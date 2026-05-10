@@ -11,11 +11,11 @@ import (
 //
 // AMD arch-specific rules are env-only (no built-in default) so they fall
 // through to the AMD-generic image when no env override is set. The arch
-// defaults now live in deploy/gpuprofiles/gfx1100.yaml and gfx906.yaml —
+// defaults now live in deploy/gpuprofiles/gfx1100.yaml, gfx906.yaml, and
+// sm_52.yaml —
 // callers that pass a GPUProfile through backend.ResolveBackendImage get the
 // per-arch image from the profile, and only nodes without a profile fall back
-// to this slice. The NVIDIA Maxwell entry keeps its hardcoded default until
-// the sm-52 profile follow-up lands.
+// to this slice.
 var llamaCppImageRules = []ImageRule{
 	// AMD arch-specific (env-only; profile owns the default)
 	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_GFX1100"},
@@ -24,8 +24,8 @@ var llamaCppImageRules = []ImageRule{
 	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_AMD", Default: "ghcr.io/ggerganov/llama.cpp:server-rocm"},
 	// CPU-only
 	{Vendor: GPUVendorCPU, EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_CPU", Default: "ghcr.io/ggerganov/llama.cpp:server"},
-	// NVIDIA Maxwell sub-arch
-	{Vendor: GPUVendorNVIDIA, ArchPrefix: "sm_5", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_MAXWELL", Default: "registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell"},
+	// NVIDIA Maxwell sub-arch (env-only; profile owns the default)
+	{Vendor: GPUVendorNVIDIA, ArchPrefix: "sm_5", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_MAXWELL"},
 	// NVIDIA/global default
 	{EnvVar: "DEFAULT_LLAMA_CPP_IMAGE", Default: "ghcr.io/ggerganov/llama.cpp:server-cuda"},
 }

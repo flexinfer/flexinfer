@@ -269,15 +269,16 @@ func TestResolveBackendImage_ProfileEntryWithEmptyImageFallsThrough(t *testing.T
 	}
 }
 
-// TestResolveBackendImage_RealBackendsArchEnvOnly asserts the slice-3 contract:
-// per-arch defaults moved to deploy/gpuprofiles/*.yaml, so each backend's rule
-// slice is env-only on gfx110/gfx906 and falls through to the vendor-generic
-// default. A GPUProfile.Image override still wins, matching ResolveBackendImage
-// precedence.
+// TestResolveBackendImage_RealBackendsArchEnvOnly asserts the slice-3/6
+// contract: per-arch defaults moved to deploy/gpuprofiles/*.yaml, so each
+// backend's rule slice is env-only on gfx110/gfx906/sm_5 and falls through to
+// the vendor-generic default. A GPUProfile.Image override still wins, matching
+// ResolveBackendImage precedence.
 func TestResolveBackendImage_RealBackendsArchEnvOnly(t *testing.T) {
 	tests := []struct {
 		name              string
 		backend           Backend
+		vendor            GPUVendor
 		arch              string
 		envKey            string
 		envVal            string
@@ -362,6 +363,14 @@ func TestResolveBackendImage_RealBackendsArchEnvOnly(t *testing.T) {
 			wantContractCheck: "previously hardcoded gfx906 default removed; now profile-owned",
 		},
 		{
+			name:              "llamacpp sm_52 no profile no env -> NVIDIA generic (was hardcoded)",
+			backend:           &LlamaCppBackend{},
+			vendor:            GPUVendorNVIDIA,
+			arch:              "sm_52",
+			wantImage:         "ghcr.io/ggerganov/llama.cpp:server-cuda",
+			wantContractCheck: "previously hardcoded Maxwell default removed; now profile-owned",
+		},
+		{
 			name:    "llamacpp gfx906 profile image wins",
 			backend: &LlamaCppBackend{},
 			arch:    "gfx906",
@@ -374,6 +383,31 @@ func TestResolveBackendImage_RealBackendsArchEnvOnly(t *testing.T) {
 			},
 			wantImage:         "registry.example.com/llamacpp:gfx906-profile",
 			wantContractCheck: "profile.Image restores per-arch override",
+		},
+		{
+			name:    "llamacpp sm_52 profile image wins",
+			backend: &LlamaCppBackend{},
+			vendor:  GPUVendorNVIDIA,
+			arch:    "sm_52",
+			profile: &aiv1alpha2.GPUProfileSpec{
+				Architecture: "sm_52",
+				Vendor:       "nvidia",
+				Backends: map[string]aiv1alpha2.BackendProfile{
+					"llamacpp": {Support: "full", Image: "registry.example.com/llamacpp:sm52-profile"},
+				},
+			},
+			wantImage:         "registry.example.com/llamacpp:sm52-profile",
+			wantContractCheck: "profile.Image restores Maxwell override",
+		},
+		{
+			name:              "llamacpp sm_52 env override still wired",
+			backend:           &LlamaCppBackend{},
+			vendor:            GPUVendorNVIDIA,
+			arch:              "sm_52",
+			envKey:            "DEFAULT_LLAMA_CPP_IMAGE_MAXWELL",
+			envVal:            "registry.example.com/llamacpp:maxwell-env",
+			wantImage:         "registry.example.com/llamacpp:maxwell-env",
+			wantContractCheck: "Maxwell arch env override fires when profile is nil",
 		},
 		// MLC-LLM ------------------------------------------------------------
 		{
@@ -389,6 +423,39 @@ func TestResolveBackendImage_RealBackendsArchEnvOnly(t *testing.T) {
 			arch:              "gfx906",
 			wantImage:         "ghcr.io/mlc-ai/mlc-llm:rocm",
 			wantContractCheck: "arch rule env-only; falls through to vendor generic",
+		},
+		{
+			name:              "mlc-llm sm_52 no profile no env -> NVIDIA generic (was hardcoded)",
+			backend:           &MLCLLMBackend{},
+			vendor:            GPUVendorNVIDIA,
+			arch:              "sm_52",
+			wantImage:         "ghcr.io/mlc-ai/mlc-llm:cuda",
+			wantContractCheck: "previously hardcoded Maxwell default removed; now profile-owned",
+		},
+		{
+			name:    "mlc-llm sm_52 profile image wins",
+			backend: &MLCLLMBackend{},
+			vendor:  GPUVendorNVIDIA,
+			arch:    "sm_52",
+			profile: &aiv1alpha2.GPUProfileSpec{
+				Architecture: "sm_52",
+				Vendor:       "nvidia",
+				Backends: map[string]aiv1alpha2.BackendProfile{
+					"mlc-llm": {Support: "full", Image: "registry.example.com/mlc-llm:sm52-profile"},
+				},
+			},
+			wantImage:         "registry.example.com/mlc-llm:sm52-profile",
+			wantContractCheck: "profile.Image restores Maxwell override",
+		},
+		{
+			name:              "mlc-llm sm_52 env override still wired",
+			backend:           &MLCLLMBackend{},
+			vendor:            GPUVendorNVIDIA,
+			arch:              "sm_52",
+			envKey:            "DEFAULT_MLC_LLM_IMAGE_MAXWELL",
+			envVal:            "registry.example.com/mlc-llm:maxwell-env",
+			wantImage:         "registry.example.com/mlc-llm:maxwell-env",
+			wantContractCheck: "Maxwell arch env override fires when profile is nil",
 		},
 		// vLLM-Omni ----------------------------------------------------------
 		{
@@ -420,7 +487,11 @@ func TestResolveBackendImage_RealBackendsArchEnvOnly(t *testing.T) {
 			if tt.envKey != "" {
 				t.Setenv(tt.envKey, tt.envVal)
 			}
-			got := ResolveBackendImage(tt.backend, tt.profile, GPUVendorAMD, tt.arch)
+			vendor := tt.vendor
+			if vendor == "" {
+				vendor = GPUVendorAMD
+			}
+			got := ResolveBackendImage(tt.backend, tt.profile, vendor, tt.arch)
 			if got != tt.wantImage {
 				t.Errorf("ResolveBackendImage(%s, %s) = %q, want %q (%s)",
 					tt.backend.Name(), tt.arch, got, tt.wantImage, tt.wantContractCheck)

@@ -71,10 +71,10 @@ Validation:
   the new fallback signal: no profile → ExperimentalGPUSupport warning fires,
   which is the operator cue to onboard the node.
 
-NVIDIA `sm_5` (Maxwell) and CPU rules retained their `Default:` fields. The
-sm-52 GPUProfile already declares `ollama` and `llamacpp` images; folding the
-remaining Maxwell entries (`mlc-llm`, `llamacpp` Maxwell) into a follow-up
-keeps this slice scoped to the documented `gfx110/gfx906` cleanup.
+CPU rules retained their `Default:` fields as the non-GPU fallback. NVIDIA
+`sm_5` (Maxwell) arch defaults later moved to `deploy/gpuprofiles/sm_52.yaml`
+in Priority 6, matching the same profile-owned image contract used for
+`gfx110/gfx906`.
 
 Files migrated:
 - `backend/comfyui.go:11-19` — gfx110+gfx906 env-only
@@ -269,19 +269,24 @@ Remaining legacy callers documented:
   from the cluster on its own); for now the legacy map is the documented
   backstop for the scheduler's defense-in-depth `SupportUnsupported` reject.
 
-## Priority 6 — Strip `Default` from NVIDIA Maxwell (`sm_5`) rule entries
+## Priority 6 — Strip `Default` from NVIDIA Maxwell (`sm_5`) rule entries — COMPLETED
 
-Slice 3 left the `Vendor: GPUVendorNVIDIA, ArchPrefix: "sm_5"` rule entries in
-`backend/llamacpp.go` and `backend/mlc_llm.go` with their hardcoded `Default:`
-images intact, because the `sm-52` GPUProfile only declares `ollama` and
-`llamacpp` overrides. Once `mlc-llm` is added to `deploy/gpuprofiles/sm_52.yaml`
-(and any Maxwell test on the GTX 980 Ti node has a chance to reconcile), the
-Maxwell `Default:` strings can be dropped using the slice-3 pattern:
+Shipped in `backlog/61-maxwell-profile-images` ([Issue #61](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/61)).
 
-- `backend/llamacpp.go` — drop `registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell`
-  (already redundant with `sm_52.yaml::backends.llamacpp.image`).
-- `backend/mlc_llm.go` — declare the Maxwell image in `sm_52.yaml`, then drop
-  `registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7` from the rule slice.
+The Maxwell image defaults now follow the same profile-owned contract as the
+`gfx110/gfx906` arch defaults:
 
-Validation: extend `TestResolveBackendImage_RealBackendsArchEnvOnly` to cover
-the Maxwell profile path and the no-profile fallback.
+- `deploy/gpuprofiles/sm_52.yaml` declares the `mlc-llm` Maxwell image next to
+  the existing `ollama` and `llamacpp` image overrides.
+- `backend/llamacpp.go` and `backend/mlc_llm.go` keep the Maxwell env override
+  rules but no longer embed hardcoded `Default:` image strings for `sm_5`.
+- Nodes without a GPUProfile now fall through to the NVIDIA-generic backend
+  image, which is the documented backstop; Maxwell-specific images require
+  either the `sm_52` GPUProfile or the existing Maxwell env override.
+
+Tests:
+- `backend/gpu_compat_test.go::TestResolveBackendImage_RealBackendsArchEnvOnly`
+  covers Maxwell no-profile fallback, profile image wins, and env override
+  preservation for both `llamacpp` and `mlc-llm`.
+- Backend-specific image tests now document the no-profile NVIDIA-generic
+  fallback for Maxwell.
