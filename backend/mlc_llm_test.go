@@ -92,10 +92,10 @@ func TestMLCLLMBackendImage_GFX1100(t *testing.T) {
 			wantImage: "ghcr.io/mlc-ai/mlc-llm:rocm",
 		},
 		{
-			name:      "NVIDIA sm_52 returns Maxwell image",
+			name:      "NVIDIA sm_52 falls through to generic CUDA without profile",
 			gpuVendor: GPUVendorNVIDIA,
 			gpuArch:   "sm_52",
-			wantImage: "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7",
+			wantImage: "ghcr.io/mlc-ai/mlc-llm:cuda",
 		},
 		{
 			name:      "NVIDIA sm_89 returns generic CUDA image",

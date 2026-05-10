@@ -190,16 +190,16 @@ func TestLlamaCppBackendImage(t *testing.T) {
 			wantImage: "ghcr.io/ggerganov/llama.cpp:server-rocm",
 		},
 		{
-			name:      "NVIDIA sm_52 Maxwell returns hardcoded default",
+			name:      "NVIDIA sm_52 Maxwell falls through to generic CUDA without profile",
 			gpuVendor: GPUVendorNVIDIA,
 			gpuArch:   "sm_52",
-			wantImage: "registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell",
+			wantImage: "ghcr.io/ggerganov/llama.cpp:server-cuda",
 		},
 		{
-			name:      "NVIDIA sm_50 Maxwell returns hardcoded default",
+			name:      "NVIDIA sm_50 Maxwell falls through to generic CUDA without profile",
 			gpuVendor: GPUVendorNVIDIA,
 			gpuArch:   "sm_50",
-			wantImage: "registry.harbor.lan/flexinfer/llamacpp:cuda-maxwell",
+			wantImage: "ghcr.io/ggerganov/llama.cpp:server-cuda",
 		},
 		{
 			name:      "NVIDIA sm_52 with env override",

@@ -12,19 +12,19 @@ import (
 //
 // AMD arch-specific rules are env-only (no built-in default) so they fall
 // through to the AMD-generic image when no env override is set. The arch
-// defaults now live in deploy/gpuprofiles/gfx1100.yaml and gfx906.yaml —
+// defaults now live in deploy/gpuprofiles/gfx1100.yaml, gfx906.yaml, and
+// sm_52.yaml —
 // callers that pass a GPUProfile through backend.ResolveBackendImage get the
 // per-arch image from the profile, and only nodes without a profile fall back
-// to this slice. The NVIDIA Maxwell entry keeps its hardcoded default until
-// the sm-52 profile follow-up lands.
+// to this slice.
 var mlcLLMImageRules = []ImageRule{
 	// AMD arch-specific (env-only; profile owns the default)
 	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_MLC_LLM_IMAGE_GFX1100"},
 	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_MLC_LLM_IMAGE_GFX906"},
 	// AMD generic
 	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_MLC_LLM_IMAGE_AMD", Default: "ghcr.io/mlc-ai/mlc-llm:rocm"},
-	// NVIDIA Maxwell sub-arch
-	{Vendor: GPUVendorNVIDIA, ArchPrefix: "sm_5", EnvVar: "DEFAULT_MLC_LLM_IMAGE_MAXWELL", Default: "registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7"},
+	// NVIDIA Maxwell sub-arch (env-only; profile owns the default)
+	{Vendor: GPUVendorNVIDIA, ArchPrefix: "sm_5", EnvVar: "DEFAULT_MLC_LLM_IMAGE_MAXWELL"},
 	// NVIDIA generic
 	{Vendor: GPUVendorNVIDIA, EnvVar: "DEFAULT_MLC_LLM_IMAGE", Default: "ghcr.io/mlc-ai/mlc-llm:cuda"},
 	// Global default
