@@ -15,6 +15,8 @@ sections:
         path: user/quickstart.md
       - title: Models (v1alpha2)
         path: user/models-v1alpha2.md
+      - title: Workflow Profiles
+        path: user/workflow-profiles.md
       - title: flexinfer-system Snapshot
         path: user/flexinfer-system-snapshot.md
       - title: Legacy (v1alpha1)

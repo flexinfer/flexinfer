@@ -1,0 +1,29 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: WorkflowProfile
+metadata:
+  name: long-context-review
+spec:
+  intent: Long-context document and code review
+  servedName: long-context-review
+  aliases:
+    - review-long
+  selector:
+    matchServiceLabels:
+      - textgen
+      - long-context
+    backends:
+      - vllm
+      - llamacpp
+  routes:
+    - name: long-ready
+      objective: LongestContext
+      maxPromptTokens: 131072
+    - name: reviewed-fallback
+      objective: PreferReady
+      maxPromptTokens: 32768
+  gates:
+    requireReadyOrColdStart: true
+    requirePromotionEvidence: true
+    allowedPhases:
+      - Idle
+    minSupportLevel: Validated

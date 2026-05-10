@@ -1,0 +1,36 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: WorkflowProfile
+metadata:
+  name: code-agent
+spec:
+  intent: Coding-agent text generation with tool-calling support
+  servedName: code-agent
+  aliases:
+    - agent-code
+  selector:
+    matchServiceLabels:
+      - textgen
+      - code
+    capabilities:
+      toolCalling: true
+    backends:
+      - vllm
+      - ollama
+  routes:
+    - name: cheapest-agent-ready
+      objective: CheapestSufficient
+      maxPromptTokens: 32768
+      requiredCapabilities:
+        toolCalling: true
+    - name: lowest-latency-agent
+      objective: LowestLatency
+      maxPromptTokens: 12000
+      requiredCapabilities:
+        toolCalling: true
+  gates:
+    requireReadyOrColdStart: true
+    requirePromotionEvidence: true
+    allowedPhases:
+      - Idle
+      - Loading
+    minSupportLevel: Validated
