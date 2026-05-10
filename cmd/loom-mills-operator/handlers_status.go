@@ -26,16 +26,24 @@ func (o *operator) handleStatusFull(w http.ResponseWriter, r *http.Request) {
 		t := runs[0].StartedAt
 		lastCouncil = &t
 	}
+	capabilities := o.capabilityReport(ctx)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"db_ok":                o.dbOK(ctx),
 		"policy_enabled":       policy.IsEnabled(),
 		"policy_version":       policy.Version,
+		"autonomy_ready":       capabilities.AutonomyReady,
+		"autonomy_blockers":    capabilities.AutonomyBlockers,
+		"capabilities":         capabilities.Capabilities,
 		"queue_depth":          queueDepth,
 		"active_pipeline_runs": active,
 		"last_council_at":      lastCouncil,
 		"slice":                "2.4-rest-surface",
 	})
+}
+
+func (o *operator) handleCapabilities(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, o.capabilityReport(r.Context()))
 }
 
 // handlePolicy returns the current effective policy. Read-only — the

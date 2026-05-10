@@ -152,6 +152,9 @@ func run(cfg Config) error {
 	// implementations in a follow-up slice once the spawn integration
 	// for FlexInfer + Claude/Codex headless is wired.
 	councilRunner := buildCouncilRunner(st, pm, budget, cfg.RepoRoot, logger)
+	capabilities := newCapabilityWiring(cfg)
+	capabilities.CouncilConfigured = councilRunner != nil
+	capabilities.CouncilUsesFakeAgents = councilRunner != nil
 
 	op := newOperator(st, pm, budget, logger).
 		withRunner(councilRunner).
@@ -159,8 +162,6 @@ func run(cfg Config) error {
 	// Audit subsystem is attached below after the pipeline runner +
 	// FlexInfer client are ready; handlers read the fields at request
 	// time so late attachment is fine.
-	op.markReady()
-	logger.Info("operator ready", "policy_enabled", pm.Current().IsEnabled())
 
 	httpSrv := httpServer(cfg.HTTPAddr, op.httpMux())
 	metricsSrv := httpServer(cfg.MetricsAddr, op.metricsMux())
@@ -169,6 +170,8 @@ func run(cfg Config) error {
 	// when FlexInfer is configured.
 	gateRegistry := gates.Default()
 	flexClient := buildFlexInferClient(cfg, logger)
+	capabilities.FlexInferConfigured = strings.TrimSpace(cfg.FlexInferProxyURL) != ""
+	capabilities.FlexInferReady = flexClient != nil
 	if flexClient != nil {
 		gates.RegisterLLMGates(gateRegistry, clients.NewRubricJudge(flexClient))
 		logger.Info("LLM-judged gates enabled (FlexInfer)")
@@ -182,6 +185,8 @@ func run(cfg Config) error {
 	// so handoff + worktree-allocate calls have a stable source session
 	// id; defer cleanup so a clean shutdown ends the session row.
 	hubClient, sessionID := establishHubAndSession(rootCtx, cfg, logger)
+	capabilities.MCPHubConfigured = strings.TrimSpace(os.Getenv("LOOM_MCP_HUB_URL")) != ""
+	capabilities.MCPHubSessionReady = hubClient != nil && sessionID != ""
 	if hubClient != nil {
 		defer endOperatorSession(hubClient, sessionID, logger)
 	}
@@ -189,7 +194,10 @@ func run(cfg Config) error {
 	// Worker dispatcher: real clients where configured, NoOpDispatcher
 	// for stages whose backing service isn't wired yet. The operator
 	// logs each gap so it's obvious which surfaces are stub vs production.
-	dispatcher := buildDispatcher(cfg, flexClient, hubClient, st, logger)
+	dispatcher, realStages := buildDispatcher(cfg, flexClient, hubClient, st, logger)
+	capabilities.DispatcherRealStages = realStages
+	capabilities.HUDSpawnConfigured = strings.TrimSpace(cfg.HUDBaseURL) != "" && strings.TrimSpace(cfg.HUDToken) != ""
+	capabilities.HUDSpawnReady = realStages["plan_slice"] && realStages["implement"] && realStages["pr_self_review"]
 
 	pipelineRunner := pipeline.New(st, gateRegistry, dispatcher, pm)
 	pipelineRunner.Logger = logger
@@ -223,6 +231,8 @@ func run(cfg Config) error {
 	// Escalator: GitLab for issues, MCP hub for handoff. Either may be
 	// disabled independently; the escalator runs whichever it has.
 	gitlabClient := buildGitLabClient(cfg, logger)
+	capabilities.GitLabConfigured = strings.TrimSpace(cfg.GitLabAPIURL) != "" && strings.TrimSpace(cfg.GitLabToken) != "" && strings.TrimSpace(cfg.GitLabProject) != ""
+	capabilities.GitLabReady = gitlabClient != nil
 	var handoffClient pipeline.HandoffClient
 	if hubClient != nil && sessionID != "" {
 		handoffClient = clients.NewHandoffClient(hubClient, sessionID)
@@ -276,6 +286,14 @@ func run(cfg Config) error {
 	}
 	starter := pipeline.NewRunnerStarter(pipelineRunner, integrator)
 	starter.Logger = logger
+	capabilities.KPIWriterReady = true
+	capabilities.KPIWriterSource = "eval.OutcomeAttributor"
+	op.setCapabilities(capabilities)
+	op.markReady()
+	logger.Info("operator ready",
+		"policy_enabled", pm.Current().IsEnabled(),
+		"autonomy_ready", op.capabilityReport(rootCtx).AutonomyReady,
+	)
 
 	// Reconciler / scheduler. The reconciler hands queued items to the
 	// pipeline starter (which spawns goroutines that drive the DAG and
@@ -479,12 +497,13 @@ func buildGitLabClient(cfg Config, logger *slog.Logger) *clients.GitLabClient {
 //   - GitLabWorker (mr/ci_watch/merge/cleanup): GitLab REST API
 //   - DevboxWorker (tests): mcp-devbox via MCP hub
 //   - SpawnWorker (plan_slice/implement/pr_self_review): HUD mobile API
-func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCPHubClient, st *store.Store, logger *slog.Logger) pipeline.WorkerDispatcher {
+func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCPHubClient, st *store.Store, logger *slog.Logger) (pipeline.WorkerDispatcher, map[string]bool) {
 	noop := &pipeline.NoOpDispatcher{}
 	gitlab := buildGitLabClient(cfg, logger)
 	spawn := buildHUDSpawnClient(cfg, logger)
 
 	routes := map[string]pipeline.Worker{}
+	realStages := newCapabilityWiring(cfg).DispatcherRealStages
 	if flex != nil {
 		wc := clients.NewWeaverClient(flex)
 		// Mode is read at construction time from MILLS_RESEARCH_VIA_
@@ -495,6 +514,7 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 			attachWeaverDelegation(wc, cfg, st, logger)
 		}
 		routes["research"] = &pipeline.WeaverWorker{Client: wc}
+		realStages["research"] = true
 		logger.Info("research stage wired to FlexInfer (WeaverClient)",
 			"research_mode", string(wc.Mode))
 	} else {
@@ -506,6 +526,10 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 		routes["ci_watch"] = gw
 		routes["merge"] = gw
 		routes["cleanup"] = gw
+		realStages["mr"] = true
+		realStages["ci_watch"] = true
+		realStages["merge"] = true
+		realStages["cleanup"] = true
 		logger.Info("mr/ci_watch/merge/cleanup stages wired to GitLab")
 	} else {
 		logger.Warn("mr/ci_watch/merge/cleanup stages stub: NoOpDispatcher (GITLAB_API_URL/TOKEN/PROJECT unset)")
@@ -521,6 +545,7 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 			Project: project,
 			AgentID: "loom-mills-operator",
 		}
+		realStages["tests"] = true
 		logger.Info("tests stage wired to devbox via MCP hub")
 	} else {
 		logger.Warn("tests stage stub: NoOpDispatcher (LOOM_MCP_HUB_URL unset)")
@@ -553,12 +578,15 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 			Namespace: "loom-mills",
 			PromptFor: stagePromptFor("pr_self_review"),
 		}
+		realStages["plan_slice"] = true
+		realStages["implement"] = true
+		realStages["pr_self_review"] = true
 		logger.Info("plan_slice/implement/pr_self_review stages wired to HUD spawn API")
 	} else {
 		logger.Warn("plan_slice/implement/pr_self_review stages stub: NoOpDispatcher (LOOM_HUD_URL+LOOM_HUD_TOKEN unset)")
 	}
 
-	return &fallbackDispatcher{routes: routes, fallback: noop}
+	return &fallbackDispatcher{routes: routes, fallback: noop}, realStages
 }
 
 // stagePromptFor returns a default per-stage prompt builder. Production
