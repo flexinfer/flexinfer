@@ -61,7 +61,7 @@ Engrams are stored as long-term memory items with `category="engram"`, the URI i
 | `agent_engram_recall` | Recall by query; optionally pull in transitive prerequisites at depth N |
 | `agent_engram_list` | List engrams filtered by tier, family, language, scope, proof_status |
 | `agent_engram_graph` | Adjacency list for the prerequisite graph rooted at a URI; direction `down` walks prereqs, `up` walks dependents |
-| `agent_engram_verify` | Verify an engram's proof. File-ref proofs check existence + line range; URL proofs run a HEAD request; command proofs are skipped (devbox sandbox deferred). Updates `proof_status`, `last_verified`, and (on success) appends the repo to `unlocked_in`. Pass `uri` for one engram or `all=true` to sweep the workspace. |
+| `agent_engram_verify` | Verify an engram's proof. File-ref proofs check existence + line range; URL proofs run a HEAD request; command proofs run inside the devbox sandbox (when wired) and pass on exit 0. Updates `proof_status`, `last_verified`, and (on success) appends the repo to `unlocked_in`. Pass `uri` for one engram or `all=true` to sweep the workspace. Optional `command_timeout` (Go duration string, default `2m`); set `skip_command=true` to force-skip command proofs. |
 
 ## Verification
 
@@ -69,7 +69,7 @@ Engrams are stored as long-term memory items with `category="engram"`, the URI i
 
 - **file_ref** (`pkg/foo/bar.go:42-58` or just `pkg/foo/bar.go`) — checks the file exists relative to `repo_root` (defaults to cwd) and that any line range fits the file's length.
 - **url** (`https://...`) — runs a HEAD request with a 5-second timeout; 2xx/3xx is `verified`, anything else is `failing`.
-- **command** (`command: go test ./...`) — currently returns `status=skipped` with a clear reason. Running arbitrary commands needs the devbox sandbox; that work is tracked as a follow-up.
+- **command** (`command: go test ./...`) — extracts the first `command:` line from the proof block and runs it through the wired `CommandRunner` (devbox-backed in production via `mcp-agent-context`'s daemon-loopback toolexec). Exit 0 → `verified`, non-zero → `failing` (stderr first line surfaced in the reason), exit 124 / TimedOut → `failing` with a timeout reason. Default timeout is `2m`, override per-call via `command_timeout`. When no runner is wired (e.g. mcp-agent-context started without `LOOM_SOCKET`), or when `skip_command=true` is passed, command proofs return `skipped` and never downgrade `proof_status`. Transport errors (daemon down, sandbox unreachable) also map to `skipped` so a transient infra blip can't flip a verified engram to failing.
 
 After verification, the service updates `proof_status` (`verified`/`stale`/`failing`/unchanged-on-skip), refreshes `last_verified`, refreshes the `engram-status:*` tag, and on a successful verify appends the `repo` argument (defaulting to the basename of cwd, worktree-aware) to `unlocked_in` so other agents can see "this engram has been proven against repo X recently."
 

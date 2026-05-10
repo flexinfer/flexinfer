@@ -38,11 +38,46 @@ type VerifyOptions struct {
 	// with a 5-second timeout.
 	HTTPClient *http.Client
 
-	// SkipCommand controls whether `command:` proofs are executed. The MVP
-	// verifier never runs commands (devbox sandboxing is out of scope for S3);
-	// command proofs always return Status="skipped" with Reason="command
-	// verification requires devbox sandbox (S4)".
+	// SkipCommand controls whether `command:` proofs are executed. When true,
+	// command proofs always return Status="skipped". When false and a
+	// CommandRunner is configured on the Service, the command line is parsed
+	// out of the proof and executed via the runner (typically a sandboxed
+	// devbox exec); a 0 exit code is verified, non-zero is failing, transport
+	// errors are skipped with the reason surfaced.
 	SkipCommand bool
+
+	// CommandTimeout caps the duration of command verification. Zero defaults
+	// to 2 minutes — long enough for typical `go test ./pkg/foo` runs but
+	// bounded so a hung verify can't wedge a bulk run.
+	CommandTimeout time.Duration
+
+	// CommandRunner is the backend used to execute `command:` proofs. When
+	// nil, command verification falls through to "skipped" with a reason that
+	// makes the missing wiring obvious to operators.
+	CommandRunner CommandRunner
+}
+
+// CommandRunner executes a verification command in a sandboxed environment.
+// Implementations are typically backed by `devbox_exec` via toolexec, but the
+// interface keeps agentcontext free of any direct devbox dependency so
+// alternative backends (local exec for tests, k8s-job exec, remote runners)
+// can be swapped in without touching the verifier.
+type CommandRunner interface {
+	RunCommand(ctx context.Context, cmd string, timeout time.Duration) CommandRunResult
+}
+
+// CommandRunResult is what a CommandRunner returns. ExitCode reflects the
+// process exit status (0 = success). TransportErr is non-nil when the runner
+// could not even start the command (sandbox unavailable, daemon down, etc.) —
+// in that case the verifier records "skipped" rather than "failing" so a
+// transient infra blip doesn't downgrade an engram's status.
+type CommandRunResult struct {
+	ExitCode     int
+	StdoutTail   string
+	StderrTail   string
+	DurationMs   int64
+	TimedOut     bool
+	TransportErr error
 }
 
 // HandleEngramVerify verifies an engram (or every engram, when `all=true`)
@@ -67,8 +102,10 @@ func (s *Service) HandleEngramVerify(ctx context.Context, args map[string]any) (
 
 	repo := v.String("repo", inferRepoName())
 	opts := VerifyOptions{
-		RepoRoot:    v.String("repo_root", ""),
-		SkipCommand: v.Bool("skip_command", true),
+		RepoRoot:       v.String("repo_root", ""),
+		SkipCommand:    v.Bool("skip_command", s.commandRunner == nil),
+		CommandTimeout: parseDurationArg(v.String("command_timeout", ""), 2*time.Minute),
+		CommandRunner:  s.commandRunner,
 	}
 
 	var targets []MemoryItem
@@ -130,13 +167,38 @@ func verifyOne(ctx context.Context, item *MemoryItem, repo string, opts VerifyOp
 		res.ProofKind = "command"
 		if opts.SkipCommand {
 			res.Status = "skipped"
-			res.Reason = "command verification requires devbox sandbox (deferred to S4)"
+			res.Reason = "command verification disabled (skip_command=true)"
 			return res
 		}
-		// MVP: even when not skipped, we don't actually exec untrusted commands.
-		// Mark skipped with a clear reason so callers know why.
-		res.Status = "skipped"
-		res.Reason = "command verification not yet implemented"
+		if opts.CommandRunner == nil {
+			res.Status = "skipped"
+			res.Reason = "no CommandRunner configured; wire devbox via cmd/mcp-agent-context"
+			return res
+		}
+		cmd := extractCommand(proof)
+		if cmd == "" {
+			res.Status = "skipped"
+			res.Reason = "could not extract command from proof (expected 'command: <line>')"
+			return res
+		}
+		timeout := opts.CommandTimeout
+		if timeout <= 0 {
+			timeout = 2 * time.Minute
+		}
+		out := opts.CommandRunner.RunCommand(ctx, cmd, timeout)
+		switch {
+		case out.TransportErr != nil:
+			res.Status = "skipped"
+			res.Reason = fmt.Sprintf("runner unavailable: %v", out.TransportErr)
+		case out.TimedOut:
+			res.Status = "failing"
+			res.Reason = fmt.Sprintf("command timed out after %s", timeout)
+		case out.ExitCode == 0:
+			res.Status = "verified"
+		default:
+			res.Status = "failing"
+			res.Reason = fmt.Sprintf("exit=%d %s", out.ExitCode, firstLine(out.StderrTail))
+		}
 		return res
 
 	case "url":
@@ -407,4 +469,62 @@ func contains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// SetCommandRunner wires (or clears) the backend used for engram `command:`
+// proof verification. Mirrors SetPublisher / SetToolExecutor: the runner is
+// often constructed after NewServiceFromEnv (e.g. after the daemon socket is
+// reachable), so this setter is the post-construction wiring point.
+func (s *Service) SetCommandRunner(r CommandRunner) {
+	s.commandRunner = r
+}
+
+// extractCommand pulls the first `command: <line>` payload from a proof
+// block. Proofs follow the engram convention from svc_engrams.go where a
+// tier-2 proof reads like:
+//
+//	command: go test ./pkg/foo -run TestX
+//	benchmark: go test -bench=BenchmarkX
+//
+// Only the command line is run during verification; benchmark/dashboard hints
+// are advisory metadata. Returns "" when no `command:` line is present.
+func extractCommand(proof string) string {
+	for _, line := range strings.Split(proof, "\n") {
+		trimmed := strings.TrimSpace(line)
+		lower := strings.ToLower(trimmed)
+		if !strings.HasPrefix(lower, "command:") {
+			continue
+		}
+		cmd := strings.TrimSpace(trimmed[len("command:"):])
+		if cmd != "" {
+			return cmd
+		}
+	}
+	return ""
+}
+
+// firstLine returns the first non-empty line of s, trimmed. Used to keep
+// failure reasons readable even when stderr is multiline.
+func firstLine(s string) string {
+	for _, line := range strings.Split(s, "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			return line
+		}
+	}
+	return ""
+}
+
+// parseDurationArg parses a duration string with a fallback. Empty input or a
+// parse failure returns the default — verify args should never reject the
+// whole call over a malformed timeout knob.
+func parseDurationArg(s string, fallback time.Duration) time.Duration {
+	if s == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }

@@ -28,6 +28,14 @@ func WithTracer(tp trace.TracerProvider) ServiceOption {
 	return func(s *Service) { s.tracer = tp.Tracer("agentcontext") }
 }
 
+// WithCommandRunner wires a backend for engram `command:` proof verification.
+// When set, HandleEngramVerify will execute commands via the runner instead of
+// returning skipped. Production binaries adapt this to devbox; tests inject a
+// fake runner.
+func WithCommandRunner(r CommandRunner) ServiceOption {
+	return func(s *Service) { s.commandRunner = r }
+}
+
 type Service struct {
 	cfg     Config
 	logger  *slog.Logger
@@ -73,6 +81,10 @@ type Service struct {
 
 	// Nudge queue
 	nudges *NudgeSvc
+
+	// Optional backend for engram command-proof verification (devbox in prod,
+	// fake in tests). nil → command proofs are skipped.
+	commandRunner CommandRunner
 
 	// Background services
 	compactionScheduler *CompactionScheduler
