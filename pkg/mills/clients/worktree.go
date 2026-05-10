@@ -79,7 +79,13 @@ func (a *WorktreeAllocator) Allocate(ctx context.Context, req pipeline.WorktreeR
 	if req.SliceName == "" {
 		return pipeline.WorktreeHandle{}, errors.New("worktree: SliceName required")
 	}
-	branchName := fmt.Sprintf("feat/%s/%s", req.BacklogID, req.SliceName)
+	branchName := req.BranchName
+	if branchName == "" {
+		branchName = pipeline.SliceBranchName(req.BacklogID, req.SliceName)
+	}
+	if branchName == "" {
+		return pipeline.WorktreeHandle{}, errors.New("worktree: BranchName required")
+	}
 	args := map[string]any{
 		"agent_id":    a.AgentID,
 		"session_id":  a.SourceSessionID,

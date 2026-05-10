@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net"
@@ -127,6 +128,7 @@ func TestStatus_FullResponds(t *testing.T) {
 	// are now ints (zero on a fresh DB), and the slice tag advances.
 	for _, want := range []string{
 		`"db_ok":true`, `"policy_enabled":true`,
+		`"autonomy_ready":false`,
 		`"queue_depth":0`, `"active_pipeline_runs":0`,
 		`"slice":"2.4-rest-surface"`,
 	} {
@@ -134,6 +136,98 @@ func TestStatus_FullResponds(t *testing.T) {
 			t.Errorf("response missing %q: %s", want, rec.Body.String())
 		}
 	}
+}
+
+func TestCapabilities_FailClosedWhenPolicyEnabledAndStubsRemain(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+	setAdminToken("test-token")
+	t.Cleanup(func() { setAdminToken("") })
+
+	repo := t.TempDir()
+	if err := os.Mkdir(filepath.Join(repo, ".loom"), 0o755); err != nil {
+		t.Fatalf("mkdir .loom: %v", err)
+	}
+	w := newCapabilityWiring(Config{
+		DBPath:            filepath.Join(repo, "mills.db"),
+		PolicyPath:        filepath.Join(repo, "policy.yaml"),
+		RepoRoot:          repo,
+		FlexInferProxyURL: "http://flexinfer.test",
+		GitLabAPIURL:      "https://gitlab.example/api/v4",
+		GitLabToken:       "token",
+		GitLabProject:     "services/loom-core",
+		HUDBaseURL:        "http://hud.test",
+		HUDToken:          "hud-token",
+	})
+	w.FlexInferConfigured = true
+	w.FlexInferReady = true
+	w.GitLabConfigured = true
+	w.GitLabReady = true
+	w.HUDSpawnConfigured = true
+	w.HUDSpawnReady = true
+	w.MCPHubConfigured = true
+	w.MCPHubSessionReady = true
+	w.CouncilConfigured = true
+	w.CouncilUsesFakeAgents = true
+	w.BranchContractReady = true
+	for stage := range w.DispatcherRealStages {
+		w.DispatcherRealStages[stage] = true
+	}
+	w.DispatcherRealStages["implement"] = false
+	op.setCapabilities(w)
+
+	rec := httptest.NewRecorder()
+	op.httpMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/mills/capabilities", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status: %d body=%s", rec.Code, rec.Body.String())
+	}
+	var got capabilityReport
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decode: %v body=%s", err, rec.Body.String())
+	}
+	if got.AutonomyReady {
+		t.Fatalf("autonomy_ready = true, want false")
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`dispatcher_write_stages: 8/9 write stages use real workers; stubbed stages: implement`,
+		`council_participants: council uses FakeReviewer/FakeEditor/FakeLLMJudge participants`,
+	} {
+		if !strings.Contains(strings.ReplaceAll(body, `"`, ``), want) {
+			t.Errorf("response missing blocker %q: %s", want, body)
+		}
+	}
+}
+
+func TestCapabilities_RepoRootRequiresWritableLoomDir(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+
+	repo := t.TempDir()
+	op.setCapabilities(newCapabilityWiring(Config{RepoRoot: repo}))
+	report := op.capabilityReport(context.Background())
+	repoRow := findCapabilityRow(report.Capabilities, "repo_root")
+	if repoRow.Status != "red" || !strings.Contains(repoRow.Message, ".loom directory is missing") {
+		t.Fatalf("missing .loom row = %+v", repoRow)
+	}
+
+	if err := os.Mkdir(filepath.Join(repo, ".loom"), 0o755); err != nil {
+		t.Fatalf("mkdir .loom: %v", err)
+	}
+	report = op.capabilityReport(context.Background())
+	repoRow = findCapabilityRow(report.Capabilities, "repo_root")
+	if repoRow.Status != "green" || repoRow.Mode != "real" {
+		t.Fatalf("writable .loom row = %+v", repoRow)
+	}
+}
+
+func findCapabilityRow(rows []capabilityRow, id string) capabilityRow {
+	for _, row := range rows {
+		if row.ID == id {
+			return row
+		}
+	}
+	return capabilityRow{}
 }
 
 func TestUnknownPath_Returns404(t *testing.T) {

@@ -48,15 +48,17 @@ type operator struct {
 
 	logger *slog.Logger
 
-	ready atomic.Bool
+	capabilities capabilityWiring
+	ready        atomic.Bool
 }
 
 func newOperator(st *store.Store, pm *mills.PolicyManager, b *mills.Budget, logger *slog.Logger) *operator {
 	return &operator{
-		store:  st,
-		policy: pm,
-		budget: b,
-		logger: logger,
+		store:        st,
+		policy:       pm,
+		budget:       b,
+		logger:       logger,
+		capabilities: newCapabilityWiring(Config{}),
 		// Default regression gate: same store + policy + default 30min
 		// window. Tests that want to skip the gate clear this field.
 		regressionGate: &gates.RegressionGate{Store: st, Policy: pm},
@@ -112,6 +114,7 @@ func (o *operator) httpMux() *http.ServeMux {
 
 	// Status / policy / KPIs (read-only).
 	mux.HandleFunc("GET /api/mills/status", o.handleStatusFull)
+	mux.HandleFunc("GET /api/mills/capabilities", o.handleCapabilities)
 	mux.HandleFunc("GET /api/mills/policy", o.handlePolicy)
 	mux.HandleFunc("GET /api/mills/kpis", o.handleKPIs)
 

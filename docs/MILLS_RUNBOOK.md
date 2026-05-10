@@ -11,8 +11,20 @@ loom mills status                                           # one-liner from Mac
 kubectl get deploy,po,pvc -n loom-mills                     # cluster snapshot
 kubectl logs -n loom-mills deploy/loom-mills-operator --tail=200
 curl -sf $LOOM_MILLS_OPERATOR_URL/readyz                    # 200 once initialized
+curl -sf $LOOM_MILLS_OPERATOR_URL/api/mills/capabilities | jq
 curl -sf $LOOM_MILLS_OPERATOR_URL/metrics | grep '^loom_mills_'
 ```
+
+`/readyz` is service readiness: the HTTP process, migrations, and policy manager
+are initialized. It is not an autonomy approval signal. Before enabling or
+trusting unattended writes, check `/api/mills/status` or
+`/api/mills/capabilities` and require `autonomy_ready=true`.
+
+Common autonomy blockers are intentional fail-closed states: missing admin auth,
+missing or unwritable `LOOM_MILLS_REPO_ROOT/.loom`, unwired FlexInfer/GitLab/HUD
+spawn/MCP hub dependencies, NoOp dispatcher coverage on write stages, or fake
+council participants. Read-only APIs may stay healthy while these blockers are
+present.
 
 ## Pause and resume
 

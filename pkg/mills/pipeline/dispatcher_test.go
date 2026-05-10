@@ -124,6 +124,7 @@ func TestBuildMillsEnv_AlwaysIncludesIDs(t *testing.T) {
 		"LOOM_MILLS_STAGE":       "implement",
 		"LOOM_PARENT_SESSION_ID": "claude-code-session-9",
 		"LOOM_MILLS_WORKTREE":    "/tmp/wt",
+		"LOOM_MILLS_BRANCH":      "feat/BL-X",
 	}
 	for k, v := range want {
 		if env[k] != v {
@@ -181,6 +182,9 @@ func TestSpawnWorker_PropagatesBudgetEnvAndPrompt(t *testing.T) {
 	}
 	if got.Env["LOOM_MILLS_RUN_ID"] != "PIPE-X-1" {
 		t.Errorf("env not propagated to spawn")
+	}
+	if got.Branch != "feat/BL-X" {
+		t.Errorf("branch = %q", got.Branch)
 	}
 }
 
@@ -259,6 +263,27 @@ func TestGitLabWorker_CreateMR_RecordsIID(t *testing.T) {
 	if len(gl.createCalls) != 1 || gl.createCalls[0].Title != "feat: x" {
 		t.Errorf("createMR call wrong: %+v", gl.createCalls)
 	}
+	if gl.createCalls[0].SourceBranch != "feat/BL-X" {
+		t.Errorf("source branch = %q", gl.createCalls[0].SourceBranch)
+	}
+}
+
+func TestGitLabWorker_CreateMR_FanOutParentUsesIntegrationBranch(t *testing.T) {
+	gl := &fakeGitLab{createResp: CreateMRResponse{MRIID: 99}}
+	w := &GitLabWorker{Client: gl}
+	jc := sampleJobContext("mr", func(jc *JobContext) {
+		jc.Item.Slices = []store.Slice{
+			{Name: "alpha", ParallelWith: []string{"beta"}},
+			{Name: "beta", ParallelWith: []string{"alpha"}},
+		}
+		jc.Env = BuildMillsEnv(jc.Run, jc.Item, jc.Stage)
+	})
+	if _, err := w.Run(context.Background(), jc); err != nil {
+		t.Fatalf("mr: %v", err)
+	}
+	if gl.createCalls[0].SourceBranch != "integrate/BL-X" {
+		t.Errorf("source branch = %q", gl.createCalls[0].SourceBranch)
+	}
 }
 
 func TestGitLabWorker_CIWatch_FailingPipelineErrors(t *testing.T) {
@@ -313,6 +338,21 @@ func TestGitLabWorker_Cleanup_UsesSourceBranchOverride(t *testing.T) {
 	}
 	if len(gl.cleanupCalls) != 1 || gl.cleanupCalls[0].BranchName != "feat/custom" {
 		t.Errorf("cleanup branch override not honored: %+v", gl.cleanupCalls)
+	}
+}
+
+func TestGitLabWorker_MRRequiresSourceBranch(t *testing.T) {
+	gl := &fakeGitLab{}
+	w := &GitLabWorker{Client: gl}
+	jc := sampleJobContext("mr", func(jc *JobContext) {
+		jc.Item.ID = ""
+		jc.Env = BuildMillsEnv(jc.Run, jc.Item, jc.Stage)
+	})
+	if _, err := w.Run(context.Background(), jc); err == nil {
+		t.Fatal("expected error when source branch is unavailable")
+	}
+	if len(gl.createCalls) != 0 {
+		t.Errorf("CreateMR should not be called: %+v", gl.createCalls)
 	}
 }
 

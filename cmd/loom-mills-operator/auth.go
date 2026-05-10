@@ -22,6 +22,11 @@ func setAdminToken(t string) {
 	adminToken.Store(strings.TrimSpace(t))
 }
 
+func currentAdminToken() string {
+	t, _ := adminToken.Load().(string)
+	return strings.TrimSpace(t)
+}
+
 // loadAdminTokenFromEnv reads adminTokenEnv into the atomic store. Safe
 // to call from main(); separated for testability.
 func loadAdminTokenFromEnv() {
@@ -40,7 +45,7 @@ func loadAdminTokenFromEnv() {
 // endpoints that actually mutate state.
 func requireAdmin(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		expected, _ := adminToken.Load().(string)
+		expected := currentAdminToken()
 		if expected == "" {
 			http.Error(w,
 				"admin token not configured (set "+adminTokenEnv+" on the operator)",

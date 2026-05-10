@@ -73,9 +73,10 @@ func TestWorktreeAllocator_Allocate_HappyPath(t *testing.T) {
 	})
 	a := NewWorktreeAllocator(hub, "loom-mills-operator", "session-op-1", "/workspaces/loom-core")
 	got, err := a.Allocate(context.Background(), pipeline.WorktreeRequest{
-		BacklogID: "BL-X",
-		SliceName: "alpha",
-		Purpose:   "mills parallel slice alpha",
+		BacklogID:  "BL-X",
+		SliceName:  "alpha",
+		BranchName: "feat/BL-X/alpha",
+		Purpose:    "mills parallel slice alpha",
 	})
 	if err != nil {
 		t.Fatalf("allocate: %v", err)
