@@ -235,20 +235,10 @@ func NewServiceFromEnv(opts ...ServiceOption) (*Service, error) {
 	svc.ctxSvc.persistedMemoryHierarchy = svc.persistedMemoryHierarchy
 	svc.ctxSvc.knowledgeGraph = svc.knowledgeGraph
 	svc.ctxSvc.getSession = svc.getSession
-	svc.ctxSvc.persistSession = svc.persistSession
 	svc.ctxSvc.addSessionEntryStats = func(session *Session, entries int, tokens int) {
-		svc.sess.mu.Lock()
-		session.EntryCount += entries
-		session.TotalTokens += tokens
-		svc.sess.mu.Unlock()
-		// Persist updated stats to Qdrant so they survive HUD restarts.
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-			defer cancel()
-			if err := svc.sess.Persist(ctx, session); err != nil {
-				svc.logger.Warn("failed to persist session stats", "session_id", session.ID, "error", err)
-			}
-		}()
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		svc.sess.IncrementStats(ctx, session, entries, tokens)
 	}
 	svc.ctxSvc.readSessionStats = func(session *Session) (int, int, *time.Time) {
 		svc.sess.mu.RLock()

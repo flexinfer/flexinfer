@@ -110,6 +110,39 @@ func newSessionsQdrantStub(t *testing.T, seeded ...Session) (*QdrantClient, *ses
 		stub.mu.Unlock()
 		writeJSON(t, w, map[string]any{"status": "ok"})
 	})
+	// SetPayload (partial merge): /points/payload accepts a payload map +
+	// list of point UUIDs and merges the payload into each matching point.
+	// We index sessions by string ID, so we resolve the UUIDs back to IDs
+	// via toPointID to find the matching session.
+	mux.HandleFunc("/collections/"+CollSessions+"/points/payload", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.NotFound(w, r)
+			return
+		}
+		var body map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decode set-payload body: %v", err)
+		}
+		patch, _ := body["payload"].(map[string]any)
+		rawIDs, _ := body["points"].([]any)
+		wantUUIDs := make(map[string]bool, len(rawIDs))
+		for _, raw := range rawIDs {
+			if s, ok := raw.(string); ok {
+				wantUUIDs[s] = true
+			}
+		}
+		stub.mu.Lock()
+		for id, existing := range stub.sessions {
+			if !wantUUIDs[toPointID(id)] {
+				continue
+			}
+			for k, v := range patch {
+				existing[k] = v
+			}
+		}
+		stub.mu.Unlock()
+		writeJSON(t, w, map[string]any{"status": "ok"})
+	})
 
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)

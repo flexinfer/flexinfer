@@ -126,12 +126,13 @@ func (cs *ContextSvc) Add(ctx context.Context, args map[string]any) (*mcp.CallTo
 		totalTokens += EstimateTokens(p.title + " " + p.content)
 	}
 	if cs.addSessionEntryStats != nil {
+		// addSessionEntryStats persists the (entry_count, total_tokens)
+		// delta to Qdrant via SetPayload synchronously. We deliberately do
+		// not full-upsert the session here: a concurrent EndStale or
+		// session_end may have just decoded the session payload from Qdrant
+		// and written status=ended; a full upsert with a stale in-memory
+		// status would re-activate it.
 		cs.addSessionEntryStats(session, len(parsed), totalTokens)
-	}
-	if cs.persistSession != nil {
-		if err := cs.persistSession(ctx, session); err != nil {
-			cs.logger.Warn("persist session stats failed", "error", err)
-		}
 	}
 
 	if cs.cfg.AutoSummarize {

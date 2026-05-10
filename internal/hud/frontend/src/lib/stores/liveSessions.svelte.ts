@@ -85,6 +85,12 @@ class LiveSessionsStore {
     if (!this.reapTimer) {
       this.reapTimer = setInterval(() => this.reapEnded(), 5_000);
     }
+
+    // Seed from currently-active sessions so the panel isn't empty when an
+    // operator opens the HUD mid-flight. SSE events take over and overlay
+    // status/calls as they arrive; getOrCreate dedups on session_id so a
+    // backfill entry and a later session.start for the same id collapse.
+    void this.seedFromActiveSessions();
   }
 
   disconnect() {
@@ -122,6 +128,47 @@ class LiveSessionsStore {
   reset() {
     this.sessions = new Map();
     this.eventCount = 0;
+  }
+
+  /**
+   * Backfill the panel with currently-active sessions from `/api/fleet`.
+   * Called once on `connect()`; runs in the background and silently no-ops
+   * on failure. SSE events arriving during the fetch are not lost because
+   * getOrCreate dedups by session_id and the latest activity timestamp wins.
+   *
+   * Exposed for tests; production code calls it via connect().
+   */
+  async seedFromActiveSessions(): Promise<void> {
+    try {
+      const res = await globalThis.fetch('/api/fleet');
+      if (!res.ok) return;
+      const data = (await res.json()) as { sessions?: Array<Record<string, unknown>> };
+      const sessions = data.sessions ?? [];
+      let added = 0;
+      for (const s of sessions) {
+        const sid = stringField(s, 'id');
+        const status = stringField(s, 'status');
+        const ended = stringField(s, 'ended_at');
+        if (!sid || status !== 'active' || ended) continue;
+        // Skip sessions an SSE event already populated — those have richer
+        // state (recent_calls, agent_status). Don't clobber.
+        if (this.sessions.has(sid)) continue;
+        const aid = stringField(s, 'agent_id');
+        const startedMs = Date.parse(stringField(s, 'started_at')) || Date.now();
+        this.sessions.set(sid, {
+          session_id: sid,
+          agent_id: aid,
+          agent_status: 'unknown',
+          recent_calls: [],
+          first_seen: startedMs,
+          last_activity: startedMs,
+        });
+        added++;
+      }
+      if (added > 0) this.touch();
+    } catch {
+      // Best-effort: SSE will populate as turns happen.
+    }
   }
 
   private touch() {

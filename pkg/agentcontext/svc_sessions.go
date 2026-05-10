@@ -50,6 +50,11 @@ type SessionSvc struct {
 	// publisher receives session lifecycle events. Defaults to noopPublisher
 	// so emit sites can call unconditionally; replace via SetPublisher.
 	publisher Publisher
+
+	// Per-session locks that serialize stats increments and their Qdrant
+	// SetPayload writes, so concurrent IncrementStats calls on the same
+	// session can't race the network ordering and lose a +N delta.
+	statsLocks sync.Map
 }
 
 // NewSessionSvc creates a new SessionSvc.
@@ -106,6 +111,43 @@ func (ss *SessionSvc) Get(ctx context.Context, sessionID string) (*Session, erro
 	ss.mu.Unlock()
 
 	return sess, nil
+}
+
+// IncrementStats increments a session's entry_count and total_tokens
+// in-memory under ss.mu, then persists those two fields to Qdrant via
+// SetPayload (partial merge). This is the hot path called from
+// agent_context_add — sync so the request can't outrun the writer, partial
+// so a concurrent EndStale / EndActiveForAgent / session_end full-upsert
+// (which decodes a fresh Session from Qdrant and re-persists status) can't
+// clobber the count back to its pre-increment value.
+//
+// Returns the post-increment values for callers that need them.
+func (ss *SessionSvc) IncrementStats(ctx context.Context, session *Session, entries, tokens int) (entryCount, totalTokens int) {
+	// Per-session serialization so concurrent IncrementStats calls on the
+	// same session can't reorder their SetPayload writes and lose a delta.
+	muAny, _ := ss.statsLocks.LoadOrStore(session.ID, &sync.Mutex{})
+	statsMu := muAny.(*sync.Mutex)
+	statsMu.Lock()
+	defer statsMu.Unlock()
+
+	ss.mu.Lock()
+	session.EntryCount += entries
+	session.TotalTokens += tokens
+	entryCount = session.EntryCount
+	totalTokens = session.TotalTokens
+	ss.mu.Unlock()
+
+	if ss.qdrant == nil {
+		return entryCount, totalTokens
+	}
+	if err := ss.qdrant.SetPayload(ctx, []string{session.ID}, map[string]any{
+		"entry_count":  entryCount,
+		"total_tokens": totalTokens,
+	}, true); err != nil {
+		ss.logger.Warn("failed to persist session stats",
+			"session_id", session.ID, "error", err)
+	}
+	return entryCount, totalTokens
 }
 
 // Persist stores a session to Qdrant.

@@ -20,8 +20,7 @@ type ContextSvc struct {
 	knowledgeGraph           *KnowledgeGraph
 
 	// Cross-domain callbacks (wired by Service).
-	getSession     func(ctx context.Context, sessionID string) (*Session, error)
-	persistSession func(ctx context.Context, session *Session) error
+	getSession func(ctx context.Context, sessionID string) (*Session, error)
 
 	// Session state callbacks — SessionSvc owns the mutex.
 	addSessionEntryStats  func(session *Session, entries int, tokens int)
