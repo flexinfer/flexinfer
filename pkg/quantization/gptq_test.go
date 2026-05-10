@@ -330,9 +330,9 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
-	t.Run("wrapper script version is v14", func(t *testing.T) {
-		if GPTQScriptVersion != "v14" {
-			t.Errorf("GPTQScriptVersion = %q, want v14 (Phase B adds reload path)", GPTQScriptVersion)
+	t.Run("wrapper script version is v15", func(t *testing.T) {
+		if GPTQScriptVersion != "v15" {
+			t.Errorf("GPTQScriptVersion = %q, want v15 (module metadata writer)", GPTQScriptVersion)
 		}
 	})
 }
