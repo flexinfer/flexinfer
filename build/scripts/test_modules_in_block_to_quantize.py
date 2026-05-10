@@ -12,12 +12,11 @@ from __future__ import annotations
 import ast
 import json
 import os
+import sys
 import tempfile
 import unittest
+import types
 from pathlib import Path
-
-import torch
-from safetensors.torch import save_file
 
 
 SCRIPT_PATH = Path(__file__).parent / "quantize_gptq.py"
@@ -26,6 +25,7 @@ SCRIPT_PATH = Path(__file__).parent / "quantize_gptq.py"
 _HELPER_NAMES = (
     "_indexed_safetensors",
     "_discover_quantized_module_suffixes",
+    "_modules_in_block_shape_for_layout",
     "write_modules_in_block_to_quantize",
 )
 
@@ -86,6 +86,24 @@ def _load_helpers() -> dict:
     return namespace
 
 
+class _FakeSafeOpen:
+    def __init__(self, path: str, framework: str = "pt") -> None:
+        self.path = Path(path)
+
+    def __enter__(self) -> "_FakeSafeOpen":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def keys(self) -> list[str]:
+        return json.loads((self.path.parent / f"{self.path.name}.keys.json").read_text())
+
+
+def _fake_safe_open(path: str, framework: str = "pt") -> _FakeSafeOpen:
+    return _FakeSafeOpen(path, framework=framework)
+
+
 class ModulesInBlockToQuantizeTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls) -> None:
@@ -94,8 +112,16 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.save_dir = Path(self._tmp.name)
+        self._orig_safetensors = sys.modules.get("safetensors")
+        fake_safetensors = types.ModuleType("safetensors")
+        fake_safetensors.safe_open = _fake_safe_open
+        sys.modules["safetensors"] = fake_safetensors
 
     def tearDown(self) -> None:
+        if self._orig_safetensors is None:
+            sys.modules.pop("safetensors", None)
+        else:
+            sys.modules["safetensors"] = self._orig_safetensors
         self._tmp.cleanup()
 
     def _write_fake_artifact(
@@ -104,8 +130,10 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
         config_qcfg: dict | None = None,
         quantize_cfg: dict | None = None,
     ) -> None:
-        tensors = {key: torch.zeros(1, dtype=torch.uint8) for key in tensor_keys}
-        save_file(tensors, str(self.save_dir / "model.safetensors"))
+        (self.save_dir / "model.safetensors").write_bytes(b"fake")
+        (self.save_dir / "model.safetensors.keys.json").write_text(
+            json.dumps(tensor_keys)
+        )
 
         config_data = {
             "_name_or_path": "fake/qwen3-test",
@@ -202,6 +230,73 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
                 "quantize_config.json", ("modules_in_block_to_quantize",)
             ),
             preset,
+        )
+
+    def test_hf_native_layout_writes_nested_shape(self) -> None:
+        tensor_keys = [
+            "model.layers.0.self_attn.q_proj.qweight",
+            "model.layers.0.self_attn.k_proj.qweight",
+            "model.layers.0.mlp.down_proj.qweight",
+        ]
+        self._write_fake_artifact(tensor_keys)
+
+        result = self.helpers["write_modules_in_block_to_quantize"](
+            str(self.save_dir), layout="hf-native"
+        )
+
+        expected = sorted(
+            ["self_attn.q_proj", "self_attn.k_proj", "mlp.down_proj"]
+        )
+        self.assertEqual(result, expected)
+        self.assertEqual(
+            self._read_modules(
+                "quantize_config.json", ("modules_in_block_to_quantize",)
+            ),
+            [expected],
+        )
+        self.assertEqual(
+            self._read_modules(
+                "config.json", ("quantization_config", "modules_in_block_to_quantize")
+            ),
+            [expected],
+        )
+
+    def test_overwrite_converts_nested_native_to_flat_vllm_shape(self) -> None:
+        tensor_keys = ["model.layers.0.self_attn.q_proj.qweight"]
+        self._write_fake_artifact(
+            tensor_keys,
+            quantize_cfg={
+                "bits": 4,
+                "group_size": 128,
+                "sym": True,
+                "modules_in_block_to_quantize": [["self_attn.q_proj"]],
+            },
+            config_qcfg={
+                "quant_method": "gptq",
+                "modules_in_block_to_quantize": [["self_attn.q_proj"]],
+            },
+        )
+
+        result = self.helpers["write_modules_in_block_to_quantize"](
+            str(self.save_dir),
+            layout="vllm-gptq",
+            modules=["self_attn.q_proj", "moe.gate_up_proj"],
+            overwrite=True,
+        )
+
+        expected = ["self_attn.q_proj", "moe.gate_up_proj"]
+        self.assertEqual(result, expected)
+        self.assertEqual(
+            self._read_modules(
+                "quantize_config.json", ("modules_in_block_to_quantize",)
+            ),
+            expected,
+        )
+        self.assertEqual(
+            self._read_modules(
+                "config.json", ("quantization_config", "modules_in_block_to_quantize")
+            ),
+            expected,
         )
 
     def test_idempotent_when_only_config_qcfg_has_field(self) -> None:

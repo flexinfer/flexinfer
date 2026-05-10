@@ -16,9 +16,10 @@ All configuration is read from environment variables set by the controller:
 # v14: Phase B — reload cached layers before model.quantize() so the looper's
 # find_modules filter naturally skips them. Adds write dedup across the
 # multiple layer_complete fires per layer in v5.x GPTQModel.
-# v15: Auto-write modules_in_block_to_quantize to quantize_config.json and
-# config.json["quantization_config"] after save so publish-validate
-# (build/scripts/validate_quantized_artifact.py:763) accepts the artifact.
+# v15: Auto-write layout-aware modules_in_block_to_quantize metadata to
+# quantize_config.json and config.json["quantization_config"] after save so
+# publish-validate (build/scripts/validate_quantized_artifact.py:763) accepts
+# the artifact.
 FLEXINFER_SCRIPT_VERSION = "v15"
 import copy
 import gc
@@ -335,21 +336,31 @@ def _discover_quantized_module_suffixes(save_dir):
     return sorted(suffixes)
 
 
-def write_modules_in_block_to_quantize(save_dir):
+def _modules_in_block_shape_for_layout(modules, layout):
+    """Return the metadata shape expected by the artifact validator."""
+    flat = list(modules)
+    if layout == "vllm-gptq":
+        return flat
+    return [flat]
+
+
+def write_modules_in_block_to_quantize(
+    save_dir, layout="vllm-gptq", modules=None, overwrite=False
+):
     """Discover quantized module suffixes from on-disk shards and persist them
     to both quantize_config.json and config.json["quantization_config"].
 
     Idempotent: if either file already declares modules_in_block_to_quantize,
-    the value is left unchanged (a model policy or earlier write may have set
-    it intentionally). Never raises — failures only emit a warning.
+    the value is left unchanged unless overwrite=True (a model policy or
+    earlier write may have set it intentionally). Never raises — failures only
+    emit a warning.
 
     Returns the modules list that was written (or already present), or [] if
     no quantized tensors were discovered.
 
-    Shape: always emits a flat string list, which the publish validator
-    accepts only for layout=vllm-gptq. For hf-native artifacts the validator
-    expects a nested-list shape; this helper does not switch on layout today.
-    See workspace TODO "modules_in_block_to_quantize layout-aware shape".
+    Shape: emits a flat string list for layout=vllm-gptq, and a nested
+    one-block list for hf-native/compressed-tensors layouts. The publish
+    validator accepts flat strings only for layout=vllm-gptq.
     """
     quantize_cfg_path = os.path.join(save_dir, "quantize_config.json")
     config_path = os.path.join(save_dir, "config.json")
@@ -383,16 +394,18 @@ def write_modules_in_block_to_quantize(save_dir):
         existing = quantize_cfg.get("modules_in_block_to_quantize")
     if existing is None and isinstance(config_qcfg, dict):
         existing = config_qcfg.get("modules_in_block_to_quantize")
-    if existing:
+    if existing and not overwrite:
         emit_progress(
             "modules_in_block_to_quantize",
             phase="saving",
             detail="preserving existing modules_in_block_to_quantize",
             modules_count=(len(existing) if isinstance(existing, list) else None),
+            layout=layout,
         )
         return existing
 
-    modules = _discover_quantized_module_suffixes(save_dir)
+    if modules is None:
+        modules = _discover_quantized_module_suffixes(save_dir)
     if not modules:
         print(
             "WARN: no quantized tensors found under model.layers.*; "
@@ -403,12 +416,15 @@ def write_modules_in_block_to_quantize(save_dir):
             phase="saving",
             detail="no quantized tensors discovered; skipping write",
             modules_count=0,
+            layout=layout,
         )
         return []
 
+    module_value = _modules_in_block_shape_for_layout(modules, layout)
+
     wrote_quantize_cfg = False
     if isinstance(quantize_cfg, dict):
-        quantize_cfg["modules_in_block_to_quantize"] = list(modules)
+        quantize_cfg["modules_in_block_to_quantize"] = module_value
         try:
             with open(quantize_cfg_path, "w") as fh:
                 json.dump(quantize_cfg, fh, indent=2)
@@ -421,7 +437,7 @@ def write_modules_in_block_to_quantize(save_dir):
         if not isinstance(config_qcfg, dict):
             config_qcfg = {}
             config_data["quantization_config"] = config_qcfg
-        config_qcfg["modules_in_block_to_quantize"] = list(modules)
+        config_qcfg["modules_in_block_to_quantize"] = module_value
         try:
             with open(config_path, "w") as fh:
                 json.dump(config_data, fh, indent=2)
@@ -430,7 +446,7 @@ def write_modules_in_block_to_quantize(save_dir):
             print(f"WARN: failed to write config.json: {exc}")
 
     print(
-        f"Wrote modules_in_block_to_quantize ({len(modules)} modules) — "
+        f"Wrote modules_in_block_to_quantize ({len(modules)} modules, layout={layout}) — "
         f"quantize_config={wrote_quantize_cfg} config.quantization_config={wrote_config}"
     )
     emit_progress(
@@ -438,6 +454,8 @@ def write_modules_in_block_to_quantize(save_dir):
         phase="saving",
         detail="wrote modules_in_block_to_quantize",
         modules_count=len(modules),
+        layout=layout,
+        shape="flat" if layout == "vllm-gptq" else "nested",
         wrote_quantize_config=wrote_quantize_cfg,
         wrote_config=wrote_config,
     )
@@ -1161,40 +1179,29 @@ def refuse_moe_expert_tensors(save_dir):
         with open(index_path, "w") as f:
             json.dump(index, f, indent=2)
 
-    # Update quantize_config.json to reflect MoE expert quantization
-    qcfg_path = os.path.join(save_dir, "quantize_config.json")
-    if os.path.exists(qcfg_path):
-        with open(qcfg_path) as f:
-            qcfg = json.load(f)
-        # Ensure modules_in_block_to_quantize lists ALL quantized modules.
-        # GPTQModel >= 6.0.3 no longer writes this field, so create it
-        # from scratch when absent. vLLM's get_linear_quant_method uses
-        # this list to decide which layers get GPTQ applied; missing
-        # entries cause KeyError on quantized weight keys (e.g. g_idx).
-        mibq = qcfg.get("modules_in_block_to_quantize")
-        if mibq is None:
-            mibq = []
-        if isinstance(mibq, list):
-            required_entries = [
-                # Attention projections
-                "self_attn.q_proj",
-                "self_attn.k_proj",
-                "self_attn.v_proj",
-                "self_attn.o_proj",
-                # MoE experts (fused)
-                "moe.gate_up_proj",
-                "moe.down_proj",
-                # Shared expert MLP (dense feed-forward)
-                "mlp.gate_proj",
-                "mlp.up_proj",
-                "mlp.down_proj",
-            ]
-            for entry in required_entries:
-                if entry not in mibq:
-                    mibq.append(entry)
-            qcfg["modules_in_block_to_quantize"] = mibq
-        with open(qcfg_path, "w") as f:
-            json.dump(qcfg, f, indent=2)
+    # Ensure modules_in_block_to_quantize lists ALL quantized modules in the
+    # flat shape vLLM expects. GPTQModel >= 6.0.3 no longer writes this field,
+    # and HF-native preservation may have written a nested shape before this
+    # vLLM re-fuse step.
+    write_modules_in_block_to_quantize(
+        save_dir,
+        layout="vllm-gptq",
+        modules=[
+            # Attention projections
+            "self_attn.q_proj",
+            "self_attn.k_proj",
+            "self_attn.v_proj",
+            "self_attn.o_proj",
+            # MoE experts (fused)
+            "moe.gate_up_proj",
+            "moe.down_proj",
+            # Shared expert MLP (dense feed-forward)
+            "mlp.gate_proj",
+            "mlp.up_proj",
+            "mlp.down_proj",
+        ],
+        overwrite=True,
+    )
 
     print(
         f"MoE re-fuse complete: {total_removed} per-expert keys → "
@@ -3498,16 +3505,6 @@ for shard_name in shard_files:
         f"Verified {shard_name}: {fsize} bytes, {len([k for k in hdr if k != '__metadata__'])} tensors OK"
     )
 
-# Persist modules_in_block_to_quantize so the publish-validate gate
-# (build/scripts/validate_quantized_artifact.py:763) accepts the artifact.
-# GPTQModel does not write this field; we discover it from the on-disk
-# tensors. This is a metadata-only patch — it must run after verify and
-# before marker/promotion so the discovered list ships with the artifact.
-try:
-    write_modules_in_block_to_quantize(save_tmp)
-except Exception as exc:  # noqa: BLE001 - never fail the job over metadata.
-    print(f"WARN: write_modules_in_block_to_quantize raised: {exc}")
-
 artifact_overrides = artifact_overrides_for_policy(policy)
 preserve_native_output = env_bool(
     "GPTQ_PRESERVE_NATIVE_OUTPUT",
@@ -3518,6 +3515,21 @@ refuse_moe_expert_tensors_enabled = env_bool(
     bool(artifact_overrides.get("refuse_moe_expert_tensors", True)),
 )
 hf_native_dir = f"{out_dir}-hf-native" if preserve_native_output else ""
+
+# Persist modules_in_block_to_quantize so the publish-validate gate
+# (build/scripts/validate_quantized_artifact.py:763) accepts the artifact.
+# GPTQModel does not write this field; we discover it from the on-disk
+# tensors. This first write happens before the optional HF-native copy, so
+# native artifacts receive the validator's nested-list shape.
+if preserve_native_output or not refuse_moe_expert_tensors_enabled:
+    try:
+        write_modules_in_block_to_quantize(
+            save_tmp,
+            layout="hf-native",
+            overwrite=preserve_native_output and refuse_moe_expert_tensors_enabled,
+        )
+    except Exception as exc:  # noqa: BLE001 - never fail the job over metadata.
+        print(f"WARN: write_modules_in_block_to_quantize raised: {exc}")
 
 if preserve_native_output:
     emit_progress(
@@ -3548,6 +3560,18 @@ else:
         percent=97.0,
         detail="keeping HF-native MoE artifact layout",
     )
+
+# Ensure final artifact metadata matches the final promoted layout. This catches
+# non-MoE GPTQ outputs where the re-fuse helper is a no-op, and flips the temp
+# tree back to flat vLLM metadata after copying a nested HF-native sibling.
+try:
+    write_modules_in_block_to_quantize(
+        save_tmp,
+        layout="vllm-gptq" if refuse_moe_expert_tensors_enabled else "hf-native",
+        overwrite=preserve_native_output and refuse_moe_expert_tensors_enabled,
+    )
+except Exception as exc:  # noqa: BLE001 - never fail the job over metadata.
+    print(f"WARN: write_modules_in_block_to_quantize raised: {exc}")
 
 if should_apply_gemma4_moe_hybrid(cfg):
     emit_progress(
