@@ -196,6 +196,8 @@ func run(cfg Config) error {
 	// logs each gap so it's obvious which surfaces are stub vs production.
 	dispatcher, realStages := buildDispatcher(cfg, flexClient, hubClient, st, logger)
 	capabilities.DispatcherRealStages = realStages
+	capabilities.BranchContractReady = true
+	capabilities.BranchContractSource = "pkg/mills/pipeline/branch_contract.go"
 	capabilities.HUDSpawnConfigured = strings.TrimSpace(cfg.HUDBaseURL) != "" && strings.TrimSpace(cfg.HUDToken) != ""
 	capabilities.HUDSpawnReady = realStages["plan_slice"] && realStages["implement"] && realStages["pr_self_review"]
 
@@ -286,8 +288,6 @@ func run(cfg Config) error {
 	}
 	starter := pipeline.NewRunnerStarter(pipelineRunner, integrator)
 	starter.Logger = logger
-	capabilities.KPIWriterReady = true
-	capabilities.KPIWriterSource = "eval.OutcomeAttributor"
 	op.setCapabilities(capabilities)
 	op.markReady()
 	logger.Info("operator ready",
