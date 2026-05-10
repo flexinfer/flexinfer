@@ -271,7 +271,9 @@ Remaining legacy callers documented:
 
 ## Priority 6 — Strip `Default` from NVIDIA Maxwell (`sm_5`) rule entries — COMPLETED
 
-Shipped in `backlog/61-maxwell-profile-images` ([Issue #61](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/61)).
+Shipped in `backlog/61-maxwell-profile-images` via MR !306 ([Issue #61](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/61)).
+Follow-up MR !307 cleared the post-merge `govulncheck` failure by moving CI to
+Go 1.25.10 and `golang.org/x/net` v0.53.0.
 
 The Maxwell image defaults now follow the same profile-owned contract as the
 `gfx110/gfx906` arch defaults:
