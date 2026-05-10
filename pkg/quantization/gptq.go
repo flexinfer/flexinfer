@@ -21,7 +21,9 @@ import (
 // v14: Phase B — reload cached layers before model.quantize() so the looper's
 // find_modules filter naturally skips them. Adds write dedup across the
 // multiple layer_complete fires per layer in v5.x GPTQModel.
-const GPTQScriptVersion = "v14"
+// v15: Auto-write modules_in_block_to_quantize to artifact metadata after
+// save so publish-validate accepts the artifact without manual patching.
+const GPTQScriptVersion = "v15"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}

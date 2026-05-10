@@ -16,7 +16,10 @@ All configuration is read from environment variables set by the controller:
 # v14: Phase B — reload cached layers before model.quantize() so the looper's
 # find_modules filter naturally skips them. Adds write dedup across the
 # multiple layer_complete fires per layer in v5.x GPTQModel.
-FLEXINFER_SCRIPT_VERSION = "v14"
+# v15: Auto-write modules_in_block_to_quantize to quantize_config.json and
+# config.json["quantization_config"] after save so publish-validate
+# (build/scripts/validate_quantized_artifact.py:763) accepts the artifact.
+FLEXINFER_SCRIPT_VERSION = "v15"
 import copy
 import gc
 import json
@@ -273,6 +276,167 @@ def _update_quantized_module_lists(save_dir, modules):
 
         with open(path, "w") as f:
             json.dump(data, f, indent=2)
+
+
+# Leaf tensor names that signal a module was quantized. Mirrors the leaf-name
+# logic in build/scripts/validate_quantized_artifact.py (LAYER_QWEIGHT_RE only
+# keys on .qweight, but GPTQModel writes the full quad alongside it).
+_GPTQ_QUANTIZED_LEAF_NAMES = ("qweight", "qzeros", "scales", "g_idx")
+
+
+def _discover_quantized_module_suffixes(save_dir):
+    """Walk the on-disk shards and return a sorted, deduped list of module
+    suffixes that received GPTQ tensors.
+
+    A "module suffix" is everything after `model.layers.<N>.` for any tensor
+    whose leaf name is one of qweight/qzeros/scales/g_idx. For a key like
+    `model.layers.5.self_attn.q_proj.qweight` the suffix is
+    `self_attn.q_proj`.
+
+    Returns [] if the safetensors library is unavailable, no shards are found,
+    or no quantized tensors are present. The caller is responsible for logging
+    and skipping the metadata write in that case.
+    """
+    try:
+        from safetensors import safe_open
+    except ImportError:
+        return []
+
+    _, weight_map, shard_files = _indexed_safetensors(save_dir)
+
+    # Build the set of shard files we need to crack open. Prefer the index's
+    # weight_map (already deduped by safetensors), fall back to a raw listdir
+    # so we still work when an unsharded model.safetensors is the only output.
+    if shard_files:
+        shards = list(shard_files)
+    else:
+        shards = sorted(
+            name for name in os.listdir(save_dir) if name.endswith(".safetensors")
+        )
+
+    suffixes = set()
+    layer_re = re.compile(r"^model\.layers\.\d+\.(?P<suffix>.+)\.(?P<leaf>[^.]+)$")
+    for shard_name in shards:
+        shard_path = os.path.join(save_dir, shard_name)
+        try:
+            with safe_open(shard_path, framework="pt") as fh:
+                tensor_keys = list(fh.keys())
+        except Exception as exc:  # noqa: BLE001 - corrupted shard handled below.
+            print(f"WARN: cannot read shard {shard_name} for module discovery: {exc}")
+            continue
+        for key in tensor_keys:
+            match = layer_re.match(key)
+            if not match:
+                continue
+            if match.group("leaf") not in _GPTQ_QUANTIZED_LEAF_NAMES:
+                continue
+            suffixes.add(match.group("suffix"))
+
+    return sorted(suffixes)
+
+
+def write_modules_in_block_to_quantize(save_dir):
+    """Discover quantized module suffixes from on-disk shards and persist them
+    to both quantize_config.json and config.json["quantization_config"].
+
+    Idempotent: if either file already declares modules_in_block_to_quantize,
+    the value is left unchanged (a model policy or earlier write may have set
+    it intentionally). Never raises — failures only emit a warning.
+
+    Returns the modules list that was written (or already present), or [] if
+    no quantized tensors were discovered.
+    """
+    quantize_cfg_path = os.path.join(save_dir, "quantize_config.json")
+    config_path = os.path.join(save_dir, "config.json")
+
+    quantize_cfg = None
+    if os.path.exists(quantize_cfg_path):
+        try:
+            with open(quantize_cfg_path) as fh:
+                quantize_cfg = json.load(fh)
+        except (OSError, ValueError) as exc:
+            print(f"WARN: cannot read quantize_config.json for module discovery: {exc}")
+            quantize_cfg = None
+
+    config_data = None
+    if os.path.exists(config_path):
+        try:
+            with open(config_path) as fh:
+                config_data = json.load(fh)
+        except (OSError, ValueError) as exc:
+            print(f"WARN: cannot read config.json for module discovery: {exc}")
+            config_data = None
+
+    config_qcfg = (
+        config_data.get("quantization_config")
+        if isinstance(config_data, dict)
+        else None
+    )
+
+    existing = None
+    if isinstance(quantize_cfg, dict):
+        existing = quantize_cfg.get("modules_in_block_to_quantize")
+    if existing is None and isinstance(config_qcfg, dict):
+        existing = config_qcfg.get("modules_in_block_to_quantize")
+    if existing:
+        emit_progress(
+            "modules_in_block_to_quantize",
+            phase="saving",
+            detail="preserving existing modules_in_block_to_quantize",
+            modules_count=(len(existing) if isinstance(existing, list) else None),
+        )
+        return existing
+
+    modules = _discover_quantized_module_suffixes(save_dir)
+    if not modules:
+        print(
+            "WARN: no quantized tensors found under model.layers.*; "
+            "skipping modules_in_block_to_quantize write"
+        )
+        emit_progress(
+            "modules_in_block_to_quantize",
+            phase="saving",
+            detail="no quantized tensors discovered; skipping write",
+            modules_count=0,
+        )
+        return []
+
+    wrote_quantize_cfg = False
+    if isinstance(quantize_cfg, dict):
+        quantize_cfg["modules_in_block_to_quantize"] = list(modules)
+        try:
+            with open(quantize_cfg_path, "w") as fh:
+                json.dump(quantize_cfg, fh, indent=2)
+            wrote_quantize_cfg = True
+        except OSError as exc:
+            print(f"WARN: failed to write quantize_config.json: {exc}")
+
+    wrote_config = False
+    if isinstance(config_data, dict):
+        if not isinstance(config_qcfg, dict):
+            config_qcfg = {}
+            config_data["quantization_config"] = config_qcfg
+        config_qcfg["modules_in_block_to_quantize"] = list(modules)
+        try:
+            with open(config_path, "w") as fh:
+                json.dump(config_data, fh, indent=2)
+            wrote_config = True
+        except OSError as exc:
+            print(f"WARN: failed to write config.json: {exc}")
+
+    print(
+        f"Wrote modules_in_block_to_quantize ({len(modules)} modules) — "
+        f"quantize_config={wrote_quantize_cfg} config.quantization_config={wrote_config}"
+    )
+    emit_progress(
+        "modules_in_block_to_quantize",
+        phase="saving",
+        detail="wrote modules_in_block_to_quantize",
+        modules_count=len(modules),
+        wrote_quantize_config=wrote_quantize_cfg,
+        wrote_config=wrote_config,
+    )
+    return list(modules)
 
 
 def _dense_gptq_zero_point_add():
@@ -3328,6 +3492,16 @@ for shard_name in shard_files:
     print(
         f"Verified {shard_name}: {fsize} bytes, {len([k for k in hdr if k != '__metadata__'])} tensors OK"
     )
+
+# Persist modules_in_block_to_quantize so the publish-validate gate
+# (build/scripts/validate_quantized_artifact.py:763) accepts the artifact.
+# GPTQModel does not write this field; we discover it from the on-disk
+# tensors. This is a metadata-only patch — it must run after verify and
+# before marker/promotion so the discovered list ships with the artifact.
+try:
+    write_modules_in_block_to_quantize(save_tmp)
+except Exception as exc:  # noqa: BLE001 - never fail the job over metadata.
+    print(f"WARN: write_modules_in_block_to_quantize raised: {exc}")
 
 artifact_overrides = artifact_overrides_for_policy(policy)
 preserve_native_output = env_bool(

@@ -1,0 +1,253 @@
+"""Tests for the modules_in_block_to_quantize discovery + write helpers in
+build/scripts/quantize_gptq.py.
+
+The script is not directly importable (top-level execution requires runtime
+env like MODEL_DIR plus transformers/torch model loading), so we extract just
+the helper functions by parsing the AST and exec'ing them into an isolated
+namespace. This keeps the test fast (<10s, CPU-only, no real model).
+"""
+
+from __future__ import annotations
+
+import ast
+import json
+import os
+import tempfile
+import unittest
+from pathlib import Path
+
+import torch
+from safetensors.torch import save_file
+
+
+SCRIPT_PATH = Path(__file__).parent / "quantize_gptq.py"
+
+# Helpers we need from the script. Order matters: dependencies first.
+_HELPER_NAMES = (
+    "_indexed_safetensors",
+    "_discover_quantized_module_suffixes",
+    "write_modules_in_block_to_quantize",
+)
+
+
+def _load_helpers() -> dict:
+    """Return a namespace with just the metadata helpers loaded.
+
+    Builds a synthetic module from the script's imports + the listed helper
+    function defs. Avoids triggering the script's top-level pipeline.
+    """
+    source = SCRIPT_PATH.read_text()
+    tree = ast.parse(source)
+
+    # Only keep stdlib imports — the helpers don't need transformers/datasets/
+    # torch/etc., and pulling them in defeats the "no real model" promise.
+    allowed_modules = {"os", "re", "json", "sys", "time", "shutil"}
+
+    keep_nodes: list[ast.stmt] = []
+    for node in tree.body:
+        if isinstance(node, ast.Import):
+            allowed = [a for a in node.names if a.name.split(".")[0] in allowed_modules]
+            if allowed:
+                node.names = allowed
+                keep_nodes.append(node)
+            continue
+        if isinstance(node, ast.ImportFrom):
+            root = (node.module or "").split(".")[0]
+            if root in allowed_modules:
+                keep_nodes.append(node)
+            continue
+        if isinstance(node, ast.FunctionDef) and node.name in _HELPER_NAMES:
+            keep_nodes.append(node)
+            continue
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if (
+                    isinstance(target, ast.Name)
+                    and target.id == "_GPTQ_QUANTIZED_LEAF_NAMES"
+                ):
+                    keep_nodes.append(node)
+                    break
+
+    # Stub emit_progress so we don't need FLEXINFER_TELEMETRY plumbing.
+    stub_src = (
+        "def emit_progress(event_type, **kwargs):\n"
+        "    EMITTED_EVENTS.append({'event': event_type, **kwargs})\n"
+        "EMITTED_EVENTS = []\n"
+    )
+    stub_tree = ast.parse(stub_src)
+    keep_nodes = stub_tree.body + keep_nodes
+
+    module = ast.Module(body=keep_nodes, type_ignores=[])
+    ast.fix_missing_locations(module)
+
+    namespace: dict = {"__name__": "_quantize_gptq_helpers"}
+    code = compile(module, str(SCRIPT_PATH), "exec")
+    exec(code, namespace)  # noqa: S102 - test-time, controlled source.
+    return namespace
+
+
+class ModulesInBlockToQuantizeTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.helpers = _load_helpers()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.save_dir = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _write_fake_artifact(
+        self,
+        tensor_keys: list[str],
+        config_qcfg: dict | None = None,
+        quantize_cfg: dict | None = None,
+    ) -> None:
+        tensors = {key: torch.zeros(1, dtype=torch.uint8) for key in tensor_keys}
+        save_file(tensors, str(self.save_dir / "model.safetensors"))
+
+        config_data = {
+            "_name_or_path": "fake/qwen3-test",
+            "model_type": "qwen3",
+            "quantization_config": config_qcfg if config_qcfg is not None else {},
+        }
+        (self.save_dir / "config.json").write_text(json.dumps(config_data, indent=2))
+
+        if quantize_cfg is None:
+            quantize_cfg = {"bits": 4, "group_size": 128, "sym": True}
+        (self.save_dir / "quantize_config.json").write_text(
+            json.dumps(quantize_cfg, indent=2)
+        )
+
+    def _read_modules(self, rel_path: str, key_path: tuple[str, ...]) -> object:
+        data = json.loads((self.save_dir / rel_path).read_text())
+        for key in key_path:
+            if not isinstance(data, dict):
+                return None
+            data = data.get(key)
+        return data
+
+    def test_discover_walks_shards_and_writes_both_files(self) -> None:
+        tensor_keys = [
+            "model.layers.0.self_attn.q_proj.qweight",
+            "model.layers.0.self_attn.q_proj.qzeros",
+            "model.layers.0.self_attn.q_proj.scales",
+            "model.layers.0.self_attn.q_proj.g_idx",
+            "model.layers.0.self_attn.k_proj.qweight",
+            "model.layers.0.self_attn.v_proj.qweight",
+            "model.layers.0.self_attn.o_proj.qweight",
+            "model.layers.0.mlp.gate_proj.qweight",
+            "model.layers.0.mlp.up_proj.qweight",
+            "model.layers.0.mlp.down_proj.qweight",
+            # Non-quantized tensors that must NOT be picked up.
+            "model.layers.0.self_attn.q_proj.weight",
+            "model.embed_tokens.weight",
+            "lm_head.weight",
+        ]
+        self._write_fake_artifact(tensor_keys)
+
+        result = self.helpers["write_modules_in_block_to_quantize"](str(self.save_dir))
+
+        expected = sorted(
+            [
+                "self_attn.q_proj",
+                "self_attn.k_proj",
+                "self_attn.v_proj",
+                "self_attn.o_proj",
+                "mlp.gate_proj",
+                "mlp.up_proj",
+                "mlp.down_proj",
+            ]
+        )
+        self.assertEqual(result, expected)
+
+        quantize_modules = self._read_modules(
+            "quantize_config.json", ("modules_in_block_to_quantize",)
+        )
+        config_modules = self._read_modules(
+            "config.json", ("quantization_config", "modules_in_block_to_quantize")
+        )
+        self.assertEqual(quantize_modules, expected)
+        self.assertEqual(config_modules, expected)
+
+        # Other quantize_config keys preserved.
+        quantize_data = json.loads((self.save_dir / "quantize_config.json").read_text())
+        self.assertEqual(quantize_data["bits"], 4)
+        self.assertEqual(quantize_data["group_size"], 128)
+        self.assertEqual(quantize_data["sym"], True)
+
+    def test_idempotent_when_already_set(self) -> None:
+        preset = ["self_attn.q_proj", "mlp.gate_proj"]
+        tensor_keys = [
+            "model.layers.0.self_attn.q_proj.qweight",
+            "model.layers.0.mlp.up_proj.qweight",
+        ]
+        self._write_fake_artifact(
+            tensor_keys,
+            quantize_cfg={
+                "bits": 4,
+                "group_size": 128,
+                "sym": True,
+                "modules_in_block_to_quantize": list(preset),
+            },
+        )
+
+        result = self.helpers["write_modules_in_block_to_quantize"](str(self.save_dir))
+
+        self.assertEqual(result, preset)
+        # Field on disk left exactly as the operator/policy set it.
+        self.assertEqual(
+            self._read_modules(
+                "quantize_config.json", ("modules_in_block_to_quantize",)
+            ),
+            preset,
+        )
+
+    def test_idempotent_when_only_config_qcfg_has_field(self) -> None:
+        preset = ["mlp.down_proj"]
+        tensor_keys = ["model.layers.0.mlp.down_proj.qweight"]
+        self._write_fake_artifact(
+            tensor_keys,
+            config_qcfg={
+                "quant_method": "gptq",
+                "modules_in_block_to_quantize": list(preset),
+            },
+        )
+
+        result = self.helpers["write_modules_in_block_to_quantize"](str(self.save_dir))
+
+        self.assertEqual(result, preset)
+        self.assertEqual(
+            self._read_modules(
+                "config.json", ("quantization_config", "modules_in_block_to_quantize")
+            ),
+            preset,
+        )
+        # quantize_config.json was NOT mutated to insert the field.
+        quantize_data = json.loads((self.save_dir / "quantize_config.json").read_text())
+        self.assertNotIn("modules_in_block_to_quantize", quantize_data)
+
+    def test_no_quantized_tensors_skips_write(self) -> None:
+        tensor_keys = [
+            "model.embed_tokens.weight",
+            "model.layers.0.self_attn.q_proj.weight",
+            "lm_head.weight",
+        ]
+        self._write_fake_artifact(tensor_keys)
+
+        result = self.helpers["write_modules_in_block_to_quantize"](str(self.save_dir))
+
+        self.assertEqual(result, [])
+        # Neither file was mutated to add the field.
+        quantize_data = json.loads((self.save_dir / "quantize_config.json").read_text())
+        config_data = json.loads((self.save_dir / "config.json").read_text())
+        self.assertNotIn("modules_in_block_to_quantize", quantize_data)
+        self.assertNotIn(
+            "modules_in_block_to_quantize",
+            config_data.get("quantization_config", {}),
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
