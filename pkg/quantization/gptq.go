@@ -552,6 +552,22 @@ if "\npatch_gptq_save_meta_tensors()\n" not in src:
         'from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict\n',
         'from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict\n\npatch_gptq_save_meta_tensors()\n',
     )
+# Patch GPTQModel's Qwen3.5/3.6 text class loader so the stock GPTQModel.load
+# path (option E from MR !300/!302) does not crash with the multimodal-loader
+# regression. GPTQModel ships Qwen3_5TextQModel.loader = AutoModelForImageTextToText
+# even though the text_config has model_type=qwen3_5_text. The manual loader
+# detected this and overrode loader_cls, but with stock loader the override
+# never fires. Solution: monkey-patch the class attribute before GPTQModel.load.
+if "patch_qwen35_text_loader" not in src:
+    src = src.replace(
+        'def patch_gptq_save_meta_tensors():',
+        'def patch_qwen35_text_loader():\n    """Override Qwen3_5TextQModel.loader so stock GPTQModel.load skips the multimodal AutoModelForImageTextToText path."""\n    try:\n        import importlib\n        from transformers import AutoModelForCausalLM\n        candidates = [\n            "gptqmodel.models.definitions.qwen3_5_text",\n            "gptqmodel.models.definitions.qwen3_5",\n            "gptqmodel.models.definitions.qwen3_5_moe",\n        ]\n        patched_any = False\n        for module_path in candidates:\n            try:\n                mod = importlib.import_module(module_path)\n            except ImportError:\n                continue\n            for cls_name in dir(mod):\n                cls = getattr(mod, cls_name, None)\n                if not isinstance(cls, type):\n                    continue\n                loader = getattr(cls, "loader", None)\n                if loader is None:\n                    continue\n                if getattr(loader, "__name__", "") == "AutoModelForImageTextToText":\n                    cls.loader = AutoModelForCausalLM\n                    patched_any = True\n                    print(f"Patched {module_path}.{cls_name}.loader: AutoModelForImageTextToText -> AutoModelForCausalLM")\n        if not patched_any:\n            print("INFO: Qwen3.5/3.6 text loader patch found no AutoModelForImageTextToText classes (already correct or not loaded)")\n    except Exception as exc:\n        print(f"INFO: Qwen3.5/3.6 text loader patch skipped: {exc}")\n\n\ndef patch_gptq_save_meta_tensors():',
+    )
+if "\npatch_qwen35_text_loader()\n" not in src:
+    src = src.replace(
+        '\npatch_gptq_save_meta_tensors()\n',
+        '\npatch_gptq_save_meta_tensors()\npatch_qwen35_text_loader()\n',
+    )
 src = src.replace(
     '    model._model_init_kwargs = init_kwargs.copy()\n    model.eval()',
     '    model._model_init_kwargs = init_kwargs.copy()\n    model.eval()\n    adapt_model_definition_for_loaded_model(model_definition, model)',
