@@ -108,14 +108,7 @@ func (r *ModelCacheReconciler) createValidatorJob(
 ) (bool, ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
-	tolerations := []corev1.Toleration{
-		{
-			Key:      "dedicated",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "gpu",
-			Effect:   corev1.TaintEffectNoSchedule,
-		},
-	}
+	tolerations := modelCachePipelineTolerations(modelCache, true)
 	params := quantization.JobParams{
 		Name:         modelCache.Name,
 		Namespace:    modelCache.Namespace,

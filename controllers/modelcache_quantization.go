@@ -190,16 +190,9 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 			return ctrl.Result{}, nil
 		}
 
-		// Tolerate dedicated GPU nodes when requesting GPUs for quantization.
-		var tolerations []corev1.Toleration
-		if modelCache.Spec.Quantization.UseGPU {
-			tolerations = append(tolerations, corev1.Toleration{
-				Key:      "dedicated",
-				Operator: corev1.TolerationOpEqual,
-				Value:    "gpu",
-				Effect:   corev1.TaintEffectNoSchedule,
-			})
-		}
+		// Tolerate dedicated GPU nodes when requesting GPUs for quantization,
+		// then append operator-provided ModelCache tolerations.
+		tolerations := modelCachePipelineTolerations(modelCache, modelCache.Spec.Quantization.UseGPU)
 
 		// Use per-phase nodeSelector if set, otherwise fall back to top-level.
 		effectiveNodeSelector := modelCache.Spec.NodeSelector

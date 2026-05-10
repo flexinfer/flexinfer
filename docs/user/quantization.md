@@ -142,7 +142,7 @@ AWQ and GPTQ quantization use calibration samples to determine optimal quantizat
 |-------|---------|-------|-------------|
 | `maxSeqLen` | 4096 | 128–32768 | Maximum token length per calibration sample |
 | `maxSamples` | 256 | 8–2048 | Number of calibration samples from the dataset |
-| `nParallelCalibSamples` | 16 | 1–256 | Parallel batch size — controls GPU↔CPU memory tradeoff |
+| `nParallelCalibSamples` | unset | 1–256 | Optional parallel calibration batch size. Lower values reduce peak VRAM by processing fewer samples on GPU at once. |
 | `dataset` | `mit-han-lab/pile-val-backup` | any HF dataset | HuggingFace dataset for calibration samples |
 
 ```yaml
@@ -159,6 +159,21 @@ quantization:
 ```
 
 The default calibration dataset is `mit-han-lab/pile-val-backup` (requires the `zstandard` Python package for zstd decompression). Set `calibration.dataset` to use a different HuggingFace dataset.
+
+### Calibration Recipes
+
+Use calibration settings as a memory control, not only as a quality knob:
+
+| Scenario | Suggested Settings | Notes |
+|----------|--------------------|-------|
+| 8B model on 24GB VRAM | defaults | Usually fits without extra CPU offload. |
+| 14B GPTQ on 24GB VRAM | `maxSamples: 256`, `maxSeqLen: 4096`, `nParallelCalibSamples: 32`, `maxMemoryGB: 56` | Good first pass when GPU memory is tight but host RAM is available. |
+| 14B AWQ on 24GB VRAM | `nParallelCalibSamples: 32`, `maxMemoryGB: 56` | AWQ consumes `nParallelCalibSamples` directly as `N_PARALLEL_CALIB_SAMPLES`. |
+| 27B+ GPTQ on single GPU | `maxSamples: 128`, `maxSeqLen: 2048`, `gpuMemoryFraction: "0.80"` | Prefer smaller calibration batches first, then increase samples only after the job reaches quantization. |
+
+Unset `nParallelCalibSamples` lets the backend library choose its own calibration batching. Setting it to a lower value such as `16` or `32` limits how many samples are active on the GPU at once. That reduces peak VRAM pressure, but it can increase CPU memory and wall-clock time because calibration is split into more batches.
+
+For AMD/ROCm jobs, FlexInfer automatically injects `PYTORCH_HIP_ALLOC_CONF=expandable_segments:True` so PyTorch can reuse fragmented HIP memory segments instead of failing on reserved-but-unused memory. Keep this automatic setting unless you are debugging allocator behavior in a custom image.
 
 ### GPTQ-Specific Parameters
 
@@ -205,8 +220,9 @@ For a 27B model: `auto` produces ~28 GB (doesn't fit 24 GB VRAM), `none` produce
 
 This parameter controls the tradeoff between GPU VRAM and CPU memory during calibration:
 
-- **Omitted / high value**: all samples processed on GPU simultaneously. Needs full VRAM for model weights + activations. Faster but can cause OOM on constrained nodes.
-- **Low value (e.g., 16-32)**: batches N samples on GPU at a time, offloads between batches. Requires more CPU memory but reduces peak VRAM usage.
+- **Omitted**: FlexInfer does not set `N_PARALLEL_CALIB_SAMPLES`; the quantizer backend chooses its default batching.
+- **High value**: more samples can be active on the GPU at once. This is faster when the model fits, but it can cause OOM on constrained nodes.
+- **Low value (e.g., 16-32)**: batches N samples on GPU at a time. This reduces peak VRAM usage, but can increase CPU memory pressure and wall-clock time.
 
 For 14B models on 24GB VRAM: `nParallelCalibSamples: 32` with 56Gi container memory is a good balance.
 
@@ -225,9 +241,9 @@ The controller automatically sets `PYTORCH_HIP_ALLOC_CONF=expandable_segments:Tr
 
 ### GPU Node Tolerations
 
-Quantization jobs run on GPU nodes. If your GPU nodes have a `dedicated=gpu:NoSchedule` taint, the job needs a matching toleration. The controller automatically adds this toleration to quantization jobs.
+Quantization jobs run on GPU nodes when `useGPU: true`. If your GPU nodes have a `dedicated=gpu:NoSchedule` taint, the job needs a matching toleration. The controller automatically adds this default toleration to GPU quantization, abliteration, finetune, publish, and validation jobs.
 
-If you need custom tolerations, add them to the ModelCache `spec.tolerations`:
+If your cluster uses additional GPU taints, add them to the ModelCache `spec.tolerations`. FlexInfer appends these to the default GPU toleration:
 
 ```yaml
 apiVersion: ai.flexinfer/v1alpha1
@@ -241,12 +257,32 @@ spec:
       value: gpu
       operator: Equal
       effect: NoSchedule
+    - key: workload
+      value: batch
+      operator: Equal
+      effect: NoSchedule
   quantization:
     format: GPTQ
     bits: 4
     groupSize: 128
     useGPU: true
 ```
+
+Use a per-phase `quantization.nodeSelector` when quantization needs a different node than download or serving, for example a larger-RAM GPU host. The top-level `spec.tolerations` still apply to the quantization job and image warmup job.
+
+### Progress and Status
+
+Watch both the Kubernetes Job and the ModelCache status. The Job tells you whether the pod is active, failed, or complete; the ModelCache status carries FlexInfer's phase and progress detail.
+
+```bash
+kubectl get modelcache my-model-gptq -n flexinfer-system -o jsonpath='{.status.currentPhase}{"\n"}{.status.quantization.progressDetail}{"\n"}'
+kubectl get jobs -n flexinfer-system | grep my-model-gptq
+kubectl logs -n flexinfer-system job/my-model-gptq-quantize -c quantizer -f
+```
+
+During an active job, `status.currentPhase` is `quantization`, `status.quantization.progress` is a best-effort percentage capped below 100 until completion, and `status.quantization.progressDetail` shows elapsed time or the latest completed layer when the controller can read it from pod logs.
+
+After success, `status.quantization` records the format, quantization type, original and compressed size, compression ratio, start/completion time, and any calibration parameters used. This status survives quantizer image updates while the ModelCache is Ready; a GPUProfile image drift only restarts jobs that are still inside the early image-drift grace window.
 
 ### Architecture-Specific Images
 
@@ -465,7 +501,8 @@ If format/backend are incompatible, scheduling or startup will fail.
 - ROCm quantizer images are ~60GB — initial pull takes 20-30 min.
 
 **Re-quantization after changing source model:**
-- The download PVC uses a `.flexinfer_cached` marker file. Changing the model source requires deleting the PVC and letting the controller recreate it. Interrupted downloads leave metadata files without weight files — check for the `.download_complete` marker, not directory contents.
+- The download PVC uses `.flexinfer_cached*` marker files to skip repeat downloads. Changing the model source, revision, allow/ignore patterns, or model path requires deleting the stale PVC contents or the whole PVC so the controller can rebuild from a clean source. Interrupted downloads can leave metadata files without weights — check for the `.download_complete` marker and expected weight files, not directory contents alone.
+- Changing `spec.quantization` or setting annotation `flexinfer.ai/requantize: "true"` resets only quantization-derived status and jobs. It does not delete the downloaded source directory or prior quantized outputs, so live models can keep serving the previous artifact until the new run succeeds.
 
 **Quality gate fails:**
 - Verify baseline/candidate eval prompts and dataset are identical.

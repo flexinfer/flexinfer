@@ -191,16 +191,8 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 			return ctrl.Result{}, nil
 		}
 
-		// Build tolerations for GPU nodes.
-		var tolerations []corev1.Toleration
-		if modelCache.Spec.Abliteration.UseGPU {
-			tolerations = append(tolerations, corev1.Toleration{
-				Key:      "dedicated",
-				Operator: corev1.TolerationOpEqual,
-				Value:    "gpu",
-				Effect:   corev1.TaintEffectNoSchedule,
-			})
-		}
+		// Build GPU and operator-provided tolerations for pipeline jobs.
+		tolerations := modelCachePipelineTolerations(modelCache, modelCache.Spec.Abliteration.UseGPU)
 
 		// Use per-phase nodeSelector if set, otherwise fall back to top-level.
 		effectiveNodeSelector := modelCache.Spec.NodeSelector

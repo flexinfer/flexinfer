@@ -203,17 +203,9 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 			return ctrl.Result{}, nil
 		}
 
-		// Build tolerations for GPU nodes.
+		// Build GPU and operator-provided tolerations for pipeline jobs.
 		useGPU := modelCache.Spec.Finetune.UseGPU == nil || *modelCache.Spec.Finetune.UseGPU
-		var tolerations []corev1.Toleration
-		if useGPU {
-			tolerations = append(tolerations, corev1.Toleration{
-				Key:      "dedicated",
-				Operator: corev1.TolerationOpEqual,
-				Value:    "gpu",
-				Effect:   corev1.TaintEffectNoSchedule,
-			})
-		}
+		tolerations := modelCachePipelineTolerations(modelCache, useGPU)
 
 		ftGPUArch := gpu.ArchFromLabels(modelCache.Spec.NodeSelector)
 		params := quantization.JobParams{

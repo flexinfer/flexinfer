@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha1
 
 import (
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -786,6 +787,11 @@ type ModelCacheSpec struct {
 	// Used with NodeLocal strategy. Defaults to nodes with nvidia.com/gpu.present=true.
 	// +optional
 	NodeSelector map[string]string `json:"nodeSelector,omitempty"`
+
+	// Tolerations are appended to ModelCache pipeline job tolerations.
+	// GPU phases also receive the default dedicated=gpu:NoSchedule toleration.
+	// +optional
+	Tolerations []corev1.Toleration `json:"tolerations,omitempty"`
 
 	// HostPath is the base directory for NodeLocal storage.
 	// Defaults to /var/lib/flexinfer/models if not specified.

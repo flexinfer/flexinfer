@@ -948,6 +948,13 @@ func (in *ModelCacheSpec) DeepCopyInto(out *ModelCacheSpec) {
 			(*out)[key] = val
 		}
 	}
+	if in.Tolerations != nil {
+		in, out := &in.Tolerations, &out.Tolerations
+		*out = make([]corev1.Toleration, len(*in))
+		for i := range *in {
+			(*in)[i].DeepCopyInto(&(*out)[i])
+		}
+	}
 	if in.HostPath != nil {
 		in, out := &in.HostPath, &out.HostPath
 		*out = new(string)
