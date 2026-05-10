@@ -300,6 +300,10 @@ func run(cfg Config) error {
 	// fire OnMerged → eval Loop B per merge).
 	reconciler := mills.NewReconciler(st, pm, budget, starter)
 	reconciler.Logger = logger
+	reconciler.AutonomyGate = func(ctx context.Context) (bool, []string) {
+		report := op.capabilityReport(ctx)
+		return report.AutonomyReady, report.AutonomyBlockers
+	}
 	if squadsLoader != nil {
 		// Wire the squad router into the reconciler so each tick attributes
 		// the chosen squad via a "reconciler.squad_routed" event keyed on

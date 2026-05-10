@@ -18,7 +18,9 @@ curl -sf $LOOM_MILLS_OPERATOR_URL/metrics | grep '^loom_mills_'
 `/readyz` is service readiness: the HTTP process, migrations, and policy manager
 are initialized. It is not an autonomy approval signal. Before enabling or
 trusting unattended writes, check `/api/mills/status` or
-`/api/mills/capabilities` and require `autonomy_ready=true`.
+`/api/mills/capabilities` and require `autonomy_ready=true`. When this is
+false, the scheduler may continue ticking for observability, but the reconciler
+will not start queued backlog items.
 
 Common autonomy blockers are intentional fail-closed states: missing admin auth,
 missing or unwritable `LOOM_MILLS_REPO_ROOT/.loom`, unwired FlexInfer/GitLab/HUD

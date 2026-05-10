@@ -119,6 +119,50 @@ func TestReconciler_PolicyDisabledShortCircuits(t *testing.T) {
 	}
 }
 
+func TestReconciler_AutonomyGateBlocksStarts(t *testing.T) {
+	env := newRecEnv(t, nil)
+	env.rec.AutonomyGate = func(context.Context) (bool, []string) {
+		return false, []string{"repo_root: .loom directory is missing under repo root"}
+	}
+	ctx := context.Background()
+
+	item := &store.BacklogItem{
+		ID:        "MILLS-GATED",
+		Title:     "blocked by capability",
+		State:     store.BacklogQueued,
+		Priority:  store.P2,
+		CreatedBy: "test",
+	}
+	if err := env.store.Backlog.Put(ctx, item); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	res, err := env.rec.Tick(ctx)
+	if err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if res.SkipReason != "autonomy blocked" {
+		t.Fatalf("skip reason: got %q want autonomy blocked", res.SkipReason)
+	}
+	if env.starter.calls() != 0 {
+		t.Fatalf("starter calls: got %d want 0", env.starter.calls())
+	}
+	got, err := env.store.Backlog.Get(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("read backlog: %v", err)
+	}
+	if got.State != store.BacklogQueued {
+		t.Fatalf("backlog state: got %q want %q", got.State, store.BacklogQueued)
+	}
+	runs, err := env.store.Pipeline.ListByBacklog(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("read runs: %v", err)
+	}
+	if len(runs) != 0 {
+		t.Fatalf("pipeline runs: got %d want 0", len(runs))
+	}
+}
+
 func TestReconciler_StartsQueuedItem(t *testing.T) {
 	env := newRecEnv(t, nil)
 	ctx := context.Background()

@@ -112,7 +112,7 @@ Environment variables (canonical prefix `LOOM_MILLS_*`); see `cmd/loom-mills-ope
 | `LOOM_MCP_HUB_URL` / `LOOM_MCP_PROFILE` | unset | Required for devbox/handoff/worktree clients. |
 | Admin token | env (operator-side) | Required for mutating endpoints; check `cmd/loom-mills-operator/auth.go`. |
 
-When a backing service env is missing, the operator boots in a degraded mode: affected stages fall back to a NoOp dispatcher and the gap is logged and exposed in the capability matrix. The reconciler and read-only APIs may still run, but production autonomy must treat `autonomy_ready=false` as a hard stop for unattended writes.
+When a backing service env is missing, the operator boots in a degraded mode: affected stages fall back to a NoOp dispatcher and the gap is logged and exposed in the capability matrix. The scheduler and read-only APIs may still run, but the reconciler skips queued work while `autonomy_ready=false`; no unattended pipeline starts are allowed until the required capability rows are green.
 
 ## Policy reference
 

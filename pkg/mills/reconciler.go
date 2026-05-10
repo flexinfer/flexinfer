@@ -28,6 +28,12 @@ type Reconciler struct {
 	Clock   func() time.Time
 	Logger  *slog.Logger
 
+	// AutonomyGate, when set, must report ready before the reconciler starts
+	// queued work. The operator wires this to its capability matrix so
+	// policy.enabled=true is necessary but not sufficient for autonomous
+	// writes when required dependencies are missing or stubbed.
+	AutonomyGate AutonomyGateFunc
+
 	// SquadRouter, when set, is consulted before handing each pipeline
 	// run off to the Starter (Phase 2 v2.0 reconciler integration). The
 	// returned squad attribution is emitted as a "reconciler.squad_routed"
@@ -72,6 +78,10 @@ type PipelineStarter interface {
 	Start(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error
 }
 
+// AutonomyGateFunc returns whether autonomous pipeline starts are allowed and
+// the human-readable blockers when they are not.
+type AutonomyGateFunc func(ctx context.Context) (ready bool, blockers []string)
+
 // NewReconciler constructs a Reconciler with sensible defaults. Logger and
 // Clock fall back to slog.Default() and time.Now respectively.
 func NewReconciler(s *store.Store, pm *PolicyManager, b *Budget, starter PipelineStarter) *Reconciler {
@@ -105,6 +115,17 @@ func (r *Reconciler) Tick(ctx context.Context) (TickResult, error) {
 		ReconcileTicksTotal.WithLabelValues("skipped").Inc()
 		r.append(ctx, "reconciler.tick", "skipped", map[string]any{"reason": "policy disabled"})
 		return TickResult{SkipReason: "policy disabled"}, nil
+	}
+	if r.AutonomyGate != nil {
+		ready, blockers := r.AutonomyGate(ctx)
+		if !ready {
+			ReconcileTicksTotal.WithLabelValues("skipped").Inc()
+			r.append(ctx, "reconciler.tick", "skipped", map[string]any{
+				"reason":   "autonomy blocked",
+				"blockers": blockers,
+			})
+			return TickResult{SkipReason: "autonomy blocked"}, nil
+		}
 	}
 
 	queued, err := r.Store.Backlog.ListByState(ctx, store.BacklogQueued)
