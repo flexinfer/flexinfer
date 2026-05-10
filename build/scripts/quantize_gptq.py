@@ -345,6 +345,11 @@ def write_modules_in_block_to_quantize(save_dir):
 
     Returns the modules list that was written (or already present), or [] if
     no quantized tensors were discovered.
+
+    Shape: always emits a flat string list, which the publish validator
+    accepts only for layout=vllm-gptq. For hf-native artifacts the validator
+    expects a nested-list shape; this helper does not switch on layout today.
+    See workspace TODO "modules_in_block_to_quantize layout-aware shape".
     """
     quantize_cfg_path = os.path.join(save_dir, "quantize_config.json")
     config_path = os.path.join(save_dir, "config.json")
