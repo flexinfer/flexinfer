@@ -1,0 +1,31 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: WorkflowProfile
+metadata:
+  name: fast-chat
+spec:
+  intent: Low-latency chat with tool-calling support
+  servedName: fast-chat
+  aliases:
+    - chat-fast
+  selector:
+    matchServiceLabels:
+      - textgen
+      - fast
+    capabilities:
+      toolCalling: true
+  routes:
+    - name: ready-fast
+      objective: PreferReady
+      maxPromptTokens: 12000
+      requiredCapabilities:
+        toolCalling: true
+    - name: fallback-long
+      objective: LongestContext
+      maxPromptTokens: 32768
+  gates:
+    requireReadyOrColdStart: true
+    requirePromotionEvidence: true
+    allowedPhases:
+      - Idle
+      - Loading
+    minSupportLevel: Validated

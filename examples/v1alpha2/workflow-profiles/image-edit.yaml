@@ -1,0 +1,29 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: WorkflowProfile
+metadata:
+  name: image-edit
+spec:
+  intent: Image editing and inpainting
+  servedName: image-edit
+  aliases:
+    - edit-image
+  selector:
+    matchServiceLabels:
+      - image
+      - edit
+    capabilities:
+      imageGeneration: true
+    backends:
+      - diffusers
+      - comfyui
+  routes:
+    - name: validated-image-edit
+      objective: PreferReady
+      requiredCapabilities:
+        imageGeneration: true
+  gates:
+    requireReadyOrColdStart: true
+    requirePromotionEvidence: true
+    allowedPhases:
+      - Idle
+    minSupportLevel: Canary

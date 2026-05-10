@@ -1,0 +1,462 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: workflowprofiles.ai.flexinfer
+spec:
+  group: ai.flexinfer
+  names:
+    kind: WorkflowProfile
+    listKind: WorkflowProfileList
+    plural: workflowprofiles
+    shortNames:
+    - wfp
+    - wfprofile
+    singular: workflowprofile
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.servedName
+      name: Served
+      type: string
+    - jsonPath: .status.activeRoute
+      name: Route
+      type: string
+    - jsonPath: .status.activeModel.name
+      name: Model
+      type: string
+    - jsonPath: .status.gateState
+      name: Gate
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha2
+    schema:
+      openAPIV3Schema:
+        description: WorkflowProfile exposes a stable serving-intent name over existing
+          Models.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: WorkflowProfileSpec defines the desired state of WorkflowProfile.
+            properties:
+              aliases:
+                description: Aliases are additional profile names accepted by the
+                  proxy.
+                items:
+                  maxLength: 63
+                  pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                  type: string
+                maxItems: 8
+                type: array
+              gates:
+                description: |-
+                  Gates define policy and validation evidence required before candidates
+                  may receive traffic.
+                properties:
+                  allowedPhases:
+                    description: |-
+                      AllowedPhases are non-Ready phases allowed by this profile, commonly Idle
+                      for scale-to-zero cold starts.
+                    items:
+                      description: Model phases
+                      enum:
+                      - Idle
+                      - Pending
+                      - Loading
+                      - Ready
+                      - Preempted
+                      - Failed
+                      type: string
+                    maxItems: 8
+                    type: array
+                  backendAllowlist:
+                    description: |-
+                      BackendAllowlist is an optional gate-specific backend allowlist. It is
+                      applied after selector.backends so operators can keep broad discovery but
+                      narrow routable candidates.
+                    items:
+                      type: string
+                    maxItems: 16
+                    type: array
+                  minSupportLevel:
+                    description: MinSupportLevel is the minimum maturity tier required
+                      for routing.
+                    enum:
+                    - Experimental
+                    - Canary
+                    - Validated
+                    - Production
+                    type: string
+                  requirePromotionEvidence:
+                    description: |-
+                      RequirePromotionEvidence requires validation or promotion evidence before
+                      a candidate can receive profile traffic.
+                    type: boolean
+                  requireReadyOrColdStart:
+                    description: |-
+                      RequireReadyOrColdStart permits Ready models and models in phases listed
+                      by allowedPhases. When false, phase gating is left to the selected route
+                      implementation.
+                    type: boolean
+                type: object
+              intent:
+                description: |-
+                  Intent is a short human-readable serving intent, such as fast-chat,
+                  long-context-review, code-agent, or image-edit.
+                maxLength: 80
+                type: string
+              routes:
+                description: |-
+                  Routes define ordered routing rules. The controller and proxy evaluate
+                  routes top-to-bottom and use objective as the tie-breaker within a route.
+                items:
+                  description: WorkflowRoute defines one ordered profile route rule.
+                  properties:
+                    maxPromptTokens:
+                      description: MaxPromptTokens is the largest approximate prompt
+                        size accepted by this route.
+                      format: int32
+                      minimum: 1
+                      type: integer
+                    name:
+                      description: Name is an operator-friendly route name used in
+                        status and trace headers.
+                      maxLength: 63
+                      pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                      type: string
+                    objective:
+                      description: Objective describes how candidates are ranked for
+                        this route.
+                      enum:
+                      - PreferReady
+                      - LowestLatency
+                      - LongestContext
+                      - CheapestSufficient
+                      - Pinned
+                      type: string
+                    requiredCapabilities:
+                      description: RequiredCapabilities are additional per-route capability
+                        requirements.
+                      properties:
+                        imageGeneration:
+                          description: |-
+                            ImageGeneration marks this as an image generation model.
+                            Auto: true for diffusers, comfyui, vllm-omni.
+                          type: boolean
+                        toolCalling:
+                          description: |-
+                            ToolCalling enables OpenAI-compatible function/tool calling.
+                            Auto: true for vllm, ollama; true for llamacpp when jinja=true.
+                          type: boolean
+                        vision:
+                          description: |-
+                            Vision enables multimodal image input.
+                            Auto: true for llamacpp when mmproj is configured.
+                          type: boolean
+                      type: object
+                    strategy:
+                      description: Strategy is an optional downstream concrete-model
+                        routing strategy name.
+                      maxLength: 63
+                      type: string
+                    weight:
+                      description: Weight is reserved for future weighted profile
+                        routing experiments.
+                      format: int32
+                      maximum: 100
+                      minimum: 0
+                      type: integer
+                  required:
+                  - name
+                  - objective
+                  type: object
+                maxItems: 16
+                minItems: 1
+                type: array
+              selector:
+                description: |-
+                  Selector chooses existing Model resources that may satisfy this profile.
+                  The MVP never creates or mutates Models from a profile.
+                properties:
+                  backends:
+                    description: Backends limits candidates to these backend names.
+                    items:
+                      type: string
+                    maxItems: 16
+                    type: array
+                  capabilities:
+                    description: Capabilities requires explicit Model.spec.capabilities
+                      matches.
+                    properties:
+                      imageGeneration:
+                        description: |-
+                          ImageGeneration marks this as an image generation model.
+                          Auto: true for diffusers, comfyui, vllm-omni.
+                        type: boolean
+                      toolCalling:
+                        description: |-
+                          ToolCalling enables OpenAI-compatible function/tool calling.
+                          Auto: true for vllm, ollama; true for llamacpp when jinja=true.
+                        type: boolean
+                      vision:
+                        description: |-
+                          Vision enables multimodal image input.
+                          Auto: true for llamacpp when mmproj is configured.
+                        type: boolean
+                    type: object
+                  matchLabels:
+                    additionalProperties:
+                      type: string
+                    description: MatchLabels requires all listed Kubernetes labels
+                      on the Model resource.
+                    maxProperties: 16
+                    type: object
+                  matchServiceLabels:
+                    description: |-
+                      MatchServiceLabels requires all listed semantic service labels from
+                      Model.spec.serviceLabels.
+                    items:
+                      type: string
+                    maxItems: 16
+                    type: array
+                  modelRefs:
+                    description: ModelRefs pins selection to named Models in the same
+                      namespace.
+                    items:
+                      description: |-
+                        LocalObjectReference contains enough information to let you locate the
+                        referenced object inside the same namespace.
+                      properties:
+                        name:
+                          default: ""
+                          description: |-
+                            Name of the referent.
+                            This field is effectively required, but due to backwards compatibility is
+                            allowed to be empty. Instances of this type with an empty value here are
+                            almost certainly wrong.
+                            More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                          type: string
+                      type: object
+                      x-kubernetes-map-type: atomic
+                    maxItems: 32
+                    type: array
+                type: object
+                x-kubernetes-validations:
+                - message: selector must set at least one of modelRefs, matchLabels,
+                    matchServiceLabels, backends, or capabilities
+                  rule: has(self.modelRefs) || has(self.matchLabels) || has(self.matchServiceLabels)
+                    || has(self.backends) || has(self.capabilities)
+              servedName:
+                description: |-
+                  ServedName is the primary model name clients send in OpenAI-compatible
+                  requests. Defaults to the WorkflowProfile metadata.name.
+                maxLength: 63
+                pattern: ^[a-z0-9]([-a-z0-9]*[a-z0-9])?$
+                type: string
+            required:
+            - routes
+            - selector
+            type: object
+            x-kubernetes-validations:
+            - message: spec.servedName must be a client-facing profile name, not a
+                reserved concrete-model prefix
+              rule: '!has(self.servedName) || !self.servedName.startsWith(''model:'')'
+          status:
+            description: WorkflowProfileStatus defines the observed state of WorkflowProfile.
+            properties:
+              activeModel:
+                description: ActiveModel is the currently selected concrete Model.
+                properties:
+                  name:
+                    default: ""
+                    description: |-
+                      Name of the referent.
+                      This field is effectively required, but due to backwards compatibility is
+                      allowed to be empty. Instances of this type with an empty value here are
+                      almost certainly wrong.
+                      More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                    type: string
+                type: object
+                x-kubernetes-map-type: atomic
+              activeRoute:
+                description: ActiveRoute is the route that currently selects ActiveModel.
+                type: string
+              aliases:
+                description: Aliases are the resolved profile aliases.
+                items:
+                  type: string
+                type: array
+              conditions:
+                description: Conditions represent the latest profile observations.
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              eligibleCandidates:
+                description: EligibleCandidates are candidates that may receive profile
+                  traffic.
+                items:
+                  description: WorkflowCandidateStatus summarizes one considered Model
+                    candidate.
+                  properties:
+                    backend:
+                      description: Backend is the candidate Model.spec.backend.
+                      type: string
+                    evidenceRefs:
+                      description: |-
+                        EvidenceRefs identify validation evidence, usually annotation keys or
+                        validation matrix references.
+                      items:
+                        type: string
+                      maxItems: 16
+                      type: array
+                    gateState:
+                      description: GateState is the aggregate candidate gate state.
+                      type: string
+                    name:
+                      description: Name is the Model resource name.
+                      type: string
+                    phase:
+                      description: Phase is the candidate Model.status.phase.
+                      type: string
+                    reasons:
+                      description: Reasons explain why a candidate was selected or
+                        rejected.
+                      items:
+                        type: string
+                      maxItems: 16
+                      type: array
+                    route:
+                      description: Route is the route that evaluated this candidate.
+                      type: string
+                  type: object
+                maxItems: 64
+                type: array
+              gateState:
+                description: GateState is the aggregate gate state for the active
+                  route.
+                type: string
+              lastDecisionTime:
+                description: LastDecisionTime is when candidate resolution last changed.
+                format: date-time
+                type: string
+              rejectedCandidates:
+                description: RejectedCandidates are candidates that were considered
+                  but blocked.
+                items:
+                  description: WorkflowCandidateStatus summarizes one considered Model
+                    candidate.
+                  properties:
+                    backend:
+                      description: Backend is the candidate Model.spec.backend.
+                      type: string
+                    evidenceRefs:
+                      description: |-
+                        EvidenceRefs identify validation evidence, usually annotation keys or
+                        validation matrix references.
+                      items:
+                        type: string
+                      maxItems: 16
+                      type: array
+                    gateState:
+                      description: GateState is the aggregate candidate gate state.
+                      type: string
+                    name:
+                      description: Name is the Model resource name.
+                      type: string
+                    phase:
+                      description: Phase is the candidate Model.status.phase.
+                      type: string
+                    reasons:
+                      description: Reasons explain why a candidate was selected or
+                        rejected.
+                      items:
+                        type: string
+                      maxItems: 16
+                      type: array
+                    route:
+                      description: Route is the route that evaluated this candidate.
+                      type: string
+                  type: object
+                maxItems: 64
+                type: array
+              servedName:
+                description: ServedName is the resolved primary client-facing name.
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
