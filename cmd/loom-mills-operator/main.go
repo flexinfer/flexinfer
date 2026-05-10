@@ -99,6 +99,10 @@ func run(cfg Config) error {
 	rootCtx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
+	if err := ensureRepoRoot(rootCtx, cfg, logger); err != nil {
+		logger.Warn("repo root bootstrap failed; autonomy readiness will report repo_root red", "repo_root", cfg.RepoRoot, "error", err)
+	}
+
 	st, err := store.Open(rootCtx, store.Options{Path: cfg.DBPath})
 	if err != nil {
 		return fmt.Errorf("open store: %w", err)

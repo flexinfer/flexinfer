@@ -207,6 +207,15 @@ func TestCapabilities_RepoRootRequiresWritableLoomDir(t *testing.T) {
 	op.setCapabilities(newCapabilityWiring(Config{RepoRoot: repo}))
 	report := op.capabilityReport(context.Background())
 	repoRow := findCapabilityRow(report.Capabilities, "repo_root")
+	if repoRow.Status != "red" || !strings.Contains(repoRow.Message, "git checkout metadata is missing") {
+		t.Fatalf("missing .git row = %+v", repoRow)
+	}
+
+	if err := os.Mkdir(filepath.Join(repo, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir .git: %v", err)
+	}
+	report = op.capabilityReport(context.Background())
+	repoRow = findCapabilityRow(report.Capabilities, "repo_root")
 	if repoRow.Status != "red" || !strings.Contains(repoRow.Message, ".loom directory is missing") {
 		t.Fatalf("missing .loom row = %+v", repoRow)
 	}

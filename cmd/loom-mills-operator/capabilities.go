@@ -310,6 +310,12 @@ func checkRepoRootCapability(row capabilityRow, repoRoot string) capabilityRow {
 		row.Message = "repo root is not configured"
 		return row
 	}
+	if _, err := os.Stat(filepath.Join(repoRoot, ".git")); err != nil {
+		row.Status = string(capabilityRed)
+		row.Mode = string(capabilityModeNotConfigured)
+		row.Message = "git checkout metadata is missing under repo root"
+		return row
+	}
 	loomDir := filepath.Join(repoRoot, ".loom")
 	info, err := os.Stat(loomDir)
 	if err != nil {
