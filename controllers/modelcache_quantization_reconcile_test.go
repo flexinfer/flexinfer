@@ -123,6 +123,12 @@ func TestReadPodLogTailReturnsTrimmedLogOutput(t *testing.T) {
 
 func TestReconcileQuantizationCreatesJobAndSeedsHash(t *testing.T) {
 	cache := newQuantizationCache("quant-create")
+	cache.Spec.Tolerations = []corev1.Toleration{{
+		Key:      "workload",
+		Operator: corev1.TolerationOpEqual,
+		Value:    "batch",
+		Effect:   corev1.TaintEffectNoSchedule,
+	}}
 	r, cl := newQuantizationTestReconciler(t, nil, cache)
 
 	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
@@ -140,6 +146,9 @@ func TestReconcileQuantizationCreatesJobAndSeedsHash(t *testing.T) {
 	require.NoError(t, err)
 	require.NotEmpty(t, job.Spec.Template.Spec.Tolerations)
 	assert.Equal(t, "dedicated", job.Spec.Template.Spec.Tolerations[0].Key)
+	require.Len(t, job.Spec.Template.Spec.Tolerations, 2)
+	assert.Equal(t, "workload", job.Spec.Template.Spec.Tolerations[1].Key)
+	assert.Equal(t, "batch", job.Spec.Template.Spec.Tolerations[1].Value)
 }
 
 func TestReconcileQuantizationWarmsRuntimeImageBeforeWorkerJob(t *testing.T) {

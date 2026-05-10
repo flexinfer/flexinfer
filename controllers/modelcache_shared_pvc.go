@@ -977,12 +977,7 @@ echo "Download complete ($WEIGHT_COUNT weight files, expected=$EXPECTED_SHARDS).
 	// Longhorn volume replica lives for local I/O. Only add GPU node
 	// toleration so the pod CAN land on a GPU node if that's where the
 	// volume is. Propagate nodeSelector from spec for node-local PVCs.
-	tolerations := []corev1.Toleration{{
-		Key:      "dedicated",
-		Operator: corev1.TolerationOpEqual,
-		Value:    "gpu",
-		Effect:   corev1.TaintEffectNoSchedule,
-	}}
+	tolerations := modelCachePipelineTolerations(m, true)
 
 	memoryLimit := resource.MustParse(fmt.Sprintf("%dGi", memoryGB))
 
@@ -1202,12 +1197,7 @@ echo "Successfully cached model from $MODEL_REF (digest: $DIGEST)"
 	// OCI download jobs don't need GPU — propagate nodeSelector so the pod
 	// lands on the same node as the Longhorn volume, and tolerate GPU taints
 	// so it CAN schedule on dedicated GPU nodes.
-	tolerations := []corev1.Toleration{{
-		Key:      "dedicated",
-		Operator: corev1.TolerationOpEqual,
-		Value:    "gpu",
-		Effect:   corev1.TaintEffectNoSchedule,
-	}}
+	tolerations := modelCachePipelineTolerations(m, true)
 
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{

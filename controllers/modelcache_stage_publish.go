@@ -164,12 +164,7 @@ func (r *ModelCacheReconciler) reconcileStagePublish(
 	job := &batchv1.Job{}
 	err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: modelCache.Namespace}, job)
 	if err != nil && errors.IsNotFound(err) {
-		tolerations := []corev1.Toleration{{
-			Key:      "dedicated",
-			Operator: corev1.TolerationOpEqual,
-			Value:    "gpu",
-			Effect:   corev1.TaintEffectNoSchedule,
-		}}
+		tolerations := modelCachePipelineTolerations(modelCache, true)
 		params := quantization.JobParams{
 			Name:         modelCache.Name,
 			Namespace:    modelCache.Namespace,
