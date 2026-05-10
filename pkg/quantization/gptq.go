@@ -568,6 +568,22 @@ if "\npatch_qwen35_text_loader()\n" not in src:
         '\npatch_gptq_save_meta_tensors()\n',
         '\npatch_gptq_save_meta_tensors()\npatch_qwen35_text_loader()\n',
     )
+# Patch Qwen3.5/3.6 QModel module_tree from multimodal layout
+# (model.language_model.layers) to causal-LM layout (model.layers). With
+# stock GPTQModel.load + AutoModelForCausalLM, the resulting model has
+# model.layers directly; without this patch, GPTQModel's module walker
+# returns layers=None and cache_inputs hits TypeError on layers[0].
+# Cycle 10 (post MRs !300/!302/!304) crashed exactly here.
+if "patch_qwen35_text_module_tree" not in src:
+    src = src.replace(
+        'def patch_qwen35_text_loader():',
+        'def patch_qwen35_text_module_tree():\n    """Rewrite Qwen3.5/3.6 QModel module_tree + lm-head/rotary refs from\n    multimodal (model.language_model.*) to causal-LM (model.*) so stock\n    GPTQModel.load + AutoModelForCausalLM finds layers correctly."""\n    try:\n        import importlib\n        candidates = [\n            "gptqmodel.models.definitions.qwen3_5_text",\n            "gptqmodel.models.definitions.qwen3_5",\n            "gptqmodel.models.definitions.qwen3_5_moe",\n        ]\n        patched_any = False\n        for module_path in candidates:\n            try:\n                mod = importlib.import_module(module_path)\n            except ImportError:\n                continue\n            for cls_name in dir(mod):\n                cls = getattr(mod, cls_name, None)\n                if not isinstance(cls, type):\n                    continue\n                module_tree = getattr(cls, "module_tree", None)\n                if isinstance(module_tree, list) and module_tree[:3] == ["model", "language_model", "layers"]:\n                    cls.module_tree = ["model", "layers", *module_tree[3:]]\n                    patched_any = True\n                    print(f"Patched {module_path}.{cls_name}.module_tree: model.language_model.layers -> model.layers")\n                if getattr(cls, "pre_lm_head_norm_module", None) == "model.language_model.norm":\n                    cls.pre_lm_head_norm_module = "model.norm"\n                    print(f"Patched {module_path}.{cls_name}.pre_lm_head_norm_module: model.language_model.norm -> model.norm")\n                if getattr(cls, "rotary_embedding", None) == "model.language_model.rotary_emb":\n                    cls.rotary_embedding = "model.rotary_emb"\n                    print(f"Patched {module_path}.{cls_name}.rotary_embedding: model.language_model.rotary_emb -> model.rotary_emb")\n        if not patched_any:\n            print("INFO: Qwen3.5/3.6 module_tree patch found no multimodal-rooted classes (already correct or not loaded)")\n    except Exception as exc:\n        print(f"INFO: Qwen3.5/3.6 module_tree patch skipped: {exc}")\n\n\ndef patch_qwen35_text_loader():',
+    )
+if "\npatch_qwen35_text_module_tree()\n" not in src:
+    src = src.replace(
+        '\npatch_qwen35_text_loader()\n',
+        '\npatch_qwen35_text_loader()\npatch_qwen35_text_module_tree()\n',
+    )
 src = src.replace(
     '    model._model_init_kwargs = init_kwargs.copy()\n    model.eval()',
     '    model._model_init_kwargs = init_kwargs.copy()\n    model.eval()\n    adapt_model_definition_for_loaded_model(model_definition, model)',
