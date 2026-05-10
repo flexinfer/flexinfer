@@ -31,7 +31,7 @@ func (f *fakeAllocator) Allocate(_ context.Context, req WorktreeRequest) (Worktr
 	}
 	return WorktreeHandle{
 		Path:   "/tmp/wt-" + req.BacklogID + "-" + req.SliceName,
-		Branch: "feat/" + req.BacklogID + "/" + req.SliceName,
+		Branch: req.BranchName,
 	}, nil
 }
 
@@ -182,6 +182,11 @@ func TestIntegrator_HappyPath(t *testing.T) {
 	if len(alloc.allocated) != 2 {
 		t.Errorf("allocated = %d, want 2", len(alloc.allocated))
 	}
+	for _, req := range alloc.allocated {
+		if req.BranchName == "" {
+			t.Errorf("allocated worktree without explicit branch: %+v", req)
+		}
+	}
 	if len(alloc.released) != 2 {
 		t.Errorf("released = %d, want 2 (every allocate must be paired with release)", len(alloc.released))
 	}
@@ -190,6 +195,9 @@ func TestIntegrator_HappyPath(t *testing.T) {
 	}
 	if len(merger.calls[0].SliceBranches) != 2 {
 		t.Errorf("slice branches = %v", merger.calls[0].SliceBranches)
+	}
+	if merger.calls[0].IntegrationBranch != "integrate/BL-PAR-1" {
+		t.Errorf("integration branch = %q", merger.calls[0].IntegrationBranch)
 	}
 	if merger.calls[0].SliceBranches[0] >= merger.calls[0].SliceBranches[1] {
 		t.Errorf("slice branches not sorted: %v", merger.calls[0].SliceBranches)
