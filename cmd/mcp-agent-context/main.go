@@ -50,6 +50,21 @@ func run(ctx context.Context) error {
 			svc.SetToolExecutor(toolClient.Execute)
 			defer toolClient.Close()
 			logger.Info("workflow tool executor configured", "socket", socketPath)
+
+			// Same client also backs engram command-proof verification via
+			// devbox. Project name comes from LOOM_DEVBOX_PROJECT (set by the
+			// daemon launching this server) and falls back to the cwd
+			// basename via the same heuristic the verifier uses for repo.
+			project := os.Getenv("LOOM_DEVBOX_PROJECT")
+			if project == "" {
+				project = inferProjectName()
+			}
+			if project != "" {
+				svc.SetCommandRunner(newDevboxRunner(toolClient, project))
+				logger.Info("engram command runner wired (devbox)", "project", project)
+			} else {
+				logger.Info("engram command runner not wired: project unresolved")
+			}
 		}
 	}
 

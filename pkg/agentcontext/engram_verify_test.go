@@ -2,12 +2,14 @@ package agentcontext
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // ---------------------------------------------------------------------------
@@ -457,5 +459,299 @@ func TestInferRepoName(t *testing.T) {
 	got := inferRepoName()
 	if got == "" {
 		t.Error("inferRepoName returned empty for a normal cwd")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// extractCommand
+// ---------------------------------------------------------------------------
+
+func TestExtractCommand(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"":                                "",
+		"command: go test ./...":          "go test ./...",
+		"  command:  go test ./pkg/foo  ": "go test ./pkg/foo",
+		"Command: go test":                "go test", // case-insensitive
+		"prelude\ncommand: go test\nbench: ignored":      "go test",
+		"benchmark: foo\ncommand: cargo test":            "cargo test",
+		"no command line at all":                         "",
+		"command:":                                       "", // empty payload
+		"command: first\ncommand: second":                "first",
+		"COMMAND: pytest tests/":                         "pytest tests/",
+		"line1\n  command: pnpm test\nline3\nbench: bar": "pnpm test",
+	}
+	for input, want := range cases {
+		got := extractCommand(input)
+		if got != want {
+			t.Errorf("extractCommand(%q) = %q, want %q", input, got, want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// firstLine + parseDurationArg
+// ---------------------------------------------------------------------------
+
+func TestFirstLine(t *testing.T) {
+	t.Parallel()
+	cases := map[string]string{
+		"":                 "",
+		"hello":            "hello",
+		"  hello  ":        "hello",
+		"hello\nworld":     "hello",
+		"\n\n  real line ": "real line",
+		"\n\t\n   \nfinal": "final",
+	}
+	for in, want := range cases {
+		if got := firstLine(in); got != want {
+			t.Errorf("firstLine(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestParseDurationArg(t *testing.T) {
+	t.Parallel()
+	fallback := 7 * time.Second
+	cases := []struct {
+		in   string
+		want time.Duration
+	}{
+		{"", fallback},
+		{"garbage", fallback},
+		{"-1s", fallback},
+		{"0s", fallback},
+		{"500ms", 500 * time.Millisecond},
+		{"3m", 3 * time.Minute},
+	}
+	for _, tc := range cases {
+		if got := parseDurationArg(tc.in, fallback); got != tc.want {
+			t.Errorf("parseDurationArg(%q, %v) = %v, want %v", tc.in, fallback, got, tc.want)
+		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Command verification with a fake CommandRunner
+// ---------------------------------------------------------------------------
+
+// fakeRunner is a CommandRunner stub that records the last call and returns a
+// preprogrammed result. Tests use it to assert each verifyOne outcome
+// (verified / failing / timeout / transport-error) without needing a live
+// devbox sandbox or real subprocess.
+type fakeRunner struct {
+	result  CommandRunResult
+	lastCmd string
+	lastTO  time.Duration
+	calls   int
+}
+
+func (f *fakeRunner) RunCommand(_ context.Context, cmd string, timeout time.Duration) CommandRunResult {
+	f.lastCmd = cmd
+	f.lastTO = timeout
+	f.calls++
+	return f.result
+}
+
+func addCommandEngram(t *testing.T, svc *Service, slug, proof string) {
+	t.Helper()
+	if _, err := svc.HandleEngramAdd(context.Background(), map[string]any{
+		"title":    "cmd engram " + slug,
+		"problem":  "p",
+		"solution": "s",
+		"proof":    proof,
+		"tier":     2,
+		"family":   "cmd-fam-" + slug,
+		"slug":     slug,
+	}); err != nil {
+		t.Fatalf("add: %v", err)
+	}
+}
+
+func TestHandleEngramVerify_CommandVerifiedWithRunner(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService()
+	runner := &fakeRunner{result: CommandRunResult{ExitCode: 0, StdoutTail: "PASS"}}
+	svc.SetCommandRunner(runner)
+	addCommandEngram(t, svc, "good", "command: go test ./pkg/foo")
+
+	res, err := svc.HandleEngramVerify(context.Background(), map[string]any{
+		"uri":  "engram://cmd-fam-good/good",
+		"repo": "test-repo",
+	})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	first := readResultJSON(t, res)["results"].([]any)[0].(map[string]any)
+	if first["status"] != "verified" {
+		t.Errorf("expected verified, got %v reason=%v", first["status"], first["reason"])
+	}
+	if runner.calls != 1 {
+		t.Errorf("runner.calls = %d, want 1", runner.calls)
+	}
+	if runner.lastCmd != "go test ./pkg/foo" {
+		t.Errorf("runner.lastCmd = %q, want %q", runner.lastCmd, "go test ./pkg/foo")
+	}
+	if runner.lastTO != 2*time.Minute {
+		t.Errorf("runner.lastTO = %v, want default 2m", runner.lastTO)
+	}
+
+	item, _ := svc.lookupEngramByURI("engram://cmd-fam-good/good")
+	if metadataString(item.Metadata, mdEngramProofStatus) != ProofStatusVerified {
+		t.Errorf("status not persisted; got %v", item.Metadata[mdEngramProofStatus])
+	}
+	if !contains(metadataStringSlice(item.Metadata, mdEngramUnlockedIn), "test-repo") {
+		t.Error("unlocked_in should include test-repo on verified")
+	}
+}
+
+func TestHandleEngramVerify_CommandFailingWithRunner(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService()
+	svc.SetCommandRunner(&fakeRunner{result: CommandRunResult{
+		ExitCode:   1,
+		StderrTail: "--- FAIL: TestX\n  foo_test.go:12: assertion failed\n",
+	}})
+	addCommandEngram(t, svc, "fail", "command: go test ./pkg/bar")
+
+	res, err := svc.HandleEngramVerify(context.Background(), map[string]any{
+		"uri": "engram://cmd-fam-fail/fail",
+	})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	first := readResultJSON(t, res)["results"].([]any)[0].(map[string]any)
+	if first["status"] != "failing" {
+		t.Errorf("expected failing, got %v", first["status"])
+	}
+	reason, _ := first["reason"].(string)
+	if !strings.Contains(reason, "exit=1") {
+		t.Errorf("reason should include exit code: %q", reason)
+	}
+	if !strings.Contains(reason, "FAIL") {
+		t.Errorf("reason should surface stderr first line: %q", reason)
+	}
+
+	item, _ := svc.lookupEngramByURI("engram://cmd-fam-fail/fail")
+	if metadataString(item.Metadata, mdEngramProofStatus) != ProofStatusFailing {
+		t.Errorf("expected proof_status=failing, got %v", item.Metadata[mdEngramProofStatus])
+	}
+}
+
+func TestHandleEngramVerify_CommandTimeout(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService()
+	// devbox surfaces timeouts as exit=124; runner translates that to TimedOut.
+	svc.SetCommandRunner(&fakeRunner{result: CommandRunResult{TimedOut: true, ExitCode: 124}})
+	addCommandEngram(t, svc, "slow", "command: sleep 999")
+
+	res, err := svc.HandleEngramVerify(context.Background(), map[string]any{
+		"uri":             "engram://cmd-fam-slow/slow",
+		"command_timeout": "30s",
+	})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	first := readResultJSON(t, res)["results"].([]any)[0].(map[string]any)
+	if first["status"] != "failing" {
+		t.Errorf("timeout should map to failing, got %v", first["status"])
+	}
+	if reason, _ := first["reason"].(string); !strings.Contains(reason, "timed out") {
+		t.Errorf("reason should mention timeout: %q", reason)
+	}
+}
+
+func TestHandleEngramVerify_CommandTransportError(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService()
+	svc.SetCommandRunner(&fakeRunner{result: CommandRunResult{
+		TransportErr: errors.New("daemon socket closed"),
+	}})
+	addCommandEngram(t, svc, "trans", "command: go test")
+
+	res, err := svc.HandleEngramVerify(context.Background(), map[string]any{
+		"uri": "engram://cmd-fam-trans/trans",
+	})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	first := readResultJSON(t, res)["results"].([]any)[0].(map[string]any)
+	if first["status"] != "skipped" {
+		t.Errorf("transport errors must map to skipped (don't downgrade engram), got %v", first["status"])
+	}
+	if reason, _ := first["reason"].(string); !strings.Contains(reason, "daemon socket closed") {
+		t.Errorf("reason should include transport error: %q", reason)
+	}
+	// Skipped → status must not have been written.
+	item, _ := svc.lookupEngramByURI("engram://cmd-fam-trans/trans")
+	if metadataString(item.Metadata, mdEngramProofStatus) != ProofStatusUnverified {
+		t.Errorf("transport-error skip should leave status unchanged; got %v", item.Metadata[mdEngramProofStatus])
+	}
+}
+
+func TestHandleEngramVerify_CommandSkippedWhenNoRunner(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService() // no SetCommandRunner
+	addCommandEngram(t, svc, "noruner", "command: go test")
+
+	res, err := svc.HandleEngramVerify(context.Background(), map[string]any{
+		"uri":          "engram://cmd-fam-noruner/noruner",
+		"skip_command": false, // explicitly opt-in; runner still nil
+	})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	first := readResultJSON(t, res)["results"].([]any)[0].(map[string]any)
+	if first["status"] != "skipped" {
+		t.Errorf("expected skipped (no runner wired), got %v", first["status"])
+	}
+	if reason, _ := first["reason"].(string); !strings.Contains(reason, "no CommandRunner configured") {
+		t.Errorf("reason should explain missing runner wiring: %q", reason)
+	}
+}
+
+func TestHandleEngramVerify_CommandSkipFlagOverridesRunner(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService()
+	runner := &fakeRunner{result: CommandRunResult{ExitCode: 0}}
+	svc.SetCommandRunner(runner)
+	addCommandEngram(t, svc, "skip", "command: rm -rf /")
+
+	res, err := svc.HandleEngramVerify(context.Background(), map[string]any{
+		"uri":          "engram://cmd-fam-skip/skip",
+		"skip_command": true,
+	})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	first := readResultJSON(t, res)["results"].([]any)[0].(map[string]any)
+	if first["status"] != "skipped" {
+		t.Errorf("skip_command=true must override runner; got %v", first["status"])
+	}
+	if runner.calls != 0 {
+		t.Errorf("runner must not be called when skip_command=true; calls=%d", runner.calls)
+	}
+}
+
+func TestHandleEngramVerify_CommandUnparsableSkipped(t *testing.T) {
+	t.Parallel()
+	svc := newEngramTestService()
+	svc.SetCommandRunner(&fakeRunner{result: CommandRunResult{ExitCode: 0}})
+	// Proof has the `command:` marker (so detectProofKind picks "command")
+	// but no actual command after the colon.
+	addCommandEngram(t, svc, "unparse", "command:\nbenchmark: go test -bench=.")
+
+	res, err := svc.HandleEngramVerify(context.Background(), map[string]any{
+		"uri": "engram://cmd-fam-unparse/unparse",
+	})
+	if err != nil {
+		t.Fatalf("%v", err)
+	}
+	first := readResultJSON(t, res)["results"].([]any)[0].(map[string]any)
+	if first["status"] != "skipped" {
+		t.Errorf("expected skipped for empty command, got %v", first["status"])
+	}
+	if reason, _ := first["reason"].(string); !strings.Contains(reason, "could not extract command") {
+		t.Errorf("reason should explain parse failure: %q", reason)
 	}
 }
