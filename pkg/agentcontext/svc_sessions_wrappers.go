@@ -97,8 +97,3 @@ func (s *Service) endActiveSessionsForAgent(ctx context.Context, agentID string)
 func (s *Service) getSession(ctx context.Context, sessionID string) (*Session, error) {
 	return s.sess.Get(ctx, sessionID)
 }
-
-// persistSession delegates to SessionSvc.Persist.
-func (s *Service) persistSession(ctx context.Context, session *Session) error {
-	return s.sess.Persist(ctx, session)
-}
