@@ -104,6 +104,9 @@ func BuildMillsEnv(run *store.PipelineRun, item *store.BacklogItem, stage Stage)
 	if run.WorktreePath != "" {
 		env["LOOM_MILLS_WORKTREE"] = run.WorktreePath
 	}
+	if branch := BranchContractFor(run, item, stage, "").SourceBranch; branch != "" {
+		env["LOOM_MILLS_BRANCH"] = branch
+	}
 	return env
 }
 
@@ -203,7 +206,10 @@ func (w *SpawnWorker) Run(ctx context.Context, jc JobContext) (StageOutput, erro
 	if namespace == "" {
 		namespace = "loom-mills"
 	}
-	branch := fmt.Sprintf("mills/%s/%s", jc.Item.ID, jc.Stage.ID)
+	branch := BranchContractFor(jc.Run, jc.Item, jc.Stage, "").SourceBranch
+	if branch == "" {
+		return StageOutput{}, fmt.Errorf("spawn worker: source branch unavailable for backlog %q", jc.Item.ID)
+	}
 	req := SpawnRequest{
 		Prompt:          prompt,
 		WorkingDir:      jc.Run.WorktreePath,
@@ -459,8 +465,8 @@ type GitLabWorker struct {
 	// tests can return constants.
 	MRTitle       func(jc JobContext) string
 	MRDescription func(jc JobContext) string
-	// SourceBranch / TargetBranch return the refs to use. Falls back
-	// to "feat/<backlog-id>" / "main".
+	// SourceBranch / TargetBranch return the refs to use. SourceBranch
+	// falls back to BranchContractFor; TargetBranch falls back to "main".
 	SourceBranch func(jc JobContext) string
 	TargetBranch func(jc JobContext) string
 }
@@ -485,9 +491,13 @@ func (w *GitLabWorker) Run(ctx context.Context, jc JobContext) (StageOutput, err
 }
 
 func (w *GitLabWorker) runMR(ctx context.Context, jc JobContext) (StageOutput, error) {
+	sourceBranch := w.sourceBranch(jc)
+	if sourceBranch == "" {
+		return StageOutput{}, fmt.Errorf("mr: source branch unavailable for backlog %q", jc.Item.ID)
+	}
 	req := CreateMRRequest{
 		BacklogID:    jc.Item.ID,
-		SourceBranch: callOr(w.SourceBranch, jc, fmt.Sprintf("feat/%s", jc.Item.ID)),
+		SourceBranch: sourceBranch,
 		TargetBranch: callOr(w.TargetBranch, jc, "main"),
 		Title:        callOr(w.MRTitle, jc, jc.Item.Title),
 		Description:  callOr(w.MRDescription, jc, ""),
@@ -556,9 +566,13 @@ func (w *GitLabWorker) runMerge(ctx context.Context, jc JobContext) (StageOutput
 }
 
 func (w *GitLabWorker) runCleanup(ctx context.Context, jc JobContext) (StageOutput, error) {
+	sourceBranch := w.sourceBranch(jc)
+	if sourceBranch == "" {
+		return StageOutput{}, fmt.Errorf("cleanup: source branch unavailable for backlog %q", jc.Item.ID)
+	}
 	resp, err := w.Client.Cleanup(ctx, CleanupRequest{
 		WorktreePath: jc.Run.WorktreePath,
-		BranchName:   callOr(w.SourceBranch, jc, fmt.Sprintf("feat/%s", jc.Item.ID)),
+		BranchName:   sourceBranch,
 		MRIID:        mrIIDFrom(jc),
 		Env:          jc.Env,
 	})
@@ -569,6 +583,15 @@ func (w *GitLabWorker) runCleanup(ctx context.Context, jc JobContext) (StageOutp
 		CostUSD: resp.CostUSD,
 		LogTail: resp.LogTail,
 	}, nil
+}
+
+func (w *GitLabWorker) sourceBranch(jc JobContext) string {
+	if w.SourceBranch != nil {
+		if branch := w.SourceBranch(jc); branch != "" {
+			return branch
+		}
+	}
+	return BranchContractFor(jc.Run, jc.Item, jc.Stage, "").SourceBranch
 }
 
 // mrIIDFrom pulls the MRIID off the run row, falling back to the

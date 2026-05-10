@@ -24,6 +24,7 @@ type WorktreeAllocator interface {
 type WorktreeRequest struct {
 	BacklogID  string
 	SliceName  string
+	BranchName string
 	BaseBranch string
 	Purpose    string
 }
@@ -153,7 +154,10 @@ func (i *Integrator) Run(ctx context.Context, run *store.PipelineRun, item *stor
 		}
 	}
 
-	integrationBranch := fmt.Sprintf("integrate/%s", item.ID)
+	integrationBranch := BranchContractFor(&parentRun, item, Stage{ID: "mr"}, "").IntegrationBranch
+	if integrationBranch == "" {
+		return i.escalateWithItem(ctx, &parentRun, item, "integration branch unavailable")
+	}
 	mergeResp, err := i.Merger.Merge(ctx, MergeBranchesRequest{
 		BacklogID:         item.ID,
 		IntegrationBranch: integrationBranch,
@@ -249,9 +253,15 @@ const subRunAttemptOffset = 1000
 
 func (i *Integrator) runOneSlice(ctx context.Context, parent *store.PipelineRun, item *store.BacklogItem, sl store.Slice, attempts int) SubRunResult {
 	res := SubRunResult{SliceName: sl.Name}
+	branch := BranchContractFor(parent, item, Stage{ID: "implement"}, sl.Name).SliceBranch
+	if branch == "" {
+		res.Err = fmt.Errorf("branch contract unavailable for slice %s", sl.Name)
+		return res
+	}
 	wt, err := i.Allocator.Allocate(ctx, WorktreeRequest{
 		BacklogID:  item.ID,
 		SliceName:  sl.Name,
+		BranchName: branch,
 		BaseBranch: "main",
 		Purpose:    fmt.Sprintf("mills slice %s of %s", sl.Name, item.ID),
 	})
