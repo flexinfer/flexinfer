@@ -88,7 +88,9 @@ kubectl get deploy -n loom-mills loom-mills-operator
 kubectl logs -n loom-mills deploy/loom-mills-operator --tail=200
 ```
 
-Healthz and readyz live on the metrics listener (`:9090` by default); `/healthz` returns 200 once the process is up, `/readyz` flips to 200 only after migrations + policy load + initial reconciler tick complete.
+Healthz and readyz live on the metrics listener (`:9090` by default). `/healthz` checks SQLite liveness. `/readyz` is service readiness: it flips to 200 after migrations, policy load, and operator wiring complete. It does not mean Mills is safe to run autonomous writes.
+
+Autonomy readiness is reported by `/api/mills/status` and `/api/mills/capabilities`. These responses include `autonomy_ready`, `autonomy_blockers`, and a capability matrix with rows for SQLite, policy, admin auth, repo root, FlexInfer, GitLab, HUD spawn, MCP hub/session, dispatcher write stages, council participants, branch contract, and KPI writer. When `policy.enabled=true`, required red or stubbed rows keep `autonomy_ready=false` while read-only API surfaces can remain available.
 
 ## Configuration
 
@@ -110,7 +112,7 @@ Environment variables (canonical prefix `LOOM_MILLS_*`); see `cmd/loom-mills-ope
 | `LOOM_MCP_HUB_URL` / `LOOM_MCP_PROFILE` | unset | Required for devbox/handoff/worktree clients. |
 | Admin token | env (operator-side) | Required for mutating endpoints; check `cmd/loom-mills-operator/auth.go`. |
 
-When a backing service env is missing, the operator boots in a degraded mode: affected stages fall back to a NoOp dispatcher and the gap is logged at startup. The reconciler still runs; reads still serve.
+When a backing service env is missing, the operator boots in a degraded mode: affected stages fall back to a NoOp dispatcher and the gap is logged and exposed in the capability matrix. The reconciler and read-only APIs may still run, but production autonomy must treat `autonomy_ready=false` as a hard stop for unattended writes.
 
 ## Policy reference
 
