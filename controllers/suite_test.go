@@ -44,6 +44,8 @@ var testEnv *envtest.Environment
 var ctx context.Context
 var cancel context.CancelFunc
 
+const envtestMetricsBindAddress = "0"
+
 func envtestAssetsDir() string {
 	if d := os.Getenv("KUBEBUILDER_ASSETS"); d != "" {
 		return d
@@ -71,6 +73,12 @@ func TestAPIs(t *testing.T) {
 	}
 	RegisterFailHandler(Fail)
 	RunSpecs(t, "Controller Suite")
+}
+
+func TestEnvtestManagerMetricsDisabled(t *testing.T) {
+	if envtestMetricsBindAddress != "0" {
+		t.Fatalf("envtest manager metrics bind address = %q, want 0 to avoid shared-port conflicts", envtestMetricsBindAddress)
+	}
 }
 
 var _ = BeforeSuite(func() {
@@ -102,7 +110,7 @@ var _ = BeforeSuite(func() {
 
 	k8sManager, err := ctrl.NewManager(cfg, ctrl.Options{
 		Scheme:  scheme.Scheme,
-		Metrics: server.Options{BindAddress: "0"},
+		Metrics: server.Options{BindAddress: envtestMetricsBindAddress},
 	})
 	Expect(err).ToNot(HaveOccurred())
 
