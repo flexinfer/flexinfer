@@ -65,9 +65,12 @@ default:
         - .gitlab-ci.yml
 
 variables:
-  # Keep in sync with Harbor mirror: registry.harbor.lan/library/golang:${GO_VERSION}
+  # Prefer GO_IMAGE from the local Harbor mirror when the patched tag exists.
+  # Temporarily use Docker Hub for 1.25.10 because the Harbor mirror only has
+  # 1.25.9 and govulncheck flags vulnerable stdlib builds.
   # Bump promptly on Go security releases; Trivy/govulncheck will flag vulnerable stdlib builds.
-  GO_VERSION: "1.25.9"
+  GO_VERSION: "1.25.10"
+  GO_IMAGE: "golang:${GO_VERSION}"
   ENVTEST_VERSION: "release-0.23"
   GOLANGCI_LINT_VERSION: "v2.10.1"
   GOVULNCHECK_VERSION: "latest"
@@ -93,7 +96,7 @@ variables:
   HELM_OCI_REPO: ""
 
 .go-cache: &go-cache
-  image: registry.harbor.lan/library/golang:${GO_VERSION}
+  image: ${GO_IMAGE}
   cache:
     - key:
         files:
@@ -1531,7 +1534,7 @@ trivy_scan_deps:
 # Generates Software Bill of Materials for CNCF compliance
 sbom_generate:
   stage: security
-  image: registry.harbor.lan/library/golang:${GO_VERSION}
+  image: ${GO_IMAGE}
   before_script:
     - mkdir -p .go .go/cache
     - export GOPATH=${CI_PROJECT_DIR}/.go
