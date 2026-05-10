@@ -10,6 +10,14 @@
 
 ---
 
+## Cycle 3 Closure Notes
+
+| Debt ID | Title | Status | Evidence | Impact |
+|---|---|---|---|---|
+| DEBT-312 | Controller envtest metrics port conflict | **resolved** (2026-05-10) | Envtest manager metrics are disabled with `BindAddress: "0"` and guarded by `TestEnvtestManagerMetricsDisabled`; `go test ./controllers -run 'TestEnvtestManagerMetricsDisabled|TestAPIs' -count=1` passes. | Restores the controller envtest gate without a shared `:8080` listener. |
+
+---
+
 ## Wave 1 — Test Coverage for Critical Paths (Score >= 69)
 
 **Goal:** Add unit tests to the most complex, most-changed, and highest-risk untested code paths. These files have caused the most production issues.
