@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/crb2nu/loom/pkg/mills"
 	"github.com/crb2nu/loom/pkg/mills/pipeline"
 	"github.com/crb2nu/loom/pkg/mills/store"
 )
@@ -64,10 +65,66 @@ func (o *operator) handlePipelineRunGet(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
-// Mutating actions. All wired to admin-token middleware in server.go;
-// the actual implementations land in slice 4.x with the pipeline runner.
-func (o *operator) handlePipelineStart(w http.ResponseWriter, _ *http.Request) {
-	notImplemented(w, "4.x pipeline runner")
+type pipelineStartResponse struct {
+	RunID     string   `json:"run_id,omitempty"`
+	BacklogID string   `json:"backlog_id"`
+	Decision  string   `json:"decision"`
+	State     string   `json:"state,omitempty"`
+	Reason    string   `json:"reason,omitempty"`
+	Blockers  []string `json:"blockers,omitempty"`
+}
+
+// handlePipelineStart asks the reconciler to start one queued backlog item now.
+// This uses the same fail-closed autonomy, dependency, budget, squad routing,
+// and PipelineStarter path as the scheduler tick; the endpoint only narrows the
+// target to one backlog id so humans can prove the operator on demand.
+func (o *operator) handlePipelineStart(w http.ResponseWriter, r *http.Request) {
+	if o.reconciler == nil {
+		http.Error(w, "reconciler not configured", http.StatusServiceUnavailable)
+		return
+	}
+	backlogID := r.PathValue("backlog_id")
+	if backlogID == "" {
+		http.Error(w, "missing backlog id", http.StatusBadRequest)
+		return
+	}
+	res, err := o.reconciler.StartQueuedItem(r.Context(), backlogID)
+	resp := pipelineStartResponse{
+		BacklogID: res.BacklogID,
+		Decision:  res.Decision,
+		Reason:    res.Reason,
+		Blockers:  res.Blockers,
+	}
+	if resp.BacklogID == "" {
+		resp.BacklogID = backlogID
+	}
+	if res.Run != nil {
+		resp.RunID = res.Run.ID
+		resp.State = string(res.Run.State)
+	}
+	if err != nil {
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			http.Error(w, "backlog item not found", http.StatusNotFound)
+		case errors.Is(err, mills.ErrPolicyDisabled):
+			writeJSON(w, http.StatusForbidden, resp)
+		case errors.Is(err, mills.ErrBacklogNotQueued):
+			writeJSON(w, http.StatusConflict, resp)
+		default:
+			var blocked *mills.AutonomyBlockedError
+			if errors.As(err, &blocked) {
+				writeJSON(w, http.StatusForbidden, resp)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+		return
+	}
+	if res.Run == nil {
+		writeJSON(w, http.StatusConflict, resp)
+		return
+	}
+	writeJSON(w, http.StatusCreated, resp)
 }
 
 func (o *operator) handlePipelinePause(w http.ResponseWriter, _ *http.Request) {

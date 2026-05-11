@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/crb2nu/loom/pkg/mills"
 	"github.com/crb2nu/loom/pkg/mills/store"
 )
 
@@ -315,6 +316,64 @@ func TestHandlePipelineRuns_GetWithStagesAndGates(t *testing.T) {
 	gates, ok := resp["gates"].([]any)
 	if !ok || len(gates) != 1 {
 		t.Errorf("gates: %v", resp["gates"])
+	}
+}
+
+type recordingPipelineStarter struct {
+	calls int
+	runID string
+}
+
+func (s *recordingPipelineStarter) Start(_ context.Context, run *store.PipelineRun, _ *store.BacklogItem) error {
+	s.calls++
+	s.runID = run.ID
+	return nil
+}
+
+func TestHandlePipelineStart_StartsQueuedBacklogItem(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+	setAdminToken("secret-abc")
+	defer setAdminToken("")
+	ctx := context.Background()
+
+	if err := op.store.Backlog.Put(ctx, &store.BacklogItem{
+		ID:        "MILLS-START-1",
+		Title:     "start me",
+		State:     store.BacklogQueued,
+		Priority:  store.P2,
+		CreatedBy: "test",
+	}); err != nil {
+		t.Fatalf("seed backlog: %v", err)
+	}
+	starter := &recordingPipelineStarter{}
+	rec := mills.NewReconciler(op.store, op.policy, op.budget, starter)
+	rec.AutonomyGate = func(context.Context) (bool, []string) { return true, nil }
+	op.withReconciler(rec)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/mills/pipeline/runs/MILLS-START-1/start", nil)
+	req.Header.Set("Authorization", "Bearer secret-abc")
+	resp := httptest.NewRecorder()
+	op.httpMux().ServeHTTP(resp, req)
+	if resp.Code != http.StatusCreated {
+		t.Fatalf("start: got %d body=%s", resp.Code, resp.Body.String())
+	}
+	var body pipelineStartResponse
+	if err := json.Unmarshal(resp.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Decision != "started" || body.RunID == "" {
+		t.Fatalf("unexpected body: %+v", body)
+	}
+	if starter.calls != 1 || starter.runID != body.RunID {
+		t.Fatalf("starter calls=%d runID=%q body=%q", starter.calls, starter.runID, body.RunID)
+	}
+	item, err := op.store.Backlog.Get(ctx, "MILLS-START-1")
+	if err != nil {
+		t.Fatalf("get backlog: %v", err)
+	}
+	if item.State != store.BacklogRunning {
+		t.Fatalf("backlog state: got %q want %q", item.State, store.BacklogRunning)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 
 	"github.com/crb2nu/loom/pkg/mills"
 	"github.com/crb2nu/loom/pkg/mills/clients"
+	"github.com/crb2nu/loom/pkg/mills/pipeline"
 	"github.com/crb2nu/loom/pkg/mills/store"
 )
 
@@ -102,6 +103,37 @@ func TestReadyz_503BeforeReady(t *testing.T) {
 	op.metricsMux().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
 	if rec.Code != http.StatusOK {
 		t.Errorf("post-ready: got %d want 200", rec.Code)
+	}
+}
+
+func TestStagePromptForIncludesBacklogContext(t *testing.T) {
+	prompt := stagePromptFor("implement")(pipeline.JobContext{
+		Stage: pipeline.Stage{ID: "implement"},
+		Item: &store.BacklogItem{
+			ID:      "MILLS-CANARY-TEST",
+			Title:   "canary",
+			Labels:  []string{"mills-canary"},
+			SpecDoc: "Update only testdata/mills-canary/heartbeat.md",
+			Success: store.SuccessCriteria{
+				Tests:       []string{"go test ./cmd/loom -run Mills"},
+				ManualCheck: "fixture-only MR",
+			},
+			Slices: []store.Slice{{
+				Name:  "heartbeat",
+				Files: []string{"testdata/mills-canary/heartbeat.md"},
+			}},
+		},
+	})
+	for _, want := range []string{
+		"Backlog context:",
+		"mills-canary",
+		"Update only testdata/mills-canary/heartbeat.md",
+		"go test ./cmd/loom -run Mills",
+		"files=testdata/mills-canary/heartbeat.md",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("prompt missing %q:\n%s", want, prompt)
+		}
 	}
 }
 

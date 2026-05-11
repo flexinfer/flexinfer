@@ -29,6 +29,7 @@ type operator struct {
 	policy         *mills.PolicyManager
 	budget         *mills.Budget
 	runner         *runner.Runner        // optional; nil disables /api/mills/council/{run,dryrun}
+	reconciler     *mills.Reconciler     // optional; nil disables manual pipeline starts
 	regressionGate *gates.RegressionGate // optional; nil makes the alerts webhook return 503
 	squadsLoader   *squads.Loader        // optional; nil makes squad endpoints return empty / 404
 
@@ -79,6 +80,13 @@ func newOperator(st *store.Store, pm *mills.PolicyManager, b *mills.Budget, logg
 // runner unset and the council POST endpoints respond 503.
 func (o *operator) withRunner(r *runner.Runner) *operator {
 	o.runner = r
+	return o
+}
+
+// withReconciler attaches the desired-state reconciler used by the manual
+// pipeline start endpoint. The scheduler owns the same pointer.
+func (o *operator) withReconciler(r *mills.Reconciler) *operator {
+	o.reconciler = r
 	return o
 }
 
