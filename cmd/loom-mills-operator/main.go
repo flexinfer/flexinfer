@@ -328,6 +328,7 @@ func run(cfg Config) error {
 	} else {
 		logger.Info("squad routing disabled (no squads loader)")
 	}
+	op.withReconciler(reconciler)
 	scheduler := mills.NewScheduler(reconciler)
 	scheduler.Logger = logger
 	scheduler.KPIRecorder = kpiWriter
@@ -678,10 +679,53 @@ func stagePromptFor(stage string) func(jc pipeline.JobContext) string {
 			title = jc.Item.Title
 		}
 		if stage == "" {
-			return fmt.Sprintf(tmpl, jc.Stage.ID, id, title)
+			return fmt.Sprintf("%s\n\n%s", fmt.Sprintf(tmpl, jc.Stage.ID, id, title), backlogPromptContext(jc.Item))
 		}
-		return fmt.Sprintf(tmpl, id, title)
+		return fmt.Sprintf("%s\n\n%s", fmt.Sprintf(tmpl, id, title), backlogPromptContext(jc.Item))
 	}
+}
+
+func backlogPromptContext(item *store.BacklogItem) string {
+	if item == nil {
+		return "Backlog context: unavailable."
+	}
+	var b strings.Builder
+	b.WriteString("Backlog context:\n")
+	if len(item.Labels) > 0 {
+		fmt.Fprintf(&b, "- Labels: %s\n", strings.Join(item.Labels, ", "))
+	}
+	if item.SpecDoc != "" {
+		fmt.Fprintf(&b, "- Spec: %s\n", item.SpecDoc)
+	}
+	if item.SpecAnchor != "" {
+		fmt.Fprintf(&b, "- Spec anchor: %s\n", item.SpecAnchor)
+	}
+	if len(item.Success.Tests) > 0 {
+		fmt.Fprintf(&b, "- Required tests: %s\n", strings.Join(item.Success.Tests, "; "))
+	}
+	if len(item.Success.Metrics) > 0 {
+		fmt.Fprintf(&b, "- Required metrics: %s\n", strings.Join(item.Success.Metrics, "; "))
+	}
+	if item.Success.ManualCheck != "" {
+		fmt.Fprintf(&b, "- Manual check: %s\n", item.Success.ManualCheck)
+	}
+	if len(item.Slices) > 0 {
+		b.WriteString("- Slice scope:\n")
+		for _, s := range item.Slices {
+			fmt.Fprintf(&b, "  - %s", s.Name)
+			if len(s.Files) > 0 {
+				fmt.Fprintf(&b, " files=%s", strings.Join(s.Files, ", "))
+			}
+			if len(s.Tests) > 0 {
+				fmt.Fprintf(&b, " tests=%s", strings.Join(s.Tests, "; "))
+			}
+			b.WriteByte('\n')
+		}
+	}
+	if len(item.Policy.ProtectedPathsTouched) > 0 {
+		fmt.Fprintf(&b, "- Predeclared protected paths: %s\n", strings.Join(item.Policy.ProtectedPathsTouched, ", "))
+	}
+	return strings.TrimSpace(b.String())
 }
 
 // attachWeaverDelegation wires the routed weaver delegator + research

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/crb2nu/loom/pkg/mills/store"
@@ -78,6 +79,32 @@ type PipelineStarter interface {
 	Start(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error
 }
 
+// StartQueuedResult reports the outcome of a manual start request.
+type StartQueuedResult struct {
+	Run       *store.PipelineRun
+	Decision  string
+	Reason    string
+	Blockers  []string
+	BacklogID string
+}
+
+var (
+	ErrPolicyDisabled   = errors.New("reconciler: policy disabled")
+	ErrBacklogNotQueued = errors.New("reconciler: backlog item is not queued")
+)
+
+// AutonomyBlockedError reports a fail-closed autonomy gate.
+type AutonomyBlockedError struct {
+	Blockers []string
+}
+
+func (e *AutonomyBlockedError) Error() string {
+	if e == nil || len(e.Blockers) == 0 {
+		return "reconciler: autonomy blocked"
+	}
+	return "reconciler: autonomy blocked: " + strings.Join(e.Blockers, "; ")
+}
+
 // AutonomyGateFunc returns whether autonomous pipeline starts are allowed and
 // the human-readable blockers when they are not.
 type AutonomyGateFunc func(ctx context.Context) (ready bool, blockers []string)
@@ -137,7 +164,7 @@ func (r *Reconciler) Tick(ctx context.Context) (TickResult, error) {
 
 	res := TickResult{Inspected: len(queued)}
 	for _, item := range queued {
-		decision, err := r.tryStart(ctx, item, policy)
+		decision, _, err := r.tryStart(ctx, item, policy)
 		if err != nil {
 			r.append(ctx, "reconciler.start_failed", "error", map[string]any{
 				"item": item.ID, "error": err.Error(),
@@ -172,6 +199,54 @@ func (r *Reconciler) Tick(ctx context.Context) (TickResult, error) {
 		"deferred": res.Deferred, "skipped": res.Skipped, "errored": res.Errored,
 		"subrun_started": subStarted, "subrun_errored": subErrs,
 	})
+	return res, nil
+}
+
+// StartQueuedItem starts one queued backlog item immediately through the same
+// dependency, budget, policy, squad-routing, and starter path used by Tick.
+func (r *Reconciler) StartQueuedItem(ctx context.Context, backlogID string) (StartQueuedResult, error) {
+	if r == nil || r.Store == nil {
+		return StartQueuedResult{}, errors.New("reconciler: not configured")
+	}
+	backlogID = strings.TrimSpace(backlogID)
+	if backlogID == "" {
+		return StartQueuedResult{}, errors.New("reconciler: backlog id required")
+	}
+	policy := r.Policy.Current()
+	if !policy.IsEnabled() {
+		return StartQueuedResult{BacklogID: backlogID, Decision: "skipped", Reason: "policy disabled"}, ErrPolicyDisabled
+	}
+	if r.AutonomyGate != nil {
+		ready, blockers := r.AutonomyGate(ctx)
+		if !ready {
+			return StartQueuedResult{
+				BacklogID: backlogID,
+				Decision:  "skipped",
+				Reason:    "autonomy blocked",
+				Blockers:  blockers,
+			}, &AutonomyBlockedError{Blockers: blockers}
+		}
+	}
+	item, err := r.Store.Backlog.Get(ctx, backlogID)
+	if err != nil {
+		return StartQueuedResult{BacklogID: backlogID, Decision: "error"}, err
+	}
+	if item.State != store.BacklogQueued {
+		return StartQueuedResult{
+			BacklogID: backlogID,
+			Decision:  "skipped",
+			Reason:    fmt.Sprintf("state is %s", item.State),
+		}, fmt.Errorf("%w: %s", ErrBacklogNotQueued, item.State)
+	}
+	decision, run, err := r.tryStart(ctx, item, policy)
+	res := StartQueuedResult{Run: run, Decision: decision.String(), BacklogID: backlogID}
+	if err != nil {
+		res.Reason = err.Error()
+		return res, err
+	}
+	if run == nil {
+		res.Reason = "not started"
+	}
 	return res, nil
 }
 
@@ -257,22 +332,35 @@ const (
 	decisionSkipped                // explicitly out of scope (e.g. paused)
 )
 
+func (d startDecision) String() string {
+	switch d {
+	case decisionStarted:
+		return "started"
+	case decisionDeferred:
+		return "deferred"
+	case decisionSkipped:
+		return "skipped"
+	default:
+		return "unknown"
+	}
+}
+
 // tryStart evaluates dependencies + budget + policy and either kicks off a
 // pipeline run (returning decisionStarted) or defers / skips with a reason
 // recorded in the events log.
-func (r *Reconciler) tryStart(ctx context.Context, item *store.BacklogItem, policy *Policy) (startDecision, error) {
+func (r *Reconciler) tryStart(ctx context.Context, item *store.BacklogItem, policy *Policy) (startDecision, *store.PipelineRun, error) {
 	// Dependency check: every backlog item in item.Dependencies must be in
 	// state=merged. Anything else (running, paused, escalated) blocks.
 	if len(item.Dependencies) > 0 {
 		ok, blocker, err := r.dependenciesMet(ctx, item)
 		if err != nil {
-			return decisionDeferred, err
+			return decisionDeferred, nil, err
 		}
 		if !ok {
 			r.append(ctx, "reconciler.deferred", "deps", map[string]any{
 				"item": item.ID, "blocked_by": blocker,
 			})
-			return decisionDeferred, nil
+			return decisionDeferred, nil, nil
 		}
 	}
 
@@ -282,7 +370,7 @@ func (r *Reconciler) tryStart(ctx context.Context, item *store.BacklogItem, poli
 	estimate := item.Budget.MaxCostUSD
 	dec, err := r.Budget.Allow(ctx, TierPipeline, estimate)
 	if err != nil {
-		return decisionDeferred, fmt.Errorf("budget: %w", err)
+		return decisionDeferred, nil, fmt.Errorf("budget: %w", err)
 	}
 	if !dec.Allowed {
 		r.append(ctx, "reconciler.deferred", "budget", map[string]any{
@@ -291,7 +379,7 @@ func (r *Reconciler) tryStart(ctx context.Context, item *store.BacklogItem, poli
 			"spent":     dec.SpentUSD,
 			"remaining": dec.RemainingUSD,
 		})
-		return decisionDeferred, nil
+		return decisionDeferred, nil, nil
 	}
 
 	// Policy gate: items flagged require_human_review without an explicit
@@ -301,7 +389,7 @@ func (r *Reconciler) tryStart(ctx context.Context, item *store.BacklogItem, poli
 		r.append(ctx, "reconciler.skipped", "policy", map[string]any{
 			"item": item.ID, "reason": "require_human_review=true",
 		})
-		return decisionSkipped, nil
+		return decisionSkipped, nil, nil
 	}
 
 	// Instantiate a pipeline run row + transition the backlog item to
@@ -316,13 +404,13 @@ func (r *Reconciler) tryStart(ctx context.Context, item *store.BacklogItem, poli
 		StartedAt: r.now(),
 	}
 	if err := r.Store.Pipeline.PutRun(ctx, run); err != nil {
-		return decisionDeferred, fmt.Errorf("persist run: %w", err)
+		return decisionDeferred, nil, fmt.Errorf("persist run: %w", err)
 	}
 	item.State = store.BacklogRunning
 	if err := r.Store.Backlog.Put(ctx, item); err != nil {
 		// Best-effort rollback so we don't leak a dangling run row.
 		_ = r.Store.DB().Close // no-op; shouldn't actually close
-		return decisionDeferred, fmt.Errorf("transition backlog: %w", err)
+		return decisionDeferred, nil, fmt.Errorf("transition backlog: %w", err)
 	}
 
 	// Squad routing: when configured, consult the router before handing
@@ -337,14 +425,14 @@ func (r *Reconciler) tryStart(ctx context.Context, item *store.BacklogItem, poli
 			r.append(ctx, "reconciler.start_failed", "starter", map[string]any{
 				"item": item.ID, "run": run.ID, "error": err.Error(),
 			})
-			return decisionDeferred, err
+			return decisionDeferred, run, err
 		}
 	}
 
 	r.append(ctx, "reconciler.started", "ok", map[string]any{
 		"item": item.ID, "run": run.ID, "estimate_usd": estimate,
 	})
-	return decisionStarted, nil
+	return decisionStarted, run, nil
 }
 
 // routeToSquad runs the squad router and emits an attribution event
