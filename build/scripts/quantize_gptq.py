@@ -24,7 +24,9 @@ All configuration is read from environment variables set by the controller:
 # another long run silently saves a partial artifact with unquantized experts.
 # v17: Route Qwen3.5/Qwen3.6 MoE configs through the MoE model definition and
 # re-fuse mlp.experts GPTQ tensors into vLLM's fused MoE layout.
-FLEXINFER_SCRIPT_VERSION = "v17"
+# v18: Disable GPTQModel's native CPU pack extension by default; on older
+# CPUs it can SIGILL during post-layer packing before Python can fall back.
+FLEXINFER_SCRIPT_VERSION = "v18"
 import copy
 import gc
 import json
@@ -37,6 +39,12 @@ import sys
 import time
 import threading
 from importlib import metadata as importlib_metadata
+
+# GPTQModel's pack_block_cpu native extension is an optional acceleration path.
+# On older CPUs it can terminate the interpreter with SIGILL, bypassing the
+# Python fallback. Prefer the pure Python/Torch pack path unless explicitly
+# overridden for a known-good host.
+os.environ.setdefault("GPTQMODEL_DISABLE_PACK_EXT", "1")
 
 POLICY_STATE_FILE = ".flexinfer-gptq-policy.json"
 CHECKPOINT_DIR_NAME = ".flexinfer-gptq-cache"

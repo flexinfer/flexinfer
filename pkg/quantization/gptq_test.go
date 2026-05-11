@@ -330,9 +330,16 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
-	t.Run("wrapper script version is v17", func(t *testing.T) {
-		if GPTQScriptVersion != "v17" {
-			t.Errorf("GPTQScriptVersion = %q, want v17 (Qwen MoE expert quantization)", GPTQScriptVersion)
+	t.Run("wrapper script version is v18", func(t *testing.T) {
+		if GPTQScriptVersion != "v18" {
+			t.Errorf("GPTQScriptVersion = %q, want v18 (safe GPTQ CPU packing)", GPTQScriptVersion)
+		}
+	})
+
+	t.Run("wrapper disables native CPU pack extension by default", func(t *testing.T) {
+		script := builder.gptqWrapperScript()
+		if !strings.Contains(script, "GPTQMODEL_DISABLE_PACK_EXT") {
+			t.Error("wrapper should default GPTQMODEL_DISABLE_PACK_EXT for older CPU nodes")
 		}
 	})
 }
