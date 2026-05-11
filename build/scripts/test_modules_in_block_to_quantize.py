@@ -25,6 +25,11 @@ SCRIPT_PATH = Path(__file__).parent / "quantize_gptq.py"
 _HELPER_NAMES = (
     "_indexed_safetensors",
     "_discover_quantized_module_suffixes",
+    "detect_moe_architecture_from_config",
+    "dynamic_config_excludes_moe_experts",
+    "should_require_moe_expert_quantization",
+    "inspect_moe_expert_visibility",
+    "discover_saved_moe_expert_quantization",
     "_modules_in_block_shape_for_layout",
     "write_modules_in_block_to_quantize",
 )
@@ -102,6 +107,28 @@ class _FakeSafeOpen:
 
 def _fake_safe_open(path: str, framework: str = "pt") -> _FakeSafeOpen:
     return _FakeSafeOpen(path, framework=framework)
+
+
+class _FakeParam:
+    shape = (128, 176, 2816)
+
+    def dim(self) -> int:
+        return 3
+
+
+class _FakeMoEModel:
+    module_tree = ["model", "layers", {"self_attn": {}, "experts:moe:?": {}}]
+
+    def named_modules(self) -> list[tuple[str, object]]:
+        return [
+            ("model.layers.0.experts.0.gate_proj", object()),
+            ("model.layers.0.experts.0.up_proj", object()),
+            ("model.layers.0.experts.0.down_proj", object()),
+            ("model.layers.0.self_attn.q_proj", object()),
+        ]
+
+    def named_parameters(self) -> list[tuple[str, object]]:
+        return [("model.layers.0.experts.gate_up_proj", _FakeParam())]
 
 
 class ModulesInBlockToQuantizeTests(unittest.TestCase):
@@ -342,6 +369,56 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
             "modules_in_block_to_quantize",
             config_data.get("quantization_config", {}),
         )
+
+    def test_moe_requirement_auto_enabled_unless_experts_excluded(self) -> None:
+        config = {
+            "text_config": {
+                "model_type": "qwen3_5_text",
+                "num_experts": 128,
+                "num_experts_per_tok": 8,
+            }
+        }
+
+        required, summary, reason = self.helpers[
+            "should_require_moe_expert_quantization"
+        ](config, None)
+        self.assertTrue(required)
+        self.assertTrue(summary["has_moe"])
+        self.assertIn("MoE config", reason)
+
+        required, _, reason = self.helpers["should_require_moe_expert_quantization"](
+            config, {"-:.*experts.*": {}}
+        )
+        self.assertFalse(required)
+        self.assertIn("full precision", reason)
+
+    def test_discovers_saved_moe_expert_quantization_shapes(self) -> None:
+        tensor_keys = [
+            "model.layers.0.experts.0.gate_proj.qweight",
+            "model.layers.0.experts.0.up_proj.qweight",
+            "model.layers.0.experts.0.down_proj.qweight",
+            "model.layers.1.moe.gate_up_proj.qweight",
+            "model.layers.1.moe.down_proj.qweight",
+        ]
+        self._write_fake_artifact(tensor_keys)
+
+        check = self.helpers["discover_saved_moe_expert_quantization"](
+            str(self.save_dir)
+        )
+
+        self.assertTrue(check["has_moe_expert_qweights"])
+        self.assertEqual(
+            check["vllm_modules"], ["moe.down_proj", "moe.gate_up_proj"]
+        )
+        self.assertIn("experts.0.gate_proj", check["hf_native_modules"])
+
+    def test_inspects_moe_expert_visibility(self) -> None:
+        visibility = self.helpers["inspect_moe_expert_visibility"](_FakeMoEModel())
+
+        self.assertTrue(visibility["module_tree_has_moe"])
+        self.assertEqual(visibility["defused_expert_module_count"], 3)
+        self.assertEqual(visibility["expert_gate_module_count"], 1)
+        self.assertEqual(visibility["fused_3d_expert_parameter_count"], 1)
 
 
 if __name__ == "__main__":

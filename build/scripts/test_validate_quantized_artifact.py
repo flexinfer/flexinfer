@@ -376,6 +376,130 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
             result["checks"]["gdn_gptq_policy"]["quantized_gdn_modules"], {}
         )
 
+    def test_qwen36_moe_expert_gate_fails_when_expert_qweights_missing(
+        self,
+    ) -> None:
+        self._write_json(
+            "config.json",
+            {
+                "text_config": {
+                    "model_type": "qwen3_5_text",
+                    "architectures": ["Qwen3_5ForConditionalGeneration"],
+                    "num_hidden_layers": 64,
+                    "vocab_size": 248320,
+                    "num_experts": 128,
+                    "num_experts_per_tok": 8,
+                },
+                "quantization_config": {
+                    "modules_in_block_to_quantize": [
+                        "self_attn.q_proj",
+                        "self_attn.k_proj",
+                        "self_attn.v_proj",
+                        "self_attn.o_proj",
+                    ]
+                },
+            },
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.3.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.3.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(
+            self.artifact, requested_layout="vllm-gptq"
+        )
+
+        self.assertFalse(result["ok"], result)
+        self.assertTrue(
+            any("Qwen MoE expert quantization gate failed" in e for e in result["errors"]),
+            result["errors"],
+        )
+        self.assertEqual(
+            result["checks"]["qwen_moe_expert_quantization"]["missing_modules"],
+            ["moe.gate_up_proj", "moe.down_proj"],
+        )
+
+    def test_qwen36_moe_expert_gate_passes_with_fused_expert_qweights(self) -> None:
+        self._write_json(
+            "config.json",
+            {
+                "model_type": "qwen3_5",
+                "architectures": ["Qwen3_5ForConditionalGeneration"],
+                "num_hidden_layers": 64,
+                "vocab_size": 248320,
+                "num_local_experts": 128,
+                "quantization_config": {
+                    "modules_in_block_to_quantize": [
+                        "moe.gate_up_proj",
+                        "moe.down_proj",
+                        "self_attn.q_proj",
+                    ]
+                },
+            },
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.0.moe.gate_up_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.moe.down_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.3.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.3.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(
+            self.artifact, requested_layout="vllm-gptq"
+        )
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["family"], "qwen36-27b")
+        self.assertEqual(
+            result["checks"]["qwen_moe_expert_quantization"]["present_modules"],
+            {"moe.gate_up_proj": 1, "moe.down_proj": 1},
+        )
+
+    def test_qwen35_moe_expert_gate_runs_without_registered_variant(self) -> None:
+        self._write_json(
+            "config.json",
+            {
+                "model_type": "qwen3_5",
+                "architectures": ["Qwen3_5ForConditionalGeneration"],
+                "num_hidden_layers": 32,
+                "vocab_size": 151936,
+                "num_experts": 64,
+                "quantization_config": {
+                    "modules_in_block_to_quantize": ["self_attn.q_proj"]
+                },
+            },
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.0.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(
+            self.artifact, requested_layout="vllm-gptq"
+        )
+
+        self.assertFalse(result["ok"], result)
+        self.assertEqual(result["family"], "auto")
+        self.assertIn("qwen_moe_expert_quantization", result["checks"])
+
     def test_qwen35_metadata_without_qwen36_shape_does_not_autodetect_qwen36(
         self,
     ) -> None:
