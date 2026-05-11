@@ -118,6 +118,10 @@ spec:
     # same math; 48 buys 8 GiB more for the GDN-FP working set without
     # overcommitting the node.
     maxMemoryGB: 48
+    # Qwen3.6 lm_head quantization needs ~4.7 GiB of temporary VRAM after the
+    # decoder stack is already packed. The default 0.80 cap OOMs there even
+    # though physical VRAM is still available.
+    gpuMemoryFraction: "0.95"
     timeoutSeconds: 28800  # 8 h upper bound; 27B GPTQ on gfx1100 is ~3-6 h
     nodeSelector:
       flexinfer.ai/gpu.arch: gfx1100
