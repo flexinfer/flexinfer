@@ -16,7 +16,7 @@ data:
     servers:
       # === API-ONLY SERVERS ===
       - name: tavily
-        url: ws://mcp-tavily.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-tavily.loom-hub.svc.cluster.local:8080/ws
         categories: [search, docs]
         description: AI-powered web search and content extraction
         timeout: 60
@@ -27,7 +27,7 @@ data:
           - search_context
 
       - name: github
-        url: ws://mcp-github.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-github.loom-hub.svc.cluster.local:8080/ws
         categories: [devops, scm]
         description: GitHub repository operations and management
         timeout: 60
@@ -45,7 +45,7 @@ data:
           - get_file_contents
 
       - name: gitlab
-        url: ws://mcp-gitlab.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-gitlab.loom-hub.svc.cluster.local:8080/ws
         categories: [devops, scm]
         description: GitLab repository operations and management
         timeout: 60
@@ -81,7 +81,7 @@ data:
           - poll_pipeline
 
       - name: cloudflare
-        url: ws://mcp-cloudflare.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-cloudflare.loom-hub.svc.cluster.local:8080/ws
         categories: [networking, operations]
         description: Cloudflare API utilities (DNS, zones, tunnels, cache)
         timeout: 60
@@ -96,7 +96,7 @@ data:
           - cf_purge_cache
 
       - name: context7
-        url: ws://mcp-context7.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-context7.loom-hub.svc.cluster.local:8080/ws
         categories: [docs]
         description: Library documentation retrieval
         timeout: 90
@@ -105,7 +105,7 @@ data:
           - get-library-docs
 
       - name: youtube
-        url: ws://mcp-youtube.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-youtube.loom-hub.svc.cluster.local:8080/ws
         categories: [media, documentation]
         description: YouTube video transcript extraction
         timeout: 60
@@ -114,7 +114,7 @@ data:
           - get_video_info
 
       - name: zep
-        url: ws://mcp-zep.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-zep.loom-hub.svc.cluster.local:8080/ws
         categories: [memory]
         description: Zep Cloud memory (sessions/messages)
         timeout: 60
@@ -124,7 +124,7 @@ data:
           - zep_get_messages
 
       - name: morph_fast_apply
-        url: ws://mcp-morph-fast-apply.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-morph-fast-apply.loom-hub.svc.cluster.local:8080/ws
         categories: [ai, code-editing]
         description: Apply Morph's fast code edit patches
         timeout: 90
@@ -133,7 +133,7 @@ data:
           - morph_edit_file
 
       - name: morph_embeddings
-        url: ws://mcp-morph-embeddings.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-morph-embeddings.loom-hub.svc.cluster.local:8080/ws
         categories: [ai, embeddings]
         description: Generate embeddings and Qdrant vector search
         timeout: 120
@@ -143,7 +143,7 @@ data:
           - morph_embeddings_search
 
       - name: sequentialthinking
-        url: ws://mcp-sequentialthinking.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-sequentialthinking.loom-hub.svc.cluster.local:8080/ws
         categories: [reasoning, planning]
         description: Dynamic problem-solving through sequential thoughts
         timeout: 60
@@ -159,14 +159,14 @@ data:
           - summarize_chain
 
       - name: time
-        url: ws://mcp-time.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-time.loom-hub.svc.cluster.local:8080/ws
         categories: [utilities]
         description: Timezone conversion and time operations
         timeout: 30
 
       # === NETWORK-ACCESSIBLE SERVERS ===
       - name: qdrant
-        url: ws://mcp-qdrant.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-qdrant.loom-hub.svc.cluster.local:8080/ws
         categories: [database, vector]
         description: Qdrant vector database operations
         timeout: 60
@@ -181,7 +181,7 @@ data:
           - qdrant_delete
 
       - name: prometheus
-        url: ws://mcp-prometheus.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-prometheus.loom-hub.svc.cluster.local:8080/ws
         categories: [monitoring, observability]
         description: Query and analyze Prometheus metrics
         timeout: 60
@@ -197,7 +197,7 @@ data:
           - runtime_info
 
       - name: loki
-        url: ws://mcp-loki.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-loki.loom-hub.svc.cluster.local:8080/ws
         categories: [logging, observability]
         description: Query and analyze Loki log aggregation
         timeout: 60
@@ -213,7 +213,7 @@ data:
           - loki_ready
 
       - name: grafana
-        url: ws://mcp-grafana.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-grafana.loom-hub.svc.cluster.local:8080/ws
         categories: [monitoring, dashboards]
         description: Grafana dashboard search and retrieval
         timeout: 60
@@ -229,7 +229,7 @@ data:
           - grafana_list_folders
 
       - name: alertmanager
-        url: ws://mcp-alertmanager.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-alertmanager.loom-hub.svc.cluster.local:8080/ws
         categories: [monitoring, alerting]
         description: Alertmanager alert and silence management
         timeout: 60
@@ -241,7 +241,7 @@ data:
           - am_status
 
       - name: postgres
-        url: ws://mcp-postgres.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-postgres.loom-hub.svc.cluster.local:8080/ws
         categories: [database]
         description: PostgreSQL database inspection and queries
         timeout: 60
@@ -255,7 +255,7 @@ data:
           - pg_table_stats
 
       - name: codebase_memory
-        url: ws://mcp-codebase-memory.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-codebase-memory.loom-hub.svc.cluster.local:8080/ws
         categories: [dev, code, search]
         description: Semantic codebase indexing and search
         timeout: 180
@@ -275,7 +275,7 @@ data:
           - codebase_module_graph
 
       - name: agent_context
-        url: ws://mcp-agent-context.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-agent-context.loom-hub.svc.cluster.local:8080/ws
         categories: [dev, context, memory]
         description: Agent context management and cross-agent coordination
         timeout: 120
@@ -339,7 +339,7 @@ data:
 
       # === CUSTOM SERVERS ===
       - name: weaver
-        url: ws://mcp-weaver.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-weaver.loom-hub.svc.cluster.local:8080/ws
         categories: [ai, orchestration, operations]
         description: MCP weaver for local-model tool orchestration via FlexInfer
         timeout: 120
@@ -356,7 +356,7 @@ data:
 
       # === IN-CLUSTER K8S SERVERS ===
       - name: k8s_apps_k3s
-        url: ws://mcp-k8s-apps-k3s.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-k8s-apps-k3s.loom-hub.svc.cluster.local:8080/ws
         categories: [kubernetes, operations]
         description: Kubernetes operations for the k3s apps cluster
         timeout: 90
@@ -371,7 +371,7 @@ data:
           - k8s_listContexts
 
       - name: longhorn_k3s
-        url: ws://mcp-longhorn-k3s.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-longhorn-k3s.loom-hub.svc.cluster.local:8080/ws
         categories: [storage, kubernetes, operations]
         description: Longhorn storage operations on k3s cluster
         timeout: 90
@@ -383,7 +383,7 @@ data:
           - k8s_apply
 
       - name: flux
-        url: ws://mcp-flux.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-flux.loom-hub.svc.cluster.local:8080/ws
         categories: [gitops, kubernetes]
         description: Flux CD GitOps operations
         timeout: 120
@@ -399,7 +399,7 @@ data:
           - flux_probe
 
       - name: helm
-        url: ws://mcp-helm.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-helm.loom-hub.svc.cluster.local:8080/ws
         categories: [kubernetes, deployment]
         description: Helm chart management
         timeout: 90
@@ -415,7 +415,7 @@ data:
 
       # === SERVERS MIGRATED FROM MCP-HUB ===
       - name: memory
-        url: ws://mcp-memory.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-memory.loom-hub.svc.cluster.local:8080/ws
         categories: [memory, knowledge-graph]
         description: Knowledge graph memory for persistent context
         timeout: 60
@@ -431,7 +431,7 @@ data:
           - open_nodes
 
       - name: git
-        url: ws://mcp-git.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-git.loom-hub.svc.cluster.local:8080/ws
         categories: [dev, scm]
         description: Local Git repository operations
         timeout: 60
@@ -449,7 +449,7 @@ data:
           - git_show
 
       - name: git_worktree
-        url: ws://mcp-git-worktree.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-git-worktree.loom-hub.svc.cluster.local:8080/ws
         categories: [dev, scm]
         description: Manage git worktrees for parallel agent work
         timeout: 60
@@ -460,7 +460,7 @@ data:
           - git_worktree_prune
 
       - name: docker
-        url: ws://mcp-docker.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-docker.loom-hub.svc.cluster.local:8080/ws
         categories: [containers, operations]
         description: Docker CLI operations (containers, images, logs)
         timeout: 60
@@ -474,7 +474,7 @@ data:
           - docker_exec
 
       - name: redis
-        url: ws://mcp-redis.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-redis.loom-hub.svc.cluster.local:8080/ws
         categories: [database, cache]
         description: Redis cache inspection and monitoring
         timeout: 60
@@ -491,7 +491,7 @@ data:
           - redis_config_get
 
       - name: neo4j
-        url: ws://mcp-neo4j.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-neo4j.loom-hub.svc.cluster.local:8080/ws
         categories: [database, graph]
         description: Neo4j graph database queries and schema inspection
         timeout: 60
@@ -508,7 +508,7 @@ data:
           - neo4j_databases
 
       - name: minio
-        url: ws://mcp-minio.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-minio.loom-hub.svc.cluster.local:8080/ws
         categories: [storage, s3]
         description: MinIO/S3 object storage operations
         timeout: 60
@@ -521,7 +521,7 @@ data:
           - minio_presign_put
 
       - name: server_mgmt
-        url: ws://mcp-server-mgmt.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-server-mgmt.loom-hub.svc.cluster.local:8080/ws
         categories: [operations, infrastructure]
         description: SSH-based server management
         timeout: 90
@@ -533,7 +533,7 @@ data:
           - server_execSafe
 
       - name: asus_router
-        url: ws://mcp-asus-router.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-asus-router.loom-hub.svc.cluster.local:8080/ws
         categories: [networking, operations]
         description: ASUS router management via SSH
         timeout: 60
@@ -547,7 +547,7 @@ data:
           - router_wifiStatus
 
       - name: k8s_harvester_infra
-        url: ws://mcp-k8s-harvester-infra.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-k8s-harvester-infra.loom-hub.svc.cluster.local:8080/ws
         categories: [kubernetes, infrastructure]
         description: Kubernetes operations for the Harvester (RKE2) cluster
         timeout: 90
@@ -562,7 +562,7 @@ data:
           - k8s_listContexts
 
       - name: ops_mcp
-        url: ws://mcp-ops-mcp.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-ops-mcp.loom-hub.svc.cluster.local:8080/ws
         categories: [operations, infrastructure]
         description: Ops MCP server for k3s and Harvester operations
         timeout: 90
@@ -579,7 +579,7 @@ data:
           - run_repo_script
 
       - name: devbox
-        url: ws://mcp-devbox.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-devbox.loom-hub.svc.cluster.local:8080/ws
         categories: [sandbox, dev]
         description: Project-aware dev sandbox executor
         timeout: 120
@@ -597,7 +597,7 @@ data:
           - devbox_summary
 
       - name: itchio
-        url: ws://mcp-itchio.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-itchio.loom-hub.svc.cluster.local:8080/ws
         categories: [distribution, gaming]
         description: itch.io distribution management via Butler CLI
         timeout: 60
@@ -607,7 +607,7 @@ data:
           - itchio_version_history
 
       - name: release
-        url: ws://mcp-release.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-release.loom-hub.svc.cluster.local:8080/ws
         categories: [ci, deployment]
         description: Multi-channel release orchestration
         timeout: 60
@@ -617,7 +617,7 @@ data:
           - release_status
 
       - name: substack
-        url: ws://mcp-substack.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-substack.loom-hub.svc.cluster.local:8080/ws
         categories: [publishing, content]
         description: Substack publication management
         timeout: 60
@@ -630,7 +630,7 @@ data:
           - substack_get_post
 
       - name: godot_debug
-        url: ws://mcp-godot-debug.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-godot-debug.loom-hub.svc.cluster.local:8080/ws
         categories: [gamedev, debug]
         description: Godot engine debugging and inspection
         timeout: 60
@@ -646,7 +646,7 @@ data:
           - godot_logs_stream
 
       - name: jira
-        url: ws://mcp-jira.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-jira.loom-hub.svc.cluster.local:8080/ws
         categories: [project-management, issues]
         description: Atlassian Jira issue tracking
         timeout: 60
@@ -658,7 +658,7 @@ data:
           - jira_transition_issue
 
       - name: linkedin
-        url: ws://mcp-linkedin.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-linkedin.loom-hub.svc.cluster.local:8080/ws
         categories: [social, professional]
         description: LinkedIn personal account management
         timeout: 60
@@ -672,7 +672,7 @@ data:
           - linkedin_send_message
 
       - name: google-workspace
-        url: ws://mcp-google-workspace.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-google-workspace.loom-hub.svc.cluster.local:8080/ws
         categories: [productivity, google, workspace]
         description: Google Workspace mailbox, calendar, docs, and drive metadata
         timeout: 60
@@ -688,7 +688,7 @@ data:
           - google_workspace_drive_get_file
 
       - name: jobsearch
-        url: ws://mcp-jobsearch.loom-hub.svc.cluster.local:8080
+        url: ws://mcp-jobsearch.loom-hub.svc.cluster.local:8080/ws
         categories: [career, search]
         description: JobSearch backend API integration
         timeout: 60
