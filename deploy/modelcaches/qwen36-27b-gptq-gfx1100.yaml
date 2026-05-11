@@ -1,4 +1,4 @@
-# Qwen3.6-27B (UPSTREAM BASE) → Abliterate → GPTQ INT4 on gfx1100.
+# Qwen3.6-27B (UPSTREAM BASE) → Abliterate → GPTQ INT4 → gfx1100 serving tag.
 #
 # Critical reframe (verified 2026-05-03): "Qwen3.6" is just Qwen3.5 modeling
 # code with vocab_size=248320 and head_dim=256. config.json says
@@ -30,11 +30,10 @@
 #   GPTQ output ~14 GB + checkpoint cache ~2 GB → 90 Gi minimum.
 #   Use 120Gi for safety; matches Qwen3.5-27B opus distill envelope.
 #
-# Node placement: cblevins-5930k chosen so the quantize cycle (8-14 hr)
-# does not preempt gemma4-31b-gptq (priority 250) or qwen3-30b-a3b (200)
-# on cblevins-7900xtx. FluxPony imagegen on 5930k is on-demand and idle
-# most of the time — quant runs cleanly there. After publish to OCI, the
-# Model CR pulls the artifact onto cblevins-7900xtx for serving.
+# Node placement: download and abliteration stay on cblevins-5930k/gfx1100.
+# GPTQ runs on cblevins-radeonvii/gfx906 for host-memory headroom during the
+# full lm_head-inclusive solve/pack. After publish to OCI, the Model CR pulls
+# the artifact onto cblevins-7900xtx for gfx1100 serving.
 ---
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
@@ -108,24 +107,27 @@ spec:
     #     no longer needs to fit in physical memory.
     dynamicExclusion: "gdn"
     useGPU: true
-    # GPTQ uses the same gfx1100 driver reservation path as abliteration.
+    # Run GPTQ on the Radeon VII host for memory headroom. The generated GPTQ
+    # artifact is backend/layout portable and is still published to the
+    # gfx1100 serving tag below.
     # 2026-05-08: 40 -> 56 to give the dynamicExclusion: gdn cycle headroom
     # for the 48 GDN linear-attn FP submodules; 56 -> 48 because cblevins-5930k
     # only has ~54.7 GiB allocatable (64 GiB - kernel/system - 8 GiB hugepages),
     # AND ROCm/HIP GPU driver memory (~15-20 GiB) lives outside the cgroup.
-    # 48 GiB cgroup + ~15 GiB GPU overhead = ~63 GiB total physical, fits the
-    # 64 GiB node with ~1 GiB OS headroom. The prior 40-GiB cycle worked the
-    # same math; 48 buys 8 GiB more for the GDN-FP working set without
-    # overcommitting the node.
-    maxMemoryGB: 48
+    # 2026-05-11: after direct lm_head tensor handoff, the 5930k canary
+    # completed all 64 decoder layers and freed GPU memory, then exceeded the
+    # 64-GiB host during the stock GPTQ lm_head CPU solve/pack. Radeon VII has
+    # 128 GiB host RAM available, so use the gfx906 quantizer to finish the full
+    # lm_head-inclusive quant while preserving the gfx1100 publish target.
+    maxMemoryGB: 96
     # Qwen3.6 lm_head quantization needs ~4.7 GiB of temporary VRAM after the
     # decoder stack is already packed. The default 0.80 cap OOMs there even
     # though physical VRAM is still available.
     gpuMemoryFraction: "0.95"
     timeoutSeconds: 28800  # 8 h upper bound; 27B GPTQ on gfx1100 is ~3-6 h
     nodeSelector:
-      flexinfer.ai/gpu.arch: gfx1100
-      kubernetes.io/hostname: cblevins-5930k
+      flexinfer.ai/gpu.arch: gfx906
+      kubernetes.io/hostname: cblevins-radeonvii
     calibration:
       maxSeqLen: 2048
       maxSamples: 128
