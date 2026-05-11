@@ -20,7 +20,9 @@ All configuration is read from environment variables set by the controller:
 # quantize_config.json and config.json["quantization_config"] after save so
 # publish-validate (build/scripts/validate_quantized_artifact.py:763) accepts
 # the artifact.
-FLEXINFER_SCRIPT_VERSION = "v15"
+# v16: Add MoE expert visibility gates so Qwen3.5/Qwen3.6 jobs fail before
+# another long run silently saves a partial artifact with unquantized experts.
+FLEXINFER_SCRIPT_VERSION = "v16"
 import copy
 import gc
 import json
@@ -334,6 +336,150 @@ def _discover_quantized_module_suffixes(save_dir):
             suffixes.add(match.group("suffix"))
 
     return sorted(suffixes)
+
+
+def detect_moe_architecture_from_config(config):
+    """Return MoE indicators from root/text config metadata."""
+    summary = {"has_moe": False, "indicators": {}}
+    if not isinstance(config, dict):
+        return summary
+
+    scopes = [("root", config)]
+    text_config = config.get("text_config")
+    if isinstance(text_config, dict):
+        scopes.append(("text_config", text_config))
+
+    indicators = {}
+    for scope_name, scope in scopes:
+        for key in (
+            "num_experts",
+            "num_local_experts",
+            "n_routed_experts",
+            "num_experts_per_tok",
+            "moe_intermediate_size",
+        ):
+            value = scope.get(key)
+            if isinstance(value, int) and value > 1:
+                indicators[f"{scope_name}.{key}"] = value
+        if scope.get("enable_moe_block") is True:
+            indicators[f"{scope_name}.enable_moe_block"] = True
+        layer_types = scope.get("layer_types")
+        if isinstance(layer_types, list):
+            moe_layers = sum(1 for item in layer_types if "moe" in str(item).lower())
+            if moe_layers > 0:
+                indicators[f"{scope_name}.layer_types.moe"] = moe_layers
+
+    summary["has_moe"] = bool(indicators)
+    summary["indicators"] = indicators
+    return summary
+
+
+def dynamic_config_excludes_moe_experts(dynamic_config):
+    if not isinstance(dynamic_config, dict):
+        return False
+    patterns = " ".join(str(pattern).lower() for pattern in dynamic_config)
+    return "experts" in patterns or "block_sparse_moe" in patterns
+
+
+def should_require_moe_expert_quantization(config, dynamic_config):
+    """Decide whether this run must expose and save quantized expert tensors."""
+    mode = os.environ.get("GPTQ_REQUIRE_MOE_EXPERT_QUANTIZATION", "auto").strip().lower()
+    moe_summary = detect_moe_architecture_from_config(config)
+
+    if mode in ("0", "false", "no", "off"):
+        return False, moe_summary, "disabled by GPTQ_REQUIRE_MOE_EXPERT_QUANTIZATION"
+    if not moe_summary["has_moe"]:
+        return False, moe_summary, "config does not advertise MoE"
+    if mode in ("1", "true", "yes", "on"):
+        return True, moe_summary, "forced by GPTQ_REQUIRE_MOE_EXPERT_QUANTIZATION"
+    if dynamic_config_excludes_moe_experts(dynamic_config):
+        return False, moe_summary, "dynamic exclusion keeps experts full precision"
+    return True, moe_summary, "MoE config without expert exclusion"
+
+
+def inspect_moe_expert_visibility(model):
+    """Summarize whether GPTQ can see routed expert modules after load/defuse."""
+    module_names = []
+    for name, _module in model.named_modules():
+        module_names.append(name)
+
+    defused_expert_modules = [
+        name
+        for name in module_names
+        if re.search(r"(?:^|\.)experts\.\d+\.(gate_proj|up_proj|down_proj)$", name)
+    ]
+    expert_gate_modules = [
+        name for name in defused_expert_modules if name.endswith(".gate_proj")
+    ]
+
+    fused_3d_params = []
+    for name, param in model.named_parameters():
+        dim = param.dim() if hasattr(param, "dim") else None
+        lname = name.lower()
+        if dim == 3 and (
+            "expert" in lname
+            or lname.endswith("gate_up_proj")
+            or lname.endswith("down_proj")
+        ):
+            fused_3d_params.append({"name": name, "shape": list(param.shape)})
+
+    cls = type(model)
+    module_tree = getattr(cls, "module_tree", None)
+    module_tree_text = repr(module_tree).lower()
+    module_tree_has_moe = (
+        "experts:moe" in module_tree_text
+        or "experts" in module_tree_text
+        or "moe" in module_tree_text
+    )
+
+    return {
+        "model_class": cls.__name__,
+        "module_tree_has_moe": module_tree_has_moe,
+        "module_tree_entry_count": len(module_tree) if isinstance(module_tree, list) else 0,
+        "defused_expert_module_count": len(defused_expert_modules),
+        "expert_gate_module_count": len(expert_gate_modules),
+        "fused_3d_expert_parameter_count": len(fused_3d_params),
+        "sample_defused_expert_modules": defused_expert_modules[:8],
+        "sample_fused_3d_expert_parameters": fused_3d_params[:8],
+    }
+
+
+def assert_moe_expert_visibility(visibility, reason):
+    if visibility.get("defused_expert_module_count", 0) <= 0:
+        raise RuntimeError(
+            "MoE expert visibility gate failed: no defused expert nn.Linear "
+            f"modules are visible after load/defuse ({reason})"
+        )
+    if not visibility.get("module_tree_has_moe"):
+        raise RuntimeError(
+            "MoE expert visibility gate failed: selected GPTQModel module_tree "
+            f"does not include experts/MoE entries ({reason})"
+        )
+
+
+def discover_saved_moe_expert_quantization(save_dir):
+    modules = _discover_quantized_module_suffixes(save_dir)
+    hf_expert_re = re.compile(
+        r"(?:^|\.)experts\.\d+\.(?:gate_proj|up_proj|down_proj)$"
+    )
+    vllm_modules = [m for m in modules if m in ("moe.gate_up_proj", "moe.down_proj")]
+    hf_native_modules = [m for m in modules if hf_expert_re.search(m)]
+    return {
+        "has_moe_expert_qweights": bool(vllm_modules or hf_native_modules),
+        "vllm_modules": vllm_modules,
+        "hf_native_modules": hf_native_modules[:24],
+        "all_quantized_modules": modules,
+    }
+
+
+def assert_saved_moe_expert_quantization(save_dir, reason):
+    check = discover_saved_moe_expert_quantization(save_dir)
+    if check["has_moe_expert_qweights"]:
+        return check
+    raise RuntimeError(
+        "MoE expert quantization gate failed: saved artifact has no expert "
+        f"qweight tensors ({reason}); modules={check['all_quantized_modules'][:24]}"
+    )
 
 
 def _modules_in_block_shape_for_layout(modules, layout):
@@ -2696,6 +2842,24 @@ else:
         else:
             print("Dynamic exclusion disabled — using model definition defaults")
 
+require_moe_expert_quantization, moe_config_summary, moe_requirement_reason = (
+    should_require_moe_expert_quantization(cfg, dynamic_config)
+)
+if moe_config_summary["has_moe"]:
+    print(
+        "MoE metadata: "
+        f"{moe_config_summary['indicators']} "
+        f"(expert quantization required={require_moe_expert_quantization}; "
+        f"reason={moe_requirement_reason})"
+    )
+    emit_progress(
+        "moe_expert_quantization_requirement",
+        phase="quantizing",
+        required=require_moe_expert_quantization,
+        reason=moe_requirement_reason,
+        indicators=moe_config_summary["indicators"],
+    )
+
 # ── Memory management ──────────────────────────────────────────────────
 import torch
 from datasets import load_dataset
@@ -3258,6 +3422,21 @@ if _has_defused_experts:
 else:
     print("INFO: No MoE experts to defuse")
 
+moe_expert_visibility = inspect_moe_expert_visibility(model)
+if moe_config_summary["has_moe"]:
+    print(f"MoE expert visibility: {moe_expert_visibility}")
+    emit_progress(
+        "moe_expert_visibility",
+        phase="quantizing",
+        required=require_moe_expert_quantization,
+        **moe_expert_visibility,
+    )
+    if require_moe_expert_quantization:
+        assert_moe_expert_visibility(
+            moe_expert_visibility,
+            moe_requirement_reason,
+        )
+
 # ── Calibration dataset ────────────────────────────────────────────────
 examples = load_cached_examples(model_dir)
 if examples is None:
@@ -3505,6 +3684,19 @@ for shard_name in shard_files:
         f"Verified {shard_name}: {fsize} bytes, {len([k for k in hdr if k != '__metadata__'])} tensors OK"
     )
 
+if require_moe_expert_quantization:
+    moe_saved_check = assert_saved_moe_expert_quantization(
+        save_tmp,
+        "post-save before vLLM re-fuse",
+    )
+    print(f"MoE expert save check: {moe_saved_check}")
+    emit_progress(
+        "moe_expert_save_check",
+        phase="saving",
+        layout="hf-native-or-pre-refuse",
+        **moe_saved_check,
+    )
+
 artifact_overrides = artifact_overrides_for_policy(policy)
 preserve_native_output = env_bool(
     "GPTQ_PRESERVE_NATIVE_OUTPUT",
@@ -3548,9 +3740,15 @@ if refuse_moe_expert_tensors_enabled:
         percent=96.0,
         detail="re-fusing MoE expert tensors",
     )
-    if refuse_moe_expert_tensors(save_tmp):
+    moe_refuse_done = refuse_moe_expert_tensors(save_tmp)
+    if moe_refuse_done:
         emit_progress(
             "progress", phase="saving", percent=97.0, detail="MoE re-fuse complete"
+        )
+    elif require_moe_expert_quantization:
+        raise RuntimeError(
+            "MoE expert quantization gate failed: vLLM re-fuse did not find "
+            "per-expert GPTQ tensors"
         )
 else:
     print("Skipping MoE re-fuse; leaving GPTQ output in HF-native layout")
@@ -3572,6 +3770,19 @@ try:
     )
 except Exception as exc:  # noqa: BLE001 - never fail the job over metadata.
     print(f"WARN: write_modules_in_block_to_quantize raised: {exc}")
+
+if require_moe_expert_quantization:
+    final_moe_saved_check = assert_saved_moe_expert_quantization(
+        save_tmp,
+        "final promoted layout",
+    )
+    print(f"Final MoE expert artifact check: {final_moe_saved_check}")
+    emit_progress(
+        "moe_expert_final_check",
+        phase="saving",
+        layout="vllm-gptq" if refuse_moe_expert_tensors_enabled else "hf-native",
+        **final_moe_saved_check,
+    )
 
 if should_apply_gemma4_moe_hybrid(cfg):
     emit_progress(

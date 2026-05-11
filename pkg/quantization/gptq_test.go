@@ -330,9 +330,9 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
-	t.Run("wrapper script version is v15", func(t *testing.T) {
-		if GPTQScriptVersion != "v15" {
-			t.Errorf("GPTQScriptVersion = %q, want v15 (module metadata writer)", GPTQScriptVersion)
+	t.Run("wrapper script version is v16", func(t *testing.T) {
+		if GPTQScriptVersion != "v16" {
+			t.Errorf("GPTQScriptVersion = %q, want v16 (MoE expert visibility gate)", GPTQScriptVersion)
 		}
 	})
 }

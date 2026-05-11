@@ -60,6 +60,8 @@ _GEMMA4_VLLM_FLAT_MODULES = frozenset(
 
 _QWEN35_VLLM_FLAT_MODULES = frozenset(
     (
+        "moe.gate_up_proj",
+        "moe.down_proj",
         "self_attn.q_proj",
         "self_attn.k_proj",
         "self_attn.v_proj",
@@ -466,6 +468,106 @@ def _collect_quantized_module_counts(tensor_keys: Sequence[str]) -> dict[str, in
     return dict(sorted(counts.items()))
 
 
+def _detect_moe_metadata(config: dict[str, Any] | None) -> dict[str, Any]:
+    check: dict[str, Any] = {"has_moe": False, "indicators": {}}
+    if not isinstance(config, dict):
+        return check
+
+    scopes: list[tuple[str, dict[str, Any]]] = [("root", config)]
+    text_config = config.get("text_config")
+    if isinstance(text_config, dict):
+        scopes.append(("text_config", text_config))
+
+    indicators: dict[str, Any] = {}
+    for scope_name, scope in scopes:
+        for key in (
+            "num_experts",
+            "num_local_experts",
+            "n_routed_experts",
+            "num_experts_per_tok",
+            "moe_intermediate_size",
+        ):
+            value = scope.get(key)
+            if isinstance(value, int) and value > 1:
+                indicators[f"{scope_name}.{key}"] = value
+        if scope.get("enable_moe_block") is True:
+            indicators[f"{scope_name}.enable_moe_block"] = True
+
+        layer_types = scope.get("layer_types")
+        if isinstance(layer_types, list):
+            moe_layers = sum(1 for item in layer_types if "moe" in str(item).lower())
+            if moe_layers > 0:
+                indicators[f"{scope_name}.layer_types.moe"] = moe_layers
+
+    check["has_moe"] = bool(indicators)
+    check["indicators"] = indicators
+    return check
+
+
+def _validate_qwen_moe_expert_quantization(
+    resolved_layout: str,
+    resolved_family: str,
+    config: dict[str, Any] | None,
+    quantized_module_counts: dict[str, int],
+) -> tuple[dict[str, Any] | None, str | None]:
+    hint_blob = " ".join(_collect_family_hints(config, None, None))
+    has_qwen_hint = any(
+        hint in hint_blob for hint in ("qwen3_5", "qwen3.5", "qwen35", "qwen36")
+    )
+    if not resolved_family.startswith("qwen") and not has_qwen_hint:
+        return None, None
+
+    moe_metadata = _detect_moe_metadata(config)
+    if not moe_metadata["has_moe"]:
+        return None, None
+
+    if resolved_layout == "vllm-gptq":
+        required_modules = ("moe.gate_up_proj", "moe.down_proj")
+        present_modules = {
+            module: quantized_module_counts[module]
+            for module in required_modules
+            if module in quantized_module_counts
+        }
+    else:
+        required_modules = (
+            "experts.*.gate_proj",
+            "experts.*.up_proj",
+            "experts.*.down_proj",
+        )
+        expert_re = re.compile(
+            r"(?:^|\.)experts\.\d+\.(?:gate_proj|up_proj|down_proj)$"
+        )
+        present_modules = {
+            module: count
+            for module, count in quantized_module_counts.items()
+            if expert_re.search(module)
+        }
+
+    missing_modules = [
+        module for module in required_modules if module not in present_modules
+    ]
+    if resolved_layout != "vllm-gptq" and present_modules:
+        missing_modules = []
+
+    check = {
+        "enabled": True,
+        "policy": "qwen-moe-experts-must-be-quantized",
+        "severity": "error",
+        "metadata": moe_metadata,
+        "required_modules": list(required_modules),
+        "present_modules": present_modules,
+        "missing_modules": missing_modules,
+    }
+    if not missing_modules:
+        return check, None
+
+    return (
+        check,
+        "Qwen MoE expert quantization gate failed: missing qweight tensors for "
+        + ", ".join(missing_modules),
+    )
+
+
 def _validate_gdn_fp_policy(
     resolved_layout: str,
     resolved_family: str,
@@ -792,6 +894,14 @@ def validate_artifact(
         checks["gdn_gptq_policy"] = gdn_policy_check
     if gdn_policy_warning:
         warnings.append(gdn_policy_warning)
+
+    qwen_moe_check, qwen_moe_error = _validate_qwen_moe_expert_quantization(
+        resolved_layout, resolved_family, config, quantized_module_counts
+    )
+    if qwen_moe_check is not None:
+        checks["qwen_moe_expert_quantization"] = qwen_moe_check
+    if qwen_moe_error:
+        errors.append(qwen_moe_error)
 
     if declared_modules and quantized_modules:
         missing_declared = sorted(set(declared_modules) - set(quantized_modules))

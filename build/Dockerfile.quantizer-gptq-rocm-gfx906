@@ -51,7 +51,7 @@ COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
 # ever executes the full quantize script. Keep them import-safe and aligned
 # with the script's FLEXINFER_SCRIPT_VERSION constant.
 RUN mkdir -p /app && \
-    printf 'FLEXINFER_SCRIPT_VERSION = "v14"\n' > /app/quantize_gptq.py && \
+    printf 'FLEXINFER_SCRIPT_VERSION = "v16"\n' > /app/quantize_gptq.py && \
     printf 'FLEXINFER_SCRIPT_VERSION = "v1"\n' > /app/abliterate.py
 
 # The controller probes /workspace/quantize_gptq.py before anything else, but the
@@ -61,7 +61,7 @@ RUN mv /bin/bash /bin/bash.real && \
       '#!/bin/sh' \
       'mkdir -p /workspace' \
       'if [ ! -f /workspace/quantize_gptq.py ]; then' \
-      '  printf '\''FLEXINFER_SCRIPT_VERSION = "v14"\n'\'' > /workspace/quantize_gptq.py' \
+      '  printf '\''FLEXINFER_SCRIPT_VERSION = "v16"\n'\'' > /workspace/quantize_gptq.py' \
       'fi' \
       'if [ ! -f /workspace/abliterate.py ]; then' \
       '  printf '\''FLEXINFER_SCRIPT_VERSION = "v1"\n'\'' > /workspace/abliterate.py' \

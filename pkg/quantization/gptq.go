@@ -23,7 +23,9 @@ import (
 // multiple layer_complete fires per layer in v5.x GPTQModel.
 // v15: Auto-write modules_in_block_to_quantize to artifact metadata after
 // save so publish-validate accepts the artifact without manual patching.
-const GPTQScriptVersion = "v15"
+// v16: Add MoE expert visibility gates so Qwen MoE jobs fail before saving
+// partial artifacts without quantized expert tensors.
+const GPTQScriptVersion = "v16"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
