@@ -1774,7 +1774,42 @@ cat > "${MODEL_DIR}/.quantization-status.json" << METADATA
 }
 METADATA
 
-cat > /dev/termination-log << TERMINATION
+python3 - "${MODEL_DIR}" <<'PATCH_QUANT_STATUS' 2>/dev/null || true
+import json
+import os
+import sys
+
+model_dir = sys.argv[1]
+status_path = os.path.join(model_dir, ".quantization-status.json")
+checkpoint_path = os.path.join(model_dir, ".flexinfer-gptq-cache", "checkpoint.json")
+
+try:
+    with open(status_path) as fh:
+        status = json.load(fh)
+except Exception:
+    status = {}
+
+try:
+    with open(checkpoint_path) as fh:
+        checkpoint = json.load(fh)
+except Exception:
+    checkpoint = {}
+
+calibration = {}
+samples = checkpoint.get("calibration_samples")
+max_seq_len = checkpoint.get("calibration_max_seq_len")
+if isinstance(samples, int) and samples > 0:
+    calibration["maxSamples"] = samples
+if isinstance(max_seq_len, int) and max_seq_len > 0:
+    calibration["maxSeqLen"] = max_seq_len
+if calibration:
+    status["calibrationParams"] = calibration
+    with open(status_path, "w") as fh:
+        json.dump(status, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+PATCH_QUANT_STATUS
+
+cat "${MODEL_DIR}/.quantization-status.json" > /dev/termination-log 2>/dev/null || cat > /dev/termination-log << TERMINATION
 {
   "type": "${TYPE}",
   "originalSizeBytes": ${ORIGINAL_SIZE},
