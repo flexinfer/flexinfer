@@ -324,6 +324,33 @@ func TestRunner_StartGoroutineReachesTerminal(t *testing.T) {
 	t.Fatalf("Start: run did not reach terminal state in time")
 }
 
+func TestRunner_StartEscalatesFatalDriveError(t *testing.T) {
+	st, run, item := newRunnerEnv(t)
+	run.State = store.PipelinePlanning
+	run.CurrentStage = "not-in-dag"
+	if err := st.Pipeline.PutRun(context.Background(), run); err != nil {
+		t.Fatalf("seed bad run head: %v", err)
+	}
+
+	r := New(st, newPassingGates(t), &fakeDispatcher{}, nil)
+	if err := r.Start(context.Background(), run, item); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		got, err := st.Pipeline.GetRun(context.Background(), run.ID)
+		if err != nil {
+			t.Fatalf("getrun: %v", err)
+		}
+		if got.State == store.PipelineEscalated {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	got, _ := st.Pipeline.GetRun(context.Background(), run.ID)
+	t.Fatalf("state = %s, want escalated", got.State)
+}
+
 func TestRunner_StartRejectsBadConfig(t *testing.T) {
 	r := &Runner{}
 	if err := r.Start(context.Background(), &store.PipelineRun{ID: "x"}, &store.BacklogItem{ID: "y"}); err == nil {

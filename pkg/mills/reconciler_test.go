@@ -431,6 +431,47 @@ func TestReconciler_PicksUpQueuedSubrun(t *testing.T) {
 	}
 }
 
+func TestReconciler_ResumeInFlightRunsRestartsStartedRun(t *testing.T) {
+	env := newRecEnv(t, nil)
+	ctx := context.Background()
+
+	item := &store.BacklogItem{
+		ID: "BACK-R", Title: "resume me", State: store.BacklogRunning,
+		Priority: store.P2, CreatedBy: "test",
+	}
+	if err := env.store.Backlog.Put(ctx, item); err != nil {
+		t.Fatalf("seed backlog: %v", err)
+	}
+	run := &store.PipelineRun{
+		ID: "PIPE-R", BacklogID: item.ID, Template: "mills-default",
+		State: store.PipelinePlanning, CurrentStage: "plan_slice",
+		Attempts: 1, StartedAt: env.now,
+	}
+	if err := env.store.Pipeline.PutRun(ctx, run); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+	if err := env.store.Pipeline.PutRun(ctx, &store.PipelineRun{
+		ID: "PIPE-Q", BacklogID: item.ID, Template: "mills-default",
+		State: store.PipelineQueued, Attempts: 2, StartedAt: env.now,
+	}); err != nil {
+		t.Fatalf("seed queued run: %v", err)
+	}
+
+	res, err := env.rec.ResumeInFlightRuns(ctx)
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if res.Inspected != 1 || res.Resumed != 1 || res.Errored != 0 {
+		t.Fatalf("resume result = %+v, want inspected=1 resumed=1 errored=0", res)
+	}
+	if env.starter.calls() != 1 {
+		t.Fatalf("starter calls: got %d want 1", env.starter.calls())
+	}
+	if env.starter.runs[0].ID != "PIPE-R" {
+		t.Fatalf("resumed run = %s, want PIPE-R", env.starter.runs[0].ID)
+	}
+}
+
 // TestReconciler_SubrunPickupSurvivesStarterError pins that a single
 // failing subrun start doesn't block the rest of the tick.
 func TestReconciler_SubrunPickupSurvivesStarterError(t *testing.T) {

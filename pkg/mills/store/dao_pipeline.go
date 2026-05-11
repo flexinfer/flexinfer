@@ -198,6 +198,29 @@ func (d *PipelineDAO) ListByState(ctx context.Context, state PipelineState) ([]*
 	return out, rows.Err()
 }
 
+// ListInFlight returns already-started, non-terminal pipeline runs. These are
+// the rows that need to be resumed after an operator restart because their
+// in-process runner goroutine died with the old pod.
+func (d *PipelineDAO) ListInFlight(ctx context.Context) ([]*PipelineRun, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT `+pipelineColumns+` FROM pipeline_runs
+		WHERE state NOT IN ('queued', 'done', 'escalated', 'paused')
+		ORDER BY started_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("pipeline list in-flight: %w", err)
+	}
+	defer rows.Close()
+	var out []*PipelineRun
+	for rows.Next() {
+		r, err := scanPipelineRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // SumCostSince totals pipeline spend since the given timestamp.
 func (d *PipelineDAO) SumCostSince(ctx context.Context, since time.Time) (float64, error) {
 	row := d.db.QueryRowContext(ctx,

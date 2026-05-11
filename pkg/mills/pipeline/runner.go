@@ -215,6 +215,9 @@ func (r *Runner) Start(ctx context.Context, run *store.PipelineRun, item *store.
 		bg := context.Background()
 		if err := r.Drive(bg, run, item); err != nil {
 			r.logger().Error("pipeline drive failed", "run", run.ID, "error", err)
+			if eerr := r.escalateWithItem(bg, run, item, fmt.Sprintf("pipeline drive failed: %v", err)); eerr != nil {
+				r.logger().Error("pipeline drive failure escalation failed", "run", run.ID, "error", eerr)
+			}
 		}
 	}()
 	return nil

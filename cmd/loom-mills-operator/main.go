@@ -329,6 +329,13 @@ func run(cfg Config) error {
 		logger.Info("squad routing disabled (no squads loader)")
 	}
 	op.withReconciler(reconciler)
+	resumed, err := reconciler.ResumeInFlightRuns(rootCtx)
+	if err != nil {
+		logger.Warn("pipeline startup resume failed", "error", err)
+	} else if resumed.Inspected > 0 {
+		logger.Info("pipeline startup resume complete",
+			"inspected", resumed.Inspected, "resumed", resumed.Resumed, "errored", resumed.Errored)
+	}
 	scheduler := mills.NewScheduler(reconciler)
 	scheduler.Logger = logger
 	scheduler.KPIRecorder = kpiWriter

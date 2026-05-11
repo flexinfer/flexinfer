@@ -46,11 +46,20 @@ func (s *RunnerStarter) Start(ctx context.Context, run *store.PipelineRun, item 
 	if item == nil || item.ID == "" {
 		return errors.New("pipeline: item.ID required")
 	}
-	if ShouldFanOut(item) && s.Integrator != nil {
+	if ShouldFanOut(item) && s.Integrator != nil && shouldStartFanOut(run) {
 		go s.driveFanOut(run, item)
 		return nil
 	}
 	return s.Runner.Start(ctx, run, item)
+}
+
+func shouldStartFanOut(run *store.PipelineRun) bool {
+	if run == nil {
+		return false
+	}
+	return run.State == store.PipelineQueued ||
+		run.State == store.PipelineSlicing ||
+		run.CurrentStage == "fan_out"
 }
 
 // driveFanOut runs the integrator to completion (sub-runs + merge), then
@@ -64,6 +73,9 @@ func (s *RunnerStarter) driveFanOut(run *store.PipelineRun, item *store.BacklogI
 	ctx := context.Background()
 	if err := s.Integrator.Run(ctx, run, item); err != nil {
 		s.logger().Error("integrator drive failed", "run", run.ID, "error", err)
+		if eerr := s.Runner.escalateWithItem(ctx, run, item, "integrator drive failed: "+err.Error()); eerr != nil {
+			s.logger().Error("integrator drive failure escalation failed", "run", run.ID, "error", eerr)
+		}
 		return
 	}
 	// On success the integrator left run.State = PipelineMR with
@@ -76,6 +88,9 @@ func (s *RunnerStarter) driveFanOut(run *store.PipelineRun, item *store.BacklogI
 	}
 	if err := s.Runner.Drive(ctx, run, item); err != nil {
 		s.logger().Error("post-fanout runner drive failed", "run", run.ID, "error", err)
+		if eerr := s.Runner.escalateWithItem(ctx, run, item, "post-fanout runner drive failed: "+err.Error()); eerr != nil {
+			s.logger().Error("post-fanout drive failure escalation failed", "run", run.ID, "error", eerr)
+		}
 	}
 }
 
