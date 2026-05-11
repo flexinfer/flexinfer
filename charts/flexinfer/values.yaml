@@ -406,6 +406,32 @@ quantization:
         attn_implementation: eager
         disable_qwen35_fla: true
         fix_mistral_regex: true
+    - name: qwen3.6-text
+      match_path_substrings:
+        - qwen36
+        - qwen3.6
+      extract_text_config: true
+      copy_root_keys:
+        - bos_token_id
+        - eos_token_id
+        - pad_token_id
+      remap_model_type: qwen3_5_text
+      architectures:
+        - Qwen3_5ForCausalLM
+      loader: gptqmodel
+      python_packages:
+        - git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea
+      quantize_config_overrides:
+        offload_to_disk: true
+        lm_head: true
+      calibration_overrides:
+        max_samples: 16
+        max_seq_len: 512
+        max_tokens: 8192
+      runtime_overrides:
+        attn_implementation: eager
+        disable_qwen35_fla: true
+        fix_mistral_regex: true
     - name: qwen3.5-text
       match_model_types:
         - qwen3_5_text
