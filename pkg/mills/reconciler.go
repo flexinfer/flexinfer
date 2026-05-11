@@ -88,6 +88,14 @@ type StartQueuedResult struct {
 	BacklogID string
 }
 
+// ResumeInFlightResult reports startup recovery work for pipeline runs that
+// were active when the previous operator process exited.
+type ResumeInFlightResult struct {
+	Inspected int
+	Resumed   int
+	Errored   int
+}
+
 var (
 	ErrPolicyDisabled   = errors.New("reconciler: policy disabled")
 	ErrBacklogNotQueued = errors.New("reconciler: backlog item is not queued")
@@ -246,6 +254,51 @@ func (r *Reconciler) StartQueuedItem(ctx context.Context, backlogID string) (Sta
 	}
 	if run == nil {
 		res.Reason = "not started"
+	}
+	return res, nil
+}
+
+// ResumeInFlightRuns starts runner goroutines for non-terminal runs that were
+// already past the queued state when this operator process booted. It is
+// intended to be called once during startup; normal Tick reconciliation should
+// not invoke it or it could duplicate currently-running goroutines.
+func (r *Reconciler) ResumeInFlightRuns(ctx context.Context) (ResumeInFlightResult, error) {
+	if r == nil || r.Store == nil {
+		return ResumeInFlightResult{}, errors.New("reconciler: not configured")
+	}
+	if r.Starter == nil {
+		return ResumeInFlightResult{}, nil
+	}
+	runs, err := r.Store.Pipeline.ListInFlight(ctx)
+	if err != nil {
+		return ResumeInFlightResult{}, err
+	}
+	res := ResumeInFlightResult{Inspected: len(runs)}
+	for _, run := range runs {
+		item, lerr := r.Store.Backlog.Get(ctx, run.BacklogID)
+		if lerr != nil {
+			r.append(ctx, "reconciler.resume_failed", "error", map[string]any{
+				"run": run.ID, "backlog": run.BacklogID, "error": lerr.Error(),
+			})
+			res.Errored++
+			continue
+		}
+		if err := r.Starter.Start(ctx, run, item); err != nil {
+			r.append(ctx, "reconciler.resume_failed", "error", map[string]any{
+				"run": run.ID, "backlog": run.BacklogID, "error": err.Error(),
+			})
+			res.Errored++
+			continue
+		}
+		r.append(ctx, "reconciler.resumed", "ok", map[string]any{
+			"run": run.ID, "backlog": run.BacklogID, "state": string(run.State), "stage": run.CurrentStage,
+		})
+		res.Resumed++
+	}
+	if res.Inspected > 0 {
+		r.append(ctx, "reconciler.resume_tick", "ok", map[string]any{
+			"inspected": res.Inspected, "resumed": res.Resumed, "errored": res.Errored,
+		})
 	}
 	return res, nil
 }

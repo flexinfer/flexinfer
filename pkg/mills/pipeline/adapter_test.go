@@ -126,6 +126,65 @@ func TestRunnerStarter_RoutesParallelSlicesThroughIntegrator(t *testing.T) {
 	}
 }
 
+func TestRunnerStarter_ResumesPostFanoutRunThroughRunner(t *testing.T) {
+	dir := t.TempDir()
+	st, err := store.Open(context.Background(), store.Options{Path: filepath.Join(dir, "h.db")})
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	t.Cleanup(func() { _ = st.Close() })
+
+	item := &store.BacklogItem{
+		ID: "BL-PAR-RESUME", Title: "fan out resume", State: store.BacklogRunning, Priority: store.P2,
+		Slices: []store.Slice{
+			{Name: "alpha", ParallelWith: []string{"beta"}},
+			{Name: "beta", ParallelWith: []string{"alpha"}},
+		},
+	}
+	if err := st.Backlog.Put(context.Background(), item); err != nil {
+		t.Fatal(err)
+	}
+	run := &store.PipelineRun{
+		ID: "PIPE-PAR-RESUME", BacklogID: item.ID, Template: "x",
+		State: store.PipelineMR, CurrentStage: "mr",
+		Attempts: 1, StartedAt: time.Now(),
+	}
+	if err := st.Pipeline.PutRun(context.Background(), run); err != nil {
+		t.Fatal(err)
+	}
+
+	disp := &fakeDispatcher{}
+	r := New(st, newPassingGates(t), disp, nil)
+	allocator := &fakeAllocator{}
+	merger := &fakeMerger{sha: "deadbeef"}
+	sub := &recordingSubRunner{store: st, settleMS: 5}
+	itg := NewIntegrator(st, sub, allocator, merger)
+
+	starter := NewRunnerStarter(r, itg)
+	if err := starter.Start(context.Background(), run, item); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		got, _ := st.Pipeline.GetRun(context.Background(), run.ID)
+		if got != nil && (got.State == store.PipelineDone || got.State == store.PipelineEscalated) {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	got, _ := st.Pipeline.GetRun(context.Background(), run.ID)
+	if got.State != store.PipelineDone {
+		t.Errorf("state = %s, want done", got.State)
+	}
+	if len(merger.calls) != 0 {
+		t.Errorf("merger should not rerun for post-fanout resume, got %d calls", len(merger.calls))
+	}
+	calls := disp.callsList()
+	if len(calls) == 0 || calls[0] != "mr" {
+		t.Fatalf("runner calls = %v, want resume at mr", calls)
+	}
+}
+
 func TestRunnerStarter_RejectsBadConfig(t *testing.T) {
 	if err := (&RunnerStarter{}).Start(context.Background(), nil, nil); err == nil {
 		t.Error("expected error for nil Runner")
