@@ -10,6 +10,10 @@ func downloadCompleted(status *aiv1alpha1.ModelCacheStatus) bool {
 	if status.Path == "" {
 		return false
 	}
+	switch status.CurrentPhase {
+	case "abliteration", "finetune", "quantization", "publish", "ready":
+		return true
+	}
 	// If the phase is still Pending or empty, download hasn't finished.
 	switch status.Phase {
 	case "", aiv1alpha1.ModelCachePhasePending:
