@@ -117,6 +117,7 @@
   // window. The backend (fleetview.Join, internal/hud/monitor) applies the
   // threshold; we just count the flag here.
   let orphanCount = $derived(fleetAgents.filter((a) => a.is_orphan).length);
+  let idleAgentCount = $derived(Math.max(0, agentsWithoutSession - orphanCount));
   let tasks = $derived(taskStore.tasks ?? []);
   let workflows = $derived(workflowStore.workflows ?? []);
   let memStats = $derived(memoryStore.stats ?? {});
@@ -394,8 +395,8 @@
       for (const row of rows) seenAgents.add(row.agent.agent_id);
     }
 
-    // Anything not slotted into a session tree (orphans, session-less
-    // bootstrapping presences, spawn-only entries) gets appended below the
+    // Anything not slotted into a session tree (orphans, idle session-less
+    // presences, spawn-only entries) gets appended below the
     // grouped section with `ungrouped: true` so the row renderer can show a
     // visual divider before the first one. This keeps "real" sessions
     // tightly grouped at the top and separates everything else.
@@ -563,10 +564,10 @@
         <div class="metric-label">Sessions</div>
         {#if orphanCount > 0}
           <div class="metric-sub metric-sub-alert" title="Heartbeating presence without an active session past 2 min. Reaped automatically after 10 min.">
-            {orphanCount} orphan{orphanCount === 1 ? '' : 's'} · {agentsWithoutSession - orphanCount} bootstrapping
+            {orphanCount} orphan{orphanCount === 1 ? '' : 's'}{idleAgentCount > 0 ? ` · ${idleAgentCount} idle` : ''}
           </div>
         {:else if agentsWithoutSession > 0}
-          <div class="metric-sub">{agentsWithoutSession} live without session</div>
+          <div class="metric-sub">{agentsWithoutSession} idle between sessions</div>
         {/if}
         {#if groupByRootSession && rootGroupCount > 0}
           <div class="metric-sub" title="Distinct root sessions (subagents grouped under their parent).">
