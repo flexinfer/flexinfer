@@ -143,7 +143,7 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		if v := findEnv(env, "DYNAMIC_EXCLUSION"); v != "auto" {
 			t.Errorf("DYNAMIC_EXCLUSION = %q, want auto", v)
 		}
-		if v := findEnv(env, "QUANTIZE_MODEL_POLICIES"); !strings.Contains(v, "qwen3.5-text") || !strings.Contains(v, "qwen3.5-moe-text") {
+		if v := findEnv(env, "QUANTIZE_MODEL_POLICIES"); !strings.Contains(v, "qwen3.5-text") || !strings.Contains(v, "qwen3.5-moe-text") || !strings.Contains(v, "qwen3.6-text") {
 			t.Errorf("QUANTIZE_MODEL_POLICIES = %q, want default Qwen policy JSON", v)
 		} else {
 			var policies []map[string]any
@@ -178,6 +178,24 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 			}
 			if got := runtimeOverrides["fix_mistral_regex"]; got != true {
 				t.Fatalf("default fix_mistral_regex override = %v, want true", got)
+			}
+
+			var qwen36Policy map[string]any
+			for _, policy := range policies {
+				if policy["name"] == "qwen3.6-text" {
+					qwen36Policy = policy
+					break
+				}
+			}
+			if qwen36Policy == nil {
+				t.Fatalf("expected qwen3.6-text default policy in %v", policies)
+			}
+			qwen36Overrides, ok := qwen36Policy["quantize_config_overrides"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected quantize_config_overrides in qwen3.6-text policy JSON")
+			}
+			if got := qwen36Overrides["lm_head"]; got != true {
+				t.Fatalf("qwen3.6 lm_head override = %v, want true", got)
 			}
 
 			var gemmaPolicy map[string]any
