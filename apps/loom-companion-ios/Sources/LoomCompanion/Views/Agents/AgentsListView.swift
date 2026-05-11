@@ -33,6 +33,10 @@ struct AgentsListView: View {
     var body: some View {
         NavigationStack(path: $navigationPath) {
             List {
+                if embeddedInPeopleTab {
+                    EmbeddedSearchField(text: $viewModel.searchText, prompt: "Search agents")
+                }
+
                 AgentFilterView(
                     statusFilter: $viewModel.statusFilter,
                     attentionOnly: $viewModel.attentionOnly,
@@ -70,10 +74,20 @@ struct AgentsListView: View {
             }
             .navigationTitle(embeddedInPeopleTab ? "" : "Agents")
             .navigationBarTitleDisplayMode(.inline)
+            .modifier(EmbeddedNavigationChrome(isHidden: embeddedInPeopleTab))
             .navigationDestination(for: String.self) { sessionId in
                 SessionDetailView(sessionId: sessionId, apiClient: apiClient)
             }
-            .searchable(text: $viewModel.searchText, prompt: "Search agents")
+            .modifier(SearchableWhenStandalone(
+                isEnabled: !embeddedInPeopleTab,
+                text: $viewModel.searchText,
+                prompt: "Search agents"
+            ))
+            .safeAreaInset(edge: .bottom) {
+                Color.clear
+                    .frame(height: 96)
+                    .allowsHitTesting(false)
+            }
             .refreshable {
                 await viewModel.load()
                 HapticManager.light()
@@ -220,5 +234,54 @@ struct AgentsListView: View {
 private struct NoOpAgentsClient: LoomAPIClientProtocol {
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         throw LoomAPIError.noToken
+    }
+}
+
+private struct EmbeddedSearchField: View {
+    @Binding var text: String
+    let prompt: String
+
+    var body: some View {
+        HStack(spacing: LoomSpacing.sm) {
+            Image(systemName: "magnifyingglass")
+                .font(.body)
+                .foregroundStyle(LoomColors.textSecondary)
+            TextField(prompt, text: $text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        }
+        .padding(.horizontal, LoomSpacing.md)
+        .padding(.vertical, 10)
+        .background(LoomColors.bgElevated, in: Capsule())
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 6, trailing: 16))
+        .listRowBackground(Color.clear)
+    }
+}
+
+private struct EmbeddedNavigationChrome: ViewModifier {
+    let isHidden: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isHidden {
+            content.toolbar(.hidden, for: .navigationBar)
+        } else {
+            content
+        }
+    }
+}
+
+private struct SearchableWhenStandalone: ViewModifier {
+    let isEnabled: Bool
+    @Binding var text: String
+    let prompt: String
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.searchable(text: $text, prompt: Text(prompt))
+        } else {
+            content
+        }
     }
 }

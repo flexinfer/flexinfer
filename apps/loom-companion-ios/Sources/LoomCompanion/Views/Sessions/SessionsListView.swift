@@ -30,6 +30,10 @@ struct SessionsListView: View {
     var body: some View {
         NavigationStack(path: $navigationPath) {
             List {
+                if embeddedInPeopleTab {
+                    EmbeddedSessionSearchField(text: $viewModel.searchText, prompt: "Search sessions")
+                }
+
                 SessionFilterView(
                     statusFilter: $viewModel.statusFilter,
                     agentFilter: $viewModel.agentFilter,
@@ -80,7 +84,17 @@ struct SessionsListView: View {
             .navigationDestination(for: String.self) { sessionId in
                 SessionDetailView(sessionId: sessionId, apiClient: apiClient)
             }
-            .searchable(text: $viewModel.searchText, prompt: "Search sessions")
+            .modifier(EmbeddedSessionNavigationChrome(isHidden: embeddedInPeopleTab))
+            .modifier(SessionSearchableWhenStandalone(
+                isEnabled: !embeddedInPeopleTab,
+                text: $viewModel.searchText,
+                prompt: "Search sessions"
+            ))
+            .safeAreaInset(edge: .bottom) {
+                Color.clear
+                    .frame(height: 96)
+                    .allowsHitTesting(false)
+            }
             .refreshable {
                 await viewModel.load()
             }
@@ -205,5 +219,54 @@ struct SessionsListView: View {
 private struct NoOpClient: LoomAPIClientProtocol {
     func request<T: Decodable>(_ endpoint: Endpoint) async throws -> T {
         throw LoomAPIError.noToken
+    }
+}
+
+private struct EmbeddedSessionSearchField: View {
+    @Binding var text: String
+    let prompt: String
+
+    var body: some View {
+        HStack(spacing: LoomSpacing.sm) {
+            Image(systemName: "magnifyingglass")
+                .font(.body)
+                .foregroundStyle(LoomColors.textSecondary)
+            TextField(prompt, text: $text)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+        }
+        .padding(.horizontal, LoomSpacing.md)
+        .padding(.vertical, 10)
+        .background(LoomColors.bgElevated, in: Capsule())
+        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 6, trailing: 16))
+        .listRowBackground(Color.clear)
+    }
+}
+
+private struct EmbeddedSessionNavigationChrome: ViewModifier {
+    let isHidden: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isHidden {
+            content.toolbar(.hidden, for: .navigationBar)
+        } else {
+            content
+        }
+    }
+}
+
+private struct SessionSearchableWhenStandalone: ViewModifier {
+    let isEnabled: Bool
+    @Binding var text: String
+    let prompt: String
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEnabled {
+            content.searchable(text: $text, prompt: Text(prompt))
+        } else {
+            content
+        }
     }
 }

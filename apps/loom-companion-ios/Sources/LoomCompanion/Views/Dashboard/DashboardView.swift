@@ -165,6 +165,11 @@ struct DashboardView: View {
             }
             .padding()
         }
+        .safeAreaInset(edge: .bottom) {
+            Color.clear
+                .frame(height: 96)
+                .allowsHitTesting(false)
+        }
         .navigationTitle("Dashboard")
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
