@@ -149,16 +149,27 @@ func run(cfg Config) error {
 		}()
 	}
 
-	// Council runner. Reviewers + editor are FakeReviewer + FakeEditor
-	// for slice 3.7 — they make /api/mills/council/{run,dryrun} produce
-	// real artifacts + sidecar + eval row + backlog mutations end to
-	// end without a live agent. Production wiring swaps in spawn-backed
-	// implementations in a follow-up slice once the spawn integration
-	// for FlexInfer + Claude/Codex headless is wired.
-	councilRunner := buildCouncilRunner(st, pm, budget, cfg.RepoRoot, logger)
+	// Gate registry: deterministic gates always; LLM-judged gates only
+	// when FlexInfer is configured.
+	gateRegistry := gates.Default()
+	flexClient := buildFlexInferClient(cfg, logger)
 	capabilities := newCapabilityWiring(cfg)
+	capabilities.FlexInferConfigured = strings.TrimSpace(cfg.FlexInferProxyURL) != ""
+	capabilities.FlexInferReady = flexClient != nil
+	if flexClient != nil {
+		gates.RegisterLLMGates(gateRegistry, clients.NewRubricJudge(flexClient))
+		logger.Info("LLM-judged gates enabled (FlexInfer)")
+	} else {
+		logger.Warn("LLM-judged gates disabled; spec_conformance + pr_self_review skipped (set FLEXINFER_PROXY_URL)")
+	}
+
+	// Council runner. In production it uses FlexInfer-backed reviewers,
+	// editor, and artifact judge. Local/degraded runs keep the deterministic
+	// fakes so handlers can still be exercised, but autonomy readiness reports
+	// the fake fallback as a blocker.
+	councilRunner, councilUsesFakeAgents := buildCouncilRunner(st, pm, budget, cfg.RepoRoot, flexClient, logger)
 	capabilities.CouncilConfigured = councilRunner != nil
-	capabilities.CouncilUsesFakeAgents = councilRunner != nil
+	capabilities.CouncilUsesFakeAgents = councilUsesFakeAgents
 
 	op := newOperator(st, pm, budget, logger).
 		withRunner(councilRunner).
@@ -169,19 +180,6 @@ func run(cfg Config) error {
 
 	httpSrv := httpServer(cfg.HTTPAddr, op.httpMux())
 	metricsSrv := httpServer(cfg.MetricsAddr, op.metricsMux())
-
-	// Gate registry: deterministic gates always; LLM-judged gates only
-	// when FlexInfer is configured.
-	gateRegistry := gates.Default()
-	flexClient := buildFlexInferClient(cfg, logger)
-	capabilities.FlexInferConfigured = strings.TrimSpace(cfg.FlexInferProxyURL) != ""
-	capabilities.FlexInferReady = flexClient != nil
-	if flexClient != nil {
-		gates.RegisterLLMGates(gateRegistry, clients.NewRubricJudge(flexClient))
-		logger.Info("LLM-judged gates enabled (FlexInfer)")
-	} else {
-		logger.Warn("LLM-judged gates disabled; spec_conformance + pr_self_review skipped (set FLEXINFER_PROXY_URL)")
-	}
 
 	// MCP hub client: shared by Devbox, Handoff, and Worktree wrappers.
 	// Nil hub means stage workers + escalator handoff fall back to
@@ -367,11 +365,11 @@ func newLogger(debug bool) *slog.Logger {
 	return slog.New(slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
 }
 
-// buildCouncilRunner wires the slice 3.7 fakes — FakeReviewer for every
-// configured lens, FakeEditor as the synthesis agent, and the deterministic
-// rubric with no LLM judge — into a runner. Production wiring swaps the
-// fakes for spawn-backed implementations in a follow-up slice once the
-// FlexInfer + Claude/Codex headless integration ships.
+// buildCouncilRunner wires the configured council ensemble into a runner. When
+// FlexInfer is configured, reviewers + editor + judge all use real local-tier
+// model calls. Without FlexInfer, local/degraded deployments keep the
+// deterministic fake fallback so dry-run/handler smoke tests still work, while
+// autonomy readiness reports the fake participants as a blocker.
 //
 // Returns nil + a structured log line if the policy doesn't configure any
 // reviewer ensemble. The operator continues to serve read-only endpoints
@@ -381,31 +379,52 @@ func buildCouncilRunner(
 	pm *mills.PolicyManager,
 	budget *mills.Budget,
 	repoRoot string,
+	flexClient *clients.FlexInferClient,
 	logger *slog.Logger,
-) *runner.Runner {
+) (*runner.Runner, bool) {
 	policy := pm.Current()
 	lenses := council.LensesFromPolicy(policy)
 	if len(lenses) == 0 {
 		logger.Warn("no council reviewers configured; council POST endpoints will return 503")
-		return nil
+		return nil, false
 	}
+
+	usesFakeAgents := flexClient == nil
 	reviewers := map[string]council.Reviewer{}
-	for _, l := range lenses {
-		reviewers[l.Name] = &council.FakeReviewer{
-			Notes:   "fake reviewer (slice 3.7)",
-			CostUSD: 0.05,
+	var editor council.Editor
+	var judge *eval.Judge
+	if flexClient != nil {
+		for _, l := range lenses {
+			reviewers[l.Name] = &clients.FlexInferCouncilReviewer{
+				Client: flexClient,
+			}
 		}
+		editor = &clients.FlexInferCouncilEditor{
+			Client:  flexClient,
+			Backend: "flexinfer",
+			Model:   policy.Council.Ensemble.Editor.Model,
+		}
+		judge = &eval.Judge{Criteria: eval.DefaultRubric(&clients.FlexInferEvalJudge{Client: flexClient})}
+		logger.Info("council participants wired to FlexInfer-backed reviewers/editor/judge")
+	} else {
+		for _, l := range lenses {
+			reviewers[l.Name] = &council.FakeReviewer{
+				Notes:   "fake reviewer fallback; set FLEXINFER_PROXY_URL for production council participants",
+				CostUSD: 0.05,
+			}
+		}
+		editor = &council.FakeEditor{
+			Backend: policy.Council.Ensemble.Editor.Backend,
+			Model:   policy.Council.Ensemble.Editor.Model,
+			CostUSD: 0.42,
+			Notes:   "FakeEditor fallback; set FLEXINFER_PROXY_URL for production council participants",
+		}
+		judge = &eval.Judge{Criteria: eval.DefaultRubric(&eval.FakeLLMJudge{Score: 1.0})}
+		logger.Warn("council participants using fake fallback; autonomy readiness will fail closed")
 	}
 	dispatcher := &council.Dispatcher{Reviewers: reviewers}
-	editor := &council.FakeEditor{
-		Backend: policy.Council.Ensemble.Editor.Backend,
-		Model:   policy.Council.Ensemble.Editor.Model,
-		CostUSD: 0.42,
-		Notes:   "FakeEditor (slice 3.7); production swap-in pending",
-	}
 	writer := &council.ArtifactWriter{RepoRoot: repoRoot}
 	mutator := &council.BacklogMutator{Store: st}
-	judge := &eval.Judge{Criteria: eval.DefaultRubric(&eval.FakeLLMJudge{Score: 1.0})}
 
 	return &runner.Runner{
 		Store:     st,
@@ -418,7 +437,7 @@ func buildCouncilRunner(
 		Judge:     judge,
 		RepoRoot:  repoRoot,
 		Logger:    logger,
-	}
+	}, usesFakeAgents
 }
 
 // buildSquadsLoader instantiates the squads manifest loader pointing at
