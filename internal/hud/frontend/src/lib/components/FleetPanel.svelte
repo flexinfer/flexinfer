@@ -983,18 +983,25 @@
 
 <style>
   .fleet-panel {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     overflow-y: auto;
   }
 
   .fleet-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
     grid-template-rows: auto auto;
     gap: var(--space-4);
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     height: 100%;
   }
 
   .fleet-table-card {
+    min-width: 0;
     min-height: 200px;
     /* U10: Allow the agent list to scroll so the "Showing X of Y" footer
        and overflowing rows stay reachable when the card is cropped. */
@@ -1045,11 +1052,13 @@
   /* Stats grid */
   .stats-grid {
     display: grid;
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
+    min-width: 0;
     gap: var(--space-3);
   }
 
   .stat-card {
+    min-width: 0;
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: var(--radius-md);
@@ -1751,7 +1760,7 @@
     100% { transform: translateX(350%); }
   }
 
-  @media (max-width: 1200px) {
+  @media (max-width: 1400px) {
     .fleet-grid {
       grid-template-columns: 1fr;
     }

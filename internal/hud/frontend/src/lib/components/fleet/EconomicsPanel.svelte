@@ -140,6 +140,9 @@
     border-radius: var(--radius-md);
     padding: var(--space-3);
     margin-bottom: var(--space-3);
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
   .econ-header {
     display: flex; justify-content: space-between; align-items: baseline;
@@ -152,7 +155,7 @@
   .econ-sub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg-muted); }
   .econ-error { color: var(--error); }
   .ratio-grid {
-    display: grid; grid-template-columns: repeat(6, minmax(0, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
     gap: var(--space-2); margin-bottom: var(--space-3);
   }
   .econ-empty {
@@ -176,6 +179,7 @@
     background: var(--bg-primary); border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm); padding: 8px 10px;
     display: flex; flex-direction: column; gap: 2px;
+    min-width: 0;
   }
   .ratio-stub { opacity: 0.6; }
   .ratio-value {
@@ -203,6 +207,5 @@
   }
   .bar-frontier { fill: var(--accent); }
   .bar-local { fill: var(--success); }
-  @media (max-width: 900px) { .ratio-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
-  @media (max-width: 600px) { .ratio-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 600px) { .ratio-grid { grid-template-columns: repeat(auto-fit, minmax(min(100%, 130px), 1fr)); } }
 </style>
