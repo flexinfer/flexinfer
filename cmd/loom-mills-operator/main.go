@@ -296,6 +296,10 @@ func run(cfg Config) error {
 	}
 	starter := pipeline.NewRunnerStarter(pipelineRunner, integrator)
 	starter.Logger = logger
+	kpiWriter := mills.NewKPIWriter(st, pm)
+	kpiWriter.Logger = logger
+	capabilities.KPIWriterReady = true
+	capabilities.KPIWriterSource = "pkg/mills/kpi_writer.go"
 	op.setCapabilities(capabilities)
 	op.markReady()
 	logger.Info("operator ready",
@@ -326,6 +330,7 @@ func run(cfg Config) error {
 	}
 	scheduler := mills.NewScheduler(reconciler)
 	scheduler.Logger = logger
+	scheduler.KPIRecorder = kpiWriter
 
 	// Eval Loop C — weekly cross-run consistency check (default Sunday
 	// 06:00 UTC). Runs alongside the reconciler scheduler in the same

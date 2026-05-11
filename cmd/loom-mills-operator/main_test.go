@@ -329,6 +329,25 @@ func TestCapabilities_RepoRootRequiresWritableLoomDir(t *testing.T) {
 	}
 }
 
+func TestCapabilities_KPIWriterReadyIsGreen(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+
+	w := newCapabilityWiring(Config{})
+	w.KPIWriterReady = true
+	w.KPIWriterSource = "pkg/mills/kpi_writer.go"
+	op.setCapabilities(w)
+
+	report := op.capabilityReport(context.Background())
+	row := findCapabilityRow(report.Capabilities, "kpi_writer")
+	if row.Status != "green" || row.Mode != "real" {
+		t.Fatalf("kpi row = %+v, want green real", row)
+	}
+	if row.Source != "pkg/mills/kpi_writer.go" {
+		t.Fatalf("kpi source = %q", row.Source)
+	}
+}
+
 func findCapabilityRow(rows []capabilityRow, id string) capabilityRow {
 	for _, row := range rows {
 		if row.ID == id {
