@@ -22,7 +22,9 @@ All configuration is read from environment variables set by the controller:
 # the artifact.
 # v16: Add MoE expert visibility gates so Qwen3.5/Qwen3.6 jobs fail before
 # another long run silently saves a partial artifact with unquantized experts.
-FLEXINFER_SCRIPT_VERSION = "v16"
+# v17: Route Qwen3.5/Qwen3.6 MoE configs through the MoE model definition and
+# re-fuse mlp.experts GPTQ tensors into vLLM's fused MoE layout.
+FLEXINFER_SCRIPT_VERSION = "v17"
 import copy
 import gc
 import json
@@ -48,17 +50,45 @@ LAYER_CACHE_MANIFEST = "manifest.json"
 SAVE_COMPLETE_MARKER = ".save-complete"
 DEFAULT_MODEL_POLICIES = [
     {
+        "name": "qwen3.5-moe-text",
+        "match_model_types": ["qwen3_5_moe_text", "qwen3_5_moe"],
+        "extract_text_config": True,
+        "copy_root_keys": ["bos_token_id", "eos_token_id", "pad_token_id"],
+        "remap_model_type": "qwen3_5_moe_text",
+        "architectures": ["Qwen3_5MoeForCausalLM"],
+        "loader": "gptqmodel",
+        "python_packages": [
+            "git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea",
+        ],
+        "quantize_config_overrides": {
+            "offload_to_disk": True,
+        },
+        "calibration_overrides": {
+            "max_samples": 16,
+            "max_seq_len": 512,
+            "max_tokens": 8192,
+        },
+        "runtime_overrides": {
+            "attn_implementation": "eager",
+            "disable_qwen35_fla": True,
+            "fix_mistral_regex": True,
+        },
+    },
+    {
         "name": "qwen3.5-text",
         "match_model_types": ["qwen3_5_text"],
-        "match_path_substrings": ["qwen35", "qwen3.5"],
+        "match_path_substrings": ["qwen35", "qwen3.5", "qwen36", "qwen3.6"],
         "extract_text_config": True,
         "copy_root_keys": ["bos_token_id", "eos_token_id", "pad_token_id"],
         "remap_model_type": "qwen3_5_text",
         "architectures": ["Qwen3_5ForCausalLM"],
-        "loader": "manual_sharded_state_dict",
+        "loader": "gptqmodel",
         "python_packages": [
             "git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea",
         ],
+        "quantize_config_overrides": {
+            "offload_to_disk": True,
+        },
         "calibration_overrides": {
             "max_samples": 16,
             "max_seq_len": 512,
@@ -286,6 +316,35 @@ def _update_quantized_module_lists(save_dir, modules):
 # keys on .qweight, but GPTQModel writes the full quad alongside it).
 _GPTQ_QUANTIZED_LEAF_NAMES = ("qweight", "qzeros", "scales", "g_idx")
 
+_MOE_EXPERT_TENSOR_RE = re.compile(
+    r"^(?P<prefix>model\.layers\.(?P<layer>\d+)\."
+    r"(?:(?:block_sparse_moe\.)?experts|mlp\.experts))\."
+    r"(?P<expert>\d+)\."
+    r"(?P<proj>gate_proj|up_proj|down_proj)\."
+    r"(?P<tensor>qweight|qzeros|scales|g_idx)$"
+)
+
+
+def _parse_moe_expert_tensor_key(key):
+    match = _MOE_EXPERT_TENSOR_RE.match(key)
+    if not match:
+        return None
+    return {
+        "prefix": match.group("prefix"),
+        "layer_idx": int(match.group("layer")),
+        "expert_idx": int(match.group("expert")),
+        "proj_type": match.group("proj"),
+        "tensor_type": match.group("tensor"),
+    }
+
+
+def _moe_fused_prefix(prefix):
+    return re.sub(
+        r"(model\.layers\.\d+)\.(?:(?:block_sparse_moe\.)?experts|mlp\.experts)$",
+        r"\1.moe",
+        prefix,
+    )
+
 
 def _discover_quantized_module_suffixes(save_dir):
     """Walk the on-disk shards and return a sorted, deduped list of module
@@ -442,6 +501,18 @@ def inspect_moe_expert_visibility(model):
         "sample_defused_expert_modules": defused_expert_modules[:8],
         "sample_fused_3d_expert_parameters": fused_3d_params[:8],
     }
+
+
+def module_tree_declares_moe(module_tree):
+    """Return true when a GPTQModel module_tree already models routed experts."""
+    if not isinstance(module_tree, list):
+        return False
+    module_tree_text = repr(module_tree).lower()
+    return (
+        "experts:moe" in module_tree_text
+        or "mlp:moe" in module_tree_text
+        or "block_sparse_moe:moe" in module_tree_text
+    )
 
 
 def assert_moe_expert_visibility(visibility, reason):
@@ -1143,29 +1214,22 @@ def refuse_moe_expert_tensors(save_dir):
         print("INFO: No safetensors index or single file found, skipping MoE re-fuse")
         return False
 
-    # Detect per-expert keys: pattern like "model.layers.N.experts.M.gate_proj.qweight"
-    expert_pattern = re.compile(
-        r"^(model\.layers\.(\d+)\.(?:block_sparse_moe\.)?experts)\.(\d+)\."
-        r"(gate_proj|up_proj|down_proj)\.(qweight|qzeros|scales|g_idx)$"
-    )
-
     # Collect per-expert tensors grouped by (prefix, layer, tensor_type, proj_type)
     expert_keys = {}
     for key in weight_map:
-        m = expert_pattern.match(key)
-        if m:
-            prefix, layer_idx, expert_idx, proj_type, tensor_type = (
-                m.group(1),
-                int(m.group(2)),
-                int(m.group(3)),
-                m.group(4),
-                m.group(5),
-            )
-            group_key = (prefix, layer_idx, tensor_type)
-            if group_key not in expert_keys:
-                expert_keys[group_key] = {}
-            sub_key = (expert_idx, proj_type)
-            expert_keys[group_key][sub_key] = key
+        parsed = _parse_moe_expert_tensor_key(key)
+        if not parsed:
+            continue
+        prefix = parsed["prefix"]
+        layer_idx = parsed["layer_idx"]
+        expert_idx = parsed["expert_idx"]
+        proj_type = parsed["proj_type"]
+        tensor_type = parsed["tensor_type"]
+        group_key = (prefix, layer_idx, tensor_type)
+        if group_key not in expert_keys:
+            expert_keys[group_key] = {}
+        sub_key = (expert_idx, proj_type)
+        expert_keys[group_key][sub_key] = key
 
     if not expert_keys:
         print("INFO: No per-expert GPTQ tensors found, skipping MoE re-fuse")
@@ -1214,14 +1278,8 @@ def refuse_moe_expert_tensors(save_dir):
                 keys_to_remove.add(key)
             continue
 
-        # Remap prefix to vLLM's FusedMoE module name. The original
-        # HF prefix is "model.layers.{i}.(block_sparse_moe.)?experts"
-        # but vLLM's Gemma4 model maps MoE to "model.layers.{i}.moe".
-        fused_prefix = re.sub(
-            r"(model\.layers\.\d+)\.(block_sparse_moe\.)?experts$",
-            r"\1.moe",
-            prefix,
-        )
+        # Remap HF expert prefixes to vLLM's FusedMoE module name.
+        fused_prefix = _moe_fused_prefix(prefix)
 
         # Collect gate, up, down per expert
         gate_list = []
@@ -1452,7 +1510,7 @@ def ensure_policy_python_packages(policy):
 
 def policy_python_packages_satisfied(policy, packages):
     name = (policy or {}).get("name", "")
-    if name != "qwen3.5-text":
+    if name not in ("qwen3.5-text", "qwen3.5-moe-text"):
         return False
     if len(packages) != 1 or "transformers.git@" not in packages[0]:
         return False
@@ -1463,7 +1521,10 @@ def policy_python_packages_satisfied(policy, packages):
     if version != "5.3.0.dev0":
         return False
     try:
-        from transformers import Qwen3_5ForCausalLM  # noqa: F401
+        if name == "qwen3.5-moe-text":
+            from transformers import Qwen3_5MoeForCausalLM  # noqa: F401
+        else:
+            from transformers import Qwen3_5ForCausalLM  # noqa: F401
     except Exception:
         return False
     return True
@@ -1506,6 +1567,7 @@ def apply_runtime_overrides(policy, config=None):
         print(f"Applied runtime override: attn_implementation={attn_implementation}")
 
     if overrides.get("disable_qwen35_fla"):
+        disabled_any = False
         try:
             from transformers.models.qwen3_5 import modeling_qwen3_5 as qwen35_modeling
 
@@ -1514,15 +1576,33 @@ def apply_runtime_overrides(policy, config=None):
             qwen35_modeling.chunk_gated_delta_rule = None
             qwen35_modeling.fused_recurrent_gated_delta_rule = None
             qwen35_modeling.is_fast_path_available = False
+            disabled_any = True
             print(
                 "Disabled Qwen3.5 FLA fast path for quantization; using torch fallback"
             )
         except Exception as exc:
             print(f"WARN: failed to disable Qwen3.5 FLA fast path: {exc}")
+        try:
+            from transformers.models.qwen3_5_moe import (
+                modeling_qwen3_5_moe as qwen35_moe_modeling,
+            )
+
+            qwen35_moe_modeling.causal_conv1d_fn = None
+            qwen35_moe_modeling.causal_conv1d_update = None
+            qwen35_moe_modeling.chunk_gated_delta_rule = None
+            qwen35_moe_modeling.fused_recurrent_gated_delta_rule = None
+            qwen35_moe_modeling.is_fast_path_available = False
+            disabled_any = True
+            print(
+                "Disabled Qwen3.5 MoE FLA fast path for quantization; using torch fallback"
+            )
+        except Exception as exc:
+            print(f"WARN: failed to disable Qwen3.5 MoE FLA fast path: {exc}")
 
         # Re-run the full nogil compat patch (idempotent) to cover any
         # Autotuner/JITFunction instances created during model import.
-        patch_triton_nogil_compat()
+        if disabled_any:
+            patch_triton_nogil_compat()
 
     return overrides
 
@@ -3385,19 +3465,26 @@ if _has_defused_experts:
         from gptqmodel.models.moe_lifecycle import GateUpDownMoELifecycleHooks
 
         _cls = type(model)
+        _module_tree_has_moe = module_tree_declares_moe(getattr(_cls, "module_tree", None))
         _patched_tree = False
-        for _entry in getattr(_cls, "module_tree", []):
-            if isinstance(_entry, dict) and "self_attn" in _entry:
-                if "experts:moe:?" not in _entry:
-                    _entry["experts:moe:?"] = {
-                        "#": ("gate_proj:0", "up_proj:0", "down_proj:1"),
-                    }
-                    _patched_tree = True
-                break
+        if not _module_tree_has_moe:
+            for _entry in getattr(_cls, "module_tree", []):
+                if isinstance(_entry, dict) and "self_attn" in _entry:
+                    if "experts:moe:?" not in _entry:
+                        _entry["experts:moe:?"] = {
+                            "#": ("gate_proj:0", "up_proj:0", "down_proj:1"),
+                        }
+                        _patched_tree = True
+                    break
+
+        if _module_tree_has_moe or _patched_tree:
+            if not getattr(_cls, "dynamic_expert_index", None):
+                _cls.dynamic_expert_index = "num_experts"
+            if not getattr(_cls, "moe_lifecycle_hooks", None):
+                _cls.moe_lifecycle_hooks = GateUpDownMoELifecycleHooks()
+            _module_tree_has_moe = True
 
         if _patched_tree:
-            _cls.dynamic_expert_index = "num_experts"
-            _cls.moe_lifecycle_hooks = GateUpDownMoELifecycleHooks()
             _n_expert_layers = sum(
                 1
                 for n, _ in model.named_modules()
@@ -3413,8 +3500,9 @@ if _has_defused_experts:
             )
         else:
             print(
-                "INFO: MoE experts already in module_tree or "
-                "self_attn entry not found"
+                "INFO: MoE experts already in module_tree"
+                if _module_tree_has_moe
+                else "INFO: MoE self_attn entry not found for module_tree patch"
             )
     except ImportError as e:
         print(f"WARN: Could not import MoE lifecycle hooks: {e}")

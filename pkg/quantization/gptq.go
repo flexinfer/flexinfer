@@ -25,7 +25,9 @@ import (
 // save so publish-validate accepts the artifact without manual patching.
 // v16: Add MoE expert visibility gates so Qwen MoE jobs fail before saving
 // partial artifacts without quantized expert tensors.
-const GPTQScriptVersion = "v16"
+// v17: Route Qwen MoE configs through GPTQModel's MoE definition and re-fuse
+// mlp.experts tensors into vLLM's fused MoE layout.
+const GPTQScriptVersion = "v17"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
@@ -276,9 +278,34 @@ func getenvDefault(name, fallback string) string {
 func defaultGPTQModelPoliciesJSON() string {
 	policies := []gptqModelPolicy{
 		{
+			Name:              "qwen3.5-moe-text",
+			MatchModelTypes:   []string{"qwen3_5_moe_text", "qwen3_5_moe"},
+			ExtractTextConfig: true,
+			CopyRootKeys:      []string{"bos_token_id", "eos_token_id", "pad_token_id"},
+			RemapModelType:    "qwen3_5_moe_text",
+			Architectures:     []string{"Qwen3_5MoeForCausalLM"},
+			Loader:            "gptqmodel",
+			PythonPackages: []string{
+				"git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea",
+			},
+			QuantizeConfigOverride: map[string]any{
+				"offload_to_disk": true,
+			},
+			CalibrationOverrides: map[string]int{
+				"max_samples": 16,
+				"max_seq_len": 512,
+				"max_tokens":  8192,
+			},
+			RuntimeOverrides: map[string]any{
+				"attn_implementation": "eager",
+				"disable_qwen35_fla":  true,
+				"fix_mistral_regex":   true,
+			},
+		},
+		{
 			Name:                "qwen3.5-text",
 			MatchModelTypes:     []string{"qwen3_5_text"},
-			MatchPathSubstrings: []string{"qwen35", "qwen3.5"},
+			MatchPathSubstrings: []string{"qwen35", "qwen3.5", "qwen36", "qwen3.6"},
 			ExtractTextConfig:   true,
 			CopyRootKeys:        []string{"bos_token_id", "eos_token_id", "pad_token_id"},
 			RemapModelType:      "qwen3_5_text",

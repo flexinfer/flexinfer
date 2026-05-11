@@ -24,11 +24,14 @@ SCRIPT_PATH = Path(__file__).parent / "quantize_gptq.py"
 # Helpers we need from the script. Order matters: dependencies first.
 _HELPER_NAMES = (
     "_indexed_safetensors",
+    "_parse_moe_expert_tensor_key",
+    "_moe_fused_prefix",
     "_discover_quantized_module_suffixes",
     "detect_moe_architecture_from_config",
     "dynamic_config_excludes_moe_experts",
     "should_require_moe_expert_quantization",
     "inspect_moe_expert_visibility",
+    "module_tree_declares_moe",
     "discover_saved_moe_expert_quantization",
     "_modules_in_block_shape_for_layout",
     "write_modules_in_block_to_quantize",
@@ -68,7 +71,8 @@ def _load_helpers() -> dict:
             for target in node.targets:
                 if (
                     isinstance(target, ast.Name)
-                    and target.id == "_GPTQ_QUANTIZED_LEAF_NAMES"
+                    and target.id
+                    in ("_GPTQ_QUANTIZED_LEAF_NAMES", "_MOE_EXPERT_TENSOR_RE")
                 ):
                     keep_nodes.append(node)
                     break
@@ -117,18 +121,29 @@ class _FakeParam:
 
 
 class _FakeMoEModel:
-    module_tree = ["model", "layers", {"self_attn": {}, "experts:moe:?": {}}]
+    module_tree = [
+        "model",
+        "layers",
+        "#",
+        {
+            "self_attn": {},
+            "mlp:moe:?": {
+                "shared_expert:0": ("gate_proj:0", "up_proj:0", "down_proj:1"),
+                "experts:0": {"#": ("gate_proj:0", "up_proj:0", "down_proj:1")},
+            },
+        },
+    ]
 
     def named_modules(self) -> list[tuple[str, object]]:
         return [
-            ("model.layers.0.experts.0.gate_proj", object()),
-            ("model.layers.0.experts.0.up_proj", object()),
-            ("model.layers.0.experts.0.down_proj", object()),
+            ("model.layers.0.mlp.experts.0.gate_proj", object()),
+            ("model.layers.0.mlp.experts.0.up_proj", object()),
+            ("model.layers.0.mlp.experts.0.down_proj", object()),
             ("model.layers.0.self_attn.q_proj", object()),
         ]
 
     def named_parameters(self) -> list[tuple[str, object]]:
-        return [("model.layers.0.experts.gate_up_proj", _FakeParam())]
+        return [("model.layers.0.mlp.experts.gate_up_proj", _FakeParam())]
 
 
 class ModulesInBlockToQuantizeTests(unittest.TestCase):
@@ -373,7 +388,7 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
     def test_moe_requirement_auto_enabled_unless_experts_excluded(self) -> None:
         config = {
             "text_config": {
-                "model_type": "qwen3_5_text",
+                "model_type": "qwen3_5_moe_text",
                 "num_experts": 128,
                 "num_experts_per_tok": 8,
             }
@@ -394,9 +409,9 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
 
     def test_discovers_saved_moe_expert_quantization_shapes(self) -> None:
         tensor_keys = [
-            "model.layers.0.experts.0.gate_proj.qweight",
-            "model.layers.0.experts.0.up_proj.qweight",
-            "model.layers.0.experts.0.down_proj.qweight",
+            "model.layers.0.mlp.experts.0.gate_proj.qweight",
+            "model.layers.0.mlp.experts.0.up_proj.qweight",
+            "model.layers.0.mlp.experts.0.down_proj.qweight",
             "model.layers.1.moe.gate_up_proj.qweight",
             "model.layers.1.moe.down_proj.qweight",
         ]
@@ -410,7 +425,7 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
         self.assertEqual(
             check["vllm_modules"], ["moe.down_proj", "moe.gate_up_proj"]
         )
-        self.assertIn("experts.0.gate_proj", check["hf_native_modules"])
+        self.assertIn("mlp.experts.0.gate_proj", check["hf_native_modules"])
 
     def test_inspects_moe_expert_visibility(self) -> None:
         visibility = self.helpers["inspect_moe_expert_visibility"](_FakeMoEModel())
@@ -419,6 +434,35 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
         self.assertEqual(visibility["defused_expert_module_count"], 3)
         self.assertEqual(visibility["expert_gate_module_count"], 1)
         self.assertEqual(visibility["fused_3d_expert_parameter_count"], 1)
+
+    def test_parses_qwen_mlp_expert_tensors_for_refuse(self) -> None:
+        parse = self.helpers["_parse_moe_expert_tensor_key"]
+        fused_prefix = self.helpers["_moe_fused_prefix"]
+
+        parsed = parse("model.layers.7.mlp.experts.12.gate_proj.qweight")
+
+        self.assertEqual(
+            parsed,
+            {
+                "prefix": "model.layers.7.mlp.experts",
+                "layer_idx": 7,
+                "expert_idx": 12,
+                "proj_type": "gate_proj",
+                "tensor_type": "qweight",
+            },
+        )
+        self.assertEqual(fused_prefix(parsed["prefix"]), "model.layers.7.moe")
+
+        parsed = parse("model.layers.8.experts.2.down_proj.scales")
+        self.assertEqual(parsed["prefix"], "model.layers.8.experts")
+        self.assertEqual(parsed["proj_type"], "down_proj")
+        self.assertEqual(fused_prefix(parsed["prefix"]), "model.layers.8.moe")
+
+    def test_module_tree_declares_qwen_moe(self) -> None:
+        declares = self.helpers["module_tree_declares_moe"]
+
+        self.assertTrue(declares(_FakeMoEModel.module_tree))
+        self.assertFalse(declares(["model", "layers", {"self_attn": {}}]))
 
 
 if __name__ == "__main__":
