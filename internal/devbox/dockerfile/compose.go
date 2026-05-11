@@ -1,9 +1,14 @@
 package dockerfile
 
 import (
+	"strconv"
+	"strings"
+
 	"github.com/crb2nu/loom/internal/devbox/baseimage"
 	"github.com/crb2nu/loom/internal/devbox/detect"
 )
+
+const defaultGoVersion = "1.25.10"
 
 // templateData holds parameters for Go templates.
 type templateData struct {
@@ -44,10 +49,7 @@ type multiTemplateData struct {
 
 // buildGoData creates template data from a Go LanguageSpec.
 func buildGoData(spec detect.LanguageSpec, fp *detect.EnvFingerprint) templateData {
-	version := spec.Version
-	if version == "" {
-		version = "1.25"
-	}
+	version := normalizeGoVersion(spec.Version)
 
 	var tools []string
 	for _, t := range spec.Tools {
@@ -131,10 +133,10 @@ func buildMultiData(fp *detect.EnvFingerprint) multiTemplateData {
 	}
 
 	if hasGo {
-		goVer := "1.25"
+		goVer := defaultGoVersion
 		for _, l := range fp.Languages {
 			if l.Language == "go" && l.Version != "" {
-				goVer = l.Version
+				goVer = normalizeGoVersion(l.Version)
 				break
 			}
 		}
@@ -175,6 +177,27 @@ func buildMultiData(fp *detect.EnvFingerprint) multiTemplateData {
 	}
 
 	return data
+}
+
+func normalizeGoVersion(version string) string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return defaultGoVersion
+	}
+
+	parts := strings.Split(version, ".")
+	if len(parts) < 2 || parts[0] != "1" || parts[1] != "25" {
+		return version
+	}
+
+	if len(parts) < 3 {
+		return defaultGoVersion
+	}
+	patch, err := strconv.Atoi(parts[2])
+	if err != nil || patch < 10 {
+		return defaultGoVersion
+	}
+	return version
 }
 
 // nodeDepStep returns Dockerfile lines for Node.js dependency installation.

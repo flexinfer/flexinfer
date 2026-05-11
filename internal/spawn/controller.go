@@ -241,7 +241,12 @@ func (c *K8sController) Reconcile(ctx context.Context) error {
 	for spawnID, state := range c.spawns {
 		pod, exists := livePods[spawnID]
 		if !exists {
-			// Pod gone -- if the spawn was non-terminal, mark it as failed.
+			if state.PodName == "" && isPreRuntimeStatus(state.Status) {
+				continue
+			}
+
+			// Pod gone -- if a runtime pod existed for a non-terminal spawn,
+			// mark it as failed.
 			if !IsTerminal(state.Status) {
 				state.Status = StatusFailed
 				state.Error = "pod not found during reconciliation"
@@ -288,6 +293,15 @@ func (c *K8sController) Reconcile(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func isPreRuntimeStatus(status Status) bool {
+	switch status {
+	case StatusPending, StatusBuilding:
+		return true
+	default:
+		return false
+	}
 }
 
 // RecoverFromStore loads persisted state from the store and populates the

@@ -59,9 +59,30 @@ func TestGenerate_GoProject_DefaultVersion(t *testing.T) {
 
 	dockerfile := string(out)
 
-	// With pre-built base images, FROM may be the Harbor base image instead of golang:X.
-	if !strings.Contains(dockerfile, "golang:1.25") && !strings.Contains(dockerfile, "go:1.25") {
-		t.Errorf("Go Dockerfile should default to version 1.25, got:\n%s", dockerfile)
+	if !strings.Contains(dockerfile, "golang:1.25.10") {
+		t.Errorf("Go Dockerfile should default to version 1.25.10, got:\n%s", dockerfile)
+	}
+}
+
+func TestGenerate_GoProject_BumpsOldGo125Patch(t *testing.T) {
+	fp := &detect.EnvFingerprint{
+		ProjectDir:  "/tmp/mygoproject",
+		ProjectName: "mygoproject",
+		Languages: []detect.LanguageSpec{
+			{Language: "go", Version: "1.25.8"},
+		},
+		Hash: "old125",
+	}
+
+	out, err := Generate(fp)
+	if err != nil {
+		t.Fatalf("Generate() returned unexpected error: %v", err)
+	}
+
+	dockerfile := string(out)
+
+	if !strings.Contains(dockerfile, "golang:1.25.10") {
+		t.Errorf("Go Dockerfile should bump old 1.25 patches to 1.25.10, got:\n%s", dockerfile)
 	}
 }
 
@@ -379,6 +400,29 @@ func TestGenerate_MultiLanguage_GoAndNode(t *testing.T) {
 		if !strings.Contains(dockerfile, c.contains) {
 			t.Errorf("Multi-lang Dockerfile missing %s: expected to contain %q\nGot:\n%s", c.name, c.contains, dockerfile)
 		}
+	}
+}
+
+func TestGenerate_MultiLanguage_BumpsOldGo125Patch(t *testing.T) {
+	fp := &detect.EnvFingerprint{
+		ProjectDir:  "/tmp/multiproject",
+		ProjectName: "multiproject",
+		Languages: []detect.LanguageSpec{
+			{Language: "go", Version: "1.25.8"},
+			{Language: "node", Version: "20", DepManager: "npm"},
+		},
+		Hash: "multi125",
+	}
+
+	out, err := Generate(fp)
+	if err != nil {
+		t.Fatalf("Generate() returned unexpected error: %v", err)
+	}
+
+	dockerfile := string(out)
+
+	if !strings.Contains(dockerfile, "golang:1.25.10") {
+		t.Errorf("Multi-lang Dockerfile should bump old Go 1.25 patches to 1.25.10, got:\n%s", dockerfile)
 	}
 }
 
