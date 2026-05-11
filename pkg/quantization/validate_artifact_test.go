@@ -42,6 +42,7 @@ func TestBuildValidateArtifactJob_DisabledRejected(t *testing.T) {
 func TestBuildValidateArtifactJob_DefaultsAndShape(t *testing.T) {
 	t.Setenv("FLEXINFER_RUNTIME_IMAGE", "registry.harbor.lan/flexinfer/runtime:test")
 	t.Setenv("FLEXINFER_VALIDATOR_IMAGE", "")
+	t.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", "registry.harbor.lan/flexinfer/model-tools:test")
 
 	spec := &aiv1alpha1.PublishValidateSpec{Enabled: true}
 	job, err := BuildValidateArtifactJob(validateBaseParams(), spec)
@@ -69,8 +70,8 @@ func TestBuildValidateArtifactJob_DefaultsAndShape(t *testing.T) {
 	if c.Name != "validator" {
 		t.Errorf("container name = %q, want validator", c.Name)
 	}
-	if c.Image != "registry.harbor.lan/flexinfer/runtime:test" {
-		t.Errorf("image = %q, want runtime image", c.Image)
+	if c.Image != "registry.harbor.lan/flexinfer/model-tools:test" {
+		t.Errorf("image = %q, want model-tools image", c.Image)
 	}
 	// No GPU — validator is CPU-only.
 	if _, hasNvidia := c.Resources.Requests["nvidia.com/gpu"]; hasNvidia {
@@ -175,6 +176,7 @@ func TestBuildValidateArtifactJob_CustomImageWinsOverEnv(t *testing.T) {
 
 func TestBuildValidateArtifactJob_ValidatorImageOverridesRuntime(t *testing.T) {
 	t.Setenv("FLEXINFER_RUNTIME_IMAGE", "runtime:env")
+	t.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", "model-tools:env")
 	t.Setenv("FLEXINFER_VALIDATOR_IMAGE", "validator:env")
 
 	spec := &aiv1alpha1.PublishValidateSpec{Enabled: true}
@@ -184,6 +186,21 @@ func TestBuildValidateArtifactJob_ValidatorImageOverridesRuntime(t *testing.T) {
 	}
 	if got := job.Spec.Template.Spec.Containers[0].Image; got != "validator:env" {
 		t.Errorf("image = %q, want validator:env", got)
+	}
+}
+
+func TestBuildValidateArtifactJob_ModelToolsImageOverridesRuntime(t *testing.T) {
+	t.Setenv("FLEXINFER_RUNTIME_IMAGE", "runtime:env")
+	t.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", "model-tools:env")
+	t.Setenv("FLEXINFER_VALIDATOR_IMAGE", "")
+
+	spec := &aiv1alpha1.PublishValidateSpec{Enabled: true}
+	job, err := BuildValidateArtifactJob(validateBaseParams(), spec)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := job.Spec.Template.Spec.Containers[0].Image; got != "model-tools:env" {
+		t.Errorf("image = %q, want model-tools:env", got)
 	}
 }
 

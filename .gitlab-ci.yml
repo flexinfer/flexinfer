@@ -385,6 +385,7 @@ publish:
       bench_tags="${REGISTRY}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
       proxy_tags="${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
       flash_loader_tags="${REGISTRY}/flexinfer-flash-loader:${CI_COMMIT_SHORT_SHA}"
+      model_tools_tags="${REGISTRY}/model-tools:${CI_COMMIT_SHORT_SHA}"
 
       # "master" tags are used for continuous deployment in homelab clusters.
       # The Helm chart forces a rollout on each revision, and imagePullPolicy=Always
@@ -396,6 +397,7 @@ publish:
         bench_tags="${bench_tags} ${REGISTRY}/flexinfer-bench:master"
         proxy_tags="${proxy_tags} ${REGISTRY}/flexinfer-proxy:master"
         flash_loader_tags="${flash_loader_tags} ${REGISTRY}/flexinfer-flash-loader:master"
+        model_tools_tags="${model_tools_tags} ${REGISTRY}/model-tools:master"
       fi
 
       if [ "${PUBLISH_LATEST_TAGS}" = "1" ] && [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
@@ -405,6 +407,7 @@ publish:
         bench_tags="${bench_tags} ${REGISTRY}/flexinfer-bench:latest"
         proxy_tags="${proxy_tags} ${REGISTRY}/flexinfer-proxy:latest"
         flash_loader_tags="${flash_loader_tags} ${REGISTRY}/flexinfer-flash-loader:latest"
+        model_tools_tags="${model_tools_tags} ${REGISTRY}/model-tools:latest"
       fi
 
       if [ "${PUBLISH_GITLAB_IMAGES}" = "1" ] && [ -n "${CI_REGISTRY_IMAGE:-}" ]; then
@@ -414,8 +417,10 @@ publish:
         bench_tags="${bench_tags} ${CI_REGISTRY_IMAGE}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
         proxy_tags="${proxy_tags} ${CI_REGISTRY_IMAGE}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
         flash_loader_tags="${flash_loader_tags} ${CI_REGISTRY_IMAGE}/flexinfer-flash-loader:${CI_COMMIT_SHORT_SHA}"
+        model_tools_tags="${model_tools_tags} ${CI_REGISTRY_IMAGE}/model-tools:${CI_COMMIT_SHORT_SHA}"
         if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
           controller_tags="${controller_tags} ${CI_REGISTRY_IMAGE}/flexinfer-controller:latest"
+          model_tools_tags="${model_tools_tags} ${CI_REGISTRY_IMAGE}/model-tools:latest"
         fi
       fi
 
@@ -433,6 +438,8 @@ publish:
       build_image "flexinfer-proxy" "Dockerfile.proxy.bin" ${proxy_tags}
       # shellcheck disable=SC2086
       build_image "flexinfer-flash-loader" "Dockerfile.flash-loader.bin" ${flash_loader_tags}
+      # shellcheck disable=SC2086
+      build_image "model-tools" "Dockerfile.model-tools" ${model_tools_tags}
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_TAG

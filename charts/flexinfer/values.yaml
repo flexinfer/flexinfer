@@ -367,6 +367,13 @@ benchmarker:
 # Quantization runtime images used by ModelCache quantization jobs.
 # Override these when publishing images to a private registry.
 quantization:
+  # Lightweight CPU-only image used by ModelCache publish and publish-validator
+  # jobs. It includes oras, safetensors, huggingface_hub, and FlexInfer helper
+  # scripts so post-quantization jobs do not pull GPU runtime images.
+  modelToolsImage: ghcr.io/flexinfer/model-tools:latest
+  # Optional specific overrides. Leave empty to use modelToolsImage.
+  publishImage: ""
+  validatorImage: ""
   # Unified runtime: use the per-profile runtime image for quantization jobs
   # instead of separate 60GB+ quantizer images.
   # Requires INCLUDE_QUANTIZER=true in the runtime image build.

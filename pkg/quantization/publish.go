@@ -18,6 +18,12 @@ import (
 )
 
 const (
+	// DefaultModelToolsImage is the lightweight CPU-only utility image used for
+	// publishing and artifact validation. It bakes in oras, safetensors,
+	// huggingface_hub, and the FlexInfer helper scripts so publish jobs do not
+	// need to install tools at runtime or pull GPU runtime images.
+	DefaultModelToolsImage = "ghcr.io/flexinfer/model-tools:latest"
+
 	// DefaultPublishMemoryGB is the default memory limit for publish jobs.
 	// Publish is CPU+network only, needs memory for oras/hf_hub buffering.
 	DefaultPublishMemoryGB = 8
@@ -390,11 +396,13 @@ echo "Published to $PUSH_REF (digest: $DIGEST) in ${DURATION}s"
 }
 
 // publishImage returns the image to use for publish jobs.
-// Prefers FLEXINFER_PUBLISH_IMAGE. Defaults to alpine (publish only
-// needs sh + curl for oras install, no Python/GPU required).
+// Prefers FLEXINFER_PUBLISH_IMAGE, then the shared FLEXINFER_MODEL_TOOLS_IMAGE.
 func publishImage() string {
 	if img := os.Getenv("FLEXINFER_PUBLISH_IMAGE"); img != "" {
 		return img
 	}
-	return "alpine:3.23"
+	if img := os.Getenv("FLEXINFER_MODEL_TOOLS_IMAGE"); img != "" {
+		return img
+	}
+	return DefaultModelToolsImage
 }

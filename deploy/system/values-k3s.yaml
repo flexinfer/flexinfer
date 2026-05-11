@@ -216,6 +216,7 @@ imagePrewarm:
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
 
 quantization:
+  modelToolsImage: "registry.harbor.lan/flexinfer/model-tools:master"
   useRuntimeForQuantize: false
   runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:5bdb065f3e143951086056f4a81378e0cb02cb6d5549114913e56a031c028109"
   gptqDeviceMap: "auto"

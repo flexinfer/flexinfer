@@ -286,6 +286,18 @@ spec:
             - name: FLEXINFER_QUANTIZER_FP8_IMAGE
               value: {{ $quantizationImages.fp8 | quote }}
             {{- end }}
+            {{- if $quantization.modelToolsImage }}
+            - name: FLEXINFER_MODEL_TOOLS_IMAGE
+              value: {{ $quantization.modelToolsImage | quote }}
+            {{- end }}
+            {{- if $quantization.publishImage }}
+            - name: FLEXINFER_PUBLISH_IMAGE
+              value: {{ $quantization.publishImage | quote }}
+            {{- end }}
+            {{- if $quantization.validatorImage }}
+            - name: FLEXINFER_VALIDATOR_IMAGE
+              value: {{ $quantization.validatorImage | quote }}
+            {{- end }}
             {{- if $quantization.useRuntimeForQuantize }}
             - name: FLEXINFER_USE_RUNTIME_FOR_QUANTIZE
               value: "true"

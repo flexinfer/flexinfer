@@ -2,7 +2,7 @@
 //
 // BuildValidateArtifactJob produces a one-shot Job that runs the offline
 // validator (build/scripts/validate_quantized_artifact.py, baked into the
-// runtime image at /opt/flexinfer/scripts/) against the on-PVC artifact
+// model-tools image at /opt/flexinfer/scripts/) against the on-PVC artifact
 // before publish. The controller gates publish on the validator's JSON
 // result.
 //
@@ -26,8 +26,7 @@ import (
 
 const (
 	// ValidatorScriptPath is the in-image path of the validator. It is
-	// shipped under /opt/flexinfer/scripts/ via build/Dockerfile.runtime
-	// (`COPY build/scripts/ /opt/flexinfer/scripts/`).
+	// shipped under /opt/flexinfer/scripts/ via build/Dockerfile.model-tools.
 	ValidatorScriptPath = "/opt/flexinfer/scripts/validate_quantized_artifact.py"
 
 	// DefaultValidatorMemoryGB is enough for safetensors metadata reads on
@@ -135,9 +134,9 @@ func BuildValidateArtifactJob(params JobParams, spec *aiv1alpha1.PublishValidate
 // Precedence (highest first):
 //  1. spec.Image (per-cache override)
 //  2. FLEXINFER_VALIDATOR_IMAGE env var
-//  3. FLEXINFER_RUNTIME_IMAGE env var (validator script ships with runtime)
-//  4. Hardcoded fallback (python3-slim — script will fail "no safetensors"
-//     but the failure is loud and points operators at the real fix).
+//  3. FLEXINFER_MODEL_TOOLS_IMAGE env var
+//  4. FLEXINFER_RUNTIME_IMAGE env var (legacy fallback)
+//  5. Hardcoded model-tools fallback
 func validateArtifactImage(spec *aiv1alpha1.PublishValidateSpec) string {
 	if spec != nil && spec.Image != nil && *spec.Image != "" {
 		return *spec.Image
@@ -145,10 +144,13 @@ func validateArtifactImage(spec *aiv1alpha1.PublishValidateSpec) string {
 	if img := os.Getenv("FLEXINFER_VALIDATOR_IMAGE"); img != "" {
 		return img
 	}
+	if img := os.Getenv("FLEXINFER_MODEL_TOOLS_IMAGE"); img != "" {
+		return img
+	}
 	if img := os.Getenv("FLEXINFER_RUNTIME_IMAGE"); img != "" {
 		return img
 	}
-	return "python:3.11-slim"
+	return DefaultModelToolsImage
 }
 
 // validatorWrapperScript returns the shell wrapper that invokes the

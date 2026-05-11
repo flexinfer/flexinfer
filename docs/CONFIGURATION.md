@@ -76,6 +76,10 @@ The controller uses these environment variables to override default backend cont
 | `FLEXINFER_QUANTIZER_GPTQ_IMAGE` | `ghcr.io/flexinfer/quantizer:gptq` | GPTQ quantizer job image for `ModelCache.spec.quantization.format=GPTQ` |
 | `FLEXINFER_QUANTIZER_EXL2_IMAGE` | `ghcr.io/flexinfer/quantizer:exl2` | EXL2 quantizer job image for `ModelCache.spec.quantization.format=EXL2` |
 | `FLEXINFER_QUANTIZER_FP8_IMAGE` | `ghcr.io/flexinfer/quantizer:fp8` | FP8 quantizer job image for `ModelCache.spec.quantization.format=FP8` |
+| `FLEXINFER_MODEL_TOOLS_IMAGE` | `ghcr.io/flexinfer/model-tools:latest` | Lightweight CPU-only image for ModelCache publish and publish-validator jobs; includes `oras`, `safetensors`, `huggingface_hub`, and FlexInfer helper scripts |
+| `FLEXINFER_PUBLISH_IMAGE` | `FLEXINFER_MODEL_TOOLS_IMAGE` | Optional publish-job image override |
+| `FLEXINFER_VALIDATOR_IMAGE` | `FLEXINFER_MODEL_TOOLS_IMAGE` | Optional pre-publish artifact validator image override |
+| `FLEXINFER_RUNTIME_IMAGE` | - | Optional unified runtime image for quantization jobs and legacy validator fallback |
 
 ---
 
