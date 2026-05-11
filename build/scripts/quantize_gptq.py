@@ -1803,6 +1803,49 @@ def patch_gptq_save_meta_tensors():
     print("Patched GPTQModel save path to skip meta-backed tensors")
 
 
+def patch_gptq_lm_head_norm_post_quantize():
+    """Keep GPTQModel's lm_head norm hook from failing on lazy meta leaves."""
+
+    import gptqmodel.models.base as gptq_base
+
+    if getattr(gptq_base, "_flexinfer_lm_head_norm_patch", False):
+        return
+
+    base_model = getattr(gptq_base, "BaseQModel", None)
+    get_module_by_name_prefix = getattr(gptq_base, "get_module_by_name_prefix", None)
+    if base_model is None or get_module_by_name_prefix is None:
+        return
+
+    def _patched_lm_head_pre_quantize_generate_hook(self, inputs):
+        if self.pre_lm_head_norm_module:
+            norm, _ = get_module_by_name_prefix(
+                self.model, [self.pre_lm_head_norm_module]
+            )
+            if norm is not None:
+                norm = self.pre_quantize(norm)
+
+                for element in inputs:
+                    for i in range(len(element)):
+                        element[i] = norm(element[i])
+
+                try:
+                    self.post_quantize(norm)
+                except NotImplementedError as exc:
+                    if "meta tensors" not in str(exc):
+                        raise
+                    print(
+                        "WARN: skipped lm_head norm post_quantize because "
+                        f"GPTQModel still reports lazy meta tensors: {exc}"
+                    )
+        return inputs
+
+    base_model.lm_head_pre_quantize_generate_hook = (
+        _patched_lm_head_pre_quantize_generate_hook
+    )
+    gptq_base._flexinfer_lm_head_norm_patch = True
+    print("Patched GPTQModel lm_head norm hook for lazy meta-backed modules")
+
+
 # ── Read config from environment ──────────────────────────────────────
 model_dir = os.environ["MODEL_DIR"]
 out_dir = os.environ["OUT_DIR"]
@@ -3008,6 +3051,7 @@ from transformers import AutoTokenizer
 from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict
 
 patch_gptq_save_meta_tensors()
+patch_gptq_lm_head_norm_post_quantize()
 
 gpu_vram_mb_env = int(os.environ.get("GPU_VRAM_MB", "0"))
 try:
