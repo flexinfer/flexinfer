@@ -1816,6 +1816,101 @@ def patch_gptq_lm_head_norm_post_quantize():
     if base_model is None or get_module_by_name_prefix is None:
         return
 
+    def _module_has_meta_tensors(module):
+        for param in module.parameters(recurse=True):
+            if getattr(param, "is_meta", False) or param.device.type == "meta":
+                return True
+        for buf in module.buffers(recurse=True):
+            if getattr(buf, "is_meta", False) or buf.device.type == "meta":
+                return True
+        return False
+
+    def _describe_gpu_memory():
+        if not torch.cuda.is_available():
+            return "gpu unavailable"
+        try:
+            free, total = torch.cuda.mem_get_info()
+        except Exception as exc:
+            return f"gpu memory unavailable: {exc}"
+        gib = 1024**3
+        return f"{free / gib:.2f}GiB free / {total / gib:.2f}GiB total"
+
+    def _clear_gpu_cache():
+        gc.collect()
+        if not torch.cuda.is_available():
+            return
+        try:
+            torch.cuda.synchronize()
+        except Exception as exc:
+            print(f"WARN: unable to synchronize GPU before lm_head quantization: {exc}")
+        torch.cuda.empty_cache()
+
+    def _offload_module(name, module, offloaded):
+        if module is None:
+            return
+
+        if _module_has_meta_tensors(module):
+            children = list(module.named_children())
+            if not children:
+                print(
+                    "WARN: skipped lm_head pre-quant offload for "
+                    f"{name}; module still has lazy meta tensors"
+                )
+                return
+            for child_name, child in children:
+                _offload_module(f"{name}.{child_name}", child, offloaded)
+            return
+
+        try:
+            module.to("cpu")
+            offloaded.append(name)
+        except NotImplementedError as exc:
+            if "meta tensors" not in str(exc):
+                raise
+            print(
+                "WARN: skipped lm_head pre-quant offload for "
+                f"{name}; GPTQModel still reports lazy meta tensors: {exc}"
+            )
+        except Exception as exc:
+            print(f"WARN: failed lm_head pre-quant offload for {name}: {exc}")
+
+    def _maybe_offload_lm_head_context(instance):
+        if getattr(instance, "_flexinfer_lm_head_context_offloaded", False):
+            return
+
+        model = getattr(instance, "model", None)
+        inner = getattr(model, "model", None)
+        if inner is None:
+            return
+
+        before = _describe_gpu_memory()
+        offloaded = []
+        _offload_module("model.layers", getattr(inner, "layers", None), offloaded)
+
+        lm_head = getattr(model, "lm_head", None)
+        embed_tokens = getattr(inner, "embed_tokens", None)
+        embed_weight = getattr(embed_tokens, "weight", None)
+        lm_head_weight = getattr(lm_head, "weight", None)
+        if (
+            embed_tokens is not None
+            and embed_tokens is not lm_head
+            and embed_weight is not lm_head_weight
+        ):
+            _offload_module("model.embed_tokens", embed_tokens, offloaded)
+
+        _clear_gpu_cache()
+        instance._flexinfer_lm_head_context_offloaded = True
+        if offloaded:
+            print(
+                "Freed lm_head pre-quant GPU context modules: "
+                f"{', '.join(offloaded)} ({before} -> {_describe_gpu_memory()})"
+            )
+        else:
+            print(
+                "WARN: no lm_head pre-quant GPU context modules were offloaded "
+                f"({before} -> {_describe_gpu_memory()})"
+            )
+
     def _patched_lm_head_pre_quantize_generate_hook(self, inputs):
         if self.pre_lm_head_norm_module:
             norm, _ = get_module_by_name_prefix(
@@ -1837,6 +1932,7 @@ def patch_gptq_lm_head_norm_post_quantize():
                         "WARN: skipped lm_head norm post_quantize because "
                         f"GPTQModel still reports lazy meta tensors: {exc}"
                     )
+        _maybe_offload_lm_head_context(self)
         return inputs
 
     base_model.lm_head_pre_quantize_generate_hook = (
