@@ -1404,6 +1404,9 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"name\":\"qwen3.5-text\"") {
 		t.Errorf("QUANTIZE_MODEL_POLICIES missing qwen3.5 policy: %q", env["QUANTIZE_MODEL_POLICIES"])
 	}
+	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"name\":\"qwen3.5-moe-text\"") {
+		t.Errorf("QUANTIZE_MODEL_POLICIES missing qwen3.5 MoE policy: %q", env["QUANTIZE_MODEL_POLICIES"])
+	}
 	// Switched 2026-05-09 from "manual_sharded_state_dict" to stock "gptqmodel"
 	// loader for the qwen3.5-text policy. See gptq.go default policies block
 	// for the full rationale; in short, the stock loader sets turtle_model to
@@ -1413,7 +1416,7 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"loader\":\"gptqmodel\"") {
 		t.Errorf("QUANTIZE_MODEL_POLICIES missing gptqmodel loader for qwen3.5-text: %q", env["QUANTIZE_MODEL_POLICIES"])
 	}
-	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"match_path_substrings\":[\"qwen35\",\"qwen3.5\"]") {
+	if !contains(env["QUANTIZE_MODEL_POLICIES"], "\"match_path_substrings\":[\"qwen35\",\"qwen3.5\",\"qwen36\",\"qwen3.6\"]") {
 		t.Errorf("QUANTIZE_MODEL_POLICIES missing path-based matcher for remapped retries: %q", env["QUANTIZE_MODEL_POLICIES"])
 	}
 	// Stock GPTQModel uses its own LazyTurtle disk-offload path when

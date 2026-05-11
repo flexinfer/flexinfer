@@ -143,8 +143,8 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		if v := findEnv(env, "DYNAMIC_EXCLUSION"); v != "auto" {
 			t.Errorf("DYNAMIC_EXCLUSION = %q, want auto", v)
 		}
-		if v := findEnv(env, "QUANTIZE_MODEL_POLICIES"); !strings.Contains(v, "qwen3.5-text") {
-			t.Errorf("QUANTIZE_MODEL_POLICIES = %q, want default qwen3.5 policy JSON", v)
+		if v := findEnv(env, "QUANTIZE_MODEL_POLICIES"); !strings.Contains(v, "qwen3.5-text") || !strings.Contains(v, "qwen3.5-moe-text") {
+			t.Errorf("QUANTIZE_MODEL_POLICIES = %q, want default Qwen policy JSON", v)
 		} else {
 			var policies []map[string]any
 			if err := json.Unmarshal([]byte(v), &policies); err != nil {
@@ -330,9 +330,9 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
-	t.Run("wrapper script version is v16", func(t *testing.T) {
-		if GPTQScriptVersion != "v16" {
-			t.Errorf("GPTQScriptVersion = %q, want v16 (MoE expert visibility gate)", GPTQScriptVersion)
+	t.Run("wrapper script version is v17", func(t *testing.T) {
+		if GPTQScriptVersion != "v17" {
+			t.Errorf("GPTQScriptVersion = %q, want v17 (Qwen MoE expert quantization)", GPTQScriptVersion)
 		}
 	})
 }
