@@ -42,6 +42,32 @@ func TestParseQuantizationMetadata_WithOutputLocation(t *testing.T) {
 	}
 }
 
+func TestParseQuantizationMetadata_WithEffectiveCalibration(t *testing.T) {
+	meta, err := parseQuantizationMetadata(`{"type":"W4_G128","calibrationParams":{"maxSeqLen":512,"maxSamples":16}}`)
+	if err != nil {
+		t.Fatalf("parseQuantizationMetadata returned error: %v", err)
+	}
+	if meta.CalibrationParams == nil {
+		t.Fatal("CalibrationParams is nil")
+	}
+	if meta.CalibrationParams.MaxSeqLen == nil || *meta.CalibrationParams.MaxSeqLen != 512 {
+		t.Fatalf("MaxSeqLen = %v, want 512", meta.CalibrationParams.MaxSeqLen)
+	}
+	if meta.CalibrationParams.MaxSamples == nil || *meta.CalibrationParams.MaxSamples != 16 {
+		t.Fatalf("MaxSamples = %v, want 16", meta.CalibrationParams.MaxSamples)
+	}
+}
+
+func TestParseQuantizationMetadata_DropsInvalidCalibration(t *testing.T) {
+	meta, err := parseQuantizationMetadata(`{"type":"W4_G128","calibrationParams":{"maxSeqLen":-1,"maxSamples":-2}}`)
+	if err != nil {
+		t.Fatalf("parseQuantizationMetadata returned error: %v", err)
+	}
+	if meta.CalibrationParams != nil {
+		t.Fatalf("CalibrationParams = %#v, want nil", meta.CalibrationParams)
+	}
+}
+
 func TestParseQuantizationMetadata_Invalid(t *testing.T) {
 	if _, err := parseQuantizationMetadata("not-json"); err == nil {
 		t.Fatal("parseQuantizationMetadata should return an error for invalid JSON")

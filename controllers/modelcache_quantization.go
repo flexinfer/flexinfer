@@ -379,7 +379,9 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		if quantJob.Status.CompletionTime != nil {
 			quantStatus.CompletedAt = quantJob.Status.CompletionTime
 		}
-		if modelCache.Spec.Quantization.Calibration != nil {
+		if meta != nil && meta.CalibrationParams != nil {
+			quantStatus.CalibrationParams = meta.CalibrationParams.DeepCopy()
+		} else if modelCache.Spec.Quantization.Calibration != nil {
 			quantStatus.CalibrationParams = modelCache.Spec.Quantization.Calibration.DeepCopy()
 		}
 		modelCache.Status.Quantization = quantStatus
@@ -591,12 +593,13 @@ func (r *ModelCacheReconciler) resetQuantizationStatusFields(mc *aiv1alpha1.Mode
 }
 
 type quantizationJobMetadata struct {
-	Type                    string `json:"type,omitempty"`
-	OriginalSizeBytes       int64  `json:"originalSizeBytes,omitempty"`
-	CompressedSizeBytes     int64  `json:"compressedSizeBytes,omitempty"`
-	QuantizationTimeSeconds int64  `json:"quantizationTimeSeconds,omitempty"`
-	OutputFile              string `json:"outputFile,omitempty"`
-	OutputDir               string `json:"outputDir,omitempty"`
+	Type                    string                      `json:"type,omitempty"`
+	OriginalSizeBytes       int64                       `json:"originalSizeBytes,omitempty"`
+	CompressedSizeBytes     int64                       `json:"compressedSizeBytes,omitempty"`
+	QuantizationTimeSeconds int64                       `json:"quantizationTimeSeconds,omitempty"`
+	OutputFile              string                      `json:"outputFile,omitempty"`
+	OutputDir               string                      `json:"outputDir,omitempty"`
+	CalibrationParams       *aiv1alpha1.CalibrationSpec `json:"calibrationParams,omitempty"`
 }
 
 func (r *ModelCacheReconciler) readQuantizationMetadataFromPods(ctx context.Context, namespace, jobName string) (*quantizationJobMetadata, error) {
@@ -673,6 +676,17 @@ func parseQuantizationMetadata(message string) (*quantizationJobMetadata, error)
 	}
 	if meta.QuantizationTimeSeconds < 0 {
 		meta.QuantizationTimeSeconds = 0
+	}
+	if meta.CalibrationParams != nil {
+		if meta.CalibrationParams.MaxSeqLen != nil && *meta.CalibrationParams.MaxSeqLen < 0 {
+			meta.CalibrationParams.MaxSeqLen = nil
+		}
+		if meta.CalibrationParams.MaxSamples != nil && *meta.CalibrationParams.MaxSamples < 0 {
+			meta.CalibrationParams.MaxSamples = nil
+		}
+		if meta.CalibrationParams.MaxSeqLen == nil && meta.CalibrationParams.MaxSamples == nil {
+			meta.CalibrationParams = nil
+		}
 	}
 	return &meta, nil
 }

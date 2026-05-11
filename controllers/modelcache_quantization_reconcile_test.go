@@ -269,6 +269,10 @@ func TestReconcileQuantizationSucceededMarksReadyAndCapturesMetadata(t *testing.
 
 	cache := newQuantizationCache("quant-success")
 	cache.Status.Path = "/models/base"
+	cache.Spec.Quantization.Calibration = &aiv1alpha1.CalibrationSpec{
+		MaxSeqLen:  int32Ptr(2048),
+		MaxSamples: int32Ptr(128),
+	}
 	r, cl := newQuantizationTestReconciler(t, nil,
 		cache,
 		&batchv1.Job{
@@ -287,7 +291,7 @@ func TestReconcileQuantizationSucceededMarksReadyAndCapturesMetadata(t *testing.
 			"quant-success-quantize",
 			"default",
 			completed,
-			`{"type":"W4_G128","originalSizeBytes":15000,"compressedSizeBytes":4000,"quantizationTimeSeconds":300,"outputDir":"gptq-w4-g128"}`,
+			`{"type":"W4_G128","originalSizeBytes":15000,"compressedSizeBytes":4000,"quantizationTimeSeconds":300,"outputDir":"gptq-w4-g128","calibrationParams":{"maxSeqLen":512,"maxSamples":16}}`,
 		),
 	)
 
@@ -312,6 +316,11 @@ func TestReconcileQuantizationSucceededMarksReadyAndCapturesMetadata(t *testing.
 	require.NotNil(t, updated.Status.Quantization.CompletedAt)
 	assert.True(t, updated.Status.Quantization.StartedAt.Equal(&started))
 	assert.True(t, updated.Status.Quantization.CompletedAt.Equal(&completed))
+	require.NotNil(t, updated.Status.Quantization.CalibrationParams)
+	require.NotNil(t, updated.Status.Quantization.CalibrationParams.MaxSeqLen)
+	require.NotNil(t, updated.Status.Quantization.CalibrationParams.MaxSamples)
+	assert.EqualValues(t, 512, *updated.Status.Quantization.CalibrationParams.MaxSeqLen)
+	assert.EqualValues(t, 16, *updated.Status.Quantization.CalibrationParams.MaxSamples)
 }
 
 func TestReconcileQuantizationFailedCapturesFailureMessage(t *testing.T) {
