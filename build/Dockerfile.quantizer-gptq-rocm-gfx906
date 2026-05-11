@@ -77,6 +77,7 @@ RUN mv /bin/bash /bin/bash.real && \
       'class Flag:' \
       '    MULTILINE = _re.MULTILINE' \
       '    IGNORECASE = _re.IGNORECASE' \
+      '    CASELESS = _re.IGNORECASE' \
       '    DOTALL = _re.DOTALL' \
       '    VERBOSE = _re.VERBOSE' \
       '    ASCII = _re.ASCII' \
