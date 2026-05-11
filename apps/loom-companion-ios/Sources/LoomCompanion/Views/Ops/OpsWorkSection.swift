@@ -4,6 +4,8 @@ import LoomCompanionKit
 /// Work section: tasks, legacy workflows/approvals, and session controls.
 struct OpsWorkSection: View {
     @Bindable var viewModel: OpsViewModel
+    var taskFilter: NavigationCoordinator.TasksFilter?
+    var clearTaskFilter: () -> Void = {}
     @State private var taskDisplayLimit = 8
     @State private var workflowDisplayLimit = 8
     @State private var showLegacyWorkflows = false
@@ -29,6 +31,43 @@ struct OpsWorkSection: View {
     private var canStartSession: Bool {
         !createAgentID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             && !viewModel.isMutatingSession
+    }
+
+    private var filteredTasks: [MobileTask] {
+        guard let taskFilter else { return viewModel.tasks }
+        return viewModel.tasks.filter { task in
+            if let status = taskFilter.status?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !status.isEmpty,
+               task.status.rawValue != status {
+                return false
+            }
+            if let agentId = taskFilter.agentId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !agentId.isEmpty,
+               task.agentId != agentId {
+                return false
+            }
+            if let sessionId = taskFilter.sessionId?.trimmingCharacters(in: .whitespacesAndNewlines),
+               !sessionId.isEmpty,
+               task.sessionId != sessionId {
+                return false
+            }
+            return true
+        }
+    }
+
+    private var taskFilterLabel: String? {
+        guard let taskFilter else { return nil }
+        var parts: [String] = []
+        if let status = taskFilter.status, !status.isEmpty {
+            parts.append(status.replacingOccurrences(of: "_", with: " "))
+        }
+        if let agentId = taskFilter.agentId, !agentId.isEmpty {
+            parts.append(agentId)
+        }
+        if let sessionId = taskFilter.sessionId, !sessionId.isEmpty {
+            parts.append(sessionId)
+        }
+        return parts.isEmpty ? nil : parts.joined(separator: " · ")
     }
 
     /// Dedupe projects by name so ForEach below never hits an Identifiable-id
@@ -101,6 +140,24 @@ struct OpsWorkSection: View {
                     .font(LoomTypography.caption)
                     .foregroundStyle(LoomColors.textTertiary)
 
+                if let taskFilterLabel {
+                    HStack(spacing: LoomSpacing.xs) {
+                        Label(taskFilterLabel, systemImage: "line.3.horizontal.decrease.circle")
+                            .font(LoomTypography.caption)
+                            .foregroundStyle(LoomColors.statusInfo)
+                            .lineLimit(1)
+                        Spacer()
+                        Button {
+                            clearTaskFilter()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(LoomColors.textTertiary)
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("Clear task filter")
+                    }
+                }
+
                 HStack {
                     opsMetric(label: "Pending", value: viewModel.taskCounts.pending, icon: "clock", color: LoomColors.statusIdle)
                     Spacer()
@@ -111,12 +168,14 @@ struct OpsWorkSection: View {
                     opsMetric(label: "Done", value: viewModel.taskCounts.completed, icon: "checkmark.circle.fill", color: LoomColors.statusHealthy)
                 }
 
-                if viewModel.tasks.isEmpty {
-                    Text("No tasks")
+                let visibleTasks = filteredTasks
+
+                if visibleTasks.isEmpty {
+                    Text(taskFilter == nil ? "No tasks" : "No matching tasks")
                         .font(LoomTypography.bodyRegular)
                         .foregroundStyle(LoomColors.textTertiary)
                 } else {
-                    ForEach(Array(viewModel.tasks.prefix(taskDisplayLimit))) { task in
+                    ForEach(Array(visibleTasks.prefix(taskDisplayLimit))) { task in
                         NavigationLink {
                             OpsTaskDetailView(task: task)
                         } label: {
@@ -171,14 +230,14 @@ struct OpsWorkSection: View {
                             .disabled(task.sessionId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         }
                     }
-                    if viewModel.tasks.count > taskDisplayLimit {
+                    if visibleTasks.count > taskDisplayLimit {
                         Button {
                             withAnimation(.easeInOut(duration: 0.25)) {
                                 taskDisplayLimit += 8
                             }
                             HapticManager.light()
                         } label: {
-                            Text("Show \(min(8, viewModel.tasks.count - taskDisplayLimit)) More")
+                            Text("Show \(min(8, visibleTasks.count - taskDisplayLimit)) More")
                                 .font(LoomTypography.caption)
                                 .foregroundStyle(LoomColors.accent)
                                 .frame(maxWidth: .infinity)

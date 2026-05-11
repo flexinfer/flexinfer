@@ -33,6 +33,9 @@ struct SessionDetailView: View {
                     SessionMetadataView(session: session)
                         .cardAppear(index: 0)
 
+                    hierarchyActions(for: session)
+                        .cardAppear(index: 1)
+
                     // Cross-tab link to the agent that owns this session
                     if !session.agentId.isEmpty {
                         Button {
@@ -82,6 +85,12 @@ struct SessionDetailView: View {
                         ) {
                             SessionTasksView(tasks: tasks)
                         }
+                    }
+
+                    if let activity = viewModel.activity,
+                       activity.taskCount > 0 || activity.pipelineCount > 0 {
+                        sessionActivityCard(activity)
+                            .cardAppear(index: 3)
                     }
 
                     // Decisions (collapsible with summary)
@@ -270,6 +279,69 @@ struct SessionDetailView: View {
         if tasks.inProgress > 0 { parts.append("\(tasks.inProgress) in-progress") }
         if tasks.completed > 0 { parts.append("\(tasks.completed) done") }
         return parts.isEmpty ? "\(tasks.total) tasks" : parts.joined(separator: " \u{00B7} ")
+    }
+
+    @ViewBuilder
+    private func hierarchyActions(for session: SessionInfo) -> some View {
+        let parentId = session.parentSessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let rootId = session.rootSessionId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if (parentId?.isEmpty == false) || (rootId?.isEmpty == false && rootId != session.id) {
+            LoomCard(priority: .compact) {
+                HStack(spacing: 8) {
+                    Label("Hierarchy", systemImage: "point.3.connected.trianglepath.dotted")
+                        .font(LoomTypography.labelLarge)
+                        .foregroundStyle(LoomColors.fgPrimary)
+                    Spacer()
+                    if let parentId, !parentId.isEmpty {
+                        Button {
+                            navigationCoordinator?.navigateToSession(id: parentId)
+                        } label: {
+                            Label("Parent", systemImage: "arrow.uturn.left")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
+                    }
+                    if let rootId, !rootId.isEmpty, rootId != session.id {
+                        Button {
+                            navigationCoordinator?.navigateToSession(id: rootId)
+                        } label: {
+                            Label("Root", systemImage: "arrow.up.left.and.arrow.down.right")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+            }
+        }
+    }
+
+    private func sessionActivityCard(_ activity: SessionActivityResponse) -> some View {
+        LoomCard(
+            priority: activity.hasFailedPipeline ? .standard : .compact,
+            accent: activity.hasFailedPipeline ? .severity(LoomColors.statusCritical, pulse: false) : .none
+        ) {
+            VStack(alignment: .leading, spacing: LoomSpacing.sm) {
+                HStack {
+                    Label("Live Activity", systemImage: "bolt.horizontal")
+                        .font(LoomTypography.labelLarge)
+                        .foregroundStyle(LoomColors.fgPrimary)
+                    Spacer()
+                    if activity.hasFailedPipeline {
+                        LoomPill("pipeline failed", icon: "xmark.octagon", color: LoomColors.statusCritical, weight: .micro)
+                    }
+                }
+                HStack(spacing: LoomSpacing.sm) {
+                    LoomPill("\(activity.taskCount) tasks", icon: "checklist", color: LoomColors.accent, style: .outlined, weight: .micro)
+                    LoomPill("\(activity.pipelineCount) pipelines", icon: "arrow.triangle.2.circlepath", color: activity.hasFailedPipeline ? LoomColors.statusCritical : LoomColors.statusInfo, style: .outlined, weight: .micro)
+                }
+                if let failed = activity.pipelines.first(where: { $0.status.lowercased() == "failed" || $0.failedJobCount > 0 }) {
+                    Text("\(failed.project) · \(failed.ref) · \(failed.failedJobCount) failed jobs")
+                        .font(LoomTypography.caption)
+                        .foregroundStyle(LoomColors.fgSecondary)
+                        .lineLimit(2)
+                }
+            }
+        }
     }
 
     private var decisionsSummary: String {

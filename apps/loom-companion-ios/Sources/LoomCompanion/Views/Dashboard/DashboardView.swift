@@ -11,6 +11,7 @@ struct DashboardView: View {
     @State private var showingConnection = false
     @State private var updatedAgo: String?
     @State private var refreshTimer: Timer?
+    @Environment(\.navigationCoordinator) private var navigationCoordinator
 
     enum DashboardNavAction {
         case people
@@ -60,7 +61,8 @@ struct DashboardView: View {
                         lanes: dashboard.coordination.attentionLanes,
                         health: dashboard.health,
                         criticalAlerts: alertsViewModel.criticalAlerts,
-                        onNavigate: onNavigate
+                        onNavigate: onNavigate,
+                        onLaneNavigate: routeFromLane
                     )
                     .cardAppear(index: 0)
 
@@ -71,7 +73,7 @@ struct DashboardView: View {
                             skipFirst: true
                         ) { lane in
                             HapticManager.selection()
-                            onNavigate?(navigationAction(for: lane))
+                            routeFromLane(lane)
                         }
                         .cardAppear(index: 1)
                     }
@@ -233,6 +235,99 @@ struct DashboardView: View {
             return .connection
         default:
             return .work
+        }
+    }
+
+    private func routeFromLane(_ lane: DashboardAttentionLane) {
+        if let url = URL(string: lane.deepLink),
+           let link = DeepLink.from(url) {
+            route(link)
+            return
+        }
+
+        switch lane.targetKind {
+        case "session":
+            if !lane.targetId.isEmpty {
+                navigationCoordinator?.navigateToSession(id: lane.targetId)
+                return
+            }
+        case "agent":
+            if !lane.targetId.isEmpty {
+                navigationCoordinator?.navigateToAgent(id: lane.targetId)
+                return
+            }
+        case "task_filter":
+            navigationCoordinator?.filterTasks(
+                status: lane.filter?.status,
+                agentId: lane.filter?.agentId,
+                sessionId: lane.filter?.sessionId
+            )
+            onNavigate?(.work)
+            return
+        case "workflow":
+            if !lane.targetId.isEmpty {
+                navigationCoordinator?.navigateToWorkflow(id: lane.targetId)
+                return
+            }
+        case "spawn":
+            if !lane.targetId.isEmpty {
+                navigationCoordinator?.navigateToSpawn(id: lane.targetId)
+                return
+            }
+        case "handoff":
+            navigationCoordinator?.openHandoffInbox()
+            onNavigate?(.work)
+            return
+        case "connection":
+            onNavigate?(.connection)
+            return
+        case "alert":
+            if !lane.targetId.isEmpty {
+                navigationCoordinator?.navigateToAlert(id: lane.targetId)
+            }
+            onNavigate?(.alerts)
+            return
+        default:
+            break
+        }
+        onNavigate?(navigationAction(for: lane))
+    }
+
+    private func route(_ link: DeepLink) {
+        switch link {
+        case .dashboard:
+            break
+        case .people:
+            onNavigate?(.people)
+        case .work:
+            onNavigate?(.work)
+        case .alerts:
+            onNavigate?(.alerts)
+        case .connection, .configure:
+            onNavigate?(.connection)
+        case .session(let id):
+            navigationCoordinator?.navigateToSession(id: id)
+        case .agent(let id):
+            navigationCoordinator?.navigateToAgent(id: id)
+        case .sessions(let status, let agentId):
+            navigationCoordinator?.filterSessions(status: status, agentId: agentId)
+            onNavigate?(.people)
+        case .agents(let status, let type):
+            navigationCoordinator?.filterAgents(status: status, type: type)
+            onNavigate?(.people)
+        case .tasks(let status, let agentId, let sessionId):
+            navigationCoordinator?.filterTasks(status: status, agentId: agentId, sessionId: sessionId)
+            onNavigate?(.work)
+        case .workflow(let id, _):
+            navigationCoordinator?.navigateToWorkflow(id: id)
+        case .spawn(let id):
+            navigationCoordinator?.navigateToSpawn(id: id)
+        case .handoff:
+            navigationCoordinator?.openHandoffInbox()
+            onNavigate?(.work)
+        case .alert(let id):
+            navigationCoordinator?.navigateToAlert(id: id)
+            onNavigate?(.alerts)
         }
     }
 

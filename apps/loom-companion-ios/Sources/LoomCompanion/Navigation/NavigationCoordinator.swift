@@ -19,6 +19,9 @@ final class NavigationCoordinator {
     /// Pending request to navigate to a spawn (remote execution) by ID.
     var pendingSpawnID: String?
 
+    /// Pending request to navigate to a workflow by ID.
+    var pendingWorkflowID: String?
+
     /// Pending request to navigate to a single alert by ID.
     var pendingAlertID: String?
 
@@ -62,6 +65,7 @@ final class NavigationCoordinator {
     func navigateToSession(id: String) { pendingSessionID = id }
     func navigateToAgent(id: String) { pendingAgentID = id }
     func navigateToSpawn(id: String) { pendingSpawnID = id }
+    func navigateToWorkflow(id: String) { pendingWorkflowID = id }
     func navigateToAlert(id: String) { pendingAlertID = id }
 
     func filterAgents(status: String?, type: String?) {
@@ -83,6 +87,7 @@ final class NavigationCoordinator {
     func clearPendingSession() { pendingSessionID = nil }
     func clearPendingAgent() { pendingAgentID = nil }
     func clearPendingSpawn() { pendingSpawnID = nil }
+    func clearPendingWorkflow() { pendingWorkflowID = nil }
     func clearPendingAlert() { pendingAlertID = nil }
     func clearPendingAgentsFilter() { pendingAgentsFilter = nil }
     func clearPendingSessionsFilter() { pendingSessionsFilter = nil }

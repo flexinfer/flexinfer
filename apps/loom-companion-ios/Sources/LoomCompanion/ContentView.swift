@@ -89,6 +89,25 @@ struct ContentView: View {
             selectedTab = .people
             navigationCoordinator.clearPendingAgent()
         }
+        .onChange(of: navigationCoordinator.pendingSpawnID) { _, spawnId in
+            guard spawnId != nil else { return }
+            selectedTab = .spawn
+            navigationCoordinator.clearPendingSpawn()
+        }
+        .onChange(of: navigationCoordinator.pendingWorkflowID) { _, workflowId in
+            guard let workflowId else { return }
+            pendingWorkflowDeepLinkID = workflowId
+            selectedTab = .work
+            navigationCoordinator.clearPendingWorkflow()
+        }
+        .onChange(of: navigationCoordinator.pendingTasksFilter) { _, filter in
+            guard filter != nil else { return }
+            selectedTab = .work
+        }
+        .onChange(of: navigationCoordinator.pendingHandoffInbox) { _, open in
+            guard open else { return }
+            selectedTab = .work
+        }
     }
 
     private func handleDeepLink(_ link: DeepLink) {
@@ -147,10 +166,10 @@ struct ContentView: View {
             pendingWorkflowDeepLinkID = id
             selectedTab = .work
 
-        // Work · spawn detail
+        // Spawn · active remote execution
         case .spawn(let id):
             navigationCoordinator.navigateToSpawn(id: id)
-            selectedTab = .work
+            selectedTab = .spawn
 
         // Work · handoff inbox
         case .handoff:
@@ -244,6 +263,10 @@ struct ContentView: View {
                     apiClient: connectionVM.buildAPIClient(),
                     broadcaster: sseBroadcaster,
                     deepLinkWorkflowID: $pendingWorkflowDeepLinkID,
+                    taskFilter: Binding(
+                        get: { navigationCoordinator.pendingTasksFilter },
+                        set: { navigationCoordinator.pendingTasksFilter = $0 }
+                    ),
                     prefillEndSessionID: $pendingEndSessionPrefillID
                 )
             }
@@ -321,6 +344,10 @@ struct ContentView: View {
                     apiClient: connectionVM.buildAPIClient(),
                     broadcaster: sseBroadcaster,
                     deepLinkWorkflowID: $pendingWorkflowDeepLinkID,
+                    taskFilter: Binding(
+                        get: { navigationCoordinator.pendingTasksFilter },
+                        set: { navigationCoordinator.pendingTasksFilter = $0 }
+                    ),
                     prefillEndSessionID: $pendingEndSessionPrefillID
                 )
             case .mills:

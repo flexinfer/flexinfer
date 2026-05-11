@@ -38,14 +38,20 @@ struct SessionsListView: View {
                     availableNamespaces: viewModel.uniqueNamespaces
                 )
 
-                ForEach(viewModel.filteredSessions) { session in
-                    NavigationLink(value: session.id) {
-                        SessionRowView(session: session)
+                ForEach(viewModel.filteredSessionRows) { row in
+                    NavigationLink(value: row.session.id) {
+                        SessionRowView(
+                            session: row.session,
+                            depth: row.depth,
+                            childCount: row.childCount,
+                            activeChildCount: row.activeChildCount,
+                            isOrphan: row.isOrphan
+                        )
                     }
                     .swipeActions(edge: .trailing) {
                         Button(role: .destructive) {
                             HapticManager.medium()
-                            onPrefillEndSession?(session.id)
+                            onPrefillEndSession?(row.session.id)
                         } label: {
                             Label("End", systemImage: "stop.circle")
                         }
@@ -54,7 +60,7 @@ struct SessionsListView: View {
                     .swipeActions(edge: .leading) {
                         Button {
                             HapticManager.light()
-                            navigationPath.append(session.id)
+                            navigationPath.append(row.session.id)
                         } label: {
                             Label("View", systemImage: "eye")
                         }
@@ -62,7 +68,7 @@ struct SessionsListView: View {
                     }
                     .contextMenu {
                         Button {
-                            onPrefillEndSession?(session.id)
+                            onPrefillEndSession?(row.session.id)
                         } label: {
                             Label("Prefill End in Ops", systemImage: "arrowshape.turn.up.left")
                         }

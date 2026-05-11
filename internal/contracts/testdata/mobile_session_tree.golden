@@ -1,0 +1,47 @@
+{
+  "orphans": [],
+  "roots": [
+    {
+      "active_child_count": 1,
+      "child_count": 1,
+      "children": [
+        {
+          "active_child_count": 0,
+          "child_count": 0,
+          "children": [],
+          "depth": 1,
+          "session": {
+            "agent_id": "claude-code-sub-1",
+            "description": "Subagent exploring payment module",
+            "entry_count": 8,
+            "id": "sess_sub_xyz",
+            "namespace": "project/feature-x",
+            "parent_session_id": "sess_abc123",
+            "root_session_id": "sess_abc123",
+            "started_at": "2025-01-15T10:20:00Z",
+            "status": "active",
+            "total_tokens": 1200
+          }
+        }
+      ],
+      "depth": 0,
+      "session": {
+        "agent_id": "claude-code-1",
+        "description": "Working on feature X",
+        "entry_count": 42,
+        "id": "sess_abc123",
+        "namespace": "project/feature-x",
+        "root_session_id": "sess_abc123",
+        "started_at": "2025-01-15T10:00:00Z",
+        "status": "active",
+        "total_tokens": 8500
+      }
+    }
+  ],
+  "summary": {
+    "active_sessions": 2,
+    "orphan_sessions": 0,
+    "root_count": 1,
+    "updated_at": "2025-01-15T10:30:00Z"
+  }
+}

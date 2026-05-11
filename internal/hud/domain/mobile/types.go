@@ -99,6 +99,32 @@ type SessionTraceResponse struct {
 	RetrievedAt  string              `json:"retrieved_at"`
 }
 
+// SessionTreeNode is the canonical mobile hierarchy projection for one
+// session and its descendants.
+type SessionTreeNode struct {
+	Session          bridge.SessionInfo `json:"session"`
+	Depth            int                `json:"depth"`
+	ChildCount       int                `json:"child_count"`
+	ActiveChildCount int                `json:"active_child_count"`
+	Children         []SessionTreeNode  `json:"children"`
+}
+
+// SessionTreeSummary summarizes the server-computed hierarchy so mobile
+// clients can render counts without rewalking the whole tree.
+type SessionTreeSummary struct {
+	RootCount      int    `json:"root_count"`
+	ActiveSessions int    `json:"active_sessions"`
+	OrphanSessions int    `json:"orphan_sessions"`
+	UpdatedAt      string `json:"updated_at"`
+}
+
+// SessionTreeResponse is returned by GET /api/mobile/v1/sessions/tree.
+type SessionTreeResponse struct {
+	Roots   []SessionTreeNode  `json:"roots"`
+	Orphans []SessionTreeNode  `json:"orphans"`
+	Summary SessionTreeSummary `json:"summary"`
+}
+
 // --- Topology types ---
 
 // TopologyNode represents an agent in the topology graph.

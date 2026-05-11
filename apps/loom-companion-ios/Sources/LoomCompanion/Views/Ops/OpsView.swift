@@ -16,6 +16,7 @@ import LoomCompanionKit
 struct OpsView: View {
     @State private var viewModel: OpsViewModel
     @Binding private var deepLinkWorkflowID: String?
+    @Binding private var taskFilter: NavigationCoordinator.TasksFilter?
     @Binding private var prefillEndSessionID: String?
     private var broadcaster: SSEEventBroadcaster?
 
@@ -32,11 +33,13 @@ struct OpsView: View {
         apiClient: APIClient?,
         broadcaster: SSEEventBroadcaster? = nil,
         deepLinkWorkflowID: Binding<String?> = .constant(nil),
+        taskFilter: Binding<NavigationCoordinator.TasksFilter?> = .constant(nil),
         prefillEndSessionID: Binding<String?> = .constant(nil)
     ) {
         let client = apiClient ?? APIClient(baseURL: URL(string: "http://localhost")!, token: "mock-token")
         self.broadcaster = broadcaster
         _deepLinkWorkflowID = deepLinkWorkflowID
+        _taskFilter = taskFilter
         _prefillEndSessionID = prefillEndSessionID
         _viewModel = State(initialValue: OpsViewModel(apiClient: client))
     }
@@ -197,6 +200,8 @@ struct OpsView: View {
         } else {
             OpsWorkSection(
                 viewModel: viewModel,
+                taskFilter: taskFilter,
+                clearTaskFilter: { taskFilter = nil },
                 prefillEndSession: { sessionID in
                     prefillEndSession(with: sessionID)
                 }

@@ -3,8 +3,13 @@ import LoomCompanionKit
 
 struct SessionRowView: View {
     let session: SessionInfo
+    var depth: Int = 0
+    var childCount: Int = 0
+    var activeChildCount: Int = 0
+    var isOrphan: Bool = false
 
     private var isLive: Bool { session.status == .active }
+    private var isChild: Bool { depth > 0 || session.parentSessionId != nil }
 
     private var subtitle: String {
         // Compose one scannable context line: namespace · description (if present)
@@ -44,6 +49,22 @@ struct SessionRowView: View {
             )
         }
         LoomPill(
+            hierarchyLabel,
+            icon: hierarchyIcon,
+            color: hierarchyColor,
+            style: .outlined,
+            weight: .micro
+        )
+        if childCount > 0 {
+            LoomPill(
+                "\(activeChildCount)/\(childCount) child active",
+                icon: "point.3.connected.trianglepath.dotted",
+                color: LoomColors.statusInfo,
+                style: .outlined,
+                weight: .micro
+            )
+        }
+        LoomPill(
             "\(session.entryCount) entries",
             icon: "doc.text",
             color: LoomColors.accent,
@@ -76,7 +97,29 @@ struct SessionRowView: View {
             trailing: { primaryMetric },
             footer: { footerPills }
         )
+        .padding(.leading, CGFloat(min(depth, 3)) * 18)
         .loomShareContextMenu(.session(id: session.id))
+    }
+
+    private var hierarchyLabel: String {
+        if isOrphan { return "orphan" }
+        if isChild { return "child" }
+        if childCount > 0 { return "root" }
+        return "session"
+    }
+
+    private var hierarchyIcon: String {
+        if isOrphan { return "questionmark.folder" }
+        if isChild { return "arrow.turn.down.right" }
+        if childCount > 0 { return "point.3.connected.trianglepath.dotted" }
+        return "circle"
+    }
+
+    private var hierarchyColor: Color {
+        if isOrphan { return LoomColors.statusDegraded }
+        if isChild { return LoomColors.statusInfo }
+        if childCount > 0 { return LoomColors.accent }
+        return LoomColors.textSecondary
     }
 
     // MARK: - Formatting Helpers

@@ -103,4 +103,118 @@ struct SessionInfoTests {
         let session = try #require(envelope.data?.session)
         #expect(session.status == .unknown)
     }
+
+    @Test("Decodes session tree response")
+    func decodesSessionTree() throws {
+        let payload = """
+        {
+          "ok": true,
+          "data": {
+            "roots": [
+              {
+                "session": {
+                  "id": "sess_root",
+                  "agent_id": "codex",
+                  "namespace": "loom-core/mobile",
+                  "status": "active",
+                  "description": "Root",
+                  "started_at": "2026-05-11T14:00:00Z",
+                  "entry_count": 10,
+                  "total_tokens": 1000,
+                  "root_session_id": "sess_root"
+                },
+                "depth": 0,
+                "child_count": 1,
+                "active_child_count": 1,
+                "children": [
+                  {
+                    "session": {
+                      "id": "sess_child",
+                      "agent_id": "codex-sub",
+                      "namespace": "loom-core/mobile",
+                      "status": "active",
+                      "description": "Child",
+                      "started_at": "2026-05-11T14:01:00Z",
+                      "entry_count": 2,
+                      "total_tokens": 200,
+                      "parent_session_id": "sess_root",
+                      "root_session_id": "sess_root"
+                    },
+                    "depth": 1,
+                    "child_count": 0,
+                    "active_child_count": 0,
+                    "children": []
+                  }
+                ]
+              }
+            ],
+            "orphans": [],
+            "summary": {
+              "root_count": 1,
+              "active_sessions": 2,
+              "orphan_sessions": 0,
+              "updated_at": "2026-05-11T14:02:00Z"
+            }
+          },
+          "meta": {
+            "request_id": "req_tree",
+            "timestamp": "2026-05-11T14:02:00Z"
+          }
+        }
+        """
+
+        let envelope = try JSONDecoder().decode(APIEnvelope<SessionTreeResponse>.self, from: Data(payload.utf8))
+        let tree = try #require(envelope.data)
+        #expect(tree.roots.count == 1)
+        #expect(tree.roots[0].childCount == 1)
+        #expect(tree.roots[0].children[0].depth == 1)
+        #expect(tree.summary.activeSessions == 2)
+    }
+
+    @Test("Decodes session activity response")
+    func decodesSessionActivity() throws {
+        let payload = """
+        {
+          "ok": true,
+          "data": {
+            "session_id": "sess_root",
+            "tasks": [
+              {
+                "id": "task-1",
+                "title": "Fix mobile route",
+                "status": "blocked",
+                "priority": "high",
+                "tags": ["mobile"],
+                "created_at": "2026-05-11T14:00:00Z",
+                "updated_at": "2026-05-11T14:01:00Z"
+              }
+            ],
+            "pipelines": [
+              {
+                "id": 42,
+                "project": "services/loom-core",
+                "ref": "codex/mobile",
+                "status": "failed",
+                "current_stage": "test",
+                "failed_job_count": 1,
+                "web_url": "https://gitlab.example/pipelines/42"
+              }
+            ],
+            "task_count": 1,
+            "pipeline_count": 1
+          },
+          "meta": {
+            "request_id": "req_activity",
+            "timestamp": "2026-05-11T14:02:00Z"
+          }
+        }
+        """
+
+        let envelope = try JSONDecoder().decode(APIEnvelope<SessionActivityResponse>.self, from: Data(payload.utf8))
+        let activity = try #require(envelope.data)
+        #expect(activity.taskCount == 1)
+        #expect(activity.pipelineCount == 1)
+        #expect(activity.hasFailedPipeline == true)
+        #expect(activity.tasks[0].tags == ["mobile"])
+    }
 }

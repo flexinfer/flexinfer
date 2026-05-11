@@ -47,6 +47,35 @@ func (d *MobileDomain) handleMobileSessions(w http.ResponseWriter, r *http.Reque
 	d.writeMobileJSON(w, http.StatusOK, map[string]any{"sessions": sessions})
 }
 
+func (d *MobileDomain) handleMobileSessionsTree(w http.ResponseWriter, r *http.Request) {
+	if !d.requireMobileScope(w, r, ScopeRead) {
+		return
+	}
+
+	sessions, err := d.deps.Agent().Sessions()
+	if err != nil {
+		d.deps.Logger().Warn("mobile: sessions tree upstream error, falling back to cache", "error", err)
+		snap := d.deps.Monitors().Fleet.Snapshot()
+		sessions = snap.Sessions
+	}
+	if sessions == nil {
+		sessions = []bridge.SessionInfo{}
+	}
+
+	statusFilter := parseMobileSessionStatusFilter(r.URL.Query().Get("status"))
+	if statusFilter != nil {
+		filtered := sessions[:0:0]
+		for _, s := range sessions {
+			if statusFilter[strings.ToLower(strings.TrimSpace(s.Status))] {
+				filtered = append(filtered, s)
+			}
+		}
+		sessions = filtered
+	}
+
+	d.writeMobileJSON(w, http.StatusOK, buildMobileSessionTree(sessions, time.Now().UTC()))
+}
+
 // parseMobileSessionStatusFilter returns a set of allowed session statuses, or
 // nil if no filtering should be applied. An empty/omitted value defaults to
 // {"active"}; "all" returns nil (no filtering). Unknown values are dropped.
@@ -68,6 +97,109 @@ func parseMobileSessionStatusFilter(raw string) map[string]bool {
 		return map[string]bool{"active": true}
 	}
 	return allowed
+}
+
+func buildMobileSessionTree(sessions []bridge.SessionInfo, updatedAt time.Time) SessionTreeResponse {
+	byID := make(map[string]bridge.SessionInfo, len(sessions))
+	childrenByParent := make(map[string][]bridge.SessionInfo, len(sessions))
+	rootIDs := make([]string, 0, len(sessions))
+	orphanIDs := make([]string, 0)
+	seenRoots := map[string]struct{}{}
+	seenOrphans := map[string]struct{}{}
+	activeSessions := 0
+
+	for i := range sessions {
+		s := normalizeMobileSessionHierarchy(sessions[i])
+		sessions[i] = s
+		if strings.TrimSpace(s.ID) == "" {
+			continue
+		}
+		byID[s.ID] = s
+		if mobileSessionIsLive(s.Status) {
+			activeSessions++
+		}
+	}
+
+	for _, s := range sessions {
+		if strings.TrimSpace(s.ID) == "" {
+			continue
+		}
+		parentID := strings.TrimSpace(s.ParentSessionID)
+		if parentID == "" {
+			if _, ok := seenRoots[s.ID]; !ok {
+				rootIDs = append(rootIDs, s.ID)
+				seenRoots[s.ID] = struct{}{}
+			}
+			continue
+		}
+		if _, ok := byID[parentID]; !ok {
+			if _, seen := seenOrphans[s.ID]; !seen {
+				orphanIDs = append(orphanIDs, s.ID)
+				seenOrphans[s.ID] = struct{}{}
+			}
+			continue
+		}
+		childrenByParent[parentID] = append(childrenByParent[parentID], s)
+	}
+
+	roots := make([]SessionTreeNode, 0, len(rootIDs))
+	for _, id := range rootIDs {
+		if s, ok := byID[id]; ok {
+			roots = append(roots, buildMobileSessionTreeNode(s, childrenByParent, 0))
+		}
+	}
+
+	orphans := make([]SessionTreeNode, 0, len(orphanIDs))
+	for _, id := range orphanIDs {
+		if s, ok := byID[id]; ok {
+			orphans = append(orphans, buildMobileSessionTreeNode(s, childrenByParent, 0))
+		}
+	}
+
+	return SessionTreeResponse{
+		Roots:   roots,
+		Orphans: orphans,
+		Summary: SessionTreeSummary{
+			RootCount:      len(roots),
+			ActiveSessions: activeSessions,
+			OrphanSessions: len(orphans),
+			UpdatedAt:      updatedAt.Format(time.RFC3339),
+		},
+	}
+}
+
+func normalizeMobileSessionHierarchy(session bridge.SessionInfo) bridge.SessionInfo {
+	session.ID = strings.TrimSpace(session.ID)
+	session.ParentSessionID = strings.TrimSpace(session.ParentSessionID)
+	session.RootSessionID = strings.TrimSpace(session.RootSessionID)
+	if session.ParentSessionID == "" && session.RootSessionID == "" {
+		session.RootSessionID = session.ID
+	}
+	return session
+}
+
+func buildMobileSessionTreeNode(session bridge.SessionInfo, childrenByParent map[string][]bridge.SessionInfo, depth int) SessionTreeNode {
+	children := childrenByParent[session.ID]
+	nodes := make([]SessionTreeNode, 0, len(children))
+	activeChildren := 0
+	for _, child := range children {
+		if mobileSessionIsLive(child.Status) {
+			activeChildren++
+		}
+		childNode := buildMobileSessionTreeNode(child, childrenByParent, depth+1)
+		activeChildren += childNode.ActiveChildCount
+		nodes = append(nodes, childNode)
+	}
+	if nodes == nil {
+		nodes = []SessionTreeNode{}
+	}
+	return SessionTreeNode{
+		Session:          session,
+		Depth:            depth,
+		ChildCount:       len(children),
+		ActiveChildCount: activeChildren,
+		Children:         nodes,
+	}
 }
 
 func (d *MobileDomain) handleMobileSessionDetail(w http.ResponseWriter, r *http.Request) {

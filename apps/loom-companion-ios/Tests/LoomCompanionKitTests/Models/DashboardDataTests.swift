@@ -124,6 +124,41 @@ struct DashboardDataTests {
         #expect(coordination.summary.crossAgentBlockers == 0)
     }
 
+    @Test("Decodes additive attention lane target metadata")
+    func decodesAttentionLaneTargetMetadata() throws {
+        let json = """
+        {
+          "type": "blocked_task",
+          "id": "task-123",
+          "label": "Blocked task",
+          "route": "work",
+          "scope": "loom-core/mobile",
+          "summary": "2 blocked tasks",
+          "severity": "critical",
+          "target_kind": "task_filter",
+          "target_id": "",
+          "deep_link": "loom://tasks?status=blocked&session=sess_abc123",
+          "filter": {
+            "status": "blocked",
+            "session_id": "sess_abc123"
+          },
+          "recommended_action": "Review blocked tasks",
+          "freshness": {
+            "source": "fleet_snapshot",
+            "updated_at": "2026-05-11T14:00:00Z"
+          }
+        }
+        """
+
+        let lane = try JSONDecoder().decode(DashboardAttentionLane.self, from: Data(json.utf8))
+        #expect(lane.targetKind == "task_filter")
+        #expect(lane.deepLink == "loom://tasks?status=blocked&session=sess_abc123")
+        #expect(lane.filter?.status == "blocked")
+        #expect(lane.filter?.sessionId == "sess_abc123")
+        #expect(lane.recommendedAction == "Review blocked tasks")
+        #expect(lane.freshness?.source == "fleet_snapshot")
+    }
+
     @Test("Health status healthy when no degraded or down")
     func healthStatusHealthy() {
         let health = HealthSummary(
