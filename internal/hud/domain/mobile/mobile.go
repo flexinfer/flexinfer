@@ -26,6 +26,7 @@ func (d *MobileDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFu
 	mux.HandleFunc("GET /api/mobile/v1/dashboard", mw(d.handleMobileDashboard))
 	mux.HandleFunc("GET /api/mobile/v1/control-plane", mw(d.handleMobileControlPlane))
 	mux.HandleFunc("GET /api/mobile/v1/sessions", mw(d.handleMobileSessions))
+	mux.HandleFunc("GET /api/mobile/v1/sessions/tree", mw(d.handleMobileSessionsTree))
 	mux.HandleFunc("GET /api/mobile/v1/sessions/{session_id}", mw(d.handleMobileSessionDetail))
 	mux.HandleFunc("GET /api/mobile/v1/sessions/{session_id}/events", mw(d.handleMobileSessionEvents))
 	mux.HandleFunc("GET /api/mobile/v1/sessions/{session_id}/trace", mw(d.handleMobileSessionTrace))

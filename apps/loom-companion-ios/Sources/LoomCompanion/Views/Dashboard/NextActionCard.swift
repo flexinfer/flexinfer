@@ -11,17 +11,20 @@ struct NextActionCard: View {
     /// of a separate red banner — the dashboard only shouts in one place.
     let criticalAlerts: [AlertItem]
     var onNavigate: ((DashboardView.DashboardNavAction) -> Void)?
+    var onLaneNavigate: ((DashboardAttentionLane) -> Void)?
 
     init(
         lanes: [DashboardAttentionLane],
         health: HealthSummary,
         criticalAlerts: [AlertItem] = [],
-        onNavigate: ((DashboardView.DashboardNavAction) -> Void)? = nil
+        onNavigate: ((DashboardView.DashboardNavAction) -> Void)? = nil,
+        onLaneNavigate: ((DashboardAttentionLane) -> Void)? = nil
     ) {
         self.lanes = lanes
         self.health = health
         self.criticalAlerts = criticalAlerts
         self.onNavigate = onNavigate
+        self.onLaneNavigate = onLaneNavigate
     }
 
     // MARK: - Body
@@ -31,7 +34,11 @@ struct NextActionCard: View {
             guard resolvedAction != nil else { return }
             HapticManager.selection()
             if let action = resolvedAction {
-                onNavigate?(action.navAction)
+                if let lane = action.lane {
+                    onLaneNavigate?(lane)
+                } else {
+                    onNavigate?(action.navAction)
+                }
             }
         } label: {
             LoomCard(priority: cardPriority, accent: cardAccent) {
@@ -168,6 +175,7 @@ struct NextActionCard: View {
         let color: Color
         let severity: Severity
         let navAction: DashboardView.DashboardNavAction
+        let lane: DashboardAttentionLane?
     }
 
     private var resolvedAction: ResolvedAction? {
@@ -183,7 +191,8 @@ struct NextActionCard: View {
                 subtitle: alert.message,
                 color: LoomColors.statusCritical,
                 severity: .critical,
-                navAction: .alerts
+                navAction: .alerts,
+                lane: nil
             )
         }
 
@@ -203,7 +212,8 @@ struct NextActionCard: View {
                 subtitle: "Open connection diagnostics for the next remediation step.",
                 color: isDown ? LoomColors.statusCritical : LoomColors.statusDegraded,
                 severity: isDown ? .critical : .warning,
-                navAction: .connection
+                navAction: .connection,
+                lane: nil
             )
         }
         // Priority 3 — Warning severity lanes
@@ -253,7 +263,8 @@ struct NextActionCard: View {
             subtitle: subtitle,
             color: color,
             severity: severity,
-            navAction: navAction
+            navAction: navAction,
+            lane: lane
         )
     }
 

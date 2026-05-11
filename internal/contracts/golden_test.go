@@ -152,40 +152,62 @@ func TestMobileDashboardContract(t *testing.T) {
 			"top_relations":    []any{},
 			"attention_lanes": []any{
 				map[string]any{
-					"type":     "agent",
-					"id":       "claude-code-1",
-					"label":    "Agent lane",
-					"route":    "people",
-					"scope":    "services/loom-core",
-					"summary":  "blocked on review",
-					"severity": "warning",
+					"type":               "agent",
+					"id":                 "claude-code-1",
+					"label":              "Agent lane",
+					"route":              "people",
+					"scope":              "services/loom-core",
+					"summary":            "blocked on review",
+					"severity":           "warning",
+					"target_kind":        "session",
+					"target_id":          "sess_abc123",
+					"deep_link":          "loom://session/sess_abc123",
+					"recommended_action": "Open session",
+					"freshness":          map[string]any{"source": "coordination_snapshot"},
 				},
 				map[string]any{
-					"type":     "namespace",
-					"id":       "services/loom-core/mobile",
-					"label":    "Work lane",
-					"route":    "work",
-					"scope":    "3 tasks",
-					"summary":  "blocked tasks",
-					"severity": "critical",
+					"type":               "namespace",
+					"id":                 "services/loom-core/mobile",
+					"label":              "Work lane",
+					"route":              "work",
+					"scope":              "3 tasks",
+					"summary":            "blocked tasks",
+					"severity":           "critical",
+					"target_kind":        "task_filter",
+					"target_id":          "",
+					"deep_link":          "loom://tasks?status=blocked",
+					"filter":             map[string]any{"status": "blocked", "namespace": "services/loom-core/mobile"},
+					"recommended_action": "Review work queue",
+					"freshness":          map[string]any{"source": "coordination_snapshot"},
 				},
 				map[string]any{
-					"type":     "merge",
-					"id":       "merge-ready",
-					"label":    "Merge ready",
-					"route":    "dispatch",
-					"scope":    "2 branches",
-					"summary":  "2 branches ready to merge",
-					"severity": "info",
+					"type":               "merge",
+					"id":                 "merge-ready",
+					"label":              "Merge ready",
+					"route":              "dispatch",
+					"scope":              "2 branches",
+					"summary":            "2 branches ready to merge",
+					"severity":           "info",
+					"target_kind":        "task_filter",
+					"target_id":          "",
+					"deep_link":          "loom://tasks?status=in_progress",
+					"filter":             map[string]any{"status": "in_progress"},
+					"recommended_action": "Review merge-ready work",
+					"freshness":          map[string]any{"source": "coordination_snapshot"},
 				},
 				map[string]any{
-					"type":     "conflict",
-					"id":       "file-conflicts",
-					"label":    "File conflicts",
-					"route":    "dispatch",
-					"scope":    "1 file",
-					"summary":  "1 file claimed by multiple agents",
-					"severity": "critical",
+					"type":               "conflict",
+					"id":                 "file-conflicts",
+					"label":              "File conflicts",
+					"route":              "dispatch",
+					"scope":              "1 file",
+					"summary":            "1 file claimed by multiple agents",
+					"severity":           "critical",
+					"target_kind":        "connection",
+					"target_id":          "file-conflicts",
+					"deep_link":          "loom://work",
+					"recommended_action": "Resolve coordination conflicts",
+					"freshness":          map[string]any{"source": "coordination_snapshot"},
 				},
 			},
 		},
@@ -202,21 +224,27 @@ func TestMobileDashboardContract(t *testing.T) {
 // internal/hud/domain/mobile.buildMobileAttentionLanes. Freezing it as a typed
 // struct catches field renames that a plain map[string]any would hide.
 type attentionLane struct {
-	Type     string `json:"type"`
-	ID       string `json:"id"`
-	Label    string `json:"label"`
-	Route    string `json:"route"`
-	Scope    string `json:"scope"`
-	Summary  string `json:"summary"`
-	Severity string `json:"severity"`
+	Type              string         `json:"type"`
+	ID                string         `json:"id"`
+	Label             string         `json:"label"`
+	Route             string         `json:"route"`
+	Scope             string         `json:"scope"`
+	Summary           string         `json:"summary"`
+	Severity          string         `json:"severity"`
+	TargetKind        string         `json:"target_kind"`
+	TargetID          string         `json:"target_id"`
+	DeepLink          string         `json:"deep_link"`
+	Filter            map[string]any `json:"filter,omitempty"`
+	RecommendedAction string         `json:"recommended_action"`
+	Freshness         map[string]any `json:"freshness"`
 }
 
 func TestMobileAttentionLanesContract(t *testing.T) {
 	lanes := []attentionLane{
-		{Type: "agent", ID: "claude-code-1", Label: "Agent lane", Route: "people", Scope: "services/loom-core", Summary: "blocked on review", Severity: "warning"},
-		{Type: "namespace", ID: "services/loom-core/mobile", Label: "Work lane", Route: "work", Scope: "3 tasks", Summary: "blocked tasks", Severity: "critical"},
-		{Type: "merge", ID: "merge-ready", Label: "Merge ready", Route: "dispatch", Scope: "2 branches", Summary: "2 branches ready to merge", Severity: "info"},
-		{Type: "conflict", ID: "file-conflicts", Label: "File conflicts", Route: "dispatch", Scope: "1 file", Summary: "1 file claimed by multiple agents", Severity: "critical"},
+		{Type: "agent", ID: "claude-code-1", Label: "Agent lane", Route: "people", Scope: "services/loom-core", Summary: "blocked on review", Severity: "warning", TargetKind: "session", TargetID: "sess_abc123", DeepLink: "loom://session/sess_abc123", RecommendedAction: "Open session", Freshness: map[string]any{"source": "coordination_snapshot"}},
+		{Type: "namespace", ID: "services/loom-core/mobile", Label: "Work lane", Route: "work", Scope: "3 tasks", Summary: "blocked tasks", Severity: "critical", TargetKind: "task_filter", TargetID: "", DeepLink: "loom://tasks?status=blocked", Filter: map[string]any{"status": "blocked", "namespace": "services/loom-core/mobile"}, RecommendedAction: "Review work queue", Freshness: map[string]any{"source": "coordination_snapshot"}},
+		{Type: "merge", ID: "merge-ready", Label: "Merge ready", Route: "dispatch", Scope: "2 branches", Summary: "2 branches ready to merge", Severity: "info", TargetKind: "task_filter", TargetID: "", DeepLink: "loom://tasks?status=in_progress", Filter: map[string]any{"status": "in_progress"}, RecommendedAction: "Review merge-ready work", Freshness: map[string]any{"source": "coordination_snapshot"}},
+		{Type: "conflict", ID: "file-conflicts", Label: "File conflicts", Route: "dispatch", Scope: "1 file", Summary: "1 file claimed by multiple agents", Severity: "critical", TargetKind: "connection", TargetID: "file-conflicts", DeepLink: "loom://work", RecommendedAction: "Resolve coordination conflicts", Freshness: map[string]any{"source": "coordination_snapshot"}},
 	}
 	assertGolden(t, "mobile_attention_lanes", marshalIndent(t, lanes))
 }
@@ -374,6 +402,57 @@ func TestMobileSessionsContract(t *testing.T) {
 		"sessions": sessions,
 	}
 	assertGolden(t, "mobile_sessions", marshalIndent(t, resp))
+}
+
+func TestMobileSessionTreeContract(t *testing.T) {
+	resp := map[string]any{
+		"roots": []any{
+			map[string]any{
+				"session": map[string]any{
+					"id":              "sess_abc123",
+					"agent_id":        "claude-code-1",
+					"namespace":       "project/feature-x",
+					"started_at":      "2025-01-15T10:00:00Z",
+					"status":          "active",
+					"description":     "Working on feature X",
+					"entry_count":     42,
+					"total_tokens":    8500,
+					"root_session_id": "sess_abc123",
+				},
+				"depth":              0,
+				"child_count":        1,
+				"active_child_count": 1,
+				"children": []any{
+					map[string]any{
+						"session": map[string]any{
+							"id":                "sess_sub_xyz",
+							"agent_id":          "claude-code-sub-1",
+							"namespace":         "project/feature-x",
+							"started_at":        "2025-01-15T10:20:00Z",
+							"status":            "active",
+							"description":       "Subagent exploring payment module",
+							"entry_count":       8,
+							"total_tokens":      1200,
+							"parent_session_id": "sess_abc123",
+							"root_session_id":   "sess_abc123",
+						},
+						"depth":              1,
+						"child_count":        0,
+						"active_child_count": 0,
+						"children":           []any{},
+					},
+				},
+			},
+		},
+		"orphans": []any{},
+		"summary": map[string]any{
+			"root_count":      1,
+			"active_sessions": 2,
+			"orphan_sessions": 0,
+			"updated_at":      "2025-01-15T10:30:00Z",
+		},
+	}
+	assertGolden(t, "mobile_session_tree", marshalIndent(t, resp))
 }
 
 // ---------------------------------------------------------------------------

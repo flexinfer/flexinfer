@@ -9,8 +9,10 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
 
     var dashboardResponse: DashboardData?
     var sessionsResponse: SessionsResponse?
+    var sessionsTreeResponse: SessionTreeResponse?
     var sessionDetailResponse: SessionDetailResponse?
     var sessionEventsResponse: SessionEventsResponse?
+    var sessionActivityResponse: SessionActivityResponse?
     var createSessionResponse: SessionCreateResponse?
     var endSessionResponse: SessionEndResponse?
     var tasksResponse: MobileTasksResponse?
@@ -60,6 +62,8 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = dashboardResponse as? T { return r }
         case .sessions:
             if let r = sessionsResponse as? T { return r }
+        case .sessionsTree:
+            if let r = sessionsTreeResponse as? T { return r }
         case .controlPlane:
             if let r = controlPlaneResponse as? T { return r }
         case .alertsPolicy:
@@ -68,6 +72,8 @@ final class MockAPIClient: LoomAPIClientProtocol, @unchecked Sendable {
             if let r = sessionDetailResponse as? T { return r }
         case .sessionEvents:
             if let r = sessionEventsResponse as? T { return r }
+        case .sessionActivity:
+            if let r = sessionActivityResponse as? T { return r }
         case .tasks:
             if let r = tasksResponse as? T { return r }
         case .workflows:

@@ -11,6 +11,7 @@ public final class SessionDetailViewModel {
     public var errors: [SessionTopEntry] = []
     public var topFiles: [TouchedFile] = []
     public var tasks: SessionTaskSummary?
+    public var activity: SessionActivityResponse?
     public var isLoading = false
     public var error: LoomAPIError?
 
@@ -34,7 +35,6 @@ public final class SessionDetailViewModel {
         do {
             async let detailResult: SessionDetailResponse = apiClient.request(.sessionDetail(id: sessionId))
             async let eventsResult: SessionEventsResponse = apiClient.request(.sessionEvents(id: sessionId, limit: 100))
-
             let (detail, sessionEvents) = try await (detailResult, eventsResult)
             session = detail.session
             events = sessionEvents.events
@@ -44,6 +44,7 @@ public final class SessionDetailViewModel {
             self.errors = detail.errors ?? []
             topFiles = detail.topFiles ?? []
             tasks = detail.tasks
+            activity = try? await apiClient.request(.sessionActivity(id: sessionId))
             error = nil
         } catch let err as LoomAPIError {
             error = err

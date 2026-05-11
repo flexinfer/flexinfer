@@ -330,7 +330,7 @@ func buildMobileAttentionLanes(snapshot coordination.Snapshot) []map[string]any 
 			continue
 		}
 		summary := strings.Join(limitMobileSlice(agent.AttentionReasons, 2), " · ")
-		lanes = append(lanes, map[string]any{
+		lane := map[string]any{
 			"type":     "agent",
 			"id":       agent.AgentID,
 			"label":    "Agent lane",
@@ -338,14 +338,26 @@ func buildMobileAttentionLanes(snapshot coordination.Snapshot) []map[string]any 
 			"scope":    preferMobileValue(agent.Namespace, "unscoped"),
 			"summary":  summary,
 			"severity": mobileAttentionSeverity(summary),
-		})
+		}
+		addMobileAttentionTarget(lane, "agent", agent.AgentID, "loom://agent/"+agent.AgentID, nil, "Review agent")
+		if strings.TrimSpace(agent.SessionID) != "" {
+			lane["target_kind"] = "session"
+			lane["target_id"] = agent.SessionID
+			lane["deep_link"] = "loom://session/" + agent.SessionID
+			lane["recommended_action"] = "Open session"
+		}
+		lanes = append(lanes, lane)
 	}
 	for _, namespace := range limitMobileSlice(snapshot.Namespaces, 3) {
 		if !namespace.NeedsAttention {
 			continue
 		}
 		summary := strings.Join(limitMobileSlice(namespace.AttentionReasons, 2), " · ")
-		lanes = append(lanes, map[string]any{
+		filter := map[string]any{"namespace": namespace.Namespace}
+		if namespace.BlockedTasks > 0 || strings.Contains(strings.ToLower(summary), "blocked") {
+			filter["status"] = "blocked"
+		}
+		lane := map[string]any{
 			"type":     "namespace",
 			"id":       namespace.Namespace,
 			"label":    "Work lane",
@@ -353,12 +365,14 @@ func buildMobileAttentionLanes(snapshot coordination.Snapshot) []map[string]any 
 			"scope":    fmt.Sprintf("%d tasks", namespace.TaskCount),
 			"summary":  summary,
 			"severity": mobileAttentionSeverity(summary),
-		})
+		}
+		addMobileAttentionTarget(lane, "task_filter", "", mobileTasksDeepLink(filter), filter, "Review work queue")
+		lanes = append(lanes, lane)
 	}
 
 	// Merge-ready lane: surface branches ready to merge for quick dispatch.
 	if snapshot.Summary.MergeReadyBranches > 0 {
-		lanes = append(lanes, map[string]any{
+		lane := map[string]any{
 			"type":     "merge",
 			"id":       "merge-ready",
 			"label":    "Merge ready",
@@ -366,12 +380,14 @@ func buildMobileAttentionLanes(snapshot coordination.Snapshot) []map[string]any 
 			"scope":    fmt.Sprintf("%d branch%s", snapshot.Summary.MergeReadyBranches, pluralSE(snapshot.Summary.MergeReadyBranches)),
 			"summary":  fmt.Sprintf("%d branch%s ready to merge", snapshot.Summary.MergeReadyBranches, pluralSE(snapshot.Summary.MergeReadyBranches)),
 			"severity": "info",
-		})
+		}
+		addMobileAttentionTarget(lane, "task_filter", "", "loom://tasks?status=in_progress", map[string]any{"status": "in_progress"}, "Review merge-ready work")
+		lanes = append(lanes, lane)
 	}
 
 	// File conflict lane: surface active file conflicts needing resolution.
 	if snapshot.Summary.ConflictFiles > 0 {
-		lanes = append(lanes, map[string]any{
+		lane := map[string]any{
 			"type":     "conflict",
 			"id":       "file-conflicts",
 			"label":    "File conflicts",
@@ -379,10 +395,42 @@ func buildMobileAttentionLanes(snapshot coordination.Snapshot) []map[string]any 
 			"scope":    fmt.Sprintf("%d file%s", snapshot.Summary.ConflictFiles, pluralS(snapshot.Summary.ConflictFiles)),
 			"summary":  fmt.Sprintf("%d file%s claimed by multiple agents", snapshot.Summary.ConflictFiles, pluralS(snapshot.Summary.ConflictFiles)),
 			"severity": "critical",
-		})
+		}
+		addMobileAttentionTarget(lane, "connection", "file-conflicts", "loom://work", nil, "Resolve coordination conflicts")
+		lanes = append(lanes, lane)
 	}
 
 	return limitMobileSlice(lanes, 8)
+}
+
+func addMobileAttentionTarget(lane map[string]any, kind, id, deepLink string, filter map[string]any, action string) {
+	lane["target_kind"] = kind
+	lane["target_id"] = id
+	lane["deep_link"] = deepLink
+	if filter != nil {
+		lane["filter"] = filter
+	}
+	lane["recommended_action"] = action
+	lane["freshness"] = map[string]any{
+		"source": "coordination_snapshot",
+	}
+}
+
+func mobileTasksDeepLink(filter map[string]any) string {
+	params := make([]string, 0, 3)
+	if status, _ := filter["status"].(string); strings.TrimSpace(status) != "" {
+		params = append(params, "status="+status)
+	}
+	if agent, _ := filter["agent_id"].(string); strings.TrimSpace(agent) != "" {
+		params = append(params, "agent="+agent)
+	}
+	if session, _ := filter["session_id"].(string); strings.TrimSpace(session) != "" {
+		params = append(params, "session="+session)
+	}
+	if len(params) == 0 {
+		return "loom://tasks"
+	}
+	return "loom://tasks?" + strings.Join(params, "&")
 }
 
 func mobileAttentionSeverity(summary string) string {

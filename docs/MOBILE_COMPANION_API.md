@@ -66,36 +66,64 @@ Notes:
 
 ## `mobile_operator` Authorization Matrix (Contract View)
 
-This section freezes the v1 endpoint allowlist for the `mobile_operator` role. Wave 1 parity additions are read-only only.
+This section freezes the v1 endpoint allowlist for the `mobile_operator` role. Routes are classified as `core_operator`, `advanced_read`, or `guarded_mutation`; any mutation requires its named scope and remains denied by default without it.
 
-| Endpoint | Method | Access | Scope |
-|---|---|---|---|
-| `/api/mobile/v1/dashboard` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/sessions` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/sessions/{session_id}` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/sessions/{session_id}/events` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/sessions/{session_id}/trace` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/tasks` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/workflows` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/workflows/{workflow_id}` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/presence` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/memory/stats` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/memory/items` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/stream` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/topology` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/graph/stats` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/graph/entities` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/graph/path` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/reasoning/chains` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/reasoning/chains/{chain_id}` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/events/stream` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/alerts/policy` | `GET` | allow | `mobile:read` |
-| `/api/mobile/v1/sessions` | `POST` | allow | `mobile:session:create` |
-| `/api/mobile/v1/sessions/{session_id}/end` | `POST` | allow | `mobile:session:end` |
-| `/api/mobile/v1/push/register` | `POST` | allow (feature-flagged) | `mobile:push` |
-| `/api/mobile/v1/push/unregister` | `POST` | allow (feature-flagged) | `mobile:push` |
-| `/api/mobile/v1/agents/{agent_id}/session/end` | `POST` | deny in v1 | N/A |
-| `/api/agent/*` direct mutation routes | `POST` | deny for mobile tokens | N/A |
+| Endpoint | Method | Category | Access | Scope |
+|---|---|---|---|---|
+| `/api/mobile/v1/ping` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/dashboard` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/control-plane` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/sessions` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/sessions/tree` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/sessions/{session_id}` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/sessions/{session_id}/events` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/sessions/{session_id}/trace` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/sessions/{session_id}/activity` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/tasks` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/workflows` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/workflows/{workflow_id}` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/presence` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/agents` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/namespaces` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/memory/stats` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/memory/items` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/stream` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/topology` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/graph/stats` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/graph/entities` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/graph/path` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/reasoning/chains` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/reasoning/chains/{chain_id}` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/events/stream` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/audit` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/alerts/policy` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/sandbox` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/pipelines` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/handoffs` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/agent/spawns` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/agent/spawn/config` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/agent/spawn/{spawn_id}` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/agent/spawn/{spawn_id}/stream` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/agent/spawn/{spawn_id}/telemetry` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/agent/spawn/{spawn_id}/telemetry/tools` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/agent/spawn/{spawn_id}/telemetry/files` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/agent/spawn/{spawn_id}/telemetry/errors` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/agent/spawn/{spawn_id}/trace` | `GET` | `advanced_read` | allow | `mobile:read` |
+| `/api/mobile/v1/sessions` | `POST` | `guarded_mutation` | allow | `mobile:session:create` |
+| `/api/mobile/v1/sessions/{session_id}/end` | `POST` | `guarded_mutation` | allow | `mobile:session:end` |
+| `/api/mobile/v1/push/register` | `POST` | `guarded_mutation` | allow (feature-flagged) | `mobile:push` |
+| `/api/mobile/v1/push/unregister` | `POST` | `guarded_mutation` | allow (feature-flagged) | `mobile:push` |
+| `/api/mobile/v1/admin/revoke` | `POST` | `guarded_mutation` | allow (admin-gated) | admin token + `mobile:read` |
+| `/api/mobile/v1/sandbox/start` | `POST` | `guarded_mutation` | allow | `mobile:agent:spawn` |
+| `/api/mobile/v1/sandbox/stop` | `POST` | `guarded_mutation` | allow | `mobile:agent:spawn` |
+| `/api/mobile/v1/workflows/{workflow_id}/approve` | `POST` | `guarded_mutation` | allow | `mobile:agent:spawn` |
+| `/api/mobile/v1/workflows/{workflow_id}/reject` | `POST` | `guarded_mutation` | allow | `mobile:agent:spawn` |
+| `/api/mobile/v1/agent/spawn` | `POST` | `guarded_mutation` | allow | `mobile:agent:spawn` |
+| `/api/mobile/v1/agent/spawn/{spawn_id}/stop` | `POST` | `guarded_mutation` | allow | `mobile:agent:spawn` |
+| `/api/mobile/v1/agent/spawn/{spawn_id}/message` | `POST` | `guarded_mutation` | allow | `mobile:agent:spawn` |
+| `/api/mobile/v1/agent/spawn/{spawn_id}/interrupt` | `POST` | `guarded_mutation` | allow | `mobile:agent:spawn` |
+| `/api/mobile/v1/agents/{agent_id}/session/end` | `POST` | N/A | deny in v1 | N/A |
+| `/api/agent/*` direct mutation routes | `POST` | N/A | deny for mobile tokens | N/A |
 
 Mode policy:
 - LAN and gateway use the same endpoint permissions.
@@ -156,6 +184,21 @@ The following additive endpoints are now part of `/api/mobile/v1`:
 | `GET /graph/path` | Path between two entities | `source_id`, `target_id`, `max_depth` | `{path}` |
 | `GET /reasoning/chains` | Reasoning chain summaries | `status`, `limit` | `{chains}` |
 | `GET /reasoning/chains/{chain_id}` | Reasoning chain detail | none | `{chain}` |
+| `GET /sessions/tree` | Server-computed session hierarchy | `status` | `{roots, orphans, summary}` |
+| `GET /sessions/{session_id}/activity` | Task/pipeline pressure for a session | none | `{session_id, tasks, pipelines, task_count, pipeline_count}` |
+| `GET /agents` | Unified agent roster | `status`, `type`, `limit` | `{agents, summary}` |
+| `GET /namespaces` | Namespace rollup | none | `{namespaces}` |
+| `GET /pipelines` | Active and recent pipelines | none | `{pipelines, recent_pipelines, summary, available}` |
+| `GET /handoffs` | Handoff inbox | `limit` | `{handoffs}` |
+| `GET /agent/spawns` | Spawn roster | none | `{spawns}` |
+| `GET /agent/spawn/config` | Spawn project/type config | none | `{projects, agent_types}` |
+| `GET /agent/spawn/{spawn_id}` | Spawn detail | none | spawn status object |
+| `GET /agent/spawn/{spawn_id}/stream` | Spawn event stream | none | SSE |
+| `GET /agent/spawn/{spawn_id}/telemetry` | Spawn telemetry summary | none | telemetry object |
+| `GET /agent/spawn/{spawn_id}/telemetry/tools` | Spawn tool-call telemetry page | `offset`, `limit` | page object |
+| `GET /agent/spawn/{spawn_id}/telemetry/files` | Spawn file telemetry page | `offset`, `limit` | page object |
+| `GET /agent/spawn/{spawn_id}/telemetry/errors` | Spawn error telemetry page | `offset`, `limit` | page object |
+| `GET /agent/spawn/{spawn_id}/trace` | Spawn trace | none | trace object |
 
 Contract rules for these additions:
 - Additive-only fields (no breaking shape changes under `v1`).
@@ -184,6 +227,37 @@ Source: `internal/hud/domain/mobile/handler_dashboard.go`
 ### GET `/api/mobile/v1/dashboard`
 
 Mobile dashboard aggregate for quick app open. Scope: `mobile:read`.
+
+Attention lanes preserve their original v1 fields and may include additive
+routing metadata so clients can dispatch directly to the right surface:
+
+```json
+{
+  "type": "blocked_task",
+  "id": "task-123",
+  "label": "Blocked task",
+  "route": "work",
+  "scope": "loom-core/mobile",
+  "summary": "2 blocked tasks",
+  "severity": "warning",
+  "target_kind": "task_filter",
+  "target_id": "",
+  "deep_link": "loom://tasks?status=blocked&session=sess_abc123",
+  "filter": {
+    "status": "blocked",
+    "session_id": "sess_abc123"
+  },
+  "recommended_action": "Review blocked tasks",
+  "freshness": {
+    "source": "fleet_snapshot",
+    "updated_at": "2026-05-11T14:00:00Z"
+  }
+}
+```
+
+Supported `target_kind` values are `agent`, `session`, `task_filter`,
+`workflow`, `spawn`, `handoff`, `connection`, `alert`, `pipeline`, and
+`namespace`. If these fields are absent, clients must fall back to `route`.
 
 **Response `data`:**
 
@@ -282,6 +356,8 @@ List all sessions. Scope: `mobile:read`.
 | `ended_at` | string (RFC3339) | Session end time (omitted if active) |
 | `entry_count` | int | Number of context entries |
 | `total_tokens` | int | Estimated token usage |
+| `parent_session_id` | string | Direct parent session when this row is child/subagent work |
+| `root_session_id` | string | Root session for the hierarchy; roots normalize to their own `id` |
 
 Source: `internal/hud/domain/mobile/handler_sessions.go`, `internal/hud/bridge/agent.go`
 
@@ -313,6 +389,42 @@ Returns a single `SessionInfo` (same schema as above) under `data.session`.
 **Error cases:**
 - `400 bad_request` — missing `session_id`
 - `404 not_found` — session not found
+
+Source: `internal/hud/domain/mobile/handler_sessions.go`
+
+### GET `/api/mobile/v1/sessions/tree`
+
+Server-computed session hierarchy. Scope: `mobile:read`.
+
+Query:
+- `status`: omitted defaults to active sessions; `all` returns all known statuses; comma-separated values filter by status.
+
+**Response `data`:**
+
+```json
+{
+  "roots": [
+    {
+      "session": {},
+      "depth": 0,
+      "child_count": 2,
+      "active_child_count": 1,
+      "children": []
+    }
+  ],
+  "orphans": [],
+  "summary": {
+    "root_count": 3,
+    "active_sessions": 5,
+    "orphan_sessions": 1,
+    "updated_at": "2026-05-11T14:00:00Z"
+  }
+}
+```
+
+Root sessions with no explicit `root_session_id` normalize their root to their
+own `id`. Sessions whose `parent_session_id` is missing from the result are
+returned under `orphans` so clients can render them distinctly.
 
 Source: `internal/hud/domain/mobile/handler_sessions.go`
 
@@ -403,6 +515,48 @@ Source: `internal/hud/domain/mobile/handler_sessions.go`, `internal/hud/app_rout
 
 ---
 
+### GET `/api/mobile/v1/sessions/{session_id}/activity`
+
+Session task and pipeline pressure summary. Scope: `mobile:read`.
+
+**Response `data`:**
+
+```json
+{
+  "session_id": "sess_abc123",
+  "tasks": [
+    {
+      "id": "task-1",
+      "title": "Fix mobile route",
+      "status": "blocked",
+      "priority": "high",
+      "tags": ["mobile"],
+      "workflow_id": "wf-1",
+      "pipeline_id": 42,
+      "created_at": "2026-05-11T14:00:00Z",
+      "updated_at": "2026-05-11T14:01:00Z"
+    }
+  ],
+  "pipelines": [
+    {
+      "id": 42,
+      "project": "services/loom-core",
+      "ref": "codex/mobile",
+      "status": "failed",
+      "current_stage": "test",
+      "failed_job_count": 1,
+      "web_url": "https://gitlab.example/pipelines/42"
+    }
+  ],
+  "task_count": 1,
+  "pipeline_count": 1
+}
+```
+
+Source: `internal/hud/domain/mobile/handler_agents.go`
+
+---
+
 ### POST `/api/mobile/v1/sessions`
 
 Create/start a new session. Scope: `mobile:session:create`.
@@ -469,11 +623,13 @@ Delegates to the existing `/api/events` SSE handler after auth validation.
 Event allowlist in v1:
 - `hud.fleet`
 - `hud.health`
+- `hud.pipeline`
 - `hud.workflows`
 - `hud.stream`
 - `agent.session.start`
 - `agent.session.end`
 - `agent.session.reaped`
+- `agent.session.stats.updated`
 - `agent.heartbeat`
 
 Source: `internal/hud/domain/mobile/handler_ops.go`

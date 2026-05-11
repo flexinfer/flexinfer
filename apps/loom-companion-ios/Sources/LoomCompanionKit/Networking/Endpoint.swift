@@ -7,8 +7,10 @@ public enum Endpoint: Sendable {
     case controlPlane
     case alertsPolicy
     case sessions
+    case sessionsTree(status: String? = nil)
     case sessionDetail(id: String)
     case sessionEvents(id: String, limit: Int? = nil)
+    case sessionActivity(id: String)
     case tasks(status: MobileTaskStatus? = nil, agentId: String? = nil, sessionId: String? = nil, limit: Int? = nil, search: String? = nil)
     case workflows(status: MobileWorkflowStatus? = nil, agentId: String? = nil, limit: Int? = nil)
     case workflowDetail(id: String)
@@ -67,7 +69,7 @@ public enum Endpoint: Sendable {
 
     var method: String {
         switch self {
-        case .ping, .dashboard, .controlPlane, .alertsPolicy, .sessions, .sessionDetail, .sessionEvents,
+        case .ping, .dashboard, .controlPlane, .alertsPolicy, .sessions, .sessionsTree, .sessionDetail, .sessionEvents, .sessionActivity,
              .tasks, .workflows, .workflowDetail, .presence, .memoryStats,
              .memoryItems, .stream, .topology, .graphStats, .graphEntities,
              .graphPath, .reasoningChains, .reasoningChainDetail,
@@ -97,10 +99,14 @@ public enum Endpoint: Sendable {
             return "/api/mobile/v1/alerts/policy"
         case .sessions:
             return "/api/mobile/v1/sessions"
+        case .sessionsTree:
+            return "/api/mobile/v1/sessions/tree"
         case let .sessionDetail(id):
             return "/api/mobile/v1/sessions/\(id)"
         case let .sessionEvents(id, _):
             return "/api/mobile/v1/sessions/\(id)/events"
+        case let .sessionActivity(id):
+            return "/api/mobile/v1/sessions/\(id)/activity"
         case .tasks:
             return "/api/mobile/v1/tasks"
         case .workflows:
@@ -213,6 +219,10 @@ public enum Endpoint: Sendable {
 
         // Query parameters
         switch self {
+        case let .sessionsTree(status):
+            if let status {
+                components.queryItems = [URLQueryItem(name: "status", value: status)]
+            }
         case let .sessionEvents(_, limit):
             if let limit {
                 components.queryItems = [URLQueryItem(name: "limit", value: String(limit))]

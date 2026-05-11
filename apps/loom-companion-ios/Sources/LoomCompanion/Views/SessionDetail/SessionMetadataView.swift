@@ -32,6 +32,18 @@ struct SessionMetadataView: View {
                         Text(session.description)
                     }
                 }
+                if let parent = session.parentSessionId, !parent.isEmpty {
+                    GridRow {
+                        Text("Parent").foregroundStyle(LoomColors.fgSecondary)
+                        Text(parent).font(.caption).monospaced()
+                    }
+                }
+                if let root = session.rootSessionId, !root.isEmpty {
+                    GridRow {
+                        Text("Root").foregroundStyle(LoomColors.fgSecondary)
+                        Text(root).font(.caption).monospaced()
+                    }
+                }
                 GridRow {
                     Text("Started").foregroundStyle(LoomColors.fgSecondary)
                     Text(session.startedAt)

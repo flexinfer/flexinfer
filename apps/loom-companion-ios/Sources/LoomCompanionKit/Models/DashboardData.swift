@@ -85,6 +85,56 @@ public struct DashboardCoordinationSummary: Decodable, Sendable, Hashable {
 }
 
 public struct DashboardAttentionLane: Decodable, Sendable, Hashable {
+    public struct Filter: Decodable, Sendable, Hashable {
+        public let status: String?
+        public let agentId: String?
+        public let sessionId: String?
+        public let namespace: String?
+
+        enum CodingKeys: String, CodingKey {
+            case status
+            case agentId = "agent_id"
+            case sessionId = "session_id"
+            case namespace
+        }
+
+        public init(status: String? = nil, agentId: String? = nil, sessionId: String? = nil, namespace: String? = nil) {
+            self.status = status
+            self.agentId = agentId
+            self.sessionId = sessionId
+            self.namespace = namespace
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.status = try container.decodeIfPresent(String.self, forKey: .status)
+            self.agentId = try container.decodeIfPresent(String.self, forKey: .agentId)
+            self.sessionId = try container.decodeIfPresent(String.self, forKey: .sessionId)
+            self.namespace = try container.decodeIfPresent(String.self, forKey: .namespace)
+        }
+    }
+
+    public struct Freshness: Decodable, Sendable, Hashable {
+        public let source: String
+        public let updatedAt: String?
+
+        enum CodingKeys: String, CodingKey {
+            case source
+            case updatedAt = "updated_at"
+        }
+
+        public init(source: String = "", updatedAt: String? = nil) {
+            self.source = source
+            self.updatedAt = updatedAt
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            self.source = try container.decodeIfPresent(String.self, forKey: .source) ?? ""
+            self.updatedAt = try container.decodeIfPresent(String.self, forKey: .updatedAt)
+        }
+    }
+
     public let type: String
     public let id: String
     public let label: String
@@ -92,11 +142,53 @@ public struct DashboardAttentionLane: Decodable, Sendable, Hashable {
     public let scope: String
     public let summary: String
     public let severity: String
+    public let targetKind: String
+    public let targetId: String
+    public let deepLink: String
+    public let filter: Filter?
+    public let recommendedAction: String
+    public let freshness: Freshness?
 
     public var stableID: String { "\(type):\(id)" }
 
     enum CodingKeys: String, CodingKey {
         case type, id, label, route, scope, summary, severity
+        case targetKind = "target_kind"
+        case targetId = "target_id"
+        case deepLink = "deep_link"
+        case filter
+        case recommendedAction = "recommended_action"
+        case freshness
+    }
+
+    public init(
+        type: String,
+        id: String,
+        label: String,
+        route: String,
+        scope: String,
+        summary: String,
+        severity: String = "info",
+        targetKind: String = "",
+        targetId: String = "",
+        deepLink: String = "",
+        filter: Filter? = nil,
+        recommendedAction: String = "",
+        freshness: Freshness? = nil
+    ) {
+        self.type = type
+        self.id = id
+        self.label = label
+        self.route = route
+        self.scope = scope
+        self.summary = summary
+        self.severity = severity
+        self.targetKind = targetKind
+        self.targetId = targetId
+        self.deepLink = deepLink
+        self.filter = filter
+        self.recommendedAction = recommendedAction
+        self.freshness = freshness
     }
 
     public init(from decoder: any Decoder) throws {
@@ -108,6 +200,12 @@ public struct DashboardAttentionLane: Decodable, Sendable, Hashable {
         self.scope = try container.decodeIfPresent(String.self, forKey: .scope) ?? ""
         self.summary = try container.decodeIfPresent(String.self, forKey: .summary) ?? ""
         self.severity = try container.decodeIfPresent(String.self, forKey: .severity) ?? "info"
+        self.targetKind = try container.decodeIfPresent(String.self, forKey: .targetKind) ?? ""
+        self.targetId = try container.decodeIfPresent(String.self, forKey: .targetId) ?? ""
+        self.deepLink = try container.decodeIfPresent(String.self, forKey: .deepLink) ?? ""
+        self.filter = try container.decodeIfPresent(Filter.self, forKey: .filter)
+        self.recommendedAction = try container.decodeIfPresent(String.self, forKey: .recommendedAction) ?? ""
+        self.freshness = try container.decodeIfPresent(Freshness.self, forKey: .freshness)
     }
 }
 
