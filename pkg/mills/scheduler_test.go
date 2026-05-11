@@ -1,6 +1,7 @@
 package mills
 
 import (
+	"context"
 	"testing"
 	"time"
 )
@@ -117,5 +118,22 @@ func TestIsNoOp(t *testing.T) {
 				t.Fatalf("IsNoOp(%+v) = %v, want %v", tc.res, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestScheduler_TickRecordsKPISnapshot(t *testing.T) {
+	env := newRecEnv(t, nil)
+	writer := NewKPIWriter(env.store, env.policy)
+	writer.Clock = func() time.Time { return env.now }
+	writer.Windows = []time.Duration{kpiWindow1d}
+
+	sch := NewScheduler(env.rec)
+	sch.KPIRecorder = writer
+
+	if _, err := sch.tickOnce(context.Background()); err != nil {
+		t.Fatalf("tickOnce: %v", err)
+	}
+	if _, err := env.store.KPI.Latest(context.Background(), int(kpiWindow1d.Seconds())); err != nil {
+		t.Fatalf("expected scheduler to record KPI snapshot: %v", err)
 	}
 }

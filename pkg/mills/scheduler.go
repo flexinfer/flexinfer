@@ -38,6 +38,12 @@ type Scheduler struct {
 	Reconciler *Reconciler
 	Logger     *slog.Logger
 
+	// KPIRecorder, when set, writes best-effort KPI snapshots after each
+	// successful reconciler tick. Snapshot failures are logged but do not
+	// fail the scheduler; KPI persistence is observability, not the control
+	// law that starts work.
+	KPIRecorder KPIRecorder
+
 	// Interval is the tick cadence when there's queue activity. Zero
 	// falls back to defaultSchedulerInterval (60s).
 	Interval time.Duration
@@ -69,6 +75,11 @@ const (
 	defaultIdleInterval      = 5 * time.Minute
 	defaultIdleAfter         = 5 * time.Minute
 )
+
+// KPIRecorder is the minimal contract Scheduler needs from the KPI writer.
+type KPIRecorder interface {
+	Record(ctx context.Context) error
+}
 
 // NewScheduler returns a Scheduler ready to Run.
 func NewScheduler(r *Reconciler) *Scheduler {
@@ -209,6 +220,11 @@ func (s *Scheduler) tickOnce(ctx context.Context) (TickResult, error) {
 	res, err := s.Reconciler.Tick(tickCtx)
 	if err != nil {
 		return res, fmt.Errorf("tick: %w", err)
+	}
+	if s.KPIRecorder != nil {
+		if err := s.KPIRecorder.Record(tickCtx); err != nil && s.Logger != nil {
+			s.Logger.Warn("scheduler: kpi snapshot failed", "error", err)
+		}
 	}
 	if s.Logger != nil {
 		s.Logger.Debug("scheduler tick",
