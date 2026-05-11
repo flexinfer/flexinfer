@@ -18,6 +18,9 @@
     { id: 'presence', label: 'Agent Presence', category: 'Panels', icon: '\u25C9' },
     { id: 'sandbox', label: 'Sandbox Dashboard', category: 'Panels', icon: '\u2B22' },
     { id: 'reasoning', label: 'Reasoning Chains', category: 'Panels', icon: '\u2726' },
+    { id: 'mills', label: 'Mills Overview', category: 'Panels', icon: '\u2756' },
+    { id: 'pipelines', label: 'Mills Pipelines', category: 'Panels', icon: '\u26D3' },
+    { id: 'backlog', label: 'Mills Backlog', category: 'Panels', icon: '\u2611' },
   ];
 
   const actions = [

@@ -152,6 +152,7 @@ export interface MillsKPISnapshot {
   window_seconds?: number;
   metrics?: {
     cost_per_merged_change_usd?: number;
+    cost_per_merged_pipeline_usd?: number;
     slice_to_merge_p50_seconds?: number;
     gate_pass_rate?: number;        // 0..1
     auto_merge_rate?: number;       // 0..1

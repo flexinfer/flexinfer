@@ -73,6 +73,9 @@
 
   let cards = $derived.by(() => {
     const m = metrics ?? {};
+    const costPerMerged = m.cost_per_merged_change_usd ?? m.cost_per_merged_pipeline_usd;
+    const costSeries = millsStore.metricSeries('cost_per_merged_change_usd');
+    const costFallbackSeries = millsStore.metricSeries('cost_per_merged_pipeline_usd');
     const cards: Array<{
       label: string;
       value: string;
@@ -83,9 +86,9 @@
     }> = [
       {
         label: 'Cost / merged',
-        value: fmtUSD(m.cost_per_merged_change_usd),
-        trend: millsStore.metricSeries('cost_per_merged_change_usd'),
-        trendColor: trendColor(millsStore.metricSeries('cost_per_merged_change_usd'), 'lower-better'),
+        value: fmtUSD(costPerMerged),
+        trend: costSeries.length > 0 ? costSeries : costFallbackSeries,
+        trendColor: trendColor(costSeries.length > 0 ? costSeries : costFallbackSeries, 'lower-better'),
       },
       {
         label: 'Slice→merge p50',
