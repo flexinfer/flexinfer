@@ -27,7 +27,9 @@ import (
 // partial artifacts without quantized expert tensors.
 // v17: Route Qwen MoE configs through GPTQModel's MoE definition and re-fuse
 // mlp.experts tensors into vLLM's fused MoE layout.
-const GPTQScriptVersion = "v17"
+// v18: Disable GPTQModel's native CPU pack extension by default because it can
+// SIGILL on older CPU nodes before Python can fall back to the safe path.
+const GPTQScriptVersion = "v18"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
@@ -498,6 +500,12 @@ trap cleanup EXIT
 
 # Tee all output so cleanup can capture tail on failure
 exec > >(tee -a "${LOGFILE}") 2>&1
+
+# GPTQModel's pack_block_cpu native extension is optional. It can SIGILL on
+# older CPU nodes during post-layer packing, which bypasses the library's
+# Python fallback. Default to the safe pure Python/Torch path unless callers
+# explicitly opt back in.
+export GPTQMODEL_DISABLE_PACK_EXT="${GPTQMODEL_DISABLE_PACK_EXT:-1}"
 
 # Patch GPTQModel writer.py to guard against ZeroDivisionError.
 WRITER_PY=$(python3 -c "import importlib.util,os; s=importlib.util.find_spec('gptqmodel'); print(os.path.join(os.path.dirname(s.origin),'models','writer.py'))" 2>/dev/null || true)

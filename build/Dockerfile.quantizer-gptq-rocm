@@ -72,7 +72,7 @@ RUN python3 -m pip uninstall -y numba llvmlite && \
 
 # FlexInfer quantization and abliteration scripts (referenced by controller wrapper)
 COPY build/scripts/quantize_gptq.py /opt/flexinfer/scripts/quantize_gptq.py
-RUN mkdir -p /app && printf 'FLEXINFER_SCRIPT_VERSION = "v17"\n' > /app/quantize_gptq.py
+RUN mkdir -p /app && printf 'FLEXINFER_SCRIPT_VERSION = "v18"\n' > /app/quantize_gptq.py
 COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
 RUN printf 'FLEXINFER_SCRIPT_VERSION = "v1"\n' > /app/abliterate.py
 
@@ -83,7 +83,7 @@ RUN mv /bin/bash /bin/bash.real && \
       '#!/bin/sh' \
       'mkdir -p /workspace' \
       'if [ ! -f /workspace/quantize_gptq.py ]; then' \
-      '  printf '\''FLEXINFER_SCRIPT_VERSION = "v17"\n'\'' > /workspace/quantize_gptq.py' \
+      '  printf '\''FLEXINFER_SCRIPT_VERSION = "v18"\n'\'' > /workspace/quantize_gptq.py' \
       'fi' \
       'if [ ! -f /workspace/abliterate.py ]; then' \
       '  printf '\''FLEXINFER_SCRIPT_VERSION = "v1"\n'\'' > /workspace/abliterate.py' \
