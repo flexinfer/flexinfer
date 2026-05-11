@@ -363,46 +363,8 @@ struct ContentView: View {
 
     @ViewBuilder
     private var peopleTab: some View {
-        VStack(spacing: LoomSpacing.sm) {
-            VStack(alignment: .leading, spacing: LoomSpacing.sm) {
-                HStack(alignment: .center, spacing: LoomSpacing.sm) {
-                    Text("Agents")
-                        .font(.largeTitle.bold())
-                        .foregroundStyle(LoomColors.textPrimary)
-                        .lineLimit(1)
-                        .minimumScaleFactor(0.8)
-                        .layoutPriority(1)
-
-                    // Spawn shortcut — Agents tab is where you see the
-                    // current fleet, so make "create a new one" one tap away.
-                    Button {
-                        selectedTab = .spawn
-                    } label: {
-                        Image(systemName: "sparkles")
-                            .font(.title3)
-                            .foregroundStyle(LoomColors.accent)
-                            .padding(.horizontal, 4)
-                    }
-                    .accessibilityLabel("Spawn new agent")
-
-                    Spacer(minLength: LoomSpacing.sm)
-                }
-
-                Picker("Agents Section", selection: $selectedPeopleSection) {
-                    Text("Roster").tag(PeopleSection.agents)
-                    Text("Sessions").tag(PeopleSection.sessions)
-                    Text("Live").tag(PeopleSection.live)
-                }
-                .pickerStyle(.segmented)
-
-                Text(peopleSectionSubtitle)
-                    .font(.caption)
-                    .foregroundStyle(LoomColors.textSecondary)
-                    .lineLimit(2)
-            }
-            .padding(.horizontal)
-            .padding(.top, LoomSpacing.sm)
-            .padding(.bottom, LoomSpacing.xs)
+        VStack(spacing: 0) {
+            peopleHeader
 
             Group {
                 switch selectedPeopleSection {
@@ -433,6 +395,51 @@ struct ContentView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var peopleHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center, spacing: LoomSpacing.sm) {
+                Text("Agents")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                    .foregroundStyle(LoomColors.textPrimary)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.72)
+                    .allowsTightening(true)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .accessibilityAddTraits(.isHeader)
+
+                Button {
+                    selectedTab = .spawn
+                } label: {
+                    Image(systemName: "sparkles")
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(LoomColors.accent)
+                        .frame(width: 34, height: 34)
+                        .contentShape(Circle())
+                }
+                .accessibilityLabel("Spawn new agent")
+
+                Spacer(minLength: 0)
+            }
+
+            Picker("Agents Section", selection: $selectedPeopleSection) {
+                Text("Roster").tag(PeopleSection.agents)
+                Text("Sessions").tag(PeopleSection.sessions)
+                Text("Live").tag(PeopleSection.live)
+            }
+            .pickerStyle(.segmented)
+            .frame(maxWidth: .infinity)
+
+            Text(peopleSectionSubtitle)
+                .font(.caption)
+                .foregroundStyle(LoomColors.textSecondary)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+        .padding(.horizontal, LoomSpacing.xl)
+        .padding(.top, 10)
+        .padding(.bottom, LoomSpacing.sm)
     }
 
     private var peopleSectionSubtitle: String {
