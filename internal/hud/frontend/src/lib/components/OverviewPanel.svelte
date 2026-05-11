@@ -696,6 +696,8 @@
   .overview {
     display: flex;
     flex-direction: column;
+    width: 100%;
+    min-width: 0;
     padding: var(--space-4) var(--space-5);
     gap: var(--space-5);
     overflow-y: auto;
@@ -706,7 +708,11 @@
 
   .signal-strip {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     gap: var(--space-3);
     padding: var(--space-3) var(--space-4);
     border-radius: var(--radius-lg);
@@ -777,6 +783,11 @@
     width: 100%;
     height: 100%;
     transform: rotate(-90deg);
+    /* The .ring-fill has a drop-shadow filter that extends ~4px past the
+       circle bounds. Browsers default to overflow:hidden on <svg> so we opt
+       into visible explicitly without padding the viewBox, which would shrink
+       the rendered geometry inside the fixed 44x44 box. */
+    overflow: visible;
   }
 
   .ring-track {
@@ -872,7 +883,10 @@
 
   .command-section {
     display: grid;
-    grid-template-columns: 1fr minmax(240px, 0.5fr);
+    grid-template-columns: 1fr minmax(260px, 0.5fr);
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     gap: var(--space-5);
     padding: var(--space-5);
     border-radius: var(--radius-lg);
@@ -881,7 +895,8 @@
       radial-gradient(ellipse at 15% 20%, rgba(0, 200, 255, 0.04), transparent 50%),
       var(--bg-secondary);
     position: relative;
-    overflow: hidden;
+    /* overflow:hidden clipped attention lanes when the right column grew
+       taller than the left; the ::after edge-glow stays inside the box. */
   }
 
   /* Top-edge glow */
@@ -1111,13 +1126,17 @@
 
   .surface-grid {
     display: grid;
-    grid-template-columns: repeat(2, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr));
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
     gap: var(--space-3);
   }
 
   .surface-card {
     display: flex;
     flex-direction: column;
+    min-width: 0;
     gap: var(--space-2);
     text-align: left;
     padding: var(--space-4);
@@ -1364,7 +1383,7 @@
 
   .support-grid {
     display: grid;
-    grid-template-columns: repeat(4, 1fr);
+    grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
     gap: var(--space-2);
   }
 

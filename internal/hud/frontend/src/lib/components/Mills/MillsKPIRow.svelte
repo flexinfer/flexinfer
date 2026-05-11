@@ -122,17 +122,11 @@
   }
 </script>
 
-{#if !disabled}
+{#if !disabled && metrics}
   <section class="mills-kpi-section">
     <div class="mills-kpi-header">
       <span class="mills-kpi-label">Mills</span>
-      <span class="mills-kpi-note">
-        {#if metrics}
-          Rolling 24h
-        {:else}
-          Awaiting first snapshot
-        {/if}
-      </span>
+      <span class="mills-kpi-note">Rolling 24h</span>
     </div>
     <div class="mills-kpi-grid">
       {#each cards as card (card.label)}

@@ -48,6 +48,7 @@
     display: flex;
     flex-direction: column;
     flex: 1;
+    min-width: 0;
     overflow: hidden;
   }
 
@@ -135,6 +136,7 @@
 
   .view-content {
     flex: 1;
+    min-width: 0;
     overflow: hidden;
     display: flex;
     flex-direction: column;
