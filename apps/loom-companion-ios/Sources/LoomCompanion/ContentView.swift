@@ -363,12 +363,15 @@ struct ContentView: View {
 
     @ViewBuilder
     private var peopleTab: some View {
-        VStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 6) {
-                HStack(alignment: .center, spacing: 12) {
+        VStack(spacing: LoomSpacing.sm) {
+            VStack(alignment: .leading, spacing: LoomSpacing.sm) {
+                HStack(alignment: .center, spacing: LoomSpacing.sm) {
                     Text("Agents")
-                        .font(.title.bold())
+                        .font(.largeTitle.bold())
                         .foregroundStyle(LoomColors.textPrimary)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .layoutPriority(1)
 
                     // Spawn shortcut — Agents tab is where you see the
                     // current fleet, so make "create a new one" one tap away.
@@ -382,25 +385,24 @@ struct ContentView: View {
                     }
                     .accessibilityLabel("Spawn new agent")
 
-                    Spacer(minLength: 8)
-
-                    Picker("Agents Section", selection: $selectedPeopleSection) {
-                        Text("Roster").tag(PeopleSection.agents)
-                        Text("Sessions").tag(PeopleSection.sessions)
-                        Text("Live").tag(PeopleSection.live)
-                    }
-                    .pickerStyle(.segmented)
-                    .frame(width: 260)
+                    Spacer(minLength: LoomSpacing.sm)
                 }
+
+                Picker("Agents Section", selection: $selectedPeopleSection) {
+                    Text("Roster").tag(PeopleSection.agents)
+                    Text("Sessions").tag(PeopleSection.sessions)
+                    Text("Live").tag(PeopleSection.live)
+                }
+                .pickerStyle(.segmented)
 
                 Text(peopleSectionSubtitle)
                     .font(.caption)
                     .foregroundStyle(LoomColors.textSecondary)
-                    .lineLimit(1)
+                    .lineLimit(2)
             }
             .padding(.horizontal)
-            .padding(.top, 2)
-            .padding(.bottom, 2)
+            .padding(.top, LoomSpacing.sm)
+            .padding(.bottom, LoomSpacing.xs)
 
             Group {
                 switch selectedPeopleSection {

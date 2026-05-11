@@ -316,6 +316,14 @@ struct NextActionCard: View {
     private func laneMeta(for lane: DashboardAttentionLane)
         -> (icon: String, title: String, nav: DashboardView.DashboardNavAction)
     {
+        let summary = lane.summary.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if lane.targetKind == "task_filter"
+            || lane.filter != nil
+            || lane.deepLink.hasPrefix("loom://tasks")
+            || summary.contains("blocked task") {
+            return ("hand.raised.fill", "Unblock stalled task", .work)
+        }
+
         // Derived route. The backend `route` hint is a sensible default, but
         // we override it when the *type* has a stronger affinity to a
         // specific surface — e.g. a blocked task should route to Work even
