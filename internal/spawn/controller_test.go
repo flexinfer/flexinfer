@@ -310,6 +310,37 @@ func TestReconcileMarksMissingPodAsFailed(t *testing.T) {
 	}
 }
 
+func TestReconcileKeepsPreRuntimeSpawnWithoutPod(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	ctrl := NewK8sController(client, "devbox", nil, nil)
+	ctx := context.Background()
+
+	ctrl.mu.Lock()
+	ctrl.spawns["spawn-building"] = &State{
+		SpawnID: "spawn-building",
+		Status:  StatusBuilding,
+	}
+	ctrl.mu.Unlock()
+
+	if err := ctrl.Reconcile(ctx); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	state, ok := ctrl.Get("spawn-building")
+	if !ok {
+		t.Fatal("spawn not found")
+	}
+	if state.Status != StatusBuilding {
+		t.Errorf("status: got %q, want %q", state.Status, StatusBuilding)
+	}
+	if state.Error != "" {
+		t.Errorf("error: got %q, want empty", state.Error)
+	}
+	if state.EndedAt != nil {
+		t.Error("expected EndedAt to remain nil")
+	}
+}
+
 func TestReconcileDiscoversUntrackedPods(t *testing.T) {
 	pod := makePod("spawn-pod-new", "spawn-new123", "agent-new", corev1.PodRunning)
 	pod.Labels["loom.dev/agent-type"] = "codex"
