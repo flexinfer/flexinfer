@@ -8,6 +8,55 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
 
+func TestDownloadCompleted(t *testing.T) {
+	tests := []struct {
+		name   string
+		status aiv1alpha1.ModelCacheStatus
+		want   bool
+	}{
+		{
+			name: "missing path is incomplete",
+			status: aiv1alpha1.ModelCacheStatus{
+				Phase: aiv1alpha1.ModelCachePhaseQuantizing,
+			},
+			want: false,
+		},
+		{
+			name: "pending without downstream phase is incomplete",
+			status: aiv1alpha1.ModelCacheStatus{
+				Phase: aiv1alpha1.ModelCachePhasePending,
+				Path:  "cache:model",
+			},
+			want: false,
+		},
+		{
+			name: "provisioning with path is complete",
+			status: aiv1alpha1.ModelCacheStatus{
+				Phase: aiv1alpha1.ModelCachePhaseProvisioning,
+				Path:  "cache:model",
+			},
+			want: true,
+		},
+		{
+			name: "downstream current phase survives retry reset",
+			status: aiv1alpha1.ModelCacheStatus{
+				Phase:        aiv1alpha1.ModelCachePhasePending,
+				CurrentPhase: "quantization",
+				Path:         "cache:model",
+			},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := downloadCompleted(&tt.status); got != tt.want {
+				t.Fatalf("downloadCompleted() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestAbliterationCompleted(t *testing.T) {
 	progress := int32(12)
 
