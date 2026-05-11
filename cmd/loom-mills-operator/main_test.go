@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/crb2nu/loom/pkg/mills"
+	"github.com/crb2nu/loom/pkg/mills/clients"
 	"github.com/crb2nu/loom/pkg/mills/store"
 )
 
@@ -25,6 +26,10 @@ budgets:
   pipeline: { max_usd_per_run: 1, max_usd_per_day: 5, max_concurrent_runs: 2 }
 council:
   schedule_cron: "0 5 * * *"
+  ensemble:
+    editor: { name: editor, model: qwen3-8b, backend: flexinfer }
+    reviewers:
+      - { name: architecture, model: qwen3-8b, backend: flexinfer, lens: architecture }
   artifacts_branch: "council/{date}"
   artifacts_merge_strategy: "fast-merge-loom-only"
 pipeline:
@@ -196,6 +201,36 @@ func TestCapabilities_FailClosedWhenPolicyEnabledAndStubsRemain(t *testing.T) {
 		if !strings.Contains(strings.ReplaceAll(body, `"`, ``), want) {
 			t.Errorf("response missing blocker %q: %s", want, body)
 		}
+	}
+}
+
+func TestBuildCouncilRunner_UsesRealParticipantsWhenFlexInferReady(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+
+	flex, err := clients.NewFlexInferClient(clients.FlexInferConfig{ProxyURL: "http://flexinfer.test"})
+	if err != nil {
+		t.Fatalf("flex client: %v", err)
+	}
+	r, usesFake := buildCouncilRunner(op.store, op.policy, op.budget, t.TempDir(), flex, discardLogger())
+	if r == nil {
+		t.Fatal("runner nil")
+	}
+	if usesFake {
+		t.Fatal("usesFake = true, want false with FlexInfer client")
+	}
+}
+
+func TestBuildCouncilRunner_FakeFallbackWhenFlexInferMissing(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+
+	r, usesFake := buildCouncilRunner(op.store, op.policy, op.budget, t.TempDir(), nil, discardLogger())
+	if r == nil {
+		t.Fatal("runner nil")
+	}
+	if !usesFake {
+		t.Fatal("usesFake = false, want true without FlexInfer client")
 	}
 }
 
