@@ -78,6 +78,30 @@ func TestFirstNonEmpty_SingleValue(t *testing.T) {
 	}
 }
 
+func TestFirstPositiveInt(t *testing.T) {
+	if got := firstPositiveInt(2, "3"); got != 2 {
+		t.Fatalf("configured value should win, got %d", got)
+	}
+	if got := firstPositiveInt(0, "3"); got != 3 {
+		t.Fatalf("env value not parsed, got %d", got)
+	}
+	if got := firstPositiveInt(0, "-1"); got != 0 {
+		t.Fatalf("non-positive env value should be ignored, got %d", got)
+	}
+}
+
+func TestFirstPositiveFloat(t *testing.T) {
+	if got := firstPositiveFloat(0.5, "1.5"); got != 0.5 {
+		t.Fatalf("configured value should win, got %f", got)
+	}
+	if got := firstPositiveFloat(0, "0.75"); got != 0.75 {
+		t.Fatalf("env value not parsed, got %f", got)
+	}
+	if got := firstPositiveFloat(0, "nope"); got != 0 {
+		t.Fatalf("invalid env value should be ignored, got %f", got)
+	}
+}
+
 func TestWriteEmbeddedHUDPortFile(t *testing.T) {
 	tmpDir := t.TempDir()
 	t.Setenv("XDG_CONFIG_HOME", tmpDir)

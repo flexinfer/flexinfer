@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -23,24 +24,32 @@ func (d *Daemon) startEmbeddedHUD(ctx context.Context, mux *http.ServeMux) error
 	// Environment variables are checked as fallbacks for K8s deployment
 	// where secrets are injected as env vars.
 	hudCfg := hud.Config{
-		RegistryPath:         firstNonEmpty(d.cfg.RegistryPath, os.Getenv("LOOM_REGISTRY_PATH"), os.Getenv("LOOM_REGISTRY")),
-		AdminToken:           firstNonEmpty(cfg.AdminToken, os.Getenv("LOOM_HUD_ADMIN_TOKEN"), os.Getenv("HUD_ADMIN_TOKEN")),
-		MobileOperatorToken:  firstNonEmpty(cfg.MobileOperatorToken, os.Getenv("HUD_MOBILE_OPERATOR_TOKEN")),
-		MobileOperatorScopes: firstNonEmpty(cfg.MobileOperatorScopes, os.Getenv("HUD_MOBILE_OPERATOR_SCOPES")),
-		SpawnEnabled:         cfg.SpawnEnabled || os.Getenv("SPAWN_ENABLED") == "true",
-		SpawnNamespace:       firstNonEmpty(cfg.SpawnNamespace, os.Getenv("SPAWN_NAMESPACE")),
-		SpawnRegistry:        firstNonEmpty(cfg.SpawnRegistry, os.Getenv("SPAWN_REGISTRY")),
-		SpawnSyncMode:        firstNonEmpty(cfg.SpawnSyncMode, os.Getenv("SPAWN_SYNC_MODE")),
-		SpawnGitBaseURL:      firstNonEmpty(cfg.SpawnGitBaseURL, os.Getenv("SPAWN_GIT_BASE_URL")),
-		SpawnGitSecret:       firstNonEmpty(cfg.SpawnGitSecret, os.Getenv("SPAWN_GIT_SECRET")),
-		SpawnProjects:        firstNonEmpty(cfg.SpawnProjects, os.Getenv("SPAWN_PROJECTS")),
-		PipelineProjects:     firstNonEmpty(cfg.PipelineProjects, os.Getenv("HUD_PIPELINE_PROJECTS")),
-		BindAddress:          firstNonEmpty(cfg.BindAddress, os.Getenv("HUD_BIND_ADDRESS")),
-		FlexInferURL:         firstNonEmpty(cfg.FlexInferURL, os.Getenv("FLEXINFER_URL")),
-		FlexInferKey:         firstNonEmpty(cfg.FlexInferKey, os.Getenv("FLEXINFER_API_KEY")),
-		CoordinatorModel:     firstNonEmpty(cfg.CoordinatorModel, os.Getenv("COORDINATOR_MODEL")),
-		MillsOperatorURL:     os.Getenv("LOOM_MILLS_OPERATOR_URL"),
-		MillsOperatorToken:   os.Getenv("LOOM_MILLS_OPERATOR_TOKEN"),
+		RegistryPath:             firstNonEmpty(d.cfg.RegistryPath, os.Getenv("LOOM_REGISTRY_PATH"), os.Getenv("LOOM_REGISTRY")),
+		AdminToken:               firstNonEmpty(cfg.AdminToken, os.Getenv("LOOM_HUD_ADMIN_TOKEN"), os.Getenv("HUD_ADMIN_TOKEN")),
+		MobileOperatorToken:      firstNonEmpty(cfg.MobileOperatorToken, os.Getenv("HUD_MOBILE_OPERATOR_TOKEN")),
+		MobileOperatorScopes:     firstNonEmpty(cfg.MobileOperatorScopes, os.Getenv("HUD_MOBILE_OPERATOR_SCOPES")),
+		SpawnEnabled:             cfg.SpawnEnabled || os.Getenv("SPAWN_ENABLED") == "true",
+		SpawnNamespace:           firstNonEmpty(cfg.SpawnNamespace, os.Getenv("SPAWN_NAMESPACE")),
+		SpawnRegistry:            firstNonEmpty(cfg.SpawnRegistry, os.Getenv("SPAWN_REGISTRY")),
+		SpawnSyncMode:            firstNonEmpty(cfg.SpawnSyncMode, os.Getenv("SPAWN_SYNC_MODE")),
+		SpawnGitBaseURL:          firstNonEmpty(cfg.SpawnGitBaseURL, os.Getenv("SPAWN_GIT_BASE_URL")),
+		SpawnGitSecret:           firstNonEmpty(cfg.SpawnGitSecret, os.Getenv("SPAWN_GIT_SECRET")),
+		SpawnProjects:            firstNonEmpty(cfg.SpawnProjects, os.Getenv("SPAWN_PROJECTS")),
+		SpawnDefaultCPU:          firstPositiveFloat(cfg.SpawnDefaultCPU, os.Getenv("SPAWN_DEFAULT_CPU")),
+		SpawnDefaultMemory:       firstPositiveInt(cfg.SpawnDefaultMemory, os.Getenv("SPAWN_DEFAULT_MEMORY_MB")),
+		SpawnMaxConcurrent:       firstPositiveInt(cfg.SpawnMaxConcurrent, os.Getenv("SPAWN_MAX_CONCURRENT")),
+		SpawnMaxConcurrentBuilds: firstPositiveInt(cfg.SpawnMaxConcurrentBuilds, os.Getenv("SPAWN_MAX_CONCURRENT_BUILDS")),
+		SpawnBuildCPURequest:     firstNonEmpty(cfg.SpawnBuildCPURequest, os.Getenv("SPAWN_BUILD_CPU_REQUEST")),
+		SpawnBuildCPULimit:       firstNonEmpty(cfg.SpawnBuildCPULimit, os.Getenv("SPAWN_BUILD_CPU_LIMIT")),
+		SpawnBuildMemoryRequest:  firstNonEmpty(cfg.SpawnBuildMemoryRequest, os.Getenv("SPAWN_BUILD_MEMORY_REQUEST")),
+		SpawnBuildMemoryLimit:    firstNonEmpty(cfg.SpawnBuildMemoryLimit, os.Getenv("SPAWN_BUILD_MEMORY_LIMIT")),
+		PipelineProjects:         firstNonEmpty(cfg.PipelineProjects, os.Getenv("HUD_PIPELINE_PROJECTS")),
+		BindAddress:              firstNonEmpty(cfg.BindAddress, os.Getenv("HUD_BIND_ADDRESS")),
+		FlexInferURL:             firstNonEmpty(cfg.FlexInferURL, os.Getenv("FLEXINFER_URL")),
+		FlexInferKey:             firstNonEmpty(cfg.FlexInferKey, os.Getenv("FLEXINFER_API_KEY")),
+		CoordinatorModel:         firstNonEmpty(cfg.CoordinatorModel, os.Getenv("COORDINATOR_MODEL")),
+		MillsOperatorURL:         os.Getenv("LOOM_MILLS_OPERATOR_URL"),
+		MillsOperatorToken:       os.Getenv("LOOM_MILLS_OPERATOR_TOKEN"),
 
 		// Inbound webhook intake (GitLab/GitHub CI failure routing).
 		// File config wins; envs are fallbacks for K8s secret injection.
@@ -222,4 +231,24 @@ func envBoolTrue(s string) bool {
 		return true
 	}
 	return false
+}
+
+func firstPositiveInt(configured int, envValue string) int {
+	if configured > 0 {
+		return configured
+	}
+	if v, err := strconv.Atoi(strings.TrimSpace(envValue)); err == nil && v > 0 {
+		return v
+	}
+	return 0
+}
+
+func firstPositiveFloat(configured float64, envValue string) float64 {
+	if configured > 0 {
+		return configured
+	}
+	if v, err := strconv.ParseFloat(strings.TrimSpace(envValue), 64); err == nil && v > 0 {
+		return v
+	}
+	return 0
 }

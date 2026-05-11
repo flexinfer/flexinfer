@@ -59,6 +59,12 @@ spec:
               value: longhorn
             - name: DEVBOX_K8S_WORKSPACE_PVC
               value: devbox-workspace-nfs
+            - name: DEVBOX_K8S_MAX_CONCURRENT_BUILDS
+              value: "1"
+            - name: DEVBOX_K8S_BUILD_CPU_REQUEST
+              value: 250m
+            - name: DEVBOX_K8S_BUILD_CPU_LIMIT
+              value: 500m
             - name: DEVBOX_K8S_GIT_BASE_URL
               value: https://gitlab.blevins.dev/homelab
             - name: DEVBOX_K8S_GIT_SECRET

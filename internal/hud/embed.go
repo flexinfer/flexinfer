@@ -520,12 +520,17 @@ func (a *App) RegisterRoutes(mux *http.ServeMux) {
 func (a *App) initSpawnOrchestrator(ctx context.Context) error {
 	cfg := a.config
 	spawnBackend, err := backend.NewK8sBackend(backend.K8sBackendConfig{
-		Kubeconfig: cfg.SpawnKubeconfig,
-		Namespace:  cfg.SpawnNamespace,
-		Registry:   cfg.SpawnRegistry,
-		SyncMode:   cfg.SpawnSyncMode,
-		GitBaseURL: cfg.SpawnGitBaseURL,
-		GitSecret:  cfg.SpawnGitSecret,
+		Kubeconfig:          cfg.SpawnKubeconfig,
+		Namespace:           cfg.SpawnNamespace,
+		Registry:            cfg.SpawnRegistry,
+		SyncMode:            cfg.SpawnSyncMode,
+		GitBaseURL:          cfg.SpawnGitBaseURL,
+		GitSecret:           cfg.SpawnGitSecret,
+		BuildCPURequest:     cfg.SpawnBuildCPURequest,
+		BuildCPULimit:       cfg.SpawnBuildCPULimit,
+		BuildMemoryRequest:  cfg.SpawnBuildMemoryRequest,
+		BuildMemoryLimit:    cfg.SpawnBuildMemoryLimit,
+		MaxConcurrentBuilds: cfg.SpawnMaxConcurrentBuilds,
 	})
 	if err != nil {
 		return err
@@ -534,6 +539,18 @@ func (a *App) initSpawnOrchestrator(ctx context.Context) error {
 	spawnCfg := DefaultSpawnConfig()
 	if cfg.SpawnProjects != "" {
 		spawnCfg.Projects = strings.Split(cfg.SpawnProjects, ",")
+	}
+	if cfg.SpawnDefaultCPU > 0 {
+		spawnCfg.DefaultCPUs = cfg.SpawnDefaultCPU
+	}
+	if cfg.SpawnDefaultMemory > 0 {
+		spawnCfg.DefaultMemory = cfg.SpawnDefaultMemory
+	}
+	if cfg.SpawnMaxConcurrent > 0 {
+		spawnCfg.MaxConcurrent = cfg.SpawnMaxConcurrent
+	}
+	if cfg.SpawnMaxConcurrentBuilds > 0 {
+		spawnCfg.MaxConcurrentBuilds = cfg.SpawnMaxConcurrentBuilds
 	}
 	a.spawner = NewSpawnOrchestrator(
 		spawnBackend, a.agent, a.sseHub, a.tracer, a.metrics, a.logger,

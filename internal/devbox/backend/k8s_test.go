@@ -10,6 +10,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
@@ -20,12 +21,16 @@ import (
 
 func testK8sBackend() *K8sBackend {
 	return &K8sBackend{
-		namespace:       "devbox",
-		registry:        "registry.harbor.lan",
-		workspacePVC:    "devbox-workspace-nfs",
-		imagePullSecret: "harbor-creds",
-		workspaceRoot:   "/workspace",
-		builderImage:    "quay.io/buildah/stable:v1.38.0",
+		namespace:          "devbox",
+		registry:           "registry.harbor.lan",
+		workspacePVC:       "devbox-workspace-nfs",
+		imagePullSecret:    "harbor-creds",
+		workspaceRoot:      "/workspace",
+		builderImage:       "quay.io/buildah/stable:v1.38.0",
+		buildCPURequest:    resource.MustParse(defaultBuildCPURequest),
+		buildCPULimit:      resource.MustParse(defaultBuildCPULimit),
+		buildMemoryRequest: resource.MustParse(defaultBuildMemoryRequest),
+		buildMemoryLimit:   resource.MustParse(defaultBuildMemoryLimit),
 	}
 }
 
@@ -113,22 +118,31 @@ func TestNewK8sBackend_DefaultsAndOverrides(t *testing.T) {
 		if k.workspaceRoot != filepath.Join(homeDir, "workspace") {
 			t.Fatalf("workspaceRoot=%q", k.workspaceRoot)
 		}
+		if got := cap(k.buildSlots); got != defaultMaxBuilds {
+			t.Fatalf("default max build slots=%d, want %d", got, defaultMaxBuilds)
+		}
+		if got := k.buildCPULimit.String(); got != defaultBuildCPULimit {
+			t.Fatalf("default build CPU limit=%s", got)
+		}
 	})
 
 	t.Run("overrides", func(t *testing.T) {
 		k, err := NewK8sBackend(K8sBackendConfig{
-			Kubeconfig:      kubeconfig,
-			Namespace:       "custom-ns",
-			Registry:        "registry.example.test",
-			WorkspacePVC:    "custom-pvc",
-			ImagePullSecret: "custom-secret",
-			WorkspaceRoot:   "/srv/workspace",
-			BuilderImage:    "quay.io/custom/buildah:v1",
-			SyncMode:        "tar-pipe",
-			SyncExcludes:    []string{"**/*.tmp"},
-			MaxSyncSize:     512,
-			GitBaseURL:      "https://gitlab.example.test/team",
-			GitSecret:       "git-token",
+			Kubeconfig:          kubeconfig,
+			Namespace:           "custom-ns",
+			Registry:            "registry.example.test",
+			WorkspacePVC:        "custom-pvc",
+			ImagePullSecret:     "custom-secret",
+			WorkspaceRoot:       "/srv/workspace",
+			BuilderImage:        "quay.io/custom/buildah:v1",
+			SyncMode:            "tar-pipe",
+			SyncExcludes:        []string{"**/*.tmp"},
+			MaxSyncSize:         512,
+			GitBaseURL:          "https://gitlab.example.test/team",
+			GitSecret:           "git-token",
+			BuildCPURequest:     "250m",
+			BuildCPULimit:       "500m",
+			MaxConcurrentBuilds: 2,
 		})
 		if err != nil {
 			t.Fatalf("NewK8sBackend returned error: %v", err)
@@ -148,6 +162,9 @@ func TestNewK8sBackend_DefaultsAndOverrides(t *testing.T) {
 		}
 		if k.gitBaseURL != "https://gitlab.example.test/team" || k.gitSecret != "git-token" {
 			t.Fatalf("unexpected git overrides: base=%q secret=%q", k.gitBaseURL, k.gitSecret)
+		}
+		if k.buildCPURequest.String() != "250m" || k.buildCPULimit.String() != "500m" || cap(k.buildSlots) != 2 {
+			t.Fatalf("unexpected build overrides: req=%s limit=%s slots=%d", k.buildCPURequest.String(), k.buildCPULimit.String(), cap(k.buildSlots))
 		}
 	})
 }
@@ -293,6 +310,18 @@ func TestBuildBuildahPodSpec(t *testing.T) {
 	if container.SecurityContext.Privileged == nil || !*container.SecurityContext.Privileged {
 		t.Fatalf("expected privileged build pod, got: %#v", container.SecurityContext)
 	}
+	if got := container.Resources.Requests.Cpu().String(); got != "1" {
+		t.Fatalf("expected default build CPU request 1, got %s", got)
+	}
+	if got := container.Resources.Limits.Cpu().String(); got != "3" {
+		t.Fatalf("expected default build CPU limit 3, got %s", got)
+	}
+	if got := container.Resources.Requests.Memory().String(); got != "1Gi" {
+		t.Fatalf("expected default build memory request 1Gi, got %s", got)
+	}
+	if got := container.Resources.Limits.Memory().String(); got != "3Gi" {
+		t.Fatalf("expected default build memory limit 3Gi, got %s", got)
+	}
 
 	if len(pod.Spec.Volumes) != 4 {
 		t.Fatalf("expected 4 volumes, got %d", len(pod.Spec.Volumes))
@@ -305,6 +334,29 @@ func TestBuildBuildahPodSpec(t *testing.T) {
 	}
 	if pod.Spec.Volumes[3].Secret == nil || pod.Spec.Volumes[3].Secret.SecretName != "harbor-creds" {
 		t.Fatalf("unexpected auth secret volume: %#v", pod.Spec.Volumes[3])
+	}
+}
+
+func TestBuildBuildahPodSpec_CustomBuildResources(t *testing.T) {
+	k := testK8sBackend()
+	k.buildCPURequest = resource.MustParse("250m")
+	k.buildCPULimit = resource.MustParse("500m")
+	k.buildMemoryRequest = resource.MustParse("768Mi")
+	k.buildMemoryLimit = resource.MustParse("2Gi")
+
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
+	res := pod.Spec.Containers[0].Resources
+	if got := res.Requests.Cpu().String(); got != "250m" {
+		t.Fatalf("CPU request = %s, want 250m", got)
+	}
+	if got := res.Limits.Cpu().String(); got != "500m" {
+		t.Fatalf("CPU limit = %s, want 500m", got)
+	}
+	if got := res.Requests.Memory().String(); got != "768Mi" {
+		t.Fatalf("memory request = %s, want 768Mi", got)
+	}
+	if got := res.Limits.Memory().String(); got != "2Gi" {
+		t.Fatalf("memory limit = %s, want 2Gi", got)
 	}
 }
 

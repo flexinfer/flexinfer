@@ -64,6 +64,7 @@ type SpawnOrchestrator struct {
 
 	// Limits.
 	maxConcurrent  int
+	buildSlots     chan struct{}
 	defaultTimeout time.Duration
 	defaultMemory  int
 	defaultCPUs    float64
@@ -126,12 +127,13 @@ type streamExecCapable interface {
 
 // SpawnOrchestratorConfig holds configuration for the spawn orchestrator.
 type SpawnOrchestratorConfig struct {
-	MaxConcurrent  int
-	DefaultTimeout time.Duration
-	DefaultMemory  int // MB
-	DefaultCPUs    float64
-	WorkspaceRoot  string   // local path to workspace mount (for project detection)
-	Projects       []string // available projects for spawn picker (from SPAWN_PROJECTS env)
+	MaxConcurrent       int
+	MaxConcurrentBuilds int
+	DefaultTimeout      time.Duration
+	DefaultMemory       int // MB
+	DefaultCPUs         float64
+	WorkspaceRoot       string   // local path to workspace mount (for project detection)
+	Projects            []string // available projects for spawn picker (from SPAWN_PROJECTS env)
 }
 
 // DefaultSpawnConfig returns sensible defaults.
@@ -141,11 +143,12 @@ func DefaultSpawnConfig() SpawnOrchestratorConfig {
 		wsRoot = home + "/workspace"
 	}
 	return SpawnOrchestratorConfig{
-		MaxConcurrent:  3,
-		DefaultTimeout: 60 * time.Minute,
-		DefaultMemory:  4096,
-		DefaultCPUs:    2.0,
-		WorkspaceRoot:  wsRoot,
+		MaxConcurrent:       3,
+		MaxConcurrentBuilds: 1,
+		DefaultTimeout:      60 * time.Minute,
+		DefaultMemory:       4096,
+		DefaultCPUs:         2.0,
+		WorkspaceRoot:       wsRoot,
 	}
 }
 
@@ -199,11 +202,31 @@ func NewSpawnOrchestrator(
 		logger:         spawnLogger,
 		ctrl:           ctrl,
 		maxConcurrent:  cfg.MaxConcurrent,
+		buildSlots:     newBuildSlots(cfg.MaxConcurrentBuilds),
 		defaultTimeout: cfg.DefaultTimeout,
 		defaultMemory:  cfg.DefaultMemory,
 		defaultCPUs:    cfg.DefaultCPUs,
 		workspaceRoot:  wsRoot,
 		projects:       cfg.Projects,
+	}
+}
+
+func newBuildSlots(maxConcurrentBuilds int) chan struct{} {
+	if maxConcurrentBuilds <= 0 {
+		maxConcurrentBuilds = 1
+	}
+	return make(chan struct{}, maxConcurrentBuilds)
+}
+
+func (o *SpawnOrchestrator) acquireBuildSlot(ctx context.Context) (func(), error) {
+	if o.buildSlots == nil {
+		return func() {}, nil
+	}
+	select {
+	case o.buildSlots <- struct{}{}:
+		return func() { <-o.buildSlots }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("wait for spawn build slot: %w", ctx.Err())
 	}
 }
 
@@ -350,11 +373,18 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	// no local filesystem access needed). In git-clone mode the backend
 	// derives the project name from the path and clones the repo.
 	buildTag := fmt.Sprintf("%s-spawn-%s", req.Project, spawnID[6:])
+	releaseBuildSlot, slotErr := o.acquireBuildSlot(ctx)
+	if slotErr != nil {
+		buildSpan.End()
+		o.failSpawn(ctx, state, fmt.Sprintf("image build queue failed: %v", slotErr))
+		return
+	}
 	buildResult, err := o.backend.Build(ctx, backend.BuildOpts{
 		Tag:        buildTag,
 		Dockerfile: df,
 		ContextDir: projectDir,
 	})
+	releaseBuildSlot()
 	buildSpan.End()
 	if err != nil {
 		o.failSpawn(ctx, state, fmt.Sprintf("image build failed: %v", err))

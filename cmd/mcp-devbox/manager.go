@@ -29,12 +29,17 @@ type managerConfig struct {
 	defaultMemMB  int
 
 	// K8s-specific
-	kubeconfig         string
-	k8sNamespace       string
-	storageClass       string
-	k8sWorkspacePVC    string
-	k8sImagePullSecret string
-	builderImage       string
+	kubeconfig          string
+	k8sNamespace        string
+	storageClass        string
+	k8sWorkspacePVC     string
+	k8sImagePullSecret  string
+	builderImage        string
+	buildCPURequest     string
+	buildCPULimit       string
+	buildMemoryRequest  string
+	buildMemoryLimit    string
+	maxConcurrentBuilds int
 
 	// NFS cache flush before each exec (default true for K8s backend)
 	nfsFlush bool
@@ -167,19 +172,24 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 		b = db
 	case "k8s", "kubernetes":
 		kb, err := backend.NewK8sBackend(backend.K8sBackendConfig{
-			Kubeconfig:      cfg.kubeconfig,
-			Namespace:       cfg.k8sNamespace,
-			Registry:        cfg.registry,
-			WorkspacePVC:    cfg.k8sWorkspacePVC,
-			ImagePullSecret: cfg.k8sImagePullSecret,
-			WorkspaceRoot:   cfg.workspaceRoot,
-			BuilderImage:    cfg.builderImage,
-			NFSFlush:        cfg.nfsFlush,
-			GitBaseURL:      cfg.gitBaseURL,
-			GitSecret:       cfg.gitSecret,
-			SyncMode:        cfg.syncMode,
-			SyncExcludes:    cfg.syncExcludes,
-			MaxSyncSize:     cfg.maxSyncSize,
+			Kubeconfig:          cfg.kubeconfig,
+			Namespace:           cfg.k8sNamespace,
+			Registry:            cfg.registry,
+			WorkspacePVC:        cfg.k8sWorkspacePVC,
+			ImagePullSecret:     cfg.k8sImagePullSecret,
+			WorkspaceRoot:       cfg.workspaceRoot,
+			BuilderImage:        cfg.builderImage,
+			NFSFlush:            cfg.nfsFlush,
+			GitBaseURL:          cfg.gitBaseURL,
+			GitSecret:           cfg.gitSecret,
+			BuildCPURequest:     cfg.buildCPURequest,
+			BuildCPULimit:       cfg.buildCPULimit,
+			BuildMemoryRequest:  cfg.buildMemoryRequest,
+			BuildMemoryLimit:    cfg.buildMemoryLimit,
+			MaxConcurrentBuilds: cfg.maxConcurrentBuilds,
+			SyncMode:            cfg.syncMode,
+			SyncExcludes:        cfg.syncExcludes,
+			MaxSyncSize:         cfg.maxSyncSize,
 		})
 		if err != nil {
 			return nil, err
