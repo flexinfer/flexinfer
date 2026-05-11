@@ -34,6 +34,7 @@ func (d *Daemon) startEmbeddedHUD(ctx context.Context, mux *http.ServeMux) error
 		SpawnSyncMode:            firstNonEmpty(cfg.SpawnSyncMode, os.Getenv("SPAWN_SYNC_MODE")),
 		SpawnGitBaseURL:          firstNonEmpty(cfg.SpawnGitBaseURL, os.Getenv("SPAWN_GIT_BASE_URL")),
 		SpawnGitSecret:           firstNonEmpty(cfg.SpawnGitSecret, os.Getenv("SPAWN_GIT_SECRET")),
+		SpawnGitCloneImage:       firstNonEmpty(cfg.SpawnGitCloneImage, os.Getenv("SPAWN_GIT_CLONE_IMAGE")),
 		SpawnProjects:            firstNonEmpty(cfg.SpawnProjects, os.Getenv("SPAWN_PROJECTS")),
 		SpawnDefaultCPU:          firstPositiveFloat(cfg.SpawnDefaultCPU, os.Getenv("SPAWN_DEFAULT_CPU")),
 		SpawnDefaultMemory:       firstPositiveInt(cfg.SpawnDefaultMemory, os.Getenv("SPAWN_DEFAULT_MEMORY_MB")),

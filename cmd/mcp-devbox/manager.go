@@ -35,6 +35,7 @@ type managerConfig struct {
 	k8sWorkspacePVC     string
 	k8sImagePullSecret  string
 	builderImage        string
+	gitCloneImage       string
 	buildCPURequest     string
 	buildCPULimit       string
 	buildMemoryRequest  string
@@ -179,6 +180,7 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 			ImagePullSecret:     cfg.k8sImagePullSecret,
 			WorkspaceRoot:       cfg.workspaceRoot,
 			BuilderImage:        cfg.builderImage,
+			GitCloneImage:       cfg.gitCloneImage,
 			NFSFlush:            cfg.nfsFlush,
 			GitBaseURL:          cfg.gitBaseURL,
 			GitSecret:           cfg.gitSecret,

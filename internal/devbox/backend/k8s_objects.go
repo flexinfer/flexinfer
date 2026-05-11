@@ -231,7 +231,7 @@ echo "git-clone: cloned %s into %s"`,
 
 	return corev1.Container{
 		Name:    "git-clone",
-		Image:   "alpine/git:2.47",
+		Image:   k.gitCloneImage,
 		Command: []string{"sh", "-c", cloneScript},
 		Env: []corev1.EnvVar{
 			{
