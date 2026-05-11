@@ -214,6 +214,13 @@ func TestIntegrator_MergeConflictEscalates(t *testing.T) {
 	if got.State != store.PipelineEscalated {
 		t.Errorf("state = %s, want escalated", got.State)
 	}
+	gotItem, err := st.Backlog.Get(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("get backlog: %v", err)
+	}
+	if gotItem.State != store.BacklogEscalated {
+		t.Errorf("backlog state = %s, want escalated", gotItem.State)
+	}
 }
 
 func TestIntegrator_SubRunFailureEscalates(t *testing.T) {
