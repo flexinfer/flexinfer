@@ -1942,6 +1942,135 @@ def patch_gptq_lm_head_norm_post_quantize():
     print("Patched GPTQModel lm_head norm hook for lazy meta-backed modules")
 
 
+def patch_gptq_lm_head_cpu_quantize():
+    """Run lm_head's GPTQ solve on CPU after GPU calibration capture."""
+
+    import gptqmodel.quantization.gptq as gptq_mod
+
+    if getattr(gptq_mod, "_flexinfer_lm_head_cpu_quantize_patch", False):
+        return
+
+    gptq_cls = getattr(gptq_mod, "GPTQ", None)
+    if gptq_cls is None or not hasattr(gptq_cls, "quantize"):
+        return
+
+    original_quantize = gptq_cls.quantize
+
+    def _is_lm_head_task(task):
+        name = getattr(task, "name", "")
+        named_module = getattr(task, "_named_module", None)
+        full_name = getattr(named_module, "full_name", "")
+        return name == "lm_head" or full_name == "lm_head" or full_name.endswith(
+            ".lm_head"
+        )
+
+    def _describe_gpu_memory():
+        if not torch.cuda.is_available():
+            return "gpu unavailable"
+        try:
+            free, total = torch.cuda.mem_get_info()
+        except Exception as exc:
+            return f"gpu memory unavailable: {exc}"
+        gib = 1024**3
+        return f"{free / gib:.2f}GiB free / {total / gib:.2f}GiB total"
+
+    def _clear_gpu_cache():
+        gc.collect()
+        if not torch.cuda.is_available():
+            return
+        try:
+            torch.cuda.synchronize()
+        except Exception as exc:
+            print(f"WARN: unable to synchronize GPU before lm_head CPU GPTQ: {exc}")
+        torch.cuda.empty_cache()
+
+    def _move_hessian_partials_to_cpu(task):
+        partials = getattr(task, "_device_hessian_partials", None)
+        counts = getattr(task, "_device_sample_counts", None)
+        if not isinstance(partials, dict) or not partials:
+            return 0
+
+        cpu_device = torch.device("cpu")
+        cpu_partial = None
+        cpu_count = 0
+        moved = 0
+        for device, partial in list(partials.items()):
+            count = 0
+            if isinstance(counts, dict):
+                count = int(counts.get(device, 0) or 0)
+
+            if not torch.is_tensor(partial):
+                continue
+
+            if partial.device.type == "cpu":
+                partial_cpu = partial
+            else:
+                partial_cpu = partial.to(device=cpu_device)
+                moved += 1
+
+            if cpu_partial is None:
+                cpu_partial = partial_cpu
+            else:
+                cpu_partial.add_(partial_cpu)
+                if partial_cpu is not partial:
+                    del partial_cpu
+            cpu_count += count
+
+        partials.clear()
+        if counts is not None:
+            counts.clear()
+        if cpu_partial is not None:
+            partials[cpu_device] = cpu_partial
+            if counts is not None:
+                counts[cpu_device] = cpu_count
+        return moved
+
+    def _force_lm_head_task_to_cpu(task):
+        if getattr(task, "_flexinfer_lm_head_cpu_quantize", False):
+            return
+
+        before = _describe_gpu_memory()
+        cpu_device = torch.device("cpu")
+        module = getattr(task, "module", None)
+        named_module = getattr(task, "_named_module", None)
+        named_wrapped = getattr(named_module, "module", None)
+
+        if torch.is_tensor(getattr(task, "H", None)) and task.H.device.type != "cpu":
+            task.H = task.H.to(device=cpu_device)
+
+        moved_partials = _move_hessian_partials_to_cpu(task)
+
+        for candidate in (module, named_wrapped):
+            if candidate is None:
+                continue
+            try:
+                candidate.to(cpu_device)
+                setattr(candidate, "target_device", cpu_device)
+            except Exception as exc:
+                print(f"WARN: failed moving lm_head GPTQ module to CPU: {exc}")
+
+        if named_module is not None:
+            setattr(named_module, "target_device", cpu_device)
+
+        setattr(task, "_final_hessian_device_hint", cpu_device)
+        setattr(task, "_flexinfer_lm_head_cpu_quantize", True)
+        _clear_gpu_cache()
+        print(
+            "Moved lm_head GPTQ solve to CPU "
+            f"(hessian_partials_moved={moved_partials}; "
+            f"{before} -> {_describe_gpu_memory()})"
+        )
+
+    def _patched_quantize(self, *args, **kwargs):
+        if _is_lm_head_task(self):
+            _force_lm_head_task_to_cpu(self)
+        return original_quantize(self, *args, **kwargs)
+
+    gptq_cls.quantize = _patched_quantize
+    gptq_mod._flexinfer_lm_head_cpu_quantize_patch = True
+    print("Patched GPTQModel lm_head GPTQ solve to run on CPU")
+
+
 # ── Read config from environment ──────────────────────────────────────
 model_dir = os.environ["MODEL_DIR"]
 out_dir = os.environ["OUT_DIR"]
@@ -3148,6 +3277,7 @@ from transformers.modeling_utils import get_checkpoint_shard_files, load_state_d
 
 patch_gptq_save_meta_tensors()
 patch_gptq_lm_head_norm_post_quantize()
+patch_gptq_lm_head_cpu_quantize()
 
 gpu_vram_mb_env = int(os.environ.get("GPU_VRAM_MB", "0"))
 try:
