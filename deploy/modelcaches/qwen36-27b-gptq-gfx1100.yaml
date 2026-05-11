@@ -117,9 +117,10 @@ spec:
     # 2026-05-11: after direct lm_head tensor handoff, the 5930k canary
     # completed all 64 decoder layers and freed GPU memory, then exceeded the
     # 64-GiB host during the stock GPTQ lm_head CPU solve/pack. Radeon VII has
-    # 128 GiB host RAM available, so use the gfx906 quantizer to finish the full
-    # lm_head-inclusive quant while preserving the gfx1100 publish target.
-    maxMemoryGB: 96
+    # 128 GiB host RAM available; 88 GiB renders as a 75-GiB pod request and
+    # fits alongside the node's baseline workload while preserving enough
+    # headroom for the full lm_head-inclusive quant.
+    maxMemoryGB: 88
     # Qwen3.6 lm_head quantization needs ~4.7 GiB of temporary VRAM after the
     # decoder stack is already packed. The default 0.80 cap OOMs there even
     # though physical VRAM is still available.
