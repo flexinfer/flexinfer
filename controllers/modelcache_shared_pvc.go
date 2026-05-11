@@ -451,9 +451,13 @@ func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, mo
 
 	// Phase 4: Publish (if configured) must complete before Ready.
 	if modelCache.Spec.Publish != nil {
-		if modelCache.Status.Publish == nil {
+		if !publishCompleted(modelCache.Status.Publish) {
 			modelCache.Status.CurrentPhase = "publish"
-			return r.reconcilePublish(ctx, modelCache, pvcName, modelPath)
+			publishPath := modelPath
+			if modelCache.Spec.Quantization != nil && quantizationCompleted(modelCache.Status.Quantization) {
+				publishPath = quantizedOutputPath(modelCache.Spec.Quantization, modelPath)
+			}
+			return r.reconcilePublish(ctx, modelCache, pvcName, publishPath)
 		}
 	}
 

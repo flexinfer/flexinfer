@@ -63,6 +63,50 @@ func TestEffectivePublishDeadline(t *testing.T) {
 	}
 }
 
+func TestPublishCompletedRequiresPublishedAt(t *testing.T) {
+	now := metav1.Now()
+
+	tests := []struct {
+		name   string
+		status *aiv1alpha1.PublishStatus
+		want   bool
+	}{
+		{
+			name:   "nil status",
+			status: nil,
+			want:   false,
+		},
+		{
+			name: "validator-only status is not complete",
+			status: &aiv1alpha1.PublishStatus{
+				Validate: &aiv1alpha1.PublishValidateStatus{Ok: true},
+			},
+			want: false,
+		},
+		{
+			name: "published status is complete",
+			status: &aiv1alpha1.PublishStatus{
+				PublishedAt: &now,
+			},
+			want: true,
+		},
+		{
+			name: "failure is not complete",
+			status: &aiv1alpha1.PublishStatus{
+				PublishedAt:    &now,
+				FailureMessage: "publish failed",
+			},
+			want: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, publishCompleted(tt.status))
+		})
+	}
+}
+
 func TestBuildPublishJob(t *testing.T) {
 	ociRef := "registry.harbor.lan/models/test:v1"
 	tests := []struct {

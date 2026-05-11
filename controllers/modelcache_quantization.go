@@ -135,7 +135,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 	// If quantization completed and publishing is configured but not yet recorded,
 	// continue into publish instead of getting stuck in Ready.
 	if quantizationCompleted(modelCache.Status.Quantization) &&
-		modelCache.Spec.Publish != nil && modelCache.Status.Publish == nil {
+		modelCache.Spec.Publish != nil && !publishCompleted(modelCache.Status.Publish) {
 		publishPath := quantizedOutputPath(modelCache.Spec.Quantization, modelPath)
 		return r.reconcilePublish(ctx, modelCache, pvcName, publishPath)
 	}

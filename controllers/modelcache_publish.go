@@ -44,7 +44,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 	log := log.FromContext(ctx)
 
 	// If already Ready with publish status, nothing to do.
-	if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady && modelCache.Status.Publish != nil {
+	if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady && publishCompleted(modelCache.Status.Publish) {
 		return ctrl.Result{}, nil
 	}
 
@@ -52,9 +52,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 	// publish *job* ran (PublishedAt set), not just that the validator gate
 	// populated Status.Publish — otherwise the validate-only branch below
 	// would short-circuit to Ready before publishing.
-	if modelCache.Status.Publish != nil &&
-		modelCache.Status.Publish.FailureMessage == "" &&
-		modelCache.Status.Publish.PublishedAt != nil {
+	if publishCompleted(modelCache.Status.Publish) {
 		if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
 			modelCache.Status.CurrentPhase = "ready"
@@ -81,7 +79,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 	err := r.Get(ctx, types.NamespacedName{Name: publishJobName, Namespace: modelCache.Namespace}, publishJob)
 	if err != nil && errors.IsNotFound(err) {
 		// If publish already completed, the job was GC'd by TTL — mark Ready.
-		if modelCache.Status.Publish != nil && modelCache.Status.Publish.FailureMessage == "" {
+		if publishCompleted(modelCache.Status.Publish) {
 			log.Info("Publish job GC'd but publish already complete, skipping re-creation",
 				"cache", modelCache.Name)
 			if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
@@ -313,6 +311,12 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 		}
 	}
 	return ctrl.Result{RequeueAfter: requeueLong}, nil
+}
+
+func publishCompleted(status *aiv1alpha1.PublishStatus) bool {
+	return status != nil &&
+		status.FailureMessage == "" &&
+		status.PublishedAt != nil
 }
 
 // publishJobMetadata is parsed from the publisher container's termination log.
