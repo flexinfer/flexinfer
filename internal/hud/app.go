@@ -82,14 +82,22 @@ type Config struct {
 	TUI bool
 
 	// Spawn orchestrator (headless agent spawning via devbox K8s backend).
-	SpawnEnabled    bool   // Enable spawn endpoints (default: false).
-	SpawnKubeconfig string // Kubeconfig for spawn K8s backend.
-	SpawnNamespace  string // K8s namespace for spawn pods (default: "devbox").
-	SpawnRegistry   string // Image registry (default: "registry.harbor.lan").
-	SpawnSyncMode   string // Workspace sync: "git-clone" or "nfs".
-	SpawnGitBaseURL string // Git base URL for git-clone mode.
-	SpawnGitSecret  string // K8s secret with git token.
-	SpawnProjects   string // Comma-separated project names for spawn picker.
+	SpawnEnabled             bool    // Enable spawn endpoints (default: false).
+	SpawnKubeconfig          string  // Kubeconfig for spawn K8s backend.
+	SpawnNamespace           string  // K8s namespace for spawn pods (default: "devbox").
+	SpawnRegistry            string  // Image registry (default: "registry.harbor.lan").
+	SpawnSyncMode            string  // Workspace sync: "git-clone" or "nfs".
+	SpawnGitBaseURL          string  // Git base URL for git-clone mode.
+	SpawnGitSecret           string  // K8s secret with git token.
+	SpawnProjects            string  // Comma-separated project names for spawn picker.
+	SpawnDefaultCPU          float64 // Default CPU limit for spawned agent pods.
+	SpawnDefaultMemory       int     // Default memory limit for spawned agent pods in MB.
+	SpawnMaxConcurrent       int     // Maximum active spawned agents.
+	SpawnMaxConcurrentBuilds int     // Maximum concurrent spawn image builds.
+	SpawnBuildCPURequest     string  // Buildah pod CPU request for spawn images.
+	SpawnBuildCPULimit       string  // Buildah pod CPU limit for spawn images.
+	SpawnBuildMemoryRequest  string  // Buildah pod memory request for spawn images.
+	SpawnBuildMemoryLimit    string  // Buildah pod memory limit for spawn images.
 
 	// Pipeline monitoring (GitLab CI).
 	PipelineProjects string // Comma-separated GitLab project paths to monitor.

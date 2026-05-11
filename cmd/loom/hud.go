@@ -64,6 +64,14 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var spawnGitBaseURL string
 	var spawnGitSecret string
 	var spawnProjects string
+	var spawnDefaultCPU float64
+	var spawnDefaultMemory int
+	var spawnMaxConcurrent int
+	var spawnMaxConcurrentBuilds int
+	var spawnBuildCPURequest string
+	var spawnBuildCPULimit string
+	var spawnBuildMemoryRequest string
+	var spawnBuildMemoryLimit string
 
 	cmd := &cobra.Command{
 		Use:   "hud",
@@ -133,6 +141,16 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 					}
 				}
 			}
+			applyEnvFloat := func(flagName, envKey string, target *float64) {
+				if cmd.Flags().Changed(flagName) {
+					return
+				}
+				if raw := os.Getenv(envKey); raw != "" {
+					if v, err := strconv.ParseFloat(raw, 64); err == nil {
+						*target = v
+					}
+				}
+			}
 			applyEnvString("metrics-addr", "DAEMON_METRICS_ADDR", &metricsAddr)
 			applyEnvString("flexinfer-url", "FLEXINFER_URL", &flexinferURL)
 			applyEnvString("flexinfer-key", "FLEXINFER_API_KEY", &flexinferKey)
@@ -156,6 +174,14 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 			applyEnvString("spawn-git-base-url", "SPAWN_GIT_BASE_URL", &spawnGitBaseURL)
 			applyEnvString("spawn-git-secret", "SPAWN_GIT_SECRET", &spawnGitSecret)
 			applyEnvString("spawn-projects", "SPAWN_PROJECTS", &spawnProjects)
+			applyEnvFloat("spawn-default-cpu", "SPAWN_DEFAULT_CPU", &spawnDefaultCPU)
+			applyEnvInt("spawn-default-memory-mb", "SPAWN_DEFAULT_MEMORY_MB", &spawnDefaultMemory)
+			applyEnvInt("spawn-max-concurrent", "SPAWN_MAX_CONCURRENT", &spawnMaxConcurrent)
+			applyEnvInt("spawn-max-concurrent-builds", "SPAWN_MAX_CONCURRENT_BUILDS", &spawnMaxConcurrentBuilds)
+			applyEnvString("spawn-build-cpu-request", "SPAWN_BUILD_CPU_REQUEST", &spawnBuildCPURequest)
+			applyEnvString("spawn-build-cpu-limit", "SPAWN_BUILD_CPU_LIMIT", &spawnBuildCPULimit)
+			applyEnvString("spawn-build-memory-request", "SPAWN_BUILD_MEMORY_REQUEST", &spawnBuildMemoryRequest)
+			applyEnvString("spawn-build-memory-limit", "SPAWN_BUILD_MEMORY_LIMIT", &spawnBuildMemoryLimit)
 			// SPAWN_ENABLED env var (boolean).
 			if !cmd.Flags().Changed("spawn-enabled") {
 				if v := os.Getenv("SPAWN_ENABLED"); v == "true" || v == "1" {
@@ -196,39 +222,47 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 			}
 
 			cfg := hud.Config{
-				SocketPath:              socketPath,
-				Dev:                     dev,
-				Port:                    port,
-				MetricsAddr:             metricsAddr,
-				Overlay:                 overlay,
-				OverlayEdge:             overlayEdge,
-				OverlayWidth:            overlayWidth,
-				OverlayOpacity:          overlayOpacity,
-				OverlayCornerRadius:     overlayCornerRadius,
-				FlexInferURL:            flexinferURL,
-				FlexInferKey:            flexinferKey,
-				CoordinatorModel:        coordinatorModel,
-				WebhookURL:              webhookURL,
-				WebhookToken:            webhookToken,
-				WebhookResolve:          webhookResolve,
-				AdminToken:              adminToken,
-				MobileOperatorToken:     mobileOperatorToken,
-				MobileOperatorScopes:    mobileOperatorScopes,
-				MobileRateLimitMutation: mobileRateLimitMutation,
-				MobileRateLimitRead:     mobileRateLimitRead,
-				TLSCert:                 tlsCert,
-				TLSKey:                  tlsKey,
-				BindAddress:             bindAddress,
-				TUI:                     tui,
-				PipelineProjects:        pipelineProjects,
-				SpawnEnabled:            spawnEnabled,
-				SpawnKubeconfig:         spawnKubeconfig,
-				SpawnNamespace:          spawnNamespace,
-				SpawnRegistry:           spawnRegistry,
-				SpawnSyncMode:           spawnSyncMode,
-				SpawnGitBaseURL:         spawnGitBaseURL,
-				SpawnGitSecret:          spawnGitSecret,
-				SpawnProjects:           spawnProjects,
+				SocketPath:               socketPath,
+				Dev:                      dev,
+				Port:                     port,
+				MetricsAddr:              metricsAddr,
+				Overlay:                  overlay,
+				OverlayEdge:              overlayEdge,
+				OverlayWidth:             overlayWidth,
+				OverlayOpacity:           overlayOpacity,
+				OverlayCornerRadius:      overlayCornerRadius,
+				FlexInferURL:             flexinferURL,
+				FlexInferKey:             flexinferKey,
+				CoordinatorModel:         coordinatorModel,
+				WebhookURL:               webhookURL,
+				WebhookToken:             webhookToken,
+				WebhookResolve:           webhookResolve,
+				AdminToken:               adminToken,
+				MobileOperatorToken:      mobileOperatorToken,
+				MobileOperatorScopes:     mobileOperatorScopes,
+				MobileRateLimitMutation:  mobileRateLimitMutation,
+				MobileRateLimitRead:      mobileRateLimitRead,
+				TLSCert:                  tlsCert,
+				TLSKey:                   tlsKey,
+				BindAddress:              bindAddress,
+				TUI:                      tui,
+				PipelineProjects:         pipelineProjects,
+				SpawnEnabled:             spawnEnabled,
+				SpawnKubeconfig:          spawnKubeconfig,
+				SpawnNamespace:           spawnNamespace,
+				SpawnRegistry:            spawnRegistry,
+				SpawnSyncMode:            spawnSyncMode,
+				SpawnGitBaseURL:          spawnGitBaseURL,
+				SpawnGitSecret:           spawnGitSecret,
+				SpawnProjects:            spawnProjects,
+				SpawnDefaultCPU:          spawnDefaultCPU,
+				SpawnDefaultMemory:       spawnDefaultMemory,
+				SpawnMaxConcurrent:       spawnMaxConcurrent,
+				SpawnMaxConcurrentBuilds: spawnMaxConcurrentBuilds,
+				SpawnBuildCPURequest:     spawnBuildCPURequest,
+				SpawnBuildCPULimit:       spawnBuildCPULimit,
+				SpawnBuildMemoryRequest:  spawnBuildMemoryRequest,
+				SpawnBuildMemoryLimit:    spawnBuildMemoryLimit,
 			}
 
 			if embed {
@@ -297,6 +331,14 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().StringVar(&spawnGitBaseURL, "spawn-git-base-url", os.Getenv("SPAWN_GIT_BASE_URL"), "Git base URL for git-clone sync [$SPAWN_GIT_BASE_URL]")
 	cmd.Flags().StringVar(&spawnGitSecret, "spawn-git-secret", os.Getenv("SPAWN_GIT_SECRET"), "K8s secret with git token [$SPAWN_GIT_SECRET]")
 	cmd.Flags().StringVar(&spawnProjects, "spawn-projects", os.Getenv("SPAWN_PROJECTS"), "Comma-separated project names for spawn picker [$SPAWN_PROJECTS]")
+	cmd.Flags().Float64Var(&spawnDefaultCPU, "spawn-default-cpu", 0, "Default CPU limit for spawned agent pods [$SPAWN_DEFAULT_CPU]")
+	cmd.Flags().IntVar(&spawnDefaultMemory, "spawn-default-memory-mb", 0, "Default memory limit for spawned agent pods in MB [$SPAWN_DEFAULT_MEMORY_MB]")
+	cmd.Flags().IntVar(&spawnMaxConcurrent, "spawn-max-concurrent", 0, "Maximum active spawned agents [$SPAWN_MAX_CONCURRENT]")
+	cmd.Flags().IntVar(&spawnMaxConcurrentBuilds, "spawn-max-concurrent-builds", 0, "Maximum concurrent spawn image builds [$SPAWN_MAX_CONCURRENT_BUILDS]")
+	cmd.Flags().StringVar(&spawnBuildCPURequest, "spawn-build-cpu-request", os.Getenv("SPAWN_BUILD_CPU_REQUEST"), "Buildah CPU request for spawn image builds [$SPAWN_BUILD_CPU_REQUEST]")
+	cmd.Flags().StringVar(&spawnBuildCPULimit, "spawn-build-cpu-limit", os.Getenv("SPAWN_BUILD_CPU_LIMIT"), "Buildah CPU limit for spawn image builds [$SPAWN_BUILD_CPU_LIMIT]")
+	cmd.Flags().StringVar(&spawnBuildMemoryRequest, "spawn-build-memory-request", os.Getenv("SPAWN_BUILD_MEMORY_REQUEST"), "Buildah memory request for spawn image builds [$SPAWN_BUILD_MEMORY_REQUEST]")
+	cmd.Flags().StringVar(&spawnBuildMemoryLimit, "spawn-build-memory-limit", os.Getenv("SPAWN_BUILD_MEMORY_LIMIT"), "Buildah memory limit for spawn image builds [$SPAWN_BUILD_MEMORY_LIMIT]")
 
 	// Service management subcommands.
 	cmd.AddCommand(

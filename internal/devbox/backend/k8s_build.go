@@ -26,6 +26,12 @@ var buildDepFiles = []string{
 const buildMaxRetries = 2
 
 func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, error) {
+	release, err := k.acquireBuildSlot(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
+
 	registryTag := k.registryTag(opts.Tag)
 
 	// Compute NFS-relative paths so the Buildah pod can find files via the shared PVC.
@@ -204,12 +210,12 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 					},
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("1"),
-							corev1.ResourceMemory: resource.MustParse("1Gi"),
+							corev1.ResourceCPU:    k.buildCPURequest,
+							corev1.ResourceMemory: k.buildMemoryRequest,
 						},
 						Limits: corev1.ResourceList{
-							corev1.ResourceCPU:    resource.MustParse("3"),
-							corev1.ResourceMemory: resource.MustParse("3Gi"),
+							corev1.ResourceCPU:    k.buildCPULimit,
+							corev1.ResourceMemory: k.buildMemoryLimit,
 						},
 					},
 					VolumeMounts: volumeMounts,
@@ -248,6 +254,18 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 				},
 			},
 		},
+	}
+}
+
+func (k *K8sBackend) acquireBuildSlot(ctx context.Context) (func(), error) {
+	if k.buildSlots == nil {
+		return func() {}, nil
+	}
+	select {
+	case k.buildSlots <- struct{}{}:
+		return func() { <-k.buildSlots }, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("wait for build slot: %w", ctx.Err())
 	}
 }
 

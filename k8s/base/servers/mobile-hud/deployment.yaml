@@ -101,6 +101,16 @@ spec:
               value: gitlab-creds
             - name: SPAWN_PROJECTS
               value: "loom-core,flexdeck,flexinfer,homelab-homepage,storyboard-generator,jobsearch-app"
+            - name: SPAWN_DEFAULT_CPU
+              value: "0.5"
+            - name: SPAWN_DEFAULT_MEMORY_MB
+              value: "2048"
+            - name: SPAWN_MAX_CONCURRENT_BUILDS
+              value: "1"
+            - name: SPAWN_BUILD_CPU_REQUEST
+              value: 250m
+            - name: SPAWN_BUILD_CPU_LIMIT
+              value: 500m
             # Embedded weaver (LLM-orchestrated multi-tool queries)
             - name: WEAVER_ENABLED
               value: "true"
