@@ -19,6 +19,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -187,10 +188,12 @@ func run(cfg Config) error {
 	// so handoff + worktree-allocate calls have a stable source session
 	// id; defer cleanup so a clean shutdown ends the session row.
 	hubClient, sessionID := establishHubAndSession(rootCtx, cfg, logger)
+	operatorSession := &operatorSessionRef{}
+	operatorSession.Set(sessionID)
 	capabilities.MCPHubConfigured = strings.TrimSpace(os.Getenv("LOOM_MCP_HUB_URL")) != ""
 	capabilities.MCPHubSessionReady = hubClient != nil && sessionID != ""
 	if hubClient != nil {
-		defer endOperatorSession(hubClient, sessionID, logger)
+		defer func() { endOperatorSession(hubClient, operatorSession.SessionID(), logger) }()
 	}
 
 	// Worker dispatcher: real clients where configured, NoOpDispatcher
@@ -238,9 +241,11 @@ func run(cfg Config) error {
 	capabilities.GitLabConfigured = strings.TrimSpace(cfg.GitLabAPIURL) != "" && strings.TrimSpace(cfg.GitLabToken) != "" && strings.TrimSpace(cfg.GitLabProject) != ""
 	capabilities.GitLabReady = gitlabClient != nil
 	var handoffClient pipeline.HandoffClient
-	if hubClient != nil && sessionID != "" {
-		handoffClient = clients.NewHandoffClient(hubClient, sessionID)
-		logger.Info("escalator handoff enabled (mcp-agent-context)")
+	if hubClient != nil {
+		handoff := clients.NewHandoffClient(hubClient, sessionID)
+		handoff.SourceSessionIDFunc = operatorSession.SessionID
+		handoffClient = handoff
+		logger.Info("escalator handoff configured (mcp-agent-context)")
 	} else {
 		logger.Warn("escalator handoff disabled (no MCP hub or operator session)")
 	}
@@ -270,8 +275,9 @@ func run(cfg Config) error {
 	// Pipeline starter routes fan-out items through the integrator when
 	// the worktree allocator + branch merger are both available.
 	var integrator *pipeline.Integrator
-	if hubClient != nil && sessionID != "" && cfg.RepoRoot != "" {
+	if hubClient != nil && cfg.RepoRoot != "" {
 		alloc := clients.NewWorktreeAllocator(hubClient, "loom-mills-operator", sessionID, cfg.RepoRoot)
+		alloc.SourceSessionIDFunc = operatorSession.SessionID
 		merger := clients.NewGitBranchMerger(cfg.RepoRoot)
 		integrator = pipeline.NewIntegrator(st, pipelineRunner, alloc, merger)
 		integrator.Logger = logger
@@ -336,6 +342,12 @@ func run(cfg Config) error {
 	g.Go(func() error { return runListener(gctx, "metrics", metricsSrv, logger) })
 	g.Go(func() error { return scheduler.Run(gctx) })
 	g.Go(func() error { return crossRunSched.Run(gctx) })
+	if hubClient != nil {
+		g.Go(func() error {
+			runOperatorSessionMaintainer(gctx, hubClient, operatorSession, op, logger, 30*time.Second)
+			return nil
+		})
+	}
 	if auditWorker != nil {
 		g.Go(func() error {
 			auditWorker.Run(gctx)
@@ -353,6 +365,29 @@ func run(cfg Config) error {
 	}
 	logger.Info("loom-mills-operator stopped")
 	return nil
+}
+
+type operatorSessionRef struct {
+	mu        sync.RWMutex
+	sessionID string
+}
+
+func (r *operatorSessionRef) SessionID() string {
+	if r == nil {
+		return ""
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.sessionID
+}
+
+func (r *operatorSessionRef) Set(sessionID string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sessionID = sessionID
 }
 
 // newLogger returns a slog.Logger writing JSON to stderr — the format Loki
@@ -744,11 +779,15 @@ func (d *fallbackDispatcher) Dispatch(ctx context.Context, run *store.PipelineRu
 	return d.fallback.Dispatch(ctx, run, item, stage, prior)
 }
 
+type agentContextCaller interface {
+	CallTool(ctx context.Context, serverName, toolName string, args map[string]any) (string, error)
+}
+
 // establishHubAndSession constructs the MCP hub client (when
-// LOOM_MCP_HUB_URL is set) and registers a long-lived agent-context
-// session for the operator. The session id is the SourceSessionID
-// passed to HandoffClient + WorktreeAllocator so handoff packages and
-// worktree-allocate calls have a consistent source.
+// LOOM_MCP_HUB_URL is set) and tries to register a long-lived
+// agent-context session for the operator. The session id is the
+// SourceSessionID passed to HandoffClient + WorktreeAllocator so handoff
+// packages and worktree-allocate calls have a consistent source.
 //
 // Returns (nil, "") and a warn log when the hub is unconfigured or the
 // session-start call fails — the operator still boots, just without
@@ -766,29 +805,71 @@ func establishHubAndSession(ctx context.Context, cfg Config, logger *slog.Logger
 	}
 	logger.Info("MCP hub configured", "url", hubCfg.HubURL, "profile", hubCfg.Profile)
 
-	// Establish a persistent operator session so handoff + worktree
-	// calls have a stable source. Best-effort: a session-start failure
-	// is logged but doesn't block boot — the affected clients fall
-	// back to stub behavior.
+	sessionID, err := startOperatorSession(ctx, hub)
+	if err != nil {
+		logger.Error("agent_session_start failed; handoff + worktree clients will retry", "error", err)
+		return hub, ""
+	}
+	logger.Info("operator session established", "session_id", sessionID)
+	return hub, sessionID
+}
+
+func startOperatorSession(ctx context.Context, caller agentContextCaller) (string, error) {
+	if caller == nil {
+		return "", errors.New("agent_context caller not configured")
+	}
 	startCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
-	body, err := hub.CallTool(startCtx, clients.AgentContextServerName, "agent_session_start", map[string]any{
+	body, err := caller.CallTool(startCtx, clients.AgentContextServerName, "agent_session_start", map[string]any{
 		"namespace":   "loom-mills",
 		"agent_id":    "loom-mills-operator",
 		"agent_type":  "operator",
 		"description": "loom-mills-operator persistent session (boot " + time.Now().UTC().Format(time.RFC3339) + ")",
 	})
 	if err != nil {
-		logger.Error("agent_session_start failed; handoff + worktree clients disabled", "error", err)
-		return hub, ""
+		return "", err
 	}
 	sessionID := extractSessionID(body)
 	if sessionID == "" {
-		logger.Warn("agent_session_start returned empty session_id; handoff + worktree clients disabled", "body_tail", truncateForLog(body, 200))
-		return hub, ""
+		return "", fmt.Errorf("agent_session_start returned empty session_id; body_tail=%s", truncateForLog(body, 200))
 	}
-	logger.Info("operator session established", "session_id", sessionID)
-	return hub, sessionID
+	return sessionID, nil
+}
+
+func runOperatorSessionMaintainer(ctx context.Context, caller agentContextCaller, ref *operatorSessionRef, op *operator, logger *slog.Logger, retryEvery time.Duration) {
+	if caller == nil || ref == nil {
+		return
+	}
+	if retryEvery <= 0 {
+		retryEvery = 30 * time.Second
+	}
+	try := func() {
+		if ref.SessionID() != "" {
+			return
+		}
+		sessionID, err := startOperatorSession(ctx, caller)
+		if err != nil {
+			logger.Warn("agent_session_start retry failed", "error", err)
+			return
+		}
+		ref.Set(sessionID)
+		if op != nil {
+			op.setMCPHubSessionReady(true)
+		}
+		logger.Info("operator session established after retry", "session_id", sessionID)
+	}
+
+	try()
+	ticker := time.NewTicker(retryEvery)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			try()
+		}
+	}
 }
 
 // endOperatorSession is the deferred cleanup that ends the operator's

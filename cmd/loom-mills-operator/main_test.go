@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -232,6 +233,69 @@ func TestBuildCouncilRunner_FakeFallbackWhenFlexInferMissing(t *testing.T) {
 	if !usesFake {
 		t.Fatal("usesFake = false, want true without FlexInfer client")
 	}
+}
+
+func TestRunOperatorSessionMaintainerRetriesAndFlipsCapability(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+	w := newCapabilityWiring(Config{})
+	w.MCPHubConfigured = true
+	op.setCapabilities(w)
+
+	caller := &fakeAgentContextCaller{
+		errs:   []error{errors.New("backend unavailable"), nil},
+		bodies: []string{"", `{"session_id":"session-recovered"}`},
+	}
+	ref := &operatorSessionRef{}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan struct{})
+	go func() {
+		runOperatorSessionMaintainer(ctx, caller, ref, op, discardLogger(), time.Millisecond)
+		close(done)
+	}()
+	deadline := time.After(2 * time.Second)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	for ref.SessionID() != "session-recovered" {
+		select {
+		case <-deadline:
+			t.Fatal("session retry did not recover")
+		case <-tick.C:
+		}
+	}
+	cancel()
+	<-done
+
+	row := findCapabilityRow(op.capabilityReport(context.Background()).Capabilities, "mcp_hub_session")
+	if row.Status != "green" {
+		t.Fatalf("mcp_hub_session capability did not flip green: %+v", row)
+	}
+}
+
+type fakeAgentContextCaller struct {
+	errs   []error
+	bodies []string
+	calls  int
+}
+
+func (f *fakeAgentContextCaller) CallTool(_ context.Context, serverName, toolName string, _ map[string]any) (string, error) {
+	if serverName != clients.AgentContextServerName {
+		return "", errors.New("unexpected server")
+	}
+	if toolName != "agent_session_start" {
+		return "", errors.New("unexpected tool")
+	}
+	i := f.calls
+	f.calls++
+	if i < len(f.errs) && f.errs[i] != nil {
+		return "", f.errs[i]
+	}
+	if i < len(f.bodies) {
+		return f.bodies[i], nil
+	}
+	return `{"session_id":"session-default"}`, nil
 }
 
 func TestCapabilities_RepoRootRequiresWritableLoomDir(t *testing.T) {

@@ -27,6 +27,10 @@ type HandoffClient struct {
 	Hub             *MCPHubClient
 	ServerName      string
 	SourceSessionID string
+	// SourceSessionIDFunc, when set, supplies the current operator
+	// session id. Mills uses this so a hub/backend outage at boot can
+	// recover without rebuilding the escalator.
+	SourceSessionIDFunc func() string
 	// HandoffType is the agent-context "type" classification. The hub
 	// expects one of: "full", "selective", "summary_only". Default
 	// "summary_only" — escalations are short, structured records.
@@ -64,7 +68,8 @@ func (c *HandoffClient) CreateHandoff(ctx context.Context, req pipeline.HandoffR
 	if c == nil || c.Hub == nil {
 		return pipeline.HandoffResponse{}, errors.New("handoff: client not configured")
 	}
-	if c.SourceSessionID == "" {
+	sourceSessionID := c.sourceSessionID()
+	if sourceSessionID == "" {
 		return pipeline.HandoffResponse{}, errors.New("handoff: SourceSessionID required (start an operator session at boot)")
 	}
 	if req.To == "" {
@@ -75,7 +80,7 @@ func (c *HandoffClient) CreateHandoff(ctx context.Context, req pipeline.HandoffR
 		server = AgentContextServerName
 	}
 	args := map[string]any{
-		"session_id":      c.SourceSessionID,
+		"session_id":      sourceSessionID,
 		"target_agent_id": req.To,
 		"handoff_type":    handoffTypeOrDefault(c.HandoffType),
 		"instructions":    buildHandoffInstructions(req),
@@ -95,6 +100,16 @@ func (c *HandoffClient) CreateHandoff(ctx context.Context, req pipeline.HandoffR
 		return pipeline.HandoffResponse{}, fmt.Errorf("handoff: service reported failure: %q", body)
 	}
 	return pipeline.HandoffResponse{HandoffID: parsed.HandoffID}, nil
+}
+
+func (c *HandoffClient) sourceSessionID() string {
+	if c == nil {
+		return ""
+	}
+	if c.SourceSessionIDFunc != nil {
+		return c.SourceSessionIDFunc()
+	}
+	return c.SourceSessionID
 }
 
 // buildHandoffInstructions renders the handoff request into a markdown

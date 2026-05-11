@@ -26,6 +26,10 @@ type WorktreeAllocator struct {
 	// SourceSessionID is the operator's persistent session id (same one
 	// HandoffClient uses).
 	SourceSessionID string
+	// SourceSessionIDFunc, when set, supplies the current operator
+	// session id. This lets Mills recover worktree allocation after a
+	// transient agent-context outage at boot.
+	SourceSessionIDFunc func() string
 	// RepoPath is the absolute path to the loom-core checkout the
 	// operator manages. Forwarded as the repo_path arg so the tool
 	// runs `git worktree add` in the right repo regardless of the
@@ -73,7 +77,8 @@ func (a *WorktreeAllocator) Allocate(ctx context.Context, req pipeline.WorktreeR
 	if a.AgentID == "" {
 		return pipeline.WorktreeHandle{}, errors.New("worktree: AgentID required")
 	}
-	if a.SourceSessionID == "" {
+	sourceSessionID := a.sourceSessionID()
+	if sourceSessionID == "" {
 		return pipeline.WorktreeHandle{}, errors.New("worktree: SourceSessionID required (start an operator session at boot)")
 	}
 	if req.SliceName == "" {
@@ -88,7 +93,7 @@ func (a *WorktreeAllocator) Allocate(ctx context.Context, req pipeline.WorktreeR
 	}
 	args := map[string]any{
 		"agent_id":    a.AgentID,
-		"session_id":  a.SourceSessionID,
+		"session_id":  sourceSessionID,
 		"branch_name": branchName,
 		"purpose":     req.Purpose,
 	}
@@ -122,6 +127,16 @@ func (a *WorktreeAllocator) Allocate(ctx context.Context, req pipeline.WorktreeR
 		Path:   parsed.WorktreePath,
 		Branch: parsed.Branch,
 	}, nil
+}
+
+func (a *WorktreeAllocator) sourceSessionID() string {
+	if a == nil {
+		return ""
+	}
+	if a.SourceSessionIDFunc != nil {
+		return a.SourceSessionIDFunc()
+	}
+	return a.SourceSessionID
 }
 
 // Release implements pipeline.WorktreeAllocator.
