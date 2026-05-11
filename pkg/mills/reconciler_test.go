@@ -472,6 +472,93 @@ func TestReconciler_ResumeInFlightRunsRestartsStartedRun(t *testing.T) {
 	}
 }
 
+func TestReconciler_SyncTerminalBacklogsClosesStaleRunningItems(t *testing.T) {
+	env := newRecEnv(t, nil)
+	ctx := context.Background()
+
+	cases := []struct {
+		id        string
+		runState  store.PipelineState
+		wantState store.BacklogState
+	}{
+		{id: "BACK-DONE", runState: store.PipelineDone, wantState: store.BacklogMerged},
+		{id: "BACK-ESC", runState: store.PipelineEscalated, wantState: store.BacklogEscalated},
+		{id: "BACK-PAUSE", runState: store.PipelinePaused, wantState: store.BacklogPaused},
+	}
+	for i, tc := range cases {
+		item := &store.BacklogItem{
+			ID: tc.id, Title: tc.id, State: store.BacklogRunning,
+			Priority: store.P2, CreatedBy: "test",
+		}
+		if err := env.store.Backlog.Put(ctx, item); err != nil {
+			t.Fatalf("seed backlog %s: %v", tc.id, err)
+		}
+		if err := env.store.Pipeline.PutRun(ctx, &store.PipelineRun{
+			ID: "PIPE-" + tc.id, BacklogID: tc.id, Template: "mills-default",
+			State: tc.runState, Attempts: i + 1, StartedAt: env.now.Add(time.Duration(i) * time.Minute),
+		}); err != nil {
+			t.Fatalf("seed run %s: %v", tc.id, err)
+		}
+	}
+
+	res, err := env.rec.SyncTerminalBacklogs(ctx)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if res.Inspected != len(cases) || res.Updated != len(cases) || res.Skipped != 0 || res.Errored != 0 {
+		t.Fatalf("sync result = %+v", res)
+	}
+	for _, tc := range cases {
+		got, err := env.store.Backlog.Get(ctx, tc.id)
+		if err != nil {
+			t.Fatalf("read backlog %s: %v", tc.id, err)
+		}
+		if got.State != tc.wantState {
+			t.Fatalf("%s state: got %q want %q", tc.id, got.State, tc.wantState)
+		}
+	}
+}
+
+func TestReconciler_SyncTerminalBacklogsSkipsActiveRuns(t *testing.T) {
+	env := newRecEnv(t, nil)
+	ctx := context.Background()
+
+	item := &store.BacklogItem{
+		ID: "BACK-ACTIVE", Title: "active", State: store.BacklogRunning,
+		Priority: store.P2, CreatedBy: "test",
+	}
+	if err := env.store.Backlog.Put(ctx, item); err != nil {
+		t.Fatalf("seed backlog: %v", err)
+	}
+	if err := env.store.Pipeline.PutRun(ctx, &store.PipelineRun{
+		ID: "PIPE-DONE", BacklogID: item.ID, Template: "mills-default",
+		State: store.PipelineDone, Attempts: 1, StartedAt: env.now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("seed done run: %v", err)
+	}
+	if err := env.store.Pipeline.PutRun(ctx, &store.PipelineRun{
+		ID: "PIPE-ACTIVE", BacklogID: item.ID, Template: "mills-default",
+		State: store.PipelinePlanning, Attempts: 2, StartedAt: env.now,
+	}); err != nil {
+		t.Fatalf("seed active run: %v", err)
+	}
+
+	res, err := env.rec.SyncTerminalBacklogs(ctx)
+	if err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+	if res.Inspected != 1 || res.Updated != 0 || res.Skipped != 1 || res.Errored != 0 {
+		t.Fatalf("sync result = %+v", res)
+	}
+	got, err := env.store.Backlog.Get(ctx, item.ID)
+	if err != nil {
+		t.Fatalf("read backlog: %v", err)
+	}
+	if got.State != store.BacklogRunning {
+		t.Fatalf("backlog state: got %q want %q", got.State, store.BacklogRunning)
+	}
+}
+
 // TestReconciler_SubrunPickupSurvivesStarterError pins that a single
 // failing subrun start doesn't block the rest of the tick.
 func TestReconciler_SubrunPickupSurvivesStarterError(t *testing.T) {
