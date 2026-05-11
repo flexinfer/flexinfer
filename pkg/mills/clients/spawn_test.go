@@ -195,6 +195,55 @@ func TestRun_PostsCorrectRequestAndAuth(t *testing.T) {
 	}
 }
 
+func TestRun_AcceptsMobileEnvelopeResponses(t *testing.T) {
+	ft := &hudFakeTransport{
+		post: func(_ *http.Request) (int, any) {
+			return 202, map[string]any{
+				"ok":   true,
+				"data": hudSpawnAcceptResponse{SpawnID: "spawn-envelope", Status: "creating"},
+			}
+		},
+		get: func(_ *http.Request) (int, any) {
+			return 200, map[string]any{
+				"ok": true,
+				"data": hudSpawnState{
+					SpawnID: "spawn-envelope",
+					Status:  "completed",
+					Telemetry: &hudSpawnTelemetry{
+						TotalCostUSD: 0.25,
+						TurnCount:    2,
+					},
+				},
+			}
+		},
+	}
+	c := newHUDStub(t, ft)
+	resp, err := c.Run(context.Background(), sampleSpawnReq())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if resp.SpawnID != "spawn-envelope" {
+		t.Errorf("SpawnID = %q", resp.SpawnID)
+	}
+	if resp.CostUSD != 0.25 {
+		t.Errorf("CostUSD = %v", resp.CostUSD)
+	}
+	if v, ok := resp.Artifacts["turn_count"].(int); !ok || v != 2 {
+		t.Errorf("turn_count artifact = %v", resp.Artifacts["turn_count"])
+	}
+}
+
+func TestDecodeHUDResponse_ReturnsEnvelopeError(t *testing.T) {
+	var out hudSpawnAcceptResponse
+	err := decodeHUDResponse([]byte(`{"ok":false,"error":{"code":"spawn_error","message":"boom"}}`), &out)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "spawn_error: boom") {
+		t.Fatalf("error = %q", err.Error())
+	}
+}
+
 // ----- Polling -----
 
 func TestRun_PollsUntilTerminal(t *testing.T) {

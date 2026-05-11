@@ -215,8 +215,12 @@ func (c *HUDSpawnClient) startSpawn(ctx context.Context, body hudSpawnRequestBod
 		buf, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return "", fmt.Errorf("hud spawn: POST status %d: %s", resp.StatusCode, strings.TrimSpace(string(buf)))
 	}
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", fmt.Errorf("hud spawn: read accept: %w", err)
+	}
 	var accept hudSpawnAcceptResponse
-	if err := json.NewDecoder(resp.Body).Decode(&accept); err != nil {
+	if err := decodeHUDResponse(buf, &accept); err != nil {
 		return "", fmt.Errorf("hud spawn: decode accept: %w", err)
 	}
 	if accept.SpawnID == "" {
@@ -242,11 +246,43 @@ func (c *HUDSpawnClient) getSpawnState(ctx context.Context, spawnID string) (*hu
 		buf, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return nil, fmt.Errorf("hud spawn: GET status %d: %s", resp.StatusCode, strings.TrimSpace(string(buf)))
 	}
+	buf, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, fmt.Errorf("hud spawn: read state: %w", err)
+	}
 	var state hudSpawnState
-	if err := json.NewDecoder(resp.Body).Decode(&state); err != nil {
+	if err := decodeHUDResponse(buf, &state); err != nil {
 		return nil, fmt.Errorf("hud spawn: decode state: %w", err)
 	}
 	return &state, nil
+}
+
+func decodeHUDResponse(data []byte, out any) error {
+	var envelope struct {
+		OK    *bool           `json:"ok"`
+		Data  json.RawMessage `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(data, &envelope); err == nil && envelope.OK != nil {
+		if !*envelope.OK {
+			msg := envelope.Error.Message
+			if msg == "" {
+				msg = "mobile API returned ok=false"
+			}
+			if envelope.Error.Code != "" {
+				return fmt.Errorf("%s: %s", envelope.Error.Code, msg)
+			}
+			return errors.New(msg)
+		}
+		if len(envelope.Data) == 0 || string(envelope.Data) == "null" {
+			return errors.New("mobile envelope missing data")
+		}
+		return json.Unmarshal(envelope.Data, out)
+	}
+	return json.Unmarshal(data, out)
 }
 
 // agentTypeOrDefault returns a valid spawn AgentType. The pipeline
