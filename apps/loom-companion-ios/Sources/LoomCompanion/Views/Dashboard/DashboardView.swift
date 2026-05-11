@@ -233,6 +233,10 @@ struct DashboardView: View {
     }
 
     private func navigationAction(for lane: DashboardAttentionLane) -> DashboardNavAction {
+        if lane.isTaskLane {
+            return .work
+        }
+
         switch lane.route {
         case "people":
             return .people
@@ -247,6 +251,16 @@ struct DashboardView: View {
         if let url = URL(string: lane.deepLink),
            let link = DeepLink.from(url) {
             route(link)
+            return
+        }
+
+        if lane.isTaskLane {
+            navigationCoordinator?.filterTasks(
+                status: lane.taskStatusHint,
+                agentId: lane.filter?.agentId,
+                sessionId: lane.filter?.sessionId
+            )
+            onNavigate?(.work)
             return
         }
 

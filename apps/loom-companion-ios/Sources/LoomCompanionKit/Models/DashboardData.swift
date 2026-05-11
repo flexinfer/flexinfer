@@ -151,6 +151,46 @@ public struct DashboardAttentionLane: Decodable, Sendable, Hashable {
 
     public var stableID: String { "\(type):\(id)" }
 
+    public var isTaskLane: Bool {
+        if targetKind == "task_filter" { return true }
+        if deepLink.hasPrefix("loom://tasks") { return true }
+
+        switch type {
+        case "blocked_task", "blocker", "orphan_task", "task", "task_filter":
+            return true
+        default:
+            break
+        }
+
+        return laneSearchText.contains("blocked task")
+            || laneSearchText.contains("blocked tasks")
+            || laneSearchText.contains("orphan task")
+            || laneSearchText.contains("orphan tasks")
+            || laneSearchText.contains("task filter")
+    }
+
+    public var taskStatusHint: String? {
+        if filter?.status?.lowercased() == "blocked" { return "blocked" }
+        if laneSearchText.contains("blocked task") || laneSearchText.contains("blocked tasks") {
+            return "blocked"
+        }
+        return filter?.status
+    }
+
+    private var laneSearchText: String {
+        [
+            type,
+            label,
+            summary,
+            scope,
+            targetKind,
+            deepLink,
+            recommendedAction
+        ]
+        .joined(separator: " ")
+        .lowercased()
+    }
+
     enum CodingKeys: String, CodingKey {
         case type, id, label, route, scope, summary, severity
         case targetKind = "target_kind"
