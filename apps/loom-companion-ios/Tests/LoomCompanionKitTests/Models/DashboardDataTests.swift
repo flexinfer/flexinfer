@@ -157,6 +157,24 @@ struct DashboardDataTests {
         #expect(lane.filter?.sessionId == "sess_abc123")
         #expect(lane.recommendedAction == "Review blocked tasks")
         #expect(lane.freshness?.source == "fleet_snapshot")
+        #expect(lane.isTaskLane)
+        #expect(lane.taskStatusHint == "blocked")
+    }
+
+    @Test("Recognizes blocked task lane when backend route still points at people")
+    func recognizesLabelOnlyBlockedTaskLane() throws {
+        let lane = DashboardAttentionLane(
+            type: "namespace",
+            id: "services/project-management/feat/m17.5-blocked",
+            label: "Blocked tasks",
+            route: "people",
+            scope: "services/project-management/feat/m17.5-blocked",
+            summary: "4 tasks",
+            severity: "critical"
+        )
+
+        #expect(lane.isTaskLane)
+        #expect(lane.taskStatusHint == "blocked")
     }
 
     @Test("Health status healthy when no degraded or down")

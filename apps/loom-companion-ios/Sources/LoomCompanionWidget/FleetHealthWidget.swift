@@ -56,40 +56,42 @@ struct FleetHealthWidgetView: View {
     }
 
     private var smallView: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Image(systemName: entry.data.daemonRunning ? "checkmark.circle.fill" : "xmark.circle.fill")
-                    .foregroundStyle(entry.data.daemonRunning ? .green : .red)
-                    .font(.title3)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: statusIcon)
+                    .foregroundStyle(statusColor)
+                    .font(.title3.weight(.semibold))
+                Text(statusTitle)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
                 Spacer()
-                Text("Loom")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
             }
 
             Spacer()
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: 3) {
                 Text("\(entry.data.healthyServers)/\(entry.data.serverCount)")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                Text("servers healthy")
+                    .font(.system(size: 32, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .minimumScaleFactor(0.8)
+                Text(statusSubtitle)
                     .font(.caption2)
                     .foregroundStyle(.secondary)
+                    .lineLimit(1)
             }
 
-            // Proportional health bar
             healthBar
-                .frame(height: 4)
+                .frame(height: 5)
 
-            // Compact agent summary
-            HStack(spacing: 8) {
-                Label("\(entry.data.activeAgents)", systemImage: "person.fill")
-                    .font(.caption2)
+            HStack(spacing: 6) {
+                Label("\(entry.data.activeAgents) active", systemImage: "person.fill")
                     .foregroundStyle(.green)
-                Label("\(entry.data.sessionCount)", systemImage: "rectangle.stack")
-                    .font(.caption2)
+                Label("\(entry.data.sessionCount) sessions", systemImage: "rectangle.stack")
                     .foregroundStyle(.blue)
             }
+            .font(.caption2.weight(.medium))
+            .lineLimit(1)
         }
     }
 
@@ -117,62 +119,110 @@ struct FleetHealthWidgetView: View {
     }
 
     private var mediumView: some View {
-        HStack(spacing: 16) {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Image(systemName: entry.data.daemonRunning ? "checkmark.circle.fill" : "xmark.circle.fill")
-                        .foregroundStyle(entry.data.daemonRunning ? .green : .red)
+        HStack(spacing: 14) {
+            VStack(alignment: .leading, spacing: 9) {
+                HStack(spacing: 8) {
+                    Image(systemName: statusIcon)
+                        .font(.title3.weight(.semibold))
+                        .foregroundStyle(statusColor)
                     Text("Fleet")
                         .font(.headline)
+                        .lineLimit(1)
+                    Spacer()
                 }
 
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 3) {
                     Text("\(entry.data.healthyServers)/\(entry.data.serverCount)")
-                        .font(.system(size: 28, weight: .bold, design: .rounded))
+                        .font(.system(size: 34, weight: .bold, design: .rounded))
+                        .monospacedDigit()
+                        .minimumScaleFactor(0.75)
                         .contentTransition(.numericText())
-                    Text("servers healthy")
+                    Text(statusSubtitle)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                        .lineLimit(1)
                 }
 
                 healthBar
-                    .frame(height: 4)
+                    .frame(height: 6)
 
                 Spacer()
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
 
             Divider()
                 .foregroundStyle(.secondary.opacity(0.3))
 
-            VStack(alignment: .leading, spacing: 6) {
-                MetricRow(icon: "rectangle.stack", label: "Sessions", value: entry.data.sessionCount, color: .blue)
-                MetricRow(icon: "person.fill", label: "Active", value: entry.data.activeAgents, color: .green)
-                MetricRow(icon: "person", label: "Idle", value: entry.data.idleAgents, color: .gray)
-                MetricRow(icon: "person.slash", label: "Offline", value: entry.data.offlineAgents, color: .red)
+            VStack(spacing: 8) {
+                HStack(spacing: 8) {
+                    MetricTile(icon: "rectangle.stack.fill", label: "Sessions", value: entry.data.sessionCount, color: .blue)
+                    MetricTile(icon: "person.fill", label: "Active", value: entry.data.activeAgents, color: .green)
+                }
+                HStack(spacing: 8) {
+                    MetricTile(icon: "person", label: "Idle", value: entry.data.idleAgents, color: .gray)
+                    MetricTile(icon: "person.slash", label: "Offline", value: entry.data.offlineAgents, color: .red)
+                }
+                Spacer(minLength: 0)
             }
+            .frame(maxWidth: .infinity, alignment: .top)
         }
+    }
+
+    private var statusIcon: String {
+        if !entry.data.daemonRunning { return "xmark.circle.fill" }
+        if entry.data.downServers > 0 { return "exclamationmark.triangle.fill" }
+        if entry.data.degradedServers > 0 { return "exclamationmark.circle.fill" }
+        return "checkmark.circle.fill"
+    }
+
+    private var statusTitle: String {
+        if !entry.data.daemonRunning { return "Offline" }
+        if entry.data.downServers > 0 { return "Down" }
+        if entry.data.degradedServers > 0 { return "Degraded" }
+        return "Healthy"
+    }
+
+    private var statusSubtitle: String {
+        if !entry.data.daemonRunning { return "daemon offline" }
+        if entry.data.downServers > 0 {
+            var parts = ["\(entry.data.downServers) down"]
+            if entry.data.degradedServers > 0 {
+                parts.append("\(entry.data.degradedServers) degraded")
+            }
+            return parts.joined(separator: " · ")
+        }
+        if entry.data.degradedServers > 0 {
+            return "\(entry.data.degradedServers) degraded"
+        }
+        return "servers healthy"
+    }
+
+    private var statusColor: Color {
+        if !entry.data.daemonRunning || entry.data.downServers > 0 { return .red }
+        if entry.data.degradedServers > 0 { return .orange }
+        return .green
     }
 }
 
-private struct MetricRow: View {
+private struct MetricTile: View {
     let icon: String
     let label: String
     let value: Int
     let color: Color
 
     var body: some View {
-        HStack(spacing: 6) {
+        VStack(alignment: .leading, spacing: 3) {
             Image(systemName: icon)
-                .font(.caption)
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(color)
-                .frame(width: 16)
             Text(label)
-                .font(.caption)
+                .font(.system(size: 10, weight: .medium))
                 .foregroundStyle(.secondary)
-            Spacer()
             Text("\(value)")
-                .font(.caption)
-                .fontWeight(.semibold)
+                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                .monospacedDigit()
+                .foregroundStyle(.primary)
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
