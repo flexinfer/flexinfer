@@ -2025,6 +2025,26 @@ def patch_gptq_lm_head_cpu_quantize():
                 counts[cpu_device] = cpu_count
         return moved
 
+    def _move_direct_lm_head_tensors_to_cpu(module, cpu_device):
+        if module is None or not hasattr(module, "_parameters"):
+            return 0
+
+        moved = 0
+        for param_name in ("weight", "bias"):
+            param = module._parameters.get(param_name)
+            if param is None or not torch.is_tensor(param.data):
+                continue
+            if param.data.device.type == "cpu":
+                continue
+            param.data = param.data.to(device=cpu_device)
+            if torch.is_tensor(param.grad) and param.grad.device.type != "cpu":
+                param.grad = param.grad.to(device=cpu_device)
+            moved += 1
+
+        if moved:
+            setattr(module, "target_device", cpu_device)
+        return moved
+
     def _force_lm_head_task_to_cpu(task):
         if getattr(task, "_flexinfer_lm_head_cpu_quantize", False):
             return
@@ -2040,14 +2060,21 @@ def patch_gptq_lm_head_cpu_quantize():
 
         moved_partials = _move_hessian_partials_to_cpu(task)
 
+        moved_tensors = 0
+        seen_modules = set()
         for candidate in (module, named_wrapped):
             if candidate is None:
                 continue
+            candidate_id = id(candidate)
+            if candidate_id in seen_modules:
+                continue
+            seen_modules.add(candidate_id)
             try:
-                candidate.to(cpu_device)
-                setattr(candidate, "target_device", cpu_device)
+                moved_tensors += _move_direct_lm_head_tensors_to_cpu(
+                    candidate, cpu_device
+                )
             except Exception as exc:
-                print(f"WARN: failed moving lm_head GPTQ module to CPU: {exc}")
+                print(f"WARN: failed moving lm_head GPTQ tensors to CPU: {exc}")
 
         if named_module is not None:
             setattr(named_module, "target_device", cpu_device)
@@ -2058,7 +2085,8 @@ def patch_gptq_lm_head_cpu_quantize():
         print(
             "Moved lm_head GPTQ solve to CPU "
             f"(hessian_partials_moved={moved_partials}; "
-            f"{before} -> {_describe_gpu_memory()})"
+            f"direct_tensors_moved={moved_tensors}; "
+            f"{before} -> {_describe_gpu_memory()}; {_memory_stats()})"
         )
 
     def _patched_quantize(self, *args, **kwargs):
