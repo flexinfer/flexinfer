@@ -124,9 +124,9 @@
         return;
       }
 
-      // a-d → sub-view switching within current view
+      // a-z → sub-view switching within current view
       const subIdx = e.key.charCodeAt(0) - 'a'.charCodeAt(0);
-      if (subIdx >= 0 && subIdx <= 3) {
+      if (subIdx >= 0 && subIdx < 26) {
         const vd = router.currentViewDef;
         if (vd && subIdx < vd.subViews.length) {
           router.navigateSub(vd.subViews[subIdx].id);
@@ -318,6 +318,14 @@
                   {:catch}
                     <EmptyState icon="!" heading="Failed to load panel" compact />
                   {/await}
+                {:else if router.subView === 'overview'}
+                  {#await import('./lib/components/Mills/OverviewPanel.svelte')}
+                    <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
+                  {:then { default: MillsOverviewPanel }}
+                    <MillsOverviewPanel />
+                  {:catch}
+                    <EmptyState icon="!" heading="Failed to load panel" compact />
+                  {/await}
                 {:else if router.subView === 'pipelines'}
                   {#await import('./lib/components/Mills/PipelinesPanel.svelte')}
                     <div class="panel-loading"><div class="loading-bar"><div class="loading-bar-inner"></div></div></div>
@@ -440,7 +448,7 @@
           </div>
           <div class="help-section">
             <div class="help-section-title">Sub-views</div>
-            <div class="help-row"><kbd>a</kbd>-<kbd>d</kbd> <span>Switch within view</span></div>
+            <div class="help-row"><kbd>a</kbd>-<kbd>z</kbd> <span>Switch within view</span></div>
             <div class="help-section-title" style="margin-top: var(--space-3);">Actions</div>
             <div class="help-row"><kbd>/</kbd> <span>Focus search</span></div>
             <div class="help-row"><kbd>r</kbd> <span>Refresh data</span></div>

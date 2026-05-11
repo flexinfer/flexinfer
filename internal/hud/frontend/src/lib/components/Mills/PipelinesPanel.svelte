@@ -75,7 +75,10 @@
     if (disabled) return 'Set LOOM_MILLS_OPERATOR_URL on the HUD to connect.';
     if (error) return error;
     if (autonomyBlocked) return blockers.slice(0, 2).join(' · ');
-    return 'Once the council queues backlog items, runs will land here.';
+    if (status?.autonomy_ready) {
+      return `Operator ready · queue ${status.queue_depth ?? 0} · active ${status.active_pipeline_runs ?? 0}`;
+    }
+    return 'Waiting for operator readiness.';
   }
 </script>
 
@@ -90,18 +93,20 @@
   emptyHint={emptyHint()}
 >
   {#snippet header()}
-    {#if autonomyBlocked}
-      <div class="readiness-banner" role="status">
-        <span class="readiness-kicker">Fail-closed</span>
-        <span class="readiness-main">Autonomy paused</span>
+    {#if status}
+      <div class="readiness-banner" class:ready={status.autonomy_ready} role="status">
+        <span class="readiness-kicker">{status.autonomy_ready ? 'Ready' : 'Fail-closed'}</span>
+        <span class="readiness-main">{status.autonomy_ready ? 'Autonomy gate passing' : 'Autonomy paused'}</span>
         <span class="readiness-meta">
-          queue {status?.queue_depth ?? 0} · active runs {status?.active_pipeline_runs ?? 0}
+          queue {status.queue_depth ?? 0} · active runs {status.active_pipeline_runs ?? 0}
         </span>
-        <ul>
-          {#each blockers.slice(0, 3) as blocker}
-            <li>{blocker}</li>
-          {/each}
-        </ul>
+        {#if autonomyBlocked}
+          <ul>
+            {#each blockers.slice(0, 3) as blocker}
+              <li>{blocker}</li>
+            {/each}
+          </ul>
+        {/if}
       </div>
     {/if}
     {#if Object.keys(counts).length > 0}
@@ -168,6 +173,10 @@
     font-size: 0.68rem;
     font-weight: 700;
     text-transform: uppercase;
+  }
+  .readiness-banner.ready .readiness-kicker {
+    border-color: color-mix(in srgb, var(--success) 42%, var(--border));
+    color: var(--success);
   }
   .readiness-main {
     color: var(--fg-primary, #dfe);
