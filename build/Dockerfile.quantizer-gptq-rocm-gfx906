@@ -67,6 +67,28 @@ RUN mv /bin/bash /bin/bash.real && \
       'if [ ! -f /workspace/abliterate.py ]; then' \
       '  printf '\''FLEXINFER_SCRIPT_VERSION = "v1"\n'\'' > /workspace/abliterate.py' \
       'fi' \
+      '(' \
+      '  i=0' \
+      '  while [ "$i" -lt 1200 ]; do' \
+      '    if [ -f /tmp/pcre.py ] && ! grep -q "class Flag" /tmp/pcre.py 2>/dev/null; then' \
+      '      cat > /tmp/pcre.py <<'\''PY'\''' \
+      'import re as _re' \
+      'from re import *' \
+      'class Flag:' \
+      '    MULTILINE = _re.MULTILINE' \
+      '    IGNORECASE = _re.IGNORECASE' \
+      '    DOTALL = _re.DOTALL' \
+      '    VERBOSE = _re.VERBOSE' \
+      '    ASCII = _re.ASCII' \
+      '    LOCALE = _re.LOCALE' \
+      '    UNICODE = _re.UNICODE' \
+      'compile = _re.compile' \
+      'PY' \
+      '    fi' \
+      '    i=$((i + 1))' \
+      '    sleep 0.2 2>/dev/null || sleep 1' \
+      '  done' \
+      ') &' \
       'exec /bin/bash.real "$@"' \
       > /bin/bash && \
     chmod +x /bin/bash
