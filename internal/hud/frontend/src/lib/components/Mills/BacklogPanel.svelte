@@ -13,6 +13,8 @@
   let disabled = $derived(millsStore.disabled);
   let error = $derived(millsStore.error);
   let previews = $derived(millsStore.costPreviews);
+  let autonomyBlocked = $derived(millsStore.autonomyBlocked);
+  let blockers = $derived(millsStore.autonomyBlockers);
 
   // Track the last set of backlog ids we've fetched a preview for so we
   // don't refetch on every poll tick. Cost previews are stable for a
@@ -43,6 +45,20 @@
   function confidenceLabel(c: CostEstimate['confidence']): string {
     return c === 'medium' ? 'med' : c;
   }
+
+  function emptyMessage(): string {
+    if (disabled) return 'Mills operator not configured';
+    if (error) return 'Failed to load backlog';
+    if (autonomyBlocked) return 'Mills cannot produce backlog yet';
+    return 'No backlog items';
+  }
+
+  function emptyHint(): string {
+    if (disabled) return 'Set LOOM_MILLS_OPERATOR_URL on the HUD to connect.';
+    if (error) return error;
+    if (autonomyBlocked) return blockers.slice(0, 2).join(' · ');
+    return 'The council has not produced any items yet.';
+  }
 </script>
 
 <PanelShell
@@ -52,9 +68,23 @@
   loading={loading}
   empty={items.length === 0}
   emptyIcon={disabled ? '◯' : '□'}
-  emptyMessage={disabled ? 'Mills operator not configured' : (error ? 'Failed to load backlog' : 'No backlog items')}
-  emptyHint={disabled ? 'Set LOOM_MILLS_OPERATOR_URL on the HUD to connect.' : (error ?? 'The council has not produced any items yet.')}
+  emptyMessage={emptyMessage()}
+  emptyHint={emptyHint()}
 >
+  {#snippet header()}
+    {#if autonomyBlocked}
+      <div class="readiness-banner" role="status">
+        <span class="readiness-kicker">Blocked</span>
+        <span class="readiness-main">Council intake unavailable</span>
+        <ul>
+          {#each blockers.slice(0, 3) as blocker}
+            <li>{blocker}</li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+  {/snippet}
+
   <table class="mills-table">
     <thead>
       <tr>
@@ -103,6 +133,31 @@
 </PanelShell>
 
 <style>
+  .readiness-banner {
+    display: grid;
+    gap: 0.3rem 0.75rem;
+    color: var(--fg-secondary, #9ab);
+  }
+  .readiness-kicker {
+    width: max-content;
+    padding: 0.08rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid rgba(240, 130, 80, 0.35);
+    color: rgb(240, 150, 105);
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .readiness-main {
+    color: var(--fg-primary, #dfe);
+    font-weight: 700;
+  }
+  .readiness-banner ul {
+    margin: 0;
+    padding-left: 1rem;
+    font-size: 0.78rem;
+  }
+  .readiness-banner li + li { margin-top: 0.15rem; }
   .mills-table { width: 100%; border-collapse: collapse; font-size: 0.875rem; }
   .mills-table th, .mills-table td {
     text-align: left; padding: 0.4rem 0.6rem; border-bottom: 1px solid var(--border-subtle, #233);

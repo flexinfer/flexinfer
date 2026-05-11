@@ -81,6 +81,31 @@ export interface PolicyView {
   raw?: unknown;
 }
 
+export interface MillsCapabilityRow {
+  id: string;
+  status?: 'green' | 'yellow' | 'red' | string;
+  mode?: string;
+  required_for_autonomy?: boolean;
+  last_checked_at?: string;
+  message?: string;
+  source?: string;
+  config_key?: string;
+}
+
+export interface MillsStatus {
+  ok?: boolean;
+  service?: string;
+  time?: string;
+  policy_enabled?: boolean;
+  policy_version?: number;
+  autonomy_ready?: boolean;
+  autonomy_blockers?: string[];
+  capabilities?: MillsCapabilityRow[];
+  queue_depth?: number;
+  active_pipeline_runs?: number;
+  last_council_at?: string | null;
+}
+
 // PolicyProposal mirrors the operator's proposals row. Field casing is
 // PascalCase because the proposals handler relies on Go's default JSON
 // marshalling (no explicit json: tags). Phase 7 slice 7.1/7.2 own the
@@ -157,6 +182,7 @@ class MillsStore {
   councilRuns = $state<CouncilRun[]>([]);
   evalScores = $state<EvalScore[]>([]);
   policy = $state<PolicyView | null>(null);
+  status = $state<MillsStatus | null>(null);
 
   // KPI snapshot for the rolling 1d window plus a small in-memory history
   // for sparkline trends. The history is only de-duped on snapshot_at so
@@ -204,11 +230,24 @@ class MillsStore {
     return out;
   }
 
+  get autonomyReady(): boolean | null {
+    return this.status?.autonomy_ready ?? null;
+  }
+
+  get autonomyBlocked(): boolean {
+    return this.status?.autonomy_ready === false && (this.status?.autonomy_blockers?.length ?? 0) > 0;
+  }
+
+  get autonomyBlockers(): string[] {
+    return this.status?.autonomy_blockers ?? [];
+  }
+
   async fetchAll(): Promise<void> {
     this.loading = true;
     this.error = null;
     try {
-      const [policy, backlog, pipelines, council, scores, kpis] = await Promise.all([
+      const [status, policy, backlog, pipelines, council, scores, kpis] = await Promise.all([
+        this.getJSON<MillsStatus>('/api/mills/status'),
         this.getJSON<PolicyView>('/api/mills/policy'),
         this.getJSON<BacklogItem[]>('/api/mills/backlog'),
         this.getJSON<PipelineRun[]>('/api/mills/pipeline/runs'),
@@ -218,6 +257,7 @@ class MillsStore {
         // Tolerate that by passing { tolerate404: true }; null is fine.
         this.getJSON<RawKPISnapshot>('/api/mills/kpis?window=1d', { tolerate404: true }),
       ]);
+      this.status = status;
       this.policy = policy;
       this.backlog = backlog ?? [];
       this.pipelineRuns = pipelines ?? [];
@@ -236,6 +276,7 @@ class MillsStore {
       // so the empty-state UX is calm, not red.
       if (msg.includes('503') || msg.toLowerCase().includes('not configured')) {
         this.disabled = true;
+        this.status = null;
         this.error = null;
       } else {
         this.disabled = false;

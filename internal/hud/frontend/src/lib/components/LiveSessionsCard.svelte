@@ -56,8 +56,19 @@
   }
 
   function formatToolName(call: ToolCall): string {
+    if (call.source === 'context') return `context.${call.tool_name}`;
+    if (call.source === 'event') return call.tool_name.replace(/^agent\./, '');
     if (call.server_name) return `${call.server_name}.${call.tool_name}`;
     return call.tool_name;
+  }
+
+  function activityLabel(session: LiveSession): string {
+    const calls = session.recent_calls.filter((call) => call.source === 'tool' || !call.source).length;
+    if (calls === session.recent_calls.length) {
+      return `${calls} call${calls === 1 ? '' : 's'}`;
+    }
+    const n = session.recent_calls.length;
+    return `${n} event${n === 1 ? '' : 's'}`;
   }
 
   function formatDuration(ms: number | undefined): string {
@@ -124,12 +135,12 @@
               <span class="ended-pill">ended</span>
             {/if}
             <span class="call-count">
-              {session.recent_calls.length} call{session.recent_calls.length === 1 ? '' : 's'}
+              {activityLabel(session)}
             </span>
           </button>
 
           {#if collapsed.length === 0}
-            <p class="row-empty">No tool calls yet for this session.</p>
+            <p class="row-empty">No captured activity for this session yet.</p>
           {:else}
             <ul class="call-list" class:expanded>
               {#each collapsed as call (call.call_id)}

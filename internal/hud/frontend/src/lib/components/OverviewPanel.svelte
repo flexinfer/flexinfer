@@ -696,9 +696,11 @@
   .overview {
     display: flex;
     flex-direction: column;
+    flex: 1;
     width: 100%;
+    min-height: 0;
     min-width: 0;
-    padding: var(--space-4) var(--space-5);
+    padding: 0 var(--space-5) var(--space-4);
     gap: var(--space-5);
     overflow-y: auto;
   }
@@ -719,7 +721,7 @@
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     position: relative;
-    overflow: hidden;
+    overflow: visible;
   }
 
   /* Subtle grid pattern */
