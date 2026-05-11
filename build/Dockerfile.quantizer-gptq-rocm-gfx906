@@ -35,6 +35,7 @@ RUN python3 -m pip install pypcre && \
 RUN python3 -m pip install \
     datasets \
     device-smi \
+    kernels \
     tokenicer \
     logbar \
     maturin \
