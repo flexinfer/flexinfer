@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -48,8 +49,9 @@ type operator struct {
 
 	logger *slog.Logger
 
-	capabilities capabilityWiring
-	ready        atomic.Bool
+	capabilitiesMu sync.RWMutex
+	capabilities   capabilityWiring
+	ready          atomic.Bool
 }
 
 func newOperator(st *store.Store, pm *mills.PolicyManager, b *mills.Budget, logger *slog.Logger) *operator {

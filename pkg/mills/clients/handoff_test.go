@@ -80,6 +80,31 @@ func TestHandoffClient_HappyPath(t *testing.T) {
 	}
 }
 
+func TestHandoffClient_UsesDynamicSourceSession(t *testing.T) {
+	ft := &fakeTransport{
+		responses: map[string][]byte{
+			"initialize": []byte(`{}`),
+			"tools/call": handoffStub(t, map[string]any{"ok": true, "handoff_id": "ho-dynamic"}),
+		},
+	}
+	hub := newTestHubClient(t, ft)
+	hc := NewHandoffClient(hub, "")
+	hc.SourceSessionIDFunc = func() string { return "session-late" }
+
+	if _, err := hc.CreateHandoff(context.Background(), pipeline.HandoffRequest{To: "human-on-call"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	var params mcp.CallToolParams
+	for _, m := range ft.sentMessages() {
+		if m.Method == "tools/call" {
+			_ = json.Unmarshal(m.Params, &params)
+		}
+	}
+	if params.Arguments["session_id"] != "session-late" {
+		t.Errorf("session_id = %v, want dynamic session", params.Arguments["session_id"])
+	}
+}
+
 func TestHandoffClient_RequiresSourceSession(t *testing.T) {
 	hub := newTestHubClient(t, &fakeTransport{})
 	hc := NewHandoffClient(hub, "")

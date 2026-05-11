@@ -138,12 +138,24 @@ func (w capabilityWiring) realStageCount() (int, int, []string) {
 }
 
 func (o *operator) setCapabilities(w capabilityWiring) {
+	o.capabilitiesMu.Lock()
+	defer o.capabilitiesMu.Unlock()
+	o.capabilities = w
+}
+
+func (o *operator) setMCPHubSessionReady(ready bool) {
+	o.capabilitiesMu.Lock()
+	defer o.capabilitiesMu.Unlock()
+	w := o.capabilities
+	w.MCPHubSessionReady = ready
 	o.capabilities = w
 }
 
 func (o *operator) capabilityReport(ctx context.Context) capabilityReport {
 	now := time.Now().UTC().Format(time.RFC3339)
+	o.capabilitiesMu.RLock()
 	w := o.capabilities
+	o.capabilitiesMu.RUnlock()
 	policyEnabled := false
 	policyVersion := 0
 	if o.policy != nil {

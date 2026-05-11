@@ -111,6 +111,34 @@ func TestWorktreeAllocator_Allocate_HappyPath(t *testing.T) {
 	}
 }
 
+func TestWorktreeAllocator_UsesDynamicSourceSession(t *testing.T) {
+	hub, rt := newRoutedHub(t, map[string][]byte{
+		"agent_worktree_allocate": wtStub(t, map[string]any{
+			"assignment_id": "asg-001",
+			"worktree_path": "/workspaces/loom-core/.worktrees/feat-x-alpha",
+			"branch":        "feat/BL-X/alpha",
+			"base_branch":   "main",
+		}),
+	})
+	a := NewWorktreeAllocator(hub, "loom-mills-operator", "", "/workspaces/loom-core")
+	a.SourceSessionIDFunc = func() string { return "session-late" }
+
+	if _, err := a.Allocate(context.Background(), pipeline.WorktreeRequest{
+		BacklogID: "BL-X", SliceName: "alpha", BranchName: "feat/BL-X/alpha",
+	}); err != nil {
+		t.Fatalf("allocate: %v", err)
+	}
+	var params mcp.CallToolParams
+	for _, m := range rt.sentMessages() {
+		if m.Method == "tools/call" {
+			_ = json.Unmarshal(m.Params, &params)
+		}
+	}
+	if params.Arguments["session_id"] != "session-late" {
+		t.Errorf("session_id = %v, want dynamic session", params.Arguments["session_id"])
+	}
+}
+
 func TestWorktreeAllocator_Allocate_BaseBranchOverride(t *testing.T) {
 	hub, rt := newRoutedHub(t, map[string][]byte{
 		"agent_worktree_allocate": wtStub(t, map[string]any{
