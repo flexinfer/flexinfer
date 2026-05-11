@@ -92,8 +92,8 @@
   {#if sessions.length === 0}
     {#if agentCount > 0}
       <EmptyState
-        heading="{agentCount} agent{agentCount === 1 ? '' : 's'} connected, awaiting first session"
-        description="Sessions begin when a Claude Code, Gemini, or Codex CLI starts a turn — your agents may simply be idle. Public-tier event redaction is applied at the producer; secrets never reach this view."
+        heading="{agentCount} agent{agentCount === 1 ? '' : 's'} connected, no active sessions"
+        description="Agents are online but idle between turns. Sessions appear here when a Claude Code, Gemini, or Codex CLI emits a SessionStart hook."
       />
     {:else}
       <EmptyState

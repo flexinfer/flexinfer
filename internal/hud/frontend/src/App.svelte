@@ -406,8 +406,8 @@
       <span class="status-divider"></span>
       <span class="status-text">
         {activeSessionCount} active session{activeSessionCount !== 1 ? 's' : ''}
-        {#if liveAgentSummary.with_sessions < liveAgentCount}
-          <span style="color: var(--warning);"> · {liveAgentCount - liveAgentSummary.with_sessions} without session</span>
+        {#if liveAgentSummary.orphans > 0}
+          <span style="color: var(--warning);"> · {liveAgentSummary.orphans} orphan{liveAgentSummary.orphans !== 1 ? 's' : ''}</span>
         {/if}
       </span>
     </div>
