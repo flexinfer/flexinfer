@@ -598,9 +598,9 @@ type PublishValidateSpec struct {
 	// +optional
 	Family *string `json:"family,omitempty"`
 
-	// Image overrides the validator container image. Defaults to the runtime
-	// image (which bundles the validator script at
-	// /opt/flexinfer/scripts/validate_quantized_artifact.py).
+	// Image overrides the validator container image. Defaults to the
+	// lightweight model-tools image, which bundles the validator script at
+	// /opt/flexinfer/scripts/validate_quantized_artifact.py.
 	// +optional
 	Image *string `json:"image,omitempty"`
 

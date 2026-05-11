@@ -61,21 +61,36 @@ func TestShouldUseInsecure(t *testing.T) {
 
 func TestPublishImage(t *testing.T) {
 	origVal, origSet := os.LookupEnv("FLEXINFER_PUBLISH_IMAGE")
+	origToolsVal, origToolsSet := os.LookupEnv("FLEXINFER_MODEL_TOOLS_IMAGE")
 	defer func() {
 		if origSet {
 			_ = os.Setenv("FLEXINFER_PUBLISH_IMAGE", origVal)
 		} else {
 			_ = os.Unsetenv("FLEXINFER_PUBLISH_IMAGE")
 		}
+		if origToolsSet {
+			_ = os.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", origToolsVal)
+		} else {
+			_ = os.Unsetenv("FLEXINFER_MODEL_TOOLS_IMAGE")
+		}
 	}()
 
-	t.Run("default returns alpine:3.23", func(t *testing.T) {
+	t.Run("default returns model-tools image", func(t *testing.T) {
 		_ = os.Unsetenv("FLEXINFER_PUBLISH_IMAGE")
+		_ = os.Unsetenv("FLEXINFER_MODEL_TOOLS_IMAGE")
 		got := publishImage()
-		assert.Equal(t, "alpine:3.23", got)
+		assert.Equal(t, DefaultModelToolsImage, got)
+	})
+
+	t.Run("shared model tools image overrides default", func(t *testing.T) {
+		_ = os.Unsetenv("FLEXINFER_PUBLISH_IMAGE")
+		_ = os.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", "model-tools:local")
+		got := publishImage()
+		assert.Equal(t, "model-tools:local", got)
 	})
 
 	t.Run("env override takes precedence", func(t *testing.T) {
+		_ = os.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", "model-tools:local")
 		_ = os.Setenv("FLEXINFER_PUBLISH_IMAGE", "custom-publisher:v2")
 		got := publishImage()
 		assert.Equal(t, "custom-publisher:v2", got)

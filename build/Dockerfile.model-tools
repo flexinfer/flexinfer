@@ -1,0 +1,24 @@
+# Dockerfile.model-tools
+# Lightweight CPU-only helper image for ModelCache publish and validation jobs.
+
+FROM python:3.11-slim
+
+ARG ORAS_VERSION=1.2.2
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates \
+    curl \
+    tar \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN curl -fsSL "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
+    | tar -xz -C /usr/local/bin oras
+
+RUN pip install --no-cache-dir \
+    huggingface_hub \
+    safetensors
+
+COPY build/scripts/validate_quantized_artifact.py /opt/flexinfer/scripts/validate_quantized_artifact.py
+COPY build/scripts/publish_hf.py /opt/flexinfer/scripts/publish_hf.py
+
+ENTRYPOINT ["/bin/sh"]
