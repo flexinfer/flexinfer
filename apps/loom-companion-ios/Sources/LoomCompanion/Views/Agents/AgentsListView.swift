@@ -72,6 +72,8 @@ struct AgentsListView: View {
                     }
                 }
             }
+            .listStyle(.plain)
+            .modifier(EmbeddedListChrome(isEmbedded: embeddedInPeopleTab))
             .navigationTitle(embeddedInPeopleTab ? "" : "Agents")
             .navigationBarTitleDisplayMode(.inline)
             .modifier(EmbeddedNavigationChrome(isHidden: embeddedInPeopleTab))
@@ -253,8 +255,23 @@ private struct EmbeddedSearchField: View {
         .padding(.horizontal, LoomSpacing.md)
         .padding(.vertical, 10)
         .background(LoomColors.bgElevated, in: Capsule())
-        .listRowInsets(EdgeInsets(top: 4, leading: 16, bottom: 6, trailing: 16))
+        .listRowInsets(EdgeInsets(top: 0, leading: 20, bottom: 6, trailing: 20))
         .listRowBackground(Color.clear)
+    }
+}
+
+private struct EmbeddedListChrome: ViewModifier {
+    let isEmbedded: Bool
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if isEmbedded {
+            content
+                .contentMargins(.top, 0, for: .scrollContent)
+                .scrollContentBackground(.hidden)
+        } else {
+            content
+        }
     }
 }
 
