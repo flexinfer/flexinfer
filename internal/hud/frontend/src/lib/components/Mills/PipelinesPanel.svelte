@@ -13,6 +13,9 @@
   let loading = $derived(millsStore.loading && millsStore.pipelineRuns.length === 0);
   let disabled = $derived(millsStore.disabled);
   let error = $derived(millsStore.error);
+  let autonomyBlocked = $derived(millsStore.autonomyBlocked);
+  let blockers = $derived(millsStore.autonomyBlockers);
+  let status = $derived(millsStore.status);
 
   // sortedRuns groups subruns directly under their parent (Phase 6
   // slice 6.3). Top-level runs are rendered in their original order;
@@ -60,6 +63,20 @@
     // typical column width.
     return `padding-left:${1.25 * d}rem`;
   }
+
+  function emptyMessage(): string {
+    if (disabled) return 'Mills operator not configured';
+    if (error) return 'Failed to load pipeline runs';
+    if (autonomyBlocked) return 'Mills autonomy is blocked';
+    return 'No pipeline runs yet';
+  }
+
+  function emptyHint(): string {
+    if (disabled) return 'Set LOOM_MILLS_OPERATOR_URL on the HUD to connect.';
+    if (error) return error;
+    if (autonomyBlocked) return blockers.slice(0, 2).join(' · ');
+    return 'Once the council queues backlog items, runs will land here.';
+  }
 </script>
 
 <PanelShell
@@ -69,15 +86,31 @@
   loading={loading}
   empty={runs.length === 0}
   emptyIcon={disabled ? '◯' : '□'}
-  emptyMessage={disabled ? 'Mills operator not configured' : (error ? 'Failed to load pipeline runs' : 'No pipeline runs yet')}
-  emptyHint={disabled ? 'Set LOOM_MILLS_OPERATOR_URL on the HUD to connect.' : (error ?? 'Once the council queues backlog items, runs will land here.')}
+  emptyMessage={emptyMessage()}
+  emptyHint={emptyHint()}
 >
   {#snippet header()}
-    <div class="counts-row">
-      {#each Object.entries(counts) as [state, n]}
-        <span class="count-pill state-{state}">{state}: {n}</span>
-      {/each}
-    </div>
+    {#if autonomyBlocked}
+      <div class="readiness-banner" role="status">
+        <span class="readiness-kicker">Fail-closed</span>
+        <span class="readiness-main">Autonomy paused</span>
+        <span class="readiness-meta">
+          queue {status?.queue_depth ?? 0} · active runs {status?.active_pipeline_runs ?? 0}
+        </span>
+        <ul>
+          {#each blockers.slice(0, 3) as blocker}
+            <li>{blocker}</li>
+          {/each}
+        </ul>
+      </div>
+    {/if}
+    {#if Object.keys(counts).length > 0}
+      <div class="counts-row">
+        {#each Object.entries(counts) as [state, n]}
+          <span class="count-pill state-{state}">{state}: {n}</span>
+        {/each}
+      </div>
+    {/if}
   {/snippet}
 
   <table class="mills-table">
@@ -120,6 +153,39 @@
 
 <style>
   .counts-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+  .readiness-banner {
+    display: grid;
+    grid-template-columns: auto auto minmax(0, 1fr);
+    gap: 0.35rem 0.75rem;
+    align-items: center;
+    color: var(--fg-secondary, #9ab);
+  }
+  .readiness-kicker {
+    padding: 0.08rem 0.45rem;
+    border-radius: 999px;
+    border: 1px solid rgba(240, 130, 80, 0.35);
+    color: rgb(240, 150, 105);
+    font-size: 0.68rem;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+  .readiness-main {
+    color: var(--fg-primary, #dfe);
+    font-weight: 700;
+  }
+  .readiness-meta {
+    min-width: 0;
+    font-family: ui-monospace, monospace;
+    font-size: 0.75rem;
+    color: var(--fg-muted, #789);
+  }
+  .readiness-banner ul {
+    grid-column: 1 / -1;
+    margin: 0.25rem 0 0;
+    padding-left: 1rem;
+    font-size: 0.78rem;
+  }
+  .readiness-banner li + li { margin-top: 0.15rem; }
   .count-pill {
     padding: 0.1rem 0.5rem; border-radius: 999px; font-size: 0.75rem;
     background: var(--bg-subtle, #233); color: var(--text-muted, #aab);

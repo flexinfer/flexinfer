@@ -43,6 +43,8 @@ export interface ToolCall {
   ended_at?: string;
   /** True until tool.call.end arrives. */
   in_flight: boolean;
+  /** Backfilled activity is not always a literal MCP tool call. */
+  source?: 'tool' | 'context' | 'event' | 'trace';
 }
 
 export interface LiveSession {
@@ -145,6 +147,7 @@ class LiveSessionsStore {
       const data = (await res.json()) as { sessions?: Array<Record<string, unknown>> };
       const sessions = data.sessions ?? [];
       let added = 0;
+      const backfills: Array<Promise<void>> = [];
       for (const s of sessions) {
         const sid = stringField(s, 'id');
         const status = stringField(s, 'status');
@@ -155,17 +158,22 @@ class LiveSessionsStore {
         if (this.sessions.has(sid)) continue;
         const aid = stringField(s, 'agent_id');
         const startedMs = Date.parse(stringField(s, 'started_at')) || Date.now();
-        this.sessions.set(sid, {
+        const session: LiveSession = {
           session_id: sid,
           agent_id: aid,
           agent_status: 'unknown',
           recent_calls: [],
           first_seen: startedMs,
           last_activity: startedMs,
-        });
+        };
+        this.sessions.set(sid, session);
+        backfills.push(this.backfillSessionActivity(session));
         added++;
       }
       if (added > 0) this.touch();
+      if (backfills.length > 0) {
+        await Promise.allSettled(backfills);
+      }
     } catch {
       // Best-effort: SSE will populate as turns happen.
     }
@@ -175,6 +183,35 @@ class LiveSessionsStore {
     this.eventCount++;
     // Replace the map reference so $state reactivity picks up the change.
     this.sessions = new Map(this.sessions);
+  }
+
+  private async backfillSessionActivity(session: LiveSession): Promise<void> {
+    if (!session.session_id || session.recent_calls.length > 0) return;
+    try {
+      const params = new URLSearchParams({ limit: '8' });
+      if (session.agent_id) params.set('agent_id', session.agent_id);
+      const res = await globalThis.fetch(
+        `/api/sessions/${encodeURIComponent(session.session_id)}/trace?${params.toString()}`,
+      );
+      if (!res.ok) return;
+      const trace = (await res.json()) as Record<string, unknown>;
+      const calls = traceActivityToCalls(trace);
+      const current = this.sessions.get(session.session_id);
+      if (!current || calls.length === 0 || current.recent_calls.length > 0) return;
+      const recent = calls.slice(0, RECENT_CALLS_PER_SESSION);
+      const latest = latestCallTime(recent);
+      this.sessions.set(session.session_id, {
+        ...current,
+        recent_calls: recent,
+        last_activity: latest > 0 ? Math.max(current.last_activity, latest) : current.last_activity,
+      });
+      if (!current.agent_id && stringField(trace, 'agent_id')) {
+        this.sessions.get(session.session_id)!.agent_id = stringField(trace, 'agent_id');
+      }
+      this.touch();
+    } catch {
+      // Best-effort: live SSE activity will still populate the card.
+    }
   }
 
   private getOrCreate(sessionID: string, agentID: string): LiveSession {
@@ -250,6 +287,7 @@ class LiveSessionsStore {
         (e.data.args_redacted as Record<string, unknown>) ?? undefined,
       started_at: stringField(e.data, 'started_at') || undefined,
       in_flight: true,
+      source: 'tool',
     };
     // Push at front (most recent first) and trim the tail.
     session.recent_calls.unshift(call);
@@ -292,6 +330,7 @@ class LiveSessionsStore {
         status: stringField(e.data, 'status') || undefined,
         ended_at: stringField(e.data, 'ended_at') || undefined,
         in_flight: false,
+        source: 'tool',
       };
       session.recent_calls.unshift(synthetic);
       if (session.recent_calls.length > RECENT_CALLS_PER_SESSION) {
@@ -328,4 +367,105 @@ function numberField(data: Record<string, unknown>, key: string): number | undef
   const v = data?.[key];
   if (typeof v === 'number' && Number.isFinite(v)) return v;
   return undefined;
+}
+
+function traceActivityToCalls(trace: Record<string, unknown>): ToolCall[] {
+  const out: ToolCall[] = [];
+  for (const raw of arrayField(trace, 'traces')) {
+    const item = objectField(raw);
+    const server = stringField(item, 'server');
+    const tool = stringField(item, 'tool');
+    if (!tool && !server) continue;
+    const ts = stringField(item, 'timestamp');
+    out.push({
+      call_id: stableBackfillID('trace', item, out.length),
+      tool_name: tool || server || 'trace',
+      server_name: server || undefined,
+      duration_ms: numberField(item, 'duration_ms'),
+      error: stringField(item, 'error') || undefined,
+      status: stringField(item, 'status') || undefined,
+      result_summary: stringField(item, 'target') || stringField(item, 'pipeline_stage') || undefined,
+      started_at: ts || undefined,
+      ended_at: ts || undefined,
+      in_flight: false,
+      source: 'trace',
+    });
+  }
+  for (const raw of arrayField(trace, 'events')) {
+    const item = objectField(raw);
+    const eventType = stringField(item, 'event_type');
+    if (!eventType) continue;
+    const ts = stringField(item, 'timestamp');
+    out.push({
+      call_id: stableBackfillID('event', item, out.length),
+      tool_name: eventType,
+      result_summary: eventSummary(item),
+      started_at: ts || undefined,
+      ended_at: ts || undefined,
+      in_flight: false,
+      source: 'event',
+    });
+  }
+  for (const raw of arrayField(trace, 'entries')) {
+    const item = objectField(raw);
+    const entryType = stringField(item, 'entry_type') || 'context';
+    const title = stringField(item, 'title');
+    const content = stringField(item, 'content');
+    const ts = stringField(item, 'timestamp');
+    out.push({
+      call_id: stableBackfillID('context', item, out.length),
+      tool_name: entryType,
+      result_summary: title || truncateSummary(content),
+      started_at: ts || undefined,
+      ended_at: ts || undefined,
+      in_flight: false,
+      source: 'context',
+    });
+  }
+  return out
+    .sort((a, b) => callTime(b) - callTime(a))
+    .filter((call, idx, calls) => calls.findIndex((c) => c.call_id === call.call_id) === idx);
+}
+
+function arrayField(data: Record<string, unknown>, key: string): unknown[] {
+  const v = data?.[key];
+  return Array.isArray(v) ? v : [];
+}
+
+function objectField(v: unknown): Record<string, unknown> {
+  return v && typeof v === 'object' ? (v as Record<string, unknown>) : {};
+}
+
+function eventSummary(item: Record<string, unknown>): string | undefined {
+  const data = objectField(item.data);
+  return (
+    stringField(data, 'tool_name') ||
+    stringField(data, 'status') ||
+    stringField(data, 'summary') ||
+    undefined
+  );
+}
+
+function stableBackfillID(prefix: string, item: Record<string, unknown>, fallback: number): string {
+  const id =
+    stringField(item, 'id') ||
+    stringField(item, 'call_id') ||
+    [stringField(item, 'timestamp'), stringField(item, 'server'), stringField(item, 'tool'), stringField(item, 'event_type'), stringField(item, 'entry_type')]
+      .filter(Boolean)
+      .join(':');
+  return `${prefix}-${id || fallback}`;
+}
+
+function truncateSummary(s: string): string | undefined {
+  if (!s) return undefined;
+  const singleLine = s.replace(/\s+/g, ' ').trim();
+  return singleLine.length > 140 ? `${singleLine.slice(0, 137)}...` : singleLine;
+}
+
+function latestCallTime(calls: ToolCall[]): number {
+  return calls.reduce((latest, call) => Math.max(latest, callTime(call)), 0);
+}
+
+function callTime(call: ToolCall): number {
+  return Date.parse(call.ended_at || call.started_at || '') || 0;
 }
