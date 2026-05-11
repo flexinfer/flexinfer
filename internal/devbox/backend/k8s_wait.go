@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 )
 
 // waitForPodRunning watches until the pod reaches Running phase or timeout.
@@ -28,6 +29,9 @@ func (k *K8sBackend) waitForPodRunning(ctx context.Context, name string, timeout
 	defer watcher.Stop()
 
 	for event := range watcher.ResultChan() {
+		if event.Type == watch.Deleted {
+			return fmt.Errorf("pod %s was deleted before reaching Running", name)
+		}
 		pod, ok := event.Object.(*corev1.Pod)
 		if !ok {
 			continue
@@ -86,6 +90,9 @@ func (k *K8sBackend) waitForPodDone(ctx context.Context, name string, timeout ti
 	defer watcher.Stop()
 
 	for event := range watcher.ResultChan() {
+		if event.Type == watch.Deleted {
+			return fmt.Errorf("pod %s was deleted before completion", name)
+		}
 		pod, ok := event.Object.(*corev1.Pod)
 		if !ok {
 			continue

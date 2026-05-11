@@ -1,9 +1,16 @@
 package backend
 
 import (
+	"context"
+	"strings"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
+	k8sfake "k8s.io/client-go/kubernetes/fake"
+	k8stesting "k8s.io/client-go/testing"
 )
 
 func TestPodFailureReason_Terminated(t *testing.T) {
@@ -103,5 +110,49 @@ func TestPodFailureReason_EmptyStatus(t *testing.T) {
 	got := podFailureReason(pod)
 	if got != "" {
 		t.Errorf("got %q, want empty (default phase)", got)
+	}
+}
+
+func TestWaitForPodRunningReturnsWhenPodDeleted(t *testing.T) {
+	k := testK8sBackend()
+	clientset := k8sfake.NewSimpleClientset()
+	podWatch := watch.NewFake()
+	clientset.PrependWatchReactor("pods", func(action k8stesting.Action) (bool, watch.Interface, error) {
+		return true, podWatch, nil
+	})
+	k.clientset = clientset
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- k.waitForPodRunning(context.Background(), "spawn-pod", time.Minute)
+	}()
+
+	podWatch.Delete(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "spawn-pod", Namespace: k.namespace}})
+
+	err := <-errCh
+	if err == nil || !strings.Contains(err.Error(), "deleted before reaching Running") {
+		t.Fatalf("waitForPodRunning error = %v, want deleted pod error", err)
+	}
+}
+
+func TestWaitForPodDoneReturnsWhenPodDeleted(t *testing.T) {
+	k := testK8sBackend()
+	clientset := k8sfake.NewSimpleClientset()
+	podWatch := watch.NewFake()
+	clientset.PrependWatchReactor("pods", func(action k8stesting.Action) (bool, watch.Interface, error) {
+		return true, podWatch, nil
+	})
+	k.clientset = clientset
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- k.waitForPodDone(context.Background(), "build-pod", time.Minute)
+	}()
+
+	podWatch.Delete(&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "build-pod", Namespace: k.namespace}})
+
+	err := <-errCh
+	if err == nil || !strings.Contains(err.Error(), "deleted before completion") {
+		t.Fatalf("waitForPodDone error = %v, want deleted pod error", err)
 	}
 }
