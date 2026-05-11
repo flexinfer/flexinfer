@@ -14,7 +14,10 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-const defaultBuilderImage = "quay.io/buildah/stable:v1.38.0"
+const (
+	defaultBuilderImage  = "quay.io/buildah/stable:v1.38.0"
+	defaultGitCloneImage = "alpine/git:2.47.2"
+)
 
 const (
 	defaultBuildCPURequest    = "1"
@@ -37,6 +40,7 @@ type K8sBackend struct {
 	imagePullSecret string // image pull secret name for private registry
 	workspaceRoot   string // host path to workspace (NFS export source)
 	builderImage    string // Buildah builder image
+	gitCloneImage   string // git image used by git-clone init containers
 	nfsFlush        bool   // prepend NFS cache flush to exec commands
 	gitBaseURL      string // base git URL for workspace repos (enables git-clone mode)
 	gitSecret       string // secret name containing git token (key: "token")
@@ -63,6 +67,7 @@ type K8sBackendConfig struct {
 	ImagePullSecret     string // image pull secret name (default: "harbor-creds")
 	WorkspaceRoot       string // host path to workspace (for NFS-relative path computation)
 	BuilderImage        string // Buildah builder image (default: quay.io/buildah/stable:v1.38.0)
+	GitCloneImage       string // git image for git-clone init containers (default: alpine/git:2.47.2)
 	NFSFlush            bool   // prepend NFS attr cache flush to exec commands (default: true for K8s)
 	GitBaseURL          string // base git URL for repos (e.g., "https://gitlab.blevins.dev/homelab"); enables git-clone mode
 	GitSecret           string // secret name containing git token (key: "token"); required when GitBaseURL is set
@@ -94,6 +99,9 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 	}
 	if cfg.BuilderImage == "" {
 		cfg.BuilderImage = defaultBuilderImage
+	}
+	if cfg.GitCloneImage == "" {
+		cfg.GitCloneImage = defaultGitCloneImage
 	}
 	if cfg.WorkspaceRoot == "" {
 		home, _ := os.UserHomeDir()
@@ -138,6 +146,7 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 		imagePullSecret:    cfg.ImagePullSecret,
 		workspaceRoot:      cfg.WorkspaceRoot,
 		builderImage:       cfg.BuilderImage,
+		gitCloneImage:      cfg.GitCloneImage,
 		nfsFlush:           cfg.NFSFlush,
 		gitBaseURL:         cfg.GitBaseURL,
 		gitSecret:          cfg.GitSecret,

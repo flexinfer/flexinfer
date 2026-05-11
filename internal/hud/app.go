@@ -89,6 +89,7 @@ type Config struct {
 	SpawnSyncMode            string  // Workspace sync: "git-clone" or "nfs".
 	SpawnGitBaseURL          string  // Git base URL for git-clone mode.
 	SpawnGitSecret           string  // K8s secret with git token.
+	SpawnGitCloneImage       string  // git image for git-clone init containers.
 	SpawnProjects            string  // Comma-separated project names for spawn picker.
 	SpawnDefaultCPU          float64 // Default CPU limit for spawned agent pods.
 	SpawnDefaultMemory       int     // Default memory limit for spawned agent pods in MB.

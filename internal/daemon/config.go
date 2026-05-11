@@ -105,6 +105,7 @@ type EmbeddedHUDConfig struct {
 	SpawnSyncMode            string  `yaml:"spawn_sync_mode,omitempty"`
 	SpawnGitBaseURL          string  `yaml:"spawn_git_base_url,omitempty"`
 	SpawnGitSecret           string  `yaml:"spawn_git_secret,omitempty"`
+	SpawnGitCloneImage       string  `yaml:"spawn_git_clone_image,omitempty"`
 	SpawnProjects            string  `yaml:"spawn_projects,omitempty"`
 	SpawnDefaultCPU          float64 `yaml:"spawn_default_cpu,omitempty"`
 	SpawnDefaultMemory       int     `yaml:"spawn_default_memory_mb,omitempty"`

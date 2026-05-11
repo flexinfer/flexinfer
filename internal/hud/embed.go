@@ -526,6 +526,7 @@ func (a *App) initSpawnOrchestrator(ctx context.Context) error {
 		SyncMode:            cfg.SpawnSyncMode,
 		GitBaseURL:          cfg.SpawnGitBaseURL,
 		GitSecret:           cfg.SpawnGitSecret,
+		GitCloneImage:       cfg.SpawnGitCloneImage,
 		BuildCPURequest:     cfg.SpawnBuildCPURequest,
 		BuildCPULimit:       cfg.SpawnBuildCPULimit,
 		BuildMemoryRequest:  cfg.SpawnBuildMemoryRequest,

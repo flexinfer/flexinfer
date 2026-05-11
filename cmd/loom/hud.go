@@ -63,6 +63,7 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var spawnSyncMode string
 	var spawnGitBaseURL string
 	var spawnGitSecret string
+	var spawnGitCloneImage string
 	var spawnProjects string
 	var spawnDefaultCPU float64
 	var spawnDefaultMemory int
@@ -173,6 +174,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 			applyEnvString("spawn-sync-mode", "SPAWN_SYNC_MODE", &spawnSyncMode)
 			applyEnvString("spawn-git-base-url", "SPAWN_GIT_BASE_URL", &spawnGitBaseURL)
 			applyEnvString("spawn-git-secret", "SPAWN_GIT_SECRET", &spawnGitSecret)
+			applyEnvString("spawn-git-clone-image", "SPAWN_GIT_CLONE_IMAGE", &spawnGitCloneImage)
 			applyEnvString("spawn-projects", "SPAWN_PROJECTS", &spawnProjects)
 			applyEnvFloat("spawn-default-cpu", "SPAWN_DEFAULT_CPU", &spawnDefaultCPU)
 			applyEnvInt("spawn-default-memory-mb", "SPAWN_DEFAULT_MEMORY_MB", &spawnDefaultMemory)
@@ -254,6 +256,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				SpawnSyncMode:            spawnSyncMode,
 				SpawnGitBaseURL:          spawnGitBaseURL,
 				SpawnGitSecret:           spawnGitSecret,
+				SpawnGitCloneImage:       spawnGitCloneImage,
 				SpawnProjects:            spawnProjects,
 				SpawnDefaultCPU:          spawnDefaultCPU,
 				SpawnDefaultMemory:       spawnDefaultMemory,
@@ -330,6 +333,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().StringVar(&spawnSyncMode, "spawn-sync-mode", os.Getenv("SPAWN_SYNC_MODE"), "Workspace sync mode: git-clone or nfs [$SPAWN_SYNC_MODE]")
 	cmd.Flags().StringVar(&spawnGitBaseURL, "spawn-git-base-url", os.Getenv("SPAWN_GIT_BASE_URL"), "Git base URL for git-clone sync [$SPAWN_GIT_BASE_URL]")
 	cmd.Flags().StringVar(&spawnGitSecret, "spawn-git-secret", os.Getenv("SPAWN_GIT_SECRET"), "K8s secret with git token [$SPAWN_GIT_SECRET]")
+	cmd.Flags().StringVar(&spawnGitCloneImage, "spawn-git-clone-image", os.Getenv("SPAWN_GIT_CLONE_IMAGE"), "Git image for spawn git-clone init containers [$SPAWN_GIT_CLONE_IMAGE]")
 	cmd.Flags().StringVar(&spawnProjects, "spawn-projects", os.Getenv("SPAWN_PROJECTS"), "Comma-separated project names for spawn picker [$SPAWN_PROJECTS]")
 	cmd.Flags().Float64Var(&spawnDefaultCPU, "spawn-default-cpu", 0, "Default CPU limit for spawned agent pods [$SPAWN_DEFAULT_CPU]")
 	cmd.Flags().IntVar(&spawnDefaultMemory, "spawn-default-memory-mb", 0, "Default memory limit for spawned agent pods in MB [$SPAWN_DEFAULT_MEMORY_MB]")

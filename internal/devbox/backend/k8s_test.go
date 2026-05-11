@@ -27,6 +27,7 @@ func testK8sBackend() *K8sBackend {
 		imagePullSecret:    "harbor-creds",
 		workspaceRoot:      "/workspace",
 		builderImage:       "quay.io/buildah/stable:v1.38.0",
+		gitCloneImage:      defaultGitCloneImage,
 		buildCPURequest:    resource.MustParse(defaultBuildCPURequest),
 		buildCPULimit:      resource.MustParse(defaultBuildCPULimit),
 		buildMemoryRequest: resource.MustParse(defaultBuildMemoryRequest),
@@ -115,6 +116,9 @@ func TestNewK8sBackend_DefaultsAndOverrides(t *testing.T) {
 		if k.builderImage != defaultBuilderImage {
 			t.Fatalf("builderImage=%q", k.builderImage)
 		}
+		if k.gitCloneImage != defaultGitCloneImage {
+			t.Fatalf("gitCloneImage=%q", k.gitCloneImage)
+		}
 		if k.workspaceRoot != filepath.Join(homeDir, "workspace") {
 			t.Fatalf("workspaceRoot=%q", k.workspaceRoot)
 		}
@@ -135,6 +139,7 @@ func TestNewK8sBackend_DefaultsAndOverrides(t *testing.T) {
 			ImagePullSecret:     "custom-secret",
 			WorkspaceRoot:       "/srv/workspace",
 			BuilderImage:        "quay.io/custom/buildah:v1",
+			GitCloneImage:       "alpine/git:custom",
 			SyncMode:            "tar-pipe",
 			SyncExcludes:        []string{"**/*.tmp"},
 			MaxSyncSize:         512,
@@ -156,6 +161,9 @@ func TestNewK8sBackend_DefaultsAndOverrides(t *testing.T) {
 		}
 		if k.workspaceRoot != "/srv/workspace" || k.builderImage != "quay.io/custom/buildah:v1" {
 			t.Fatalf("unexpected path/image overrides: root=%q image=%q", k.workspaceRoot, k.builderImage)
+		}
+		if k.gitCloneImage != "alpine/git:custom" {
+			t.Fatalf("unexpected git clone image override: %q", k.gitCloneImage)
 		}
 		if k.syncMode != "tar-pipe" || len(k.syncExcludes) != 1 || k.syncExcludes[0] != "**/*.tmp" || k.maxSyncSize != 512 {
 			t.Fatalf("unexpected sync overrides: mode=%q excludes=%v max=%d", k.syncMode, k.syncExcludes, k.maxSyncSize)
@@ -555,8 +563,8 @@ func TestGitCloneInitContainer(t *testing.T) {
 	if ic.Name != "git-clone" {
 		t.Fatalf("expected initContainer name 'git-clone', got %q", ic.Name)
 	}
-	if ic.Image != "alpine/git:2.47" {
-		t.Fatalf("expected alpine/git:2.47 image, got %q", ic.Image)
+	if ic.Image != defaultGitCloneImage {
+		t.Fatalf("expected %s image, got %q", defaultGitCloneImage, ic.Image)
 	}
 
 	// Should have GIT_TOKEN env from secret ref

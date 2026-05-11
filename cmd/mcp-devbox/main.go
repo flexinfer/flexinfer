@@ -118,6 +118,7 @@ func run(ctx context.Context) error {
 		k8sWorkspacePVC:     env.String("DEVBOX_K8S_WORKSPACE_PVC", "devbox-workspace-nfs"),
 		k8sImagePullSecret:  env.String("DEVBOX_K8S_IMAGE_PULL_SECRET", "harbor-creds"),
 		builderImage:        builderImage(),
+		gitCloneImage:       env.String("DEVBOX_K8S_GIT_CLONE_IMAGE", ""),
 		buildCPURequest:     env.String("DEVBOX_K8S_BUILD_CPU_REQUEST", ""),
 		buildCPULimit:       env.String("DEVBOX_K8S_BUILD_CPU_LIMIT", ""),
 		buildMemoryRequest:  env.String("DEVBOX_K8S_BUILD_MEMORY_REQUEST", ""),
