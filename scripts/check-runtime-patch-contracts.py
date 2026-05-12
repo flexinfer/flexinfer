@@ -38,8 +38,25 @@ COMPILE_ONLY = PATCH_SCRIPTS + (
 CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
     "scripts/check-runtime-patch-contracts.py",
     "build/Dockerfile.runtime",
+    "build/Dockerfile.runtime-serving",
     "build/runtime.yaml",
     ".gitlab/ci/runtime-publish.yml",
+)
+
+SERVING_CHANGE_RULE_FILES = (
+    ".gitlab/ci/runtime-publish.yml",
+    "build/Dockerfile.runtime-serving",
+    "build/runtime.yaml",
+    "build/runtime-entrypoint.sh",
+    "build/server-diffusers.py",
+    "build/scripts/vllm_gemma4_moe_gptq_patch.py",
+    "build/scripts/vllm_qwen35_patches_nodiag.py",
+)
+
+UNIFIED_SERVING_ONLY_RULE_FILES = (
+    "build/server-diffusers.py",
+    "build/scripts/vllm_gemma4_moe_gptq_patch.py",
+    "build/scripts/vllm_qwen35_patches_nodiag.py",
 )
 
 
@@ -127,17 +144,56 @@ def assert_dockerfile_patch_order(dockerfile: str) -> None:
             fail(f"Dockerfile.runtime no longer applies {token}")
 
 
+def assert_serving_dockerfile_contract(dockerfile: str) -> None:
+    required = (
+        "Serving-focused flexinfer-runtime Dockerfile.",
+        "FROM golang:${GO_VERSION} AS go-builder",
+        "FROM ${BASE_IMAGE} AS runtime",
+        "COPY build/scripts/ /opt/flexinfer/scripts/",
+        "python3 /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py",
+        "python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py",
+        "COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py",
+        "COPY --from=go-builder /runtime /usr/local/bin/flexinfer-runtime",
+    )
+    for snippet in required:
+        if snippet not in dockerfile:
+            fail(f"Dockerfile.runtime-serving missing {snippet!r}")
+
+    forbidden = (
+        "AS llamacpp-builder",
+        "AS ollama-builder",
+        "INCLUDE_OLLAMA",
+        "INCLUDE_LLAMACPP",
+        "INCLUDE_STEAM",
+        "INCLUDE_QUANTIZER",
+        "COPY --from=llamacpp-builder",
+        "COPY --from=ollama-builder",
+        "steamcmd",
+        "gptqmodel @",
+        "oras/releases",
+    )
+    for snippet in forbidden:
+        if snippet in dockerfile:
+            fail(f"Dockerfile.runtime-serving reintroduced utility payload: {snippet!r}")
+
+
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     fast_job = ci_yaml.find("runtime_patch_contracts:")
+    serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
     publish_job = ci_yaml.find("publish_unified_rocm_gfx1100:")
     if fast_job == -1:
         fail("runtime-publish CI is missing runtime_patch_contracts")
+    if serving_job == -1:
+        fail("runtime-publish CI is missing publish_serving_rocm_gfx1100")
     if publish_job == -1:
         fail("runtime-publish CI is missing publish_unified_rocm_gfx1100")
-    if fast_job > publish_job:
-        fail("runtime_patch_contracts must appear before publish_unified_rocm_gfx1100")
+    if not (fast_job < serving_job < publish_job):
+        fail(
+            "runtime-publish CI order changed; expected runtime_patch_contracts "
+            "-> publish_serving_rocm_gfx1100 -> publish_unified_rocm_gfx1100"
+        )
 
-    fast_job_body = ci_yaml[fast_job:publish_job]
+    fast_job_body = ci_yaml[fast_job:serving_job]
     required_snippets = (
         "stage: lint",
         "needs: []",
@@ -152,6 +208,34 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     missing_rules = [path for path in CI_CHANGE_RULE_FILES if path not in fast_job_body]
     if missing_rules:
         fail(f"runtime_patch_contracts rules do not include: {missing_rules}")
+
+    serving_job_body = ci_yaml[serving_job:publish_job]
+    serving_required_snippets = (
+        'filename="Dockerfile.runtime-serving"',
+        "${REGISTRY}/runtime:rocm-gfx1100-serving",
+        '--opt build-arg:INCLUDE_VLLM="true"',
+        '--opt build-arg:INCLUDE_DIFFUSERS="true"',
+        "build/server-diffusers.py",
+        "build/scripts/vllm_qwen35_patches_nodiag.py",
+        "build/scripts/vllm_gemma4_moe_gptq_patch.py",
+    )
+    for snippet in serving_required_snippets:
+        if snippet not in serving_job_body:
+            fail(f"publish_serving_rocm_gfx1100 missing {snippet!r}")
+
+    missing_serving_rules = [
+        path for path in SERVING_CHANGE_RULE_FILES if path not in serving_job_body
+    ]
+    if missing_serving_rules:
+        fail(
+            "publish_serving_rocm_gfx1100 rules do not include: "
+            f"{missing_serving_rules}"
+        )
+
+    unified_job_body = ci_yaml[publish_job:]
+    for path in UNIFIED_SERVING_ONLY_RULE_FILES:
+        if path in unified_job_body:
+            fail(f"serving-only file still auto-triggers unified runtime: {path}")
 
 
 def run_python_tests() -> None:
@@ -170,11 +254,13 @@ def main(argv: list[str]) -> int:
 
     runtime_yaml = read("build/runtime.yaml")
     dockerfile = read("build/Dockerfile.runtime")
+    serving_dockerfile = read("build/Dockerfile.runtime-serving")
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
     assert_runtime_yaml_patch_refs(runtime_yaml)
     assert_dockerfile_patch_order(dockerfile)
+    assert_serving_dockerfile_contract(serving_dockerfile)
     assert_ci_fast_check_wiring(ci_yaml)
 
     if run_tests:

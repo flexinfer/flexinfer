@@ -1,0 +1,258 @@
+# Serving-focused flexinfer-runtime Dockerfile.
+#
+# This persona intentionally omits utility-only payloads from the legacy unified
+# gfx1100 image: llama.cpp, Ollama, Steam, and quantizer packages. Keep it for
+# persistent runtime pods and serving API changes so those updates do not pay
+# for unrelated utility layers.
+
+ARG BASE_IMAGE=rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0
+ARG GO_VERSION=1.26.0
+ARG GPU_VENDOR=amd
+ARG GPU_ARCH=gfx1100
+ARG INCLUDE_VLLM=true
+ARG INCLUDE_DIFFUSERS=true
+ARG INCLUDE_BITSANDBYTES=false
+ARG TRANSFORMERS_CONSTRAINT=">=5.0"
+ARG TRANSFORMERS_INSTALL_MODE=constraint
+ARG TRANSFORMERS_REPO=https://github.com/huggingface/transformers.git
+ARG TRANSFORMERS_REF=main
+ARG TRANSFORMERS_PACKAGE=""
+ARG TRANSFORMERS_RUNTIME_INSTALL=disabled
+ARG VLLM_INSTALL_MODE=wheel
+ARG VLLM_VERSION=0.17.0+rocm700
+ARG VLLM_EXTRA_INDEX_URL=https://wheels.vllm.ai/rocm/0.17.0/rocm700
+ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
+ARG VLLM_REF=main
+ARG VLLM_SOURCE_PATCH_SCRIPT=
+ARG VLLM_EXTRA_DEPS_PROFILE=full
+ARG INSTALL_QWEN35_FASTPATH=true
+ARG INCLUDE_TURBOQUANT=false
+ARG TURBOQUANT_INSTALL_MODE=none
+ARG TURBOQUANT_VERSION=1.4.0
+ARG TURBOQUANT_REPO=https://github.com/Alberto-Codes/turboquant-vllm.git
+ARG TURBOQUANT_REF=main
+ARG TURBOQUANT_SOURCE_PATCH_SCRIPT=
+
+FROM golang:${GO_VERSION} AS go-builder
+
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd/ cmd/
+COPY api/ api/
+COPY backend/ backend/
+COPY internal/ internal/
+COPY controllers/ controllers/
+COPY pkg/ pkg/
+COPY scheduler/ scheduler/
+COPY agents/ agents/
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o /runtime cmd/flexinfer-runtime/main.go
+
+FROM ${BASE_IMAGE} AS runtime
+
+ARG GPU_VENDOR
+ARG GPU_ARCH
+ARG INCLUDE_VLLM
+ARG INCLUDE_DIFFUSERS
+ARG INCLUDE_BITSANDBYTES
+ARG TRANSFORMERS_CONSTRAINT
+ARG TRANSFORMERS_INSTALL_MODE
+ARG TRANSFORMERS_REPO
+ARG TRANSFORMERS_REF
+ARG TRANSFORMERS_PACKAGE
+ARG TRANSFORMERS_RUNTIME_INSTALL
+ARG VLLM_INSTALL_MODE
+ARG VLLM_VERSION
+ARG VLLM_EXTRA_INDEX_URL
+ARG VLLM_REPO
+ARG VLLM_REF
+ARG VLLM_SOURCE_PATCH_SCRIPT
+ARG VLLM_EXTRA_DEPS_PROFILE
+ARG INSTALL_QWEN35_FASTPATH
+ARG INCLUDE_TURBOQUANT
+ARG TURBOQUANT_INSTALL_MODE
+ARG TURBOQUANT_VERSION
+ARG TURBOQUANT_REPO
+ARG TURBOQUANT_REF
+ARG TURBOQUANT_SOURCE_PATCH_SCRIPT
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV GPU_VENDOR=${GPU_VENDOR}
+ENV GPU_ARCH=${GPU_ARCH}
+ENV FLEXINFER_TRANSFORMERS_PACKAGE=${TRANSFORMERS_PACKAGE}
+ENV FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL=${TRANSFORMERS_RUNTIME_INSTALL}
+
+COPY build/scripts/ /opt/flexinfer/scripts/
+RUN chmod +x /opt/flexinfer/scripts/*.sh /opt/flexinfer/scripts/*.py 2>/dev/null || true
+
+RUN if [ "${GPU_VENDOR}" = "amd" ]; then \
+      if ! getent hosts compute-artifactory.amd.com >/dev/null 2>&1; then \
+        for src in /etc/apt/sources.list.d/*.list; do \
+          [ -e "${src}" ] || continue; \
+          if grep -Eq 'compute-artifactory\.amd\.com|rocm-osdb-24\.04-deb|compute-rocm-rel-7\.2' "${src}" 2>/dev/null; then \
+            mv "${src}" "${src}.disabled" && echo "Disabled stale AMD apt source: ${src}"; \
+          fi; \
+        done; \
+      fi; \
+    fi
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl tini jq lsof procps psmisc \
+    $(if [ "${GPU_VENDOR}" = "amd" ]; then echo "hipblas rocblas"; fi) \
+    $(if [ "${INCLUDE_VLLM}" = "true" ] || [ "${VLLM_INSTALL_MODE}" = "source" ] || [ "${TRANSFORMERS_INSTALL_MODE}" = "source" ]; then echo "build-essential git pkg-config python3-dev"; fi) \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN if [ "${GPU_VENDOR}" = "amd" ] && command -v pip >/dev/null 2>&1; then \
+      pip install --no-cache-dir "urllib3<2"; \
+    fi
+
+RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ] && command -v pip >/dev/null 2>&1; then \
+      BNB_FLAG=""; \
+      if [ "${INCLUDE_BITSANDBYTES}" = "true" ]; then BNB_FLAG="bitsandbytes"; fi; \
+      if [ "${TRANSFORMERS_INSTALL_MODE}" = "source" ]; then \
+        rm -rf /tmp/transformers-src && \
+        git clone --depth 1 "${TRANSFORMERS_REPO}" /tmp/transformers-src && \
+        cd /tmp/transformers-src && \
+        git fetch --depth 1 origin "${TRANSFORMERS_REF}" && \
+        git checkout FETCH_HEAD && \
+        pip install --no-cache-dir /tmp/transformers-src; \
+      else \
+        pip install --no-cache-dir --no-deps "transformers${TRANSFORMERS_CONSTRAINT}"; \
+      fi; \
+      pip install --no-cache-dir --no-deps \
+        "diffusers>=0.30.0" \
+        accelerate \
+        ${BNB_FLAG}; \
+      pip install --no-cache-dir \
+        safetensors \
+        pillow \
+        sentencepiece \
+        protobuf \
+        "numpy<2" \
+        huggingface-hub \
+        regex \
+        pyyaml \
+        psutil \
+        packaging \
+        fastapi \
+        uvicorn; \
+    fi
+
+RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
+      if [ "${VLLM_INSTALL_MODE}" = "source" ]; then \
+        pip uninstall -y vllm 2>/dev/null || true; \
+        rm -rf /var/lib/jenkins/vllm /workspace/vllm /tmp/vllm-src; \
+        git clone --depth 1 "${VLLM_REPO}" /tmp/vllm-src && \
+        cd /tmp/vllm-src && \
+        git fetch --depth 1 origin "${VLLM_REF}" && \
+        git checkout FETCH_HEAD && \
+        if [ -n "${VLLM_SOURCE_PATCH_SCRIPT}" ]; then \
+          python3 "/opt/flexinfer/scripts/$(basename "${VLLM_SOURCE_PATCH_SCRIPT}")" /tmp/vllm-src; \
+        fi && \
+        if [ "${GPU_VENDOR}" = "amd" ]; then \
+          export PYTORCH_ROCM_ARCH="${GPU_ARCH}" HCC_AMDGPU_TARGET="${GPU_ARCH}"; \
+          export CMAKE_ARGS="${CMAKE_ARGS:+${CMAKE_ARGS} }-DGPU_TARGETS=${GPU_ARCH}"; \
+          echo "Constraining vLLM ROCm build to GPU_TARGETS=${GPU_ARCH}"; \
+        fi && \
+        pip install --no-cache-dir cmake ninja packaging "setuptools>=74" wheel jinja2 && \
+        pip install --no-cache-dir --no-build-isolation /tmp/vllm-src || exit 1; \
+      else \
+        pip install --no-cache-dir --no-deps \
+          "vllm==${VLLM_VERSION}" \
+          --extra-index-url "${VLLM_EXTRA_INDEX_URL}"; \
+      fi; \
+      if [ "${TRANSFORMERS_INSTALL_MODE}" = "source" ]; then \
+        rm -rf /tmp/transformers-src && \
+        git clone --depth 1 "${TRANSFORMERS_REPO}" /tmp/transformers-src && \
+        cd /tmp/transformers-src && \
+        git fetch --depth 1 origin "${TRANSFORMERS_REF}" && \
+        git checkout FETCH_HEAD && \
+        pip install --no-cache-dir /tmp/transformers-src; \
+      else \
+        pip install --no-cache-dir "transformers${TRANSFORMERS_CONSTRAINT}"; \
+      fi; \
+      if [ "${VLLM_EXTRA_DEPS_PROFILE}" = "minimal" ]; then \
+        pip install --no-cache-dir \
+          partial-json-parser msgspec gguf aiohttp \
+          lm-format-enforcer mistral_common \
+          depyf cloudpickle \
+          prometheus-client prometheus-fastapi-instrumentator \
+          py-cpuinfo psutil pyzmq uvloop; \
+      else \
+        pip install --no-cache-dir \
+          partial-json-parser msgspec gguf aiohttp \
+          lm-format-enforcer outlines mistral_common \
+          compressed-tensors depyf cloudpickle \
+          prometheus-client prometheus-fastapi-instrumentator \
+          py-cpuinfo psutil pyzmq uvloop; \
+      fi; \
+      if [ "${INSTALL_QWEN35_FASTPATH}" = "true" ]; then \
+        export ROCM_PATH="${ROCM_PATH:-/opt/rocm}" HIP_PATH="${HIP_PATH:-/opt/rocm}" MAX_JOBS="${MAX_JOBS:-$(nproc)}"; \
+        export HIP_ARCHITECTURES="${GPU_ARCH}" HCC_AMDGPU_TARGET="${GPU_ARCH}" PYTORCH_ROCM_ARCH="${GPU_ARCH}"; \
+        pip install --no-cache-dir flash-linear-attention; \
+        pip install --no-cache-dir --no-build-isolation "causal-conv1d>=1.5.0.post8"; \
+        python3 -c 'import importlib.util; missing=[name for name in ("fla","causal_conv1d") if importlib.util.find_spec(name) is None]; assert not missing, f"missing Qwen3.5 fast-path deps: {missing}"; print("Qwen3.5 fast-path deps installed")'; \
+      else \
+        echo "Skipping Qwen3.5 fast-path deps for this vLLM profile"; \
+      fi; \
+      python3 -c 'import pathlib, transformers, vllm; root = pathlib.Path(vllm.__file__).resolve().parent / "model_executor" / "models"; hits = sorted(p.name for p in root.glob("gemma4*.py")); print("transformers", transformers.__version__); print("vLLM", vllm.__version__, "Gemma4 model files:", hits if hits else "none")'; \
+    fi
+
+RUN if [ "${INCLUDE_TURBOQUANT}" = "true" ] && command -v pip >/dev/null 2>&1; then \
+      if [ "${TURBOQUANT_INSTALL_MODE}" = "source" ]; then \
+        rm -rf /tmp/turboquant-src && \
+        git clone --depth 1 "${TURBOQUANT_REPO}" /tmp/turboquant-src && \
+        cd /tmp/turboquant-src && \
+        git fetch --depth 1 origin "${TURBOQUANT_REF}" && \
+        git checkout FETCH_HEAD && \
+        if [ -n "${TURBOQUANT_SOURCE_PATCH_SCRIPT}" ]; then \
+          python3 "/opt/flexinfer/scripts/$(basename "${TURBOQUANT_SOURCE_PATCH_SCRIPT}")" /tmp/turboquant-src; \
+        fi && \
+        pip install --no-cache-dir --no-deps /tmp/turboquant-src; \
+      else \
+        pip install --no-cache-dir --no-deps "turboquant-vllm==${TURBOQUANT_VERSION}"; \
+      fi; \
+      python3 -c 'import importlib.metadata as md; eps = [e.name for e in md.entry_points(group="vllm.general_plugins") if e.name == "tq4_backend"]; print("turboquant-vllm", md.version("turboquant-vllm")); print("tq4_entrypoints", eps)'; \
+    fi
+
+RUN if command -v pip >/dev/null 2>&1; then \
+      pip install --no-cache-dir py-spy memray; \
+    fi
+
+RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ "${VLLM_INSTALL_MODE}" = "wheel" ] && [ -f /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py ]; then \
+      python3 /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py && \
+      echo "vLLM Qwen3.5 patches applied at build time"; \
+    fi
+
+RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ -f /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py ]; then \
+      python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py && \
+      echo "vLLM Gemma4 MoE GPTQ patch applied at build time"; \
+    fi
+
+RUN if [ "${GPU_VENDOR}" = "amd" ] && command -v python3 >/dev/null 2>&1; then \
+      python3 -c "import torch; assert torch.version.hip is not None, 'CUDA torch detected!'; print('OK: PyTorch', torch.__version__, 'HIP', torch.version.hip)"; \
+    fi
+
+COPY build/.runtime-env /etc/flexinfer/runtime.env
+
+COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
+COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
+RUN chmod +x /usr/local/bin/runtime-entrypoint.sh
+
+COPY --from=go-builder /runtime /usr/local/bin/flexinfer-runtime
+
+RUN mkdir -p /models /var/lib/flexinfer/compile-cache
+
+WORKDIR /workspace
+
+EXPOSE 8080 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/healthz || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/runtime-entrypoint.sh"]
+CMD ["flexinfer-runtime", "--listen", ":8080"]

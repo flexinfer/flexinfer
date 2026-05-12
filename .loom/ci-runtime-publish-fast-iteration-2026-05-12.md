@@ -179,3 +179,28 @@ Expected impact: patch-script and wiring mistakes should fail in the lint stage
 in seconds instead of after the runtime publish job has entered heavyweight
 BuildKit work. This does not split the monolithic runtime personas yet; that
 remains the next larger CI speed slice.
+
+## Follow-up: gfx1100 Serving Runtime Persona
+
+MR !341 landed the early lint-stage patch contracts. The next bottleneck is
+that `build/Dockerfile.runtime` is structurally monolithic: even when backend
+build args are false, the final image still references the llama.cpp and Ollama
+builder stages, so BuildKit must prepare those utility paths.
+
+This slice introduces a first split:
+
+- `build/Dockerfile.runtime-serving` builds the persistent serving runtime
+  without llama.cpp, Ollama, Steam, or quantizer package layers.
+- `build/runtime.yaml` adds `gfx1100-serving` for local dry-runs and future
+  digest promotion.
+- `.gitlab/ci/runtime-publish.yml` adds `publish_serving_rocm_gfx1100`, which
+  publishes `runtime:rocm-gfx1100-serving` for vLLM/diffusers serving changes.
+- `publish_unified_rocm_gfx1100` remains available for utility refreshes and
+  manual rebuilds, but serving-only file changes no longer auto-trigger it.
+- `scripts/check-runtime-patch-contracts.py` now asserts the serving persona
+  stays free of utility payloads and that CI routing keeps serving files out of
+  the legacy unified job.
+
+Expected impact: editing serving runtime code or vLLM patch scripts should
+exercise the smaller `rocm-gfx1100-serving` image path instead of rebuilding
+the legacy quantizer/Steam/llama.cpp/Ollama bundle.
