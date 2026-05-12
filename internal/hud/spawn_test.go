@@ -11,6 +11,67 @@ import (
 	"github.com/crb2nu/loom/internal/spawn"
 )
 
+func TestSpawnOrchestrator_SpawnIsIdempotentForActiveMillsStage(t *testing.T) {
+	ctx := context.Background()
+	ctrl := spawn.NewK8sController(nil, "", nil, slog.Default())
+	req := SpawnRequest{
+		AgentType:       "claude-code",
+		Project:         "loom-core",
+		Branch:          "feat/MILLS-CANARY-1",
+		TaskDescription: "plan",
+		Metadata: map[string]string{
+			"LOOM_MILLS_RUN_ID": "PIPE-MILLS-CANARY-1",
+			"LOOM_MILLS_STAGE":  "plan_slice",
+		},
+	}
+	existing, err := ctrl.Spawn(ctx, req)
+	if err != nil {
+		t.Fatalf("seed spawn: %v", err)
+	}
+	o := NewSpawnOrchestratorForTest(ctrl)
+
+	got, err := o.Spawn(ctx, req)
+	if err != nil {
+		t.Fatalf("spawn: %v", err)
+	}
+	if got != existing {
+		t.Fatalf("spawn id = %q, want existing %q", got, existing)
+	}
+	if got := ctrl.ActiveCount(); got != 1 {
+		t.Fatalf("active spawns = %d, want 1", got)
+	}
+}
+
+func TestSpawnOrchestrator_DoesNotReuseTerminalMillsSpawn(t *testing.T) {
+	ctx := context.Background()
+	ctrl := spawn.NewK8sController(nil, "", nil, slog.Default())
+	req := SpawnRequest{
+		AgentType:       "claude-code",
+		Project:         "loom-core",
+		Branch:          "feat/MILLS-CANARY-1",
+		TaskDescription: "plan",
+		Metadata: map[string]string{
+			"LOOM_MILLS_RUN_ID": "PIPE-MILLS-CANARY-1",
+			"LOOM_MILLS_STAGE":  "plan_slice",
+		},
+	}
+	existing, err := ctrl.Spawn(ctx, req)
+	if err != nil {
+		t.Fatalf("seed spawn: %v", err)
+	}
+	state, ok := ctrl.Get(existing)
+	if !ok {
+		t.Fatalf("seeded spawn missing")
+	}
+	state.Status = spawn.StatusCompleted
+	ctrl.UpdateState(ctx, state)
+
+	o := NewSpawnOrchestratorForTest(ctrl)
+	if got := o.existingActiveSpawnForRequest(req); got != "" {
+		t.Fatalf("terminal spawn was reused: %q (existing %q)", got, existing)
+	}
+}
+
 func TestBuildAgentCommand(t *testing.T) {
 	tests := []struct {
 		agentType       string
