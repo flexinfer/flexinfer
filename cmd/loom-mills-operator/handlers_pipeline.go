@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/crb2nu/loom/pkg/mills"
 	"github.com/crb2nu/loom/pkg/mills/pipeline"
@@ -135,8 +136,58 @@ func (o *operator) handlePipelineResume(w http.ResponseWriter, _ *http.Request) 
 	notImplemented(w, "4.x pipeline runner")
 }
 
-func (o *operator) handlePipelineEscalate(w http.ResponseWriter, _ *http.Request) {
-	notImplemented(w, "4.x pipeline runner")
+type pipelineEscalateRequest struct {
+	Reason string `json:"reason,omitempty"`
+}
+
+func (o *operator) handlePipelineEscalate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if id == "" {
+		http.Error(w, "missing id", http.StatusBadRequest)
+		return
+	}
+	ctx := r.Context()
+	run, err := o.store.Pipeline.GetRun(ctx, id)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "pipeline run not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	var req pipelineEscalateRequest
+	if r.Body != nil {
+		_ = json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req)
+	}
+	if req.Reason == "" {
+		req.Reason = "manual escalation"
+	}
+	now := time.Now().UTC()
+	run.State = store.PipelineEscalated
+	run.EndedAt = &now
+	if err := o.store.Pipeline.PutRun(ctx, run); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	item, itemErr := o.store.Backlog.Get(ctx, run.BacklogID)
+	if itemErr == nil {
+		item.State = store.BacklogEscalated
+		item.UpdatedAt = now
+		if err := o.store.Backlog.Put(ctx, item); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	} else if !errors.Is(itemErr, store.ErrNotFound) {
+		http.Error(w, itemErr.Error(), http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"run_id":     run.ID,
+		"backlog_id": run.BacklogID,
+		"state":      string(run.State),
+		"reason":     req.Reason,
+	})
 }
 
 // subrunCreateRequest is the admin POST body for the Phase 6 recursion

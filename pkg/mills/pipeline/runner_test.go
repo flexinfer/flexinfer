@@ -63,6 +63,29 @@ func (d *resumeAwareDispatcher) Dispatch(ctx context.Context, _ *store.PipelineR
 	return StageOutput{SpawnID: d.gotResume}, nil
 }
 
+type blockingDispatcher struct {
+	mu      sync.Mutex
+	calls   int
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+}
+
+func (d *blockingDispatcher) Dispatch(_ context.Context, _ *store.PipelineRun, _ *store.BacklogItem, stage Stage, _ map[string]StageOutput) (StageOutput, error) {
+	d.mu.Lock()
+	d.calls++
+	d.mu.Unlock()
+	d.once.Do(func() { close(d.started) })
+	<-d.release
+	return StageOutput{SpawnID: "spawn-blocking"}, nil
+}
+
+func (d *blockingDispatcher) callCount() int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.calls
+}
+
 // alwaysFailGate is a gate that always returns Pass=false; used to drive
 // the gate-fail retry path.
 type alwaysFailGate struct{ name string }
@@ -391,6 +414,39 @@ func TestRunner_StartGoroutineReachesTerminal(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("Start: run did not reach terminal state in time")
+}
+
+func TestRunner_StartSuppressesDuplicateActiveRun(t *testing.T) {
+	st, run, item := newRunnerEnv(t)
+	disp := &blockingDispatcher{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	r := New(st, newPassingGates(t), disp, nil)
+	r.Stages = []Stage{{ID: "plan_slice", Type: "llm", State: store.PipelinePlanning}}
+	if err := r.Start(context.Background(), run, item); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	select {
+	case <-disp.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first dispatch did not start")
+	}
+	if err := r.Start(context.Background(), run, item); err != nil {
+		t.Fatalf("duplicate start: %v", err)
+	}
+	close(disp.release)
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if got, err := st.Pipeline.GetRun(context.Background(), run.ID); err == nil && got.State == store.PipelineDone {
+			if calls := disp.callCount(); calls != 1 {
+				t.Fatalf("dispatch calls = %d, want 1", calls)
+			}
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("run did not finish after releasing dispatcher")
 }
 
 func TestRunner_StartEscalatesFatalDriveError(t *testing.T) {

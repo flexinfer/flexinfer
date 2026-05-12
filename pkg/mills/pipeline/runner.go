@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/crb2nu/loom/pkg/mills"
@@ -190,6 +191,7 @@ type Runner struct {
 	// produces exactly one pipeline_outcome eval row. Errors are logged
 	// but do not undo the state transition.
 	OnMerged func(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem) error
+	active   sync.Map
 	// CrossRepoIntegrator, when set, switches the runner into the
 	// cross-repo path for any backlog item that has an open
 	// cross_repo_run row. Unset means single-repo behaviour for every
@@ -236,7 +238,12 @@ func (r *Runner) Start(ctx context.Context, run *store.PipelineRun, item *store.
 	if item == nil || item.ID == "" {
 		return errors.New("pipeline: item.ID required")
 	}
+	if _, loaded := r.active.LoadOrStore(run.ID, struct{}{}); loaded {
+		r.logger().Warn("pipeline start skipped; run already active in this operator", "run", run.ID)
+		return nil
+	}
 	go func() {
+		defer r.active.Delete(run.ID)
 		// Drive uses a detached context; a reconciler tick that returns
 		// must not cancel an in-flight run.
 		bg := context.Background()
@@ -334,6 +341,10 @@ func (r *Runner) Drive(ctx context.Context, run *store.PipelineRun, item *store.
 		attempts[stage.ID] = attempt
 		out, err := r.runStage(ctx, run, item, stage, prior, attempt, pending)
 		if err != nil {
+			if errors.Is(err, store.ErrStageSpawnConflict) {
+				r.logger().Info("pipeline drive stopped; stage attempt already has an accepted spawn", "run", run.ID, "stage", stage.ID, "attempt", attempt)
+				return nil
+			}
 			if attempts[stage.ID] >= maxAttempts {
 				return r.escalateWithItem(ctx, run, item, fmt.Sprintf("stage %s errored after %d attempts: %v", stage.ID, attempts[stage.ID], err))
 			}

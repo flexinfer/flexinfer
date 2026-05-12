@@ -354,6 +354,8 @@ func scanPipelineRun(s scanner) (*PipelineRun, error) {
 const stageColumns = `id, pipeline_run_id, stage, attempt, started_at, ended_at,
 		outcome, spawn_id, cost_usd, artifacts_json, log_tail`
 
+var ErrStageSpawnConflict = errors.New("pipeline: stage attempt already has an accepted spawn")
+
 // PutStage inserts a stage result. The unique (pipeline_run_id, stage, attempt)
 // index makes retries idempotent: re-recording the same attempt is a no-op
 // upsert that updates ended_at/outcome.
@@ -377,6 +379,21 @@ func (d *PipelineDAO) PutStage(ctx context.Context, sr *StageResult) error {
 	}
 	if sr.Outcome != nil {
 		outcome = sql.NullString{String: string(*sr.Outcome), Valid: true}
+	}
+	if sr.SpawnID != "" {
+		var existingSpawn, existingOutcome sql.NullString
+		err := d.db.QueryRowContext(ctx, `
+			SELECT spawn_id, outcome
+			FROM stage_results
+			WHERE pipeline_run_id = ? AND stage = ? AND attempt = ?
+		`, sr.PipelineRunID, sr.Stage, sr.Attempt).Scan(&existingSpawn, &existingOutcome)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("stage conflict check %s/%s/%d: %w", sr.PipelineRunID, sr.Stage, sr.Attempt, err)
+		}
+		if err == nil && !existingOutcome.Valid && existingSpawn.Valid && existingSpawn.String != "" && existingSpawn.String != sr.SpawnID {
+			return fmt.Errorf("%w: %s/%s/%d existing=%s incoming=%s",
+				ErrStageSpawnConflict, sr.PipelineRunID, sr.Stage, sr.Attempt, existingSpawn.String, sr.SpawnID)
+		}
 	}
 	res, err := d.db.ExecContext(ctx, `
 		INSERT INTO stage_results (pipeline_run_id, stage, attempt, started_at,
