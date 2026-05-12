@@ -45,7 +45,6 @@ publish_unified_rocm_gfx1100:
       echo "Building Unified Runtime image for gfx1100..."
       attempts=3
       delay=5
-      runtime_cache_ref="${REGISTRY}/cache/runtime:rocm-gfx1100"
       for i in $(seq 1 "${attempts}"); do
         if buildctl --addr "${BUILDKIT_HOST}" build \
           --frontend dockerfile.v0 \
@@ -71,9 +70,8 @@ publish_unified_rocm_gfx1100:
           --opt build-arg:TRANSFORMERS_CONSTRAINT=">=5.0" \
           --opt build-arg:LLAMACPP_BUILD_IMAGE="rocm/dev-ubuntu-24.04:6.4.4" \
           --opt build-arg:CUDA_ARCHITECTURES="52" \
-          --import-cache "type=registry,ref=${runtime_cache_ref}" \
           --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100" \
-          --export-cache "type=registry,ref=${runtime_cache_ref},mode=max" \
+          --export-cache "type=inline" \
           --output "type=image,\"name=${REGISTRY}/runtime:rocm-gfx1100,${REGISTRY}/runtime:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"; then
           break
         fi
