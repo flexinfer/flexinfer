@@ -531,6 +531,7 @@ func (a *App) initSpawnOrchestrator(ctx context.Context) error {
 		BuildCPULimit:       cfg.SpawnBuildCPULimit,
 		BuildMemoryRequest:  cfg.SpawnBuildMemoryRequest,
 		BuildMemoryLimit:    cfg.SpawnBuildMemoryLimit,
+		BuildAvoidNodes:     cfg.SpawnBuildAvoidNodes,
 		MaxConcurrentBuilds: cfg.SpawnMaxConcurrentBuilds,
 	})
 	if err != nil {

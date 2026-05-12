@@ -19,6 +19,15 @@ spec:
       serviceAccountName: loom-hub
       nodeSelector:
         kubernetes.io/arch: amd64
+      affinity:
+        nodeAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: NotIn
+                    values:
+                      - k3s-w-7
       containers:
         - name: loomd
           # Concrete SHA tag is set via the platform/gitops Kustomization
@@ -111,6 +120,8 @@ spec:
               value: 250m
             - name: SPAWN_BUILD_CPU_LIMIT
               value: 500m
+            - name: SPAWN_BUILD_AVOID_NODES
+              value: k3s-w-7
             # Embedded weaver (LLM-orchestrated multi-tool queries)
             - name: WEAVER_ENABLED
               value: "true"

@@ -123,6 +123,7 @@ func run(ctx context.Context) error {
 		buildCPULimit:       env.String("DEVBOX_K8S_BUILD_CPU_LIMIT", ""),
 		buildMemoryRequest:  env.String("DEVBOX_K8S_BUILD_MEMORY_REQUEST", ""),
 		buildMemoryLimit:    env.String("DEVBOX_K8S_BUILD_MEMORY_LIMIT", ""),
+		buildAvoidNodes:     env.String("DEVBOX_K8S_BUILD_AVOID_NODES", ""),
 		maxConcurrentBuilds: env.Int("DEVBOX_K8S_MAX_CONCURRENT_BUILDS", 1),
 		nfsFlush:            nfsFlush,
 		gitBaseURL:          env.String("DEVBOX_K8S_GIT_BASE_URL", ""),
