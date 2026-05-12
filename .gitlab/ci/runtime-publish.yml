@@ -3,6 +3,47 @@
 
 # Unified gfx1100 runtime (vLLM + diffusers + quantizer + abliteration)
 # This is the image path used by the live gfx1100 runtime DaemonSets.
+runtime_patch_contracts:
+  stage: lint
+  image: python:3.12-alpine
+  needs: []
+  script:
+    - python3 scripts/check-runtime-patch-contracts.py
+    - python3 build/scripts/test_modules_in_block_to_quantize.py
+    - python3 build/scripts/test_validate_quantized_artifact.py
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - .gitlab/ci/runtime-publish.yml
+        - build/Dockerfile.runtime
+        - build/runtime.yaml
+        - build/scripts/patch_turboquant_quantizer_gpu_qr.py
+        - build/scripts/patch_vllm_env_override_torch29.py
+        - build/scripts/vllm_gemma4_moe_gptq_patch.py
+        - build/scripts/vllm_qwen35_patches_nodiag.py
+        - scripts/check-runtime-patch-contracts.py
+    - if: $CI_MERGE_REQUEST_ID
+      changes:
+        - .gitlab/ci/runtime-publish.yml
+        - build/Dockerfile.runtime
+        - build/runtime.yaml
+        - build/scripts/patch_turboquant_quantizer_gpu_qr.py
+        - build/scripts/patch_vllm_env_override_torch29.py
+        - build/scripts/vllm_gemma4_moe_gptq_patch.py
+        - build/scripts/vllm_qwen35_patches_nodiag.py
+        - scripts/check-runtime-patch-contracts.py
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - .gitlab/ci/runtime-publish.yml
+        - build/Dockerfile.runtime
+        - build/runtime.yaml
+        - build/scripts/patch_turboquant_quantizer_gpu_qr.py
+        - build/scripts/patch_vllm_env_override_torch29.py
+        - build/scripts/vllm_gemma4_moe_gptq_patch.py
+        - build/scripts/vllm_qwen35_patches_nodiag.py
+        - scripts/check-runtime-patch-contracts.py
+    - when: never
+
 publish_unified_rocm_gfx1100:
   stage: publish
   image: registry.harbor.lan/library/buildkit:v0.12.5
