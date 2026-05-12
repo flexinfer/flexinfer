@@ -360,6 +360,27 @@ func TestRun_FailedTerminalReturnsError(t *testing.T) {
 	if resp.CostUSD != 0.5 {
 		t.Errorf("cost should be propagated even on failure: %v", resp.CostUSD)
 	}
+	if resp.Artifacts["status"] != "failed" {
+		t.Errorf("terminal status artifact = %v, want failed", resp.Artifacts["status"])
+	}
+}
+
+func TestMapTelemetryToResponse_PreservesTerminalStatusWithoutTelemetry(t *testing.T) {
+	resp := mapTelemetryToResponse(&hudSpawnState{
+		SpawnID: "spawn-fail",
+		AgentID: "agent-1",
+		Status:  "failed",
+		Error:   "agent pod failed before telemetry",
+	})
+	if resp.SpawnID != "spawn-fail" {
+		t.Fatalf("spawn id = %q", resp.SpawnID)
+	}
+	if resp.Artifacts["status"] != "failed" {
+		t.Fatalf("status artifact = %v, want failed", resp.Artifacts["status"])
+	}
+	if resp.LogTail != "agent pod failed before telemetry" {
+		t.Fatalf("log tail = %q", resp.LogTail)
+	}
 }
 
 func TestRun_PollDeadlineExceeded(t *testing.T) {

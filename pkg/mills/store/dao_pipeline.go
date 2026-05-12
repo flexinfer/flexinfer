@@ -402,7 +402,7 @@ func (d *PipelineDAO) PutStage(ctx context.Context, sr *StageResult) error {
 		ON CONFLICT(pipeline_run_id, stage, attempt) DO UPDATE SET
 			ended_at        = excluded.ended_at,
 			outcome         = excluded.outcome,
-			spawn_id        = excluded.spawn_id,
+			spawn_id        = COALESCE(NULLIF(excluded.spawn_id, ''), stage_results.spawn_id),
 			cost_usd        = excluded.cost_usd,
 			artifacts_json  = excluded.artifacts_json,
 			log_tail        = excluded.log_tail

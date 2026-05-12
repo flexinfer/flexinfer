@@ -63,6 +63,19 @@ func (d *resumeAwareDispatcher) Dispatch(ctx context.Context, _ *store.PipelineR
 	return StageOutput{SpawnID: d.gotResume}, nil
 }
 
+type acceptedThenInterruptedDispatcher struct{}
+
+func (d *acceptedThenInterruptedDispatcher) Dispatch(ctx context.Context, _ *store.PipelineRun, _ *store.BacklogItem, stage Stage, _ map[string]StageOutput) (StageOutput, error) {
+	record := stageAcceptRecorderFromContext(ctx)
+	if record == nil {
+		return StageOutput{}, fmt.Errorf("missing accept recorder for %s", stage.ID)
+	}
+	if err := record("spawn-accepted"); err != nil {
+		return StageOutput{}, err
+	}
+	return StageOutput{}, fmt.Errorf("poll interrupted")
+}
+
 type blockingDispatcher struct {
 	mu      sync.Mutex
 	calls   int
@@ -392,6 +405,36 @@ func TestRunner_ResumesPendingStageSpawnAttempt(t *testing.T) {
 	}
 	if stages[0].Outcome == nil || *stages[0].Outcome != store.StageOutcomeSuccess {
 		t.Fatalf("stage outcome = %v, want success", stages[0].Outcome)
+	}
+}
+
+func TestRunner_KeepsAcceptedSpawnPendingOnInterruptedPoll(t *testing.T) {
+	st, run, item := newRunnerEnv(t)
+	r := New(st, nil, &acceptedThenInterruptedDispatcher{}, nil)
+	r.Stages = []Stage{{ID: "plan_slice", Type: "llm", State: store.PipelinePlanning}}
+
+	if err := r.Drive(context.Background(), run, item); err != nil {
+		t.Fatalf("drive: %v", err)
+	}
+	stages, err := st.Pipeline.ListStages(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("list stages: %v", err)
+	}
+	if len(stages) != 1 {
+		t.Fatalf("stage rows = %d, want pending accepted spawn", len(stages))
+	}
+	if stages[0].SpawnID != "spawn-accepted" {
+		t.Fatalf("spawn id = %q, want accepted spawn preserved", stages[0].SpawnID)
+	}
+	if stages[0].Outcome != nil || stages[0].EndedAt != nil {
+		t.Fatalf("stage should remain pending, got outcome=%v ended=%v", stages[0].Outcome, stages[0].EndedAt)
+	}
+	gotRun, err := st.Pipeline.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if gotRun.State != store.PipelinePlanning || gotRun.CurrentStage != "plan_slice" {
+		t.Fatalf("run head = state %s current %q, want planning/plan_slice", gotRun.State, gotRun.CurrentStage)
 	}
 }
 
