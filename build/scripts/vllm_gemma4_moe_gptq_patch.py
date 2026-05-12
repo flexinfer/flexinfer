@@ -174,6 +174,12 @@ def patch_gptq_rocm_reference_fallback(vllm_root: pathlib.Path) -> bool:
     if "GEMMA4_GPTQ_ROCM_REFERENCE_PATCH" in src:
         print("[gemma4-moe-patch] GPTQ ROCm reference fallback already patched")
         return True
+    if "FLEXINFER_QWEN35_GPTQ_ROCM_REFERENCE_PATCH" in src:
+        print(
+            "[gemma4-moe-patch] GPTQ ROCm reference fallback already patched "
+            "by Qwen3.5 runtime patch"
+        )
+        return True
 
     old_apply = (
         "    def apply(\n"
