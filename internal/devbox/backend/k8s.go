@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -49,6 +50,7 @@ type K8sBackend struct {
 	buildCPULimit      resource.Quantity
 	buildMemoryRequest resource.Quantity
 	buildMemoryLimit   resource.Quantity
+	buildAvoidNodes    []string
 	buildSlots         chan struct{}
 
 	// Tar-pipe sync configuration.
@@ -75,6 +77,7 @@ type K8sBackendConfig struct {
 	BuildCPULimit       string // Buildah pod CPU limit as Kubernetes quantity (default: "3")
 	BuildMemoryRequest  string // Buildah pod memory request as Kubernetes quantity (default: "1Gi")
 	BuildMemoryLimit    string // Buildah pod memory limit as Kubernetes quantity (default: "3Gi")
+	BuildAvoidNodes     string // comma-separated node names to avoid for Buildah pods
 	MaxConcurrentBuilds int    // max concurrent Buildah pods per backend process (default: 1)
 
 	// Tar-pipe sync: stream local files into pods via SPDY exec.
@@ -154,11 +157,27 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 		buildCPULimit:      buildCPULimit,
 		buildMemoryRequest: buildMemoryRequest,
 		buildMemoryLimit:   buildMemoryLimit,
+		buildAvoidNodes:    splitCSV(cfg.BuildAvoidNodes),
 		buildSlots:         make(chan struct{}, cfg.MaxConcurrentBuilds),
 		syncMode:           cfg.SyncMode,
 		syncExcludes:       cfg.SyncExcludes,
 		maxSyncSize:        cfg.MaxSyncSize,
 	}, nil
+}
+
+func splitCSV(value string) []string {
+	if value == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
 }
 
 func parseBuildQuantity(name, value, fallback string) (resource.Quantity, error) {

@@ -237,7 +237,7 @@ func TestAgentRuntimeBuildTag_StableForDockerfile(t *testing.T) {
 	if got == changed {
 		t.Fatalf("expected Dockerfile content to affect runtime tag, got %q", got)
 	}
-	if !strings.HasPrefix(got, "mcp/spawn-runtime-claude-code:") {
+	if !strings.HasPrefix(got, "spawn-runtime-claude-code:") {
 		t.Fatalf("unexpected runtime tag: %q", got)
 	}
 	if strings.Contains(got, " ") || strings.Contains(got, "_") {

@@ -73,6 +73,7 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var spawnBuildCPULimit string
 	var spawnBuildMemoryRequest string
 	var spawnBuildMemoryLimit string
+	var spawnBuildAvoidNodes string
 
 	cmd := &cobra.Command{
 		Use:   "hud",
@@ -184,6 +185,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 			applyEnvString("spawn-build-cpu-limit", "SPAWN_BUILD_CPU_LIMIT", &spawnBuildCPULimit)
 			applyEnvString("spawn-build-memory-request", "SPAWN_BUILD_MEMORY_REQUEST", &spawnBuildMemoryRequest)
 			applyEnvString("spawn-build-memory-limit", "SPAWN_BUILD_MEMORY_LIMIT", &spawnBuildMemoryLimit)
+			applyEnvString("spawn-build-avoid-nodes", "SPAWN_BUILD_AVOID_NODES", &spawnBuildAvoidNodes)
 			// SPAWN_ENABLED env var (boolean).
 			if !cmd.Flags().Changed("spawn-enabled") {
 				if v := os.Getenv("SPAWN_ENABLED"); v == "true" || v == "1" {
@@ -266,6 +268,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				SpawnBuildCPULimit:       spawnBuildCPULimit,
 				SpawnBuildMemoryRequest:  spawnBuildMemoryRequest,
 				SpawnBuildMemoryLimit:    spawnBuildMemoryLimit,
+				SpawnBuildAvoidNodes:     spawnBuildAvoidNodes,
 			}
 
 			if embed {
@@ -343,6 +346,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	cmd.Flags().StringVar(&spawnBuildCPULimit, "spawn-build-cpu-limit", os.Getenv("SPAWN_BUILD_CPU_LIMIT"), "Buildah CPU limit for spawn image builds [$SPAWN_BUILD_CPU_LIMIT]")
 	cmd.Flags().StringVar(&spawnBuildMemoryRequest, "spawn-build-memory-request", os.Getenv("SPAWN_BUILD_MEMORY_REQUEST"), "Buildah memory request for spawn image builds [$SPAWN_BUILD_MEMORY_REQUEST]")
 	cmd.Flags().StringVar(&spawnBuildMemoryLimit, "spawn-build-memory-limit", os.Getenv("SPAWN_BUILD_MEMORY_LIMIT"), "Buildah memory limit for spawn image builds [$SPAWN_BUILD_MEMORY_LIMIT]")
+	cmd.Flags().StringVar(&spawnBuildAvoidNodes, "spawn-build-avoid-nodes", os.Getenv("SPAWN_BUILD_AVOID_NODES"), "Comma-separated node names to avoid for spawn image builds [$SPAWN_BUILD_AVOID_NODES]")
 
 	// Service management subcommands.
 	cmd.AddCommand(

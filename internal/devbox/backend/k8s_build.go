@@ -205,6 +205,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 			NodeSelector: map[string]string{
 				"kubernetes.io/arch": "amd64",
 			},
+			Affinity:       avoidNodesAffinity(k.buildAvoidNodes),
 			InitContainers: workspace.initContainers,
 			Containers: []corev1.Container{
 				{
@@ -265,6 +266,25 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 						},
 					},
 				},
+			},
+		},
+	}
+}
+
+func avoidNodesAffinity(nodes []string) *corev1.Affinity {
+	if len(nodes) == 0 {
+		return nil
+	}
+	return &corev1.Affinity{
+		NodeAffinity: &corev1.NodeAffinity{
+			RequiredDuringSchedulingIgnoredDuringExecution: &corev1.NodeSelector{
+				NodeSelectorTerms: []corev1.NodeSelectorTerm{{
+					MatchExpressions: []corev1.NodeSelectorRequirement{{
+						Key:      "kubernetes.io/hostname",
+						Operator: corev1.NodeSelectorOpNotIn,
+						Values:   nodes,
+					}},
+				}},
 			},
 		},
 	}

@@ -99,6 +99,7 @@ type Config struct {
 	SpawnBuildCPULimit       string  // Buildah pod CPU limit for spawn images.
 	SpawnBuildMemoryRequest  string  // Buildah pod memory request for spawn images.
 	SpawnBuildMemoryLimit    string  // Buildah pod memory limit for spawn images.
+	SpawnBuildAvoidNodes     string  // Comma-separated node names to avoid for spawn image builds.
 
 	// Pipeline monitoring (GitLab CI).
 	PipelineProjects string // Comma-separated GitLab project paths to monitor.

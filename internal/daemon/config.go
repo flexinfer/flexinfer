@@ -115,6 +115,7 @@ type EmbeddedHUDConfig struct {
 	SpawnBuildCPULimit       string  `yaml:"spawn_build_cpu_limit,omitempty"`
 	SpawnBuildMemoryRequest  string  `yaml:"spawn_build_memory_request,omitempty"`
 	SpawnBuildMemoryLimit    string  `yaml:"spawn_build_memory_limit,omitempty"`
+	SpawnBuildAvoidNodes     string  `yaml:"spawn_build_avoid_nodes,omitempty"`
 	PipelineProjects         string  `yaml:"pipeline_projects,omitempty"`
 	BindAddress              string  `yaml:"bind_address,omitempty"`
 	FlexInferURL             string  `yaml:"flexinfer_url,omitempty"`

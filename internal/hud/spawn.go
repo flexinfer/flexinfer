@@ -719,7 +719,7 @@ func agentRuntimeBuildTag(agentType string, dockerfile []byte) string {
 	if safeAgent == "" {
 		safeAgent = "agent"
 	}
-	return fmt.Sprintf("mcp/spawn-runtime-%s:%x", safeAgent, sum[:8])
+	return fmt.Sprintf("spawn-runtime-%s:%x", safeAgent, sum[:8])
 }
 
 func sanitizeImageTagComponent(value string) string {

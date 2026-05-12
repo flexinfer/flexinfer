@@ -511,6 +511,24 @@ func TestBuildBuildahPodSpec_PreferExistingImage(t *testing.T) {
 	}
 }
 
+func TestBuildBuildahPodSpec_AvoidNodesAffinity(t *testing.T) {
+	k := testK8sBackend()
+	k.buildAvoidNodes = []string{"k3s-w-7", "k3s-w-8"}
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core", false)
+
+	affinity := pod.Spec.Affinity
+	if affinity == nil || affinity.NodeAffinity == nil || affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution == nil {
+		t.Fatalf("expected required node affinity, got %#v", affinity)
+	}
+	expr := affinity.NodeAffinity.RequiredDuringSchedulingIgnoredDuringExecution.NodeSelectorTerms[0].MatchExpressions[0]
+	if expr.Key != "kubernetes.io/hostname" || expr.Operator != corev1.NodeSelectorOpNotIn {
+		t.Fatalf("unexpected affinity expression: %#v", expr)
+	}
+	if got := strings.Join(expr.Values, ","); got != "k3s-w-7,k3s-w-8" {
+		t.Fatalf("affinity values = %q", got)
+	}
+}
+
 func TestImagePullPolicy(t *testing.T) {
 	tests := []struct {
 		imageTag string

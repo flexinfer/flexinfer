@@ -40,6 +40,7 @@ type managerConfig struct {
 	buildCPULimit       string
 	buildMemoryRequest  string
 	buildMemoryLimit    string
+	buildAvoidNodes     string
 	maxConcurrentBuilds int
 
 	// NFS cache flush before each exec (default true for K8s backend)
@@ -188,6 +189,7 @@ func newManager(ctx context.Context, logger *slog.Logger, cfg managerConfig) (*m
 			BuildCPULimit:       cfg.buildCPULimit,
 			BuildMemoryRequest:  cfg.buildMemoryRequest,
 			BuildMemoryLimit:    cfg.buildMemoryLimit,
+			BuildAvoidNodes:     cfg.buildAvoidNodes,
 			MaxConcurrentBuilds: cfg.maxConcurrentBuilds,
 			SyncMode:            cfg.syncMode,
 			SyncExcludes:        cfg.syncExcludes,

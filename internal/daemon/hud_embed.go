@@ -44,6 +44,7 @@ func (d *Daemon) startEmbeddedHUD(ctx context.Context, mux *http.ServeMux) error
 		SpawnBuildCPULimit:       firstNonEmpty(cfg.SpawnBuildCPULimit, os.Getenv("SPAWN_BUILD_CPU_LIMIT")),
 		SpawnBuildMemoryRequest:  firstNonEmpty(cfg.SpawnBuildMemoryRequest, os.Getenv("SPAWN_BUILD_MEMORY_REQUEST")),
 		SpawnBuildMemoryLimit:    firstNonEmpty(cfg.SpawnBuildMemoryLimit, os.Getenv("SPAWN_BUILD_MEMORY_LIMIT")),
+		SpawnBuildAvoidNodes:     firstNonEmpty(cfg.SpawnBuildAvoidNodes, os.Getenv("SPAWN_BUILD_AVOID_NODES")),
 		PipelineProjects:         firstNonEmpty(cfg.PipelineProjects, os.Getenv("HUD_PIPELINE_PROJECTS")),
 		BindAddress:              firstNonEmpty(cfg.BindAddress, os.Getenv("HUD_BIND_ADDRESS")),
 		FlexInferURL:             firstNonEmpty(cfg.FlexInferURL, os.Getenv("FLEXINFER_URL")),
