@@ -108,6 +108,37 @@
     await spawnStore.stop(spawnId);
   }
 
+  function taskSummary(text: string | undefined | null): { firstLine: string; hasMore: boolean } {
+    const t = (text ?? '').trim();
+    if (!t) return { firstLine: '(no task)', hasMore: false };
+    const first = t.split(/\r?\n/)[0]?.trim() ?? '';
+    return { firstLine: first || t, hasMore: t.length > first.length };
+  }
+
+  // classifySpawnError lifts a one-line headline + a coarse "kind" out
+  // of the noisy multi-line errors that spawn pods produce (buildah
+  // dumps, quota strings, HUD spawn failures, etc.). The full text is
+  // still rendered inside the <details> body — this is purely to give
+  // the card a meaningful header instead of a wall of red text.
+  function classifySpawnError(raw: string): { kind: string; headline: string } {
+    const trimmed = (raw ?? '').trim();
+    if (!trimmed) return { kind: 'unknown', headline: '(empty error)' };
+    const lc = trimmed.toLowerCase();
+    let kind = 'error';
+    if (lc.includes('exceeded quota') || lc.includes('forbidden: exceeded')) kind = 'quota';
+    else if (lc.includes('image build failed') || lc.includes('buildah') || lc.includes('build pod failed')) kind = 'build';
+    else if (lc.includes('connection refused') || lc.includes('dial tcp')) kind = 'network';
+    else if (lc.includes('max concurrent') || lc.includes('max retries')) kind = 'throttle';
+    else if (lc.includes('not found') || lc.includes('errimagepull')) kind = 'missing';
+    else if (lc.includes('budget') || lc.includes('cost cap')) kind = 'budget';
+    else if (lc.includes('timeout') || lc.includes('timed out')) kind = 'timeout';
+    else if (lc.includes('syntax error') || lc.includes('parse error')) kind = 'syntax';
+    // Headline: first non-empty line, capped so the card stays compact.
+    let headline = trimmed.split(/\r?\n/).find((line) => line.trim().length > 0)?.trim() ?? trimmed;
+    if (headline.length > 160) headline = headline.slice(0, 157) + '…';
+    return { kind, headline };
+  }
+
   function statusColor(status: string): string {
     switch (status) {
       case 'running': return 'var(--color-success, #22c55e)';
@@ -469,7 +500,14 @@
               </div>
             {/if}
 
-            <div class="spawn-task">{spawn.request.task_description}</div>
+            {#if spawn.request.task_description}
+              {@const task = taskSummary(spawn.request.task_description)}
+              <div class="spawn-task" class:has-more={task.hasMore} title={task.hasMore ? spawn.request.task_description : undefined}>
+                {task.firstLine}
+              </div>
+            {:else}
+              <div class="spawn-task spawn-task-empty">(no task)</div>
+            {/if}
             {#if !hasBudget(spawn)}
               {@const rt = rowTelemetry(spawn)}
               {#if rt && (rt.total_cost_usd > 0 || rt.turn_count > 0)}
@@ -489,10 +527,17 @@
             <div class="spawn-meta">
               <span class="spawn-agent-type">{spawn.request.agent_type}</span>
               <span class="spawn-agent-id">{spawn.agent_id}</span>
-              {#if spawn.error}
-                <span class="spawn-error">{spawn.error}</span>
-              {/if}
             </div>
+            {#if spawn.error}
+              {@const errInfo = classifySpawnError(spawn.error)}
+              <details class="spawn-error-block">
+                <summary>
+                  <span class="spawn-error-class kind-{errInfo.kind}">{errInfo.kind}</span>
+                  <span class="spawn-error-headline">{errInfo.headline}</span>
+                </summary>
+                <pre class="spawn-error-raw">{spawn.error}</pre>
+              </details>
+            {/if}
           </div>
         {/each}
       </div>
@@ -1138,6 +1183,72 @@
 
   .spawn-error {
     color: var(--error);
+  }
+
+  /* spawn-error-block replaces the bare red wall-of-text with a
+     classified one-line summary that expands on demand. */
+  .spawn-error-block {
+    margin-top: var(--space-2);
+    border: 1px solid color-mix(in srgb, var(--error) 30%, var(--border-subtle));
+    border-radius: var(--radius-sm);
+    background: color-mix(in srgb, var(--error) 6%, transparent);
+    overflow: hidden;
+  }
+  .spawn-error-block > summary {
+    list-style: none;
+    cursor: pointer;
+    padding: 4px var(--space-2);
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+    font-size: var(--text-xs);
+    color: var(--fg-secondary);
+  }
+  .spawn-error-block > summary::-webkit-details-marker { display: none; }
+  .spawn-error-block[open] > summary {
+    border-bottom: 1px solid color-mix(in srgb, var(--error) 24%, var(--border-subtle));
+  }
+  .spawn-error-class {
+    padding: 1px 6px;
+    border-radius: var(--radius-sm);
+    border: 1px solid color-mix(in srgb, var(--error) 38%, var(--border));
+    background: color-mix(in srgb, var(--error) 14%, transparent);
+    color: var(--error);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    text-transform: uppercase;
+    letter-spacing: var(--tracking-wide);
+    flex-shrink: 0;
+  }
+  .spawn-error-class.kind-quota { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 38%, var(--border)); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+  .spawn-error-class.kind-throttle { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 38%, var(--border)); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+  .spawn-error-class.kind-budget { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 38%, var(--border)); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+  .spawn-error-class.kind-timeout { color: var(--warning); border-color: color-mix(in srgb, var(--warning) 38%, var(--border)); background: color-mix(in srgb, var(--warning) 14%, transparent); }
+  .spawn-error-class.kind-missing { color: var(--fg-dim); border-color: var(--border); background: transparent; }
+  .spawn-error-headline {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+    color: var(--fg-primary);
+    font-family: var(--font-mono);
+  }
+  .spawn-error-raw {
+    margin: 0;
+    padding: var(--space-2);
+    max-height: 240px;
+    overflow: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    color: var(--fg-secondary);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+
+  .spawn-task.has-more::after {
+    content: ' …';
+    color: var(--fg-muted);
   }
 
   .spawn-agent-type {

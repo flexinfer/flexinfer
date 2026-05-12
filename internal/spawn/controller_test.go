@@ -458,3 +458,95 @@ func TestNewSpawnID(t *testing.T) {
 		t.Errorf("spawn ID too short: %q", id1)
 	}
 }
+
+// TestReconcileFiresTerminalHookOnNewlyFailedSpawn verifies the cleanup
+// hook is invoked when Reconcile transitions a spawn into a terminal
+// state from observing the pod's Failed phase. The hook receives the
+// state by value so concurrent reconciles do not race the caller.
+func TestReconcileFiresTerminalHookOnNewlyFailedSpawn(t *testing.T) {
+	pod := makePod("spawn-pod-fail", "spawn-fail", "agent-fail", corev1.PodFailed)
+	client := fake.NewSimpleClientset([]runtime.Object{pod}...)
+	ctrl := NewK8sController(client, "devbox", nil, nil)
+
+	ctrl.mu.Lock()
+	ctrl.spawns["spawn-fail"] = &State{
+		SpawnID: "spawn-fail",
+		AgentID: "agent-fail",
+		Status:  StatusRunning,
+	}
+	ctrl.mu.Unlock()
+
+	var hookCalls []State
+	ctrl.SetTerminalHook(func(_ context.Context, st State) {
+		hookCalls = append(hookCalls, st)
+	})
+
+	if err := ctrl.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	if len(hookCalls) != 1 {
+		t.Fatalf("hook fired %d times, want 1", len(hookCalls))
+	}
+	if hookCalls[0].SpawnID != "spawn-fail" || hookCalls[0].AgentID != "agent-fail" {
+		t.Fatalf("hook state mismatch: %+v", hookCalls[0])
+	}
+	state, _ := ctrl.Get("spawn-fail")
+	if state.CleanupAt == nil {
+		t.Fatal("CleanupAt should be stamped after hook fires")
+	}
+}
+
+// TestReconcileTerminalHookIsIdempotent ensures CleanupAt gates the
+// hook so a long-lived terminal state does not re-trigger cleanup on
+// every reconcile tick — the symptom that filled namespace quota
+// with stale spawn pods before the reaper landed.
+func TestReconcileTerminalHookIsIdempotent(t *testing.T) {
+	// Pod is still alive in the cluster even though the spawn's
+	// state went terminal — exactly the orphan path that motivated
+	// the reaper.
+	pod := makePod("spawn-pod-orphan", "spawn-orphan", "agent-orphan", corev1.PodRunning)
+	client := fake.NewSimpleClientset([]runtime.Object{pod}...)
+	ctrl := NewK8sController(client, "devbox", nil, nil)
+
+	ctrl.mu.Lock()
+	ctrl.spawns["spawn-orphan"] = &State{
+		SpawnID: "spawn-orphan",
+		AgentID: "agent-orphan",
+		Status:  StatusFailed,
+		PodName: "spawn-pod-orphan",
+	}
+	ctrl.mu.Unlock()
+
+	var fires int
+	ctrl.SetTerminalHook(func(_ context.Context, _ State) { fires++ })
+
+	for range 3 {
+		if err := ctrl.Reconcile(context.Background()); err != nil {
+			t.Fatalf("Reconcile: %v", err)
+		}
+	}
+
+	if fires != 1 {
+		t.Fatalf("hook fired %d times across 3 reconciles, want 1 (CleanupAt should gate)", fires)
+	}
+}
+
+// TestReconcileTerminalHookFiresForDiscoveredOrphan covers the
+// operator-restart recovery path: a pod observed for the first time
+// already in PodFailed must trigger cleanup so it doesn't linger.
+func TestReconcileTerminalHookFiresForDiscoveredOrphan(t *testing.T) {
+	pod := makePod("spawn-pod-found", "spawn-found", "agent-found", corev1.PodFailed)
+	client := fake.NewSimpleClientset([]runtime.Object{pod}...)
+	ctrl := NewK8sController(client, "devbox", nil, nil)
+
+	var fires int
+	ctrl.SetTerminalHook(func(_ context.Context, _ State) { fires++ })
+
+	if err := ctrl.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+	if fires != 1 {
+		t.Fatalf("hook fired %d times for newly-discovered failed pod, want 1", fires)
+	}
+}

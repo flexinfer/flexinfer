@@ -216,6 +216,14 @@ func NewSpawnOrchestrator(
 		workspaceRoot:  wsRoot,
 		projects:       cfg.Projects,
 	}
+	// Wire the controller's terminal-cleanup hook so Reconcile reaps the
+	// pod + presence + agent session for any spawn it observes in a
+	// terminal state without CleanupAt set. This covers:
+	//   - pods that exit naturally between failSpawn/completeSpawn ticks
+	//   - pods abandoned across an operator restart
+	//   - terminal-state spawns whose pod is still running (orphans that
+	//     drain namespace quota — the failure mode that triggered this fix).
+	ctrl.SetTerminalHook(o.reapTerminalSpawn)
 	o.resumePreRuntimeSpawns()
 	return o
 }
@@ -1050,6 +1058,47 @@ func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState
 			Summarize: &summarize,
 		})
 	}()
+}
+
+// reapTerminalSpawn is the K8sController.TerminalHook invocation: it
+// releases the cluster + agent-context resources for a terminal spawn
+// so neither stale pods nor stale presence rows accumulate.
+//
+// The hook is intentionally tolerant of partial failure — backend.Stop
+// returns nil for an already-gone pod; PresenceDeregister returns nil
+// for an already-deregistered agent. Whatever can be cleaned up is.
+// Errors are logged but do not block further cleanup steps so a flake
+// on one resource cannot starve the others.
+func (o *SpawnOrchestrator) reapTerminalSpawn(ctx context.Context, state spawn.State) {
+	o.logger.Info("reaping terminal spawn",
+		"spawn_id", state.SpawnID,
+		"agent_id", state.AgentID,
+		"pod", state.PodName,
+		"status", state.Status,
+	)
+
+	if state.PodName != "" && o.backend != nil {
+		if err := o.backend.Stop(ctx, state.PodName); err != nil {
+			o.logger.Warn("reap: failed to stop pod",
+				"spawn_id", state.SpawnID, "pod", state.PodName, "error", err)
+		}
+	}
+
+	if state.AgentID != "" && o.agentBridge != nil {
+		if err := o.agentBridge.PresenceDeregister(state.AgentID); err != nil {
+			o.logger.Warn("reap: failed to deregister presence",
+				"spawn_id", state.SpawnID, "agent_id", state.AgentID, "error", err)
+		}
+		// EndSession is idempotent and safe to call even when the
+		// session already ended in failSpawn/completeSpawn. It guards
+		// against the operator restart path where the prior process
+		// died before reaching its EndSession call.
+		summarize := false
+		o.agentBridge.EndSession(bridge.SessionEndParams{
+			AgentID:   state.AgentID,
+			Summarize: &summarize,
+		})
+	}
 }
 
 // recordSpawnTelemetryMetrics records OTel metrics from the telemetry snapshot

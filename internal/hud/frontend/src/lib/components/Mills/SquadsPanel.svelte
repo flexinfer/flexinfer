@@ -88,27 +88,43 @@
           {/if}
         </header>
 
-        <div class="squad-metrics">
-          <div class="metric">
-            <span class="metric-label">success rate</span>
-            <span class="metric-value {successClass(stats.success_rate, stats.total)}">
-              {fmtPct(stats.success_rate)}
+        {#if stats.total === 0 && stats.in_flight === 0}
+          <div class="squad-empty" role="note">
+            <span class="empty-kicker">Not yet routed</span>
+            <span class="empty-copy">
+              The squad router has not picked this squad for any backlog item yet.
+              {#if entry.squad.Paths && entry.squad.Paths.length > 0}
+                Routing fires when an item's slices touch
+                <code>{entry.squad.Paths[0]}</code>{entry.squad.Paths.length > 1 ? ' (+others)' : ''}
+                with confidence ≥ <code>policy.squads.routing.min_confidence</code>.
+              {:else}
+                Add path globs in <code>platform/gitops/k3s/mills/squads/{entry.squad.Name}.yaml</code> so the router can match items.
+              {/if}
             </span>
-            <span class="metric-sub">window of {stats.window}</span>
           </div>
-          <div class="metric">
-            <span class="metric-label">total</span>
-            <span class="metric-value">{stats.total}</span>
-            <span class="metric-sub">
-              {stats.merged_clean} clean / {stats.failed} failed
-            </span>
+        {:else}
+          <div class="squad-metrics">
+            <div class="metric">
+              <span class="metric-label">success rate</span>
+              <span class="metric-value {successClass(stats.success_rate, stats.total)}">
+                {fmtPct(stats.success_rate)}
+              </span>
+              <span class="metric-sub">window of {stats.window}</span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">total</span>
+              <span class="metric-value">{stats.total}</span>
+              <span class="metric-sub">
+                {stats.merged_clean} clean / {stats.failed} failed
+              </span>
+            </div>
+            <div class="metric">
+              <span class="metric-label">in flight</span>
+              <span class="metric-value">{stats.in_flight}</span>
+              <span class="metric-sub">{fmtCost(stats.total_cost_usd)} window cost</span>
+            </div>
           </div>
-          <div class="metric">
-            <span class="metric-label">in flight</span>
-            <span class="metric-value">{stats.in_flight}</span>
-            <span class="metric-sub">{fmtCost(stats.total_cost_usd)} window cost</span>
-          </div>
-        </div>
+        {/if}
 
         {#if expanded === entry.squad.Name}
           <div class="squad-detail">
@@ -203,6 +219,33 @@
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 0.5rem;
+  }
+  .squad-empty {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.5rem 0.6rem;
+    border: 1px dashed var(--border-subtle, #233);
+    border-radius: 4px;
+    background: color-mix(in srgb, var(--bg-default, #1a1f2a) 60%, transparent);
+  }
+  .squad-empty .empty-kicker {
+    font-size: 0.7rem;
+    color: var(--text-muted, #889);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .squad-empty .empty-copy {
+    color: var(--fg-secondary, #9ab);
+    font-size: 0.8rem;
+    line-height: 1.4;
+  }
+  .squad-empty code {
+    padding: 0 0.25rem;
+    border-radius: 3px;
+    background: color-mix(in srgb, var(--bg-subtle, #233) 80%, transparent);
+    color: var(--fg-secondary, #9ab);
+    font-size: 0.72rem;
   }
   .metric {
     display: flex;
