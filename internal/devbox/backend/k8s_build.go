@@ -163,7 +163,7 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 			"echo Using existing image "+destination+";",
 			"exit 0;",
 			"fi;",
-			"cat \"$manifest_err\" >&2;",
+			"cat \"$manifest_err\" >&2",
 			"&&",
 		)
 	}
