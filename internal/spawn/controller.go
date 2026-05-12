@@ -23,6 +23,14 @@ type Controller interface {
 	Reconcile(ctx context.Context) error
 }
 
+// TerminalHook is fired by Reconcile exactly once per spawn that has
+// reached a terminal Status. Implementations should release K8s, HUD,
+// and agent-context resources for the spawn (delete pod, deregister
+// presence, end session). Errors are logged by the controller but do not
+// block the rest of the reconcile pass; the hook will be retried on the
+// next tick if CleanupAt remains unset.
+type TerminalHook func(ctx context.Context, state State)
+
 // K8sController implements Controller using Kubernetes pods as the source of
 // truth. On each Reconcile cycle it lists pods by the managed-by label and
 // updates the in-memory state map accordingly, eliminating the "stale after
@@ -35,6 +43,12 @@ type K8sController struct {
 
 	mu     sync.RWMutex
 	spawns map[string]*State
+
+	// terminalHook, when non-nil, is invoked by Reconcile for every
+	// spawn whose Status is terminal and whose CleanupAt has not yet
+	// been stamped. The hook runs outside the controller's lock; it
+	// must be safe to invoke concurrently with other controller calls.
+	terminalHook TerminalHook
 }
 
 // NewK8sController creates a new K8s-native spawn controller.
@@ -60,6 +74,14 @@ func (c *K8sController) SetK8sClient(client kubernetes.Interface, namespace stri
 	defer c.mu.Unlock()
 	c.client = client
 	c.namespace = namespace
+}
+
+// SetTerminalHook installs the cleanup hook fired by Reconcile when a
+// spawn reaches a terminal Status. Passing nil clears the hook.
+func (c *K8sController) SetTerminalHook(h TerminalHook) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.terminalHook = h
 }
 
 // Spawn records a new spawn in the in-memory map and persistent store. The
@@ -235,7 +257,11 @@ func (c *K8sController) Reconcile(ctx context.Context) error {
 	}
 
 	c.mu.Lock()
-	defer c.mu.Unlock()
+
+	// Collect terminal spawns needing cleanup; fire the hook after we
+	// release the lock so handlers can call back into the controller
+	// without deadlocking.
+	var terminal []State
 
 	// Update existing entries from pod status.
 	for spawnID, state := range c.spawns {
@@ -254,6 +280,12 @@ func (c *K8sController) Reconcile(ctx context.Context) error {
 				state.EndedAt = &now
 				c.persistLocked(ctx, state)
 			}
+			// Pod is gone — if cleanup never ran (e.g., the spawn went
+			// terminal across a controller restart), queue the hook so we
+			// still deregister presence and end the session.
+			if IsTerminal(state.Status) && state.CleanupAt == nil {
+				terminal = append(terminal, *state)
+			}
 			continue
 		}
 		// Update state from pod phase.
@@ -266,6 +298,15 @@ func (c *K8sController) Reconcile(ctx context.Context) error {
 				state.EndedAt = &now
 			}
 			c.persistLocked(ctx, state)
+		}
+		// Spawn-is-terminal-but-pod-is-still-alive — the orphan path that
+		// drains namespace quota. Queue cleanup so the hook can delete
+		// the pod and deregister presence.
+		if IsTerminal(state.Status) && state.CleanupAt == nil {
+			if state.PodName == "" {
+				state.PodName = pod.Name
+			}
+			terminal = append(terminal, *state)
 		}
 	}
 
@@ -290,6 +331,31 @@ func (c *K8sController) Reconcile(ctx context.Context) error {
 		c.persistLocked(ctx, state)
 		c.logger.Info("discovered untracked spawn pod",
 			"spawn_id", spawnID, "pod", pod.Name, "status", state.Status)
+		// Discovered-already-terminal pod (e.g., previous operator died
+		// mid-run): fire cleanup so the orphan does not linger.
+		if IsTerminal(state.Status) {
+			terminal = append(terminal, *state)
+		}
+	}
+
+	hook := c.terminalHook
+	c.mu.Unlock()
+
+	// Fire cleanup hooks outside the lock so handlers can call back
+	// into Get/List/ActiveCount without deadlocking. Each hook invocation
+	// stamps CleanupAt so subsequent ticks skip the spawn.
+	if hook != nil {
+		for i := range terminal {
+			st := terminal[i]
+			hook(ctx, st)
+			c.mu.Lock()
+			if live, ok := c.spawns[st.SpawnID]; ok && live.CleanupAt == nil {
+				now := time.Now()
+				live.CleanupAt = &now
+				c.persistLocked(ctx, live)
+			}
+			c.mu.Unlock()
+		}
 	}
 
 	return nil

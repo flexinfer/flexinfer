@@ -23,6 +23,11 @@ export interface PipelineRun {
   BacklogID: string;
   Template: string;
   State: string;
+  // CurrentStage is the stage id the runner is currently driving
+  // (plan_slice, research, implement, tests, pr_self_review, mr, ci_watch,
+  // merge, cleanup). Surfaces what a run is "doing right now" without
+  // requiring an extra detail fetch.
+  CurrentStage?: string;
   Attempts: number;
   StartedAt?: string;
   EndedAt?: string;

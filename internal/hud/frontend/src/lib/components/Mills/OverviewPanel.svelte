@@ -66,6 +66,42 @@
     }
     return counts;
   }
+
+  // capModeLabel returns the short label rendered as the right-hand
+  // pill on each capability row. "real" mode at green status is the
+  // expected resting state — we suppress the pill in that case so the
+  // row reads as just "name · context" instead of "name … REAL". Stub,
+  // disabled, and degraded modes still surface so the operator can
+  // distinguish a misconfigured capability from a healthy one.
+  function capModeLabel(cap: MillsCapabilityRow): string | null {
+    const mode = (cap.mode ?? '').toLowerCase();
+    const status = (cap.status ?? '').toLowerCase();
+    if (!mode) return status === 'green' ? null : (status || 'unknown');
+    if (mode === 'real') return status === 'green' ? null : 'degraded';
+    if (mode === 'stub' || mode === 'fake' || mode === 'mock') return 'stub';
+    if (mode === 'disabled' || mode === 'off') return 'disabled';
+    return mode;
+  }
+
+  function capModeIntent(cap: MillsCapabilityRow): 'neutral' | 'warning' | 'error' | 'muted' {
+    const label = capModeLabel(cap);
+    if (!label) return 'neutral';
+    if (label === 'stub' || label === 'degraded' || label === 'yellow') return 'warning';
+    if (label === 'red' || label === 'unknown') return 'error';
+    if (label === 'disabled' || label === 'off') return 'muted';
+    return 'neutral';
+  }
+
+  // capContext is the small secondary line under the capability name
+  // (e.g., the config_key or the source path) so each row identifies
+  // what it is bound to. Falls back to message when nothing else is
+  // available so the cell never collapses to just an id.
+  function capContext(cap: MillsCapabilityRow): string {
+    if (cap.config_key) return cap.config_key;
+    if (cap.source) return cap.source;
+    if (cap.message) return cap.message;
+    return '';
+  }
 </script>
 
 <PanelShell
@@ -179,10 +215,19 @@
       </div>
       <div class="capability-grid">
         {#each requiredCaps as cap (cap.id)}
+          {@const modeLabel = capModeLabel(cap)}
+          {@const context = capContext(cap)}
           <div class="capability-row" title={cap.message ?? cap.source ?? cap.id}>
             <span class="cap-dot status-{cap.status ?? 'unknown'}"></span>
-            <span class="cap-name">{cap.id}</span>
-            <span class="cap-mode">{cap.mode ?? cap.status ?? 'unknown'}</span>
+            <div class="cap-text">
+              <span class="cap-name">{cap.id}</span>
+              {#if context}
+                <span class="cap-context">{context}</span>
+              {/if}
+            </div>
+            {#if modeLabel}
+              <span class="cap-mode intent-{capModeIntent(cap)}">{modeLabel}</span>
+            {/if}
           </div>
         {/each}
       </div>
@@ -419,6 +464,13 @@
   .cap-dot.status-yellow { background: var(--warning); box-shadow: 0 0 8px var(--glow-warning); }
   .cap-dot.status-red { background: var(--error); box-shadow: 0 0 8px var(--glow-error); }
 
+  .cap-text {
+    display: flex;
+    flex-direction: column;
+    gap: 1px;
+    min-width: 0;
+  }
+
   .cap-name {
     min-width: 0;
     overflow: hidden;
@@ -429,10 +481,49 @@
     font-size: var(--text-xs);
   }
 
-  .cap-mode {
+  .cap-context {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--fg-muted);
+    font-family: var(--font-mono);
     font-size: var(--text-2xs);
+    letter-spacing: 0;
+  }
+
+  .cap-mode {
+    padding: 1px 6px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--fg-muted);
+    background: color-mix(in srgb, var(--bg-tertiary) 65%, transparent);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xs);
+    letter-spacing: var(--tracking-wide);
     text-transform: uppercase;
+    white-space: nowrap;
+  }
+
+  .cap-mode.intent-warning {
+    color: var(--warning);
+    border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
+    background: var(--warning-dim, color-mix(in srgb, var(--warning) 12%, transparent));
+  }
+
+  .cap-mode.intent-error {
+    color: var(--error);
+    border-color: color-mix(in srgb, var(--error) 40%, var(--border));
+    background: var(--error-dim, color-mix(in srgb, var(--error) 12%, transparent));
+  }
+
+  .cap-mode.intent-muted {
+    color: var(--fg-dim);
+    border-color: var(--border);
+    background: transparent;
+    text-decoration: line-through;
+    text-decoration-thickness: 1px;
+    text-underline-offset: 2px;
   }
 
   .optional-row {

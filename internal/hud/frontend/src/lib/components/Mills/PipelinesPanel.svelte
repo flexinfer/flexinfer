@@ -125,7 +125,7 @@
         <th>Depth</th>
         <th>Backlog</th>
         <th>State</th>
-        <th>Template</th>
+        <th>Stage</th>
         <th>Attempts</th>
         <th>Started</th>
         <th>Ended</th>
@@ -146,7 +146,13 @@
           </td>
           <td class="mono">{r.BacklogID}</td>
           <td><span class="state state-{r.State}">{r.State}</span></td>
-          <td>{r.Template}</td>
+          <td>
+            {#if r.CurrentStage}
+              <span class="stage-chip" title="active stage">{r.CurrentStage}</span>
+            {:else}
+              <span class="stage-chip stage-empty" title="not yet driving a stage">—</span>
+            {/if}
+          </td>
           <td>{r.Attempts}</td>
           <td>{fmtTime(r.StartedAt)}</td>
           <td>{fmtTime(r.EndedAt)}</td>
@@ -222,4 +228,21 @@
     font-family: ui-monospace, monospace;
   }
   .depth-pill.depth-root { background: var(--bg-subtle, #233); color: var(--text-muted, #889); }
+
+  .stage-chip {
+    padding: 0.05rem 0.4rem;
+    border-radius: 3px;
+    border: 1px solid color-mix(in srgb, var(--accent, #58a) 32%, var(--border-subtle, #233));
+    background: color-mix(in srgb, var(--accent, #58a) 10%, transparent);
+    color: var(--fg-secondary, #9ab);
+    font-family: ui-monospace, monospace;
+    font-size: 0.72rem;
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+  .stage-chip.stage-empty {
+    border-color: var(--border-subtle, #233);
+    background: transparent;
+    color: var(--text-muted, #889);
+  }
 </style>

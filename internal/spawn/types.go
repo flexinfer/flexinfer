@@ -161,6 +161,11 @@ type State struct {
 	// AuthMode records which cluster credential path the pod was
 	// configured to use. Populated by the orchestrator before pod start.
 	AuthMode AuthMode `json:"auth_mode,omitempty"`
+	// CleanupAt records when the terminal hook ran for this spawn. Used
+	// by the reconciler to fire the hook at most once per spawn — without
+	// this, every Reconcile tick after termination would re-attempt
+	// presence/pod cleanup.
+	CleanupAt *time.Time `json:"cleanup_at,omitempty"`
 }
 
 // IsTerminal returns true if the status represents a terminal spawn state.
