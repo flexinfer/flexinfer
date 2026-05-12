@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 
+	mcp "gitlab.flexinfer.ai/libs/mcp-go"
+
 	"github.com/crb2nu/loom/pkg/mills/pipeline"
 )
 
@@ -70,8 +72,8 @@ func (c *DevboxClient) QualityGate(ctx context.Context, req pipeline.DevboxReque
 	if err != nil && body == "" {
 		return pipeline.DevboxResponse{}, fmt.Errorf("devbox quality_gate: %w", err)
 	}
-	var parsed devboxQualityGateResult
-	if perr := json.Unmarshal([]byte(body), &parsed); perr != nil {
+	parsed, perr := parseDevboxQualityGateResult(body)
+	if perr != nil {
 		if err != nil {
 			return pipeline.DevboxResponse{}, fmt.Errorf("devbox quality_gate: %w; raw=%q", err, body)
 		}
@@ -94,6 +96,21 @@ func (c *DevboxClient) QualityGate(ctx context.Context, req pipeline.DevboxReque
 		Checks:   checks,
 		Language: parsed.Language,
 	}, nil
+}
+
+func parseDevboxQualityGateResult(body string) (devboxQualityGateResult, error) {
+	var parsed devboxQualityGateResult
+	if err := json.Unmarshal([]byte(body), &parsed); err == nil {
+		return parsed, nil
+	}
+	jsonBody, err := mcp.DecodeTOONToJSON(body)
+	if err != nil {
+		return devboxQualityGateResult{}, err
+	}
+	if err := json.Unmarshal(jsonBody, &parsed); err != nil {
+		return devboxQualityGateResult{}, err
+	}
+	return parsed, nil
 }
 
 // buildDevboxLogTail collapses the per-check output into a single

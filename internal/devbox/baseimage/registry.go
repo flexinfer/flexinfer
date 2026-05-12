@@ -27,12 +27,30 @@ var registry = []entry{
 // Returns empty string if no pre-built base exists.
 func Lookup(language, version string) string {
 	language = strings.ToLower(language)
-	for _, e := range registry {
-		if e.Language == language && e.Version == version {
-			return e.Image
+	for _, candidate := range versionCandidates(version) {
+		for _, e := range registry {
+			if e.Language == language && e.Version == candidate {
+				return e.Image
+			}
 		}
 	}
 	return ""
+}
+
+func versionCandidates(version string) []string {
+	version = strings.TrimSpace(version)
+	if version == "" {
+		return nil
+	}
+	candidates := []string{version}
+	parts := strings.Split(version, ".")
+	if len(parts) >= 2 {
+		candidates = append(candidates, parts[0]+"."+parts[1])
+	}
+	if len(parts) >= 1 {
+		candidates = append(candidates, parts[0])
+	}
+	return candidates
 }
 
 // Languages returns all registered language+version pairs.

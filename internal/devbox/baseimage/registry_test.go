@@ -9,9 +9,12 @@ func TestLookup_KnownVersions(t *testing.T) {
 	}{
 		{"go", "1.24", "registry.harbor.lan/mcp/devbox-base/go:1.24"},
 		{"go", "1.25", "registry.harbor.lan/mcp/devbox-base/go:1.25"},
+		{"go", "1.25.10", "registry.harbor.lan/mcp/devbox-base/go:1.25"},
 		{"python", "3.12", "registry.harbor.lan/mcp/devbox-base/python:3.12"},
+		{"python", "3.12.13", "registry.harbor.lan/mcp/devbox-base/python:3.12"},
 		{"python", "3.13", "registry.harbor.lan/mcp/devbox-base/python:3.13"},
 		{"node", "20", "registry.harbor.lan/mcp/devbox-base/node:20"},
+		{"node", "20.11.1", "registry.harbor.lan/mcp/devbox-base/node:20"},
 		{"node", "22", "registry.harbor.lan/mcp/devbox-base/node:22"},
 	}
 	for _, tt := range tests {
