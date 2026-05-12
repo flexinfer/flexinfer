@@ -59,8 +59,8 @@ func TestGenerate_GoProject_DefaultVersion(t *testing.T) {
 
 	dockerfile := string(out)
 
-	if !strings.Contains(dockerfile, "golang:1.25.10") {
-		t.Errorf("Go Dockerfile should default to version 1.25.10, got:\n%s", dockerfile)
+	if !strings.Contains(dockerfile, "registry.harbor.lan/mcp/devbox-base/go:1.25") {
+		t.Errorf("Go Dockerfile should default to the prebuilt Go 1.25 base, got:\n%s", dockerfile)
 	}
 }
 
@@ -81,8 +81,8 @@ func TestGenerate_GoProject_BumpsOldGo125Patch(t *testing.T) {
 
 	dockerfile := string(out)
 
-	if !strings.Contains(dockerfile, "golang:1.25.10") {
-		t.Errorf("Go Dockerfile should bump old 1.25 patches to 1.25.10, got:\n%s", dockerfile)
+	if !strings.Contains(dockerfile, "registry.harbor.lan/mcp/devbox-base/go:1.25") {
+		t.Errorf("Go Dockerfile should use the prebuilt Go 1.25 base for old 1.25 patches, got:\n%s", dockerfile)
 	}
 }
 
@@ -421,8 +421,8 @@ func TestGenerate_MultiLanguage_BumpsOldGo125Patch(t *testing.T) {
 
 	dockerfile := string(out)
 
-	if !strings.Contains(dockerfile, "golang:1.25.10") {
-		t.Errorf("Multi-lang Dockerfile should bump old Go 1.25 patches to 1.25.10, got:\n%s", dockerfile)
+	if !strings.Contains(dockerfile, "registry.harbor.lan/mcp/devbox-base/go:1.25") {
+		t.Errorf("Multi-lang Dockerfile should use the prebuilt Go 1.25 base for old 1.25 patches, got:\n%s", dockerfile)
 	}
 }
 

@@ -140,6 +140,37 @@ func TestDevboxClient_FailedGateBuildsLogTail(t *testing.T) {
 	}
 }
 
+func TestDevboxClient_DecodesTOONGateResult(t *testing.T) {
+	toonBody := "language: unknown\npassed: false\nchecks[1]{name,passed,exit_code,duration_ms}:\n  fmt,false,1,42\ntotal_duration_ms: 42"
+	res := mcp.CallToolResult{
+		Content: []mcp.Content{{Type: "text", Text: toonBody}},
+	}
+	resBytes, _ := json.Marshal(res)
+	ft := &fakeTransport{
+		responses: map[string][]byte{
+			"initialize": []byte(`{}`),
+			"tools/call": resBytes,
+		},
+	}
+	hub := newTestHubClient(t, ft)
+	resp, err := NewDevboxClient(hub).QualityGate(context.Background(), pipeline.DevboxRequest{Project: "loom-core"})
+	if err != nil {
+		t.Fatalf("TOON quality gate should decode: %v", err)
+	}
+	if resp.Passed {
+		t.Fatal("expected failed gate")
+	}
+	if resp.Language != "unknown" {
+		t.Fatalf("language = %q", resp.Language)
+	}
+	if len(resp.Checks) != 1 || resp.Checks[0].Name != "fmt" || resp.Checks[0].ExitCode != 1 {
+		t.Fatalf("checks = %#v", resp.Checks)
+	}
+	if !strings.Contains(resp.LogTail, "FAIL fmt") {
+		t.Fatalf("log tail = %q", resp.LogTail)
+	}
+}
+
 func TestDevboxClient_RequiresProject(t *testing.T) {
 	hub := newTestHubClient(t, &fakeTransport{})
 	if _, err := NewDevboxClient(hub).QualityGate(context.Background(), pipeline.DevboxRequest{}); err == nil {

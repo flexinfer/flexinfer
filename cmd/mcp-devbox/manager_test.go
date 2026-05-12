@@ -247,7 +247,7 @@ func TestGenerateSandboxDockerfile_GitCloneAllowsNoLocalLanguages(t *testing.T) 
 		t.Fatalf("generateSandboxDockerfile returned error: %v", err)
 	}
 	got := string(df)
-	for _, want := range []string{"FROM golang:1.25.10-alpine", "git make nodejs npm python3", "WORKDIR /workspace"} {
+	for _, want := range []string{"FROM registry.harbor.lan/mcp/devbox-base/go:1.25", `ENV PATH="/usr/local/go/bin:${PATH}"`, "nodejs npm python3", "WORKDIR /workspace"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("fallback Dockerfile missing %q:\n%s", want, got)
 		}

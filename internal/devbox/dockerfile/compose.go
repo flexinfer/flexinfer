@@ -38,6 +38,7 @@ type templateData struct {
 type multiTemplateData struct {
 	Hash                 string
 	BaseImage            string
+	GoBase               bool
 	PackageManager       string
 	PackageInstallCmd    string
 	SystemDeps           []string
@@ -133,6 +134,7 @@ func buildMultiData(fp *detect.EnvFingerprint) multiTemplateData {
 	}
 
 	if hasGo {
+		data.GoBase = true
 		goVer := defaultGoVersion
 		for _, l := range fp.Languages {
 			if l.Language == "go" && l.Version != "" {
@@ -140,7 +142,10 @@ func buildMultiData(fp *detect.EnvFingerprint) multiTemplateData {
 				break
 			}
 		}
-		data.BaseImage = "golang:" + goVer + "-alpine"
+		data.BaseImage = baseimage.Lookup("go", goVer)
+		if data.BaseImage == "" {
+			data.BaseImage = "golang:" + goVer + "-alpine"
+		}
 		data.PackageManager = "apk add --no-cache"
 		data.PackageInstallCmd = "ca-certificates git make bash curl"
 

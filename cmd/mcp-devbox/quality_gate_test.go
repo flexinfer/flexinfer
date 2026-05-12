@@ -173,6 +173,40 @@ func TestQualityGate_CustomChecks(t *testing.T) {
 	}
 }
 
+func TestQualityGate_GitCloneProbesSandboxLanguage(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+	fb := &qgFakeBackend{
+		fakeBackend: fakeBackend{statuses: map[string]*fakeStatus{}},
+		commandResults: map[string]*backend.ExecResult{
+			sandboxLanguageProbeCommand: {ExitCode: 0, StdoutTail: "go"},
+		},
+	}
+	mgr := newQGTestManager(t, fb, "unknown")
+	mgr.cfg.syncMode = "git-clone"
+
+	result, err := mgr.handleQualityGate(context.Background(), map[string]any{
+		"project": "test-project",
+		"checks":  []string{"fmt"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var qr qualityGateResult
+	if len(result.Content) > 0 {
+		if err := json.Unmarshal([]byte(result.Content[0].Text), &qr); err != nil {
+			t.Fatalf("unmarshal result: %v", err)
+		}
+	}
+
+	if qr.Language != "go" {
+		t.Fatalf("language = %q, want go", qr.Language)
+	}
+	if len(qr.Checks) != 1 || qr.Checks[0].Name != "fmt" {
+		t.Fatalf("checks = %#v", qr.Checks)
+	}
+}
+
 func TestQualityGate_DiffCheckAndStringChecks(t *testing.T) {
 	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
 	fb := &qgFakeBackend{

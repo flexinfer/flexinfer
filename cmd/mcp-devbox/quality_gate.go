@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -67,6 +68,8 @@ var fallbackCommands = map[string]string{
 	"diff": "git diff --exit-code",
 }
 
+const sandboxLanguageProbeCommand = `if [ -f go.mod ]; then printf go; elif [ -f package.json ]; then printf node; elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then printf python; elif [ -f Cargo.toml ]; then printf rust; else printf unknown; fi`
+
 func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
 	project := v.Required("project")
@@ -125,6 +128,11 @@ func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*
 	lang := "unknown"
 	if len(fp.Languages) > 0 {
 		lang = fp.Languages[0].Language
+	}
+	if lang == "unknown" && m.cfg.syncMode == "git-clone" {
+		if detected := m.detectSandboxLanguage(ctx, containerID, projectDir); detected != "" {
+			lang = detected
+		}
 	}
 
 	// Look up commands
@@ -205,6 +213,28 @@ func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*
 	}
 
 	return mcp.JSONResult(gateResult)
+}
+
+func (m *manager) detectSandboxLanguage(ctx context.Context, containerID, projectDir string) string {
+	result, err := m.backend.Exec(ctx, backend.ExecOpts{
+		ContainerID: containerID,
+		Command:     sandboxLanguageProbeCommand,
+		WorkDir:     m.projectWorkDir(projectDir),
+		TimeoutSec:  10,
+		MaxLines:    1,
+	})
+	if err != nil || result == nil || result.ExitCode != 0 {
+		if m.logger != nil && err != nil {
+			m.logger.Warn("sandbox language probe failed", "project", filepath.Base(projectDir), "error", err)
+		}
+		return ""
+	}
+	switch strings.TrimSpace(result.StdoutTail) {
+	case "go", "python", "node", "rust":
+		return strings.TrimSpace(result.StdoutTail)
+	default:
+		return ""
+	}
 }
 
 // truncateOutput returns the last N bytes of output.
