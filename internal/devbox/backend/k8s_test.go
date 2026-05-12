@@ -21,17 +21,19 @@ import (
 
 func testK8sBackend() *K8sBackend {
 	return &K8sBackend{
-		namespace:          "devbox",
-		registry:           "registry.harbor.lan",
-		workspacePVC:       "devbox-workspace-nfs",
-		imagePullSecret:    "harbor-creds",
-		workspaceRoot:      "/workspace",
-		builderImage:       "quay.io/buildah/stable:v1.38.0",
-		gitCloneImage:      defaultGitCloneImage,
-		buildCPURequest:    resource.MustParse(defaultBuildCPURequest),
-		buildCPULimit:      resource.MustParse(defaultBuildCPULimit),
-		buildMemoryRequest: resource.MustParse(defaultBuildMemoryRequest),
-		buildMemoryLimit:   resource.MustParse(defaultBuildMemoryLimit),
+		namespace:                    "devbox",
+		registry:                     "registry.harbor.lan",
+		workspacePVC:                 "devbox-workspace-nfs",
+		imagePullSecret:              "harbor-creds",
+		workspaceRoot:                "/workspace",
+		builderImage:                 "quay.io/buildah/stable:v1.38.0",
+		gitCloneImage:                defaultGitCloneImage,
+		buildCPURequest:              resource.MustParse(defaultBuildCPURequest),
+		buildCPULimit:                resource.MustParse(defaultBuildCPULimit),
+		buildMemoryRequest:           resource.MustParse(defaultBuildMemoryRequest),
+		buildMemoryLimit:             resource.MustParse(defaultBuildMemoryLimit),
+		buildEphemeralStorageRequest: resource.MustParse(defaultBuildEphemeralStorageRequest),
+		buildEphemeralStorageLimit:   resource.MustParse(defaultBuildEphemeralStorageLimit),
 	}
 }
 
@@ -128,26 +130,34 @@ func TestNewK8sBackend_DefaultsAndOverrides(t *testing.T) {
 		if got := k.buildCPULimit.String(); got != defaultBuildCPULimit {
 			t.Fatalf("default build CPU limit=%s", got)
 		}
+		if got := k.buildEphemeralStorageRequest.String(); got != defaultBuildEphemeralStorageRequest {
+			t.Fatalf("default build ephemeral-storage request=%s", got)
+		}
+		if got := k.buildEphemeralStorageLimit.String(); got != defaultBuildEphemeralStorageLimit {
+			t.Fatalf("default build ephemeral-storage limit=%s", got)
+		}
 	})
 
 	t.Run("overrides", func(t *testing.T) {
 		k, err := NewK8sBackend(K8sBackendConfig{
-			Kubeconfig:          kubeconfig,
-			Namespace:           "custom-ns",
-			Registry:            "registry.example.test",
-			WorkspacePVC:        "custom-pvc",
-			ImagePullSecret:     "custom-secret",
-			WorkspaceRoot:       "/srv/workspace",
-			BuilderImage:        "quay.io/custom/buildah:v1",
-			GitCloneImage:       "alpine/git:custom",
-			SyncMode:            "tar-pipe",
-			SyncExcludes:        []string{"**/*.tmp"},
-			MaxSyncSize:         512,
-			GitBaseURL:          "https://gitlab.example.test/team",
-			GitSecret:           "git-token",
-			BuildCPURequest:     "250m",
-			BuildCPULimit:       "500m",
-			MaxConcurrentBuilds: 2,
+			Kubeconfig:                   kubeconfig,
+			Namespace:                    "custom-ns",
+			Registry:                     "registry.example.test",
+			WorkspacePVC:                 "custom-pvc",
+			ImagePullSecret:              "custom-secret",
+			WorkspaceRoot:                "/srv/workspace",
+			BuilderImage:                 "quay.io/custom/buildah:v1",
+			GitCloneImage:                "alpine/git:custom",
+			SyncMode:                     "tar-pipe",
+			SyncExcludes:                 []string{"**/*.tmp"},
+			MaxSyncSize:                  512,
+			GitBaseURL:                   "https://gitlab.example.test/team",
+			GitSecret:                    "git-token",
+			BuildCPURequest:              "250m",
+			BuildCPULimit:                "500m",
+			BuildEphemeralStorageRequest: "3Gi",
+			BuildEphemeralStorageLimit:   "9Gi",
+			MaxConcurrentBuilds:          2,
 		})
 		if err != nil {
 			t.Fatalf("NewK8sBackend returned error: %v", err)
@@ -173,6 +183,9 @@ func TestNewK8sBackend_DefaultsAndOverrides(t *testing.T) {
 		}
 		if k.buildCPURequest.String() != "250m" || k.buildCPULimit.String() != "500m" || cap(k.buildSlots) != 2 {
 			t.Fatalf("unexpected build overrides: req=%s limit=%s slots=%d", k.buildCPURequest.String(), k.buildCPULimit.String(), cap(k.buildSlots))
+		}
+		if k.buildEphemeralStorageRequest.String() != "3Gi" || k.buildEphemeralStorageLimit.String() != "9Gi" {
+			t.Fatalf("unexpected ephemeral-storage overrides: req=%s limit=%s", k.buildEphemeralStorageRequest.String(), k.buildEphemeralStorageLimit.String())
 		}
 	})
 }
@@ -330,6 +343,14 @@ func TestBuildBuildahPodSpec(t *testing.T) {
 	if got := container.Resources.Limits.Memory().String(); got != "3Gi" {
 		t.Fatalf("expected default build memory limit 3Gi, got %s", got)
 	}
+	ephemeralRequest := container.Resources.Requests[corev1.ResourceEphemeralStorage]
+	if got := ephemeralRequest.String(); got != "2Gi" {
+		t.Fatalf("expected default build ephemeral-storage request 2Gi, got %s", got)
+	}
+	ephemeralLimit := container.Resources.Limits[corev1.ResourceEphemeralStorage]
+	if got := ephemeralLimit.String(); got != "40Gi" {
+		t.Fatalf("expected default build ephemeral-storage limit 40Gi, got %s", got)
+	}
 
 	if len(pod.Spec.Volumes) != 4 {
 		t.Fatalf("expected 4 volumes, got %d", len(pod.Spec.Volumes))
@@ -351,6 +372,8 @@ func TestBuildBuildahPodSpec_CustomBuildResources(t *testing.T) {
 	k.buildCPULimit = resource.MustParse("500m")
 	k.buildMemoryRequest = resource.MustParse("768Mi")
 	k.buildMemoryLimit = resource.MustParse("2Gi")
+	k.buildEphemeralStorageRequest = resource.MustParse("4Gi")
+	k.buildEphemeralStorageLimit = resource.MustParse("12Gi")
 
 	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core", false)
 	res := pod.Spec.Containers[0].Resources
@@ -365,6 +388,14 @@ func TestBuildBuildahPodSpec_CustomBuildResources(t *testing.T) {
 	}
 	if got := res.Limits.Memory().String(); got != "2Gi" {
 		t.Fatalf("memory limit = %s, want 2Gi", got)
+	}
+	ephemeralRequest := res.Requests[corev1.ResourceEphemeralStorage]
+	if got := ephemeralRequest.String(); got != "4Gi" {
+		t.Fatalf("ephemeral-storage request = %s, want 4Gi", got)
+	}
+	ephemeralLimit := res.Limits[corev1.ResourceEphemeralStorage]
+	if got := ephemeralLimit.String(); got != "12Gi" {
+		t.Fatalf("ephemeral-storage limit = %s, want 12Gi", got)
 	}
 }
 
@@ -500,7 +531,8 @@ func TestBuildBuildahPodSpec_PreferExistingImage(t *testing.T) {
 
 	buildCmd := pod.Spec.Containers[0].Command[2]
 	for _, want := range []string{
-		"buildah pull --storage-driver=vfs --tls-verify=false registry.harbor.lan/devbox:tag",
+		"skopeo inspect --raw --tls-verify=false docker://registry.harbor.lan/devbox:tag",
+		"buildah manifest inspect --tls-verify=false docker://registry.harbor.lan/devbox:tag",
 		"echo Using existing image registry.harbor.lan/devbox:tag",
 		"exit 0",
 		"buildah build-using-dockerfile",

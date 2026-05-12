@@ -120,8 +120,12 @@ spec:
               value: 250m
             - name: SPAWN_BUILD_CPU_LIMIT
               value: 500m
+            - name: SPAWN_BUILD_EPHEMERAL_STORAGE_REQUEST
+              value: 2Gi
+            - name: SPAWN_BUILD_EPHEMERAL_STORAGE_LIMIT
+              value: 40Gi
             - name: SPAWN_BUILD_AVOID_NODES
-              value: k3s-w-7
+              value: k3s-w-7,k3s-w-11
             # Embedded weaver (LLM-orchestrated multi-tool queries)
             - name: WEAVER_ENABLED
               value: "true"

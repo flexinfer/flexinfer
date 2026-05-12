@@ -596,7 +596,7 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 		if wc.Mode != clients.ResearchModeOff {
 			attachWeaverDelegation(wc, cfg, st, logger)
 		}
-		routes["research"] = &pipeline.WeaverWorker{Client: wc}
+		routes["research"] = &pipeline.WeaverWorker{Client: wc, PromptFor: stagePromptFor("research")}
 		realStages["research"] = true
 		logger.Info("research stage wired to FlexInfer (WeaverClient)",
 			"research_mode", string(wc.Mode))
@@ -679,6 +679,7 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 func stagePromptFor(stage string) func(jc pipeline.JobContext) string {
 	templates := map[string]string{
 		"plan_slice":     "Plan implementation slices for backlog item %s (%q). Output a numbered list of independent slices with files touched and test strategy per slice.",
+		"research":       "Research backlog item %s (%q). Summarize relevant code paths, prior decisions, test constraints, and rollout risks for the implementation worker.",
 		"implement":      "Implement backlog item %s (%q). Write code + tests in the allocated worktree. Commit with conventional commit format.",
 		"pr_self_review": "Review your own diff for backlog item %s (%q) before opening a merge request. Score on the pr_self_review_v1 rubric and fix anything below 0.8.",
 	}

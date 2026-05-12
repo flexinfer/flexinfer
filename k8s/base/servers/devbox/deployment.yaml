@@ -65,8 +65,14 @@ spec:
               value: 250m
             - name: DEVBOX_K8S_BUILD_CPU_LIMIT
               value: 500m
+            - name: DEVBOX_K8S_BUILD_EPHEMERAL_STORAGE_REQUEST
+              value: 2Gi
+            - name: DEVBOX_K8S_BUILD_EPHEMERAL_STORAGE_LIMIT
+              value: 40Gi
+            - name: DEVBOX_K8S_BUILD_AVOID_NODES
+              value: k3s-w-7,k3s-w-11
             - name: DEVBOX_K8S_GIT_BASE_URL
-              value: https://gitlab.blevins.dev/homelab
+              value: http://192.168.50.218/services
             - name: DEVBOX_K8S_GIT_SECRET
               value: gitlab-creds
             - name: DEVBOX_MAX_TAIL_LINES
