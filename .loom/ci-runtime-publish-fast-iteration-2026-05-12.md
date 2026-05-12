@@ -127,3 +127,32 @@ Follow-up acceptance:
 - The quantizer dependency layer fails immediately on any package install,
   `oras` download, or import smoke-test failure.
 - The smoke test imports `gptqmodel` in addition to the supporting packages.
+
+## Follow-up: Runtime Cache Export Must Not Poison Publish
+
+Master pipeline `9100` for the GPTQModel fail-closed fix proved the runtime
+image build and patch stack:
+
+- `gptqmodel` built and installed after `tokenicer pypcre`.
+- The quantizer smoke test imported `gptqmodel, tokenicer, pcre, kernels,
+  torchao`.
+- Qwen3.5 patches applied successfully.
+- Gemma4 MoE GPTQ patches applied successfully, with absent `gemma4.py`
+  treated as an expected wheel-runtime no-op.
+- ROCm PyTorch assertion passed.
+- The runtime image pushed as `runtime:rocm-gfx1100` and
+  `runtime:rocm-gfx1100-472994d5`.
+
+The build then spent roughly 28.5 minutes preparing/writing a max-mode registry
+cache and failed only when Harbor returned `404 Not Found` for
+`registry.harbor.lan/flexinfer/cache/runtime:rocm-gfx1100`. The CI wrapper
+started a full second build attempt even though the runtime image had already
+been published, so job `98511` was canceled to stop wasting runner time.
+
+Follow-up acceptance:
+- Runtime publish no longer depends on the separate `cache/runtime` registry
+  cache manifest.
+- Cache metadata is exported inline with the published runtime image, matching
+  the repo's other BuildKit publish jobs.
+- A successful runtime image push cannot be retried solely because optional
+  cache export to a separate registry ref failed.
