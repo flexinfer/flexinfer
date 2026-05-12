@@ -28,10 +28,7 @@ spec:
             - name: DEVBOX_BACKEND
               value: k8s
             - name: DEVBOX_BUILDER_IMAGE
-              valueFrom:
-                secretKeyRef:
-                  key: DEVBOX_BUILDER_IMAGE
-                  name: loom-secrets
+              value: quay.io/buildah/stable:v1.38.0
             - name: DEVBOX_CACHE_DIR
               value: /home/mcp/.cache/loom/devbox
             - name: DEVBOX_DEFAULT_CPU
