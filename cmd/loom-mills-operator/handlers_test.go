@@ -377,6 +377,53 @@ func TestHandlePipelineStart_StartsQueuedBacklogItem(t *testing.T) {
 	}
 }
 
+func TestHandlePipelineEscalate_MarksRunAndBacklog(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+	setAdminToken("secret-abc")
+	defer setAdminToken("")
+	ctx := context.Background()
+
+	if err := op.store.Backlog.Put(ctx, &store.BacklogItem{
+		ID:        "MILLS-ESC-1",
+		Title:     "escalate me",
+		State:     store.BacklogRunning,
+		Priority:  store.P2,
+		CreatedBy: "test",
+	}); err != nil {
+		t.Fatalf("seed backlog: %v", err)
+	}
+	if err := op.store.Pipeline.PutRun(ctx, &store.PipelineRun{
+		ID: "PIPE-ESC-1", BacklogID: "MILLS-ESC-1", Template: "mills-default-pipeline",
+		State: store.PipelinePlanning, CurrentStage: "plan_slice", Attempts: 1, StartedAt: time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/mills/pipeline/runs/PIPE-ESC-1/escalate",
+		strings.NewReader(`{"reason":"test cleanup"}`))
+	req.Header.Set("Authorization", "Bearer secret-abc")
+	resp := httptest.NewRecorder()
+	op.httpMux().ServeHTTP(resp, req)
+	if resp.Code != http.StatusOK {
+		t.Fatalf("escalate: got %d body=%s", resp.Code, resp.Body.String())
+	}
+	run, err := op.store.Pipeline.GetRun(ctx, "PIPE-ESC-1")
+	if err != nil {
+		t.Fatalf("get run: %v", err)
+	}
+	if run.State != store.PipelineEscalated || run.EndedAt == nil {
+		t.Fatalf("run after escalate = %+v", run)
+	}
+	item, err := op.store.Backlog.Get(ctx, "MILLS-ESC-1")
+	if err != nil {
+		t.Fatalf("get backlog: %v", err)
+	}
+	if item.State != store.BacklogEscalated {
+		t.Fatalf("backlog state = %q, want %q", item.State, store.BacklogEscalated)
+	}
+}
+
 func TestHandleEvalScores_EmptyOK(t *testing.T) {
 	op, cleanup := newTestOperator(t)
 	defer cleanup()

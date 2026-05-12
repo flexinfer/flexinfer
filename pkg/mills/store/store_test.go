@@ -281,6 +281,44 @@ func TestPipeline_RoundTrip(t *testing.T) {
 		t.Errorf("log tail not updated: %q", stages[0].LogTail)
 	}
 
+	// A pending attempt that has accepted a spawn is owned by that spawn.
+	// A second overlapping worker must not silently switch the durable
+	// identity for the same (run, stage, attempt).
+	pending := &StageResult{
+		PipelineRunID: run.ID,
+		Stage:         "plan_slice",
+		Attempt:       1,
+		StartedAt:     time.Now().UTC(),
+		SpawnID:       "spawn-original",
+	}
+	if err := st.Pipeline.PutStage(ctx, pending); err != nil {
+		t.Fatalf("put pending stage: %v", err)
+	}
+	conflict := &StageResult{
+		PipelineRunID: run.ID,
+		Stage:         "plan_slice",
+		Attempt:       1,
+		StartedAt:     pending.StartedAt,
+		SpawnID:       "spawn-duplicate",
+	}
+	if err := st.Pipeline.PutStage(ctx, conflict); !errors.Is(err, ErrStageSpawnConflict) {
+		t.Fatalf("conflicting pending spawn error = %v, want ErrStageSpawnConflict", err)
+	}
+	stages, err = st.Pipeline.ListStages(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("list stages after conflict: %v", err)
+	}
+	var plan *StageResult
+	for _, sr := range stages {
+		if sr.Stage == "plan_slice" {
+			plan = sr
+			break
+		}
+	}
+	if plan == nil || plan.SpawnID != "spawn-original" || plan.Outcome != nil {
+		t.Fatalf("pending stage after conflict = %+v", plan)
+	}
+
 	// Gate outcomes.
 	gate := &GateOutcome{
 		PipelineRunID: run.ID,
