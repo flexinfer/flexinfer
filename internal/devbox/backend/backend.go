@@ -51,9 +51,10 @@ type Backend interface {
 
 // BuildOpts configures an image build.
 type BuildOpts struct {
-	Tag        string // image tag (e.g., "mcp/devbox/loom-core:a3b9c1d")
-	Dockerfile []byte // generated Dockerfile content
-	ContextDir string // build context directory (project dir)
+	Tag            string // image tag (e.g., "mcp/devbox/loom-core:a3b9c1d")
+	Dockerfile     []byte // generated Dockerfile content
+	ContextDir     string // build context directory (project dir)
+	PreferExisting bool   // when true, return/reuse Tag if it already exists
 }
 
 // BuildResult describes the outcome of an image build.

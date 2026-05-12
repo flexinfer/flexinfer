@@ -2,6 +2,7 @@ package hud
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -199,7 +200,7 @@ func NewSpawnOrchestrator(
 		spawnLogger.Warn("failed to recover spawn state from store", "error", err)
 	}
 
-	return &SpawnOrchestrator{
+	o := &SpawnOrchestrator{
 		backend:        b,
 		agentBridge:    agentBridge,
 		sseHub:         sseHub,
@@ -215,6 +216,8 @@ func NewSpawnOrchestrator(
 		workspaceRoot:  wsRoot,
 		projects:       cfg.Projects,
 	}
+	o.resumePreRuntimeSpawns()
+	return o
 }
 
 func newBuildSlots(maxConcurrentBuilds int) chan struct{} {
@@ -249,6 +252,39 @@ func (o *SpawnOrchestrator) Controller() *spawn.K8sController {
 func (o *SpawnOrchestrator) RecoverSpawns() {
 	if err := o.ctrl.RecoverFromStore(context.Background()); err != nil {
 		o.logger.Warn("failed to recover spawns", "error", err)
+	}
+	o.resumePreRuntimeSpawns()
+}
+
+func (o *SpawnOrchestrator) resumePreRuntimeSpawns() {
+	if o == nil || o.ctrl == nil || o.backend == nil {
+		return
+	}
+	for _, state := range o.ctrl.List() {
+		if state == nil || state.PodName != "" || !isPreRuntimeSpawnStatus(state.Status) {
+			continue
+		}
+		if state.Request.TaskDescription == "" || state.Request.Project == "" {
+			continue
+		}
+		spawnID := state.SpawnID
+		req := state.Request
+		o.logger.Info("resuming pre-runtime spawn after HUD restart",
+			"spawn_id", spawnID,
+			"status", state.Status,
+			"agent_type", req.AgentType,
+			"project", req.Project,
+		)
+		go o.runSpawn(spawnID, req)
+	}
+}
+
+func isPreRuntimeSpawnStatus(status spawn.Status) bool {
+	switch status {
+	case spawn.StatusPending, spawn.StatusBuilding:
+		return true
+	default:
+		return false
 	}
 }
 
@@ -427,7 +463,7 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	// ContextDir is used by the K8s backend for filepath.Rel (string-only,
 	// no local filesystem access needed). In git-clone mode the backend
 	// derives the project name from the path and clones the repo.
-	buildTag := fmt.Sprintf("%s-spawn-%s", req.Project, spawnID[6:])
+	buildTag := agentRuntimeBuildTag(req.AgentType, df)
 	releaseBuildSlot, slotErr := o.acquireBuildSlot(ctx)
 	if slotErr != nil {
 		buildSpan.End()
@@ -435,9 +471,10 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 		return
 	}
 	buildResult, err := o.backend.Build(ctx, backend.BuildOpts{
-		Tag:        buildTag,
-		Dockerfile: df,
-		ContextDir: projectDir,
+		Tag:            buildTag,
+		Dockerfile:     df,
+		ContextDir:     projectDir,
+		PreferExisting: true,
 	})
 	releaseBuildSlot()
 	buildSpan.End()
@@ -674,6 +711,32 @@ RUN apk add --no-cache ca-certificates git make bash curl nodejs npm python3
 WORKDIR /workspace
 CMD ["sleep", "infinity"]
 `)
+}
+
+func agentRuntimeBuildTag(agentType string, dockerfile []byte) string {
+	sum := sha256.Sum256(dockerfile)
+	safeAgent := sanitizeImageTagComponent(agentType)
+	if safeAgent == "" {
+		safeAgent = "agent"
+	}
+	return fmt.Sprintf("mcp/spawn-runtime-%s:%x", safeAgent, sum[:8])
+}
+
+func sanitizeImageTagComponent(value string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range strings.ToLower(value) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-")
 }
 
 // injectAgentConfig writes platform-specific config files into the pod.

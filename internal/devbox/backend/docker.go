@@ -36,6 +36,13 @@ func (d *DockerBackend) Health(ctx context.Context) error {
 }
 
 func (d *DockerBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, error) {
+	if opts.PreferExisting {
+		inspect := exec.CommandContext(ctx, d.dockerPath, "image", "inspect", opts.Tag)
+		if err := inspect.Run(); err == nil {
+			return &BuildResult{ImageTag: opts.Tag, Cached: true}, nil
+		}
+	}
+
 	// Write Dockerfile to a temp file in the context directory
 	tmpDir, err := os.MkdirTemp("", "devbox-build-*")
 	if err != nil {

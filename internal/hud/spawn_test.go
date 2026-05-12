@@ -225,6 +225,37 @@ func TestGenerateDockerfile_UsesLeanAgentRuntime(t *testing.T) {
 	}
 }
 
+func TestAgentRuntimeBuildTag_StableForDockerfile(t *testing.T) {
+	df := []byte("FROM scratch\n")
+	got := agentRuntimeBuildTag("claude-code", df)
+	again := agentRuntimeBuildTag("claude-code", df)
+	changed := agentRuntimeBuildTag("claude-code", []byte("FROM busybox\n"))
+
+	if got != again {
+		t.Fatalf("expected stable tag for identical runtime Dockerfile, got %q then %q", got, again)
+	}
+	if got == changed {
+		t.Fatalf("expected Dockerfile content to affect runtime tag, got %q", got)
+	}
+	if !strings.HasPrefix(got, "mcp/spawn-runtime-claude-code:") {
+		t.Fatalf("unexpected runtime tag: %q", got)
+	}
+	if strings.Contains(got, " ") || strings.Contains(got, "_") {
+		t.Fatalf("runtime tag should be registry-safe, got %q", got)
+	}
+}
+
+func TestIsPreRuntimeSpawnStatus(t *testing.T) {
+	if !isPreRuntimeSpawnStatus(spawn.StatusPending) || !isPreRuntimeSpawnStatus(spawn.StatusBuilding) {
+		t.Fatal("pending/building spawns should be resumable before a runtime pod exists")
+	}
+	for _, status := range []spawn.Status{spawn.StatusRunning, spawn.StatusCompleted, spawn.StatusFailed, spawn.StatusStopped} {
+		if isPreRuntimeSpawnStatus(status) {
+			t.Fatalf("status %q should not be treated as pre-runtime", status)
+		}
+	}
+}
+
 func TestAgentSecretMounts_ClaudeOAuthFromClusterSecret(t *testing.T) {
 	mounts := agentSecretMounts("claude-code")
 	if len(mounts) != 1 {
