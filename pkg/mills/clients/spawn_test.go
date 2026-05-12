@@ -195,6 +195,34 @@ func TestRun_PostsCorrectRequestAndAuth(t *testing.T) {
 	}
 }
 
+func TestRun_RecordsAcceptedSpawnBeforePolling(t *testing.T) {
+	ft := &hudFakeTransport{
+		post: func(_ *http.Request) (int, any) {
+			return 202, hudSpawnAcceptResponse{SpawnID: "spawn-record", Status: "creating"}
+		},
+		get: func(_ *http.Request) (int, any) {
+			return 200, hudSpawnState{SpawnID: "spawn-record", Status: "completed"}
+		},
+	}
+	c := newHUDStub(t, ft)
+	req := sampleSpawnReq()
+	var recorded string
+	req.OnAccepted = func(spawnID string) error {
+		recorded = spawnID
+		if len(ft.recordedRequests()) != 1 {
+			t.Fatalf("OnAccepted should run immediately after POST, before polling")
+		}
+		return nil
+	}
+	resp, err := c.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if recorded != "spawn-record" || resp.SpawnID != "spawn-record" {
+		t.Fatalf("recorded=%q response=%q, want spawn-record", recorded, resp.SpawnID)
+	}
+}
+
 func TestRun_AcceptsMobileEnvelopeResponses(t *testing.T) {
 	ft := &hudFakeTransport{
 		post: func(_ *http.Request) (int, any) {
@@ -277,6 +305,34 @@ func TestRun_PollsUntilTerminal(t *testing.T) {
 	}
 	if v, ok := resp.Artifacts["turn_count"].(int); !ok || v != 12 {
 		t.Errorf("turn_count artifact = %v", resp.Artifacts["turn_count"])
+	}
+}
+
+func TestResumePollsExistingSpawnWithoutPost(t *testing.T) {
+	ft := &hudFakeTransport{
+		post: func(_ *http.Request) (int, any) {
+			t.Fatal("resume must not POST a new spawn")
+			return 500, nil
+		},
+		get: func(_ *http.Request) (int, any) {
+			return 200, hudSpawnState{
+				SpawnID:   "spawn-existing",
+				Status:    "completed",
+				Telemetry: &hudSpawnTelemetry{TotalCostUSD: 0.11},
+			}
+		},
+	}
+	c := newHUDStub(t, ft)
+	resp, err := c.Resume(context.Background(), "spawn-existing")
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if resp.SpawnID != "spawn-existing" || resp.CostUSD != 0.11 {
+		t.Fatalf("resp = %+v", resp)
+	}
+	requests := ft.recordedRequests()
+	if len(requests) != 1 || requests[0].Method != http.MethodGet {
+		t.Fatalf("requests = %+v, want one GET", requests)
 	}
 }
 

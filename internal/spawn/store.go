@@ -194,11 +194,7 @@ func (s *K8sConfigMapStore) Save(ctx context.Context, state *State) error {
 	}
 	cm.Data[state.SpawnID] = string(data)
 
-	_, err = s.client.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{})
-	if err != nil {
-		return fmt.Errorf("update configmap %s: %w", s.name, err)
-	}
-	return nil
+	return s.writeCM(ctx, cm)
 }
 
 // Load reads a single spawn state by ID from the ConfigMap.
@@ -254,9 +250,37 @@ func (s *K8sConfigMapStore) Delete(ctx context.Context, id string) error {
 		return nil
 	}
 	delete(cm.Data, id)
-	_, err = s.client.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{})
-	if err != nil {
+	if len(cm.Data) == 0 {
+		if err := s.client.CoreV1().ConfigMaps(s.namespace).Delete(ctx, s.name, metav1.DeleteOptions{}); err != nil && !errors.IsNotFound(err) {
+			return fmt.Errorf("delete configmap %s: %w", s.name, err)
+		}
+		return nil
+	}
+	return s.writeCM(ctx, cm)
+}
+
+func (s *K8sConfigMapStore) writeCM(ctx context.Context, cm *corev1.ConfigMap) error {
+	_, err := s.client.CoreV1().ConfigMaps(s.namespace).Update(ctx, cm, metav1.UpdateOptions{})
+	if err == nil {
+		return nil
+	}
+	if !errors.IsForbidden(err) {
 		return fmt.Errorf("update configmap %s: %w", s.name, err)
+	}
+
+	// Some deployed HUD service accounts only have get/list/create/delete
+	// on configmaps because Buildah Dockerfile ConfigMaps were write-once.
+	// Fall back to replace-via-delete/create so spawn state can still be
+	// durable without a coordinated RBAC rollout.
+	if derr := s.client.CoreV1().ConfigMaps(s.namespace).Delete(ctx, s.name, metav1.DeleteOptions{}); derr != nil && !errors.IsNotFound(derr) {
+		return fmt.Errorf("replace configmap %s delete: %w", s.name, derr)
+	}
+	next := cm.DeepCopy()
+	next.ResourceVersion = ""
+	next.UID = ""
+	next.CreationTimestamp = metav1.Time{}
+	if _, cerr := s.client.CoreV1().ConfigMaps(s.namespace).Create(ctx, next, metav1.CreateOptions{}); cerr != nil {
+		return fmt.Errorf("replace configmap %s create: %w", s.name, cerr)
 	}
 	return nil
 }

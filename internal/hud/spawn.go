@@ -171,14 +171,21 @@ func NewSpawnOrchestrator(
 
 	spawnLogger := logger.With("component", "spawn")
 
-	// Initialize persistent spawn store (FileStore for backward compat).
+	// Initialize persistent spawn store. In Kubernetes, use a ConfigMap
+	// in the spawn namespace so HUD rollouts preserve accepted/in-flight
+	// spawns. Local/dev backends keep the legacy FileStore.
 	var store spawn.Store
-	storeDir := spawn.DefaultStoreDir()
-	if fs, err := spawn.NewFileStore(storeDir); err != nil {
-		spawnLogger.Warn("failed to create spawn store, state will not be persisted",
-			"dir", storeDir, "error", err)
+	if k8s, ok := b.(streamExecCapable); ok && k8s.Clientset() != nil && k8s.Namespace() != "" {
+		store = spawn.NewK8sConfigMapStore(k8s.Clientset(), k8s.Namespace(), "loom-spawn-state")
+		spawnLogger.Info("using kubernetes spawn state store", "namespace", k8s.Namespace(), "configmap", "loom-spawn-state")
 	} else {
-		store = fs
+		storeDir := spawn.DefaultStoreDir()
+		if fs, err := spawn.NewFileStore(storeDir); err != nil {
+			spawnLogger.Warn("failed to create spawn store, state will not be persisted",
+				"dir", storeDir, "error", err)
+		} else {
+			store = fs
+		}
 	}
 
 	// Create a K8sController. We pass a nil kubernetes.Interface because the

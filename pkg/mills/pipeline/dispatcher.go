@@ -12,11 +12,15 @@ import (
 // it from the run + item + stage so workers don't have to reach back
 // into the runner.
 type JobContext struct {
-	Run    *store.PipelineRun
-	Item   *store.BacklogItem
-	Stage  Stage
-	Prior  map[string]StageOutput
-	Budget store.Budget
+	Run   *store.PipelineRun
+	Item  *store.BacklogItem
+	Stage Stage
+	Prior map[string]StageOutput
+	// ResumeSpawnID is set by the runner when a previous operator
+	// process accepted a spawn for this stage attempt but stopped before
+	// the spawn reached a terminal result.
+	ResumeSpawnID string
+	Budget        store.Budget
 	// Env carries the LOOM_MILLS_* variables every worker propagates to
 	// child processes (spawn, devbox exec, mcp tool calls). Workers may
 	// add more before invoking the underlying client.
@@ -68,12 +72,13 @@ func (d *Dispatcher) Dispatch(
 		return StageOutput{}, fmt.Errorf("dispatcher: no worker for stage %q", stage.ID)
 	}
 	jc := JobContext{
-		Run:    run,
-		Item:   item,
-		Stage:  stage,
-		Prior:  prior,
-		Budget: item.Budget,
-		Env:    BuildMillsEnv(run, item, stage),
+		Run:           run,
+		Item:          item,
+		Stage:         stage,
+		Prior:         prior,
+		ResumeSpawnID: resumeSpawnIDFromContext(ctx),
+		Budget:        item.Budget,
+		Env:           BuildMillsEnv(run, item, stage),
 	}
 	return w.Run(ctx, jc)
 }
@@ -123,6 +128,12 @@ type SpawnClient interface {
 	Run(ctx context.Context, req SpawnRequest) (SpawnResponse, error)
 }
 
+// SpawnResumeClient is implemented by spawn backends that can re-attach
+// to an already accepted spawn after an operator restart.
+type SpawnResumeClient interface {
+	Resume(ctx context.Context, spawnID string) (SpawnResponse, error)
+}
+
 // SpawnRequest carries every field the spawn API needs to start a
 // subordinate Claude/Codex/Gemini run for this stage.
 type SpawnRequest struct {
@@ -135,6 +146,7 @@ type SpawnRequest struct {
 	BudgetMinutes   int
 	ParentSessionID string
 	StageID         string
+	OnAccepted      func(spawnID string) error
 
 	// BacklogID, Project, Branch, BaseBranch, and Namespace are
 	// populated by SpawnWorker from JobContext for spawn services that
@@ -220,16 +232,32 @@ func (w *SpawnWorker) Run(ctx context.Context, jc JobContext) (StageOutput, erro
 		BudgetMinutes:   jc.Budget.MaxPipelineMinutes,
 		ParentSessionID: jc.Run.ParentSessionID,
 		StageID:         jc.Stage.ID,
+		OnAccepted:      stageAcceptRecorderFromContext(ctx),
 		BacklogID:       jc.Item.ID,
 		Project:         project,
 		Branch:          branch,
 		BaseBranch:      w.BaseBranch,
 		Namespace:       namespace,
 	}
+	if jc.ResumeSpawnID != "" {
+		resumer, ok := w.Client.(SpawnResumeClient)
+		if !ok {
+			return StageOutput{SpawnID: jc.ResumeSpawnID}, fmt.Errorf("spawn worker: client cannot resume spawn %s", jc.ResumeSpawnID)
+		}
+		resp, err := resumer.Resume(ctx, jc.ResumeSpawnID)
+		if err != nil {
+			return spawnResponseToStageOutput(resp), err
+		}
+		return spawnResponseToStageOutput(resp), nil
+	}
 	resp, err := w.Client.Run(ctx, req)
 	if err != nil {
-		return StageOutput{}, err
+		return spawnResponseToStageOutput(resp), err
 	}
+	return spawnResponseToStageOutput(resp), nil
+}
+
+func spawnResponseToStageOutput(resp SpawnResponse) StageOutput {
 	return StageOutput{
 		CostUSD:        resp.CostUSD,
 		SpawnID:        resp.SpawnID,
@@ -240,7 +268,7 @@ func (w *SpawnWorker) Run(ctx context.Context, jc JobContext) (StageOutput, erro
 		LinesRemoved:   resp.LinesRemoved,
 		DiffPatch:      resp.DiffPatch,
 		CommitMessages: resp.CommitMessages,
-	}, nil
+	}
 }
 
 // WeaverClient is the codebase-aware FlexInfer subagent facade. Used by
