@@ -110,3 +110,20 @@ Follow-up acceptance:
   exist in the installed vLLM tree.
 - The next master runtime publish should proceed past
   `vLLM Gemma4 MoE GPTQ patch applied at build time`.
+
+## Follow-up: Quantizer GPTQModel Fail-Closed
+
+Master pipeline `9085` for the Gemma4 missing-model no-op fix reached the
+quantizer dependency layer before the Qwen/Gemma patch layers. The GPTQModel
+install failed during package metadata generation because its setup imports
+`pcre`, but the Dockerfile installed `pypcre` only after attempting GPTQModel.
+The same `RUN` block used semicolon-separated commands, so the build continued
+after the failed GPTQModel install and could have published an image with
+`quantizer-deps-baked` but no GPTQModel. Job `98409` was canceled before push.
+
+Follow-up acceptance:
+- Quantizer prerequisites needed by GPTQModel setup are installed before
+  GPTQModel.
+- The quantizer dependency layer fails immediately on any package install,
+  `oras` download, or import smoke-test failure.
+- The smoke test imports `gptqmodel` in addition to the supporting packages.
