@@ -282,7 +282,7 @@ func TestBuildPodSpecResourcesAndMounts(t *testing.T) {
 
 func TestBuildBuildahPodSpec(t *testing.T) {
 	k := testK8sBackend()
-	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core", false)
 
 	if pod.Name != "build-pod" || pod.Namespace != "devbox" {
 		t.Fatalf("unexpected pod metadata: %#v", pod.ObjectMeta)
@@ -352,7 +352,7 @@ func TestBuildBuildahPodSpec_CustomBuildResources(t *testing.T) {
 	k.buildMemoryRequest = resource.MustParse("768Mi")
 	k.buildMemoryLimit = resource.MustParse("2Gi")
 
-	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core", false)
 	res := pod.Spec.Containers[0].Resources
 	if got := res.Requests.Cpu().String(); got != "250m" {
 		t.Fatalf("CPU request = %s, want 250m", got)
@@ -449,7 +449,7 @@ func TestBuildRejectsContextOutsideWorkspaceRoot(t *testing.T) {
 
 func TestBuildBuildahPodSpec_EmptyDirAndRegistryCache(t *testing.T) {
 	k := testK8sBackend()
-	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core", false)
 
 	// Verify the buildah-storage volume always uses EmptyDir
 	var found bool
@@ -491,6 +491,23 @@ func TestBuildBuildahPodSpec_EmptyDirAndRegistryCache(t *testing.T) {
 	cpuLim := container.Resources.Limits["cpu"]
 	if cpuLim.String() != "3" {
 		t.Errorf("expected 3 CPU limit, got %s", cpuLim.String())
+	}
+}
+
+func TestBuildBuildahPodSpec_PreferExistingImage(t *testing.T) {
+	k := testK8sBackend()
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core", true)
+
+	buildCmd := pod.Spec.Containers[0].Command[2]
+	for _, want := range []string{
+		"buildah pull --storage-driver=vfs --tls-verify=false registry.harbor.lan/devbox:tag",
+		"echo Using existing image registry.harbor.lan/devbox:tag",
+		"exit 0",
+		"buildah build-using-dockerfile",
+	} {
+		if !strings.Contains(buildCmd, want) {
+			t.Fatalf("prefer-existing build command missing %q:\n%s", want, buildCmd)
+		}
 	}
 }
 
@@ -676,7 +693,7 @@ func TestBuildPodSpec_TarPipeMode(t *testing.T) {
 
 func TestBuildBuildahPodSpec_GitCloneMode(t *testing.T) {
 	k := testK8sBackendGitClone()
-	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core", false)
 
 	// Should use emptyDir for workspace, not NFS PVC
 	wsVol := pod.Spec.Volumes[0]
@@ -706,7 +723,7 @@ func TestBuildBuildahPodSpec_GitCloneMode(t *testing.T) {
 func TestBuildBuildahPodSpec_TarPipeMode(t *testing.T) {
 	k := testK8sBackend()
 	k.syncMode = "tar-pipe"
-	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core", false)
 
 	wsVol := pod.Spec.Volumes[0]
 	if wsVol.EmptyDir == nil {
@@ -725,7 +742,7 @@ func TestBuildBuildahPodSpec_TarPipeMode(t *testing.T) {
 
 func TestBuildBuildahPodSpec_NFSMode(t *testing.T) {
 	k := testK8sBackend()
-	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core")
+	pod := k.buildBuildahPodSpec("build-pod", "registry.harbor.lan/devbox:tag", "dockerfile-cm", "/workspace/services/loom-core", false)
 
 	wsVol := pod.Spec.Volumes[0]
 	if wsVol.PersistentVolumeClaim == nil {

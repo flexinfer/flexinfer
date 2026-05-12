@@ -73,7 +73,7 @@ func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, e
 
 	var lastErr error
 	for attempt := range buildMaxRetries {
-		result, err := k.runBuildPod(buildCtx, podName, registryTag, cmName, buildContextDir)
+		result, err := k.runBuildPod(buildCtx, podName, registryTag, cmName, buildContextDir, opts.PreferExisting)
 		if err == nil {
 			return result, nil
 		}
@@ -94,8 +94,8 @@ func (k *K8sBackend) Build(ctx context.Context, opts BuildOpts) (*BuildResult, e
 // runBuildPod creates a Buildah build pod, waits for completion, and returns the result.
 // buildContext is the absolute path inside the pod (e.g., "/workspace/services/loom-core"
 // or "/buildah-dockerfile" for tar-pipe mode).
-func (k *K8sBackend) runBuildPod(ctx context.Context, podName, registryTag, cmName, buildContext string) (*BuildResult, error) {
-	pod := k.buildBuildahPodSpec(podName, registryTag, cmName, buildContext)
+func (k *K8sBackend) runBuildPod(ctx context.Context, podName, registryTag, cmName, buildContext string, preferExisting bool) (*BuildResult, error) {
+	pod := k.buildBuildahPodSpec(podName, registryTag, cmName, buildContext, preferExisting)
 
 	// Delete any leftover build pod with the same name
 	_ = k.deletePod(ctx, podName)
@@ -117,7 +117,8 @@ func (k *K8sBackend) runBuildPod(ctx context.Context, podName, registryTag, cmNa
 	// Read build logs and check for cache hits
 	logs, _ := k.getPodLogs(ctx, podName)
 	cached := strings.Contains(logs, "Using cache") ||
-		strings.Contains(logs, "--> Using cache")
+		strings.Contains(logs, "--> Using cache") ||
+		strings.Contains(logs, "Using existing image")
 
 	return &BuildResult{ImageTag: registryTag, Cached: cached}, nil
 }
@@ -125,7 +126,7 @@ func (k *K8sBackend) runBuildPod(ctx context.Context, podName, registryTag, cmNa
 // buildBuildahPodSpec creates a Pod spec for a Buildah in-cluster build.
 // buildContext is the absolute path inside the pod to use as the Docker build context
 // (e.g., "/workspace/services/loom-core" for NFS/git, "/buildah-dockerfile" for tar-pipe).
-func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, buildContext string) *corev1.Pod {
+func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, buildContext string, preferExisting bool) *corev1.Pod {
 	gracePeriod := int64(0)
 	runAsUser := int64(0)
 	runAsGroup := int64(0)
@@ -139,29 +140,41 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 	}
 	cacheTag := cacheRepo + ":cache"
 
-	buildAndPush := strings.Join([]string{
+	buildSteps := []string{
 		// Configure registries for short-name resolution (non-interactive builds)
 		"mkdir -p /etc/containers",
 		"&&",
 		`printf 'unqualified-search-registries = ["docker.io"]\nshort-name-mode = "permissive"\n' > /etc/containers/registries.conf`,
 		"&&",
+	}
+	if preferExisting {
+		buildSteps = append(buildSteps,
+			"if buildah pull --storage-driver=vfs --tls-verify=false "+destination+"; then",
+			"echo Using existing image "+destination+";",
+			"exit 0;",
+			"fi",
+			"&&",
+		)
+	}
+	buildSteps = append(buildSteps,
 		"buildah build-using-dockerfile",
 		"--storage-driver=vfs",
 		"--isolation=chroot",
 		"--tls-verify=false",
 		"--layers",
-		"--cache-from=" + cacheRepo,
+		"--cache-from="+cacheRepo,
 		"-f /buildah-dockerfile/Dockerfile",
-		"-t " + destination,
+		"-t "+destination,
 		buildContext,
 		"&&",
-		"buildah push --storage-driver=vfs --tls-verify=false " + destination,
+		"buildah push --storage-driver=vfs --tls-verify=false "+destination,
 		"&&",
 		// Push a cache tag so future builds can use --cache-from
-		"buildah tag --storage-driver=vfs " + destination + " " + cacheTag,
+		"buildah tag --storage-driver=vfs "+destination+" "+cacheTag,
 		"&&",
-		"buildah push --storage-driver=vfs --tls-verify=false " + cacheTag,
-	}, " ")
+		"buildah push --storage-driver=vfs --tls-verify=false "+cacheTag,
+	)
+	buildAndPush := strings.Join(buildSteps, " ")
 
 	workspaceSizeLimit := resource.MustParse("5Gi")
 	workspace := k.workspacePlan(buildContext, &workspaceSizeLimit)
