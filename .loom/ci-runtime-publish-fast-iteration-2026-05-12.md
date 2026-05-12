@@ -65,3 +65,22 @@
   - Split `gfx1100` runtime personas so quantizer/Steam/llama.cpp do not all rebuild on serving-runtime changes.
   - Prebuild llama.cpp HIP artifacts or a builder image keyed by `LLAMACPP_VERSION` and `AMDGPU_TARGETS`.
   - Add a CI duration ledger for BuildKit phase timings.
+
+## Follow-up: Master Runtime Publish Failure
+
+MR !335 merged and MR pipeline `9041` passed, but master pipeline `9048`
+failed in `publish_unified_rocm_gfx1100` after 2,817 seconds. The job no
+longer failed from the old 2h timeout; instead, the runtime build reached
+`build/scripts/vllm_gemma4_moe_gptq_patch.py` and exited because the Gemma4
+patch script treated a missing `GPTQLinearMethod.apply` pattern as fatal even
+though `build/scripts/vllm_qwen35_patches_nodiag.py` had already applied the
+equivalent ROCm GPTQ reference fallback marker.
+
+Follow-up acceptance:
+- `vllm_gemma4_moe_gptq_patch.py` treats
+  `FLEXINFER_QWEN35_GPTQ_ROCM_REFERENCE_PATCH` as an equivalent already-applied
+  GPTQ ROCm fallback.
+- The script remains fatal when neither the Gemma4 marker, the Qwen3.5 marker,
+  nor the expected unpatched function body is present.
+- The next master runtime publish should proceed past
+  `vLLM Gemma4 MoE GPTQ patch applied at build time`.
