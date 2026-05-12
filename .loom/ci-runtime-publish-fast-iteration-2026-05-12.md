@@ -156,3 +156,26 @@ Follow-up acceptance:
   the repo's other BuildKit publish jobs.
 - A successful runtime image push cannot be retried solely because optional
   cache export to a separate registry ref failed.
+
+## Follow-up: Early Runtime Patch Contracts
+
+MR !340 removed the max-mode cache-export failure path, and master pipeline
+`9119` proved the `gfx1100` runtime publish path green. The remaining wall-clock
+risk is now earlier in the job: cheap source-patch drift can still be discovered
+only after BuildKit starts the expensive ROCm/llama.cpp/Ollama/quantizer layers.
+
+This slice adds a lint-stage `runtime_patch_contracts` job before
+`publish_unified_rocm_gfx1100`. It runs in a tiny Python image and checks:
+
+- runtime patch scripts compile and parse;
+- `build/runtime.yaml` references expected source patch scripts;
+- `build/Dockerfile.runtime` still copies scripts before applying Qwen3.5 and
+  Gemma4 patches and before the ROCm PyTorch assertion;
+- `.gitlab/ci/runtime-publish.yml` keeps the fast check wired ahead of the
+  publish job and triggers it when runtime patch inputs change;
+- existing CPU-only artifact metadata tests still pass.
+
+Expected impact: patch-script and wiring mistakes should fail in the lint stage
+in seconds instead of after the runtime publish job has entered heavyweight
+BuildKit work. This does not split the monolithic runtime personas yet; that
+remains the next larger CI speed slice.

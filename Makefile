@@ -215,6 +215,10 @@ push-runtimes: ## Build + push all runtime images
 dry-run-runtime-%: ## Print docker build command for a profile without executing
 	./build/build-runtime.sh $* --dry-run
 
+.PHONY: check-runtime-patch-contracts
+check-runtime-patch-contracts: ## Run fast runtime patch wiring checks
+	python3 scripts/check-runtime-patch-contracts.py --run-script-tests
+
 .PHONY: promote-runtime-digest-%
 promote-runtime-digest-%: ## Dry-run runtime digest promotion for a profile (DIGEST=sha256:... optional)
 	@if [ -n "$(DIGEST)" ]; then \
