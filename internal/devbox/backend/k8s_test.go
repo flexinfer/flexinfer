@@ -80,6 +80,22 @@ users:
 	return path
 }
 
+func TestExecModeDefault(t *testing.T) {
+	t.Setenv("DEVBOX_EXEC_MODE", "")
+
+	if got := execMode(); got != "spdy" {
+		t.Fatalf("execMode() = %q, want spdy", got)
+	}
+}
+
+func TestExecModeOverride(t *testing.T) {
+	t.Setenv("DEVBOX_EXEC_MODE", " websocket ")
+
+	if got := execMode(); got != "websocket" {
+		t.Fatalf("execMode() = %q, want websocket", got)
+	}
+}
+
 func TestBuildRestConfig_UsesExplicitKubeconfig(t *testing.T) {
 	kubeconfig := writeTestKubeconfig(t)
 
