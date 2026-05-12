@@ -19,7 +19,6 @@ import (
 
 	"github.com/crb2nu/loom/internal/devbox/backend"
 	"github.com/crb2nu/loom/internal/devbox/detect"
-	"github.com/crb2nu/loom/internal/devbox/dockerfile"
 	"github.com/crb2nu/loom/internal/hud/bridge"
 	"github.com/crb2nu/loom/internal/spawn"
 )
@@ -653,40 +652,27 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 	o.completeSpawn(ctx, state)
 }
 
-// generateDockerfile detects the project environment and generates a Dockerfile.
-// Falls back to a minimal Go-based Dockerfile if detection fails.
-// Appends agent CLI install lines so the spawned pod has the right agent binary.
+// generateDockerfile builds a lean agent runtime image. Spawned agents get
+// project source through the runtime workspace init container, and quality
+// gates run in later Mills stages, so the spawn image should not install
+// project-specific lint/security toolchains during planning/implementation.
 func (o *SpawnOrchestrator) generateDockerfile(projectDir, agentType string) ([]byte, error) {
-	var df []byte
-
-	fp, err := detect.Fingerprint(projectDir)
-	if err != nil {
-		o.logger.Warn("project detection failed, using fallback Dockerfile", "dir", projectDir, "error", err)
-		df = fallbackDockerfile()
-	} else {
-		generated, genErr := dockerfile.Generate(fp)
-		if genErr != nil {
-			o.logger.Warn("dockerfile generation failed, using fallback", "dir", projectDir, "error", genErr)
-			df = fallbackDockerfile()
-		} else {
-			df = generated
-		}
+	if _, err := detect.Fingerprint(projectDir); err != nil {
+		o.logger.Warn("project detection failed; using generic agent runtime image", "dir", projectDir, "error", err)
 	}
-
-	// Append agent CLI installation lines.
+	df := agentRuntimeDockerfile()
 	if cliLines := agentCLIInstallLines(agentType); cliLines != "" {
 		df = append(df, []byte("\n"+cliLines+"\n")...)
 	}
 	return df, nil
 }
 
-// fallbackDockerfile returns a minimal Dockerfile for projects where detection fails.
-func fallbackDockerfile() []byte {
-	return []byte(`FROM golang:1.24-bookworm
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git make curl ca-certificates nodejs npm python3 python3-pip && \
-    rm -rf /var/lib/apt/lists/*
+// agentRuntimeDockerfile returns the shared base for spawned agent pods.
+func agentRuntimeDockerfile() []byte {
+	return []byte(`FROM golang:1.25.10-alpine
+RUN apk add --no-cache ca-certificates git make bash curl nodejs npm python3
 WORKDIR /workspace
+CMD ["sleep", "infinity"]
 `)
 }
 

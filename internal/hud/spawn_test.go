@@ -198,6 +198,33 @@ func TestAgentCLIInstallLines_EnsuresNPM(t *testing.T) {
 	}
 }
 
+func TestGenerateDockerfile_UsesLeanAgentRuntime(t *testing.T) {
+	o := &SpawnOrchestrator{logger: slog.Default()}
+	df, err := o.generateDockerfile(t.TempDir(), "claude-code")
+	if err != nil {
+		t.Fatalf("generateDockerfile: %v", err)
+	}
+	got := string(df)
+	for _, want := range []string{
+		"FROM golang:1.25.10-alpine",
+		"apk add --no-cache ca-certificates git make bash curl nodejs npm python3",
+		"npm install -g @anthropic-ai/claude-code@",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("generated Dockerfile missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{
+		"go mod download",
+		"golangci-lint",
+		"gosec",
+	} {
+		if strings.Contains(got, forbidden) {
+			t.Fatalf("generated Dockerfile contains slow project tooling %q:\n%s", forbidden, got)
+		}
+	}
+}
+
 func TestAgentSecretMounts_ClaudeOAuthFromClusterSecret(t *testing.T) {
 	mounts := agentSecretMounts("claude-code")
 	if len(mounts) != 1 {
