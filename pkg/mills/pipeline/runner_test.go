@@ -51,6 +51,18 @@ func (f *fakeDispatcher) callsList() []string {
 	return out
 }
 
+type resumeAwareDispatcher struct {
+	gotResume string
+}
+
+func (d *resumeAwareDispatcher) Dispatch(ctx context.Context, _ *store.PipelineRun, _ *store.BacklogItem, stage Stage, _ map[string]StageOutput) (StageOutput, error) {
+	d.gotResume = resumeSpawnIDFromContext(ctx)
+	if d.gotResume == "" {
+		return StageOutput{}, fmt.Errorf("missing resume spawn id for %s", stage.ID)
+	}
+	return StageOutput{SpawnID: d.gotResume}, nil
+}
+
 // alwaysFailGate is a gate that always returns Pass=false; used to drive
 // the gate-fail retry path.
 type alwaysFailGate struct{ name string }
@@ -314,6 +326,49 @@ func TestRunner_ResumesFromCurrentStage(t *testing.T) {
 	// And tests should be the first call this Drive made.
 	if len(calls) == 0 || calls[0] != "tests" {
 		t.Errorf("first call after resume = %v, want tests-first", calls)
+	}
+}
+
+func TestRunner_ResumesPendingStageSpawnAttempt(t *testing.T) {
+	st, run, item := newRunnerEnv(t)
+	now := time.Date(2026, 4, 26, 12, 0, 0, 0, time.UTC)
+	run.CurrentStage = "plan_slice"
+	run.State = store.PipelinePlanning
+	if err := st.Pipeline.PutRun(context.Background(), run); err != nil {
+		t.Fatalf("seed run head: %v", err)
+	}
+	if err := st.Pipeline.PutStage(context.Background(), &store.StageResult{
+		PipelineRunID: run.ID,
+		Stage:         "plan_slice",
+		Attempt:       1,
+		StartedAt:     now,
+		SpawnID:       "spawn-existing",
+		Artifacts:     map[string]any{"stage_id": "plan_slice"},
+	}); err != nil {
+		t.Fatalf("seed pending stage: %v", err)
+	}
+
+	disp := &resumeAwareDispatcher{}
+	r := New(st, nil, disp, nil)
+	r.Stages = []Stage{{ID: "plan_slice", Type: "llm", State: store.PipelinePlanning}}
+	if err := r.Drive(context.Background(), run, item); err != nil {
+		t.Fatalf("drive: %v", err)
+	}
+	if disp.gotResume != "spawn-existing" {
+		t.Fatalf("resume spawn id = %q, want spawn-existing", disp.gotResume)
+	}
+	stages, err := st.Pipeline.ListStages(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("list stages: %v", err)
+	}
+	if len(stages) != 1 {
+		t.Fatalf("stage rows = %d, want existing attempt updated in-place", len(stages))
+	}
+	if stages[0].Attempt != 1 || stages[0].SpawnID != "spawn-existing" {
+		t.Fatalf("stage row = %+v", stages[0])
+	}
+	if stages[0].Outcome == nil || *stages[0].Outcome != store.StageOutcomeSuccess {
+		t.Fatalf("stage outcome = %v, want success", stages[0].Outcome)
 	}
 }
 

@@ -160,7 +160,29 @@ func (c *HUDSpawnClient) Run(ctx context.Context, req pipeline.SpawnRequest) (pi
 	if err != nil {
 		return pipeline.SpawnResponse{}, err
 	}
+	if req.OnAccepted != nil {
+		if err := req.OnAccepted(spawnID); err != nil {
+			return pipeline.SpawnResponse{SpawnID: spawnID}, fmt.Errorf("hud spawn: record accepted spawn: %w", err)
+		}
+	}
 
+	return c.pollSpawn(ctx, spawnID)
+}
+
+// Resume implements pipeline.SpawnResumeClient by polling an already
+// accepted HUD spawn id. This lets the Mills operator re-attach after a
+// rollout instead of starting duplicate stage attempts.
+func (c *HUDSpawnClient) Resume(ctx context.Context, spawnID string) (pipeline.SpawnResponse, error) {
+	if c == nil || c.http == nil {
+		return pipeline.SpawnResponse{}, errors.New("hud spawn: client not configured")
+	}
+	if spawnID == "" {
+		return pipeline.SpawnResponse{}, errors.New("hud spawn: resume spawn id required")
+	}
+	return c.pollSpawn(ctx, spawnID)
+}
+
+func (c *HUDSpawnClient) pollSpawn(ctx context.Context, spawnID string) (pipeline.SpawnResponse, error) {
 	// Poll until terminal.
 	pollCtx, cancel := context.WithTimeout(ctx, c.cfg.PollDeadline)
 	defer cancel()
@@ -176,7 +198,7 @@ func (c *HUDSpawnClient) Run(ctx context.Context, req pipeline.SpawnRequest) (pi
 			if pollCtx.Err() != nil {
 				return pipeline.SpawnResponse{SpawnID: spawnID}, fmt.Errorf("hud spawn: poll cancelled: %w", err)
 			}
-			return pipeline.SpawnResponse{SpawnID: spawnID}, err
+			return pipeline.SpawnResponse{SpawnID: spawnID}, fmt.Errorf("hud spawn %s: %w", spawnID, err)
 		}
 		if isTerminalSpawnStatus(state.Status) {
 			resp := mapTelemetryToResponse(state)

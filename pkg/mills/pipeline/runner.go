@@ -128,6 +128,33 @@ type StageOutput struct {
 	MergedSHA string
 }
 
+type stageAcceptRecorderKey struct{}
+type resumeSpawnIDKey struct{}
+
+func withStageAcceptRecorder(ctx context.Context, fn func(spawnID string) error) context.Context {
+	if fn == nil {
+		return ctx
+	}
+	return context.WithValue(ctx, stageAcceptRecorderKey{}, fn)
+}
+
+func stageAcceptRecorderFromContext(ctx context.Context) func(spawnID string) error {
+	fn, _ := ctx.Value(stageAcceptRecorderKey{}).(func(string) error)
+	return fn
+}
+
+func withResumeSpawnID(ctx context.Context, spawnID string) context.Context {
+	if spawnID == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, resumeSpawnIDKey{}, spawnID)
+}
+
+func resumeSpawnIDFromContext(ctx context.Context) string {
+	spawnID, _ := ctx.Value(resumeSpawnIDKey{}).(string)
+	return spawnID
+}
+
 // WorkerDispatcher executes one non-gate stage. Slice 4.2 supplies the
 // real implementation (spawn / weaver / devbox / mcp); slice 4.1 ships
 // the runner against this interface and tests use a fake.
@@ -296,8 +323,16 @@ func (r *Runner) Drive(ctx context.Context, run *store.PipelineRun, item *store.
 		}
 
 		// Non-gate stage: dispatch the worker.
-		attempts[stage.ID]++
-		out, err := r.runStage(ctx, run, item, stage, prior, attempts[stage.ID])
+		attempt := attempts[stage.ID] + 1
+		pending, err := r.pendingStage(ctx, run.ID, stage.ID)
+		if err != nil {
+			return fmt.Errorf("pipeline: load pending stage: %w", err)
+		}
+		if pending != nil {
+			attempt = pending.Attempt
+		}
+		attempts[stage.ID] = attempt
+		out, err := r.runStage(ctx, run, item, stage, prior, attempt, pending)
 		if err != nil {
 			if attempts[stage.ID] >= maxAttempts {
 				return r.escalateWithItem(ctx, run, item, fmt.Sprintf("stage %s errored after %d attempts: %v", stage.ID, attempts[stage.ID], err))
@@ -394,11 +429,31 @@ func (r *Runner) seedAttempts(ctx context.Context, runID string) (map[string]int
 		return nil, err
 	}
 	for _, sr := range rows {
+		if sr.Outcome == nil {
+			continue
+		}
 		if sr.Attempt > out[sr.Stage] {
 			out[sr.Stage] = sr.Attempt
 		}
 	}
 	return out, nil
+}
+
+func (r *Runner) pendingStage(ctx context.Context, runID, stageID string) (*store.StageResult, error) {
+	if r.Store == nil || runID == "" || stageID == "" {
+		return nil, nil
+	}
+	rows, err := r.Store.Pipeline.ListStages(ctx, runID)
+	if err != nil {
+		return nil, err
+	}
+	for i := len(rows) - 1; i >= 0; i-- {
+		sr := rows[i]
+		if sr.Stage == stageID && sr.Outcome == nil && sr.SpawnID != "" {
+			return sr, nil
+		}
+	}
+	return nil, nil
 }
 
 // runStage executes one non-gate stage: persist current_stage, dispatch
@@ -411,8 +466,14 @@ func (r *Runner) runStage(
 	stage Stage,
 	prior map[string]StageOutput,
 	attempt int,
+	pending *store.StageResult,
 ) (StageOutput, error) {
 	now := r.now()
+	resumeSpawnID := ""
+	if pending != nil {
+		now = pending.StartedAt
+		resumeSpawnID = pending.SpawnID
+	}
 	run.CurrentStage = stage.ID
 	run.State = stage.State
 	if err := r.Store.Pipeline.PutRun(ctx, run); err != nil {
@@ -422,7 +483,21 @@ func (r *Runner) runStage(
 		"run": run.ID, "stage": stage.ID, "attempt": attempt,
 	})
 
-	out, derr := r.Dispatcher.Dispatch(ctx, run, item, stage, prior)
+	stageCtx := withResumeSpawnID(ctx, resumeSpawnID)
+	stageCtx = withStageAcceptRecorder(stageCtx, func(spawnID string) error {
+		if spawnID == "" {
+			return nil
+		}
+		return r.Store.Pipeline.PutStage(ctx, &store.StageResult{
+			PipelineRunID: run.ID,
+			Stage:         stage.ID,
+			Attempt:       attempt,
+			StartedAt:     now,
+			SpawnID:       spawnID,
+			Artifacts:     map[string]any{"stage_id": stage.ID},
+		})
+	})
+	out, derr := r.Dispatcher.Dispatch(stageCtx, run, item, stage, prior)
 	endedAt := r.now()
 
 	mills.PipelineStageDurationSeconds.WithLabelValues(stage.ID).Observe(endedAt.Sub(now).Seconds())
