@@ -171,6 +171,38 @@ func TestDevboxClient_DecodesTOONGateResult(t *testing.T) {
 	}
 }
 
+// TestDevboxClient_StderrFallbackOutput verifies that when a check
+// reports an empty stdout (typical of `make fmt` errors which write
+// to stderr only), the client surfaces stderr_tail through Output so
+// the runner's escalation reason is not a blank string.
+func TestDevboxClient_StderrFallbackOutput(t *testing.T) {
+	const stderrMsg = "make: *** No rule to make target 'fmt'.  Stop."
+	body := devboxQualityGateResult{
+		Language: "unknown",
+		Passed:   false,
+		Checks: []devboxQualityCheckRow{
+			{Name: "fmt", Passed: false, ExitCode: 1, DurationMs: 8, OutputTail: "", StderrTail: stderrMsg},
+		},
+	}
+	ft := &fakeTransport{
+		responses: map[string][]byte{
+			"initialize": []byte(`{}`),
+			"tools/call": devboxStubResult(t, body),
+		},
+	}
+	hub := newTestHubClient(t, ft)
+	resp, err := NewDevboxClient(hub).QualityGate(context.Background(), pipeline.DevboxRequest{Project: "loom-core"})
+	if err != nil {
+		t.Fatalf("QualityGate should not error on a non-passing gate: %v", err)
+	}
+	if len(resp.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(resp.Checks))
+	}
+	if resp.Checks[0].Output != stderrMsg {
+		t.Fatalf("Output = %q, want stderr fallback %q", resp.Checks[0].Output, stderrMsg)
+	}
+}
+
 func TestDevboxClient_RequiresProject(t *testing.T) {
 	hub := newTestHubClient(t, &fakeTransport{})
 	if _, err := NewDevboxClient(hub).QualityGate(context.Background(), pipeline.DevboxRequest{}); err == nil {

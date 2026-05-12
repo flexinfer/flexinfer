@@ -207,6 +207,103 @@ func TestQualityGate_GitCloneProbesSandboxLanguage(t *testing.T) {
 	}
 }
 
+// TestDetectSandboxLanguage_FallsBackToWorkspaceRoot asserts the
+// probe iterates past the per-project workdir and inspects /workspace
+// when the first probe comes back unknown. The historical canary
+// failures fingerprint as unknown at the project path (git-clone
+// dropped source under a different prefix than expected) and the
+// fallback path is what keeps `make fmt` from running blind.
+func TestDetectSandboxLanguage_FallsBackToWorkspaceRoot(t *testing.T) {
+	calls := []backend.ExecOpts{}
+	fb := &fakeProbeBackend{
+		results: map[string]*backend.ExecResult{
+			"/workspace": {ExitCode: 0, StdoutTail: "go\n"},
+		},
+		calls: &calls,
+	}
+	tmp := t.TempDir()
+	mgr := &manager{
+		cfg:    managerConfig{workspaceRoot: tmp},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	mgr.backend = fb
+
+	got := mgr.detectSandboxLanguage(context.Background(), "ctr", filepath.Join(tmp, "services", "loom-core"))
+	if got != "go" {
+		t.Fatalf("language = %q, want go", got)
+	}
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 probe attempts (workdir + workspace root), got %d", len(calls))
+	}
+	if calls[0].WorkDir == calls[1].WorkDir {
+		t.Fatalf("expected distinct probe paths, got both = %q", calls[0].WorkDir)
+	}
+}
+
+// fakeProbeBackend records every Exec call and returns workdir-keyed
+// results so detectSandboxLanguage path iteration is observable.
+type fakeProbeBackend struct {
+	fakeBackend
+	results map[string]*backend.ExecResult
+	calls   *[]backend.ExecOpts
+}
+
+func (b *fakeProbeBackend) Exec(_ context.Context, opts backend.ExecOpts) (*backend.ExecResult, error) {
+	*b.calls = append(*b.calls, opts)
+	if r, ok := b.results[opts.WorkDir]; ok {
+		return r, nil
+	}
+	return &backend.ExecResult{ExitCode: 0, StdoutTail: "unknown\n"}, nil
+}
+
+// TestQualityGate_StderrSurfacedWhenStdoutEmpty mirrors the canary
+// failure mode where `make fmt` returns exit=1 with empty stdout
+// but a useful stderr line. The artifact's OutputTail must reflect
+// stderr so escalations show the actual error.
+func TestQualityGate_StderrSurfacedWhenStdoutEmpty(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+	const stderrMsg = "make: *** No rule to make target 'fmt'. Stop."
+	fb := &qgFakeBackend{
+		fakeBackend: fakeBackend{statuses: map[string]*fakeStatus{}},
+		commandResults: map[string]*backend.ExecResult{
+			"make fmt": {ExitCode: 1, StdoutTail: "", StderrTail: stderrMsg},
+		},
+	}
+	mgr := newQGTestManager(t, fb, "unknown")
+	// Without a language marker on the host (lang="unknown"), the
+	// only way ensureRunning's dockerfile generation succeeds is via
+	// the git-clone genericGitCloneDockerfile fallback.
+	mgr.cfg.syncMode = "git-clone"
+
+	result, err := mgr.handleQualityGate(context.Background(), map[string]any{
+		"project": "test-project",
+		"checks":  []string{"fmt"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	var qr qualityGateResult
+	if len(result.Content) > 0 {
+		if err := json.Unmarshal([]byte(result.Content[0].Text), &qr); err != nil {
+			t.Fatalf("unmarshal result: %v (raw=%q)", err, result.Content[0].Text)
+		}
+	}
+	if len(qr.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(qr.Checks))
+	}
+	got := qr.Checks[0]
+	if got.Passed {
+		t.Fatalf("expected fmt check to fail")
+	}
+	if got.StderrTail != stderrMsg {
+		t.Fatalf("StderrTail = %q, want %q", got.StderrTail, stderrMsg)
+	}
+	if got.OutputTail != stderrMsg {
+		t.Fatalf("OutputTail = %q, want stderr fallback %q", got.OutputTail, stderrMsg)
+	}
+}
+
 func TestQualityGate_DiffCheckAndStringChecks(t *testing.T) {
 	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
 	fb := &qgFakeBackend{
