@@ -273,6 +273,15 @@ func (o *SpawnOrchestrator) Spawn(ctx context.Context, req SpawnRequest) (string
 		req.Namespace = req.Project + "/spawn"
 	}
 
+	if existing := o.existingActiveSpawnForRequest(req); existing != "" {
+		o.logger.Info("returning existing active spawn for idempotent request",
+			"spawn_id", existing,
+			"run_id", req.Metadata["LOOM_MILLS_RUN_ID"],
+			"stage", req.Metadata["LOOM_MILLS_STAGE"],
+		)
+		return existing, nil
+	}
+
 	// Check concurrent limit.
 	if o.ctrl.ActiveCount() >= o.maxConcurrent {
 		return "", fmt.Errorf("max concurrent spawns reached (%d)", o.maxConcurrent)
@@ -298,6 +307,46 @@ func (o *SpawnOrchestrator) Spawn(ctx context.Context, req SpawnRequest) (string
 	go o.runSpawn(spawnID, req)
 
 	return spawnID, nil
+}
+
+func (o *SpawnOrchestrator) existingActiveSpawnForRequest(req SpawnRequest) string {
+	if o == nil || o.ctrl == nil {
+		return ""
+	}
+	runID := firstNonEmptySpawnTag(req.Metadata["LOOM_MILLS_RUN_ID"], req.Metadata["loom_mills_run_id"])
+	stage := firstNonEmptySpawnTag(req.Metadata["LOOM_MILLS_STAGE"], req.Metadata["loom_mills_stage"])
+	if runID == "" || stage == "" {
+		return ""
+	}
+	for _, state := range o.ctrl.List() {
+		if state == nil || spawn.IsTerminal(state.Status) {
+			continue
+		}
+		meta := state.Request.Metadata
+		if firstNonEmptySpawnTag(meta["LOOM_MILLS_RUN_ID"], meta["loom_mills_run_id"]) != runID {
+			continue
+		}
+		if firstNonEmptySpawnTag(meta["LOOM_MILLS_STAGE"], meta["loom_mills_stage"]) != stage {
+			continue
+		}
+		if req.Project != "" && state.Request.Project != "" && req.Project != state.Request.Project {
+			continue
+		}
+		if req.Branch != "" && state.Request.Branch != "" && req.Branch != state.Request.Branch {
+			continue
+		}
+		return state.SpawnID
+	}
+	return ""
+}
+
+func firstNonEmptySpawnTag(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // newSpawnParser creates the appropriate JSONL parser for the given agent type.
@@ -1139,7 +1188,7 @@ func (o *SpawnOrchestrator) Projects() []string { return o.projects }
 // because backend/sseHub/etc. fields are unexported. Do not use in
 // production code paths.
 func NewSpawnOrchestratorForTest(ctrl *spawn.K8sController) *SpawnOrchestrator {
-	return &SpawnOrchestrator{ctrl: ctrl}
+	return &SpawnOrchestrator{ctrl: ctrl, logger: slog.Default()}
 }
 
 // runBudgetWatcher polls the spawn telemetry accumulator at a fixed interval
