@@ -362,6 +362,10 @@ func isTerminalSpawnStatus(s string) bool {
 func mapTelemetryToResponse(state *hudSpawnState) pipeline.SpawnResponse {
 	resp := pipeline.SpawnResponse{
 		SpawnID: state.SpawnID,
+		Artifacts: map[string]any{
+			"agent_id": state.AgentID,
+			"status":   state.Status,
+		},
 	}
 	if state.Telemetry == nil {
 		resp.LogTail = state.Error
@@ -385,11 +389,7 @@ func mapTelemetryToResponse(state *hudSpawnState) pipeline.SpawnResponse {
 		logParts = append(logParts, "error="+state.Error)
 	}
 	resp.LogTail = strings.Join(logParts, "\n")
-	resp.Artifacts = map[string]any{
-		"turn_count": tel.TurnCount,
-		"agent_id":   state.AgentID,
-		"status":     state.Status,
-	}
+	resp.Artifacts["turn_count"] = tel.TurnCount
 	return resp
 }
 

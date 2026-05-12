@@ -132,6 +132,8 @@ type StageOutput struct {
 type stageAcceptRecorderKey struct{}
 type resumeSpawnIDKey struct{}
 
+var errStagePending = errors.New("pipeline: stage remains pending")
+
 func withStageAcceptRecorder(ctx context.Context, fn func(spawnID string) error) context.Context {
 	if fn == nil {
 		return ctx
@@ -341,6 +343,10 @@ func (r *Runner) Drive(ctx context.Context, run *store.PipelineRun, item *store.
 		attempts[stage.ID] = attempt
 		out, err := r.runStage(ctx, run, item, stage, prior, attempt, pending)
 		if err != nil {
+			if errors.Is(err, errStagePending) {
+				r.logger().Info("pipeline drive stopped; stage remains pending", "run", run.ID, "stage", stage.ID, "attempt", attempt)
+				return nil
+			}
 			if errors.Is(err, store.ErrStageSpawnConflict) {
 				r.logger().Info("pipeline drive stopped; stage attempt already has an accepted spawn", "run", run.ID, "stage", stage.ID, "attempt", attempt)
 				return nil
@@ -494,11 +500,13 @@ func (r *Runner) runStage(
 		"run": run.ID, "stage": stage.ID, "attempt": attempt,
 	})
 
+	acceptedSpawnID := resumeSpawnID
 	stageCtx := withResumeSpawnID(ctx, resumeSpawnID)
 	stageCtx = withStageAcceptRecorder(stageCtx, func(spawnID string) error {
 		if spawnID == "" {
 			return nil
 		}
+		acceptedSpawnID = spawnID
 		return r.Store.Pipeline.PutStage(ctx, &store.StageResult{
 			PipelineRunID: run.ID,
 			Stage:         stage.ID,
@@ -509,6 +517,26 @@ func (r *Runner) runStage(
 		})
 	})
 	out, derr := r.Dispatcher.Dispatch(stageCtx, run, item, stage, prior)
+	if out.SpawnID == "" && acceptedSpawnID != "" {
+		out.SpawnID = acceptedSpawnID
+	}
+	if derr != nil && out.SpawnID != "" && !hasTerminalSpawnStatus(out) {
+		if perr := r.Store.Pipeline.PutStage(ctx, &store.StageResult{
+			PipelineRunID: run.ID,
+			Stage:         stage.ID,
+			Attempt:       attempt,
+			StartedAt:     now,
+			SpawnID:       out.SpawnID,
+			Artifacts:     map[string]any{"stage_id": stage.ID},
+			LogTail:       out.LogTail,
+		}); perr != nil {
+			return out, fmt.Errorf("persist pending stage: %w", perr)
+		}
+		r.event(ctx, "pipeline.stage.pending", "ok", map[string]any{
+			"run": run.ID, "stage": stage.ID, "attempt": attempt, "spawn_id": out.SpawnID, "error": derr.Error(),
+		})
+		return out, errStagePending
+	}
 	endedAt := r.now()
 
 	mills.PipelineStageDurationSeconds.WithLabelValues(stage.ID).Observe(endedAt.Sub(now).Seconds())
@@ -557,6 +585,19 @@ func (r *Runner) runStage(
 		"run": run.ID, "stage": stage.ID, "attempt": attempt, "cost_usd": out.CostUSD,
 	})
 	return out, nil
+}
+
+func hasTerminalSpawnStatus(out StageOutput) bool {
+	if out.Artifacts == nil {
+		return false
+	}
+	status, _ := out.Artifacts["status"].(string)
+	switch status {
+	case "completed", "failed", "stopped":
+		return true
+	default:
+		return false
+	}
 }
 
 // runGate evaluates an auto_gate stage against the gate registry. Returns

@@ -318,6 +318,33 @@ func TestPipeline_RoundTrip(t *testing.T) {
 	if plan == nil || plan.SpawnID != "spawn-original" || plan.Outcome != nil {
 		t.Fatalf("pending stage after conflict = %+v", plan)
 	}
+	errOutcome := StageOutcomeError
+	errEnd := pending.StartedAt.Add(time.Second)
+	if err := st.Pipeline.PutStage(ctx, &StageResult{
+		PipelineRunID: run.ID,
+		Stage:         "plan_slice",
+		Attempt:       1,
+		StartedAt:     pending.StartedAt,
+		EndedAt:       &errEnd,
+		Outcome:       &errOutcome,
+		LogTail:       "poll interrupted before terminal spawn state",
+	}); err != nil {
+		t.Fatalf("put empty-spawn terminal update: %v", err)
+	}
+	stages, err = st.Pipeline.ListStages(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("list stages after empty-spawn update: %v", err)
+	}
+	plan = nil
+	for _, sr := range stages {
+		if sr.Stage == "plan_slice" {
+			plan = sr
+			break
+		}
+	}
+	if plan == nil || plan.SpawnID != "spawn-original" {
+		t.Fatalf("empty-spawn update erased accepted spawn: %+v", plan)
+	}
 
 	// Gate outcomes.
 	gate := &GateOutcome{
