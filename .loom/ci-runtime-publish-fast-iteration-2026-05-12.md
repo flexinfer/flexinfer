@@ -92,3 +92,21 @@ Master pipeline `9068` for the marker fix did not run
 tracked `vllm_qwen35_patches_nodiag.py` but not
 `vllm_gemma4_moe_gptq_patch.py`. The runtime publish trigger list must include
 every build-time runtime patch script that can affect the `gfx1100` image.
+
+## Follow-up: Gemma4 Missing-Model No-op
+
+Master pipeline `9072` for the trigger fix correctly ran
+`publish_unified_rocm_gfx1100`. It proved the Qwen marker fix worked:
+`vllm_gemma4_moe_gptq_patch.py` detected
+`FLEXINFER_QWEN35_GPTQ_ROCM_REFERENCE_PATCH` and continued. The next failure was
+`FAILED — MLP fp16 clamp patch failed` because the pinned wheel runtime reported
+`Gemma4 model files: none`, so `gemma4.py` was absent and the file-specific MLP
+clamp helper returned failure.
+
+Follow-up acceptance:
+- Gemma4 file-specific helpers treat an absent `gemma4.py` as a successful
+  no-op for wheel runtimes that do not ship Gemma4 model files.
+- The script remains fatal for shared quantization/runtime patches that should
+  exist in the installed vLLM tree.
+- The next master runtime publish should proceed past
+  `vLLM Gemma4 MoE GPTQ patch applied at build time`.
