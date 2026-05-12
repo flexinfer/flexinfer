@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -301,11 +302,18 @@ func TestRunner_StageErrorRetriesThenSucceeds(t *testing.T) {
 	}
 	implementRows := 0
 	successRows := 0
+	errorRows := 0
 	for _, sr := range stages {
 		if sr.Stage == "implement" {
 			implementRows++
 			if sr.Outcome != nil && *sr.Outcome == store.StageOutcomeSuccess {
 				successRows++
+			}
+			if sr.Outcome != nil && *sr.Outcome == store.StageOutcomeError {
+				errorRows++
+				if !strings.Contains(sr.LogTail, "dispatch fail: implement") {
+					t.Errorf("implement error log tail = %q, want dispatch error", sr.LogTail)
+				}
 			}
 		}
 	}
@@ -314,6 +322,9 @@ func TestRunner_StageErrorRetriesThenSucceeds(t *testing.T) {
 	}
 	if successRows != 1 {
 		t.Errorf("implement success rows = %d, want 1", successRows)
+	}
+	if errorRows != 1 {
+		t.Errorf("implement error rows = %d, want 1", errorRows)
 	}
 }
 

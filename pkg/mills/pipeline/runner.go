@@ -545,6 +545,10 @@ func (r *Runner) runStage(
 		outcome = store.StageOutcomeError
 	}
 	mills.PipelineStageAttemptsTotal.WithLabelValues(stage.ID, string(outcome)).Inc()
+	logTail := out.LogTail
+	if derr != nil && strings.TrimSpace(logTail) == "" {
+		logTail = derr.Error()
+	}
 	sr := &store.StageResult{
 		PipelineRunID: run.ID,
 		Stage:         stage.ID,
@@ -555,7 +559,7 @@ func (r *Runner) runStage(
 		SpawnID:       out.SpawnID,
 		CostUSD:       out.CostUSD,
 		Artifacts:     mergeArtifacts(stage.ID, out),
-		LogTail:       out.LogTail,
+		LogTail:       logTail,
 	}
 	if perr := r.Store.Pipeline.PutStage(ctx, sr); perr != nil {
 		// PutStage failure is unrecoverable for audit purposes.

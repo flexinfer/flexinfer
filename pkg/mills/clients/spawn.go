@@ -34,6 +34,14 @@ type HUDSpawnConfig struct {
 	PollDeadline time.Duration
 	// Timeout caps any individual HTTP call. Default 30s.
 	Timeout time.Duration
+	// MaxRetries controls transient HTTP retries for the HUD spawn API.
+	// Defaults to 6 so short Kubernetes rollouts do not burn Mills stage
+	// attempts before a replacement HUD pod becomes ready.
+	MaxRetries int
+	// RetryBaseDelay is the initial retry delay. Defaults to 1s.
+	RetryBaseDelay time.Duration
+	// RetryMaxDelay caps exponential retry delay. Defaults to 5s.
+	RetryMaxDelay time.Duration
 }
 
 // HUDSpawnClient implements pipeline.SpawnClient against the HUD mobile
@@ -64,8 +72,20 @@ func NewHUDSpawnClient(cfg HUDSpawnConfig) (*HUDSpawnClient, error) {
 	if cfg.Timeout == 0 {
 		cfg.Timeout = 30 * time.Second
 	}
+	if cfg.MaxRetries <= 0 {
+		cfg.MaxRetries = 6
+	}
+	if cfg.RetryBaseDelay == 0 {
+		cfg.RetryBaseDelay = time.Second
+	}
+	if cfg.RetryMaxDelay == 0 {
+		cfg.RetryMaxDelay = 5 * time.Second
+	}
 	hcfg := httpclient.DefaultConfig()
 	hcfg.Timeout = cfg.Timeout
+	hcfg.MaxRetries = cfg.MaxRetries
+	hcfg.RetryBaseDelay = cfg.RetryBaseDelay
+	hcfg.RetryMaxDelay = cfg.RetryMaxDelay
 	c := httpclient.New(hcfg)
 	return &HUDSpawnClient{cfg: cfg, http: c}, nil
 }

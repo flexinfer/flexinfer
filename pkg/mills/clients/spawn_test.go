@@ -74,10 +74,13 @@ func (t *hudFakeTransport) recordedRequests() []hudRecorded {
 func newHUDStub(t *testing.T, ft *hudFakeTransport) *HUDSpawnClient {
 	t.Helper()
 	c, err := NewHUDSpawnClient(HUDSpawnConfig{
-		BaseURL:      "http://hud.example",
-		Token:        "tok-abc",
-		PollInterval: 5 * time.Millisecond,
-		PollDeadline: 500 * time.Millisecond,
+		BaseURL:        "http://hud.example",
+		Token:          "tok-abc",
+		PollInterval:   5 * time.Millisecond,
+		PollDeadline:   500 * time.Millisecond,
+		MaxRetries:     1,
+		RetryBaseDelay: time.Millisecond,
+		RetryMaxDelay:  time.Millisecond,
 	})
 	if err != nil {
 		t.Fatalf("ctor: %v", err)
@@ -192,6 +195,32 @@ func TestRun_PostsCorrectRequestAndAuth(t *testing.T) {
 	}
 	if body.Metadata["loom_mills_stage"] != "plan_slice" {
 		t.Errorf("metadata.loom_mills_stage missing: %v", body.Metadata)
+	}
+}
+
+func TestRun_RetriesTransientPostFailure(t *testing.T) {
+	var postCount int32
+	ft := &hudFakeTransport{
+		post: func(_ *http.Request) (int, any) {
+			if atomic.AddInt32(&postCount, 1) == 1 {
+				return http.StatusServiceUnavailable, map[string]string{"error": "hud rolling"}
+			}
+			return 202, hudSpawnAcceptResponse{SpawnID: "spawn-after-rollout", Status: "creating"}
+		},
+		get: func(_ *http.Request) (int, any) {
+			return 200, hudSpawnState{SpawnID: "spawn-after-rollout", Status: "completed"}
+		},
+	}
+	c := newHUDStub(t, ft)
+	resp, err := c.Run(context.Background(), sampleSpawnReq())
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if resp.SpawnID != "spawn-after-rollout" {
+		t.Fatalf("spawn_id = %q", resp.SpawnID)
+	}
+	if got := atomic.LoadInt32(&postCount); got != 2 {
+		t.Fatalf("POST attempts = %d, want 2", got)
 	}
 }
 
