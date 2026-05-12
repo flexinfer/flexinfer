@@ -154,10 +154,16 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 			"exit 0;",
 			"fi",
 			"&&",
-			"if buildah manifest inspect --tls-verify=false docker://"+destination+" >/dev/null 2>&1; then",
+			"manifest_err=$(mktemp);",
+			"if buildah manifest inspect --tls-verify=false "+destination+" >/dev/null 2>\"$manifest_err\"; then",
 			"echo Using existing image "+destination+";",
 			"exit 0;",
-			"fi",
+			"fi;",
+			"if grep -q 'not a list type' \"$manifest_err\"; then",
+			"echo Using existing image "+destination+";",
+			"exit 0;",
+			"fi;",
+			"cat \"$manifest_err\" >&2;",
 			"&&",
 		)
 	}

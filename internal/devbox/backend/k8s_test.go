@@ -532,7 +532,8 @@ func TestBuildBuildahPodSpec_PreferExistingImage(t *testing.T) {
 	buildCmd := pod.Spec.Containers[0].Command[2]
 	for _, want := range []string{
 		"skopeo inspect --raw --tls-verify=false docker://registry.harbor.lan/devbox:tag",
-		"buildah manifest inspect --tls-verify=false docker://registry.harbor.lan/devbox:tag",
+		"buildah manifest inspect --tls-verify=false registry.harbor.lan/devbox:tag",
+		"grep -q 'not a list type'",
 		"echo Using existing image registry.harbor.lan/devbox:tag",
 		"exit 0",
 		"buildah build-using-dockerfile",
