@@ -17,18 +17,24 @@ import (
 )
 
 // execMode returns the executor transport mode from the DEVBOX_EXEC_MODE env var.
-// Default: "websocket". Set DEVBOX_EXEC_MODE=spdy to use the legacy SPDY transport.
+// Default: "spdy". Set DEVBOX_EXEC_MODE=websocket to opt into the newer
+// WebSocket transport once it is proven reliable in the target cluster.
 func execMode() string {
-	return strings.ToLower(os.Getenv("DEVBOX_EXEC_MODE"))
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("DEVBOX_EXEC_MODE")))
+	if mode == "" {
+		return "spdy"
+	}
+	return mode
 }
 
 // newExecForMode creates a remotecommand.Executor using the appropriate transport.
-// Default is WebSocket; set DEVBOX_EXEC_MODE=spdy to fall back to SPDY.
+// Default is SPDY because the WebSocket executor can report empty exit-code-only
+// failures for otherwise healthy in-cluster exec calls.
 func newExecForMode(config *rest.Config, execURL *url.URL) (remotecommand.Executor, error) {
-	if execMode() == "spdy" {
-		return remotecommand.NewSPDYExecutor(config, "POST", execURL)
+	if execMode() == "websocket" {
+		return remotecommand.NewWebSocketExecutor(config, "GET", execURL.String())
 	}
-	return remotecommand.NewWebSocketExecutor(config, "GET", execURL.String())
+	return remotecommand.NewSPDYExecutor(config, "POST", execURL)
 }
 
 func (k *K8sBackend) Start(ctx context.Context, opts StartOpts) (*StartResult, error) {
