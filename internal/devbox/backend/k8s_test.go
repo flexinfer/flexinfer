@@ -542,6 +542,9 @@ func TestBuildBuildahPodSpec_PreferExistingImage(t *testing.T) {
 			t.Fatalf("prefer-existing build command missing %q:\n%s", want, buildCmd)
 		}
 	}
+	if strings.Contains(buildCmd, "; &&") {
+		t.Fatalf("prefer-existing build command has invalid shell join:\n%s", buildCmd)
+	}
 }
 
 func TestBuildBuildahPodSpec_AvoidNodesAffinity(t *testing.T) {
