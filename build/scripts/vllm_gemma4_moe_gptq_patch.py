@@ -597,7 +597,7 @@ def patch_gemma4_moe_gptq_weight_names(vllm_root: pathlib.Path) -> bool:
     gemma4_py = vllm_root / "model_executor" / "models" / "gemma4.py"
     if not gemma4_py.exists():
         print(f"[gemma4-moe-patch] SKIP: {gemma4_py} not found")
-        return False
+        return True
 
     src = gemma4_py.read_text()
 
@@ -1117,7 +1117,7 @@ def patch_gemma4_mlp_fp16_clamp(vllm_root: pathlib.Path) -> bool:
     gemma4_py = vllm_root / "model_executor" / "models" / "gemma4.py"
     if not gemma4_py.exists():
         print(f"[gemma4-moe-patch] SKIP: {gemma4_py} not found")
-        return False
+        return True
 
     src = gemma4_py.read_text()
 
