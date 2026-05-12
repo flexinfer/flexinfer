@@ -567,6 +567,12 @@ func (r *Runner) markDone(ctx context.Context, run *store.PipelineRun, item *sto
 	if err := r.Store.Pipeline.PutRun(ctx, run); err != nil {
 		return fmt.Errorf("persist run done: %w", err)
 	}
+	if item != nil {
+		item.State = store.BacklogMerged
+		if err := r.Store.Backlog.Put(ctx, item); err != nil {
+			return fmt.Errorf("persist backlog merged: %w", err)
+		}
+	}
 	mills.PipelineRunsTotal.WithLabelValues(string(store.PipelineDone)).Inc()
 	mills.PipelineCostUSDTotal.WithLabelValues(string(store.PipelineDone)).Add(run.CostUSD)
 	r.event(ctx, "pipeline.run.done", "ok", map[string]any{
@@ -590,6 +596,12 @@ func (r *Runner) escalateWithItem(ctx context.Context, run *store.PipelineRun, i
 	run.EndedAt = &t
 	if err := r.Store.Pipeline.PutRun(ctx, run); err != nil {
 		return fmt.Errorf("persist run escalated: %w", err)
+	}
+	if item != nil {
+		item.State = store.BacklogEscalated
+		if err := r.Store.Backlog.Put(ctx, item); err != nil {
+			return fmt.Errorf("persist backlog escalated: %w", err)
+		}
 	}
 	mills.PipelineRunsTotal.WithLabelValues(string(store.PipelineEscalated)).Inc()
 	mills.PipelineCostUSDTotal.WithLabelValues(string(store.PipelineEscalated)).Add(run.CostUSD)

@@ -329,6 +329,14 @@ func run(cfg Config) error {
 		logger.Info("squad routing disabled (no squads loader)")
 	}
 	op.withReconciler(reconciler)
+	terminalSync, err := reconciler.SyncTerminalBacklogs(rootCtx)
+	if err != nil {
+		logger.Warn("pipeline startup backlog terminal sync failed", "error", err)
+	} else if terminalSync.Inspected > 0 {
+		logger.Info("pipeline startup backlog terminal sync complete",
+			"inspected", terminalSync.Inspected, "updated", terminalSync.Updated,
+			"skipped", terminalSync.Skipped, "errored", terminalSync.Errored)
+	}
 	resumed, err := reconciler.ResumeInFlightRuns(rootCtx)
 	if err != nil {
 		logger.Warn("pipeline startup resume failed", "error", err)

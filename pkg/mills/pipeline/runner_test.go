@@ -136,6 +136,13 @@ func TestRunner_DriveHappyPath(t *testing.T) {
 	if got.State != store.PipelineDone {
 		t.Errorf("state = %s, want done", got.State)
 	}
+	gotItem, err := st.Backlog.Get(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("get backlog: %v", err)
+	}
+	if gotItem.State != store.BacklogMerged {
+		t.Errorf("backlog state = %s, want merged", gotItem.State)
+	}
 	if got.MRIID == nil || *got.MRIID != 42 {
 		t.Errorf("mr_iid = %v, want 42", got.MRIID)
 	}
@@ -181,6 +188,13 @@ func TestRunner_GateFailRetriesUpstreamThenEscalates(t *testing.T) {
 	}
 	if got.State != store.PipelineEscalated {
 		t.Errorf("state = %s, want escalated", got.State)
+	}
+	gotItem, err := st.Backlog.Get(context.Background(), item.ID)
+	if err != nil {
+		t.Fatalf("get backlog: %v", err)
+	}
+	if gotItem.State != store.BacklogEscalated {
+		t.Errorf("backlog state = %s, want escalated", gotItem.State)
 	}
 	// Implement should have been called maxAttempts (3) times before
 	// escalation; plan_slice + research run once each.

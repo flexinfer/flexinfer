@@ -111,6 +111,32 @@ func TestBuildAgentCommand_ClaudeStreamJSON(t *testing.T) {
 	}
 }
 
+func TestAgentCLIInstallLines_EnsuresNPM(t *testing.T) {
+	tests := []struct {
+		agentType string
+		pkgName   string
+	}{
+		{"claude-code", "@anthropic-ai/claude-code"},
+		{"codex", "@openai/codex"},
+		{"gemini", "@google/gemini-cli"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.agentType, func(t *testing.T) {
+			lines := agentCLIInstallLines(tt.agentType)
+			for _, want := range []string{
+				"command -v npm",
+				"apk add --no-cache nodejs npm",
+				"apt-get install -y --no-install-recommends nodejs npm",
+				"npm install -g " + tt.pkgName,
+			} {
+				if !strings.Contains(lines, want) {
+					t.Fatalf("agentCLIInstallLines(%q) missing %q:\n%s", tt.agentType, want, lines)
+				}
+			}
+		})
+	}
+}
+
 func TestAgentSecretMounts_ClaudeOAuthFromClusterSecret(t *testing.T) {
 	mounts := agentSecretMounts("claude-code")
 	if len(mounts) != 1 {

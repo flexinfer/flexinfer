@@ -335,6 +335,12 @@ func (i *Integrator) escalateWithItem(ctx context.Context, run *store.PipelineRu
 	if err := i.Store.Pipeline.PutRun(ctx, run); err != nil {
 		return fmt.Errorf("integrator: persist escalated: %w", err)
 	}
+	if item != nil {
+		item.State = store.BacklogEscalated
+		if err := i.Store.Backlog.Put(ctx, item); err != nil {
+			return fmt.Errorf("integrator: persist backlog escalated: %w", err)
+		}
+	}
 	i.event(ctx, "pipeline.integrate.escalated", "error", map[string]any{
 		"run": run.ID, "reason": reason,
 	})

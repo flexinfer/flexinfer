@@ -1435,13 +1435,23 @@ func agentSecretMounts(agentType string) []backend.SecretMount {
 // agentCLIInstallLines returns Dockerfile RUN lines to install the agent CLI
 // with pinned versions for reproducible builds.
 func agentCLIInstallLines(agentType string) string {
+	const ensureNPM = `RUN if ! command -v npm >/dev/null 2>&1; then \
+    if command -v apk >/dev/null 2>&1; then \
+      apk add --no-cache nodejs npm; \
+    elif command -v apt-get >/dev/null 2>&1; then \
+      apt-get update && apt-get install -y --no-install-recommends nodejs npm && rm -rf /var/lib/apt/lists/*; \
+    else \
+      echo "npm is required to install agent CLI" >&2; exit 1; \
+    fi; \
+  fi`
+
 	switch agentType {
 	case "claude-code":
-		return fmt.Sprintf("RUN npm install -g @anthropic-ai/claude-code@%s", claudeCodeVersion)
+		return fmt.Sprintf("%s\nRUN npm install -g @anthropic-ai/claude-code@%s", ensureNPM, claudeCodeVersion)
 	case "codex":
-		return fmt.Sprintf("RUN npm install -g @openai/codex@%s", codexVersion)
+		return fmt.Sprintf("%s\nRUN npm install -g @openai/codex@%s", ensureNPM, codexVersion)
 	case "gemini":
-		return fmt.Sprintf("RUN npm install -g @google/gemini-cli@%s", geminiVersion)
+		return fmt.Sprintf("%s\nRUN npm install -g @google/gemini-cli@%s", ensureNPM, geminiVersion)
 	default:
 		return ""
 	}

@@ -96,6 +96,15 @@ type ResumeInFlightResult struct {
 	Errored   int
 }
 
+// TerminalBacklogSyncResult reports stale running backlog items repaired from
+// terminal pipeline state during startup.
+type TerminalBacklogSyncResult struct {
+	Inspected int
+	Updated   int
+	Skipped   int
+	Errored   int
+}
+
 var (
 	ErrPolicyDisabled   = errors.New("reconciler: policy disabled")
 	ErrBacklogNotQueued = errors.New("reconciler: backlog item is not queued")
@@ -301,6 +310,92 @@ func (r *Reconciler) ResumeInFlightRuns(ctx context.Context) (ResumeInFlightResu
 		})
 	}
 	return res, nil
+}
+
+// SyncTerminalBacklogs repairs running backlog rows whose pipeline runs already
+// reached a terminal state. This is intentionally safe to run on startup: it
+// skips any backlog with an active run and only mirrors done/escalated/paused
+// terminal pipeline state onto stale backlog rows.
+func (r *Reconciler) SyncTerminalBacklogs(ctx context.Context) (TerminalBacklogSyncResult, error) {
+	if r == nil || r.Store == nil {
+		return TerminalBacklogSyncResult{}, errors.New("reconciler: not configured")
+	}
+	items, err := r.Store.Backlog.ListByState(ctx, store.BacklogRunning)
+	if err != nil {
+		return TerminalBacklogSyncResult{}, fmt.Errorf("list running backlog: %w", err)
+	}
+	res := TerminalBacklogSyncResult{Inspected: len(items)}
+	for _, item := range items {
+		runs, err := r.Store.Pipeline.ListByBacklog(ctx, item.ID)
+		if err != nil {
+			r.append(ctx, "reconciler.backlog_terminal_sync_failed", "error", map[string]any{
+				"backlog": item.ID, "error": err.Error(),
+			})
+			res.Errored++
+			continue
+		}
+		state, ok := terminalBacklogState(runs)
+		if !ok {
+			res.Skipped++
+			continue
+		}
+		item.State = state
+		if err := r.Store.Backlog.Put(ctx, item); err != nil {
+			r.append(ctx, "reconciler.backlog_terminal_sync_failed", "error", map[string]any{
+				"backlog": item.ID, "state": string(state), "error": err.Error(),
+			})
+			res.Errored++
+			continue
+		}
+		r.append(ctx, "reconciler.backlog_terminal_synced", "ok", map[string]any{
+			"backlog": item.ID, "state": string(state),
+		})
+		res.Updated++
+	}
+	if res.Inspected > 0 {
+		r.append(ctx, "reconciler.backlog_terminal_sync_tick", "ok", map[string]any{
+			"inspected": res.Inspected, "updated": res.Updated,
+			"skipped": res.Skipped, "errored": res.Errored,
+		})
+	}
+	return res, nil
+}
+
+func terminalBacklogState(runs []*store.PipelineRun) (store.BacklogState, bool) {
+	var latest *store.PipelineRun
+	for _, run := range runs {
+		if run == nil {
+			continue
+		}
+		if !isTerminalPipelineState(run.State) {
+			return "", false
+		}
+		if latest == nil || run.StartedAt.After(latest.StartedAt) || (run.StartedAt.Equal(latest.StartedAt) && run.Attempts > latest.Attempts) {
+			latest = run
+		}
+	}
+	if latest == nil {
+		return "", false
+	}
+	switch latest.State {
+	case store.PipelineDone:
+		return store.BacklogMerged, true
+	case store.PipelineEscalated:
+		return store.BacklogEscalated, true
+	case store.PipelinePaused:
+		return store.BacklogPaused, true
+	default:
+		return "", false
+	}
+}
+
+func isTerminalPipelineState(state store.PipelineState) bool {
+	switch state {
+	case store.PipelineDone, store.PipelineEscalated, store.PipelinePaused:
+		return true
+	default:
+		return false
+	}
 }
 
 // pickupQueuedSubruns looks up every pipeline run created by
