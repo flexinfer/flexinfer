@@ -95,6 +95,7 @@ publish_unified_rocm_gfx1100:
         - build/server-diffusers.py
         - build/scripts/abliterate.py
         - build/scripts/quantize_gptq.py
+        - build/scripts/vllm_gemma4_moe_gptq_patch.py
         - build/scripts/vllm_qwen35_patches_nodiag.py
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
