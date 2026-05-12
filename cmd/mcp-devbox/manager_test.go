@@ -112,10 +112,11 @@ func TestSanitizeContainerName(t *testing.T) {
 		want  string
 	}{
 		{"loom-core", "loom-core"},
-		{"my_project", "my_project"},
-		{"hello world!", "hello-world-"},
+		{"my_project", "my-project"},
+		{"hello world!", "hello-world"},
 		{"a/b/c.d", "a-b-c-d"},
-		{"ALL_CAPS_123", "ALL_CAPS_123"},
+		{"ALL_CAPS_123", "all-caps-123"},
+		{"---", "sandbox"},
 	}
 
 	for _, tt := range tests {
@@ -137,11 +138,12 @@ func TestContainerName(t *testing.T) {
 		want    string
 	}{
 		{"loom-core", "", "devbox-loom-core"},
-		{"my_app", "", "devbox-my_app"},
+		{"my_app", "", "devbox-my-app"},
 		{"hello world", "", "devbox-hello-world"},
 		{"loom-core", "claude-code", "devbox-loom-core-claude-code"},
 		{"loom-core", "codex", "devbox-loom-core-codex"},
 		{"flexdeck", "very-long-agent-name-here", "devbox-flexdeck-very-long-ag"},
+		{"loom-core", "codex-mills-verify", "devbox-loom-core-codex-mills"},
 	}
 
 	for _, tt := range tests {
