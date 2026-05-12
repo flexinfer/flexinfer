@@ -84,3 +84,11 @@ Follow-up acceptance:
   nor the expected unpatched function body is present.
 - The next master runtime publish should proceed past
   `vLLM Gemma4 MoE GPTQ patch applied at build time`.
+
+## Follow-up: Runtime Trigger Completeness
+
+Master pipeline `9068` for the marker fix did not run
+`publish_unified_rocm_gfx1100` because `.gitlab/ci/runtime-publish.yml`
+tracked `vllm_qwen35_patches_nodiag.py` but not
+`vllm_gemma4_moe_gptq_patch.py`. The runtime publish trigger list must include
+every build-time runtime patch script that can affect the `gfx1100` image.
