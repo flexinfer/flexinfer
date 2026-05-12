@@ -16,12 +16,18 @@ import (
 )
 
 // qualityCheckResult holds the result of a single quality gate check.
+//
+// OutputTail is captured from the check's stdout. When stdout is empty
+// (common for `make` errors and fallback commands that error to stderr),
+// StderrTail surfaces the underlying failure so escalations are
+// actionable instead of an unhelpful empty string.
 type qualityCheckResult struct {
 	Name       string `json:"name"`
 	Passed     bool   `json:"passed"`
 	ExitCode   int    `json:"exit_code,omitempty"`
 	DurationMs int64  `json:"duration_ms"`
 	OutputTail string `json:"output_tail,omitempty"`
+	StderrTail string `json:"stderr_tail,omitempty"`
 }
 
 // qualityGateResult holds the aggregate result of the quality gate.
@@ -68,7 +74,18 @@ var fallbackCommands = map[string]string{
 	"diff": "git diff --exit-code",
 }
 
-const sandboxLanguageProbeCommand = `if [ -f go.mod ]; then printf go; elif [ -f package.json ]; then printf node; elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then printf python; elif [ -f Cargo.toml ]; then printf rust; else printf unknown; fi`
+// sandboxLanguageProbeCommand inspects the cwd for the canonical
+// marker file of each supported language. Trailing newlines keep
+// k8s exec capture happy (no-newline output can race with stream
+// close in some kubelet versions) and stays harmless under strings.TrimSpace.
+const sandboxLanguageProbeCommand = `if [ -f go.mod ]; then echo go; elif [ -f package.json ]; then echo node; elif [ -f pyproject.toml ] || [ -f requirements.txt ]; then echo python; elif [ -f Cargo.toml ]; then echo rust; else echo unknown; fi`
+
+// sandboxLanguageProbePaths is the ordered list of cwds the probe tries
+// when the first probe returns unknown. In git-clone mode the sources
+// land under projectWorkDir, but tar-pipe sandboxes that pre-date a
+// syncMode flip and home-rolled mounts can leave the marker at the
+// workspace root instead. The extra candidates are inert when missing.
+var sandboxLanguageProbePaths = []string{"", "/workspace"}
 
 func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*mcp.CallToolResult, error) {
 	v := validate.NewArgs(args)
@@ -129,7 +146,7 @@ func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*
 	if len(fp.Languages) > 0 {
 		lang = fp.Languages[0].Language
 	}
-	if lang == "unknown" && m.cfg.syncMode == "git-clone" {
+	if lang == "unknown" {
 		if detected := m.detectSandboxLanguage(ctx, containerID, projectDir); detected != "" {
 			lang = detected
 		}
@@ -185,7 +202,15 @@ func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*
 			cr.ExitCode = result.ExitCode
 			cr.Passed = result.ExitCode == 0
 			if !cr.Passed {
+				// Surface stderr when stdout is empty so `make` errors like
+				// "*** No rule to make target 'fmt'" stop showing up as a
+				// blank Output in escalations. Truncate independently so
+				// neither stream crowds the other out of the artifact.
 				cr.OutputTail = truncateOutput(result.StdoutTail, 500)
+				cr.StderrTail = truncateOutput(result.StderrTail, 500)
+				if cr.OutputTail == "" {
+					cr.OutputTail = cr.StderrTail
+				}
 				allPassed = false
 			}
 		}
@@ -215,26 +240,56 @@ func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*
 	return mcp.JSONResult(gateResult)
 }
 
+// detectSandboxLanguage probes the running sandbox for a language marker.
+//
+// It tries projectWorkDir first (where git-clone deposits source) and
+// falls back to /workspace so tar-pipe-era sandboxes and any layout
+// drift still resolve. Every attempt is logged with stdout/stderr/exit
+// so empty results don't disappear into the void.
 func (m *manager) detectSandboxLanguage(ctx context.Context, containerID, projectDir string) string {
-	result, err := m.backend.Exec(ctx, backend.ExecOpts{
-		ContainerID: containerID,
-		Command:     sandboxLanguageProbeCommand,
-		WorkDir:     m.projectWorkDir(projectDir),
-		TimeoutSec:  10,
-		MaxLines:    1,
-	})
-	if err != nil || result == nil || result.ExitCode != 0 {
-		if m.logger != nil && err != nil {
-			m.logger.Warn("sandbox language probe failed", "project", filepath.Base(projectDir), "error", err)
+	project := filepath.Base(projectDir)
+	defaultWorkDir := m.projectWorkDir(projectDir)
+	for _, wd := range sandboxLanguageProbePaths {
+		if wd == "" {
+			wd = defaultWorkDir
 		}
-		return ""
+		result, err := m.backend.Exec(ctx, backend.ExecOpts{
+			ContainerID: containerID,
+			Command:     sandboxLanguageProbeCommand,
+			WorkDir:     wd,
+			TimeoutSec:  10,
+			MaxLines:    1,
+		})
+		if m.logger != nil {
+			exit := -1
+			var stdout, stderr string
+			if result != nil {
+				exit = result.ExitCode
+				stdout = strings.TrimSpace(result.StdoutTail)
+				stderr = strings.TrimSpace(result.StderrTail)
+			}
+			errStr := ""
+			if err != nil {
+				errStr = err.Error()
+			}
+			m.logger.Info("sandbox language probe",
+				"project", project,
+				"workdir", wd,
+				"exit", exit,
+				"stdout", stdout,
+				"stderr", stderr,
+				"error", errStr,
+			)
+		}
+		if err != nil || result == nil || result.ExitCode != 0 {
+			continue
+		}
+		switch strings.TrimSpace(result.StdoutTail) {
+		case "go", "python", "node", "rust":
+			return strings.TrimSpace(result.StdoutTail)
+		}
 	}
-	switch strings.TrimSpace(result.StdoutTail) {
-	case "go", "python", "node", "rust":
-		return strings.TrimSpace(result.StdoutTail)
-	default:
-		return ""
-	}
+	return ""
 }
 
 // truncateOutput returns the last N bytes of output.

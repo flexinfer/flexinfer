@@ -46,6 +46,7 @@ type devboxQualityCheckRow struct {
 	ExitCode   int    `json:"exit_code,omitempty"`
 	DurationMs int64  `json:"duration_ms"`
 	OutputTail string `json:"output_tail,omitempty"`
+	StderrTail string `json:"stderr_tail,omitempty"`
 }
 
 // QualityGate implements pipeline.DevboxClient.
@@ -81,12 +82,20 @@ func (c *DevboxClient) QualityGate(ctx context.Context, req pipeline.DevboxReque
 	}
 	checks := make([]pipeline.DevboxCheck, 0, len(parsed.Checks))
 	for _, row := range parsed.Checks {
+		// Fall back to stderr when the canonical stdout tail is empty
+		// so the runner's stage_results.artifacts_json carries an
+		// actionable failure message (the canary failure mode of
+		// "make fmt" with stderr-only output otherwise vanishes here).
+		output := row.OutputTail
+		if output == "" {
+			output = row.StderrTail
+		}
 		checks = append(checks, pipeline.DevboxCheck{
 			Name:     row.Name,
 			Passed:   row.Passed,
 			ExitCode: row.ExitCode,
 			Duration: float64(row.DurationMs) / 1000.0,
-			Output:   row.OutputTail,
+			Output:   output,
 		})
 	}
 	return pipeline.DevboxResponse{
