@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -34,12 +35,14 @@ type fakeBackend struct {
 	// Configurable responses for handler tests.
 	buildResult     *backend.BuildResult
 	buildErr        error
+	buildOpts       []backend.BuildOpts
 	readFileContent []byte
 	readFileErr     error
 	writeFileErr    error
 }
 
-func (f *fakeBackend) Build(_ context.Context, _ backend.BuildOpts) (*backend.BuildResult, error) {
+func (f *fakeBackend) Build(_ context.Context, opts backend.BuildOpts) (*backend.BuildResult, error) {
+	f.buildOpts = append(f.buildOpts, opts)
 	if f.buildErr != nil {
 		return nil, f.buildErr
 	}
@@ -225,6 +228,43 @@ func TestActiveExecs(t *testing.T) {
 	m.decActiveExecs("test-project")
 	if m.hasActiveExecs("test-project") {
 		t.Error("expected no active execs after dec")
+	}
+}
+
+func TestGenerateSandboxDockerfile_GitCloneAllowsNoLocalLanguages(t *testing.T) {
+	m := &manager{
+		cfg:    managerConfig{syncMode: "git-clone"},
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
+	fp := &detect.EnvFingerprint{
+		ProjectDir:  "/app/services/loom-core",
+		ProjectName: "loom-core",
+		Hash:        "abc123456789",
+	}
+
+	df, err := m.generateSandboxDockerfile(fp)
+	if err != nil {
+		t.Fatalf("generateSandboxDockerfile returned error: %v", err)
+	}
+	got := string(df)
+	for _, want := range []string{"FROM golang:1.25.10-alpine", "git make nodejs npm python3", "WORKDIR /workspace"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("fallback Dockerfile missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestGenerateSandboxDockerfile_NFSStillRejectsNoLocalLanguages(t *testing.T) {
+	m := &manager{cfg: managerConfig{syncMode: "nfs"}}
+	fp := &detect.EnvFingerprint{
+		ProjectDir:  "/app/services/loom-core",
+		ProjectName: "loom-core",
+		Hash:        "abc123456789",
+	}
+
+	_, err := m.generateSandboxDockerfile(fp)
+	if err == nil || !strings.Contains(err.Error(), "no languages detected") {
+		t.Fatalf("expected no-languages error, got %v", err)
 	}
 }
 

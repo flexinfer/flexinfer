@@ -21,11 +21,13 @@ const (
 )
 
 const (
-	defaultBuildCPURequest    = "1"
-	defaultBuildCPULimit      = "3"
-	defaultBuildMemoryRequest = "1Gi"
-	defaultBuildMemoryLimit   = "3Gi"
-	defaultMaxBuilds          = 1
+	defaultBuildCPURequest              = "1"
+	defaultBuildCPULimit                = "3"
+	defaultBuildMemoryRequest           = "1Gi"
+	defaultBuildMemoryLimit             = "3Gi"
+	defaultBuildEphemeralStorageRequest = "2Gi"
+	defaultBuildEphemeralStorageLimit   = "40Gi"
+	defaultMaxBuilds                    = 1
 )
 
 // K8sBackend implements Backend using a Kubernetes cluster.
@@ -46,12 +48,14 @@ type K8sBackend struct {
 	gitBaseURL      string // base git URL for workspace repos (enables git-clone mode)
 	gitSecret       string // secret name containing git token (key: "token")
 
-	buildCPURequest    resource.Quantity
-	buildCPULimit      resource.Quantity
-	buildMemoryRequest resource.Quantity
-	buildMemoryLimit   resource.Quantity
-	buildAvoidNodes    []string
-	buildSlots         chan struct{}
+	buildCPURequest              resource.Quantity
+	buildCPULimit                resource.Quantity
+	buildMemoryRequest           resource.Quantity
+	buildMemoryLimit             resource.Quantity
+	buildEphemeralStorageRequest resource.Quantity
+	buildEphemeralStorageLimit   resource.Quantity
+	buildAvoidNodes              []string
+	buildSlots                   chan struct{}
 
 	// Tar-pipe sync configuration.
 	syncMode     string   // "tar-pipe", "git-clone", or "nfs"
@@ -61,24 +65,26 @@ type K8sBackend struct {
 
 // K8sBackendConfig holds configuration for the K8s backend.
 type K8sBackendConfig struct {
-	Kubeconfig          string // path to kubeconfig file
-	Namespace           string // namespace for sandbox pods (default: "devbox")
-	Registry            string // image registry (e.g., "registry.harbor.lan")
-	StorageClass        string // storage class for PVCs (default: "longhorn")
-	WorkspacePVC        string // PVC name for NFS workspace (default: "devbox-workspace-nfs")
-	ImagePullSecret     string // image pull secret name (default: "harbor-creds")
-	WorkspaceRoot       string // host path to workspace (for NFS-relative path computation)
-	BuilderImage        string // Buildah builder image (default: quay.io/buildah/stable:v1.38.0)
-	GitCloneImage       string // git image for git-clone init containers (default: alpine/git:2.47.2)
-	NFSFlush            bool   // prepend NFS attr cache flush to exec commands (default: true for K8s)
-	GitBaseURL          string // base git URL for repos (e.g., "https://gitlab.blevins.dev/homelab"); enables git-clone mode
-	GitSecret           string // secret name containing git token (key: "token"); required when GitBaseURL is set
-	BuildCPURequest     string // Buildah pod CPU request as Kubernetes quantity (default: "1")
-	BuildCPULimit       string // Buildah pod CPU limit as Kubernetes quantity (default: "3")
-	BuildMemoryRequest  string // Buildah pod memory request as Kubernetes quantity (default: "1Gi")
-	BuildMemoryLimit    string // Buildah pod memory limit as Kubernetes quantity (default: "3Gi")
-	BuildAvoidNodes     string // comma-separated node names to avoid for Buildah pods
-	MaxConcurrentBuilds int    // max concurrent Buildah pods per backend process (default: 1)
+	Kubeconfig                   string // path to kubeconfig file
+	Namespace                    string // namespace for sandbox pods (default: "devbox")
+	Registry                     string // image registry (e.g., "registry.harbor.lan")
+	StorageClass                 string // storage class for PVCs (default: "longhorn")
+	WorkspacePVC                 string // PVC name for NFS workspace (default: "devbox-workspace-nfs")
+	ImagePullSecret              string // image pull secret name (default: "harbor-creds")
+	WorkspaceRoot                string // host path to workspace (for NFS-relative path computation)
+	BuilderImage                 string // Buildah builder image (default: quay.io/buildah/stable:v1.38.0)
+	GitCloneImage                string // git image for git-clone init containers (default: alpine/git:2.47.2)
+	NFSFlush                     bool   // prepend NFS attr cache flush to exec commands (default: true for K8s)
+	GitBaseURL                   string // base git URL for repos (e.g., "https://gitlab.blevins.dev/homelab"); enables git-clone mode
+	GitSecret                    string // secret name containing git token (key: "token"); required when GitBaseURL is set
+	BuildCPURequest              string // Buildah pod CPU request as Kubernetes quantity (default: "1")
+	BuildCPULimit                string // Buildah pod CPU limit as Kubernetes quantity (default: "3")
+	BuildMemoryRequest           string // Buildah pod memory request as Kubernetes quantity (default: "1Gi")
+	BuildMemoryLimit             string // Buildah pod memory limit as Kubernetes quantity (default: "3Gi")
+	BuildEphemeralStorageRequest string // Buildah pod ephemeral-storage request (default: "2Gi")
+	BuildEphemeralStorageLimit   string // Buildah pod ephemeral-storage limit (default: "40Gi")
+	BuildAvoidNodes              string // comma-separated node names to avoid for Buildah pods
+	MaxConcurrentBuilds          int    // max concurrent Buildah pods per backend process (default: 1)
 
 	// Tar-pipe sync: stream local files into pods via SPDY exec.
 	SyncMode     string   // "tar-pipe" (default local), "git-clone", "nfs"
@@ -126,6 +132,14 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 	if err != nil {
 		return nil, err
 	}
+	buildEphemeralStorageRequest, err := parseBuildQuantity("build ephemeral-storage request", cfg.BuildEphemeralStorageRequest, defaultBuildEphemeralStorageRequest)
+	if err != nil {
+		return nil, err
+	}
+	buildEphemeralStorageLimit, err := parseBuildQuantity("build ephemeral-storage limit", cfg.BuildEphemeralStorageLimit, defaultBuildEphemeralStorageLimit)
+	if err != nil {
+		return nil, err
+	}
 	if cfg.MaxConcurrentBuilds <= 0 {
 		cfg.MaxConcurrentBuilds = defaultMaxBuilds
 	}
@@ -141,27 +155,29 @@ func NewK8sBackend(cfg K8sBackendConfig) (*K8sBackend, error) {
 	}
 
 	return &K8sBackend{
-		clientset:          clientset,
-		restConfig:         restConfig,
-		namespace:          cfg.Namespace,
-		registry:           cfg.Registry,
-		workspacePVC:       cfg.WorkspacePVC,
-		imagePullSecret:    cfg.ImagePullSecret,
-		workspaceRoot:      cfg.WorkspaceRoot,
-		builderImage:       cfg.BuilderImage,
-		gitCloneImage:      cfg.GitCloneImage,
-		nfsFlush:           cfg.NFSFlush,
-		gitBaseURL:         cfg.GitBaseURL,
-		gitSecret:          cfg.GitSecret,
-		buildCPURequest:    buildCPURequest,
-		buildCPULimit:      buildCPULimit,
-		buildMemoryRequest: buildMemoryRequest,
-		buildMemoryLimit:   buildMemoryLimit,
-		buildAvoidNodes:    splitCSV(cfg.BuildAvoidNodes),
-		buildSlots:         make(chan struct{}, cfg.MaxConcurrentBuilds),
-		syncMode:           cfg.SyncMode,
-		syncExcludes:       cfg.SyncExcludes,
-		maxSyncSize:        cfg.MaxSyncSize,
+		clientset:                    clientset,
+		restConfig:                   restConfig,
+		namespace:                    cfg.Namespace,
+		registry:                     cfg.Registry,
+		workspacePVC:                 cfg.WorkspacePVC,
+		imagePullSecret:              cfg.ImagePullSecret,
+		workspaceRoot:                cfg.WorkspaceRoot,
+		builderImage:                 cfg.BuilderImage,
+		gitCloneImage:                cfg.GitCloneImage,
+		nfsFlush:                     cfg.NFSFlush,
+		gitBaseURL:                   cfg.GitBaseURL,
+		gitSecret:                    cfg.GitSecret,
+		buildCPURequest:              buildCPURequest,
+		buildCPULimit:                buildCPULimit,
+		buildMemoryRequest:           buildMemoryRequest,
+		buildMemoryLimit:             buildMemoryLimit,
+		buildEphemeralStorageRequest: buildEphemeralStorageRequest,
+		buildEphemeralStorageLimit:   buildEphemeralStorageLimit,
+		buildAvoidNodes:              splitCSV(cfg.BuildAvoidNodes),
+		buildSlots:                   make(chan struct{}, cfg.MaxConcurrentBuilds),
+		syncMode:                     cfg.SyncMode,
+		syncExcludes:                 cfg.SyncExcludes,
+		maxSyncSize:                  cfg.MaxSyncSize,
 	}, nil
 }
 

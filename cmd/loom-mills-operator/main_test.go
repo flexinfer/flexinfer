@@ -137,6 +137,30 @@ func TestStagePromptForIncludesBacklogContext(t *testing.T) {
 	}
 }
 
+func TestStagePromptForResearchIsNotBlank(t *testing.T) {
+	prompt := stagePromptFor("research")(pipeline.JobContext{
+		Stage: pipeline.Stage{ID: "research"},
+		Item: &store.BacklogItem{
+			ID:     "MILLS-CANARY-TEST",
+			Title:  "canary",
+			Labels: []string{"mills-canary", "safe-fixture"},
+			Success: store.SuccessCriteria{
+				Tests: []string{"go test ./cmd/loom -run Mills"},
+			},
+		},
+	})
+	for _, want := range []string{
+		"Research backlog item MILLS-CANARY-TEST",
+		"Backlog context:",
+		"mills-canary",
+		"go test ./cmd/loom -run Mills",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("research prompt missing %q:\n%s", want, prompt)
+		}
+	}
+}
+
 func TestMetrics_Endpoint(t *testing.T) {
 	op, cleanup := newTestOperator(t)
 	defer cleanup()

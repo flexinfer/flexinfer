@@ -72,6 +72,9 @@ func (c *DevboxClient) QualityGate(ctx context.Context, req pipeline.DevboxReque
 	}
 	var parsed devboxQualityGateResult
 	if perr := json.Unmarshal([]byte(body), &parsed); perr != nil {
+		if err != nil {
+			return pipeline.DevboxResponse{}, fmt.Errorf("devbox quality_gate: %w; raw=%q", err, body)
+		}
 		return pipeline.DevboxResponse{}, fmt.Errorf("devbox: decode body: %w; raw=%q", perr, body)
 	}
 	checks := make([]pipeline.DevboxCheck, 0, len(parsed.Checks))

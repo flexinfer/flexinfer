@@ -520,19 +520,21 @@ func (a *App) RegisterRoutes(mux *http.ServeMux) {
 func (a *App) initSpawnOrchestrator(ctx context.Context) error {
 	cfg := a.config
 	spawnBackend, err := backend.NewK8sBackend(backend.K8sBackendConfig{
-		Kubeconfig:          cfg.SpawnKubeconfig,
-		Namespace:           cfg.SpawnNamespace,
-		Registry:            cfg.SpawnRegistry,
-		SyncMode:            cfg.SpawnSyncMode,
-		GitBaseURL:          cfg.SpawnGitBaseURL,
-		GitSecret:           cfg.SpawnGitSecret,
-		GitCloneImage:       cfg.SpawnGitCloneImage,
-		BuildCPURequest:     cfg.SpawnBuildCPURequest,
-		BuildCPULimit:       cfg.SpawnBuildCPULimit,
-		BuildMemoryRequest:  cfg.SpawnBuildMemoryRequest,
-		BuildMemoryLimit:    cfg.SpawnBuildMemoryLimit,
-		BuildAvoidNodes:     cfg.SpawnBuildAvoidNodes,
-		MaxConcurrentBuilds: cfg.SpawnMaxConcurrentBuilds,
+		Kubeconfig:                   cfg.SpawnKubeconfig,
+		Namespace:                    cfg.SpawnNamespace,
+		Registry:                     cfg.SpawnRegistry,
+		SyncMode:                     cfg.SpawnSyncMode,
+		GitBaseURL:                   cfg.SpawnGitBaseURL,
+		GitSecret:                    cfg.SpawnGitSecret,
+		GitCloneImage:                cfg.SpawnGitCloneImage,
+		BuildCPURequest:              cfg.SpawnBuildCPURequest,
+		BuildCPULimit:                cfg.SpawnBuildCPULimit,
+		BuildMemoryRequest:           cfg.SpawnBuildMemoryRequest,
+		BuildMemoryLimit:             cfg.SpawnBuildMemoryLimit,
+		BuildEphemeralStorageRequest: cfg.SpawnBuildEphemeralStorageRequest,
+		BuildEphemeralStorageLimit:   cfg.SpawnBuildEphemeralStorageLimit,
+		BuildAvoidNodes:              cfg.SpawnBuildAvoidNodes,
+		MaxConcurrentBuilds:          cfg.SpawnMaxConcurrentBuilds,
 	})
 	if err != nil {
 		return err

@@ -95,32 +95,34 @@ type FileConfig struct {
 
 // EmbeddedHUDConfig controls the embedded HUD application within the daemon.
 type EmbeddedHUDConfig struct {
-	Enabled                  bool    `yaml:"enabled"`
-	AdminToken               string  `yaml:"admin_token,omitempty"`
-	MobileOperatorToken      string  `yaml:"mobile_operator_token,omitempty"`
-	MobileOperatorScopes     string  `yaml:"mobile_operator_scopes,omitempty"`
-	SpawnEnabled             bool    `yaml:"spawn_enabled"`
-	SpawnNamespace           string  `yaml:"spawn_namespace,omitempty"`
-	SpawnRegistry            string  `yaml:"spawn_registry,omitempty"`
-	SpawnSyncMode            string  `yaml:"spawn_sync_mode,omitempty"`
-	SpawnGitBaseURL          string  `yaml:"spawn_git_base_url,omitempty"`
-	SpawnGitSecret           string  `yaml:"spawn_git_secret,omitempty"`
-	SpawnGitCloneImage       string  `yaml:"spawn_git_clone_image,omitempty"`
-	SpawnProjects            string  `yaml:"spawn_projects,omitempty"`
-	SpawnDefaultCPU          float64 `yaml:"spawn_default_cpu,omitempty"`
-	SpawnDefaultMemory       int     `yaml:"spawn_default_memory_mb,omitempty"`
-	SpawnMaxConcurrent       int     `yaml:"spawn_max_concurrent,omitempty"`
-	SpawnMaxConcurrentBuilds int     `yaml:"spawn_max_concurrent_builds,omitempty"`
-	SpawnBuildCPURequest     string  `yaml:"spawn_build_cpu_request,omitempty"`
-	SpawnBuildCPULimit       string  `yaml:"spawn_build_cpu_limit,omitempty"`
-	SpawnBuildMemoryRequest  string  `yaml:"spawn_build_memory_request,omitempty"`
-	SpawnBuildMemoryLimit    string  `yaml:"spawn_build_memory_limit,omitempty"`
-	SpawnBuildAvoidNodes     string  `yaml:"spawn_build_avoid_nodes,omitempty"`
-	PipelineProjects         string  `yaml:"pipeline_projects,omitempty"`
-	BindAddress              string  `yaml:"bind_address,omitempty"`
-	FlexInferURL             string  `yaml:"flexinfer_url,omitempty"`
-	FlexInferKey             string  `yaml:"flexinfer_key,omitempty"`
-	CoordinatorModel         string  `yaml:"coordinator_model,omitempty"`
+	Enabled                           bool    `yaml:"enabled"`
+	AdminToken                        string  `yaml:"admin_token,omitempty"`
+	MobileOperatorToken               string  `yaml:"mobile_operator_token,omitempty"`
+	MobileOperatorScopes              string  `yaml:"mobile_operator_scopes,omitempty"`
+	SpawnEnabled                      bool    `yaml:"spawn_enabled"`
+	SpawnNamespace                    string  `yaml:"spawn_namespace,omitempty"`
+	SpawnRegistry                     string  `yaml:"spawn_registry,omitempty"`
+	SpawnSyncMode                     string  `yaml:"spawn_sync_mode,omitempty"`
+	SpawnGitBaseURL                   string  `yaml:"spawn_git_base_url,omitempty"`
+	SpawnGitSecret                    string  `yaml:"spawn_git_secret,omitempty"`
+	SpawnGitCloneImage                string  `yaml:"spawn_git_clone_image,omitempty"`
+	SpawnProjects                     string  `yaml:"spawn_projects,omitempty"`
+	SpawnDefaultCPU                   float64 `yaml:"spawn_default_cpu,omitempty"`
+	SpawnDefaultMemory                int     `yaml:"spawn_default_memory_mb,omitempty"`
+	SpawnMaxConcurrent                int     `yaml:"spawn_max_concurrent,omitempty"`
+	SpawnMaxConcurrentBuilds          int     `yaml:"spawn_max_concurrent_builds,omitempty"`
+	SpawnBuildCPURequest              string  `yaml:"spawn_build_cpu_request,omitempty"`
+	SpawnBuildCPULimit                string  `yaml:"spawn_build_cpu_limit,omitempty"`
+	SpawnBuildMemoryRequest           string  `yaml:"spawn_build_memory_request,omitempty"`
+	SpawnBuildMemoryLimit             string  `yaml:"spawn_build_memory_limit,omitempty"`
+	SpawnBuildEphemeralStorageRequest string  `yaml:"spawn_build_ephemeral_storage_request,omitempty"`
+	SpawnBuildEphemeralStorageLimit   string  `yaml:"spawn_build_ephemeral_storage_limit,omitempty"`
+	SpawnBuildAvoidNodes              string  `yaml:"spawn_build_avoid_nodes,omitempty"`
+	PipelineProjects                  string  `yaml:"pipeline_projects,omitempty"`
+	BindAddress                       string  `yaml:"bind_address,omitempty"`
+	FlexInferURL                      string  `yaml:"flexinfer_url,omitempty"`
+	FlexInferKey                      string  `yaml:"flexinfer_key,omitempty"`
+	CoordinatorModel                  string  `yaml:"coordinator_model,omitempty"`
 
 	// Inbound webhook receiver — feeds the GitLab/GitHub CI failure
 	// routing path in internal/hud/domain/webhook. Disabled by default

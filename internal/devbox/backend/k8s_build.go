@@ -149,7 +149,12 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 	}
 	if preferExisting {
 		buildSteps = append(buildSteps,
-			"if buildah pull --storage-driver=vfs --tls-verify=false "+destination+"; then",
+			"if command -v skopeo >/dev/null 2>&1 && skopeo inspect --raw --tls-verify=false docker://"+destination+" >/dev/null 2>&1; then",
+			"echo Using existing image "+destination+";",
+			"exit 0;",
+			"fi",
+			"&&",
+			"if buildah manifest inspect --tls-verify=false docker://"+destination+" >/dev/null 2>&1; then",
 			"echo Using existing image "+destination+";",
 			"exit 0;",
 			"fi",
@@ -224,12 +229,14 @@ func (k *K8sBackend) buildBuildahPodSpec(podName, destination, dockerfileCM, bui
 					},
 					Resources: corev1.ResourceRequirements{
 						Requests: corev1.ResourceList{
-							corev1.ResourceCPU:    k.buildCPURequest,
-							corev1.ResourceMemory: k.buildMemoryRequest,
+							corev1.ResourceCPU:              k.buildCPURequest,
+							corev1.ResourceMemory:           k.buildMemoryRequest,
+							corev1.ResourceEphemeralStorage: k.buildEphemeralStorageRequest,
 						},
 						Limits: corev1.ResourceList{
-							corev1.ResourceCPU:    k.buildCPULimit,
-							corev1.ResourceMemory: k.buildMemoryLimit,
+							corev1.ResourceCPU:              k.buildCPULimit,
+							corev1.ResourceMemory:           k.buildMemoryLimit,
+							corev1.ResourceEphemeralStorage: k.buildEphemeralStorageLimit,
 						},
 					},
 					VolumeMounts: volumeMounts,
