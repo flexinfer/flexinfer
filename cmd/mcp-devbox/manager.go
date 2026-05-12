@@ -126,17 +126,27 @@ func (m *manager) hasActiveExecs(name string) bool {
 	return false
 }
 
-// sanitizeContainerName ensures the name contains only Docker-safe characters.
+// sanitizeContainerName returns a DNS-1123-safe name fragment that is also safe
+// for Docker container names and image repository components.
 func sanitizeContainerName(name string) string {
 	var b strings.Builder
-	for _, r := range name {
-		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
+	lastDash := false
+	for _, r := range strings.ToLower(name) {
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
 			b.WriteRune(r)
-		} else {
+			lastDash = false
+			continue
+		}
+		if !lastDash {
 			b.WriteRune('-')
+			lastDash = true
 		}
 	}
-	return b.String()
+	out := strings.Trim(b.String(), "-")
+	if out == "" {
+		return "sandbox"
+	}
+	return out
 }
 
 // validateMountPath ensures a host path is under an allowed directory.
@@ -259,6 +269,7 @@ func (m *manager) containerName(projectName, agentID string) string {
 		id := sanitizeContainerName(agentID)
 		if len(id) > 12 {
 			id = id[:12]
+			id = strings.Trim(id, "-")
 		}
 		return base + "-" + id
 	}
