@@ -104,7 +104,17 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 				"hooks": sessionStartHooks,
 			},
 		},
-		hp.HeartbeatEvent: []map[string]any{
+	}
+
+	// Heartbeat hook (Claude/Gemini PostToolUse/AfterTool with a narrow
+	// matcher) — only emit when the profile declares an event AND a
+	// narrowing matcher pattern exists. Codex sets heartbeat_event to ""
+	// because its hook payloads don't expose a stable tool-name surface
+	// to filter on, so an unmatched heartbeat would fire on every tool
+	// call and bounce the TUI. notify + keepalive-wrap cover the
+	// keepalive surface for codex without per-tool-call shell overhead.
+	if hp.HeartbeatEvent != "" {
+		hooks[hp.HeartbeatEvent] = []map[string]any{
 			{
 				"matcher": hp.HeartbeatMatcher,
 				"hooks": []map[string]any{
@@ -116,7 +126,7 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 					},
 				},
 			},
-		},
+		}
 	}
 
 	// SessionEnd hook (Claude `SessionEnd`, Gemini `SessionEnd`, etc.) —

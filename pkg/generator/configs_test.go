@@ -465,12 +465,13 @@ func TestGenerateHooksConfig_CodexEmitsHooksJSON(t *testing.T) {
 		t.Fatalf("generated hooks.json missing top-level hooks key: %s", string(content))
 	}
 
-	// Two canonical lifecycle events for Codex: SessionStart (once per
-	// session) and PostToolUse (heartbeat, per tool call). Codex has no
-	// SessionEnd event, and Stop is per-turn — session termination is
-	// handled by notify + keepalive-wrap deregister-on-exit, not by a
-	// hooks.json Stop entry.
-	for _, evt := range []string{"SessionStart", "PostToolUse"} {
+	// One canonical lifecycle event for Codex: SessionStart (once per
+	// session). Codex has no SessionEnd event, Stop is per-turn, and
+	// PostToolUse heartbeat is intentionally suppressed because codex
+	// hook payloads have no stable tool-name surface to filter on, so
+	// an unmatched heartbeat would fire on every tool call and bounce
+	// the TUI. Session keepalive is handled by notify + keepalive-wrap.
+	for _, evt := range []string{"SessionStart"} {
 		if _, found := hooks[evt]; !found {
 			t.Errorf("expected codex hooks.json to contain %q event, got keys: %v", evt, mapKeys(hooks))
 		}
@@ -489,6 +490,18 @@ func TestGenerateHooksConfig_CodexEmitsHooksJSON(t *testing.T) {
 	// Codex hooks should NOT carry SubagentStart (Claude-only event).
 	if _, found := hooks["SubagentStart"]; found {
 		t.Error("codex hooks.json must NOT contain SubagentStart (Claude-only event)")
+	}
+
+	// Codex hooks.json must NOT contain a PostToolUse heartbeat. With
+	// heartbeat_matcher = "" (no narrowing), a PostToolUse hook fires
+	// synchronously on every tool call, forking `loom agent heartbeat`
+	// each time — each fork pays for shell bootstrap (git rev-parse +
+	// jq + cksum + file I/O) and a loom binary cold-start, which makes
+	// the codex TUI visibly bounce per tool call. notify + keepalive-wrap
+	// already cover session keepalive in the background. See the codex
+	// profile in platform_profiles.yaml (heartbeat_event: "").
+	if _, found := hooks["PostToolUse"]; found {
+		t.Error("codex hooks.json must NOT contain PostToolUse (per-tool heartbeat causes TUI bounce; notify + keepalive-wrap cover keepalive)")
 	}
 }
 

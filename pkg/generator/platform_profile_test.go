@@ -184,13 +184,15 @@ func TestToVendorCapabilities_Codex(t *testing.T) {
 		t.Error("NotifyHook = false, want true (config.toml notify still emitted)")
 	}
 	// Codex v0.129.0 (2026-05-07) added a Claude-shape [hooks] block. We emit
-	// hooks.json alongside config.toml, so SessionStart/Stop/PostToolUse are
-	// now native lifecycle hooks for Codex too.
+	// hooks.json alongside config.toml, so SessionStart is a native lifecycle
+	// hook for codex. PostToolUse is intentionally NOT used (heartbeat would
+	// fire on every tool call and bounce the TUI; notify + keepalive-wrap
+	// cover keepalive in the background).
 	if !vc.SessionStartHook {
 		t.Error("SessionStartHook = false, want true (Codex hooks.json)")
 	}
-	if !vc.PostToolUseHook {
-		t.Error("PostToolUseHook = false, want true (Codex hooks.json)")
+	if vc.PostToolUseHook {
+		t.Error("PostToolUseHook = true, want false (codex per-tool heartbeat causes TUI bounce; notify covers keepalive)")
 	}
 	if !vc.SandboxMode {
 		t.Error("SandboxMode = false, want true")

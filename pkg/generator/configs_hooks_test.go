@@ -270,6 +270,37 @@ func TestBuildPlatformHooks_EmitsSubagentStartWhenDeclared(t *testing.T) {
 	}
 }
 
+func TestBuildPlatformHooks_OmitsHeartbeatWhenEventEmpty(t *testing.T) {
+	// Codex sets heartbeat_event to "" because its hook payloads have no
+	// stable tool-name surface to filter on. An unmatched PostToolUse
+	// heartbeat would fork `loom agent heartbeat` on every tool call and
+	// visibly bounce the codex TUI. The notify + keepalive-wrap path
+	// already covers keepalive in the background, so buildPlatformHooks
+	// must skip the heartbeat block entirely when HeartbeatEvent == "".
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
+		AgentID:          "codex",
+		AgentType:        "codex",
+		Description:      "Codex CLI session",
+		SessionEndEvent:  "",
+		HeartbeatEvent:   "",
+		HeartbeatMatcher: "",
+		Events:           []string{"sessionStart", "notify"},
+	}, "")
+
+	// No heartbeat block at any of the conventional event slots.
+	for _, evt := range []string{"PostToolUse", "AfterTool", "Stop", "SessionEnd", ""} {
+		if _, ok := hooks[evt]; ok {
+			t.Errorf("expected no heartbeat block, got entry for event %q (codex would bounce on every tool call)", evt)
+		}
+	}
+
+	// SessionStart still fires — that's the one event we want.
+	if _, ok := hooks["SessionStart"]; !ok {
+		t.Error("expected SessionStart hook to remain when heartbeat is suppressed")
+	}
+}
+
 func TestHookProfileHasEvent_CaseInsensitive(t *testing.T) {
 	hp := HookProfile{Events: []string{"SubagentStart", "preToolUse"}}
 	if !hookProfileHasEvent(hp, "subagentStart") {

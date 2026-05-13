@@ -106,14 +106,18 @@ func TestVendorCapabilities_CodexHasNotifyAndHooks(t *testing.T) {
 	if !caps.SandboxMode {
 		t.Error("Codex should have sandbox mode support")
 	}
-	// Codex v0.129.0 (2026-05-07) shipped a Claude-shape [hooks] block.
-	// We emit hooks.json alongside config.toml so SessionStart/Stop/PostToolUse
-	// fire natively. `notify` is retained as a fallback during transition.
+	// Codex v0.129.0 (2026-05-07) shipped a Claude-shape [hooks] block. We
+	// emit hooks.json alongside config.toml so SessionStart fires natively.
+	// `notify` is retained for turn-end keepalive + as a session-end signal.
 	if !caps.SessionStartHook {
 		t.Error("Codex should have SessionStart hook (hooks.json, Codex v0.129.0+)")
 	}
-	if !caps.PostToolUseHook {
-		t.Error("Codex should have PostToolUse hook (hooks.json, Codex v0.129.0+)")
+	// PostToolUse is intentionally not exposed for codex: heartbeat_matcher
+	// has no useful narrowing equivalent, so a hook would fire on every
+	// tool call and bounce the TUI. notify + keepalive-wrap cover
+	// keepalive without per-tool-call shell overhead.
+	if caps.PostToolUseHook {
+		t.Error("Codex should NOT advertise PostToolUse hook (per-tool heartbeat causes TUI bounce; notify covers keepalive)")
 	}
 }
 
