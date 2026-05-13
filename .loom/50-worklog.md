@@ -21,6 +21,27 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
   - After Flux reconcile, watch `kubectl get models gemma4-26b-a4b-gptq -n flexinfer-system` transition to `Ready`; record cold-load + first-token TPS as a new row in `60-validation-matrix.md`.
   - Loom-core / project-management service configs need to point at the new aliases to actually consume the warm lane (follow-up).
 
+### Post-merge live validation (same day)
+
+- What changed (cluster side, no code/manifest edits):
+  - Flux applied the new `Model` CR `gemma4-26b-a4b-gptq` at 17:55:54Z. The Model controller did not immediately pick it up because the reconcile worker was busy on a separate Model in the `default` namespace; forced a reconcile via `kubectl annotate model gemma4-26b-a4b-gptq -n flexinfer-system flexinfer.ai/force-reconcile=<ts>`.
+  - Controller created cache PVC `gemma4-26b-a4b-gptq-cache` (50Gi, `local-path`, pinned to `cblevins-7900xtx`). Cache-copy job `gemma4-26b-a4b-gptq-cache-copy` succeeded in ~4 min (copied ~17 GiB across `attention-fp16-layer-*.safetensors`, `model-0000{1..4}-of-00004.safetensors`, tokenizer/config files from source PVC `gemma4-26b-a4b-gptq` on `nvme-1r-gpu`).
+  - vLLM pod `gemma4-26b-a4b-gptq-6d798b8665-s859w` reached `1/1 Ready` ~18:11Z; API server initialized at 18:09:03Z. `qwen3-8b-fast-7900xtx` correctly transitioned `Ready -> Idle` and pod was removed when the 26B claimed the `7900xtx-textgen` warm lane.
+- Smoke evidence:
+  - Direct backend: `POST http://gemma4-26b-a4b-gptq.flexinfer-system.svc:8000/v1/chat/completions` with greedy `"What is 2+2?"` -> `"content":"4"` (27 prompt / 2 completion tokens, finish_reason `stop`).
+  - Proxy via `project-mgmt` alias: `POST http://flexinfer-proxy.flexinfer-system.svc/v1/chat/completions` with a 3-task triage prompt -> coherent prioritization ("You should deploy the hotfix first because it addresses an immediate production issue that likely impacts users and system stability.", 55 / 23 tokens).
+  - `/v1/models` exposes the gemma4-26b-a4b-gptq entry with `aliases: [gemma4-26b, gemma4-26b-a4b, quality-chat, mid-chat, gpt-4, project-mgmt]`, `phase: Ready`, `context_window: 16384`.
+- Validation matrix:
+  - Added a new row to `.loom/60-validation-matrix.md` (`promotion_decision: pass`) capturing runtime digest, cache PVC migration timing, direct + proxy smoke, and the rollback path (revert MR !343).
+- Open follow-ups (out of scope for this slice):
+  - `services/project-management/src/integration_command_center/extractors/llm_qwen.py` hardcodes `LLM_MODEL = "qwen3-8b-fast-7900xtx"` and `DEFAULT_FLEXINFER_URL = "http://qwen3-8b-fast-7900xtx.flexinfer-system.svc:8000"`. URL is env-overridable via `FLEXINFER_QWEN_URL`; model name is not. To consume the new warm lane, project-management needs both env-driven (URL + model name) or a switch to `flexinfer-proxy` with the `project-mgmt` / `quality-chat` alias. `prompt_hash` is salted with `LLM_MODEL`, so any switch breaks `extraction_runs.prompt_hash` continuity by design.
+  - Loom-core resolver consumers on `qwen3-default` / `qwen3-8b` aliases now cold-start; needs a real-load measurement of the 8B cold-start budget before declaring this acceptable for Weaver/Mills/Coordinator/Autofix.
+- Sources:
+  - `kubectl get models -n flexinfer-system`, `kubectl describe model gemma4-26b-a4b-gptq -n flexinfer-system`
+  - `kubectl logs gemma4-26b-a4b-gptq-cache-copy-95ch8 -n flexinfer-system`
+  - `kubectl logs gemma4-26b-a4b-gptq-6d798b8665-s859w -n flexinfer-system`
+  - Direct + proxy `/v1/chat/completions` smoke commands above.
+
 ## 2026-05-06 (round 1 closeout)
 
 ### Next-round parallel plan + first-wave shipping
