@@ -1,0 +1,24 @@
+apiVersion: v1
+data:
+  server.yaml: |
+    always_allow:
+        - office_extract_text
+        - office_extract_metadata
+        - office_extract_structure
+        - office_extract_tables
+        - office_search
+        - office_inspect
+    categories:
+        - documents
+        - parsing
+        - office
+        - productivity
+    description: Pure-Go parser/producer for .pdf, .docx, .xlsx, .pptx. Read tools accept either a filesystem path or inline base64 bytes, so the server works on restricted hosts (e.g. code-server containers) where the agent cannot install office tooling.
+    name: office
+    timeout: 60
+kind: ConfigMap
+metadata:
+  labels:
+    app: office
+    component: mcp-server
+  name: office-config

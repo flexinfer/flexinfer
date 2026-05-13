@@ -1838,6 +1838,24 @@ servers:
           CF_ACCESS_CLIENT_ID: "${env:CF_ACCESS_CLIENT_ID}"
           CF_ACCESS_CLIENT_SECRET: "${env:CF_ACCESS_CLIENT_SECRET}"
 
+  - name: office
+    disabled: false
+    categories: [documents, parsing, office, productivity]
+    common:
+      command: "${repo}/services/loom-core/bin/mcp-office"
+      description: "Pure-Go parser/producer for .pdf, .docx, .xlsx, .pptx. Read tools accept either a filesystem path or inline base64 bytes, so the server works on restricted hosts (e.g. code-server containers) where the agent cannot install office tooling."
+      env:
+        OFFICE_MAX_BYTES: "${env:OFFICE_MAX_BYTES:-67108864}"
+      always_allow:
+        - office_extract_text
+        - office_extract_metadata
+        - office_extract_structure
+        - office_extract_tables
+        - office_search
+        - office_inspect
+      hint: "Use when an agent needs to read or summarize Office/PDF documents on a host that cannot install poppler, libreoffice, or python deps. Write tools (office_create_xlsx, office_modify_docx) are gated and require explicit approval."
+      timeout: 60
+
 # Sandbox policy — advisory guidance for agents on when to use devbox sandboxes.
 # Agents read this from AGENTS.md (injected by loom sync) and the HUD displays it.
 sandbox_policy:
