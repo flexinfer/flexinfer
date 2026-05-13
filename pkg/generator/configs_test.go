@@ -433,19 +433,90 @@ func TestGenerateHooksConfig_Gemini(t *testing.T) {
 	}
 }
 
-func TestGenerateHooksConfig_NoHooksPlatform(t *testing.T) {
+func TestGenerateHooksConfig_CodexEmitsHooksJSON(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Platforms without hooks should return nil and not write any file
+	// Codex v0.129.0 (2026-05-07) shipped a Claude-shape [hooks] block read
+	// from ~/.codex/hooks.json (when [features] hooks = true). We emit
+	// hooks.json — NOT settings.json — alongside config.toml.
 	codexProfile, _ := GetPlatformProfile("codex")
-	if err := generateHooksConfig(nil, tmpDir, "codex", codexProfile, ""); err != nil {
+	if err := generateHooksConfig(testRegistry(), tmpDir, "codex", codexProfile, ""); err != nil {
 		t.Fatalf("generateHooksConfig(codex) failed: %v", err)
 	}
 
-	settingsPath := filepath.Join(tmpDir, "codex", "settings.json")
-	if _, err := os.Stat(settingsPath); !os.IsNotExist(err) {
-		t.Error("codex should not have a settings.json")
+	// settings.json must NOT exist for codex.
+	if _, err := os.Stat(filepath.Join(tmpDir, "codex", "settings.json")); !os.IsNotExist(err) {
+		t.Error("codex should not have a settings.json (uses hooks.json)")
 	}
+
+	// hooks.json must exist and contain the canonical lifecycle events.
+	hooksPath := filepath.Join(tmpDir, "codex", "hooks.json")
+	content, err := os.ReadFile(hooksPath)
+	if err != nil {
+		t.Fatalf("hooks.json not found at %s: %v", hooksPath, err)
+	}
+
+	var parsed map[string]any
+	if err := json.Unmarshal(content, &parsed); err != nil {
+		t.Fatalf("generated hooks.json is not valid JSON: %v", err)
+	}
+	hooks, ok := parsed["hooks"].(map[string]any)
+	if !ok {
+		t.Fatalf("generated hooks.json missing top-level hooks key: %s", string(content))
+	}
+
+	// Two canonical lifecycle events for Codex: SessionStart (once per
+	// session) and PostToolUse (heartbeat, per tool call). Codex has no
+	// SessionEnd event, and Stop is per-turn — session termination is
+	// handled by notify + keepalive-wrap deregister-on-exit, not by a
+	// hooks.json Stop entry.
+	for _, evt := range []string{"SessionStart", "PostToolUse"} {
+		if _, found := hooks[evt]; !found {
+			t.Errorf("expected codex hooks.json to contain %q event, got keys: %v", evt, mapKeys(hooks))
+		}
+	}
+
+	// Codex hooks.json must NOT contain a Stop entry. Codex `Stop` fires
+	// per-turn (after each model response), so mapping it to
+	// `loom agent session-end --summarize` would queue a summary on every
+	// turn. The fix is to omit Stop entirely and rely on notify+keepalive
+	// for true session-end. See pkg/generator/VENDOR_SPECS.md and the
+	// codex profile in platform_profiles.yaml.
+	if _, found := hooks["Stop"]; found {
+		t.Error("codex hooks.json must NOT contain Stop (per-turn event; would spam session-end)")
+	}
+
+	// Codex hooks should NOT carry SubagentStart (Claude-only event).
+	if _, found := hooks["SubagentStart"]; found {
+		t.Error("codex hooks.json must NOT contain SubagentStart (Claude-only event)")
+	}
+}
+
+func TestGenerateHooksConfig_CodexUsesExplicitLoomBinary(t *testing.T) {
+	tmpDir := t.TempDir()
+	codexProfile, _ := GetPlatformProfile("codex")
+
+	if err := generateHooksConfig(testRegistry(), tmpDir, "codex", codexProfile, "/opt/loom/bin/loom"); err != nil {
+		t.Fatalf("generateHooksConfig(codex) failed: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(tmpDir, "codex", "hooks.json"))
+	if err != nil {
+		t.Fatalf("hooks.json not found: %v", err)
+	}
+
+	if !strings.Contains(string(content), `'/opt/loom/bin/loom' agent session-start`) {
+		t.Fatalf("expected explicit loom binary in generated codex hooks.json")
+	}
+}
+
+// mapKeys returns the keys of m as a slice for error messages.
+func mapKeys(m map[string]any) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }
 
 func TestGenerateHooksConfig_UsesExplicitLoomBinary(t *testing.T) {

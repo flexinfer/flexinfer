@@ -385,5 +385,38 @@ func withAgentFallback(op string, hudCall, daemonCall func() (json.RawMessage, e
 		return fallbackResult, nil
 	}
 
+	// One retry on transient transport drops. Under concurrent agent_context
+	// activity, a pool connection can be in an indeterminate state (process
+	// exited, websocket reset). The pool's discardIfStale on the next Get
+	// reaps the bad conn and dials a fresh one, so a single retry typically
+	// lands on a healthy connection. Bounded to one retry to avoid storm.
+	if isTransientTransportError(fallbackErr) {
+		time.Sleep(50 * time.Millisecond)
+		retryResult, retryErr := daemonCall()
+		if retryErr == nil {
+			return retryResult, nil
+		}
+		fallbackErr = retryErr
+	}
+
 	return nil, fmt.Errorf("%s failed via HUD (%v) and daemon fallback (%w)", op, err, fallbackErr)
+}
+
+// isTransientTransportError reports whether err looks like a transient
+// pool/transport drop that's worth a single retry. Matches the dominant
+// failure strings emitted by internal/daemon (callpipeline errors).
+func isTransientTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "transport closed"):
+		return true
+	case strings.Contains(msg, "use of closed network connection"):
+		return true
+	case strings.Contains(msg, "tools/call timeout during recv"):
+		return true
+	}
+	return false
 }

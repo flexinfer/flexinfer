@@ -437,8 +437,16 @@ func (a *AgentBridge) PresenceHeartbeat(agentID string, p PresenceHeartbeatParam
 		args["pipeline_status"] = p.PipelineStatus
 	}
 
+	// Heartbeats are best-effort presence pings: a SQLite UPSERT that
+	// should complete in milliseconds. Cap the daemon RPC budget at 5s so
+	// a hung agent_context server (or contended SQLite write) fails fast
+	// instead of holding the per-server callLock for the default 60s,
+	// which previously produced the "acquire call lock for agent_context
+	// after 15s" cascade for every other in-flight heartbeat. The client
+	// (cmd/loom/cmd_agent_transport.go) retries once on transport-close,
+	// so a transient miss is covered.
 	var result PresenceHeartbeatResult
-	if err := a.callAgentTool("agent_presence_heartbeat", args, &result); err != nil {
+	if err := a.callAgentToolTimeout("agent_presence_heartbeat", args, &result, 5*time.Second); err != nil {
 		return nil, err
 	}
 	return &result, nil

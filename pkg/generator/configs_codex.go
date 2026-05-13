@@ -3,6 +3,7 @@ package generator
 import (
 	"bytes"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -44,6 +45,16 @@ type codexTemplateContext struct {
 	NotifyCommand string // shell command, raw (template applies %q)
 
 	Agents *codexAgentsBlock // nil when [agents] section is absent
+
+	// HookTrustEntries are [hooks.state."<key>"] trusted_hash entries that
+	// make our emitted hooks.json self-trusting. Without them, Codex v0.129+
+	// silently skips every hook on the first run because the trusted_hash
+	// in [hooks.state] does not match the canonical hash of the hook content.
+	// Each regen invalidates pre-existing trust hashes, so the generator must
+	// always recompute these alongside hooks.json. See
+	// pkg/generator/codex_hooks_trust.go for the hash algorithm. Empty when
+	// hooks.json is absent or has no hooks.
+	HookTrustEntries []CodexHookTrustEntry
 }
 
 // codexAgentsBlock holds the resolved [agents] section data. nil when the
@@ -119,6 +130,13 @@ func buildCodexContext(reg *registry.Registry, workspaceRoot string, loomBinary 
 			"apply_patch_freeform": true,
 			"unified_exec":         true,
 			"collaboration_modes":  true,
+			// Opt in to Codex's [hooks] block surface (GA in v0.129.0,
+			// 2026-05-07). Pairs with the hooks.json generated alongside
+			// config.toml via generateHooksConfig. The `notify = [...]`
+			// fallback below is intentionally kept active during transition
+			// because [hooks] is unreliable for SessionStart/Stop with
+			// repo-local config (openai/codex#17532).
+			"hooks": true,
 		}),
 		DirtyWorktreeMode:     policy.DirtyWorktreeMode,
 		DirtyWorktreeIsScoped: policy.DirtyWorktreeMode == "continue_scoped_commits",
@@ -175,7 +193,55 @@ func buildCodexContext(reg *registry.Registry, workspaceRoot string, loomBinary 
 	// [agents] section if registry declares one.
 	ctx.Agents = buildCodexAgentsBlock(pp)
 
+	// Self-trust [hooks.state] entries. Compute the canonical hash for
+	// every hook in the hooks.json we're about to emit, so codex doesn't
+	// silently drop them on the first run (or after a content change on
+	// regen). The hook content here is built by the same hooksConfigFromProfile
+	// that generateHooksConfig writes out, so the hashes match by construction.
+	ctx.HookTrustEntries = buildCodexHookTrustEntries(reg, loomBinary)
+
 	return ctx
+}
+
+// buildCodexHookTrustEntries renders the codex hooks structure the same
+// way generateHooksConfig does, then computes the [hooks.state] trust
+// entries for it. The resulting entries are keyed on the absolute path
+// where the file will land at sync time (~/.codex/hooks.json), so the
+// trust state matches what codex sees when it reads the file.
+//
+// Returns nil if the codex profile is missing, hooks are disabled, or the
+// user's home directory can't be resolved (the latter only happens in
+// pathological environments — generation continues without self-trust).
+func buildCodexHookTrustEntries(reg *registry.Registry, loomBinary string) []CodexHookTrustEntry {
+	profile, err := GetPlatformProfile("codex")
+	if err != nil || profile == nil || !profile.Hooks.Enabled {
+		return nil
+	}
+	hooksConfig := hooksConfigFromProfile(reg, profile, loomBinary)
+	if hooksConfig == nil {
+		return nil
+	}
+	hooksPath, ok := codexHooksJSONHomePath()
+	if !ok {
+		return nil
+	}
+	entries, err := ComputeCodexHookTrust(hooksPath, hooksConfig)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "WARN  [codex] hook trust hash failed: %v\n", err)
+		return nil
+	}
+	return entries
+}
+
+// codexHooksJSONHomePath returns the absolute path codex will look at
+// when checking [hooks.state] keys against the loaded hooks.json. Codex
+// reads ~/.codex/hooks.json and stores absolute paths in trust keys.
+func codexHooksJSONHomePath() (string, bool) {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "", false
+	}
+	return home + "/.codex/hooks.json", true
 }
 
 // codexFeaturesString formats a features map as the inline TOML body

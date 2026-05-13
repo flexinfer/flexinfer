@@ -93,6 +93,7 @@ func (m *Manager) registerProfiles() {
 		SecretFiles:           []string{"auth.json"},
 		GeneratorTarget:       "codex",
 		GeneratedFile:         "config.toml",
+		ExtraGeneratedFiles:   []string{"hooks.json"}, // Codex v0.129.0 [hooks] block (Claude-shape JSON, opt-in via features.hooks=true)
 		GeneratedDirectToHome: true,
 		SyncGeneratedOnly:     true,
 		SkillsTarget:          "codex",

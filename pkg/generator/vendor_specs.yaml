@@ -7,50 +7,123 @@
 # pkg/generator/configs_test.go so our fixtures cannot drift away from docs
 # without a failing signal.
 #
-# History: Slice G (2026-04-18) shipped after a Codex regression where
-# generator emitted `approval_mode = "always"`, which is not a valid Codex
-# key. This manifest is the durable process to catch that class of drift.
+# History:
+#   - Slice G (2026-04-18) shipped after a Codex regression where the
+#     generator emitted `approval_mode = "always"` — not a valid Codex key.
+#   - Refreshed 2026-05-11 against current vendor docs. Replaced the
+#     marketing-only Claude README with the authoritative settings docs page
+#     (code.claude.com/docs/en/settings), pointed Gemini at its docs/hooks
+#     reference, and tightened Codex assertions against the developer portal
+#     config-advanced page.
 #
 # Keep this file human-editable. Populate a vendor once you have verified the
 # exact strings in upstream docs, and leave a comment pointing at the anchor
 # if the docs page is long.
-
 #
 # Operational note: prefer docs URLs that serve the relevant content as
 # static HTML / plain text. Many vendor doc sites are JS-rendered SPAs
 # where a curl fetch returns only a skeleton shell without the keyword
-# content. Use GitHub issues / repo README raw files where possible.
-# A follow-up slice may add a headless-browser fetcher.
+# content. WebFetch (used by `loom vendor-specs check`) extracts content
+# from SPAs reasonably well, but raw GitHub markdown is the most reliable.
 
 vendors:
   codex:
-    # The feature request + discussion around the canonical key.
+    # Original drift anchor: the feature-request issue where the canonical
+    # default_tools_approval_mode key landed.
     docs_url: https://github.com/openai/codex/issues/16501
     extra_urls:
-      # Agent approvals overview — often contains the key in prose.
+      # Developer-portal advanced config reference (JS-rendered but WebFetch
+      # extracts the TOML keys). Authoritative for the rest of the config
+      # surface (approval_policy, sandbox_mode, notify, mcp_servers).
+      - https://developers.openai.com/codex/config-advanced
+      # [hooks] block reference — GA in v0.129.0 (2026-05-07). Authoritative
+      # for SessionStart / PreToolUse / PostToolUse / Stop / UserPromptSubmit /
+      # PermissionRequest event names and the stdin payload shape.
+      - https://developers.openai.com/codex/hooks
+      # Repo README — keep as a stable anchor even though it's terse.
       - https://raw.githubusercontent.com/openai/codex/main/README.md
     must_contain:
       - default_tools_approval_mode
+      - mcp_servers
+      - approval_policy
+      - sandbox_mode
+      - notify
+      # [hooks] block GA in v0.129.0 (2026-05-07) — Claude-shape JSON read
+      # from ~/.codex/hooks.json when [features] hooks = true. We emit
+      # SessionStart + PostToolUse only. `Stop` is intentionally omitted
+      # because Codex `Stop` is per-turn, not session-end.
+      - hooks
+      - SessionStart
+      - PostToolUse
     must_not_contain:
       # Invalid/deprecated keys the generator must not regress to.
       - 'approval_mode = "always"'
     emitted_keys:
       - 'default_tools_approval_mode = "approve"'
+      - '[mcp_servers.loom]'
+      - 'approval_policy = "never"'
+      - 'notify ='
+      # Codex hooks.json emitted alongside config.toml (Claude-shape JSON,
+      # asserted in pkg/generator/configs_test.go: TestGenerateHooksConfig_CodexEmitsHooksJSON).
+      - '"SessionStart"'
+      - '"PostToolUse"'
 
   kilocode:
-    # Kilocode docs are a JS SPA — must_contain / emitted_keys intentionally
-    # left empty; the vendor entry exists so drift-checking picks up the URL
-    # on CI manual runs, and so future contributors can populate it once
-    # authoritative docs are confirmed.
-    docs_url: https://kilocode.ai
+    # Marketing site is a JS SPA; the raw README at least mentions MCP, so we
+    # keep a thin "MCP" assertion to detect a wholesale rename of the feature.
+    docs_url: https://raw.githubusercontent.com/Kilo-Org/kilocode/main/README.md
+    extra_urls:
+      - https://kilocode.ai
+    must_contain:
+      - MCP
 
   claude_code:
-    # README is a marketing page — does not mention MCP directly even though
-    # Claude Code ships MCP support. Keep the URL as the anchor; contributor
-    # should populate must_contain with a stable marker once identified.
-    docs_url: https://raw.githubusercontent.com/anthropics/claude-code/main/README.md
+    # Authoritative settings.json schema doc (was previously the marketing
+    # README, which did not mention MCP or hooks at all). Note the settings
+    # page is JS-rendered: tokens listed below appear in the static server
+    # response. SessionStart/Stop/SubagentStop only appear in the static
+    # hooks reference, so it's included as a second URL.
+    docs_url: https://code.claude.com/docs/en/settings
+    extra_urls:
+      - https://code.claude.com/docs/en/hooks
+      - https://raw.githubusercontent.com/anthropics/claude-code/main/README.md
+    must_contain:
+      # Hook events Claude emits and the generator wires.
+      - PreToolUse
+      - PostToolUse
+      - SessionStart
+      - Stop
+      - SubagentStop
+      - matcher
+      # permissions block keys consumed by claudePermissions().
+      - allow
+      - additionalDirectories
+      - defaultMode
+      - disableBypassPermissionsMode
+    emitted_keys:
+      # Strings asserted in pkg/generator/configs_test.go for the Claude path.
+      - '"PreToolUse"'
+      - '"PostToolUse"'
+      - '"SessionStart"'
+      - '"hooks"'
+      - '"permissions"'
 
   gemini_cli:
-    docs_url: https://raw.githubusercontent.com/google-gemini/gemini-cli/main/README.md
+    # docs/hooks/reference.md is the richest stable source for Gemini's hook
+    # event names. The CLI README is too sparse to assert against.
+    docs_url: https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/hooks/reference.md
+    extra_urls:
+      - https://raw.githubusercontent.com/google-gemini/gemini-cli/main/docs/cli/settings.md
+      - https://raw.githubusercontent.com/google-gemini/gemini-cli/main/README.md
     must_contain:
+      - SessionStart
+      - SessionEnd
+      - BeforeTool
+      - AfterTool
+      - hooks
+      - matcher
       - mcp
+    emitted_keys:
+      - '"SessionStart"'
+      - '"SessionEnd"'
+      - '"AfterTool"'

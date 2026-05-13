@@ -304,9 +304,17 @@ func generateHooksConfig(reg *registry.Registry, outputDir, target string, profi
 		return generateOpenCodeHooksPlugin(outputDir)
 	}
 
-	// Skip platforms whose hooks are embedded in their main config file
-	// rather than a separate settings.json (e.g. Codex notify in config.toml).
-	if profile.Hooks.File != "settings.json" && profile.Hooks.File != "" {
+	// Determine output filename. Claude/Gemini use settings.json; Codex uses
+	// hooks.json (Claude-shape JSON read by Codex v0.129.0+). Any other value
+	// means hooks are embedded in the main config file and there is nothing
+	// for this function to write (legacy path).
+	var hooksFile string
+	switch profile.Hooks.File {
+	case "", "settings.json":
+		hooksFile = "settings.json"
+	case "hooks.json":
+		hooksFile = "hooks.json"
+	default:
 		return nil
 	}
 
@@ -350,15 +358,18 @@ func generateHooksConfig(reg *registry.Registry, outputDir, target string, profi
 		return err
 	}
 
-	settingsPath := filepath.Join(destDir, "settings.json")
+	settingsPath := filepath.Join(destDir, hooksFile)
 	content := []byte(buf.String())
 
 	if err := os.WriteFile(settingsPath, content, 0644); err != nil {
 		return err
 	}
 
-	// Validate generated settings against upstream schema.
-	validateSettingsAgainstUpstream(target, settingsPath, content)
+	// Validate generated settings against upstream schema (Claude/Gemini only —
+	// Codex hooks.json has no published JSON Schema yet).
+	if hooksFile == "settings.json" {
+		validateSettingsAgainstUpstream(target, settingsPath, content)
+	}
 
 	return nil
 }
