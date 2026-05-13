@@ -2077,6 +2077,60 @@ func TestConfigInSyncIgnoringKeys_HooksDifferOnly(t *testing.T) {
 	}
 }
 
+func TestSettingsInSyncIgnoringHomeManaged(t *testing.T) {
+	tests := []struct {
+		name     string
+		repo     string
+		home     string
+		profile  *Profile
+		wantSync bool
+	}{
+		{
+			name:     "claude: hooks+permissions stripped from repo — in sync",
+			repo:     `{"$schema":"x"}`,
+			home:     `{"$schema":"x","hooks":{"PostToolUse":[]},"permissions":{"allow":["mcp__loom"]}}`,
+			profile:  &Profile{HomeManagedSettingsKeys: []string{"hooks", "permissions"}},
+			wantSync: true,
+		},
+		{
+			name:     "gemini: 5-key strip — in sync",
+			repo:     `{"$schema":"x"}`,
+			home:     `{"$schema":"x","hooks":{},"experimental":{},"general":{},"tools":{},"security":{}}`,
+			profile:  &Profile{HomeManagedSettingsKeys: []string{"hooks", "experimental", "general", "tools", "security"}},
+			wantSync: true,
+		},
+		{
+			name:     "non-managed key differs — out of sync",
+			repo:     `{"$schema":"x","theme":"dark"}`,
+			home:     `{"$schema":"x","theme":"light","hooks":{}}`,
+			profile:  &Profile{HomeManagedSettingsKeys: []string{"hooks"}},
+			wantSync: false,
+		},
+		{
+			name:     "nil profile falls back to hooks-only",
+			repo:     `{"$schema":"x"}`,
+			home:     `{"$schema":"x","hooks":{}}`,
+			profile:  nil,
+			wantSync: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			repoFile := filepath.Join(dir, "repo.json")
+			homeFile := filepath.Join(dir, "home.json")
+			os.WriteFile(repoFile, []byte(tt.repo), 0644)
+			os.WriteFile(homeFile, []byte(tt.home), 0644)
+
+			got := settingsInSyncIgnoringHomeManaged(repoFile, homeFile, tt.profile)
+			if got != tt.wantSync {
+				t.Errorf("settingsInSyncIgnoringHomeManaged() = %v, want %v", got, tt.wantSync)
+			}
+		})
+	}
+}
+
 func TestTomlInSyncIgnoringKeys_NotifyDiffers(t *testing.T) {
 	tests := []struct {
 		name       string

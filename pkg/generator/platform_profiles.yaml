@@ -25,7 +25,14 @@ platforms:
       agent_id: "claude-code"
       agent_type: "claude-code"
       description: "Claude Code session"
-      session_end_event: "Stop"
+      # Claude `Stop` is per-turn ("Claude finishes responding"); `SessionEnd`
+      # fires once per session (matchers: clear/resume/logout/prompt_input_exit/
+      # bypass_permissions_disabled/other). Mapping session-end to `Stop`
+      # caused `loom agent session-end --summarize` to run every turn —
+      # corrected on 2026-05-12 to fire on the real session-end event.
+      # See pkg/generator/VENDOR_SPECS.md "Hook lifecycle surface" + the
+      # SessionEnd row in the canonical → vendor mapping table.
+      session_end_event: "SessionEnd"
       heartbeat_event: "PostToolUse"
       heartbeat_matcher: "Bash|Task"
       extras: ["postToolUse_formatters", "postToolUse_taskSync", "telemetry_eventEmit"]
@@ -112,12 +119,37 @@ platforms:
     display_name: "Codex CLI"
     config_format: "toml"
     config_file: "config.toml"
+    # Codex shipped a Claude-style [hooks] block in v0.129.0 (2026-05-07). We
+    # emit `notify = [...]` in config.toml AND a Claude-shape hooks.json
+    # alongside it, so both `notify` (turn-end keepalive) and the richer
+    # SessionStart/Stop/PostToolUse events fire. `notify` stays as a fallback
+    # because the [hooks] block does not always fire SessionStart/Stop for
+    # repo-local config (openai/codex#17532).
     hooks:
       enabled: true
-      file: "config.toml"
-      events: ["notify"]
+      file: "hooks.json"
+      # Note: Codex's `Stop` event is per-turn (fires after every model
+      # response), NOT session-end. There is NO `SessionEnd` event in Codex
+      # docs (https://developers.openai.com/codex/hooks). True session
+      # termination is detected via notify + the keepalive-wrap background
+      # process (deregister-on-exit). Therefore:
+      #   - `stop` is intentionally absent from this events list
+      #   - session_end_event is empty so buildPlatformHooks doesn't emit a
+      #     [hooks.Stop] block that would spam `loom agent session-end
+      #     --summarize` every turn.
+      events: ["sessionStart", "postToolUse", "notify"]
+      # Enforcement stays "proxy": Codex's PreToolUse doesn't expose a Bash
+      # matcher (image-gen and other tools also don't fire PreToolUse —
+      # openai/codex#20616), so kubectl/policy guardrails still run via the
+      # loom proxy.
       policy_refs: ["gitops_flux"]
       enforcement: "proxy"
+      agent_id: "codex"
+      agent_type: "codex"
+      description: "Codex CLI session"
+      session_end_event: ""
+      heartbeat_event: "PostToolUse"
+      heartbeat_matcher: ""
       extras: ["telemetry_eventEmit"]
     loom_proxy:
       agent_hint: "codex"

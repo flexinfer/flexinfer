@@ -181,10 +181,16 @@ func TestToVendorCapabilities_Codex(t *testing.T) {
 	vc := p.ToVendorCapabilities()
 
 	if !vc.NotifyHook {
-		t.Error("NotifyHook = false, want true")
+		t.Error("NotifyHook = false, want true (config.toml notify still emitted)")
 	}
-	if vc.SessionStartHook {
-		t.Error("SessionStartHook = true, want false")
+	// Codex v0.129.0 (2026-05-07) added a Claude-shape [hooks] block. We emit
+	// hooks.json alongside config.toml, so SessionStart/Stop/PostToolUse are
+	// now native lifecycle hooks for Codex too.
+	if !vc.SessionStartHook {
+		t.Error("SessionStartHook = false, want true (Codex hooks.json)")
+	}
+	if !vc.PostToolUseHook {
+		t.Error("PostToolUseHook = false, want true (Codex hooks.json)")
 	}
 	if !vc.SandboxMode {
 		t.Error("SandboxMode = false, want true")

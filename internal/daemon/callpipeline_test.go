@@ -2338,6 +2338,16 @@ func TestCallPipelineExecute_ResponseIDMismatch(t *testing.T) {
 }
 
 func TestHandleCall_HubConcurrencyNoIDMismatchWithLock(t *testing.T) {
+	// Two concurrent callers share a single transport (mirrors
+	// kitprocess.Manager.Dial returning the same *Process for both
+	// pool.Conns). Without per-server serialization the interleaving
+	// transport's broken Recv would deliver the wrong response ID, which
+	// the pipeline catches as transport corruption and treats with a
+	// full process teardown. With the per-server callLock the two calls
+	// serialize, each Send→Recv pair completes atomically, and both
+	// callers see the correct response. This is the property the
+	// daemon's per-server callLock exists to guarantee for shared
+	// stdio transports.
 	d := newCallPipelineTestDaemon()
 	d.router = router.New(router.Config{HubEnabled: true})
 
@@ -2394,6 +2404,104 @@ func TestHandleCall_HubConcurrencyNoIDMismatchWithLock(t *testing.T) {
 		}
 	}
 }
+
+// TestHandleCall_ConcurrentCallsCompleteWithoutLockTimeout exercises the
+// hot path that originally produced the "acquire call lock for
+// agent_context after 15s: context deadline exceeded" cascade in
+// loom-agent-hooks.log: many concurrent callers serializing through the
+// per-server callLock. The lock must serialize them (it does — shared
+// stdio transport demands it) but should NOT pile up to the 15s
+// acquire timeout for fast in-flight calls.
+//
+// This is a regression test for the cascade behaviour, not for
+// parallelism: with a shared transport, concurrent callers physically
+// cannot run their Send→Recv pairs in parallel without ID interleaving.
+// What we verify is that the per-server lock has reasonable fairness
+// and no caller exhausts the lock-acquire budget under bounded
+// in-flight latency.
+func TestHandleCall_ConcurrentCallsCompleteWithoutLockTimeout(t *testing.T) {
+	d := newCallPipelineTestDaemon()
+	d.router = router.New(router.Config{HubEnabled: true})
+
+	d.hubPool = pool.New(pool.Config{
+		MaxIdle:     8,
+		MaxOpen:     8,
+		IdleTimeout: time.Minute,
+		DialFunc: func(_ context.Context, _ string) (mcp.Transport, error) {
+			// Per-call latency well under the default 5s callLock acquire
+			// timeout: 4 callers serialized = 60ms total, plenty of headroom.
+			return &slowEchoTransport{sendDelay: 15 * time.Millisecond}, nil
+		},
+	})
+	defer func() { _ = d.hubPool.Close() }()
+
+	makeMsg := func(id string) *mcp.Message {
+		msg := newCallMessage(t, map[string]any{
+			"server": "lock_fairness_test",
+			"tool":   "echo",
+		})
+		msg.ID = id
+		return msg
+	}
+
+	const callers = 4
+	start := make(chan struct{})
+	errs := make(chan error, callers)
+	var wg sync.WaitGroup
+	for i := 0; i < callers; i++ {
+		wg.Add(1)
+		go func(idx int) {
+			defer wg.Done()
+			<-start
+			_, err := d.handleCall(context.Background(), makeMsg(fmt.Sprintf("req-%d", idx)))
+			errs <- err
+		}(i)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("unexpected call error (lock-acquire timeout regression?): %v", err)
+		}
+	}
+}
+
+// slowEchoTransport simulates an MCP server with an artificial Send
+// delay. Instances are designed for use as fixture: each call's
+// Send→Recv must be serialized by the caller (matching production
+// shared-transport semantics).
+type slowEchoTransport struct {
+	mu        sync.Mutex
+	lastID    any
+	sendDelay time.Duration
+}
+
+func (t *slowEchoTransport) Send(_ context.Context, msg *mcp.Message) error {
+	t.mu.Lock()
+	t.lastID = msg.ID
+	delay := t.sendDelay
+	t.mu.Unlock()
+	if delay > 0 {
+		time.Sleep(delay)
+	}
+	return nil
+}
+
+func (t *slowEchoTransport) Recv(_ context.Context) (*mcp.Message, error) {
+	t.mu.Lock()
+	id := t.lastID
+	t.mu.Unlock()
+	return &mcp.Message{
+		JSONRPC: mcp.JSONRPCVersion,
+		ID:      id,
+		Result:  json.RawMessage(`{"ok":true}`),
+	}, nil
+}
+
+func (t *slowEchoTransport) Close() error { return nil }
 
 // TestCallPipelineExecute_ResponseIDMatchSucceeds verifies that execute()
 // passes when the response ID matches the request ID.

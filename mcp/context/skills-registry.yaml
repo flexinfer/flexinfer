@@ -64,7 +64,7 @@
 # Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
 
 version: 1
-updated: 2026-05-09
+updated: 2026-05-12
 skills:
   - name: flux-gitops-operator
     categories: [kubernetes, gitops, operations]
@@ -6287,6 +6287,95 @@ skills:
         enabled: true
         type: command
         output_format: markdown
+
+  - name: rapid-dev-iteration-loop
+    categories: [workflow, development, debugging, game]
+    common:
+      description: |
+        Rapid dev iteration loop for experimental engineering: isolate one blocker, patch the narrowest point, build the smallest viable artifact, prove the runtime used it, and capture the exact next blocker. Use for unstable integrations, experimental profiles, Godot game iteration, mobile perf debugging, or any tight build-test-observe cycle.
+      instructions: |
+        # Rapid Dev Iteration Loop
+
+        Use this when the fastest path forward is a tight isolate-patch-prove-capture loop.
+        Not for planned features or refactors — this is for experimental bring-up and blocker retirement.
+
+        ## When to Use
+
+        - Experimental backend or runtime integration (new GPU profile, inference model, game build)
+        - Mobile performance debugging (frame budget, battery, thermal)
+        - Godot game iteration (scene changes, shader tuning, touch input debugging)
+        - CI/CD pipeline bring-up with new tooling
+        - Any situation where the blocker list is longer than the solution list
+
+        ## Loop
+
+        1. **Isolate** — identify the single current blocker from evidence (logs, metrics, screenshots)
+        2. **Hypothesize** — state one testable hypothesis about root cause
+        3. **Patch** — make the narrowest possible change that tests the hypothesis
+        4. **Build** — produce the smallest viable artifact (binary, image, export, scene)
+        5. **Prove** — confirm the runtime actually used that artifact (digest, version, asset hash)
+        6. **Observe** — capture exact success/failure evidence
+        7. **Record** — log the iteration in `assets/templates/iteration-log.md` format
+        8. **Next** — if blocker retired, pick next; if moved, refine hypothesis and re-enter loop
+
+        ## Evidence Standards
+
+        - Exact artifact identifiers (image digest, commit SHA, build hash)
+        - Exact failure text (exception, frame time, error code)
+        - Exact file + line or function name for the patch point
+        - Screenshot or metric snapshot when visual
+
+        ## Anti-Patterns
+
+        - Multiple theories in one probe — test one thing at a time
+        - Editing production manifests during exploratory bring-up
+        - Relying on mutable tags without confirming pulled digest
+        - Describing results vaguely instead of recording exact blocker
+        - Bundling cleanup or refactors into a blocker-isolation loop
+
+        ## Godot Game Iteration
+
+        When iterating on Godot projects:
+        - Use `godot_mcp` to launch editor/project and capture debug output
+        - Use `godot_debug` for live scene inspection when Godot is running
+        - Use `make validate-godot` for headless validation
+        - Use `make run-game` for quick launch
+        - For mobile: export, install, observe frame times, patch, repeat
+        - Frame budget: 33ms at 30fps, 16ms at 60fps
+
+        ## Mobile Performance Iteration
+
+        Key metrics to track per iteration:
+        - FPS (target: 30fps minimum, 60fps ideal)
+        - Frame time percentiles (p50, p95, p99)
+        - Draw calls per frame
+        - Memory usage (RSS)
+        - Battery drain rate (thermal state if available)
+
+        ## References / Templates
+
+        - Workflow guide: `references/workflow.md`
+        - Iteration log template: `assets/templates/iteration-log.md`
+      scripts: []
+      references:
+        - workflow.md
+      assets:
+        - templates/iteration-log.md
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: skill
 
   # =========================================================================
   # Migrated Skills - from .agents/skills/ hand-maintained docs

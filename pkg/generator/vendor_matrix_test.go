@@ -98,16 +98,22 @@ func TestVendorCapabilities_ClaudeHasFullHooks(t *testing.T) {
 	}
 }
 
-func TestVendorCapabilities_CodexHasNotify(t *testing.T) {
+func TestVendorCapabilities_CodexHasNotifyAndHooks(t *testing.T) {
 	caps := GetVendorCapabilities("codex")
 	if !caps.NotifyHook {
-		t.Error("Codex should have notify hook support")
+		t.Error("Codex should have notify hook support (config.toml notify = […])")
 	}
 	if !caps.SandboxMode {
 		t.Error("Codex should have sandbox mode support")
 	}
-	if caps.SessionStartHook {
-		t.Error("Codex should NOT have SessionStart hook")
+	// Codex v0.129.0 (2026-05-07) shipped a Claude-shape [hooks] block.
+	// We emit hooks.json alongside config.toml so SessionStart/Stop/PostToolUse
+	// fire natively. `notify` is retained as a fallback during transition.
+	if !caps.SessionStartHook {
+		t.Error("Codex should have SessionStart hook (hooks.json, Codex v0.129.0+)")
+	}
+	if !caps.PostToolUseHook {
+		t.Error("Codex should have PostToolUse hook (hooks.json, Codex v0.129.0+)")
 	}
 }
 

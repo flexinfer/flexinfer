@@ -219,9 +219,30 @@ func (p *callPipeline) connectTarget(target router.Target, reason string) error 
 		return err
 	}
 
-	// Re-acquire the lock for the RPC send phase. The lock now only
-	// serializes the actual send/recv on the connection, not the wait
-	// for a pool slot.
+	// Re-acquire the lock for the RPC send phase.
+	//
+	// Why this serialization is required (even though pool.Get gives an
+	// "exclusive" Conn): for local stdio servers, kitprocess.Manager.Dial
+	// returns the SAME *Process — and therefore the same *StdioTransport
+	// — every time it's called for a given serverName. Pool maxOpen=25
+	// means 25 logical handles to ONE stdio pipe, not 25 processes. The
+	// readLoop dispatches every incoming message to a single msgCh, so
+	// concurrent Send+Recv pairs on the shared transport interleave:
+	// goroutine A can Recv() goroutine B's response. The pipeline catches
+	// the ID mismatch and treats it as transport corruption, triggering
+	// procMgr.Stop and a cascade of "transport closed" errors for every
+	// other in-flight call.
+	//
+	// A 2026-05-12 attempt to remove this lock (commit a6bb44e2) was
+	// based on the incorrect assumption that each pool Conn had its own
+	// Transport. The unit test for that change accidentally validated the
+	// removal because its mock DialFunc returned a fresh Transport per
+	// call — production never does. Reverted 2026-05-12 (this commit).
+	//
+	// The first acquire (lines above pool.Get) is intentionally NOT
+	// re-introduced as a held-through-pool-Get lock — that was the real
+	// cascade source in commit ee76d223. We hold the lock ONLY for the
+	// send/recv phase; the pool wait is unlocked.
 	p.callMu, _, err = p.daemon.acquireCallLock(p.ctx, p.serverName)
 	if err != nil {
 		// Connection acquired but can't get lock — return connection to pool.

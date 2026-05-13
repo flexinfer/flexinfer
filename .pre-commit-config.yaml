@@ -99,6 +99,17 @@ repos:
         types: [go]
         pass_filenames: false
 
+      # GitOps mirror drift: when mcp/context/*.yaml changes, require the
+      # platform/gitops mirror to match. The hook is skipped if the gitops
+      # checkout is missing (developer doesn't have platform/gitops cloned).
+      - id: mirror-drift-check
+        name: gitops mirror drift check
+        entry: bash scripts/ci/check_mirror_drift.sh
+        language: system
+        files: ^mcp/context/(registry|skills-registry)\.yaml$
+        pass_filenames: false
+        stages: [pre-commit]
+
 # CI configuration
 ci:
   autofix_commit_msg: "style: auto-fix from pre-commit hooks"

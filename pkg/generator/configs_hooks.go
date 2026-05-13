@@ -104,20 +104,6 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 				"hooks": sessionStartHooks,
 			},
 		},
-		hp.SessionEndEvent: []map[string]any{
-			{
-				"hooks": []map[string]any{
-					{
-						"type": "command",
-						"command": fmt.Sprintf(
-							// Kill keepalives matching this workspace (any session scope) — not just exact agent ID.
-							// Two-layer cleanup: PID file glob + pkill for orphans from different binary paths.
-							`INPUT=$(cat); %s; for pf in "${TMPDIR:-/tmp}"/loom-keepalive-%s-"${WS_HASH}"*.pid; do [ -f "$pf" ] && kill "$(cat "$pf")" 2>/dev/null && rm -f "$pf"; done; pkill -f "loom agent keepalive --agent-id %s-${WS_HASH}" 2>/dev/null || true; rm -f "$AGENT_ID_FILE"; %s agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
-							bootstrap, hp.AgentID, hp.AgentID, loomCmd, log),
-					},
-				},
-			},
-		},
 		hp.HeartbeatEvent: []map[string]any{
 			{
 				"matcher": hp.HeartbeatMatcher,
@@ -131,6 +117,31 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 				},
 			},
 		},
+	}
+
+	// SessionEnd hook (Claude `SessionEnd`, Gemini `SessionEnd`, etc.) —
+	// only emit when the profile declares a session-end event AND that
+	// event is semantically session-scoped (not per-turn). Codex has no
+	// SessionEnd event and `Stop` fires per turn, so codex sets
+	// session_end_event to "" to suppress this block; lifecycle is then
+	// handled exclusively by notify + keepalive-wrap (deregister-on-exit).
+	// Claude has `SessionEnd` as a distinct session-scoped event; mapping
+	// session-end to `Stop` would spam `loom agent session-end` every turn.
+	if hp.SessionEndEvent != "" {
+		hooks[hp.SessionEndEvent] = []map[string]any{
+			{
+				"hooks": []map[string]any{
+					{
+						"type": "command",
+						"command": fmt.Sprintf(
+							// Kill keepalives matching this workspace (any session scope) — not just exact agent ID.
+							// Two-layer cleanup: PID file glob + pkill for orphans from different binary paths.
+							`INPUT=$(cat); %s; for pf in "${TMPDIR:-/tmp}"/loom-keepalive-%s-"${WS_HASH}"*.pid; do [ -f "$pf" ] && kill "$(cat "$pf")" 2>/dev/null && rm -f "$pf"; done; pkill -f "loom agent keepalive --agent-id %s-${WS_HASH}" 2>/dev/null || true; rm -f "$AGENT_ID_FILE"; %s agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
+							bootstrap, hp.AgentID, hp.AgentID, loomCmd, log),
+					},
+				},
+			},
+		}
 	}
 
 	// Capture parent session ID for subagent session grouping.
@@ -370,15 +381,20 @@ func telemetryEventEmitPlatform(hp HookProfile) string {
 // for events that do not correspond to a canonical telemetry hook (e.g.
 // SubagentStart, the heartbeat-only Bash|Task PostToolUse matcher, etc.).
 //
-// Stop and SessionEnd both map to "session-end" because Claude Code uses
-// "Stop" while Gemini uses "SessionEnd" for the same lifecycle moment.
+// `Stop` is intentionally NOT mapped to session-end. Both Claude Code and
+// Codex fire `Stop` once per turn (after every model response), not at
+// true session termination. Mapping `Stop` to "session-end" caused
+// `loom agent event-emit --hook session-end` to fire every turn. Use the
+// platform's real session-end event instead: Claude `SessionEnd`, Gemini
+// `SessionEnd`. Codex has no session-end event — session-end signal flows
+// through notify + keepalive-wrap deregister-on-exit, not telemetry.
 // AfterTool is Gemini's name for the post-tool-use hook; BeforeTool is its
 // pre-tool-use counterpart.
 func canonicalTelemetryHookForEvent(event string) string {
 	switch event {
 	case "SessionStart":
 		return "session-start"
-	case "SessionEnd", "Stop":
+	case "SessionEnd":
 		return "session-end"
 	case "PreToolUse", "BeforeTool":
 		return "pre-tool-use"

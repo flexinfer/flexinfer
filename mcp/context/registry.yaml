@@ -1405,6 +1405,28 @@ servers:
           MENTATLAB_BASE_URL: "${env:MENTATLAB_BASE_URL:-http://localhost:7070}"
           MENTATLAB_API_TOKEN: "${env:MENTATLAB_API_TOKEN}"
 
+  - name: weaver
+    categories: [ai, orchestration, operations]
+    common:
+      description: "Multi-domain query orchestration via FlexInfer local models. Replaces 5-10 sequential tool calls with a single compound query."
+      hint: "Use weaver__query for auto-classified multi-domain queries, or compound tools (cluster_status, ci_status, fleet_status, system_health, deploy_status, incident_triage, codebase_overview) for deterministic workflows."
+      command: "${repo}/services/loom-core/bin/mcp-weaver"
+      args: []
+      timeout: 120
+      always_allow:
+        - weaver__query
+        - weaver__gather
+        - weaver__cluster_status
+        - weaver__ci_status
+        - weaver__system_health
+        - weaver__fleet_status
+        - weaver__deploy_status
+        - weaver__incident_triage
+        - weaver__codebase_overview
+      env:
+        WEAVER_ENABLED: "1"
+        FLEXINFER_URL: "${env:FLEXINFER_URL:-http://litellm.ai.svc.cluster.local:8000}"
+
   - name: docker
     categories: [containers, devops]
     common:
@@ -1926,6 +1948,10 @@ platform_permissions:
         unified_exec: true
         shell_tool: true
         collaboration_modes: true
+        # Opt in to Codex's [hooks] block (GA v0.129.0, 2026-05-07). The
+        # generator emits hooks.json alongside config.toml; this flag tells
+        # Codex to load it. See pkg/generator/VENDOR_SPECS.md "Codex [hooks]".
+        hooks: true
       # Agent definitions emitted as [agents.<name>] TOML sections.
       agents:
         max_threads: 4

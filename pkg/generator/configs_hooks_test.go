@@ -558,9 +558,14 @@ func TestHooksConfigFromProfile_RetroOptIn_Gemini(t *testing.T) {
 
 func TestCanonicalTelemetryHookForEvent(t *testing.T) {
 	cases := map[string]string{
-		"SessionStart":  "session-start",
-		"SessionEnd":    "session-end",
-		"Stop":          "session-end",  // Claude Code uses Stop for the same lifecycle moment.
+		"SessionStart": "session-start",
+		"SessionEnd":   "session-end", // Per-session terminal event in Claude + Gemini.
+		// Stop is intentionally NOT mapped: it fires per-turn in both
+		// Claude and Codex, so mapping it to "session-end" caused
+		// `loom agent event-emit --hook session-end` to fire every turn.
+		// Use the platform-native SessionEnd (Claude/Gemini) or notify +
+		// keepalive-wrap (Codex) for real session terminus.
+		"Stop":          "",
 		"PreToolUse":    "pre-tool-use", // Claude
 		"PostToolUse":   "post-tool-use",
 		"BeforeTool":    "pre-tool-use",  // Gemini-native name (Phase 2.2b).
@@ -600,13 +605,15 @@ func TestTelemetryEventEmitPlatform_UnsupportedReturnsEmpty(t *testing.T) {
 }
 
 func TestAppendHookExtras_TelemetryEventEmit_ClaudeCodeWiresAllFourEvents(t *testing.T) {
-	// Build Claude Code base hooks (Stop + PostToolUse populated by buildPlatformHooks).
+	// Build Claude Code base hooks (SessionEnd + PostToolUse populated by
+	// buildPlatformHooks). `Stop` is per-turn in Claude, so SessionEnd is
+	// the real per-session terminal event we wire telemetry to.
 	hp := HookProfile{
 		Enabled:          true,
 		AgentID:          "claude-code",
 		AgentType:        "claude-code",
 		Description:      "Claude Code session",
-		SessionEndEvent:  "Stop",
+		SessionEndEvent:  "SessionEnd",
 		HeartbeatEvent:   "PostToolUse",
 		HeartbeatMatcher: "Bash|Task",
 		Events:           []string{"sessionStart", "sessionEnd", "preToolUse", "postToolUse"},
@@ -624,7 +631,7 @@ func TestAppendHookExtras_TelemetryEventEmit_ClaudeCodeWiresAllFourEvents(t *tes
 
 	appendHookExtras(hooks, hp, "/usr/local/bin/loom")
 
-	for _, event := range []string{"SessionStart", "Stop", "PreToolUse", "PostToolUse"} {
+	for _, event := range []string{"SessionStart", "SessionEnd", "PreToolUse", "PostToolUse"} {
 		blocks, ok := hooks[event].([]map[string]any)
 		if !ok {
 			t.Errorf("event=%s: hooks slot missing or wrong type", event)
@@ -655,11 +662,14 @@ func TestAppendHookExtras_TelemetryEventEmit_ClaudeCodeWiresAllFourEvents(t *tes
 
 func TestAppendHookExtras_TelemetryEventEmit_UsesCanonicalHookNames(t *testing.T) {
 	hp := HookProfile{
-		Enabled:          true,
-		AgentID:          "claude-code",
-		AgentType:        "claude-code",
-		Description:      "Claude Code session",
-		SessionEndEvent:  "Stop",
+		Enabled:     true,
+		AgentID:     "claude-code",
+		AgentType:   "claude-code",
+		Description: "Claude Code session",
+		// SessionEnd is per-session in Claude; Stop is per-turn. Telemetry
+		// `session-end` must fire on the real session-end event, not on
+		// every turn — see canonicalTelemetryHookForEvent for the mapping.
+		SessionEndEvent:  "SessionEnd",
 		HeartbeatEvent:   "PostToolUse",
 		HeartbeatMatcher: "Bash|Task",
 		Events:           []string{"sessionStart", "sessionEnd", "preToolUse", "postToolUse"},
@@ -673,7 +683,7 @@ func TestAppendHookExtras_TelemetryEventEmit_UsesCanonicalHookNames(t *testing.T
 
 	expectedHookForEvent := map[string]string{
 		"SessionStart": "--hook session-start",
-		"Stop":         "--hook session-end",
+		"SessionEnd":   "--hook session-end",
 		"PreToolUse":   "--hook pre-tool-use",
 		"PostToolUse":  "--hook post-tool-use",
 	}

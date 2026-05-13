@@ -459,9 +459,10 @@ func compareGeneratedFile(repoPath, homePath string, profile *Profile) []DriftIt
 			repoHash, _ := hashFile(repoFile)
 			homeHash, _ := hashFile(homeFile)
 			if repoHash != homeHash {
-				// For settings.json, hooks are stripped from repo but preserved in
-				// home via merge. Compare non-hooks keys only to avoid false drift.
-				if rel == "settings.json" && settingsInSyncIgnoringHooks(repoFile, homeFile) {
+				// For settings.json, home-managed keys (hooks, permissions, etc.) are
+				// stripped from repo via SyncAllProjects but preserved in home. Compare
+				// non-home-managed keys only to avoid false drift.
+				if rel == "settings.json" && settingsInSyncIgnoringHomeManaged(repoFile, homeFile, profile) {
 					items = append(items, DriftItem{File: rel, RepoHash: repoHash, HomeHash: homeHash, Status: DriftInSync})
 				} else if strings.HasSuffix(rel, ".toml") && tomlInSyncIgnoringKeys(repoFile, homeFile, []string{"notify"}) {
 					// For TOML configs, the [notify] section may exist in home
@@ -511,10 +512,17 @@ func configInSyncIgnoringKeys(repoFile, homeFile string, ignoreKeys []string) bo
 	return string(repoNorm) == string(homeNorm)
 }
 
-// settingsInSyncIgnoringHooks compares two settings.json files, treating them
-// as in-sync if they differ only in the "hooks" key.
-func settingsInSyncIgnoringHooks(repoFile, homeFile string) bool {
-	return configInSyncIgnoringKeys(repoFile, homeFile, []string{"hooks"})
+// settingsInSyncIgnoringHomeManaged compares two settings.json files, treating
+// them as in-sync if they differ only in the profile's HomeManagedSettingsKeys.
+// SyncAllProjects strips these keys from the repo copy (they live at user level
+// only), so a naive byte-compare reports false drift against the home copy that
+// retains them.
+func settingsInSyncIgnoringHomeManaged(repoFile, homeFile string, profile *Profile) bool {
+	keys := []string{"hooks"}
+	if profile != nil && len(profile.HomeManagedSettingsKeys) > 0 {
+		keys = profile.HomeManagedSettingsKeys
+	}
+	return configInSyncIgnoringKeys(repoFile, homeFile, keys)
 }
 
 // tomlInSyncIgnoringKeys compares two TOML config files, treating them as
