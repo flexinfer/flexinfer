@@ -1,22 +1,20 @@
-# Gonzalomo FluxPony SDXL text-to-image on cblevins-5930k (gfx1100).
+# Gonzalomo FluxPony SDXL text-to-image on cblevins-radeonvii (gfx906).
 #
-# Relocated 2026-05-03 back from cblevins-radeonvii to cblevins-5930k so
-# image generation stays warm on the alternate 7900 XTX node while textgen
-# runs on cblevins-7900xtx.
+# Relocated 2026-05-13 from cblevins-5930k to cblevins-radeonvii so the
+# 5930k 7900 XTX is fully dedicated to the second gemma4-26b-a4b-gptq textgen
+# instance. Image generation now lives entirely on the Radeon VII (gfx906)
+# alongside sdxl-inpainting-radeonvii on the `radeonvii-imagegen` shared lane.
 #
-# 7900 XTX quirks:
-#   - gfx1100 needs the ROCm/PyTorch env injected by the GPUProfile.
-#   - 24GB VRAM — SDXL + cpuOffload fits with room for compile caches.
-#
-# MAINTENANCE WINDOW — 2026-05-05
-#
-# Temporarily stop keeping this imagegen runtime warm while
-# qwen36-27b-gptq-gfx1100 finishes its abliterate → GPTQ recovery cycle on
-# cblevins-5930k. Both workloads target the same single gfx1100 GPU; keeping
-# FluxPony warm holds amd.com/gpu=1 and blocks the Qwen pipeline pod.
-#
-# Keep minReplicas at 0 now that Qwen3.6 serves on this node. Both models share
-# the 5930k-imagegen-textgen lane so Qwen can preempt imagegen on text demand.
+# Radeon VII / gfx906 quirks:
+#   - 16 GiB VRAM (vs 24 GiB on 7900 XTX) — SDXL + cpuOffload still fits since
+#     this is FluxPony (an SDXL fork, ~12 GiB est) with cpuOffload=true.
+#   - The diffusers gfx906 image (registry.harbor.lan/flexinfer/diffusers:rocm-gfx906)
+#     is selected automatically by the GPUProfile gfx906 backends.diffusers.image.
+#     Memory: gfx906 reports as gfx900 — requires HSA_OVERRIDE_GFX_VERSION=9.0.6
+#     at runtime (also handled via GPUProfile env injection).
+#   - Disk: this manifest uses cache.strategy=Local so the model lives on the
+#     node's local FS. Radeon VII root FS is 127G total. Combined with the
+#     sdxl-inpainting Local cache, monitor for disk pressure.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -32,7 +30,7 @@ spec:
   gpu:
     vendor: amd
     count: 1
-    shared: 5930k-imagegen-textgen
+    shared: radeonvii-imagegen
     priority: 200
     vramEstimateMB: 12000
   serverless:
@@ -61,7 +59,7 @@ spec:
     compilationCache: "true"
     hipVisibleDevices: "0"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-radeonvii
   resources:
     requests:
       cpu: "2"

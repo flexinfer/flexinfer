@@ -17,7 +17,7 @@ metadata:
     flexinfer.ai/promotion-requires: 18k-22k-validation-before-primary-promotion
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
+  image: registry.harbor.lan/flexinfer/runtime@sha256:fdba7d555396f6d4ec99908adfb9df7239318469601d05d1c4d2520f0597ff3e
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   cache:
     strategy: None

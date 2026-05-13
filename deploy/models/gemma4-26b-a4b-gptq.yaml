@@ -6,13 +6,18 @@
 # dequantized tensors and repeated-token output on vLLM/ROCm.
 #
 # Warm primary in 7900xtx-textgen (priority 350, minReplicas=1).
-# Promoted 2026-05-13 to the always-on quality lane for downstream services
-# (project-management and similar) that need capable reasoning + 16K context.
-# The paired demotion of qwen3-8b-fast-7900xtx to scale-to-zero frees the
-# 24 GiB warm slot; fast-chat consumers (loom-core agents on qwen3-default)
-# now cold-start when invoked. Context uplift 2026-04-27: the separate
-# gemma4-26b-a4b-gptq-long canary proved the same hybrid artifact at 16K with
-# FP8 KV on 2026-04-26; those runtime knobs are baked in below.
+# 7900 XTX instance #1 of the 2-instance 26B serving fleet. Promoted 2026-05-13
+# to the always-on quality lane for downstream services (project-management and
+# similar) that need capable reasoning + 16K context. The paired sister model
+# `gemma4-26b-a4b-gptq-5930k` runs on cblevins-5930k from the same OCI-published
+# artifact for horizontal capacity. Shared routes (quality-chat / mid-chat /
+# gpt-4 / project-mgmt / gemma4-26b) live in `serviceLabels` on BOTH instances
+# so the proxy load-balances across them; `litellm.aliases` carry only
+# node-specific addressing (gemma4-26b-7900xtx). Context uplift 2026-04-27:
+# the separate gemma4-26b-a4b-gptq-long canary proved the same hybrid artifact
+# at 16K with FP8 KV on 2026-04-26; those runtime knobs are baked in below.
+# Runtime image rebuilt 2026-05-13 with the gemma4 decoder-layer debug patch
+# OFF (was eating ~10x perf via per-token GPU->CPU syncs); new digest pinned.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -26,7 +31,7 @@ metadata:
     flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
+  image: registry.harbor.lan/flexinfer/runtime@sha256:fdba7d555396f6d4ec99908adfb9df7239318469601d05d1c4d2520f0597ff3e
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   # Cache PVC migration (2026-04-18): switched from the default 3-replica
   # Longhorn storage class to single-replica local NVMe to stop
@@ -120,8 +125,12 @@ spec:
       cpu: "4"
       memory: 16Gi
   serviceLabels:
+    # 2026-05-13: shared route names live here so the proxy can load-balance
+    # them across both 26B instances (this one + sister on cblevins-5930k).
+    # Adding/removing a name requires the same change in the sister manifest.
     - gemma4-26b-a4b-gptq
     - gemma4-26b-a4b
+    - gemma4-26b
     - quality-chat
     - mid-chat
     - gpt-4
@@ -129,16 +138,13 @@ spec:
   litellm:
     enabled: true
     servedModelName: gemma4-26b-a4b-gptq
+    # 2026-05-13: shared routes (quality-chat, mid-chat, gpt-4, project-mgmt,
+    # gemma4-26b, gemma4-26b-a4b) moved to serviceLabels so the proxy can
+    # load-balance them across both instances (this one + sister on 5930k).
+    # litellm.aliases stays node-specific.
     aliases:
-      - gemma4-26b
-      - gemma4-26b-a4b
-      # 2026-05-13: warm quality lane on the discrete 7900 XTX. These aliases
-      # are how downstream services (project-management and similar) request
-      # the capable + long-context tier without hardcoding the artifact name.
-      - quality-chat
-      - mid-chat
-      - gpt-4
-      - project-mgmt
+      - gemma4-26b-7900xtx
+      - gemma4-26b-a4b-7900xtx
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"

@@ -1,0 +1,39 @@
+# OCI Pull Cache for Gemma4 26B-A4B GPTQ INT4 — instance #2 on cblevins-5930k.
+#
+# Pipeline:
+#   ModelCache(gemma4-26b-a4b-gptq, cblevins-7900xtx)
+#     -> Quantize -> Publish -> Harbor OCI
+#   ModelCache(gemma4-26b-a4b-gptq-oci-5930k, this file)
+#     -> Pull artifact from OCI into local-path PVC on cblevins-5930k
+#   Model(gemma4-26b-a4b-gptq-5930k)
+#     -> Sources from this cache PVC, serves vLLM on the 5930k 7900 XTX.
+#
+# Sister to gemma4-26b-a4b-gptq (cblevins-7900xtx) which owns the source pipeline.
+# This cache is artifact-only (no pipeline) so the 5930k node never has to run
+# abliterate/quantize. Resize when the source artifact grows.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: gemma4-26b-a4b-gptq-oci-5930k
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-state: oci-pull-from-7900xtx-source
+spec:
+  source: "oci://registry.harbor.lan/flexinfer/gemma4-26b-a4b:gptq-w4-g128-attnfp16-clean"
+  modelPath: "gemma4-26b-a4b-gptq"
+  storageStrategy: SharedPVC
+  # 50Gi matches the per-node serving cache size used elsewhere; the hybrid
+  # GPTQ artifact (MoE INT4 + dense FP16) is ~17 GiB on disk and ~17.7 GiB
+  # resident at runtime.
+  storageSize: "50Gi"
+  clusterStorageClassName: local-path
+  secretRef: "harbor-oci-creds"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  download:
+    maxMemoryGB: 8
+    backoffLimit: 3
+  retentionPriority: 85
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85
