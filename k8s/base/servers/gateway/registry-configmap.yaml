@@ -606,6 +606,19 @@ data:
           - itchio_status
           - itchio_version_history
 
+      - name: office
+        url: ws://mcp-office.loom-hub.svc.cluster.local:8080/ws
+        categories: [documents, parsing, office, productivity]
+        description: Pure-Go parser/producer for .pdf, .docx, .xlsx, .pptx. Read tools accept either a filesystem path or inline base64 bytes.
+        timeout: 60
+        always_allow:
+          - office_extract_text
+          - office_extract_metadata
+          - office_extract_structure
+          - office_extract_tables
+          - office_search
+          - office_inspect
+
       - name: release
         url: ws://mcp-release.loom-hub.svc.cluster.local:8080/ws
         categories: [ci, deployment]
