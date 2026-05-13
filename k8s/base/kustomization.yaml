@@ -203,6 +203,10 @@ resources:
   - servers/itchio/deployment.yaml
   - servers/itchio/service.yaml
 
+  - servers/office/configmap.yaml
+  - servers/office/deployment.yaml
+  - servers/office/service.yaml
+
   - servers/release/configmap.yaml
   - servers/release/deployment.yaml
   - servers/release/service.yaml

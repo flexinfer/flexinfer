@@ -51,7 +51,7 @@ LOOM_HUB_DIR := $(GITOPS_DIR)/k3s/loom-hub
 FLUX_KUST := $(GITOPS_DIR)/clusters/k3s/flux-system/kustomization-loom-hub-servers.yaml
 
 # MCP server binaries
-MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-quality mcp-brand-kit mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot mcp-alertmanager mcp-flux mcp-postgres mcp-helm mcp-docker mcp-codebase-memory mcp-agent-context mcp-redis mcp-neo4j mcp-confluence mcp-browserkit mcp-devbox mcp-itchio mcp-release mcp-substack mcp-linkedin mcp-google-workspace mcp-jobsearch mcp-mentatlab mcp-flexinfer mcp-weaver
+MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-quality mcp-brand-kit mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot mcp-alertmanager mcp-flux mcp-postgres mcp-helm mcp-docker mcp-codebase-memory mcp-agent-context mcp-redis mcp-neo4j mcp-confluence mcp-browserkit mcp-devbox mcp-itchio mcp-release mcp-substack mcp-linkedin mcp-google-workspace mcp-jobsearch mcp-mentatlab mcp-flexinfer mcp-weaver mcp-office
 .PHONY: $(MCP_SERVERS)
 
 # Default target
@@ -329,6 +329,9 @@ install-devbox-sync:
 
 mcp-itchio:
 	go build $(LDFLAGS) -o bin/mcp-itchio ./cmd/mcp-itchio
+
+mcp-office:
+	go build $(LDFLAGS) -o bin/mcp-office ./cmd/mcp-office
 
 mcp-release:
 	go build $(LDFLAGS) -o bin/mcp-release ./cmd/mcp-release
