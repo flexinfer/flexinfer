@@ -6,17 +6,19 @@ resources:
   # qwen35-27b-opus-distill.yaml and qwen35-9b.yaml are intentionally disabled
   # for the Gemma4 rollout. Keep the manifests on disk for rollback/reference,
   # but do not reconcile them here.
-  # 2026-05-07 fast-chat recovery: the 31B/26B long-context lanes are valid
-  # canaries, but they are the wrong default for interactive traffic. Keep them
-  # off the reconciled path while `qwen3-8b-fast-7900xtx` owns the warm
-  # low-latency route on the discrete 7900 XTX.
-  # - gemma4-31b-gptq.yaml          # disabled; quality lane, not fast default
-  - fast-chat-7900xtx.yaml          # MLC Qwen3 8B, ~106 tok/s fast-chat primary
-  # 2026-05-03 dedupe: keep one 26B profile. The base 26B and 22K canary use
-  # the same artifact as the validated 16K long profile and add routing/status
-  # ambiguity without improving the serving surface.
-  # - gemma4-26b-a4b-gptq.yaml      # superseded by gemma4-26b-a4b-gptq-long
-  # - gemma4-26b-a4b-gptq-long.yaml # disabled; slow long-context canary
+  # 2026-05-13 quality lane promotion: gemma4-26b-a4b-gptq becomes the warm
+  # primary on the discrete 7900 XTX (priority 350, minReplicas 1). It owns
+  # the quality-chat / mid-chat / gpt-4 / project-mgmt aliases so downstream
+  # services (project-management and similar) can request capable reasoning +
+  # 16K context. fast-chat-7900xtx is demoted to minReplicas 0 and stays on
+  # disk for loom-core (qwen3-default) and explicit fast-chat cold-starts;
+  # qwen3-8b-fast-fallback-5930k still owns the warm fast-chat lane on the
+  # 5930k node. The 31B / 22K / 26B-long canaries stay disabled until their
+  # own promotion gates pass.
+  # - gemma4-31b-gptq.yaml          # disabled; promoted-state pending dense rebuild
+  - fast-chat-7900xtx.yaml          # MLC Qwen3 8B, scale-to-zero cold lane (was warm primary pre-2026-05-13)
+  - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K FP8 KV
+  # - gemma4-26b-a4b-gptq-long.yaml # disabled; superseded by base 26B at 16K (see 2026-05-03 dedupe)
   # 2026-05-05: replaced by Qwen3.6. The old qwen3-30b-a3b canary requested
   # gpu.count=2 and stayed unschedulable after gfx1100 nodes were normalized
   # to one discrete GPU slot.

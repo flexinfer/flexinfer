@@ -19,7 +19,16 @@
 - gfx1100/gfx906 platform enhancement plan: `gfx1100-gfx906-platform-enhancements-plan.md`
 - gfx1100/gfx906 next-round parallel plan: `gfx1100-gfx906-next-round-plan.md`
 
-## Current Goal (2026-05-06, round 1 closed)
+## Current Goal (2026-05-13)
+
+Promote `gemma4-26b-a4b-gptq` to the warm quality lane on `cblevins-7900xtx` so downstream services (project-management and similar) consume capable reasoning + 16K context via stable aliases (`quality-chat`, `mid-chat`, `gpt-4`, `project-mgmt`). Pair-demote `qwen3-8b-fast-7900xtx` to scale-to-zero so the 24 GiB lane is not double-claimed. Cold-start contract for `qwen3-default` / `qwen3-8b` (loom-core agents) is the explicit tradeoff — fast-chat callers cold-start (≤10m from `local-path` NVMe).
+
+- [ ] Land the manifest swap (priority 350 / minReplicas 1 / warmPolicy primary on 26B; mirror demotion on 8B).
+- [ ] Pipeline green + Flux reconcile shows `gemma4-26b-a4b-gptq` Ready and `qwen3-8b-fast-7900xtx` Idle.
+- [ ] Validation matrix row for the warm 26B canary updated with first served request evidence (`60-validation-matrix.md`).
+- [ ] Document service-side consumption pattern (services point at `quality-chat` or `project-mgmt` alias) — follow-up.
+
+## Previous Goal (2026-05-06, round 1 closed)
 
 Decompose the remaining `gfx1100`/`gfx906` work into eight tracks (A-H) sized for parallel sub-agent execution.
 
