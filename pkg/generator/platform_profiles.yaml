@@ -137,7 +137,17 @@ platforms:
       #   - session_end_event is empty so buildPlatformHooks doesn't emit a
       #     [hooks.Stop] block that would spam `loom agent session-end
       #     --summarize` every turn.
-      events: ["sessionStart", "postToolUse", "notify"]
+      # PostToolUse is intentionally omitted: codex's heartbeat_matcher
+      # has no useful narrowing equivalent (Claude uses "Bash|Task", Gemini
+      # uses "run_shell_command" — codex tool names aren't stable enough
+      # to filter on), so a PostToolUse heartbeat would fire on every tool
+      # call and synchronously fork `loom agent heartbeat` each time.
+      # Each fork pays for a shell bootstrap (git rev-parse + jq + cksum
+      # + file I/O) plus loom binary cold-start (~50-200ms) and codex's
+      # TUI bounces visibly per tool call. notify + keepalive-wrap already
+      # provide session keepalive in the background, so the per-tool-call
+      # heartbeat is redundant overhead.
+      events: ["sessionStart", "notify"]
       # Enforcement stays "proxy": Codex's PreToolUse doesn't expose a Bash
       # matcher (image-gen and other tools also don't fire PreToolUse —
       # openai/codex#20616), so kubectl/policy guardrails still run via the
@@ -148,7 +158,9 @@ platforms:
       agent_type: "codex"
       description: "Codex CLI session"
       session_end_event: ""
-      heartbeat_event: "PostToolUse"
+      # heartbeat_event "" suppresses the per-tool-call heartbeat hook;
+      # buildPlatformHooks gates the block on a non-empty event name.
+      heartbeat_event: ""
       heartbeat_matcher: ""
       extras: ["telemetry_eventEmit"]
     loom_proxy:
