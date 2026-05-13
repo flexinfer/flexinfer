@@ -6,18 +6,19 @@ resources:
   # qwen35-27b-opus-distill.yaml and qwen35-9b.yaml are intentionally disabled
   # for the Gemma4 rollout. Keep the manifests on disk for rollback/reference,
   # but do not reconcile them here.
-  # 2026-05-13 quality lane promotion: gemma4-26b-a4b-gptq becomes the warm
-  # primary on the discrete 7900 XTX (priority 350, minReplicas 1). It owns
-  # the quality-chat / mid-chat / gpt-4 / project-mgmt aliases so downstream
-  # services (project-management and similar) can request capable reasoning +
-  # 16K context. fast-chat-7900xtx is demoted to minReplicas 0 and stays on
-  # disk for loom-core (qwen3-default) and explicit fast-chat cold-starts;
-  # qwen3-8b-fast-fallback-5930k still owns the warm fast-chat lane on the
-  # 5930k node. The 31B / 22K / 26B-long canaries stay disabled until their
-  # own promotion gates pass.
+  # 2026-05-13 fleet reshape — two-instance 26B serving + image-gen consolidation:
+  # Both 7900 XTX nodes (cblevins-7900xtx and cblevins-5930k) now run the same
+  # gemma4-26b-a4b-gptq hybrid artifact as their warm primary. Shared routes
+  # (quality-chat / mid-chat / gpt-4 / project-mgmt / gemma4-26b) live in
+  # serviceLabels on both Models so the proxy load-balances across them.
+  # 5930k's source artifact pulls from Harbor OCI (published by the 7900xtx
+  # source modelcache) -- no full pipeline rerun. The Radeon VII takes over
+  # ALL image generation (FluxPony + SDXL inpainting). 8B fast-chat stays only
+  # on cblevins-7900xtx as a cold fallback for loom-core qwen3-default.
+  # 31B / 22K / 26B-long canaries stay disabled until their own gates pass.
   # - gemma4-31b-gptq.yaml          # disabled; promoted-state pending dense rebuild
-  - fast-chat-7900xtx.yaml          # MLC Qwen3 8B, scale-to-zero cold lane (was warm primary pre-2026-05-13)
-  - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K FP8 KV
+  - fast-chat-7900xtx.yaml          # MLC Qwen3 8B, scale-to-zero cold lane (the only Qwen3-8B path post-2026-05-13)
+  - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (7900xtx instance #1)
   # - gemma4-26b-a4b-gptq-long.yaml # disabled; superseded by base 26B at 16K (see 2026-05-03 dedupe)
   # 2026-05-05: replaced by Qwen3.6. The old qwen3-30b-a3b canary requested
   # gpu.count=2 and stayed unschedulable after gfx1100 nodes were normalized
@@ -43,13 +44,14 @@ resources:
   # - gemma4-e4b-turboquant.yaml
   # - gemma4-e4b-multimodal.yaml
 
-  # === cblevins-5930k (24 GB gfx1100) ===
-  # 2026-05-07: the prior MLC fast-chat.yaml was disabled because the
-  # 5930k local-path PVC lacks the model directory and the shared NFS copy
-  # lacks `mlc-chat-config.json`. fast-chat-5930k-llamacpp.yaml is the
-  # llama.cpp + GGUF replacement (HF source, no PVC distribution problem).
-  # See docs/planning/fast-chat-resilience.md for the full decision record.
-  - fast-chat-5930k-llamacpp.yaml   # llama.cpp Qwen3-8B Q4_K_M, fast-chat fallback
+  # === cblevins-5930k (24 GB gfx1100) — second 26B instance, no image-gen ===
+  # 2026-05-13 fleet reshape: this node is now dedicated to gemma4-26b-a4b-gptq
+  # instance #2 (warm primary, OCI-pull from the 7900xtx-published artifact).
+  # FluxPony moved to cblevins-radeonvii. The 5930k 8B llama.cpp fallback is
+  # disabled (the warm 26B + cold 8B on cblevins-7900xtx cover the lane); see
+  # docs/planning/fast-chat-resilience.md for the previous decision record.
+  - gemma4-26b-a4b-gptq-5930k.yaml  # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (5930k instance #2)
+  # - fast-chat-5930k-llamacpp.yaml # disabled 2026-05-13; 8B path consolidated onto cblevins-7900xtx
   # - fast-chat.yaml                  # disabled MLC variant, kept on disk for one cycle as rollback
   # qwen3-14b-abliterated-v2-5930k.yaml references a GPTQ PVC that is not
   # present in the live cluster; keep disabled until that cache is rebuilt or
@@ -60,14 +62,16 @@ resources:
   # disk for forensic rebuilds, but do not advertise or reconcile it.
   # - omnicoder-9b.yaml
 
-  # === cblevins-radeonvii (16 GB gfx906) ===
-  # Keep the heavy gfx906 diffusers/runtime path paused until the node has more
-  # image-storage headroom. The llama.cpp GGUF lane pulls a much smaller image
-  # and gives the Radeon VII a useful low-latency routing workload.
+  # === cblevins-radeonvii (16 GB gfx906) — image-gen primary ===
+  # 2026-05-13: FluxPony relocated here from cblevins-5930k. The Radeon VII
+  # now owns ALL image generation (SDXL text-to-image + SDXL inpainting),
+  # both on the `radeonvii-imagegen` shared lane. Disk pressure on the node
+  # root FS is the main risk -- monitor /var/lib once both caches are warm.
+  # The 1.7B Qwen tool/canary lanes stay for routing experiments.
   - qwen3-1.7b-tools-radeonvii.yaml # llama.cpp GGUF, fast tool-router lane
   - qwen3-1.7b-vllm-radeonvii.yaml  # vllm canary, scaled to 0; closes Track C revive path (priority 80)
-  - gonzalomo-fluxpony-imagegen.yaml # diffusers, SDXL text-to-image, on-demand (priority 200)
-  - sdxl-inpainting-radeonvii.yaml   # diffusers, SDXL inpainting, cache-ready; runtime/image path paused
+  - gonzalomo-fluxpony-imagegen.yaml # diffusers gfx906, SDXL text-to-image (relocated 2026-05-13 from 5930k)
+  - sdxl-inpainting-radeonvii.yaml   # diffusers gfx906, SDXL inpainting
 
   # === cblevins-gtx980ti (6 GB sm_52) ===
   - gemma4-e4b-gguf-gtx980ti.yaml   # llama.cpp GGUF, node-local cache for Maxwell cold starts

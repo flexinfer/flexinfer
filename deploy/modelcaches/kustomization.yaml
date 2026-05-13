@@ -14,7 +14,7 @@ resources:
   # - omnicoder-9b-gptq.yaml         # omnicoder-9b-gptq (disabled; OCI cache in use)
 
   # === Active Abliteration + GPTQ pipelines (Download → Abliterate → Quantize → Publish) ===
-  - gemma4-26b-a4b-gptq.yaml        # gemma4-26b-a4b-gptq (cblevins-7900xtx)
+  - gemma4-26b-a4b-gptq.yaml        # gemma4-26b-a4b-gptq (cblevins-7900xtx) — pipeline + OCI publish source
   # Dense rebuild paused 2026-05-03: it monopolizes cblevins-5930k and blocks
   # active serving validation for Omnicoder. Re-enable only during a dedicated
   # rebuild window or after ModelCache grows a first-class suspend knob.
@@ -45,3 +45,4 @@ resources:
 
   # === Active OCI pull caches (Harbor → local PVC → Model CRs) ===
   - qwen36-27b-oci.yaml             # qwen36-27b (cblevins-5930k, artifact-only serving cache)
+  - gemma4-26b-a4b-gptq-oci-5930k.yaml  # gemma4-26b-a4b-gptq (cblevins-5930k, instance #2 OCI-pull from 7900xtx publish)

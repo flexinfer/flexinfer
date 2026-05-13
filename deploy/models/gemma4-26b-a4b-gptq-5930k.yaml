@@ -1,0 +1,110 @@
+# Gemma4 26B-A4B GPTQ INT4 — 5930k instance (sister of gemma4-26b-a4b-gptq).
+#
+# 7900 XTX instance #2 of the 2-instance 26B serving fleet (added 2026-05-13).
+# Mirrors gemma4-26b-a4b-gptq.yaml but pinned to cblevins-5930k. The source
+# artifact is pulled from the OCI ref published by the primary modelcache
+# (see deploy/modelcaches/gemma4-26b-a4b-gptq-oci-5930k.yaml) so this node
+# never runs the 12-24h pipeline.
+#
+# Shared routes (quality-chat, mid-chat, gpt-4, project-mgmt, gemma4-26b,
+# gemma4-26b-a4b) live in `serviceLabels` so the proxy load-balances across
+# both instances. `litellm.aliases` carry only the 5930k-specific alias.
+#
+# Runtime image: same digest as the 7900xtx instance (clean rebuild from
+# master with the gemma4 decoder-layer debug patch OFF).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gemma4-26b-a4b-gptq-5930k
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-gate: quantized-artifact-v1
+    flexinfer.ai/promotion-state: baseline-16k-validated-oci-pull
+    flexinfer.ai/promotion-validation: passed
+    flexinfer.ai/promotion-evidence: docs/dev/gemma4-rocm-status.md#16k-fp8-kv-proof-2026-04-26
+    flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:fdba7d555396f6d4ec99908adfb9df7239318469601d05d1c4d2520f0597ff3e
+  # Source = the 5930k OCI-pull cache PVC. The artifact subdir matches the
+  # 7900xtx Model's source (gptq-w4-g128-attnfp16-clean).
+  source: pvc://gemma4-26b-a4b-gptq-oci-5930k/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
+  cache:
+    strategy: SharedPVC
+    storageClass: local-path
+    hostPath: /var/lib/flexinfer/models
+    size: 50Gi
+  gpu:
+    vendor: amd
+    # cblevins-5930k has ONLY the discrete 7900 XTX (no iGPU), so count=1 is
+    # sufficient. This differs from cblevins-7900xtx which exposes the
+    # Raphael iGPU as a second amd.com/gpu slot and needs count=2.
+    count: 1
+    vramEstimateMB: 16000
+    # New shared group name — image-gen moved off to radeonvii, so this lane
+    # is text-gen-only now. Group rename: 5930k-imagegen-textgen -> 5930k-textgen.
+    shared: 5930k-textgen
+    # Same priority as the 7900xtx instance so neither preempts the other; the
+    # proxy serviceLabel routing load-balances between them.
+    priority: 350
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  config:
+    quantization: gptq
+    dtype: "half"
+    maxModelLen: 16384
+    gpuMemoryUtilization: "0.98"
+    kvCacheDtype: fp8_e4m3
+    maxNumSeqs: 1
+    trustRemoteCode: true
+    attentionBackend: TRITON_ATTN
+    # servedModelName MUST be globally unique across Models in the namespace
+    # (controller checks aliasOwners[served]). Give this instance its own.
+    servedModelName: gemma4-26b-a4b-gptq-5930k
+    enableToolCalling: true
+    toolCallParser: gemma4
+    reasoningParser: gemma4
+    enablePrefixCaching: false
+    maxNumBatchedTokens: 160
+    disableLogStats: false
+    enforceEager: true
+    disableHybridKVCacheManager: true
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    warmPolicy: primary
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+    limits:
+      cpu: "4"
+      memory: 16Gi
+  serviceLabels:
+    # Shared routes — must match gemma4-26b-a4b-gptq.yaml exactly so the proxy
+    # treats both as load-balanced backends for the same logical service.
+    - gemma4-26b-a4b-gptq
+    - gemma4-26b-a4b
+    - gemma4-26b
+    - quality-chat
+    - mid-chat
+    - gpt-4
+    - project-mgmt
+  litellm:
+    enabled: true
+    # Unique per-instance servedModelName + aliases. Downstream services that
+    # need explicit 5930k addressing use one of these; shared service-level
+    # routing happens via serviceLabels above.
+    servedModelName: gemma4-26b-a4b-gptq-5930k
+    aliases:
+      - gemma4-26b-5930k
+      - gemma4-26b-a4b-5930k
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

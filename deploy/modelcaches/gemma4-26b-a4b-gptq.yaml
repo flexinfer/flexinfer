@@ -87,3 +87,20 @@ spec:
       maxSeqLen: 2048
       # Increase samples for better MoE expert coverage (128 experts × top-8).
       maxSamples: 512
+  # 2026-05-13: OCI publish so we can spin up additional 26B serving
+  # instances (e.g. cblevins-5930k) without re-running the 12-24h pipeline.
+  # Pipeline: ... -> Quantize -> Publish -> Ready. The publish job runs only
+  # AFTER the quantize artifact is present; existing Ready caches just stage a
+  # publish phase. The sister cache gemma4-26b-a4b-gptq-oci-5930k pulls from
+  # this ociRef onto cblevins-5930k. Validate stays false initially -- we trust
+  # the existing artifact (already serving on 7900xtx). Flip to true once we
+  # publish-rebuild with a clean pipeline.
+  publish:
+    targets:
+      - oci
+    ociRef: "registry.harbor.lan/flexinfer/gemma4-26b-a4b:gptq-w4-g128-attnfp16-clean"
+    secretRef: "harbor-oci-creds"
+    maxMemoryGB: 8
+    timeoutSeconds: 7200
+    validate:
+      enabled: false
