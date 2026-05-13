@@ -13,9 +13,11 @@ spec:
     vramEstimateMB: 12000
   serverless:
     enabled: true
-    # Warm primary for interactive chat. The heavier Gemma canaries remain on
-    # disk for explicit validation but no longer own the default route.
-    minReplicas: 1
+    # 2026-05-13: demoted to scale-to-zero. gemma4-26b-a4b-gptq is the warm
+    # primary for downstream services (project-mgmt etc.) on this lane; this
+    # 8B remains on disk for loom-core qwen3-default/qwen3-8b cold-starts and
+    # any explicit fast-chat traffic.
+    minReplicas: 0
     idleTimeout: 5m
     coldStartTimeout: 10m
   config:
@@ -28,6 +30,9 @@ spec:
     hipVisibleDevices: "0"
     rocrVisibleDevices: "0"
     gpuDeviceOrdinal: "0"
+    # 2026-05-13: explicit on-demand. gemma4-26b-a4b-gptq holds the warm slot
+    # on this GPU group; this 8B cold-starts when fast-chat aliases are hit.
+    warmPolicy: ondemand
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:

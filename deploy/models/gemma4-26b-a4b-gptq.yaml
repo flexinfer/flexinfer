@@ -5,17 +5,14 @@
 # stay at post-abliteration FP16/BF16. Full dense-attention GPTQ produced bad
 # dequantized tensors and repeated-token output on vLLM/ROCm.
 #
-# On-demand fallback in 7900xtx-textgen (priority 200, scale-to-zero).
-# Demoted from always-on 2026-04-21 after 13h+ of zero request telemetry —
-# the hybrid artifact was a hack on the path to the proper dense build, and
-# the 31B-gptq finally has a serving slot. Kept in the group with lower
-# priority so it can still come up on explicit alias if needed, but the
-# always-warm lane is 31B now.
-#
-# Context uplift 2026-04-27: the separate gemma4-26b-a4b-gptq-long canary
-# proved the same hybrid artifact at 16K with FP8 KV on 2026-04-26. Promote
-# those runtime knobs to the default 26B alias while keeping this model
-# scale-to-zero and non-primary.
+# Warm primary in 7900xtx-textgen (priority 350, minReplicas=1).
+# Promoted 2026-05-13 to the always-on quality lane for downstream services
+# (project-management and similar) that need capable reasoning + 16K context.
+# The paired demotion of qwen3-8b-fast-7900xtx to scale-to-zero frees the
+# 24 GiB warm slot; fast-chat consumers (loom-core agents on qwen3-default)
+# now cold-start when invoked. Context uplift 2026-04-27: the separate
+# gemma4-26b-a4b-gptq-long canary proved the same hybrid artifact at 16K with
+# FP8 KV on 2026-04-26; those runtime knobs are baked in below.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -65,14 +62,15 @@ spec:
     count: 2
     vramEstimateMB: 16000
     shared: 7900xtx-textgen
-    priority: 200
+    # 2026-05-13: priority raised above qwen3-8b-fast-7900xtx (300) so the
+    # 26B owns the warm lane for downstream services.
+    priority: 350
   serverless:
     enabled: true
-    # 2026-04-24: demoted back to cold fallback. The 31B re-quant with
-    # nParallelCalibSamples=8 produced a clean artifact (distinct per-layer
-    # hashes verified), so 31B is warm primary in 7900xtx-textgen again
-    # and this MoE variant goes back to scale-to-zero on-demand.
-    minReplicas: 0
+    # 2026-05-13: promoted to warm primary for project-management and other
+    # quality-tier consumers. Pair-edited fast-chat-7900xtx down to
+    # minReplicas: 0 so the 24 GiB lane is not double-claimed.
+    minReplicas: 1
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
@@ -109,9 +107,9 @@ spec:
     disableAiter: true
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
-    # 2026-04-24: primary → ondemand. 31B re-quant verified clean, so
-    # the MoE is back to on-demand fallback in 7900xtx-textgen.
-    warmPolicy: ondemand
+    # 2026-05-13: ondemand → primary. 26B-A4B is the warm quality lane for
+    # downstream services on the discrete 7900 XTX.
+    warmPolicy: primary
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
@@ -124,12 +122,23 @@ spec:
   serviceLabels:
     - gemma4-26b-a4b-gptq
     - gemma4-26b-a4b
+    - quality-chat
+    - mid-chat
+    - gpt-4
+    - project-mgmt
   litellm:
     enabled: true
     servedModelName: gemma4-26b-a4b-gptq
     aliases:
       - gemma4-26b
       - gemma4-26b-a4b
+      # 2026-05-13: warm quality lane on the discrete 7900 XTX. These aliases
+      # are how downstream services (project-management and similar) request
+      # the capable + long-context tier without hardcoding the artifact name.
+      - quality-chat
+      - mid-chat
+      - gpt-4
+      - project-mgmt
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"

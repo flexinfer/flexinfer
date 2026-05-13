@@ -2,6 +2,25 @@
 
 Chronological notes while executing the plan (useful for handoffs and debugging).
 
+## 2026-05-13
+
+### RALPH slice — promote gemma4-26b-a4b-gptq to warm quality lane
+
+- What changed:
+  - `deploy/models/gemma4-26b-a4b-gptq.yaml`: `gpu.priority` 200→350, `serverless.minReplicas` 0→1, `config.warmPolicy` ondemand→primary, added `quality-chat`/`mid-chat`/`gpt-4`/`project-mgmt` aliases + serviceLabels, refreshed manifest preamble.
+  - `deploy/models/fast-chat-7900xtx.yaml`: `serverless.minReplicas` 1→0, added explicit `config.warmPolicy: ondemand`.
+  - `deploy/models/kustomization.yaml`: uncommented `- gemma4-26b-a4b-gptq.yaml`, updated the 7900 XTX section preamble to record the swap.
+- Why:
+  - The flexinfer fleet only had `qwen3-8b-fast-7900xtx` Ready as a text-gen lane on the discrete 7900 XTX. Downstream services (project-management and similar) need capable reasoning + 16K context, and the validated `gemma4-26b-a4b-gptq` artifact (gfx1100 hybrid GPTQ INT4, FP8 KV @ 16K) was sitting on disk with no `Model` CR reconciling it.
+  - VRAM math (~17.7 GiB for 26B + 12 GiB est for 8B > 24 GiB) means only one of the two can be warm at a time on the shared `7900xtx-textgen` group. Per the user's selection, the 26B takes the warm slot; the 8B remains on disk for explicit `qwen3-default` / `qwen3-8b` traffic (cold-start ≤10m from `local-path` NVMe).
+- Validation:
+  - `kustomize build deploy/models` renders 9 `Model` resources cleanly; `quality-chat` / `project-mgmt` aliases land on the 26B; `warmPolicy: primary` (26B) and `warmPolicy: ondemand` (8B) appear in the built output.
+  - `scripts/check-runtime-profile-consistency.sh` passed (runtime/profile contract unchanged).
+  - `go test ./api/v1alpha2/... ./controllers/...` passed.
+- What's next:
+  - After Flux reconcile, watch `kubectl get models gemma4-26b-a4b-gptq -n flexinfer-system` transition to `Ready`; record cold-load + first-token TPS as a new row in `60-validation-matrix.md`.
+  - Loom-core / project-management service configs need to point at the new aliases to actually consume the warm lane (follow-up).
+
 ## 2026-05-06 (round 1 closeout)
 
 ### Next-round parallel plan + first-wave shipping
