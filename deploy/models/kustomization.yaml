@@ -50,7 +50,7 @@ resources:
   # FluxPony moved to cblevins-radeonvii. The 5930k 8B llama.cpp fallback is
   # disabled (the warm 26B + cold 8B on cblevins-7900xtx cover the lane); see
   # docs/planning/fast-chat-resilience.md for the previous decision record.
-  - gemma4-26b-a4b-gptq-5930k.yaml  # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (5930k instance #2)
+  # - gemma4-26b-a4b-gptq-5930k.yaml  # PAUSED 2026-05-13: depends on the 5930k OCI-pull cache, which is paused (no published OCI artifact yet). Re-enable in the follow-up MR that seeds the artifact.
   # - fast-chat-5930k-llamacpp.yaml # disabled 2026-05-13; 8B path consolidated onto cblevins-7900xtx
   # - fast-chat.yaml                  # disabled MLC variant, kept on disk for one cycle as rollback
   # qwen3-14b-abliterated-v2-5930k.yaml references a GPTQ PVC that is not

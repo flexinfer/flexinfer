@@ -45,4 +45,4 @@ resources:
 
   # === Active OCI pull caches (Harbor → local PVC → Model CRs) ===
   - qwen36-27b-oci.yaml             # qwen36-27b (cblevins-5930k, artifact-only serving cache)
-  - gemma4-26b-a4b-gptq-oci-5930k.yaml  # gemma4-26b-a4b-gptq (cblevins-5930k, instance #2 OCI-pull from 7900xtx publish)
+  # - gemma4-26b-a4b-gptq-oci-5930k.yaml  # PAUSED 2026-05-13: source publish was reverted to avoid serving outage. Re-enable once the OCI artifact lands (manual crane push or completed publish pipeline).
