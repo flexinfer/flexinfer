@@ -349,10 +349,16 @@ type DevboxClient interface {
 }
 
 // DevboxRequest carries the project + agent id + env to a quality-gate run.
+//
+// Checks, when non-empty, scopes the gate to the named subset (one of
+// "fmt"/"lint"/"test"/"diff"). The canary path uses this to skip the
+// codebase-wide lint/test on safe-fixture backlog items that only touch
+// non-Go assets.
 type DevboxRequest struct {
 	Project string
 	AgentID string
 	Env     map[string]string
+	Checks  []string
 }
 
 // DevboxResponse summarises the gate verdict + per-check results.
@@ -380,6 +386,30 @@ type DevboxWorker struct {
 	AgentID string
 }
 
+// canaryTestsScope is the gate selector for the safe-fixture canary
+// path. The deterministic Mills canary only modifies a single Markdown
+// fixture, so running `go vet ./...` or `go test ./...` on the entire
+// codebase exercises infrastructure unrelated to the canary's intent
+// (and historically failed in git-clone sandboxes where module cache
+// wasn't pre-populated). Scoping to fmt keeps the canary deterministic
+// while still validating the worktree was modified cleanly.
+var canaryTestsScope = []string{"fmt"}
+
+// devboxScopeFor returns the Checks selector for a given backlog item.
+// Canary items (Labels contains "mills-canary") get the narrowed scope;
+// everything else uses the gate's defaults (fmt + lint + test).
+func devboxScopeFor(item *store.BacklogItem) []string {
+	if item == nil {
+		return nil
+	}
+	for _, lbl := range item.Labels {
+		if lbl == "mills-canary" {
+			return canaryTestsScope
+		}
+	}
+	return nil
+}
+
 // Run satisfies Worker.
 func (w *DevboxWorker) Run(ctx context.Context, jc JobContext) (StageOutput, error) {
 	if w.Client == nil {
@@ -389,6 +419,7 @@ func (w *DevboxWorker) Run(ctx context.Context, jc JobContext) (StageOutput, err
 		Project: w.Project,
 		AgentID: w.AgentID,
 		Env:     jc.Env,
+		Checks:  devboxScopeFor(jc.Item),
 	})
 	if err != nil {
 		return StageOutput{}, err

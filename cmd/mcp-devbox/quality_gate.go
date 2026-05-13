@@ -196,7 +196,25 @@ func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*
 
 		if err != nil {
 			cr.Passed = false
-			cr.OutputTail = err.Error()
+			// Some exec wrappers (poll.RetryWithBackoff, k8s upgrade
+			// errors) can produce errors whose Error() is empty or
+			// missing the cmd context. Always synthesize a non-empty
+			// OutputTail so the operator's escalation reason never
+			// degrades to `devbox quality gate failed: N checks` with
+			// no further signal.
+			msg := strings.TrimSpace(err.Error())
+			if msg == "" {
+				msg = fmt.Sprintf("exec failed (%T) for `%s`", err, cmd)
+			} else {
+				msg = fmt.Sprintf("%s: %s", check, msg)
+			}
+			cr.OutputTail = msg
+			// Capture any partial stderr the runtime produced before
+			// failing; helps diagnose go-toolchain errors that write
+			// to stderr and then return a non-zero exec wrapper.
+			if result != nil && result.StderrTail != "" {
+				cr.StderrTail = truncateOutput(result.StderrTail, 500)
+			}
 			allPassed = false
 		} else {
 			cr.ExitCode = result.ExitCode
@@ -211,8 +229,32 @@ func (m *manager) handleQualityGate(ctx context.Context, args map[string]any) (*
 				if cr.OutputTail == "" {
 					cr.OutputTail = cr.StderrTail
 				}
+				if cr.OutputTail == "" {
+					// Final safety net: a check that exits non-zero with
+					// neither stdout nor stderr (rare but real for some
+					// silent toolchain failures) still gets a meaningful
+					// artifact rather than a blank one.
+					cr.OutputTail = fmt.Sprintf("%s exited %d (no output)", check, result.ExitCode)
+				}
 				allPassed = false
 			}
+		}
+
+		// Log every check at INFO so failed gates leave a forensic trail
+		// in the mcp-devbox container log even when the artifact JSON is
+		// stripped by an upstream encoder.
+		if m.logger != nil {
+			m.logger.Info("quality gate check",
+				"project", projectName,
+				"check", check,
+				"language", lang,
+				"cmd", cmd,
+				"passed", cr.Passed,
+				"exit", cr.ExitCode,
+				"duration_ms", cr.DurationMs,
+				"stdout_tail", truncateOutput(cr.OutputTail, 240),
+				"stderr_tail", truncateOutput(cr.StderrTail, 240),
+			)
 		}
 
 		results = append(results, cr)

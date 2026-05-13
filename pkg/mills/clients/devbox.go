@@ -61,6 +61,16 @@ func (c *DevboxClient) QualityGate(ctx context.Context, req pipeline.DevboxReque
 	if req.AgentID != "" {
 		args["agent_id"] = req.AgentID
 	}
+	// Forward the explicit Checks selector when the caller scoped the
+	// gate (canary path uses Checks=["fmt"] so `go vet` / `go test` aren't
+	// run for a backlog item that only touched a non-Go fixture).
+	if len(req.Checks) > 0 {
+		checks := make([]any, 0, len(req.Checks))
+		for _, c := range req.Checks {
+			checks = append(checks, c)
+		}
+		args["checks"] = checks
+	}
 	server := c.ServerName
 	if server == "" {
 		server = DevboxServerName
