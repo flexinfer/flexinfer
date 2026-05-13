@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -260,6 +261,54 @@ func (b *fakeProbeBackend) Exec(_ context.Context, opts backend.ExecOpts) (*back
 // failure mode where `make fmt` returns exit=1 with empty stdout
 // but a useful stderr line. The artifact's OutputTail must reflect
 // stderr so escalations show the actual error.
+// emptyErrorBackend returns a non-nil error whose Error() is empty
+// for every Exec call — the empty-err.Error() failure mode observed in
+// production canary attempts when go-toolchain exec wrappers swallow
+// their message. Verifies the gate now synthesizes a fallback so the
+// check artifact never reaches the operator with a blank Output.
+type emptyErrorBackend struct{ fakeBackend }
+
+type emptyErr struct{}
+
+func (emptyErr) Error() string { return "" }
+
+func (b *emptyErrorBackend) Exec(_ context.Context, _ backend.ExecOpts) (*backend.ExecResult, error) {
+	return nil, emptyErr{}
+}
+
+func TestQualityGate_EmptyErrorStillProducesOutput(t *testing.T) {
+	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
+	fb := &emptyErrorBackend{fakeBackend{statuses: map[string]*fakeStatus{}}}
+	mgr := newQGTestManager(t, fb, "go")
+
+	result, err := mgr.handleQualityGate(context.Background(), map[string]any{
+		"project": "test-project",
+		"checks":  []string{"fmt"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var qr qualityGateResult
+	if len(result.Content) > 0 {
+		if err := json.Unmarshal([]byte(result.Content[0].Text), &qr); err != nil {
+			t.Fatalf("unmarshal: %v (raw=%q)", err, result.Content[0].Text)
+		}
+	}
+	if len(qr.Checks) != 1 {
+		t.Fatalf("expected 1 check, got %d", len(qr.Checks))
+	}
+	got := qr.Checks[0]
+	if got.Passed {
+		t.Fatalf("expected fmt check to fail when exec returns error")
+	}
+	if got.OutputTail == "" {
+		t.Fatalf("OutputTail must never be empty when exec errored; got blank")
+	}
+	if !strings.Contains(got.OutputTail, "fmt") && !strings.Contains(got.OutputTail, "exec failed") {
+		t.Fatalf("OutputTail = %q, expected a fallback that names the check or exec", got.OutputTail)
+	}
+}
+
 func TestQualityGate_StderrSurfacedWhenStdoutEmpty(t *testing.T) {
 	t.Setenv("LOOM_MCP_OUTPUT_FORMAT", "json")
 	const stderrMsg = "make: *** No rule to make target 'fmt'. Stop."

@@ -231,6 +231,48 @@ func TestDevboxWorker_FailedGateReturnsError(t *testing.T) {
 	}
 }
 
+// TestDevboxWorker_CanaryScopesChecks asserts that a backlog item
+// labeled "mills-canary" narrows the gate to fmt-only. Prior to this
+// scoping, every canary ran `go vet ./...` on the entire codebase even
+// though the canary only modifies a Markdown fixture — and any
+// transient go-toolchain failure in the sandbox (module cache, network
+// to the proxy) would escalate the canary on infra it was not meant
+// to exercise.
+func TestDevboxWorker_CanaryScopesChecks(t *testing.T) {
+	db := &fakeDevbox{resp: DevboxResponse{Passed: true, Checks: []DevboxCheck{{Name: "fmt", Passed: true}}}}
+	w := &DevboxWorker{Client: db, Project: "loom-core", AgentID: "claude-code"}
+	jc := sampleJobContext("tests", func(jc *JobContext) {
+		jc.Item.Labels = []string{"mills-canary", "safe-fixture"}
+	})
+	if _, err := w.Run(context.Background(), jc); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(db.calls) != 1 {
+		t.Fatalf("expected 1 devbox call, got %d", len(db.calls))
+	}
+	got := db.calls[0].Checks
+	if len(got) != 1 || got[0] != "fmt" {
+		t.Fatalf("canary checks = %v, want [fmt]", got)
+	}
+}
+
+// TestDevboxWorker_NonCanaryLeavesDefaults asserts that a non-canary
+// backlog item sends Checks=nil so mcp-devbox's default selector
+// (fmt+lint+test) still runs for real work.
+func TestDevboxWorker_NonCanaryLeavesDefaults(t *testing.T) {
+	db := &fakeDevbox{resp: DevboxResponse{Passed: true, Checks: []DevboxCheck{{Name: "test", Passed: true}}}}
+	w := &DevboxWorker{Client: db, Project: "loom-core", AgentID: "claude-code"}
+	jc := sampleJobContext("tests", func(jc *JobContext) {
+		jc.Item.Labels = []string{"feature", "p1"}
+	})
+	if _, err := w.Run(context.Background(), jc); err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(db.calls[0].Checks) != 0 {
+		t.Fatalf("non-canary should send no Checks override, got %v", db.calls[0].Checks)
+	}
+}
+
 func TestDevboxWorker_PassPropagatesArtifacts(t *testing.T) {
 	db := &fakeDevbox{resp: DevboxResponse{
 		Passed:  true,
