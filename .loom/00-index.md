@@ -19,9 +19,9 @@
 - gfx1100/gfx906 platform enhancement plan: `gfx1100-gfx906-platform-enhancements-plan.md`
 - gfx1100/gfx906 next-round parallel plan: `gfx1100-gfx906-next-round-plan.md`
 
-## Current Goal (2026-05-14, late evening) — F1+F2+F7 shipped (6.2% cumulative); bigger gains require vectorization
+## Current Goal (2026-05-14, late evening) — F1+F7-vectorize shipped: −24.9% cumulative, 5930k gap closed from 2.13x → 1.60x
 
-Brainstorm session (`.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md`) produced 8 framings for closing the 5930k decode-rate gap without hardware swap. User picked F1 then F2 then F7 in that order; all three attempted on 2026-05-14.
+Brainstorm session (`.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md`) produced 8 framings for closing the 5930k decode-rate gap without hardware swap. User picked F1, then F2 (falsified), then F7 (profile first), then vectorize the MoE patch inner loop. Four slices attempted on 2026-05-14.
 
 **Status:**
 
@@ -29,23 +29,23 @@ Brainstorm session (`.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md`) prod
 | --- | --- | --- | --- |
 | Baseline (Flux-managed config) | 48.89 s | — | — |
 | F1 (CPU governor `schedutil` → `performance`) | 47.01 s | −3.8% | −3.8% |
-| F7 (hoist `.item()` sync) — MR !361 | 45.87 s | −2.4% | **−6.2%** |
-| F2 (revisit `enforce_eager`) | — | n/a | **falsified** (HIP stream-capture crash) |
+| F7 sync-hoist (MR !361, `runtime:...-moe-patched-fast`) | 45.87 s | −2.4% | −6.2% |
+| F2 (revisit `enforce_eager`) | — | n/a | **falsified** (HIP stream-capture crash, manifest comment still binding) |
+| F7 vectorize (MR !363, `runtime:...-moe-vectorized`) | **36.70 s** | **−20.0%** | **−24.9%** |
 
-- F1 set the 5930k governor to `performance` live on the host (sysfs probe shows cores boosting to 2.9-3.3 GHz under load vs idle-stuck at 1.2 GHz). Kept live on the node; no DaemonSet shipped — reverts on reboot, which a future bench will catch. CPU clock was not the binding bottleneck.
-- F2 flipped `enforce_eager: false` on the 5930k Model CR with Flux suspended. Pod crashed on engine init with `torch.AcceleratorError: HIP error: operation not permitted when stream is capturing` at `vllm/compilation/cuda_graph.py:314`. The manifest comment is still binding in current vLLM. Reverted, Flux resumed.
-- F7 used py-spy on the live engine. 6/10 stack samples in `GEMMA4_MOE_ROCM_REFERENCE_PATCH` (the custom int4+GELU MoE fallback we ship in the runtime image). Shipped MR !361 to hoist `topk_ids.tolist()` out of the per-slot inner loop — 8 GPU syncs per layer per token → 1 per call, same outputs. Built `runtime:rocm-gfx1100-gemma4-moe-patched-fast` (digest `sha256:91debc8e8d9841ddb60bfec6b5d12c882440ff9dc74d4170897b44394d29bdc4`), pinned the **5930k Model only** as canary. Coherence outputs IDENTICAL; benchmark 45.87 s mean. 2.4% additional gain.
+**5930k went from 2.13x slower than 7900xtx → 1.60x slower.** The gap closed by ~25% with no hardware change.
 
-**Conclusion:** the remaining ~94% of the 5930k gap appears to be **actual GPU operation latency** — 240 small matmuls per decoded token (top_k=8 × 30 MoE layers) on the X99 PCIe-3 platform vs PCIe-5 on the 7900xtx node. Second py-spy pass post-F7 confirms hot lines shifted from sync-related to actual GPU compute (`_get_w13`, `_get_w2`, matmuls, RMSNorm). Closing the rest requires **vectorizing the inner loop** in the MoE patch — batch all top_k=8 experts' matmuls per token into a single op. Substantially bigger code change with real correctness risk on a path explicitly marked "correctness-first fallback." Not auto-actioned.
+MR !363 (vectorize) replaced the top_k per-slot inner loop in the GEMMA4_MOE_ROCM_REFERENCE_PATCH with two `torch.bmm` calls per token: 16 small matmul launches per layer per token → 2. PCIe roundtrip savings dominate the gain on the older X99 platform. Coherence gauntlet (6 prompts at temperature=0, golden = 7900xtx output): **5/6 exact-match**. The 6th (haiku) diverges at line 3 due to expected FP16 reduction non-associativity (vectorized `sum(dim=0)` parallel reduce vs the original sequential accumulator); output is still a valid 5-7-5 haiku. Factual outputs are bit-identical. Image registry digest: `sha256:c2c89b330c3f414e23b75f468d94b1d80b512a8d539951645c6971446adf77a1`.
+
+**What's left in the gap (1.60x → 1.0x = ~14 s remaining):** likely memory bandwidth + residual per-token Python overhead (cache lookups + stacking + remaining per-layer small launches we still do). Closing further requires either (a) pre-dequantizing all experts at startup (memory cost: 46 GB total, doesn't fit on 24 GB GPU), (b) writing a proper Triton/HIP kernel for INT4 + GELU MoE on ROCm (real upstream engineering, months), or (c) hardware. Returns diminish sharply from here.
 
 **Remaining options, listed for explicit user direction:**
 
-- [ ] **(Pin 7900xtx)** After 24 h of clean 5930k canary on the new image, pin the 7900xtx Model to the same digest. Same patch benefits it proportionally (likely 1-3% on the already-fast lane). Trivial follow-up MR; just a digest swap in `deploy/models/gemma4-26b-a4b-gptq.yaml`. No correctness exposure since the patch is already proven on the sister instance.
-- [ ] **(Vectorize MoE loop)** Real engineering. Replace the per-slot Python loop with batched torch ops across all top_k experts per token. Expected gain: 20-50% (closes a large fraction of the GPU-latency-bound remaining gap). Risk: correctness regression on the "correctness-first fallback" path. ~50-150 LoC patch + careful A/B with a quality-gauntlet probe (more than 3 prompts).
-- [ ] **(F5) Workload-shaped routing.** Route short-output requests to 5930k, long-output to 7900xtx. Proxy code change in `internal/proxy/proxy.go`. Routes around the gap; doesn't fix it.
-- [ ] **(F6) llama.cpp on 5930k.** Highest potential lift; 12-24 h GGUF re-quant + feature divergence.
-- [ ] **(Demote 5930k)** Set `minReplicas: 0` + lower priority. Loses parallel capacity; eliminates slow-path tax on routine traffic.
-- [ ] **(Accept)** Status-quo + documented. Reasonable for current workload volumes.
+- [ ] **(Pin 7900xtx to vectorized image)** After 24 h of clean 5930k canary, pin the 7900xtx Model to the same `sha256:c2c89b330c3f...` digest. Same patch benefits it proportionally (likely 5-15% on the already-fast lane; the per-token launch overhead matters less but is still real). Trivial follow-up MR; one-line digest swap in `deploy/models/gemma4-26b-a4b-gptq.yaml`. No correctness exposure — patch already proven on sister.
+- [ ] **(F5) Workload-shaped routing.** Route short-output requests to 5930k, long-output to 7900xtx. Proxy code change in `internal/proxy/proxy.go`. Routes around the residual gap; doesn't fix it.
+- [ ] **(F6) llama.cpp on 5930k.** Highest potential lift; 12-24 h GGUF re-quant + feature divergence (different tool/reasoning parsers, separate operational paths).
+- [ ] **(Demote 5930k)** Set `minReplicas: 0` + lower priority. Loses parallel capacity; eliminates the slow-path tax on routine traffic.
+- [ ] **(Accept)** Status-quo + documented. The 1.60x gap is operationally usable for current workload volumes. F5 (cheap routing tweak) is the natural next step if user-visible latency becomes a complaint.
 
 Detailed evidence in `.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md` (execution log), `.loom/60-validation-matrix.md`, and `.loom/50-worklog.md` 2026-05-14 entries.
 

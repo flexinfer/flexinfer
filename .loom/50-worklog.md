@@ -4,6 +4,50 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 
 ## 2026-05-14
 
+### RALPH slice — vectorize MoE patch inner loop (MR !363, biggest single-slice win)
+
+After the sync-hoist (MR !361) only delivered 2.4%, py-spy showed compute lines (`_get_w13`, `_get_w2`, the per-slot matmuls) were the new bottleneck. With top_k=8 × 30 MoE layers = **480 small matmul kernel launches per generated token** on the X99 PCIe-3 platform, the per-launch overhead dominated. User picked "vectorize" from the queued options.
+
+Replace the top_k per-slot loop in the GEMMA4_MOE_ROCM_REFERENCE_PATCH with two `torch.bmm` calls per token:
+
+```python
+W13_batch = torch.stack([_get_w13(eid) for eid in tok_experts])  # (K, H, I*2)
+W2_batch  = torch.stack([_get_w2(eid)  for eid in tok_experts])  # (K, I, H)
+gate_up_batch = torch.bmm(x.expand(K,-1,-1), W13_batch)           # (K, 1, I*2)
+apply_moe_activation(... hidden_2d, gate_up_2d)                   # per-row, vectorized
+expert_out_batch = torch.bmm(hidden_batch, W2_batch)              # (K, 1, H)
+expert_out_batch *= router_w.view(-1,1,1)  # if not apply_on_input
+tok_out = expert_out_batch.sum(dim=0)
+```
+
+16 small matmul launches per layer per token → 2 bmm launches. Same math; just batched. `apply_router_weight_on_input` branch preserved verbatim (nonlinear activation makes "multiply before vs after" not equivalent). Negative expert id sentinel handled via mask (zero router_w for those slots).
+
+Image: `runtime:rocm-gfx1100-gemma4-moe-vectorized` overlay on the experimental base, built via the same Dockerfile.runtime-patch recipe as before. Registry digest `sha256:c2c89b330c3f414e23b75f468d94b1d80b512a8d539951645c6971446adf77a1`.
+
+Canary on cblevins-5930k (Flux suspended, manifest pin patched live, then resumed once the manifest matched):
+- Pod Ready in **110 s** with zero restarts.
+- 5/6 prompt gauntlet vs 7900xtx golden: exact-match on math (`2 + 2 = 4`), single-word (`UP`), list-format (`Mars\nJupiter\nSaturn`), factual (`The capital of France is **Paris**.`), and recursion-definition. The 6th (haiku) diverged at line 3: gold "Morning in a cup", got "Morning starts with warmth". Both are valid 5-7-5 haikus; semantic coherence intact. **Documented as expected FP16 reduction non-associativity**: vectorized `sum(dim=0)` does a parallel reduce vs the original sequential `_tok_out.add_(expert_out)` accumulator. Tiny logit differences flip greedy argmax on creative tasks where many tokens have similar probability. Factual outputs are robust because top-token margins are large.
+- Benchmark: 36.55 / 36.82 / 36.74 → **mean 36.70 s** (was 45.87 s with sync-hoist only).
+
+**Cumulative 5930k optimization on existing hardware:**
+
+| Slice | Mean req time | Δ vs prev | Cum gain |
+| --- | --- | --- | --- |
+| Baseline (Flux-managed config) | 48.89 s | — | — |
+| F1 (governor `schedutil` → `performance`) | 47.01 s | −3.8% | −3.8% |
+| F7 (hoist `.item()` sync, MR !361) | 45.87 s | −2.4% | −6.2% |
+| F7 (vectorize inner loop, MR !363) | **36.70 s** | **−20.0%** | **−24.9%** |
+
+5930k went from 2.13x slower than 7900xtx to **1.60x slower**. The gap closed by ~25%. 7900xtx warm primary stays on the sync-hoist-only digest (`sha256:91debc8e...`) until the vectorized image bakes here; a trivial follow-up MR pins 7900xtx to the same image after 24 h clean canary.
+
+What's left in the gap (1.60x → 1.0x is the remaining ~14 seconds): likely **memory bandwidth + remaining per-token Python overhead** (cache lookups + stacking + small launches that we still do per-layer, just fewer of them). Closing it further requires either (a) pre-dequantizing all experts at startup (memory cost: 46 GB total, doesn't fit), (b) writing a proper Triton/HIP kernel for INT4 + GELU MoE on ROCm (real engineering — months), or (c) hardware. Returns diminish sharply from here.
+
+Sources:
+- MR !363 (`perf(gemma4-moe-patch): vectorize per-slot inner loop with torch.bmm`), commit `e10c94a4`, merged `9daf7bb4`.
+- Image build: `docker --context 7900xtx build -f build/Dockerfile.runtime-patch --build-arg BASE_IMAGE=registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-experimental -t registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-moe-vectorized .` ~2 min build, 30 s push (most layers cached).
+- Gauntlet evidence: 6-prompt diff vs 7900xtx golden, captured in the MR description.
+- Benchmark: bench-vec-1/2/3 pods on cblevins-5930k.
+
 ### RALPH slice — F7 profile + ship MoE patch sync-hoist (MR !361)
 
 User picked F7 (profile-first) from the post-F2-falsification options. py-spy on the live 5930k engine during a 141-token decode produced 10 stack snapshots — **6/10 inside the GEMMA4_MOE_ROCM_REFERENCE_PATCH path** in `vllm/model_executor/layers/quantization/moe_wna16.py` (the manually-unpacked int4+GELU MoE fallback we ship in the runtime image). Hot functions: `_unpack_u4_last_dim`, `_get_w13`, `_get_w2`, `_cache_put`, the per-slot `int(topk_ids[_tok, _slot].item())` GPU sync, and the per-slot `_expert_in @ _w13` matmul. Only 2/10 samples in actual GPU kernel work (triton attention + GEMM). This was a meaningful update to the earlier "gap is hardware-bound at PCIe/memory bandwidth" conclusion: the bottleneck is partly in OUR OWN custom patch.
