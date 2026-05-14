@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 // Config bundles every operator-tunable knob. Resolved via flag → env →
@@ -64,6 +65,12 @@ type Config struct {
 	// FlexInferWeaverModel is the model id WeaverWorker targets. Empty
 	// falls through to JudgeModel.
 	FlexInferWeaverModel string
+	// FlexInferTimeout caps any single proxy HTTP call. Zero falls
+	// through to the client default (5min). Operators tune this via
+	// FLEXINFER_TIMEOUT (Go duration; e.g. "180s", "3m") when the
+	// backing model is slow enough that the default would clip the
+	// research stage prematurely.
+	FlexInferTimeout time.Duration
 
 	// GitLabAPIURL is the GitLab REST API base, e.g.
 	// "https://gitlab.flexinfer.ai/api/v4". Empty disables the GitLab
@@ -160,6 +167,11 @@ func (c *Config) ApplyEnv() {
 	}
 	if v := strings.TrimSpace(os.Getenv("FLEXINFER_WEAVER_MODEL")); v != "" {
 		c.FlexInferWeaverModel = v
+	}
+	if v := strings.TrimSpace(os.Getenv("FLEXINFER_TIMEOUT")); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			c.FlexInferTimeout = d
+		}
 	}
 	if v := strings.TrimSpace(os.Getenv("GITLAB_API_URL")); v != "" {
 		c.GitLabAPIURL = v

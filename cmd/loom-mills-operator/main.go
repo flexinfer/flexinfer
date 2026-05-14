@@ -538,6 +538,7 @@ func buildFlexInferClient(cfg Config, logger *slog.Logger) *clients.FlexInferCli
 		Token:       cfg.FlexInferToken,
 		JudgeModel:  cfg.FlexInferJudgeModel,
 		WeaverModel: cfg.FlexInferWeaverModel,
+		Timeout:     cfg.FlexInferTimeout,
 	})
 	if err != nil {
 		logger.Error("flexinfer client init failed; LLM gates + research stage will skip", "error", err)

@@ -47,7 +47,11 @@ type FlexInferConfig struct {
 	// Token, when set, is sent as a Bearer auth header (the proxy
 	// supports OAuth bearer in front of vLLM).
 	Token string
-	// Timeout caps any individual HTTP call. Default 30s.
+	// Timeout caps any individual HTTP call. Default 5min. The Mills
+	// research stage asks for up to 1024 tokens; a 26B model on a
+	// warm GPU takes ~2min for that, and cold-start adds more. 30s
+	// (the prior default) escalated every research call against a
+	// healthy backend.
 	Timeout time.Duration
 }
 
@@ -71,7 +75,7 @@ func NewFlexInferClient(cfg FlexInferConfig) (*FlexInferClient, error) {
 		cfg.WeaverModel = aimodels.DefaultResolver().ResolveOrDefault(aimodels.RoleMillsResearch, cfg.JudgeModel)
 	}
 	if cfg.Timeout == 0 {
-		cfg.Timeout = 30 * time.Second
+		cfg.Timeout = 5 * time.Minute
 	}
 	hcfg := httpclient.DefaultConfig()
 	hcfg.Timeout = cfg.Timeout
