@@ -19,25 +19,35 @@
 - gfx1100/gfx906 platform enhancement plan: `gfx1100-gfx906-platform-enhancements-plan.md`
 - gfx1100/gfx906 next-round parallel plan: `gfx1100-gfx906-next-round-plan.md`
 
-## Current Goal (2026-05-14, late evening) — gap confirmed hardware-bound; F1+F2 attempts exhausted
+## Current Goal (2026-05-14, late evening) — F1+F2+F7 shipped (6.2% cumulative); bigger gains require vectorization
 
-Brainstorm session (`.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md`) produced 8 framings for closing the 5930k decode-rate gap without hardware swap. User picked F1 (CPU governor) then F2 (revisit `enforce_eager`). Both attempted on 2026-05-14.
+Brainstorm session (`.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md`) produced 8 framings for closing the 5930k decode-rate gap without hardware swap. User picked F1 then F2 then F7 in that order; all three attempted on 2026-05-14.
 
-**F1 result: 4% gain.** Set 5930k governor `schedutil` → `performance`. Verified cores boost to 2.9-3.3 GHz under load (vs idle-stuck at 1.2 GHz). End-to-end decode mean: 48.89 s → 47.01 s. **CPU clock was not the bottleneck.** Governor left at `performance` on the live node (free 4%, reverts on reboot). Skipped F4 because F1's result is evidence per-token Python isn't binding either.
+**Status:**
 
-**F2 result: falsified.** Flipped `enforce_eager: false` on the 5930k Model CR with Flux suspended. Pod crashed on engine init: `torch.AcceleratorError: HIP error: operation not permitted when stream is capturing` (in `vllm/compilation/cuda_graph.py:314`). The manifest comment is still load-bearing in current vLLM. Reverted, Flux resumed, service restored.
+| Slice | Mean req time | Δ vs prev | Cum gain |
+| --- | --- | --- | --- |
+| Baseline (Flux-managed config) | 48.89 s | — | — |
+| F1 (CPU governor `schedutil` → `performance`) | 47.01 s | −3.8% | −3.8% |
+| F7 (hoist `.item()` sync) — MR !361 | 45.87 s | −2.4% | **−6.2%** |
+| F2 (revisit `enforce_eager`) | — | n/a | **falsified** (HIP stream-capture crash) |
 
-**Conclusion:** the 2.13x gap is hardware-bound at PCIe 3.0 latency + DDR4 bandwidth on the X99 platform, not at any layer we can configure. The cblevins-5930k node's hostname is legacy; the actual CPU is an Intel Xeon E5-2680 v4 (Broadwell-EP, 2016). The 7900xtx node runs an AMD Ryzen 9 7900X3D (Zen 4, 2023) on AM5 (PCIe 5.0 + DDR5).
+- F1 set the 5930k governor to `performance` live on the host (sysfs probe shows cores boosting to 2.9-3.3 GHz under load vs idle-stuck at 1.2 GHz). Kept live on the node; no DaemonSet shipped — reverts on reboot, which a future bench will catch. CPU clock was not the binding bottleneck.
+- F2 flipped `enforce_eager: false` on the 5930k Model CR with Flux suspended. Pod crashed on engine init with `torch.AcceleratorError: HIP error: operation not permitted when stream is capturing` at `vllm/compilation/cuda_graph.py:314`. The manifest comment is still binding in current vLLM. Reverted, Flux resumed.
+- F7 used py-spy on the live engine. 6/10 stack samples in `GEMMA4_MOE_ROCM_REFERENCE_PATCH` (the custom int4+GELU MoE fallback we ship in the runtime image). Shipped MR !361 to hoist `topk_ids.tolist()` out of the per-slot inner loop — 8 GPU syncs per layer per token → 1 per call, same outputs. Built `runtime:rocm-gfx1100-gemma4-moe-patched-fast` (digest `sha256:91debc8e8d9841ddb60bfec6b5d12c882440ff9dc74d4170897b44394d29bdc4`), pinned the **5930k Model only** as canary. Coherence outputs IDENTICAL; benchmark 45.87 s mean. 2.4% additional gain.
 
-Remaining levers from the brainstorm, **none auto-actioned, surfaced for explicit user direction:**
+**Conclusion:** the remaining ~94% of the 5930k gap appears to be **actual GPU operation latency** — 240 small matmuls per decoded token (top_k=8 × 30 MoE layers) on the X99 PCIe-3 platform vs PCIe-5 on the 7900xtx node. Second py-spy pass post-F7 confirms hot lines shifted from sync-related to actual GPU compute (`_get_w13`, `_get_w2`, matmuls, RMSNorm). Closing the rest requires **vectorizing the inner loop** in the MoE patch — batch all top_k=8 experts' matmuls per token into a single op. Substantially bigger code change with real correctness risk on a path explicitly marked "correctness-first fallback." Not auto-actioned.
 
-- [ ] **(F5) Workload-shaped routing.** Route short-output requests (`max_tokens ≤ 256`, like ICC extraction) to 5930k; long-output requests (chat, generation) to 7900xtx. Proxy code change in `internal/proxy/proxy.go`. Cleanest mitigation; no correctness risk. Doesn't fix the gap — routes around it.
-- [ ] **(F6) Replace vLLM with llama.cpp on 5930k only.** Much smaller per-token CPU footprint. Requires 12-24h GGUF re-quantization of the 26B-A4B artifact (Gemma4 MoE landed in llama.cpp b8637+); feature divergence (tool/reasoning parsers). Highest potential lift; biggest engineering cost.
-- [ ] **(F7) Profile first with `py-spy` flamegraph.** Now MORE valuable post-F1/F2 falsification — would tell us whether the bottleneck is HIP kernel launch overhead specifically (points at F3 spec-decoding when a vLLM version fixes Gemma4-MoE+graphs+ROCm) or something else entirely.
-- [ ] **(Demote)** Set `gemma4-26b-a4b-gptq-5930k` `minReplicas: 0` + lower priority. Spins up only when 7900xtx is unavailable. Loses parallel capacity, eliminates the slow-path tax on routine traffic.
-- [ ] **(Accept)** Status-quo + documented. Reasonable if expected request volume stays modest. Default position.
+**Remaining options, listed for explicit user direction:**
 
-Detailed evidence in `.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md` (execution log section), `.loom/60-validation-matrix.md` row "26B fleet asymmetric decode rate", and `.loom/50-worklog.md` 2026-05-14 entries.
+- [ ] **(Pin 7900xtx)** After 24 h of clean 5930k canary on the new image, pin the 7900xtx Model to the same digest. Same patch benefits it proportionally (likely 1-3% on the already-fast lane). Trivial follow-up MR; just a digest swap in `deploy/models/gemma4-26b-a4b-gptq.yaml`. No correctness exposure since the patch is already proven on the sister instance.
+- [ ] **(Vectorize MoE loop)** Real engineering. Replace the per-slot Python loop with batched torch ops across all top_k experts per token. Expected gain: 20-50% (closes a large fraction of the GPU-latency-bound remaining gap). Risk: correctness regression on the "correctness-first fallback" path. ~50-150 LoC patch + careful A/B with a quality-gauntlet probe (more than 3 prompts).
+- [ ] **(F5) Workload-shaped routing.** Route short-output requests to 5930k, long-output to 7900xtx. Proxy code change in `internal/proxy/proxy.go`. Routes around the gap; doesn't fix it.
+- [ ] **(F6) llama.cpp on 5930k.** Highest potential lift; 12-24 h GGUF re-quant + feature divergence.
+- [ ] **(Demote 5930k)** Set `minReplicas: 0` + lower priority. Loses parallel capacity; eliminates slow-path tax on routine traffic.
+- [ ] **(Accept)** Status-quo + documented. Reasonable for current workload volumes.
+
+Detailed evidence in `.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md` (execution log), `.loom/60-validation-matrix.md`, and `.loom/50-worklog.md` 2026-05-14 entries.
 
 ## Previously queued follow-ups (lower priority)
 

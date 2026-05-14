@@ -4,6 +4,39 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 
 ## 2026-05-14
 
+### RALPH slice — F7 profile + ship MoE patch sync-hoist (MR !361)
+
+User picked F7 (profile-first) from the post-F2-falsification options. py-spy on the live 5930k engine during a 141-token decode produced 10 stack snapshots — **6/10 inside the GEMMA4_MOE_ROCM_REFERENCE_PATCH path** in `vllm/model_executor/layers/quantization/moe_wna16.py` (the manually-unpacked int4+GELU MoE fallback we ship in the runtime image). Hot functions: `_unpack_u4_last_dim`, `_get_w13`, `_get_w2`, `_cache_put`, the per-slot `int(topk_ids[_tok, _slot].item())` GPU sync, and the per-slot `_expert_in @ _w13` matmul. Only 2/10 samples in actual GPU kernel work (triton attention + GEMM). This was a meaningful update to the earlier "gap is hardware-bound at PCIe/memory bandwidth" conclusion: the bottleneck is partly in OUR OWN custom patch.
+
+The patch is in `build/scripts/vllm_gemma4_moe_gptq_patch.py`. It exists because `fused_experts` (the fast vLLM MoE path) gives wrong outputs on ROCm + int4 + GELU. The patch runs a per-token, per-slot Python loop with a 16-entry LRU cache of unpacked expert weights. Gemma4 has 128 experts × top_k=8 routing × 30 layers, so cache miss rate is high and per-token Python orchestration is heavy.
+
+**Minimal viable fix shipped (MR !361, commit `bce0b011`, merged `d81703a0`):** hoist `topk_ids.tolist()` out of the per-slot inner loop. 8 GPU→CPU sync points per layer per token → 1 per call. Same outputs; just moves WHEN the sync happens.
+
+Built `runtime:rocm-gfx1100-gemma4-moe-patched-fast` overlay via `docker --context 7900xtx build -f build/Dockerfile.runtime-patch --build-arg BASE_IMAGE=registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-experimental .` → digest `sha256:91debc8e8d9841ddb60bfec6b5d12c882440ff9dc74d4170897b44394d29bdc4`. Pushed to Harbor.
+
+Canary on cblevins-5930k (Flux suspended for the live image-pin patch, then resumed once manifest matched):
+- Coherence probe (3 prompts: math, single-word, list) — outputs IDENTICAL to pre-patch baseline ("2 + 2 = 4", "UP", "Mars\nJupiter\nSaturn"). No regression.
+- Benchmark mean: **45.87 s** (was 47.01 s with F1 governor / 48.89 s pre-F1). **2.4% additional gain, 6.2% cumulative with F1.** Modest.
+
+Second py-spy pass confirms the hot path SHIFTED: lines 511, 517, 518, 526 (`_get_w13`, `_get_w2`, matmuls) — all valid GPU compute now. The remaining ~94% of the 5930k gap appears to be in actual GPU operation latency: 240 small matmuls per decoded token (top_k=8 × 30 layers) on the X99 PCIe-3 platform vs PCIe-5 on the 7900xtx node. Closing this requires **vectorizing the inner loop** — batch all 8 experts' matmuls per token into a single op. Substantially bigger code change with real correctness risk on a "correctness-first fallback" path. Deferred.
+
+7900xtx primary stays on the previous digest `sha256:69569cbfc0db...` for now. Same patch benefits it proportionally, but no point risking the warm primary without a longer 5930k bake. Follow-up: pin 7900xtx after 24 h of clean canary.
+
+**Cumulative 5930k optimization so far (no hardware change):**
+
+| Slice | Mean req time | Δ vs prev | Cum gain |
+| --- | --- | --- | --- |
+| Baseline (Flux-managed config) | 48.89 s | — | — |
+| F1 (governor `schedutil` → `performance`) | 47.01 s | −3.8% | −3.8% |
+| F7 (hoist `.item()` sync) — MR !361 | 45.87 s | −2.4% | −6.2% |
+
+Sources:
+- MR !361 (`perf(gemma4-moe-patch): hoist topk_ids .item() sync out of inner loop`), commit `bce0b011`, merged `d81703a0`.
+- 10-snapshot py-spy dump during decode: hot path concentrated in `vllm/model_executor/layers/quantization/moe_wna16.py:418-525` (the patch's body).
+- 8-snapshot py-spy dump post-patch: hot path shifted to actual GPU compute lines.
+- Benchmark output: bench-fast-1/2/3 pods on cblevins-5930k.
+- Coherence: 3 prompts via `kubectl run --image=curlimages/curl ... POST /v1/chat/completions` direct to backend Service.
+
 ### RALPH slice — attempted F1+F2 optimizations on 5930k decode rate (both marginal/falsified)
 
 After the 2.13x gap was diagnosed as CPU-side asymmetry, user invoked `/brainstorm` which produced 8 framings and converged on F1+F4 (CPU governor + Python prune) recommended, F2 (revisit `enforce_eager`) runner-up. Doc at `.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md`. User picked F1 then F2.
