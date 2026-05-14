@@ -24,7 +24,7 @@ metadata:
     flexinfer.ai/promotion-requires: separate-primary-promotion-change
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
+  image: registry.harbor.lan/flexinfer/runtime@sha256:69569cbfc0db7c4f8755cf07ad329361a59514ebc7112fb859c5b08c8787b759
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   cache:
     # The source artifact already lives on the 7900 XTX node in the primary

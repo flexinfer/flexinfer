@@ -10,8 +10,11 @@
 # gemma4-26b-a4b) live in `serviceLabels` so the proxy load-balances across
 # both instances. `litellm.aliases` carry only the 5930k-specific alias.
 #
-# Runtime image: same digest as the 7900xtx instance (clean rebuild from
-# master with the gemma4 decoder-layer debug patch OFF).
+# Runtime image: matches the 7900xtx instance — digest sha256:69569cbfc0db...
+# (tag `runtime:rocm-gfx1100-gemma4-moe-patched`), the thin patch overlay on
+# `runtime:rocm-gfx1100-gemma4-experimental` that adds the MoE GELU+wna16 fix
+# without the decoder-layer debug overhead. See the longer note in
+# gemma4-26b-a4b-gptq.yaml for the full origin story.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -25,7 +28,7 @@ metadata:
     flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
+  image: registry.harbor.lan/flexinfer/runtime@sha256:69569cbfc0db7c4f8755cf07ad329361a59514ebc7112fb859c5b08c8787b759
   # Source = the 5930k OCI-pull cache PVC. The artifact subdir matches the
   # 7900xtx Model's source (gptq-w4-g128-attnfp16-clean).
   source: pvc://gemma4-26b-a4b-gptq-oci-5930k/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
