@@ -2,6 +2,38 @@
 
 Chronological notes while executing the plan (useful for handoffs and debugging).
 
+## 2026-05-14
+
+### RALPH slice — fix 26B 5930k source-path mismatch (instance #2 stuck Pending)
+
+- What was broken:
+  - Instance #2 (`gemma4-26b-a4b-gptq-5930k`) had been un-paused 9 h earlier via MR !350 (`626185b1`) after the OCI artifact was seeded into Harbor (`sha256:ef26e6c7b614e187b37a78f362d7afe176137fdf815c003cecc9b1be1fb6c932`, 42 files, ~17 GiB).
+  - The OCI `ModelCache` was Ready, but the sister `Model` was sitting in `Pending` / `Cached: False / CacheNotReady` because the controller-generated cache-copy job kept failing with `Missing source path: /src/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean` on every retry until `BackoffLimit` was exhausted.
+  - Root cause: `oras push` on the 7900xtx had been executed from INSIDE the `gptq-w4-g128-attnfp16-clean/` directory, so the 42-file artifact landed FLAT under the `modelPath` (`/data/gemma4-26b-a4b-gptq/<file>`) without the `gptq-w4-g128-attnfp16-clean/` parent — but the Model `spec.source` still ended in `/gptq-w4-g128-attnfp16-clean`. The cache-copy `SRC` derives from `spec.source`'s subpath, so the script looked for a directory that didn't exist.
+
+- What changed:
+  - MR !352 (`fix/26b-5930k-source-path-flat`, commit `45a54175`, merged `d81e5e4a`): dropped the trailing `/gptq-w4-g128-attnfp16-clean` segment from `deploy/models/gemma4-26b-a4b-gptq-5930k.yaml` `spec.source`, so the new source is `pvc://gemma4-26b-a4b-gptq-oci-5930k/gemma4-26b-a4b-gptq`. Both cache-copy `SRC`/`DST` and the vLLM `--model` flag derive from this, so the one-line change re-aligns the whole chain. `servedModelName: gemma4-26b-a4b-gptq-5930k` is set explicitly, so `/v1/models` is unaffected. The primary 7900xtx instance reads from a different (non-OCI) PVC where the subdir IS preserved by the quantization writer, so its source path is unchanged.
+  - Updated `.loom/60-validation-matrix.md` with a `pass` row for the sister instance (cluster transitions, smoke evidence, rollback path, follow-up).
+
+- Cluster transitions observed end-to-end:
+  - Flux reconciled `master@d81e5e4a` after `flux reconcile kustomization flexinfer-models -n flux-system --with-source`. Controller's source-hash drift detection (`controllers/model_cache.go:138-146`) compared the existing job's `flexinfer.ai/source` annotation against the new `spec.source`, detected drift, deleted the stale failed job, and created a fresh one with the new annotation.
+  - Cache-copy job succeeded in 72 s (vs the ~4 min on the 7900xtx primary) because the OCI source PVC and the cache PVC are both `local-path` on the same NVMe — no cross-PVC traffic.
+  - vLLM pod (`gemma4-26b-a4b-gptq-5930k-7ffb9bc79c-h85t8`) on `cblevins-5930k` reached `1/1 Ready` ~3 min after cache-copy completed; Model phase `Loading → Ready`.
+
+- Smoke evidence:
+  - Direct backend: `POST http://gemma4-26b-a4b-gptq-5930k.flexinfer-system.svc:8000/v1/chat/completions` with greedy `"What is 2+2?"` → `"content":"4"` (26 / 2 tokens, `finish_reason=stop`, `stop_reason=106`).
+  - `/v1/models` exposes both 26B instances Ready with matching `service_labels`: `["gemma4-26b-a4b-gptq","gemma4-26b-a4b","gemma4-26b","quality-chat","mid-chat","gpt-4","project-mgmt"]`. Node-specific `litellm.aliases` on instance #2: `gemma4-26b-5930k`, `gemma4-26b-a4b-5930k`.
+
+- Follow-up surfaced (next RALPH slice):
+  - 10-request load probe through the shared `quality-chat` alias routed 10/10 to the 7900xtx instance (`served_by=gemma4-26b-a4b-gptq`). Root cause is in `internal/proxy/proxy.go:409` → `internal/proxy/model_resolver.go:47`: `ResolveServiceLabel` returns `claimants[0]` (`r.serviceLabelCache.Load` — first-by-priority) per label. The infrastructure to load-balance already exists — `refreshServiceLabelCache` builds a `labelGroupCache` of ALL claimants per label (line 130) and a `labelGroupModels` reverse index (line 145–152) — but no caller uses them on the routing path. Fixing this is the next slice: pick a routing policy (round-robin / least-busy / weighted-priority), implement it on top of `labelGroupCache`, and prove load-balancing with a 20+ request probe. The manifest comment on both Model CRs is aspirational until that lands.
+
+- Sources:
+  - `kubectl get model gemma4-26b-a4b-gptq-5930k -n flexinfer-system -o yaml` (phase, status.cache, status.conditions)
+  - `kubectl describe job gemma4-26b-a4b-gptq-5930k-cache-copy -n flexinfer-system` (BackoffLimit / SRC + DST)
+  - Inspect pod that mounted the OCI PVC: `find /src -name '*.safetensors' | wc -l` → 42; `du -sh /src/gemma4-26b-a4b-gptq` → 15.6G; no `gptq-w4-g128-attnfp16-clean` subdir.
+  - `controllers/model_cache.go:138-146` (source-drift detection), `controllers/model_cache_jobs.go:289-340` (cache-copy job script construction), `controllers/model_backend.go:88-101` (serving `ModelPath` derived from `pvc://` subpath).
+  - `internal/proxy/proxy.go:409`, `internal/proxy/model_resolver.go:47,127,130` (proxy first-claimant routing).
+
 ## 2026-05-13
 
 ### RALPH slice — promote gemma4-26b-a4b-gptq to warm quality lane
