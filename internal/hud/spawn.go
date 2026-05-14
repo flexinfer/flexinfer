@@ -868,7 +868,12 @@ func buildAgentCommand(agentType, task, agentID string) string {
 	switch agentType {
 	case "claude-code":
 		// stream-json emits one JSONL event per line for real-time telemetry parsing.
-		return fmt.Sprintf(`claude -p %q --dangerously-skip-permissions --output-format stream-json --max-turns 50`, task)
+		// --verbose is mandatory: claude-code 1.x rejects `-p` + `--output-format
+		// stream-json` without it ("Error: When using --print, --output-format=
+		// stream-json requires --verbose"). Without --verbose the CLI prints
+		// that one line and exits 0 *without making any API call*, which is
+		// why every Mills spawn showed turn_count=0 / cost=$0 / file_changes=0.
+		return fmt.Sprintf(`claude -p %q --dangerously-skip-permissions --output-format stream-json --verbose --max-turns 50`, task)
 	case "codex":
 		// Wrap with EXIT trap so loom session-end fires even without a native hook.
 		// The trap is best-effort: if the loom binary is not in the pod PATH,
