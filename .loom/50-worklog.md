@@ -4,6 +4,46 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 
 ## 2026-05-14
 
+### RALPH slice — investigate 5930k vs 7900xtx decode-rate asymmetry (operational finding, documented)
+
+- Why this slice: a previous worklog observed the 5930k engine showing 0.6-1.1 tok/s vs 7900xtx 6-8 tok/s in mid-load samples. That looked like a real anomaly worth investigating before bumping `maxNumSeqs` or doing other capacity work.
+- Methodology:
+  1. Probe each upstream directly (bypass proxy) with an identical workload — same prompt ("Count from 1 to 50…", 32 prompt tokens), same params (`temperature: 0`, `max_tokens: 200`), 3 sequential requests per backend.
+  2. Time the curl from the host shell (Python `time.time()` boundaries around `kubectl run … curl`) since BusyBox `date +%s%N` in the proxy pod returns 0.
+  3. Each curl-pod pinned to the matching GPU node via `nodeSelector` + `dedicated:gpu` toleration so network path is symmetric.
+- Result (host-timed end-to-end, ~141 completion tokens each):
+  | seq | 7900xtx elapsed | 5930k elapsed |
+  | --- | --- | --- |
+  | 1 | 24.55 s | 50.67 s |
+  | 2 | 22.16 s | 47.44 s |
+  | 3 | 22.25 s | 48.57 s |
+  | **avg** | **22.99 s** | **48.89 s** |
+  
+  **2.13x decode-rate gap.**
+- Root cause: **CPU hardware asymmetry** between the two nodes. `lscpu` from each:
+  - `cblevins-7900xtx`: AMD Ryzen 9 7900X3D (Zen 4, 12c/24t, 5.6 GHz boost, 2023).
+  - `cblevins-5930k`: Intel Xeon E5-2680 v4 (Broadwell-EP, 14c, 2.4 GHz base / 3.3 GHz boost, **2016**). The hostname `cblevins-5930k` is legacy — the original i7-5930K was replaced; current CPU is the Xeon.
+  
+  Engine init logs corroborate the same ratio applies to all CPU-bound work:
+  - aiter JIT compile: 12.2 s (7900xtx) vs 22.9 s (5930k) — 1.88x.
+  - Model weight load: 21.5 s vs 40.1 s — 1.87x.
+  
+  With `enforce_eager: true` (correctness lock per the manifest comment — `torch.compile` falls back to non-tanh GELU on ROCm and the gptq_gemm kernel is "buggy" with CUDA graphs) every decoded token bears Python-side CPU overhead (sampler, KV scheduler, structured-output validation), and `maxNumSeqs: 1` removes any batching that would amortize that overhead. The gap is hardware-bound; cannot be fixed serving-side.
+- Why this didn't show up earlier:
+  - During the round-robin proof on 2026-05-14 the probe used short prompts (`"UP"` / `"What is 2+2?"`) with `max_tokens=3-4` — so the per-token CPU overhead barely registered. The 7900xtx and 5930k both responded in <2 s, masking the gap.
+  - The earlier engine-log throughput numbers (`Avg generation throughput: 0.6 tok/s` on 5930k) were sampled during `Running: 0, Waiting: 9` snapshots (the proxy queue burst). Those represent engine bubbles between iterations, not steady-state decode.
+- Operational implication: the round-robin 1:1 split means mean request latency = `(22.99 + 48.89) / 2 = 35.9 s` for the ~141-token workload, ~1.6x worse than an all-7900xtx config. Fleet still serves correctly; just slower on average.
+- **NOT shipped today — the fix is one of these slices, surfaced for explicit user direction:**
+  1. **Weighted routing on `pickReadyMember`.** Add a `flexinfer.ai/routing-weight: "2"` annotation (or similar) on the Model CR and have the round-robin picker honor weights when distributing. `7900xtx weight=2, 5930k weight=1` would route ~67% of traffic to the faster node. Real change to `internal/proxy/resolver.go` + new resolver field + tests + image rebuild + rollout. Mean latency improves to ~30 s; tail latency on 5930k unchanged.
+  2. **Demote 5930k to failover.** Set `gemma4-26b-a4b-gptq-5930k` `minReplicas: 0` + lower priority. Only spins up if the 7900xtx instance is unavailable. Loses parallel capacity but eliminates the slow-path tax on routine traffic.
+  3. **Hardware swap.** Replace the Xeon E5-2680 v4 with something post-2020. Real cost, not a code change.
+  4. **Accept the gap.** Status-quo. Document it so future operators don't re-investigate. Reasonable if expected request volume stays modest.
+- Sources:
+  - Benchmark output: `/private/tmp/.../tasks/bxme6bnuf.output` (host-timed, 3+3 sequential reqs).
+  - CPU info: `ssh cblevins-7900xtx lscpu` + `ssh cblevins-5930k lscpu`.
+  - Engine init logs: `kubectl logs -n flexinfer-system gemma4-26b-a4b-gptq{,-5930k}-* | grep -iE 'weights took|aiter'`.
+  - 60-validation-matrix.md row "26B fleet asymmetric decode rate: 5930k node is 2.2x slower".
+
 ### RALPH slice — wire project-management to consume the warm 26B lane (services/project-management MR !73)
 
 - What was open:

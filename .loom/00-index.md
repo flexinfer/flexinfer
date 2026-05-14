@@ -19,9 +19,22 @@
 - gfx1100/gfx906 platform enhancement plan: `gfx1100-gfx906-platform-enhancements-plan.md`
 - gfx1100/gfx906 next-round parallel plan: `gfx1100-gfx906-next-round-plan.md`
 
-## Current Goal (2026-05-14, evening) — none active
+## Current Goal (2026-05-14, evening) — surface a 2.13x decode-rate gap on the 5930k upstream for explicit user direction
 
-The 2-instance 26B fleet plus shared-service-label load-balancing is fully shipped and verified end-to-end, and the first downstream consumer (services/project-management) has been wired to consume it via the `project-mgmt` proxy alias. Remaining optional follow-ups:
+A matched-workload benchmark on 2026-05-14 confirmed the cblevins-5930k 26B upstream runs **2.13x slower** than the cblevins-7900xtx upstream on identical config (22.99 s vs 48.89 s mean for a 141-completion-token request). Root cause: hardware. The `cblevins-5930k` node hostname is legacy — the actual CPU is an Intel Xeon E5-2680 v4 (Broadwell-EP, 2016), vs the 7900xtx node's AMD Ryzen 9 7900X3D (Zen 4, 2023). Engine init logs corroborate (aiter JIT 22.9s vs 12.2s; weight load 40.1s vs 21.5s — same ~1.9x ratio). With `enforce_eager: true` (correctness lock) + `maxNumSeqs: 1`, every decoded token bears Python-side CPU overhead and there's no batching to amortize it. Cannot be fixed serving-side.
+
+The current 1:1 round-robin produces a fleet mean latency of ~35.9 s vs ~23 s if everything went to the 7900xtx alone — a ~1.6x mean-latency tax for parallel capacity that may or may not be worth it.
+
+Four follow-up slices, listed for explicit user direction:
+
+- [ ] **(Option A) Weighted routing.** Add a `flexinfer.ai/routing-weight` Model-CR annotation and have `pickReadyMember` honor weights. Weight `7900xtx=2, 5930k=1` → ~67% of traffic to the faster node, fleet mean latency drops to ~30 s. Real code change (`internal/proxy/resolver.go` + new field + tests + image rebuild + rollout).
+- [ ] **(Option B) Demote 5930k to failover.** Set `gemma4-26b-a4b-gptq-5930k` `minReplicas: 0` + lower priority. Spins up only if the 7900xtx instance is unavailable. Loses parallel capacity, eliminates the slow-path tax on routine traffic.
+- [ ] **(Option C) Hardware swap.** Replace the Xeon E5-2680 v4 with something post-2020. Real cost, not a code change.
+- [ ] **(Option D) Accept the gap.** Status-quo + documented. Reasonable if expected request volume stays modest and parallel capacity matters more than mean latency.
+
+Detailed evidence in `.loom/60-validation-matrix.md` row "26B fleet asymmetric decode rate: 5930k node is 2.2x slower" and `.loom/50-worklog.md` 2026-05-14 entry "RALPH slice — investigate 5930k vs 7900xtx decode-rate asymmetry".
+
+## Previously queued follow-ups (lower priority)
 
 - [ ] **(Optional) Increase per-upstream concurrency.** Both 26B Models run `maxNumSeqs: 1`. A 100-req `-P 20` probe saw 42% HTTP=000 timeouts — purely upstream queue saturation, not routing. Raising `maxNumSeqs` on both Model CRs would scale fleet throughput beyond 2 concurrent reqs but trade per-token latency. Worth re-measuring after a real workload shape is known. Likely not urgent until project-management (or another downstream caller) flips `ICC_LLM_ENABLED=1` and produces sustained concurrency.
 - [x] **Document/wire service-side consumption pattern** — closed by services/project-management MR !73 (2026-05-14). `llm_qwen.py` defaults now point at `flexinfer-proxy` + the `project-mgmt` alias; new `FLEXINFER_QWEN_MODEL` env override mirrors the existing `FLEXINFER_QWEN_URL` pattern; rollback recipe documented in ICC's `.loom/40-decisions.md`. Cluster validation captured in flexinfer `.loom/50-worklog.md` 2026-05-14 entry — proxy round-tripped an ICC-shaped extraction request through `project-mgmt → gemma4-26b-a4b-gptq-5930k` and returned valid JSON matching ICC's `_validate_response` schema. ICC overlay still needs `ICC_LLM_ENABLED=1` to actually enable extraction, but that's a deployment-side toggle independent of code.
