@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"os"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -239,6 +240,14 @@ type Proxy struct {
 	directRuntimeEnabled bool                         // enable direct proxy-to-runtime loading
 	directLoadTargets    TypedSyncMap[string, string] // modelName -> "http://podIP:backendPort"
 
+	// Round-robin counters for shared service-label routing. Keyed by label
+	// (e.g. "quality-chat"). Used by pickReadyMember to distribute requests
+	// across multiple models that claim the same label (two-instance fleets,
+	// horizontal capacity). Counters are atomic and ride alongside the
+	// resolver's labelGroupCache; they survive proxy lifetime, reset on
+	// Proxy reconstruction (every proxyTTL).
+	labelRRCounters TypedSyncMap[string, *atomic.Uint64]
+
 	// Lifecycle context for background goroutines
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -405,12 +414,19 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	ctx = r.Context()
 
-	// 2. Try to resolve service labels (e.g., "textgen" -> "qwen3-8b-fast")
-	resolvedName := p.resolver.ResolveServiceLabel(ctx, modelName)
-	if resolvedName != modelName {
-		slog.Debug("resolved service label", "label", modelName, "model", resolvedName, "request_id", requestID)
-		modelName = resolvedName
-		span.SetAttributes(attribute.String("flexinfer.model", modelName))
+	// 2. Try to resolve service labels (e.g., "textgen" -> "qwen3-8b-fast").
+	// For shared labels with multiple claimants (two-instance fleets), pick
+	// among Ready members in round-robin; for single-claimant labels this
+	// reduces to the same behavior as the legacy ResolveServiceLabel path.
+	if members, isLabel := p.resolver.ResolveServiceLabelGroup(ctx, modelName); isLabel && len(members) > 0 {
+		chosen := p.pickReadyMember(ctx, modelName, members)
+		if chosen != modelName {
+			slog.Debug("resolved service label",
+				"label", modelName, "model", chosen,
+				"members", members, "request_id", requestID)
+			modelName = chosen
+			span.SetAttributes(attribute.String("flexinfer.model", modelName))
+		}
 	}
 
 	// 2b. Try to resolve model aliases (servedModelName / litellm aliases -> K8s name)

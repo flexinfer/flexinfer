@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"log/slog"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +45,11 @@ func NewModelResolver(c client.Client, namespace string) *ModelResolver {
 
 // ResolveServiceLabel resolves a service label to an actual model name.
 // Returns the model name if the label was resolved, or the original input if no mapping found.
+//
+// Single-model semantics only: when multiple models claim the same label
+// (shared service-labels for horizontal capacity, e.g. a two-instance fleet),
+// this returns only the first claimant. Callers that need to load-balance
+// across all claimants should use ResolveServiceLabelGroup.
 func (r *ModelResolver) ResolveServiceLabel(ctx context.Context, labelOrModelName string) string {
 	// First check cache
 	if modelName, ok := r.serviceLabelCache.Load(labelOrModelName); ok {
@@ -60,6 +66,27 @@ func (r *ModelResolver) ResolveServiceLabel(ctx context.Context, labelOrModelNam
 
 	// Not a service label, return as-is (it's probably a model name)
 	return labelOrModelName
+}
+
+// ResolveServiceLabelGroup returns all models that claim a service label.
+//
+// The returned slice is in stable (sorted) order so callers can use a
+// round-robin counter without observing reshuffled positions across refreshes.
+// The bool return is true when the input matches a known service label
+// (regardless of how many claimants), false when it is not a service label
+// (likely a direct model name) so the caller can fall through to alias lookup.
+//
+// For single-claimant labels this returns a one-element slice; the routing
+// path can treat that as a no-op pick.
+func (r *ModelResolver) ResolveServiceLabelGroup(ctx context.Context, labelOrModelName string) ([]string, bool) {
+	if members, ok := r.labelGroupCache.Load(labelOrModelName); ok {
+		return members.([]string), true
+	}
+	r.refreshServiceLabelCache(ctx)
+	if members, ok := r.labelGroupCache.Load(labelOrModelName); ok {
+		return members.([]string), true
+	}
+	return nil, false
 }
 
 // refreshServiceLabelCache updates the service label to model name mapping.
@@ -120,6 +147,9 @@ func (r *ModelResolver) refreshServiceLabelCache(ctx context.Context) {
 	groupMembers := make(map[string]map[string]bool) // modelName -> set of related models
 
 	for label, claimants := range labelClaims {
+		// Sort for deterministic ordering across refreshes so callers using a
+		// round-robin counter against labelGroupCache see stable positions.
+		sort.Strings(claimants)
 		if len(claimants) > 1 {
 			slog.Info("serviceLabel shared by multiple models",
 				"label", label, "models", claimants)
