@@ -107,6 +107,21 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 
 	gracePeriod := int64(10)
 
+	// FSGroup makes the workspace emptyDir + secret mounts readable + writable
+	// by group 1000. The agent runtime image (cmd path: HUD spawn) runs as
+	// uid 1000 (non-root, required by claude --dangerously-skip-permissions);
+	// the git-clone init container runs as root and would otherwise leave the
+	// workspace owned by root:0 mode 0755, blocking the main container from
+	// writing settings.json and the agent's own diff. Kubelet's fsGroup
+	// chown sets group ownership to 1000 and forces 0660/0770 modes across
+	// every supported volume type (emptyDir, secret, projected, configMap),
+	// so the main container can read secrets + write the workspace.
+	//
+	// Root-mode devbox sandboxes (the legacy /workspace path used by
+	// mcp-devbox) are unaffected: their container runs as uid 0 which can
+	// already read/write everywhere regardless of fsGroup-forced modes.
+	agentFSGroup := int64(1000)
+
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      opts.Name,
@@ -117,6 +132,9 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 			RestartPolicy:                 corev1.RestartPolicyNever,
 			TerminationGracePeriodSeconds: &gracePeriod,
 			ServiceAccountName:            "mcp-devbox",
+			SecurityContext: &corev1.PodSecurityContext{
+				FSGroup: &agentFSGroup,
+			},
 			ImagePullSecrets: []corev1.LocalObjectReference{
 				{Name: k.imagePullSecret},
 			},
