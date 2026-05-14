@@ -29,7 +29,7 @@ spec:
       image: registry.harbor.lan/flexinfer/ollama:cuda-maxwell
     llamacpp:
       support: full
-      image: registry.harbor.lan/flexinfer/llamacpp@sha256:2c378e3120c14963e20dd34bafeb46fe2c9ec5358edd130acbac56bde779e785
+      image: registry.harbor.lan/flexinfer/llamacpp@sha256:18e8cb0868346b273b1cd22b4c3ed0fb5c63d0bb74e72dd0dae10f8786d81cc5
     mlc-llm:
       support: full
       image: registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7
