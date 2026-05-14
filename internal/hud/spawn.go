@@ -709,6 +709,11 @@ func (o *SpawnOrchestrator) generateDockerfile(projectDir, agentType string) ([]
 	if cliLines := agentCLIInstallLines(agentType); cliLines != "" {
 		df = append(df, []byte("\n"+cliLines+"\n")...)
 	}
+	// Switch to the non-root agent user *after* the CLI install layer so
+	// `npm install -g` can write to /usr/local/lib/node_modules. The
+	// runtime CMD in agentRuntimeDockerfile keeps the pod alive as the
+	// agent user; injectAgentConfig + claude exec all run as uid 1000.
+	df = append(df, []byte(agentRuntimeUserSuffix())...)
 	return df, nil
 }
 
@@ -719,6 +724,11 @@ func (o *SpawnOrchestrator) generateDockerfile(projectDir, agentType string) ([]
 // security reasons"), and Mills launches every claude-code spawn with that
 // flag. Spawned agents must run as a non-root user with a writable $HOME so
 // claude can stash its `.claude.json` profile.
+//
+// The base stays as root so the agent CLI install layer
+// (agentCLIInstallLines) can run `npm install -g`, which needs to write
+// to /usr/local/lib/node_modules. The trailing USER agent + HOME switch is
+// appended by generateDockerfile *after* the install layer.
 func agentRuntimeDockerfile() []byte {
 	return []byte(`FROM golang:1.25.10-alpine
 RUN apk add --no-cache ca-certificates git make bash curl nodejs npm python3 \
@@ -726,10 +736,15 @@ RUN apk add --no-cache ca-certificates git make bash curl nodejs npm python3 \
  && mkdir -p /workspace \
  && chown -R agent:agent /workspace /home/agent
 WORKDIR /workspace
-USER agent
-ENV HOME=/home/agent
 CMD ["sleep", "infinity"]
 `)
+}
+
+// agentRuntimeUserSuffix returns the trailing Dockerfile lines that flip
+// the image from root to the agent user. It is appended *after* the agent
+// CLI install layer (which needs root for `npm install -g`).
+func agentRuntimeUserSuffix() string {
+	return "USER agent\nENV HOME=/home/agent\n"
 }
 
 func agentRuntimeBuildTag(agentType string, dockerfile []byte) string {
