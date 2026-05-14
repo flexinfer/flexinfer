@@ -832,12 +832,13 @@ type fallbackDispatcher struct {
 func (d *fallbackDispatcher) Dispatch(ctx context.Context, run *store.PipelineRun, item *store.BacklogItem, stage pipeline.Stage, prior map[string]pipeline.StageOutput) (pipeline.StageOutput, error) {
 	if w, ok := d.routes[stage.ID]; ok {
 		jc := pipeline.JobContext{
-			Run:    run,
-			Item:   item,
-			Stage:  stage,
-			Prior:  prior,
-			Budget: item.Budget,
-			Env:    pipeline.BuildMillsEnv(run, item, stage),
+			Run:           run,
+			Item:          item,
+			Stage:         stage,
+			Prior:         prior,
+			ResumeSpawnID: pipeline.ResumeSpawnIDFromContext(ctx),
+			Budget:        item.Budget,
+			Env:           pipeline.BuildMillsEnv(run, item, stage),
 		}
 		return w.Run(ctx, jc)
 	}

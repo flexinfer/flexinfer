@@ -158,6 +158,22 @@ func resumeSpawnIDFromContext(ctx context.Context) string {
 	return spawnID
 }
 
+// ResumeSpawnIDFromContext exposes the resume spawn id the runner stashes
+// on the stage context. Custom WorkerDispatcher implementations (outside
+// this package) must read it when building a JobContext, otherwise
+// SpawnWorker.Run can't re-attach to an accepted spawn after an operator
+// restart and the stage gets stuck in a pending loop against
+// ErrStageSpawnConflict.
+func ResumeSpawnIDFromContext(ctx context.Context) string {
+	return resumeSpawnIDFromContext(ctx)
+}
+
+// WithResumeSpawnID is the exported counterpart of ResumeSpawnIDFromContext
+// for tests that drive a custom dispatcher without going through Runner.
+func WithResumeSpawnID(ctx context.Context, spawnID string) context.Context {
+	return withResumeSpawnID(ctx, spawnID)
+}
+
 // WorkerDispatcher executes one non-gate stage. Slice 4.2 supplies the
 // real implementation (spawn / weaver / devbox / mcp); slice 4.1 ships
 // the runner against this interface and tests use a fake.
