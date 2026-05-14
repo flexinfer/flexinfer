@@ -29,9 +29,16 @@ metadata:
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:69569cbfc0db7c4f8755cf07ad329361a59514ebc7112fb859c5b08c8787b759
-  # Source = the 5930k OCI-pull cache PVC. The artifact subdir matches the
-  # 7900xtx Model's source (gptq-w4-g128-attnfp16-clean).
-  source: pvc://gemma4-26b-a4b-gptq-oci-5930k/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
+  # Source = the 5930k OCI-pull cache PVC. The OCI artifact was pushed via
+  # `oras push` from inside the `gptq-w4-g128-attnfp16-clean/` directory on
+  # cblevins-7900xtx, so the 42-file artifact landed FLAT under the modelPath
+  # (`/data/gemma4-26b-a4b-gptq/<file>`), without a `gptq-w4-g128-attnfp16-clean/`
+  # parent. Source therefore points one level shallower than the 7900xtx
+  # Model's source (which reads from the original quantization-output PVC
+  # where the subdir is preserved). Cache-copy/serving paths derive from
+  # this; do not append `gptq-w4-g128-attnfp16-clean` here or the cache-copy
+  # job fails with `Missing source path: /src/.../gptq-w4-g128-attnfp16-clean`.
+  source: pvc://gemma4-26b-a4b-gptq-oci-5930k/gemma4-26b-a4b-gptq
   cache:
     strategy: SharedPVC
     storageClass: local-path
