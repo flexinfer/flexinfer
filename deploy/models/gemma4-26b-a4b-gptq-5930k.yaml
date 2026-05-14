@@ -28,7 +28,14 @@ metadata:
     flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:69569cbfc0db7c4f8755cf07ad329361a59514ebc7112fb859c5b08c8787b759
+  # 2026-05-14: pinned to `runtime:rocm-gfx1100-gemma4-moe-patched-fast` which
+  # adds a hoist of `topk_ids.tolist()` out of the per-slot inner loop in
+  # the GEMMA4_MOE_ROCM_REFERENCE_PATCH (build/scripts/vllm_gemma4_moe_gptq_patch.py).
+  # py-spy on this pod showed ~50% of decode time inside that patch path;
+  # the .item()-per-slot GPU sync was a small contributor (~2.4% measured).
+  # Kept the previous digest sha256:69569cbfc0db... as the 7900xtx primary
+  # (no production risk) until this digest bakes here on the sister instance.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:91debc8e8d9841ddb60bfec6b5d12c882440ff9dc74d4170897b44394d29bdc4
   # Source = the 5930k OCI-pull cache PVC. The OCI artifact was pushed via
   # `oras push` from inside the `gptq-w4-g128-attnfp16-clean/` directory on
   # cblevins-7900xtx, so the 42-file artifact landed FLAT under the modelPath
