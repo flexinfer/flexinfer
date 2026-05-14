@@ -19,20 +19,25 @@
 - gfx1100/gfx906 platform enhancement plan: `gfx1100-gfx906-platform-enhancements-plan.md`
 - gfx1100/gfx906 next-round parallel plan: `gfx1100-gfx906-next-round-plan.md`
 
-## Current Goal (2026-05-14, evening) — surface a 2.13x decode-rate gap on the 5930k upstream for explicit user direction
+## Current Goal (2026-05-14, late evening) — gap confirmed hardware-bound; F1+F2 attempts exhausted
 
-A matched-workload benchmark on 2026-05-14 confirmed the cblevins-5930k 26B upstream runs **2.13x slower** than the cblevins-7900xtx upstream on identical config (22.99 s vs 48.89 s mean for a 141-completion-token request). Root cause: hardware. The `cblevins-5930k` node hostname is legacy — the actual CPU is an Intel Xeon E5-2680 v4 (Broadwell-EP, 2016), vs the 7900xtx node's AMD Ryzen 9 7900X3D (Zen 4, 2023). Engine init logs corroborate (aiter JIT 22.9s vs 12.2s; weight load 40.1s vs 21.5s — same ~1.9x ratio). With `enforce_eager: true` (correctness lock) + `maxNumSeqs: 1`, every decoded token bears Python-side CPU overhead and there's no batching to amortize it. Cannot be fixed serving-side.
+Brainstorm session (`.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md`) produced 8 framings for closing the 5930k decode-rate gap without hardware swap. User picked F1 (CPU governor) then F2 (revisit `enforce_eager`). Both attempted on 2026-05-14.
 
-The current 1:1 round-robin produces a fleet mean latency of ~35.9 s vs ~23 s if everything went to the 7900xtx alone — a ~1.6x mean-latency tax for parallel capacity that may or may not be worth it.
+**F1 result: 4% gain.** Set 5930k governor `schedutil` → `performance`. Verified cores boost to 2.9-3.3 GHz under load (vs idle-stuck at 1.2 GHz). End-to-end decode mean: 48.89 s → 47.01 s. **CPU clock was not the bottleneck.** Governor left at `performance` on the live node (free 4%, reverts on reboot). Skipped F4 because F1's result is evidence per-token Python isn't binding either.
 
-Four follow-up slices, listed for explicit user direction:
+**F2 result: falsified.** Flipped `enforce_eager: false` on the 5930k Model CR with Flux suspended. Pod crashed on engine init: `torch.AcceleratorError: HIP error: operation not permitted when stream is capturing` (in `vllm/compilation/cuda_graph.py:314`). The manifest comment is still load-bearing in current vLLM. Reverted, Flux resumed, service restored.
 
-- [ ] **(Option A) Weighted routing.** Add a `flexinfer.ai/routing-weight` Model-CR annotation and have `pickReadyMember` honor weights. Weight `7900xtx=2, 5930k=1` → ~67% of traffic to the faster node, fleet mean latency drops to ~30 s. Real code change (`internal/proxy/resolver.go` + new field + tests + image rebuild + rollout).
-- [ ] **(Option B) Demote 5930k to failover.** Set `gemma4-26b-a4b-gptq-5930k` `minReplicas: 0` + lower priority. Spins up only if the 7900xtx instance is unavailable. Loses parallel capacity, eliminates the slow-path tax on routine traffic.
-- [ ] **(Option C) Hardware swap.** Replace the Xeon E5-2680 v4 with something post-2020. Real cost, not a code change.
-- [ ] **(Option D) Accept the gap.** Status-quo + documented. Reasonable if expected request volume stays modest and parallel capacity matters more than mean latency.
+**Conclusion:** the 2.13x gap is hardware-bound at PCIe 3.0 latency + DDR4 bandwidth on the X99 platform, not at any layer we can configure. The cblevins-5930k node's hostname is legacy; the actual CPU is an Intel Xeon E5-2680 v4 (Broadwell-EP, 2016). The 7900xtx node runs an AMD Ryzen 9 7900X3D (Zen 4, 2023) on AM5 (PCIe 5.0 + DDR5).
 
-Detailed evidence in `.loom/60-validation-matrix.md` row "26B fleet asymmetric decode rate: 5930k node is 2.2x slower" and `.loom/50-worklog.md` 2026-05-14 entry "RALPH slice — investigate 5930k vs 7900xtx decode-rate asymmetry".
+Remaining levers from the brainstorm, **none auto-actioned, surfaced for explicit user direction:**
+
+- [ ] **(F5) Workload-shaped routing.** Route short-output requests (`max_tokens ≤ 256`, like ICC extraction) to 5930k; long-output requests (chat, generation) to 7900xtx. Proxy code change in `internal/proxy/proxy.go`. Cleanest mitigation; no correctness risk. Doesn't fix the gap — routes around it.
+- [ ] **(F6) Replace vLLM with llama.cpp on 5930k only.** Much smaller per-token CPU footprint. Requires 12-24h GGUF re-quantization of the 26B-A4B artifact (Gemma4 MoE landed in llama.cpp b8637+); feature divergence (tool/reasoning parsers). Highest potential lift; biggest engineering cost.
+- [ ] **(F7) Profile first with `py-spy` flamegraph.** Now MORE valuable post-F1/F2 falsification — would tell us whether the bottleneck is HIP kernel launch overhead specifically (points at F3 spec-decoding when a vLLM version fixes Gemma4-MoE+graphs+ROCm) or something else entirely.
+- [ ] **(Demote)** Set `gemma4-26b-a4b-gptq-5930k` `minReplicas: 0` + lower priority. Spins up only when 7900xtx is unavailable. Loses parallel capacity, eliminates the slow-path tax on routine traffic.
+- [ ] **(Accept)** Status-quo + documented. Reasonable if expected request volume stays modest. Default position.
+
+Detailed evidence in `.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md` (execution log section), `.loom/60-validation-matrix.md` row "26B fleet asymmetric decode rate", and `.loom/50-worklog.md` 2026-05-14 entries.
 
 ## Previously queued follow-ups (lower priority)
 

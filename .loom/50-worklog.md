@@ -4,6 +4,52 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 
 ## 2026-05-14
 
+### RALPH slice — attempted F1+F2 optimizations on 5930k decode rate (both marginal/falsified)
+
+After the 2.13x gap was diagnosed as CPU-side asymmetry, user invoked `/brainstorm` which produced 8 framings and converged on F1+F4 (CPU governor + Python prune) recommended, F2 (revisit `enforce_eager`) runner-up. Doc at `.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md`. User picked F1 then F2.
+
+**F1 — CPU governor → performance:** Captured baseline (`schedutil` governor, `intel_cpufreq` passive, cores idling 1.2-2.3 GHz). Set governor to `performance` on all 28 cores via `ssh cblevins@cblevins-5930k 'sudo sh -c "for c in /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor; do echo performance > $c; done"'`. Verified during a warm-up request that cores climbed to 2.9 GHz steady with one boosting to 3.3 GHz (the chip's turbo ceiling). The 50% MHz scaling reading in `lscpu` was real — the slow CPU was running well below its base clock between work bursts.
+
+Re-ran the matched-workload benchmark (same prompt + params + node-pinned curl pod):
+- 7900xtx mean: 22.99 s → 23.21 s (+1.0%, within noise)
+- **5930k mean: 48.89 s → 47.01 s (−3.8%)**
+
+**F1 hypothesis falsified.** Despite the CPU now actually running at boost frequency under load, end-to-end decode rate barely moved. Per-token cost on this hardware is not CPU-clock-bound. Likely PCIe roundtrip latency (X99 PCIe 3.0 vs AM5 PCIe 5.0 = ~4x) or DDR4 vs DDR5 memory bandwidth. Both hardware-fixed.
+
+Kept the governor at `performance` on the live node (4% is free; no DaemonSet shipped because the gain doesn't justify the persistence work; reverts to schedutil on next reboot, which we'll notice in any future bench). Skipped F4 entirely — F1's result is evidence that per-token Python isn't the bottleneck, so Python pruning would also be minimal.
+
+**F2 — flip `enforce_eager: false` on 5930k Model CR:** Live A/B with Flux suspended. `kubectl patch model gemma4-26b-a4b-gptq-5930k --type=merge -p '{"spec":{"config":{"enforceEager":false}}}'`. New pod crashed on engine init within 5 minutes (2 restarts):
+
+```
+torch.AcceleratorError: HIP error: operation not permitted when stream is capturing
+Search for `hipErrorStreamCaptureUnsupported' ...
+File ".../vllm/compilation/cuda_graph.py", line 314, in __call__
+File ".../vllm/compilation/compiler_interface.py", line 412, in compiled_graph_wrapper
+RuntimeError: Engine core initialization failed.
+```
+
+Exactly the class of bug the manifest comment cited 8 months ago — still present in current vLLM image (`v0.1.dev1+g467d3247c.d20260410`). Cannot be configured around from our side. **F2 falsified.** Reverted via `kubectl patch ... enforceEager: true`, `flux resume kustomization flexinfer-models -n flux-system`. Pod came back Ready, coherence probe returned `"2 + 2 = 4"` — service restored.
+
+**Net outcome of F1+F2 attempts:**
+- 4% improvement from F1 (kept).
+- F2 confirmed impossible on current vLLM+ROCm+Gemma4-MoE stack.
+- The 2.13x gap is hardware-bound at PCIe/memory-bandwidth, not at CPU clock or Python overhead.
+
+Remaining levers from the brainstorm (none auto-actioned, surfaced for future direction):
+- F3 spec decoding: probably blocked by the same CUDA-graph issue.
+- **F5 workload-shaped routing**: cleanest mitigation. Route `max_tokens ≤ 256` requests to 5930k, long-output requests to 7900xtx. Proxy code change in `internal/proxy/proxy.go`.
+- **F6 llama.cpp on 5930k**: biggest potential lift but 12-24h re-quantization pipeline + feature divergence.
+- F7 `py-spy` flamegraph: now more valuable post-F1/F2 falsification, not less. Would tell us whether the bottleneck is HIP kernel launch overhead specifically (would point at F3 or F6) or something else.
+
+Honest position: with the current stack locked at `enforce_eager: true`, the per-token CPU↔GPU dance on X99 is bound by PCIe 3.0 + DDR4. Mitigations exist (F5, F6) but each costs real engineering work for a node that may be retired before they pay off. Recommended next step is to **document, don't optimize further**, until a real workload makes the latency-vs-capacity tradeoff bite users.
+
+Sources:
+- Brainstorm doc: `.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md` (Phase 1-3 + execution log).
+- F1 benchmark output: `/private/tmp/.../tasks/bt8i5sqlo.output`.
+- F1 CPU freq verification: ssh probe during warm request → cores at 2900-3300 MHz.
+- F2 crash trace: `kubectl logs gemma4-26b-a4b-gptq-5930k-8c6f59d84-hlgrx --previous` (`hipErrorStreamCaptureUnsupported` in cuda_graph.py line 314).
+- Recovery: `flux resume kustomization flexinfer-models -n flux-system` + sanity probe `"What is 2+2?"` → `"2 + 2 = 4"`.
+
 ### RALPH slice — investigate 5930k vs 7900xtx decode-rate asymmetry (operational finding, documented)
 
 - Why this slice: a previous worklog observed the 5930k engine showing 0.6-1.1 tok/s vs 7900xtx 6-8 tok/s in mid-load samples. That looked like a real anomaly worth investigating before bumping `maxNumSeqs` or doing other capacity work.
