@@ -136,9 +136,13 @@ spec:
       cpu: "4"
       memory: 16Gi
   serviceLabels:
-    # 2026-05-13: shared route names live here so the proxy can load-balance
-    # them across both 26B instances (this one + sister on cblevins-5930k).
-    # Adding/removing a name requires the same change in the sister manifest.
+    # 2026-05-13: shared route names live here so the proxy load-balances them
+    # across both 26B instances (this one + sister on cblevins-5930k). Routing
+    # policy is round-robin among Ready members (alphabetical fallback when
+    # none Ready); see internal/proxy/resolver.go:pickReadyMember. Adding or
+    # removing a name requires the same change in the sister manifest, or the
+    # alias drops out of the multi-claimant set and reverts to single-target
+    # routing for that name only.
     - gemma4-26b-a4b-gptq
     - gemma4-26b-a4b
     - gemma4-26b

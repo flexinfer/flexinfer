@@ -19,15 +19,25 @@
 - gfx1100/gfx906 platform enhancement plan: `gfx1100-gfx906-platform-enhancements-plan.md`
 - gfx1100/gfx906 next-round parallel plan: `gfx1100-gfx906-next-round-plan.md`
 
-## Current Goal (2026-05-14)
+## Current Goal (2026-05-14, late afternoon)
 
-Make the two-instance 26B fleet actually load-balance across both Ready backends. Today `internal/proxy/proxy.go:409` calls `internal/proxy/model_resolver.go:47:ResolveServiceLabel`, which returns `claimants[0]` (`r.serviceLabelCache.Load` — first-by-priority) per shared label. A 10-request probe through `quality-chat` on 2026-05-14 routed 10/10 to the 7900xtx instance. The infrastructure to fix this already exists — `refreshServiceLabelCache` populates `labelGroupCache` with ALL claimants per label and a `labelGroupModels` reverse index — but no caller uses it on the routing path.
+Close the concurrent-load race in shared-service-label routing. The round-robin picker (MR !354) works at 0.5 s spacing — 20/20 success, 10/10 split — but under concurrent load the previous probe showed 16/20 success with 4/20 vLLM 404s (`The model 'gemma4-26b-a4b-gptq-5930k' does not exist.` from the 7900xtx upstream). The picker chooses correctly, but during the 5-second `serviceLabelCacheTTL` refresh window a request can read one cache snapshot for `chosen = gemma4-26b-a4b-gptq-5930k` (driving body rewrite) and a different snapshot for `targetURL` resolution (driving Service DNS), sending a 5930k-labeled body to the 7900xtx Service.
 
-- [ ] Pick a routing policy: round-robin / least-busy / weighted-by-priority. Record the decision in `40-decisions.md`.
-- [ ] Implement the policy on top of `labelGroupCache` (new `ResolveServiceLabelGroup` returning a `[]string`, or a per-request picker) and wire it into the proxy routing path.
-- [ ] Prove load-balancing: 20+ requests through `quality-chat` should split across `gemma4-26b-a4b-gptq` and `gemma4-26b-a4b-gptq-5930k` according to the chosen policy.
-- [ ] Update both 26B Model CR comments to remove the "aspirational" caveat once the policy ships.
-- [ ] Validation matrix row updated with policy + load-probe evidence.
+- [ ] Reproduce: concurrent probe (e.g. 50 reqs with `xargs -P 10`) measures the failure rate under load. Capture exact `seq → http_code → forwarding-debug-log` for a sample.
+- [ ] Fix: take a single atomic snapshot of the resolved name once at request entry and pass it through both the rewrite path and the targetURL builder, OR re-check `getModel(chosen).Phase` right before `rp.ServeHTTP` so a stale targetURL cannot match a 200-Ready response from the wrong upstream.
+- [ ] Add a regression test in `internal/proxy/pick_member_test.go` that simulates two label-cache snapshots (pre/post refresh) and asserts the routing path sticks to one.
+- [ ] Prove: same concurrent probe lands `≥95%` success with `~50/50` split.
+- [ ] Validation matrix row updated with the under-load evidence.
+
+## Previous Goal (2026-05-13/14 afternoon, closed)
+
+Make the two-instance 26B fleet load-balance across both Ready backends. Closed 2026-05-14 with MR !354 — `internal/proxy/proxy.go:409` now calls `ResolveServiceLabelGroup` + `pickReadyMember` (round-robin among Ready, alphabetical fallback when none Ready).
+
+- [x] Pick a routing policy: round-robin among Ready members. Rationale captured in MR !354 description and `.loom/50-worklog.md` 2026-05-14 entry.
+- [x] Implement `ResolveServiceLabelGroup` (`internal/proxy/model_resolver.go`) + `pickReadyMember` (`internal/proxy/resolver.go`). Per-label `atomic.Uint64` counter on `Proxy.labelRRCounters`. Sorted claimants for stable round-robin across cache refreshes. 5 unit tests in `internal/proxy/pick_member_test.go`.
+- [x] Prove load-balancing: 20-request probe through `quality-chat` at 0.5 s spacing splits **exactly 10/10** across the two instances. Evidence in `60-validation-matrix.md` row "Proxy round-robin Ready-member routing across shared service-labels".
+- [x] Drop "aspirational" caveat from both 26B Model CR comments.
+- [x] Validation matrix row updated.
 
 ## Previous Goal (2026-05-13/14, closed)
 
