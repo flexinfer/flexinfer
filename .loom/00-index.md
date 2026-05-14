@@ -19,14 +19,26 @@
 - gfx1100/gfx906 platform enhancement plan: `gfx1100-gfx906-platform-enhancements-plan.md`
 - gfx1100/gfx906 next-round parallel plan: `gfx1100-gfx906-next-round-plan.md`
 
-## Current Goal (2026-05-13)
+## Current Goal (2026-05-14)
 
-Promote `gemma4-26b-a4b-gptq` to the warm quality lane on `cblevins-7900xtx` so downstream services (project-management and similar) consume capable reasoning + 16K context via stable aliases (`quality-chat`, `mid-chat`, `gpt-4`, `project-mgmt`). Pair-demote `qwen3-8b-fast-7900xtx` to scale-to-zero so the 24 GiB lane is not double-claimed. Cold-start contract for `qwen3-default` / `qwen3-8b` (loom-core agents) is the explicit tradeoff — fast-chat callers cold-start (≤10m from `local-path` NVMe).
+Make the two-instance 26B fleet actually load-balance across both Ready backends. Today `internal/proxy/proxy.go:409` calls `internal/proxy/model_resolver.go:47:ResolveServiceLabel`, which returns `claimants[0]` (`r.serviceLabelCache.Load` — first-by-priority) per shared label. A 10-request probe through `quality-chat` on 2026-05-14 routed 10/10 to the 7900xtx instance. The infrastructure to fix this already exists — `refreshServiceLabelCache` populates `labelGroupCache` with ALL claimants per label and a `labelGroupModels` reverse index — but no caller uses it on the routing path.
 
-- [ ] Land the manifest swap (priority 350 / minReplicas 1 / warmPolicy primary on 26B; mirror demotion on 8B).
-- [ ] Pipeline green + Flux reconcile shows `gemma4-26b-a4b-gptq` Ready and `qwen3-8b-fast-7900xtx` Idle.
-- [ ] Validation matrix row for the warm 26B canary updated with first served request evidence (`60-validation-matrix.md`).
-- [ ] Document service-side consumption pattern (services point at `quality-chat` or `project-mgmt` alias) — follow-up.
+- [ ] Pick a routing policy: round-robin / least-busy / weighted-by-priority. Record the decision in `40-decisions.md`.
+- [ ] Implement the policy on top of `labelGroupCache` (new `ResolveServiceLabelGroup` returning a `[]string`, or a per-request picker) and wire it into the proxy routing path.
+- [ ] Prove load-balancing: 20+ requests through `quality-chat` should split across `gemma4-26b-a4b-gptq` and `gemma4-26b-a4b-gptq-5930k` according to the chosen policy.
+- [ ] Update both 26B Model CR comments to remove the "aspirational" caveat once the policy ships.
+- [ ] Validation matrix row updated with policy + load-probe evidence.
+
+## Previous Goal (2026-05-13/14, closed)
+
+Promote `gemma4-26b-a4b-gptq` to the warm quality lane on `cblevins-7900xtx` so downstream services consume capable reasoning + 16K context via stable aliases (`quality-chat`, `mid-chat`, `gpt-4`, `project-mgmt`). Pair-demote `qwen3-8b-fast-7900xtx` to scale-to-zero so the 24 GiB lane is not double-claimed. Extended on 2026-05-13 to a two-instance fleet (sister `gemma4-26b-a4b-gptq-5930k` on `cblevins-5930k` via OCI pull). Closed 2026-05-14 with MR !352.
+
+- [x] Land the manifest swap (priority 350 / minReplicas 1 / warmPolicy primary on 26B; mirror demotion on 8B) — MR !343.
+- [x] Pipeline green + Flux reconcile shows `gemma4-26b-a4b-gptq` Ready and `qwen3-8b-fast-7900xtx` Idle — 2026-05-13.
+- [x] Validation matrix row for the warm 26B canary updated with first served request evidence — `60-validation-matrix.md` row 120.
+- [x] Two-instance fleet shipped (MR !345 fleet-reshape) and OCI artifact seeded (MR !350) so the sister Model can pull without re-running the 12-24 h pipeline.
+- [x] Sister instance source-path mismatch fixed — MR !352. Both instances Ready, direct smoke passes on each, shared `service_labels` identical, node-specific `litellm.aliases` set. Evidence in `60-validation-matrix.md` row "gemma4-26b-a4b-gptq-5930k sister instance via OCI pull".
+- [ ] (Deferred) Document service-side consumption pattern (services point at `quality-chat` or `project-mgmt` alias) — out-of-scope for the fleet build; depends on the load-balancing slice above before downstream services can rely on shared-alias capacity.
 
 ## Previous Goal (2026-05-06, round 1 closed)
 
