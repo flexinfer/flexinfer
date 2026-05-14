@@ -377,6 +377,18 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		return
 	}
 
+	// One-line audit trail of what we're actually forwarding to. At debug
+	// level because this fires per-request; useful when investigating
+	// shared-service-label routing or stale cache effects (a misrouted
+	// request shows up as a 404 from the wrong vLLM upstream and the
+	// resolved_model/target pair pins which lane handled it).
+	slog.Debug("forwarding to upstream",
+		"model", modelName,
+		"resolved_model", resolvedModel,
+		"backend_model", backendModelName,
+		"target", targetURL,
+		"target_pod", targetPod)
+
 	rp.ServeHTTP(w, r)
 }
 

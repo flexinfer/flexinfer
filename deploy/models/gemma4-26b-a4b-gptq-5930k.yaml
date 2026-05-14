@@ -98,6 +98,10 @@ spec:
   serviceLabels:
     # Shared routes — must match gemma4-26b-a4b-gptq.yaml exactly so the proxy
     # treats both as load-balanced backends for the same logical service.
+    # Routing policy is round-robin among Ready members (see primary manifest
+    # for the longer note). A 20-request probe through `quality-chat` on
+    # 2026-05-14 split 10/10 across the two instances; evidence captured in
+    # .loom/60-validation-matrix.md.
     - gemma4-26b-a4b-gptq
     - gemma4-26b-a4b
     - gemma4-26b

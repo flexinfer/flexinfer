@@ -4,6 +4,34 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 
 ## 2026-05-14
 
+### RALPH slice — proxy round-robin across shared service-labels (load-balancing the 26B fleet)
+
+- What was broken (carry-over from previous slice):
+  - With both 26B instances Ready and declaring identical `service_labels`, a 10-request probe through `quality-chat` routed 10/10 to `gemma4-26b-a4b-gptq` (the 7900xtx primary). The sister instance was healthy but received zero traffic. Root cause was `internal/proxy/proxy.go:409` calling `ResolveServiceLabel` which returns `serviceLabelCache.Load(label).(string)` — first claimant only.
+- What changed (MR !354, commit `f3cc1046`, merged in `5aa483e`):
+  - `internal/proxy/model_resolver.go`: new `ResolveServiceLabelGroup(ctx, label) ([]string, bool)` returns the full claimant slice; `refreshServiceLabelCache` now `sort.Strings(claimants)` before storing so the round-robin ring is stable across refreshes.
+  - `internal/proxy/resolver.go`: new `pickReadyMember(ctx, label, members) string`. Policy: prefer Ready members, round-robin via per-label `atomic.Uint64`, alphabetical fallback when no member is Ready so the cold-start path engages on a deterministic target. Single-member groups short-circuit (zero counter touch, zero Model fetch).
+  - `internal/proxy/proxy.go`: `Proxy.labelRRCounters TypedSyncMap[string, *atomic.Uint64]` added; the `proxy.go:409` call site swapped from `ResolveServiceLabel` to `ResolveServiceLabelGroup` + `pickReadyMember`.
+  - `internal/proxy/pick_member_test.go`: 5 tests — single-member short-circuit, AllReady_RoundRobin exact 10/10 split over 20 picks, PrefersReady avoids Idle members, NoneReady_FallsBackToFirst hits alphabetical-first, PerLabelCounters proves two overlapping groups don't share state.
+  - `internal/proxy/routing.go`: added a `slog.Debug("forwarding to upstream", ...)` log line at the bottom of `serveProxy` (per-request, debug-level so it's silent unless `LOG_LEVEL=DEBUG`). Useful for diagnosing shared-label routing mishaps.
+  - `deploy/models/gemma4-26b-a4b-gptq.yaml` + `deploy/models/gemma4-26b-a4b-gptq-5930k.yaml`: dropped the "aspirational" caveat from the serviceLabels comment and documented the routing policy. Primary points at `internal/proxy/resolver.go:pickReadyMember`.
+- Policy decision (round-robin among Ready, not least-busy or weighted):
+  - Round-robin is the smallest correct change; least-busy needs in-flight tracking on the routing path that doesn't exist yet.
+  - "Among Ready" matters under partial outages (one node draining, one image pulling). Today both 26B instances run `minReplicas=1` so they're both Ready steady-state, but the filter is what keeps the policy correct when only one is Ready.
+  - Alphabetical fallback when none Ready preserves the deterministic cold-start contract (operator predicts which instance warms up).
+- CI: pipeline #9457 had `proxy_test` evicted mid-run (`Eviction API: evicting` — runner pod disruption, not a logic failure). Retried as job 100740, succeeded in 226 s. `promotion_gate_test` ~10 s, `publish` ~165 s. Total cycle ~10 min from merge to `flexinfer-proxy:master` digest landing.
+- Rollout: `kubectl rollout restart deployment/flexinfer-proxy -n flexinfer-system` picked up `flexinfer-proxy@sha256:ad1f7bd13c7bbe9164dd7df3b047c7bd23b5ce605b1801be7be76417d6c771f0`; old pod terminated, new one Ready in seconds.
+- Validation:
+  - Direct-name proxy probes (`model: "gemma4-26b-a4b-gptq"` and `model: "gemma4-26b-a4b-gptq-5930k"`) — both 200, model-name passthrough confirmed (single-claimant short-circuit path).
+  - 6-request `quality-chat` probe (no spacing): 6/6 success, 3/3 split.
+  - 20-request `quality-chat` probe (0.5 s spacing): **20/20 success, exact 10/10 split** between `gemma4-26b-a4b-gptq` and `gemma4-26b-a4b-gptq-5930k`. Evidence captured in `60-validation-matrix.md` row "Proxy round-robin Ready-member routing across shared service-labels".
+- Follow-up surfaced (next RALPH slice):
+  - Concurrent-load race: an earlier 20-req probe **without** spacing returned 16/20 success and 4/20 vLLM 404s from the 7900xtx upstream (`The model 'gemma4-26b-a4b-gptq-5930k' does not exist.`). The picker is firing correctly, but during the 5-second `serviceLabelCacheTTL` refresh window concurrent reqs can race: one read of the cache pins `chosen = gemma4-26b-a4b-gptq-5930k` for the body-rewrite, while a downstream read of the cache (e.g. for `targetURL` via `k8surl.ServiceURL`) snaps to a stale-but-different mapping and forwards to the 7900xtx Service. Net effect: 5930k-labeled body lands on the 7900xtx upstream, which 404s. With 0.5 s spacing it's 20/20 clean — the race window is narrow. Likely fix: a single atomic snapshot of `chosen` consumed by both rewrite and targetURL resolution, OR a fast-path that re-checks `getModel(chosen).Phase` immediately before forwarding. Not a regression of the previous "all → 7900xtx" baseline since failures resolve to a clear 4xx instead of silent mis-routing.
+- Sources:
+  - MR !354 (`feat(proxy): round-robin Ready members for shared service labels`); pipeline 9457 (`proxy_test` retry 100740, publish success at 165 s).
+  - `internal/proxy/model_resolver.go:71-87` (`ResolveServiceLabelGroup`); `internal/proxy/resolver.go:43-90` (`pickReadyMember`); `internal/proxy/proxy.go:417-431` (call site); `internal/proxy/pick_member_test.go`.
+  - Probe scripts captured in `60-validation-matrix.md` row.
+
 ### RALPH slice — fix 26B 5930k source-path mismatch (instance #2 stuck Pending)
 
 - What was broken:
