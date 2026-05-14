@@ -241,10 +241,6 @@ func (p *Proxy) getRoutingStrategy(ctx context.Context, modelName string) routin
 				return routing.Strategy(strategy)
 			}
 		}
-		// Models in a label group default to least-loaded routing
-		if p.isModelInLabelGroup(modelName) {
-			return routing.StrategyLeastLoaded
-		}
 		return routing.StrategyDefault
 	}
 
@@ -259,13 +255,27 @@ func (p *Proxy) getRoutingStrategy(ctx context.Context, modelName string) routin
 		return routing.StrategyDefault
 	}
 
-	// Models in a label group default to least-loaded routing
-	if p.isModelInLabelGroup(modelName) {
-		return routing.StrategyLeastLoaded
-	}
-
 	return routing.StrategyDefault
 }
+
+// Note on label-group default routing:
+//
+// Previously this function auto-defaulted to `StrategyLeastLoaded` whenever a
+// model was in a label group (shared service-labels with another model). Paired
+// with `refreshEndpoints`' label-group aggregation pass, that wrote the UNION
+// of all group members' pod endpoints into each member's router ring. So a
+// request resolved to `gemma4-26b-a4b-gptq-5930k` (body rewritten to that
+// served-model-name) could be forwarded to a pod from a different group member
+// (`gemma4-26b-a4b-gptq` on the 7900xtx), which then 404'd because vLLM's
+// `--served-model-name` didn't match the body's `model` field.
+//
+// Under shared service-labels with the round-robin picker (proxy.go:417,
+// resolver.go:pickReadyMember), cross-model selection happens BEFORE
+// `serveProxy`. The router/aggregation pair would re-pick across the same
+// group, racing the picker. Removing the auto-default keeps the router branch
+// dormant unless an operator explicitly opts in with `flexinfer.ai/routing`.
+// Aggregation in `refreshEndpoints` is preserved for that explicit case
+// (see `TestRefreshEndpoints_LabelGroupAggregation`).
 
 // serveProxy forwards the request to the appropriate backend.
 // If the model name resolves to a LoRA adapter, the request is routed to the

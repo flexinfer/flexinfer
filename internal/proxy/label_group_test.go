@@ -279,7 +279,24 @@ func TestRefreshEndpoints_LabelGroupAggregation(t *testing.T) {
 		"model-b router should have aggregated endpoints from both models")
 }
 
-func TestGetRoutingStrategy_LabelGroup_DefaultsToLeastLoaded(t *testing.T) {
+func TestGetRoutingStrategy_LabelGroup_StaysDefault(t *testing.T) {
+	// Locks in the 2026-05-14 behavior change: an unannotated label-group
+	// member must NOT auto-default to StrategyLeastLoaded.
+	//
+	// The previous auto-default was paired with refreshEndpoints' label-group
+	// aggregation, which wrote the union of all members' pod endpoints into
+	// each member's router ring. Under the round-robin picker
+	// (proxy.go:417, resolver.go:pickReadyMember) that combination caused
+	// cross-routing: a request resolved to model A could be forwarded to a
+	// pod serving model B, yielding a vLLM 404 because `--served-model-name`
+	// didn't match the body's `model` field. Concurrent probes saw ~26%
+	// failure rate at parallelism 10.
+	//
+	// The picker handles cross-model selection. The router branch is now
+	// dormant for unannotated label-group members; Service DNS routes
+	// strictly within the resolved model. Operators who want cross-model
+	// least-loaded routing can still opt in via `flexinfer.ai/routing` (see
+	// TestGetRoutingStrategy_ExplicitAnnotation_OverridesLabelGroup).
 	p := setupTestProxyWithRouting(t)
 	ctx := context.Background()
 
@@ -296,16 +313,19 @@ func TestGetRoutingStrategy_LabelGroup_DefaultsToLeastLoaded(t *testing.T) {
 	}
 	require.NoError(t, p.client.Create(ctx, m))
 
-	// Without label group membership, should return default
+	// Without label group membership, returns default
 	strategy := p.getRoutingStrategy(ctx, "model-no-annotation")
 	assert.Equal(t, routing.StrategyDefault, strategy)
 
-	// Add to label group
+	// Add to label group — picker is now responsible for cross-model selection,
+	// so this model must STAY at default (Service DNS routing) and let the
+	// caller's resolved name pin the upstream Service. Auto-defaulting to
+	// LeastLoaded would re-pick across the aggregated ring and race with
+	// the picker.
 	p.resolver.labelGroupModels.Store("model-no-annotation", []string{"model-no-annotation", "model-other"})
-
-	// Now should return least-loaded
 	strategy = p.getRoutingStrategy(ctx, "model-no-annotation")
-	assert.Equal(t, routing.StrategyLeastLoaded, strategy)
+	assert.Equal(t, routing.StrategyDefault, strategy,
+		"unannotated label-group members must stay at StrategyDefault so the picker's chosen model maps directly to its own Service")
 }
 
 func TestGetRoutingStrategy_ExplicitAnnotation_OverridesLabelGroup(t *testing.T) {
