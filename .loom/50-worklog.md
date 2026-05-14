@@ -4,6 +4,32 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 
 ## 2026-05-14
 
+### RALPH slice — fix concurrent-load cross-routing on shared service-labels (MR !356)
+
+- What was broken (carry-over from the previous slice):
+  - With MR !354's round-robin picker live, a 20-req `quality-chat` probe at 0.5 s spacing split 10/10 cleanly. But a 50-req `xargs -P 10` concurrent probe failed 13/50 (~26%) with vLLM 404s like `The model 'gemma4-26b-a4b-gptq-5930k' does not exist.` from the 7900xtx upstream.
+  - Earlier worklog framed the cause as a "cache-refresh race" inside `pickReadyMember`. The new `slog.Debug("forwarding to upstream", ...)` log (MR !355) plus `--log-level=debug` patched into the live deployment proved that was wrong.
+- True root cause (captured from the forwarding log):
+  - `internal/proxy/routing.go:getRoutingStrategy` auto-defaulted to `StrategyLeastLoaded` whenever a model was in a label group (≥2 service-label claimants). Paired with `refreshEndpoints`' label-group aggregation pass — which writes the **union** of all members' pod endpoints into each member's router ring — that combination cross-routed requests. The picker chose `gemma4-26b-a4b-gptq-5930k`, the body was rewritten to that served-model-name, but the router then picked any pod from the aggregated ring (10.42.0.7:8000 — the 7900xtx pod). vLLM on 7900xtx serves `gemma4-26b-a4b-gptq`, not `-5930k`, and returns 404. Log evidence: entries like `{"model":"gemma4-26b-a4b-gptq-5930k","resolved_model":"gemma4-26b-a4b-gptq-5930k","target":"http://10.42.0.7:8000","target_pod":"10.42.0.7:8000"}`.
+- What changed (MR !356, commit `de21f5cc`, merged in `0e2805f1`):
+  - `internal/proxy/routing.go`: removed the two `isModelInLabelGroup` auto-default branches (v1alpha2 and v1alpha1 paths). With my MR !354 picker handling cross-model selection on its own, the router branch now stays dormant unless an operator explicitly opts in via the `flexinfer.ai/routing` annotation. Added a long block comment explaining the 2026-05-14 behavior change so a future reader doesn't re-add the auto-default by accident.
+  - `internal/proxy/label_group_test.go`: renamed `TestGetRoutingStrategy_LabelGroup_DefaultsToLeastLoaded` → `_StaysDefault`, inverted the assertion, added a long comment locking in the new behavior + linking to the root-cause analysis.
+  - Aggregation in `refreshEndpoints` is **preserved** for the explicit-opt-in case (`TestRefreshEndpoints_LabelGroupAggregation` still passes). Operators who annotate a label-group model with `flexinfer.ai/routing=least-loaded` still get the aggregated cross-model routing as before.
+- CI: pipeline #9473 (master after MR !356 merge) — proxy_test 132 s, promotion_gate 80 s, publish 214 s; total ~10 min from merge to `flexinfer-proxy:master` digest `c5c4497cc6a102df1328d65022e4685dc9c7d6c0c3137b6ba62904260a23af90`.
+- Rollout: `kubectl rollout restart deployment/flexinfer-proxy -n flexinfer-system` picked up the new digest; debug-log arg (`--log-level=debug`) preserved across rollout, then removed via `kubectl patch ... remove` after validation.
+- Validation:
+  - **20 reqs at parallelism 2: 20/20 success, exact 10/10 split** between `gemma4-26b-a4b-gptq` and `gemma4-26b-a4b-gptq-5930k`.
+  - **16 forwarding log entries, 0 cross-routing mismatches** — every `target` matched the picker's resolved model.
+- Capacity note (not a routing bug):
+  - At parallelism 10 and 20, HTTP=000 connection failures appear because both 26B upstreams run `maxNumSeqs: 1` and queue-saturate. The 5930k pod log showed `Running: 0 reqs, Waiting: 13 reqs` during the probe. 50 reqs / `-P 10`: 41/50 success. 100 reqs / `-P 20`: 58/100 success. Successful responses still split correctly; nothing is mis-routed. Scaling beyond 2 concurrent reqs would need higher `maxNumSeqs` per upstream — a separate config-tuning slice if more throughput is needed.
+- Follow-up captured (probably out-of-scope for this fleet build):
+  - If the fleet ever needs >2 concurrent reqs (current limit = 2 instances × `maxNumSeqs: 1`), raise `maxNumSeqs` on both Model CRs. Tradeoff: more concurrency increases per-token latency. Worth re-measuring after a real workload shape is known.
+- Sources:
+  - MR !356 (`fix(proxy): stop auto-defaulting to LeastLoaded for label-group members`); commit `de21f5cc`; merged at `0e2805f1`.
+  - Pipeline 9473 (master) jobs: build_binaries success 198 s, proxy_test 132 s, promotion_gate_test 80 s, publish 214 s.
+  - `internal/proxy/routing.go:230-268` (`getRoutingStrategy` post-fix); `internal/proxy/routing.go:269-291` (block comment locking in the 2026-05-14 decision); `internal/proxy/label_group_test.go:TestGetRoutingStrategy_LabelGroup_StaysDefault`.
+  - Forwarding-log evidence pre-fix: `model=gemma4-26b-a4b-gptq-5930k target=http://10.42.0.7:8000 target_pod=10.42.0.7:8000` (cross-routed to 7900xtx pod). Post-fix: 16/16 logs matched correctly.
+
 ### RALPH slice — proxy round-robin across shared service-labels (load-balancing the 26B fleet)
 
 - What was broken (carry-over from previous slice):

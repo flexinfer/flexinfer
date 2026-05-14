@@ -19,15 +19,24 @@
 - gfx1100/gfx906 platform enhancement plan: `gfx1100-gfx906-platform-enhancements-plan.md`
 - gfx1100/gfx906 next-round parallel plan: `gfx1100-gfx906-next-round-plan.md`
 
-## Current Goal (2026-05-14, late afternoon)
+## Current Goal (2026-05-14, evening) — none active
 
-Close the concurrent-load race in shared-service-label routing. The round-robin picker (MR !354) works at 0.5 s spacing — 20/20 success, 10/10 split — but under concurrent load the previous probe showed 16/20 success with 4/20 vLLM 404s (`The model 'gemma4-26b-a4b-gptq-5930k' does not exist.` from the 7900xtx upstream). The picker chooses correctly, but during the 5-second `serviceLabelCacheTTL` refresh window a request can read one cache snapshot for `chosen = gemma4-26b-a4b-gptq-5930k` (driving body rewrite) and a different snapshot for `targetURL` resolution (driving Service DNS), sending a 5930k-labeled body to the 7900xtx Service.
+The 2-instance 26B fleet plus shared-service-label load-balancing is fully shipped and verified end-to-end. Suggested next slices, in priority order:
 
-- [ ] Reproduce: concurrent probe (e.g. 50 reqs with `xargs -P 10`) measures the failure rate under load. Capture exact `seq → http_code → forwarding-debug-log` for a sample.
-- [ ] Fix: take a single atomic snapshot of the resolved name once at request entry and pass it through both the rewrite path and the targetURL builder, OR re-check `getModel(chosen).Phase` right before `rp.ServeHTTP` so a stale targetURL cannot match a 200-Ready response from the wrong upstream.
-- [ ] Add a regression test in `internal/proxy/pick_member_test.go` that simulates two label-cache snapshots (pre/post refresh) and asserts the routing path sticks to one.
-- [ ] Prove: same concurrent probe lands `≥95%` success with `~50/50` split.
-- [ ] Validation matrix row updated with the under-load evidence.
+- [ ] **(Optional) Increase per-upstream concurrency.** Both 26B Models run `maxNumSeqs: 1`. A 100-req `-P 20` probe saw 42% HTTP=000 timeouts — purely upstream queue saturation, not routing. Raising `maxNumSeqs` on both Model CRs would scale fleet throughput beyond 2 concurrent reqs but trade per-token latency. Worth re-measuring after a real workload shape is known. Likely not urgent until project-management or another downstream caller produces sustained concurrency.
+- [ ] **Document service-side consumption pattern.** Project-management still hardcodes `LLM_MODEL = "qwen3-8b-fast-7900xtx"` and `DEFAULT_FLEXINFER_URL = "http://qwen3-8b-fast-7900xtx.flexinfer-system.svc:8000"` (see `services/project-management/src/integration_command_center/extractors/llm_qwen.py`). Switch to `flexinfer-proxy` + `quality-chat` (or `project-mgmt`) alias to consume the warm 26B lane with load-balancing.
+- [ ] **(Optional) Migrate `--log-level=debug` toggle to Helm values.** The 2026-05-14 debugging cycle required `kubectl patch` to add `--log-level=debug` (Flux didn't revert during the window, but the path is fragile). A first-class `proxy.logLevel` Helm value would make future debugging cycles a one-liner.
+
+## Previous Goal (2026-05-14, late afternoon, closed)
+
+Close the concurrent-load failure mode in shared-service-label routing. **Closed by MR !356.** The 26% failure rate observed at parallelism 10 was NOT a cache-refresh race in the picker — `slog.Debug("forwarding to upstream", ...)` logs (MR !355) with `--log-level=debug` revealed `getRoutingStrategy` was auto-defaulting to `StrategyLeastLoaded` for any label-group member, and `refreshEndpoints`' aggregation wrote the union of all members' pod endpoints into each member's router ring, cross-routing bodies (5930k body → 7900xtx pod → 404).
+
+- [x] Reproduce: 50-req `xargs -P 10` probe → 13/50 vLLM 404s with both directions of mis-routing.
+- [x] Root-cause from the new forwarding log: `target=10.42.0.7:8000` (7900xtx pod) for `model=gemma4-26b-a4b-gptq-5930k`.
+- [x] Fix: removed the two `isModelInLabelGroup` auto-default branches in `internal/proxy/routing.go:getRoutingStrategy`. Picker (MR !354) now owns cross-model selection; router branch stays dormant unless an operator explicitly opts in via `flexinfer.ai/routing`. Aggregation in `refreshEndpoints` preserved for that explicit case.
+- [x] Test: renamed `TestGetRoutingStrategy_LabelGroup_DefaultsToLeastLoaded` → `_StaysDefault` with inverted assertion and lock-in comment.
+- [x] Prove: 20 reqs at parallelism 2 → 20/20 success, exact 10/10 split, 16/16 forwarding logs show model-name matching target (0 mismatches). At parallelism 10/20, HTTP=000 failures persist but are upstream queue saturation (`maxNumSeqs: 1`), not routing.
+- [x] Validation matrix row added (MR !356 row in `60-validation-matrix.md`).
 
 ## Previous Goal (2026-05-13/14 afternoon, closed)
 
