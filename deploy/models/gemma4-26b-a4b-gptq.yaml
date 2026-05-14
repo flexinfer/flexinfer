@@ -16,19 +16,19 @@
 # node-specific addressing (gemma4-26b-7900xtx). Context uplift 2026-04-27:
 # the separate gemma4-26b-a4b-gptq-long canary proved the same hybrid artifact
 # at 16K with FP8 KV on 2026-04-26; those runtime knobs are baked in below.
-# Runtime image rebuild attempted 2026-05-13 but ROLLED BACK: the new vLLM
-# 0.17.0 base image (rocm/vllm-dev:rocm7.2_navi_..._vllm_0.14.0rc0 +
-# wheel 0.17.0) does NOT ship `vllm/model_executor/models/gemma4.py`, and
-# the `gemma4` tool-call parser is not registered in the new validator's
-# allow-list -- pod CrashLoopBackOff with `KeyError: 'invalid tool call
-# parser: gemma4'`. The previous serving digest sha256:0b05b32b92e6...
-# is restored so the 26B quality lane stays up. The decoder-layer debug
-# patch overhead (~7.5 tok/s vs ~60+ tok/s expected) is the price we pay
-# until the runtime build pipeline restores gemma4 model + tool-call parser
-# support in a way that's compatible with the perf-clean build. Follow-up
-# slice: vendor gemma4.py from a vLLM tag that included it (pre-cleanup),
-# OR add `gemma4` to vLLM's tool-call parser registry via patch, OR pick
-# a different vLLM upstream tag for the runtime base.
+# Runtime image (2026-05-13): pinned to digest sha256:69569cbfc0db... which is
+# tag `runtime:rocm-gfx1100-gemma4-moe-patched`, built as a thin overlay of
+# `runtime:rocm-gfx1100-gemma4-experimental` with `vllm_gemma4_moe_gptq_patch.py`
+# applied at build time. The overlay relaxes `moe_wna16.py`'s SiLU-only assertion
+# to accept (SiLU, GELU) so Gemma4 MoE experts load on ROCm, and keeps the
+# decoder-layer debug patch SKIPPED (env-gated, only enabled when
+# GEMMA4_DECODER_LAYER_DEBUG=1) so we get the perf-clean code path. This replaces
+# the rolled-back digest sha256:0b05b32b92e6... (decoder-debug-ON, ~7.5 tok/s)
+# and the failed swap to the bare experimental tag (no MoE GELU patch -> crashed
+# on `Only SiLU activation is supported, not MoEActivation.GELU`). Build flow:
+# `docker --context 7900xtx build -f build/Dockerfile.runtime-patch
+# --build-arg BASE_IMAGE=registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-experimental
+# -t registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-moe-patched .`
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -42,7 +42,7 @@ metadata:
     flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
+  image: registry.harbor.lan/flexinfer/runtime@sha256:69569cbfc0db7c4f8755cf07ad329361a59514ebc7112fb859c5b08c8787b759
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   # Cache PVC migration (2026-04-18): switched from the default 3-replica
   # Longhorn storage class to single-replica local NVMe to stop
