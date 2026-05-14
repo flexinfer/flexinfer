@@ -265,10 +265,11 @@ func TestAgentSecretMounts_ClaudeOAuthFromClusterSecret(t *testing.T) {
 	if m.SecretName != ClusterAgentAuthSecret {
 		t.Fatalf("SecretName = %q, want %q", m.SecretName, ClusterAgentAuthSecret)
 	}
-	if m.MountPath != "/root/.claude.auth" {
-		t.Fatalf("MountPath = %q, want %q (staging dir, not /root/.claude)", m.MountPath, "/root/.claude.auth")
+	wantClaudeMount := AgentHomeDir + "/.claude.auth"
+	if m.MountPath != wantClaudeMount {
+		t.Fatalf("MountPath = %q, want %q (staging dir, not %s/.claude)", m.MountPath, wantClaudeMount, AgentHomeDir)
 	}
-	if strings.HasPrefix(m.MountPath, "/root/.claude/") || m.MountPath == "/root/.claude" {
+	if strings.HasPrefix(m.MountPath, AgentHomeDir+"/.claude/") || m.MountPath == AgentHomeDir+"/.claude" {
 		t.Fatalf("Claude mount must NOT shadow writable .claude/ config dir: %q", m.MountPath)
 	}
 	if len(m.Items) != 1 || m.Items[0].Key != "claude-oauth-json" || m.Items[0].Path != "oauth.json" {
@@ -285,10 +286,11 @@ func TestAgentSecretMounts_CodexOAuthFromClusterSecret(t *testing.T) {
 	if m.SecretName != ClusterAgentAuthSecret {
 		t.Fatalf("SecretName = %q, want %q", m.SecretName, ClusterAgentAuthSecret)
 	}
-	if m.MountPath != "/root/.codex.auth" {
-		t.Fatalf("MountPath = %q, want %q (staging dir, not /root/.codex)", m.MountPath, "/root/.codex.auth")
+	wantCodexMount := AgentHomeDir + "/.codex.auth"
+	if m.MountPath != wantCodexMount {
+		t.Fatalf("MountPath = %q, want %q (staging dir, not %s/.codex)", m.MountPath, wantCodexMount, AgentHomeDir)
 	}
-	if strings.HasPrefix(m.MountPath, "/root/.codex/") || m.MountPath == "/root/.codex" {
+	if strings.HasPrefix(m.MountPath, AgentHomeDir+"/.codex/") || m.MountPath == AgentHomeDir+"/.codex" {
 		t.Fatalf("Codex mount must NOT shadow writable .codex/ config dir: %q", m.MountPath)
 	}
 	if len(m.Items) != 1 || m.Items[0].Key != "codex-auth-json" || m.Items[0].Path != "auth.json" {
