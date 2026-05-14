@@ -4,6 +4,31 @@ Chronological notes while executing the plan (useful for handoffs and debugging)
 
 ## 2026-05-14
 
+### RALPH slice — wire project-management to consume the warm 26B lane (services/project-management MR !73)
+
+- What was open:
+  - The `00-index.md` "Current Goal" closeout left three optional follow-ups queued. User picked #2: "Switch project-management to consume the warm-lane alias." Up until now, `services/project-management/src/integration_command_center/extractors/llm_qwen.py` hardcoded `LLM_MODEL = "qwen3-8b-fast-7900xtx"` and `DEFAULT_FLEXINFER_URL = "http://qwen3-8b-fast-7900xtx.flexinfer-system.svc:8000"`. URL was env-overridable via `FLEXINFER_QWEN_URL`; model name was not.
+- What changed (services/project-management MR !73, commit `bd7df51`, auto-merge queued):
+  - `llm_qwen.py`:
+    - `LLM_MODEL = os.environ.get("FLEXINFER_QWEN_MODEL", "project-mgmt")` — new default is the proxy service-label alias.
+    - `DEFAULT_FLEXINFER_URL = "http://flexinfer-proxy.flexinfer-system.svc"` — new default targets the proxy, not a specific Model Service.
+    - Docstring rewritten to cover both env vars + rollback recipe.
+  - `tests/test_runner.py`: 3 metric-label asserts rewritten from hardcoded `'icc_llm_extractions_total{model="qwen3-8b-fast-7900xtx",result="…"}'` to `f'icc_llm_extractions_total{{model="{llm_qwen.LLM_MODEL}",result="…"}}'` so the suite follows the default automatically.
+  - `.loom/40-decisions.md`: 2026-05-14 entry capturing the rationale, alternatives considered, prompt_hash continuity note, and the env-rollback recipe.
+- Why this alias (`project-mgmt`):
+  - The proxy's round-robin policy is what makes the two-instance fleet useful; pinning to a single Model resource name forgoes the second instance's capacity.
+  - `project-mgmt` is the project-management-specific alias (vs the shared `quality-chat`). Easier to grep in flexinfer-proxy access logs and a clear handle for future shaped-traffic experiments.
+- Cluster validation (run BEFORE the MR even merges, against the live proxy):
+  - `kubectl run … curlimages/curl -- curl -X POST http://flexinfer-proxy.flexinfer-system.svc/v1/chat/completions -d '{"model":"project-mgmt","messages":[{"role":"user","content":"<ICC extraction prompt>"}],"temperature":0,"response_format":{"type":"json_object"}}'` returned a valid extraction envelope: `model: gemma4-26b-a4b-gptq-5930k` (sister instance via round-robin), parsed content `{candidates: [{kind:"action_item",text:"confirm vendor list with Acme Health by Friday"}, {kind:"decision",text:"ship MVP on the 20th"}]}`. Both `kind` values in `CANDIDATE_KINDS`, both `text` values are strings. Schema matches ICC's `_validate_response`.
+- Test coverage (ICC repo): 1095/1095 green (test_llm_extractor 32/32 + test_runner 13/13 + sweep).
+- Out-of-scope follow-up (left in ICC's queue, not blocking this slice):
+  - ICC's k8s overlays do not currently set `ICC_LLM_ENABLED=1`. The consumption path is now correct, but extraction stays opt-in via that env flag — flipping it is a deployment-side operator decision, not a code change.
+- Sources:
+  - services/project-management MR !73 (`feat/llm-warm-lane-26b`, commit `bd7df51`).
+  - `services/project-management/src/integration_command_center/extractors/llm_qwen.py:46-50` (new defaults).
+  - `services/project-management/.loom/40-decisions.md` 2026-05-14 entry.
+  - Live cluster validation: curl above with body `{"model":"project-mgmt", …}` round-tripped through flexinfer-proxy and the `gemma4-26b-a4b-gptq-5930k` upstream.
+
 ### RALPH slice — fix concurrent-load cross-routing on shared service-labels (MR !356)
 
 - What was broken (carry-over from the previous slice):
