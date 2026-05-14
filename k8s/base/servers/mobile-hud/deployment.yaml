@@ -113,7 +113,13 @@ spec:
             - name: SPAWN_DEFAULT_CPU
               value: "0.5"
             - name: SPAWN_DEFAULT_MEMORY_MB
-              value: "2048"
+              # 2 GiB OOMKilled claude-code within ~7s of `claude -p ...`
+              # against the loom-core source tree (PIPE-MILLS-CANARY-
+              # 20260514-142702 implement spawn-e06aa121df9e: exit 137,
+              # turn_count=0, total_cost_usd=0). Bump to 4 GiB so the
+              # agent has runway for a full multi-turn implement pass
+              # plus background JSONL parsing.
+              value: "4096"
             - name: SPAWN_MAX_CONCURRENT_BUILDS
               value: "1"
             - name: SPAWN_BUILD_CPU_REQUEST
