@@ -16,16 +16,19 @@
 # node-specific addressing (gemma4-26b-7900xtx). Context uplift 2026-04-27:
 # the separate gemma4-26b-a4b-gptq-long canary proved the same hybrid artifact
 # at 16K with FP8 KV on 2026-04-26; those runtime knobs are baked in below.
-# Runtime image (2026-05-13): tag `runtime:rocm-gfx1100-gemma4-experimental`.
-# The `gfx1100-serving` persona currently installs vLLM from the published wheel
-# (vllm==0.17.0+rocm700), which does NOT ship `vllm/model_executor/models/gemma4.py`
-# nor a `gemma4` tool-call parser — flipping the serving digest to a fresh build
-# crashed with `KeyError: 'invalid tool call parser: gemma4'`. The experimental
-# persona builds vLLM from pinned source (vllm_ref=50cd5674...) with transformers
-# pinned to a Gemma4-supporting commit (transformers_ref=f965b10b...), and is the
-# proven path used by `gemma4-e4b-multimodal` today. Long-term follow-up: mirror
-# the experimental profile's source build into `gfx1100-serving` so one image
-# covers both serving + gemma4 (see build/runtime.yaml).
+# Runtime image rebuild attempted 2026-05-13 but ROLLED BACK: the new vLLM
+# 0.17.0 base image (rocm/vllm-dev:rocm7.2_navi_..._vllm_0.14.0rc0 +
+# wheel 0.17.0) does NOT ship `vllm/model_executor/models/gemma4.py`, and
+# the `gemma4` tool-call parser is not registered in the new validator's
+# allow-list -- pod CrashLoopBackOff with `KeyError: 'invalid tool call
+# parser: gemma4'`. The previous serving digest sha256:0b05b32b92e6...
+# is restored so the 26B quality lane stays up. The decoder-layer debug
+# patch overhead (~7.5 tok/s vs ~60+ tok/s expected) is the price we pay
+# until the runtime build pipeline restores gemma4 model + tool-call parser
+# support in a way that's compatible with the perf-clean build. Follow-up
+# slice: vendor gemma4.py from a vLLM tag that included it (pre-cleanup),
+# OR add `gemma4` to vLLM's tool-call parser registry via patch, OR pick
+# a different vLLM upstream tag for the runtime base.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -39,7 +42,7 @@ metadata:
     flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-experimental
+  image: registry.harbor.lan/flexinfer/runtime@sha256:0b05b32b92e6ab99cd648837a9bf80cf3dd437275b1d97fb71378a9f829cdaac
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   # Cache PVC migration (2026-04-18): switched from the default 3-replica
   # Longhorn storage class to single-replica local NVMe to stop
