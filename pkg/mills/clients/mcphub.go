@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,7 +36,9 @@ type MCPHubConfig struct {
 	CFAccessClientSecret string
 	// ConnectTimeout caps the websocket dial. Default 10s.
 	ConnectTimeout time.Duration
-	// CallTimeout caps a single tools/call round trip. Default 60s.
+	// CallTimeout caps a single tools/call round trip. Default 10m.
+	// Sized for devbox_quality_gate, which runs fmt + lint + test
+	// against a real workspace and routinely exceeds a minute.
 	CallTimeout time.Duration
 	// ClientName / ClientVersion are sent on initialize. Default
 	// "loom-mills-operator" / "0.1.0".
@@ -84,7 +87,7 @@ func newMCPHubClientWithDefaults(cfg MCPHubConfig, dial func(ctx context.Context
 		cfg.ConnectTimeout = 10 * time.Second
 	}
 	if cfg.CallTimeout == 0 {
-		cfg.CallTimeout = 60 * time.Second
+		cfg.CallTimeout = 10 * time.Minute
 	}
 	if cfg.ClientName == "" {
 		cfg.ClientName = "loom-mills-operator"
@@ -128,6 +131,15 @@ func (c *MCPHubClient) realDial(ctx context.Context, serverName string) (mcp.Tra
 // in-tree MCP tools return a single JSON text block; callers Unmarshal
 // it into their own typed response. Returns an error when the tool
 // itself reports IsError=true (the body is included in the error).
+//
+// Resilience: a cached transport that fails with a transport-level error
+// (close 1006, broken pipe, unexpected EOF, etc.) is invalidated and the
+// call is retried exactly once with a freshly-dialed connection. This
+// covers the case where the gateway tore the connection down between
+// calls (idle deadline, gateway restart, ping/relay race) without
+// surfacing an error to the operator until the next Send/Recv. Without
+// this, the cached broken transport poisons every subsequent call until
+// the operator process is restarted.
 func (c *MCPHubClient) CallTool(ctx context.Context, serverName, toolName string, args map[string]any) (string, error) {
 	if c == nil {
 		return "", errors.New("mcphub: client nil")
@@ -138,6 +150,23 @@ func (c *MCPHubClient) CallTool(ctx context.Context, serverName, toolName string
 	if toolName == "" {
 		return "", errors.New("mcphub: toolName required")
 	}
+
+	body, err := c.callOnce(ctx, serverName, toolName, args)
+	if err == nil || !isTransportError(err) {
+		return body, err
+	}
+	// Transport-level failure on the cached connection: drop it and
+	// retry once with a fresh dial. Most close-1006/broken-pipe cases
+	// recover on the second attempt because each new WebSocket forks
+	// a new mcp-devbox subprocess on the hub side.
+	c.invalidate(serverName)
+	return c.callOnce(ctx, serverName, toolName, args)
+}
+
+// callOnce performs a single tools/call round trip without retry. On
+// any error the transport is left in c.transports (so CallTool can
+// decide whether to invalidate it based on isTransportError).
+func (c *MCPHubClient) callOnce(ctx context.Context, serverName, toolName string, args map[string]any) (string, error) {
 	transport, err := c.transportFor(ctx, serverName)
 	if err != nil {
 		return "", err
@@ -183,6 +212,50 @@ func (c *MCPHubClient) CallTool(ctx context.Context, serverName, toolName string
 		}
 		return text, nil
 	}
+}
+
+// invalidate closes and forgets the cached transport for serverName so
+// the next CallTool dials a fresh one. Idempotent; safe to call when
+// no transport is cached.
+func (c *MCPHubClient) invalidate(serverName string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if t, ok := c.transports[serverName]; ok {
+		_ = t.Close()
+		delete(c.transports, serverName)
+	}
+	delete(c.initialized, serverName)
+}
+
+// isTransportError returns true for the WebSocket / TCP failure modes
+// that mean the cached connection is dead and we should redial. We
+// match on error text rather than wrapped types because the gorilla
+// websocket library and the mcp-go transport both wrap errors as
+// strings before they reach us. Conservative on purpose — JSON-RPC
+// errors and tool-reported errors (IsError=true) must NOT match.
+func isTransportError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	s := err.Error()
+	for _, needle := range []string{
+		"websocket: close",         // gorilla close-frame errors (1006, 1001, etc.)
+		"unexpected EOF",           // half-closed read
+		"broken pipe",              // EPIPE on Send after peer closed
+		"connection reset by peer", // RST mid-flight
+		"use of closed network connection",
+		"transport closed", // mcp-go / fake transport
+		"i/o timeout",      // ReadDeadline expiry
+		"EOF",              // bare io.EOF wrapped as string
+	} {
+		if strings.Contains(s, needle) {
+			return true
+		}
+	}
+	return false
 }
 
 // transportFor returns the transport for serverName, dialing + initializing

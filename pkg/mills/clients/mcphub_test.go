@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -135,8 +136,8 @@ func TestNewMCPHubClient_AppliesDefaults(t *testing.T) {
 	if c.cfg.ConnectTimeout != 10*time.Second {
 		t.Errorf("ConnectTimeout default = %v, want 10s", c.cfg.ConnectTimeout)
 	}
-	if c.cfg.CallTimeout != 60*time.Second {
-		t.Errorf("CallTimeout default = %v, want 60s", c.cfg.CallTimeout)
+	if c.cfg.CallTimeout != 10*time.Minute {
+		t.Errorf("CallTimeout default = %v, want 10m", c.cfg.CallTimeout)
 	}
 }
 
@@ -357,6 +358,268 @@ func TestClose_ClosesAllTransports(t *testing.T) {
 	}
 	if !ft.closed {
 		t.Error("transport not closed after Close()")
+	}
+}
+
+// ----- Transport invalidation + retry -----
+
+// transportErrSequence implements mcp.Transport with a scripted error
+// on the Nth Recv call. Used to simulate a half-broken cached
+// connection: Send succeeds (or fails) and Recv emits a close-1006 /
+// EOF style error to trigger the retry path.
+type transportErrSequence struct {
+	mu             sync.Mutex
+	sendErrOnTry   int // 1-indexed call number on which Send returns sendErr; 0 disables
+	sendTries      int
+	sendErr        error
+	recvErrOnTry   int // 1-indexed call number on which Recv returns recvErr; 0 disables
+	recvTries      int
+	recvErr        error
+	defaultResults map[string][]byte // method → result bytes for successful calls
+	failsInit      bool              // when true, return error on initialize
+	closed         bool
+	sent           []mcp.Message
+	pending        []mcp.Message
+}
+
+func (f *transportErrSequence) Send(_ context.Context, msg *mcp.Message) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.closed {
+		return errors.New("transport closed")
+	}
+	if msg.Method == "tools/call" {
+		f.sendTries++
+		if f.sendErrOnTry != 0 && f.sendTries == f.sendErrOnTry {
+			return f.sendErr
+		}
+	}
+	f.sent = append(f.sent, *msg)
+	if msg.Method == "notifications/initialized" {
+		return nil
+	}
+	resp := mcp.Message{JSONRPC: "2.0", ID: msg.ID}
+	if msg.Method == "initialize" && f.failsInit {
+		resp.Error = &mcp.Error{Code: -32603, Message: "init refused"}
+	} else if body, ok := f.defaultResults[msg.Method]; ok {
+		resp.Result = body
+	} else {
+		resp.Result = []byte(`{}`)
+	}
+	f.pending = append(f.pending, resp)
+	return nil
+}
+
+func (f *transportErrSequence) Recv(ctx context.Context) (*mcp.Message, error) {
+	for {
+		f.mu.Lock()
+		if f.closed {
+			f.mu.Unlock()
+			return nil, errors.New("transport closed")
+		}
+		if len(f.pending) > 0 {
+			// Peek at the next pending message: only count Recv tries on
+			// tools/call responses so init handshakes don't burn the
+			// scripted error budget.
+			next := f.pending[0]
+			isToolsCall := next.Result != nil || next.Error != nil
+			if isToolsCall {
+				f.recvTries++
+				if f.recvErrOnTry != 0 && f.recvTries == f.recvErrOnTry {
+					f.mu.Unlock()
+					return nil, f.recvErr
+				}
+			}
+			f.pending = f.pending[1:]
+			f.mu.Unlock()
+			return &next, nil
+		}
+		f.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+}
+
+func (f *transportErrSequence) Close() error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.closed = true
+	return nil
+}
+
+func TestCallTool_RetriesOnceAfterTransportClose1006(t *testing.T) {
+	// First Recv returns the gateway's close-1006 error (the exact
+	// shape the canary failure log captured). The retry should redial
+	// (a fresh transport) and succeed.
+	dialCalls := 0
+	var firstTransport *transportErrSequence
+	successResult := makeCallToolResult(t, map[string]any{"passed": true})
+
+	c := newMCPHubClientWithDefaults(MCPHubConfig{
+		HubURL:         "wss://stub",
+		ConnectTimeout: 100 * time.Millisecond,
+		CallTimeout:    500 * time.Millisecond,
+	}, func(_ context.Context, _ string) (mcp.Transport, error) {
+		dialCalls++
+		if dialCalls == 1 {
+			firstTransport = &transportErrSequence{
+				recvErrOnTry: 1,
+				recvErr:      errors.New("read message: websocket: close 1006 (abnormal closure): unexpected EOF"),
+				defaultResults: map[string][]byte{
+					"initialize": []byte(`{"protocolVersion":"2024-11-05"}`),
+					"tools/call": successResult,
+				},
+			}
+			return firstTransport, nil
+		}
+		// Second dial: clean transport that succeeds.
+		return &transportErrSequence{
+			defaultResults: map[string][]byte{
+				"initialize": []byte(`{"protocolVersion":"2024-11-05"}`),
+				"tools/call": successResult,
+			},
+		}, nil
+	})
+
+	got, err := c.CallTool(context.Background(), "devbox", "devbox_quality_gate", map[string]any{"project": "loom-core"})
+	if err != nil {
+		t.Fatalf("CallTool after retry: %v", err)
+	}
+	if !strings.Contains(got, `"passed":true`) {
+		t.Errorf("expected retried call to succeed, got body %q", got)
+	}
+	if dialCalls != 2 {
+		t.Errorf("expected 2 dials (initial + retry), got %d", dialCalls)
+	}
+	if firstTransport == nil || !firstTransport.closed {
+		t.Errorf("broken transport should have been closed during invalidation, closed=%v", firstTransport != nil && firstTransport.closed)
+	}
+}
+
+func TestCallTool_RetriesOnceAfterBrokenPipeOnSend(t *testing.T) {
+	// Simulates the third attempt in the canary log: Send returns
+	// "broken pipe" on the cached (half-closed) connection. Retry
+	// with a fresh dial succeeds.
+	dialCalls := 0
+	successResult := makeCallToolResult(t, map[string]any{"passed": true})
+
+	c := newMCPHubClientWithDefaults(MCPHubConfig{
+		HubURL:         "wss://stub",
+		ConnectTimeout: 100 * time.Millisecond,
+		CallTimeout:    500 * time.Millisecond,
+	}, func(_ context.Context, _ string) (mcp.Transport, error) {
+		dialCalls++
+		if dialCalls == 1 {
+			return &transportErrSequence{
+				sendErrOnTry: 1,
+				sendErr:      errors.New("write message: write tcp 10.42.7.5:57228->10.43.248.41:80: write: broken pipe"),
+				defaultResults: map[string][]byte{
+					"initialize": []byte(`{"protocolVersion":"2024-11-05"}`),
+					"tools/call": successResult,
+				},
+			}, nil
+		}
+		return &transportErrSequence{
+			defaultResults: map[string][]byte{
+				"initialize": []byte(`{"protocolVersion":"2024-11-05"}`),
+				"tools/call": successResult,
+			},
+		}, nil
+	})
+
+	if _, err := c.CallTool(context.Background(), "devbox", "devbox_quality_gate", nil); err != nil {
+		t.Fatalf("CallTool after retry: %v", err)
+	}
+	if dialCalls != 2 {
+		t.Errorf("expected 2 dials, got %d", dialCalls)
+	}
+}
+
+func TestCallTool_DoesNotRetryJSONRPCErrors(t *testing.T) {
+	// A tool-reported JSON-RPC error is NOT a transport failure and
+	// must bubble immediately without burning a redial.
+	dialCalls := 0
+	c := newMCPHubClientWithDefaults(MCPHubConfig{
+		HubURL:         "wss://stub",
+		ConnectTimeout: 100 * time.Millisecond,
+		CallTimeout:    500 * time.Millisecond,
+	}, func(_ context.Context, _ string) (mcp.Transport, error) {
+		dialCalls++
+		ft := &fakeTransport{
+			responses: map[string][]byte{
+				"initialize": []byte(`{"protocolVersion":"2024-11-05"}`),
+			},
+			failOn: map[string]*mcp.Error{
+				"tools/call": {Code: -32602, Message: "invalid args"},
+			},
+		}
+		return ft, nil
+	})
+
+	if _, err := c.CallTool(context.Background(), "devbox", "tool", nil); err == nil {
+		t.Fatal("expected JSON-RPC error to surface")
+	}
+	if dialCalls != 1 {
+		t.Errorf("expected 1 dial (no retry on app-level error), got %d", dialCalls)
+	}
+}
+
+func TestCallTool_StopsAfterOneRetry(t *testing.T) {
+	// Both dials return broken transports — the second failure must
+	// propagate (no infinite retry loop).
+	dialCalls := 0
+	c := newMCPHubClientWithDefaults(MCPHubConfig{
+		HubURL:         "wss://stub",
+		ConnectTimeout: 100 * time.Millisecond,
+		CallTimeout:    500 * time.Millisecond,
+	}, func(_ context.Context, _ string) (mcp.Transport, error) {
+		dialCalls++
+		return &transportErrSequence{
+			recvErrOnTry: 1,
+			recvErr:      errors.New("read message: websocket: close 1006 (abnormal closure): unexpected EOF"),
+			defaultResults: map[string][]byte{
+				"initialize": []byte(`{"protocolVersion":"2024-11-05"}`),
+				"tools/call": []byte(`{}`),
+			},
+		}, nil
+	})
+
+	_, err := c.CallTool(context.Background(), "devbox", "tool", nil)
+	if err == nil {
+		t.Fatal("expected error after both attempts fail")
+	}
+	if dialCalls != 2 {
+		t.Errorf("expected exactly 2 dials, got %d", dialCalls)
+	}
+}
+
+func TestIsTransportError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"close 1006", errors.New("websocket: close 1006 (abnormal closure): unexpected EOF"), true},
+		{"broken pipe", errors.New("write tcp x->y: write: broken pipe"), true},
+		{"unexpected EOF", errors.New("read message: unexpected EOF"), true},
+		{"connection reset", errors.New("read: connection reset by peer"), true},
+		{"closed conn", errors.New("use of closed network connection"), true},
+		{"transport closed", errors.New("transport closed"), true},
+		{"i/o timeout", errors.New("read tcp: i/o timeout"), true},
+		{"raw io.EOF", io.EOF, true},
+		{"jsonrpc error", errors.New("mcphub: srv/tool: invalid args (code=-32602)"), false},
+		{"tool reported error", errors.New("mcphub: srv/tool reported error: bad project"), false},
+		{"nil", nil, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isTransportError(tc.err); got != tc.want {
+				t.Errorf("isTransportError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
 	}
 }
 
