@@ -7,6 +7,7 @@
   import { streamStore } from './lib/stores/stream.svelte.ts';
   import { eventStore } from './lib/stores/events.svelte.ts';
   import { overlayStore } from './lib/stores/overlay.svelte.ts';
+  import { actionStore } from './lib/stores/action.svelte.ts';
   import { formatTime as fmtTime } from './lib/utils/format.ts';
   import ViewShell from './lib/components/shared/ViewShell.svelte';
   import FleetPanel from './lib/components/FleetPanel.svelte';
@@ -32,6 +33,7 @@
   import OverviewPanel from './lib/components/OverviewPanel.svelte';
   import OverlayShell from './lib/components/OverlayShell.svelte';
   import Toast from './lib/widgets/Toast.svelte';
+  import AuditDrawer from './lib/components/shared/action/AuditDrawer.svelte';
 
   let showCommandPalette = $state(false);
   let showKeyboardHelp = $state(false);
@@ -148,6 +150,9 @@
         break;
       case 'toggle-scanlines':
         document.body.classList.toggle('scanlines');
+        break;
+      case 'open-audit-drawer':
+        actionStore.openDrawer();
         break;
       default:
         // Navigate: works for both view IDs and legacy panel IDs
@@ -465,6 +470,7 @@
   {/if}
 
   <Toast />
+  <AuditDrawer />
 </div>
 {/if}
 
