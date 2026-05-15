@@ -114,3 +114,49 @@ Rebuilt sandbox image: digest `sha256:737ac1ba9c5366c66dc3e010c6cac5a904a5cee827
 - File upstream `vllm-project/vllm` issue for the ROCm `rms_norm` half-precision rejection so the patch script can eventually be retired.
 - `.loom/21-product-spec-vllm-feature-parity-2026-05-15.md` validation matrix delta updated to flip Slices 3+4+5 from `pending` → `pass`.
 - `vllm.fusedMoETriton` capability matrix entry on `gfx1100` GPUProfile may be promoted from `experimental` to `supported` after the burn-in.
+
+---
+
+## Post-Promotion Failure + Rollback (later same evening, 2026-05-15)
+
+Within ~30 min after MR !372 merged and Flux took back GitOps control, the V1 patched pod on `cblevins-7900xtx` degraded under sustained operation and entered a CrashLoopBackOff cycle:
+
+- Initial canary pod (`gemma4-26b-a4b-gptq-59b7696c8f-z2dxh`) was stable when MR !372 merged — `Running 1/1, 0 restarts`. Smokes and benchmarks all passed against this pod.
+- After the Flux pause annotation was removed (so GitOps would resume managing the resource), a new ReplicaSet (`6845f676`) was created and the original pod was replaced. Likely cause: Flux applied a label/annotation diff that triggered a Deployment rollout.
+- The new pod attempted to init the V1 patched runtime image. Across the next ~30-40 min the pod accumulated **11 restarts** and never reached Ready. Each restart re-ran AITER JIT build + Triton kernel compile + vLLM engine init from cold, but did not survive past readiness.
+- A health-check smoke against `gemma4-26b-7900xtx` hung for **905 seconds** before failing without `choices` in the response — evidence the engine was non-responsive throughout the window.
+- Production traffic for shared aliases (`quality-chat`, `project-mgmt`, etc.) continued to be served by the `gemma4-26b-a4b-gptq-5930k` sister, which never left V0. Service was not fully down, but the 7900xtx half of the round-robin was effectively unavailable for ~45 min.
+
+**Rollback executed**:
+- Flux paused on Model + ModelCache.
+- `spec.image` patched back to V0 digest `sha256:69569cb...`.
+- Crashlooping pod force-deleted to trigger a fresh V0 boot.
+- Recovery watcher in flight; production should restore on V0 within ~13 min cold-load.
+
+**GitOps revert** (this MR): manifest reverts to V0 digest so the gitops source of truth matches the (rolled-back) live state.
+
+### Hypothesis on what changed
+
+The initial canary boot succeeded because the pod was created by my direct kubectl image patch — a single Deployment update that didn't trigger any of Flux's reconciliation logic. The pod ran cleanly for ~30 min under that state.
+
+When MR !372 merged and the Flux pause annotation was removed, Flux's reconciliation likely applied annotation/label diffs that the controller treats as a generation bump → new ReplicaSet → fresh pod cold-load. The cold-load on the V1 path is significantly more complex than V0 (AITER JIT build, Triton MoE kernel compile, vLLM 0.19's custom fusions) and apparently is racey enough that the readiness probe times out → kubelet restart → loop.
+
+The "first boot worked" pattern is consistent with this: the JIT-compiled kernels were already cached on the node from the canary run, so the first kubectl-driven pod hit a warm cache. The Flux-driven recreate may have invalidated the cache (different image-pull semantics, ephemeral storage cleanup, etc.) and the cold-load wasn't survivable within the readiness probe timeout.
+
+### Open questions
+
+1. Why did Flux trigger a Deployment rollout when the spec field that changed (annotation) shouldn't have affected the PodSpec? Need to inspect the Deployment generation count and the actual diff Flux applied.
+2. Can the readiness probe timeout be increased to give the V1 cold-load more room? `coldStartTimeout: 15m` is set on the Model CR but the kubelet probe periodSeconds + failureThreshold may be tighter.
+3. Why did AITER even try to JIT build when `VLLM_ROCM_USE_AITER=0`? The image was built without AITER, but vLLM 0.19's import path apparently triggers it anyway.
+4. Is there a simpler workaround — e.g. pre-warming JIT caches into the image at build time so cold-load is fast?
+
+### Forward path
+
+The patch script (`build/scripts/patch_vllm_rocm_rms_norm_dtype.py`, !371) is still good — it correctly fixed the rms_norm dtype issue. The image (sha256:737ac1ba) is structurally OK — it boots and serves cleanly in the right conditions. The failure mode is *cold-load latency* under Flux-driven recreates, not a correctness bug.
+
+Slice 7 production promotion stays on hold pending investigation of the cold-load survivability:
+- **Option Z1**: increase Model CR's readiness probe tolerance (longer initial delay, higher failureThreshold) and retry the promotion.
+- **Option Z2**: pre-warm AITER + Triton kernel caches into the image (build-time JIT) so cold-load skips most of the slow path.
+- **Option Z3**: keep both instances on V0 indefinitely; flip back to "validation only, no production promotion" until Wave 2.
+
+Wave 1 closure now reverts to: Slices 1, 2 shipped + the rms_norm patch + the falsification + rollback evidence. Slices 3-7 are validated-but-unpromoted.
