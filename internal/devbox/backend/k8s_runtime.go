@@ -138,8 +138,15 @@ func (k *K8sBackend) Exec(_ context.Context, opts ExecOpts) (*ExecResult, error)
 				DurationMs: durationMs,
 			}, nil
 		}
-		// Extract exit code from error message if possible
+		// Extract exit code from error message if possible. parseExitCode
+		// returns 1 as a default when it can't find an "exit code N" in
+		// the error — the cases that produce that fallback (pod gone,
+		// container terminating, exec channel rejected, etc.) are exactly
+		// the ones an operator needs to see, so preserve the original
+		// streamErr text in stderrBuf when neither buffer captured
+		// anything from the command itself.
 		exitCode = parseExitCode(streamErr)
+		surfaceExecStreamError(&stdoutBuf, &stderrBuf, streamErr)
 	}
 
 	maxLines := opts.MaxLines
