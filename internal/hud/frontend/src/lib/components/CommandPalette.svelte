@@ -35,6 +35,7 @@
     { id: 'pause-stream', label: 'Toggle Stream Pause', category: 'Actions', icon: '\u23F8' },
     { id: 'toggle-scanlines', label: 'Toggle CRT Scanlines', category: 'Actions', icon: '\u2588' },
     { id: 'refresh-all', label: 'Refresh All Data', category: 'Actions', icon: '\u21BB' },
+    { id: 'open-audit-drawer', label: 'Open Recent Actions', category: 'Actions', icon: '\u29C9' },
   ];
 
   const allItems = [...panels, ...actions];
