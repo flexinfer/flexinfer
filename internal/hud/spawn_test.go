@@ -100,11 +100,17 @@ func TestBuildAgentCommand(t *testing.T) {
 			agentID:   "spawn-codex-abc123",
 			wantContains: []string{
 				"codex exec",
-				"--full-auto",
+				"--sandbox workspace-write",
+				"--skip-git-repo-check",
 				"--json",
 				"trap",
 				"session-end",
 				"spawn-codex-abc123",
+			},
+			wantNotContains: []string{
+				// --full-auto was removed in codex 0.110+; verify we
+				// don't regress to the deprecated flag.
+				"--full-auto",
 			},
 		},
 		{
