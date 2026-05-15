@@ -28,20 +28,29 @@ metadata:
     flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
-  # 2026-05-14: pinned to `runtime:rocm-gfx1100-gemma4-moe-vectorized` which
-  # rewrites the GEMMA4_MOE_ROCM_REFERENCE_PATCH inner loop to vectorized
-  # form — top_k=8 separate (1,H)@(H,I*2) matmuls collapse into a single
-  # `torch.bmm` per layer per token, then a second bmm for w2. 16 small
-  # kernel launches per token per layer → 2. Measured 5930k decode:
-  # 36.70s mean (was 45.87s with prior sync-hoist) = -20%, -24.9%
-  # cumulative vs the original 48.89s baseline. Gauntlet vs 7900xtx
-  # golden outputs: 5/6 prompts exact-match; the 6th (haiku) diverges at
-  # line 3 due to FP16 reduction-order non-associativity (sum(dim=0)
-  # parallel-reduce vs sequential accumulate). Output is still a valid
-  # 5-7-5 haiku; coherence intact. Build script in
-  # build/scripts/vllm_gemma4_moe_gptq_patch.py. Previous digest
-  # sha256:91debc8e... stays as the 7900xtx pin until this bakes.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:c2c89b330c3f414e23b75f468d94b1d80b512a8d539951645c6971446adf77a1
+  # 2026-05-14: pinned to `runtime:rocm-gfx1100-gemma4-moe-cache-nan-v3` which
+  # is a thin overlay on the vectorize image (sha256:c2c89b33…) adding two
+  # follow-up fixes identified by py-spy profiling
+  # (see .loom/research-26b-5930k-profile-2026-05-14.md):
+  #   B1-LRU: switch GEMMA4_MOE_ROCM_REFERENCE_PATCH cache eviction from
+  #     FIFO to LRU at cap=16. With top_k=8 × {w13,w2} = 16 entries, every
+  #     apply() call was filling the cache exactly to cap and the next call
+  #     evicted the just-inserted entries by insertion order; LRU lets
+  #     skewed-routing hits survive across calls.
+  #   B2: drop the four `.item()` NaN/Inf debug guards in MoeWNA16.apply
+  #     (input + output). Were ~16,800 GPU→CPU syncs per request — pure
+  #     debug, no behavioral need in steady state.
+  # B3a (batched dequant across top_k experts) was attempted and reverted:
+  # peak FP16 intermediate didn't fit alongside gpuMemoryUtilization=0.98.
+  # Measured 5930k decode: 43.76s mean / 200 tokens = 4.57 tok/s vs
+  # vectorize baseline 3.84 tok/s = +19% throughput, −15.9% end-to-end
+  # latency. Gauntlet vs 7900xtx goldens: 6/6 exact-match (including
+  # haiku, which drifted under vectorize's parallel sum reduction).
+  # Build: thin overlay built from /tmp/cache-nan-overlay/Dockerfile +
+  # hand-edited moe_wna16.py. Patch script in
+  # build/scripts/vllm_gemma4_moe_gptq_patch.py carries the same changes
+  # so future full rebuilds via gfx1100-gemma4-experimental pick them up.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:1066e8665e9aeadfa3e79a9f71c5b5ec94ea3acbd7550a646bce5481a75af07d
   # Source = the 5930k OCI-pull cache PVC. The OCI artifact was pushed via
   # `oras push` from inside the `gptq-w4-g128-attnfp16-clean/` directory on
   # cblevins-7900xtx, so the 42-file artifact landed FLAT under the modelPath
