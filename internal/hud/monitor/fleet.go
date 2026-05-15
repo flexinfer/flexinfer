@@ -30,6 +30,11 @@ type FleetSnapshot struct {
 	Sessions       []bridge.SessionInfo `json:"sessions"`
 	ActiveSessions int                  `json:"active_sessions"`
 	TotalSessions  int                  `json:"total_sessions"`
+	// StaleSessions counts active sessions whose joined presence has not
+	// heartbeated past fleetStaleSessionReapAfter. These were dropped from
+	// Sessions for the current snapshot and a background reaper has been
+	// dispatched to call agent_session_end on them.
+	StaleSessions int `json:"stale_sessions"`
 
 	// Task summary
 	TotalTasks   int               `json:"total_tasks"`
@@ -131,6 +136,21 @@ const fleetOrphanReapAfter = 10 * time.Minute
 // refresh will queue it again.
 const fleetOrphanReapCooldown = 2 * time.Minute
 
+// fleetStaleSessionReapAfter is how long an "active" session may exist
+// without a fresh heartbeat from its agent before the fleet monitor
+// calls agent_session_end on it. Defense-in-depth against zombie
+// sessions left behind when a vendor CLI is killed without firing its
+// SessionEnd/Stop hook, or when a Mills spawn pod is deleted before
+// reapTerminalSpawn completes the EndSession call. Matches
+// fleetOrphanReapAfter so both reapers age out on the same horizon.
+const fleetStaleSessionReapAfter = 10 * time.Minute
+
+// fleetStaleSessionReapCooldown mirrors fleetOrphanReapCooldown — once
+// agent_session_end has been attempted, skip retries for this long so
+// a stuck MCP call doesn't flood the agent-context server on every 5s
+// refresh.
+const fleetStaleSessionReapCooldown = 2 * time.Minute
+
 // FleetMonitor aggregates data from the daemon client and agent bridge
 // into a FleetSnapshot. It runs a background goroutine that polls all
 // data sources at a configurable interval.
@@ -155,6 +175,12 @@ type FleetMonitor struct {
 	// call is still in flight or recently failed.
 	orphanReapedAt map[string]time.Time
 
+	// Stale session reap dedup: session_id -> time of last
+	// agent_session_end attempt. Same rationale as orphanReapedAt: a single
+	// end call is enough; later refreshes should not pile on while the
+	// previous attempt is in flight.
+	staleSessionReapedAt map[string]time.Time
+
 	// KPI counters -- daily aggregate metrics.
 	kpis KPICounters
 
@@ -166,10 +192,11 @@ type FleetMonitor struct {
 // NewFleetMonitor creates a FleetMonitor backed by the given caller and agent bridge.
 func NewFleetMonitor(client bridge.Caller, agent *bridge.AgentBridge, logger *slog.Logger) *FleetMonitor {
 	m := &FleetMonitor{
-		client:           client,
-		agent:            agent,
-		notifiedHandoffs: make(map[string]bool),
-		orphanReapedAt:   make(map[string]time.Time),
+		client:               client,
+		agent:                agent,
+		notifiedHandoffs:     make(map[string]bool),
+		orphanReapedAt:       make(map[string]time.Time),
+		staleSessionReapedAt: make(map[string]time.Time),
 	}
 	m.InitBase(logger, nil, "fleet-monitor")
 	return m
@@ -204,6 +231,70 @@ func (m *FleetMonitor) reapOrphans(agentIDs []string) {
 		m.Logger.Info("fleet: reaped orphan presence",
 			"agent_id", agentID,
 			"reap_after_seconds", int(fleetOrphanReapAfter.Seconds()))
+	}
+}
+
+// staleSessionRef captures the data needed to end a single stale
+// session. We keep heartbeat age around for log breadcrumbs.
+type staleSessionRef struct {
+	SessionID           string
+	AgentID             string
+	HeartbeatAgeSeconds int
+}
+
+// reapStaleSessions ends sessions whose joined presence has not
+// heartbeated past fleetStaleSessionReapAfter. Runs in a goroutine so
+// the fleet refresh path stays non-blocking; each candidate is gated
+// by a per-session cooldown so a stuck MCP call doesn't flood retries.
+// On success the session disappears from agent_session_list on the
+// next refresh; we also drop it from the current snapshot so the UI
+// count is correct immediately.
+func (m *FleetMonitor) reapStaleSessions(refs []staleSessionRef) {
+	now := time.Now()
+	for _, ref := range refs {
+		if m.agent == nil {
+			return
+		}
+		if ref.SessionID == "" {
+			continue
+		}
+		m.Lock()
+		last, seen := m.staleSessionReapedAt[ref.SessionID]
+		if seen && now.Sub(last) < fleetStaleSessionReapCooldown {
+			m.Unlock()
+			continue
+		}
+		m.staleSessionReapedAt[ref.SessionID] = now
+		m.Unlock()
+
+		// Suppress the summarization roundtrip — a stale session's
+		// agent is already gone, so there is no meaningful working
+		// context to harvest and we don't want to pay the recall
+		// budget on a zombie.
+		summarize := false
+		ended, err := m.agent.EndSession(bridge.SessionEndParams{
+			SessionID: ref.SessionID,
+			AgentID:   ref.AgentID,
+			Summarize: &summarize,
+		})
+		if err != nil {
+			m.Logger.Warn("fleet: stale session reap failed",
+				"session_id", ref.SessionID,
+				"agent_id", ref.AgentID,
+				"heartbeat_age_seconds", ref.HeartbeatAgeSeconds,
+				"error", err)
+			continue
+		}
+		if !ended {
+			// Session was already gone on the MCP side (race with a
+			// SessionEnd hook that finally fired). Nothing to log.
+			continue
+		}
+		m.Logger.Info("fleet: reaped stale session",
+			"session_id", ref.SessionID,
+			"agent_id", ref.AgentID,
+			"heartbeat_age_seconds", ref.HeartbeatAgeSeconds,
+			"reap_after_seconds", int(fleetStaleSessionReapAfter.Seconds()))
 	}
 }
 
@@ -335,18 +426,13 @@ func (m *FleetMonitor) refresh(force bool) error {
 		}
 	}
 
-	// Fetch agent sessions.
+	// Fetch agent sessions. Session counts and totals are recomputed after
+	// the fleetview.Join below so the stale-session filter can drop zombie
+	// sessions (no fresh heartbeat) from the snapshot in a single pass.
 	if sessions, err := m.agent.Sessions(); err != nil {
 		m.Logger.Warn("fleet: failed to fetch sessions", "error", err)
 	} else {
 		snap.Sessions = sessions
-		snap.TotalSessions = len(sessions)
-		for _, s := range sessions {
-			if s.Status == "active" {
-				snap.ActiveSessions++
-			}
-			snap.TotalTokens += s.TotalTokens
-		}
 	}
 
 	// Fetch all tasks.
@@ -397,13 +483,86 @@ func (m *FleetMonitor) refresh(force bool) error {
 		}
 	}
 
-	// Fetch agent presence.
+	// Fetch agent presence. We keep the raw slice around so the
+	// stale-session filter below can compute heartbeat ages without
+	// having to call fleetview.Join twice (the first join would already
+	// have synthesized session-only rows for sessions we're about to
+	// drop, which would then leak back through a second join).
+	var rawAgents []presence.PresenceInfo
 	if agents, err := m.agent.PresenceList(true); err != nil {
 		m.Logger.Warn("fleet: failed to fetch presence", "error", err)
 	} else {
-		snap.Agents = agents
+		rawAgents = agents
 	}
-	snap.Agents = fleetview.Join(snap.Agents, snap.Sessions, snap.UpdatedAt)
+
+	// Stale-session filter: identify sessions whose backing agent has
+	// not heartbeated past fleetStaleSessionReapAfter, drop them from
+	// the snapshot, and dispatch a background reaper to call
+	// agent_session_end on each. Heartbeat lookup precedence:
+	//   1. raw presence keyed by session_id (most precise),
+	//   2. raw presence keyed by agent_id,
+	//   3. session.StartedAt as a fallback when no presence row exists
+	//      at all — in that case the session has been alive for its
+	//      entire life without any liveness signal, so its own age is
+	//      the correct staleness clock.
+	heartbeatBySession := make(map[string]int, len(rawAgents))
+	heartbeatByAgent := make(map[string]int, len(rawAgents))
+	for _, p := range rawAgents {
+		age := fleetview.AgeSeconds(p.LastHeartbeat, snap.UpdatedAt)
+		if p.SessionID != "" {
+			heartbeatBySession[p.SessionID] = age
+		}
+		if p.AgentID != "" {
+			// Prefer the freshest heartbeat we can find for this
+			// agent when multiple presence rows exist (shouldn't
+			// happen in practice, but the MCP server doesn't enforce
+			// uniqueness for our purposes).
+			if existing, ok := heartbeatByAgent[p.AgentID]; !ok || age < existing {
+				heartbeatByAgent[p.AgentID] = age
+			}
+		}
+	}
+	reapThresholdSeconds := int(fleetStaleSessionReapAfter.Seconds())
+	liveSessions := snap.Sessions[:0]
+	var staleSessions []staleSessionRef
+	for _, s := range snap.Sessions {
+		isActive := s.Status == "active"
+		age, ok := heartbeatBySession[s.ID]
+		if !ok {
+			age, ok = heartbeatByAgent[s.AgentID]
+		}
+		if !ok {
+			age = fleetview.AgeSeconds(s.StartedAt, snap.UpdatedAt)
+		}
+		if isActive && age >= reapThresholdSeconds {
+			snap.StaleSessions++
+			staleSessions = append(staleSessions, staleSessionRef{
+				SessionID:           s.ID,
+				AgentID:             s.AgentID,
+				HeartbeatAgeSeconds: age,
+			})
+			continue
+		}
+		liveSessions = append(liveSessions, s)
+		if isActive {
+			snap.ActiveSessions++
+		}
+		snap.TotalTokens += s.TotalTokens
+	}
+	snap.Sessions = liveSessions
+	snap.TotalSessions = len(snap.Sessions)
+	if len(staleSessions) > 0 {
+		go m.reapStaleSessions(staleSessions)
+	}
+
+	// Join raw presence against the filtered session list. Sessions
+	// reaped above don't produce synthetic session-only agent rows here,
+	// and presence rows that previously matched a now-stale session
+	// revert to presence-only (and may be picked up by the orphan
+	// reaper on a later refresh if they keep heartbeating without
+	// re-establishing a session).
+	snap.Agents = fleetview.Join(rawAgents, snap.Sessions, snap.UpdatedAt)
+
 	var reapCandidates []string
 	for _, a := range snap.Agents {
 		switch a.Status {

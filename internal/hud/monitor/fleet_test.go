@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -390,5 +391,250 @@ func TestFleetMonitor_ConcurrentRefreshesCollapse(t *testing.T) {
 
 	if got := statusCalls.Load(); got != 1 {
 		t.Fatalf("expected only one in-flight status call, got %d", got)
+	}
+}
+
+// TestFleetMonitor_StaleSessionReaper exercises the defense-in-depth
+// reaper that ends sessions whose backing agent has gone silent.
+// Three scenarios in one refresh:
+//
+//   - "sess-live": fresh heartbeat → stays, counted active.
+//   - "sess-stale-with-presence": heartbeat ~15 min old → reaped, dropped,
+//     agent_session_end called.
+//   - "sess-no-presence-old": no presence row, session_started_at ~20 min
+//     ago → reaped on session-age fallback.
+//
+// Non-active sessions are NOT reaped (already ended on MCP side).
+func TestFleetMonitor_StaleSessionReaper(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	client, agent := newBridges(t, sockPath)
+
+	now := time.Now().UTC()
+	staleHeartbeat := now.Add(-15 * time.Minute).Format(time.RFC3339Nano)
+	freshHeartbeat := now.Add(-30 * time.Second).Format(time.RFC3339Nano)
+	oldStart := now.Add(-20 * time.Minute).Format(time.RFC3339Nano)
+	freshStart := now.Add(-5 * time.Minute).Format(time.RFC3339Nano)
+
+	var endedSessions []string
+	var endedMu sync.Mutex
+
+	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
+		return status.DaemonRPCStatus{Running: true, Servers: 1}, nil
+	})
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, err
+		}
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return toolEnvelope(map[string]any{
+				"sessions": []map[string]any{
+					{
+						"id": "sess-live", "agent_id": "agent-live",
+						"status": "active", "started_at": freshStart, "total_tokens": 100,
+					},
+					{
+						"id": "sess-stale-with-presence", "agent_id": "agent-stale",
+						"status": "active", "started_at": freshStart, "total_tokens": 50,
+					},
+					{
+						"id": "sess-no-presence-old", "agent_id": "agent-missing",
+						"status": "active", "started_at": oldStart, "total_tokens": 25,
+					},
+					{
+						"id": "sess-idle-stale", "agent_id": "agent-idle",
+						"status": "idle", "started_at": oldStart, "total_tokens": 10,
+					},
+				},
+			}), nil
+		case "agent_context__agent_presence_list":
+			return toolEnvelope(map[string]any{
+				"agents": []map[string]any{
+					{
+						"agent_id": "agent-live", "session_id": "sess-live",
+						"status": "active", "last_heartbeat": freshHeartbeat,
+					},
+					{
+						"agent_id": "agent-stale", "session_id": "sess-stale-with-presence",
+						"status": "active", "last_heartbeat": staleHeartbeat,
+					},
+				},
+			}), nil
+		case "agent_context__agent_session_end":
+			var args struct {
+				SessionID string `json:"session_id"`
+			}
+			_ = json.Unmarshal(req.Arguments, &args)
+			endedMu.Lock()
+			endedSessions = append(endedSessions, args.SessionID)
+			endedMu.Unlock()
+			return toolEnvelope(map[string]any{"ok": true}), nil
+		case "agent_context__agent_presence_deregister":
+			return toolEnvelope(map[string]any{"ok": true}), nil
+		case "agent_context__agent_task_list":
+			return toolEnvelope(map[string]any{"tasks": []map[string]any{}}), nil
+		case "agent_context__agent_memory_stats":
+			return toolEnvelope(map[string]any{"total_items": 0, "total_tokens": 0}), nil
+		case "agent_context__agent_graph_stats":
+			return toolEnvelope(map[string]any{"entity_count": 0, "relation_count": 0}), nil
+		case "agent_context__agent_workflow_list":
+			return toolEnvelope(map[string]any{"workflows": []map[string]any{}}), nil
+		case "agent_context__agent_file_claim_list":
+			return toolEnvelope(map[string]any{"claims": []map[string]any{}}), nil
+		case "agent_context__agent_worktree_list":
+			return toolEnvelope(map[string]any{"assignments": []map[string]any{}}), nil
+		case "agent_context__agent_handoff_inbox":
+			return toolEnvelope(map[string]any{"handoffs": []map[string]any{}}), nil
+		default:
+			return nil, fmt.Errorf("unexpected tool: %s", req.Name)
+		}
+	})
+
+	monitor := NewFleetMonitor(client, agent, nil)
+	if err := monitor.Refresh(); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	snap := monitor.Snapshot()
+	if snap.ActiveSessions != 1 {
+		t.Fatalf("expected 1 active session after stale reap, got %d (sessions=%+v)",
+			snap.ActiveSessions, snap.Sessions)
+	}
+	if snap.StaleSessions != 2 {
+		t.Fatalf("expected 2 stale sessions, got %d", snap.StaleSessions)
+	}
+	if snap.TotalSessions != 2 {
+		// sess-live (active, fresh) + sess-idle-stale (non-active, kept).
+		t.Fatalf("expected TotalSessions=2 after reap, got %d", snap.TotalSessions)
+	}
+	if snap.TotalTokens != 110 {
+		t.Fatalf("expected TotalTokens=110 after reap, got %d", snap.TotalTokens)
+	}
+	for _, s := range snap.Sessions {
+		if s.ID == "sess-stale-with-presence" || s.ID == "sess-no-presence-old" {
+			t.Fatalf("expected stale session %s to be dropped from snapshot", s.ID)
+		}
+	}
+
+	// Reaper runs in a goroutine; allow up to 2s for both end calls.
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		endedMu.Lock()
+		n := len(endedSessions)
+		endedMu.Unlock()
+		if n >= 2 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	endedMu.Lock()
+	defer endedMu.Unlock()
+	if len(endedSessions) != 2 {
+		t.Fatalf("expected 2 agent_session_end calls, got %d: %v",
+			len(endedSessions), endedSessions)
+	}
+	got := map[string]bool{}
+	for _, id := range endedSessions {
+		got[id] = true
+	}
+	if !got["sess-stale-with-presence"] || !got["sess-no-presence-old"] {
+		t.Fatalf("expected reaper to end stale sessions, got: %v", endedSessions)
+	}
+	if got["sess-live"] {
+		t.Fatal("reaper unexpectedly ended a fresh session")
+	}
+	if got["sess-idle-stale"] {
+		t.Fatal("reaper unexpectedly ended a non-active session")
+	}
+}
+
+// TestFleetMonitor_StaleSessionReaperCooldown verifies that the
+// per-session cooldown prevents a hot loop of agent_session_end calls
+// when the MCP-side cleanup hasn't yet propagated back to
+// agent_session_list.
+func TestFleetMonitor_StaleSessionReaperCooldown(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	client, agent := newBridges(t, sockPath)
+
+	now := time.Now().UTC()
+	staleHeartbeat := now.Add(-15 * time.Minute).Format(time.RFC3339Nano)
+	freshStart := now.Add(-5 * time.Minute).Format(time.RFC3339Nano)
+
+	var endCalls atomic.Int32
+
+	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
+		return status.DaemonRPCStatus{Running: true}, nil
+	})
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, err
+		}
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return toolEnvelope(map[string]any{
+				"sessions": []map[string]any{
+					{"id": "sess-zombie", "agent_id": "agent-zombie",
+						"status": "active", "started_at": freshStart},
+				},
+			}), nil
+		case "agent_context__agent_presence_list":
+			return toolEnvelope(map[string]any{
+				"agents": []map[string]any{
+					{"agent_id": "agent-zombie", "session_id": "sess-zombie",
+						"status": "active", "last_heartbeat": staleHeartbeat},
+				},
+			}), nil
+		case "agent_context__agent_session_end":
+			endCalls.Add(1)
+			return toolEnvelope(map[string]any{"ok": true}), nil
+		case "agent_context__agent_presence_deregister":
+			return toolEnvelope(map[string]any{"ok": true}), nil
+		case "agent_context__agent_task_list":
+			return toolEnvelope(map[string]any{"tasks": []map[string]any{}}), nil
+		case "agent_context__agent_memory_stats":
+			return toolEnvelope(map[string]any{"total_items": 0, "total_tokens": 0}), nil
+		case "agent_context__agent_graph_stats":
+			return toolEnvelope(map[string]any{"entity_count": 0, "relation_count": 0}), nil
+		case "agent_context__agent_workflow_list":
+			return toolEnvelope(map[string]any{"workflows": []map[string]any{}}), nil
+		case "agent_context__agent_file_claim_list":
+			return toolEnvelope(map[string]any{"claims": []map[string]any{}}), nil
+		case "agent_context__agent_worktree_list":
+			return toolEnvelope(map[string]any{"assignments": []map[string]any{}}), nil
+		case "agent_context__agent_handoff_inbox":
+			return toolEnvelope(map[string]any{"handoffs": []map[string]any{}}), nil
+		default:
+			return nil, fmt.Errorf("unexpected tool: %s", req.Name)
+		}
+	})
+
+	monitor := NewFleetMonitor(client, agent, nil)
+	if err := monitor.Refresh(); err != nil {
+		t.Fatalf("refresh #1: %v", err)
+	}
+	if err := monitor.RefreshForce(); err != nil {
+		t.Fatalf("refresh #2: %v", err)
+	}
+	if err := monitor.RefreshForce(); err != nil {
+		t.Fatalf("refresh #3: %v", err)
+	}
+
+	deadline := time.Now().Add(750 * time.Millisecond)
+	for time.Now().Before(deadline) && endCalls.Load() == 0 {
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(150 * time.Millisecond)
+
+	// 3 refreshes saw the same stale session; cooldown keeps end calls at 1.
+	if got := endCalls.Load(); got != 1 {
+		t.Fatalf("expected 1 session_end call across 3 refreshes (cooldown), got %d", got)
 	}
 }
