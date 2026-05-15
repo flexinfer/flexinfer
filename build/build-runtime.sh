@@ -136,7 +136,7 @@ build_profile() {
     local include_bitsandbytes transformers_constraint transformers_install_mode transformers_repo transformers_ref
     local transformers_package transformers_runtime_install
     local vllm_install_mode vllm_version vllm_extra_index_url vllm_repo vllm_ref vllm_source_patch_script
-    local vllm_extra_deps_profile install_qwen35_fastpath
+    local vllm_extra_deps_profile install_qwen35_fastpath skip_gemma4_moe_patch
     local turboquant_install_mode turboquant_version turboquant_repo turboquant_ref turboquant_source_patch_script
     include_bitsandbytes=$(pcfg "${profile}" "include_bitsandbytes" "false")
     transformers_constraint=$(pcfg "${profile}" "transformers_constraint" ">=5.0")
@@ -173,6 +173,7 @@ build_profile() {
     vllm_source_patch_script=$(pcfg "${profile}" "vllm_source_patch_script" "")
     vllm_extra_deps_profile=$(pcfg "${profile}" "vllm_extra_deps_profile" "full")
     install_qwen35_fastpath=$(pcfg "${profile}" "install_qwen35_fastpath" "true")
+    skip_gemma4_moe_patch=$(pcfg "${profile}" "skip_gemma4_moe_patch" "false")
     turboquant_install_mode=$(pcfg "${profile}" "turboquant_install_mode" "none")
     turboquant_version=$(pcfg "${profile}" "turboquant_version" "1.4.0")
     turboquant_repo=$(pcfg "${profile}" "turboquant_repo" "https://github.com/Alberto-Codes/turboquant-vllm.git")
@@ -252,6 +253,7 @@ build_profile() {
         "--build-arg" "VLLM_REF=${vllm_ref}"
         "--build-arg" "VLLM_SOURCE_PATCH_SCRIPT=${vllm_source_patch_script}"
         "--build-arg" "VLLM_EXTRA_DEPS_PROFILE=${vllm_extra_deps_profile}"
+        "--build-arg" "SKIP_GEMMA4_MOE_PATCH=${skip_gemma4_moe_patch}"
         "--build-arg" "INSTALL_QWEN35_FASTPATH=${install_qwen35_fastpath}"
         "--build-arg" "INCLUDE_TURBOQUANT=${include_turboquant}"
         "--build-arg" "TURBOQUANT_INSTALL_MODE=${turboquant_install_mode}"
