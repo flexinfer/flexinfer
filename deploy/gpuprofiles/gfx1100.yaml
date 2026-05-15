@@ -33,6 +33,19 @@ spec:
     vllm:
       support: full
       image: registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8
+      # Wave 1 capability matrix backfill (2026-05-15, spec .loom/21-product-spec-vllm-feature-parity-2026-05-15.md).
+      # Schema-only: no controller consumes these fields yet. Encodes current truth at t=0.
+      vllm:
+        v1Engine: supported          # V0 removed in vLLM >=0.18; production target is 0.19.x.
+        piecewiseGraphs: experimental # Gated on upstream vllm-project/vllm#39010, #41622.
+        flashAttention: ck            # CK FA from rocm/vllm-dev Navi base; AOTriton experimental.
+        fusedMoETriton: experimental  # BF16 path works (gemma4.py in 0.19+); INT4 weight-loader unproven.
+        fp8KVEmulation: experimental  # patch_vllm_env_override_torch29.py wires kv_cache_dtype="fp8"; overhead unmeasured.
+        marlinINT4: unsupported       # CUDA-only upstream; turboquant-vllm Tq4 is our INT4 path.
+        defaults:
+          cudagraphMode: "NONE"       # Forced eager until Wave 2 (piecewise graph capture bug closes).
+          enforceEager: true
+          kvCacheDtype: auto
     vllm-omni:
       # vLLM-Omni shares the gfx1100 vLLM build but ships multimodal endpoints.
       # Owns its own per-arch image so the backend rule slice can drop the

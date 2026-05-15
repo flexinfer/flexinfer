@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.1
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: gpuprofiles.ai.flexinfer
 spec:
   group: ai.flexinfer
@@ -80,6 +80,68 @@ spec:
                     support:
                       description: 'Support level: "full", "experimental", or "unsupported".'
                       type: string
+                    vllm:
+                      description: |-
+                        VLLM declares vLLM-specific feature capability per architecture.
+                        Only meaningful when Support != "unsupported" and the backend key is "vllm".
+                        Wave 1 schema-only addition (2026-05-15): consumers come in a follow-up slice.
+                      properties:
+                        defaults:
+                          description: |-
+                            Defaults specifies default engine args injected when this profile is selected.
+                            Wave 1 lands the field; controller consumers come in a follow-up slice.
+                          properties:
+                            cudagraphMode:
+                              description: |-
+                                CudagraphMode is the default --cudagraph-mode engine arg.
+                                One of "NONE", "PIECEWISE", or "FULL".
+                                gfx1100 Wave 1: "NONE" until upstream piecewise capture bugs close.
+                              type: string
+                            enforceEager:
+                              description: EnforceEager forces enforce_eager=true
+                                at the engine level.
+                              type: boolean
+                            kvCacheDtype:
+                              description: |-
+                                KVCacheDtype default. One of "auto", "fp8", "fp8_e4m3", or "fp8_e5m2".
+                                Model CRs may override.
+                              type: string
+                          type: object
+                        flashAttention:
+                          description: |-
+                            FlashAttention reports which FA backend is supported.
+                            One of "ck", "triton", "aotriton", or "none".
+                            gfx1100 today: "ck" with AOTriton experimental.
+                            gfx906 today: "none" (no FA kernel exists for Vega20).
+                          type: string
+                        fp8KVEmulation:
+                          description: |-
+                            FP8KVEmulation reports INT8-with-FP8-scale KV cache emulation support
+                            for arches without native FP8 hardware (RDNA3, Vega20).
+                          type: string
+                        fusedMoETriton:
+                          description: |-
+                            FusedMoETriton reports vLLM-native FusedMoE Triton kernel support
+                            (covers gemma4, mixtral, qwen3-moe, etc.).
+                            gfx1100 BF16: validated via PR #38826 in vLLM 0.19.0.
+                            gfx1100 INT4: experimental (weight-loader path unproven).
+                          type: string
+                        marlinINT4:
+                          description: |-
+                            MarlinINT4 reports Marlin INT4 GEMM kernel support. CUDA-only upstream;
+                            ROCm variants (Conch, rocm_aiter_marlin) ship in newer vLLM versions.
+                            turboquant-vllm Tq4 backend is the current INT4 path on AMD, tracked separately.
+                          type: string
+                        piecewiseGraphs:
+                          description: |-
+                            PiecewiseGraphs reports V1 piecewise CUDA-graph capture support.
+                            gfx1100 as of 2026-05: "experimental" pending upstream vllm-project/vllm#39010 / #41622.
+                          type: string
+                        v1Engine:
+                          description: V1Engine reports vLLM V1 engine support. V0
+                            was removed upstream in vLLM >=0.18.
+                          type: string
+                      type: object
                   required:
                   - support
                   type: object

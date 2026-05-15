@@ -117,6 +117,73 @@ type BackendProfile struct {
 	// Image overrides the default container image for this backend on this architecture.
 	// +optional
 	Image string `json:"image,omitempty"`
+
+	// VLLM declares vLLM-specific feature capability per architecture.
+	// Only meaningful when Support != "unsupported" and the backend key is "vllm".
+	// Wave 1 schema-only addition (2026-05-15): consumers come in a follow-up slice.
+	// +optional
+	VLLM *VLLMCapabilities `json:"vllm,omitempty"`
+}
+
+// VLLMCapabilities declares per-arch vLLM feature support and engine-arg defaults.
+// Each capability field is one of "supported", "experimental", or "unsupported".
+type VLLMCapabilities struct {
+	// V1Engine reports vLLM V1 engine support. V0 was removed upstream in vLLM >=0.18.
+	// +optional
+	V1Engine string `json:"v1Engine,omitempty"`
+
+	// PiecewiseGraphs reports V1 piecewise CUDA-graph capture support.
+	// gfx1100 as of 2026-05: "experimental" pending upstream vllm-project/vllm#39010 / #41622.
+	// +optional
+	PiecewiseGraphs string `json:"piecewiseGraphs,omitempty"`
+
+	// FlashAttention reports which FA backend is supported.
+	// One of "ck", "triton", "aotriton", or "none".
+	// gfx1100 today: "ck" with AOTriton experimental.
+	// gfx906 today: "none" (no FA kernel exists for Vega20).
+	// +optional
+	FlashAttention string `json:"flashAttention,omitempty"`
+
+	// FusedMoETriton reports vLLM-native FusedMoE Triton kernel support
+	// (covers gemma4, mixtral, qwen3-moe, etc.).
+	// gfx1100 BF16: validated via PR #38826 in vLLM 0.19.0.
+	// gfx1100 INT4: experimental (weight-loader path unproven).
+	// +optional
+	FusedMoETriton string `json:"fusedMoETriton,omitempty"`
+
+	// FP8KVEmulation reports INT8-with-FP8-scale KV cache emulation support
+	// for arches without native FP8 hardware (RDNA3, Vega20).
+	// +optional
+	FP8KVEmulation string `json:"fp8KVEmulation,omitempty"`
+
+	// MarlinINT4 reports Marlin INT4 GEMM kernel support. CUDA-only upstream;
+	// ROCm variants (Conch, rocm_aiter_marlin) ship in newer vLLM versions.
+	// turboquant-vllm Tq4 backend is the current INT4 path on AMD, tracked separately.
+	// +optional
+	MarlinINT4 string `json:"marlinINT4,omitempty"`
+
+	// Defaults specifies default engine args injected when this profile is selected.
+	// Wave 1 lands the field; controller consumers come in a follow-up slice.
+	// +optional
+	Defaults *VLLMDefaults `json:"defaults,omitempty"`
+}
+
+// VLLMDefaults specifies per-arch default vLLM engine args.
+type VLLMDefaults struct {
+	// CudagraphMode is the default --cudagraph-mode engine arg.
+	// One of "NONE", "PIECEWISE", or "FULL".
+	// gfx1100 Wave 1: "NONE" until upstream piecewise capture bugs close.
+	// +optional
+	CudagraphMode string `json:"cudagraphMode,omitempty"`
+
+	// EnforceEager forces enforce_eager=true at the engine level.
+	// +optional
+	EnforceEager *bool `json:"enforceEager,omitempty"`
+
+	// KVCacheDtype default. One of "auto", "fp8", "fp8_e4m3", or "fp8_e5m2".
+	// Model CRs may override.
+	// +optional
+	KVCacheDtype string `json:"kvCacheDtype,omitempty"`
 }
 
 // QuantizationProfile declares available quantization formats and their container images.
