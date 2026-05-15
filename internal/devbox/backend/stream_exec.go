@@ -188,6 +188,15 @@ func StreamExec(_ context.Context, clientset kubernetes.Interface, restConfig *r
 			}, nil
 		}
 		exitCode = parseExitCode(streamErr)
+		// See K8sBackend.Exec — same rationale: when no stdout/stderr
+		// got captured but the stream errored out, surface streamErr in
+		// stderr so the failure mode (pod gone, container terminating,
+		// exec rejected) is visible instead of an empty buffer. The
+		// stdout side here is a line-streaming ring buffer so we gate
+		// on totalLines instead of a buffer length.
+		if stderrBuf.Len() == 0 && totalLines == 0 {
+			surfaceExecStreamError(nil, &stderrBuf, streamErr)
+		}
 	}
 
 	// Build tail string from the tail buffer.

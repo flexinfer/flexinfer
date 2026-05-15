@@ -164,6 +164,29 @@ func parseExitCode(err error) int {
 	return 1
 }
 
+// surfaceExecStreamError writes the exec stream error text into stderrBuf
+// when neither buffer captured any output from the command itself. This
+// turns silent failures (pod gone, container terminating, exec channel
+// rejected) into something actionable. Skipped when the buffers already
+// have content — the command's own output takes priority.
+//
+// stdoutBuf may be nil for streaming-exec callers that maintain a tail
+// ring buffer outside; pass nil and gate on your own totalLines counter.
+func surfaceExecStreamError(stdoutBuf, stderrBuf *bytes.Buffer, streamErr error) {
+	if streamErr == nil || stderrBuf == nil {
+		return
+	}
+	if stderrBuf.Len() > 0 {
+		return
+	}
+	if stdoutBuf != nil && stdoutBuf.Len() > 0 {
+		return
+	}
+	stderrBuf.WriteString("exec error: ")
+	stderrBuf.WriteString(streamErr.Error())
+	stderrBuf.WriteByte('\n')
+}
+
 // isNotFound returns true if the error is a K8s "not found" error.
 func isNotFound(err error) bool {
 	if err == nil {

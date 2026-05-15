@@ -1,7 +1,9 @@
 package backend
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -12,6 +14,68 @@ import (
 	k8sfake "k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
 )
+
+func TestSurfaceExecStreamError_EmptyBuffersGetStreamErrText(t *testing.T) {
+	// Mirrors the canary failure: K8s exec stream errors out for a
+	// reason that doesn't include "exit code N" (pod gone, container
+	// terminating). Without surfacing, the operator sees `cmd exited 1
+	// (no output)`. With surfacing, the actual cause lands in stderr.
+	var stdout, stderr bytes.Buffer
+	streamErr := errors.New("pods \"buildah-build-abc\" not found")
+	surfaceExecStreamError(&stdout, &stderr, streamErr)
+	if !strings.Contains(stderr.String(), "pods \"buildah-build-abc\" not found") {
+		t.Errorf("stderr did not capture streamErr: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "exec error:") {
+		t.Errorf("stderr missing 'exec error:' prefix: %q", stderr.String())
+	}
+}
+
+func TestSurfaceExecStreamError_PreservesExistingStderr(t *testing.T) {
+	// When the command itself wrote to stderr before the stream errored,
+	// the command's own output takes priority — we don't bury it under
+	// the exec error.
+	var stdout, stderr bytes.Buffer
+	stderr.WriteString("real error from command\n")
+	surfaceExecStreamError(&stdout, &stderr, errors.New("connection reset"))
+	if strings.Contains(stderr.String(), "exec error:") {
+		t.Errorf("should not overwrite existing stderr: %q", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "real error from command") {
+		t.Errorf("real stderr lost: %q", stderr.String())
+	}
+}
+
+func TestSurfaceExecStreamError_PreservesExistingStdout(t *testing.T) {
+	// Same idea but for stdout — if the command produced output we want
+	// to keep, we don't pollute stderr with a misleading exec-level error
+	// that landed after the command had already started reporting.
+	var stdout, stderr bytes.Buffer
+	stdout.WriteString("partial result\n")
+	surfaceExecStreamError(&stdout, &stderr, errors.New("connection reset"))
+	if stderr.Len() != 0 {
+		t.Errorf("stderr should stay empty when stdout has content: %q", stderr.String())
+	}
+}
+
+func TestSurfaceExecStreamError_NilStreamErrIsNoop(t *testing.T) {
+	var stdout, stderr bytes.Buffer
+	surfaceExecStreamError(&stdout, &stderr, nil)
+	if stderr.Len() != 0 || stdout.Len() != 0 {
+		t.Errorf("nil err should leave buffers untouched, got stdout=%q stderr=%q", stdout.String(), stderr.String())
+	}
+}
+
+func TestSurfaceExecStreamError_NilStdoutBufAllowed(t *testing.T) {
+	// stream_exec.go maintains stdout as a ring buffer outside this helper
+	// and passes nil; the helper must not panic and must still surface
+	// the stream error in stderr.
+	var stderr bytes.Buffer
+	surfaceExecStreamError(nil, &stderr, errors.New("upgrade request failed"))
+	if !strings.Contains(stderr.String(), "upgrade request failed") {
+		t.Errorf("nil stdout path lost streamErr: %q", stderr.String())
+	}
+}
 
 func TestPodFailureReason_Terminated(t *testing.T) {
 	pod := &corev1.Pod{
