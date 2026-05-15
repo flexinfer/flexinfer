@@ -1179,3 +1179,27 @@ func TestVLLMBackendArgs_DisableLogStats(t *testing.T) {
 		t.Error("expected --disable-log-stats when disableLogStats=true")
 	}
 }
+
+func TestVLLMStartupProbe(t *testing.T) {
+	b := &VLLMBackend{}
+	probe := b.StartupProbe()
+	if probe == nil {
+		t.Fatal("StartupProbe() returned nil")
+	}
+	if probe.PeriodSeconds != 2 {
+		t.Errorf("PeriodSeconds = %d, want 2", probe.PeriodSeconds)
+	}
+	if probe.InitialDelaySeconds > 5 {
+		t.Errorf("InitialDelaySeconds = %d, want <= 5", probe.InitialDelaySeconds)
+	}
+	if probe.ProbeHandler.HTTPGet == nil {
+		t.Fatal("expected HTTPGet probe handler")
+	}
+	if probe.ProbeHandler.HTTPGet.Path != "/health" {
+		t.Errorf("HTTPGet.Path = %q, want /health", probe.ProbeHandler.HTTPGet.Path)
+	}
+	// 300s StartupTimeout / 2s period = 150 failures of budget for cold-load
+	if probe.FailureThreshold < 150 {
+		t.Errorf("FailureThreshold = %d, want >= 150 (cold-load budget for 300s startup timeout)", probe.FailureThreshold)
+	}
+}

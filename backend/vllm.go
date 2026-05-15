@@ -309,6 +309,19 @@ func (b *VLLMBackend) ReadinessProbe() *corev1.Probe {
 	return HTTPReadinessProbe("/health", 8000, 10, 10, 5)
 }
 
+// StartupProbe gives vLLM cold-load up to b.StartupTimeout() before kubelet
+// starts running the readiness probe. Added 2026-05-15 after the V1 promotion
+// rollback (!373): vLLM 0.19+ on ROCm gfx1100 has a longer cold-load than V0
+// (AITER JIT, Triton kernel compile, vLLM custom fusions, model weight load)
+// and Flux-driven Deployment recreates can put pods through that full cold
+// path. The startup probe absorbs that variance; once it passes, the
+// readiness probe handles steady-state health.
+//
+// See .loom/slice3-v1-sandbox-rms-norm-falsified-2026-05-15.md (Z1 option).
+func (b *VLLMBackend) StartupProbe() *corev1.Probe {
+	return HTTPStartupProbe("/health", 8000, b.StartupTimeout())
+}
+
 func (b *VLLMBackend) StartupTimeout() time.Duration {
 	return 300 * time.Second
 }
