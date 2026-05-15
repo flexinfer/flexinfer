@@ -879,8 +879,13 @@ func buildAgentCommand(agentType, task, agentID string) string {
 		// The trap is best-effort: if the loom binary is not in the pod PATH,
 		// stderr is suppressed via 2>/dev/null and the HUD-side completeSpawn /
 		// failSpawn will still call EndSession as a fallback.
+		//
+		// --full-auto was deprecated in @openai/codex 0.110+; the supported form
+		// is --sandbox workspace-write. --skip-git-repo-check lets codex run in
+		// the spawn pod's /workspace clone where there is no .git on first
+		// boot (devbox backend clones into the working dir, not /).
 		return fmt.Sprintf(
-			`trap 'loom agent session-end --agent-id %q --summarize --summary-async --quiet 2>/dev/null' EXIT; codex exec --full-auto --json %q`,
+			`trap 'loom agent session-end --agent-id %q --summarize --summary-async --quiet 2>/dev/null' EXIT; codex exec --sandbox workspace-write --skip-git-repo-check --json %q`,
 			agentID, task,
 		)
 	case "gemini":
