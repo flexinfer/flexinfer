@@ -393,6 +393,25 @@ RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ -f /opt/flexinfer/scripts/vllm_gemma4
       echo "vLLM Gemma4 MoE GPTQ patch applied at build time"; \
     fi
 
+# ── Pre-warm vLLM JIT caches at build time (Wave 1 Slice 7 cold-load fix) ──
+# vLLM 0.19+ on ROCm gfx1100 compiles AITER's HIP module + vLLM custom fusions
+# at first import. With cold JIT caches, pod startup can exceed the kubelet
+# readiness probe budget when Flux triggers a Deployment recreate, leading to
+# CrashLoopBackOff. Pre-warming during the Docker build bakes the compiled
+# artifacts into the image layer so cold-loads skip the slow path.
+#
+# Best-effort: failure here (e.g. no ROCm dev tools available, network issue
+# resolving an import) emits a warning but does not fail the build — the
+# runtime can still JIT at startup as a fallback.
+#
+# See .loom/slice3-v1-sandbox-rms-norm-falsified-2026-05-15.md (post-promotion
+# failure section) for the cold-load incident this addresses.
+RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ -f /opt/flexinfer/scripts/prewarm_vllm_jit.py ]; then \
+      echo "Pre-warming vLLM JIT caches..."; \
+      python3 /opt/flexinfer/scripts/prewarm_vllm_jit.py \
+        || echo "WARNING: vLLM JIT prewarm failed; runtime will JIT at pod startup"; \
+    fi
+
 # ── Verify ROCm PyTorch was not replaced by CUDA ────────────────────
 RUN if [ "${GPU_VENDOR}" = "amd" ] && command -v python3 >/dev/null 2>&1; then \
       python3 -c "import torch; assert torch.version.hip is not None, 'CUDA torch detected!'; print('OK: PyTorch', torch.__version__, 'HIP', torch.version.hip)"; \
