@@ -202,6 +202,10 @@ Z1 and Z2 don't help here because the container exits at init (process-level) â€
 
 Adds `SKIP_GEMMA4_MOE_PATCH` build-arg to `Dockerfile.runtime`. When true, the legacy patch RUN block is bypassed entirely. `build/runtime.yaml` `gfx1100-sandbox-019` profile sets `skip_gemma4_moe_patch: true`. Default for all other profiles remains `false` so production runtime images keep their current behavior.
 
+Codex follow-up on the same branch closed the second invocation path: `build/build-runtime.sh` now bakes `SKIP_GEMMA4_MOE_PATCH` into `/etc/flexinfer/runtime.env`, and `runtime-entrypoint.sh` skips the startup-time patch when that flag is true. The patch script itself also refuses to run against installed vLLM `>=0.19.0` unless `FLEXINFER_FORCE_LEGACY_GEMMA4_MOE_PATCH=1` is set, so ad hoc invocation and future Dockerfile paths fail safe.
+
+Brainstorm artifact: `.loom/brainstorm-skip-gemma4-moe-patch-for-sandbox-2026-05-15.md`.
+
 After this lands, sandbox image rebuild + retry V1 swap. With Z1 + Z2 + rms_norm-patch + legacy-patch-skipped all in place, the V1 cold-load should both *succeed* and *survive* Flux recreates.
 
 ### Wave 1 status snapshot

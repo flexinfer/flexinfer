@@ -207,6 +207,7 @@ build_profile() {
     echo "GPU_ARCH=${gpu_arch}" >> "${env_file}"
     echo "FLEXINFER_TRANSFORMERS_PACKAGE=${transformers_package}" >> "${env_file}"
     echo "FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL=${transformers_runtime_install}" >> "${env_file}"
+    echo "SKIP_GEMMA4_MOE_PATCH=${skip_gemma4_moe_patch}" >> "${env_file}"
     local env_keys
     env_keys=$(yq -r ".profiles[\"${profile}\"].env | keys | .[]" "${CONFIG}" 2>/dev/null || true)
     for key in ${env_keys}; do

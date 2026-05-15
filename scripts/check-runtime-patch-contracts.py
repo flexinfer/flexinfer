@@ -37,8 +37,10 @@ COMPILE_ONLY = PATCH_SCRIPTS + (
 
 CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
     "scripts/check-runtime-patch-contracts.py",
+    "build/build-runtime.sh",
     "build/Dockerfile.runtime",
     "build/Dockerfile.runtime-serving",
+    "build/runtime-entrypoint.sh",
     "build/runtime.yaml",
     ".gitlab/ci/runtime-publish.yml",
 )
@@ -142,6 +144,20 @@ def assert_dockerfile_patch_order(dockerfile: str) -> None:
     for token in ("VLLM_SOURCE_PATCH_SCRIPT", "TURBOQUANT_SOURCE_PATCH_SCRIPT"):
         if token not in dockerfile:
             fail(f"Dockerfile.runtime no longer applies {token}")
+
+    if "ARG SKIP_GEMMA4_MOE_PATCH=false" not in dockerfile:
+        fail("Dockerfile.runtime missing SKIP_GEMMA4_MOE_PATCH build arg")
+    if 'if [ "${SKIP_GEMMA4_MOE_PATCH}" = "true" ]; then' not in dockerfile:
+        fail("Dockerfile.runtime no longer gates the Gemma4 MoE patch")
+
+
+def assert_runtime_entrypoint_contract(entrypoint: str, build_script: str) -> None:
+    if "SKIP_GEMMA4_MOE_PATCH=${skip_gemma4_moe_patch}" not in build_script:
+        fail("build-runtime.sh no longer bakes SKIP_GEMMA4_MOE_PATCH into runtime.env")
+    if 'SKIP_GEMMA4_MOE_PATCH:-false' not in entrypoint:
+        fail("runtime-entrypoint.sh no longer respects SKIP_GEMMA4_MOE_PATCH")
+    if "vllm_gemma4_moe_gptq_patch.py" not in entrypoint:
+        fail("runtime-entrypoint.sh no longer wires the Gemma4 MoE patch script")
 
 
 def assert_serving_dockerfile_contract(dockerfile: str) -> None:
@@ -254,12 +270,15 @@ def main(argv: list[str]) -> int:
 
     runtime_yaml = read("build/runtime.yaml")
     dockerfile = read("build/Dockerfile.runtime")
+    build_script = read("build/build-runtime.sh")
+    entrypoint = read("build/runtime-entrypoint.sh")
     serving_dockerfile = read("build/Dockerfile.runtime-serving")
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
     assert_runtime_yaml_patch_refs(runtime_yaml)
     assert_dockerfile_patch_order(dockerfile)
+    assert_runtime_entrypoint_contract(entrypoint, build_script)
     assert_serving_dockerfile_contract(serving_dockerfile)
     assert_ci_fast_check_wiring(ci_yaml)
 

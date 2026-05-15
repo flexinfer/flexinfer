@@ -260,7 +260,9 @@ if command -v python3 >/dev/null 2>&1; then
     # the patch script silently no-ops in that case, but gating here also
     # avoids spawning a python3 process unnecessarily and keeps the warning
     # meaningful: if it fires, vLLM IS present and the patch genuinely failed.
-    if [ -f /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py ] && \
+    if [ "${SKIP_GEMMA4_MOE_PATCH:-false}" = "true" ]; then
+        echo "[entrypoint] Skipping Gemma4 MoE GPTQ patch (SKIP_GEMMA4_MOE_PATCH=true)"
+    elif [ -f /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py ] && \
        python3 -c 'import vllm' >/dev/null 2>&1; then
         python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py || \
             echo "[entrypoint] WARNING: Gemma4 MoE GPTQ patch failed (may already be applied at build time)"
