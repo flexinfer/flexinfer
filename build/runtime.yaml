@@ -135,6 +135,69 @@ profiles:
       FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC_STATUS: planned
     build_context: 7900xtx
 
+  # Wave 1 Slice 2 sandbox profile (spec .loom/21-product-spec-vllm-feature-parity-2026-05-15.md).
+  # Targets vLLM 0.19.1 to validate native gemma4 FusedMoE (merged in 0.19.0 via PR #38826)
+  # so the GEMMA4_MOE_ROCM_REFERENCE_PATCH can be retired for BF16 (V2a) and conditionally
+  # for GPTQ-INT4 (V2b). NOT promoted to GPUProfile / values-runtime / model manifests —
+  # this image is a sandbox-only artifact for Slice 3/4/5 validation.
+  gfx1100-sandbox-019:
+    tag: "runtime:rocm-gfx1100-sandbox-019"
+    promotion:
+      gpuprofile: false
+      values_runtime_profiles: false
+      model_manifests: []
+    gpu_vendor: amd
+    gpu_arch: gfx1100
+    # Same Navi base as the production profile so we inherit the ROCm/PyTorch
+    # stack known to boot on RDNA3, then replace vLLM with the 0.19.x source build.
+    base_image: "rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0"
+    rocm_dev_image: "rocm/dev-ubuntu-24.04:6.4.4"
+    amdgpu_targets: gfx1100
+    backends:
+      vllm: true
+      llamacpp: false
+      ollama: false
+      diffusers: false
+      steam: false
+    include_bitsandbytes: false
+    include_quantizer: false
+    # transformers >= 5.5.0 is required by vLLM 0.19+ for the gemma4 model file
+    # (vllm/model_executor/models/gemma4.py imports transformers.models.gemma4).
+    # R1 risk in the spec: validate against GPTQModel + abliteration pipeline before
+    # promoting; if compat breaks for non-runtime jobs the constraint can split per-profile.
+    transformers_constraint: ">=5.5.0"
+    vllm_install_mode: source
+    vllm_extra_deps_profile: minimal
+    install_qwen35_fastpath: false
+    vllm_repo: "https://github.com/vllm-project/vllm.git"
+    # vLLM v0.19.1 (2026-05 patch release). Commit sha verified via:
+    #   git ls-remote https://github.com/vllm-project/vllm.git refs/tags/v0.19.1
+    # v0.19.0 (commit 2a69949bdadf0e8942b7a1619b229cb475beef20) was the release that
+    # merged native gemma4 FusedMoE (PR #38826); 0.19.1 carries the bugfix tail.
+    vllm_ref: "b1388b1fbf5aaef47937fabe98931211684666a6"
+    # No source patch script — the whole point of this sandbox is to validate that
+    # GEMMA4_MOE_ROCM_REFERENCE_PATCH is no longer needed against upstream native
+    # FusedMoE on gfx1100. Slice 4/5 canaries decide whether to retire the patch
+    # entirely or keep it as a rebased fallback for the INT4 weight-loader path.
+    env:
+      ROCM_PATH: /opt/rocm
+      HIP_PATH: /opt/rocm
+      HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+      PYTORCH_ROCM_ARCH: gfx1100
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+      HIP_FORCE_DEV_KERNARG: "1"
+      TORCH_BLAS_PREFER_HIPBLASLT: "1"
+      # AITER stays off — MI300X-tuned, not RDNA3 (per Dockerfile.vllm-* comments).
+      VLLM_ROCM_USE_AITER: "0"
+      VLLM_TARGET_DEVICE: rocm
+      MIOPEN_FIND_MODE: "2"
+      PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512"
+      # V1 engine on 0.19 is mandatory (V0 removed in >=0.18).
+      # Force eager mode until upstream piecewise-graph bugs (#39010, #41622) close.
+      # Wave 2 will flip this to PIECEWISE.
+      VLLM_USE_V1: "1"
+    build_context: 7900xtx
+
   gfx1100-gemma4-turboquant-experimental:
     tag: "runtime:rocm-gfx1100-gemma4-turboquant-experimental"
     promotion:
