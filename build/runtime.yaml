@@ -175,10 +175,16 @@ profiles:
     # v0.19.0 (commit 2a69949bdadf0e8942b7a1619b229cb475beef20) was the release that
     # merged native gemma4 FusedMoE (PR #38826); 0.19.1 carries the bugfix tail.
     vllm_ref: "b1388b1fbf5aaef47937fabe98931211684666a6"
-    # No source patch script — the whole point of this sandbox is to validate that
-    # GEMMA4_MOE_ROCM_REFERENCE_PATCH is no longer needed against upstream native
-    # FusedMoE on gfx1100. Slice 4/5 canaries decide whether to retire the patch
-    # entirely or keep it as a rebased fallback for the INT4 weight-loader path.
+    # Single source patch (added 2026-05-15 after live swap falsification):
+    # vLLM 0.19's RMSNorm.forward_hip() calls the ROCm rms_norm C++ custom op,
+    # which rejects FP16/BF16 weights with "expected scalar type Float but
+    # found Half". Patch routes forward_hip → forward_native (pure-PyTorch
+    # path that handles any dtype). Remove when upstream vllm-project/vllm
+    # fixes the dtype mismatch. Falsification doc:
+    #   .loom/slice3-v1-sandbox-rms-norm-falsified-2026-05-15.md
+    # The GEMMA4_MOE_ROCM_REFERENCE_PATCH is intentionally NOT applied here —
+    # Slice 4/5 canaries validate that upstream native FusedMoE supplants it.
+    vllm_source_patch_script: "build/scripts/patch_vllm_rocm_rms_norm_dtype.py"
     env:
       ROCM_PATH: /opt/rocm
       HIP_PATH: /opt/rocm
