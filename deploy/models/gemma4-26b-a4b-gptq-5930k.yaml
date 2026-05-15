@@ -28,29 +28,21 @@ metadata:
     flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
-  # 2026-05-14: pinned to `runtime:rocm-gfx1100-gemma4-moe-cache-nan-v3` which
-  # is a thin overlay on the vectorize image (sha256:c2c89b33…) adding two
-  # follow-up fixes identified by py-spy profiling
-  # (see .loom/research-26b-5930k-profile-2026-05-14.md):
-  #   B1-LRU: switch GEMMA4_MOE_ROCM_REFERENCE_PATCH cache eviction from
-  #     FIFO to LRU at cap=16. With top_k=8 × {w13,w2} = 16 entries, every
-  #     apply() call was filling the cache exactly to cap and the next call
-  #     evicted the just-inserted entries by insertion order; LRU lets
-  #     skewed-routing hits survive across calls.
-  #   B2: drop the four `.item()` NaN/Inf debug guards in MoeWNA16.apply
-  #     (input + output). Were ~16,800 GPU→CPU syncs per request — pure
-  #     debug, no behavioral need in steady state.
-  # B3a (batched dequant across top_k experts) was attempted and reverted:
-  # peak FP16 intermediate didn't fit alongside gpuMemoryUtilization=0.98.
-  # Measured 5930k decode: 43.76s mean / 200 tokens = 4.57 tok/s vs
-  # vectorize baseline 3.84 tok/s = +19% throughput, −15.9% end-to-end
-  # latency. Gauntlet vs 7900xtx goldens: 6/6 exact-match (including
-  # haiku, which drifted under vectorize's parallel sum reduction).
-  # Build: thin overlay built from /tmp/cache-nan-overlay/Dockerfile +
-  # hand-edited moe_wna16.py. Patch script in
-  # build/scripts/vllm_gemma4_moe_gptq_patch.py carries the same changes
-  # so future full rebuilds via gfx1100-gemma4-experimental pick them up.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:1066e8665e9aeadfa3e79a9f71c5b5ec94ea3acbd7550a646bce5481a75af07d
+  # 2026-05-15: pinned to `runtime:rocm-gfx1100-gemma4-moe-r3-cap24`, a thin
+  # overlay on cache-nan-v3 (sha256:1066e8665…) that raises the per-layer
+  # MoE-dequant cache cap from 16 -> 24 (R3 from the round-2 brainstorm).
+  # Instrumentation showed steady-state hit rate ~44% at cap=16 with
+  # top16_share=50% / top32_share=70% expert reuse, so cap=24 captures
+  # ~60% of expert references. cap=32 would gain ~3% more but failed the
+  # vLLM startup KV-block memory budget check at gpu_memory_util=0.96.
+  # Measured 5930k decode: 40.39s mean / 200 tokens = 4.95 tok/s vs the
+  # cache-nan baseline of 4.57 tok/s = +8.3% throughput, −7.7% latency.
+  # Cumulative from original 48.89s baseline: +72% throughput, −42%
+  # latency. Gauntlet vs 7900xtx goldens: 6/6 exact-match.
+  # Build: thin overlay (/tmp/r3-cap24/Dockerfile) on cache-nan-v3.
+  # Patch script in build/scripts/vllm_gemma4_moe_gptq_patch.py carries
+  # the cap=24 change for future full rebuilds.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:3d5acd2390f6a9462df4fda500a3c9e15e4e1122a98e7a0ff0869dcea0980c45
   # Source = the 5930k OCI-pull cache PVC. The OCI artifact was pushed via
   # `oras push` from inside the `gptq-w4-g128-attnfp16-clean/` directory on
   # cblevins-7900xtx, so the 42-file artifact landed FLAT under the modelPath
