@@ -640,16 +640,25 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 		// Per-stage Model + PromptFor closures select agent type and
 		// prompt body; production deployments register richer prompt
 		// builders here once spec doc loaders ship.
+		//
+		// LOOM_MILLS_SPAWN_AGENT overrides the agent type the dispatcher
+		// asks the HUD to spawn for plan_slice/implement/pr_self_review.
+		// Default "claude-code"; set to "codex" or "gemini" when the
+		// preferred agent's auth is unavailable.
+		spawnAgent := os.Getenv("LOOM_MILLS_SPAWN_AGENT")
+		if spawnAgent == "" {
+			spawnAgent = "claude-code"
+		}
 		routes["plan_slice"] = &pipeline.SpawnWorker{
 			Client:    spawn,
-			Model:     "claude-code",
+			Model:     spawnAgent,
 			Project:   project,
 			Namespace: "loom-mills",
 			PromptFor: stagePromptFor("plan_slice"),
 		}
 		routes["implement"] = &pipeline.SpawnWorker{
 			Client:        spawn,
-			Model:         "claude-code",
+			Model:         spawnAgent,
 			Project:       project,
 			Namespace:     "loom-mills",
 			PromptFor:     stagePromptFor("implement"),
@@ -657,7 +666,7 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 		}
 		routes["pr_self_review"] = &pipeline.SpawnWorker{
 			Client:    spawn,
-			Model:     "claude-code",
+			Model:     spawnAgent,
 			Project:   project,
 			Namespace: "loom-mills",
 			PromptFor: stagePromptFor("pr_self_review"),
@@ -665,7 +674,7 @@ func buildDispatcher(cfg Config, flex *clients.FlexInferClient, hub *clients.MCP
 		realStages["plan_slice"] = true
 		realStages["implement"] = true
 		realStages["pr_self_review"] = true
-		logger.Info("plan_slice/implement/pr_self_review stages wired to HUD spawn API")
+		logger.Info("plan_slice/implement/pr_self_review stages wired to HUD spawn API", "agent_type", spawnAgent)
 	} else {
 		logger.Warn("plan_slice/implement/pr_self_review stages stub: NoOpDispatcher (LOOM_HUD_URL+LOOM_HUD_TOKEN unset)")
 	}
