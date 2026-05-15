@@ -27,7 +27,7 @@ import (
 // Pinned CLI versions for reproducible agent container builds.
 const (
 	claudeCodeVersion = "1.0.33"
-	codexVersion      = "0.1.2025062000"
+	codexVersion      = "0.130.0"
 	geminiVersion     = "0.37.1"
 )
 
