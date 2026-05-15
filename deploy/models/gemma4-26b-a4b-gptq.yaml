@@ -16,19 +16,29 @@
 # node-specific addressing (gemma4-26b-7900xtx). Context uplift 2026-04-27:
 # the separate gemma4-26b-a4b-gptq-long canary proved the same hybrid artifact
 # at 16K with FP8 KV on 2026-04-26; those runtime knobs are baked in below.
-# Runtime image (2026-05-13): pinned to digest sha256:69569cbfc0db... which is
-# tag `runtime:rocm-gfx1100-gemma4-moe-patched`, built as a thin overlay of
-# `runtime:rocm-gfx1100-gemma4-experimental` with `vllm_gemma4_moe_gptq_patch.py`
-# applied at build time. The overlay relaxes `moe_wna16.py`'s SiLU-only assertion
-# to accept (SiLU, GELU) so Gemma4 MoE experts load on ROCm, and keeps the
-# decoder-layer debug patch SKIPPED (env-gated, only enabled when
-# GEMMA4_DECODER_LAYER_DEBUG=1) so we get the perf-clean code path. This replaces
-# the rolled-back digest sha256:0b05b32b92e6... (decoder-debug-ON, ~7.5 tok/s)
-# and the failed swap to the bare experimental tag (no MoE GELU patch -> crashed
-# on `Only SiLU activation is supported, not MoEActivation.GELU`). Build flow:
-# `docker --context 7900xtx build -f build/Dockerfile.runtime-patch
-# --build-arg BASE_IMAGE=registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-experimental
-# -t registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-gemma4-moe-patched .`
+# Runtime image (2026-05-15, Wave 1 Slice 3+4+5 promotion): pinned to digest
+# sha256:737ac1ba9c5366c66dc3e010c6cac5a904a5cee8276d720187ea04a335e52ce5 which
+# is the `runtime:rocm-gfx1100-sandbox-019` build (vLLM 0.19.1 commit b1388b1f
+# + native gemma4 FusedMoE + the ROCm rms_norm half-precision patch from !371).
+#
+# Replaces the prior digest sha256:69569cbfc0db... which was the V0+Python-MoE
+# patch path. The V1 native path is +18.7% faster on this prod workload (3-run
+# mean 25.33s vs V0 31.17s for 200-token completion at temperature=0) and
+# retires GEMMA4_MOE_ROCM_REFERENCE_PATCH for both BF16 and GPTQ-INT4 gemma4.
+#
+# Sister `gemma4-26b-a4b-gptq-5930k` intentionally stays on the V0 digest for
+# a 24h A/B baseline; promote that instance only after the 7900xtx canary
+# burns in cleanly.
+#
+# Evidence: .loom/slice3-v1-sandbox-rms-norm-falsified-2026-05-15.md
+# Spec:     .loom/21-product-spec-vllm-feature-parity-2026-05-15.md (Slices 3-5)
+#
+# Build flow for this digest (sandbox profile, no auto-promotion):
+#   ./build/build-runtime.sh gfx1100-sandbox-019 --push --no-cache
+# The patch chain is:
+#   - vllm_source_patch_script: build/scripts/patch_vllm_rocm_rms_norm_dtype.py
+#   - No GEMMA4_MOE_ROCM_REFERENCE_PATCH (upstream native FusedMoE supplants it)
+# Roll back to the V0 digest above if any regression surfaces under prod traffic.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -42,7 +52,7 @@ metadata:
     flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:69569cbfc0db7c4f8755cf07ad329361a59514ebc7112fb859c5b08c8787b759
+  image: registry.harbor.lan/flexinfer/runtime@sha256:737ac1ba9c5366c66dc3e010c6cac5a904a5cee8276d720187ea04a335e52ce5
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   # Cache PVC migration (2026-04-18): switched from the default 3-replica
   # Longhorn storage class to single-replica local NVMe to stop

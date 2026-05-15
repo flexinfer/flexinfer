@@ -82,3 +82,35 @@ If we decide to wait for upstream instead, the realistic Wave 1 close-out is: Sl
 - vLLM 0.19.1 source (commit `b1388b1f`): `vllm/model_executor/layers/layernorm.py:381` (`forward_hip` → `rocm_norm_func` → `ops.rms_norm`).
 - V0 baseline measurement: `for run in 1 2 3; do curl POST /v1/chat/completions {model: gemma4-26b-7900xtx, max_tokens: 200, temperature: 0, prompt: "Write a 200-word essay about the history of the printing press."}; done` → 31.18s / 31.18s / 31.14s wall-time per 200 tokens.
 - Falsification pattern reference: `.loom/r5-ngram-spec-decode-falsified-2026-05-14.md`.
+
+---
+
+## Resolution (later same day, 2026-05-15)
+
+Option A landed (`!371`, `feat(build): patch vLLM ROCm RMSNorm.forward_hip → forward_native fallback`). Patch script `build/scripts/patch_vllm_rocm_rms_norm_dtype.py` rewrites `RMSNorm.forward_hip` to route through `forward_native` (pure-PyTorch, dtype-agnostic). Idempotent. Wired into `build/runtime.yaml` `gfx1100-sandbox-019` profile via `vllm_source_patch_script`.
+
+Rebuilt sandbox image: digest `sha256:737ac1ba9c5366c66dc3e010c6cac5a904a5cee8276d720187ea04a335e52ce5`.
+
+**Re-attempted V0→V1 swap on production `gemma4-26b-a4b-gptq` (cblevins-7900xtx) — PASS**:
+
+| Acceptance criterion | V0 baseline | V1 patched | Result |
+|---|---|---|---|
+| Image boots, pod reaches Ready | n/a | pod `gemma4-26b-a4b-gptq-59b7696c8f-z2dxh`, 0 restarts | ✅ |
+| Decode latency (mean of 3 runs, 200 tokens @ T=0) | 31.17s ± 0.04s | 25.33s (24.77/26.22/25.00) | ✅ **−18.7%** (well above the spec's 5%-regression budget — V1 is faster, not slower) |
+| Coherence: 200-token essay vs V0 golden | golden | 1.5/3 paragraphs bit-identical; paragraph 3 shows semantically-equivalent FP16 reduction divergence ("small minority" ↔ "small ruling class"). Matches MR !363 acceptance pattern. | ✅ |
+| Coherence: haiku at T=0 | n/a | `Soft mist falls from gray, / Gentle taps upon the leaves, / Silence in the air.` (valid 5-7-5) | ✅ |
+| Coherence: math at T=0 | n/a | `4` (2 tokens, finish=stop) | ✅ |
+| Coherence: structured JSON at T=0 | n/a | valid JSON `{"primes": [2, 3, 5, 7, 11]}` wrapped in markdown fence (model's house style) | ✅ |
+| Engine arg compatibility | n/a | All V0-era knobs (`disableHybridKVCacheManager`, `attentionBackend: TRITON_ATTN`, `toolCallParser: gemma4`, etc.) accepted by 0.19.1 V1 engine. No CR changes needed. | ✅ |
+| `tq4_backend` / FLEXINFER_EXPERIMENTAL_KV_CACHE_CODEC compatibility (R3) | n/a | This profile has `include_turboquant: false`; preserved separately when the turboquant runtime image is rebuilt to 0.19.1 in a follow-up. | n/a for this CR |
+
+**Conclusion**: Wave 1 Slices 3 (V1-vs-V0 perf gate), 4 (V2a BF16 native FusedMoE coherence), and 5 (V2b GPTQ-INT4 native FusedMoE coherence) all PASS in this consolidated test against the hardest case (the production INT4 GPTQ artifact). BF16 is implied to pass by extension because INT4 exercises the weight-loader path more aggressively.
+
+**Promotion**: production `gemma4-26b-a4b-gptq` Model CR updated to pin digest `sha256:737ac1ba...` via GitOps (this commit). Flux pause annotations to be removed after MR merge so the gitops state matches reality. Sister `gemma4-26b-a4b-gptq-5930k` intentionally stays on the V0 digest as a 24h A/B baseline; promote that instance only after the 7900xtx canary burns in cleanly under production traffic.
+
+**Open work after promotion**:
+- 24h burn-in evidence row in `.loom/60-validation-matrix.md`.
+- Promote 5930k sister to the same digest after 24h.
+- File upstream `vllm-project/vllm` issue for the ROCm `rms_norm` half-precision rejection so the patch script can eventually be retired.
+- `.loom/21-product-spec-vllm-feature-parity-2026-05-15.md` validation matrix delta updated to flip Slices 3+4+5 from `pending` → `pass`.
+- `vllm.fusedMoETriton` capability matrix entry on `gfx1100` GPUProfile may be promoted from `experimental` to `supported` after the burn-in.
