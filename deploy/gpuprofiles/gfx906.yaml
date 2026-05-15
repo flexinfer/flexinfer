@@ -35,6 +35,20 @@ spec:
       # profile patch rather than relying on the in-code rule slice.
       support: experimental
       image: registry.harbor.lan/flexinfer/vllm:rocm-gfx906
+      # Wave 1 capability matrix backfill (2026-05-15, spec .loom/21-product-spec-vllm-feature-parity-2026-05-15.md).
+      # Schema-only: no controller consumes these fields yet. Encodes current truth at t=0.
+      # Slice 8 (V6 gfx906 vLLM revival) is GATED by Track B (gfx906 disk-pressure unblock).
+      vllm:
+        v1Engine: supported          # V0 removed in vLLM >=0.18; revival target is 0.19.x.
+        piecewiseGraphs: unsupported  # No graph capture path validated on Vega20.
+        flashAttention: none          # No FA kernel exists for gfx906 in CK/Triton/AOTriton.
+        fusedMoETriton: experimental  # Untested on Vega20; will be validated during Slice 8.
+        fp8KVEmulation: unsupported   # No FP8 hardware; emulation untested on Vega20.
+        marlinINT4: unsupported       # CUDA-only upstream; ExllamaV2 is the INT4 path on gfx906.
+        defaults:
+          cudagraphMode: "NONE"       # Eager-only on gfx906 (graph capture unproven).
+          enforceEager: true
+          kvCacheDtype: auto
     llamacpp:
       support: full
       image: registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3
