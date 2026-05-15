@@ -160,3 +160,61 @@ Slice 7 production promotion stays on hold pending investigation of the cold-loa
 - **Option Z3**: keep both instances on V0 indefinitely; flip back to "validation only, no production promotion" until Wave 2.
 
 Wave 1 closure now reverts to: Slices 1, 2 shipped + the rms_norm patch + the falsification + rollback evidence. Slices 3-7 are validated-but-unpromoted.
+
+---
+
+## Post-Z2/Z1 Retry Failure: legacy `vllm_gemma4_moe_gptq_patch` corrupts native FusedMoE (later 2026-05-15)
+
+Shipped both fixes earlier in the day:
+- **Z2** (!374): pre-warm AITER JIT into image — measured 26.8s → 4.76s import time reduction (~22s saved)
+- **Z1** (!375): added `VLLMBackend.StartupProbe()` returning `HTTPStartupProbe(b.StartupTimeout())` — 5-min platform tolerance via `failureThreshold=150` × `periodSeconds=2`
+- Controller rebuilt + redeployed; verified the gemma4 Deployment got the new `StartupProbe` block (`failureThreshold:150, periodSeconds:2, httpGet:/health`, generation 21→22)
+
+Retried the V1 promotion swap with the prewarmed image (`sha256:20ae3462`, vLLM 0.19.1 + rms_norm patch + AITER prewarm). Result: **pod exited with `Status: Error` at 95 seconds, no restarts** (container exited on its first run; not a probe failure since `RESTARTS=0`).
+
+Pod log tail (`gemma4-26b-a4b-gptq-57c94498b-ft7zz`):
+
+```
+[gemma4-moe-patch] vLLM root: /opt/venv/lib/python3.12/site-packages/vllm
+[gemma4-moe-patch] Already patched, skipping
+[gemma4-moe-patch] GPTQ ROCm reference fallback already patched
+[gemma4-moe-patch] MoeWNA16 activation already patched, skipping
+[gemma4-moe-patch] WARNING: Could not find moe_name lookup block in Gemma4Model.load_weights
+[gemma4-moe-patch] WARNING: Could not find weight_loader call in Gemma4Model.load_weights expert loop
+[gemma4-moe-patch] KV cache interface already patched, skipping
+...
+[gemma4-moe-patch] WARNING — GPTQ weight names patch failed (non-fatal, may already be fixed in this vLLM version)
+[gemma4-moe-patch] All patches applied successfully
+[W515 23:36:28.565462139 AllocatorConfig.cpp:29] Warning: PYTORCH_HIP_ALLOC_CONF is deprecated, use PYTORCH_ALLOC_CONF instead
+```
+
+Container exits after that — no Python traceback captured.
+
+### Real root cause
+
+The runtime image's build script (`build/Dockerfile.runtime:391`) unconditionally runs `vllm_gemma4_moe_gptq_patch.py` for any vLLM-enabled profile. That patch targets vLLM 0.17 code structure. When applied to 0.19.1 source, some hunks match (`MoeWNA16 activation already patched`, `GPTQ ROCm reference fallback already patched`) and others don't (`Could not find moe_name lookup block in Gemma4Model.load_weights`). The partial-apply corrupts the upstream native FusedMoE code path, which then fails at init.
+
+The first "successful" canary in MR !372 was therefore not actually serving via the clean upstream native path — it was serving via a chimera of upstream code + partially-applied legacy patches. The initial pod survived because the warm-cached binary code worked; the Flux-driven recreate caused a fresh import that hit the broken state and crashed.
+
+Z1 and Z2 don't help here because the container exits at init (process-level) — kubelet's probes never get a chance to run.
+
+### Fix
+
+Adds `SKIP_GEMMA4_MOE_PATCH` build-arg to `Dockerfile.runtime`. When true, the legacy patch RUN block is bypassed entirely. `build/runtime.yaml` `gfx1100-sandbox-019` profile sets `skip_gemma4_moe_patch: true`. Default for all other profiles remains `false` so production runtime images keep their current behavior.
+
+After this lands, sandbox image rebuild + retry V1 swap. With Z1 + Z2 + rms_norm-patch + legacy-patch-skipped all in place, the V1 cold-load should both *succeed* and *survive* Flux recreates.
+
+### Wave 1 status snapshot
+
+| Slice | Status |
+|---|---|
+| 1 — V7 schema | shipped (!368) |
+| 2 — V4 sandbox build | shipped (!369); rebuilt twice for fixes (!374, this MR) |
+| 3 — V1-vs-V0 perf gate | validated in initial canary (V1 −18.7% faster) but not promoted |
+| 4 — V2a BF16 FusedMoE | not yet cleanly validated against the legacy-patch-skipped image |
+| 5 — V2b INT4 FusedMoE | same |
+| 6 — V3 FP8 KV emulation | unchanged |
+| 7 — V4 prod promotion | rolled back twice (!373, this MR); pending clean V1 image build |
+| 8 — V6 gfx906 V1 revival | unchanged |
+
+The path to Slice 7 is now: ship this patch-skip MR → rebuild sandbox image → retry V1 swap (one more time).

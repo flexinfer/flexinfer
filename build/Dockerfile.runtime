@@ -38,6 +38,13 @@ ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
 ARG VLLM_REF=main
 ARG VLLM_SOURCE_PATCH_SCRIPT=
 ARG VLLM_EXTRA_DEPS_PROFILE=full
+# Set to "true" to skip the legacy vllm_gemma4_moe_gptq_patch at build time.
+# Required for vLLM >=0.19 profiles where upstream native FusedMoE supplants
+# the legacy patch; partial-apply of the legacy patch corrupts the native
+# code path and causes container exits at init.
+# See .loom/slice3-v1-sandbox-rms-norm-falsified-2026-05-15.md (gemma4-moe-patch
+# section) for the post-mortem that drove this knob.
+ARG SKIP_GEMMA4_MOE_PATCH=false
 ARG INSTALL_QWEN35_FASTPATH=true
 ARG INCLUDE_TURBOQUANT=false
 ARG TURBOQUANT_INSTALL_MODE=none
@@ -155,6 +162,7 @@ ARG VLLM_REPO
 ARG VLLM_REF
 ARG VLLM_SOURCE_PATCH_SCRIPT
 ARG VLLM_EXTRA_DEPS_PROFILE
+ARG SKIP_GEMMA4_MOE_PATCH
 ARG INSTALL_QWEN35_FASTPATH
 ARG INCLUDE_TURBOQUANT
 ARG TURBOQUANT_INSTALL_MODE
@@ -388,7 +396,17 @@ RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ "${VLLM_INSTALL_MODE}" = "wheel" ] &&
 # even when experts are excluded from GPTQ (attention-only quantization).
 # This patch checks modules_in_block_to_quantize and skips MoE quantization
 # when no MoE-related modules are in the list.
-RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ -f /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py ]; then \
+#
+# 2026-05-15: gated on SKIP_GEMMA4_MOE_PATCH. vLLM 0.19+ native gemma4
+# FusedMoE supplants this legacy patch; partial-apply of the legacy patch
+# against 0.19 source corrupts the native code path and causes container
+# exits at init. Sandbox / source-build vLLM-0.19 profiles must set this
+# build arg to "true" via build/runtime.yaml.
+# See .loom/slice3-v1-sandbox-rms-norm-falsified-2026-05-15.md (Z2-Z1
+# rollback-2 section).
+RUN if [ "${SKIP_GEMMA4_MOE_PATCH}" = "true" ]; then \
+      echo "vLLM Gemma4 MoE GPTQ patch SKIPPED (SKIP_GEMMA4_MOE_PATCH=true; required for vLLM >=0.19 with native FusedMoE)"; \
+    elif [ "${INCLUDE_VLLM}" = "true" ] && [ -f /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py ]; then \
       python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py && \
       echo "vLLM Gemma4 MoE GPTQ patch applied at build time"; \
     fi

@@ -185,6 +185,12 @@ profiles:
     # The GEMMA4_MOE_ROCM_REFERENCE_PATCH is intentionally NOT applied here —
     # Slice 4/5 canaries validate that upstream native FusedMoE supplants it.
     vllm_source_patch_script: "build/scripts/patch_vllm_rocm_rms_norm_dtype.py"
+    # Skip the legacy gemma4_moe_gptq build-time patch. That patch targets vLLM
+    # 0.17 code structure; partial-apply against 0.19 source corrupts the
+    # native FusedMoE path and causes container exits at init. Discovered in
+    # the second retry attempt on 2026-05-15 (see falsification doc, the
+    # "Post-Z2/Z1 retry failure" section).
+    skip_gemma4_moe_patch: true
     env:
       ROCM_PATH: /opt/rocm
       HIP_PATH: /opt/rocm
