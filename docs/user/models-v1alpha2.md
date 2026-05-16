@@ -90,7 +90,9 @@ Scale-to-zero behavior.
 
 - `enabled`: default true (homelab-friendly)
 - `idleTimeout`: scale down after this idle window
-- `coldStartTimeout`: request timeout budget during activation
+- `coldStartTimeout`: request timeout budget during activation. For `vllm`,
+  the pod startup probe uses at least this budget, so slow first-start compile
+  passes can finish instead of being killed by kubelet before the proxy timeout.
 
 ### `spec.cache` (optional)
 
@@ -129,6 +131,14 @@ on the source string alone:
 Common imagegen knobs in this repo include `pipelineMode`, `modelFamily`,
 `cpuOffload`, `quantization`, `useFp16`, `vaeRepo`, `vaePath`, `guidanceScale`,
 `numInferenceSteps`, `warmupResolutions`, and `warmPolicy`.
+
+Common `vllm` knobs include `maxModelLen`, `gpuMemoryUtilization`,
+`maxNumSeqs`, `maxNumBatchedTokens`, `startupTimeout` or
+`startupTimeoutSeconds`, `cudagraphCaptureSizes`,
+`maxCudagraphCaptureSize`, and `compilationConfig`. `startupTimeout`
+accepts duration strings such as `15m`; `startupTimeoutSeconds` accepts a
+second count. If neither is set, vLLM uses the larger of its backend default
+and `spec.serverless.coldStartTimeout`.
 
 #### Maxwell (sm_5x) notes
 

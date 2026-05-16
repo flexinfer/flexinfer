@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -102,6 +103,18 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	// Enforce eager mode (disable torch.compile and HIPGraph/CUDAGraph)
 	if spec.ConfigBool("enforceEager", false) {
 		args = append(args, "--enforce-eager")
+	}
+
+	// CUDA/HIP graph and torch.compile controls. These are useful on slower
+	// startup nodes where limiting capture sizes can reduce compile pressure.
+	if sizes := configValueAsArg(spec, "cudagraphCaptureSizes"); sizes != "" {
+		args = append(args, "--cudagraph-capture-sizes", sizes)
+	}
+	if maxSize := configValueAsArg(spec, "maxCudagraphCaptureSize"); maxSize != "" {
+		args = append(args, "--max-cudagraph-capture-size", maxSize)
+	}
+	if compilation := configValueAsArg(spec, "compilationConfig"); compilation != "" {
+		args = append(args, "--compilation-config", compilation)
 	}
 
 	// CPU weight offload — moves part of model weights to CPU-pinned memory.
@@ -322,8 +335,29 @@ func (b *VLLMBackend) StartupProbe() *corev1.Probe {
 	return HTTPStartupProbe("/health", 8000, b.StartupTimeout())
 }
 
+func (b *VLLMBackend) StartupProbeForSpec(spec *ModelSpec) *corev1.Probe {
+	return HTTPStartupProbe("/health", 8000, b.startupTimeoutForSpec(spec))
+}
+
 func (b *VLLMBackend) StartupTimeout() time.Duration {
 	return 300 * time.Second
+}
+
+func (b *VLLMBackend) startupTimeoutForSpec(spec *ModelSpec) time.Duration {
+	timeout := b.StartupTimeout()
+	if spec == nil {
+		return timeout
+	}
+	if configured := spec.ConfigDuration("startupTimeout", 0); configured > 0 {
+		return configured
+	}
+	if configured := spec.ConfigDuration("startupTimeoutSeconds", 0); configured > 0 {
+		return configured
+	}
+	if spec.StartupTimeout > timeout {
+		return spec.StartupTimeout
+	}
+	return timeout
 }
 
 // KVCacheArgs returns CLI arguments for KV-cache tuning.
@@ -408,6 +442,29 @@ func rocmBoolOverride(spec *ModelSpec, key string) (string, bool) {
 		return "0", true
 	default:
 		return "", false
+	}
+}
+
+func configValueAsArg(spec *ModelSpec, key string) string {
+	if spec == nil || spec.Config == nil {
+		return ""
+	}
+	raw, ok := spec.Config[key]
+	if !ok || raw == nil {
+		return ""
+	}
+	if value, ok := raw.(string); ok {
+		return strings.TrimSpace(value)
+	}
+	switch raw.(type) {
+	case map[string]any, []any, []int, []int32, []int64, []float64, []string:
+		encoded, err := json.Marshal(raw)
+		if err != nil {
+			return ""
+		}
+		return string(encoded)
+	default:
+		return fmt.Sprint(raw)
 	}
 }
 

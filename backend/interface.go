@@ -63,6 +63,10 @@ type ModelSpec struct {
 
 	// GPUMemoryBytes is the available GPU memory
 	GPUMemoryBytes int64
+
+	// StartupTimeout is an optional per-model startup budget derived from the
+	// model cold-start budget. Backends may use this to size startup probes.
+	StartupTimeout time.Duration
 }
 
 // ConfigString returns a string config value with a default.
@@ -120,6 +124,37 @@ func (s *ModelSpec) ConfigBool(key string, defaultVal bool) bool {
 	default:
 		return defaultVal
 	}
+}
+
+// ConfigDuration returns a duration config value with a default.
+// Numeric values are interpreted as seconds. Strings may use Go duration
+// syntax ("15m") or a bare integer second count ("900").
+func (s *ModelSpec) ConfigDuration(key string, defaultVal time.Duration) time.Duration {
+	if s.Config == nil {
+		return defaultVal
+	}
+	v, ok := s.Config[key]
+	if !ok {
+		return defaultVal
+	}
+	switch val := v.(type) {
+	case time.Duration:
+		return val
+	case int:
+		return time.Duration(val) * time.Second
+	case int64:
+		return time.Duration(val) * time.Second
+	case float64:
+		return time.Duration(val * float64(time.Second))
+	case string:
+		if d, err := time.ParseDuration(val); err == nil {
+			return d
+		}
+		if seconds, err := strconv.ParseFloat(val, 64); err == nil {
+			return time.Duration(seconds * float64(time.Second))
+		}
+	}
+	return defaultVal
 }
 
 // Backend defines the interface that all inference backends must implement.
@@ -188,6 +223,13 @@ type Backend interface {
 	// DefaultIdleTimeout returns the default idle timeout for this backend.
 	// Image generation backends may have longer timeouts.
 	DefaultIdleTimeout() time.Duration
+}
+
+// StartupProbeConfigurer is an optional interface for backends that need
+// per-model startup probe sizing.
+type StartupProbeConfigurer interface {
+	// StartupProbeForSpec returns the startup probe for the given backend spec.
+	StartupProbeForSpec(spec *ModelSpec) *corev1.Probe
 }
 
 // KVCacheConfigurer is an optional interface that backends can implement

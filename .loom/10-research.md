@@ -854,3 +854,54 @@ Recommendation: **Qwen3-30B-A3B-GPTQ-Int4** is the highest-leverage new candidat
 - https://rocm.docs.amd.com/en/latest/about/release-notes.html — ROCm 7.2.2
 - https://www.amd.com/en/developer/resources/technical-articles/2025/pytorch-2-9-wheel-variant-support-expands-to-rocm.html — PyTorch 2.9 wheel variants
 - https://huggingface.co/unsloth/gemma-4-26B-A4B-it-GGUF/discussions/11 — Unsloth re-uploaded GGUFs after llama.cpp fixes
+
+## Update (2026-05-16): Gemma4 26B 5930k Parity Research
+
+### Question
+
+How can the `cblevins-5930k` 7900 XTX lane reach parity with the `cblevins-7900xtx` Gemma4 26B lane for graph-captured concurrency and/or longer context?
+
+### Findings
+
+- Both warm 16K Gemma4 lanes now use graph capture (`enforceEager=false`).
+- The 7900xtx lane successfully runs `maxNumSeqs=2` and `maxNumBatchedTokens=256`, with two short parallel requests aggregating about 132 tok/s while preserving about 70 tok/s single-stream decode.
+- The same `2/256` profile on 5930k did not prove a runtime/kernel failure. Kubernetes restarted it because the vLLM container failed its startup probe before `/health` came up.
+- The startup probe budget is hard-coded by `VLLMBackend.StartupTimeout()` to 300 seconds, which maps to `failureThreshold=150` at a 2 second period. The model CR's `serverless.coldStartTimeout: 15m` is not used to size the backend startup probe.
+- FlexInfer already mounts a persistent compilation cache for shared AMD GPU models under `/cache/compile`, backed by `/var/lib/flexinfer/compile-cache/<namespace>/<model>`. This should help after a profile compiles successfully once, but it cannot help if kubelet kills the first compile before completion.
+- vLLM docs confirm that `max_num_batched_tokens` is both a scheduler budget and an input to compilation/cuda-graph capture behavior. The local 7900xtx tests matched that: `512` worked but compiled for about 216 seconds and reduced KV headroom, while `256` compiled in about 53 seconds and gave the best concurrency tradeoff.
+- PyTorch compiler docs confirm compile caches can reduce latency across processes when the graph, shapes, versions, and device assumptions match. This supports a one-time 5930k cache-warming path once the startup budget is long enough.
+
+### Implications
+
+- The highest-confidence path to 5930k parity is not another decode knob first. It is a control-plane/runtime patch that lets long vLLM compile profiles survive startup:
+  1. make vLLM startup probe timeout configurable per model, or derive it from `spec.serverless.coldStartTimeout`;
+  2. retry 5930k `maxNumSeqs=2/maxNumBatchedTokens=256`;
+  3. let the persistent compile cache finish and persist artifacts;
+  4. then benchmark single and parallel decode.
+- A secondary path is to expose vLLM compilation knobs such as `--cudagraph-capture-sizes`, `--max-cudagraph-capture-size`, or `--compilation-config` so scheduler concurrency can be decoupled from expensive graph compile sizes on slower hosts.
+- CPU allocation may still matter: 5930k is older, lacks AVX512, carries more pods, and the model pod is CPU-limited to 4 cores. If the longer startup budget is insufficient, the next experiment should raise the 5930k pod CPU limit/request during compile.
+- More context and more concurrency should stay as separate profiles. The `2/256` concurrency profile reduces full-context KV headroom compared with the `1/160` profile, so 18K/22K should be tested as a separate scale-to-zero canary.
+
+### Recommended Next Slice
+
+- Implement a small backend/controller patch: vLLM startup timeout can be overridden from model config or serverless `coldStartTimeout`.
+- Add tests covering the generated startup probe.
+- Live-test 5930k `2/256` with a 15 minute startup budget.
+- If it reaches Ready, run the same single/parallel benchmark used for 7900xtx and then decide whether to promote.
+
+### Local Anchors
+
+- `backend/vllm.go`: `VLLMBackend.StartupTimeout()` is hard-coded to 300 seconds.
+- `backend/interface.go`: `HTTPStartupProbe()` converts timeout to `failureThreshold`.
+- `controllers/model_backend.go`: shared AMD models auto-enable persistent compile cache.
+- `controllers/model_deployment.go`: compile cache hostPath is mounted at `/cache/compile`.
+- `deploy/models/gemma4-26b-a4b-gptq.yaml`: 7900xtx profile is now `2/256`.
+- `deploy/models/gemma4-26b-a4b-gptq-5930k.yaml`: 5930k profile remains stable at `1/160`.
+
+### External Sources
+
+- vLLM scheduler/config docs for `max_num_batched_tokens` and `max_num_seqs`: https://docs.vllm.ai/en/stable/api/vllm/config/scheduler/
+- vLLM CUDA graph capture sizing docs: https://docs.vllm.ai/en/stable/api/vllm/config/vllm/
+- vLLM serve CLI docs for `--cudagraph-capture-sizes`, `--max-cudagraph-capture-size`, and `--compilation-config`: https://docs.vllm.ai/en/latest/cli/serve.html
+- PyTorch compile caching docs: https://docs.pytorch.org/tutorials/recipes/torch_compile_caching_tutorial.html
+- PyTorch compile caching configuration docs: https://docs.pytorch.org/tutorials/recipes/torch_compile_caching_configuration_tutorial.html
