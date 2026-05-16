@@ -33,6 +33,23 @@ import os
 import pathlib
 import re
 import sys
+from importlib import metadata
+
+
+def _truthy(value: str | None) -> bool:
+    return value is not None and value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_version(raw: str | None) -> tuple[int, int, int] | None:
+    if not raw:
+        return None
+    match = re.match(r"^(\d+)\.(\d+)(?:\.(\d+))?", raw)
+    if not match:
+        return None
+    major = int(match.group(1))
+    minor = int(match.group(2))
+    patch = int(match.group(3) or 0)
+    return major, minor, patch
 
 
 def find_vllm_root() -> pathlib.Path | None:
@@ -58,6 +75,46 @@ def find_vllm_root() -> pathlib.Path | None:
             if p.is_dir():
                 return p
         return None
+
+
+def detect_vllm_version() -> str | None:
+    """Return the installed vLLM package version when available."""
+    try:
+        return metadata.version("vllm")
+    except metadata.PackageNotFoundError:
+        pass
+
+    try:
+        import vllm
+
+        return getattr(vllm, "__version__", None)
+    except ImportError:
+        return None
+
+
+def should_skip_for_native_gemma4() -> bool:
+    """Skip this legacy patch on vLLM versions with native Gemma4 FusedMoE."""
+    if _truthy(os.environ.get("FLEXINFER_FORCE_LEGACY_GEMMA4_MOE_PATCH")):
+        print(
+            "[gemma4-moe-patch] FORCE: applying legacy patch despite vLLM version"
+        )
+        return False
+
+    raw_version = detect_vllm_version()
+    parsed = _parse_version(raw_version)
+    if parsed is not None and parsed >= (0, 19, 0):
+        print(
+            "[gemma4-moe-patch] SKIP: vLLM "
+            f"{raw_version} has native Gemma4 FusedMoE; legacy patch is unsafe "
+            "(set FLEXINFER_FORCE_LEGACY_GEMMA4_MOE_PATCH=1 to override)"
+        )
+        return True
+
+    if raw_version:
+        print(f"[gemma4-moe-patch] vLLM version: {raw_version}")
+    else:
+        print("[gemma4-moe-patch] vLLM version unknown; applying legacy patch")
+    return False
 
 
 def patch_gptq_config(vllm_root: pathlib.Path) -> bool:
@@ -1387,6 +1444,8 @@ def main():
         # that intentionally excludes vLLM). Nothing to patch — exit silently.
         return
     print(f"[gemma4-moe-patch] vLLM root: {vllm_root}")
+    if should_skip_for_native_gemma4():
+        return
 
     ok1 = patch_gptq_config(vllm_root)
     ok1b = patch_gptq_rocm_reference_fallback(vllm_root)

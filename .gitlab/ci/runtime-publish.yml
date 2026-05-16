@@ -15,8 +15,10 @@ runtime_patch_contracts:
     - if: $CI_COMMIT_BRANCH == "master"
       changes:
         - .gitlab/ci/runtime-publish.yml
+        - build/build-runtime.sh
         - build/Dockerfile.runtime
         - build/Dockerfile.runtime-serving
+        - build/runtime-entrypoint.sh
         - build/runtime.yaml
         - build/scripts/patch_turboquant_quantizer_gpu_qr.py
         - build/scripts/patch_vllm_env_override_torch29.py
@@ -26,8 +28,10 @@ runtime_patch_contracts:
     - if: $CI_MERGE_REQUEST_ID
       changes:
         - .gitlab/ci/runtime-publish.yml
+        - build/build-runtime.sh
         - build/Dockerfile.runtime
         - build/Dockerfile.runtime-serving
+        - build/runtime-entrypoint.sh
         - build/runtime.yaml
         - build/scripts/patch_turboquant_quantizer_gpu_qr.py
         - build/scripts/patch_vllm_env_override_torch29.py
@@ -37,8 +41,10 @@ runtime_patch_contracts:
     - if: $CI_COMMIT_BRANCH
       changes:
         - .gitlab/ci/runtime-publish.yml
+        - build/build-runtime.sh
         - build/Dockerfile.runtime
         - build/Dockerfile.runtime-serving
+        - build/runtime-entrypoint.sh
         - build/runtime.yaml
         - build/scripts/patch_turboquant_quantizer_gpu_qr.py
         - build/scripts/patch_vllm_env_override_torch29.py
