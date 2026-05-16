@@ -74,6 +74,24 @@ class HealthStore {
   error = $state<string | null>(null);
   lastUpdated = $state<Date | null>(null);
 
+  // Per-panel UI state (Slice B2.2 — moved out of ServersPanel.svelte so the
+  // panel becomes a pure composition shell).
+  searchQuery = $state<string>('');
+  categoryFilter = $state<string>('');
+  statusFilter = $state<string>('');
+  sortKey = $state<string>('name');
+  sortDir = $state<'asc' | 'desc'>('asc');
+
+  setSearch(value: string): void { this.searchQuery = value; }
+  setCategoryFilter(value: string): void { this.categoryFilter = value; }
+  setStatusFilter(value: string): void { this.statusFilter = value; }
+  setSort(key: string, dir: 'asc' | 'desc'): void { this.sortKey = key; this.sortDir = dir; }
+  clearFilters(): void {
+    this.searchQuery = '';
+    this.categoryFilter = '';
+    this.statusFilter = '';
+  }
+
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private latencyBuffers: Map<string, number[]> = new Map();
   private eventUnsubs: Array<() => void> = [];
