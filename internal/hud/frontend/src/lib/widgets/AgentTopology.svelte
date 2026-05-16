@@ -5,21 +5,21 @@
   /** @type {{ nodes: any[], edges: any[], clusters: any[], width?: number, height?: number, selectedNode?: string | null, onselect?: (id: string | null) => void }} */
   let { nodes: inputNodes = [], edges: inputEdges = [], clusters = [], width = 800, height = 500, selectedNode = null, onselect } = $props();
 
-  // Agent type colors (shared with PresencePanel)
+  // Agent type colors — read from CSS tokens so the theme owns the palette.
   const AGENT_COLORS = {
-    claude: '#E95D74',
-    codex: '#22B255',
-    gemini: '#018799',
-    copilot: '#E7B312',
+    claude: 'var(--agent-claude)',
+    codex: 'var(--agent-codex)',
+    gemini: 'var(--agent-gemini)',
+    copilot: 'var(--agent-copilot)',
   };
 
   function agentColor(agentType) {
-    if (!agentType) return '#5EBDC9';
+    if (!agentType) return 'var(--fg-secondary)';
     const lower = agentType.toLowerCase();
     for (const [key, color] of Object.entries(AGENT_COLORS)) {
       if (lower.includes(key)) return color;
     }
-    return '#5EBDC9';
+    return 'var(--fg-secondary)';
   }
 
   function statusColor(status) {

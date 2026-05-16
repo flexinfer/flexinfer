@@ -2,21 +2,21 @@
   /** @type {{ lanes: import('../stores/lifecycle.svelte.ts').SwimLane[], timeRange: { start: number, end: number }, width?: number }} */
   let { lanes = [], timeRange, width = 900 } = $props();
 
-  // Agent type colors (shared)
+  // Agent type colors — read from CSS tokens so the theme owns the palette.
   const AGENT_COLORS = {
-    claude: '#E95D74',
-    codex: '#22B255',
-    gemini: '#018799',
-    copilot: '#E7B312',
+    claude: 'var(--agent-claude)',
+    codex: 'var(--agent-codex)',
+    gemini: 'var(--agent-gemini)',
+    copilot: 'var(--agent-copilot)',
   };
 
   function agentColor(agentType) {
-    if (!agentType) return '#5EBDC9';
+    if (!agentType) return 'var(--fg-secondary)';
     const lower = agentType.toLowerCase();
     for (const [key, color] of Object.entries(AGENT_COLORS)) {
       if (lower.includes(key)) return color;
     }
-    return '#5EBDC9';
+    return 'var(--fg-secondary)';
   }
 
   const LABEL_WIDTH = 120;

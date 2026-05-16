@@ -705,9 +705,6 @@
     display: flex;
     flex-direction: column;
     padding: var(--space-4) var(--content-gutter) var(--content-gutter);
-    background:
-      radial-gradient(circle at top left, rgba(0, 200, 255, 0.04), transparent 26%),
-      radial-gradient(circle at top right, rgba(255, 107, 53, 0.05), transparent 22%);
   }
 
   /* ═══ Status Bar ════════════════════════════════════════════ */

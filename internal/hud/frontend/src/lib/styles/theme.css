@@ -55,11 +55,14 @@
   --tier-short:   #B06CDE;
   --tier-long:    var(--success);
 
-  /* Agent type */
-  --agent-claude:  #FF6B9D;
-  --agent-codex:   #22E076;
-  --agent-gemini:  #00C8FF;
-  --agent-copilot: #FFB830;
+  /* Agent type — derived from --accent so all agents share the same visual family.
+     Earlier hues (#FF6B9D / #22E076 / #00C8FF / #FFB830) competed with semantic
+     status colors and made every panel look like a four-team color war. The accent
+     ramp keeps slots distinguishable without re-using success/info/warning hues. */
+  --agent-claude:  var(--accent);
+  --agent-codex:   color-mix(in srgb, var(--accent) 76%, var(--fg-secondary));
+  --agent-gemini:  color-mix(in srgb, var(--accent) 54%, var(--fg-secondary));
+  --agent-copilot: color-mix(in srgb, var(--accent) 32%, var(--fg-secondary));
 
   /* ── Typography ─────────────────────────────────────────────── */
 
@@ -177,11 +180,15 @@
 
   --noise-opacity:    0.022;
   --scanline-opacity: 0.015;
+  /* Glow tokens. Alert glows (accent/error/warning) keep a colored halo so
+     they read as "look here". Healthy/decorative glows (success/info) collapse
+     to a near-neutral fg tint so they preserve box-shadow geometry without
+     adding color noise — glow now signals attention, not state. */
   --glow-accent:  rgba(255, 107, 53, 0.18);
-  --glow-success: rgba(34, 224, 118, 0.12);
   --glow-error:   rgba(255, 61, 113, 0.12);
-  --glow-info:    rgba(0, 200, 255, 0.12);
   --glow-warning: rgba(255, 184, 48, 0.12);
+  --glow-success: rgba(212, 238, 244, 0.05);
+  --glow-info:    rgba(212, 238, 244, 0.05);
 }
 
 
