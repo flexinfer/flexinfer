@@ -98,7 +98,7 @@ spec:
     - name: ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL
       value: fallback
   runtime:
-    image: registry.harbor.lan/flexinfer/runtime@sha256:94045d0ca4b12deb3c46bb22070f67bfedad8b719bb992e5d3ce128ad27ad597
+    image: registry.harbor.lan/flexinfer/runtime@sha256:a536d25f8b0f154e16c080ce852da6f1430783bedcb53e7098cee3a9baa264c5
   containerMemoryGB: 56
   maxGPUMemoryGB: 12
   maxCPUMemoryGB: 56
