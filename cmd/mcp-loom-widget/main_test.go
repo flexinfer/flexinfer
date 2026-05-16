@@ -61,20 +61,27 @@ func TestInitializeReturnsServerInfoAndCapabilities(t *testing.T) {
 }
 
 // TestToolsListEmitsUiResourceUri is the critical MCP Apps wire-format
-// assertion: the tool declaration must carry _meta.ui.resourceUri so
-// the host knows to render the widget when the tool is invoked.
+// assertion: the widget-bearing tool (loom_fleet_show) must carry
+// _meta.ui.resourceUri so the host knows to render the widget when
+// the tool is invoked. The relay tools intentionally do NOT carry the
+// pointer — they are widget-callback only and would confuse hosts if
+// they implied a render.
 func TestToolsListEmitsUiResourceUri(t *testing.T) {
 	resp := requestResponse(t, `{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
 	result, _ := resp["result"].(map[string]any)
 	tools, _ := result["tools"].([]any)
-	if len(tools) != 1 {
-		t.Fatalf("tools count = %d, want 1", len(tools))
+	var showTool map[string]any
+	for _, tv := range tools {
+		tm, _ := tv.(map[string]any)
+		if n, _ := tm["name"].(string); n == toolShow {
+			showTool = tm
+			break
+		}
 	}
-	tool, _ := tools[0].(map[string]any)
-	if tool["name"] != toolName {
-		t.Errorf("tool.name = %v, want %s", tool["name"], toolName)
+	if showTool == nil {
+		t.Fatalf("tools/list missing %q (got %d tools)", toolShow, len(tools))
 	}
-	meta, _ := tool["_meta"].(map[string]any)
+	meta, _ := showTool["_meta"].(map[string]any)
 	ui, _ := meta["ui"].(map[string]any)
 	if ui["resourceUri"] != widgetURI {
 		t.Errorf("tool._meta.ui.resourceUri = %v, want %s", ui["resourceUri"], widgetURI)
@@ -148,10 +155,14 @@ func TestResourcesReadReturnsEmbeddedHTML(t *testing.T) {
 	}
 	text, _ := c0["text"].(string)
 	if !strings.Contains(text, "Loom Fleet") {
-		t.Errorf("widget html missing Loom Fleet heading (first 80 chars): %q", text[:min(80, len(text))])
+		t.Errorf("widget html missing Loom Fleet keyword (first 80 chars): %q", text[:min(80, len(text))])
 	}
-	if !strings.Contains(text, "Slice 1b") {
-		t.Errorf("widget html missing 1b-α placeholder marker")
+	// Sanity-check the embed is the React bundle (≥50KB) rather than
+	// an accidental revert to the 2.6KB hand-rolled placeholder. This
+	// catches a future case where someone forgets to run `make widget`
+	// before committing.
+	if len(text) < 50_000 {
+		t.Errorf("widget html unexpectedly small (%d bytes) — did `make widget` run before commit?", len(text))
 	}
 }
 

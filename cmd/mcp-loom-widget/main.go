@@ -32,14 +32,28 @@ import (
 
 const (
 	serverName    = "mcp-loom-widget"
-	serverVersion = "0.1.0"
+	serverVersion = "0.2.0"
 	// widgetURI is the ui://-scheme resource that hosts read. The MCP
 	// Apps spec scopes the host's sandboxed iframe to a single resource
 	// per tool via _meta.ui.resourceUri; we expose just one widget.
 	widgetURI      = "ui://widget/loom-fleet.html"
 	widgetMimeType = "text/html"
-	toolName       = "loom_fleet_show"
+
+	toolShow      = "loom_fleet_show"
+	toolDashboard = "loom_fleet_get_dashboard"
+	toolPresence  = "loom_fleet_get_presence"
+	toolSessions  = "loom_fleet_get_sessions"
+
+	pathDashboard = "/api/mobile/v1/dashboard"
+	pathPresence  = "/api/mobile/v1/presence"
+	pathSessions  = "/api/mobile/v1/sessions"
 )
+
+// relayPaths is the HUD-path allowlist passed to hudClient.get. Each
+// relay tool maps to exactly one path; the indirection keeps the
+// allowlist enforced even if a future code change accidentally passes
+// user input through.
+var relayPaths = []string{pathDashboard, pathPresence, pathSessions}
 
 //go:embed widget.html
 var widgetHTML []byte
@@ -86,12 +100,19 @@ type rpcError struct {
 // interleave with responses.
 type server struct {
 	logger      *slog.Logger
+	hud         *hudClient
 	writeMu     sync.Mutex
 	initialized bool
 }
 
 func newServer(logger *slog.Logger) *server {
-	return &server{logger: logger}
+	return &server{logger: logger, hud: newHUDClient()}
+}
+
+// newServerWithHUD lets tests inject a hudClient pointed at an
+// httptest.NewServer; production code uses newServer.
+func newServerWithHUD(logger *slog.Logger, hud *hudClient) *server {
+	return &server{logger: logger, hud: hud}
 }
 
 // Serve runs the JSON-RPC 2.0 stdio loop until ctx is done or in
@@ -201,12 +222,17 @@ func (s *server) handleInitialize(_ rpcRequest) (any, *rpcError) {
 	}, nil
 }
 
-// handleToolsList declares the loom_fleet_show tool with the MCP Apps
-// _meta.ui.resourceUri pointer that tells the host to render the
-// widget when this tool is invoked.
+// handleToolsList declares:
+//   - loom_fleet_show — the user-facing widget-bearing tool (the host
+//     renders the widget when this is invoked); _meta.ui.resourceUri
+//     points to the embedded HTML bundle.
+//   - loom_fleet_get_dashboard / _get_presence / _get_sessions — the
+//     widget-facing relay tools. The widget calls these via the MCP
+//     Apps ToolsCall bridge; this server fetches HUD on its behalf so
+//     the LOOM_HUD_TOKEN never enters the LLM's context window.
 func (s *server) handleToolsList() (any, *rpcError) {
-	tool := map[string]any{
-		"name":        toolName,
+	show := map[string]any{
+		"name":        toolShow,
 		"description": "Show the current loom fleet (active agents, sessions, tasks) as an inline widget.",
 		"inputSchema": map[string]any{
 			"type":       "object",
@@ -218,12 +244,31 @@ func (s *server) handleToolsList() (any, *rpcError) {
 			},
 		},
 	}
-	return map[string]any{"tools": []any{tool}}, nil
+	dashboard := map[string]any{
+		"name":        toolDashboard,
+		"description": "Fetch the loom HUD mobile dashboard (relay; widget-facing). Returns the raw HUD JSON.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	}
+	presence := map[string]any{
+		"name":        toolPresence,
+		"description": "Fetch the loom HUD agent presence list (relay; widget-facing). Returns the raw HUD JSON.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	}
+	sessions := map[string]any{
+		"name":        toolSessions,
+		"description": "Fetch the loom HUD agent sessions list (relay; widget-facing). Returns the raw HUD JSON.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	}
+	return map[string]any{"tools": []any{show, dashboard, presence, sessions}}, nil
 }
 
-// handleToolsCall returns a short text summary for the LLM and the
-// widget pointer in _meta. The host renders the widget inline; the
-// text content is what surfaces in summaries / chat history.
+// handleToolsCall routes the four tools:
+//   - loom_fleet_show: returns a short text summary for the LLM and
+//     the widget pointer in _meta so the host renders inline.
+//   - loom_fleet_get_{dashboard,presence,sessions}: relay HUD JSON
+//     back as a text content block. The widget uses this via the MCP
+//     Apps bridge to refresh its data without ever seeing the bearer
+//     token.
 func (s *server) handleToolsCall(req rpcRequest) (any, *rpcError) {
 	var params struct {
 		Name string `json:"name"`
@@ -233,19 +278,56 @@ func (s *server) handleToolsCall(req rpcRequest) (any, *rpcError) {
 			return nil, &rpcError{Code: -32602, Message: "invalid params: " + err.Error()}
 		}
 	}
-	if params.Name != toolName {
+	switch params.Name {
+	case toolShow:
+		return map[string]any{
+			"content": []any{
+				map[string]any{
+					"type": "text",
+					"text": "Loom fleet widget rendered inline.",
+				},
+			},
+			"_meta": map[string]any{
+				"ui": map[string]any{
+					"resourceUri": widgetURI,
+				},
+			},
+		}, nil
+	case toolDashboard:
+		return s.relay(pathDashboard)
+	case toolPresence:
+		return s.relay(pathPresence)
+	case toolSessions:
+		return s.relay(pathSessions)
+	default:
 		return nil, &rpcError{Code: -32602, Message: "unknown tool: " + params.Name}
+	}
+}
+
+// relay fetches one HUD path and returns the body as a text content
+// block. Errors come back as an isError tool result so the widget can
+// surface them without the JSON-RPC error code path (which the host
+// might present as a hard failure rather than a recoverable state).
+func (s *server) relay(path string) (any, *rpcError) {
+	body, err := s.hud.get(context.Background(), path, relayPaths)
+	if err != nil {
+		s.logger.Warn("hud relay failed", "path", path, "error", err)
+		return map[string]any{
+			"content": []any{
+				map[string]any{
+					"type": "text",
+					"text": "loom HUD relay failed: " + err.Error(),
+				},
+			},
+			"isError": true,
+		}, nil
 	}
 	return map[string]any{
 		"content": []any{
 			map[string]any{
-				"type": "text",
-				"text": "Loom fleet widget rendered inline. (Slice 1b-α placeholder; live data lands in 1b-γ.)",
-			},
-		},
-		"_meta": map[string]any{
-			"ui": map[string]any{
-				"resourceUri": widgetURI,
+				"type":     "text",
+				"text":     string(body),
+				"mimeType": "application/json",
 			},
 		},
 	}, nil
