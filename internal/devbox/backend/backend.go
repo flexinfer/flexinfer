@@ -96,6 +96,15 @@ type StartOpts struct {
 	CPUs         float64           // CPU limit (0 = no limit)
 	Network      bool              // enable networking
 	AgentID      string            // owning agent ID (used as pod label in K8s backend)
+
+	// ManagedByOverride, if non-empty, replaces the default "mcp-devbox"
+	// value for the app.kubernetes.io/managed-by label. Spawn pods set this
+	// to "loom-spawn" so the reconciler can discover them.
+	ManagedByOverride string
+
+	// ExtraLabels are merged into the pod/container labels after defaults.
+	// Caller-provided keys win over defaults if there is a collision.
+	ExtraLabels map[string]string
 }
 
 // Mount describes a bind mount.

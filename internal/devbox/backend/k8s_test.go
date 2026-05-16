@@ -945,3 +945,78 @@ func keysOf(m map[string]corev1.EnvVar) []string {
 	}
 	return out
 }
+
+func TestBuildPodSpec_ManagedByOverride(t *testing.T) {
+	k := testK8sBackend()
+
+	t.Run("default managed-by when override is empty", func(t *testing.T) {
+		pod := k.buildPodSpec(StartOpts{
+			Name: "devbox-test",
+		}, "registry.harbor.lan/devbox:latest")
+
+		if got := pod.Labels["app.kubernetes.io/managed-by"]; got != "mcp-devbox" {
+			t.Fatalf("expected default managed-by=mcp-devbox, got %q", got)
+		}
+	})
+
+	t.Run("override managed-by to loom-spawn", func(t *testing.T) {
+		pod := k.buildPodSpec(StartOpts{
+			Name:              "spawn-abc123",
+			ManagedByOverride: "loom-spawn",
+		}, "registry.harbor.lan/devbox:latest")
+
+		if got := pod.Labels["app.kubernetes.io/managed-by"]; got != "loom-spawn" {
+			t.Fatalf("expected managed-by=loom-spawn, got %q", got)
+		}
+	})
+}
+
+func TestBuildPodSpec_ExtraLabels(t *testing.T) {
+	k := testK8sBackend()
+
+	t.Run("extra labels merged into pod", func(t *testing.T) {
+		pod := k.buildPodSpec(StartOpts{
+			Name:              "spawn-abc123",
+			AgentID:           "agent-1",
+			ManagedByOverride: "loom-spawn",
+			ExtraLabels: map[string]string{
+				"loom.dev/spawn-id": "spawn-abc123",
+				"loom.dev/agent-id": "agent-1",
+			},
+		}, "registry.harbor.lan/devbox:latest")
+
+		if got := pod.Labels["loom.dev/spawn-id"]; got != "spawn-abc123" {
+			t.Fatalf("expected loom.dev/spawn-id=spawn-abc123, got %q", got)
+		}
+		if got := pod.Labels["loom.dev/agent-id"]; got != "agent-1" {
+			t.Fatalf("expected loom.dev/agent-id=agent-1, got %q", got)
+		}
+		if got := pod.Labels["app.kubernetes.io/managed-by"]; got != "loom-spawn" {
+			t.Fatalf("expected managed-by=loom-spawn, got %q", got)
+		}
+	})
+
+	t.Run("extra labels override defaults", func(t *testing.T) {
+		pod := k.buildPodSpec(StartOpts{
+			Name: "devbox-test",
+			ExtraLabels: map[string]string{
+				"devbox/project": "custom-project",
+			},
+		}, "registry.harbor.lan/devbox:latest")
+
+		if got := pod.Labels["devbox/project"]; got != "custom-project" {
+			t.Fatalf("expected extra label to override default, got %q", got)
+		}
+	})
+
+	t.Run("nil extra labels does not panic", func(t *testing.T) {
+		pod := k.buildPodSpec(StartOpts{
+			Name:        "devbox-test",
+			ExtraLabels: nil,
+		}, "registry.harbor.lan/devbox:latest")
+
+		if pod.Labels["devbox/project"] != "devbox-test" {
+			t.Fatalf("unexpected project label: %q", pod.Labels["devbox/project"])
+		}
+	})
+}

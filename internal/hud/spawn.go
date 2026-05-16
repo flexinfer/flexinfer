@@ -510,16 +510,21 @@ func (o *SpawnOrchestrator) runSpawn(spawnID string, req SpawnRequest) {
 		env["GOOGLE_APPLICATION_CREDENTIALS"] = GeminiSAMountPath + "/" + GeminiSAFilename
 	}
 	startResult, err := o.backend.Start(ctx, backend.StartOpts{
-		Name:         "spawn-" + spawnID,
-		ImageTag:     buildResult.ImageTag,
-		WorkDir:      podProjectDir,
-		Env:          env,
-		SecretEnv:    agentSecretEnvVars(req.AgentType),
-		SecretMounts: agentSecretMounts(req.AgentType),
-		MemoryMB:     req.MemoryMB,
-		CPUs:         req.CPUs,
-		Network:      true,
-		AgentID:      state.AgentID,
+		Name:              "spawn-" + spawnID,
+		ImageTag:          buildResult.ImageTag,
+		WorkDir:           podProjectDir,
+		Env:               env,
+		SecretEnv:         agentSecretEnvVars(req.AgentType),
+		SecretMounts:      agentSecretMounts(req.AgentType),
+		MemoryMB:          req.MemoryMB,
+		CPUs:              req.CPUs,
+		Network:           true,
+		AgentID:           state.AgentID,
+		ManagedByOverride: spawn.ManagedByValue,
+		ExtraLabels: map[string]string{
+			spawn.SpawnIDLabel: spawnID,
+			spawn.AgentIDLabel: state.AgentID,
+		},
 	})
 	podSpan.End()
 	if err != nil {
