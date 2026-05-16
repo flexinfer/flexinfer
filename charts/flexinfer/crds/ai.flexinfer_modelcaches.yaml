@@ -79,7 +79,7 @@ spec:
                   direction" from transformer weights via contrastive activation analysis.
                 properties:
                   ablitateLmHead:
-                    default: true
+                    default: false
                     description: |-
                       AblitateLmHead controls whether the lm_head output projection is abliterated.
                       Set to false to skip lm_head modification (safer for hybrid architectures).
@@ -145,7 +145,7 @@ spec:
                   weightMatrices:
                     description: |-
                       WeightMatrices to orthogonalize against the refusal direction.
-                      Defaults to ["o_proj", "down_proj"] if empty.
+                      Defaults to ["o_proj", "out_proj", "down_proj"] if empty.
                     items:
                       type: string
                     type: array

@@ -109,7 +109,7 @@ Full list: `build/scripts/vllm_qwen35_patches.py`
 |-------|------|---------|---------|
 | `skipGDNLayers` | *bool | true | Only abliterate full-attention layers |
 | `normThreshold` | *string | "100" | Abort if refusal norm exceeds |
-| `ablitateLmHead` | *bool | true | Abliterate output projection |
+| `ablitateLmHead` | *bool | false | Abliterate output projection; opt in only when the save path is known safe |
 | `targetLayers` | *string | "auto" | Layer selection (e.g. "27,31,35") |
 | `dynamicExclusion` | *string | "auto" | GPTQ exclusion pattern (`auto`, `gdn`, or `none`) |
 | `denseModulePolicy` | *string | unset / "fallback" | Optional dense GPTQ family validation policy |
