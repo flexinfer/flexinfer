@@ -174,3 +174,89 @@ func TestHandoffTypeDefault(t *testing.T) {
 		}
 	}
 }
+
+// liveHandoffYAMLBody is the exact raw text observed in the operator
+// WARN log when agent_handoff_create returned YAML and the legacy
+// JSON-only decoder failed (see fix/mills-escalator-yaml-handoff-decode).
+const liveHandoffYAMLBody = "entry_count: 0\n" +
+	"handoff_id: bcd72b1b8f9ad438\n" +
+	"ok: true\n" +
+	"summary: \"\"\n" +
+	"token_count: 0\n"
+
+func TestDecodeHandoffCreateResponse_YAML(t *testing.T) {
+	parsed, err := decodeHandoffCreateResponse(liveHandoffYAMLBody)
+	if err != nil {
+		t.Fatalf("decode YAML: %v", err)
+	}
+	if !parsed.OK {
+		t.Errorf("OK = false, want true")
+	}
+	if parsed.HandoffID != "bcd72b1b8f9ad438" {
+		t.Errorf("HandoffID = %q, want bcd72b1b8f9ad438", parsed.HandoffID)
+	}
+	if parsed.Summary != "" {
+		t.Errorf("Summary = %q, want empty", parsed.Summary)
+	}
+	if parsed.TokenCount != 0 || parsed.EntryCount != 0 {
+		t.Errorf("counts = (%d,%d), want (0,0)", parsed.TokenCount, parsed.EntryCount)
+	}
+}
+
+func TestDecodeHandoffCreateResponse_JSON(t *testing.T) {
+	body := `{"ok":true,"handoff_id":"ho-json","token_count":42,"entry_count":3,"summary":"hi"}`
+	parsed, err := decodeHandoffCreateResponse(body)
+	if err != nil {
+		t.Fatalf("decode JSON: %v", err)
+	}
+	if !parsed.OK || parsed.HandoffID != "ho-json" || parsed.TokenCount != 42 || parsed.EntryCount != 3 || parsed.Summary != "hi" {
+		t.Errorf("parsed = %+v", parsed)
+	}
+}
+
+func TestDecodeHandoffCreateResponse_Empty(t *testing.T) {
+	if _, err := decodeHandoffCreateResponse(""); err == nil {
+		t.Error("expected error for empty body")
+	}
+	if _, err := decodeHandoffCreateResponse("   \n  "); err == nil {
+		t.Error("expected error for whitespace-only body")
+	}
+}
+
+func TestDecodeHandoffCreateResponse_Invalid(t *testing.T) {
+	// Neither valid JSON nor YAML mapping.
+	if _, err := decodeHandoffCreateResponse("not: : valid: yaml: ::"); err == nil {
+		t.Error("expected error for malformed payload")
+	}
+}
+
+// handoffRawStub returns a CallToolResult whose content[0].text is the
+// raw body verbatim (no JSON wrapping). Used to simulate YAML payloads
+// from servers running in concise-text-output mode.
+func handoffRawStub(t *testing.T, rawText string) []byte {
+	t.Helper()
+	res := mcp.CallToolResult{Content: []mcp.Content{{Type: "text", Text: rawText}}}
+	out, _ := json.Marshal(res)
+	return out
+}
+
+func TestHandoffClient_AcceptsYAMLBody(t *testing.T) {
+	ft := &fakeTransport{
+		responses: map[string][]byte{
+			"initialize": []byte(`{}`),
+			"tools/call": handoffRawStub(t, liveHandoffYAMLBody),
+		},
+	}
+	hub := newTestHubClient(t, ft)
+	hc := NewHandoffClient(hub, "session-op-yaml")
+	resp, err := hc.CreateHandoff(context.Background(), pipeline.HandoffRequest{
+		From: "loom-mills-operator",
+		To:   "human-on-call",
+	})
+	if err != nil {
+		t.Fatalf("create with YAML body: %v", err)
+	}
+	if resp.HandoffID != "bcd72b1b8f9ad438" {
+		t.Errorf("HandoffID = %q, want bcd72b1b8f9ad438", resp.HandoffID)
+	}
+}
