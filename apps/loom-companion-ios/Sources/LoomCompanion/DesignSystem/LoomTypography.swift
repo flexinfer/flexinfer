@@ -29,6 +29,17 @@ enum LoomTypography {
     static let monoCaption = Font.system(size: 10, weight: .regular, design: .monospaced)
     static let monoMedium = Font.system(size: 13, weight: .medium, design: .monospaced)
 
+    // MARK: - Kind Label (HUD-aligned triage eyebrow)
+    //
+    // Mono, slightly heavier, uppercased and wide-tracked by callers via
+    // `.tracking(LoomTypography.kindLabelTracking)`. Pairs with the operator-
+    // inbox card pattern shipped in the HUD's Slice A2 triage overview, where
+    // each pressure point is tagged with a kind label like `BLOCKED_TASK`
+    // or `PENDING_APPROVAL` in the card header.
+
+    static let kindLabel = Font.system(size: 10, weight: .semibold, design: .monospaced)
+    static let kindLabelTracking: CGFloat = 1.6
+
     // MARK: - Counter (animated numbers on dashboard — monospaced for data-forward feel)
 
     static let counterLarge = Font.system(size: 32, weight: .bold, design: .monospaced)

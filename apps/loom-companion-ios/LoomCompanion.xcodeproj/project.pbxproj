@@ -9,6 +9,7 @@
 /* Begin PBXBuildFile section */
 		0034FF0A8F95401700D87E5C /* CompactSparkline.swift in Sources */ = {isa = PBXBuildFile; fileRef = 62324BA9DC53973102DF1B85 /* CompactSparkline.swift */; };
 		0154632F64A9B778BD328148 /* HealthSummary.swift in Sources */ = {isa = PBXBuildFile; fileRef = 258CB4A2EE68D95676AB445E /* HealthSummary.swift */; };
+		040848B887479AF5C3F593F6 /* DashboardInboxHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3F174A7BC7D577B63F9B5A61 /* DashboardInboxHeader.swift */; };
 		0BB6F08961D982D9BF1023F8 /* LoomCompanionKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0965F79DE443186E70D59245 /* LoomCompanionKit.framework */; };
 		0D01D277C24B8DA64CB64C59 /* SessionLiveActivityView.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD30CC7930CFA14D3DB2836 /* SessionLiveActivityView.swift */; };
 		0FD22322A54C0DA5ED21C612 /* LoomListRow.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04FF7B8133D3CCC0DC42AB08 /* LoomListRow.swift */; };
@@ -30,6 +31,7 @@
 		218D4749741E3B72A64549FE /* AgentFilterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6CCA5BB226DF7900CF791225 /* AgentFilterView.swift */; };
 		25F9A3AACB334874920BAF6A /* SessionRowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 49E6B8D288B2788D83D73ACA /* SessionRowView.swift */; };
 		26051289636AC8286F10DD32 /* SpawnViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = B1D118C36E14FC9B7B901282 /* SpawnViewModel.swift */; };
+		281B573B55BE71BDFB398831 /* LoomEmptyState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9AFC594F979F95F7D0BAB750 /* LoomEmptyState.swift */; };
 		2883218139FF2C2D0F68CA9F /* HandoffInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 256BBFB22303B582CC796CDF /* HandoffInboxView.swift */; };
 		2D98A8D1191662318E0F2FE5 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 678EE9DDABB8C2F74E417932 /* ContentView.swift */; };
 		36B0A528E84F750D61844E2A /* SkeletonView.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2E1FD6491A1467889D644AD /* SkeletonView.swift */; };
@@ -227,6 +229,7 @@
 		3B54489129D12CD2FE8EB2E8 /* ConnectionDiagnosticsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConnectionDiagnosticsView.swift; sourceTree = "<group>"; };
 		3E658DFA7DF9965AC39ECCB3 /* SSEClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SSEClient.swift; sourceTree = "<group>"; };
 		3EE6D438C7105791B6B9A720 /* LoomTypography.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomTypography.swift; sourceTree = "<group>"; };
+		3F174A7BC7D577B63F9B5A61 /* DashboardInboxHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DashboardInboxHeader.swift; sourceTree = "<group>"; };
 		3F846B3688A0A1CDB3EC131E /* OpsReasoningChainDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsReasoningChainDetailView.swift; sourceTree = "<group>"; };
 		41BD976B82B11491D10ECF8C /* CheckFleetHealthIntent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CheckFleetHealthIntent.swift; sourceTree = "<group>"; };
 		42BF81586CBA848909A4F4AC /* WidgetData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WidgetData.swift; sourceTree = "<group>"; };
@@ -282,6 +285,7 @@
 		96C49B61AED887490A116605 /* SessionTimelineChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionTimelineChart.swift; sourceTree = "<group>"; };
 		96CC59A029891F1F80DF8153 /* OpsTaskDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsTaskDetailView.swift; sourceTree = "<group>"; };
 		9ACB13956A25A11A5A18DDD3 /* SessionsViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionsViewModel.swift; sourceTree = "<group>"; };
+		9AFC594F979F95F7D0BAB750 /* LoomEmptyState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LoomEmptyState.swift; sourceTree = "<group>"; };
 		9BCC13E0C8BCA4FEBD821204 /* OpsRuntimeSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpsRuntimeSection.swift; sourceTree = "<group>"; };
 		9C8910526CF468521F9E5CEC /* HealthGaugeChart.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HealthGaugeChart.swift; sourceTree = "<group>"; };
 		9D65752DA1D831C10454937C /* APIClient.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = APIClient.swift; sourceTree = "<group>"; };
@@ -710,6 +714,7 @@
 			children = (
 				80F942D468E002C7585986BA /* ActiveWorkCard.swift */,
 				6A048D43A81CB4769491775B /* AttentionLanesCard.swift */,
+				3F174A7BC7D577B63F9B5A61 /* DashboardInboxHeader.swift */,
 				8128EBBB2219D0A2C14482ED /* DashboardView.swift */,
 				1CF7388A60BCC73E46496965 /* FleetSummaryCard.swift */,
 				CFBB16BC786E0CA1239A1927 /* HealthStatusCard.swift */,
@@ -743,6 +748,7 @@
 				62324BA9DC53973102DF1B85 /* CompactSparkline.swift */,
 				27130C96FE0A807F7AE9930E /* LiveActivityBanner.swift */,
 				A882B8682E19E4E7B3C5A671 /* LoomCard.swift */,
+				9AFC594F979F95F7D0BAB750 /* LoomEmptyState.swift */,
 				04FF7B8133D3CCC0DC42AB08 /* LoomListRow.swift */,
 				F8FC1E43EB5C7C2F5E3FDD87 /* LoomPill.swift */,
 				BB4F15AD1A69DF0EF8683C5B /* LoomShareLink.swift */,
@@ -877,6 +883,7 @@
 				3B7D185E18B6B4441E16A8DB /* ConnectionProfileView.swift in Sources */,
 				2D98A8D1191662318E0F2FE5 /* ContentView.swift in Sources */,
 				76902BBFE74D96C71EF3120C /* CreateSessionView.swift in Sources */,
+				040848B887479AF5C3F593F6 /* DashboardInboxHeader.swift in Sources */,
 				EF6C45BC301083177F0FDFBE /* DashboardView.swift in Sources */,
 				FA64F07EF16BF9A5CBA8759C /* DeviceInfo.swift in Sources */,
 				C87437F13DE7E88A0AFD1E1B /* ErrorBanner.swift in Sources */,
@@ -896,6 +903,7 @@
 				F0AE8E31B10892857FE259AE /* LoomCard.swift in Sources */,
 				9AE17E87F2C1766CA77517CC /* LoomColors.swift in Sources */,
 				A0ADB23805338C6C29E0A0CB /* LoomCompanionApp.swift in Sources */,
+				281B573B55BE71BDFB398831 /* LoomEmptyState.swift in Sources */,
 				0FD22322A54C0DA5ED21C612 /* LoomListRow.swift in Sources */,
 				5297427D09FA2F13F26C87D8 /* LoomPill.swift in Sources */,
 				15F869E11F655A1C72BD38B3 /* LoomShadows.swift in Sources */,

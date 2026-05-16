@@ -131,22 +131,32 @@ struct AgentsListView: View {
                         .buttonStyle(.borderedProminent)
                     }
                 } else if viewModel.agents.isEmpty && !viewModel.isLoading {
-                    ContentUnavailableView {
-                        Label("No Agents", systemImage: "person.2.wave.2")
-                    } description: {
-                        Text("Agents appear here when coding agents connect via presence or sessions. Start an agent from your terminal or spawn one from the Work tab.")
-                    } actions: {
-                        if !embeddedInPeopleTab {
-                            Button {
-                                showingCreateSheet = true
-                            } label: {
-                                Label("Create Session", systemImage: "plus.circle")
+                    ScrollView {
+                        LoomEmptyState(
+                            tone: .idle,
+                            title: "No agents yet",
+                            detail: "Agents appear here when coding agents connect via presence or sessions.\nStart one from your terminal or spawn from the Work tab."
+                        ) {
+                            if !embeddedInPeopleTab {
+                                Button {
+                                    showingCreateSheet = true
+                                } label: {
+                                    Label("Create session", systemImage: "plus.circle")
+                                        .font(LoomTypography.labelLarge)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(LoomColors.accent)
                             }
-                            .buttonStyle(.borderedProminent)
                         }
                     }
                 } else if viewModel.filteredAgents.isEmpty && !viewModel.agents.isEmpty {
-                    ContentUnavailableView.search(text: viewModel.searchText)
+                    ScrollView {
+                        LoomEmptyState(
+                            tone: .attention,
+                            title: "No matching agents",
+                            detail: "Filter excluded \(viewModel.agents.count) agent\(viewModel.agents.count == 1 ? "" : "s"). Adjust filters or clear search."
+                        )
+                    }
                 }
             }
             .task {

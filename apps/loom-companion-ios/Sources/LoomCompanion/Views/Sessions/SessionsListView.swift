@@ -135,22 +135,32 @@ struct SessionsListView: View {
                         .buttonStyle(.borderedProminent)
                     }
                 } else if viewModel.sessions.isEmpty && !viewModel.isLoading {
-                    ContentUnavailableView {
-                        Label("No Sessions", systemImage: "person.2.circle")
-                    } description: {
-                        Text("Agent sessions appear here when coding agents connect. Start a session from the Work tab or launch an agent from your terminal.")
-                    } actions: {
-                        if !embeddedInPeopleTab {
-                            Button {
-                                showingCreateSheet = true
-                            } label: {
-                                Label("Create Session", systemImage: "plus.circle")
+                    ScrollView {
+                        LoomEmptyState(
+                            tone: .idle,
+                            title: "No sessions yet",
+                            detail: "Agent sessions appear here when coding agents connect.\nStart from the Work tab or launch an agent from your terminal."
+                        ) {
+                            if !embeddedInPeopleTab {
+                                Button {
+                                    showingCreateSheet = true
+                                } label: {
+                                    Label("Create session", systemImage: "plus.circle")
+                                        .font(LoomTypography.labelLarge)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(LoomColors.accent)
                             }
-                            .buttonStyle(.borderedProminent)
                         }
                     }
                 } else if viewModel.filteredSessions.isEmpty && !viewModel.sessions.isEmpty {
-                    ContentUnavailableView.search(text: viewModel.searchText)
+                    ScrollView {
+                        LoomEmptyState(
+                            tone: .attention,
+                            title: "No matching sessions",
+                            detail: "Filter excluded \(viewModel.sessions.count) session\(viewModel.sessions.count == 1 ? "" : "s"). Adjust filters or clear search."
+                        )
+                    }
                 }
             }
             .task {
