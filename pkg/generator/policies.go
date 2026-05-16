@@ -254,3 +254,33 @@ func gitCommitQualityReminderHook() map[string]any {
 		},
 	}
 }
+
+// gitCommitCwdDriftWarningHook returns a PreToolUse hook that warns when
+// `git commit` is about to run from a working directory that resolves to a
+// different git toplevel than the session's starting cwd. This catches the
+// failure mode where the agent ran `cd /abs/path/to/main && cmd` in a Bash
+// invocation, causing Claude Code's persisted cwd to drift out of the
+// allocated worktree — subsequent commits then land on the *main checkout's*
+// branch instead of the worktree's branch.
+//
+// The session's starting cwd is stamped to ${AGENT_CACHE_DIR}/session-cwd-${AGENT_ID}
+// by the SessionStart hook. The warning is non-blocking: it emits a
+// systemMessage instructing the agent to re-cd back into the worktree before
+// committing, but does not stop the commit (so accidental commits from main
+// can still be recovered without disabling the hook).
+//
+// Bootstrap must be supplied so AGENT_CACHE_DIR / AGENT_ID resolve identically
+// to the SessionStart stamp.
+func gitCommitCwdDriftWarningHook(bootstrap string) map[string]any {
+	return map[string]any{
+		"matcher": "Bash",
+		"hooks": []map[string]any{
+			{
+				"type": "command",
+				"command": fmt.Sprintf(
+					`INPUT=$(cat); CMD=$(echo "$INPUT" | jq -r '.tool_input.command // ""'); if echo "$CMD" | grep -qE '^[[:space:]]*git[[:space:]]+commit([[:space:]]|$)'; then %s; SESSION_CWD_FILE="${AGENT_CACHE_DIR}/session-cwd-${AGENT_ID}"; if [ -s "$SESSION_CWD_FILE" ]; then SESSION_CWD="$(cat "$SESSION_CWD_FILE")"; SESSION_TOP="$(git -C "$SESSION_CWD" rev-parse --show-toplevel 2>/dev/null || echo "")"; CURRENT_TOP="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"; if [ -n "$SESSION_TOP" ] && [ -n "$CURRENT_TOP" ] && [ "$SESSION_TOP" != "$CURRENT_TOP" ]; then printf '%%s\n' "{\"systemMessage\":\"⚠ cwd drift detected: this 'git commit' will run in $CURRENT_TOP but the session started in $SESSION_TOP. Commits will land on the wrong branch. cd back into $SESSION_TOP before committing.\"}"; fi; fi; fi; exit 0`,
+					bootstrap),
+			},
+		},
+	}
+}

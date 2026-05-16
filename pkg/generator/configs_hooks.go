@@ -66,7 +66,13 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 		{
 			"type": "command",
 			"command": fmt.Sprintf(
-				`INPUT=$(cat); %s; %s; %s; PARENT_FLAG=""; PARENT_FILE="${AGENT_CACHE_DIR}/parent-session-${AGENT_ID}"; if [ -s "$PARENT_FILE" ]; then PARENT_FLAG="--parent-session-id $(cat "$PARENT_FILE")"; rm -f "$PARENT_FILE"; elif [ -n "${LOOM_PARENT_SESSION_ID:-}" ]; then PARENT_FLAG="--parent-session-id $LOOM_PARENT_SESSION_ID"; fi; %s agent session-start --namespace "$NS_PROJECT/$NS_BRANCH" --agent-id "$AGENT_ID" --agent-type %s --description "%s · $NS_PROJECT" --auto-recall --auto-recall-strategy fast $PARENT_FLAG --quiet %s || true`,
+				// Stamp the session's starting $PWD so later hooks can detect
+				// cwd drift caused by `cd /abs/path` persisting across Bash
+				// invocations. Without this stamp, a hook that calls
+				// `git rev-parse --show-toplevel` resolves the *drifted* repo,
+				// which silently mis-targets worktree cleanup and `git commit`
+				// on the wrong branch.
+				`INPUT=$(cat); %s; %s; %s; printf '%%s' "$PWD" > "${AGENT_CACHE_DIR}/session-cwd-${AGENT_ID}" 2>/dev/null || true; PARENT_FLAG=""; PARENT_FILE="${AGENT_CACHE_DIR}/parent-session-${AGENT_ID}"; if [ -s "$PARENT_FILE" ]; then PARENT_FLAG="--parent-session-id $(cat "$PARENT_FILE")"; rm -f "$PARENT_FILE"; elif [ -n "${LOOM_PARENT_SESSION_ID:-}" ]; then PARENT_FLAG="--parent-session-id $LOOM_PARENT_SESSION_ID"; fi; %s agent session-start --namespace "$NS_PROJECT/$NS_BRANCH" --agent-id "$AGENT_ID" --agent-type %s --description "%s · $NS_PROJECT" --auto-recall --auto-recall-strategy fast $PARENT_FLAG --quiet %s || true`,
 				bootstrap, staleCleanup, nsVars, loomCmd, hp.AgentType, descPrefix, log),
 		},
 		{
@@ -149,6 +155,18 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 							`INPUT=$(cat); %s; for pf in "${TMPDIR:-/tmp}"/loom-keepalive-%s-"${WS_HASH}"*.pid; do [ -f "$pf" ] && kill "$(cat "$pf")" 2>/dev/null && rm -f "$pf"; done; pkill -f "loom agent keepalive --agent-id %s-${WS_HASH}" 2>/dev/null || true; rm -f "$AGENT_ID_FILE"; %s agent session-end --agent-id "$AGENT_ID" --summarize --summary-async --quiet %s || true`,
 							bootstrap, hp.AgentID, hp.AgentID, loomCmd, log),
 					},
+					{
+						"type": "command",
+						// Auto-release the current harness-allocated worktree if it's clean
+						// and fully pushed. Resolves the worktree path from the cwd stamped
+						// at SessionStart so cleanup still works when the agent's cwd has
+						// drifted (e.g. `cd /abs/path/to/main` in a Bash invocation).
+						// Fires only when the stamped cwd resolves to a path containing
+						// /.claude/worktrees/; otherwise it's a no-op.
+						"command": fmt.Sprintf(
+							`%s; SESSION_CWD_FILE="${AGENT_CACHE_DIR}/session-cwd-${AGENT_ID}"; if [ -s "$SESSION_CWD_FILE" ]; then WT_PATH="$(cat "$SESSION_CWD_FILE")"; else WT_PATH="$(git rev-parse --show-toplevel 2>/dev/null || printf '%%s' "$PWD")"; fi; WT_ROOT="$(git -C "$WT_PATH" rev-parse --show-toplevel 2>/dev/null || printf '%%s' "$WT_PATH")"; if printf '%%s' "$WT_ROOT" | grep -q '/.claude/worktrees/'; then %s agent worktree-cleanup-self --worktree-path "$WT_ROOT" --quiet %s || true; fi; rm -f "$SESSION_CWD_FILE" 2>/dev/null || true`,
+							bootstrap, loomCmd, log),
+					},
 				},
 			},
 		}
@@ -192,12 +210,19 @@ func buildPlatformHooks(reg *registry.Registry, hp HookProfile, loomBinary strin
 // lack preToolUse (e.g. Gemini), policies are enforced at the loom proxy
 // layer and no PreToolUse hooks are generated here.
 func appendHookPolicies(hooks map[string]any, reg *registry.Registry, hp HookProfile) {
-	if len(hp.PolicyRefs) == 0 {
+	if hp.Enforcement != "native" || !hookProfileHasEvent(hp, "preToolUse") {
+		// Proxy/plugin enforcement: policy denies and the git-commit reminder
+		// are skipped (they're PreToolUse hooks). The cwd-drift guardrail is
+		// also gated here for the same reason.
 		return
 	}
-	if hp.Enforcement != "native" || !hookProfileHasEvent(hp, "preToolUse") {
-		// Proxy/plugin enforcement: nothing to emit. The git-commit reminder
-		// is also gated here — it's a PreToolUse hook itself.
+
+	// Always emit the cwd-drift guardrail on platforms that support PreToolUse.
+	// It is not policy-gated: drift can mis-target commits regardless of which
+	// policies (if any) the platform has loaded.
+	hooks["PreToolUse"] = appendHookBlocks(hooks["PreToolUse"], gitCommitCwdDriftWarningHook(hookAgentIDBootstrap(hp.AgentID)))
+
+	if len(hp.PolicyRefs) == 0 {
 		return
 	}
 
