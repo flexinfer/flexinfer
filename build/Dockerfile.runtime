@@ -405,7 +405,8 @@ RUN if [ "${INCLUDE_VLLM}" = "true" ] && [ "${VLLM_INSTALL_MODE}" = "wheel" ] &&
 # See .loom/slice3-v1-sandbox-rms-norm-falsified-2026-05-15.md (Z2-Z1
 # rollback-2 section).
 RUN if [ "${SKIP_GEMMA4_MOE_PATCH}" = "true" ]; then \
-      echo "vLLM Gemma4 MoE GPTQ patch SKIPPED (SKIP_GEMMA4_MOE_PATCH=true; required for vLLM >=0.19 with native FusedMoE)"; \
+      FLEXINFER_GEMMA4_MOE_NATIVE_COMPAT_ONLY=1 python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py && \
+      echo "vLLM Gemma4 legacy MoE GPTQ patch SKIPPED; native activation compat applied (SKIP_GEMMA4_MOE_PATCH=true)"; \
     elif [ "${INCLUDE_VLLM}" = "true" ] && [ -f /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py ]; then \
       python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py && \
       echo "vLLM Gemma4 MoE GPTQ patch applied at build time"; \
