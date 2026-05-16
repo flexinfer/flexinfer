@@ -72,6 +72,20 @@ func (d *DockerBackend) Start(ctx context.Context, opts StartOpts) (*StartResult
 
 	args := []string{"run", "-d", "--name", opts.Name}
 
+	// Apply container labels (symmetry with K8s backend pod labels).
+	managedBy := "mcp-devbox"
+	if opts.ManagedByOverride != "" {
+		managedBy = opts.ManagedByOverride
+	}
+	args = append(args, "--label", "app.kubernetes.io/managed-by="+managedBy)
+	args = append(args, "--label", "devbox/project="+opts.Name)
+	if opts.AgentID != "" {
+		args = append(args, "--label", "devbox/agent-id="+opts.AgentID)
+	}
+	for k, v := range opts.ExtraLabels {
+		args = append(args, "--label", k+"="+v)
+	}
+
 	for _, m := range opts.Mounts {
 		flag := fmt.Sprintf("%s:%s", m.Host, m.Container)
 		if m.ReadOnly {

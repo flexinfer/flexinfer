@@ -135,3 +135,61 @@ func TestDockerStart_PassesMountsAndNetworkFlags(t *testing.T) {
 		t.Fatalf("missing --network none in args: %q", runLine)
 	}
 }
+
+func TestDockerStart_DefaultManagedByLabel(t *testing.T) {
+	dockerPath, logPath := writeFakeDocker(t)
+	d := &DockerBackend{dockerPath: dockerPath}
+
+	_, err := d.Start(context.Background(), StartOpts{
+		Name:     "devbox-test",
+		ImageTag: "test:latest",
+		Network:  true,
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	lines := readLogLines(t, logPath)
+	runLine := lines[len(lines)-1]
+	if !strings.Contains(runLine, "--label app.kubernetes.io/managed-by=mcp-devbox") {
+		t.Fatalf("missing default managed-by label in args: %q", runLine)
+	}
+	if !strings.Contains(runLine, "--label devbox/project=devbox-test") {
+		t.Fatalf("missing devbox/project label in args: %q", runLine)
+	}
+}
+
+func TestDockerStart_ManagedByOverrideAndExtraLabels(t *testing.T) {
+	dockerPath, logPath := writeFakeDocker(t)
+	d := &DockerBackend{dockerPath: dockerPath}
+
+	_, err := d.Start(context.Background(), StartOpts{
+		Name:              "spawn-abc123",
+		ImageTag:          "test:latest",
+		Network:           true,
+		AgentID:           "agent-1",
+		ManagedByOverride: "loom-spawn",
+		ExtraLabels: map[string]string{
+			"loom.dev/spawn-id": "spawn-abc123",
+			"loom.dev/agent-id": "agent-1",
+		},
+	})
+	if err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+
+	lines := readLogLines(t, logPath)
+	runLine := lines[len(lines)-1]
+	if !strings.Contains(runLine, "--label app.kubernetes.io/managed-by=loom-spawn") {
+		t.Fatalf("missing overridden managed-by label in args: %q", runLine)
+	}
+	if !strings.Contains(runLine, "--label devbox/agent-id=agent-1") {
+		t.Fatalf("missing agent-id label in args: %q", runLine)
+	}
+	if !strings.Contains(runLine, "--label loom.dev/spawn-id=spawn-abc123") {
+		t.Fatalf("missing spawn-id extra label in args: %q", runLine)
+	}
+	if !strings.Contains(runLine, "--label loom.dev/agent-id=agent-1") {
+		t.Fatalf("missing agent-id extra label in args: %q", runLine)
+	}
+}

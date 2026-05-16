@@ -638,6 +638,50 @@ func TestPruneDropsTerminalSpawnsOlderThanMaxAge(t *testing.T) {
 	}
 }
 
+// TestReconcileDoesNotFailRunningSpawnWithMatchingPod is a regression test for
+// the Mills spawn "pod not found" canary failure. When the devbox backend labels
+// spawn pods with managed-by=loom-spawn (matching the reconciler's selector),
+// Reconcile must discover the pod and NOT mark the spawn as failed.
+func TestReconcileDoesNotFailRunningSpawnWithMatchingPod(t *testing.T) {
+	spawnID := "spawn-regression"
+	agentID := "agent-regression"
+
+	// Pod labeled with the spawn constants — exactly what the HUD spawn
+	// orchestrator now produces via ManagedByOverride + ExtraLabels.
+	pod := makePod("spawn-"+spawnID, spawnID, agentID, corev1.PodRunning)
+	client := fake.NewSimpleClientset([]runtime.Object{pod}...)
+	ctrl := NewK8sController(client, "devbox", nil, nil)
+
+	// Pre-populate a Running spawn entry (simulating the orchestrator having
+	// started the pod successfully and advanced state to Running).
+	ctrl.mu.Lock()
+	ctrl.spawns[spawnID] = &State{
+		SpawnID: spawnID,
+		AgentID: agentID,
+		Status:  StatusRunning,
+		PodName: "spawn-" + spawnID,
+	}
+	ctrl.mu.Unlock()
+
+	if err := ctrl.Reconcile(context.Background()); err != nil {
+		t.Fatalf("Reconcile: %v", err)
+	}
+
+	state, ok := ctrl.Get(spawnID)
+	if !ok {
+		t.Fatal("spawn not found after reconcile")
+	}
+	if state.Status != StatusRunning {
+		t.Errorf("status: got %q, want %q — reconciler must not mark spawn as failed when pod exists with correct labels", state.Status, StatusRunning)
+	}
+	if state.Error != "" {
+		t.Errorf("error should be empty, got %q", state.Error)
+	}
+	if state.EndedAt != nil {
+		t.Error("EndedAt should remain nil for a running spawn")
+	}
+}
+
 // TestPruneZeroMaxAgeIsNoOp protects against accidentally wiping the entire
 // store via a misconfigured retention window.
 func TestPruneZeroMaxAgeIsNoOp(t *testing.T) {

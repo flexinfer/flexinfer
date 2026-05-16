@@ -97,12 +97,19 @@ func (k *K8sBackend) buildPodSpec(opts StartOpts, imageTag string) *corev1.Pod {
 		})
 	}
 
+	managedBy := "mcp-devbox"
+	if opts.ManagedByOverride != "" {
+		managedBy = opts.ManagedByOverride
+	}
 	labels := map[string]string{
-		"app.kubernetes.io/managed-by": "mcp-devbox",
+		"app.kubernetes.io/managed-by": managedBy,
 		"devbox/project":               opts.Name,
 	}
 	if opts.AgentID != "" {
 		labels["devbox/agent-id"] = opts.AgentID
+	}
+	for k, v := range opts.ExtraLabels {
+		labels[k] = v
 	}
 
 	gracePeriod := int64(10)
