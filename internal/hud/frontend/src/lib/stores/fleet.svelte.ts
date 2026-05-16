@@ -1,6 +1,7 @@
 // Fleet store - daemon status and sessions overview
 // v2: SSE-first with 30s fallback poll. Applies hud.fleet snapshots directly.
 import { eventStore } from './events.svelte.ts';
+import { isStaleFromTimestamp, stalenessStore } from './staleness.svelte.ts';
 import { arraysEqualById } from '../utils/diff.ts';
 import { spawnStore, type SpawnState } from './spawn.svelte.ts';
 import {
@@ -220,6 +221,14 @@ class FleetStore {
   sortKey = $state<string>('agent');
   sortDir = $state<'asc' | 'desc'>('asc');
   groupByRootSession = $state<boolean>(true);
+
+  // Staleness (Slice B3) — flips true when no snapshot has landed within
+  // staleAfter ms. Catches silent SSE failures where the connection stays
+  // up but the daemon stops emitting hud.fleet snapshots.
+  staleAfter = 90_000;
+  get isStale(): boolean {
+    return isStaleFromTimestamp(this.lastUpdated, this.staleAfter);
+  }
 
   setSort(key: string, dir: 'asc' | 'desc'): void {
     this.sortKey = key;
@@ -621,7 +630,7 @@ class FleetStore {
     }, intervalMs);
   }
 
-  startPolling(intervalMs = 30000, owner: PollingOwner = DEFAULT_POLLING_OWNER): void {
+  startPolling(intervalMs = 60000, owner: PollingOwner = DEFAULT_POLLING_OWNER): void {
     const wasIdle = this.pollingOwners.size === 0;
     this.pollingOwners.set(owner, intervalMs);
     this.ensureEventSubscriptions();
@@ -646,3 +655,4 @@ class FleetStore {
 }
 
 export const fleetStore = new FleetStore();
+stalenessStore.register('fleet', () => fleetStore.isStale);

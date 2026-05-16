@@ -2,6 +2,7 @@
 // and subscribes to SSE events for real-time exec/build activity.
 // Follows the health.svelte.ts SSE-first pattern with fallback polling.
 import { eventStore } from './events.svelte.ts';
+import { isStaleFromTimestamp, stalenessStore } from './staleness.svelte.ts';
 import { adminFetch, labsAuthStore } from './labsAuth.svelte.ts';
 
 export interface SandboxSummary {
@@ -98,6 +99,12 @@ class SandboxStore {
   execRuns = $state<SandboxExecRun[]>([]);
   projectStatus = $state(new Map<string, SandboxProjectEntry[]>());
   projectStatusLoading = $state(new Set<string>());
+
+  // Staleness (Slice B3) — see fleet.svelte.ts for the pattern.
+  staleAfter = 90_000;
+  get isStale(): boolean {
+    return isStaleFromTimestamp(this.lastUpdated, this.staleAfter);
+  }
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private execPollTimer: ReturnType<typeof setInterval> | null = null;
@@ -363,11 +370,13 @@ class SandboxStore {
     await Promise.allSettled(projects.map(p => this.fetchProjectStatus(p)));
   }
 
-  startPolling(intervalMs = 15000): void {
+  startPolling(intervalMs = 60000): void {
     this.stopPolling();
     this.fetch();
     this.fetchCapabilities();
     this.fetchPolicy();
+    // 60s watchdog poll (SSE is the primary data source; this only fires
+    // when SSE is disconnected — see Slice B3 of the HUD UX overhaul).
     this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
     this.execPollTimer = setInterval(() => {
       this.pollActiveExecs().catch(() => { /* best-effort */ });
@@ -395,3 +404,4 @@ class SandboxStore {
 }
 
 export const sandboxStore = new SandboxStore();
+stalenessStore.register('sandbox', () => sandboxStore.isStale);

@@ -16,7 +16,7 @@
   import SandboxLive from './sandbox/SandboxLive.svelte';
 
   $effect(() => {
-    sandboxStore.startPolling(15000);
+    sandboxStore.startPolling(60000);
     return () => { sandboxStore.stopPolling(); };
   });
 

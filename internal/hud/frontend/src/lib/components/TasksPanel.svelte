@@ -27,7 +27,7 @@
   } from '../utils/tasksHelpers';
 
   $effect(() => {
-    taskStore.startPolling(5000);
+    taskStore.startPolling(60000);
     agentStore.startPolling(30000);
     coordinationStore.startPolling(30000);
     return () => {

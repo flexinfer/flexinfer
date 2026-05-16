@@ -516,6 +516,15 @@ code, pre {
   color: var(--warning);
 }
 
+/* Slice B3 — shown when SSE is connected but one or more decomposed stores
+   haven't received a snapshot within their staleAfter window (silent SSE
+   failure). Lower-prominence than reconnecting/disconnected. */
+.connection-stale {
+  background: rgba(255, 184, 48, 0.04);
+  border-bottom: 1px solid rgba(255, 184, 48, 0.12);
+  color: var(--warning);
+}
+
 @keyframes ellipsis {
   0%   { content: '.'; }
   33%  { content: '..'; }

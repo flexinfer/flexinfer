@@ -28,7 +28,7 @@
 
   $effect(() => { rbacStore.startPolling(30000); return () => rbacStore.stopPolling(); });
   $effect(() => { otelStore.startPolling(30000, otelPollingOwner); return () => otelStore.stopPolling(otelPollingOwner); });
-  $effect(() => { healthStore.startPolling(5000); return () => { healthStore.stopPolling(); }; });
+  $effect(() => { healthStore.startPolling(60000); return () => { healthStore.stopPolling(); }; });
   $effect(() => { daemonMetricsStore.startPolling(15000); return () => daemonMetricsStore.stopPolling(); });
 
   let servers = $derived(healthStore.servers ?? []);

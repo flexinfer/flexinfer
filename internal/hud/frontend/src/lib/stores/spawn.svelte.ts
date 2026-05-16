@@ -1,6 +1,7 @@
 // Spawn store — manages headless agent spawns via /api/agent/spawn endpoints
 // and subscribes to SSE events for real-time spawn lifecycle updates.
 import { eventStore } from './events.svelte.ts';
+import { isStaleFromTimestamp, stalenessStore } from './staleness.svelte.ts';
 import { adminFetch, labsAuthStore } from './labsAuth.svelte.ts';
 import { fleetStore, type Session } from './fleet.svelte.ts';
 
@@ -130,6 +131,15 @@ class SpawnStore {
 
   setStatusFilter(value: string): void { this.statusFilter = value; }
   setSearchQuery(value: string): void { this.searchQuery = value; }
+
+  // Staleness (Slice B3) — fleet snapshots don't include spawns, so spawn
+  // relies on the fine-grained agent.spawn.* SSE stream plus this watchdog
+  // poll. We use a longer staleAfter than the fleet/health stores because
+  // an idle daemon (no active spawns, no events) is a legitimate state.
+  staleAfter = 180_000;
+  get isStale(): boolean {
+    return isStaleFromTimestamp(this.lastUpdated, this.staleAfter);
+  }
 
   private static readonly MAX_ACTIVITY_EVENTS = 500;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -373,14 +383,18 @@ class SpawnStore {
     }
   }
 
-  startPolling(intervalMs = 10000): void {
+  startPolling(intervalMs = 60000): void {
     if (!this.config && !this.configLoading) {
       this.fetchConfig().catch(() => { /* best-effort */ });
     }
     this.fetch();
     this.subscribeSSE();
     if (this.pollTimer) return;
-    this.pollTimer = setInterval(() => this.fetch(), intervalMs);
+    // 60s watchdog poll (Slice B3) — SSE agent.spawn.* events are the
+    // primary data source; this only fires when SSE is disconnected.
+    this.pollTimer = setInterval(() => {
+      if (!eventStore.connected) this.fetch();
+    }, intervalMs);
   }
 
   stopPolling(): void {
@@ -469,3 +483,4 @@ class SpawnStore {
 }
 
 export const spawnStore = new SpawnStore();
+stalenessStore.register('spawn', () => spawnStore.isStale);

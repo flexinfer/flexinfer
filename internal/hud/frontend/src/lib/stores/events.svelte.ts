@@ -17,6 +17,46 @@ export type SSEEvent = {
 
 type EventListener = (event: SSEEvent) => void;
 
+/**
+ * Registry of HUD-side SSE events the daemon emits. Used as documentation
+ * for store authors and as a discovery surface for the typed `subscribe`
+ * helper. Cadences correspond to the monitor `Start(...)` calls in
+ * `internal/hud/embed.go`.
+ *
+ * Snapshot events carry the full payload (apply directly via store
+ * `applySnapshot`); push events carry deltas that trigger targeted updates
+ * or a full refetch fallback.
+ */
+export const SUPPORTED_HUD_EVENTS: Record<string, string> = {
+  'hud.fleet': 'Fleet snapshot — sessions, tasks, agents, file_claims (every 15s)',
+  'hud.health': 'Server health snapshot (every 5s)',
+  'hud.memory': 'Memory snapshot (every 10s)',
+  'hud.workflows': 'Workflow snapshot (every 5s)',
+  'hud.stream': 'Activity stream events (every 5s)',
+  'hud.sandbox': 'Sandbox state snapshot (every 10s)',
+  'hud.sandbox.event': 'Sandbox activity event (push)',
+  'hud.cost': 'Cost snapshot (every 10s)',
+  'hud.pipeline': 'Pipeline status (every 10s when enabled)',
+  'hud.pipeline.failed': 'Pipeline failure (push)',
+  'hud.pipeline.active': 'Pipeline activated (push)',
+  'hud.pipeline.success': 'Pipeline success (push)',
+  'hud.context_health': 'Context health snapshot (every 5s)',
+  'hud.codebase': 'Codebase index snapshot (every 30s)',
+  'hud.weavertion': 'Weavertion event (push)',
+  'hud.task.create': 'New task created (push)',
+  'hud.workflow.approve': 'Workflow approved (push)',
+  'hud.workflow.reject': 'Workflow rejected (push)',
+  'hud.workflow.waiting_approval': 'Workflow awaiting approval (push)',
+  'hud.memory.add': 'Memory item added (push)',
+  'hud.memory.delete': 'Memory item deleted (push)',
+  'hud.memory.promote': 'Memory item promoted (push)',
+  'hud.memory.demote': 'Memory item demoted (push)',
+  'hud.handoff.created': 'Handoff created (push)',
+  'hud.conflict': 'Conflict detected (push)',
+  'hud.approval_needed': 'Approval needed (push)',
+  'hud.claim.released': 'File claim released (push)',
+};
+
 class EventStore {
   connected = $state(false);
   lastEvent: SSEEvent | null = $state(null);
@@ -35,6 +75,20 @@ class EventStore {
   private consecutiveErrors = 0;
   private static readonly MAX_RECONNECT_ERRORS = 5;
   private static readonly BASE_RECONNECT_MS = 5000;
+
+  /**
+   * Typed subscribe helper — like `on(...)` but unwraps `event.data` to a
+   * caller-specified type so stores avoid `as` casts at every callsite.
+   * Returns an unsubscribe function. Prefer this over `on(...)` for new
+   * subscriptions; `on(...)` is preserved for listeners that need the full
+   * SSEEvent envelope (id/timestamp/etc).
+   */
+  subscribe<T = Record<string, unknown>>(
+    eventType: string,
+    handler: (data: T, event: SSEEvent) => void,
+  ): () => void {
+    return this.on(eventType, (event) => handler(event.data as T, event));
+  }
 
   /** Register a listener for a specific event type. Returns an unsubscribe function. */
   on(eventType: string, listener: EventListener): () => void {

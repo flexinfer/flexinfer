@@ -12,7 +12,7 @@
 
   $effect(() => {
     timelineStore.startPolling(30000);
-    fleetStore.startPolling(30000, fleetPollingOwner);
+    fleetStore.startPolling(60000, fleetPollingOwner);
     coordinationStore.startPolling(30000);
     return () => {
       timelineStore.stopPolling();

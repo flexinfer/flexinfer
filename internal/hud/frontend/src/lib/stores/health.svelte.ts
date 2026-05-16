@@ -1,6 +1,7 @@
 // Health store - server health, latency sparklines
-// v2: SSE-first with 30s fallback poll. Applies hud.health snapshots directly.
+// v2: SSE-first with 60s fallback poll. Applies hud.health snapshots directly.
 import { eventStore } from './events.svelte.ts';
+import { isStaleFromTimestamp, stalenessStore } from './staleness.svelte.ts';
 import { arraysEqualByKey } from '../utils/diff.ts';
 
 export interface HealthEndpoint {
@@ -90,6 +91,13 @@ class HealthStore {
     this.searchQuery = '';
     this.categoryFilter = '';
     this.statusFilter = '';
+  }
+
+  // Staleness (Slice B3) — see fleet.svelte.ts for the pattern. Daemon emits
+  // hud.health every 5s, so 90s gives ~18 cycles of grace before we flag stale.
+  staleAfter = 90_000;
+  get isStale(): boolean {
+    return isStaleFromTimestamp(this.lastUpdated, this.staleAfter);
   }
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
@@ -272,10 +280,11 @@ class HealthStore {
     this.error = null;
   }
 
-  startPolling(intervalMs = 30000): void {
+  startPolling(intervalMs = 60000): void {
     this.stopPolling();
     this.fetch();
-    // 30s fallback poll (SSE is the primary data source).
+    // 60s watchdog poll (SSE is the primary data source; this only fires
+    // when SSE is disconnected — see Slice B3 of the HUD UX overhaul).
     this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // Subscribe to SSE events: apply data directly from hud.health snapshots.
@@ -300,3 +309,6 @@ class HealthStore {
 }
 
 export const healthStore = new HealthStore();
+// Registered under "servers" so the stale pill reads naturally in the UI
+// (the panel that consumes this store is ServersPanel).
+stalenessStore.register('servers', () => healthStore.isStale);
