@@ -6,6 +6,7 @@ package hud
 import (
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -35,26 +36,69 @@ import (
 
 // initDomainRegistry creates and populates the domain registry. Called from
 // Run() and from test helpers.
+//
+// When config.EmbedSubset == "operator", domains outside the operator
+// allowlist are skipped so their routes never register. Allowlist mirrors
+// the frontend nav filter; see routes.go operatorAllowedViews. This is the
+// "Backend route allowlist enforced at handler register time" item from
+// Slice B5 of the HUD UX overhaul.
 func (a *App) initDomainRegistry() {
 	a.domainRegistry = domain.NewRegistry()
-	a.domainRegistry.Register(fleet.New(&fleetDepsAdapter{app: a}))
-	a.domainRegistry.Register(domainspawn.New(&spawnDepsAdapter{app: a}))
-	a.domainRegistry.Register(mobile.New(a))
-	a.domainRegistry.Register(coorddomain.New(a))
-	a.domainRegistry.Register(sandbox.New(a))
-	a.domainRegistry.Register(graph.New(&graphDepsAdapter{app: a}))
-	a.domainRegistry.Register(workflow.New(&workflowDepsAdapter{app: a}))
-	a.domainRegistry.Register(memory.New(&memoryDepsAdapter{app: a}))
-	a.domainRegistry.Register(handoff.New(&handoffDepsAdapter{app: a}))
-	a.domainRegistry.Register(domainmills.New(&millsDepsAdapter{app: a}))
-	a.domainRegistry.Register(domainmerge.New(&mergeDepsAdapter{app: a}))
-	a.domainRegistry.Register(domainshuttle.New(&shuttleDepsAdapter{app: a}))
-	a.domainRegistry.Register(domainctx.New(&ctxDepsAdapter{app: a}))
-	a.domainRegistry.Register(codebase.New(&codebaseDepsAdapter{app: a}))
-	a.domainRegistry.Register(domainalerting.New(&alertingDepsAdapter{app: a}))
-	a.domainRegistry.Register(domainweaver.New(&weaverDepsAdapter{app: a}))
-	a.domainRegistry.Register(domainwebhook.New(&webhookDepsAdapter{app: a}))
-	a.domainRegistry.Register(domainaimodels.New(&aimodelsDepsAdapter{app: a}))
+	register := func(name string, d domain.Domain) {
+		if !a.subsetAllowsDomain(name) {
+			return
+		}
+		a.domainRegistry.Register(d)
+	}
+	register("fleet", fleet.New(&fleetDepsAdapter{app: a}))
+	register("spawn", domainspawn.New(&spawnDepsAdapter{app: a}))
+	register("mobile", mobile.New(a))
+	register("coordinator", coorddomain.New(a))
+	register("sandbox", sandbox.New(a))
+	register("graph", graph.New(&graphDepsAdapter{app: a}))
+	register("workflow", workflow.New(&workflowDepsAdapter{app: a}))
+	register("memory", memory.New(&memoryDepsAdapter{app: a}))
+	register("handoff", handoff.New(&handoffDepsAdapter{app: a}))
+	register("mills", domainmills.New(&millsDepsAdapter{app: a}))
+	register("merge", domainmerge.New(&mergeDepsAdapter{app: a}))
+	register("shuttle", domainshuttle.New(&shuttleDepsAdapter{app: a}))
+	register("context", domainctx.New(&ctxDepsAdapter{app: a}))
+	register("codebase", codebase.New(&codebaseDepsAdapter{app: a}))
+	register("alerting", domainalerting.New(&alertingDepsAdapter{app: a}))
+	register("weaver", domainweaver.New(&weaverDepsAdapter{app: a}))
+	register("webhook", domainwebhook.New(&webhookDepsAdapter{app: a}))
+	register("aimodels", domainaimodels.New(&aimodelsDepsAdapter{app: a}))
+}
+
+// operatorDomainAllowlist names the domains whose routes remain registered
+// under EmbedSubset == "operator". Everything else is skipped. The set is
+// intentionally permissive on the Overview-supporting domains (coordinator,
+// memory, workflow, context, alerting, mobile, aimodels) because the
+// Overview panel reads cross-cutting summary endpoints from them; the
+// surfaces hidden from the nav (sandbox, spawn, mills, graph, weaver,
+// codebase, shuttle, merge, handoff) are the user-action surfaces that
+// shouldn't be reachable by URL in an operator embed.
+var operatorDomainAllowlist = map[string]struct{}{
+	"fleet":       {},
+	"mobile":      {},
+	"coordinator": {},
+	"workflow":    {},
+	"memory":      {},
+	"context":     {},
+	"alerting":    {},
+	"aimodels":    {},
+}
+
+func (a *App) subsetAllowsDomain(name string) bool {
+	if a == nil {
+		return true
+	}
+	subset := strings.ToLower(strings.TrimSpace(a.config.EmbedSubset))
+	if subset != "operator" {
+		return true
+	}
+	_, ok := operatorDomainAllowlist[name]
+	return ok
 }
 
 // --- aimodels domain adapter ---

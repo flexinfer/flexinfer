@@ -1,6 +1,7 @@
 package hud
 
 import (
+	"encoding/json"
 	"io/fs"
 	"net/http"
 	"strings"
@@ -86,11 +87,71 @@ func (a *App) registerRoutes(mux *http.ServeMux) {
 		w.Write([]byte(`{"ok":true}`))
 	})
 
+	// Embed/subset config — read by the frontend at boot to decide which
+	// top-level views to render in the nav. See Slice B5 of the HUD UX
+	// overhaul (.loom/117) for the operator-subset rationale.
+	mux.HandleFunc("GET /api/hud/config", a.withCORS(a.handleHUDConfig))
+
 	// CORS preflight for all API routes.
 	mux.HandleFunc("OPTIONS /api/", a.handlePreflight)
 
 	// Static frontend files.
 	a.serveFrontend(mux)
+}
+
+// handleHUDConfig returns boot-time config the frontend needs to decide
+// which views are reachable. The subset field is "full" or "operator";
+// allowed_views/allowed_sub_views describe the operator-subset allowlist
+// the frontend uses to filter the nav and guard router.navigate.
+//
+// Always served — even when EmbedSubset is empty — so the frontend has
+// a single fetch path and doesn't need to special-case missing config.
+func (a *App) handleHUDConfig(w http.ResponseWriter, _ *http.Request) {
+	subset := strings.ToLower(strings.TrimSpace(a.config.EmbedSubset))
+	if subset == "" {
+		subset = "full"
+	}
+	resp := map[string]any{
+		"subset":            subset,
+		"allowed_views":     allowedViewsForSubset(subset),
+		"allowed_sub_views": allowedSubViewsForSubset(subset),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// operatorAllowedViews enumerates the top-level views shown when the HUD
+// is embedded with --subset=operator. Mirrored on the frontend as the
+// router guard. Stream is a sub-view under "activity", so we expose the
+// parent view here.
+var operatorAllowedViews = []string{"overview", "agents", "activity"}
+
+// operatorAllowedSubViews enumerates the sub-views inside each allowed
+// view. Empty list ⇒ all sub-views allowed.
+var operatorAllowedSubViews = map[string][]string{
+	"agents":   {"fleet"},
+	"activity": {"stream"},
+}
+
+func allowedViewsForSubset(subset string) []string {
+	if subset == "operator" {
+		out := make([]string, len(operatorAllowedViews))
+		copy(out, operatorAllowedViews)
+		return out
+	}
+	return nil // nil ⇒ "no restriction"
+}
+
+func allowedSubViewsForSubset(subset string) map[string][]string {
+	if subset == "operator" {
+		out := make(map[string][]string, len(operatorAllowedSubViews))
+		for k, v := range operatorAllowedSubViews {
+			out[k] = append([]string(nil), v...)
+		}
+		return out
+	}
+	return nil
 }
 
 // serveFrontend serves the embedded Svelte dist directory, falling back to

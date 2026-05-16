@@ -4315,3 +4315,121 @@ func TestMemoryStatsPayload_NoCompression(t *testing.T) {
 		t.Fatal("compression block should be absent when ratio=0 and compressed=0")
 	}
 }
+
+// TestHUDConfig_DefaultIsFullSubset verifies the boot-time config endpoint
+// reports "full" when EmbedSubset is unset, with no view restrictions. The
+// frontend uses this to decide whether to filter the nav.
+func TestHUDConfig_DefaultIsFullSubset(t *testing.T) {
+	_, mux := newTestApp(t)
+
+	req := httptest.NewRequest("GET", "/api/hud/config", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if got, want := resp["subset"], "full"; got != want {
+		t.Fatalf("subset=%v, want %q", got, want)
+	}
+	if v := resp["allowed_views"]; v != nil {
+		t.Fatalf("allowed_views=%v, want nil (no restriction)", v)
+	}
+}
+
+// TestHUDConfig_OperatorSubsetAllowlist verifies the operator subset
+// reports the documented allowlist of views (Overview + Operations/Fleet
+// + Activity/Stream) and the matching sub-view restrictions.
+func TestHUDConfig_OperatorSubsetAllowlist(t *testing.T) {
+	app, _ := newTestApp(t)
+	app.config.EmbedSubset = "operator"
+
+	mux := http.NewServeMux()
+	app.registerRoutes(mux)
+
+	req := httptest.NewRequest("GET", "/api/hud/config", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Subset          string              `json:"subset"`
+		AllowedViews    []string            `json:"allowed_views"`
+		AllowedSubViews map[string][]string `json:"allowed_sub_views"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Subset != "operator" {
+		t.Fatalf("subset=%q, want operator", resp.Subset)
+	}
+	wantViews := map[string]bool{"overview": true, "agents": true, "activity": true}
+	if len(resp.AllowedViews) != len(wantViews) {
+		t.Fatalf("allowed_views=%v, want %v", resp.AllowedViews, wantViews)
+	}
+	for _, v := range resp.AllowedViews {
+		if !wantViews[v] {
+			t.Fatalf("unexpected view %q in allowed_views=%v", v, resp.AllowedViews)
+		}
+	}
+	if got, want := resp.AllowedSubViews["agents"], []string{"fleet"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("allowed_sub_views[agents]=%v, want %v", got, want)
+	}
+	if got, want := resp.AllowedSubViews["activity"], []string{"stream"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("allowed_sub_views[activity]=%v, want %v", got, want)
+	}
+}
+
+// TestDomainRegistry_OperatorSubsetSkipsNonAllowlisted verifies that
+// non-allowlisted domains (sandbox, spawn, mills, graph, weaver, codebase,
+// shuttle, merge, handoff) do not register routes when EmbedSubset is
+// "operator". The allowlisted domains (fleet, mobile, etc.) still register.
+func TestDomainRegistry_OperatorSubsetSkipsNonAllowlisted(t *testing.T) {
+	app, _ := newTestApp(t)
+	app.config.EmbedSubset = "operator"
+
+	// Re-init the registry now that the subset is set.
+	app.initDomainRegistry()
+
+	got := map[string]bool{}
+	for _, name := range app.domainRegistry.Domains() {
+		got[name] = true
+	}
+	mustAllow := []string{"fleet", "mobile", "coordinator", "workflow", "memory", "context", "alerting", "aimodels"}
+	for _, name := range mustAllow {
+		if !got[name] {
+			t.Errorf("operator subset must register domain %q (registered: %v)", name, got)
+		}
+	}
+	mustDeny := []string{"sandbox", "spawn", "mills", "graph", "weaver", "codebase", "shuttle", "merge", "handoff", "webhook"}
+	for _, name := range mustDeny {
+		if got[name] {
+			t.Errorf("operator subset must skip domain %q (registered: %v)", name, got)
+		}
+	}
+}
+
+// TestDomainRegistry_FullSubsetKeepsEverything is the baseline: with no
+// subset set, every domain registers.
+func TestDomainRegistry_FullSubsetKeepsEverything(t *testing.T) {
+	app, _ := newTestApp(t)
+	// EmbedSubset zero value = "full".
+
+	app.initDomainRegistry()
+
+	got := map[string]bool{}
+	for _, name := range app.domainRegistry.Domains() {
+		got[name] = true
+	}
+	for _, name := range []string{"fleet", "sandbox", "spawn", "mills", "graph", "weaver"} {
+		if !got[name] {
+			t.Errorf("default subset must register domain %q (registered: %v)", name, got)
+		}
+	}
+}

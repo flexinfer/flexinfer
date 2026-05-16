@@ -379,4 +379,61 @@
       align-items: stretch;
     }
   }
+
+  /* ≤800px — stacked-card mode (Slice B5 of the HUD UX overhaul).
+     Each row becomes a vertically-stacked card so long horizontal tables
+     stay readable on phones without horizontal scrolling. Header is hidden;
+     row cells stack as block elements with their own padding. The first
+     cell of each row (typically the primary identifier column) gets a
+     bottom border to separate cards. */
+  @media (max-width: 800px) {
+    .data-table-wrap {
+      overflow-x: visible;
+    }
+    .data-table,
+    .data-table.stable-layout {
+      table-layout: auto;
+    }
+    .data-table thead {
+      display: none;
+    }
+    .data-table tbody,
+    .data-table tbody tr,
+    .data-table tbody td {
+      display: block;
+      width: 100%;
+    }
+    .data-table tbody tr {
+      padding: var(--space-3) var(--space-2);
+      border-bottom: 1px solid var(--border);
+      background: transparent;
+    }
+    .data-table tbody tr:nth-child(even) td,
+    .data-table tbody tr:hover td {
+      background: transparent;
+    }
+    .data-table tbody td {
+      padding: 4px var(--space-1);
+      border-bottom: none;
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+    }
+    .data-table.stable-layout tbody td {
+      white-space: normal;
+      overflow: visible;
+      text-overflow: clip;
+      min-width: 0;
+    }
+    .data-table tbody tr:last-child {
+      border-bottom: none;
+    }
+    .data-table-skeleton-row td {
+      padding: 6px var(--space-1);
+    }
+    .data-table-check {
+      width: auto;
+      text-align: left;
+    }
+  }
 </style>
