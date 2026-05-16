@@ -95,7 +95,8 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		"cacheReady", cacheReady,
 	)
 
-	if err := r.ensureRuntimeNetworking(ctx, model, b); err != nil {
+	runtimeBackendPort := pkgrt.RuntimePortForBackend(b)
+	if err := r.ensureRuntimeNetworking(ctx, model, b, runtimeBackendPort); err != nil {
 		log.Error(err, "Failed to ensure runtime networking for model")
 		return ctrl.Result{}, err
 	}
@@ -192,7 +193,10 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	switch status.State {
 	case "Ready":
 		// Update Endpoints to point to the runtime pod's backend port.
-		port := b.Port()
+		port := status.Port
+		if port == 0 {
+			port = runtimeBackendPort
+		}
 		if err := r.ensureRuntimeEndpoints(ctx, model, endpoint.PodIP, port); err != nil {
 			log.Error(err, "Failed to ensure runtime endpoints")
 			return ctrl.Result{}, err
@@ -296,8 +300,8 @@ func (r *ModelReconciler) updateRuntimeStatus(
 	return r.Status().Update(ctx, model)
 }
 
-func (r *ModelReconciler) ensureRuntimeNetworking(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) error {
-	if err := r.ensureService(ctx, model, b); err != nil {
+func (r *ModelReconciler) ensureRuntimeNetworking(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, port int32) error {
+	if err := r.ensureServiceWithPort(ctx, model, b, port); err != nil {
 		return err
 	}
 	return r.removeRuntimeServiceSelector(ctx, model)

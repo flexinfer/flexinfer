@@ -10,6 +10,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 	"github.com/prometheus/client_golang/prometheus"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -82,7 +83,7 @@ func (p *Proxy) recoverDirectLoadTargets(ctx context.Context) {
 		}
 
 		// Model is ready on this runtime pod — register direct routing target.
-		backendPort := b.Port()
+		backendPort := pkgrt.RuntimePortForBackend(b)
 		targetURL := fmt.Sprintf("http://%s:%d", ep.PodIP, backendPort)
 		p.directLoadTargets.Store(m.Name, targetURL)
 		recovered++

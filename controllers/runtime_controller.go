@@ -199,6 +199,7 @@ type RuntimeModelStatus struct {
 	Name  string `json:"name"`
 	State string `json:"state"`
 	Error string `json:"error"`
+	Port  int32  `json:"port,omitempty"`
 }
 
 type RuntimeModeStatus struct {

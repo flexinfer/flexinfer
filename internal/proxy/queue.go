@@ -451,7 +451,7 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 
 	// Store the direct routing target so serveProxy routes to the runtime pod
 	// instead of the (non-existent) K8s Service.
-	backendPort := b.Port()
+	backendPort := pkgrt.RuntimePortForBackend(b)
 	targetURL := fmt.Sprintf("http://%s:%d", endpoint.PodIP, backendPort)
 	p.directLoadTargets.Store(modelName, targetURL)
 	slog.Info("direct load: registered routing target", "model", modelName, "target", targetURL)

@@ -120,6 +120,52 @@ func TestRuntimePodTargetsModel_PendingPodUsesNodeSelector(t *testing.T) {
 	}
 }
 
+func TestEnsureRuntimeNetworkingUsesRuntimeBackendPortForLlamaCpp(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add core scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add api scheme: %v", err)
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "qwen3-1p7b-tools-radeonvii",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://unsloth/Qwen3-1.7B-GGUF",
+		},
+	}
+	b, ok := backend.Get("llamacpp")
+	if !ok {
+		t.Fatal("llamacpp backend not registered")
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithRuntimeObjects(model).
+		Build()
+	r := &ModelReconciler{Client: fakeClient, Scheme: s}
+
+	if err := r.ensureRuntimeNetworking(context.Background(), model, b, 8000); err != nil {
+		t.Fatalf("ensure runtime networking: %v", err)
+	}
+
+	service := &corev1.Service{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKey{Name: model.Name, Namespace: model.Namespace}, service); err != nil {
+		t.Fatalf("get service: %v", err)
+	}
+	if got := service.Spec.Ports[0].Port; got != 8000 {
+		t.Fatalf("service port = %d, want 8000", got)
+	}
+	if service.Spec.Selector != nil {
+		t.Fatalf("runtime-managed service selector = %#v, want nil", service.Spec.Selector)
+	}
+}
+
 func TestReconcileViaRuntime_LoadingClearsReadyAndEndpoints(t *testing.T) {
 	s := runtime.NewScheme()
 	if err := corev1.AddToScheme(s); err != nil {

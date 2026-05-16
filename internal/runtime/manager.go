@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/flexinfer/flexinfer/backend"
+	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -172,6 +173,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		GPUVendor: m.gpuVendor,
 		GPUArch:   m.gpuArch,
 	}
+	backendPort := runtimeBackendPort(b, spec)
 
 	// Build command and args.
 	command := b.Command()
@@ -245,7 +247,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		Backend: req.Backend,
 		Model:   req.Model,
 		State:   ModelStateLoading,
-		Port:    b.Port(),
+		Port:    backendPort,
 		cmd:     cmd,
 		cancel:  cancel,
 	}
@@ -259,7 +261,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	logger.Info("Starting backend subprocess",
 		"executable", executable,
 		"args", execArgs,
-		"port", b.Port(),
+		"port", backendPort,
 	)
 
 	if err := cmd.Start(); err != nil {
@@ -303,7 +305,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 			}
 		}
 	}
-	go m.healthCheckLoop(subCtx, name, b, startupTimeout)
+	go m.healthCheckLoop(subCtx, name, b, backendPort, startupTimeout)
 
 	return nil
 }
@@ -518,7 +520,7 @@ func (m *Manager) monitorProcess(ctx context.Context, name string, cmd *exec.Cmd
 }
 
 // healthCheckLoop polls the backend's health endpoint until ready or cancelled.
-func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Backend, startupTimeout time.Duration) {
+func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Backend, port int32, startupTimeout time.Duration) {
 	logger := log.FromContext(ctx).WithValues("model", name, "startupTimeout", startupTimeout)
 
 	probe := b.ReadinessProbe()
@@ -539,7 +541,6 @@ func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Ba
 	}
 
 	healthPath := probe.HTTPGet.Path
-	port := b.Port()
 	healthURL := fmt.Sprintf("http://127.0.0.1:%d%s", port, healthPath)
 
 	ticker := time.NewTicker(2 * time.Second)
@@ -580,6 +581,21 @@ func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Ba
 			}
 		}
 	}
+}
+
+func runtimeBackendPort(b backend.Backend, spec *backend.ModelSpec) int32 {
+	port := pkgrt.RuntimePortForBackend(b)
+	if spec != nil {
+		if spec.Config == nil {
+			spec.Config = make(map[string]any, 1)
+		}
+		if configured := spec.ConfigInt("port", 0); configured > 0 {
+			port = int32(configured)
+		} else if b != nil && b.Port() == pkgrt.RuntimeAPIPort {
+			spec.Config["port"] = float64(port)
+		}
+	}
+	return port
 }
 
 // continuousHealthCheck monitors a ready model and marks it failed if unhealthy.
