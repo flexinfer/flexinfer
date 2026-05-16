@@ -214,6 +214,22 @@ class FleetStore {
   drawerError = $state<string | null>(null);
   lastUpdated = $state<Date | null>(null);
 
+  // Per-panel UI state (Slice B1 — moved out of FleetPanel.svelte so the
+  // panel becomes a pure composition shell). Components mutate via the
+  // setters below and read directly via getters.
+  sortKey = $state<string>('agent');
+  sortDir = $state<'asc' | 'desc'>('asc');
+  groupByRootSession = $state<boolean>(true);
+
+  setSort(key: string, dir: 'asc' | 'desc'): void {
+    this.sortKey = key;
+    this.sortDir = dir;
+  }
+
+  toggleGrouping(): void {
+    this.groupByRootSession = !this.groupByRootSession;
+  }
+
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private eventUnsubs: Array<() => void> = [];
   private pollingOwners = new Map<PollingOwner, number>();
