@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { MillsCapabilityRow } from '../../stores/mills.svelte.ts';
+  import type { MillsCapabilityRow, SystemHealth } from '../../stores/mills.svelte.ts';
   import { millsStore } from '../../stores/mills.svelte.ts';
   import { router } from '../../stores/router.svelte.ts';
   import MetricCard from '../shared/MetricCard.svelte';
@@ -24,9 +24,75 @@
   let error = $derived(millsStore.error);
   let blockers = $derived(millsStore.autonomyBlockers);
   let metrics = $derived(kpis?.metrics ?? {});
+  let health = $derived(millsStore.systemHealth);
+  // Suppress the banner only when everything is genuinely fine — green
+  // health is already conveyed by the existing "Autonomy ready" chip and
+  // KPI cards, so stacking another green pill is just visual noise.
+  let showBanner = $derived(health.state !== 'healthy');
 
   function goto(subView: string): void {
     router.navigate('mills', subView);
+  }
+
+  // gotoBacklogEscalated mirrors `goto('backlog')` but also drops the
+  // escalated-state filter into the URL hash so BacklogPanel can pick it
+  // up. We rely on router.navigate's `detail` slot here because the
+  // existing BacklogPanel reads from window.location for deep links;
+  // worst-case (panel doesn't honor the param yet) it falls through to
+  // an unfiltered backlog view, which is still the right next step.
+  function gotoBacklogEscalated(): void {
+    router.navigate('mills', 'backlog', 'state=escalated');
+  }
+
+  function bannerHeadline(h: SystemHealth): string {
+    switch (h.state) {
+      case 'broken':
+        return `${h.escalations_24h} escalated · 0 merged in 24h`;
+      case 'in_flight':
+        return `${h.active_runs} ${h.active_runs === 1 ? 'pipeline' : 'pipelines'} in flight`;
+      case 'idle':
+        return 'Council has never run';
+      default:
+        return '';
+    }
+  }
+
+  function bannerDetail(h: SystemHealth): string {
+    switch (h.state) {
+      case 'broken':
+        return h.last_successful_merge_at
+          ? `Last successful merge: ${fmtTime(h.last_successful_merge_at)}`
+          : 'No successful merge on record';
+      case 'in_flight':
+        return h.queued > 0 ? `${h.queued} queued behind active runs` : 'Pipelines progressing';
+      case 'idle':
+        return 'Next scheduled: 0 5 * * * UTC. Trigger manually via `loom mills council run`.';
+      default:
+        return '';
+    }
+  }
+
+  function bannerActionLabel(h: SystemHealth): string {
+    switch (h.state) {
+      case 'broken': return 'View escalations';
+      case 'in_flight': return 'Open pipelines';
+      case 'idle': return 'Open council';
+      default: return '';
+    }
+  }
+
+  function runBannerAction(h: SystemHealth): void {
+    switch (h.state) {
+      case 'broken':
+        gotoBacklogEscalated();
+        return;
+      case 'in_flight':
+        goto('pipelines');
+        return;
+      case 'idle':
+        goto('council');
+        return;
+    }
   }
 
   function fmtNumber(v: number | undefined | null): string {
@@ -115,6 +181,27 @@
   emptyHint={disabled ? 'LOOM_MILLS_OPERATOR_URL is not available to the HUD.' : (error ?? '')}
 >
   {#snippet header()}
+    {#if showBanner}
+      <div
+        class="system-health-banner intent-{health.state}"
+        role={health.state === 'broken' ? 'alert' : 'status'}
+        data-testid="system-health-banner"
+        data-state={health.state}
+      >
+        <span class="banner-dot" aria-hidden="true"></span>
+        <div class="banner-text">
+          <span class="banner-headline">{bannerHeadline(health)}</span>
+          <span class="banner-detail">{bannerDetail(health)}</span>
+        </div>
+        <button
+          type="button"
+          class="banner-action"
+          onclick={() => runBannerAction(health)}
+        >
+          {bannerActionLabel(health)} →
+        </button>
+      </div>
+    {/if}
     <div class="overview-status" role="status">
       <div
         class="readiness-chip"
@@ -266,6 +353,149 @@
 </PanelShell>
 
 <style>
+  .system-health-banner {
+    display: grid;
+    grid-template-columns: 10px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md);
+    background: var(--bg-tertiary);
+    color: var(--fg-secondary);
+    margin-bottom: var(--space-3);
+  }
+
+  .system-health-banner.intent-broken {
+    border-color: color-mix(in srgb, var(--error) 48%, var(--border));
+    background: color-mix(in srgb, var(--error) 8%, var(--bg-tertiary));
+    box-shadow: 0 0 18px var(--glow-error);
+    color: var(--fg-primary);
+  }
+
+  .system-health-banner.intent-in_flight {
+    border-color: color-mix(in srgb, var(--info) 38%, var(--border));
+    background: color-mix(in srgb, var(--info) 6%, var(--bg-tertiary));
+    box-shadow: 0 0 14px var(--glow-accent);
+    color: var(--fg-primary);
+  }
+
+  .system-health-banner.intent-idle {
+    border-color: color-mix(in srgb, var(--warning) 42%, var(--border));
+    background: color-mix(in srgb, var(--warning) 8%, var(--bg-tertiary));
+    color: var(--fg-primary);
+  }
+
+  .banner-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--fg-dim);
+    flex: 0 0 auto;
+  }
+
+  .system-health-banner.intent-broken .banner-dot {
+    background: var(--error);
+    box-shadow: 0 0 10px var(--glow-error);
+    animation: banner-pulse 1.8s ease-in-out infinite;
+  }
+
+  .system-health-banner.intent-in_flight .banner-dot {
+    background: var(--info);
+    box-shadow: 0 0 10px var(--info-glow);
+    animation: banner-pulse 2.4s ease-in-out infinite;
+  }
+
+  .system-health-banner.intent-idle .banner-dot {
+    background: var(--warning);
+    box-shadow: 0 0 10px var(--glow-warning);
+  }
+
+  @keyframes banner-pulse {
+    0%, 100% { transform: scale(1); opacity: 1; }
+    50%      { transform: scale(1.25); opacity: 0.85; }
+  }
+
+  .banner-text {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .banner-headline {
+    font-weight: 700;
+    font-size: var(--text-sm);
+    color: var(--fg-primary);
+    letter-spacing: var(--tracking-tight);
+  }
+
+  .system-health-banner.intent-broken .banner-headline {
+    color: var(--error);
+  }
+
+  .banner-detail {
+    color: var(--fg-muted);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .banner-action {
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+    color: var(--fg-secondary);
+    border-radius: var(--radius-sm);
+    padding: 4px var(--space-3);
+    font: inherit;
+    font-size: var(--text-xs);
+    font-weight: 600;
+    letter-spacing: var(--tracking-wide);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+
+  .banner-action:hover,
+  .banner-action:focus-visible {
+    color: var(--fg-primary);
+    border-color: var(--border-focus, var(--accent));
+    outline: none;
+  }
+
+  .system-health-banner.intent-broken .banner-action {
+    border-color: color-mix(in srgb, var(--error) 50%, var(--border));
+    color: var(--error);
+  }
+
+  .system-health-banner.intent-in_flight .banner-action {
+    border-color: color-mix(in srgb, var(--info) 42%, var(--border));
+    color: var(--info);
+  }
+
+  .system-health-banner.intent-idle .banner-action {
+    border-color: color-mix(in srgb, var(--warning) 46%, var(--border));
+    color: var(--warning);
+  }
+
+  @media (max-width: 720px) {
+    .system-health-banner {
+      grid-template-columns: 10px minmax(0, 1fr);
+      grid-template-rows: auto auto;
+    }
+
+    .banner-action {
+      grid-column: 1 / -1;
+      justify-self: stretch;
+    }
+
+    .banner-detail {
+      white-space: normal;
+    }
+  }
+
   .overview-status {
     display: flex;
     align-items: flex-start;

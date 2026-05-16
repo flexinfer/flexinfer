@@ -181,6 +181,13 @@ interface RawKPISnapshot {
 
 const KPI_HISTORY_MAX = 24;
 
+// SystemHealth + computeSystemHealth live in a rune-free sibling module
+// so fixtures / SSR can exercise them without a Svelte runtime. Re-export
+// here so consumers keep `from './mills.svelte.ts'` ergonomics.
+export type { SystemHealth, SystemHealthState } from './mills.systemHealth.ts';
+import { computeSystemHealth } from './mills.systemHealth.ts';
+import type { SystemHealth } from './mills.systemHealth.ts';
+
 class MillsStore {
   // Per-panel data
   backlog = $state<BacklogItem[]>([]);
@@ -246,6 +253,18 @@ class MillsStore {
 
   get autonomyBlockers(): string[] {
     return this.status?.autonomy_blockers ?? [];
+  }
+
+  // systemHealth is the input that drives the Overview "System Health"
+  // banner. Recomputed on every access (cheap; bounded by the pipeline run
+  // page) so it stays in lock-step with the 15s poll.
+  get systemHealth(): SystemHealth {
+    return computeSystemHealth({
+      pipelineRuns: this.pipelineRuns,
+      status: this.status,
+      councilRuns: this.councilRuns,
+      backlog: this.backlog,
+    });
   }
 
   async fetchAll(): Promise<void> {
