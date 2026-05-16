@@ -20,6 +20,15 @@
   let entries = $derived(traceStore.entries ?? []);
   let summary = $derived(traceStore.summary ?? {});
 
+  // A filtered agent_id that matches no audit records is often a subagent
+  // whose tool calls were logged under the root agent's id (Claude Code's
+  // Task tool shares the parent MCP session). We can't infer the parent
+  // from the trace stream alone, but we can show a clearer empty-state
+  // hint so the user knows the filter, not the data, is the issue.
+  let agentHasAnyTrace = $derived(
+    !agentFilter || entries.some((entry) => (entry.agent_id ?? '') === agentFilter),
+  );
+
   let filtered = $derived.by(() => {
     let rows = entries;
     if (agentFilter) {
@@ -106,7 +115,15 @@
   {#if !traceStore.enabled}
     <EmptyState icon={'\u25A6'} heading="Trace stream unavailable" description="Enable daemon audit logging to populate recent tool-call traces." />
   {:else if filtered.length === 0}
-    <EmptyState icon={'\u25A6'} heading="No traces matched" compact />
+    {#if agentFilter && !agentHasAnyTrace}
+      <EmptyState
+        icon={'\u25A6'}
+        heading="No traces matched for this agent"
+        description="Subagents (e.g. Claude Code Task-tool children) share their parent's MCP session, so their tool calls are recorded under the root agent's id. Try the Traces button on the parent row, or remove the filter to see the full stream."
+      />
+    {:else}
+      <EmptyState icon={'\u25A6'} heading="No traces matched" compact />
+    {/if}
   {:else}
     <div class="trace-list">
       {#each filtered as entry, i (`${entry.timestamp}-${entry.server}-${entry.tool}-${i}`)}

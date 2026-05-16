@@ -163,7 +163,21 @@
               Session
             </button>
           {/if}
-          <button class="btn btn-xs btn-ghost" onclick={(e) => { e.stopPropagation(); onTraceClick(agent.agent_id); }}>
+          <button
+            class="btn btn-xs btn-ghost"
+            onclick={(e) => {
+              e.stopPropagation();
+              // Subagent rows (Claude Code Task-tool children, etc.) share an
+              // MCP connection with their parent, so the audit stream tags
+              // their tool calls with the ROOT agent's id, not the subagent's.
+              // Resolve to root_agent_id whenever the row is a child so the
+              // Traces filter actually returns results. Falls back to the
+              // row's own agent_id for root sessions.
+              const isChild = !!(row.rootSession && row.session && row.rootSession.id !== row.session.id);
+              const traceAgent = isChild ? (row.rootSession.agent_id ?? agent.agent_id) : agent.agent_id;
+              onTraceClick(traceAgent);
+            }}
+          >
             Traces
           </button>
         </td>
