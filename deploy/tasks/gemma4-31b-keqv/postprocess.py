@@ -473,15 +473,10 @@ def main() -> None:
                     dst_weight_map = dst_index.get("weight_map", {})
                     # Cheap validation: pull heterogeneous layer indices
                     # from the source config and check every v_proj.qweight
-                    # is in the destination index. Also re-check source
-                    # qweight integrity before returning: a corrupt source can
-                    # otherwise keep an already-complete but bad k_eq_v output
-                    # alive forever.
+                    # is in the destination index. Do not reopen source shard
+                    # tensors here: this path runs on every GitOps reapply and
+                    # must stay metadata-only once the output artifact exists.
                     cfg_for_check = load_config(src)
-                    index_for_check = load_index(src)
-                    validate_no_repeated_layer_qweights(
-                        src, index_for_check.get("weight_map", {})
-                    )
                     het = heterogeneous_layer_indices(cfg_for_check)
                     expected_keys = [
                         f"model.layers.{i}.self_attn.v_proj.qweight" for i in het
