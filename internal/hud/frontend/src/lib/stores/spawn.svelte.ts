@@ -123,6 +123,14 @@ class SpawnStore {
   // (messages, tool calls, thinking, file changes, results). Capped at 500 per spawn.
   activityBySpawnId = $state(new Map<string, SpawnActivityEvent[]>());
 
+  // Per-panel UI state (Slice B2 — moved out of SpawnPanel.svelte so the
+  // panel becomes a pure composition shell).
+  statusFilter = $state<string>('all');
+  searchQuery = $state<string>('');
+
+  setStatusFilter(value: string): void { this.statusFilter = value; }
+  setSearchQuery(value: string): void { this.searchQuery = value; }
+
   private static readonly MAX_ACTIVITY_EVENTS = 500;
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private eventUnsubs: Array<() => void> = [];
