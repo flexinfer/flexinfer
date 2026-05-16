@@ -35,6 +35,16 @@ struct DashboardView: View {
             VStack(spacing: LoomSpacing.lg) {
                 ErrorBanner(health: healthMonitor.health)
 
+                // Triage-first header — mirrors the HUD A2 inbox strip.
+                // Operator's at-a-glance answer to "do I need to do anything?"
+                if viewModel.dashboard != nil {
+                    DashboardInboxHeader(
+                        pressureCount: pressureCount,
+                        topSeverity: topSeverity,
+                        updatedAgo: updatedAgo
+                    )
+                }
+
                 // Critical alerts are now folded into NextActionCard as the
                 // highest-priority action — no separate banner needed.
 
@@ -54,72 +64,10 @@ struct DashboardView: View {
                 #endif
 
                 if let dashboard = viewModel.dashboard {
-                    // Hero: the ONE thing to do next (scales to critical/all-clear).
-                    // Critical alerts take top priority — they used to show as a
-                    // separate red banner, now fold into this single anchor.
-                    NextActionCard(
-                        lanes: dashboard.coordination.attentionLanes,
-                        health: dashboard.health,
-                        criticalAlerts: alertsViewModel.criticalAlerts,
-                        onNavigate: onNavigate,
-                        onLaneNavigate: routeFromLane
-                    )
-                    .cardAppear(index: 0)
-
-                    // Remaining attention lanes — hero already represents #1
-                    if dashboard.coordination.attentionLanes.count > 1 {
-                        AttentionLanesCard(
-                            lanes: dashboard.coordination.attentionLanes,
-                            skipFirst: true
-                        ) { lane in
-                            HapticManager.selection()
-                            routeFromLane(lane)
-                        }
-                        .cardAppear(index: 1)
-                    }
-
-                    // Active work — scales itself (compact when steady, standard when blocked)
-                    if let counts = viewModel.taskCounts,
-                       counts.pending + counts.inProgress + counts.blocked > 0 {
-                        ActiveWorkCard(counts: counts) {
-                            onNavigate?(.work)
-                        }
-                        .cardAppear(index: 2)
-                    }
-
-                    // Context: fleet (compact when steady, standard when anomaly)
-                    Button {
-                        HapticManager.selection()
-                        onNavigate?(.people)
-                    } label: {
-                        FleetSummaryCard(dashboard: dashboard)
-                    }
-                    .buttonStyle(.plain)
-                    .cardAppear(index: 3)
-
-                    // Context: server health (compact when all-healthy)
-                    Button {
-                        HapticManager.selection()
-                        onNavigate?(.connection)
-                    } label: {
-                        HealthStatusCard(health: dashboard.health)
-                    }
-                    .buttonStyle(.plain)
-                    .cardAppear(index: 4)
-
-                    TimelineListView(entries: dashboard.recentTimeline)
-                        .cardAppear(index: 5)
-
-                    if let agoText = updatedAgo {
-                        HStack {
-                            Spacer()
-                            Text("Updated \(agoText)")
-                                .font(LoomTypography.monoCaption)
-                                .foregroundStyle(LoomColors.textTertiary)
-                                .contentTransition(.numericText())
-                            Spacer()
-                        }
-                        .padding(.top, LoomSpacing.xs)
+                    if isClear {
+                        clearState(dashboard: dashboard)
+                    } else {
+                        pressureState(dashboard: dashboard)
                     }
                 } else if viewModel.isLoading {
                     VStack(spacing: LoomSpacing.lg) {
@@ -208,6 +156,154 @@ struct DashboardView: View {
                 viewModel.startListening(broadcaster: broadcaster)
             }
         }
+    }
+
+    // MARK: - Triage-First Decomposition (HUD A2 alignment)
+
+    /// Count of distinct pressure points the operator should consider. Mirrors
+    /// the HUD inbox count: each attention lane + each unread critical alert.
+    /// Health degradations are already projected into lanes by the backend, so
+    /// we don't double-count them here.
+    private var pressureCount: Int {
+        guard let dashboard = viewModel.dashboard else { return 0 }
+        let lanes = dashboard.coordination.attentionLanes.count
+        let unreadCritical = alertsViewModel.criticalAlerts.filter { !$0.isRead }.count
+        return lanes + unreadCritical
+    }
+
+    /// Worst severity present across alerts + lanes. Drives the count-pill tint.
+    private var topSeverity: DashboardInboxHeader.Severity {
+        guard let dashboard = viewModel.dashboard else { return .nominal }
+        let unreadCritical = alertsViewModel.criticalAlerts.filter { !$0.isRead }
+        if !unreadCritical.isEmpty { return .critical }
+        if dashboard.coordination.attentionLanes.contains(where: { $0.severity == "critical" }) {
+            return .critical
+        }
+        if dashboard.coordination.attentionLanes.contains(where: { $0.severity == "warning" }) {
+            return .warning
+        }
+        if !dashboard.coordination.attentionLanes.isEmpty { return .info }
+        return .nominal
+    }
+
+    private var isClear: Bool {
+        pressureCount == 0
+    }
+
+    // MARK: - Clear state (hide-when-clear)
+
+    /// When nothing needs attention, the dashboard becomes a single calm anchor
+    /// + the compact fleet chip. Everything else recedes. This is the operator
+    /// "the world is fine" surface — the opposite of glance-overload.
+    @ViewBuilder
+    private func clearState(dashboard: DashboardData) -> some View {
+        LoomEmptyState(
+            tone: .nominal,
+            title: "System nominal",
+            detail: clearDetail(dashboard: dashboard)
+        )
+        .loomCard(priority: .standard)
+        .cardAppear(index: 0)
+
+        Button {
+            HapticManager.selection()
+            onNavigate?(.people)
+        } label: {
+            FleetSummaryCard(dashboard: dashboard)
+        }
+        .buttonStyle(.plain)
+        .cardAppear(index: 1)
+    }
+
+    /// Short mono-styled detail line under "System nominal", composed from the
+    /// fleet numbers the operator would otherwise check by scrolling.
+    private func clearDetail(dashboard: DashboardData) -> String {
+        var parts: [String] = []
+        parts.append("\(dashboard.activeAgents) agent\(dashboard.activeAgents == 1 ? "" : "s") active")
+        parts.append("\(dashboard.activeSessions) session\(dashboard.activeSessions == 1 ? "" : "s")")
+        if dashboard.offlineAgents > 0 {
+            parts.append("\(dashboard.offlineAgents) offline")
+        }
+        return parts.joined(separator: " · ")
+    }
+
+    // MARK: - Pressure state (triage queue + collapsed context)
+
+    /// When there's work to do, surface the inbox stack — hero, attention
+    /// queue, active work — and demote steady-state context (fleet, health,
+    /// timeline) below a subtle "Context" divider so they don't compete.
+    @ViewBuilder
+    private func pressureState(dashboard: DashboardData) -> some View {
+        NextActionCard(
+            lanes: dashboard.coordination.attentionLanes,
+            health: dashboard.health,
+            criticalAlerts: alertsViewModel.criticalAlerts,
+            onNavigate: onNavigate,
+            onLaneNavigate: routeFromLane
+        )
+        .cardAppear(index: 0)
+
+        if dashboard.coordination.attentionLanes.count > 1 {
+            AttentionLanesCard(
+                lanes: dashboard.coordination.attentionLanes,
+                skipFirst: true
+            ) { lane in
+                HapticManager.selection()
+                routeFromLane(lane)
+            }
+            .cardAppear(index: 1)
+        }
+
+        if let counts = viewModel.taskCounts,
+           counts.pending + counts.inProgress + counts.blocked > 0 {
+            ActiveWorkCard(counts: counts) {
+                onNavigate?(.work)
+            }
+            .cardAppear(index: 2)
+        }
+
+        // Steady-state context — recedes below the triage queue.
+        contextDivider
+
+        Button {
+            HapticManager.selection()
+            onNavigate?(.people)
+        } label: {
+            FleetSummaryCard(dashboard: dashboard)
+        }
+        .buttonStyle(.plain)
+        .cardAppear(index: 3)
+
+        Button {
+            HapticManager.selection()
+            onNavigate?(.connection)
+        } label: {
+            HealthStatusCard(health: dashboard.health)
+        }
+        .buttonStyle(.plain)
+        .cardAppear(index: 4)
+
+        TimelineListView(entries: dashboard.recentTimeline)
+            .cardAppear(index: 5)
+    }
+
+    /// Subtle "below the fold" divider that signals what follows is context,
+    /// not action. Uses the kindLabel motif for visual continuity with the
+    /// inbox header.
+    private var contextDivider: some View {
+        HStack(spacing: LoomSpacing.sm) {
+            Rectangle()
+                .fill(LoomColors.border)
+                .frame(height: 1)
+            Text("CONTEXT")
+                .font(LoomTypography.kindLabel)
+                .tracking(LoomTypography.kindLabelTracking)
+                .foregroundStyle(LoomColors.fgMuted)
+            Rectangle()
+                .fill(LoomColors.border)
+                .frame(height: 1)
+        }
+        .padding(.top, LoomSpacing.xs)
     }
 
     private static let isoFormatter: ISO8601DateFormatter = {
