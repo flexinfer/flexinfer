@@ -2,6 +2,43 @@
 
 Chronological notes while executing the plan (useful for handoffs and debugging).
 
+## 2026-05-16
+
+### RALPH slice — 5930k Gemma4 26B 2/256 concurrency promotion
+
+The prior parity research found that the first 5930k `2/256` attempt was killed
+by the old fixed 5 minute vLLM startup probe, not by a clean runtime/kernel
+failure. `master` already contained the follow-up controller/backend fix:
+vLLM startup probes can be sized from `spec.serverless.coldStartTimeout`.
+
+This slice used that unlocked path:
+
+- Updated `deploy/models/gemma4-26b-a4b-gptq-5930k.yaml`:
+  - `serverless.coldStartTimeout: 15m` -> `25m`
+  - `config.maxNumSeqs: 1` -> `2`
+  - `config.maxNumBatchedTokens: 160` -> `256`
+- Live canary:
+  - Suspended `flux-system/flexinfer-models` with `flux suspend kustomization`.
+  - Patched the live Model to `25m`/`2`/`256`.
+  - Deployment rendered `startupProbe.failureThreshold=750` at `periodSeconds=2`.
+  - Pod reached `Ready` with zero restarts.
+  - Startup logs recorded: weights 20.94s, model load 21.69s, Dynamo transform
+    16.55s, and application startup complete.
+- Benchmark:
+  - Direct single request to `gemma4-26b-a4b-gptq-5930k`: 141 completion tokens
+    in 2.625s (~53.7 tok/s), coherent numbered output.
+  - First parallel-2 request after the profile change was a one-time slow
+    graph/capture warmup: 282 tokens in 53.35s (~5.3 aggregate tok/s).
+  - Three repeated parallel-2 rounds then served 282 completion tokens in
+    2.34-2.41s (~117-120 aggregate tok/s, ~60 tok/s/request), coherent output.
+
+Decision: promote the 5930k sister to the same short-request concurrency profile
+as the 7900xtx primary while keeping the proven 16K context rung. Longer-context
+work stays separate because `2/256` trades KV headroom for request concurrency.
+
+Rollback: restore `coldStartTimeout: 15m`, `maxNumSeqs: 1`, and
+`maxNumBatchedTokens: 160`, then reconcile `flexinfer-models`.
+
 ## 2026-05-14
 
 ### RALPH slice — vectorize MoE patch inner loop (MR !363, biggest single-slice win)
