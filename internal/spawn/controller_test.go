@@ -3,6 +3,7 @@ package spawn
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -548,5 +549,110 @@ func TestReconcileTerminalHookFiresForDiscoveredOrphan(t *testing.T) {
 	}
 	if fires != 1 {
 		t.Fatalf("hook fired %d times for newly-discovered failed pod, want 1", fires)
+	}
+}
+
+// TestPruneDropsTerminalSpawnsOlderThanMaxAge validates the periodic
+// retention loop: terminal spawns whose EndedAt is older than the cutoff
+// are removed from both the in-memory map and the persistent store, while
+// recent terminal spawns and any non-terminal spawn are retained.
+func TestPruneDropsTerminalSpawnsOlderThanMaxAge(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	store, err := NewFileStore(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewFileStore: %v", err)
+	}
+	ctrl := NewK8sController(client, "devbox", store, nil)
+	ctx := context.Background()
+
+	now := time.Now()
+	old := now.Add(-25 * time.Hour)
+	recent := now.Add(-5 * time.Minute)
+
+	cases := []struct {
+		id      string
+		status  Status
+		ended   *time.Time
+		cleanup *time.Time
+	}{
+		{id: "old-completed", status: StatusCompleted, ended: &old},
+		{id: "old-failed", status: StatusFailed, ended: &old},
+		{id: "old-cleanup-only", status: StatusFailed, cleanup: &old},
+		{id: "recent-completed", status: StatusCompleted, ended: &recent},
+		{id: "running", status: StatusRunning, ended: nil},
+		{id: "stale-no-timestamps", status: StatusFailed},
+	}
+
+	ctrl.mu.Lock()
+	for _, c := range cases {
+		st := &State{
+			SpawnID:   c.id,
+			AgentID:   "agent-" + c.id,
+			Status:    c.status,
+			StartedAt: now.Add(-26 * time.Hour),
+			EndedAt:   c.ended,
+			CleanupAt: c.cleanup,
+		}
+		ctrl.spawns[c.id] = st
+		_ = store.Save(ctx, st)
+	}
+	ctrl.mu.Unlock()
+
+	pruned := ctrl.Prune(ctx, 24*time.Hour)
+	if pruned != 3 {
+		t.Fatalf("Prune count: got %d, want 3 (old-completed, old-failed, old-cleanup-only)", pruned)
+	}
+
+	// Check in-memory survivors.
+	for _, want := range []string{"recent-completed", "running", "stale-no-timestamps"} {
+		if _, ok := ctrl.Get(want); !ok {
+			t.Errorf("expected %q to remain in-memory after Prune", want)
+		}
+	}
+	for _, gone := range []string{"old-completed", "old-failed", "old-cleanup-only"} {
+		if _, ok := ctrl.Get(gone); ok {
+			t.Errorf("expected %q to be evicted from in-memory after Prune", gone)
+		}
+	}
+
+	// Check store survivors mirror in-memory.
+	for _, want := range []string{"recent-completed", "running", "stale-no-timestamps"} {
+		st, err := store.Load(ctx, want)
+		if err != nil {
+			t.Errorf("store.Load(%q): %v", want, err)
+			continue
+		}
+		if st == nil {
+			t.Errorf("expected %q to remain on disk after Prune", want)
+		}
+	}
+	for _, gone := range []string{"old-completed", "old-failed", "old-cleanup-only"} {
+		st, err := store.Load(ctx, gone)
+		if err != nil {
+			t.Errorf("store.Load(%q): %v", gone, err)
+			continue
+		}
+		if st != nil {
+			t.Errorf("expected %q to be deleted from disk after Prune", gone)
+		}
+	}
+}
+
+// TestPruneZeroMaxAgeIsNoOp protects against accidentally wiping the entire
+// store via a misconfigured retention window.
+func TestPruneZeroMaxAgeIsNoOp(t *testing.T) {
+	client := fake.NewSimpleClientset()
+	ctrl := NewK8sController(client, "devbox", nil, nil)
+	now := time.Now()
+	old := now.Add(-100 * time.Hour)
+	ctrl.mu.Lock()
+	ctrl.spawns["x"] = &State{SpawnID: "x", Status: StatusCompleted, EndedAt: &old}
+	ctrl.mu.Unlock()
+
+	if got := ctrl.Prune(context.Background(), 0); got != 0 {
+		t.Fatalf("Prune(0): got %d, want 0", got)
+	}
+	if _, ok := ctrl.Get("x"); !ok {
+		t.Fatal("Prune with zero maxAge must not evict anything")
 	}
 }

@@ -565,6 +565,15 @@ func (a *App) initSpawnOrchestrator(ctx context.Context) error {
 	ctrl := a.spawner.Controller()
 	ctrl.SetK8sClient(spawnBackend.Clientset(), spawnBackend.Namespace())
 	ctrl.StartReconcileLoop(ctx, 30*time.Second)
+	// Periodic prune of terminal spawn records. Reconcile reaps the live
+	// pod + presence + session via TerminalHook, but the State entry stays
+	// in-memory and on-disk so the operator can still drill into a recent
+	// failure. Without this loop the in-memory map and `~/.config/loom/spawns`
+	// (or the cluster ConfigMap) accumulate indefinitely; the HUD spawn list
+	// then surfaces "old orphan spawns" from days ago. 24h retention keeps a
+	// useful triage window without unbounded growth; 10min cadence amortises
+	// the disk I/O against the existing 30s reconcile tick.
+	ctrl.StartPruneLoop(ctx, 10*time.Minute, 24*time.Hour)
 
 	a.logger.Info("spawn orchestrator enabled",
 		"namespace", cfg.SpawnNamespace, "registry", cfg.SpawnRegistry,
