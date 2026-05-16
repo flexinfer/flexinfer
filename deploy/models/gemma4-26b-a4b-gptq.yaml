@@ -13,7 +13,8 @@
 # artifact for horizontal capacity. Shared routes (quality-chat / mid-chat /
 # gpt-4 / project-mgmt / gemma4-26b) live in `serviceLabels` on BOTH instances
 # so the proxy load-balances across them; `litellm.aliases` carry only
-# node-specific addressing (gemma4-26b-7900xtx). Context uplift 2026-04-27:
+# node-specific addressing (gemma4-26b-7900xtx). On 2026-05-16 this pair also
+# became the sole fast-chat/default-chat path for the 7900 XTXs. Context uplift 2026-04-27:
 # the separate gemma4-26b-a4b-gptq-long canary proved the same hybrid artifact
 # at 16K with FP8 KV on 2026-04-26; those runtime knobs are baked in below.
 # Runtime image (2026-05-15): pinned to digest sha256:310988969f34... from
@@ -139,27 +140,29 @@ spec:
       cpu: "4"
       memory: 16Gi
   serviceLabels:
-    # 2026-05-13: shared route names live here so the proxy load-balances them
+    # 2026-05-16: shared route names live here so the proxy load-balances them
     # across both 26B instances (this one + sister on cblevins-5930k). Routing
     # policy is round-robin among Ready members (alphabetical fallback when
     # none Ready); see internal/proxy/resolver.go:pickReadyMember. Adding or
     # removing a name requires the same change in the sister manifest, or the
     # alias drops out of the multi-claimant set and reverts to single-target
     # routing for that name only.
-    - gemma4-26b-a4b-gptq
-    - gemma4-26b-a4b
     - gemma4-26b
     - quality-chat
     - mid-chat
+    - fast-chat
+    - fast-text
     - gpt-4
+    - gpt-3.5-turbo
+    - copilot
+    - qwen3-default
     - project-mgmt
   litellm:
     enabled: true
     servedModelName: gemma4-26b-a4b-gptq
-    # 2026-05-13: shared routes (quality-chat, mid-chat, gpt-4, project-mgmt,
-    # gemma4-26b, gemma4-26b-a4b) moved to serviceLabels so the proxy can
-    # load-balance them across both instances (this one + sister on 5930k).
-    # litellm.aliases stays node-specific.
+    # Shared/default routes moved to serviceLabels so the proxy can load-balance
+    # them across both instances (this one + sister on 5930k). litellm.aliases
+    # stays node-specific.
     aliases:
       - gemma4-26b-7900xtx
       - gemma4-26b-a4b-7900xtx

@@ -1,3 +1,34 @@
+# Fast-Chat Resilience: Gemma4 26B Default Decision
+
+Status: Superseded/Accepted (2026-05-16)
+
+## 2026-05-16 Update
+
+`fast-chat`, `fast-text`, `gpt-3.5-turbo`, `copilot`, `gpt-4`,
+`quality-chat`, `mid-chat`, `qwen3-default`, and `project-mgmt` now route to
+the two warm Gemma4 26B-A4B GPTQ instances on the 7900 XTX nodes:
+
+- `gemma4-26b-a4b-gptq` on `cblevins-7900xtx`
+- `gemma4-26b-a4b-gptq-5930k` on `cblevins-5930k`
+
+The old Qwen3 8B fast-chat cold lane is disabled in
+`deploy/models/kustomization.yaml`. The 5930k 8K Gemma4 canary is also disabled
+so the 7900 XTX text lanes have one clear active model per node. Shared route
+names live in `spec.serviceLabels` on both Gemma4 Models so the proxy can
+load-balance across Ready members; `spec.litellm.aliases` remains node-specific
+to avoid duplicate LiteLLM alias validation.
+
+Live validation before landing this GitOps update:
+
+- Both Gemma4 26B Models were `Ready` with `ConfigValid=True`.
+- Direct smoke on both backend Services returned HTTP 200.
+- Proxy smoke through `model=fast-chat` returned HTTP 200 and resolved to a
+  Gemma4 26B backend.
+- `qwen3-8b-fast-7900xtx` and `qwen3-8b-fast-fallback-5930k` were removed from
+  the live cluster.
+
+The original Qwen fallback decision is retained below for historical context.
+
 # Fast-Chat Resilience: 5930k Fallback Decision
 
 Status: Accepted (2026-05-07)
