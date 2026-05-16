@@ -117,6 +117,31 @@ def should_skip_for_native_gemma4() -> bool:
     return False
 
 
+def should_apply_native_compat_only() -> bool:
+    """Apply only vLLM-native Gemma4 MoE compatibility patches.
+
+    vLLM 0.19+ has native Gemma4 FusedMoE support, so the legacy weight-routing
+    and reference fallback patches are unsafe there. The native path still needs
+    a tiny MoeWNA16 bridge for Gemma4 GPTQ artifacts: accept GELU and forward the
+    activation into fused_experts instead of silently taking its SiLU default.
+    """
+    return _truthy(os.environ.get("FLEXINFER_GEMMA4_MOE_NATIVE_COMPAT_ONLY"))
+
+
+def apply_native_gemma4_moe_compat(vllm_root: pathlib.Path) -> bool:
+    """Patch only the native vLLM Gemma4 MoE activation compatibility gap."""
+    ok_activation = patch_moe_wna16_activation(vllm_root)
+    ok_forwarding = patch_moe_wna16_activation_forwarding(vllm_root)
+    if ok_activation and ok_forwarding:
+        print("[gemma4-moe-patch] Native Gemma4 MoE compat patches applied")
+        return True
+    if not ok_activation:
+        print("[gemma4-moe-patch] FAILED — native activation patch failed")
+    if not ok_forwarding:
+        print("[gemma4-moe-patch] FAILED — native activation forwarding patch failed")
+    return False
+
+
 def patch_gptq_config(vllm_root: pathlib.Path) -> bool:
     """Patch GPTQConfig.get_quant_method to skip MoE quantization when
     experts are excluded from GPTQ."""
@@ -1444,6 +1469,11 @@ def main():
         # that intentionally excludes vLLM). Nothing to patch — exit silently.
         return
     print(f"[gemma4-moe-patch] vLLM root: {vllm_root}")
+    if should_apply_native_compat_only():
+        if not apply_native_gemma4_moe_compat(vllm_root):
+            sys.exit(1)
+        return
+
     if should_skip_for_native_gemma4():
         return
 

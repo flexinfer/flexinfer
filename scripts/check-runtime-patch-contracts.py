@@ -149,6 +149,8 @@ def assert_dockerfile_patch_order(dockerfile: str) -> None:
         fail("Dockerfile.runtime missing SKIP_GEMMA4_MOE_PATCH build arg")
     if 'if [ "${SKIP_GEMMA4_MOE_PATCH}" = "true" ]; then' not in dockerfile:
         fail("Dockerfile.runtime no longer gates the Gemma4 MoE patch")
+    if "FLEXINFER_GEMMA4_MOE_NATIVE_COMPAT_ONLY=1" not in dockerfile:
+        fail("Dockerfile.runtime no longer applies native Gemma4 MoE compat")
 
 
 def assert_runtime_entrypoint_contract(entrypoint: str, build_script: str) -> None:
