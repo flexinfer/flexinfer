@@ -14,7 +14,9 @@
   const fleetPollingOwner = Symbol('PresencePanel');
 
   $effect(() => {
-    fleetStore.startPolling(5000, fleetPollingOwner);
+    // Slice B3 — 60s watchdog poll; presence updates arrive via agent.heartbeat
+    // and agent.session.* SSE events, so the short 5s poll was redundant.
+    fleetStore.startPolling(60000, fleetPollingOwner);
     return () => {
       fleetStore.stopPolling(fleetPollingOwner);
     };

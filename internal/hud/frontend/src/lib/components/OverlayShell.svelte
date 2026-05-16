@@ -29,7 +29,7 @@
 
   onMount(() => {
     eventStore.connect();
-    fleetStore.startPolling(30000, fleetPollingOwner);
+    fleetStore.startPolling(60000, fleetPollingOwner);
     healthStore.startPolling();
     taskStore.startPolling();
     workflowStore.startPolling();

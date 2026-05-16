@@ -30,14 +30,17 @@
   const tracePollingOwner = Symbol('FleetPanelTraces');
 
   $effect(() => {
-    fleetStore.startPolling(5000, fleetPollingOwner);
+    // Decomposed stores (fleet, tasks, spawn) now use 60s watchdog polling
+    // + SSE-first updates per Slice B3. Other stores retain their original
+    // cadences until they're migrated.
+    fleetStore.startPolling(60000, fleetPollingOwner);
     traceStore.startPolling(15000, tracePollingOwner);
-    taskStore.startPolling(5000);
+    taskStore.startPolling(60000);
     workflowStore.startPolling(10000);
     memoryStore.startPolling(10000);
     graphStore.startPolling(15000);
     streamStore.startPolling(3000);
-    spawnStore.startPolling(15000);
+    spawnStore.startPolling(60000);
 
     return () => {
       fleetStore.stopPolling(fleetPollingOwner);

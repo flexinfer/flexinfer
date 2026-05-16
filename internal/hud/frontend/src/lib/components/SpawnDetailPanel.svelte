@@ -77,7 +77,7 @@
   }
 
   $effect(() => {
-    spawnStore.startPolling(10000);
+    spawnStore.startPolling(60000);
     traceStore.startPolling(15000, tracePollingOwner);
     return () => {
       spawnStore.stopPolling();

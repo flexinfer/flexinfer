@@ -12,7 +12,7 @@
   import SpawnList from './spawn/SpawnList.svelte';
 
   $effect(() => {
-    spawnStore.startPolling(10000);
+    spawnStore.startPolling(60000);
     return () => { spawnStore.stopPolling(); };
   });
 </script>

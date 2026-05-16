@@ -70,11 +70,13 @@
   });
 
   // Polling bootstrap: this is currently the landing view, so eagerly start
-  // every store the dashboard reads. Slice B will replace polling with SSE.
+  // every store the dashboard reads. The 5 decomposed stores (fleet, tasks,
+  // sandbox, spawn, health) now use SSE-first 60s watchdog polling per
+  // Slice B3 — the intervals below are just safety nets for SSE disconnects.
   $effect(() => {
-    fleetStore.startPolling(10000, fleetPollingOwner);
-    healthStore.startPolling(15000);
-    taskStore.startPolling(15000);
+    fleetStore.startPolling(60000, fleetPollingOwner);
+    healthStore.startPolling(60000);
+    taskStore.startPolling(60000);
     memoryStore.startPolling(30000);
     streamStore.startPolling(15000);
     costStore.startPolling(30000);

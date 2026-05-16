@@ -1,6 +1,7 @@
 // Tasks store - task management
-// v2: SSE-first with 30s fallback poll. Applies task list from hud.fleet snapshots.
+// v2: SSE-first with 60s fallback poll. Applies task list from hud.fleet snapshots.
 import { eventStore } from './events.svelte.ts';
+import { isStaleFromTimestamp, stalenessStore } from './staleness.svelte.ts';
 import { arraysEqualById } from '../utils/diff.ts';
 
 export interface Task {
@@ -52,6 +53,13 @@ class TaskStore {
   filterPriority = $state<string>('all');
   sortField = $state<TaskSortField>('priority');
   sortDir = $state<TaskSortDir>('asc');
+
+  // Staleness (Slice B3) — see fleet.svelte.ts for the pattern. tasks data
+  // arrives bundled in hud.fleet snapshots, so this matches the fleet cadence.
+  staleAfter = 90_000;
+  get isStale(): boolean {
+    return isStaleFromTimestamp(this.lastUpdated, this.staleAfter);
+  }
 
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private eventUnsubs: Array<() => void> = [];
@@ -223,10 +231,11 @@ class TaskStore {
     }
   }
 
-  startPolling(intervalMs = 30000): void {
+  startPolling(intervalMs = 60000): void {
     this.stopPolling();
     this.fetch();
-    // 30s fallback poll (SSE is the primary data source).
+    // 60s watchdog poll (SSE is the primary data source; this only fires
+    // when SSE is disconnected — see Slice B3 of the HUD UX overhaul).
     this.pollTimer = setInterval(() => { if (!eventStore.connected) this.fetch(); }, intervalMs);
 
     // Subscribe to SSE events: apply task list directly from hud.fleet snapshots.
@@ -261,3 +270,4 @@ class TaskStore {
 }
 
 export const taskStore = new TaskStore();
+stalenessStore.register('tasks', () => taskStore.isStale);

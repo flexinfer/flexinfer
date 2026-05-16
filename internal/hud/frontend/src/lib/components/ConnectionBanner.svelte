@@ -1,14 +1,25 @@
 <script>
   import { eventStore } from '../stores/events.svelte.ts';
+  import { stalenessStore } from '../stores/staleness.svelte.ts';
 
   /**
    * ConnectionBanner shows daemon connection state below the header.
-   * Hidden when connected (zero chrome when healthy).
-   * States: reconnecting (amber), disconnected (red), circuit-open (amber).
+   * Hidden when connected AND no stores are stale (zero chrome when healthy).
+   *
+   * States:
+   *   reconnecting   (amber)  — SSE dropped, retry in progress
+   *   disconnected   (red)    — SSE is down
+   *   circuit-open   (amber)  — repeated reconnect failures, backing off
+   *   stale          (amber)  — SSE connected but no snapshot from one or
+   *                             more registered stores within staleAfter
+   *                             (Slice B3 — catches silent SSE failures)
    */
   let state = $derived(eventStore.connectionState);
   let retryIn = $derived(eventStore.retryCountdown);
-  let visible = $derived(state !== 'connected');
+  let staleStores = $derived(stalenessStore.staleStores);
+  let connectionVisible = $derived(state !== 'connected');
+  let staleVisible = $derived(!connectionVisible && staleStores.length > 0);
+  let visible = $derived(connectionVisible || staleVisible);
 </script>
 
 {#if visible}
@@ -17,6 +28,7 @@
     class:connection-reconnecting={state === 'reconnecting'}
     class:connection-disconnected={state === 'disconnected'}
     class:connection-circuit-open={state === 'circuit-open'}
+    class:connection-stale={staleVisible}
     role="status"
     aria-live="polite"
   >
@@ -35,6 +47,9 @@
       {#if retryIn > 0}
         <span class="banner-countdown">{retryIn}s</span>
       {/if}
+    {:else if staleVisible}
+      <span class="banner-icon">◷</span>
+      <span class="banner-text">Stale data — no recent updates from {staleStores.join(', ')}</span>
     {/if}
   </div>
 {/if}
