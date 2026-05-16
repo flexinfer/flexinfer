@@ -49,6 +49,33 @@ func TestLlamaCppBackendArgs_DeviceTakesPrecedenceOverOrdinal(t *testing.T) {
 	}
 }
 
+func TestLlamaCppBackendArgs_PortOverride(t *testing.T) {
+	b := &LlamaCppBackend{}
+	spec := &ModelSpec{
+		ModelPath: "/models/test/model.gguf",
+		Config: map[string]any{
+			"port": float64(8000),
+		},
+	}
+
+	args := b.Args(spec)
+	port := argValue(args, "--port")
+	if port != "8000" {
+		t.Fatalf("expected --port 8000, got %q in args %#v", port, args)
+	}
+}
+
+func TestLlamaCppBackendArgs_DefaultPort(t *testing.T) {
+	b := &LlamaCppBackend{}
+	spec := &ModelSpec{ModelPath: "/models/test/model.gguf"}
+
+	args := b.Args(spec)
+	port := argValue(args, "--port")
+	if port != "8080" {
+		t.Fatalf("expected --port 8080, got %q in args %#v", port, args)
+	}
+}
+
 func TestLlamaCppBackendEnv_AMDDevicePinningFromOrdinal(t *testing.T) {
 	b := &LlamaCppBackend{}
 	spec := &ModelSpec{

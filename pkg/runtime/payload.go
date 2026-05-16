@@ -100,6 +100,7 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 	config := cloneConfig(model.Spec.GetConfigMap())
 	config = applyColdStartTimeout(config, model)
 	config = applyGPUProfileDeviceDefaults(config, vendor, opts.GPUProfile)
+	config = applyRuntimeBackendPort(config, b)
 
 	payload := LoadPayload{
 		Backend: b.Name(),
@@ -262,6 +263,29 @@ func applyColdStartTimeout(config map[string]any, model *aiv1alpha2.Model) map[s
 	}
 	if _, exists := config["startupTimeoutSeconds"]; !exists {
 		config["startupTimeoutSeconds"] = model.Spec.Serverless.ColdStartTimeout.Duration.Seconds()
+	}
+	return config
+}
+
+func RuntimePortForBackend(b backend.Backend) int32 {
+	if b == nil {
+		return RuntimeBackendPort
+	}
+	if b.Port() == RuntimeAPIPort {
+		return RuntimeBackendPort
+	}
+	return b.Port()
+}
+
+func applyRuntimeBackendPort(config map[string]any, b backend.Backend) map[string]any {
+	if b == nil || b.Port() != RuntimeAPIPort {
+		return config
+	}
+	if config == nil {
+		config = make(map[string]any, 1)
+	}
+	if _, exists := config["port"]; !exists {
+		config["port"] = float64(RuntimeBackendPort)
 	}
 	return config
 }

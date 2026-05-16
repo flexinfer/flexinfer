@@ -139,6 +139,7 @@ func (s *Server) handleModelHealth(w http.ResponseWriter, r *http.Request) {
 		"name":  active.Name,
 		"state": string(active.State),
 		"error": active.Error,
+		"port":  active.Port,
 	})
 }
 

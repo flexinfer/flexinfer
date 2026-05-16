@@ -63,9 +63,10 @@ func (b *LlamaCppBackend) Command() []string {
 }
 
 func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
+	port := spec.ConfigInt("port", int(b.Port()))
 	args := []string{
 		"--host", "0.0.0.0",
-		"--port", "8080",
+		"--port", fmt.Sprintf("%d", port),
 	}
 
 	// Model path

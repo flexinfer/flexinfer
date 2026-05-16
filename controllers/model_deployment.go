@@ -43,6 +43,10 @@ import (
 
 // ensureService creates or updates the Service for the model.
 func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) error {
+	return r.ensureServiceWithPort(ctx, model, b, b.Port())
+}
+
+func (r *ModelReconciler) ensureServiceWithPort(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, port int32) error {
 	log := log.FromContext(ctx)
 
 	service := &corev1.Service{}
@@ -50,8 +54,6 @@ func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.M
 	if err != nil && !errors.IsNotFound(err) {
 		return err
 	}
-
-	port := b.Port()
 
 	// Build annotations including LiteLLM and service labels
 	annotations := make(map[string]string)

@@ -157,6 +157,30 @@ func TestResolveExecutablePreservesExistingAbsolutePath(t *testing.T) {
 	assert.Equal(t, want, got)
 }
 
+func TestRuntimeBackendPortMovesAPI8080BackendsToBackendPort(t *testing.T) {
+	b, ok := backend.Get("llamacpp")
+	require.True(t, ok)
+	spec := &backend.ModelSpec{}
+
+	got := runtimeBackendPort(b, spec)
+
+	assert.Equal(t, int32(8000), got)
+	assert.Equal(t, float64(8000), spec.Config["port"])
+}
+
+func TestRuntimeBackendPortPreservesExplicitPort(t *testing.T) {
+	b, ok := backend.Get("llamacpp")
+	require.True(t, ok)
+	spec := &backend.ModelSpec{
+		Config: map[string]any{"port": float64(18080)},
+	}
+
+	got := runtimeBackendPort(b, spec)
+
+	assert.Equal(t, int32(18080), got)
+	assert.Equal(t, float64(18080), spec.Config["port"])
+}
+
 func TestOverlayEnvVarsReplacesByName(t *testing.T) {
 	base := []corev1.EnvVar{
 		{Name: "A", Value: "one"},

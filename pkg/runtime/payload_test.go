@@ -122,6 +122,60 @@ func TestBuildLoadPayloadForModelUsesGPUProfileDeviceDefaults(t *testing.T) {
 	assert.Equal(t, "0", payload.Config["gpuDeviceOrdinal"])
 }
 
+func TestBuildLoadPayloadForModelAddsRuntimeBackendPortForAPI8080Backends(t *testing.T) {
+	b, ok := backend.Get("llamacpp")
+	require.True(t, ok)
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "qwen3-tools",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://unsloth/Qwen3-1.7B-GGUF",
+		},
+	}
+
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+	})
+	require.NoError(t, err)
+
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, float64(RuntimeBackendPort), payload.Config["port"])
+}
+
+func TestBuildLoadPayloadForModelPreservesExplicitRuntimeBackendPort(t *testing.T) {
+	b, ok := backend.Get("llamacpp")
+	require.True(t, ok)
+
+	rawConfig := []byte(`{"port":18080}`)
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "qwen3-tools",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://unsloth/Qwen3-1.7B-GGUF",
+			Config:  &apiextensionsv1.JSON{Raw: rawConfig},
+		},
+	}
+
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+	})
+	require.NoError(t, err)
+
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, float64(18080), payload.Config["port"])
+}
+
 func TestBuildLoadPayloadForModelAddsNVIDIARuntimeEnvFromProfile(t *testing.T) {
 	b, ok := backend.Get("ollama")
 	require.True(t, ok)
