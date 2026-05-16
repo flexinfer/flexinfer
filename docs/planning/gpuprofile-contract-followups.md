@@ -187,22 +187,27 @@ No CRD schema changes — annotations are sufficient for status as the design
 intended. `make manifests` produced only controller-gen version churn, which
 was restored before commit.
 
-**Consumers are not wired in this MR**. The next slice should layer
-controller-side checks on top of this contract:
+Follow-up consumer shipped in `codex/backend-canary-event`:
 
-- `controllers/model_controller.go::validateBackendGPUCompatibility` (or a
-  sibling step) should call `GetBackendCanary(profile, backendName)` and emit
-  a `BackendCanary` event when serving on a canary backend, mirroring the
-  existing `ExperimentalGPUSupport` pattern.
+- `controllers/gpuprofile_controller.go` now keeps a full-object GPUProfile
+  cache next to the existing spec cache so ObjectMeta annotations are available
+  without changing the `Lookup()` contract used by existing callers.
+- `controllers/model_gpu.go::validateBackendGPUCompatibility` calls
+  `GetBackendCanary(profile, backendName)` and emits a warning
+  `BackendCanary` event when serving on a canary backend, including the
+  timestamp and evidence pointer when present.
+- `controllers/model_gpu_test.go` covers the event path, and
+  `controllers/gpuprofile_controller_test.go` verifies that cold-cache API
+  fetches preserve canary annotations in the full-object cache.
+
+Remaining follow-up ideas:
+
 - `scheduler/scheduler.go` may want a defense-in-depth check, though the
   scheduler currently has no GPUProfile cache in scope (same caveat as slice
   5's `LookupGPUArchSupport` call).
 - A tiny `kubectl flexinfer canary <gpuprofile> <backend> --evidence=<url>`
-  CLI surface (or operator-facing runbook step) that calls Set/Clear via
-  the controller client.
-
-Keep that follow-up small: one consumer + one event + one test, mirroring
-the slice-1..5 cadence.
+  CLI surface (or operator-facing runbook step) that calls Set/Clear via the
+  controller client.
 
 ## Priority 5 — Replace `BackendGPUCompatibility` map with profile-only lookup — COMPLETED
 

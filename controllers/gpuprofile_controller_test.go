@@ -23,6 +23,11 @@ func TestGPUProfileLookupOrFetch_LoadsFromAPIOnColdCache(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "gfx1100",
 			Namespace: "flexinfer-system",
+			Annotations: map[string]string{
+				aiv1alpha2.BackendCanaryAnnotationKey("vllm"):         "true",
+				aiv1alpha2.BackendCanarySinceAnnotationKey("vllm"):    "2026-05-16T12:00:00Z",
+				aiv1alpha2.BackendCanaryEvidenceAnnotationKey("vllm"): ".loom/60-validation-matrix.md#gfx1100-vllm",
+			},
 		},
 		Spec: aiv1alpha2.GPUProfileSpec{
 			Architecture:      "gfx1100",
@@ -57,5 +62,17 @@ func TestGPUProfileLookupOrFetch_LoadsFromAPIOnColdCache(t *testing.T) {
 	}
 	if cached.MaxGPUMemoryGB == nil || *cached.MaxGPUMemoryGB != 18 {
 		t.Fatalf("cached MaxGPUMemoryGB = %v, want 18", cached.MaxGPUMemoryGB)
+	}
+
+	cachedProfile, ok := r.LookupProfile("gfx1100")
+	if !ok {
+		t.Fatal("LookupProfile did not return cached full profile after fetch")
+	}
+	isCanary, _, evidence := aiv1alpha2.GetBackendCanary(cachedProfile, "vllm")
+	if !isCanary {
+		t.Fatal("cached full profile did not preserve BackendCanary annotations")
+	}
+	if evidence != ".loom/60-validation-matrix.md#gfx1100-vllm" {
+		t.Fatalf("cached BackendCanary evidence = %q, want validation matrix pointer", evidence)
 	}
 }

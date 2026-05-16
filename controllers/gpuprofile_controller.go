@@ -39,6 +39,11 @@ type GPUProfileReconciler struct {
 
 	// profiles stores *aiv1alpha2.GPUProfileSpec keyed by architecture string.
 	profiles sync.Map
+
+	// profileObjects stores full GPUProfile objects keyed by architecture string.
+	// Most callers only need Spec via Lookup(), but canary/status annotations
+	// live on ObjectMeta and need to survive the same cache lifecycle.
+	profileObjects sync.Map
 }
 
 // Lookup returns the cached GPUProfileSpec for the given GPU architecture.
@@ -50,6 +55,18 @@ func (r *GPUProfileReconciler) Lookup(arch string) (*aiv1alpha2.GPUProfileSpec, 
 	}
 	spec, ok := v.(*aiv1alpha2.GPUProfileSpec)
 	return spec, ok
+}
+
+// LookupProfile returns the cached full GPUProfile for the given GPU
+// architecture. It is intended for annotation/status metadata that is not
+// present on GPUProfileSpec.
+func (r *GPUProfileReconciler) LookupProfile(arch string) (*aiv1alpha2.GPUProfile, bool) {
+	v, ok := r.profileObjects.Load(arch)
+	if !ok {
+		return nil, false
+	}
+	profile, ok := v.(*aiv1alpha2.GPUProfile)
+	return profile, ok
 }
 
 // LookupOrFetch returns a cached GPU profile when available and falls back to
@@ -67,6 +84,7 @@ func (r *GPUProfileReconciler) LookupOrFetch(ctx context.Context, namespace, arc
 		if err := r.Get(ctx, client.ObjectKey{Name: arch, Namespace: namespace}, &profile); err == nil {
 			specCopy := profile.Spec.DeepCopy()
 			r.profiles.Store(arch, specCopy)
+			r.profileObjects.Store(arch, profile.DeepCopy())
 			return specCopy, true, nil
 		} else if err != nil && !errors.IsNotFound(err) {
 			return nil, false, err
@@ -92,6 +110,7 @@ func (r *GPUProfileReconciler) LookupOrFetch(ctx context.Context, namespace, arc
 			cacheKey = item.Name
 		}
 		r.profiles.Store(cacheKey, specCopy)
+		r.profileObjects.Store(cacheKey, item.DeepCopy())
 		return specCopy, true, nil
 	}
 
@@ -112,6 +131,7 @@ func (r *GPUProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 			// Profile deleted — remove from cache.
 			// The CR name is typically the architecture (e.g. "gfx1100").
 			r.profiles.Delete(req.Name)
+			r.profileObjects.Delete(req.Name)
 			log.Info("GPUProfile deleted, removed from cache", "name", req.Name)
 			return ctrl.Result{}, nil
 		}
@@ -125,6 +145,7 @@ func (r *GPUProfileReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	}
 	specCopy := profile.Spec.DeepCopy()
 	r.profiles.Store(arch, specCopy)
+	r.profileObjects.Store(arch, profile.DeepCopy())
 	log.Info("GPUProfile cached", "architecture", arch, "vendor", profile.Spec.Vendor, "vramMB", profile.Spec.VRAMMB)
 
 	// Update status to reflect caching.

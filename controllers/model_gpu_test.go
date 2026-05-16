@@ -447,6 +447,36 @@ func TestValidateBackendGPUCompatibility(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "not supported")
 	})
+
+	t.Run("GPUProfile canary annotation emits BackendCanary event", func(t *testing.T) {
+		profile := &aiv1alpha2.GPUProfile{
+			ObjectMeta: metav1.ObjectMeta{Name: "gfx1100"},
+			Spec: aiv1alpha2.GPUProfileSpec{
+				Architecture: "gfx1100",
+				Backends: map[string]aiv1alpha2.BackendProfile{
+					"vllm": {Support: "full"},
+				},
+			},
+		}
+		aiv1alpha2.SetBackendCanary(profile, "vllm", ".loom/60-validation-matrix.md#gfx1100-vllm")
+		profileR := &GPUProfileReconciler{}
+		profileR.profileObjects.Store("gfx1100", profile)
+		r := gpuTestReconciler(func(r *ModelReconciler) {
+			r.GPUProfiles = profileR
+		})
+		model := gpuTestModel("canary-event")
+		b := &fakeGPUBackend{name: "vllm"}
+
+		err := r.validateBackendGPUCompatibility(model, b, backend.GPUVendorAMD, "gfx1100")
+		require.NoError(t, err)
+
+		events := gpuRecorderEvents(r)
+		require.Len(t, events, 1)
+		assert.Equal(t, "BackendCanary", events[0].Reason)
+		assert.Equal(t, corev1.EventTypeWarning, events[0].EventType)
+		assert.Contains(t, events[0].Message, "vllm on gfx1100 is marked as a canary backend")
+		assert.Contains(t, events[0].Message, ".loom/60-validation-matrix.md#gfx1100-vllm")
+	})
 }
 
 // ---------------------------------------------------------------------------
