@@ -1,14 +1,27 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/crb2nu/loom/pkg/mills/budget"
 	"github.com/crb2nu/loom/pkg/mills/store"
 )
+
+// canaryDedupeLabel is the label that marks a backlog item as a Mills
+// canary heartbeat. Items carrying this label are subject to the
+// 24h dedupe window enforced by handleBacklogCreate.
+const canaryDedupeLabel = "mills-canary"
+
+// canaryDedupeWindow is the lookback used to detect a still-in-flight
+// canary. Kept conservative (24h) because canaries should reach merge
+// inside a few hours; anything older is a sign of an outright wedge,
+// not a duplicate enqueue.
+const canaryDedupeWindow = 24 * time.Hour
 
 // handleBacklogList returns every backlog item, newest-first by updated_at.
 // Pagination is intentionally absent for v1 — operator humans will browse
@@ -58,6 +71,31 @@ func (o *operator) handleBacklogCreate(w http.ResponseWriter, r *http.Request) {
 	if item.CreatedBy == "" {
 		item.CreatedBy = "api"
 	}
+
+	// Canary dedupe: refuse a new mills-canary enqueue when an earlier
+	// one is still in flight within the 24h window. External automation
+	// (e.g. cron-driven heartbeats) was creating dozens of escalated
+	// duplicates per day; this guard turns those into idempotent retries.
+	// The `force=1` query bypass exists for operators who genuinely
+	// want a second canary in the same window — typically because they
+	// just unwedged the previous one.
+	if itemHasLabel(&item, canaryDedupeLabel) && !backlogForceRequested(r) {
+		existing, derr := findRecentCanary(r.Context(), o.store, canaryDedupeWindow, item.ID)
+		if derr != nil {
+			http.Error(w, derr.Error(), http.StatusInternalServerError)
+			return
+		}
+		if existing != nil {
+			writeJSON(w, http.StatusConflict, map[string]string{
+				"error":          "canary-deduped",
+				"existing_id":    existing.ID,
+				"existing_state": string(existing.State),
+				"window":         canaryDedupeWindow.String(),
+			})
+			return
+		}
+	}
+
 	if err := o.store.Backlog.Put(r.Context(), &item); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -139,4 +177,63 @@ func (o *operator) handleCostPreview(w http.ResponseWriter, r *http.Request) {
 		CostEstimate: preview,
 		Source:       "estimator/v1",
 	})
+}
+
+// itemHasLabel returns true if the backlog item carries the given label.
+func itemHasLabel(item *store.BacklogItem, label string) bool {
+	if item == nil {
+		return false
+	}
+	for _, l := range item.Labels {
+		if l == label {
+			return true
+		}
+	}
+	return false
+}
+
+// backlogForceRequested returns true if the caller passed ?force=1 (or
+// any truthy synonym). Used to bypass the canary dedupe guard.
+func backlogForceRequested(r *http.Request) bool {
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get("force"))) {
+	case "1", "true", "yes", "on":
+		return true
+	}
+	return false
+}
+
+// findRecentCanary scans the backlog for a non-merged mills-canary item
+// whose CreatedAt is within `window`. Returns the oldest match (i.e. the
+// item still wedging the queue) or nil if none. `selfID` excludes the
+// item that is being upserted right now, which matters because Put is
+// an upsert — re-posting a canary by ID must not be treated as a
+// duplicate of itself.
+func findRecentCanary(ctx context.Context, st *store.Store, window time.Duration, selfID string) (*store.BacklogItem, error) {
+	if st == nil {
+		return nil, nil
+	}
+	items, err := st.Backlog.List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	cutoff := time.Now().UTC().Add(-window)
+	var oldest *store.BacklogItem
+	for _, it := range items {
+		if it == nil || it.ID == selfID {
+			continue
+		}
+		if !itemHasLabel(it, canaryDedupeLabel) {
+			continue
+		}
+		if it.State == store.BacklogMerged {
+			continue
+		}
+		if it.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if oldest == nil || it.CreatedAt.Before(oldest.CreatedAt) {
+			oldest = it
+		}
+	}
+	return oldest, nil
 }

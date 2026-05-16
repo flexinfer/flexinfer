@@ -147,6 +147,159 @@ func TestHandleBacklog_CreateRoundTrip(t *testing.T) {
 	}
 }
 
+// TestHandleBacklog_CreateDedupesRecentCanary locks in the 24h dedupe
+// window on the operator: a second mills-canary POST within the
+// window must return 409 + the canonical body shape that the CLI
+// parses. Items missing the label, items older than 24h, and items in
+// state=merged must not block.
+func TestHandleBacklog_CreateDedupesRecentCanary(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+
+	ctx := context.Background()
+
+	// Recent escalated canary — should block.
+	priorEscalated := &store.BacklogItem{
+		ID:        "MILLS-CANARY-PRIOR",
+		Title:     "prior",
+		Labels:    []string{"mills-canary", "safe-fixture"},
+		State:     store.BacklogEscalated,
+		Priority:  store.P3,
+		CreatedBy: "test",
+		CreatedAt: time.Now().UTC().Add(-2 * time.Hour),
+		UpdatedAt: time.Now().UTC().Add(-2 * time.Hour),
+	}
+	if err := op.store.Backlog.Put(ctx, priorEscalated); err != nil {
+		t.Fatalf("seed prior: %v", err)
+	}
+
+	body := `{"ID":"MILLS-CANARY-NEW","Title":"new canary","Labels":["mills-canary"]}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/mills/backlog", strings.NewReader(body))
+	op.handleBacklogCreate(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("dedupe: status = %d body=%s, want 409", rec.Code, rec.Body.String())
+	}
+	var resp map[string]string
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode 409 body: %v body=%s", err, rec.Body.String())
+	}
+	if resp["error"] != "canary-deduped" {
+		t.Errorf("error = %q, want canary-deduped", resp["error"])
+	}
+	if resp["existing_id"] != "MILLS-CANARY-PRIOR" {
+		t.Errorf("existing_id = %q, want MILLS-CANARY-PRIOR", resp["existing_id"])
+	}
+	if resp["existing_state"] != string(store.BacklogEscalated) {
+		t.Errorf("existing_state = %q, want %s", resp["existing_state"], store.BacklogEscalated)
+	}
+
+	// Confirm the new row was *not* persisted (server-side guard works).
+	if _, err := op.store.Backlog.Get(ctx, "MILLS-CANARY-NEW"); err == nil {
+		t.Errorf("dedupe should have skipped the insert; MILLS-CANARY-NEW found in store")
+	}
+}
+
+// TestHandleBacklog_CreateDedupeAllowsMergedAndOldCanaries proves the
+// negative cases: a merged canary in the window, an in-flight canary
+// older than the window, and an item without the canary label must
+// all be permissible to follow with a new canary enqueue.
+func TestHandleBacklog_CreateDedupeAllowsMergedAndOldCanaries(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	// Merged canary, fresh — not a blocker.
+	if err := op.store.Backlog.Put(ctx, &store.BacklogItem{
+		ID: "MILLS-CANARY-MERGED", Title: "merged", Labels: []string{"mills-canary"},
+		State: store.BacklogMerged, Priority: store.P3, CreatedBy: "test",
+		CreatedAt: now.Add(-3 * time.Hour),
+	}); err != nil {
+		t.Fatalf("seed merged: %v", err)
+	}
+	// In-flight canary older than the dedupe window — also not a blocker.
+	if err := op.store.Backlog.Put(ctx, &store.BacklogItem{
+		ID: "MILLS-CANARY-STALE", Title: "stale", Labels: []string{"mills-canary"},
+		State: store.BacklogEscalated, Priority: store.P3, CreatedBy: "test",
+		CreatedAt: now.Add(-48 * time.Hour),
+	}); err != nil {
+		t.Fatalf("seed stale: %v", err)
+	}
+	// Non-canary in-flight row — must never trigger dedupe.
+	if err := op.store.Backlog.Put(ctx, &store.BacklogItem{
+		ID: "MILLS-OTHER", Title: "other work", Labels: []string{"feature"},
+		State: store.BacklogRunning, Priority: store.P2, CreatedBy: "test",
+		CreatedAt: now.Add(-1 * time.Hour),
+	}); err != nil {
+		t.Fatalf("seed other: %v", err)
+	}
+
+	body := `{"ID":"MILLS-CANARY-FRESH","Title":"fresh","Labels":["mills-canary"]}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/mills/backlog", strings.NewReader(body))
+	op.handleBacklogCreate(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := op.store.Backlog.Get(ctx, "MILLS-CANARY-FRESH"); err != nil {
+		t.Errorf("fresh canary should persist: %v", err)
+	}
+}
+
+// TestHandleBacklog_CreateDedupeForceQuery confirms ?force=1 bypasses
+// the guard so operators can rescue a wedged queue intentionally.
+func TestHandleBacklog_CreateDedupeForceQuery(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := op.store.Backlog.Put(ctx, &store.BacklogItem{
+		ID: "MILLS-CANARY-PRIOR-F", Title: "prior", Labels: []string{"mills-canary"},
+		State: store.BacklogEscalated, Priority: store.P3, CreatedBy: "test",
+		CreatedAt: time.Now().UTC().Add(-1 * time.Hour),
+	}); err != nil {
+		t.Fatalf("seed prior: %v", err)
+	}
+
+	body := `{"ID":"MILLS-CANARY-FORCED","Title":"forced","Labels":["mills-canary"]}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/mills/backlog?force=1", strings.NewReader(body))
+	op.handleBacklogCreate(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("force should bypass dedupe; got %d body=%s", rec.Code, rec.Body.String())
+	}
+	if _, err := op.store.Backlog.Get(ctx, "MILLS-CANARY-FORCED"); err != nil {
+		t.Errorf("forced canary should persist: %v", err)
+	}
+}
+
+// TestHandleBacklog_CreateRepostingSameIDIsNotDedupe covers the upsert
+// path: re-POSTing the *same* canary id is a retry of one row, not a
+// duplicate, and must succeed under the dedupe guard.
+func TestHandleBacklog_CreateRepostingSameIDIsNotDedupe(t *testing.T) {
+	op, cleanup := newTestOperator(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	if err := op.store.Backlog.Put(ctx, &store.BacklogItem{
+		ID: "MILLS-CANARY-RETRY", Title: "retry", Labels: []string{"mills-canary"},
+		State: store.BacklogEscalated, Priority: store.P3, CreatedBy: "test",
+		CreatedAt: time.Now().UTC().Add(-30 * time.Minute),
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	body := `{"ID":"MILLS-CANARY-RETRY","Title":"retry updated","Labels":["mills-canary"]}`
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/mills/backlog", strings.NewReader(body))
+	op.handleBacklogCreate(rec, req)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("same-id repost should succeed (upsert); got %d body=%s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestHandleBacklog_CreateRequiresIDAndTitle(t *testing.T) {
 	op, cleanup := newTestOperator(t)
 	defer cleanup()
