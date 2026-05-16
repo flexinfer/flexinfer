@@ -6,9 +6,10 @@
 # (see deploy/modelcaches/gemma4-26b-a4b-gptq-oci-5930k.yaml) so this node
 # never runs the 12-24h pipeline.
 #
-# Shared routes (quality-chat, mid-chat, gpt-4, project-mgmt, gemma4-26b,
-# gemma4-26b-a4b) live in `serviceLabels` so the proxy load-balances across
-# both instances. `litellm.aliases` carry only the 5930k-specific alias.
+# Shared routes (quality-chat, mid-chat, fast-chat, default chat aliases,
+# project-mgmt, gemma4-26b, gemma4-26b-a4b) live in `serviceLabels` so the
+# proxy load-balances across both instances. `litellm.aliases` carry only the
+# 5930k-specific alias.
 #
 # Runtime image: matches the 7900xtx instance — digest sha256:310988969f34...
 # from MR !379. This is the native vLLM 0.19+ path with the legacy Gemma4 patch
@@ -70,7 +71,7 @@ spec:
     maxModelLen: 16384
     gpuMemoryUtilization: "0.98"
     kvCacheDtype: fp8_e4m3
-    maxNumSeqs: 1
+    maxNumSeqs: 2
     trustRemoteCode: true
     attentionBackend: TRITON_ATTN
     # servedModelName MUST be globally unique across Models in the namespace
@@ -80,7 +81,7 @@ spec:
     toolCallParser: gemma4
     reasoningParser: gemma4
     enablePrefixCaching: false
-    maxNumBatchedTokens: 160
+    maxNumBatchedTokens: 256
     disableLogStats: false
     enforceEager: false
     disableHybridKVCacheManager: true
@@ -104,12 +105,15 @@ spec:
     # for the longer note). A 20-request probe through `quality-chat` on
     # 2026-05-14 split 10/10 across the two instances; evidence captured in
     # .loom/60-validation-matrix.md.
-    - gemma4-26b-a4b-gptq
-    - gemma4-26b-a4b
     - gemma4-26b
     - quality-chat
     - mid-chat
+    - fast-chat
+    - fast-text
     - gpt-4
+    - gpt-3.5-turbo
+    - copilot
+    - qwen3-default
     - project-mgmt
   litellm:
     enabled: true

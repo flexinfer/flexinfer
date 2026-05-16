@@ -9,6 +9,31 @@ This page is intentionally cluster-specific and will go stale. It exists to answ
 
 Snapshot taken: **2026-02-14**
 
+Update (2026-05-16): the 7900 XTX text posture is now intentionally simple.
+Only the two warm Gemma4 26B-A4B GPTQ primaries should occupy the 7900 XTX
+chat lanes:
+
+- `gemma4-26b-a4b-gptq` on `cblevins-7900xtx`
+- `gemma4-26b-a4b-gptq-5930k` on `cblevins-5930k`
+
+The shared default chat aliases (`fast-chat`, `fast-text`, `gpt-3.5-turbo`,
+`copilot`, `gpt-4`, `quality-chat`, `mid-chat`, `qwen3-default`, and
+`project-mgmt`) are declared as `serviceLabels` on both Models so
+`flexinfer-proxy` can spread traffic across Ready members. Node-specific
+`litellm.aliases` are kept separate.
+
+Quick current-state checks:
+
+```bash
+kubectl -n flexinfer-system get model \
+  gemma4-26b-a4b-gptq gemma4-26b-a4b-gptq-5930k \
+  qwen3-8b-fast-7900xtx qwen3-8b-fast-fallback-5930k
+
+kubectl -n flexinfer-system get svc \
+  gemma4-26b-a4b-gptq gemma4-26b-a4b-gptq-5930k \
+  -o jsonpath='{range .items[*]}{.metadata.name}{"\\n"}{.metadata.annotations.litellm\\.flexinfer\\.ai/aliases}{"\\n\\n"}{end}'
+```
+
 Namespace: `flexinfer-system`
 
 ## Deployed v1alpha2 Models
