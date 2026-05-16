@@ -989,3 +989,160 @@ func TestClaudeProfile_OptedIntoTelemetryEventEmit(t *testing.T) {
 		t.Errorf("claude profile extras missing telemetry_eventEmit: got %v", profile.Hooks.Extras)
 	}
 }
+
+// Regression: SessionStart must stamp $PWD to a session-cwd file so later
+// hooks (SessionEnd worktree cleanup, PreToolUse git-commit drift warning)
+// can detect cwd drift caused by `cd /abs/path` persisting across Bash
+// invocations. Without the stamp, drift silently mis-targets cleanup and
+// causes commits to land on the wrong branch.
+func TestSessionStart_StampsSessionCwd(t *testing.T) {
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "Claude Code session",
+		SessionEndEvent:  "SessionEnd",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+	}, "")
+
+	ss, ok := hooks["SessionStart"].([]map[string]any)
+	if !ok || len(ss) == 0 {
+		t.Fatal("expected SessionStart hooks")
+	}
+	inner, ok := ss[0]["hooks"].([]map[string]any)
+	if !ok || len(inner) == 0 {
+		t.Fatal("expected SessionStart inner hooks")
+	}
+	cmd, _ := inner[0]["command"].(string)
+	if !strings.Contains(cmd, `"${AGENT_CACHE_DIR}/session-cwd-${AGENT_ID}"`) {
+		t.Errorf("SessionStart first hook should stamp $PWD to session-cwd file; got: %s", cmd)
+	}
+	if !strings.Contains(cmd, `printf '%s' "$PWD" > "${AGENT_CACHE_DIR}/session-cwd-`) {
+		t.Errorf("SessionStart first hook should write $PWD via printf; got: %s", cmd)
+	}
+}
+
+// Regression: SessionEnd must include a worktree-cleanup-self hook that
+// resolves the worktree path from the SessionStart-stamped cwd, NOT from
+// `git rev-parse --show-toplevel` on the (potentially drifted) current cwd.
+// Otherwise cleanup silently skips when the agent's cwd has wandered out
+// of the harness worktree.
+func TestSessionEnd_WorktreeCleanupUsesStampedCwd(t *testing.T) {
+	hooks := buildPlatformHooks(testRegistry(), HookProfile{
+		Enabled:          true,
+		AgentID:          "claude-code",
+		AgentType:        "claude-code",
+		Description:      "Claude Code session",
+		SessionEndEvent:  "SessionEnd",
+		HeartbeatEvent:   "PostToolUse",
+		HeartbeatMatcher: "Bash|Task",
+	}, "/usr/local/bin/loom")
+
+	se, ok := hooks["SessionEnd"].([]map[string]any)
+	if !ok || len(se) == 0 {
+		t.Fatal("expected SessionEnd hooks")
+	}
+	inner, ok := se[0]["hooks"].([]map[string]any)
+	if !ok || len(inner) < 2 {
+		t.Fatalf("expected at least 2 SessionEnd inner hooks (session-end + worktree-cleanup), got %d", len(inner))
+	}
+	// The cleanup hook is the second entry.
+	cmd, _ := inner[1]["command"].(string)
+	if !strings.Contains(cmd, "worktree-cleanup-self") {
+		t.Errorf("second SessionEnd hook should be worktree-cleanup-self; got: %s", cmd)
+	}
+	if !strings.Contains(cmd, `SESSION_CWD_FILE="${AGENT_CACHE_DIR}/session-cwd-${AGENT_ID}"`) {
+		t.Errorf("worktree-cleanup hook should read session-cwd stamp; got: %s", cmd)
+	}
+	if !strings.Contains(cmd, `/.claude/worktrees/`) {
+		t.Errorf("worktree-cleanup hook should gate on /.claude/worktrees/; got: %s", cmd)
+	}
+}
+
+// Regression: PreToolUse on a native preToolUse platform (Claude Code) must
+// include the cwd-drift warning hook for `git commit`. This catches the
+// failure mode where the agent's persisted Bash cwd has drifted out of the
+// worktree and the next commit would land on the wrong branch.
+func TestAppendHookPolicies_EmitsCwdDriftWarning(t *testing.T) {
+	hooks := map[string]any{}
+	hp := HookProfile{
+		Enabled:     true,
+		AgentID:     "claude-code",
+		AgentType:   "claude-code",
+		Enforcement: "native",
+		Events:      []string{"preToolUse", "sessionStart", "sessionEnd"},
+	}
+	appendHookPolicies(hooks, testRegistry(), hp)
+
+	pre, ok := hooks["PreToolUse"].([]map[string]any)
+	if !ok || len(pre) == 0 {
+		t.Fatal("expected PreToolUse hooks after appendHookPolicies on a native preToolUse platform")
+	}
+
+	var found bool
+	for _, block := range pre {
+		inner, ok := block["hooks"].([]map[string]any)
+		if !ok {
+			continue
+		}
+		for _, h := range inner {
+			cmd, _ := h["command"].(string)
+			if strings.Contains(cmd, "cwd drift detected") && strings.Contains(cmd, "git[[:space:]]+commit") {
+				found = true
+			}
+		}
+	}
+	if !found {
+		t.Errorf("expected PreToolUse to include git-commit cwd-drift warning hook")
+	}
+}
+
+// Negative: proxy/plugin platforms (no native preToolUse) must NOT receive
+// the drift warning hook — they have no PreToolUse to put it in. Verifies
+// the gating in appendHookPolicies stays correct.
+func TestAppendHookPolicies_NoCwdDriftWarning_WhenNoPreToolUse(t *testing.T) {
+	hooks := map[string]any{}
+	hp := HookProfile{
+		Enabled:     true,
+		AgentID:     "gemini-cli",
+		AgentType:   "gemini-cli",
+		Enforcement: "native",
+		Events:      []string{"sessionStart", "sessionEnd"}, // no preToolUse
+	}
+	appendHookPolicies(hooks, testRegistry(), hp)
+
+	if _, ok := hooks["PreToolUse"]; ok {
+		t.Errorf("expected no PreToolUse hooks for platforms without preToolUse event; got: %v", hooks["PreToolUse"])
+	}
+}
+
+// Direct unit test for the hook command shape — confirms it bootstraps
+// AGENT_ID, matches `git commit`, reads the session-cwd stamp, and only
+// emits a warning when toplevels differ.
+func TestGitCommitCwdDriftWarningHook_Shape(t *testing.T) {
+	hook := gitCommitCwdDriftWarningHook(hookAgentIDBootstrap("claude-code"))
+	if hook["matcher"] != "Bash" {
+		t.Errorf("expected matcher=Bash, got %v", hook["matcher"])
+	}
+	inner, ok := hook["hooks"].([]map[string]any)
+	if !ok || len(inner) != 1 {
+		t.Fatalf("expected 1 inner hook, got %d", len(inner))
+	}
+	cmd, _ := inner[0]["command"].(string)
+
+	requiredFragments := []string{
+		`git[[:space:]]+commit`, // matcher for `git commit`
+		`SESSION_CWD_FILE="${AGENT_CACHE_DIR}/session-cwd-${AGENT_ID}"`,
+		`SESSION_TOP=`,
+		`CURRENT_TOP=`,
+		`"$SESSION_TOP" != "$CURRENT_TOP"`,
+		`cwd drift detected`,
+		`exit 0`, // non-blocking
+	}
+	for _, f := range requiredFragments {
+		if !strings.Contains(cmd, f) {
+			t.Errorf("cwd-drift hook missing required fragment %q in command: %s", f, cmd)
+		}
+	}
+}
