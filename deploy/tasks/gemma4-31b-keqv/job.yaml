@@ -26,6 +26,9 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
+  # v5 bump on 2026-05-16: make the complete-artifact idempotence path
+  # metadata-only. The v4 pod could repeatedly scan large source shards on
+  # GitOps reapply and saturate the NAS pilot disk even after output existed.
   # v4 bump on 2026-04-25: source-integrity guard. Refuses repeated
   # cross-layer qweight tensors before k_eq_v can produce a complete-looking
   # but semantically corrupt artifact.
@@ -36,7 +39,7 @@ metadata:
   # DST_DIR now include that subdir. Job spec is immutable so this
   # requires a rename to force Flux to prune v2 and create v3.
   # v1 → v2: swapped 20 GiB flexinfer/runtime image for python:3.12-slim.
-  name: gemma4-31b-keqv-postprocess-v4
+  name: gemma4-31b-keqv-postprocess-v5
   namespace: flexinfer-system
   labels:
     app.kubernetes.io/managed-by: flexinfer

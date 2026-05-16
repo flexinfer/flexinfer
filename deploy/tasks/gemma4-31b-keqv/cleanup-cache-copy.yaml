@@ -65,12 +65,12 @@ spec:
           args:
             - |
               set -euo pipefail
-              echo "[reset] waiting for gemma4-31b-keqv-postprocess-v4 to complete (up to 15m)"
+              echo "[reset] waiting for gemma4-31b-keqv-postprocess-v5 to complete (up to 15m)"
               # --for=condition=complete returns non-zero if the condition
               # isn't met within the timeout; trap that so a not-yet-
               # created Job doesn't fail the whole reset loop.
               if ! kubectl wait --for=condition=complete \
-                   job/gemma4-31b-keqv-postprocess-v4 \
+                   job/gemma4-31b-keqv-postprocess-v5 \
                    -n flexinfer-system --timeout=15m; then
                 echo "[reset] postprocess Job did NOT complete in 15m; skipping reset"
                 exit 0
