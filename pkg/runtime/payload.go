@@ -110,6 +110,7 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 	if opts.ModelBasePath != "" {
 		if usesLocalCache(model) {
 			payload.ModelPath = runtimeLocalCacheModelPath(model, opts.ModelBasePath)
+			payload.ModelPath = appendRuntimeGGUFFile(payload.ModelPath, config)
 		} else if strings.HasPrefix(model.Spec.Source, "pvc://") {
 			pvcParts := strings.SplitN(strings.TrimPrefix(model.Spec.Source, "pvc://"), "/", 2)
 			if len(pvcParts) >= 1 {
@@ -174,6 +175,17 @@ func runtimeLocalCacheModelPath(model *aiv1alpha2.Model, modelBasePath string) s
 		return root
 	}
 	return path.Join(root, subPath)
+}
+
+func appendRuntimeGGUFFile(modelPath string, config map[string]any) string {
+	ggufFile := strings.TrimLeft(strings.TrimSpace(configString(config, "ggufFile")), "/")
+	if ggufFile == "" {
+		ggufFile = strings.TrimLeft(strings.TrimSpace(configString(config, "modelFile")), "/")
+	}
+	if ggufFile == "" || strings.Contains(ggufFile, "..") || path.Base(modelPath) == path.Base(ggufFile) {
+		return modelPath
+	}
+	return path.Join(modelPath, ggufFile)
 }
 
 func runtimeArtifactRoot(modelPath string) string {

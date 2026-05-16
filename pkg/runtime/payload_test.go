@@ -344,6 +344,38 @@ func TestBuildLoadPayloadForModelUsesRuntimeLocalCacheForHFSources(t *testing.T)
 	assert.Equal(t, "/models/flexinfer-system/gonzalomo-fluxpony-imagegen", payload.ModelPath)
 }
 
+func TestBuildLoadPayloadForModelAppendsGGUFFileForRuntimeLocalCache(t *testing.T) {
+	b, ok := backend.Get("llamacpp")
+	require.True(t, ok)
+
+	rawConfig := []byte(`{"ggufFile":"qwen3-1.7b-q4_k_m.gguf"}`)
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "qwen3-1p7b-tools-radeonvii",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF",
+			Config:  &apiextensionsv1.JSON{Raw: rawConfig},
+			Cache:   &aiv1alpha2.CacheSpec{Strategy: "Local"},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Cache: &aiv1alpha2.CacheStatus{Strategy: "Local", Ready: true},
+		},
+	}
+
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+	})
+	require.NoError(t, err)
+
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, "/models/flexinfer-system/qwen3-1p7b-tools-radeonvii/qwen3-1.7b-q4_k_m.gguf", payload.ModelPath)
+}
+
 func TestBuildLoadPayloadForModelRewritesLocalCacheAbsoluteVAEPath(t *testing.T) {
 	b, ok := backend.Get("diffusers")
 	require.True(t, ok)

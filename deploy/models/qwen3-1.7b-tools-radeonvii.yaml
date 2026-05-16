@@ -21,9 +21,11 @@ spec:
   backend: llamacpp
   source: HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF
   cache:
+    # Runtime DaemonSets only see node-local staged caches under /models.
+    # Keep this GGUF beside the Radeon VII runtime instead of a model PVC.
     size: 2Gi
     storageClass: nvme-1r
-    strategy: SharedPVC
+    strategy: Local
   gpu:
     vendor: amd
     shared: radeonvii-models
