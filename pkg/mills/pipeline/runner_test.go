@@ -544,3 +544,178 @@ func TestRunner_StartRejectsBadConfig(t *testing.T) {
 		t.Errorf("expected error for nil item")
 	}
 }
+
+// emptyTextErr is an error type whose Error() returns "". Real-world
+// example: a context that was canceled before the spawn HTTP client
+// captured any body text, then wrapped through a custom error type. The
+// runner's log_tail fallback must still produce searchable text — this
+// is the path that historically left 33 of 33 plan_slice rows with
+// outcome='error' AND empty log_tail.
+type emptyTextErr struct{}
+
+func (emptyTextErr) Error() string { return "" }
+
+// silentErrorDispatcher returns (StageOutput{}, emptyTextErr{}) for every
+// stage call. Models the failure mode where the spawn HUD client errored
+// without any usable telemetry or text — the case slice M1a must cover.
+type silentErrorDispatcher struct{}
+
+func (silentErrorDispatcher) Dispatch(_ context.Context, _ *store.PipelineRun, _ *store.BacklogItem, _ Stage, _ map[string]StageOutput) (StageOutput, error) {
+	return StageOutput{}, emptyTextErr{}
+}
+
+// TestRunner_PersistsSpawnFailureContextWhenWorkerReturnsEmptyError is
+// the regression guard for slice M1a: even when the dispatcher errors
+// without any text and without spawn telemetry, the persisted
+// stage_results row for the error attempt must have a non-empty log_tail
+// that names the stage + attempt so future triage has signal.
+func TestRunner_PersistsSpawnFailureContextWhenWorkerReturnsEmptyError(t *testing.T) {
+	st, run, item := newRunnerEnv(t)
+	r := New(st, newPassingGates(t), silentErrorDispatcher{}, nil)
+	// Narrow the DAG to just plan_slice to keep the assertions tight and
+	// mirror the live failure mode (plan_slice is where the 33 empty
+	// rows landed).
+	r.Stages = []Stage{{ID: "plan_slice", Type: "llm", State: store.PipelinePlanning}}
+
+	// Drive returns the escalation error from the runner; we only care
+	// that stage_results captured signal regardless of run-state outcome.
+	_ = r.Drive(context.Background(), run, item)
+
+	stages, err := st.Pipeline.ListStages(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("list stages: %v", err)
+	}
+	if len(stages) == 0 {
+		t.Fatalf("expected at least one stage_results row, got 0")
+	}
+	sawError := false
+	for _, sr := range stages {
+		if sr.Outcome == nil || *sr.Outcome != store.StageOutcomeError {
+			continue
+		}
+		sawError = true
+		if strings.TrimSpace(sr.LogTail) == "" {
+			t.Errorf("stage %s attempt %d: log_tail empty for error row (the bug)", sr.Stage, sr.Attempt)
+		}
+		// Identifiable context: stage id + attempt number must be in
+		// the tail so a SQL grep on stage_results.log_tail can find
+		// the run.
+		if !strings.Contains(sr.LogTail, "stage=plan_slice") {
+			t.Errorf("log_tail %q missing stage marker", sr.LogTail)
+		}
+		if !strings.Contains(sr.LogTail, fmt.Sprintf("attempt=%d", sr.Attempt)) {
+			t.Errorf("log_tail %q missing attempt marker for attempt %d", sr.LogTail, sr.Attempt)
+		}
+		// Synthetic worker-no-text fallback must apply — emptyTextErr
+		// returns "" from Error() so neither the worker tail nor the
+		// derr.Error() fallback can populate the row on their own.
+		if !strings.Contains(sr.LogTail, "no error text returned by worker") {
+			t.Errorf("log_tail %q missing worker-empty fallback marker", sr.LogTail)
+		}
+	}
+	if !sawError {
+		t.Fatalf("expected at least one stage_results row with outcome=error, got: %+v", stages)
+	}
+}
+
+// TestRunner_PersistsSpawnFailureContextOnPendingPath covers the pending
+// branch: the spawn was accepted (OnAccepted ran) but the dispatcher
+// returned an error before the spawn reached a terminal status. The
+// pending stage_results row must carry the error context too — without
+// it the next operator restart sees a pending row with no clue what
+// went wrong on the previous attempt.
+func TestRunner_PersistsSpawnFailureContextOnPendingPath(t *testing.T) {
+	st, run, item := newRunnerEnv(t)
+	r := New(st, nil, &acceptedThenInterruptedDispatcher{}, nil)
+	r.Stages = []Stage{{ID: "plan_slice", Type: "llm", State: store.PipelinePlanning}}
+
+	if err := r.Drive(context.Background(), run, item); err != nil {
+		t.Fatalf("drive: %v", err)
+	}
+	stages, err := st.Pipeline.ListStages(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("list stages: %v", err)
+	}
+	if len(stages) != 1 {
+		t.Fatalf("stage rows = %d, want exactly one pending row", len(stages))
+	}
+	row := stages[0]
+	if row.Outcome != nil {
+		t.Fatalf("pending row should have nil outcome, got %v", row.Outcome)
+	}
+	if row.SpawnID != "spawn-accepted" {
+		t.Fatalf("pending row spawn_id = %q, want spawn-accepted", row.SpawnID)
+	}
+	if strings.TrimSpace(row.LogTail) == "" {
+		t.Fatalf("pending row log_tail empty; should carry spawn/stage context for resume triage")
+	}
+	for _, want := range []string{"stage=plan_slice", "attempt=1", "spawn=spawn-accepted", "poll interrupted"} {
+		if !strings.Contains(row.LogTail, want) {
+			t.Errorf("pending row log_tail %q missing %q", row.LogTail, want)
+		}
+	}
+}
+
+// TestBuildFailureLogTail_Precedence pins the contract that the helper
+// keeps existing worker text when present, falls back to err.Error(),
+// and otherwise synthesizes a worker-empty marker.
+func TestBuildFailureLogTail_Precedence(t *testing.T) {
+	cases := []struct {
+		name     string
+		existing string
+		err      error
+		stage    string
+		attempt  int
+		spawn    string
+		want     []string // substrings the result must contain
+		notWant  []string // substrings the result must NOT contain
+	}{
+		{
+			name:     "worker tail wins",
+			existing: "  HUD spawn telemetry: stop_reason=max_turns  ",
+			err:      errors.New("hud spawn xyz status=failed"),
+			stage:    "plan_slice", attempt: 1, spawn: "spawn-1",
+			want: []string{"stage=plan_slice", "attempt=1", "spawn=spawn-1", "HUD spawn telemetry"},
+		},
+		{
+			name:     "err.Error fills empty tail",
+			existing: "",
+			err:      errors.New("hud spawn xyz status=failed"),
+			stage:    "implement", attempt: 2, spawn: "spawn-2",
+			want: []string{"stage=implement", "attempt=2", "spawn=spawn-2", "hud spawn xyz status=failed"},
+		},
+		{
+			name:     "synthetic when both empty",
+			existing: "",
+			err:      emptyTextErr{},
+			stage:    "pr_self_review", attempt: 3, spawn: "",
+			want:    []string{"stage=pr_self_review", "attempt=3", "no error text returned by worker"},
+			notWant: []string{"spawn="},
+		},
+		{
+			name:     "nil error with empty tail still gets synthetic",
+			existing: "   ",
+			err:      nil,
+			stage:    "tests", attempt: 1, spawn: "spawn-z",
+			want: []string{"stage=tests", "attempt=1", "spawn=spawn-z", "no error text returned by worker"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildFailureLogTail(tc.existing, tc.err, tc.stage, tc.attempt, tc.spawn)
+			if strings.TrimSpace(got) == "" {
+				t.Fatalf("got empty result for %q", tc.name)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("result %q missing %q", got, w)
+				}
+			}
+			for _, n := range tc.notWant {
+				if strings.Contains(got, n) {
+					t.Errorf("result %q should not contain %q", got, n)
+				}
+			}
+		})
+	}
+}

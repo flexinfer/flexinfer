@@ -537,6 +537,7 @@ func (r *Runner) runStage(
 		out.SpawnID = acceptedSpawnID
 	}
 	if derr != nil && out.SpawnID != "" && !hasTerminalSpawnStatus(out) {
+		pendingTail := buildFailureLogTail(out.LogTail, derr, stage.ID, attempt, out.SpawnID)
 		if perr := r.Store.Pipeline.PutStage(ctx, &store.StageResult{
 			PipelineRunID: run.ID,
 			Stage:         stage.ID,
@@ -544,7 +545,7 @@ func (r *Runner) runStage(
 			StartedAt:     now,
 			SpawnID:       out.SpawnID,
 			Artifacts:     map[string]any{"stage_id": stage.ID},
-			LogTail:       out.LogTail,
+			LogTail:       pendingTail,
 		}); perr != nil {
 			return out, fmt.Errorf("persist pending stage: %w", perr)
 		}
@@ -562,8 +563,8 @@ func (r *Runner) runStage(
 	}
 	mills.PipelineStageAttemptsTotal.WithLabelValues(stage.ID, string(outcome)).Inc()
 	logTail := out.LogTail
-	if derr != nil && strings.TrimSpace(logTail) == "" {
-		logTail = derr.Error()
+	if derr != nil {
+		logTail = buildFailureLogTail(out.LogTail, derr, stage.ID, attempt, out.SpawnID)
 	}
 	sr := &store.StageResult{
 		PipelineRunID: run.ID,
@@ -605,6 +606,41 @@ func (r *Runner) runStage(
 		"run": run.ID, "stage": stage.ID, "attempt": attempt, "cost_usd": out.CostUSD,
 	})
 	return out, nil
+}
+
+// buildFailureLogTail returns a non-empty log_tail string for a stage
+// attempt that errored. It is the single source of truth for what gets
+// persisted to stage_results.log_tail on the error path, including the
+// pending path where the spawn was accepted but the worker call did not
+// reach a terminal status. The returned string always contains
+// identifiable context (stage id, attempt #, spawn id when known) so
+// triage on the audit table never lands on an empty cell — historically
+// 33 of 33 plan_slice error rows had no log_tail and were untriagable.
+//
+// Precedence:
+//  1. Existing log_tail from the worker (most informative — telemetry
+//     from the spawn poll, devbox check tail, etc.).
+//  2. err.Error() — what the dispatcher returned upstream.
+//  3. A synthetic "<stage> attempt <n> spawn <id>: no error text returned
+//     by worker" fallback so the row is still searchable.
+func buildFailureLogTail(existing string, err error, stageID string, attempt int, spawnID string) string {
+	tail := strings.TrimSpace(existing)
+	if tail == "" && err != nil {
+		tail = strings.TrimSpace(err.Error())
+	}
+	if tail == "" {
+		tail = "no error text returned by worker"
+	}
+	prefix := fmt.Sprintf("stage=%s attempt=%d", stageID, attempt)
+	if spawnID != "" {
+		prefix += " spawn=" + spawnID
+	}
+	// Avoid double-prefixing when the worker already echoed the stage
+	// label (devbox/spawn clients sometimes do).
+	if strings.Contains(tail, prefix) {
+		return tail
+	}
+	return prefix + ": " + tail
 }
 
 func hasTerminalSpawnStatus(out StageOutput) bool {
