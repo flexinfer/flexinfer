@@ -227,6 +227,68 @@ func (c *K8sController) List() []*State {
 	return result
 }
 
+// Prune removes terminal spawns whose EndedAt (or CleanupAt as a fallback)
+// is older than maxAge from both the in-memory map and the persistent store.
+// Non-terminal spawns and spawns missing both timestamps are skipped — the
+// caller's reaper path is responsible for stamping them first.
+//
+// Returns the number of pruned entries. The HUD's `/api/spawns` list grows
+// unboundedly without this — Reconcile keeps every record forever, and the
+// disk store's `LoadAll` pulls them all back into memory on each restart.
+// Without periodic pruning, the operator inbox surfaces "old orphan spawns"
+// from days ago even though the underlying pods have been reaped.
+func (c *K8sController) Prune(ctx context.Context, maxAge time.Duration) int {
+	if maxAge <= 0 {
+		return 0
+	}
+	cutoff := time.Now().Add(-maxAge)
+
+	c.mu.Lock()
+	var toDelete []string
+	for id, state := range c.spawns {
+		if state == nil || !IsTerminal(state.Status) {
+			continue
+		}
+		// Prefer EndedAt for the cutoff comparison (set by failSpawn /
+		// completeSpawn / Reconcile when a pod transitions to terminal).
+		// Fall back to CleanupAt for spawns that were reaped via the
+		// TerminalHook path without an EndedAt stamp (rare but possible
+		// across pre-hook restarts).
+		var ts time.Time
+		switch {
+		case state.EndedAt != nil && !state.EndedAt.IsZero():
+			ts = *state.EndedAt
+		case state.CleanupAt != nil && !state.CleanupAt.IsZero():
+			ts = *state.CleanupAt
+		default:
+			continue
+		}
+		if ts.Before(cutoff) {
+			toDelete = append(toDelete, id)
+		}
+	}
+	for _, id := range toDelete {
+		delete(c.spawns, id)
+	}
+	c.mu.Unlock()
+
+	if c.store != nil {
+		for _, id := range toDelete {
+			if err := c.store.Delete(ctx, id); err != nil {
+				c.logger.Warn("prune: failed to delete spawn from store",
+					"spawn_id", id, "error", err)
+			}
+		}
+	}
+	if len(toDelete) > 0 {
+		c.logger.Info("pruned terminal spawns",
+			"count", len(toDelete),
+			"max_age", maxAge.String(),
+		)
+	}
+	return len(toDelete)
+}
+
 // Reconcile synchronises the in-memory state map with actual Kubernetes pod
 // status. This is the key fix for the stale-after-restart bug: instead of
 // trusting local JSON, we query the cluster for pods labeled
