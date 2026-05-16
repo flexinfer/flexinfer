@@ -889,6 +889,27 @@ How can the `cblevins-5930k` 7900 XTX lane reach parity with the `cblevins-7900x
 - Live-test 5930k `2/256` with a 15 minute startup budget.
 - If it reaches Ready, run the same single/parallel benchmark used for 7900xtx and then decide whether to promote.
 
+### Follow-Through Outcome (2026-05-16)
+
+- The backend/controller patch landed on `master` before this slice. Live
+  `gemma4-26b-a4b-gptq-5930k` rendered the expected probe budget from
+  `serverless.coldStartTimeout`: `15m` became `startupProbe.failureThreshold=450`
+  at a 2 second period.
+- The canary raised the 5930k model to `coldStartTimeout: 25m`,
+  `maxNumSeqs: 2`, and `maxNumBatchedTokens: 256`. The generated Deployment
+  rendered `failureThreshold=750`, proving the startup path used the longer
+  budget.
+- Live result: the pod reached `Ready` with zero restarts. Startup logs recorded
+  weight loading in 20.94 seconds, model load in 21.69 seconds, Dynamo bytecode
+  transform in 16.55 seconds, and `Application startup complete`.
+- Direct benchmark result: coherent `1..50` output. Single request completed
+  141 tokens in 2.625 seconds (~53.7 tok/s). After the first two-way warmup
+  pass, three repeated parallel-2 rounds served 282 completion tokens in
+  2.34-2.41 seconds (~117-120 aggregate tok/s).
+- Decision: promote the 5930k sister to the same 2/256 concurrency profile as
+  the 7900xtx primary, keeping `maxModelLen=16384`. Longer-context work remains
+  separate because the 2/256 profile trades KV headroom for concurrency.
+
 ### Local Anchors
 
 - `backend/vllm.go`: `VLLMBackend.StartupTimeout()` is hard-coded to 300 seconds.
