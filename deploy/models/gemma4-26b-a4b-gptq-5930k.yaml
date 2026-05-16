@@ -82,7 +82,7 @@ spec:
     enablePrefixCaching: false
     maxNumBatchedTokens: 160
     disableLogStats: false
-    enforceEager: true
+    enforceEager: false
     disableHybridKVCacheManager: true
     disableAiter: true
     rocmCustomPagedAttn: false
