@@ -37,6 +37,11 @@ The script updates:
   - deploy/gpuprofiles/<profile-or-arch>.yaml: .spec.runtime.image
   - deploy/system/values-k3s.yaml runtime.profiles entries matching profile name or gpuArch
   - optional profile promotion.model_manifests entries: .spec.image
+
+Promotion gate:
+  Before --apply, update .loom/60-validation-matrix.md with a promotion-ready
+  row covering the digest, canary command, result, rollback digest/ref, and
+  relevant hardware lane.
 USAGE
 }
 
@@ -335,7 +340,10 @@ print_validation_reminders() {
   local profile="$1" arch="$2" apply="$3"
   echo "Validation reminders:"
   echo "  - Run scripts/check-runtime-profile-consistency.sh after promotion."
-  echo "  - Record profile=${profile}, arch=${arch}, digest, canary command, result, and rollback digest in .loom/60-validation-matrix.md."
+  echo "  - Promotion gate: update .loom/60-validation-matrix.md before --apply."
+  echo "  - Required matrix fields: artifact, context_length, gpu_class, backend, support_level, runtime_image, oci_ref, validation_evidence, observed_failure_mode, canary_command, rollback_digest, spec_roadmap_link, promotion_decision."
+  echo "  - Record profile=${profile}, arch=${arch}, target digest, canary result, rollback digest/ref, and manifest pointers in that row."
+  echo "  - Required lanes to keep represented: gfx1100 textgen, gfx1100 imagegen, gfx906 textgen/quantization, gfx906 imagegen/offload."
   case "${arch}" in
     gfx1100)
       echo "  - Smoke gfx1100 textgen and imagegen lanes before Flux reconciliation."

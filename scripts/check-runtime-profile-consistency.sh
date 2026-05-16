@@ -64,7 +64,6 @@ profile_dir="${REPO_ROOT}/deploy/gpuprofiles"
 declare -A profile_arches=()
 declare -A profile_vendors=()
 declare -A managed_arches=()
-declare -A values_arches=()
 
 while IFS=$'\t' read -r name arch vendor image; do
   [[ -n "${name}" ]] || continue
@@ -120,7 +119,6 @@ while IFS=$'\t' read -r name arch vendor image; do
   [[ "${build_arch}" == "${arch}" ]] || fail "values runtime profile ${name}: build arch ${build_arch} != values arch ${arch}"
   [[ "${build_vendor}" == "${vendor}" ]] || fail "values runtime profile ${name}: build vendor ${build_vendor} != values vendor ${vendor}"
 
-  values_arches["${arch}"]=1
 done < <(yq -r '.runtime.profiles[]? | [.name, .gpuArch, .gpuVendor, .image] | @tsv' "${values_file}")
 
 for arch in "${!managed_arches[@]}"; do

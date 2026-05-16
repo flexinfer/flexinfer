@@ -40,11 +40,24 @@ promote or block runtime canaries.
 Goal: runtime canary promotions on gfx1100 can be audited from a spec or roadmap
 entry to concrete runtime evidence without relying on chat history.
 
+Operational gate:
+
+- Runtime digest promotion dry-runs must point operators at
+  `.loom/60-validation-matrix.md` before `--apply`.
+- The matrix row must include the target digest/ref, canary command and result,
+  rollback digest/ref or rollback manifest, hardware lane, and spec/MR/issue
+  pointer.
+- The matrix must keep the four required lane categories visible even when
+  evidence is incomplete: `gfx1100` textgen, `gfx1100` imagegen, `gfx906`
+  textgen/quantization, and `gfx906` imagegen/offload.
+
 Owner boundary for SD-3:
 
 - Owned files: `.loom/60-validation-matrix.md`,
   `docs/planning/spec-driven-delivery.md`,
   `docs/planning/next-roadmap.md`.
+- Runtime promotion guardrail file: `scripts/promote-runtime-digest.sh`.
+- Runtime promotion guardrail test: `scripts/test-promote-runtime-digest.sh`.
 - Optional alignment file: `ROADMAP.md`.
 - Out of scope: controller code, runtime image builds, CRDs, Helm manifests, and
   live-cluster changes.
@@ -66,6 +79,8 @@ Acceptance criteria:
 - [x] `docs/planning/next-roadmap.md` links or names
       `.loom/60-validation-matrix.md` as the canonical SD-3 evidence artifact.
 - [x] `ROADMAP.md` is aligned with the same SD-3 status and evidence artifact.
+- [x] `scripts/promote-runtime-digest.sh` dry-runs remind operators to fill the
+      validation matrix gate before applying digest changes.
 
 Validation commands for SD-3:
 
@@ -73,6 +88,8 @@ Validation commands for SD-3:
 git diff --check
 rg "artifact|context_length|gpu_class|runtime_image|oci_ref|observed_failure_mode|spec_roadmap_link|promotion_decision" .loom/60-validation-matrix.md docs/planning/spec-driven-delivery.md docs/planning/next-roadmap.md ROADMAP.md
 rg ".loom/60-validation-matrix.md|Issue #57|SD-3" docs/planning/spec-driven-delivery.md docs/planning/next-roadmap.md ROADMAP.md
+scripts/test-promote-runtime-digest.sh
+scripts/check-runtime-profile-consistency.sh
 ```
 
 Rollout/backout:
