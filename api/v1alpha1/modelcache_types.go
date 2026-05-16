@@ -279,7 +279,7 @@ type AbliterationSpec struct {
 	TargetLayers *string `json:"targetLayers,omitempty"`
 
 	// WeightMatrices to orthogonalize against the refusal direction.
-	// Defaults to ["o_proj", "down_proj"] if empty.
+	// Defaults to ["o_proj", "out_proj", "down_proj"] if empty.
 	// +optional
 	WeightMatrices []string `json:"weightMatrices,omitempty"`
 
@@ -329,7 +329,7 @@ type AbliterationSpec struct {
 
 	// AblitateLmHead controls whether the lm_head output projection is abliterated.
 	// Set to false to skip lm_head modification (safer for hybrid architectures).
-	// +kubebuilder:default=true
+	// +kubebuilder:default=false
 	// +optional
 	AblitateLmHead *bool `json:"ablitateLmHead,omitempty"`
 

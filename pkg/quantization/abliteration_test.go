@@ -212,7 +212,7 @@ func TestAbliterationEnv_Content(t *testing.T) {
 		{"num samples", "NUM_SAMPLES", "64"},
 		{"target layers", "TARGET_LAYERS", "10-55"},
 		{"weight matrices", "WEIGHT_MATRICES", "o_proj,down_proj"},
-		{"ablate lm_head", "ABLITERATION_ABLITERATE_LM_HEAD", "true"},
+		{"ablate lm_head", "ABLITERATION_ABLITERATE_LM_HEAD", "false"},
 		{"skip vision", "SKIP_VISION", "true"},
 		{"device map auto", "DEVICE_MAP", "auto"},
 		{"progress interval", "ABLITERATION_PROGRESS_INTERVAL", "10"},
@@ -448,6 +448,7 @@ func TestAbliterationEnv_ExplicitSavePolicyPassedThrough(t *testing.T) {
 
 func TestAbliterationEnv_AblateLMHeadOptIn(t *testing.T) {
 	spec := &aiv1alpha1.AbliterationSpec{
+		AblitateLmHead: ablitBoolPtr(true),
 		WeightMatrices: []string{"o_proj", "lm_head"},
 	}
 
@@ -462,6 +463,22 @@ func TestAbliterationEnv_AblateLMHeadOptIn(t *testing.T) {
 	}
 	if got := envMap["WEIGHT_MATRICES"]; got != "o_proj,lm_head" {
 		t.Fatalf("WEIGHT_MATRICES = %q, want o_proj,lm_head", got)
+	}
+}
+
+func TestAbliterationEnv_AblateLMHeadDefaultsOff(t *testing.T) {
+	spec := &aiv1alpha1.AbliterationSpec{
+		WeightMatrices: []string{"o_proj", "lm_head"},
+	}
+
+	env := abliterationEnv("test-model", "gfx1100", spec, DefaultGPUMemoryConfig())
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	if got := envMap["ABLITERATION_ABLITERATE_LM_HEAD"]; got != "false" {
+		t.Fatalf("ABLITERATION_ABLITERATE_LM_HEAD = %q, want false", got)
 	}
 }
 

@@ -383,9 +383,9 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		normThreshold = *spec.NormThreshold
 	}
 
-	ablitateLmHead := "true"
-	if spec.AblitateLmHead != nil && !*spec.AblitateLmHead {
-		ablitateLmHead = "false"
+	ablitateLmHead := "false"
+	if spec.AblitateLmHead != nil && *spec.AblitateLmHead {
+		ablitateLmHead = "true"
 	}
 
 	env := []corev1.EnvVar{

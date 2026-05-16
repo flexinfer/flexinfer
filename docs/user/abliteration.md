@@ -51,12 +51,12 @@ spec:
 |-------|------|---------|-------------|
 | `numSamples` | int | 128 | Number of contrastive prompt pairs for activation capture |
 | `targetLayers` | string | `"auto"` | Layer selection: `"auto"`, `"10-55"` (range), `"0,1,5,10"` (explicit) |
-| `weightMatrices` | []string | `["o_proj", "down_proj"]` | Weight matrices to orthogonalize |
+| `weightMatrices` | []string | `["o_proj", "out_proj", "down_proj"]` | Weight matrices to orthogonalize. Set explicitly for model-family safety. |
 | `useGPU` | bool | false | Use GPU for activation capture (faster but needs VRAM) |
 | `maxMemoryGB` | int | 56 | Container memory limit |
 | `timeoutSeconds` | int | 14400 | Job deadline (4 hours default) |
 | `normThreshold` | string | `"100"` | Max L2 norm of refusal direction. Abort if exceeded. |
-| `ablitateLmHead` | bool | false | Abliterate the output projection. **Must be false.** |
+| `ablitateLmHead` | bool | false | Abliterate the `lm_head` output projection. Keep false unless a runbook explicitly opts in. |
 | `skipGDNLayers` | bool | true | Skip GDN (linear attention) layers in hybrid architectures |
 | `skipVisionLayers` | bool | true | Skip vision encoder layers in VLMs |
 | `nodeSelector` | map | (inherited) | GPU-specific node constraints for abliteration job |
@@ -170,7 +170,7 @@ Manual trigger: set annotation `flexinfer.ai/reabliterate: "true"` to force re-a
 
 **lm_head corruption (gibberish output):**
 - **Root cause**: `ablitateLmHead: true` + accelerate disk offloading corrupts lm_head during streaming save. In-place weight modifications are lost when the model uses disk offloading.
-- **Fix**: Set `ablitateLmHead: false` (default since 2026-04-01). If already corrupted, replace lm_head with original weights from the base model.
+- **Fix**: Leave `ablitateLmHead` unset or set it to `false`. If already corrupted, replace lm_head with original weights from the base model.
 
 **Job OOMKilled on gfx906:**
 - Set `FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB=12` (not 20) and `FLEXINFER_ABLITERATION_CPU_MAX_MEMORY_GB=56` in GPUProfile env vars.
