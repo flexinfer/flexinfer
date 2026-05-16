@@ -51,6 +51,7 @@ func newHudCmd(socketPath string) *cobra.Command {
 	var installShader bool
 	var tui bool
 	var embed bool
+	var embedSubset string
 
 	// Pipeline monitor flags.
 	var pipelineProjects string
@@ -275,6 +276,7 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 				SpawnBuildEphemeralStorageRequest: spawnBuildEphemeralStorageRequest,
 				SpawnBuildEphemeralStorageLimit:   spawnBuildEphemeralStorageLimit,
 				SpawnBuildAvoidNodes:              spawnBuildAvoidNodes,
+				EmbedSubset:                       embedSubset,
 			}
 
 			if embed {
@@ -330,6 +332,10 @@ real-time updates (e.g., --metrics-addr 127.0.0.1:9090).`,
 	// Combine with --tui to co-host both surfaces in one process. See
 	// docs/HUD_EMBEDDING.md.
 	cmd.Flags().BoolVar(&embed, "embed", false, "Run HUD in-process (LocalCaller, no separate daemon). Lifetime tied to this CLI process.")
+	// --subset gates the HUD UI to a curated set of views when embedded
+	// inside another product (typically via iframe). "operator" exposes
+	// Overview + Fleet + Stream only. See internal/hud/app.go EmbedSubset.
+	cmd.Flags().StringVar(&embedSubset, "subset", "", "HUD view subset for embedded surfaces: 'full' (default) or 'operator' (Overview + Fleet + Stream).")
 
 	// Spawn orchestrator (headless agent spawning via devbox K8s pods).
 	// Pipeline monitoring (GitLab CI via mcp-gitlab).

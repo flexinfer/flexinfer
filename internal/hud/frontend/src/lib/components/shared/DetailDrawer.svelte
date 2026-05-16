@@ -217,10 +217,21 @@
     flex-shrink: 0;
   }
 
-  @media (max-width: 480px) {
+  /* ≤800px — full-screen drawer (Slice B5 of the HUD UX overhaul). The
+     side-panel pattern is replaced by a full-viewport sheet that slides up
+     from the bottom. Leaves room above the bottom-fixed nav bar so the
+     close button stays reachable. */
+  @media (max-width: 800px) {
     .drawer {
       width: 100vw !important;
+      left: 0;
+      right: 0;
+      top: 0;
+      /* Stop short of the bottom-fixed nav (64px + safe-area). */
+      bottom: calc(64px + env(safe-area-inset-bottom, 0px));
       border-left: none;
+      border-bottom: 1px solid var(--border);
+      animation: drawerSlideUp var(--duration-normal, 200ms) cubic-bezier(0.4, 0, 0.2, 1);
     }
     .drawer-close {
       min-width: 44px;
@@ -229,5 +240,10 @@
       align-items: center;
       justify-content: center;
     }
+  }
+
+  @keyframes drawerSlideUp {
+    from { transform: translateY(20%); opacity: 0.8; }
+    to   { transform: translateY(0);   opacity: 1; }
   }
 </style>

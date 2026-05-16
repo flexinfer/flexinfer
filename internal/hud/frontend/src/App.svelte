@@ -7,6 +7,7 @@
   import { streamStore } from './lib/stores/stream.svelte.ts';
   import { eventStore } from './lib/stores/events.svelte.ts';
   import { overlayStore } from './lib/stores/overlay.svelte.ts';
+  import { embedConfig } from './lib/stores/embedConfig.svelte.ts';
   import { actionStore } from './lib/stores/action.svelte.ts';
   import { formatTime as fmtTime } from './lib/utils/format.ts';
   import ViewShell from './lib/components/shared/ViewShell.svelte';
@@ -42,11 +43,20 @@
     overlayStore.init();
     if (overlayStore.enabled) return;
 
+    // Load embed/subset config first so the router guard can use it on the
+    // very first navigate() triggered by hash parsing. Fire-and-forget —
+    // the store defaults to "full" until the fetch resolves.
+    embedConfig.load();
     router.init();
     eventStore.connect();
     fleetStore.fetch();
     healthStore.fetch();
   });
+
+  // Filter the nav to the embed-subset allowlist (or pass through when
+  // unrestricted). Reactive so the nav updates after `embedConfig.load`
+  // resolves.
+  let visibleViews = $derived(views.filter((v) => embedConfig.isViewAllowed(v.id)));
   onDestroy(() => {
     eventStore.disconnect();
   });
@@ -215,8 +225,8 @@
 
       <span class="nav-divider"></span>
 
-      <!-- Grouped view tabs -->
-      {#each views as v}
+      <!-- Grouped view tabs (filtered by embed subset; see Slice B5) -->
+      {#each visibleViews as v}
         <button
           class="nav-tab"
           class:active={router.view === v.id}
@@ -447,7 +457,7 @@
           <div class="help-section">
             <div class="help-section-title">Views</div>
             <div class="help-row"><kbd>`</kbd> / <kbd>o</kbd> <span>Overview</span></div>
-            {#each views as v}
+            {#each visibleViews as v}
               <div class="help-row"><kbd>{v.key}</kbd> <span>{v.label}</span></div>
             {/each}
           </div>
@@ -878,13 +888,49 @@
 
   /* ═══ Responsive ════════════════════════════════════════════ */
 
-  @media (max-width: 768px) {
+  /* ≤800px — phone + small-tablet layout. Slice B5 of the HUD UX overhaul
+     extended the existing 768px breakpoint to 800px and reflows the nav
+     into a bottom-fixed tab bar (thumb-zone navigation), bumps tap targets
+     to 44px, and leaves room above the bar so panel content doesn't sit
+     underneath it. Tabs scroll horizontally when their natural width
+     exceeds the viewport. */
+  @media (max-width: 800px) {
+    .hud-shell {
+      /* Reserve space for the fixed bottom nav so the last row of panel
+         content stays scrollable into view. 56px tab + 8px gap. */
+      padding-bottom: calc(64px + env(safe-area-inset-bottom, 0px));
+    }
+
+    .nav-bar {
+      /* Reflow: brand + actions stay top-aligned, tabs detach to bottom. */
+      gap: var(--space-3);
+      padding: 0 var(--space-3);
+    }
+
     .nav-tabs {
-      scrollbar-width: none;
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      z-index: 200;
+      flex: 0 0 auto;
+      width: 100%;
+      gap: 2px;
+      padding: 6px max(var(--space-2), env(safe-area-inset-left, 0px))
+        calc(6px + env(safe-area-inset-bottom, 0px))
+        max(var(--space-2), env(safe-area-inset-right, 0px));
+      background: color-mix(in srgb, var(--bg-secondary) 92%, black 8%);
+      border-top: 1px solid var(--border);
+      backdrop-filter: blur(18px);
+      overflow-x: auto;
       -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
       justify-content: flex-start;
     }
     .nav-tabs::-webkit-scrollbar {
+      display: none;
+    }
+    .nav-divider {
       display: none;
     }
     .nav-tab-key {
@@ -892,7 +938,9 @@
     }
     .nav-tab {
       min-height: 44px;
+      min-width: 44px;
       flex-shrink: 0;
+      padding: 6px 10px;
     }
     .status-bar-right {
       display: none;

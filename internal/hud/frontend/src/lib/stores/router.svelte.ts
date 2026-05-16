@@ -2,6 +2,8 @@
 // Supports grouped views with legacy hash compatibility.
 // Top-level labels are intentionally operator-oriented while IDs stay stable.
 
+import { embedConfig } from './embedConfig.svelte.ts';
+
 export interface RouteState {
   view: string;
   subView: string;
@@ -246,12 +248,29 @@ class Router {
       this.view = view;
       this.subView = subView ?? vd?.default ?? '';
     }
+    // Embed subset guard (Slice B5): redirect to Overview when the requested
+    // view is outside the operator allowlist. Sub-views fall back to the
+    // first allowed sub-view of the parent view.
+    if (!embedConfig.isViewAllowed(this.view)) {
+      this.view = overviewId;
+      this.subView = '';
+    } else if (this.subView && !embedConfig.isSubViewAllowed(this.view, this.subView)) {
+      const allowed = embedConfig.allowedSubViews[this.view];
+      const vd = findViewDef(this.view);
+      this.subView = (allowed && allowed.length > 0 ? allowed[0] : vd?.default ?? '');
+    }
     this.detail = detail ?? null;
     this._syncHash();
   }
 
   /** Switch sub-view within the current view. */
   navigateSub(subView: string, detail?: string | null): void {
+    // Embed subset guard: refuse to switch into a hidden sub-view; stay
+    // on the current sub-view rather than dropping to overview, which
+    // would be jarring during in-panel tab switches.
+    if (!embedConfig.isSubViewAllowed(this.view, subView)) {
+      return;
+    }
     this.subView = subView;
     this.detail = detail ?? null;
     this._syncHash();

@@ -116,6 +116,20 @@ type Config struct {
 	// empty-state instead of crashing.
 	MillsOperatorURL   string // base URL, e.g. http://loom-mills-operator.loom-mills.svc.cluster.local:8090
 	MillsOperatorToken string // admin bearer for mutation routes (LOOM_MILLS_ADMIN_TOKEN on the operator)
+
+	// EmbedSubset selects which views the HUD exposes when running as an
+	// embedded surface (e.g., inside an iframe in another product). Values:
+	//
+	//   "" / "full"   — default; every panel is registered and routable.
+	//   "operator"    — Overview + Operations/Fleet + Activity/Stream only;
+	//                   all other top-level views are hidden in the nav and
+	//                   navigating to a hidden route falls back to Overview.
+	//                   Non-allowlisted JSON API routes are skipped at
+	//                   handler registration time as a defense-in-depth
+	//                   measure for iframe embeds.
+	//
+	// See .loom/117 Slice B5 for the rationale.
+	EmbedSubset string
 }
 
 // App is the HUD application. It holds the daemon client, agent bridge,
