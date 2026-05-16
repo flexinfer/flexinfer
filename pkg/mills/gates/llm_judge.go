@@ -4,7 +4,56 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 )
+
+// ErrJudgeUnparseable is the gate-layer sentinel for "the judge ran but
+// returned a response we couldn't grade". It mirrors
+// pkg/mills/clients.ErrRubricUnparseable, exposed at the gates layer so
+// the gate package has no import cycle on clients. The clients package
+// wraps its sentinel; LLMGate.Evaluate translates that into this one
+// (and a soft Outcome) so the runner takes the retry branch instead of
+// the no-retry escalation branch.
+//
+// Tests can `errors.Is(out.Reasons-derived-err, gates.ErrJudgeUnparseable)`
+// after fishing the wrap chain out, but the canonical contract is
+// Outcome.JudgedBy == "flexinfer:unparseable" + Outcome.Pass=false +
+// err=nil so the runner naturally rewinds to RetryFrom.
+var ErrJudgeUnparseable = errors.New("gates: judge output unparseable")
+
+// errJudgeUnparseable is the predicate the LLMGate uses to detect a
+// soft-failure (judge returned but we couldn't grade). Pure-Go gates
+// using FakeRubricJudge can return any error type wrapping
+// ErrJudgeUnparseable to opt in; production wires through the clients
+// package's ErrRubricUnparseable, which the gates package can't import
+// directly without a cycle. RubricJudge implementations may set the
+// optional UnparseableError interface to expose the predicate at the
+// gate layer.
+//
+// We accept either:
+//   - errors.Is(err, ErrJudgeUnparseable) — preferred for in-package tests
+//   - an err whose chain contains an error with method
+//     IsRubricUnparseable() bool returning true — used by the clients
+//     package's ErrRubricUnparseable indirection
+func isJudgeUnparseable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrJudgeUnparseable) {
+		return true
+	}
+	// Duck-typed predicate: any wrapped error with this method opts in.
+	// Implemented by the clients package's ErrRubricUnparseable wrapper
+	// without creating an import cycle.
+	type unparseable interface {
+		IsRubricUnparseable() bool
+	}
+	var u unparseable
+	if errors.As(err, &u) && u.IsRubricUnparseable() {
+		return true
+	}
+	return false
+}
 
 // RubricJudge evaluates a strict rubric prompt against a stage input and
 // returns a score in [0,1] plus human-readable reasons. The contract is
@@ -57,12 +106,37 @@ type LLMGate struct {
 	// Disabled, when true, returns Outcome{Pass:true, JudgedBy:"flexinfer:disabled"}.
 	// Useful when policy.gates.llm_judged_disabled is on (cost spike, outage).
 	Disabled bool
+	// Logger is optional; nil falls back to slog.Default().
+	Logger *slog.Logger
 }
 
 // Name satisfies the gates.Gate contract.
 func (g *LLMGate) Name() string { return g.GateName }
 
+func (g *LLMGate) logger() *slog.Logger {
+	if g.Logger != nil {
+		return g.Logger
+	}
+	return slog.Default()
+}
+
 // Evaluate satisfies the gates.Gate contract.
+//
+// Error contract (post-M2.5):
+//   - judge returns nil error + verdict: convert score → Outcome.Pass against
+//     threshold (existing behavior).
+//   - judge returns an error wrapping ErrJudgeUnparseable / a clients-layer
+//     ErrRubricUnparseable: this is a *soft* failure — the LLM ran fine, the
+//     operator just couldn't read the answer. Return Outcome{Pass:false,
+//     JudgedBy:"flexinfer:unparseable"} and err=nil so the runner takes the
+//     existing gate-retry path (rewind to RetryFrom, bump attempt counter)
+//     instead of the no-retry escalation branch.
+//   - judge returns any other error (network, timeout, 5xx): infrastructure
+//     failure — propagate the error so the runner escalates.
+//
+// Background: 2026-05-16 canary PIPE-MILLS-CANARY-M1D-VERIFY-2 escalated on
+// the first spec_conformance call because gemma4-26b returned free-text.
+// See .loom/119-…2026-05-16.md for the diagnosis.
 func (g *LLMGate) Evaluate(ctx context.Context, in StageInput) (Outcome, error) {
 	if g.Disabled {
 		return Outcome{Pass: true, JudgedBy: "flexinfer:disabled"}, nil
@@ -76,6 +150,17 @@ func (g *LLMGate) Evaluate(ctx context.Context, in StageInput) (Outcome, error) 
 	}
 	v, err := g.Judge.Judge(ctx, g.RubricName, in)
 	if err != nil {
+		if isJudgeUnparseable(err) {
+			g.logger().Warn("llm gate: judge output unparseable; soft-failing for retry",
+				"gate", g.GateName, "rubric", g.RubricName, "error", err)
+			return Outcome{
+				Pass:     false,
+				JudgedBy: "flexinfer:unparseable",
+				Reasons: []string{
+					fmt.Sprintf("judge response could not be parsed into a score envelope: %v", err),
+				},
+			}, nil
+		}
 		return Outcome{}, fmt.Errorf("%s: judge: %w", g.GateName, err)
 	}
 	model := v.Model
