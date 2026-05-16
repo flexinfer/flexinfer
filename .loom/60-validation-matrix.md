@@ -164,7 +164,7 @@ by at least one row even when evidence is incomplete.
 | `gemma4-31b-gptq` Radeon VII comparison | n/a | `gfx906/radeonvii` | `n/a` | `unsupported` | n/a | n/a | n/a | Off-gfx1100 comparison row; VRAM ceiling for this promotion lane | n/a: not a target | n/a | SD-3 / Issue #57 | `skip` |
 | **Required canary: `gfx906` textgen/quantization** — Qwen3.5 GPTQ Radeon VII pipeline (`docs/user/gptq-quantization-runbook.md`) | TBD: gfx906 runtime currently paused (DiskPressure) so no live serving canary | `gfx906/radeonvii` | `vllm` | `deprecated` | TBD: gfx906 vLLM runtime is paused via `flexinfer.ai/runtime-paused=true` after the digest pull repeatedly hit DiskPressure | TBD: 31B GPTQ artifact reused from gfx1100 (`pvc:///gemma4-31b-gptq/gptq-w4-g128-keqv`) | GPTQ runbook documents abliteration + GPTQ flow on Radeon VII (`docs/user/gptq-quantization-runbook.md`); 2026-05-07 evidence below records DaemonSet pause + DiskPressure history. CPU loading + community PyTorch wheel restore allocations under 16 GiB. Live serving canary not currently runnable on radeonvii. | Root-backed containerd fills to 100% on first pull of the 17 GiB digest-pinned `runtime` image, evicting kubelet workloads. The replacement `qwen3-1p7b-tools-radeonvii` llama.cpp lane is queued precisely because vLLM cannot run here today. | TBD: re-enable canary after storage relocation; recapture before lifting `runtime-paused` | `registry.harbor.lan/flexinfer/runtime@sha256:7c05960614517dbd5d6453944125a01e78f0451f6695467a8eaf6a6859d461dd` (last gfx906 runtime digest before the `dd0a1936...` promotion that hit DiskPressure) | `.loom/gfx1100-gfx906-platform-enhancements-plan.md` Slice 5; `docs/user/gptq-quantization-runbook.md`; 2026-05-07 gfx906 runtime digest promotion evidence below | `pending` |
 | **Required canary: `gfx906` imagegen/offload** — `sdxl-inpainting-radeonvii` Diffusers inpaint | n/a, 512x512 image edit | `gfx906/radeonvii` | `diffusers` | `experimental` | `registry.harbor.lan/flexinfer/runtime@sha256:94045d0ca4b12deb3c46bb22070f67bfedad8b719bb992e5d3ce128ad27ad597` | `local:///models/flexinfer-system/sdxl-inpainting-radeonvii` | Slim runtime image (cycle 2: `Dockerfile.runtime-gfx906` on `mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3` base, 36.9 GB extracted vs prior 59.2 GB) promoted via MR !282 after MR !281. DaemonSet pod Ready on `cblevins-radeonvii`; cold-start `/v1/images/edits` smoke returned HTTP 200 in 107.7s with one 512x512 PNG, `b64_len=252372`. Pre-pull verified root holds at 65% (78G/127G used) post-image-pull; bind-mounted `/var/lib/flexinfer/models` to `/mnt/nvme/longhorn/flexinfer/models` via fstab, reclaiming 21G on root. | None on the runtime path. Cold-start latency increased from prior 48.35s warm to 107.7s cold (deployment scale-up + weights load from freshly bind-mounted NVMe path). Failed pull on root LVM exposed pull-time peak ~1.5x final extracted size. | Multipart `POST /model/sdxl-inpainting-radeonvii/v1/images/edits` through `flexinfer-proxy` with 512x512 PNG image+mask (raw 2026-05-07 evidence below) | `registry.harbor.lan/flexinfer/runtime@sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97` (the prior 59.2 GB digest replaced by this promotion) | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md`; `.loom/gfx1100-gfx906-next-round-plan.md` Track B-3; 2026-05-07 Radeon VII evidence below | `conditional` |
-| `qwen3-1p7b-tools-radeonvii` GGUF tool-router | 8192 | `gfx906/radeonvii` | `llamacpp` | `experimental` | `registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3` (digest TBD) | `HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF` / `qwen3-1.7b-q4_k_m.gguf` | Manifest enabled 2026-05-07 as the safe Radeon VII utilization lane after gfx906 runtime image pulls filled root-backed containerd storage. Expected image is about 2.5 GiB compressed versus about 17 GiB for diffusers/runtime. | Runtime smoke pending after Flux applies cache/PVC and activation. Keep `tool-router` and `qwen3-1.7b` aliases only; do not make this the default chat route unless coherence and latency pass. The Kubernetes object uses `1p7b` because Service names cannot contain dots. | TBD: smoke pending Flux activation | TBD: first manifest of this lane; no prior llama.cpp gfx906 digest pinned in this matrix | 2026-05-07 fast-chat recovery and gfx906 disk-pressure follow-up | `pending` |
+| `qwen3-1p7b-tools-radeonvii` GGUF tool-router | 8192 | `gfx906/radeonvii` | `llamacpp` | `experimental` | Persistent runtime `registry.harbor.lan/flexinfer/runtime@sha256:94045d0ca4b12deb3c46bb22070f67bfedad8b719bb992e5d3ce128ad27ad597`; standalone profile image `registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3` digest TBD | `HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF` / `qwen3-1.7b-q4_k_m.gguf` | Cache prefetched and ready on 2026-05-16. Live runtime image contains `/opt/llamacpp/bin/llama-server`, but the runtime manager launched the stale absolute path `/opt/src/llama.cpp/build/bin/llama-server`; this slice adds PATH fallback before the next runtime rebuild. | Runtime load fails before smoke with `fork/exec /opt/src/llama.cpp/build/bin/llama-server: no such file or directory`. Keep `tool-router` and `qwen3-1.7b` aliases only; do not make this the default chat route unless coherence and latency pass. | After patched runtime rollout: `kubectl -n flexinfer-system port-forward svc/flexinfer-proxy 8080:80`; `curl -sS http://127.0.0.1:8080/model/qwen3-1p7b-tools-radeonvii/v1/chat/completions -H 'Content-Type: application/json' -d '{"model":"qwen3-1.7b-tools","messages":[{"role":"user","content":"Reply with exactly one word: blue"}],"max_tokens":8,"temperature":0}'` | TBD: first manifest of this lane; prior runtime digest before `94045d0c...` is not a validated llama.cpp success | RG-4 / `.loom/real-hardware-platform-improvements-plan.md` Slice 4; 2026-05-16 live failure evidence below | `block` |
 
 ## Artifact Layout Notes
 
@@ -182,6 +182,31 @@ Large JSON outputs and smoke transcripts go under
 `.loom/local/validation/<family>/<timestamp>/`. Summaries only belong in this
 tracked file. Each archive should include the exact command, artifact path,
 runtime image digest or OCI ref when available, and smoke response transcript.
+
+### 2026-05-16 gfx906 llama.cpp runtime path failure
+
+RALPH RG-4 follow-up checked the Radeon VII conservative lane before running a
+promotion smoke. Live state:
+
+- `cblevins-radeonvii` was Ready with `flexinfer.ai/gpu.arch=gfx906` and one
+  15Gi GPU.
+- `qwen3-1p7b-tools-radeonvii` cache prefetch had succeeded, but the Model was
+  `Loading` with `Ready=False`, reason `RuntimeStarting`.
+- The runtime pod
+  `flexinfer-runtime-gfx906-q6wgb` was running image
+  `registry.harbor.lan/flexinfer/runtime@sha256:94045d0ca4b12deb3c46bb22070f67bfedad8b719bb992e5d3ce128ad27ad597`
+  on `cblevins-radeonvii`.
+- `kubectl exec` showed the image contains
+  `/opt/llamacpp/bin/llama-server`, but not
+  `/opt/src/llama.cpp/build/bin/llama-server`.
+- Runtime logs showed repeated load failures:
+  `failed to start backend: fork/exec /opt/src/llama.cpp/build/bin/llama-server: no such file or directory`.
+
+Decision: do not promote the `qwen3-1p7b-tools-radeonvii` canary yet. The
+active slice teaches `flexinfer-runtime` to preserve valid absolute backend
+commands while falling back to the same basename in `PATH` when a runtime image
+moves a bundled binary. After that runtime image is rebuilt and rolled out,
+re-run the one-word proxy smoke recorded in the row above.
 
 ### 2026-04-18 gemma4-26b-a4b-gptq findings (Slice A1-lite)
 

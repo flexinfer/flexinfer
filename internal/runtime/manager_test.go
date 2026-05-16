@@ -2,6 +2,8 @@ package runtime
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -129,6 +131,30 @@ func TestInferCommand(t *testing.T) {
 			assert.Equal(t, tt.expectedArgs, args)
 		})
 	}
+}
+
+func TestResolveExecutableFallsBackToPathForStaleAbsolutePath(t *testing.T) {
+	binDir := t.TempDir()
+	want := filepath.Join(binDir, "llama-server")
+	require.NoError(t, os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, ok := resolveExecutable("/opt/src/llama.cpp/build/bin/llama-server")
+
+	require.True(t, ok)
+	assert.Equal(t, want, got)
+}
+
+func TestResolveExecutablePreservesExistingAbsolutePath(t *testing.T) {
+	binDir := t.TempDir()
+	want := filepath.Join(binDir, "llama-server")
+	require.NoError(t, os.WriteFile(want, []byte("#!/bin/sh\n"), 0o755))
+	t.Setenv("PATH", t.TempDir()+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	got, ok := resolveExecutable(want)
+
+	require.True(t, ok)
+	assert.Equal(t, want, got)
 }
 
 func TestOverlayEnvVarsReplacesByName(t *testing.T) {
