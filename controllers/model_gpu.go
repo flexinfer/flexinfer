@@ -44,8 +44,10 @@ func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Bac
 	// falls through to BackendGPUCompatibility for nodes without a profile.
 	var profileSpec *aiv1alpha2.GPUProfileSpec
 	if r.GPUProfiles != nil {
-		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
-			profileSpec = profile
+		if cachedProfile, ok := r.GPUProfiles.LookupProfile(gpuArch); ok {
+			profileSpec = &cachedProfile.Spec
+		} else if cachedSpec, ok := r.GPUProfiles.Lookup(gpuArch); ok {
+			profileSpec = cachedSpec
 		}
 	}
 	var maxVRAMMB int
@@ -90,9 +92,13 @@ func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Mode
 	// wins; falls through to BackendGPUCompatibility for nodes without a
 	// profile.
 	var profileSpec *aiv1alpha2.GPUProfileSpec
+	var profile *aiv1alpha2.GPUProfile
 	if r.GPUProfiles != nil {
-		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
-			profileSpec = profile
+		if cachedProfile, ok := r.GPUProfiles.LookupProfile(gpuArch); ok {
+			profile = cachedProfile
+			profileSpec = &cachedProfile.Spec
+		} else if cachedSpec, ok := r.GPUProfiles.Lookup(gpuArch); ok {
+			profileSpec = cachedSpec
 		}
 	}
 	support, found := backend.ResolveBackendGPUSupport(profileSpec, b.Name(), gpuArch)
@@ -112,6 +118,16 @@ func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Mode
 					fmt.Sprintf("%s on %s is experimental: using generic image %s", b.Name(), gpuArch, img))
 			}
 		}
+	}
+	if isCanary, since, evidence := aiv1alpha2.GetBackendCanary(profile, b.Name()); isCanary {
+		message := fmt.Sprintf("%s on %s is marked as a canary backend", b.Name(), gpuArch)
+		if !since.IsZero() {
+			message += fmt.Sprintf(" since %s", since.Format("2006-01-02T15:04:05Z07:00"))
+		}
+		if strings.TrimSpace(evidence) != "" {
+			message += fmt.Sprintf("; evidence: %s", evidence)
+		}
+		r.Recorder.Event(model, corev1.EventTypeWarning, "BackendCanary", message)
 	}
 
 	// --- Maxwell-specific validation (sm_5x) ---
