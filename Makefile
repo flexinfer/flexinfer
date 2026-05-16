@@ -296,6 +296,16 @@ mcp-agent-context:
 mcp-loom-widget:
 	go build $(LDFLAGS) -o bin/mcp-loom-widget ./cmd/mcp-loom-widget
 
+# Build the React widget bundle (web/loom-fleet-widget) and copy the
+# single-file output into the path embedded by cmd/mcp-loom-widget.
+# Re-run `make mcp-loom-widget` afterwards to bake the new bundle into
+# the Go binary.
+.PHONY: widget
+widget:
+	cd web/loom-fleet-widget && pnpm install --frozen-lockfile && pnpm build
+	\cp web/loom-fleet-widget/dist/index.html cmd/mcp-loom-widget/widget.html
+	@echo "widget: built $$(wc -c < cmd/mcp-loom-widget/widget.html) bytes into cmd/mcp-loom-widget/widget.html"
+
 mcp-redis:
 	go build $(LDFLAGS) -o bin/mcp-redis ./cmd/mcp-redis
 
