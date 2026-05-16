@@ -10,11 +10,10 @@
 # gemma4-26b-a4b) live in `serviceLabels` so the proxy load-balances across
 # both instances. `litellm.aliases` carry only the 5930k-specific alias.
 #
-# Runtime image: matches the 7900xtx instance — digest sha256:69569cbfc0db...
-# (tag `runtime:rocm-gfx1100-gemma4-moe-patched`), the thin patch overlay on
-# `runtime:rocm-gfx1100-gemma4-experimental` that adds the MoE GELU+wna16 fix
-# without the decoder-layer debug overhead. See the longer note in
-# gemma4-26b-a4b-gptq.yaml for the full origin story.
+# Runtime image: matches the 7900xtx instance — digest sha256:310988969f34...
+# from MR !379. This is the native vLLM 0.19+ path with the legacy Gemma4 patch
+# skipped, while still patching `MoeWNA16` for Gemma4 GELU activation and
+# forwarding `activation=layer.activation` into `fused_experts`.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -28,21 +27,10 @@ metadata:
     flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
-  # 2026-05-15: pinned to `runtime:rocm-gfx1100-gemma4-moe-r3-cap24`, a thin
-  # overlay on cache-nan-v3 (sha256:1066e8665…) that raises the per-layer
-  # MoE-dequant cache cap from 16 -> 24 (R3 from the round-2 brainstorm).
-  # Instrumentation showed steady-state hit rate ~44% at cap=16 with
-  # top16_share=50% / top32_share=70% expert reuse, so cap=24 captures
-  # ~60% of expert references. cap=32 would gain ~3% more but failed the
-  # vLLM startup KV-block memory budget check at gpu_memory_util=0.96.
-  # Measured 5930k decode: 40.39s mean / 200 tokens = 4.95 tok/s vs the
-  # cache-nan baseline of 4.57 tok/s = +8.3% throughput, −7.7% latency.
-  # Cumulative from original 48.89s baseline: +72% throughput, −42%
-  # latency. Gauntlet vs 7900xtx goldens: 6/6 exact-match.
-  # Build: thin overlay (/tmp/r3-cap24/Dockerfile) on cache-nan-v3.
-  # Patch script in build/scripts/vllm_gemma4_moe_gptq_patch.py carries
-  # the cap=24 change for future full rebuilds.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:3d5acd2390f6a9462df4fda500a3c9e15e4e1122a98e7a0ff0869dcea0980c45
+  # 2026-05-15: live canary on cblevins-5930k reached Ready with 0 restarts.
+  # Warm direct endpoint benchmark: 8.08 tok/s average / 8.07 median across
+  # five 138-token completions, up from the r3-cap24 baseline of ~4.9 tok/s.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:310988969f3448ccb7b6001d36df0610c40a0354cacbd7e3410cf9d9592dd187
   # Source = the 5930k OCI-pull cache PVC. The OCI artifact was pushed via
   # `oras push` from inside the `gptq-w4-g128-attnfp16-clean/` directory on
   # cblevins-7900xtx, so the 42-file artifact landed FLAT under the modelPath
