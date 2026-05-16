@@ -216,11 +216,23 @@ func newMillsPipelinesGetCmd() *cobra.Command {
 	}
 }
 
+// canaryDedupeWindow mirrors the operator-side constant in
+// cmd/loom-mills-operator/handlers_backlog.go. Kept in sync by hand —
+// the CLI only uses it for the optimistic pre-check; the operator is
+// the source of truth and will return 409 on its own clock if the
+// constants ever drift.
+const canaryDedupeWindow = 24 * time.Hour
+
+// canaryDedupeLabel is the backlog label every Mills canary carries;
+// the dedupe scan filters on it both client- and server-side.
+const canaryDedupeLabel = "mills-canary"
+
 func newMillsPipelinesCanaryCmd() *cobra.Command {
 	var id string
 	var priority string
 	var path string
 	var title string
+	var force bool
 	cmd := &cobra.Command{
 		Use:   "canary",
 		Short: "Queue and start the deterministic Mills heartbeat canary",
@@ -239,10 +251,31 @@ func newMillsPipelinesCanaryCmd() *cobra.Command {
 			ctx, cancel := context.WithTimeout(cmd.Context(), 10*time.Minute)
 			defer cancel()
 
+			// Optimistic client-side dedupe: if the operator already has a
+			// non-merged mills-canary in the last 24h, refuse to enqueue.
+			// This stops cron-driven canary callers from generating a fresh
+			// backlog row every invocation. The operator enforces the same
+			// guard server-side (HTTP 409); --force bypasses both layers.
+			if !force {
+				if skipped, derr := checkCanaryDedupe(ctx, client, id); derr != nil {
+					// A failed pre-check should never block the enqueue —
+					// the server-side guard will still catch dupes. Log a
+					// hint and fall through.
+					fmt.Fprintf(cmd.ErrOrStderr(), "canary dedupe pre-check failed: %v (continuing; server will re-check)\n", derr)
+				} else if skipped != nil {
+					fmt.Fprintln(cmd.OutOrStdout(), formatCanarySkip(skipped))
+					return nil
+				}
+			}
+
 			emitJSON, _ := cmd.Flags().GetBool("json")
 			if emitJSON {
 				var created json.RawMessage
-				if err := client.post(ctx, "/api/mills/backlog", item, &created); err != nil {
+				if err := client.post(ctx, withForceQuery("/api/mills/backlog", force), item, &created); err != nil {
+					if skipped := decodeCanaryDedupeError(err); skipped != nil && !force {
+						fmt.Fprintln(cmd.OutOrStdout(), formatCanarySkip(skipped))
+						return nil
+					}
 					return wrapMillsErr(client, err)
 				}
 				var started json.RawMessage
@@ -255,7 +288,11 @@ func newMillsPipelinesCanaryCmd() *cobra.Command {
 			}
 
 			var created backlogItemSummary
-			if err := client.post(ctx, "/api/mills/backlog", item, &created); err != nil {
+			if err := client.post(ctx, withForceQuery("/api/mills/backlog", force), item, &created); err != nil {
+				if skipped := decodeCanaryDedupeError(err); skipped != nil && !force {
+					fmt.Fprintln(cmd.OutOrStdout(), formatCanarySkip(skipped))
+					return nil
+				}
 				return wrapMillsErr(client, err)
 			}
 			var started pipelineStartSummary
@@ -282,7 +319,128 @@ func newMillsPipelinesCanaryCmd() *cobra.Command {
 	cmd.Flags().StringVar(&priority, "priority", "P3", "Backlog priority")
 	cmd.Flags().StringVar(&path, "path", "testdata/mills-canary/heartbeat.md", "Repo-relative fixture path the canary may touch")
 	cmd.Flags().StringVar(&title, "title", "", "Backlog title override")
+	cmd.Flags().BoolVar(&force, "force", false, "Bypass the 24h canary dedupe guard")
 	return cmd
+}
+
+// canaryDedupeMatch is the parsed shape of a dedupe skip: either the
+// existing-canary row our pre-check found, or the body the operator
+// returned with HTTP 409.
+type canaryDedupeMatch struct {
+	ID    string
+	State string
+}
+
+// checkCanaryDedupe asks the operator for the current backlog and
+// returns the oldest non-merged mills-canary item created in the last
+// 24h, or nil if none. `selfID` is excluded because the canary
+// command issues an upsert by id — re-posting the same id is a
+// retry, not a duplicate.
+func checkCanaryDedupe(ctx context.Context, client *millsClient, selfID string) (*canaryDedupeMatch, error) {
+	// Mirror the operator's BacklogItem JSON shape only for the fields
+	// we filter on. Extra fields stay ignored on Unmarshal.
+	type backlogRow struct {
+		ID        string    `json:"ID"`
+		Labels    []string  `json:"Labels"`
+		State     string    `json:"State"`
+		CreatedAt time.Time `json:"CreatedAt"`
+	}
+	var rows []backlogRow
+	if err := client.get(ctx, "/api/mills/backlog", &rows); err != nil {
+		return nil, err
+	}
+	cutoff := time.Now().UTC().Add(-canaryDedupeWindow)
+	var oldest *backlogRow
+	for i := range rows {
+		r := &rows[i]
+		if r.ID == selfID {
+			continue
+		}
+		if !containsLabel(r.Labels, canaryDedupeLabel) {
+			continue
+		}
+		if r.State == "merged" {
+			continue
+		}
+		if r.CreatedAt.Before(cutoff) {
+			continue
+		}
+		if oldest == nil || r.CreatedAt.Before(oldest.CreatedAt) {
+			oldest = r
+		}
+	}
+	if oldest == nil {
+		return nil, nil
+	}
+	return &canaryDedupeMatch{ID: oldest.ID, State: oldest.State}, nil
+}
+
+// containsLabel is a tiny helper to keep the dedupe filter readable.
+func containsLabel(labels []string, want string) bool {
+	for _, l := range labels {
+		if l == want {
+			return true
+		}
+	}
+	return false
+}
+
+// decodeCanaryDedupeError detects the operator's HTTP 409 canary-dedupe
+// response inside the generic "operator returned 409: <body>" error the
+// mills client surfaces. Returns nil when the error is something else.
+// We string-match on the status because the millsClient.do helper
+// flattens the response body into the error message — adding a typed
+// error would require touching every other call site.
+func decodeCanaryDedupeError(err error) *canaryDedupeMatch {
+	if err == nil {
+		return nil
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, "operator returned 409") {
+		return nil
+	}
+	// Body starts after the first colon following the status — extract
+	// the JSON suffix and decode.
+	idx := strings.Index(msg, "{")
+	if idx < 0 {
+		return nil
+	}
+	var payload struct {
+		Error         string `json:"error"`
+		ExistingID    string `json:"existing_id"`
+		ExistingState string `json:"existing_state"`
+	}
+	if jerr := json.Unmarshal([]byte(msg[idx:]), &payload); jerr != nil {
+		return nil
+	}
+	if payload.Error != "canary-deduped" {
+		return nil
+	}
+	return &canaryDedupeMatch{ID: payload.ExistingID, State: payload.ExistingState}
+}
+
+// formatCanarySkip is the single source of truth for the "skipped"
+// message printed in both the client pre-check and the 409 fallback
+// path. Kept as a function so the two paths can't drift.
+func formatCanarySkip(m *canaryDedupeMatch) string {
+	state := m.State
+	if state == "" {
+		state = "unknown"
+	}
+	return fmt.Sprintf("canary skipped: prior canary %s in state %s within last 24h (use --force to override)", m.ID, state)
+}
+
+// withForceQuery appends ?force=1 to the backlog POST path when force
+// is set. The operator honours the same param to bypass its dedupe
+// guard, so a `--force` user gets a coherent two-layer override.
+func withForceQuery(path string, force bool) string {
+	if !force {
+		return path
+	}
+	if strings.Contains(path, "?") {
+		return path + "&force=1"
+	}
+	return path + "?force=1"
 }
 
 func millsCanaryBacklogItem(id, title, priority, path string) store.BacklogItem {
