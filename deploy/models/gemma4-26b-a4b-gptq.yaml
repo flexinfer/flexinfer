@@ -16,13 +16,11 @@
 # node-specific addressing (gemma4-26b-7900xtx). Context uplift 2026-04-27:
 # the separate gemma4-26b-a4b-gptq-long canary proved the same hybrid artifact
 # at 16K with FP8 KV on 2026-04-26; those runtime knobs are baked in below.
-# Runtime image (2026-05-13): pinned to digest sha256:69569cbfc0db... which is
-# tag `runtime:rocm-gfx1100-gemma4-moe-patched`, built as a thin overlay of
-# `runtime:rocm-gfx1100-gemma4-experimental` with `vllm_gemma4_moe_gptq_patch.py`
-# applied at build time. The overlay relaxes `moe_wna16.py`'s SiLU-only assertion
-# to accept (SiLU, GELU) so Gemma4 MoE experts load on ROCm, and keeps the
-# decoder-layer debug patch SKIPPED (env-gated, only enabled when
-# GEMMA4_DECODER_LAYER_DEBUG=1) so we get the perf-clean code path.
+# Runtime image (2026-05-15): pinned to digest sha256:310988969f34... from
+# MR !379. This keeps the legacy Gemma4 patch skipped on native vLLM 0.19+,
+# but still patches `MoeWNA16` to accept Gemma4 GELU activation and forwards
+# `activation=layer.activation` into `fused_experts`. Canary on cblevins-7900xtx
+# reached Ready with 0 restarts and direct smoke returned coherent output.
 #
 # 2026-05-15: Wave 1 Slice 7 promotion to sha256:737ac1ba... (vLLM 0.19.1
 # patched) was ATTEMPTED in MR !372 and ROLLED BACK in this MR (!NNN). The
@@ -44,7 +42,7 @@ metadata:
     flexinfer.ai/promotion-requires: dense-artifact-or-22k-target-proof-before-next-rung
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:69569cbfc0db7c4f8755cf07ad329361a59514ebc7112fb859c5b08c8787b759
+  image: registry.harbor.lan/flexinfer/runtime@sha256:310988969f3448ccb7b6001d36df0610c40a0354cacbd7e3410cf9d9592dd187
   source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
   # Cache PVC migration (2026-04-18): switched from the default 3-replica
   # Longhorn storage class to single-replica local NVMe to stop
