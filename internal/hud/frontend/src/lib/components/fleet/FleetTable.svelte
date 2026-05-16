@@ -288,25 +288,28 @@
   }
 
   /* Visual separator above the first ungrouped agent row, applied to every
-     cell of that row so the divider spans the full table width. */
+     cell of that row so the divider spans the full table width. The label
+     sits below the dashed border (inside the agent cell), giving the row
+     a clear two-band header instead of a floating chip that overlapped
+     the previous row. */
   .ungrouped-divider {
     border-top: 1px dashed color-mix(in srgb, var(--warning) 40%, var(--border)) !important;
-    padding-top: 14px;
+    padding-top: var(--space-3);
   }
 
   .ungrouped-label {
-    position: absolute;
-    top: -6px;
-    left: 0;
+    display: block;
+    width: fit-content;
+    margin-bottom: 6px;
     font-size: 9px;
     font-family: var(--font-mono);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.08em;
     color: var(--warning);
-    background: var(--bg-secondary);
-    padding: 0 6px;
+    background: color-mix(in srgb, var(--warning) 10%, transparent);
+    border: 1px solid color-mix(in srgb, var(--warning) 30%, var(--border));
+    padding: 1px 6px;
     border-radius: var(--radius-sm);
-    z-index: 1;
     white-space: nowrap;
   }
 

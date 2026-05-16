@@ -229,12 +229,15 @@ export function buildUnifiedAgents(input: {
       has_presence: hasPresence,
       has_session: hasSession,
       has_spawn: false,
-      // is_orphan is authoritative from server (fleetview.Join applies the
-      // age threshold). Default to false when absent — a "heartbeating but
-      // no session" state within the grace window is legitimate during
-      // session bootstrap and should not flash as an alert.
-      is_orphan: agent.is_orphan ?? false,
-      orphan_age_seconds: agent.orphan_age_seconds ?? 0,
+      // is_orphan must agree with the locally-computed hasSession. The
+      // server applies the age threshold in fleetview.Join, but presence
+      // and sessions can arrive at the client out of order: a snapshot
+      // can carry agent.is_orphan=true alongside a now-matching session
+      // when raw presence was sampled before the session was created.
+      // Mirror the server's invariant ("orphan ⇒ no active session") on
+      // the client so the badge can never contradict the SESSION pill.
+      is_orphan: hasSession ? false : (agent.is_orphan ?? false),
+      orphan_age_seconds: hasSession ? 0 : (agent.orphan_age_seconds ?? 0),
     });
   }
 
@@ -250,6 +253,11 @@ export function buildUnifiedAgents(input: {
       existing.task_count = Math.max(existing.task_count, session.task_count ?? 0);
       if (!existing.description) existing.description = session.description ?? '';
       existing.has_session = true;
+      // Same invariant as in the first loop: an agent with a matched
+      // active session is never an orphan, regardless of what the server
+      // flag said.
+      existing.is_orphan = false;
+      existing.orphan_age_seconds = 0;
       if (existing.source === 'presence') existing.source = 'presence+session';
       if (!existing.session_started_at) existing.session_started_at = session.started_at;
       continue;
