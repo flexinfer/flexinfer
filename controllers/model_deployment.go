@@ -201,7 +201,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		env = mergeEnv(env, profileEnv)
 	}
 	probe := b.ReadinessProbe()
-	startupProbe := b.StartupProbe()
+	startupProbe := backendStartupProbe(b, spec)
 
 	// Append KV-cache tuning args if the backend supports it.
 	if model.Spec.KVCache != nil {
@@ -652,6 +652,13 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	log.Info("Updating Deployment", "name", model.Name, "changedFields", changed)
 
 	return r.Update(ctx, deployment)
+}
+
+func backendStartupProbe(b backend.Backend, spec *backend.ModelSpec) *corev1.Probe {
+	if configured, ok := b.(backend.StartupProbeConfigurer); ok {
+		return configured.StartupProbeForSpec(spec)
+	}
+	return b.StartupProbe()
 }
 
 // deploymentChangedFields returns a human-readable summary of what changed

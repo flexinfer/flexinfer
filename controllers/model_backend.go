@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -32,9 +33,10 @@ import (
 func (r *ModelReconciler) buildBackendModelSpec(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor) *backend.ModelSpec {
 	modelValue := extractModelFromSource(model.Spec.Source)
 	spec := &backend.ModelSpec{
-		Model:     modelValue,
-		ModelPath: "",
-		GPUVendor: gpuVendor,
+		Model:          modelValue,
+		ModelPath:      "",
+		GPUVendor:      gpuVendor,
+		StartupTimeout: modelColdStartTimeout(model),
 	}
 
 	// Parse config into the spec
@@ -46,6 +48,13 @@ func (r *ModelReconciler) buildBackendModelSpec(model *aiv1alpha2.Model, b backe
 	spec.ModelPath = storagePlan.ModelPath
 
 	return spec
+}
+
+func modelColdStartTimeout(model *aiv1alpha2.Model) time.Duration {
+	if model == nil || model.Spec.Serverless == nil || model.Spec.Serverless.ColdStartTimeout == nil {
+		return 0
+	}
+	return model.Spec.Serverless.ColdStartTimeout.Duration
 }
 
 type backendStoragePlan struct {

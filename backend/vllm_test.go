@@ -2,6 +2,7 @@ package backend
 
 import (
 	"testing"
+	"time"
 )
 
 func TestVLLMBackendImage_GFX1100(t *testing.T) {
@@ -150,6 +151,40 @@ func TestVLLMBackendArgs_TuningKnobs(t *testing.T) {
 	}
 	if !found {
 		t.Error("expected --enforce-eager to be present")
+	}
+}
+
+func TestVLLMBackendArgs_CompilationControls(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"cudagraphCaptureSizes":   []any{float64(1), float64(2), float64(4)},
+			"maxCudagraphCaptureSize": 4,
+			"compilationConfig": map[string]any{
+				"mode":                    float64(3),
+				"cudagraph_capture_sizes": []any{float64(1), float64(2), float64(4)},
+			},
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--cudagraph-capture-sizes"]; v != "[1,2,4]" {
+		t.Errorf("expected --cudagraph-capture-sizes=[1,2,4], got %q", v)
+	}
+	if v := argMap["--max-cudagraph-capture-size"]; v != "4" {
+		t.Errorf("expected --max-cudagraph-capture-size=4, got %q", v)
+	}
+	if v := argMap["--compilation-config"]; v != `{"cudagraph_capture_sizes":[1,2,4],"mode":3}` {
+		t.Errorf("expected --compilation-config JSON, got %q", v)
 	}
 }
 
@@ -1201,5 +1236,35 @@ func TestVLLMStartupProbe(t *testing.T) {
 	// 300s StartupTimeout / 2s period = 150 failures of budget for cold-load
 	if probe.FailureThreshold < 150 {
 		t.Errorf("FailureThreshold = %d, want >= 150 (cold-load budget for 300s startup timeout)", probe.FailureThreshold)
+	}
+}
+
+func TestVLLMStartupProbeForSpec_UsesLargerColdStartBudget(t *testing.T) {
+	b := &VLLMBackend{}
+	probe := b.StartupProbeForSpec(&ModelSpec{StartupTimeout: 15 * time.Minute})
+	if probe == nil {
+		t.Fatal("StartupProbeForSpec() returned nil")
+	}
+	if probe.PeriodSeconds != 2 {
+		t.Errorf("PeriodSeconds = %d, want 2", probe.PeriodSeconds)
+	}
+	if probe.FailureThreshold < 450 {
+		t.Errorf("FailureThreshold = %d, want >= 450 (15m cold-start budget)", probe.FailureThreshold)
+	}
+}
+
+func TestVLLMStartupProbeForSpec_ConfigOverridesBudget(t *testing.T) {
+	b := &VLLMBackend{}
+	probe := b.StartupProbeForSpec(&ModelSpec{
+		StartupTimeout: 15 * time.Minute,
+		Config: map[string]any{
+			"startupTimeoutSeconds": 600,
+		},
+	})
+	if probe == nil {
+		t.Fatal("StartupProbeForSpec() returned nil")
+	}
+	if probe.FailureThreshold != 300 {
+		t.Errorf("FailureThreshold = %d, want 300 (600s / 2s)", probe.FailureThreshold)
 	}
 }

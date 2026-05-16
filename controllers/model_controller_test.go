@@ -3244,6 +3244,73 @@ func TestEnsureDeploymentStartupProbe(t *testing.T) {
 	}
 }
 
+func TestEnsureDeploymentVLLMStartupProbeUsesColdStartTimeout(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+
+	b, ok := backend.Get("vllm")
+	if !ok {
+		t.Fatal("vllm backend not found")
+	}
+
+	coldStart := metav1.Duration{Duration: 15 * time.Minute}
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "test-vllm",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://org/model",
+			GPU: &aiv1alpha2.GPUSpec{
+				Vendor: "amd",
+			},
+			Serverless: &aiv1alpha2.ServerlessSpec{
+				ColdStartTimeout: &coldStart,
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		Build()
+
+	r := &ModelReconciler{
+		Client: fakeClient,
+		Scheme: s,
+	}
+
+	ctx := context.Background()
+	if err := r.ensureDeployment(ctx, model, b, backend.GPUVendorAMD, "gfx1100", 1); err != nil {
+		t.Fatalf("ensureDeployment() error: %v", err)
+	}
+
+	created := &appsv1.Deployment{}
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: model.Name, Namespace: model.Namespace}, created); err != nil {
+		t.Fatalf("failed to fetch created deployment: %v", err)
+	}
+
+	containers := created.Spec.Template.Spec.Containers
+	if len(containers) == 0 {
+		t.Fatal("expected at least 1 container")
+	}
+	probe := containers[0].StartupProbe
+	if probe == nil {
+		t.Fatal("StartupProbe is nil, want non-nil for vllm backend")
+	}
+	if probe.PeriodSeconds != 2 {
+		t.Errorf("StartupProbe.PeriodSeconds = %d, want 2", probe.PeriodSeconds)
+	}
+	if probe.FailureThreshold < 450 {
+		t.Errorf("StartupProbe.FailureThreshold = %d, want >= 450 (15m at 2s)", probe.FailureThreshold)
+	}
+}
+
 func TestPersistentFlashTmpfsForSharedModel(t *testing.T) {
 	t.Setenv("DEFAULT_FLASH_LOADER_ENABLED", "true")
 	t.Setenv("DEFAULT_FLASH_LOADER_IMAGE", "registry.example/flash-loader:rocm")
