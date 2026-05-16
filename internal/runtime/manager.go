@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"syscall"
@@ -210,6 +211,12 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		var defaultArgs []string
 		executable, defaultArgs = inferCommand(b.Name())
 		execArgs = append(defaultArgs, args...)
+	}
+	if resolved, ok := resolveExecutable(executable); ok && resolved != executable {
+		logger.Info("Resolved backend executable from PATH",
+			"requested", executable,
+			"resolved", resolved)
+		executable = resolved
 	}
 
 	subCtx, cancel := context.WithCancel(context.Background())
@@ -610,6 +617,29 @@ func (m *Manager) continuousHealthCheck(ctx context.Context, name, healthURL str
 			}
 		}
 	}
+}
+
+// resolveExecutable preserves explicit command paths when they exist, but
+// lets runtime images move backend binaries to PATH-compatible locations.
+func resolveExecutable(executable string) (string, bool) {
+	if executable == "" {
+		return executable, false
+	}
+	if !strings.ContainsRune(executable, os.PathSeparator) {
+		return executable, false
+	}
+	if _, err := os.Stat(executable); err == nil {
+		return executable, true
+	}
+	base := filepath.Base(executable)
+	if base == "" || base == "." || base == string(os.PathSeparator) {
+		return executable, false
+	}
+	resolved, err := exec.LookPath(base)
+	if err != nil {
+		return executable, false
+	}
+	return resolved, true
 }
 
 // inferCommand maps a backend name to its executable and any required
