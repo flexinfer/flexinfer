@@ -54,7 +54,12 @@ if [[ "${dry_before}" != "${dry_after}" ]]; then
   echo "dry-run mutated files" >&2
   exit 1
 fi
-grep -E "Promotion targets:|Validation reminders:|Smoke gfx1100 textgen and imagegen lanes" /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
+grep -F "Promotion targets:" /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
+grep -F "Validation reminders:" /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
+grep -F "Promotion gate: update .loom/60-validation-matrix.md before --apply." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
+grep -F "Required matrix fields: artifact, context_length, gpu_class, backend, support_level, runtime_image, oci_ref, validation_evidence, observed_failure_mode, canary_command, rollback_digest, spec_roadmap_link, promotion_decision." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
+grep -F "Required lanes to keep represented: gfx1100 textgen, gfx1100 imagegen, gfx906 textgen/quantization, gfx906 imagegen/offload." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
+grep -F "Smoke gfx1100 textgen and imagegen lanes before Flux reconciliation." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
 
 canary_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
 canary_target="registry.harbor.lan/flexinfer/runtime@${canary_digest}"

@@ -55,6 +55,33 @@ Promotion rules:
 - `skip`: intentionally not a target for this GPU class or slice.
 - `pending`: no runtime evidence has been captured yet.
 
+## Promotion-Ready Row Template
+
+Before a runtime digest, GPUProfile support level, model canary, or user-facing
+alias is promoted, add or update one matrix row with the fields below filled in.
+Do not mark a row `promote` while any required field is still `TBD` unless the
+missing value is explicitly explained in `observed_failure_mode` and the
+decision is only `conditional`.
+
+Copy/paste row template:
+
+```markdown
+| `<artifact-or-model>` | `<context or n/a>` | `<gfx1100/7900xtx|gfx906/radeonvii|sm_52/maxwell>` | `<backend>` | `<supported|experimental|deprecated|unsupported|n/a>` | `<registry/repo@sha256:... or n/a>` | `<oci-ref-or-pvc-ref>` | `<validator/runtime evidence summary>` | `<none or concrete failure>` | `<kubectl/curl/script command>` | `<previous digest/ref or rollback manifest>` | `<spec/issue/MR/doc link>` | `<promote|conditional|block|fail|skip|pending>` |
+```
+
+Promotion-ready checklist:
+
+- Runtime image is digest-pinned, or the row explains why no runtime image is
+  involved.
+- Canary command proves the target reaches Ready and returns coherent output, or
+  the row is explicitly `block`, `fail`, `skip`, or `pending`.
+- Rollback digest/ref or rollback manifest path is present.
+- `spec_roadmap_link` points to the spec, issue, MR, or decision that justified
+  the promotion.
+- One of the required hardware lanes is represented when applicable:
+  `gfx1100` textgen, `gfx1100` imagegen, `gfx906` textgen/quantization,
+  `gfx906` imagegen/offload.
+
 ## Validation Layers
 
 The codebase exposes two separate validation surfaces. Keep them separate in
