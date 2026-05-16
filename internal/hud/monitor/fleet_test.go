@@ -553,6 +553,125 @@ func TestFleetMonitor_StaleSessionReaper(t *testing.T) {
 	}
 }
 
+// TestFleetMonitor_StaleSessionReaper_EmptyHeartbeatFallsBackToSessionAge
+// pins the fix for spawn pods that register presence but die before
+// flushing any heartbeat. Before the fix the stale-session filter seeded
+// the heartbeat map with age=0 for these (fleetview.AgeSeconds clamps
+// empty/unparseable values), so the reaper saw every such session as
+// "freshly heartbeated" forever — visible in the HUD as spawn-* rows
+// stuck in "active" with HEARTBEAT="---" long after the pod died.
+//
+// Scenario: an "active" session with a matching presence row that
+// carries LastHeartbeat="" and started_at >10min ago. The reaper must
+// fall through to the session.StartedAt clock and end the session.
+func TestFleetMonitor_StaleSessionReaper_EmptyHeartbeatFallsBackToSessionAge(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	client, agent := newBridges(t, sockPath)
+
+	now := time.Now().UTC()
+	oldStart := now.Add(-20 * time.Minute).Format(time.RFC3339Nano)
+
+	var endedSessions []string
+	var endedMu sync.Mutex
+
+	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
+		return status.DaemonRPCStatus{Running: true}, nil
+	})
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name      string          `json:"name"`
+			Arguments json.RawMessage `json:"arguments"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, err
+		}
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return toolEnvelope(map[string]any{
+				"sessions": []map[string]any{
+					{
+						"id": "spawn-sess-no-hb", "agent_id": "spawn-claude-code-deadbeef",
+						"status": "active", "started_at": oldStart, "total_tokens": 0,
+					},
+				},
+			}), nil
+		case "agent_context__agent_presence_list":
+			// Presence row exists but never heartbeated. This is the
+			// shape produced by a spawn pod that registered presence
+			// and then died before its first heartbeat cycle.
+			return toolEnvelope(map[string]any{
+				"agents": []map[string]any{
+					{
+						"agent_id":       "spawn-claude-code-deadbeef",
+						"session_id":     "spawn-sess-no-hb",
+						"status":         "active",
+						"last_heartbeat": "", // <-- key field under test
+						"registered_at":  oldStart,
+					},
+				},
+			}), nil
+		case "agent_context__agent_session_end":
+			var args struct {
+				SessionID string `json:"session_id"`
+			}
+			_ = json.Unmarshal(req.Arguments, &args)
+			endedMu.Lock()
+			endedSessions = append(endedSessions, args.SessionID)
+			endedMu.Unlock()
+			return toolEnvelope(map[string]any{"ok": true}), nil
+		case "agent_context__agent_presence_deregister":
+			return toolEnvelope(map[string]any{"ok": true}), nil
+		case "agent_context__agent_task_list":
+			return toolEnvelope(map[string]any{"tasks": []map[string]any{}}), nil
+		case "agent_context__agent_memory_stats":
+			return toolEnvelope(map[string]any{"total_items": 0, "total_tokens": 0}), nil
+		case "agent_context__agent_graph_stats":
+			return toolEnvelope(map[string]any{"entity_count": 0, "relation_count": 0}), nil
+		case "agent_context__agent_workflow_list":
+			return toolEnvelope(map[string]any{"workflows": []map[string]any{}}), nil
+		case "agent_context__agent_file_claim_list":
+			return toolEnvelope(map[string]any{"claims": []map[string]any{}}), nil
+		case "agent_context__agent_worktree_list":
+			return toolEnvelope(map[string]any{"assignments": []map[string]any{}}), nil
+		case "agent_context__agent_handoff_inbox":
+			return toolEnvelope(map[string]any{"handoffs": []map[string]any{}}), nil
+		default:
+			return nil, fmt.Errorf("unexpected tool: %s", req.Name)
+		}
+	})
+
+	monitor := NewFleetMonitor(client, agent, nil)
+	if err := monitor.Refresh(); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	snap := monitor.Snapshot()
+	if snap.StaleSessions != 1 {
+		t.Fatalf("expected 1 stale session (empty-heartbeat fallback to session age), got %d; sessions=%+v",
+			snap.StaleSessions, snap.Sessions)
+	}
+	if snap.ActiveSessions != 0 {
+		t.Fatalf("expected ActiveSessions=0 after reap, got %d", snap.ActiveSessions)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		endedMu.Lock()
+		n := len(endedSessions)
+		endedMu.Unlock()
+		if n >= 1 {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	endedMu.Lock()
+	defer endedMu.Unlock()
+	if len(endedSessions) != 1 || endedSessions[0] != "spawn-sess-no-hb" {
+		t.Fatalf("expected reaper to call agent_session_end on spawn-sess-no-hb, got %v", endedSessions)
+	}
+}
+
 // TestFleetMonitor_StaleSessionReaperCooldown verifies that the
 // per-session cooldown prevents a hot loop of agent_session_end calls
 // when the MCP-side cleanup hasn't yet propagated back to

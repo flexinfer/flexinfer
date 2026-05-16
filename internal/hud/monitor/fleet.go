@@ -6,6 +6,7 @@ package monitor
 import (
 	"encoding/json"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/crb2nu/loom/internal/hud/bridge"
@@ -502,12 +503,22 @@ func (m *FleetMonitor) refresh(force bool) error {
 	//   1. raw presence keyed by session_id (most precise),
 	//   2. raw presence keyed by agent_id,
 	//   3. session.StartedAt as a fallback when no presence row exists
-	//      at all — in that case the session has been alive for its
-	//      entire life without any liveness signal, so its own age is
-	//      the correct staleness clock.
+	//      OR the presence row never reported a heartbeat — in either
+	//      case the session has been alive for its entire life without
+	//      any liveness signal, so its own age is the correct
+	//      staleness clock.
+	//
+	// Presence rows with an empty LastHeartbeat are skipped here. Before
+	// this guard, fleetview.AgeSeconds clamped empty/unparseable values
+	// to 0, which seeded the maps with age=0 and made every such session
+	// look freshly heartbeated forever — visible as spawn-* rows stuck
+	// in "active" with HEARTBEAT="---" long after the spawn pod died.
 	heartbeatBySession := make(map[string]int, len(rawAgents))
 	heartbeatByAgent := make(map[string]int, len(rawAgents))
 	for _, p := range rawAgents {
+		if strings.TrimSpace(p.LastHeartbeat) == "" {
+			continue
+		}
 		age := fleetview.AgeSeconds(p.LastHeartbeat, snap.UpdatedAt)
 		if p.SessionID != "" {
 			heartbeatBySession[p.SessionID] = age
