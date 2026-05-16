@@ -241,9 +241,52 @@ func composePrompt(rubricBody string, in gates.StageInput) string {
 	return b.String()
 }
 
+// ErrRubricUnparseable is the sentinel returned by parseRubricEnvelope when
+// the judge produced a response we can't grade — no JSON envelope, fields
+// out of range, etc. Callers (notably gates.LLMGate) use errors.Is against
+// this sentinel to translate a parse miss into a soft gate failure rather
+// than an infrastructure escalation: the LLM ran fine, the operator just
+// couldn't read the answer, so retrying the upstream stage is cheaper than
+// escalating the whole pipeline.
+//
+// Live trigger (post-M1d canary PIPE-MILLS-CANARY-M1D-VERIFY-2, 2026-05-16):
+// gemma4-26b returned the free-text string "please provide the diff..."
+// for a spec_conformance judge call. parseRubricEnvelope returned an
+// unwrapped string error; runner.go:276 took the no-retry escalation
+// branch. Wrapping this sentinel + soft-failing in LLMGate.Evaluate
+// routes that case through the existing gate-retry path instead.
+//
+// The gates package detects this without a back-import via a duck-typed
+// predicate: any error in the chain that exposes
+// IsRubricUnparseable() bool returning true is treated as a parse miss.
+// rubricParseError below implements that predicate.
+var ErrRubricUnparseable = errors.New("rubric judge: unparseable response")
+
+// rubricParseError wraps ErrRubricUnparseable with an additional message
+// and implements the IsRubricUnparseable() bool predicate that
+// gates.LLMGate looks for. The double-handed approach (sentinel + method)
+// lets callers use either errors.Is(err, ErrRubricUnparseable) (same
+// package or back-import) or the package-free duck-type check (from
+// pkg/mills/gates, which can't import clients).
+type rubricParseError struct {
+	msg string
+}
+
+func (e *rubricParseError) Error() string             { return e.msg + ": " + ErrRubricUnparseable.Error() }
+func (e *rubricParseError) Unwrap() error             { return ErrRubricUnparseable }
+func (e *rubricParseError) IsRubricUnparseable() bool { return true }
+
+func newRubricParseError(format string, args ...any) error {
+	return &rubricParseError{msg: fmt.Sprintf(format, args...)}
+}
+
 // parseRubricEnvelope extracts {"score": float, "reasons": [strings]}
 // from the LLM response. Models often wrap the JSON in prose or fenced
 // code blocks; we try several locations before giving up.
+//
+// Failure modes wrap ErrRubricUnparseable so callers can distinguish a
+// judge-output problem from a transport/infrastructure failure with
+// errors.Is.
 func parseRubricEnvelope(content string) (float64, []string, error) {
 	type env struct {
 		Score   float64  `json:"score"`
@@ -254,12 +297,12 @@ func parseRubricEnvelope(content string) (float64, []string, error) {
 		var e env
 		if err := json.Unmarshal([]byte(c), &e); err == nil {
 			if e.Score < 0 || e.Score > 1 {
-				return 0, nil, fmt.Errorf("score %v out of [0,1]", e.Score)
+				return 0, nil, newRubricParseError("score %v out of [0,1]", e.Score)
 			}
 			return e.Score, e.Reasons, nil
 		}
 	}
-	return 0, nil, fmt.Errorf("no parseable score envelope in response")
+	return 0, nil, newRubricParseError("no parseable score envelope in response")
 }
 
 // extractJSONCandidates returns substrings that might be JSON objects.

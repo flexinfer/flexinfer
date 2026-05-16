@@ -117,6 +117,35 @@ func (g *alwaysPassGate) Evaluate(_ context.Context, _ gates.StageInput) (gates.
 	return gates.Outcome{Pass: true, JudgedBy: "go"}, nil
 }
 
+// flakyJudgeGate fails its first failFor calls with a Pass=false outcome
+// (mimicking the LLMGate soft-fail path used for unparseable judge
+// output), then passes. This is the M2.5 contract: a gate that returns
+// Outcome.Pass=false with err=nil must cause the runner to rewind to
+// RetryFrom and re-attempt the upstream stage.
+type flakyJudgeGate struct {
+	name      string
+	failFor   int
+	calls     int
+	failJudge string // JudgedBy on failure (e.g., "flexinfer:unparseable")
+}
+
+func (g *flakyJudgeGate) Name() string { return g.name }
+func (g *flakyJudgeGate) Evaluate(_ context.Context, _ gates.StageInput) (gates.Outcome, error) {
+	g.calls++
+	if g.calls <= g.failFor {
+		judged := g.failJudge
+		if judged == "" {
+			judged = "flexinfer:unparseable"
+		}
+		return gates.Outcome{
+			Pass:     false,
+			JudgedBy: judged,
+			Reasons:  []string{"simulated unparseable judge response"},
+		}, nil
+	}
+	return gates.Outcome{Pass: true, JudgedBy: "flexinfer:qwen-3-8b"}, nil
+}
+
 func newRunnerEnv(t *testing.T) (*store.Store, *store.PipelineRun, *store.BacklogItem) {
 	t.Helper()
 	dir := t.TempDir()
@@ -267,6 +296,77 @@ func TestRunner_GateFailRetriesUpstreamThenEscalates(t *testing.T) {
 		if g.Outcome != store.GateOutcomeFail {
 			t.Errorf("gate %s outcome = %s, want fail", g.GateName, g.Outcome)
 		}
+	}
+}
+
+// M2.5: post_review_gate's LLM-judged gates (spec_conformance,
+// pr_self_review) must trigger the runner's retry path when they return
+// Outcome.Pass=false with err=nil — even if the underlying cause is a
+// judge parse miss. Verifies the contract that LLMGate.Evaluate now
+// soft-fails on unparseable judge output so the existing rewind-to-
+// RetryFrom path fires (pr_self_review re-runs on attempt 2).
+//
+// Live reproducer (2026-05-16 canary PIPE-MILLS-CANARY-M1D-VERIFY-2):
+// gemma4-26b returned free-text instead of a score envelope on the first
+// spec_conformance call. Before this slice, the runner escalated on the
+// first failure. After this slice, the runner rewinds to pr_self_review
+// (RetryFrom from DefaultStages line 79), bumps the attempt counter,
+// and retries — exactly what the gate-fail path in runner.go line 281
+// already does for pure-Go gate failures.
+func TestRunner_LLMGateUnparseableOutcomeTriggersRetry(t *testing.T) {
+	st, run, item := newRunnerEnv(t)
+	disp := &fakeDispatcher{canned: map[string]StageOutput{
+		"implement": {
+			CostUSD:        0.10,
+			FilesChanged:   []string{"foo.go"},
+			LinesAdded:     5,
+			LinesRemoved:   1,
+			DiffPatch:      []byte("diff --git a/foo.go b/foo.go\n+x\n"),
+			CommitMessages: []string{"feat: x"},
+		},
+		"mr":    {CostUSD: 0.05, MRIID: 42},
+		"merge": {CostUSD: 0.03, MergedSHA: "abcdef"},
+	}}
+	gr := gates.NewRegistry()
+	// Register pure-Go gates as no-op passes so post_implement_gate +
+	// post_tests_gate clear unimpeded.
+	for _, name := range []string{"diff_size", "scope", "path_policy", "secret_scan", "commit_format"} {
+		gr.Register(&alwaysPassGate{name: name})
+	}
+	// spec_conformance fails once with the unparseable JudgedBy then
+	// passes on retry — the contract under test.
+	flaky := &flakyJudgeGate{name: "spec_conformance", failFor: 1}
+	gr.Register(flaky)
+	// pr_self_review trivially passes; it shares post_review_gate with
+	// spec_conformance and must not block when its sibling soft-fails.
+	gr.Register(&alwaysPassGate{name: "pr_self_review"})
+
+	r := New(st, gr, disp, nil)
+	r.Clock = func() time.Time { return time.Date(2026, 5, 16, 12, 0, 0, 0, time.UTC) }
+	if err := r.Drive(context.Background(), run, item); err != nil {
+		t.Fatalf("drive: %v", err)
+	}
+	got, err := st.Pipeline.GetRun(context.Background(), run.ID)
+	if err != nil {
+		t.Fatalf("getrun: %v", err)
+	}
+	if got.State != store.PipelineDone {
+		t.Errorf("state = %s, want done (run must complete via gate-retry path)", got.State)
+	}
+	// pr_self_review is the post_review_gate RetryFrom target. After one
+	// soft-fail it should be re-dispatched, so the dispatcher sees it twice.
+	prCalls := 0
+	for _, c := range disp.callsList() {
+		if c == "pr_self_review" {
+			prCalls++
+		}
+	}
+	if prCalls != 2 {
+		t.Errorf("pr_self_review dispatches = %d, want 2 (initial + retry after gate soft-fail)", prCalls)
+	}
+	// spec_conformance gate evaluated twice (fail, then pass).
+	if flaky.calls != 2 {
+		t.Errorf("spec_conformance evaluations = %d, want 2 (fail then pass after retry)", flaky.calls)
 	}
 }
 
