@@ -340,7 +340,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				log.V(1).Info("Runtime discovery failed, falling back to Deployment", "error", err)
 			}
 			if runtimeEndpoint != nil {
-				if runtimeEndpoint.Ready {
+				if runtimeEndpoint.CanAcceptLoad() {
 					return r.reconcileViaRuntime(ctx, model, b, gpuVendor, gpuArch, runtimeEndpoint, desiredReplicas, cacheReady, requeueAfter)
 				}
 				// Runtime pod exists but isn't ready yet (starting up). Wait instead

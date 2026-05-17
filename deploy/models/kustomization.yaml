@@ -72,7 +72,7 @@ resources:
   # root FS is the main risk -- monitor /var/lib once both caches are warm.
   # The 1.7B Qwen tool/canary lanes stay for routing experiments.
   - qwen3-1.7b-tools-radeonvii.yaml # llama.cpp GGUF, fast tool-router lane
-  - qwen3-1.7b-vllm-radeonvii.yaml  # vllm canary, scaled to 0; closes Track C revive path (priority 80)
+  - qwen3-1p7b-vllm-radeonvii.yaml  # vllm canary, scaled to 0; explicit canary traffic can preempt CPU fallback
   - gonzalomo-fluxpony-imagegen.yaml # diffusers gfx906, SDXL text-to-image (relocated 2026-05-13 from 5930k)
   - sdxl-inpainting-radeonvii.yaml   # diffusers gfx906, SDXL inpainting
 

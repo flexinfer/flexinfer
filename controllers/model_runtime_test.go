@@ -120,6 +120,84 @@ func TestRuntimePodTargetsModel_PendingPodUsesNodeSelector(t *testing.T) {
 	}
 }
 
+func TestRuntimeEndpointCanAcceptLoadWhenPodRunningButNotReady(t *testing.T) {
+	endpoint := &RuntimeEndpoint{
+		PodName: "flexinfer-runtime-gfx906-test",
+		PodIP:   "10.42.8.88",
+		Port:    8080,
+		Ready:   false,
+	}
+	if !endpoint.CanAcceptLoad() {
+		t.Fatal("running runtime endpoint with a pod IP should accept load requests even when pod Ready=false")
+	}
+
+	pending := &RuntimeEndpoint{
+		PodName: "flexinfer-runtime-gfx906-pending",
+		Port:    8080,
+		Ready:   false,
+	}
+	if pending.CanAcceptLoad() {
+		t.Fatal("pending runtime endpoint without a pod IP should not accept load requests")
+	}
+}
+
+func TestFindRuntimeForNode_RunningNotReadyStillAcceptsLoad(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add core scheme: %v", err)
+	}
+
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "cblevins-radeonvii",
+			Labels: map[string]string{
+				"kubernetes.io/hostname": "cblevins-radeonvii",
+			},
+		},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "flexinfer-runtime-gfx906-test",
+			Namespace: "flexinfer-system",
+			Labels: map[string]string{
+				"app.kubernetes.io/component": runtimeComponentLabel,
+			},
+		},
+		Spec: corev1.PodSpec{
+			NodeName: "cblevins-radeonvii",
+		},
+		Status: corev1.PodStatus{
+			Phase: corev1.PodRunning,
+			PodIP: "10.42.8.88",
+			Conditions: []corev1.PodCondition{
+				{Type: corev1.PodReady, Status: corev1.ConditionFalse},
+			},
+		},
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithRuntimeObjects(node, pod).
+		Build()
+	r := &RuntimeReconciler{Client: fakeClient, Scheme: s}
+
+	endpoint, err := r.FindRuntimeForNode(context.Background(), "flexinfer-system", map[string]string{
+		"kubernetes.io/hostname": "cblevins-radeonvii",
+	})
+	if err != nil {
+		t.Fatalf("FindRuntimeForNode() error: %v", err)
+	}
+	if endpoint == nil {
+		t.Fatal("FindRuntimeForNode() returned nil")
+	}
+	if endpoint.Ready {
+		t.Fatal("endpoint Ready=true, want false")
+	}
+	if !endpoint.CanAcceptLoad() {
+		t.Fatal("running not-ready runtime endpoint should be load-addressable")
+	}
+}
+
 func TestEnsureRuntimeNetworkingUsesRuntimeBackendPortForLlamaCpp(t *testing.T) {
 	s := runtime.NewScheme()
 	if err := corev1.AddToScheme(s); err != nil {
