@@ -107,6 +107,12 @@ spec:
     - name: ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL
       value: fallback
   runtime:
+    # Persistent serving runtime is intentionally slimmer than the broad
+    # GPUProfile fallback image: only direct-load backends listed here may use
+    # the runtime pod. Other backends fall back to their dedicated image.
+    bundledBackends:
+      - vllm
+      - diffusers
     image: registry.harbor.lan/flexinfer/runtime@sha256:24cbefd79152e3995c1e44623bddb1d98767da8e5ea0393fdd452a7ad3d1bea5
   containerMemoryGB: 48
   maxGPUMemoryGB: 18

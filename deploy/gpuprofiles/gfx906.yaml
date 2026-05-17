@@ -98,6 +98,13 @@ spec:
     - name: ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL
       value: fallback
   runtime:
+    # The persistent gfx906 runtime deliberately does not bundle vLLM. vLLM
+    # canaries must use the standalone profile backend image instead of the
+    # runtime direct-load path.
+    bundledBackends:
+      - llamacpp
+      - ollama
+      - diffusers
     image: registry.harbor.lan/flexinfer/runtime@sha256:cbe1157c2fb6a24fc67e901bec92a72bbf16498a86ad1a064ce9bf4db1f2ddf4
   containerMemoryGB: 56
   maxGPUMemoryGB: 12

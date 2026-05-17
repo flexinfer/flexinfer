@@ -391,6 +391,15 @@ spec:
                   When set, the controller deploys a DaemonSet with this image on matching nodes
                   instead of creating per-model Deployments.
                 properties:
+                  bundledBackends:
+                    description: |-
+                      BundledBackends lists backend names that can be launched inside this
+                      persistent runtime image. When set, controller/proxy direct runtime loads
+                      are allowed only for these backends; other backends fall back to their
+                      dedicated GPUProfile backend image.
+                    items:
+                      type: string
+                    type: array
                   image:
                     description: |-
                       Image is the unified runtime container image for this architecture.

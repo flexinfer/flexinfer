@@ -10,7 +10,10 @@
 # (image tag `registry.harbor.lan/flexinfer/vllm:rocm-gfx906`).
 #
 # This manifest is the smallest model that exercises the full vLLM serve
-# path on gfx906 hardware:
+# path on gfx906 hardware. The persistent gfx906 runtime does not bundle
+# vLLM, so this canary must be served by the standalone GPUProfile backend
+# image (`registry.harbor.lan/flexinfer/vllm:rocm-gfx906`) instead of the
+# runtime direct-load API:
 #   - Qwen3-1.7B FP16 ≈ 3.5 GB weights
 #   - vLLM overhead ≈ 5-7 GB (KV cache + activations)
 #   - Total budget: ~10-12 GB on a 16 GB Vega20 dGPU
