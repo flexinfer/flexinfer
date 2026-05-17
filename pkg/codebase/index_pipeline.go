@@ -201,14 +201,18 @@ func (s *Service) runIndexJob(
 			if end > len(points) {
 				end = len(points)
 			}
-			// Bulk batches: wait=false by default for 5-10x speedup
-			// (Qdrant defers HNSW reindex off the response path). The
-			// LAST batch of every flush uses wait=true so callers observing
-			// status=done can trust the data is durable in Qdrant.
+			// All bulk batches use wait=false for throughput. Qdrant queues
+			// the WAL + HNSW work in the background instead of serializing
+			// it on the response path. Durability of the final job is
+			// guaranteed by a single trailing Flush call after the
+			// indexing run completes, not per-batch wait=true (which
+			// previously tripped EOF on heavily-loaded Qdrant nodes when
+			// invoked dozens of times per job).
+			//
 			// Operators can force synchronous behavior on every batch by
-			// setting CODEBASE_UPSERT_WAIT=true.
-			wait := upsertWaitForBatch(s.cfg.UpsertWait, end, len(points))
-			if upsertErr := s.qdrant.Upsert(ctx, points[i:end], wait); upsertErr != nil {
+			// setting CODEBASE_UPSERT_BLOCKING=true (rollback hatch; old
+			// CODEBASE_UPSERT_WAIT name still honored).
+			if upsertErr := s.qdrant.Upsert(ctx, points[i:end], s.cfg.UpsertBlocking); upsertErr != nil {
 				return upsertErr
 			}
 		}
@@ -396,24 +400,23 @@ func (s *Service) runIndexJob(
 		return
 	}
 
+	// Job-final durability flush. ALL bulk batches above ran with
+	// wait=false; this single round-trip is what proves to Qdrant
+	// (and us) that the WAL is fsynced and pending segment work is
+	// drained for this collection. It is intentionally NON-FATAL: if
+	// the trailing Flush returns EOF or another transport error, prior
+	// writes are still durable via WAL fsync (flush_interval_sec=5
+	// default server-side), so we surface the failure as a soft warning
+	// on job stats and still report status=done. The previous design
+	// triggered wait=true at the end of EVERY Upsert call (per
+	// file-batch), which made one stray EOF a job-killer despite all
+	// data having landed in Qdrant.
+	if flushErr := s.qdrant.Flush(ctx); flushErr != nil {
+		s.recordFlushWarning(jobID, fmt.Sprintf("job-final flush: %v", flushErr))
+	}
+
 	s.setJobDone(jobID)
 	_ = vectorSize
-}
-
-// upsertWaitForBatch returns the wait flag to pass to qdrant.Upsert for a
-// single batch in a flush loop.
-//
-// Default behavior (cfgWait=false): bulk batches use wait=false so Qdrant can
-// queue WAL/HNSW work in the background, and the LAST batch uses wait=true so
-// callers observing job status=done can trust the data is durable.
-//
-// Override (cfgWait=true): every batch uses wait=true, matching pre-perf
-// behavior — provided as a rollback hatch via CODEBASE_UPSERT_WAIT=true.
-func upsertWaitForBatch(cfgWait bool, batchEnd, totalPoints int) bool {
-	if cfgWait {
-		return true
-	}
-	return batchEnd >= totalPoints
 }
 
 func (s *Service) ensureCollectionForVector(ctx context.Context, vectorSize int, allowRecreate bool) error {

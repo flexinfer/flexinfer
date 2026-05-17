@@ -562,16 +562,26 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 			if end > len(points) {
 				end = len(points)
 			}
-			// Mirror index_pipeline.go: bulk batches wait=false, last
-			// batch wait=true for durability. Watch mode usually flushes
-			// a single small batch so the speedup is modest, but the
-			// symmetry keeps both code paths predictable for operators.
-			wait := upsertWaitForBatch(s.cfg.UpsertWait, end, len(points))
-			if err := s.qdrant.Upsert(ctx, points[i:end], wait); err != nil {
+			// Mirror index_pipeline.go: all bulk batches wait=false.
+			// Watch events are typically a single small batch so
+			// throughput gain is modest, but the symmetry keeps both
+			// code paths predictable and avoids per-call EOF traps.
+			// Operators can force wait=true via CODEBASE_UPSERT_BLOCKING
+			// (rollback hatch; CODEBASE_UPSERT_WAIT still honored).
+			if err := s.qdrant.Upsert(ctx, points[i:end], s.cfg.UpsertBlocking); err != nil {
 				return fmt.Errorf("upsert %s: %v", t.relPath, err)
 			}
 		}
 		stages.QdrantUpsert = stageSample(time.Since(upsertStart), len(points))
+
+		// Per-watch-event durability flush. Treated as a soft warning if
+		// it fails — prior writes are durable via WAL fsync
+		// (flush_interval_sec=5 default). We do NOT propagate the error
+		// because doing so would mark the watch event failed despite the
+		// data having landed in Qdrant.
+		if flushErr := s.qdrant.Flush(ctx); flushErr != nil {
+			s.incrementWatchError(watchID, fmt.Sprintf("watch flush %s: %v", t.relPath, flushErr))
+		}
 
 		s.mergeWatchStageStats(watchID, stages)
 		s.incrementWatchIndexed(watchID, len(chunks))

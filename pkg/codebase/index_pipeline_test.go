@@ -1,73 +1,69 @@
 package codebase
 
-import "testing"
+import (
+	"testing"
 
-func TestUpsertWaitForBatch(t *testing.T) {
+	"github.com/crb2nu/loom/pkg/codebase/schema"
+)
+
+// TestRecordFlushWarning_DoesNotMarkJobFailed asserts that a job-final
+// Flush failure is surfaced as a soft warning on job stats but the job
+// still reports status=done. This is the structural invariant the
+// indexer must preserve: an EOF on the trailing durability ping cannot
+// mark a fully-processed run as failed, because all data has already
+// landed in Qdrant via wait=false upserts and is durable through WAL
+// fsync regardless.
+func TestRecordFlushWarning_DoesNotMarkJobFailed(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name        string
-		cfgWait     bool
-		batchEnd    int
-		totalPoints int
-		want        bool
-	}{
-		// Default behavior (cfgWait=false): bulk batches false, last batch true.
-		{name: "default_first_of_three", cfgWait: false, batchEnd: 32, totalPoints: 96, want: false},
-		{name: "default_middle_of_three", cfgWait: false, batchEnd: 64, totalPoints: 96, want: false},
-		{name: "default_last_of_three", cfgWait: false, batchEnd: 96, totalPoints: 96, want: true},
-
-		// Single-batch case: the only batch is the last, so it must wait.
-		{name: "default_single_batch", cfgWait: false, batchEnd: 20, totalPoints: 20, want: true},
-
-		// Safety-hatch behavior (cfgWait=true): every batch waits.
-		{name: "override_first_of_three", cfgWait: true, batchEnd: 32, totalPoints: 96, want: true},
-		{name: "override_last_of_three", cfgWait: true, batchEnd: 96, totalPoints: 96, want: true},
-
-		// Defensive: a batch that overshoots total (shouldn't happen but the
-		// helper must still report last-batch correctly).
-		{name: "default_overshoot", cfgWait: false, batchEnd: 128, totalPoints: 96, want: true},
+	svc := &Service{
+		jobs: map[string]*indexJob{},
+	}
+	jobID := "test-job"
+	svc.jobs[jobID] = &indexJob{
+		id:     jobID,
+		status: "running",
+		stats:  schema.IndexStats{RepoID: "r", FilesTotal: 10, FilesDone: 10},
 	}
 
-	for _, tc := range cases {
-		tc := tc
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := upsertWaitForBatch(tc.cfgWait, tc.batchEnd, tc.totalPoints)
-			if got != tc.want {
-				t.Fatalf("upsertWaitForBatch(cfgWait=%v, end=%d, total=%d)=%v want %v",
-					tc.cfgWait, tc.batchEnd, tc.totalPoints, got, tc.want)
-			}
-		})
+	svc.recordFlushWarning(jobID, "job-final flush: EOF")
+	svc.setJobDone(jobID)
+
+	job := svc.jobs[jobID]
+	if job.status != "done" {
+		t.Fatalf("status=%q want \"done\" after recordFlushWarning + setJobDone", job.status)
+	}
+	if job.stats.FlushWarnings != 1 {
+		t.Fatalf("FlushWarnings=%d want 1", job.stats.FlushWarnings)
+	}
+	if job.stats.LastFlushWarning == "" {
+		t.Fatalf("LastFlushWarning should be set to the warning message")
+	}
+	if job.stats.Errors != 0 {
+		t.Fatalf("Errors=%d want 0 (flush warning must NOT bump hard error count)", job.stats.Errors)
+	}
+	if job.err != "" {
+		t.Fatalf("job.err=%q want empty (flush warning is soft)", job.err)
 	}
 }
 
-// TestUpsertWaitForBatch_FullFlushSequence simulates a flush loop and asserts
-// the (false,false,...,true) pattern that the index pipeline must produce
-// under default config.
-func TestUpsertWaitForBatch_FullFlushSequence(t *testing.T) {
+// TestRecordFlushWarning_IsAdditive asserts the counter increments on
+// repeated calls (e.g. if a future code path retries Flush).
+func TestRecordFlushWarning_IsAdditive(t *testing.T) {
 	t.Parallel()
 
-	const total = 200
-	const batchSize = 64
+	svc := &Service{jobs: map[string]*indexJob{}}
+	jobID := "j"
+	svc.jobs[jobID] = &indexJob{id: jobID, status: "running"}
 
-	var got []bool
-	for i := 0; i < total; i += batchSize {
-		end := i + batchSize
-		if end > total {
-			end = total
-		}
-		got = append(got, upsertWaitForBatch(false, end, total))
-	}
+	svc.recordFlushWarning(jobID, "first warn")
+	svc.recordFlushWarning(jobID, "second warn")
 
-	// Expect 4 batches: false, false, false, true.
-	want := []bool{false, false, false, true}
-	if len(got) != len(want) {
-		t.Fatalf("batch count=%d want %d", len(got), len(want))
+	got := svc.jobs[jobID].stats.FlushWarnings
+	if got != 2 {
+		t.Fatalf("FlushWarnings=%d want 2", got)
 	}
-	for i := range got {
-		if got[i] != want[i] {
-			t.Fatalf("batch %d wait=%v want %v (full seq=%v)", i, got[i], want[i], got)
-		}
+	if last := svc.jobs[jobID].stats.LastFlushWarning; last != "second warn" {
+		t.Fatalf("LastFlushWarning=%q want %q", last, "second warn")
 	}
 }

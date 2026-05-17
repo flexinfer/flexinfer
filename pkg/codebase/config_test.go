@@ -31,20 +31,50 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	if cfg.QdrantDistance != "Cosine" {
 		t.Errorf("expected QdrantDistance Cosine, got %q", cfg.QdrantDistance)
 	}
-	if cfg.UpsertWait {
-		t.Errorf("expected UpsertWait default false, got true")
+	if cfg.UpsertBlocking {
+		t.Errorf("expected UpsertBlocking default false, got true")
 	}
 }
 
-func TestLoadConfigFromEnv_UpsertWaitOverride(t *testing.T) {
+func TestLoadConfigFromEnv_UpsertBlockingOverride(t *testing.T) {
+	t.Setenv("CODEBASE_UPSERT_BLOCKING", "true")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.UpsertBlocking {
+		t.Errorf("expected UpsertBlocking true when CODEBASE_UPSERT_BLOCKING=true")
+	}
+}
+
+// TestLoadConfigFromEnv_UpsertWaitLegacy verifies the deprecated
+// CODEBASE_UPSERT_WAIT env var still flips UpsertBlocking. Kept so
+// pre-existing deployments that set the old knob continue to work.
+func TestLoadConfigFromEnv_UpsertWaitLegacy(t *testing.T) {
 	t.Setenv("CODEBASE_UPSERT_WAIT", "true")
 
 	cfg, err := LoadConfigFromEnv()
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !cfg.UpsertWait {
-		t.Errorf("expected UpsertWait true when CODEBASE_UPSERT_WAIT=true")
+	if !cfg.UpsertBlocking {
+		t.Errorf("expected UpsertBlocking true via legacy CODEBASE_UPSERT_WAIT=true")
+	}
+}
+
+// TestLoadConfigFromEnv_UpsertBlockingTakesPrecedence ensures the new knob
+// wins when both are set.
+func TestLoadConfigFromEnv_UpsertBlockingTakesPrecedence(t *testing.T) {
+	t.Setenv("CODEBASE_UPSERT_BLOCKING", "false")
+	t.Setenv("CODEBASE_UPSERT_WAIT", "true")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.UpsertBlocking {
+		t.Errorf("expected UpsertBlocking false when CODEBASE_UPSERT_BLOCKING=false overrides legacy")
 	}
 }
 
