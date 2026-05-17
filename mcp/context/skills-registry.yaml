@@ -64,7 +64,7 @@
 # Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
 
 version: 1
-updated: 2026-05-12
+updated: 2026-05-17
 skills:
   - name: flux-gitops-operator
     categories: [kubernetes, gitops, operations]
@@ -8127,3 +8127,102 @@ skills:
         enabled: true
         type: command
         output_format: markdown
+
+  - name: spec-riskiest-assumption
+    categories: [planning, methodology, process]
+    common:
+      description: |
+        Every spec and brainstorm-derived plan must explicitly name its riskiest
+        load-bearing assumption AND a kill-test that proves the assumption
+        before downstream slices ship. Catches the class of breakdown where
+        positive-only research masks a foundational gap (e.g. spec assumes a
+        vendor renders a widget; vendor doesn't; 9 commits ship before anyone
+        looks). Source: .loom/brainstorm-widget-rendering-breakdown-2026-05-17.md
+      instructions: |
+        # Spec Riskiest-Assumption + Kill-Test
+
+        Every product spec, brainstorm doc, and multi-slice plan MUST include
+        a "Riskiest Assumption" section near the top. The downstream slice
+        plan is BLOCKED until the kill-test for that assumption passes.
+
+        ## What goes in the section
+
+        ```markdown
+        ## Riskiest assumption + kill-test
+
+        **Load-bearing assumption**: <one sentence — the claim the entire
+        plan depends on. Be specific about the product/version/host/feature.
+        Vendor X supports Y is too vague; "Claude Code Desktop 2.1+ renders
+        MCP Apps widgets via _meta.ui.resourceUri" is specific.>
+
+        **Kill test**: <a procedure another agent (or human) could run in
+        ≤30 minutes to prove the assumption is true. Must produce an
+        observable, unambiguous outcome. "Tests pass" doesn't count if
+        the tests don't exercise the assumption end-to-end.>
+
+        **Failure mode if the assumption is wrong**: <what we'd be
+        building toward that wouldn't work. Helps the reader judge whether
+        the assumption deserves more verification energy.>
+
+        **Status**: not run | passed YYYY-MM-DD | FAILED YYYY-MM-DD
+        (link to evidence)
+        ```
+
+        ## When this fires
+
+        - Writing a new brainstorm doc: every framing's "Bet" line is an
+          implicit assumption — the convergence section's recommendation
+          inherits the bet that won. Surface the strongest such bet as
+          the riskiest assumption explicitly.
+        - Writing a product spec: ANY claim about external system behavior
+          (vendor APIs, third-party rendering, infra availability) needs
+          the section. Internal-only specs (e.g. "refactor module X")
+          usually don't.
+        - Writing a multi-slice plan: the riskiest assumption likely lives
+          in slice 1; the kill-test IS slice 1's completion criterion.
+          Slice 2 cannot ship until slice 1 ran the kill-test live.
+
+        ## Pair with positive/negative search
+
+        Before declaring the kill-test "passed":
+
+        1. Do at least one search for the disconfirming claim. "Does
+           <vendor> NOT support <feature>?" / "<feature> limitations
+           <product>". Surfaces conflations where the positive answer
+           was right but for a different product/version.
+        2. Cite both the positive AND negative evidence in the spec.
+
+        ## Why this exists
+
+        We shipped 2 MRs (9 commits, ~6,400 lines) targeting Claude Code
+        for MCP Apps widget rendering before discovering Claude Code does
+        not render MCP Apps widgets. The wire format was correct, the
+        unit tests were green, the smoke tests passed — but nothing
+        exercised the actual rendering on the actual host. The MR
+        description even listed "verify in Claude Desktop" as an
+        unchecked manual step. ~30% of the work targeted the wrong host;
+        ~70% was reusable. With a kill-test in slice 1b-α, the
+        discovery would have happened in 30 minutes, not 2 MRs later.
+
+        Full breakdown:
+        .loom/brainstorm-widget-rendering-breakdown-2026-05-17.md
+      scripts: []
+      references: []
+      assets: []
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: rule
+      claude:
+        enabled: true
+        type: rule
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: true
+        type: instruction
+      antigravity:
+        enabled: true
+        type: rule

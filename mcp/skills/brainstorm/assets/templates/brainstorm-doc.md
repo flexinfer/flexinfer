@@ -47,6 +47,31 @@
 
 <one question the user has to answer before the recommended path is actually chosen>
 
+## Riskiest assumption + kill-test
+
+> Every brainstorm-derived plan must surface its riskiest load-bearing
+> assumption explicitly. See the `spec-riskiest-assumption` skill.
+
+**Load-bearing assumption**: <one specific sentence — name the product,
+version, host, feature. "Vendor X supports Y" is too vague; "Claude
+Code Desktop 2.1+ renders MCP Apps widgets via `_meta.ui.resourceUri`"
+is specific.>
+
+**Kill test**: <a procedure another agent or human can run in ≤30
+minutes that produces an observable, unambiguous outcome. Unit tests
+that don't exercise the assumption end-to-end don't count.>
+
+**Failure mode if wrong**: <what we'd be building toward that wouldn't
+work — helps judge how much verification energy this assumption
+deserves.>
+
+**Status**: not run
+
+> The downstream slice plan is BLOCKED until this kill-test passes.
+> Pair it with at least one disconfirming-search query (look for
+> "feature NOT supported in product" / "product limitations feature")
+> before declaring the assumption verified.
+
 ## Handoff
 
 - If chosen → next step is: `<plan-loom-core | feature-dev | research | other>`

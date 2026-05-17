@@ -1,14 +1,47 @@
 # Product Spec — Loom Fleet widget for Claude + ChatGPT (Slice 1b)
 
-- **Date**: 2026-05-16
+- **Date**: 2026-05-16 · **Revised**: 2026-05-17 (host-support reality check)
 - **Author**: claude-code (funny-noyce worktree)
 - **Brainstorm**: [.loom/brainstorm-cross-agent-gui-integration-2026-05-16.md](brainstorm-cross-agent-gui-integration-2026-05-16.md)
+- **Breakdown retro**: [.loom/brainstorm-widget-rendering-breakdown-2026-05-17.md](brainstorm-widget-rendering-breakdown-2026-05-17.md)
 - **Predecessor slice**: [.loom/23-product-spec-codex-session-tail-2026-05-16.md](23-product-spec-codex-session-tail-2026-05-16.md)
-- **Status**: spec — awaiting user go-ahead before scaffolding
+- **Status**: spec — slices 1b-α through 2-β + CF Access follow-up shipped; **rendering verified gap: Claude Code does not render MCP Apps widgets** (see Riskiest Assumption below).
 
-## Goal
+## ⚠️ Original spec assumption was wrong
 
-A single interactive widget — built once, rendering in **Claude Code Desktop (chat + Code tab)** and **ChatGPT mobile/web** (where Codex monitoring lives) — that shows the loom fleet: active agents (Claude/Codex/Gemini), session worktrees, file claims, handoffs in flight, mills queue, and devbox status. The user types something like `show loom fleet` (Claude) or invokes the connector tool (ChatGPT) and gets a live, refreshing dashboard inline.
+The original goal called out *"rendering in Claude Code Desktop"* as the headline use case. **Claude Code (any flavor — terminal, Code tab, Desktop GUI) does not support MCP Apps widget rendering.** Confirmed via live test 2026-05-17: tool invoked correctly, `content[0].text` shown, `_meta.ui.resourceUri` silently ignored. The MCP Apps extension is supported in Claude.ai (web), Claude Desktop (chat-only macOS app), Claude Inspector, ChatGPT (Apps SDK), and VS Code+Copilot — not in any Claude Code surface.
+
+What we built is still usable:
+- Codex telemetry + relay tools + CF Access + envelope unwrap: works regardless of host (~70% of the effort).
+- The widget bundle itself renders in any MCP Apps host except Claude Code (~30% of the effort, still recoverable).
+- For Claude Code specifically, `loom_fleet_show` returns a **markdown text fallback** in `content[0].text` so it's still useful there.
+
+## Riskiest assumption + kill-test (added retro)
+
+**Load-bearing assumption (original, now disproved)**: *"Claude Code Desktop renders MCP Apps widgets via `_meta.ui.resourceUri`."*
+
+**Kill test we should have run before 1b-β**: register `mcp-loom-widget` in Claude Code via `~/.claude.json`, restart, invoke `loom_fleet_show`. Observe whether HTML renders inline.
+
+**Failure mode if wrong (what actually happened)**: built 2 MRs / 9 commits / ~6,400 lines targeting the wrong host. Net loss: ~30% (the widget UX itself, not the data layers).
+
+**Status**: FAILED 2026-05-17 — see breakdown retro.
+
+**Replacement kill test for current/future hosts**: run [MCP Inspector](https://github.com/modelcontextprotocol/inspector) against the binary (`npx -y @modelcontextprotocol/inspector ~/go/bin/mcp-loom-widget`), open the browser UI, invoke `loom_fleet_show`, confirm the widget HTML renders inline. Inspector is the canonical Anthropic debug host; if the widget renders there, the wire format is correct and any non-rendering elsewhere is a host limitation.
+
+## Host-support matrix (2026-05-17)
+
+| Host                                              | Renders widget? | Notes |
+|---------------------------------------------------|-----------------|-------|
+| **Claude Code** (any flavor)                       | **No** ❌        | Confirmed via live test. Falls back to markdown text. |
+| Claude Desktop (chat-only macOS app)              | Yes (with bugs) | See [claude-ai-mcp#165](https://github.com/anthropics/claude-ai-mcp/issues/165). |
+| Claude.ai (web)                                    | Yes ✅           | Canonical host. |
+| ChatGPT (Apps SDK)                                 | Yes ✅           | Needs HTTPS endpoint + Connector. |
+| VS Code + GitHub Copilot                           | Yes ✅           | Per spec, not personally verified. |
+| MCP Inspector                                      | Yes ✅           | Recommended kill-test host. |
+
+## Goal (revised)
+
+A single interactive widget — built once, rendering in **any MCP Apps host that actually renders MCP Apps widgets** — that shows the loom fleet: active agents (Claude/Codex/Gemini), session worktrees, file claims, handoffs in flight, mills queue, and devbox status. **In hosts that don't render the widget (notably Claude Code), the same tool returns a useful markdown text summary as a fallback.**
 
 ## Non-goals (this slice)
 
