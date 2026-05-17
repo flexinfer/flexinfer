@@ -46,6 +46,18 @@ spec:
                   name: loom-secrets
             - name: QDRANT_URL
               value: http://192.168.50.176:6333
+            # Default HTTP_TIMEOUT (30s) was insufficient for large
+            # qdrant upsert batches with wait=true — the codebase_memory_v1
+            # collection has 50K+ points and HNSW reindexing on each
+            # upsert pushed batches over 30s, causing index runs to
+            # fail with "context deadline exceeded". 5min headroom.
+            - name: HTTP_TIMEOUT
+              value: 300s
+            # Smaller upsert batches finish within timeout even when
+            # Qdrant is under load. Default was 64; halving it keeps
+            # round-trip time linear and predictable.
+            - name: CODEBASE_UPSERT_BATCH_SIZE
+              value: "32"
             - name: MCP_TRANSPORT
               value: websocket
             - name: MCP_WS_PORT
