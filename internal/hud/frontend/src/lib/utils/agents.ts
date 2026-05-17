@@ -128,6 +128,27 @@ export function normalizeUnifiedStatus(raw: string | null | undefined): UnifiedA
   return 'offline';
 }
 
+// Terminal spawn statuses — any spawn in one of these states is "done"
+// and the agent that owned it has no current work, even if a stale CLI
+// keepalive may still be heartbeating its presence row. Used to keep the
+// Fleet view honest: the previous build of the unified row marked every
+// spawn `status: 'active'` unconditionally (line 317 below), so closed
+// CI pipelines like `spawn-claude-code-10fa8a6eb214` (pipeline 9839
+// failed 2026-05-16) kept showing up as live agents on hud.flexinfer.ai.
+const TERMINAL_SPAWN_STATUSES = new Set([
+  'completed',
+  'failed',
+  'escalated',
+  'stopped',
+  'paused',
+  'cancelled',
+  'canceled',
+]);
+
+export function isTerminalSpawnStatus(raw: string | null | undefined): boolean {
+  return TERMINAL_SPAWN_STATUSES.has((raw ?? '').trim().toLowerCase());
+}
+
 export function isLiveSession(raw: string | null | undefined): boolean {
   return (raw ?? '').trim().toLowerCase() === 'active';
 }
@@ -297,6 +318,7 @@ export function buildUnifiedAgents(input: {
 
   for (const spawn of spawns) {
     if (!spawn.agent_id) continue;
+    const spawnTerminal = isTerminalSpawnStatus(spawn.status);
     const existing = byAgent.get(spawn.agent_id);
     if (existing) {
       existing.spawn_id = spawn.spawn_id;
@@ -308,13 +330,27 @@ export function buildUnifiedAgents(input: {
         existing.agent_type = inferAgentType(spawn.agent_id, spawn.request?.agent_type);
       }
       existing.has_spawn = true;
+      // If the spawn is terminal, the agent that owned it has no current
+      // work — even if its presence/session rows are still heartbeating
+      // (a vendor CLI keepalive can outlive the spawn it was started
+      // for). Downgrade the unified row to "offline" so the Fleet view's
+      // "live agents" counter reflects active work, not historical
+      // spawns. Preserves the SPAWN badge and underlying spawn detail.
+      if (spawnTerminal && (existing.status === 'active' || existing.status === 'idle')) {
+        existing.status = 'offline';
+      }
       continue;
     }
 
     byAgent.set(spawn.agent_id, {
       agent_id: spawn.agent_id,
       agent_type: inferAgentType(spawn.agent_id, spawn.request?.agent_type),
-      status: 'active',
+      // Spawn-only rows (no presence, no session) reflect the spawn's
+      // own state: still running → active, terminal → offline. Previous
+      // build hardcoded 'active' regardless, so reaped spawn pods like
+      // `spawn-claude-code-10fa8a6eb214` (CI pipeline 9839 failed) kept
+      // showing up as live agents long after the work ended.
+      status: spawnTerminal ? 'offline' : 'active',
       source: 'spawn',
       description: spawn.request?.task_description ?? '',
       current_task: '',
