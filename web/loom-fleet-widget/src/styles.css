@@ -241,3 +241,103 @@ code {
   color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
+
+.inbox {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.inbox-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.inbox-count {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  color: #fff;
+  background: var(--accent);
+  border-radius: 999px;
+  letter-spacing: 0;
+}
+
+.inbox-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.inbox-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.card-inner {
+  background: color-mix(in srgb, var(--accent) 5%, transparent);
+  border: 1px solid color-mix(in srgb, var(--accent) 18%, var(--border));
+  border-radius: 6px;
+  padding: 10px 12px;
+}
+
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  margin-bottom: 4px;
+}
+
+.card-actor {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-weight: 500;
+  color: var(--fg);
+}
+
+.card-arrow {
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.card-age {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.card-summary {
+  font-size: 13px;
+  color: var(--fg);
+  margin: 4px 0;
+}
+
+.card-context {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 4px 0;
+  padding: 6px 8px;
+  background: color-mix(in srgb, var(--muted) 5%, transparent);
+  border-radius: 4px;
+  line-height: 1.4;
+}
+
+.card-action-hint {
+  font-size: 11px;
+  color: var(--muted);
+  margin-top: 6px;
+  font-style: italic;
+}

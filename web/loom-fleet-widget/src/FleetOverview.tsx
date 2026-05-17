@@ -1,4 +1,5 @@
 import { EventTicker } from "./components/EventTicker";
+import { HandoffInbox } from "./components/HandoffInbox";
 import { useFleet } from "./hooks/useFleet";
 import { hostKind } from "./lib/mcpBridge";
 
@@ -52,6 +53,8 @@ export function FleetOverview() {
           )}
         </>
       )}
+
+      <HandoffInbox />
 
       <EventTicker />
 

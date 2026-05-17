@@ -157,6 +157,28 @@ const MOCK_RESPONSES: Record<string, string> = {
       },
     ],
   }),
+  loom_fleet_get_handoffs: JSON.stringify({
+    handoffs: [
+      {
+        id: "h-mock-1",
+        from_agent: "claude-code",
+        to_agent: "codex-desktop",
+        status: "pending",
+        summary: "Finish the gfx906 RALPH slice — runtime fix landed in MR !394",
+        context: "Validation passed locally and in CI; next step is rollout + smoke for qwen3-1p7b-tools-radeonvii.",
+        created_at: new Date(Date.now() - 18 * 60_000).toISOString(),
+      },
+      {
+        id: "h-mock-2",
+        from_agent: "codex-desktop-019e32a5",
+        target_agent_id: "claude-code",
+        status: "pending",
+        summary: "Cross-agent GUI integration plan handoff: ticker UX feedback",
+        created_at: new Date(Date.now() - 90 * 60_000).toISOString(),
+      },
+    ],
+    total: 2,
+  }),
 };
 
 // setMockResponse is exported so tests (or interactive dev) can swap

@@ -44,18 +44,20 @@ const (
 	toolPresence  = "loom_fleet_get_presence"
 	toolSessions  = "loom_fleet_get_sessions"
 	toolStream    = "loom_fleet_get_stream"
+	toolHandoffs  = "loom_fleet_get_handoffs"
 
 	pathDashboard = "/api/mobile/v1/dashboard"
 	pathPresence  = "/api/mobile/v1/presence"
 	pathSessions  = "/api/mobile/v1/sessions"
 	pathStream    = "/api/mobile/v1/stream"
+	pathHandoffs  = "/api/mobile/v1/handoffs"
 )
 
 // relayPaths is the HUD-path allowlist passed to hudClient.get. Each
 // relay tool maps to exactly one path; the indirection keeps the
 // allowlist enforced even if a future code change accidentally passes
 // user input through.
-var relayPaths = []string{pathDashboard, pathPresence, pathSessions, pathStream}
+var relayPaths = []string{pathDashboard, pathPresence, pathSessions, pathStream, pathHandoffs}
 
 //go:embed widget.html
 var widgetHTML []byte
@@ -266,7 +268,12 @@ func (s *server) handleToolsList() (any, *rpcError) {
 		"description": "Fetch the most recent loom HUD context stream entries (decisions, findings, tasks). Relay; widget-facing.",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	}
-	return map[string]any{"tools": []any{show, dashboard, presence, sessions, stream}}, nil
+	handoffs := map[string]any{
+		"name":        toolHandoffs,
+		"description": "Fetch the loom HUD pending agent handoff inbox (cross-agent coordination). Relay; widget-facing.",
+		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+	}
+	return map[string]any{"tools": []any{show, dashboard, presence, sessions, stream, handoffs}}, nil
 }
 
 // handleToolsCall routes the four tools:
@@ -308,6 +315,8 @@ func (s *server) handleToolsCall(req rpcRequest) (any, *rpcError) {
 		return s.relay(pathSessions)
 	case toolStream:
 		return s.relay(pathStream)
+	case toolHandoffs:
+		return s.relay(pathHandoffs)
 	default:
 		return nil, &rpcError{Code: -32602, Message: "unknown tool: " + params.Name}
 	}

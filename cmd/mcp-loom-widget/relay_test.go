@@ -23,6 +23,8 @@ func fakeHUD(t *testing.T) (*httptest.Server, *fakeHUDState) {
 		dashboard:  `{"daemon_running":true,"active_sessions":3,"server_count":42}`,
 		presence:   `{"agents":[{"agent_id":"claude-1","status":"active"}]}`,
 		sessions:   `{"sessions":[]}`,
+		stream:     `{"entries":[{"id":"e1","entry_type":"decision","agent_id":"claude-1","title":"chose X","timestamp":"2026-05-16T20:00:00Z"}]}`,
+		handoffs:   `{"handoffs":[{"id":"h1","from_agent":"claude-1","to_agent":"codex-2","status":"pending","summary":"finish slice 1b-δ","created_at":"2026-05-16T20:00:00Z"}],"total":1}`,
 		expectAuth: "Bearer test-token",
 	}
 	mux := http.NewServeMux()
@@ -54,6 +56,12 @@ func fakeHUD(t *testing.T) (*httptest.Server, *fakeHUDState) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, state.stream)
 	})
+	mux.HandleFunc("/api/mobile/v1/handoffs", func(w http.ResponseWriter, r *http.Request) {
+		state.lastPath = r.URL.Path
+		state.lastAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, state.handoffs)
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, state
@@ -64,6 +72,7 @@ type fakeHUDState struct {
 	presence   string
 	sessions   string
 	stream     string
+	handoffs   string
 	expectAuth string
 
 	lastPath string
@@ -122,10 +131,33 @@ func TestToolsList_AdvertisesRelayTools(t *testing.T) {
 			names[n] = true
 		}
 	}
-	for _, want := range []string{toolShow, toolDashboard, toolPresence, toolSessions, toolStream} {
+	for _, want := range []string{toolShow, toolDashboard, toolPresence, toolSessions, toolStream, toolHandoffs} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q (got %v)", want, names)
 		}
+	}
+}
+
+// TestRelay_Handoffs_HappyPath covers the slice-2-α handoff inbox
+// relay so the widget can render a pending-handoffs card. Uses the
+// shared path-allowlist + Bearer-auth boundary.
+func TestRelay_Handoffs_HappyPath(t *testing.T) {
+	hud, state := fakeHUD(t)
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{baseURL: hud.URL, token: "test-token", client: hud.Client()},
+	)
+	result := callTool(t, srv, toolHandoffs)
+	content, _ := result["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("content count = %d, want 1", len(content))
+	}
+	c0, _ := content[0].(map[string]any)
+	if c0["text"] != state.handoffs {
+		t.Errorf("relay body mismatch:\n got  %q\n want %q", c0["text"], state.handoffs)
+	}
+	if state.lastPath != "/api/mobile/v1/handoffs" {
+		t.Errorf("HUD got path %q, want /api/mobile/v1/handoffs", state.lastPath)
 	}
 }
 
