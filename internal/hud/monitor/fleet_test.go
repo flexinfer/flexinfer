@@ -757,3 +757,158 @@ func TestFleetMonitor_StaleSessionReaperCooldown(t *testing.T) {
 		t.Fatalf("expected 1 session_end call across 3 refreshes (cooldown), got %d", got)
 	}
 }
+
+// TestFleetMonitor_LivePresenceFilterDowngradesStaleAndOrphanRows pins
+// the heartbeat-age threshold for the Fleet view's "live agents"
+// classification (fleetLivePresenceStaleAfter = 90s) and the orphan
+// downgrade. Five rows in a single refresh:
+//
+//   - heartbeat 15s old + active session → stays "active"
+//   - heartbeat 89s old + active session → stays "active" (below 90s)
+//   - heartbeat 91s old + active session → flipped to "offline"
+//   - heartbeat 25s old, orphan (no session, registered 5min ago) →
+//     flipped to "offline" even though the heartbeat itself is fresh
+//   - session-only synthetic row (no presence, no heartbeat) → stays
+//     "active" because the live filter only fires when HasPresence=true
+//
+// The corresponding ActiveAgents / OfflineAgents counters must match
+// the row statuses after filtering so the snapshot's "live agents"
+// number agrees with what the frontend renders.
+func TestFleetMonitor_LivePresenceFilterDowngradesStaleAndOrphanRows(t *testing.T) {
+	sockPath, handlers := mockDaemon(t)
+	client, agent := newBridges(t, sockPath)
+
+	now := time.Now().UTC()
+	hbFresh := now.Add(-15 * time.Second).Format(time.RFC3339Nano)
+	hbJustBelow := now.Add(-89 * time.Second).Format(time.RFC3339Nano)
+	hbJustOver := now.Add(-91 * time.Second).Format(time.RFC3339Nano)
+	hbOrphanFresh := now.Add(-25 * time.Second).Format(time.RFC3339Nano)
+	regOrphanOld := now.Add(-5 * time.Minute).Format(time.RFC3339Nano)
+	sessStart := now.Add(-3 * time.Minute).Format(time.RFC3339Nano)
+
+	handlers.handle("loom/status", func(_ json.RawMessage) (any, error) {
+		return status.DaemonRPCStatus{Running: true}, nil
+	})
+	handlers.handle("tools/call", func(params json.RawMessage) (any, error) {
+		var req struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(params, &req); err != nil {
+			return nil, err
+		}
+		switch req.Name {
+		case "agent_context__agent_session_list":
+			return toolEnvelope(map[string]any{
+				"sessions": []map[string]any{
+					{"id": "sess-fresh", "agent_id": "agent-fresh",
+						"status": "active", "started_at": sessStart},
+					{"id": "sess-just-below", "agent_id": "agent-just-below",
+						"status": "active", "started_at": sessStart},
+					{"id": "sess-just-over", "agent_id": "agent-just-over",
+						"status": "active", "started_at": sessStart},
+					// agent-orphan has no session row.
+					{"id": "sess-only", "agent_id": "agent-session-only",
+						"status": "active", "started_at": sessStart},
+				},
+			}), nil
+		case "agent_context__agent_presence_list":
+			return toolEnvelope(map[string]any{
+				"agents": []map[string]any{
+					{"agent_id": "agent-fresh", "session_id": "sess-fresh",
+						"status": "active", "last_heartbeat": hbFresh,
+						"registered_at": sessStart},
+					{"agent_id": "agent-just-below", "session_id": "sess-just-below",
+						"status": "active", "last_heartbeat": hbJustBelow,
+						"registered_at": sessStart},
+					{"agent_id": "agent-just-over", "session_id": "sess-just-over",
+						"status": "active", "last_heartbeat": hbJustOver,
+						"registered_at": sessStart},
+					{"agent_id": "agent-orphan",
+						"status": "active", "last_heartbeat": hbOrphanFresh,
+						"registered_at": regOrphanOld},
+				},
+			}), nil
+		case "agent_context__agent_session_end":
+			return toolEnvelope(map[string]any{"ok": true}), nil
+		case "agent_context__agent_presence_deregister":
+			return toolEnvelope(map[string]any{"ok": true}), nil
+		case "agent_context__agent_task_list":
+			return toolEnvelope(map[string]any{"tasks": []map[string]any{}}), nil
+		case "agent_context__agent_memory_stats":
+			return toolEnvelope(map[string]any{"total_items": 0, "total_tokens": 0}), nil
+		case "agent_context__agent_graph_stats":
+			return toolEnvelope(map[string]any{"entity_count": 0, "relation_count": 0}), nil
+		case "agent_context__agent_workflow_list":
+			return toolEnvelope(map[string]any{"workflows": []map[string]any{}}), nil
+		case "agent_context__agent_file_claim_list":
+			return toolEnvelope(map[string]any{"claims": []map[string]any{}}), nil
+		case "agent_context__agent_worktree_list":
+			return toolEnvelope(map[string]any{"assignments": []map[string]any{}}), nil
+		case "agent_context__agent_handoff_inbox":
+			return toolEnvelope(map[string]any{"handoffs": []map[string]any{}}), nil
+		default:
+			return nil, fmt.Errorf("unexpected tool: %s", req.Name)
+		}
+	})
+
+	monitor := NewFleetMonitor(client, agent, nil)
+	if err := monitor.Refresh(); err != nil {
+		t.Fatalf("refresh: %v", err)
+	}
+
+	snap := monitor.Snapshot()
+	byAgent := make(map[string]presence.PresenceInfo, len(snap.Agents))
+	for _, a := range snap.Agents {
+		byAgent[a.AgentID] = a
+	}
+
+	cases := []struct {
+		agentID    string
+		wantStatus string
+		reason     string
+	}{
+		{"agent-fresh", "active", "fresh heartbeat (15s) + live session"},
+		{"agent-just-below", "active", "heartbeat 89s old, below 90s threshold"},
+		{"agent-just-over", "offline", "heartbeat 91s old, above 90s threshold"},
+		{"agent-orphan", "offline", "orphan rows are not live work"},
+		{"agent-session-only", "active", "synthetic session-only row, no heartbeat clock"},
+	}
+	for _, tc := range cases {
+		got, ok := byAgent[tc.agentID]
+		if !ok {
+			t.Fatalf("missing agent %s in snapshot.Agents", tc.agentID)
+		}
+		if got.Status != tc.wantStatus {
+			t.Errorf("agent %s: want status=%q (%s), got %q (heartbeat_age=%ds, is_orphan=%v, has_presence=%v)",
+				tc.agentID, tc.wantStatus, tc.reason,
+				got.Status, got.HeartbeatAgeSeconds, got.IsOrphan, got.HasPresence)
+		}
+	}
+
+	// Counters must agree with the row statuses after filtering. Two
+	// rows stay active (fresh + just-below), one synthetic session row
+	// stays active (no presence), and two downgrade to offline.
+	if snap.ActiveAgents != 3 {
+		t.Errorf("expected ActiveAgents=3 after filter, got %d", snap.ActiveAgents)
+	}
+	if snap.OfflineAgents != 2 {
+		t.Errorf("expected OfflineAgents=2 after filter, got %d", snap.OfflineAgents)
+	}
+	if snap.IdleAgents != 0 {
+		t.Errorf("expected IdleAgents=0, got %d", snap.IdleAgents)
+	}
+
+	// The visible "live agents" count (active + idle) must match the
+	// number of rows the frontend will classify as live, so the footer
+	// number cannot diverge from the visible-row count.
+	live := 0
+	for _, a := range snap.Agents {
+		if a.Status == "active" || a.Status == "idle" {
+			live++
+		}
+	}
+	wantLive := snap.ActiveAgents + snap.IdleAgents
+	if live != wantLive {
+		t.Errorf("live row count (%d) != ActiveAgents+IdleAgents (%d)", live, wantLive)
+	}
+}
