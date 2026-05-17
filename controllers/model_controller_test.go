@@ -1027,6 +1027,85 @@ func TestBuildBackendModelSpec(t *testing.T) {
 	}
 }
 
+func TestBuildBackendModelSpecForArchAppliesVLLMProfileDefaults(t *testing.T) {
+	enforceEager := true
+	profileR := &GPUProfileReconciler{}
+	profileR.profiles.Store("gfx906", &aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx906",
+		Backends: map[string]aiv1alpha2.BackendProfile{
+			"vllm": {
+				VLLM: &aiv1alpha2.VLLMCapabilities{
+					Defaults: &aiv1alpha2.VLLMDefaults{
+						EnforceEager: &enforceEager,
+						KVCacheDtype: "auto",
+					},
+				},
+			},
+		},
+	})
+	r := &ModelReconciler{GPUProfiles: profileR}
+	b, ok := backend.Get("vllm")
+	if !ok {
+		t.Fatal("vllm backend not found")
+	}
+
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://Qwen/Qwen3-1.7B",
+		},
+	}
+
+	spec := r.buildBackendModelSpecForArch(model, b, backend.GPUVendorAMD, "gfx906")
+	if spec.Config["enforceEager"] != true {
+		t.Fatalf("enforceEager = %v, want GPUProfile default true", spec.Config["enforceEager"])
+	}
+	if spec.Config["kvCacheDtype"] != "auto" {
+		t.Fatalf("kvCacheDtype = %v, want GPUProfile default auto", spec.Config["kvCacheDtype"])
+	}
+}
+
+func TestBuildBackendModelSpecForArchPreservesExplicitVLLMConfig(t *testing.T) {
+	enforceEager := true
+	profileR := &GPUProfileReconciler{}
+	profileR.profiles.Store("gfx1100", &aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx1100",
+		Backends: map[string]aiv1alpha2.BackendProfile{
+			"vllm": {
+				VLLM: &aiv1alpha2.VLLMCapabilities{
+					Defaults: &aiv1alpha2.VLLMDefaults{
+						EnforceEager: &enforceEager,
+						KVCacheDtype: "auto",
+					},
+				},
+			},
+		},
+	})
+	r := &ModelReconciler{GPUProfiles: profileR}
+	b, ok := backend.Get("vllm")
+	if !ok {
+		t.Fatal("vllm backend not found")
+	}
+
+	model := &aiv1alpha2.Model{
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://Qwen/Qwen3-14B",
+			Config: &apiextensionsv1.JSON{
+				Raw: []byte(`{"enforceEager":false,"kvCacheDtype":"fp8_e4m3"}`),
+			},
+		},
+	}
+
+	spec := r.buildBackendModelSpecForArch(model, b, backend.GPUVendorAMD, "gfx1100")
+	if spec.Config["enforceEager"] != false {
+		t.Fatalf("enforceEager = %v, want explicit false", spec.Config["enforceEager"])
+	}
+	if spec.Config["kvCacheDtype"] != "fp8_e4m3" {
+		t.Fatalf("kvCacheDtype = %v, want explicit fp8_e4m3", spec.Config["kvCacheDtype"])
+	}
+}
+
 func TestBuildBackendModelSpec_LlamaCppHFUsesGGUFFile(t *testing.T) {
 	r := &ModelReconciler{}
 	b, ok := backend.Get("llamacpp")

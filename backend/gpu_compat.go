@@ -223,6 +223,46 @@ func ImageFromProfile(profile *aiv1alpha2.GPUProfileSpec, backendName string) (s
 	return bp.Image, true
 }
 
+// ApplyVLLMDefaultsFromProfile fills missing vLLM backend config from the
+// selected GPUProfile. Model-level config remains authoritative: any key the
+// Model already set is left untouched.
+func ApplyVLLMDefaultsFromProfile(config map[string]any, profile *aiv1alpha2.GPUProfileSpec, backendName string) map[string]any {
+	if profile == nil || profile.Backends == nil {
+		return config
+	}
+	if backendName != NameVLLM && backendName != NameVLLMOmni {
+		return config
+	}
+	bp, ok := profile.Backends[backendName]
+	if !ok || bp.VLLM == nil || bp.VLLM.Defaults == nil {
+		return config
+	}
+
+	defaults := bp.VLLM.Defaults
+	out := config
+	setDefault := func(key string, value any) {
+		if out == nil {
+			out = make(map[string]any, 3)
+		}
+		if _, exists := out[key]; !exists {
+			out[key] = value
+		}
+	}
+
+	if defaults.EnforceEager != nil {
+		setDefault("enforceEager", *defaults.EnforceEager)
+	} else if strings.EqualFold(defaults.CudagraphMode, "NONE") {
+		// Older vLLM builds do not expose a stable --cudagraph-mode flag. The
+		// compatible expression of profile default cudagraphMode=NONE is eager
+		// mode, and explicit Model config can still opt back out.
+		setDefault("enforceEager", true)
+	}
+	if defaults.KVCacheDtype != "" {
+		setDefault("kvCacheDtype", defaults.KVCacheDtype)
+	}
+	return out
+}
+
 // ResolveBackendImage returns the container image for a backend, preferring a
 // GPUProfile-declared override before falling back to the backend's hardcoded
 // arch rules.

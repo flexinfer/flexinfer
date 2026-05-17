@@ -834,6 +834,78 @@ func TestIsBackendSupported(t *testing.T) {
 	}
 }
 
+func TestApplyVLLMDefaultsFromProfile(t *testing.T) {
+	enforceEager := true
+	profile := &aiv1alpha2.GPUProfileSpec{
+		Backends: map[string]aiv1alpha2.BackendProfile{
+			NameVLLM: {
+				Support: "experimental",
+				VLLM: &aiv1alpha2.VLLMCapabilities{
+					Defaults: &aiv1alpha2.VLLMDefaults{
+						EnforceEager: &enforceEager,
+						KVCacheDtype: "auto",
+					},
+				},
+			},
+		},
+	}
+
+	got := ApplyVLLMDefaultsFromProfile(nil, profile, NameVLLM)
+	if got["enforceEager"] != true {
+		t.Fatalf("enforceEager default = %v, want true", got["enforceEager"])
+	}
+	if got["kvCacheDtype"] != "auto" {
+		t.Fatalf("kvCacheDtype default = %v, want auto", got["kvCacheDtype"])
+	}
+}
+
+func TestApplyVLLMDefaultsFromProfilePreservesModelConfig(t *testing.T) {
+	enforceEager := true
+	profile := &aiv1alpha2.GPUProfileSpec{
+		Backends: map[string]aiv1alpha2.BackendProfile{
+			NameVLLM: {
+				VLLM: &aiv1alpha2.VLLMCapabilities{
+					Defaults: &aiv1alpha2.VLLMDefaults{
+						EnforceEager: &enforceEager,
+						KVCacheDtype: "auto",
+					},
+				},
+			},
+		},
+	}
+	config := map[string]any{
+		"enforceEager": false,
+		"kvCacheDtype": "fp8_e4m3",
+	}
+
+	got := ApplyVLLMDefaultsFromProfile(config, profile, NameVLLM)
+	if got["enforceEager"] != false {
+		t.Fatalf("enforceEager = %v, want explicit false", got["enforceEager"])
+	}
+	if got["kvCacheDtype"] != "fp8_e4m3" {
+		t.Fatalf("kvCacheDtype = %v, want explicit fp8_e4m3", got["kvCacheDtype"])
+	}
+}
+
+func TestApplyVLLMDefaultsFromProfileMapsCudagraphNoneToEager(t *testing.T) {
+	profile := &aiv1alpha2.GPUProfileSpec{
+		Backends: map[string]aiv1alpha2.BackendProfile{
+			NameVLLM: {
+				VLLM: &aiv1alpha2.VLLMCapabilities{
+					Defaults: &aiv1alpha2.VLLMDefaults{
+						CudagraphMode: "NONE",
+					},
+				},
+			},
+		},
+	}
+
+	got := ApplyVLLMDefaultsFromProfile(nil, profile, NameVLLM)
+	if got["enforceEager"] != true {
+		t.Fatalf("cudagraphMode=NONE enforceEager = %v, want true", got["enforceEager"])
+	}
+}
+
 func TestGPUArchSupportLevel_String(t *testing.T) {
 	tests := []struct {
 		level GPUArchSupportLevel
