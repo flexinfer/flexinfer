@@ -23,11 +23,14 @@ cp "${REPO_ROOT}/scripts/promote-runtime-digest.sh" "${TMP_ROOT}/scripts/promote
 cp "${REPO_ROOT}/scripts/check-runtime-profile-consistency.sh" "${TMP_ROOT}/scripts/check-runtime-profile-consistency.sh"
 
 digest="sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+rollback_digest="sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 target="registry.harbor.lan/flexinfer/runtime@${digest}"
 
 "${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100 \
   --repo-root "${TMP_ROOT}" \
   --digest "${digest}" \
+  --validation-row "Required canary: gfx1100 textgen" \
+  --rollback-digest "${rollback_digest}" \
   --apply >/tmp/flexinfer-promote-runtime-test.log
 
 profile_image="$(yq -r '.spec.runtime.image' "${TMP_ROOT}/deploy/gpuprofiles/gfx1100.yaml")"
@@ -58,10 +61,22 @@ grep -F "Promotion targets:" /tmp/flexinfer-promote-runtime-dry-run.log >/dev/nu
 grep -F "Validation reminders:" /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
 grep -F "Promotion gate: update .loom/60-validation-matrix.md before --apply." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
 grep -F "Required matrix fields: artifact, context_length, gpu_class, backend, support_level, runtime_image, oci_ref, validation_evidence, observed_failure_mode, canary_command, rollback_digest, spec_roadmap_link, promotion_decision." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
+grep -F "Validation matrix row: REQUIRED for --apply via --validation-row." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
+grep -F "Rollback digest: REQUIRED for --apply via --rollback-digest." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
 grep -F "Required lanes to keep represented: gfx1100 textgen, gfx1100 imagegen, gfx906 textgen/quantization, gfx906 imagegen/offload." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
 grep -F "Smoke gfx1100 textgen and imagegen lanes before Flux reconciliation." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
 
+if "${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100 \
+  --repo-root "${TMP_ROOT}" \
+  --digest "${digest}" \
+  --apply >/tmp/flexinfer-promote-runtime-missing-gate.log 2>&1; then
+  echo "apply without validation gate unexpectedly succeeded" >&2
+  exit 1
+fi
+grep -E -- "--apply requires --validation-row" /tmp/flexinfer-promote-runtime-missing-gate.log >/dev/null
+
 canary_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
+canary_rollback_digest="sha256:2222222222222222222222222222222222222222222222222222222222222222"
 canary_target="registry.harbor.lan/flexinfer/runtime@${canary_digest}"
 profile_before="$(shasum "${TMP_ROOT}/deploy/gpuprofiles/gfx1100.yaml" "${TMP_ROOT}/deploy/system/values-k3s.yaml")"
 "${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100-gemma4-turboquant-experimental \
@@ -71,6 +86,8 @@ grep -E "Model manifest image: deploy/models/gemma4-e4b-turboquant.yaml|Model ma
 "${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100-gemma4-turboquant-experimental \
   --repo-root "${TMP_ROOT}" \
   --digest "${canary_digest}" \
+  --validation-row "gemma4-e4b-turboquant runtime probe" \
+  --rollback-digest "${canary_rollback_digest}" \
   --apply >/tmp/flexinfer-promote-runtime-canary-test.log
 profile_after="$(shasum "${TMP_ROOT}/deploy/gpuprofiles/gfx1100.yaml" "${TMP_ROOT}/deploy/system/values-k3s.yaml")"
 if [[ "${profile_before}" != "${profile_after}" ]]; then

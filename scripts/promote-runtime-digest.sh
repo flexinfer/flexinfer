@@ -14,6 +14,8 @@ PROFILE=""
 DIGEST=""
 IMAGE_REF=""
 RESOLVE_TOOL="auto"
+VALIDATION_ROW=""
+ROLLBACK_DIGEST=""
 
 usage() {
   cat <<'USAGE'
@@ -24,13 +26,15 @@ Flags:
   --digest sha256:<hex>   Use an already-resolved digest instead of querying the registry.
   --image <ref>           Resolve this image ref instead of build/runtime.yaml's profile tag.
   --apply                 Update files in place. Default is dry-run diff only.
+  --validation-row <id>   Required with --apply. Matrix row/artifact proving the canary.
+  --rollback-digest <sha> Required with --apply. Previous known-good runtime digest.
   --repo-root <path>      Repository root, for tests or unusual launch paths.
   --resolve-tool <tool>   auto, crane, or docker. Default: auto.
   -h, --help              Show this help.
 
 Examples:
   scripts/promote-runtime-digest.sh gfx1100
-  scripts/promote-runtime-digest.sh gfx1100 --digest <sha256> --apply
+  scripts/promote-runtime-digest.sh gfx1100 --digest <sha256> --validation-row <artifact> --rollback-digest <previous-sha256> --apply
   scripts/promote-runtime-digest.sh gfx906 --image registry.harbor.lan/flexinfer/runtime:rocm-gfx906
 
 The script updates:
@@ -337,12 +341,22 @@ print_promotion_targets() {
 }
 
 print_validation_reminders() {
-  local profile="$1" arch="$2" apply="$3"
+  local profile="$1" arch="$2" apply="$3" validation_row="$4" rollback_digest="$5"
   echo "Validation reminders:"
   echo "  - Run scripts/check-runtime-profile-consistency.sh after promotion."
   echo "  - Promotion gate: update .loom/60-validation-matrix.md before --apply."
   echo "  - Required matrix fields: artifact, context_length, gpu_class, backend, support_level, runtime_image, oci_ref, validation_evidence, observed_failure_mode, canary_command, rollback_digest, spec_roadmap_link, promotion_decision."
   echo "  - Record profile=${profile}, arch=${arch}, target digest, canary result, rollback digest/ref, and manifest pointers in that row."
+  if [[ -n "${validation_row}" ]]; then
+    echo "  - Validation matrix row: ${validation_row}"
+  else
+    echo "  - Validation matrix row: REQUIRED for --apply via --validation-row."
+  fi
+  if [[ -n "${rollback_digest}" ]]; then
+    echo "  - Rollback digest: ${rollback_digest}"
+  else
+    echo "  - Rollback digest: REQUIRED for --apply via --rollback-digest."
+  fi
   echo "  - Required lanes to keep represented: gfx1100 textgen, gfx1100 imagegen, gfx906 textgen/quantization, gfx906 imagegen/offload."
   case "${arch}" in
     gfx1100)
@@ -356,7 +370,7 @@ print_validation_reminders() {
       ;;
   esac
   if [[ "${apply}" != "true" ]]; then
-    echo "  - Dry-run only: re-run with --apply after the digest and canary plan are validated."
+    echo "  - Dry-run only: re-run with --apply after the validation row is populated and rollback digest is known."
   fi
 }
 
@@ -375,6 +389,16 @@ while [[ $# -gt 0 ]]; do
     --apply)
       APPLY=true
       shift
+      ;;
+    --validation-row)
+      [[ $# -ge 2 ]] || fail "--validation-row requires a value"
+      VALIDATION_ROW="$2"
+      shift 2
+      ;;
+    --rollback-digest)
+      [[ $# -ge 2 ]] || fail "--rollback-digest requires a value"
+      ROLLBACK_DIGEST="$2"
+      shift 2
       ;;
     --repo-root)
       [[ $# -ge 2 ]] || fail "--repo-root requires a value"
@@ -422,6 +446,14 @@ fi
 TARGET_DIGEST="${DIGEST:-$(resolve_digest "${IMAGE_REF}")}"
 TARGET_DIGEST="$(normalize_digest "${TARGET_DIGEST}")"
 TARGET_IMAGE="$(image_repo "${IMAGE_REF}")@${TARGET_DIGEST}"
+if [[ -n "${ROLLBACK_DIGEST}" ]]; then
+  ROLLBACK_DIGEST="$(normalize_digest "${ROLLBACK_DIGEST}")"
+fi
+
+if [[ "${APPLY}" == "true" ]]; then
+  [[ -n "${VALIDATION_ROW}" ]] || fail "--apply requires --validation-row pointing at the populated .loom/60-validation-matrix.md row"
+  [[ -n "${ROLLBACK_DIGEST}" ]] || fail "--apply requires --rollback-digest with the previous known-good runtime digest"
+fi
 
 if [[ "${UPDATE_GPUPROFILE}" == "true" ]]; then
   [[ -f "${PROFILE_FILE}" ]] || fail "GPUProfile file missing: ${PROFILE_FILE}"
@@ -445,12 +477,14 @@ echo "  arch:    ${ARCH}"
 echo "  source:  ${IMAGE_REF}"
 echo "  target:  ${TARGET_IMAGE}"
 echo "  mode:    $([[ "${APPLY}" == "true" ]] && echo apply || echo dry-run)"
+[[ -n "${VALIDATION_ROW}" ]] && echo "  evidence row: ${VALIDATION_ROW}"
+[[ -n "${ROLLBACK_DIGEST}" ]] && echo "  rollback: ${ROLLBACK_DIGEST}"
 echo ""
 print_current_consumers "${PROFILE_FILE}" "${VALUES_FILE}" "${PROFILE}" "${ARCH}" "${UPDATE_GPUPROFILE}" "${UPDATE_VALUES}" "${MODEL_MANIFESTS[@]}"
 echo ""
 print_promotion_targets "${PROFILE_FILE}" "${VALUES_FILE}" "${UPDATE_GPUPROFILE}" "${UPDATE_VALUES}" "${MODEL_MANIFESTS[@]}"
 echo ""
-print_validation_reminders "${PROFILE}" "${ARCH}" "${APPLY}"
+print_validation_reminders "${PROFILE}" "${ARCH}" "${APPLY}" "${VALIDATION_ROW}" "${ROLLBACK_DIGEST}"
 echo ""
 
 if [[ "${APPLY}" == "true" ]]; then

@@ -44,6 +44,9 @@ Operational gate:
 
 - Runtime digest promotion dry-runs must point operators at
   `.loom/60-validation-matrix.md` before `--apply`.
+- Runtime digest promotion applies must include
+  `--validation-row <row/artifact>` and `--rollback-digest <previous-sha256>`;
+  missing gate evidence is a script error, not a reviewer convention.
 - The matrix row must include the target digest/ref, canary command and result,
   rollback digest/ref or rollback manifest, hardware lane, and spec/MR/issue
   pointer.
@@ -81,6 +84,8 @@ Acceptance criteria:
 - [x] `ROADMAP.md` is aligned with the same SD-3 status and evidence artifact.
 - [x] `scripts/promote-runtime-digest.sh` dry-runs remind operators to fill the
       validation matrix gate before applying digest changes.
+- [x] `scripts/promote-runtime-digest.sh --apply` requires a validation row
+      pointer and rollback digest before editing GitOps consumers.
 
 Validation commands for SD-3:
 
