@@ -19,6 +19,10 @@ ollama_go_version: "1.25.7"
 profiles:
   gfx1100:
     tag: "runtime:rocm-gfx1100"
+    promotion:
+      # The managed DaemonSet lanes use the slimmer gfx1100-serving persona.
+      # Keep the broad unified image scoped to the GPUProfile fallback surface.
+      values_runtime_profiles: false
     gpu_vendor: amd
     gpu_arch: gfx1100
     # Pre-built vLLM navi image — vLLM compiled for RDNA3.
@@ -55,6 +59,11 @@ profiles:
 
   gfx1100-serving:
     tag: "runtime:rocm-gfx1100-serving"
+    promotion:
+      # Serving-profile promotion updates the persistent runtime DaemonSets.
+      # GPUProfile fallback/runtime defaults stay on the broad unified image.
+      gpuprofile: false
+      values_runtime_profiles: true
     # Serving persona for persistent runtime pods. This keeps vLLM/diffusers
     # changes away from the legacy utility layers: quantizer, Steam,
     # llama.cpp, and Ollama.
