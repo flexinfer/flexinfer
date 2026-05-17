@@ -325,6 +325,26 @@ actual port. Active fix: make `getBackendPort` prefer the model Service port,
 using the `http` port when present and falling back to the first valid Service
 port before backend defaults.
 
+MR !403 shipped that proxy fix. Branch and MR pipelines passed, master pipeline
+9994 published the updated chart and proxy image, and Helm rolled
+`flexinfer-proxy` to chart `1.0.2+0d0fc833aaa1.3` with proxy image digest
+`sha256:3a650e2b6613be373a81b6d1bb385cc3884eeb2a57e4b38112d598c0527ebb95`.
+Harbor briefly refused image pulls while the VM restarted, so the first restart
+kept the old proxy pod serving; once Harbor recovered, deleting the failed new
+pod retried the pull and the deployment completed.
+
+Final normal-path smoke through `flexinfer-proxy` succeeded:
+
+```text
+POST http://flexinfer-proxy.flexinfer-system.svc.cluster.local/model/qwen3-1p7b-tools-radeonvii/v1/chat/completions
+{"model":"qwen3-1.7b-tools","messages":[{"role":"user","content":"Reply with exactly one word: blue"}],"max_tokens":8,"temperature":0}
+HTTP 200
+content: Blue
+model: qwen3-1.7b-q4_k_m.gguf
+prompt_per_second: 119.15
+predicted_per_second: 69.99
+```
+
 ### 2026-04-18 gemma4-26b-a4b-gptq findings (Slice A1-lite)
 
 - Active serving artifact:
