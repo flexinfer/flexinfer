@@ -8059,3 +8059,71 @@ skills:
         enabled: true
         type: command
         output_format: markdown
+
+  - name: icc-capture-ops
+    categories: [icc, notes, workflow]
+    common:
+      description: |
+        Capture notes for the icc-project-workspaces repo using the mcp-icc-capture MCP server. Format Slack pastes (and future email/meeting pastes) into canonical markdown with frontmatter, and lint existing notes against the spec. This slice ships scaffold + two starter tools; later slices will wire ICC HTTP and file-write capability.
+      instructions: |
+        # ICC Capture Ops
+
+        Standardize note-capture into `icc-project-workspaces/projects/<slug>/<source>/` using the `icc-capture` MCP server.
+
+        ## When to use
+
+        - You have a Slack thread, email, or meeting log to file under an ICC project.
+        - You want to lint an existing project's notes before a review.
+
+        ## Tools
+
+        - `icc-capture__icc_format_slack_paste` — pure formatter. Returns `{markdown, suggested_filename, suggested_path}`. The caller writes the file.
+        - `icc-capture__icc_lint_notes` — walks `projects/<slug>/<source>/`, validates frontmatter + naming, optionally applies safe auto-fixes (`fix=true`).
+
+        ## Frontmatter contract
+
+        Every captured note carries this frontmatter (Slice A documents the canonical spec):
+
+        ```yaml
+        ---
+        project: <project_slug>      # use "_inbox" when unattributed
+        source: slack|email|meetings|research|deliverables|queries
+        classification: public|internal|confidential|possible_phi|confirmed_phi
+        captured_at: <ISO 8601 with TZ>
+        # source-specific fields, e.g. for slack:
+        channel: <channel name>
+        participants: ["alice", "bob"]
+        ---
+        ```
+
+        ## Loop
+
+        1. Call `icc_format_slack_paste` with `text`, `project_slug`, `channel`.
+        2. Review the returned `markdown` + `suggested_path`.
+        3. Write the file (manual today; a file-write tool lands in a later slice).
+        4. Periodically run `icc_lint_notes` with the workspace root to catch drift; pass `fix=true` to auto-correct safe issues.
+
+        ## Limits of this slice
+
+        - No ICC HTTP calls.
+        - No file writes from the tools themselves.
+        - `project:` is never auto-fixed; resolve attribution before saving.
+        - Naming-pattern violations are reported, never auto-renamed (renaming would break refs).
+      always_allow: []
+    targets:
+      codex:
+        enabled: true
+        type: skill
+      claude:
+        enabled: true
+        type: command
+        output_format: markdown
+      kilocode:
+        enabled: true
+        type: rule
+      gemini:
+        enabled: false
+      antigravity:
+        enabled: true
+        type: command
+        output_format: markdown
