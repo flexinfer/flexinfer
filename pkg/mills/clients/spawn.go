@@ -42,6 +42,21 @@ type HUDSpawnConfig struct {
 	RetryBaseDelay time.Duration
 	// RetryMaxDelay caps exponential retry delay. Defaults to 5s.
 	RetryMaxDelay time.Duration
+	// GitRunner runs `git` commands in the spawn worktree to capture the
+	// unified diff + commit messages once the spawn completes. The
+	// operator + spawn pod share an NFS-backed worktree, so the path
+	// passed in SpawnRequest.WorkingDir is readable from the operator's
+	// process. Defaults to execCommandRunner{} (real os/exec). Tests
+	// inject a fake.
+	GitRunner CommandRunner
+	// MaxDiffBytes caps how much of the working-tree diff we serialize
+	// into SpawnResponse.DiffPatch. The rubric prompt has its own 8 KiB
+	// cap; we cap higher here so secret-scan and other downstream gates
+	// can see more context. Defaults to 32 KiB.
+	MaxDiffBytes int
+	// MaxCommitMessagesBytes caps the joined byte length of
+	// SpawnResponse.CommitMessages. Defaults to 8 KiB.
+	MaxCommitMessagesBytes int
 }
 
 // HUDSpawnClient implements pipeline.SpawnClient against the HUD mobile
@@ -54,6 +69,16 @@ type HUDSpawnClient struct {
 	cfg  HUDSpawnConfig
 	http *httpclient.Client
 }
+
+// Default caps on captured diff/commit-message content. Chosen to match
+// gateInputFor + composePrompt expectations: the rubric template
+// re-truncates the diff at 8 KiB before sending to the judge; we keep
+// 32 KiB here so secret-scan and other gates that read the raw
+// SpawnResponse.DiffPatch see more context.
+const (
+	defaultMaxDiffBytes           = 32 * 1024
+	defaultMaxCommitMessagesBytes = 8 * 1024
+)
 
 // NewHUDSpawnClient validates config and returns a ready client.
 func NewHUDSpawnClient(cfg HUDSpawnConfig) (*HUDSpawnClient, error) {
@@ -80,6 +105,15 @@ func NewHUDSpawnClient(cfg HUDSpawnConfig) (*HUDSpawnClient, error) {
 	}
 	if cfg.RetryMaxDelay == 0 {
 		cfg.RetryMaxDelay = 5 * time.Second
+	}
+	if cfg.GitRunner == nil {
+		cfg.GitRunner = execCommandRunner{}
+	}
+	if cfg.MaxDiffBytes <= 0 {
+		cfg.MaxDiffBytes = defaultMaxDiffBytes
+	}
+	if cfg.MaxCommitMessagesBytes <= 0 {
+		cfg.MaxCommitMessagesBytes = defaultMaxCommitMessagesBytes
 	}
 	hcfg := httpclient.DefaultConfig()
 	hcfg.Timeout = cfg.Timeout
@@ -186,12 +220,18 @@ func (c *HUDSpawnClient) Run(ctx context.Context, req pipeline.SpawnRequest) (pi
 		}
 	}
 
-	return c.pollSpawn(ctx, spawnID)
+	return c.pollSpawn(ctx, spawnID, req.WorkingDir, req.BaseBranch)
 }
 
 // Resume implements pipeline.SpawnResumeClient by polling an already
 // accepted HUD spawn id. This lets the Mills operator re-attach after a
 // rollout instead of starting duplicate stage attempts.
+//
+// Resume does not have the original SpawnRequest.WorkingDir/BaseBranch
+// in scope, so the post-terminal git capture is skipped. The M2.5
+// unparseable-retry path is the safety net when a resumed spawn's
+// rubric judge can't see the diff; a subsequent Run attempt will
+// repopulate it.
 func (c *HUDSpawnClient) Resume(ctx context.Context, spawnID string) (pipeline.SpawnResponse, error) {
 	if c == nil || c.http == nil {
 		return pipeline.SpawnResponse{}, errors.New("hud spawn: client not configured")
@@ -199,10 +239,10 @@ func (c *HUDSpawnClient) Resume(ctx context.Context, spawnID string) (pipeline.S
 	if spawnID == "" {
 		return pipeline.SpawnResponse{}, errors.New("hud spawn: resume spawn id required")
 	}
-	return c.pollSpawn(ctx, spawnID)
+	return c.pollSpawn(ctx, spawnID, "", "")
 }
 
-func (c *HUDSpawnClient) pollSpawn(ctx context.Context, spawnID string) (pipeline.SpawnResponse, error) {
+func (c *HUDSpawnClient) pollSpawn(ctx context.Context, spawnID, workingDir, baseBranch string) (pipeline.SpawnResponse, error) {
 	// Poll until terminal.
 	pollCtx, cancel := context.WithTimeout(ctx, c.cfg.PollDeadline)
 	defer cancel()
@@ -222,6 +262,7 @@ func (c *HUDSpawnClient) pollSpawn(ctx context.Context, spawnID string) (pipelin
 		}
 		if isTerminalSpawnStatus(state.Status) {
 			resp := mapTelemetryToResponse(state)
+			c.attachGitContext(ctx, &resp, workingDir, baseBranch)
 			if state.Status != "completed" {
 				return resp, fmt.Errorf("hud spawn %s status=%s: %s", spawnID, state.Status, state.Error)
 			}
@@ -411,6 +452,123 @@ func mapTelemetryToResponse(state *hudSpawnState) pipeline.SpawnResponse {
 	resp.LogTail = strings.Join(logParts, "\n")
 	resp.Artifacts["turn_count"] = tel.TurnCount
 	return resp
+}
+
+// attachGitContext fills resp.DiffPatch + resp.CommitMessages by
+// shelling `git diff` and `git log` in the spawn's worktree. The
+// operator + spawn pods share an NFS-backed worktree, so the operator
+// process can read the working tree HEAD after the spawn pod
+// terminates.
+//
+// Failure modes are best-effort: any git error sets the fields to zero
+// values (empty diff, nil commits) so downstream gates see "nothing to
+// grade" rather than getting an infrastructure error here. The M2.5
+// unparseable-retry path is the safety net for the legitimate
+// nothing-changed case (the canary's no-op edit).
+//
+// The function never returns nil for DiffPatch when there's a worktree
+// to inspect: it returns []byte{} (empty slice) on success-with-no-diff
+// so downstream code can distinguish "ran git, got nothing" from
+// "didn't run git at all".
+func (c *HUDSpawnClient) attachGitContext(ctx context.Context, resp *pipeline.SpawnResponse, workingDir, baseBranch string) {
+	if c == nil || resp == nil {
+		return
+	}
+	if workingDir == "" || baseBranch == "" {
+		// No worktree path or base ref → operator never told us where to
+		// look. Leave Diff/Commits at zero values; gate fallback path
+		// will retry via M2.5's unparseable-handler.
+		return
+	}
+	if c.cfg.GitRunner == nil {
+		return
+	}
+
+	diff := captureGitDiff(ctx, c.cfg.GitRunner, workingDir, baseBranch, c.cfg.MaxDiffBytes)
+	commits := captureGitCommitMessages(ctx, c.cfg.GitRunner, workingDir, baseBranch, c.cfg.MaxCommitMessagesBytes)
+
+	resp.DiffPatch = diff
+	resp.CommitMessages = commits
+}
+
+// captureGitDiff runs `git diff <baseBranch>...HEAD` in workingDir and
+// returns the unified diff capped at maxBytes. The triple-dot form
+// produces the symmetric-difference diff between base and HEAD — i.e.
+// "what changed on this branch since fork from base", which is the
+// view the rubric judge needs to score code review questions.
+//
+// On any git error (worktree missing, base ref unknown, etc.) we
+// return an empty slice — never nil — so callers can distinguish
+// "ran git, no changes" from "git capture was skipped entirely".
+func captureGitDiff(ctx context.Context, runner CommandRunner, workingDir, baseBranch string, maxBytes int) []byte {
+	if runner == nil || workingDir == "" || baseBranch == "" {
+		return nil
+	}
+	stdout, _, code, err := runner.Run(ctx, workingDir, "git", "diff", baseBranch+"...HEAD")
+	if err != nil || code != 0 {
+		// best-effort: return empty slice (not nil) so the response
+		// shape is consistent.
+		return []byte{}
+	}
+	return truncateBytes([]byte(stdout), maxBytes)
+}
+
+// captureGitCommitMessages returns the per-commit message bodies on
+// the current branch since fork from baseBranch. Uses a NUL delimiter
+// so multi-paragraph commit messages don't get mangled by newline
+// splitting.
+func captureGitCommitMessages(ctx context.Context, runner CommandRunner, workingDir, baseBranch string, maxBytes int) []string {
+	if runner == nil || workingDir == "" || baseBranch == "" {
+		return nil
+	}
+	stdout, _, code, err := runner.Run(ctx, workingDir, "git", "log", "--pretty=format:%B%x00", baseBranch+"..HEAD")
+	if err != nil || code != 0 {
+		return nil
+	}
+	parts := strings.Split(strings.TrimRight(stdout, "\x00\n"), "\x00")
+	out := make([]string, 0, len(parts))
+	total := 0
+	for _, p := range parts {
+		msg := strings.TrimSpace(p)
+		if msg == "" {
+			continue
+		}
+		// Reserve room for joining commas in the byte budget so a single
+		// runaway commit message still hits the cap.
+		if maxBytes > 0 && total+len(msg) > maxBytes {
+			remaining := maxBytes - total
+			if remaining > 0 {
+				marker := truncationMarker(len(msg) - remaining)
+				out = append(out, msg[:remaining]+marker)
+			}
+			break
+		}
+		out = append(out, msg)
+		total += len(msg)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// truncateBytes returns the input capped at maxBytes, appending a
+// truncation marker that tells the reader exactly how much was dropped.
+// maxBytes <= 0 disables truncation.
+func truncateBytes(b []byte, maxBytes int) []byte {
+	if maxBytes <= 0 || len(b) <= maxBytes {
+		return b
+	}
+	dropped := len(b) - maxBytes
+	marker := truncationMarker(dropped)
+	out := make([]byte, 0, maxBytes+len(marker))
+	out = append(out, b[:maxBytes]...)
+	out = append(out, marker...)
+	return out
+}
+
+func truncationMarker(dropped int) string {
+	return fmt.Sprintf("\n... [truncated %d bytes]\n", dropped)
 }
 
 // Compile-time interface assertion.
