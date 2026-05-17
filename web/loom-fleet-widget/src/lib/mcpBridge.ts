@@ -106,14 +106,25 @@ function normaliseToolResult(raw: unknown): ToolCallResult {
   return { content: [{ type: "text", text: String(raw ?? "") }] };
 }
 
+// envelope wraps a payload in the {ok, data, meta} shape that the
+// real HUD mobile API returns via writeMobileJSON. Mocks have to
+// match this shape so the hooks' unwrap path is exercised in dev too.
+function envelope(data: unknown): string {
+  return JSON.stringify({
+    ok: true,
+    data,
+    meta: { request_id: "req_mock", timestamp: new Date().toISOString() },
+  });
+}
+
 // MOCK_RESPONSES drive the dev preview. Shape mirrors what the real
-// HUD returns for each relay path so the UI can be developed
-// faithfully without standing up loomd. The dashboard mock is
-// deliberately minimal — enough fields for FleetOverview to render
+// HUD returns for each relay path (envelope-wrapped) so the UI can be
+// developed faithfully without standing up loomd. The dashboard mock
+// is deliberately minimal — enough fields for FleetOverview to render
 // every code path but small enough that the bundle size impact is
 // negligible.
 const MOCK_RESPONSES: Record<string, string> = {
-  loom_fleet_get_dashboard: JSON.stringify({
+  loom_fleet_get_dashboard: envelope({
     daemon_running: true,
     server_count: 47,
     active_sessions: 3,
@@ -125,7 +136,7 @@ const MOCK_RESPONSES: Record<string, string> = {
     spawns: { active: 1, total: 12 },
     last_heartbeat: { agent_id: "claude-code", timestamp: new Date().toISOString(), count_1h: 142 },
   }),
-  loom_fleet_get_stream: JSON.stringify({
+  loom_fleet_get_stream: envelope({
     entries: [
       {
         id: "mock-1",
@@ -157,7 +168,7 @@ const MOCK_RESPONSES: Record<string, string> = {
       },
     ],
   }),
-  loom_fleet_get_handoffs: JSON.stringify({
+  loom_fleet_get_handoffs: envelope({
     handoffs: [
       {
         id: "h-mock-1",
@@ -179,12 +190,12 @@ const MOCK_RESPONSES: Record<string, string> = {
     ],
     total: 2,
   }),
-  loom_fleet_handoff_accept: JSON.stringify({
+  loom_fleet_handoff_accept: envelope({
     status: "accepted",
     handoff_id: "h-mock-1",
     result: { ok: true },
   }),
-  loom_fleet_handoff_reject: JSON.stringify({
+  loom_fleet_handoff_reject: envelope({
     status: "rejected",
     handoff_id: "h-mock-1",
     result: { ok: true },
@@ -195,4 +206,39 @@ const MOCK_RESPONSES: Record<string, string> = {
 // the mock body for one tool. Production code does not call this.
 export function setMockResponse(name: string, body: string): void {
   MOCK_RESPONSES[name] = body;
+}
+
+// MobileEnvelope describes the {ok, data, meta} wrapper the loom HUD
+// mobile API places around every successful response (see
+// internal/hud/domain/mobile/auth.go writeMobileJSON). Hooks pass
+// raw response text through unwrapEnvelope to get at the payload.
+export interface MobileEnvelope<T> {
+  ok: boolean;
+  data?: T;
+  error?: { code?: string; message?: string };
+  meta?: { request_id?: string; timestamp?: string };
+}
+
+// unwrapEnvelope parses the relay text and returns the inner data
+// payload. Accepts an unwrapped body as a fallback so legacy callers
+// or future endpoints that bypass writeMobileJSON keep working. An
+// envelope with `ok: false` surfaces as an error.
+export function unwrapEnvelope<T = unknown>(text: string): { data: T | null; error: string | null } {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    return { data: null, error: `parse failed: ${(err as Error).message}` };
+  }
+  if (parsed && typeof parsed === "object" && "ok" in (parsed as object)) {
+    const env = parsed as MobileEnvelope<T>;
+    if (env.ok === false) {
+      const code = env.error?.code ?? "unknown_error";
+      const msg = env.error?.message ?? "unspecified HUD error";
+      return { data: null, error: `${code}: ${msg}` };
+    }
+    return { data: (env.data ?? null) as T | null, error: null };
+  }
+  // Unwrapped fallback: treat the whole parsed value as the payload.
+  return { data: parsed as T, error: null };
 }

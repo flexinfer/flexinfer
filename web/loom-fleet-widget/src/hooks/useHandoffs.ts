@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { callTool } from "../lib/mcpBridge";
+import { callTool, unwrapEnvelope } from "../lib/mcpBridge";
 
 // Handoff mirrors the HandoffInfo Go DTO returned by
 // /api/mobile/v1/handoffs. Fields are kept lowercase JSON to match
@@ -75,21 +75,17 @@ export function useHandoffs(refreshMs = 8000): HandoffState {
         return;
       }
       const text = result.content[0]?.text ?? "{}";
-      try {
-        const parsed = JSON.parse(text) as { handoffs?: Handoff[]; total?: number };
-        setData({
-          handoffs: parsed.handoffs ?? [],
-          total: parsed.total ?? (parsed.handoffs?.length ?? 0),
-          error: null,
-          loading: false,
-        });
-      } catch (err) {
-        setData((s) => ({
-          ...s,
-          error: `parse failed: ${(err as Error).message}`,
-          loading: false,
-        }));
+      const { data: payload, error } = unwrapEnvelope<{ handoffs?: Handoff[]; total?: number }>(text);
+      if (error) {
+        setData((s) => ({ ...s, error, loading: false }));
+        return;
       }
+      setData({
+        handoffs: payload?.handoffs ?? [],
+        total: payload?.total ?? (payload?.handoffs?.length ?? 0),
+        error: null,
+        loading: false,
+      });
     };
     fetchRef.current = fetchOnce;
 
