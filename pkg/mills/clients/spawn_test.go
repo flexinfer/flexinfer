@@ -516,3 +516,378 @@ func TestIsTerminalSpawnStatus(t *testing.T) {
 		}
 	}
 }
+
+// ----- DiffPatch + CommitMessages capture -----
+
+// spawnTelGitRunner records every invocation and returns canned stdout per
+// invocation key (joined args after "git"). Unmatched keys fall back to
+// exit code 128 with the literal string "unknown" — that's the same
+// shape git produces for missing-ref errors so capture stays best-effort.
+type spawnTelGitRunner struct {
+	mu       sync.Mutex
+	calls    []spawnTelGitCall
+	stdouts  map[string]string
+	stderrs  map[string]string
+	exits    map[string]int
+	errs     map[string]error
+	dirSeen  string
+	fallback spawnTelGitResult
+}
+
+type spawnTelGitCall struct {
+	Dir  string
+	Args []string
+}
+
+type spawnTelGitResult struct {
+	Stdout   string
+	Stderr   string
+	ExitCode int
+	Err      error
+}
+
+func (r *spawnTelGitRunner) Run(_ context.Context, dir, name string, args ...string) (string, string, int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.dirSeen = dir
+	r.calls = append(r.calls, spawnTelGitCall{Dir: dir, Args: append([]string{name}, args...)})
+	key := strings.Join(args, " ")
+	if r.errs != nil {
+		if err, ok := r.errs[key]; ok {
+			return r.stdouts[key], r.stderrs[key], r.exits[key], err
+		}
+	}
+	if r.stdouts != nil {
+		if out, ok := r.stdouts[key]; ok {
+			return out, r.stderrs[key], r.exits[key], nil
+		}
+	}
+	return r.fallback.Stdout, r.fallback.Stderr, r.fallback.ExitCode, r.fallback.Err
+}
+
+func (r *spawnTelGitRunner) callArgs() [][]string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make([][]string, len(r.calls))
+	for i, c := range r.calls {
+		out[i] = append([]string(nil), c.Args...)
+	}
+	return out
+}
+
+// TestRun_PopulatesDiffPatchAndCommitMessages drives a complete
+// Run() against a stub HUD + a fake git runner and asserts both
+// SpawnResponse fields are populated for downstream gate input.
+func TestRun_PopulatesDiffPatchAndCommitMessages(t *testing.T) {
+	diffOut := "diff --git a/testdata/mills-canary/heartbeat.md b/testdata/mills-canary/heartbeat.md\n" +
+		"--- a/testdata/mills-canary/heartbeat.md\n" +
+		"+++ b/testdata/mills-canary/heartbeat.md\n" +
+		"@@\n-old line\n+new line\n"
+	logOut := "feat(canary): bump heartbeat\x00fix(spawn): retry logic\x00"
+
+	gr := &spawnTelGitRunner{
+		stdouts: map[string]string{
+			"diff main...HEAD":                      diffOut,
+			"log --pretty=format:%B%x00 main..HEAD": logOut,
+		},
+	}
+	ft := &hudFakeTransport{
+		post: func(_ *http.Request) (int, any) {
+			return 202, hudSpawnAcceptResponse{SpawnID: "spawn-diff-1", Status: "creating"}
+		},
+		get: func(_ *http.Request) (int, any) {
+			return 200, hudSpawnState{
+				SpawnID: "spawn-diff-1", Status: "completed",
+				Telemetry: &hudSpawnTelemetry{
+					TotalCostUSD: 0.5,
+					FileChanges: []hudFileChange{
+						{Path: "testdata/mills-canary/heartbeat.md", Kind: "modify", LinesAdded: 1, LinesRemoved: 1},
+					},
+				},
+			}
+		},
+	}
+	c := newHUDStub(t, ft)
+	c.cfg.GitRunner = gr
+	req := sampleSpawnReq()
+	req.WorkingDir = "/work/spawn/heartbeat"
+	resp, err := c.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(string(resp.DiffPatch), "testdata/mills-canary/heartbeat.md") {
+		t.Errorf("DiffPatch missing file path; got %q", string(resp.DiffPatch))
+	}
+	if len(resp.CommitMessages) != 2 {
+		t.Fatalf("CommitMessages len = %d, want 2: %#v", len(resp.CommitMessages), resp.CommitMessages)
+	}
+	if resp.CommitMessages[0] != "feat(canary): bump heartbeat" {
+		t.Errorf("CommitMessages[0] = %q", resp.CommitMessages[0])
+	}
+	if resp.CommitMessages[1] != "fix(spawn): retry logic" {
+		t.Errorf("CommitMessages[1] = %q", resp.CommitMessages[1])
+	}
+	// Capture should be rooted at WorkingDir, not the operator's CWD.
+	if gr.dirSeen != "/work/spawn/heartbeat" {
+		t.Errorf("git ran in dir %q, want /work/spawn/heartbeat", gr.dirSeen)
+	}
+	// Both git diff + git log must be invoked exactly once.
+	calls := gr.callArgs()
+	wantArgs := map[string]bool{
+		"git diff main...HEAD":                      true,
+		"git log --pretty=format:%B%x00 main..HEAD": true,
+	}
+	for _, c := range calls {
+		key := strings.Join(c, " ")
+		delete(wantArgs, key)
+	}
+	if len(wantArgs) > 0 {
+		t.Errorf("missing git calls: %v; saw %v", wantArgs, calls)
+	}
+}
+
+// TestRun_DiffPatchTruncatedAtCap synthesizes an oversized diff and
+// confirms the byte cap + marker land on SpawnResponse.DiffPatch. The
+// rubric prompt has its own 8 KiB cap; this test guards the 32 KiB
+// spawn-client cap so the marker is visible in stage_results artifacts
+// even when the prompt re-truncates.
+func TestRun_DiffPatchTruncatedAtCap(t *testing.T) {
+	bigDiff := strings.Repeat("x", 64*1024)
+	gr := &spawnTelGitRunner{
+		stdouts: map[string]string{
+			"diff main...HEAD":                      bigDiff,
+			"log --pretty=format:%B%x00 main..HEAD": "",
+		},
+	}
+	ft := &hudFakeTransport{
+		post: func(_ *http.Request) (int, any) {
+			return 202, hudSpawnAcceptResponse{SpawnID: "spawn-big", Status: "creating"}
+		},
+		get: func(_ *http.Request) (int, any) {
+			return 200, hudSpawnState{SpawnID: "spawn-big", Status: "completed", Telemetry: &hudSpawnTelemetry{}}
+		},
+	}
+	c := newHUDStub(t, ft)
+	c.cfg.GitRunner = gr
+	c.cfg.MaxDiffBytes = 4 * 1024
+	req := sampleSpawnReq()
+	req.WorkingDir = "/work/spawn/big"
+	resp, err := c.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if !strings.Contains(string(resp.DiffPatch), "[truncated") {
+		t.Errorf("DiffPatch missing truncation marker; len=%d", len(resp.DiffPatch))
+	}
+	// Allow marker overhead on top of the byte cap.
+	if len(resp.DiffPatch) > 4*1024+128 {
+		t.Errorf("DiffPatch len = %d, want <= %d", len(resp.DiffPatch), 4*1024+128)
+	}
+}
+
+// TestRun_CommitMessagesTruncatedAtCap drives the per-message byte
+// budget: a runaway commit body gets truncated, but earlier commits
+// that fit are preserved intact.
+func TestRun_CommitMessagesTruncatedAtCap(t *testing.T) {
+	big := strings.Repeat("y", 12*1024)
+	logOut := "feat: tiny\x00" + big + "\x00"
+	gr := &spawnTelGitRunner{
+		stdouts: map[string]string{
+			"diff main...HEAD":                      "",
+			"log --pretty=format:%B%x00 main..HEAD": logOut,
+		},
+	}
+	ft := &hudFakeTransport{
+		post: func(_ *http.Request) (int, any) {
+			return 202, hudSpawnAcceptResponse{SpawnID: "spawn-big-msg"}
+		},
+		get: func(_ *http.Request) (int, any) {
+			return 200, hudSpawnState{SpawnID: "spawn-big-msg", Status: "completed", Telemetry: &hudSpawnTelemetry{}}
+		},
+	}
+	c := newHUDStub(t, ft)
+	c.cfg.GitRunner = gr
+	c.cfg.MaxCommitMessagesBytes = 4 * 1024
+	req := sampleSpawnReq()
+	req.WorkingDir = "/work/spawn/msgs"
+	resp, err := c.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if len(resp.CommitMessages) != 2 {
+		t.Fatalf("CommitMessages len = %d, want 2", len(resp.CommitMessages))
+	}
+	if resp.CommitMessages[0] != "feat: tiny" {
+		t.Errorf("first message = %q, want %q (small msg should be preserved)", resp.CommitMessages[0], "feat: tiny")
+	}
+	if !strings.Contains(resp.CommitMessages[1], "[truncated") {
+		t.Errorf("second message missing truncation marker; got prefix %q", resp.CommitMessages[1][:64])
+	}
+}
+
+// TestRun_EmptyWorktreeYieldsEmptyDiff covers the canary's no-op edit
+// case: the spawn ran but the working tree carries no changes vs base.
+// The post_review_gate's M2.5 retry-on-unparseable path is the safety
+// net for the "judge has nothing to grade" outcome; this test just
+// guarantees DiffPatch is the empty slice (not nil, not absent) so
+// downstream code can distinguish "ran git, nothing changed" from
+// "didn't run git at all".
+func TestRun_EmptyWorktreeYieldsEmptyDiff(t *testing.T) {
+	gr := &spawnTelGitRunner{
+		stdouts: map[string]string{
+			"diff main...HEAD":                      "",
+			"log --pretty=format:%B%x00 main..HEAD": "",
+		},
+	}
+	ft := &hudFakeTransport{
+		post: func(_ *http.Request) (int, any) {
+			return 202, hudSpawnAcceptResponse{SpawnID: "spawn-empty"}
+		},
+		get: func(_ *http.Request) (int, any) {
+			return 200, hudSpawnState{SpawnID: "spawn-empty", Status: "completed", Telemetry: &hudSpawnTelemetry{}}
+		},
+	}
+	c := newHUDStub(t, ft)
+	c.cfg.GitRunner = gr
+	req := sampleSpawnReq()
+	req.WorkingDir = "/work/spawn/empty"
+	resp, err := c.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if resp.DiffPatch == nil {
+		t.Error("DiffPatch is nil; want non-nil empty slice so downstream sees 'ran git, nothing changed'")
+	}
+	if len(resp.DiffPatch) != 0 {
+		t.Errorf("DiffPatch should be empty for unchanged worktree; got %q", string(resp.DiffPatch))
+	}
+	if resp.CommitMessages != nil {
+		t.Errorf("CommitMessages should be nil when no commits exist; got %v", resp.CommitMessages)
+	}
+}
+
+// TestRun_GitFailureFallsBackToEmptyCapture guards the operator
+// against an infrastructure-level git failure (worktree gone after pod
+// terminated, base ref missing, etc). The spawn result must still be
+// returned — DiffPatch becomes empty so the M2.5 retry path can decide
+// what to do.
+func TestRun_GitFailureFallsBackToEmptyCapture(t *testing.T) {
+	gr := &spawnTelGitRunner{
+		stdouts: map[string]string{
+			"diff main...HEAD":                      "irrelevant",
+			"log --pretty=format:%B%x00 main..HEAD": "ignored",
+		},
+		exits: map[string]int{
+			"diff main...HEAD":                      128,
+			"log --pretty=format:%B%x00 main..HEAD": 128,
+		},
+		stderrs: map[string]string{
+			"diff main...HEAD": "fatal: bad revision 'main...HEAD'",
+		},
+	}
+	ft := &hudFakeTransport{
+		post: func(_ *http.Request) (int, any) {
+			return 202, hudSpawnAcceptResponse{SpawnID: "spawn-git-fail"}
+		},
+		get: func(_ *http.Request) (int, any) {
+			return 200, hudSpawnState{SpawnID: "spawn-git-fail", Status: "completed", Telemetry: &hudSpawnTelemetry{}}
+		},
+	}
+	c := newHUDStub(t, ft)
+	c.cfg.GitRunner = gr
+	req := sampleSpawnReq()
+	req.WorkingDir = "/work/spawn/broken"
+	resp, err := c.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	// Diff capture failed → empty slice (not nil), so downstream knows
+	// we tried.
+	if resp.DiffPatch == nil || len(resp.DiffPatch) != 0 {
+		t.Errorf("DiffPatch should be empty after git failure; got %q", string(resp.DiffPatch))
+	}
+	if resp.CommitMessages != nil {
+		t.Errorf("CommitMessages should be nil after git failure; got %v", resp.CommitMessages)
+	}
+}
+
+// TestRun_NoWorktreeSkipsGitCapture exercises the legacy code path:
+// stages that don't pass a WorkingDir + BaseBranch must not attempt
+// git capture. This is also the Resume() path (Resume can't recover
+// the original WorkingDir).
+func TestRun_NoWorktreeSkipsGitCapture(t *testing.T) {
+	gr := &spawnTelGitRunner{
+		stdouts: map[string]string{},
+	}
+	ft := &hudFakeTransport{
+		post: func(_ *http.Request) (int, any) {
+			return 202, hudSpawnAcceptResponse{SpawnID: "spawn-no-wd"}
+		},
+		get: func(_ *http.Request) (int, any) {
+			return 200, hudSpawnState{SpawnID: "spawn-no-wd", Status: "completed", Telemetry: &hudSpawnTelemetry{}}
+		},
+	}
+	c := newHUDStub(t, ft)
+	c.cfg.GitRunner = gr
+	req := sampleSpawnReq()
+	req.WorkingDir = "" // operator omitted
+	resp, err := c.Run(context.Background(), req)
+	if err != nil {
+		t.Fatalf("run: %v", err)
+	}
+	if resp.DiffPatch != nil {
+		t.Errorf("DiffPatch should stay nil when WorkingDir is empty; got %q", string(resp.DiffPatch))
+	}
+	if resp.CommitMessages != nil {
+		t.Errorf("CommitMessages should stay nil when WorkingDir is empty; got %v", resp.CommitMessages)
+	}
+	if len(gr.callArgs()) != 0 {
+		t.Errorf("git runner should not be invoked; saw %v", gr.callArgs())
+	}
+}
+
+// TestResume_SkipsGitCapture mirrors the WorkingDir-empty case for the
+// Resume() entrypoint: the operator can't recover the WorkingDir
+// across rollouts, so the capture is intentionally skipped. The M2.5
+// retry path keeps the pipeline alive when this happens.
+func TestResume_SkipsGitCapture(t *testing.T) {
+	gr := &spawnTelGitRunner{
+		stdouts: map[string]string{},
+	}
+	ft := &hudFakeTransport{
+		get: func(_ *http.Request) (int, any) {
+			return 200, hudSpawnState{SpawnID: "spawn-resume-1", Status: "completed", Telemetry: &hudSpawnTelemetry{TotalCostUSD: 0.1}}
+		},
+	}
+	c := newHUDStub(t, ft)
+	c.cfg.GitRunner = gr
+	resp, err := c.Resume(context.Background(), "spawn-resume-1")
+	if err != nil {
+		t.Fatalf("resume: %v", err)
+	}
+	if resp.DiffPatch != nil || resp.CommitMessages != nil {
+		t.Errorf("Resume should leave Diff/Commits unset; got Diff=%q Commits=%v", string(resp.DiffPatch), resp.CommitMessages)
+	}
+	if len(gr.callArgs()) != 0 {
+		t.Errorf("git runner should not be invoked on Resume; saw %v", gr.callArgs())
+	}
+}
+
+// TestNewHUDSpawnClient_DefaultsGitConfig confirms the constructor
+// fills in the default git runner + byte caps so callers don't have
+// to wire them by hand.
+func TestNewHUDSpawnClient_DefaultsGitConfig(t *testing.T) {
+	c, err := NewHUDSpawnClient(HUDSpawnConfig{BaseURL: "x", Token: "y"})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	if c.cfg.GitRunner == nil {
+		t.Error("default GitRunner not installed")
+	}
+	if c.cfg.MaxDiffBytes != defaultMaxDiffBytes {
+		t.Errorf("MaxDiffBytes default = %d, want %d", c.cfg.MaxDiffBytes, defaultMaxDiffBytes)
+	}
+	if c.cfg.MaxCommitMessagesBytes != defaultMaxCommitMessagesBytes {
+		t.Errorf("MaxCommitMessagesBytes default = %d, want %d", c.cfg.MaxCommitMessagesBytes, defaultMaxCommitMessagesBytes)
+	}
+}
