@@ -73,6 +73,9 @@ Promotion-ready checklist:
 
 - Runtime image is digest-pinned, or the row explains why no runtime image is
   involved.
+- `scripts/promote-runtime-digest.sh --apply` is allowed only when the operator
+  passes `--validation-row <row/artifact>` and `--rollback-digest
+  <previous-sha256>` for the populated row.
 - Canary command proves the target reaches Ready and returns coherent output, or
   the row is explicitly `block`, `fail`, `skip`, or `pending`.
 - Rollback digest/ref or rollback manifest path is present.
