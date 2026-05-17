@@ -63,16 +63,23 @@ type ContextInfo struct {
 }
 
 type IndexStats struct {
-	RepoID       string          `json:"repo_id"`
-	Root         string          `json:"root"`
-	FilesTotal   int             `json:"files_total"`
-	FilesDone    int             `json:"files_done"`
-	FilesSkipped int             `json:"files_skipped"`
-	ChunksTotal  int             `json:"chunks_total"`
-	Errors       int             `json:"errors"`
-	StartedAt    time.Time       `json:"started_at"`
-	FinishedAt   time.Time       `json:"finished_at,omitempty"`
-	Stages       IndexStageStats `json:"stages,omitempty"`
+	RepoID       string `json:"repo_id"`
+	Root         string `json:"root"`
+	FilesTotal   int    `json:"files_total"`
+	FilesDone    int    `json:"files_done"`
+	FilesSkipped int    `json:"files_skipped"`
+	ChunksTotal  int    `json:"chunks_total"`
+	Errors       int    `json:"errors"`
+	// FlushWarnings counts non-fatal failures of the trailing
+	// Qdrant Flush call at end of the indexing run. Prior writes are
+	// still durable via Qdrant's WAL fsync when this happens; the
+	// counter exists so operators can observe transport flakiness
+	// without conflating it with hard indexing errors.
+	FlushWarnings    int             `json:"flush_warnings,omitempty"`
+	LastFlushWarning string          `json:"last_flush_warning,omitempty"`
+	StartedAt        time.Time       `json:"started_at"`
+	FinishedAt       time.Time       `json:"finished_at,omitempty"`
+	Stages           IndexStageStats `json:"stages,omitempty"`
 }
 
 type WatchStats struct {

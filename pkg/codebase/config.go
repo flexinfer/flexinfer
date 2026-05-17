@@ -28,19 +28,22 @@ type Config struct {
 	IndexConcurrency int
 	ScrollLimit      int
 
-	// UpsertWait controls whether each bulk-upsert batch blocks until Qdrant
-	// has fsynced WAL and finished HNSW reindex on the affected segments
-	// (true) or returns as soon as Qdrant has queued the write (false).
+	// UpsertBlocking controls whether each bulk-upsert batch blocks until
+	// Qdrant has fsynced WAL and finished HNSW reindex on the affected
+	// segments (true) or returns as soon as Qdrant has queued the write
+	// (false).
 	//
-	// Default is false: 5-10x faster bulk indexing because Qdrant batches
-	// HNSW work in the background instead of serializing it on the response
-	// path. The pipeline still issues a wait=true call on the LAST batch of
-	// every flush so that callers observing job status=done can trust the
-	// data is durable on disk for that index job.
+	// Default is false: all bulk batches return as soon as Qdrant has
+	// queued the write. Durability of the indexing run is proved via a
+	// single trailing Flush() call after the run completes (failure of
+	// which is logged but does not fail the job — prior writes are still
+	// durable via WAL fsync, flush_interval_sec=5 default server-side).
 	//
-	// Flip via CODEBASE_UPSERT_WAIT=true as a safety hatch if a deployment
-	// needs the old synchronous behavior without a code change.
-	UpsertWait bool
+	// Flip via CODEBASE_UPSERT_BLOCKING=true as a safety hatch if a
+	// deployment wants every batch to block on commit. The older
+	// CODEBASE_UPSERT_WAIT name is still honored for backward
+	// compatibility.
+	UpsertBlocking bool
 
 	MaxFileBytes int64
 
@@ -81,9 +84,12 @@ func LoadConfigFromEnv() (Config, error) {
 		ScrollLimit:      env.IntWithZero("CODEBASE_SCROLL_LIMIT", 256),
 
 		// Default false: bulk batches do not block on WAL fsync + HNSW
-		// reindex. The final batch of every flush still uses wait=true so
-		// "index job done" implies "data durable in Qdrant".
-		UpsertWait: env.Bool("CODEBASE_UPSERT_WAIT", false),
+		// reindex. Durability of the indexing run is established via a
+		// single trailing Flush() call after the run completes. Operators
+		// who do not trust WAL fsync can force every batch to block by
+		// setting CODEBASE_UPSERT_BLOCKING=true (or the legacy
+		// CODEBASE_UPSERT_WAIT name).
+		UpsertBlocking: env.Bool("CODEBASE_UPSERT_BLOCKING", env.Bool("CODEBASE_UPSERT_WAIT", false)),
 
 		MaxFileBytes: env.Int64("CODEBASE_MAX_FILE_BYTES", 2*1024*1024), // 2MiB per file by default
 

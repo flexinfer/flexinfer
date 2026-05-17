@@ -66,13 +66,17 @@ spec:
             # to the default 30s.
             - name: HTTP_TIMEOUT
               value: "300"
-            # Larger upsert batches are safe again now that bulk batches
-            # default to wait=false (only the final batch of each flush
-            # blocks on Qdrant's WAL+HNSW), and HTTP_TIMEOUT=300 leaves
-            # plenty of headroom for the trailing wait=true call. Bumped
-            # from 32 back to 128 to amortize round-trip overhead.
-            # Rollback hatch: set CODEBASE_UPSERT_WAIT=true to force
-            # wait=true on every batch without a code change.
+            # Larger upsert batches are safe because all bulk batches
+            # run with wait=false; durability of the indexing run is
+            # established by a single trailing Flush() call after the
+            # run completes (failure of which is logged as
+            # flush_warnings but does NOT mark the job failed — data is
+            # durable via Qdrant's WAL fsync regardless). HTTP_TIMEOUT=300
+            # is retained as headroom for that trailing round-trip.
+            # Bumped from 32 back to 128 to amortize round-trip overhead.
+            # Rollback hatch: set CODEBASE_UPSERT_BLOCKING=true (or the
+            # legacy CODEBASE_UPSERT_WAIT=true) to force wait=true on
+            # every batch without a code change.
             - name: CODEBASE_UPSERT_BATCH_SIZE
               value: "128"
             - name: MCP_TRANSPORT
