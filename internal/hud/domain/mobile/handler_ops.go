@@ -1,6 +1,8 @@
 package mobile
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
@@ -310,6 +312,130 @@ func (d *MobileDomain) handleMobileHandoffs(w http.ResponseWriter, r *http.Reque
 	d.writeMobileJSON(w, http.StatusOK, map[string]any{
 		"handoffs": handoffs,
 		"total":    len(handoffs),
+	})
+}
+
+// handleMobileHandoffAccept accepts a handoff via the agent bridge.
+// Body shape mirrors the existing /api/handoffs/{id}/accept endpoint:
+// either session_id or target_agent_id must be provided (the latter
+// resolves to the agent's active session). import_entries is optional.
+//
+// Slice 2-β of the cross-agent GUI integration plan: lets the loom
+// fleet widget surface an Accept button on each pending handoff card
+// without leaving the host (Claude/ChatGPT) UI.
+func (d *MobileDomain) handleMobileHandoffAccept(w http.ResponseWriter, r *http.Request) {
+	if !d.requireMobileScope(w, r, ScopeRead) {
+		return
+	}
+
+	handoffID := strings.TrimSpace(r.PathValue("handoff_id"))
+	if handoffID == "" {
+		d.writeMobileError(w, http.StatusBadRequest, "MISSING_HANDOFF_ID", "handoff_id is required")
+		return
+	}
+
+	var body struct {
+		SessionID     string `json:"session_id"`
+		TargetAgentID string `json:"target_agent_id"`
+		ImportEntries bool   `json:"import_entries"`
+	}
+	if r.Body != nil {
+		data, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+		if err != nil {
+			d.writeMobileError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+			return
+		}
+		if len(strings.TrimSpace(string(data))) > 0 {
+			if err := json.Unmarshal(data, &body); err != nil {
+				d.writeMobileError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+				return
+			}
+		}
+	}
+	body.SessionID = strings.TrimSpace(body.SessionID)
+	body.TargetAgentID = strings.TrimSpace(body.TargetAgentID)
+
+	if body.SessionID == "" {
+		if body.TargetAgentID == "" {
+			d.writeMobileError(w, http.StatusBadRequest, "MISSING_SESSION", "session_id or target_agent_id is required")
+			return
+		}
+		active, err := d.deps.Agent().GetActiveSession(body.TargetAgentID)
+		if err != nil {
+			d.writeMobileError(w, http.StatusBadGateway, "RESOLVE_SESSION_FAILED", err.Error())
+			return
+		}
+		if active == nil || strings.TrimSpace(active.ID) == "" {
+			d.writeMobileError(w, http.StatusBadRequest, "NO_ACTIVE_SESSION", "target agent has no active session")
+			return
+		}
+		body.SessionID = strings.TrimSpace(active.ID)
+	}
+
+	result, err := d.deps.Agent().HandoffAccept(bridge.HandoffAcceptParams{
+		HandoffID:     handoffID,
+		SessionID:     body.SessionID,
+		ImportEntries: body.ImportEntries,
+	})
+	if err != nil {
+		d.writeMobileError(w, http.StatusBadGateway, "HANDOFF_ACCEPT_FAILED", err.Error())
+		return
+	}
+
+	d.deps.Logger().Info("handoff accepted via mobile", "handoff_id", handoffID, "session_id", body.SessionID)
+	d.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"status":     "accepted",
+		"handoff_id": handoffID,
+		"session_id": body.SessionID,
+		"result":     result,
+	})
+}
+
+// handleMobileHandoffReject marks a handoff rejected. Reason is
+// optional; when present it is forwarded to the source agent via
+// agent_handoff_reject so they understand why.
+func (d *MobileDomain) handleMobileHandoffReject(w http.ResponseWriter, r *http.Request) {
+	if !d.requireMobileScope(w, r, ScopeRead) {
+		return
+	}
+
+	handoffID := strings.TrimSpace(r.PathValue("handoff_id"))
+	if handoffID == "" {
+		d.writeMobileError(w, http.StatusBadRequest, "MISSING_HANDOFF_ID", "handoff_id is required")
+		return
+	}
+
+	var body struct {
+		Reason string `json:"reason"`
+	}
+	if r.Body != nil {
+		data, err := io.ReadAll(io.LimitReader(r.Body, 4096))
+		if err != nil {
+			d.writeMobileError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+			return
+		}
+		if len(strings.TrimSpace(string(data))) > 0 {
+			if err := json.Unmarshal(data, &body); err != nil {
+				d.writeMobileError(w, http.StatusBadRequest, "INVALID_BODY", "invalid request body")
+				return
+			}
+		}
+	}
+
+	result, err := d.deps.Agent().HandoffReject(bridge.HandoffRejectParams{
+		HandoffID: handoffID,
+		Reason:    strings.TrimSpace(body.Reason),
+	})
+	if err != nil {
+		d.writeMobileError(w, http.StatusBadGateway, "HANDOFF_REJECT_FAILED", err.Error())
+		return
+	}
+
+	d.deps.Logger().Info("handoff rejected via mobile", "handoff_id", handoffID, "reason_len", len(body.Reason))
+	d.writeMobileJSON(w, http.StatusOK, map[string]any{
+		"status":     "rejected",
+		"handoff_id": handoffID,
+		"result":     result,
 	})
 }
 

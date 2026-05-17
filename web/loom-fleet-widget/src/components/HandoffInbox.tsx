@@ -1,15 +1,15 @@
+import { useState } from "react";
 import { useHandoffs, type Handoff } from "../hooks/useHandoffs";
 
-// HandoffInbox renders the pending handoff inbox as a stack of cards.
-// Slice 2-α is read-only — the cards show the from/to + summary +
-// age, and instruct the user how to accept/reject from outside the
-// widget. Slice 2-β adds in-widget Accept/Reject buttons once the
-// HUD exposes POST /handoffs/{id}/{accept,reject} endpoints.
+// HandoffInbox renders the pending handoff inbox as a stack of cards
+// with inline Accept/Reject buttons (slice 2-β). The Accept button
+// resolves the destination session by handing target_agent_id to the
+// HUD, which looks up the active session for that agent. Reject
+// captures an optional reason via a small inline prompt.
 export function HandoffInbox({ maxRows = 5 }: { maxRows?: number }) {
-  const { handoffs, total, error, loading } = useHandoffs();
+  const state = useHandoffs();
+  const { handoffs, total, error, loading, pendingAction, actionError, accept, reject } = state;
 
-  // Only surface PENDING handoffs in the inbox; accepted/rejected
-  // ones live in the timeline ticker instead.
   const pending = handoffs.filter((h) => isPending(h.status));
 
   if (error) {
@@ -49,9 +49,18 @@ export function HandoffInbox({ maxRows = 5 }: { maxRows?: number }) {
         Pending handoffs
         <span className="inbox-count">{pending.length}</span>
       </div>
+      {actionError && <div className="banner banner-error">{actionError}</div>}
       <ul className="inbox-list">
         {visible.map((h) => (
-          <HandoffCard key={h.id} handoff={h} />
+          <HandoffCard
+            key={h.id}
+            handoff={h}
+            busy={pendingAction === h.id}
+            onAccept={() =>
+              accept(h.id, { targetAgentID: h.to_agent || h.target_agent_id })
+            }
+            onReject={(reason) => reject(h.id, { reason })}
+          />
         ))}
       </ul>
       {pending.length > maxRows && (
@@ -63,8 +72,21 @@ export function HandoffInbox({ maxRows = 5 }: { maxRows?: number }) {
   );
 }
 
-function HandoffCard({ handoff }: { handoff: Handoff }) {
+function HandoffCard({
+  handoff,
+  busy,
+  onAccept,
+  onReject,
+}: {
+  handoff: Handoff;
+  busy: boolean;
+  onAccept: () => Promise<boolean>;
+  onReject: (reason: string) => Promise<boolean>;
+}) {
+  const [rejecting, setRejecting] = useState(false);
+  const [reason, setReason] = useState("");
   const target = handoff.to_agent || handoff.target_agent_id || "any";
+
   return (
     <li className="card-inner">
       <div className="card-head">
@@ -77,10 +99,59 @@ function HandoffCard({ handoff }: { handoff: Handoff }) {
       {handoff.context && (
         <div className="card-context">{truncate(handoff.context, 140)}</div>
       )}
-      <div className="card-action-hint">
-        Accept/reject via <code>loom agent</code> or the HUD; in-widget buttons
-        ship in slice 2-β.
-      </div>
+
+      {rejecting ? (
+        <div className="card-reject-row">
+          <input
+            className="card-reason"
+            type="text"
+            placeholder="optional reason"
+            value={reason}
+            disabled={busy}
+            onChange={(e) => setReason(e.target.value)}
+          />
+          <button
+            className="card-btn card-btn-reject"
+            disabled={busy}
+            onClick={async () => {
+              await onReject(reason);
+              setRejecting(false);
+              setReason("");
+            }}
+          >
+            confirm reject
+          </button>
+          <button
+            className="card-btn card-btn-cancel"
+            disabled={busy}
+            onClick={() => {
+              setRejecting(false);
+              setReason("");
+            }}
+          >
+            cancel
+          </button>
+        </div>
+      ) : (
+        <div className="card-actions">
+          <button
+            className="card-btn card-btn-accept"
+            disabled={busy}
+            onClick={() => {
+              void onAccept();
+            }}
+          >
+            {busy ? "accepting…" : "accept"}
+          </button>
+          <button
+            className="card-btn card-btn-reject"
+            disabled={busy}
+            onClick={() => setRejecting(true)}
+          >
+            reject
+          </button>
+        </div>
+      )}
     </li>
   );
 }

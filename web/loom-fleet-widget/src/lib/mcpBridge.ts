@@ -179,6 +179,16 @@ const MOCK_RESPONSES: Record<string, string> = {
     ],
     total: 2,
   }),
+  loom_fleet_handoff_accept: JSON.stringify({
+    status: "accepted",
+    handoff_id: "h-mock-1",
+    result: { ok: true },
+  }),
+  loom_fleet_handoff_reject: JSON.stringify({
+    status: "rejected",
+    handoff_id: "h-mock-1",
+    result: { ok: true },
+  }),
 };
 
 // setMockResponse is exported so tests (or interactive dev) can swap

@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -39,25 +40,34 @@ const (
 	widgetURI      = "ui://widget/loom-fleet.html"
 	widgetMimeType = "text/html"
 
-	toolShow      = "loom_fleet_show"
-	toolDashboard = "loom_fleet_get_dashboard"
-	toolPresence  = "loom_fleet_get_presence"
-	toolSessions  = "loom_fleet_get_sessions"
-	toolStream    = "loom_fleet_get_stream"
-	toolHandoffs  = "loom_fleet_get_handoffs"
+	toolShow          = "loom_fleet_show"
+	toolDashboard     = "loom_fleet_get_dashboard"
+	toolPresence      = "loom_fleet_get_presence"
+	toolSessions      = "loom_fleet_get_sessions"
+	toolStream        = "loom_fleet_get_stream"
+	toolHandoffs      = "loom_fleet_get_handoffs"
+	toolHandoffAccept = "loom_fleet_handoff_accept"
+	toolHandoffReject = "loom_fleet_handoff_reject"
 
-	pathDashboard = "/api/mobile/v1/dashboard"
-	pathPresence  = "/api/mobile/v1/presence"
-	pathSessions  = "/api/mobile/v1/sessions"
-	pathStream    = "/api/mobile/v1/stream"
-	pathHandoffs  = "/api/mobile/v1/handoffs"
+	pathDashboard     = "/api/mobile/v1/dashboard"
+	pathPresence      = "/api/mobile/v1/presence"
+	pathSessions      = "/api/mobile/v1/sessions"
+	pathStream        = "/api/mobile/v1/stream"
+	pathHandoffs      = "/api/mobile/v1/handoffs"
+	pathHandoffAccept = "/api/mobile/v1/handoffs/{handoff_id}/accept"
+	pathHandoffReject = "/api/mobile/v1/handoffs/{handoff_id}/reject"
 )
 
 // relayPaths is the HUD-path allowlist passed to hudClient.get. Each
-// relay tool maps to exactly one path; the indirection keeps the
+// GET relay tool maps to exactly one path; the indirection keeps the
 // allowlist enforced even if a future code change accidentally passes
 // user input through.
 var relayPaths = []string{pathDashboard, pathPresence, pathSessions, pathStream, pathHandoffs}
+
+// relayPostPaths is the matching allowlist for hudClient.post. These
+// are TEMPLATES — placeholders like {handoff_id} are substituted from
+// validated input before the request is built. See hudClient.post.
+var relayPostPaths = []string{pathHandoffAccept, pathHandoffReject}
 
 //go:embed widget.html
 var widgetHTML []byte
@@ -273,19 +283,49 @@ func (s *server) handleToolsList() (any, *rpcError) {
 		"description": "Fetch the loom HUD pending agent handoff inbox (cross-agent coordination). Relay; widget-facing.",
 		"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 	}
-	return map[string]any{"tools": []any{show, dashboard, presence, sessions, stream, handoffs}}, nil
+	handoffAccept := map[string]any{
+		"name":        toolHandoffAccept,
+		"description": "Accept a pending agent handoff. Either session_id or target_agent_id is required (target_agent_id auto-resolves the destination agent's active session). Relay; widget-facing.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"handoff_id":      map[string]any{"type": "string"},
+				"session_id":      map[string]any{"type": "string"},
+				"target_agent_id": map[string]any{"type": "string"},
+				"import_entries":  map[string]any{"type": "boolean"},
+			},
+			"required": []string{"handoff_id"},
+		},
+	}
+	handoffReject := map[string]any{
+		"name":        toolHandoffReject,
+		"description": "Reject a pending agent handoff. Optional reason is surfaced to the source agent. Relay; widget-facing.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"handoff_id": map[string]any{"type": "string"},
+				"reason":     map[string]any{"type": "string"},
+			},
+			"required": []string{"handoff_id"},
+		},
+	}
+	return map[string]any{"tools": []any{show, dashboard, presence, sessions, stream, handoffs, handoffAccept, handoffReject}}, nil
 }
 
-// handleToolsCall routes the four tools:
+// handleToolsCall routes the tools the widget can invoke:
 //   - loom_fleet_show: returns a short text summary for the LLM and
 //     the widget pointer in _meta so the host renders inline.
-//   - loom_fleet_get_{dashboard,presence,sessions}: relay HUD JSON
-//     back as a text content block. The widget uses this via the MCP
-//     Apps bridge to refresh its data without ever seeing the bearer
-//     token.
+//   - loom_fleet_get_{dashboard,presence,sessions,stream,handoffs}:
+//     relay HUD JSON back as a text content block. The widget uses
+//     these via the MCP Apps bridge to refresh data without ever
+//     seeing the bearer token.
+//   - loom_fleet_handoff_{accept,reject}: mutating relays that POST
+//     to /api/mobile/v1/handoffs/{id}/{accept,reject}. The widget's
+//     Accept/Reject buttons call these.
 func (s *server) handleToolsCall(req rpcRequest) (any, *rpcError) {
 	var params struct {
-		Name string `json:"name"`
+		Name      string         `json:"name"`
+		Arguments map[string]any `json:"arguments,omitempty"`
 	}
 	if len(req.Params) > 0 {
 		if err := json.Unmarshal(req.Params, &params); err != nil {
@@ -317,9 +357,92 @@ func (s *server) handleToolsCall(req rpcRequest) (any, *rpcError) {
 		return s.relay(pathStream)
 	case toolHandoffs:
 		return s.relay(pathHandoffs)
+	case toolHandoffAccept:
+		return s.relayHandoffMutation(pathHandoffAccept, params.Arguments,
+			[]string{"session_id", "target_agent_id"},
+			[]string{"handoff_id"},
+			[]string{"session_id", "target_agent_id", "import_entries"})
+	case toolHandoffReject:
+		return s.relayHandoffMutation(pathHandoffReject, params.Arguments,
+			nil,
+			[]string{"handoff_id"},
+			[]string{"reason"})
 	default:
 		return nil, &rpcError{Code: -32602, Message: "unknown tool: " + params.Name}
 	}
+}
+
+// relayHandoffMutation is the shared body for Accept/Reject handoff
+// tool calls. It extracts handoff_id, validates required arguments
+// and any "at-least-one" semantic constraints, builds the POST body
+// from the named keys, and dispatches via hudClient.post.
+//
+// requireAnyOf is satisfied if at least one of the named fields is
+// present and non-empty (Accept needs session_id OR target_agent_id;
+// Reject has no such constraint and passes nil).
+//
+// requireAll fields must all be present and non-empty.
+//
+// bodyKeys controls which arguments are forwarded as POST body
+// fields; this acts as a tiny allowlist so unexpected keys don't
+// leak through to the HUD.
+func (s *server) relayHandoffMutation(template string, args map[string]any, requireAnyOf, requireAll, bodyKeys []string) (any, *rpcError) {
+	handoffID := stringArg(args, "handoff_id")
+	for _, req := range requireAll {
+		if v := stringArg(args, req); v == "" {
+			return nil, &rpcError{Code: -32602, Message: req + " is required"}
+		}
+	}
+	if len(requireAnyOf) > 0 {
+		ok := false
+		for _, k := range requireAnyOf {
+			if stringArg(args, k) != "" {
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return nil, &rpcError{Code: -32602, Message: "one of " + strings.Join(requireAnyOf, ", ") + " is required"}
+		}
+	}
+
+	body := map[string]any{}
+	for _, k := range bodyKeys {
+		if v, ok := args[k]; ok && v != nil && v != "" {
+			body[k] = v
+		}
+	}
+
+	respBody, err := s.hud.post(context.Background(), template,
+		map[string]string{"handoff_id": handoffID}, body, relayPostPaths)
+	if err != nil {
+		s.logger.Warn("hud handoff mutation failed", "template", template, "error", err)
+		return map[string]any{
+			"content": []any{map[string]any{
+				"type": "text",
+				"text": "loom HUD mutation failed: " + err.Error(),
+			}},
+			"isError": true,
+		}, nil
+	}
+	return map[string]any{
+		"content": []any{map[string]any{
+			"type":     "text",
+			"text":     string(respBody),
+			"mimeType": "application/json",
+		}},
+	}, nil
+}
+
+// stringArg pulls a string from MCP tool arguments without crashing
+// on missing keys or wrong types. Returns "" when absent or non-string.
+func stringArg(args map[string]any, key string) string {
+	v, ok := args[key]
+	if !ok {
+		return ""
+	}
+	s, _ := v.(string)
+	return strings.TrimSpace(s)
 }
 
 // relay fetches one HUD path and returns the body as a text content

@@ -350,6 +350,24 @@ func (a *AgentBridge) HandoffAccept(p HandoffAcceptParams) (*HandoffAcceptResult
 	return &result, nil
 }
 
+// HandoffReject marks a handoff as rejected. Reason is forwarded to
+// the agent_handoff_reject MCP tool and surfaced to the source agent
+// so they know why the handoff wasn't taken. Empty reason is allowed.
+func (a *AgentBridge) HandoffReject(p HandoffRejectParams) (*HandoffRejectResult, error) {
+	args := map[string]any{
+		"handoff_id": strings.TrimSpace(p.HandoffID),
+	}
+	if r := strings.TrimSpace(p.Reason); r != "" {
+		args["reason"] = r
+	}
+
+	var result HandoffRejectResult
+	if err := a.callAgentTool("agent_handoff_reject", args, &result); err != nil {
+		return nil, err
+	}
+	return &result, nil
+}
+
 // HandoffListForAgent returns pending handoffs targeted at a specific agent.
 func (a *AgentBridge) HandoffListForAgent(agentID string) ([]HandoffInfo, error) {
 	if strings.TrimSpace(agentID) == "" {

@@ -58,9 +58,27 @@ func fakeHUD(t *testing.T) (*httptest.Server, *fakeHUDState) {
 	})
 	mux.HandleFunc("/api/mobile/v1/handoffs", func(w http.ResponseWriter, r *http.Request) {
 		state.lastPath = r.URL.Path
+		state.lastMethod = r.Method
 		state.lastAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, state.handoffs)
+	})
+	// Mobile handoff accept/reject POST endpoints. Pattern matches
+	// the actual mobile route registration ({handoff_id} segment).
+	mux.HandleFunc("/api/mobile/v1/handoffs/", func(w http.ResponseWriter, r *http.Request) {
+		state.lastPath = r.URL.Path
+		state.lastMethod = r.Method
+		state.lastAuth = r.Header.Get("Authorization")
+		if r.Body != nil {
+			data, _ := io.ReadAll(r.Body)
+			state.lastBody = string(data)
+		}
+		if state.failNext {
+			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{"status":"ok"}`)
 	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
@@ -75,17 +93,33 @@ type fakeHUDState struct {
 	handoffs   string
 	expectAuth string
 
-	lastPath string
-	lastAuth string
-	failNext bool
+	lastPath   string
+	lastMethod string
+	lastAuth   string
+	lastBody   string
+	failNext   bool
 }
 
 // callTool returns the parsed `result` map from a tools/call response.
 // Used by the relay tests below to assert on content shape without
 // re-implementing the JSON-RPC scaffolding.
 func callTool(t *testing.T, srv *server, toolName string) map[string]any {
+	return callToolWithArgs(t, srv, toolName, nil)
+}
+
+// callToolWithArgs is the variant the mutating relay tests use:
+// arguments are forwarded to the tool handler so it can validate
+// required fields + build the POST body.
+func callToolWithArgs(t *testing.T, srv *server, toolName string, args map[string]any) map[string]any {
 	t.Helper()
-	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + toolName + `","arguments":{}}}`
+	if args == nil {
+		args = map[string]any{}
+	}
+	argsJSON, err := json.Marshal(args)
+	if err != nil {
+		t.Fatalf("marshal args: %v", err)
+	}
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + toolName + `","arguments":` + string(argsJSON) + `}}`
 	in := bytes.NewBufferString(body + "\n")
 	out := &bytes.Buffer{}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
@@ -131,10 +165,139 @@ func TestToolsList_AdvertisesRelayTools(t *testing.T) {
 			names[n] = true
 		}
 	}
-	for _, want := range []string{toolShow, toolDashboard, toolPresence, toolSessions, toolStream, toolHandoffs} {
+	for _, want := range []string{toolShow, toolDashboard, toolPresence, toolSessions, toolStream, toolHandoffs, toolHandoffAccept, toolHandoffReject} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q (got %v)", want, names)
 		}
+	}
+}
+
+// TestRelay_HandoffAccept_PostsBodyAndPath covers the happy-path
+// mutating relay: handoff_id substitutes into the URL template,
+// session_id flows through as the request body, and the resolved
+// path + Bearer auth + POST verb all match expectations.
+func TestRelay_HandoffAccept_PostsBodyAndPath(t *testing.T) {
+	hud, state := fakeHUD(t)
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{baseURL: hud.URL, token: "test-token", client: hud.Client()},
+	)
+	result := callToolWithArgs(t, srv, toolHandoffAccept, map[string]any{
+		"handoff_id":     "h-abc-123",
+		"session_id":     "sess-xyz",
+		"import_entries": true,
+	})
+
+	if isErr, _ := result["isError"].(bool); isErr {
+		t.Fatalf("unexpected isError: %+v", result)
+	}
+	if state.lastMethod != "POST" {
+		t.Errorf("HUD got method %q, want POST", state.lastMethod)
+	}
+	if state.lastPath != "/api/mobile/v1/handoffs/h-abc-123/accept" {
+		t.Errorf("HUD got path %q, want /api/mobile/v1/handoffs/h-abc-123/accept", state.lastPath)
+	}
+	if state.lastAuth != "Bearer test-token" {
+		t.Errorf("HUD got auth %q, want Bearer test-token", state.lastAuth)
+	}
+	if !strings.Contains(state.lastBody, `"session_id":"sess-xyz"`) {
+		t.Errorf("POST body missing session_id: %q", state.lastBody)
+	}
+	if !strings.Contains(state.lastBody, `"import_entries":true`) {
+		t.Errorf("POST body missing import_entries: %q", state.lastBody)
+	}
+	// handoff_id was the URL placeholder, NOT a body field.
+	if strings.Contains(state.lastBody, "handoff_id") {
+		t.Errorf("POST body should not contain handoff_id (it's in URL): %q", state.lastBody)
+	}
+}
+
+// TestRelay_HandoffReject_Minimal verifies the reject tool also
+// works with just handoff_id (reason optional) and substitutes
+// correctly into the reject URL template.
+func TestRelay_HandoffReject_Minimal(t *testing.T) {
+	hud, state := fakeHUD(t)
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{baseURL: hud.URL, token: "test-token", client: hud.Client()},
+	)
+	result := callToolWithArgs(t, srv, toolHandoffReject, map[string]any{
+		"handoff_id": "h-def-456",
+		"reason":     "not relevant to current scope",
+	})
+	if isErr, _ := result["isError"].(bool); isErr {
+		t.Fatalf("unexpected isError: %+v", result)
+	}
+	if state.lastPath != "/api/mobile/v1/handoffs/h-def-456/reject" {
+		t.Errorf("HUD got path %q, want .../h-def-456/reject", state.lastPath)
+	}
+	if !strings.Contains(state.lastBody, `"reason":"not relevant to current scope"`) {
+		t.Errorf("POST body missing reason: %q", state.lastBody)
+	}
+}
+
+// TestRelay_HandoffAccept_RejectsUnsafeID is the security regression:
+// a handoff_id with traversal characters must be refused by the path
+// allowlist + isSafeID validator before any HTTP request is made.
+func TestRelay_HandoffAccept_RejectsUnsafeID(t *testing.T) {
+	hud, _ := fakeHUD(t)
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{baseURL: hud.URL, token: "test-token", client: hud.Client()},
+	)
+	result := callToolWithArgs(t, srv, toolHandoffAccept, map[string]any{
+		"handoff_id": "../secrets/leak",
+		"session_id": "sess-1",
+	})
+	if isErr, _ := result["isError"].(bool); !isErr {
+		t.Errorf("expected isError=true for unsafe handoff_id, got %+v", result)
+	}
+}
+
+// TestRelay_HandoffAccept_RequiresSessionOrTarget enforces the
+// at-least-one constraint: passing handoff_id without session_id or
+// target_agent_id must fail at the tool layer (before any HTTP).
+func TestRelay_HandoffAccept_RequiresSessionOrTarget(t *testing.T) {
+	hud, _ := fakeHUD(t)
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{baseURL: hud.URL, token: "test-token", client: hud.Client()},
+	)
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"loom_fleet_handoff_accept","arguments":{"handoff_id":"h1"}}}`
+	in := bytes.NewBufferString(body + "\n")
+	out := &bytes.Buffer{}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := srv.Serve(ctx, in, out); err != nil && err != io.EOF {
+		t.Fatalf("Serve: %v", err)
+	}
+	var resp map[string]any
+	if err := json.Unmarshal(bytes.TrimSpace(out.Bytes()), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	errObj, _ := resp["error"].(map[string]any)
+	if errObj == nil {
+		t.Fatalf("expected RPC error for missing session_id+target_agent_id, got %+v", resp)
+	}
+	msg, _ := errObj["message"].(string)
+	if !strings.Contains(msg, "session_id") {
+		t.Errorf("error message should mention session_id: %q", msg)
+	}
+}
+
+// TestHUDClient_PostRejectsUnknownTemplate exercises the internal
+// boundary: even if a caller passes an arbitrary template to .post,
+// the allowlist refuses. Defense-in-depth.
+func TestHUDClient_PostRejectsUnknownTemplate(t *testing.T) {
+	hud, _ := fakeHUD(t)
+	hc := &hudClient{baseURL: hud.URL, token: "test-token", client: hud.Client()}
+	_, err := hc.post(context.Background(),
+		"/api/mobile/v1/secrets/{x}/exfiltrate",
+		map[string]string{"x": "anything"},
+		map[string]any{},
+		relayPostPaths)
+	if err == nil || !strings.Contains(err.Error(), "not in allowlist") {
+		t.Errorf("expected allowlist rejection, got err=%v", err)
 	}
 }
 

@@ -52,6 +52,8 @@ func (d *MobileDomain) RegisterRoutes(mux *http.ServeMux, mw func(http.HandlerFu
 	mux.HandleFunc("GET /api/mobile/v1/sandbox", mw(d.handleMobileSandbox))
 	mux.HandleFunc("GET /api/mobile/v1/pipelines", mw(d.handleMobilePipelines))
 	mux.HandleFunc("GET /api/mobile/v1/handoffs", mw(d.handleMobileHandoffs))
+	mux.HandleFunc("POST /api/mobile/v1/handoffs/{handoff_id}/accept", mw(d.handleMobileHandoffAccept))
+	mux.HandleFunc("POST /api/mobile/v1/handoffs/{handoff_id}/reject", mw(d.handleMobileHandoffReject))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawns", mw(d.handleMobileSpawnList))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/config", mw(d.handleMobileSpawnConfig))
 	mux.HandleFunc("GET /api/mobile/v1/agent/spawn/{spawn_id}", mw(d.handleMobileSpawnDetail))
