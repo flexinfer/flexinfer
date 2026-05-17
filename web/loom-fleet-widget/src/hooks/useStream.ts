@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { callTool } from "../lib/mcpBridge";
+import { callTool, unwrapEnvelope } from "../lib/mcpBridge";
 
 // StreamEntry mirrors the streamEntryDTO shape returned by
 // /api/mobile/v1/stream. The HUD packs decisions, findings, tasks
@@ -50,20 +50,16 @@ export function useStream(refreshMs = 2000): StreamState {
         return;
       }
       const text = result.content[0]?.text ?? "{}";
-      try {
-        const parsed = JSON.parse(text) as { entries?: StreamEntry[] };
-        setState({
-          entries: parsed.entries ?? [],
-          error: null,
-          loading: false,
-        });
-      } catch (err) {
-        setState((s) => ({
-          ...s,
-          error: `parse failed: ${(err as Error).message}`,
-          loading: false,
-        }));
+      const { data, error } = unwrapEnvelope<{ entries?: StreamEntry[] }>(text);
+      if (error) {
+        setState((s) => ({ ...s, error, loading: false }));
+        return;
       }
+      setState({
+        entries: data?.entries ?? [],
+        error: null,
+        loading: false,
+      });
     };
 
     const tick = async () => {

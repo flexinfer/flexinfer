@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { callTool } from "../lib/mcpBridge";
+import { callTool, unwrapEnvelope } from "../lib/mcpBridge";
 
 // Dashboard mirrors the JSON shape the loom HUD returns for
 // /api/mobile/v1/dashboard, narrowed to just the fields FleetOverview
@@ -60,21 +60,17 @@ export function useFleet(refreshMs = 5000): FleetState {
         return;
       }
       const text = result.content[0]?.text ?? "{}";
-      try {
-        const parsed = JSON.parse(text) as Dashboard;
-        setState({
-          data: parsed,
-          error: null,
-          loading: false,
-          lastUpdated: new Date(),
-        });
-      } catch (err) {
-        setState((s) => ({
-          ...s,
-          error: `parse failed: ${(err as Error).message}`,
-          loading: false,
-        }));
+      const { data, error } = unwrapEnvelope<Dashboard>(text);
+      if (error) {
+        setState((s) => ({ ...s, error, loading: false }));
+        return;
       }
+      setState({
+        data: data ?? null,
+        error: null,
+        loading: false,
+        lastUpdated: new Date(),
+      });
     };
 
     const tick = async () => {

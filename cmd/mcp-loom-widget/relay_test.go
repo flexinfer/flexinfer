@@ -31,6 +31,8 @@ func fakeHUD(t *testing.T) (*httptest.Server, *fakeHUDState) {
 	mux.HandleFunc("/api/mobile/v1/dashboard", func(w http.ResponseWriter, r *http.Request) {
 		state.lastPath = r.URL.Path
 		state.lastAuth = r.Header.Get("Authorization")
+		state.lastCFAccessID = r.Header.Get("CF-Access-Client-Id")
+		state.lastCFAccessSecret = r.Header.Get("CF-Access-Client-Secret")
 		if state.failNext {
 			http.Error(w, `{"error":"forbidden"}`, http.StatusForbidden)
 			return
@@ -85,13 +87,19 @@ func fakeHUD(t *testing.T) (*httptest.Server, *fakeHUDState) {
 	return srv, state
 }
 
+// lastCFAccessID + lastCFAccessSecret capture the CF Access headers
+// from the most recent dashboard GET. They live alongside lastAuth so
+// the CF Access tests can assert the headers without adding a second
+// stateful field to every handler.
 type fakeHUDState struct {
-	dashboard  string
-	presence   string
-	sessions   string
-	stream     string
-	handoffs   string
-	expectAuth string
+	lastCFAccessID     string
+	lastCFAccessSecret string
+	dashboard          string
+	presence           string
+	sessions           string
+	stream             string
+	handoffs           string
+	expectAuth         string
 
 	lastPath   string
 	lastMethod string
@@ -448,5 +456,88 @@ func TestHUDClient_AllowlistRejectsOtherPaths(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "not in allowlist") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+// TestHUDClient_AttachesCFAccessHeaders verifies the slice-2-β-followup
+// CF Access service-token plumbing: when both LOOM_HUD_CF_ACCESS_*
+// fields are populated on the client, every relay GET attaches the
+// CF-Access-Client-Id and CF-Access-Client-Secret headers alongside
+// the existing Bearer token. Without this, hud.flexinfer.ai (behind
+// Cloudflare Zero Trust) returns a 302 to the CF Access login screen
+// instead of the JSON payload.
+func TestHUDClient_AttachesCFAccessHeaders(t *testing.T) {
+	hud, state := fakeHUD(t)
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{
+			baseURL:          hud.URL,
+			token:            "test-token",
+			cfAccessClientID: "cf-client-id-abc",
+			cfAccessSecret:   "cf-secret-xyz",
+			client:           hud.Client(),
+		},
+	)
+	_ = callTool(t, srv, toolDashboard)
+
+	if state.lastAuth != "Bearer test-token" {
+		t.Errorf("Authorization header = %q, want Bearer test-token", state.lastAuth)
+	}
+	if state.lastCFAccessID != "cf-client-id-abc" {
+		t.Errorf("CF-Access-Client-Id = %q, want cf-client-id-abc", state.lastCFAccessID)
+	}
+	if state.lastCFAccessSecret != "cf-secret-xyz" {
+		t.Errorf("CF-Access-Client-Secret = %q, want cf-secret-xyz", state.lastCFAccessSecret)
+	}
+}
+
+// TestHUDClient_OmitsCFAccessHeadersWhenUnset confirms the backward-
+// compatible default: a loopback HUD that does not sit behind
+// Cloudflare Access (the common dev setup) sees no CF Access headers
+// at all, preserving the existing local-only behaviour.
+func TestHUDClient_OmitsCFAccessHeadersWhenUnset(t *testing.T) {
+	hud, state := fakeHUD(t)
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{
+			baseURL: hud.URL,
+			token:   "test-token",
+			client:  hud.Client(),
+		},
+	)
+	_ = callTool(t, srv, toolDashboard)
+
+	if state.lastAuth != "Bearer test-token" {
+		t.Errorf("Authorization header = %q, want Bearer test-token", state.lastAuth)
+	}
+	if state.lastCFAccessID != "" {
+		t.Errorf("CF-Access-Client-Id should be empty, got %q", state.lastCFAccessID)
+	}
+	if state.lastCFAccessSecret != "" {
+		t.Errorf("CF-Access-Client-Secret should be empty, got %q", state.lastCFAccessSecret)
+	}
+}
+
+// TestHUDClient_OmitsCFAccessHeadersWhenOnlyOneHalfSet defends against
+// a half-configured deployment: providing only the id (or only the
+// secret) MUST NOT send either header. The earlier check is "both
+// non-empty" — this test pins that contract so a future refactor
+// can't loosen it to "either non-empty" without failing here.
+func TestHUDClient_OmitsCFAccessHeadersWhenOnlyOneHalfSet(t *testing.T) {
+	hud, state := fakeHUD(t)
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{
+			baseURL:          hud.URL,
+			token:            "test-token",
+			cfAccessClientID: "id-only",
+			// cfAccessSecret intentionally empty
+			client: hud.Client(),
+		},
+	)
+	_ = callTool(t, srv, toolDashboard)
+
+	if state.lastCFAccessID != "" {
+		t.Errorf("expected no CF-Access-Client-Id when secret missing, got %q", state.lastCFAccessID)
 	}
 }
