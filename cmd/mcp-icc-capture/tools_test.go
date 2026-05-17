@@ -324,3 +324,315 @@ func findingRulePresent(findings []lintFinding, rule string) bool {
 	}
 	return false
 }
+
+// --- icc_format_email_extract -------------------------------------------
+
+func TestFormatEmailExtract_MissingRequired(t *testing.T) {
+	// project_slug is missing — validate.Required should catch it.
+	result, err := handleFormatEmailExtract(context.Background(), map[string]any{
+		"text": "From: alice@x.com\nSubject: hi\n\nbody",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error result for missing project_slug, got %s", result.Content[0].Text)
+	}
+}
+
+func TestFormatEmailExtract_EmptyText(t *testing.T) {
+	result, err := handleFormatEmailExtract(context.Background(), map[string]any{
+		"text":         "   \n  ",
+		"project_slug": "vendor-x",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error result for empty text, got %s", result.Content[0].Text)
+	}
+}
+
+func TestFormatEmailExtract_RFC822WithHeadersAndReply(t *testing.T) {
+	text := strings.Join([]string{
+		"From: alice@example.com",
+		"To: bob@example.com",
+		"Subject: Re: (Priority) Weekly Audit Inventory Requiring Action",
+		"Date: Thu, 14 May 2026 09:15:00 -0400",
+		"",
+		"Yes, attached.",
+		"",
+		"On Wed, 13 May 2026 17:00:00 -0400, bob@example.com wrote:",
+		"> Can you send the inventory?",
+		"> Thanks",
+	}, "\n")
+
+	result, err := handleFormatEmailExtract(context.Background(), map[string]any{
+		"text":         text,
+		"project_slug": "vendor-audits",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got %s", result.Content[0].Text)
+	}
+
+	var out formatEmailExtractResult
+	decodeResult(t, result.Content[0].Text, &out)
+
+	// Frontmatter sanity.
+	for _, want := range []string{
+		"project: vendor-audits",
+		"source: email",
+		"classification: possible_phi",
+		`subject: Re: (Priority) Weekly Audit Inventory Requiring Action`,
+		`"alice@example.com"`,
+		`"bob@example.com"`,
+	} {
+		if !strings.Contains(out.Markdown, want) {
+			t.Fatalf("missing %q in markdown:\n%s", want, out.Markdown)
+		}
+	}
+
+	// Two messages rendered: top reply and quoted parent.
+	if got := strings.Count(out.Markdown, "### From "); got != 2 {
+		t.Fatalf("expected 2 message headers, got %d:\n%s", got, out.Markdown)
+	}
+	if !strings.Contains(out.Markdown, "Can you send the inventory?") {
+		t.Fatalf("expected unquoted reply body in markdown:\n%s", out.Markdown)
+	}
+	// Filename: date-prefixed and topic-slugged from subject.
+	if !strings.HasPrefix(out.SuggestedFilename, "2026-05-14-") {
+		t.Fatalf("expected 2026-05-14 prefix, got %q", out.SuggestedFilename)
+	}
+	if !strings.Contains(out.SuggestedPath, "/projects/vendor-audits/email/") {
+		t.Fatalf("unexpected suggested path: %s", out.SuggestedPath)
+	}
+	if out.DetectedSubject == "" {
+		t.Fatalf("expected detected_subject, got empty")
+	}
+	if len(out.DetectedFrom) == 0 {
+		t.Fatalf("expected detected_from senders")
+	}
+}
+
+func TestFormatEmailExtract_HeaderlessBodyWarns(t *testing.T) {
+	// No header lines at all — formatter should treat the whole input
+	// as body and surface a warning.
+	result, err := handleFormatEmailExtract(context.Background(), map[string]any{
+		"text":         "just some text\nno headers here",
+		"project_slug": "vendor-x",
+		"captured_at":  "2026-05-14T10:00:00-04:00",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got %s", result.Content[0].Text)
+	}
+	var out formatEmailExtractResult
+	decodeResult(t, result.Content[0].Text, &out)
+	if len(out.Warnings) == 0 {
+		t.Fatalf("expected at least one warning when no headers are detected")
+	}
+	if !strings.Contains(out.Markdown, "just some text") {
+		t.Fatalf("expected body preserved:\n%s", out.Markdown)
+	}
+}
+
+// --- icc_format_meeting_notes -------------------------------------------
+
+func TestFormatMeetingNotes_MissingParticipants(t *testing.T) {
+	result, err := handleFormatMeetingNotes(context.Background(), map[string]any{
+		"text":         "# Sync\nNotes go here",
+		"project_slug": "vendor-x",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error result for missing participants, got %s", result.Content[0].Text)
+	}
+}
+
+func TestFormatMeetingNotes_EmptyText(t *testing.T) {
+	result, err := handleFormatMeetingNotes(context.Background(), map[string]any{
+		"text":         "   ",
+		"project_slug": "vendor-x",
+		"participants": []any{"alice", "bob"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error result for empty text, got %s", result.Content[0].Text)
+	}
+}
+
+func TestFormatMeetingNotes_GeminiStructure(t *testing.T) {
+	text := strings.Join([]string{
+		"# 1:1 — Cody & Nadia",
+		"",
+		"## Quick recap",
+		"- Talked through Q3 priorities.",
+		"",
+		"## Action items",
+		"- Cody: draft RFC by Friday.",
+	}, "\n")
+
+	result, err := handleFormatMeetingNotes(context.Background(), map[string]any{
+		"text":         text,
+		"project_slug": "vendor-x",
+		"participants": []any{"Cody Blevins", "Nadia Patel"},
+		"captured_at":  "2026-05-12T14:00:00-04:00",
+		"topic":        "1on1",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got %s", result.Content[0].Text)
+	}
+
+	var out formatMeetingNotesResult
+	decodeResult(t, result.Content[0].Text, &out)
+
+	for _, want := range []string{
+		"project: vendor-x",
+		"source: meeting",
+		"classification: possible_phi",
+		`participants: ["Cody Blevins", "Nadia Patel"]`,
+		"# 1:1 — Cody & Nadia",
+		"## Action items",
+	} {
+		if !strings.Contains(out.Markdown, want) {
+			t.Fatalf("missing %q in markdown:\n%s", want, out.Markdown)
+		}
+	}
+
+	// Filename pattern: YYYY-MM-DD-<participants-slug>-<topic>.md
+	if out.SuggestedFilename != "2026-05-12-cody-nadia-1on1.md" {
+		t.Fatalf("expected 2026-05-12-cody-nadia-1on1.md, got %q", out.SuggestedFilename)
+	}
+	if !strings.Contains(out.SuggestedPath, "/projects/vendor-x/meetings/") {
+		t.Fatalf("unexpected suggested path: %s", out.SuggestedPath)
+	}
+}
+
+func TestFormatMeetingNotes_FreeformGetsTopicHeading(t *testing.T) {
+	// No H1 in body — formatter should synthesize one from the topic.
+	result, err := handleFormatMeetingNotes(context.Background(), map[string]any{
+		"text":         "discussion notes, no heading",
+		"project_slug": "vendor-x",
+		"participants": []any{"Cody", "Nadia"},
+		"captured_at":  "2026-05-12T14:00:00-04:00",
+		"topic":        "sprint-review",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got %s", result.Content[0].Text)
+	}
+	var out formatMeetingNotesResult
+	decodeResult(t, result.Content[0].Text, &out)
+	if !strings.Contains(out.Markdown, "# sprint review") {
+		t.Fatalf("expected synthesized H1 from topic, got:\n%s", out.Markdown)
+	}
+}
+
+// --- icc_format_standup -------------------------------------------------
+
+func TestFormatStandup_EmptyText(t *testing.T) {
+	result, err := handleFormatStandup(context.Background(), map[string]any{
+		"text":         "   ",
+		"project_slug": "_inbox",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error result for empty text, got %s", result.Content[0].Text)
+	}
+}
+
+func TestFormatStandup_PersonalPrepDefaultsToStandupPrep(t *testing.T) {
+	result, err := handleFormatStandup(context.Background(), map[string]any{
+		"text":         "Yesterday: shipped slice C-2.\nToday: slice D-1.\nBlocked: nothing.",
+		"project_slug": "_inbox",
+		"captured_at":  "2026-05-17T09:00:00-04:00",
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got %s", result.Content[0].Text)
+	}
+	var out formatStandupResult
+	decodeResult(t, result.Content[0].Text, &out)
+
+	if out.SuggestedFilename != "2026-05-17-standup-prep.md" {
+		t.Fatalf("expected 2026-05-17-standup-prep.md, got %q", out.SuggestedFilename)
+	}
+	// Personal prep still lands under research/ — same folder per
+	// STRUCTURE.md (no standup/ source folder).
+	if !strings.Contains(out.SuggestedPath, "/projects/_inbox/research/") {
+		t.Fatalf("expected research/ folder under _inbox, got %s", out.SuggestedPath)
+	}
+	for _, want := range []string{
+		"project: _inbox",
+		"source: standup",
+		"classification: possible_phi",
+	} {
+		if !strings.Contains(out.Markdown, want) {
+			t.Fatalf("missing %q in markdown:\n%s", want, out.Markdown)
+		}
+	}
+}
+
+func TestFormatStandup_TeamStandupFilenameAndTitle(t *testing.T) {
+	result, err := handleFormatStandup(context.Background(), map[string]any{
+		"text":         "Updates from team standup.",
+		"project_slug": "vendor-x",
+		"team":         "PMT Integrity",
+		"captured_at":  "2026-05-17T10:00:00-04:00",
+		"participants": []any{"Alice", "Bob", "Carol"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got %s", result.Content[0].Text)
+	}
+	var out formatStandupResult
+	decodeResult(t, result.Content[0].Text, &out)
+
+	if out.SuggestedFilename != "2026-05-17-pmt-integrity-standup.md" {
+		t.Fatalf("expected 2026-05-17-pmt-integrity-standup.md, got %q", out.SuggestedFilename)
+	}
+	if !strings.Contains(out.SuggestedPath, "/projects/vendor-x/research/") {
+		t.Fatalf("expected research/ folder, got %s", out.SuggestedPath)
+	}
+	if !strings.Contains(out.Markdown, `participants: ["Alice", "Bob", "Carol"]`) {
+		t.Fatalf("expected participants in frontmatter:\n%s", out.Markdown)
+	}
+	if !strings.Contains(out.Markdown, "# PMT Integrity standup") {
+		t.Fatalf("expected synthesized team title heading:\n%s", out.Markdown)
+	}
+}
+
+// --- shared allowlist assertion ----------------------------------------
+
+func TestCaptureSourcesIncludesD1Sources(t *testing.T) {
+	// Slice D-1 introduces the three new sources that the backend
+	// already enumerates in CAPTURE_SOURCES. Pinning the allowlist
+	// here guards against accidental shrinkage that would otherwise
+	// only surface as a runtime 400 from /api/captures.
+	required := []string{"email", "meeting", "standup"}
+	for _, want := range required {
+		if !contains(captureSources, want) {
+			t.Fatalf("captureSources missing %q (got %v); keep it in lockstep with the ICC backend CAPTURE_SOURCES enum", want, captureSources)
+		}
+	}
+}
