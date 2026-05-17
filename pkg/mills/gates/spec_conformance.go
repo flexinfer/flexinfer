@@ -10,6 +10,14 @@ const SpecConformanceRubricName = "spec_conformance_v1"
 //
 // The exact text is part of the persisted contract — changing it must
 // rev SpecConformanceRubricName so eval rows stay comparable.
+//
+// The template ends with `rubricGroundingInstructions` (anti-hallucination
+// boilerplate shared with pr_self_review_v1) followed by the
+// structural-output envelope so gemma4-26b returns parseable JSON even
+// for small / fixture-only diffs. Live evidence from canary
+// PIPE-MILLS-CANARY-M6-164007-1779036007 (2026-05-17): without these
+// instructions the judge fabricated file:line references and replied
+// with prose instead of the score envelope.
 const SpecConformanceRubric = `You are a strict reviewer for a software engineering pipeline.
 
 Given:
@@ -23,11 +31,12 @@ Score how well the diff conforms to the spec on a [0.0, 1.0] scale where:
 - 0.5 = partial implementation; major requirement(s) unmet.
 - 0.0 = unrelated change, breaking change, or contradicts the spec.
 
-Reply with a JSON object:
-  {"score": <float>, "reasons": ["...", "..."]}
-
 Be terse in reasons[]. List concrete deviations only — do not restate
-what the spec says.`
+what the spec says.
+
+` + rubricGroundingInstructions + `
+
+` + rubricStructuralOutputInstructions
 
 // NewSpecConformanceGate constructs the spec_conformance gate using the
 // supplied judge. Default threshold 0.8 — verdicts at or above are pass.
