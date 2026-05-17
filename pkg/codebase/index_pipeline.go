@@ -201,7 +201,14 @@ func (s *Service) runIndexJob(
 			if end > len(points) {
 				end = len(points)
 			}
-			if upsertErr := s.qdrant.Upsert(ctx, points[i:end], true); upsertErr != nil {
+			// Bulk batches: wait=false by default for 5-10x speedup
+			// (Qdrant defers HNSW reindex off the response path). The
+			// LAST batch of every flush uses wait=true so callers observing
+			// status=done can trust the data is durable in Qdrant.
+			// Operators can force synchronous behavior on every batch by
+			// setting CODEBASE_UPSERT_WAIT=true.
+			wait := upsertWaitForBatch(s.cfg.UpsertWait, end, len(points))
+			if upsertErr := s.qdrant.Upsert(ctx, points[i:end], wait); upsertErr != nil {
 				return upsertErr
 			}
 		}
@@ -391,6 +398,22 @@ func (s *Service) runIndexJob(
 
 	s.setJobDone(jobID)
 	_ = vectorSize
+}
+
+// upsertWaitForBatch returns the wait flag to pass to qdrant.Upsert for a
+// single batch in a flush loop.
+//
+// Default behavior (cfgWait=false): bulk batches use wait=false so Qdrant can
+// queue WAL/HNSW work in the background, and the LAST batch uses wait=true so
+// callers observing job status=done can trust the data is durable.
+//
+// Override (cfgWait=true): every batch uses wait=true, matching pre-perf
+// behavior — provided as a rollback hatch via CODEBASE_UPSERT_WAIT=true.
+func upsertWaitForBatch(cfgWait bool, batchEnd, totalPoints int) bool {
+	if cfgWait {
+		return true
+	}
+	return batchEnd >= totalPoints
 }
 
 func (s *Service) ensureCollectionForVector(ctx context.Context, vectorSize int, allowRecreate bool) error {

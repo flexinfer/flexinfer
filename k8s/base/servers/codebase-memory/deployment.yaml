@@ -56,11 +56,15 @@ spec:
             # to the default 30s.
             - name: HTTP_TIMEOUT
               value: "300"
-            # Smaller upsert batches finish within timeout even when
-            # Qdrant is under load. Default was 64; halving it keeps
-            # round-trip time linear and predictable.
+            # Larger upsert batches are safe again now that bulk batches
+            # default to wait=false (only the final batch of each flush
+            # blocks on Qdrant's WAL+HNSW), and HTTP_TIMEOUT=300 leaves
+            # plenty of headroom for the trailing wait=true call. Bumped
+            # from 32 back to 128 to amortize round-trip overhead.
+            # Rollback hatch: set CODEBASE_UPSERT_WAIT=true to force
+            # wait=true on every batch without a code change.
             - name: CODEBASE_UPSERT_BATCH_SIZE
-              value: "32"
+              value: "128"
             - name: MCP_TRANSPORT
               value: websocket
             - name: MCP_WS_PORT

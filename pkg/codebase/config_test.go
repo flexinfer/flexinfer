@@ -31,6 +31,21 @@ func TestLoadConfigFromEnv_Defaults(t *testing.T) {
 	if cfg.QdrantDistance != "Cosine" {
 		t.Errorf("expected QdrantDistance Cosine, got %q", cfg.QdrantDistance)
 	}
+	if cfg.UpsertWait {
+		t.Errorf("expected UpsertWait default false, got true")
+	}
+}
+
+func TestLoadConfigFromEnv_UpsertWaitOverride(t *testing.T) {
+	t.Setenv("CODEBASE_UPSERT_WAIT", "true")
+
+	cfg, err := LoadConfigFromEnv()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.UpsertWait {
+		t.Errorf("expected UpsertWait true when CODEBASE_UPSERT_WAIT=true")
+	}
 }
 
 func TestLoadConfigFromEnv_CustomValues(t *testing.T) {

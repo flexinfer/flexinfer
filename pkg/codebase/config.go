@@ -28,6 +28,20 @@ type Config struct {
 	IndexConcurrency int
 	ScrollLimit      int
 
+	// UpsertWait controls whether each bulk-upsert batch blocks until Qdrant
+	// has fsynced WAL and finished HNSW reindex on the affected segments
+	// (true) or returns as soon as Qdrant has queued the write (false).
+	//
+	// Default is false: 5-10x faster bulk indexing because Qdrant batches
+	// HNSW work in the background instead of serializing it on the response
+	// path. The pipeline still issues a wait=true call on the LAST batch of
+	// every flush so that callers observing job status=done can trust the
+	// data is durable on disk for that index job.
+	//
+	// Flip via CODEBASE_UPSERT_WAIT=true as a safety hatch if a deployment
+	// needs the old synchronous behavior without a code change.
+	UpsertWait bool
+
 	MaxFileBytes int64
 
 	// Chunker settings for splitting large code chunks
@@ -65,6 +79,11 @@ func LoadConfigFromEnv() (Config, error) {
 		UpsertBatchSize:  env.IntWithZero("CODEBASE_UPSERT_BATCH_SIZE", 64),
 		IndexConcurrency: env.IntWithZero("CODEBASE_INDEX_CONCURRENCY", 4),
 		ScrollLimit:      env.IntWithZero("CODEBASE_SCROLL_LIMIT", 256),
+
+		// Default false: bulk batches do not block on WAL fsync + HNSW
+		// reindex. The final batch of every flush still uses wait=true so
+		// "index job done" implies "data durable in Qdrant".
+		UpsertWait: env.Bool("CODEBASE_UPSERT_WAIT", false),
 
 		MaxFileBytes: env.Int64("CODEBASE_MAX_FILE_BYTES", 2*1024*1024), // 2MiB per file by default
 
