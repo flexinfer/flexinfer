@@ -406,25 +406,40 @@ func TestReconciler_PicksUpQueuedSubrun(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tick: %v", err)
 	}
-	// Tick should have invoked the starter once — for the subrun.
-	// (No queued backlog items, so the main loop is a no-op.)
-	if env.starter.calls() != 1 {
-		t.Fatalf("starter calls: got %d want 1", env.starter.calls())
+	// Tick invokes the starter twice now: once for the queued subrun
+	// (PIPE-C), and once for the in-flight parent (PIPE-P, state=
+	// implementing). The M7 in-flight re-driver re-spawns Drive for
+	// any non-terminal run; idempotency is enforced downstream by
+	// Runner.Start.
+	if env.starter.calls() != 2 {
+		t.Fatalf("starter calls: got %d want 2", env.starter.calls())
 	}
-	got := env.starter.runs[0]
-	if got.ID != "PIPE-C" {
-		t.Errorf("starter run id: got %q want PIPE-C", got.ID)
+	sawSubrun, sawInflight := false, false
+	for i, r := range env.starter.runs {
+		switch r.ID {
+		case "PIPE-C":
+			sawSubrun = true
+			if r.Depth != 1 {
+				t.Errorf("subrun depth: got %d want 1", r.Depth)
+			}
+			if env.starter.items[i].ID != "BACK-CHILD" {
+				t.Errorf("subrun item id: got %q want BACK-CHILD", env.starter.items[i].ID)
+			}
+		case "PIPE-P":
+			sawInflight = true
+		default:
+			t.Errorf("unexpected starter run id %q", r.ID)
+		}
 	}
-	if got.Depth != 1 {
-		t.Errorf("starter run depth: got %d want 1", got.Depth)
+	if !sawSubrun {
+		t.Errorf("starter never saw the subrun PIPE-C")
 	}
-	gotItem := env.starter.items[0]
-	if gotItem.ID != "BACK-CHILD" {
-		t.Errorf("starter item id: got %q want BACK-CHILD", gotItem.ID)
+	if !sawInflight {
+		t.Errorf("starter never saw the in-flight parent PIPE-P")
 	}
-	// res.Started should reflect the subrun pickup.
-	if res.Started != 1 {
-		t.Errorf("res.Started: got %d want 1", res.Started)
+	// res.Started should reflect both the subrun pickup and the in-flight re-drive.
+	if res.Started != 2 {
+		t.Errorf("res.Started: got %d want 2", res.Started)
 	}
 	if res.Errored != 0 {
 		t.Errorf("res.Errored: got %d want 0", res.Errored)
@@ -597,8 +612,225 @@ func TestReconciler_SubrunPickupSurvivesStarterError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tick: %v", err)
 	}
-	if res.Errored != 1 {
-		t.Errorf("expected one errored subrun start, got Errored=%d", res.Errored)
+	// Both the queued subrun and the in-flight parent (PIPE-P) are
+	// handed to the (failing) starter; each surfaces as one Errored.
+	// What this test pins is that neither failure blocks the other —
+	// the tick completes and the per-row error counts roll up.
+	if res.Errored != 2 {
+		t.Errorf("expected two errored starts (subrun + in-flight parent), got Errored=%d", res.Errored)
+	}
+}
+
+// TestReconciler_TickReDrivesInFlightRuns pins the M7 contract: a
+// non-terminal pipeline_runs row whose runner goroutine exited (e.g.,
+// after errStagePending) is re-driven by every subsequent Tick. The
+// smoking-gun scenario from the 2026-05-17 wedge: state=planning,
+// current_stage=plan_slice, ended_at=NULL, with a pending stage_results
+// row carrying spawn_id but outcome=NULL. The wedge held for 9 hours
+// because nothing scanned non-terminal runs after startup; this test
+// proves the new Tick path would have unstuck it.
+func TestReconciler_TickReDrivesInFlightRuns(t *testing.T) {
+	env := newRecEnv(t, nil)
+	ctx := context.Background()
+
+	item := &store.BacklogItem{
+		ID: "BACK-WEDGED", Title: "wedged run", State: store.BacklogRunning,
+		Priority: store.P2, CreatedBy: "test",
+	}
+	if err := env.store.Backlog.Put(ctx, item); err != nil {
+		t.Fatalf("seed backlog: %v", err)
+	}
+	run := &store.PipelineRun{
+		ID: "PIPE-WEDGED", BacklogID: item.ID, Template: "mills-default",
+		State: store.PipelinePlanning, CurrentStage: "plan_slice",
+		Attempts: 1, StartedAt: env.now,
+	}
+	if err := env.store.Pipeline.PutRun(ctx, run); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+	// Seed the pending stage_results row that mirrors the live wedge:
+	// outcome=NULL, spawn_id set. The reconciler does not read this row,
+	// but Runner.Drive will use it (via pendingStage) when re-spawned.
+	if err := env.store.Pipeline.PutStage(ctx, &store.StageResult{
+		PipelineRunID: run.ID, Stage: "plan_slice", Attempt: 1,
+		StartedAt: env.now, SpawnID: "spawn-b7bc071ff949",
+	}); err != nil {
+		t.Fatalf("seed pending stage: %v", err)
+	}
+
+	res, err := env.rec.Tick(ctx)
+	if err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if env.starter.calls() != 1 {
+		t.Fatalf("after tick 1 starter calls: got %d want 1", env.starter.calls())
+	}
+	if env.starter.runs[0].ID != run.ID {
+		t.Fatalf("tick 1 redrove %q want %q", env.starter.runs[0].ID, run.ID)
+	}
+	if res.Started != 1 {
+		t.Errorf("tick 1 res.Started: got %d want 1", res.Started)
+	}
+
+	// Second tick: re-drive again. Production idempotency lives in
+	// Runner.Start's r.active guard; the recording starter is dumb and
+	// records every call, which is the right shape for this assertion —
+	// we want to know the Reconciler does its part on every tick.
+	if _, err := env.rec.Tick(ctx); err != nil {
+		t.Fatalf("tick 2: %v", err)
+	}
+	if env.starter.calls() != 2 {
+		t.Fatalf("after tick 2 starter calls: got %d want 2", env.starter.calls())
+	}
+}
+
+// idempotentStarter simulates Runner.Start's r.active.LoadOrStore guard:
+// the first call for a given run id records the call AND marks the run
+// "active"; subsequent calls return nil without re-recording, mimicking
+// the production no-op-on-active path. This lets us verify that even
+// when a real Runner is still driving a previously-dispatched run, the
+// Reconciler's repeated Tick traffic is harmless.
+type idempotentStarter struct {
+	mu     sync.Mutex
+	active map[string]struct{}
+	runs   []*store.PipelineRun
+}
+
+func newIdempotentStarter() *idempotentStarter {
+	return &idempotentStarter{active: map[string]struct{}{}}
+}
+
+func (s *idempotentStarter) Start(_ context.Context, run *store.PipelineRun, _ *store.BacklogItem) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, loaded := s.active[run.ID]; loaded {
+		// Mirror Runner.Start contract: nil + (logged) warn, no
+		// new dispatch.
+		return nil
+	}
+	s.active[run.ID] = struct{}{}
+	s.runs = append(s.runs, run)
+	return nil
+}
+
+func (s *idempotentStarter) dispatches() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.runs)
+}
+
+// TestReconciler_TickReDriveIsIdempotent pins that repeated Ticks against
+// the same in-flight run do not produce duplicate dispatches when the
+// downstream Starter is idempotent — the production wiring path
+// (Runner.Start uses r.active.LoadOrStore).
+func TestReconciler_TickReDriveIsIdempotent(t *testing.T) {
+	env := newRecEnv(t, nil)
+	ctx := context.Background()
+
+	starter := newIdempotentStarter()
+	env.rec.Starter = starter
+
+	item := &store.BacklogItem{
+		ID: "BACK-IDEM", Title: "idem", State: store.BacklogRunning,
+		Priority: store.P2, CreatedBy: "test",
+	}
+	if err := env.store.Backlog.Put(ctx, item); err != nil {
+		t.Fatalf("seed backlog: %v", err)
+	}
+	run := &store.PipelineRun{
+		ID: "PIPE-IDEM", BacklogID: item.ID, Template: "mills-default",
+		State: store.PipelineImplementing, CurrentStage: "implement",
+		Attempts: 1, StartedAt: env.now,
+	}
+	if err := env.store.Pipeline.PutRun(ctx, run); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := env.rec.Tick(ctx); err != nil {
+			t.Fatalf("tick %d: %v", i, err)
+		}
+	}
+	if got := starter.dispatches(); got != 1 {
+		t.Fatalf("idempotent starter dispatches: got %d want 1 (re-drive must not duplicate live goroutines)", got)
+	}
+}
+
+// TestReconciler_TickReDriveSkipsWhenAutonomyBlocked pins that the new
+// in-flight pickup honors the same autonomy gate the backlog pickup
+// already does. A paused operator must stay paused — no re-drive bursts.
+func TestReconciler_TickReDriveSkipsWhenAutonomyBlocked(t *testing.T) {
+	env := newRecEnv(t, nil)
+	env.rec.AutonomyGate = func(context.Context) (bool, []string) {
+		return false, []string{"paused"}
+	}
+	ctx := context.Background()
+
+	item := &store.BacklogItem{
+		ID: "BACK-PAUSED", Title: "paused", State: store.BacklogRunning,
+		Priority: store.P2, CreatedBy: "test",
+	}
+	if err := env.store.Backlog.Put(ctx, item); err != nil {
+		t.Fatalf("seed backlog: %v", err)
+	}
+	if err := env.store.Pipeline.PutRun(ctx, &store.PipelineRun{
+		ID: "PIPE-PAUSED", BacklogID: item.ID, Template: "mills-default",
+		State: store.PipelinePlanning, CurrentStage: "plan_slice",
+		Attempts: 1, StartedAt: env.now,
+	}); err != nil {
+		t.Fatalf("seed run: %v", err)
+	}
+
+	res, err := env.rec.Tick(ctx)
+	if err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if res.SkipReason != "autonomy blocked" {
+		t.Fatalf("skip reason: got %q want autonomy blocked", res.SkipReason)
+	}
+	if env.starter.calls() != 0 {
+		t.Fatalf("starter calls: got %d want 0 (paused operator must not re-drive)", env.starter.calls())
+	}
+}
+
+// TestReconciler_TickReDriveSkipsTerminalRuns pins the contract boundary:
+// done/escalated/paused runs are excluded by ListInFlight, so the new
+// re-driver never touches them. This guards against a regression where
+// a future ListInFlight refactor broadens the filter.
+func TestReconciler_TickReDriveSkipsTerminalRuns(t *testing.T) {
+	env := newRecEnv(t, nil)
+	ctx := context.Background()
+
+	cases := []struct {
+		id        string
+		state     store.PipelineState
+		backlog   store.BacklogState
+		backlogID string
+	}{
+		{id: "PIPE-DONE", state: store.PipelineDone, backlog: store.BacklogMerged, backlogID: "BACK-DONE"},
+		{id: "PIPE-ESC", state: store.PipelineEscalated, backlog: store.BacklogEscalated, backlogID: "BACK-ESC"},
+		{id: "PIPE-PSE", state: store.PipelinePaused, backlog: store.BacklogPaused, backlogID: "BACK-PSE"},
+	}
+	for _, tc := range cases {
+		if err := env.store.Backlog.Put(ctx, &store.BacklogItem{
+			ID: tc.backlogID, Title: tc.backlogID, State: tc.backlog,
+			Priority: store.P2, CreatedBy: "test",
+		}); err != nil {
+			t.Fatalf("seed backlog %s: %v", tc.backlogID, err)
+		}
+		if err := env.store.Pipeline.PutRun(ctx, &store.PipelineRun{
+			ID: tc.id, BacklogID: tc.backlogID, Template: "mills-default",
+			State: tc.state, Attempts: 1, StartedAt: env.now,
+		}); err != nil {
+			t.Fatalf("seed run %s: %v", tc.id, err)
+		}
+	}
+
+	if _, err := env.rec.Tick(ctx); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if env.starter.calls() != 0 {
+		t.Fatalf("starter calls: got %d want 0 (terminal runs must not re-drive); runs=%v", env.starter.calls(), env.starter.runs)
 	}
 }
 
