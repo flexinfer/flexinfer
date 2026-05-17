@@ -1075,6 +1075,8 @@ publish_unified_rocm_gfx906:
         - build/Dockerfile.unified-gfx906
         - build/scripts/abliterate.py
         - build/scripts/quantize_gptq.py
+        - build/scripts/qwen35_wrap_to_vl_layout.py
+        - build/scripts/qwen35_unwrap_from_vl_layout.py
         - build/server-diffusers.py
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual

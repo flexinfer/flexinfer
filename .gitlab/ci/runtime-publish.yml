@@ -24,6 +24,8 @@ runtime_patch_contracts:
         - build/scripts/patch_vllm_env_override_torch29.py
         - build/scripts/vllm_gemma4_moe_gptq_patch.py
         - build/scripts/vllm_qwen35_patches_nodiag.py
+        - build/scripts/qwen35_wrap_to_vl_layout.py
+        - build/scripts/qwen35_unwrap_from_vl_layout.py
         - scripts/check-runtime-patch-contracts.py
     - if: $CI_MERGE_REQUEST_ID
       changes:
@@ -37,6 +39,8 @@ runtime_patch_contracts:
         - build/scripts/patch_vllm_env_override_torch29.py
         - build/scripts/vllm_gemma4_moe_gptq_patch.py
         - build/scripts/vllm_qwen35_patches_nodiag.py
+        - build/scripts/qwen35_wrap_to_vl_layout.py
+        - build/scripts/qwen35_unwrap_from_vl_layout.py
         - scripts/check-runtime-patch-contracts.py
     - if: $CI_COMMIT_BRANCH
       changes:
@@ -50,6 +54,8 @@ runtime_patch_contracts:
         - build/scripts/patch_vllm_env_override_torch29.py
         - build/scripts/vllm_gemma4_moe_gptq_patch.py
         - build/scripts/vllm_qwen35_patches_nodiag.py
+        - build/scripts/qwen35_wrap_to_vl_layout.py
+        - build/scripts/qwen35_unwrap_from_vl_layout.py
         - scripts/check-runtime-patch-contracts.py
     - when: never
 
@@ -137,6 +143,8 @@ publish_serving_rocm_gfx1100:
         - build/server-diffusers.py
         - build/scripts/vllm_gemma4_moe_gptq_patch.py
         - build/scripts/vllm_qwen35_patches_nodiag.py
+        - build/scripts/qwen35_wrap_to_vl_layout.py
+        - build/scripts/qwen35_unwrap_from_vl_layout.py
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
@@ -235,6 +243,8 @@ publish_unified_rocm_gfx1100:
         - build/steam-headless.sh
         - build/scripts/abliterate.py
         - build/scripts/quantize_gptq.py
+        - build/scripts/qwen35_wrap_to_vl_layout.py
+        - build/scripts/qwen35_unwrap_from_vl_layout.py
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never

@@ -112,19 +112,28 @@ docker --context "${DOCKER_CONTEXT}" build \
 # the local source. We hit a BuildKit regression where `docker build --no-cache`
 # silently shipped stale script content despite new local edits; catching that
 # at build time is much cheaper than discovering it via a stuck quantize job.
-SCRIPT_PATH_LOCAL=""
-SCRIPT_PATH_IMAGE=""
+SCRIPT_PARITY_FILES=()
 case "${FORMAT}" in
     gptq)
-        SCRIPT_PATH_LOCAL="${REPO_ROOT}/build/scripts/quantize_gptq.py"
-        SCRIPT_PATH_IMAGE="/opt/flexinfer/scripts/quantize_gptq.py"
+        SCRIPT_PARITY_FILES=(
+            "build/scripts/quantize_gptq.py:/opt/flexinfer/scripts/quantize_gptq.py"
+            "build/scripts/qwen35_wrap_to_vl_layout.py:/opt/flexinfer/scripts/qwen35_wrap_to_vl_layout.py"
+            "build/scripts/qwen35_unwrap_from_vl_layout.py:/opt/flexinfer/scripts/qwen35_unwrap_from_vl_layout.py"
+        )
         ;;
     awq)
-        SCRIPT_PATH_LOCAL="${REPO_ROOT}/build/scripts/quantize_awq.py"
-        SCRIPT_PATH_IMAGE="/opt/flexinfer/scripts/quantize_awq.py"
+        SCRIPT_PARITY_FILES=(
+            "build/scripts/quantize_awq.py:/opt/flexinfer/scripts/quantize_awq.py"
+        )
         ;;
 esac
-if [[ -n "${SCRIPT_PATH_LOCAL}" && -f "${SCRIPT_PATH_LOCAL}" ]]; then
+for script_pair in "${SCRIPT_PARITY_FILES[@]}"; do
+    SCRIPT_PATH_LOCAL="${REPO_ROOT}/${script_pair%%:*}"
+    SCRIPT_PATH_IMAGE="${script_pair#*:}"
+    if [[ ! -f "${SCRIPT_PATH_LOCAL}" ]]; then
+        echo "ERROR: required local script missing: ${SCRIPT_PATH_LOCAL}" >&2
+        exit 2
+    fi
     LOCAL_MD5=$(md5sum "${SCRIPT_PATH_LOCAL}" | awk '{print $1}')
     IMAGE_MD5=$(docker --context "${DOCKER_CONTEXT}" run --rm --entrypoint "" \
         "${IMAGE_NAME}" md5sum "${SCRIPT_PATH_IMAGE}" 2>/dev/null | awk '{print $1}')
@@ -135,8 +144,8 @@ if [[ -n "${SCRIPT_PATH_LOCAL}" && -f "${SCRIPT_PATH_LOCAL}" ]]; then
         echo "  Try a fresh docker context (docker system prune on the remote) or rebuild manually." >&2
         exit 2
     fi
-    echo "  Script parity verified: md5=${LOCAL_MD5}"
-fi
+    echo "  Script parity verified: ${SCRIPT_PATH_IMAGE} md5=${LOCAL_MD5}"
+done
 
 echo ""
 echo "=== Step 2/5: Push to registry ==="
