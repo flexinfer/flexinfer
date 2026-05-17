@@ -293,6 +293,90 @@ func TestRelay_HandoffAccept_RequiresSessionOrTarget(t *testing.T) {
 	}
 }
 
+// TestFleetShow_MarkdownFallback covers the slice-2-γ remediation:
+// loom_fleet_show now fetches live dashboard data + returns a
+// markdown text summary alongside the MCP Apps widget pointer.
+// Hosts that render widgets show the widget; hosts that don't
+// (notably Claude Code) get the markdown summary. The test asserts
+// the table includes real metrics from the relayed dashboard JSON.
+func TestFleetShow_MarkdownFallback(t *testing.T) {
+	hud, state := fakeHUD(t)
+	// Wrap the dashboard fixture in the {ok, data, meta} envelope so
+	// the renderer's unwrap path is exercised — that's the shape the
+	// real HUD returns via writeMobileJSON.
+	state.dashboard = `{"ok":true,"data":{"daemon_running":true,"server_count":42,"active_sessions":3,"active_agents":4,"idle_agents":1,"offline_agents":2,"health":{"healthy_servers":40,"degraded_servers":2,"down_servers":0,"total_servers":42}},"meta":{"request_id":"req_test","timestamp":"2026-05-17T00:00:00Z"}}`
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{baseURL: hud.URL, token: "test-token", client: hud.Client()},
+	)
+	result := callTool(t, srv, toolShow)
+
+	// Widget pointer still present so widget-capable hosts render.
+	meta, _ := result["_meta"].(map[string]any)
+	ui, _ := meta["ui"].(map[string]any)
+	if ui["resourceUri"] != widgetURI {
+		t.Errorf("widget pointer missing: %+v", meta)
+	}
+
+	// Text content contains the markdown summary with real metrics.
+	content, _ := result["content"].([]any)
+	if len(content) != 1 {
+		t.Fatalf("expected 1 content block, got %d", len(content))
+	}
+	text, _ := content[0].(map[string]any)["text"].(string)
+	wantSubstrings := []string{
+		"Loom Fleet",
+		"7 agents tracked, 3 live sessions", // 4 active + 1 idle + 2 offline
+		"| Daemon | running |",
+		"4 active · 1 idle · 2 offline",
+		"42 total",
+		"40 healthy · 2 degraded · 0 down",
+	}
+	for _, want := range wantSubstrings {
+		if !strings.Contains(text, want) {
+			t.Errorf("markdown summary missing %q in:\n%s", want, text)
+		}
+	}
+}
+
+// TestFleetShow_FallbackOnHUDError verifies the diagnostic markdown
+// path when the relay fails (network, auth, CF Access). The widget
+// pointer should still be attached so capable hosts can fall back to
+// mock data, but the text content should clearly say the relay
+// failed and suggest where to look.
+func TestFleetShow_FallbackOnHUDError(t *testing.T) {
+	// Construct a hudClient pointing at a closed-port URL so every
+	// fetch fails immediately. The exact error wording doesn't
+	// matter; we just need the failure path to produce a diagnostic
+	// rather than crashing or returning empty content.
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{
+			baseURL: "http://127.0.0.1:1", // closed port; connect refused
+			token:   "test-token",
+			client:  &http.Client{Timeout: 500 * time.Millisecond},
+		},
+	)
+	result := callTool(t, srv, toolShow)
+
+	meta, _ := result["_meta"].(map[string]any)
+	ui, _ := meta["ui"].(map[string]any)
+	if ui["resourceUri"] != widgetURI {
+		t.Errorf("widget pointer missing on error path: %+v", meta)
+	}
+
+	content, _ := result["content"].([]any)
+	text, _ := content[0].(map[string]any)["text"].(string)
+	if !strings.Contains(text, "Could not reach the loom HUD") {
+		t.Errorf("error diagnostic missing in text:\n%s", text)
+	}
+	// Should NOT make the misleading "rendered inline" claim from the
+	// pre-remediation code — that was the original sin we're fixing.
+	if strings.Contains(text, "rendered inline") {
+		t.Errorf("text still claims 'rendered inline' on error path — remediation regressed:\n%s", text)
+	}
+}
+
 // TestHUDClient_PostRejectsUnknownTemplate exercises the internal
 // boundary: even if a caller passes an arbitrary template to .post,
 // the allowlist refuses. Defense-in-depth.

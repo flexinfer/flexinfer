@@ -334,19 +334,7 @@ func (s *server) handleToolsCall(req rpcRequest) (any, *rpcError) {
 	}
 	switch params.Name {
 	case toolShow:
-		return map[string]any{
-			"content": []any{
-				map[string]any{
-					"type": "text",
-					"text": "Loom fleet widget rendered inline.",
-				},
-			},
-			"_meta": map[string]any{
-				"ui": map[string]any{
-					"resourceUri": widgetURI,
-				},
-			},
-		}, nil
+		return s.handleFleetShow()
 	case toolDashboard:
 		return s.relay(pathDashboard)
 	case toolPresence:
@@ -443,6 +431,138 @@ func stringArg(args map[string]any, key string) string {
 	}
 	s, _ := v.(string)
 	return strings.TrimSpace(s)
+}
+
+// handleFleetShow returns BOTH a markdown text summary of the live
+// HUD dashboard AND the MCP Apps widget pointer in _meta. Hosts that
+// render MCP Apps widgets (Claude.ai, Claude Desktop chat-only,
+// ChatGPT, VS Code+Copilot, MCP Inspector) show the widget; hosts
+// that don't render widgets (Claude Code in any flavor, as of
+// 2026-05-17) show the markdown summary inline. Both surfaces stay
+// useful from one tool call.
+//
+// Slice 2-γ remediation: was previously returning only the assertive
+// text "Loom fleet widget rendered inline." which mis-claimed
+// successful render in hosts that ignored the widget pointer. See
+// .loom/brainstorm-widget-rendering-breakdown-2026-05-17.md.
+func (s *server) handleFleetShow() (any, *rpcError) {
+	body, err := s.hud.get(context.Background(), pathDashboard, relayPaths)
+	text := renderFleetMarkdown(body, err)
+	return map[string]any{
+		"content": []any{
+			map[string]any{
+				"type": "text",
+				"text": text,
+			},
+		},
+		"_meta": map[string]any{
+			"ui": map[string]any{
+				"resourceUri": widgetURI,
+			},
+		},
+	}, nil
+}
+
+// renderFleetMarkdown formats the mobile-api dashboard envelope as a
+// compact markdown summary. When the HUD fetch fails (network, auth,
+// CF Access, etc.) returns a clear diagnostic block instead — the
+// host still shows it inline, the user knows the relay failed, and
+// they get the URL to investigate. Never returns an empty string.
+func renderFleetMarkdown(body []byte, fetchErr error) string {
+	header := "**Loom Fleet**"
+	if fetchErr != nil {
+		return header + "\n\n" +
+			"⚠️ Could not reach the loom HUD: `" + fetchErr.Error() + "`\n\n" +
+			"_If this host renders MCP Apps widgets, the inline widget above may still work " +
+			"with mock data. Otherwise, check `LOOM_HUD_URL` / `LOOM_HUD_TOKEN` / " +
+			"`LOOM_HUD_CF_ACCESS_*` env on the mcp-loom-widget process._"
+	}
+
+	// envelope is the {ok, data, meta} wrapper from
+	// internal/hud/domain/mobile/auth.go writeMobileJSON. Tolerates
+	// unwrapped bodies for forward compatibility.
+	var env struct {
+		OK    bool            `json:"ok"`
+		Data  json.RawMessage `json:"data"`
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &env); err != nil {
+		return header + "\n\n⚠️ HUD response not parseable: `" + err.Error() + "`"
+	}
+	payload := env.Data
+	if payload == nil {
+		// Maybe the HUD returned an unwrapped object; try parsing
+		// the raw body as the dashboard payload directly.
+		payload = body
+	}
+	if !env.OK && env.Error.Code != "" {
+		return header + "\n\n⚠️ HUD returned an error: `" + env.Error.Code + ": " + env.Error.Message + "`"
+	}
+
+	var dash struct {
+		DaemonRunning  bool   `json:"daemon_running"`
+		ServerCount    int    `json:"server_count"`
+		ActiveSessions int    `json:"active_sessions"`
+		ActiveAgents   int    `json:"active_agents"`
+		IdleAgents     int    `json:"idle_agents"`
+		OfflineAgents  int    `json:"offline_agents"`
+		UpdatedAt      string `json:"updated_at"`
+		Health         struct {
+			TotalServers    int `json:"total_servers"`
+			HealthyServers  int `json:"healthy_servers"`
+			DegradedServers int `json:"degraded_servers"`
+			DownServers     int `json:"down_servers"`
+		} `json:"health"`
+		Spawns struct {
+			Active int `json:"active"`
+			Total  int `json:"total"`
+		} `json:"spawns"`
+		LastHeartbeat struct {
+			AgentID   string `json:"agent_id"`
+			Timestamp string `json:"timestamp"`
+			Count1h   int    `json:"count_1h"`
+		} `json:"last_heartbeat"`
+	}
+	if err := json.Unmarshal(payload, &dash); err != nil {
+		return header + "\n\n⚠️ Dashboard payload not parseable: `" + err.Error() + "`"
+	}
+
+	var sb strings.Builder
+	sb.WriteString(header)
+	totalAgents := dash.ActiveAgents + dash.IdleAgents + dash.OfflineAgents
+	sb.WriteString(fmt.Sprintf(" · %d agents tracked, %d live sessions\n\n", totalAgents, dash.ActiveSessions))
+
+	sb.WriteString("| Metric | Value |\n")
+	sb.WriteString("|---|---|\n")
+	daemonState := "running"
+	if !dash.DaemonRunning {
+		daemonState = "down"
+	}
+	sb.WriteString(fmt.Sprintf("| Daemon | %s |\n", daemonState))
+	sb.WriteString(fmt.Sprintf("| Agents | %d active · %d idle · %d offline |\n",
+		dash.ActiveAgents, dash.IdleAgents, dash.OfflineAgents))
+	sb.WriteString(fmt.Sprintf("| Sessions | %d active |\n", dash.ActiveSessions))
+	sb.WriteString(fmt.Sprintf("| MCP servers | %d total |\n", dash.ServerCount))
+	if dash.Health.TotalServers > 0 {
+		sb.WriteString(fmt.Sprintf("| Server health | %d healthy · %d degraded · %d down |\n",
+			dash.Health.HealthyServers, dash.Health.DegradedServers, dash.Health.DownServers))
+	}
+	if dash.Spawns.Total > 0 || dash.Spawns.Active > 0 {
+		sb.WriteString(fmt.Sprintf("| Spawns | %d active · %d total |\n", dash.Spawns.Active, dash.Spawns.Total))
+	}
+	if dash.LastHeartbeat.AgentID != "" {
+		sb.WriteString(fmt.Sprintf("| Last heartbeat | `%s` · %d/h |\n",
+			dash.LastHeartbeat.AgentID, dash.LastHeartbeat.Count1h))
+	}
+
+	sb.WriteString("\n_Hosts that render MCP Apps widgets show an interactive ")
+	sb.WriteString("version of this above (Claude.ai web, Claude Desktop, ChatGPT, ")
+	sb.WriteString("MCP Inspector). Claude Code shows this markdown summary; the ")
+	sb.WriteString("widget renderer is a vendor gap, not a wire-format bug._")
+	return sb.String()
 }
 
 // relay fetches one HUD path and returns the body as a text content
