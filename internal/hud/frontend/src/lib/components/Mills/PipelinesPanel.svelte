@@ -65,6 +65,17 @@
     return `padding-left:${1.25 * d}rem`;
   }
 
+  // shortRunID keeps the run id glanceable in a dense table. Mills
+  // ids are ~40 chars (PIPE-<BACKLOG>-HHMMSS-<unixms>); the
+  // <BACKLOG> prefix is the load-bearing identifier so we keep it
+  // and the trailing unique suffix, eliding the timestamp middle.
+  // Full id is preserved in the row's title attribute + accessible
+  // via click-to-copy in the drilldown drawer.
+  function shortRunID(id: string): string {
+    if (id.length <= 24) return id;
+    return `${id.slice(0, 18)}…${id.slice(-4)}`;
+  }
+
   let selectedID = $derived(millsStore.selectedRunID);
 
   function openRun(id: string): void {
@@ -157,8 +168,8 @@
           onclick={() => openRun(r.ID)}
           onkeydown={(ev) => onRowKeydown(ev, r.ID)}
         >
-          <td class="mono" style={depthIndent(r.Depth)} title={r.ParentRunID ? `subrun of ${r.ParentRunID}` : 'top-level run'}>
-            {#if (r.Depth ?? 0) > 0}<span class="tree-glyph" aria-hidden="true">└─ </span>{/if}{r.ID}
+          <td class="mono" style={depthIndent(r.Depth)} title={r.ParentRunID ? `${r.ID} — subrun of ${r.ParentRunID}` : r.ID}>
+            {#if (r.Depth ?? 0) > 0}<span class="tree-glyph" aria-hidden="true">└─ </span>{/if}{shortRunID(r.ID)}
           </td>
           <td>
             {#if (r.Depth ?? 0) > 0}

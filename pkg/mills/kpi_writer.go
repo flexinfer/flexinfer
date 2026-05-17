@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"fmt"
 	"log/slog"
+	"sort"
 	"time"
 
 	"github.com/crb2nu/loom/pkg/mills/store"
@@ -129,7 +130,46 @@ func (w *KPIWriter) snapshot(ctx context.Context, now time.Time, window time.Dur
 		metrics["gate_pass_rate"] = float64(gatePass) / float64(gateTotal)
 	}
 	if mergedRuns > 0 {
+		// cost_per_merged_change_usd: today equivalent to per-pipeline
+		// since Mills doesn't yet aggregate multiple pipeline_runs per
+		// backlog item into a single "change". When backlog→change
+		// attribution is added (Phase 8+) this should switch to
+		// grouping by backlog_id; the metric key is the canonical
+		// frontend contract either way.
 		metrics["cost_per_merged_pipeline_usd"] = pipelineCost / float64(mergedRuns)
+		metrics["cost_per_merged_change_usd"] = pipelineCost / float64(mergedRuns)
+	}
+	// auto_merge_rate: fraction of terminal runs in the window that
+	// reached `done` (vs `escalated`). Mills always uses the
+	// auto-merge path so this measures autonomous-success rate, not
+	// human vs auto merge selection. Denominator is mergedRuns +
+	// escalatedRuns so the metric stays bounded to [0,1] over actual
+	// outcomes and complementary with regression_rate below.
+	if denom := mergedRuns + escalatedRuns; denom > 0 {
+		metrics["auto_merge_rate"] = float64(mergedRuns) / float64(denom)
+		// regression_rate: best-effort proxy = escalation_rate. Mills
+		// doesn't yet track post-merge regressions; until that signal
+		// exists, "rate at which the autonomous pipeline can't carry
+		// through" is the closest single-pass signal we have.
+		metrics["regression_rate"] = float64(escalatedRuns) / float64(denom)
+	}
+	// council_roi: merged changes per dollar of council spend. A
+	// value > 1 means each $1 of council deliberation produced > 1
+	// merged change in the window. Omitted when councilCost <= 0 so
+	// the frontend renders "—" rather than divide-by-zero infinity.
+	if councilCost > 0 {
+		metrics["council_roi"] = float64(mergedRuns) / councilCost
+	}
+	// slice_to_merge_p50_seconds: median wall-clock from started_at
+	// to ended_at over runs that reached state=done in the window.
+	// Computed in Go because SQLite lacks a built-in percentile
+	// function.
+	p50, err := mergedRunDurationP50(ctx, w.Store, since)
+	if err != nil {
+		return nil, err
+	}
+	if p50 > 0 {
+		metrics["slice_to_merge_p50_seconds"] = p50
 	}
 
 	return &store.KPISnapshot{
@@ -137,6 +177,38 @@ func (w *KPIWriter) snapshot(ctx context.Context, now time.Time, window time.Dur
 		WindowSeconds: int(window.Seconds()),
 		Metrics:       metrics,
 	}, nil
+}
+
+// mergedRunDurationP50 returns the median (started_at → ended_at)
+// duration in seconds across runs that reached state=done in the
+// window. Returns 0 when there are no completed runs (caller treats
+// 0 as "omit the metric").
+func mergedRunDurationP50(ctx context.Context, st *store.Store, since time.Time) (float64, error) {
+	runs, err := st.Pipeline.ListByStateSince(ctx, store.PipelineDone, since)
+	if err != nil {
+		return 0, fmt.Errorf("kpi p50 list: %w", err)
+	}
+	durations := make([]float64, 0, len(runs))
+	for _, r := range runs {
+		if r == nil || r.EndedAt == nil {
+			continue
+		}
+		d := r.EndedAt.Sub(r.StartedAt).Seconds()
+		if d <= 0 {
+			continue
+		}
+		durations = append(durations, d)
+	}
+	if len(durations) == 0 {
+		return 0, nil
+	}
+	sort.Float64s(durations)
+	n := len(durations)
+	if n%2 == 1 {
+		return durations[n/2], nil
+	}
+	mid := n / 2
+	return (durations[mid-1] + durations[mid]) / 2, nil
 }
 
 func (w *KPIWriter) policyEnabled() bool {
