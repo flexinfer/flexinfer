@@ -209,12 +209,29 @@ func (r *Reconciler) Tick(ctx context.Context) (TickResult, error) {
 	res.Started += subStarted
 	res.Errored += subErrs
 
+	// M7: re-drive non-terminal pipeline_runs whose runner goroutine
+	// is no longer alive in this process. A transient HUD error during
+	// a spawn poll (or an operator pod rollout) can cause Runner.Drive
+	// to exit with a pending stage_results row but no live goroutine
+	// scanning it. Without a mid-life re-driver the run wedges until
+	// manual intervention. Idempotency is enforced downstream by
+	// Runner.Start's r.active.LoadOrStore guard: a live goroutine
+	// returns nil + warn log; a missing goroutine gets re-spawned and
+	// reattaches to the pending spawn via SpawnResumeClient.Resume.
+	//
+	// Stays inside Tick's existing policy + autonomy gates above, so a
+	// paused operator does not re-drive anything.
+	inflightStarted, inflightErrs := r.pickupInFlightRuns(ctx)
+	res.Started += inflightStarted
+	res.Errored += inflightErrs
+
 	tickOutcome := tickOutcomeLabel(res)
 	ReconcileTicksTotal.WithLabelValues(tickOutcome).Inc()
 	r.append(ctx, "reconciler.tick", "ok", map[string]any{
 		"inspected": res.Inspected, "started": res.Started,
 		"deferred": res.Deferred, "skipped": res.Skipped, "errored": res.Errored,
 		"subrun_started": subStarted, "subrun_errored": subErrs,
+		"inflight_started": inflightStarted, "inflight_errored": inflightErrs,
 	})
 	return res, nil
 }
@@ -438,6 +455,54 @@ func (r *Reconciler) pickupQueuedSubruns(ctx context.Context) (int, int) {
 		r.append(ctx, "reconciler.subrun_started", "ok", map[string]any{
 			"run": run.ID, "backlog": run.BacklogID, "depth": run.Depth,
 			"parent_run": derefString(run.ParentRunID),
+		})
+		started++
+	}
+	return started, errored
+}
+
+// pickupInFlightRuns re-invokes the PipelineStarter for every non-terminal
+// pipeline_runs row. Intended cadence: every Tick. The Starter is expected
+// to be idempotent for an already-driving run (production wiring is
+// Runner.Start, which uses r.active.LoadOrStore to no-op a duplicate).
+//
+// Rationale: when a runner goroutine exits with a stage in pending state
+// (errStagePending after a transient HUD error, or a panic-recovered Drive)
+// nothing else picks the run back up. ResumeInFlightRuns only fires once at
+// operator startup. Without this re-driver a transient spawn-poll error
+// strands a run until manual escalation.
+//
+// Errors are logged per-row and counted into the tick result; one failure
+// does not block the rest. Returns (started, errored).
+func (r *Reconciler) pickupInFlightRuns(ctx context.Context) (int, int) {
+	if r.Store == nil || r.Starter == nil {
+		return 0, 0
+	}
+	runs, err := r.Store.Pipeline.ListInFlight(ctx)
+	if err != nil {
+		r.append(ctx, "reconciler.inflight_pickup_failed", "error", map[string]any{"error": err.Error()})
+		return 0, 1
+	}
+	var started, errored int
+	for _, run := range runs {
+		item, lerr := r.Store.Backlog.Get(ctx, run.BacklogID)
+		if lerr != nil {
+			r.append(ctx, "reconciler.inflight_pickup_failed", "error", map[string]any{
+				"run": run.ID, "backlog": run.BacklogID, "error": lerr.Error(),
+			})
+			errored++
+			continue
+		}
+		if err := r.Starter.Start(ctx, run, item); err != nil {
+			r.append(ctx, "reconciler.inflight_start_failed", "error", map[string]any{
+				"run": run.ID, "backlog": run.BacklogID, "error": err.Error(),
+			})
+			errored++
+			continue
+		}
+		r.append(ctx, "reconciler.inflight_redriven", "ok", map[string]any{
+			"run": run.ID, "backlog": run.BacklogID,
+			"state": string(run.State), "stage": run.CurrentStage,
 		})
 		started++
 	}
