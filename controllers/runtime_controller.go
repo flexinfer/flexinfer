@@ -45,6 +45,14 @@ type RuntimeEndpoint struct {
 	Ready bool
 }
 
+// CanAcceptLoad reports whether the runtime management API has a routable pod
+// IP. A runtime pod can be Running with Ready=false while no backend model is
+// ready yet; the controller must still be able to send load/unload requests in
+// that state.
+func (e *RuntimeEndpoint) CanAcceptLoad() bool {
+	return e != nil && e.PodIP != ""
+}
+
 // URL returns the HTTP URL for the runtime API.
 func (e *RuntimeEndpoint) URL() string {
 	return fmt.Sprintf("http://%s:%d", e.PodIP, e.Port)

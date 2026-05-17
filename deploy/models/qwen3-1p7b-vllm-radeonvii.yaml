@@ -17,28 +17,34 @@
 #
 # Coexists with the existing radeonvii-models pool entries: bge embeddings
 # (~600 MB), qwen3-1p7b-tools llama.cpp tool-router (~1.5 GB), and SDXL
-# inpainting (~6-8 GB CPU-offloaded). vLLM canary at priority 80 stays
-# below the tool-router (120) and below qwen3-8b-radeonvii (100) so the
-# established lanes preempt this canary if GPU pressure rises.
+# inpainting (~6-8 GB CPU-offloaded). The vLLM canary stays scaled to zero,
+# but its explicit canary aliases can preempt the CPU fallback while an
+# operator is intentionally smoking the vLLM lane.
 #
 # Default: scaled to zero. Smoke procedure (manual; do NOT auto-promote):
-#   1. kubectl scale -n flexinfer-system deployment/qwen3-1.7b-vllm-radeonvii --replicas=1
-#      (or just hit the proxy alias and let serverless cold-start)
-#   2. Wait for Ready phase + pod 1/1 Running.
-#   3. curl /v1/completions through flexinfer-proxy with prompt
+#   1. Hit the proxy canary alias and let serverless cold-start
+#      qwen3-1p7b-vllm-radeonvii through flexinfer-runtime-gfx906.
+#   2. Wait for Ready phase on the Model and the active Service endpoint.
+#   3. curl /v1/chat/completions through flexinfer-proxy with prompt
 #      "The color of the sky is" (deterministic). Expect coherent reply.
 #   4. Record evidence in .loom/60-validation-matrix.md as a `gfx906` textgen
 #      canary row. If pass, follow up with a small MR flipping
-#      `deploy/gpuprofiles/gfx906.yaml` `vllm.support: experimental → full`.
+#      `deploy/gpuprofiles/gfx906.yaml` `vllm.support: experimental -> full`.
 #
 # Block: vLLM 0.7.3 has known limits on gfx906 (no FP8 KV, no Marlin kernels;
 # Triton AWQ is slow). Do NOT promote to a serving lane based on this canary
 # alone — the canary's purpose is to validate the *import-and-serve* path,
 # not to claim parity with the gfx1100 vLLM lane.
+#
+# 2026-05-17 live RALPH: DNS-safe naming, Local cache staging, and priority
+# preemption all worked. The smoke exposed a controller/runtime readiness gap:
+# the persistent runtime can be API-alive but pod-not-Ready while no backend is
+# ready. Keep support experimental until the patched load path rolls out and
+# this canary returns HTTP 200.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
-  name: qwen3-1.7b-vllm-radeonvii
+  name: qwen3-1p7b-vllm-radeonvii
   namespace: flexinfer-system
 spec:
   backend: vllm
@@ -46,9 +52,9 @@ spec:
   gpu:
     vendor: amd
     shared: radeonvii-models
-    # Below tool-router (120) and qwen3-8b (100). Canary should yield to
-    # established lanes if GPU pressure rises.
-    priority: 80
+    # Above the CPU fallback only for explicit canary traffic. The model stays
+    # minReplicas=0 and owns only canary-scoped aliases.
+    priority: 130
     count: 1
     vramEstimateMB: 10000
   serverless:
@@ -73,7 +79,7 @@ spec:
   cache:
     size: 6Gi
     storageClass: nvme-1r
-    strategy: SharedPVC
+    strategy: Local
   nodeSelector:
     kubernetes.io/hostname: cblevins-radeonvii
   resources:
