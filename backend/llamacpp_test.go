@@ -76,6 +76,39 @@ func TestLlamaCppBackendArgs_DefaultPort(t *testing.T) {
 	}
 }
 
+func TestLlamaCppBackendArgs_AppendsGGUFFileToModelDirectory(t *testing.T) {
+	b := &LlamaCppBackend{}
+	spec := &ModelSpec{
+		ModelPath: "/models/flexinfer-system/qwen3-1p7b-tools-radeonvii",
+		Config: map[string]any{
+			"ggufFile": "qwen3-1.7b-q4_k_m.gguf",
+		},
+	}
+
+	args := b.Args(spec)
+	model := argValue(args, "--model")
+	want := "/models/flexinfer-system/qwen3-1p7b-tools-radeonvii/qwen3-1.7b-q4_k_m.gguf"
+	if model != want {
+		t.Fatalf("expected --model %q, got %q in args %#v", want, model, args)
+	}
+}
+
+func TestLlamaCppBackendArgs_KeepsExplicitGGUFModelPath(t *testing.T) {
+	b := &LlamaCppBackend{}
+	spec := &ModelSpec{
+		ModelPath: "/models/flexinfer-system/qwen3-1p7b-tools-radeonvii/qwen3-1.7b-q4_k_m.gguf",
+		Config: map[string]any{
+			"ggufFile": "qwen3-1.7b-q4_k_m.gguf",
+		},
+	}
+
+	args := b.Args(spec)
+	model := argValue(args, "--model")
+	if model != spec.ModelPath {
+		t.Fatalf("expected --model %q, got %q in args %#v", spec.ModelPath, model, args)
+	}
+}
+
 func TestLlamaCppBackendEnv_AMDDevicePinningFromOrdinal(t *testing.T) {
 	b := &LlamaCppBackend{}
 	spec := &ModelSpec{
