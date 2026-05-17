@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/crb2nu/loom/pkg/mills/store"
 )
 
 func TestSpecConformanceGate_PassAtOrAboveThreshold(t *testing.T) {
@@ -241,4 +243,171 @@ func TestIsJudgeUnparseable_DuckTypedReturnsTrue(t *testing.T) {
 	if !isJudgeUnparseable(&duckUnparseableErr{msg: "x"}) {
 		t.Error("duck-typed predicate must classify cross-package wrappers")
 	}
+}
+
+// --- M8: mills-canary label short-circuits LLM-judged gates ---
+
+// recordingJudge counts Judge invocations. The M8 short-circuit must
+// fire before the judge is asked anything; the canary tests assert
+// Calls remains 0 when the canary label is set.
+type recordingJudge struct {
+	calls    int
+	response RubricVerdict
+}
+
+func (r *recordingJudge) Judge(_ context.Context, _ string, _ StageInput) (RubricVerdict, error) {
+	r.calls++
+	return r.response, nil
+}
+
+// TestLLMGate_CanaryLabelShortCircuitsJudge pins the M8 contract: when
+// the backlog item carries the canary label, the gate passes immediately
+// with JudgedBy="skipped:canary" and the underlying judge is never
+// consulted. Live evidence from PIPE-MILLS-CANARY-M6-164007-1779036007
+// (2026-05-17): gemma4-26b returned a fabricated "file.py:10 - debug
+// print found" verdict on a markdown-only diff. The skip removes the
+// judge from the canary path entirely so model-quality hallucination
+// can never bound canary pipeline completion again.
+func TestLLMGate_CanaryLabelShortCircuitsJudge(t *testing.T) {
+	judge := &recordingJudge{response: RubricVerdict{Score: 0.0, Model: "should-not-be-called"}}
+	g := NewSpecConformanceGate(judge)
+	in := StageInput{
+		Item: &store.BacklogItem{
+			ID:     "PIPE-CANARY-M8",
+			Labels: []string{CanaryLabel, "safe-fixture"},
+		},
+	}
+	out, err := g.Evaluate(context.Background(), in)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if !out.Pass {
+		t.Errorf("canary item must pass LLM gate; got %+v", out)
+	}
+	if out.JudgedBy != CanarySkipJudgedBy {
+		t.Errorf("JudgedBy = %q, want %q (operators grep for this token in gate_outcomes)", out.JudgedBy, CanarySkipJudgedBy)
+	}
+	if judge.calls != 0 {
+		t.Errorf("judge.calls = %d, want 0 (canary skip must avoid the FlexInfer roundtrip)", judge.calls)
+	}
+	if len(out.Reasons) == 0 {
+		t.Errorf("expected at least one reason describing the canary skip, got %v", out.Reasons)
+	}
+}
+
+// TestLLMGate_CanaryLabelShortCircuitsPRSelfReviewToo ensures both
+// LLM-judged gates share the skip path. The runner's post_review_gate
+// stage lists both spec_conformance and pr_self_review; if only one
+// skipped the canary would still escalate on the other.
+func TestLLMGate_CanaryLabelShortCircuitsPRSelfReviewToo(t *testing.T) {
+	judge := &recordingJudge{response: RubricVerdict{Score: 0.0}}
+	g := NewPRSelfReviewGate(judge)
+	in := StageInput{Item: &store.BacklogItem{ID: "X", Labels: []string{CanaryLabel}}}
+	out, err := g.Evaluate(context.Background(), in)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if !out.Pass || out.JudgedBy != CanarySkipJudgedBy {
+		t.Errorf("pr_self_review canary outcome = %+v, want Pass=true JudgedBy=%q", out, CanarySkipJudgedBy)
+	}
+	if judge.calls != 0 {
+		t.Errorf("pr_self_review judge.calls = %d, want 0", judge.calls)
+	}
+}
+
+// TestLLMGate_NonCanaryLabelsDoNotShortCircuit guards against a typo
+// or label-overload regression: only the exact "mills-canary" label
+// triggers the skip. Real backlog items with other labels (debt, docs,
+// tech-debt, etc.) must continue to go through the judge.
+func TestLLMGate_NonCanaryLabelsDoNotShortCircuit(t *testing.T) {
+	judge := &recordingJudge{response: RubricVerdict{Score: 0.9, Model: "qwen-3-8b"}}
+	g := NewSpecConformanceGate(judge)
+	in := StageInput{
+		Item: &store.BacklogItem{
+			ID:     "BL-REAL-WORK",
+			Labels: []string{"debt", "tech-debt", "mills-canary-but-not-quite", "safe-fixture"},
+		},
+	}
+	out, err := g.Evaluate(context.Background(), in)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if judge.calls != 1 {
+		t.Errorf("judge.calls = %d, want 1 (non-canary item must still go through the judge)", judge.calls)
+	}
+	if !out.Pass {
+		t.Errorf("expected pass at score 0.9; got %+v", out)
+	}
+	if out.JudgedBy == CanarySkipJudgedBy {
+		t.Errorf("non-canary item must NOT carry %q JudgedBy", CanarySkipJudgedBy)
+	}
+	if !strings.HasPrefix(out.JudgedBy, "flexinfer:") {
+		t.Errorf("JudgedBy = %q, want flexinfer:* prefix for real LLM-judged path", out.JudgedBy)
+	}
+}
+
+// TestLLMGate_NilItemDoesNotShortCircuit is the belt-and-suspenders
+// case: a test or buggy caller passing StageInput{} (no Item) must not
+// accidentally trigger the skip. The judge must run as configured.
+func TestLLMGate_NilItemDoesNotShortCircuit(t *testing.T) {
+	judge := &recordingJudge{response: RubricVerdict{Score: 0.9, Model: "qwen-3-8b"}}
+	g := NewSpecConformanceGate(judge)
+	out, err := g.Evaluate(context.Background(), StageInput{})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if judge.calls != 1 {
+		t.Errorf("judge.calls = %d, want 1 (nil item must fall through to judge)", judge.calls)
+	}
+	if out.JudgedBy == CanarySkipJudgedBy {
+		t.Errorf("nil item must not produce canary skip; got %+v", out)
+	}
+}
+
+// TestLLMGate_EmptyLabelsDoNotShortCircuit pins the empty-slice case:
+// Item present but Labels=nil or []string{} must not trigger the skip.
+func TestLLMGate_EmptyLabelsDoNotShortCircuit(t *testing.T) {
+	judge := &recordingJudge{response: RubricVerdict{Score: 0.85, Model: "qwen-3-8b"}}
+	g := NewSpecConformanceGate(judge)
+	in := StageInput{Item: &store.BacklogItem{ID: "X", Labels: nil}}
+	out, err := g.Evaluate(context.Background(), in)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if judge.calls != 1 {
+		t.Errorf("judge.calls = %d, want 1 (empty labels must fall through to judge)", judge.calls)
+	}
+	if out.JudgedBy == CanarySkipJudgedBy {
+		t.Errorf("empty labels must not produce canary skip; got %+v", out)
+	}
+}
+
+// TestItemHasCanaryLabel_PureFunction guards the helper's nil-safety
+// and exact-match semantics.
+func TestItemHasCanaryLabel_PureFunction(t *testing.T) {
+	t.Run("nil item is false", func(t *testing.T) {
+		if itemHasCanaryLabel(nil) {
+			t.Error("nil item must not be classified as canary")
+		}
+	})
+	t.Run("empty labels is false", func(t *testing.T) {
+		if itemHasCanaryLabel(&store.BacklogItem{}) {
+			t.Error("empty Labels must not match")
+		}
+	})
+	t.Run("exact match is true", func(t *testing.T) {
+		if !itemHasCanaryLabel(&store.BacklogItem{Labels: []string{CanaryLabel}}) {
+			t.Error("exact mills-canary label must match")
+		}
+	})
+	t.Run("substring match is false", func(t *testing.T) {
+		if itemHasCanaryLabel(&store.BacklogItem{Labels: []string{"mills-canary-but-not-quite"}}) {
+			t.Error("substring match must not trigger skip")
+		}
+	})
+	t.Run("multi-label with canary among others is true", func(t *testing.T) {
+		if !itemHasCanaryLabel(&store.BacklogItem{Labels: []string{"safe-fixture", CanaryLabel, "auto"}}) {
+			t.Error("canary label found at any position must match")
+		}
+	})
 }
