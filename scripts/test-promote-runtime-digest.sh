@@ -25,6 +25,13 @@ cp "${REPO_ROOT}/scripts/check-runtime-profile-consistency.sh" "${TMP_ROOT}/scri
 digest="sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 rollback_digest="sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
 target="registry.harbor.lan/flexinfer/runtime@${digest}"
+serving_digest="sha256:3333333333333333333333333333333333333333333333333333333333333333"
+serving_rollback_digest="sha256:4444444444444444444444444444444444444444444444444444444444444444"
+serving_target="registry.harbor.lan/flexinfer/runtime@${serving_digest}"
+runtime_images_before="$(
+  yq -r '.runtime.profiles[] | select(.gpuArch == "gfx1100") | .image' \
+    "${TMP_ROOT}/deploy/system/values-k3s.yaml" | sort -u
+)"
 
 "${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100 \
   --repo-root "${TMP_ROOT}" \
@@ -43,8 +50,8 @@ runtime_images="$(
   yq -r '.runtime.profiles[] | select(.gpuArch == "gfx1100") | .image' \
     "${TMP_ROOT}/deploy/system/values-k3s.yaml" | sort -u
 )"
-if [[ "${runtime_images}" != "${target}" ]]; then
-  echo "values runtime image mismatch: got ${runtime_images}, want ${target}" >&2
+if [[ "${runtime_images}" != "${runtime_images_before}" ]]; then
+  echo "gfx1100 promotion mutated serving runtime profiles: got ${runtime_images}, want ${runtime_images_before}" >&2
   exit 1
 fi
 
@@ -65,6 +72,35 @@ grep -F "Validation matrix row: REQUIRED for --apply via --validation-row." /tmp
 grep -F "Rollback digest: REQUIRED for --apply via --rollback-digest." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
 grep -F "Required lanes to keep represented: gfx1100 textgen, gfx1100 imagegen, gfx906 textgen/quantization, gfx906 imagegen/offload." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
 grep -F "Smoke gfx1100 textgen and imagegen lanes before Flux reconciliation." /tmp/flexinfer-promote-runtime-dry-run.log >/dev/null
+
+serving_before="$(shasum "${TMP_ROOT}/deploy/gpuprofiles/gfx1100.yaml")"
+"${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100-serving \
+  --repo-root "${TMP_ROOT}" \
+  --digest "${serving_digest}" >/tmp/flexinfer-promote-runtime-serving-dry-run.log
+grep -F "Helm runtime profiles: deploy/system/values-k3s.yaml" /tmp/flexinfer-promote-runtime-serving-dry-run.log >/dev/null
+if grep -F "GPUProfile runtime image:" /tmp/flexinfer-promote-runtime-serving-dry-run.log >/dev/null; then
+  echo "serving dry-run unexpectedly targeted GPUProfile" >&2
+  exit 1
+fi
+"${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100-serving \
+  --repo-root "${TMP_ROOT}" \
+  --digest "${serving_digest}" \
+  --validation-row "Required canary: gfx1100 serving" \
+  --rollback-digest "${serving_rollback_digest}" \
+  --apply >/tmp/flexinfer-promote-runtime-serving-test.log
+serving_after="$(shasum "${TMP_ROOT}/deploy/gpuprofiles/gfx1100.yaml")"
+if [[ "${serving_before}" != "${serving_after}" ]]; then
+  echo "serving promotion mutated GPUProfile" >&2
+  exit 1
+fi
+serving_runtime_images="$(
+  yq -r '.runtime.profiles[] | select(.gpuArch == "gfx1100") | .image' \
+    "${TMP_ROOT}/deploy/system/values-k3s.yaml" | sort -u
+)"
+if [[ "${serving_runtime_images}" != "${serving_target}" ]]; then
+  echo "serving values runtime image mismatch: got ${serving_runtime_images}, want ${serving_target}" >&2
+  exit 1
+fi
 
 if "${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100 \
   --repo-root "${TMP_ROOT}" \

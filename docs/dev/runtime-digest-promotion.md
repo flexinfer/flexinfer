@@ -17,6 +17,12 @@ or Docker buildx, then prints the exact diff it would apply to:
 - `deploy/gpuprofiles/<profile-or-arch>.yaml`
 - matching `runtime.profiles` entries in `deploy/system/values-k3s.yaml`
 
+Profiles can narrow their promotion targets in `build/runtime.yaml`. Today
+`gfx1100` promotes only the broad GPUProfile runtime image, while
+`gfx1100-serving` promotes the persistent `gfx1100` Helm runtime profiles. This
+keeps serving DaemonSets on the slim serving persona instead of accidentally
+rolling them back to the broader unified image.
+
 No files are changed in dry-run mode.
 
 ## Apply
@@ -36,6 +42,17 @@ scripts/promote-runtime-digest.sh gfx1100 \
   --digest sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef \
   --validation-row "Required canary: gfx1100 textgen" \
   --rollback-digest <previous-sha256> \
+  --apply
+```
+
+Promote the serving persona separately when the serving tag is the intended
+DaemonSet runtime:
+
+```bash
+scripts/promote-runtime-digest.sh gfx1100-serving \
+  --digest sha256:3333333333333333333333333333333333333333333333333333333333333333 \
+  --validation-row "Required canary: gfx1100 serving" \
+  --rollback-digest <previous-serving-sha256> \
   --apply
 ```
 
