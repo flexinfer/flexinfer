@@ -562,7 +562,12 @@ func (s *Service) applyWatchTask(ctx context.Context, watchID, repoID, absRoot, 
 			if end > len(points) {
 				end = len(points)
 			}
-			if err := s.qdrant.Upsert(ctx, points[i:end], true); err != nil {
+			// Mirror index_pipeline.go: bulk batches wait=false, last
+			// batch wait=true for durability. Watch mode usually flushes
+			// a single small batch so the speedup is modest, but the
+			// symmetry keeps both code paths predictable for operators.
+			wait := upsertWaitForBatch(s.cfg.UpsertWait, end, len(points))
+			if err := s.qdrant.Upsert(ctx, points[i:end], wait); err != nil {
 				return fmt.Errorf("upsert %s: %v", t.relPath, err)
 			}
 		}

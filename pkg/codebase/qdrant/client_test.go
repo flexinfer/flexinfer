@@ -303,6 +303,65 @@ func TestDoJSON_404WithoutCollectionMessageIsNotCollectionNotFound(t *testing.T)
 	}
 }
 
+func TestUpsert_PassesWaitFlagInQueryString(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name     string
+		wait     bool
+		wantWait string
+	}{
+		{name: "wait_false", wait: false, wantWait: "false"},
+		{name: "wait_true", wait: true, wantWait: "true"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			var seenWait string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPut && r.URL.Path == "/collections/test/points" {
+					seenWait = r.URL.Query().Get("wait")
+					_, _ = w.Write([]byte(`{"status":"ok"}`))
+					return
+				}
+				http.NotFound(w, r)
+			}))
+			t.Cleanup(srv.Close)
+
+			c := NewClient(httpclient.NewDefault(), srv.URL, "", "test", "Cosine")
+			points := []Point{{ID: "a", Vector: []float64{1, 2, 3}, Payload: map[string]any{"id": "a"}}}
+			if err := c.Upsert(context.Background(), points, tc.wait); err != nil {
+				t.Fatalf("Upsert err=%v", err)
+			}
+			if seenWait != tc.wantWait {
+				t.Fatalf("wait query=%q want %q", seenWait, tc.wantWait)
+			}
+		})
+	}
+}
+
+func TestUpsert_EmptyPointsIsNoOp(t *testing.T) {
+	t.Parallel()
+
+	var hits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits++
+		_, _ = w.Write([]byte(`{"status":"ok"}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	c := NewClient(httpclient.NewDefault(), srv.URL, "", "test", "Cosine")
+	if err := c.Upsert(context.Background(), nil, true); err != nil {
+		t.Fatalf("Upsert(nil) err=%v", err)
+	}
+	if hits != 0 {
+		t.Fatalf("expected no HTTP calls for empty points, got %d", hits)
+	}
+}
+
 func TestRecreateCollection_DeletesThenCreates(t *testing.T) {
 	t.Parallel()
 
