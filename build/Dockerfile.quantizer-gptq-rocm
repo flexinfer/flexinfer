@@ -72,6 +72,8 @@ RUN python3 -m pip uninstall -y numba llvmlite && \
 
 # FlexInfer quantization and abliteration scripts (referenced by controller wrapper)
 COPY build/scripts/quantize_gptq.py /opt/flexinfer/scripts/quantize_gptq.py
+COPY build/scripts/qwen35_wrap_to_vl_layout.py /opt/flexinfer/scripts/qwen35_wrap_to_vl_layout.py
+COPY build/scripts/qwen35_unwrap_from_vl_layout.py /opt/flexinfer/scripts/qwen35_unwrap_from_vl_layout.py
 RUN mkdir -p /app && printf 'FLEXINFER_SCRIPT_VERSION = "v18"\n' > /app/quantize_gptq.py
 COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
 RUN printf 'FLEXINFER_SCRIPT_VERSION = "v1"\n' > /app/abliterate.py
