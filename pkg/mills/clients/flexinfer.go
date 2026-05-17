@@ -227,17 +227,28 @@ func composePrompt(rubricBody string, in gates.StageInput) string {
 			fmt.Fprintf(&b, "  - %s\n", strings.SplitN(m, "\n", 2)[0])
 		}
 	}
-	if len(in.DiffPatch) > 0 {
+	// Always render the `=== Diff ===` section so the model sees the
+	// canonical anchor referenced by rubricGroundingInstructions
+	// ("Ground every concern in EXACTLY ONE specific line of the diff
+	// provided below"). When the upstream stage produced no patch we
+	// emit an explicit `(empty diff)` placeholder rather than omitting
+	// the section — without the placeholder the model is more likely
+	// to fall back to its prior context and fabricate file:line
+	// references that don't exist in the change set.
+	b.WriteString("\n=== Diff ===\n```diff\n")
+	if len(in.DiffPatch) == 0 {
+		b.WriteString("(empty diff)\n")
+	} else {
 		// Cap the diff at 8KB so we don't blow the context budget.
 		const maxDiff = 8 * 1024
 		patch := in.DiffPatch
 		if len(patch) > maxDiff {
 			patch = append(patch[:maxDiff:maxDiff], []byte("\n... (truncated) ...\n")...)
 		}
-		b.WriteString("\n=== Diff ===\n```diff\n")
 		b.Write(patch)
-		b.WriteString("\n```\n")
+		b.WriteString("\n")
 	}
+	b.WriteString("```\n")
 	return b.String()
 }
 

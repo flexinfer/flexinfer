@@ -239,6 +239,129 @@ func TestRubricJudge_DiffTruncatedAtCap(t *testing.T) {
 	}
 }
 
+// ----- Rubric template snapshot tests (M9) -----
+//
+// These pin the prompt hygiene fixes that ship the anti-hallucination
+// boilerplate, the structural-output envelope, and the explicit
+// empty-diff placeholder. They are template-level assertions, not
+// LLM-roundtrip tests — gemma's actual verdict quality on a fixture
+// corpus is a separate eval slice.
+
+// captureRubricPrompt renders the rubric prompt by sending a stub chat
+// completion through the FlexInfer client and capturing the message
+// content that hit the wire. Returns the exact string the model would
+// see.
+func captureRubricPrompt(t *testing.T, rubric string, in gates.StageInput) string {
+	t.Helper()
+	var captured string
+	cli, err := NewFlexInferClient(FlexInferConfig{ProxyURL: "http://stub"})
+	if err != nil {
+		t.Fatalf("ctor: %v", err)
+	}
+	cli.SetTransport(roundTripFn(func(req *http.Request) (*http.Response, error) {
+		buf, _ := io.ReadAll(req.Body)
+		var parsed chatRequest
+		if err := json.Unmarshal(buf, &parsed); err != nil {
+			t.Fatalf("decode req: %v", err)
+		}
+		if len(parsed.Messages) > 0 {
+			captured = parsed.Messages[0].Content
+		}
+		return &http.Response{
+			StatusCode: 200,
+			Body:       io.NopCloser(bytes.NewBufferString(successBody)),
+			Header:     make(http.Header),
+		}, nil
+	}))
+	if _, err := NewRubricJudge(cli).Judge(context.Background(), rubric, in); err != nil {
+		t.Fatalf("judge: %v", err)
+	}
+	return captured
+}
+
+// TestRubricTemplate_PRSelfReviewIncludesGroundingInstructions pins the
+// anti-hallucination phrase in the pr_self_review template render. Live
+// regression: gemma4-26b fabricated "file.py:10 - debug print found"
+// against a markdown-only diff. The grounding boilerplate is the fix.
+func TestRubricTemplate_PRSelfReviewIncludesGroundingInstructions(t *testing.T) {
+	rendered := captureRubricPrompt(t, gates.PRSelfReviewRubricName, gates.StageInput{
+		DiffPatch: []byte("diff --git a/.loom/heartbeat.md b/.loom/heartbeat.md\n+HEARTBEAT-123\n"),
+	})
+	// Anchor on the load-bearing phrases — anything less and the
+	// snapshot test wouldn't catch a silent rewrite that removes the
+	// grounding requirement.
+	for _, want := range []string{
+		gates.RubricGroundingInstructions,
+		"Ground every concern in EXACTLY ONE specific line",
+		"Do NOT reference files, symbols, line numbers, or behaviors that are not present in the diff",
+		"return a score of 1.0 (no scorable concerns)",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("pr_self_review template missing %q\n--- rendered ---\n%s", want, rendered)
+		}
+	}
+}
+
+// TestRubricTemplate_SpecConformanceIncludesStructuralInstructions pins
+// the JSON-envelope instructions in the spec_conformance template.
+// Live regression: spec_conformance returned judged_by=flexinfer:
+// unparseable because gemma replied with prose, ignoring the format ask.
+// The structural-output instructions reinforce the contract that
+// parseRubricEnvelope consumes.
+func TestRubricTemplate_SpecConformanceIncludesStructuralInstructions(t *testing.T) {
+	rendered := captureRubricPrompt(t, gates.SpecConformanceRubricName, gates.StageInput{
+		DiffPatch: []byte("diff --git a/foo.go b/foo.go\n+package foo\n"),
+	})
+	for _, want := range []string{
+		gates.RubricStructuralOutputInstructions,
+		"Respond ONLY with a JSON object",
+		`{"score": <number between 0.0 and 1.0>, "reasons": ["<one concern per array entry>"]}`,
+		"Do not include any text outside the JSON object",
+		"Do not ask clarifying questions",
+		`{"score": 1.0, "reasons": ["fixture-only or empty diff; no scorable concerns"]}`,
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("spec_conformance template missing %q\n--- rendered ---\n%s", want, rendered)
+		}
+	}
+	// Also assert grounding is present — both rubrics share it.
+	if !strings.Contains(rendered, gates.RubricGroundingInstructions) {
+		t.Errorf("spec_conformance template missing grounding instructions\n--- rendered ---\n%s", rendered)
+	}
+}
+
+// TestRubricTemplate_EmptyDiffRendersExplicitPlaceholder pins the
+// `(empty diff)` placeholder behavior. Without the placeholder the
+// `=== Diff ===` section would be omitted entirely and the model would
+// be more likely to fall back to its prior context and fabricate
+// references — defeating the grounding instructions.
+func TestRubricTemplate_EmptyDiffRendersExplicitPlaceholder(t *testing.T) {
+	rendered := captureRubricPrompt(t, gates.SpecConformanceRubricName, gates.StageInput{
+		// No DiffPatch.
+	})
+	if !strings.Contains(rendered, "=== Diff ===") {
+		t.Errorf("empty-diff render must still include `=== Diff ===` section\n--- rendered ---\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "(empty diff)") {
+		t.Errorf("empty-diff render must include explicit `(empty diff)` placeholder\n--- rendered ---\n%s", rendered)
+	}
+}
+
+// TestRubricTemplate_NonEmptyDiffSkipsPlaceholder is the symmetric
+// guard: when a real diff is present, the placeholder must NOT appear
+// or the model would see a self-contradictory section.
+func TestRubricTemplate_NonEmptyDiffSkipsPlaceholder(t *testing.T) {
+	rendered := captureRubricPrompt(t, gates.SpecConformanceRubricName, gates.StageInput{
+		DiffPatch: []byte("diff --git a/foo.go b/foo.go\n+x\n"),
+	})
+	if strings.Contains(rendered, "(empty diff)") {
+		t.Errorf("non-empty diff must not render `(empty diff)` placeholder\n--- rendered ---\n%s", rendered)
+	}
+	if !strings.Contains(rendered, "diff --git a/foo.go b/foo.go") {
+		t.Errorf("non-empty diff must render the actual patch\n--- rendered ---\n%s", rendered)
+	}
+}
+
 // ----- WeaverClient -----
 
 func TestWeaverClient_ReturnsNotesAndCitation(t *testing.T) {

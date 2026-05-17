@@ -10,6 +10,12 @@ const PRSelfReviewRubricName = "pr_self_review_v1"
 // The threshold is intentionally lower than spec_conformance because
 // self-review is heuristic; the gate is a smoke test against obvious
 // regressions, not a definitive verdict.
+//
+// The template ends with `rubricGroundingInstructions` (anti-hallucination
+// boilerplate shared with spec_conformance_v1) followed by the
+// structural-output envelope so gemma4-26b returns parseable JSON even
+// for small / fixture-only diffs. See the rubric_boilerplate.go header
+// for the live regression that motivated these instructions.
 const PRSelfReviewRubric = `You are reviewing your own work before opening a merge request.
 
 Given:
@@ -25,10 +31,11 @@ Score on [0.0, 1.0] where:
 - 0.5 = obvious problems (debug prints, commented code, missing tests).
 - 0.0 = unsafe to ship (secrets, deletes critical paths, broken build).
 
-Reply with a JSON object:
-  {"score": <float>, "reasons": ["...", "..."]}
+Reasons[] must point to a specific file:line or commit if possible.
 
-Reasons[] must point to a specific file:line or commit if possible.`
+` + rubricGroundingInstructions + `
+
+` + rubricStructuralOutputInstructions
 
 // NewPRSelfReviewGate constructs the pr_self_review gate using the
 // supplied judge. Default threshold 0.7 (more permissive than
