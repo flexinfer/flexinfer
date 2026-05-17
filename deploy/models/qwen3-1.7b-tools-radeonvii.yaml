@@ -40,7 +40,10 @@ spec:
   config:
     ggufFile: qwen3-1.7b-q4_k_m.gguf
     contextSize: 8192
-    nGPULayers: 999
+    # Radeon VII currently aborts llama.cpp ROCm loads in hipMemGetInfo.
+    # Keep this tiny router colocated with the gfx906 runtime, but hide ROCm
+    # devices so llama.cpp takes the proven CPU path.
+    nGPULayers: 0
     batchSize: 1024
     ubatchSize: 512
     parallel: 2
@@ -52,7 +55,8 @@ spec:
     metrics: true
     cacheTypeK: q4_0
     cacheTypeV: q4_0
-    rocrVisibleDevices: "0"
+    hipVisibleDevices: "-1"
+    rocrVisibleDevices: "-1"
   nodeSelector:
     kubernetes.io/hostname: cblevins-radeonvii
   resources:

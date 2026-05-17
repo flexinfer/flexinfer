@@ -168,8 +168,9 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--metrics")
 	}
 
-	// Disable auto-fit when GPU doesn't support VMM (e.g., gfx906/Vega20).
-	// hipMemGetInfo crashes on these GPUs; -fit off skips the memory query.
+	// Disable llama.cpp's auto-fit sizing. Some ROCm paths can still query
+	// device memory during model load, so broken devices may also need to be
+	// hidden with HIP_VISIBLE_DEVICES/ROCR_VISIBLE_DEVICES.
 	if spec.ConfigBool("fitOff", false) {
 		args = append(args, "-fit", "off")
 	}
