@@ -462,6 +462,421 @@ func TestDemote_404PropagatesNotFound(t *testing.T) {
 	}
 }
 
+// --- icc_archive_raw ----------------------------------------------------
+
+func TestArchiveRaw_FreshArchiveReturnsFreshTrue(t *testing.T) {
+	var seen map[string]any
+	var seenPath, seenMethod string
+
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, r *http.Request) {
+		seen = readBody(t, r)
+		seenPath = r.URL.Path
+		seenMethod = r.Method
+		writeJSON(t, w, http.StatusCreated, map[string]any{
+			"ok": true,
+			"result": map[string]any{
+				"already_archived": false,
+				"code_ref":         map[string]any{"id": "cref_1", "path": "/workspace/notes/archive/2026/05/x.md"},
+				"original_path":    "/workspace/icc-project-workspaces/projects/vendor-x/slack/x.md",
+				"archived_path":    "/workspace/notes/archive/2026/05/x.md",
+			},
+		})
+	})
+
+	handler := makeArchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id": "cref_1",
+		"reason":      "Project closed",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got: %s", result.Content[0].Text)
+	}
+
+	if seenMethod != http.MethodPost {
+		t.Fatalf("expected POST, got %s", seenMethod)
+	}
+	if seenPath != "/api/captures/archive" {
+		t.Fatalf("unexpected path: %s", seenPath)
+	}
+	if seen["code_ref_id"] != "cref_1" || seen["reason"] != "Project closed" {
+		t.Fatalf("unexpected body: %+v", seen)
+	}
+	// archive_root omitted by caller → must not appear in posted body
+	// (json:"archive_root,omitempty") so the server defaults take.
+	if _, ok := seen["archive_root"]; ok {
+		t.Fatalf("expected archive_root omitted when not set, got %+v", seen)
+	}
+
+	var out archiveRawToolResult
+	decodeResult(t, result.Content[0].Text, &out)
+	if out.AlreadyArchived {
+		t.Fatalf("expected already_archived=false")
+	}
+	if !out.Fresh {
+		t.Fatalf("expected fresh=true")
+	}
+	if out.OriginalPath == "" || out.ArchivedPath == "" {
+		t.Fatalf("expected paths surfaced, got %+v", out)
+	}
+	if out.OriginalPath == out.ArchivedPath {
+		t.Fatalf("expected paths to differ on fresh archive, got %s", out.OriginalPath)
+	}
+}
+
+func TestArchiveRaw_IdempotentReturnsFreshFalse(t *testing.T) {
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusOK, map[string]any{
+			"ok": true,
+			"result": map[string]any{
+				"already_archived": true,
+				"code_ref":         map[string]any{"id": "cref_1", "path": "/workspace/notes/archive/2026/05/x.md"},
+				"original_path":    "/workspace/notes/archive/2026/05/x.md",
+				"archived_path":    "/workspace/notes/archive/2026/05/x.md",
+			},
+		})
+	})
+
+	handler := makeArchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id": "cref_1",
+		"reason":      "Project closed",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got: %s", result.Content[0].Text)
+	}
+
+	var out archiveRawToolResult
+	decodeResult(t, result.Content[0].Text, &out)
+	if !out.AlreadyArchived {
+		t.Fatalf("expected already_archived=true")
+	}
+	if out.Fresh {
+		t.Fatalf("expected fresh=false")
+	}
+	if out.OriginalPath != out.ArchivedPath {
+		t.Fatalf("expected paths equal when already_archived, got %s vs %s",
+			out.OriginalPath, out.ArchivedPath)
+	}
+}
+
+func TestArchiveRaw_ArchiveRootForwardedWhenSet(t *testing.T) {
+	var seen map[string]any
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, r *http.Request) {
+		seen = readBody(t, r)
+		writeJSON(t, w, http.StatusCreated, map[string]any{
+			"ok": true,
+			"result": map[string]any{
+				"already_archived": false,
+				"code_ref":         map[string]any{"id": "cref_1"},
+				"original_path":    "/ws/a.md",
+				"archived_path":    "/custom/2026/05/a.md",
+			},
+		})
+	})
+
+	handler := makeArchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id":  "cref_1",
+		"reason":       "closed",
+		"archive_root": "/custom/archive",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got: %s", result.Content[0].Text)
+	}
+	if seen["archive_root"] != "/custom/archive" {
+		t.Fatalf("expected archive_root forwarded, got %+v", seen["archive_root"])
+	}
+}
+
+func TestArchiveRaw_404PropagatesNotFound(t *testing.T) {
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusNotFound, map[string]any{
+			"error": "code_ref not found",
+		})
+	})
+
+	handler := makeArchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id": "cref_missing",
+		"reason":      "closed",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error, got success: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "not found") {
+		t.Fatalf("expected 'not found' in error, got: %s", result.Content[0].Text)
+	}
+}
+
+func TestArchiveRaw_400FolderKindPropagatesServerMessage(t *testing.T) {
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusBadRequest, map[string]any{
+			"error": "cannot archive folder ref",
+		})
+	})
+
+	handler := makeArchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id": "cref_folder",
+		"reason":      "closed",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error, got success: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "folder") {
+		t.Fatalf("expected server message 'folder' in error, got: %s", result.Content[0].Text)
+	}
+}
+
+func TestArchiveRaw_EmptyCodeRefID_ClientRefusal(t *testing.T) {
+	called := false
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		writeJSON(t, w, http.StatusOK, map[string]any{})
+	})
+
+	handler := makeArchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id": "",
+		"reason":      "closed",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected client-side error for empty code_ref_id, got success")
+	}
+	if called {
+		t.Fatalf("expected NO HTTP call for empty code_ref_id")
+	}
+}
+
+func TestArchiveRaw_WhitespaceReason_ClientRefusal(t *testing.T) {
+	called := false
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		writeJSON(t, w, http.StatusOK, map[string]any{})
+	})
+
+	handler := makeArchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id": "cref_1",
+		"reason":      "   ",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected client-side error for whitespace reason, got success")
+	}
+	if called {
+		t.Fatalf("expected NO HTTP call for whitespace reason")
+	}
+}
+
+func TestArchiveRaw_MissingBaseURL_ICCNotConfigured(t *testing.T) {
+	icc := &iccClient{baseURL: "", httpClient: &http.Client{}, logger: slog.Default()}
+	handler := makeArchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id": "cref_1",
+		"reason":      "closed",
+	})
+	if err != nil {
+		t.Fatalf("unexpected handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected ICC-not-configured error, got success")
+	}
+	if !strings.Contains(result.Content[0].Text, "ICC_BASE_URL") {
+		t.Fatalf("expected ICC_BASE_URL in error, got: %s", result.Content[0].Text)
+	}
+}
+
+// --- icc_unarchive_raw --------------------------------------------------
+
+func TestUnarchiveRaw_HappyPath_ForwardsDestination(t *testing.T) {
+	var seen map[string]any
+	var seenPath, seenMethod string
+
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, r *http.Request) {
+		seen = readBody(t, r)
+		seenPath = r.URL.Path
+		seenMethod = r.Method
+		writeJSON(t, w, http.StatusCreated, map[string]any{
+			"ok": true,
+			"result": map[string]any{
+				"code_ref":      map[string]any{"id": "cref_1", "path": "/workspace/icc-project-workspaces/projects/vendor-x/slack/x.md"},
+				"archived_path": "/workspace/notes/archive/2026/05/x.md",
+				"restored_path": "/workspace/icc-project-workspaces/projects/vendor-x/slack/x.md",
+			},
+		})
+	})
+
+	handler := makeUnarchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id":      "cref_1",
+		"destination_path": "/workspace/icc-project-workspaces/projects/vendor-x/slack/x.md",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if result.IsError {
+		t.Fatalf("expected success, got: %s", result.Content[0].Text)
+	}
+
+	if seenMethod != http.MethodPost {
+		t.Fatalf("expected POST, got %s", seenMethod)
+	}
+	if seenPath != "/api/captures/unarchive" {
+		t.Fatalf("unexpected path: %s", seenPath)
+	}
+	if seen["code_ref_id"] != "cref_1" {
+		t.Fatalf("expected code_ref_id forwarded, got %+v", seen)
+	}
+	if seen["destination_path"] != "/workspace/icc-project-workspaces/projects/vendor-x/slack/x.md" {
+		t.Fatalf("expected destination_path forwarded, got %+v", seen["destination_path"])
+	}
+
+	var out unarchiveRawServerResult
+	decodeResult(t, result.Content[0].Text, &out)
+	if out.ArchivedPath == "" || out.RestoredPath == "" {
+		t.Fatalf("expected paths surfaced, got %+v", out)
+	}
+	if len(out.CodeRef) == 0 {
+		t.Fatalf("expected code_ref surfaced")
+	}
+}
+
+func TestUnarchiveRaw_400NotUnderArchivePropagatesServerMessage(t *testing.T) {
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusBadRequest, map[string]any{
+			"error": "code_ref is not currently under archive",
+		})
+	})
+
+	handler := makeUnarchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id":      "cref_1",
+		"destination_path": "/workspace/icc-project-workspaces/projects/vendor-x/slack/x.md",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error, got success: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "not currently under archive") {
+		t.Fatalf("expected server message in error, got: %s", result.Content[0].Text)
+	}
+}
+
+func TestUnarchiveRaw_400DestinationOutsideAllowlist(t *testing.T) {
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusBadRequest, map[string]any{
+			"error": "destination_path outside workspace allowlist",
+		})
+	})
+
+	handler := makeUnarchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id":      "cref_1",
+		"destination_path": "/etc/passwd",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error, got success: %s", result.Content[0].Text)
+	}
+	if !strings.Contains(result.Content[0].Text, "allowlist") {
+		t.Fatalf("expected allowlist message in error, got: %s", result.Content[0].Text)
+	}
+}
+
+func TestUnarchiveRaw_404PropagatesNotFound(t *testing.T) {
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(t, w, http.StatusNotFound, map[string]any{
+			"error": "code_ref not found",
+		})
+	})
+
+	handler := makeUnarchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id":      "cref_missing",
+		"destination_path": "/workspace/icc-project-workspaces/projects/vendor-x/slack/x.md",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected error, got success")
+	}
+	if !strings.Contains(result.Content[0].Text, "not found") {
+		t.Fatalf("expected 'not found' in error, got: %s", result.Content[0].Text)
+	}
+}
+
+func TestUnarchiveRaw_EmptyCodeRefID_ClientRefusal(t *testing.T) {
+	called := false
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		writeJSON(t, w, http.StatusOK, map[string]any{})
+	})
+
+	handler := makeUnarchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id":      "",
+		"destination_path": "/workspace/icc-project-workspaces/projects/vendor-x/slack/x.md",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected client-side error for empty code_ref_id, got success")
+	}
+	if called {
+		t.Fatalf("expected NO HTTP call for empty code_ref_id")
+	}
+}
+
+func TestUnarchiveRaw_EmptyDestinationPath_ClientRefusal(t *testing.T) {
+	called := false
+	_, icc := newTestICCServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		writeJSON(t, w, http.StatusOK, map[string]any{})
+	})
+
+	handler := makeUnarchiveRawHandler(icc)
+	result, err := handler(context.Background(), map[string]any{
+		"code_ref_id":      "cref_1",
+		"destination_path": "",
+	})
+	if err != nil {
+		t.Fatalf("handler error: %v", err)
+	}
+	if !result.IsError {
+		t.Fatalf("expected client-side error for empty destination_path, got success")
+	}
+	if called {
+		t.Fatalf("expected NO HTTP call for empty destination_path")
+	}
+}
+
 // --- icc_capture_slack --------------------------------------------------
 
 func TestCaptureSlack_FormatsAndPostsFrontmatter(t *testing.T) {
