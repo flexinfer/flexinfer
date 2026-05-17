@@ -432,8 +432,13 @@ func (p *Proxy) getBackendModelName(ctx context.Context, modelName string) strin
 }
 
 // getBackendPort returns the port for a model's backend service.
-// Returns the backend-specific port based on model spec, or 8000 as default.
+// The reconciled Service is the source of truth when present; backend defaults
+// are only a fallback for old objects or tests without a Service.
 func (p *Proxy) getBackendPort(ctx context.Context, modelName string) int32 {
+	if port, ok := p.getServicePort(ctx, modelName); ok {
+		return port
+	}
+
 	// Check v1alpha2 Model first
 	m := &aiv1alpha2.Model{}
 	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err == nil {
@@ -454,6 +459,28 @@ func (p *Proxy) getBackendPort(ctx context.Context, modelName string) int32 {
 		return defaultBackendPort
 	}
 	return defaultBackendPort
+}
+
+func (p *Proxy) getServicePort(ctx context.Context, modelName string) (int32, bool) {
+	svc := &corev1.Service{}
+	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, svc); err != nil {
+		if !errors.IsNotFound(err) {
+			slog.Debug("failed to get model service for backend port", "model", modelName, "error", err)
+		}
+		return 0, false
+	}
+
+	for _, port := range svc.Spec.Ports {
+		if port.Name == "http" && port.Port > 0 {
+			return port.Port, true
+		}
+	}
+	for _, port := range svc.Spec.Ports {
+		if port.Port > 0 {
+			return port.Port, true
+		}
+	}
+	return 0, false
 }
 
 // rewriteModelInBody replaces the "model" field in a JSON request body with the backend model name.

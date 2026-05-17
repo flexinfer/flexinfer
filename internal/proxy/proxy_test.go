@@ -16,6 +16,7 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -897,6 +898,62 @@ func TestBackendPort_Defaults(t *testing.T) {
 			assert.Equal(t, tc.expectedPort, port, "Backend %s should have port %d", tc.backend, tc.expectedPort)
 		})
 	}
+}
+
+func TestBackendPort_UsesServicePortWhenPresent(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	m := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-llamacpp",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://test/model",
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, m))
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-llamacpp",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Name: "metrics", Port: 9090},
+				{Name: "http", Port: 8000},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, svc))
+
+	port := p.getBackendPort(ctx, "runtime-llamacpp")
+	assert.Equal(t, int32(8000), port)
+}
+
+func TestBackendPort_UsesFirstServicePortWhenHTTPMissing(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "runtime-custom",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Name: "backend", Port: 7000},
+				{Name: "metrics", Port: 9090},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, svc))
+
+	port := p.getBackendPort(ctx, "runtime-custom")
+	assert.Equal(t, int32(7000), port)
 }
 
 func TestGetBackendPort_ModelNotFound(t *testing.T) {

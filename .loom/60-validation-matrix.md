@@ -307,6 +307,24 @@ set `nGPULayers: 0`, `hipVisibleDevices: "-1"`, and
 `rocrVisibleDevices: "-1"` in the reconciled Model. This is a conservative
 tool-router fallback, not a general gfx906 llama.cpp GPU promotion.
 
+### 2026-05-16 gfx906 qwen router proxy service-port blocker
+
+After MR !402 merged and Flux reconciled, `qwen3-1p7b-tools-radeonvii` reached
+Ready on runtime digest
+`sha256:f0537a5498ca0ac0afe01a22413e2fa3bc36e0629d9d423960dd0c5572f7cc2b`.
+The live runtime pod loaded the GGUF and listened on backend port `8000`.
+Direct localhost OpenAI-compatible smoke inside the runtime pod returned HTTP
+200 with content `Blue`.
+
+The normal proxy path still returned HTTP 502. Proxy logs showed it dialing the
+model Service at `10.43.134.64:8080`, while the Service and EndpointSlice were
+correctly exposing `qwen3-1p7b-tools-radeonvii` on port `8000` with a Ready
+endpoint. Root cause: proxy fallback routing derived the Service URL port from
+the backend default (`llamacpp` = `8080`) instead of the reconciled Service's
+actual port. Active fix: make `getBackendPort` prefer the model Service port,
+using the `http` port when present and falling back to the first valid Service
+port before backend defaults.
+
 ### 2026-04-18 gemma4-26b-a4b-gptq findings (Slice A1-lite)
 
 - Active serving artifact:
