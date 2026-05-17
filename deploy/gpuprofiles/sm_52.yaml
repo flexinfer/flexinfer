@@ -40,6 +40,9 @@ spec:
     comfyui:
       support: unsupported
   runtime:
+    bundledBackends:
+      - ollama
+      - llamacpp
     image: registry.harbor.lan/flexinfer/runtime:cuda-maxwell
   quantization:
     supported:

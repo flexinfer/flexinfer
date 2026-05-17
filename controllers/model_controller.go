@@ -332,7 +332,13 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// If so, manage the model via the runtime API instead of creating a Deployment.
 	// The runtime pod already holds the GPU device, so Deployment creation is skipped.
 	if r.Runtime != nil {
-		if ok, reason := pkgrt.DirectRuntimeLoadEligibility(model); !ok {
+		var runtimeProfile *aiv1alpha2.GPUProfileSpec
+		if r.GPUProfiles != nil {
+			if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
+				runtimeProfile = profile
+			}
+		}
+		if ok, reason := pkgrt.DirectRuntimeLoadEligibility(model, b.Name(), runtimeProfile); !ok {
 			log.V(1).Info("Skipping runtime-managed flow for model", "reason", reason)
 		} else {
 			runtimeEndpoint, err := r.Runtime.FindRuntimeForNode(ctx, model.Namespace, model.Spec.NodeSelector)

@@ -208,6 +208,13 @@ type RuntimeProfile struct {
 	// Example: "registry.harbor.lan/flexinfer/runtime:rocm-gfx1100"
 	Image string `json:"image"`
 
+	// BundledBackends lists backend names that can be launched inside this
+	// persistent runtime image. When set, controller/proxy direct runtime loads
+	// are allowed only for these backends; other backends fall back to their
+	// dedicated GPUProfile backend image.
+	// +optional
+	BundledBackends []string `json:"bundledBackends,omitempty"`
+
 	// Port is the runtime API port. Defaults to 8080.
 	// +optional
 	Port *int32 `json:"port,omitempty"`

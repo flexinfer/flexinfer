@@ -68,9 +68,12 @@ type BuildLoadOptions struct {
 // Today, runtime pods only see the node-local hostPath mounted at /models. Raw
 // pvc:// sources require an explicit PVC mount on the serving pod, so sending
 // them through the runtime daemonset fails even if the cache-check job passes.
-func DirectRuntimeLoadEligibility(model *aiv1alpha2.Model) (bool, string) {
+func DirectRuntimeLoadEligibility(model *aiv1alpha2.Model, backendName string, profile *aiv1alpha2.GPUProfileSpec) (bool, string) {
 	if model == nil {
 		return false, "model is nil"
+	}
+	if ok, reason := RuntimeProfileBundlesBackend(profile, backendName); !ok {
+		return false, reason
 	}
 	if usesLocalCache(model) {
 		if model.Status.Cache == nil || !model.Status.Cache.Ready {
@@ -83,6 +86,27 @@ func DirectRuntimeLoadEligibility(model *aiv1alpha2.Model) (bool, string) {
 		}
 	}
 	return true, ""
+}
+
+// RuntimeProfileBundlesBackend reports whether a selected persistent runtime
+// image is allowed to launch backendName. Missing metadata preserves the
+// legacy behavior so older GPUProfiles keep working until they opt into the
+// explicit bundledBackends contract.
+func RuntimeProfileBundlesBackend(profile *aiv1alpha2.GPUProfileSpec, backendName string) (bool, string) {
+	backendName = strings.TrimSpace(backendName)
+	if backendName == "" || profile == nil || profile.Runtime == nil || len(profile.Runtime.BundledBackends) == 0 {
+		return true, ""
+	}
+	for _, bundled := range profile.Runtime.BundledBackends {
+		if strings.EqualFold(strings.TrimSpace(bundled), backendName) {
+			return true, ""
+		}
+	}
+	arch := strings.TrimSpace(profile.Architecture)
+	if arch == "" {
+		arch = "selected"
+	}
+	return false, fmt.Sprintf("runtime profile for %s does not bundle backend %q; use the dedicated backend image", arch, backendName)
 }
 
 // BuildLoadPayloadForModel constructs a payload using the model CR plus

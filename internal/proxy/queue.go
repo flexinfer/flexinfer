@@ -402,11 +402,6 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 		slog.Info("direct load: cannot fetch model CR", "model", modelName, "error", err)
 		return false
 	}
-	if ok, reason := pkgrt.DirectRuntimeLoadEligibility(m); !ok {
-		slog.Info("direct load: skipping runtime path", "model", modelName, "reason", reason)
-		return false
-	}
-
 	// Resolve backend.
 	b, ok := backend.Get(m.Spec.Backend)
 	if !ok {
@@ -421,6 +416,11 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 		return false
 	}
 	slog.Info("direct load: matched runtime endpoint", "model", modelName, "runtimePod", endpoint.PodName, "node", endpoint.NodeName, "runtimeURL", endpoint.URL())
+	profile := p.lookupGPUProfile(ctx, endpoint.GPUArch)
+	if ok, reason := pkgrt.DirectRuntimeLoadEligibility(m, b.Name(), profile); !ok {
+		slog.Info("direct load: skipping runtime path", "model", modelName, "reason", reason)
+		return false
+	}
 
 	// Build the load payload (shared with controller).
 	// Pass /models as modelBasePath so PVC sources resolve correctly and
@@ -428,7 +428,7 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 	payload, err := pkgrt.BuildLoadPayloadForModel(m, b, pkgrt.BuildLoadOptions{
 		ModelBasePath: "/models",
 		GPUVendor:     backend.GPUVendor(m.Spec.GetGPUVendor()),
-		GPUProfile:    p.lookupGPUProfile(ctx, endpoint.GPUArch),
+		GPUProfile:    profile,
 	})
 	if err != nil {
 		slog.Warn("direct load: failed to build payload", "model", modelName, "error", err)

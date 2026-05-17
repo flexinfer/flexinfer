@@ -292,6 +292,8 @@ func TestDirectRuntimeLoadEligibility(t *testing.T) {
 	tests := []struct {
 		name       string
 		model      *aiv1alpha2.Model
+		backend    string
+		profile    *aiv1alpha2.GPUProfileSpec
 		wantOK     bool
 		wantReason string
 	}{
@@ -336,6 +338,57 @@ func TestDirectRuntimeLoadEligibility(t *testing.T) {
 			wantOK: true,
 		},
 		{
+			name:    "backend not bundled in selected runtime profile is not eligible",
+			backend: "vllm",
+			profile: &aiv1alpha2.GPUProfileSpec{
+				Architecture: "gfx906",
+				Runtime: &aiv1alpha2.RuntimeProfile{
+					Image:           "registry.harbor.lan/flexinfer/runtime:rocm-gfx906",
+					BundledBackends: []string{"llamacpp", "ollama", "diffusers"},
+				},
+			},
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://Qwen/Qwen3-1.7B",
+				},
+			},
+			wantOK:     false,
+			wantReason: `runtime profile for gfx906 does not bundle backend "vllm"; use the dedicated backend image`,
+		},
+		{
+			name:    "backend bundled in selected runtime profile is eligible",
+			backend: "llamacpp",
+			profile: &aiv1alpha2.GPUProfileSpec{
+				Architecture: "gfx906",
+				Runtime: &aiv1alpha2.RuntimeProfile{
+					Image:           "registry.harbor.lan/flexinfer/runtime:rocm-gfx906",
+					BundledBackends: []string{"llamacpp", "ollama", "diffusers"},
+				},
+			},
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF",
+				},
+			},
+			wantOK: true,
+		},
+		{
+			name:    "profile without bundled backend metadata preserves legacy behavior",
+			backend: "vllm",
+			profile: &aiv1alpha2.GPUProfileSpec{
+				Architecture: "gfx1100",
+				Runtime: &aiv1alpha2.RuntimeProfile{
+					Image: "registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-serving",
+				},
+			},
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://Qwen/Qwen3-14B",
+				},
+			},
+			wantOK: true,
+		},
+		{
 			name: "hf source is eligible",
 			model: &aiv1alpha2.Model{
 				Spec: aiv1alpha2.ModelSpec{
@@ -359,7 +412,7 @@ func TestDirectRuntimeLoadEligibility(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ok, reason := DirectRuntimeLoadEligibility(tt.model)
+			ok, reason := DirectRuntimeLoadEligibility(tt.model, tt.backend, tt.profile)
 			assert.Equal(t, tt.wantOK, ok)
 			assert.Equal(t, tt.wantReason, reason)
 		})
