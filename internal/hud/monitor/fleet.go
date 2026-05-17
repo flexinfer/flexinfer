@@ -152,6 +152,28 @@ const fleetStaleSessionReapAfter = 10 * time.Minute
 // refresh.
 const fleetStaleSessionReapCooldown = 2 * time.Minute
 
+// fleetLivePresenceStaleAfter is the heartbeat-age past which a presence
+// row is no longer counted as "live work" in the Fleet view, regardless
+// of what the upstream MCP presence registry reports as its Status.
+//
+// Background: agent_presence_list keeps a row in status="active" until
+// roughly 10 minutes after its last heartbeat (the registry's own age
+// horizon), and a vendor CLI keepalive process may keep firing
+// heartbeats even after its session has ended. The Fleet view's job is
+// to answer "which agents are doing work right now," not "which agents
+// have ever heartbeated in the last 10 minutes" — heartbeats older than
+// this threshold are downgraded to "offline" so the live counter and
+// the visible row list both reflect actual active work.
+//
+// 90s is one full heartbeat interval plus a generous retry window:
+// daemon heartbeats fire on a 30s cadence (see CLI hook config) and the
+// MCP transport has a 5s call cap (see PresenceHeartbeat in
+// internal/hud/bridge/agent_session.go), so a live agent will rarely
+// report >60s of heartbeat age and never >90s without something being
+// wrong. Synthetic session-only rows (Source="session", no presence at
+// all) are exempt because they have no heartbeat to age out.
+const fleetLivePresenceStaleAfter = 90 * time.Second
+
 // FleetMonitor aggregates data from the daemon client and agent bridge
 // into a FleetSnapshot. It runs a background goroutine that polls all
 // data sources at a configurable interval.
@@ -574,8 +596,26 @@ func (m *FleetMonitor) refresh(force bool) error {
 	// re-establishing a session).
 	snap.Agents = fleetview.Join(rawAgents, snap.Sessions, snap.UpdatedAt)
 
+	// Live-presence filter: downgrade any active/idle row whose
+	// heartbeat is older than fleetLivePresenceStaleAfter to "offline"
+	// before counting, and likewise downgrade orphan-flagged rows.
+	// The Fleet API ("live agents") and the frontend's live-agent
+	// classification both key off Status, so this is what makes the
+	// counter agree with what the user calls "actually working right
+	// now." Synthetic session-only rows (HasPresence=false) are
+	// exempt: they have no heartbeat clock by construction, and the
+	// stale-session reaper above already covers the "session alive,
+	// no agent" case.
+	livePresenceStaleSeconds := int(fleetLivePresenceStaleAfter.Seconds())
 	var reapCandidates []string
-	for _, a := range snap.Agents {
+	for i := range snap.Agents {
+		a := &snap.Agents[i]
+		if a.HasPresence {
+			tooStale := a.HeartbeatAgeSeconds >= livePresenceStaleSeconds
+			if (tooStale || a.IsOrphan) && (a.Status == "active" || a.Status == "idle") {
+				a.Status = "offline"
+			}
+		}
 		switch a.Status {
 		case "active":
 			snap.ActiveAgents++
