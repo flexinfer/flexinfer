@@ -238,6 +238,8 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 	// between GPU and CPU RAM based on available memory. Per-layer
 	// quantization moves each layer to GPU individually.
 	// Override with FLEXINFER_GPTQ_DEVICE_MAP=cpu to force CPU-only loading.
+	layoutAdapterEnabled := getenvDefault("FLEXINFER_GPTQ_LAYOUT_ADAPTER", "0")
+	layoutAdapterStrategy := getenvDefault("FLEXINFER_GPTQ_LAYOUT_ADAPTER_VISION", "none")
 
 	env := []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
@@ -264,6 +266,8 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 		{Name: "GPTQ_RESUME_LAYERS", Value: resumeLayersEnabled},
 		{Name: "GPTQ_CALIBRATION_CACHE", Value: calibrationCacheEnabled},
 		{Name: "QUANTIZE_DEVICE_MAP", Value: deviceMap},
+		{Name: "FLEXINFER_GPTQ_LAYOUT_ADAPTER", Value: layoutAdapterEnabled},
+		{Name: "FLEXINFER_GPTQ_LAYOUT_ADAPTER_VISION", Value: layoutAdapterStrategy},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
 	env = append(env, BuildCalibrationEnv(calib)...)
@@ -1466,6 +1470,43 @@ fi
 mkdir -p "${OUT_DIR}"
 mkdir -p /workspace/offload
 
+# Layout adapter: pre-quant wrap. Default off; when enabled, rewrite the
+# source checkpoint into the Qwen3-VL namespace GPTQModel expects while leaving
+# the canonical source untouched.
+ORIG_MODEL_DIR="${MODEL_DIR}"
+ORIG_OUT_DIR="${OUT_DIR}"
+LAYOUT_ADAPTER_USED="no"
+if [ "${FLEXINFER_GPTQ_LAYOUT_ADAPTER:-0}" = "1" ]; then
+    WRAP_SCRIPT=/opt/flexinfer/scripts/qwen35_wrap_to_vl_layout.py
+    UNWRAP_SCRIPT=/opt/flexinfer/scripts/qwen35_unwrap_from_vl_layout.py
+    if [ ! -f "${WRAP_SCRIPT}" ] || [ ! -f "${UNWRAP_SCRIPT}" ]; then
+        echo "ERROR: FLEXINFER_GPTQ_LAYOUT_ADAPTER=1 but adapter scripts are missing"
+        echo "  ${WRAP_SCRIPT}: $([ -f "${WRAP_SCRIPT}" ] && echo present || echo missing)"
+        echo "  ${UNWRAP_SCRIPT}: $([ -f "${UNWRAP_SCRIPT}" ] && echo present || echo missing)"
+        exit 1
+    fi
+    WRAPPED_MODEL_DIR="${MODEL_DIR}/.flexinfer-vl-wrap"
+    OUTPUT_BASENAME=$(basename "${OUT_DIR}")
+    WRAPPED_OUT_DIR="${WRAPPED_MODEL_DIR}/${OUTPUT_BASENAME}"
+    rm -rf "${WRAPPED_MODEL_DIR}"
+    emit_event "layout_wrap_start" "src" "${MODEL_DIR}" "dst" "${WRAPPED_MODEL_DIR}" "strategy" "${FLEXINFER_GPTQ_LAYOUT_ADAPTER_VISION:-none}"
+    python3 "${WRAP_SCRIPT}" \
+        --src "${MODEL_DIR}" \
+        --dst "${WRAPPED_MODEL_DIR}" \
+        --vision-strategy "${FLEXINFER_GPTQ_LAYOUT_ADAPTER_VISION:-none}"
+    rc=$?
+    if [ "${rc}" -ne 0 ]; then
+        emit_event "layout_wrap_failed" "exit_code" "${rc}"
+        echo "ERROR: layout wrap failed (rc=${rc})"
+        exit "${rc}"
+    fi
+    emit_event "layout_wrap_complete" "wrapped_dir" "${WRAPPED_MODEL_DIR}"
+    export MODEL_DIR="${WRAPPED_MODEL_DIR}"
+    export OUT_DIR="${WRAPPED_OUT_DIR}"
+    mkdir -p "${WRAPPED_OUT_DIR}"
+    LAYOUT_ADAPTER_USED="yes"
+fi
+
 # torchao can core-dump (SIGABRT) on torch dev builds (e.g. 2.9.1+git) due to
 # incompatible cpp extensions. GPTQModel imports torchao transitively, so a
 # broken torchao kills the entire quantization pipeline. Remove proactively —
@@ -1733,6 +1774,28 @@ if errors:
     sys.exit(1)
 print('All safetensors files passed post-NFS-sync integrity check')
 "
+
+# Layout adapter: post-quant unwrap. Return the saved output to the flat
+# causal-LM namespace used by vLLM before downstream metadata/source cleanup.
+if [ "${LAYOUT_ADAPTER_USED:-no}" = "yes" ]; then
+    UNWRAP_SCRIPT=/opt/flexinfer/scripts/qwen35_unwrap_from_vl_layout.py
+    emit_event "layout_unwrap_start" "src" "${WRAPPED_OUT_DIR}" "dst" "${ORIG_OUT_DIR}"
+    rm -rf "${ORIG_OUT_DIR}"
+    mkdir -p "${ORIG_OUT_DIR}"
+    python3 "${UNWRAP_SCRIPT}" \
+        --src "${WRAPPED_OUT_DIR}" \
+        --dst "${ORIG_OUT_DIR}"
+    rc=$?
+    if [ "${rc}" -ne 0 ]; then
+        emit_event "layout_unwrap_failed" "exit_code" "${rc}"
+        echo "ERROR: layout unwrap failed (rc=${rc})"
+        exit "${rc}"
+    fi
+    emit_event "layout_unwrap_complete" "out_dir" "${ORIG_OUT_DIR}"
+    export MODEL_DIR="${ORIG_MODEL_DIR}"
+    export OUT_DIR="${ORIG_OUT_DIR}"
+    rm -rf "${ORIG_MODEL_DIR}/.flexinfer-vl-wrap" 2>/dev/null || true
+fi
 
 COMPRESSED_SIZE=$(du -sb "${OUT_DIR}" | cut -f1)
 OUTPUT_BASENAME=$(basename "${OUT_DIR}")
