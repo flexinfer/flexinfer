@@ -51,8 +51,11 @@ spec:
             # collection has 50K+ points and HNSW reindexing on each
             # upsert pushed batches over 30s, causing index runs to
             # fail with "context deadline exceeded". 5min headroom.
+            # NOTE: pkg/httpclient parses this as bare integer seconds
+            # (strconv.Atoi); the "s" suffix would silently fall back
+            # to the default 30s.
             - name: HTTP_TIMEOUT
-              value: 300s
+              value: "300"
             # Smaller upsert batches finish within timeout even when
             # Qdrant is under load. Default was 64; halving it keeps
             # round-trip time linear and predictable.
