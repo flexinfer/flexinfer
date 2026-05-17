@@ -17,6 +17,12 @@ func registerTools(srv *mcpscaffold.Server, icc *iccClient) {
 	// Listed in alphabetic order so the registration order is grep-able
 	// and stable across additions.
 	srv.AddTracedTool(mcp.Tool{
+		Name:        "icc_archive_raw",
+		Description: "Archive a raw-only code_ref's underlying file: moves it from projects/<slug>/<source>/ to notes/archive/YYYY/MM/ and updates the code_ref's path. Idempotent: archiving an already-archived ref returns already_archived=true rather than re-moving. Operator-driven, never automatic.",
+		InputSchema: archiveRawSchema(),
+	}, makeArchiveRawHandler(icc))
+
+	srv.AddTracedTool(mcp.Tool{
 		Name:        "icc_capture_email",
 		Description: "End-to-end email-extract capture. Formats raw email text (RFC 822, Gmail paste, or web-rendered) and writes the result via /api/captures. Equivalent to icc_format_email_extract followed by icc_write_capture. Use this for one-shot capture; use the two-step path when you want to edit the markdown between format and write.",
 		InputSchema: captureEmailSchema(),
@@ -81,6 +87,12 @@ func registerTools(srv *mcpscaffold.Server, icc *iccClient) {
 		Description: "Promote an existing raw-only code_ref to a full artifact (DB entry + link). Idempotent: re-promoting an already-promoted ref returns the existing artifact with already_promoted=true rather than creating a duplicate. The MCP tool surfaces already_promoted so the caller knows whether this was a fresh promotion or a no-op.",
 		InputSchema: promoteToArtifactSchema(),
 	}, makePromoteToArtifactHandler(icc))
+
+	srv.AddTracedTool(mcp.Tool{
+		Name:        "icc_unarchive_raw",
+		Description: "Reverse of icc_archive_raw: move a file from notes/archive/ back to a project source folder and update the code_ref. The destination path must be inside the workspace allowlist and not already exist.",
+		InputSchema: unarchiveRawSchema(),
+	}, makeUnarchiveRawHandler(icc))
 
 	srv.AddTracedTool(mcp.Tool{
 		Name:        "icc_write_capture",

@@ -6,14 +6,22 @@ email extracts, meeting notes, etc.
 
 ## Status
 
-Slice D-1 (Round 9): three more pure formatters plus their convenience
-composers ship alongside the C-2 wire tools. `icc_format_email_extract`,
-`icc_format_meeting_notes`, and `icc_format_standup` mirror the
-`icc_format_slack_paste` shape; `icc_capture_email`,
-`icc_capture_meeting`, and `icc_capture_standup` compose each formatter
-with `icc_write_capture` the same way `icc_capture_slack` does. No new
-HTTP plumbing — the ICC client and `/api/captures` endpoint from C-2
-already accept these sources.
+Slice E-2 (Round 10): operator-driven archive / unarchive wrappers
+ship alongside the existing capture, promote, and demote tools.
+`icc_archive_raw` and `icc_unarchive_raw` wire up the two new
+`/api/captures/{archive,unarchive}` endpoints from Slice E-1. Archive
+is idempotent (the server returns `already_archived=true` for repeat
+calls); unarchive is not (it always restores or refuses). No backend
+changes — the endpoints already exist.
+
+Slice D-1 (Round 9) shipped three more pure formatters plus their
+convenience composers alongside the C-2 wire tools:
+`icc_format_email_extract`, `icc_format_meeting_notes`, and
+`icc_format_standup` mirror the `icc_format_slack_paste` shape;
+`icc_capture_email`, `icc_capture_meeting`, and `icc_capture_standup`
+compose each formatter with `icc_write_capture` the same way
+`icc_capture_slack` does. No new HTTP plumbing — the ICC client and
+`/api/captures` endpoint from C-2 already accept these sources.
 
 The original pure-local helpers (format + lint) still work without ICC
 reachable.
@@ -30,6 +38,8 @@ reachable.
 | `icc_write_capture` | Write a pre-formatted capture (markdown + frontmatter) via `POST /api/captures`. Atomic: file + code_ref + artifact land together, or nothing. Validates `source` and `mode` client-side before hitting the network. |
 | `icc_promote_to_artifact` | Promote a raw-only code_ref to a full artifact (`POST /api/code/refs/promote`). Idempotent — re-promoting an already-promoted ref returns the existing artifact with `already_promoted=true` / `fresh=false`. |
 | `icc_demote_artifact` | Soft-delete an artifact, optionally keep the underlying code_ref (`POST /api/artifacts/<id>/demote`). Requires a non-empty `reason`. |
+| `icc_archive_raw` | Archive a raw-only code_ref's underlying file: moves it from `projects/<slug>/<source>/` to `notes/archive/YYYY/MM/` and updates the code_ref (`POST /api/captures/archive`). Idempotent — re-archiving returns `already_archived=true` / `fresh=false`. Operator-driven; requires a non-empty `reason`. |
+| `icc_unarchive_raw` | Reverse of `icc_archive_raw`: move a file from `notes/archive/` back to a project source folder (`POST /api/captures/unarchive`). Destination must be inside the workspace allowlist and not already exist. |
 | `icc_capture_slack` | One-shot convenience tool — composes `icc_format_slack_paste` + `icc_write_capture` so a Slack paste lands in one MCP call. |
 | `icc_capture_email` | One-shot composer — `icc_format_email_extract` + `icc_write_capture`. Default mode `both`. |
 | `icc_capture_meeting` | One-shot composer — `icc_format_meeting_notes` + `icc_write_capture`. Default mode `both`. Requires `participants`. |
@@ -165,6 +175,37 @@ a `standup/` source folder — standups are a kind of research artifact.
 }
 ```
 
+### Archive / unarchive
+
+```jsonc
+// Archive a raw-only code_ref. Moves the file to
+// /workspace/notes/archive/YYYY/MM/<filename>.md and updates the row.
+// Idempotent — re-archiving returns already_archived=true unchanged.
+{
+  "tool": "icc_archive_raw",
+  "args": { "code_ref_id": "cref_123", "reason": "Project closed" }
+}
+
+// Reverse it. Destination must be inside the workspace allowlist and
+// not already exist.
+{
+  "tool": "icc_unarchive_raw",
+  "args": {
+    "code_ref_id":      "cref_123",
+    "destination_path": "/workspace/icc-project-workspaces/projects/vendor-x/slack/2026-05-17-hey-team.md"
+  }
+}
+```
+
+### Capture lifecycle
+
+```
+raw → captured (icc_capture_<source>) → promoted (icc_promote_to_artifact)
+                                     ↘ archived (icc_archive_raw)
+                                     ↗ restored (icc_unarchive_raw)
+                                     ↘ demoted (icc_demote_artifact)
+```
+
 ## Develop
 
 ```bash
@@ -233,8 +274,9 @@ participants: [...]          # optional; empty list when omitted
 
 ## Roadmap (later slices, separate sessions)
 
-- Slice E: archive + retention. Per-source archive policies (slack
-  threads, email, meeting notes, standup) and a sweep tool to roll
-  stale captures into `archive/<source>/<year>/`.
+- Slice F: `enforce_archive` auto-sweeper that walks
+  `list_archive_candidates` and calls `icc_archive_raw` per ref —
+  operator-gated by an env flag (parallel to the existing
+  `ICC_RETENTION_AUTO`). Until then, archive remains operator-driven.
 - HMAC signing on the ICC client for production hardening.
 - Promote `_inbox` notes once attribution is decided.
