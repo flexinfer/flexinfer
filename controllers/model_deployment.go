@@ -161,8 +161,9 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		return err
 	}
 
-	// Build ModelSpec for backend
-	spec := r.buildBackendModelSpec(model, b, gpuVendor)
+	// Build ModelSpec for backend, applying GPUProfile-declared backend
+	// defaults before container args are rendered.
+	spec := r.buildBackendModelSpecForArch(model, b, gpuVendor, gpuArch)
 	spec.GPUArch = gpuArch
 
 	applyKVCacheReconfigureOverrides(model, spec)

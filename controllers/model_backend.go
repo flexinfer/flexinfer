@@ -31,6 +31,10 @@ import (
 
 // buildBackendModelSpec converts Model spec to backend.ModelSpec.
 func (r *ModelReconciler) buildBackendModelSpec(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor) *backend.ModelSpec {
+	return r.buildBackendModelSpecForArch(model, b, gpuVendor, "")
+}
+
+func (r *ModelReconciler) buildBackendModelSpecForArch(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string) *backend.ModelSpec {
 	modelValue := extractModelFromSource(model.Spec.Source)
 	spec := &backend.ModelSpec{
 		Model:          modelValue,
@@ -42,6 +46,11 @@ func (r *ModelReconciler) buildBackendModelSpec(model *aiv1alpha2.Model, b backe
 	// Parse config into the spec
 	if model.Spec.Config != nil {
 		spec.Config = model.Spec.GetConfigMap()
+	}
+	if gpuArch != "" && r.GPUProfiles != nil {
+		if profile, ok := r.GPUProfiles.Lookup(gpuArch); ok {
+			spec.Config = backend.ApplyVLLMDefaultsFromProfile(spec.Config, profile, b.Name())
+		}
 	}
 
 	storagePlan := resolveBackendStoragePlan(model, b, spec.Config)

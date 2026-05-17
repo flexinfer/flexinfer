@@ -99,6 +99,7 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 	vendor := resolvedVendor(opts.GPUVendor, opts.GPUProfile)
 	config := cloneConfig(model.Spec.GetConfigMap())
 	config = applyColdStartTimeout(config, model)
+	config = backend.ApplyVLLMDefaultsFromProfile(config, opts.GPUProfile, b.Name())
 	config = applyGPUProfileDeviceDefaults(config, vendor, opts.GPUProfile)
 	config = applyRuntimeBackendPort(config, b)
 

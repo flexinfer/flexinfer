@@ -122,6 +122,88 @@ func TestBuildLoadPayloadForModelUsesGPUProfileDeviceDefaults(t *testing.T) {
 	assert.Equal(t, "0", payload.Config["gpuDeviceOrdinal"])
 }
 
+func TestBuildLoadPayloadForModelUsesGPUProfileVLLMDefaults(t *testing.T) {
+	b, ok := backend.Get("vllm")
+	require.True(t, ok)
+
+	enforceEager := true
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "vega-vllm",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://Qwen/Qwen3-1.7B",
+		},
+	}
+
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+		GPUProfile: &aiv1alpha2.GPUProfileSpec{
+			Backends: map[string]aiv1alpha2.BackendProfile{
+				"vllm": {
+					VLLM: &aiv1alpha2.VLLMCapabilities{
+						Defaults: &aiv1alpha2.VLLMDefaults{
+							EnforceEager: &enforceEager,
+							KVCacheDtype: "auto",
+						},
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, true, payload.Config["enforceEager"])
+	assert.Equal(t, "auto", payload.Config["kvCacheDtype"])
+}
+
+func TestBuildLoadPayloadForModelPreservesExplicitVLLMConfig(t *testing.T) {
+	b, ok := backend.Get("vllm")
+	require.True(t, ok)
+
+	enforceEager := true
+	rawConfig := []byte(`{"enforceEager":false,"kvCacheDtype":"fp8_e4m3"}`)
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "rdna-vllm",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://Qwen/Qwen3-14B",
+			Config:  &apiextensionsv1.JSON{Raw: rawConfig},
+		},
+	}
+
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+		GPUProfile: &aiv1alpha2.GPUProfileSpec{
+			Backends: map[string]aiv1alpha2.BackendProfile{
+				"vllm": {
+					VLLM: &aiv1alpha2.VLLMCapabilities{
+						Defaults: &aiv1alpha2.VLLMDefaults{
+							EnforceEager: &enforceEager,
+							KVCacheDtype: "auto",
+						},
+					},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, false, payload.Config["enforceEager"])
+	assert.Equal(t, "fp8_e4m3", payload.Config["kvCacheDtype"])
+}
+
 func TestBuildLoadPayloadForModelAddsRuntimeBackendPortForAPI8080Backends(t *testing.T) {
 	b, ok := backend.Get("llamacpp")
 	require.True(t, ok)
