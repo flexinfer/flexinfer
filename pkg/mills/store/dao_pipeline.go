@@ -198,6 +198,31 @@ func (d *PipelineDAO) ListByState(ctx context.Context, state PipelineState) ([]*
 	return out, rows.Err()
 }
 
+// ListByStateSince returns pipeline runs in the given state with
+// started_at on-or-after `since`, oldest-first. Used by the KPI
+// writer to compute window-bounded aggregates (e.g. slice→merge
+// duration p50) without pulling the full table.
+func (d *PipelineDAO) ListByStateSince(ctx context.Context, state PipelineState, since time.Time) ([]*PipelineRun, error) {
+	rows, err := d.db.QueryContext(ctx,
+		`SELECT `+pipelineColumns+` FROM pipeline_runs
+		WHERE state = ? AND started_at >= ?
+		ORDER BY started_at ASC`,
+		string(state), timeRFC3339(since))
+	if err != nil {
+		return nil, fmt.Errorf("pipeline list-since: %w", err)
+	}
+	defer rows.Close()
+	var out []*PipelineRun
+	for rows.Next() {
+		r, err := scanPipelineRun(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
 // ListInFlight returns already-started, non-terminal pipeline runs. These are
 // the rows that need to be resumed after an operator restart because their
 // in-process runner goroutine died with the old pod.

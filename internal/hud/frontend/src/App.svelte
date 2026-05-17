@@ -9,6 +9,7 @@
   import { overlayStore } from './lib/stores/overlay.svelte.ts';
   import { embedConfig } from './lib/stores/embedConfig.svelte.ts';
   import { actionStore } from './lib/stores/action.svelte.ts';
+  import { millsStore } from './lib/stores/mills.svelte.ts';
   import { formatTime as fmtTime } from './lib/utils/format.ts';
   import ViewShell from './lib/components/shared/ViewShell.svelte';
   import FleetPanel from './lib/components/FleetPanel.svelte';
@@ -267,9 +268,28 @@
         {:else}
           {#key router.subView}
             {@const vd = router.currentViewDef}
+            {@const enrichedSubViews = vd && vd.id === 'mills'
+              ? vd.subViews.map((sv) => {
+                  // Surface item counts as small badges next to the
+                  // sub-tab label so an operator can see at a glance
+                  // where activity lives without opening each panel.
+                  // Only tabs whose stores have a meaningful "items"
+                  // signal get a count; squads / audit / cross-repo
+                  // are intentionally left countless until those
+                  // stores expose first-class counts.
+                  switch (sv.id) {
+                    case 'pipelines': return { ...sv, count: millsStore.pipelineRuns.length };
+                    case 'backlog':   return { ...sv, count: millsStore.backlog.length };
+                    case 'council':   return { ...sv, count: millsStore.councilRuns.length };
+                    case 'eval':      return { ...sv, count: millsStore.evalScores.length };
+                    case 'policy':    return { ...sv, count: millsStore.policyProposals.length };
+                    default:          return sv;
+                  }
+                })
+              : vd?.subViews}
             {#if vd}
               <ViewShell
-                subViews={vd.subViews}
+                subViews={enrichedSubViews}
                 activeSubView={router.subView}
                 onSwitch={(id) => router.navigateSub(id)}
               >

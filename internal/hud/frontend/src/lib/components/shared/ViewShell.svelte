@@ -3,8 +3,12 @@
    * ViewShell — wrapper for a grouped view that provides sub-navigation tabs.
    * Renders a segmented control bar when the view has multiple sub-panels.
    *
+   * sub-tabs may optionally carry a `count` (number) which renders as a
+   * small badge next to the label. Zero/undefined counts render no
+   * badge so empty tabs stay visually quiet.
+   *
    * @type {{
-   *   subViews: Array<{ id: string, label: string, key: string }>,
+   *   subViews: Array<{ id: string, label: string, key: string, count?: number }>,
    *   activeSubView: string,
    *   onSwitch: (id: string) => void,
    *   children: import('svelte').Snippet,
@@ -32,6 +36,9 @@
           title="{sv.label} ({sv.key})"
         >
           <span class="view-tab-label">{sv.label}</span>
+          {#if typeof sv.count === 'number' && sv.count > 0}
+            <span class="view-tab-count" aria-label={`${sv.count} items`}>{sv.count}</span>
+          {/if}
           <kbd class="view-tab-key">{sv.key}</kbd>
         </button>
       {/each}
@@ -128,6 +135,22 @@
     line-height: 1;
     opacity: 0.8;
     background: rgba(255, 255, 255, 0.02);
+  }
+
+  .view-tab-count {
+    font-size: 10px;
+    font-family: var(--font-mono);
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--info) 18%, transparent);
+    color: var(--info);
+    font-weight: 600;
+    min-width: 18px;
+    text-align: center;
+  }
+  .view-tab.active .view-tab-count {
+    background: color-mix(in srgb, var(--info) 28%, transparent);
   }
 
   .view-tab.active .view-tab-key {
