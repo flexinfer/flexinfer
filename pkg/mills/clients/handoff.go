@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 
+	"gopkg.in/yaml.v3"
+
 	"github.com/crb2nu/loom/pkg/mills/pipeline"
 )
 
@@ -53,14 +55,16 @@ func NewHandoffClient(hub *MCPHubClient, sourceSessionID string) *HandoffClient 
 	}
 }
 
-// handoffCreateResponse mirrors the JSON payload agent_handoff_create
-// emits. We only need handoff_id for the wrapper return.
+// handoffCreateResponse mirrors the payload agent_handoff_create emits.
+// We accept both JSON and YAML serialisations: the YAML form ships from
+// MCP servers running in "concise text output" mode. We only need
+// handoff_id for the wrapper return, but keep the rest for diagnostics.
 type handoffCreateResponse struct {
-	OK         bool   `json:"ok"`
-	HandoffID  string `json:"handoff_id"`
-	TokenCount int    `json:"token_count"`
-	EntryCount int    `json:"entry_count"`
-	Summary    string `json:"summary"`
+	OK         bool   `json:"ok" yaml:"ok"`
+	HandoffID  string `json:"handoff_id" yaml:"handoff_id"`
+	TokenCount int    `json:"token_count" yaml:"token_count"`
+	EntryCount int    `json:"entry_count" yaml:"entry_count"`
+	Summary    string `json:"summary" yaml:"summary"`
 }
 
 // CreateHandoff implements pipeline.HandoffClient.
@@ -92,14 +96,46 @@ func (c *HandoffClient) CreateHandoff(ctx context.Context, req pipeline.HandoffR
 	if err != nil && body == "" {
 		return pipeline.HandoffResponse{}, fmt.Errorf("handoff: %w", err)
 	}
-	var parsed handoffCreateResponse
-	if perr := json.Unmarshal([]byte(body), &parsed); perr != nil {
+	parsed, perr := decodeHandoffCreateResponse(body)
+	if perr != nil {
 		return pipeline.HandoffResponse{}, fmt.Errorf("handoff: decode: %w; raw=%q", perr, body)
 	}
 	if !parsed.OK && parsed.HandoffID == "" {
 		return pipeline.HandoffResponse{}, fmt.Errorf("handoff: service reported failure: %q", body)
 	}
 	return pipeline.HandoffResponse{HandoffID: parsed.HandoffID}, nil
+}
+
+// decodeHandoffCreateResponse parses the body returned by
+// agent_handoff_create. MCP servers may emit either JSON or YAML for tool
+// result text (the "concise text output" mode produces YAML), so we try
+// JSON first and fall back to YAML when the payload starts with a non-JSON
+// token. The fallback covers the live-cluster output observed during
+// escalation, e.g.:
+//
+//	entry_count: 0
+//	handoff_id: bcd72b1b8f9ad438
+//	ok: true
+//	summary: ""
+//	token_count: 0
+func decodeHandoffCreateResponse(body string) (handoffCreateResponse, error) {
+	trimmed := strings.TrimSpace(body)
+	var parsed handoffCreateResponse
+	if trimmed == "" {
+		return parsed, errors.New("empty body")
+	}
+	// JSON objects/arrays start with '{' or '['. Anything else is almost
+	// certainly YAML; skip the JSON attempt so the JSON error doesn't mask
+	// the YAML decode failure.
+	if c := trimmed[0]; c == '{' || c == '[' {
+		if err := json.Unmarshal([]byte(body), &parsed); err == nil {
+			return parsed, nil
+		}
+	}
+	if err := yaml.Unmarshal([]byte(body), &parsed); err != nil {
+		return handoffCreateResponse{}, err
+	}
+	return parsed, nil
 }
 
 func (c *HandoffClient) sourceSessionID() string {

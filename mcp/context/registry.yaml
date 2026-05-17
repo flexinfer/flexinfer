@@ -1253,6 +1253,23 @@ servers:
           BRAND_KIT_CLI: "${repo}/libs/banner-kit/bin/banner-kit"
           BRAND_KIT_DEFAULT_ROOT: "${repo}"
 
+  - name: icc-capture
+    categories: [icc, notes, local-only]
+    common:
+      description: ICC note-capture tools (Slack/email/meeting paste -> markdown with canonical frontmatter, plus a notes linter for icc-project-workspaces/)
+      hint: Use when capturing notes destined for icc-project-workspaces/projects/<slug>/<source>/. Current tools are pure local helpers; no ICC HTTP calls or file writes in this slice.
+      command: "${repo}/services/loom-core/bin/mcp-icc-capture"
+      args: []
+      timeout: 60
+      always_allow:
+        - icc_format_slack_paste
+        - icc_lint_notes
+    targets:
+      vscode:
+        type: stdio
+        command: "${repo}/services/loom-core/bin/mcp-icc-capture"
+        args: []
+
   - name: alertmanager
     categories: [monitoring, alerting]
     common:

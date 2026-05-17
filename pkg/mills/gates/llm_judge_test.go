@@ -3,6 +3,7 @@ package gates
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -117,5 +118,127 @@ func TestRubricPromptsAreNonEmpty(t *testing.T) {
 	}
 	if PRSelfReviewRubric == "" {
 		t.Error("pr_self_review rubric prompt is empty")
+	}
+}
+
+// --- M2.5: unparseable-judge soft-fail path ---
+
+// fakeUnparseableJudge returns an error wrapping gates.ErrJudgeUnparseable.
+// In production, the clients package returns its own ErrRubricUnparseable
+// wrapper that satisfies the same duck-typed predicate; these in-package
+// tests use the gates sentinel directly so they don't need a cross-package
+// import.
+type fakeUnparseableJudge struct{ wrapped error }
+
+func (f *fakeUnparseableJudge) Judge(_ context.Context, _ string, _ StageInput) (RubricVerdict, error) {
+	return RubricVerdict{}, f.wrapped
+}
+
+// fakeDuckUnparseableJudge returns a custom error type that exposes
+// IsRubricUnparseable() bool but does NOT wrap ErrJudgeUnparseable. This
+// mirrors the production cross-package contract where pkg/mills/clients'
+// ErrRubricUnparseable wrapper is detected without an import cycle.
+type duckUnparseableErr struct{ msg string }
+
+func (e *duckUnparseableErr) Error() string             { return e.msg }
+func (e *duckUnparseableErr) IsRubricUnparseable() bool { return true }
+
+type fakeDuckUnparseableJudge struct{}
+
+func (f *fakeDuckUnparseableJudge) Judge(_ context.Context, _ string, _ StageInput) (RubricVerdict, error) {
+	return RubricVerdict{}, &duckUnparseableErr{msg: "free-text instead of JSON envelope"}
+}
+
+func TestLLMGate_UnparseableJudgeReturnsSoftFailNotError(t *testing.T) {
+	wrapped := fmt.Errorf("rubric judge: parse: %w; raw=%q", ErrJudgeUnparseable, "please provide the diff…")
+	g := NewSpecConformanceGate(&fakeUnparseableJudge{wrapped: wrapped})
+	out, err := g.Evaluate(context.Background(), StageInput{})
+	if err != nil {
+		t.Fatalf("unparseable judge must NOT return err (got %v); runner needs err=nil to take retry path", err)
+	}
+	if out.Pass {
+		t.Errorf("unparseable judge must produce Pass=false outcome, got %+v", out)
+	}
+	if out.JudgedBy != "flexinfer:unparseable" {
+		t.Errorf("JudgedBy = %q, want %q", out.JudgedBy, "flexinfer:unparseable")
+	}
+	if len(out.Reasons) == 0 {
+		t.Errorf("expected at least one reason explaining the parse miss, got %v", out.Reasons)
+	}
+}
+
+func TestLLMGate_DuckTypedUnparseableErrorAlsoSoftFails(t *testing.T) {
+	// Production wires through pkg/mills/clients.ErrRubricUnparseable
+	// (custom type with IsRubricUnparseable() bool). Verify the gate
+	// detects it without a sentinel-Is match.
+	g := NewSpecConformanceGate(&fakeDuckUnparseableJudge{})
+	out, err := g.Evaluate(context.Background(), StageInput{})
+	if err != nil {
+		t.Fatalf("duck-typed unparseable error must soft-fail, got err=%v", err)
+	}
+	if out.Pass || out.JudgedBy != "flexinfer:unparseable" {
+		t.Errorf("outcome = %+v, want Pass=false + JudgedBy=flexinfer:unparseable", out)
+	}
+}
+
+func TestLLMGate_TransportErrorStillEscalates(t *testing.T) {
+	// 5xx, timeout, network errors are infrastructure failures and must
+	// still surface as err (runner escalates the run).
+	transportErr := errors.New("flexinfer chat: status 500: model overloaded")
+	g := NewSpecConformanceGate(&fakeUnparseableJudge{wrapped: transportErr})
+	_, err := g.Evaluate(context.Background(), StageInput{})
+	if err == nil {
+		t.Fatalf("transport error must return non-nil err so runner escalates")
+	}
+	if !strings.Contains(err.Error(), "status 500") {
+		t.Errorf("err should preserve underlying transport message, got %v", err)
+	}
+}
+
+func TestLLMGate_SuccessfulLowScorePreservesExistingBehavior(t *testing.T) {
+	// Regression guard: legacy soft-fail path (score < threshold, no
+	// parse error) must keep its score-based JudgedBy and reasons.
+	g := NewSpecConformanceGate(&FakeRubricJudge{Default: RubricVerdict{
+		Score:   0.3,
+		Reasons: []string{"missing tests"},
+		Model:   "qwen-3-8b",
+	}})
+	out, err := g.Evaluate(context.Background(), StageInput{})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if out.Pass {
+		t.Errorf("expected fail at score 0.3")
+	}
+	if out.JudgedBy == "flexinfer:unparseable" {
+		t.Errorf("low-score path must not collide with unparseable JudgedBy")
+	}
+	if !strings.Contains(out.JudgedBy, "qwen") {
+		t.Errorf("JudgedBy should reflect the judging model: %q", out.JudgedBy)
+	}
+}
+
+func TestIsJudgeUnparseable_NilReturnsFalse(t *testing.T) {
+	if isJudgeUnparseable(nil) {
+		t.Error("nil error must not be classified as unparseable")
+	}
+}
+
+func TestIsJudgeUnparseable_PlainErrorReturnsFalse(t *testing.T) {
+	if isJudgeUnparseable(errors.New("network down")) {
+		t.Error("plain non-wrapping error must not be classified as unparseable")
+	}
+}
+
+func TestIsJudgeUnparseable_SentinelWrapReturnsTrue(t *testing.T) {
+	wrapped := fmt.Errorf("rubric judge: parse: %w", ErrJudgeUnparseable)
+	if !isJudgeUnparseable(wrapped) {
+		t.Error("errors wrapping ErrJudgeUnparseable must be classified")
+	}
+}
+
+func TestIsJudgeUnparseable_DuckTypedReturnsTrue(t *testing.T) {
+	if !isJudgeUnparseable(&duckUnparseableErr{msg: "x"}) {
+		t.Error("duck-typed predicate must classify cross-package wrappers")
 	}
 }

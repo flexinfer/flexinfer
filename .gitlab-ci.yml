@@ -249,8 +249,22 @@ lint:
 vet:
   <<: *go-template
   stage: lint
+  needs:
+    - job: prepare:go-cache
+      artifacts: true
+  dependencies:
+    - prepare:go-cache
   variables:
     GO_WARM_MOD_CACHE: "false"
+    KUBERNETES_CPU_REQUEST: "1"
+    KUBERNETES_CPU_LIMIT: "2"
+    # vet has to load every package + dep into memory to typecheck.
+    # Without the cache artifacts AND a memory bump, the runner OOMs at
+    # exit 137 partway through `go mod download` (pipeline 9872 jobs
+    # 104271 + 104295 both died here at ~5min). Match the lint job's
+    # memory profile since vet has comparable working-set requirements.
+    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
     - go vet ./...
 

@@ -105,6 +105,59 @@ func TestRubricJudge_ScoreOutOfRangeErrors(t *testing.T) {
 	}
 }
 
+// M2.5: parser errors must wrap ErrRubricUnparseable (sentinel) AND
+// implement the duck-typed IsRubricUnparseable() bool predicate. The
+// gates.LLMGate uses the duck-type from across the package boundary to
+// route the failure into the runner's retry path instead of escalation.
+func TestParseRubricEnvelope_WrapsSentinelOnNoJSON(t *testing.T) {
+	_, _, err := parseRubricEnvelope("please provide the diff and I will judge it")
+	if err == nil {
+		t.Fatal("expected error for free-text response")
+	}
+	if !errors.Is(err, ErrRubricUnparseable) {
+		t.Errorf("error chain must include ErrRubricUnparseable: %v", err)
+	}
+	type unparseable interface {
+		IsRubricUnparseable() bool
+	}
+	var u unparseable
+	if !errors.As(err, &u) || !u.IsRubricUnparseable() {
+		t.Errorf("error must implement duck-typed IsRubricUnparseable() predicate: %v", err)
+	}
+}
+
+func TestParseRubricEnvelope_WrapsSentinelOnOutOfRangeScore(t *testing.T) {
+	_, _, err := parseRubricEnvelope(`{"score": 2.5, "reasons": []}`)
+	if err == nil {
+		t.Fatal("expected error for score > 1")
+	}
+	if !errors.Is(err, ErrRubricUnparseable) {
+		t.Errorf("out-of-range score must also wrap ErrRubricUnparseable for retry routing: %v", err)
+	}
+}
+
+// Verify the full Judge call surfaces the duck-typed predicate even
+// after Judge's own fmt.Errorf("rubric judge: parse: %w; raw=%q", ...)
+// wrap layer. This is the path the production gate consumes.
+func TestRubricJudge_UnparseableContentExposesPredicateAcrossWrap(t *testing.T) {
+	body := `{"model": "x", "choices": [{"message": {"content": "I cannot grade this without more context."}}]}`
+	cli := newStubClient(t, body, 200)
+	_, err := NewRubricJudge(cli).Judge(context.Background(), "spec_conformance_v1", gates.StageInput{})
+	if err == nil {
+		t.Fatal("expected parse error")
+	}
+	if !errors.Is(err, ErrRubricUnparseable) {
+		t.Errorf("Judge wrap must preserve ErrRubricUnparseable in chain: %v", err)
+	}
+	type unparseable interface {
+		IsRubricUnparseable() bool
+	}
+	var u unparseable
+	if !errors.As(err, &u) || !u.IsRubricUnparseable() {
+		t.Errorf("Judge wrap must preserve IsRubricUnparseable() predicate: %v", err)
+	}
+}
+
 func TestRubricJudge_HTTP500BubblesError(t *testing.T) {
 	cli := newStubClient(t, `{"error": "model overloaded"}`, 500)
 	if _, err := NewRubricJudge(cli).Judge(context.Background(), "spec_conformance_v1", gates.StageInput{}); err == nil {
