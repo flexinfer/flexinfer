@@ -39,12 +39,13 @@ returned markdown, and a separate workflow handles the write.`),
 	}
 	defer func() { _ = cleanup(ctx) }()
 
-	// HTTP client to ICC backend is wired here when future slices add
-	// network-backed tools. For now it is a stub that records config but
-	// makes no calls.
-	_ = newICCClient(srv.Logger)
+	// HTTP client to ICC backend. Empty ICC_BASE_URL is allowed at
+	// startup so pure-local tools (icc_format_slack_paste, icc_lint_notes)
+	// still work without ICC reachable; network-backed tools call
+	// ensureConfigured() at call time and fail loud if unset.
+	icc := newICCClient(srv.Logger)
 
-	registerTools(srv)
+	registerTools(srv, icc)
 
 	return srv.Run(ctx)
 }

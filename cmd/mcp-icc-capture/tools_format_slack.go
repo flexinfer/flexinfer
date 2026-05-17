@@ -64,50 +64,79 @@ type slackMessage struct {
 	Body string
 }
 
-func handleFormatSlackPaste(_ context.Context, args map[string]any) (*mcp.CallToolResult, error) {
-	v := validate.NewArgs(args)
-	text := v.Required("text")
-	projectSlug := v.Required("project_slug")
-	channel := v.Required("channel")
-	capturedAt := v.String("captured_at", "")
-	topic := v.String("topic", "")
-	explicitParticipants := v.StringSlice("participants")
-	if err := v.Validate(); err != nil {
-		return mcp.ErrorResult(err), nil
+// formatSlackPasteInput is the strongly-typed input bundle for
+// formatSlackPaste. Extracted from the MCP-tool handler so the
+// icc_capture_slack convenience tool can reuse the same pure formatter
+// without re-implementing arg parsing.
+type formatSlackPasteInput struct {
+	Text                 string
+	ProjectSlug          string
+	Channel              string
+	CapturedAt           string
+	Topic                string
+	ExplicitParticipants []string
+}
+
+// formatSlackPaste is the pure formatter (no MCP types, no I/O). Both
+// icc_format_slack_paste and icc_capture_slack call this so the two
+// surfaces stay byte-identical. Returns a validation error when text is
+// empty/whitespace.
+func formatSlackPaste(in formatSlackPasteInput) (formatSlackPasteResult, error) {
+	if strings.TrimSpace(in.Text) == "" {
+		return formatSlackPasteResult{}, errors.New("text is required and must not be empty")
 	}
 
-	if strings.TrimSpace(text) == "" {
-		return mcp.ErrorResult(errors.New("text is required and must not be empty")), nil
-	}
-
+	capturedAt := in.CapturedAt
 	if capturedAt == "" {
 		capturedAt = time.Now().Format(time.RFC3339)
 	}
 
-	messages := parseSlackPaste(text)
+	messages := parseSlackPaste(in.Text)
 
-	participants := explicitParticipants
+	participants := in.ExplicitParticipants
 	if len(participants) == 0 {
 		participants = inferParticipants(messages)
 	}
 
+	topic := in.Topic
 	if topic == "" {
-		topic = deriveTopicSlug(messages, text)
+		topic = deriveTopicSlug(messages, in.Text)
 	}
 
 	captureDate := dateForFilename(capturedAt)
 	filename := buildSlackFilename(captureDate, topic)
-	suggestedPath := buildSlackPath(projectSlug, filename)
+	suggestedPath := buildSlackPath(in.ProjectSlug, filename)
 
 	markdown := renderSlackMarkdown(
-		projectSlug, channel, capturedAt, participants, messages, text,
+		in.ProjectSlug, in.Channel, capturedAt, participants, messages, in.Text,
 	)
 
-	return jsonResult(formatSlackPasteResult{
+	return formatSlackPasteResult{
 		Markdown:          markdown,
 		SuggestedFilename: filename,
 		SuggestedPath:     suggestedPath,
-	})
+	}, nil
+}
+
+func handleFormatSlackPaste(_ context.Context, args map[string]any) (*mcp.CallToolResult, error) {
+	v := validate.NewArgs(args)
+	in := formatSlackPasteInput{
+		Text:                 v.Required("text"),
+		ProjectSlug:          v.Required("project_slug"),
+		Channel:              v.Required("channel"),
+		CapturedAt:           v.String("captured_at", ""),
+		Topic:                v.String("topic", ""),
+		ExplicitParticipants: v.StringSlice("participants"),
+	}
+	if err := v.Validate(); err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+
+	out, err := formatSlackPaste(in)
+	if err != nil {
+		return mcp.ErrorResult(err), nil
+	}
+	return jsonResult(out)
 }
 
 // slackHeaderRE matches a Slack message header line. Slack pastes
