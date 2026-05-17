@@ -107,7 +107,7 @@ spec:
     - name: ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL
       value: fallback
   runtime:
-    image: registry.harbor.lan/flexinfer/runtime@sha256:04631a8db20fb7c2ea62a9846938b155d031d180c962477e011936765bcfeb88
+    image: registry.harbor.lan/flexinfer/runtime@sha256:24cbefd79152e3995c1e44623bddb1d98767da8e5ea0393fdd452a7ad3d1bea5
   containerMemoryGB: 48
   maxGPUMemoryGB: 18
   # Dropped 44 → 24 on 2026-04-21 to unblock gemma4-26b-a4b-gptq-dense
