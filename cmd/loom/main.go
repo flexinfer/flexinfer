@@ -97,6 +97,9 @@ func main() {
 		// Mills (cluster operator client)
 		newMillsCmd(),
 
+		// Codex Desktop session tail (cross-agent integration slice 1a)
+		newCodexWatchCmd(),
+
 		// Shell completion
 		newCompletionCmd(rootCmd),
 	)

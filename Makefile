@@ -51,7 +51,7 @@ LOOM_HUB_DIR := $(GITOPS_DIR)/k3s/loom-hub
 FLUX_KUST := $(GITOPS_DIR)/clusters/k3s/flux-system/kustomization-loom-hub-servers.yaml
 
 # MCP server binaries
-MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-quality mcp-brand-kit mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot mcp-alertmanager mcp-flux mcp-postgres mcp-helm mcp-docker mcp-codebase-memory mcp-agent-context mcp-redis mcp-neo4j mcp-confluence mcp-browserkit mcp-devbox mcp-itchio mcp-release mcp-substack mcp-linkedin mcp-google-workspace mcp-jobsearch mcp-mentatlab mcp-flexinfer mcp-weaver mcp-office mcp-icc-capture
+MCP_SERVERS := mcp-time mcp-git mcp-github mcp-gitlab mcp-memory mcp-sequentialthinking mcp-prometheus mcp-k8s mcp-tavily mcp-server-mgmt mcp-cloudflare mcp-loki mcp-asus-router mcp-git-worktree mcp-grafana mcp-k8s-ops mcp-minio mcp-morph-embeddings mcp-qdrant mcp-quality mcp-brand-kit mcp-ops mcp-zep mcp-morph-fast-apply mcp-youtube mcp-godot mcp-alertmanager mcp-flux mcp-postgres mcp-helm mcp-docker mcp-codebase-memory mcp-agent-context mcp-redis mcp-neo4j mcp-confluence mcp-browserkit mcp-devbox mcp-itchio mcp-release mcp-substack mcp-linkedin mcp-google-workspace mcp-jobsearch mcp-mentatlab mcp-flexinfer mcp-weaver mcp-office mcp-icc-capture mcp-loom-widget
 .PHONY: $(MCP_SERVERS)
 
 # Default target
@@ -292,6 +292,19 @@ mcp-codebase-memory:
 
 mcp-agent-context:
 	go build $(LDFLAGS) -o bin/mcp-agent-context ./cmd/mcp-agent-context
+
+mcp-loom-widget:
+	go build $(LDFLAGS) -o bin/mcp-loom-widget ./cmd/mcp-loom-widget
+
+# Build the React widget bundle (web/loom-fleet-widget) and copy the
+# single-file output into the path embedded by cmd/mcp-loom-widget.
+# Re-run `make mcp-loom-widget` afterwards to bake the new bundle into
+# the Go binary.
+.PHONY: widget
+widget:
+	cd web/loom-fleet-widget && pnpm install --frozen-lockfile && pnpm build
+	\cp web/loom-fleet-widget/dist/index.html cmd/mcp-loom-widget/widget.html
+	@echo "widget: built $$(wc -c < cmd/mcp-loom-widget/widget.html) bytes into cmd/mcp-loom-widget/widget.html"
 
 mcp-redis:
 	go build $(LDFLAGS) -o bin/mcp-redis ./cmd/mcp-redis

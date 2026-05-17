@@ -1,0 +1,60 @@
+{"timestamp": "2026-05-16T21:16:42.497Z", "type": "session_meta", "payload": {"id": "00000000-0000-0000-0000-000000000001", "timestamp": "2026-05-16T21:16:26.541Z", "cwd": "/Users/test/workspace/example-repo", "originator": "Codex Desktop", "cli_version": "0.131.0-alpha.9", "source": "vscode", "thread_source": "user", "model_provider": "openai", "base_instructions": "<redacted>", "dynamic_tools": []}}
+{"timestamp": "2026-05-16T21:16:42.500Z", "type": "event_msg", "payload": {"type": "task_started", "turn_id": "019e32a6-0854-7a62-b201-7a69937142df", "started_at": 1778966202, "model_context_window": 258400, "collaboration_mode_kind": "default"}}
+{"timestamp": "2026-05-16T21:16:42.500Z", "type": "response_item", "payload": {"type": "message", "role": "developer", "content": [{"type": "input_text", "text": "<redacted>"}, {"type": "input_text", "text": "<redacted>"}, {"type": "input_text", "text": "<redacted>"}, {"type": "input_text", "text": "<redacted>"}, {"type": "input_text", "text": "<redacted>"}, {"type": "input_text", "text": "<redacted>"}, {"type": "input_text", "text": "<redacted>"}]}}
+{"timestamp": "2026-05-16T21:16:42.500Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<redacted>"}, {"type": "input_text", "text": "<redacted>"}]}}
+{"timestamp": "2026-05-16T21:16:42.500Z", "type": "turn_context", "payload": {"turn_id": "019e32a6-0854-7a62-b201-7a69937142df", "cwd": "/Users/test/workspace/example-repo", "model": "gpt-5.5", "approval_policy": "never"}}
+{"timestamp": "2026-05-16T21:16:46.394Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<redacted>"}]}}
+{"timestamp": "2026-05-16T21:16:46.394Z", "type": "event_msg", "payload": {"type": "user_message", "message": "<redacted user prose>", "images": [], "local_images": [], "text_elements": []}}
+{"timestamp": "2026-05-16T21:16:46.395Z", "type": "response_item", "payload": {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "<redacted>"}]}}
+{"timestamp": "2026-05-16T21:16:46.636Z", "type": "event_msg", "payload": {"type": "token_count"}}
+{"timestamp": "2026-05-16T21:16:53.729Z", "type": "response_item", "payload": {"type": "reasoning", "summary": [], "content": null, "encrypted_content": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:00.572Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "<redacted agent prose>", "phase": "commentary", "memory_citation": null}}
+{"timestamp": "2026-05-16T21:17:00.572Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "<redacted>"}], "phase": "commentary"}}
+{"timestamp": "2026-05-16T21:17:00.582Z", "type": "response_item", "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"redacted\":true}", "call_id": "call_Ksy7OGebgGrsG3wPndEAAo9L"}}
+{"timestamp": "2026-05-16T21:17:00.609Z", "type": "response_item", "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"redacted\":true}", "call_id": "call_nEsp5pxdXhvJPCnI8nTTYkHX"}}
+{"timestamp": "2026-05-16T21:17:00.624Z", "type": "response_item", "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"redacted\":true}", "call_id": "call_7X6MaMrk277qk7EEX4hXjb0r"}}
+{"timestamp": "2026-05-16T21:17:00.642Z", "type": "response_item", "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"redacted\":true}", "call_id": "call_9GMmkCgJOmBRJ5cqOP21ohkv"}}
+{"timestamp": "2026-05-16T21:17:00.643Z", "type": "event_msg", "payload": {"type": "token_count"}}
+{"timestamp": "2026-05-16T21:17:00.658Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_Ksy7OGebgGrsG3wPndEAAo9L", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:00.660Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_nEsp5pxdXhvJPCnI8nTTYkHX", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:00.705Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_7X6MaMrk277qk7EEX4hXjb0r", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:00.720Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_9GMmkCgJOmBRJ5cqOP21ohkv", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:04.154Z", "type": "response_item", "payload": {"type": "reasoning", "summary": [], "content": null, "encrypted_content": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:05.578Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "<redacted agent prose>", "phase": "commentary", "memory_citation": null}}
+{"timestamp": "2026-05-16T21:17:05.578Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "<redacted>"}], "phase": "commentary"}}
+{"timestamp": "2026-05-16T21:17:06.030Z", "type": "response_item", "payload": {"type": "tool_search_call", "call_id": "call_wVfIFjBxFEP9M3jh7RzG9XJE", "status": "completed", "execution": "client", "arguments": {"redacted": true}}}
+{"timestamp": "2026-05-16T21:17:06.078Z", "type": "event_msg", "payload": {"type": "token_count"}}
+{"timestamp": "2026-05-16T21:17:06.079Z", "type": "response_item", "payload": {"type": "tool_search_output", "call_id": "call_wVfIFjBxFEP9M3jh7RzG9XJE", "status": "completed", "execution": "client", "tools": []}}
+{"timestamp": "2026-05-16T21:17:07.535Z", "type": "response_item", "payload": {"type": "tool_search_call", "call_id": "call_if1IISLxHrnbxEpRp2nROt8O", "status": "completed", "execution": "client", "arguments": {"redacted": true}}}
+{"timestamp": "2026-05-16T21:17:07.588Z", "type": "event_msg", "payload": {"type": "token_count"}}
+{"timestamp": "2026-05-16T21:17:07.589Z", "type": "response_item", "payload": {"type": "tool_search_output", "call_id": "call_if1IISLxHrnbxEpRp2nROt8O", "status": "completed", "execution": "client", "tools": []}}
+{"timestamp": "2026-05-16T21:17:11.280Z", "type": "response_item", "payload": {"type": "reasoning", "summary": [], "content": null, "encrypted_content": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:11.618Z", "type": "response_item", "payload": {"type": "tool_search_call", "call_id": "call_TmYqN1WKuKUcmZrDGoxxAD3W", "status": "completed", "execution": "client", "arguments": {"redacted": true}}}
+{"timestamp": "2026-05-16T21:17:11.673Z", "type": "event_msg", "payload": {"type": "token_count"}}
+{"timestamp": "2026-05-16T21:17:11.673Z", "type": "response_item", "payload": {"type": "tool_search_output", "call_id": "call_TmYqN1WKuKUcmZrDGoxxAD3W", "status": "completed", "execution": "client", "tools": []}}
+{"timestamp": "2026-05-16T21:17:22.924Z", "type": "response_item", "payload": {"type": "reasoning", "summary": [], "content": null, "encrypted_content": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:22.939Z", "type": "response_item", "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"redacted\":true}", "call_id": "call_RkgCJTOtTbzj9f2jppYmSGZB"}}
+{"timestamp": "2026-05-16T21:17:22.945Z", "type": "response_item", "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"redacted\":true}", "call_id": "call_aFc3W8zSjhneN4MnF8ah4S8f"}}
+{"timestamp": "2026-05-16T21:17:22.968Z", "type": "response_item", "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"redacted\":true}", "call_id": "call_VYwt9HDSDGaTkT5koR4cN0kJ"}}
+{"timestamp": "2026-05-16T21:17:22.984Z", "type": "response_item", "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"redacted\":true}", "call_id": "call_5J4bunqt4QUydagYnxNGuAhX"}}
+{"timestamp": "2026-05-16T21:17:22.998Z", "type": "response_item", "payload": {"type": "function_call", "name": "exec_command", "arguments": "{\"redacted\":true}", "call_id": "call_dIllBEukUqjPk52GIPDjXQJP"}}
+{"timestamp": "2026-05-16T21:17:23.038Z", "type": "event_msg", "payload": {"type": "token_count"}}
+{"timestamp": "2026-05-16T21:17:24.117Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_RkgCJTOtTbzj9f2jppYmSGZB", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:24.117Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_aFc3W8zSjhneN4MnF8ah4S8f", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:24.117Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_VYwt9HDSDGaTkT5koR4cN0kJ", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:24.117Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_5J4bunqt4QUydagYnxNGuAhX", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:24.117Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_dIllBEukUqjPk52GIPDjXQJP", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:25.186Z", "type": "response_item", "payload": {"type": "reasoning", "summary": [], "content": null, "encrypted_content": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:25.753Z", "type": "response_item", "payload": {"type": "function_call", "name": "write_stdin", "arguments": "{\"redacted\":true}", "call_id": "call_lozvSO7rZl6fNQkvO0Ba85EG"}}
+{"timestamp": "2026-05-16T21:17:25.795Z", "type": "event_msg", "payload": {"type": "token_count"}}
+{"timestamp": "2026-05-16T21:17:30.756Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_lozvSO7rZl6fNQkvO0Ba85EG", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:34.324Z", "type": "response_item", "payload": {"type": "function_call", "name": "write_stdin", "arguments": "{\"redacted\":true}", "call_id": "call_nPGQkbx15czoEYSPJAbojB00"}}
+{"timestamp": "2026-05-16T21:17:34.366Z", "type": "event_msg", "payload": {"type": "token_count"}}
+{"timestamp": "2026-05-16T21:17:34.367Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_nPGQkbx15czoEYSPJAbojB00", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:35.586Z", "type": "response_item", "payload": {"type": "reasoning", "summary": [], "content": null, "encrypted_content": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:36.132Z", "type": "response_item", "payload": {"type": "function_call", "name": "write_stdin", "arguments": "{\"redacted\":true}", "call_id": "call_LRRPlC1NPBLKkg0ERpiBYoCx"}}
+{"timestamp": "2026-05-16T21:17:36.173Z", "type": "event_msg", "payload": {"type": "token_count"}}
+{"timestamp": "2026-05-16T21:17:41.134Z", "type": "response_item", "payload": {"type": "function_call_output", "call_id": "call_LRRPlC1NPBLKkg0ERpiBYoCx", "output": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:42.494Z", "type": "response_item", "payload": {"type": "reasoning", "summary": [], "content": null, "encrypted_content": "<redacted>"}}
+{"timestamp": "2026-05-16T21:17:48.870Z", "type": "event_msg", "payload": {"type": "agent_message", "message": "<redacted agent prose>", "phase": "commentary", "memory_citation": null}}
+{"timestamp": "2026-05-16T21:17:48.872Z", "type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": "<redacted>"}], "phase": "commentary"}}

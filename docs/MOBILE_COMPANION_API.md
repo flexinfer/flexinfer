@@ -100,6 +100,8 @@ This section freezes the v1 endpoint allowlist for the `mobile_operator` role. R
 | `/api/mobile/v1/sandbox` | `GET` | `core_operator` | allow | `mobile:read` |
 | `/api/mobile/v1/pipelines` | `GET` | `core_operator` | allow | `mobile:read` |
 | `/api/mobile/v1/handoffs` | `GET` | `core_operator` | allow | `mobile:read` |
+| `/api/mobile/v1/handoffs/{handoff_id}/accept` | `POST` | `guarded_mutation` | allow | `mobile:read` |
+| `/api/mobile/v1/handoffs/{handoff_id}/reject` | `POST` | `guarded_mutation` | allow | `mobile:read` |
 | `/api/mobile/v1/agent/spawns` | `GET` | `core_operator` | allow | `mobile:read` |
 | `/api/mobile/v1/agent/spawn/config` | `GET` | `core_operator` | allow | `mobile:read` |
 | `/api/mobile/v1/agent/spawn/{spawn_id}` | `GET` | `core_operator` | allow | `mobile:read` |
@@ -190,6 +192,8 @@ The following additive endpoints are now part of `/api/mobile/v1`:
 | `GET /namespaces` | Namespace rollup | none | `{namespaces}` |
 | `GET /pipelines` | Active and recent pipelines | none | `{pipelines, recent_pipelines, summary, available}` |
 | `GET /handoffs` | Handoff inbox | `limit` | `{handoffs}` |
+| `POST /handoffs/{handoff_id}/accept` | Accept a pending handoff (body: `session_id` or `target_agent_id`, optional `import_entries`) | none | `{status:"accepted", handoff_id, session_id, result}` |
+| `POST /handoffs/{handoff_id}/reject` | Reject a pending handoff (body: optional `reason`) | none | `{status:"rejected", handoff_id, result}` |
 | `GET /agent/spawns` | Spawn roster | none | `{spawns}` |
 | `GET /agent/spawn/config` | Spawn project/type config | none | `{projects, agent_types}` |
 | `GET /agent/spawn/{spawn_id}` | Spawn detail | none | spawn status object |

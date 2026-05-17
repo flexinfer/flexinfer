@@ -526,6 +526,24 @@ type HandoffAcceptResult struct {
 	ImportedCount int    `json:"imported_count,omitempty"`
 }
 
+// HandoffRejectParams names the handoff to mark rejected. Reason is
+// surfaced to the source agent so they understand why the handoff
+// wasn't taken; optional but recommended.
+type HandoffRejectParams struct {
+	HandoffID string `json:"handoff_id"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+// HandoffRejectResult is the minimal envelope returned by the
+// agent_handoff_reject MCP tool. The HUD/widget needs only ok +
+// handoff_id; richer fields can be added later without breaking the
+// caller.
+type HandoffRejectResult struct {
+	OK        bool   `json:"ok"`
+	HandoffID string `json:"handoff_id"`
+	Status    string `json:"status,omitempty"`
+}
+
 // --- Template DTOs ---
 
 // TemplateInfo describes a session template.
