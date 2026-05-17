@@ -1070,6 +1070,13 @@ func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState
 	o.persistTelemetrySummary(state, string(SpawnStatusCompleted))
 
 	state.Status = SpawnStatusCompleted
+	// Clear any stale Error left over from a transient reconcile tick that
+	// poisoned the persisted state before the success path landed (e.g.,
+	// "pod not found during reconciliation" set by Reconcile after the pod
+	// finished but before this completion handler ran). Without this, the
+	// ConfigMap row reads `status=completed, error=...` and downstream
+	// dashboards mis-classify a successful spawn as a failure.
+	state.Error = ""
 	now := time.Now()
 	state.EndedAt = &now
 	o.ctrl.UpdateState(ctx, state)
@@ -1092,14 +1099,17 @@ func (o *SpawnOrchestrator) completeSpawn(ctx context.Context, state *SpawnState
 	o.logger.Info("spawn completed", "spawn_id", state.SpawnID)
 	o.broadcastSpawnEvent("agent.spawn.completed", state)
 
-	// End the agent session with summarization.
-	go func() {
-		summarize := true
-		o.agentBridge.EndSession(bridge.SessionEndParams{
-			AgentID:   state.AgentID,
-			Summarize: &summarize,
-		})
-	}()
+	// End the agent session with summarization. Nil-safe to support tests
+	// that construct a minimal orchestrator without a real agent bridge.
+	if o.agentBridge != nil {
+		go func() {
+			summarize := true
+			o.agentBridge.EndSession(bridge.SessionEndParams{
+				AgentID:   state.AgentID,
+				Summarize: &summarize,
+			})
+		}()
+	}
 }
 
 // reapTerminalSpawn is the K8sController.TerminalHook invocation: it
@@ -1118,6 +1128,18 @@ func (o *SpawnOrchestrator) reapTerminalSpawn(ctx context.Context, state spawn.S
 		"pod", state.PodName,
 		"status", state.Status,
 	)
+
+	// Hygiene: if a spawn reached a clean terminal status (completed /
+	// stopped) but still carries a stale Error from an earlier reconcile
+	// tick (e.g., "pod not found during reconciliation"), clear it and
+	// re-persist so the ConfigMap row matches the actual outcome. Failed
+	// spawns intentionally keep their Error.
+	if (state.Status == spawn.StatusCompleted || state.Status == spawn.StatusStopped) && state.Error != "" && o.ctrl != nil {
+		if live, ok := o.ctrl.Get(state.SpawnID); ok && live != nil && live.Error != "" {
+			live.Error = ""
+			o.ctrl.UpdateState(ctx, live)
+		}
+	}
 
 	if state.PodName != "" && o.backend != nil {
 		if err := o.backend.Stop(ctx, state.PodName); err != nil {
@@ -1436,6 +1458,9 @@ func (o *SpawnOrchestrator) runHeartbeatLoop(ctx context.Context, state *SpawnSt
 // event on first broadcast so HUD clients can wire the "came from
 // weaver query X" badge without polling the spawn detail endpoint.
 func (o *SpawnOrchestrator) broadcastSpawnEvent(eventType string, state *SpawnState) {
+	if o.sseHub == nil {
+		return
+	}
 	data, err := json.Marshal(state)
 	if err != nil {
 		return
