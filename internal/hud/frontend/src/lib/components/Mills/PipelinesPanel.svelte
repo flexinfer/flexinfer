@@ -2,6 +2,7 @@
   import type { PipelineRun } from '../../stores/mills.svelte.ts';
   import { millsStore } from '../../stores/mills.svelte.ts';
   import PanelShell from '../shared/PanelShell.svelte';
+  import PipelineRunDetail from './PipelineRunDetail.svelte';
 
   $effect(() => {
     millsStore.startPolling(15000);
@@ -62,6 +63,19 @@
     // 1.25rem per level — keeps the run id visible at depth 3 in a
     // typical column width.
     return `padding-left:${1.25 * d}rem`;
+  }
+
+  let selectedID = $derived(millsStore.selectedRunID);
+
+  function openRun(id: string): void {
+    millsStore.openRunDetail(id);
+  }
+
+  function onRowKeydown(ev: KeyboardEvent, id: string): void {
+    if (ev.key === 'Enter' || ev.key === ' ') {
+      ev.preventDefault();
+      openRun(id);
+    }
   }
 
   function emptyMessage(): string {
@@ -133,7 +147,16 @@
     </thead>
     <tbody>
       {#each sortedRuns as r (r.ID)}
-        <tr class:subrun={(r.Depth ?? 0) > 0}>
+        <tr
+          class:subrun={(r.Depth ?? 0) > 0}
+          class:selected={selectedID === r.ID}
+          class="clickable"
+          role="button"
+          tabindex="0"
+          aria-label={`Open detail for pipeline run ${r.ID}`}
+          onclick={() => openRun(r.ID)}
+          onkeydown={(ev) => onRowKeydown(ev, r.ID)}
+        >
           <td class="mono" style={depthIndent(r.Depth)} title={r.ParentRunID ? `subrun of ${r.ParentRunID}` : 'top-level run'}>
             {#if (r.Depth ?? 0) > 0}<span class="tree-glyph" aria-hidden="true">└─ </span>{/if}{r.ID}
           </td>
@@ -161,6 +184,8 @@
     </tbody>
   </table>
 </PanelShell>
+
+<PipelineRunDetail />
 
 <style>
   .counts-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
@@ -221,6 +246,16 @@
   .state-escalated { background: rgba(220, 140, 60, 0.15); color: rgb(240, 180, 100); }
   .state-paused   { background: rgba(180, 180, 60, 0.15); color: rgb(220, 220, 120); }
   .subrun { background: rgba(120, 140, 200, 0.04); }
+  .clickable { cursor: pointer; transition: background 0.1s ease-out; }
+  .clickable:hover { background: rgba(120, 144, 200, 0.08); }
+  .clickable:focus-visible {
+    outline: 2px solid var(--accent, #58a);
+    outline-offset: -2px;
+  }
+  .clickable.selected {
+    background: rgba(120, 144, 200, 0.14);
+    box-shadow: inset 3px 0 0 var(--accent, #58a);
+  }
   .tree-glyph { color: var(--text-muted, #889); margin-right: 0.15rem; }
   .depth-pill {
     padding: 0.05rem 0.35rem; border-radius: 3px; font-size: 0.7rem;
