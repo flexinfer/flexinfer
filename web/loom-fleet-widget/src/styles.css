@@ -150,3 +150,94 @@ code {
   align-items: center;
   gap: 4px;
 }
+
+.ticker {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+
+.ticker-title {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+  margin-bottom: 8px;
+}
+
+.ticker-empty {
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
+.ticker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.ticker-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr auto;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  padding: 4px 0;
+  border-bottom: 1px dashed color-mix(in srgb, var(--border) 60%, transparent);
+}
+
+.ticker-row:last-child {
+  border-bottom: 0;
+}
+
+.chip {
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--muted) 12%, transparent);
+  color: var(--muted);
+}
+
+.chip-decision {
+  background: color-mix(in srgb, #6e56cf 14%, transparent);
+  color: #6e56cf;
+}
+
+.chip-finding {
+  background: color-mix(in srgb, #2ea043 14%, transparent);
+  color: #2ea043;
+}
+
+.chip-task {
+  background: color-mix(in srgb, #d29922 14%, transparent);
+  color: #d29922;
+}
+
+.chip-handoff {
+  background: color-mix(in srgb, #1f6feb 14%, transparent);
+  color: #1f6feb;
+}
+
+.ticker-agent {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.ticker-title-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+.ticker-time {
+  font-size: 11px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}

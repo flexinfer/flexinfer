@@ -125,6 +125,38 @@ const MOCK_RESPONSES: Record<string, string> = {
     spawns: { active: 1, total: 12 },
     last_heartbeat: { agent_id: "claude-code", timestamp: new Date().toISOString(), count_1h: 142 },
   }),
+  loom_fleet_get_stream: JSON.stringify({
+    entries: [
+      {
+        id: "mock-1",
+        entry_type: "decision",
+        agent_id: "claude-code",
+        title: "Picked Combo A (hub-and-spoke) for cross-agent GUI",
+        timestamp: new Date(Date.now() - 45_000).toISOString(),
+      },
+      {
+        id: "mock-2",
+        entry_type: "finding",
+        agent_id: "codex-desktop-019e32a5",
+        title: "Codex.app spawns app-server with --listen stdio:// — no external socket",
+        timestamp: new Date(Date.now() - 5 * 60_000).toISOString(),
+      },
+      {
+        id: "mock-3",
+        entry_type: "task",
+        agent_id: "claude-code",
+        title: "Ship slice 1b-δ event ticker via /stream relay",
+        timestamp: new Date(Date.now() - 12 * 60_000).toISOString(),
+      },
+      {
+        id: "mock-4",
+        entry_type: "handoff",
+        agent_id: "gemini-cli",
+        title: "Mills canary dedupe shipped",
+        timestamp: new Date(Date.now() - 60 * 60_000).toISOString(),
+      },
+    ],
+  }),
 };
 
 // setMockResponse is exported so tests (or interactive dev) can swap

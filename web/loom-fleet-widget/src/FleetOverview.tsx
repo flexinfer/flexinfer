@@ -1,3 +1,4 @@
+import { EventTicker } from "./components/EventTicker";
 import { useFleet } from "./hooks/useFleet";
 import { hostKind } from "./lib/mcpBridge";
 
@@ -51,6 +52,8 @@ export function FleetOverview() {
           )}
         </>
       )}
+
+      <EventTicker />
 
       <p className="footer">
         {lastUpdated ? `updated ${lastUpdated.toLocaleTimeString()}` : "polling…"}

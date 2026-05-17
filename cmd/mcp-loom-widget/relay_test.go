@@ -48,6 +48,12 @@ func fakeHUD(t *testing.T) (*httptest.Server, *fakeHUDState) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = io.WriteString(w, state.sessions)
 	})
+	mux.HandleFunc("/api/mobile/v1/stream", func(w http.ResponseWriter, r *http.Request) {
+		state.lastPath = r.URL.Path
+		state.lastAuth = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, state.stream)
+	})
 	srv := httptest.NewServer(mux)
 	t.Cleanup(srv.Close)
 	return srv, state
@@ -57,6 +63,7 @@ type fakeHUDState struct {
 	dashboard  string
 	presence   string
 	sessions   string
+	stream     string
 	expectAuth string
 
 	lastPath string
@@ -115,10 +122,30 @@ func TestToolsList_AdvertisesRelayTools(t *testing.T) {
 			names[n] = true
 		}
 	}
-	for _, want := range []string{toolShow, toolDashboard, toolPresence, toolSessions} {
+	for _, want := range []string{toolShow, toolDashboard, toolPresence, toolSessions, toolStream} {
 		if !names[want] {
 			t.Errorf("tools/list missing %q (got %v)", want, names)
 		}
+	}
+}
+
+// TestRelay_Stream_HappyPath covers the new stream relay so the
+// widget can build an event ticker. Uses the same path-allowlist +
+// auth surface as the other relays.
+func TestRelay_Stream_HappyPath(t *testing.T) {
+	hud, state := fakeHUD(t)
+	srv := newServerWithHUD(
+		slog.New(slog.NewTextHandler(io.Discard, nil)),
+		&hudClient{baseURL: hud.URL, token: "test-token", client: hud.Client()},
+	)
+	result := callTool(t, srv, toolStream)
+	content, _ := result["content"].([]any)
+	c0, _ := content[0].(map[string]any)
+	if c0["text"] != state.stream {
+		t.Errorf("relay body mismatch: got %q want %q", c0["text"], state.stream)
+	}
+	if state.lastPath != "/api/mobile/v1/stream" {
+		t.Errorf("wrong path: %q", state.lastPath)
 	}
 }
 
