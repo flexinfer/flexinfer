@@ -44,8 +44,18 @@ spec:
                 secretKeyRef:
                   key: QDRANT_API_KEY
                   name: loom-secrets
+            # Switched from the Harvester VM Qdrant (192.168.50.176:6333,
+            # shared 8c/8GB on Harvester storage) to qdrant-fast (gitops!160) —
+            # a dedicated Qdrant pinned to cblevins-7900xtx (24c/65GB) on
+            # local NVMe via local-path provisioner. Expected ~3-5x faster
+            # upserts for codebase indexing (local disk + node-local network
+            # + no contention with news-analyzer / other writers).
+            #
+            # The old collection on the Harvester instance is still around;
+            # re-indexing devoted-core writes a fresh codebase_memory_v1
+            # collection on qdrant-fast.
             - name: QDRANT_URL
-              value: http://192.168.50.176:6333
+              value: http://qdrant-fast.loom-hub.svc.cluster.local:6333
             # Default HTTP_TIMEOUT (30s) was insufficient for large
             # qdrant upsert batches with wait=true — the codebase_memory_v1
             # collection has 50K+ points and HNSW reindexing on each
