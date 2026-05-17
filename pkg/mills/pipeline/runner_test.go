@@ -370,6 +370,122 @@ func TestRunner_LLMGateUnparseableOutcomeTriggersRetry(t *testing.T) {
 	}
 }
 
+// recordingJudge counts Judge invocations for the M8 integration test.
+type recordingJudge struct {
+	mu       sync.Mutex
+	calls    int
+	response gates.RubricVerdict
+}
+
+func (r *recordingJudge) Judge(_ context.Context, _ string, _ gates.StageInput) (gates.RubricVerdict, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.calls++
+	return r.response, nil
+}
+
+func (r *recordingJudge) callCount() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.calls
+}
+
+// TestRunner_CanaryItemSkipsLLMGatesAndReachesMerge is the M8
+// end-to-end contract: a backlog item labeled `mills-canary` carries
+// through the entire pipeline (plan_slice → research → implement →
+// tests → pr_self_review → mr → ci_watch → merge → cleanup) WITHOUT
+// the LLM-judged gates ever calling FlexInfer. Each LLM gate persists
+// a `gate_outcomes` row with `judged_by="skipped:canary"` so operators
+// reviewing the run can grep that exact token to see why no model was
+// consulted.
+//
+// Live evidence the skip is needed: PIPE-MILLS-CANARY-M6-164007-1779036007
+// (2026-05-17) returned `score=0.00 below threshold=0.70 | Example:
+// file.py:10 - debug print found` from gemma4-26b on a markdown-only
+// diff. After M2.5 + M6 the canary retries 3× and escalates honestly
+// instead of crashing — but it never reaches merge because the verdict
+// is model-quality bounded. M8 short-circuits exactly the LLM gates
+// for canaries so the rest of the pipeline plumbing gets exercised.
+func TestRunner_CanaryItemSkipsLLMGatesAndReachesMerge(t *testing.T) {
+	st, run, item := newRunnerEnv(t)
+	// Re-stamp the backlog item with the canary label; newRunnerEnv
+	// seeds an unlabeled item by default. This mirrors what
+	// cmd/loom/cmd_mills_pipelines.go does when triggering a canary.
+	ctx := context.Background()
+	item.Labels = []string{gates.CanaryLabel, "safe-fixture"}
+	if err := st.Backlog.Put(ctx, item); err != nil {
+		t.Fatalf("seed canary item: %v", err)
+	}
+	disp := &fakeDispatcher{canned: map[string]StageOutput{
+		"implement": {
+			CostUSD:        0.10,
+			FilesChanged:   []string{"testdata/mills-canary/heartbeat.md"},
+			LinesAdded:     1,
+			LinesRemoved:   1,
+			DiffPatch:      []byte("diff --git a/testdata/mills-canary/heartbeat.md b/testdata/mills-canary/heartbeat.md\n@@\n-Run: x\n+Run: y\n"),
+			CommitMessages: []string{"chore(canary): bump heartbeat run id"},
+		},
+		"mr":    {CostUSD: 0.05, MRIID: 99},
+		"merge": {CostUSD: 0.03, MergedSHA: "deadbeef"},
+	}}
+
+	// Register pure-Go gates as no-op passes so post_implement_gate +
+	// post_tests_gate clear unimpeded (these still run for canaries).
+	gr := gates.NewRegistry()
+	for _, name := range []string{"diff_size", "scope", "path_policy", "secret_scan", "commit_format"} {
+		gr.Register(&alwaysPassGate{name: name})
+	}
+	// Wire the real spec_conformance + pr_self_review gates. The
+	// recordingJudge would emit a fail verdict if consulted; the M8
+	// skip path must short-circuit before it's called.
+	judge := &recordingJudge{response: gates.RubricVerdict{Score: 0.0, Model: "should-not-be-called"}}
+	gates.RegisterLLMGates(gr, judge)
+
+	r := New(st, gr, disp, nil)
+	r.Clock = func() time.Time { return time.Date(2026, 5, 17, 12, 0, 0, 0, time.UTC) }
+	if err := r.Drive(ctx, run, item); err != nil {
+		t.Fatalf("drive: %v", err)
+	}
+
+	got, err := st.Pipeline.GetRun(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("getrun: %v", err)
+	}
+	if got.State != store.PipelineDone {
+		t.Fatalf("state = %s, want done (canary must reach merge with LLM gates skipped)", got.State)
+	}
+
+	// Hard contract: the judge must NEVER be consulted for a canary.
+	// If this fires we're paying for and waiting on a model roundtrip
+	// we explicitly designed the canary to avoid.
+	if calls := judge.callCount(); calls != 0 {
+		t.Errorf("judge.calls = %d, want 0 (canary must not consult FlexInfer)", calls)
+	}
+
+	gateRows, err := st.Pipeline.ListGates(ctx, run.ID)
+	if err != nil {
+		t.Fatalf("list gates: %v", err)
+	}
+
+	// Audit-trail contract: both LLM gates persisted a row with
+	// judged_by="skipped:canary" so operators can grep for it.
+	skipped := map[string]int{}
+	for _, gr := range gateRows {
+		if gr.JudgedBy == gates.CanarySkipJudgedBy {
+			skipped[gr.GateName]++
+			if gr.Outcome != store.GateOutcomePass {
+				t.Errorf("canary-skipped gate %s outcome = %v, want pass", gr.GateName, gr.Outcome)
+			}
+		}
+	}
+	if skipped["spec_conformance"] == 0 {
+		t.Errorf("expected at least one spec_conformance row with judged_by=%q; got rows %+v", gates.CanarySkipJudgedBy, gateRows)
+	}
+	if skipped["pr_self_review"] == 0 {
+		t.Errorf("expected at least one pr_self_review row with judged_by=%q; got rows %+v", gates.CanarySkipJudgedBy, gateRows)
+	}
+}
+
 func TestRunner_StageErrorRetriesThenSucceeds(t *testing.T) {
 	st, run, item := newRunnerEnv(t)
 	// First implement attempt fails; second succeeds.

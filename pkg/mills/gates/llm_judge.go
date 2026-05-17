@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+
+	"github.com/crb2nu/loom/pkg/mills/store"
 )
 
 // ErrJudgeUnparseable is the gate-layer sentinel for "the judge ran but
@@ -20,6 +22,28 @@ import (
 // Outcome.JudgedBy == "flexinfer:unparseable" + Outcome.Pass=false +
 // err=nil so the runner naturally rewinds to RetryFrom.
 var ErrJudgeUnparseable = errors.New("gates: judge output unparseable")
+
+// CanaryLabel marks a backlog item as a deterministic Mills canary
+// (one-line edit to testdata/mills-canary/heartbeat.md, no real spec to
+// conform to and nothing meaningful for a self-review rubric to grade).
+// When an item carries this label, LLM-judged gates short-circuit with
+// JudgedBy="skipped:canary" so the canary exercises the rest of the
+// pipeline (mr → merge → cleanup) instead of being bounded by model
+// quality. Pure-Go gates (path_policy, secret_scan, diff_size, scope,
+// commit_format) still run — they're cheap and catch real things.
+//
+// This constant is the same string referenced by
+// cmd/loom-mills-operator/handlers_backlog.go::canaryDedupeLabel and
+// cmd/loom/cmd_mills_pipelines.go::canaryDedupeLabel; callers should
+// converge here on follow-up if the strings drift.
+const CanaryLabel = "mills-canary"
+
+// CanarySkipJudgedBy is the audit-trail token persisted to
+// gate_outcomes.judged_by when an LLM gate is short-circuited because
+// the backlog item carries CanaryLabel. Operators reviewing a canary
+// run grep for this exact token to see WHY the gate passed without an
+// LLM call.
+const CanarySkipJudgedBy = "skipped:canary"
 
 // errJudgeUnparseable is the predicate the LLMGate uses to detect a
 // soft-failure (judge returned but we couldn't grade). Pure-Go gates
@@ -138,6 +162,26 @@ func (g *LLMGate) logger() *slog.Logger {
 // the first spec_conformance call because gemma4-26b returned free-text.
 // See .loom/119-…2026-05-16.md for the diagnosis.
 func (g *LLMGate) Evaluate(ctx context.Context, in StageInput) (Outcome, error) {
+	// Canary short-circuit (M8): deterministic Mills canaries are one-line
+	// markdown edits to testdata/mills-canary/heartbeat.md. There is no
+	// spec to conform to and nothing meaningful for self-review to grade,
+	// and gemma4-26b hallucinates fail verdicts on the trivial diff (live
+	// evidence 2026-05-17: PIPE-MILLS-CANARY-M6-164007-1779036007
+	// returned "score=0.00 below threshold=0.70 | Example:
+	// file.py:10 - debug print found" — a Python file that exists nowhere
+	// in the diff). Pass the gate with an honest audit token so operators
+	// can grep gate_outcomes.judged_by="skipped:canary" to see WHY the
+	// gate passed without an LLM call. Pure-Go gates (path_policy,
+	// secret_scan, diff_size, scope, commit_format) still run.
+	if itemHasCanaryLabel(in.Item) {
+		g.logger().Info("llm gate: skipped for mills-canary deterministic fixture",
+			"gate", g.GateName, "rubric", g.RubricName)
+		return Outcome{
+			Pass:     true,
+			JudgedBy: CanarySkipJudgedBy,
+			Reasons:  []string{"LLM gate skipped for mills-canary deterministic fixture"},
+		}, nil
+	}
 	if g.Disabled {
 		return Outcome{Pass: true, JudgedBy: "flexinfer:disabled"}, nil
 	}
@@ -183,4 +227,20 @@ func (g *LLMGate) Evaluate(ctx context.Context, in StageInput) (Outcome, error) 
 func RegisterLLMGates(r *Registry, judge RubricJudge) {
 	r.Register(NewSpecConformanceGate(judge))
 	r.Register(NewPRSelfReviewGate(judge))
+}
+
+// itemHasCanaryLabel reports whether the backlog item carries the
+// CanaryLabel. Nil-safe: a missing item returns false (the runner
+// composes StageInput.Item from the live backlog, but defensive code
+// here lets unit tests pass StageInput{} without panicking).
+func itemHasCanaryLabel(item *store.BacklogItem) bool {
+	if item == nil {
+		return false
+	}
+	for _, lbl := range item.Labels {
+		if lbl == CanaryLabel {
+			return true
+		}
+	}
+	return false
 }
