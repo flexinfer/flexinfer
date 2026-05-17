@@ -2,6 +2,8 @@ package backend
 
 import (
 	"fmt"
+	"path"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -70,8 +72,8 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 	}
 
 	// Model path
-	if spec.ModelPath != "" {
-		args = append(args, "--model", spec.ModelPath)
+	if modelPath := llamaCppModelPath(spec); modelPath != "" {
+		args = append(args, "--model", modelPath)
 	} else if spec.Model != "" {
 		args = append(args, "--model", spec.Model)
 	}
@@ -173,6 +175,24 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 	}
 
 	return args
+}
+
+func llamaCppModelPath(spec *ModelSpec) string {
+	if spec == nil || spec.ModelPath == "" {
+		return ""
+	}
+	modelPath := spec.ModelPath
+	ggufFile := strings.TrimLeft(strings.TrimSpace(spec.ConfigString("ggufFile", "")), "/")
+	if ggufFile == "" {
+		ggufFile = strings.TrimLeft(strings.TrimSpace(spec.ConfigString("modelFile", "")), "/")
+	}
+	if ggufFile == "" || strings.Contains(ggufFile, "..") || path.Base(modelPath) == path.Base(ggufFile) {
+		return modelPath
+	}
+	if strings.HasSuffix(strings.ToLower(path.Base(modelPath)), ".gguf") {
+		return modelPath
+	}
+	return path.Join(modelPath, ggufFile)
 }
 
 func (b *LlamaCppBackend) Env(spec *ModelSpec) []corev1.EnvVar {
