@@ -36,7 +36,61 @@ export interface PipelineRun {
   // carry their parent's ID and depth+1.
   ParentRunID?: string | null;
   Depth?: number;
+  // Detail-only fields (populated by GET /api/mills/pipeline/runs/{id});
+  // list responses may omit them, so they're optional. WorktreePath +
+  // MRIID let the drilldown surface direct links; CostUSD is the
+  // aggregate stage spend for the header total.
+  WorktreePath?: string;
+  MRIID?: number | null;
+  CostUSD?: number;
+  ParentSessionID?: string;
 }
+
+// StageResult mirrors store.StageResult — one attempt at one stage.
+// Outcome is *StageOutcome on the Go side: null/missing while in flight,
+// "success" | "gate_fail" | "error" once finalized.
+export interface StageResult {
+  ID: number;
+  PipelineRunID: string;
+  Stage: string;
+  Attempt: number;
+  StartedAt: string;
+  EndedAt?: string | null;
+  Outcome?: 'success' | 'gate_fail' | 'error' | null;
+  SpawnID?: string;
+  CostUSD: number;
+  Artifacts?: Record<string, unknown>;
+  LogTail?: string;
+}
+
+// GateOutcome mirrors store.GateOutcome — one evaluated gate after a
+// stage. Reasons are surfaced to the user verbatim so they can act on
+// gate_fail without diving into the operator logs.
+export interface GateOutcome {
+  ID: number;
+  PipelineRunID: string;
+  AfterStage: string;
+  GateName: string;
+  Outcome: 'pass' | 'fail' | 'skip';
+  Reasons?: string[];
+  JudgedBy?: string;
+  EvaluatedAt: string;
+}
+
+// PipelineRunDetail is the shape returned by handlePipelineRunGet —
+// run + stages + gates in one round-trip so the drilldown drawer can
+// render without per-section fetches.
+export interface PipelineRunDetail {
+  run: PipelineRun;
+  stages: StageResult[];
+  gates: GateOutcome[];
+}
+
+type PipelineDetailLoadState =
+  | { status: 'idle' }
+  | { status: 'loading' }
+  | { status: 'loaded'; detail: PipelineRunDetail }
+  | { status: 'error'; message: string };
 
 export interface CouncilRun {
   ID: string;
@@ -209,6 +263,14 @@ class MillsStore {
   // expander.
   debateByRun = $state<Record<string, DebateLoadState>>({});
 
+  // Pipeline-run drilldown state. selectedRunID drives whether the
+  // PipelineRunDetail drawer is open; pipelineDetailByRun caches the
+  // {run, stages, gates} payload so re-opening the same run is
+  // instant. The 15s background poll refreshes the cached entry only
+  // when the drawer is currently open (see refreshOpenPipelineDetail).
+  selectedRunID = $state<string | null>(null);
+  pipelineDetailByRun = $state<Record<string, PipelineDetailLoadState>>({});
+
   // Pending adaptive policy proposals (Phase 7 slice 7.1/7.2). Refreshed
   // alongside the rest of fetchAll so the card stays in sync with the
   // 15s poll cadence used elsewhere.
@@ -295,6 +357,10 @@ class MillsStore {
       // slice 7.4). Awaited but never throws; its own try/catch
       // silences errors so the rest of the panel stays green.
       void this.fetchPolicyProposals();
+      // Keep an open pipeline-detail drawer in sync with the 15s
+      // cadence — the drawer otherwise frozen at open-time would
+      // misrepresent in-flight runs as their stages advance.
+      void this.refreshOpenPipelineDetail();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // Treat 503 from the proxy as "Mills disabled" rather than an error,
@@ -360,6 +426,73 @@ class MillsStore {
       if (typeof v === 'number' && Number.isFinite(v)) out.push(v);
     }
     return out;
+  }
+
+  // openPipelineDetail is the derived load-state for the currently
+  // selected run id. Returns null when no run is selected so the
+  // drawer component can render purely off this one signal.
+  get openPipelineDetail(): PipelineDetailLoadState | null {
+    if (!this.selectedRunID) return null;
+    return this.pipelineDetailByRun[this.selectedRunID] ?? { status: 'idle' };
+  }
+
+  // openRunDetail opens the drilldown drawer for a pipeline run.
+  // Cache-on-success: subsequent opens for the same id render
+  // immediately from cache while a fresh fetch refreshes in the
+  // background. The 'loading' state is only set when there's no
+  // cached payload yet, so re-opening doesn't flash an empty drawer.
+  openRunDetail(runID: string): void {
+    if (!runID) return;
+    this.selectedRunID = runID;
+    const cached = this.pipelineDetailByRun[runID];
+    if (!cached || cached.status === 'idle' || cached.status === 'error') {
+      this.pipelineDetailByRun = {
+        ...this.pipelineDetailByRun,
+        [runID]: { status: 'loading' },
+      };
+    }
+    void this.fetchPipelineDetail(runID);
+  }
+
+  closeRunDetail(): void {
+    this.selectedRunID = null;
+  }
+
+  // refreshOpenPipelineDetail re-fetches the currently open run on
+  // each background poll tick so the drawer stays live without
+  // forcing the user to close+reopen. No-op when nothing is open.
+  // Called from fetchAll() so it shares the 15s cadence.
+  async refreshOpenPipelineDetail(): Promise<void> {
+    const id = this.selectedRunID;
+    if (!id) return;
+    await this.fetchPipelineDetail(id);
+  }
+
+  private async fetchPipelineDetail(runID: string): Promise<void> {
+    try {
+      const detail = await this.getJSON<PipelineRunDetail>(
+        `/api/mills/pipeline/runs/${encodeURIComponent(runID)}`,
+      );
+      if (!detail) {
+        // Treat a null body as "not found" — surface as error so the
+        // drawer can show a retry instead of an empty pane.
+        this.pipelineDetailByRun = {
+          ...this.pipelineDetailByRun,
+          [runID]: { status: 'error', message: 'run not found' },
+        };
+        return;
+      }
+      this.pipelineDetailByRun = {
+        ...this.pipelineDetailByRun,
+        [runID]: { status: 'loaded', detail },
+      };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      this.pipelineDetailByRun = {
+        ...this.pipelineDetailByRun,
+        [runID]: { status: 'error', message },
+      };
+    }
   }
 
   // loadDebate fetches the per-round transcript for one council run.
