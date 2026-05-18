@@ -116,12 +116,16 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	var fallbackLeader *aiv1alpha2.Model
 	var demandedLeader *aiv1alpha2.Model
 	var warmPrimaryLeader *aiv1alpha2.Model
+	var activeLoadingLeader *aiv1alpha2.Model
 	for _, m := range groupModels {
 		fallbackLeader = better(fallbackLeader, m)
 		if !sharedModelCanTakeDemand(m) {
 			continue
 		}
 		runnableFallbackLeader = better(runnableFallbackLeader, m)
+		if isActiveSharedModelLoading(m) && withinSharedActivationWindow(m, now) {
+			activeLoadingLeader = better(activeLoadingLeader, m)
+		}
 		if isWarmPrimaryModel(m) {
 			warmPrimaryLeader = better(warmPrimaryLeader, m)
 		}
@@ -138,6 +142,13 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		if now.Sub(m.Status.LastActiveTime.Time) < sharedDemandWindow {
 			demandedLeader = better(demandedLeader, m)
 		}
+	}
+
+	// Keep the current loading model active for its cold-start budget. Large
+	// first pulls can outlive the short demand window; dropping leadership here
+	// scales the pod down before kubelet can finish pulling the backend image.
+	if activeLoadingLeader != nil {
+		return activeLoadingLeader
 	}
 
 	// Demand-based preemption: if a non-ready model has recent demand
@@ -184,6 +195,27 @@ func sharedModelCanTakeDemand(model *aiv1alpha2.Model) bool {
 		return false
 	}
 	return true
+}
+
+func isActiveSharedModelLoading(model *aiv1alpha2.Model) bool {
+	if model == nil || model.Status.SharedGroup == nil || model.Status.SharedGroup.State != "Active" {
+		return false
+	}
+	return model.Status.Phase == aiv1alpha2.ModelPhasePending || model.Status.Phase == aiv1alpha2.ModelPhaseLoading
+}
+
+func withinSharedActivationWindow(model *aiv1alpha2.Model, now time.Time) bool {
+	if model == nil || model.Status.LastActiveTime == nil {
+		return false
+	}
+
+	window := sharedSwapCooldown
+	if model.Spec.Serverless != nil && model.Spec.Serverless.ColdStartTimeout != nil {
+		if d := model.Spec.Serverless.ColdStartTimeout.Duration; d > window {
+			window = d
+		}
+	}
+	return now.Sub(model.Status.LastActiveTime.Time) <= window
 }
 
 func queuePositionForSharedModel(modelName string, activeModel *aiv1alpha2.Model, groupModels []*aiv1alpha2.Model) int32 {

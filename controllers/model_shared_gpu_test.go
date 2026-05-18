@@ -317,6 +317,34 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 			wantName: "alpha",
 		},
 		{
+			name: "active pending model remains leader during cold start window",
+			models: func() []*aiv1alpha2.Model {
+				activePulling := makeSharedModel("active-pulling", 130, aiv1alpha2.ModelPhasePending, timePtr(now.Add(-7*time.Minute)), &aiv1alpha2.SharedGroupStatus{
+					State: "Active",
+				})
+				activePulling.Spec.Serverless = &aiv1alpha2.ServerlessSpec{
+					ColdStartTimeout: &metav1.Duration{Duration: 15 * time.Minute},
+				}
+				readyFallback := makeSharedModel("ready-fallback", 120, aiv1alpha2.ModelPhaseReady, timePtr(now.Add(-10*time.Minute)), nil)
+				return []*aiv1alpha2.Model{activePulling, readyFallback}
+			}(),
+			wantName: "active-pulling",
+		},
+		{
+			name: "active pending model releases leadership after cold start window",
+			models: func() []*aiv1alpha2.Model {
+				activeStale := makeSharedModel("active-stale", 130, aiv1alpha2.ModelPhasePending, timePtr(now.Add(-20*time.Minute)), &aiv1alpha2.SharedGroupStatus{
+					State: "Active",
+				})
+				activeStale.Spec.Serverless = &aiv1alpha2.ServerlessSpec{
+					ColdStartTimeout: &metav1.Duration{Duration: 15 * time.Minute},
+				}
+				readyFallback := makeSharedModel("ready-fallback", 120, aiv1alpha2.ModelPhaseReady, timePtr(now.Add(-10*time.Minute)), nil)
+				return []*aiv1alpha2.Model{activeStale, readyFallback}
+			}(),
+			wantName: "ready-fallback",
+		},
+		{
 			name: "cooldown respected even with higher priority demand",
 			models: []*aiv1alpha2.Model{
 				makeSharedModel("active-low", 50, aiv1alpha2.ModelPhaseReady, timePtr(past), &aiv1alpha2.SharedGroupStatus{
