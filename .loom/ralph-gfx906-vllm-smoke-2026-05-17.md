@@ -88,20 +88,20 @@ HTTP 200.
 
 ## Next Slice
 
-After merge and rollout, hold the standalone
-`registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:beadf394fc81c031799799f5d965664e419e5f3ffb4c5873a9d7677f0e1e06b8`
-image warm on `cblevins-radeonvii` before rerunning the same canary command.
 Only consider `deploy/gpuprofiles/gfx906.yaml` `vllm.support` promotion after a
-real HTTP 200 vLLM response.
+real HTTP 200 vLLM response. Before rerunning the canary command, fix the
+Radeon VII image-store capacity issue so the standalone
+`registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:beadf394fc81c031799799f5d965664e419e5f3ffb4c5873a9d7677f0e1e06b8`
+image can be pulled without triggering DiskPressure.
 
 2026-05-18 follow-up:
 
 - `deploy/gpuprofiles/gfx906.yaml` now pins the vLLM standalone profile image to
   the same digest used by the canary evidence row.
-- `deploy/system/values-k3s.yaml` now sets `vllm.gfx906Image` and adds the
-  `radeonvii-gfx906-vllm-canary` imagePrewarm profile for the standalone vLLM
-  image.
-- Before the next smoke, verify the generated
-  `flexinfer-image-prewarm-radeonvii-gfx906-vllm-canary` DaemonSet is Ready and
-  the Radeon VII remains `DiskPressure=False`; if either is false, fix that
-  posture before activating the model.
+- `deploy/system/values-k3s.yaml` now sets `vllm.gfx906Image` to that digest.
+- Live validation proved the standalone vLLM image cannot currently be held
+  warm on `cblevins-radeonvii`: the prewarm DaemonSet repeatedly evicted during
+  pull with ephemeral-storage pressure and flipped the node to
+  `DiskPressure=True`.
+- The unsafe prewarm profile was removed. The next slice should free or move the
+  node image store, then re-attempt the prewarm before activating the canary.
