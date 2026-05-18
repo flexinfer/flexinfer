@@ -45,6 +45,8 @@ import (
 // These are known to contain non-model data that wastes tmpfs space.
 var defaultExcludes = []string{".cache/", ".git/"}
 
+var statfs = syscall.Statfs
+
 func main() {
 	src := os.Getenv("FLASH_SRC")
 	dst := os.Getenv("FLASH_DST")
@@ -315,7 +317,7 @@ func filterFP32Variants(files []fileEntry) []fileEntry {
 // is insufficient, preventing the "no space left on device" crash-loop.
 func checkAvailableSpace(dst string, requiredBytes int64) error {
 	var stat syscall.Statfs_t
-	if err := syscall.Statfs(dst, &stat); err != nil {
+	if err := statfs(dst, &stat); err != nil {
 		log.Printf("WARN: cannot check destination space: %v (proceeding anyway)", err)
 		return nil
 	}

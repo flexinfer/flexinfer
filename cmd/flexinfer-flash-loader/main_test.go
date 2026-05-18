@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 )
 
@@ -302,15 +303,21 @@ func TestFilterFP32Variants_NoFP16(t *testing.T) {
 }
 
 func TestCheckAvailableSpace_Sufficient(t *testing.T) {
-	dir := t.TempDir()
-	// tmpdir should have plenty of space
-	err := checkAvailableSpace(dir, 1024)
+	withStatfs(t, func(path string, stat *syscall.Statfs_t) error {
+		stat.Bsize = 4096
+		stat.Bavail = 16 * 1024
+		return nil
+	})
+	err := checkAvailableSpace("/models", 1024)
 	if err != nil {
 		t.Fatalf("expected space check to pass: %v", err)
 	}
 }
 
 func TestCheckAvailableSpace_NonexistentPath(t *testing.T) {
+	withStatfs(t, func(path string, stat *syscall.Statfs_t) error {
+		return os.ErrNotExist
+	})
 	// Non-existent path returns warning but no error (graceful fallback)
 	err := checkAvailableSpace("/nonexistent/flash/test/path", 1024)
 	if err != nil {
@@ -319,15 +326,28 @@ func TestCheckAvailableSpace_NonexistentPath(t *testing.T) {
 }
 
 func TestCheckAvailableSpace_Insufficient(t *testing.T) {
-	dir := t.TempDir()
+	withStatfs(t, func(path string, stat *syscall.Statfs_t) error {
+		stat.Bsize = 4096
+		stat.Bavail = 1
+		return nil
+	})
 	// Request an impossibly large amount (100 PB)
-	err := checkAvailableSpace(dir, 100*1024*1024*1024*1024*1024)
+	err := checkAvailableSpace("/models", 100*1024*1024*1024*1024*1024)
 	if err == nil {
 		t.Fatal("expected space check to fail for 100 PB")
 	}
 	if got := err.Error(); !contains(got, "insufficient tmpfs space") {
 		t.Fatalf("expected 'insufficient tmpfs space' in error, got: %s", got)
 	}
+}
+
+func withStatfs(t *testing.T, fn func(string, *syscall.Statfs_t) error) {
+	t.Helper()
+	orig := statfs
+	statfs = fn
+	t.Cleanup(func() {
+		statfs = orig
+	})
 }
 
 func TestVerifyIntegrity_ExcludesRespected(t *testing.T) {
