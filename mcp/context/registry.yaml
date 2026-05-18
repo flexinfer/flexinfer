@@ -1256,14 +1256,26 @@ servers:
   - name: icc-capture
     categories: [icc, notes, local-only]
     common:
-      description: ICC note-capture tools (Slack/email/meeting paste -> markdown with canonical frontmatter, plus a notes linter for icc-project-workspaces/)
-      hint: Use when capturing notes destined for icc-project-workspaces/projects/<slug>/<source>/. Current tools are pure local helpers; no ICC HTTP calls or file writes in this slice.
+      description: ICC note-capture tools — format Slack/email/meeting/standup pastes into canonical markdown + frontmatter, write captures into icc-project-workspaces/projects/<slug>/<source>/ via the ICC /api/captures endpoint, promote/demote raw refs, archive/unarchive raw files, and lint existing notes.
+      hint: Use for any note-capture flow destined for icc-project-workspaces/projects/<slug>/<source>/. Format-only tools are pure local helpers; capture/write/promote/demote/archive/unarchive tools call ICC over HTTP (ICC_BASE_URL / ICC_TOKEN env). Lint walks the local clone.
       command: "${repo}/services/loom-core/bin/mcp-icc-capture"
       args: []
       timeout: 60
       always_allow:
+        - icc_archive_raw
+        - icc_capture_email
+        - icc_capture_meeting
+        - icc_capture_slack
+        - icc_capture_standup
+        - icc_demote_artifact
+        - icc_format_email_extract
+        - icc_format_meeting_notes
         - icc_format_slack_paste
+        - icc_format_standup
         - icc_lint_notes
+        - icc_promote_to_artifact
+        - icc_unarchive_raw
+        - icc_write_capture
     targets:
       vscode:
         type: stdio

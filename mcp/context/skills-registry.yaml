@@ -64,7 +64,7 @@
 # Sync: loom sync <profile> --regen --hub-mode --all-projects --skip-worktrees
 
 version: 1
-updated: 2026-05-17
+updated: 2026-05-18
 skills:
   - name: flux-gitops-operator
     categories: [kubernetes, gitops, operations]
@@ -8064,7 +8064,7 @@ skills:
     categories: [icc, notes, workflow]
     common:
       description: |
-        Capture notes for the icc-project-workspaces repo using the mcp-icc-capture MCP server. Format Slack pastes (and future email/meeting pastes) into canonical markdown with frontmatter, and lint existing notes against the spec. This slice ships scaffold + two starter tools; later slices will wire ICC HTTP and file-write capability.
+        Capture notes for the icc-project-workspaces repo via the mcp-icc-capture MCP server. Format Slack/email/meeting/standup pastes into canonical markdown + frontmatter, write captures into `projects/<slug>/<source>/` through the ICC `/api/captures` endpoint, promote/demote raw refs, archive/unarchive raw files, and lint existing notes against the spec.
       instructions: |
         # ICC Capture Ops
 
@@ -8072,22 +8072,44 @@ skills:
 
         ## When to use
 
-        - You have a Slack thread, email, or meeting log to file under an ICC project.
+        - You have a Slack thread, email, meeting log, or standup note to file under an ICC project.
+        - You want to promote an existing raw `code_ref` to a full artifact, or demote one.
+        - You want to archive a raw file out of `projects/<slug>/<source>/` into `notes/archive/YYYY/MM/`, or restore it.
         - You want to lint an existing project's notes before a review.
 
         ## Tools
 
-        - `icc-capture__icc_format_slack_paste` — pure formatter. Returns `{markdown, suggested_filename, suggested_path}`. The caller writes the file.
+        Format-only (pure local, no ICC HTTP):
+
+        - `icc-capture__icc_format_slack_paste` — paste → markdown + frontmatter for `projects/<slug>/slack/`.
+        - `icc-capture__icc_format_email_extract` — RFC 822 / Gmail paste / web-rendered → `projects/<slug>/email/`.
+        - `icc-capture__icc_format_meeting_notes` — Gemini auto-notes or freeform → `projects/<slug>/meetings/`.
+        - `icc-capture__icc_format_standup` — personal prep or team standup → `projects/<slug>/research/` (or `_inbox` for personal prep).
+
+        One-shot capture (format + write via `/api/captures`):
+
+        - `icc-capture__icc_capture_slack`, `icc_capture_email`, `icc_capture_meeting`, `icc_capture_standup` — equivalent to format + `icc_write_capture`.
+        - `icc-capture__icc_write_capture` — write pre-formatted markdown atomically; returns the new `code_ref` and/or `artifact` plus the path written.
+
+        Lifecycle:
+
+        - `icc-capture__icc_promote_to_artifact` — promote a raw-only `code_ref` to a full artifact. Idempotent (`already_promoted=true` on re-call).
+        - `icc-capture__icc_demote_artifact` — soft-delete the artifact, optionally keep the underlying `code_ref`. Requires a non-empty reason.
+        - `icc-capture__icc_archive_raw` — move a raw file from `projects/<slug>/<source>/` to `notes/archive/YYYY/MM/` and update the `code_ref` path. Idempotent.
+        - `icc-capture__icc_unarchive_raw` — reverse: move back to a project source folder, update the `code_ref`.
+
+        Lint:
+
         - `icc-capture__icc_lint_notes` — walks `projects/<slug>/<source>/`, validates frontmatter + naming, optionally applies safe auto-fixes (`fix=true`).
 
         ## Frontmatter contract
 
-        Every captured note carries this frontmatter (Slice A documents the canonical spec):
+        Every captured note carries this frontmatter (`STRUCTURE.md` in icc-project-workspaces is the source of truth):
 
         ```yaml
         ---
         project: <project_slug>      # use "_inbox" when unattributed
-        source: slack|email|meetings|research|deliverables|queries
+        source: slack|email|meetings|research|deliverables|queries|standup
         classification: public|internal|confidential|possible_phi|confirmed_phi
         captured_at: <ISO 8601 with TZ>
         # source-specific fields, e.g. for slack:
@@ -8098,18 +8120,32 @@ skills:
 
         ## Loop
 
-        1. Call `icc_format_slack_paste` with `text`, `project_slug`, `channel`.
-        2. Review the returned `markdown` + `suggested_path`.
-        3. Write the file (manual today; a file-write tool lands in a later slice).
-        4. Periodically run `icc_lint_notes` with the workspace root to catch drift; pass `fix=true` to auto-correct safe issues.
+        1. Pick the right capture path — `icc_capture_<source>` for one-shot, or `icc_format_<source>` + `icc_write_capture` when you want to review/edit the markdown first.
+        2. Pass `text` (or equivalent input), `project_slug`, and source-specific fields (`channel`, `subject`, `participants`).
+        3. The capture tools write through the ICC `/api/captures` endpoint and return the created `code_ref` and/or `artifact`. Promote later with `icc_promote_to_artifact` if the original write was raw-only.
+        4. Periodically run `icc_lint_notes` against the workspace root to catch drift; pass `fix=true` to auto-correct safe issues.
 
-        ## Limits of this slice
+        ## Behavior notes
 
-        - No ICC HTTP calls.
-        - No file writes from the tools themselves.
-        - `project:` is never auto-fixed; resolve attribution before saving.
+        - `project:` is never auto-fixed by lint; resolve attribution before saving.
         - Naming-pattern violations are reported, never auto-renamed (renaming would break refs).
-      always_allow: []
+        - Archive + promote tools are idempotent — re-calling returns `already_archived` / `already_promoted` rather than mutating again.
+        - HTTP-backed tools require `ICC_BASE_URL` (and `ICC_TOKEN` when the server gates auth).
+      always_allow:
+        - icc_archive_raw
+        - icc_capture_email
+        - icc_capture_meeting
+        - icc_capture_slack
+        - icc_capture_standup
+        - icc_demote_artifact
+        - icc_format_email_extract
+        - icc_format_meeting_notes
+        - icc_format_slack_paste
+        - icc_format_standup
+        - icc_lint_notes
+        - icc_promote_to_artifact
+        - icc_unarchive_raw
+        - icc_write_capture
     targets:
       codex:
         enabled: true
