@@ -105,3 +105,22 @@ image can be pulled without triggering DiskPressure.
   `DiskPressure=True`.
 - The unsafe prewarm profile was removed. The next slice should free or move the
   node image store, then re-attempt the prewarm before activating the canary.
+
+2026-05-18 imagefs/auth follow-up:
+
+- The Radeon VII k3s containerd image store was moved off root LVM and onto the
+  NVMe-backed `/mnt/nvme/longhorn/k3s-containerd/containerd` bind mount.
+- Post-move validation showed `cblevins-radeonvii` `Ready=True` and
+  `DiskPressure=False`; the gfx906 runtime DaemonSet recovered after recycling
+  the stale post-restart pod.
+- Retrying the vLLM canary reached the pinned standalone image pull path without
+  storage pressure. The local cache stage completed, and cleanup returned
+  `qwen3-1p7b-vllm-radeonvii` to `Idle` with its Deployment at zero replicas.
+- The current blocker is Harbor authorization for
+  `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:beadf394fc81c031799799f5d965664e419e5f3ffb4c5873a9d7677f0e1e06b8`.
+  Both `harbor-creds` and a temporary dockerconfig built from
+  `harbor-oci-creds` returned `401 Unauthorized`.
+- This slice adds controller/Helm support for default model pod
+  `imagePullSecrets`, but the canary still needs Harbor project permissions or
+  a republished image in a project readable by the existing pull secret before
+  another smoke can produce an HTTP 200.

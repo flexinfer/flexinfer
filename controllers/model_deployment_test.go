@@ -22,6 +22,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -173,6 +174,28 @@ func TestDeploymentManagedFieldChanges(t *testing.T) {
 			t.Errorf("expected at least 4 changed fields, got %d: %v", len(fields), fields)
 		}
 	})
+
+	t.Run("image pull secrets change", func(t *testing.T) {
+		dep := baseDeployment()
+		desired := dep.Spec.DeepCopy()
+		desired.Template.Spec.ImagePullSecrets = []corev1.LocalObjectReference{{Name: "harbor-creds"}}
+
+		fields := deploymentManagedFieldChanges(dep, desired, dep.Labels, dep.Annotations, dep.Spec.Template.Labels, dep.Spec.Template.Annotations)
+		if !containsField(fields, "imagePullSecrets") {
+			t.Errorf("expected 'imagePullSecrets' in %v", fields)
+		}
+	})
+}
+
+func TestParseModelImagePullSecrets(t *testing.T) {
+	got := ParseModelImagePullSecrets(" harbor-creds, ,harbor-oci,harbor-creds ")
+	want := []corev1.LocalObjectReference{
+		{Name: "harbor-creds"},
+		{Name: "harbor-oci"},
+	}
+	if !apiequality.Semantic.DeepEqual(got, want) {
+		t.Fatalf("ParseModelImagePullSecrets() = %#v, want %#v", got, want)
+	}
 }
 
 // =============================================================================

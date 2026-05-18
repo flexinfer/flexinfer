@@ -61,6 +61,9 @@ controller:
   runtime:
     # Shared memory volume size mounted at /dev/shm for model pods created by the v1alpha2 controller.
     shmSizeLimit: "8Gi"
+    # Optional imagePullSecrets applied to model pods created by the v1alpha2 controller.
+    # Use this when backend/runtime images live in a private registry.
+    imagePullSecrets: []
     # Flash-loader defaults used by v1alpha2 model deployments when enabled globally
     # or when a matching v1alpha1 ModelCache enables flashLoader.
     flashLoader:
