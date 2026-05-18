@@ -5,15 +5,14 @@
 # (`.loom/local/track-c-vllm-gfx906-investigation.md`) recommended the
 # `mixa3607` base, but the live merged Dockerfile path (commit ea0bc1e0,
 # 2026-05-02) reverted to source-built vLLM 0.7.3 on `rocm/vllm-dev:base`.
-# That build is what's pushed at digest
-# `sha256:beadf394fc81c031799799f5d965664e419e5f3ffb4c5873a9d7677f0e1e06b8`
-# (image tag `registry.harbor.lan/flexinfer/vllm:rocm-gfx906`).
+# That build is pinned in the gfx906 GPUProfile and prewarmed on the Radeon VII:
+# `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:beadf394fc81c031799799f5d965664e419e5f3ffb4c5873a9d7677f0e1e06b8`.
 #
 # This manifest is the smallest model that exercises the full vLLM serve
 # path on gfx906 hardware. The persistent gfx906 runtime does not bundle
 # vLLM, so this canary must be served by the standalone GPUProfile backend
-# image (`registry.harbor.lan/flexinfer/vllm:rocm-gfx906`) instead of the
-# runtime direct-load API:
+# image pinned in `deploy/gpuprofiles/gfx906.yaml` instead of the runtime
+# direct-load API:
 #   - Qwen3-1.7B FP16 ≈ 3.5 GB weights
 #   - vLLM overhead ≈ 5-7 GB (KV cache + activations)
 #   - Total budget: ~10-12 GB on a 16 GB Vega20 dGPU
@@ -44,6 +43,12 @@
 # the persistent runtime can be API-alive but pod-not-Ready while no backend is
 # ready. Keep support experimental until the patched load path rolls out and
 # this canary returns HTTP 200.
+#
+# 2026-05-18 prewarm follow-up: the standalone vLLM image is held warm by the
+# `radeonvii-gfx906-vllm-canary` imagePrewarm profile in
+# `deploy/system/values-k3s.yaml`. Before the next smoke, confirm that DaemonSet
+# is Ready so image pull and DiskPressure behavior are not rediscovered during
+# activation.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
