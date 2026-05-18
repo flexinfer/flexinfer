@@ -215,12 +215,6 @@ imagePrewarm:
       images:
         - registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
-    - name: radeonvii-gfx906-vllm-canary
-      nodeSelector:
-        kubernetes.io/hostname: cblevins-radeonvii
-      images:
-        - registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:beadf394fc81c031799799f5d965664e419e5f3ffb4c5873a9d7677f0e1e06b8
-
 quantization:
   modelToolsImage: "registry.harbor.lan/flexinfer/model-tools:master"
   useRuntimeForQuantize: false
