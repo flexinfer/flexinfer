@@ -119,13 +119,13 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	var activeLoadingLeader *aiv1alpha2.Model
 	for _, m := range groupModels {
 		fallbackLeader = better(fallbackLeader, m)
+		if isActiveSharedModelLoading(m) && withinSharedActivationWindow(m, now) {
+			activeLoadingLeader = better(activeLoadingLeader, m)
+		}
 		if !sharedModelCanTakeDemand(m) {
 			continue
 		}
 		runnableFallbackLeader = better(runnableFallbackLeader, m)
-		if isActiveSharedModelLoading(m) && withinSharedActivationWindow(m, now) {
-			activeLoadingLeader = better(activeLoadingLeader, m)
-		}
 		if isWarmPrimaryModel(m) {
 			warmPrimaryLeader = better(warmPrimaryLeader, m)
 		}
