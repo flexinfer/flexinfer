@@ -15,22 +15,27 @@ serviceAccounts:
   controller:
     create: true
     annotations: {}
+    imagePullSecrets: []
     name: ""
   agent:
     create: true
     annotations: {}
+    imagePullSecrets: []
     name: ""
   scheduler:
     create: true
     annotations: {}
+    imagePullSecrets: []
     name: ""
   proxy:
     create: true
     annotations: {}
+    imagePullSecrets: []
     name: ""
   benchmarker:
     create: true
     annotations: {}
+    imagePullSecrets: []
     name: ""
 
 podAnnotations: {}

@@ -25,6 +25,10 @@ metadata:
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+{{- with (get $controllerSA "imagePullSecrets") }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
 ---
 {{- end }}
 
@@ -41,6 +45,10 @@ metadata:
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+{{- with (get $agentSA "imagePullSecrets") }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
 ---
 {{- end }}
 
@@ -57,6 +65,10 @@ metadata:
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+{{- with (get $schedulerSA "imagePullSecrets") }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
 ---
 {{- end }}
 
@@ -73,6 +85,10 @@ metadata:
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+{{- with (get $proxySA "imagePullSecrets") }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
 ---
 {{- end }}
 
@@ -89,6 +105,10 @@ metadata:
   annotations:
     {{- toYaml . | nindent 4 }}
   {{- end }}
+{{- with (get $benchmarkerSA "imagePullSecrets") }}
+imagePullSecrets:
+  {{- toYaml . | nindent 2 }}
+{{- end }}
 ---
 {{- end }}
 
