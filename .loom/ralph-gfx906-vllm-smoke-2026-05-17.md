@@ -88,6 +88,20 @@ HTTP 200.
 
 ## Next Slice
 
-After merge and rollout, rerun the same canary command and only consider
-`deploy/gpuprofiles/gfx906.yaml` `vllm.support` promotion after a real HTTP
-200 vLLM response.
+After merge and rollout, hold the standalone
+`registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:beadf394fc81c031799799f5d965664e419e5f3ffb4c5873a9d7677f0e1e06b8`
+image warm on `cblevins-radeonvii` before rerunning the same canary command.
+Only consider `deploy/gpuprofiles/gfx906.yaml` `vllm.support` promotion after a
+real HTTP 200 vLLM response.
+
+2026-05-18 follow-up:
+
+- `deploy/gpuprofiles/gfx906.yaml` now pins the vLLM standalone profile image to
+  the same digest used by the canary evidence row.
+- `deploy/system/values-k3s.yaml` now sets `vllm.gfx906Image` and adds the
+  `radeonvii-gfx906-vllm-canary` imagePrewarm profile for the standalone vLLM
+  image.
+- Before the next smoke, verify the generated
+  `flexinfer-image-prewarm-radeonvii-gfx906-vllm-canary` DaemonSet is Ready and
+  the Radeon VII remains `DiskPressure=False`; if either is false, fix that
+  posture before activating the model.
