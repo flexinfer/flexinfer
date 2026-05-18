@@ -133,6 +133,11 @@ func newGenerateConfigsCmd() *cobra.Command {
 			loomMode, _ := cmd.Flags().GetBool("loom-mode")
 			loomBinary, _ := cmd.Flags().GetString("loom-binary")
 			registryPath, _ := cmd.Flags().GetString("registry")
+			host, _ := cmd.Flags().GetString("host")
+
+			if cmd.Flags().Changed("host") {
+				_ = os.Setenv("LOOM_HOST", host)
+			}
 
 			cwd, _ := os.Getwd()
 			if registryPath == "" {
@@ -189,6 +194,7 @@ func newGenerateConfigsCmd() *cobra.Command {
 	cmd.Flags().String("registry", "", "Path to registry.yaml")
 	cmd.Flags().Bool("emit", true, "Emit generated files (always true)")
 	cmd.Flags().Bool("resolve-secrets", false, "Resolve secret templates to literal values")
+	cmd.Flags().String("host", "", "Host profile for registry overrides (e.g. code-server). Sets $LOOM_HOST.")
 	return cmd
 }
 
@@ -330,6 +336,16 @@ func newSyncCmd() *cobra.Command {
 			wsRoot, _ := cmd.Flags().GetString("workspace-root")
 			skipWorktrees, _ := cmd.Flags().GetBool("skip-worktrees")
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			host, _ := cmd.Flags().GetString("host")
+
+			// Propagate --host to the generator via env var. The generator
+			// reads $LOOM_HOST (see pkg/generator/host.go) when applying
+			// host_overrides from registry.yaml. Empty value clears any
+			// inherited LOOM_HOST so a bare `loom sync` regenerates the base
+			// config even in shells where the env var was exported.
+			if cmd.Flags().Changed("host") {
+				_ = os.Setenv("LOOM_HOST", host)
+			}
 
 			cwd, _ := os.Getwd()
 			mgr, err := sync.NewManager(cwd)
@@ -451,6 +467,7 @@ func newSyncCmd() *cobra.Command {
 	syncCmd.Flags().Bool("all-projects", false, "Propagate hooks to all workspace projects")
 	syncCmd.Flags().String("workspace-root", "", "Explicit workspace root (default: auto-detect)")
 	syncCmd.Flags().Bool("skip-worktrees", false, "Skip .worktrees/ during project discovery")
+	syncCmd.Flags().String("host", "", "Host profile for registry overrides (e.g. code-server). Sets $LOOM_HOST.")
 	syncCmd.Flags().Bool("dry-run", false, "Show what would change without writing")
 
 	// Sync skills subcommand

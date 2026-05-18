@@ -78,6 +78,15 @@ func claudePermissions(reg *registry.Registry) map[string]any {
 	if len(pp.AdditionalDirectories) > 0 {
 		perms["additionalDirectories"] = pp.AdditionalDirectories
 	}
+	// Per-host override (e.g. LOOM_HOST=code-server inside the code-server
+	// pod, where ~/workspace doesn't exist and `/home/coder` is the NFS root).
+	// Override REPLACES the base additional_directories rather than appending,
+	// so the in-pod config doesn't drag the macOS-only path along.
+	if override := hostOverride(pp); override != nil {
+		if dirs := hostOverrideStringSlice(override, "additional_directories"); len(dirs) > 0 {
+			perms["additionalDirectories"] = dirs
+		}
+	}
 	if pp.Settings != nil {
 		if mode, ok := pp.Settings["default_mode"].(string); ok && mode != "" {
 			perms["defaultMode"] = mode
