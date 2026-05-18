@@ -165,7 +165,7 @@ fmt:
 
 helm:
   stage: lint
-  image: registry.harbor.lan/library/helm:3.15.4
+  image: alpine/helm:3.15.4
   <<: *rules-helm-validation
   needs: []
   script:
@@ -448,7 +448,7 @@ publish:
 
 publish_binaries:
   stage: publish
-  image: registry.harbor.lan/library/helm:3.15.4
+  image: alpine/helm:3.15.4
   needs:
     - job: promotion_gate_test
       artifacts: false
@@ -479,7 +479,7 @@ publish_binaries:
 
 publish_helm_chart:
   stage: publish
-  image: registry.harbor.lan/library/helm:3.15.4
+  image: alpine/helm:3.15.4
   needs:
     - job: promotion_gate_test
       artifacts: false
@@ -1529,7 +1529,7 @@ govulncheck:
 # Trivy filesystem scanning for go.mod vulnerabilities
 trivy_scan_deps:
   stage: security
-  image: registry.harbor.lan/library/trivy:0.58.0
+  image: aquasec/trivy:0.58.0
   <<: *rules-dependency-validation
   needs: []
   variables:
@@ -1638,7 +1638,7 @@ go_mod_outdated:
 # Fails pipeline on HIGH or CRITICAL CVEs in production images
 .trivy-scan: &trivy-scan
   stage: security-images
-  image: registry.harbor.lan/library/trivy:0.58.0
+  image: aquasec/trivy:0.58.0
   variables:
     TRIVY_NO_PROGRESS: "true"
     TRIVY_CACHE_DIR: ".trivycache/"

@@ -100,6 +100,10 @@ spec:
             - name: DEFAULT_SHM_SIZE_LIMIT
               value: {{ $controllerRuntime.shmSizeLimit | quote }}
             {{- end }}
+            {{- with $controllerRuntime.imagePullSecrets }}
+            - name: DEFAULT_MODEL_IMAGE_PULL_SECRETS
+              value: {{ join "," . | quote }}
+            {{- end }}
             {{- if $controllerRuntime.flashLoader }}
             - name: DEFAULT_FLASH_LOADER_ENABLED
               value: {{ default false $flashLoader.enabled | quote }}

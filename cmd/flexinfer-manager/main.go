@@ -149,7 +149,8 @@ func main() {
 		// KubeClient is used for pod log retrieval (loadingSubstage refinement
 		// into LoadingWeights / Compiling / HealthCheckPending). Shares the
 		// clientset with the ModelCache reconciler above.
-		KubeClient: kubeClient,
+		KubeClient:            kubeClient,
+		ModelImagePullSecrets: controllers.ParseModelImagePullSecrets(os.Getenv("DEFAULT_MODEL_IMAGE_PULL_SECRETS")),
 	}
 	if err = modelReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Model")

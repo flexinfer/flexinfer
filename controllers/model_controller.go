@@ -89,6 +89,10 @@ type ModelReconciler struct {
 	// when nil, log-based substage refinement is skipped and the controller
 	// falls back to pod-container-state only.
 	KubeClient kubernetes.Interface
+	// ModelImagePullSecrets are applied to model pods created by the controller.
+	// This keeps private backend images pullable without relying on manual
+	// Deployment patches.
+	ModelImagePullSecrets []corev1.LocalObjectReference
 
 	mgr ctrl.Manager // set by SetupWithManager, used for startup sweep
 }

@@ -48,6 +48,9 @@ controller:
       operator: Equal
       value: gpu
       effect: NoSchedule
+  runtime:
+    imagePullSecrets:
+      - harbor-creds
 
 agent:
   enabled: true

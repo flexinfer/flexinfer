@@ -552,9 +552,10 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 							},
 						}
 					}(),
-					InitContainers: initContainers,
-					Containers:     []corev1.Container{container},
-					Volumes:        volumes,
+					InitContainers:   initContainers,
+					Containers:       []corev1.Container{container},
+					Volumes:          volumes,
+					ImagePullSecrets: r.ModelImagePullSecrets,
 					RuntimeClassName: func() *string {
 						// NVIDIA GPUs require the "nvidia" runtime to inject /dev/nvidia* and driver libs.
 						// Without this, pods may schedule with nvidia.com/gpu but have no CUDA devices.
@@ -638,6 +639,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	deployment.Spec.Template.Spec.TopologySpreadConstraints = desired.Template.Spec.TopologySpreadConstraints
 	deployment.Spec.Template.Spec.InitContainers = desired.Template.Spec.InitContainers
 	deployment.Spec.Template.Spec.Volumes = desired.Template.Spec.Volumes
+	deployment.Spec.Template.Spec.ImagePullSecrets = desired.Template.Spec.ImagePullSecrets
 	deployment.Spec.Template.Spec.RuntimeClassName = desired.Template.Spec.RuntimeClassName
 	deployment.Spec.Template.Spec.AutomountServiceAccountToken = desired.Template.Spec.AutomountServiceAccountToken
 	deployment.Spec.Template.Spec.RestartPolicy = desired.Template.Spec.RestartPolicy
@@ -701,6 +703,9 @@ func deploymentChangedFields(old, new *appsv1.DeploymentSpec) []string {
 	}
 	if !apiequality.Semantic.DeepEqual(old.Template.Spec.InitContainers, new.Template.Spec.InitContainers) {
 		fields = append(fields, "initContainers")
+	}
+	if !apiequality.Semantic.DeepEqual(old.Template.Spec.ImagePullSecrets, new.Template.Spec.ImagePullSecrets) {
+		fields = append(fields, "imagePullSecrets")
 	}
 	if !apiequality.Semantic.DeepEqual(old.Template.Annotations, new.Template.Annotations) {
 		fields = append(fields, "podAnnotations")
@@ -803,6 +808,9 @@ func deploymentManagedFieldChanges(
 	}
 	if !apiequality.Semantic.DeepEqual(e.Template.Spec.InitContainers, desired.Template.Spec.InitContainers) {
 		fields = append(fields, "initContainers")
+	}
+	if !apiequality.Semantic.DeepEqual(e.Template.Spec.ImagePullSecrets, desired.Template.Spec.ImagePullSecrets) {
+		fields = append(fields, "imagePullSecrets")
 	}
 	if !apiequality.Semantic.DeepEqual(e.Template.Spec.RuntimeClassName, desired.Template.Spec.RuntimeClassName) {
 		fields = append(fields, "runtimeClassName")
