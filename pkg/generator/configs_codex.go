@@ -176,6 +176,29 @@ func buildCodexContext(reg *registry.Registry, workspaceRoot string, loomBinary 
 		}
 	}
 
+	// Per-host override. Applied after base settings so it shadows them.
+	// Used to flip sandbox_mode to "danger-full-access" inside the code-server
+	// pod, where bwrap fails (capabilities ALL dropped, runAsNonRoot) and the
+	// pod's k8s sandbox is the real security boundary.
+	if override := hostOverride(pp); override != nil {
+		if v := hostOverrideString(override, "sandbox_mode"); v != "" {
+			ctx.SandboxMode = v
+		}
+		if v := hostOverrideString(override, "approval_policy"); v != "" {
+			ctx.ApprovalPolicyStr = v
+			ctx.ApprovalPolicyGranular = ""
+		}
+		if v := hostOverrideString(override, "web_search"); v != "" {
+			ctx.WebSearchMode = v
+		}
+		if dirs := hostOverrideStringSlice(override, "writable_roots"); len(dirs) > 0 {
+			// Replace the inferred WorkspaceRoot with the first override entry.
+			// The template only emits a single writable_roots entry today; if
+			// multi-root support is needed later the template needs to change.
+			ctx.WorkspaceRoot = dirs[0]
+		}
+	}
+
 	// Policy enforcement annotations from the platform profile.
 	if codexProfile, _ := GetPlatformProfile("codex"); codexProfile != nil {
 		ctx.PolicyComment = FormatPolicyComment(codexProfile.Hooks, "# ")

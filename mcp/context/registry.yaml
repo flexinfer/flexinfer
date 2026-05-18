@@ -1947,6 +1947,15 @@ platform_permissions:
       # Accept edits automatically; Bash is broadly allowed below so
       # the only remaining prompts are the deny-list items.
       default_mode: "acceptEdits"
+      # Host-aware overrides applied at sync time by `loom sync --host <name>`
+      # (or $LOOM_HOST). Override REPLACES the matching base field. Used to
+      # produce a code-server-correct settings.json without forking the
+      # registry. Layout inside the code-server pod: PVC mounts directly at
+      # /home/coder, so ~/workspace does not exist there.
+      host_overrides:
+        code-server:
+          additional_directories:
+            - "/home/coder"
     allow:
       # -- MCP tools (all loom-proxied servers) --
       - "mcp__loom"
@@ -2009,6 +2018,20 @@ platform_permissions:
             description: "Implements a single feature slice in an isolated worktree."
           reviewer:
             description: "Reviews code for correctness, security, and test coverage."
+      # Host-aware overrides applied at sync time by `loom sync --host <name>`
+      # (or $LOOM_HOST). Override values shadow the matching base settings.
+      #
+      # code-server: the pod runs as uid=65534(nobody) with all capabilities
+      # dropped and runAsNonRoot=true. Codex's default workspace-write
+      # sandbox tries to wrap shell + apply_patch commands with bwrap, which
+      # fails ("Failed to make / slave") because bwrap can't create the
+      # required mount namespace without those capabilities. The pod's k8s
+      # sandbox (non-root, dropped caps, NFS-confined home, NetworkPolicy)
+      # is already the security boundary, so we disable codex's redundant
+      # second sandbox layer rather than loosening the pod securityContext.
+      host_overrides:
+        code-server:
+          sandbox_mode: "danger-full-access"
 
   gemini:
     settings:
