@@ -30,6 +30,14 @@ spec:
               value: codebase_memory_v1
             - name: LOG_LEVEL
               value: info
+            # Emit JSON in MCP CallToolResult content (vs the mcp-go default
+            # TOON). Consumers like project-management's ICC bridge expect
+            # a stable JSON schema; the ICC parser auto-detects JSON vs
+            # TOON so this flip is safe to roll out once the parser update
+            # ships. See agent-context task 3e0a89e4bcbd7050 (session
+            # f26fa5da3ea96cd8, namespace loom-core/codebase-memory).
+            - name: LOOM_MCP_OUTPUT_FORMAT
+              value: json
             - name: MORPH_API_KEY
               valueFrom:
                 secretKeyRef:
