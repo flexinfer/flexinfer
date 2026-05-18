@@ -9,14 +9,24 @@ serviceAccount:
 serviceAccounts:
   controller:
     create: true
+    imagePullSecrets:
+      - name: harbor-creds
   agent:
     create: true
+    imagePullSecrets:
+      - name: harbor-creds
   scheduler:
     create: true
+    imagePullSecrets:
+      - name: harbor-creds
   proxy:
     create: true
+    imagePullSecrets:
+      - name: harbor-creds
   benchmarker:
     create: true
+    imagePullSecrets:
+      - name: harbor-creds
 
 controller:
   enabled: true
