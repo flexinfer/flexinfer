@@ -124,3 +124,17 @@ image can be pulled without triggering DiskPressure.
   `imagePullSecrets`, but the canary still needs Harbor project permissions or
   a republished image in a project readable by the existing pull secret before
   another smoke can produce an HTTP 200.
+
+2026-05-18 tokenizer compatibility follow-up:
+
+- Harbor pull access and the NVMe-backed image store were enough to start the
+  standalone vLLM canary image on Radeon VII.
+- The first container startup failed before readiness because vLLM 0.7.3 called
+  `Qwen2Tokenizer.all_special_tokens_extended`, but the installed
+  `transformers` 5.8.0 tokenizer no longer exposes that attribute.
+- MR !420 patches the gfx906 vLLM image with a small site-packages compatibility
+  hook and pins the profile image to
+  `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:0eebd5a70e184d31c706457ef4b7f393b10d4193a7b728dd5112a17d3457797f`.
+- The controller also preserves an already-active Pending/Loading shared-GPU
+  leader while cache readiness is revalidated during the cold-start window, so
+  a transient cache condition cannot scale down the canary mid-activation.
