@@ -54,6 +54,14 @@
 # on gfx906. Keep the historical resource name for now, but use a tiny OPT
 # artifact that exercises the vLLM import-and-serve path without Qwen-specific
 # architecture blockers.
+#
+# 2026-05-19 live validation: OPT-125M proved the cache/image/node prerequisites
+# are clear, but the pinned standalone vLLM image still fails at model weight
+# load on gfx906. Both the default CK fallback (`VLLM_USE_TRITON_FLASH_ATTN=0`)
+# and a live-only forced ROCmFlashAttention patch reached
+# `Starting to load model facebook/opt-125m...` and then exited with
+# `RuntimeError: Engine process failed to start`. Keep this canary isolated and
+# blocked until the image surfaces or fixes the worker crash.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
