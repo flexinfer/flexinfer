@@ -7,7 +7,7 @@
 - **Diarization**: `cblevins-radeonvii` (Radeon VII, gfx906, 16 GiB VRAM) — co-resident with FLUX Fill inpainting
 **Sharing group**: `7900xtx-textgen` on the gfx1100 node (current owner: `gemma4-26b-a4b-gptq`, priority=350, minReplicas=1, 16 GiB VRAM estimate)
 **Estimated effort**: 4–6 days end-to-end (1 day kill-test, 1–2 days Whisper Model CR + serving, 1–2 days pyannote sibling Deployment, 1 day proxy/litellm wiring + smoke)
-**Status**: BLOCKED. Slices 2 + 3b shipped 2026-05-18 via [!423](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/423). Slice 1 kill-test attempted 2026-05-19 via [!429](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/429) — **outcome INCONCLUSIVE**, cleaned up via !430. Post-investigation 2026-05-19 (Open Question #14, REVISED): the kill-test failed for structural reasons — `chooseSharedGroupLeader` returns the Ready 26B as leader before raw priority is consulted, and `desiredReplicasForContext` keeps non-Active members at 0 replicas. The kill-test was scheduled to deadlock at `State: Queued, replicas: 0` regardless of priority. Slice 3a as currently specced (`priority: 100`) has the same structural problem. Evidence: `.loom/asr-diarization-kill-test-inconclusive-2026-05-19.md`. **Next step before re-attempt**: pick a Slice 1-bis approach (add `gpu.forcePromotion` spec field, or accept `priority: 400` + traffic-trigger). See Open Question #14 for the three viable mechanisms.
+**Status**: Slice 1 RETRY IN FLIGHT. Slices 2 + 3b shipped 2026-05-18 via [!423](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/423). Slice 1 v1 attempted 2026-05-19 via [!429](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/429) — INCONCLUSIVE (structural deadlock), cleaned up via !430. Slice 1-bis (`gpu.forcePromotion` field + `chooseSharedGroupLeader` short-circuit) shipped 2026-05-19 via [!433](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/433) (merge commit `9f251180`). Slice 1 v2 (this MR) lands `deploy/models/whisper-kill-test-v2.yaml` with `gpu.forcePromotion: true` so the new claimant actually wins leadership against the warm 26B and gets a Deployment. Post-merge, validation is on-cluster: watch the swap, port-forward into the kill-test pod, `curl -F file=@sample.wav /v1/audio/transcriptions`, evaluate against the pass/fail conditions below.
 
 ## Goal
 
@@ -76,7 +76,23 @@ The entire ICC ASR path depends on this. If it's false, ICC either gets a fallba
 2. **vLLM-Omni image** (`registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100`, already in the gfx1100 GPUProfile) — same kill-test against the omni image. Confirmed to handle multimodal endpoints; audio-transcription path on gfx1100 is unproven.
 3. **CPU-only faster-whisper-server** on a non-GPU node — practical for ICC's batch-after-call cadence (5–10 min for a 30-min call is acceptable), but no GPU savings.
 
-**Status**: ATTEMPTED 2026-05-19, INCONCLUSIVE. The kill-test Model CR landed in the cluster but never got a Deployment. Post-investigation root cause (Open Question #14, REVISED): the shared-GPU swap logic in `controllers/model_shared_gpu.go:50-185` prefers the Ready warm-primary (gemma4-26b) over the higher-priority new claimant because the Ready check (priority step 3) returns BEFORE the raw-priority fallback (priority step 8). The new claimant gets `State: Queued`, `desiredReplicasForContext` returns 0, no Deployment is ever created, and it can never become Ready — a chicken-and-egg deadlock by construction. **Raw `priority` alone does not evict a warm-primary**; the demand-based-swap escape hatch requires both `priority > 350` AND `LastActiveTime` set via proxy traffic (which requires `serviceLabels`, which the kill-test omitted). The riskiest assumption (vLLM serves Whisper transcription on ROCm gfx1100) remains unproven. Slice 1 retry needs a controller mechanism that does NOT exist today — see Open Question #14 for the three viable options.
+**Status**: v1 ATTEMPTED 2026-05-19, INCONCLUSIVE — structural deadlock in `chooseSharedGroupLeader` (Ready warm-primary 26B always beat the new claimant). Slice 1-bis (`gpu.forcePromotion` field) shipped via [!433](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/433) (merge commit `9f251180`) on 2026-05-19. **v2 IN FLIGHT**: this MR adds `deploy/models/whisper-kill-test-v2.yaml` with `gpu.forcePromotion: true` so the chooser short-circuits at `controllers/model_shared_gpu.go:84-101` and the kill-test wins leadership immediately. On-cluster validation (operator port-forwards into the new pod and runs the curl) is the remaining work after this MR merges.
+
+**Re-attempt procedure (post-merge)**:
+1. Confirm Flux reconciled the new Model: `kubectl get model whisper-kill-test-v2 -n flexinfer-system -o jsonpath='{.status.sharedGroup.state}'` returns `Active`.
+2. Confirm the 26B was preempted: `kubectl get model gemma4-26b-a4b-gptq -n flexinfer-system -o jsonpath='{.status.phase}'` returns `Preempted` (or `Pending`, depending on cycle). ICC chat traffic should ride the 5930k sister.
+3. Wait for the kill-test pod to reach Ready: `kubectl get pod -n flexinfer-system -l app=whisper-kill-test-v2`. Expected 30–90s including HF download.
+4. Capture vLLM startup log first 50 lines: `kubectl logs -n flexinfer-system -l app=whisper-kill-test-v2 --tail=50` — scan for "task=transcription" acknowledgement and absence of "CUDA-only kernel" / "FlashInfer required" / "task not supported".
+5. Port-forward: `kubectl port-forward -n flexinfer-system $(kubectl get pod -n flexinfer-system -l app=whisper-kill-test-v2 -o name) 8000:8000`.
+6. Curl with a known-text wav (LibriSpeech sample, ~10s English speech):
+   ```
+   curl -sS -X POST http://127.0.0.1:8000/v1/audio/transcriptions \
+     -F file=@sample.wav \
+     -F model=whisper-large-v3-turbo \
+     -F response_format=verbose_json
+   ```
+7. Evaluate against the pass/fail conditions above. Capture evidence to `.loom/asr-diarization-kill-test-passed-2026-05-19.md` or `-failed-2026-05-19.md`.
+8. **Tear down**: open a cleanup MR removing the kill-test from `deploy/models/kustomization.yaml` and the manifest file. With no force-promoted members in the group, the chooser reverts to normal Ready-first preference and the 26B reclaims leadership.
 
 ## Current Evidence
 
@@ -162,12 +178,16 @@ Schema change in `api/v1alpha2/gpuprofile_types.go`: add `AudioTranscription str
 
 ### Slice 3a: Whisper Model CR (depends on Slice 1 PASSED)
 
-> **⚠ DESIGN CORRECTION 2026-05-19** (post Open Question #14 investigation): the spec below as-written **will not work**. With `priority: 100` and the 26B at `priority: 350` (warm-primary), `chooseSharedGroupLeader` permanently picks the 26B as leader; Whisper sits at `State: Queued, replicas: 0` and never gets a Deployment. **Before applying this Model CR**, pick one of:
-> - **(a) Add `gpu.forcePromotion: true`** — requires a new ModelSpec field + controller wiring (out-of-band Slice 1-bis). Cleanest long-term.
-> - **(b) Raise `priority` to 400** (above the 26B) — every transcribe triggers a full 26B unload+reload via demand-based swap. Expensive but works without code changes. Only viable if ICC's transcribe rate is genuinely sub-hourly.
-> - **(c) Run Whisper on a different node** — no gfx1100 nodes without a warm-primary exist in the current fleet; not practical.
+> **⚠ DESIGN CORRECTION 2026-05-19** (post Open Question #14 investigation): the spec below as-written **will not work** with `priority: 100` alone. `chooseSharedGroupLeader` permanently picks the warm-primary 26B (priority 350, Phase=Ready); Whisper sits at `State: Queued, replicas: 0` and never gets a Deployment.
 >
-> Recommendation: ship the `gpu.forcePromotion` field in a follow-up slice (≤1 file in API, ≤1 file in controller, ≤2 LOC change to `chooseSharedGroupLeader` to honor it). Then this Model CR works as written.
+> **Slice 1-bis shipped via !433 (2026-05-19)** added `gpu.forcePromotion *bool` to `ModelSpec.GPU`. With this field, the chooser short-circuits at `controllers/model_shared_gpu.go:84-101` and any force-promoted member wins leadership over a Ready warm-primary.
+>
+> For the **production** Whisper Model CR, the choice is now between two viable mechanisms — pick at apply time based on ICC's expected transcribe rate:
+> - **(a) Set `gpu.forcePromotion: true` and keep `priority: 100`** (or any value) — every transcription window evicts the 26B until the operator unsets the flag. Behaves more like a manual leadership lock than a demand-driven swap. Best when ICC will batch-process recordings on a known cadence and an operator can flip the flag for the duration.
+> - **(b) Raise `priority` to 400** (above the 26B) and add `serviceLabels: [whisper-large-v3-turbo, asr, ...]` so the proxy can route. First request fires the demand-based swap (strict-greater path at `model_shared_gpu.go:179`), 26B unloads, Whisper loads, transcribe runs, then the next 26B request swaps back via the same mechanism. Works without operator intervention but pays a swap on every transcribe. Only viable if ICC's transcribe rate is genuinely sub-hourly.
+> - **(c) Run Whisper on a different node** — no gfx1100 nodes without a warm-primary exist in the current fleet; still not practical.
+>
+> **Recommendation for Slice 3a**: start with **(b)** — keep the proxy in the loop so ICC has a single base URL, accept the per-request swap cost while validating end-to-end. Switch to **(a)** later if the swap cost becomes a measurable problem.
 
 New file `deploy/models/whisper-large-v3-turbo.yaml`:
 
@@ -379,7 +399,7 @@ Document findings in `.loom/asr-diarization-load-test-2026-05-18.md`. If 7900 XT
 
 | Slice | Verification | Owner | Status | Evidence path |
 |---|---|---|---|---|
-| 1 | Kill-test passes against pinned vLLM image | flexinfer maintainer | ⚠️ INCONCLUSIVE (2026-05-19) | `.loom/asr-diarization-kill-test-inconclusive-2026-05-19.md` |
+| 1 | Kill-test passes against pinned vLLM image | flexinfer maintainer | 🔄 v2 IN FLIGHT (2026-05-19); v1 was INCONCLUSIVE | `.loom/asr-diarization-kill-test-inconclusive-2026-05-19.md` (v1); `deploy/models/whisper-kill-test-v2.yaml` (v2 retry) |
 | 2 | `kubectl explain` shows new field; `make manifests` green | flexinfer maintainer | ✅ shipped | !423 merge commit `c8e4d75f`; CRD diff visible in MR |
 | 3a | Whisper Model CR reaches Ready; transcribe via proxy returns expected text | operator | blocked on Slice 1 | smoke log appended to validation matrix |
 | 3b | `go test ./backend -run TestVLLMArgs` passes; deployed pod has `--task transcription` | maintainer | ✅ shipped | !423 unit test `TestVLLMBackendArgs_Task` green |
