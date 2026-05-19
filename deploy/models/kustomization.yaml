@@ -20,11 +20,6 @@ resources:
   # - gemma4-31b-gptq.yaml          # disabled; promoted-state pending dense rebuild
   # - fast-chat-7900xtx.yaml        # disabled 2026-05-16; Gemma4 26B now serves fast-chat/default-chat.
   - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (7900xtx instance #1)
-  # TEMPORARY: ICC ASR plan Slice 1 kill-test. Priority 400 > 26B's 350 so the
-  # controller swaps the 26B out long enough to validate the vLLM
-  # /v1/audio/transcriptions endpoint. Delete this entry + the file as soon as
-  # evidence is captured. See .loom/asr-diarization-7900xtx-plan-2026-05-18.md.
-  - whisper-kill-test.yaml          # SLICE-1 KILL-TEST — DELETE AFTER EVIDENCE
   # - gemma4-26b-a4b-gptq-long.yaml # disabled; superseded by base 26B at 16K (see 2026-05-03 dedupe)
   # 2026-05-05: replaced by Qwen3.6. The old qwen3-30b-a3b canary requested
   # gpu.count=2 and stayed unschedulable after gfx1100 nodes were normalized
