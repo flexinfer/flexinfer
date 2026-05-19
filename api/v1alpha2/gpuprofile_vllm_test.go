@@ -25,12 +25,13 @@ func TestVLLMCapabilities_JSONRoundTrip(t *testing.T) {
 		Support: "full",
 		Image:   "registry.example/vllm@sha256:abc",
 		VLLM: &VLLMCapabilities{
-			V1Engine:        "supported",
-			PiecewiseGraphs: "experimental",
-			FlashAttention:  "ck",
-			FusedMoETriton:  "experimental",
-			FP8KVEmulation:  "experimental",
-			MarlinINT4:      "unsupported",
+			V1Engine:           "supported",
+			PiecewiseGraphs:    "experimental",
+			FlashAttention:     "ck",
+			FusedMoETriton:     "experimental",
+			FP8KVEmulation:     "experimental",
+			MarlinINT4:         "unsupported",
+			AudioTranscription: "experimental",
 			Defaults: &VLLMDefaults{
 				CudagraphMode: "NONE",
 				EnforceEager:  &enforceEager,
@@ -96,5 +97,40 @@ func TestVLLMCapabilities_DeepCopy(t *testing.T) {
 	*clone.Defaults.EnforceEager = false
 	if *source.Defaults.EnforceEager != true {
 		t.Errorf("mutation through clone leaked to source")
+	}
+}
+
+// TestVLLMCapabilities_AudioTranscription verifies the new Whisper-support
+// capability field round-trips and honors omitempty when unset.
+// Reference: .loom/asr-diarization-7900xtx-plan-2026-05-18.md (Slice 2).
+func TestVLLMCapabilities_AudioTranscription(t *testing.T) {
+	t.Run("omitempty when unset", func(t *testing.T) {
+		caps := &VLLMCapabilities{V1Engine: "supported"}
+		data, err := json.Marshal(caps)
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		got := string(data)
+		want := `{"v1Engine":"supported"}`
+		if got != want {
+			t.Errorf("AudioTranscription unset: got %s, want %s", got, want)
+		}
+	})
+
+	for _, value := range []string{"supported", "experimental", "unsupported"} {
+		t.Run(value, func(t *testing.T) {
+			original := &VLLMCapabilities{AudioTranscription: value}
+			data, err := json.Marshal(original)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var roundTrip VLLMCapabilities
+			if err := json.Unmarshal(data, &roundTrip); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if roundTrip.AudioTranscription != value {
+				t.Errorf("round-trip: got %q, want %q", roundTrip.AudioTranscription, value)
+			}
+		})
 	}
 }

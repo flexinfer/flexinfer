@@ -162,6 +162,17 @@ type VLLMCapabilities struct {
 	// +optional
 	MarlinINT4 string `json:"marlinINT4,omitempty"`
 
+	// AudioTranscription reports OpenAI-compatible /v1/audio/transcriptions
+	// endpoint support for Whisper-family models (vLLM `--task transcription`).
+	// gfx1100: gated on the Slice 1 kill-test in
+	// .loom/asr-diarization-7900xtx-plan-2026-05-18.md (initial value "experimental").
+	// gfx906: "unsupported" — no FlashAttention kernel on Vega20 and the gfx906
+	// vLLM runtime is currently paused (Track B in gfx1100-gfx906-next-round-plan.md).
+	// Doc-only at first; controller enforcement (refuse `task: transcription` model
+	// CRs on profiles where this is "unsupported") lands in a follow-up slice.
+	// +optional
+	AudioTranscription string `json:"audioTranscription,omitempty"`
+
 	// Defaults specifies default engine args injected when this profile is selected.
 	// Wave 1 lands the field; controller consumers come in a follow-up slice.
 	// +optional

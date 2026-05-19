@@ -751,6 +751,45 @@ func TestVLLMBackendArgs_ServedModelName(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_Task(t *testing.T) {
+	b := &VLLMBackend{}
+
+	t.Run("transcription exposes whisper audio endpoint", func(t *testing.T) {
+		spec := &ModelSpec{
+			Model: "openai/whisper-large-v3-turbo",
+			Config: map[string]any{
+				"task": "transcription",
+			},
+		}
+
+		args := b.Args(spec)
+		argMap := make(map[string]string)
+		for i := 0; i < len(args)-1; i++ {
+			if args[i][0] == '-' {
+				argMap[args[i]] = args[i+1]
+			}
+		}
+
+		if v := argMap["--task"]; v != "transcription" {
+			t.Errorf("expected --task=transcription, got %q", v)
+		}
+	})
+
+	t.Run("unset omits flag", func(t *testing.T) {
+		spec := &ModelSpec{
+			Model:  "test-model",
+			Config: map[string]any{},
+		}
+
+		args := b.Args(spec)
+		for _, a := range args {
+			if a == "--task" {
+				t.Errorf("--task flag present when task config is unset")
+			}
+		}
+	})
+}
+
 func TestVLLMBackendArgs_KVCacheDtype(t *testing.T) {
 	b := &VLLMBackend{}
 

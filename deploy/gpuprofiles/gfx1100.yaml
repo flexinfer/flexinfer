@@ -42,6 +42,7 @@ spec:
         fusedMoETriton: experimental  # BF16 path works (gemma4.py in 0.19+); INT4 weight-loader unproven.
         fp8KVEmulation: experimental  # patch_vllm_env_override_torch29.py wires kv_cache_dtype="fp8"; overhead unmeasured.
         marlinINT4: unsupported       # CUDA-only upstream; turboquant-vllm Tq4 is our INT4 path.
+        audioTranscription: experimental # Gated on Slice 1 kill-test in .loom/asr-diarization-7900xtx-plan-2026-05-18.md.
         defaults:
           cudagraphMode: "NONE"       # Expressed as enforceEager by controller/runtime defaults.
           enforceEager: true

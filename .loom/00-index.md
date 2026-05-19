@@ -21,6 +21,7 @@
 - vLLM feature-parity brainstorm (AMD, 2026-05-15): `brainstorm-vllm-feature-parity-amd-2026-05-15.md`
 - vLLM feature-parity Wave 1 spec (AMD, 2026-05-15): `21-product-spec-vllm-feature-parity-2026-05-15.md`
 - vLLM feature-parity Slice 3 falsification (rms_norm ROCm bug, 2026-05-15): `slice3-v1-sandbox-rms-norm-falsified-2026-05-15.md`
+- ASR + diarization infra plan for ICC meeting transcription (7900 XTX, 2026-05-18): `asr-diarization-7900xtx-plan-2026-05-18.md`
 
 ## Current Goal (2026-05-14, late evening) — F1+F7-vectorize shipped: −24.9% cumulative, 5930k gap closed from 2.13x → 1.60x
 
