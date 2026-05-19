@@ -7,7 +7,7 @@
 - **Diarization**: `cblevins-radeonvii` (Radeon VII, gfx906, 16 GiB VRAM) — co-resident with FLUX Fill inpainting
 **Sharing group**: `7900xtx-textgen` on the gfx1100 node (current owner: `gemma4-26b-a4b-gptq`, priority=350, minReplicas=1, 16 GiB VRAM estimate)
 **Estimated effort**: 4–6 days end-to-end (1 day kill-test, 1–2 days Whisper Model CR + serving, 1–2 days pyannote sibling Deployment, 1 day proxy/litellm wiring + smoke)
-**Status**: Draft — blocked on Slice 1 kill-test before Slice 2+ proceed
+**Status**: In flight — Slices 2 + 3b shipped 2026-05-18 via [!423](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/423) (merge commit `c8e4d75f`). Slice 1 kill-test pending operator. Slices 3a/4/5/6 blocked on Slice 1.
 
 ## Goal
 
@@ -129,7 +129,7 @@ Run the procedure in the Riskiest Assumption section. Two outcomes:
 - **PASSED**: capture evidence (curl output, vLLM startup log first 50 lines, GPU memory snapshot from `rocm-smi`) into `.loom/asr-diarization-kill-test-passed-2026-05-18.md`. Proceed to Slice 2.
 - **FAILED**: capture evidence, re-run against `registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100`. If that also fails, switch the plan to fallback path: whisper.cpp HIP sibling Deployment. Delete Slices 2/3a from this plan, rewrite Slice 2 to build/pin a whisper.cpp HIP image, and re-plan downstream. **Do not start Slice 2 on a failed assumption.**
 
-### Slice 2: GPUProfile capability flag (no-op rollout, parallel-safe)
+### Slice 2: GPUProfile capability flag (no-op rollout, parallel-safe) — SHIPPED 2026-05-18 (!423)
 
 Add `audioTranscription` to the typed `vllm` capability block in `deploy/gpuprofiles/gfx1100.yaml:38-44`:
 
@@ -228,7 +228,7 @@ spec:
 
 **Acceptance**: `kubectl apply -f deploy/models/whisper-large-v3-turbo.yaml` reaches `phase=Ready`. From a debug pod: `curl -X POST http://flexinfer-proxy.flexinfer-system.svc/v1/audio/transcriptions -F file=@sample.wav -F model=whisper-large-v3-turbo` returns the expected transcript text.
 
-### Slice 3b: vLLM `--task transcription` wiring (controller code change)
+### Slice 3b: vLLM `--task transcription` wiring (controller code change) — SHIPPED 2026-05-18 (!423)
 
 `backend/vllm.go` `Args` (`backend/vllm.go:54+`) currently has no path for `--task`. Add (around line 90 alongside the other `ConfigString` knobs):
 
@@ -343,15 +343,15 @@ Document findings in `.loom/asr-diarization-load-test-2026-05-18.md`. If 7900 XT
 
 ## Validation Matrix
 
-| Slice | Verification | Owner | Evidence path |
-|---|---|---|---|
-| 1 | Kill-test passes against pinned vLLM image | flexinfer maintainer | `.loom/asr-diarization-kill-test-passed-2026-05-18.md` (or `-failed-`) |
-| 2 | `kubectl explain` shows new field; `make manifests` green | flexinfer maintainer | CRD diff in MR |
-| 3a | Whisper Model CR reaches Ready; transcribe via proxy returns expected text | operator | smoke log appended to validation matrix |
-| 3b | `go test ./backend -run TestVLLMArgs` passes; deployed pod has `--task transcription` | maintainer | unit test green in CI |
-| 4 | pyannote Deployment Ready on radeonvii (`kubectl get pod -n flexinfer-system -l app=pyannote-diarization -o wide` shows `cblevins-radeonvii`); `/diarize` returns segments JSON | operator | smoke log appended |
-| 5 | Proxy `/diarize` route returns segments JSON same as direct pyannote call | maintainer | smoke log appended |
-| 6 | 5-min load test: no OOM, ≤2 swaps, ≤30% 26B latency degradation | operator | `.loom/asr-diarization-load-test-2026-05-18.md` |
+| Slice | Verification | Owner | Status | Evidence path |
+|---|---|---|---|---|
+| 1 | Kill-test passes against pinned vLLM image | flexinfer maintainer | pending | `.loom/asr-diarization-kill-test-passed-2026-05-18.md` (or `-failed-`) |
+| 2 | `kubectl explain` shows new field; `make manifests` green | flexinfer maintainer | ✅ shipped | !423 merge commit `c8e4d75f`; CRD diff visible in MR |
+| 3a | Whisper Model CR reaches Ready; transcribe via proxy returns expected text | operator | blocked on Slice 1 | smoke log appended to validation matrix |
+| 3b | `go test ./backend -run TestVLLMArgs` passes; deployed pod has `--task transcription` | maintainer | ✅ shipped | !423 unit test `TestVLLMBackendArgs_Task` green |
+| 4 | pyannote Deployment Ready on radeonvii (`kubectl get pod -n flexinfer-system -l app=pyannote-diarization -o wide` shows `cblevins-radeonvii`); `/diarize` returns segments JSON | operator | blocked on Slice 1 | smoke log appended |
+| 5 | Proxy `/diarize` route returns segments JSON same as direct pyannote call | maintainer | blocked on Slice 4 | smoke log appended |
+| 6 | 5-min load test: no OOM, ≤2 swaps, ≤30% 26B latency degradation | operator | blocked on 3a + 4 + 5 | `.loom/asr-diarization-load-test-2026-05-18.md` |
 
 ## Files this lands
 
