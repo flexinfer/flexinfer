@@ -280,3 +280,29 @@ image can be pulled without triggering DiskPressure.
 - Do not promote `gfx906` vLLM from `experimental` from this source-only slice.
   The next live loop must publish/pin the new digest, run the OPT canary, and
   capture either HTTP 200 or the newly surfaced failure details.
+
+2026-05-19 diagnostic digest follow-up:
+
+- Post-merge pipeline `10513` passed, and manual publish job
+  `publish_vllm_rocm_gfx906` / `109838` published the rebuilt diagnostic image
+  as
+  `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:020e737330f7e6355634ffc7d606d294806c65988e7f48f3099f6013fda07964`.
+- `deploy/gpuprofiles/gfx906.yaml` and `deploy/system/values-k3s.yaml` now pin
+  that digest for standalone gfx906 vLLM canaries.
+- The live OPT canary pulled the diagnostic image in 8m33s, staged/skipped the
+  cached OPT files with roughly 55 GB free in `/dev/shm`, and kept
+  `cblevins-radeonvii` `Ready=True` with no DiskPressure, MemoryPressure, or
+  PIDPressure.
+- The canary still did not return HTTP 200: the proxy smoke ended with an empty
+  reply, but the diagnostics hook captured the useful failure. The vLLM child
+  process hit a fatal Python segfault while OPT initialized its `Embedding`
+  layer through `torch.nn.init._no_grad_normal_`; the stack includes
+  `vllm/model_executor/models/opt.py`, `model_loader/loader.py`, and
+  `worker/model_runner.py:1112 load_model`.
+- Cleanup restored the fallback: Flux `flexinfer-system` and `flexinfer-models`
+  were resumed, `qwen3-1p7b-vllm-radeonvii` returned to `Idle`, and
+  `qwen3-1p7b-tools-radeonvii` returned to `Ready`. A fallback proxy smoke
+  returned `Blue`.
+- Do not promote `gfx906` vLLM from `experimental`. The next live/source slice
+  should patch the torch/vLLM OPT initialization path named by the diagnostic
+  traceback, not retry more model-family or profile-flag variants.
