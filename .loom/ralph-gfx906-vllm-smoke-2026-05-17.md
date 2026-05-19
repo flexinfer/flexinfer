@@ -244,3 +244,24 @@ image can be pulled without triggering DiskPressure.
   validation target narrow: prove the gfx906 standalone vLLM image can import a
   supported text-generation architecture and return HTTP 200 before revisiting
   Qwen-family SWA/rope support.
+
+2026-05-19 OPT load follow-up:
+
+- Live validation with the OPT canary proved the artifact and cache path are no
+  longer the blockers: `flash-loader` copied/skipped 13 files / 718.2 MB with
+  roughly 55 GB free in `/dev/shm`, and the vLLM pod launched the pinned
+  `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:84f0ae2bb1ea46163885aad55181540bee9995b4b4b0c656f3943b7580e07e1e`
+  image without node pressure.
+- The default gfx906 profile path (`VLLM_USE_TRITON_FLASH_ATTN=0`) still failed
+  at `model_runner.py:1110] Starting to load model facebook/opt-125m...`, with
+  the parent process reporting `RuntimeError: Engine process failed to start`.
+- A live-only GPUProfile patch forced `VLLM_USE_TRITON_FLASH_ATTN=1`; vLLM then
+  selected `ROCmFlashAttention` and failed at the same model-weight load point.
+- The canary was contained afterward: smoke pod deleted, standalone Deployment
+  scaled to zero, failed model pod force-deleted, GPUProfile restored to
+  `VLLM_USE_TRITON_FLASH_ATTN=0`, and `cblevins-radeonvii` remained
+  `Ready=True`, `DiskPressure=False`, `MemoryPressure=False`, `PIDPressure=False`.
+- Next slice should treat this as an image/runtime worker crash at OPT weight
+  load on gfx906. Re-trying model/profile flags is unlikely to produce HTTP 200
+  until the child-process failure is surfaced or patched inside the pinned vLLM
+  image.
