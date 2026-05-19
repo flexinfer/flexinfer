@@ -163,3 +163,17 @@ image can be pulled without triggering DiskPressure.
   `~/.triton/dump`.
 - The rebuilt image was published and pinned as
   `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:8350619f10e31e5172fd94e8686e9b185292d6182c911711d4e026e4acce23d6`.
+
+2026-05-18 Triton override-dir and cache-refresh follow-up:
+
+- Live validation with the MR !422 image got past `default_dump_dir`; the
+  remaining import from vLLM 0.7.3's custom Triton cache manager was
+  `triton.runtime.cache.default_override_dir`.
+- The same validation also proved the shared-GPU cache-refresh guard was still
+  incomplete: `ensureCache` could transiently report not-ready and force
+  `desiredReplicas=0` while an active shared model was still pulling/loading.
+- MR !424 adds `default_override_dir` to the site-packages compatibility hook
+  and preserves active shared-GPU `Pending`/`Loading` models during cache
+  refresh if they remain inside their cold-start window.
+- The rebuilt image was published and pinned as
+  `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:021d31f322b2ff789a0d7bfa1f79c713b8a1cbcf3498e2bc58ddb0a5fe26386d`.
