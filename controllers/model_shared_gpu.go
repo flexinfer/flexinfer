@@ -218,6 +218,10 @@ func withinSharedActivationWindow(model *aiv1alpha2.Model, now time.Time) bool {
 	return now.Sub(model.Status.LastActiveTime.Time) <= window
 }
 
+func preserveActiveSharedLoadingDuringCacheRefresh(model *aiv1alpha2.Model, now time.Time) bool {
+	return isActiveSharedModelLoading(model) && withinSharedActivationWindow(model, now)
+}
+
 func queuePositionForSharedModel(modelName string, activeModel *aiv1alpha2.Model, groupModels []*aiv1alpha2.Model) int32 {
 	if activeModel != nil && modelName == activeModel.Name {
 		return 0
