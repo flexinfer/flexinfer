@@ -31,6 +31,7 @@ PATCH_TESTS = (
 )
 
 COMPILE_ONLY = PATCH_SCRIPTS + (
+    "build/scripts/install_vllm_gfx906_compat.py",
     "build/scripts/quantize_gptq.py",
     "build/scripts/validate_quantized_artifact.py",
 )
@@ -40,8 +41,10 @@ CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
     "build/build-runtime.sh",
     "build/Dockerfile.runtime",
     "build/Dockerfile.runtime-serving",
+    "build/Dockerfile.vllm-rocm-gfx906",
     "build/runtime-entrypoint.sh",
     "build/runtime.yaml",
+    "build/scripts/install_vllm_gfx906_compat.py",
     ".gitlab/ci/runtime-publish.yml",
 )
 
@@ -195,6 +198,19 @@ def assert_serving_dockerfile_contract(dockerfile: str) -> None:
             fail(f"Dockerfile.runtime-serving reintroduced utility payload: {snippet!r}")
 
 
+def assert_gfx906_vllm_diagnostics_contract(dockerfile: str) -> None:
+    required = (
+        "PYTHONFAULTHANDLER=1",
+        "TORCH_SHOW_CPP_STACKTRACES=1",
+        "FLEXINFER_GFX906_VLLM_DIAGNOSTICS=1",
+        "COPY build/scripts/install_vllm_gfx906_compat.py",
+        "python3 /tmp/install_vllm_gfx906_compat.py",
+    )
+    for snippet in required:
+        if snippet not in dockerfile:
+            fail(f"Dockerfile.vllm-rocm-gfx906 missing diagnostics wiring: {snippet!r}")
+
+
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     fast_job = ci_yaml.find("runtime_patch_contracts:")
     serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
@@ -275,6 +291,7 @@ def main(argv: list[str]) -> int:
     build_script = read("build/build-runtime.sh")
     entrypoint = read("build/runtime-entrypoint.sh")
     serving_dockerfile = read("build/Dockerfile.runtime-serving")
+    gfx906_vllm_dockerfile = read("build/Dockerfile.vllm-rocm-gfx906")
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
@@ -282,6 +299,7 @@ def main(argv: list[str]) -> int:
     assert_dockerfile_patch_order(dockerfile)
     assert_runtime_entrypoint_contract(entrypoint, build_script)
     assert_serving_dockerfile_contract(serving_dockerfile)
+    assert_gfx906_vllm_diagnostics_contract(gfx906_vllm_dockerfile)
     assert_ci_fast_check_wiring(ci_yaml)
 
     if run_tests:

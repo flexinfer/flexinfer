@@ -18,8 +18,10 @@ runtime_patch_contracts:
         - build/build-runtime.sh
         - build/Dockerfile.runtime
         - build/Dockerfile.runtime-serving
+        - build/Dockerfile.vllm-rocm-gfx906
         - build/runtime-entrypoint.sh
         - build/runtime.yaml
+        - build/scripts/install_vllm_gfx906_compat.py
         - build/scripts/patch_turboquant_quantizer_gpu_qr.py
         - build/scripts/patch_vllm_env_override_torch29.py
         - build/scripts/vllm_gemma4_moe_gptq_patch.py
@@ -33,8 +35,10 @@ runtime_patch_contracts:
         - build/build-runtime.sh
         - build/Dockerfile.runtime
         - build/Dockerfile.runtime-serving
+        - build/Dockerfile.vllm-rocm-gfx906
         - build/runtime-entrypoint.sh
         - build/runtime.yaml
+        - build/scripts/install_vllm_gfx906_compat.py
         - build/scripts/patch_turboquant_quantizer_gpu_qr.py
         - build/scripts/patch_vllm_env_override_torch29.py
         - build/scripts/vllm_gemma4_moe_gptq_patch.py
@@ -48,8 +52,10 @@ runtime_patch_contracts:
         - build/build-runtime.sh
         - build/Dockerfile.runtime
         - build/Dockerfile.runtime-serving
+        - build/Dockerfile.vllm-rocm-gfx906
         - build/runtime-entrypoint.sh
         - build/runtime.yaml
+        - build/scripts/install_vllm_gfx906_compat.py
         - build/scripts/patch_turboquant_quantizer_gpu_qr.py
         - build/scripts/patch_vllm_env_override_torch29.py
         - build/scripts/vllm_gemma4_moe_gptq_patch.py

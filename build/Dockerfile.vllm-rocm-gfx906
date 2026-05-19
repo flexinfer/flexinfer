@@ -42,6 +42,13 @@ ENV VLLM_USE_V1=0 \
     VLLM_USE_TRITON_FLASH_ATTN=0 \
     VLLM_ROCM_USE_AITER=0
 
+# Keep the canary image noisy enough to surface worker-process crashes. The
+# gfx906 vLLM lane is experimental, so deterministic diagnostics matter more
+# than quiet startup logs while OPT-125M still dies during weight load.
+ENV PYTHONFAULTHANDLER=1 \
+    TORCH_SHOW_CPP_STACKTRACES=1 \
+    FLEXINFER_GFX906_VLLM_DIAGNOSTICS=1
+
 # Install additional build/runtime dependencies not guaranteed in the base.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
@@ -87,135 +94,13 @@ RUN pip install --no-cache-dir \
     protobuf \
     "numpy<2"
 
-# vLLM 0.7.3 expects older tokenizer and Triton cache APIs. Newer base
-# dependencies removed those compatibility symbols, which crashes Qwen tokenizers
-# or the ROCm attention backend before the engine can start. Install a small
-# site hook so this legacy vLLM build can run against the modern base stack.
-RUN python3 - <<'PY'
-import pathlib
-import site
-import textwrap
-
-site_packages = pathlib.Path(site.getsitepackages()[0])
-(site_packages / "flexinfer_vllm_transformers_compat.py").write_text(textwrap.dedent(
-    r'''
-    def _install():
-        try:
-            from transformers.tokenization_utils_base import PreTrainedTokenizerBase
-        except Exception:
-            return
-
-        if hasattr(PreTrainedTokenizerBase, "all_special_tokens_extended"):
-            return
-
-        @property
-        def all_special_tokens_extended(self):
-            values = []
-            try:
-                mapping = self.special_tokens_map_extended
-            except Exception:
-                mapping = {}
-            for value in mapping.values():
-                if isinstance(value, (list, tuple)):
-                    values.extend(value)
-                else:
-                    values.append(value)
-            if values:
-                return values
-            return list(getattr(self, "all_special_tokens", []))
-
-        PreTrainedTokenizerBase.all_special_tokens_extended = all_special_tokens_extended
-
-    _install()
-    '''
-).lstrip())
-(site_packages / "flexinfer_vllm_triton_compat.py").write_text(textwrap.dedent(
-    r'''
-    def _install():
-        try:
-            import os
-            import pathlib
-            import triton.runtime.cache as triton_cache
-        except Exception:
-            return
-
-        def default_cache_dir():
-            configured = os.environ.get("TRITON_CACHE_DIR")
-            if configured:
-                return configured
-            return str(pathlib.Path.home() / ".triton" / "cache")
-
-        def default_dump_dir():
-            configured = os.environ.get("TRITON_DUMP_DIR")
-            if configured:
-                return configured
-            return str(pathlib.Path.home() / ".triton" / "dump")
-
-        def default_override_dir():
-            configured = os.environ.get("TRITON_OVERRIDE_DIR")
-            if configured:
-                return configured
-            return str(pathlib.Path.home() / ".triton" / "override")
-
-        if not hasattr(triton_cache, "default_cache_dir"):
-            triton_cache.default_cache_dir = default_cache_dir
-        if not hasattr(triton_cache, "default_dump_dir"):
-            triton_cache.default_dump_dir = default_dump_dir
-        if not hasattr(triton_cache, "default_override_dir"):
-            triton_cache.default_override_dir = default_override_dir
-
-    _install()
-    '''
-).lstrip())
-(site_packages / "flexinfer_vllm_torch_rocm_compat.py").write_text(textwrap.dedent(
-    r'''
-    def _install():
-        try:
-            import torch
-        except Exception:
-            return
-
-        original = getattr(torch.cuda, "mem_get_info", None)
-        if original is None or getattr(original, "_flexinfer_gfx906_safe", False):
-            return
-
-        def safe_mem_get_info(device=None):
-            try:
-                return original(device)
-            except Exception:
-                if device is None:
-                    device = torch.cuda.current_device()
-                props = torch.cuda.get_device_properties(device)
-                total = int(getattr(props, "total_memory", 0) or 0)
-                try:
-                    reserved = int(torch.cuda.memory_reserved(device))
-                except Exception:
-                    reserved = 0
-                try:
-                    allocated = int(torch.cuda.memory_allocated(device))
-                except Exception:
-                    allocated = 0
-                used = max(reserved, allocated)
-                free = max(total - used, 0)
-                return free, total
-
-        safe_mem_get_info._flexinfer_gfx906_safe = True
-        torch.cuda.mem_get_info = safe_mem_get_info
-        try:
-            import torch.cuda.memory as cuda_memory
-            cuda_memory.mem_get_info = safe_mem_get_info
-        except Exception:
-            pass
-
-    _install()
-    '''
-).lstrip())
-(site_packages / "flexinfer_vllm_transformers_compat.pth").write_text(
-    "import flexinfer_vllm_transformers_compat\n"
-    "import flexinfer_vllm_triton_compat\n"
-    "import flexinfer_vllm_torch_rocm_compat\n"
-)
-PY
+# vLLM 0.7.3 expects older tokenizer/Triton APIs, and the current gfx906
+# blocker dies inside a child worker during OPT weight load. Install site hooks
+# that preserve the compatibility shims and print child-process tracebacks or
+# faulthandler output instead of leaving only "Engine process failed to start".
+COPY build/scripts/install_vllm_gfx906_compat.py /tmp/install_vllm_gfx906_compat.py
+RUN python3 /tmp/install_vllm_gfx906_compat.py && \
+    rm -f /tmp/install_vllm_gfx906_compat.py
 
 RUN rm -rf /build
 
