@@ -234,3 +234,13 @@ image can be pulled without triggering DiskPressure.
   `config.disableSlidingWindow` as vLLM's `--disable-sliding-window` flag, and
   the Radeon VII canary sets it until this backend has positive HTTP 200
   evidence.
+
+2026-05-19 OPT canary pivot:
+
+- The merged `disableSlidingWindow` path rendered correctly, but live validation
+  showed vLLM 0.7.3 rejects `--disable-sliding-window` for Qwen2.5 because the
+  model also has `rope_scaling`.
+- The canary now uses `HF://facebook/opt-125m` / `opt-125m-vllm`. This keeps the
+  validation target narrow: prove the gfx906 standalone vLLM image can import a
+  supported text-generation architecture and return HTTP 200 before revisiting
+  Qwen-family SWA/rope support.
