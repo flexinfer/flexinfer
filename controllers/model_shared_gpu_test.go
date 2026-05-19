@@ -68,6 +68,36 @@ func markWarmPrimary(m *aiv1alpha2.Model) *aiv1alpha2.Model {
 	return m
 }
 
+func TestPreserveActiveSharedLoadingDuringCacheRefresh(t *testing.T) {
+	now := time.Now()
+	recent := now.Add(-2 * time.Minute)
+	old := now.Add(-20 * time.Minute)
+
+	activeLoading := makeSharedModel("loading", 100, aiv1alpha2.ModelPhaseLoading, timePtr(recent), &aiv1alpha2.SharedGroupStatus{
+		GroupName: "test-group",
+		State:     "Active",
+	})
+	assert.True(t, preserveActiveSharedLoadingDuringCacheRefresh(activeLoading, now))
+
+	activePending := makeSharedModel("pending", 100, aiv1alpha2.ModelPhasePending, timePtr(recent), &aiv1alpha2.SharedGroupStatus{
+		GroupName: "test-group",
+		State:     "Active",
+	})
+	assert.True(t, preserveActiveSharedLoadingDuringCacheRefresh(activePending, now))
+
+	queuedLoading := makeSharedModel("queued", 100, aiv1alpha2.ModelPhaseLoading, timePtr(recent), &aiv1alpha2.SharedGroupStatus{
+		GroupName: "test-group",
+		State:     "Queued",
+	})
+	assert.False(t, preserveActiveSharedLoadingDuringCacheRefresh(queuedLoading, now))
+
+	staleLoading := makeSharedModel("stale", 100, aiv1alpha2.ModelPhaseLoading, timePtr(old), &aiv1alpha2.SharedGroupStatus{
+		GroupName: "test-group",
+		State:     "Active",
+	})
+	assert.False(t, preserveActiveSharedLoadingDuringCacheRefresh(staleLoading, now))
+}
+
 // --------------------------------------------------------------------------
 // chooseSharedGroupLeader
 // --------------------------------------------------------------------------

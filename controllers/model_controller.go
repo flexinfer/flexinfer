@@ -323,8 +323,19 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// Gate activation on cache readiness: keep replicas at 0 while a prefetch job is running/failed.
 	if !cacheReady {
-		desiredReplicas = 0
-		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted && model.Status.Phase != aiv1alpha2.ModelPhaseFailed {
+		if preserveActiveSharedLoadingDuringCacheRefresh(model, time.Now()) {
+			if desiredReplicas < 1 {
+				desiredReplicas = 1
+			}
+			log.Info("Preserving active shared-GPU model during cache refresh",
+				"model", model.Name,
+				"phase", model.Status.Phase,
+				"sharedGroup", model.Status.SharedGroup.GroupName,
+			)
+		} else {
+			desiredReplicas = 0
+		}
+		if desiredReplicas == 0 && model.Status.Phase != aiv1alpha2.ModelPhasePreempted && model.Status.Phase != aiv1alpha2.ModelPhaseFailed {
 			if err := r.updatePhase(ctx, model, aiv1alpha2.ModelPhasePending); err != nil {
 				// Non-fatal: this is a best-effort status update while cache warms.
 				log.Error(err, "Failed to update Model phase to Pending while cache is warming")

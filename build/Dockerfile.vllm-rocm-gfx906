@@ -151,10 +151,18 @@ site_packages = pathlib.Path(site.getsitepackages()[0])
                 return configured
             return str(pathlib.Path.home() / ".triton" / "dump")
 
+        def default_override_dir():
+            configured = os.environ.get("TRITON_OVERRIDE_DIR")
+            if configured:
+                return configured
+            return str(pathlib.Path.home() / ".triton" / "override")
+
         if not hasattr(triton_cache, "default_cache_dir"):
             triton_cache.default_cache_dir = default_cache_dir
         if not hasattr(triton_cache, "default_dump_dir"):
             triton_cache.default_dump_dir = default_dump_dir
+        if not hasattr(triton_cache, "default_override_dir"):
+            triton_cache.default_override_dir = default_override_dir
 
     _install()
     '''
