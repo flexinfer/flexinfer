@@ -1,12 +1,13 @@
-# Qwen2.5-1.5B via vLLM on AMD gfx906 (Radeon VII) — canary lane
+# OPT-125M via vLLM on AMD gfx906 (Radeon VII) — canary lane
 #
 # Closes Track C of `.loom/gfx1100-gfx906-next-round-plan.md` (revive-or-retire
 # decision for gfx906 vLLM): chose Path A (revive). Track C investigation
 # (`.loom/local/track-c-vllm-gfx906-investigation.md`) recommended the
 # `mixa3607` base, but the live merged Dockerfile path (commit ea0bc1e0,
 # 2026-05-02) reverted to source-built vLLM 0.7.3 on `rocm/vllm-dev:base`.
-# That build is pinned in the gfx906 GPUProfile for operator-visible canary use:
-# `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:beadf394fc81c031799799f5d965664e419e5f3ffb4c5873a9d7677f0e1e06b8`.
+# The diagnostic build is pinned in the gfx906 GPUProfile for operator-visible
+# canary use:
+# `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:020e737330f7e6355634ffc7d606d294806c65988e7f48f3099f6013fda07964`.
 #
 # This manifest is the smallest model that exercises the full vLLM serve
 # path on gfx906 hardware. The persistent gfx906 runtime does not bundle
@@ -62,6 +63,18 @@
 # `Starting to load model facebook/opt-125m...` and then exited with
 # `RuntimeError: Engine process failed to start`. Keep this canary isolated and
 # blocked until the image surfaces or fixes the worker crash.
+#
+# 2026-05-19 diagnostic digest follow-up: MR !439's rebuilt image is pinned via
+# the gfx906 GPUProfile and Helm values. It keeps the same compatibility hooks
+# and adds faulthandler / child-process diagnostics for the next OPT canary run.
+#
+# 2026-05-19 diagnostic digest live result: the pinned image pulled in 8m33s
+# without node pressure, but the proxy smoke returned an empty reply before HTTP
+# 200. The new diagnostics captured a fatal Python segfault during OPT
+# `Embedding` initialization in `torch.nn.init._no_grad_normal_`, reached via
+# vLLM's `model_executor/models/opt.py` and child-process engine startup. Treat
+# the next slice as a torch/vLLM OPT construction crash, not a profile/cache
+# issue.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
