@@ -34,7 +34,7 @@ spec:
       # experimental canary launches it must override via the env var or a
       # profile patch rather than relying on the in-code rule slice.
       support: experimental
-      image: registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:bec2ad7d136ce9c2add97c692901dec8e10a9240ecdc2960ed5b028cd18e24e1
+      image: registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:8350619f10e31e5172fd94e8686e9b185292d6182c911711d4e026e4acce23d6
       # Wave 1 capability matrix backfill (2026-05-15, spec .loom/21-product-spec-vllm-feature-parity-2026-05-15.md).
       # Controller/runtime load paths consume safe defaults when Model config omits them.
       # Slice 8 (V6 gfx906 vLLM revival) is GATED by Track B (gfx906 disk-pressure unblock).

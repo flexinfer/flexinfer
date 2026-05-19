@@ -151,3 +151,15 @@ image can be pulled without triggering DiskPressure.
   falling back to `~/.triton/cache`.
 - The rebuilt image was published and pinned as
   `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:bec2ad7d136ce9c2add97c692901dec8e10a9240ecdc2960ed5b028cd18e24e1`.
+
+2026-05-18 Triton dump-dir compatibility follow-up:
+
+- Live validation with the MR !421 image got past `default_cache_dir` and again
+  reached ROCm attention backend selection.
+- Startup then failed on the adjacent missing Triton cache API,
+  `triton.runtime.cache.default_dump_dir`.
+- MR !422 extends the same site-packages compatibility hook to provide
+  `default_dump_dir`, preferring `TRITON_DUMP_DIR` and otherwise falling back to
+  `~/.triton/dump`.
+- The rebuilt image was published and pinned as
+  `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:8350619f10e31e5172fd94e8686e9b185292d6182c911711d4e026e4acce23d6`.

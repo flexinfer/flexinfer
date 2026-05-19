@@ -139,16 +139,22 @@ site_packages = pathlib.Path(site.getsitepackages()[0])
         except Exception:
             return
 
-        if hasattr(triton_cache, "default_cache_dir"):
-            return
-
         def default_cache_dir():
             configured = os.environ.get("TRITON_CACHE_DIR")
             if configured:
                 return configured
             return str(pathlib.Path.home() / ".triton" / "cache")
 
-        triton_cache.default_cache_dir = default_cache_dir
+        def default_dump_dir():
+            configured = os.environ.get("TRITON_DUMP_DIR")
+            if configured:
+                return configured
+            return str(pathlib.Path.home() / ".triton" / "dump")
+
+        if not hasattr(triton_cache, "default_cache_dir"):
+            triton_cache.default_cache_dir = default_cache_dir
+        if not hasattr(triton_cache, "default_dump_dir"):
+            triton_cache.default_dump_dir = default_dump_dir
 
     _install()
     '''
