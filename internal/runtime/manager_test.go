@@ -3,7 +3,10 @@ package runtime
 import (
 	"context"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
@@ -108,6 +111,72 @@ func TestShutdownEmpty(t *testing.T) {
 
 	err := m.Shutdown(ctx)
 	assert.NoError(t, err)
+}
+
+func TestUnloadDoesNotBlockStatusWhileWaitingForBackendExit(t *testing.T) {
+	cmd := exec.Command(os.Args[0], "-test.run=TestRuntimeManagerHelperProcess")
+	cmd.Env = append(os.Environ(), "FLEXINFER_RUNTIME_HELPER_PROCESS=1")
+	require.NoError(t, cmd.Start())
+	time.Sleep(100 * time.Millisecond)
+
+	m := NewManager(ManagerConfig{
+		ShutdownTimeout: 150 * time.Millisecond,
+		GPUVendor:       backend.GPUVendorAMD,
+		GPUArch:         "gfx906",
+	})
+	loaded := &LoadedModel{
+		Name:    "stubborn-model",
+		Backend: "llamacpp",
+		Model:   "test/model",
+		State:   ModelStateReady,
+		PID:     cmd.Process.Pid,
+		cmd:     cmd,
+		done:    make(chan error, 1),
+	}
+	m.active = loaded
+	go func() {
+		err := cmd.Wait()
+		loaded.done <- err
+		close(loaded.done)
+	}()
+
+	unloaded := make(chan error, 1)
+	go func() {
+		unloaded <- m.Unload(context.Background(), loaded.Name)
+	}()
+
+	time.Sleep(25 * time.Millisecond)
+	statusReturned := make(chan RuntimeStatus, 1)
+	go func() {
+		statusReturned <- m.Status()
+	}()
+
+	select {
+	case status := <-statusReturned:
+		assert.Equal(t, "gfx906", status.GPUArch)
+		assert.NotNil(t, status.ActiveModel)
+		assert.Equal(t, "Stopping", status.ActiveModel.State)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("Status blocked while unload waited for backend shutdown")
+	}
+
+	select {
+	case err := <-unloaded:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Unload did not finish after shutdown timeout")
+	}
+}
+
+func TestRuntimeManagerHelperProcess(t *testing.T) {
+	if os.Getenv("FLEXINFER_RUNTIME_HELPER_PROCESS") != "1" {
+		return
+	}
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM)
+	for range signals {
+		// Keep running until SIGKILL so tests can exercise shutdown timeout.
+	}
 }
 
 func TestInferCommand(t *testing.T) {

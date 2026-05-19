@@ -98,6 +98,10 @@ spec:
       value: git+https://github.com/huggingface/transformers.git@f965b10bcc979e6ad5f02a46f6d074206eccbe75
     - name: ABLITERATION_TRANSFORMERS_RUNTIME_INSTALL
       value: fallback
+    # Qwen2 sliding-window attention is not supported by ROCm Triton flash
+    # attention on gfx906. Force CK flash attention for vLLM canaries.
+    - name: VLLM_USE_TRITON_FLASH_ATTN
+      value: "0"
   runtime:
     # The persistent gfx906 runtime deliberately does not bundle vLLM. vLLM
     # canaries must use the standalone profile backend image instead of the
