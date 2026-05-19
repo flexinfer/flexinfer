@@ -265,3 +265,18 @@ image can be pulled without triggering DiskPressure.
   load on gfx906. Re-trying model/profile flags is unlikely to produce HTTP 200
   until the child-process failure is surfaced or patched inside the pinned vLLM
   image.
+
+2026-05-19 worker-diagnostics follow-up:
+
+- The next source slice extracts the standalone gfx906 vLLM compatibility hooks
+  from `build/Dockerfile.vllm-rocm-gfx906` into
+  `build/scripts/install_vllm_gfx906_compat.py`, preserving the tokenizer,
+  Triton cache-dir, and `torch.cuda.mem_get_info` shims that were validated in
+  the previous live attempts.
+- The same installer adds Python faulthandler, `sys.excepthook`, and
+  `multiprocessing.process.BaseProcess.run` diagnostics so a rebuilt image can
+  print the child-worker traceback or fatal-signal stack when OPT-125M dies at
+  weight load.
+- Do not promote `gfx906` vLLM from `experimental` from this source-only slice.
+  The next live loop must publish/pin the new digest, run the OPT canary, and
+  capture either HTTP 200 or the newly surfaced failure details.
