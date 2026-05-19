@@ -45,6 +45,7 @@ spec:
         fusedMoETriton: experimental  # Untested on Vega20; will be validated during Slice 8.
         fp8KVEmulation: unsupported   # No FP8 hardware; emulation untested on Vega20.
         marlinINT4: unsupported       # CUDA-only upstream; ExllamaV2 is the INT4 path on gfx906.
+        audioTranscription: unsupported # No FA kernel on Vega20 and runtime is paused (Track B). Whisper.cpp HIP is the gfx906 ASR fallback per .loom/asr-diarization-7900xtx-plan-2026-05-18.md.
         defaults:
           cudagraphMode: "NONE"       # Expressed as enforceEager by controller/runtime defaults.
           enforceEager: true

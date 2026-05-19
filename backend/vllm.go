@@ -155,6 +155,13 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--served-model-name", name)
 	}
 
+	// Task selects the vLLM serving task. "transcription" exposes the
+	// OpenAI-compatible /v1/audio/transcriptions endpoint for Whisper-family
+	// models. Other values pass through unchanged (vLLM validates).
+	if task := spec.ConfigString("task", ""); task != "" {
+		args = append(args, "--task", task)
+	}
+
 	// KV cache dtype (auto, fp8_e5m2). FP8 requires MI300X+ hardware.
 	if kvDtype := spec.ConfigString("kvCacheDtype", ""); kvDtype != "" {
 		args = append(args, "--kv-cache-dtype", kvDtype)
