@@ -1471,9 +1471,8 @@ publish_vllm_rocm_gfx906:
         --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx906,${REGISTRY}/vllm:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
-    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
-      when: manual
-    - when: never
+    - when: manual
+      allow_failure: true
 
 # vLLM with flash attention ENABLED for gfx1100 (experimental)
 publish_vllm_rocm_gfx1100_fa:
