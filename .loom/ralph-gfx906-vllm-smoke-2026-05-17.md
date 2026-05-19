@@ -177,3 +177,15 @@ image can be pulled without triggering DiskPressure.
   refresh if they remain inside their cold-start window.
 - The rebuilt image was published and pinned as
   `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:021d31f322b2ff789a0d7bfa1f79c713b8a1cbcf3498e2bc58ddb0a5fe26386d`.
+
+2026-05-18 PyTorch ROCm memory-info follow-up:
+
+- Live validation with the MR !424 image and MR !426 controller guard kept the
+  active pod running through cache refresh and got past all Triton compatibility
+  imports.
+- Startup then failed in vLLM's memory snapshot because
+  `torch.cuda.mem_get_info()` returned HIP `invalid argument` on gfx906.
+- MR !427 adds a guarded PyTorch ROCm compatibility hook that falls back to
+  device properties plus PyTorch allocation counters when `mem_get_info` fails.
+- The rebuilt image was published and pinned as
+  `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:84f0ae2bb1ea46163885aad55181540bee9995b4b4b0c656f3943b7580e07e1e`.
