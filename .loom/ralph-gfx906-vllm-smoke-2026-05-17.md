@@ -138,3 +138,14 @@ image can be pulled without triggering DiskPressure.
 - The controller also preserves an already-active Pending/Loading shared-GPU
   leader while cache readiness is revalidated during the cold-start window, so
   a transient cache condition cannot scale down the canary mid-activation.
+
+2026-05-18 Triton compatibility follow-up:
+
+- Live validation with the MR !420 image got past the tokenizer blocker and
+  initialized the vLLM engine far enough to select the ROCm attention backend.
+- Startup then failed because vLLM 0.7.3 imports
+  `triton.runtime.cache.default_cache_dir`, which is no longer exported by the
+  Triton package in the current base image.
+- The next image rebuild extends the same site-packages compatibility hook to
+  provide `default_cache_dir`, preferring `TRITON_CACHE_DIR` and otherwise
+  falling back to `~/.triton/cache`.

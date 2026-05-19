@@ -227,6 +227,12 @@ compatibility hook and pins the image to
 The same MR hardens shared-GPU leader choice so transient cache revalidation
 cannot scale down an active Pending/Loading canary during the cold-start window.
 
+Live validation of that pinned image got past the tokenizer failure and reached
+ROCm attention backend selection. The next blocker is another dependency API
+drift: vLLM 0.7.3 imports `triton.runtime.cache.default_cache_dir`, but the
+installed Triton package does not export it. The next image rebuild extends the
+site hook with a `default_cache_dir` shim.
+
 ### 2026-05-16 gfx906 llama.cpp runtime path failure
 
 RALPH RG-4 follow-up checked the Radeon VII conservative lane before running a
