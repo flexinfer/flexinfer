@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.1
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: models.ai.flexinfer
 spec:
   group: ai.flexinfer
@@ -214,6 +214,20 @@ spec:
                     maximum: 8
                     minimum: 1
                     type: integer
+                  forcePromotion:
+                    description: |-
+                      ForcePromotion makes this model bypass the Ready-first preference and
+                      anti-thrashing cooldown in the shared-group leader chooser. When true,
+                      this model is selected as the active leader purely on Priority among
+                      other force-promoted members, evicting the current Ready leader even
+                      without proxy traffic (LastActiveTime) or a higher priority than the
+                      demand-swap threshold. Intended for operator-driven canary rollouts
+                      and Slice 1-style kill-tests where the new claimant needs a Deployment
+                      before it can become Ready (chicken-and-egg breaker). Use sparingly:
+                      while true, the normal warm-primary protection is disabled for this
+                      group. Set back to false (or remove) once the forced-active model is
+                      no longer wanted active. Default: false.
+                    type: boolean
                   priority:
                     default: 100
                     description: |-

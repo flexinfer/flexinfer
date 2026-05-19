@@ -68,6 +68,12 @@ func markWarmPrimary(m *aiv1alpha2.Model) *aiv1alpha2.Model {
 	return m
 }
 
+func markForcePromoted(m *aiv1alpha2.Model) *aiv1alpha2.Model {
+	v := true
+	m.Spec.GPU.ForcePromotion = &v
+	return m
+}
+
 func TestPreserveActiveSharedLoadingDuringCacheRefresh(t *testing.T) {
 	now := time.Now()
 	recent := now.Add(-2 * time.Minute)
@@ -415,6 +421,51 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 			},
 			// recentSwap = true, active-low has State "Active" => returns active-low
 			wantName: "active-low",
+		},
+		// Force-promotion: explicit operator override that bypasses the
+		// Ready-first preference and anti-thrashing cooldown.
+		{
+			name: "force-promoted pending beats ready warm primary",
+			models: []*aiv1alpha2.Model{
+				markWarmPrimary(makeSharedModel("warm-primary", 350, aiv1alpha2.ModelPhaseReady, timePtr(recent), nil)),
+				markForcePromoted(makeSharedModel("kill-test", 100, aiv1alpha2.ModelPhasePending, nil, nil)),
+			},
+			// kill-test has lower priority AND is not Ready, but ForcePromotion
+			// trumps both signals.
+			wantName: "kill-test",
+		},
+		{
+			name: "force-promotion ignores anti-thrashing cooldown",
+			models: []*aiv1alpha2.Model{
+				makeSharedModel("active-recent", 200, aiv1alpha2.ModelPhaseReady, timePtr(past), &aiv1alpha2.SharedGroupStatus{
+					State:       "Active",
+					PreemptedAt: &metav1.Time{Time: now.Add(-30 * time.Second)}, // well inside default 5min cooldown
+				}),
+				markForcePromoted(makeSharedModel("forced", 50, aiv1alpha2.ModelPhasePending, nil, nil)),
+			},
+			// Cooldown would normally pin active-recent. ForcePromotion overrides.
+			wantName: "forced",
+		},
+		{
+			name: "two force-promoted resolved by priority",
+			models: []*aiv1alpha2.Model{
+				markForcePromoted(makeSharedModel("forced-low", 100, aiv1alpha2.ModelPhasePending, nil, nil)),
+				markForcePromoted(makeSharedModel("forced-high", 300, aiv1alpha2.ModelPhasePending, nil, nil)),
+				makeSharedModel("ready-bystander", 250, aiv1alpha2.ModelPhaseReady, timePtr(recent), nil),
+			},
+			wantName: "forced-high",
+		},
+		{
+			name: "force-promotion false falls through to normal logic",
+			models: func() []*aiv1alpha2.Model {
+				notForced := makeSharedModel("not-forced", 100, aiv1alpha2.ModelPhasePending, nil, nil)
+				falseFlag := false
+				notForced.Spec.GPU.ForcePromotion = &falseFlag
+				readyPrimary := makeSharedModel("ready-primary", 350, aiv1alpha2.ModelPhaseReady, nil, nil)
+				return []*aiv1alpha2.Model{notForced, readyPrimary}
+			}(),
+			// ForcePromotion=false is treated identically to nil — normal Ready-first wins.
+			wantName: "ready-primary",
 		},
 	}
 

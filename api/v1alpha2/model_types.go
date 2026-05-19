@@ -413,6 +413,20 @@ type GPUSpec struct {
 	// Set lower for small models that load quickly, higher for large ones.
 	// +optional
 	SwapCooldown *metav1.Duration `json:"swapCooldown,omitempty"`
+
+	// ForcePromotion makes this model bypass the Ready-first preference and
+	// anti-thrashing cooldown in the shared-group leader chooser. When true,
+	// this model is selected as the active leader purely on Priority among
+	// other force-promoted members, evicting the current Ready leader even
+	// without proxy traffic (LastActiveTime) or a higher priority than the
+	// demand-swap threshold. Intended for operator-driven canary rollouts
+	// and Slice 1-style kill-tests where the new claimant needs a Deployment
+	// before it can become Ready (chicken-and-egg breaker). Use sparingly:
+	// while true, the normal warm-primary protection is disabled for this
+	// group. Set back to false (or remove) once the forced-active model is
+	// no longer wanted active. Default: false.
+	// +optional
+	ForcePromotion *bool `json:"forcePromotion,omitempty"`
 }
 
 // ServerlessSpec configures scale-to-zero behavior.
@@ -746,6 +760,16 @@ func (s *ModelSpec) GetPriority() int32 {
 		return *s.GPU.Priority
 	}
 	return 100
+}
+
+// IsForcePromoted reports whether the model has gpu.forcePromotion=true,
+// requesting that the shared-group leader chooser bypass the Ready-first
+// preference and anti-thrashing cooldown for this claimant.
+func (s *ModelSpec) IsForcePromoted() bool {
+	if s.GPU == nil || s.GPU.ForcePromotion == nil {
+		return false
+	}
+	return *s.GPU.ForcePromotion
 }
 
 // GetGPUCount returns the number of GPUs required, defaulting to 1.

@@ -81,6 +81,25 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		return b
 	}
 
+	// Operator-forced promotion: any group member with gpu.forcePromotion=true
+	// wins leadership purely on priority among other force-promoted members.
+	// This bypasses both the Ready-first preference (priority steps 3-7 below)
+	// and the anti-thrashing cooldown. Intended for canary rollouts and
+	// kill-tests where the new claimant must get a Deployment in order to
+	// become Ready (the chooser would otherwise return the existing Ready
+	// warm-primary at priority step 3 and never give the new claimant a chance
+	// to reach Phase=Ready). Use sparingly; while a model is force-promoted
+	// it preempts warm-primaries without proxy traffic.
+	var forcedLeader *aiv1alpha2.Model
+	for _, m := range groupModels {
+		if m.Spec.IsForcePromoted() {
+			forcedLeader = better(forcedLeader, m)
+		}
+	}
+	if forcedLeader != nil {
+		return forcedLeader
+	}
+
 	// Anti-thrashing: if a swap happened recently, keep the currently
 	// active model regardless of demand or priority.
 	// Use the maximum SwapCooldown from any model in the group, falling
