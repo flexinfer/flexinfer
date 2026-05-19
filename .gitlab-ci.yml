@@ -571,9 +571,8 @@ publish_mlcllm_rocm64:
         --export-cache "type=inline" \
         --output "type=image,\"name=registry.harbor.lan/library/mlc-llm:rocm64-src,registry.harbor.lan/library/mlc-llm:rocm64-src-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
-    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
-      when: manual
-    - when: never
+    - when: manual
+      allow_failure: true
 
 publish_mlcllm_cuda:
   stage: publish
