@@ -223,3 +223,14 @@ image can be pulled without triggering DiskPressure.
   `VLLM_USE_TRITON_FLASH_ATTN=0`.
 - This follow-up adds that env var to `GPUProfile/gfx906` so controller-created
   vLLM deployments inherit the profile-level CK flash attention fallback.
+
+2026-05-19 sliding-window follow-up:
+
+- A live retry showed the pod received `VLLM_USE_TRITON_FLASH_ATTN=0`, but
+  vLLM 0.7.3 still failed while initializing Qwen2.5's sliding-window attention
+  path on gfx906.
+- Image inspection showed vLLM already reads the env var; the remaining unsafe
+  path is the model's SWA config. FlexInfer now exposes
+  `config.disableSlidingWindow` as vLLM's `--disable-sliding-window` flag, and
+  the Radeon VII canary sets it until this backend has positive HTTP 200
+  evidence.

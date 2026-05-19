@@ -100,6 +100,12 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--max-num-batched-tokens", fmt.Sprintf("%d", maxBatched))
 	}
 
+	// Disable model sliding-window attention. This is useful for ROCm backends
+	// where the selected attention kernel cannot serve SWA-capable models.
+	if spec.ConfigBool("disableSlidingWindow", false) {
+		args = append(args, "--disable-sliding-window")
+	}
+
 	// Enforce eager mode (disable torch.compile and HIPGraph/CUDAGraph)
 	if spec.ConfigBool("enforceEager", false) {
 		args = append(args, "--enforce-eager")
