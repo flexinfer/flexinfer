@@ -149,3 +149,5 @@ image can be pulled without triggering DiskPressure.
 - The next image rebuild extends the same site-packages compatibility hook to
   provide `default_cache_dir`, preferring `TRITON_CACHE_DIR` and otherwise
   falling back to `~/.triton/cache`.
+- The rebuilt image was published and pinned as
+  `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:bec2ad7d136ce9c2add97c692901dec8e10a9240ecdc2960ed5b028cd18e24e1`.
