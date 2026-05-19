@@ -571,9 +571,8 @@ publish_mlcllm_rocm64:
         --export-cache "type=inline" \
         --output "type=image,\"name=registry.harbor.lan/library/mlc-llm:rocm64-src,registry.harbor.lan/library/mlc-llm:rocm64-src-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
-    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
-      when: manual
-    - when: never
+    - when: manual
+      allow_failure: true
 
 publish_mlcllm_cuda:
   stage: publish
@@ -1442,6 +1441,35 @@ publish_vllm_rocm_gfx1100_qwen35_patched:
         --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg" \
         --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg,${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - when: manual
+      allow_failure: true
+
+publish_vllm_rocm_gfx906:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 2h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building vLLM ROCm image for gfx906 (BUILD_FA=0)..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.vllm-rocm-gfx906" \
+        --opt platform=linux/amd64 \
+        --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-gfx906" \
+        --export-cache "type=inline" \
+        --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx906,${REGISTRY}/vllm:rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - when: manual
       allow_failure: true

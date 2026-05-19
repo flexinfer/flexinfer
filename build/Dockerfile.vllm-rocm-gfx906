@@ -87,6 +87,53 @@ RUN pip install --no-cache-dir \
     protobuf \
     "numpy<2"
 
+# vLLM 0.7.3 expects all_special_tokens_extended on tokenizers. Newer
+# transformers 5.x removed that compatibility property, which crashes Qwen
+# tokenizers before the engine can start. Install a small site hook so this
+# legacy vLLM build can run against the modern transformers stack in the base.
+RUN python3 - <<'PY'
+import pathlib
+import site
+import textwrap
+
+site_packages = pathlib.Path(site.getsitepackages()[0])
+(site_packages / "flexinfer_vllm_transformers_compat.py").write_text(textwrap.dedent(
+    r'''
+    def _install():
+        try:
+            from transformers.tokenization_utils_base import PreTrainedTokenizerBase
+        except Exception:
+            return
+
+        if hasattr(PreTrainedTokenizerBase, "all_special_tokens_extended"):
+            return
+
+        @property
+        def all_special_tokens_extended(self):
+            values = []
+            try:
+                mapping = self.special_tokens_map_extended
+            except Exception:
+                mapping = {}
+            for value in mapping.values():
+                if isinstance(value, (list, tuple)):
+                    values.extend(value)
+                else:
+                    values.append(value)
+            if values:
+                return values
+            return list(getattr(self, "all_special_tokens", []))
+
+        PreTrainedTokenizerBase.all_special_tokens_extended = all_special_tokens_extended
+
+    _install()
+    '''
+).lstrip())
+(site_packages / "flexinfer_vllm_transformers_compat.pth").write_text(
+    "import flexinfer_vllm_transformers_compat\n"
+)
+PY
+
 RUN rm -rf /build
 
 WORKDIR /workspace
