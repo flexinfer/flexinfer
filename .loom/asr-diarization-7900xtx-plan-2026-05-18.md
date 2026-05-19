@@ -7,7 +7,7 @@
 - **Diarization**: `cblevins-radeonvii` (Radeon VII, gfx906, 16 GiB VRAM) — co-resident with FLUX Fill inpainting
 **Sharing group**: `7900xtx-textgen` on the gfx1100 node (current owner: `gemma4-26b-a4b-gptq`, priority=350, minReplicas=1, 16 GiB VRAM estimate)
 **Estimated effort**: 4–6 days end-to-end (1 day kill-test, 1–2 days Whisper Model CR + serving, 1–2 days pyannote sibling Deployment, 1 day proxy/litellm wiring + smoke)
-**Status**: In flight — Slices 2 + 3b shipped 2026-05-18 via [!423](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/423) (merge commit `c8e4d75f`). Slice 1 kill-test pending operator. Slices 3a/4/5/6 blocked on Slice 1.
+**Status**: BLOCKED. Slices 2 + 3b shipped 2026-05-18 via [!423](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/423). Slice 1 kill-test attempted 2026-05-19 via [!429](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/429) and the cleanup MR (next) — **outcome INCONCLUSIVE**: the controller did not reconcile the kill-test Model CR (8+ hours, no Deployment, no Events, no Status). Evidence: `.loom/asr-diarization-kill-test-inconclusive-2026-05-19.md`. Slices 3a/4/5/6 blocked on Slice 1, and Slice 1 itself blocked on a new sub-question about controller reconciliation predicates (see Open Question #14).
 
 ## Goal
 
@@ -76,7 +76,7 @@ The entire ICC ASR path depends on this. If it's false, ICC either gets a fallba
 2. **vLLM-Omni image** (`registry.harbor.lan/flexinfer/vllm-omni:rocm-gfx1100`, already in the gfx1100 GPUProfile) — same kill-test against the omni image. Confirmed to handle multimodal endpoints; audio-transcription path on gfx1100 is unproven.
 3. **CPU-only faster-whisper-server** on a non-GPU node — practical for ICC's batch-after-call cadence (5–10 min for a 30-min call is acceptable), but no GPU savings.
 
-**Status**: not run.
+**Status**: ATTEMPTED 2026-05-19, INCONCLUSIVE. Kill-test Model CR was reconciled into the cluster via !429 but the flexinfer controller never gave it a Deployment (8+ hours, Status empty, Events empty, resourceVersion never bumped). Engine validation never ran. Evidence: `.loom/asr-diarization-kill-test-inconclusive-2026-05-19.md`. The riskiest assumption (vLLM serves Whisper transcription on ROCm gfx1100) remains unproven. Slice 1 is now gated on Open Question #14 (controller reconciliation predicate).
 
 ## Current Evidence
 
@@ -327,6 +327,15 @@ Document findings in `.loom/asr-diarization-load-test-2026-05-18.md`. If 7900 XT
 
 12. **gfx906 PyTorch base image staleness**: the `mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3` community image is the validated gfx906 baseline today, but it's a community fork — upstream PyTorch dropped gfx906 in 2.4+, and this image's maintenance cadence is not Anthropic-controlled. If `mixa3607` stops publishing, we either pin to a SHA and stay there, or build our own gfx906 PyTorch (large undertaking, out of scope here). Pin the digest in `build/Dockerfile.pyannote-rocm-gfx906` and record the pin in MEMORY.md.
 
+13. **K8s `amd.com/gpu` accounting on cblevins-7900xtx is 2/2 = held by the 26B**. Originally surfaced inline during the 2026-05-19 kill-test attempt. Initially mitigated by raising kill-test priority to 400 (>26B's 350) and routing through the Model CR path to exercise the shared-GPU swap. But that path failed in a different way — see Open Question #14.
+
+14. **NEW (2026-05-19, post-kill-test attempt)**: **the flexinfer controller did not reconcile the kill-test Model CR**. The Model sat with empty Status / no Events / unchanged resourceVersion for 8+ hours. The 26B was never evicted. Working hypotheses (in priority order):
+    - The Model reconciler has a predicate that gates on `serviceLabels` or `litellm.enabled: true`; the kill-test deliberately omitted both. If true, **Slice 3a has the same problem** — its production Whisper Model CR also has no `serviceLabels` (the plan kept them off until the kill-test passed) and would similarly never reconcile. Slice 3a needs `serviceLabels: [whisper]` added before applying.
+    - The shared-GPU controller in `controllers/model_shared_gpu.go` only acts when a Deployment already exists for the new claimant. Chicken-and-egg if true.
+    - A subtle defect in master since the gfx906 commits (`5b134f28`, `9af52fc9`, `864a30ed`) that landed during the kill-test window — though the controller pod itself rolled successfully.
+
+    Investigation required before re-attempting Slice 1: read `controllers/model_controller.go` `Reconcile` predicate + `controllers/model_shared_gpu.go` `SetupWithManager` watch filters. Find what makes a Model invisible to the reconciler. Spec change to the kill-test Model CR (add `serviceLabels` etc.) is likely the fix.
+
 ## Risk Register
 
 | Risk | Likelihood | Impact | Mitigation |
@@ -345,7 +354,7 @@ Document findings in `.loom/asr-diarization-load-test-2026-05-18.md`. If 7900 XT
 
 | Slice | Verification | Owner | Status | Evidence path |
 |---|---|---|---|---|
-| 1 | Kill-test passes against pinned vLLM image | flexinfer maintainer | pending | `.loom/asr-diarization-kill-test-passed-2026-05-18.md` (or `-failed-`) |
+| 1 | Kill-test passes against pinned vLLM image | flexinfer maintainer | ⚠️ INCONCLUSIVE (2026-05-19) | `.loom/asr-diarization-kill-test-inconclusive-2026-05-19.md` |
 | 2 | `kubectl explain` shows new field; `make manifests` green | flexinfer maintainer | ✅ shipped | !423 merge commit `c8e4d75f`; CRD diff visible in MR |
 | 3a | Whisper Model CR reaches Ready; transcribe via proxy returns expected text | operator | blocked on Slice 1 | smoke log appended to validation matrix |
 | 3b | `go test ./backend -run TestVLLMArgs` passes; deployed pod has `--task transcription` | maintainer | ✅ shipped | !423 unit test `TestVLLMBackendArgs_Task` green |
