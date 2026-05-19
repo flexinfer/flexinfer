@@ -167,9 +167,53 @@ site_packages = pathlib.Path(site.getsitepackages()[0])
     _install()
     '''
 ).lstrip())
+(site_packages / "flexinfer_vllm_torch_rocm_compat.py").write_text(textwrap.dedent(
+    r'''
+    def _install():
+        try:
+            import torch
+        except Exception:
+            return
+
+        original = getattr(torch.cuda, "mem_get_info", None)
+        if original is None or getattr(original, "_flexinfer_gfx906_safe", False):
+            return
+
+        def safe_mem_get_info(device=None):
+            try:
+                return original(device)
+            except Exception:
+                if device is None:
+                    device = torch.cuda.current_device()
+                props = torch.cuda.get_device_properties(device)
+                total = int(getattr(props, "total_memory", 0) or 0)
+                try:
+                    reserved = int(torch.cuda.memory_reserved(device))
+                except Exception:
+                    reserved = 0
+                try:
+                    allocated = int(torch.cuda.memory_allocated(device))
+                except Exception:
+                    allocated = 0
+                used = max(reserved, allocated)
+                free = max(total - used, 0)
+                return free, total
+
+        safe_mem_get_info._flexinfer_gfx906_safe = True
+        torch.cuda.mem_get_info = safe_mem_get_info
+        try:
+            import torch.cuda.memory as cuda_memory
+            cuda_memory.mem_get_info = safe_mem_get_info
+        except Exception:
+            pass
+
+    _install()
+    '''
+).lstrip())
 (site_packages / "flexinfer_vllm_transformers_compat.pth").write_text(
     "import flexinfer_vllm_transformers_compat\n"
     "import flexinfer_vllm_triton_compat\n"
+    "import flexinfer_vllm_torch_rocm_compat\n"
 )
 PY
 
