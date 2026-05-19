@@ -53,6 +53,11 @@
 # natively. Keep the historical resource name for now, but use a Qwen2.5
 # canary artifact that this vLLM generation can load without the Transformers
 # fallback path.
+#
+# 2026-05-19 ROCm attention follow-up: Qwen2.5 advertises sliding-window
+# attention, and vLLM 0.7.3 cannot serve that path reliably on gfx906. The
+# canary disables sliding-window attention so the import-and-serve smoke can
+# validate the Radeon VII vLLM lane without exercising unsupported SWA kernels.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -79,6 +84,7 @@ spec:
     maxModelLen: 4096
     gpuMemoryUtilization: "0.85"
     maxNumSeqs: 2
+    disableSlidingWindow: true
     # ROCm gfx906 vLLM 0.7.3 — eager mode required to avoid CUDA-graph
     # compilation issues (gfx906 lacks the toolchain support that gfx1100/
     # gfx942 have).

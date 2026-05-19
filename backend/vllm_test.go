@@ -122,6 +122,7 @@ func TestVLLMBackendArgs_TuningKnobs(t *testing.T) {
 			"gpuMemoryUtilization": "0.92",
 			"maxNumSeqs":           256,
 			"maxNumBatchedTokens":  16384,
+			"disableSlidingWindow": true,
 			"enforceEager":         true,
 		},
 	}
@@ -140,6 +141,16 @@ func TestVLLMBackendArgs_TuningKnobs(t *testing.T) {
 	}
 	if v := argMap["--max-num-batched-tokens"]; v != "16384" {
 		t.Errorf("expected --max-num-batched-tokens=16384, got %q", v)
+	}
+	foundDisableSlidingWindow := false
+	for _, a := range args {
+		if a == "--disable-sliding-window" {
+			foundDisableSlidingWindow = true
+			break
+		}
+	}
+	if !foundDisableSlidingWindow {
+		t.Error("expected --disable-sliding-window to be present")
 	}
 	// enforce-eager is a flag, check it's present
 	found := false
