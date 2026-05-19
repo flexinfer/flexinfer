@@ -1,4 +1,4 @@
-# Qwen3-1.7B via vLLM on AMD gfx906 (Radeon VII) — canary lane
+# Qwen2.5-1.5B via vLLM on AMD gfx906 (Radeon VII) — canary lane
 #
 # Closes Track C of `.loom/gfx1100-gfx906-next-round-plan.md` (revive-or-retire
 # decision for gfx906 vLLM): chose Path A (revive). Track C investigation
@@ -13,7 +13,7 @@
 # vLLM, so this canary must be served by the standalone GPUProfile backend
 # image pinned in `deploy/gpuprofiles/gfx906.yaml` instead of the runtime
 # direct-load API:
-#   - Qwen3-1.7B FP16 ≈ 3.5 GB weights
+#   - Qwen2.5-1.5B FP16 ≈ 3 GB weights
 #   - vLLM overhead ≈ 5-7 GB (KV cache + activations)
 #   - Total budget: ~10-12 GB on a 16 GB Vega20 dGPU
 #
@@ -48,6 +48,11 @@
 # warm on Radeon VII drove the node back into DiskPressure during image pull.
 # Keep this canary scaled to zero and do not smoke it again until the node image
 # store has enough free space for the digest outside the activation path.
+#
+# 2026-05-18 runtime follow-up: vLLM 0.7.3 does not implement Qwen3ForCausalLM
+# natively. Keep the historical resource name for now, but use a Qwen2.5
+# canary artifact that this vLLM generation can load without the Transformers
+# fallback path.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -55,7 +60,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: vllm
-  source: HF://Qwen/Qwen3-1.7B
+  source: HF://Qwen/Qwen2.5-1.5B-Instruct
   gpu:
     vendor: amd
     shared: radeonvii-models
@@ -79,7 +84,7 @@ spec:
     # gfx942 have).
     enforceEager: true
     trustRemoteCode: true
-    servedModelName: qwen3-1.7b-vllm
+    servedModelName: qwen2.5-1.5b-vllm
     # gfx906 reports as gfx900; HSA_OVERRIDE_GFX_VERSION=9.0.6 is supplied
     # by the gfx906 GPUProfile env block. No per-model override needed.
     rocrVisibleDevices: "0"
@@ -98,14 +103,13 @@ spec:
       memory: 16Gi
   serviceLabels:
     - vllm-canary
-    - qwen3-1.7b-vllm
+    - qwen2.5-1.5b-vllm
   litellm:
     enabled: true
-    servedModelName: qwen3-1.7b-vllm
-    # Carry only canary-scoped aliases. The bare `qwen3-1.7b` alias is owned
-    # by the llama.cpp tool-router (qwen3-1p7b-tools-radeonvii) and must NOT
-    # be claimed here — would conflict with the existing fast-routing lane.
+    servedModelName: qwen2.5-1.5b-vllm
+    # Carry only canary-scoped aliases. Do not claim generic chat aliases until
+    # the gfx906 vLLM lane has live HTTP 200 evidence.
     aliases:
       - vllm-canary
-      - qwen3-1.7b-vllm
-      - qwen3-1.7b-vllm-vii
+      - qwen2.5-1.5b-vllm
+      - qwen2.5-1.5b-vllm-vii
