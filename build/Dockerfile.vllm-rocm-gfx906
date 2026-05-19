@@ -87,10 +87,10 @@ RUN pip install --no-cache-dir \
     protobuf \
     "numpy<2"
 
-# vLLM 0.7.3 expects all_special_tokens_extended on tokenizers. Newer
-# transformers 5.x removed that compatibility property, which crashes Qwen
-# tokenizers before the engine can start. Install a small site hook so this
-# legacy vLLM build can run against the modern transformers stack in the base.
+# vLLM 0.7.3 expects older tokenizer and Triton cache APIs. Newer base
+# dependencies removed those compatibility symbols, which crashes Qwen tokenizers
+# or the ROCm attention backend before the engine can start. Install a small
+# site hook so this legacy vLLM build can run against the modern base stack.
 RUN python3 - <<'PY'
 import pathlib
 import site
@@ -129,8 +129,33 @@ site_packages = pathlib.Path(site.getsitepackages()[0])
     _install()
     '''
 ).lstrip())
+(site_packages / "flexinfer_vllm_triton_compat.py").write_text(textwrap.dedent(
+    r'''
+    def _install():
+        try:
+            import os
+            import pathlib
+            import triton.runtime.cache as triton_cache
+        except Exception:
+            return
+
+        if hasattr(triton_cache, "default_cache_dir"):
+            return
+
+        def default_cache_dir():
+            configured = os.environ.get("TRITON_CACHE_DIR")
+            if configured:
+                return configured
+            return str(pathlib.Path.home() / ".triton" / "cache")
+
+        triton_cache.default_cache_dir = default_cache_dir
+
+    _install()
+    '''
+).lstrip())
 (site_packages / "flexinfer_vllm_transformers_compat.pth").write_text(
     "import flexinfer_vllm_transformers_compat\n"
+    "import flexinfer_vllm_triton_compat\n"
 )
 PY
 
