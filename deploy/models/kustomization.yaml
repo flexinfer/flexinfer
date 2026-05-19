@@ -20,11 +20,12 @@ resources:
   # - gemma4-31b-gptq.yaml          # disabled; promoted-state pending dense rebuild
   # - fast-chat-7900xtx.yaml        # disabled 2026-05-16; Gemma4 26B now serves fast-chat/default-chat.
   - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (7900xtx instance #1)
-  # Slice 1 kill-test retry (ASR/diarization plan). Force-promoted (gpu.forcePromotion: true)
-  # so it bypasses the chooseSharedGroupLeader Ready-first preference and preempts the 26B
-  # warm primary. Tear down by removing this line + the manifest after the assumption is
-  # proven / falsified. See .loom/asr-diarization-7900xtx-plan-2026-05-18.md Slice 1.
-  - whisper-kill-test-v2.yaml       # vLLM Whisper-large-v3-turbo kill-test, force-promoted into 7900xtx-textgen
+  # Slice 1 kill-test v2 (whisper-kill-test-v2.yaml) was torn down 2026-05-19
+  # after on-cluster INCONCLUSIVE outcome (cache strategy mismatch — only a
+  # cache PVC was declared, no main model PVC, so cache-copy never fired and
+  # the runtime saw an empty mount). Evidence:
+  # .loom/asr-diarization-kill-test-v2-inconclusive-2026-05-19.md. v3 will be
+  # written with proper main+cache PVC layout mirroring gemma4-26b-a4b-gptq.
   # - gemma4-26b-a4b-gptq-long.yaml # disabled; superseded by base 26B at 16K (see 2026-05-03 dedupe)
   # 2026-05-05: replaced by Qwen3.6. The old qwen3-30b-a3b canary requested
   # gpu.count=2 and stayed unschedulable after gfx1100 nodes were normalized
