@@ -55,6 +55,7 @@ type LoadedModel struct {
 	HealthURL string             `json:"-"`
 	cmd       *exec.Cmd          `json:"-"`
 	cancel    context.CancelFunc `json:"-"`
+	done      chan error         `json:"-"`
 }
 
 // NodeMode represents the operating mode of a GPU node.
@@ -68,6 +69,10 @@ const (
 // Manager controls backend subprocess lifecycle on a GPU node.
 // Only one backend subprocess runs at a time (single-GPU constraint).
 type Manager struct {
+	// opMu serializes lifecycle operations. m.mu protects state reads/writes,
+	// but must not be held while waiting for backend subprocess shutdown.
+	opMu sync.Mutex
+
 	mu sync.RWMutex
 
 	// active is the currently loaded model (nil if none).
@@ -138,23 +143,28 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		return fmt.Errorf("backend %q is not bundled in flexinfer-runtime images; use the dedicated ComfyUI image", req.Backend)
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 
 	// Idempotency: if the same model+backend is already loaded and healthy,
 	// skip the unload/reload cycle.  This prevents the controller and proxy
 	// from fighting over the same model.
+	m.mu.Lock()
 	if m.active != nil && m.active.Name == name && m.active.Backend == req.Backend &&
 		(m.active.State == ModelStateReady || m.active.State == ModelStateLoading) {
+		state := string(m.active.State)
+		m.mu.Unlock()
 		logger.Info("Model already loaded, skipping reload",
-			"state", string(m.active.State))
+			"state", state)
 		return nil
 	}
 
 	// Unload any active model first (different model or failed state).
-	if m.active != nil {
-		logger.Info("Unloading active model before loading new one", "active", m.active.Name)
-		if err := m.unloadLocked(ctx); err != nil {
+	active := m.active
+	m.mu.Unlock()
+	if active != nil {
+		logger.Info("Unloading active model before loading new one", "active", active.Name)
+		if err := m.unloadActive(ctx, active); err != nil {
 			logger.Error(err, "Failed to unload active model, forcing")
 		}
 	}
@@ -250,9 +260,12 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		Port:    backendPort,
 		cmd:     cmd,
 		cancel:  cancel,
+		done:    make(chan error, 1),
 	}
 
+	m.mu.Lock()
 	m.active = loaded
+	m.mu.Unlock()
 
 	// Clear any previous model state metrics.
 	ModelActiveState.Reset()
@@ -265,17 +278,25 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	)
 
 	if err := cmd.Start(); err != nil {
+		m.mu.Lock()
 		loaded.State = ModelStateFailed
 		loaded.Error = err.Error()
+		if m.active == loaded {
+			m.active = nil
+		}
+		m.mu.Unlock()
 		cancel()
+		close(loaded.done)
 		ModelLoadsTotal.WithLabelValues(req.Backend, "error").Inc()
 		ModelActiveState.Reset()
 		ModelActiveState.WithLabelValues(name, req.Backend, "Failed").Set(1)
 		return fmt.Errorf("failed to start backend: %w", err)
 	}
 
+	m.mu.Lock()
 	loaded.PID = cmd.Process.Pid
 	loaded.LoadedAt = time.Now()
+	m.mu.Unlock()
 
 	ModelLoadsTotal.WithLabelValues(req.Backend, "ok").Inc()
 
@@ -289,7 +310,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	}
 
 	// Monitor subprocess exit.
-	go m.monitorProcess(subCtx, name, cmd)
+	go m.monitorProcess(subCtx, loaded)
 
 	// Start health checking in background.
 	// Allow the load request config to override the backend's default startup timeout
@@ -312,36 +333,39 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 
 // Unload stops the active model's backend subprocess.
 func (m *Manager) Unload(ctx context.Context, name string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 
+	m.mu.Lock()
 	if m.active == nil || m.active.Name != name {
+		m.mu.Unlock()
 		return fmt.Errorf("model %q is not loaded", name)
 	}
+	active := m.active
+	m.mu.Unlock()
 
-	return m.unloadLocked(ctx)
+	return m.unloadActive(ctx, active)
 }
 
-// unloadLocked stops the active subprocess. Caller must hold m.mu.
-func (m *Manager) unloadLocked(ctx context.Context) error {
-	if m.active == nil {
+// unloadActive stops the active subprocess without holding m.mu while waiting.
+func (m *Manager) unloadActive(ctx context.Context, active *LoadedModel) error {
+	if active == nil {
 		return nil
 	}
 
-	logger := log.FromContext(ctx).WithValues("model", m.active.Name)
-	m.active.State = ModelStateStopping
+	logger := log.FromContext(ctx).WithValues("model", active.Name)
+	m.mu.Lock()
+	if m.active != active {
+		m.mu.Unlock()
+		return nil
+	}
+	active.State = ModelStateStopping
+	m.mu.Unlock()
 
 	// Send SIGTERM for graceful shutdown.
-	if m.active.cmd != nil && m.active.cmd.Process != nil {
-		logger.Info("Sending SIGTERM to backend", "pid", m.active.PID)
-		_ = m.active.cmd.Process.Signal(syscall.SIGTERM)
-
-		// Wait for graceful exit with timeout. The done channel signals
-		// that cmd.Wait() has returned and the process has been reaped.
-		// We must not call Kill() after Wait() returns, because the PID
-		// may have been recycled by the OS.
-		done := make(chan error, 1)
-		go func() { done <- m.active.cmd.Wait() }()
+	if active.cmd != nil && active.cmd.Process != nil {
+		logger.Info("Sending SIGTERM to backend", "pid", active.PID)
+		_ = active.cmd.Process.Signal(syscall.SIGTERM)
 
 		select {
 		case <-time.After(m.shutdownTimeout):
@@ -350,32 +374,36 @@ func (m *Manager) unloadLocked(ctx context.Context) error {
 			// if Wait() already returned, the PID is reaped and could be
 			// reassigned to an unrelated process.
 			select {
-			case err := <-done:
+			case err := <-active.done:
 				// Process already exited before we could kill it.
 				if err != nil {
 					logger.Info("Backend exited during shutdown timeout", "error", err)
 				}
 			default:
-				logger.Info("Shutdown timeout exceeded, sending SIGKILL", "pid", m.active.PID)
-				if err := m.active.cmd.Process.Kill(); err != nil {
+				logger.Info("Shutdown timeout exceeded, sending SIGKILL", "pid", active.PID)
+				if err := active.cmd.Process.Kill(); err != nil {
 					logger.Info("Kill returned error (process may have already exited)", "error", err)
 				}
-				<-done // Wait for the process to be reaped after kill.
+				<-active.done // Wait for the process to be reaped after kill.
 			}
-		case err := <-done:
+		case err := <-active.done:
 			if err != nil {
 				logger.Info("Backend exited", "error", err)
 			}
 		}
 	}
 
-	if m.active.cancel != nil {
-		m.active.cancel()
+	if active.cancel != nil {
+		active.cancel()
 	}
 
-	ModelUnloadsTotal.WithLabelValues(m.active.Backend, "requested").Inc()
+	ModelUnloadsTotal.WithLabelValues(active.Backend, "requested").Inc()
 	ModelActiveState.Reset()
-	m.active = nil
+	m.mu.Lock()
+	if m.active == active {
+		m.active = nil
+	}
+	m.mu.Unlock()
 	return nil
 }
 
@@ -415,9 +443,13 @@ func (m *Manager) Status() RuntimeStatus {
 
 // Shutdown gracefully stops any active subprocess.
 func (m *Manager) Shutdown(ctx context.Context) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.unloadLocked(ctx)
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
+
+	m.mu.RLock()
+	active := m.active
+	m.mu.RUnlock()
+	return m.unloadActive(ctx, active)
 }
 
 // Mode returns the current node operating mode.
@@ -448,15 +480,17 @@ func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 	}
 
 	// Unload whatever is currently running.
-	if m.active != nil {
-		logger.Info("Unloading active model for mode switch", "active", m.active.Name)
-		if err := m.unloadLocked(ctx); err != nil {
-			logger.Error(err, "Failed to unload during mode switch")
-		}
-	}
+	active := m.active
 
 	m.mode = target
 	m.mu.Unlock()
+
+	if active != nil {
+		logger.Info("Unloading active model for mode switch", "active", active.Name)
+		if err := m.unloadActive(ctx, active); err != nil {
+			logger.Error(err, "Failed to unload during mode switch")
+		}
+	}
 
 	// Phase 2: if gaming mode, call Load() without holding the lock.
 	// Load() acquires m.mu internally for its own state management.
@@ -498,23 +532,25 @@ type ModelSummary struct {
 }
 
 // monitorProcess waits for the subprocess to exit and updates state.
-func (m *Manager) monitorProcess(ctx context.Context, name string, cmd *exec.Cmd) {
-	logger := log.FromContext(ctx).WithValues("model", name)
+func (m *Manager) monitorProcess(ctx context.Context, loaded *LoadedModel) {
+	logger := log.FromContext(ctx).WithValues("model", loaded.Name)
 
-	err := cmd.Wait()
+	err := loaded.cmd.Wait()
+	loaded.done <- err
+	close(loaded.done)
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	// Only update if this is still the active model.
-	if m.active != nil && m.active.Name == name {
+	if m.active == loaded {
 		if err != nil && m.active.State != ModelStateStopping {
 			logger.Error(err, "Backend subprocess crashed")
 			m.active.State = ModelStateFailed
 			m.active.Error = err.Error()
-			BackendSubprocessCrashesTotal.WithLabelValues(name, m.active.Backend).Inc()
+			BackendSubprocessCrashesTotal.WithLabelValues(loaded.Name, m.active.Backend).Inc()
 			ModelActiveState.Reset()
-			ModelActiveState.WithLabelValues(name, m.active.Backend, "Failed").Set(1)
+			ModelActiveState.WithLabelValues(loaded.Name, m.active.Backend, "Failed").Set(1)
 		}
 	}
 }

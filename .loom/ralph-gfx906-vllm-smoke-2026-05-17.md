@@ -189,3 +189,37 @@ image can be pulled without triggering DiskPressure.
   device properties plus PyTorch allocation counters when `mem_get_info` fails.
 - The rebuilt image was published and pinned as
   `registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:84f0ae2bb1ea46163885aad55181540bee9995b4b4b0c656f3943b7580e07e1e`.
+
+2026-05-19 runtime manager lock follow-up:
+
+- MR !428 switched the canary source to `HF://Qwen/Qwen2.5-1.5B-Instruct`
+  because vLLM 0.7.3 does not have a native `Qwen3ForCausalLM`
+  implementation and falls back to the slower/failed Transformers path.
+- The Qwen2.5 smoke still timed out after 900 seconds. Live inspection showed
+  the standalone vLLM Deployment was scaled to zero while the persistent
+  `flexinfer-runtime-gfx906` pod was `0/1 Running`: `/healthz` returned 200,
+  but `/readyz`, `/api/v1/status`, model health checks, and model load calls
+  timed out.
+- Controller logs showed repeated `gonzalomo-fluxpony-imagegen` load attempts
+  and `qwen3-1p7b-tools-radeonvii` unload/load health checks against the same
+  runtime. The runtime manager held its state lock while waiting for backend
+  shutdown and also allowed unload and monitor paths to race on `cmd.Wait()`;
+  a stubborn backend could starve runtime status/ready endpoints and keep the
+  controller in a duplicate load loop.
+- This follow-up changes the runtime manager so lifecycle operations are
+  serialized separately from state reads, shutdown waits happen without holding
+  the state lock, and the monitor goroutine owns `cmd.Wait()`. Regression test:
+  `TestUnloadDoesNotBlockStatusWhileWaitingForBackendExit`.
+
+2026-05-19 CK flash-attention follow-up:
+
+- Retrying the Qwen2.5 smoke after the runtime recovered proved the image-store
+  move is sufficient for the current pinned image: the 10.4 GB vLLM image pull
+  completed in 7m25s and `cblevins-radeonvii` stayed `DiskPressure=False`.
+- The canary reached vLLM engine initialization and started loading
+  `Qwen/Qwen2.5-1.5B-Instruct`, then crashed with vLLM's gfx906 warning that
+  Qwen2 sliding-window attention is not supported by ROCm Triton flash
+  attention and to use CK flash attention by setting
+  `VLLM_USE_TRITON_FLASH_ATTN=0`.
+- This follow-up adds that env var to `GPUProfile/gfx906` so controller-created
+  vLLM deployments inherit the profile-level CK flash attention fallback.
