@@ -77,6 +77,7 @@ func TestPreserveActiveSharedLoadingDuringCacheRefresh(t *testing.T) {
 		GroupName: "test-group",
 		State:     "Active",
 	})
+	assert.True(t, activeSharedModelWithinActivationWindow(activeLoading, now))
 	assert.True(t, preserveActiveSharedLoadingDuringCacheRefresh(activeLoading, now))
 
 	activePending := makeSharedModel("pending", 100, aiv1alpha2.ModelPhasePending, timePtr(recent), &aiv1alpha2.SharedGroupStatus{
@@ -89,13 +90,22 @@ func TestPreserveActiveSharedLoadingDuringCacheRefresh(t *testing.T) {
 		GroupName: "test-group",
 		State:     "Queued",
 	})
+	assert.False(t, activeSharedModelWithinActivationWindow(queuedLoading, now))
 	assert.False(t, preserveActiveSharedLoadingDuringCacheRefresh(queuedLoading, now))
 
 	staleLoading := makeSharedModel("stale", 100, aiv1alpha2.ModelPhaseLoading, timePtr(old), &aiv1alpha2.SharedGroupStatus{
 		GroupName: "test-group",
 		State:     "Active",
 	})
+	assert.False(t, activeSharedModelWithinActivationWindow(staleLoading, now))
 	assert.False(t, preserveActiveSharedLoadingDuringCacheRefresh(staleLoading, now))
+
+	activeIdle := makeSharedModel("idle", 100, aiv1alpha2.ModelPhaseIdle, timePtr(recent), &aiv1alpha2.SharedGroupStatus{
+		GroupName: "test-group",
+		State:     "Active",
+	})
+	assert.True(t, activeSharedModelWithinActivationWindow(activeIdle, now))
+	assert.False(t, preserveActiveSharedLoadingDuringCacheRefresh(activeIdle, now))
 }
 
 // --------------------------------------------------------------------------

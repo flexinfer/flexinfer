@@ -323,7 +323,16 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// Gate activation on cache readiness: keep replicas at 0 while a prefetch job is running/failed.
 	if !cacheReady {
-		if preserveActiveSharedLoadingDuringCacheRefresh(model, time.Now()) {
+		now := time.Now()
+		preserveActiveShared := preserveActiveSharedLoadingDuringCacheRefresh(model, now)
+		if !preserveActiveShared && activeSharedModelWithinActivationWindow(model, now) {
+			hasPod, err := r.hasActiveModelPod(ctx, model)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			preserveActiveShared = hasPod
+		}
+		if preserveActiveShared {
 			if desiredReplicas < 1 {
 				desiredReplicas = 1
 			}
@@ -431,6 +440,24 @@ func (r *ModelReconciler) deploymentExists(ctx context.Context, model *aiv1alpha
 		return false, err
 	}
 	return true, nil
+}
+
+func (r *ModelReconciler) hasActiveModelPod(ctx context.Context, model *aiv1alpha2.Model) (bool, error) {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(model.Namespace), client.MatchingLabels(r.selectorLabelsForModel(model))); err != nil {
+		return false, err
+	}
+
+	for i := range podList.Items {
+		pod := &podList.Items[i]
+		if pod.DeletionTimestamp != nil || strings.Contains(pod.Name, "-cache-") {
+			continue
+		}
+		if pod.Status.Phase == corev1.PodPending || pod.Status.Phase == corev1.PodRunning {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 // pruneFailedModelPods removes old failed pods for this model to keep
