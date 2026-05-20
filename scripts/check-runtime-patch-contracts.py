@@ -241,6 +241,8 @@ def assert_gfx906_vllm_compat_hooks_contract(install_script: str) -> None:
     init_contract = (
         '"_no_grad_normal_"',
         '"_no_grad_uniform_"',
+        '"_no_grad_fill_"',
+        '"_no_grad_zero_"',
     )
     for token in init_contract:
         if token not in install_script:
