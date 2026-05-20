@@ -204,7 +204,7 @@ llamacpp:
 
 vllm:
   rocmImage: registry.harbor.lan/library/vllm-api:rocm-navi-fp8e5-v2
-  gfx1100Image: registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8
+  gfx1100Image: registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
   gfx906Image: registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:2139c92b3ca00716216f9e5644e9fbd29b2bba7237dc0459017c86012ece51c3
 
 diffusers:
@@ -220,13 +220,13 @@ imagePrewarm:
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
       images:
-        - registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8
+        - registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
       images:
-        - registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8
+        - registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
 quantization:
   modelToolsImage: "registry.harbor.lan/flexinfer/model-tools:master"

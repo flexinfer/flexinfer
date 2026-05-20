@@ -32,7 +32,7 @@ spec:
   backends:
     vllm:
       support: full
-      image: registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8
+      image: registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
       # Wave 1 capability matrix backfill (2026-05-15, spec .loom/21-product-spec-vllm-feature-parity-2026-05-15.md).
       # Controller/runtime load paths consume safe defaults when Model config omits them.
       vllm:
