@@ -1,0 +1,240 @@
+# gfx906 HIP embedding-op feasibility probe.
+#
+# Purpose: determine whether torch.embedding / Tensor.index_select / F.embedding
+# crashes on Vega20 (gfx906) standalone — i.e. independent of vLLM. If a
+# standalone probe reproduces the same segfault that vLLM's _dummy_run hit
+# at vocab_parallel_embedding.py:47, the broken op family is a ROCm-runtime
+# layer bug, not a vLLM-layer bug, and the strategic pivot is preferred over
+# more Python-level monkey-patching.
+#
+# The probe image is the same digest the production runtime is pinned to,
+# so the result reflects exactly the PyTorch+ROCm build the pod uses.
+#
+# Usage:
+#   kubectl apply -f deploy/debug/gfx906-hip-embedding-probe.yaml
+#   kubectl logs -f job/gfx906-hip-embedding-probe -n flexinfer-system
+#   kubectl delete -f deploy/debug/gfx906-hip-embedding-probe.yaml
+#
+# Reference: .loom/ralph-gfx906-vllm-embedding-probe-2026-05-20.md
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gfx906-hip-embedding-probe
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+data:
+  probe.py: |
+    #!/usr/bin/env python3
+    """gfx906 HIP embedding-op feasibility probe.
+
+    Each scenario runs in its own subprocess (driven by run.sh) so a HIP
+    segfault on one scenario does not terminate the rest. The decisive
+    output is the SCENARIO header + exit code line per variant, plus the
+    Python faulthandler stack for any crash.
+    """
+    import argparse
+    import faulthandler
+    import os
+    import sys
+    import time
+    import traceback
+
+    faulthandler.enable()
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--scenario", type=int, required=True)
+    args = parser.parse_args()
+
+    import torch
+    import torch.nn.functional as F
+
+    def banner(msg: str) -> None:
+        print(f"=== {msg} ===", flush=True)
+
+    def env_dump() -> None:
+        banner(f"scenario {args.scenario} env")
+        print(f"python={sys.version.split()[0]}", flush=True)
+        print(f"torch={torch.__version__}", flush=True)
+        print(f"hip_available={torch.cuda.is_available()}", flush=True)
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            print(f"gpu_name={props.name}", flush=True)
+            print(f"gpu_total_vram_gib={props.total_memory / 1024**3:.2f}", flush=True)
+            arch = getattr(torch.version, "hip", None) or "unknown"
+            print(f"hip_version={arch}", flush=True)
+            try:
+                free, total = torch.cuda.mem_get_info(0)
+                print(f"mem_get_info free={free} total={total}", flush=True)
+            except Exception as exc:  # noqa: BLE001
+                print(f"mem_get_info_error={exc!r}", flush=True)
+
+    def run_scenario_1_cpu_baseline() -> None:
+        """CPU torch.embedding — must pass (sanity for the surrounding harness)."""
+        banner("scenario 1: cpu baseline torch.embedding [50272, 768]")
+        weight = torch.randn(50272, 768, dtype=torch.float32, device="cpu")
+        ids = torch.zeros((1, 1), dtype=torch.long, device="cpu")
+        out = torch.embedding(weight, ids)
+        print(f"out_shape={tuple(out.shape)} out_device={out.device}", flush=True)
+        print("PASS scenario 1 cpu baseline", flush=True)
+
+    def run_scenario_2_hip_tiny() -> None:
+        """Tiniest possible HIP torch.embedding — single token, single hidden dim row."""
+        banner("scenario 2: hip tiny torch.embedding [4, 8]")
+        weight = torch.randn(4, 8, dtype=torch.float32, device="cuda")
+        ids = torch.zeros((1, 1), dtype=torch.long, device="cuda")
+        out = torch.embedding(weight, ids)
+        torch.cuda.synchronize()
+        print(f"out_shape={tuple(out.shape)} out_device={out.device}", flush=True)
+        print("PASS scenario 2 hip tiny", flush=True)
+
+    def run_scenario_3_hip_opt125m_min() -> None:
+        """HIP torch.embedding with OPT-125M vocab shape [50272, 768], minimal input."""
+        banner("scenario 3: hip OPT-125M weight shape [50272, 768], ids [1, 1]")
+        weight = torch.randn(50272, 768, dtype=torch.float32, device="cuda")
+        ids = torch.zeros((1, 1), dtype=torch.long, device="cuda")
+        out = torch.embedding(weight, ids)
+        torch.cuda.synchronize()
+        print(f"out_shape={tuple(out.shape)} out_device={out.device}", flush=True)
+        print("PASS scenario 3 hip opt125m min", flush=True)
+
+    def run_scenario_4_hip_opt125m_dummy_run() -> None:
+        """HIP torch.embedding with the shape vLLM's _dummy_run hits.
+
+        OPT-125M weight [50272, 768] in float16 (vLLM default dtype), input_ids
+        shape comparable to _dummy_run profile forward pass for KV cache sizing.
+        vLLM defaults max_num_seqs=256, max_model_len varies; pick a modest
+        shape that matches the crashing path without ballooning memory.
+        """
+        banner("scenario 4: hip OPT-125M float16 [50272, 768], ids [256, 1024]")
+        weight = torch.randn(50272, 768, dtype=torch.float16, device="cuda")
+        ids = torch.zeros((256, 1024), dtype=torch.long, device="cuda")
+        out = torch.embedding(weight, ids)
+        torch.cuda.synchronize()
+        print(f"out_shape={tuple(out.shape)} out_device={out.device}", flush=True)
+        print("PASS scenario 4 hip opt125m dummy_run", flush=True)
+
+    def run_scenario_5_hip_F_embedding() -> None:
+        """torch.nn.functional.embedding — the actual call site at vocab_parallel_embedding.py:47."""
+        banner("scenario 5: hip F.embedding [50272, 768] float16, ids [1, 1]")
+        weight = torch.randn(50272, 768, dtype=torch.float16, device="cuda")
+        ids = torch.zeros((1, 1), dtype=torch.long, device="cuda")
+        out = F.embedding(ids, weight)
+        torch.cuda.synchronize()
+        print(f"out_shape={tuple(out.shape)} out_device={out.device}", flush=True)
+        print("PASS scenario 5 hip F.embedding", flush=True)
+
+    def run_scenario_6_hip_index_select() -> None:
+        """torch.Tensor.index_select — the underlying op invoked by torch.embedding."""
+        banner("scenario 6: hip Tensor.index_select [50272, 768] float16, indices [1024]")
+        weight = torch.randn(50272, 768, dtype=torch.float16, device="cuda")
+        ids = torch.zeros(1024, dtype=torch.long, device="cuda")
+        out = weight.index_select(0, ids)
+        torch.cuda.synchronize()
+        print(f"out_shape={tuple(out.shape)} out_device={out.device}", flush=True)
+        print("PASS scenario 6 hip index_select", flush=True)
+
+    SCENARIOS = {
+        1: run_scenario_1_cpu_baseline,
+        2: run_scenario_2_hip_tiny,
+        3: run_scenario_3_hip_opt125m_min,
+        4: run_scenario_4_hip_opt125m_dummy_run,
+        5: run_scenario_5_hip_F_embedding,
+        6: run_scenario_6_hip_index_select,
+    }
+
+    env_dump()
+    start = time.time()
+    try:
+        SCENARIOS[args.scenario]()
+    except Exception:  # noqa: BLE001
+        banner(f"FAIL scenario {args.scenario} python exception")
+        traceback.print_exc()
+        sys.exit(2)
+    print(f"scenario {args.scenario} elapsed_s={time.time() - start:.2f}", flush=True)
+    sys.exit(0)
+  run.sh: |
+    #!/bin/bash
+    # Driver: run each scenario in its own subprocess so a segfault on one does
+    # not terminate the rest. Print SCENARIO N exit=K markers for downstream
+    # parsing. Exit non-zero iff any scenario crashed.
+    set -u
+    SCENARIOS="${SCENARIOS:-1 2 3 4 5 6}"
+    FAILED=""
+    for s in $SCENARIOS; do
+      echo "=========================================="
+      echo "DRIVER: starting scenario $s"
+      echo "=========================================="
+      python3 /scripts/probe.py --scenario "$s"
+      rc=$?
+      echo "DRIVER: SCENARIO $s exit=$rc"
+      if [ "$rc" -ne 0 ]; then
+        FAILED="${FAILED}${s} "
+      fi
+    done
+    echo "=========================================="
+    echo "DRIVER: summary"
+    echo "=========================================="
+    if [ -z "$FAILED" ]; then
+      echo "DRIVER: ALL SCENARIOS PASS"
+      exit 0
+    else
+      echo "DRIVER: FAILED SCENARIOS = $FAILED"
+      exit 1
+    fi
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gfx906-hip-embedding-probe
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flexinfer
+        flexinfer.ai/purpose: debug
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: probe
+          image: registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:2139c92b3ca00716216f9e5644e9fbd29b2bba7237dc0459017c86012ece51c3
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/run.sh"]
+          env:
+            - name: HSA_OVERRIDE_GFX_VERSION
+              value: "9.0.6"
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 8Gi
+              amd.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: 16Gi
+              amd.com/gpu: "1"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: gfx906-hip-embedding-probe
+            defaultMode: 0755
