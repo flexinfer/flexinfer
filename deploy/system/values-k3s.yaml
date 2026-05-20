@@ -205,7 +205,7 @@ llamacpp:
 vllm:
   rocmImage: registry.harbor.lan/library/vllm-api:rocm-navi-fp8e5-v2
   gfx1100Image: registry.harbor.lan/flexinfer/vllm@sha256:cb6d92c956ee150b4b8210e625586140e1b5da4c204caa422b1965e953de78e8
-  gfx906Image: registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:020e737330f7e6355634ffc7d606d294806c65988e7f48f3099f6013fda07964
+  gfx906Image: registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:d545fb8a36acd93c303d332ce39601982c71f9f277502ee88d5fdd01f3ac6bb3
 
 diffusers:
   rocmImage: registry.harbor.lan/library/diffusers-api:rocm-0cbf9b7
