@@ -133,7 +133,7 @@ HOOKS = {
             if not getattr(torch.version, "hip", None):
                 return
 
-            def _patch_in_place(name, kernel_attr):
+            def _patch_in_place(name):
                 original = getattr(init, name, None)
                 if original is None or getattr(original, "_flexinfer_gfx906_safe", False):
                     return
@@ -144,7 +144,13 @@ HOOKS = {
                     cpu_tensor = torch.empty(
                         tensor.shape, dtype=tensor.dtype, device="cpu"
                     )
-                    getattr(cpu_tensor, kernel_attr)(*args, **kwargs)
+                    # Delegate to the original function on a CPU tensor so the
+                    # CPU normal_/uniform_ kernel runs (the HIP RNG kernel is
+                    # what segfaults on Vega20). This keeps signature parity
+                    # for variants that pass a generator positionally or call
+                    # a sequence of kernels (e.g. _no_grad_trunc_normal_ which
+                    # is uniform_ + erfinv_ + mul_ + add_ + clamp_).
+                    original(cpu_tensor, *args, **kwargs)
                     with torch.no_grad():
                         tensor.copy_(cpu_tensor)
                     return tensor
@@ -157,9 +163,9 @@ HOOKS = {
             # OPT-125M Embedding init via _no_grad_normal_). Random init is
             # overwritten by vLLM's pretrained-weight load, so route the in-place
             # init through CPU and copy back to the HIP tensor.
-            _patch_in_place("_no_grad_normal_", "normal_")
-            _patch_in_place("_no_grad_uniform_", "uniform_")
-            _patch_in_place("_no_grad_trunc_normal_", "normal_")
+            _patch_in_place("_no_grad_normal_")
+            _patch_in_place("_no_grad_uniform_")
+            _patch_in_place("_no_grad_trunc_normal_")
 
         _install()
     """,
