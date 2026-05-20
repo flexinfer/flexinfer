@@ -178,6 +178,54 @@ HOOKS = {
 
         _install()
     """,
+    "flexinfer_vllm_torch_tensor_compat.py": r"""
+        def _install():
+            try:
+                import torch
+            except Exception:
+                return
+
+            if not getattr(torch.version, "hip", None):
+                return
+
+            def _patch_tensor_method(name):
+                original = getattr(torch.Tensor, name, None)
+                if original is None or getattr(original, "_flexinfer_gfx906_safe", False):
+                    return
+
+                def safe(self, *args, **kwargs):
+                    if not self.is_cuda:
+                        return original(self, *args, **kwargs)
+                    # The HIP fill_/zero_ kernels on Vega20 segfault for the
+                    # zero-pad slice in vLLM's VocabParallelEmbedding.weight_loader
+                    # (vocab_parallel_embedding.py:401 -> param[N:].data.fill_(0)).
+                    # Mirror the in-place op onto a CPU tensor and copy_ back so
+                    # the broken HIP kernel is never invoked. self.copy_ uses the
+                    # HIP copy_ kernel which is known-good on this image (line 400
+                    # of the same weight_loader already ran successfully).
+                    cpu_mirror = torch.empty(
+                        self.shape, dtype=self.dtype, device="cpu"
+                    )
+                    original(cpu_mirror, *args, **kwargs)
+                    with torch.no_grad():
+                        self.copy_(cpu_mirror)
+                    return self
+
+                safe._flexinfer_gfx906_safe = True
+                setattr(torch.Tensor, name, safe)
+
+            # gfx906/Vega20 segfaults inside the HIP Tensor.fill_/zero_ kernels
+            # when invoked outside torch.nn.init (observed at vLLM v0.7.3
+            # vocab_parallel_embedding.py:401 -> param[loaded:].data.fill_(0)
+            # zero-padding the vocab embedding when the loaded vocab is smaller
+            # than the parallel-padded vocab). The torch.nn.init.* family is
+            # already CPU-mirrored by flexinfer_vllm_torch_init_compat; this
+            # hook covers direct Tensor.fill_/zero_ calls that bypass it.
+            _patch_tensor_method("fill_")
+            _patch_tensor_method("zero_")
+
+        _install()
+    """,
     "flexinfer_vllm_worker_diagnostics.py": r"""
         def _install():
             try:
