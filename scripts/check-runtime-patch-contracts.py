@@ -229,6 +229,7 @@ def assert_gfx906_vllm_compat_hooks_contract(install_script: str) -> None:
         "flexinfer_vllm_triton_compat.py",
         "flexinfer_vllm_torch_rocm_compat.py",
         "flexinfer_vllm_torch_init_compat.py",
+        "flexinfer_vllm_torch_tensor_compat.py",
         "flexinfer_vllm_worker_diagnostics.py",
     )
     for hook in required_hooks:
@@ -248,6 +249,17 @@ def assert_gfx906_vllm_compat_hooks_contract(install_script: str) -> None:
         if token not in install_script:
             fail(
                 "install_vllm_gfx906_compat.py no longer patches torch.nn.init "
+                f"target {token}"
+            )
+
+    tensor_contract = (
+        '_patch_tensor_method("fill_")',
+        '_patch_tensor_method("zero_")',
+    )
+    for token in tensor_contract:
+        if token not in install_script:
+            fail(
+                "install_vllm_gfx906_compat.py no longer patches torch.Tensor "
                 f"target {token}"
             )
 
