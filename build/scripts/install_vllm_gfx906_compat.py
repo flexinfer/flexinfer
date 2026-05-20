@@ -158,14 +158,23 @@ HOOKS = {
                 safe._flexinfer_gfx906_safe = True
                 setattr(init, name, safe)
 
-            # gfx906/Vega20 segfaults inside the HIP random kernels invoked by
-            # torch.Tensor.normal_/uniform_ during module __init__ (observed at
-            # OPT-125M Embedding init via _no_grad_normal_). Random init is
-            # overwritten by vLLM's pretrained-weight load, so route the in-place
-            # init through CPU and copy back to the HIP tensor.
+            # gfx906/Vega20 segfaults inside the HIP kernels invoked from
+            # torch.nn.init during module __init__:
+            #   - Random init: _no_grad_normal_/_uniform_/_trunc_normal_ ->
+            #     Tensor.normal_/uniform_ (observed at OPT-125M Embedding init,
+            #     vLLM v0.7.3 opt.py:218 -> OPTLearnedPositionalEmbedding ->
+            #     nn.Embedding.reset_parameters -> init.normal_).
+            #   - Fill init: _no_grad_fill_/_no_grad_zero_ -> Tensor.fill_/zero_
+            #     (observed at OPT-125M LayerNorm init, vLLM v0.7.3 opt.py:245 ->
+            #     nn.LayerNorm.reset_parameters -> init.ones_/zeros_).
+            # Both random init and constant init are overwritten by vLLM's
+            # pretrained-weight load, so route the in-place init through CPU and
+            # copy back to the HIP tensor.
             _patch_in_place("_no_grad_normal_")
             _patch_in_place("_no_grad_uniform_")
             _patch_in_place("_no_grad_trunc_normal_")
+            _patch_in_place("_no_grad_fill_")
+            _patch_in_place("_no_grad_zero_")
 
         _install()
     """,
