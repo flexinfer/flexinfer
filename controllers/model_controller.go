@@ -33,9 +33,12 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
@@ -487,6 +490,19 @@ func (r *ModelReconciler) pruneFailedModelPods(ctx context.Context, model *aiv1a
 // SetupWithManager sets up the controller with the Manager.
 func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.mgr = mgr
+
+	// Delete-only predicate for the sibling fan-out watch. We only need to
+	// re-enqueue siblings when a shared-group member is deleted; Create and
+	// Update events are already covered by the primary For() watch and the
+	// per-model reconcile loop. Filtering avoids reconcile amplification on
+	// busy clusters.
+	siblingDeleteOnly := predicate.Funcs{
+		CreateFunc:  func(event.CreateEvent) bool { return false },
+		UpdateFunc:  func(event.UpdateEvent) bool { return false },
+		GenericFunc: func(event.GenericEvent) bool { return false },
+		DeleteFunc:  func(event.DeleteEvent) bool { return true },
+	}
+
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiv1alpha2.Model{}).
 		Owns(&appsv1.Deployment{}).
@@ -494,13 +510,18 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
 		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.requestsForRuntimePod)).
+		Watches(&aiv1alpha2.Model{},
+			handler.EnqueueRequestsFromMapFunc(r.requestsForSharedGroupSiblings),
+			builder.WithPredicates(siblingDeleteOnly)).
 		Complete(r)
 }
 
 // Start implements manager.Runnable. It performs a one-time sweep after the
-// informer cache is synced, re-enqueuing any Model in an intermediate state
-// (Loading, Pending) that may have lost its requeue timer during a controller
-// restart.
+// informer cache is synced, re-enqueuing any Model in a non-terminal state
+// (empty Phase, Loading, or Pending) that may have lost its requeue timer
+// during a controller restart. Brand-new Models created while no controller
+// is leader have an empty Phase and were previously skipped by this sweep,
+// leaving them invisible to the reconciler until a manual annotation touch.
 func (r *ModelReconciler) Start(ctx context.Context) error {
 	// Wait for the cache to be synced before listing models.
 	if !r.mgr.GetCache().WaitForCacheSync(ctx) {
@@ -508,7 +529,7 @@ func (r *ModelReconciler) Start(ctx context.Context) error {
 	}
 
 	log := log.FromContext(ctx).WithName("startup-sweep")
-	log.Info("Running startup reconcile sweep for models in intermediate states")
+	log.Info("Running startup reconcile sweep for models in non-terminal states")
 
 	var models aiv1alpha2.ModelList
 	if err := r.List(ctx, &models); err != nil {
@@ -519,31 +540,84 @@ func (r *ModelReconciler) Start(ctx context.Context) error {
 	poked := 0
 	for i := range models.Items {
 		m := &models.Items[i]
-		phase := m.Status.Phase
-		if phase == aiv1alpha2.ModelPhaseLoading || phase == aiv1alpha2.ModelPhasePending {
-			// Touch an annotation to trigger the informer watch event and
-			// re-enqueue this model for reconciliation.
-			if m.Annotations == nil {
-				m.Annotations = make(map[string]string)
-			}
-			m.Annotations["flexinfer.ai/startup-sweep"] = time.Now().UTC().Format(time.RFC3339)
-			if err := r.Update(ctx, m); err != nil {
-				log.Error(err, "Failed to poke model during startup sweep", "model", m.Name)
-				continue
-			}
-			poked++
-			log.Info("Re-enqueued model from startup sweep", "model", m.Name, "phase", phase)
+		if !startupSweepShouldPoke(m.Status.Phase) {
+			continue
 		}
+		// Touch an annotation to trigger the informer watch event and
+		// re-enqueue this model for reconciliation.
+		if m.Annotations == nil {
+			m.Annotations = make(map[string]string)
+		}
+		m.Annotations["flexinfer.ai/startup-sweep"] = time.Now().UTC().Format(time.RFC3339)
+		if err := r.Update(ctx, m); err != nil {
+			log.Error(err, "Failed to poke model during startup sweep", "model", m.Name)
+			continue
+		}
+		poked++
+		log.Info("Re-enqueued model from startup sweep", "model", m.Name, "phase", m.Status.Phase)
 	}
 
 	log.Info("Startup sweep complete", "total", len(models.Items), "reEnqueued", poked)
 	return nil
 }
 
+// startupSweepShouldPoke reports whether a Model in the given Phase should be
+// re-enqueued by the startup sweep. Brand-new Models with empty Phase are
+// included so a controller restart cannot leave a freshly-created Model
+// stranded with no reconcile (see .loom/asr-diarization-kill-test-v2-*.md).
+func startupSweepShouldPoke(phase aiv1alpha2.ModelPhase) bool {
+	switch phase {
+	case "", aiv1alpha2.ModelPhaseLoading, aiv1alpha2.ModelPhasePending:
+		return true
+	default:
+		return false
+	}
+}
+
 // NeedLeaderElection implements manager.LeaderElectionRunnable.
 // The sweep must only run on the elected leader to avoid duplicate reconciles.
 func (r *ModelReconciler) NeedLeaderElection() bool {
 	return true
+}
+
+// requestsForSharedGroupSiblings returns reconcile requests for every Model
+// in the same shared GPU group as the deleted Model, excluding the deleted
+// Model itself. Combined with a delete-only predicate in SetupWithManager,
+// this guarantees that surviving group members re-run leader election (via
+// handleSharedGPU) and clear stale `status.sharedGroup.preemptedBy`
+// references that point at the now-gone sibling. Without this fan-out, the
+// surviving leader's status reflected the deleted Model until an operator
+// manually annotated it (workaround documented in
+// .loom/asr-diarization-kill-test-v2-inconclusive-2026-05-19.md).
+func (r *ModelReconciler) requestsForSharedGroupSiblings(ctx context.Context, obj client.Object) []ctrl.Request {
+	deleted, ok := obj.(*aiv1alpha2.Model)
+	if !ok || deleted == nil {
+		return nil
+	}
+	if deleted.Spec.GPU == nil || deleted.Spec.GPU.Shared == "" {
+		return nil
+	}
+	groupName := deleted.Spec.GPU.Shared
+
+	siblings := &aiv1alpha2.ModelList{}
+	if err := r.List(ctx, siblings, client.InNamespace(deleted.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list shared-group siblings",
+			"deletedModel", deleted.Name, "group", groupName)
+		return nil
+	}
+
+	requests := make([]ctrl.Request, 0, len(siblings.Items))
+	for i := range siblings.Items {
+		m := &siblings.Items[i]
+		if m.Name == deleted.Name && m.Namespace == deleted.Namespace {
+			continue
+		}
+		if m.Spec.GPU == nil || m.Spec.GPU.Shared != groupName {
+			continue
+		}
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(m)})
+	}
+	return requests
 }
 
 func (r *ModelReconciler) requestsForRuntimePod(ctx context.Context, obj client.Object) []ctrl.Request {
