@@ -20,17 +20,19 @@ resources:
   # - gemma4-31b-gptq.yaml          # disabled; promoted-state pending dense rebuild
   # - fast-chat-7900xtx.yaml        # disabled 2026-05-16; Gemma4 26B now serves fast-chat/default-chat.
   - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (7900xtx instance #1)
-  # Slice 1 kill-test v3 for the ASR/diarization plan
-  # (.loom/asr-diarization-7900xtx-plan-2026-05-18.md). v2 was torn down
-  # 2026-05-19 after on-cluster INCONCLUSIVE outcome (cache strategy
-  # mismatch — SharedPVC layout never reached the runtime's hostPath
-  # mount; evidence: .loom/asr-diarization-kill-test-v2-inconclusive-2026-05-19.md).
-  # v3 rewrites with `cache.strategy: Local` + `nvme-1r-gpu`, mirroring the
-  # proven qwen3-1p7b-vllm-radeonvii layout for HF + vLLM. Slice plan in
-  # .loom/ralph-whisper-kill-test-v3-2026-05-19.md. Will be torn down again
-  # once the kill-test completes (PASS → Slice 3a production CR, FAIL →
-  # whisper.cpp HIP fallback path).
-  - whisper-kill-test-v3.yaml       # TEMPORARY: Slice 1 kill-test, Whisper on vLLM/ROCm gfx1100
+  # Slice 1 kill-test v3 (whisper-kill-test-v3.yaml) was torn down 2026-05-20
+  # after the live evaluation. The cache-layout assumption PASSED: Local +
+  # nvme-1r-gpu staged 1.6 GB of Whisper weights at
+  # /models/flexinfer-system/whisper-kill-test-v3/ and the runtime DaemonSet
+  # saw them. The vLLM load still failed, but NOT on a Whisper-on-ROCm-gfx1100
+  # path: the gfx1100 vLLM image ships transformers 5.8.1 against
+  # mistral_common 1.8.8, and transformers/tokenization_mistral_common.py
+  # imports `ReasoningEffort` (not present in 1.8.8). AutoProcessor's class
+  # registry walk inside WhisperProcessor.__init__ trips that ImportError,
+  # vLLM exits 1, the controller hot-loops the reconcile. Evidence:
+  # .loom/ralph-whisper-kill-test-v3-evidence-2026-05-20.md. Next slices
+  # queued in that doc: bump mistral_common in build/Dockerfile.vllm-rocm-gfx1100*,
+  # republish, then re-apply this CR (or a v4) against the new image.
   # - gemma4-26b-a4b-gptq-long.yaml # disabled; superseded by base 26B at 16K (see 2026-05-03 dedupe)
   # 2026-05-05: replaced by Qwen3.6. The old qwen3-30b-a3b canary requested
   # gpu.count=2 and stayed unschedulable after gfx1100 nodes were normalized
