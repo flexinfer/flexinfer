@@ -1,5 +1,27 @@
 FROM registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched
 
+# Bump mistral_common to expose ReasoningEffort.
+#
+# transformers 5.8.1 (shipped in the qwen35-patched base) imports
+# `ReasoningEffort` from `mistral_common.protocol.instruct.request` inside
+# `tokenization_mistral_common.py`. The base image carries mistral_common 1.8.8
+# which does NOT export that symbol, so AutoProcessor's dynamic class-registry
+# walk crashes with `ImportError: cannot import name 'ReasoningEffort'` the
+# moment any multimodal model (e.g. Whisper) is loaded. Text-only models
+# (gemma4, qwen3, opt) never hit this path because they use AutoTokenizer
+# instead of AutoProcessor.
+#
+# `ReasoningEffort` was introduced in mistral_common v1.10.0 (2026-03-13,
+# "Tokenizer v15, Reasoning Effort and Python 3.14"). Pin >=1.10.0 to unblock
+# the import without committing to any 2.x breaking-change window.
+#
+# `--no-deps` keeps the dependency cascade pinned to the base image's tested
+# versions of pydantic/sentencepiece/etc. Only mistral_common itself changes.
+#
+# Evidence: .loom/ralph-whisper-kill-test-v3-evidence-2026-05-20.md
+RUN pip install --no-cache-dir --no-deps "mistral_common>=1.10.0,<2" \
+    && python3 -c "from mistral_common.protocol.instruct.request import ReasoningEffort; print('mistral_common ReasoningEffort import OK:', ReasoningEffort)"
+
 COPY build/scripts/vllm_qwen35_patches_nodiag.py /opt/patches/patch.py
 COPY build/scripts/vllm-patched-entrypoint.sh /opt/patches/entrypoint.sh
 RUN chmod +x /opt/patches/entrypoint.sh
