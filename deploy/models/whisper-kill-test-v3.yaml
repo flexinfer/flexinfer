@@ -1,0 +1,122 @@
+# Slice 1 kill-test (v3) for the ASR/diarization plan
+# (.loom/asr-diarization-7900xtx-plan-2026-05-18.md).
+#
+# Purpose: prove that vLLM on ROCm gfx1100 actually serves Whisper via the
+# OpenAI-compatible /v1/audio/transcriptions endpoint. v1 (!429) and v2
+# (!436) both came back INCONCLUSIVE — v1 deadlocked at State: Queued,
+# replicas: 0 (chooser preferred the Ready warm-primary 26B); v2 cleared
+# the chooser path via gpu.forcePromotion but crashed during arg-parsing
+# because the cache PVC files never landed at the runtime's hostPath mount.
+# Full v2 evidence: .loom/asr-diarization-kill-test-v2-inconclusive-2026-05-19.md.
+#
+# What changed for v3: cache.strategy switched from `SharedPVC` to `Local`,
+# mirroring the proven `qwen3-1p7b-vllm-radeonvii.yaml` layout for
+# HF-sourced vLLM models. With `Local` + `storageClass: nvme-1r-gpu`, the
+# controller schedules a single cache-prefetch job that writes the
+# Whisper safetensors into a per-node PVC, and the same-node runtime
+# DaemonSet mounts that PVC under /models/whisper-kill-test-v3/. No
+# two-stage cache-copy is needed because there is no separate "main"
+# model PVC for this kill-test — vLLM serves directly from the staged
+# cache directory.
+#
+# Everything else is preserved from v2: gpu.forcePromotion=true is still
+# required (MR !442 fixed startup-sweep + sibling-watch but did NOT change
+# chooseSharedGroupLeader's Ready-first preference at
+# controllers/model_shared_gpu.go:84-101), priority=400 for documentation,
+# task=transcription, maxModelLen=448, gpuMemoryUtilization=0.30,
+# enforceEager=true. No serviceLabels / no litellm — kill-test is
+# operator-validated via port-forward, NOT routable.
+#
+# Production impact while reconciled: the 7900 XTX warm 26B
+# (gemma4-26b-a4b-gptq) is preempted and scales to zero replicas; ICC's
+# quality-chat / mid-chat / project-mgmt routes continue via the sister
+# 26B on cblevins-5930k via shared serviceLabels routing. Same envelope
+# as v2 (observed ~3 min of preemption in the v2 evidence doc).
+#
+# Tear-down: remove this file from deploy/models/kustomization.yaml and
+# let Flux reconcile. With no force-promoted members in the group, the
+# chooser reverts to its normal priority order and the 26B is selected
+# as Ready leader again.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: whisper-kill-test-v3
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/purpose: "Slice 1 kill-test (vLLM Whisper on ROCm gfx1100) — v3"
+    flexinfer.ai/plan: ".loom/asr-diarization-7900xtx-plan-2026-05-18.md"
+    flexinfer.ai/iteration-plan: ".loom/ralph-whisper-kill-test-v3-2026-05-19.md"
+    flexinfer.ai/temporary: "true"
+spec:
+  backend: vllm
+  # Image inherits from the gfx1100 GPUProfile vllm.image pin
+  # (deploy/gpuprofiles/gfx1100.yaml). Do not override here — the kill-test
+  # must exercise the same image the production Whisper Model CR would use.
+  source: HF://openai/whisper-large-v3-turbo
+  cache:
+    # Local strategy: controller schedules a single cache-prefetch job that
+    # downloads the HF repo into this PVC; the runtime DaemonSet mounts the
+    # same PVC at /models/whisper-kill-test-v3/. No SharedPVC dance, no
+    # cache-copy job. Mirrors qwen3-1p7b-vllm-radeonvii (HF + vLLM + Local).
+    strategy: Local
+    # nvme-1r-gpu: single-replica Longhorn on GPU-labelled nodes
+    # (platform/gitops/k3s/longhorn/storageclass-nvme-1r-gpu.yaml). Already
+    # used by gemma4-26b-a4b-gptq-cache on the same node, so the PV class is
+    # proven on cblevins-7900xtx.
+    storageClass: nvme-1r-gpu
+    # whisper-large-v3-turbo is ~3 GiB safetensors. 6 GiB buys headroom for
+    # tokenizer/config/preprocessor + transient download artifacts.
+    size: 6Gi
+  gpu:
+    vendor: amd
+    # Same count=2 trick as gemma4-26b-a4b-gptq.yaml: claim both K8s plugin
+    # slots so the iGPU can't co-tenant; hipVisibleDevices="0" pins to the
+    # dGPU.
+    count: 2
+    vramEstimateMB: 4000
+    shared: 7900xtx-textgen
+    # With forcePromotion=true, priority only matters as a tiebreaker among
+    # other force-promoted members in the same group. There are no other
+    # force-promoted members today; 400 is set for documentation only.
+    priority: 400
+    # MR !442 (sibling-watch + startup-sweep fix) did NOT change
+    # chooseSharedGroupLeader's Ready-first preference at
+    # controllers/model_shared_gpu.go:84-101. Without forcePromotion, this
+    # kill-test would deadlock at State: Queued exactly like v1.
+    forcePromotion: true
+  serverless:
+    enabled: true
+    # Keep this Model loaded for the duration of the kill-test. Scale-to-zero
+    # would unload the pod between curl attempts and waste time on cold
+    # starts; the kill-test is a one-shot live evaluation.
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 10m
+  config:
+    # Whisper-large-v3 architectural limit.
+    maxModelLen: 448
+    # Cap VRAM well below the GPU's 24 GiB so the allocator does not OOM
+    # while the 26B is being preempted (the swap is not instantaneous).
+    gpuMemoryUtilization: "0.30"
+    # gfx1100 vLLM standard for non-graph-capture canaries.
+    enforceEager: true
+    dtype: "half"
+    # Wired via backend/vllm.go:167 (shipped in !423). Exposes
+    # /v1/audio/transcriptions on the served port.
+    task: transcription
+    servedModelName: whisper-large-v3-turbo
+    hipVisibleDevices: "0"
+    trustRemoteCode: false
+    disableLogStats: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+    limits:
+      cpu: "2"
+      memory: 8Gi
+  # No serviceLabels: this Model must not be reachable through the proxy's
+  # OpenAI model-name routing surface. Operator validates via port-forward.
+  # No litellm block: same reason.
