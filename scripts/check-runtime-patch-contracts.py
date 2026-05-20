@@ -120,7 +120,9 @@ def assert_runtime_yaml_patch_refs(runtime_yaml: str) -> None:
     referenced = referenced_source_patch_scripts(runtime_yaml)
     for relative in referenced:
         if not relative.startswith("build/scripts/"):
-            fail(f"runtime.yaml patch reference must stay under build/scripts/: {relative}")
+            fail(
+                f"runtime.yaml patch reference must stay under build/scripts/: {relative}"
+            )
         if not (REPO_ROOT / relative).exists():
             fail(f"runtime.yaml references missing patch script: {relative}")
 
@@ -130,19 +132,27 @@ def assert_runtime_yaml_patch_refs(runtime_yaml: str) -> None:
     }
     missing = sorted(required_refs - referenced)
     if missing:
-        fail(f"runtime.yaml no longer references expected source patch scripts: {missing}")
+        fail(
+            f"runtime.yaml no longer references expected source patch scripts: {missing}"
+        )
 
 
 def assert_dockerfile_patch_order(dockerfile: str) -> None:
     scripts_copy = dockerfile.find("COPY build/scripts/ /opt/flexinfer/scripts/")
-    qwen_patch = dockerfile.find("python3 /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py")
-    gemma_patch = dockerfile.find("python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py")
+    qwen_patch = dockerfile.find(
+        "python3 /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py"
+    )
+    gemma_patch = dockerfile.find(
+        "python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py"
+    )
     hip_check = dockerfile.find("CUDA torch detected")
 
     if min(scripts_copy, qwen_patch, gemma_patch, hip_check) == -1:
         fail("Dockerfile.runtime is missing runtime patch copy/apply/HIP-check wiring")
     if not (scripts_copy < qwen_patch < gemma_patch < hip_check):
-        fail("Dockerfile.runtime patch order changed; expected copy -> qwen -> gemma -> HIP check")
+        fail(
+            "Dockerfile.runtime patch order changed; expected copy -> qwen -> gemma -> HIP check"
+        )
 
     for token in ("VLLM_SOURCE_PATCH_SCRIPT", "TURBOQUANT_SOURCE_PATCH_SCRIPT"):
         if token not in dockerfile:
@@ -159,7 +169,7 @@ def assert_dockerfile_patch_order(dockerfile: str) -> None:
 def assert_runtime_entrypoint_contract(entrypoint: str, build_script: str) -> None:
     if "SKIP_GEMMA4_MOE_PATCH=${skip_gemma4_moe_patch}" not in build_script:
         fail("build-runtime.sh no longer bakes SKIP_GEMMA4_MOE_PATCH into runtime.env")
-    if 'SKIP_GEMMA4_MOE_PATCH:-false' not in entrypoint:
+    if "SKIP_GEMMA4_MOE_PATCH:-false" not in entrypoint:
         fail("runtime-entrypoint.sh no longer respects SKIP_GEMMA4_MOE_PATCH")
     if "vllm_gemma4_moe_gptq_patch.py" not in entrypoint:
         fail("runtime-entrypoint.sh no longer wires the Gemma4 MoE patch script")
@@ -195,7 +205,9 @@ def assert_serving_dockerfile_contract(dockerfile: str) -> None:
     )
     for snippet in forbidden:
         if snippet in dockerfile:
-            fail(f"Dockerfile.runtime-serving reintroduced utility payload: {snippet!r}")
+            fail(
+                f"Dockerfile.runtime-serving reintroduced utility payload: {snippet!r}"
+            )
 
 
 def assert_gfx906_vllm_diagnostics_contract(dockerfile: str) -> None:
@@ -209,6 +221,33 @@ def assert_gfx906_vllm_diagnostics_contract(dockerfile: str) -> None:
     for snippet in required:
         if snippet not in dockerfile:
             fail(f"Dockerfile.vllm-rocm-gfx906 missing diagnostics wiring: {snippet!r}")
+
+
+def assert_gfx906_vllm_compat_hooks_contract(install_script: str) -> None:
+    required_hooks = (
+        "flexinfer_vllm_transformers_compat.py",
+        "flexinfer_vllm_triton_compat.py",
+        "flexinfer_vllm_torch_rocm_compat.py",
+        "flexinfer_vllm_torch_init_compat.py",
+        "flexinfer_vllm_worker_diagnostics.py",
+    )
+    for hook in required_hooks:
+        if hook not in install_script:
+            fail(
+                "install_vllm_gfx906_compat.py no longer installs required hook: "
+                f"{hook!r}"
+            )
+
+    init_contract = (
+        '"_no_grad_normal_"',
+        '"_no_grad_uniform_"',
+    )
+    for token in init_contract:
+        if token not in install_script:
+            fail(
+                "install_vllm_gfx906_compat.py no longer patches torch.nn.init "
+                f"target {token}"
+            )
 
 
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
@@ -292,6 +331,7 @@ def main(argv: list[str]) -> int:
     entrypoint = read("build/runtime-entrypoint.sh")
     serving_dockerfile = read("build/Dockerfile.runtime-serving")
     gfx906_vllm_dockerfile = read("build/Dockerfile.vllm-rocm-gfx906")
+    gfx906_vllm_install_script = read("build/scripts/install_vllm_gfx906_compat.py")
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
@@ -300,6 +340,7 @@ def main(argv: list[str]) -> int:
     assert_runtime_entrypoint_contract(entrypoint, build_script)
     assert_serving_dockerfile_contract(serving_dockerfile)
     assert_gfx906_vllm_diagnostics_contract(gfx906_vllm_dockerfile)
+    assert_gfx906_vllm_compat_hooks_contract(gfx906_vllm_install_script)
     assert_ci_fast_check_wiring(ci_yaml)
 
     if run_tests:

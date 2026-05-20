@@ -15,7 +15,7 @@ import textwrap
 
 
 HOOKS = {
-    "flexinfer_vllm_transformers_compat.py": r'''
+    "flexinfer_vllm_transformers_compat.py": r"""
         def _install():
             try:
                 from transformers.tokenization_utils_base import PreTrainedTokenizerBase
@@ -44,8 +44,8 @@ HOOKS = {
             PreTrainedTokenizerBase.all_special_tokens_extended = all_special_tokens_extended
 
         _install()
-    ''',
-    "flexinfer_vllm_triton_compat.py": r'''
+    """,
+    "flexinfer_vllm_triton_compat.py": r"""
         def _install():
             try:
                 import os
@@ -80,8 +80,8 @@ HOOKS = {
                 triton_cache.default_override_dir = default_override_dir
 
         _install()
-    ''',
-    "flexinfer_vllm_torch_rocm_compat.py": r'''
+    """,
+    "flexinfer_vllm_torch_rocm_compat.py": r"""
         def _install():
             try:
                 import torch
@@ -121,8 +121,49 @@ HOOKS = {
                 pass
 
         _install()
-    ''',
-    "flexinfer_vllm_worker_diagnostics.py": r'''
+    """,
+    "flexinfer_vllm_torch_init_compat.py": r"""
+        def _install():
+            try:
+                import torch
+                import torch.nn.init as init
+            except Exception:
+                return
+
+            if not getattr(torch.version, "hip", None):
+                return
+
+            def _patch_in_place(name, kernel_attr):
+                original = getattr(init, name, None)
+                if original is None or getattr(original, "_flexinfer_gfx906_safe", False):
+                    return
+
+                def safe(tensor, *args, **kwargs):
+                    if not tensor.is_cuda:
+                        return original(tensor, *args, **kwargs)
+                    cpu_tensor = torch.empty(
+                        tensor.shape, dtype=tensor.dtype, device="cpu"
+                    )
+                    getattr(cpu_tensor, kernel_attr)(*args, **kwargs)
+                    with torch.no_grad():
+                        tensor.copy_(cpu_tensor)
+                    return tensor
+
+                safe._flexinfer_gfx906_safe = True
+                setattr(init, name, safe)
+
+            # gfx906/Vega20 segfaults inside the HIP random kernels invoked by
+            # torch.Tensor.normal_/uniform_ during module __init__ (observed at
+            # OPT-125M Embedding init via _no_grad_normal_). Random init is
+            # overwritten by vLLM's pretrained-weight load, so route the in-place
+            # init through CPU and copy back to the HIP tensor.
+            _patch_in_place("_no_grad_normal_", "normal_")
+            _patch_in_place("_no_grad_uniform_", "uniform_")
+            _patch_in_place("_no_grad_trunc_normal_", "normal_")
+
+        _install()
+    """,
+    "flexinfer_vllm_worker_diagnostics.py": r"""
         def _install():
             try:
                 import faulthandler
@@ -177,13 +218,11 @@ HOOKS = {
             base_process.run = run_with_trace
 
         _install()
-    ''',
+    """,
 }
 
 
-PTH_IMPORTS = "\n".join(
-    f"import {name.removesuffix('.py')}" for name in HOOKS
-) + "\n"
+PTH_IMPORTS = "\n".join(f"import {name.removesuffix('.py')}" for name in HOOKS) + "\n"
 
 
 def default_site_packages() -> pathlib.Path:
