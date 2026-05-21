@@ -288,21 +288,31 @@ RUN if [ "${INCLUDE_VLLM}" = "true" ] && command -v pip >/dev/null 2>&1; then \
       else \
         pip install --no-cache-dir "transformers${TRANSFORMERS_CONSTRAINT}"; \
       fi; \
+      # `mistral_common>=1.10.0,<2` is required by transformers 5.x's
+      # `tokenization_mistral_common.py`, which imports `ReasoningEffort`
+      # from `mistral_common.protocol.instruct.request`. The symbol was
+      # introduced in mistral_common 1.10.0 (2026-03-13). Without an
+      # explicit constraint, pip can resolve to an older release if the
+      # transitive dep chain pins it lower, and `AutoProcessor`'s
+      # dynamic class-registry walk crashes the moment any multimodal
+      # model (e.g. Whisper) is loaded — see kill-test v4 evidence in
+      # .loom/ralph-whisper-kill-test-v4-evidence-2026-05-20.md.
       if [ "${VLLM_EXTRA_DEPS_PROFILE}" = "minimal" ]; then \
         pip install --no-cache-dir \
           partial-json-parser msgspec gguf aiohttp \
-          lm-format-enforcer mistral_common \
+          lm-format-enforcer "mistral_common>=1.10.0,<2" \
           depyf cloudpickle \
           prometheus-client prometheus-fastapi-instrumentator \
           py-cpuinfo psutil pyzmq uvloop; \
       else \
         pip install --no-cache-dir \
           partial-json-parser msgspec gguf aiohttp \
-          lm-format-enforcer outlines mistral_common \
+          lm-format-enforcer outlines "mistral_common>=1.10.0,<2" \
           compressed-tensors depyf cloudpickle \
           prometheus-client prometheus-fastapi-instrumentator \
           py-cpuinfo psutil pyzmq uvloop; \
       fi; \
+      python3 -c "from mistral_common.protocol.instruct.request import ReasoningEffort; print('mistral_common ReasoningEffort import OK:', ReasoningEffort)"; \
       if [ "${INSTALL_QWEN35_FASTPATH}" = "true" ]; then \
         export ROCM_PATH="${ROCM_PATH:-/opt/rocm}" HIP_PATH="${HIP_PATH:-/opt/rocm}" MAX_JOBS="${MAX_JOBS:-$(nproc)}"; \
         export HIP_ARCHITECTURES="${GPU_ARCH}" HCC_AMDGPU_TARGET="${GPU_ARCH}" PYTORCH_ROCM_ARCH="${GPU_ARCH}"; \
