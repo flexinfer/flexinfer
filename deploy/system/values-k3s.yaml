@@ -231,7 +231,7 @@ imagePrewarm:
 quantization:
   modelToolsImage: "registry.harbor.lan/flexinfer/model-tools:master"
   useRuntimeForQuantize: false
-  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:5bdb065f3e143951086056f4a81378e0cb02cb6d5549114913e56a031c028109"
+  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166"
   gptqDeviceMap: "auto"
   gptqModelPolicies:
     - name: qwen3.5-moe-text
@@ -350,7 +350,7 @@ runtime:
   terminationGracePeriodSeconds: 60
   profiles:
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:7899640c4ac93e9c10b49a9a0e80e65559b448bb40a9fdf67f3f8598732c8836"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -383,7 +383,7 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx1100-5930k
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:7899640c4ac93e9c10b49a9a0e80e65559b448bb40a9fdf67f3f8598732c8836"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 1
