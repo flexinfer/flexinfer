@@ -161,12 +161,13 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--served-model-name", name)
 	}
 
-	// Task selects the vLLM serving task. "transcription" exposes the
-	// OpenAI-compatible /v1/audio/transcriptions endpoint for Whisper-family
-	// models. Other values pass through unchanged (vLLM validates).
-	if task := spec.ConfigString("task", ""); task != "" {
-		args = append(args, "--task", task)
-	}
+	// Task is intentionally NOT emitted as a CLI arg.
+	// vLLM 0.17.0+rocm700's api_server.py removed the top-level --task flag;
+	// it auto-resolves from the model's config.json architectures (e.g.
+	// WhisperForConditionalGeneration → transcription). The spec field is
+	// kept for backward compatibility but ignored here; if a future vLLM
+	// build needs explicit task selection, route it via
+	// --override-model-config '{"task": "..."}'.
 
 	// KV cache dtype (auto, fp8_e5m2). FP8 requires MI300X+ hardware.
 	if kvDtype := spec.ConfigString("kvCacheDtype", ""); kvDtype != "" {

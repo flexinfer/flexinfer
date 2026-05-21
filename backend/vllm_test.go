@@ -763,9 +763,12 @@ func TestVLLMBackendArgs_ServedModelName(t *testing.T) {
 }
 
 func TestVLLMBackendArgs_Task(t *testing.T) {
+	// vLLM 0.17.0+rocm700 removed the top-level --task argparse flag.
+	// The backend must never emit --task regardless of spec config; vLLM
+	// auto-resolves the task from the model's config.json architectures.
 	b := &VLLMBackend{}
 
-	t.Run("transcription exposes whisper audio endpoint", func(t *testing.T) {
+	t.Run("transcription config does not emit --task", func(t *testing.T) {
 		spec := &ModelSpec{
 			Model: "openai/whisper-large-v3-turbo",
 			Config: map[string]any{
@@ -774,15 +777,10 @@ func TestVLLMBackendArgs_Task(t *testing.T) {
 		}
 
 		args := b.Args(spec)
-		argMap := make(map[string]string)
-		for i := 0; i < len(args)-1; i++ {
-			if args[i][0] == '-' {
-				argMap[args[i]] = args[i+1]
+		for _, a := range args {
+			if a == "--task" {
+				t.Errorf("--task must not be emitted; vLLM 0.17+ rejects it (Whisper kill-test v5)")
 			}
-		}
-
-		if v := argMap["--task"]; v != "transcription" {
-			t.Errorf("expected --task=transcription, got %q", v)
 		}
 	})
 
