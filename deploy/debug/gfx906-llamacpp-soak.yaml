@@ -1,0 +1,358 @@
+# gfx906 llama.cpp 24h standalone soak.
+#
+# Purpose: run the next Slice 1B evidence gate for the shimmed Radeon VII
+# llama.cpp image before any runtime/profile or alias/default fallback promotion.
+# This intentionally does not create a FlexInfer Model: an initial live attempt
+# showed that per-model spec.image does not affect the persistent
+# flexinfer-runtime-gfx906 direct-load path.
+#
+# Usage:
+#   kubectl apply -f deploy/debug/gfx906-llamacpp-soak.yaml
+#   kubectl -n flexinfer-system logs -f job/gfx906-llamacpp-soak-traffic -c traffic
+#   kubectl -n flexinfer-system logs -f job/gfx906-llamacpp-soak-traffic -c server
+#   kubectl -n flexinfer-system get pods -o wide | rg 'gfx906-llamacpp-soak|sdxl-inpainting-radeonvii|flexinfer-runtime-gfx906'
+#
+# Harvest after completion:
+#   kubectl -n flexinfer-system logs job/gfx906-llamacpp-soak-traffic -c traffic > .loom/local/validation/gfx906-llamacpp/2026-05-21/soak-traffic.log
+#   kubectl -n flexinfer-system logs job/gfx906-llamacpp-soak-traffic -c server > .loom/local/validation/gfx906-llamacpp/2026-05-21/soak-server.log
+#   kubectl -n flexinfer-system get model qwen3-1p7b-tools-radeonvii qwen3-1p7b-vllm-radeonvii sdxl-inpainting-radeonvii -o yaml > .loom/local/validation/gfx906-llamacpp/2026-05-21/soak-models.yaml
+#   kubectl -n flexinfer-system get pods -o wide > .loom/local/validation/gfx906-llamacpp/2026-05-21/soak-pods.txt
+#   kubectl -n flexinfer-system get events --sort-by=.lastTimestamp > .loom/local/validation/gfx906-llamacpp/2026-05-21/soak-events.txt
+#
+# Rollback:
+#   kubectl -n flexinfer-system delete job/gfx906-llamacpp-soak-traffic --ignore-not-found
+#   kubectl -n flexinfer-system delete configmap/gfx906-llamacpp-soak-traffic --ignore-not-found
+#
+# Reference: .loom/ralph-gfx906-llamacpp-soak-2026-05-21.md
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gfx906-llamacpp-soak-traffic
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug-soak
+data:
+  run-server.sh: |
+    #!/bin/sh
+    set -eu
+
+    model_path="${SOAK_MODEL_PATH:-/models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf}"
+    server_bin="${SOAK_LLAMA_SERVER_BIN:-/opt/src/llama.cpp/build/bin/llama-server}"
+    if [ ! -x "$server_bin" ]; then
+      server_bin="/opt/llamacpp/bin/llama-server"
+    fi
+    if [ ! -x "$server_bin" ]; then
+      echo "SOAK_RESULT FAIL missing_llama_server"
+      exit 30
+    fi
+    if [ ! -f "$model_path" ]; then
+      echo "SOAK_RESULT FAIL missing_model_path=$model_path"
+      exit 31
+    fi
+
+    echo "=== standalone llama.cpp soak server preflight ==="
+    date -Iseconds
+    "$server_bin" --version || true
+    env | sort | grep -E '^(FLEXINFER_HIPMEMINFO_|GPU_DEVICE_ORDINAL|HIP_VISIBLE_DEVICES|HSA_|LD_PRELOAD|PYTORCH_ROCM_ARCH|ROCR_VISIBLE_DEVICES|ROCM_PATH)=' || true
+    echo "model_path=$model_path"
+
+    "$server_bin" \
+      --host 127.0.0.1 \
+      --port 8000 \
+      --model "$model_path" \
+      --ctx-size 8192 \
+      --n-gpu-layers 999 \
+      --flash-attn on \
+      --cache-type-k q4_0 \
+      --cache-type-v q4_0 \
+      --batch-size 1024 \
+      --ubatch-size 512 \
+      --threads 12 \
+      --parallel 2 \
+      --metrics \
+      --jinja \
+      -fit off &
+    server_pid="$!"
+    echo "llama_server_pid=$server_pid"
+
+    while kill -0 "$server_pid" 2>/dev/null; do
+      if [ -f /shared/stop ]; then
+        echo "traffic_complete_stopping_server"
+        kill "$server_pid" 2>/dev/null || true
+        wait "$server_pid" 2>/dev/null || true
+        exit 0
+      fi
+      sleep 5
+    done
+
+    wait "$server_pid"
+  soak.py: |
+    import json
+    import os
+    import signal
+    import sys
+    import time
+    import urllib.request
+
+    endpoint = os.environ["SOAK_ENDPOINT"]
+    health_endpoint = os.environ.get("SOAK_HEALTH_ENDPOINT", "http://127.0.0.1:8000/health")
+    model = os.environ.get("SOAK_MODEL", "qwen3-8b-radeonvii")
+    duration_seconds = int(os.environ.get("SOAK_DURATION_SECONDS", "86400"))
+    interval_seconds = int(os.environ.get("SOAK_INTERVAL_SECONDS", "60"))
+    timeout_seconds = int(os.environ.get("SOAK_REQUEST_TIMEOUT_SECONDS", "900"))
+    warmup_requests = int(os.environ.get("SOAK_WARMUP_REQUESTS", "1"))
+    max_tokens = int(os.environ.get("SOAK_MAX_TOKENS", "64"))
+    latency_budget_ms_per_token = float(os.environ.get("SOAK_P95_MS_PER_TOKEN_BUDGET", "300"))
+    stop_path = os.environ.get("SOAK_STOP_PATH", "/shared/stop")
+
+    def emit(record):
+        print(json.dumps(record), flush=True)
+
+    def stop_server():
+        try:
+            with open(stop_path, "w", encoding="utf-8") as handle:
+                handle.write(time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+        except Exception as exc:
+            emit({"event": "stop_signal_failed", "error": repr(exc)})
+
+    def wait_for_health():
+        deadline = time.monotonic() + int(os.environ.get("SOAK_SERVER_READY_TIMEOUT_SECONDS", "600"))
+        attempt = 0
+        while time.monotonic() < deadline:
+            attempt += 1
+            try:
+                with urllib.request.urlopen(health_endpoint, timeout=5) as resp:
+                    resp.read()
+                    emit({"event": "server_ready", "attempt": attempt, "status": getattr(resp, "status", 200)})
+                    return True
+            except Exception as exc:
+                if attempt % 10 == 0:
+                    emit({"event": "server_wait", "attempt": attempt, "error": repr(exc)})
+                time.sleep(1)
+        return False
+
+    prompt = (
+        "You are a deterministic soak-test target. Reply with one concise "
+        "sentence that includes the word Blue."
+    )
+    payload = {
+        "model": model,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": max_tokens,
+        "temperature": 0,
+    }
+
+    emit({
+        "event": "soak_start",
+        "endpoint": endpoint,
+        "model": model,
+        "duration_seconds": duration_seconds,
+        "interval_seconds": interval_seconds,
+        "warmup_requests": warmup_requests,
+        "latency_budget_ms_per_token": latency_budget_ms_per_token,
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    })
+
+    if not wait_for_health():
+        emit({"event": "soak_summary", "failures": 1, "reason": "server_health_timeout"})
+        stop_server()
+        sys.exit(19)
+
+    deadline = time.monotonic() + duration_seconds
+    attempts = 0
+    failures = 0
+    measured = []
+
+    try:
+        while time.monotonic() < deadline:
+            attempts += 1
+            started = time.monotonic()
+            record = {
+                "event": "request",
+                "attempt": attempts,
+                "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "warmup": attempts <= warmup_requests,
+            }
+            try:
+                body = json.dumps(payload).encode("utf-8")
+                req = urllib.request.Request(
+                    endpoint,
+                    data=body,
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+                    raw = resp.read()
+                    elapsed = time.monotonic() - started
+                    data = json.loads(raw)
+                usage = data.get("usage") or {}
+                completion_tokens = int(usage.get("completion_tokens") or 0)
+                if completion_tokens <= 0:
+                    content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+                    completion_tokens = max(1, len(content.split()))
+                ms_per_token = (elapsed * 1000.0) / completion_tokens
+                record.update({
+                    "ok": True,
+                    "status": getattr(resp, "status", 200),
+                    "elapsed_seconds": round(elapsed, 3),
+                    "completion_tokens": completion_tokens,
+                    "ms_per_token": round(ms_per_token, 3),
+                    "model_returned": data.get("model", ""),
+                    "content_preview": (data.get("choices") or [{}])[0].get("message", {}).get("content", "")[:120],
+                })
+                if attempts > warmup_requests:
+                    measured.append(ms_per_token)
+            except Exception as exc:
+                failures += 1
+                record.update({
+                    "ok": False,
+                    "error": repr(exc),
+                    "elapsed_seconds": round(time.monotonic() - started, 3),
+                })
+            emit(record)
+
+            sleep_for = interval_seconds - (time.monotonic() - started)
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+    finally:
+        stop_server()
+
+    p95 = None
+    if measured:
+        sorted_values = sorted(measured)
+        p95_index = max(0, min(len(sorted_values) - 1, int(0.95 * len(sorted_values)) - 1))
+        p95 = sorted_values[p95_index]
+
+    summary = {
+        "event": "soak_summary",
+        "attempts": attempts,
+        "measured_requests": len(measured),
+        "failures": failures,
+        "p95_ms_per_token": None if p95 is None else round(p95, 3),
+        "latency_budget_ms_per_token": latency_budget_ms_per_token,
+        "completed_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    emit(summary)
+
+    if failures:
+        sys.exit(20)
+    if p95 is None:
+        sys.exit(21)
+    if p95 > latency_budget_ms_per_token:
+        sys.exit(22)
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gfx906-llamacpp-soak-traffic
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug-soak
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flexinfer
+        flexinfer.ai/purpose: debug-soak
+    spec:
+      shareProcessNamespace: true
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: server
+          image: registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407
+          imagePullPolicy: Always
+          command: ["/bin/sh", "/scripts/run-server.sh"]
+          env:
+            - name: SOAK_MODEL_PATH
+              value: /models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf
+            - name: LD_PRELOAD
+              value: /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
+            - name: FLEXINFER_HIPMEMINFO_FALLBACK_TOTAL_MB
+              value: "16384"
+            - name: HSA_OVERRIDE_GFX_VERSION
+              value: "9.0.6"
+            - name: HSA_ENABLE_SDMA
+              value: "0"
+            - name: HSA_USE_SVM
+              value: "0"
+            - name: PYTORCH_ROCM_ARCH
+              value: gfx906
+            - name: ROCR_VISIBLE_DEVICES
+              value: "0"
+          resources:
+            requests:
+              cpu: "4"
+              memory: 12Gi
+              amd.com/gpu: "1"
+            limits:
+              cpu: "14"
+              memory: 24Gi
+              amd.com/gpu: "1"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: shared
+              mountPath: /shared
+        - name: traffic
+          image: python:3.11-alpine
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/scripts/soak.py"]
+          env:
+            - name: SOAK_ENDPOINT
+              value: http://127.0.0.1:8000/v1/chat/completions
+            - name: SOAK_HEALTH_ENDPOINT
+              value: http://127.0.0.1:8000/health
+            - name: SOAK_MODEL
+              value: qwen3-8b-radeonvii
+            - name: SOAK_DURATION_SECONDS
+              value: "86400"
+            - name: SOAK_INTERVAL_SECONDS
+              value: "60"
+            - name: SOAK_REQUEST_TIMEOUT_SECONDS
+              value: "900"
+            - name: SOAK_WARMUP_REQUESTS
+              value: "1"
+            - name: SOAK_MAX_TOKENS
+              value: "64"
+            - name: SOAK_P95_MS_PER_TOKEN_BUDGET
+              value: "300"
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+            - name: shared
+              mountPath: /shared
+      volumes:
+        - name: script
+          configMap:
+            name: gfx906-llamacpp-soak-traffic
+            defaultMode: 0755
+        - name: models
+          hostPath:
+            path: /var/lib/flexinfer/models
+            type: DirectoryOrCreate
+        - name: shared
+          emptyDir: {}
