@@ -23,9 +23,15 @@
 # required (MR !442 fixed startup-sweep + sibling-watch but did NOT change
 # chooseSharedGroupLeader's Ready-first preference at
 # controllers/model_shared_gpu.go:84-101), priority=400 for documentation,
-# task=transcription, maxModelLen=448, gpuMemoryUtilization=0.30,
-# enforceEager=true. No serviceLabels / no litellm — kill-test is
-# operator-validated via port-forward, NOT routable.
+# maxModelLen=448, gpuMemoryUtilization=0.30, enforceEager=true. No
+# serviceLabels / no litellm — kill-test is operator-validated via
+# port-forward, NOT routable.
+#
+# v6 (2026-05-21): the explicit `task: transcription` config field was
+# dropped. vLLM 0.17.0+rocm700 removed the top-level --task argparse flag
+# (kill-test v5 evidence: .loom/ralph-whisper-kill-test-v5-evidence-2026-05-21.md);
+# the task is auto-resolved from the model's `architectures:
+# ["WhisperForConditionalGeneration"]` config.json field.
 #
 # Production impact while reconciled: the 7900 XTX warm 26B
 # (gemma4-26b-a4b-gptq) is preempted and scales to zero replicas; ICC's
@@ -101,9 +107,8 @@ spec:
     # gfx1100 vLLM standard for non-graph-capture canaries.
     enforceEager: true
     dtype: "half"
-    # Wired via backend/vllm.go:167 (shipped in !423). Exposes
-    # /v1/audio/transcriptions on the served port.
-    task: transcription
+    # /v1/audio/transcriptions is auto-exposed by vLLM 0.17+ based on the
+    # WhisperForConditionalGeneration architecture; no --task CLI flag.
     servedModelName: whisper-large-v3-turbo
     hipVisibleDevices: "0"
     trustRemoteCode: false
