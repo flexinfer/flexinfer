@@ -3,7 +3,7 @@
 # Purpose: isolate the qwen3-8b-radeonvii failure where llama.cpp sees the
 # Radeon VII, then aborts in hipMemGetInfo during GPU-backed model load. This
 # probe runs outside FlexInfer's runtime manager and outside model loading,
-# using the same standalone llama.cpp image pinned by GPUProfile/gfx906.
+# using the candidate standalone llama.cpp image for GPUProfile/gfx906.
 #
 # Usage:
 #   kubectl apply -f deploy/debug/gfx906-llamacpp-hipmeminfo-probe.yaml
@@ -93,7 +93,8 @@ data:
     command -v /opt/src/llama.cpp/build/bin/llama-server || true
     /opt/src/llama.cpp/build/bin/llama-server --version || true
     command -v hipcc || command -v /opt/rocm/bin/hipcc || true
-    env | sort | grep -E '^(GPU_DEVICE_ORDINAL|HIP_VISIBLE_DEVICES|HSA_|PYTORCH_ROCM_ARCH|ROCR_VISIBLE_DEVICES|ROCM_PATH)=' || true
+    env | sort | grep -E '^(FLEXINFER_HIPMEMINFO_|GPU_DEVICE_ORDINAL|HIP_VISIBLE_DEVICES|HSA_|LD_PRELOAD|PYTORCH_ROCM_ARCH|ROCR_VISIBLE_DEVICES|ROCM_PATH)=' || true
+    test -r /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so && echo "PROBE_SHIM present" || echo "PROBE_SHIM missing"
 
     HIPCC="$(command -v hipcc || command -v /opt/rocm/bin/hipcc || true)"
     if [ -z "$HIPCC" ]; then
@@ -117,6 +118,8 @@ data:
       echo "=========================================="
       env -i PATH="/opt/rocm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
         LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/opt/rocm/lib:/opt/rocm/lib64}" \
+        LD_PRELOAD="${LD_PRELOAD:-/opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so}" \
+        FLEXINFER_HIPMEMINFO_FALLBACK_TOTAL_MB="${FLEXINFER_HIPMEMINFO_FALLBACK_TOTAL_MB:-16384}" \
         ROCM_PATH="${ROCM_PATH:-/opt/rocm}" \
         HIP_PATH="${HIP_PATH:-/opt/rocm/hip}" \
         "$@" \
@@ -189,8 +192,8 @@ spec:
           effect: NoSchedule
       containers:
         - name: probe
-          image: registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3
-          imagePullPolicy: IfNotPresent
+          image: registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407
+          imagePullPolicy: Always
           command: ["/bin/bash", "/scripts/run.sh"]
           env:
             - name: PYTHONUNBUFFERED
