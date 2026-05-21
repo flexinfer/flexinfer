@@ -59,15 +59,19 @@ the recommended remediation is GPU group partitioning (similar to
 `5930k-imagegen-textgen` group on cblevins-5930k) rather than
 re-introducing vLLM.
 
-**Status**: pre-soak blocked by image-level `hipMemGetInfo` failure. A
-2026-05-21 temporary `qwen3-8b-radeonvii` canary reached llama.cpp startup and
-detected the Radeon VII, then aborted during GPU-backed model load at
-`ggml_backend_cuda_device_get_memory` / `hipMemGetInfo(free, total)`. The
-standalone probe in `deploy/debug/gfx906-llamacpp-hipmeminfo-probe.yaml` ran
-the same llama.cpp image outside FlexInfer model loading and reproduced
-`hipMemGetInfo=1:invalid argument` in all four tested env variants. The 24h
-soak and alias promotion remain blocked until the llama.cpp image handles this
-ROCm/Vega20 memory-info path without aborting.
+**Status**: pre-soak memory-info and model-load gates are unblocked by the
+shimmed llama.cpp image. A 2026-05-21 temporary `qwen3-8b-radeonvii` canary
+first reached llama.cpp startup and detected the Radeon VII, then aborted during
+GPU-backed model load at `ggml_backend_cuda_device_get_memory` /
+`hipMemGetInfo(free, total)`. The standalone probe in
+`deploy/debug/gfx906-llamacpp-hipmeminfo-probe.yaml` reproduced raw
+`hipMemGetInfo=1:invalid argument` in all four tested env variants. MR !467 then
+landed `registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407`,
+which converts that raw ROCm failure into sysfs VRAM totals. The shimmed image
+passed both the standalone HIP probe and a Qwen3 8B GGUF model-load smoke on
+`cblevins-radeonvii` (`SMOKE_RESULT PASS`, 81.1 tok/s short generation). The
+24h soak and alias promotion remain blocked until sustained serving proves zero
+restarts, acceptable latency, and no SDXL inpainting regression.
 
 ## Scope
 
@@ -167,15 +171,38 @@ Order is gated by the pre-soak memory-info probe and then by the kill-test:
    `hipMalloc` results, or the failure is classified as a llama.cpp image /
    ROCm compatibility bug before another model-load retry is attempted.
 
-Verdict: FAIL/BLOCK. All variants returned `hipMemGetInfo=1:invalid argument`
-after successful device discovery. Treat this as an image-level compatibility
-bug and patch/rebuild the llama.cpp image before retrying qwen3-8b model load.
+Verdict: PASS after shim. The original `rocm-gfx906-patched-v3` image returned
+`hipMemGetInfo=1:invalid argument` after successful device discovery. The
+shimmed image returns clean `hipMemGetInfo`, `hipMalloc4096`, and post-malloc
+`hipMemGetInfo` results by falling back to sysfs VRAM totals when raw ROCm
+returns `err=1`.
 
 Evidence doc: `.loom/ralph-gfx906-llamacpp-meminfo-probe-2026-05-21.md`.
 
+### Slice 0a — Model-load smoke on shimmed image
+
+1. Run a one-off debug Job on `cblevins-radeonvii` with the shimmed standalone
+   llama.cpp image and the node-local Qwen3 8B GGUF mounted from
+   `/var/lib/flexinfer/models`.
+2. Load `/models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf`
+   with `--gpu-layers 999`, `--flash-attn on`, `--cache-type-k q4_0`, and
+   `--cache-type-v q4_0`.
+3. Acceptance: llama.cpp reaches model memory breakdown, generates a short
+   response, exits `0`, and the pre-existing CPU-fallback router path still
+   smokes afterward.
+
+Verdict: PASS. The shimmed image loaded Qwen3 8B on the Radeon VII, printed
+ROCm memory breakdown (`model=4455 MiB`, `context=324 MiB`, `compute=304 MiB`),
+generated a short response at `81.1 t/s`, and exited `SMOKE_RESULT PASS`.
+Restore smoke against `qwen3-1p7b-tools-radeonvii` returned `Blue` at
+`69.51 tok/s`.
+
+Evidence doc: `.loom/ralph-gfx906-llamacpp-model-load-smoke-2026-05-21.md`.
+
 ### Slice 1 — Soak validation (kill-test, ~24h wall clock)
 
-Conditional on Slice 0 producing a viable memory-info path.
+Conditional on Slice 0 and Slice 0a producing a viable memory-info and
+model-load path.
 
 1. Pick the soak target. Default: `qwen3-8b-radeonvii` (already warm).
    Alternate: a freshly-pulled Qwen2.5-7B-Instruct Q4_K_M if the team
