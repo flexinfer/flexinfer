@@ -59,7 +59,15 @@ the recommended remediation is GPU group partitioning (similar to
 `5930k-imagegen-textgen` group on cblevins-5930k) rather than
 re-introducing vLLM.
 
-**Status**: not run (pre-spec).
+**Status**: pre-soak blocked by image-level `hipMemGetInfo` failure. A
+2026-05-21 temporary `qwen3-8b-radeonvii` canary reached llama.cpp startup and
+detected the Radeon VII, then aborted during GPU-backed model load at
+`ggml_backend_cuda_device_get_memory` / `hipMemGetInfo(free, total)`. The
+standalone probe in `deploy/debug/gfx906-llamacpp-hipmeminfo-probe.yaml` ran
+the same llama.cpp image outside FlexInfer model loading and reproduced
+`hipMemGetInfo=1:invalid argument` in all four tested env variants. The 24h
+soak and alias promotion remain blocked until the llama.cpp image handles this
+ROCm/Vega20 memory-info path without aborting.
 
 ## Scope
 
@@ -145,9 +153,29 @@ promotion, not infrastructure construction.
 
 ## Slice breakdown
 
-Order is gated by the kill-test:
+Order is gated by the pre-soak memory-info probe and then by the kill-test:
+
+### Slice 0 — HIP memory-info isolation (pre-soak gate)
+
+1. Apply `deploy/debug/gfx906-llamacpp-hipmeminfo-probe.yaml`.
+2. Capture per-case results for:
+   - current profile env;
+   - no `HSA_OVERRIDE_GFX_VERSION`;
+   - `ROCR_VISIBLE_DEVICES=0` only;
+   - `HIP_VISIBLE_DEVICES=0` plus `GPU_DEVICE_ORDINAL=0`.
+3. Acceptance: either one env variant returns clean `hipMemGetInfo` and
+   `hipMalloc` results, or the failure is classified as a llama.cpp image /
+   ROCm compatibility bug before another model-load retry is attempted.
+
+Verdict: FAIL/BLOCK. All variants returned `hipMemGetInfo=1:invalid argument`
+after successful device discovery. Treat this as an image-level compatibility
+bug and patch/rebuild the llama.cpp image before retrying qwen3-8b model load.
+
+Evidence doc: `.loom/ralph-gfx906-llamacpp-meminfo-probe-2026-05-21.md`.
 
 ### Slice 1 — Soak validation (kill-test, ~24h wall clock)
+
+Conditional on Slice 0 producing a viable memory-info path.
 
 1. Pick the soak target. Default: `qwen3-8b-radeonvii` (already warm).
    Alternate: a freshly-pulled Qwen2.5-7B-Instruct Q4_K_M if the team
