@@ -201,6 +201,20 @@ evidence that survives beyond chat history.
 - [ ] RG-4: Run `gfx906` conservative-lane canaries for llama.cpp/Ollama, GPTQ/abliteration, and 512px diffusers offload.
 - [ ] RG-5: Run `gfx1100` textgen/imagegen canaries for Navi vLLM, FLUX/Fill, and any Gemma4/TurboQuant runtime candidates.
 
+## Context-Curve Benchmarking 🚧 PLANNED
+
+Planning doc: `docs/planning/context-curve-benchmark.md`
+
+Objective: make long-context runtime behavior measurable before making it
+schedulable. The first pass is reporting-only: record prefill throughput, decode
+throughput, free-VRAM slope when available, and failure/skipped points across a
+small context ladder.
+
+- [x] CC-1: Add spec capsule and readiness gate for the context-curve benchmark MVP.
+- [ ] CC-2: Add a reporting-only context-curve runner that emits a stable JSON report without changing scheduler decisions.
+- [ ] CC-3: Capture one live curve on an existing Gemma4 or Qwen lane and link it from `.loom/60-validation-matrix.md`.
+- [ ] CC-4: Consider additive ConfigMap storage only after the report shape survives one live run.
+
 ## Tech Debt (Ongoing)
 
 See `ROADMAP.md` for full tech debt tracking:
