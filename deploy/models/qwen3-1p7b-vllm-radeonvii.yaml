@@ -86,9 +86,9 @@ spec:
   gpu:
     vendor: amd
     shared: radeonvii-models
-    # Above the CPU fallback only for explicit canary traffic. The model stays
-    # minReplicas=0 and owns only canary-scoped aliases.
-    priority: 130
+    # Below the CPU fallback; explicit canary traffic can still activate it,
+    # but idle vLLM must not keep the shared group above the tool-router lane.
+    priority: 100
     count: 1
     vramEstimateMB: 4000
   serverless:
