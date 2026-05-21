@@ -1,13 +1,14 @@
 # llama.cpp Docker image for AMD gfx906 (Radeon VII, Vega20)
 # Built from source with GGML_HIP=ON targeting gfx906
 #
-# Includes a patch for hipMemGetInfo returning hipErrorInvalidValue on
-# gfx906 when VMM is not supported (ROCm 6.x). The patch falls back to
-# a hardcoded 16 GB VRAM size instead of aborting.
+# Includes a patch and LD_PRELOAD shim for hipMemGetInfo returning
+# hipErrorInvalidValue on gfx906 when VMM is not supported (ROCm 6.x). The shim
+# falls back to sysfs VRAM totals, then a conservative 16 GB default, instead of
+# aborting.
 #
 # Build command (on GPU node with docker):
 #   docker --context 7900xtx build -f build/Dockerfile.llamacpp-rocm-gfx906 \
-#     -t registry.harbor.lan/library/llamacpp:rocm-gfx906-patched build/
+#     -t registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim .
 
 ARG ROCM_VERSION=6.4.4
 FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION} AS builder
@@ -38,6 +39,13 @@ RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org
 WORKDIR /opt/src/llama.cpp
 COPY build/patch-hipmemgetinfo.sh /tmp/
 RUN chmod +x /tmp/patch-hipmemgetinfo.sh && /tmp/patch-hipmemgetinfo.sh
+
+# Build image-level HIP memory-info compatibility shim.
+COPY build/hipmemgetinfo_shim.cpp /tmp/
+RUN mkdir -p /opt/flexinfer/lib \
+    && g++ -std=c++17 -fPIC -shared -I/opt/rocm/include \
+        /tmp/hipmemgetinfo_shim.cpp -ldl \
+        -o /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
 
 # Build llama.cpp with HIP (ROCm) support
 # GGML_NATIVE=OFF prevents -march=native so the binary runs on older CPUs
@@ -77,6 +85,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Copy built binaries (internal libs are statically linked; ROCm shared libs
 # come from the runtime stage's hipblas/rocblas packages)
 COPY --from=builder /opt/src/llama.cpp/build/bin/ /opt/src/llama.cpp/build/bin/
+COPY --from=builder /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
+ENV LD_PRELOAD=/opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
+ENV FLEXINFER_HIPMEMINFO_FALLBACK_TOTAL_MB=16384
 
 # Create model directory (run as root; K8s securityContext handles the user)
 RUN mkdir -p /models && chmod 777 /models
