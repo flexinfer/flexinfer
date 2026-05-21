@@ -114,7 +114,7 @@ spec:
     bundledBackends:
       - vllm
       - diffusers
-    image: registry.harbor.lan/flexinfer/runtime@sha256:24cbefd79152e3995c1e44623bddb1d98767da8e5ea0393fdd452a7ad3d1bea5
+    image: registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166
   containerMemoryGB: 48
   maxGPUMemoryGB: 18
   # Dropped 44 → 24 on 2026-04-21 to unblock gemma4-26b-a4b-gptq-dense
