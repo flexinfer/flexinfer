@@ -11,6 +11,11 @@ include:
 
 workflow:
   rules:
+    # Codex branches are validated through MR pipelines and then auto-deleted.
+    # Skipping their push pipelines avoids post-merge jobs trying to fetch a
+    # source branch that no longer exists.
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^codex\//
+      when: never
     # Avoid burning runner time on duplicate branch pipelines once an MR exists.
     - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"
       when: never
