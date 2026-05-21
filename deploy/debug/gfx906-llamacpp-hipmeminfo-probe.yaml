@@ -1,0 +1,215 @@
+# gfx906 llama.cpp HIP memory-info probe.
+#
+# Purpose: isolate the qwen3-8b-radeonvii failure where llama.cpp sees the
+# Radeon VII, then aborts in hipMemGetInfo during GPU-backed model load. This
+# probe runs outside FlexInfer's runtime manager and outside model loading,
+# using the same standalone llama.cpp image pinned by GPUProfile/gfx906.
+#
+# Usage:
+#   kubectl apply -f deploy/debug/gfx906-llamacpp-hipmeminfo-probe.yaml
+#   kubectl logs -f job/gfx906-llamacpp-hipmeminfo-probe -n flexinfer-system
+#   kubectl delete -f deploy/debug/gfx906-llamacpp-hipmeminfo-probe.yaml
+#
+# Reference: .loom/ralph-gfx906-llamacpp-meminfo-probe-2026-05-21.md
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gfx906-llamacpp-hipmeminfo-probe
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+data:
+  hipmeminfo.cpp: |
+    #include <hip/hip_runtime.h>
+
+    #include <cstdio>
+    #include <cstdlib>
+
+    static void print_status(const char *label, hipError_t err) {
+        std::printf("%s=%d:%s\n", label, static_cast<int>(err), hipGetErrorString(err));
+        std::fflush(stdout);
+    }
+
+    int main() {
+        int count = 0;
+        hipError_t err = hipGetDeviceCount(&count);
+        print_status("hipGetDeviceCount", err);
+        if (err != hipSuccess || count < 1) {
+            return 2;
+        }
+
+        err = hipSetDevice(0);
+        print_status("hipSetDevice0", err);
+        if (err != hipSuccess) {
+            return 3;
+        }
+
+        hipDeviceProp_t props{};
+        err = hipGetDeviceProperties(&props, 0);
+        print_status("hipGetDeviceProperties0", err);
+        if (err == hipSuccess) {
+            std::printf("device_name=%s\n", props.name);
+            std::printf("totalGlobalMem=%zu\n", static_cast<size_t>(props.totalGlobalMem));
+            std::printf("gcnArchName=%s\n", props.gcnArchName);
+        }
+
+        size_t free_bytes = 0;
+        size_t total_bytes = 0;
+        err = hipMemGetInfo(&free_bytes, &total_bytes);
+        print_status("hipMemGetInfo", err);
+        std::printf("free_bytes=%zu\n", free_bytes);
+        std::printf("total_bytes=%zu\n", total_bytes);
+        std::fflush(stdout);
+        if (err != hipSuccess) {
+            return 4;
+        }
+
+        void *ptr = nullptr;
+        err = hipMalloc(&ptr, 4096);
+        print_status("hipMalloc4096", err);
+        if (err != hipSuccess) {
+            return 5;
+        }
+
+        err = hipMemGetInfo(&free_bytes, &total_bytes);
+        print_status("hipMemGetInfoAfterMalloc", err);
+        std::printf("free_after_malloc_bytes=%zu\n", free_bytes);
+        std::printf("total_after_malloc_bytes=%zu\n", total_bytes);
+
+        (void)hipFree(ptr);
+        return err == hipSuccess ? 0 : 6;
+    }
+  run.sh: |
+    #!/bin/bash
+    # Compile and run a minimal HIP memory-info probe across the env variants
+    # implicated by the qwen3-8b-radeonvii llama.cpp crash.
+    set -u
+
+    echo "=== image/runtime preflight ==="
+    date -Iseconds
+    uname -a
+    command -v /opt/src/llama.cpp/build/bin/llama-server || true
+    /opt/src/llama.cpp/build/bin/llama-server --version || true
+    command -v hipcc || command -v /opt/rocm/bin/hipcc || true
+    env | sort | grep -E '^(GPU_DEVICE_ORDINAL|HIP_VISIBLE_DEVICES|HSA_|PYTORCH_ROCM_ARCH|ROCR_VISIBLE_DEVICES|ROCM_PATH)=' || true
+
+    HIPCC="$(command -v hipcc || command -v /opt/rocm/bin/hipcc || true)"
+    if [ -z "$HIPCC" ]; then
+      echo "PROBE_RESULT compile_skipped missing_hipcc"
+      exit 10
+    fi
+
+    HIP_PATH=/opt/rocm "$HIPCC" --rocm-path=/opt/rocm /scripts/hipmeminfo.cpp -O2 -o /tmp/hipmeminfo-probe
+    rc=$?
+    echo "PROBE_COMPILE exit=$rc"
+    if [ "$rc" -ne 0 ]; then
+      exit "$rc"
+    fi
+
+    FAILED=""
+    run_case() {
+      name="$1"
+      shift
+      echo "=========================================="
+      echo "DRIVER: starting $name"
+      echo "=========================================="
+      env -i PATH="/opt/rocm/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+        LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-/opt/rocm/lib:/opt/rocm/lib64}" \
+        ROCM_PATH="${ROCM_PATH:-/opt/rocm}" \
+        HIP_PATH="${HIP_PATH:-/opt/rocm/hip}" \
+        "$@" \
+        /tmp/hipmeminfo-probe
+      rc=$?
+      echo "DRIVER: CASE $name exit=$rc"
+      if [ "$rc" -ne 0 ]; then
+        FAILED="${FAILED}${name}:${rc} "
+      fi
+    }
+
+    run_case current-profile \
+      HSA_OVERRIDE_GFX_VERSION=9.0.6 \
+      HSA_ENABLE_SDMA=0 \
+      HSA_USE_SVM=0 \
+      PYTORCH_ROCM_ARCH=gfx906
+
+    run_case no-gfx-override \
+      HSA_ENABLE_SDMA=0 \
+      HSA_USE_SVM=0 \
+      PYTORCH_ROCM_ARCH=gfx906
+
+    run_case rocr-visible-only \
+      HSA_ENABLE_SDMA=0 \
+      HSA_USE_SVM=0 \
+      ROCR_VISIBLE_DEVICES=0 \
+      PYTORCH_ROCM_ARCH=gfx906
+
+    run_case hip-visible-and-ordinal \
+      HSA_ENABLE_SDMA=0 \
+      HSA_USE_SVM=0 \
+      HIP_VISIBLE_DEVICES=0 \
+      GPU_DEVICE_ORDINAL=0 \
+      PYTORCH_ROCM_ARCH=gfx906
+
+    echo "=========================================="
+    echo "DRIVER: summary"
+    echo "=========================================="
+    if [ -z "$FAILED" ]; then
+      echo "DRIVER: ALL CASES PASS"
+      exit 0
+    fi
+    echo "DRIVER: FAILED CASES = $FAILED"
+    exit 1
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gfx906-llamacpp-hipmeminfo-probe
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 7200
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flexinfer
+        flexinfer.ai/purpose: debug
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: probe
+          image: registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3
+          imagePullPolicy: IfNotPresent
+          command: ["/bin/bash", "/scripts/run.sh"]
+          env:
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 2Gi
+              amd.com/gpu: "1"
+            limits:
+              cpu: "4"
+              memory: 8Gi
+              amd.com/gpu: "1"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: gfx906-llamacpp-hipmeminfo-probe
+            defaultMode: 0755
