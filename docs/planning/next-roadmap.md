@@ -211,7 +211,7 @@ throughput, free-VRAM slope when available, and failure/skipped points across a
 small context ladder.
 
 - [x] CC-1: Add spec capsule and readiness gate for the context-curve benchmark MVP.
-- [ ] CC-2: Add a reporting-only context-curve runner that emits a stable JSON report without changing scheduler decisions.
+- [x] CC-2: Add a reporting-only context-curve runner that emits a stable JSON report without changing scheduler decisions.
 - [ ] CC-3: Capture one live curve on an existing Gemma4 or Qwen lane and link it from `.loom/60-validation-matrix.md`.
 - [ ] CC-4: Consider additive ConfigMap storage only after the report shape survives one live run.
 

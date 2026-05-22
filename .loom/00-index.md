@@ -25,6 +25,7 @@
 - ASR Slice 1 kill-test INCONCLUSIVE (controller did not reconcile, 2026-05-19): `asr-diarization-kill-test-inconclusive-2026-05-19.md`
 - Context-curve benchmark spec capsule: `../docs/planning/context-curve-benchmark.md`
 - RALPH context-curve benchmark spec iteration (2026-05-21): `ralph-context-curve-benchmark-spec-2026-05-21.md`
+- RALPH context-curve runner MVP (2026-05-22): `ralph-context-curve-runner-2026-05-22.md`
 
 ## Current Goal (2026-05-14, late evening) — F1+F7-vectorize shipped: −24.9% cumulative, 5930k gap closed from 2.13x → 1.60x
 

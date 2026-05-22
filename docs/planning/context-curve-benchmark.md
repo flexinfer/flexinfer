@@ -119,7 +119,7 @@ must not change scheduling decisions.
 | Slice | Target files/modules | Owner boundary | Validation | Rollback/backout |
 |-------|----------------------|----------------|------------|------------------|
 | 4A spec capsule | `docs/planning/context-curve-benchmark.md`, `docs/planning/next-roadmap.md`, `.loom/ralph-context-curve-benchmark-spec-2026-05-21.md` | Planning only | `git diff --check`; `rg "context-curve|Context-Curve" docs .loom` | Revert docs-only MR |
-| 4B report MVP | `scripts/bench-context-curve.sh` or `cmd/flexinfer/commands`, optional benchmark docs | Reporting only; no scheduler/controller mutation | Shell dry run, JSON shape check, one live model run | Remove MVP command/script; leave existing benchmarker unchanged |
+| 4B report MVP | `scripts/bench-context-curve.sh`, `docs/dev/context-curve-benchmarking.md` | Reporting only; no scheduler/controller mutation | Shell dry run, JSON shape check, one live model run | Remove MVP command/script; leave existing benchmarker unchanged |
 | 4C stored evidence | `agents/benchmarker`, `configmap_store`, docs, tests | Additive result schema only | Go tests for backward compatibility plus fixture report tests | Keep legacy keys; disable new writer flag |
 | Later scheduler use | scheduler/controller planning docs first | Blocked until two model families have evidence | New spec and kill-test required | n/a |
 
@@ -167,6 +167,13 @@ First live MVP check, after Slice 4B exists:
 
 ```bash
 MODEL=<existing-model> ./scripts/bench-context-curve.sh --points 2048,8192
+```
+
+Dry-run and JSON-shape check for Slice 4B:
+
+```bash
+REPORT_DIR="$(mktemp -d)" ./scripts/bench-context-curve.sh --dry-run --points 2k,8k
+python3 -m json.tool "$REPORT_DIR"/bench-context-curve-*.json >/dev/null
 ```
 
 ## Rollout / Backout
