@@ -193,6 +193,43 @@ Large JSON outputs and smoke transcripts go under
 tracked file. Each archive should include the exact command, artifact path,
 runtime image digest or OCI ref when available, and smoke response transcript.
 
+### 2026-05-22 context-curve MVP: gemma4-26b-a4b-gptq
+
+First live CC-3 context-curve run used the reporting-only
+`scripts/bench-context-curve.sh` runner from MR !472. It targeted the explicit
+`gemma4-26b-a4b-gptq` route through a local port-forward to
+`svc/flexinfer-proxy` so shared-alias round-robin did not mix in the 5930k
+sister lane.
+
+Command:
+
+```bash
+kubectl -n flexinfer-system port-forward svc/flexinfer-proxy 18080:80
+REPORT_DIR=.loom/local/validation/context-curve/2026-05-22 \
+  MODEL=gemma4-26b-a4b-gptq \
+  ENDPOINT=http://127.0.0.1:18080 \
+  ./scripts/bench-context-curve.sh --points 2048,8192 --iterations 1 --warmup 1 --timeout 900
+```
+
+Result summary:
+
+- Report schema: `flexinfer.context_curve.v1`.
+- Raw report:
+  `.loom/local/validation/context-curve/2026-05-22/bench-context-curve-gemma4-26b-a4b-gptq-context-curve-20260521T215333-dcd797.json`.
+- Stdout transcript:
+  `.loom/local/validation/context-curve/2026-05-22/context-curve-stdout.log`.
+- Summary: `total_points=2`, `passed=2`, `failed=0`, `skipped=0`,
+  `first_failure_point=null`.
+- 2048 target: observed `1872` prompt tokens and `13` completion tokens;
+  measured sample elapsed `1.066s`, prefill throughput `1756.2 tok/s`, decode
+  throughput `12.20 tok/s`.
+- 8192 target: observed `7292` prompt tokens and `13` completion tokens;
+  measured sample elapsed `4.958s`, prefill throughput `1470.8 tok/s`, decode
+  throughput `2.62 tok/s`.
+
+This is evidence capture only. It does not change scheduler scoring,
+controller behavior, runtime profiles, CRDs, or benchmark ConfigMap consumers.
+
 ### 2026-05-21 gfx906 llama.cpp HIP memory-info shim probe
 
 Built and pushed:
