@@ -58,6 +58,14 @@ VRAM_COMMAND='kubectl get node cblevins-7900xtx -o jsonpath={.metadata.annotatio
 ./scripts/bench-context-curve.sh --points 2048,8192
 ```
 
+Store the same JSON report in a ConfigMap for later comparison:
+
+```bash
+MODEL=gemma4-26b-a4b-gptq \
+STORE_CONFIGMAP=1 \
+./scripts/bench-context-curve.sh --points 2048,8192 --iterations 1
+```
+
 ## Output
 
 The script writes one JSON report under `REPORT_DIR`:
@@ -96,6 +104,13 @@ The stable top-level contract is:
 `status` is one of `pass`, `fail`, or `skip`. Dry runs mark all points as
 `skip` with `reason: dry_run`.
 
+When `--store-configmap` or `STORE_CONFIGMAP=1` is set, the runner also stores
+the report JSON in `flexinfer-context-curve-results` in `flexinfer-system` by
+default. Each run gets a unique `<model>-<run_id>.json` key, so storing a new
+report does not replace older reports. Override the target with
+`--configmap-name`, `--configmap-namespace`, or the matching environment
+variables `CONTEXT_CURVE_CONFIGMAP` and `NAMESPACE`.
+
 ## Notes
 
 - Prompt token targets are approximate because the script does not use a
@@ -106,3 +121,5 @@ The stable top-level contract is:
 - Treat the first implementation as evidence capture only. Scheduler changes
   require a later spec and at least two model families with comparable live
   curves.
+- ConfigMap storage is additive evidence only. The scheduler still reads the
+  existing benchmark result ConfigMaps and ignores context-curve reports.

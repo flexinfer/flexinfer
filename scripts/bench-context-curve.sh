@@ -26,6 +26,7 @@ from pathlib import Path
 DEFAULT_POINTS = "2048,8192,32768,131072"
 DEFAULT_MODEL = "qwen3-14b-claude-distill"
 DEFAULT_ENDPOINT = "http://localhost:8080"
+DEFAULT_CONFIGMAP = "flexinfer-context-curve-results"
 
 
 def parse_points(raw):
@@ -82,6 +83,10 @@ def slugify(value):
             safe.append("-")
     slug = "".join(safe).strip("-")
     return slug or "model"
+
+
+def env_flag(name):
+    return os.environ.get(name, "0").lower() in {"1", "true", "yes", "on"}
 
 
 def prompt_for_context(target_tokens):
@@ -290,6 +295,55 @@ def rounded(value):
     return value
 
 
+def store_report_configmap(args, report_path, report):
+    key = f"{slugify(args.model)[:80]}-{report['run_id']}.json"
+    report_json = report_path.read_text(encoding="utf-8")
+
+    get_cmd = [args.kubectl, "-n", args.configmap_namespace, "get", "configmap", args.configmap_name]
+    get_result = subprocess.run(get_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    if get_result.returncode != 0:
+        create_cmd = [
+            args.kubectl,
+            "-n",
+            args.configmap_namespace,
+            "create",
+            "configmap",
+            args.configmap_name,
+            "--from-literal=createdBy=bench-context-curve",
+        ]
+        subprocess.run(create_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+
+    patch = {
+        "metadata": {
+            "labels": {
+                "app.kubernetes.io/component": "context-curve-benchmark",
+                "app.kubernetes.io/part-of": "flexinfer",
+            }
+        },
+        "data": {
+            key: report_json,
+        },
+    }
+    patch_cmd = [
+        args.kubectl,
+        "-n",
+        args.configmap_namespace,
+        "patch",
+        "configmap",
+        args.configmap_name,
+        "--type",
+        "merge",
+        "-p",
+        json.dumps(patch),
+    ]
+    subprocess.run(patch_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+    return {
+        "namespace": args.configmap_namespace,
+        "name": args.configmap_name,
+        "key": key,
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Run a reporting-only FlexInfer long-context benchmark curve.",
@@ -304,6 +358,13 @@ def main():
     parser.add_argument("--report-dir", default=os.environ.get("REPORT_DIR", "/tmp"))
     parser.add_argument("--vram-command", default=os.environ.get("VRAM_COMMAND", ""))
     parser.add_argument("--direct", action="store_true", default=os.environ.get("DIRECT", "0") == "1")
+    parser.add_argument("--store-configmap", action="store_true", default=env_flag("STORE_CONFIGMAP"))
+    parser.add_argument("--configmap-name", default=os.environ.get("CONTEXT_CURVE_CONFIGMAP", DEFAULT_CONFIGMAP))
+    parser.add_argument(
+        "--configmap-namespace",
+        default=os.environ.get("NAMESPACE") or os.environ.get("POD_NAMESPACE") or "flexinfer-system",
+    )
+    parser.add_argument("--kubectl", default=os.environ.get("KUBECTL", "kubectl"))
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
 
@@ -356,6 +417,21 @@ def main():
         "path": str(report_path),
         "summary": report["context_curve"]["summary"],
     }), flush=True)
+    if args.store_configmap:
+        try:
+            stored = store_report_configmap(args, report_path, report)
+        except (OSError, subprocess.CalledProcessError) as exc:
+            print(json.dumps({
+                "event": "context_curve_configmap_store",
+                "status": "fail",
+                "error": repr(exc),
+            }), flush=True)
+            return 1
+        print(json.dumps({
+            "event": "context_curve_configmap_store",
+            "status": "pass",
+            **stored,
+        }), flush=True)
 
     return 1 if any(point["status"] == "fail" for point in points) else 0
 
