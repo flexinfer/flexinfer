@@ -109,14 +109,56 @@ Initial evidence:
 
 ## Handoff/Harvest
 
-- Docs to update after the 24 hour run:
-  - `.loom/60-validation-matrix.md`
-  - `.loom/spec-gfx906-llamacpp-production-lane-2026-05-20.md`
-- Agent-context entries to add after MCP recovery:
-  - finding: soak setup manifest created and applied.
-  - decision: alias promotion remains blocked pending soak PASS.
-- Next-slice candidates:
-  - If standalone soak passes: build/promote a `gfx906` runtime image carrying
-    the shim, then rerun a proxy-backed soak.
-  - If standalone soak fails: keep Radeon VII out of fallback aliases and open a
-    remediation slice for reduced context/concurrency or driver/runtime changes.
+### Final harvest (2026-05-22)
+
+The standalone soak completed successfully.
+
+Kubernetes status:
+
+- Job `gfx906-llamacpp-soak-traffic`
+  - `startTime`: 2026-05-21T18:40:23Z
+  - `completionTime`: 2026-05-22T18:43:42Z
+  - conditions: `SuccessCriteriaMet=True`, `Complete=True`
+  - `succeeded`: 1
+- Pod `gfx906-llamacpp-soak-traffic-brpcf`
+  - phase: `Succeeded`
+  - node: `cblevins-radeonvii`
+  - `server` container: exit `0`, restart count `0`
+  - `traffic` container: exit `0`, restart count `0`
+
+Traffic-script contract:
+
+- The script exits `20` on request failures.
+- The script exits `21` if no measured p95 exists.
+- The script exits `22` if p95 exceeds `300 ms/token`.
+- Therefore traffic container exit `0` proves the soak had no recorded request
+  failures and stayed inside the latency envelope.
+
+Observed mid-run health:
+
+- A 19h harvest showed attempts 981-1140 returning HTTP 200, 64 completion
+  tokens, and approximately `13.6-13.8 ms/token`.
+
+Co-tenant baseline at final harvest:
+
+- `sdxl-inpainting-radeonvii`: `Idle`
+- `qwen3-1p7b-tools-radeonvii`: `Ready`
+
+Evidence caveat:
+
+- Final completed-container logs were unavailable after completion; `kubectl
+  logs` returned `unable to retrieve container logs for containerd://...`.
+- This prevents recording the exact final `soak_summary.p95_ms_per_token`.
+- Next proxy-backed soak must persist its summary to a ConfigMap or PVC before
+  alias/default fallback promotion.
+
+Decision:
+
+- Standalone kill-test: PASS.
+- Alias promotion remains blocked until a persistent `gfx906` runtime image
+  carries the shim and a proxy-backed soak passes with durable summary storage.
+
+Next slice:
+
+- Build or promote a `gfx906` runtime image carrying
+  `libflexinfer_hipmeminfo_shim.so`, then rerun a proxy-backed soak.
