@@ -24,6 +24,7 @@ If you’re looking for “what exists today” docs, start here instead:
 - `phase-1-controller-api-hardening.md`: PR-sized checklist for the next series of controller hardening work.
 - `../design/multi-tenancy.md`: M1 design for namespace-isolated tenancy baseline.
 - `phase-5-multi-cluster.md`: forward-looking checklist for multi-cluster federation (future).
+- Runtime/dev benchmark docs: `../dev/context-curve-benchmarking.md` and `../dev/gemma4-benchmarking.md`.
 
 ## Current Focus (February 2026)
 
