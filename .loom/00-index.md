@@ -28,6 +28,7 @@
 - RALPH context-curve runner MVP (2026-05-22): `ralph-context-curve-runner-2026-05-22.md`
 - RALPH context-curve live capture (2026-05-22): `ralph-context-curve-live-capture-2026-05-22.md`
 - RALPH context-curve ConfigMap storage (2026-05-22): `ralph-context-curve-configmap-storage-2026-05-22.md`
+- RALPH context-curve spec closeout (2026-05-22): `ralph-context-curve-spec-closeout-2026-05-22.md`
 
 ## Current Goal (2026-05-14, late evening) — F1+F7-vectorize shipped: −24.9% cumulative, 5930k gap closed from 2.13x → 1.60x
 

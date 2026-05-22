@@ -105,14 +105,25 @@ must not change scheduling decisions.
 
 ## Acceptance Criteria
 
-- [ ] The MVP command produces JSON with a stable `context_curve.points[]`
-      shape.
-- [ ] At least two context points are attempted against one existing model.
-- [ ] Failed or skipped context points preserve the reason and do not erase
-      earlier successful measurements.
-- [ ] Existing one-number benchmark results continue to be emitted unchanged.
-- [ ] A validation-matrix row or raw-evidence note links the first live report.
-- [ ] Rollout/backout path is clear and does not require runtime promotion.
+- [x] The MVP command produces JSON with a stable `context_curve.points[]`
+      shape. Closed by `scripts/bench-context-curve.sh` and the dry-run JSON
+      validation in `.loom/ralph-context-curve-runner-2026-05-22.md`.
+- [x] At least two context points are attempted against one existing model.
+      Closed by the 2048/8192-token `gemma4-26b-a4b-gptq` live capture linked
+      from `.loom/60-validation-matrix.md`.
+- [x] Failed or skipped context points preserve the reason and do not erase
+      earlier successful measurements. The report schema keeps per-point
+      `status`, `reason`, and `error` fields, and dry runs mark unavailable
+      points as `skip`.
+- [x] Existing one-number benchmark results continue to be emitted unchanged.
+      Context-curve storage is additive and uses the separate
+      `flexinfer-context-curve-results` ConfigMap.
+- [x] A validation-matrix row or raw-evidence note links the first live report.
+      See `.loom/60-validation-matrix.md` section
+      `2026-05-22 context-curve MVP: gemma4-26b-a4b-gptq`.
+- [x] Rollout/backout path is clear and does not require runtime promotion.
+      The MVP is reporting-only; backout is removing the script or omitting
+      `--store-configmap`.
 
 ## Implementation Slices
 
@@ -141,7 +152,7 @@ Coordination notes:
 
 ## Readiness
 
-Status: Slice 4C implemented
+Status: Slice 4C implemented and acceptance closed
 
 - Target files/modules: benchmark scripts and docs. Benchmarker-native storage
   remains out of scope until more than one model family has comparable live
@@ -152,8 +163,8 @@ Status: Slice 4C implemented
   JSON fixtures.
 - Rollout/backout: additive command/script can be reverted without changing
   live controllers, schedulers, or CRDs.
-- Non-blocking open questions: which warm model should anchor the first run:
-  Gemma4 26B, Qwen3 8B/14B, or the current fast-chat alias.
+- First-run anchor: `gemma4-26b-a4b-gptq`, selected because it was an existing
+  warm production lane and avoided cold-start noise for the first curve.
 
 ## Validation Plan
 
@@ -197,8 +208,11 @@ kubectl -n flexinfer-system get configmap flexinfer-context-curve-results
 
 ## Open Questions
 
-- [ ] Should the first run target a model with a currently warm production lane
+- [x] Should the first run target a model with a currently warm production lane
       or a direct canary where cold-start noise is easier to isolate?
+      Answer: use a currently warm production lane for the first report. The
+      first live run targeted `gemma4-26b-a4b-gptq` at 2048 and 8192 tokens so
+      the MVP measured curve shape without cold-start variance.
 - [x] Should context-curve reports live in the global benchmark ConfigMap, a
       per-model ConfigMap, or only in raw validation artifacts for the MVP?
       Answer: keep the one-number benchmark ConfigMaps unchanged and store
