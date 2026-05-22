@@ -107,6 +107,19 @@ WORKDIR /opt/src
 RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 
 WORKDIR /opt/src/llama.cpp
+COPY build/patch-hipmemgetinfo.sh /tmp/
+RUN chmod +x /tmp/patch-hipmemgetinfo.sh && /tmp/patch-hipmemgetinfo.sh
+
+# Build the image-level HIP memory-info compatibility shim used by the
+# standalone gfx906 llama.cpp canaries. The live runtime inherits LD_PRELOAD so
+# runtime-managed llama.cpp children use the same sysfs fallback when Vega20
+# returns hipErrorInvalidValue from hipMemGetInfo.
+COPY build/hipmemgetinfo_shim.cpp /tmp/
+RUN mkdir -p /opt/flexinfer/lib \
+    && g++ -std=c++17 -fPIC -shared -I/opt/rocm/include \
+        /tmp/hipmemgetinfo_shim.cpp -ldl \
+        -o /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
+
 RUN cmake -B build -G Ninja \
     -DGGML_HIP=ON -DGGML_NATIVE=OFF \
     -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
@@ -199,7 +212,8 @@ ENV DEBIAN_FRONTEND=noninteractive \
     GPU_VENDOR=${GPU_VENDOR} \
     GPU_ARCH=${GPU_ARCH} \
     FLEXINFER_TRANSFORMERS_PACKAGE=${TRANSFORMERS_PACKAGE} \
-    FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL=${TRANSFORMERS_RUNTIME_INSTALL}
+    FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL=${TRANSFORMERS_RUNTIME_INSTALL} \
+    FLEXINFER_HIPMEMINFO_FALLBACK_TOTAL_MB=16384
 
 # ── Layer 1: System deps + pip tooling, single layer ────────────────
 # tini for PID 1 init, curl/jq/lsof/procps/psmisc for healthchecks and
@@ -305,8 +319,10 @@ RUN chmod +x /usr/local/bin/runtime-entrypoint.sh
 
 # ── Copy llama.cpp binary ────────────────────────────────────────────
 COPY --from=llamacpp-builder /opt/src/llama.cpp/build/bin/ /opt/llamacpp/bin/
+COPY --from=llamacpp-builder /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
 ENV PATH="/opt/llamacpp/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/llamacpp/bin:${LD_LIBRARY_PATH}"
+ENV LD_PRELOAD=/opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
 
 # ── Copy ollama binary ───────────────────────────────────────────────
 COPY --from=ollama-builder /build/ollama /usr/local/bin/ollama

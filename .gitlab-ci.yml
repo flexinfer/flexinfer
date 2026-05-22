@@ -1020,6 +1020,8 @@ publish_runtime_rocm_gfx906:
         - internal/runtime/**/*
         - backend/**/*
         - build/Dockerfile.runtime-gfx906
+        - build/hipmemgetinfo_shim.cpp
+        - build/patch-hipmemgetinfo.sh
         - build/runtime.yaml
         - build/runtime-entrypoint.sh
         - build/server-diffusers.py
@@ -1299,7 +1301,10 @@ publish_llamacpp_rocm_gfx906:
       done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
-      changes: [build/Dockerfile.llamacpp-rocm-gfx906]
+      changes:
+        - build/Dockerfile.llamacpp-rocm-gfx906
+        - build/hipmemgetinfo_shim.cpp
+        - build/patch-hipmemgetinfo.sh
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
