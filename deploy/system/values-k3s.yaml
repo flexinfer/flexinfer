@@ -412,7 +412,7 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx906
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:cbe1157c2fb6a24fc67e901bec92a72bbf16498a86ad1a064ce9bf4db1f2ddf4"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:8797a08a209201dc7bcf6bce7f79b0697055a02824f5fe9947932ef91273c29e"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
