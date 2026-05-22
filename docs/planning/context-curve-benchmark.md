@@ -85,7 +85,7 @@ must not change scheduling decisions.
     available.
   - Record each point as `pass`, `fail`, or `skip` with a reason.
 - Operational:
-  - MVP output is a report artifact and optional ConfigMap data only.
+  - MVP output is a report artifact and optional additive ConfigMap data only.
   - The benchmark can run against an existing proxy route or a direct
     port-forwarded backend.
   - A failed large-context point must not fail earlier successful points.
@@ -120,7 +120,7 @@ must not change scheduling decisions.
 |-------|----------------------|----------------|------------|------------------|
 | 4A spec capsule | `docs/planning/context-curve-benchmark.md`, `docs/planning/next-roadmap.md`, `.loom/ralph-context-curve-benchmark-spec-2026-05-21.md` | Planning only | `git diff --check`; `rg "context-curve|Context-Curve" docs .loom` | Revert docs-only MR |
 | 4B report MVP | `scripts/bench-context-curve.sh`, `docs/dev/context-curve-benchmarking.md` | Reporting only; no scheduler/controller mutation | Shell dry run, JSON shape check, one live model run | Remove MVP command/script; leave existing benchmarker unchanged |
-| 4C stored evidence | `agents/benchmarker`, `configmap_store`, docs, tests | Additive result schema only | Go tests for backward compatibility plus fixture report tests | Keep legacy keys; disable new writer flag |
+| 4C stored evidence | `scripts/bench-context-curve.sh`, `docs/dev/context-curve-benchmarking.md` | Additive evidence storage only | Dry-run JSON shape check; opt-in ConfigMap-store invocation with an existing kube context | Keep local report output; omit `--store-configmap` |
 | Later scheduler use | scheduler/controller planning docs first | Blocked until two model families have evidence | New spec and kill-test required | n/a |
 
 ## Agent Delegation Notes
@@ -128,7 +128,7 @@ must not change scheduling decisions.
 | Workstream | Safe-to-edit files/modules | Do not touch | Local verification | Expected output/signals |
 |------------|----------------------------|--------------|--------------------|-------------------------|
 | Script MVP | `scripts/bench-context-curve.sh`, `docs/dev/*benchmark*` | `scheduler/`, `controllers/`, CRDs, runtime Dockerfiles | Dry-run; JSON fixture validation; one direct endpoint smoke when available | Report contains per-context points and preserves partial failure |
-| Benchmarker storage | `agents/benchmarker/*`, `cmd/flexinfer-bench`, tests | scheduler scoring, model CRD schema | `go test ./agents/benchmarker ./cmd/flexinfer-bench` | Existing ConfigMap fields remain; curve data is additive |
+| Context-curve storage | `scripts/bench-context-curve.sh`, `docs/dev/context-curve-benchmarking.md` | scheduler scoring, model CRD schema, existing benchmark ConfigMaps | Dry-run JSON shape check; opt-in ConfigMap-store invocation with an existing kube context | Existing ConfigMap fields remain; curve data is additive |
 | Matrix/docs evidence | `.loom/60-validation-matrix.md`, `docs/planning/context-curve-benchmark.md` | runtime promotion rows unrelated to the run | `git diff --check`; `rg "context_curve|Context-Curve"` | First live report is linked without marking scheduler changes complete |
 
 Coordination notes:
@@ -141,10 +141,11 @@ Coordination notes:
 
 ## Readiness
 
-Status: Ready for Slice 4B
+Status: Slice 4C implemented
 
-- Target files/modules: benchmark scripts or CLI benchmark command, benchmarker
-  storage only if the MVP proves the report shape.
+- Target files/modules: benchmark scripts and docs. Benchmarker-native storage
+  remains out of scope until more than one model family has comparable live
+  curves.
 - Owner boundary: reporting and evidence capture, not placement.
 - Validation commands: named in the slices above.
 - Generated artifacts: none for the spec slice; later CLI/docs slices may add
@@ -172,8 +173,16 @@ MODEL=<existing-model> ./scripts/bench-context-curve.sh --points 2048,8192
 Dry-run and JSON-shape check for Slice 4B:
 
 ```bash
-REPORT_DIR="$(mktemp -d)" ./scripts/bench-context-curve.sh --dry-run --points 2k,8k
+REPORT_DIR="$(mktemp -d)"
+REPORT_DIR="$REPORT_DIR" ./scripts/bench-context-curve.sh --dry-run --points 2k,8k
 python3 -m json.tool "$REPORT_DIR"/bench-context-curve-*.json >/dev/null
+```
+
+Opt-in ConfigMap storage check:
+
+```bash
+STORE_CONFIGMAP=1 ./scripts/bench-context-curve.sh --dry-run --points 2k
+kubectl -n flexinfer-system get configmap flexinfer-context-curve-results
 ```
 
 ## Rollout / Backout
@@ -190,8 +199,11 @@ python3 -m json.tool "$REPORT_DIR"/bench-context-curve-*.json >/dev/null
 
 - [ ] Should the first run target a model with a currently warm production lane
       or a direct canary where cold-start noise is easier to isolate?
-- [ ] Should context-curve reports live in the global benchmark ConfigMap, a
+- [x] Should context-curve reports live in the global benchmark ConfigMap, a
       per-model ConfigMap, or only in raw validation artifacts for the MVP?
+      Answer: keep the one-number benchmark ConfigMaps unchanged and store
+      opt-in curve reports in `flexinfer-context-curve-results` under unique
+      per-run keys.
 
 ## Sources
 
