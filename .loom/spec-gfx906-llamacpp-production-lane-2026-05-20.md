@@ -59,19 +59,22 @@ the recommended remediation is GPU group partitioning (similar to
 `5930k-imagegen-textgen` group on cblevins-5930k) rather than
 re-introducing vLLM.
 
-**Status**: pre-soak memory-info and model-load gates are unblocked by the
-shimmed llama.cpp image. A 2026-05-21 temporary `qwen3-8b-radeonvii` canary
-first reached llama.cpp startup and detected the Radeon VII, then aborted during
-GPU-backed model load at `ggml_backend_cuda_device_get_memory` /
-`hipMemGetInfo(free, total)`. The standalone probe in
+**Status**: pre-soak memory-info, model-load, and standalone 24h soak gates are
+unblocked by the shimmed llama.cpp image. A 2026-05-21 temporary
+`qwen3-8b-radeonvii` canary first reached llama.cpp startup and detected the
+Radeon VII, then aborted during GPU-backed model load at
+`ggml_backend_cuda_device_get_memory` / `hipMemGetInfo(free, total)`. The
+standalone probe in
 `deploy/debug/gfx906-llamacpp-hipmeminfo-probe.yaml` reproduced raw
 `hipMemGetInfo=1:invalid argument` in all four tested env variants. MR !467 then
 landed `registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407`,
 which converts that raw ROCm failure into sysfs VRAM totals. The shimmed image
 passed both the standalone HIP probe and a Qwen3 8B GGUF model-load smoke on
 `cblevins-radeonvii` (`SMOKE_RESULT PASS`, 81.1 tok/s short generation). The
-24h soak and alias promotion remain blocked until sustained serving proves zero
-restarts, acceptable latency, and no SDXL inpainting regression.
+24h standalone soak then completed successfully on 2026-05-22 with both
+containers exit `0` and zero restarts. Alias promotion remains blocked until a
+persistent `gfx906` runtime image carries the shim and a proxy-backed soak
+persists final summary evidence.
 
 ## Scope
 
@@ -218,11 +221,22 @@ model-load path.
    promotion and open a remediation slice (GPU group partitioning
    etc.).
 
-Evidence doc: `.loom/ralph-gfx906-llamacpp-soak-<DATE>.md`.
+Verdict: PASS for the standalone shimmed-image kill-test. Job
+`gfx906-llamacpp-soak-traffic` ran from 2026-05-21T18:40:23Z to
+2026-05-22T18:43:42Z, with both the `server` and `traffic` containers exiting
+`0` and restart count `0`. The traffic script exits nonzero on request
+failures, missing p95 data, or p95 above `300 ms/token`, so exit `0` proves the
+latency envelope. Final logs were not retrievable from Kubernetes after
+completion, so the exact final p95 was not harvested; the next proxy-backed
+soak must persist its summary to a ConfigMap or PVC.
+
+Evidence doc: `.loom/ralph-gfx906-llamacpp-soak-2026-05-21.md`.
 
 ### Slice 2 — Alias promotion (small docs/manifest MR)
 
-Conditional on Slice 1 PASS.
+Conditional on Slice 1 PASS and a proxy-backed soak using the persistent
+`gfx906` runtime image with the hipMemGetInfo shim. The standalone soak proved
+the image and hardware path, but not the controller/proxy runtime path.
 
 1. Edit `deploy/models/qwen3-8b-radeonvii.yaml` to add
    `default-chat-fallback` to `serviceLabels`.
