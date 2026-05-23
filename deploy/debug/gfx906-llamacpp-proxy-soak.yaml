@@ -126,7 +126,8 @@ data:
 
     deadline = time.monotonic() + duration_seconds
     attempts = 0
-    failures = 0
+    warmup_failures = 0
+    measured_failures = 0
     measured = []
 
     while time.monotonic() < deadline:
@@ -169,7 +170,10 @@ data:
             if attempts > warmup_requests:
                 measured.append(ms_per_token)
         except Exception as exc:
-            failures += 1
+            if record["warmup"]:
+                warmup_failures += 1
+            else:
+                measured_failures += 1
             record.update({
                 "ok": False,
                 "error": repr(exc),
@@ -191,7 +195,9 @@ data:
         "event": "soak_summary",
         "attempts": attempts,
         "measured_requests": len(measured),
-        "failures": failures,
+        "failures": measured_failures,
+        "measured_failures": measured_failures,
+        "warmup_failures": warmup_failures,
         "p95_ms_per_token": None if p95 is None else round(p95, 3),
         "latency_budget_ms_per_token": latency_budget_ms_per_token,
         "jsonl_path": jsonl_path,
@@ -203,7 +209,7 @@ data:
         json.dump(summary, handle, indent=2, sort_keys=True)
         handle.write("\n")
 
-    if failures:
+    if measured_failures:
         sys.exit(20)
     if p95 is None:
         sys.exit(21)

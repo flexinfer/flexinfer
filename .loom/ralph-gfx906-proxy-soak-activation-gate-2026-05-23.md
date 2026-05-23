@@ -44,6 +44,27 @@ Source change prepared:
 - `deploy/debug/gfx906-llamacpp-proxy-soak.yaml` now defaults to
   `/model/qwen3-8b-radeonvii-soak/v1/chat/completions`.
 
+Follow-up after the first live preflight attempt:
+
+- `gpu.forcePromotion: true` worked: `qwen3-1p7b-tools-radeonvii` moved to
+  `Preempted` immediately.
+- The first target version failed before proving runtime health because the
+  soak-only model name produced a new cache path:
+  `/models/qwen3-8b-radeonvii-soak/Qwen3-8B-Q4_K_M.gguf`.
+- Runtime logs showed the shim active and the Radeon VII detected, then
+  llama.cpp failed with `No such file or directory` for that GGUF path.
+- The target now points at the already-proven node-local path:
+  `file:///models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf`
+  with `cache.strategy: None`.
+- The immediate retry exposed a runtime payload bug: `file://` sources were
+  parsed into `payload.Model`, but `BuildLoadPayloadForModel` did not preserve
+  that value as `payload.ModelPath`, so the runtime fell back to
+  `/models/<model-name>`. The payload builder now passes file paths through
+  explicitly, covered by `TestBuildLoadPayloadForModelPreservesFileSourcePath`.
+- The proxy traffic script now records `warmup_failures` separately from
+  measured request failures. Cold-start warmup failures remain visible in the
+  evidence JSONL/summary but do not make the measured soak verdict fail.
+
 ## Riskiest Assumption
 
 `gpu.forcePromotion: true` can hold the 8B soak target active long enough to
