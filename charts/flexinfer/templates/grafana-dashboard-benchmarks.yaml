@@ -1,0 +1,275 @@
+{{- $benchmarksEnabled := true -}}
+{{- if hasKey .Values.grafanaDashboard "benchmarksEnabled" -}}
+{{- $benchmarksEnabled = .Values.grafanaDashboard.benchmarksEnabled -}}
+{{- end -}}
+{{- if and .Values.grafanaDashboard.enabled $benchmarksEnabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-grafana-dashboard-benchmarks
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    grafana_dashboard: "1"
+data:
+  flexinfer-benchmark-results.json: |
+    {
+      "annotations": {
+        "list": [
+          {
+            "builtIn": 1,
+            "datasource": "-- Grafana --",
+            "enable": true,
+            "hide": true,
+            "iconColor": "rgba(0, 211, 255, 1)",
+            "name": "Annotations & Alerts",
+            "type": "dashboard"
+          }
+        ]
+      },
+      "editable": true,
+      "gnetId": null,
+      "graphTooltip": 1,
+      "id": null,
+      "links": [],
+      "panels": [
+        {
+          "title": "Benchmark Results",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Tokens/sec by Model",
+          "description": "Latest benchmark throughput grouped by model, backend, and GPU architecture",
+          "type": "barchart",
+          "gridPos": { "x": 0, "y": 1, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "max by (model, backend, gpu_vendor, gpu_arch) (flexinfer_benchmark_tokens_per_second)",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }} / {{ "{{" }}backend{{ "}}" }} / {{ "{{" }}gpu_vendor{{ "}}" }} {{ "{{" }}gpu_arch{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "tok/s",
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisPlacement": "auto",
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "lineWidth": 1
+              }
+            }
+          },
+          "options": {
+            "orientation": "horizontal",
+            "showValue": "always",
+            "stacking": "none"
+          }
+        },
+        {
+          "title": "VRAM Used by Model",
+          "description": "Latest benchmark VRAM use in GiB",
+          "type": "barchart",
+          "gridPos": { "x": 12, "y": 1, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "max by (model, backend, gpu_vendor, gpu_arch) (flexinfer_benchmark_vram_used_bytes / 1024 / 1024 / 1024)",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }} / {{ "{{" }}backend{{ "}}" }} / {{ "{{" }}gpu_vendor{{ "}}" }} {{ "{{" }}gpu_arch{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "gbytes",
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisPlacement": "auto",
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "lineWidth": 1
+              }
+            }
+          },
+          "options": {
+            "orientation": "horizontal",
+            "showValue": "always",
+            "stacking": "none"
+          }
+        },
+        {
+          "title": "Tokens/sec Over Time",
+          "description": "Benchmark throughput history by model and GPU architecture",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 9, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "flexinfer_benchmark_tokens_per_second",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }} / {{ "{{" }}backend{{ "}}" }} / {{ "{{" }}gpu_vendor{{ "}}" }} {{ "{{" }}gpu_arch{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "tok/s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "VRAM Efficiency",
+          "description": "Tokens/sec per GiB of VRAM used during the benchmark",
+          "type": "barchart",
+          "gridPos": { "x": 12, "y": 9, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "max by (model, backend, gpu_vendor, gpu_arch) (flexinfer_benchmark_tokens_per_second / (flexinfer_benchmark_vram_used_bytes / 1024 / 1024 / 1024))",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }} / {{ "{{" }}backend{{ "}}" }} / {{ "{{" }}gpu_vendor{{ "}}" }} {{ "{{" }}gpu_arch{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "tok/s/GiB",
+              "color": { "mode": "palette-classic" },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisPlacement": "auto",
+                "drawStyle": "bars",
+                "fillOpacity": 80,
+                "lineWidth": 1
+              }
+            }
+          },
+          "options": {
+            "orientation": "horizontal",
+            "showValue": "always",
+            "stacking": "none"
+          }
+        },
+        {
+          "title": "Model Comparison",
+          "description": "Latest benchmark samples across models, backends, and GPU architectures",
+          "type": "table",
+          "gridPos": { "x": 0, "y": 17, "w": 24, "h": 8 },
+          "targets": [
+            {
+              "expr": "max by (model, backend, gpu_vendor, gpu_arch) (flexinfer_benchmark_tokens_per_second)",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "Tokens/sec",
+              "refId": "A"
+            },
+            {
+              "expr": "max by (model, backend, gpu_vendor, gpu_arch) (flexinfer_benchmark_vram_used_bytes / 1024 / 1024 / 1024)",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "VRAM GiB",
+              "refId": "B"
+            },
+            {
+              "expr": "max by (model, backend, gpu_vendor, gpu_arch) (flexinfer_benchmark_tokens_per_second / (flexinfer_benchmark_vram_used_bytes / 1024 / 1024 / 1024))",
+              "format": "table",
+              "instant": true,
+              "legendFormat": "Tokens/sec/GiB",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "custom": {
+                "align": "auto",
+                "cellOptions": { "type": "auto" },
+                "inspect": false
+              }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "Value #A" },
+                "properties": [
+                  { "id": "displayName", "value": "Tokens/sec" },
+                  { "id": "unit", "value": "tok/s" }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Value #B" },
+                "properties": [
+                  { "id": "displayName", "value": "VRAM GiB" },
+                  { "id": "unit", "value": "gbytes" }
+                ]
+              },
+              {
+                "matcher": { "id": "byName", "options": "Value #C" },
+                "properties": [
+                  { "id": "displayName", "value": "Tokens/sec/GiB" },
+                  { "id": "unit", "value": "tok/s/GiB" }
+                ]
+              }
+            ]
+          },
+          "options": {
+            "showHeader": true,
+            "sortBy": [
+              { "desc": true, "displayName": "Tokens/sec" }
+            ]
+          },
+          "transformations": [
+            {
+              "id": "merge",
+              "options": {}
+            },
+            {
+              "id": "organize",
+              "options": {
+                "excludeByName": {
+                  "Time": true,
+                  "__name__": true
+                },
+                "indexByName": {
+                  "model": 0,
+                  "backend": 1,
+                  "gpu_vendor": 2,
+                  "gpu_arch": 3,
+                  "Value #A": 4,
+                  "Value #B": 5,
+                  "Value #C": 6
+                },
+                "renameByName": {
+                  "model": "Model",
+                  "backend": "Backend",
+                  "gpu_vendor": "GPU Vendor",
+                  "gpu_arch": "GPU Arch",
+                  "Value #A": "Tokens/sec",
+                  "Value #B": "VRAM GiB",
+                  "Value #C": "Tokens/sec/GiB"
+                }
+              }
+            }
+          ]
+        }
+      ],
+      "refresh": "30s",
+      "schemaVersion": 38,
+      "tags": ["flexinfer", "benchmarks", "performance"],
+      "templating": { "list": [] },
+      "time": { "from": "now-24h", "to": "now" },
+      "timepicker": {},
+      "timezone": "",
+      "title": "FlexInfer: Benchmark Results",
+      "uid": "flexinfer-benchmark-results"
+    }
+{{- end }}
