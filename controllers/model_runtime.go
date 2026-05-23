@@ -166,6 +166,19 @@ func (r *ModelReconciler) reconcileViaRuntime(
 			)
 			return ctrl.Result{RequeueAfter: requeueShort}, nil
 		}
+		if deferLoad, activeName, err := r.shouldDeferRuntimeLoadForActivePeer(ctx, model, endpoint, time.Now()); err != nil {
+			log.V(1).Info("Could not evaluate active runtime peer before load", "model", model.Name, "error", err)
+		} else if deferLoad {
+			message := fmt.Sprintf("Runtime is currently serving or loading %s", activeName)
+			log.Info("Deferring runtime load while active peer is protected",
+				"model", model.Name,
+				"activePeer", activeName,
+			)
+			if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhasePending, false, "RuntimeBusy", message); err != nil {
+				log.Error(err, "Failed to update phase while deferring runtime load")
+			}
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
 
 		// Model not loaded — send load request.
 		if err := r.loadViaRuntime(ctx, model, b, gpuVendor, endpoint, gpuArch); err != nil {
@@ -233,6 +246,56 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	}
 
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
+}
+
+func (r *ModelReconciler) shouldDeferRuntimeLoadForActivePeer(
+	ctx context.Context,
+	model *aiv1alpha2.Model,
+	endpoint *RuntimeEndpoint,
+	now time.Time,
+) (bool, string, error) {
+	if model == nil || model.Spec.IsForcePromoted() || r.Runtime == nil {
+		return false, "", nil
+	}
+
+	status, err := r.Runtime.GetStatus(ctx, endpoint)
+	if err != nil {
+		return false, "", err
+	}
+	if status == nil || status.ActiveModel == nil || status.ActiveModel.Name == "" || status.ActiveModel.Name == model.Name {
+		return false, "", nil
+	}
+
+	active := &aiv1alpha2.Model{}
+	key := types.NamespacedName{Name: status.ActiveModel.Name, Namespace: model.Namespace}
+	if err := r.Get(ctx, key, active); err != nil {
+		if k8serrors.IsNotFound(err) {
+			return false, status.ActiveModel.Name, nil
+		}
+		return false, status.ActiveModel.Name, err
+	}
+
+	if runtimeActivePeerProtected(active, now) && !runtimeModelHasRecentDemand(model, now) {
+		return true, active.Name, nil
+	}
+
+	return false, active.Name, nil
+}
+
+func runtimeActivePeerProtected(model *aiv1alpha2.Model, now time.Time) bool {
+	if model == nil {
+		return false
+	}
+	if isActiveSharedModelLoading(model) && withinSharedActivationWindow(model, now) {
+		return true
+	}
+	return runtimeModelHasRecentDemand(model, now)
+}
+
+func runtimeModelHasRecentDemand(model *aiv1alpha2.Model, now time.Time) bool {
+	return model != nil &&
+		model.Status.LastActiveTime != nil &&
+		now.Sub(model.Status.LastActiveTime.Time) < sharedDemandWindow
 }
 
 func isTransientRuntimeLoadError(err error) bool {

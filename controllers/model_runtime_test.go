@@ -1201,3 +1201,210 @@ func TestReconcileViaRuntime_RetriesLoadAfterBackoffWindow(t *testing.T) {
 		t.Fatalf("loadCalls = %d, want 1 after backoff window expiry", loadCalls)
 	}
 }
+
+func TestReconcileViaRuntime_DefersIdleCandidateWhenActivePeerProtected(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add core scheme: %v", err)
+	}
+	if err := appsv1.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add apps scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add api scheme: %v", err)
+	}
+
+	now := time.Now()
+	active := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "qwen3-8b-radeonvii",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://Qwen/Qwen3-8B-GGUF",
+			Serverless: &aiv1alpha2.ServerlessSpec{
+				ColdStartTimeout: &metav1.Duration{Duration: 15 * time.Minute},
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhaseLoading,
+			LastActiveTime: &metav1.Time{Time: now.Add(-1 * time.Minute)},
+			SharedGroup: &aiv1alpha2.SharedGroupStatus{
+				GroupName: "radeonvii-models",
+				State:     "Active",
+			},
+		},
+	}
+
+	candidate := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:       "gonzalomo-fluxpony-imagegen",
+			Namespace:  "flexinfer-system",
+			Generation: 1,
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "diffusers",
+			Source:  "HF://stablediffusionapi/gonzalomoxlfluxpony-v30unitydmd",
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhasePending,
+		},
+	}
+
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      candidate.Name,
+			Namespace: candidate.Namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Selector: map[string]string{"app": candidate.Name},
+			Ports: []corev1.ServicePort{{
+				Name: "http",
+				Port: 8000,
+			}},
+		},
+	}
+	endpoints := &corev1.Endpoints{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      candidate.Name,
+			Namespace: candidate.Namespace,
+		},
+		Subsets: []corev1.EndpointSubset{{
+			Addresses: []corev1.EndpointAddress{{IP: "10.42.8.20"}},
+			Ports:     []corev1.EndpointPort{{Name: "http", Port: 8000}},
+		}},
+	}
+
+	loadCalls := 0
+	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch req.URL.Path {
+		case "/api/v1/models/gonzalomo-fluxpony-imagegen/health":
+			http.NotFound(w, req)
+		case "/api/v1/status":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"gpuVendor": "amd",
+				"gpuArch":   "gfx906",
+				"activeModel": map[string]any{
+					"name":  active.Name,
+					"state": "Loading",
+					"port":  8000,
+				},
+			})
+		case "/api/v1/models/gonzalomo-fluxpony-imagegen/load":
+			loadCalls++
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer runtimeServer.Close()
+
+	parsed, err := url.Parse(runtimeServer.URL)
+	if err != nil {
+		t.Fatalf("parse runtime url: %v", err)
+	}
+	host := parsed.Hostname()
+	port := int32(80)
+	if parsed.Port() != "" {
+		var parsedPort int
+		if _, err := fmt.Sscanf(parsed.Port(), "%d", &parsedPort); err != nil {
+			t.Fatalf("parse runtime port: %v", err)
+		}
+		port = int32(parsedPort)
+	}
+
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).
+		WithRuntimeObjects(active, candidate, service, endpoints).
+		WithStatusSubresource(&aiv1alpha2.Model{}).
+		Build()
+
+	r := &ModelReconciler{
+		Client:   fakeClient,
+		Scheme:   s,
+		Recorder: record.NewFakeRecorder(10),
+		Runtime:  &RuntimeReconciler{},
+	}
+
+	b, ok := backend.Get("diffusers")
+	if !ok {
+		t.Fatal("diffusers backend not registered")
+	}
+
+	result, err := r.reconcileViaRuntime(
+		context.Background(),
+		candidate,
+		b,
+		backend.GPUVendorAMD,
+		"gfx906",
+		&RuntimeEndpoint{
+			PodName:  "flexinfer-runtime-gfx906-test",
+			PodIP:    host,
+			Port:     port,
+			NodeName: "cblevins-radeonvii",
+			Ready:    true,
+		},
+		1,
+		true,
+		30*time.Second,
+	)
+	if err != nil {
+		t.Fatalf("reconcileViaRuntime() error: %v", err)
+	}
+	if result.RequeueAfter != requeueShort {
+		t.Fatalf("requeueAfter = %v, want %v", result.RequeueAfter, requeueShort)
+	}
+	if loadCalls != 0 {
+		t.Fatalf("loadCalls = %d, want 0 while active peer is protected", loadCalls)
+	}
+
+	current := &aiv1alpha2.Model{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(candidate), current); err != nil {
+		t.Fatalf("get model: %v", err)
+	}
+	if current.Status.Phase != aiv1alpha2.ModelPhasePending {
+		t.Fatalf("phase = %s, want %s", current.Status.Phase, aiv1alpha2.ModelPhasePending)
+	}
+	ready := modelCondition(current.Status.Conditions, aiv1alpha2.ConditionModelReady)
+	if ready == nil {
+		t.Fatal("expected ready condition")
+	}
+	if ready.Status != metav1.ConditionFalse || ready.Reason != "RuntimeBusy" {
+		t.Fatalf("ready condition = %+v, want false RuntimeBusy", *ready)
+	}
+
+	currentEndpoints := &corev1.Endpoints{}
+	if err := fakeClient.Get(context.Background(), client.ObjectKeyFromObject(endpoints), currentEndpoints); err != nil {
+		t.Fatalf("get endpoints: %v", err)
+	}
+	if len(currentEndpoints.Subsets) != 0 {
+		t.Fatalf("endpoints subsets = %+v, want cleared while runtime is busy", currentEndpoints.Subsets)
+	}
+}
+
+func TestShouldDeferRuntimeLoadForActivePeer_ForcePromotionBypassesGuard(t *testing.T) {
+	forced := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "qwen3-8b-radeonvii",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			GPU: &aiv1alpha2.GPUSpec{},
+		},
+	}
+	force := true
+	forced.Spec.GPU.ForcePromotion = &force
+
+	r := &ModelReconciler{}
+	deferLoad, activeName, err := r.shouldDeferRuntimeLoadForActivePeer(context.Background(), forced, nil, time.Now())
+	if err != nil {
+		t.Fatalf("shouldDeferRuntimeLoadForActivePeer() error: %v", err)
+	}
+	if deferLoad {
+		t.Fatalf("deferLoad = true, want false for force-promoted model")
+	}
+	if activeName != "" {
+		t.Fatalf("activeName = %q, want empty because runtime status should not be queried", activeName)
+	}
+}
