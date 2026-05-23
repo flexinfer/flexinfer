@@ -65,6 +65,34 @@ Follow-up after the first live preflight attempt:
   measured request failures. Cold-start warmup failures remain visible in the
   evidence JSONL/summary but do not make the measured soak verdict fail.
 
+Live activation preflight after MR !484:
+
+- MR !484 (`fix(runtime): preserve file paths in load payloads`) merged and
+  master pipeline #11160 passed. The first post-merge rollout had chart
+  annotation `1.0.2+838291925b38.3` but still pulled controller digest
+  `sha256:d85f3c...`; because the mutable `:master` controller image finished
+  publishing after the Helm rollout, the soak still fell back to
+  `/models/qwen3-8b-radeonvii-soak`. A manual controller rollout restart after
+  pipeline #11160 completed pulled
+  `registry.harbor.lan/flexinfer/flexinfer-controller@sha256:fd66dc859968e7e0439b76af651c64a579d025c8e077e162888c5d017dedefcb`.
+- With the fresh controller digest, `qwen3-8b-radeonvii-soak` reached `Ready`
+  and runtime logs showed llama.cpp loading the intended file source:
+  `/models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf`.
+- The 900s preflight Job used `SOAK_DURATION_SECONDS=900` and completed with a
+  failed verdict: 15 attempts total, 1 warmup 502, 10 measured requests,
+  4 measured 502s, and p95 `23.51 ms/token` for successful measured requests.
+- Proxy logs for the measured failures show `dial tcp 10.43.137.91:8000: i/o timeout`
+  against `svc/qwen3-8b-radeonvii-soak`; runtime logs do not show matching
+  request entries at the failed timestamps, while successful attempts return
+  HTTP 200 from llama.cpp. The remaining blocker is intermittent proxy/service
+  reachability to the selectorless runtime-backed Service, not model activation.
+- Durable evidence was copied from PVC
+  `gfx906-llamacpp-proxy-soak-evidence` to the local archive
+  `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-activation-preflight-fail/`
+  before cleanup. Cleanup deleted the Job/ConfigMap/PVC/soak Model and verified
+  `qwen3-1p7b-tools-radeonvii` returned `Ready`; `sdxl-inpainting-radeonvii`
+  remained `Idle`.
+
 ## Riskiest Assumption
 
 `gpu.forcePromotion: true` can hold the 8B soak target active long enough to
@@ -86,11 +114,15 @@ Before any 24 hour run:
 5. Verify `qwen3-1p7b-tools-radeonvii` returns to `Ready` and answers a proxy
    smoke request.
 
-Only then rerun the full 24 hour proxy-backed soak and harvest durable PVC
+This kill-test now fails at the proxy/service reachability layer. Fix that
+before rerunning the full 24 hour proxy-backed soak and harvesting durable PVC
 evidence.
 
 ## Decision
 
-This slice makes the next live test runnable without conflating validation with
-promotion. Alias/default fallback promotion remains blocked until the 24 hour
-proxy-backed soak completes cleanly with durable summary evidence.
+This slice made the activation test runnable without conflating validation with
+promotion, and it proved the runtime can load the intended file-backed GGUF
+after the controller digest is actually refreshed. Alias/default fallback
+promotion remains blocked: the 900s proxy-backed preflight has measured 502s,
+so the next slice must address proxy/service reachability for the runtime-backed
+selectorless Service before any 24 hour soak is meaningful.
