@@ -210,6 +210,12 @@ type RuntimeModelStatus struct {
 	Port  int32  `json:"port,omitempty"`
 }
 
+type RuntimeStatusResponse struct {
+	GPUVendor   string              `json:"gpuVendor"`
+	GPUArch     string              `json:"gpuArch"`
+	ActiveModel *RuntimeModelStatus `json:"activeModel,omitempty"`
+}
+
 type RuntimeModeStatus struct {
 	Mode string `json:"mode"`
 }
@@ -238,6 +244,36 @@ func (r *RuntimeReconciler) CheckModelHealth(ctx context.Context, endpoint *Runt
 	var status RuntimeModelStatus
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 		return nil, fmt.Errorf("decoding health response: %w", err)
+	}
+
+	return &status, nil
+}
+
+// GetStatus queries the runtime process for node-level state, including the
+// currently active model when one is loaded.
+func (r *RuntimeReconciler) GetStatus(ctx context.Context, endpoint *RuntimeEndpoint) (*RuntimeStatusResponse, error) {
+	url := fmt.Sprintf("%s/api/v1/status", endpoint.URL())
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("creating status request: %w", err)
+	}
+
+	httpClient := &http.Client{Timeout: httpClientShort}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("status request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("runtime status failed (status %d): %s", resp.StatusCode, string(body))
+	}
+
+	var status RuntimeStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
+		return nil, fmt.Errorf("decoding status response: %w", err)
 	}
 
 	return &status, nil
