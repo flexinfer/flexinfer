@@ -162,3 +162,79 @@ Next slice:
 
 - Build or promote a `gfx906` runtime image carrying
   `libflexinfer_hipmeminfo_shim.so`, then rerun a proxy-backed soak.
+
+### Proxy-backed soak harvest (2026-05-23)
+
+The follow-up proxy-backed soak did not pass.
+
+Setup:
+
+- Runtime image:
+  `registry.harbor.lan/flexinfer/runtime@sha256:8797a08a209201dc7bcf6bce7f79b0697055a02824f5fe9947932ef91273c29e`
+- Job: `gfx906-llamacpp-proxy-soak-traffic`
+- Target:
+  `http://flexinfer-proxy.flexinfer-system.svc/model/qwen3-8b-radeonvii/v1/chat/completions`
+- Temporary Model: `qwen3-8b-radeonvii`
+
+Observed result:
+
+- The original standalone Job `gfx906-llamacpp-soak-traffic` was no longer
+  present in Kubernetes, and no pod/logs were recoverable from it.
+- The proxy-backed Job was still running after roughly five hours but was in a
+  failed state, not a healthy soak.
+- The persistent runtime did load Qwen3 8B with the shim active and served many
+  early HTTP 200 responses around `16-18 ms/token`.
+- The traffic log also showed early intermittent `502 Bad Gateway` responses.
+- From attempt 122 onward, the job entered a terminal failure loop:
+  repeated 900 second request timeouts plus `502` and `503 Service Unavailable`
+  responses.
+- `qwen3-8b-radeonvii` remained `Loading`.
+
+Root blocker:
+
+- Runtime logs show active-model thrash on the single `gfx906` runtime. Qwen3
+  8B loaded successfully, then `gonzalomo-fluxpony-imagegen` immediately
+  triggered an unload, followed by new Qwen3 8B load attempts.
+- This makes the failed gate a persistent-runtime/shared-GPU arbitration
+  blocker under cross-family load contention. It is not evidence that the
+  standalone llama.cpp GPU load path regressed.
+
+Evidence harvested before cleanup:
+
+- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/proxy-soak-traffic.log`
+- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/proxy-soak-job.yaml`
+- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/proxy-soak-configmap.yaml`
+- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/model-snapshot.yaml`
+- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/runtime-tail.log`
+- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/events.txt`
+
+Rollback performed:
+
+```bash
+kubectl -n flexinfer-system delete \
+  job/gfx906-llamacpp-proxy-soak-traffic \
+  configmap/gfx906-llamacpp-proxy-soak-traffic \
+  --ignore-not-found
+kubectl -n flexinfer-system delete model qwen3-8b-radeonvii --ignore-not-found
+kubectl -n flexinfer-system annotate model qwen3-1p7b-tools-radeonvii \
+  flexinfer.ai/force-promote=<timestamp> --overwrite
+```
+
+Recovery proof:
+
+- `qwen3-1p7b-tools-radeonvii` returned to `Ready`.
+- Proxy smoke through `flexinfer-proxy` returned `Blue` with
+  `completion_tokens=2` and `predicted_per_second=75.99`.
+
+Decision:
+
+- Proxy-backed Qwen3 8B soak: FAIL.
+- Alias/default fallback promotion remains blocked.
+- Rollback path is preserved and verified.
+
+Next RALPH slice:
+
+- Harden or isolate persistent-runtime arbitration for the Radeon VII lane
+  before rerunning a proxy-backed soak. The practical kill-test is a new
+  proxy-backed Qwen3 8B soak that cannot be preempted by the imagegen lane and
+  persists its JSONL plus summary evidence to PVC or ConfigMap.
