@@ -3,7 +3,9 @@
 # Debug-only Model used by deploy/debug/gfx906-llamacpp-proxy-soak.yaml. It
 # intentionally force-promotes the 8B llama.cpp target so the soak can validate
 # the runtime/proxy path without permanently changing production aliases or
-# the warm qwen3-1p7b-tools-radeonvii fallback priority.
+# the warm qwen3-1p7b-tools-radeonvii fallback priority. The source points at
+# the node-local GGUF path proven by the standalone shim smoke; do not let the
+# soak-only model name create a new empty 8B cache path.
 #
 # Usage:
 #   kubectl apply -f deploy/debug/gfx906-llamacpp-proxy-soak-target.yaml
@@ -27,11 +29,9 @@ metadata:
     flexinfer.ai/promotion-requires: "24h proxy soak before any alias/default fallback promotion"
 spec:
   backend: llamacpp
-  source: HF://Qwen/Qwen3-8B-GGUF
+  source: file:///models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf
   cache:
-    size: 8Gi
-    storageClass: nvme-1r
-    strategy: SharedPVC
+    strategy: None
   gpu:
     vendor: amd
     shared: radeonvii-models
@@ -48,7 +48,6 @@ spec:
     idleTimeout: 15m
     coldStartTimeout: 15m
   config:
-    ggufFile: Qwen3-8B-Q4_K_M.gguf
     contextSize: 16384
     nGPULayers: 999
     batchSize: 2048

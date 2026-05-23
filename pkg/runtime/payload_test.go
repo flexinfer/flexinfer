@@ -511,6 +511,38 @@ func TestBuildLoadPayloadForModelAppendsGGUFFileForRuntimeLocalCache(t *testing.
 	assert.Equal(t, "/models/flexinfer-system/qwen3-1p7b-tools-radeonvii/qwen3-1.7b-q4_k_m.gguf", payload.ModelPath)
 }
 
+func TestBuildLoadPayloadForModelPreservesFileSourcePath(t *testing.T) {
+	b, ok := backend.Get("llamacpp")
+	require.True(t, ok)
+
+	const modelPath = "/models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf"
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "qwen3-8b-radeonvii-soak",
+			Namespace: "flexinfer-system",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "file://" + modelPath,
+			Cache:   &aiv1alpha2.CacheSpec{Strategy: "None"},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Cache: &aiv1alpha2.CacheStatus{Strategy: "None", Ready: true},
+		},
+	}
+
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+	})
+	require.NoError(t, err)
+
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, modelPath, payload.ModelPath)
+	assert.Equal(t, modelPath, payload.Model)
+}
+
 func TestBuildLoadPayloadForModelRewritesLocalCacheAbsoluteVAEPath(t *testing.T) {
 	b, ok := backend.Get("diffusers")
 	require.True(t, ok)

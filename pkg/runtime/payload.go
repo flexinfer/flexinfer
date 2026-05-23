@@ -136,6 +136,8 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 		if usesLocalCache(model) {
 			payload.ModelPath = runtimeLocalCacheModelPath(model, opts.ModelBasePath)
 			payload.ModelPath = appendRuntimeGGUFFile(payload.ModelPath, config)
+		} else if strings.HasPrefix(model.Spec.Source, "file://") {
+			payload.ModelPath = strings.TrimPrefix(model.Spec.Source, "file://")
 		} else if strings.HasPrefix(model.Spec.Source, "pvc://") {
 			pvcParts := strings.SplitN(strings.TrimPrefix(model.Spec.Source, "pvc://"), "/", 2)
 			if len(pvcParts) >= 1 {
