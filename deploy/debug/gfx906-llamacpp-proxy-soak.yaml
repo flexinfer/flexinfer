@@ -26,6 +26,9 @@
 #     - qwen3-8b-radeonvii-soak reaches Active/Ready
 #     - qwen3-1p7b-tools-radeonvii is intentionally preempted
 #     - deleting qwen3-8b-radeonvii-soak restores qwen3-1p7b-tools-radeonvii
+#   The traffic script also performs a bounded HTTP preflight before the 24h
+#   loop. It exits 23 when the target cannot serve a request within the
+#   preflight budget, preserving the failure records on the evidence PVC.
 #
 # Harvest after completion:
 #   kubectl -n flexinfer-system get job gfx906-llamacpp-proxy-soak-traffic -o yaml
@@ -87,6 +90,10 @@ data:
     max_tokens = int(os.environ.get("SOAK_MAX_TOKENS", "64"))
     latency_budget_ms_per_token = float(os.environ.get("SOAK_P95_MS_PER_TOKEN_BUDGET", "300"))
     evidence_dir = os.environ.get("SOAK_EVIDENCE_DIR", "/evidence")
+    preflight_attempts = int(os.environ.get("SOAK_PREFLIGHT_ATTEMPTS", "10"))
+    preflight_interval_seconds = int(os.environ.get("SOAK_PREFLIGHT_INTERVAL_SECONDS", "30"))
+    preflight_timeout_seconds = int(os.environ.get("SOAK_PREFLIGHT_REQUEST_TIMEOUT_SECONDS", "120"))
+    expected_model = os.environ.get("SOAK_EXPECT_MODEL", model)
     jsonl_path = os.path.join(evidence_dir, "proxy-soak.jsonl")
     summary_path = os.path.join(evidence_dir, "proxy-soak-summary.json")
 
@@ -100,6 +107,38 @@ data:
         print(line, flush=True)
         with open(jsonl_path, "a", encoding="utf-8") as handle:
             handle.write(line + "\n")
+
+    def post_chat(request_timeout):
+        body = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            endpoint,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=request_timeout) as resp:
+            raw = resp.read()
+            return resp, json.loads(raw)
+
+    def response_record(data, resp, elapsed):
+        usage = data.get("usage") or {}
+        completion_tokens = int(usage.get("completion_tokens") or 0)
+        if completion_tokens <= 0:
+            content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
+            completion_tokens = max(1, len(content.split()))
+        ms_per_token = (elapsed * 1000.0) / completion_tokens
+        returned_model = data.get("model", "")
+        return {
+            "ok": True,
+            "status": getattr(resp, "status", 200),
+            "elapsed_seconds": round(elapsed, 3),
+            "completion_tokens": completion_tokens,
+            "ms_per_token": round(ms_per_token, 3),
+            "model_returned": returned_model,
+            "expected_model": expected_model,
+            "expected_model_match": not expected_model or returned_model in ("", expected_model),
+            "content_preview": (data.get("choices") or [{}])[0].get("message", {}).get("content", "")[:120],
+        }
 
     payload = {
         "model": model,
@@ -121,8 +160,60 @@ data:
         "interval_seconds": interval_seconds,
         "warmup_requests": warmup_requests,
         "latency_budget_ms_per_token": latency_budget_ms_per_token,
+        "preflight_attempts": preflight_attempts,
+        "preflight_interval_seconds": preflight_interval_seconds,
+        "preflight_timeout_seconds": preflight_timeout_seconds,
+        "expected_model": expected_model,
         "started_at": utc_now(),
     })
+
+    preflight_ok = preflight_attempts <= 0
+    for attempt in range(1, preflight_attempts + 1):
+        started = time.monotonic()
+        record = {
+            "event": "preflight_request",
+            "attempt": attempt,
+            "started_at": utc_now(),
+        }
+        try:
+            resp, data = post_chat(preflight_timeout_seconds)
+            record.update(response_record(data, resp, time.monotonic() - started))
+            if record["expected_model_match"]:
+                preflight_ok = True
+        except Exception as exc:
+            record.update({
+                "ok": False,
+                "error": repr(exc),
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+            })
+        append_record(record)
+        if preflight_ok:
+            break
+        if attempt < preflight_attempts:
+            time.sleep(preflight_interval_seconds)
+
+    if not preflight_ok:
+        summary = {
+            "event": "soak_summary",
+            "status": "preflight_failed",
+            "attempts": 0,
+            "measured_requests": 0,
+            "failures": 0,
+            "measured_failures": 0,
+            "warmup_failures": 0,
+            "p95_ms_per_token": None,
+            "latency_budget_ms_per_token": latency_budget_ms_per_token,
+            "preflight_attempts": preflight_attempts,
+            "preflight_timeout_seconds": preflight_timeout_seconds,
+            "jsonl_path": jsonl_path,
+            "summary_path": summary_path,
+            "completed_at": utc_now(),
+        }
+        append_record(summary)
+        with open(summary_path, "w", encoding="utf-8") as handle:
+            json.dump(summary, handle, indent=2, sort_keys=True)
+            handle.write("\n")
+        sys.exit(23)
 
     deadline = time.monotonic() + duration_seconds
     attempts = 0
@@ -140,35 +231,11 @@ data:
             "warmup": attempts <= warmup_requests,
         }
         try:
-            body = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                endpoint,
-                data=body,
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
-                raw = resp.read()
-                elapsed = time.monotonic() - started
-                data = json.loads(raw)
-
-            usage = data.get("usage") or {}
-            completion_tokens = int(usage.get("completion_tokens") or 0)
-            if completion_tokens <= 0:
-                content = (data.get("choices") or [{}])[0].get("message", {}).get("content", "")
-                completion_tokens = max(1, len(content.split()))
-            ms_per_token = (elapsed * 1000.0) / completion_tokens
-            record.update({
-                "ok": True,
-                "status": getattr(resp, "status", 200),
-                "elapsed_seconds": round(elapsed, 3),
-                "completion_tokens": completion_tokens,
-                "ms_per_token": round(ms_per_token, 3),
-                "model_returned": data.get("model", ""),
-                "content_preview": (data.get("choices") or [{}])[0].get("message", {}).get("content", "")[:120],
-            })
+            resp, data = post_chat(timeout_seconds)
+            elapsed = time.monotonic() - started
+            record.update(response_record(data, resp, elapsed))
             if attempts > warmup_requests:
-                measured.append(ms_per_token)
+                measured.append(record["ms_per_token"])
         except Exception as exc:
             if record["warmup"]:
                 warmup_failures += 1
@@ -252,6 +319,14 @@ spec:
               value: "64"
             - name: SOAK_P95_MS_PER_TOKEN_BUDGET
               value: "300"
+            - name: SOAK_PREFLIGHT_ATTEMPTS
+              value: "10"
+            - name: SOAK_PREFLIGHT_INTERVAL_SECONDS
+              value: "30"
+            - name: SOAK_PREFLIGHT_REQUEST_TIMEOUT_SECONDS
+              value: "120"
+            - name: SOAK_EXPECT_MODEL
+              value: qwen3-8b-radeonvii-soak
             - name: SOAK_EVIDENCE_DIR
               value: /evidence
           resources:
