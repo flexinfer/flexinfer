@@ -10,16 +10,26 @@
 #      /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so.
 #   2. That digest has been promoted into deploy/gpuprofiles/gfx906.yaml and
 #      deploy/system/values-k3s.yaml, then reconciled.
-#   3. qwen3-8b-radeonvii is allowed to activate on the Radeon VII lane.
+#   3. deploy/debug/gfx906-llamacpp-proxy-soak-target.yaml has been applied so
+#      qwen3-8b-radeonvii-soak can temporarily force-promote over the warm
+#      qwen3-1p7b-tools-radeonvii fallback.
 #
 # Usage:
+#   kubectl apply -f deploy/debug/gfx906-llamacpp-proxy-soak-target.yaml
 #   kubectl apply -f deploy/debug/gfx906-llamacpp-proxy-soak.yaml
 #   kubectl -n flexinfer-system logs -f job/gfx906-llamacpp-proxy-soak-traffic
-#   kubectl -n flexinfer-system get model qwen3-8b-radeonvii sdxl-inpainting-radeonvii qwen3-1p7b-tools-radeonvii
+#   kubectl -n flexinfer-system get model qwen3-8b-radeonvii-soak sdxl-inpainting-radeonvii qwen3-1p7b-tools-radeonvii
+#
+# Preflight:
+#   Before the 24h gate, run the same manifest with SOAK_DURATION_SECONDS set
+#   to 900 in the Job env and verify:
+#     - qwen3-8b-radeonvii-soak reaches Active/Ready
+#     - qwen3-1p7b-tools-radeonvii is intentionally preempted
+#     - deleting qwen3-8b-radeonvii-soak restores qwen3-1p7b-tools-radeonvii
 #
 # Harvest after completion:
 #   kubectl -n flexinfer-system get job gfx906-llamacpp-proxy-soak-traffic -o yaml
-#   kubectl -n flexinfer-system get pods -o wide | rg 'qwen3-8b-radeonvii|sdxl-inpainting-radeonvii|flexinfer-runtime-gfx906'
+#   kubectl -n flexinfer-system get pods -o wide | rg 'qwen3-8b-radeonvii-soak|sdxl-inpainting-radeonvii|flexinfer-runtime-gfx906'
 #   kubectl -n flexinfer-system get events --sort-by=.lastTimestamp
 #   Mount PVC gfx906-llamacpp-proxy-soak-evidence in a reader pod and copy:
 #     /evidence/proxy-soak.jsonl
@@ -29,6 +39,7 @@
 #   kubectl -n flexinfer-system delete job/gfx906-llamacpp-proxy-soak-traffic --ignore-not-found
 #   kubectl -n flexinfer-system delete configmap/gfx906-llamacpp-proxy-soak-traffic --ignore-not-found
 #   kubectl -n flexinfer-system delete pvc/gfx906-llamacpp-proxy-soak-evidence --ignore-not-found
+#   kubectl -n flexinfer-system delete model/qwen3-8b-radeonvii-soak --ignore-not-found
 #
 # Reference: .loom/ralph-gfx906-runtime-hipmem-shim-2026-05-22.md
 ---
@@ -66,9 +77,9 @@ data:
 
     endpoint = os.environ.get(
         "SOAK_ENDPOINT",
-        "http://flexinfer-proxy.flexinfer-system.svc.cluster.local/model/qwen3-8b-radeonvii/v1/chat/completions",
+        "http://flexinfer-proxy.flexinfer-system.svc.cluster.local/model/qwen3-8b-radeonvii-soak/v1/chat/completions",
     )
-    model = os.environ.get("SOAK_MODEL", "qwen3-8b-radeonvii")
+    model = os.environ.get("SOAK_MODEL", "qwen3-8b-radeonvii-soak")
     duration_seconds = int(os.environ.get("SOAK_DURATION_SECONDS", "86400"))
     interval_seconds = int(os.environ.get("SOAK_INTERVAL_SECONDS", "60"))
     timeout_seconds = int(os.environ.get("SOAK_REQUEST_TIMEOUT_SECONDS", "900"))

@@ -207,9 +207,13 @@ Evidence doc: `.loom/ralph-gfx906-llamacpp-model-load-smoke-2026-05-21.md`.
 Conditional on Slice 0 and Slice 0a producing a viable memory-info and
 model-load path.
 
-1. Pick the soak target. Default: `qwen3-8b-radeonvii` (already warm).
-   Alternate: a freshly-pulled Qwen2.5-7B-Instruct Q4_K_M if the team
-   wants to validate a new model line.
+1. Pick the soak target. Current default: the debug-only sibling
+   `qwen3-8b-radeonvii-soak`, defined in
+   `deploy/debug/gfx906-llamacpp-proxy-soak-target.yaml`, so the live gate can
+   use `gpu.forcePromotion: true` without permanently raising the production
+   `qwen3-8b-radeonvii` priority or promoting aliases. Alternate: a
+   freshly-pulled Qwen2.5-7B-Instruct Q4_K_M if the team wants to validate a
+   new model line.
 2. Set up a low-rate continuous traffic generator (e.g. a small `Job`
    that issues one `/v1/chat/completions` call per minute against the
    model's proxy alias) and arm Prometheus to alert on
@@ -231,6 +235,11 @@ completion, so the exact final p95 was not harvested; the next proxy-backed
 soak must persist its summary to a ConfigMap or PVC.
 
 Evidence doc: `.loom/ralph-gfx906-llamacpp-soak-2026-05-21.md`.
+
+Proxy-backed follow-up status: blocked once by cross-family runtime unload, then
+blocked again by same-group priority arbitration. The next attempt must first
+run the activation preflight from
+`.loom/ralph-gfx906-proxy-soak-activation-gate-2026-05-23.md`.
 
 ### Slice 2 — Alias promotion (small docs/manifest MR)
 

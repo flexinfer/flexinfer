@@ -1,0 +1,76 @@
+# gfx906 llama.cpp proxy-soak activation target.
+#
+# Debug-only Model used by deploy/debug/gfx906-llamacpp-proxy-soak.yaml. It
+# intentionally force-promotes the 8B llama.cpp target so the soak can validate
+# the runtime/proxy path without permanently changing production aliases or
+# the warm qwen3-1p7b-tools-radeonvii fallback priority.
+#
+# Usage:
+#   kubectl apply -f deploy/debug/gfx906-llamacpp-proxy-soak-target.yaml
+#   kubectl -n flexinfer-system get model qwen3-8b-radeonvii-soak
+#
+# Cleanup:
+#   kubectl -n flexinfer-system delete model qwen3-8b-radeonvii-soak --ignore-not-found
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-8b-radeonvii-soak
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: proxy-soak
+  annotations:
+    flexinfer.ai/promotion-gate: gfx906-proxy-soak
+    flexinfer.ai/promotion-state: soak-only
+    flexinfer.ai/promotion-validation: pending
+    flexinfer.ai/promotion-requires: "24h proxy soak before any alias/default fallback promotion"
+spec:
+  backend: llamacpp
+  source: HF://Qwen/Qwen3-8B-GGUF
+  cache:
+    size: 8Gi
+    storageClass: nvme-1r
+    strategy: SharedPVC
+  gpu:
+    vendor: amd
+    shared: radeonvii-models
+    # Explicit kill-test override: the production 8B manifest stays lower
+    # priority than the warm tool-router, but the soak target must become
+    # Active to validate the gfx906 runtime/proxy lane.
+    forcePromotion: true
+    priority: 100
+    count: 1
+    vramEstimateMB: 6000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 15m
+    coldStartTimeout: 15m
+  config:
+    ggufFile: Qwen3-8B-Q4_K_M.gguf
+    contextSize: 16384
+    nGPULayers: 999
+    batchSize: 2048
+    ubatchSize: 512
+    parallel: 2
+    threads: 12
+    flashAttention: true
+    fitOff: true
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
+    jinja: true
+    metrics: true
+    rocrVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: "4"
+      memory: 12Gi
+    limits:
+      cpu: "14"
+      memory: 24Gi
+  serviceLabels:
+    - proxy-soak
+    - gfx906-soak
