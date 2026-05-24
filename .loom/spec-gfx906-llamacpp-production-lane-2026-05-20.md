@@ -55,9 +55,12 @@ mode (VRAM, HSA queue, or scheduler-level) only surfaces under
 sustained dual-workload load. Mitigation: run the soak BEFORE removing
 the vLLM canary row from `minReplicas: 0`, so the canary's pinned
 image-pull-policy doesn't compete with the soak. If the soak fails,
-the recommended remediation is GPU group partitioning (similar to
-`5930k-imagegen-textgen` group on cblevins-5930k) rather than
-re-introducing vLLM.
+the proven remediation surface (per the 2026-05-23 proxy-soak cascade) is
+controller-level cross-group arbitration in `controllers/model_runtime.go`
+(MR !480) plus debug-only force-promotion targets, NOT GPU group
+partitioning. Re-introducing vLLM is not a remediation: the embedding-probe
+evidence (`.loom/ralph-gfx906-vllm-embedding-probe-evidence-2026-05-20.md`)
+already closed that lane as feasibility-only.
 
 **Status**: pre-soak memory-info, model-load, and standalone 24h soak gates are
 unblocked by the shimmed llama.cpp image. A 2026-05-21 temporary
@@ -72,9 +75,36 @@ which converts that raw ROCm failure into sysfs VRAM totals. The shimmed image
 passed both the standalone HIP probe and a Qwen3 8B GGUF model-load smoke on
 `cblevins-radeonvii` (`SMOKE_RESULT PASS`, 81.1 tok/s short generation). The
 24h standalone soak then completed successfully on 2026-05-22 with both
-containers exit `0` and zero restarts. Alias promotion remains blocked until a
-persistent `gfx906` runtime image carries the shim and a proxy-backed soak
-persists final summary evidence.
+containers exit `0` and zero restarts. MR !477 promoted the persistent gfx906
+runtime image `registry.harbor.lan/flexinfer/runtime@sha256:8797a08a209201dc7bcf6bce7f79b0697055a02824f5fe9947932ef91273c29e`
+that bakes the shim in, so proxy-backed soak became the next gate.
+
+Three proxy-backed soak attempts on 2026-05-23 each surfaced a different
+blocker and were captured in `.loom/60-validation-matrix.md` rows 184-186:
+
+1. Row 184: cross-family thrash — `gonzalomo-fluxpony-imagegen` unloaded the
+   in-flight Qwen3 8B load. Closed by MR !480
+   (`fix(runtime): guard cross-group runtime loads` in
+   `controllers/model_runtime.go`), which prevents idle runtime-managed peers
+   from unloading actively loading or recently demanded models.
+2. Row 185: same-group priority arbitration — the lower-priority
+   `qwen3-8b-radeonvii` soak target could not preempt the Ready
+   `qwen3-1p7b-tools-radeonvii` fallback. Closed by adding a debug-only
+   `qwen3-8b-radeonvii-soak` Model with `gpu.forcePromotion: true` (and the
+   `file://` source bug closed by MR !484 `fix(runtime): preserve file paths
+   in load payloads`).
+3. Row 186: **current blocker — intermittent proxy → selectorless Service
+   reachability**. With the activation gate fixed, the 900s preflight
+   reached the runtime cleanly but four of ten measured requests returned
+   `502 Bad Gateway` after ~30s with `dial tcp 10.43.137.91:8000: i/o
+   timeout` against `svc/qwen3-8b-radeonvii-soak`. Runtime logs have no
+   matching entries at the failed timestamps while successful attempts
+   return HTTP 200 from llama.cpp.
+
+Alias and default-chat fallback promotion remain blocked. The next live slice
+must isolate the selectorless-Service / proxy reachability gap before a clean
+24h proxy soak is meaningful; partitioning, controller arbitration, and
+runtime-image gates are already addressed.
 
 ## Scope
 
@@ -236,10 +266,15 @@ soak must persist its summary to a ConfigMap or PVC.
 
 Evidence doc: `.loom/ralph-gfx906-llamacpp-soak-2026-05-21.md`.
 
-Proxy-backed follow-up status: blocked once by cross-family runtime unload, then
-blocked again by same-group priority arbitration. The next attempt must first
-run the activation preflight from
-`.loom/ralph-gfx906-proxy-soak-activation-gate-2026-05-23.md`.
+Proxy-backed follow-up status: blocked in sequence by (a) cross-family runtime
+unload (closed by MR !480), (b) same-group priority arbitration (closed by the
+debug `qwen3-8b-radeonvii-soak` target + `gpu.forcePromotion: true`), and (c)
+intermittent proxy → selectorless-Service reachability (current blocker;
+`dial tcp ... :8000: i/o timeout` against `svc/qwen3-8b-radeonvii-soak` on 4/10
+measured requests during the 2026-05-23 activation preflight). The next live
+gate is isolating the selectorless-Service reachability gap before any 24h
+proxy soak — see `.loom/ralph-gfx906-proxy-soak-activation-gate-2026-05-23.md`
+"Decision" for the current handoff state.
 
 ### Slice 2 — Alias promotion (small docs/manifest MR)
 
