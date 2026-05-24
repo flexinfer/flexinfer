@@ -184,6 +184,38 @@ Production `gemma4-31b-gptq` stays at the current manifest ceiling
 - [C4] `loom tools call codebase_memory__codebase_index_poll --args '{"job_id":"1869e8aca6a0ab14"}' --json`
 - [C5] `loom tools call codebase_memory__codebase_stats --args '{"repo_id":"flexinfer"}' --json`
 
+## Status Update (2026-05-21): Roadmap Unblock Plan
+
+Focused plan: `.loom/roadmap-unblock-plan-2026-05-21.md`.
+
+Execution order:
+
+1. Link and freeze the roadmap-unblock plan in `.loom/` so future agents start
+   from one current surface.
+2. Run the gfx906 llama.cpp HIP memory-info kill-test before any 24 hour soak or
+   alias promotion work continues.
+3. Close runtime-promotion evidence gaps in `.loom/60-validation-matrix.md`,
+   especially pending gfx1100 imagegen/textgen rows and blocked gfx906 rows.
+4. Convert proof-complete deploy/swap observability work into one live rollout
+   validation pass.
+5. Spec and build a reporting-only context-curve benchmark MVP.
+6. Resume major dependency/base-image rollout one runtime family per MR after
+   validation evidence is stable.
+
+Primary blocker:
+
+- gfx906 llama.cpp currently fails the pre-soak `hipMemGetInfo` probe, so the
+  radeonvii production fallback lane is blocked until the image-level
+  compatibility issue is fixed and recorded.
+
+Acceptance:
+
+- Every downstream feature slice either links to
+  `.loom/roadmap-unblock-plan-2026-05-21.md` or names why it is out of scope.
+- No runtime promotion is marked complete unless the validation matrix has a
+  digest/ref, canary command, rollback path, source link, and promotion
+  decision.
+
 ## Status Update (2026-04-07): Next Round After Gemma4 Runtime/Storage Incidents
 
 ## Objective

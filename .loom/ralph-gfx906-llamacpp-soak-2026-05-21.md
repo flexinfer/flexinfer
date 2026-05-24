@@ -1,240 +1,68 @@
-# RALPH: gfx906 llama.cpp 24h Soak Setup
+# RALPH: gfx906 llama.cpp Production-Lane Canary
 
 Date: 2026-05-21
 
-## Review
+## Intent
 
-- Roadmap milestone: Lane 1, Slice 1B from the roadmap-unblock plan: controlled
-  24 hour llama.cpp soak before Radeon VII alias/default fallback promotion.
-- Spec section: `.loom/spec-gfx906-llamacpp-production-lane-2026-05-20.md`
-  Slice 1.
-- Prior decisions to preserve:
-  - `gfx906` production textgen substrate is llama.cpp, not vLLM.
-  - The shimmed image
-    `registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407`
-    passed the standalone HIP memory-info gate and the Qwen3 8B model-load
-    smoke.
-  - Do not add `default-chat-fallback` or any broad chat alias until the soak
-    passes.
+Pick up the non-Whisper slice while Claude owns the Whisper ASR lane: prove or falsify the `gfx906` llama.cpp production-lane soak assumption from `spec-gfx906-llamacpp-production-lane-2026-05-20.md`.
 
-## Align
+## Actions
 
-- Slice name: `gfx906` llama.cpp soak setup.
-- Scope in:
-  - Add a debug manifest that runs the shimmed standalone llama.cpp image on
-    `cblevins-radeonvii`, mounts the existing node-local Qwen3 8B GGUF cache,
-    starts `llama-server`, and drives it for 24 hours.
-  - Add a 24 hour low-rate traffic loop that sends one deterministic
-    `/v1/chat/completions` request per minute and exits non-zero on request
-    failure or p95 decode latency above 300 ms/token.
-  - Document harvest and rollback commands in the manifest comments.
-- Scope out:
-  - No fallback/default alias promotion.
-  - No GPUProfile or Helm profile image promotion.
-  - No FlexInfer proxy/controller serving soak yet; a first live attempt showed
-    that per-model `spec.image` does not affect the persistent
-    `flexinfer-runtime-gfx906` direct-load path, so runtime-image promotion must
-    precede a proxy-backed soak.
-  - No vLLM canary closeout.
-- Acceptance criteria:
-  - The standalone soak artifact can be applied with one `kubectl apply`.
-  - The traffic Job records per-request latency/token data as JSON lines and a
-    final summary.
-  - Follow-up evidence collection covers request failures, pod restarts/events,
-    and the `sdxl-inpainting-radeonvii` co-tenant baseline.
-- Dependencies/blockers:
-  - Live cluster access to `cblevins-radeonvii`.
-  - Existing local Qwen3 8B GGUF cache at
-    `/var/lib/flexinfer/models/flexinfer-system/qwen3-8b-radeonvii/`.
-  - Agent-context MCP was unavailable during setup, so harvest notes must be
-    recorded once the MCP route recovers.
-  - Proxy-backed soak remains blocked until the persistent `gfx906` runtime
-    image carries the hipMemGetInfo shim or llama.cpp is forced onto a
-    standalone backend Deployment path.
+- Applied the dormant `qwen3-8b-radeonvii` manifest as a temporary live canary.
+- Patched it live to use `Local` cache, `minReplicas: 1`, priority `140`, force promotion, and canary-only LiteLLM/service labels.
+- Waited for `qwen3-8b-radeonvii-cache-stage` to complete.
+- Recycled `flexinfer-runtime-gfx906` once after the previous `qwen3-1p7b-tools-radeonvii` unload wedged the runtime API before the 8B subprocess could start.
+- Captured the 8B llama.cpp ROCm failure, then deleted the temporary canary.
+- Lowered `qwen3-1p7b-vllm-radeonvii` canary priority from `130` to `100` live and in `deploy/models/qwen3-1p7b-vllm-radeonvii.yaml` so the idle vLLM canary cannot hold the shared Radeon VII group above the resident tool-router model.
+- Added a runtime unload guard so a killed backend that is never reaped cannot block future load requests forever.
 
-## Land
+## Evidence
 
-- Planned file areas:
-  - `deploy/debug/gfx906-llamacpp-soak.yaml`
-  - `.loom/ralph-gfx906-llamacpp-soak-2026-05-21.md`
-- Implementation steps:
-  1. Add the standalone llama.cpp server plus traffic generator Job.
-  2. Validate YAML rendering with `kubectl --dry-run=client`.
-  3. Apply the manifest to start the 24 hour standalone image soak.
+- Cache stage succeeded and staged:
+  - `/models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf`
+  - size `5027783488`
+- Clean runtime retry launched llama.cpp with:
+  - `--model /models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf`
+  - `--ctx-size 16384`
+  - `--n-gpu-layers 999`
+  - `--flash-attn on`
+  - `-fit off`
+- llama.cpp detected the GPU:
+  - `ggml_cuda_init: found 1 ROCm devices`
+  - `Device 0: AMD Radeon VII, gfx906:sramecc+:xnack- (0x906), VMM: no, Wave Size: 64`
+- The backend aborted during model load:
+  - `ROCm error: invalid argument`
+  - `ggml_backend_cuda_device_get_memory`
+  - `hipMemGetInfo(free, total)`
+  - `signal: aborted (core dumped)`
+- Rollback status:
+  - `qwen3-1p7b-tools-radeonvii`: `Ready`, `Active`, priority `120`
+  - `qwen3-1p7b-vllm-radeonvii`: `Idle`, queued behind tool-router, priority `100`
+- Restore smoke:
+  - proxy route `/model/qwen3-1p7b-tools-radeonvii/v1/chat/completions`
+  - response content: `Blue`
+  - timings included `predicted_per_second: 73.3568`
 
-## Live Attempt Note
+## Outcome
 
-An initial proxy-backed attempt created a temporary `qwen3-8b-radeonvii` Model
-with `spec.image` pointing at the shimmed standalone image. That failed before a
-usable soak began: the controller still sent the load request to the persistent
-`flexinfer-runtime-gfx906` pod, whose image is
-`registry.harbor.lan/flexinfer/runtime@sha256:cbe1157c2fb6a24fc67e901bec92a72bbf16498a86ad1a064ce9bf4db1f2ddf4`
-and does not include the shim. The runtime wedged during the handoff from
-`qwen3-1p7b-tools-radeonvii`; recovery deleted the temporary Model/Job,
-recycled `flexinfer-runtime-gfx906`, and lowered the live vLLM canary priority
-to `100` so the tool-router fallback can reclaim the shared group.
+The 24h production soak did not start. The riskiest assumption was falsified before soak: llama.cpp can see the Radeon VII but crashes on `hipMemGetInfo` during GPU-backed model load, even with `fitOff`, `HSA_OVERRIDE_GFX_VERSION=9.0.6`, `HSA_ENABLE_SDMA=0`, and `HSA_USE_SVM=0` supplied by the runtime/profile path.
 
-## Standalone Soak Start
+The useful shipped fix from this slice is adjacent: the vLLM canary no longer preempts the default tool-router lane while idle, and the runtime unload path now has a bounded post-SIGKILL wait.
 
-The corrected standalone soak was applied on 2026-05-21. Job
-`gfx906-llamacpp-soak-traffic` scheduled on `cblevins-radeonvii`, pulled
-`registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407`,
-mounted `/var/lib/flexinfer/models`, and started two containers:
+## Next Blocker
 
-- `server`: shimmed `llama-server` with `Qwen3-8B-Q4_K_M.gguf`,
-  `--n-gpu-layers 999`, `--flash-attn on`, and q4_0 KV cache.
-- `traffic`: one deterministic OpenAI-compatible chat request per minute for
-  24 hours.
+The next `gfx906` llama.cpp slice should isolate `hipMemGetInfo` outside FlexInfer:
 
-Initial evidence:
+1. Run `/opt/llamacpp/bin/llama-server` or a minimal HIP memory-info probe inside the same runtime image on `cblevins-radeonvii`.
+2. Compare env variants:
+   - current profile env
+   - no `HSA_OVERRIDE_GFX_VERSION`
+   - `ROCR_VISIBLE_DEVICES=0` only
+   - `HIP_VISIBLE_DEVICES=0` plus `GPU_DEVICE_ORDINAL=0`
+3. If the minimal probe fails, treat this as a ROCm/runtime-image compatibility bug.
+4. If the probe passes, narrow to llama.cpp memory-fit/model-load behavior.
 
-- server loaded Qwen3 8B and printed ROCm memory breakdown:
-  `ROCm0 model buffer size = 4455.34 MiB`,
-  `ROCm0 KV buffer size = 324.00 MiB`,
-  `ROCm0 compute buffer size = 304.75 MiB`.
-- first traffic request returned HTTP 200 with 64 completion tokens and
-  `15.716 ms/token`; this request is marked warmup and excluded from the final
-  p95.
-- follow-up heartbeat automation: `check-gfx906-llama-cpp-soak`.
+## Validation
 
-## Prove
-
-- Tests to run:
-  - `kubectl apply --dry-run=client -f deploy/debug/gfx906-llamacpp-soak.yaml`
-  - `git diff --check`
-- Live validation:
-  - `kubectl apply -f deploy/debug/gfx906-llamacpp-soak.yaml`
-  - `kubectl -n flexinfer-system get job gfx906-llamacpp-soak-traffic`
-  - `kubectl -n flexinfer-system logs job/gfx906-llamacpp-soak-traffic`
-
-## Handoff/Harvest
-
-### Final harvest (2026-05-22)
-
-The standalone soak completed successfully.
-
-Kubernetes status:
-
-- Job `gfx906-llamacpp-soak-traffic`
-  - `startTime`: 2026-05-21T18:40:23Z
-  - `completionTime`: 2026-05-22T18:43:42Z
-  - conditions: `SuccessCriteriaMet=True`, `Complete=True`
-  - `succeeded`: 1
-- Pod `gfx906-llamacpp-soak-traffic-brpcf`
-  - phase: `Succeeded`
-  - node: `cblevins-radeonvii`
-  - `server` container: exit `0`, restart count `0`
-  - `traffic` container: exit `0`, restart count `0`
-
-Traffic-script contract:
-
-- The script exits `20` on request failures.
-- The script exits `21` if no measured p95 exists.
-- The script exits `22` if p95 exceeds `300 ms/token`.
-- Therefore traffic container exit `0` proves the soak had no recorded request
-  failures and stayed inside the latency envelope.
-
-Observed mid-run health:
-
-- A 19h harvest showed attempts 981-1140 returning HTTP 200, 64 completion
-  tokens, and approximately `13.6-13.8 ms/token`.
-
-Co-tenant baseline at final harvest:
-
-- `sdxl-inpainting-radeonvii`: `Idle`
-- `qwen3-1p7b-tools-radeonvii`: `Ready`
-
-Evidence caveat:
-
-- Final completed-container logs were unavailable after completion; `kubectl
-  logs` returned `unable to retrieve container logs for containerd://...`.
-- This prevents recording the exact final `soak_summary.p95_ms_per_token`.
-- Next proxy-backed soak must persist its summary to a ConfigMap or PVC before
-  alias/default fallback promotion.
-
-Decision:
-
-- Standalone kill-test: PASS.
-- Alias promotion remains blocked until a persistent `gfx906` runtime image
-  carries the shim and a proxy-backed soak passes with durable summary storage.
-
-Next slice:
-
-- Build or promote a `gfx906` runtime image carrying
-  `libflexinfer_hipmeminfo_shim.so`, then rerun a proxy-backed soak.
-
-### Proxy-backed soak harvest (2026-05-23)
-
-The follow-up proxy-backed soak did not pass.
-
-Setup:
-
-- Runtime image:
-  `registry.harbor.lan/flexinfer/runtime@sha256:8797a08a209201dc7bcf6bce7f79b0697055a02824f5fe9947932ef91273c29e`
-- Job: `gfx906-llamacpp-proxy-soak-traffic`
-- Target:
-  `http://flexinfer-proxy.flexinfer-system.svc/model/qwen3-8b-radeonvii/v1/chat/completions`
-- Temporary Model: `qwen3-8b-radeonvii`
-
-Observed result:
-
-- The original standalone Job `gfx906-llamacpp-soak-traffic` was no longer
-  present in Kubernetes, and no pod/logs were recoverable from it.
-- The proxy-backed Job was still running after roughly five hours but was in a
-  failed state, not a healthy soak.
-- The persistent runtime did load Qwen3 8B with the shim active and served many
-  early HTTP 200 responses around `16-18 ms/token`.
-- The traffic log also showed early intermittent `502 Bad Gateway` responses.
-- From attempt 122 onward, the job entered a terminal failure loop:
-  repeated 900 second request timeouts plus `502` and `503 Service Unavailable`
-  responses.
-- `qwen3-8b-radeonvii` remained `Loading`.
-
-Root blocker:
-
-- Runtime logs show active-model thrash on the single `gfx906` runtime. Qwen3
-  8B loaded successfully, then `gonzalomo-fluxpony-imagegen` immediately
-  triggered an unload, followed by new Qwen3 8B load attempts.
-- This makes the failed gate a persistent-runtime/shared-GPU arbitration
-  blocker under cross-family load contention. It is not evidence that the
-  standalone llama.cpp GPU load path regressed.
-
-Evidence harvested before cleanup:
-
-- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/proxy-soak-traffic.log`
-- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/proxy-soak-job.yaml`
-- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/proxy-soak-configmap.yaml`
-- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/model-snapshot.yaml`
-- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/runtime-tail.log`
-- `.loom/local/validation/gfx906-llamacpp/2026-05-23-proxy-soak-fail/events.txt`
-
-Rollback performed:
-
-```bash
-kubectl -n flexinfer-system delete \
-  job/gfx906-llamacpp-proxy-soak-traffic \
-  configmap/gfx906-llamacpp-proxy-soak-traffic \
-  --ignore-not-found
-kubectl -n flexinfer-system delete model qwen3-8b-radeonvii --ignore-not-found
-kubectl -n flexinfer-system annotate model qwen3-1p7b-tools-radeonvii \
-  flexinfer.ai/force-promote=<timestamp> --overwrite
-```
-
-Recovery proof:
-
-- `qwen3-1p7b-tools-radeonvii` returned to `Ready`.
-- Proxy smoke through `flexinfer-proxy` returned `Blue` with
-  `completion_tokens=2` and `predicted_per_second=75.99`.
-
-Decision:
-
-- Proxy-backed Qwen3 8B soak: FAIL.
-- Alias/default fallback promotion remains blocked.
-- Rollback path is preserved and verified.
-
-Next RALPH slice:
-
-- Harden or isolate persistent-runtime arbitration for the Radeon VII lane
-  before rerunning a proxy-backed soak. The practical kill-test is a new
-  proxy-backed Qwen3 8B soak that cannot be preempted by the imagegen lane and
-  persists its JSONL plus summary evidence to PVC or ConfigMap.
+- `go test ./internal/runtime` passed.
+- Live restore smoke against `qwen3-1p7b-tools-radeonvii` passed.

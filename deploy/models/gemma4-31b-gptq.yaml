@@ -6,8 +6,8 @@
 #
 # On-demand model on cblevins-7900xtx (priority 250, scale-to-zero) co-located
 # with the 26B-A4B MoE in the 7900xtx-textgen shared group. 5930k is currently
-# tied up with the 26B-dense abliteration Job (and the imagegen shared group
-# below), so the gfx1100 with available serving capacity is 7900xtx.
+# dedicated to the text-only 5930k lane, so the gfx1100 with available serving
+# capacity is 7900xtx.
 #
 # Shared-group semantics: 31B priority=250 > 26B priority=200, so a call to
 # any 31B alias preempts the 26B MoE (scale-to-zero). When 31B goes idle
@@ -21,7 +21,7 @@
 #   - Temporarily moved to 5930k to free VRAM for 26B-A4B MoE (commit 5099ab17).
 #   - Moved back to 7900xtx after 31B quantize finished (7h57m58s; artifact
 #     18.1 GiB / 3.4x compression). 5930k is blocked by the 26B-dense
-#     abliteration Job + imagegen shared group.
+#     abliteration Job and the text-only 5930k lane.
 #
 # Promotion gate (reusable for any quantized family):
 # future compressed-tensors/fp8-KV paths must stay canary-only until validated

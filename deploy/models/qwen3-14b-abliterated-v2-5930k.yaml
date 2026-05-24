@@ -2,8 +2,8 @@
 #
 # Second instance of the 14B GPTQ model for multi-node text throughput.
 # Shares the ModelCache PVC (RWX) from cblevins-7900xtx via Longhorn NFS.
-# Shares GPU with FLUX Schnell on 5930k — yields to FLUX via shared group
-# preemption (priority 100 < FLUX's 200).
+# Disabled legacy 5930k text canary. If restored, it belongs to the text-only
+# 5930k lane; image generation now lives on Radeon VII.
 #
 # Expected: ~72-73 tok/s decode per GPU. Two instances behind flexinfer proxy
 # should roughly double aggregate text throughput when FLUX is idle.
@@ -20,7 +20,7 @@ spec:
   source: pvc://qwen3-14b-abliterated-v2-gptq/qwen3-14b-abliterated-v2-gptq/gptq-w4-g128
   gpu:
     vendor: amd
-    shared: 5930k-imagegen-textgen
+    shared: 5930k-textgen
     priority: 220
     count: 1
     vramEstimateMB: 10000

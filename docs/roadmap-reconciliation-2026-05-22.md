@@ -1,0 +1,29 @@
+# Roadmap Reconciliation Report (2026-05-22)
+
+- Repo:
+  - services/flexinfer
+- Baseline:
+  - 2026-05-21T12:25:53.952Z
+- Planning files changed since baseline:
+  - .loom/00-index.md; .loom/20-product-spec.md; .loom/30-implementation-plan.md; .loom/60-validation-matrix.md; .loom/brainstorm-long-context-architecture-runtime-2026-05-18.md; .loom/ralph-gfx906-llamacpp-hipmem-shim-2026-05-21.md; .loom/ralph-gfx906-llamacpp-model-load-smoke-2026-05-21.md; .loom/ralph-gfx906-llamacpp-soak-2026-05-21.md; .loom/roadmap-unblock-plan-2026-05-21.md; .loom/spec-gfx906-llamacpp-production-lane-2026-05-20.md
+- Missing issue links in changed unchecked checklist items:
+  - 16
+- Issue actions this run:
+  - created=0
+  - updated=0
+  - closed=0
+  - reopened=0
+  - label_or_milestone_updates=0
+  - backlink_updates=0
+- Evidence:
+  - Git history: git -C "/Users/cblevins/workspace/services/flexinfer" log --since="2026-05-21T12:25:53.952Z" --name-only
+  - Working tree: git -C "/Users/cblevins/workspace/services/flexinfer" status --porcelain=v1
+  - Issue duplicate check: glab issue list -R gitlab.flexinfer.ai/services/flexinfer -P 100 --all -O json
+- Notes:
+  - Automated reconciliation pass completed.
+  - Issue mutations require explicit GitHub/GitLab issue evidence and bidirectional links.
+  - Skipped issue creation for 16 unchecked `.loom/00-index.md` planning lines: these are option/status lanes from recent GPU/runtime planning, not duplicate-safe standalone tracker issues. Existing roadmap tracking already includes broad FlexInfer roadmap issue #1, GPUProfile follow-up issues including #60, and earlier runtime/platform planning issues; new issues need an explicit taxonomy before splitting these lines.
+  - Agent-context session start and enhanced recall succeeded; file-backed automation memory was also updated for continuity.
+  - Loom inventory checked via `loom://config`, `loom://servers`, `loom://tools/index`, and `loom://health`.
+  - No fallback issue tracker mutation path was used because no duplicate-safe issue changes were identified.
+  - Skipped issue creation for 16 unmatched `.loom/00-index.md` operational options/slices; they need taxonomy review before tracker import.

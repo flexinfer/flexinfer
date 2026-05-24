@@ -12,11 +12,9 @@ spec:
     strategy: SharedPVC
   gpu:
     vendor: amd
-    shared: 5930k-imagegen-textgen
-    # Above imagegen so text demand can preempt; below 26B/31B canaries when
-    # those re-enter the shared pool. Mirrors the disabled MLC manifest's
-    # posture (priority 220) so LiteLLM pool routing reaches the same
-    # qualitative ranking.
+    shared: 5930k-textgen
+    # Legacy disabled fallback in the text-only 5930k lane; below the 26B
+    # primary and larger text canaries if this manifest is restored.
     priority: 220
     count: 1
     vramEstimateMB: 6000
