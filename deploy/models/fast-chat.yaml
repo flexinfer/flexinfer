@@ -8,9 +8,9 @@ spec:
   source: pvc://mlc-models-nfs/Qwen3-8B-abliterated-q4f32_1-MLC
   gpu:
     vendor: amd
-    shared: 5930k-imagegen-textgen
-    # Fallback text lane on the second gfx1100. Higher than imagegen so text
-    # demand can preempt, but the 7900XTX route owns the default aliases.
+    shared: 5930k-textgen
+    # Legacy disabled fallback on the second gfx1100. If restored, it belongs
+    # to the text-only 5930k lane; the 7900XTX route owns the default aliases.
     priority: 220
     vramEstimateMB: 12000
   serverless:

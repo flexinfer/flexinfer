@@ -91,10 +91,10 @@ change). Mirrors `qwen3-8b-radeonvii.yaml` structurally (llama.cpp + GGUF, HF
 source, SharedPVC cache), retargeted for:
 
 - `nodeSelector: kubernetes.io/hostname: cblevins-5930k`
-- `gpu.shared: 5930k-imagegen-textgen` (existing pool — text demand can
-  preempt imagegen)
-- `gpu.priority: 220` (matches the disabled MLC manifest's posture: above
-  imagegen, below 26B/31B canaries when those re-enter the pool)
+- `gpu.shared: 5930k-textgen` (current text-only pool; FluxPony imagegen moved
+  to Radeon VII)
+- `gpu.priority: 220` (matches the disabled MLC manifest's posture: below the
+  26B primary and larger text canaries when those re-enter the pool)
 - `serverless.minReplicas: 0` (cold-warm; only spin up when 7900xtx is
   unavailable or saturated)
 - `idleTimeout: 5m` (match prior fallback)

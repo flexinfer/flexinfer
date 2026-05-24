@@ -25,7 +25,8 @@ spec:
     strategy: SharedPVC
   config:
     # FLUX.1 Fill Dev: 12B param model — inpainting only
-    # Text2image served by flux-schnell-imagegen on 5930k (FluxPipeline)
+    # Text2image is served by the Radeon VII imagegen lane; keep this manifest
+    # on gfx906 with CPU offload.
     # Running on Radeon VII (gfx906, 16GB HBM2) — CPU offload required
     modelFamily: "flux"
     pipelineMode: "inpainting"

@@ -31,6 +31,13 @@ dist/
 .gotmp/
 .golangci-lint-cache/
 
+# Agent-managed linked worktrees (claude-code spawns under .claude/worktrees;
+# canonical user worktrees live under .worktrees and are covered by global ignore)
+.claude/worktrees/
+
+# Ad-hoc build logs / pid files (e.g. tmp/build-runtime-gfx1100.log)
+tmp/
+
 # --- Loom MCP tooling (local; do not commit) ---
 .codex/
 .gemini/

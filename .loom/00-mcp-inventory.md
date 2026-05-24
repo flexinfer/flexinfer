@@ -6,6 +6,28 @@ Capture current MCP/runtime capabilities and constraints for FlexInfer planning 
 
 ## Runtime Mode Detection
 
+### Update (2026-05-21): Loom full profile, codebase index ready
+
+- `functions.list_mcp_resources({})` exposes `loom://config`,
+  `loom://servers`, `loom://tools`, `loom://tools/index`, and
+  `loom://health`.
+- `functions.list_mcp_resource_templates({})` exposes paged tool inventory
+  templates, including `loom://tools/page/{page}` and
+  `loom://tools/server/{server}/page/{page}`.
+- `functions.read_mcp_resource(server="loom", uri="loom://config")` reports
+  active profile `full`, `51` servers, and `514` tools.
+- `functions.read_mcp_resource(server="loom", uri="loom://tools/index")`
+  reports `514` tools across `6` pages.
+- `mcp__loom__.codebase_memory__codebase_stats({"repo_id":"flexinfer"})`
+  reports collection `codebase_memory_v1` with `2831` total chunks.
+- Planning implication:
+  - Loom-mode inventory is available for roadmap refreshes.
+  - Use `codebase_memory` for targeted code search, but keep `rg` and direct
+    file reads as the fastest source-backed planning path.
+  - Relevant execution tools for the unblock roadmap include `codebase_memory`,
+    `gitlab`, `k8s_apps_k3s`, `flux`, `helm`, `prometheus`, `grafana`,
+    `quality`, `devbox`, and the FlexInfer MCP server.
+
 ### Update (2026-05-06): Loom full profile and codebase index ready
 
 - `functions.list_mcp_resources({})` exposes `loom://config`, `loom://servers`, `loom://tools`, `loom://tools/index`, and `loom://health`.

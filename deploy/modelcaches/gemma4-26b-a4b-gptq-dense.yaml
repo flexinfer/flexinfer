@@ -43,9 +43,9 @@
 #   - 7900xtx: primary Model CR claims amd.com/gpu=2 (iGPU block), 0 slots free.
 #   - radeonvii: gfx906, Gemma4 tooling not validated on that PyTorch 2.3 /
 #     transformers<5 stack; also currently running gemma4-31b-gptq quantize.
-#   - 5930k: gfx1100 (single dGPU, no iGPU), shared group 5930k-imagegen-textgen
-#     with FluxPony/opus-distill fast-swap. Quant Job sits Pending until
-#     FluxPony idle-scales; accept the tradeoff as a known scheduling window.
+#   - 5930k: gfx1100 (single dGPU, no iGPU), text-only shared group
+#     5930k-textgen. Quant Job sits Pending until the active 5930k text
+#     workload yields; accept the tradeoff as a known scheduling window.
 #
 # Why not radeonvii:
 #   - Currently running gemma4-31b-gptq quantization (phase=Quantizing). GPU

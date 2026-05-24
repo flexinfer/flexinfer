@@ -3,18 +3,20 @@
 # Note: GPUGroup CRD is v1alpha1 and NOT required by v1alpha2 Model scheduling
 # (gpu.shared field works independently). These are documentation/future-proofing.
 ---
-# cblevins-5930k: imagegen + Qwen3.6 text (fast swap replacement)
-# When idle, imagegen stays loaded. Text requests preempt imagegen,
-# then imagegen reclaims GPU after text idle timeout (5m).
+# cblevins-5930k: text-only shared lane.
+#
+# 2026-05-13 fleet reshape moved image generation to cblevins-radeonvii
+# (`radeonvii-imagegen`). Do not list gonzalomo-fluxpony-imagegen here unless a
+# deliberate gfx1100 imagegen canary is restored.
 apiVersion: ai.flexinfer/v1alpha1
 kind: GPUGroup
 metadata:
-  name: 5930k-imagegen-textgen
+  name: 5930k-textgen
   namespace: flexinfer-system
 spec:
   models:
-    - name: gonzalomo-fluxpony-imagegen
-      priority: 200
+    - name: gemma4-26b-a4b-gptq-5930k
+      priority: 350
     - name: qwen36-27b-gptq
       priority: 250
   nodeSelector:

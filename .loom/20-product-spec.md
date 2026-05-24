@@ -120,3 +120,37 @@ Sources:
 - `ROADMAP.md`
 - `docs/planning/next-roadmap.md`
 - `.loom/00-mcp-inventory.md`
+
+## Scope Extension (2026-05-21): Roadmap Unblock Plan
+
+Product objective:
+
+- Convert the blocked feature queue into an ordered, evidence-gated roadmap
+  that prioritizes runtime kill-tests, validation-matrix closure, and small
+  reversible feature slices.
+
+Requirements:
+
+- Treat gfx906 llama.cpp compatibility as the first kill-test before soak,
+  fallback alias promotion, or vLLM closeout work continues.
+- Keep `.loom/60-validation-matrix.md` as the canonical promotion evidence for
+  runtime images, canaries, rollback digests, and support decisions.
+- Separate the next new product feature, context-curve benchmarking, from
+  runtime rescue work so it can ship as a reporting-only MVP.
+- Resume major dependency/base-image upgrades only as one runtime family per MR
+  with rollback evidence.
+
+Acceptance criteria:
+
+- `.loom/roadmap-unblock-plan-2026-05-21.md` names lanes, slice gates,
+  validation commands, and rollback posture.
+- `.loom/00-index.md` points to the current unblock roadmap.
+- `.loom/00-mcp-inventory.md` records the current Loom full-profile and
+  `codebase_memory` readiness.
+
+Sources:
+
+- `.loom/roadmap-unblock-plan-2026-05-21.md`
+- `.loom/60-validation-matrix.md`
+- `docs/planning/next-roadmap.md`
+- `.loom/spec-gfx906-llamacpp-production-lane-2026-05-20.md`

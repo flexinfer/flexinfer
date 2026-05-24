@@ -1,8 +1,7 @@
 # Qwen3.5-27B Opus-Reasoning-Distilled — fast swap on cblevins-5930k
 #
-# Shares GPU with gonzalomo-fluxpony-imagegen (primary).
-# Scales up on demand when text requests arrive, preempts imagegen.
-# Scales back to 0 when idle, allowing imagegen to reclaim GPU.
+# Disabled legacy 5930k text canary. If restored, it belongs to the text-only
+# 5930k lane; FluxPony now lives on Radeon VII.
 #
 # Same GPTQ INT4 weights as the 7900xtx variant (OCI from Harbor).
 # gpu.count=1 (5930k has 1 discrete 7900 XTX, no iGPU).
@@ -18,7 +17,7 @@ spec:
   gpu:
     vendor: amd
     count: 1
-    shared: gfx1100-5930k-primary
+    shared: 5930k-textgen
     priority: 200
     vramEstimateMB: 15000
   serverless:

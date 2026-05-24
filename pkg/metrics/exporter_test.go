@@ -629,26 +629,27 @@ func TestNewExporter(t *testing.T) {
 // ---------- Multi-metric interaction tests ----------
 
 func TestSharedGroupPreemptionTracking(t *testing.T) {
-	group, ns := "5930k-imagegen-textgen", "flexinfer"
+	group, ns := "5930k-textgen", "flexinfer"
+	activeModel, queuedModel := "gemma4-26b-a4b-gptq-5930k", "qwen36-27b-gptq"
 
 	// Record a preemption event.
-	SharedGroupPreemptionsTotal.WithLabelValues(group, ns, "imagegen", "textgen").Inc()
+	SharedGroupPreemptionsTotal.WithLabelValues(group, ns, activeModel, queuedModel).Inc()
 	got := promtestutil.ToFloat64(
-		SharedGroupPreemptionsTotal.WithLabelValues(group, ns, "imagegen", "textgen"))
+		SharedGroupPreemptionsTotal.WithLabelValues(group, ns, activeModel, queuedModel))
 	assert.Equal(t, 1.0, got)
 
 	// Set group state for both models.
-	SharedGroupState.WithLabelValues(group, "imagegen", ns, "active").Set(1)
-	SharedGroupState.WithLabelValues(group, "textgen", ns, "evicted").Set(1)
+	SharedGroupState.WithLabelValues(group, activeModel, ns, "active").Set(1)
+	SharedGroupState.WithLabelValues(group, queuedModel, ns, "evicted").Set(1)
 
 	assert.Equal(t, 1.0,
-		promtestutil.ToFloat64(SharedGroupState.WithLabelValues(group, "imagegen", ns, "active")))
+		promtestutil.ToFloat64(SharedGroupState.WithLabelValues(group, activeModel, ns, "active")))
 	assert.Equal(t, 1.0,
-		promtestutil.ToFloat64(SharedGroupState.WithLabelValues(group, "textgen", ns, "evicted")))
+		promtestutil.ToFloat64(SharedGroupState.WithLabelValues(group, queuedModel, ns, "evicted")))
 
 	// Clean up.
-	SharedGroupState.DeleteLabelValues(group, "imagegen", ns, "active")
-	SharedGroupState.DeleteLabelValues(group, "textgen", ns, "evicted")
+	SharedGroupState.DeleteLabelValues(group, activeModel, ns, "active")
+	SharedGroupState.DeleteLabelValues(group, queuedModel, ns, "evicted")
 }
 
 func TestJobProgressPercent_BoundaryValues(t *testing.T) {

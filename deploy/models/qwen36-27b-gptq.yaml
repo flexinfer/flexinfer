@@ -18,9 +18,8 @@
 #   - maxModelLen=8192 starting cap (native is 262144); raise after smoke
 #   - enforceEager=true (ROCm GPTQ + CUDAGraph fragility)
 #
-# Co-existence: cblevins-5930k is the recovered Qwen3.6 build node and the
-# FluxPony imagegen lane remains scale-to-zero. Qwen3.6 uses the shared
-# 5930k-imagegen-textgen lane and activates on demand.
+# Co-existence: cblevins-5930k is the recovered Qwen3.6 build node and now uses
+# the text-only 5930k lane. FluxPony imagegen lives on Radeon VII.
 #
 # Tool calling: Qwen3 family ships a Hermes-shaped chat template. For the
 # first smoke we leave toolCallParser unset (vLLM falls back to OpenAI
@@ -43,7 +42,7 @@ spec:
     vendor: amd
     count: 1
     vramEstimateMB: 18000
-    shared: 5930k-imagegen-textgen
+    shared: 5930k-textgen
     priority: 250
   serverless:
     enabled: true

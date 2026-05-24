@@ -81,9 +81,12 @@ Promotion-ready checklist:
 - Rollback digest/ref or rollback manifest path is present.
 - `spec_roadmap_link` points to the spec, issue, MR, or decision that justified
   the promotion.
-- One of the required hardware lanes is represented when applicable:
-  `gfx1100` textgen, `gfx1100` imagegen, `gfx906` textgen/quantization,
-  `gfx906` imagegen/offload.
+- One of the required active hardware lanes is represented when applicable:
+  `gfx1100` textgen, `gfx906` textgen/quantization, and `gfx906`
+  imagegen/offload. `gfx1100` imagegen is not a standing canary while
+  `deploy/models/kustomization.yaml` keeps both 7900 XTX nodes dedicated to
+  text serving; add a new row only when a reconciled gfx1100 diffusers Model is
+  restored.
 
 ## Validation Layers
 
@@ -140,9 +143,11 @@ the row notes:
 
 ## Promotion Matrix
 
-The four required canary lanes (`gfx1100` textgen, `gfx1100` imagegen,
-`gfx906` textgen/quantization, `gfx906` imagegen/offload) are each represented
-by at least one row even when evidence is incomplete.
+The required active canary lanes (`gfx1100` textgen,
+`gfx906` textgen/quantization, and `gfx906` imagegen/offload) are each
+represented by at least one row even when evidence is incomplete. Historical
+gfx1100 imagegen rows must be marked `skip` or `pending` unless a real
+reconciled gfx1100 diffusers Model backs the row.
 
 | `artifact` | `context_length` | `gpu_class` | `backend` | `support_level` | `runtime_image` | `oci_ref` | `validation_evidence` | `observed_failure_mode` | `canary_command` | `rollback_digest` | `spec_roadmap_link` | `promotion_decision` |
 |---|---:|---|---|---|---|---|---|---|---|---|---|---|
@@ -167,7 +172,8 @@ by at least one row even when evidence is incomplete.
 | `qwen35-9b-gptq-gfx1100` | TBD: not yet served | `gfx1100/7900xtx` | `vllm` | `experimental` | TBD | TBD | TBD: no validation run | Evidence not captured | TBD | TBD | SD-3 / Issue #57 | `pending` |
 | **Required canary: `gfx1100` textgen** — `qwen36-27b-gptq` abliterated GPTQ W4_G128 | 8192 | `gfx1100/5930k` | `vllm` | `experimental` | `registry.harbor.lan/flexinfer/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg` (digest TBD) | `registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100@sha256:fe3a6bea0cd2cdf254a5db6194e01402f1f7f93c4b86d8c717695470fdd3849d` | Cache Ready; vLLM reached Ready with `quantization=gptq`, `kvCacheDtype=auto`, `maxNumSeqs=2`; direct proxy and service smoke returned HTTP 200; quarantined from reconciled serving manifests on 2026-05-07; DEBT-302 adds warning-first publish validation with `layout=vllm-gptq`, `family=qwen36-27b`, and `checks.gdn_gptq_policy` to surface any `linear_attn.*.qweight` tensors before OCI publish | First activation exposed proxy `lastActiveTime` conflict; cold start was dominated by 17.6GB image pull; `fp8_e4m3` KV crashed Triton cache update; `gptq_marlin` rejected because artifact config declares `gptq`; current `gptq` runtime serves incoherent output (`!!!!!!!!!!!!` / multilingual junk), flat punctuation logprobs, and live profile traffic like `-current Lockheedпуст劳逸...`; too slow for the 5930k shared lane | Direct `/v1/completions` greedy smoke against `qwen36-27b-gptq:8000` for `The color of the sky is` (raw 2026-05-06 evidence below); publish validator gate runs during next qwen36 ModelCache publish | TBD: failing canary; predecessor `qwen3-14b-abliterated` GPTQ digest is referenced in MR !247 but has no captured success on 5930k to roll back to | MR !247 replacement; MR !248 runtime hardening; MR !253/!254 quiet runtime; 2026-05-05, 2026-05-06, 2026-05-07 smoke evidence; DEBT-302 validator tests | `fail` |
 | `qwen3-14b-gptq` | TBD: not yet served | `gfx1100/5930k` | `vllm` | `experimental` | TBD | TBD | TBD: no validation run | Evidence not captured | TBD | TBD | SD-3 / Issue #57 | `pending` |
-| **Required canary: `gfx1100` imagegen** — `gonzalomo-fluxpony-imagegen` FLUX Schnell text-to-image | n/a, 512x512 + 1024x1024 warmup resolutions | `gfx1100/5930k` | `diffusers` | `supported` | TBD: diffusers runtime digest not yet pinned in this matrix; see `deploy/models/gonzalomo-fluxpony-imagegen.yaml` | `HF://black-forest-labs/FLUX.1-schnell` (Apache 2.0); manifest `deploy/models/gonzalomo-fluxpony-imagegen.yaml` | NF4 + bfloat16 compute dtype; `WARMUP_RESOLUTIONS=512x512,1024x1024` precompiles MIOpen kernels; `MIOPEN_FIND_MODE=2` works around ROCm#4729 VAE crash; primary imagegen on `5930k-imagegen-textgen` shared lane (priority 200) per current model layout | TBD: live cold-load + 512/1024 generation timings not yet captured to a tracked artifact in this matrix | TBD: capture `curl /v1/images/generations` once runtime digest is pinned | TBD: no prior diffusers runtime digest recorded for this lane | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md` Slice 4; `docs/user/backends-rocm-gfx1100.md:344-460` | `pending` |
+| **Required canary: `gfx906` imagegen/text-to-image** — `gonzalomo-fluxpony-imagegen` SDXL text-to-image | n/a, 512x512 warmup resolution | `gfx906/radeonvii` | `diffusers` | `experimental` | `registry.harbor.lan/flexinfer/diffusers:rocm-gfx906` (tag from `deploy/gpuprofiles/gfx906.yaml`; digest still TBD) | `HF://stablediffusionapi/gonzalomoxlfluxpony-v30unitydmd`; manifest `deploy/models/gonzalomo-fluxpony-imagegen.yaml`; local cache under `/models/flexinfer-system/gonzalomo-fluxpony-imagegen` once staged | Manifest relocated FluxPony from `cblevins-5930k` to `cblevins-radeonvii` on 2026-05-13 so both 7900 XTX nodes can stay on Gemma4 26B text serving. The canary uses `radeonvii-imagegen`, `cpuOffload=true`, fp16 weights, the fixed SDXL VAE, Euler/30-step published recipe, and `warmupResolutions=512x512`. | Live cold-load + 512x512 generation timing has not been recaptured after the lane move. 1024x1024 is no longer required for this gfx906 lane; treat it as optional headroom evidence after disk/VRAM pressure is understood. | `kubectl -n flexinfer-system run fluxpony-gfx906-smoke --rm -i --restart=Never --image=curlimages/curl:8.11.1 -- curl -sS -m 1800 -X POST http://flexinfer-proxy.flexinfer-system.svc.cluster.local/model/gonzalomo-fluxpony-imagegen/v1/images/generations -H 'Content-Type: application/json' -d '{"model":"gonzalomo-fluxpony-imagegen","prompt":"a small blue glass cube on a white table","size":"512x512","n":1}'` | Rollback manifest path: disable `gonzalomo-fluxpony-imagegen.yaml` in `deploy/models/kustomization.yaml` or keep `minReplicas: 0`; do not roll back to 5930k unless a new gfx1100 imagegen capacity decision lands. | `deploy/models/gonzalomo-fluxpony-imagegen.yaml`; `deploy/models/kustomization.yaml`; `deploy/gpuprofiles/gfx906.yaml`; this matrix reconciliation | `pending` |
+| Retired `gfx1100` imagegen canary slot (2026-05-22) | n/a | `gfx1100/5930k+7900xtx` | `diffusers` | `supported` capability, no active canary | n/a | Disabled manifests only (`sdxl-diffusers-gfx1100`, `sdxl-turbo-imagegen`, `sdxl-inpainting`, `instruct-pix2pix`) | No reconciled gfx1100 imagegen Model currently proves this lane. `deploy/models/kustomization.yaml` documents the 2026-05-13 fleet reshape: `cblevins-5930k` is text-only and FluxPony moved to Radeon VII. | Treating `gonzalomo-fluxpony-imagegen` as gfx1100 evidence is stale and invalid. | n/a until a gfx1100 diffusers Model is re-enabled and smoked through `/v1/images/generations` or `/v1/images/edits`. | Re-enable an explicit gfx1100 imagegen manifest, then add a new promotion row with runtime digest, smoke command, and rollback. | `deploy/models/kustomization.yaml`; disabled manifests in `deploy/models/`; this matrix reconciliation | `skip` |
 | `gemma4-31b-gptq` Radeon VII comparison | n/a | `gfx906/radeonvii` | `n/a` | `unsupported` | n/a | n/a | n/a | Off-gfx1100 comparison row; VRAM ceiling for this promotion lane | n/a: not a target | n/a | SD-3 / Issue #57 | `skip` |
 | **Required canary: `gfx906` textgen/quantization** — Qwen3.5 GPTQ Radeon VII pipeline (`docs/user/gptq-quantization-runbook.md`) | TBD: gfx906 runtime currently paused (DiskPressure) so no live serving canary | `gfx906/radeonvii` | `vllm` | `deprecated` | TBD: gfx906 vLLM runtime is paused via `flexinfer.ai/runtime-paused=true` after the digest pull repeatedly hit DiskPressure | TBD: 31B GPTQ artifact reused from gfx1100 (`pvc:///gemma4-31b-gptq/gptq-w4-g128-keqv`) | GPTQ runbook documents abliteration + GPTQ flow on Radeon VII (`docs/user/gptq-quantization-runbook.md`); 2026-05-07 evidence below records DaemonSet pause + DiskPressure history. CPU loading + community PyTorch wheel restore allocations under 16 GiB. Live serving canary not currently runnable on radeonvii. | Root-backed containerd fills to 100% on first pull of the 17 GiB digest-pinned `runtime` image, evicting kubelet workloads. The replacement `qwen3-1p7b-tools-radeonvii` llama.cpp lane is queued precisely because vLLM cannot run here today. | TBD: re-enable canary after storage relocation; recapture before lifting `runtime-paused` | `registry.harbor.lan/flexinfer/runtime@sha256:7c05960614517dbd5d6453944125a01e78f0451f6695467a8eaf6a6859d461dd` (last gfx906 runtime digest before the `dd0a1936...` promotion that hit DiskPressure) | `.loom/gfx1100-gfx906-platform-enhancements-plan.md` Slice 5; `docs/user/gptq-quantization-runbook.md`; 2026-05-07 gfx906 runtime digest promotion evidence below | `pending` |
 | **Required canary: `gfx906` imagegen/offload** — `sdxl-inpainting-radeonvii` Diffusers inpaint | n/a, 512x512 image edit | `gfx906/radeonvii` | `diffusers` | `experimental` | `registry.harbor.lan/flexinfer/runtime@sha256:94045d0ca4b12deb3c46bb22070f67bfedad8b719bb992e5d3ce128ad27ad597` | `local:///models/flexinfer-system/sdxl-inpainting-radeonvii` | Slim runtime image (cycle 2: `Dockerfile.runtime-gfx906` on `mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3` base, 36.9 GB extracted vs prior 59.2 GB) promoted via MR !282 after MR !281. DaemonSet pod Ready on `cblevins-radeonvii`; cold-start `/v1/images/edits` smoke returned HTTP 200 in 107.7s with one 512x512 PNG, `b64_len=252372`. Pre-pull verified root holds at 65% (78G/127G used) post-image-pull; bind-mounted `/var/lib/flexinfer/models` to `/mnt/nvme/longhorn/flexinfer/models` via fstab, reclaiming 21G on root. | None on the runtime path. Cold-start latency increased from prior 48.35s warm to 107.7s cold (deployment scale-up + weights load from freshly bind-mounted NVMe path). Failed pull on root LVM exposed pull-time peak ~1.5x final extracted size. | Multipart `POST /model/sdxl-inpainting-radeonvii/v1/images/edits` through `flexinfer-proxy` with 512x512 PNG image+mask (raw 2026-05-07 evidence below) | `registry.harbor.lan/flexinfer/runtime@sha256:dd0a1936f350ec117da1ab6a589618a571074d6828c2ccb5e273f2f6eb195b97` (the prior 59.2 GB digest replaced by this promotion) | RG-4 / `.loom/gfx1100-gfx906-platform-enhancements-plan.md`; `.loom/gfx1100-gfx906-next-round-plan.md` Track B-3; 2026-05-07 Radeon VII evidence below | `conditional` |
@@ -680,7 +686,7 @@ Raw outputs:
   synthetic prompt problem: the `qwen36-27b` profile returned mixed token soup
   beginning `-current Lockheedпуст...`. The model was manually scaled to zero
   and removed from reconciled `deploy/models/kustomization.yaml` because it is
-  both incoherent and slow on the `5930k-imagegen-textgen` shared lane.
+  both incoherent and slow on the 5930k shared text lane.
 - 2026-05-07 fast-chat recovery posture: remove `qwen36-27b-gptq`,
   `gemma4-31b-gptq`, and `gemma4-26b-a4b-gptq-long` from the reconciled model
   set so slow or incoherent canaries stop owning user-facing aliases. Promote
@@ -915,11 +921,15 @@ older rows mapped to newer columns.
   `smoke.cold_load_min`, `smoke.decode_tps`, `smoke.prompt_tps`, image
   generation seconds) into table columns; the Runtime Smoke section under
   Field Capture Reference remains the canonical source.
-- Backfilled the four required canary lanes called out in the Track E spec:
-  `gfx1100` textgen (`qwen36-27b-gptq`), `gfx1100` imagegen
-  (`gonzalomo-fluxpony-imagegen` FLUX Schnell), `gfx906` textgen/quantization
-  (Qwen3.5 GPTQ runbook lane, currently paused under DiskPressure), and
-  `gfx906` imagegen/offload (`sdxl-inpainting-radeonvii`).
+- Backfilled the then-required canary lanes called out in the Track E spec:
+  `gfx1100` textgen (`qwen36-27b-gptq`), historical `gfx1100` imagegen,
+  `gfx906` textgen/quantization (Qwen3.5 GPTQ runbook lane, currently paused
+  under DiskPressure), and `gfx906` imagegen/offload
+  (`sdxl-inpainting-radeonvii`).
+- 2026-05-22 correction: `gonzalomo-fluxpony-imagegen` no longer counts as
+  `gfx1100` imagegen evidence. Its manifest is now pinned to
+  `cblevins-radeonvii`/`gfx906`, so the active imagegen canary contract follows
+  the Radeon VII lane until a real gfx1100 diffusers Model is re-enabled.
 - Cells without captured evidence are written as `TBD: <reason>` so the
   promotion rules can keep treating them as `pending` instead of fabricating
   a `promote`.

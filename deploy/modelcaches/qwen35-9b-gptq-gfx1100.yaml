@@ -27,8 +27,8 @@
 # Status: DISABLED in kustomization.yaml. Enable only after:
 #   1. Resolving whether to deprecate the radeonvii qwen35-9b-gptq.yaml once
 #      this artifact is promoted, or keep both for per-node warm caches.
-#   2. Confirming cblevins-5930k has no higher-priority workload queued
-#      (e.g. FluxPony + 27B opus distill in some profiles).
+#   2. Confirming cblevins-5930k has no higher-priority text workload queued
+#      in the 5930k-textgen lane.
 ---
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache

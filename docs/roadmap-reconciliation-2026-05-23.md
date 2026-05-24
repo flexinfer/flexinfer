@@ -1,0 +1,28 @@
+# Roadmap Reconciliation Report (2026-05-23)
+
+- Repo:
+  - services/flexinfer
+- Baseline:
+  - 2026-05-22T12:16:25.664Z
+- Planning files changed since baseline:
+  - .loom/00-index.md; .loom/20-product-spec.md; .loom/30-implementation-plan.md; .loom/60-validation-matrix.md; .loom/brainstorm-long-context-architecture-runtime-2026-05-18.md; .loom/ralph-gfx906-llamacpp-soak-2026-05-21.md; .loom/roadmap-unblock-plan-2026-05-21.md
+- Missing issue links in changed unchecked checklist items:
+  - 16
+- Issue actions this run:
+  - created=0
+  - updated=0
+  - closed=0
+  - reopened=0
+  - label_or_milestone_updates=0
+  - backlink_updates=0
+- Evidence:
+  - Git history: git -C "/Users/cblevins/workspace/services/flexinfer" log --since="2026-05-22T12:16:25.664Z" --name-only
+  - Working tree: git -C "/Users/cblevins/workspace/services/flexinfer" status --porcelain=v1
+- Notes:
+  - Automated reconciliation pass completed.
+  - Issue mutations require explicit GitHub/GitLab issue evidence and bidirectional links.
+  - Loom MCP inventory checked via `loom://config`, `loom://servers`, `loom://tools/index`, and `loom://health`; full profile reported 52 servers and 514 tools.
+  - Agent-context session `f0d2c0ea27f86464` started successfully; recall returned no prior context entries, so file-backed automation memory supplied prior-run rationale.
+  - No label, milestone, or issue-state update was applied because the changed planning artifacts do not clearly identify a single issue taxonomy or duplicate-free issue target.
+  - MCP inventory: `loom://config`, `loom://servers`, `loom://tools/index`, and `loom://health` were checked; full profile reported 52 servers and 514 tools, and agent_context was healthy for session `32ae9a2271074573`.
+  - Skipped issue creation: the 16 unmatched checklist lines are operational options, deferred tracks, and validation gates in `.loom/00-index.md` lines 71-83 plus `.loom/roadmap-unblock-plan-2026-05-21.md` lines 115, 130-133, and 156-161. These are process gates/sub-slices pending taxonomy review, not clearly distinct roadmap issues.

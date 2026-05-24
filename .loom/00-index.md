@@ -23,6 +23,7 @@
 - vLLM feature-parity Slice 3 falsification (rms_norm ROCm bug, 2026-05-15): `slice3-v1-sandbox-rms-norm-falsified-2026-05-15.md`
 - ASR + diarization infra plan for ICC meeting transcription (7900 XTX, 2026-05-18): `asr-diarization-7900xtx-plan-2026-05-18.md`
 - ASR Slice 1 kill-test INCONCLUSIVE (controller did not reconcile, 2026-05-19): `asr-diarization-kill-test-inconclusive-2026-05-19.md`
+- Roadmap unblock plan (blocked feature churn, 2026-05-21): `roadmap-unblock-plan-2026-05-21.md`
 - Context-curve benchmark spec capsule: `../docs/planning/context-curve-benchmark.md`
 - RALPH context-curve benchmark spec iteration (2026-05-21): `ralph-context-curve-benchmark-spec-2026-05-21.md`
 - RALPH context-curve runner MVP (2026-05-22): `ralph-context-curve-runner-2026-05-22.md`
@@ -30,7 +31,28 @@
 - RALPH context-curve ConfigMap storage (2026-05-22): `ralph-context-curve-configmap-storage-2026-05-22.md`
 - RALPH context-curve spec closeout (2026-05-22): `ralph-context-curve-spec-closeout-2026-05-22.md`
 
-## Current Goal (2026-05-14, late evening) — F1+F7-vectorize shipped: −24.9% cumulative, 5930k gap closed from 2.13x → 1.60x
+## Current Goal (2026-05-21) - Roadmap unblock plan
+
+Focused plan: `roadmap-unblock-plan-2026-05-21.md`.
+
+The current execution posture is to stop feature churn by ordering the open
+work around explicit runtime kill-tests and validation-matrix evidence:
+
+- Lane 0: link and freeze the roadmap-unblock context.
+- Lane 1: unblock or retire gfx906 production fallback through the llama.cpp
+  `hipMemGetInfo` kill-test before soak or alias promotion.
+- Lane 2: close runtime-promotion evidence gaps for gfx1100/gfx906 canaries.
+- Lane 3: run live deploy/swap observability validation for the proof-complete
+  PR-2 surfaces.
+- Lane 4: spec and implement a reporting-only context-curve benchmark MVP.
+- Lane 5: resume major dependency/base-image rollout only as one image family
+  per MR with rollback evidence.
+
+Primary blocker: the gfx906 llama.cpp pre-soak probe currently fails
+`hipMemGetInfo=1:invalid argument`, so downstream radeonvii alias promotion is
+blocked until that image-level compatibility issue is fixed and recorded.
+
+## Previous Goal (2026-05-14, late evening) - F1+F7-vectorize shipped: -24.9% cumulative, 5930k gap closed from 2.13x -> 1.60x
 
 Brainstorm session (`.loom/brainstorm-26b-5930k-decode-perf-2026-05-14.md`) produced 8 framings for closing the 5930k decode-rate gap without hardware swap. User picked F1, then F2 (falsified), then F7 (profile first), then vectorize the MoE patch inner loop. Four slices attempted on 2026-05-14.
 
