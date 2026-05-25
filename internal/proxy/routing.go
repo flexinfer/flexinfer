@@ -467,20 +467,32 @@ func (p *Proxy) getServicePort(ctx context.Context, modelName string) (int32, bo
 		if !errors.IsNotFound(err) {
 			slog.Debug("failed to get model service for backend port", "model", modelName, "error", err)
 		}
+		if cached, ok := p.lastKnownServicePorts.Load(modelName); ok {
+			return cached, true
+		}
 		return 0, false
 	}
 
+	var picked int32
 	for _, port := range svc.Spec.Ports {
 		if port.Name == "http" && port.Port > 0 {
-			return port.Port, true
+			picked = port.Port
+			break
 		}
 	}
-	for _, port := range svc.Spec.Ports {
-		if port.Port > 0 {
-			return port.Port, true
+	if picked == 0 {
+		for _, port := range svc.Spec.Ports {
+			if port.Port > 0 {
+				picked = port.Port
+				break
+			}
 		}
 	}
-	return 0, false
+	if picked == 0 {
+		return 0, false
+	}
+	p.lastKnownServicePorts.Store(modelName, picked)
+	return picked, true
 }
 
 // rewriteModelInBody replaces the "model" field in a JSON request body with the backend model name.

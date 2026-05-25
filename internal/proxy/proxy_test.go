@@ -956,6 +956,62 @@ func TestBackendPort_UsesFirstServicePortWhenHTTPMissing(t *testing.T) {
 	assert.Equal(t, int32(7000), port)
 }
 
+// TestBackendPort_UsesLastKnownServicePortAfterTransientLookupFailure
+// reproduces the failure mode from the gfx906 proxy-soak run on 2026-05-25:
+// a llamacpp Model whose Service exposes port 8000 was intermittently dialed
+// at port 8080 (LlamaCppBackend.Port(), the runtime control-plane port). The
+// trigger was the flexinfer-controller's hot reconcile loop briefly evicting
+// the Service from the proxy's informer cache; the silent fall-through to
+// the backend default port produced 30s TCP timeouts on the Service ClusterIP
+// (which exposes no 8080 binding) → 502 Bad Gateway. The fix caches the last
+// successfully observed Service port and prefers it over the backend default
+// on transient lookup failure.
+func TestBackendPort_UsesLastKnownServicePortAfterTransientLookupFailure(t *testing.T) {
+	p := setupTestProxy(t)
+	ctx := context.Background()
+
+	m := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "soak-llamacpp",
+			Namespace: "default",
+		},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "HF://test/model",
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, m))
+
+	svc := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "soak-llamacpp",
+			Namespace: "default",
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{
+				{Name: "http", Port: 8000},
+				{Name: "metrics", Port: 9090},
+			},
+		},
+	}
+	require.NoError(t, p.client.Create(ctx, svc))
+
+	// Warm read: Service is present, picks port 8000 and caches it.
+	require.Equal(t, int32(8000), p.getBackendPort(ctx, "soak-llamacpp"),
+		"warm read must use the Service port")
+
+	// Simulate the transient cache eviction observed during the controller's
+	// 1059-update/min reconcile loop: the Service briefly disappears from the
+	// informer cache.
+	require.NoError(t, p.client.Delete(ctx, svc))
+
+	// Without the fix, getServicePort returns (0, false), getBackendPort falls
+	// through to the Model CR's backend type, and llamacpp's default port 8080
+	// wins — producing the dial-to-:8080 502s observed in the soak.
+	require.Equal(t, int32(8000), p.getBackendPort(ctx, "soak-llamacpp"),
+		"transient Service lookup failure must return the last-known port, not the backend default")
+}
+
 func TestGetBackendPort_ModelNotFound(t *testing.T) {
 	p := setupTestProxy(t)
 	ctx := context.Background()
