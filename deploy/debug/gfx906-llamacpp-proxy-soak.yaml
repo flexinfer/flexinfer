@@ -357,7 +357,7 @@ spec:
           command: ["python3", "/scripts/proxy-soak.py"]
           env:
             - name: SOAK_DURATION_SECONDS
-              value: "86400"
+              value: "900"
             - name: SOAK_INTERVAL_SECONDS
               value: "60"
             - name: SOAK_REQUEST_TIMEOUT_SECONDS
