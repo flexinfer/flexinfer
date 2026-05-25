@@ -204,6 +204,69 @@ Large JSON outputs and smoke transcripts go under
 tracked file. Each archive should include the exact command, artifact path,
 runtime image digest or OCI ref when available, and smoke response transcript.
 
+### 2026-05-25 context-curve 2nd family: qwen3-8b-radeonvii-soak
+
+Second model family for Lane 4. Same runner
+(`scripts/bench-context-curve.sh`) against the gfx906 llama.cpp
+soak target through a port-forward to `svc/flexinfer-proxy`. Run
+right after MR !493 (proxy port-cache fix) unblocked the lane —
+the curve confirms steady-state serving plus exposes how Q4_0 KV
+cache scales on Radeon VII.
+
+Command:
+
+```bash
+kubectl -n flexinfer-system port-forward svc/flexinfer-proxy 18080:80
+MODEL=qwen3-8b-radeonvii-soak \
+  ENDPOINT=http://localhost:18080 \
+  POINTS=2k,8k MAX_TOKENS=64 TIMEOUT=300 \
+  REPORT_DIR=/tmp/flexinfer-curves \
+  STORE_CONFIGMAP=1 \
+  ./scripts/bench-context-curve.sh
+```
+
+Result summary:
+
+- Report schema: `flexinfer.context_curve.v1`.
+- Local report:
+  `.loom/local/validation/context-curve/2026-05-25/bench-context-curve-qwen3-8b-radeonvii-soak-context-curve-20260525T132342-e017e7.json`.
+- ConfigMap key:
+  `qwen3-8b-radeonvii-soak-context-curve-20260525T132342-e017e7.json`
+  in `flexinfer-system/flexinfer-context-curve-results`.
+- Summary: `total_points=2`, `passed=2`, `failed=0`, `skipped=0`,
+  `first_failure_point=null`.
+- 2048 target: observed `1866` prompt tokens, `64` completion
+  tokens; elapsed `1.498s`; prefill throughput `1245.5 tok/s`;
+  decode throughput `42.72 tok/s`.
+- 8192 target: observed `7286` prompt tokens, `64` completion
+  tokens; elapsed `8.243s`; prefill throughput `883.9 tok/s`;
+  decode throughput `7.76 tok/s`.
+- 16384 attempted earlier in the same session and rejected with
+  HTTP 400 by llama-server (prompt + completion budget exceeded
+  `contextSize: 16384`). Recorded as `first_failure_point=16384`
+  in an earlier raw report; not retained in the ConfigMap because
+  the persisted run used `--points 2k,8k`.
+
+Curve shape vs. `gemma4-26b-a4b-gptq` (first family):
+
+| target | gemma4-26b prefill | gemma4-26b decode | qwen3-8b prefill | qwen3-8b decode |
+| --- | --- | --- | --- | --- |
+| 2048 | 1756.2 tok/s | 12.20 tok/s | 1245.5 tok/s | 42.72 tok/s |
+| 8192 | 1470.8 tok/s | 2.62 tok/s | 883.9 tok/s | 7.76 tok/s |
+
+Both families show prefill throughput degrading gently (≈16% on
+gemma4, ≈29% on qwen3) and decode throughput degrading sharply
+(≈78% on gemma4, ≈82% on qwen3) over the same 2k→8k range.
+qwen3-8b on llama.cpp is markedly faster at decode in absolute
+terms thanks to the smaller model and Q4_K_M weights, but the
+shape of the curve mirrors the 26B vLLM lane. With two families
+now stored, downstream scheduler/controller use can begin
+specifying its decision rules in a follow-up spec.
+
+This is evidence capture only. It does not change scheduler
+scoring, controller behavior, runtime profiles, CRDs, or benchmark
+ConfigMap consumers.
+
 ### 2026-05-22 context-curve MVP: gemma4-26b-a4b-gptq
 
 First live CC-3 context-curve run used the reporting-only
