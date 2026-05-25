@@ -214,6 +214,10 @@ small context ladder.
 - [x] CC-2: Add a reporting-only context-curve runner that emits a stable JSON report without changing scheduler decisions.
 - [x] CC-3: Capture one live curve on an existing Gemma4 or Qwen lane and link it from `.loom/60-validation-matrix.md`.
 - [x] CC-4: Add opt-in ConfigMap storage for context-curve reports without changing scheduler consumers.
+- [x] CC-4b: Capture a second-family live curve (`qwen3-8b-radeonvii-soak`) so scheduler use can be specified.
+- [ ] CC-5: Spec the scheduler/proxy use of stored curves, including a backtest kill-test, before any runtime code lands. See `docs/planning/context-curve-scheduler-spec.md`.
+- [ ] CC-6: Run the backtest kill-test offline and record the verdict in the validation matrix.
+- [ ] CC-7: Proxy curve-aware routing implementation (opt-in annotation, default off). **Blocked** until CC-6 passes.
 
 ## Tech Debt (Ongoing)
 
