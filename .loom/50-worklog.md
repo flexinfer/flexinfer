@@ -2,6 +2,49 @@
 
 Chronological notes while executing the plan (useful for handoffs and debugging).
 
+## 2026-05-25
+
+### RALPH slice — proxy port-cache fix (Lane 1B Bug 1 unblock)
+
+Merged MR !493 `fix(proxy): cache last-known Service port to avoid 8080
+fallthrough` to master (commit `8796c59a`). Lane 1B kill-test gfx906 proxy-soak
+on 2026-05-25 isolated two bugs (see
+`memory/gfx906-proxy-port-mismatch.md`):
+
+- **Bug 1 (fixed in !493)**: `internal/proxy/routing.go:getBackendPort`
+  silently fell through to `LlamaCppBackend.Port() = 8080` when
+  `getServicePort` returned `(0, false)` from a transient informer
+  cache eviction. Fix caches the last-observed Service port per
+  model in `lastKnownServicePorts` and uses it on lookup failure.
+  Regression test
+  `TestBackendPort_UsesLastKnownServicePortAfterTransientLookupFailure`
+  in `internal/proxy/proxy_test.go` proves the failure mode locally
+  (8080 without fix, 8000 with fix).
+- **Bug 2 (not in !493)**: dial to the *correct* port (8000) still
+  times out at 30s during runtime pod churn. Root cause traces to
+  the controller writing per-Model Endpoints at ~1059 updates/min
+  with no status-equality guard, briefly leaving `subsets.addresses`
+  empty or stale. Tracked for a follow-up MR.
+
+Pipeline #11455 green on all auto stages. CI evidence:
+`https://gitlab.flexinfer.ai/services/flexinfer/-/pipelines/11455`.
+
+Next slice candidates (queued, pick one before re-running soak):
+
+1. Re-run the 15-minute proxy-soak on the gfx906 lane with the !493
+   fix in place. If Bug 2 is the only remaining failure mode, the
+   soak should show fewer or zero `:8080` dial timeouts but may
+   still show 30s timeouts on `:8000`. Outcome decides whether
+   Bug 2 needs an immediate follow-up MR or whether soak can
+   tolerate it long enough to start the 24h Lane 1B promotion gate.
+2. Bug 2 follow-up MR: add status-equality guard to the per-Model
+   Endpoints writer in `controllers/` so the hot reconcile loop
+   does not churn `subsets.addresses` on no-op updates.
+
+Lane 0 plan markers (no edits this slice): roadmap-unblock-plan-2026-05-21
+remains the active surface; this slice unblocks the soak path
+inside Lane 1B without changing the lane ordering.
+
 ## 2026-05-16
 
 ### RALPH slice — 5930k Gemma4 26B 2/256 concurrency promotion
