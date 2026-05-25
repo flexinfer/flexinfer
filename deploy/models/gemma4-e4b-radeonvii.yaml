@@ -1,0 +1,86 @@
+# Gemma 3 4B IT (Gemma 4 family) GGUF via llama.cpp on Radeon VII (gfx906).
+#
+# Role: small DRAFT model for cross-card speculative decoding against the
+# `gemma4-26b-a4b-gptq` (gfx1100) verifier. The Gemma family shares the
+# same SentencePiece tokenizer across the 270M / 1B / 4B / 12B / 27B
+# variants, so the 4B's token IDs are directly comparable to the 27B's.
+# That's the prerequisite for external speculative decoding.
+#
+# This lane is COLD (minReplicas: 0): it only spins up when the
+# spec-decode coordinator (CC-DR-1b, future MR) routes draft requests
+# to it. The Radeon VII's HBM2 bandwidth is wasted on autoregressive
+# decode of a small model, but the latency for short draft windows
+# (4-8 tokens per round) is still much better than running the verifier
+# alone.
+#
+# Co-tenants on cblevins-radeonvii (radeonvii-models shared group):
+#   - qwen3-1.7b-tools-radeonvii (priority 120)   — currently active
+#   - qwen3-1p7b-vllm-radeonvii  (priority 100)   — feasibility-only
+#   - qwen3-8b-radeonvii         (priority 100)   — tertiary fallback
+# This draft is priority 110: yields to the tool-router (which the
+# weaver depends on per-query) but takes precedence over the cold 8B
+# tertiary fallback. It only displaces the imagegen lanes if the
+# operator force-promotes it.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gemma4-e4b-radeonvii
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://bartowski/gemma-3-4b-it-GGUF
+  cache:
+    size: 6Gi
+    storageClass: nvme-1r
+    strategy: Local
+  gpu:
+    vendor: amd
+    shared: radeonvii-models
+    priority: 110
+    count: 1
+    vramEstimateMB: 4000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 10m
+  config:
+    ggufFile: google_gemma-3-4b-it-Q4_K_M.gguf
+    # Match the verifier's target context (gemma4-26b-a4b-gptq at 32768).
+    # A draft does not need full-context behavior to be useful — most
+    # speculative-decoding workloads draft 4-16 tokens per round — but
+    # matching the verifier's window avoids any edge case where the
+    # running prompt grows past the draft's cap mid-conversation.
+    contextSize: 32768
+    nGPULayers: 999
+    batchSize: 1024
+    ubatchSize: 512
+    parallel: 2
+    threads: 12
+    flashAttention: true
+    # gfx906 lacks VMM support; the runtime image's hipMemGetInfo shim
+    # returns sysfs totals so llama.cpp's startup probe passes.
+    fitOff: true
+    cacheTypeK: q4_0
+    cacheTypeV: q4_0
+    jinja: true
+    metrics: true
+    rocrVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: "2"
+      memory: 6Gi
+    limits:
+      cpu: "8"
+      memory: 12Gi
+  serviceLabels:
+    - gemma4-e4b
+    - gemma4-draft
+  litellm:
+    enabled: true
+    servedModelName: gemma4-e4b-radeonvii
+    aliases:
+      - gemma4-e4b-vii
+      - gemma4-4b-vii
