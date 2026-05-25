@@ -94,6 +94,9 @@ data:
     preflight_interval_seconds = int(os.environ.get("SOAK_PREFLIGHT_INTERVAL_SECONDS", "30"))
     preflight_timeout_seconds = int(os.environ.get("SOAK_PREFLIGHT_REQUEST_TIMEOUT_SECONDS", "120"))
     expected_model = os.environ.get("SOAK_EXPECT_MODEL", model)
+    preflight_require_model_match = os.environ.get(
+        "SOAK_PREFLIGHT_REQUIRE_MODEL_MATCH", "false"
+    ).lower() in ("1", "true", "yes")
     diag_endpoint = os.environ.get("SOAK_DIAG_ENDPOINT", "").strip()
     diag_timeout_seconds = float(os.environ.get("SOAK_DIAG_TIMEOUT_SECONDS", "5"))
     jsonl_path = os.path.join(evidence_dir, "proxy-soak.jsonl")
@@ -189,10 +192,12 @@ data:
         "preflight_interval_seconds": preflight_interval_seconds,
         "preflight_timeout_seconds": preflight_timeout_seconds,
         "expected_model": expected_model,
+        "preflight_require_model_match": preflight_require_model_match,
         "started_at": utc_now(),
     })
 
     preflight_ok = preflight_attempts <= 0
+    preflight_model_mismatches = 0
     for attempt in range(1, preflight_attempts + 1):
         started = time.monotonic()
         record = {
@@ -203,7 +208,11 @@ data:
         try:
             resp, data = post_chat(preflight_timeout_seconds)
             record.update(response_record(data, resp, time.monotonic() - started))
-            if record["expected_model_match"]:
+            if record["ok"] and not record["expected_model_match"]:
+                preflight_model_mismatches += 1
+            if record["ok"] and (
+                record["expected_model_match"] or not preflight_require_model_match
+            ):
                 preflight_ok = True
         except Exception as exc:
             record.update({
@@ -229,10 +238,13 @@ data:
             "failures": 0,
             "measured_failures": 0,
             "warmup_failures": 0,
+            "preflight_model_mismatches": preflight_model_mismatches,
+            "measured_model_mismatches": 0,
             "p95_ms_per_token": None,
             "latency_budget_ms_per_token": latency_budget_ms_per_token,
             "preflight_attempts": preflight_attempts,
             "preflight_timeout_seconds": preflight_timeout_seconds,
+            "preflight_require_model_match": preflight_require_model_match,
             "jsonl_path": jsonl_path,
             "summary_path": summary_path,
             "completed_at": utc_now(),
@@ -247,6 +259,7 @@ data:
     attempts = 0
     warmup_failures = 0
     measured_failures = 0
+    measured_model_mismatches = 0
     measured = []
 
     while time.monotonic() < deadline:
@@ -264,6 +277,8 @@ data:
             record.update(response_record(data, resp, elapsed))
             if attempts > warmup_requests:
                 measured.append(record["ms_per_token"])
+                if record["ok"] and not record["expected_model_match"]:
+                    measured_model_mismatches += 1
         except Exception as exc:
             if record["warmup"]:
                 warmup_failures += 1
@@ -296,8 +311,11 @@ data:
         "failures": measured_failures,
         "measured_failures": measured_failures,
         "warmup_failures": warmup_failures,
+        "preflight_model_mismatches": preflight_model_mismatches,
+        "measured_model_mismatches": measured_model_mismatches,
         "p95_ms_per_token": None if p95 is None else round(p95, 3),
         "latency_budget_ms_per_token": latency_budget_ms_per_token,
+        "preflight_require_model_match": preflight_require_model_match,
         "jsonl_path": jsonl_path,
         "summary_path": summary_path,
         "completed_at": utc_now(),
@@ -358,6 +376,18 @@ spec:
               value: "120"
             - name: SOAK_EXPECT_MODEL
               value: qwen3-8b-radeonvii-soak
+            # Preflight model-match policy. The proxy returns whatever the
+            # upstream advertises as `model`; llama.cpp upstreams advertise the
+            # GGUF basename (e.g. `Qwen3-8B-Q4_K_M.gguf`), not the Model CR
+            # name, so a strict match gates every healthy soak to exit 23.
+            # Default soft: any HTTP 200 satisfies preflight, mismatches are
+            # tallied into `preflight_model_mismatches` / `measured_model_
+            # mismatches` in the summary and the triage tool surfaces them
+            # separately. Set to "true" to restore strict behavior when the
+            # upstream is known to advertise the Model CR name (e.g. vLLM with
+            # `--served-model-name`, or llama.cpp with `--alias`).
+            - name: SOAK_PREFLIGHT_REQUIRE_MODEL_MATCH
+              value: "false"
             # Correlated diag probe. On each measured/preflight failure the
             # script also hits this endpoint with a short timeout and records
             # the result inline. Default targets `flexinfer-proxy /healthz` so
