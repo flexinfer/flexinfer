@@ -1,6 +1,36 @@
 # Fast-Chat Resilience: Gemma4 26B Default Decision
 
-Status: Superseded/Accepted (2026-05-16)
+Status: Updated (2026-05-25) — radeonvii tertiary added after Lane 1B
+unblock + Lane 1C alias promotion.
+
+## 2026-05-25 Fallback Order (current)
+
+Per `.loom/roadmap-unblock-plan-2026-05-21.md` Lane 1C, the gfx906
+llama.cpp lane joins the fallback chain as a cold tertiary now that
+Lane 1B is unblocked (MR !493 fixed the proxy port-cache fall-through;
+2026-05-25 smoke confirmed 0% failure on the gfx906 lane).
+
+Routing order (proxy resolves the requested alias against Ready
+members of each shared `serviceLabel`):
+
+1. **Primary** (warm, two-instance load balance): `fast-chat`
+   - `gemma4-26b-a4b-gptq` on `cblevins-7900xtx` (vLLM, gfx1100, warm)
+   - `gemma4-26b-a4b-gptq-5930k` on `cblevins-5930k` (vLLM, gfx1100, warm)
+2. **Secondary** (cold, 5930k node): `fast-chat-fallback`
+   - `fast-chat-5930k-llamacpp` on `cblevins-5930k` (llama.cpp, gfx1100, cold)
+3. **Tertiary** (cold, gfx906 node): `fast-chat-fallback`
+   - `qwen3-8b-radeonvii` on `cblevins-radeonvii` (llama.cpp, gfx906, cold)
+
+Both secondary and tertiary share the `fast-chat-fallback`
+`serviceLabel`; the proxy's `pickReadyMember` picks among Ready
+members in round-robin, so whichever fallback warms first absorbs
+traffic and the other stays cold. `minReplicas: 0` on both keeps GPU
+contention with their co-tenants minimal until traffic forces a
+cold-start.
+
+`qwen3-1p7b-vllm-radeonvii` stays at `minReplicas: 0` as a
+feasibility-only lane (vLLM gfx906 is not a production candidate per
+`.loom/spec-gfx906-llamacpp-production-lane-2026-05-20.md`).
 
 ## 2026-05-16 Update
 
