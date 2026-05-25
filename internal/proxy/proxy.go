@@ -240,6 +240,16 @@ type Proxy struct {
 	directRuntimeEnabled bool                         // enable direct proxy-to-runtime loading
 	directLoadTargets    TypedSyncMap[string, string] // modelName -> "http://podIP:backendPort"
 
+	// Last-observed Service port per model. Populated on every successful
+	// getServicePort read; consulted when a subsequent read fails so we don't
+	// silently fall through to the backend's default port. Without this,
+	// llamacpp Models whose Service exposes port 8000 can be dialed at port
+	// 8080 (LlamaCppBackend.Port(), the runtime control-plane port) during
+	// the brief windows when the controller's reconcile churn evicts the
+	// Service from the proxy's informer cache — producing intermittent 502
+	// Bad Gateway with 30s TCP timeouts. See MR !491 follow-up.
+	lastKnownServicePorts TypedSyncMap[string, int32]
+
 	// Round-robin counters for shared service-label routing. Keyed by label
 	// (e.g. "quality-chat"). Used by pickReadyMember to distribute requests
 	// across multiple models that claim the same label (two-instance fleets,
