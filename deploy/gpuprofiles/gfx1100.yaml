@@ -116,7 +116,16 @@ spec:
       - diffusers
     image: registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166
   containerMemoryGB: 48
-  maxGPUMemoryGB: 18
+  # 2026-05-25: bumped 18 → 22 to make room for `gemma4-26b-a4b-gptq` at
+  # maxModelLen=32768 with kvCacheDtype=fp8_e4m3. Math:
+  #   weights (GPTQ Int4, 26B):  ~13 GB
+  #   KV @ FP8, interleaved attn (32k global / 4k local): ~5 GB
+  #   activations + framework:   ~3 GB
+  # 22 GB cap on a 24 GB card leaves 2 GB physical headroom; vLLM's own
+  # gpuMemoryUtilization (set per-Model at 0.98) bounds its working set
+  # within the cap. The prior 18 GB cap was sized for 16k context and is
+  # too tight for 32k.
+  maxGPUMemoryGB: 22
   # Dropped 44 → 24 on 2026-04-21 to unblock gemma4-26b-a4b-gptq-dense
   # abliteration which was looping OOM on 5930k. The ModelCache overrides
   # spec.abliteration.maxMemoryGB=28 (kubelet-stability protection after
