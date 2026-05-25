@@ -51,6 +51,12 @@ spec:
   serviceLabels:
     - qwen3-8b
     - textgen
+    # Lane 1C (2026-05-25): tertiary fallback for fast-chat after the two
+    # warm Gemma4 26B 7900 XTX/5930k primaries and the 5930k llama.cpp
+    # secondary. See docs/planning/fast-chat-resilience.md. minReplicas
+    # stays 0 so we cold-start only when both warm primaries and the
+    # 5930k cold secondary are unavailable.
+    - fast-chat-fallback
   litellm:
     enabled: true
     servedModelName: qwen3-8b-radeonvii

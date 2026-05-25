@@ -86,6 +86,7 @@ resources:
   # The 1.7B Qwen tool/canary lanes stay for routing experiments.
   - qwen3-1.7b-tools-radeonvii.yaml # llama.cpp GGUF, fast tool-router lane
   - qwen3-1p7b-vllm-radeonvii.yaml  # vllm canary, scaled to 0; explicit canary traffic can preempt CPU fallback
+  - qwen3-8b-radeonvii.yaml         # llama.cpp GGUF on gfx906, cold tertiary fast-chat-fallback (Lane 1C 2026-05-25)
   - gonzalomo-fluxpony-imagegen.yaml # diffusers gfx906, SDXL text-to-image (relocated 2026-05-13 from 5930k)
   - sdxl-inpainting-radeonvii.yaml   # diffusers gfx906, SDXL inpainting
 
