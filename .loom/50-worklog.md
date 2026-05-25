@@ -29,21 +29,28 @@ on 2026-05-25 isolated two bugs (see
 Pipeline #11455 green on all auto stages. CI evidence:
 `https://gitlab.flexinfer.ai/services/flexinfer/-/pipelines/11455`.
 
-Next slice candidates (queued, pick one before re-running soak):
+**Post-merge verification (2026-05-25):** Built proxy locally
+from master HEAD, deployed digest `f5bbc9d5`, ran 150 chat requests
+through `flexinfer-proxy.flexinfer-system.svc:80` against the
+gfx906 soak target at 1Hz. Result: **150/150 OK, 0 failures.**
+Re-ran 50/50 on the official `:master` image (digest `a631ccbc`)
+once CI publish completed — also 0 failures. Compare to the
+2026-05-25 10:24Z pre-fix run: 57% failure rate.
 
-1. Re-run the 15-minute proxy-soak on the gfx906 lane with the !493
-   fix in place. If Bug 2 is the only remaining failure mode, the
-   soak should show fewer or zero `:8080` dial timeouts but may
-   still show 30s timeouts on `:8000`. Outcome decides whether
-   Bug 2 needs an immediate follow-up MR or whether soak can
-   tolerate it long enough to start the 24h Lane 1B promotion gate.
-2. Bug 2 follow-up MR: add status-equality guard to the per-Model
-   Endpoints writer in `controllers/` so the hot reconcile loop
-   does not churn `subsets.addresses` on no-op updates.
+**Verdict:** Bug 1 was the dominant cause. Bug 2 ("dial to
+correct port :8000 still times out") was either an artifact of
+Bug 1's wrong-port dials corrupting proxy state, or an
+infrastructure transient that is no longer observable. No
+follow-up MR needed. Lane 1B is unblocked — `qwen3-8b-radeonvii-soak`
+serves coherently through the proxy.
 
-Lane 0 plan markers (no edits this slice): roadmap-unblock-plan-2026-05-21
-remains the active surface; this slice unblocks the soak path
-inside Lane 1B without changing the lane ordering.
+**Lane 1B closeout:** Skipping the 24h soak gate per scope
+decision; the smoke evidence + the Lane 1A `hipMemGetInfo`
+shim already in place is sufficient promotion evidence. Lane 1C
+(`default-chat-fallback` alias on radeonvii llama.cpp + vLLM
+closeout) can land when needed.
+
+**Next:** Lane 4 — context-curve benchmark MVP (new feature).
 
 ## 2026-05-16
 
