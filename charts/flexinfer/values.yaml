@@ -451,7 +451,6 @@ quantization:
         - git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea
       quantize_config_overrides:
         offload_to_disk: true
-        lm_head: true
       calibration_overrides:
         max_samples: 16
         max_seq_len: 512

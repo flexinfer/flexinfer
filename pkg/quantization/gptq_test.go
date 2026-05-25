@@ -194,8 +194,8 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 			if !ok {
 				t.Fatalf("expected quantize_config_overrides in qwen3.6-text policy JSON")
 			}
-			if got := qwen36Overrides["lm_head"]; got != true {
-				t.Fatalf("qwen3.6 lm_head override = %v, want true", got)
+			if _, ok := qwen36Overrides["lm_head"]; ok {
+				t.Fatalf("qwen3.6 lm_head override should be absent to avoid ROCm/CPU LAPACK fallback path: %v", qwen36Overrides)
 			}
 
 			var gemmaPolicy map[string]any

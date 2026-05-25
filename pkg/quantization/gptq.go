@@ -321,7 +321,6 @@ func defaultGPTQModelPoliciesJSON() string {
 			},
 			QuantizeConfigOverride: map[string]any{
 				"offload_to_disk": true,
-				"lm_head":         true,
 			},
 			CalibrationOverrides: map[string]int{
 				"max_samples": 16,
