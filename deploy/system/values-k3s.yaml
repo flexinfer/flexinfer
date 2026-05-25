@@ -120,6 +120,15 @@ proxy:
       operator: Equal
       value: gpu
       effect: NoSchedule
+  # Enable context-bounded admission for Models that opt in via the
+  # `flexinfer.ai/admission: context-bounded` annotation. Currently only
+  # `qwen3-8b-radeonvii` (the gfx906 tertiary fast-chat-fallback lane) is
+  # opted in; other Models see no behavior change. See
+  # docs/planning/context-bounded-admission-spec.md.
+  admission:
+    enabled: true
+    safetyMarginPercent: 5
+    defaultMaxTokens: 256
 
 tenancy:
   enabled: false
