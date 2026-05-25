@@ -2,7 +2,9 @@
 """Triage proxy-soak.jsonl from deploy/debug/gfx906-llamacpp-proxy-soak.yaml.
 
 Reads the JSONL evidence file produced by the proxy-soak Job, prints a summary
-of the run, and emits a verdict that maps directly to the next RALPH slice:
+of the run, and emits a verdict that maps directly to the next RALPH slice.
+
+Failure buckets (one per ok=false record, based on the embedded diag probe):
 
   diag.ok=true on every failure  -> proxy alive at failure; gap is per-Model
                                     selectorless Service or backend :8000.
@@ -17,10 +19,16 @@ of the run, and emits a verdict that maps directly to the next RALPH slice:
   mixed                          -> show ratios; both branches in play.
   no diag                        -> SOAK_DIAG_ENDPOINT was unset; rerun.
 
+Separately, ok=true records with expected_model_match=false are tallied as
+"model_mismatch" — they don't fail the run with the default soft preflight,
+but they tell you the upstream advertises a different model id than the
+Model CR name (e.g. llama.cpp returns the GGUF basename). Use --alias on
+the upstream or accept it as informational.
+
 Usage:
   scripts/proxy-soak-triage.py [path/to/proxy-soak.jsonl]
-  kubectl -n flexinfer-system cp <reader-pod>:/evidence/proxy-soak.jsonl /tmp/p.jsonl
-  scripts/proxy-soak-triage.py /tmp/p.jsonl
+  kubectl -n flexinfer-system logs job/gfx906-llamacpp-proxy-soak-traffic \\
+    | scripts/proxy-soak-triage.py -
 
 Reads from stdin if path is "-" or omitted and stdin is a pipe.
 """
@@ -75,6 +83,31 @@ def classify(records):
         else:
             buckets["proxy_down"] += 1
 
+    def mismatch_count(rs):
+        return sum(
+            1
+            for r in rs
+            if r.get("ok") is True and r.get("expected_model_match") is False
+        )
+
+    mismatches = {
+        "preflight": mismatch_count(preflight),
+        "measured": mismatch_count([r for r in requests if not r.get("warmup")]),
+        "warmup": mismatch_count([r for r in requests if r.get("warmup")]),
+    }
+    sample = next(
+        (
+            r
+            for r in preflight + requests
+            if r.get("ok") is True and r.get("expected_model_match") is False
+        ),
+        None,
+    )
+    mismatches["sample_returned"] = sample.get("model_returned") if sample else None
+    mismatches["expected"] = (start or {}).get("expected_model") or (sample or {}).get(
+        "expected_model"
+    )
+
     return {
         "start": start,
         "summary": summary,
@@ -82,6 +115,7 @@ def classify(records):
         "requests": requests,
         "failures": failures,
         "buckets": buckets,
+        "mismatches": mismatches,
     }
 
 
@@ -124,6 +158,18 @@ def print_counts(c):
     ):
         ok, fail = split(rs)
         print(f"  {label:<10} ok={ok:<5} fail={fail}")
+    m = c["mismatches"]
+    total_mismatch = m["preflight"] + m["warmup"] + m["measured"]
+    if total_mismatch:
+        print(
+            f"  model_mismatch (ok=true, expected_model_match=false): "
+            f"preflight={m['preflight']} warmup={m['warmup']} measured={m['measured']}"
+        )
+        if m["sample_returned"]:
+            print(
+                f"    sample: model_returned={m['sample_returned']!r} "
+                f"expected={m['expected']!r}"
+            )
     summary = c["summary"]
     if summary:
         print("\n=== soak_summary ===")
@@ -133,6 +179,9 @@ def print_counts(c):
             "measured_requests",
             "measured_failures",
             "warmup_failures",
+            "preflight_model_mismatches",
+            "measured_model_mismatches",
+            "preflight_require_model_match",
             "p95_ms_per_token",
             "latency_budget_ms_per_token",
             "completed_at",
@@ -168,16 +217,55 @@ def print_failures(failures):
         )
 
 
+def _print_mismatch_followup(c):
+    m = c["mismatches"]
+    total_mismatch = m["preflight"] + m["warmup"] + m["measured"]
+    if not total_mismatch:
+        return
+    print(
+        f"\n  also: model_returned mismatched expected on {total_mismatch} "
+        f"ok response(s)."
+    )
+    if m["sample_returned"] and m["expected"]:
+        print(f"    expected={m['expected']!r} returned={m['sample_returned']!r}")
+    print("    if upstream is llama.cpp this is expected (advertises GGUF basename);")
+    print("    set --alias on llama-server (or --served-model-name on vLLM) to fix,")
+    print("    or set SOAK_PREFLIGHT_REQUIRE_MODEL_MATCH=false to accept (default).")
+
+
 def print_verdict(c):
     print("\n=== verdict ===")
     failures = c["failures"]
     buckets = c["buckets"]
+    m = c["mismatches"]
+    total_mismatch = m["preflight"] + m["warmup"] + m["measured"]
 
     if not failures:
-        print("  soak clean. no measured failures.")
-        print(
-            "  next: proceed to 24h gate (set SOAK_DURATION_SECONDS=86400, re-apply)."
-        )
+        if total_mismatch:
+            print(
+                "  transport clean (no ok=false records), but model_returned "
+                "mismatched expected on every successful response."
+            )
+            print(
+                "  this is normal for llama.cpp upstreams (GGUF basename in `model`)."
+            )
+            print(f"    expected={m['expected']!r} returned={m['sample_returned']!r}")
+            print("  next options:")
+            print(
+                "   a) accept as informational; soft preflight already lets the gate pass"
+            )
+            print("   b) tighten the contract by aliasing the upstream model id")
+            print(
+                "      (llama.cpp --alias <model-cr-name>, vLLM --served-model-name <model-cr-name>)"
+            )
+            print(
+                "   c) proceed to 24h gate (set SOAK_DURATION_SECONDS=86400, re-apply)"
+            )
+        else:
+            print("  soak clean. no measured failures, no model mismatches.")
+            print(
+                "  next: proceed to 24h gate (set SOAK_DURATION_SECONDS=86400, re-apply)."
+            )
         return
 
     total = sum(buckets.values())
@@ -191,6 +279,7 @@ def print_verdict(c):
         print(
             "  next: rerun with SOAK_DIAG_ENDPOINT set (defaults to flexinfer-proxy /healthz)."
         )
+        _print_mismatch_followup(c)
         return
 
     dominant = max(buckets, key=buckets.get)
@@ -208,6 +297,7 @@ def print_verdict(c):
             "      SOAK_DIAG_ENDPOINT=http://flexinfer-proxy.flexinfer-system.svc.cluster.local"
             "/model/qwen3-1p7b-tools-radeonvii/v1/chat/completions"
         )
+        _print_mismatch_followup(c)
         return
 
     if dominant == "proxy_down" and only_one:
@@ -224,12 +314,14 @@ def print_verdict(c):
         print(
             "   kubectl -n flexinfer-system logs -l app.kubernetes.io/name=flexinfer-proxy --tail=200 --prev"
         )
+        _print_mismatch_followup(c)
         return
 
     print("\n  mixed signal: failures span buckets. both branches in play.")
     print(
         "  next: inspect the failure timeline; correlate proxy_down events with proxy pod restarts."
     )
+    _print_mismatch_followup(c)
 
 
 def main(argv):
