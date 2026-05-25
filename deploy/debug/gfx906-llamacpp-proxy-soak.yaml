@@ -94,10 +94,35 @@ data:
     preflight_interval_seconds = int(os.environ.get("SOAK_PREFLIGHT_INTERVAL_SECONDS", "30"))
     preflight_timeout_seconds = int(os.environ.get("SOAK_PREFLIGHT_REQUEST_TIMEOUT_SECONDS", "120"))
     expected_model = os.environ.get("SOAK_EXPECT_MODEL", model)
+    diag_endpoint = os.environ.get("SOAK_DIAG_ENDPOINT", "").strip()
+    diag_timeout_seconds = float(os.environ.get("SOAK_DIAG_TIMEOUT_SECONDS", "5"))
     jsonl_path = os.path.join(evidence_dir, "proxy-soak.jsonl")
     summary_path = os.path.join(evidence_dir, "proxy-soak-summary.json")
 
     os.makedirs(evidence_dir, exist_ok=True)
+
+    def diag_probe():
+        if not diag_endpoint:
+            return None
+        started = time.monotonic()
+        req = urllib.request.Request(diag_endpoint, method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=diag_timeout_seconds) as resp:
+                status = getattr(resp, "status", 200)
+                resp.read(256)
+            return {
+                "endpoint": diag_endpoint,
+                "ok": True,
+                "status": status,
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+            }
+        except Exception as diag_exc:
+            return {
+                "endpoint": diag_endpoint,
+                "ok": False,
+                "error": repr(diag_exc),
+                "elapsed_seconds": round(time.monotonic() - started, 3),
+            }
 
     def utc_now():
         return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
@@ -186,6 +211,9 @@ data:
                 "error": repr(exc),
                 "elapsed_seconds": round(time.monotonic() - started, 3),
             })
+            diag = diag_probe()
+            if diag is not None:
+                record["diag"] = diag
         append_record(record)
         if preflight_ok:
             break
@@ -246,6 +274,9 @@ data:
                 "error": repr(exc),
                 "elapsed_seconds": round(time.monotonic() - started, 3),
             })
+            diag = diag_probe()
+            if diag is not None:
+                record["diag"] = diag
         append_record(record)
 
         sleep_for = interval_seconds - (time.monotonic() - started)
@@ -327,6 +358,18 @@ spec:
               value: "120"
             - name: SOAK_EXPECT_MODEL
               value: qwen3-8b-radeonvii-soak
+            # Correlated diag probe. On each measured/preflight failure the
+            # script also hits this endpoint with a short timeout and records
+            # the result inline. Default targets `flexinfer-proxy /healthz` so
+            # we can tell whether the proxy itself is alive when a per-Model
+            # request times out at the selectorless-Service layer. Override to
+            # `""` to disable, or to a sibling model route (e.g.
+            # `/model/qwen3-1p7b-tools-radeonvii/v1/chat/completions`) to test
+            # whether other models on the same runtime are reachable.
+            - name: SOAK_DIAG_ENDPOINT
+              value: http://flexinfer-proxy.flexinfer-system.svc.cluster.local/healthz
+            - name: SOAK_DIAG_TIMEOUT_SECONDS
+              value: "5"
             - name: SOAK_EVIDENCE_DIR
               value: /evidence
           resources:
