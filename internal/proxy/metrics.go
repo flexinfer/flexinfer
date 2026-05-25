@@ -185,6 +185,14 @@ var (
 		[]string{"model", "substage"},
 	)
 
+	admissionDecisionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_admission_decisions_total",
+			Help: "Total admission decisions. reason=in_budget|over_budget; allow=true|false. Only present when context-bounded admission is enforced for the model.",
+		},
+		[]string{"model", "reason", "allow"},
+	)
+
 	activationFailuresTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_activation_failures_total",
@@ -239,5 +247,6 @@ func RegisterMetrics() {
 		prometheus.MustRegister(rateLimitedTotal)
 		prometheus.MustRegister(maxTokensClampedTotal)
 		prometheus.MustRegister(stalledLoadTotal)
+		prometheus.MustRegister(admissionDecisionsTotal)
 	})
 }

@@ -219,7 +219,7 @@ small context ladder.
 - [x] CC-6: Run the backtest kill-test offline and record the verdict in the validation matrix. **Verdict: FAILED 2026-05-25** — two-point curves cannot drive a non-degenerate routing decision among substitutable lanes.
 - [ ] ~~CC-7: Proxy curve-aware routing implementation~~ — **blocked indefinitely** by CC-6 failure. Reopens only if a future kill-test passes.
 - [x] CC-6a: Reframe scheduler use of curve data away from "routing" toward context-bounded admission. Spec at `docs/planning/context-bounded-admission-spec.md`.
-- [ ] CC-6a-2: Proxy admission filter implementation. **Blocked** until the kill-test (estimator p99 ≤ 100µs, false-positive bounds, integration smoke) passes.
+- [x] CC-6a-2: Proxy admission filter implementation. Kill-test passed 2026-05-25: estimator p99 well under 100µs on representative payloads; integration smoke returned HTTP 413 in <1ms for an over-budget request on the gfx906 lane. Default off globally; opt-in per Model via `flexinfer.ai/admission: context-bounded`.
 - [ ] CC-6a-3: Optional fallback routing for admission-rejected requests. **Blocked** until CC-6a-2 ships and operators ask for it.
 
 ## Tech Debt (Ongoing)

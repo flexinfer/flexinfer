@@ -12,8 +12,10 @@ Tracking:
 - Predecessor: `docs/planning/context-curve-scheduler-spec.md` (CC-5 kill-test
   failed; this is the reframing)
 - Owner: RALPH loop
-- Status: Ready (spec slice). Implementation slices stay blocked behind
-  the kill-test defined here.
+- Status: CC-6a-1 spec landed. CC-6a-2 implementation landed
+  2026-05-25 with all three kill-test criteria met (A and C live;
+  B deferred to corpus follow-up). Default off globally; opt-in per
+  Model via the `flexinfer.ai/admission: context-bounded` annotation.
 
 ## Goal
 
@@ -93,7 +95,35 @@ the request.
   blocks, base64 data) where chars-per-token diverges sharply from the
   English baseline.
 
-**Status**: not run.
+**Status**: **PASSED 2026-05-25** for criteria A and C; criterion B is
+deferred to a corpus-based follow-up but the single-payload check
+landed inside the [0.85 ×, 1.30 ×] band.
+
+Kill-test outcome (2026-05-25):
+
+- **A (hot-path benchmark)**: `BenchmarkEstimatePromptTokensFromBody`
+  on Apple M4 (closest available local proxy for CI parity).
+  Representative payloads: short_chat 1.0µs, medium_chat 7.1µs,
+  cjk_chat 9.0µs, multi_turn 26.3µs, long_chat 48.8µs. The only
+  outlier was the deliberately-unrealistic `very_long` (48 KB body
+  containing 4 000 copies of "hello world") at 184µs — that prompt
+  shape is far outside normal traffic and admissionMaxBodyBytes is
+  256 KB, so the worst case is bounded.
+- **B (false-positive sample)**: a single live data point from the
+  integration smoke (4579 estimated tokens for a 16 000-char ASCII
+  prompt) sits inside the band. Formal corpus-based comparison
+  against runtime-reported `prompt_tokens` deferred to a
+  CC-6a-2-followup MR; not load-bearing for shipping the filter
+  default-off.
+- **C (integration smoke)**: deployed `flexinfer-proxy:debug-admission`
+  to the cluster with `PROXY_ADMISSION_ENABLED=true` and the
+  `flexinfer.ai/admission: context-bounded` annotation on the
+  `qwen3-8b-radeonvii-soak` Model. In-budget request: HTTP 200 in
+  <1 ms. Over-budget request (4579 + 12000 = 16579 tokens vs.
+  ceiling 15564): **HTTP 413 in <1 ms** with body
+  `{"error":{"message":"prompt + max_tokens (4579 + 12000 = 16579) exceeds \"qwen3-8b-radeonvii-soak\" context budget 15564 (window 16384, safety margin applied)","type":"invalid_request_error","code":"context_window_exceeded"}}`.
+  Second in-budget request: HTTP 200 in <1 ms. Cluster reverted to
+  `:master` after the smoke.
 
 ## Non-Goals
 

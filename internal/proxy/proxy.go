@@ -17,6 +17,7 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/internal/routing"
 	"github.com/flexinfer/flexinfer/pkg/envutil"
+	"github.com/flexinfer/flexinfer/pkg/modelmeta"
 	"github.com/flexinfer/flexinfer/pkg/validation"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.opentelemetry.io/otel"
@@ -97,6 +98,9 @@ type Config struct {
 	DirectRuntimeEnabled             bool // Enable direct proxy-to-runtime fast path
 	MaxTokensClampEnabled            bool
 	MaxTokensClampPromptReserve      int
+	AdmissionEnabled                 bool
+	AdmissionSafetyMarginPercent     int
+	AdmissionDefaultMaxTokens        int
 }
 
 // Validate checks the Config for conflicting or invalid settings. Returns a
@@ -135,6 +139,14 @@ func (c Config) Validate() error {
 	if c.MaxTokensClampEnabled && c.MaxTokensClampPromptReserve <= 0 {
 		errs = append(errs, fmt.Errorf("PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS must be > 0 when max_tokens clamp is enabled (got %d)", c.MaxTokensClampPromptReserve))
 	}
+	if c.AdmissionEnabled {
+		if c.AdmissionSafetyMarginPercent < 0 || c.AdmissionSafetyMarginPercent > 50 {
+			errs = append(errs, fmt.Errorf("PROXY_ADMISSION_SAFETY_MARGIN_PERCENT must be in [0,50] when admission enabled (got %d)", c.AdmissionSafetyMarginPercent))
+		}
+		if c.AdmissionDefaultMaxTokens <= 0 {
+			errs = append(errs, fmt.Errorf("PROXY_ADMISSION_DEFAULT_MAX_TOKENS must be > 0 when admission enabled (got %d)", c.AdmissionDefaultMaxTokens))
+		}
+	}
 
 	return stderrors.Join(errs...)
 }
@@ -167,6 +179,9 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		DirectRuntimeEnabled:             envutil.BoolOrDefault("PROXY_DIRECT_RUNTIME_ENABLED", true),
 		MaxTokensClampEnabled:            envutil.BoolOrDefault("PROXY_MAX_TOKENS_CLAMP_ENABLED", true),
 		MaxTokensClampPromptReserve:      envutil.IntOrDefault("PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS", defaultPromptReserveTokens),
+		AdmissionEnabled:                 envutil.BoolOrDefault("PROXY_ADMISSION_ENABLED", false),
+		AdmissionSafetyMarginPercent:     envutil.IntOrDefault("PROXY_ADMISSION_SAFETY_MARGIN_PERCENT", 5),
+		AdmissionDefaultMaxTokens:        envutil.IntOrDefault("PROXY_ADMISSION_DEFAULT_MAX_TOKENS", defaultAdmissionMaxTokens),
 	}
 
 	return cfg
@@ -235,6 +250,13 @@ type Proxy struct {
 	maxTokensClampEnabled       bool
 	maxTokensClampPromptReserve int
 
+	// context-bounded admission (CC-6a-2): refuses requests whose
+	// estimated_prompt_tokens + max_tokens would exceed the per-Model
+	// context ceiling. Opt-in per Model via the flexinfer.ai/admission
+	// annotation; default off globally. See
+	// docs/planning/context-bounded-admission-spec.md.
+	admission *admissionFilter
+
 	// Direct runtime communication (fast path)
 	runtimeCache         *RuntimeCache                // cached runtime pod endpoints
 	directRuntimeEnabled bool                         // enable direct proxy-to-runtime loading
@@ -301,10 +323,15 @@ func New(cfg Config) *Proxy {
 		authToken:                   cfg.AuthToken,
 		maxTokensClampEnabled:       cfg.MaxTokensClampEnabled,
 		maxTokensClampPromptReserve: cfg.MaxTokensClampPromptReserve,
-		directRuntimeEnabled:        cfg.DirectRuntimeEnabled,
-		ctx:                         ctx,
-		cancel:                      cancel,
-		debugConfig:                 newDebugConfigView(cfg),
+		admission: &admissionFilter{
+			Enabled:             cfg.AdmissionEnabled,
+			SafetyMarginPercent: cfg.AdmissionSafetyMarginPercent,
+			DefaultMaxTokens:    cfg.AdmissionDefaultMaxTokens,
+		},
+		directRuntimeEnabled: cfg.DirectRuntimeEnabled,
+		ctx:                  ctx,
+		cancel:               cancel,
+		debugConfig:          newDebugConfigView(cfg),
 	}
 
 	if cfg.DirectRuntimeEnabled {
@@ -371,6 +398,9 @@ func (p *Proxy) Run(port int) error {
 		"rate_limit_global", p.rateLimitGlobal,
 		"max_tokens_clamp_enabled", p.maxTokensClampEnabled,
 		"max_tokens_clamp_prompt_reserve", p.maxTokensClampPromptReserve,
+		"admission_enabled", p.admission.Enabled,
+		"admission_safety_margin_percent", p.admission.SafetyMarginPercent,
+		"admission_default_max_tokens", p.admission.DefaultMaxTokens,
 		"direct_runtime_enabled", p.directRuntimeEnabled)
 
 	return http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
@@ -450,6 +480,27 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 3. Fetch v1alpha2 Model first (preferred)
 	m, err := p.getModel(ctx, modelName)
 	if err == nil {
+		// 3a. Context-bounded admission (CC-6a-2): refuse over-budget
+		// requests at the proxy edge instead of forwarding and waiting
+		// 30s for the runtime to reject. Opt-in per Model via the
+		// flexinfer.ai/admission annotation; no-op when not opted in or
+		// the feature flag is off.
+		if decision := p.admission.checkAdmission(
+			m.Annotations,
+			modelmeta.ResolveTokenLimits(&m.Spec),
+			bodyBytes,
+		); decision.Enforced {
+			logAdmission(ctx, modelName, decision)
+			admissionDecisionsTotal.WithLabelValues(
+				modelName, decision.Reason, boolLabel(decision.Allow),
+			).Inc()
+			if !decision.Allow {
+				writeAdmissionRejection(w, modelName, decision)
+				requestsTotal.WithLabelValues(modelName, "admission_rejected").Inc()
+				return
+			}
+		}
+
 		// If model is ready, serve directly.
 		if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 			p.trackAndServe(w, r, modelName, start)
@@ -521,26 +572,29 @@ func isReady(md *aiv1alpha1.ModelDeployment) bool {
 // debugConfigView is a JSON-safe, redacted view of the proxy configuration
 // exposed via the /debug/config endpoint.
 type debugConfigView struct {
-	Namespace                   string  `json:"namespace"`
-	MaxQueueSize                int     `json:"maxQueueSize"`
-	QueueTimeout                string  `json:"queueTimeout"`
-	ColdStartTimeout            string  `json:"coldStartTimeout"`
-	RoutingEnabled              bool    `json:"routingEnabled"`
-	ValidateRequests            bool    `json:"validateRequests"`
-	BackoffEnabled              bool    `json:"backoffEnabled"`
-	BackoffMaxRetries           int     `json:"backoffMaxRetries"`
-	BackoffInitialWait          string  `json:"backoffInitialWait"`
-	BackoffMaxWait              string  `json:"backoffMaxWait"`
-	RateLimitEnabled            bool    `json:"rateLimitEnabled"`
-	RateLimitPerModel           float64 `json:"rateLimitPerModel"`
-	RateLimitBurst              int     `json:"rateLimitBurst"`
-	RateLimitGlobal             float64 `json:"rateLimitGlobal"`
-	RateLimitGlobalBurst        int     `json:"rateLimitGlobalBurst"`
-	AuthEnabled                 bool    `json:"authEnabled"`
-	AuthToken                   string  `json:"authToken"` // always redacted
-	DirectRuntimeEnabled        bool    `json:"directRuntimeEnabled"`
-	MaxTokensClampEnabled       bool    `json:"maxTokensClampEnabled"`
-	MaxTokensClampPromptReserve int     `json:"maxTokensClampPromptReserve"`
+	Namespace                    string  `json:"namespace"`
+	MaxQueueSize                 int     `json:"maxQueueSize"`
+	QueueTimeout                 string  `json:"queueTimeout"`
+	ColdStartTimeout             string  `json:"coldStartTimeout"`
+	RoutingEnabled               bool    `json:"routingEnabled"`
+	ValidateRequests             bool    `json:"validateRequests"`
+	BackoffEnabled               bool    `json:"backoffEnabled"`
+	BackoffMaxRetries            int     `json:"backoffMaxRetries"`
+	BackoffInitialWait           string  `json:"backoffInitialWait"`
+	BackoffMaxWait               string  `json:"backoffMaxWait"`
+	RateLimitEnabled             bool    `json:"rateLimitEnabled"`
+	RateLimitPerModel            float64 `json:"rateLimitPerModel"`
+	RateLimitBurst               int     `json:"rateLimitBurst"`
+	RateLimitGlobal              float64 `json:"rateLimitGlobal"`
+	RateLimitGlobalBurst         int     `json:"rateLimitGlobalBurst"`
+	AuthEnabled                  bool    `json:"authEnabled"`
+	AuthToken                    string  `json:"authToken"` // always redacted
+	DirectRuntimeEnabled         bool    `json:"directRuntimeEnabled"`
+	MaxTokensClampEnabled        bool    `json:"maxTokensClampEnabled"`
+	MaxTokensClampPromptReserve  int     `json:"maxTokensClampPromptReserve"`
+	AdmissionEnabled             bool    `json:"admissionEnabled"`
+	AdmissionSafetyMarginPercent int     `json:"admissionSafetyMarginPercent"`
+	AdmissionDefaultMaxTokens    int     `json:"admissionDefaultMaxTokens"`
 }
 
 func newDebugConfigView(cfg Config) debugConfigView {
@@ -549,26 +603,29 @@ func newDebugConfigView(cfg Config) debugConfigView {
 		tokenDisplay = "***redacted***"
 	}
 	return debugConfigView{
-		Namespace:                   cfg.Namespace,
-		MaxQueueSize:                cfg.MaxQueueSize,
-		QueueTimeout:                cfg.QueueTimeout.String(),
-		ColdStartTimeout:            cfg.ColdStartTimeout.String(),
-		RoutingEnabled:              cfg.RoutingEnabled,
-		ValidateRequests:            cfg.ValidateRequests,
-		BackoffEnabled:              cfg.BackoffEnabled,
-		BackoffMaxRetries:           cfg.BackoffMaxRetries,
-		BackoffInitialWait:          cfg.BackoffInitialWait.String(),
-		BackoffMaxWait:              cfg.BackoffMaxWait.String(),
-		RateLimitEnabled:            cfg.RateLimitEnabled,
-		RateLimitPerModel:           cfg.RateLimitPerModel,
-		RateLimitBurst:              cfg.RateLimitBurst,
-		RateLimitGlobal:             cfg.RateLimitGlobal,
-		RateLimitGlobalBurst:        cfg.RateLimitGlobalBurst,
-		AuthEnabled:                 cfg.AuthEnabled,
-		AuthToken:                   tokenDisplay,
-		DirectRuntimeEnabled:        cfg.DirectRuntimeEnabled,
-		MaxTokensClampEnabled:       cfg.MaxTokensClampEnabled,
-		MaxTokensClampPromptReserve: cfg.MaxTokensClampPromptReserve,
+		Namespace:                    cfg.Namespace,
+		MaxQueueSize:                 cfg.MaxQueueSize,
+		QueueTimeout:                 cfg.QueueTimeout.String(),
+		ColdStartTimeout:             cfg.ColdStartTimeout.String(),
+		RoutingEnabled:               cfg.RoutingEnabled,
+		ValidateRequests:             cfg.ValidateRequests,
+		BackoffEnabled:               cfg.BackoffEnabled,
+		BackoffMaxRetries:            cfg.BackoffMaxRetries,
+		BackoffInitialWait:           cfg.BackoffInitialWait.String(),
+		BackoffMaxWait:               cfg.BackoffMaxWait.String(),
+		RateLimitEnabled:             cfg.RateLimitEnabled,
+		RateLimitPerModel:            cfg.RateLimitPerModel,
+		RateLimitBurst:               cfg.RateLimitBurst,
+		RateLimitGlobal:              cfg.RateLimitGlobal,
+		RateLimitGlobalBurst:         cfg.RateLimitGlobalBurst,
+		AuthEnabled:                  cfg.AuthEnabled,
+		AuthToken:                    tokenDisplay,
+		DirectRuntimeEnabled:         cfg.DirectRuntimeEnabled,
+		MaxTokensClampEnabled:        cfg.MaxTokensClampEnabled,
+		MaxTokensClampPromptReserve:  cfg.MaxTokensClampPromptReserve,
+		AdmissionEnabled:             cfg.AdmissionEnabled,
+		AdmissionSafetyMarginPercent: cfg.AdmissionSafetyMarginPercent,
+		AdmissionDefaultMaxTokens:    cfg.AdmissionDefaultMaxTokens,
 	}
 }
 
