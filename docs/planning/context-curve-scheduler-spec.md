@@ -146,7 +146,8 @@ even when lanes are nearly identical. Candidate framings for CC-6a:
   during runtime/model promotion decisions instead of at request time.
   No proxy hot-path involvement.
 
-CC-6a should pick one framing and write a new spec capsule for it.
+CC-6a picked the **context-bounded admission** framing. New spec
+capsule: `docs/planning/context-bounded-admission-spec.md`.
 Routing-style curve use can be revisited only if a future kill-test
 shows that a richer measurement set (more points, multi-iteration
 samples, VRAM slope) makes substitutable lanes look meaningfully
