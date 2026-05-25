@@ -10,7 +10,9 @@ Tracking:
 - Roadmap item: `docs/planning/next-roadmap.md` (Context-Curve Benchmarking) and
   `.loom/roadmap-unblock-plan-2026-05-21.md` (Lane 4)
 - Owner: RALPH loop
-- Status: Ready (for kill-test work; runtime code blocked behind kill-test pass)
+- Status: Kill-test FAILED 2026-05-25. CC-7 implementation is **not**
+  unblocked. See "Kill-test outcome (2026-05-25)" section below and
+  the CC-6a follow-up.
 
 ## Goal
 
@@ -82,7 +84,73 @@ operator complaints, not the spec.
   quantization mode changes). Search for "decode throughput cliff context
   length" or "KV cache quant mode boundary".
 
-**Status**: not run.
+**Status**: **FAILED 2026-05-25**. See "Kill-test outcome (2026-05-25)"
+below.
+
+## Kill-test outcome (2026-05-25)
+
+Ran `scripts/sim-curve-router.py` against three live curves stored in
+`flexinfer-context-curve-results`:
+
+- `gemma4-26b-a4b-gptq` (7900xtx): 2k decode 10.42 tok/s, 8k decode 2.56 tok/s
+- `gemma4-26b-a4b-gptq-5930k` (5930k): 2k decode 10.02 tok/s, 8k decode 2.51 tok/s
+- `qwen3-8b-radeonvii-soak` (gfx906): 2k decode 42.72 tok/s, 8k decode 7.76 tok/s
+
+Workload: 80 short (256–2048 tokens) + 20 long (4096–14000 tokens),
+seed=20260525, completion_tokens=64. Two interpolation modes tried
+(linear, nearest).
+
+Two runs were attempted:
+
+1. **All three lanes (non-substitutable test)** — predicted
+   `qwen3-8b-radeonvii-soak` for every request (smaller/faster model
+   end-to-end). Long p95 −32.6%, short p95 −58.6%. **Failed** the
+   degenerate-split criterion (0/100 distribution).
+   Report:
+   `.loom/local/validation/context-curve/2026-05-25/sim-report.json`.
+
+2. **Substitutable lanes only (two gemma4 variants)** — predicted
+   `gemma4-26b-a4b-gptq` for every request (marginally faster across
+   every measured point). Long p95 +0.0%, short p95 −3.1%. **Failed**
+   the degenerate-split criterion (0/100 distribution).
+   Report:
+   `.loom/local/validation/context-curve/2026-05-25/sim-report-gemma4-substitutable.json`.
+
+Interpretation:
+
+- Across **non-substitutable** lanes the curve-aware policy *can*
+  predict latency improvements, but it isn't really routing — it's a
+  blanket preference for one lane that the proxy is not architecturally
+  allowed to make (the lanes serve different model families).
+- Across **substitutable** lanes (the actual scheduler-use target) the
+  two-point curve resolution is too coarse to discriminate. The fastest
+  lane wins every comparison, so `argmax(decode_tps)` collapses to
+  "always pick the marginally faster sibling", which is not routing.
+- The pass criteria — designed to catch exactly this — fired correctly.
+  Two-point interpolation is not enough signal to drive a non-degenerate
+  scheduler decision among intended-redundant siblings.
+
+Decision: CC-7 (proxy curve-aware routing) is **NOT** unblocked. The
+next slice is CC-6a, which **reframes** the scheduler use of curve data
+away from "routing" toward use cases that benefit from a per-lane curve
+even when lanes are nearly identical. Candidate framings for CC-6a:
+
+- **Context-bounded admission**: refuse a request at the proxy when its
+  prompt + max_tokens exceeds the lane's measured failure point. This
+  prevents OOM/timeout cascades; it does not need lanes to differ on
+  curve shape, only that each lane has a known capacity ceiling.
+- **Operator dashboard signal only**: surface stored curves in a Grafana
+  panel for capacity planning, with no automated decision. Cheap and
+  immediately useful; defers any scheduler change.
+- **Cross-architecture promotion gate**: use curve data as a tie-breaker
+  during runtime/model promotion decisions instead of at request time.
+  No proxy hot-path involvement.
+
+CC-6a should pick one framing and write a new spec capsule for it.
+Routing-style curve use can be revisited only if a future kill-test
+shows that a richer measurement set (more points, multi-iteration
+samples, VRAM slope) makes substitutable lanes look meaningfully
+different.
 
 ## Non-Goals
 

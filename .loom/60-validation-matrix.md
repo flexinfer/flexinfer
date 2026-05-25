@@ -204,6 +204,65 @@ Large JSON outputs and smoke transcripts go under
 tracked file. Each archive should include the exact command, artifact path,
 runtime image digest or OCI ref when available, and smoke response transcript.
 
+### 2026-05-25 CC-6 kill-test: scheduler-use assumption FAILED
+
+Backtest per `docs/planning/context-curve-scheduler-spec.md` CC-5.
+Runner: `scripts/sim-curve-router.py`. Workload: 80 short prompts
+(256–2048 tokens) + 20 long prompts (4096–14000 tokens),
+`seed=20260525`, `completion_tokens=64`. Two interpolation modes
+(linear, nearest) tried; identical results because the curves only
+have two measured points each.
+
+Three curves were available in `flexinfer-context-curve-results`:
+
+- `gemma4-26b-a4b-gptq` (cblevins-7900xtx, vLLM)
+- `gemma4-26b-a4b-gptq-5930k` (cblevins-5930k, vLLM)
+- `qwen3-8b-radeonvii-soak` (cblevins-radeonvii, llama.cpp)
+
+Two runs:
+
+| Set | Lane assignment | Long p95 Δ | Short p95 Δ | Degenerate split | Pass |
+| --- | --- | --- | --- | --- | --- |
+| All three lanes | curve-aware picked qwen3-8b for 100% of requests | −32.6% | −58.6% | yes (qwen3 100%) | no |
+| Two substitutable gemma4 lanes | curve-aware picked 7900xtx for 100% of requests | +0.0% | −3.1% | yes (7900xtx 100%) | no |
+
+Latency criteria mathematically pass in the cross-family run, but
+the assignment is not "routing" — the lanes serve different model
+families and the proxy is not allowed to substitute one for the
+other. The substitutable-only run is the real scheduler-use case
+and shows that two-point curves on near-identical sibling lanes
+cannot drive a non-degenerate split: the marginally faster lane
+wins every comparison, collapsing `argmax(decode_tps)` into a
+blanket preference. The pass criteria correctly fired.
+
+Decision: do **not** build CC-7 (proxy curve-aware routing) on
+this foundation. CC-6a will reframe scheduler use of curve data
+toward use cases that benefit from per-lane curves even when
+lanes are near-identical — candidates: context-bounded admission,
+operator dashboard signal, cross-architecture promotion gate.
+
+Raw reports:
+
+- `.loom/local/validation/context-curve/2026-05-25/sim-report.json`
+- `.loom/local/validation/context-curve/2026-05-25/sim-report-gemma4-substitutable.json`
+
+Command:
+
+```bash
+kubectl -n flexinfer-system port-forward svc/flexinfer-proxy 18080:80
+# (curves captured with scripts/bench-context-curve.sh STORE_CONFIGMAP=1)
+
+python3 scripts/sim-curve-router.py \
+  --report .loom/local/validation/context-curve/2026-05-25/sim-report.json
+python3 scripts/sim-curve-router.py \
+  --models gemma4-26b-a4b-gptq,gemma4-26b-a4b-gptq-5930k \
+  --report .loom/local/validation/context-curve/2026-05-25/sim-report-gemma4-substitutable.json
+```
+
+This is evidence capture only. It does not change scheduler scoring,
+controller behavior, runtime profiles, CRDs, or benchmark ConfigMap
+consumers.
+
 ### 2026-05-25 context-curve 2nd family: qwen3-8b-radeonvii-soak
 
 Second model family for Lane 4. Same runner
