@@ -132,7 +132,8 @@ must not change scheduling decisions.
 | 4A spec capsule | `docs/planning/context-curve-benchmark.md`, `docs/planning/next-roadmap.md`, `.loom/ralph-context-curve-benchmark-spec-2026-05-21.md` | Planning only | `git diff --check`; `rg "context-curve|Context-Curve" docs .loom` | Revert docs-only MR |
 | 4B report MVP | `scripts/bench-context-curve.sh`, `docs/dev/context-curve-benchmarking.md` | Reporting only; no scheduler/controller mutation | Shell dry run, JSON shape check, one live model run | Remove MVP command/script; leave existing benchmarker unchanged |
 | 4C stored evidence | `scripts/bench-context-curve.sh`, `docs/dev/context-curve-benchmarking.md` | Additive evidence storage only | Dry-run JSON shape check; opt-in ConfigMap-store invocation with an existing kube context | Keep local report output; omit `--store-configmap` |
-| Later scheduler use | scheduler/controller planning docs first | Blocked until two model families have evidence | New spec and kill-test required | n/a |
+| CC-5 scheduler spec | `docs/planning/context-curve-scheduler-spec.md` | Planning only; runtime code blocked behind a backtest kill-test | `git diff --check`; `rg "context-curve-scheduler"` | Revert docs commit |
+| Later scheduler use (CC-6/CC-7/CC-8) | scheduler/proxy code per the CC-5 spec | Blocked until CC-6 backtest passes | Defined in `docs/planning/context-curve-scheduler-spec.md` | Per CC-5 spec rollout/backout |
 
 ## Agent Delegation Notes
 
@@ -152,7 +153,9 @@ Coordination notes:
 
 ## Readiness
 
-Status: Slice 4C implemented and acceptance closed
+Status: Slice 4C implemented and acceptance closed; follow-up CC-5 scheduler
+spec in `docs/planning/context-curve-scheduler-spec.md` (with kill-test gate
+on CC-6 before any runtime code lands)
 
 - Target files/modules: benchmark scripts and docs. Benchmarker-native storage
   remains out of scope until more than one model family has comparable live
