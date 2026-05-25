@@ -187,6 +187,19 @@ proxy:
   maxTokensClamp:
     enabled: true
     promptReserveTokens: 512
+  # Context-bounded admission (CC-6a-2). Refuses chat-completion requests at
+  # the proxy edge when the estimated prompt + max_tokens exceeds the per-Model
+  # context ceiling. Default off globally; opt-in per Model via the
+  # `flexinfer.ai/admission: context-bounded` annotation. See
+  # docs/planning/context-bounded-admission-spec.md.
+  admission:
+    enabled: false
+    # 5% safety margin against the declared context window. Bump to 20 on
+    # lanes serving mostly long-form English (the estimator over-counts by
+    # ~70% on that shape; see the kill-test B verdict in the spec).
+    safetyMarginPercent: 5
+    # Assumed max_tokens when the request omits the field.
+    defaultMaxTokens: 256
   # Rate limiting configuration
   # Protects K8s API server from excessive per-request API calls
   rateLimit:

@@ -3,6 +3,13 @@ kind: Model
 metadata:
   name: qwen3-8b-radeonvii
   namespace: flexinfer-system
+  annotations:
+    # CC-6a-2: refuse over-budget requests at the proxy edge with HTTP 413
+    # in <1ms instead of forwarding and timing out at the runtime. This is
+    # the first opt-in lane: cold/low-traffic, contextSize=16384 makes
+    # ceiling-hits plausible. Disable with annotation removal or by
+    # flipping the proxy chart's `proxy.admission.enabled` Helm value.
+    flexinfer.ai/admission: context-bounded
 spec:
   backend: llamacpp
   source: HF://Qwen/Qwen3-8B-GGUF
