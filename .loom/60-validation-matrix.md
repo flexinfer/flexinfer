@@ -267,11 +267,82 @@ recommendation to ship a proxy-integrated draft+verify path
 (CC-DR-3) is deprioritised — in-process server-side SD already
 covers it without the inter-pod RPC tax.
 
-**Next steps**: (a) replicate on 5930k twin (in flight, MR !513),
-(b) tune `num_speculative_tokens` up to 7 and `prompt_lookup_max` to
-6 — per-position acceptance still 68% at position 5 so more headroom
-likely, (c) measure at `maxNumSeqs=2` (the 5930k twin already runs
-2-way concurrency, so the re-validation will partially answer this).
+**Next steps (now resolved below)**: (a) replicate on 5930k twin
+(MR !513), (b) tune to (7,6) — MR !514, (c) measure at
+`maxNumSeqs=2` (folded into the 5930k re-validation since that twin
+runs maxNumSeqs=2).
+
+#### 2026-05-25 post-roll: (7,6) tuning + 5930k re-validation
+
+Both rollouts completed cleanly. Same 5-prompt corpus, 64 tokens,
+greedy, single-stream (5930k still runs maxNumSeqs=2 so its row is
+also the first measurement of the SD ↔ batched-concurrency
+interaction).
+
+| prompt | no-SD baseline | 7900xtx (5,4) | 7900xtx (7,6) | 5930k (5,4), maxSeqs=2 |
+| --- | ---: | ---: | ---: | ---: |
+| q1_capital | 58.09 | 104.94 | 38.11 | 11.64 |
+| q2_math | 60.99 | 147.46 | 196.74 | 145.34 |
+| q3_code (early-stop, 2 tok) | 12.98 | 14.18 | 10.12 | 12.90 |
+| q4_chat | 66.11 | 122.88 | 186.97 | 138.76 |
+| q5_explain | 64.71 | 119.22 | 127.17 | 126.12 |
+| **p50** | **60.99** | **119.22** | **127.17** | **126.12** |
+| **p95** | **65.83** | **142.54** | **188.92** | **144.02** |
+| **speedup vs no-SD p50** | 1.00× | 1.95× | **2.08×** | **2.07×** |
+
+vLLM `SpecDecoding metrics` (per-step accept length / per-position
+rates):
+
+- 7900xtx (5,4): mean 4.89 / 5, per-position 91.8 / 81.4 / 74.2 / 73.2 / 68.0 %
+- 7900xtx (7,6): mean **6.76 / 7**, per-position 100 / 92.1 / 81.6 / 81.6 / 76.3 / **73.7 / 71.1 %**
+- 5930k (5,4): mean 5.72 / 5 (count includes verifier bonus token), per-position 100 / 100 / 93.8 / 93.8 / 84.4 %
+
+What we learned:
+
+1. **5930k re-validation succeeded.** 2.07× speedup at maxNumSeqs=2
+   replicates the 7900xtx (5,4) result. The 2026-05-14 falsification
+   was correct for the pre-graph-capture image; graph capture flipped
+   the equation by amortising per-forward overhead so SD's
+   position-widening becomes cheap. The same config went from −22%
+   then to +107% now on this same twin/hardware.
+2. **The (7,6) tuning is a real-but-small win at p50** (+6.7% over
+   5,4) and a substantial p95 win (+33%, 142→189 tps). Positions 6
+   and 7 still accept 73.7% / 71.1% respectively — both clear the
+   per-forward breakeven, justifying the wider speculation budget.
+   vLLM-reported mean accept length jumps 4.89 → 6.76 (out of 7).
+3. **q1_capital regressed on both (7,6) AND 5930k** (58 → 38 / 11.6).
+   That prompt is only ~6 tokens; with `prompt_lookup_min=1` and a
+   short prompt, the n-gram table fires speculations that miss
+   because there's no history yet to match against. Likely fix:
+   `prompt_lookup_min=2`. Deferred to a follow-up MR — production
+   prompts are mostly longer.
+
+Decision: **keep (7,6) on the 7900xtx primary, keep (5,4) on the
+5930k twin** for now. The 5930k could also adopt (7,6) but the (5,4)
+measurement is the cleaner re-validation evidence; a single-variable
+change is easier to attribute if anything regresses later. Promote
+both to "supported" SD-enabled config — these are the new defaults
+for vLLM models that share this image and graph capture profile.
+
+Cross-reference with the F4 decode-tail kill-test (row 192 below):
+decode is flat at 50–67 tok/s from 2k → 28k context. The n-gram
+speedup (2.07×) should compound at every context size, predicting
+~100 tok/s decode even at full 32k. Not yet measured under SD.
+
+Raw reports under `.loom/local/validation/spec-decode/2026-05-25/`:
+`tuned-76.json`, `5930k-54.json`, `with-ngram-orig.json`,
+`baseline-only.json`.
+
+Next experiments (not blocking):
+
+- `prompt_lookup_min=2` to fix the short-prompt regression
+- Try (7,6) on 5930k twin to confirm the tuning win replicates under
+  maxNumSeqs=2
+- Apply to `qwen35-27b` and `qwen36-27b-gptq` once those serve
+  coherently again
+- Re-run the F4 decode-tail kill-test with SD on — confirm the
+  ~2× speedup compounds across the full context ladder, not just
+  at short prompts
 
 Commands:
 
