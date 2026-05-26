@@ -373,6 +373,20 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		r.ContentLength = int64(len(bodyBytes))
 	}
 
+	// Stash per-request metadata for the upstream-response hook so the
+	// access log line emitted by logUpstreamUsage carries both halves
+	// (request shape + upstream usage).
+	maxTokensForLog, streamForLog := parseRequestForUsageLog(bodyBytes)
+	r = r.WithContext(withUsageLogCtx(r.Context(), &usageLogCtx{
+		model:         modelName,
+		resolvedModel: resolvedModel,
+		path:          r.URL.Path,
+		maxTokens:     maxTokensForLog,
+		stream:        streamForLog,
+		userAgent:     r.Header.Get("User-Agent"),
+		startedAt:     time.Now(),
+	}))
+
 	// Track per-pod connections for least-loaded routing
 	if targetPod != "" {
 		p.incrementPodConnections(targetPod)
@@ -595,6 +609,7 @@ func (p *Proxy) loadOrCreateProxy(targetURL string) (*httputil.ReverseProxy, boo
 		return nil, false
 	}
 	rp := httputil.NewSingleHostReverseProxy(u)
+	rp.ModifyResponse = p.logUpstreamUsage
 	p.proxyMap.Store(targetURL, proxyEntry{proxy: rp, created: time.Now()})
 	return rp, true
 }

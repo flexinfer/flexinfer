@@ -487,7 +487,7 @@ func (b *httpBackend) postJSON(
 	if err != nil {
 		return fmt.Errorf("http do: %w", err)
 	}
-	defer httpResp.Body.Close()
+	defer func() { _ = httpResp.Body.Close() }()
 
 	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {

@@ -580,17 +580,52 @@ the two marginals):
 - **Do not keep blanket SD-on without a hedge.** ~20–30% of
   organic traffic is being penalized 50–75%.
 - **The right next slice is workload-gated SD with a defensible
-  heuristic**, not "decide on a default." Candidate heuristics, in
-  order of cheapness to implement:
-  1. `max_tokens > 256 → SD off` (proxy-side, no model knowledge needed)
-  2. `prompt_tokens > 2048 → SD off`
-  3. user-agent / model-route–based gating (manual override per client)
+  heuristic**, not "decide on a default." See the
+  **CORRECTION** below for what "workload-gated" actually requires.
 - **Better measurement** would tag traffic by source (proxy access
   log enrichment), filter probes, and provide the joint histogram.
   Proxy logging is currently too noisy ("v1 Endpoints deprecated"
   warnings dominate); a small enrichment slice on `flexinfer-proxy`
   to log structured per-request prompt_tokens + max_tokens +
   user-agent would unblock all future workload-aware decisions.
+
+**CORRECTION (2026-05-26, post-write)** — the original version of
+this entry listed "`max_tokens > 256 → SD off` (proxy-side, no model
+knowledge needed)" as the cheapest gating heuristic. That framing
+is wrong: I verified against the live runtime that vLLM
+`0.1.dev1+gb1388b1fb` configures speculative decoding at engine
+startup via `--speculative-config` (an `EngineArgs` field) and that
+`ChatCompletionRequest` has no `speculative`/`prompt_lookup`/`draft`
+field. `SamplingParams._validate_spec_decode` reads the
+engine-level `SpeculativeConfig`, not per-request data. Sending
+unknown OpenAI extras (`"speculative":false`,
+`"disable_speculative_decoding":true`, etc.) returns 200 OK but
+vLLM silently ignores them; SD stays on. **There is no per-request
+SD bypass.** Workload-gated SD therefore requires one of:
+
+1. **Two parallel deployments** (`-sd-on` and `-sd-off`) on the
+   same node, with proxy routing between them based on request
+   shape. Costs: ~2× VRAM if both run hot, or a cold-start hit if
+   one is scaled to zero. The 7900XTX runs at
+   `gpuMemoryUtilization=0.95` today, so a second hot copy is
+   likely infeasible without dropping max_model_len or maxNumSeqs.
+2. **A vLLM patch** that reads a request hint (e.g. an HTTP header
+   or a sampling-params extension) and skips the speculator for
+   that request. Invasive; couples flexinfer to a specific vLLM
+   version.
+3. **Two model identities sharing one engine** is not supported by
+   vLLM — `--speculative-config` is global.
+
+The honest ordering of "cheap to implement" is now:
+
+  1. **proxy access-log enrichment** (MR !518) — gives the joint
+     `(prompt_tokens, completion_tokens, user_agent, finish_reason)`
+     distribution that the previous entry estimated from marginal
+     vLLM histograms. Required input to make any of options
+     (a)/(b)/(c) above defensible.
+  2. **two-deployment routing** (option 1) — if the joint
+     distribution justifies the VRAM cost.
+  3. **vLLM patch** (option 2) — only if (1) is infeasible.
 
 Commands:
 
