@@ -201,6 +201,6 @@ func WriteReportFile(path string, r Report) error {
 	if err != nil {
 		return fmt.Errorf("create report file: %w", err)
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return WriteReport(f, r)
 }

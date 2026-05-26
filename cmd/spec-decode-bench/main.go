@@ -432,7 +432,7 @@ func runSpecDecode(
 // operator running the bench interactively sees the verdict without
 // piping JSON through jq.
 func printHumanSummary(w *os.File, r Report) {
-	fmt.Fprintf(w, "spec-decode-bench %s — %d prompts, mode=%s, accept=%s\n",
+	_, _ = fmt.Fprintf(w, "spec-decode-bench %s — %d prompts, mode=%s, accept=%s\n",
 		r.SchemaVersion, len(r.PerPrompt), r.Config.Mode, r.Config.Accept)
 	for _, row := range r.PerPrompt {
 		bt, st := 0.0, 0.0
@@ -444,10 +444,10 @@ func printHumanSummary(w *os.File, r Report) {
 			st = row.SpecDecode.TokensPerSecond
 			ar = row.SpecDecode.AcceptanceRate
 		}
-		fmt.Fprintf(w, "  %-22s baseline=%6.2f tps  spec=%6.2f tps  accept=%4.2f\n",
+		_, _ = fmt.Fprintf(w, "  %-22s baseline=%6.2f tps  spec=%6.2f tps  accept=%4.2f\n",
 			row.Name, bt, st, ar)
 	}
-	fmt.Fprintf(w, "summary: baseline p50=%.2f p95=%.2f  spec p50=%.2f p95=%.2f  speedup p50=%.3f p95=%.3f  mean_accept=%.3f\n",
+	_, _ = fmt.Fprintf(w, "summary: baseline p50=%.2f p95=%.2f  spec p50=%.2f p95=%.2f  speedup p50=%.3f p95=%.3f  mean_accept=%.3f\n",
 		r.Summary.BaselineP50TPS, r.Summary.BaselineP95TPS,
 		r.Summary.SpecDecodeP50TPS, r.Summary.SpecDecodeP95TPS,
 		r.Summary.SpeedupP50, r.Summary.SpeedupP95,
@@ -456,5 +456,5 @@ func printHumanSummary(w *os.File, r Report) {
 	if r.Summary.VerdictPass {
 		verdict = "PASS"
 	}
-	fmt.Fprintf(w, "verdict: %s — %s\n", verdict, r.Summary.VerdictReason)
+	_, _ = fmt.Fprintf(w, "verdict: %s — %s\n", verdict, r.Summary.VerdictReason)
 }
