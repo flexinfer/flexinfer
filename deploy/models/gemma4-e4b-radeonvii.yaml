@@ -28,7 +28,7 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: llamacpp
-  source: HF://bartowski/gemma-3-4b-it-GGUF
+  source: HF://bartowski/google_gemma-3-4b-it-GGUF
   cache:
     size: 6Gi
     storageClass: nvme-1r
