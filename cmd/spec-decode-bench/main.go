@@ -16,6 +16,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"os"
 	"time"
 
@@ -48,10 +49,32 @@ type benchConfig struct {
 	accept             string
 	seed               int64
 	reportPath         string
+	backend            string
 	mockAcceptance     float64
 	mockAcceptanceSet  bool
 	mockDecodeMsPerTok int
 	mockDraftMsPerTok  int
+	httpDraftURL       string
+	httpVerifyURL      string
+	httpDraftModel     string
+	httpVerifyModel    string
+	httpPromptTopK     int
+	httpTimeoutSec     int
+}
+
+// benchBackend is the shape both mockBackend and httpBackend satisfy.
+// Extracted so run()/runBaseline/runSpecDecode can dispatch on the
+// configured backend without conditional code paths.
+//
+// Decode emits up to maxTokens from the verifier WITHOUT speculative
+// decoding — this is what runBaseline compares spec-decode against. We
+// can't reuse Verify(...) for this because the HTTP backend's verify
+// path needs at least one candidate token to score, and the baseline
+// has no candidates by definition.
+type benchBackend interface {
+	Draft(ctx context.Context, prompt string, n int) ([]spec_decode.Token, error)
+	Verify(ctx context.Context, prompt string, candidates []spec_decode.Token) ([]spec_decode.Logprob, error)
+	Decode(ctx context.Context, prompt string, maxTokens int) ([]spec_decode.Token, error)
 }
 
 func main() {
@@ -104,12 +127,21 @@ func parseFlags(args []string) (benchConfig, error) {
 	fs.Int64Var(&cfg.seed, "seed", 20260525, "rng seed for the modified-rejection accept rule")
 	fs.StringVar(&cfg.reportPath, "report", "", "JSON report path; empty = stdout only")
 
+	fs.StringVar(&cfg.backend, "backend", "mock", "one of mock, http")
+
 	// mock-acceptance is tracked separately so we know whether the operator
-	// actually set it; this slice requires it (real-model wiring is future
-	// work).
-	mockAccept := fs.Float64("mock-acceptance", -1, "0..1 fraction of draft tokens the mock verify will accept; required in this slice")
+	// actually set it; the mock backend requires it. The http backend
+	// ignores it.
+	mockAccept := fs.Float64("mock-acceptance", -1, "0..1 fraction of draft tokens the mock verify will accept; required for --backend=mock")
 	fs.IntVar(&cfg.mockDecodeMsPerTok, "mock-decode-ms-per-token", 25, "simulated verify latency per token in ms")
 	fs.IntVar(&cfg.mockDraftMsPerTok, "mock-draft-ms-per-token", 2, "simulated draft latency per token in ms")
+
+	fs.StringVar(&cfg.httpDraftURL, "draft-url", "", "OpenAI-compatible /v1/completions URL for the draft model (required for --backend=http)")
+	fs.StringVar(&cfg.httpVerifyURL, "verify-url", "", "OpenAI-compatible /v1/completions URL for the verifier model (required for --backend=http)")
+	fs.StringVar(&cfg.httpDraftModel, "draft-model", "", "model id sent to --draft-url")
+	fs.StringVar(&cfg.httpVerifyModel, "verify-model", "", "model id sent to --verify-url")
+	fs.IntVar(&cfg.httpPromptTopK, "prompt-logprobs-topk", 20, "top-K passed to vLLM prompt_logprobs; larger = more chance the draft's candidate appears in the returned slice")
+	fs.IntVar(&cfg.httpTimeoutSec, "http-timeout-sec", 120, "per-request timeout for HTTP backend calls")
 
 	if err := fs.Parse(args); err != nil {
 		return cfg, err
@@ -139,14 +171,38 @@ func parseFlags(args []string) (benchConfig, error) {
 	if cfg.maxRounds < 1 {
 		return cfg, fmt.Errorf("--max-rounds must be >= 1, got %d", cfg.maxRounds)
 	}
-	if !cfg.mockAcceptanceSet {
-		return cfg, errors.New("--mock-acceptance is required in this slice (real-model wiring not yet available)")
-	}
-	if cfg.mockAcceptance < 0 || cfg.mockAcceptance > 1 {
-		return cfg, fmt.Errorf("--mock-acceptance must be in [0,1], got %v", cfg.mockAcceptance)
-	}
-	if cfg.mockDecodeMsPerTok < 0 || cfg.mockDraftMsPerTok < 0 {
-		return cfg, errors.New("mock per-token latencies must be non-negative")
+	switch cfg.backend {
+	case "mock":
+		if !cfg.mockAcceptanceSet {
+			return cfg, errors.New("--mock-acceptance is required for --backend=mock")
+		}
+		if cfg.mockAcceptance < 0 || cfg.mockAcceptance > 1 {
+			return cfg, fmt.Errorf("--mock-acceptance must be in [0,1], got %v", cfg.mockAcceptance)
+		}
+		if cfg.mockDecodeMsPerTok < 0 || cfg.mockDraftMsPerTok < 0 {
+			return cfg, errors.New("mock per-token latencies must be non-negative")
+		}
+	case "http":
+		if cfg.httpDraftURL == "" {
+			return cfg, errors.New("--draft-url is required for --backend=http")
+		}
+		if cfg.httpVerifyURL == "" {
+			return cfg, errors.New("--verify-url is required for --backend=http")
+		}
+		if cfg.httpDraftModel == "" {
+			return cfg, errors.New("--draft-model is required for --backend=http")
+		}
+		if cfg.httpVerifyModel == "" {
+			return cfg, errors.New("--verify-model is required for --backend=http")
+		}
+		if cfg.httpPromptTopK < 1 {
+			return cfg, fmt.Errorf("--prompt-logprobs-topk must be >= 1, got %d", cfg.httpPromptTopK)
+		}
+		if cfg.httpTimeoutSec < 1 {
+			return cfg, fmt.Errorf("--http-timeout-sec must be >= 1, got %d", cfg.httpTimeoutSec)
+		}
+	default:
+		return cfg, fmt.Errorf("invalid --backend %q (want mock|http)", cfg.backend)
 	}
 	return cfg, nil
 }
@@ -193,19 +249,26 @@ func run(
 	for _, entry := range corpus {
 		row := PerPromptResult{Name: entry.Name, PromptChars: len(entry.Prompt)}
 
-		mock := newMockBackend(cfg)
+		baselineBE, err := newBackend(cfg)
+		if err != nil {
+			return Report{}, fmt.Errorf("backend init: %w", err)
+		}
 
 		if cfg.mode == "baseline" || cfg.mode == "compare" {
-			bstats := runBaseline(ctx, mock, entry.Prompt, cfg.maxTokens)
+			bstats := runBaseline(ctx, baselineBE, entry.Prompt, cfg.maxTokens)
 			row.Baseline = &bstats
 		}
 
 		if cfg.mode == "spec-decode" || cfg.mode == "compare" {
-			// Fresh mock so spec-decode runs aren't contaminated by the
-			// baseline run's RNG state.
-			mockSpec := newMockBackend(cfg)
+			// Fresh backend so spec-decode runs aren't contaminated by
+			// any per-backend state from the baseline run (mock RNG,
+			// http prompt-token cache).
+			specBE, err := newBackend(cfg)
+			if err != nil {
+				return Report{}, fmt.Errorf("backend init: %w", err)
+			}
 			acceptFn := buildAcceptFn(cfg)
-			sstats, err := runSpecDecode(ctx, mockSpec, entry.Prompt, cfg, acceptFn, coord)
+			sstats, err := runSpecDecode(ctx, specBE, entry.Prompt, cfg, acceptFn, coord)
 			if err != nil {
 				return Report{}, fmt.Errorf("spec-decode prompt %q: %w", entry.Name, err)
 			}
@@ -217,22 +280,51 @@ func run(
 	return NewReport(makeReportConfig(cfg, len(corpus)), rows), nil
 }
 
+// newBackend constructs the configured backend. mock is in-process; http
+// hits a remote OpenAI-compatible server.
+func newBackend(cfg benchConfig) (benchBackend, error) {
+	switch cfg.backend {
+	case "http":
+		return newHTTPBackend(httpBackendConfig{
+			httpClient:  &http.Client{Timeout: time.Duration(cfg.httpTimeoutSec) * time.Second},
+			draftURL:    cfg.httpDraftURL,
+			verifyURL:   cfg.httpVerifyURL,
+			draftModel:  cfg.httpDraftModel,
+			verifyModel: cfg.httpVerifyModel,
+			promptTopK:  cfg.httpPromptTopK,
+		})
+	default:
+		return newMockBackend(cfg), nil
+	}
+}
+
 // makeReportConfig builds the echoed config block, masking the path field
 // when the operator relied on the built-in corpus.
 func makeReportConfig(cfg benchConfig, corpusSize int) ReportConfig {
-	return ReportConfig{
-		CorpusPath:         cfg.corpusPath,
-		DraftN:             cfg.draftN,
-		MaxTokens:          cfg.maxTokens,
-		MaxRounds:          cfg.maxRounds,
-		Mode:               cfg.mode,
-		Accept:             cfg.accept,
-		Seed:               cfg.seed,
-		MockAcceptance:     cfg.mockAcceptance,
-		MockDecodeMsPerTok: cfg.mockDecodeMsPerTok,
-		MockDraftMsPerTok:  cfg.mockDraftMsPerTok,
-		CorpusSize:         corpusSize,
+	rc := ReportConfig{
+		CorpusPath: cfg.corpusPath,
+		DraftN:     cfg.draftN,
+		MaxTokens:  cfg.maxTokens,
+		MaxRounds:  cfg.maxRounds,
+		Mode:       cfg.mode,
+		Accept:     cfg.accept,
+		Seed:       cfg.seed,
+		Backend:    cfg.backend,
+		CorpusSize: corpusSize,
 	}
+	switch cfg.backend {
+	case "mock":
+		rc.MockAcceptance = cfg.mockAcceptance
+		rc.MockDecodeMsPerTok = cfg.mockDecodeMsPerTok
+		rc.MockDraftMsPerTok = cfg.mockDraftMsPerTok
+	case "http":
+		rc.HTTPDraftURL = cfg.httpDraftURL
+		rc.HTTPVerifyURL = cfg.httpVerifyURL
+		rc.HTTPDraftModel = cfg.httpDraftModel
+		rc.HTTPVerifyModel = cfg.httpVerifyModel
+		rc.HTTPPromptTopK = cfg.httpPromptTopK
+	}
+	return rc
 }
 
 // buildAcceptFn resolves --accept into a concrete AcceptFn. The greedy
@@ -258,25 +350,15 @@ func buildAcceptFn(cfg benchConfig) spec_decode.AcceptFn {
 // no-spec-decode greedy decoder would do.
 func runBaseline(
 	ctx context.Context,
-	mock *mockBackend,
+	be benchBackend,
 	prompt string,
 	maxTokens int,
 ) BaselineRunStats {
 	start := time.Now()
-	prompt2 := prompt
-	emitted := 0
-	for emitted < maxTokens {
-		// Single-position candidate; the actual token value doesn't matter
-		// because we always take Argmax. We just need Verify's timing model
-		// to do its per-token sleep.
-		candidate := []spec_decode.Token{{ID: 0}}
-		lp, err := mock.Verify(ctx, prompt2, candidate)
-		if err != nil || len(lp) == 0 {
-			break
-		}
-		tok := lp[0].Argmax
-		prompt2 += tok.Text
-		emitted++
+	tokens, _ := be.Decode(ctx, prompt, maxTokens)
+	emitted := len(tokens)
+	if emitted > maxTokens {
+		emitted = maxTokens
 	}
 	elapsed := time.Since(start).Seconds()
 	tps := 0.0
@@ -294,7 +376,7 @@ func runBaseline(
 // caps generation at --max-tokens.
 func runSpecDecode(
 	ctx context.Context,
-	mock *mockBackend,
+	be benchBackend,
 	prompt string,
 	cfg benchConfig,
 	acceptFn spec_decode.AcceptFn,
@@ -305,7 +387,7 @@ func runSpecDecode(
 		return total >= maxTokens
 	}
 	start := time.Now()
-	res, err := coord(ctx, prompt, cfg.draftN, mock.Draft, mock.Verify, acceptFn, stop, cfg.maxRounds)
+	res, err := coord(ctx, prompt, cfg.draftN, be.Draft, be.Verify, acceptFn, stop, cfg.maxRounds)
 	if err != nil {
 		return SpecDecodeRunStats{}, err
 	}
