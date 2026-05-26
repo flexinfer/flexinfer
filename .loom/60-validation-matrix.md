@@ -210,6 +210,91 @@ Large JSON outputs and smoke transcripts go under
 tracked file. Each archive should include the exact command, artifact path,
 runtime image digest or OCI ref when available, and smoke response transcript.
 
+### 2026-05-25 CC-DR-2: in-process n-gram spec-decode WINS on 7900xtx (re-validation)
+
+Live measurement of vLLM's built-in n-gram (prompt-lookup) speculative
+decoding on `gemma4-26b-a4b-gptq` (cblevins-7900xtx, runtime image
+`sha256:31098896...`, vLLM `0.1.dev1+gb1388b1fb.d20260516`,
+graph-capture on, single-stream `maxNumSeqs=1`).
+
+Config (passed as `--speculative-config`):
+
+```json
+{"method": "ngram", "num_speculative_tokens": 5, "prompt_lookup_max": 4, "prompt_lookup_min": 1}
+```
+
+Apples-to-apples on the same 5-prompt corpus (64 tokens each, greedy,
+single-stream), measured via `cmd/spec-decode-bench` against the
+`/v1/completions` endpoint:
+
+| prompt | baseline (no SD) | n-gram SD | speedup |
+| --- | --- | --- | --- |
+| q1_capital ("The capital of France is") | 58.09 | 104.94 | 1.81× |
+| q2_math ("What is 17 times 23? Show your work.") | 60.99 | 147.46 | 2.42× |
+| q3_code (early-stop at 2 tokens both runs) | 12.98 | 14.18 | n/a |
+| q4_chat ("Hey, how are you doing today?") | 66.11 | 122.88 | 1.86× |
+| q5_explain ("Explain TCP congestion control.") | 64.71 | 119.22 | 1.84× |
+| **p50** | **60.99** | **119.22** | **1.95×** |
+| **p95** | **65.83** | **142.54** | **2.17×** |
+
+vLLM's own `SpecDecoding metrics` line (read live from the engine logs):
+
+- Mean acceptance length: **4.89 / 5** speculative positions
+- **Avg draft acceptance rate: 82.5%**
+- Per-position acceptance: 91.8% / 81.4% / 74.2% / 73.2% / 68.0%
+- 377 accepted / 457 drafted total
+
+**Conditional on graph capture.** The same config was falsified on
+2026-05-14 against the 5930k twin (see
+`.loom/r5-ngram-spec-decode-falsified-2026-05-14.md`) and produced
+−13% to −22% throughput. That run was on
+`runtime:rocm-gfx1100-gemma4-moe-cache-nan-v3`, **before** graph
+capture was validated for the gemma4 MoE path on 2026-05-16. With
+eager-mode MoE the per-verifier-step cost dominated and SD's
+position-widening (1 → 1 + num_spec) multiplied the bottleneck. With
+graph capture on, the per-forward overhead is amortised, SD's width
+becomes cheap, and the same config flips from net-negative to
+net-positive. Re-validation runs in flight on the 5930k twin (now
+also on the post-graph-capture image) to confirm the flip
+replicates.
+
+**What this kills**: CC-DR-1's external HTTP-orchestrated spec-decode
+prototype (measured 0.05× speedup on the e4b draft × 26b verifier
+pair earlier this session — network overhead dominated). The bench
+tool stays as the comparison harness; the prototype's
+internal/proxy/spec_decode library stays as a reference; the
+recommendation to ship a proxy-integrated draft+verify path
+(CC-DR-3) is deprioritised — in-process server-side SD already
+covers it without the inter-pod RPC tax.
+
+**Next steps**: (a) replicate on 5930k twin (in flight, MR !513),
+(b) tune `num_speculative_tokens` up to 7 and `prompt_lookup_max` to
+6 — per-position acceptance still 68% at position 5 so more headroom
+likely, (c) measure at `maxNumSeqs=2` (the 5930k twin already runs
+2-way concurrency, so the re-validation will partially answer this).
+
+Commands:
+
+```bash
+kubectl -n flexinfer-system port-forward svc/flexinfer-proxy 18080:80
+
+go run ./cmd/spec-decode-bench \
+  --backend=http \
+  --draft-url=http://localhost:18080/v1/completions \
+  --verify-url=http://localhost:18080/v1/completions \
+  --draft-model=gemma4-26b-a4b-gptq \
+  --verify-model=gemma4-26b-a4b-gptq \
+  --max-tokens=64 --mode=baseline --corpus=<5-prompt corpus>
+```
+
+Acceptance-rate scrape (vLLM logs at INFO level):
+
+```bash
+kubectl -n flexinfer-system logs deploy/gemma4-26b-a4b-gptq | grep "SpecDecoding metrics"
+```
+
+Raw report: `.loom/local/validation/spec-decode/2026-05-25/with-ngram-orig.json`
+
 ### 2026-05-25 CC-6 kill-test: scheduler-use assumption FAILED
 
 Backtest per `docs/planning/context-curve-scheduler-spec.md` CC-5.
