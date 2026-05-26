@@ -489,6 +489,126 @@ Raw artifacts (`.loom/local/`, gitignored):
 - `.loom/local/validation/context-curve/2026-05-26-decode-tail-with-sd/specdecoding-metrics-during-bench.txt`
 - `.loom/local/validation/context-curve/2026-05-26-decode-tail-with-sd/bench-run.log`
 
+### 2026-05-26 CC-DR-2: production traffic-mix measurement on gemma4-26b-a4b-gptq
+
+Follow-up to the F4+SD decode-tail FAIL: that finding showed n-gram
+SD is workload-conditional, but the production policy question
+("should blanket SD-on stay, or should we gate by prompt
+characteristics?") is unanswerable without knowing how production
+traffic distributes across the SD-positive (short Q/A) and
+SD-negative (long-form generation) regimes. This entry samples that
+distribution from vLLM's per-request histograms via the cluster
+Prometheus (`kube-prometheus-stack-prometheus`, 1-week retention).
+
+**Measured windows** (gemma4-26b-a4b-gptq verifier on cblevins-7900xtx):
+
+| window | requests | mean prompt tok | mean completion tok |
+| --- | --- | --- | --- |
+| last 1h  |   5  | 9213 | 256 |
+| last 6h  |  10  | 5856 | 349 |
+| last 24h | 454  |  546 |  45 |
+| last 7d  | 784  | 1272 | 182 |
+
+The 1h/6h windows are essentially this session's bench traffic
+(matches F4+SD's 5×256-token shape and F4 baseline's 5×256-token
+shape). The 24h window is bench traffic *plus* probe traffic. The
+7d window is the most defensible "production-ish" view, but is
+still skewed by today's CC-DR-2 work (~58% of weekly requests).
+
+**7-day distribution** (784 requests):
+
+```
+prompt-token cumulative distribution:
+  ≤    50  tok:  51.5%   (probes + short Q/A)
+  ≤   100  tok:  51.9%
+  ≤   500  tok:  56.2%
+  ≤  1000  tok:  66.4%
+  ≤  2000  tok:  77.8%
+  ≤  5000  tok:  95.2%
+  ≤ 10000  tok:  98.9%
+  > 10000  tok:   1.1%
+
+completion-token cumulative distribution:
+  ≤    1   tok:  41.3%   (probes — finished_reason=length, max_tokens≈1)
+  ≤   10   tok:  56.1%
+  ≤   100  tok:  67.1%
+  ≤   500  tok:  83.3%
+  ≤  1000  tok:  95.7%
+  > 1000   tok:   4.3%
+
+finished_reason breakdown (24h slice, 454 requests):
+  length     :  81%   (hit max_tokens — probe-shaped or bench-shaped)
+  stop       :  19%   (natural completion — organic-shaped)
+  abort/error:   0%
+```
+
+**Workload-regime estimate** (defensible bracket; marginal split
+since the joint (prompt, completion) histogram isn't available, only
+the two marginals):
+
+| regime | estimate | criterion |
+| --- | --- | --- |
+| Probes / synthetic | ~40% | completion ≤ 1 token |
+| SD-positive (short Q/A) | ~15–25% | prompt ≤ 500 tok AND completion 5–200 tok |
+| SD-negative (long prompt OR long-form output) | ~20–30% | prompt > 2000 tok OR completion > 500 tok |
+| Ambiguous middle | ~15% | between the two regimes |
+
+**Interpretation**:
+
+1. **Probe traffic dominates the volume but is policy-irrelevant.**
+   ~40% of requests get ≤1 completion token. Whether SD is on or off
+   for those does not matter — there is no decoding to speculate on.
+2. **Of organic-shaped traffic, the SD-negative regime is at least
+   as large as the SD-positive regime.** Today's blanket SD-on is
+   making roughly the larger half of real generation requests
+   50–75% slower (per MR !516's F4+SD kill-test).
+3. **The proposed coarse heuristic
+   `prompt_tokens > 4096 → SD off` catches ~5% of weekly traffic.**
+   That is too narrow; the SD-negative regime is broader than just
+   "long prompt." A better split needs the joint distribution or
+   needs to incorporate `max_tokens` from the request body (high
+   `max_tokens` → likely long-form output → SD negative).
+4. **The 7d sample is contaminated by today's bench-heavy session.**
+   58% of weekly requests are from today. A clean retroactive view
+   requires either filtering bench user-agents in proxy logs or
+   waiting a week of normal traffic.
+
+**Strategic implications**:
+
+- **Do not blanket-disable SD yet.** ~15–25% of organic traffic
+  benefits from SD; killing it would regress that segment.
+- **Do not keep blanket SD-on without a hedge.** ~20–30% of
+  organic traffic is being penalized 50–75%.
+- **The right next slice is workload-gated SD with a defensible
+  heuristic**, not "decide on a default." Candidate heuristics, in
+  order of cheapness to implement:
+  1. `max_tokens > 256 → SD off` (proxy-side, no model knowledge needed)
+  2. `prompt_tokens > 2048 → SD off`
+  3. user-agent / model-route–based gating (manual override per client)
+- **Better measurement** would tag traffic by source (proxy access
+  log enrichment), filter probes, and provide the joint histogram.
+  Proxy logging is currently too noisy ("v1 Endpoints deprecated"
+  warnings dominate); a small enrichment slice on `flexinfer-proxy`
+  to log structured per-request prompt_tokens + max_tokens +
+  user-agent would unblock all future workload-aware decisions.
+
+Commands:
+
+```bash
+kubectl -n monitoring port-forward svc/kube-prometheus-stack-prometheus 9090:9090
+# Distributions
+curl -s "http://localhost:9090/api/v1/query?query=sum%20by%20(le)%20(increase(vllm:request_prompt_tokens_bucket%7Bmodel_name%3D%22gemma4-26b-a4b-gptq%22%7D%5B7d%5D))"
+curl -s "http://localhost:9090/api/v1/query?query=sum%20by%20(le)%20(increase(vllm:request_generation_tokens_bucket%7Bmodel_name%3D%22gemma4-26b-a4b-gptq%22%7D%5B7d%5D))"
+# Finished reason breakdown
+curl -s "http://localhost:9090/api/v1/query?query=sum%20by%20(model_name%2Cfinished_reason)%20(increase(vllm:request_success_total%5B24h%5D))"
+```
+
+Raw scrapes (`.loom/local/`, gitignored):
+
+- `.loom/local/validation/spec-decode/2026-05-26-traffic-mix/prompt-tokens-bucket-{24h,7d}.json`
+- `.loom/local/validation/spec-decode/2026-05-26-traffic-mix/generation-tokens-bucket-{24h,7d}.json`
+- `.loom/local/validation/spec-decode/2026-05-26-traffic-mix/finished-reason-7d.json`
+
 ### 2026-05-25 CC-6 kill-test: scheduler-use assumption FAILED
 
 Backtest per `docs/planning/context-curve-scheduler-spec.md` CC-5.
