@@ -344,10 +344,13 @@ func buildAcceptFn(cfg benchConfig) spec_decode.AcceptFn {
 	}
 }
 
-// runBaseline simulates "decode one token at a time with the verifier".
-// We call mock.Verify once per token, with a single-token candidate, and
-// take the verifier's argmax as the emitted token. This matches what a
-// no-spec-decode greedy decoder would do.
+// runBaseline runs the no-spec-decode decoder. For the mock backend
+// this is sleep-per-token; for the http backend it's a single
+// /v1/completions call returning maxTokens tokens.
+//
+// On error we record zero tokens AND surface the error on stderr so
+// runs against an unreachable backend don't silently produce a 0-tps
+// row — that was a real bug we hit.
 func runBaseline(
 	ctx context.Context,
 	be benchBackend,
@@ -355,7 +358,10 @@ func runBaseline(
 	maxTokens int,
 ) BaselineRunStats {
 	start := time.Now()
-	tokens, _ := be.Decode(ctx, prompt, maxTokens)
+	tokens, err := be.Decode(ctx, prompt, maxTokens)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "spec-decode-bench: baseline decode error: %v\n", err)
+	}
 	emitted := len(tokens)
 	if emitted > maxTokens {
 		emitted = maxTokens
