@@ -366,6 +366,129 @@ kubectl -n flexinfer-system logs deploy/gemma4-26b-a4b-gptq | grep "SpecDecoding
 
 Raw report: `.loom/local/validation/spec-decode/2026-05-25/with-ngram-orig.json`
 
+### 2026-05-26 CC-DR-2: F4+SD decode-tail kill-test — **SD compounding ASSUMPTION FALSIFIED**
+
+Re-ran the F4 decode-tail bench
+(`.loom/local/validation/context-curve/2026-05-25-decode-tail/f4-decode-tail-bench.py`,
+256 forced completion tokens at 2k/4k/8k/16k/28k context) against the
+**same** `gemma4-26b-a4b-gptq` endpoint, now serving with the tuned
+`(num_speculative_tokens=7, prompt_lookup_max=6, prompt_lookup_min=1)`
+n-gram SD config from MR !514.
+
+Side-by-side, exact same prompts, exact same runtime image, exact same
+prefill-rate estimation:
+
+| ctx | F4 baseline decode tok/s (2026-05-25, SD off — historical*) | F4+SD decode tok/s (2026-05-26, SD on) | Δ |
+| --- | --- | --- | --- |
+| 2k  | 66.8 | **31.2** | −53% |
+| 4k  | 62.5 | **27.6** | −56% |
+| 8k  | 58.0 | **21.8** | −62% |
+| 16k | 52.1 | **18.5** | −64% |
+| 28k | 53.6 | **13.4** | −75% |
+
+\*The 2026-05-25 F4 row was captured BEFORE n-gram SD was enabled in
+MR !512. The 2026-05-26 row is the same endpoint with SD live.
+
+**Three kill-test pass criteria** (definition: ≥80 tok/s at 28k as the
+floor for "SD compounds meaningfully across context"; the predicted
+value was ~100 tok/s based on the 2× speedup observed on short
+prompts):
+
+1. decode @ 28k ≥ 80 tok/s: **13.4 → FAIL** (target missed by 6×)
+2. F4 base @ 16k ≥ 10 tok/s: 18.5 → pass (SD-on still clears the F4 floor)
+3. F4 base @ 28k ≥ 5 tok/s:  13.4 → pass
+
+**vLLM's own `SpecDecoding metrics`** during this bench window
+(scraped from `kubectl logs deploy/gemma4-26b-a4b-gptq --since=10m`,
+archived at
+`.loom/local/validation/context-curve/2026-05-26-decode-tail-with-sd/specdecoding-metrics-during-bench.txt`):
+
+- Mean acceptance length: **1.00 – 1.19** speculative positions (vs 6.76/7 on the short-prompt bench)
+- **Avg draft acceptance rate: 0.0% – 7.1%** (vs 82.5% on the short-prompt bench)
+- Per-position acceptance at slot 1: 0.0%–37.5% (vs 91.8%)
+- All slots 4–7 essentially 0% acceptance for the entire run
+
+**Root cause** — *prompt-output n-gram mismatch on long-form
+generation*. The F4 bench prompts are filler text ("The quick brown
+fox jumps over the lazy dog." repeated to fill 2k–28k of context),
+followed by an instruction asking for a 250-word paragraph about the
+Linux kernel. The model's output is novel prose with essentially zero
+n-gram overlap with the filler context. `prompt_lookup_min=1` finds
+matches but all 7 drafted positions get rejected at verify, so SD
+costs ~6-position verifier overhead per step for ~0 accepted tokens.
+
+The short-prompt bench from 2026-05-25 (`q1_capital`, `q2_math`,
+`q5_explain`) achieved 82.5% acceptance precisely because Q/A
+vocabulary echoes into the answer ("The capital of France is Paris,
+which..." — "the", "is", "of" all hit the n-gram lookup table). That
+is the BEST case for prompt-lookup SD. The F4 long-form generation
+case is the WORST case.
+
+**What this kills** — the "n-gram SD compounds with F4's flat-decode
+property to give ~100 tok/s at 32k" product framing. It does not.
+On the F4 workload (long-form output, no prompt echo) SD is
+**net-negative at every context size**, getting *worse* with longer
+context (−53% at 2k → −75% at 28k) because the absolute decode
+overhead per rejected slot dominates more as the prefill-amortised
+baseline rises.
+
+**Strategic implications**:
+
+1. **F4 + SD do not stack as a generic "fast at every context" win.**
+   F4's flat-decode property stands alone (validated 2026-05-25). SD
+   stands alone for short Q/A workloads (validated 2026-05-25). They
+   are workload-disjoint, not compounding.
+2. **n-gram SD is the wrong default for production long-form
+   generation.** Today's config blanket-enables SD on
+   `gemma4-26b-a4b-gptq`. Production long-form requests will see
+   −50% to −75% decode throughput vs SD-off.
+3. **The (5,4) → (7,6) tuning that improved short-prompt p95 by 30%
+   makes long-form WORSE** (more drafted positions to reject = more
+   overhead). This is the first concrete evidence that the SD tuning
+   axis is opposed to the long-form-quality axis.
+4. **Honest framing for the "feels instant" pitch**: SD is real but
+   conditional. The next dependent slice needs to answer "what
+   fraction of real production traffic looks like the short Q/A best
+   case vs the long-form worst case" before claiming a blanket 2×.
+
+**Next moves (queued, not landed in this slice)**:
+
+- **gate SD on prompt characteristics** — disable SD when prompt is
+  obviously non-echoing (filler, long context, novel-generation
+  intent). Requires either client-side hinting or proxy-side
+  heuristics. Coarse heuristic: `prompt_tokens > 4096` → SD off.
+- **`prompt_lookup_min=2`** — still worth doing to dampen the
+  short-prompt regression on `q1_capital`, but it does not address the
+  long-form failure mode (raises overhead floor, doesn't change the
+  ~0% acceptance reality).
+- **measure production traffic mix** — without knowing the
+  short:long ratio, no policy decision is well-founded. Sample real
+  prompt lengths + output lengths from `flexinfer-proxy` access logs
+  for one week.
+- **revisit draft-model SD on a smaller draft** — n-gram is a
+  "shape-of-the-prompt" speculator; a real draft model speculates on
+  *content* and would not collapse on novel-generation workloads. The
+  2026-05-25 cross-card kill-test failed for a different reason
+  (4B/Q4_K_M on gfx906 decoded at ~65 tok/s — too slow as a draft).
+  A Gemma 3 1B / 270M draft on gfx1100 might be viable now that the
+  failure mode is understood.
+
+Commands:
+
+```bash
+kubectl -n flexinfer-system port-forward svc/flexinfer-proxy 18080:80
+python3 .loom/local/validation/context-curve/2026-05-26-decode-tail-with-sd/f4-sd-decode-tail-bench.py
+kubectl -n flexinfer-system logs deploy/gemma4-26b-a4b-gptq --since=10m \
+  | grep "SpecDecoding metrics"
+```
+
+Raw artifacts (`.loom/local/`, gitignored):
+
+- `.loom/local/validation/context-curve/2026-05-26-decode-tail-with-sd/f4-sd-killtest-report.json`
+- `.loom/local/validation/context-curve/2026-05-26-decode-tail-with-sd/f4-sd-decode-tail-bench.py`
+- `.loom/local/validation/context-curve/2026-05-26-decode-tail-with-sd/specdecoding-metrics-during-bench.txt`
+- `.loom/local/validation/context-curve/2026-05-26-decode-tail-with-sd/bench-run.log`
+
 ### 2026-05-25 CC-6 kill-test: scheduler-use assumption FAILED
 
 Backtest per `docs/planning/context-curve-scheduler-spec.md` CC-5.
