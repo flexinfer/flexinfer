@@ -30,8 +30,32 @@
 - RALPH context-curve live capture (2026-05-22): `ralph-context-curve-live-capture-2026-05-22.md`
 - RALPH context-curve ConfigMap storage (2026-05-22): `ralph-context-curve-configmap-storage-2026-05-22.md`
 - RALPH context-curve spec closeout (2026-05-22): `ralph-context-curve-spec-closeout-2026-05-22.md`
+- F4 long-context agent brainstorm (2026-05-25): `brainstorm-f4-long-context-agent-2026-05-25.md`
+- RALPH F4-prefix-cache-flip canary plan (2026-05-26): `ralph-f4-prefix-cache-flip-canary-2026-05-26.md`
 
-## Current Goal (2026-05-21) - Roadmap unblock plan
+## Current Goal (2026-05-26) - F4-prefix-cache-flip canary
+
+Focused plan: `ralph-f4-prefix-cache-flip-canary-2026-05-26.md`.
+
+After F4 decode-tail kill-test PASS on 2026-05-25 (decode flat 50-67 tok/s
+across 2k→28k context — F4 "feels instant" structurally viable), the
+recommended F4 first slice from
+`brainstorm-f4-long-context-agent-2026-05-25.md` is unblocked. MR !519
+landed the side-by-side `gemma4-26b-a4b-gptq-apc-canary` Model that
+mirrors the warm primary except for `enablePrefixCaching: true` and
+`gpuMemoryUtilization: "0.94"`. Posture: `minReplicas=0`, priority 100
+in `7900xtx-textgen` so the warm primary at 350 always wins; isolated
+serviceLabels so canary never sees production traffic.
+
+**Open: live cache-eviction-thrash kill-test.** Operator runbook in the
+plan doc above: pause primary → force-promote canary → alternate two
+~30k-token prompts ABABAB × 5 → scrape `vllm:prefix_cache_hit_rate`.
+Pass: hit_rate ≥ 50% after the third alternation. Fail: <20% →
+eviction thrash, back out APC promotion. Matrix row in
+`60-validation-matrix.md` lands in `pending` and is updated `pass` /
+`fail` only after the live run.
+
+## Previous Goal (2026-05-21) - Roadmap unblock plan
 
 Focused plan: `roadmap-unblock-plan-2026-05-21.md`.
 
