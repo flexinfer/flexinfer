@@ -236,6 +236,16 @@ cheaper. They want to ship together.
 
 ### Recommended: F1 + F4 (cross-card speculative decoding deployed on a long-context RAG agent lane)
 
+> **Update 2026-05-25** — slice outcomes after live runs:
+>
+> - **CC-DR-1 (external HTTP draft+verify)**: **falsified**. Implemented end-to-end (`internal/proxy/spec_decode/` + `cmd/spec-decode-bench/`, MRs !493–!510) with a real gemma4-e4b-radeonvii draft and gemma4-26b-a4b-gptq verifier. Acceptance 42.6% (real signal, IDs aligned across the two backends), but measured speedup **0.05×** — three HTTP round-trips per Coordinate round (draft + prompt-token-count + verify) obliterate per-token amortisation. Structural finding, not a bug. The bench tool stays as the comparison harness; the reference implementation stays for future cross-card explorations.
+> - **CC-DR-2 (32k canary)**: **shipped**. `gemma4-26b-a4b-gptq` runs at 32k with FP8 KV cache (~13 GB weights + ~3 GB KV @ 32k, ~22 GB GPU profile cap, 2 GB physical headroom on the 24 GB card). Live 19k-token-prompt smoke produced the correct answer in 20.2s.
+> - **CC-DR-3 (proxy-integrated spec-decode)**: **rerouted**. The CC-DR-1 measurement made the original framing (proxy orchestrates draft/verify across pods) uneconomic. Pivoted to in-process server-side n-gram (prompt-lookup) SD via vLLM's built-in `--speculative-config`. Live measurement on `gemma4-26b-a4b-gptq` (MR !512): **p50 1.95× speedup, p95 2.17×, 82.5% vLLM-reported acceptance rate**, with zero controller code changes (the `speculativeConfig` passthrough at `backend/vllm.go:212-216` was already wired) and zero additional GPU memory. Full re-validation row in `.loom/60-validation-matrix.md`. The win is conditional on graph capture being enabled — the same config was correctly falsified on 2026-05-14 against the pre-graph-capture image (see `.loom/r5-ngram-spec-decode-falsified-2026-05-14.md`).
+>
+> **Net**: cross-card / cross-pod spec-decode is not the right lever on this hardware topology. In-process server-side SD is the lever, and it's already paying out 2× on the 26B primary. Remaining work is tuning (`num_speculative_tokens` 5 → 7, `prompt_lookup_max` 4 → 6 — per-position acceptance is still 68% at position 5, indicating headroom) and replication to the 5930k twin and qwen35 (once qwen35 serves coherently again).
+
+The original slice plan, preserved for context:
+
 This is the only framing that compounds: F1 alone gives 2× decode speedup
 but lacks application context. F4 alone gives a great agent that's still
 gated by decode latency. **Together**, they produce a single chat lane where

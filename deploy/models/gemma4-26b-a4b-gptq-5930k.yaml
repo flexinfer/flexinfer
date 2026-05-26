@@ -97,6 +97,32 @@ spec:
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
     warmPolicy: primary
+    # 2026-05-25 CC-DR-2 follow-up: enable in-process n-gram (prompt-lookup)
+    # spec decoding on the 5930k twin.
+    #
+    # An earlier R5 experiment on 2026-05-14 (see
+    # .loom/r5-ngram-spec-decode-falsified-2026-05-14.md) found this exact
+    # config delivered −13% to −22% throughput on this twin. That experiment
+    # ran on `runtime:rocm-gfx1100-gemma4-moe-cache-nan-v3`, BEFORE graph
+    # capture was validated for the gemma4 MoE path. The MoE forward was
+    # eager-mode (~4.6 tok/s baseline single-stream), so widening each
+    # verifier step from 1 → 1+num_spec positions multiplied a dominant
+    # cost.
+    #
+    # On 2026-05-25 the 7900xtx primary ran the same speculativeConfig
+    # against the post-graph-capture image (sha256:31098896...) — measured
+    # speedup p50 1.95x, p95 2.17x; vLLM acceptance rate 82.5%. With graph
+    # capture the per-forward overhead of widening positions is dominated
+    # by amortised graph cost, and SD flips from net-negative to
+    # net-positive. Both twins now run that same image, so we expect the
+    # same flip here. This deployment is the live re-validation.
+    #
+    # Difference vs the 7900xtx primary: this twin runs maxNumSeqs=2, so
+    # the SD ↔ concurrency interaction is also being measured for the
+    # first time. If acceptance drops or decode tps regresses under
+    # 2-way concurrency we revert this single key (see post-roll
+    # measurement in 60-validation-matrix.md).
+    speculativeConfig: '{"method": "ngram", "num_speculative_tokens": 5, "prompt_lookup_max": 4, "prompt_lookup_min": 1}'
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:
