@@ -134,6 +134,23 @@ spec:
     # 2026-05-13: ondemand → primary. 26B-A4B is the warm quality lane for
     # downstream services on the discrete 7900 XTX.
     warmPolicy: primary
+    # 2026-05-25 CC-DR-2 experiment: in-process n-gram (prompt-lookup) spec
+    # decoding. No second model loaded — vLLM speculates against tokens
+    # already in the prompt's KV cache, then verifies them. Cost: a few %
+    # GPU + RAM for the n-gram tables. Wins on tasks with prompt-token
+    # echo (long context recall, code generation citing the prompt,
+    # structured output) and breaks even on open-ended generation.
+    #
+    # Schema (passed verbatim to --speculative-config):
+    #   method=ngram         use prompt-lookup, no draft model required
+    #   num_speculative_tokens=5  candidates proposed per verifier step
+    #   prompt_lookup_max=4  longest n-gram window scanned in the prompt
+    #   prompt_lookup_min=1  shortest n-gram that triggers a proposal
+    #
+    # Compared against the bench-measured baseline of ~60 tok/s p50 at 64
+    # tokens. Revert by deleting this key if acceptance is low or decode
+    # tps drops below baseline; vLLM logs acceptance rate at INFO.
+    speculativeConfig: '{"method": "ngram", "num_speculative_tokens": 5, "prompt_lookup_max": 4, "prompt_lookup_min": 1}'
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
