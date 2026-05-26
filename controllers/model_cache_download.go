@@ -137,3 +137,34 @@ func resolveHFDownloadOptions(model *aiv1alpha2.Model) hfDownloadOptions {
 	opts.ignorePatterns = sanitizeHFPatterns(opts.ignorePatterns)
 	return opts
 }
+
+// expectedHFCacheFiles returns the list of relative paths (under the
+// model cache directory) that MUST exist and be non-empty after a
+// successful HF prefetch. The cache-stage script uses this to refuse
+// to write its success marker when snapshot_download returned without
+// actually pulling the required files — the common silent-failure
+// modes are (a) allow_patterns matched nothing, (b) the repo is gated
+// and HF_TOKEN was missing for a specific file, and (c) a network
+// hiccup that huggingface_hub absorbed.
+//
+// We currently only return non-empty for backends where a single
+// concrete filename is in the spec (llamacpp/vllm + ggufFile). For
+// other backends the controller has no way to know up-front which
+// specific files MUST be present, so we leave the check disabled and
+// let the existing "size of downloaded tree" heuristics catch
+// failures at activation time. Tightening this is future work.
+func expectedHFCacheFiles(model *aiv1alpha2.Model) []string {
+	cfg := model.Spec.GetConfigMap()
+	backendName := strings.ToLower(strings.TrimSpace(model.Spec.Backend))
+	if backendName != backend.NameLlamaCpp && backendName != "llama.cpp" && backendName != backend.NameVLLM {
+		return nil
+	}
+	var out []string
+	if ggufFile := configStringValue(cfg, "ggufFile", "modelFile"); ggufFile != "" {
+		out = append(out, ggufFile)
+	}
+	if mmproj := configStringValue(cfg, "mmproj"); mmproj != "" && !strings.HasPrefix(mmproj, "/") {
+		out = append(out, mmproj)
+	}
+	return out
+}
