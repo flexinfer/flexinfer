@@ -255,6 +255,20 @@ func (r *ModelReconciler) jobForLocalHFPrefetch(model *aiv1alpha2.Model) (*batch
 		)
 	}
 
+	// EXPECTED_FILES is the post-download integrity check. We list the
+	// files we contractually require for the model to be loadable; the
+	// script verifies each is present and non-empty before writing the
+	// success marker. Without this guard, snapshot_download can return
+	// successfully even when nothing matched allow_patterns or the repo
+	// is gated and HF_TOKEN was missing — leaving an empty cache dir
+	// that the controller then trusts forever.
+	if expected := expectedHFCacheFiles(model); len(expected) > 0 {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "EXPECTED_FILES",
+			Value: strings.Join(expected, "\n"),
+		})
+	}
+
 	script := fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
@@ -262,6 +276,7 @@ DEST_DIR="/models"
 MARKER="/models/%s"
 VAE_REPO="${VAE_REPO:-}"
 VAE_DEST_DIR="${VAE_DEST_DIR:-}"
+EXPECTED_FILES="${EXPECTED_FILES:-}"
 
 if [ -f "$MARKER" ]; then
   if [ -z "$VAE_REPO" ] || [ -d "$VAE_DEST_DIR" ]; then
@@ -278,6 +293,7 @@ pip install --no-cache-dir huggingface_hub hf_transfer
 MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
 import json
 import os
+import sys
 
 from huggingface_hub import snapshot_download
 
@@ -303,14 +319,43 @@ if ignore_patterns:
 if revision:
     download_kwargs["revision"] = revision
 
-snapshot_download(**download_kwargs)
+print(f"snapshot_download repo_id={repo_id} allow={allow_patterns} ignore={ignore_patterns} token_present={bool(token)}", flush=True)
+try:
+    snapshot_download(**download_kwargs)
+except Exception as exc:
+    print(f"snapshot_download FAILED: {type(exc).__name__}: {exc}", file=sys.stderr, flush=True)
+    raise
 
 vae_repo = os.environ.get("VAE_REPO", "").strip()
 if vae_repo:
     vae_dir = os.environ.get("VAE_DEST_DIR", "")
-    print(f"Downloading VAE: {vae_repo} -> {vae_dir}")
+    print(f"Downloading VAE: {vae_repo} -> {vae_dir}", flush=True)
     snapshot_download(repo_id=vae_repo, local_dir=vae_dir, local_dir_use_symlinks=False, cache_dir=cache_dir, token=token)
 PY
+
+# Post-download integrity check. snapshot_download is allowed to
+# return "successfully" with zero files matched (e.g. allow_patterns
+# typo, repo gated and HF_TOKEN missing for a sub-resource). Without
+# this guard the controller observes a successful job, writes the
+# marker, and the next reconcile trusts the empty cache forever.
+#
+# We iterate via word-splitting (IFS includes newline by default), so
+# EXPECTED_FILES is treated as a whitespace-separated list. HF model
+# filenames don't contain spaces in practice.
+if [ -n "$EXPECTED_FILES" ]; then
+  echo "Verifying expected files under $DEST_DIR..."
+  for rel in $EXPECTED_FILES; do
+    full="$DEST_DIR/$rel"
+    if [ ! -s "$full" ]; then
+      echo "FATAL: refusing to write marker — required file '$rel' not present (or empty) at '$full'." >&2
+      echo "       snapshot_download likely returned without pulling the requested file." >&2
+      echo "       Check HF_TOKEN, repo gating, allow_patterns, and the ggufFile spec value." >&2
+      exit 1
+    fi
+  done
+  echo "All expected files present."
+fi
+
 touch "$MARKER"
 echo "Local HF staging complete."
 `, modelID, markerName)
