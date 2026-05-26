@@ -28,9 +28,15 @@ type ReportConfig struct {
 	Mode               string  `json:"mode"`
 	Accept             string  `json:"accept"`
 	Seed               int64   `json:"seed"`
-	MockAcceptance     float64 `json:"mock_acceptance"`
-	MockDecodeMsPerTok int     `json:"mock_decode_ms_per_token"`
-	MockDraftMsPerTok  int     `json:"mock_draft_ms_per_token"`
+	Backend            string  `json:"backend"`
+	MockAcceptance     float64 `json:"mock_acceptance,omitempty"`
+	MockDecodeMsPerTok int     `json:"mock_decode_ms_per_token,omitempty"`
+	MockDraftMsPerTok  int     `json:"mock_draft_ms_per_token,omitempty"`
+	HTTPDraftURL       string  `json:"http_draft_url,omitempty"`
+	HTTPVerifyURL      string  `json:"http_verify_url,omitempty"`
+	HTTPDraftModel     string  `json:"http_draft_model,omitempty"`
+	HTTPVerifyModel    string  `json:"http_verify_model,omitempty"`
+	HTTPPromptTopK     int     `json:"http_prompt_logprobs_topk,omitempty"`
 	CorpusSize         int     `json:"corpus_size"`
 }
 

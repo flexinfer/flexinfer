@@ -120,6 +120,29 @@ func (m *mockBackend) Verify(
 	return out, nil
 }
 
+// Decode simulates "decode one token at a time with the verifier",
+// i.e. the no-spec-decode baseline. Each emitted token pays one
+// verifyLatency tick — matching the per-token cost the spec-decode loop
+// is trying to amortise. The returned tokens' text/ID values are
+// synthetic but stable so the bench's accounting works.
+func (m *mockBackend) Decode(ctx context.Context, _ string, maxTokens int) ([]spec_decode.Token, error) {
+	if maxTokens <= 0 {
+		return nil, nil
+	}
+	out := make([]spec_decode.Token, 0, maxTokens)
+	for i := 0; i < maxTokens; i++ {
+		if err := sleepOrCancel(ctx, m.verifyLatency); err != nil {
+			return out, err
+		}
+		m.draftCounter++
+		out = append(out, spec_decode.Token{
+			ID:   m.draftCounter,
+			Text: fmt.Sprintf("v%d ", m.draftCounter),
+		})
+	}
+	return out, nil
+}
+
 // sleepOrCancel sleeps for d unless the context is cancelled first, in
 // which case it returns ctx.Err immediately.
 func sleepOrCancel(ctx context.Context, d time.Duration) error {
