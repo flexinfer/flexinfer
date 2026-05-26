@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -124,9 +125,65 @@ type completionsResponse struct {
 	} `json:"usage"`
 }
 
+// completionLogprob covers two on-the-wire shapes:
+//
+//  1. vLLM (OpenAI-compatible): parallel arrays
+//     {"tokens": ["a","b"], "token_logprobs": [-0.1,-0.4]}
+//
+//  2. llama.cpp: array of per-token records under "content", carrying
+//     real integer token IDs and (optionally) top_logprobs
+//     {"content":[{"id":42,"token":"a","logprob":-0.1,"top_logprobs":[...]}, ...]}
+//
+// The Draft path uses normalize() to fold both into a uniform slice so
+// the rest of the code stays single-shape. The bench prefers
+// llama.cpp's native integer IDs when available (better than our
+// fnv32a hash fallback because they're the model's real tokenizer
+// IDs, which makes acceptance-rate comparison across configs more
+// directly meaningful).
 type completionLogprob struct {
-	Tokens        []string  `json:"tokens"`
-	TokenLogprobs []float64 `json:"token_logprobs"`
+	Tokens        []string              `json:"tokens"`
+	TokenLogprobs []float64             `json:"token_logprobs"`
+	Content       []llamaContentLogprob `json:"content"`
+}
+
+type llamaContentLogprob struct {
+	ID      int     `json:"id"`
+	Token   string  `json:"token"`
+	Logprob float64 `json:"logprob"`
+}
+
+// normalizedToken is what Draft consumes: text + logprob + optional
+// native ID. When NativeID is non-zero the bench uses it; otherwise
+// it falls back to the fnv32a text hash so accept-by-equality keeps
+// working.
+type normalizedToken struct {
+	Text     string
+	Logprob  float64
+	NativeID int
+}
+
+// normalize collapses both wire shapes into a single token slice.
+func (c *completionLogprob) normalize() []normalizedToken {
+	if c == nil {
+		return nil
+	}
+	if len(c.Content) > 0 {
+		out := make([]normalizedToken, len(c.Content))
+		for i, e := range c.Content {
+			out[i] = normalizedToken{Text: e.Token, Logprob: e.Logprob, NativeID: e.ID}
+		}
+		return out
+	}
+	n := len(c.Tokens)
+	out := make([]normalizedToken, n)
+	for i := 0; i < n; i++ {
+		var lp float64
+		if i < len(c.TokenLogprobs) {
+			lp = c.TokenLogprobs[i]
+		}
+		out[i] = normalizedToken{Text: c.Tokens[i], Logprob: lp}
+	}
+	return out
 }
 
 type promptLogprobEntry struct {
@@ -172,20 +229,20 @@ func (b *httpBackend) Draft(ctx context.Context, prompt string, n int) ([]spec_d
 	if len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("draft: empty choices array")
 	}
-	lp := resp.Choices[0].Logprobs
-	if lp == nil || len(lp.Tokens) == 0 {
-		return nil, fmt.Errorf("draft: response has no logprobs.tokens (set logprobs=1 supported by backend?)")
+	toks := resp.Choices[0].Logprobs.normalize()
+	if len(toks) == 0 {
+		return nil, fmt.Errorf("draft: response has no logprobs.tokens / logprobs.content (set logprobs=1 supported by backend?)")
 	}
-	if len(lp.TokenLogprobs) != len(lp.Tokens) {
-		return nil, fmt.Errorf("draft: logprob/token length mismatch (%d vs %d)",
-			len(lp.TokenLogprobs), len(lp.Tokens))
-	}
-	out := make([]spec_decode.Token, 0, len(lp.Tokens))
-	for i, text := range lp.Tokens {
+	out := make([]spec_decode.Token, 0, len(toks))
+	for _, t := range toks {
+		id := t.NativeID
+		if id == 0 {
+			id = tokenIDFromText(t.Text)
+		}
 		out = append(out, spec_decode.Token{
-			ID:      tokenIDFromText(text),
-			Text:    text,
-			Logprob: lp.TokenLogprobs[i],
+			ID:      id,
+			Text:    t.Text,
+			Logprob: t.Logprob,
 		})
 	}
 	return out, nil
@@ -286,44 +343,74 @@ func (b *httpBackend) Decode(ctx context.Context, prompt string, maxTokens int) 
 	if len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("baseline decode: empty choices")
 	}
-	lp := resp.Choices[0].Logprobs
-	if lp == nil || len(lp.Tokens) == 0 {
-		return nil, fmt.Errorf("baseline decode: response has no logprobs.tokens")
+	toks := resp.Choices[0].Logprobs.normalize()
+	if len(toks) == 0 {
+		return nil, fmt.Errorf("baseline decode: response has no logprobs.tokens / logprobs.content")
 	}
-	out := make([]spec_decode.Token, 0, len(lp.Tokens))
-	for i, text := range lp.Tokens {
-		var lpv float64
-		if i < len(lp.TokenLogprobs) {
-			lpv = lp.TokenLogprobs[i]
+	out := make([]spec_decode.Token, 0, len(toks))
+	for _, t := range toks {
+		id := t.NativeID
+		if id == 0 {
+			id = tokenIDFromText(t.Text)
 		}
 		out = append(out, spec_decode.Token{
-			ID:      tokenIDFromText(text),
-			Text:    text,
-			Logprob: lpv,
+			ID:      id,
+			Text:    t.Text,
+			Logprob: t.Logprob,
 		})
 	}
 	return out, nil
 }
 
 // extractLogprob picks the verifier's argmax (rank=1 entry) and the
-// logprob it assigned to the draft's candidate at this position. If the
-// draft candidate is not present in the returned top-K, we synthesise a
-// very-negative logprob so AcceptModifiedRejection rejects with
-// probability ~1. AcceptGreedy still works correctly because it only
-// compares argmax.ID vs draft.ID.
+// logprob it assigned to the draft's candidate at this position.
+//
+// Token-ID alignment: vLLM's prompt_logprobs returns the verifier's
+// NATIVE integer token IDs as the outer dict key (e.g. "9079" →
+// " Paris"). The draft from llama.cpp also returns native integer
+// IDs. When both models share the same vocab/tokenizer (Gemma-3
+// e4b ↔ Gemma-3 26b is the canonical pairing), draft.ID == verifier
+// native ID is the right accept-by-equality check.
+//
+// If the draft has a synthetic fnv32a ID (because the draft backend
+// didn't expose native IDs), we fall back to text equality and put
+// a fnv32a hash of the argmax text on argmax.ID — which then matches
+// the draft side's hash. Either path keeps AcceptGreedy correct.
+//
+// If the draft's candidate doesn't appear in the verifier's returned
+// top-K we use -inf so AcceptModifiedRejection rejects ~100%.
 func extractLogprob(entry map[string]promptLogprobEntry, draft spec_decode.Token) spec_decode.Logprob {
 	var argmax spec_decode.Token
-	draftLP := -math.MaxFloat32 // effectively -inf for AcceptModifiedRejection
+	draftLP := -math.MaxFloat32
 
-	for _, e := range entry {
+	// Decide ID derivation: native int if the verifier exposed it,
+	// fnv32a hash if not. The verifier ALWAYS exposes it in vLLM's
+	// prompt_logprobs format (the outer key), so the native path is
+	// the common case. Drafts with NativeID=0 (fallback) flip us into
+	// hash mode and we re-key the draft's logprob lookup by text.
+	useNative := draft.ID > 0 && looksLikeNativeID(draft.ID)
+
+	for keyStr, e := range entry {
+		var entryID int
+		if useNative {
+			entryID = parseNativeID(keyStr)
+		} else {
+			entryID = tokenIDFromText(e.DecodedToken)
+		}
 		if e.Rank == 1 {
 			argmax = spec_decode.Token{
-				ID:      tokenIDFromText(e.DecodedToken),
+				ID:      entryID,
 				Text:    e.DecodedToken,
 				Logprob: e.Logprob,
 			}
 		}
-		if e.DecodedToken == draft.Text {
+		var matches bool
+		if useNative {
+			matches = entryID == draft.ID
+		} else {
+			matches = e.DecodedToken == draft.Text
+		}
+		if matches {
 			draftLP = e.Logprob
 		}
 	}
@@ -331,6 +418,26 @@ func extractLogprob(entry map[string]promptLogprobEntry, draft spec_decode.Token
 		Argmax:                argmax,
 		DraftCandidateLogprob: draftLP,
 	}
+}
+
+// looksLikeNativeID reports whether an int is plausibly a native
+// vocabulary token ID (small positive) vs a fnv32a synthetic hash
+// (uniformly distributed across the 31-bit range). Real tokenizer
+// vocab sizes top out around 250K (Gemma3 = 262144), so anything
+// above ~1M is almost certainly a hash.
+func looksLikeNativeID(id int) bool {
+	return id > 0 && id < 1_000_000
+}
+
+// parseNativeID strips the verifier's outer dict key (a stringified
+// int) back to an int. Returns 0 on parse failure, which downstream
+// treats as "no native ID".
+func parseNativeID(s string) int {
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0
+	}
+	return n
 }
 
 // countPromptTokens hits the verifier with the prompt alone and reads
