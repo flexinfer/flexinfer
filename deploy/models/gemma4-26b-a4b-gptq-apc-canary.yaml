@@ -1,0 +1,122 @@
+# Gemma4 26B-A4B GPTQ — Automatic Prefix Caching (APC) canary.
+#
+# F4-prefix-cache-flip canary from .loom/brainstorm-f4-long-context-agent-2026-05-25.md.
+# Mirrors the production warm primary `gemma4-26b-a4b-gptq` exactly EXCEPT for:
+#
+#   - enablePrefixCaching: true        (vs false on primary)
+#   - gpuMemoryUtilization: "0.94"     (vs "0.98" on primary; leaves headroom
+#                                       for APC block pool at 32k FP8 KV)
+#
+# Posture: serverless, scale-to-zero, low priority (100) under the same
+# `7900xtx-textgen` shared GPU group. The warm primary at priority 350 always
+# wins arbitration; the canary only activates when an operator preempts the
+# primary via `flexinfer.ai/pause` (see runbook below).
+#
+# This canary never carries production traffic. ServiceLabels and litellm
+# aliases are isolated (`gemma4-26b-apc-canary` only) so the shared-route
+# proxy load-balancer never routes to it.
+#
+# Kill-test recipe: alternate two ~30k-token system prompts ABABAB × 5,
+# scrape vllm:prefix_cache_hit_rate. Pass: hit_rate ≥ 50% after the third
+# alternation. Fail: hit_rate <20% — eviction thrash, APC at 32k holds <2
+# distinct prefixes. Full runbook in
+# `.loom/ralph-f4-prefix-cache-flip-canary-2026-05-26.md`.
+#
+# Promotion path: if the kill-test passes, the production primary at
+# `deploy/models/gemma4-26b-a4b-gptq.yaml` flips its two fields to match,
+# and this canary is either retired or kept as a regression-detection lane.
+#
+# Backout: `git revert` removes the canary Model. Primary is untouched
+# throughout the slice.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gemma4-26b-a4b-gptq-apc-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/canary: f4-prefix-cache-flip
+    flexinfer.ai/canary-plan: .loom/ralph-f4-prefix-cache-flip-canary-2026-05-26.md
+    flexinfer.ai/promotion-state: kill-test-pending
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:310988969f3448ccb7b6001d36df0610c40a0354cacbd7e3410cf9d9592dd187
+  source: pvc://gemma4-26b-a4b-gptq/gemma4-26b-a4b-gptq/gptq-w4-g128-attnfp16-clean
+  cache:
+    strategy: SharedPVC
+    storageClass: local-path
+    hostPath: /var/lib/flexinfer/models
+    size: 50Gi
+  gpu:
+    vendor: amd
+    # Same iGPU dedup trick as the primary: count=2 claims both AMD GPU slots
+    # on cblevins-7900xtx so hipVisibleDevices="0" deterministically pins to
+    # the discrete card. Lowering this to 1 lets the AMD plugin schedule on
+    # the iGPU → immediate page-fault on engine init.
+    count: 2
+    vramEstimateMB: 16000
+    shared: 7900xtx-textgen
+    # Low priority: warm primary at 350 always wins. Canary only activates
+    # when operator pauses the primary.
+    priority: 100
+  serverless:
+    enabled: true
+    minReplicas: 0
+    # Short idle timeout — canary is operator-driven, no need to hold GPU.
+    idleTimeout: 10m
+    coldStartTimeout: 15m
+  config:
+    quantization: gptq
+    dtype: "half"
+    maxModelLen: 32768
+    # APC needs headroom for the block pool. 0.98 → 0.94 on the production
+    # math (weights 13 GB + FP8 KV 5 GB + framework 3 GB = 21 GB in the 22 GB
+    # cap) leaves ~1 GB extra. If the canary OOMs on engine init, this is
+    # the first knob to drop further (0.92).
+    gpuMemoryUtilization: "0.94"
+    kvCacheDtype: fp8_e4m3
+    maxNumSeqs: 1
+    trustRemoteCode: true
+    attentionBackend: TRITON_ATTN
+    servedModelName: gemma4-26b-a4b-gptq-apc-canary
+    enableToolCalling: true
+    toolCallParser: gemma4
+    reasoningParser: gemma4
+    # THE FLIP. Everything else in this manifest mirrors the warm primary
+    # so the kill-test isolates APC's effect cleanly.
+    enablePrefixCaching: true
+    maxNumBatchedTokens: 256
+    disableLogStats: false
+    enforceEager: false
+    disableHybridKVCacheManager: true
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    warmPolicy: ondemand
+    # Match the production SD config so the canary's APC measurement isn't
+    # confounded by a different decode-time speculator. APC affects prefill;
+    # SD affects decode. They compose orthogonally on paper — the kill-test
+    # is whether they compose in practice on this GPTQ+FP8 KV combo at 32k.
+    speculativeConfig: '{"method": "ngram", "num_speculative_tokens": 7, "prompt_lookup_max": 6, "prompt_lookup_min": 1}'
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+    limits:
+      cpu: "4"
+      memory: 16Gi
+  # Isolated routes — no shared aliases. The warm primary keeps every
+  # production label (quality-chat / fast-chat / gpt-4 / etc.); this canary
+  # is only addressable by its own name.
+  serviceLabels:
+    - gemma4-26b-apc-canary
+  litellm:
+    enabled: true
+    servedModelName: gemma4-26b-a4b-gptq-apc-canary
+    aliases:
+      - gemma4-26b-apc-canary
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

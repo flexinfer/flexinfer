@@ -20,6 +20,7 @@ resources:
   # - gemma4-31b-gptq.yaml          # disabled; promoted-state pending dense rebuild
   # - fast-chat-7900xtx.yaml        # disabled 2026-05-16; Gemma4 26B now serves fast-chat/default-chat.
   - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (7900xtx instance #1)
+  - gemma4-26b-a4b-gptq-apc-canary.yaml  # F4-prefix-cache-flip canary; minReplicas=0, low priority, operator-activated kill-test lane (.loom/ralph-f4-prefix-cache-flip-canary-2026-05-26.md)
   # Slice 1 kill-test v3 (whisper-kill-test-v3.yaml) was torn down 2026-05-20
   # after the live evaluation. The cache-layout assumption PASSED: Local +
   # nvme-1r-gpu staged 1.6 GB of Whisper weights at
