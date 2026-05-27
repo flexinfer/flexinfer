@@ -1,8 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -501,4 +504,95 @@ func TestRefreshServiceLabelCache_ActiveAnnotationPrecedence(t *testing.T) {
 	// No label group since only one claimant
 	_, ok = p.resolver.labelGroupModels.Load("model-a")
 	assert.False(t, ok, "should not form a group when only one model has active labels")
+}
+
+// TestRefreshServiceLabelCache_SharedLabelLogDedup proves the
+// "serviceLabel shared by multiple models" line is emitted exactly once per
+// (label, claimant-set) transition rather than on every refresh tick.
+// This is the Slice γ fix from the 2026-05-25 gfx906 proxy-soak brainstorm:
+// before the fix, ~10 shared labels × every-5s refresh drowned real proxy
+// signals under a 1:10 noise ratio.
+func TestRefreshServiceLabelCache_SharedLabelLogDedup(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	ctx := context.Background()
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	svcA := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "model-a",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationServiceLabels: "abliterated",
+			},
+		},
+		Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8000}}},
+	}
+	svcB := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "model-b",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationServiceLabels: "abliterated",
+			},
+		},
+		Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8000}}},
+	}
+	require.NoError(t, p.client.Create(ctx, svcA))
+	require.NoError(t, p.client.Create(ctx, svcB))
+
+	// First refresh: shared, expect exactly one log line.
+	p.resolver.refreshServiceLabelCache(ctx)
+	assert.Equal(t, 1, strings.Count(buf.String(), "serviceLabel shared by multiple models"),
+		"first observation should log once")
+
+	// Three more refreshes with unchanged membership: still exactly one.
+	for i := 0; i < 3; i++ {
+		p.resolver.lastCacheRefresh = time.Time{} // bypass TTL
+		p.resolver.refreshServiceLabelCache(ctx)
+	}
+	assert.Equal(t, 1, strings.Count(buf.String(), "serviceLabel shared by multiple models"),
+		"steady-state refreshes must not re-log")
+
+	// Add a third claimant: membership changed, expect one additional log line.
+	svcC := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "model-c",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationServiceLabels: "abliterated",
+			},
+		},
+		Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8000}}},
+	}
+	require.NoError(t, p.client.Create(ctx, svcC))
+	p.resolver.lastCacheRefresh = time.Time{}
+	p.resolver.refreshServiceLabelCache(ctx)
+	assert.Equal(t, 2, strings.Count(buf.String(), "serviceLabel shared by multiple models"),
+		"membership change should re-log")
+
+	// Drop label below 2 claimants then re-share: should log again.
+	require.NoError(t, p.client.Delete(ctx, svcB))
+	require.NoError(t, p.client.Delete(ctx, svcC))
+	p.resolver.lastCacheRefresh = time.Time{}
+	p.resolver.refreshServiceLabelCache(ctx)
+	// Still 2 — single claimant doesn't log, but loggedSharedLabels was cleared.
+
+	require.NoError(t, p.client.Create(ctx, &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "model-b2",
+			Namespace: "default",
+			Annotations: map[string]string{
+				AnnotationServiceLabels: "abliterated",
+			},
+		},
+		Spec: corev1.ServiceSpec{Ports: []corev1.ServicePort{{Port: 8000}}},
+	}))
+	p.resolver.lastCacheRefresh = time.Time{}
+	p.resolver.refreshServiceLabelCache(ctx)
+	assert.Equal(t, 3, strings.Count(buf.String(), "serviceLabel shared by multiple models"),
+		"re-sharing after a drop should log again")
 }
