@@ -164,20 +164,37 @@ func (f *admissionFilter) checkAdmission(
 
 // writeAdmissionRejection writes a 413 Payload Too Large response with a
 // structured OpenAI-style error body naming the lane, ceiling, and estimated
-// breach amount.
+// breach amount, plus a flexinfer `admission` extension carrying numeric
+// fields a client can use to render an affordance (e.g. "trim by N tokens").
+// See docs/planning/context-bounded-admission-spec.md (F4-413-as-feature).
 func writeAdmissionRejection(w http.ResponseWriter, modelName string, d admissionDecision) {
+	submitted := d.EstimatedPromptTokens + d.MaxTokens
+	over := submitted - d.Ceiling
+	if over < 0 {
+		// Defensive: this helper is only called on a reject path where
+		// submitted > ceiling, but clamp so the wire contract never lies.
+		over = 0
+	}
+	truncateTo := d.Ceiling - d.MaxTokens
+	if truncateTo < 0 {
+		// max_tokens alone meets or exceeds the budget — the client must
+		// shrink max_tokens, not the prompt. Zero communicates "no truncation
+		// of the prompt will help."
+		truncateTo = 0
+	}
 	msg := fmt.Sprintf(
 		"prompt + max_tokens (%d + %d = %d) exceeds %q context budget %d (window %d, safety margin applied)",
-		d.EstimatedPromptTokens, d.MaxTokens, d.EstimatedPromptTokens+d.MaxTokens,
+		d.EstimatedPromptTokens, d.MaxTokens, submitted,
 		modelName, d.Ceiling, d.RawContextWindow,
 	)
-	validation.WriteError(
-		w,
-		http.StatusRequestEntityTooLarge,
-		msg,
-		"invalid_request_error",
-		admissionRejectCode,
-	)
+	validation.WriteAdmissionError(w, msg, admissionRejectCode, validation.AdmissionDetails{
+		Model:             modelName,
+		TokensBudget:      d.Ceiling,
+		TokensSubmitted:   submitted,
+		TokensOver:        over,
+		SuggestTruncateTo: truncateTo,
+		ContextWindow:     d.RawContextWindow,
+	})
 }
 
 // boolLabel returns the Prometheus-friendly label form of a bool ("true" or

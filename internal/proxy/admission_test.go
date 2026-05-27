@@ -2,12 +2,14 @@ package proxy
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/flexinfer/flexinfer/pkg/modelmeta"
+	"github.com/flexinfer/flexinfer/pkg/validation"
 )
 
 func TestAdmissionFilter_DisabledNoEnforcement(t *testing.T) {
@@ -192,6 +194,60 @@ func TestWriteAdmissionRejection_413WithCode(t *testing.T) {
 	}
 	if !strings.Contains(body, "5000") {
 		t.Errorf("body missing estimated tokens: %q", body)
+	}
+
+	// F4-413-as-feature: the rejection MUST carry the structured admission
+	// extension so clients can render an affordance instead of a generic error.
+	var resp validation.OpenAIErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v; body=%q", err, body)
+	}
+	if resp.Admission == nil {
+		t.Fatalf("admission extension missing; body=%q", body)
+	}
+	got := *resp.Admission
+	want := validation.AdmissionDetails{
+		Model:             "gemma4-26b-a4b-gptq",
+		TokensBudget:      4000,
+		TokensSubmitted:   6000, // 5000 + 1000
+		TokensOver:        2000, // 6000 - 4000
+		SuggestTruncateTo: 3000, // 4000 - 1000
+		ContextWindow:     4096,
+	}
+	if got != want {
+		t.Errorf("admission details = %+v, want %+v", got, want)
+	}
+}
+
+// TestWriteAdmissionRejection_MaxTokensExceedsBudget verifies the
+// suggest_truncate_to=0 sentinel when max_tokens alone meets or exceeds the
+// budget — in that case there is no prompt size that would have fit.
+func TestWriteAdmissionRejection_MaxTokensExceedsBudget(t *testing.T) {
+	w := httptest.NewRecorder()
+	d := admissionDecision{
+		Enforced:              true,
+		Allow:                 false,
+		Reason:                "over_budget",
+		EstimatedPromptTokens: 100,
+		MaxTokens:             5000, // alone exceeds Ceiling
+		Ceiling:               4000,
+		RawContextWindow:      4096,
+	}
+	writeAdmissionRejection(w, "test-model", d)
+
+	var resp validation.OpenAIErrorResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if resp.Admission == nil {
+		t.Fatalf("admission extension missing")
+	}
+	if resp.Admission.SuggestTruncateTo != 0 {
+		t.Errorf("suggest_truncate_to = %d, want 0 when max_tokens >= ceiling",
+			resp.Admission.SuggestTruncateTo)
+	}
+	if resp.Admission.TokensOver != 1100 { // (100+5000) - 4000
+		t.Errorf("tokens_over = %d, want 1100", resp.Admission.TokensOver)
 	}
 }
 
