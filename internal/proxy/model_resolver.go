@@ -28,6 +28,11 @@ type ModelResolver struct {
 	labelGroupModels    sync.Map // map[string][]string: modelName -> []relatedModelNames (reverse index)
 	serviceLabelCacheMu sync.Mutex
 	lastCacheRefresh    time.Time
+	// loggedSharedLabels remembers the last-logged claimant set per shared label
+	// so steady-state refreshes (every serviceLabelCacheTTL) stay silent.
+	// We only emit when membership transitions: first observation, member added
+	// or removed, or label drops below 2 claimants.
+	loggedSharedLabels map[string]string
 
 	// Model alias resolution
 	modelAliasCache   sync.Map // map[string]string: alias -> K8s model name
@@ -146,13 +151,22 @@ func (r *ModelResolver) refreshServiceLabelCache(ctx context.Context) {
 	// - labelGroupModels: reverse index from model name to all group members
 	groupMembers := make(map[string]map[string]bool) // modelName -> set of related models
 
+	if r.loggedSharedLabels == nil {
+		r.loggedSharedLabels = make(map[string]string)
+	}
+	currentShared := make(map[string]struct{}, len(labelClaims))
 	for label, claimants := range labelClaims {
 		// Sort for deterministic ordering across refreshes so callers using a
 		// round-robin counter against labelGroupCache see stable positions.
 		sort.Strings(claimants)
 		if len(claimants) > 1 {
-			slog.Info("serviceLabel shared by multiple models",
-				"label", label, "models", claimants)
+			signature := strings.Join(claimants, ",")
+			currentShared[label] = struct{}{}
+			if prev, ok := r.loggedSharedLabels[label]; !ok || prev != signature {
+				slog.Info("serviceLabel shared by multiple models",
+					"label", label, "models", claimants)
+				r.loggedSharedLabels[label] = signature
+			}
 		}
 		// First claimant for backward-compat single-model resolution
 		r.serviceLabelCache.Store(label, claimants[0])
@@ -180,6 +194,13 @@ func (r *ModelResolver) refreshServiceLabelCache(ctx context.Context) {
 			members = append(members, m)
 		}
 		r.labelGroupModels.Store(model, members)
+	}
+
+	// Drop labels that are no longer shared so a later re-share is logged again.
+	for label := range r.loggedSharedLabels {
+		if _, still := currentShared[label]; !still {
+			delete(r.loggedSharedLabels, label)
+		}
 	}
 
 	r.lastCacheRefresh = time.Now()
