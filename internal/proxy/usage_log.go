@@ -74,29 +74,74 @@ func isCompletionPath(path string) bool {
 // (prompt_tokens, completion_tokens, finish_reason, ok). ok=false when the
 // body does not parse — usage and finish_reason fields default to zero/empty.
 func extractUsageFields(body []byte) (promptTokens, completionTokens int, finishReason string, ok bool) {
+	pt, ct, fr, _, _, parsed := extractUsageFieldsFull(body)
+	return pt, ct, fr, parsed
+}
+
+// extractUsageFieldsFull is extractUsageFields plus the cached_tokens hint
+// vLLM (and any OpenAI-spec-compliant engine) reports under
+// `usage.prompt_tokens_details.cached_tokens`. When the engine omits the
+// detail block, cachedTokens is -1 and cachedOK is false to distinguish
+// "not reported" from "reported as zero". The F4 instrumentation slice
+// gates the X-Flexinfer-Cached-Tokens response header on cachedOK so
+// engines that don't report the field don't emit a misleading "0".
+func extractUsageFieldsFull(body []byte) (promptTokens, completionTokens int, finishReason string, cachedTokens int, cachedOK bool, ok bool) {
+	cachedTokens = -1
 	var resp struct {
 		Choices []struct {
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 		Usage struct {
-			PromptTokens     int `json:"prompt_tokens"`
-			CompletionTokens int `json:"completion_tokens"`
+			PromptTokens        int `json:"prompt_tokens"`
+			CompletionTokens    int `json:"completion_tokens"`
+			PromptTokensDetails *struct {
+				CachedTokens *int `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &resp); err != nil {
-		return 0, 0, "", false
+		return 0, 0, "", -1, false, false
 	}
 	if len(resp.Choices) > 0 {
 		finishReason = resp.Choices[0].FinishReason
 	}
-	return resp.Usage.PromptTokens, resp.Usage.CompletionTokens, finishReason, true
+	if resp.Usage.PromptTokensDetails != nil && resp.Usage.PromptTokensDetails.CachedTokens != nil {
+		cachedTokens = *resp.Usage.PromptTokensDetails.CachedTokens
+		cachedOK = true
+	}
+	return resp.Usage.PromptTokens, resp.Usage.CompletionTokens, finishReason, cachedTokens, cachedOK, true
 }
+
+// Response headers emitted by the proxy for the F4-instant-followup
+// instrumentation slice. Clients and operators use these to interpret
+// prefix-cache behavior without round-tripping to vLLM metrics.
+//
+//	X-Flexinfer-Upstream-Ms     — time from request received by the proxy
+//	                              to upstream response headers; equals TTFT
+//	                              for streaming completions and total
+//	                              upstream time for non-streaming.
+//	X-Flexinfer-Cached-Tokens   — vLLM-reported
+//	                              usage.prompt_tokens_details.cached_tokens
+//	                              for non-streaming completions; omitted
+//	                              when the engine does not report it (e.g.
+//	                              llama.cpp without prefix-cache stats).
+const (
+	headerUpstreamMs   = "X-Flexinfer-Upstream-Ms"
+	headerCachedTokens = "X-Flexinfer-Cached-Tokens"
+	headerPromptTokens = "X-Flexinfer-Prompt-Tokens"
+	headerFinishReason = "X-Flexinfer-Finish-Reason"
+)
 
 // logUpstreamUsage is wired onto httputil.ReverseProxy.ModifyResponse. For
 // non-streaming OpenAI completion endpoints it buffers the response body to
 // extract token usage, then restores the body so the downstream client
 // receives it unchanged. Streaming responses (text/event-stream) are logged
 // without usage — we deliberately do not buffer SSE.
+//
+// Beyond logging, this hook emits X-Flexinfer-Upstream-Ms on every
+// completion response and X-Flexinfer-Cached-Tokens when the engine
+// reports prefix-cache hit tokens. These are the F4-instant-followup
+// headers from the 2026-05-25 long-context brainstorm.
 //
 // Emits a single slog line per request:
 //
@@ -107,6 +152,13 @@ func (p *Proxy) logUpstreamUsage(resp *http.Response) error {
 		return nil
 	}
 	durMs := time.Since(lc.startedAt).Milliseconds()
+
+	// Surface the upstream timing on every completion response.
+	// For streaming, this is TTFT — ModifyResponse fires on the upstream
+	// 200 OK before the first SSE chunk is forwarded.
+	if isCompletionPath(lc.path) {
+		resp.Header.Set(headerUpstreamMs, strconv.FormatInt(durMs, 10))
+	}
 
 	args := []any{
 		"event", "request_usage",
@@ -138,12 +190,20 @@ func (p *Proxy) logUpstreamUsage(resp *http.Response) error {
 		resp.ContentLength = int64(len(body))
 		resp.Header.Set("Content-Length", strconv.Itoa(len(body)))
 
-		if pt, ct, fr, ok := extractUsageFields(body); ok {
+		if pt, ct, fr, cached, cachedOK, ok := extractUsageFieldsFull(body); ok {
 			args = append(args,
 				"prompt_tokens", pt,
 				"completion_tokens", ct,
 				"finish_reason", fr,
 			)
+			resp.Header.Set(headerPromptTokens, strconv.Itoa(pt))
+			if fr != "" {
+				resp.Header.Set(headerFinishReason, fr)
+			}
+			if cachedOK {
+				args = append(args, "cached_tokens", cached)
+				resp.Header.Set(headerCachedTokens, strconv.Itoa(cached))
+			}
 		}
 	}
 	slog.Info("request usage", args...)
