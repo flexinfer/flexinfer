@@ -16,9 +16,25 @@ break.
 
 The test alternates two distinct ~30k-token system prompts A and B with a
 short user suffix per turn, pattern ABABAB × N (default 5). It captures
-per-turn TTFT and the runtime's reported `usage.prompt_tokens`, then
-scrapes `vllm:prefix_cache_hit_rate` from the pod's /metrics endpoint
-before and after to derive an aggregate hit rate over the run.
+per-turn TTFT and the runtime's reported `usage.prompt_tokens`. Two
+independent signals derive an aggregate hit rate:
+
+1. Proxy response headers (preferred — added in MR !524):
+       X-Flexinfer-Upstream-Ms     proxy-measured runtime time
+       X-Flexinfer-Cached-Tokens   vLLM-reported (absent on llama.cpp)
+       X-Flexinfer-Prompt-Tokens   cross-check vs usage.prompt_tokens
+       X-Flexinfer-Finish-Reason   cross-check vs choices[0].finish_reason
+   Sum(cached_tokens) / Sum(prompt_tokens) over header-bearing turns
+   gives a header-derived aggregate that needs only the proxy
+   port-forward, not a second port-forward to the canary pod's
+   /metrics endpoint. Per-turn cached_ratio also exposes asymmetric
+   eviction (e.g. A always hits, B always misses) that an aggregate
+   counter rate hides.
+
+2. /metrics scrape (legacy — still supported as cross-check):
+       vllm:prefix_cache_hits_total / vllm:prefix_cache_queries_total
+   delta before/after run, and after the third alternation, so the
+   aggregate hit rate is comparable across runs.
 
 Pass criterion (default):
     Aggregate hit rate >= 0.50 AFTER the third alternation. Cache holds
@@ -81,6 +97,11 @@ DEFAULT_TIMEOUT_S = 600
 PASS_HIT_RATE = 0.50
 FAIL_HIT_RATE = 0.20
 
+HEADER_UPSTREAM_MS = "X-Flexinfer-Upstream-Ms"
+HEADER_CACHED_TOKENS = "X-Flexinfer-Cached-Tokens"
+HEADER_PROMPT_TOKENS = "X-Flexinfer-Prompt-Tokens"
+HEADER_FINISH_REASON = "X-Flexinfer-Finish-Reason"
+
 # Two seed words used to build the two distinct ~30k-token prefixes. They are
 # topic-disjoint so vLLM cannot deduplicate across them. The body is filler
 # repeated to reach the target token count; the suffix is what the model
@@ -131,6 +152,24 @@ def now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _header_int(headers, name: str) -> int | None:
+    """Parse a non-negative integer response header. Returns None if absent,
+    empty, or non-parseable so the caller can distinguish "engine did not
+    report" from a legitimate zero."""
+    if headers is None:
+        return None
+    raw = headers.get(name)
+    if raw is None or raw == "":
+        return None
+    try:
+        v = int(raw)
+    except (TypeError, ValueError):
+        return None
+    if v < 0:
+        return None
+    return v
+
+
 def post_chat(
     endpoint: str,
     model: str,
@@ -161,6 +200,7 @@ def post_chat(
     try:
         with urllib.request.urlopen(req, timeout=timeout_s) as resp:
             duration_ms = now_ms() - t0
+            resp_headers = resp.headers
             payload = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
         return {
@@ -180,14 +220,36 @@ def post_chat(
     choices = payload.get("choices") or [{}]
     finish = choices[0].get("finish_reason", "")
     content = choices[0].get("message", {}).get("content", "") or ""
+
+    upstream_ms = _header_int(resp_headers, HEADER_UPSTREAM_MS)
+    cached_tokens = _header_int(resp_headers, HEADER_CACHED_TOKENS)
+    header_prompt_tokens = _header_int(resp_headers, HEADER_PROMPT_TOKENS)
+    header_finish_reason = (
+        resp_headers.get(HEADER_FINISH_REASON) if resp_headers else None
+    )
+
+    prompt_tokens = usage.get("prompt_tokens", 0) or 0
+    cached_ratio: float | None
+    if cached_tokens is not None and prompt_tokens > 0:
+        cached_ratio = cached_tokens / prompt_tokens
+    else:
+        cached_ratio = None
+
     return {
         "ok": True,
         "duration_ms": duration_ms,
-        "prompt_tokens": usage.get("prompt_tokens", 0),
+        "upstream_ms": upstream_ms,
+        "prompt_tokens": prompt_tokens,
         "completion_tokens": usage.get("completion_tokens", 0),
         "total_tokens": usage.get("total_tokens", 0),
         "finish_reason": finish,
         "content_head": content[:120],
+        # Proxy header signals (None when engine doesn't report — e.g. llama.cpp
+        # omits cached_tokens, so we distinguish "absent" from "zero").
+        "cached_tokens": cached_tokens,
+        "cached_ratio": cached_ratio,
+        "header_prompt_tokens": header_prompt_tokens,
+        "header_finish_reason": header_finish_reason,
     }
 
 
@@ -229,9 +291,43 @@ def hit_rate(snap_before: dict, snap_after: dict) -> float | None:
     return d_hits / d_queries
 
 
+def header_cached_rate(
+    turns: list[dict], rounds_max: int | None = None
+) -> float | None:
+    """Compute aggregate Sum(cached_tokens) / Sum(prompt_tokens) over successful
+    turns whose proxy header reported cached_tokens. Skips turns with no header
+    (e.g. llama.cpp non-vLLM backends). Returns None if no eligible turns.
+
+    rounds_max: when set, only consider turns with round <= rounds_max. The
+    spec's pass criterion anchors on "after the third alternation" (round
+    index 2), so callers pass rounds_max=2 for the post-third snapshot."""
+    total_prompt = 0
+    total_cached = 0
+    eligible = 0
+    for t in turns:
+        if not t.get("ok"):
+            continue
+        if rounds_max is not None and t.get("round", -1) > rounds_max:
+            continue
+        cached = t.get("cached_tokens")
+        prompt = t.get("prompt_tokens") or 0
+        if cached is None or prompt <= 0:
+            continue
+        total_prompt += prompt
+        total_cached += cached
+        eligible += 1
+    if eligible == 0 or total_prompt <= 0:
+        return None
+    return total_cached / total_prompt
+
+
 def verdict(rate: float | None) -> tuple[str, str, int]:
     if rate is None:
-        return ("unknown", "no /metrics delta available — re-run with --metrics", 3)
+        return (
+            "unknown",
+            "no hit-rate signal available — engine omitted cached_tokens header AND /metrics unreachable",
+            3,
+        )
     if rate >= PASS_HIT_RATE:
         return ("pass", f"aggregate hit_rate={rate:.3f} >= {PASS_HIT_RATE} gate", 0)
     if rate < FAIL_HIT_RATE:
@@ -245,6 +341,139 @@ def verdict(rate: float | None) -> tuple[str, str, int]:
         f"aggregate hit_rate={rate:.3f} in [{FAIL_HIT_RATE}, {PASS_HIT_RATE}) — re-run with adjusted utilization or longer prompts",
         2,
     )
+
+
+def _run_self_check() -> int:
+    """In-process smoke-check of header parsing and the header_cached_rate
+    aggregator. Spins up a tiny HTTP server emitting !524's response headers,
+    runs post_chat against it, and verifies parse + aggregate behavior. No
+    live canary needed."""
+    import http.server
+    import threading
+
+    canned_headers = {
+        HEADER_UPSTREAM_MS: "567",
+        HEADER_CACHED_TOKENS: "1234",
+        HEADER_PROMPT_TOKENS: "30000",
+        HEADER_FINISH_REASON: "stop",
+    }
+    canned_body = json.dumps(
+        {
+            "id": "self-check",
+            "choices": [
+                {
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "ok"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 30000,
+                "completion_tokens": 1,
+                "total_tokens": 30001,
+            },
+        }
+    ).encode()
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):  # noqa: N802 (urllib method name)
+            length = int(self.headers.get("Content-Length", "0"))
+            self.rfile.read(length)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            for k, v in canned_headers.items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(canned_body)))
+            self.end_headers()
+            self.wfile.write(canned_body)
+
+        def log_message(self, *_args, **_kw):  # silence stderr noise
+            return
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    port = httpd.server_address[1]
+    th = threading.Thread(target=httpd.serve_forever, daemon=True)
+    th.start()
+    try:
+        turn = post_chat(
+            endpoint=f"http://127.0.0.1:{port}",
+            model="self-check",
+            system_prompt="sys",
+            user_suffix="hi",
+            max_tokens=1,
+            timeout_s=5,
+        )
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+    failures: list[str] = []
+
+    def check(cond: bool, msg: str) -> None:
+        if not cond:
+            failures.append(msg)
+
+    check(turn.get("ok") is True, f"turn.ok={turn.get('ok')!r}")
+    check(turn.get("upstream_ms") == 567, f"upstream_ms={turn.get('upstream_ms')!r}")
+    check(
+        turn.get("cached_tokens") == 1234,
+        f"cached_tokens={turn.get('cached_tokens')!r}",
+    )
+    check(
+        turn.get("prompt_tokens") == 30000,
+        f"prompt_tokens={turn.get('prompt_tokens')!r}",
+    )
+    check(
+        turn.get("header_prompt_tokens") == 30000,
+        f"header_prompt_tokens={turn.get('header_prompt_tokens')!r}",
+    )
+    check(
+        turn.get("header_finish_reason") == "stop",
+        f"header_finish_reason={turn.get('header_finish_reason')!r}",
+    )
+    ratio = turn.get("cached_ratio")
+    check(
+        ratio is not None and abs(ratio - (1234 / 30000)) < 1e-9,
+        f"cached_ratio={ratio!r}",
+    )
+
+    # Aggregator: hits + misses + a header-absent row should yield
+    # Sum(cached) / Sum(prompt) across eligible turns only.
+    synth = [
+        {"ok": True, "round": 0, "cached_tokens": 0, "prompt_tokens": 30000},
+        {"ok": True, "round": 1, "cached_tokens": 27000, "prompt_tokens": 30000},
+        {"ok": True, "round": 2, "cached_tokens": 28500, "prompt_tokens": 30000},
+        {"ok": True, "round": 3, "cached_tokens": 29000, "prompt_tokens": 30000},
+        # llama.cpp-style row: header absent
+        {"ok": True, "round": 4, "cached_tokens": None, "prompt_tokens": 30000},
+        # failed turn — ignored
+        {"ok": False, "round": 5, "cached_tokens": 99999, "prompt_tokens": 30000},
+    ]
+    full = header_cached_rate(synth)
+    expected_full = (0 + 27000 + 28500 + 29000) / (30000 * 4)
+    check(
+        full is not None and abs(full - expected_full) < 1e-9,
+        f"header_cached_rate(full)={full!r} expected={expected_full!r}",
+    )
+    post3 = header_cached_rate(synth, rounds_max=2)
+    expected_post3 = (0 + 27000 + 28500) / (30000 * 3)
+    check(
+        post3 is not None and abs(post3 - expected_post3) < 1e-9,
+        f"header_cached_rate(post_third)={post3!r} expected={expected_post3!r}",
+    )
+    empty = header_cached_rate(
+        [{"ok": True, "round": 0, "cached_tokens": None, "prompt_tokens": 30000}]
+    )
+    check(empty is None, f"header_cached_rate(no-eligible)={empty!r}")
+
+    if failures:
+        for f in failures:
+            print(f"[self-check] FAIL: {f}", file=sys.stderr)
+        return 1
+    print(
+        "[self-check] OK: header parse + aggregator behavior verified", file=sys.stderr
+    )
+    return 0
 
 
 def main(argv: list[str]) -> int:
@@ -291,11 +520,25 @@ def main(argv: list[str]) -> int:
         default=DEFAULT_TIMEOUT_S,
         help="per-turn HTTP timeout in seconds (default: 600)",
     )
-    p.add_argument("--report", required=True, help="output JSON report path")
+    p.add_argument(
+        "--report",
+        default=None,
+        help="output JSON report path (required unless --self-check)",
+    )
     p.add_argument(
         "--seed", type=int, default=20260526, help="random seed for user-suffix wording"
     )
+    p.add_argument(
+        "--self-check",
+        action="store_true",
+        help="run in-process header-parse + aggregator smoke check, then exit",
+    )
     args = p.parse_args(argv)
+
+    if args.self_check:
+        return _run_self_check()
+    if not args.report:
+        p.error("--report is required unless --self-check is set")
 
     rng = random.Random(args.seed)
     target_chars = args.prompt_tokens * 4  # ~4 chars/token for Gemma SP English
@@ -321,7 +564,7 @@ def main(argv: list[str]) -> int:
     ]
 
     report = {
-        "schema_version": "flexinfer.f4_apc_eviction_thrash.v1",
+        "schema_version": "flexinfer.f4_apc_eviction_thrash.v2",
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "model": args.model,
         "endpoint": args.endpoint,
@@ -365,9 +608,16 @@ def main(argv: list[str]) -> int:
             t.update({"round": r, "label": label, "suffix": suffix})
             report["turns"].append(t)
             if t["ok"]:
+                cached = t.get("cached_tokens")
+                cached_str = "absent" if cached is None else str(cached)
+                ratio = t.get("cached_ratio")
+                ratio_str = "n/a" if ratio is None else f"{ratio:.3f}"
+                upstream = t.get("upstream_ms")
+                upstream_str = "n/a" if upstream is None else f"{upstream}ms"
                 print(
                     f"[f4-apc] r{r}-{label}: prompt={t['prompt_tokens']} "
                     f"completion={t['completion_tokens']} duration={t['duration_ms']}ms "
+                    f"upstream={upstream_str} cached={cached_str} ratio={ratio_str} "
                     f"head={t['content_head']!r}",
                     file=sys.stderr,
                 )
@@ -403,20 +653,50 @@ def main(argv: list[str]) -> int:
         hit_rate(snap_before, snap_after_third) if snap_after_third else None
     )
 
-    # The spec's pass criterion is "≥ 50% after the third alternation",
-    # so the verdict is driven by post_third_rate when available;
-    # aggregate_rate is reported for context.
-    primary_rate = post_third_rate if post_third_rate is not None else aggregate_rate
+    # Header-derived rates (independent of /metrics; needs only the proxy PF).
+    # post_third anchors on round_idx <= 2 to mirror the /metrics post-third snapshot.
+    header_post_third_rate = header_cached_rate(report["turns"], rounds_max=2)
+    header_aggregate_rate = header_cached_rate(report["turns"])
+
+    # Verdict cascade: /metrics post-third wins when present (matches spec
+    # wording); otherwise fall back to /metrics aggregate, then header post-third,
+    # then header aggregate, then unknown. Header rates are kept in the summary
+    # in all cases for cross-check.
+    primary_rate: float | None
+    primary_source: str
+    if post_third_rate is not None:
+        primary_rate = post_third_rate
+        primary_source = "metrics_post_third"
+    elif aggregate_rate is not None:
+        primary_rate = aggregate_rate
+        primary_source = "metrics_aggregate"
+    elif header_post_third_rate is not None:
+        primary_rate = header_post_third_rate
+        primary_source = "header_post_third"
+    elif header_aggregate_rate is not None:
+        primary_rate = header_aggregate_rate
+        primary_source = "header_aggregate"
+    else:
+        primary_rate = None
+        primary_source = "none"
     v_label, v_reason, exit_code = verdict(primary_rate)
 
     durations = [t["duration_ms"] for t in report["turns"] if t["ok"]]
+    upstream_ms_values = [
+        t["upstream_ms"]
+        for t in report["turns"]
+        if t.get("ok") and t.get("upstream_ms") is not None
+    ]
     completions = [t["completion_tokens"] for t in report["turns"] if t["ok"]]
     report["summary"] = {
         "verdict": v_label,
         "reason": v_reason,
         "primary_hit_rate": primary_rate,
+        "primary_hit_rate_source": primary_source,
         "aggregate_hit_rate": aggregate_rate,
         "post_third_alternation_hit_rate": post_third_rate,
+        "header_aggregate_hit_rate": header_aggregate_rate,
+        "header_post_third_alternation_hit_rate": header_post_third_rate,
         "turn_count": len(report["turns"]),
         "turn_success_count": len(durations),
         "duration_ms_p50": statistics.median(durations) if durations else None,
@@ -424,6 +704,14 @@ def main(argv: list[str]) -> int:
             statistics.quantiles(durations, n=20)[-1]
             if len(durations) >= 20
             else max(durations) if durations else None
+        ),
+        "upstream_ms_p50": (
+            statistics.median(upstream_ms_values) if upstream_ms_values else None
+        ),
+        "upstream_ms_p95": (
+            statistics.quantiles(upstream_ms_values, n=20)[-1]
+            if len(upstream_ms_values) >= 20
+            else max(upstream_ms_values) if upstream_ms_values else None
         ),
         "mean_completion_tokens": statistics.mean(completions) if completions else None,
     }
@@ -436,9 +724,12 @@ def main(argv: list[str]) -> int:
     print(
         f"[f4-apc] verdict={summary['verdict']} "
         f"primary_hit_rate={summary['primary_hit_rate']} "
-        f"aggregate_hit_rate={summary['aggregate_hit_rate']} "
+        f"primary_source={summary['primary_hit_rate_source']} "
+        f"metrics_aggregate={summary['aggregate_hit_rate']} "
+        f"header_aggregate={summary['header_aggregate_hit_rate']} "
         f"turns={summary['turn_success_count']}/{summary['turn_count']} "
-        f"duration_p50={summary['duration_ms_p50']}ms",
+        f"duration_p50={summary['duration_ms_p50']}ms "
+        f"upstream_p50={summary['upstream_ms_p50']}ms",
         file=sys.stderr,
     )
     print(f"[f4-apc] report written to {out_path}", file=sys.stderr)
