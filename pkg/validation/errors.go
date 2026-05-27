@@ -55,8 +55,48 @@ type OpenAIError struct {
 }
 
 // OpenAIErrorResponse is the top-level error response structure.
+//
+// Admission is a flexinfer extension populated on 413 admission rejections so
+// clients can render a structured affordance ("your prompt is N tokens over
+// budget — truncate to M?") instead of a generic error. The field is
+// omitempty so existing clients that only parse `error` see no shape change.
+// See docs/planning/context-bounded-admission-spec.md and the F4 brainstorm
+// (F4-413-as-feature).
 type OpenAIErrorResponse struct {
-	Error OpenAIError `json:"error"`
+	Error     OpenAIError       `json:"error"`
+	Admission *AdmissionDetails `json:"admission,omitempty"`
+}
+
+// AdmissionDetails is the structured payload attached to a 413 admission
+// rejection. All token counts are estimator outputs from the proxy admission
+// filter; clients should treat them as conservative upper bounds, not exact
+// runtime tokenizer results.
+type AdmissionDetails struct {
+	// Model is the lane the request targeted.
+	Model string `json:"model"`
+
+	// TokensBudget is the effective ceiling (raw context window with the
+	// configured safety margin applied) the request was compared against.
+	TokensBudget int `json:"tokens_budget"`
+
+	// TokensSubmitted is estimated_prompt_tokens + max_tokens — the total
+	// budget the request asked for.
+	TokensSubmitted int `json:"tokens_submitted"`
+
+	// TokensOver is TokensSubmitted - TokensBudget. Always positive on a
+	// rejection.
+	TokensOver int `json:"tokens_over"`
+
+	// SuggestTruncateTo is the largest prompt size (in estimated tokens) that
+	// would have fit given the current max_tokens reservation. Zero when
+	// max_tokens alone meets or exceeds the budget — in that case the client
+	// should reduce max_tokens, not the prompt.
+	SuggestTruncateTo int `json:"suggest_truncate_to"`
+
+	// ContextWindow is the lane's raw declared context window before the
+	// safety margin was applied. Surfaced so clients can show "X of Y" rather
+	// than just the post-margin budget.
+	ContextWindow int `json:"context_window"`
 }
 
 // NewError creates a new OpenAI error with the given parameters.
@@ -92,6 +132,22 @@ func WriteError(w http.ResponseWriter, statusCode int, message, errorType, code 
 func WriteErrorWithParam(w http.ResponseWriter, statusCode int, message, errorType, code, param string) {
 	resp := NewErrorWithParam(message, errorType, code, param)
 	writeJSONError(w, statusCode, resp)
+}
+
+// WriteAdmissionError writes a 413 Payload Too Large response with the
+// OpenAI-format error body AND the flexinfer-specific admission extension
+// populated. The status code, error type, and error code are fixed because
+// this helper exists solely for the context-bounded admission filter.
+func WriteAdmissionError(w http.ResponseWriter, message, code string, details AdmissionDetails) {
+	resp := &OpenAIErrorResponse{
+		Error: OpenAIError{
+			Message: message,
+			Type:    ErrorTypeInvalidRequest,
+			Code:    code,
+		},
+		Admission: &details,
+	}
+	writeJSONError(w, http.StatusRequestEntityTooLarge, resp)
 }
 
 // writeJSONError marshals and writes the error response.
