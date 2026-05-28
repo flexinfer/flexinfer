@@ -107,6 +107,13 @@ func TestConfigValidate_Errors(t *testing.T) {
 			},
 			wantErr: "PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS must be > 0",
 		},
+		{
+			name: "label group routing unknown mode",
+			modify: func(c *Config) {
+				c.LabelGroupRouting = "least-loaded"
+			},
+			wantErr: "FLEXINFER_PROXY_LABEL_GROUP_ROUTING must be one of",
+		},
 	}
 
 	for _, tt := range tests {
