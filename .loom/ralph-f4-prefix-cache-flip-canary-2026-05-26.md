@@ -180,16 +180,76 @@ disjoint files from any concurrent stream. No fan-out planned.
 - Post-kill-test (fail): leave the canary in place if useful as a
   diagnostic surface; otherwise `git revert`.
 
+## Live verdict 2026-05-28
+
+Ran the kill-test live against the canary. Two corrections to the
+runbook above are load-bearing for anyone repeating this:
+
+1. **Annotation mechanism does not exist.** Steps 1 and 2 above
+   reference `kubectl annotate ... flexinfer.ai/pause="true"` and
+   `flexinfer.ai/force-promote="<ts>"`. Neither annotation is wired
+   in the controller — no codepath consumes them. The annotations
+   apply cleanly but are inert. Correct mechanism, verified live:
+   `flux -n flux-system suspend kustomization flexinfer-models`,
+   then `kubectl -n flexinfer-system patch model
+   gemma4-26b-a4b-gptq-apc-canary --type=merge -p
+   '{"spec":{"gpu":{"forcePromotion":true},"serverless":{"minReplicas":1}}}'`.
+   `gpu.forcePromotion` is consumed at
+   `controllers/model_shared_gpu.go:84` and overrides the warm
+   primary's chooser-leader claim.
+
+2. **Predicted failure mode (a) fires in the OPPOSITE direction.**
+   The plan said: "drop to 0.92 if 0.94 is too tight." The actual
+   error at `maxModelLen: 32768` + APC + FP8 KV +
+   `gpuMemoryUtilization: 0.94` is `ValueError: available KV cache
+   memory (2.07 GiB) < needed (3.44 GiB); estimated maximum model
+   length is 19712`. vLLM needs MORE memory than 0.94 leaves, not
+   less. Math: 22 GB cap × (1.0 − 0.94) = 1.32 GB; even at
+   util=1.0, the 1.37 GiB gap cannot close. APC at 32k FP8 KV is
+   structurally infeasible on the 22 GB cap. The correct
+   remediation is dropping `maxModelLen`, not the utilization
+   knob.
+
+After patching to `maxModelLen: 20480` and rerunning with
+`scripts/f4-apc-eviction-thrash.py --prompt-tokens 16000
+--max-tokens 256 --rounds 5`:
+
+- 10/10 turns succeeded
+- `/metrics` post-3rd-alternation `hit_rate = 0.666` (gate ≥ 0.50,
+  fail ≤ 0.20) → **PASS at the reduced context**
+- aggregate over full run = 0.799
+- TTFT decay decisive: prefix A 15705 → 378 ms (24× faster),
+  prefix B 11544 → 670 ms (17× faster); `ttft_decay.assertion_passed = true`
+- proxy `X-Flexinfer-Cached-Tokens` header was absent on every
+  turn (engine omitted the upstream `cached_tokens` field); the
+  bench's verdict cascade correctly fell back to `/metrics` scrape
+
+Verdict for matrix row 193: `conditional`. APC promotion to the
+production primary requires accepting `maxModelLen` drop from
+32 768 → ≤ ~20 480 (forfeits the 32k context push validated on
+2026-05-25, matrix row 191) OR keeping `enablePrefixCaching:
+false` on the primary at 32k (status quo). Either ship the
+F4-tool-loop-as-prefix application slice against a reduced-context
+APC lane, or keep the current 32k single-stream cold-prefix
+posture and pursue a different framing.
+
+Local-only run artifact: `.loom/local/validation/f4-apc/2026-05-28-eviction-thrash/report.json`.
+
+Tear-down: patch reverts `forcePromotion: false`, `minReplicas:
+0`, `maxModelLen: 32768`; `flux -n flux-system resume
+kustomization flexinfer-models`. Anti-thrashing cooldown (≤5 min)
+plus canary `idleTimeout: 10m` returns the primary to Ready
+automatically.
+
 ## Sources
 
 - `.loom/brainstorm-f4-long-context-agent-2026-05-25.md` — F4
   brainstorm convergence + skeptic kill-test
 - `.loom/60-validation-matrix.md` — F4 decode-tail PASS row (the
-  prerequisite kill-test)
+  prerequisite kill-test) and row 193 with live verdict
 - `deploy/models/gemma4-26b-a4b-gptq.yaml` — production primary
   config the canary mirrors
-- `deploy/debug/gfx906-llamacpp-proxy-soak-target.yaml` —
-  precedent for `force-promote` + `pause` orchestration during a
-  canary kill-test
+- `controllers/model_shared_gpu.go:84` — actual `forcePromotion`
+  chooser bypass
 - `docs/planning/spec-capsule-template.md` — slice contract this
   doc follows
