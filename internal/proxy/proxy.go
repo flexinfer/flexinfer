@@ -101,6 +101,14 @@ type Config struct {
 	AdmissionEnabled                 bool
 	AdmissionSafetyMarginPercent     int
 	AdmissionDefaultMaxTokens        int
+	// LabelGroupRouting controls how pickReadyMember picks within a shared
+	// service-label group when more than one member is Ready.
+	// Empty / "round-robin": legacy per-label RR (default).
+	// "prefix-or-rr": extract routing prefix key; consistent-hash to a
+	// candidate when present, else RR.
+	// "session-or-rr": session key, else RR.
+	// "prefix-session-or-rr": prefix first, then session, else RR.
+	LabelGroupRouting string
 }
 
 // Validate checks the Config for conflicting or invalid settings. Returns a
@@ -147,6 +155,14 @@ func (c Config) Validate() error {
 			errs = append(errs, fmt.Errorf("PROXY_ADMISSION_DEFAULT_MAX_TOKENS must be > 0 when admission enabled (got %d)", c.AdmissionDefaultMaxTokens))
 		}
 	}
+	if !isValidLabelGroupRoutingMode(c.LabelGroupRouting) {
+		errs = append(errs, fmt.Errorf(
+			"FLEXINFER_PROXY_LABEL_GROUP_ROUTING must be one of %q,%q,%q,%q,%q (got %q)",
+			labelGroupRoutingRR, labelGroupRoutingRRAlias,
+			labelGroupRoutingPrefixOrRR, labelGroupRoutingSessionOrRR,
+			labelGroupRoutingPrefixSessionOrRR, c.LabelGroupRouting,
+		))
+	}
 
 	return stderrors.Join(errs...)
 }
@@ -182,6 +198,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		AdmissionEnabled:                 envutil.BoolOrDefault("PROXY_ADMISSION_ENABLED", false),
 		AdmissionSafetyMarginPercent:     envutil.IntOrDefault("PROXY_ADMISSION_SAFETY_MARGIN_PERCENT", 5),
 		AdmissionDefaultMaxTokens:        envutil.IntOrDefault("PROXY_ADMISSION_DEFAULT_MAX_TOKENS", defaultAdmissionMaxTokens),
+		LabelGroupRouting:                os.Getenv("FLEXINFER_PROXY_LABEL_GROUP_ROUTING"),
 	}
 
 	return cfg
@@ -280,6 +297,11 @@ type Proxy struct {
 	// Proxy reconstruction (every proxyTTL).
 	labelRRCounters TypedSyncMap[string, *atomic.Uint64]
 
+	// Configured label-group routing mode. Validated at startup. Default
+	// empty = legacy per-label round-robin. See F4-proxy-prefix-pinning in
+	// `.loom/brainstorm-f4-long-context-agent-2026-05-25.md`.
+	labelGroupRouting string
+
 	// Lifecycle context for background goroutines
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -329,6 +351,7 @@ func New(cfg Config) *Proxy {
 			DefaultMaxTokens:    cfg.AdmissionDefaultMaxTokens,
 		},
 		directRuntimeEnabled: cfg.DirectRuntimeEnabled,
+		labelGroupRouting:    canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting),
 		ctx:                  ctx,
 		cancel:               cancel,
 		debugConfig:          newDebugConfigView(cfg),
@@ -459,7 +482,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// among Ready members in round-robin; for single-claimant labels this
 	// reduces to the same behavior as the legacy ResolveServiceLabel path.
 	if members, isLabel := p.resolver.ResolveServiceLabelGroup(ctx, modelName); isLabel && len(members) > 0 {
-		chosen := p.pickReadyMember(ctx, modelName, members)
+		chosen := p.pickReadyMemberRouted(ctx, modelName, members, r, bodyBytes)
 		if chosen != modelName {
 			slog.Debug("resolved service label",
 				"label", modelName, "model", chosen,

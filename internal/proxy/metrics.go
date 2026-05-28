@@ -200,6 +200,21 @@ var (
 		},
 		[]string{"model", "reason"},
 	)
+
+	// Label-group routing observability (F4-proxy-prefix-pinning). One counter
+	// increment per pickReadyMemberRouted call. `strategy` is the configured
+	// mode (round-robin|prefix-or-rr|session-or-rr|prefix-session-or-rr).
+	// `outcome` is what actually happened on this call: hashed_prefix,
+	// hashed_session, fallback_no_key (mode tried but no key extractable),
+	// fallback_single (only one Ready candidate so no choice to make), or
+	// default_rr (mode was round-robin or empty).
+	labelGroupRouteDecisionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_label_group_route_decisions_total",
+			Help: "Label-group routing decisions by label, configured strategy, and per-call outcome.",
+		},
+		[]string{"label", "strategy", "outcome"},
+	)
 )
 
 var metricsOnce sync.Once
@@ -248,5 +263,6 @@ func RegisterMetrics() {
 		prometheus.MustRegister(maxTokensClampedTotal)
 		prometheus.MustRegister(stalledLoadTotal)
 		prometheus.MustRegister(admissionDecisionsTotal)
+		prometheus.MustRegister(labelGroupRouteDecisionsTotal)
 	})
 }

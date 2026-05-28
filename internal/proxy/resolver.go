@@ -3,20 +3,57 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/binary"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"mime"
 	"mime/multipart"
 	"net/http"
+	"sort"
 	"strings"
 	"sync/atomic"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/internal/routing"
 	"github.com/flexinfer/flexinfer/pkg/constants"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
+
+// Label-group routing mode constants. See Config.LabelGroupRouting.
+const (
+	labelGroupRoutingRR                = ""
+	labelGroupRoutingRRAlias           = "round-robin"
+	labelGroupRoutingPrefixOrRR        = "prefix-or-rr"
+	labelGroupRoutingSessionOrRR       = "session-or-rr"
+	labelGroupRoutingPrefixSessionOrRR = "prefix-session-or-rr"
+)
+
+// isValidLabelGroupRoutingMode reports whether the given value is one of the
+// recognized label-group routing modes. Used by Config.Validate.
+func isValidLabelGroupRoutingMode(mode string) bool {
+	switch mode {
+	case labelGroupRoutingRR,
+		labelGroupRoutingRRAlias,
+		labelGroupRoutingPrefixOrRR,
+		labelGroupRoutingSessionOrRR,
+		labelGroupRoutingPrefixSessionOrRR:
+		return true
+	default:
+		return false
+	}
+}
+
+// canonicalLabelGroupRoutingMode folds "round-robin" to the empty default so
+// runtime checks can compare against the empty string.
+func canonicalLabelGroupRoutingMode(mode string) string {
+	if mode == labelGroupRoutingRRAlias {
+		return labelGroupRoutingRR
+	}
+	return mode
+}
 
 // Service label annotation constants for model routing.
 // These are aliases for the canonical values in pkg/constants, kept for
@@ -87,6 +124,119 @@ func (p *Proxy) pickReadyMember(ctx context.Context, label string, members []str
 	counter := counterAny
 	idx := counter.Add(1) - 1
 	return candidates[idx%uint64(len(candidates))]
+}
+
+// pickReadyMemberRouted is the production entry point for label-group
+// resolution. It honors the configured FLEXINFER_PROXY_LABEL_GROUP_ROUTING
+// mode: when empty / "round-robin", delegates to pickReadyMember for exact
+// legacy behavior. Otherwise extracts a routing key (prefix and/or session)
+// and consistent-hashes across the Ready candidates so multi-turn agent
+// traffic pins to the same replica, raising the chance of an APC hit on
+// turn-2+ (see F4-proxy-prefix-pinning in `.loom/brainstorm-f4-long-context-
+// agent-2026-05-25.md`).
+//
+// Every call emits exactly one
+// flexinfer_proxy_label_group_route_decisions_total{label,strategy,outcome}
+// increment. `strategy` is the configured mode; `outcome` is one of:
+//   - default_rr: mode was empty / round-robin
+//   - fallback_single: only one (Ready) candidate
+//   - fallback_no_ready: zero Ready candidates; deterministic cold-start path
+//   - fallback_no_key: mode was non-default but no key was extractable
+//   - hashed_prefix | hashed_session: consistent-hash pin took effect
+//
+// Fallback paths preserve existing semantics by delegating to
+// pickReadyMember; the legacy RR counter still advances so consecutive
+// no-key requests distribute across replicas.
+func (p *Proxy) pickReadyMemberRouted(
+	ctx context.Context,
+	label string,
+	members []string,
+	req *http.Request,
+	bodyBytes []byte,
+) string {
+	strategy := p.labelGroupRouting
+	if strategy == labelGroupRoutingRR {
+		labelGroupRouteDecisionsTotal.WithLabelValues(label, "round-robin", "default_rr").Inc()
+		return p.pickReadyMember(ctx, label, members)
+	}
+
+	if len(members) == 1 {
+		labelGroupRouteDecisionsTotal.WithLabelValues(label, strategy, "fallback_single").Inc()
+		return members[0]
+	}
+
+	ready := make([]string, 0, len(members))
+	for _, name := range members {
+		m, err := p.getModel(ctx, name)
+		if err == nil && m.Status.Phase == aiv1alpha2.ModelPhaseReady {
+			ready = append(ready, name)
+		}
+	}
+
+	if len(ready) == 0 {
+		labelGroupRouteDecisionsTotal.WithLabelValues(label, strategy, "fallback_no_ready").Inc()
+		return p.pickReadyMember(ctx, label, members)
+	}
+	if len(ready) == 1 {
+		labelGroupRouteDecisionsTotal.WithLabelValues(label, strategy, "fallback_single").Inc()
+		return ready[0]
+	}
+
+	key, outcome := extractRoutingKey(strategy, req, bodyBytes)
+	if key == "" {
+		labelGroupRouteDecisionsTotal.WithLabelValues(label, strategy, "fallback_no_key").Inc()
+		return p.pickReadyMember(ctx, label, members)
+	}
+
+	labelGroupRouteDecisionsTotal.WithLabelValues(label, strategy, outcome).Inc()
+	return consistentHashPick(key, ready)
+}
+
+// extractRoutingKey returns the routing key and outcome label appropriate for
+// the configured mode. Empty key means no extractable key — caller should
+// fall back to round-robin.
+func extractRoutingKey(strategy string, req *http.Request, bodyBytes []byte) (string, string) {
+	switch strategy {
+	case labelGroupRoutingPrefixOrRR:
+		if k, _ := routing.ExtractPrefixKey(req, bodyBytes); k != "" {
+			return k, "hashed_prefix"
+		}
+	case labelGroupRoutingSessionOrRR:
+		if k, _ := routing.ExtractSessionKey(req, bodyBytes); k != "" {
+			return k, "hashed_session"
+		}
+	case labelGroupRoutingPrefixSessionOrRR:
+		if k, _ := routing.ExtractPrefixKey(req, bodyBytes); k != "" {
+			return k, "hashed_prefix"
+		}
+		if k, _ := routing.ExtractSessionKey(req, bodyBytes); k != "" {
+			return k, "hashed_session"
+		}
+	}
+	return "", ""
+}
+
+// consistentHashPick deterministically picks one candidate from members
+// based on key. SHA-256(key) folded to uint64, mod len(sortedMembers).
+//
+// This is NOT a true consistent-hash ring: removing one member from a 2-set
+// reroutes every key. For label-group routing that's acceptable — groups
+// have 2-3 members and membership changes are rare (Model CR add/remove).
+// The benefit we need is "same key → same target across calls", which
+// simple SHA-mod gives us with one allocation per call.
+func consistentHashPick(key string, members []string) string {
+	if len(members) == 0 {
+		return ""
+	}
+	if len(members) == 1 {
+		return members[0]
+	}
+	sorted := make([]string, len(members))
+	copy(sorted, members)
+	sort.Strings(sorted)
+	sum := sha256.Sum256([]byte(key))
+	h := binary.BigEndian.Uint64(sum[:8])
+	return sorted[h%uint64(len(sorted))]
 }
 
 // extractModelNameAndBody extracts the model name from a request and returns the body bytes.
