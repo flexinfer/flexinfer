@@ -2,6 +2,26 @@
 
 Chronological notes while executing the plan (useful for handoffs and debugging).
 
+## 2026-05-28
+
+### RALPH slice — F4-prefix-cache-flip canary live kill-test (verdict: conditional)
+
+Ran the eviction-thrash kill-test that `.loom/ralph-f4-prefix-cache-flip-canary-2026-05-26.md` queued post-merge. Two corrections to the canary plan are load-bearing for anyone repeating this; full details in the plan doc's "Live verdict 2026-05-28" section and `.loom/60-validation-matrix.md` row 193 (now `conditional`).
+
+- **Runbook bug**: the plan said pause primary with `flexinfer.ai/pause=true` and force-promote canary with `flexinfer.ai/force-promote=<ts>`. Neither annotation is consumed by the controller. The annotations apply cleanly but are inert. Correct mechanism: `flux -n flux-system suspend kustomization flexinfer-models`, then patch `spec.gpu.forcePromotion: true` + `spec.serverless.minReplicas: 1` on the canary. `forcePromotion` is consumed at `controllers/model_shared_gpu.go:84`.
+- **Predicted failure mode (a) fired in the OPPOSITE direction**: at `maxModelLen: 32768` + `enablePrefixCaching: true` + FP8 KV + `gpuMemoryUtilization: 0.94`, vLLM refuses to start with `ValueError: available KV cache memory (2.07 GiB) < needed (3.44 GiB); estimated maximum model length is 19712`. Math: 22 GB cap × (1.0 − 0.94) = 1.32 GB; even at `gpuMemoryUtilization=1.0`, the 1.37 GiB gap cannot close. APC + 32k FP8 KV is **structurally infeasible** on the 22 GB cap. The plan's predicted remediation of dropping to 0.92 is wrong; correct remediation is dropping `maxModelLen`.
+- Reran with `maxModelLen: 20480` and `--prompt-tokens 16000`: 10/10 turns, `/metrics post-3rd-alternation hit_rate = 0.666` (gate ≥ 0.50), aggregate 0.799, TTFT decay 17–24× across both prefixes. Proxy `X-Flexinfer-Cached-Tokens` header was absent on every turn (engine omitted upstream `cached_tokens`); bench cascade correctly fell back to `/metrics`. Local-only report: `.loom/local/validation/f4-apc/2026-05-28-eviction-thrash/report.json`.
+- Tear-down: patch reverts (`forcePromotion: false`, `minReplicas: 0`, `maxModelLen: 32768`), `flux resume kustomization flexinfer-models`. Production traffic absorbed by `gemma4-26b-a4b-gptq-5930k` sister via shared label group throughout — no production-traffic impact.
+
+**Verdict for matrix row 193: `conditional`.** APC promotion to the production primary requires accepting `maxModelLen` drop from 32 768 → ≤ ~20 480 (forfeits the 32k context push validated 2026-05-25, row 191) OR keeping `enablePrefixCaching: false` on the primary at 32k (status quo). The downstream F4-tool-loop-as-prefix application slice from the brainstorm convergence ships either against a reduced-context APC lane or moves to a different framing.
+
+Sources:
+- `.loom/60-validation-matrix.md` row 193 (verdict `conditional`)
+- `.loom/ralph-f4-prefix-cache-flip-canary-2026-05-26.md` "Live verdict 2026-05-28" section
+- `.loom/local/validation/f4-apc/2026-05-28-eviction-thrash/report.json` (local-only)
+- `scripts/f4-apc-eviction-thrash.py` (kill-test runner)
+- `controllers/model_shared_gpu.go:84` (real `forcePromotion` chooser bypass)
+
 ## 2026-05-25
 
 ### RALPH slice — proxy port-cache fix (Lane 1B Bug 1 unblock)
