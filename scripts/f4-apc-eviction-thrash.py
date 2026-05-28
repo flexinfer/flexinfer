@@ -36,6 +36,17 @@ independent signals derive an aggregate hit rate:
    delta before/after run, and after the third alternation, so the
    aggregate hit rate is comparable across runs.
 
+A third complementary signal — informational only, does NOT drive the
+verdict — is per-label upstream_ms decay (last-round p50 vs first-round
+p50, computed separately for prefix A and prefix B). Mirrors the
+brainstorm bet from `F4-instant-followup`: "10-turn turn-10-TTFT ≤
+turn-2-TTFT". When APC works, the last B turn's upstream_ms should be
+much smaller than the first B turn (same for A). Asymmetric decay
+(A decays cleanly, B does not, or vice versa) is a fingerprint of
+asymmetric eviction that the aggregate hit rate hides. Emitted under
+summary.ttft_decay; assertion_passed is logged but does NOT change the
+exit code (verdict cascade is unchanged from v2).
+
 Pass criterion (default):
     Aggregate hit rate >= 0.50 AFTER the third alternation. Cache holds
     both prefixes; user-switch is mostly free.
@@ -321,6 +332,99 @@ def header_cached_rate(
     return total_cached / total_prompt
 
 
+def upstream_ms_decay(turns: list[dict], rounds_total: int) -> dict:
+    """Per-label first-round vs last-round upstream_ms decay. Informational
+    signal — caller MUST NOT use the assertion to drive the verdict (the
+    primary hit-rate cascade in main() owns that).
+
+    Mirrors the `F4-instant-followup` brainstorm bet ("turn-10-TTFT ≤
+    turn-2-TTFT") translated to ABABAB rounds: for each label L in (A, B),
+    compare median upstream_ms of L turns in round=0 vs round=rounds_total-1.
+
+    Asymmetric decay (one label decays cleanly, the other does not) is a
+    fingerprint of asymmetric eviction that the aggregate hit rate hides.
+
+    Returns a dict with per-label first/last p50s, decay ratios
+    (last/first; lower = better), an overall `assertion_passed` (both
+    labels' last p50 <= first p50, with both populated), and an
+    `assertion_note` explaining edge cases. All fields may be None when
+    the data is insufficient (single round, header absent, etc.)."""
+    if rounds_total < 2:
+        return {
+            "a_first_upstream_ms_p50": None,
+            "a_last_upstream_ms_p50": None,
+            "a_decay_ratio": None,
+            "b_first_upstream_ms_p50": None,
+            "b_last_upstream_ms_p50": None,
+            "b_decay_ratio": None,
+            "assertion_passed": None,
+            "assertion_note": (
+                f"rounds_total={rounds_total} < 2; need >= 2 rounds for decay"
+            ),
+        }
+
+    last_round = rounds_total - 1
+
+    def _median_upstream(label: str, round_idx: int) -> int | None:
+        vals = [
+            t["upstream_ms"]
+            for t in turns
+            if t.get("ok")
+            and t.get("label") == label
+            and t.get("round") == round_idx
+            and t.get("upstream_ms") is not None
+        ]
+        if not vals:
+            return None
+        return int(statistics.median(vals))
+
+    def _ratio(first: int | None, last: int | None) -> float | None:
+        if first is None or last is None or first <= 0:
+            return None
+        return last / first
+
+    a_first = _median_upstream("A", 0)
+    a_last = _median_upstream("A", last_round)
+    b_first = _median_upstream("B", 0)
+    b_last = _median_upstream("B", last_round)
+
+    a_ratio = _ratio(a_first, a_last)
+    b_ratio = _ratio(b_first, b_last)
+
+    passed: bool | None
+    note: str
+    if a_ratio is not None and b_ratio is not None:
+        passed = a_ratio <= 1.0 and b_ratio <= 1.0
+        if passed:
+            note = "both labels: last_p50 <= first_p50 (APC warming works)"
+        elif a_ratio > 1.0 and b_ratio > 1.0:
+            note = "both labels regress: last_p50 > first_p50 (no APC benefit)"
+        elif a_ratio > 1.0:
+            note = "asymmetric: A regresses, B decays (B prefix held; A evicted)"
+        else:
+            note = "asymmetric: B regresses, A decays (A prefix held; B evicted)"
+    elif a_ratio is None and b_ratio is None:
+        passed = None
+        note = "no upstream_ms decay data (header absent on both labels)"
+    else:
+        passed = None
+        note = (
+            f"partial decay data (A_ratio={a_ratio}, B_ratio={b_ratio}); "
+            "engine omitted upstream_ms on one label"
+        )
+
+    return {
+        "a_first_upstream_ms_p50": a_first,
+        "a_last_upstream_ms_p50": a_last,
+        "a_decay_ratio": a_ratio,
+        "b_first_upstream_ms_p50": b_first,
+        "b_last_upstream_ms_p50": b_last,
+        "b_decay_ratio": b_ratio,
+        "assertion_passed": passed,
+        "assertion_note": note,
+    }
+
+
 def verdict(rate: float | None) -> tuple[str, str, int]:
     if rate is None:
         return (
@@ -466,12 +570,74 @@ def _run_self_check() -> int:
     )
     check(empty is None, f"header_cached_rate(no-eligible)={empty!r}")
 
+    # ttft_decay aggregator: symmetric improvement (APC working).
+    symmetric_turns = [
+        {"ok": True, "round": 0, "label": "A", "upstream_ms": 28000},
+        {"ok": True, "round": 0, "label": "B", "upstream_ms": 27500},
+        {"ok": True, "round": 4, "label": "A", "upstream_ms": 3500},
+        {"ok": True, "round": 4, "label": "B", "upstream_ms": 3200},
+    ]
+    sym = upstream_ms_decay(symmetric_turns, rounds_total=5)
+    check(sym["assertion_passed"] is True, f"sym.passed={sym['assertion_passed']!r}")
+    check(
+        sym["a_first_upstream_ms_p50"] == 28000,
+        f"sym.a_first={sym['a_first_upstream_ms_p50']!r}",
+    )
+    check(
+        sym["a_last_upstream_ms_p50"] == 3500,
+        f"sym.a_last={sym['a_last_upstream_ms_p50']!r}",
+    )
+    check(
+        sym["a_decay_ratio"] is not None
+        and abs(sym["a_decay_ratio"] - (3500 / 28000)) < 1e-9,
+        f"sym.a_ratio={sym['a_decay_ratio']!r}",
+    )
+
+    # Asymmetric: A evicted (regresses), B held (decays).
+    asym_turns = [
+        {"ok": True, "round": 0, "label": "A", "upstream_ms": 28000},
+        {"ok": True, "round": 0, "label": "B", "upstream_ms": 27500},
+        {"ok": True, "round": 4, "label": "A", "upstream_ms": 29000},
+        {"ok": True, "round": 4, "label": "B", "upstream_ms": 3200},
+    ]
+    asym = upstream_ms_decay(asym_turns, rounds_total=5)
+    check(
+        asym["assertion_passed"] is False, f"asym.passed={asym['assertion_passed']!r}"
+    )
+    check(
+        "A regresses" in asym["assertion_note"],
+        f"asym.note={asym['assertion_note']!r}",
+    )
+
+    # Single round (degenerate): no decay possible.
+    one_round = upstream_ms_decay(symmetric_turns, rounds_total=1)
+    check(
+        one_round["assertion_passed"] is None
+        and one_round["a_first_upstream_ms_p50"] is None,
+        f"one_round={one_round!r}",
+    )
+
+    # All headers absent (llama.cpp): no decay data.
+    no_header = upstream_ms_decay(
+        [
+            {"ok": True, "round": 0, "label": "A", "upstream_ms": None},
+            {"ok": True, "round": 4, "label": "B", "upstream_ms": None},
+        ],
+        rounds_total=5,
+    )
+    check(
+        no_header["assertion_passed"] is None
+        and "header absent" in no_header["assertion_note"],
+        f"no_header={no_header!r}",
+    )
+
     if failures:
         for f in failures:
             print(f"[self-check] FAIL: {f}", file=sys.stderr)
         return 1
     print(
-        "[self-check] OK: header parse + aggregator behavior verified", file=sys.stderr
+        "[self-check] OK: header parse + aggregator + ttft_decay behavior verified",
+        file=sys.stderr,
     )
     return 0
 
@@ -564,7 +730,7 @@ def main(argv: list[str]) -> int:
     ]
 
     report = {
-        "schema_version": "flexinfer.f4_apc_eviction_thrash.v2",
+        "schema_version": "flexinfer.f4_apc_eviction_thrash.v3",
         "created_at": dt.datetime.now(dt.timezone.utc).isoformat(),
         "model": args.model,
         "endpoint": args.endpoint,
@@ -688,6 +854,7 @@ def main(argv: list[str]) -> int:
         if t.get("ok") and t.get("upstream_ms") is not None
     ]
     completions = [t["completion_tokens"] for t in report["turns"] if t["ok"]]
+    ttft_decay = upstream_ms_decay(report["turns"], rounds_total=args.rounds)
     report["summary"] = {
         "verdict": v_label,
         "reason": v_reason,
@@ -714,6 +881,7 @@ def main(argv: list[str]) -> int:
             else max(upstream_ms_values) if upstream_ms_values else None
         ),
         "mean_completion_tokens": statistics.mean(completions) if completions else None,
+        "ttft_decay": ttft_decay,
     }
 
     out_path = Path(args.report)
@@ -730,6 +898,16 @@ def main(argv: list[str]) -> int:
         f"turns={summary['turn_success_count']}/{summary['turn_count']} "
         f"duration_p50={summary['duration_ms_p50']}ms "
         f"upstream_p50={summary['upstream_ms_p50']}ms",
+        file=sys.stderr,
+    )
+    td = summary["ttft_decay"]
+    print(
+        f"[f4-apc] ttft_decay: assertion_passed={td['assertion_passed']} "
+        f"A first/last/ratio={td['a_first_upstream_ms_p50']}/"
+        f"{td['a_last_upstream_ms_p50']}/{td['a_decay_ratio']} "
+        f"B first/last/ratio={td['b_first_upstream_ms_p50']}/"
+        f"{td['b_last_upstream_ms_p50']}/{td['b_decay_ratio']} "
+        f"note={td['assertion_note']!r}",
         file=sys.stderr,
     )
     print(f"[f4-apc] report written to {out_path}", file=sys.stderr)
