@@ -32,28 +32,43 @@
 - RALPH context-curve spec closeout (2026-05-22): `ralph-context-curve-spec-closeout-2026-05-22.md`
 - F4 long-context agent brainstorm (2026-05-25): `brainstorm-f4-long-context-agent-2026-05-25.md`
 - RALPH F4-prefix-cache-flip canary plan (2026-05-26): `ralph-f4-prefix-cache-flip-canary-2026-05-26.md`
+- RALPH F4-tool-loop-as-prefix kill-test plan (2026-06-01): `ralph-f4-tool-loop-as-prefix-2026-06-01.md`
 
-## Current Goal (2026-05-26) - F4-prefix-cache-flip canary
+## Current Goal (2026-06-01) - F4-tool-loop-as-prefix kill-test
+
+Focused plan: `ralph-f4-tool-loop-as-prefix-2026-06-01.md`.
+
+Second leg of the F4 compound. The canary slice (below) returned a
+**conditional** verdict on 2026-05-28: APC survives the *alternating
+two-prefix* (multi-tenant) eviction pattern at `maxModelLen ≤ 20480`
+(hit_rate 0.666, TTFT decay 17-24×) but is structurally infeasible at
+32k FP8 KV on the 22 GB cap. This slice ships the kill-test for the
+**distinct, unproven** *append-only growing* pattern
+(`F4-tool-loop-as-prefix`): an immutable `system + tool-schema` prefix
+followed by an append-only `(user → assistant → tool-result)` history,
+re-sent in full each round. Runner `scripts/f4-tool-loop-as-prefix.py`
+(schema `flexinfer.f4_tool_loop_as_prefix.v1`) with an offline
+`--self-check`.
+
+**Open: live append-only tool-loop kill-test.** Operator runbook in the
+plan doc: `flux suspend` → patch `forcePromotion`+`maxModelLen 20480` →
+20 append-only rounds → verdict on median prefix-hit ratio (PASS ≥ 0.90,
+FAIL < 0.50), TTFT-flatness fallback when the engine omits
+`cached_tokens`. Matrix row 194 lands `pending`; updated after the run.
+
+## Previous Goal (2026-05-26) - F4-prefix-cache-flip canary
 
 Focused plan: `ralph-f4-prefix-cache-flip-canary-2026-05-26.md`.
 
 After F4 decode-tail kill-test PASS on 2026-05-25 (decode flat 50-67 tok/s
 across 2k→28k context — F4 "feels instant" structurally viable), the
 recommended F4 first slice from
-`brainstorm-f4-long-context-agent-2026-05-25.md` is unblocked. MR !519
+`brainstorm-f4-long-context-agent-2026-05-25.md` was unblocked. MR !519
 landed the side-by-side `gemma4-26b-a4b-gptq-apc-canary` Model that
 mirrors the warm primary except for `enablePrefixCaching: true` and
-`gpuMemoryUtilization: "0.94"`. Posture: `minReplicas=0`, priority 100
-in `7900xtx-textgen` so the warm primary at 350 always wins; isolated
-serviceLabels so canary never sees production traffic.
-
-**Open: live cache-eviction-thrash kill-test.** Operator runbook in the
-plan doc above: pause primary → force-promote canary → alternate two
-~30k-token prompts ABABAB × 5 → scrape `vllm:prefix_cache_hit_rate`.
-Pass: hit_rate ≥ 50% after the third alternation. Fail: <20% →
-eviction thrash, back out APC promotion. Matrix row in
-`60-validation-matrix.md` lands in `pending` and is updated `pass` /
-`fail` only after the live run.
+`gpuMemoryUtilization: "0.94"`. **Live verdict 2026-05-28: conditional**
+— APC passes eviction-thrash at `maxModelLen ≤ 20480`, fails to load at
+32k. See `60-validation-matrix.md` row 193.
 
 ## Previous Goal (2026-05-21) - Roadmap unblock plan
 
