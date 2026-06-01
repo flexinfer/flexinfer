@@ -33,8 +33,37 @@
 - F4 long-context agent brainstorm (2026-05-25): `brainstorm-f4-long-context-agent-2026-05-25.md`
 - RALPH F4-prefix-cache-flip canary plan (2026-05-26): `ralph-f4-prefix-cache-flip-canary-2026-05-26.md`
 - RALPH F4-tool-loop-as-prefix kill-test plan (2026-06-01): `ralph-f4-tool-loop-as-prefix-2026-06-01.md`
+- RALPH F4 agent-loop ReAct client — slice 1/CLI (2026-06-01): `ralph-f4-agent-loop-client-2026-06-01.md`
 
-## Current Goal (2026-06-01) - F4-tool-loop-as-prefix kill-test
+## Current Goal (2026-06-01) - F4 agent-loop ReAct client (slice 1: CLI)
+
+Focused plan: `ralph-f4-agent-loop-client-2026-06-01.md`.
+
+The kill-test PASS (below) cleared the spec-riskiest-assumption gate, so the
+F4 ReAct **client** is unblocked. Operator picked client forms **(a) CLI +
+(b) loom-core MCP tool**, scope **loop + real tool execution**. Because (a)
+and (b) are separate modules/repos, RALPH ships them as two vertical slices.
+
+**Slice 1 (this slice) — CLI `cmd/agent-loop/` on a reusable
+`internal/agentloop/` engine.** The engine enforces the cache-paying
+invariant in the type system: `Conversation` is append-only and
+mutability-ordered (immutable system+tools prefix; history grows by `Append`
+only — no Insert/Replace/Reorder). `ChatClient` pins
+`X-Flexinfer-Cache-Key=session_id` for prefix-consistent routing; per-turn
+`TurnMetrics` parse the proxy headers the kill-test used; a `Budget` guard
+encodes the usable-context bound (`maxModelLen − system − output`) row 194
+surfaced and stops the loop cleanly before HTTP 400 (the F4-413-as-feature
+affordance, in-process). The CLI runs REAL read-only, path-jailed tools
+(`read_file`, `list_dir`) in a ReAct loop, with an offline `--self-check`.
+Offline-validated locally (build/vet/test/-race/gofmt/self-check green);
+**live multi-round session against the canary is the post-merge follow-up**
+(assert flat `upstream_ms` while `prompt_tokens` grows). Matrix row pending.
+
+**Slice 2 (queued):** expose the same engine shape as an MCP tool loom-core
+hosts, mirroring this slice's append-only prefix layout against the
+agent-context surface.
+
+## Previous Goal (2026-06-01) - F4-tool-loop-as-prefix kill-test
 
 Focused plan: `ralph-f4-tool-loop-as-prefix-2026-06-01.md`.
 

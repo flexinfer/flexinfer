@@ -116,6 +116,11 @@ build-all: build build-cli ## Build all binaries (manager + CLI + flash-loader).
 	go build -o bin/flexinfer-global-proxy ./cmd/flexinfer-global-proxy
 	go build -o bin/flexinfer-sched ./cmd/flexinfer-sched
 	go build -o bin/flexinfer-flash-loader ./cmd/flexinfer-flash-loader
+	go build -o bin/agent-loop ./cmd/agent-loop
+
+.PHONY: build-agent-loop
+build-agent-loop: ## Build the F4 tool-loop-as-prefix ReAct client.
+	go build -o bin/agent-loop ./cmd/agent-loop
 
 .PHONY: build-flash-loader
 build-flash-loader: ## Build the flash-loader init container binary.
