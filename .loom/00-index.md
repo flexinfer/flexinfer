@@ -50,11 +50,21 @@ re-sent in full each round. Runner `scripts/f4-tool-loop-as-prefix.py`
 (schema `flexinfer.f4_tool_loop_as_prefix.v1`) with an offline
 `--self-check`.
 
-**Open: live append-only tool-loop kill-test.** Operator runbook in the
-plan doc: `flux suspend` → patch `forcePromotion`+`maxModelLen 20480` →
-20 append-only rounds → verdict on median prefix-hit ratio (PASS ≥ 0.90,
-FAIL < 0.50), TTFT-flatness fallback when the engine omits
-`cached_tokens`. Matrix row 194 lands `pending`; updated after the run.
+**RESOLVED — live kill-test PASSED 2026-06-01.** Ran on the canary
+(`flux suspend` → force-promote at `maxModelLen 20480` → 16 tuned rounds →
+restore + `flux resume`; production primary preempted ~7 min, reclaimed Ready).
+Two independent signals confirmed the assumption: TTFT-flatness ratio **1.42**
+(≤ 1.5) despite **2.94× prompt growth**, and engine `/metrics` prefix-cache
+block hit rate **93.0%** over the run (the gemma4 engine omits `cached_tokens`,
+so the fallback path was taken as designed). Matrix row 194 → `promote`.
+Operational bound surfaced: at a 6k system prefix the append-only context
+exceeds `maxModelLen 20480` by round 12 (HTTP 400) — usable budget =
+`maxModelLen − system − output`, which is the `F4-413-as-feature` leg's domain.
+
+**Next slice (unblocked by the PASS, per spec-riskiest-assumption rule): build
+the ReAct client.** Open question from the brainstorm — pick the client form:
+(a) CLI `cmd/agent-loop/`, (b) MCP tool loom-core hosts, (c) Open WebUI plugin;
+recommendation leans (a). Append-only tool history is proven near-free per turn.
 
 ## Previous Goal (2026-05-26) - F4-prefix-cache-flip canary
 
