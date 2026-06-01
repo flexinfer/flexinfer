@@ -5,6 +5,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strconv"
 	"testing"
 	"time"
@@ -289,6 +290,178 @@ func TestLogUpstreamUsage_OmitsCachedHeaderWhenEngineSilent(t *testing.T) {
 	require.Empty(t, resp.Header.Get(headerCachedTokens),
 		"X-Flexinfer-Cached-Tokens must be absent when the engine doesn't report it")
 	require.Equal(t, "23", resp.Header.Get(headerPromptTokens))
+}
+
+func TestPrefixHitOptIn(t *testing.T) {
+	cases := map[string]bool{
+		"1":     true,
+		"true":  true,
+		"TRUE":  true,
+		"yes":   true,
+		"on":    true,
+		" 1 ":   true,
+		"0":     false,
+		"false": false,
+		"":      false,
+		"no":    false,
+		"maybe": false,
+	}
+	for v, want := range cases {
+		t.Run(v, func(t *testing.T) {
+			require.Equal(t, want, prefixHitOptIn(v))
+		})
+	}
+}
+
+func TestParsePrefixCacheHitRate(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		wantRate float64
+		wantOK   bool
+	}{
+		{
+			name: "gauge present",
+			body: "# HELP vllm:gpu_prefix_cache_hit_rate GPU prefix cache hit rate\n" +
+				"# TYPE vllm:gpu_prefix_cache_hit_rate gauge\n" +
+				`vllm:gpu_prefix_cache_hit_rate{model_name="gemma4"} 0.93` + "\n",
+			wantRate: 0.93,
+			wantOK:   true,
+		},
+		{
+			name: "counters only — lifetime ratio",
+			body: `vllm:gpu_prefix_cache_queries_total{model_name="gemma4"} 363373` + "\n" +
+				`vllm:gpu_prefix_cache_hits_total{model_name="gemma4"} 330800` + "\n",
+			wantRate: 330800.0 / 363373.0,
+			wantOK:   true,
+		},
+		{
+			name: "gauge preferred over counters",
+			body: `vllm:gpu_prefix_cache_hit_rate 0.5` + "\n" +
+				`vllm:gpu_prefix_cache_hits_total 10` + "\n" +
+				`vllm:gpu_prefix_cache_queries_total 100` + "\n",
+			wantRate: 0.5,
+			wantOK:   true,
+		},
+		{
+			name: "non-gpu spelling counters",
+			body: `vllm:prefix_cache_hits_total 25` + "\n" +
+				`vllm:prefix_cache_queries_total 100` + "\n",
+			wantRate: 0.25,
+			wantOK:   true,
+		},
+		{
+			name: "multiple series summed",
+			body: `vllm:gpu_prefix_cache_hits_total{gpu="0"} 30` + "\n" +
+				`vllm:gpu_prefix_cache_hits_total{gpu="1"} 20` + "\n" +
+				`vllm:gpu_prefix_cache_queries_total{gpu="0"} 60` + "\n" +
+				`vllm:gpu_prefix_cache_queries_total{gpu="1"} 40` + "\n",
+			wantRate: 50.0 / 100.0,
+			wantOK:   true,
+		},
+		{
+			name:   "queries zero — no rate",
+			body:   `vllm:gpu_prefix_cache_hits_total 0` + "\n" + `vllm:gpu_prefix_cache_queries_total 0` + "\n",
+			wantOK: false,
+		},
+		{
+			name:   "metric absent",
+			body:   "# nothing relevant\nvllm:num_requests_running 3\n",
+			wantOK: false,
+		},
+		{
+			name:   "empty body",
+			body:   "",
+			wantOK: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rate, ok := parsePrefixCacheHitRate([]byte(tc.body))
+			require.Equal(t, tc.wantOK, ok)
+			if tc.wantOK {
+				require.InDelta(t, tc.wantRate, rate, 1e-9)
+			}
+		})
+	}
+}
+
+func TestScrapePrefixCacheHitRate(t *testing.T) {
+	t.Run("success", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, "/metrics", r.URL.Path)
+			_, _ = io.WriteString(w, `vllm:gpu_prefix_cache_hits_total 93`+"\n"+`vllm:gpu_prefix_cache_queries_total 100`+"\n")
+		}))
+		defer srv.Close()
+		rate, ok := scrapePrefixCacheHitRate(context.Background(), srv.URL)
+		require.True(t, ok)
+		require.InDelta(t, 0.93, rate, 1e-9)
+	})
+
+	t.Run("non-200 returns not-ok", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+		}))
+		defer srv.Close()
+		_, ok := scrapePrefixCacheHitRate(context.Background(), srv.URL)
+		require.False(t, ok)
+	})
+
+	t.Run("empty target returns not-ok", func(t *testing.T) {
+		_, ok := scrapePrefixCacheHitRate(context.Background(), "")
+		require.False(t, ok)
+	})
+
+	t.Run("unreachable target returns not-ok", func(t *testing.T) {
+		_, ok := scrapePrefixCacheHitRate(context.Background(), "http://127.0.0.1:0")
+		require.False(t, ok)
+	})
+}
+
+func TestLogUpstreamUsage_PrefixHitOptIn(t *testing.T) {
+	// gemma4 omits prompt_tokens_details, so Cached-Tokens is absent. When the
+	// client opts in, the proxy scrapes the engine /metrics and surfaces the
+	// hit rate directly — closing the row-195 caveat.
+	metricsBody := `vllm:gpu_prefix_cache_hits_total 930` + "\n" + `vllm:gpu_prefix_cache_queries_total 1000` + "\n"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, metricsBody)
+	}))
+	defer srv.Close()
+
+	body := `{"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":2048,"completion_tokens":42}}`
+
+	newResp := func(want bool) *http.Response {
+		req, err := http.NewRequest("POST", "/v1/chat/completions", nil)
+		require.NoError(t, err)
+		lc := &usageLogCtx{
+			path:          "/v1/chat/completions",
+			startedAt:     time.Now(),
+			wantPrefixHit: want,
+			targetURL:     srv.URL,
+		}
+		req = req.WithContext(withUsageLogCtx(context.Background(), lc))
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{},
+			Body:       io.NopCloser(bytes.NewReader([]byte(body))),
+			Request:    req,
+		}
+		resp.Header.Set("Content-Type", "application/json")
+		return resp
+	}
+
+	p := &Proxy{}
+
+	// Opt-in: header present, engine-silent Cached-Tokens still absent.
+	respIn := newResp(true)
+	require.NoError(t, p.logUpstreamUsage(respIn))
+	require.Equal(t, "0.9300", respIn.Header.Get(headerPrefixHitRate))
+	require.Empty(t, respIn.Header.Get(headerCachedTokens))
+
+	// Opt-out: no scrape, header absent (zero-cost default path).
+	respOut := newResp(false)
+	require.NoError(t, p.logUpstreamUsage(respOut))
+	require.Empty(t, respOut.Header.Get(headerPrefixHitRate))
 }
 
 func TestLogUpstreamUsage_StreamingEmitsUpstreamMs(t *testing.T) {

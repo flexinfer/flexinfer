@@ -71,6 +71,49 @@ For models in a `GPUGroup`, only one model is active at a time. When a request a
   - `flexinfer.ai/queue-since.<modelName>: "<rfc3339>"`
 - waits for the GPUGroup controller to swap the active model
 
+## Instrumentation response headers
+
+On OpenAI-style completion responses (`/v1/chat/completions`, `/v1/completions`)
+the proxy emits headers that let clients and operators interpret prefix-cache
+behavior without scraping engine metrics:
+
+| Header | When | Meaning |
+|--------|------|---------|
+| `X-Flexinfer-Upstream-Ms` | every completion | Proxy-measured upstream time; equals TTFT for streaming, total upstream time for non-streaming. |
+| `X-Flexinfer-Prompt-Tokens` | non-streaming | `usage.prompt_tokens` from the engine. |
+| `X-Flexinfer-Finish-Reason` | non-streaming | `choices[0].finish_reason`. |
+| `X-Flexinfer-Cached-Tokens` | non-streaming, engine reports it | `usage.prompt_tokens_details.cached_tokens`. Omitted when the engine does not report it (e.g. gemma4, llama.cpp) — absence ≠ zero. |
+| `X-Flexinfer-Prefix-Cache-Hit-Rate` | non-streaming, **opt-in** | Engine prefix-cache hit rate in `[0,1]`, scraped from the upstream's `/metrics`. Closes the gap for engines that omit `cached_tokens`. |
+
+### Prefix-cache hit rate (opt-in)
+
+Engines such as gemma4 don't surface per-request `cached_tokens`, so the only
+direct hit signal is the engine's own counters. Send
+`X-Flexinfer-Want-Prefix-Hit: 1` on a completion request and the proxy makes a
+best-effort scrape of the upstream `/metrics`
+(`vllm:gpu_prefix_cache_hit_rate`, or `…hits_total`/`…queries_total`) and
+returns `X-Flexinfer-Prefix-Cache-Hit-Rate`:
+
+```bash
+curl -s -D - -o /dev/null http://proxy/v1/chat/completions \
+  -H 'Content-Type: application/json' \
+  -H 'X-Flexinfer-Want-Prefix-Hit: 1' \
+  -d '{"model":"gemma4-26b-a4b-gptq","messages":[{"role":"user","content":"hi"}]}' \
+  | grep -i x-flexinfer-prefix-cache-hit-rate
+# x-flexinfer-prefix-cache-hit-rate: 0.9300
+```
+
+Notes:
+
+- **Opt-in only.** Without the request header the proxy adds no `/metrics`
+  round-trip — normal traffic stays on the zero-cost path.
+- **Best-effort.** The header is omitted if the engine is unreachable, returns
+  non-200, or exposes no prefix-cache metric.
+- **Engine-windowed, not strictly per-request.** vLLM's counters are
+  cumulative/windowed across the engine, so the value is directly
+  interpretable for a single prefix-consistent session (e.g. an agent loop
+  pinned with `X-Flexinfer-Cache-Key`) but is a fleet figure under concurrency.
+
 ## Troubleshooting
 
 - List models: `curl -s http://proxy/v1/models | jq .`

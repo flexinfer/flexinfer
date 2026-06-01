@@ -385,6 +385,8 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		stream:        streamForLog,
 		userAgent:     r.Header.Get("User-Agent"),
 		startedAt:     time.Now(),
+		wantPrefixHit: prefixHitOptIn(r.Header.Get(headerWantPrefixHit)),
+		targetURL:     targetURL,
 	}))
 
 	// Track per-pod connections for least-loaded routing
