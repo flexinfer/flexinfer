@@ -95,8 +95,19 @@ turn — TTFT climbing linearly per round. The append-only/mutability-ordering
 architecture (the whole point of F4-tool-loop-as-prefix) silently doesn't pay
 off, and we'd have shipped a client on a false premise.
 
-**Status**: not run (this slice ships the runner + offline self-check; the live
-run is the post-merge operator follow-up). Matrix row lands `pending`.
+**Status**: **PASSED 2026-06-01** (live run, claude-code). Two independent
+signals confirmed the assumption: (1) TTFT-flatness ratio **1.42 ≤ 1.5** despite
+**2.94× prompt growth** (5154 → 17622 tokens, 16/16 rounds) on the tuned run
+(`--system-tokens 3000 --max-tokens 48`); (2) engine `/metrics` prefix-cache
+block hit rate over the run window = **93.0%** ((330800−161184)/(363373−181077)),
+directly satisfying the brainstorm ">90%" bet. The gemma4 engine omits
+`cached_tokens` (fallback path taken, as designed). Operational bound: at the
+default 6000-token system prefix the append-only context exceeds `maxModelLen
+20480` by round 12 (HTTP 400) — usable budget = `maxModelLen − system − output`,
+which is the `F4-413-as-feature` leg's domain. Evidence (local, gitignored):
+`.loom/local/validation/f4-tool-loop/2026-06-01/{report-tuned.json,report.json}`.
+Matrix row 194 → `promote`. **Next: build the ReAct client** (the gated slice is
+now unblocked per the spec-riskiest-assumption rule).
 
 ## Acceptance criteria
 
@@ -134,8 +145,10 @@ flux -n flux-system suspend kustomization flexinfer-models
 
 # 2. Force-promote the canary at the APC-feasible context (canary verdict:
 #    32k is structurally infeasible; 20480 passed eviction-thrash).
+#    CORRECTED 2026-06-01: maxModelLen is at .spec.config, NOT .spec.runtime.
+#    Primary priority 350 > canary 100, so forcePromotion is required to preempt.
 kubectl -n flexinfer-system patch model gemma4-26b-a4b-gptq-apc-canary \
-  --type=merge -p '{"spec":{"runtime":{"maxModelLen":20480},"gpu":{"forcePromotion":true},"serverless":{"minReplicas":1}}}'
+  --type=merge -p '{"spec":{"config":{"maxModelLen":20480},"gpu":{"forcePromotion":true},"serverless":{"minReplicas":1}}}'
 
 kubectl -n flexinfer-system wait --for=condition=Ready \
   model/gemma4-26b-a4b-gptq-apc-canary --timeout=15m
@@ -155,7 +168,7 @@ python3 scripts/f4-tool-loop-as-prefix.py \
 
 # 5. Restore.
 kubectl -n flexinfer-system patch model gemma4-26b-a4b-gptq-apc-canary \
-  --type=merge -p '{"spec":{"runtime":{"maxModelLen":32768},"gpu":{"forcePromotion":false},"serverless":{"minReplicas":0}}}'
+  --type=merge -p '{"spec":{"config":{"maxModelLen":32768},"gpu":{"forcePromotion":false},"serverless":{"minReplicas":0}}}'
 flux -n flux-system resume kustomization flexinfer-models
 ```
 
