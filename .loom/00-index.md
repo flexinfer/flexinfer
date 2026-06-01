@@ -56,11 +56,18 @@ surfaced and stops the loop cleanly before HTTP 400 (the F4-413-as-feature
 affordance, in-process). The CLI runs REAL read-only, path-jailed tools
 (`read_file`, `list_dir`) in a ReAct loop, with an offline `--self-check`.
 Offline-validated locally (build/vet/test/-race/gofmt/self-check green);
-**live multi-round session against the canary is the post-merge follow-up**
-(assert flat `upstream_ms` while `prompt_tokens` grows). Matrix row pending.
+**live-validated 2026-06-01 (PASS)** via operator-authorized full canary
+preemption: two `bin/agent-loop` sessions vs `gemma4-26b-a4b-gptq-apc-canary`
+through `flexinfer-proxy`. The prefill-isolation probe showed `prompt_tokens`
+growing **22.5×** (247→5565) while `upstream_ms` tracked the per-round token
+*delta* (526–701ms for small-delta rounds; only large-file rounds rose) — the
+prefix cache absorbing the immutable prefix, observed client-side, matching
+row 194's engine-side finding. Caveat: gemma4 omits `cached_tokens`, so the
+hit is inferred from delta-bound latency (follow-up: prefill-only/TTFT header).
+Production restored cleanly (primary Ready+Active). **Matrix row 195 → `pass`.**
 
-**Slice 2 (queued):** expose the same engine shape as an MCP tool loom-core
-hosts, mirroring this slice's append-only prefix layout against the
+**Slice 2 (NEXT, queued):** expose the same engine shape as an MCP tool
+loom-core hosts, mirroring this slice's append-only prefix layout against the
 agent-context surface.
 
 ## Previous Goal (2026-06-01) - F4-tool-loop-as-prefix kill-test
