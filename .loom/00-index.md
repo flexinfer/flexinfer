@@ -66,9 +66,20 @@ row 194's engine-side finding. Caveat: gemma4 omits `cached_tokens`, so the
 hit is inferred from delta-bound latency (follow-up: prefill-only/TTFT header).
 Production restored cleanly (primary Ready+Active). **Matrix row 195 → `pass`.**
 
-**Slice 2 (NEXT, queued):** expose the same engine shape as an MCP tool
-loom-core hosts, mirroring this slice's append-only prefix layout against the
-agent-context surface.
+**Slice 2 (SHIPPED 2026-06-01 — loom-core MR !585):** the same engine shape
+exposed as an MCP tool. `pkg/agentloop` (ported from `internal/agentloop` —
+different Go modules, so layout mirrored not imported) + `cmd/mcp-agent-loop`
+with two tools: `agent_loop_run` (bounded live ReAct session, per-turn metrics
+report) and `agent_loop_self_check` (offline wiring gate, `always_allow`'d).
+Wired into `MCP_SERVERS` + Makefile + `registry.yaml`. Verified gofmt/vet/
+`go test ./pkg/agentloop` + a live stdio smoke (`agent_loop_self_check` →
+passed, all 5 checks). **Both F4 client forms (a)+(b) now delivered.**
+
+The F4 compound is complete: `F4-tool-loop-as-prefix` (kill-test PASS, row 194)
+→ client slice 1 CLI (row 195 PASS) → client slice 2 MCP tool (loom-core !585).
+Open follow-ups: a prefill-only/TTFT proxy header so the client can read the
+prefix-hit ratio directly on engines that omit `cached_tokens` (gemma4); and
+`F4-prefix-cache-flip` canary promotion remains `conditional` (row 193).
 
 ## Previous Goal (2026-06-01) - F4-tool-loop-as-prefix kill-test
 
