@@ -61,24 +61,16 @@ func (b *EXL2JobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	}
 
 	// Container memory priority: spec > GPUProfile > hardcoded default.
-	memoryGB := int32(DefaultGPUQuantizationMemoryGB)
-	if params.MemoryConfig.ContainerMemoryGB > 0 {
-		memoryGB = params.MemoryConfig.ContainerMemoryGB
-	}
-	if params.Spec.MaxMemoryGB != nil {
-		memoryGB = *params.Spec.MaxMemoryGB
-	}
+	memoryGB := resolveQuantizationMemoryGB(params.Spec, params.MemoryConfig)
 
 	bits := DefaultEXL2Bits
 	if params.Spec.Bits != nil {
 		bits = int(*params.Spec.Bits)
 	}
 
-	image := ResolveImage(ImageFormatEXL2, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
-
-	return buildGPUQuantizationJob(
+	return buildFormatQuantizationJob(
 		params,
-		image,
+		ImageFormatEXL2,
 		b.buildScript(params.ModelPath, bits),
 		memoryGB,
 		nil,

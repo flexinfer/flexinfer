@@ -64,19 +64,11 @@ func (b *GPTQJobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec) error {
 		return fmt.Errorf("GPTQ: %w", ErrGPURequired)
 	}
 
-	bits := DefaultGPTQBits
-	if spec.Bits != nil {
-		bits = int(*spec.Bits)
-	}
+	bits, groupSize := resolveBitsAndGroupSize(spec, DefaultGPTQBits, DefaultQuantizationGroupSize)
 	switch bits {
 	case 4, 8:
 	default:
 		return fmt.Errorf("GPTQ %w: got %d, want 4 or 8", ErrInvalidBits, bits)
-	}
-
-	groupSize := DefaultQuantizationGroupSize
-	if spec.GroupSize != nil {
-		groupSize = int(*spec.GroupSize)
 	}
 	if groupSize <= 0 {
 		return fmt.Errorf("GPTQ: %w (got %d)", ErrInvalidGroupSize, groupSize)
@@ -106,13 +98,7 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	}
 
 	// Container memory priority: env var > spec > GPUProfile > hardcoded default.
-	memoryGB := int32(DefaultGPUQuantizationMemoryGB)
-	if params.MemoryConfig.ContainerMemoryGB > 0 {
-		memoryGB = params.MemoryConfig.ContainerMemoryGB
-	}
-	if params.Spec.MaxMemoryGB != nil {
-		memoryGB = *params.Spec.MaxMemoryGB
-	}
+	memoryGB := resolveQuantizationMemoryGB(params.Spec, params.MemoryConfig)
 	// Allow env var override for memory (e.g. when redirecting to a high-RAM node).
 	if override := os.Getenv("FLEXINFER_GPTQ_MAX_MEMORY_GB"); override != "" {
 		if v, err := strconv.Atoi(override); err == nil && v > 0 {
@@ -120,14 +106,7 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 		}
 	}
 
-	bits := DefaultGPTQBits
-	if params.Spec.Bits != nil {
-		bits = int(*params.Spec.Bits)
-	}
-	groupSize := DefaultQuantizationGroupSize
-	if params.Spec.GroupSize != nil {
-		groupSize = int(*params.Spec.GroupSize)
-	}
+	bits, groupSize := resolveBitsAndGroupSize(params.Spec, DefaultGPTQBits, DefaultQuantizationGroupSize)
 
 	sym := true
 	if params.Spec.Sym != nil {
