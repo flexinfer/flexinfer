@@ -54,3 +54,29 @@ func ResolveImage(rules []ImageRule, vendor GPUVendor, arch string) string {
 	}
 	return ""
 }
+
+// ApplyImageDigest pins image to the given content digest for reproducible
+// deployments. Any existing tag or digest on image is stripped and replaced
+// with "@<digest>". A bare hex digest is normalized to "sha256:<hex>".
+//
+// Empty image or empty digest returns image unchanged. The registry-host port
+// colon (e.g. "registry:5000/...") is preserved: only a tag colon appearing
+// after the last path separator is treated as a tag.
+func ApplyImageDigest(image, digest string) string {
+	if image == "" || digest == "" {
+		return image
+	}
+	if !strings.Contains(digest, ":") {
+		digest = "sha256:" + digest
+	}
+	// Strip an existing digest ("repo@sha256:...").
+	if at := strings.LastIndex(image, "@"); at != -1 {
+		image = image[:at]
+	}
+	// Strip an existing tag: the last ':' that comes after the last '/', so a
+	// registry-host port colon is left intact.
+	if colon := strings.LastIndex(image, ":"); colon > strings.LastIndex(image, "/") {
+		image = image[:colon]
+	}
+	return image + "@" + digest
+}

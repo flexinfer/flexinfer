@@ -5,6 +5,34 @@ import (
 	"testing"
 )
 
+func TestApplyImageDigest(t *testing.T) {
+	const dig = "sha256:abc1230000000000000000000000000000000000000000000000000000000000"
+	const hex = "abc1230000000000000000000000000000000000000000000000000000000000"
+
+	tests := []struct {
+		name   string
+		image  string
+		digest string
+		want   string
+	}{
+		{"empty digest unchanged", "repo/img:tag", "", "repo/img:tag"},
+		{"empty image unchanged", "", dig, ""},
+		{"tagged image", "flexinfer/runtime:master", dig, "flexinfer/runtime@" + dig},
+		{"untagged image", "flexinfer/runtime", dig, "flexinfer/runtime@" + dig},
+		{"bare hex normalized", "flexinfer/runtime:master", hex, "flexinfer/runtime@" + dig},
+		{"registry host with port + tag", "registry.harbor.lan:5000/flexinfer/runtime:master", dig, "registry.harbor.lan:5000/flexinfer/runtime@" + dig},
+		{"registry host with port no tag", "registry.harbor.lan:5000/flexinfer/runtime", dig, "registry.harbor.lan:5000/flexinfer/runtime@" + dig},
+		{"existing digest replaced", "flexinfer/runtime@sha256:0000000000000000000000000000000000000000000000000000000000000000", dig, "flexinfer/runtime@" + dig},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := ApplyImageDigest(tt.image, tt.digest); got != tt.want {
+				t.Errorf("ApplyImageDigest(%q, %q) = %q, want %q", tt.image, tt.digest, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestResolveImage(t *testing.T) {
 	rules := []ImageRule{
 		{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "TEST_IMG_GFX1100", Default: "default-gfx1100"},

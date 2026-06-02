@@ -285,6 +285,17 @@ type ModelSpec struct {
 	// +optional
 	Image string `json:"image,omitempty"`
 
+	// ImageDigest pins the resolved backend image to an immutable content
+	// digest for reproducible deployments. When set, the digest is applied to
+	// whatever image is otherwise resolved (per-model Image override, GPUProfile
+	// image, or backend default): any existing tag/digest is stripped and
+	// replaced with "@sha256:<digest>". Keeping the human-readable tag in Image
+	// while pinning reproducibility here is the recommended pattern.
+	// Accepts a bare 64-char hex digest or the "sha256:<hex>" form.
+	// +kubebuilder:validation:Pattern=`^(sha256:)?[a-f0-9]{64}$`
+	// +optional
+	ImageDigest string `json:"imageDigest,omitempty"`
+
 	// Source is the model source URI.
 	// Formats:
 	//   - HF://org/model        - HuggingFace model
