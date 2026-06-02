@@ -147,6 +147,9 @@ agent:
   image:
     repository: ghcr.io/flexinfer/flexinfer-agent
     tag: "latest"
+    # Pin to an immutable digest (repository@sha256:...) for reproducible
+    # deploys; when set it overrides tag. Resolve with `flexinfer image pin`.
+    digest: ""
   resources:
     limits:
       cpu: 500m
@@ -161,6 +164,9 @@ proxy:
   image:
     repository: ghcr.io/flexinfer/flexinfer-proxy
     tag: "latest"
+    # Pin to an immutable digest (repository@sha256:...) for reproducible
+    # deploys; when set it overrides tag. Resolve with `flexinfer image pin`.
+    digest: ""
   service:
     type: ClusterIP
     port: 80
@@ -339,6 +345,9 @@ scheduler:
   image:
     repository: ghcr.io/flexinfer/flexinfer-scheduler
     tag: "latest"
+    # Pin to an immutable digest (repository@sha256:...) for reproducible
+    # deploys; when set it overrides tag. Resolve with `flexinfer image pin`.
+    digest: ""
   # Optional scheduling controls for the scheduler Deployment.
   # Useful when your cluster has mixed architectures (e.g., arm64 nodes).
   nodeSelector: {}
