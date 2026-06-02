@@ -30,27 +30,29 @@ spec:
       nodeSelector:
         kubernetes.io/arch: amd64
       # Kokoro is CPU-bound (torch 2.8.0+cpu, 82M StyleTTS2). Warm RTF is
-      # per-core-clock-bound, not thread-bound: on the weak k3s-w-10 VM it was
-      # ~1.07 (slower than real-time); the kill-test hit RTF 0.116 on the
-      # cblevins-7900xtx host CPU. PREFER (soft) that strong host so long-form
-      # synthesis stays faster than playback, but fall back to any amd64 node if
-      # it is unschedulable (availability over peak throughput — TTS stays up).
-      # GPU serving on 7900xtx is GPU-bound (~1% node CPU baseline, 24 cores),
-      # so a CPU-capped TTS pod does not starve it; the conversational loop is
+      # per-core-clock-bound: on the weak k3s-w-10 VM it was ~1.07 (slower than
+      # real-time) and the gtx980ti host has an even worse Ivy Bridge CPU
+      # (no AVX2/FMA), while the kill-test hit RTF 0.116 on the cblevins-7900xtx
+      # host CPU. REQUIRE that strong host. A soft preference loses to the
+      # scheduler's resource-balancing score (both GPU nodes share the
+      # dedicated=gpu taint our toleration opens, so it drifted to the emptier
+      # but slower gtx980ti). Hard-pinning costs no real availability: gemma4-26b
+      # (the LLM half of the voice stack) already runs on 7900xtx, so TTS shares
+      # fate with it — if this node is down the stack is down regardless. GPU
+      # serving here is GPU-bound (~16/24 cores requested, ~8 free), so a 2-core
+      # request / 8-core cap does not starve it; the conversational loop is
       # sequential (LLM finishes, then TTS) so the two barely overlap anyway.
       affinity:
         nodeAffinity:
-          preferredDuringSchedulingIgnoredDuringExecution:
-            - weight: 100
-              preference:
-                matchExpressions:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            nodeSelectorTerms:
+              - matchExpressions:
                   - key: kubernetes.io/hostname
                     operator: In
                     values:
                       - cblevins-7900xtx
-      # Tolerate the GPU node's dedicated taint so the soft preference above can
-      # actually land there. This is the only taint we accept; the amd64
-      # nodeSelector still keeps us off non-amd64 hosts.
+      # Tolerate the GPU node's dedicated taint so the required affinity above
+      # can actually land. This is the only taint we accept.
       tolerations:
         - key: dedicated
           operator: Equal
