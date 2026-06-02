@@ -99,6 +99,10 @@ proxy:
   # Deployment on gfx906 (deploy/system/pyannote-diarization/). Gives ICC one
   # base URL for ASR + diarization. Empty disables the route (503).
   pyannoteUpstream: "http://pyannote-diarization.flexinfer-system.svc:8000"
+  # Static upstream for the /v1/audio/speech route → Kokoro TTS sibling
+  # Deployment (deploy/system/kokoro-tts/, CPU-only). Completes the voice stack
+  # (ASR + diarization + TTS) under one base URL. Empty disables the route (503).
+  kokoroUpstream: "http://kokoro-tts.flexinfer-system.svc:8880"
   resources:
     limits:
       cpu: 200m

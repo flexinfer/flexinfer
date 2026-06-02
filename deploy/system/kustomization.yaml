@@ -12,3 +12,4 @@ resources:
   - servicemonitor.yaml
   - benchmark-results/
   - pyannote-diarization/
+  - kokoro-tts/

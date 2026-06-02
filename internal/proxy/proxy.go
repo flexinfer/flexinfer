@@ -113,6 +113,10 @@ type Config struct {
 	// service. When set, POST /diarize is reverse-proxied to it so ICC has a
 	// single base URL for ASR + diarization. Empty → /diarize returns 503.
 	PyannoteUpstream string
+	// KokoroUpstream is the base URL of the Kokoro TTS sibling service. When
+	// set, POST /v1/audio/speech is reverse-proxied to it so the voice stack
+	// exposes ASR + diarization + TTS under one base URL. Empty → 503.
+	KokoroUpstream string
 }
 
 // Validate checks the Config for conflicting or invalid settings. Returns a
@@ -204,6 +208,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		AdmissionDefaultMaxTokens:        envutil.IntOrDefault("PROXY_ADMISSION_DEFAULT_MAX_TOKENS", defaultAdmissionMaxTokens),
 		LabelGroupRouting:                os.Getenv("FLEXINFER_PROXY_LABEL_GROUP_ROUTING"),
 		PyannoteUpstream:                 os.Getenv("FLEXINFER_PYANNOTE_UPSTREAM"),
+		KokoroUpstream:                   os.Getenv("FLEXINFER_KOKORO_UPSTREAM"),
 	}
 
 	return cfg
@@ -311,6 +316,10 @@ type Proxy struct {
 	// service; empty disables the /diarize route (returns 503).
 	pyannoteUpstream string
 
+	// kokoroUpstream is the base URL of the Kokoro TTS sibling service; empty
+	// disables the /v1/audio/speech route (returns 503).
+	kokoroUpstream string
+
 	// Lifecycle context for background goroutines
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -362,6 +371,7 @@ func New(cfg Config) *Proxy {
 		directRuntimeEnabled: cfg.DirectRuntimeEnabled,
 		labelGroupRouting:    canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting),
 		pyannoteUpstream:     cfg.PyannoteUpstream,
+		kokoroUpstream:       cfg.KokoroUpstream,
 		ctx:                  ctx,
 		cancel:               cancel,
 		debugConfig:          newDebugConfigView(cfg),
@@ -411,6 +421,7 @@ func (p *Proxy) Run(port int) error {
 	mux.HandleFunc("/v1/models", p.handleModels)
 	mux.HandleFunc("/debug/config", p.handleDebugConfig)
 	mux.HandleFunc("/diarize", p.handleDiarize)
+	mux.HandleFunc("/v1/audio/speech", p.handleSpeech)
 	mux.HandleFunc("/", p.handleRequest)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
