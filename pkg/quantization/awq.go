@@ -26,17 +26,9 @@ func (b *AWQJobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec) error {
 		return fmt.Errorf("AWQ: %w", ErrGPURequired)
 	}
 
-	bits := DefaultAWQBits
-	if spec.Bits != nil {
-		bits = int(*spec.Bits)
-	}
+	bits, groupSize := resolveBitsAndGroupSize(spec, DefaultAWQBits, DefaultQuantizationGroupSize)
 	if bits != 4 {
 		return fmt.Errorf("AWQ %w: got %d, want 4", ErrInvalidBits, bits)
-	}
-
-	groupSize := DefaultQuantizationGroupSize
-	if spec.GroupSize != nil {
-		groupSize = int(*spec.GroupSize)
 	}
 	if groupSize <= 0 {
 		return fmt.Errorf("AWQ: %w (got %d)", ErrInvalidGroupSize, groupSize)
@@ -52,30 +44,15 @@ func (b *AWQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 	}
 
 	// Container memory priority: spec > GPUProfile > hardcoded default.
-	memoryGB := int32(DefaultGPUQuantizationMemoryGB)
-	if params.MemoryConfig.ContainerMemoryGB > 0 {
-		memoryGB = params.MemoryConfig.ContainerMemoryGB
-	}
-	if params.Spec.MaxMemoryGB != nil {
-		memoryGB = *params.Spec.MaxMemoryGB
-	}
+	memoryGB := resolveQuantizationMemoryGB(params.Spec, params.MemoryConfig)
 
-	bits := DefaultAWQBits
-	if params.Spec.Bits != nil {
-		bits = int(*params.Spec.Bits)
-	}
-	groupSize := DefaultQuantizationGroupSize
-	if params.Spec.GroupSize != nil {
-		groupSize = int(*params.Spec.GroupSize)
-	}
-
-	image := ResolveImage(ImageFormatAWQ, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
+	bits, groupSize := resolveBitsAndGroupSize(params.Spec, DefaultAWQBits, DefaultQuantizationGroupSize)
 
 	env := b.buildEnv(params.ModelPath, bits, groupSize, params.Spec.Calibration)
 
-	return buildGPUQuantizationJob(
+	return buildFormatQuantizationJob(
 		params,
-		image,
+		ImageFormatAWQ,
 		b.awqWrapperScript(),
 		memoryGB,
 		env,

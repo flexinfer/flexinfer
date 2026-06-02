@@ -39,10 +39,7 @@ func (b *CompressedTensorsJobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec
 		return fmt.Errorf("COMPRESSED_TENSORS: %w", ErrGPURequired)
 	}
 
-	bits := DefaultCompressedTensorsBits
-	if spec.Bits != nil {
-		bits = int(*spec.Bits)
-	}
+	bits, groupSize := resolveBitsAndGroupSize(spec, DefaultCompressedTensorsBits, DefaultCompressedTensorsGroupSize)
 	if bits != DefaultCompressedTensorsBits {
 		return fmt.Errorf(
 			"COMPRESSED_TENSORS %w: got %d, want %d for W4A16",
@@ -52,10 +49,6 @@ func (b *CompressedTensorsJobBuilder) Validate(spec *aiv1alpha2.QuantizationSpec
 		)
 	}
 
-	groupSize := DefaultCompressedTensorsGroupSize
-	if spec.GroupSize != nil {
-		groupSize = int(*spec.GroupSize)
-	}
 	if groupSize != DefaultCompressedTensorsGroupSize {
 		return fmt.Errorf(
 			"COMPRESSED_TENSORS groupSize must be %d for W4A16 (got %d)",
@@ -75,22 +68,9 @@ func (b *CompressedTensorsJobBuilder) BuildJob(params JobParams) (*batchv1.Job, 
 	}
 
 	// Container memory priority: spec > GPUProfile > hardcoded default.
-	memoryGB := int32(DefaultGPUQuantizationMemoryGB)
-	if params.MemoryConfig.ContainerMemoryGB > 0 {
-		memoryGB = params.MemoryConfig.ContainerMemoryGB
-	}
-	if params.Spec.MaxMemoryGB != nil {
-		memoryGB = *params.Spec.MaxMemoryGB
-	}
+	memoryGB := resolveQuantizationMemoryGB(params.Spec, params.MemoryConfig)
 
-	bits := DefaultCompressedTensorsBits
-	if params.Spec.Bits != nil {
-		bits = int(*params.Spec.Bits)
-	}
-	groupSize := DefaultCompressedTensorsGroupSize
-	if params.Spec.GroupSize != nil {
-		groupSize = int(*params.Spec.GroupSize)
-	}
+	bits, groupSize := resolveBitsAndGroupSize(params.Spec, DefaultCompressedTensorsBits, DefaultCompressedTensorsGroupSize)
 
 	image := ResolveImage(ImageFormatCompressedTensors, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
 	command := strings.TrimSpace(os.Getenv("FLEXINFER_COMPRESSED_TENSORS_COMMAND"))

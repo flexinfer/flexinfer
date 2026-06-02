@@ -180,3 +180,45 @@ func resourcePtr(s string) *resource.Quantity {
 	q := resource.MustParse(s)
 	return &q
 }
+
+// resolveQuantizationMemoryGB applies the container-memory precedence shared by
+// the GPU quantization builders (AWQ, GPTQ, FP8, EXL2, compressed-tensors):
+// explicit spec.maxMemoryGB wins, then the GPUProfile-derived
+// MemoryConfig.ContainerMemoryGB, then the hardcoded default. GPTQ layers an
+// env-var override on top of the value returned here.
+func resolveQuantizationMemoryGB(spec *aiv1alpha2.QuantizationSpec, memCfg GPUMemoryConfig) int32 {
+	memoryGB := int32(DefaultGPUQuantizationMemoryGB)
+	if memCfg.ContainerMemoryGB > 0 {
+		memoryGB = memCfg.ContainerMemoryGB
+	}
+	if spec != nil && spec.MaxMemoryGB != nil {
+		memoryGB = *spec.MaxMemoryGB
+	}
+	return memoryGB
+}
+
+// resolveBitsAndGroupSize extracts the bit width and group size from a spec,
+// falling back to the supplied per-format defaults when unset. Shared by the
+// AWQ, GPTQ, and compressed-tensors builders.
+func resolveBitsAndGroupSize(spec *aiv1alpha2.QuantizationSpec, defaultBits, defaultGroupSize int) (bits, groupSize int) {
+	bits = defaultBits
+	groupSize = defaultGroupSize
+	if spec == nil {
+		return bits, groupSize
+	}
+	if spec.Bits != nil {
+		bits = int(*spec.Bits)
+	}
+	if spec.GroupSize != nil {
+		groupSize = int(*spec.GroupSize)
+	}
+	return bits, groupSize
+}
+
+// buildFormatQuantizationJob resolves the quantizer image for the given format
+// and delegates to buildGPUQuantizationJob. It captures the image-resolution +
+// job-construction tail shared by the AWQ, FP8, and EXL2 builders.
+func buildFormatQuantizationJob(params JobParams, format ImageFormat, script string, memoryGB int32, env []corev1.EnvVar) (*batchv1.Job, error) {
+	image := ResolveImage(format, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
+	return buildGPUQuantizationJob(params, image, script, memoryGB, env)
+}
