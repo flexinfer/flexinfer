@@ -14,14 +14,14 @@
 | **Slice 1 — Whisper kill-test (runtime gate)** | ✅ **PASS 2026-05-21** | [ralph-whisper-kill-test-v6-evidence-2026-05-21.md](ralph-whisper-kill-test-v6-evidence-2026-05-21.md): Model CR `Ready`, `/v1/models` returns `whisper-large-v3-turbo`, vLLM 0.17.0 auto-resolves `WhisperForConditionalGeneration`, FA Triton on RDNA, 67s cold-start |
 | **Slice 2 — GPUProfile `audioTranscription` flag** | ✅ shipped | !423 (`gfx1100: experimental`, `gfx906: unsupported`) |
 | **Slice 3b — vLLM `--task` wiring** | ✅ shipped then DROPPED | !423 added it; !464 removed it — vLLM 0.17+ auto-resolves the task from architecture, no CLI flag |
-| **Slice 3a — production Whisper Model CR** | ❌ NOT STARTED ← **this feature-dev** | only `deploy/models/whisper-kill-test-v3.yaml` exists (torn down); no production CR anywhere |
+| **Slice 3a — production Whisper Model CR** | ✅ **DONE + LIVE-VALIDATED 2026-06-02** | MR !541 merged; `deploy/models/whisper-large-v3-turbo.yaml`. Both residual risks closed live (real transcript HTTP 200 + demand-driven swap-from-idle w/o forcePromotion + 26B reclaim). Evidence: [whisper-prod-cr-live-validation-2026-06-02.md](whisper-prod-cr-live-validation-2026-06-02.md) |
 | **Slice 4 — pyannote diarization on gfx906** | ❌ NOT STARTED (riskiest assumption) | no code; new image + CI lane + FastAPI + Deployment |
 | **Slice 5 — proxy `/diarize` route** | ❌ NOT STARTED | depends on Slice 4 |
 | **Slice 6 — load test under contention** | ❌ NOT STARTED | depends on 3a + 4 + 5 |
 
-**Two residual risks the kill-test did NOT close** (both validate live in step 1):
-1. v6 verified Whisper *loads + registers* (`/v1/models`), but **never POSTed audio to `/v1/audio/transcriptions`**. The endpoint mounting is inferred from the encoder-cache audio profiling — strong, but not a verified transcript.
-2. The kill-test used `gpu.forcePromotion: true` + `minReplicas: 1` (permanent 26B eviction) to sidestep the shared-GPU chooser deadlock. **Demand-driven swap-from-idle** (priority 400 + serviceLabels + `minReplicas: 0`, no forcePromotion) is the production shape and is **unproven on-cluster**.
+**Two residual risks the kill-test did NOT close — both CLOSED LIVE 2026-06-02** ([evidence](whisper-prod-cr-live-validation-2026-06-02.md)):
+1. ✅ Real transcription verified — `POST /v1/audio/transcriptions` returned HTTP 200 with an exact transcript (not just `/v1/models`).
+2. ✅ Demand-driven swap-from-idle verified — priority 400 + serviceLabels + a routed request preempted the 26B **without `forcePromotion`**; Whisper served, then released and the 26B reclaimed after the 5m idleTimeout. The forcePromotion fallback is **not needed** for the demand-driven cadence.
 
 ---
 
