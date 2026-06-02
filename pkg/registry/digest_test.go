@@ -76,7 +76,7 @@ func TestResolveImageDigest_BearerChallenge(t *testing.T) {
 				t.Errorf("token request missing service param: %q", r.URL.RawQuery)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, `{"token":"tok-123"}`)
+			_, _ = fmt.Fprint(w, `{"token":"tok-123"}`)
 		case r.Method == http.MethodHead && r.URL.Path == "/v2/library/nginx/manifests/latest":
 			if r.Header.Get("Authorization") == "Bearer tok-123" {
 				w.Header().Set("Docker-Content-Digest", testDigest)
