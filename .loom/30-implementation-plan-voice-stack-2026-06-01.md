@@ -15,8 +15,8 @@
 | **Slice 2 — GPUProfile `audioTranscription` flag** | ✅ shipped | !423 (`gfx1100: experimental`, `gfx906: unsupported`) |
 | **Slice 3b — vLLM `--task` wiring** | ✅ shipped then DROPPED | !423 added it; !464 removed it — vLLM 0.17+ auto-resolves the task from architecture, no CLI flag |
 | **Slice 3a — production Whisper Model CR** | ✅ **DONE + LIVE-VALIDATED 2026-06-02** | MR !541 merged; `deploy/models/whisper-large-v3-turbo.yaml`. Both residual risks closed live (real transcript HTTP 200 + demand-driven swap-from-idle w/o forcePromotion + 26B reclaim). Evidence: [whisper-prod-cr-live-validation-2026-06-02.md](whisper-prod-cr-live-validation-2026-06-02.md) |
-| **Slice 4 — pyannote diarization on gfx906** | ❌ NOT STARTED (riskiest assumption) | no code; new image + CI lane + FastAPI + Deployment |
-| **Slice 5 — proxy `/diarize` route** | ❌ NOT STARTED | depends on Slice 4 |
+| **Slice 4 — pyannote diarization on gfx906** | 🟡 **KILL-TEST PASSED 2026-06-02; image built** | Riskiest assumption CONFIRMED — pyannote runs on Vega20 GPU (1.65 GiB, correct 2-speaker split). Image `flexinfer/pyannote-diarization:rocm-gfx906` built+pushed; Dockerfile + scripts + torchaudio shim landed. Evidence: [pyannote-gfx906-killtest-passed-2026-06-02.md](pyannote-gfx906-killtest-passed-2026-06-02.md). REMAINING: Deployment/Service/PVC manifests, CI publish lane, digest pin. |
+| **Slice 5 — proxy `/diarize` route** | ❌ NOT STARTED | depends on Slice 4 Deployment |
 | **Slice 6 — load test under contention** | ❌ NOT STARTED | depends on 3a + 4 + 5 |
 
 **Two residual risks the kill-test did NOT close — both CLOSED LIVE 2026-06-02** ([evidence](whisper-prod-cr-live-validation-2026-06-02.md)):
@@ -86,7 +86,7 @@ Per workspace spec rule, Slice 4 is BLOCKED until this kill-test runs live.
 
 **Failure mode**: collapse to ASR-only (brainstorm runner-up). ~70% of work (Whisper deploy, proxy, demo) reusable; only the diarization service is lost.
 
-**Status**: not run.
+**Status**: ✅ **PASSED 2026-06-02** — pyannote ran on the Radeon VII GPU (1.65 GiB, correct 2-speaker split at the right boundary). Cost: a 7-fix `torchaudio_compat` shim for torchaudio-2.9 ↔ pyannote-3.3.2 drift + operator HF license acceptance. Evidence: [pyannote-gfx906-killtest-passed-2026-06-02.md](pyannote-gfx906-killtest-passed-2026-06-02.md).
 
 ---
 
