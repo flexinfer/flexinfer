@@ -190,6 +190,15 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		log.V(1).Info("Using per-model image override", "model", model.Name, "image", model.Spec.Image)
 		image = model.Spec.Image
 	}
+	// Pin the resolved image to an immutable digest when requested. Applied
+	// last so it reproducibly fixes whatever image won the precedence chain
+	// above (per-model override, GPUProfile, or backend default).
+	if model.Spec.ImageDigest != "" {
+		if pinned := backend.ApplyImageDigest(image, model.Spec.ImageDigest); pinned != image {
+			log.V(1).Info("Pinning model image to digest", "model", model.Name, "image", pinned)
+			image = pinned
+		}
+	}
 	port := b.Port()
 	command := b.Command()
 	args := b.Args(spec)

@@ -53,6 +53,43 @@ curl -s http://127.0.0.1:8000/v1/models \
   -H "Authorization: Bearer sk-litellm-master-key" | jq '.data[].id'
 ```
 
+## Pin a model image to a digest
+
+For reproducible deployments, pin a model's backend image to an immutable
+content digest with `spec.imageDigest`. The digest is applied last in the
+image-resolution chain, so it pins whatever image wins precedence (the
+per-model `spec.image` override, the GPUProfile image, or the backend
+default). Any existing tag or digest on the resolved image is replaced with
+`@sha256:<digest>`.
+
+Keep the human-readable tag in `spec.image` for documentation and let
+`spec.imageDigest` guarantee reproducibility:
+
+```yaml
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime:master   # readable tag
+  imageDigest: sha256:d9def647d3f0520390ff8e1addd00762111b07a4bd77eec1108eb430f6cc8ff2
+```
+
+The field accepts either the `sha256:<hex>` form or a bare 64-character hex
+digest (normalized to `sha256:` automatically). It is validated by the CRD
+against `^(sha256:)?[a-f0-9]{64}$`.
+
+Resolve a tag to its current digest before pinning:
+
+```bash
+# Expected output: registry.harbor.lan/flexinfer/runtime@sha256:<hex>
+docker --context 7900xtx buildx imagetools inspect \
+  registry.harbor.lan/flexinfer/runtime:master --format '{{.Manifest.Digest}}'
+```
+
+> Note: a `flexinfer image pin` CLI that resolves tag→digest automatically and
+> Helm-level digest defaults are planned follow-ups (issue #50). Today, set the
+> digest on the Model CR directly.
+
 ## Debug a model that won't become ready
 
 1. Check events:
