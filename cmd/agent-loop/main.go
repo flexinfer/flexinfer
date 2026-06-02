@@ -157,7 +157,7 @@ func run(o options) error {
 	printSummary(res)
 
 	if o.report != "" {
-		if err := writeReport(o, session, system, systemTok, budget, res); err != nil {
+		if err := writeReport(o, session, systemTok, budget, res); err != nil {
 			return fmt.Errorf("write report: %w", err)
 		}
 		fmt.Printf("report written: %s\n", o.report)
@@ -242,7 +242,7 @@ type reportBudget struct {
 	Usable        int `json:"usable"`
 }
 
-func writeReport(o options, session, _ string, systemTok int, budget agentloop.Budget, res *agentloop.Result) error {
+func writeReport(o options, session string, systemTok int, budget agentloop.Budget, res *agentloop.Result) error {
 	r := report{
 		Schema:      reportSchema,
 		GeneratedAt: time.Now().UTC().Format(time.RFC3339),

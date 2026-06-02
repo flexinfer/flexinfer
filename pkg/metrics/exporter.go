@@ -38,7 +38,7 @@ var (
 		[]string{"gpu", "node"},
 	)
 
-	// === GPU VRAM Metrics ===
+	// GPU VRAM metrics
 
 	// GPUVRAMFreeBytes tracks free VRAM per GPU.
 	GPUVRAMFreeBytes = prometheus.NewGaugeVec(
@@ -76,7 +76,7 @@ var (
 		[]string{"gpu", "node", "vendor"},
 	)
 
-	// === ModelCache LRU Eviction Metrics ===
+	// ModelCache LRU eviction metrics
 
 	// ModelCacheResidentSeconds tracks how long a cache has been resident in memory.
 	ModelCacheResidentSeconds = prometheus.NewGaugeVec(
@@ -141,7 +141,7 @@ var (
 		[]string{"cache", "namespace", "phase"},
 	)
 
-	// === Quantization Metrics ===
+	// Quantization metrics
 
 	// QuantizationDurationSeconds tracks quantization job duration.
 	QuantizationDurationSeconds = prometheus.NewHistogramVec(
@@ -288,7 +288,7 @@ var (
 		[]string{"cluster", "reason"},
 	)
 
-	// === Model Lifecycle Metrics ===
+	// Model lifecycle metrics
 
 	// ModelPhase reports the current phase for each model (1 for current phase, 0 otherwise).
 	ModelPhase = prometheus.NewGaugeVec(
@@ -318,7 +318,7 @@ var (
 		[]string{"model", "namespace", "backend"},
 	)
 
-	// === Shared-Group Scheduling Metrics (v1alpha2) ===
+	// Shared-group scheduling metrics (v1alpha2)
 
 	// SharedGroupState tracks the state of each model in a shared GPU group.
 	SharedGroupState = prometheus.NewGaugeVec(
@@ -338,7 +338,7 @@ var (
 		[]string{"group", "namespace", "from", "to"},
 	)
 
-	// === Cache Job Metrics ===
+	// Cache job metrics
 
 	// ModelCacheJobDurationSeconds tracks duration of ModelCache pipeline jobs.
 	ModelCacheJobDurationSeconds = prometheus.NewHistogramVec(
@@ -359,7 +359,7 @@ var (
 		[]string{"model", "namespace", "reason"},
 	)
 
-	// === Controller Reconcile Metrics ===
+	// Controller reconcile metrics
 
 	// ReconcileDurationSeconds tracks the duration of each controller reconcile loop.
 	ReconcileDurationSeconds = prometheus.NewHistogramVec(
@@ -380,7 +380,7 @@ var (
 		[]string{"controller"},
 	)
 
-	// === Finetune Metrics ===
+	// Finetune metrics
 
 	// FinetuneDurationSeconds tracks finetune job duration.
 	FinetuneDurationSeconds = prometheus.NewHistogramVec(
@@ -419,7 +419,7 @@ var (
 		[]string{"model", "namespace", "mode"},
 	)
 
-	// === Benchmark Result Metrics ===
+	// Benchmark result metrics
 
 	// BenchmarkTokensPerSecond publishes the latest benchmark TPS result.
 	BenchmarkTokensPerSecond = prometheus.NewGaugeVec(
@@ -510,9 +510,7 @@ func init() {
 }
 
 // Exporter handles serving the Prometheus metrics.
-type Exporter struct {
-	// In the future, this could hold configuration for the exporter.
-}
+type Exporter struct{}
 
 // NewExporter creates a new Exporter.
 func NewExporter() *Exporter {
