@@ -78,6 +78,15 @@ established + the clip is valid non-silent audio of the correct duration for
 the input); an ASR round-trip against the live Whisper endpoint is the natural
 verification for the Slice 4 conversational-loop demonstrator.
 
+> **Post-deploy addendum (2026-06-02)**: this RTF (0.116) was measured on the
+> **7900xtx host CPU**. In production the Deployment scheduled onto **k3s-w-10**
+> (a weaker worker) where warm RTF is **~1.2** — still CPU-only/no-GPU (the
+> load-bearing claim holds) but *slower than real-time*. The kill-test
+> over-stated throughput by running on a faster CPU than the pod landed on.
+> Slice-4 intelligibility round-trip PASSED live (Whisper transcribed the TTS
+> output verbatim). Full deploy evidence + throughput follow-up:
+> [voice-stack-tts-live-2026-06-02.md](voice-stack-tts-live-2026-06-02.md).
+
 ## Positive / negative evidence (pre-run)
 
 **Positive**:
