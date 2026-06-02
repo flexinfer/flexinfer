@@ -75,197 +75,121 @@ type ValidationError struct {
 	Message string
 }
 
+// add records a single validation failure and flips the result invalid. Every
+// endpoint validator funnels through this so the error ordering — which
+// WriteValidationErrors depends on for the surfaced param and the
+// "(and N more errors)" count — stays consistent.
+func (r *ValidationResult) add(field, message string) {
+	r.Valid = false
+	r.Errors = append(r.Errors, ValidationError{Field: field, Message: message})
+}
+
+// decodeRequest runs the empty-body and JSON-unmarshal phases shared by every
+// endpoint validator. It returns ok=false with the fatal error already
+// recorded when the body cannot be decoded, signalling the caller to return
+// the result immediately.
+func decodeRequest[T any](body []byte, req *T) (*ValidationResult, bool) {
+	result := &ValidationResult{Valid: true}
+	if len(body) == 0 {
+		result.add("", "Request body is empty")
+		return result, false
+	}
+	if err := json.Unmarshal(body, req); err != nil {
+		result.add("", fmt.Sprintf("Invalid JSON: %v", err))
+		return result, false
+	}
+	return result, true
+}
+
+// requireModel records the shared "model is required" error.
+func (r *ValidationResult) requireModel(model string) {
+	if model == "" {
+		r.add("model", "model is required")
+	}
+}
+
+// checkSamplingCommon applies the numeric-range rules shared by the chat and
+// completion endpoints, in their canonical order (temperature, top_p, n,
+// max_tokens). A nil pointer means the field was omitted and is skipped.
+func (r *ValidationResult) checkSamplingCommon(temperature, topP *float64, n, maxTokens *int) {
+	if temperature != nil && (*temperature < 0 || *temperature > 2) {
+		r.add("temperature", "temperature must be between 0 and 2")
+	}
+	if topP != nil && (*topP < 0 || *topP > 1) {
+		r.add("top_p", "top_p must be between 0 and 1")
+	}
+	if n != nil && *n < 1 {
+		r.add("n", "n must be at least 1")
+	}
+	if maxTokens != nil && *maxTokens < 1 {
+		r.add("max_tokens", "max_tokens must be at least 1")
+	}
+}
+
+// checkPenalty applies the shared [-2, 2] range rule for presence/frequency
+// penalties. field is the JSON field name used in both the param and message.
+func (r *ValidationResult) checkPenalty(field string, v *float64) {
+	if v != nil && (*v < -2 || *v > 2) {
+		r.add(field, field+" must be between -2 and 2")
+	}
+}
+
 // ValidateChatCompletionRequest validates a chat completion request body.
 func ValidateChatCompletionRequest(body []byte) *ValidationResult {
-	result := &ValidationResult{Valid: true}
-
-	if len(body) == 0 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "",
-			Message: "Request body is empty",
-		})
-		return result
-	}
-
 	var req ChatCompletionRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "",
-			Message: fmt.Sprintf("Invalid JSON: %v", err),
-		})
+	result, ok := decodeRequest(body, &req)
+	if !ok {
 		return result
 	}
 
-	// Validate required fields
-	if req.Model == "" {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "model",
-			Message: "model is required",
-		})
-	}
+	result.requireModel(req.Model)
 
 	if len(req.Messages) == 0 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "messages",
-			Message: "messages is required and must not be empty",
-		})
+		result.add("messages", "messages is required and must not be empty")
 	}
 
 	// Validate messages
 	for i, msg := range req.Messages {
 		if msg.Role == "" {
-			result.Valid = false
-			result.Errors = append(result.Errors, ValidationError{
-				Field:   fmt.Sprintf("messages[%d].role", i),
-				Message: "role is required",
-			})
+			result.add(fmt.Sprintf("messages[%d].role", i), "role is required")
 		} else if msg.Role != "system" && msg.Role != "user" && msg.Role != "assistant" && msg.Role != "tool" && msg.Role != "function" {
-			result.Valid = false
-			result.Errors = append(result.Errors, ValidationError{
-				Field:   fmt.Sprintf("messages[%d].role", i),
-				Message: fmt.Sprintf("role must be one of: system, user, assistant, tool, function (got '%s')", msg.Role),
-			})
+			result.add(
+				fmt.Sprintf("messages[%d].role", i),
+				fmt.Sprintf("role must be one of: system, user, assistant, tool, function (got '%s')", msg.Role),
+			)
 		}
 	}
 
 	// Validate optional numeric fields
-	if req.Temperature != nil && (*req.Temperature < 0 || *req.Temperature > 2) {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "temperature",
-			Message: "temperature must be between 0 and 2",
-		})
-	}
-
-	if req.TopP != nil && (*req.TopP < 0 || *req.TopP > 1) {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "top_p",
-			Message: "top_p must be between 0 and 1",
-		})
-	}
-
-	if req.N != nil && *req.N < 1 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "n",
-			Message: "n must be at least 1",
-		})
-	}
-
-	if req.MaxTokens != nil && *req.MaxTokens < 1 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "max_tokens",
-			Message: "max_tokens must be at least 1",
-		})
-	}
-
-	if req.PresencePenalty != nil && (*req.PresencePenalty < -2 || *req.PresencePenalty > 2) {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "presence_penalty",
-			Message: "presence_penalty must be between -2 and 2",
-		})
-	}
-
-	if req.FrequencyPenalty != nil && (*req.FrequencyPenalty < -2 || *req.FrequencyPenalty > 2) {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "frequency_penalty",
-			Message: "frequency_penalty must be between -2 and 2",
-		})
-	}
+	result.checkSamplingCommon(req.Temperature, req.TopP, req.N, req.MaxTokens)
+	result.checkPenalty("presence_penalty", req.PresencePenalty)
+	result.checkPenalty("frequency_penalty", req.FrequencyPenalty)
 
 	return result
 }
 
 // ValidateCompletionRequest validates a completion request body.
 func ValidateCompletionRequest(body []byte) *ValidationResult {
-	result := &ValidationResult{Valid: true}
-
-	if len(body) == 0 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "",
-			Message: "Request body is empty",
-		})
-		return result
-	}
-
 	var req CompletionRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "",
-			Message: fmt.Sprintf("Invalid JSON: %v", err),
-		})
+	result, ok := decodeRequest(body, &req)
+	if !ok {
 		return result
 	}
 
-	// Validate required fields
-	if req.Model == "" {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "model",
-			Message: "model is required",
-		})
-	}
+	result.requireModel(req.Model)
 
 	// Prompt can be empty for some backends, but validate if provided
 	// The type can be string, []string, []int, or [][]int
 
 	// Validate optional numeric fields (same as chat completion)
-	if req.Temperature != nil && (*req.Temperature < 0 || *req.Temperature > 2) {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "temperature",
-			Message: "temperature must be between 0 and 2",
-		})
-	}
-
-	if req.TopP != nil && (*req.TopP < 0 || *req.TopP > 1) {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "top_p",
-			Message: "top_p must be between 0 and 1",
-		})
-	}
-
-	if req.N != nil && *req.N < 1 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "n",
-			Message: "n must be at least 1",
-		})
-	}
-
-	if req.MaxTokens != nil && *req.MaxTokens < 1 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "max_tokens",
-			Message: "max_tokens must be at least 1",
-		})
-	}
+	result.checkSamplingCommon(req.Temperature, req.TopP, req.N, req.MaxTokens)
 
 	if req.BestOf != nil && *req.BestOf < 1 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "best_of",
-			Message: "best_of must be at least 1",
-		})
+		result.add("best_of", "best_of must be at least 1")
 	}
 
 	if req.Logprobs != nil && *req.Logprobs < 0 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "logprobs",
-			Message: "logprobs must be non-negative",
-		})
+		result.add("logprobs", "logprobs must be non-negative")
 	}
 
 	return result
@@ -273,60 +197,26 @@ func ValidateCompletionRequest(body []byte) *ValidationResult {
 
 // ValidateEmbeddingRequest validates an embedding request body.
 func ValidateEmbeddingRequest(body []byte) *ValidationResult {
-	result := &ValidationResult{Valid: true}
-
-	if len(body) == 0 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "",
-			Message: "Request body is empty",
-		})
-		return result
-	}
-
 	var req EmbeddingRequest
-	if err := json.Unmarshal(body, &req); err != nil {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "",
-			Message: fmt.Sprintf("Invalid JSON: %v", err),
-		})
+	result, ok := decodeRequest(body, &req)
+	if !ok {
 		return result
 	}
 
-	// Validate required fields
-	if req.Model == "" {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "model",
-			Message: "model is required",
-		})
-	}
+	result.requireModel(req.Model)
 
 	if req.Input == nil {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "input",
-			Message: "input is required",
-		})
+		result.add("input", "input is required")
 	}
 
 	// Validate encoding_format if provided
 	if req.EncodingFormat != "" && req.EncodingFormat != "float" && req.EncodingFormat != "base64" {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "encoding_format",
-			Message: "encoding_format must be 'float' or 'base64'",
-		})
+		result.add("encoding_format", "encoding_format must be 'float' or 'base64'")
 	}
 
 	// Validate dimensions if provided
 	if req.Dimensions != nil && *req.Dimensions < 1 {
-		result.Valid = false
-		result.Errors = append(result.Errors, ValidationError{
-			Field:   "dimensions",
-			Message: "dimensions must be at least 1",
-		})
+		result.add("dimensions", "dimensions must be at least 1")
 	}
 
 	return result

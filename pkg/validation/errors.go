@@ -163,80 +163,117 @@ func writeJSONError(w http.ResponseWriter, statusCode int, resp *OpenAIErrorResp
 
 // Common error responses as convenience functions
 
+// errorClass bundles the fixed (status, type, code) triple that a convenience
+// writer emits. Declaring the triples as a table keeps the OpenAI error
+// contract — the exact status/type/code each helper produces — auditable in
+// one place and removes the per-helper repetition of the WriteError call.
+type errorClass struct {
+	status  int
+	errType string
+	code    string
+}
+
+// write emits the class's fixed status/type/code with the given message.
+func (c errorClass) write(w http.ResponseWriter, message string) {
+	WriteError(w, c.status, message, c.errType, c.code)
+}
+
+// writeParam is write with an OpenAI `param` field attached.
+func (c errorClass) writeParam(w http.ResponseWriter, message, param string) {
+	WriteErrorWithParam(w, c.status, message, c.errType, c.code, param)
+}
+
+// The set of error classes the convenience writers map onto. Each entry is the
+// (status, type, code) contract for a category of failure.
+var (
+	classBadRequest         = errorClass{http.StatusBadRequest, ErrorTypeInvalidRequest, CodeInvalidRequestError}
+	classMissingField       = errorClass{http.StatusBadRequest, ErrorTypeInvalidRequest, CodeMissingRequiredField}
+	classInvalidFieldValue  = errorClass{http.StatusBadRequest, ErrorTypeInvalidRequest, CodeInvalidFieldValue}
+	classNotFound           = errorClass{http.StatusNotFound, ErrorTypeNotFound, CodeModelNotFound}
+	classMethodNotAllowed   = errorClass{http.StatusMethodNotAllowed, ErrorTypeInvalidRequest, CodeMethodNotAllowed}
+	classInternal           = errorClass{http.StatusInternalServerError, ErrorTypeServer, CodeServerError}
+	classServiceUnavailable = errorClass{http.StatusServiceUnavailable, ErrorTypeServiceUnavailable, CodeServiceUnavailable}
+	classQueueFull          = errorClass{http.StatusServiceUnavailable, ErrorTypeServiceUnavailable, CodeQueueFull}
+	classActivationFailed   = errorClass{http.StatusServiceUnavailable, ErrorTypeServiceUnavailable, CodeActivationFailed}
+	classTimeout            = errorClass{http.StatusGatewayTimeout, ErrorTypeTimeout, CodeTimeout}
+	classRateLimit          = errorClass{http.StatusTooManyRequests, ErrorTypeRateLimit, CodeRateLimitExceeded}
+	classUnauthorized       = errorClass{http.StatusUnauthorized, ErrorTypeInvalidRequest, CodeInvalidAPIKey}
+)
+
 // WriteBadRequest writes a 400 Bad Request error.
 func WriteBadRequest(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusBadRequest, message, ErrorTypeInvalidRequest, CodeInvalidRequestError)
+	classBadRequest.write(w, message)
 }
 
 // WriteBadRequestWithCode writes a 400 Bad Request error with a specific code.
 func WriteBadRequestWithCode(w http.ResponseWriter, message, code string) {
-	WriteError(w, http.StatusBadRequest, message, ErrorTypeInvalidRequest, code)
+	WriteError(w, classBadRequest.status, message, classBadRequest.errType, code)
 }
 
 // WriteMissingField writes a 400 Bad Request error for a missing required field.
 func WriteMissingField(w http.ResponseWriter, fieldName string) {
-	WriteErrorWithParam(w, http.StatusBadRequest, "Missing required field: "+fieldName, ErrorTypeInvalidRequest, CodeMissingRequiredField, fieldName)
+	classMissingField.writeParam(w, "Missing required field: "+fieldName, fieldName)
 }
 
 // WriteInvalidFieldValue writes a 400 Bad Request error for an invalid field value.
 func WriteInvalidFieldValue(w http.ResponseWriter, fieldName, reason string) {
-	WriteErrorWithParam(w, http.StatusBadRequest, "Invalid value for field '"+fieldName+"': "+reason, ErrorTypeInvalidRequest, CodeInvalidFieldValue, fieldName)
+	classInvalidFieldValue.writeParam(w, "Invalid value for field '"+fieldName+"': "+reason, fieldName)
 }
 
 // WriteNotFound writes a 404 Not Found error.
 func WriteNotFound(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusNotFound, message, ErrorTypeNotFound, CodeModelNotFound)
+	classNotFound.write(w, message)
 }
 
 // WriteModelNotFound writes a 404 Not Found error for a missing model.
 func WriteModelNotFound(w http.ResponseWriter, modelName string) {
-	WriteErrorWithParam(w, http.StatusNotFound, "Model '"+modelName+"' not found", ErrorTypeNotFound, CodeModelNotFound, "model")
+	classNotFound.writeParam(w, "Model '"+modelName+"' not found", "model")
 }
 
 // WriteMethodNotAllowed writes a 405 Method Not Allowed error.
 func WriteMethodNotAllowed(w http.ResponseWriter, method string) {
-	WriteError(w, http.StatusMethodNotAllowed, "Method "+method+" not allowed", ErrorTypeInvalidRequest, CodeMethodNotAllowed)
+	classMethodNotAllowed.write(w, "Method "+method+" not allowed")
 }
 
 // WriteInternalError writes a 500 Internal Server Error.
 func WriteInternalError(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusInternalServerError, message, ErrorTypeServer, CodeServerError)
+	classInternal.write(w, message)
 }
 
 // WriteServiceUnavailable writes a 503 Service Unavailable error.
 func WriteServiceUnavailable(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusServiceUnavailable, message, ErrorTypeServiceUnavailable, CodeServiceUnavailable)
+	classServiceUnavailable.write(w, message)
 }
 
 // WriteQueueFull writes a 503 Service Unavailable error for queue overflow.
 func WriteQueueFull(w http.ResponseWriter) {
-	WriteError(w, http.StatusServiceUnavailable, "Service overloaded, please retry", ErrorTypeServiceUnavailable, CodeQueueFull)
+	classQueueFull.write(w, "Service overloaded, please retry")
 }
 
 // WriteActivationFailed writes a 503 Service Unavailable error for failed model activation.
 func WriteActivationFailed(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusServiceUnavailable, message, ErrorTypeServiceUnavailable, CodeActivationFailed)
+	classActivationFailed.write(w, message)
 }
 
 // WriteTimeout writes a 504 Gateway Timeout error.
 func WriteTimeout(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusGatewayTimeout, message, ErrorTypeTimeout, CodeTimeout)
+	classTimeout.write(w, message)
 }
 
 // WriteColdStartTimeout writes a 504 Gateway Timeout error for cold start timeout.
 func WriteColdStartTimeout(w http.ResponseWriter, waitedDuration string) {
-	WriteError(w, http.StatusGatewayTimeout, "Timeout waiting for model to become ready (waited "+waitedDuration+")", ErrorTypeTimeout, CodeTimeout)
+	classTimeout.write(w, "Timeout waiting for model to become ready (waited "+waitedDuration+")")
 }
 
 // WriteGPUGroupTimeout writes a 504 Gateway Timeout error for GPUGroup activation timeout.
 func WriteGPUGroupTimeout(w http.ResponseWriter, waitedDuration string) {
-	WriteError(w, http.StatusGatewayTimeout, "Timeout waiting for model to become active (waited "+waitedDuration+")", ErrorTypeTimeout, CodeTimeout)
+	classTimeout.write(w, "Timeout waiting for model to become active (waited "+waitedDuration+")")
 }
 
 // WriteRateLimited writes a 429 Too Many Requests error with Retry-After header.
 func WriteRateLimited(w http.ResponseWriter, retryAfterSeconds int) {
 	w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
-	WriteError(w, http.StatusTooManyRequests, "Rate limit exceeded, please retry later", ErrorTypeRateLimit, CodeRateLimitExceeded)
+	classRateLimit.write(w, "Rate limit exceeded, please retry later")
 }
 
 // WriteStalledLoad writes a 503 Service Unavailable for a model whose cold-start
@@ -246,10 +283,10 @@ func WriteStalledLoad(w http.ResponseWriter, message string, retryAfterSeconds i
 	if retryAfterSeconds > 0 {
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
 	}
-	WriteError(w, http.StatusServiceUnavailable, message, ErrorTypeServiceUnavailable, CodeActivationFailed)
+	classActivationFailed.write(w, message)
 }
 
 // WriteUnauthorized writes a 401 Unauthorized error.
 func WriteUnauthorized(w http.ResponseWriter, message string) {
-	WriteError(w, http.StatusUnauthorized, message, ErrorTypeInvalidRequest, CodeInvalidAPIKey)
+	classUnauthorized.write(w, message)
 }
