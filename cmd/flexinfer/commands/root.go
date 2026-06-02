@@ -100,6 +100,7 @@ func init() {
 	rootCmd.AddCommand(benchmarkCmd)
 	rootCmd.AddCommand(autotuneCmd)
 	rootCmd.AddCommand(migrateCmd)
+	rootCmd.AddCommand(imageCmd)
 }
 
 // Execute runs the root command
