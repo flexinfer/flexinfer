@@ -77,7 +77,7 @@ spec:
               mountPath: /etc/kubernetes
       containers:
         - name: flexinfer-scheduler
-          image: "{{ $schedulerImage.repository }}:{{ $schedulerImage.tag | default .Chart.AppVersion }}"
+          image: {{ include "flexinfer.imageRef" (merge (deepCopy $schedulerImage) (dict "tag" (.Chart.AppVersion | toString))) | quote }}
           imagePullPolicy: {{ include "flexinfer.imagePullPolicy" $schedulerImage }}
           args:
             - --port={{ default 8082 $scheduler.port }}

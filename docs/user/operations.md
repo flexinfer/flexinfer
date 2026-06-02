@@ -97,8 +97,29 @@ Supply credentials with `--username`/`--password` or the
 variables; anonymous access and the Docker Hub bearer-token flow both work.
 Use `--insecure` for plain-HTTP (local/test) registries.
 
-> Note: Helm-level digest default fields for backend images remain a planned
-> follow-up (issue #50).
+### Pin the operator's own component images (Helm)
+
+The Helm chart pins the FlexInfer operator component images
+(`controller`, `agent`, `proxy`, `scheduler`) to a digest via an `image.digest`
+value. When set, it overrides the tag (`repository@sha256:...`) and the
+pull policy auto-detects to `IfNotPresent`:
+
+```yaml
+# values.yaml
+controller:
+  image:
+    repository: ghcr.io/flexinfer/flexinfer-controller
+    digest: "sha256:<hex>"   # overrides tag when set
+agent:    { image: { digest: "sha256:<hex>" } }
+proxy:    { image: { digest: "sha256:<hex>" } }
+scheduler: { image: { digest: "sha256:<hex>" } }
+```
+
+Resolve each digest with `flexinfer image pin <repository>:<tag>`.
+
+Per-model *backend* runtime images (vLLM, llama.cpp, …) are pinned separately
+via the Model CR's `spec.imageDigest` (above) or a digest-qualified
+GPUProfile/`spec.image` reference.
 
 ## Debug a model that won't become ready
 
