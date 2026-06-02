@@ -1,0 +1,109 @@
+# Production Whisper ASR Model CR — ASR/diarization plan Slice 3a.
+#
+# Plan:       .loom/asr-diarization-7900xtx-plan-2026-05-18.md
+# Execution:  .loom/30-implementation-plan-voice-stack-2026-06-01.md
+# Kill-test:  .loom/ralph-whisper-kill-test-v6-evidence-2026-05-21.md (PASS 2026-05-21)
+#
+# This promotes the v6-proven kill-test to a routable production endpoint.
+# vLLM 0.17.0+rocm700 auto-exposes OpenAI-compatible /v1/audio/transcriptions
+# from the WhisperForConditionalGeneration architecture — no `task:` field
+# (dropped in MR !464; v5 evidence showed --task is rejected by 0.17+ argparse).
+#
+# === Demand-driven, NOT permanent eviction ===
+# Unlike the kill-test (forcePromotion=true + minReplicas=1, which permanently
+# evicts the warm 26B), this CR is idle-to-zero. While idle it holds ZERO
+# replicas, so the 7900xtx warm primary (gemma4-26b-a4b-gptq, priority 350)
+# keeps the GPU and chat traffic is unaffected. Deploying this is a no-op for
+# the 26B. The FIRST /v1/audio/transcriptions request routed by the proxy
+# writes LastActiveTime; priority 400 (> 350) then satisfies the strict-greater
+# demand-swap branch (controllers/model_shared_gpu.go), the 26B yields, Whisper
+# loads (~8s weight load, ~67s cold start observed in v6), transcribes, and
+# after idleTimeout releases the GPU back to the 26B. The sister 26B on
+# cblevins-5930k carries chat throughout the swap via shared serviceLabels.
+#
+# RESIDUAL RISK (validate live, see execution plan STEP 1): demand-driven
+# swap-from-idle is unproven on-cluster — the kill-test used forcePromotion to
+# sidestep it. If this Model gets stuck at State: Queued / replicas: 0 and never
+# activates, the fallback is operator-flipped `gpu.forcePromotion: true` for
+# batch transcription windows (the proven path), or a controller follow-up to
+# make the proxy activation path emit demand for queued shared-GPU members.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: whisper-large-v3-turbo
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/purpose: "ASR — OpenAI /v1/audio/transcriptions for ICC meeting transcription (Slice 3a)"
+    flexinfer.ai/plan: ".loom/asr-diarization-7900xtx-plan-2026-05-18.md"
+    flexinfer.ai/kill-test-evidence: ".loom/ralph-whisper-kill-test-v6-evidence-2026-05-21.md"
+spec:
+  backend: vllm
+  # Image inherits from the gfx1100 GPUProfile vllm.image pin
+  # (deploy/gpuprofiles/gfx1100.yaml). Do NOT override — production must serve
+  # from the same runtime image the v6 kill-test passed against.
+  source: HF://openai/whisper-large-v3-turbo
+  cache:
+    # Local strategy mirrors the v6 kill-test (and qwen3-1p7b-vllm-radeonvii):
+    # a single cache-prefetch job downloads the HF repo into a per-node PVC,
+    # and the same-node runtime DaemonSet mounts it at
+    # /models/flexinfer-system/whisper-large-v3-turbo/. No SharedPVC/cache-copy.
+    strategy: Local
+    # nvme-1r-gpu: single-replica Longhorn on GPU-labelled nodes. Proven on
+    # cblevins-7900xtx by gemma4-26b-a4b-gptq-cache and the v3 kill-test stage.
+    storageClass: nvme-1r-gpu
+    # whisper-large-v3-turbo is ~1.6 GiB safetensors; 6Gi buys headroom for
+    # tokenizer/preprocessor/config + transient download artifacts.
+    size: 6Gi
+  gpu:
+    vendor: amd
+    # count=2 is REQUIRED on cblevins-7900xtx: the node exposes the discrete
+    # 7900 XTX AND the Raphael iGPU both as amd.com/gpu. Claim both plugin slots
+    # so nothing co-tenants the iGPU; hipVisibleDevices="0" then pins the dGPU.
+    count: 2
+    vramEstimateMB: 4000
+    shared: 7900xtx-textgen
+    # priority 400 > the 26B's 350 so a routed transcribe request fires the
+    # demand-based swap. NO forcePromotion — idle-to-zero keeps the 26B warm
+    # until a transcribe actually arrives.
+    priority: 400
+  serverless:
+    enabled: true
+    # idle-to-zero: the 24 GiB lane is not double-claimed while idle.
+    minReplicas: 0
+    # release the GPU back to the 26B promptly after a transcription batch.
+    idleTimeout: 5m
+    coldStartTimeout: 10m
+  config:
+    # Whisper-large-v3 architectural ceiling.
+    maxModelLen: 448
+    # Cap VRAM well under 24 GiB so the allocator does not OOM while the 26B is
+    # mid-preemption (the swap is not instantaneous).
+    gpuMemoryUtilization: "0.30"
+    enforceEager: true
+    dtype: "half"
+    servedModelName: whisper-large-v3-turbo
+    hipVisibleDevices: "0"
+    trustRemoteCode: false
+    disableLogStats: false
+    # No `task` field — vLLM 0.17+ auto-resolves transcription from the
+    # WhisperForConditionalGeneration architecture (MR !464).
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "1"
+      memory: 4Gi
+    limits:
+      cpu: "2"
+      memory: 8Gi
+  serviceLabels:
+    # Routable names so the proxy gives ICC a single base URL. `asr` is the
+    # generic alias so callers can request model=asr.
+    - whisper-large-v3-turbo
+    - whisper
+    - asr
+  litellm:
+    enabled: true
+    servedModelName: whisper-large-v3-turbo
+    aliases:
+      - whisper-large-v3-turbo-7900xtx

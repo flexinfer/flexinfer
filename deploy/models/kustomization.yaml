@@ -21,19 +21,14 @@ resources:
   # - fast-chat-7900xtx.yaml        # disabled 2026-05-16; Gemma4 26B now serves fast-chat/default-chat.
   - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (7900xtx instance #1)
   - gemma4-26b-a4b-gptq-apc-canary.yaml  # F4-prefix-cache-flip canary; minReplicas=0, low priority, operator-activated kill-test lane (.loom/ralph-f4-prefix-cache-flip-canary-2026-05-26.md)
-  # Slice 1 kill-test v3 (whisper-kill-test-v3.yaml) was torn down 2026-05-20
-  # after the live evaluation. The cache-layout assumption PASSED: Local +
-  # nvme-1r-gpu staged 1.6 GB of Whisper weights at
-  # /models/flexinfer-system/whisper-kill-test-v3/ and the runtime DaemonSet
-  # saw them. The vLLM load still failed, but NOT on a Whisper-on-ROCm-gfx1100
-  # path: the gfx1100 vLLM image ships transformers 5.8.1 against
-  # mistral_common 1.8.8, and transformers/tokenization_mistral_common.py
-  # imports `ReasoningEffort` (not present in 1.8.8). AutoProcessor's class
-  # registry walk inside WhisperProcessor.__init__ trips that ImportError,
-  # vLLM exits 1, the controller hot-loops the reconcile. Evidence:
-  # .loom/ralph-whisper-kill-test-v3-evidence-2026-05-20.md. Next slices
-  # queued in that doc: bump mistral_common in build/Dockerfile.vllm-rocm-gfx1100*,
-  # republish, then re-apply this CR (or a v4) against the new image.
+  - whisper-large-v3-turbo.yaml     # ASR (Slice 3a): vLLM Whisper on gfx1100, demand-driven (priority 400, minReplicas=0) so deploying is a no-op for the 26B until first transcribe. .loom/30-implementation-plan-voice-stack-2026-06-01.md
+  # ASR kill-test history: Slice 1 (whisper-kill-test-v3.yaml) was torn down
+  # 2026-05-20; the runtime-side gate finally PASSED on v6 2026-05-21 after the
+  # mistral_common bump (MR !461/!462) cleared the WhisperProcessor ImportError
+  # and MR !464 dropped the --task flag vLLM 0.17+ rejects. v6 evidence:
+  # .loom/ralph-whisper-kill-test-v6-evidence-2026-05-21.md (Model Ready,
+  # /v1/models returns whisper-large-v3-turbo). The production CR above
+  # supersedes the kill-test.
   # - gemma4-26b-a4b-gptq-long.yaml # disabled; superseded by base 26B at 16K (see 2026-05-03 dedupe)
   # 2026-05-05: replaced by Qwen3.6. The old qwen3-30b-a3b canary requested
   # gpu.count=2 and stayed unschedulable after gfx1100 nodes were normalized
