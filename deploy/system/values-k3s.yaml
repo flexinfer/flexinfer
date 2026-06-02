@@ -95,6 +95,10 @@ proxy:
   service:
     type: ClusterIP
     port: 80
+  # Static upstream for the /diarize route → pyannote diarization sibling
+  # Deployment on gfx906 (deploy/system/pyannote-diarization/). Gives ICC one
+  # base URL for ASR + diarization. Empty disables the route (503).
+  pyannoteUpstream: "http://pyannote-diarization.flexinfer-system.svc:8000"
   resources:
     limits:
       cpu: 200m

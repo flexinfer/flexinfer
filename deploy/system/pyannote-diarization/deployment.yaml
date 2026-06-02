@@ -1,0 +1,111 @@
+# pyannote speaker-diarization sibling Deployment on gfx906 (Radeon VII).
+# ASR/diarization plan Slice 4. NOT a Model CR — a hand-written FastAPI service
+# (no /v1/models, no servedModelName) routed by the proxy's static /diarize path.
+#
+# GPU access mirrors the gfx906 flexinfer-runtime DaemonSet: privileged +
+# hostPath /dev/kfd + /dev/dri, and NO `amd.com/gpu` device-plugin request.
+# This is deliberate — claiming the device plugin would lock the single Radeon
+# VII exclusively and permanently starve the serverless image-gen Models
+# (fluxpony / sdxl-inpainting). Cooperative HIP sharing lets them co-exist;
+# pyannote's working set is ~1.65 GiB (kill-test) against the 16 GiB card.
+#
+# Kill-test evidence: .loom/pyannote-gfx906-killtest-passed-2026-06-02.md
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pyannote-diarization
+  namespace: flexinfer-system
+  labels:
+    app: pyannote-diarization
+    app.kubernetes.io/part-of: flexinfer
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate # single GPU service; never run two pods at once
+  selector:
+    matchLabels:
+      app: pyannote-diarization
+  template:
+    metadata:
+      labels:
+        app: pyannote-diarization
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      imagePullSecrets:
+        - name: harbor-creds
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: pyannote
+          # Digest-pinned (image tag is mutable; pin the proven build). Rebuild
+          # + repin on any change. tag: rocm-gfx906.
+          image: registry.harbor.lan/flexinfer/pyannote-diarization@sha256:3ea89869f61f5bd4f30c235be9e227a35a3c111f0d2c56b1c61e81829912e172
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8000
+          securityContext:
+            privileged: true # required for /dev/kfd HIP access on gfx906
+          env:
+            - name: HSA_OVERRIDE_GFX_VERSION
+              value: "9.0.6" # gfx906 reports as gfx900 without this
+            - name: HIP_VISIBLE_DEVICES
+              value: "0"
+            - name: ROCR_VISIBLE_DEVICES
+              value: "0"
+            - name: HF_HOME
+              value: /cache/hf # model cache lives in the emptyDir below
+            - name: HF_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: flexinfer-hf-token
+                  key: HF_TOKEN
+          # Pipeline loads (downloads ~50 MiB gated models) during uvicorn
+          # startup before the port serves, so readiness fails until loaded.
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 20
+            periodSeconds: 10
+            failureThreshold: 30 # allow up to ~5 min for first model download
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: "1"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 12Gi
+          volumeMounts:
+            - name: dev-kfd
+              mountPath: /dev/kfd
+            - name: dev-dri
+              mountPath: /dev/dri
+            - name: cache
+              mountPath: /cache
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: dev-kfd
+          hostPath:
+            path: /dev/kfd
+        - name: dev-dri
+          hostPath:
+            path: /dev/dri
+        - name: cache
+          emptyDir: {}
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
