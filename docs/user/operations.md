@@ -78,17 +78,27 @@ The field accepts either the `sha256:<hex>` form or a bare 64-character hex
 digest (normalized to `sha256:` automatically). It is validated by the CRD
 against `^(sha256:)?[a-f0-9]{64}$`.
 
-Resolve a tag to its current digest before pinning:
+Resolve a tag to its current digest with `flexinfer image pin`:
 
 ```bash
-# Expected output: registry.harbor.lan/flexinfer/runtime@sha256:<hex>
-docker --context 7900xtx buildx imagetools inspect \
-  registry.harbor.lan/flexinfer/runtime:master --format '{{.Manifest.Digest}}'
+# Print the pinned reference (repo@sha256:<hex>):
+flexinfer image pin registry.harbor.lan/flexinfer/runtime:master
+# registry.harbor.lan/flexinfer/runtime@sha256:<hex>
+# (stderr also prints the ready-to-paste `spec.imageDigest:` value)
+
+# Print only the digest, e.g. for `kubectl patch`:
+flexinfer image pin registry.harbor.lan/flexinfer/runtime:master --quiet
+# sha256:<hex>
 ```
 
-> Note: a `flexinfer image pin` CLI that resolves tag→digest automatically and
-> Helm-level digest defaults are planned follow-ups (issue #50). Today, set the
-> digest on the Model CR directly.
+`image pin` queries the Registry v2 API directly (no `docker`/`oras` needed).
+Supply credentials with `--username`/`--password` or the
+`FLEXINFER_REGISTRY_USERNAME` / `FLEXINFER_REGISTRY_PASSWORD` environment
+variables; anonymous access and the Docker Hub bearer-token flow both work.
+Use `--insecure` for plain-HTTP (local/test) registries.
+
+> Note: Helm-level digest default fields for backend images remain a planned
+> follow-up (issue #50).
 
 ## Debug a model that won't become ready
 
