@@ -1,0 +1,64 @@
+# Kokoro-82M text-to-speech sibling Deployment (voice-stack conversational-loop
+# Slice 2). NOT a Model CR — a pre-built OpenAI-compatible FastAPI service
+# (remsky/Kokoro-FastAPI) routed by the proxy's static /v1/audio/speech path.
+#
+# CPU-ONLY by design. The 2026-06-02 kill-test
+# (.loom/tts-killtest-plan-2026-06-02.md) measured RTF 0.116 (~8.6x faster than
+# real-time) on CPU, so TTS needs no GPU at all — sidestepping both the gfx906
+# community-fork fragility and the gfx1100 26B-textgen contention that the
+# brainstorm worried about. Models are baked into the image; no HF token, no
+# gated download, no persistent cache required.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: kokoro-tts
+  namespace: flexinfer-system
+  labels:
+    app: kokoro-tts
+    app.kubernetes.io/part-of: flexinfer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kokoro-tts
+  template:
+    metadata:
+      labels:
+        app: kokoro-tts
+    spec:
+      # amd64 only (the published image is linux/amd64). No GPU node pin — runs
+      # wherever there is CPU headroom.
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      imagePullSecrets:
+        - name: harbor-creds
+      containers:
+        - name: kokoro
+          # Digest-pinned mirror of ghcr.io/remsky/kokoro-fastapi-cpu:v0.4.0-amd64
+          # (tag is mutable; pin the kill-tested build). Re-mirror + repin on bump.
+          image: registry.harbor.lan/flexinfer/kokoro-fastapi-cpu@sha256:11f49aafe8a0b7ad57347a7a528f64e5078911fad715087d2e2d37c505f7afb3
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8880
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 12
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 6Gi

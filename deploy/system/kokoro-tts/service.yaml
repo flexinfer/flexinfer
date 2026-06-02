@@ -1,0 +1,17 @@
+# ClusterIP for the Kokoro TTS service. The proxy reverse-proxies
+# POST /v1/audio/speech here via FLEXINFER_KOKORO_UPSTREAM
+# (http://kokoro-tts.flexinfer-system.svc:8880).
+apiVersion: v1
+kind: Service
+metadata:
+  name: kokoro-tts
+  namespace: flexinfer-system
+  labels:
+    app: kokoro-tts
+spec:
+  selector:
+    app: kokoro-tts
+  ports:
+    - name: http
+      port: 8880
+      targetPort: http
