@@ -109,6 +109,10 @@ type Config struct {
 	// "session-or-rr": session key, else RR.
 	// "prefix-session-or-rr": prefix first, then session, else RR.
 	LabelGroupRouting string
+	// PyannoteUpstream is the base URL of the pyannote diarization sibling
+	// service. When set, POST /diarize is reverse-proxied to it so ICC has a
+	// single base URL for ASR + diarization. Empty → /diarize returns 503.
+	PyannoteUpstream string
 }
 
 // Validate checks the Config for conflicting or invalid settings. Returns a
@@ -199,6 +203,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		AdmissionSafetyMarginPercent:     envutil.IntOrDefault("PROXY_ADMISSION_SAFETY_MARGIN_PERCENT", 5),
 		AdmissionDefaultMaxTokens:        envutil.IntOrDefault("PROXY_ADMISSION_DEFAULT_MAX_TOKENS", defaultAdmissionMaxTokens),
 		LabelGroupRouting:                os.Getenv("FLEXINFER_PROXY_LABEL_GROUP_ROUTING"),
+		PyannoteUpstream:                 os.Getenv("FLEXINFER_PYANNOTE_UPSTREAM"),
 	}
 
 	return cfg
@@ -302,6 +307,10 @@ type Proxy struct {
 	// `.loom/brainstorm-f4-long-context-agent-2026-05-25.md`.
 	labelGroupRouting string
 
+	// pyannoteUpstream is the base URL of the pyannote diarization sibling
+	// service; empty disables the /diarize route (returns 503).
+	pyannoteUpstream string
+
 	// Lifecycle context for background goroutines
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -352,6 +361,7 @@ func New(cfg Config) *Proxy {
 		},
 		directRuntimeEnabled: cfg.DirectRuntimeEnabled,
 		labelGroupRouting:    canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting),
+		pyannoteUpstream:     cfg.PyannoteUpstream,
 		ctx:                  ctx,
 		cancel:               cancel,
 		debugConfig:          newDebugConfigView(cfg),
@@ -400,6 +410,7 @@ func (p *Proxy) Run(port int) error {
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/v1/models", p.handleModels)
 	mux.HandleFunc("/debug/config", p.handleDebugConfig)
+	mux.HandleFunc("/diarize", p.handleDiarize)
 	mux.HandleFunc("/", p.handleRequest)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

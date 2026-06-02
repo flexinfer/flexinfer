@@ -1,0 +1,17 @@
+# ClusterIP for the pyannote diarization service. The proxy reverse-proxies
+# POST /diarize here via FLEXINFER_PYANNOTE_UPSTREAM
+# (http://pyannote-diarization.flexinfer-system.svc:8000).
+apiVersion: v1
+kind: Service
+metadata:
+  name: pyannote-diarization
+  namespace: flexinfer-system
+  labels:
+    app: pyannote-diarization
+spec:
+  selector:
+    app: pyannote-diarization
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

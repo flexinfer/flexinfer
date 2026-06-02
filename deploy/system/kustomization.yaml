@@ -11,3 +11,4 @@ resources:
   - rbac-controller-nodes.yaml
   - servicemonitor.yaml
   - benchmark-results/
+  - pyannote-diarization/
