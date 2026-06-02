@@ -77,9 +77,24 @@ passed, all 5 checks). **Both F4 client forms (a)+(b) now delivered.**
 
 The F4 compound is complete: `F4-tool-loop-as-prefix` (kill-test PASS, row 194)
 → client slice 1 CLI (row 195 PASS) → client slice 2 MCP tool (loom-core !585).
-Open follow-ups: a prefill-only/TTFT proxy header so the client can read the
-prefix-hit ratio directly on engines that omit `cached_tokens` (gemma4); and
-`F4-prefix-cache-flip` canary promotion remains `conditional` (row 193).
+
+**Row-195 prefix-hit follow-up — FULLY CLOSED end-to-end 2026-06-01 (3 MRs
+merged):** the "client can't read the hit ratio directly when the engine omits
+`cached_tokens`" caveat is gone. (1) Proxy header — flexinfer !535 (`a7740702`):
+opt-in `X-Flexinfer-Prefix-Cache-Hit-Rate` (request sets
+`X-Flexinfer-Want-Prefix-Hit: 1`), best-effort scrape of the engine `/metrics`,
+1.5s-bounded, zero-cost when not opted in. (2) flexinfer CLI client — !536
+(`bc65ba23` / `c2781e87`): `ChatClientConfig.WantPrefixHit` sends the opt-in,
+`TurnMetrics.PrefixCacheHitRate` parses the response, `cmd/agent-loop
+--want-prefix-hit` (default true). (3) loom-core MCP mirror — !597 (`8be7a6bc`):
+same in `pkg/agentloop` + `cmd/mcp-agent-loop` (`agent_loop_run want_prefix_hit`
+param, default true). Both client forms now report the engine prefix-cache hit
+ratio directly even on gemma4. Library defaults stay opt-out (backward-compat);
+only the CLI flag + MCP param default on. **F4-tool-loop-as-prefix milestone
+(kill-test + both client forms + row-195 follow-up) is COMPLETE.**
+
+Remaining F4 open item: `F4-prefix-cache-flip` canary promotion is still
+`conditional` (row 193) — the genuine next candidate for an F4 RALPH loop.
 
 ## Previous Goal (2026-06-01) - F4-tool-loop-as-prefix kill-test
 
