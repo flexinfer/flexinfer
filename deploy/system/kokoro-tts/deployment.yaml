@@ -26,10 +26,36 @@ spec:
       labels:
         app: kokoro-tts
     spec:
-      # amd64 only (the published image is linux/amd64). No GPU node pin — runs
-      # wherever there is CPU headroom.
+      # amd64 only (the published image is linux/amd64).
       nodeSelector:
         kubernetes.io/arch: amd64
+      # Kokoro is CPU-bound (torch 2.8.0+cpu, 82M StyleTTS2). Warm RTF is
+      # per-core-clock-bound, not thread-bound: on the weak k3s-w-10 VM it was
+      # ~1.07 (slower than real-time); the kill-test hit RTF 0.116 on the
+      # cblevins-7900xtx host CPU. PREFER (soft) that strong host so long-form
+      # synthesis stays faster than playback, but fall back to any amd64 node if
+      # it is unschedulable (availability over peak throughput — TTS stays up).
+      # GPU serving on 7900xtx is GPU-bound (~1% node CPU baseline, 24 cores),
+      # so a CPU-capped TTS pod does not starve it; the conversational loop is
+      # sequential (LLM finishes, then TTS) so the two barely overlap anyway.
+      affinity:
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              preference:
+                matchExpressions:
+                  - key: kubernetes.io/hostname
+                    operator: In
+                    values:
+                      - cblevins-7900xtx
+      # Tolerate the GPU node's dedicated taint so the soft preference above can
+      # actually land there. This is the only taint we accept; the amd64
+      # nodeSelector still keeps us off non-amd64 hosts.
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
       imagePullSecrets:
         - name: harbor-creds
       containers:
@@ -38,6 +64,14 @@ spec:
           # (tag is mutable; pin the kill-tested build). Re-mirror + repin on bump.
           image: registry.harbor.lan/flexinfer/kokoro-fastapi-cpu@sha256:11f49aafe8a0b7ad57347a7a528f64e5078911fad715087d2e2d37c505f7afb3
           imagePullPolicy: IfNotPresent
+          env:
+            # torch CPU intra-op threads. torch auto-detects the cgroup quota
+            # (it read 4 on k3s-w-10), but we pin it to the CPU limit so the
+            # 82M model parallelizes across the cores we reserve without
+            # oversubscribing the 24-core 7900xtx host and contending with GPU
+            # serving. Keep this in lock-step with resources.limits.cpu below.
+            - name: OMP_NUM_THREADS
+              value: "8"
           ports:
             - name: http
               containerPort: 8880
@@ -57,8 +91,13 @@ spec:
             failureThreshold: 4
           resources:
             requests:
-              cpu: "1"
+              # Reserve 2 cores so the scheduler guarantees steady cycles; the
+              # 7900xtx has 24 cores at ~1% baseline so this is comfortable.
+              cpu: "2"
               memory: 2Gi
             limits:
-              cpu: "4"
+              # Burst to 8 cores for long-form synthesis (was 4). Leaves 16
+              # cores on the 7900xtx for GPU serving + system daemons.
+              # Keep in lock-step with OMP_NUM_THREADS above.
+              cpu: "8"
               memory: 6Gi
