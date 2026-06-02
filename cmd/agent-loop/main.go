@@ -40,20 +40,21 @@ import (
 const reportSchema = "flexinfer.agent_loop.v1"
 
 type options struct {
-	endpoint    string
-	model       string
-	session     string
-	system      string
-	systemFile  string
-	prompt      string
-	workdir     string
-	report      string
-	maxModelLen int
-	systemTok   int
-	maxTokens   int
-	maxRounds   int
-	temperature float64
-	selfCheck   bool
+	endpoint      string
+	model         string
+	session       string
+	system        string
+	systemFile    string
+	prompt        string
+	workdir       string
+	report        string
+	maxModelLen   int
+	systemTok     int
+	maxTokens     int
+	maxRounds     int
+	temperature   float64
+	selfCheck     bool
+	wantPrefixHit bool
 }
 
 func main() {
@@ -88,6 +89,7 @@ func parseFlags() options {
 	flag.IntVar(&o.maxRounds, "max-rounds", 20, "max ReAct rounds before stopping")
 	flag.Float64Var(&o.temperature, "temperature", 0, "sampling temperature")
 	flag.BoolVar(&o.selfCheck, "self-check", false, "run the offline self-check and exit")
+	flag.BoolVar(&o.wantPrefixHit, "want-prefix-hit", true, "ask the proxy for X-Flexinfer-Prefix-Cache-Hit-Rate (engine /metrics scrape; the direct hit signal when the engine omits cached_tokens)")
 	flag.Parse()
 	return o
 }
@@ -118,10 +120,11 @@ func run(o options) error {
 		return err
 	}
 	client, err := agentloop.NewChatClient(agentloop.ChatClientConfig{
-		Endpoint:    o.endpoint,
-		Model:       o.model,
-		CacheKey:    session,
-		Temperature: o.temperature,
+		Endpoint:      o.endpoint,
+		Model:         o.model,
+		CacheKey:      session,
+		Temperature:   o.temperature,
+		WantPrefixHit: o.wantPrefixHit,
 	})
 	if err != nil {
 		return err

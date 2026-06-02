@@ -15,11 +15,12 @@ import (
 // flexinfer proxy. It pins prefix-consistent routing with the session's
 // cache key so every turn lands on the replica that holds the warm prefix.
 type ChatClient struct {
-	httpClient  *http.Client
-	endpoint    string // base URL, e.g. http://localhost:18080
-	model       string
-	cacheKey    string
-	temperature float64
+	httpClient    *http.Client
+	endpoint      string // base URL, e.g. http://localhost:18080
+	model         string
+	cacheKey      string
+	temperature   float64
+	wantPrefixHit bool
 	// reqLogger, when set, receives the raw request/response bytes per turn.
 	reqLogger func(payload, response []byte, status int)
 }
@@ -31,6 +32,11 @@ type ChatClientConfig struct {
 	Model       string
 	CacheKey    string // session id; pins X-Flexinfer-Cache-Key
 	Temperature float64
+	// WantPrefixHit opts into the proxy's X-Flexinfer-Prefix-Cache-Hit-Rate
+	// header (sets X-Flexinfer-Want-Prefix-Hit on each request). Costs one
+	// upstream /metrics scrape per turn at the proxy; gives the engine-reported
+	// hit rate even when the engine omits per-request cached_tokens.
+	WantPrefixHit bool
 }
 
 // NewChatClient validates config and returns a client.
@@ -46,11 +52,12 @@ func NewChatClient(cfg ChatClientConfig) (*ChatClient, error) {
 		hc = &http.Client{Timeout: 15 * time.Minute}
 	}
 	return &ChatClient{
-		httpClient:  hc,
-		endpoint:    strings.TrimRight(cfg.Endpoint, "/"),
-		model:       cfg.Model,
-		cacheKey:    cfg.CacheKey,
-		temperature: cfg.Temperature,
+		httpClient:    hc,
+		endpoint:      strings.TrimRight(cfg.Endpoint, "/"),
+		model:         cfg.Model,
+		cacheKey:      cfg.CacheKey,
+		temperature:   cfg.Temperature,
+		wantPrefixHit: cfg.WantPrefixHit,
 	}, nil
 }
 
@@ -104,6 +111,9 @@ func (c *ChatClient) Complete(ctx context.Context, msgs []Message, tools []ToolD
 	httpReq.Header.Set("Content-Type", "application/json")
 	if c.cacheKey != "" {
 		httpReq.Header.Set(HeaderCacheKey, c.cacheKey)
+	}
+	if c.wantPrefixHit {
+		httpReq.Header.Set(HeaderWantPrefixHit, "1")
 	}
 
 	httpResp, err := c.httpClient.Do(httpReq)

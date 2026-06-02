@@ -14,6 +14,12 @@ const (
 	HeaderCachedTokens = "X-Flexinfer-Cached-Tokens"
 	HeaderPromptTokens = "X-Flexinfer-Prompt-Tokens"
 	HeaderFinishReason = "X-Flexinfer-Finish-Reason"
+	// HeaderWantPrefixHit is the request opt-in that asks the proxy to scrape
+	// the engine's /metrics and return HeaderPrefixHitRate. HeaderPrefixHitRate
+	// is the engine-reported prefix-cache hit rate — the direct signal for
+	// engines (gemma4) that omit per-request cached_tokens.
+	HeaderWantPrefixHit = "X-Flexinfer-Want-Prefix-Hit"
+	HeaderPrefixHitRate = "X-Flexinfer-Prefix-Cache-Hit-Rate"
 )
 
 // TurnMetrics is the per-turn signal the F4 kill-test measured, captured
@@ -29,6 +35,14 @@ type TurnMetrics struct {
 	PromptTokens int `json:"prompt_tokens"`
 	// PrefixHitRatio is CachedTokens/PromptTokens when both are known.
 	PrefixHitRatio *float64 `json:"prefix_hit_ratio,omitempty"`
+	// PrefixCacheHitRate is the engine-reported prefix-cache hit rate the
+	// proxy scrapes from /metrics (X-Flexinfer-Prefix-Cache-Hit-Rate), present
+	// only when the request opted in via HeaderWantPrefixHit and the proxy
+	// could read it. Unlike PrefixHitRatio (derived from per-request
+	// cached_tokens) this is available even when the engine omits
+	// prompt_tokens_details — closing the gemma4 gap. Engine-windowed, so it
+	// is interpretable for a single prefix-consistent session.
+	PrefixCacheHitRate *float64 `json:"prefix_cache_hit_rate,omitempty"`
 	// FinishReason is the engine's stop reason (stop, tool_calls, length).
 	FinishReason string `json:"finish_reason,omitempty"`
 }
@@ -59,6 +73,14 @@ func parseTurnMetrics(h http.Header, usagePromptTokens int) TurnMetrics {
 				ratio := float64(ct) / float64(m.PromptTokens)
 				m.PrefixHitRatio = &ratio
 			}
+		}
+	}
+
+	// Engine-reported hit rate from the proxy's /metrics scrape. This is the
+	// direct signal when the engine omits cached_tokens (CachedTokens nil).
+	if raw := h.Get(HeaderPrefixHitRate); raw != "" {
+		if rate, err := strconv.ParseFloat(raw, 64); err == nil {
+			m.PrefixCacheHitRate = &rate
 		}
 	}
 

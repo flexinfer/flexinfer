@@ -115,13 +115,20 @@ func TestParseTurnMetrics(t *testing.T) {
 	require.NotNil(t, m.PrefixHitRatio)
 	require.InDelta(t, 5000.0/5154.0, *m.PrefixHitRatio, 1e-9)
 
-	// CachedTokens absent (the gemma4 fallback path) -> nil, not zero.
+	require.Nil(t, m.PrefixCacheHitRate, "engine-reported rate absent when header not set")
+
+	// CachedTokens absent (the gemma4 fallback path) -> nil, not zero. But the
+	// proxy-scraped engine rate IS present (the row-195 follow-up): the client
+	// now reports the hit ratio directly even without cached_tokens.
 	h2 := http.Header{}
 	h2.Set(HeaderPromptTokens, "8000")
+	h2.Set(HeaderPrefixHitRate, "0.9300")
 	m2 := parseTurnMetrics(h2, 0)
 	require.Nil(t, m2.CachedTokens)
 	require.Nil(t, m2.PrefixHitRatio)
 	require.Equal(t, 8000, m2.PromptTokens, "falls back to header when usage absent")
+	require.NotNil(t, m2.PrefixCacheHitRate, "engine-reported rate parsed from proxy header")
+	require.InDelta(t, 0.93, *m2.PrefixCacheHitRate, 1e-9)
 }
 
 func TestEngineRunToolThenFinal(t *testing.T) {
@@ -197,29 +204,51 @@ func TestBudgetErrorFromBody(t *testing.T) {
 }
 
 func TestChatClientCompleteSetsCacheKeyAndParsesMetrics(t *testing.T) {
-	var gotCacheKey string
+	var gotCacheKey, gotWantPrefixHit string
 	var gotBody chatRequest
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotCacheKey = r.Header.Get(HeaderCacheKey)
+		gotWantPrefixHit = r.Header.Get(HeaderWantPrefixHit)
 		_ = json.NewDecoder(r.Body).Decode(&gotBody)
 		w.Header().Set(HeaderUpstreamMs, "1412")
 		w.Header().Set(HeaderFinishReason, "stop")
+		// gemma4 omits cached_tokens but the proxy supplies the scraped rate.
+		w.Header().Set(HeaderPrefixHitRate, "0.9300")
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":5154}}`))
 	}))
 	defer srv.Close()
 
-	c, err := NewChatClient(ChatClientConfig{Endpoint: srv.URL, Model: "m", CacheKey: "sess-42"})
+	c, err := NewChatClient(ChatClientConfig{Endpoint: srv.URL, Model: "m", CacheKey: "sess-42", WantPrefixHit: true})
 	require.NoError(t, err)
 	msg, metrics, err := c.Complete(context.Background(),
 		[]Message{{Role: RoleSystem, Content: "SYS"}}, nil, 48)
 	require.NoError(t, err)
 	require.Equal(t, "hi", msg.Content)
 	require.Equal(t, "sess-42", gotCacheKey, "cache key must pin prefix routing")
+	require.Equal(t, "1", gotWantPrefixHit, "opt-in header sent when WantPrefixHit")
 	require.Equal(t, "m", gotBody.Model)
 	require.Equal(t, int64(1412), metrics.UpstreamMs)
 	require.Equal(t, 5154, metrics.PromptTokens)
 	require.Equal(t, "stop", metrics.FinishReason)
+	require.NotNil(t, metrics.PrefixCacheHitRate, "engine-reported rate parsed even without cached_tokens")
+	require.InDelta(t, 0.93, *metrics.PrefixCacheHitRate, 1e-9)
+}
+
+func TestChatClientOmitsPrefixHitOptInByDefault(t *testing.T) {
+	var gotWantPrefixHit = "unset"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotWantPrefixHit = r.Header.Get(HeaderWantPrefixHit)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}],"usage":{"prompt_tokens":10}}`))
+	}))
+	defer srv.Close()
+
+	c, err := NewChatClient(ChatClientConfig{Endpoint: srv.URL, Model: "m"}) // WantPrefixHit false
+	require.NoError(t, err)
+	_, _, err = c.Complete(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil, 48)
+	require.NoError(t, err)
+	require.Empty(t, gotWantPrefixHit, "no opt-in header on the zero-cost default path")
 }
 
 func TestChatClientContextOverflowIsBudgetError(t *testing.T) {
