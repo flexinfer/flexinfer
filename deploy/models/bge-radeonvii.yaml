@@ -8,12 +8,15 @@
 # utilization-2026-06-03.md). Kill-test 2026-06-03 PASS: GPU-resident on gfx906,
 # 8,952 tok/s compute, peak GPU 100% (60-validation-matrix.md "S1.1 kill-test").
 #
-# DEPLOYED ADDITIVE + SAFE (this slice): priority 100 sits BELOW the live
-# qwen3-1.7b tool router (priority 120) so it never preempts it; minReplicas: 0
-# (serverless, activated on demand); distinct serviceLabel `embeddings-hbm2` so it
-# does NOT hijack the default `embeddings`/`rag` routing group from nomic. Direct
-# addressing via the `bge-large` / `embeddings-radeonvii` aliases. Warm-promote +
-# default-alias cutover + reranker are a LATER slice, gated on the S0.3 baseline.
+# Primary GPU lane of the radeonvii-models group. priority 120 wins leadership
+# over the other (mostly-defunct) GPU members — gemma4-e4b-radeonvii (110, the
+# falsified cross-card spec-decode draft) and qwen3-8b-radeonvii (100, cold
+# fallback). The CPU tool router left this group in #62, so the old "stay below
+# 120" constraint is gone. minReplicas: 0 (serverless, activated on demand);
+# distinct serviceLabel `embeddings-hbm2` so it does NOT hijack the default
+# `embeddings`/`rag` routing group from nomic; addressed via `bge-large` /
+# `embeddings-radeonvii`. Warm-promote + default-alias cutover + reranker are a
+# LATER slice, gated on the S0.3 baseline.
 #
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -30,7 +33,7 @@ spec:
   gpu:
     vendor: amd
     shared: radeonvii-models
-    priority: 100
+    priority: 120
     count: 1
     vramEstimateMB: 1500
   serverless:
