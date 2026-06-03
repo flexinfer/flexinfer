@@ -511,3 +511,119 @@ func getScore(res []extenderv1.HostPriority, host string) int64 {
 	}
 	return -1
 }
+
+// filterNodes is a test helper that POSTs ExtenderArgs to the /filter handler
+// and returns the surviving node names plus the FailedNodes map.
+func filterNodes(t *testing.T, sched *Scheduler, pod *corev1.Pod, nodes ...string) (kept []string, failed map[string]string) {
+	t.Helper()
+	args := extenderv1.ExtenderArgs{Pod: pod, NodeNames: &nodes}
+	body, _ := json.Marshal(args)
+	req := httptest.NewRequest("POST", "/filter", bytes.NewBuffer(body))
+	rr := httptest.NewRecorder()
+	sched.Filter(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("filter: unexpected status %d", rr.Code)
+	}
+	var result extenderv1.ExtenderFilterResult
+	if err := json.Unmarshal(rr.Body.Bytes(), &result); err != nil {
+		t.Fatalf("filter decode: %v", err)
+	}
+	if result.NodeNames != nil {
+		kept = *result.NodeNames
+	}
+	return kept, result.FailedNodes
+}
+
+// TestScore_PrefersHigherVRAMHeadroom verifies the free-VRAM-headroom scoring
+// bonus: with vramFreeWeight set and all else equal, the node reporting more
+// free VRAM relative to its total capacity scores higher.
+func TestScore_PrefersHigherVRAMHeadroom(t *testing.T) {
+	mkNode := func(name, freeMB string) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: name,
+				Labels: map[string]string{
+					"flexinfer.ai/gpu.vendor": "NVIDIA",
+					"flexinfer.ai/gpu.vram":   "40Gi",
+					"flexinfer.ai/gpu.count":  "1",
+				},
+				Annotations: map[string]string{
+					"flexinfer.ai/gpu-free-memory": freeMB, // MB, summed across GPUs
+				},
+			},
+		}
+	}
+	cache := &fakeCache{
+		nodes: map[string]*corev1.Node{
+			"roomy":  mkNode("roomy", "36000"), // ~0.88 free of 40Gi
+			"packed": mkNode("packed", "4000"), // ~0.10 free of 40Gi
+		},
+	}
+	// Isolate the VRAM-headroom term: only vramFreeWeight is non-zero.
+	sched := &Scheduler{cache: cache, vramFreeWeight: 50}
+
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "default"}}
+	roomy := scoreForSingleNode(t, sched, pod, "roomy")
+	packed := scoreForSingleNode(t, sched, pod, "packed")
+	if roomy <= packed {
+		t.Fatalf("expected roomy score (%d) > packed score (%d) from higher free-VRAM headroom", roomy, packed)
+	}
+}
+
+// TestScore_PenalizesHighKVCachePressure verifies the KV-cache pressure penalty:
+// a node above the 0.85 high-watermark is scored lower than one below it, with
+// all other scoring terms neutralized.
+func TestScore_PenalizesHighKVCachePressure(t *testing.T) {
+	mkNode := func(name, kvUsage string) *corev1.Node {
+		return &corev1.Node{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:        name,
+				Annotations: map[string]string{"flexinfer.ai/kv-cache-usage": kvUsage},
+			},
+		}
+	}
+	cache := &fakeCache{
+		nodes: map[string]*corev1.Node{
+			"calm":      mkNode("calm", "0.50"),      // below watermark, no penalty
+			"saturated": mkNode("saturated", "0.95"), // above 0.85 -> penalized
+		},
+	}
+	// cacheWeight=0 so the only difference is the >0.85 pressure penalty.
+	sched := &Scheduler{cache: cache, cacheWeight: 0}
+
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "default"}}
+	calm := scoreForSingleNode(t, sched, pod, "calm")
+	saturated := scoreForSingleNode(t, sched, pod, "saturated")
+	if saturated >= calm {
+		t.Fatalf("expected saturated score (%d) < calm score (%d) due to KV-cache pressure penalty", saturated, calm)
+	}
+}
+
+// TestFilter_RejectsNodeWithoutGPUVendorLabel verifies the extender drops nodes
+// that the agent has not labelled with a GPU vendor (i.e. not a usable GPU
+// node), while keeping properly labelled nodes.
+func TestFilter_RejectsNodeWithoutGPUVendorLabel(t *testing.T) {
+	cache := &fakeCache{
+		nodes: map[string]*corev1.Node{
+			"gpu-node": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "gpu-node",
+					Labels: map[string]string{"flexinfer.ai/gpu.vendor": "AMD"},
+				},
+			},
+			"cpu-node": {
+				ObjectMeta: metav1.ObjectMeta{Name: "cpu-node"}, // no gpu.vendor label
+			},
+		},
+	}
+	sched := &Scheduler{cache: cache}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "default"}}
+
+	kept, failed := filterNodes(t, sched, pod, "gpu-node", "cpu-node")
+	if len(kept) != 1 || kept[0] != "gpu-node" {
+		t.Fatalf("expected only gpu-node to survive, got %v", kept)
+	}
+	if _, ok := failed["cpu-node"]; !ok {
+		t.Fatalf("expected cpu-node in FailedNodes, got %v", failed)
+	}
+}
