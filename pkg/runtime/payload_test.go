@@ -408,6 +408,34 @@ func TestDirectRuntimeLoadEligibility(t *testing.T) {
 			wantOK:     false,
 			wantReason: "staged Local cache is not ready",
 		},
+		{
+			// services/flexinfer#62: a CPU-only model must not occupy the
+			// single-slot GPU runtime; it gets a dedicated Deployment instead so
+			// it can run concurrently with the node's GPU runtime.
+			name:    "cpu-only model is not runtime-eligible (uses dedicated Deployment)",
+			backend: "llamacpp",
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF",
+					GPU:    &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorCPU},
+				},
+			},
+			wantOK:     false,
+			wantReason: "cpu-only models use a dedicated Deployment, not the single-slot GPU runtime",
+		},
+		{
+			// A GPU (amd) llamacpp model on the same source stays runtime-eligible —
+			// the CPU exclusion must not regress GPU models.
+			name:    "amd gpu model stays runtime-eligible",
+			backend: "llamacpp",
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF",
+					GPU:    &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorAMD},
+				},
+			},
+			wantOK: true,
+		},
 	}
 
 	for _, tt := range tests {

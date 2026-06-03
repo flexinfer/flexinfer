@@ -1,8 +1,15 @@
 # Qwen3-1.7B GGUF on Radeon VII (gfx906) — fast tool-call routing model
 #
 # Small model for function calling and tool routing decisions.
-# VRAM: ~1.5 GB Q4_K_M — coexists with BGE embeddings in 16 GB.
-# Part of the radeonvii-models shared group at priority 120.
+# Runs CPU-only (config pins nGPULayers:0 + *VisibleDevices:-1).
+#
+# 2026-06-03 (services/flexinfer#62): reclassified from the radeonvii-models GPU
+# group to vendor:cpu. The gfx906 unified runtime serves ONE backend subprocess
+# at a time, so this CPU model was holding that single slot and blocking GPU
+# models (the bge-large HBM2 embedding lane) from serving. As vendor:cpu it leaves
+# the GPU group (schema-enforced) and is served by a dedicated CPU Deployment
+# (controller routes CPU models off the single-slot GPU runtime), so it stays warm
+# for Loom's weaver Router WHILE the GPU runtime serves embeddings concurrently.
 #
 # 2026-05-08: bumped minReplicas 0 -> 1 because Loom's weaver Router
 # resolves to this model on every query (via pkg/aimodels
@@ -27,11 +34,10 @@ spec:
     storageClass: nvme-1r
     strategy: Local
   gpu:
-    vendor: amd
-    shared: radeonvii-models
-    priority: 120
-    count: 1
-    vramEstimateMB: 2000
+    # CPU-only: leaves the radeonvii-models GPU group (schema requires gpu.shared
+    # empty for cpu) and is served by a dedicated Deployment, not the single-slot
+    # gfx906 runtime — frees that slot for the bge-large embedding lane. See #62.
+    vendor: cpu
   serverless:
     enabled: true
     minReplicas: 1
