@@ -12,6 +12,8 @@ import (
 
 	"github.com/flexinfer/flexinfer/backend"
 	_ "github.com/flexinfer/flexinfer/backend" // register all backends
+	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -133,7 +135,7 @@ func TestUnloadDoesNotBlockStatusWhileWaitingForBackendExit(t *testing.T) {
 		cmd:     cmd,
 		done:    make(chan error, 1),
 	}
-	m.active = loaded
+	m.models[loaded.Name] = loaded
 	go func() {
 		err := cmd.Wait()
 		loaded.done <- err
@@ -267,4 +269,83 @@ func TestOverlayEnvVarsReplacesByName(t *testing.T) {
 		{Name: "B", Value: "override"},
 		{Name: "C", Value: "three"},
 	}, got)
+}
+
+// --- Multi-subprocess runtime (R2) unit tests ---
+
+func TestAllocatePortLocked(t *testing.T) {
+	m := NewManager(ManagerConfig{MultiModel: true})
+
+	// First allocation with no preference returns the default backend port.
+	p1 := m.allocatePortLocked(0)
+	assert.Equal(t, pkgrt.RuntimeBackendPort, p1)
+
+	// Simulate it being taken, then allocate again — must differ and skip the API port.
+	m.models["a"] = &LoadedModel{Name: "a", Port: p1}
+	p2 := m.allocatePortLocked(0)
+	assert.NotEqual(t, p1, p2)
+	assert.NotEqual(t, pkgrt.RuntimeAPIPort, p2)
+
+	// A free preferred port is honored.
+	m.models["b"] = &LoadedModel{Name: "b", Port: p2}
+	pref := p2 + 50
+	assert.Equal(t, pref, m.allocatePortLocked(pref))
+
+	// A taken preferred port falls back to a free one.
+	m.models["c"] = &LoadedModel{Name: "c", Port: pref}
+	got := m.allocatePortLocked(pref)
+	assert.NotEqual(t, pref, got)
+	assert.NotEqual(t, p1, got)
+	assert.NotEqual(t, p2, got)
+}
+
+func TestPrimaryLockedPrefersReady(t *testing.T) {
+	m := NewManager(ManagerConfig{MultiModel: true})
+	m.models["loading"] = &LoadedModel{Name: "loading", State: ModelStateLoading}
+	m.models["ready"] = &LoadedModel{Name: "ready", State: ModelStateReady}
+
+	p := m.primaryLocked()
+	require.NotNil(t, p)
+	assert.Equal(t, "ready", p.Name)
+}
+
+func TestStatusListsAllActiveModels(t *testing.T) {
+	m := NewManager(ManagerConfig{MultiModel: true, GPUArch: "gfx906"})
+	m.models["embed"] = &LoadedModel{Name: "embed", Backend: "llamacpp", State: ModelStateReady, Port: 8000}
+	m.models["rerank"] = &LoadedModel{Name: "rerank", Backend: "llamacpp", State: ModelStateReady, Port: 8001}
+
+	s := m.Status()
+	assert.Len(t, s.ActiveModels, 2)
+	require.NotNil(t, s.ActiveModel) // representative populated for back-compat
+	names := map[string]bool{}
+	for _, sm := range s.ActiveModels {
+		names[sm.Name] = true
+	}
+	assert.True(t, names["embed"] && names["rerank"])
+}
+
+func TestSetModelStateMetricIsPerModel(t *testing.T) {
+	// Setting state for one model must not clear another's series.
+	setModelStateMetric("m1", "llamacpp", "Ready")
+	setModelStateMetric("m2", "llamacpp", "Loading")
+
+	assert.Equal(t, 1.0, testutil.ToFloat64(ModelActiveState.WithLabelValues("m1", "llamacpp", "Ready")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(ModelActiveState.WithLabelValues("m2", "llamacpp", "Loading")))
+
+	// Transition m2 to Ready: its Loading series clears, m1 untouched.
+	setModelStateMetric("m2", "llamacpp", "Ready")
+	assert.Equal(t, 1.0, testutil.ToFloat64(ModelActiveState.WithLabelValues("m1", "llamacpp", "Ready")))
+	assert.Equal(t, 0.0, testutil.ToFloat64(ModelActiveState.WithLabelValues("m2", "llamacpp", "Loading")))
+	assert.Equal(t, 1.0, testutil.ToFloat64(ModelActiveState.WithLabelValues("m2", "llamacpp", "Ready")))
+
+	clearModelStateMetric("m1", "llamacpp")
+	clearModelStateMetric("m2", "llamacpp")
+}
+
+func TestCanAdmitFailsOpenWithoutTelemetry(t *testing.T) {
+	// In CI there is no rocm-smi/nvidia-smi, so QueryGPU returns zeros and
+	// admission must fail open (admit) rather than block on missing telemetry.
+	m := NewManager(ManagerConfig{MultiModel: true, GPUVendor: backend.GPUVendorAMD, GPUArch: "gfx906"})
+	ok, reason := m.canAdmit(500)
+	assert.True(t, ok, "expected fail-open admit, got reason=%s", reason)
 }

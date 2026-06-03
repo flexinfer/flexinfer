@@ -42,6 +42,8 @@ func main() {
 		modelBasePath   string
 		shutdownTimeout time.Duration
 		healthInterval  time.Duration
+		multiModel      bool
+		vramHeadroomMB  int
 	)
 
 	flag.StringVar(&listenAddr, "listen", ":8080", "Address for the runtime API server.")
@@ -50,6 +52,10 @@ func main() {
 	flag.StringVar(&modelBasePath, "model-base-path", "/models", "Root path where models are mounted.")
 	flag.DurationVar(&shutdownTimeout, "shutdown-timeout", 30*time.Second, "Time to wait for subprocess graceful exit.")
 	flag.DurationVar(&healthInterval, "health-interval", 5*time.Second, "Health check polling interval.")
+	flag.BoolVar(&multiModel, "multi-model", envutil.BoolOrDefault("FLEXINFER_RUNTIME_MULTI_MODEL", false),
+		"Allow multiple concurrent VRAM-bounded model subprocesses on this node (default: single-slot).")
+	flag.IntVar(&vramHeadroomMB, "vram-headroom-mb", envutil.IntOrDefault("FLEXINFER_RUNTIME_VRAM_HEADROOM_MB", 0),
+		"Free-VRAM safety margin (MB) kept when admitting a concurrent model in multi-model mode (0 = default).")
 
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
@@ -83,6 +89,7 @@ func main() {
 		"runtimeProfile", runtimeProfile,
 		"runtimeDigest", runtimeDigest,
 		"modelBasePath", modelBasePath,
+		"multiModel", multiModel,
 		"backends", backend.List(),
 	)
 
@@ -111,6 +118,8 @@ func main() {
 		ShutdownTimeout:     shutdownTimeout,
 		HealthCheckInterval: healthInterval,
 		ModelBasePath:       modelBasePath,
+		MultiModel:          multiModel,
+		VRAMHeadroomMB:      int64(vramHeadroomMB),
 	})
 
 	srv := runtime.NewServer(mgr)

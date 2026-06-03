@@ -42,21 +42,12 @@ func (s *Server) registerRoutes() {
 	s.mux.Handle("GET /metrics", promhttp.Handler())
 }
 
-// handleListModels returns the currently loaded model (if any).
+// handleListModels returns all currently loaded models (one in single-slot mode,
+// possibly several in multi-model mode).
 func (s *Server) handleListModels(w http.ResponseWriter, r *http.Request) {
-	active := s.manager.Active()
-	var models []ModelSummary
-	if active != nil {
-		models = append(models, ModelSummary{
-			Name:     active.Name,
-			Backend:  active.Backend,
-			Model:    active.Model,
-			State:    string(active.State),
-			Port:     active.Port,
-			PID:      active.PID,
-			LoadedAt: active.LoadedAt,
-			Error:    active.Error,
-		})
+	models := s.manager.Status().ActiveModels
+	if models == nil {
+		models = []ModelSummary{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"models": models,
