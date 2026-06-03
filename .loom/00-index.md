@@ -34,8 +34,39 @@
 - RALPH F4-prefix-cache-flip canary plan (2026-05-26): `ralph-f4-prefix-cache-flip-canary-2026-05-26.md`
 - RALPH F4-tool-loop-as-prefix kill-test plan (2026-06-01): `ralph-f4-tool-loop-as-prefix-2026-06-01.md`
 - RALPH F4 agent-loop ReAct client — slice 1/CLI (2026-06-01): `ralph-f4-agent-loop-client-2026-06-01.md`
+- Hardware-utilization sprints brainstorm (2026-06-03): `brainstorm-hardware-utilization-sprints-2026-06-03.md`
+- Hardware-utilization arc implementation plan (2026-06-03): `30-implementation-plan-hardware-utilization-2026-06-03.md`
 
-## Current Goal (2026-06-01) - F4 agent-loop ReAct client (slice 1: CLI)
+## Current Goal (2026-06-03) - Hardware-utilization arc (retrieval + throughput)
+
+Brainstorm: `brainstorm-hardware-utilization-sprints-2026-06-03.md`.
+Plan: `30-implementation-plan-hardware-utilization-2026-06-03.md`.
+
+After the F4 compound + voice stack landed, the planning question stepped up a
+level: which silicon is still under-utilized? An 8-framing brainstorm converged
+(operator pick 2026-06-03) on the **utilization/throughput** arc — extract more
+from the fleet we own rather than chase capability ceiling (70B/multimodal) or
+product polish (daily driver). Four sprints, leverage-ordered:
+
+- **Sprint 0 (thin) — fleet utilization instrument [F4].** Per-card util +
+  KV-pressure metrics + Grafana dashboard + 24 h baseline snapshot. Closes #28.
+  Hard prerequisite so every later claim is metered.
+- **Sprint 1 — gfx906 HBM2 retrieval plane [F1], KILL-TEST GATED.** Finish the
+  already-stubbed `bge-large-radeonvii` llamacpp lane (the predecessor brainstorm's
+  never-built F2): kill-test ≥5× emb/s GPU-resident vs nomic/980 Ti baseline, then
+  warm-promote + repoint the `embeddings` alias + add the missing `/v1/rerank` +
+  migrate one consumer. HBM2's ~1 TB/s is the clearest wasted silicon.
+- **Sprint 2 — idle-time batch appliance [F3].** Nightly re-embed/index + offline
+  eval gauntlet + prefix prewarm on the now-cheap embedding plane (#26/#27/#34).
+- **Sprint 3 — fleet throughput replication [F2].** Near-free: replicate the
+  proven 2× n-gram SD to the 5930k twin + qwen35, tune params, find the
+  `maxNumSeqs` batch-depth knee. Pull-forward if concurrent demand appears.
+
+Riskiest assumption + kill-test live in the brainstorm doc. Grounding correction:
+the current embeddings baseline is nomic on the **GTX 980 Ti (ollama)**, not CPU
+as the 2026-05-25 brainstorm assumed.
+
+## Previous Goal (2026-06-01) - F4 agent-loop ReAct client (slice 1: CLI)
 
 Focused plan: `ralph-f4-agent-loop-client-2026-06-01.md`.
 

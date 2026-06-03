@@ -86,6 +86,7 @@ resources:
   - gemma4-e4b-radeonvii.yaml       # llama.cpp Gemma 3 4B IT GGUF on gfx906, draft for cross-card spec decode (CC-DR-1b precursor, 2026-05-25)
   - gonzalomo-fluxpony-imagegen.yaml # diffusers gfx906, SDXL text-to-image (relocated 2026-05-13 from 5930k)
   - sdxl-inpainting-radeonvii.yaml   # diffusers gfx906, SDXL inpainting
+  - bge-radeonvii.yaml               # llamacpp bge-large embeddings on gfx906 HBM2; additive lane (priority 100, serverless, label embeddings-hbm2). Kill-test PASS 2026-06-03; hardware-util arc Sprint 1.
 
   # === cblevins-gtx980ti (6 GB sm_52) ===
   - gemma4-e4b-gguf-gtx980ti.yaml   # llama.cpp GGUF, node-local cache for Maxwell cold starts
