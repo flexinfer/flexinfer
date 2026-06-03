@@ -195,6 +195,36 @@ func TestLlamaCppBackendArgs_EmbeddingFlag(t *testing.T) {
 	})
 }
 
+func TestLlamaCppBackendArgs_RerankingFlag(t *testing.T) {
+	b := &LlamaCppBackend{}
+
+	t.Run("enabled", func(t *testing.T) {
+		spec := &ModelSpec{
+			ModelPath: "/models/bge-reranker/model.gguf",
+			Config: map[string]any{
+				"reranking": true,
+			},
+		}
+		args := b.Args(spec)
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--reranking") {
+			t.Fatalf("expected args to contain --reranking, got %#v", args)
+		}
+	})
+
+	t.Run("not set by default", func(t *testing.T) {
+		spec := &ModelSpec{
+			ModelPath: "/models/test/model.gguf",
+			Config:    map[string]any{},
+		}
+		args := b.Args(spec)
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "--reranking") {
+			t.Fatalf("expected args to NOT contain --reranking, got %#v", args)
+		}
+	})
+}
+
 func TestLlamaCppBackendImage(t *testing.T) {
 	b := &LlamaCppBackend{}
 
