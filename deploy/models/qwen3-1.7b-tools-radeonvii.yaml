@@ -26,6 +26,13 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: llamacpp
+  # Explicit image: a vendor:cpu llamacpp model otherwise resolves the broken
+  # DEFAULT_LLAMA_CPP_IMAGE_CPU default (ghcr.io/ggerganov/llama.cpp:server — the
+  # repo moved to ggml-org; that tag 404s -> ErrImagePull). Pin the gfx906 ROCm
+  # llamacpp image already cached on cblevins-radeonvii: same binary path the
+  # controller expects (/opt/src/llama.cpp/build/bin/llama-server) and proven to
+  # run this router CPU-only (n-gpu-layers 0; it was the runtime image pre-#62).
+  image: registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3
   source: HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF
   cache:
     # Runtime DaemonSets only see node-local staged caches under /models.
