@@ -109,9 +109,14 @@ baseline — i.e. HBM2 bandwidth is reachable, not blocked by Vega20 fragility.
   - Follow-up (latent, non-blocking): fix `backend/llamacpp.go`
     `DEFAULT_LLAMA_CPP_IMAGE_CPU` (ggerganov→ggml-org) so future vendor:cpu
     llamacpp models don't need an explicit image.
-- **S1.2c — warm + default-alias cutover (after S1.2b + S0.3 baseline).** Set bge
-  `minReplicas: 1`, repoint `embeddings` + `text-embedding-3-small` aliases to
-  bge, demote nomic/980 Ti to fallback or scale-to-zero.
+- **S1.2c — DONE + LIVE VERIFIED 2026-06-03 (MR !560).** bge `minReplicas:1` (warm),
+  took `embeddings`+`text-embedding-3-small` aliases + `embeddings`/`semantic-search`/
+  `rag` serviceLabels; nomic demoted to cold fallback (distinct names). Live: default
+  `embeddings` + `text-embedding-3-small` aliases → HTTP 200 served by bge@gfx906
+  (1024-dim). **The gfx906 HBM2 retrieval plane is the live default embeddings lane.**
+  S0.3 verdict: incumbent nomic@980Ti was stuck Queued for weeks (same #62 pathology
+  on gtx980ti-models) → cutover is a strict availability win; bge served ~91 emb/s
+  batched. Matrix: "S0.3 baseline", "S1.2c LIVE VERIFIED".
 - **S1.3** — Add the **reranker**: `bge-reranker-large` GGUF on the same card via
   llamacpp `--reranking`, expose proxy `/v1/rerank`. New `rerank` service label +
   alias. (Reranker was the predecessor brainstorm's "free win" — never built.)

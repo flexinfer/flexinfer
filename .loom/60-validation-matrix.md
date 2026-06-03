@@ -1624,3 +1624,44 @@ Live verification (2026-06-03 ~18:47):
 Follow-up (latent bug, not blocking): `backend/llamacpp.go` `DEFAULT_LLAMA_CPP_IMAGE_CPU`
 default is the stale `ghcr.io/ggerganov/llama.cpp:server` (ggml-org now). Any future
 vendor:cpu llamacpp model without an explicit image hits ErrImagePull.
+
+### 2026-06-03 S0.3 baseline — bge served throughput + incumbent-stuck finding
+
+- **bge-large @ gfx906 (served, via flexinfer-proxy `/v1/embeddings`, model `bge-large`):**
+  cold-load 5.3s; warm 64-doc batch **~91 emb/s** (3 trials 83/91.5/91.2), model
+  `CompendiumLabs/bge-large-en-v1.5-gguf`, 1024 dims. Compute peak (kill-test)
+  8,952 tok/s; same-substrate nomic@gfx906 was 23,719 tok/s.
+- **Incumbent nomic @ 980Ti: NOT MEASURABLE — effectively unavailable.** Despite
+  `minReplicas: 1`, nomic-embed-text is stuck `phase: Idle / sharedGroup Queued,
+  preemptedBy gemma4-e4b-gguf` (preemptedAt 2026-05-03, lastActiveTime 2026-06-01).
+  Same single-leader-group pathology as #62, on `gtx980ti-models`. The default
+  `embeddings`/`text-embedding-3-small` alias lane has been degraded/down for weeks.
+- **Verdict:** the ≥5×-vs-incumbent *ratio* is moot — the incumbent isn't serving.
+  bge@gfx906 is a strict availability improvement (it returns HTTP 200 at ~91 emb/s
+  batched; the incumbent returns nothing). S1.2c default-alias cutover to bge is
+  justified on availability grounds, not just throughput.
+- **New finding (follow-up):** `gtx980ti-models` group exhibits the #62 pathology —
+  a warm minReplicas:1 model (nomic) starved by an idle higher-priority leader
+  (gemma4-e4b-gguf). Worth applying the same analysis (priorities / CPU-vs-GPU
+  placement) to the 980Ti group.
+
+### 2026-06-03 S1.2c LIVE VERIFIED — bge is the default embeddings lane
+
+MR !560 (squash efcd2665) cut the default embeddings retrieval plane over to
+bge@gfx906 and demoted the stuck nomic@980Ti incumbent.
+
+- bge-large-radeonvii: minReplicas:1 (warm), aliases `embeddings`,
+  `text-embedding-3-small`, `bge-large`, `embeddings-radeonvii`; serviceLabels
+  `embeddings`,`semantic-search`,`rag`,`embeddings-hbm2`. ConfigValid "No alias
+  conflicts detected"; phase Ready / sharedGroup Active (priority-120 leader).
+- nomic-embed-text: demoted to minReplicas:0 cold fallback under distinct
+  `nomic-embed-text`/`embeddings-980ti` names.
+- Live smoke via flexinfer-proxy `/v1/embeddings`:
+  - model `text-embedding-3-small` → HTTP 200, served `bge-large-en-v1.5`, 1024 dims.
+  - model `embeddings` → HTTP 200 (×3 consistent), served `bge-large-en-v1.5`,
+    1024 dims. (First call 502 = transient proxy alias-cache refresh; cleared in ~5s.)
+- `promotion_decision`: **promote** — Sprint 1 (gfx906 HBM2 retrieval plane)
+  delivered and LIVE as the default embeddings lane.
+
+Sprint 1 remaining: S1.3 reranker (bge-reranker-large `/v1/rerank`), S1.4 migrate a
+real consumer (codebase-memory/agent-context) — deferred.
