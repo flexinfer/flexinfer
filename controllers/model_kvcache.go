@@ -31,6 +31,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
 
 // reconcileKVCachePressure checks KV-cache utilization from agent annotations
@@ -220,6 +221,8 @@ func (r *ModelReconciler) handleKVCacheEvict(ctx context.Context, model *aiv1alp
 	model.Status.KVCache.Evicted = true
 	model.Status.KVCache.EvictedAt = &now
 	model.Status.KVCache.LastAction = "Evicted"
+
+	metrics.KVCachePressureEvictionsTotal.WithLabelValues(model.Name, model.Namespace).Inc()
 
 	log.Info("KV-cache pressure: evicting model",
 		"model", model.Name, "utilization", util, "highWatermark", highWatermark)

@@ -141,6 +141,19 @@ var (
 		[]string{"cache", "namespace", "phase"},
 	)
 
+	// KV-cache pressure metrics
+
+	// KVCachePressureEvictionsTotal counts KV-cache pressure evictions per model.
+	// Incremented each time the Evict pressure policy scales a model down to relieve
+	// KV-cache pressure (one increment per eviction transition, not per reconcile).
+	KVCachePressureEvictionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_kvcache_pressure_evictions_total",
+			Help: "Total number of KV-cache pressure evictions (Evict policy scale-downs).",
+		},
+		[]string{"model", "namespace"},
+	)
+
 	// Quantization metrics
 
 	// QuantizationDurationSeconds tracks quantization job duration.
@@ -461,6 +474,9 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ModelCacheSizeBytes)
 	ctrlmetrics.Registry.MustRegister(ModelCacheAccessCount)
 	ctrlmetrics.Registry.MustRegister(ModelCachePhase)
+
+	// KV-cache pressure metrics
+	ctrlmetrics.Registry.MustRegister(KVCachePressureEvictionsTotal)
 
 	// Quantization metrics
 	ctrlmetrics.Registry.MustRegister(QuantizationDurationSeconds)

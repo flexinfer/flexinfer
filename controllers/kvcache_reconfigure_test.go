@@ -33,6 +33,8 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 )
 
 func kvCacheTestSetup(t *testing.T, utilization string, objects ...runtime.Object) (*ModelReconciler, *aiv1alpha2.Model) {
@@ -463,5 +465,25 @@ func TestKVCacheEvict_NoRestoreBeforeCooldown(t *testing.T) {
 
 	if !model.Status.KVCache.Evicted {
 		t.Fatal("expected Evicted=true (cooldown not elapsed)")
+	}
+}
+
+func TestKVCacheEvict_IncrementsEvictionCounter(t *testing.T) {
+	r, model := kvCacheTestSetup(t, "0.90")
+	model.Spec.KVCache.PressurePolicy = aiv1alpha2.KVCachePressurePolicyEvict
+
+	counter := metrics.KVCachePressureEvictionsTotal.WithLabelValues(model.Name, model.Namespace)
+	before := promtestutil.ToFloat64(counter)
+
+	// First eviction transition increments the counter once.
+	r.reconcileKVCachePressure(context.Background(), model)
+	if got := promtestutil.ToFloat64(counter) - before; got != 1 {
+		t.Fatalf("expected eviction counter to increment by 1, got %v", got)
+	}
+
+	// Subsequent reconciles while already evicted (EvictActive) must not double-count.
+	r.reconcileKVCachePressure(context.Background(), model)
+	if got := promtestutil.ToFloat64(counter) - before; got != 1 {
+		t.Fatalf("expected eviction counter to stay at 1 while EvictActive, got %v", got)
 	}
 }
