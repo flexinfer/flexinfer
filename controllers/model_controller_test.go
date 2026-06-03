@@ -1630,8 +1630,15 @@ func TestEnsureDeploymentCPUDoesNotRequestGPU(t *testing.T) {
 	}
 
 	c := podSpec.Containers[0]
-	if c.Image != "ghcr.io/ggerganov/llama.cpp:server" {
-		t.Fatalf("Image = %q, want %q", c.Image, "ghcr.io/ggerganov/llama.cpp:server")
+	if c.Image != "ghcr.io/ggml-org/llama.cpp:server" {
+		t.Fatalf("Image = %q, want %q", c.Image, "ghcr.io/ggml-org/llama.cpp:server")
+	}
+	// The public upstream image launches llama-server via its own entrypoint at
+	// /app/llama-server, which is not at /opt/src and not on PATH. The Deployment
+	// must NOT force the custom binary-path Command, or the container fails to
+	// start with "no such file or directory". See LlamaCppBackend.CommandForImage.
+	if len(c.Command) != 0 {
+		t.Fatalf("Command = %#v, want nil for upstream image", c.Command)
 	}
 	if _, ok := c.Resources.Limits[corev1.ResourceName("nvidia.com/gpu")]; ok {
 		t.Fatalf("unexpected nvidia.com/gpu limit in resources: %#v", c.Resources.Limits)

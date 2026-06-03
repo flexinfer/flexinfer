@@ -229,9 +229,9 @@ Default container images for each backend type:
 - **Maxwell (sm_52)**: `registry.harbor.lan/flexinfer/mlc-llm:cuda-maxwell-v7`
 
 ### llama.cpp
-- **NVIDIA**: `ghcr.io/ggerganov/llama.cpp:server-cuda`
-- **AMD**: `ghcr.io/ggerganov/llama.cpp:server-rocm`
-- **CPU**: `ghcr.io/ggerganov/llama.cpp:server`
+- **NVIDIA**: `ghcr.io/ggml-org/llama.cpp:server-cuda`
+- **AMD**: `ghcr.io/ggml-org/llama.cpp:server-rocm`
+- **CPU**: `ghcr.io/ggml-org/llama.cpp:server`
 
 ### ComfyUI
 - **NVIDIA**: `comfyanonymous/comfyui:latest`

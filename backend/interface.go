@@ -279,6 +279,17 @@ type CompilationCacheConfigurer interface {
 	CompilationCacheEnvVars(cacheMountPath string) []corev1.EnvVar
 }
 
+// ImageAwareCommander is an optional interface for backends whose container
+// command depends on the resolved image layout. The dedicated-Deployment path
+// calls CommandForImage(image) instead of Command() when a backend implements
+// this, letting it skip an explicit binary-path override for upstream images
+// that already set a working entrypoint (see LlamaCppBackend.CommandForImage).
+type ImageAwareCommander interface {
+	// CommandForImage returns the container command for the given resolved
+	// image. Returns nil to use the image's own entrypoint.
+	CommandForImage(image string) []string
+}
+
 // BaseBackend provides common default implementations for Backend methods.
 // Embed this in concrete backend implementations to inherit defaults.
 type BaseBackend struct{}

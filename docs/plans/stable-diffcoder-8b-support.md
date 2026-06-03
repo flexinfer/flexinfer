@@ -55,9 +55,9 @@ The `llamacpp` backend is the only option for GGUF models:
 
 | GPU Vendor | Image |
 |------------|-------|
-| NVIDIA | `ghcr.io/ggerganov/llama.cpp:server-cuda` |
-| AMD | `ghcr.io/ggerganov/llama.cpp:server-rocm` |
-| CPU | `ghcr.io/ggerganov/llama.cpp:server` |
+| NVIDIA | `ghcr.io/ggml-org/llama.cpp:server-cuda` |
+| AMD | `ghcr.io/ggml-org/llama.cpp:server-rocm` |
+| CPU | `ghcr.io/ggml-org/llama.cpp:server` |
 
 ---
 

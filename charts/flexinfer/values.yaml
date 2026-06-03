@@ -298,9 +298,9 @@ vllm:
 # llama.cpp backend configuration (used when spec.backend=llamacpp)
 llamacpp:
   # Images - auto-selected based on GPU vendor, or set custom images
-  # CUDA image for NVIDIA GPUs (default: ghcr.io/ggerganov/llama.cpp:server-cuda)
+  # CUDA image for NVIDIA GPUs (default: ghcr.io/ggml-org/llama.cpp:server-cuda)
   cudaImage: ""
-  # ROCm image for AMD GPUs (default: ghcr.io/ggerganov/llama.cpp:server-rocm)
+  # ROCm image for AMD GPUs (default: ghcr.io/ggml-org/llama.cpp:server-rocm)
   rocmImage: ""
   # Architecture-specific AMD images (override rocmImage for specific GPU families)
   gfx1100Image: ""   # AMD RX 7900 series (RDNA3)
