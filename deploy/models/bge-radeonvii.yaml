@@ -42,7 +42,11 @@ spec:
     vramEstimateMB: 1500
   serverless:
     enabled: true
-    minReplicas: 0
+    # Warm: S1.2c cutover makes bge the default embeddings retrieval plane. As the
+    # radeonvii-models priority-120 leader it holds the gfx906 runtime slot — an
+    # intentional allocation (HBM2 -> embeddings) over the low-use gemma4-e4b draft
+    # and qwen3-8b fallback lanes.
+    minReplicas: 1
     idleTimeout: 30m
     coldStartTimeout: 5m
   config:
@@ -65,13 +69,18 @@ spec:
     limits:
       cpu: "4"
       memory: 4Gi
-  # Distinct label this slice — keeps bge out of nomic's default `embeddings`/`rag`
-  # routing group until the S0.3-gated cutover slice flips the default lane.
+  # S1.2c cutover: bge is now the default embeddings/rag retrieval lane (taken
+  # from the stuck nomic@980Ti incumbent — see 60-validation-matrix.md "S0.3").
   serviceLabels:
+    - embeddings
+    - semantic-search
+    - rag
     - embeddings-hbm2
   litellm:
     enabled: true
     servedModelName: bge-large-radeonvii
     aliases:
+      - embeddings
+      - text-embedding-3-small
       - bge-large
       - embeddings-radeonvii
