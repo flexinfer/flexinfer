@@ -1665,3 +1665,95 @@ bge@gfx906 and demoted the stuck nomic@980Ti incumbent.
 
 Sprint 1 remaining: S1.3 reranker (bge-reranker-large `/v1/rerank`), S1.4 migrate a
 real consumer (codebase-memory/agent-context) — deferred.
+
+### 2026-06-03 S1.3 kill-test — reranker GGUF on gfx906 via llama-server `--reranking` — PASS
+
+**Riskiest assumption** (spec-riskiest-assumption rule): a reranker GGUF runs
+GPU-resident on gfx906 via `llama-server --reranking` AND serves a working
+`/v1/rerank` endpoint that the path-agnostic flexinfer-proxy can route.
+
+**Procedure**: exec into `flexinfer-runtime-gfx906-jm62h`; downloaded
+`gpustack/bge-reranker-v2-m3-GGUF` (Q8_0, 607 MB; the llama.cpp-validated reranker —
+substituted for the plan's `bge-reranker-large`, see note); launched
+`/opt/llamacpp/bin/llama-server --model bge-reranker-v2-m3-Q8_0.gguf --reranking
+-ngl 999 -fit off --port 8099` (HSA_OVERRIDE_GFX_VERSION=9.0.6, ROCR_VISIBLE_DEVICES=0)
+alongside the live managed bge subprocess; curled `/v1/rerank`.
+
+**Evidence**:
+- GPU-resident: `load_tensors: offloaded 25/25 layers to GPU`, ROCm0 model buffer
+  308.29 MiB, `Device 0: AMD Radeon VII, gfx906`, ready in ~4s, no segfault, no
+  Vega20 fragility (15262 MiB free reported; VMM:no as expected).
+- `--rerank, --reranking` confirmed in this build's `llama-server --help`
+  (llama.cpp 0.9.7, env `LLAMA_ARG_RERANKING`).
+- Functional ranking correct (`/v1/rerank`, query "What is the capital of France?",
+  4 docs): idx3 "Paris is the largest city and capital of France" **7.378** (top),
+  idx0 "Eiffel Tower in Paris…" **5.526**, idx2 "Berlin is capital of Germany"
+  **−5.437**, idx1 "Bananas…potassium" **−11.041** (bottom). Response is
+  cohere-style `{"results":[{"index","relevance_score"}],"usage"}`.
+- Proxy passthrough (code read): `internal/proxy/proxy.go:454 handleRequest` is
+  path-agnostic — extracts model from body `model` field / header / path and
+  proxies preserving `r.URL.Path` → backend pod `/v1/rerank`. No proxy code change
+  needed; only model resolution (alias/serviceLabel) must point at the reranker.
+
+**Verdict: PASS.** The Vega20 reranking risk is retired; S1.3 reduces to (a) a 4-line
+`--reranking` flag in `backend/llamacpp.go` mirroring `--embeddings`, and (b) a new
+reranker Model CR. **Note**: kill-test used `bge-reranker-v2-m3` (newer, multilingual,
+the reranker llama.cpp's rerank support was validated against) rather than the plan's
+`bge-reranker-large`; the production CR uses v2-m3 for the same reason.
+
+### 2026-06-03 S1.3 design pivot — single-slot runtime blocks concurrent embed+rerank
+
+**Finding**: the gfx906 unified runtime is **single-slot by design** —
+`internal/runtime/manager.go:70` "Only one backend subprocess runs at a time",
+`Manager.active *LoadedModel` (one model), and `Load()` unloads the active model
+before starting a new one (manager.go:128-170). The controller routes GPU models on
+the runtime's node through the runtime API (skips Deployment; forcing a dedicated
+Deployment would deadlock on the GPU device — model_controller.go:379-381). So bge
+embeddings (warm, priority-120 leader) and a GPU reranker **cannot both be warm** on
+gfx906 via the current path; they'd swap-thrash (~9s/RAG-query). The S1.3 plan's
+"reranker on the same card" assumed co-residence that the runtime doesn't support.
+
+**Operator decision (2026-06-03)**: build the **multi-subprocess runtime first** —
+extend the runtime Manager to hold N VRAM-bounded subprocesses so bge+reranker (and
+future models) co-reside on the HBM2 card (the true retrieval-appliance vision). The
+reranker CR + `/v1/rerank` go live after the runtime work (re-scoped to slices below).
+
+### 2026-06-03 Multi-subprocess runtime kill-test (concurrent embed+rerank) — PASS
+
+**Riskiest assumption**: two GPU model subprocesses can run concurrently inside the
+gfx906 runtime pod, each on its own port, both GPU-resident, both serving correct
+results, within the 16 GB VRAM budget, without Vega20 instability.
+
+**Procedure**: with the managed bge subprocess Ready on port 8000 (runtime
+`/api/v1/status`: vramUsed 1105 MB / 16368 MB), launched a second `llama-server
+--reranking` (reranker GGUF) on port 8099 GPU-resident, then hit BOTH endpoints.
+
+**Evidence**:
+- Concurrent serve: `POST :8000/v1/embeddings` → 1024-dim vector **AND**
+  `POST :8099/v1/rerank` ("capital of France" / 2 docs) → top_idx 0 (Paris)
+  score 8.56 — both returned correctly while both subprocesses were live.
+- Both GPU-resident: reranker `offloaded 25/25 layers to GPU`, ROCm0 buffer 308 MiB;
+  bge already 25/25.
+- VRAM with BOTH up: **1591 MB / 16368 MB used (14777 MB free)** — reranker added
+  only ~486 MB. The 16 GB card can co-host many such models.
+- Runtime GPU telemetry tracked it: 1105 → 1591 → 1113 MB (after teardown).
+- Managed bge undisturbed throughout (still Ready on 8000 after test-server kill).
+
+**Verdict: PASS.** The multi-subprocess approach is feasible and VRAM-cheap. The
+runtime change is software orchestration only (per-model ports + VRAM admission +
+no auto-unload + multi-Active election), NOT a hardware limit.
+
+### Multi-subprocess runtime — slice decomposition (re-scoped S1.3)
+
+- **R1 (kill-test)** — DONE 2026-06-03 PASS (above).
+- **R2** — Manager multi-subprocess core, flag-gated (`active` map, per-model port
+  allocation, VRAM admission, no auto-unload when flag on, multi-model
+  status/metrics/health). Self-contained to `internal/runtime/`; default off =
+  identical to today.
+- **R3** — Proxy per-model port routing from runtime status (resolve model→port
+  for the right subprocess instead of assuming the single active model).
+- **R4** — Controller multi-Active election (`chooseSharedGroupLeader` → VRAM-bounded
+  set; `reconcileViaRuntime` loads additively; `CanAcceptLoad` VRAM-aware).
+- **R5** — Reranker Model CR + flip multi-model on for radeonvii-models; live-verify
+  `/v1/rerank` concurrent with `/v1/embeddings` (the original S1.3 payoff). Backend
+  `--reranking` flag (shipped separately, additive) feeds this.
