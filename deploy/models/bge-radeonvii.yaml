@@ -1,8 +1,19 @@
 # BGE-large-en-v1.5 embeddings on Radeon VII (gfx906)
 #
-# Always-on embedding model using llamacpp backend with GGUF weights.
+# HBM2 retrieval-plane embedding lane using llamacpp backend with GGUF weights.
 # VRAM: ~1.3 GB — fits easily in 16 GB alongside other radeonvii models.
-# Part of the radeonvii-models shared group at priority 200 (highest).
+# Part of the radeonvii-models shared group.
+#
+# Hardware-utilization arc Sprint 1 (.loom/30-implementation-plan-hardware-
+# utilization-2026-06-03.md). Kill-test 2026-06-03 PASS: GPU-resident on gfx906,
+# 8,952 tok/s compute, peak GPU 100% (60-validation-matrix.md "S1.1 kill-test").
+#
+# DEPLOYED ADDITIVE + SAFE (this slice): priority 100 sits BELOW the live
+# qwen3-1.7b tool router (priority 120) so it never preempts it; minReplicas: 0
+# (serverless, activated on demand); distinct serviceLabel `embeddings-hbm2` so it
+# does NOT hijack the default `embeddings`/`rag` routing group from nomic. Direct
+# addressing via the `bge-large` / `embeddings-radeonvii` aliases. Warm-promote +
+# default-alias cutover + reranker are a LATER slice, gated on the S0.3 baseline.
 #
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -19,7 +30,7 @@ spec:
   gpu:
     vendor: amd
     shared: radeonvii-models
-    priority: 200
+    priority: 100
     count: 1
     vramEstimateMB: 1500
   serverless:
@@ -47,9 +58,10 @@ spec:
     limits:
       cpu: "4"
       memory: 4Gi
+  # Distinct label this slice — keeps bge out of nomic's default `embeddings`/`rag`
+  # routing group until the S0.3-gated cutover slice flips the default lane.
   serviceLabels:
-    - embeddings
-    - rag
+    - embeddings-hbm2
   litellm:
     enabled: true
     servedModelName: bge-large-radeonvii

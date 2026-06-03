@@ -1500,3 +1500,44 @@ older rows mapped to newer columns.
   a `promote`.
 - Source plan: Track E in the gfx1100/gfx906 next-round plan, picking up
   Slice 6 of `.loom/gfx1100-gfx906-platform-enhancements-plan.md`.
+
+### 2026-06-03 S1.1 kill-test — gfx906 HBM2 embedding feasibility (PASS, feasibility leg)
+
+Hardware-utilization arc Sprint 1 gate
+(`.loom/30-implementation-plan-hardware-utilization-2026-06-03.md`,
+`.loom/brainstorm-hardware-utilization-sprints-2026-06-03.md`).
+
+- `artifact`: bge-large-en-v1.5 q8_0 GGUF (335M, 1024-dim) + nomic-embed-v1.5
+  q8_0 GGUF (137M, 768-dim), same-substrate control.
+- `context_length`: n/a (embedding, ctx 512 cap per CR).
+- `gpu_class`: gfx906/radeonvii. `backend`: llamacpp (`/opt/llamacpp/bin/llama-embedding`).
+- `support_level`: experimental. `observed_failure_mode`: **none** (no segfault;
+  the Vega20 C++ fused-path fragility that made vLLM feasibility-only does NOT
+  affect the llama.cpp embedding path).
+- `canary_command`: `kubectl exec flexinfer-runtime-gfx906-p4kng -n flexinfer-system
+  -- bash -lc 'HSA_OVERRIDE_GFX_VERSION=9.0.6 ROCR_VISIBLE_DEVICES=0
+  /opt/llamacpp/bin/llama-embedding -m bge.gguf -ngl 999 -b 2048 -ub 512
+  --pooling mean -f p2k.txt --embd-output-format array'`
+- `promotion_decision`: **conditional** — feasibility leg PASSES; the
+  ≥5×-vs-incumbent throughput leg defers to Sprint 0 S0.3 (measure nomic@980Ti).
+
+Evidence (2000-doc batch, 75,179 tokens, ~37.6 tok/doc):
+
+| Model | layers→GPU | ROCm0 buf | compute tok/s | wall emb/s | peak GPU% |
+|---|---|---|---|---|---|
+| bge-large-en-v1.5 q8_0 | 25/25 | 307 MiB | **8,952** | 84.0 | **100** |
+| nomic-embed-v1.5 q8_0 | 13/13 | 115 MiB | **23,719** | 128.9 | **100** |
+
+- Residency proof: `found 1 ROCm devices: Device 0: AMD Radeon VII, gfx906`,
+  `offloaded N/N layers to GPU`, peak GPU busy 100% (15+ samples pegged).
+- Wall emb/s is serialization-penalized (2000×1024 floats → stdout text); the
+  real `llama-server /v1/embeddings` path won't pay it — compute tok/s is the
+  honest card capability.
+- `[flexinfer-hipmeminfo-shim] hipMemGetInfo failed err=1` lines are the expected
+  Vega20 VMM workaround firing as designed, not errors.
+- Open: nomic@980Ti (operational incumbent) baseline NOT captured — activation
+  stuck in `gtx980ti-models` shared-group queue (behind gemma4-e4b-gguf). That
+  exact measurement is Sprint 0 S0.3. Cross-card ≥5× ratio rendered there.
+- Disconfirming search: real-world llama.cpp-gfx906 works GPU-resident
+  (95 t/s text-gen on Radeon VII); documented ROCm-7 segfault instability exists
+  but did not manifest on the embedding path here.
