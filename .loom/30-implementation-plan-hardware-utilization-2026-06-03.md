@@ -120,6 +120,26 @@ baseline — i.e. HBM2 bandwidth is reachable, not blocked by Vega20 fragility.
 - **S1.3** — Add the **reranker**: `bge-reranker-large` GGUF on the same card via
   llamacpp `--reranking`, expose proxy `/v1/rerank`. New `rerank` service label +
   alias. (Reranker was the predecessor brainstorm's "free win" — never built.)
+  - **Kill-test 2026-06-03 PASS**: `bge-reranker-v2-m3` GGUF (the llama.cpp-validated
+    reranker, substituted for `bge-reranker-large`) GPU-resident on gfx906 via
+    `llama-server --reranking`; `/v1/rerank` returns correct cohere-style scores.
+  - **PIVOT 2026-06-03**: the gfx906 unified runtime is **single-slot**
+    (`internal/runtime/manager.go` — one subprocess at a time), so bge embeddings
+    (warm) and a GPU reranker can't co-reside; they'd swap-thrash. Operator chose
+    "**multi-subprocess runtime first**". Second kill-test PASS: bge + reranker
+    served **concurrently** on gfx906, 1591MB/16368MB VRAM (14.7GB free) — the
+    blocker is software orchestration, not hardware. S1.3 re-scoped into R1–R5
+    (`60-validation-matrix.md` "Multi-subprocess runtime — slice decomposition"):
+    - **R1** kill-test — DONE PASS.
+    - **S1.3 backend leg**: `--reranking` flag in `backend/llamacpp.go` — SHIPPED
+      MR !562 (additive, inert until a reranker CR uses it).
+    - **R2** Manager multi-subprocess core (flag-gated, default off) — SHIPPED MR
+      !564 (`active` map, per-model ports, VRAM admission, multi-model status/metrics).
+    - **R3** proxy per-model port routing from runtime status — TODO.
+    - **R4** controller multi-Active leader election (VRAM-bounded set) — TODO.
+    - **R5** reranker Model CR + flip `FLEXINFER_RUNTIME_MULTI_MODEL` on for
+      radeonvii + rebuild/roll runtime image + live-verify `/v1/rerank` concurrent
+      with `/v1/embeddings` — TODO (the original S1.3 payoff).
 - **S1.4** — Wire one real consumer end-to-end as proof: point
   `codebase-memory` (or agent-context recall) at the bge `/v1/embeddings` lane,
   re-embed one repo, confirm search quality parity + throughput gain. Matrix row.
