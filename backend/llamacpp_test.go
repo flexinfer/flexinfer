@@ -210,13 +210,13 @@ func TestLlamaCppBackendImage(t *testing.T) {
 			name:      "AMD gfx1100 falls through to generic AMD default",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1100",
-			wantImage: "ghcr.io/ggerganov/llama.cpp:server-rocm",
+			wantImage: "ghcr.io/ggml-org/llama.cpp:server-rocm",
 		},
 		{
 			name:      "AMD gfx1101 falls through to generic AMD default",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx1101",
-			wantImage: "ghcr.io/ggerganov/llama.cpp:server-rocm",
+			wantImage: "ghcr.io/ggml-org/llama.cpp:server-rocm",
 		},
 		{
 			name:      "AMD gfx1100 with env override",
@@ -233,7 +233,7 @@ func TestLlamaCppBackendImage(t *testing.T) {
 			name:      "AMD gfx906 falls through to AMD generic",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx906",
-			wantImage: "ghcr.io/ggerganov/llama.cpp:server-rocm",
+			wantImage: "ghcr.io/ggml-org/llama.cpp:server-rocm",
 		},
 		{
 			name:      "AMD gfx906 with env override",
@@ -247,19 +247,19 @@ func TestLlamaCppBackendImage(t *testing.T) {
 			name:      "AMD generic falls through to server-rocm",
 			gpuVendor: GPUVendorAMD,
 			gpuArch:   "gfx900",
-			wantImage: "ghcr.io/ggerganov/llama.cpp:server-rocm",
+			wantImage: "ghcr.io/ggml-org/llama.cpp:server-rocm",
 		},
 		{
 			name:      "NVIDIA sm_52 Maxwell falls through to generic CUDA without profile",
 			gpuVendor: GPUVendorNVIDIA,
 			gpuArch:   "sm_52",
-			wantImage: "ghcr.io/ggerganov/llama.cpp:server-cuda",
+			wantImage: "ghcr.io/ggml-org/llama.cpp:server-cuda",
 		},
 		{
 			name:      "NVIDIA sm_50 Maxwell falls through to generic CUDA without profile",
 			gpuVendor: GPUVendorNVIDIA,
 			gpuArch:   "sm_50",
-			wantImage: "ghcr.io/ggerganov/llama.cpp:server-cuda",
+			wantImage: "ghcr.io/ggml-org/llama.cpp:server-cuda",
 		},
 		{
 			name:      "NVIDIA sm_52 with env override",
@@ -273,13 +273,13 @@ func TestLlamaCppBackendImage(t *testing.T) {
 			name:      "NVIDIA sm_89 ignores Maxwell path",
 			gpuVendor: GPUVendorNVIDIA,
 			gpuArch:   "sm_89",
-			wantImage: "ghcr.io/ggerganov/llama.cpp:server-cuda",
+			wantImage: "ghcr.io/ggml-org/llama.cpp:server-cuda",
 		},
 		{
 			name:      "CPU returns server image",
 			gpuVendor: GPUVendorCPU,
 			gpuArch:   "",
-			wantImage: "ghcr.io/ggerganov/llama.cpp:server",
+			wantImage: "ghcr.io/ggml-org/llama.cpp:server",
 		},
 	}
 
@@ -291,6 +291,62 @@ func TestLlamaCppBackendImage(t *testing.T) {
 			got := b.Image(tt.gpuVendor, tt.gpuArch)
 			if got != tt.wantImage {
 				t.Errorf("Image(%v, %q) = %q, want %q", tt.gpuVendor, tt.gpuArch, got, tt.wantImage)
+			}
+		})
+	}
+}
+
+func TestLlamaCppBackendCommandForImage(t *testing.T) {
+	b := &LlamaCppBackend{}
+
+	// LlamaCppBackend must satisfy the ImageAwareCommander contract so the
+	// deployment builder calls CommandForImage instead of Command.
+	var _ ImageAwareCommander = b
+
+	custom := []string{"/opt/src/llama.cpp/build/bin/llama-server"}
+
+	tests := []struct {
+		name  string
+		image string
+		want  []string
+	}{
+		{
+			name:  "upstream ggml-org CPU image uses entrypoint",
+			image: "ghcr.io/ggml-org/llama.cpp:server",
+			want:  nil,
+		},
+		{
+			name:  "upstream ggml-org CUDA image uses entrypoint",
+			image: "ghcr.io/ggml-org/llama.cpp:server-cuda",
+			want:  nil,
+		},
+		{
+			name:  "upstream ggml-org ROCm image uses entrypoint",
+			image: "ghcr.io/ggml-org/llama.cpp:server-rocm",
+			want:  nil,
+		},
+		{
+			name:  "legacy ggerganov image uses entrypoint",
+			image: "ghcr.io/ggerganov/llama.cpp:server",
+			want:  nil,
+		},
+		{
+			name:  "custom Harbor build keeps explicit binary path",
+			image: "registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3",
+			want:  custom,
+		},
+		{
+			name:  "custom Harbor digest-pinned build keeps explicit binary path",
+			image: "registry.harbor.lan/flexinfer/llamacpp@sha256:18e8cb0868346b273b1cd22b4c3ed0fb5c63d0bb74e72dd0dae10f8786d81cc5",
+			want:  custom,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := b.CommandForImage(tt.image)
+			if strings.Join(got, " ") != strings.Join(tt.want, " ") {
+				t.Errorf("CommandForImage(%q) = %#v, want %#v", tt.image, got, tt.want)
 			}
 		})
 	}

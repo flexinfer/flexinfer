@@ -359,7 +359,7 @@ func TestResolveBackendImage_RealBackendsArchEnvOnly(t *testing.T) {
 			name:              "llamacpp gfx906 no profile no env -> AMD generic (was hardcoded)",
 			backend:           &LlamaCppBackend{},
 			arch:              "gfx906",
-			wantImage:         "ghcr.io/ggerganov/llama.cpp:server-rocm",
+			wantImage:         "ghcr.io/ggml-org/llama.cpp:server-rocm",
 			wantContractCheck: "previously hardcoded gfx906 default removed; now profile-owned",
 		},
 		{
@@ -367,7 +367,7 @@ func TestResolveBackendImage_RealBackendsArchEnvOnly(t *testing.T) {
 			backend:           &LlamaCppBackend{},
 			vendor:            GPUVendorNVIDIA,
 			arch:              "sm_52",
-			wantImage:         "ghcr.io/ggerganov/llama.cpp:server-cuda",
+			wantImage:         "ghcr.io/ggml-org/llama.cpp:server-cuda",
 			wantContractCheck: "previously hardcoded Maxwell default removed; now profile-owned",
 		},
 		{

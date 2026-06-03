@@ -18,7 +18,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Clone and build llama.cpp
 ARG LLAMA_CPP_VERSION=master
 RUN git clone --depth 1 --branch ${LLAMA_CPP_VERSION} \
-    https://github.com/ggerganov/llama.cpp /build/llama.cpp
+    https://github.com/ggml-org/llama.cpp /build/llama.cpp
 
 WORKDIR /build/llama.cpp
 

@@ -23,13 +23,13 @@ var llamaCppImageRules = []ImageRule{
 	{Vendor: GPUVendorAMD, ArchPrefix: "gfx110", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_GFX1100"},
 	{Vendor: GPUVendorAMD, ArchPrefix: "gfx906", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_GFX906"},
 	// AMD generic
-	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_AMD", Default: "ghcr.io/ggerganov/llama.cpp:server-rocm"},
+	{Vendor: GPUVendorAMD, EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_AMD", Default: "ghcr.io/ggml-org/llama.cpp:server-rocm"},
 	// CPU-only
-	{Vendor: GPUVendorCPU, EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_CPU", Default: "ghcr.io/ggerganov/llama.cpp:server"},
+	{Vendor: GPUVendorCPU, EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_CPU", Default: "ghcr.io/ggml-org/llama.cpp:server"},
 	// NVIDIA Maxwell sub-arch (env-only; profile owns the default)
 	{Vendor: GPUVendorNVIDIA, ArchPrefix: "sm_5", EnvVar: "DEFAULT_LLAMA_CPP_IMAGE_MAXWELL"},
 	// NVIDIA/global default
-	{EnvVar: "DEFAULT_LLAMA_CPP_IMAGE", Default: "ghcr.io/ggerganov/llama.cpp:server-cuda"},
+	{EnvVar: "DEFAULT_LLAMA_CPP_IMAGE", Default: "ghcr.io/ggml-org/llama.cpp:server-cuda"},
 }
 
 // LlamaCppBackend implements the Backend interface for llama.cpp.
@@ -62,6 +62,37 @@ func (b *LlamaCppBackend) Port() int32 {
 // Required for custom images that use tini as entrypoint (e.g., Harbor ROCm builds).
 func (b *LlamaCppBackend) Command() []string {
 	return []string{"/opt/src/llama.cpp/build/bin/llama-server"}
+}
+
+// CommandForImage adjusts the container command to the resolved image layout.
+//
+// The custom Harbor builds use tini as their entrypoint and need the explicit
+// llama-server binary path (see Command). The public upstream images
+// (ghcr.io/ggml-org/llama.cpp:server*, and the legacy ggerganov path) already
+// launch llama-server via their own entrypoint at /app/llama-server — which is
+// NOT on PATH and NOT at /opt/src — so forcing Command on them would fail the
+// container with "no such file or directory". For those images we return nil to
+// fall back to the image's own entrypoint.
+//
+// Unlike the runtime DaemonSet subprocess path (which has a PATH-resolution
+// fallback via resolveExecutable), the dedicated-Deployment path sets Command
+// verbatim, so this image-aware selection is what keeps a plain CPU/CUDA
+// llamacpp Model with no spec.image runnable.
+func (b *LlamaCppBackend) CommandForImage(image string) []string {
+	if isUpstreamLlamaCppImage(image) {
+		return nil
+	}
+	return b.Command()
+}
+
+// isUpstreamLlamaCppImage reports whether the image is a public upstream
+// llama.cpp server image whose own entrypoint already launches llama-server.
+// Covers the current ggml-org repository and the legacy ggerganov path it was
+// renamed from. Custom builds (e.g. registry.harbor.lan/...) return false and
+// keep the explicit binary-path command.
+func isUpstreamLlamaCppImage(image string) bool {
+	return strings.Contains(image, "ggml-org/llama.cpp") ||
+		strings.Contains(image, "ggerganov/llama.cpp")
 }
 
 func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {

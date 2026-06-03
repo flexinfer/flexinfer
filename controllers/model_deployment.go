@@ -200,7 +200,16 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		}
 	}
 	port := b.Port()
+	// Most backends use a static command, but some (llamacpp) must adjust it to
+	// the resolved image layout: the explicit binary-path override only applies
+	// to custom builds, while public upstream images launch via their own
+	// entrypoint. Unlike the runtime subprocess path, this Deployment sets
+	// Command verbatim with no PATH-resolution fallback, so the image-aware
+	// selection is what keeps a no-spec.image Model runnable.
 	command := b.Command()
+	if ic, ok := b.(backend.ImageAwareCommander); ok {
+		command = ic.CommandForImage(image)
+	}
 	args := b.Args(spec)
 	env := b.Env(spec)
 

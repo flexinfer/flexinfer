@@ -15,7 +15,7 @@
 #
 # Prerequisites:
 # 1. GGUF model file in ModelCache
-# 2. llama.cpp CPU image (ghcr.io/ggerganov/llama.cpp:server)
+# 2. llama.cpp CPU image (ghcr.io/ggml-org/llama.cpp:server)
 ---
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelDeployment
