@@ -1569,3 +1569,27 @@ serviceLabels `[embeddings-hbm2]`). Flux applied it; live-activation probe:
   VRAM budget to admit both [config-only stopgap].
 - `promotion_decision`: **conditional** — lane deployed + cache warm; serving
   blocked pending the group-budget fix. bge left Idle/Queued (harmless, no pod).
+
+### 2026-06-03 S1.2b fix — cpu-only models off the single-slot GPU runtime (MR !556, #62)
+
+Corrected root cause of the S1.2 blocker: NOT VRAM-budget accounting. The gfx906
+unified runtime serves ONE backend subprocess at a time
+(`internal/runtime/manager.go:70`); `chooseSharedGroupLeader` elects one leader
+per shared group. The CPU-pinned tool router (`qwen3-1p7b-tools-radeonvii`,
+`nGPULayers:0`, `*VisibleDevices:-1`, `minReplicas:1`) held that single slot,
+blocking GPU models from serving on the Radeon VII.
+
+- Operator decision: option (A) dedicated pod for the tool router.
+- Fix (MR !556, squash 6704c998, merge c810db58): `DirectRuntimeLoadEligibility`
+  (`pkg/runtime/payload.go`) returns false for models that explicitly set
+  `gpu.vendor: cpu` → controller falls through to the Deployment flow
+  (`model_controller.go:391+`). GPU-less models keep existing eligibility.
+  `qwen3-1.7b-tools-radeonvii.yaml` reclassified to `vendor: cpu` (schema forces
+  `gpu.shared` empty → leaves the GPU group). Unit tests
+  `TestDirectRuntimeLoadEligibility` (+cpu→excluded, +amd→eligible); CI pipeline
+  12721 success; auto-merged.
+- `promotion_decision`: **conditional** — code merged + CI green. NOT yet live:
+  the controller image must be rebuilt + rolled out (manual cycle, no CI publish)
+  before the behavior takes effect on-cluster. Live Prove pending:
+  tool router → own CPU Deployment (Ready); bge → radeonvii-models runtime leader;
+  `/v1/embeddings` returns a vector; pyannote diarization unaffected.

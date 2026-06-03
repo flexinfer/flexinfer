@@ -88,16 +88,22 @@ baseline — i.e. HBM2 bandwidth is reachable, not blocked by Vega20 fragility.
   live tool router 120; minReplicas 0; serviceLabel `embeddings-hbm2`). Flux
   applied; cache prefetched; ConfigValid + Schedulable. **But live-activation
   revealed a blocker (see S1.2b): bge is Idle/Queued, can't get the GPU slot.**
-- **S1.2b (NEW — blocker, must precede serving) — GPU-group budget accounting.**
-  The `radeonvii-models` group queues bge behind the CPU-pinned tool router
-  (`nGPULayers:0`, `*VisibleDevices:-1`) which reserves 2000 MB GPU budget while
-  running on CPU — blocking a real GPU model from co-admission with ~16 GB
-  physically free. Fix (pick one): (a) exclude CPU-pinned models from GPU-group
-  VRAM budget [principled, controller change + scheduler test]; (b) move the CPU
-  tool router out of the `radeonvii-models` GPU group [cleanest]; (c) raise the
-  group budget [config stopgap]. Acceptance: bge reaches Ready with the tool
-  router still Ready; `/v1/embeddings` smoke returns a vector. Evidence:
-  `60-validation-matrix.md` "S1.2 deploy".
+- **S1.2b (blocker) — CPU model on the single-slot GPU runtime. CODE FIX MERGED
+  2026-06-03 (MR !556, #62).** Corrected root cause: NOT VRAM budget — the gfx906
+  unified runtime serves ONE backend subprocess at a time
+  (`internal/runtime/manager.go:70`) and `chooseSharedGroupLeader` elects one
+  leader per group; the CPU-pinned tool router held that single slot. Operator
+  picked option (A) "dedicated pod for tool router". Fix: `DirectRuntimeLoadEligibility`
+  excludes explicit `gpu.vendor: cpu` models → they get a dedicated Deployment
+  (CPU pod) instead of the GPU runtime; tool router reclassified to `vendor: cpu`
+  (schema-forces it out of the GPU group). Unit tests added; CI green; auto-merged.
+  - **REMAINING (operational Prove, not yet done): rebuild + roll out the
+    controller image** (no auto-publish job / standard make target — manual
+    rsync→build-on-7900xtx→harbor→rollout; cluster-wide blast radius). Until the
+    new controller is live, the OLD controller still runtime-serves the (now
+    vendor:cpu) tool router. After rollout: confirm tool router gets its own CPU
+    Deployment + stays Ready; activate bge → it becomes the radeonvii-models
+    runtime leader; `/v1/embeddings` smoke returns a vector; pyannote unaffected.
 - **S1.2c — warm + default-alias cutover (after S1.2b + S0.3 baseline).** Set bge
   `minReplicas: 1`, repoint `embeddings` + `text-embedding-3-small` aliases to
   bge, demote nomic/980 Ti to fallback or scale-to-zero.
