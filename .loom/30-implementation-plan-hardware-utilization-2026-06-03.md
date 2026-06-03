@@ -83,10 +83,24 @@ baseline — i.e. HBM2 bandwidth is reachable, not blocked by Vega20 fragility.
   *throughput* confirmation rolls into S0.3 (nomic@980Ti baseline couldn't be
   activated — 980 Ti shared-group queue). Net: feasibility proven; quantitative
   ratio is a measurement, not a risk.
-- **S1.2** — Promote bge to the warm default embeddings lane: `minReplicas: 1`
-  (fix the "always-on" comment/behavior mismatch), repoint the `embeddings` +
-  `text-embedding-3-small` aliases to bge, demote nomic/980 Ti to fallback or
-  scale-to-zero (frees the 980 Ti for F7-style use later).
+- **S1.2 (deploy) — DONE 2026-06-03, MR !555.** Added `bge-large-radeonvii` to
+  the deployed kustomization as an additive, reversible lane (priority 100 <
+  live tool router 120; minReplicas 0; serviceLabel `embeddings-hbm2`). Flux
+  applied; cache prefetched; ConfigValid + Schedulable. **But live-activation
+  revealed a blocker (see S1.2b): bge is Idle/Queued, can't get the GPU slot.**
+- **S1.2b (NEW — blocker, must precede serving) — GPU-group budget accounting.**
+  The `radeonvii-models` group queues bge behind the CPU-pinned tool router
+  (`nGPULayers:0`, `*VisibleDevices:-1`) which reserves 2000 MB GPU budget while
+  running on CPU — blocking a real GPU model from co-admission with ~16 GB
+  physically free. Fix (pick one): (a) exclude CPU-pinned models from GPU-group
+  VRAM budget [principled, controller change + scheduler test]; (b) move the CPU
+  tool router out of the `radeonvii-models` GPU group [cleanest]; (c) raise the
+  group budget [config stopgap]. Acceptance: bge reaches Ready with the tool
+  router still Ready; `/v1/embeddings` smoke returns a vector. Evidence:
+  `60-validation-matrix.md` "S1.2 deploy".
+- **S1.2c — warm + default-alias cutover (after S1.2b + S0.3 baseline).** Set bge
+  `minReplicas: 1`, repoint `embeddings` + `text-embedding-3-small` aliases to
+  bge, demote nomic/980 Ti to fallback or scale-to-zero.
 - **S1.3** — Add the **reranker**: `bge-reranker-large` GGUF on the same card via
   llamacpp `--reranking`, expose proxy `/v1/rerank`. New `rerank` service label +
   alias. (Reranker was the predecessor brainstorm's "free win" — never built.)

@@ -898,3 +898,40 @@ Sources:
   - `deploy/gpuprofiles/gfx1100.yaml`
   - `deploy/modelcaches/{gemma4-26b-a4b-gptq,omnicoder-9b-gptq,qwen35-9b-gptq,gemma4-31b-gptq}.yaml`
   - Commits: `551f6763`, `0378749e`, `0e8ec72a`, `f3b6c164`, `3e77d9da`, `b8ab9cf4`, `d5355aec`.
+
+## 2026-06-03
+
+### RALPH — hardware-utilization arc Sprint 1: gfx906 HBM2 embedding lane
+
+- What happened:
+  - Brainstorm (`brainstorm-hardware-utilization-sprints-2026-06-03.md`) →
+    operator picked the utilization/throughput arc; plan
+    `30-implementation-plan-hardware-utilization-2026-06-03.md`.
+  - S1.1 kill-test PASS: llama.cpp embeddings GPU-resident on gfx906 (bge-large
+    8,952 tok/s, nomic 23,719 tok/s compute, peak GPU 100%, no segfault; ran
+    in-pod via `/opt/llamacpp/bin/llama-embedding`). Vega20-fragility risk retired.
+  - S1.2: shipped MR !555 — added `bge-large-radeonvii` to the deployed
+    kustomization as an additive, reversible lane (priority 200→100 so it never
+    preempts the live qwen3-1.7b tool router at 120; minReplicas 0; distinct
+    serviceLabel `embeddings-hbm2`). Merged to master, Flux applied the CR.
+  - Live Prove surfaced a blocker: bge prefetched + config-valid but Idle/Queued,
+    preemptedBy the tool router. Root cause: the tool router is CPU-pinned
+    (`nGPULayers:0`, `*VisibleDevices:-1`) yet reserves 2000 MB against the gfx906
+    GPU group budget, blocking a real GPU model from co-admission while the
+    physical GPU sits idle (663 MB/16 GB).
+- Why it mattered:
+  - The "additive lane" config worked exactly as designed (no preemption of the
+    live weaver-Router dependency), but the radeonvii-models group's VRAM-budget
+    accounting counts a CPU model against GPU capacity → the HBM2 embedding lane
+    can't serve concurrently with the warm tool router. This is the real Sprint 1
+    blocker and likely a controller accounting bug.
+- What's next:
+  - Next slice: fix GPU-group budget accounting so CPU-pinned models
+    (`*VisibleDevices == -1`) don't consume GPU VRAM budget, OR move the CPU tool
+    router out of the `radeonvii-models` GPU group. Then re-run the bge serving
+    smoke (activate → `/v1/embeddings` returns a vector). Then S1.3 reranker,
+    S1.4 consumer migration, gated on the S0.3 baseline.
+- Sources:
+  - MR !555 (f3755e18); `60-validation-matrix.md` "S1.1 kill-test" + "S1.2 deploy"
+  - `kubectl get model {bge-large-radeonvii,qwen3-1p7b-tools-radeonvii} -o yaml`
+  - in-pod kill-test: `flexinfer-runtime-gfx906-2kbtp` llama-embedding runs

@@ -1541,3 +1541,31 @@ Evidence (2000-doc batch, 75,179 tokens, ~37.6 tok/doc):
 - Disconfirming search: real-world llama.cpp-gfx906 works GPU-resident
   (95 t/s text-gen on Radeon VII); documented ROCm-7 segfault instability exists
   but did not manifest on the embedding path here.
+
+### 2026-06-03 S1.2 deploy — bge gfx906 lane LANDED, blocked from serving by group-budget accounting
+
+MR !555 (squash f3755e18) added `bge-large-radeonvii` to `deploy/models/
+kustomization.yaml` as an additive lane (priority 100, minReplicas 0,
+serviceLabels `[embeddings-hbm2]`). Flux applied it; live-activation probe:
+
+- `cache.jobPhase: Succeeded` ("artifact prefetched"), `ConfigValid: True`,
+  `Schedulable: True` — controller deploy/cache path works for a llamacpp
+  embedding Model (`config.embedding: true`).
+- **phase: Idle / sharedGroup.state: Queued, preemptedBy qwen3-1p7b-tools-radeonvii.**
+  bge did NOT get the gfx906 slot.
+- **Root cause (finding):** `qwen3-1p7b-tools-radeonvii` is **CPU-pinned**
+  (`nGPULayers: 0`, `hipVisibleDevices: "-1"`, `rocrVisibleDevices: "-1"`) yet
+  reserves `vramEstimateMB: 2000` against the `radeonvii-models` **GPU** group
+  budget. Physical gfx906 is idle (663 MB / 16 GB). So a CPU model's phantom GPU
+  reservation blocks co-admission of a real GPU model (bge, 1500 MB) with ~16 GB
+  physically free. No preemption occurred (priority 100 < 120 as designed →
+  safety held; live pyannote + tool router stayed Ready throughout).
+- **Implication:** the HBM2 embedding lane cannot serve concurrently with the
+  warm CPU tool router under current group-budget accounting. Next-slice fix
+  options: (a) exclude `hipVisibleDevices/rocrVisibleDevices == -1` (CPU) models
+  from GPU-group VRAM budget [principled, controller change]; (b) move the
+  CPU tool router out of the `radeonvii-models` GPU group entirely [cleanest —
+  a CPU model arguably should not be in a GPU shared group]; (c) raise the group
+  VRAM budget to admit both [config-only stopgap].
+- `promotion_decision`: **conditional** — lane deployed + cache warm; serving
+  blocked pending the group-budget fix. bge left Idle/Queued (harmless, no pod).
