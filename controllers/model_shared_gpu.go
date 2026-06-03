@@ -135,6 +135,7 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	var fallbackLeader *aiv1alpha2.Model
 	var demandedLeader *aiv1alpha2.Model
 	var warmPrimaryLeader *aiv1alpha2.Model
+	var warmPinnedLeader *aiv1alpha2.Model
 	var activeLoadingLeader *aiv1alpha2.Model
 	for _, m := range groupModels {
 		fallbackLeader = better(fallbackLeader, m)
@@ -147,6 +148,9 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		runnableFallbackLeader = better(runnableFallbackLeader, m)
 		if isWarmPrimaryModel(m) {
 			warmPrimaryLeader = better(warmPrimaryLeader, m)
+		}
+		if isWarmPinnedSharedModel(m) {
+			warmPinnedLeader = better(warmPinnedLeader, m)
 		}
 		if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 			readyLeader = better(readyLeader, m)
@@ -197,10 +201,32 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	if warmPrimaryLeader != nil {
 		return warmPrimaryLeader
 	}
+	// Warm-pinned preference: when no member is Ready, recently active, or under
+	// demand, prefer a member the operator pinned warm (minReplicas>=1) over an
+	// idle scale-to-zero member that would otherwise win on raw priority via the
+	// runnable fallback. Without this, a higher-priority idle minReplicas:0
+	// member permanently holds the single runtime slot and starves the warm
+	// incumbent -- the gtx980ti-models pathology where nomic-embed-text
+	// (minReplicas:1, priority 100) stayed Queued for weeks behind an idle
+	// gemma4-e4b-gguf (minReplicas:0, priority 200). This only fires in the
+	// no-demand fallback path, so a higher-priority model still preempts the
+	// warm incumbent the moment it sees real traffic (demand path above).
+	if warmPinnedLeader != nil {
+		return warmPinnedLeader
+	}
 	if runnableFallbackLeader != nil {
 		return runnableFallbackLeader
 	}
 	return fallbackLeader
+}
+
+// isWarmPinnedSharedModel reports whether the operator has pinned this model
+// warm via minReplicas>=1. Such a model is meant to stay running, so in a
+// single-slot shared group it should hold leadership over an idle scale-to-zero
+// member when neither has demand -- otherwise the pinned warmth never
+// materializes because a higher-priority idle member keeps the slot.
+func isWarmPinnedSharedModel(model *aiv1alpha2.Model) bool {
+	return model != nil && model.Spec.GetMinReplicas() >= 1
 }
 
 func sharedModelCanTakeDemand(model *aiv1alpha2.Model) bool {

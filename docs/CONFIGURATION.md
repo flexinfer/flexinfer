@@ -379,6 +379,23 @@ Key configuration fields in the `Model` CRD:
 | `cache.*` | object | Cache strategy (Memory/SharedPVC/None) |
 | `serviceLabels` | []string | Semantic labels for routing |
 
+#### Shared-group leadership and warm-pinning
+
+A shared GPU group serves one model at a time (`chooseSharedGroupLeader` in
+`controllers/model_shared_gpu.go`). Leadership resolves in this order: an
+operator `gpu.forcePromotion`, the anti-thrashing cooldown, the in-flight
+cold-start, demand-based preemption (a higher-priority member with recent proxy
+traffic preempts an idle leader), the Ready/recently-active member, an explicit
+`warmPolicy: primary` member, and finally raw priority.
+
+When **no** member has demand and none is Ready or recently active, a member
+pinned warm via `serverless.minReplicas >= 1` is preferred over an idle
+`minReplicas: 0` member even if the idle member has higher `gpu.priority`.
+Without this, a higher-priority idle scale-to-zero member would permanently hold
+the single slot and starve the warm incumbent. A higher-priority member still
+preempts the warm incumbent the moment it receives real traffic, so this only
+changes the otherwise-idle steady state.
+
 ### GPUGroup Spec
 
 | Field | Type | Description |
