@@ -20,6 +20,8 @@ import (
 	"github.com/flexinfer/flexinfer/internal/routing"
 	"github.com/flexinfer/flexinfer/pkg/k8surl"
 	"github.com/flexinfer/flexinfer/pkg/validation"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -611,6 +613,18 @@ func (p *Proxy) loadOrCreateProxy(targetURL string) (*httputil.ReverseProxy, boo
 		return nil, false
 	}
 	rp := httputil.NewSingleHostReverseProxy(u)
+	// Wrap the default Director to propagate W3C trace context into the
+	// upstream request so the backend can continue the distributed trace
+	// started at the proxy edge (see handleRequest's Extract+Start). The
+	// inbound request's context — carried into the cloned outbound request —
+	// holds the active span. Injection is a no-op when tracing is disabled,
+	// because the global propagator is the default no-op until InitTracing
+	// installs the W3C propagator under FLEXINFER_OTEL_ENABLED=true.
+	origDirector := rp.Director
+	rp.Director = func(req *http.Request) {
+		origDirector(req)
+		otel.GetTextMapPropagator().Inject(req.Context(), propagation.HeaderCarrier(req.Header))
+	}
 	rp.ModifyResponse = p.logUpstreamUsage
 	p.proxyMap.Store(targetURL, proxyEntry{proxy: rp, created: time.Now()})
 	return rp, true
