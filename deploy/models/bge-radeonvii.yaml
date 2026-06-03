@@ -27,9 +27,13 @@ spec:
   backend: llamacpp
   source: HF://CompendiumLabs/bge-large-en-v1.5-gguf
   cache:
+    # Local (node-local hostPath under /models): the gfx906 unified runtime only
+    # sees node-local staged caches, not PVCs. SharedPVC left the GGUF where the
+    # runtime couldn't open it (gguf_init_from_file: No such file or directory).
+    # Mirrors gemma4-e4b-radeonvii (the working runtime-served llamacpp lane).
     size: 2Gi
     storageClass: nvme-1r
-    strategy: SharedPVC
+    strategy: Local
   gpu:
     vendor: amd
     shared: radeonvii-models
