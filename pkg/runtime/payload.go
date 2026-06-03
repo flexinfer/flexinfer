@@ -68,9 +68,24 @@ type BuildLoadOptions struct {
 // Today, runtime pods only see the node-local hostPath mounted at /models. Raw
 // pvc:// sources require an explicit PVC mount on the serving pod, so sending
 // them through the runtime daemonset fails even if the cache-check job passes.
+//
+// CPU-only models (gpu.vendor: cpu) are never runtime-eligible. The unified
+// runtime serves a single backend subprocess at a time on the GPU device
+// ("Only one backend subprocess runs at a time", internal/runtime/manager.go),
+// so a CPU model loaded into it would occupy that single slot and block GPU
+// models from serving on the same node — even though it never touches the GPU.
+// Routing CPU models to a dedicated Deployment lets them run concurrently with
+// the node's GPU runtime (e.g. a warm CPU tool router alongside a warm GPU
+// embedding lane on the Radeon VII). See services/flexinfer#62.
 func DirectRuntimeLoadEligibility(model *aiv1alpha2.Model, backendName string, profile *aiv1alpha2.GPUProfileSpec) (bool, string) {
 	if model == nil {
 		return false, "model is nil"
+	}
+	// Require an explicit gpu.vendor: cpu. GetGPUVendor() also returns CPU when
+	// the GPU block is absent entirely, but GPU-less models keep their existing
+	// runtime eligibility — only an explicit CPU declaration opts out.
+	if model.Spec.GPU != nil && model.Spec.GetGPUVendor() == aiv1alpha2.GPUVendorCPU {
+		return false, "cpu-only models use a dedicated Deployment, not the single-slot GPU runtime"
 	}
 	if ok, reason := RuntimeProfileBundlesBackend(profile, backendName); !ok {
 		return false, reason
