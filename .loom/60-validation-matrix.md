@@ -1757,3 +1757,26 @@ no auto-unload + multi-Active election), NOT a hardware limit.
 - **R5** — Reranker Model CR + flip multi-model on for radeonvii-models; live-verify
   `/v1/rerank` concurrent with `/v1/embeddings` (the original S1.3 payoff). Backend
   `--reranking` flag (shipped separately, additive) feeds this.
+
+#### Ship status (2026-06-03)
+- **S1.3 backend `--reranking` flag** — MERGED MR !562 (squash e0df2162).
+- **R2** — MERGED/merging MR !564 (squash-on-merge armed, CI passed leg).
+- **R3** — DONE, MR pending rebase onto master post-R2. Changes: runtime
+  `handleModelHealth` looks up model BY NAME (was `Active()`, which 404'd every
+  non-primary model) + reports its port; `Manager.Model(name)` accessor; proxy
+  `waitForRuntimeReady` returns the runtime-reported port; `tryDirectRuntimeLoad`
+  + `recoverDirectLoadTargets` route to `podIP:<reportedPort>` (fall back to the
+  fixed backend port for single-slot/older runtimes). Tests: port round-trip +
+  by-name lookup; proxy+runtime suites green, vet clean.
+- **R4** — TODO + **must reconcile with !563** (`fix/shared-gpu-warm-pinned-leader`,
+  merged 2026-06-03 615c74f1) which added a `warmPinnedLeader` preference to
+  `chooseSharedGroupLeader` (closed the gtx980ti-models follow-up). R4 extends the
+  same function from returning ONE leader to a VRAM-bounded SET when the runtime is
+  multi-model. Open design Qs: (a) how the controller learns a runtime is
+  multi-model (add `multiModel`+VRAM to `RuntimeStatus`/`/api/v1/status`, or a
+  GPUProfile field); (b) VRAM budget = sum of members' `gpu.vramEstimateMB` ≤ card
+  total; (c) `reconcileViaRuntime` must load additively (not preempt) members that
+  fit; (d) `CanAcceptLoad` becomes VRAM-aware. Higher-risk: governs ALL shared GPU
+  groups, not just gfx906 — needs careful design + tests on a stable master.
+- **R5** — TODO (after R4): reranker CR + flip `FLEXINFER_RUNTIME_MULTI_MODEL` on
+  radeonvii + rebuild/roll runtime image (NO CI publish — manual) + live-verify.
