@@ -74,6 +74,15 @@ func markForcePromoted(m *aiv1alpha2.Model) *aiv1alpha2.Model {
 	return m
 }
 
+// markWarmPinned pins a model warm via minReplicas>=1 (serverless still
+// enabled). Mirrors nomic-embed-text's old config on the gtx980ti-models group.
+func markWarmPinned(m *aiv1alpha2.Model) *aiv1alpha2.Model {
+	enabled := true
+	min := int32(1)
+	m.Spec.Serverless = &aiv1alpha2.ServerlessSpec{Enabled: &enabled, MinReplicas: &min}
+	return m
+}
+
 func TestPreserveActiveSharedLoadingDuringCacheRefresh(t *testing.T) {
 	now := time.Now()
 	recent := now.Add(-2 * time.Minute)
@@ -466,6 +475,56 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 			}(),
 			// ForcePromotion=false is treated identically to nil — normal Ready-first wins.
 			wantName: "ready-primary",
+		},
+		// Warm-pinned preference (minReplicas>=1): the gtx980ti-models pathology.
+		// A warm-pinned lower-priority member must reclaim the single slot from an
+		// idle higher-priority scale-to-zero member when neither has demand.
+		{
+			name: "warm-pinned reclaims slot from idle higher-priority scale-to-zero member",
+			models: []*aiv1alpha2.Model{
+				// gemma4-e4b-gguf analog: priority 200, minReplicas 0, idle/non-ready.
+				makeSharedModel("gemma4-e4b-gguf", 200, aiv1alpha2.ModelPhaseIdle, nil, nil),
+				// nomic-embed-text analog: priority 100 but pinned warm (minReplicas:1).
+				markWarmPinned(makeSharedModel("nomic-embed-text", 100, aiv1alpha2.ModelPhaseIdle, nil, nil)),
+			},
+			wantName: "nomic-embed-text",
+		},
+		{
+			name: "warm-pinned does not block higher-priority member with recent demand",
+			models: []*aiv1alpha2.Model{
+				// Higher-priority text-gen sees real traffic -> must still preempt.
+				makeSharedModel("gemma4-e4b-gguf", 200, aiv1alpha2.ModelPhasePending, timePtr(recent), nil),
+				markWarmPinned(makeSharedModel("nomic-embed-text", 100, aiv1alpha2.ModelPhaseReady, timePtr(past), nil)),
+			},
+			// nomic is the idle ready leader; gemma4 has recent demand and higher
+			// priority -> demand preemption wins, warm-pinning does not shield it.
+			wantName: "gemma4-e4b-gguf",
+		},
+		{
+			name: "warm-pinned yields to a Ready member when itself idle and non-ready",
+			models: []*aiv1alpha2.Model{
+				// Higher-priority member is actually serving (Ready) -> keep it to
+				// avoid thrashing a live pod; warm-pinned waits its turn.
+				makeSharedModel("gemma4-e4b-gguf", 200, aiv1alpha2.ModelPhaseReady, nil, nil),
+				markWarmPinned(makeSharedModel("nomic-embed-text", 100, aiv1alpha2.ModelPhaseIdle, nil, nil)),
+			},
+			wantName: "gemma4-e4b-gguf",
+		},
+		{
+			name: "two warm-pinned members resolved by priority",
+			models: []*aiv1alpha2.Model{
+				markWarmPinned(makeSharedModel("warm-low", 100, aiv1alpha2.ModelPhaseIdle, nil, nil)),
+				markWarmPinned(makeSharedModel("warm-high", 200, aiv1alpha2.ModelPhaseIdle, nil, nil)),
+			},
+			wantName: "warm-high",
+		},
+		{
+			name: "no warm-pinned member falls back to priority (unchanged)",
+			models: []*aiv1alpha2.Model{
+				makeSharedModel("low-idle", 100, aiv1alpha2.ModelPhaseIdle, nil, nil),
+				makeSharedModel("high-idle", 200, aiv1alpha2.ModelPhaseIdle, nil, nil),
+			},
+			wantName: "high-idle",
 		},
 	}
 
