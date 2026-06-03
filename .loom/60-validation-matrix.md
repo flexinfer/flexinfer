@@ -1593,3 +1593,34 @@ blocking GPU models from serving on the Radeon VII.
   before the behavior takes effect on-cluster. Live Prove pending:
   tool router → own CPU Deployment (Ready); bge → radeonvii-models runtime leader;
   `/v1/embeddings` returns a vector; pyannote diarization unaffected.
+
+### 2026-06-03 S1.2b LIVE VERIFIED — bge embedding lane serving + CPU tool router concurrent
+
+The #62 fix is deployed and proven end-to-end. Controller rebuilt from master
+(Dockerfile.manager, digest sha256:5932e77d) + rolled out; chain of follow-up
+manifest fixes landed:
+
+- MR !556 (6704c998): `DirectRuntimeLoadEligibility` excludes explicit vendor:cpu
+  → dedicated Deployment. Controller live (image ID 5932e77d confirmed).
+- MR !557 (82a4e613): bge priority 100→120 (was out-ranked by gemma4-e4b 110 once
+  the tool router left the group).
+- MR !558 (4299bb59): pin tool-router image — vendor:cpu llamacpp resolved the
+  stale `ghcr.io/ggerganov/llama.cpp:server` default (404 → ErrImagePull, weaver
+  router down). Pinned node-cached gfx906 ROCm llamacpp image.
+- MR !559 (1f6eb516): bge cache SharedPVC→Local — the runtime only sees node-local
+  /models; SharedPVC → `gguf_init_from_file: No such file or directory` → RuntimeFailed.
+
+Live verification (2026-06-03 ~18:47):
+- `qwen3-1p7b-tools-radeonvii`: gpu_vendor **cpu**, NO shared group, own Deployment
+  pod 1/1 **Ready** (weaver-router dependency restored).
+- `bge-large-radeonvii`: phase **Ready**, sharedGroup.state **Active** (leader,
+  priority 120), RuntimeReady, runtime-served GPU-resident on gfx906.
+- Smoke: `POST /v1/embeddings` via flexinfer-proxy (model `bge-large`) →
+  **HTTP 200**, model `CompendiumLabs/bge-large-en-v1.5-gguf`, **1024 dims**,
+  usage prompt_tokens 19. A CPU model + GPU model serve the same node concurrently.
+- pyannote-diarization (voice stack) Running throughout — undisturbed.
+- `promotion_decision`: **promote** — S1.2/S1.2b complete and live.
+
+Follow-up (latent bug, not blocking): `backend/llamacpp.go` `DEFAULT_LLAMA_CPP_IMAGE_CPU`
+default is the stale `ghcr.io/ggerganov/llama.cpp:server` (ggml-org now). Any future
+vendor:cpu llamacpp model without an explicit image hits ErrImagePull.

@@ -97,13 +97,18 @@ baseline — i.e. HBM2 bandwidth is reachable, not blocked by Vega20 fragility.
   excludes explicit `gpu.vendor: cpu` models → they get a dedicated Deployment
   (CPU pod) instead of the GPU runtime; tool router reclassified to `vendor: cpu`
   (schema-forces it out of the GPU group). Unit tests added; CI green; auto-merged.
-  - **REMAINING (operational Prove, not yet done): rebuild + roll out the
-    controller image** (no auto-publish job / standard make target — manual
-    rsync→build-on-7900xtx→harbor→rollout; cluster-wide blast radius). Until the
-    new controller is live, the OLD controller still runtime-serves the (now
-    vendor:cpu) tool router. After rollout: confirm tool router gets its own CPU
-    Deployment + stays Ready; activate bge → it becomes the radeonvii-models
-    runtime leader; `/v1/embeddings` smoke returns a vector; pyannote unaffected.
+  - **DONE + LIVE VERIFIED 2026-06-03.** Controller rebuilt (Dockerfile.manager,
+    digest sha256:5932e77d) + rolled out (scale 0→1). Four follow-up fixes landed
+    via live verification: !557 bge priority 100→120 (out-ranked by gemma4-e4b
+    110); !558 pin tool-router image (vendor:cpu default 404→ErrImagePull); !559
+    bge cache SharedPVC→Local (runtime sees node-local /models only). Result:
+    tool router = own CPU Deployment 1/1 Ready (weaver dep up); bge = Active
+    leader, runtime-served GPU-resident; `POST /v1/embeddings` via proxy → **HTTP
+    200, 1024-dim** vector; pyannote undisturbed. A CPU + GPU model now serve the
+    same node concurrently. Matrix: "S1.2b LIVE VERIFIED".
+  - Follow-up (latent, non-blocking): fix `backend/llamacpp.go`
+    `DEFAULT_LLAMA_CPP_IMAGE_CPU` (ggerganov→ggml-org) so future vendor:cpu
+    llamacpp models don't need an explicit image.
 - **S1.2c — warm + default-alias cutover (after S1.2b + S0.3 baseline).** Set bge
   `minReplicas: 1`, repoint `embeddings` + `text-embedding-3-small` aliases to
   bge, demote nomic/980 Ti to fallback or scale-to-zero.
