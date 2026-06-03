@@ -194,6 +194,15 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--embeddings")
 	}
 
+	// Reranking mode (required for /v1/rerank endpoint). Mutually exclusive with
+	// --embeddings in llama-server (both set the pooling head); reranking implies
+	// pooling type RANK. Kill-test 2026-06-03 PASS: bge-reranker-v2-m3 GGUF
+	// GPU-resident on gfx906, /v1/rerank returns correct cohere-style scores
+	// (60-validation-matrix.md "S1.3 kill-test").
+	if spec.ConfigBool("reranking", false) {
+		args = append(args, "--reranking")
+	}
+
 	// Enable metrics endpoint
 	if spec.ConfigBool("metrics", false) {
 		args = append(args, "--metrics")
