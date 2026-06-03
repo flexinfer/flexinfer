@@ -459,6 +459,16 @@ func TestCounterVecIncAndRead(t *testing.T) {
 	assert.GreaterOrEqual(t, got, 2.0, "counter should be at least 2 after two Inc() calls")
 }
 
+func TestKVCachePressureEvictionsTotal_IncAndRead(t *testing.T) {
+	// Verify the KV-cache pressure eviction counter increments per (model, namespace).
+	counter := KVCachePressureEvictionsTotal.WithLabelValues("evict-model", "ns-a")
+	before := promtestutil.ToFloat64(counter)
+	counter.Inc()
+	counter.Inc()
+	got := promtestutil.ToFloat64(counter) - before
+	assert.Equal(t, 2.0, got, "eviction counter should increment by 2 after two Inc() calls")
+}
+
 func TestHistogramVecObserveAndRead(t *testing.T) {
 	// Observe a value and verify the histogram count increases.
 	ReconcileDurationSeconds.WithLabelValues("test-ctrl").Observe(0.5)

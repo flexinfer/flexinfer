@@ -34,6 +34,7 @@ Defined in `services/flexinfer/pkg/metrics/exporter.go`:
 - `flexinfer_modelcache_size_bytes{cache,node,strategy}`
 - `flexinfer_modelcache_access_count{cache,node}`
 - `flexinfer_modelcache_phase{cache,namespace,phase}`
+- `flexinfer_kvcache_pressure_evictions_total{model,namespace}` (counts Evict-policy scale-downs under KV-cache pressure)
 - `flexinfer_quantization_duration_seconds{model,format,type}` (histogram)
 - `flexinfer_quantization_compression_ratio{model,format}`
 - `flexinfer_quantization_jobs_total{model,status}`
