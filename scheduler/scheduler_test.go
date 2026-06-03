@@ -8,6 +8,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"go.opentelemetry.io/otel"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -626,4 +629,65 @@ func TestFilter_RejectsNodeWithoutGPUVendorLabel(t *testing.T) {
 	if _, ok := failed["cpu-node"]; !ok {
 		t.Fatalf("expected cpu-node in FailedNodes, got %v", failed)
 	}
+}
+
+// TestFilterAndScoreEmitSpans verifies the extender handlers emit OpenTelemetry
+// spans named scheduler.filter and scheduler.score carrying the pod identity,
+// so traces are visible when tracing is enabled (issue #45).
+func TestFilterAndScoreEmitSpans(t *testing.T) {
+	sr := tracetest.NewSpanRecorder()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(sr))
+	prev := otel.GetTracerProvider()
+	otel.SetTracerProvider(tp)
+	t.Cleanup(func() { otel.SetTracerProvider(prev) })
+
+	cache := &fakeCache{
+		nodes: map[string]*corev1.Node{
+			"gpu-node": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "gpu-node",
+					Labels: map[string]string{"flexinfer.ai/gpu.vendor": "AMD"},
+				},
+			},
+		},
+	}
+	sched := &Scheduler{cache: cache}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "spanpod", Namespace: "default"}}
+
+	filterNodes(t, sched, pod, "gpu-node")
+
+	nodes := []string{"gpu-node"}
+	args := extenderv1.ExtenderArgs{Pod: pod, NodeNames: &nodes}
+	body, _ := json.Marshal(args)
+	req := httptest.NewRequest("POST", "/score", bytes.NewBuffer(body))
+	sched.Score(httptest.NewRecorder(), req)
+
+	spans := sr.Ended()
+	byName := map[string]sdktrace.ReadOnlySpan{}
+	for _, s := range spans {
+		byName[s.Name()] = s
+	}
+	for _, want := range []string{"scheduler.filter", "scheduler.score"} {
+		span, ok := byName[want]
+		if !ok {
+			t.Fatalf("expected span %q to be emitted, got %v", want, spanNames(spans))
+		}
+		var podName string
+		for _, attr := range span.Attributes() {
+			if string(attr.Key) == "k8s.pod.name" {
+				podName = attr.Value.AsString()
+			}
+		}
+		if podName != "spanpod" {
+			t.Fatalf("span %q: expected k8s.pod.name=spanpod, got %q", want, podName)
+		}
+	}
+}
+
+func spanNames(spans []sdktrace.ReadOnlySpan) []string {
+	names := make([]string, 0, len(spans))
+	for _, s := range spans {
+		names = append(names, s.Name())
+	}
+	return names
 }

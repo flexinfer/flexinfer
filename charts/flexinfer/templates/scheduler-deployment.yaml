@@ -6,6 +6,8 @@
 {{- $kubeSchedulerImage := default (dict) $kubeScheduler.image -}}
 {{- $kubeconfigInit := default (dict) $scheduler.kubeconfigInit -}}
 {{- $kubeconfigInitImage := default (dict) $kubeconfigInit.image -}}
+{{- $observability := default (dict) .Values.observability -}}
+{{- $tracing := default (dict) $observability.tracing -}}
 {{- if $scheduler.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -112,6 +114,18 @@ spec:
               value: "{{ default 1.0 $tenantFairShare.gpuBudget }}"
             - name: SCHED_TENANT_LABEL_KEY
               value: "{{ default "" $tenantFairShare.tenantLabelKey }}"
+            {{- if $tracing.enabled }}
+            - name: FLEXINFER_OTEL_ENABLED
+              value: "true"
+            {{- if $tracing.otlpEndpoint }}
+            - name: OTEL_EXPORTER_OTLP_ENDPOINT
+              value: {{ $tracing.otlpEndpoint | quote }}
+            {{- end }}
+            {{- if $tracing.serviceNamespace }}
+            - name: FLEXINFER_OTEL_SERVICE_NAMESPACE
+              value: {{ $tracing.serviceNamespace | quote }}
+            {{- end }}
+            {{- end }}
         - name: kube-scheduler
           image: "{{ default "registry.k8s.io/kube-scheduler" $kubeSchedulerImage.repository }}:{{ default "v1.35.2" $kubeSchedulerImage.tag }}"
           imagePullPolicy: {{ include "flexinfer.imagePullPolicy" $kubeSchedulerImage }}

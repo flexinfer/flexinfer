@@ -18,6 +18,9 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/propagation"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -227,16 +230,30 @@ func (s *Scheduler) tenantFairShareForPod(pod *corev1.Pod) (string, float64, flo
 
 // Filter is the handler for the /filter endpoint.
 func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
-	log := log.FromContext(r.Context())
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := otel.Tracer("flexinfer/scheduler").Start(ctx, "scheduler.filter")
+	defer span.End()
+
+	log := log.FromContext(ctx)
 	var args extenderv1.ExtenderArgs
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		span.RecordError(err)
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
 	if err := json.Unmarshal(body, &args); err != nil {
+		span.RecordError(err)
 		http.Error(w, "Failed to unmarshal request body", http.StatusBadRequest)
 		return
+	}
+
+	span.SetAttributes(
+		attribute.String("k8s.pod.name", args.Pod.Name),
+		attribute.String("k8s.pod.namespace", args.Pod.Namespace),
+	)
+	if args.NodeNames != nil {
+		span.SetAttributes(attribute.Int("scheduler.candidate_nodes", len(*args.NodeNames)))
 	}
 
 	log.Info("Filtering for Pod", "pod", args.Pod.Name)
@@ -306,6 +323,10 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 		NodeNames:   &filteredNodes,
 		FailedNodes: failed,
 	}
+	span.SetAttributes(
+		attribute.Int("scheduler.filtered_nodes", len(filteredNodes)),
+		attribute.Int("scheduler.failed_nodes", len(failed)),
+	)
 
 	data, err := json.Marshal(result)
 	if err != nil {
@@ -321,14 +342,20 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 
 // Score is the handler for the /score endpoint.
 func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
-	log := log.FromContext(r.Context())
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := otel.Tracer("flexinfer/scheduler").Start(ctx, "scheduler.score")
+	defer span.End()
+
+	log := log.FromContext(ctx)
 	var args extenderv1.ExtenderArgs
 	body, err := io.ReadAll(r.Body)
 	if err != nil {
+		span.RecordError(err)
 		http.Error(w, "Failed to read request body", http.StatusBadRequest)
 		return
 	}
 	if err := json.Unmarshal(body, &args); err != nil {
+		span.RecordError(err)
 		http.Error(w, "Failed to unmarshal request body", http.StatusBadRequest)
 		return
 	}
@@ -340,6 +367,15 @@ func (s *Scheduler) Score(w http.ResponseWriter, r *http.Request) {
 	if args.Pod.Annotations != nil {
 		model = args.Pod.Annotations[constants.AnnotationModel]
 		backend = canonicalBackend(args.Pod.Annotations[constants.AnnotationBackend])
+	}
+	span.SetAttributes(
+		attribute.String("k8s.pod.name", args.Pod.Name),
+		attribute.String("k8s.pod.namespace", args.Pod.Namespace),
+		attribute.String("flexinfer.model", model),
+		attribute.String("flexinfer.backend", backend),
+	)
+	if args.NodeNames != nil {
+		span.SetAttributes(attribute.Int("scheduler.candidate_nodes", len(*args.NodeNames)))
 	}
 
 	var globalCM *corev1.ConfigMap

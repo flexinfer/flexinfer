@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"net/http"
 	"os"
 
+	"github.com/flexinfer/flexinfer/pkg/observability"
 	"github.com/flexinfer/flexinfer/scheduler"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -25,6 +27,17 @@ func main() {
 	setupLog := log.Log.WithName("setup")
 
 	setupLog.Info("Starting flexinfer-sched...")
+
+	shutdownTracing, err := observability.InitTracing(context.Background(), "flexinfer-sched")
+	if err != nil {
+		setupLog.Error(err, "Failed to initialize tracing")
+		os.Exit(1)
+	}
+	defer func() {
+		if err := shutdownTracing(context.Background()); err != nil {
+			setupLog.Error(err, "Failed to shutdown tracing")
+		}
+	}()
 
 	sched, err := scheduler.NewScheduler()
 	if err != nil {

@@ -33,7 +33,7 @@ The controller manager handles reconciliation of FlexInfer CRDs and manages the 
 | `DEFAULT_FLASH_LOADER_BUFFER_KB` | `4096` | Default flash-loader copy buffer size in KiB |
 | `DEFAULT_FLASH_LOADER_VERIFY` | `false` | Verify copied files after flash-loader transfer |
 | `DEFAULT_FLASH_LOADER_EXCLUDE` | - | Comma-separated flash-loader exclude patterns |
-| `FLEXINFER_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing export (manager + proxy) |
+| `FLEXINFER_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing export (manager + proxy + scheduler) |
 | `FLEXINFER_OTEL_SERVICE_NAMESPACE` | - | Optional `service.namespace` attribute for exported spans |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTEL SDK default | OTLP endpoint for tracing exporter (typically `http://collector:4318`) |
 
@@ -149,6 +149,11 @@ The scheduler extender (`flexinfer-sched`) plugs into kube-scheduler as an exten
 | `SCHED_UTIL_WEIGHT` | `0.2` | Weight for GPU utilization hint |
 | `SCHED_COST_WEIGHT` | `0.1` | Weight for node “cost” hint |
 | `SCHED_CACHE_WEIGHT` | `0.3` | Weight for KV-cache locality hint |
+| `FLEXINFER_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing export for filter/score requests |
+| `FLEXINFER_OTEL_SERVICE_NAMESPACE` | - | Optional `service.namespace` attribute for scheduler spans |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | OTEL SDK default | OTLP endpoint for scheduler trace export |
+
+The scheduler emits `scheduler.filter` and `scheduler.score` spans and propagates W3C Trace Context from incoming extender requests. Enable via Helm `observability.tracing.enabled=true`.
 
 ### Command Line Flags
 
