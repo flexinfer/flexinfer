@@ -67,7 +67,12 @@ const (
 )
 
 // Manager controls backend subprocess lifecycle on a GPU node.
-// Only one backend subprocess runs at a time (single-GPU constraint).
+//
+// By default a single backend subprocess runs at a time (single-GPU,
+// single-slot). When MultiModel is enabled the manager holds a VRAM-bounded
+// SET of concurrent subprocesses, each on its own port — letting e.g. an
+// embeddings lane and a reranker co-reside on the same card. Single-slot is
+// the default; the multi-model path is opt-in and additive.
 type Manager struct {
 	// opMu serializes lifecycle operations. m.mu protects state reads/writes,
 	// but must not be held while waiting for backend subprocess shutdown.
@@ -75,8 +80,18 @@ type Manager struct {
 
 	mu sync.RWMutex
 
-	// active is the currently loaded model (nil if none).
-	active *LoadedModel
+	// models holds every loaded model keyed by name. In single-slot mode it
+	// contains at most one entry (Load unloads the incumbent first); in
+	// multi-model mode it can hold several VRAM-permitting concurrent models.
+	models map[string]*LoadedModel
+
+	// multiModel enables holding multiple concurrent subprocesses (VRAM-bounded).
+	multiModel bool
+
+	// vramHeadroomMB is the free-VRAM safety margin kept when admitting a new
+	// model in multi-model mode. Admission is skipped (fail-open) when GPU
+	// telemetry is unavailable.
+	vramHeadroomMB int64
 
 	// mode tracks whether the node is in inference or gaming mode.
 	mode NodeMode
@@ -95,6 +110,10 @@ type Manager struct {
 	modelBasePath string
 }
 
+// defaultVRAMHeadroomMB is the free-VRAM margin kept before admitting a new
+// concurrent model in multi-model mode.
+const defaultVRAMHeadroomMB int64 = 1024
+
 // ManagerConfig holds configuration for creating a Manager.
 type ManagerConfig struct {
 	GPUVendor           backend.GPUVendor
@@ -102,6 +121,12 @@ type ManagerConfig struct {
 	ShutdownTimeout     time.Duration
 	HealthCheckInterval time.Duration
 	ModelBasePath       string
+
+	// MultiModel enables concurrent VRAM-bounded subprocesses (default false =
+	// single-slot, behavior identical to the pre-multi-model runtime).
+	MultiModel bool
+	// VRAMHeadroomMB overrides the default free-VRAM admission margin.
+	VRAMHeadroomMB int64
 }
 
 // NewManager creates a runtime process manager.
@@ -115,7 +140,13 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.ModelBasePath == "" {
 		cfg.ModelBasePath = "/models"
 	}
+	if cfg.VRAMHeadroomMB <= 0 {
+		cfg.VRAMHeadroomMB = defaultVRAMHeadroomMB
+	}
 	return &Manager{
+		models:              make(map[string]*LoadedModel),
+		multiModel:          cfg.MultiModel,
+		vramHeadroomMB:      cfg.VRAMHeadroomMB,
 		mode:                ModeInference,
 		gpuVendor:           cfg.GPUVendor,
 		gpuArch:             cfg.GPUArch,
@@ -123,6 +154,98 @@ func NewManager(cfg ManagerConfig) *Manager {
 		healthCheckInterval: cfg.HealthCheckInterval,
 		modelBasePath:       cfg.ModelBasePath,
 	}
+}
+
+// allModelStates enumerates the state label values used by ModelActiveState, so
+// per-model metric series can be cleared without Reset() wiping other models.
+var allModelStates = []string{"Loading", "Ready", "Failed", "Stopping"}
+
+// setModelStateMetric marks the given model's current state as 1 and clears its
+// other state series. Unlike ModelActiveState.Reset() it touches only this
+// model's label series, so concurrent models' gauges are preserved.
+func setModelStateMetric(name, backend, state string) {
+	for _, s := range allModelStates {
+		ModelActiveState.DeleteLabelValues(name, backend, s)
+	}
+	ModelActiveState.WithLabelValues(name, backend, state).Set(1)
+}
+
+// clearModelStateMetric removes all state series for a model (on unload).
+func clearModelStateMetric(name, backend string) {
+	for _, s := range allModelStates {
+		ModelActiveState.DeleteLabelValues(name, backend, s)
+	}
+}
+
+// primaryLocked returns a representative loaded model for back-compat with the
+// single-active API surface (api.go Active(), Status().ActiveModel). It prefers
+// a Ready model, then a Loading one, then any. Caller must hold m.mu.
+func (m *Manager) primaryLocked() *LoadedModel {
+	var loading, any *LoadedModel
+	for _, lm := range m.models {
+		switch lm.State {
+		case ModelStateReady:
+			return lm
+		case ModelStateLoading:
+			if loading == nil {
+				loading = lm
+			}
+		}
+		if any == nil {
+			any = lm
+		}
+	}
+	if loading != nil {
+		return loading
+	}
+	return any
+}
+
+// usedPortsLocked returns the set of ports currently claimed by loaded models.
+// Caller must hold m.mu.
+func (m *Manager) usedPortsLocked() map[int32]bool {
+	ports := make(map[int32]bool, len(m.models))
+	for _, lm := range m.models {
+		ports[lm.Port] = true
+	}
+	return ports
+}
+
+// allocatePortLocked picks a port for a new model. It honors an explicitly
+// requested port (config.port, surfaced via preferred) when free; otherwise it
+// scans upward from the default backend port for a free port not used by an
+// existing model and not equal to the runtime API port. Caller must hold m.mu.
+func (m *Manager) allocatePortLocked(preferred int32) int32 {
+	used := m.usedPortsLocked()
+	if preferred > 0 && preferred != pkgrt.RuntimeAPIPort && !used[preferred] {
+		return preferred
+	}
+	for p := pkgrt.RuntimeBackendPort; p < pkgrt.RuntimeBackendPort+512; p++ {
+		if p == pkgrt.RuntimeAPIPort || used[p] {
+			continue
+		}
+		return p
+	}
+	return preferred
+}
+
+// canAdmitLocked reports whether a new model with the given VRAM estimate fits
+// alongside the currently loaded models. It is fail-open: when GPU telemetry is
+// unavailable (free==0) it admits and lets the backend's own OOM handling apply.
+// Caller need not hold m.mu (QueryGPU shells out); callers pass estimateMB=0 to
+// mean "unknown estimate" (admission then only enforces the headroom margin).
+func (m *Manager) canAdmit(estimateMB int64) (bool, string) {
+	info := QueryGPU(string(m.gpuVendor), m.gpuArch)
+	if info.VRAMFreeMB <= 0 {
+		// No telemetry — fail open.
+		return true, "vram telemetry unavailable; admitting (fail-open)"
+	}
+	if info.VRAMFreeMB-estimateMB < m.vramHeadroomMB {
+		return false, fmt.Sprintf("insufficient VRAM: free=%dMB estimate=%dMB headroom=%dMB",
+			info.VRAMFreeMB, estimateMB, m.vramHeadroomMB)
+	}
+	return true, fmt.Sprintf("admit: free=%dMB estimate=%dMB headroom=%dMB",
+		info.VRAMFreeMB, estimateMB, m.vramHeadroomMB)
 }
 
 // Load starts a backend subprocess for the named model. If another model
@@ -150,22 +273,34 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	// skip the unload/reload cycle.  This prevents the controller and proxy
 	// from fighting over the same model.
 	m.mu.Lock()
-	if m.active != nil && m.active.Name == name && m.active.Backend == req.Backend &&
-		(m.active.State == ModelStateReady || m.active.State == ModelStateLoading) {
-		state := string(m.active.State)
+	if existing, ok := m.models[name]; ok && existing.Backend == req.Backend &&
+		(existing.State == ModelStateReady || existing.State == ModelStateLoading) {
+		state := string(existing.State)
 		m.mu.Unlock()
 		logger.Info("Model already loaded, skipping reload",
 			"state", state)
 		return nil
 	}
 
-	// Unload any active model first (different model or failed state).
-	active := m.active
+	// Determine which incumbents to unload before loading.
+	//   - single-slot mode: unload every other model (only one runs at a time).
+	//   - multi-model mode: unload only a stale/failed entry with this same name
+	//     (a reload); leave the other concurrent models running.
+	var toUnload []*LoadedModel
+	if m.multiModel {
+		if stale, ok := m.models[name]; ok {
+			toUnload = append(toUnload, stale)
+		}
+	} else {
+		for _, lm := range m.models {
+			toUnload = append(toUnload, lm)
+		}
+	}
 	m.mu.Unlock()
-	if active != nil {
-		logger.Info("Unloading active model before loading new one", "active", active.Name)
-		if err := m.unloadActive(ctx, active); err != nil {
-			logger.Error(err, "Failed to unload active model, forcing")
+	for _, lm := range toUnload {
+		logger.Info("Unloading model before loading new one", "unloading", lm.Name, "loading", name)
+		if err := m.unloadActive(ctx, lm); err != nil {
+			logger.Error(err, "Failed to unload model, forcing", "model", lm.Name)
 		}
 	}
 
@@ -184,6 +319,30 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		GPUArch:   m.gpuArch,
 	}
 	backendPort := runtimeBackendPort(b, spec)
+
+	// Multi-model mode: allocate a distinct port per concurrent subprocess and
+	// enforce VRAM admission. Single-slot mode keeps the fixed backend port and
+	// skips admission (the incumbent was already unloaded above).
+	if m.multiModel {
+		m.mu.Lock()
+		backendPort = m.allocatePortLocked(backendPort)
+		m.mu.Unlock()
+		// Reflect the chosen port back into the spec config so backends that read
+		// config.port (e.g. llama-server --port) bind where we expect to probe.
+		if spec.Config == nil {
+			spec.Config = make(map[string]any, 1)
+		}
+		spec.Config["port"] = float64(backendPort)
+		var estimateMB int64
+		if v := spec.ConfigInt("vramEstimateMB", 0); v > 0 {
+			estimateMB = int64(v)
+		}
+		if ok, reason := m.canAdmit(estimateMB); !ok {
+			return fmt.Errorf("cannot load %q: %s", name, reason)
+		} else {
+			logger.Info("VRAM admission passed", "model", name, "reason", reason, "port", backendPort)
+		}
+	}
 
 	// Build command and args.
 	command := b.Command()
@@ -264,12 +423,10 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	}
 
 	m.mu.Lock()
-	m.active = loaded
+	m.models[name] = loaded
 	m.mu.Unlock()
 
-	// Clear any previous model state metrics.
-	ModelActiveState.Reset()
-	ModelActiveState.WithLabelValues(name, req.Backend, "Loading").Set(1)
+	setModelStateMetric(name, req.Backend, "Loading")
 
 	logger.Info("Starting backend subprocess",
 		"executable", executable,
@@ -281,15 +438,14 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		m.mu.Lock()
 		loaded.State = ModelStateFailed
 		loaded.Error = err.Error()
-		if m.active == loaded {
-			m.active = nil
+		if cur, ok := m.models[name]; ok && cur == loaded {
+			delete(m.models, name)
 		}
 		m.mu.Unlock()
 		cancel()
 		close(loaded.done)
 		ModelLoadsTotal.WithLabelValues(req.Backend, "error").Inc()
-		ModelActiveState.Reset()
-		ModelActiveState.WithLabelValues(name, req.Backend, "Failed").Set(1)
+		setModelStateMetric(name, req.Backend, "Failed")
 		return fmt.Errorf("failed to start backend: %w", err)
 	}
 
@@ -326,7 +482,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 			}
 		}
 	}
-	go m.healthCheckLoop(subCtx, name, b, backendPort, startupTimeout)
+	go m.healthCheckLoop(subCtx, loaded, b, backendPort, startupTimeout)
 
 	return nil
 }
@@ -337,17 +493,17 @@ func (m *Manager) Unload(ctx context.Context, name string) error {
 	defer m.opMu.Unlock()
 
 	m.mu.Lock()
-	if m.active == nil || m.active.Name != name {
+	active, ok := m.models[name]
+	if !ok {
 		m.mu.Unlock()
 		return fmt.Errorf("model %q is not loaded", name)
 	}
-	active := m.active
 	m.mu.Unlock()
 
 	return m.unloadActive(ctx, active)
 }
 
-// unloadActive stops the active subprocess without holding m.mu while waiting.
+// unloadActive stops the given subprocess without holding m.mu while waiting.
 func (m *Manager) unloadActive(ctx context.Context, active *LoadedModel) error {
 	if active == nil {
 		return nil
@@ -355,7 +511,7 @@ func (m *Manager) unloadActive(ctx context.Context, active *LoadedModel) error {
 
 	logger := log.FromContext(ctx).WithValues("model", active.Name)
 	m.mu.Lock()
-	if m.active != active {
+	if cur, ok := m.models[active.Name]; !ok || cur != active {
 		m.mu.Unlock()
 		return nil
 	}
@@ -398,23 +554,38 @@ func (m *Manager) unloadActive(ctx context.Context, active *LoadedModel) error {
 	}
 
 	ModelUnloadsTotal.WithLabelValues(active.Backend, "requested").Inc()
-	ModelActiveState.Reset()
+	clearModelStateMetric(active.Name, active.Backend)
 	m.mu.Lock()
-	if m.active == active {
-		m.active = nil
+	if cur, ok := m.models[active.Name]; ok && cur == active {
+		delete(m.models, active.Name)
 	}
 	m.mu.Unlock()
 	return nil
 }
 
-// Active returns the currently loaded model, or nil.
+// Active returns a representative loaded model, or nil. Prefers a Ready model.
+// For the full set (multi-model mode) use Status().ActiveModels.
 func (m *Manager) Active() *LoadedModel {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return m.active
+	return m.primaryLocked()
 }
 
-// Status returns summary information about the runtime.
+func summarize(lm *LoadedModel) ModelSummary {
+	return ModelSummary{
+		Name:     lm.Name,
+		Backend:  lm.Backend,
+		Model:    lm.Model,
+		State:    string(lm.State),
+		Port:     lm.Port,
+		PID:      lm.PID,
+		LoadedAt: lm.LoadedAt,
+		Error:    lm.Error,
+	}
+}
+
+// Status returns summary information about the runtime. ActiveModel is a
+// representative model (back-compat); ActiveModels lists all loaded models.
 func (m *Manager) Status() RuntimeStatus {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -425,31 +596,35 @@ func (m *Manager) Status() RuntimeStatus {
 		Mode:      string(m.mode),
 	}
 
-	if m.active != nil {
-		s.ActiveModel = &ModelSummary{
-			Name:     m.active.Name,
-			Backend:  m.active.Backend,
-			Model:    m.active.Model,
-			State:    string(m.active.State),
-			Port:     m.active.Port,
-			PID:      m.active.PID,
-			LoadedAt: m.active.LoadedAt,
-			Error:    m.active.Error,
-		}
+	if primary := m.primaryLocked(); primary != nil {
+		summary := summarize(primary)
+		s.ActiveModel = &summary
+	}
+	for _, lm := range m.models {
+		s.ActiveModels = append(s.ActiveModels, summarize(lm))
 	}
 
 	return s
 }
 
-// Shutdown gracefully stops any active subprocess.
+// Shutdown gracefully stops all active subprocesses.
 func (m *Manager) Shutdown(ctx context.Context) error {
 	m.opMu.Lock()
 	defer m.opMu.Unlock()
 
 	m.mu.RLock()
-	active := m.active
+	all := make([]*LoadedModel, 0, len(m.models))
+	for _, lm := range m.models {
+		all = append(all, lm)
+	}
 	m.mu.RUnlock()
-	return m.unloadActive(ctx, active)
+	var firstErr error
+	for _, lm := range all {
+		if err := m.unloadActive(ctx, lm); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
 }
 
 // Mode returns the current node operating mode.
@@ -479,16 +654,19 @@ func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 		return nil
 	}
 
-	// Unload whatever is currently running.
-	active := m.active
+	// Unload whatever is currently running (all models).
+	all := make([]*LoadedModel, 0, len(m.models))
+	for _, lm := range m.models {
+		all = append(all, lm)
+	}
 
 	m.mode = target
 	m.mu.Unlock()
 
-	if active != nil {
-		logger.Info("Unloading active model for mode switch", "active", active.Name)
-		if err := m.unloadActive(ctx, active); err != nil {
-			logger.Error(err, "Failed to unload during mode switch")
+	for _, lm := range all {
+		logger.Info("Unloading model for mode switch", "model", lm.Name)
+		if err := m.unloadActive(ctx, lm); err != nil {
+			logger.Error(err, "Failed to unload during mode switch", "model", lm.Name)
 		}
 	}
 
@@ -513,10 +691,14 @@ func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 
 // RuntimeStatus is the serializable status of the runtime manager.
 type RuntimeStatus struct {
-	GPUVendor   string        `json:"gpuVendor"`
-	GPUArch     string        `json:"gpuArch"`
-	Mode        string        `json:"mode"`
+	GPUVendor string `json:"gpuVendor"`
+	GPUArch   string `json:"gpuArch"`
+	Mode      string `json:"mode"`
+	// ActiveModel is a representative loaded model (back-compat with the
+	// single-slot API). Prefer ActiveModels for the full set.
 	ActiveModel *ModelSummary `json:"activeModel,omitempty"`
+	// ActiveModels lists every loaded model (one entry in single-slot mode).
+	ActiveModels []ModelSummary `json:"activeModels,omitempty"`
 }
 
 // ModelSummary is a serializable view of a loaded model.
@@ -542,21 +724,28 @@ func (m *Manager) monitorProcess(ctx context.Context, loaded *LoadedModel) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	// Only update if this is still the active model.
-	if m.active == loaded {
-		if err != nil && m.active.State != ModelStateStopping {
+	// Only update if this exact instance is still loaded (survives reload races).
+	if cur, ok := m.models[loaded.Name]; ok && cur == loaded {
+		if err != nil && loaded.State != ModelStateStopping {
 			logger.Error(err, "Backend subprocess crashed")
-			m.active.State = ModelStateFailed
-			m.active.Error = err.Error()
-			BackendSubprocessCrashesTotal.WithLabelValues(loaded.Name, m.active.Backend).Inc()
-			ModelActiveState.Reset()
-			ModelActiveState.WithLabelValues(loaded.Name, m.active.Backend, "Failed").Set(1)
+			loaded.State = ModelStateFailed
+			loaded.Error = err.Error()
+			BackendSubprocessCrashesTotal.WithLabelValues(loaded.Name, loaded.Backend).Inc()
+			setModelStateMetric(loaded.Name, loaded.Backend, "Failed")
 		}
 	}
 }
 
+// stillLoadingLocked reports whether loaded is still the registered instance for
+// its name and is in the Loading state. Caller must hold m.mu.
+func (m *Manager) stillLoadingLocked(loaded *LoadedModel) bool {
+	cur, ok := m.models[loaded.Name]
+	return ok && cur == loaded && loaded.State == ModelStateLoading
+}
+
 // healthCheckLoop polls the backend's health endpoint until ready or cancelled.
-func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Backend, port int32, startupTimeout time.Duration) {
+func (m *Manager) healthCheckLoop(ctx context.Context, loaded *LoadedModel, b backend.Backend, port int32, startupTimeout time.Duration) {
+	name := loaded.Name
 	logger := log.FromContext(ctx).WithValues("model", name, "startupTimeout", startupTimeout)
 
 	probe := b.ReadinessProbe()
@@ -568,8 +757,9 @@ func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Ba
 			return
 		}
 		m.mu.Lock()
-		if m.active != nil && m.active.Name == name && m.active.State == ModelStateLoading {
-			m.active.State = ModelStateReady
+		if m.stillLoadingLocked(loaded) {
+			loaded.State = ModelStateReady
+			setModelStateMetric(name, loaded.Backend, "Ready")
 			logger.Info("Model marked ready (no probe defined, startup timeout elapsed)")
 		}
 		m.mu.Unlock()
@@ -590,29 +780,27 @@ func (m *Manager) healthCheckLoop(ctx context.Context, name string, b backend.Ba
 			return
 		case <-startupDeadline:
 			m.mu.Lock()
-			if m.active != nil && m.active.Name == name && m.active.State == ModelStateLoading {
-				m.active.State = ModelStateFailed
-				m.active.Error = "startup timeout exceeded"
+			if m.stillLoadingLocked(loaded) {
+				loaded.State = ModelStateFailed
+				loaded.Error = "startup timeout exceeded"
 				logger.Error(nil, "Backend startup timeout exceeded")
-				ModelActiveState.Reset()
-				ModelActiveState.WithLabelValues(name, m.active.Backend, "Failed").Set(1)
+				setModelStateMetric(name, loaded.Backend, "Failed")
 			}
 			m.mu.Unlock()
 			return
 		case <-ticker.C:
 			if checkHTTPHealth(healthURL) {
 				m.mu.Lock()
-				if m.active != nil && m.active.Name == name && m.active.State == ModelStateLoading {
-					m.active.State = ModelStateReady
+				if m.stillLoadingLocked(loaded) {
+					loaded.State = ModelStateReady
 					logger.Info("Model is ready", "healthURL", healthURL)
-					ModelActiveState.Reset()
-					ModelActiveState.WithLabelValues(name, m.active.Backend, "Ready").Set(1)
-					ModelLoadDurationSeconds.WithLabelValues(name, m.active.Backend).Observe(time.Since(m.active.LoadedAt).Seconds())
+					setModelStateMetric(name, loaded.Backend, "Ready")
+					ModelLoadDurationSeconds.WithLabelValues(name, loaded.Backend).Observe(time.Since(loaded.LoadedAt).Seconds())
 				}
 				m.mu.Unlock()
 
 				// Continue monitoring for ongoing health.
-				m.continuousHealthCheck(ctx, name, healthURL)
+				m.continuousHealthCheck(ctx, loaded, healthURL)
 				return
 			}
 		}
@@ -635,7 +823,8 @@ func runtimeBackendPort(b backend.Backend, spec *backend.ModelSpec) int32 {
 }
 
 // continuousHealthCheck monitors a ready model and marks it failed if unhealthy.
-func (m *Manager) continuousHealthCheck(ctx context.Context, name, healthURL string) {
+func (m *Manager) continuousHealthCheck(ctx context.Context, loaded *LoadedModel, healthURL string) {
+	name := loaded.Name
 	logger := log.FromContext(ctx).WithValues("model", name)
 	ticker := time.NewTicker(m.healthCheckInterval)
 	defer ticker.Stop()
@@ -656,13 +845,12 @@ func (m *Manager) continuousHealthCheck(ctx context.Context, name, healthURL str
 			failures++
 			if failures >= maxFailures {
 				m.mu.Lock()
-				if m.active != nil && m.active.Name == name && m.active.State == ModelStateReady {
-					m.active.State = ModelStateFailed
-					m.active.Error = "health check failed"
+				if cur, ok := m.models[name]; ok && cur == loaded && loaded.State == ModelStateReady {
+					loaded.State = ModelStateFailed
+					loaded.Error = "health check failed"
 					logger.Error(nil, "Backend health check failed, marking model as failed")
-					HealthCheckFailuresTotal.WithLabelValues(name, m.active.Backend).Inc()
-					ModelActiveState.Reset()
-					ModelActiveState.WithLabelValues(name, m.active.Backend, "Failed").Set(1)
+					HealthCheckFailuresTotal.WithLabelValues(name, loaded.Backend).Inc()
+					setModelStateMetric(name, loaded.Backend, "Failed")
 				}
 				m.mu.Unlock()
 				return
