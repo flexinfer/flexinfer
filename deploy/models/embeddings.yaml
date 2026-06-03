@@ -14,8 +14,10 @@ spec:
     vramEstimateMB: 1000
   serverless:
     enabled: true
-    # Warm: keep one replica always ready for low-latency embeddings.
-    minReplicas: 1
+    # Demoted to cold fallback (S1.2c): bge-large-radeonvii is now the default
+    # embeddings lane. nomic stayed stuck Queued on gtx980ti-models for weeks
+    # (60-validation-matrix.md "S0.3"), so this is strictly an availability win.
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 5m
   nodeSelector:
@@ -30,13 +32,14 @@ spec:
     limits:
       cpu: "4"
       memory: 4Gi
+  # Distinct fallback labels/aliases (S1.2c): the default embeddings/rag/
+  # semantic-search names moved to bge-large-radeonvii. nomic remains reachable
+  # explicitly for fallback/rollback.
   serviceLabels:
-    - embeddings
-    - semantic-search
-    - rag
+    - embeddings-980ti
   litellm:
     enabled: true
     servedModelName: nomic-embed-text
     aliases:
-      - embeddings
-      - text-embedding-3-small
+      - nomic-embed-text
+      - embeddings-980ti
