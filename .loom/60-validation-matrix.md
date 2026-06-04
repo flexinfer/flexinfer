@@ -1876,3 +1876,40 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
 - **#28 status**: metrics (S0.1) + dashboard (S0.2) + baseline (S0.3) all landed.
   Remaining before close: rebuild/roll the flexinfer-agent image so compute-util +
   idle panels populate. Left open w/ backlink comment.
+
+### 2026-06-04 S1.4a — litellm gateway bge route fixed → bge@gfx906 reachable (platform/gitops MR !220)
+
+- **Slice**: Sprint 1 (gfx906 HBM2 retrieval plane), S1.4a — the gateway-route
+  prerequisite of S1.4 ("wire one real consumer"). Arc:
+  `30-implementation-plan-hardware-utilization-2026-06-03.md`.
+- **Kill-test (live, pre-merge)** — surfaced the real blocker, NOT the assumed one.
+  The assumed path (codebase-memory → litellm `embeddings` alias → bge) was false on
+  two counts: (1) `flexinfer-proxy` is ClusterIP-only — no ingress — so the S1.2c
+  "default embeddings = bge" cutover (on the native proxy) is unreachable to an
+  external consumer; (2) the litellm gateway (the only external entry) routed
+  `embeddings`/`text-embedding-3-small` → **morph-embedding-v4** (paid cloud, 1536-dim,
+  confirmed by direct call) and its dedicated `bge-large-embeddings` entry pointed at
+  `bge-large-embeddings.flexinfer-system.svc:80` — **a Service that does not exist**.
+  From the litellm pod, `flexinfer-proxy.../v1/embeddings` with model
+  `bge-large-radeonvii` / `semantic-search` / `text-embedding-3-small` → **HTTP 200,
+  1024-dim, served by `CompendiumLabs/bge-large-en-v1.5-gguf`** (= bge@gfx906). So the
+  proxy routes embeddings by model-name correctly; only the litellm entry's endpoint
+  was wrong.
+- **Change**: re-point the litellm `bge-large-embeddings` route at
+  `http://flexinfer-proxy.flexinfer-system.svc.cluster.local:80/v1` with
+  `remoteModel: bge-large-radeonvii` + `encodingFormat: float`, in BOTH the
+  `external-models.yaml` ConfigMap (source-of-truth) and the inline
+  `STATIC_LOCAL_EMBEDDINGS` fallback in `litellm.yaml`. Aliases `bge-large` /
+  `text-embedding-bge-large` unchanged.
+- **Verdict**: PASS + LIVE. Validated YAML + embedded-JSON parse + `kustomize build`.
+  Pipeline 12829 green, MR !220 squash-merged (c731f5c6), Flux `apps` ks reconciled to
+  the merge revision. **Gateway live-verify**: `bge-large` via
+  `https://litellm.flexinfer.ai/v1/embeddings` → **1024-dim, served by
+  CompendiumLabs/bge-large-en-v1.5-gguf**. bge@gfx906 is now reachable through the
+  gateway. Additive/reversible — `morph-embedding-v4` is still the default `embeddings`
+  alias; only the explicit `bge-large` route changed.
+- **Next**: S1.4b — migrate `codebase-memory` (loom-core `mcp/context/registry.yaml`:
+  `CODEBASE_EMBED_PROVIDER=flexinfer`, model `bge-large`, base = litellm gateway, key
+  `LITELLM_API_KEY`) to a fresh 1024-dim collection `codebase_memory_bge_v1`, re-embed
+  one repo, capture before/after emb/s + search-quality parity. Old morph collection
+  preserved (reversible).

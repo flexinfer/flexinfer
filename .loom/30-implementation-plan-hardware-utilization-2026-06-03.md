@@ -166,6 +166,27 @@ baseline — i.e. HBM2 bandwidth is reachable, not blocked by Vega20 fragility.
 - **S1.4** — Wire one real consumer end-to-end as proof: point
   `codebase-memory` (or agent-context recall) at the bge `/v1/embeddings` lane,
   re-embed one repo, confirm search quality parity + throughput gain. Matrix row.
+  - **S1.4a (gateway route) — DONE + LIVE 2026-06-04, platform/gitops MR !220
+    (merge c731f5c6).** Kill-test surfaced the real blocker: the litellm gateway
+    (the only externally reachable entry — `flexinfer-proxy` is ClusterIP-only) had
+    NO working bge route. Its `bge-large-embeddings` entry pointed at
+    `bge-large-embeddings.flexinfer-system.svc:80`, a Service that does not exist,
+    so `bge-large`/`text-embedding-bge-large` 404'd; consumers asking for
+    `embeddings` got morph-embedding-v4 (paid cloud, 1536-dim). Re-pointed the route
+    at `flexinfer-proxy.../v1` with `remoteModel: bge-large-radeonvii` (verified live
+    from the litellm pod: that model name → HTTP 200, 1024-dim, bge@gfx906). Fixed in
+    both `external-models.yaml` ConfigMap + the inline `STATIC_LOCAL_EMBEDDINGS`
+    fallback. Flux-reconciled (`apps` ks); **gateway live-verified**: `bge-large` via
+    `litellm.flexinfer.ai/v1/embeddings` → 1024-dim, served by
+    `CompendiumLabs/bge-large-en-v1.5-gguf`. Additive/reversible (morph stays the
+    default `embeddings` alias). Matrix: "2026-06-04 S1.4a".
+  - **S1.4b (consumer migration) — TODO.** Point `codebase-memory`
+    (`CODEBASE_EMBED_PROVIDER=flexinfer`, model `bge-large`, base = litellm gateway,
+    key from keychain `LITELLM_API_KEY`) at a fresh 1024-dim Qdrant collection
+    (`codebase_memory_bge_v1` — morph is 1536-dim, can't reuse `codebase_memory_v1`),
+    re-embed one repo, capture before/after emb/s + search-quality parity. Old morph
+    collection preserved → fully reversible. Registry source: loom-core
+    `mcp/context/registry.yaml`.
 
 **Acceptance**: kill-test PASS row; bge warm + default; `/v1/rerank` live; one
 consumer migrated with before/after emb/s in the matrix.
