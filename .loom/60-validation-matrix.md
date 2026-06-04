@@ -2026,3 +2026,43 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
     + full `./controllers/` suite green. MR !570 auto-merge armed, pipeline 12851.
   - **Two halves of one failure mode**: !569 (proxy, client-side: retry past dead
     upstream) + !570 (controller, server-side: stop advertising the dead address).
+
+### 2026-06-04 S1.4 — rerank consumer wired into loom-core agent-context recall — PASS (loom-core MR !621)
+- **Slice**: Sprint 1, S1.4 — "migrate one real consumer onto the live `rerank` route".
+  Distinct from S1.4a/b, which killed the *embeddings*-over-WAN migration (4.7× regression
+  for a local interactive consumer, row 2026-06-04 S1.4b). Reranking is the right consumer
+  shape: it's latency-tolerant (runs on the already-retrieved top-K), so the win is ranking
+  *quality* — exactly what the co-active gfx906 reranker delivers.
+- **Consumer**: loom-core **agent-context recall** (`pkg/agentcontext`, `HandleUnifiedRecall`)
+  — the highest-traffic agent retrieval path. The `Reranker`/`FlexInferReranker`/`ApplyReranker`
+  infra was built+tested in loom-core Slice A1 but deliberately UNWIRED (the code carried a
+  ".loom/88 §2.A1 — wired separately in a later slice" note). This slice IS that wiring.
+- **Change** (default-off, additive): `Service.reranker` field (constructed from
+  `LoadRerankerConfigFromEnv`, default `NoopReranker`/"off" = zero I/O, response byte-stable);
+  `HandleUnifiedRecall` applies `rerankRecallEntries` as a 2nd stage over the merged context
+  candidates (gates on backend; soft-fails to embedding/priority order on proxy down — recall
+  never fails; surfaces `recall_meta.rerank_backend`). `WithReranker` test option + 3 wiring
+  tests. `go test ./pkg/agentcontext` + vet + golangci-lint(0) green; `cmd/mcp-agent-context` builds.
+- **Live before/after** (proxy `/v1/rerank`, bge-reranker-v2-m3 co-active with bge-large on
+  the Radeon VII; embedding-cosine order vs cross-encoder rerank, 5 graded-relevance queries):
+
+  | Metric | Before (embedding-only) | After (+rerank) | Lift |
+  |---|---|---|---|
+  | Mean nDCG@6 | 0.554 | 0.778 | **+22.4 pts** |
+  | Mean gold-doc rank | 3.40 | 2.40 | **−1.0** |
+
+  Gold answer → rank 1 on 3/5 queries; ties on 2 genuinely hard cross-vocabulary queries;
+  **never regresses**. Runtime stayed co-Active and served ~50+ live embedding+rerank calls
+  through the eval with no eviction (VRAM ~1.6/16 GB). Utilization confirmed.
+- **Enable (opt-in, default-safe)**: `WEAVER_RERANKER=flexinfer` + `WEAVER_RERANKER_BASE_URL=$FLEXINFER_URL`
+  + **`WEAVER_RERANKER_MODEL=rerank`** — CRITICAL: the proxy routes the litellm alias
+  `rerank`/`bge-reranker`; the library default `bge-reranker-v2-m3` is **not** a routable
+  proxy alias (would 502). Graceful fallback (criterion 3) is unit-tested (404/timeout →
+  `rerank_status` annotated, order preserved).
+- **Gotchas**: cold-start transient bad_gateway right after a proxy restart (warms in seconds);
+  loom-core default branch is `main` not `master` (the MCP create-MR targeted a non-existent
+  `master` → phantom MR `cannot_be_merged`; retarget via REST `PUT .../merge_requests/IID?target_branch=main`).
+  agent-context runs as a LOCAL stdio MCP server (no k8s pod) → flipping the flag live = rebuild
+  local binary + set env (operator step; code ships default-off).
+- **Status**: shipped loom-core MR !621 (auto-merge armed, pipeline 12855). Sprint 1 S1.4 done
+  for real — the rerank route now has a production consumer wired (vs the falsified embeddings migration).
