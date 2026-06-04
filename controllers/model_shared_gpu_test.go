@@ -796,3 +796,67 @@ func TestHandleSharedGPU_NilSafety(t *testing.T) {
 		assert.Zero(t, result.RequeueAfter, "expected zero RequeueAfter for empty Shared")
 	})
 }
+
+// withVRAMEst sets a model's gpu.vramEstimateMB (for multi-model budget tests).
+func withVRAMEst(m *aiv1alpha2.Model, mb int64) *aiv1alpha2.Model {
+	m.Spec.GPU.VRAMEstimateMB = &mb
+	return m
+}
+
+func names(models []*aiv1alpha2.Model) map[string]bool {
+	out := make(map[string]bool, len(models))
+	for _, m := range models {
+		out[m.Name] = true
+	}
+	return out
+}
+
+func TestChooseSharedGroupLeaders(t *testing.T) {
+	now := time.Now()
+
+	t.Run("single-slot returns exactly one leader", func(t *testing.T) {
+		// Two warm-pinned members; single-slot must still elect only one.
+		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 1500)
+		b := withVRAMEst(markWarmPinned(makeSharedModel("b", 100, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 600)
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, false, 16000)
+		assert.Len(t, got, 1)
+	})
+
+	t.Run("multi-model admits multiple wanters within budget", func(t *testing.T) {
+		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 1500)
+		b := withVRAMEst(markWarmPinned(makeSharedModel("b", 100, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 600)
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 16000)
+		assert.Len(t, got, 2)
+		assert.True(t, names(got)["a"] && names(got)["b"])
+	})
+
+	t.Run("multi-model VRAM budget drops the over-budget member", func(t *testing.T) {
+		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 1500)
+		b := withVRAMEst(markWarmPinned(makeSharedModel("b", 100, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 600)
+		// Budget fits the primary (1500) but not +600.
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 1800)
+		assert.Len(t, got, 1)
+		assert.True(t, names(got)["a"], "primary must be retained")
+	})
+
+	t.Run("multi-model always includes the primary even if it exceeds budget", func(t *testing.T) {
+		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 20000)
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a}, now, true, 1000)
+		assert.Len(t, got, 1)
+		assert.True(t, names(got)["a"])
+	})
+
+	t.Run("multi-model excludes idle non-wanters", func(t *testing.T) {
+		// a: warm-pinned Ready (wants). b: idle scale-to-zero, not Ready, no demand.
+		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 1500)
+		b := withVRAMEst(makeSharedModel("b", 100, aiv1alpha2.ModelPhaseIdle, nil, nil), 600)
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 16000)
+		assert.Len(t, got, 1)
+		assert.True(t, names(got)["a"])
+		assert.False(t, names(got)["b"], "idle non-wanter must be excluded")
+	})
+
+	t.Run("empty group returns nil", func(t *testing.T) {
+		assert.Nil(t, chooseSharedGroupLeaders(nil, now, true, 16000))
+	})
+}
