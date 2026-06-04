@@ -23,6 +23,18 @@ var (
 		[]string{"model"},
 	)
 
+	// upstreamRetriesTotal counts upstream forward retries triggered by a
+	// dial-class failure (stale direct-load target, rolling backend pod). A
+	// rising rate for a model points at backend churn or a stale fast-path
+	// target the proxy is self-healing.
+	upstreamRetriesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_upstream_retries_total",
+			Help: "Total upstream forward retries after a dial-class failure, by model and reason.",
+		},
+		[]string{"model", "reason"},
+	)
+
 	requestDuration = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "flexinfer_proxy_request_duration_seconds",
@@ -242,6 +254,7 @@ func RegisterMetrics() {
 	metricsOnce.Do(func() {
 		prometheus.MustRegister(requestsTotal)
 		prometheus.MustRegister(scaleUpsTotal)
+		prometheus.MustRegister(upstreamRetriesTotal)
 		prometheus.MustRegister(requestDuration)
 		prometheus.MustRegister(queuedRequestsTotal)
 		prometheus.MustRegister(queueRejectedTotal)
