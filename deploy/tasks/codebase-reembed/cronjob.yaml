@@ -1,0 +1,100 @@
+# Idle-time batch appliance [Sprint 2 / S2.2]: nightly codebase re-embed.
+#
+# Runs the bge HBM2 retrieval plane (gfx906) against an in-cluster codebase and
+# writes 1024-dim vectors to a dedicated Qdrant collection during the idle window.
+# Read-only on the source (NFS workspace mount); the morph codebase_memory_v1
+# collection is untouched (this writes codebase_memory_bge_v1).
+#
+# Source is mounted inline from the shared devbox workspace NFS export
+# (mirrors PV devbox-workspace-nfs). Embedding runs remotely on gfx906 via
+# flexinfer-proxy, so this pod needs no GPU.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: codebase-reembed
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: idle-batch
+spec:
+  schedule: "0 4 * * *"          # 04:00 daily (idle window)
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flexinfer
+        flexinfer.ai/purpose: idle-batch
+    spec:
+      backoffLimit: 1
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: flexinfer
+            flexinfer.ai/purpose: idle-batch
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: reembed
+              image: python:3.12-slim
+              imagePullPolicy: IfNotPresent
+              command: ["python3", "/scripts/reembed.py"]
+              env:
+                - name: EMBEDDINGS_URL
+                  value: "http://flexinfer-proxy.flexinfer-system.svc.cluster.local"
+                - name: EMBED_MODEL
+                  value: "bge-large-radeonvii"
+                # Canonical agent-context / codebase-memory Qdrant (holds the morph
+                # sibling collection codebase_memory_v1). Reachable on the LAN from
+                # in-cluster pods; requires an api-key (see qdrant-credentials below).
+                - name: QDRANT_URL
+                  value: "http://192.168.50.176:6333"
+                - name: COLLECTION
+                  value: "codebase_memory_bge_v1"
+                - name: VECTOR_DIM
+                  value: "1024"
+                - name: REPO_PATH
+                  value: "/workspace/services/loom-core"
+                - name: REPO_NAME
+                  value: "loom-core"
+                - name: BATCH_SIZE
+                  value: "64"
+                # The canonical Qdrant enforces an api-key. Provide it via a
+                # `qdrant-credentials` secret (key `api-key`) in this namespace.
+                # optional:true keeps pod creation from hard-failing if absent (the
+                # job then surfaces a clear 401), but the secret is required for the
+                # default target above.
+                - name: QDRANT_API_KEY
+                  valueFrom:
+                    secretKeyRef:
+                      name: qdrant-credentials
+                      key: api-key
+                      optional: true
+              volumeMounts:
+                - name: script
+                  mountPath: /scripts
+                  readOnly: true
+                - name: workspace
+                  mountPath: /workspace
+                  readOnly: true
+              resources:
+                requests:
+                  cpu: "500m"
+                  memory: 512Mi
+                limits:
+                  cpu: "2"
+                  memory: 1Gi
+          volumes:
+            - name: script
+              configMap:
+                name: codebase-reembed-script
+                defaultMode: 0755
+            - name: workspace
+              nfs:
+                server: 192.168.50.211
+                path: /srv/nas/pilot3/nas-media-bulk/devbox-ws
+                readOnly: true
