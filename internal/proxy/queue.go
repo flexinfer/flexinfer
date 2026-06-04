@@ -442,19 +442,27 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 		return false
 	}
 
-	// Poll runtime health until ready.
+	// Poll runtime health until ready. The runtime reports the model's actual
+	// bound port — in multi-model mode each concurrent model gets a distinct
+	// port, so we must route to the reported one rather than the fixed default.
 	slog.Info("direct load: waiting for runtime health", "model", modelName, "endpoint", endpoint.URL())
-	if err := p.waitForRuntimeReady(ctx, endpoint, modelName); err != nil {
+	readyPort, err := p.waitForRuntimeReady(ctx, endpoint, modelName)
+	if err != nil {
 		slog.Warn("direct load: runtime health poll failed", "model", modelName, "error", err)
 		return false
 	}
 
 	// Store the direct routing target so serveProxy routes to the runtime pod
-	// instead of the (non-existent) K8s Service.
-	backendPort := pkgrt.RuntimePortForBackend(b)
+	// instead of the (non-existent) K8s Service. Prefer the runtime-reported
+	// port; fall back to the fixed backend port for older runtimes that don't
+	// report one (single-slot mode).
+	backendPort := readyPort
+	if backendPort == 0 {
+		backendPort = pkgrt.RuntimePortForBackend(b)
+	}
 	targetURL := fmt.Sprintf("http://%s:%d", endpoint.PodIP, backendPort)
 	p.directLoadTargets.Store(modelName, targetURL)
-	slog.Info("direct load: registered routing target", "model", modelName, "target", targetURL)
+	slog.Info("direct load: registered routing target", "model", modelName, "target", targetURL, "port", backendPort)
 
 	return true
 }
@@ -503,8 +511,9 @@ func (p *Proxy) loadOnRuntime(ctx context.Context, ep *pkgrt.RuntimeEndpoint, mo
 }
 
 // waitForRuntimeReady polls GET /api/v1/models/{name}/health on the runtime
-// pod until the model reaches "Ready" state or a timeout is exceeded.
-func (p *Proxy) waitForRuntimeReady(ctx context.Context, ep *pkgrt.RuntimeEndpoint, modelName string) error {
+// pod until the model reaches "Ready" state or a timeout is exceeded. It returns
+// the model's runtime-reported port (0 if the runtime doesn't report one).
+func (p *Proxy) waitForRuntimeReady(ctx context.Context, ep *pkgrt.RuntimeEndpoint, modelName string) (int32, error) {
 	timeout := p.coldStartTimeout
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -518,7 +527,7 @@ func (p *Proxy) waitForRuntimeReady(ctx context.Context, ep *pkgrt.RuntimeEndpoi
 	for {
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf("timeout waiting for runtime model to become ready (after %v)", timeout)
+			return 0, fmt.Errorf("timeout waiting for runtime model to become ready (after %v)", timeout)
 		case <-ticker.C:
 			req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 			if err != nil {
@@ -531,6 +540,7 @@ func (p *Proxy) waitForRuntimeReady(ctx context.Context, ep *pkgrt.RuntimeEndpoi
 			var status struct {
 				State string `json:"state"`
 				Error string `json:"error"`
+				Port  int32  `json:"port"`
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 				_ = resp.Body.Close()
@@ -540,9 +550,9 @@ func (p *Proxy) waitForRuntimeReady(ctx context.Context, ep *pkgrt.RuntimeEndpoi
 
 			switch status.State {
 			case "Ready":
-				return nil
+				return status.Port, nil
 			case "Failed":
-				return fmt.Errorf("runtime model failed: %s", status.Error)
+				return 0, fmt.Errorf("runtime model failed: %s", status.Error)
 			}
 			// "Loading" — keep polling
 		}

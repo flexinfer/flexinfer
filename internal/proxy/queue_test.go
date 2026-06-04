@@ -586,15 +586,16 @@ func TestLoadOnRuntime_ServerError(t *testing.T) {
 func TestWaitForRuntimeReady_Success(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{"state": "Ready"})
+		_ = json.NewEncoder(w).Encode(map[string]any{"state": "Ready", "port": 8001})
 	}))
 	defer server.Close()
 
 	ep := parseTestEndpoint(server.Listener.Addr().String())
 
 	p := &Proxy{coldStartTimeout: 5 * time.Second}
-	err := p.waitForRuntimeReady(context.Background(), ep, "test-model")
+	port, err := p.waitForRuntimeReady(context.Background(), ep, "test-model")
 	assert.NoError(t, err)
+	assert.Equal(t, int32(8001), port, "should return the runtime-reported per-model port")
 }
 
 func TestWaitForRuntimeReady_Failed(t *testing.T) {
@@ -607,7 +608,7 @@ func TestWaitForRuntimeReady_Failed(t *testing.T) {
 	ep := parseTestEndpoint(server.Listener.Addr().String())
 
 	p := &Proxy{coldStartTimeout: 5 * time.Second}
-	err := p.waitForRuntimeReady(context.Background(), ep, "test-model")
+	_, err := p.waitForRuntimeReady(context.Background(), ep, "test-model")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "out of memory")
 }
@@ -622,7 +623,7 @@ func TestWaitForRuntimeReady_Timeout(t *testing.T) {
 	ep := parseTestEndpoint(server.Listener.Addr().String())
 
 	p := &Proxy{coldStartTimeout: 500 * time.Millisecond}
-	err := p.waitForRuntimeReady(context.Background(), ep, "test-model")
+	_, err := p.waitForRuntimeReady(context.Background(), ep, "test-model")
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "timeout")
 }

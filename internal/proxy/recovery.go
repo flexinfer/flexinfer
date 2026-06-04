@@ -71,6 +71,7 @@ func (p *Proxy) recoverDirectLoadTargets(ctx context.Context) {
 
 		var status struct {
 			State string `json:"state"`
+			Port  int32  `json:"port"`
 		}
 		decodeErr := json.NewDecoder(resp.Body).Decode(&status)
 		_ = resp.Body.Close()
@@ -83,11 +84,16 @@ func (p *Proxy) recoverDirectLoadTargets(ctx context.Context) {
 		}
 
 		// Model is ready on this runtime pod — register direct routing target.
-		backendPort := pkgrt.RuntimePortForBackend(b)
+		// Prefer the runtime-reported port (distinct per model in multi-model
+		// mode); fall back to the fixed backend port for older runtimes.
+		backendPort := status.Port
+		if backendPort == 0 {
+			backendPort = pkgrt.RuntimePortForBackend(b)
+		}
 		targetURL := fmt.Sprintf("http://%s:%d", ep.PodIP, backendPort)
 		p.directLoadTargets.Store(m.Name, targetURL)
 		recovered++
-		slog.Info("recovery: restored direct load target", "model", m.Name, "target", targetURL)
+		slog.Info("recovery: restored direct load target", "model", m.Name, "target", targetURL, "port", backendPort)
 	}
 
 	directTargetsRecovered.Set(float64(recovered))

@@ -584,6 +584,18 @@ func summarize(lm *LoadedModel) ModelSummary {
 	}
 }
 
+// Model returns a summary of the named loaded model, or ok=false if it is not
+// loaded. Used by the per-model health endpoint so each concurrent model is
+// addressable by name (and reports its own port) in multi-model mode.
+func (m *Manager) Model(name string) (ModelSummary, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if lm, ok := m.models[name]; ok {
+		return summarize(lm), true
+	}
+	return ModelSummary{}, false
+}
+
 // Status returns summary information about the runtime. ActiveModel is a
 // representative model (back-compat); ActiveModels lists all loaded models.
 func (m *Manager) Status() RuntimeStatus {

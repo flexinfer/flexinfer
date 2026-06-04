@@ -349,3 +349,17 @@ func TestCanAdmitFailsOpenWithoutTelemetry(t *testing.T) {
 	ok, reason := m.canAdmit(500)
 	assert.True(t, ok, "expected fail-open admit, got reason=%s", reason)
 }
+
+func TestManagerModelByName(t *testing.T) {
+	m := NewManager(ManagerConfig{MultiModel: true})
+	m.models["embed"] = &LoadedModel{Name: "embed", Backend: "llamacpp", State: ModelStateReady, Port: 8000}
+	m.models["rerank"] = &LoadedModel{Name: "rerank", Backend: "llamacpp", State: ModelStateLoading, Port: 8001}
+
+	got, ok := m.Model("rerank")
+	require.True(t, ok)
+	assert.Equal(t, int32(8001), got.Port)
+	assert.Equal(t, string(ModelStateLoading), got.State)
+
+	_, ok = m.Model("absent")
+	assert.False(t, ok)
+}

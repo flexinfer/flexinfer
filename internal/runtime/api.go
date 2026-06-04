@@ -111,26 +111,27 @@ func (s *Server) handleUnloadModel(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleModelHealth returns the health of a specific model.
+// handleModelHealth returns the health of a specific model. It looks the model
+// up by name so that, in multi-model mode, every concurrent model is addressable
+// (not just the representative one) and reports its own port.
 func (s *Server) handleModelHealth(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	active := s.manager.Active()
-
-	if active == nil || active.Name != name {
+	model, ok := s.manager.Model(name)
+	if !ok {
 		writeError(w, http.StatusNotFound, fmt.Sprintf("model %q is not loaded", name))
 		return
 	}
 
 	status := http.StatusOK
-	if active.State != ModelStateReady {
+	if model.State != string(ModelStateReady) {
 		status = http.StatusServiceUnavailable
 	}
 
 	writeJSON(w, status, map[string]any{
-		"name":  active.Name,
-		"state": string(active.State),
-		"error": active.Error,
-		"port":  active.Port,
+		"name":  model.Name,
+		"state": model.State,
+		"error": model.Error,
+		"port":  model.Port,
 	})
 }
 
