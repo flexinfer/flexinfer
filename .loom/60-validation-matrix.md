@@ -1793,6 +1793,47 @@ The entire software stack (R1-R4) is built/tested/merged. R5 is an ops cycle:
    bge-reranker@gfx906 CONCURRENTLY with `/v1/embeddings` from bge@gfx906 (both Active
    in radeonvii-models). Matrix row + S1.4 (migrate a consumer) optional follow-up.
 
+### 2026-06-04 R5 SHIPPED + LIVE-VERIFIED — multi-Active runtime live on gfx906 — PASS
+
+**Slice**: R5 (final slice of the multi-subprocess runtime arc). MR !568 merged
+(squash `d46ead08`). **The original S1.3 payoff is live**: bge embeddings + a GPU
+reranker GPU-resident on the SAME Radeon VII at once.
+
+**What shipped** (deploy/ only, one MR; controller needed NO manual build — CI
+`publish` had already rebuilt `:master` with R4, only `govulncheck` flaked the
+master pipeline red; runtime gfx906 WAS stale (digest from 2026-05-22) so it was
+the one real rebuild):
+- `models/bge-reranker-radeonvii.yaml`: llamacpp `gpustack/bge-reranker-v2-m3-GGUF`
+  Q8_0, `config.reranking:true`, group radeonvii-models, priority 115, vram 700,
+  minReplicas 1 (warm co-Active), serviceLabel + litellm alias `rerank`.
+- `gpuprofiles/gfx906.yaml`: `features.multiModel:true` + runtime digest repin.
+- `values-k3s.yaml`: `FLEXINFER_RUNTIME_MULTI_MODEL=true` on the gfx906 runtime DS
+  + runtime digest repin.
+- Runtime gfx906 rebuilt from master HEAD (R2/R3) → `runtime@sha256:4a02796d…`
+  (replaced May-22 `8797a08a`); pushed via `build/build-runtime.sh gfx906 --push`.
+
+**Rollout**: `flux reconcile` (source flexinfer → ks flexinfer-models → hr
+flexinfer). Chart-version bump `1.0.2+2f59e2a7d403` rolled controller (repull R4
+`:master`) + runtime gfx906 (new digest). Reranker GGUF auto-downloaded, loaded
+via runtime, Ready in ~1 min.
+
+**Live evidence (PASS)**:
+- Runtime `/api/v1/models` holds BOTH subprocesses concurrently: `bge-reranker`
+  state=Ready port=8000 pid=127; `bge-large` state=Ready port=8001 pid=217 (R2
+  multi-subprocess + R3 per-model ports). Runtime log: `VRAM admission passed …
+  free=15259MB` (R2 admission gate).
+- Controller elected BOTH Active in radeonvii-models (R4 `chooseSharedGroupLeaders`:
+  primary bge 120 + admitted reranker 115; gemma4-e4b/qwen3-8b stayed Idle).
+- CONCURRENT proxy calls both succeeded: `/v1/rerank` (model `rerank`) →
+  bge-reranker-v2-m3 correct cohere ranking (idx0 "Paris…" 8.61 top, idx1
+  "Berlin…" −5.39 bottom); `/v1/embeddings` (model `bge-large`) → valid vector.
+- Post-load steady state: both still Ready, same PIDs (NO eviction). GPU VRAM
+  ~1597 MB / 16368 MB used with both resident — ~14 GB headroom.
+
+**Verdict: PASS.** R1–R5 multi-subprocess runtime arc COMPLETE and live. Default-safe
+elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
+`rerank` route) is the optional follow-up.
+
 ### 2026-06-03 S0.1 — per-card GPU compute-utilization metric exported (MR !567)
 
 - **Slice**: Sprint 0 (fleet utilization instrument), S0.1. Advances #28.
