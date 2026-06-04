@@ -1913,3 +1913,47 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
   `LITELLM_API_KEY`) to a fresh 1024-dim collection `codebase_memory_bge_v1`, re-embed
   one repo, capture before/after emb/s + search-quality parity. Old morph collection
   preserved (reversible).
+
+### 2026-06-04 S1.4b — codebase-memory→bge migration PROOF (proof-only; verdict: do NOT migrate the local consumer)
+
+- **Slice**: Sprint 1, S1.4b — proof-only (operator chose "side collection, no global
+  flip"). Goal: measure bge-vs-Morph emb/s + search-quality parity for the
+  codebase-memory consumer before any cutover. Builds on S1.4a (gateway route live).
+- **Setup**: codebase-memory embeds via the **paid Morph cloud** (`embeddings` alias →
+  morph-embedding-v4, 1536-dim) today and runs as a **local stdio process** on the dev
+  box. The bge alternative reaches gfx906 only through the public litellm gateway
+  (Cloudflare-fronted). Corpus: 114 real Go decl/doc chunks from loom-core
+  `pkg/codebase`. Measured via the exact OpenAI-compatible POST the flexinfer embedder
+  client makes (`/v1/embeddings`, batch 64, median of 3 rounds).
+- **M1 — emb/s (the consumer's real local→gateway path)**:
+
+  | path | emb/s |
+  |---|---|
+  | bge in-cluster (proxy direct — k8s Job path) | **70.9** |
+  | morph cloud via gateway (current consumer baseline) | 15.4 |
+  | **bge via gateway (local consumer path)** | **3.3** |
+
+  Attribution: bge *serving* is fast (70.9, matches the S0.3 ~91 emb/s baseline). The
+  3.3 the local consumer sees is **WAN + Cloudflare per-batch round-trip overhead**,
+  not GPU — each batch is one HTTPS round-trip through the public edge. Morph wins for
+  this consumer because it is a globally-distributed, WAN-optimized cloud endpoint.
+- **M2 — parity (paraphrase probe)**: query "function that marks an indexing job as
+  failed with an error" → morph ranked the exact target `setJobFailed` **top-1**; bge
+  ranked a semantically-adjacent sibling `incrementJobError` top-1 with the exact
+  target **not in top-3**. Suggestive of slightly weaker retrieval precision (one
+  probe — not conclusive), with no offsetting throughput case.
+- **Integration check**: Go client UA (`Go-http-client/1.1`) → HTTP 200 at the gateway
+  (only `python-urllib` is Cloudflare-1010-blocked), so the flexinfer/bge embedder path
+  would function; the embedder client + `bge-large` alias already exist
+  (`loom-core pkg/codebase/embed/flexinfer.go`). Did NOT write the throwaway
+  `codebase_memory_bge_v1` Qdrant collection — the throughput verdict already decides
+  the migration, so a slow full re-embed adds no signal.
+- **Verdict**: **Do NOT migrate the local interactive codebase-memory to bge.** It is a
+  ~4.7× throughput regression (3.3 vs 15.4 emb/s) over the consumer's real path, plus a
+  weaker parity probe. The proof-only slice correctly **falsified** the assumed
+  "migrate codebase-memory → utilization win." The HBM2 plane's win is for **in-cluster
+  batch** consumers hitting flexinfer-proxy directly (70.9 emb/s, free, self-hosted) —
+  i.e. **Sprint 2 S2.2** (nightly re-embed as a k8s Job), the correct migration target.
+  Morph remains codebase-memory's default (untouched, no global flip — as scoped).
+- **Net Sprint 1 close**: S1.4a (gateway route) LIVE; S1.4b proof concludes the
+  consumer choice. S1.4 done. Redirects the "wire a real consumer" payoff to S2.2.

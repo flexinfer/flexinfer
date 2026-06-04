@@ -180,13 +180,18 @@ baseline — i.e. HBM2 bandwidth is reachable, not blocked by Vega20 fragility.
     `litellm.flexinfer.ai/v1/embeddings` → 1024-dim, served by
     `CompendiumLabs/bge-large-en-v1.5-gguf`. Additive/reversible (morph stays the
     default `embeddings` alias). Matrix: "2026-06-04 S1.4a".
-  - **S1.4b (consumer migration) — TODO.** Point `codebase-memory`
-    (`CODEBASE_EMBED_PROVIDER=flexinfer`, model `bge-large`, base = litellm gateway,
-    key from keychain `LITELLM_API_KEY`) at a fresh 1024-dim Qdrant collection
-    (`codebase_memory_bge_v1` — morph is 1536-dim, can't reuse `codebase_memory_v1`),
-    re-embed one repo, capture before/after emb/s + search-quality parity. Old morph
-    collection preserved → fully reversible. Registry source: loom-core
-    `mcp/context/registry.yaml`.
+  - **S1.4b (consumer migration) — DONE (proof-only) 2026-06-04. VERDICT: do NOT
+    migrate the local codebase-memory.** Operator chose side-collection proof (no
+    global flip). Measured emb/s + parity for the consumer's real path (local stdio
+    → public litellm gateway). Result: **bge via gateway = 3.3 emb/s vs morph cloud =
+    15.4 emb/s — a ~4.7× regression** for this consumer. Attribution: bge *serving* is
+    fast (70.9 emb/s in-cluster via proxy, ≈ S0.3 baseline); the loss is WAN +
+    Cloudflare per-batch round-trip, not GPU. Parity: morph nailed a paraphrase probe
+    (`setJobFailed` top-1); bge ranked a sibling top-1 (suggestive, one probe). The
+    proof **falsified** "migrate codebase-memory → utilization win." Morph left as the
+    default (untouched). Matrix: "2026-06-04 S1.4b". **Redirect**: the real consumer to
+    migrate is an **in-cluster batch** job hitting flexinfer-proxy directly (70.9
+    emb/s, self-hosted) → see Sprint 2 **S2.2**.
 
 **Acceptance**: kill-test PASS row; bge warm + default; `/v1/rerank` live; one
 consumer migrated with before/after emb/s in the matrix.
@@ -204,7 +209,12 @@ HBM2 plane live, nightly re-embed/index is 10–40× cheaper.
   job-spec, bounded by admission filter + max_tokens clamp.
 - **S2.2** — First job: nightly codebase re-embed/index for the repos in
   `codebase-memory`, writing to the existing Qdrant collection. Uses the Sprint 1
-  bge lane.
+  bge lane. **NOTE (from S1.4b)**: run this as an **in-cluster k8s Job hitting
+  `flexinfer-proxy` directly** (70.9 emb/s, self-hosted) — NOT via the public
+  Cloudflare gateway (3.3 emb/s, WAN-bound). This is the correct home for the
+  "wire a real bge consumer" payoff: a batch job is latency-insensitive and stays
+  in-cluster, so the HBM2 throughput actually lands. New 1024-dim collection
+  (`codebase_memory_bge_v1`); morph collection preserved.
 - **S2.3** — Second job (demand-driven): offline model-eval gauntlet for any new
   model artifact (ties to #27 automate-benchmark-gen + #34 Postgres benchmark
   storage). Produces a coherence/throughput row automatically.
