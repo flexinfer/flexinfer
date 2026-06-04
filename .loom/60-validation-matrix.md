@@ -1993,3 +1993,36 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
   controller Service port mapping — a separate controller-side reconciliation concern;
   this MR makes the proxy resilient to the resulting dial failures but doesn't change
   Service reconciliation.
+
+### 2026-06-04 Internal routing (cont.) — Part A LIVE-VERIFIED + Part B controller fix (MR !570)
+
+- **Part A (proxy self-heal MR !569) — now LIVE-VERIFIED.** master pipeline `publish`
+  job rebuilt the proxy image despite the overall pipeline reddening on a
+  `govulncheck` flake (allow_failure=false but `publish`/`proxy_test` both succeeded —
+  matches the known controller-publish pattern). Rolled the proxy (scale 0→1 via
+  ops_mcp; bash kubectl mutations denied). **Running pod image digest
+  `sha256:241457e6e064` exactly matches the digest published for `:master`** → the
+  self-heal code is deployed and running. Post-roll smoke: `bge-large` via the
+  gateway → 3/3 HTTP 200, 1024-dim bge@gfx906. (The new `upstream_retries_total`
+  CounterVec is lazily registered — absent until first retry — so it isn't a liveness
+  signal; digest match is the proof.)
+- **Part B — controller-side root cause FIXED (MR !570).** Investigating the residual
+  stale-endpoint symptom: found `bge-reranker-radeonvii` stuck `phase=Ready` with
+  Endpoints → dead pod IP `10.42.8.249` while the live runtime pod was `10.42.8.38`.
+  - **Verified a NON-bug**: the per-model **port** wiring is correct —
+    `ensureRuntimeEndpoints` writes a named `"http"` EndpointPort with the runtime's
+    dynamic per-model port, and the selectorless Service routes by the named Endpoint
+    port (so a model on `:8001` is reachable via its `:8000` Service). This also
+    confirms Part A's Service-DNS retry path is sound for multi-model.
+  - **Real bug**: after a runtime pod swap (new IP), `reconcileViaRuntime` only
+    rewrites Endpoints in the loaded/"Ready" path; the not-loaded (`status==nil`)
+    reload branch never clears the stale Endpoints → traffic 502s to the dead pod for
+    the whole reload window. (`status==nil` also fires on transient health errors, so
+    clearing on that alone would flap.)
+  - **Fix** (`clearStaleRuntimeEndpoints`, early in `reconcileViaRuntime`): drop any
+    Endpoints subset whose address ≠ the current runtime pod IP. Cross-pod = dead =
+    safe to clear; Ready path re-creates the correct ones; IP-mismatch guard means a
+    transient health blip (same pod IP) never tears down a live endpoint. 3 unit tests
+    + full `./controllers/` suite green. MR !570 auto-merge armed, pipeline 12851.
+  - **Two halves of one failure mode**: !569 (proxy, client-side: retry past dead
+    upstream) + !570 (controller, server-side: stop advertising the dead address).
