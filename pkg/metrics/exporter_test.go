@@ -80,6 +80,13 @@ func allMetrics() []metricSpec {
 			labels:     []string{"gpu", "node", "vendor"},
 			collector:  GPUVRAMUtilizationPercent,
 		},
+		{
+			name:       "flexinfer_gpu_compute_utilization_percent",
+			help:       "GPU compute (core) utilization as a percentage (0-100). Near-zero indicates an idle card.",
+			metricType: dto.MetricType_GAUGE,
+			labels:     []string{"gpu", "node", "vendor"},
+			collector:  GPUComputeUtilizationPercent,
+		},
 
 		// --- ModelCache LRU eviction ---
 		{
@@ -433,7 +440,7 @@ func TestMetricTypes(t *testing.T) {
 // TestMetricCount verifies the table is exhaustive. If a developer adds a metric
 // to exporter.go but forgets to add it to the test table, this test fails.
 func TestMetricCount(t *testing.T) {
-	const expectedMetricCount = 43 // total exported metrics in exporter.go
+	const expectedMetricCount = 44 // total exported metrics in exporter.go
 	got := len(allMetrics())
 	assert.Equal(t, expectedMetricCount, got,
 		"metric count changed — update allMetrics() table when adding/removing metrics")

@@ -90,17 +90,22 @@ func runProbeAndMetrics(ctx context.Context, nodeAgent *agent.Agent, setupLog in
 		metrics.GPUVRAMTotalBytes.WithLabelValues(gpuIdx, nodeName, gpu.Vendor).Set(float64(gpu.TotalVRAMMB * 1024 * 1024))
 		metrics.GPUVRAMUsedBytes.WithLabelValues(gpuIdx, nodeName, gpu.Vendor).Set(float64(gpu.UsedVRAMMB * 1024 * 1024))
 
-		// Emit utilization percentage
+		// Emit VRAM utilization percentage
 		if gpu.TotalVRAMMB > 0 {
 			utilPercent := float64(gpu.UsedVRAMMB) / float64(gpu.TotalVRAMMB) * 100
 			metrics.GPUVRAMUtilizationPercent.WithLabelValues(gpuIdx, nodeName, gpu.Vendor).Set(utilPercent)
 		}
+
+		// Emit GPU compute (core busy) utilization. 0 is a valid reading (idle card),
+		// so emit unconditionally — the near-zero value is the fleet idle-time signal.
+		metrics.GPUComputeUtilizationPercent.WithLabelValues(gpuIdx, nodeName, gpu.Vendor).Set(gpu.Utilization)
 
 		setupLog.Info("Emitted GPU metrics",
 			"gpu", gpuIdx,
 			"node", nodeName,
 			"vendor", gpu.Vendor,
 			"temperature", gpu.Temperature,
+			"computeUtilPercent", gpu.Utilization,
 			"usedMB", gpu.UsedVRAMMB,
 			"freeMB", gpu.FreeVRAMMB,
 			"totalMB", gpu.TotalVRAMMB,
