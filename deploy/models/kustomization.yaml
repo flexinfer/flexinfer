@@ -87,6 +87,7 @@ resources:
   - gonzalomo-fluxpony-imagegen.yaml # diffusers gfx906, SDXL text-to-image (relocated 2026-05-13 from 5930k)
   - sdxl-inpainting-radeonvii.yaml   # diffusers gfx906, SDXL inpainting
   - bge-radeonvii.yaml               # llamacpp bge-large embeddings on gfx906 HBM2; additive lane (priority 100, serverless, label embeddings-hbm2). Kill-test PASS 2026-06-03; hardware-util arc Sprint 1.
+  - bge-reranker-radeonvii.yaml      # llamacpp bge-reranker-v2-m3 on gfx906; co-Active with bge embeddings (priority 115, serverless, label rerank). R5 multi-Active payoff — needs gfx906 features.multiModel + FLEXINFER_RUNTIME_MULTI_MODEL.
 
   # === cblevins-gtx980ti (6 GB sm_52) ===
   - gemma4-e4b-gguf-gtx980ti.yaml   # llama.cpp GGUF, node-local cache for Maxwell cold starts

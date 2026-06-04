@@ -1,0 +1,88 @@
+# BGE-reranker-v2-m3 on Radeon VII (gfx906)
+#
+# GPU-resident reranker (cohere-style /v1/rerank) co-resident with the
+# bge-large embeddings lane on the same gfx906 card. This is the R5 payoff of
+# the multi-subprocess runtime arc: a shared-GPU group keeping TWO models
+# Active at once (embeddings + rerank) instead of single-leader election.
+#
+# Hardware-utilization arc Sprint 1, slice R5 (.loom/30-implementation-plan-
+# hardware-utilization-2026-06-03.md + .loom/60-validation-matrix.md). The
+# reranking risk was retired by two kill-tests on 2026-06-03 (both PASS):
+#   - S1.3: bge-reranker-v2-m3 GGUF GPU-resident via llama-server --reranking,
+#     /v1/rerank returns correct cohere-style scores.
+#   - Multi-subprocess: bge (embeddings, :8000) + reranker (:8099) BOTH
+#     GPU-resident concurrently; VRAM with both up 1591/16368 MB — reranker
+#     added only ~308 MiB ROCm buffer.
+#
+# Co-Active election requires `features.multiModel: true` on the gfx906
+# GPUProfile (R4 controller) AND FLEXINFER_RUNTIME_MULTI_MODEL=true on the
+# gfx906 runtime DaemonSet (R2/R3). Until BOTH are set, this stays queued
+# behind the priority-120 bge leader (default-safe single-slot behavior).
+#
+# priority 115: below bge (120, the embeddings primary that must stay leader)
+# and above the cold gemma4-e4b (110) / qwen3-8b (100) draft lanes. minReplicas
+# 1 makes it a warm "wants-to-run" member so the multi-Active set admits it.
+# vramEstimateMB 700 (~607 MB Q8_0 weights + ROCm buffer); bge 1500 + reranker
+# 700 = 2200 MB, far inside the gfx906 16384 MB VRAM budget.
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: bge-reranker-radeonvii
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://gpustack/bge-reranker-v2-m3-GGUF
+  cache:
+    # Local (node-local hostPath under /models): the gfx906 unified runtime only
+    # sees node-local staged caches, not PVCs (mirrors bge-large-radeonvii).
+    size: 2Gi
+    storageClass: nvme-1r
+    strategy: Local
+  gpu:
+    vendor: amd
+    shared: radeonvii-models
+    priority: 115
+    count: 1
+    vramEstimateMB: 700
+  serverless:
+    enabled: true
+    # Warm co-Active member of radeonvii-models alongside the bge embeddings
+    # leader. Held GPU-resident so /v1/rerank has no cold-start once multiModel
+    # is enabled.
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 5m
+  config:
+    ggufFile: bge-reranker-v2-m3-Q8_0.gguf
+    contextSize: 512
+    nGPULayers: 999
+    batchSize: 2048
+    ubatchSize: 512
+    # Reranking mode: sets llama-server --reranking (pooling head RANK, serves
+    # /v1/rerank). Mutually exclusive with embedding — do NOT set both.
+    reranking: true
+    flashAttention: false
+    fitOff: true
+    metrics: true
+    rocrVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: "2"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  # Distinct rerank routing lane. The path-agnostic flexinfer-proxy forwards
+  # /v1/rerank to whichever backend pod advertises the `rerank` serviceLabel.
+  serviceLabels:
+    - rerank
+  litellm:
+    enabled: true
+    servedModelName: bge-reranker-radeonvii
+    aliases:
+      - rerank
+      - bge-reranker
+      - rerank-radeonvii
