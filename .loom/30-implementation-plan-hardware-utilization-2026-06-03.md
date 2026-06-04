@@ -66,6 +66,18 @@ side effect. Small, mostly-existing surface.
 - **S0.2** — Grafana "Fleet Utilization" dashboard: per-card util, tokens/sec,
   idle-hours/day, warm-vs-cold time. GitOps via `platform/gitops` monitoring
   overlay.
+  - **DONE + LIVE 2026-06-03, platform/gitops MR !219 (merge 93fb826f).** New
+    dashboard `services-flexinfer-fleet-utilization` (folder Services) in
+    `k3s/monitoring/dashboards/`. Kill-test first: confirmed live that the
+    `flexinfer_gpu_*` agent family + `flexinfer_runtime_model_state` are scraped
+    into the monitoring Prometheus (3 GPUs report). 10 panels — per-card compute
+    util (`flexinfer_gpu_compute_utilization_percent`, S0.1) + VRAM util, VRAM
+    bytes, temp, idle-cards + idle-hours/24h, tokens/sec, warm/cold states. All
+    PromQL `max by (node,gpu,vendor)`-aggregated (collapses DaemonSet pod churn to
+    one clean line/card). Flux-reconciled; ConfigMap verified in `monitoring` ns.
+    VRAM/temp/warm-cold panels LIVE now; compute-util + idle panels populate once
+    the flexinfer-agent image carrying S0.1 (MR !567) is rebuilt + rolled (ops
+    follow-up). MR !227 (stale chart runtime-dashboard dedupe) untouched.
 - **S0.3** — Capture a **baseline snapshot** (24 h) into `60-validation-matrix.md`:
   current per-card idle %, embeddings emb/s (nomic on 980 Ti), 26B tok/s. This
   is the before-picture every later sprint measures against.

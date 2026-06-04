@@ -1812,3 +1812,26 @@ The entire software stack (R1-R4) is built/tested/merged. R5 is an ops cycle:
 - **Next in Sprint 0**: S0.2 Grafana "Fleet Utilization" dashboard (platform/gitops;
   coordinate with open MR !227 monitoring-dashboard-dedupe). S0.3 baseline already
   captured. Then #28 can close with backlinks once the dashboard is live.
+
+### 2026-06-03 S0.2 — FlexInfer Fleet Utilization Grafana dashboard LIVE (platform/gitops MR !219)
+
+- **Slice**: Sprint 0 (fleet utilization instrument), S0.2. Advances #28. With S0.1
+  (metric) + S0.3 (baseline, already captured), the Sprint 0 instrument is complete.
+- **Kill-test (live, pre-build)**: confirmed the `flexinfer_gpu_*` agent family and
+  `flexinfer_runtime_model_state` are scraped into the monitoring Prometheus (3 GPUs
+  report: 7900xtx, 5930k, radeonvii). Every panel PromQL parses + returns clean
+  per-card series. → dashboard will have real data, not empty panels.
+- **Change**: `k3s/monitoring/dashboards/services-flexinfer-fleet-utilization-dashboard.yaml`
+  (ConfigMap, `grafana_dashboard:"1"`, folder Services) + kustomization entry. 10
+  panels across 4 rows: per-card compute util + VRAM util; VRAM bytes + VRAM-util
+  bargauge + temp; idle-cards-now + idle-hours/24h; tokens/sec + warm/cold states +
+  warm count. All exprs `max by (node,gpu,vendor)` aggregated to collapse DaemonSet
+  pod churn (was 66 stale series → 3 clean lines/card).
+- **Verdict**: PASS + LIVE. `kustomize build` OK, JSON validates, merge 93fb826f,
+  Flux `monitoring` Kustomization reconciled, ConfigMap confirmed present in
+  `monitoring` ns (Grafana sidecar auto-imports). VRAM/temp/warm-cold panels live
+  immediately; compute-util + idle panels light up after the flexinfer-agent image
+  (S0.1 / MR !567) is rebuilt + rolled — ops follow-up, additive (no empty errors).
+- **#28 status**: metrics (S0.1) + dashboard (S0.2) + baseline (S0.3) all landed.
+  Remaining before close: rebuild/roll the flexinfer-agent image so compute-util +
+  idle panels populate. Left open w/ backlink comment.
