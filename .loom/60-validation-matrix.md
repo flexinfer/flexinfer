@@ -1957,3 +1957,39 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
   Morph remains codebase-memory's default (untouched, no global flip — as scoped).
 - **Net Sprint 1 close**: S1.4a (gateway route) LIVE; S1.4b proof concludes the
   consumer choice. S1.4 done. Redirects the "wire a real consumer" payoff to S2.2.
+
+### 2026-06-04 Internal routing — proxy self-heals stale direct-load targets (MR !569)
+
+- **Context**: follow-up to S1.4b. While measuring the bge embeddings lane I hit
+  repeated proxy 502s after a runtime/litellm restart. Code review (Explore map of
+  `internal/proxy/`) found a real, non-transient bug.
+- **Bug**: the proxy's per-model fast-path cache `directLoadTargets` (modelName →
+  `http://<podIP>:<port>`, used for runtime-served models) is populated ONLY at
+  startup (`recoverDirectLoadTargets`, proxy.go:415) and on activation
+  (`tryDirectRuntimeLoad`, queue.go:464), is **never `Delete`d anywhere**, and has
+  **no periodic refresh**. When a runtime pod restarts (new IP / per-model port), the
+  stale entry pins a dead address **indefinitely** → every direct-path request 502s
+  until the proxy itself restarts or the model re-activates. `httputil.ReverseProxy`
+  had no `ErrorHandler` and no retry, so a dial failure = immediate 502.
+- **Fix** (`internal/proxy/routing_retry.go` + `routing.go` + `metrics.go`):
+  `forwardWithRetry` — on a dial-class transport error, (1) **delete the stale
+  `directLoadTargets` entry** (core self-heal), (2) **retry once** against a freshly
+  re-resolved target (Service DNS, kube-proxy load-balanced — never re-picks the dead
+  pod). Safe because `ReverseProxy.ErrorHandler` fires only on pre-response RoundTrip
+  errors (nothing written → buffered body replays cleanly). A custom ErrorHandler
+  records the error on a per-request `forwardResult`; `serveProxy` keeps the original
+  body for routing and forwards the rewritten body (behavior-preserving). Bounded
+  (default 2 attempts, `FLEXINFER_PROXY_UPSTREAM_MAX_ATTEMPTS` clamped [1,3], 50ms
+  backoff); dial-class only (conn refused/reset, host/net unreachable, EOF, timeout —
+  never valid upstream HTTP statuses). New metric
+  `flexinfer_proxy_upstream_retries_total{model,reason}`.
+- **Verdict**: PASS (code+CI). 5 new unit tests + full `./internal/proxy/...` suite
+  green, gofmt clean, module builds. MR !569 squash-merged (fbf1b592, merge 54d7916b);
+  master pipeline 12847 rebuilds + republishes the proxy image. **Live-verify pends**
+  the proxy image roll (Flux) — reproduce a runtime pod restart and confirm the bge
+  lane recovers without an indefinite 502 window. Additive/reversible (set
+  `FLEXINFER_PROXY_UPSTREAM_MAX_ATTEMPTS=1` to restore legacy single-attempt).
+- **Out of scope (follow-up)**: the gfx906 multi-model per-model-port (`:8001`) vs
+  controller Service port mapping — a separate controller-side reconciliation concern;
+  this MR makes the proxy resilient to the resulting dial failures but doesn't change
+  Service reconciliation.
