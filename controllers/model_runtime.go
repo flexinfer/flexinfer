@@ -100,6 +100,18 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		log.Error(err, "Failed to ensure runtime networking for model")
 		return ctrl.Result{}, err
 	}
+
+	// Drop any Endpoints left pointing at a former runtime pod. The only valid
+	// address for a runtime-served model is the current runtime pod; an address
+	// mismatch means the runtime pod was replaced (restart/reschedule) and the
+	// stale Endpoints now route traffic to a dead pod IP — every request 502s
+	// (or hangs) until the model reloads. Clearing here is always safe: a
+	// cross-pod address is unreachable by definition, and the Ready path below
+	// re-creates the correct Endpoints once the model is confirmed loaded on the
+	// current pod. Guarded on an IP mismatch so a transient health-check blip
+	// (which leaves the pod IP unchanged) never clears a live endpoint.
+	r.clearStaleRuntimeEndpoints(ctx, model, endpoint.PodIP)
+
 	if err := r.deleteLegacyDeploymentForRuntime(ctx, model); err != nil {
 		log.Error(err, "Failed to remove legacy Deployment for runtime-managed model")
 		return ctrl.Result{}, err
@@ -479,6 +491,46 @@ func (r *ModelReconciler) ensureRuntimeEndpoints(ctx context.Context, model *aiv
 	}
 
 	return nil
+}
+
+// clearStaleRuntimeEndpoints removes Endpoints subsets that point at any pod IP
+// other than the current runtime pod. A runtime-served model can only be served
+// from the current runtime pod, so any other address is a leftover from a former
+// pod (restart / reschedule) that now routes to a dead IP. Subsets that already
+// match currentPodIP are left untouched, so a transient health-check failure
+// (which does not change the pod IP) never tears down a live endpoint. The
+// caller's Ready path re-creates the correct Endpoints once the model is
+// confirmed loaded on the current pod.
+func (r *ModelReconciler) clearStaleRuntimeEndpoints(ctx context.Context, model *aiv1alpha2.Model, currentPodIP string) {
+	log := log.FromContext(ctx)
+
+	if currentPodIP == "" {
+		return // Can't classify staleness without a current pod IP.
+	}
+
+	ep := &corev1.Endpoints{}
+	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, ep); err != nil {
+		return // Not found or error — nothing to clean up.
+	}
+
+	hasStale := false
+	for _, ss := range ep.Subsets {
+		for _, addr := range ss.Addresses {
+			if addr.IP != currentPodIP {
+				hasStale = true
+			}
+		}
+	}
+	if !hasStale {
+		return
+	}
+
+	log.Info("Clearing stale runtime Endpoints pointing at a former runtime pod",
+		"model", model.Name, "currentPodIP", currentPodIP)
+	ep.Subsets = nil
+	if err := r.Update(ctx, ep); err != nil {
+		log.Error(err, "Failed to clear stale runtime endpoints", "model", model.Name)
+	}
 }
 
 // removeRuntimeEndpoints clears the Endpoints subsets for a runtime-managed
