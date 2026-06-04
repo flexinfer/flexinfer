@@ -1758,25 +1758,37 @@ no auto-unload + multi-Active election), NOT a hardware limit.
   `/v1/rerank` concurrent with `/v1/embeddings` (the original S1.3 payoff). Backend
   `--reranking` flag (shipped separately, additive) feeds this.
 
-#### Ship status (2026-06-03)
+#### Ship status (2026-06-03/04) — all 4 software slices R1-R4 shipped
 - **S1.3 backend `--reranking` flag** — MERGED MR !562 (squash e0df2162).
-- **R2** — MERGED/merging MR !564 (squash-on-merge armed, CI passed leg).
-- **R3** — DONE, MR pending rebase onto master post-R2. Changes: runtime
-  `handleModelHealth` looks up model BY NAME (was `Active()`, which 404'd every
-  non-primary model) + reports its port; `Manager.Model(name)` accessor; proxy
-  `waitForRuntimeReady` returns the runtime-reported port; `tryDirectRuntimeLoad`
-  + `recoverDirectLoadTargets` route to `podIP:<reportedPort>` (fall back to the
-  fixed backend port for single-slot/older runtimes). Tests: port round-trip +
-  by-name lookup; proxy+runtime suites green, vet clean.
-- **R4** — TODO + **must reconcile with !563** (`fix/shared-gpu-warm-pinned-leader`,
-  merged 2026-06-03 615c74f1) which added a `warmPinnedLeader` preference to
-  `chooseSharedGroupLeader` (closed the gtx980ti-models follow-up). R4 extends the
-  same function from returning ONE leader to a VRAM-bounded SET when the runtime is
-  multi-model. Open design Qs: (a) how the controller learns a runtime is
-  multi-model (add `multiModel`+VRAM to `RuntimeStatus`/`/api/v1/status`, or a
-  GPUProfile field); (b) VRAM budget = sum of members' `gpu.vramEstimateMB` ≤ card
-  total; (c) `reconcileViaRuntime` must load additively (not preempt) members that
-  fit; (d) `CanAcceptLoad` becomes VRAM-aware. Higher-risk: governs ALL shared GPU
-  groups, not just gfx906 — needs careful design + tests on a stable master.
-- **R5** — TODO (after R4): reranker CR + flip `FLEXINFER_RUNTIME_MULTI_MODEL` on
-  radeonvii + rebuild/roll runtime image (NO CI publish — manual) + live-verify.
+- **R2** Manager multi-subprocess core — MERGED MR !564 (squash e7e7393f).
+- **R3** proxy+runtime per-model port routing — MERGED/merging MR !565: runtime
+  `handleModelHealth` by-name + port; `Manager.Model(name)`; proxy
+  `waitForRuntimeReady` returns port; `tryDirectRuntimeLoad`/`recoverDirectLoadTargets`
+  route to `podIP:<reportedPort>` with fixed-port fallback. Tests green, vet clean.
+- **R4** controller multi-Active election — MR !566 auto-merge ARMED. Reconciled
+  with !563 (warm-pinned-leader): `chooseSharedGroupLeaders` builds ON TOP of the
+  single-leader fn (multiModel=false → exactly today's behavior). Mechanism chosen:
+  **GPUProfile `features.multiModel` flag** (per-arch capability) + budget reuses
+  profile `vramMB`; NOT a runtime round-trip. `handleSharedGPU` marks this model
+  Active iff in the VRAM-bounded set; `syncActiveServiceLabels` takes the set so each
+  Active member advertises its own labels (embeddings vs rerank). Default-safe (no
+  profile sets multiModel yet → single-slot everywhere). Tests cover set election.
+  NOTE: `reconcileViaRuntime`/`CanAcceptLoad` did NOT need changes — additive load
+  happens because each Active model reconciles + loads itself, and the R2 Manager in
+  multi-model mode doesn't unload others (+ its own VRAM admission is the backstop).
+
+#### R5 — remaining (deploy/enablement + live-verify), gated on R4 merge
+The entire software stack (R1-R4) is built/tested/merged. R5 is an ops cycle:
+1. Reranker Model CR `deploy/models/bge-reranker-radeonvii.yaml` (backend llamacpp,
+   source `gpustack/bge-reranker-v2-m3-GGUF`, `config.reranking: true`, cache Local
+   nvme-1r, group `radeonvii-models`, `vramEstimateMB` ~700, serviceLabel `rerank`,
+   litellm alias `rerank`, minReplicas 1) + add to `deploy/models/kustomization.yaml`.
+2. Set `features.multiModel: true` on the gfx906 GPUProfile (platform/gitops).
+3. Set `FLEXINFER_RUNTIME_MULTI_MODEL=true` (or `--multi-model`) on the
+   flexinfer-runtime-gfx906 DaemonSet (platform/gitops).
+4. **Rebuild + roll BOTH images** (manual, NO CI publish): controller (R4 code) via
+   `build/Dockerfile.manager`; runtime gfx906 (R2/R3 code) via `build/build-runtime.sh
+   gfx906 --push` (~30-60min). Watch for the Helm-chart-bump → Flux full-rollout churn.
+5. Live-verify: `POST /v1/rerank` via proxy returns ranked scores from
+   bge-reranker@gfx906 CONCURRENTLY with `/v1/embeddings` from bge@gfx906 (both Active
+   in radeonvii-models). Matrix row + S1.4 (migrate a consumer) optional follow-up.
