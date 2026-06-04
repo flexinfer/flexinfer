@@ -26,6 +26,13 @@ spec:
     flashAttention: false
     int4: true
     int8: true
+    # R5 (hardware-utilization arc): allow the controller to keep multiple
+    # shared-GPU members Active at once on this card (VRAM-bounded set election,
+    # chooseSharedGroupLeaders). The 16 GB HBM2 budget (vramMB above) easily
+    # holds the bge embeddings lane (~1.5 GB) + the bge-reranker lane (~0.7 GB)
+    # concurrently. Pairs with FLEXINFER_RUNTIME_MULTI_MODEL on the gfx906
+    # runtime DaemonSet (the runtime must actually hold both subprocesses).
+    multiModel: true
   backends:
     vllm:
       # The current unified gfx906 runtime does not ship vLLM; keep this
@@ -110,7 +117,7 @@ spec:
       - llamacpp
       - ollama
       - diffusers
-    image: registry.harbor.lan/flexinfer/runtime@sha256:8797a08a209201dc7bcf6bce7f79b0697055a02824f5fe9947932ef91273c29e
+    image: registry.harbor.lan/flexinfer/runtime@sha256:4a02796d4010423a18d0347653c780f7d2467c5435d6a4960d5e6f9e102c7e27
   containerMemoryGB: 56
   maxGPUMemoryGB: 12
   maxCPUMemoryGB: 56
