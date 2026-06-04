@@ -18,7 +18,6 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/internal/routing"
-	"github.com/flexinfer/flexinfer/pkg/k8surl"
 	"github.com/flexinfer/flexinfer/pkg/validation"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
@@ -320,39 +319,15 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		}
 	}
 
-	// Determine target URL - try routing first, fall back to Service DNS
-	var targetURL string
-	var targetPod string // Track if we routed to a specific pod
-	strategy := p.getRoutingStrategy(ctx, resolvedModel)
-
-	if strategy != routing.StrategyDefault && p.router != nil {
-		decision := p.router.RouteWithDecision(resolvedModel, strategy, r, bodyBytes, p.getPodConnections)
-		targetPod = decision.Target
-		if targetPod != "" {
-			targetURL = fmt.Sprintf("http://%s", targetPod)
-			slog.Debug("routing to pod", "model", modelName, "strategy", strategy, "target", targetPod, "key_source", decision.KeySource)
-		} else {
-			slog.Debug("routing fallback to service", "model", modelName, "strategy", strategy, "key_source", decision.KeySource)
-		}
-		p.recordRoutingObservability(resolvedModel, strategy, decision, targetPod)
-	}
-
-	// Check if this model was loaded via the direct runtime path.
-	if targetURL == "" {
-		if dt, ok := p.directLoadTargets.Load(resolvedModel); ok {
-			targetURL = dt
-		}
-	}
-
-	// Fall back to Service DNS if no routing target
-	if targetURL == "" {
-		targetURL = k8surl.ServiceURL(resolvedModel, p.namespace, port, true)
-	}
+	// routeBody is the original payload used for strategy routing decisions
+	// (must be captured before model-name rewriting below).
+	routeBody := bodyBytes
+	forwardBody := bodyBytes
 
 	// Rewrite model name in request body if needed (JSON only — skip for multipart/form-data)
-	if backendModelName != "" && len(bodyBytes) > 0 &&
+	if backendModelName != "" && len(forwardBody) > 0 &&
 		strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-		bodyBytes = p.rewriteModelInBody(bodyBytes, backendModelName)
+		forwardBody = p.rewriteModelInBody(forwardBody, backendModelName)
 	}
 
 	// Clamp max_tokens against the target model's context window so a client
@@ -360,64 +335,18 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 	// UIs and LiteLLM) does not end up with a 0-token prompt budget and a
 	// guaranteed 400 from vLLM. No-op when the model has no declared context
 	// window or when max_tokens already fits.
-	if len(bodyBytes) > 0 &&
+	if len(forwardBody) > 0 &&
 		strings.Contains(r.Header.Get("Content-Type"), "application/json") {
 		var originalMaxTokens, clampedMaxTokens int
-		bodyBytes, originalMaxTokens, clampedMaxTokens = p.maybeClampMaxTokensForResponse(ctx, resolvedModel, bodyBytes)
+		forwardBody, originalMaxTokens, clampedMaxTokens = p.maybeClampMaxTokensForResponse(ctx, resolvedModel, forwardBody)
 		if originalMaxTokens >= 0 && clampedMaxTokens >= 0 {
 			w.Header().Set("X-FlexInfer-MaxTokens-Clamped", fmt.Sprintf("%d->%d", originalMaxTokens, clampedMaxTokens))
 		}
 	}
 
-	// Restore body if we read it
-	if len(bodyBytes) > 0 {
-		r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		r.ContentLength = int64(len(bodyBytes))
-	}
-
-	// Stash per-request metadata for the upstream-response hook so the
-	// access log line emitted by logUpstreamUsage carries both halves
-	// (request shape + upstream usage).
-	maxTokensForLog, streamForLog := parseRequestForUsageLog(bodyBytes)
-	r = r.WithContext(withUsageLogCtx(r.Context(), &usageLogCtx{
-		model:         modelName,
-		resolvedModel: resolvedModel,
-		path:          r.URL.Path,
-		maxTokens:     maxTokensForLog,
-		stream:        streamForLog,
-		userAgent:     r.Header.Get("User-Agent"),
-		startedAt:     time.Now(),
-		wantPrefixHit: prefixHitOptIn(r.Header.Get(headerWantPrefixHit)),
-		targetURL:     targetURL,
-	}))
-
-	// Track per-pod connections for least-loaded routing
-	if targetPod != "" {
-		p.incrementPodConnections(targetPod)
-		defer p.decrementPodConnections(targetPod)
-	}
-
-	// Create or get cached proxy for this target, with TTL-based eviction.
-	proxyKey := targetURL // Use full URL as key for pod-specific proxies
-	rp, ok := p.loadOrCreateProxy(proxyKey)
-	if !ok {
-		validation.WriteInternalError(w, "Internal error routing request")
-		return
-	}
-
-	// One-line audit trail of what we're actually forwarding to. At debug
-	// level because this fires per-request; useful when investigating
-	// shared-service-label routing or stale cache effects (a misrouted
-	// request shows up as a 404 from the wrong vLLM upstream and the
-	// resolved_model/target pair pins which lane handled it).
-	slog.Debug("forwarding to upstream",
-		"model", modelName,
-		"resolved_model", resolvedModel,
-		"backend_model", backendModelName,
-		"target", targetURL,
-		"target_pod", targetPod)
-
-	rp.ServeHTTP(w, r)
+	// Forward to the upstream with self-healing retry on dial-class failures
+	// (stale direct-load target / rolling backend pod). See routing_retry.go.
+	p.forwardWithRetry(w, r, modelName, resolvedModel, port, routeBody, forwardBody)
 }
 
 // getBackendModelName returns the actual model identifier used by the backend.
@@ -626,6 +555,18 @@ func (p *Proxy) loadOrCreateProxy(targetURL string) (*httputil.ReverseProxy, boo
 		otel.GetTextMapPropagator().Inject(req.Context(), propagation.HeaderCarrier(req.Header))
 	}
 	rp.ModifyResponse = p.logUpstreamUsage
+	// On a transport (dial) error — which httputil.ReverseProxy reports only
+	// before any response byte is written — record it on the per-request
+	// forwardResult so forwardWithRetry can self-heal and retry. When no retry
+	// context is present (direct callers / tests), preserve the default 502.
+	rp.ErrorHandler = func(rw http.ResponseWriter, req *http.Request, err error) {
+		if fr := forwardResultFromContext(req.Context()); fr != nil {
+			fr.err = err
+			return
+		}
+		slog.Debug("upstream transport error (no retry context)", "target", targetURL, "error", err)
+		validation.WriteError(rw, http.StatusBadGateway, "upstream unavailable", "upstream_error", "bad_gateway")
+	}
 	p.proxyMap.Store(targetURL, proxyEntry{proxy: rp, created: time.Now()})
 	return rp, true
 }
