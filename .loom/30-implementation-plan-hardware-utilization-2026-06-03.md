@@ -52,6 +52,17 @@ side effect. Small, mostly-existing surface.
   `cblevins-5930k`, `cblevins-radeonvii`, `cblevins-gtx980ti`) reports
   utilization %, VRAM used/total, and idle-time. Reuse the existing
   `flexinfer_kvcache_pressure_*` family (MR !553) and scheduler scoring metrics.
+  - **DONE 2026-06-03, MR !567 (squash b455d1f4).** Found the
+    compute-utilization leg was collected-but-dead: the `flexinfer-agent`
+    DaemonSet already populates `GPUMetrics.Utilization` (nvidia-smi
+    `utilization.gpu` + rocm-smi `--showuse`) but only VRAM util was exported.
+    Surfaced the per-card **compute (core busy) utilization** as a new gauge
+    `flexinfer_gpu_compute_utilization_percent{gpu,node,vendor}` — near-zero is
+    the fleet idle-time signal S0.2/S0.3 derive from. VRAM used/total/free/util%
+    + temperature already existed (`flexinfer_gpu_vram_*`). Additive, all code CI
+    green (the one red was a GitLab-502 git-clone flake in `proxy_test`, retried).
+    Remaining S0.1 nicety: a dedicated KV-pressure-per-card label is still on the
+    `flexinfer_kvcache_pressure_*` family from !553 (already shipped).
 - **S0.2** — Grafana "Fleet Utilization" dashboard: per-card util, tokens/sec,
   idle-hours/day, warm-vs-cold time. GitOps via `platform/gitops` monitoring
   overlay.

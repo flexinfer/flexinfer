@@ -1792,3 +1792,23 @@ The entire software stack (R1-R4) is built/tested/merged. R5 is an ops cycle:
 5. Live-verify: `POST /v1/rerank` via proxy returns ranked scores from
    bge-reranker@gfx906 CONCURRENTLY with `/v1/embeddings` from bge@gfx906 (both Active
    in radeonvii-models). Matrix row + S1.4 (migrate a consumer) optional follow-up.
+
+### 2026-06-03 S0.1 — per-card GPU compute-utilization metric exported (MR !567)
+
+- **Slice**: Sprint 0 (fleet utilization instrument), S0.1. Advances #28.
+- **Finding**: the compute-utilization leg was *collected but never exported*. The
+  `flexinfer-agent` DaemonSet already fills `GPUMetrics.Utilization` on both vendors
+  (nvidia-smi `utilization.gpu`, rocm-smi `--showuse` → `extractUtilValue`), but
+  `cmd/flexinfer-agent/main.go` only emitted VRAM metrics. The dashboard had no
+  compute-busy signal and therefore no idle-time signal.
+- **Change**: new gauge `flexinfer_gpu_compute_utilization_percent{gpu,node,vendor}`
+  in `pkg/metrics/exporter.go` (registered) + emitted unconditionally in the agent
+  loop (0 = valid idle reading). Descriptor test added; `expectedMetricCount` 43→44.
+- **Verdict**: PASS. `go build ./...`, `go test ./pkg/metrics/... ./agents/agent/...`,
+  vet/fmt/lint all green. Squash-merged b455d1f4 (merge d137c10b). The one red job was
+  a GitLab-502 git-clone flake in `proxy_test` (infra, not code) — retried → green.
+- **Idle-time**: derive from `flexinfer_gpu_compute_utilization_percent`; near-zero
+  over a window = idle card. No separate idle metric needed.
+- **Next in Sprint 0**: S0.2 Grafana "Fleet Utilization" dashboard (platform/gitops;
+  coordinate with open MR !227 monitoring-dashboard-dedupe). S0.3 baseline already
+  captured. Then #28 can close with backlinks once the dashboard is live.
