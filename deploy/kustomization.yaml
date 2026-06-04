@@ -9,3 +9,6 @@ resources:
   # One-shot, Flux-managed artifact-transform tasks. Each subdirectory
   # is idempotent so Flux re-reconciles are no-ops once complete.
   - tasks/gemma4-31b-keqv/
+  # Idle-time batch appliance (Sprint 2 / S2.2): nightly codebase re-embed
+  # through the gfx906 bge HBM2 retrieval plane -> Qdrant codebase_memory_bge_v1.
+  - tasks/codebase-reembed/

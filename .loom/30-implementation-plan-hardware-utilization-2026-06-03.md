@@ -207,6 +207,13 @@ HBM2 plane live, nightly re-embed/index is 10–40× cheaper.
 - **S2.1** — Minimal job-queue + nightly trigger (reuse existing controller Job
   machinery + `scheduled-tasks`; do **not** reinvent Argo). One CRD or ConfigMap
   job-spec, bounded by admission filter + max_tokens clamp.
+  - **DONE 2026-06-04 (folded into S2.2).** Operator chose the standalone
+    ConfigMap-script form, so the "nightly trigger" is a plain Flux-managed
+    `CronJob` (`deploy/tasks/codebase-reembed/`, 04:00 ET, `concurrencyPolicy:
+    Forbid`) rather than a new CRD/controller machinery — simplest thing that
+    works, no Argo. Bounded by `MAX_FILES`/`MAX_CHUNKS`/`MAX_FILE_BYTES` clamps
+    (the "admission filter + max_tokens" equivalent), and a per-input 512-token
+    char cap forced by the bge model.
 - **S2.2** — First job: nightly codebase re-embed/index for the repos in
   `codebase-memory`, writing to the existing Qdrant collection. Uses the Sprint 1
   bge lane. **NOTE (from S1.4b)**: run this as an **in-cluster k8s Job hitting
@@ -215,6 +222,18 @@ HBM2 plane live, nightly re-embed/index is 10–40× cheaper.
   "wire a real bge consumer" payoff: a batch job is latency-insensitive and stays
   in-cluster, so the HBM2 throughput actually lands. New 1024-dim collection
   (`codebase_memory_bge_v1`); morph collection preserved.
+  - **DONE + LIVE-VERIFIED 2026-06-04** (`deploy/tasks/codebase-reembed/`).
+    Standalone ConfigMap `reembed.py` (pure-stdlib) + nightly CronJob. Source =
+    inline read-only NFS mount of the shared devbox workspace (no git/creds;
+    flexinfer not on the NFS, so target = `services/loom-core`, the codebase-memory
+    consumer's own repo + S1.4b corpus). Live: 500-chunk bounded run → collection
+    `codebase_memory_bge_v1` (1024-dim, 500 pts, green) on the **canonical** Qdrant
+    `192.168.50.176` (NOT the orphan `daemon/qdrant`), beside morph
+    `codebase_memory_v1`; junk-free relevant search. Three bugs caught+fixed in
+    Prove: 512-token per-input cap, AppleDouble `._*` dotfile skip, wrong-Qdrant
+    target + api-key secret. Throughput 4–10 emb/s wall-clock (cold-start + upsert
+    bound; warm bge serving is the 70.9 from S1.4b) — fine for an idle batch.
+    Matrix: "2026-06-04 S2.2". **S2.3/S2.4 remain.**
 - **S2.3** — Second job (demand-driven): offline model-eval gauntlet for any new
   model artifact (ties to #27 automate-benchmark-gen + #34 Postgres benchmark
   storage). Produces a coherence/throughput row automatically.

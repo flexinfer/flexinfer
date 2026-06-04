@@ -1,0 +1,231 @@
+# Idle-time batch appliance [Sprint 2 / S2.2]: re-embed script.
+#
+# Pure-stdlib Python (urllib + json + uuid + hashlib). No pip deps, so the job
+# runs on a bare python:3.x-slim image with nothing to install. It:
+#   1. Walks REPO_PATH for source/doc files (extension allowlist, dir denylist).
+#   2. Splits each file into overlapping line-window chunks.
+#   3. Embeds chunks in batches via the OpenAI-compatible /v1/embeddings endpoint
+#      (flexinfer-proxy -> bge-large-radeonvii on gfx906, the HBM2 retrieval plane).
+#   4. Upserts vectors into a Qdrant collection with deterministic UUIDv5 point IDs
+#      (so nightly re-runs overwrite in place rather than duplicate).
+#
+# This is the in-cluster batch consumer the S1.4b proof redirected here: hitting
+# flexinfer-proxy directly is ~70.9 emb/s (self-hosted), vs 3.3 emb/s for the
+# WAN/Cloudflare gateway path that made the interactive consumer a regression.
+#
+# Chunking is intentionally simple (line windows, not AST) per the operator's
+# "standalone ConfigMap script" choice; the goal is to prove the throughput lands
+# for a latency-insensitive batch, not to mirror codebase-memory's AST chunker.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codebase-reembed-script
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: idle-batch
+data:
+  reembed.py: |
+    #!/usr/bin/env python3
+    """Nightly codebase re-embed into Qdrant via the bge HBM2 retrieval plane.
+
+    Configuration is entirely env-driven (see the CronJob spec). All HTTP uses the
+    stdlib so the image needs no extra packages.
+    """
+    import hashlib
+    import json
+    import os
+    import sys
+    import time
+    import urllib.error
+    import urllib.request
+    import uuid
+
+    # ---- config (env) --------------------------------------------------------
+    EMBEDDINGS_URL = os.environ["EMBEDDINGS_URL"].rstrip("/")
+    EMBED_MODEL = os.environ["EMBED_MODEL"]
+    QDRANT_URL = os.environ["QDRANT_URL"].rstrip("/")
+    QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
+    COLLECTION = os.environ["COLLECTION"]
+    VECTOR_DIM = int(os.environ.get("VECTOR_DIM", "1024"))
+    REPO_PATH = os.environ["REPO_PATH"].rstrip("/")
+    REPO_NAME = os.environ.get("REPO_NAME") or os.path.basename(REPO_PATH)
+    BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "64"))
+    CHUNK_LINES = int(os.environ.get("CHUNK_LINES", "45"))
+    CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "8"))
+    # bge-large-en-v1.5 has a 512-token max sequence. Token density for code can be
+    # as low as ~2.0 chars/token (symbol-dense), so cap each input at ~900 chars
+    # (~450 tokens worst case) to stay safely under 512. Over-long line windows are
+    # split into multiple inputs, not dropped/truncated.
+    MAX_CHUNK_CHARS = int(os.environ.get("MAX_CHUNK_CHARS", "900"))
+    MAX_FILES = int(os.environ.get("MAX_FILES", "0"))      # 0 = unbounded
+    MAX_CHUNKS = int(os.environ.get("MAX_CHUNKS", "0"))    # 0 = unbounded
+    MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(512 * 1024)))
+    HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "120"))
+
+    EXTS = tuple(e.strip() for e in os.environ.get(
+        "EXTENSIONS",
+        ".go,.py,.ts,.tsx,.js,.jsx,.rs,.java,.c,.h,.cpp,.hpp,.md,.rst,.sh,.yaml,.yml,.toml",
+    ).split(",") if e.strip())
+    DENY_DIRS = set(d.strip() for d in os.environ.get(
+        "DENY_DIRS",
+        ".git,node_modules,vendor,dist,build,.cache,.venv,venv,__pycache__,testdata,.worktrees,bin,.loom",
+    ).split(",") if d.strip())
+
+    NS = uuid.UUID("6f1d9e3a-2b7c-4f5e-9a10-c0ffee5217c2")  # stable namespace for IDs
+
+    def log(msg):
+        print(msg, flush=True)
+
+    # ---- file discovery + chunking ------------------------------------------
+    def iter_files(root):
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames if d not in DENY_DIRS and not d.startswith(".")]
+            for fn in sorted(filenames):
+                # Skip dotfiles, incl. macOS AppleDouble (._foo.go) NFS cruft that
+                # otherwise embeds as near-empty noise and crowds out real hits.
+                if fn.endswith(EXTS) and not fn.startswith("."):
+                    yield os.path.join(dirpath, fn)
+
+    def chunk_file(path):
+        try:
+            if os.path.getsize(path) > MAX_FILE_BYTES:
+                return
+            with open(path, "r", encoding="utf-8", errors="replace") as fh:
+                lines = fh.readlines()
+        except OSError as exc:
+            log(f"WARN read {path}: {exc}")
+            return
+        rel = os.path.relpath(path, REPO_PATH)
+        prefix = f"# {REPO_NAME}/{rel}\n"
+        step = max(1, CHUNK_LINES - CHUNK_OVERLAP)
+        idx = 0
+        for start in range(0, len(lines), step):
+            window = lines[start:start + CHUNK_LINES]
+            body = "".join(window).strip()
+            last = start + CHUNK_LINES >= len(lines)
+            if body:
+                # Split over-long windows so no single input exceeds the model's
+                # 512-token sequence limit (per-input char budget).
+                for off in range(0, len(body), MAX_CHUNK_CHARS):
+                    yield {
+                        "rel": rel, "chunk_index": idx,
+                        "start_line": start + 1, "end_line": start + len(window),
+                        "text": prefix + body[off:off + MAX_CHUNK_CHARS],
+                    }
+                    idx += 1
+            if last:
+                break
+
+    # ---- http helpers --------------------------------------------------------
+    def _req(url, data=None, method=None, headers=None):
+        h = {"Content-Type": "application/json"}
+        if headers:
+            h.update(headers)
+        body = json.dumps(data).encode() if data is not None else None
+        return urllib.request.Request(url, data=body, method=method, headers=h)
+
+    def _do(req, expect=(200,)):
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
+                    raw = r.read()
+                    return r.status, (json.loads(raw) if raw else None)
+            except urllib.error.HTTPError as exc:
+                detail = exc.read()[:300]
+                if exc.code in expect:
+                    return exc.code, None
+                if attempt == 2:
+                    raise RuntimeError(f"HTTP {exc.code} {req.full_url}: {detail!r}")
+            except Exception as exc:  # noqa: BLE001
+                if attempt == 2:
+                    raise RuntimeError(f"{type(exc).__name__} {req.full_url}: {exc}")
+            time.sleep(2 * (attempt + 1))
+        raise RuntimeError(f"unreachable {req.full_url}")
+
+    def qdrant_headers():
+        return {"api-key": QDRANT_API_KEY} if QDRANT_API_KEY else {}
+
+    def ensure_collection():
+        url = f"{QDRANT_URL}/collections/{COLLECTION}"
+        status, _ = _do(_req(url, headers=qdrant_headers()), expect=(200, 404))
+        if status == 200:
+            log(f"collection {COLLECTION} exists")
+            return
+        log(f"creating collection {COLLECTION} (dim={VECTOR_DIM}, Cosine)")
+        _do(_req(url, data={"vectors": {"size": VECTOR_DIM, "distance": "Cosine"}},
+                 method="PUT", headers=qdrant_headers()))
+
+    def embed(texts):
+        _, resp = _do(_req(f"{EMBEDDINGS_URL}/v1/embeddings",
+                           data={"model": EMBED_MODEL, "input": texts}))
+        rows = sorted(resp["data"], key=lambda d: d["index"])
+        return [row["embedding"] for row in rows]
+
+    def upsert(points):
+        _do(_req(f"{QDRANT_URL}/collections/{COLLECTION}/points?wait=true",
+                 data={"points": points}, method="PUT", headers=qdrant_headers()))
+
+    def point_id(rel, chunk_index):
+        return str(uuid.uuid5(NS, f"{REPO_NAME}:{rel}:{chunk_index}"))
+
+    # ---- main ----------------------------------------------------------------
+    def main():
+        log(f"re-embed start repo={REPO_NAME} path={REPO_PATH} model={EMBED_MODEL} "
+            f"-> {QDRANT_URL}/{COLLECTION}")
+        if not os.path.isdir(REPO_PATH):
+            log(f"FATAL REPO_PATH not found: {REPO_PATH}")
+            sys.exit(1)
+        ensure_collection()
+
+        batch, total, files, t0 = [], 0, 0, time.time()
+        clamped_files = clamped_chunks = False
+
+        def flush():
+            nonlocal total
+            if not batch:
+                return
+            texts = [b["text"] for b in batch]
+            vecs = embed(texts)
+            points = [{
+                "id": point_id(b["rel"], b["chunk_index"]),
+                "vector": vec,
+                "payload": {
+                    "repo": REPO_NAME, "path": b["rel"],
+                    "chunk_index": b["chunk_index"],
+                    "start_line": b["start_line"], "end_line": b["end_line"],
+                    "text": b["text"],
+                    "embed_model": EMBED_MODEL,
+                },
+            } for b, vec in zip(batch, vecs)]
+            upsert(points)
+            total += len(points)
+            batch.clear()
+
+        for path in iter_files(REPO_PATH):
+            if MAX_FILES and files >= MAX_FILES:
+                clamped_files = True
+                break
+            files += 1
+            for ch in chunk_file(path):
+                if MAX_CHUNKS and (total + len(batch)) >= MAX_CHUNKS:
+                    clamped_chunks = True
+                    break
+                batch.append(ch)
+                if len(batch) >= BATCH_SIZE:
+                    flush()
+            if clamped_chunks:
+                break
+        flush()
+
+        elapsed = time.time() - t0
+        rate = total / elapsed if elapsed > 0 else 0.0
+        log(f"re-embed DONE files={files} chunks={total} elapsed={elapsed:.1f}s "
+            f"emb/s={rate:.1f}")
+        if clamped_files:
+            log(f"NOTE: stopped at MAX_FILES={MAX_FILES} (coverage truncated)")
+        if clamped_chunks:
+            log(f"NOTE: stopped at MAX_CHUNKS={MAX_CHUNKS} (coverage truncated)")
+
+    if __name__ == "__main__":
+        main()

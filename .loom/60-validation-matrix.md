@@ -2066,3 +2066,44 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
   local binary + set env (operator step; code ships default-off).
 - **Status**: shipped loom-core MR !621 (auto-merge armed, pipeline 12855). Sprint 1 S1.4 done
   for real — the rerank route now has a production consumer wired (vs the falsified embeddings migration).
+
+### 2026-06-04 S2.2 — idle-time batch appliance: nightly bge re-embed CronJob (LIVE-VERIFIED)
+
+- **Slice**: Sprint 2, S2.2 (hardware-utilization arc). The in-cluster batch consumer the
+  S1.4b proof redirected here: latency-insensitive nightly re-embed hitting `flexinfer-proxy`
+  directly (self-hosted bge HBM2 plane), NOT the WAN/Cloudflare gateway. Operator picks:
+  S2.2 per plan + standalone ConfigMap script Job.
+- **Artifact** (`deploy/tasks/codebase-reembed/`, additive/reversible, Flux-managed): a
+  `CronJob` (nightly 04:00 ET, `concurrencyPolicy: Forbid`) + ConfigMap `reembed.py`
+  (pure-stdlib: urllib + uuid, no pip deps) + README. Source = inline read-only NFS mount of
+  the shared devbox workspace (`192.168.50.211:/srv/nas/pilot3/nas-media-bulk/devbox-ws`) →
+  no git/creds. Walk → line-window chunk → bge `/v1/embeddings` (model `bge-large-radeonvii`,
+  1024-dim) → Qdrant upsert with deterministic UUIDv5 IDs (idempotent re-runs). Embedding runs
+  remotely on gfx906 so the pod needs no GPU.
+- **Grounding probes (read-only Jobs)**: bge embeddings in-cluster → HTTP 200 dim=1024;
+  Qdrant **target disambiguation** — `daemon/qdrant` is anon-200 but a near-empty ORPHAN
+  (only `xfiles-ufo`); the canonical agent-context/codebase-memory Qdrant is **host-level
+  `192.168.50.176:6333`** (holds the morph sibling `codebase_memory_v1`), reachable from
+  in-cluster pods but **api-key-enforced** → secret `qdrant-credentials/api-key` in
+  flexinfer-system. GitLab unusable as source (public edge Cloudflare-1010 blocks urllib UA;
+  in-cluster svc 404 anon for the private repo).
+- **Live verify** (bounded `MAX_CHUNKS=500`, target REPO_PATH=/workspace/services/loom-core →
+  collection `codebase_memory_bge_v1`, 1024-dim Cosine, on the canonical Qdrant alongside
+  morph): re-embed DONE files=35 chunks=500; `points_count=500` status green (confirmed via
+  the MCP qdrant pointed at 192.168.50.176). Search (3 queries, junk-free after the dotfile
+  fix): "register an MCP tool handler" → `cmd/mcp-quality/main.go`, `cmd/mcp-docker/main.go`
+  (0.77/0.73); "start a new agent context session" → `AGENTS.md` agent-context sections
+  (0.73). Semantically relevant; morph `codebase_memory_v1` untouched.
+- **Bugs found+fixed via live verification** (RALPH Prove caught all three): (1) bge-large is
+  a 512-token max-seq model → 60-line code windows hit 583/533 tokens → 500s; fixed with a
+  per-input `MAX_CHUNK_CHARS=900` (~450 tok worst case) that splits over-long windows.
+  (2) macOS AppleDouble `._*` NFS cruft embedded as near-empty noise and crowded out real
+  hits → skip dotfiles in `iter_files`. (3) wrote to the wrong (orphan) Qdrant first →
+  repointed to the canonical `192.168.50.176` + api-key secret; orphan collection cleaned up.
+- **Throughput**: 4–10 emb/s **wall-clock** for the bounded run (cold bge activation + per-batch
+  Qdrant upsert over LAN dominate; NOT the warm-serving 70.9 emb/s from S1.4b). For a nightly
+  latency-insensitive idle batch this is fine and free/self-hosted vs the morph cloud.
+  Follow-up tuning (warm-pin during the window / parallel upsert / larger batches) is optional.
+- **Status**: CronJob LIVE (`SUSPEND: False`), schema accepted by the API. Shipping in
+  flexinfer `deploy/tasks/codebase-reembed/`. S2.2 acceptance met: nightly re-embed runs
+  unattended + logged; one in-cluster consumer wired with the throughput path measured.
