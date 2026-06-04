@@ -350,6 +350,14 @@ spec:
                     type: boolean
                   int8:
                     type: boolean
+                  multiModel:
+                    description: |-
+                      MultiModel declares that this architecture's runtime can host multiple
+                      concurrent model subprocesses (VRAM-bounded), so a shared GPU group on it
+                      may keep several members Active at once instead of electing a single
+                      leader. Requires the runtime to run with --multi-model
+                      (FLEXINFER_RUNTIME_MULTI_MODEL). Default false = single-slot election.
+                    type: boolean
                 type: object
               gpuDriverMemoryMB:
                 description: |-

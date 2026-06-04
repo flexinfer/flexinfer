@@ -107,6 +107,14 @@ type GPUFeatures struct {
 	FlashAttention bool `json:"flashAttention,omitempty"`
 	INT4           bool `json:"int4,omitempty"`
 	INT8           bool `json:"int8,omitempty"`
+
+	// MultiModel declares that this architecture's runtime can host multiple
+	// concurrent model subprocesses (VRAM-bounded), so a shared GPU group on it
+	// may keep several members Active at once instead of electing a single
+	// leader. Requires the runtime to run with --multi-model
+	// (FLEXINFER_RUNTIME_MULTI_MODEL). Default false = single-slot election.
+	// +optional
+	MultiModel bool `json:"multiModel,omitempty"`
 }
 
 // BackendProfile describes a backend's support level and optional image override for this arch.

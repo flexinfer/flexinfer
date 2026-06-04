@@ -220,6 +220,88 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	return fallbackLeader
 }
 
+// vramEstimateMB returns a model's declared VRAM estimate in MB (0 if unset).
+func vramEstimateMB(m *aiv1alpha2.Model) int64 {
+	if m == nil || m.Spec.GPU == nil || m.Spec.GPU.VRAMEstimateMB == nil {
+		return 0
+	}
+	return *m.Spec.GPU.VRAMEstimateMB
+}
+
+// sharedModelWantsToRun reports whether a member should be considered for one of
+// several concurrent Active slots in multi-model mode: it must be runnable and
+// either pinned warm, currently Ready, or under recent demand. (The primary
+// leader is chosen separately by chooseSharedGroupLeader and always included.)
+func sharedModelWantsToRun(m *aiv1alpha2.Model, now time.Time) bool {
+	if !sharedModelCanTakeDemand(m) {
+		return false
+	}
+	if isWarmPinnedSharedModel(m) {
+		return true
+	}
+	if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
+		return true
+	}
+	if m.Status.LastActiveTime != nil && now.Sub(m.Status.LastActiveTime.Time) < sharedDemandWindow {
+		return true
+	}
+	return false
+}
+
+// chooseSharedGroupLeaders returns the set of group members that should be
+// Active concurrently.
+//
+// With multiModel=false (the default) it returns exactly the single leader from
+// chooseSharedGroupLeader -- identical to single-slot election, preserving all
+// existing behavior (demand preemption, warm-pinned preference, etc).
+//
+// With multiModel=true it returns a VRAM-bounded set: the primary leader plus
+// every other member that wants to run, admitted in descending priority order
+// while the summed gpu.vramEstimateMB stays within budgetMB. The primary is
+// always included (parity with the single-slot guarantee that the elected leader
+// runs, even if its own estimate exceeds the budget). budgetMB<=0 disables the
+// VRAM bound (admit all wanters); callers pass the GPUProfile VRAMMB.
+func chooseSharedGroupLeaders(groupModels []*aiv1alpha2.Model, now time.Time, multiModel bool, budgetMB int64) []*aiv1alpha2.Model {
+	primary := chooseSharedGroupLeader(groupModels, now)
+	if primary == nil {
+		return nil
+	}
+	if !multiModel {
+		return []*aiv1alpha2.Model{primary}
+	}
+
+	active := []*aiv1alpha2.Model{primary}
+	used := vramEstimateMB(primary)
+
+	// Other wanters, highest priority first (deterministic tiebreak by name).
+	var candidates []*aiv1alpha2.Model
+	for _, m := range groupModels {
+		if m.Name == primary.Name {
+			continue
+		}
+		if sharedModelWantsToRun(m, now) {
+			candidates = append(candidates, m)
+		}
+	}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		pi, pj := candidates[i].Spec.GetPriority(), candidates[j].Spec.GetPriority()
+		if pi != pj {
+			return pi > pj
+		}
+		return candidates[i].Name < candidates[j].Name
+	})
+
+	for _, m := range candidates {
+		est := vramEstimateMB(m)
+		if budgetMB > 0 && used+est > budgetMB {
+			continue
+		}
+		active = append(active, m)
+		used += est
+	}
+	return active
+}
+
 // isWarmPinnedSharedModel reports whether the operator has pinned this model
 // warm via minReplicas>=1. Such a model is meant to stay running, so in a
 // single-slot shared group it should hold leadership over an idle scale-to-zero
@@ -330,6 +412,26 @@ func cloneSharedGroupStatus(in *aiv1alpha2.SharedGroupStatus) *aiv1alpha2.Shared
 	return &out
 }
 
+// sharedGroupMultiModel resolves whether the model's GPU architecture runtime
+// can host concurrent model subprocesses (GPUProfile feature flag) and the VRAM
+// budget (MB, from the profile's usable VRAMMB) used to bound the Active set.
+// Returns (false, 0) when no GPUProfile declares MultiModel -- the safe
+// single-slot default that preserves single-leader election everywhere.
+func (r *ModelReconciler) sharedGroupMultiModel(model *aiv1alpha2.Model) (bool, int64) {
+	if r.GPUProfiles == nil || model == nil {
+		return false, 0
+	}
+	arch := gpuArchFromNodeSelector(model.Spec.NodeSelector)
+	if arch == "" {
+		return false, 0
+	}
+	profile, ok := r.GPUProfiles.Lookup(arch)
+	if !ok || profile == nil || !profile.Features.MultiModel {
+		return false, 0
+	}
+	return true, profile.VRAMMB
+}
+
 func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2.Model) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
@@ -353,9 +455,20 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		}
 	}
 
-	activeModel := chooseSharedGroupLeader(groupModels, time.Now())
-	if activeModel == nil {
+	// Multi-model election: when the group's GPU runtime can host concurrent
+	// subprocesses (GPUProfile feature flag), keep a VRAM-bounded SET of members
+	// Active instead of a single leader. Single-slot (default) returns exactly
+	// the one leader, so behavior is unchanged for every existing group.
+	multiModel, budgetMB := r.sharedGroupMultiModel(model)
+	activeModels := chooseSharedGroupLeaders(groupModels, time.Now(), multiModel, budgetMB)
+	if len(activeModels) == 0 {
 		return ctrl.Result{RequeueAfter: requeueFast}, nil
+	}
+	// primary is the elected leader (set[0]); used for PreemptedBy/queue position.
+	primary := activeModels[0]
+	activeSet := make(map[string]bool, len(activeModels))
+	for _, am := range activeModels {
+		activeSet[am.Name] = true
 	}
 
 	// Update this model's shared group status
@@ -367,7 +480,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	}
 	model.Status.SharedGroup.GroupName = groupName
 
-	if activeModel.Name == model.Name {
+	if activeSet[model.Name] {
 		// This model should be active
 		model.Status.SharedGroup.State = "Active"
 		model.Status.SharedGroup.QueuePosition = 0
@@ -381,22 +494,22 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Queued").Set(0)
 		metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Preempted").Set(0)
 	} else {
-		// This model should be preempted/queued
+		// This model should be preempted/queued (not in the Active set).
 		model.Status.SharedGroup.State = "Queued"
-		model.Status.SharedGroup.QueuePosition = queuePositionForSharedModel(model.Name, activeModel, groupModels)
-		model.Status.SharedGroup.PreemptedBy = activeModel.Name
+		model.Status.SharedGroup.QueuePosition = queuePositionForSharedModel(model.Name, primary, groupModels)
+		model.Status.SharedGroup.PreemptedBy = primary.Name
 
 		if model.Status.Phase == aiv1alpha2.ModelPhaseReady {
 			// Preempt this model
-			log.Info("Preempting model in favor of higher priority", "preemptedBy", activeModel.Name)
+			log.Info("Preempting model in favor of higher priority", "preemptedBy", primary.Name)
 			model.Status.Phase = aiv1alpha2.ModelPhasePreempted
 			model.Status.LoadingSubstage = aiv1alpha2.LoadingSubstagePreempted
 			model.Status.Message = preemptedStatusMessage(model)
 			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonPreempted, model.Status.Message)
 			model.Status.SharedGroup.PreemptedAt = &metav1.Time{Time: time.Now()}
 			r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
-				fmt.Sprintf("Preempted by %s with priority %d", activeModel.Name, activeModel.Spec.GetPriority()))
-			metrics.SharedGroupPreemptionsTotal.WithLabelValues(groupName, model.Namespace, model.Name, activeModel.Name).Inc()
+				fmt.Sprintf("Preempted by %s with priority %d", primary.Name, primary.Spec.GetPriority()))
+			metrics.SharedGroupPreemptionsTotal.WithLabelValues(groupName, model.Namespace, model.Name, primary.Name).Inc()
 			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Preempted").Set(1)
 			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Active").Set(0)
 			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Queued").Set(0)
@@ -408,10 +521,12 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	}
 
 	// Sync active service labels on Services for the entire group.
-	// The active model's Service gets ai.flexinfer/active-services set;
-	// all other group members have it removed.  This lets the proxy
-	// route group-wide names (serviceLabels) only to the active model.
-	r.syncActiveServiceLabels(ctx, activeModel, groupModels)
+	// Each Active model's Service gets its serviceLabels written into
+	// ai.flexinfer/active-services; all other group members have it cleared.
+	// This lets the proxy route group-wide names (serviceLabels) only to the
+	// Active model(s) -- in multi-model mode each Active member advertises its
+	// own distinct labels (e.g. embeddings vs rerank) concurrently.
+	r.syncActiveServiceLabels(ctx, activeSet, groupModels)
 
 	if origPhase == model.Status.Phase && sharedGroupStatusEqual(origShared, model.Status.SharedGroup) {
 		return ctrl.Result{RequeueAfter: requeueFast}, nil
@@ -429,7 +544,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 // written into the annotation; all other group members get an empty string.
 // An empty annotation (key present, value "") tells the proxy "this service is
 // managed but currently inactive -- do not fall back to static service-labels".
-func (r *ModelReconciler) syncActiveServiceLabels(ctx context.Context, activeModel *aiv1alpha2.Model, groupModels []*aiv1alpha2.Model) {
+func (r *ModelReconciler) syncActiveServiceLabels(ctx context.Context, activeSet map[string]bool, groupModels []*aiv1alpha2.Model) {
 	log := log.FromContext(ctx)
 	annoKey := constants.ServiceAnnotationActiveLabels
 
@@ -443,7 +558,7 @@ func (r *ModelReconciler) syncActiveServiceLabels(ctx context.Context, activeMod
 		}
 
 		var desired string
-		if m.Name == activeModel.Name && len(m.Spec.ServiceLabels) > 0 {
+		if activeSet[m.Name] && len(m.Spec.ServiceLabels) > 0 {
 			desired = strings.Join(m.Spec.ServiceLabels, ",")
 		}
 		// desired is "" for non-active members -- annotation is still SET so
