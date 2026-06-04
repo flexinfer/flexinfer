@@ -76,6 +76,17 @@ var (
 		[]string{"gpu", "node", "vendor"},
 	)
 
+	// GPUComputeUtilizationPercent tracks GPU compute (core busy) utilization as a
+	// percentage. Distinct from VRAM utilization: this is how busy the shader/compute
+	// engine is — the signal for fleet idle-time (near-zero means an idle card).
+	GPUComputeUtilizationPercent = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_compute_utilization_percent",
+			Help: "GPU compute (core) utilization as a percentage (0-100). Near-zero indicates an idle card.",
+		},
+		[]string{"gpu", "node", "vendor"},
+	)
+
 	// ModelCache LRU eviction metrics
 
 	// ModelCacheResidentSeconds tracks how long a cache has been resident in memory.
@@ -465,6 +476,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(GPUVRAMTotalBytes)
 	ctrlmetrics.Registry.MustRegister(GPUVRAMUsedBytes)
 	ctrlmetrics.Registry.MustRegister(GPUVRAMUtilizationPercent)
+	ctrlmetrics.Registry.MustRegister(GPUComputeUtilizationPercent)
 
 	// ModelCache LRU eviction metrics
 	ctrlmetrics.Registry.MustRegister(ModelCacheResidentSeconds)
