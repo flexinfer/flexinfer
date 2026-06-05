@@ -2137,3 +2137,33 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
 - **Status**: both CronJobs LIVE (`codebase-reembed` + `model-eval-gauntlet`, SUSPEND False).
   #34 validated (closeable); #27 advanced (offline scheduled gauntlet; true on-artifact-creation
   trigger is a follow-up). S2.3 acceptance met: gauntlet emits Postgres rows automatically.
+
+### 2026-06-04 S2.4 → #26 — controller preload-on-deploy (premise pivot + opt-in feature)
+
+- **Slice**: Sprint 2, S2.4. The plan framed S2.4 as idle-window **prefix-cache prewarm**.
+  Grounding **falsified that premise for the current fleet**: the daily-driver
+  `gemma4-26b-a4b-gptq` is warm-pinned (`minReplicas:1`, nothing to cold-start) AND has
+  `enablePrefixCaching: false` (APC structurally infeasible at 32K/FP8-KV per the F4 canary —
+  no prefix cache to seed); every scale-to-zero text lane (gemma4-e4b, qwen3-8b, qwen3-1p7b)
+  is on `cblevins-radeonvii` (gfx906) co-located with the **live bge+reranker** plane, so a
+  blanket morning prewarm would evict the S1.4 retrieval win for idleTimeout-bounded gain.
+  **Operator picked: pursue #26's controller pre-loading instead.**
+- **Shipped** (opt-in, default-off, additive): `config.preloadOnDeploy: true` keeps a
+  **non-shared, serverless** model warm (1 replica) from deploy until its first request, so
+  the first post-deploy request skips cold start; after `LastActiveTime` is set, normal idle
+  scale-to-zero resumes (distinct from `minReplicas:1` which pins forever). Pure calculation in
+  `desiredReplicasForContext` (the `LastActiveTime==nil` branch) — no CRD change, no state
+  writes. **Shared-GPU members are excluded** (the `SharedGroup.State != Active → 0` guard runs
+  first), so preload can **never** contend with or evict a group leader (e.g. gfx906 bge).
+  Observability: `flexinfer_model_preload_active{model,namespace}` gauge (1 while held warm
+  pre-first-request). Files: `controllers/model_helpers.go` (`preloadOnDeploy`/`isPreloadWarming`
+  + branch + gauge in `recordPhaseMetrics`), `pkg/metrics/exporter.go` (gauge + register),
+  `docs/CONFIGURATION.md`.
+- **Verify**: `go build ./...` OK; `go vet` OK; new `TestDesiredReplicasPreloadOnDeploy` PASS
+  (warm when never-activated; scales to 0 after first-use idle; off when disabled; shared
+  excluded) + full `./controllers/...` + `./pkg/metrics/...` suites green. Default-off → zero
+  behavior change for existing models, safe to roll via CI-publish + Flux. Live-verify on a
+  non-shared serverless lane is an optional post-rollout step (no such lane is warm-testable on
+  the current shared-heavy fleet without disturbing live gfx906 lanes).
+- **Status**: #26 advanced (controller preload-on-deploy shipped; the heavier "rollout controls"
+  like preload TTL / on-artifact triggers remain). **Sprint 2 COMPLETE** (S2.1–S2.4).

@@ -332,6 +332,18 @@ var (
 		[]string{"model", "namespace", "from", "to", "reason"},
 	)
 
+	// ModelPreloadActive reports whether a model is currently held warm by the
+	// preload-on-deploy policy (1) ahead of its first request, or not (0). It
+	// returns to 0 once the model serves its first request and normal idle
+	// scale-to-zero resumes.
+	ModelPreloadActive = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_model_preload_active",
+			Help: "1 if a model is held warm by preload-on-deploy before its first request, else 0.",
+		},
+		[]string{"model", "namespace"},
+	)
+
 	// ModelReadyLatencySeconds tracks the time from model creation to Ready.
 	ModelReadyLatencySeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -512,6 +524,7 @@ func init() {
 	// Model lifecycle metrics
 	ctrlmetrics.Registry.MustRegister(ModelPhase)
 	ctrlmetrics.Registry.MustRegister(ModelTransitionsTotal)
+	ctrlmetrics.Registry.MustRegister(ModelPreloadActive)
 	ctrlmetrics.Registry.MustRegister(ModelReadyLatencySeconds)
 
 	// Shared-group scheduling metrics (v1alpha2)

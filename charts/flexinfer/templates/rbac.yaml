@@ -467,6 +467,11 @@ rules:
   - apiGroups: [""]
     resources: ["configmaps"]
     verbs: ["get", "list", "watch", "create", "update", "patch"]
+  # Resolve the GPU node serving the benchmarked model (model Endpoints → pod →
+  # node) so device_class is read from the GPU node, not the CPU runner node.
+  - apiGroups: [""]
+    resources: ["endpoints", "pods"]
+    verbs: ["get", "list"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

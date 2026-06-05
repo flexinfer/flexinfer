@@ -71,6 +71,15 @@ func (r *ModelReconciler) desiredReplicasForContext(ctx context.Context, model *
 		minReplicas = 1
 	}
 	if model.Status.LastActiveTime == nil {
+		// preload-on-deploy: warm a non-shared serverless model proactively from
+		// deploy until its first request, so the first post-deploy request skips
+		// cold start. Distinct from minReplicas=1 (which never scales to zero):
+		// once the first request sets LastActiveTime, normal idle scale-to-zero
+		// resumes. Shared-GPU models are excluded (the guard above returns 0 for
+		// non-Active members) so preload can never evict a live group leader.
+		if isPreloadWarming(model) {
+			return 1
+		}
 		return minReplicas
 	}
 
@@ -129,6 +138,32 @@ func warmPolicy(model *aiv1alpha2.Model) string {
 
 func isWarmPrimaryModel(model *aiv1alpha2.Model) bool {
 	return warmPolicy(model) == warmPolicyPrimary
+}
+
+// preloadOnDeploy reports whether the model opts into proactive warm-up after
+// deploy via `config.preloadOnDeploy: true`. Opt-in, default off.
+func preloadOnDeploy(model *aiv1alpha2.Model) bool {
+	if model == nil {
+		return false
+	}
+	return model.Spec.ConfigBool("preloadOnDeploy", false)
+}
+
+// isPreloadWarming reports whether a model should be held warm by the
+// preload-on-deploy policy: opted in, serverless, scale-to-zero (minReplicas<1),
+// NOT part of a shared GPU group, and not yet activated since deploy
+// (LastActiveTime nil). Shared-GPU members are intentionally excluded so preload
+// can never contend with or evict a group leader; they use warm-pinning
+// (minReplicas>=1) instead.
+func isPreloadWarming(model *aiv1alpha2.Model) bool {
+	if model == nil {
+		return false
+	}
+	return preloadOnDeploy(model) &&
+		model.Spec.IsServerless() &&
+		!model.Spec.IsShared() &&
+		model.Spec.GetMinReplicas() < 1 &&
+		model.Status.LastActiveTime == nil
 }
 
 func (r *ModelReconciler) nodeHasActivePipelineWork(ctx context.Context, namespace, nodeName string) bool {
@@ -507,6 +542,14 @@ func (r *ModelReconciler) recordPhaseMetrics(model *aiv1alpha2.Model, from, to a
 		}
 		metrics.ModelPhase.WithLabelValues(name, ns, string(p)).Set(val)
 	}
+
+	// Surface whether preload-on-deploy is currently holding this model warm
+	// ahead of its first request (1) or not (0).
+	preloadVal := float64(0)
+	if isPreloadWarming(model) {
+		preloadVal = 1
+	}
+	metrics.ModelPreloadActive.WithLabelValues(name, ns).Set(preloadVal)
 
 	// Count the transition.
 	if from != "" && from != to {
