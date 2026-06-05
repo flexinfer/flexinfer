@@ -200,7 +200,7 @@ func (r *ModelCacheReconciler) reconcileStagePublish(
 			return ctrl.Result{}, err
 		}
 		log.Info("Creating stage publish job", "cache", modelCache.Name, "stage", stage, "job", newJob.Name, "ref", desiredRef)
-		if err := r.Create(ctx, newJob); err != nil {
+		if _, err := createJobIdempotent(ctx, r.Client, newJob); err != nil {
 			return ctrl.Result{}, err
 		}
 
