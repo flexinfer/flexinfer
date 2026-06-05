@@ -199,10 +199,20 @@ func (b *Benchmarker) RunAndReturn(ctx context.Context, model string) (*Benchmar
 		"samples", result.Samples,
 	)
 
+	// Device class must come from the GPU node serving the model, not the
+	// benchmarker's own runner node (which is typically a CPU worker). Resolve the
+	// serving node from the model's Endpoints now that the backend is Ready; fall
+	// back to the runner node if it can't be resolved.
+	nodeName := b.nodeName
+	if served := b.resolveServingNodeName(ctx); served != "" {
+		nodeName = served
+		log.Info("Resolved model serving node for device class", "servingNode", served, "runnerNode", b.nodeName)
+	}
+
 	record := &BenchmarkRecord{
 		ModelName:        model,
 		Backend:          b.backendType,
-		NodeName:         b.nodeName,
+		NodeName:         nodeName,
 		Namespace:        b.namespace,
 		TokensPerSecond:  result.TokensPerSecond,
 		CompletionTokens: result.CompletionTokens,
@@ -242,9 +252,11 @@ func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) erro
 
 // emitBenchmarkMetrics publishes benchmark results to Prometheus gauges.
 func (b *Benchmarker) emitBenchmarkMetrics(ctx context.Context, record *BenchmarkRecord) {
+	// Use the serving node resolved onto the record (the GPU node), not the
+	// runner node, so vendor/arch labels match the device that ran the model.
 	vendor, arch := "", ""
-	if b.nodeName != "" {
-		node, err := b.kubeClient.CoreV1().Nodes().Get(ctx, b.nodeName, metav1.GetOptions{})
+	if record.NodeName != "" {
+		node, err := b.kubeClient.CoreV1().Nodes().Get(ctx, record.NodeName, metav1.GetOptions{})
 		if err == nil {
 			vendor = node.Labels["flexinfer.ai/gpu.vendor"]
 			arch = node.Labels["flexinfer.ai/gpu.arch"]

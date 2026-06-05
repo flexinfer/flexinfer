@@ -8,8 +8,11 @@ import (
 // BenchmarkRecord holds all the data produced by a benchmark run,
 // which can be saved to one or more persistence stores.
 type BenchmarkRecord struct {
-	ModelName        string
-	Backend          string
+	ModelName string
+	Backend   string
+	// NodeName is the cluster node that served the benchmarked model — the GPU
+	// node behind the proxy, resolved from the model's Endpoints — NOT the
+	// benchmarker's own runner node. Stores read GPU device-class labels from it.
 	NodeName         string
 	Namespace        string
 	ConfigMapName    string // Target ConfigMap for this specific deployment's result
