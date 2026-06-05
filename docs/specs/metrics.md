@@ -73,6 +73,23 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
 - `flexinfer_proxy_rate_limited_total{model,scope}`
 - `flexinfer_proxy_activation_retries_total{model}`
 - `flexinfer_proxy_activation_retry_wait_duration_seconds{model}` (histogram)
+- `flexinfer_proxy_request_prompt_tokens{model}` (histogram) — upstream-reported
+  `prompt_tokens` per request, by resolved model. **Non-streaming completions
+  only** (streaming/SSE responses carry no parseable `usage` block).
+- `flexinfer_proxy_request_completion_tokens{model}` (histogram) — upstream-reported
+  `completion_tokens` per request, by resolved model. Non-streaming completions only.
+
+> **Why these exist (traffic-shape observability).** The per-request usage *log*
+> line (`event=request_usage`, `internal/proxy/usage_log.go`) is the richer
+> source but is **unreachable in the log aggregator**: the proxy is pinned to a
+> control-plane node whose pod logs are not scraped into Loki, and its stream is
+> drowned by controller-runtime `v1 Endpoints is deprecated` spam. These two
+> histograms are the durable, scrape-reliable view of the per-lane traffic mix.
+> Read them to ground workload-conditional decisions — e.g. blanket n-gram
+> speculative decoding is a win on short Q/A but a tax on long-form generation
+> (`ngram-sd-workload-conditional`), so the completion-token distribution and the
+> prompt:completion ratio per lane decide whether SD should stay on. Example:
+> `histogram_quantile(0.5, sum by (le) (rate(flexinfer_proxy_request_completion_tokens_bucket{model="gemma4-26b-a4b-gptq"}[1d])))`.
 
 ## Runtime Metrics (`flexinfer-runtime`)
 

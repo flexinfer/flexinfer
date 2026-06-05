@@ -358,6 +358,19 @@ func (p *Proxy) logUpstreamUsage(resp *http.Response) error {
 				"completion_tokens", ct,
 				"finish_reason", fr,
 			)
+
+			// Surface request shape to Prometheus. The usage *log* line above is
+			// unreachable in the aggregator (proxy pod on an un-scraped
+			// control-plane node), so these histograms are the durable,
+			// scrape-reliable view of the per-lane traffic mix. Label by the
+			// resolved model (the actual serving lane) to match the other proxy
+			// metrics; fall back to the requested alias when unresolved.
+			shapeModel := lc.resolvedModel
+			if shapeModel == "" {
+				shapeModel = lc.model
+			}
+			requestPromptTokens.WithLabelValues(shapeModel).Observe(float64(pt))
+			requestCompletionTokens.WithLabelValues(shapeModel).Observe(float64(ct))
 			resp.Header.Set(headerPromptTokens, strconv.Itoa(pt))
 			if fr != "" {
 				resp.Header.Set(headerFinishReason, fr)

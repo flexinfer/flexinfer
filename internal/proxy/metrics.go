@@ -189,6 +189,41 @@ var (
 		[]string{"model", "reason"},
 	)
 
+	// Per-request token-shape histograms. Observed in logUpstreamUsage from the
+	// upstream `usage` block, labeled by resolved model so the traffic mix can be
+	// read per serving lane. This is the only place the proxy surfaces request
+	// shape to Prometheus — the per-request usage *log* line is unreachable in
+	// the aggregator (the proxy is pinned to a control-plane node whose pod logs
+	// are not scraped), so these metrics are the durable, scrape-reliable path
+	// for grounding workload-conditional decisions (e.g. blanket n-gram SD,
+	// which is a win on short Q/A but a tax on long-form generation).
+	//
+	// CAVEAT: only non-streaming JSON completions carry a parseable usage block,
+	// so streaming (SSE) requests are not observed here. The sample is biased
+	// toward non-streaming traffic; read the histograms with that in mind.
+	//
+	// Buckets span the LLM token range (16 → 32768) so both short Q/A and
+	// long-context lanes land in distinct buckets.
+	llmTokenBuckets = []float64{16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768}
+
+	requestPromptTokens = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_request_prompt_tokens",
+			Help:    "Histogram of upstream-reported prompt_tokens per request, by resolved model. Non-streaming completions only.",
+			Buckets: llmTokenBuckets,
+		},
+		[]string{"model"},
+	)
+
+	requestCompletionTokens = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_request_completion_tokens",
+			Help:    "Histogram of upstream-reported completion_tokens per request, by resolved model. Non-streaming completions only.",
+			Buckets: llmTokenBuckets,
+		},
+		[]string{"model"},
+	)
+
 	stalledLoadTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_stalled_load_total",
@@ -274,6 +309,8 @@ func RegisterMetrics() {
 		prometheus.MustRegister(activationFailuresTotal)
 		prometheus.MustRegister(rateLimitedTotal)
 		prometheus.MustRegister(maxTokensClampedTotal)
+		prometheus.MustRegister(requestPromptTokens)
+		prometheus.MustRegister(requestCompletionTokens)
 		prometheus.MustRegister(stalledLoadTotal)
 		prometheus.MustRegister(admissionDecisionsTotal)
 		prometheus.MustRegister(labelGroupRouteDecisionsTotal)
