@@ -2322,10 +2322,31 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
   gemma4-26b-a4b-gptq-5930k, gemma4-e4b-gguf` — app honors the canary chain. That run found **0
   pending articles** (queue drained, low overnight inflow), so completion volume accrues organically
   as the scraper/extractor pipeline feeds articles.
-- **Status**: traffic source enabled; real per-lane completion data now accrues toward the S3.0 SD
-  verdict. **Follow-up (≥1 day)**: confirm gemma4 lanes show real news-analyzer completions, read the
-  per-lane completion-token distribution + `stream` coverage, watch for 32K-context overflows (gemma4
-  is 32K vs cloud 131K) and summary-quality regressions, then make the blanket-SD verdict.
+- **Action 2 — storyboard-generator (prod) — MR !2 (merged + LIVE 2026-06-05)**: repointed the
+  prod text path (`LLM_ENDPOINT`/`LLM_BASE_URL` + `LLM_MODEL`/`TEXTGEN`/`VISION`/`AGENT` + legacy
+  `OLLAMA_API_URL`) → flexinfer-proxy `gemma4-26b-a4b-gptq`. Image generation (`IMAGE_ENDPOINT`/
+  `IMAGE_MODEL=image-gen`/`SD_API_URL`) stays on cloud diffusers (separate env, untouched). Edited
+  `k8s/overlays/production/configmap-patch.yaml`. **GitOps gotcha**: `envFrom: configMapRef` does NOT
+  auto-rollout on a ConfigMap change, and `kubectl rollout restart` is **reverted by Flux** (the
+  restart annotation isn't in git) — had to `kubectl delete pod -l app=storyboard-generator` to cycle
+  them. New pod verified: `LLM_ENDPOINT=flexinfer..., LLM_MODEL=gemma4-26b-a4b-gptq, IMAGE_ENDPOINT=
+  litellm.ai` (cloud). Reachability kill-tested 200 from a storyboard-prod pod.
+- **Action 3 — jobsearch-app daemon — MR !93 (auto-merge armed)**: required a **code change** —
+  daemon shares one `LLM_BASE_URL` for all roles and has a *real* cloud vision model
+  (`or/claude-3.5-sonnet`). Added `LLM_VISION_BASE_URL` split (`config.get_base_url_for(model_type)` +
+  threaded through `clients._get_local_model`/`_create_model_for_provider`; 54 tests pass). Manifests
+  (deployment, worker, cron-match): `LLM_BASE_URL`→flexinfer, `LLM_VISION_BASE_URL`→litellm.ai (cloud),
+  `LLM_TEXTGEN_MODEL`/`LLM_AGENT_MODEL`→gemma4-26b, vision model stays claude. **Safe**: the LLM vision
+  path (`get_vision_model`) is dormant (no `image_url` call sites; real interview vision is MediaPipe),
+  and text works under old or new code → no new-env/old-image risk. **NOTE**: jobsearch deploy/image-
+  promote job is `when: manual` → after merge, promote the new `daemon-api` image so the vision-split
+  code is live (text canary works regardless; env change triggers the pod rollout via Flux).
+- **Status**: 3 traffic sources enabled (news-analyzer batch, storyboard-prod text, jobsearch
+  text/agent); real per-lane completion data now accrues toward the S3.0 SD verdict. **Follow-up
+  (≥1 day)**: confirm gemma4 lanes show real completions from all three, read the per-lane
+  completion-token distribution + `stream` coverage, watch for 32K-context overflows (gemma4 is 32K
+  vs cloud 131K) and quality regressions, then make the blanket-SD verdict. jobsearch image-promote
+  is the one open manual step.
 
 ---
 
