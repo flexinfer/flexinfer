@@ -298,6 +298,13 @@ pulled forward if concurrent demand materializes (the runner-up trigger).
   Shipped two proxy histograms `flexinfer_proxy_request_{prompt,completion}_tokens{model}`
   (scrape-reliable path; non-streaming only) so the measurement can land once data
   accumulates. Verdict deferred to a follow-up. Matrix: "2026-06-05 S3.0".
+  - **S3.0 #3 (streaming usage-chunk capture) — DONE 2026-06-05, MR !579 (merge 2af1c733).**
+    Closed the histograms' streaming blind spot: `usageSniffingBody` transparently sniffs the
+    terminal SSE `usage` chunk (when the client set `stream_options.include_usage`) and records
+    the shape histograms, so the eventual SD verdict is trustworthy regardless of traffic mix.
+    Additive/default-safe; full `./internal/proxy/` suite green under `-race`. Matrix:
+    "2026-06-05 S3.0 #3". Remaining S3.0 dependency: roll S3.0b `completions_total` live + let
+    ≥1 day of real traffic accumulate before the blanket-SD verdict.
 - **S3.1** — Replicate in-process n-gram SD (`speculativeConfig` passthrough,
   already wired at `backend/vllm.go:212-216`) to qwen35 (once it serves coherently
   — see #51/#52). **Twin already done** (see reconciliation above). Verify

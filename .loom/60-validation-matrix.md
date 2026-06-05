@@ -2237,6 +2237,39 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
 
 ---
 
+### 2026-06-05 S3.0 #3 — streaming usage-chunk capture (MR !579, merged 2af1c733)
+
+- **Slice**: Sprint 3 S3.0 follow-up #3. Closes the documented blind spot in the S3.0 instrument:
+  `flexinfer_proxy_request_{prompt,completion}_tokens` observed **non-streaming completions only**,
+  biasing the sample away from exactly the long-form generation the blanket n-gram SD verdict hinges
+  on (`ngram-sd-workload-conditional`). Not data-gated (unlike the verdict), so landable now to make
+  the eventual verdict trustworthy regardless of traffic mix.
+- **What**: `usageSniffingBody` (`internal/proxy/usage_log.go`) — a transparent pass-through wrapper
+  around streaming (SSE) completion bodies. Forwards every byte to the client unmodified/unbuffered,
+  retains a bounded 32 KiB tail, parses the terminal OpenAI `usage` chunk on `Close`, records the
+  two histograms once. Wired in `logUpstreamUsage` for `stream=true` 2xx completion paths. Present
+  **only** when the client set `stream_options.include_usage` (engine then emits the usage chunk);
+  streams without it stay unobserved and `flexinfer_proxy_completions_total{stream}` still bounds the
+  gap. Help text + `docs/specs/metrics.md` updated (no longer "non-streaming only").
+- **Safety**: additive, default-safe, no behavior change to the stream itself (transparent tap, no
+  buffering, idempotent `Close`).
+- **Verify**: `gofmt`/`go build`/`go vet ./internal/proxy/...` clean. New tests:
+  `TestExtractStreamingUsage` (null frames, truncated leading line, zero-filled placeholder,
+  `[DONE]`-only, garbage), `TestUsageSniffingBody_RecordsOnCloseAndPassesThrough` (byte-exact
+  pass-through + record-on-Close + idempotent Close), `TestLogUpstreamUsage_StreamingRecordsTokenShapeFromUsageChunk`
+  (e2e), and the repurposed `..._SkipsTokenShapeMetricsForStreamingWithoutUsageChunk`. Full
+  `./internal/proxy/` suite green under `-race`. CI pipeline 13024 green (fmt/vet/lint + unit/proxy/
+  integration/gpugroup tests); auto-merged.
+- **CAVEAT (no silent cap)**: coverage still depends on clients setting `stream_options.include_usage`.
+  Whether real streaming traffic carries the chunk is unknown until S3.0b's `completions_total` rolls
+  live and data accumulates — if streaming dominates AND usage chunks are absent, the histograms stay
+  biased and a deeper capture (delta-counting, or proxy-injected `include_usage`) would be the next move.
+- **Status**: S3.0 instrument now covers streaming-with-usage-chunk. Remaining S3.0 dependency is
+  unchanged: roll S3.0b (`completions_total`, merge `c0815345`) live via proxy publish+Flux, then let
+  ≥1 day of real traffic accumulate before the blanket-SD verdict.
+
+---
+
 ## Benchmarker device_class — serving-node resolution (#34 follow-up, 2026-06-04)
 
 **Defect**: The benchmarker stored an empty `device_class`
