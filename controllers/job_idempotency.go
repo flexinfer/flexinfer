@@ -21,6 +21,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/flexinfer/flexinfer/pkg/metrics"
 	batchv1 "k8s.io/api/batch/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -79,7 +80,11 @@ func resolveControllerInstanceID(envHostname string, osHostname func() (string, 
 // created=false with err=nil means an equivalent Job already existed (the
 // desired post-condition is still satisfied). Any non-AlreadyExists error is
 // returned unchanged.
-func createJobIdempotent(ctx context.Context, w client.Writer, job *batchv1.Job) (created bool, err error) {
+//
+// jobType labels the conflict counter so the rollout race can be observed per
+// pipeline stage (e.g. "abliterate", "quantize", "download"). It does not
+// affect the create itself.
+func createJobIdempotent(ctx context.Context, w client.Writer, job *batchv1.Job, jobType string) (created bool, err error) {
 	if id := ControllerInstanceID(); id != "" {
 		if job.Annotations == nil {
 			job.Annotations = map[string]string{}
@@ -88,6 +93,10 @@ func createJobIdempotent(ctx context.Context, w client.Writer, job *batchv1.Job)
 	}
 	if err := w.Create(ctx, job); err != nil {
 		if apierrors.IsAlreadyExists(err) {
+			// The race fired: another controller generation already created an
+			// equivalent Job. Record it so the (now silently tolerated) rollout
+			// conflict stays observable instead of vanishing into success.
+			metrics.ModelCacheJobCreateConflictsTotal.WithLabelValues(jobType).Inc()
 			return false, nil
 		}
 		return false, err

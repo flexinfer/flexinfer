@@ -21,6 +21,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/flexinfer/flexinfer/pkg/metrics"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
@@ -94,7 +96,7 @@ func TestCreateJobIdempotent_CreatesWhenAbsent(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(s).Build()
 
 	job := newTestJob("quant-job")
-	created, err := createJobIdempotent(context.Background(), cl, job)
+	created, err := createJobIdempotent(context.Background(), cl, job, "quantize")
 	require.NoError(t, err)
 	assert.True(t, created, "expected created=true on first create")
 
@@ -116,9 +118,17 @@ func TestCreateJobIdempotent_SwallowsAlreadyExists(t *testing.T) {
 	existing := newTestJob("dup-job")
 	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(existing).Build()
 
-	created, err := createJobIdempotent(context.Background(), cl, newTestJob("dup-job"))
+	// A distinct job_type keeps this assertion isolated from other tests that
+	// touch the shared global counter.
+	const jobType = "conflict-test-stage"
+	before := testutil.ToFloat64(metrics.ModelCacheJobCreateConflictsTotal.WithLabelValues(jobType))
+
+	created, err := createJobIdempotent(context.Background(), cl, newTestJob("dup-job"), jobType)
 	require.NoError(t, err, "AlreadyExists must be treated as success")
 	assert.False(t, created, "expected created=false when the job already exists")
+
+	after := testutil.ToFloat64(metrics.ModelCacheJobCreateConflictsTotal.WithLabelValues(jobType))
+	assert.Equal(t, before+1, after, "tolerated AlreadyExists conflict must increment the counter")
 }
 
 func TestCreateJobIdempotent_StampsAnnotationOnNilMap(t *testing.T) {
@@ -132,7 +142,7 @@ func TestCreateJobIdempotent_StampsAnnotationOnNilMap(t *testing.T) {
 
 	job := newTestJob("ann-job")
 	job.Annotations = nil
-	created, err := createJobIdempotent(context.Background(), cl, job)
+	created, err := createJobIdempotent(context.Background(), cl, job, "image_warmup")
 	require.NoError(t, err)
 	require.True(t, created)
 	assert.Equal(t, ControllerInstanceID(), job.Annotations[AnnotationControllerInstance])

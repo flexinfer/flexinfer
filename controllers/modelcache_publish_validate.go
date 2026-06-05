@@ -135,7 +135,7 @@ func (r *ModelCacheReconciler) createValidatorJob(
 	}
 
 	log.Info("Creating publish-validator job", "Job", job.Name)
-	if _, err := createJobIdempotent(ctx, r.Client, job); err != nil {
+	if _, err := createJobIdempotent(ctx, r.Client, job, "publish_validate"); err != nil {
 		return false, ctrl.Result{}, err
 	}
 
