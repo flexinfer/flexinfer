@@ -224,6 +224,22 @@ var (
 		[]string{"model"},
 	)
 
+	// completionsTotal counts successful completion responses by resolved model
+	// and whether the client streamed. It is the **coverage denominator** for the
+	// token-shape histograms above: those only observe non-streaming requests
+	// (SSE carries no parseable usage block), so the streaming fraction here tells
+	// you how much traffic the shape histograms miss. A high stream=true share
+	// means the shape data is biased and the histogram-based workload verdict
+	// (e.g. blanket n-gram SD) must be read with caution — or the streaming usage
+	// chunk must be captured before trusting it.
+	completionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_completions_total",
+			Help: "Total successful completion responses by resolved model and stream flag. The stream=true share is the blind spot of the request_*_tokens histograms (non-streaming only).",
+		},
+		[]string{"model", "stream"},
+	)
+
 	stalledLoadTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_stalled_load_total",
@@ -311,6 +327,7 @@ func RegisterMetrics() {
 		prometheus.MustRegister(maxTokensClampedTotal)
 		prometheus.MustRegister(requestPromptTokens)
 		prometheus.MustRegister(requestCompletionTokens)
+		prometheus.MustRegister(completionsTotal)
 		prometheus.MustRegister(stalledLoadTotal)
 		prometheus.MustRegister(admissionDecisionsTotal)
 		prometheus.MustRegister(labelGroupRouteDecisionsTotal)

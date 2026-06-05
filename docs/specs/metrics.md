@@ -78,6 +78,14 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
   only** (streaming/SSE responses carry no parseable `usage` block).
 - `flexinfer_proxy_request_completion_tokens{model}` (histogram) — upstream-reported
   `completion_tokens` per request, by resolved model. Non-streaming completions only.
+- `flexinfer_proxy_completions_total{model,stream}` (counter) — successful completion
+  responses by resolved model and `stream` flag. **Coverage denominator** for the two
+  histograms above: they observe non-streaming only, so the `stream="true"` share is
+  exactly the traffic the shape histograms miss. Read it before trusting a
+  histogram-based workload verdict — e.g.
+  `sum by (stream) (rate(flexinfer_proxy_completions_total{model="gemma4-26b-a4b-gptq"}[1d]))`.
+  A high streaming share means the shape data is biased and the verdict needs the
+  streaming usage chunk captured first (see metrics.md follow-up #3 / MR !575).
 
 > **Why these exist (traffic-shape observability).** The per-request usage *log*
 > line (`event=request_usage`, `internal/proxy/usage_log.go`) is the richer

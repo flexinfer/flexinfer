@@ -307,6 +307,17 @@ func (p *Proxy) logUpstreamUsage(resp *http.Response) error {
 	// 200 OK before the first SSE chunk is forwarded.
 	if isCompletionPath(lc.path) {
 		resp.Header.Set(headerUpstreamMs, strconv.FormatInt(durMs, 10))
+
+		// Coverage denominator for the token-shape histograms (which observe
+		// non-streaming only). Counts every successful completion by stream
+		// flag so the stream=true share quantifies the histograms' blind spot.
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			shapeModel := lc.resolvedModel
+			if shapeModel == "" {
+				shapeModel = lc.model
+			}
+			completionsTotal.WithLabelValues(shapeModel, strconv.FormatBool(lc.stream)).Inc()
+		}
 	}
 
 	args := []any{

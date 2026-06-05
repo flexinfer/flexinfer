@@ -2207,12 +2207,23 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
 - **CAVEAT (no silent cap)**: only **non-streaming** JSON completions carry a parseable usage
   block, so the histograms are biased toward non-streaming traffic (same bias as the usage log).
   A future slice could parse the final SSE `usage` chunk for streaming coverage.
+- **S3.0b (coverage counter) — SHIPPED 2026-06-05.** The histograms observe **non-streaming
+  only**, so a streaming-heavy workload would bias them toward exactly the long-form generation
+  the SD verdict hinges on. Added `flexinfer_proxy_completions_total{model,stream}` (counter,
+  every successful completion) as the **coverage denominator**: the `stream="true"` share
+  quantifies the histograms' blind spot per lane. If streaming dominates, the histogram verdict
+  must wait for streaming usage-chunk capture (follow-up #3); if not, the histograms are
+  trustworthy as-is. `TestLogUpstreamUsage_CountsCompletionCoverage` PASS; full
+  `./internal/proxy/` suite green.
+- **Telemetry follow-up (a) ALREADY FIXED 2026-06-05** (master `b3fc0406`,
+  `fix(proxy): migrate endpoint watch to discovery.k8s.io/v1 EndpointSlice`): the controller-
+  runtime `v1 Endpoints is deprecated` log spam is gone → `kubectl logs` on the proxy is
+  readable again. Loki-scraping gap (b) still open in platform/gitops.
 - **Status**: instrument shipped (the measurement now *can* land once data accumulates — hours/
-  days of real traffic, then read percentiles per lane and decide blanket SD per route). The
-  verdict itself is **deferred** to a follow-up. Two telemetry follow-ups flagged: (a) the
-  proxy `v1 Endpoints is deprecated` log spam; (b) the gtx980ti / control-plane node not being
-  scraped into Loki (platform/gitops). Sprint 3 SD replication remains config-blocked/risk-gated
-  pending this data (twin already has SD `{5,4}`; primary already tuned `{7,6}`; qwen35 disabled).
+  days of real traffic, then read percentiles per lane and decide blanket SD per route, **gated
+  on the stream-coverage share being low**). The verdict itself is **deferred** to a follow-up.
+  Sprint 3 SD replication remains config-blocked/risk-gated pending this data (twin already has
+  SD `{5,4}`; primary already tuned `{7,6}`; qwen35 disabled).
 
 ---
 
