@@ -378,6 +378,36 @@ Key configuration fields in the `Model` CRD:
 | `serverless.*` | object | Scale-to-zero behavior (idle/cold start timeouts) |
 | `cache.*` | object | Cache strategy (Memory/SharedPVC/None) |
 | `serviceLabels` | []string | Semantic labels for routing |
+| `config.preloadOnDeploy` | bool | Warm a non-shared serverless model on deploy until its first request (see below) |
+
+#### Preload on deploy
+
+Set `config.preloadOnDeploy: true` on a **non-shared, serverless** model
+(`serverless.minReplicas: 0`) to have the controller proactively keep it warm
+(one replica) from deploy until it serves its first request, so the first
+post-deploy request skips cold start:
+
+```yaml
+spec:
+  backend: vllm
+  serverless:
+    enabled: true
+    minReplicas: 0      # still scales to zero after first use
+  config:
+    preloadOnDeploy: true
+```
+
+This differs from `serverless.minReplicas: 1` (which pins the model warm
+forever): once the first request sets `LastActiveTime`, normal idle
+scale-to-zero resumes. The model is held warm only until first use, so use it
+for lanes you expect to be hit shortly after deploy (a never-requested model
+stays warm indefinitely).
+
+**Shared-GPU members are excluded**: a model in a `gpu.shared` group is governed
+by leadership/warm-pinning (above), and preload is skipped for it so it can never
+contend with or evict a group leader. Observe the warm state via the
+`flexinfer_model_preload_active{model,namespace}` gauge (1 while held warm before
+first request, 0 otherwise).
 
 #### Shared-group leadership and warm-pinning
 

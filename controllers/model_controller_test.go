@@ -135,6 +135,55 @@ func TestDesiredReplicasServerless(t *testing.T) {
 	}
 }
 
+func TestDesiredReplicasPreloadOnDeploy(t *testing.T) {
+	r := &ModelReconciler{}
+	vllmBackend, _ := backend.Get("vllm")
+
+	newModel := func(cfg string) *aiv1alpha2.Model {
+		m := &aiv1alpha2.Model{Spec: aiv1alpha2.ModelSpec{Backend: "vllm"}}
+		if cfg != "" {
+			m.Spec.Config = &apiextensionsv1.JSON{Raw: []byte(cfg)}
+		}
+		return m
+	}
+
+	// preload-on-deploy: serverless, scale-to-zero, never activated => warm (1).
+	model := newModel(`{"preloadOnDeploy":true}`)
+	if got := r.desiredReplicas(model, vllmBackend); got != 1 {
+		t.Errorf("desiredReplicas() = %d, want 1 (preload-on-deploy, never activated)", got)
+	}
+
+	// After the first request (recent activity) it serves normally (1) but is no
+	// longer in the preload-warm state.
+	recent := metav1.Time{Time: time.Now().Add(-1 * time.Minute)}
+	model.Status.LastActiveTime = &recent
+	if isPreloadWarming(model) {
+		t.Errorf("isPreloadWarming = true after activation, want false")
+	}
+
+	// Once idle past the timeout, a preload model scales back to zero — the key
+	// distinction from minReplicas=1 (which would stay at 1).
+	old := metav1.Time{Time: time.Now().Add(-1 * time.Hour)}
+	model.Status.LastActiveTime = &old
+	if got := r.desiredReplicas(model, vllmBackend); got != 0 {
+		t.Errorf("desiredReplicas() = %d, want 0 (preload scales to zero after first use)", got)
+	}
+
+	// Without the opt-in, a never-activated serverless model stays at zero.
+	off := newModel(`{"preloadOnDeploy":false}`)
+	if got := r.desiredReplicas(off, vllmBackend); got != 0 {
+		t.Errorf("desiredReplicas() = %d, want 0 (preload disabled)", got)
+	}
+
+	// Shared-GPU members are excluded from preload so they cannot contend with a
+	// group leader; preload never holds them warm.
+	shared := newModel(`{"preloadOnDeploy":true}`)
+	shared.Spec.GPU = &aiv1alpha2.GPUSpec{Shared: "group-a"}
+	if isPreloadWarming(shared) {
+		t.Errorf("isPreloadWarming = true for shared model, want false (excluded)")
+	}
+}
+
 func TestDeploymentExists(t *testing.T) {
 	s := runtime.NewScheme()
 	if err := scheme.AddToScheme(s); err != nil {

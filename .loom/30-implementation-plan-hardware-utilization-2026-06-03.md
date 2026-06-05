@@ -250,6 +250,19 @@ HBM2 plane live, nightly re-embed/index is 10–40× cheaper.
 - **S2.4** — Model pre-loading / prefix-cache prewarm during the idle window
   (ties to #26): precompute likely first-prompt prefixes so the morning's first
   request is warm.
+  - **PREMISE PIVOT + SHIPPED 2026-06-04 (flexinfer MR — controller feature).**
+    The prefix-prewarm framing was **falsified for the current fleet**: the
+    daily-driver gemma4-26b is warm-pinned (no cold-start) with
+    `enablePrefixCaching: false` (APC infeasible at 32K/FP8-KV per the F4 canary →
+    no prefix cache to seed), and all scale-to-zero text lanes share gfx906 with the
+    LIVE bge+reranker plane (prewarm would evict the S1.4 win). Operator chose #26's
+    controller pre-loading. Shipped opt-in `config.preloadOnDeploy: true`: warms a
+    **non-shared serverless** model (1 replica) from deploy until first request,
+    then normal idle scale-to-zero resumes (distinct from minReplicas:1). Pure calc
+    in `desiredReplicasForContext`; shared-GPU members excluded (cannot evict a
+    leader); gauge `flexinfer_model_preload_active`. Default-off, unit-tested, all
+    controllers/metrics suites green. Matrix: "2026-06-04 S2.4". **Sprint 2 COMPLETE
+    (S2.1–S2.4).**
 
 **Acceptance**: nightly re-embed runs unattended + logged; eval gauntlet emits a
 matrix/Postgres row for a test artifact; #26/#27/#34 advanced with backlinks.
