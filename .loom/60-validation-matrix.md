@@ -2219,11 +2219,21 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
   `fix(proxy): migrate endpoint watch to discovery.k8s.io/v1 EndpointSlice`): the controller-
   runtime `v1 Endpoints is deprecated` log spam is gone → `kubectl logs` on the proxy is
   readable again. Loki-scraping gap (b) still open in platform/gitops.
-- **Status**: instrument shipped (the measurement now *can* land once data accumulates — hours/
-  days of real traffic, then read percentiles per lane and decide blanket SD per route, **gated
-  on the stream-coverage share being low**). The verdict itself is **deferred** to a follow-up.
-  Sprint 3 SD replication remains config-blocked/risk-gated pending this data (twin already has
-  SD `{5,4}`; primary already tuned `{7,6}`; qwen35 disabled).
+- **S3.0 LIVE-VERIFIED 2026-06-05.** Proxy rolled to `sha256:2d5b47ca` (15:31Z). Sent one
+  non-streaming completion through the proxy to the warm `gemma4-26b-a4b-gptq` lane
+  (`prompt_tokens=22, completion_tokens=6`); `/metrics` then showed
+  `flexinfer_proxy_request_prompt_tokens_count{model="gemma4-26b-a4b-gptq"} 1` +
+  `..._completion_tokens_count ... 1`. **The instrument works end-to-end through Prometheus,
+  bypassing the broken log path** — design goal confirmed on real traffic. `completions_total`
+  (S3.0b) is NOT yet in this image (rolled before the S3.0b merge `c0815345`) → goes live on the
+  next proxy publish+Flux cycle. (Live-checked via `kubectl port-forward svc/flexinfer-proxy`;
+  loom Prometheus MCP was disconnected.)
+- **Status**: instrument shipped + S3.0 LIVE. The measurement now *can* land once data
+  accumulates (hours/days of real traffic → read completion-token percentiles per lane and decide
+  blanket SD per route, **gated on the stream-coverage share being low** once S3.0b rolls). The
+  verdict itself is **deferred** to a follow-up. Sprint 3 SD replication remains
+  config-blocked/risk-gated pending this data (twin already has SD `{5,4}`; primary already tuned
+  `{7,6}`; qwen35 disabled).
 
 ---
 
