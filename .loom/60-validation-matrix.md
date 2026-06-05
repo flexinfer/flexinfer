@@ -2301,6 +2301,34 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
 
 ---
 
+### 2026-06-05 S3.0 traffic source — news-analyzer batch canary onto gemma4-26b SD lanes
+
+- **Problem found**: the SD-verdict data clock was effectively *not running* — the gemma4-26b lanes
+  see ~0 real completions/day. The heavy LLM consumers (news-analyzer, jobsearch-app,
+  storyboard-generator) route through the **legacy `ai`-namespace litellm** (`litellm.ai.svc`),
+  whose local GPU backends are all scaled 0/0, so it only proxies to **OpenRouter cloud**
+  (`or/deepseek-chat`, `or/llama-3.3-70b`). Self-hosted GPUs idle + cloud spend + lanes starved.
+  Only project-management/mentatlab point at flexinfer-proxy (low volume). flexinfer-proxy 24h
+  total ≈534 req, ~0 actual completions per lane.
+- **Action (operator-approved canary)**: repointed **only** the news-analyzer `summarizer-batch`
+  cronjob (runs every 30 min) → `flexinfer-proxy.flexinfer-system/v1`, model `gemma4-26b-a4b-gptq`,
+  local fallback chain `[-5930k twin, gemma4-e4b-gguf]`, `CONCURRENCY 10→2` + `TIMEOUT→120`
+  (single-stream `maxNumSeqs:1` lanes). Shipped news-analyzer **MR !7** (merged; Flux-applied).
+  OCR/extractor (gemini vision), digest, rss-digest, the always-on deployment, and all embeddings
+  stay on cloud (untouched). Reversible: revert the cronjob file.
+- **Verify**: reachability kill-test from a live summarizer pod → flexinfer-proxy `/v1/models` 200,
+  chat `gemma4-26b-a4b-gptq` 200 (no NetworkPolicy block). After Flux apply, a manual batch run
+  logged `Initialized ArticleSummarizer with model priority: gemma4-26b-a4b-gptq,
+  gemma4-26b-a4b-gptq-5930k, gemma4-e4b-gguf` — app honors the canary chain. That run found **0
+  pending articles** (queue drained, low overnight inflow), so completion volume accrues organically
+  as the scraper/extractor pipeline feeds articles.
+- **Status**: traffic source enabled; real per-lane completion data now accrues toward the S3.0 SD
+  verdict. **Follow-up (≥1 day)**: confirm gemma4 lanes show real news-analyzer completions, read the
+  per-lane completion-token distribution + `stream` coverage, watch for 32K-context overflows (gemma4
+  is 32K vs cloud 131K) and summary-quality regressions, then make the blanket-SD verdict.
+
+---
+
 ## Benchmarker device_class — serving-node resolution (#34 follow-up, 2026-06-04)
 
 **Defect**: The benchmarker stored an empty `device_class`
