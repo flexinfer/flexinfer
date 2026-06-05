@@ -2107,3 +2107,33 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
 - **Status**: CronJob LIVE (`SUSPEND: False`), schema accepted by the API. Shipping in
   flexinfer `deploy/tasks/codebase-reembed/`. S2.2 acceptance met: nightly re-embed runs
   unattended + logged; one in-cluster consumer wired with the throughput path measured.
+
+### 2026-06-04 S2.3 — offline model-eval gauntlet: Postgres benchmark storage e2e (#34) + automation (#27) (LIVE-VERIFIED)
+
+- **Slice**: Sprint 2, S2.3 (hardware-utilization arc). Validate the never-proven Postgres
+  benchmark storage backend (#34) end-to-end, then automate benchmark generation (#27) as a
+  scheduled gauntlet. Continues the S2.2 idle-batch appliance pattern.
+- **Tracker drift corrected**: #34 names `pkg/benchmarkconfig/store_postgres.go` — that path
+  does not exist; the store is `agents/benchmarker/postgres_store.go` (`NewPostgresStore`:
+  `sql.Open`+Ping, embedded `schema.sql` auto-creates the `benchmarks` table, inserts via
+  `Save`). `flexinfer-bench` is CI-published (`registry.harbor.lan/flexinfer/flexinfer-bench:master`).
+- **#34 e2e — gap found + closed**: the configured DSN
+  (`deploy/system/values-k3s.yaml:210` → `langgraph-postgres-postgresql.ai.svc:5432/flexinfer_benchmarks`,
+  user langgraph) pointed at a database that **did not exist** — the store auto-creates the
+  *table* but not the *database*, so the bench would have failed at Ping. Created
+  `flexinfer_benchmarks` (probe job). Then ran `flexinfer-bench` (SA `flexinfer-benchmarker`,
+  nodes+configmaps RBAC; `FLEXINFER_PROXY_URL`; `POSTGRES_DSN`) against the warm
+  `gemma4-26b-a4b-gptq` (vllm): table auto-created, **1 row inserted** (113.39 tps / 512 tok /
+  4.52 s). #34 PASS.
+- **#27 automation — gauntlet CronJob** (`deploy/tasks/model-eval-gauntlet/`, additive/reversible,
+  Flux-managed): weekly (Sun 05:00 ET) `flexinfer-bench` loop over a `MODELS` (`name=backend`)
+  list → Postgres `benchmarks` + per-model ConfigMap. Wrapper continues past one cold/missing
+  model (exits non-zero only if all fail). Live one-shot from the CronJob: **ok=2 fail=0**,
+  both models "Saved benchmark result to postgres". Final table = **3 rows**:
+  gemma4-26b-a4b-gptq 113.39→156.60 tps (batch 32→64), gemma4-26b-a4b-gptq-5930k twin 141.24 tps.
+- **Known limitation (follow-up)**: `device_class` is empty (`vendor=,arch=,…`) — the bench
+  derives it from the **runner pod's** node (a CPU node), not the model's serving GPU node.
+  Storage + throughput numbers are correct; device attribution needs a benchmarker code change.
+- **Status**: both CronJobs LIVE (`codebase-reembed` + `model-eval-gauntlet`, SUSPEND False).
+  #34 validated (closeable); #27 advanced (offline scheduled gauntlet; true on-artifact-creation
+  trigger is a follow-up). S2.3 acceptance met: gauntlet emits Postgres rows automatically.

@@ -1,0 +1,74 @@
+# model-eval-gauntlet — offline benchmark automation (Sprint 2 / S2.3)
+
+Weekly CronJob that runs `flexinfer-bench` against a configurable set of warm text
+models and records a throughput row per model to **Postgres** (the `benchmarks`
+table in `flexinfer_benchmarks`) and a per-model results ConfigMap.
+
+This is the automation leg of **#27** (keep benchmark/scheduling inputs current),
+riding on the **#34** Postgres storage backend, which was validated end-to-end
+live on 2026-06-04 (see `.loom/60-validation-matrix.md` → "2026-06-04 S2.3").
+
+## How it works
+
+1. The `flexinfer-benchmarker` ServiceAccount (nodes `get` + configmaps RBAC)
+   runs the published `flexinfer-bench:master` image.
+2. A shell wrapper loops `MODELS` (space-separated `name=backend` entries) and runs
+   the bench binary once per model, routing through `flexinfer-proxy` (models
+   cold-start on demand).
+3. Each run stores a row to Postgres (`POSTGRES_DSN`) and to
+   `flexinfer-benchmarks-<model>` ConfigMap.
+4. One cold/missing model is logged (`GAUNTLET FAIL <name>`) but does not abort the
+   gauntlet; the job exits non-zero only if **every** model failed.
+
+## Configuration (env on the container)
+
+| Env | Default | Purpose |
+|-----|---------|---------|
+| `MODELS` | `gemma4-26b-a4b-gptq=vllm gemma4-26b-a4b-gptq-5930k=vllm` | `name=backend` list |
+| `ITERS` / `MIN_DURATION` / `BATCH_SIZE` | `3` / `30s` / `64` | bench knobs |
+| `COLD_START_TIMEOUT` | `5m` | per-model activation wait |
+| `POSTGRES_DSN` | langgraph `flexinfer_benchmarks` | mirrors `values-k3s.yaml` |
+| `FLEXINFER_PROXY_URL` | `http://flexinfer-proxy…:80` | proxy base |
+
+Add models as artifacts land by editing `MODELS` (or a Flux patch).
+
+## Prerequisites (#34)
+
+The `flexinfer_benchmarks` database must exist on the Postgres host
+(`langgraph-postgres-postgresql.ai.svc:5432`). The bench store auto-creates the
+`benchmarks` **table** but not the **database**:
+
+```bash
+PGPASSWORD=changeme-app psql -h langgraph-postgres-postgresql.ai.svc -U langgraph \
+  -d postgres -c "CREATE DATABASE flexinfer_benchmarks;"
+```
+
+(Already created in-cluster during the S2.3 validation.)
+
+## Operations
+
+```bash
+# Manual one-shot run:
+kubectl -n flexinfer-system create job --from=cronjob/model-eval-gauntlet gauntlet-adhoc
+kubectl -n flexinfer-system logs -f job/gauntlet-adhoc
+
+# Inspect stored rows:
+PGPASSWORD=changeme-app psql -h langgraph-postgres-postgresql.ai.svc -U langgraph \
+  -d flexinfer_benchmarks -c \
+  "SELECT model, backend, tokens_per_second, timestamp FROM benchmarks ORDER BY timestamp DESC LIMIT 10;"
+
+# Pause:
+kubectl -n flexinfer-system patch cronjob/model-eval-gauntlet -p '{"spec":{"suspend":true}}'
+```
+
+## Known limitation
+
+`device_class` currently reflects the **bench runner pod's** node (often a CPU
+node), not the model's serving GPU node — it reads `NODE_NAME`/node labels of the
+pod, not the model endpoint's node. Tracked as a benchmarker follow-up; storage
+and throughput numbers are correct.
+
+## Reversibility
+
+Additive: a CronJob writing to a dedicated DB + ConfigMaps. Remove by deleting this
+directory from `deploy/kustomization.yaml` (Flux prunes it).
