@@ -2270,6 +2270,37 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
 
 ---
 
+### 2026-06-05 S3.0b + S3.0 #3 — LIVE-ROLL VERIFIED (instrument trio live + centrally scraped)
+
+- **Slice**: Sprint 3 S3.0 — closes the *only* remaining S3.0 implementation dependency: confirm
+  the merged S3.0b coverage counter (`c0815345`) and S3.0 #3 streaming usage-chunk capture
+  (`2af1c733`) are actually **live on the rolled proxy** (they were merged but the previously-checked
+  image `sha256:2d5b47ca` @ 15:31Z predated both merges). No code change — this is the live-roll
+  proof that starts the ≥1-day data clock.
+- **Live image**: proxy Deployment pins `:master`; running pod `flexinfer-proxy-788c67b76c-kq28f`
+  on `cblevins-gtx980ti`, image `sha256:3094248f...`, started **2026-06-05T20:47:58Z** (re-rolled
+  ~4 h after the #3 merge at 16:30Z, so `:master` was rebuilt with both commits).
+- **Verify (end-to-end via `kubectl port-forward svc/flexinfer-proxy`)**:
+  - Non-streaming completion to warm `gemma4-26b-a4b-gptq` (HTTP 200, `usage` prompt=20/compl=2) →
+    `flexinfer_proxy_completions_total{model,stream="false"}=1` (with the **S3.0b help text**
+    "The stream=true share is the blind spot…") + `request_prompt_tokens_count`/
+    `request_completion_tokens_count`=1. **S3.0b counter LIVE.**
+  - Streaming completion with `stream_options.include_usage=true` → terminal SSE `usage` chunk
+    (prompt=20/compl=2) → `completions_total{stream="true"}=1` **and** the histogram `_count`
+    advanced **1 → 2**. Pre-#3 the streaming path would NOT have recorded the shape (count would
+    have stayed 1) → **S3.0 #3 streaming usage-chunk capture LIVE.**
+  - **Central scrape confirmed**: loom Prometheus returns all three new series with full
+    `job="flexinfer-proxy"` / `pod` / `namespace` labels (scraped from `10.42.2.23:8080`). The
+    earlier "proxy on un-scraped gtx980ti node" worry is moot — the proxy *is* scraped.
+- **Status**: S3.0 instrument stack (histograms + coverage counter + streaming capture) is **fully
+  live and centrally scraped**. The "roll S3.0b live" dependency is **CLOSED**. The blanket n-gram
+  SD verdict is now **purely time-gated**: let ≥1 day of real per-lane traffic accumulate, then read
+  per-lane completion-token percentiles + the `stream="true"` coverage share and decide blanket SD
+  per route (gated on coverage being trustworthy per `ngram-sd-workload-conditional`). 2 synthetic
+  verification samples injected (negligible vs. a day of traffic). No code/CR change this slice.
+
+---
+
 ## Benchmarker device_class — serving-node resolution (#34 follow-up, 2026-06-04)
 
 **Defect**: The benchmarker stored an empty `device_class`

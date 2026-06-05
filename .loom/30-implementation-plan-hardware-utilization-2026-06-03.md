@@ -305,6 +305,15 @@ pulled forward if concurrent demand materializes (the runner-up trigger).
     Additive/default-safe; full `./internal/proxy/` suite green under `-race`. Matrix:
     "2026-06-05 S3.0 #3". Remaining S3.0 dependency: roll S3.0b `completions_total` live + let
     ≥1 day of real traffic accumulate before the blanket-SD verdict.
+  - **S3.0b + #3 LIVE-ROLL VERIFIED — DONE 2026-06-05.** Confirmed the merged coverage counter
+    (`c0815345`) and streaming usage capture (`2af1c733`) are live on the rolled proxy pod
+    (`:master` → `sha256:3094248f`, started 20:47Z). End-to-end via port-forward: non-streaming
+    completion populated `completions_total{stream="false"}` + the token-shape histograms; a
+    streaming completion with `stream_options.include_usage` populated `completions_total{stream="true"}`
+    **and advanced the histogram `_count` 1→2** (proving the #3 streaming path records shape). All
+    three series confirmed centrally scraped in loom Prometheus (`job="flexinfer-proxy"`). The
+    **"roll S3.0b live" dependency is CLOSED**; the blanket-SD verdict is now **purely time-gated**
+    on ≥1 day of real per-lane traffic. Matrix: "2026-06-05 S3.0b + S3.0 #3 — LIVE-ROLL VERIFIED".
 - **S3.1** — Replicate in-process n-gram SD (`speculativeConfig` passthrough,
   already wired at `backend/vllm.go:212-216`) to qwen35 (once it serves coherently
   — see #51/#52). **Twin already done** (see reconciliation above). Verify
