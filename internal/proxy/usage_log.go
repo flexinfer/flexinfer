@@ -122,6 +122,116 @@ func extractUsageFieldsFull(body []byte) (promptTokens, completionTokens int, fi
 	return resp.Usage.PromptTokens, resp.Usage.CompletionTokens, finishReason, cachedTokens, cachedOK, true
 }
 
+// extractStreamingUsage scans the trailing bytes of an OpenAI-style streaming
+// (SSE) completion body for the terminal `usage` chunk and returns its
+// prompt/completion token counts. OpenAI emits this chunk only when the client
+// sets `stream_options.include_usage`: the engine streams content frames with
+// `usage: null`, then a final `data: {... "usage": {...}}` frame (cumulative
+// totals) before `data: [DONE]`.
+//
+// The input may begin mid-line (it is a bounded tail of the full stream); such
+// partial leading frames simply fail to parse and are skipped. The last frame
+// carrying non-zero usage wins. ok=false when no usage frame is present — the
+// caller then records nothing (the completionsTotal stream-share counter still
+// quantifies the gap).
+func extractStreamingUsage(tail []byte) (promptTokens, completionTokens int, ok bool) {
+	for _, raw := range bytes.Split(tail, []byte("\n")) {
+		line := bytes.TrimSpace(raw)
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(line[len("data:"):])
+		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+			continue
+		}
+		var chunk struct {
+			Usage *struct {
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal(payload, &chunk); err != nil {
+			continue
+		}
+		if chunk.Usage == nil {
+			continue
+		}
+		// Require a real total so an early `usage: null`-equivalent frame
+		// (or a zero-filled placeholder) does not record a spurious zero.
+		if chunk.Usage.PromptTokens <= 0 && chunk.Usage.CompletionTokens <= 0 {
+			continue
+		}
+		promptTokens = chunk.Usage.PromptTokens
+		completionTokens = chunk.Usage.CompletionTokens
+		ok = true
+	}
+	return
+}
+
+// streamUsageTailCap bounds the trailing bytes retained from a streaming
+// completion body so the terminal SSE usage chunk can be parsed without
+// buffering the whole stream. The usage frame is a few hundred bytes; 32 KiB is
+// generous headroom while staying small per in-flight request.
+const streamUsageTailCap = 32 * 1024
+
+// usageSniffingBody is a transparent pass-through wrapper around a streaming
+// (SSE) completion response body. It forwards every byte to the client
+// unmodified and unbuffered while retaining a bounded tail of the most recent
+// bytes. On Close it parses that tail for the terminal streaming `usage` chunk
+// and records the token-shape histograms once — closing the non-streaming-only
+// blind spot of logUpstreamUsage without delaying the stream.
+type usageSniffingBody struct {
+	rc     io.ReadCloser
+	model  string
+	tail   []byte
+	parsed bool
+}
+
+func newUsageSniffingBody(rc io.ReadCloser, model string) *usageSniffingBody {
+	return &usageSniffingBody{rc: rc, model: model}
+}
+
+func (b *usageSniffingBody) Read(p []byte) (int, error) {
+	n, err := b.rc.Read(p)
+	if n > 0 {
+		b.appendTail(p[:n])
+	}
+	return n, err
+}
+
+// appendTail keeps at most streamUsageTailCap of the most recent bytes seen.
+func (b *usageSniffingBody) appendTail(chunk []byte) {
+	if len(chunk) >= streamUsageTailCap {
+		b.tail = append(b.tail[:0], chunk[len(chunk)-streamUsageTailCap:]...)
+		return
+	}
+	b.tail = append(b.tail, chunk...)
+	if len(b.tail) > streamUsageTailCap {
+		b.tail = b.tail[len(b.tail)-streamUsageTailCap:]
+	}
+}
+
+func (b *usageSniffingBody) Close() error {
+	b.sniff()
+	return b.rc.Close()
+}
+
+// sniff parses the retained tail once and records the token-shape histograms
+// when a usage chunk is present. Best-effort: a parse miss leaves the
+// histograms untouched.
+func (b *usageSniffingBody) sniff() {
+	if b.parsed {
+		return
+	}
+	b.parsed = true
+	pt, ct, ok := extractStreamingUsage(b.tail)
+	if !ok {
+		return
+	}
+	requestPromptTokens.WithLabelValues(b.model).Observe(float64(pt))
+	requestCompletionTokens.WithLabelValues(b.model).Observe(float64(ct))
+}
+
 // parsePrefixCacheHitRate extracts a prefix-cache hit rate in [0,1] from a
 // Prometheus text-format /metrics body. It tolerates either vLLM metrics
 // shape:
@@ -343,6 +453,21 @@ func (p *Proxy) logUpstreamUsage(resp *http.Response) error {
 			args = append(args, "prefix_cache_hit_rate", rate)
 		}
 		cancel()
+	}
+
+	// Streaming completions deliver token usage in a terminal SSE chunk, present
+	// only when the client set stream_options.include_usage. Wrap the body in a
+	// transparent tail-sniffer that records the token-shape histograms when that
+	// chunk flows past — closing the non-streaming-only blind spot below without
+	// buffering the stream. No-op for streams without the usage chunk (the
+	// completionsTotal stream-share counter still reports the gap).
+	if lc.stream && isCompletionPath(lc.path) && resp.Body != nil &&
+		resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		shapeModel := lc.resolvedModel
+		if shapeModel == "" {
+			shapeModel = lc.model
+		}
+		resp.Body = newUsageSniffingBody(resp.Body, shapeModel)
 	}
 
 	contentType := resp.Header.Get("Content-Type")

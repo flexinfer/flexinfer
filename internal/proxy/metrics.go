@@ -198,9 +198,13 @@ var (
 	// for grounding workload-conditional decisions (e.g. blanket n-gram SD,
 	// which is a win on short Q/A but a tax on long-form generation).
 	//
-	// CAVEAT: only non-streaming JSON completions carry a parseable usage block,
-	// so streaming (SSE) requests are not observed here. The sample is biased
-	// toward non-streaming traffic; read the histograms with that in mind.
+	// COVERAGE: non-streaming JSON completions always carry a parseable usage
+	// block. Streaming (SSE) completions are observed too, but only when the
+	// client requested stream_options.include_usage (so the engine emits a
+	// terminal usage chunk; usageSniffingBody captures it as it flows past).
+	// Streaming requests without that opt-in are still unobserved — the
+	// completionsTotal{stream} counter is the coverage denominator that
+	// quantifies any remaining blind spot per lane.
 	//
 	// Buckets span the LLM token range (16 → 32768) so both short Q/A and
 	// long-context lanes land in distinct buckets.
@@ -209,7 +213,7 @@ var (
 	requestPromptTokens = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "flexinfer_proxy_request_prompt_tokens",
-			Help:    "Histogram of upstream-reported prompt_tokens per request, by resolved model. Non-streaming completions only.",
+			Help:    "Histogram of upstream-reported prompt_tokens per request, by resolved model. Non-streaming completions, plus streaming completions that include a terminal usage chunk.",
 			Buckets: llmTokenBuckets,
 		},
 		[]string{"model"},
@@ -218,7 +222,7 @@ var (
 	requestCompletionTokens = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "flexinfer_proxy_request_completion_tokens",
-			Help:    "Histogram of upstream-reported completion_tokens per request, by resolved model. Non-streaming completions only.",
+			Help:    "Histogram of upstream-reported completion_tokens per request, by resolved model. Non-streaming completions, plus streaming completions that include a terminal usage chunk.",
 			Buckets: llmTokenBuckets,
 		},
 		[]string{"model"},
@@ -226,12 +230,12 @@ var (
 
 	// completionsTotal counts successful completion responses by resolved model
 	// and whether the client streamed. It is the **coverage denominator** for the
-	// token-shape histograms above: those only observe non-streaming requests
-	// (SSE carries no parseable usage block), so the streaming fraction here tells
-	// you how much traffic the shape histograms miss. A high stream=true share
-	// means the shape data is biased and the histogram-based workload verdict
-	// (e.g. blanket n-gram SD) must be read with caution — or the streaming usage
-	// chunk must be captured before trusting it.
+	// token-shape histograms above. Those observe all non-streaming completions
+	// plus streaming completions that carry a terminal usage chunk
+	// (stream_options.include_usage); the remaining blind spot is streaming
+	// requests that omit it. The stream=true share here bounds that gap — a high
+	// streaming share whose usage chunks are absent means the histogram-based
+	// workload verdict (e.g. blanket n-gram SD) must be read with caution.
 	completionsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_completions_total",
