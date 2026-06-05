@@ -29,6 +29,16 @@ func histSampleCount(t *testing.T, vec *prometheus.HistogramVec, model string) u
 	return m.GetHistogram().GetSampleCount()
 }
 
+// counterValue returns the current value of a {model,stream} completions counter.
+func counterValue(t *testing.T, model, stream string) float64 {
+	t.Helper()
+	c, err := completionsTotal.GetMetricWithLabelValues(model, stream)
+	require.NoError(t, err)
+	var m dto.Metric
+	require.NoError(t, c.Write(&m))
+	return m.GetCounter().GetValue()
+}
+
 func TestParseRequestForUsageLog(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -579,4 +589,43 @@ func TestLogUpstreamUsage_SkipsTokenShapeMetricsForStreaming(t *testing.T) {
 	require.NoError(t, p.logUpstreamUsage(resp))
 	require.Equal(t, before, histSampleCount(t, requestPromptTokens, model),
 		"streaming requests must not record token-shape observations")
+}
+
+func TestLogUpstreamUsage_CountsCompletionCoverage(t *testing.T) {
+	// Every successful completion increments the coverage counter labeled by
+	// stream flag — the denominator that exposes how much traffic the
+	// non-streaming-only token-shape histograms miss.
+	const model = "coverage-counter-lane"
+	p := &Proxy{}
+
+	mkResp := func(stream bool, ct string) *http.Response {
+		req, err := http.NewRequest("POST", "/v1/chat/completions", nil)
+		require.NoError(t, err)
+		lc := &usageLogCtx{
+			resolvedModel: model,
+			path:          "/v1/chat/completions",
+			stream:        stream,
+			startedAt:     time.Now(),
+		}
+		req = req.WithContext(withUsageLogCtx(context.Background(), lc))
+		resp := &http.Response{
+			StatusCode: 200,
+			Header:     http.Header{},
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+			Request:    req,
+		}
+		resp.Header.Set("Content-Type", ct)
+		return resp
+	}
+
+	beforeNon := counterValue(t, model, "false")
+	beforeStream := counterValue(t, model, "true")
+
+	require.NoError(t, p.logUpstreamUsage(mkResp(false, "application/json")))
+	require.NoError(t, p.logUpstreamUsage(mkResp(true, "text/event-stream")))
+
+	require.Equal(t, beforeNon+1, counterValue(t, model, "false"),
+		"non-streaming completion should increment the false-stream counter")
+	require.Equal(t, beforeStream+1, counterValue(t, model, "true"),
+		"streaming completion should increment the true-stream counter")
 }
