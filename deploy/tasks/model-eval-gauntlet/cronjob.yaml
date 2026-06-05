@@ -1,0 +1,103 @@
+# Offline model-eval gauntlet [Sprint 2 / S2.3] — automated benchmark generation.
+#
+# Periodically runs flexinfer-bench against a configurable set of warm text
+# models and stores a throughput row per model to:
+#   - Postgres  (`benchmarks` table in flexinfer_benchmarks, the #34 store), and
+#   - a per-model results ConfigMap (the existing ConfigMapStore).
+#
+# This is the automation leg of #27 (keep benchmark/scheduling inputs current)
+# riding on the #34 Postgres storage backend validated live 2026-06-04. The bench
+# binary benchmarks one model per invocation; the wrapper loops the MODELS list so
+# one cold/missing model does not abort the gauntlet (it exits non-zero only if
+# EVERY model failed, so a single idle model is logged, not fatal).
+#
+# Uses the flexinfer-benchmarker ServiceAccount (nodes get + configmaps RBAC) and
+# routes through flexinfer-proxy, so models cold-start on demand.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: model-eval-gauntlet
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: idle-batch
+spec:
+  schedule: "0 5 * * 0"          # 05:00 ET Sundays (idle window, weekly)
+  timeZone: America/New_York
+  concurrencyPolicy: Forbid
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flexinfer
+        flexinfer.ai/purpose: idle-batch
+    spec:
+      backoffLimit: 0
+      ttlSecondsAfterFinished: 86400
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: flexinfer
+            flexinfer.ai/purpose: idle-batch
+        spec:
+          restartPolicy: Never
+          serviceAccountName: flexinfer-benchmarker
+          imagePullSecrets:
+            - name: harbor-creds
+          containers:
+            - name: gauntlet
+              image: registry.harbor.lan/flexinfer/flexinfer-bench:master
+              imagePullPolicy: Always
+              command: ["/bin/sh", "-c"]
+              args:
+                - |
+                  set -u
+                  ok=0; fail=0
+                  for entry in $MODELS; do
+                    name="${entry%%=*}"; backend="${entry#*=}"
+                    echo "=== gauntlet: $name ($backend) ==="
+                    if /flexinfer-bench \
+                        --model="$name" --model-name="$name" --backend="$backend" \
+                        --configmap="flexinfer-benchmarks-${name}" \
+                        --warmup-iterations="${WARMUP:-1}" --iterations="${ITERS:-3}" \
+                        --min-duration="${MIN_DURATION:-30s}" \
+                        --batch-size="${BATCH_SIZE:-64}" \
+                        --cold-start-timeout="${COLD_START_TIMEOUT:-5m}"; then
+                      echo "GAUNTLET OK $name"; ok=$((ok+1))
+                    else
+                      echo "GAUNTLET FAIL $name (continuing)"; fail=$((fail+1))
+                    fi
+                  done
+                  echo "gauntlet summary: ok=$ok fail=$fail"
+                  # Fail the job only if nothing succeeded (one idle model is not fatal).
+                  [ "$ok" -gt 0 ] || exit 1
+              env:
+                - name: POD_NAMESPACE
+                  valueFrom: {fieldRef: {fieldPath: metadata.namespace}}
+                - name: NODE_NAME
+                  valueFrom: {fieldRef: {fieldPath: spec.nodeName}}
+                - name: FLEXINFER_PROXY_URL
+                  value: "http://flexinfer-proxy.flexinfer-system.svc.cluster.local:80"
+                # Space-separated name=backend entries. Default = the warm vllm
+                # primaries; add models here (or via a Flux patch) as artifacts land.
+                - name: MODELS
+                  value: "gemma4-26b-a4b-gptq=vllm gemma4-26b-a4b-gptq-5930k=vllm"
+                - name: ITERS
+                  value: "3"
+                - name: MIN_DURATION
+                  value: "30s"
+                - name: BATCH_SIZE
+                  value: "64"
+                # Mirrors deploy/system/values-k3s.yaml benchmarker.postgresDsn.
+                # Password is already plaintext in that committed value.
+                - name: POSTGRES_DSN
+                  value: "postgres://langgraph:changeme-app@langgraph-postgres-postgresql.ai.svc:5432/flexinfer_benchmarks?sslmode=disable"
+              resources:
+                requests:
+                  cpu: 200m
+                  memory: 256Mi
+                limits:
+                  cpu: "1"
+                  memory: 512Mi

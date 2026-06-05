@@ -12,3 +12,6 @@ resources:
   # Idle-time batch appliance (Sprint 2 / S2.2): nightly codebase re-embed
   # through the gfx906 bge HBM2 retrieval plane -> Qdrant codebase_memory_bge_v1.
   - tasks/codebase-reembed/
+  # Offline model-eval gauntlet (Sprint 2 / S2.3): weekly flexinfer-bench runs
+  # -> Postgres benchmarks table (#34) + per-model ConfigMaps (#27).
+  - tasks/model-eval-gauntlet/

@@ -237,6 +237,16 @@ HBM2 plane live, nightly re-embed/index is 10–40× cheaper.
 - **S2.3** — Second job (demand-driven): offline model-eval gauntlet for any new
   model artifact (ties to #27 automate-benchmark-gen + #34 Postgres benchmark
   storage). Produces a coherence/throughput row automatically.
+  - **DONE + LIVE-VERIFIED 2026-06-04** (`deploy/tasks/model-eval-gauntlet/`).
+    **#34** validated e2e: tracker drift (store is `agents/benchmarker/postgres_store.go`,
+    not `pkg/benchmarkconfig/...`); the configured DSN's `flexinfer_benchmarks`
+    **database did not exist** (store auto-creates the table, not the DB) → created
+    it; `flexinfer-bench` → 1 Postgres row (gemma4-26b 113 tps). **#27** automated:
+    weekly gauntlet CronJob loops a `MODELS` list → Postgres + per-model ConfigMap;
+    live one-shot ok=2 fail=0, 3 rows total (gemma4-26b 113→156 tps, 5930k twin 141).
+    Follow-up: `device_class` empty (reads runner node, not model node — benchmarker
+    code change); true on-artifact-creation trigger (vs weekly schedule). Matrix:
+    "2026-06-04 S2.3". **S2.4 (prefix prewarm #26) remains.**
 - **S2.4** — Model pre-loading / prefix-cache prewarm during the idle window
   (ties to #26): precompute likely first-prompt prefixes so the morning's first
   request is warm.
