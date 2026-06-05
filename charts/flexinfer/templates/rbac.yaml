@@ -403,6 +403,11 @@ rules:
   - apiGroups: [""]
     resources: ["services", "endpoints"]
     verbs: ["get", "list", "watch"]
+  # EndpointSlice replaces the deprecated core/v1 Endpoints API for pod-routing
+  # discovery (refreshEndpoints in internal/proxy/routing.go).
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list"]

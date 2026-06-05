@@ -15,11 +15,33 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
+
+// newEndpointSlice builds a discovery.k8s.io/v1 EndpointSlice backing the named
+// Service. Endpoints created with no Conditions are treated as ready (see
+// endpointSliceReady). Pass no IPs to model a Service with no ready endpoints.
+func newEndpointSlice(svcName, namespace string, port int32, ips ...string) *discoveryv1.EndpointSlice {
+	p := port
+	var eps []discoveryv1.Endpoint
+	for _, ip := range ips {
+		eps = append(eps, discoveryv1.Endpoint{Addresses: []string{ip}})
+	}
+	return &discoveryv1.EndpointSlice{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      svcName + "-slice",
+			Namespace: namespace,
+			Labels:    map[string]string{discoveryv1.LabelServiceName: svcName},
+		},
+		AddressType: discoveryv1.AddressTypeIPv4,
+		Endpoints:   eps,
+		Ports:       []discoveryv1.EndpointPort{{Port: &p}},
+	}
+}
 
 func setupTestProxyWithRouting(t *testing.T) *Proxy {
 	t.Helper()
@@ -224,31 +246,9 @@ func TestRefreshEndpoints_LabelGroupAggregation(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, svcA))
 	require.NoError(t, p.client.Create(ctx, svcB))
 
-	// Create endpoints for both services
-	epA := &corev1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "model-a",
-			Namespace: "default",
-		},
-		Subsets: []corev1.EndpointSubset{
-			{
-				Addresses: []corev1.EndpointAddress{{IP: "10.0.0.1"}},
-				Ports:     []corev1.EndpointPort{{Port: 8000}},
-			},
-		},
-	}
-	epB := &corev1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "model-b",
-			Namespace: "default",
-		},
-		Subsets: []corev1.EndpointSubset{
-			{
-				Addresses: []corev1.EndpointAddress{{IP: "10.0.0.2"}},
-				Ports:     []corev1.EndpointPort{{Port: 8000}},
-			},
-		},
-	}
+	// Create EndpointSlices for both services
+	epA := newEndpointSlice("model-a", "default", 8000, "10.0.0.1")
+	epB := newEndpointSlice("model-b", "default", 8000, "10.0.0.2")
 	require.NoError(t, p.client.Create(ctx, epA))
 	require.NoError(t, p.client.Create(ctx, epB))
 
@@ -419,26 +419,9 @@ func TestRefreshEndpoints_LabelGroup_PartialEndpoints(t *testing.T) {
 	require.NoError(t, p.client.Create(ctx, svcDown))
 
 	// Only model-up has endpoints
-	epUp := &corev1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "model-up",
-			Namespace: "default",
-		},
-		Subsets: []corev1.EndpointSubset{
-			{
-				Addresses: []corev1.EndpointAddress{{IP: "10.0.0.1"}},
-				Ports:     []corev1.EndpointPort{{Port: 8000}},
-			},
-		},
-	}
+	epUp := newEndpointSlice("model-up", "default", 8000, "10.0.0.1")
 	// model-down has empty endpoints
-	epDown := &corev1.Endpoints{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "model-down",
-			Namespace: "default",
-		},
-		Subsets: []corev1.EndpointSubset{},
-	}
+	epDown := newEndpointSlice("model-down", "default", 8000)
 	require.NoError(t, p.client.Create(ctx, epUp))
 	require.NoError(t, p.client.Create(ctx, epDown))
 
