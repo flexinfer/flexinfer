@@ -561,11 +561,14 @@ func TestLogUpstreamUsage_RecordsTokenShapeMetrics(t *testing.T) {
 		"completion-token histogram should record one observation")
 }
 
-func TestLogUpstreamUsage_SkipsTokenShapeMetricsForStreaming(t *testing.T) {
-	// Streaming responses have no parseable usage block, so the shape
-	// histograms must not record — keeping the sampling bias explicit rather
-	// than silently logging a zero.
-	const model = "shape-metric-stream-lane"
+func TestLogUpstreamUsage_SkipsTokenShapeMetricsForStreamingWithoutUsageChunk(t *testing.T) {
+	// A streaming response whose client did not request stream_options.include_usage
+	// carries no terminal usage chunk, so the shape histograms must not record —
+	// keeping the sampling bias explicit rather than silently logging a zero. The
+	// body is fully drained and closed to exercise the sniffer's parse path.
+	const model = "shape-metric-stream-nousage-lane"
+	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":null}\n\n" +
+		"data: [DONE]\n\n"
 	req, err := http.NewRequest("POST", "/v1/chat/completions", nil)
 	require.NoError(t, err)
 	lc := &usageLogCtx{
@@ -579,7 +582,7 @@ func TestLogUpstreamUsage_SkipsTokenShapeMetricsForStreaming(t *testing.T) {
 	resp := &http.Response{
 		StatusCode: 200,
 		Header:     http.Header{},
-		Body:       io.NopCloser(bytes.NewReader(nil)),
+		Body:       io.NopCloser(bytes.NewReader([]byte(sse))),
 		Request:    req,
 	}
 	resp.Header.Set("Content-Type", "text/event-stream")
@@ -587,8 +590,162 @@ func TestLogUpstreamUsage_SkipsTokenShapeMetricsForStreaming(t *testing.T) {
 	before := histSampleCount(t, requestPromptTokens, model)
 	p := &Proxy{}
 	require.NoError(t, p.logUpstreamUsage(resp))
+
+	// Drain + close like the reverse proxy would; the stream must pass through
+	// unchanged and the sniffer must find no usage chunk.
+	out, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, sse, string(out), "streaming body must pass through unchanged")
 	require.Equal(t, before, histSampleCount(t, requestPromptTokens, model),
-		"streaming requests must not record token-shape observations")
+		"streaming requests without a usage chunk must not record token-shape observations")
+}
+
+func TestExtractStreamingUsage(t *testing.T) {
+	tests := []struct {
+		name   string
+		tail   string
+		wantPT int
+		wantCT int
+		wantOK bool
+	}{
+		{
+			name: "vllm terminal usage chunk after null frames",
+			tail: "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}],\"usage\":null}\n\n" +
+				"data: {\"choices\":[{\"delta\":{\"content\":\"b\"}}],\"usage\":null}\n\n" +
+				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1500,\"completion_tokens\":900,\"total_tokens\":2400}}\n\n" +
+				"data: [DONE]\n\n",
+			wantPT: 1500,
+			wantCT: 900,
+			wantOK: true,
+		},
+		{
+			name:   "truncated leading partial line then valid usage chunk",
+			tail:   " delta\":{\"content\":\"xyz\"}}],\"usage\":null}\n\ndata: {\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":7}}\n\ndata: [DONE]\n\n",
+			wantPT: 42,
+			wantCT: 7,
+			wantOK: true,
+		},
+		{
+			name:   "no usage chunk (include_usage not set)",
+			tail:   "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}],\"usage\":null}\n\ndata: [DONE]\n\n",
+			wantOK: false,
+		},
+		{
+			name:   "zero-filled usage placeholder is not recorded",
+			tail:   "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":0,\"completion_tokens\":0}}\n\ndata: [DONE]\n\n",
+			wantOK: false,
+		},
+		{
+			name:   "done only",
+			tail:   "data: [DONE]\n\n",
+			wantOK: false,
+		},
+		{
+			name:   "empty tail",
+			tail:   "",
+			wantOK: false,
+		},
+		{
+			name:   "non-sse garbage",
+			tail:   "not an sse stream at all\n{\"usage\":{\"completion_tokens\":5}}\n",
+			wantOK: false,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			pt, ct, ok := extractStreamingUsage([]byte(tc.tail))
+			require.Equal(t, tc.wantOK, ok)
+			if tc.wantOK {
+				require.Equal(t, tc.wantPT, pt)
+				require.Equal(t, tc.wantCT, ct)
+			}
+		})
+	}
+}
+
+func TestUsageSniffingBody_RecordsOnCloseAndPassesThrough(t *testing.T) {
+	// The sniffer forwards the SSE stream byte-for-byte and records the
+	// token-shape histograms once, on Close, from the terminal usage chunk.
+	const model = "shape-metric-stream-usage-lane"
+	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"}}],\"usage\":null}\n\n" +
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":256,\"completion_tokens\":2048}}\n\n" +
+		"data: [DONE]\n\n"
+
+	beforeP := histSampleCount(t, requestPromptTokens, model)
+	beforeC := histSampleCount(t, requestCompletionTokens, model)
+
+	body := newUsageSniffingBody(io.NopCloser(bytes.NewReader([]byte(sse))), model)
+
+	// Read in small chunks to exercise the bounded-tail accumulation across
+	// multiple Read calls.
+	var got bytes.Buffer
+	buf := make([]byte, 8)
+	for {
+		n, err := body.Read(buf)
+		got.Write(buf[:n])
+		if err == io.EOF {
+			break
+		}
+		require.NoError(t, err)
+	}
+
+	// Histograms are recorded on Close, not mid-stream.
+	require.Equal(t, beforeP, histSampleCount(t, requestPromptTokens, model),
+		"no observation should land before Close")
+	require.NoError(t, body.Close())
+
+	require.Equal(t, sse, got.String(), "stream must pass through unchanged")
+	require.Equal(t, beforeP+1, histSampleCount(t, requestPromptTokens, model))
+	require.Equal(t, beforeC+1, histSampleCount(t, requestCompletionTokens, model))
+
+	// Close is idempotent — a second call must not double-record.
+	require.NoError(t, body.Close())
+	require.Equal(t, beforeP+1, histSampleCount(t, requestPromptTokens, model),
+		"Close must record at most once")
+}
+
+func TestLogUpstreamUsage_StreamingRecordsTokenShapeFromUsageChunk(t *testing.T) {
+	// End-to-end: logUpstreamUsage wraps a streaming completion body; once the
+	// reverse proxy drains and closes it, the terminal usage chunk lands on the
+	// token-shape histograms — closing the streaming blind spot.
+	const model = "shape-metric-e2e-stream-lane"
+	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"x\"}}],\"usage\":null}\n\n" +
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":120,\"completion_tokens\":64}}\n\n" +
+		"data: [DONE]\n\n"
+
+	req, err := http.NewRequest("POST", "/v1/chat/completions", nil)
+	require.NoError(t, err)
+	lc := &usageLogCtx{
+		model:         "alias",
+		resolvedModel: model,
+		path:          "/v1/chat/completions",
+		stream:        true,
+		startedAt:     time.Now(),
+	}
+	req = req.WithContext(withUsageLogCtx(context.Background(), lc))
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader([]byte(sse))),
+		Request:    req,
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+
+	beforeP := histSampleCount(t, requestPromptTokens, model)
+	beforeC := histSampleCount(t, requestCompletionTokens, model)
+
+	p := &Proxy{}
+	require.NoError(t, p.logUpstreamUsage(resp))
+
+	out, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+
+	require.Equal(t, sse, string(out), "streaming body must pass through unchanged")
+	require.Equal(t, beforeP+1, histSampleCount(t, requestPromptTokens, model))
+	require.Equal(t, beforeC+1, histSampleCount(t, requestCompletionTokens, model))
 }
 
 func TestLogUpstreamUsage_CountsCompletionCoverage(t *testing.T) {

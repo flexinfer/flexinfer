@@ -74,18 +74,22 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
 - `flexinfer_proxy_activation_retries_total{model}`
 - `flexinfer_proxy_activation_retry_wait_duration_seconds{model}` (histogram)
 - `flexinfer_proxy_request_prompt_tokens{model}` (histogram) — upstream-reported
-  `prompt_tokens` per request, by resolved model. **Non-streaming completions
-  only** (streaming/SSE responses carry no parseable `usage` block).
+  `prompt_tokens` per request, by resolved model. Observes **all non-streaming
+  completions, plus streaming completions that carry a terminal `usage` chunk**
+  (i.e. the client set `stream_options.include_usage`). Streaming requests that
+  omit that opt-in are still unobserved.
 - `flexinfer_proxy_request_completion_tokens{model}` (histogram) — upstream-reported
-  `completion_tokens` per request, by resolved model. Non-streaming completions only.
+  `completion_tokens` per request, by resolved model. Same coverage as the prompt
+  histogram above.
 - `flexinfer_proxy_completions_total{model,stream}` (counter) — successful completion
   responses by resolved model and `stream` flag. **Coverage denominator** for the two
-  histograms above: they observe non-streaming only, so the `stream="true"` share is
-  exactly the traffic the shape histograms miss. Read it before trusting a
+  histograms above: the `stream="true"` share bounds the remaining blind spot
+  (streaming requests without a usage chunk). Read it before trusting a
   histogram-based workload verdict — e.g.
   `sum by (stream) (rate(flexinfer_proxy_completions_total{model="gemma4-26b-a4b-gptq"}[1d]))`.
-  A high streaming share means the shape data is biased and the verdict needs the
-  streaming usage chunk captured first (see metrics.md follow-up #3 / MR !575).
+  A high streaming share whose usage chunks are absent means the shape data is
+  biased and the verdict must be read with caution. Streaming usage-chunk capture
+  shipped in `internal/proxy/usage_log.go` (`usageSniffingBody`).
 
 > **Why these exist (traffic-shape observability).** The per-request usage *log*
 > line (`event=request_usage`, `internal/proxy/usage_log.go`) is the richer
