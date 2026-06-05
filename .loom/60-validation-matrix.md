@@ -2167,3 +2167,49 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
   the current shared-heavy fleet without disturbing live gfx906 lanes).
 - **Status**: #26 advanced (controller preload-on-deploy shipped; the heavier "rollout controls"
   like preload TTL / on-artifact triggers remain). **Sprint 2 COMPLETE** (S2.1–S2.4).
+
+---
+
+## Benchmarker device_class — serving-node resolution (#34 follow-up, 2026-06-04)
+
+**Defect**: The benchmarker stored an empty `device_class`
+(`vendor=,arch=,vram=,count=,int4=`) in the Postgres `benchmarks` table.
+`agents/benchmarker/postgres_store.go` `Save()` resolved device class from
+`r.NodeName`, which was the benchmarker pod's own node (downward-API
+`NODE_NAME`) — a CPU worker (`k3s-w-10`) with no `flexinfer.ai/gpu.*` labels —
+not the node serving the benchmarked model.
+
+**Fix** (`fix/benchmarker-device-class-serving-node`, commit `7e2c09e3`):
+resolve the serving node from the model's Endpoints after the backend is Ready,
+priority order (1) endpoint `NodeName` → (2) `TargetRef` Pod → (3) IP→Pod match
+(runtime-served models carry only an IP). Recorded onto `BenchmarkRecord.NodeName`
+so the Postgres store, the ConfigMap global-result store, and `emitBenchmarkMetrics`
+all read GPU labels from the correct node. Benchmarker ClusterRole granted
+`get,list` on `endpoints,pods`. Falls back to the runner node if unresolved.
+
+**Unit evidence**: `go build ./...` OK, `go vet ./agents/benchmarker/` OK,
+`go test ./agents/benchmarker/` PASS — incl. new `serving_node_test.go`
+(NodeName / TargetRef / PodIP tiers, not-found + no-client fallbacks, and
+`TestRun_DeviceClassFromServingNode_NotRunnerNode` proving the GPU node wins
+over the CPU runner node end-to-end).
+
+**Live e2e** (like S2.3; image `flexinfer-bench:device-class-fix` built+pushed,
+additive test RBAC `flexinfer-benchmarker-endpoints-test`, one-off Job
+`device-class-validate` → warm `gemma4-26b-a4b-gptq` via proxy):
+
+- Benchmarker log: `Resolved model serving node for device class
+  {"servingNode": "cblevins-7900xtx", "runnerNode": "k3s-w-10"}` — runner was the
+  CPU node (the bug), correctly resolved to the GPU node.
+- Postgres `flexinfer_benchmarks.benchmarks`
+  (`langgraph-postgres-postgresql.ai.svc:5432`, user `langgraph`), new row
+  `4e795412-876d-4c0c-9ce2-0f43bccbb0af` @ `2026-06-05 01:49:27Z`:
+  `device_class = vendor=AMD,arch=gfx1100,vram=23Gi,count=1,int4=true`
+  (153.0 tps). The three prior rows (the reproduced bug) remain
+  `vendor=,arch=,vram=,count=,int4=`.
+
+**Status**: PASSED 2026-06-04. Durable RBAC ships via the chart
+(`charts/flexinfer/templates/rbac.yaml`) on merge→CI→Flux; durable code ships in
+CI-published `flexinfer-bench:master`. The test RBAC
+(`flexinfer-benchmarker-endpoints-test`) and the one-off `device-class-validate`
+Job were deleted after validation; the throwaway `flexinfer-bench:device-class-fix`
+registry tag remains in Harbor (harmless, superseded by `:master` on merge).
