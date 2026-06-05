@@ -395,6 +395,20 @@ var (
 		[]string{"model", "namespace", "reason"},
 	)
 
+	// ModelCacheJobCreateConflictsTotal counts AlreadyExists conflicts tolerated
+	// when creating ModelCache pipeline jobs. These arise when two controller
+	// generations briefly reconcile the same parent during a rolling update.
+	// The idempotent-create guard swallows the conflict as success, so this
+	// counter preserves visibility of how often the rollout race actually fires
+	// (it was previously observable only as reconcile error spam).
+	ModelCacheJobCreateConflictsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_model_cache_job_create_conflicts_total",
+			Help: "Total AlreadyExists conflicts tolerated when creating ModelCache pipeline jobs (controller rollout race).",
+		},
+		[]string{"job_type"},
+	)
+
 	// Controller reconcile metrics
 
 	// ReconcileDurationSeconds tracks the duration of each controller reconcile loop.
@@ -534,6 +548,7 @@ func init() {
 	// Cache job metrics
 	ctrlmetrics.Registry.MustRegister(ModelCacheJobDurationSeconds)
 	ctrlmetrics.Registry.MustRegister(ModelCacheJobFailuresTotal)
+	ctrlmetrics.Registry.MustRegister(ModelCacheJobCreateConflictsTotal)
 
 	// Controller reconcile metrics
 	ctrlmetrics.Registry.MustRegister(ReconcileDurationSeconds)
