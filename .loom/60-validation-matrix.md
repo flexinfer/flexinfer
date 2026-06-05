@@ -2170,6 +2170,52 @@ elsewhere (only gfx906 sets multiModel). S1.4 (migrate a real consumer onto the
 
 ---
 
+### 2026-06-05 S3.0 — traffic-mix kill-test FAILED → request-shape instrument shipped
+
+- **Slice**: Sprint 3 grounding. Operator picked "**measure traffic mix first**" before any
+  further blanket n-gram SD work (twin param bump / `maxNumSeqs` raise), because SD is
+  **workload-conditional** (short Q/A ~2× win; long-form gen −53%→−75% tax) and there is **no
+  per-request SD bypass** (`ngram-sd-workload-conditional`). The prescribed data source was a
+  week of proxy `event=request_usage` logs (`internal/proxy/usage_log.go`, MR !518) → joint
+  prompt/completion-token distribution per lane.
+- **Kill-test (≪30 min) — FAILED**: the data source does not exist in any aggregator.
+  Evidence:
+  - Loki: **zero `request_usage` lines** in flexinfer-system over 24 h (650k lines scanned,
+    `postFilterLines: 0`); `{app="flexinfer-proxy"}` returns **zero lines of any kind**.
+  - Root cause: the proxy pod (`flexinfer-proxy:master @ sha256:1da9de53`, chart
+    `1.0.2+7067adee` = HEAD, so the usage-log feature **is** deployed) is pinned to
+    `cblevins-gtx980ti` (`nodeSelector: node-role.kubernetes.io/control-plane`), a node whose
+    pod logs are **not scraped into Loki** (no flexinfer-system series ever originate there).
+    `kubectl logs` works but the stream is **drowned by controller-runtime
+    `v1 Endpoints is deprecated` spam** (~4/s) and rolls, so request lines are unrecoverable.
+  - Prometheus (reliably scraped) has **no** token/shape metric — `list_metrics` over
+    `flexinfer.*(token|prompt|completion|shape)` returns only duration/count/queue/admission.
+  - Net: per-request token shape is observable **nowhere**. The traffic-mix verdict is
+    ungroundable today — exactly the kind of failure a kill-test catches before building an
+    analysis pipeline on absent data.
+- **Shipped (in-repo, additive, default-safe)**: two proxy Prometheus histograms
+  `flexinfer_proxy_request_prompt_tokens{model}` + `flexinfer_proxy_request_completion_tokens{model}`,
+  observed in `logUpstreamUsage` from the upstream `usage` block, labeled by **resolved model**
+  (matches existing proxy metrics for joins). Buckets span 16→32768 tokens. This routes the
+  traffic-shape signal through Prometheus (scraped), **bypassing the broken log path**. Files:
+  `internal/proxy/metrics.go`, `internal/proxy/usage_log.go`, `internal/proxy/usage_log_test.go`,
+  `docs/specs/metrics.md`.
+- **Verify**: `go build`/`go vet ./internal/proxy/...` OK; new
+  `TestLogUpstreamUsage_RecordsTokenShapeMetrics` (+1 obs on each histogram) and
+  `..._SkipsTokenShapeMetricsForStreaming` (no obs) PASS; full `./internal/proxy/` suite green;
+  gofmt clean.
+- **CAVEAT (no silent cap)**: only **non-streaming** JSON completions carry a parseable usage
+  block, so the histograms are biased toward non-streaming traffic (same bias as the usage log).
+  A future slice could parse the final SSE `usage` chunk for streaming coverage.
+- **Status**: instrument shipped (the measurement now *can* land once data accumulates — hours/
+  days of real traffic, then read percentiles per lane and decide blanket SD per route). The
+  verdict itself is **deferred** to a follow-up. Two telemetry follow-ups flagged: (a) the
+  proxy `v1 Endpoints is deprecated` log spam; (b) the gtx980ti / control-plane node not being
+  scraped into Loki (platform/gitops). Sprint 3 SD replication remains config-blocked/risk-gated
+  pending this data (twin already has SD `{5,4}`; primary already tuned `{7,6}`; qwen35 disabled).
+
+---
+
 ## Benchmarker device_class — serving-node resolution (#34 follow-up, 2026-06-04)
 
 **Defect**: The benchmarker stored an empty `device_class`

@@ -10,8 +10,24 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
+
+// histSampleCount returns the number of observations recorded for a given
+// label value on a token-shape histogram. Reads the live collector directly so
+// it is independent of the registry.
+func histSampleCount(t *testing.T, vec *prometheus.HistogramVec, model string) uint64 {
+	t.Helper()
+	obs, err := vec.GetMetricWithLabelValues(model)
+	require.NoError(t, err)
+	h, ok := obs.(prometheus.Histogram)
+	require.True(t, ok, "observer should be a prometheus.Histogram")
+	var m dto.Metric
+	require.NoError(t, h.Write(&m))
+	return m.GetHistogram().GetSampleCount()
+}
 
 func TestParseRequestForUsageLog(t *testing.T) {
 	tests := []struct {
@@ -495,4 +511,72 @@ func TestLogUpstreamUsage_StreamingEmitsUpstreamMs(t *testing.T) {
 	// No cached-tokens / prompt-tokens for streaming (we don't buffer SSE).
 	require.Empty(t, resp.Header.Get(headerCachedTokens))
 	require.Empty(t, resp.Header.Get(headerPromptTokens))
+}
+
+func TestLogUpstreamUsage_RecordsTokenShapeMetrics(t *testing.T) {
+	// A non-streaming completion records one observation on each token-shape
+	// histogram, labeled by the resolved model. This is the scrape-reliable
+	// view of the per-lane traffic mix that grounds workload-conditional
+	// decisions (e.g. blanket n-gram SD).
+	const model = "shape-metric-nonstream-lane"
+	body := `{"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":1500,"completion_tokens":900}}`
+
+	req, err := http.NewRequest("POST", "/v1/chat/completions", nil)
+	require.NoError(t, err)
+	lc := &usageLogCtx{
+		model:         "alias",
+		resolvedModel: model,
+		path:          "/v1/chat/completions",
+		startedAt:     time.Now(),
+	}
+	req = req.WithContext(withUsageLogCtx(context.Background(), lc))
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader([]byte(body))),
+		Request:    req,
+	}
+	resp.Header.Set("Content-Type", "application/json")
+
+	beforeP := histSampleCount(t, requestPromptTokens, model)
+	beforeC := histSampleCount(t, requestCompletionTokens, model)
+
+	p := &Proxy{}
+	require.NoError(t, p.logUpstreamUsage(resp))
+
+	require.Equal(t, beforeP+1, histSampleCount(t, requestPromptTokens, model),
+		"prompt-token histogram should record one observation")
+	require.Equal(t, beforeC+1, histSampleCount(t, requestCompletionTokens, model),
+		"completion-token histogram should record one observation")
+}
+
+func TestLogUpstreamUsage_SkipsTokenShapeMetricsForStreaming(t *testing.T) {
+	// Streaming responses have no parseable usage block, so the shape
+	// histograms must not record — keeping the sampling bias explicit rather
+	// than silently logging a zero.
+	const model = "shape-metric-stream-lane"
+	req, err := http.NewRequest("POST", "/v1/chat/completions", nil)
+	require.NoError(t, err)
+	lc := &usageLogCtx{
+		resolvedModel: model,
+		path:          "/v1/chat/completions",
+		stream:        true,
+		startedAt:     time.Now(),
+	}
+	req = req.WithContext(withUsageLogCtx(context.Background(), lc))
+
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{},
+		Body:       io.NopCloser(bytes.NewReader(nil)),
+		Request:    req,
+	}
+	resp.Header.Set("Content-Type", "text/event-stream")
+
+	before := histSampleCount(t, requestPromptTokens, model)
+	p := &Proxy{}
+	require.NoError(t, p.logUpstreamUsage(resp))
+	require.Equal(t, before, histSampleCount(t, requestPromptTokens, model),
+		"streaming requests must not record token-shape observations")
 }

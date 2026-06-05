@@ -275,22 +275,48 @@ matrix/Postgres row for a test artifact; #26/#27/#34 advanced with backlinks.
 with the whole textgen fleet at the throughput the primary already proved. Can be
 pulled forward if concurrent demand materializes (the runner-up trigger).
 
+> **STATUS RECONCILIATION (2026-06-05)**: grounding found the plan's Sprint 3 is
+> largely already-applied, blocked, or live-risky:
+> - **S3.1 twin SD** — *already live*: `deploy/models/gemma4-26b-a4b-gptq-5930k.yaml`
+>   has `speculativeConfig {method:ngram, num_speculative_tokens:5, prompt_lookup_max:4}`
+>   + `enforceEager:false` (graph-capture on), deployed (`kustomization.yaml:64`).
+> - **S3.1 qwen35 SD** — *blocked*: qwen35 models intentionally disabled
+>   (`deploy/models/kustomization.yaml:6`); not serving coherently (#51/#52).
+> - **S3.2 primary tuning** — *already applied*: primary at `{7,6}`
+>   (`gemma4-26b-a4b-gptq.yaml:163`).
+> - The remaining real moves (twin bump `{5,4}→{7,6}`; `maxNumSeqs` knee) all push
+>   **more blanket SD / heavier batching with no traffic-mix evidence and no
+>   per-request SD bypass** — the exact mistake `ngram-sd-workload-conditional`
+>   warns against. **Operator decision (2026-06-05): measure traffic mix first.**
+
 **Slices**
+- **S3.0 (measure traffic mix) — KILL-TEST FAILED → instrument shipped 2026-06-05.**
+  Goal: per-lane joint prompt/completion-token distribution to decide blanket SD
+  per route. The prescribed source (proxy `event=request_usage` logs) is
+  **unreachable** — proxy pinned to the un-scraped `gtx980ti` control-plane node,
+  drowned by `v1 Endpoints is deprecated` spam; Prometheus had no token metric.
+  Shipped two proxy histograms `flexinfer_proxy_request_{prompt,completion}_tokens{model}`
+  (scrape-reliable path; non-streaming only) so the measurement can land once data
+  accumulates. Verdict deferred to a follow-up. Matrix: "2026-06-05 S3.0".
 - **S3.1** — Replicate in-process n-gram SD (`speculativeConfig` passthrough,
-  already wired at `backend/vllm.go:212-216`) to `gemma4-26b-a4b-gptq-5930k` and
-  qwen35 (once it serves coherently — see #51/#52). Verify graph-capture is on
-  (the win is conditional on it).
+  already wired at `backend/vllm.go:212-216`) to qwen35 (once it serves coherently
+  — see #51/#52). **Twin already done** (see reconciliation above). Verify
+  graph-capture is on (the win is conditional on it).
 - **S3.2** — Tune `num_speculative_tokens` 5→7 / `prompt_lookup_max` 4→6 on the
-  primary (per-position acceptance still 68% at position 5 → headroom). Guard:
-  n-gram SD is **workload-conditional** (long-form gen regresses; see
-  `ngram-sd-workload-conditional.md`) — measure on the real workload shape, gate
-  per-route.
+  **twin** to match the already-tuned primary (per-position acceptance still 68% at
+  position 5 → headroom). **GATED on S3.0 data**: n-gram SD is
+  **workload-conditional** (long-form gen regresses; see
+  `ngram-sd-workload-conditional.md`) — read the twin's completion-token
+  distribution before bumping.
 - **S3.3** — Controlled `maxNumSeqs` raise on the 26B lanes with the Sprint 0
   dashboard watching KV pressure; find the batch-depth knee at current context
-  before latency regresses. Matrix row with the throughput/latency tradeoff curve.
+  before latency regresses. **High blast radius** (live warm-pinned daily-driver
+  primary at 32K/FP8-KV ~5GB KV) — canary the twin first. Matrix row with the
+  throughput/latency tradeoff curve.
 
-**Acceptance**: SD replicated to twin + qwen35 with per-lane verdict; tuned params
-or documented null result; `maxNumSeqs` knee captured with the tradeoff curve.
+**Acceptance**: S3.0 instrument live + ≥1 day of per-lane token-shape data → blanket
+SD verdict per lane; twin tuned (or documented null) on that evidence; `maxNumSeqs`
+knee captured with the tradeoff curve.
 
 ---
 
