@@ -22,6 +22,7 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -79,16 +80,25 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 		// Pre-initialize all per-model metrics so Grafana shows 0 instead of "No data".
 		InitModelMetrics(modelName)
 
-		// List endpoints for this service to track endpoint count for all models.
-		var endpoints corev1.Endpoints
-		if err := p.client.Get(ctx, client.ObjectKey{Name: svc.Name, Namespace: p.namespace}, &endpoints); err != nil {
+		// List EndpointSlices for this service to track endpoint count for all
+		// models. EndpointSlice replaces the deprecated core/v1 Endpoints API
+		// (removed warning spam on k8s v1.33+); a single Service may be backed
+		// by multiple slices, so aggregate across all of them.
+		var sliceList discoveryv1.EndpointSliceList
+		if err := p.client.List(ctx, &sliceList,
+			client.InNamespace(p.namespace),
+			client.MatchingLabels{discoveryv1.LabelServiceName: svc.Name}); err != nil {
 			continue
 		}
 
 		// Count ready addresses for the endpoint_count gauge (all models).
 		var readyCount int
-		for _, subset := range endpoints.Subsets {
-			readyCount += len(subset.Addresses)
+		for _, slice := range sliceList.Items {
+			for _, ep := range slice.Endpoints {
+				if endpointSliceReady(ep) {
+					readyCount += len(ep.Addresses)
+				}
+			}
 		}
 		endpointCount.WithLabelValues(modelName).Set(float64(readyCount))
 
@@ -106,19 +116,23 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 
 		// Collect ready pod addresses, skipping pods on terminating nodes.
 		var podAddresses []string
-		for _, subset := range endpoints.Subsets {
+		for _, slice := range sliceList.Items {
 			port := defaultBackendPort
-			for _, pp := range subset.Ports {
-				port = pp.Port
-				break
+			if len(slice.Ports) > 0 && slice.Ports[0].Port != nil {
+				port = *slice.Ports[0].Port
 			}
-			for _, addr := range subset.Addresses {
-				// Skip pods on nodes marked for spot termination
-				if addr.NodeName != nil && p.activator.IsNodeTerminating(ctx, *addr.NodeName) {
-					slog.Debug("skipping endpoint on terminating node", "model", modelName, "node", *addr.NodeName)
+			for _, ep := range slice.Endpoints {
+				if !endpointSliceReady(ep) {
 					continue
 				}
-				podAddresses = append(podAddresses, fmt.Sprintf("%s:%d", addr.IP, port))
+				// Skip pods on nodes marked for spot termination
+				if ep.NodeName != nil && p.activator.IsNodeTerminating(ctx, *ep.NodeName) {
+					slog.Debug("skipping endpoint on terminating node", "model", modelName, "node", *ep.NodeName)
+					continue
+				}
+				for _, addr := range ep.Addresses {
+					podAddresses = append(podAddresses, fmt.Sprintf("%s:%d", addr, port))
+				}
 			}
 		}
 
@@ -156,6 +170,14 @@ func (p *Proxy) refreshEndpoints(ctx context.Context) {
 		}
 		return true
 	})
+}
+
+// endpointSliceReady reports whether an EndpointSlice endpoint is serving
+// traffic. A nil Ready condition is treated as ready, matching kube-proxy's
+// backwards-compatible interpretation (an unset condition means "unknown",
+// which historically routed like the ready Addresses of core/v1 Endpoints).
+func endpointSliceReady(ep discoveryv1.Endpoint) bool {
+	return ep.Conditions.Ready == nil || *ep.Conditions.Ready
 }
 
 // trackEndpointChanges compares current endpoints with cached ones and updates metrics.
