@@ -134,33 +134,30 @@ spec:
     # 2026-05-13: ondemand → primary. 26B-A4B is the warm quality lane for
     # downstream services on the discrete 7900 XTX.
     warmPolicy: primary
-    # 2026-05-25 CC-DR-2 tuning: bump num_speculative_tokens 5 → 7 and
-    # prompt_lookup_max 4 → 6 on the back of the first SD measurement.
+    # 2026-06-06 S3.4 — n-gram speculative decoding REMOVED from this lane.
     #
-    # Initial 5/4 config (MR !512) delivered p50 1.95×, p95 2.17×,
-    # 82.5% avg acceptance with per-position acceptance still 91.8 /
-    # 81.4 / 74.2 / 73.2 / 68.0 % at positions 1–5. Position 5 holding
-    # 68% says "the last speculative slot is still earning its keep" —
-    # extending to 7 should pull positions 6–7 too, even if their
-    # acceptance is in the 40–60% range. Bumping the lookup window to
-    # 6 catches longer prompt-echo sequences (templated output, longer
-    # variable names, multi-token quoted spans).
+    # Earlier history: the 5/4 config (MR !512) measured p50 1.95× on SHORT
+    # Q/A; CC-DR-2 then widened it to 7/6 on that basis. But the win was
+    # workload-conditional (ngram-sd-workload-conditional.md): SD regresses
+    # hard on long-form generation, where prompt-lookup acceptance can't
+    # offset the widened per-verifier-step compute on this MoE/gfx1100 target.
     #
-    # Schema (passed verbatim to --speculative-config):
-    #   method=ngram         prompt-lookup, no draft model
-    #   num_speculative_tokens=7  candidates proposed per verifier step
-    #   prompt_lookup_max=6  longest n-gram window scanned in the prompt
-    #   prompt_lookup_min=1  shortest n-gram that triggers a proposal
+    # The S3.0 data clock (2026-06-06, ≥1 day of real canary traffic) showed
+    # this PRIMARY lane is long-form-dominant: completion p50 ≈ 588 tok, 58%
+    # of completions > 512 tok. The S3.4 on/off A/B then measured the effect
+    # directly on the identical gemma4-26b/gfx1100 substrate (the -5930k twin,
+    # single-stream, real document→summary load matching the 588/953 p50/p90
+    # shape; engine-verified each arm). Decode throughput:
+    #   SD OFF        63.2 tok/s   (baseline)
+    #   ngram {5,4}   40.3 tok/s   −36%
+    #   ngram {7,6}   38.4 tok/s   −39%   (this lane's prior config)
+    # i.e. SD OFF is +64% faster than 7/6 on real summarization traffic.
+    # Evidence: .loom/60-validation-matrix.md "2026-06-06 S3.4".
     #
-    # Watch for: (a) decode tps regressing vs the 5/4 baseline if the
-    # tail positions accept <50% (per-forward cost width 1+7=8 vs 1+5=6
-    # is ~33% more per-step compute that has to be paid back by extra
-    # accepted tokens); (b) vLLM auto-tuning max_num_scheduled_tokens
-    # higher and competing for the maxNumBatchedTokens=256 budget.
-    #
-    # Revert to (5,4) is a one-liner if (a) fires; if (b) fires, also
-    # bump maxNumBatchedTokens to ~400.
-    speculativeConfig: '{"method": "ngram", "num_speculative_tokens": 7, "prompt_lookup_max": 6, "prompt_lookup_min": 1}'
+    # The twin (-5930k) KEEPS its {5,4} SD: its real traffic is short
+    # (completion p50 ≈ 13 tok), the SD-favorable regime. SD is a per-lane
+    # decision, not a fleet default. To re-enable here, restore:
+    #   speculativeConfig: '{"method": "ngram", "num_speculative_tokens": 5, "prompt_lookup_max": 4, "prompt_lookup_min": 1}'
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
