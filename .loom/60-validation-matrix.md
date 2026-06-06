@@ -2512,3 +2512,58 @@ this is the measurement→decision slice the operator's "measure first" gate was
 data → blanket-SD verdict per lane" acceptance criterion for Sprint 3 is **met**. SD
 knobs deliberately untouched this slice (verdict, not action); the one high-leverage
 action the data justifies (primary SD A/B) is scoped as S3.4 for operator-gated execution.
+
+---
+
+### 2026-06-06 S3.4 — primary SD on/off A/B kill-test (operator-gated) → primary SD DISABLED
+
+**What this slice is**: the operator-gated A/B the S3.0 verdict scoped. The S3.0
+read made "the primary's blanket SD `{7,6}` is a net throughput loss on its real
+long-form workload" the riskiest live assumption. This kill-test measures it
+**directly** on the identical gemma4-26b/gfx1100 substrate.
+
+**Rig & method** (low blast radius): ran the A/B on the **`-5930k` twin** — same
+model + GPTQ-int4 on the same 7900 XTX silicon as the primary, but near-idle
+(~5 real req/day), so no daily-driver disruption. The S3.0 "twin can't canary the
+primary" finding was about *natural* traffic shape; here the load is **supplied**,
+so it dissolves. `flux suspend flexinfer-models` around the experiment; CR toggled
+via `flexinfer_update_model`; **gitops = clean restore** via `flux resume`. Load:
+real document→detailed-summary (≈760-tok prompt → ~685-tok completion, matching the
+live 588/953 p50/p90 shape), **single-stream** (so the twin's maxNumSeqs=2 ≡ the
+primary's maxNumSeqs=1), **temperature=0** (deterministic; SD is verified-equivalent
+→ identical output, clean tps comparison). Decode tps = completion_tokens /
+(t_last − t_first_token), isolating decode from prefill. 3 runs/arm; each arm's SD
+state **engine-verified** from the vLLM `speculative_config=…` startup log.
+
+**Result** (median decode tok/s, real-shaped long-form):
+
+| Arm | speculativeConfig | engine `speculative_config` | decode tok/s | vs OFF |
+|-----|-------------------|------------------------------|--------------|--------|
+| **B** | *(removed)* | `None` | **63.2** (61.9–63.6) | — |
+| A | ngram `{5,4}` | `num_spec_tokens=5` | 40.3 (40.2–40.3) | **−36%** |
+| C | ngram `{7,6}` *(= primary's live config)* | `num_spec_tokens=7` | 38.4 (38.3–38.8) | **−39%** |
+
+**SD OFF is +64% faster than the primary's `{7,6}` on real summarization traffic.**
+Wider SD (`{7,6}`) is worse than narrower (`{5,4}`); both far worse than off.
+
+**Why it matters / what's new**: this closes the gap the S3.0 verdict left open. The
+−53…−75% figure in `ngram-sd-workload-conditional` came from **filler-prompted** free
+gen. This A/B used **real document→summary** — the output *echoes the input document*,
+the case most *favorable* to prompt-lookup SD — and SD **still** regresses ~39%.
+Prompt-lookup acceptance on coherent summarization is too low to offset the widened
+verifier-step compute on the gfx1100 MoE target (graph capture is ON — `enforce_eager:
+false` — so this is not the eager-mode 2026-05-14 falsification; it's the post-graph-
+capture regime, and SD is still a loss for long-form here). The S3.0 verdict is now
+**empirically confirmed**, not inferred.
+
+**Action**: removed `speculativeConfig` from the **primary**
+`gemma4-26b-a4b-gptq.yaml` (long-form lane) via GitOps. The **twin** keeps `{5,4}` —
+its real traffic is short (completion p50 ≈ 13 tok), the SD-favorable regime → SD is a
+**per-lane** decision, not a fleet default. Twin restored to gitops `{5,4}` + Ready;
+Flux resumed; cluster returned to known-good before shipping.
+
+**Status**: PASSED 2026-06-06 — kill-test decisive. Primary SD disabled (expected
++~64% decode throughput on its real long-form workload, free, via one rolling restart
+mitigated by the twin fallback). S3.4 closes the Sprint 3 SD-verdict thread:
+**primary = SD off (proven), twin = SD `{5,4}` keep (short traffic), qwen35 = blocked
+(#51/#52)**. Remaining Sprint 3 slice: S3.3 `maxNumSeqs` knee (orthogonal to SD).

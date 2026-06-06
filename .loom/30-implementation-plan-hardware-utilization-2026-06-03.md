@@ -360,20 +360,28 @@ pulled forward if concurrent demand materializes (the runner-up trigger).
     speculation. Still a separate high-blast-radius slice. (Caveat from S3.4: the twin's
     inverted workload limits its value as a primary canary for *latency-shape* questions
     too, but `maxNumSeqs` knee-finding is per-lane anyway.)
-- **S3.4 (NEW, proposed 2026-06-06)** — **primary SD on/off A/B kill-test.** The S3.0
-  verdict makes "the primary's existing blanket SD `{7,6}` is a net throughput loss on its
-  real long-form traffic" the riskiest live assumption now standing. Kill-test: a direct
-  decode-tps before/after on the **primary lane itself** with `speculativeConfig` present
-  vs absent, under a prompt set matching the live completion shape (p50 ≈ 588 / p90 ≈ 953
-  tok) — **not** a twin canary (workloads inverted; see S3.0 verdict). High blast radius
-  (live warm-pinned daily driver) → **operator-gated**. If the regression reproduces on
-  real-shaped traffic, disable or narrow primary SD; if not, the synthetic
-  `ngram-sd-workload-conditional` regression doesn't transfer and primary SD stays.
+- **S3.4 — primary SD on/off A/B kill-test — DONE 2026-06-06 (operator-gated; flexinfer
+  MR pending). Result: PRIMARY SD DISABLED.** Ran the A/B on the **`-5930k` twin** (same
+  gemma4-26b GPTQ-int4 on the same 7900 XTX silicon, near-idle → low blast radius) under
+  **supplied** real-shaped long-form load (document→summary, ≈760-tok prompt → ~685-tok
+  completion matching the live 588/953 shape; single-stream so twin maxNumSeqs=2 ≡ primary
+  maxNumSeqs=1; temp=0; each arm's SD state engine-verified). `flux suspend` around it;
+  `flexinfer_update_model` to toggle; `flux resume` = clean gitops restore. **Median decode
+  tok/s: SD OFF 63.2 | ngram `{5,4}` 40.3 (−36%) | ngram `{7,6}`=primary 38.4 (−39%)** →
+  SD OFF is **+64%** vs the primary's `{7,6}`. Crucially this used *real summarization*
+  (output echoes the input — the SD-*favorable* case), not filler-prompted gen, with graph
+  capture ON, and SD **still** regressed ~39% → the S3.0 verdict is **empirically
+  confirmed**, not inferred. Action: removed `speculativeConfig` from the primary
+  `gemma4-26b-a4b-gptq.yaml`; the **twin keeps `{5,4}`** (its real traffic is short, p50 ≈
+  13 tok → SD-favorable). Twin restored to `{5,4}` Ready, Flux resumed, cluster known-good.
+  Matrix: "2026-06-06 S3.4". **SD verdict thread COMPLETE: primary off / twin keep / qwen35
+  blocked.**
 
 **Acceptance**: S3.0 instrument live + ≥1 day of per-lane token-shape data → blanket
 SD verdict per lane **[MET 2026-06-06]**; twin tuned (or documented null) on that
 evidence **[documented null — S3.2 deferred]**; `maxNumSeqs` knee captured with the
-tradeoff curve **[S3.3 open]**; primary SD A/B run **[S3.4 open, operator-gated]**.
+tradeoff curve **[S3.3 open]**; primary SD A/B run **[S3.4 DONE 2026-06-06 → primary
+SD disabled; +64% decode on real long-form]**.
 
 ---
 
