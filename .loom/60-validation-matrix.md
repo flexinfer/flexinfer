@@ -2393,3 +2393,57 @@ CI-published `flexinfer-bench:master`. The test RBAC
 (`flexinfer-benchmarker-endpoints-test`) and the one-off `device-class-validate`
 Job were deleted after validation; the throwaway `flexinfer-bench:device-class-fix`
 registry tag remains in Harbor (harmless, superseded by `:master` on merge).
+
+---
+
+### 2026-06-05 S3.0 — first per-lane data-clock read (canary effective; verdict still time-gated)
+
+**What this slice is**: a RALPH Prove/Harvest pass over the S3.0 data clock that the
+2026-06-05 canaries started (news-analyzer batch MR !7, storyboard-prod MR !2,
+jobsearch-app MR !93 — all merged). Yesterday the gemma4-26b SD lanes saw ~0 real
+completions/day (heavy consumers routed via legacy `ai`-namespace litellm → OpenRouter
+cloud). This confirms the bet paid off: **real per-lane traffic is now flowing**, and
+records the first token-shape read. No code/CR change.
+
+**Evidence (loom Prometheus, `job="flexinfer-proxy"`, instant + 24 h aggregates handling
+per-pod counter resets via `increase(...[24h])`)**:
+
+- **Traffic now flowing** (was ~0/lane on 2026-06-04):
+  `sum(increase(flexinfer_proxy_completions_total[24h]))` → **primary
+  `gemma4-26b-a4b-gptq` ≈ 45/day**, **twin `gemma4-26b-a4b-gptq-5930k` ≈ 5/day**.
+  (Counter reset ~5× in 24 h from proxy pod rolls — `increase()` repairs the resets;
+  the TSDB accumulates across pod generations, so the "≥1 day" window is intact even
+  though no single pod's counter survives a day.)
+- **Primary lane token shape** (the daily-driver / news-analyzer summarizer path):
+  - `histogram_quantile(0.5, …request_prompt_tokens_bucket…)` → **prompt p50 ≈ 741 tok**
+  - `histogram_quantile(0.5, …request_completion_tokens_bucket…)` → **completion p50 ≈ 495 tok**
+  - `histogram_quantile(0.9, …)` → **completion p90 ≈ 958 tok**
+  - Current-pod bucket snapshot (~21 samples) was bimodal: ~8 short (≤256 tok) + ~12
+    medium-long (512–1024 tok), 1 in 1024–2048.
+- **Twin lane token shape**: completion **p50 ≈ 13 tok** (~5 samples — noisy, but clearly
+  short: fallback / health-probe-shaped traffic, not the summarizer batch).
+- **Stream coverage**: `sum(increase(completions_total{stream="true"}[24h])) / sum(...)`
+  → **0 %**. Every real consumer in the current mix is non-streaming, so the
+  `request_*_tokens` histograms already capture **100 %** of real traffic. The S3.0 #3
+  streaming usage-chunk capture (MR !579) remains correct insurance but is moot for the
+  present consumer set.
+
+**Preliminary read (NOT the verdict — sample is <1 day, ~45+5 completions)**:
+
+- The two SD lanes have **inverted workload shapes**: the **primary is long-form**
+  (prompt p50 ~741, completion p50 ~495 / p90 ~958), the **twin is short** (completion
+  p50 ~13). Per [`ngram-sd-workload-conditional`] this is the decisive split — n-gram SD
+  pays ~2× on short Q/A but **regresses −53 % to −75 % on long-form generation**.
+- Direction therefore **inverts the naive Sprint 3 "replicate the 2× everywhere"
+  premise** for the primary: a median ~495-token completion sits squarely in the
+  SD-hostile regime. Early signal = **blanket SD on the primary long-form lane is
+  likely a net loss**; the twin (short) is the lane that would actually benefit. This
+  is exactly the per-lane (not blanket) outcome the operator's "measure first" gate was
+  protecting against.
+
+**Status**: S3.0 data clock **CONFIRMED RUNNING** (canaries effective). The blanket-SD
+verdict (S3.1/S3.2/S3.3) remains **time-gated** — current sample is immature (<1 day,
+~50 completions). Re-read after ≥1 day of accumulation: per-lane completion-token
+percentiles + `stream` coverage share, then rule SD **per lane** (preliminary lean:
+twin-yes / primary-no). No knob touched this slice — recording the read, not acting on
+it, per the spec-riskiest-assumption discipline baked into this plan.
