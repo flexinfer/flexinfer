@@ -226,7 +226,9 @@ publish_unified_rocm_gfx1100:
           --opt build-arg:TRANSFORMERS_CONSTRAINT=">=5.0" \
           --opt build-arg:LLAMACPP_BUILD_IMAGE="rocm/dev-ubuntu-24.04:6.4.4" \
           --opt build-arg:CUDA_ARCHITECTURES="52" \
+          --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100-buildcache" \
           --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100" \
+          --export-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100-buildcache,mode=max,image-manifest=true,ignore-error=true" \
           --export-cache "type=inline" \
           --output "type=image,\"name=${REGISTRY}/runtime:rocm-gfx1100,${REGISTRY}/runtime:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"; then
           break
