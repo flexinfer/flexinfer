@@ -314,6 +314,17 @@ pulled forward if concurrent demand materializes (the runner-up trigger).
     three series confirmed centrally scraped in loom Prometheus (`job="flexinfer-proxy"`). The
     **"roll S3.0b live" dependency is CLOSED**; the blanket-SD verdict is now **purely time-gated**
     on ≥1 day of real per-lane traffic. Matrix: "2026-06-05 S3.0b + S3.0 #3 — LIVE-ROLL VERIFIED".
+  - **S3.0 first data-clock read — DONE 2026-06-05 (canary effective).** The 2026-06-05
+    traffic-source canaries (news-analyzer !7, storyboard !2, jobsearch !93 — all merged)
+    moved the lanes from ~0 real completions/day to **primary ≈ 45/day + twin ≈ 5/day**
+    (24 h `increase()`, reset-repaired). First token-shape read: **primary is long-form**
+    (prompt p50 ≈ 741, completion p50 ≈ 495 / p90 ≈ 958 tok), **twin is short** (completion
+    p50 ≈ 13 tok), **stream coverage = 0 %** (all consumers non-streaming → histograms catch
+    100 %). Preliminary lean (sample still <1 day): the lanes have **inverted shapes**, so
+    the verdict is **per-lane not blanket** — primary's long-form median sits in the
+    SD-hostile regime (regresses −53…−75 % per `ngram-sd-workload-conditional`), twin's
+    short traffic is the lane SD would help. Records the read, does **not** act on it.
+    Matrix: "2026-06-05 S3.0 — first per-lane data-clock read".
 - **S3.1** — Replicate in-process n-gram SD (`speculativeConfig` passthrough,
   already wired at `backend/vllm.go:212-216`) to qwen35 (once it serves coherently
   — see #51/#52). **Twin already done** (see reconciliation above). Verify
