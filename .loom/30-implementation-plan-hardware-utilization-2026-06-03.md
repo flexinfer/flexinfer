@@ -325,6 +325,17 @@ pulled forward if concurrent demand materializes (the runner-up trigger).
     SD-hostile regime (regresses −53…−75 % per `ngram-sd-workload-conditional`), twin's
     short traffic is the lane SD would help. Records the read, does **not** act on it.
     Matrix: "2026-06-05 S3.0 — first per-lane data-clock read".
+  - **S3.0 mature ≥1-day read + VERDICT — DONE 2026-06-06.** Re-read after a full day of
+    canary traffic (sample matured ~2×: primary 45→**88/day**, twin **5/day**, stream
+    coverage still 0% → histograms catch 100%). Lane shapes **held and sharpened**:
+    **primary long-form** (compl p50 ≈ 588, p90 ≈ 953; **58.3% of completions >512 tok**,
+    82.5% >256), **twin short** (compl p50 ≈ 13; 60% ≤16 tok). **Verdict = per-lane, NOT
+    blanket**: the primary already runs the *widest* blanket SD (`{7,6}`) but its real
+    traffic sits in the SD-hostile long-form regime → **primary blanket SD is a probable
+    net LOSS**; the twin is SD-friendly but runs ~5/day (negligible). Methodological
+    finding: the twin **cannot canary the primary's SD decision** (inverted workloads).
+    Sprint 3's "≥1-day data → per-lane verdict" acceptance criterion is **met**. No knob
+    touched (verdict, not action). Matrix: "2026-06-06 S3.0 — mature … + blanket-SD VERDICT".
 - **S3.1** — Replicate in-process n-gram SD (`speculativeConfig` passthrough,
   already wired at `backend/vllm.go:212-216`) to qwen35 (once it serves coherently
   — see #51/#52). **Twin already done** (see reconciliation above). Verify
@@ -335,15 +346,34 @@ pulled forward if concurrent demand materializes (the runner-up trigger).
   **workload-conditional** (long-form gen regresses; see
   `ngram-sd-workload-conditional.md`) — read the twin's completion-token
   distribution before bumping.
+  - **VERDICT 2026-06-06: documented null — DEFER.** The mature read confirms the twin's
+    completions are short (p50 ≈ 13, 60% ≤16 tok) → the `{5,4}→{7,6}` bump is
+    *directionally safe*, but the lane runs **~5 completions/day**. Tuning a negligible
+    fallback lane is low-leverage motion; not worth a live CR change. Revisit only if twin
+    volume materially rises.
 - **S3.3** — Controlled `maxNumSeqs` raise on the 26B lanes with the Sprint 0
   dashboard watching KV pressure; find the batch-depth knee at current context
   before latency regresses. **High blast radius** (live warm-pinned daily-driver
   primary at 32K/FP8-KV ~5GB KV) — canary the twin first. Matrix row with the
   throughput/latency tradeoff curve.
+  - **Note 2026-06-06**: unaffected by the S3.0 verdict — `maxNumSeqs` is batching, not
+    speculation. Still a separate high-blast-radius slice. (Caveat from S3.4: the twin's
+    inverted workload limits its value as a primary canary for *latency-shape* questions
+    too, but `maxNumSeqs` knee-finding is per-lane anyway.)
+- **S3.4 (NEW, proposed 2026-06-06)** — **primary SD on/off A/B kill-test.** The S3.0
+  verdict makes "the primary's existing blanket SD `{7,6}` is a net throughput loss on its
+  real long-form traffic" the riskiest live assumption now standing. Kill-test: a direct
+  decode-tps before/after on the **primary lane itself** with `speculativeConfig` present
+  vs absent, under a prompt set matching the live completion shape (p50 ≈ 588 / p90 ≈ 953
+  tok) — **not** a twin canary (workloads inverted; see S3.0 verdict). High blast radius
+  (live warm-pinned daily driver) → **operator-gated**. If the regression reproduces on
+  real-shaped traffic, disable or narrow primary SD; if not, the synthetic
+  `ngram-sd-workload-conditional` regression doesn't transfer and primary SD stays.
 
 **Acceptance**: S3.0 instrument live + ≥1 day of per-lane token-shape data → blanket
-SD verdict per lane; twin tuned (or documented null) on that evidence; `maxNumSeqs`
-knee captured with the tradeoff curve.
+SD verdict per lane **[MET 2026-06-06]**; twin tuned (or documented null) on that
+evidence **[documented null — S3.2 deferred]**; `maxNumSeqs` knee captured with the
+tradeoff curve **[S3.3 open]**; primary SD A/B run **[S3.4 open, operator-gated]**.
 
 ---
 

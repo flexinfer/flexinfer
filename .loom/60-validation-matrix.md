@@ -2447,3 +2447,68 @@ verdict (S3.1/S3.2/S3.3) remains **time-gated** — current sample is immature (
 percentiles + `stream` coverage share, then rule SD **per lane** (preliminary lean:
 twin-yes / primary-no). No knob touched this slice — recording the read, not acting on
 it, per the spec-riskiest-assumption discipline baked into this plan.
+
+---
+
+### 2026-06-06 S3.0 — mature ≥1-day per-lane data-clock read + blanket-SD VERDICT
+
+**What this slice is**: the RALPH Prove/Harvest pass that the 2026-06-05 first-read
+deferred. The traffic-source canaries (news-analyzer !7, storyboard !2, jobsearch !93)
+have now fed the gemma4-26b SD lanes for a full day, so the sample is mature enough to
+render the per-lane blanket-SD verdict that gates S3.1/S3.2/S3.3. No code/CR change —
+this is the measurement→decision slice the operator's "measure first" gate was built for.
+
+**Evidence (loom Prometheus, `job="flexinfer-proxy"`, `increase(...[24h])`, reset-repaired)**:
+
+| Lane | 24h vol | prompt p50 | compl p50 | compl p90 | completion mass |
+|------|---------|-----------|-----------|-----------|-----------------|
+| primary `gemma4-26b-a4b-gptq` | **≈ 88/day** (was ~45) | ≈ 756 | **≈ 588** | **≈ 953** | ≤256: 17.5% · ≤512: 41.7% · **>512: 58.3%** · >256: 82.5% |
+| twin `gemma4-26b-a4b-gptq-5930k` | **≈ 5/day** | ≈ 896 | **≈ 13** | ≈ 384 | **≤16: 60%** · ≤128: 80% · ≤512: 100% |
+
+- **Stream coverage = 0%** (`completions_total{stream="true"}` = 0) — every consumer in
+  the live mix is non-streaming, so the `request_*_tokens` histograms capture **100%** of
+  real traffic. MR !579 streaming capture stays correct insurance but is moot here.
+- Sample matured ~2× vs the 2026-06-05 first read (primary 45→88 completions); the lane
+  shapes held, so the preliminary lean is now confirmed, not provisional.
+
+**Live SD config at read time** (both lanes already run blanket n-gram SD):
+- primary `gemma4-26b-a4b-gptq.yaml:163`: `{num_speculative_tokens:7, prompt_lookup_max:6}`, `enforceEager:false` (graph capture on), `enablePrefixCaching:false`.
+- twin `gemma4-26b-a4b-gptq-5930k.yaml:125`: `{5, 4}`, `enforceEager:false`.
+
+**VERDICT — per-lane, NOT blanket** (per [`ngram-sd-workload-conditional`]: n-gram SD pays
+~2× on short Q/A but regresses −53% to −75% on long-form generation):
+
+- **Primary — blanket SD is a PROBABLE NET LOSS on its real workload.** 58.3% of primary
+  completions exceed 512 tok (median ≈ 588); the lane lives squarely in the SD-hostile
+  long-form regime, yet currently runs the *widest* SD config (`{7,6}`). The naive Sprint 3
+  "replicate the 2× everywhere" premise is **falsified for the primary**. The next move on
+  the primary is **DOWN/OFF, not up** — but it must be proven by a direct on/off A/B (see
+  next slice), not flipped blind on the live warm-pinned daily driver.
+- **Twin — SD-friendly workload, but negligible volume.** 60% of twin completions are
+  ≤16 tok (median ≈ 13): short fallback/probe-shaped traffic, exactly the regime SD helps.
+  So the planned **S3.2** bump `{5,4}→{7,6}` is *directionally safe* — but the lane runs
+  ~5 completions/day. **Verdict: documented null — defer.** Tuning a 5/day fallback lane is
+  low-leverage motion; not worth a live CR change against a warm-pinned daily driver's twin.
+- **Methodological finding (blocks the obvious canary path)**: the twin **cannot serve as
+  the primary's SD canary** — their workloads are *inverted* (twin short ↔ primary long). A
+  primary SD on/off decision therefore needs a before/after measured **on the primary lane
+  itself** (or a representative long-form synthetic load that matches the 588/953 p50/p90
+  shape), not a twin canary. The plan's "canary the twin first" guidance (S3.3) does **not**
+  transfer to the SD-verdict question.
+
+**Per-slice disposition**:
+- **S3.1** (replicate SD → qwen35): **BLOCKED, no change** — qwen35 disabled (#51/#52).
+- **S3.2** (twin `{5,4}→{7,6}`): **documented null / defer** — safe but ~5/day, negligible value.
+- **S3.3** (`maxNumSeqs` knee): **unaffected** — orthogonal to SD (batching, not speculation);
+  remains a separate high-blast-radius slice.
+- **NEW S3.4** (proposed next): **primary SD on/off A/B kill-test** on representative
+  long-form traffic. The data makes "primary blanket SD net-loss" the riskiest live
+  assumption now standing; the kill-test is a direct decode-tps before/after on the primary
+  with `speculativeConfig` present vs absent, under a prompt set matching the live
+  588-p50 / 953-p90 completion shape. If confirmed, disable or narrow primary SD.
+
+**Status**: S3.0 measurement thread **COMPLETE** — instrument shipped, rolled live,
+≥1-day data accumulated, per-lane verdict rendered. The "≥1 day of per-lane token-shape
+data → blanket-SD verdict per lane" acceptance criterion for Sprint 3 is **met**. SD
+knobs deliberately untouched this slice (verdict, not action); the one high-leverage
+action the data justifies (primary SD A/B) is scoped as S3.4 for operator-gated execution.
