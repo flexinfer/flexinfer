@@ -360,6 +360,21 @@ pulled forward if concurrent demand materializes (the runner-up trigger).
     speculation. Still a separate high-blast-radius slice. (Caveat from S3.4: the twin's
     inverted workload limits its value as a primary canary for *latency-shape* questions
     too, but `maxNumSeqs` knee-finding is per-lane anyway.)
+  - **DONE 2026-06-07 (non-destructive probe → verdict; no CR change). VERDICT: knee =
+    current config; keep both lanes as-is.** Operator chose the non-destructive path: drove
+    supplied concurrent load (C ∈ {1,2,4,8}, 256-tok long-form, temp=0) at the twin's
+    *current* config (`maxNumSeqs=2`, SD `{5,4}`, 16K) via proxy port-forward — no flux
+    suspend, no restart. Curve (twin@5930k): agg tok/s **35.4 → 57.2 (C=2, 1.62×) → 58.9
+    (C=4) → 59.8 (C=8)**; per-req latency 7.23s → 8.95s → 13.32s → 21.61s. **Knee is exactly
+    at maxNumSeqs=2**: the whole 1.62× batch gain lands at the cap; above it aggregate is
+    flat while latency grows ~linearly (queuing — the controlled form of MR !356 / the "42%
+    timeouts at parallelism 10"). Per-lane verdict: **primary keep maxNumSeqs=1** (32K/FP8-KV
+    has no headroom for a 2nd stream — proven in the 2026-05-25 32K push; +real traffic is
+    162/24h long-form, no concurrency); **twin keep maxNumSeqs=2** (raising to 4 is
+    KV-feasible at 16K but unjustified — 336/24h short-form, near-zero concurrency; same
+    low-leverage motion S3.2 declined). 1.62× (long-form+SD) vs the 2026-05-16 2.2×
+    (short+no-SD) confirms batching is workload-conditional too. Matrix:
+    "2026-06-07 S3.3". Evidence: `.loom/local/validation/maxnumseqs-knee/2026-06-07/`.
 - **S3.4 — primary SD on/off A/B kill-test — DONE 2026-06-06 (operator-gated; flexinfer
   MR pending). Result: PRIMARY SD DISABLED.** Ran the A/B on the **`-5930k` twin** (same
   gemma4-26b GPTQ-int4 on the same 7900 XTX silicon, near-idle → low blast radius) under
@@ -380,8 +395,18 @@ pulled forward if concurrent demand materializes (the runner-up trigger).
 **Acceptance**: S3.0 instrument live + ≥1 day of per-lane token-shape data → blanket
 SD verdict per lane **[MET 2026-06-06]**; twin tuned (or documented null) on that
 evidence **[documented null — S3.2 deferred]**; `maxNumSeqs` knee captured with the
-tradeoff curve **[S3.3 open]**; primary SD A/B run **[S3.4 DONE 2026-06-06 → primary
+tradeoff curve **[MET 2026-06-07 — S3.3: knee = maxNumSeqs=2; both lanes at per-lane
+optimum, documented null]**; primary SD A/B run **[S3.4 DONE 2026-06-06 → primary
 SD disabled; +64% decode on real long-form]**.
+
+> **SPRINT 3 COMPLETE 2026-06-07** (S3.0 verdict · S3.1 blocked/qwen35 · S3.2 null ·
+> S3.3 null · S3.4 primary-SD-off). With Sprints 0–2 already complete, **the
+> hardware-utilization arc is COMPLETE.** Net deliveries: F4 fleet-utilization instrument
+> + Grafana dashboard (S0); gfx906 HBM2 retrieval plane live as the default embeddings
+> lane + co-active reranker (S1); nightly in-cluster re-embed + weekly eval gauntlet +
+> controller preload-on-deploy (S2); per-lane SD/batching verdicts grounded in ≥1 day of
+> real traffic — primary SD disabled (+64% decode), twin SD kept, both lanes at their
+> maxNumSeqs optimum (S3).
 
 ---
 
