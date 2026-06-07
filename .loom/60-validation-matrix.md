@@ -2567,3 +2567,68 @@ Flux resumed; cluster returned to known-good before shipping.
 mitigated by the twin fallback). S3.4 closes the Sprint 3 SD-verdict thread:
 **primary = SD off (proven), twin = SD `{5,4}` keep (short traffic), qwen35 = blocked
 (#51/#52)**. Remaining Sprint 3 slice: S3.3 `maxNumSeqs` knee (orthogonal to SD).
+
+---
+
+### 2026-06-07 S3.3 — maxNumSeqs batching-knee probe (non-destructive) → knee = current config
+
+**What this slice is**: the final open slice of the hardware-utilization arc. S3.0/S3.4
+settled the SD thread; S3.3 is the orthogonal **batching** question — find the
+`maxNumSeqs` knee where added concurrency stops buying aggregate throughput and only
+adds latency. Operator chose the **non-destructive** path (2026-06-07): drive supplied
+concurrent load at the twin lane's **current** config (`maxNumSeqs=2`, SD `{5,4}`,
+maxModelLen 16384) **without any CR change or flux gate**, then render a per-lane
+verdict. Low blast radius; no model restart.
+
+**Rig & method**: `kubectl port-forward svc/flexinfer-proxy 18080:80`; pure-stdlib
+harness fires C identical requests simultaneously (threads), each a forced ~256-tok
+long-form generation (temperature=0, stream=false), 3 reps/level, warmup first.
+Concurrency swept C ∈ {1, 2, 4, 8}. Aggregate tok/s = Σ completion_tokens / batch
+wall-clock; per-req latency = median request elapsed. Twin is on the **5930k** node
+(2.13× slower than the 7900xtx per the 2026-05-14 row), so absolute tok/s is low — the
+**batch-scaling ratio** is the transferable result. Harness + raw log:
+`.loom/local/validation/maxnumseqs-knee/2026-06-07/`.
+
+**Result** (twin `gemma4-26b-a4b-gptq-5930k`, 16K, maxNumSeqs=2, SD `{5,4}`, 256-tok output):
+
+| Concurrency | Aggregate tok/s | Per-req tok/s | Req latency (med) | vs C=1 |
+|-------------|-----------------|---------------|-------------------|--------|
+| 1 | 35.4 | 35.4 | 7.23 s | baseline |
+| **2** (= maxNumSeqs) | **57.2** | 28.6 | 8.95 s | **1.62× agg · +24% lat** |
+| 4 (2× over cap) | 58.9 | 21.3 | 13.32 s | +3% agg · +84% lat |
+| 8 (4× over cap) | 59.8 | 12.3 | 21.61 s | +5% agg · +199% lat |
+
+0/24 requests failed. **The knee is exactly at `maxNumSeqs=2`.** The entire batching
+benefit (1.62× aggregate) is captured at the configured cap; above it, aggregate
+throughput is flat (57→60 tok/s, within noise) while per-request latency grows ~linearly
+with concurrency (queuing). This is the controlled, quantified form of the MR !356
+finding ("scaling beyond 2 concurrent requests would need higher maxNumSeqs — separate
+config-tuning slice" → that slice is this one) and the "42% timeouts at parallelism 10".
+
+**Cross-check**: the 2026-05-16 row measured **2.2×** at maxNumSeqs=2 on *short* output
+with *no* SD; this probe measures **1.62×** on *long-form* output with SD `{5,4}` on.
+Less batch scaling under long-form + SD is consistent with `ngram-sd-workload-conditional`
+(SD's verifier compute competes for the batch's compute budget; sustained long decode is
+more compute-bound) — batching, like SD, is workload-conditional.
+
+**VERDICT — per-lane; maxNumSeqs already at the per-lane optimum; no change**:
+
+- **Primary `gemma4-26b-a4b-gptq` (32K, maxNumSeqs=1)**: raising maxNumSeqs is
+  **infeasible without sacrificing context** — the 2026-05-25 32K push (row above) already
+  proved the 32K/FP8-KV config has no KV headroom for a 2nd stream (it had to drop 2→1 to
+  reach 32K; gpuMem 0.98, pool full). And its real traffic is ~162 compl/24h long-form
+  with **no concurrency** to batch. **Keep maxNumSeqs=1.**
+- **Twin `gemma4-26b-a4b-gptq-5930k` (16K, maxNumSeqs=2)**: already sits exactly at the
+  measured knee. Raising to 4 is KV-*feasible* at 16K (half the primary's context) but
+  **unjustified by real traffic**: ~336 compl/24h short-form (p50 ≈ 23 tok), near-zero
+  real concurrency, so a higher cap would essentially never be exercised. Tuning it is
+  the same low-leverage motion S3.2 declined. **Documented null — keep maxNumSeqs=2.**
+  (If a concurrent in-cluster batch consumer ever targets this lane, 4 is safe to try at
+  16K — but the burst behavior above shows the gain is bounded by single-GPU decode
+  compute, not the cap.)
+
+**Status**: PASSED 2026-06-07 — knee captured with the full throughput/latency tradeoff
+curve (S3.3 acceptance MET). Both 26B lanes are at their per-lane maxNumSeqs optimum given
+context/KV constraints and the measured low-concurrency real traffic; no knob touched
+(verdict, not action). **S3.3 closes the last open slice of the hardware-utilization arc —
+Sprint 3 and the arc are COMPLETE.**
