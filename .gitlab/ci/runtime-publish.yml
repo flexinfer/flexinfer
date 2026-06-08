@@ -256,3 +256,65 @@ publish_unified_rocm_gfx1100:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
+
+# Multi-arch torch rebuild — riskiest-assumption validation for a unified
+# multi-arch runtime image. Rebuilds torch from source for BOTH gfx906 and
+# gfx1100 in one wheel (the stock rocm/pytorch 6.3.4 base ships torch for
+# gfx1100 only; its SYSTEM rocBLAS Tensile + librccl already cover both arches,
+# so only torch's own kernels need rebuilding). Single-purpose, no GPU op at
+# build time. Structure copied verbatim from publish_unified_rocm_gfx1100.
+publish_torch_multiarch:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 4h
+  needs: []
+  resource_group: buildkit-rocm-images
+  retry:
+    max: 1
+    when: [runner_system_failure, stuck_or_timeout_failure]
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building multi-arch torch (gfx906;gfx1100) for ROCm 6.3.4..."
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.runtime-torch-multiarch" \
+          --opt platform=linux/amd64 \
+          --opt build-arg:BASE_IMAGE="rocm/pytorch:rocm6.3.4_ubuntu22.04_py3.10_pytorch_release_2.4.0" \
+          --opt build-arg:PYTORCH_ROCM_ARCH="gfx906;gfx1100" \
+          --opt build-arg:PYTORCH_REF="v2.4.0" \
+          --import-cache "type=registry,ref=${REGISTRY}/torch:rocm6.3.4-multiarch-buildcache" \
+          --import-cache "type=registry,ref=${REGISTRY}/torch:rocm6.3.4-multiarch" \
+          --export-cache "type=registry,ref=${REGISTRY}/torch:rocm6.3.4-multiarch-buildcache,mode=max,image-manifest=true,ignore-error=true" \
+          --export-cache "type=inline" \
+          --output "type=image,\"name=${REGISTRY}/torch:rocm6.3.4-multiarch,${REGISTRY}/torch:rocm6.3.4-multiarch-${CI_COMMIT_SHORT_SHA}\",push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: build failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: build failed (${i}/${attempts}); retrying..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - build/Dockerfile.runtime-torch-multiarch
+        - .gitlab/ci/runtime-publish.yml
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
