@@ -96,10 +96,18 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #   pyyaml + typing_extensions; numpy must stay 1.x — the base's torch 2.4.0
 #   was compiled against the numpy 1.x ABI and numpy 2.x → "Numpy is not
 #   available" at import (project memory: ROCm numpy ABI matrix).
+# cmake<4 (CRITICAL): pip's unpinned `cmake` resolves to 4.x, which REMOVED
+#   compatibility with `cmake_minimum_required(VERSION < 3.5)`. PyTorch 2.4.0's
+#   bundled third_party (protobuf etc.) still declare those old minimums, so
+#   cmake 4.x hard-errors at configure: "Compatibility with CMake < 3.5 has
+#   been removed from CMake" (third_party/protobuf/cmake/CMakeLists.txt:2).
+#   Pin to the latest 3.x (PyTorch 2.4.0 builds cleanly on 3.18–3.31; the base
+#   image's own apt cmake is 3.22.1). This is SEPARATE from the FindHIP cmake
+#   fix below, which is needed regardless of cmake major version.
 RUN python3 -m pip install --no-cache-dir \
         "setuptools>=74" "setuptools-scm" wheel ninja \
         pyyaml typing-extensions "numpy>=1.26,<2" \
-        cmake packaging requests
+        "cmake<4" packaging requests
 
 # ── Clone torch at the exact tag matching the base's torch ───────────
 # Shallow clone of just PYTORCH_REF, then init submodules. v2.4.0 must match
