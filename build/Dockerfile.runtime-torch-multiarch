@@ -145,6 +145,19 @@ RUN python3 tools/amd_build/build_amd.py
 # (This is the same fix documented for the vLLM ROCm source build.)
 ENV CMAKE_ARGS="-DCMAKE_MODULE_PATH=/opt/rocm/lib/cmake/hip"
 
+# ── Skip PyTorch's C++ test binaries (BUILD_TEST=0) ──────────────────
+# The wheel does not ship test binaries, and building them is pure waste — but
+# more importantly the base image's bundled OpenMPI (/opt/ompi/libmpi.so) has
+# UNRESOLVED opal_hwloc201_* symbols. With BUILD_TEST=1 (the default) torch
+# compiles ProcessGroupMPITest, whose executable link does full symbol
+# resolution against that broken libmpi → "collect2: error: ld returned 1"
+# at ~[7815/8636], aborting the whole wheel right before completion.
+# libtorch.so itself links fine (shared libs defer those symbols; only the test
+# executable resolves them), so skipping tests drops zero torch features and
+# sidesteps the broken base MPI. Placed here (after hipify/CMAKE_ARGS) so the
+# expensive clone+submodule+hipify layers stay cached across rebuilds.
+ENV BUILD_TEST=0
+
 # ── Build the torch wheel for gfx906;gfx1100 ─────────────────────────
 # USE_ROCM/USE_CUDA/PYTORCH_ROCM_ARCH come from ENV above. Build a wheel (not
 # `setup.py install`) so the artifact is inspectable and the install is a

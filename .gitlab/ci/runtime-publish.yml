@@ -257,12 +257,21 @@ publish_unified_rocm_gfx1100:
       when: manual
     - when: never
 
-# Multi-arch torch rebuild — riskiest-assumption validation for a unified
-# multi-arch runtime image. Rebuilds torch from source for BOTH gfx906 and
-# gfx1100 in one wheel (the stock rocm/pytorch 6.3.4 base ships torch for
+# Multi-arch torch rebuild — PROVEN. Rebuilds torch from source for BOTH gfx906
+# and gfx1100 in one wheel (the stock rocm/pytorch 6.3.4 base ships torch for
 # gfx1100 only; its SYSTEM rocBLAS Tensile + librccl already cover both arches,
-# so only torch's own kernels need rebuilding). Single-purpose, no GPU op at
-# build time. Structure copied verbatim from publish_unified_rocm_gfx1100.
+# so only torch's own kernels need rebuilding). Verified 2026-06-08: the built
+# libtorch_hip.so embeds both gfx906 AND gfx1100 code objects; image published
+# to ${REGISTRY}/torch:rocm6.3.4-multiarch.
+#
+# CANONICAL BUILD PATH IS OFF-CI: build/build-torch-multiarch.sh on a beefy host
+# (e.g. the 7900xtx Docker builder: 24c/62G/~496G free). This from-source 2-arch
+# torch + aotriton build's peak working set (>130GB) EXCEEDS the in-cluster
+# buildkitd-central VMs (~134GB free, 14G RAM), which get evicted mid-build —
+# wiping the emptyDir cache and canceling the build (observed 3x: snapshot
+# "no such file" + "context canceled"). Do NOT rely on this CI job for the
+# real build; it is kept MANUAL-ONLY below as documentation / break-glass and
+# will fail on buildkit. Downstream runtime images COPY --from=<image> /wheels/.
 publish_torch_multiarch:
   stage: publish
   image: registry.harbor.lan/library/buildkit:v0.12.5
@@ -311,10 +320,10 @@ publish_torch_multiarch:
         delay=$((delay * 2))
       done
   rules:
-    - if: $CI_COMMIT_BRANCH == "master"
-      changes:
-        - build/Dockerfile.runtime-torch-multiarch
-        - .gitlab/ci/runtime-publish.yml
+    # MANUAL-ONLY (break-glass). NO master auto-trigger on Dockerfile changes:
+    # buildkitd-central cannot hold this build's >130GB working set and evicts
+    # mid-build (see job header). The canonical, working build path is off-CI:
+    # build/build-torch-multiarch.sh.
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
