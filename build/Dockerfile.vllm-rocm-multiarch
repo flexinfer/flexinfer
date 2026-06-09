@@ -1,0 +1,152 @@
+# Unified multi-arch (gfx906;gfx1100) vLLM serving image — PROVEN 2026-06-09.
+#
+# One image whose torch + vLLM run on BOTH gfx906 (Radeon VII) and gfx1100
+# (RX 7900 XTX), enabling cross-arch Ray pipeline-parallel serving (F5 3-way PP).
+#
+# Foundation: FROM the multi-arch torch wheel image (torch 2.4.0 built for
+# gfx906;gfx1100; gfx906 device code hardware-verified — see
+# Dockerfile.runtime-torch-multiarch + project memory). rocBLAS Tensile + librccl
+# in the 6.3.4 base already cover both arches, so only torch (done) + vLLM here
+# need multi-arch builds.
+#
+# vLLM = 0.6.3.post1 — the release pinned to torch==2.4.0 (0.6.4+ require 2.5.1).
+# Compiled for gfx906;gfx1100 in ONE wheel (warpSize compiles cleanly on
+# 0.6.3/ROCm6.3.4; verified _C.abi3.so carries both arches).
+#
+# THREE arch-safe fixes are baked in (each validated on radeonvii via opt-125m →
+# coherent output). NONE patches a vLLM kernel; the portable generic kernel works:
+#   1. transformers==4.45.2  — base ships 5.x, which rejects torch 2.4.0a0 and
+#      dropped tokenizer.all_special_tokens_extended that vLLM 0.6.3 calls.
+#   2. gfx906 safe mem_get_info — Vega20 VMM-unsupported makes
+#      torch.cuda.mem_get_info() raise "HIP error: invalid argument" in
+#      worker.init_device. A .pth site-hook wraps it (try-real / except-fallback);
+#      transparent on gfx1100.
+#   3. force GENERIC paged-attention — vLLM gates the AMD "ll4mi" custom kernel on
+#      `not _ON_NAVI`, so gfx1100 (Navi) already uses the portable v1/v2 kernel,
+#      but gfx906 (Vega20, non-Navi, non-CDNA) wrongly tries ll4mi and
+#      device-asserts false. We pin _use_rocm_custom_paged_attention()->False so
+#      both our arches use the generic kernel. (No effect on gfx1100.)
+#
+# HSA_OVERRIDE_GFX_VERSION is intentionally NOT baked (9.0.6 gfx906 vs 11.0.0
+# gfx1100). The torch/vLLM here carry NATIVE gfx906 code objects (no override
+# needed — proven). Set per-pod via the runtime CR/nodeSelector if ever required.
+
+ARG BASE_IMAGE=registry.harbor.lan/flexinfer/torch:rocm6.3.4-multiarch
+FROM ${BASE_IMAGE}
+
+ARG PYTORCH_ROCM_ARCH="gfx906;gfx1100"
+ARG VLLM_REF=v0.6.3.post1
+ARG TRANSFORMERS_VERSION=4.45.2
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    ROCM_PATH=/opt/rocm \
+    HIP_PATH=/opt/rocm \
+    CMAKE_PREFIX_PATH=/opt/rocm \
+    PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH} \
+    VLLM_TARGET_DEVICE=rocm \
+    BUILD_FA=0 \
+    MAX_JOBS=24 \
+    CMAKE_BUILD_PARALLEL_LEVEL=24 \
+    SETUPTOOLS_SCM_PRETEND_VERSION=0.6.3.post1
+
+RUN apt-get update && apt-get install -y --no-install-recommends git curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Build vLLM for BOTH arches in one wheel ──────────────────────────
+WORKDIR /build
+RUN git clone --branch ${VLLM_REF} --depth 1 https://github.com/vllm-project/vllm.git
+WORKDIR /build/vllm
+# Keep our pre-installed multi-arch torch — strip vLLM's torch pins so pip cannot
+# silently swap in a PyPI CPU wheel.
+RUN python3 use_existing_torch.py
+RUN python3 -m pip install --no-cache-dir "setuptools>=74" setuptools_scm wheel ninja "cmake<4"
+RUN python3 -m pip install --no-cache-dir -r requirements-rocm.txt \
+ || python3 -m pip install --no-cache-dir -r requirements/rocm.txt
+RUN python3 setup.py clean --all || true
+RUN python3 setup.py bdist_wheel --dist-dir=/wheels-vllm && ls -la /wheels-vllm
+RUN python3 -m pip install --no-cache-dir --no-deps /wheels-vllm/*.whl
+
+# ── FIX 1: transformers pin (vLLM 0.6.3 era) ─────────────────────────
+RUN python3 -m pip install --no-cache-dir "transformers==${TRANSFORMERS_VERSION}"
+
+# ── FIX 3: force the generic paged-attention kernel on our arches ────
+# Deterministic source patch of vLLM's kernel selector. Fails loudly if the
+# upstream text drifts (so a version bump can't silently re-enable ll4mi).
+RUN python3 - <<'PY'
+import pathlib, sys
+root = pathlib.Path("/opt/conda/envs/py_3.10/lib/python3.10/site-packages/vllm/attention/backends/rocm_flash_attn.py")
+src = root.read_text()
+old = ("    return (not _ON_NAVI and (qtype == torch.half or qtype == torch.bfloat16)\n"
+       "            and (head_size == 64 or head_size == 128)\n"
+       "            and (block_size == 16 or block_size == 32)\n"
+       "            and (gqa_ratio >= 1 and gqa_ratio <= 16) and max_seq_len <= 32768)")
+new = ("    # flexinfer multi-arch: force the portable generic paged-attention kernel.\n"
+       "    # The AMD 'll4mi' custom kernel is CDNA-only; gfx1100 (Navi) already skips it\n"
+       "    # via `not _ON_NAVI`, and gfx906 (Vega20) device-asserts on it. Our fleet is\n"
+       "    # gfx906+gfx1100 only (no gfx90a/gfx942), so v1/v2 is always correct here.\n"
+       "    return False")
+assert old in src, "rocm_flash_attn._use_rocm_custom_paged_attention text drifted — re-derive the patch"
+root.write_text(src.replace(old, new))
+print("patched _use_rocm_custom_paged_attention -> False")
+PY
+
+# ── FIX 2: gfx906 safe mem_get_info via a .pth site-hook ─────────────
+# Applies at interpreter startup for every process (incl. vLLM workers). torch-only
+# (no vllm import), arch-transparent: real mem_get_info on gfx1100, fallback on gfx906.
+RUN SP="$(python3 -c 'import site,sys;print([p for p in site.getsitepackages() if p.endswith("site-packages")][0])')" && \
+    printf '%s\n' \
+'def _install():' \
+'    try:' \
+'        import torch' \
+'    except Exception:' \
+'        return' \
+'    if not getattr(torch.version, "hip", None):' \
+'        return' \
+'    orig = getattr(torch.cuda, "mem_get_info", None)' \
+'    if orig is None or getattr(orig, "_flexinfer_safe", False):' \
+'        return' \
+'    def safe(device=None):' \
+'        try:' \
+'            return orig(device)' \
+'        except Exception:' \
+'            if device is None:' \
+'                device = torch.cuda.current_device()' \
+'            total = int(torch.cuda.get_device_properties(device).total_memory)' \
+'            used = max(int(torch.cuda.memory_reserved(device)), int(torch.cuda.memory_allocated(device)))' \
+'            return max(total - used, 0), total' \
+'    safe._flexinfer_safe = True' \
+'    torch.cuda.mem_get_info = safe' \
+'    try:' \
+'        import torch.cuda.memory as _m' \
+'        _m.mem_get_info = safe' \
+'    except Exception:' \
+'        pass' \
+'_install()' \
+    > "$SP/flexinfer_gfx906_memfix.py" && \
+    echo 'import flexinfer_gfx906_memfix' > "$SP/zzz_flexinfer_gfx906.pth" && \
+    echo "installed mem_get_info hook in $SP"
+
+# ── Build-time arch-coverage check (GPU-FREE, informational) ─────────
+RUN VC="$(find /opt/conda -name '_C*.so' -path '*vllm*' | head -1)"; \
+    echo "=== vllm C-ext: ${VC:-NOT_FOUND} ==="; \
+    ( roc-obj-ls "$VC" 2>/dev/null | grep -ioE 'gfx[0-9a-f]+' | sort -u \
+      || llvm-objdump --offloading "$VC" 2>/dev/null | grep -ioE 'gfx[0-9a-f]+' | sort -u ) || true; \
+    echo "=== EXPECT gfx906 AND gfx1100 (informational) ==="
+
+RUN rm -rf /build
+
+# ── Serving defaults (V0 engine + non-FA attention; matches the gfx906 lane) ──
+ENV VLLM_USE_V1=0 \
+    VLLM_USE_TRITON_FLASH_ATTN=0 \
+    VLLM_ROCM_USE_AITER=0 \
+    HIP_VISIBLE_DEVICES=0
+
+WORKDIR /workspace
+RUN mkdir -p /models
+EXPOSE 8000
+HEALTHCHECK --interval=30s --timeout=10s --start-period=180s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=10)"
+ENTRYPOINT ["python3", "-m", "vllm.entrypoints.openai.api_server"]
+CMD ["--host", "0.0.0.0", "--port", "8000"]
