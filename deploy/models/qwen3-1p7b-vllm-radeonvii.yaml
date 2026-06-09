@@ -122,15 +122,26 @@ spec:
     limits:
       cpu: "6"
       memory: 16Gi
-  serviceLabels:
-    - vllm-canary
-    - opt-125m-vllm
+  # 2026-06-09 stabilization: de-registered from the proxy to stop a recurring
+  # activation flap. A ~30s smoke/soak probe to the canary aliases kept
+  # cold-starting the known-broken gfx906 vLLM lane (segfault during OPT
+  # Embedding init — see the 2026-05-19 log above), scheduling a pod that
+  # crash-looped and tripped PodCrashLoopBackOff + KubeDeploymentReplicasMismatch
+  # + TargetDown(flexinfer-vllm-backends). The proxy alias cache
+  # (internal/proxy/model_resolver.go: refreshModelAliasCache) and the
+  # service-label cache map their claims regardless of litellm.enabled, so
+  # clearing the claims — not just setting enabled:false — is what actually
+  # de-registers the canary. With no alias/service-label claims, vllm-canary /
+  # opt-125m-vllm no longer resolve to this Model, so it stays scaled to zero per
+  # its documented default. Only the bare resource name still resolves, for a
+  # deliberate manual smoke.
+  #
+  # To smoke once a fixed gfx906 vLLM image lands, restore the commented values
+  # below (and litellm.enabled:true), then follow the procedure at the top.
+  serviceLabels: []
+  #   serviceLabels: [vllm-canary, opt-125m-vllm]
   litellm:
-    enabled: true
-    servedModelName: opt-125m-vllm
-    # Carry only canary-scoped aliases. Do not claim generic chat aliases until
-    # the gfx906 vLLM lane has live HTTP 200 evidence.
-    aliases:
-      - vllm-canary
-      - opt-125m-vllm
-      - opt-125m-vllm-vii
+    enabled: false
+    aliases: []
+    #   servedModelName: opt-125m-vllm
+    #   aliases: [vllm-canary, opt-125m-vllm, opt-125m-vllm-vii]
