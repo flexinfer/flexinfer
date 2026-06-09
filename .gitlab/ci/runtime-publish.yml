@@ -327,3 +327,67 @@ publish_torch_multiarch:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
+
+# Unified multi-arch (gfx906;gfx1100) vLLM serving image — PROVEN 2026-06-09.
+# FROM ${REGISTRY}/torch:rocm6.3.4-multiarch + vLLM 0.6.3.post1 source-built for
+# BOTH arches, with three arch-safe fixes baked in (transformers==4.45.2; gfx906
+# safe mem_get_info wrapper; force generic paged-attention since the AMD "ll4mi"
+# kernel is CDNA-only and device-asserts on Vega20). Validated on radeonvii:
+# opt-125m generated coherent output on gfx906. Produces ${REGISTRY}/vllm:rocm6.3.4-multiarch.
+#
+# CANONICAL BUILD PATH IS OFF-CI: build/build-vllm-multiarch.sh on a beefy host
+# (7900xtx). The from-source dual-arch vLLM build's >130GB working set exceeds the
+# buildkitd-central VMs (evicted mid-build). This job is MANUAL-ONLY break-glass
+# and will fail on buildkit.
+publish_vllm_multiarch:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 4h
+  needs: []
+  resource_group: buildkit-rocm-images
+  retry:
+    max: 1
+    when: [runner_system_failure, stuck_or_timeout_failure]
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building unified multi-arch vLLM image (gfx906;gfx1100)..."
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.vllm-rocm-multiarch" \
+          --opt platform=linux/amd64 \
+          --opt build-arg:BASE_IMAGE="${REGISTRY}/torch:rocm6.3.4-multiarch" \
+          --opt build-arg:PYTORCH_ROCM_ARCH="gfx906;gfx1100" \
+          --opt build-arg:VLLM_REF="v0.6.3.post1" \
+          --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm6.3.4-multiarch-buildcache" \
+          --export-cache "type=registry,ref=${REGISTRY}/vllm:rocm6.3.4-multiarch-buildcache,mode=max,image-manifest=true,ignore-error=true" \
+          --export-cache "type=inline" \
+          --output "type=image,\"name=${REGISTRY}/vllm:rocm6.3.4-multiarch,${REGISTRY}/vllm:rocm6.3.4-multiarch-${CI_COMMIT_SHORT_SHA}\",push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: build failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: build failed (${i}/${attempts}); retrying..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
+  rules:
+    # MANUAL-ONLY (break-glass). Canonical path is OFF-CI:
+    # build/build-vllm-multiarch.sh. buildkitd-central cannot hold this build.
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
