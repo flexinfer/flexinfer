@@ -1,0 +1,209 @@
+# Multi-arch PyTorch-for-ROCm rebuild — riskiest-assumption validation.
+#
+# GOAL
+#   Produce a single torch wheel whose own CUDA/HIP kernels are compiled for
+#   BOTH gfx906 (Radeon VII) AND gfx1100 (7900 XTX) in ONE image, so a future
+#   unified multi-arch runtime can serve both cards from one torch install.
+#
+# WHY THIS WORKS (the load-bearing assumption being validated)
+#   The stock base image
+#     rocm/pytorch:rocm6.3.4_ubuntu22.04_py3.10_pytorch_release_2.4.0
+#   ships a torch built for gfx1100 but NOT gfx906 — confirmed:
+#     torch.cuda.get_arch_list() = [gfx908, gfx90a, gfx1030, gfx1100, gfx1101,
+#                                   gfx940, gfx941, gfx942, gfx1200, gfx1201]
+#     (no gfx906).
+#   BUT the base's SYSTEM rocBLAS Tensile libraries AND librccl already cover
+#   both gfx906 and gfx1100. So ONLY torch's own kernels need rebuilding for
+#   "gfx906;gfx1100" — the heavy system math/comm libs are reused as-is.
+#   This Dockerfile rebuilds torch from source against that exact arch list and
+#   reinstalls it over the base's torch.
+#
+# APPROACH: FRESH CLONE at the v2.4.0 tag (not in-place rebuild).
+#   The ROCm "Building PyTorch for ROCm" wiki recommends a clean clone +
+#   `git submodule update --init --recursive`. An in-place rebuild of any
+#   source tree the base image might carry is unsafe: that tree may already be
+#   hipified, and running tools/amd_build/build_amd.py twice corrupts sources.
+#   A fresh checkout at the exact tag matching the base's torch (2.4.0) is the
+#   reproducible path and guarantees the rebuilt kernels match the rest of the
+#   already-installed torch Python/runtime surface in the base.
+#
+# BUILD-HOST CONSTRAINT (critical)
+#   This builds in-cluster via buildctl against buildkitd-central — the CI
+#   build host has NO GPU. Do NOT run any torch.cuda / GPU op at build time;
+#   those probe the driver and will fail. The only sanity check here is a
+#   cheap NON-GPU import: `python -c "import torch; print(torch.__version__)"`.
+#   Verifying the gfx906 kernels actually run is a SEPARATE on-GPU step on the
+#   radeonvii node after this image is published.
+#
+# This file is buildkit / dockerfile.v0 compatible (single FROM, plain RUN).
+
+# ── Build ARGs ───────────────────────────────────────────────────────
+# BASE_IMAGE         the stock rocm/pytorch 6.3.4 / torch 2.4.0 image.
+# PYTORCH_ROCM_ARCH  semicolon-separated arch list torch kernels compile for.
+# PYTORCH_REF        git tag/branch/sha to check out; MUST match the base's
+#                    torch version (2.4.0) so the rebuilt kernels are ABI- and
+#                    feature-compatible with the rest of the installed torch.
+ARG BASE_IMAGE=rocm/pytorch:rocm6.3.4_ubuntu22.04_py3.10_pytorch_release_2.4.0
+ARG PYTORCH_ROCM_ARCH="gfx906;gfx1100"
+ARG PYTORCH_REF=v2.4.0
+ARG PYTORCH_REPO=https://github.com/pytorch/pytorch.git
+# Parallelism cap for the C++/HIP compile. Left unset → use all cores at build.
+ARG MAX_JOBS=
+
+# ── Single stage: rebuild torch in the base image ────────────────────
+FROM ${BASE_IMAGE} AS torch-multiarch
+
+ARG PYTORCH_ROCM_ARCH
+ARG PYTORCH_REF
+ARG PYTORCH_REPO
+ARG MAX_JOBS
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+# ROCm 6.4 flat layout convention (carried for 6.3.4 too): HIP tooling lives
+# directly under /opt/rocm; HIP_PATH must be /opt/rocm, NOT /opt/rocm/hip.
+# (Gotcha from project memory: /opt/rocm/hip does not exist on flat layouts.)
+ENV ROCM_PATH=/opt/rocm
+ENV HIP_PATH=/opt/rocm
+
+# Torch's own build is USE_ROCM (HIP), never CUDA. Pin the arch list and the
+# ROCm-build toggles up front so every layer agrees.
+ENV PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH}
+ENV USE_ROCM=1
+ENV USE_CUDA=0
+# Faster, deterministic builds. Avoid the sccache launcher (not installed in
+# this base) — same class of footgun as VLLM_DISABLE_SCCACHE in the vLLM build.
+ENV USE_NINJA=1
+ENV CMAKE_BUILD_TYPE=Release
+
+# ── System build deps ────────────────────────────────────────────────
+# The rocm/pytorch base already carries the ROCm/HIP SDK + a working python
+# toolchain; we only add the generic C/C++ build essentials, git (+ git-lfs
+# for any LFS submodules), and ninja. We do NOT add hipblas/rocblas: the base
+# already ships the Tensile-backed system libs covering gfx906+gfx1100, which
+# is the whole reason this rebuild is cheap.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        git git-lfs cmake ninja-build build-essential ca-certificates curl \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+# ── Python build tooling ─────────────────────────────────────────────
+# setuptools-scm: torch's build metadata generation can require it (same pin
+#   we carry for the vLLM source build).
+# pyyaml/typing-extensions/numpy<2: torch's codegen (gen.py) and setup.py need
+#   pyyaml + typing_extensions; numpy must stay 1.x — the base's torch 2.4.0
+#   was compiled against the numpy 1.x ABI and numpy 2.x → "Numpy is not
+#   available" at import (project memory: ROCm numpy ABI matrix).
+# cmake<4 (CRITICAL): pip's unpinned `cmake` resolves to 4.x, which REMOVED
+#   compatibility with `cmake_minimum_required(VERSION < 3.5)`. PyTorch 2.4.0's
+#   bundled third_party (protobuf etc.) still declare those old minimums, so
+#   cmake 4.x hard-errors at configure: "Compatibility with CMake < 3.5 has
+#   been removed from CMake" (third_party/protobuf/cmake/CMakeLists.txt:2).
+#   Pin to the latest 3.x (PyTorch 2.4.0 builds cleanly on 3.18–3.31; the base
+#   image's own apt cmake is 3.22.1). This is SEPARATE from the FindHIP cmake
+#   fix below, which is needed regardless of cmake major version.
+RUN python3 -m pip install --no-cache-dir \
+        "setuptools>=74" "setuptools-scm" wheel ninja \
+        pyyaml typing-extensions "numpy>=1.26,<2" \
+        "cmake<4" packaging requests
+
+# ── Clone torch at the exact tag matching the base's torch ───────────
+# Shallow clone of just PYTORCH_REF, then init submodules. v2.4.0 must match
+# the base's torch 2.4.0 release so the rebuilt kernels slot into the existing
+# torch install without ABI drift.
+WORKDIR /opt/src
+RUN git clone --depth 1 --branch "${PYTORCH_REF}" --recursive \
+        "${PYTORCH_REPO}" pytorch \
+    || (git clone "${PYTORCH_REPO}" pytorch \
+        && cd pytorch \
+        && git fetch --depth 1 origin "${PYTORCH_REF}" \
+        && git checkout FETCH_HEAD \
+        && git submodule update --init --recursive --depth 1)
+
+WORKDIR /opt/src/pytorch
+
+# Belt-and-suspenders: ensure submodules are fully materialized even if the
+# --recursive clone above raced or the fallback path was taken.
+RUN git submodule update --init --recursive --depth 1
+
+# ── Hipify: convert CUDA sources → HIP for the target arches ─────────
+# Explicit hipify per the ROCm wiki. setup.py would invoke this implicitly
+# under USE_ROCM=1, but running it explicitly makes the step observable in the
+# CI log and avoids any ambiguity about whether sources were converted.
+# This is a pure source transform — no GPU touched.
+RUN python3 tools/amd_build/build_amd.py
+
+# ── KEY ROCm-from-source FIX: point cmake MODULE mode at ROCm's FindHIP ──
+# pip's cmake 4.x does NOT ship FindHIP.cmake, and PyTorch's LoadHIP.cmake
+# forces MODULE mode via `find_package(HIP 1.0 MODULE)`, which only searches
+# CMAKE_MODULE_PATH. Config mode fails (hip-config-version.cmake uses
+# SameMajorVersion: 6 != 1). The fix is to add ROCm's own FindHIP.cmake dir to
+# CMAKE_MODULE_PATH. cmake 4.x ignores the CMAKE_MODULE_PATH *env var*, so it
+# MUST be passed as a -D cmake arg via CMAKE_ARGS (read by torch's setup.py).
+# (This is the same fix documented for the vLLM ROCm source build.)
+ENV CMAKE_ARGS="-DCMAKE_MODULE_PATH=/opt/rocm/lib/cmake/hip"
+
+# ── Skip PyTorch's C++ test binaries (BUILD_TEST=0) ──────────────────
+# The wheel does not ship test binaries, and building them is pure waste — but
+# more importantly the base image's bundled OpenMPI (/opt/ompi/libmpi.so) has
+# UNRESOLVED opal_hwloc201_* symbols. With BUILD_TEST=1 (the default) torch
+# compiles ProcessGroupMPITest, whose executable link does full symbol
+# resolution against that broken libmpi → "collect2: error: ld returned 1"
+# at ~[7815/8636], aborting the whole wheel right before completion.
+# libtorch.so itself links fine (shared libs defer those symbols; only the test
+# executable resolves them), so skipping tests drops zero torch features and
+# sidesteps the broken base MPI. Placed here (after hipify/CMAKE_ARGS) so the
+# expensive clone+submodule+hipify layers stay cached across rebuilds.
+ENV BUILD_TEST=0
+
+# ── Build the torch wheel for gfx906;gfx1100 ─────────────────────────
+# USE_ROCM/USE_CUDA/PYTORCH_ROCM_ARCH come from ENV above. Build a wheel (not
+# `setup.py install`) so the artifact is inspectable and the install is a
+# clean, separate, reproducible step. No GPU is touched: this only compiles
+# device code for the named arches, it does not run it.
+#   MAX_JOBS controls compile parallelism; default to all cores.
+RUN export MAX_JOBS="${MAX_JOBS:-$(nproc)}" \
+    && echo "Building torch ${PYTORCH_REF} for PYTORCH_ROCM_ARCH=${PYTORCH_ROCM_ARCH} with MAX_JOBS=${MAX_JOBS}" \
+    && python3 setup.py bdist_wheel \
+    && ls -la dist/
+
+# ── Reinstall the freshly built multi-arch torch over the base's torch ──
+# --no-deps so pip does not pull a different (possibly CUDA) torch dep tree;
+# the base already provides torch's runtime deps. Force-reinstall to replace
+# the base's gfx1100-only torch with our gfx906;gfx1100 build.
+RUN python3 -m pip install --no-cache-dir --no-deps --force-reinstall \
+        dist/torch-*.whl
+
+# ── Stash the wheel where it can be copied out by downstream images ──
+# A future unified runtime image can `COPY --from=<this image> /wheels/` to
+# pick up the multi-arch torch wheel without rebuilding.
+RUN mkdir -p /wheels && cp dist/torch-*.whl /wheels/
+
+# ── Cleanup: drop the ~10GB+ source/build tree and pip/apt caches ───
+# The installed torch and the stashed wheel are all that downstream needs.
+RUN rm -rf /opt/src/pytorch \
+    && (python3 -m pip cache purge 2>/dev/null || true) \
+    && find / -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true \
+    && find / -name "*.py[co]" -delete 2>/dev/null || true \
+    && rm -rf /root/.cache /tmp/* /var/tmp/* 2>/dev/null || true
+
+# ── NON-GPU arch-coverage check ──────────────────────────────────────
+# The CI build host has NO GPU. NOTE: torch.cuda.get_arch_list() returns []
+# without a CUDA context (verified empirically: a CPU-only pod printed
+# `arch_list []` for this same base) — so it CANNOT confirm gfx906 here.
+# Instead inspect the embedded code objects of libtorch_hip.so directly:
+# roc-obj-ls lists the gfx targets baked into the fat binary, no GPU/driver
+# needed (this works in the rocm/pytorch base — it listed librccl's arches).
+# This is the build-time confirmation that the gfx906;gfx1100 rebuild took.
+RUN python3 -c "import torch; print('torch', torch.__version__, 'hip', torch.version.hip)" \
+    && TLIB="$(python3 -c 'import torch,os;print(os.path.dirname(torch.__file__))')/lib/libtorch_hip.so" \
+    && echo "=== embedded code-object arches in ${TLIB} (no GPU) ===" \
+    && ( roc-obj-ls "${TLIB}" 2>/dev/null | grep -ioE 'gfx[0-9a-f]+' | sort -u \
+         || llvm-objdump --offloading "${TLIB}" 2>/dev/null | grep -ioE 'gfx[0-9a-f]+' | sort -u ) \
+    && echo "=== EXPECT both gfx906 AND gfx1100 listed above (build fails downstream validation if gfx906 missing) ==="
+
+# Default to a no-op shell; this image is a build/validation artifact, not a
+# long-running service. Downstream runtimes COPY the wheel or FROM this image.
+CMD ["python3", "-c", "import torch; print(torch.__version__)"]
