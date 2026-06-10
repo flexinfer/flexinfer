@@ -2667,3 +2667,38 @@ confirmed `Ready` for `gemma4-26b-a4b-gptq`, `gemma4-26b-a4b-gptq-5930k`,
 `qwen3-1p7b-vllm-radeonvii` remained `Idle` with `minReplicas: 0`.
 
 Raw evidence: `.loom/local/validation/f5-3way-2026-06-10/`.
+
+---
+
+### 2026-06-10 gfx906 `gptq_gemm` 2×2 kill-test — verdict PRESSURE, window failure reproduced single-GPU
+
+**Rig**: zero-displacement probe pod on `cblevins-radeonvii` (privileged, hostPath
+`/dev/kfd`+`/dev/dri`, no `amd.com/gpu` claim), image
+`vllm:rocm6.3.4-multiarch-serve@2f3fe306…`, synthetic GPTQ-int4 weights (no model
+download), fresh python process per cell, `AMD_SERIALIZE_KERNEL=3` +
+`HIP_LAUNCH_BLOCKING=1`, M=1024 (window's max-num-batched-tokens). Manifest:
+`tmp/gfx906-gptq-gemm-killtest.yaml`.
+
+**Result**: planned 2×2 all PASSED — A (1.5B shape, no fill), C (72B shape
+K=8192/N=59136, no fill), B (1.5B, free→2.65 GB), D (72B, free→2.94 GB; gemm left
+1.81 GB free). Pressure ladder via exec: **D2 (free→~1.9 GB) FAILED inside
+`ops.gptq_gemm` with `HIP error: invalid argument` — the exact 72B window
+signature**, no Ray/PP/model. D3/D4: plain 0.5 GB `torch.empty` fails below
+~1.5 GB free. D5 (`AMD_LOG_LEVEL=2`): ROCm `memory.cpp:358 "Video memory
+allocation failed!"` at the gemm call.
+
+**Verdict**: the 72B wall is **memory-pressure**, not kernel shape. Vega20 (no
+VMM) returns `invalid argument` (not OOM) for any allocation landing free VRAM
+below a ~1.5–1.8 GB floor; the exllama reconstruct path allocates a K×N×2-byte
+`temp_dq` scratch (~968 MB at 72B `gate_up_proj`) per gptq_gemm call, which
+crossed the floor under the window's ~2.7 GB free minus forward transients. Same
+wall as the 06-09 toy's KV `torch.zeros`. **Fix for the final 72B relaunch:
+`VLLM_PP_LAYER_PARTITION=29,22,29` (gfx906 shard 14.4 → ~12.2 GB, free ~4.9 GB) +
+keep `--num-gpu-blocks-override 256`.** Cells B/D validate the lever: same op,
+same shape, passes with ≥2.5 GB free.
+
+**Restore**: probe pod + ConfigMap deleted; `bge-large-radeonvii`,
+`bge-reranker-radeonvii`, `qwen3-1p7b-tools-radeonvii` confirmed `Ready` after
+teardown (zero displacement, as designed).
+
+Raw evidence: `.loom/local/validation/gfx906-gptq-gemm-2026-06-10/`.
