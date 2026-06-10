@@ -99,3 +99,15 @@ sections:
         path: planning/phase-4-operational-polish.md
       - title: Phase 5 (Multi-Cluster)
         path: planning/phase-5-multi-cluster.md
+
+  - id: agents
+    title: Agents Reference
+    pages:
+      - title: Component Reference
+        path: agents/components.md
+      - title: Model CRDs
+        path: agents/model-crds.md
+      - title: Operations Runbook
+        path: agents/operations.md
+      - title: GPU Compatibility
+        path: agents/gpu-compatibility.md
