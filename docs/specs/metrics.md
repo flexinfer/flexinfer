@@ -61,8 +61,6 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
 - `flexinfer_proxy_queue_wait_duration_seconds{model}` (histogram)
 - `flexinfer_proxy_active_connections{model}`
 - `flexinfer_proxy_queue_depth{model}`
-- `flexinfer_proxy_gpugroup_swap_signals_total{gpugroup,model}`
-- `flexinfer_proxy_gpugroup_queued_requests_total{gpugroup,model}`
 - `flexinfer_proxy_endpoint_changes_total{model,change_type}`
 - `flexinfer_proxy_endpoint_count{model}`
 - `flexinfer_proxy_endpoint_refresh_duration_seconds` (histogram)
@@ -120,19 +118,25 @@ Defined in `services/flexinfer/internal/runtime/metrics.go`:
 - `flexinfer_runtime_gpu_vram_free_bytes{gpu_vendor,gpu_arch}`
 - `flexinfer_runtime_gpu_temperature_celsius{gpu_vendor,gpu_arch}`
 
-## GPUGroup Controller Metrics (v1alpha1)
+## GPUGroup Controller Metrics (v1alpha1) — never implemented, superseded
 
-Defined in `services/flexinfer/controllers/gpugroup_controller.go`:
+The `flexinfer_gpugroup_*` family (and the proxy-side
+`flexinfer_proxy_gpugroup_*` pair) was specified for the v1alpha1 GPUGroup
+workflow but never implemented: no `controllers/gpugroup_controller.go`
+exists, and no code emits these series (verified 2026-06-10 via
+`git grep 'flexinfer_gpugroup' -- '*.go'`). The v1alpha1
+ModelDeployment + GPUGroup workflow was replaced by the v1alpha2 shared-GPU
+group scheduler (`controllers/model_shared_gpu.go`).
 
-- `flexinfer_gpugroup_active_model{gpugroup,model,namespace}` (gauge; `1=active`)
-- `flexinfer_gpugroup_model_run_duration_seconds{gpugroup,model,namespace}` (gauge)
-- `flexinfer_gpugroup_swap_cooldown_seconds{gpugroup,namespace}` (gauge)
-- `flexinfer_gpugroup_swaps_total{gpugroup,from_model,to_model,namespace}` (counter)
-- `flexinfer_gpugroup_swap_blocked_antithrashing_total{gpugroup,namespace}` (counter)
-- `flexinfer_gpugroup_swap_blocked_cooldown_total{gpugroup,namespace}` (counter)
-- `flexinfer_gpugroup_model_queue_depth{gpugroup,model,namespace}` (gauge)
+Use the shared-group scheduling metrics instead (see "Recently Shipped
+Metrics" below):
 
-These only appear once the controller has observed at least one GPUGroup and called `WithLabelValues(...)` for the series.
+| Specified but never emitted | Live equivalent |
+|---|---|
+| `flexinfer_gpugroup_active_model` | `flexinfer_sharedgroup_state{state="Active"}` |
+| `flexinfer_gpugroup_swaps_total` | `flexinfer_sharedgroup_preemptions_total` |
+| `flexinfer_gpugroup_model_queue_depth` | `sum by (group) (flexinfer_sharedgroup_state{state="Queued"})` |
+| run-duration / cooldown / swap-blocked series | none (anti-thrashing internals are not exported) |
 
 ## Recently Shipped Metrics
 

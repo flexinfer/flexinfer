@@ -126,21 +126,6 @@ spec:
             summary: "FlexInfer scheduler is down"
             description: "The FlexInfer scheduler extender has been unreachable for 2 minutes. GPU-aware scheduling is disabled."
 
-    - name: flexinfer-gpugroup
-      rules:
-        # GPUGroup swap signals not being processed
-        - alert: FlexInferGPUGroupSwapStalled
-          expr: |
-            sum(rate(flexinfer_proxy_gpugroup_swap_signals_total[10m])) by (gpugroup) > 0
-            unless
-            sum(rate(flexinfer_proxy_gpugroup_queued_requests_total[10m])) by (gpugroup) > 0
-          for: 10m
-          labels:
-            severity: warning
-          annotations:
-            summary: "GPUGroup {{ "{{ $labels.gpugroup }}" }} swap may be stalled"
-            description: "Swap signals are being sent but no requests are being queued for GPUGroup {{ "{{ $labels.gpugroup }}" }}."
-
     - name: flexinfer-quantization
       rules:
         # Elapsed-time-based progress is approaching the job deadline while
