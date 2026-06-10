@@ -104,6 +104,18 @@ snapshot — see the 06-09 canary-revival incident): both `gemma4-26b` lanes
 `qwen3-1p7b-tools` `Ready`, `qwen3-1p7b-vllm-radeonvii` `Idle` with
 `minReplicas: 0`, `whisper-large-v3-turbo` `Idle`.
 
+## Benchmarking (optional)
+
+For aggregate throughput, set `--max-num-seqs 8` (or higher) in the manifest
+before launch, then run concurrent greedy completions with `ignore_eos: true`
+and divide total completion tokens by wall time. Measured 2026-06-10:
+13.1 / 26.6 / 40.3 / 68.4 tok/s at C=1/2/4/8 — C=2 is free (pipeline bubbles),
+no knee through the C=8 cap. KV budget: 256 blocks = 4096 tokens total across
+sequences.
+
+Note: kubelet image GC can prune the window image within hours of a previous
+window — expect cold pulls (~25 min) and the head recreate path below.
+
 ## Rollback
 
 The window is fully additive: deleting the three pods + ConfigMap and running
