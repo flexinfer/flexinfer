@@ -1,0 +1,33 @@
+# Serving-lane derivative of the unified multi-arch (gfx906;gfx1100) vLLM image.
+#
+# WHY A DERIVED IMAGE: the base image's vLLM 0.6.3 request path lazily imports
+# the outlines guided-decoding backend, which crashes on a missing transitive
+# dep (pyairports). The controller's dedicated-Deployment path for backend:vllm
+# has no pre-start hook (no command/args override in the Model CR — see
+# controllers/model_deployment.go), so the two runtime seds validated in the
+# F5 window (.loom/local/validation/f5-3way-2026-06-09/TOY-KILLTEST-VERDICT.md,
+# variants A1/B1 PASS) are baked here as an image layer instead:
+#
+#   FIX 3: short-circuit both guided-decoding logits-processor entry points
+#          (return None). Guided decoding (JSON-schema / regex / choice
+#          constraints) is DISABLED in this image — plain sampling only.
+#   FIX 4: drop the num_gpus kwarg when connecting to an existing Ray cluster
+#          (ROCm bug). Harmless for single-GPU serving; required for the
+#          cross-host PP relaunch so the same image serves both lanes.
+#
+# Build: build/build-vllm-multiarch-serve.sh (thin layer on the pushed base —
+# minutes, not hours; no source compile).
+ARG BASE_IMAGE=registry.harbor.lan/flexinfer/vllm:rocm6.3.4-multiarch
+FROM ${BASE_IMAGE}
+
+# ── FIX 3: guided-decoding short-circuit (asserts exactly 2 entry points) ──
+RUN python3 -c "import re,pathlib,site; sp=[p for p in site.getsitepackages() if p.endswith('site-packages')][0]; p=pathlib.Path(sp)/'vllm/model_executor/guided_decoding/__init__.py'; s=p.read_text(); s2=re.sub(r'((?:async )?def get_(?:local_)?guided_decoding_logits_processor\([^)]*\)[^:\n]*:\n)', r'\1    return None  # flexinfer guided decoding disabled\n', s); n=s2.count('flexinfer guided decoding disabled'); assert n==2, f'expected 2 guided-decoding entry points, patched {n}'; p.write_text(s2); print('gd short-circuited:', n)"
+
+# ── FIX 4: ray num_gpus kwarg drop (existing-cluster connect bug on ROCm) ──
+RUN SP="$(python3 -c "import site;print([p for p in site.getsitepackages() if p.endswith('site-packages')][0])")" && \
+    grep -q 'num_gpus=parallel_config.world_size)' "$SP/vllm/executor/ray_utils.py" && \
+    sed -i 's/num_gpus=parallel_config\.world_size)/)/' "$SP/vllm/executor/ray_utils.py" && \
+    if grep -q 'num_gpus=parallel_config.world_size)' "$SP/vllm/executor/ray_utils.py"; then \
+        echo "FIX 4 failed: num_gpus kwarg still present" >&2; exit 1; \
+    fi && \
+    echo "ray num_gpus kwarg dropped"

@@ -75,6 +75,24 @@
 # vLLM's `model_executor/models/opt.py` and child-process engine startup. Treat
 # the next slice as a torch/vLLM OPT construction crash, not a profile/cache
 # issue.
+#
+# 2026-06-09 revival (same day as the de-registration below): the unified
+# multi-arch image proved the full vLLM 0.6.3.post1 engine on this exact card
+# with coherent GRAPH-MODE generation, both plain and Ray-actor executors
+# (toy GPTQ kill-test A1/B1 PASS,
+# .loom/local/validation/f5-3way-2026-06-09/TOY-KILLTEST-VERDICT.md); the same
+# window also ran opt-125m PP=3 coherently in graph mode. The gfx906 GPUProfile
+# now pins the `-serve` derivative (build/Dockerfile.vllm-rocm-multiarch-serve),
+# which bakes in the guided-decoding short-circuit the request path needs
+# (outlines lazily imports the missing pyairports dep; dedicated vLLM pods have
+# no pre-start hook, so the fix lives in the image, not a pod sed). Canary
+# config changes shipped with the re-registration:
+#   - enforceEager: false — graph mode is the proven configuration on the
+#     unified image; the old eager-only note applied to the retired 0.7.3
+#     diagnostic build.
+#   - numGpuBlocksOverride: 512 — never let vLLM profile-derive the KV
+#     allocation on Vega20: a near-full profile-derived KV torch.zeros dies
+#     with `HIP invalid argument` (verdict file C/D variants; override PASS).
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -101,10 +119,15 @@ spec:
     maxModelLen: 2048
     gpuMemoryUtilization: "0.75"
     maxNumSeqs: 2
-    # ROCm gfx906 vLLM 0.7.3 — eager mode required to avoid CUDA-graph
-    # compilation issues (gfx906 lacks the toolchain support that gfx1100/
-    # gfx942 have).
-    enforceEager: true
+    # Graph mode is the configuration proven coherent on the unified image
+    # (2026-06-09 kill-test). The old eager-only constraint was specific to
+    # the retired vLLM 0.7.3 diagnostic build.
+    enforceEager: false
+    # Cap the KV cache instead of profile-deriving it: Vega20 (no VMM) fails
+    # large profile-derived KV torch.zeros with `HIP invalid argument`
+    # (TOY-KILLTEST-VERDICT.md). 512 blocks × 16 tok = 8192 KV tokens, ≥
+    # maxModelLen (2048) × maxNumSeqs (2) with headroom.
+    numGpuBlocksOverride: 512
     servedModelName: opt-125m-vllm
     # gfx906 reports as gfx900; HSA_OVERRIDE_GFX_VERSION=9.0.6 is supplied
     # by the gfx906 GPUProfile env block. No per-model override needed.
@@ -136,12 +159,13 @@ spec:
   # its documented default. Only the bare resource name still resolves, for a
   # deliberate manual smoke.
   #
-  # To smoke once a fixed gfx906 vLLM image lands, restore the commented values
-  # below (and litellm.enabled:true), then follow the procedure at the top.
-  serviceLabels: []
-  #   serviceLabels: [vllm-canary, opt-125m-vllm]
+  # 2026-06-09 (later same day): re-registered with the fixed unified image
+  # (see the revival entry at the top). The transient ~30s soak prober is gone
+  # (repo + cluster swept: no CronJob, blackbox Probe, or soak pod claims these
+  # aliases), and a cold start on the unified image serves instead of
+  # crash-looping, so the alias/service-label claims are safe to restore.
+  serviceLabels: [vllm-canary, opt-125m-vllm]
   litellm:
-    enabled: false
-    aliases: []
-    #   servedModelName: opt-125m-vllm
-    #   aliases: [vllm-canary, opt-125m-vllm, opt-125m-vllm-vii]
+    enabled: true
+    servedModelName: opt-125m-vllm
+    aliases: [vllm-canary, opt-125m-vllm, opt-125m-vllm-vii]
