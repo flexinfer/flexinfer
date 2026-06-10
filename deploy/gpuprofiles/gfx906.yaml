@@ -35,19 +35,24 @@ spec:
     multiModel: true
   backends:
     vllm:
-      # The current unified gfx906 runtime does not ship vLLM; keep this
-      # experimental until a dedicated canary image is validated and promoted.
-      # Image is recorded for the profile-first contract: when a Maxwell-style
-      # experimental canary launches it must override via the env var or a
-      # profile patch rather than relying on the in-code rule slice.
+      # 2026-06-09: unified multi-arch (gfx906;gfx1100) vLLM 0.6.3.post1
+      # serving image, `-serve` derivative with the request-path
+      # guided-decoding short-circuit baked in
+      # (build/Dockerfile.vllm-rocm-multiarch-serve). Proven on this card:
+      # full engine, coherent graph-mode generation, plain + Ray-actor
+      # executors (.loom/local/validation/f5-3way-2026-06-09/
+      # TOY-KILLTEST-VERDICT.md). Replaces the retired 0.7.3 diagnostic build
+      # that segfaulted during OPT Embedding init. Keep experimental until
+      # more than the opt-125m canary has soaked; profile-first contract:
+      # per-model overrides go through Model spec.image or a profile patch,
+      # not the in-code env-var rule slice.
       support: experimental
-      image: registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:2139c92b3ca00716216f9e5644e9fbd29b2bba7237dc0459017c86012ece51c3
+      image: registry.harbor.lan/flexinfer/vllm:rocm6.3.4-multiarch-serve@sha256:2f3fe30651ae1cf52b1af12e5db2ad03ed4d36fa1c2b9da64d0e83da3b907920
       # Wave 1 capability matrix backfill (2026-05-15, spec .loom/21-product-spec-vllm-feature-parity-2026-05-15.md).
       # Controller/runtime load paths consume safe defaults when Model config omits them.
-      # Slice 8 (V6 gfx906 vLLM revival) is GATED by Track B (gfx906 disk-pressure unblock).
       vllm:
-        v1Engine: supported          # V0 removed in vLLM >=0.18; revival target is 0.19.x.
-        piecewiseGraphs: unsupported  # No graph capture path validated on Vega20.
+        v1Engine: unsupported        # Pinned image is vLLM 0.6.3.post1 — V0 engine (VLLM_USE_V1=0 baked into image env).
+        piecewiseGraphs: unsupported  # 0.6.3 predates piecewise graphs; full HIP-graph capture IS proven on Vega20 (2026-06-09 kill-test).
         flashAttention: none          # No FA kernel exists for gfx906 in CK/Triton/AOTriton.
         fusedMoETriton: experimental  # Untested on Vega20; will be validated during Slice 8.
         fp8KVEmulation: unsupported   # No FP8 hardware; emulation untested on Vega20.
