@@ -1,0 +1,125 @@
+# gfx906 (Vega20) gptq_gemm synthetic probe — zero-displacement, single GPU.
+#
+# Builds a synthetic GPTQ-int4 layer (no model download, no PVC) and calls
+# vllm._custom_ops.gptq_gemm directly. Used 2026-06-10 to attribute the F5
+# 72B wall: verdict PRESSURE (alloc floor ~1.5-1.8 GB free; temp_dq ~928 MiB
+# per call at 72B gate_up_proj shape K=8192 N=59136).
+# Evidence: .loom/local/validation/gfx906-gptq-gemm-2026-06-10/VERDICT.md
+#
+# The pod idles; run cells via exec (fresh python process each — a failed
+# HIP context poisons the process):
+#   kubectl apply -f deploy/debug/gfx906-gptq-gemm-probe.yaml
+#   kubectl exec gfx906-gptq-gemm-killtest -n flexinfer-system -- \
+#     bash -c 'GEMM_M=1024 TARGET_FREE_GB=2.5 python3 /scripts/run_cell.py D 8192 59136'
+#   # M sweep: GEMM_M in {1..1024}; pressure ladder: TARGET_FREE_GB in {2.5,1.5,1.0}
+#   kubectl delete -f deploy/debug/gfx906-gptq-gemm-probe.yaml
+#
+# CAVEAT: a fresh-context probe CANNOT reproduce fragmentation-dependent
+# contiguity failures (the serve-time 72B wall) — it bounds total-free
+# behavior only. Co-residency safe: no amd.com/gpu claim (hostPath /dev/kfd).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gfx906-gptq-gemm-killtest
+  namespace: flexinfer-system
+  labels: {app: f5-gptq-gemm-killtest}
+data:
+  run_cell.py: |
+    import os, sys, torch
+    from vllm import _custom_ops as ops
+
+    tag = sys.argv[1]
+    K, N = int(sys.argv[2]), int(sys.argv[3])
+    M = int(os.environ.get("GEMM_M", "1024"))
+    target_free_gb = float(os.environ.get("TARGET_FREE_GB", "0"))
+    group = 128
+    dev = "cuda"
+
+    free, total = torch.cuda.mem_get_info()
+    print(f"[{tag}] start free={free/1e9:.2f}GB total={total/1e9:.2f}GB", flush=True)
+
+    # Synthetic GPTQ-int4 layer (values irrelevant for launch/alloc errors)
+    qweight = torch.randint(-2**31, 2**31 - 1, (K // 8, N), dtype=torch.int32, device=dev)
+    qzeros = torch.full((K // group, N // 8), -2004318072, dtype=torch.int32, device=dev)  # 0x88888888
+    scales = torch.full((K // group, N), 0.001, dtype=torch.float16, device=dev)
+    g_idx = torch.empty((0,), dtype=torch.int, device=dev)  # desc_act=false exllama path
+    ops.gptq_shuffle(qweight, g_idx, 4)
+    torch.cuda.synchronize()
+    print(f"[{tag}] weights built K={K} N={N}", flush=True)
+
+    held = []
+    if target_free_gb > 0:
+        chunk = 512 * 1024 * 1024  # 0.5GB — Vega20 single-alloc cap ~2GB
+        while True:
+            free, _ = torch.cuda.mem_get_info()
+            if free <= target_free_gb * 1e9 + chunk:
+                break
+            held.append(torch.empty(chunk, dtype=torch.uint8, device=dev))
+        free, _ = torch.cuda.mem_get_info()
+        print(f"[{tag}] FILLED {len(held)} chunks, free={free/1e9:.2f}GB", flush=True)
+
+    a = (torch.randn((M, K), dtype=torch.float16, device=dev) * 0.01)
+    torch.cuda.synchronize()
+    out = ops.gptq_gemm(a, qweight, qzeros, scales, g_idx, True, 4)
+    torch.cuda.synchronize()
+    free, _ = torch.cuda.mem_get_info()
+    print(f"[{tag}] gemm OK out={tuple(out.shape)} norm={out.float().norm().item():.3f} free={free/1e9:.2f}GB", flush=True)
+    print(f"CELL_{tag}_PASS", flush=True)
+  run.sh: |
+    set -x
+    rocm-smi --showmeminfo vram 2>/dev/null | grep -i used
+    run_cell() {  # tag K N target_free_gb
+      echo "=== CELL $1 (K=$2 N=$3 target_free=${4}GB) ==="
+      TARGET_FREE_GB=$4 python3 /scripts/run_cell.py "$1" "$2" "$3" >/tmp/$1.log 2>&1
+      rc=$?
+      if [ $rc -eq 0 ] && grep -q "CELL_$1_PASS" /tmp/$1.log; then
+        grep -E "^\[$1\]" /tmp/$1.log; echo "VERDICT $1_PASS"
+      else
+        echo "--- $1 failure log ---"
+        grep -vE "^(import|\s*$)" /tmp/$1.log | tail -40
+        echo "VERDICT $1_FAIL rc=$rc"
+      fi
+    }
+    echo "PROBE_IDLE: exec cells via kubectl exec (GEMM_M sweep)"
+    sleep 3600
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gfx906-gptq-gemm-killtest
+  namespace: flexinfer-system
+  labels: {app: f5-gptq-gemm-killtest}
+spec:
+  restartPolicy: Never
+  nodeSelector: {kubernetes.io/hostname: cblevins-radeonvii}
+  imagePullSecrets: [{name: harbor-creds}]
+  containers:
+    - name: killtest
+      # -serve variant: same vLLM/torch as base multiarch, already cached on
+      # radeonvii (gfx906 canary image) — avoids a ~17GB pull on the flaky node
+      image: registry.harbor.lan/flexinfer/vllm:rocm6.3.4-multiarch-serve@sha256:2f3fe30651ae1cf52b1af12e5db2ad03ed4d36fa1c2b9da64d0e83da3b907920
+      imagePullPolicy: IfNotPresent
+      securityContext: {privileged: true}
+      command: ["/bin/bash", "/scripts/run.sh"]
+      env:
+        - {name: HIP_VISIBLE_DEVICES, value: "0"}
+        - {name: ROCR_VISIBLE_DEVICES, value: "0"}
+        - {name: AMD_SERIALIZE_KERNEL, value: "3"}
+        - {name: HIP_LAUNCH_BLOCKING, value: "1"}
+        - {name: PYTORCH_HIP_ALLOC_CONF, value: "garbage_collection_threshold:0.9,max_split_size_mb:512"}
+        - {name: VLLM_USE_V1, value: "0"}
+        - {name: VLLM_USE_TRITON_FLASH_ATTN, value: "0"}
+        - {name: VLLM_ROCM_USE_AITER, value: "0"}
+      resources:
+        requests: {cpu: "2", memory: 6Gi}
+        limits: {cpu: "6", memory: 16Gi}
+      volumeMounts:
+        - {name: scripts, mountPath: /scripts}
+        - {name: dshm, mountPath: /dev/shm}
+        - {name: kfd, mountPath: /dev/kfd}
+        - {name: dri, mountPath: /dev/dri}
+  volumes:
+    - {name: scripts, configMap: {name: gfx906-gptq-gemm-killtest, defaultMode: 0755}}
+    - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 4Gi}}
+    - {name: kfd, hostPath: {path: /dev/kfd}}
+    - {name: dri, hostPath: {path: /dev/dri}}
