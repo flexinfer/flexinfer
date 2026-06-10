@@ -2702,3 +2702,40 @@ same shape, passes with ≥2.5 GB free.
 teardown (zero displacement, as designed).
 
 Raw evidence: `.loom/local/validation/gfx906-gptq-gemm-2026-06-10/`.
+
+---
+
+### 2026-06-10 F5 72B 3-way SERVED ✅ — graph mode, coherent, ~14–17 tok/s (final partition 31,18,31)
+
+**Rig**: window manifest (`tmp/f5-3way-validate-29-22-29.yaml`, final content
+31,18,31) on 7900xtx+radeonvii+5930k, unified `vllm:rocm6.3.4-multiarch`, vLLM
+0.6.3 Ray PP=3, graph mode, `--num-gpu-blocks-override 256`,
+`VLLM_PP_LAYER_PARTITION=31,18,31` **as pod env on all three pods**.
+
+**Result: SERVED.** Three greedy completions HTTP 200, all coherent (Rayleigh
+scattering explanation correct; Paris/Seine correct): 96 tok/6.80s ≈ 14.1 tok/s,
+128 tok/7.72s ≈ 16.6 tok/s, 64 tok/3.96s ≈ 16.2 tok/s single-stream. Residency:
+head 17.87 GB (31L+embed), 5930k 15.55 GB (31L+lm_head), **radeonvii 10.00 GB
+(18L, ~6 GB free)**. Graph capture 1–2 s/rank.
+
+**Three walls cleared in-window** (full detail:
+`.loom/local/validation/f5-3way-29-22-29-2026-06-10/RELAUNCH-VERDICT.md`):
+1. **`VLLM_PP_LAYER_PARTITION` does not propagate to Ray workers** (vLLM 0.6.3)
+   — head.sh export reaches rank 0 only; workers fell back to the default split
+   (radeonvii loaded 13.4144 GB both windows — the "27,26,27" assumption was
+   never in effect on worker ranks). Fix: pod env on every rank pod.
+2. At 29,22,29 (11.7 GB shard) profile passed (kill-test prediction held) but
+   the **first request** failed: post-profile `empty_cache` + KV/graph pools
+   fragment the map; serve-time gptq_gemm cannot re-acquire its ~928 MiB
+   `temp_dq` contiguously — ROCm `"Can't allocate memory size - 0x3A000000
+   bytes!"` captured via `AMD_LOG_LEVEL=2` (async-safe; serialize env
+   deadlocks RCCL init cross-rank — never use on multi-rank).
+3. Suppressing the post-profile `empty_cache` overshoots the other way (driver
+   free < ~1.8 GB Vega20 floor at KV/graph init). Resolution: lighter shard
+   **31,18,31** → both walls cleared with stock vLLM flow.
+
+**Verdict**: F5 heterogeneous 72B serving milestone COMPLETE — capability
+proven. The gfx906 contribution rule of thumb: keep the Vega20 rank ≤ ~18/80
+layers (~10 GB) so floor (≈1.8 GB) + gptq temp scratch (≈1 GB) + KV + graph
+pools coexist. Restore verified clean (gemma lanes Ready, bge/tools Ready,
+canary Idle minReplicas 0).
