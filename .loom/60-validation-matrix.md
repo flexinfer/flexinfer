@@ -2633,3 +2633,37 @@ curve (S3.3 acceptance MET). Both 26B lanes are at their per-lane maxNumSeqs opt
 context/KV constraints and the measured low-concurrency real traffic; no knob touched
 (verdict, not action). **S3.3 closes the last open slice of the hardware-utilization arc —
 Sprint 3 and the arc are COMPLETE.**
+
+---
+
+### 2026-06-10 F5 72B 3-way vLLM relaunch — `num_gpu_blocks_override=256` does not clear gfx906 GPTQ
+
+**Rig**: bare validation pods from `/Users/cblevins/workspace/tmp/f5-3way-validate.yaml`
+using `registry.harbor.lan/flexinfer/vllm:rocm6.3.4-multiarch`, graph mode, Ray PP=3
+across `cblevins-7900xtx` + `cblevins-radeonvii` + `cblevins-5930k`, explicit
+`VLLM_PP_LAYER_PARTITION=27,26,27`, Radeon VII middle-rank placement sed, guided-decoding
+short-circuit, Ray `num_gpus` sed, and `--num-gpu-blocks-override 256`.
+
+**Result**: **BLOCKED**. The cluster reached `3.0 GPU`, vLLM launched with the override
+visible in args, and all 11 Qwen2.5-72B GPTQ shards loaded. Weight residency was
+`16.1610 GB` on the head, `14.2670 GB` on the 5930k worker, and `13.4144 GB` on the
+Radeon VII worker. Before serving, vLLM still ran
+`determine_num_available_blocks -> profile_run`; the Radeon VII rank failed inside
+`vllm/_custom_ops.py:gptq_gemm` during Qwen2 MLP `gate_up_proj` with
+`RuntimeError: HIP error: invalid argument`.
+
+**Verdict**: the full 72B path is not fixed by `num_gpu_blocks_override=256`; in vLLM
+0.6.3 the override does not bypass the profiling forward. The failing full-window signal
+is now the gfx906 fused GPTQ kernel under a ~13.4 GB 72B shard, not the toy kill-test's
+`torch.zeros` KV allocation. Do not spend another full 72B window on `512` alone. Next
+proof should either serialize the Radeon VII rank with `AMD_SERIALIZE_KERNEL=3` to confirm
+kernel attribution, or test a ROCm GPTQ fallback/per-arch gfx906 worker image that avoids
+stock fused `gptq_gemm`.
+
+**Restore**: F5 pods and ConfigMap deleted; `flexinfer-controller`, HelmRelease
+`flexinfer`, and Flux kustomization `flexinfer-models` resumed; final cluster state
+confirmed `Ready` for `gemma4-26b-a4b-gptq`, `gemma4-26b-a4b-gptq-5930k`,
+`bge-large-radeonvii`, `bge-reranker-radeonvii`, and `qwen3-1p7b-tools-radeonvii`.
+`qwen3-1p7b-vllm-radeonvii` remained `Idle` with `minReplicas: 0`.
+
+Raw evidence: `.loom/local/validation/f5-3way-2026-06-10/`.
