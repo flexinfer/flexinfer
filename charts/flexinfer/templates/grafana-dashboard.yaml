@@ -29,19 +29,19 @@ data:
       "links": [],
       "panels": [
         {
-          "title": "GPU Group Status",
+          "title": "Shared GPU Groups",
           "type": "row",
           "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
           "collapsed": false
         },
         {
-          "title": "GPU Group Leaders",
+          "title": "Shared Group Leaders",
           "description": "Active model per shared GPU group",
           "type": "table",
-          "gridPos": { "x": 0, "y": 1, "w": 10, "h": 7 },
+          "gridPos": { "x": 0, "y": 1, "w": 12, "h": 7 },
           "targets": [
             {
-              "expr": "flexinfer_gpugroup_active_model == 1",
+              "expr": "flexinfer_sharedgroup_state{state=\"Active\"} == 1",
               "legendFormat": "",
               "refId": "A",
               "format": "table",
@@ -52,8 +52,8 @@ data:
             {
               "id": "organize",
               "options": {
-                "excludeByName": { "Time": true, "Value": true, "__name__": true, "namespace": true, "job": true, "instance": true, "service": true, "pod": true, "container": true, "endpoint": true },
-                "renameByName": { "gpugroup": "GPU Group", "model": "Active Model" }
+                "excludeByName": { "Time": true, "Value": true, "__name__": true, "namespace": true, "job": true, "instance": true, "service": true, "pod": true, "container": true, "endpoint": true, "state": true },
+                "renameByName": { "group": "GPU Group", "model": "Active Model" }
               }
             }
           ],
@@ -66,75 +66,14 @@ data:
           "options": { "showHeader": true, "cellHeight": "sm" }
         },
         {
-          "title": "Model Run Duration",
-          "description": "How long the current leader has been active",
-          "type": "stat",
-          "gridPos": { "x": 10, "y": 1, "w": 6, "h": 7 },
-          "targets": [
-            {
-              "expr": "flexinfer_gpugroup_model_run_duration_seconds > 0",
-              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }}: {{ "{{" }}model{{ "}}" }}",
-              "refId": "A"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "s",
-              "color": { "mode": "thresholds" },
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "green", "value": null },
-                  { "color": "yellow", "value": 1800 },
-                  { "color": "orange", "value": 3600 }
-                ]
-              }
-            }
-          },
-          "options": {
-            "reduceOptions": { "calcs": ["lastNotNull"] },
-            "textMode": "value_and_name",
-            "colorMode": "value",
-            "orientation": "vertical"
-          }
-        },
-        {
-          "title": "Swap Cooldown",
-          "description": "Seconds until next GPU group swap is allowed",
-          "type": "gauge",
-          "gridPos": { "x": 16, "y": 1, "w": 4, "h": 7 },
-          "targets": [
-            {
-              "expr": "flexinfer_gpugroup_swap_cooldown_seconds > 0",
-              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }}",
-              "refId": "A"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "s",
-              "min": 0,
-              "max": 120,
-              "thresholds": {
-                "mode": "absolute",
-                "steps": [
-                  { "color": "green", "value": null },
-                  { "color": "yellow", "value": 30 },
-                  { "color": "red", "value": 60 }
-                ]
-              }
-            }
-          }
-        },
-        {
-          "title": "Swap Events",
-          "description": "GPU group model swap activity",
+          "title": "Preemptions",
+          "description": "Shared GPU group preemption activity",
           "type": "timeseries",
-          "gridPos": { "x": 20, "y": 1, "w": 4, "h": 7 },
+          "gridPos": { "x": 12, "y": 1, "w": 12, "h": 7 },
           "targets": [
             {
-              "expr": "sum by (gpugroup) (rate(flexinfer_gpugroup_swaps_total[5m]))",
-              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }}",
+              "expr": "sum by (group) (rate(flexinfer_sharedgroup_preemptions_total[5m]))",
+              "legendFormat": "{{ "{{" }}group{{ "}}" }}",
               "refId": "A"
             }
           ],
@@ -464,20 +403,20 @@ data:
           }
         },
         {
-          "title": "Queue & Preemption",
+          "title": "Queue & Cache",
           "type": "row",
           "gridPos": { "x": 0, "y": 26, "w": 24, "h": 1 },
           "collapsed": false
         },
         {
-          "title": "GPU Group Queue Depth",
-          "description": "Requests waiting per model in each GPU group",
+          "title": "Queued Models",
+          "description": "Models queued behind the active leader in each shared GPU group",
           "type": "timeseries",
-          "gridPos": { "x": 0, "y": 27, "w": 8, "h": 7 },
+          "gridPos": { "x": 0, "y": 27, "w": 16, "h": 7 },
           "targets": [
             {
-              "expr": "flexinfer_gpugroup_model_queue_depth > 0",
-              "legendFormat": "{{ "{{" }}gpugroup{{ "}}" }}/{{ "{{" }}model{{ "}}" }}",
+              "expr": "sum by (group) (flexinfer_sharedgroup_state{state=\"Queued\"})",
+              "legendFormat": "{{ "{{" }}group{{ "}}" }}",
               "refId": "A"
             }
           ],
@@ -497,48 +436,11 @@ data:
                 "mode": "absolute",
                 "steps": [
                   { "color": "green", "value": null },
-                  { "color": "yellow", "value": 3 },
-                  { "color": "red", "value": 8 }
+                  { "color": "yellow", "value": 2 },
+                  { "color": "red", "value": 4 }
                 ]
               }
             }
-          }
-        },
-        {
-          "title": "Swap Blocks",
-          "description": "Swaps blocked by cooldown or anti-thrashing",
-          "type": "timeseries",
-          "gridPos": { "x": 8, "y": 27, "w": 8, "h": 7 },
-          "targets": [
-            {
-              "expr": "sum by (gpugroup) (rate(flexinfer_gpugroup_swap_blocked_cooldown_total[5m]))",
-              "legendFormat": "cooldown {{ "{{" }}gpugroup{{ "}}" }}",
-              "refId": "A"
-            },
-            {
-              "expr": "sum by (gpugroup) (rate(flexinfer_gpugroup_swap_blocked_antithrashing_total[5m]))",
-              "legendFormat": "anti-thrash {{ "{{" }}gpugroup{{ "}}" }}",
-              "refId": "B"
-            }
-          ],
-          "fieldConfig": {
-            "defaults": {
-              "unit": "short",
-              "custom": {
-                "drawStyle": "bars",
-                "fillOpacity": 50,
-                "lineWidth": 1,
-                "showPoints": "never",
-                "stacking": { "mode": "none" }
-              },
-              "color": { "mode": "palette-classic" }
-            },
-            "overrides": [
-              {
-                "matcher": { "id": "byRegexp", "options": "anti-thrash.*" },
-                "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "orange" } }]
-              }
-            ]
           }
         },
         {
@@ -625,13 +527,13 @@ data:
             "allValue": ".*",
             "current": { "selected": true, "text": "All", "value": "$__all" },
             "datasource": "Prometheus",
-            "definition": "label_values(flexinfer_gpugroup_active_model, gpugroup)",
+            "definition": "label_values(flexinfer_sharedgroup_state, group)",
             "hide": 0,
             "includeAll": true,
             "label": "GPU Group",
             "multi": true,
-            "name": "gpugroup",
-            "query": "label_values(flexinfer_gpugroup_active_model, gpugroup)",
+            "name": "group",
+            "query": "label_values(flexinfer_sharedgroup_state, group)",
             "refresh": 2,
             "sort": 1,
             "type": "query"
