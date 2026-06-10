@@ -90,3 +90,22 @@ Pass/fail readout:
   `vllm:rocm6.3.4-multiarch` nor the `-serve` digest was still in the node image
   cache (GC pruned; canary is scale-to-zero) — budget ~10 min for the pull, and
   expect a possible TaintManagerEviction blip from CI contention mid-pull.
+
+## Postscript (2026-06-10 evening): relaunch outcome — SERVED at 31,18,31
+
+The same-day relaunch validated the PRESSURE verdict but sharpened it twice:
+
+1. The intended 29,22,29 never reached worker ranks in the earlier window —
+   `VLLM_PP_LAYER_PARTITION` is not propagated to Ray workers in vLLM 0.6.3;
+   it must be pod env on every rank pod.
+2. With 22 layers actually applied (11.7 GB), profile_run passed exactly as
+   this kill-test predicted, but a second, finer pressure wall appeared at
+   serve time: vLLM's post-profile `empty_cache` + KV/graph-pool fragmentation
+   leaves no ~928 MiB contiguous region for gptq_gemm's `temp_dq`
+   (ROCm: `Can't allocate memory size - 0x3A000000 bytes!`, via AMD_LOG_LEVEL=2).
+   The kill-test's standalone probe could not see this wall — fresh contexts
+   have no fragmentation. Total-free is necessary but not sufficient on Vega20;
+   contiguity after fragmentation is the binding constraint.
+3. Final fix: `31,18,31` (10.0 GB shard, ~6 GB free) — 72B SERVED, graph mode,
+   coherent, ~14–17 tok/s single-stream. See the validation-matrix entry and
+   `.loom/local/validation/f5-3way-29-22-29-2026-06-10/RELAUNCH-VERDICT.md`.
