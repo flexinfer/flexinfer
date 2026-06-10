@@ -73,10 +73,11 @@ default:
 
 variables:
   # Prefer GO_IMAGE from the local Harbor mirror when the patched tag exists.
-  # Temporarily use Docker Hub for 1.25.10 because the Harbor mirror only has
-  # 1.25.9 and govulncheck flags vulnerable stdlib builds.
+  # Temporarily use Docker Hub for 1.25.11 because the Harbor mirror lags behind
+  # upstream patch releases and govulncheck flags vulnerable stdlib builds.
+  # 1.25.11 patches GO-2026-5037/5038/5039 (crypto/x509, mime, net/textproto).
   # Bump promptly on Go security releases; Trivy/govulncheck will flag vulnerable stdlib builds.
-  GO_VERSION: "1.25.10"
+  GO_VERSION: "1.25.11"
   GO_IMAGE: "golang:${GO_VERSION}"
   ENVTEST_VERSION: "release-0.23"
   GOLANGCI_LINT_VERSION: "v2.10.1"
