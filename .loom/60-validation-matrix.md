@@ -2739,3 +2739,32 @@ proven. The gfx906 contribution rule of thumb: keep the Vega20 rank ≤ ~18/80
 layers (~10 GB) so floor (≈1.8 GB) + gptq temp scratch (≈1 GB) + KV + graph
 pools coexist. Restore verified clean (gemma lanes Ready, bge/tools Ready,
 canary Idle minReplicas 0).
+
+---
+
+### 2026-06-10 F5 72B concurrency ladder — no knee through C=8, agg 68.4 tok/s (5.2×)
+
+**Rig**: `deploy/debug/f5-3way-72b-window.yaml` with one delta (`--max-num-seqs 8`),
+window per `docs/user/f5-72b-3way-window-runbook.md`. C concurrent greedy
+completions (128 tok each, `ignore_eos`), aggregate = total tokens / wall.
+
+| C | agg tok/s | per-stream | scaling |
+|---|---|---|---|
+| 1 | 13.1 | 13.1 | 1.0× |
+| 2 | 26.6 | 13.3 | **2.03× — free (per-stream unchanged)** |
+| 4 | 40.3 | 10.1 | 3.08× |
+| 8 | 68.4 | 8.5 | 5.22× |
+
+**Verdict**: PP=3 pipeline bubbles absorb concurrency — C=2 is literally free and
+aggregate is still climbing near-linearly at the `max-num-seqs 8` cap (65%
+efficiency at C=8). No knee found; finding it needs `--max-num-seqs ≥ 16`
+(KV fits: 256-block override = 4096 tokens ≫ 16×~140). Output stays coherent
+under full C=8 load. Contrast with the single-GPU S3.3 twin probe (knee at
+C=2): pipeline parallelism rewards concurrency where a single GPU saturates.
+
+**Ops note**: kubelet image GC pruned `vllm:rocm6.3.4-multiarch` from all three
+nodes within ~1.5 h of the previous window — budget ~25 min of pulls per
+window unless pinned; head wait-loop expiry + recreate is the expected path.
+
+**Restore**: verified clean (gemma lanes Ready, bge/tools Ready, canary Idle).
+Raw evidence: `.loom/local/validation/f5-72b-concurrency-2026-06-10/`.
