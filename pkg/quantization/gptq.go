@@ -206,10 +206,15 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 	dampAutoIncrementOverride := getenvDefault("FLEXINFER_GPTQ_DAMP_AUTO_INCREMENT_OVERRIDE", "0.1")
 	resumeEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME", "true")
 	calibrationCacheEnabled := getenvDefault("FLEXINFER_GPTQ_CALIBRATION_CACHE", "true")
-	// Per-layer quantized-state persistence. Phase A ships the writer only
-	// (safe, observable, low risk). Phase B will wire the reload+skip path
-	// once we've verified the writer's artifacts against a live run.
-	resumeLayersEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME_LAYERS", "false")
+	// Per-layer quantized-state persistence (writer + reload, shipped in
+	// !163-!165). Default-on since 2026-06-11: a 70B run is ~5-8 h and a
+	// mid-run failure without this restarts from layer 0 (three such
+	// restarts on the llama33-70b build motivated the flip). Reload is
+	// best-effort and never blocks — any manifest/shape/config-hash
+	// mismatch wipes the cache and falls through to a full re-quantize
+	// (quantization_resume_fallback event). Artifact quality is gated by
+	// the eval gauntlet regardless of resume path.
+	resumeLayersEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME_LAYERS", "true")
 	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "auto")
 	// GPU path uses init_empty_weights + infer_auto_device_map +
 	// load_checkpoint_in_model, which correctly materializes tensors on the
