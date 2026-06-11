@@ -584,6 +584,16 @@ fi
 # GPTQModel's meta-device turtle-load path, which currently crashes in
 # transformers when materializing Qwen3.5 weights from meta tensors.
 GPTQ_SCRIPT=/opt/flexinfer/scripts/quantize_gptq.py
+
+# Fix latent NameError in resume_config_fingerprint() on images baked before
+# 2026-06-11: the fingerprint payload referenced 'hessian_repair' but the
+# global is 'hessian_repair_enabled'. Dormant while GPTQ_RESUME_LAYERS
+# defaulted false; fatal at startup once resume went default-on. Guarded so
+# it no-ops on images rebuilt with the corrected script.
+if [ -f "${GPTQ_SCRIPT}" ] && grep -q '"hessian_repair": hessian_repair,' "${GPTQ_SCRIPT}" 2>/dev/null; then
+    sed -i 's/"hessian_repair": hessian_repair,/"hessian_repair": hessian_repair_enabled,/' "${GPTQ_SCRIPT}"
+    echo "Patched resume_config_fingerprint hessian_repair NameError"
+fi
 if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Disabled GPTQ offload_to_disk for model_type=" "${GPTQ_SCRIPT}" 2>/dev/null; then
     python3 - <<'PY'
 from pathlib import Path

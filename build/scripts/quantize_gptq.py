@@ -2246,7 +2246,7 @@ def resume_config_fingerprint():
         "desc_act": desc_act,
         "damp_percent_override": qcfg_damp_percent_override,
         "damp_auto_increment_override": qcfg_damp_auto_increment_override,
-        "hessian_repair": hessian_repair,
+        "hessian_repair": hessian_repair_enabled,
         "hessian_sanitize_nonfinite": hessian_sanitize_nonfinite,
         "hessian_diag_floor_mode": hessian_diag_floor_mode,
         "hessian_diag_floor_scale": hessian_diag_floor_scale,
