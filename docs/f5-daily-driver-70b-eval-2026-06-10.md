@@ -1,7 +1,7 @@
 # F5 Daily Driver: 70B-Class Candidate Evaluation
 
 **Date**: 2026-06-10
-**Status**: Decision made — bench slice queued
+**Status**: Track A bench COMPLETE 2026-06-11 — kill-test PASS, Llama-3.3 wins, PP=2 is the preferred topology (see [Track A results](#track-a-results-2026-06-11))
 **Context**: The F5 3-way window (PP=3 across 7900xtx + 5930k + radeonvii) serves
 Qwen2.5-72B-Instruct-GPTQ-Int4 at 13.1 tok/s single-stream, 68.4 tok/s aggregate at C=8
 (see [f5-72b-3way-window-runbook.md](user/f5-72b-3way-window-runbook.md)). Goal: select the
@@ -35,7 +35,7 @@ vLLM, **not** on 0.6.3). We would be selecting a daily driver from a candidate
 pool of one, and the abliteration track would need a format-compatibility
 detour before any quality work.
 
-**Status**: not run
+**Status**: passed 2026-06-11 — 128 greedy tokens coherent (Rayleigh) at 13.0 tok/s wall (baseline 13.1; criterion was within 2×) on the 3-way window, 31,18,31, graph mode. Modern AutoRound/gptqmodel export provenance is PROVEN on vLLM 0.6.3 ROCm Exllama. Evidence: `.loom/local/validation/f5-llama33-70b-2026-06-10/RESULTS.md`
 
 ## Hard constraints (recap)
 
@@ -106,6 +106,54 @@ driver; verify per-build with the eval gauntlet.
 **Default if the bench ties**: Llama-3.3 base — lighter weights (more KV
 headroom), better IFEval, PP=2 option, and its abliteration avoids re-staging
 a 145 GB BF16 Qwen download.
+
+## Track A results (2026-06-11)
+
+Window opened per the runbook (weights pre-staged by `llm-models-nfs` job;
+image pre-pulled on all three nodes BEFORE displacing lanes — do this every
+time, it removes the 25-min pulls from the window). Manifests:
+[f5-3way-llama33-70b-window.yaml](../deploy/debug/f5-3way-llama33-70b-window.yaml),
+[f5-2way-llama33-70b-window.yaml](../deploy/debug/f5-2way-llama33-70b-window.yaml).
+
+### 3-way (31,18,31, blocks=256, graph mode)
+
+- **Kill-test PASS**: 128 greedy tokens coherent at 13.0 tok/s (vs Qwen 13.1).
+- **Instruction-following**: exact format compliance (numbered list + JSON-only
+  checks); chat template intact via `/v1/chat/completions`.
+- **Residency**: head 14.83 GB / 5930k 14.83 GB / radeonvii **7.49 GB** (vs
+  Qwen's 10.0 — ~8.2 GB free on the Vega20).
+- **Ladder** (greedy 128-tok, `ignore_eos`, same method as the Qwen ladder):
+
+| C | Llama-3.3 agg | per-stream | Qwen agg |
+|---|---|---|---|
+| 1 | 17.2 | 17.2 | 13.1 |
+| 2 | 36.3 | 18.2 | 26.6 |
+| 4 | 51.0 | 12.8 | 40.3 |
+| 8 | 89.5 | 11.2 | 68.4 |
+
+**~+31% over the Qwen incumbent at every rung**; C=2 still free; no knee
+through C=8.
+
+### PP=2 probe (two gfx1100 only, 40,40, util 0.95) — PASS, preferred topology
+
+- At util 0.92 the profile-derived KV came up 48 tokens short of the 4096
+  context (informative fail); **0.95 serves**: `# GPU blocks: 548` = **8768
+  tokens KV** (2.1× the Vega20-capped 3-way), 18.55 GB resident/rank.
+- Warm ladder: **C=1 18.2 / C=2 23.5 / C=4 52.0 / C=8 108.7** agg tok/s.
+  Beats the 3-way at C=1/4/8 (+21% at C=8, +59% over Qwen); loses only at C=2
+  (PP=3's pipeline bubbles make C=2 free there). First request after graph
+  capture is slow (6.1 tok/s) — warmup, not steady-state.
+- JSON-only instruction check: exact compliance.
+
+### Verdict
+
+**kaitchup/Llama-3.3-70B-Instruct-AutoRound-GPTQ-4bit on PP=2 (the two
+gfx1100s) is the daily-driver candidate**: no Vega20 rank (radeonvii stays on
+the retrieval plane full-time), double the KV budget, wins everywhere but C=2,
+and the riskiest assumption is dead — Track B's self-quantized abliteration
+(same modern gptqmodel provenance) is format-safe. Next: Track B picks
+**Llama-3.3** as base (`huihui-ai/Llama-3.3-70B-Instruct-abliterated`, 141 GB
+FP16) with the proven recipe; serve the result on the PP=2 topology.
 
 ## Open questions (not blockers for the bench)
 

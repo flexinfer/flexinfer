@@ -1,0 +1,235 @@
+# F5 Track A kill-test window — kaitchup/Llama-3.3-70B-Instruct-AutoRound-GPTQ-4bit
+# (39.8GB, 80 layers, gptq/4/sym/desc_act=false/g128, modern gptqmodel/AutoRound
+# provenance) over Ray PP=3 across cblevins-7900xtx (gfx1100) +
+# cblevins-radeonvii (gfx906) + cblevins-5930k (gfx1100), unified image, GRAPH MODE.
+#
+# Derived 1:1 from the PROVEN f5-3way-72b-window.yaml (Qwen, 2026-06-10);
+# deltas: model path, served name, max-num-seqs 8 (ladder in same window).
+# Kill-test per docs/f5-daily-driver-70b-eval-2026-06-10.md: 128 greedy tokens
+# coherent + tok/s within 2x of the 13.1 Qwen baseline.
+#
+# *** MANUAL WINDOW ONLY — never auto-apply. Displaces the warm Gemma lanes. ***
+# Full procedure (suspend/displace/launch/smoke/restore + troubleshooting):
+#   docs/user/f5-72b-3way-window-runbook.md
+#
+# Load-bearing config (do not change casually):
+#   - VLLM_PP_LAYER_PARTITION=31,18,31 must be POD ENV on ALL THREE pods.
+#     vLLM 0.6.3 does NOT propagate it from the driver to Ray workers; a
+#     head.sh export reaches rank 0 only and workers silently use the
+#     default split.
+#   - gfx906 (Vega20) rank carries 18/80 layers (~10.0 GB, ~6 GB free).
+#     At 22 layers the first request dies: post-profile empty_cache +
+#     KV/graph pools fragment the map and gptq_gemm cannot re-acquire its
+#     ~928 MiB temp_dq contiguously (rocm: "Can't allocate memory size -
+#     0x3A000000 bytes!"). Floor for ANY alloc is ~1.8 GB free.
+#   - --num-gpu-blocks-override 256: profile-derived KV torch.zeros would
+#     also cross the Vega20 wall (06-09 toy kill-test).
+#   - Never set AMD_SERIALIZE_KERNEL / HIP_LAUNCH_BLOCKING here: they
+#     deadlock RCCL communicator init cross-rank. For failure attribution
+#     use AMD_LOG_LEVEL=2 on the suspect rank (failing HIP API lands in
+#     /tmp/ray/session_latest/logs/worker-*.err on that pod).
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: f5-3way-llama33-launch
+  namespace: flexinfer-system
+data:
+  head.sh: |
+    set -x
+    export VLLM_HOST_IP=192.168.50.125
+    export GLOO_SOCKET_IFNAME=enp7s0
+    ray start --head --node-ip-address=192.168.50.125 --port=6379 --num-gpus=1 \
+      --node-manager-port=6380 --object-manager-port=6381 \
+      --min-worker-port=10002 --max-worker-port=11000 \
+      --dashboard-host=0.0.0.0 --dashboard-port=8265
+    echo "=== waiting for 3 GPUs (all nodes joined) ==="
+    for i in $(seq 1 120); do
+      if ray status 2>/dev/null | grep -qE '/3\.0 GPU'; then echo "3 GPUS READY"; break; fi
+      echo "  ray not at 3 GPUs yet ($i)"; sleep 5
+    done
+    ray status || true
+    # vLLM 0.6.3 ROCm bug: initialize_ray_cluster passes num_gpus even when
+    # connecting to an existing cluster -> Ray ValueError. Drop the kwarg.
+    sed -i 's/num_gpus=parallel_config\.world_size)/)/' \
+      /opt/conda/envs/py_3.10/lib/python3.10/site-packages/vllm/executor/ray_utils.py
+    # outlines guided-decoding import chain needs pyairports (missing; no PyPI from
+    # hostNetwork pod). We never use guided decoding -> short-circuit BOTH entry
+    # points to return None when no guided params, before any outlines import.
+    python3 -c "import re,pathlib; p=pathlib.Path('/opt/conda/envs/py_3.10/lib/python3.10/site-packages/vllm/model_executor/guided_decoding/__init__.py'); s=p.read_text(); s2=re.sub(r'((?:async )?def get_(?:local_)?guided_decoding_logits_processor\([^)]*\)[^:\n]*:\n)', r'\1    return None  # flexinfer guided decoding disabled\n', s); p.write_text(s2); print('guided-decoding short-circuited:', s2.count('flexinfer guided decoding disabled'))"
+    # Force radeonvii (.166, 16GB Vega20) to be the MIDDLE PP rank: rank0 (embed,
+    # 2.5GB tensor) is the driver; the LAST rank holds the 2.5GB lm_head; Vega20
+    # cannot make single allocations >~2GB. Map .166 first in the IP sort key so
+    # the lm_head lands on 5930k (24GB) instead.
+    sed -i 's/return (ip != driver_ip, ip_counts\[ip\], ip)/return (ip != driver_ip, ip_counts[ip], {"192.168.50.166": "0"}.get(ip, ip))/' \
+      /opt/conda/envs/py_3.10/lib/python3.10/site-packages/vllm/executor/ray_gpu_executor.py
+    grep -n '50.166' /opt/conda/envs/py_3.10/lib/python3.10/site-packages/vllm/executor/ray_gpu_executor.py | head -2
+    echo "=== launching vLLM PP=3 72B (graph mode) ==="
+    # 80 layers: 31,18,31 — kill-test 2026-06-10 verdict PRESSURE: gfx906 needs free >= ~3GB
+    # (Vega20 alloc floor ~1.8GB + exllama temp_dq ~1GB); 22 layers = ~12.2GB shard, ~4.9GB free.
+    export VLLM_PP_LAYER_PARTITION="31,18,31"
+    exec python3 -m vllm.entrypoints.openai.api_server \
+      --model /models/llama33-70b-autoround-gptq-4bit \
+      --served-model-name llama33-70b \
+      --pipeline-parallel-size 3 \
+      --distributed-executor-backend ray \
+      --quantization gptq \
+      --dtype half \
+      --gpu-memory-utilization 0.92 \
+      --max-model-len 1024 \
+      --max-num-batched-tokens 1024 \
+      --max-num-seqs 8 \
+      --num-gpu-blocks-override 256 \
+      --trust-remote-code \
+      --disable-log-stats \
+      --host 0.0.0.0 --port 8000
+  worker.sh: |
+    set -x
+    # WORKER_DELAY sequences PP rank order: radeonvii joins first (middle rank,
+    # no embed/lm_head); 5930k joins last (last rank: 2.5GB lm_head > Vega20 cap).
+    sleep "${WORKER_DELAY:-0}"
+    export VLLM_HOST_IP="${WORKER_IP}"
+    export GLOO_SOCKET_IFNAME="${WORKER_IFNAME}"
+    until ray start --address=192.168.50.125:6379 --node-ip-address="${WORKER_IP}" \
+        --num-gpus=1 --node-manager-port=6380 --object-manager-port=6381 \
+        --min-worker-port=10002 --max-worker-port=11000 --block; do
+      echo "ray join failed (head not up?), retrying in 5s"; sleep 5
+    done
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: f5-3way-llama33-head
+  namespace: flexinfer-system
+  labels: {app: f5-llama33-pp, role: head}
+spec:
+  restartPolicy: Never
+  hostNetwork: true
+  nodeSelector: {kubernetes.io/hostname: cblevins-7900xtx}
+  imagePullSecrets: [{name: harbor-creds}]
+  tolerations:
+    - {key: dedicated, value: gpu, effect: NoSchedule, operator: Equal}
+  volumes:
+    - {name: launch, configMap: {name: f5-3way-llama33-launch, defaultMode: 0755}}
+    - {name: models, persistentVolumeClaim: {claimName: llm-models-nfs}}
+    - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 16Gi}}
+  containers:
+    - name: head
+      image: registry.harbor.lan/flexinfer/vllm:rocm6.3.4-multiarch
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash","/launch/head.sh"]
+      env:
+        - {name: HIP_VISIBLE_DEVICES, value: "0"}
+        - {name: VLLM_PP_LAYER_PARTITION, value: "31,18,31"}
+        - {name: ROCR_VISIBLE_DEVICES, value: "0"}
+        - {name: PYTORCH_HIP_ALLOC_CONF, value: "garbage_collection_threshold:0.9,max_split_size_mb:512"}
+        - {name: NCCL_SOCKET_IFNAME, value: "enp7s0,ens4,ens2"}
+        - {name: NCCL_IB_DISABLE, value: "1"}
+        - {name: NCCL_DEBUG, value: "INFO"}
+        - {name: HF_HUB_DISABLE_XET, value: "1"}
+        - {name: VLLM_USE_V1, value: "0"}
+        - {name: VLLM_USE_TRITON_FLASH_ATTN, value: "0"}
+        - {name: VLLM_ROCM_USE_AITER, value: "0"}
+      resources:
+        limits: {amd.com/gpu: "2", cpu: "8", memory: 24Gi}
+      volumeMounts:
+        - {name: launch, mountPath: /launch}
+        - {name: models, mountPath: /models, readOnly: true}
+        - {name: dshm, mountPath: /dev/shm}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: f5-3way-llama33-worker1
+  namespace: flexinfer-system
+  labels: {app: f5-llama33-pp, role: worker1}
+spec:
+  restartPolicy: Never
+  hostNetwork: true
+  nodeSelector: {kubernetes.io/hostname: cblevins-5930k}
+  imagePullSecrets: [{name: harbor-creds}]
+  tolerations:
+    - {key: dedicated, value: gpu, effect: NoSchedule, operator: Equal}
+  volumes:
+    - {name: launch, configMap: {name: f5-3way-llama33-launch, defaultMode: 0755}}
+    - {name: models, persistentVolumeClaim: {claimName: llm-models-nfs}}
+    - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 16Gi}}
+  containers:
+    - name: worker
+      image: registry.harbor.lan/flexinfer/vllm:rocm6.3.4-multiarch
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash","/launch/worker.sh"]
+      env:
+        - {name: WORKER_IP, value: "192.168.50.151"}
+        - {name: WORKER_DELAY, value: "45"}
+        - {name: WORKER_IFNAME, value: "ens4"}
+        - {name: HIP_VISIBLE_DEVICES, value: "0"}
+        - {name: VLLM_PP_LAYER_PARTITION, value: "31,18,31"}
+        - {name: ROCR_VISIBLE_DEVICES, value: "0"}
+        - {name: PYTORCH_HIP_ALLOC_CONF, value: "garbage_collection_threshold:0.9,max_split_size_mb:512"}
+        - {name: NCCL_SOCKET_IFNAME, value: "enp7s0,ens4,ens2"}
+        - {name: NCCL_IB_DISABLE, value: "1"}
+        - {name: NCCL_DEBUG, value: "INFO"}
+        - {name: HF_HUB_DISABLE_XET, value: "1"}
+        - {name: VLLM_USE_V1, value: "0"}
+        - {name: VLLM_USE_TRITON_FLASH_ATTN, value: "0"}
+        - {name: VLLM_ROCM_USE_AITER, value: "0"}
+      resources:
+        # explicit request: 5930k has ~55Gi allocatable, ~31Gi already requested
+        # by co-tenants (CI runners, prometheus) -> 32Gi default-from-limits no
+        # longer fits. Rank host-RAM footprint is well under 12Gi.
+        requests: {amd.com/gpu: "1", cpu: "2", memory: 12Gi}
+        limits: {amd.com/gpu: "1", cpu: "8", memory: 32Gi}
+      volumeMounts:
+        - {name: launch, mountPath: /launch}
+        - {name: models, mountPath: /models, readOnly: true}
+        - {name: dshm, mountPath: /dev/shm}
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: f5-3way-llama33-worker2
+  namespace: flexinfer-system
+  labels: {app: f5-llama33-pp, role: worker2}
+spec:
+  restartPolicy: Never
+  hostNetwork: true
+  nodeSelector: {kubernetes.io/hostname: cblevins-radeonvii}
+  imagePullSecrets: [{name: harbor-creds}]
+  containers:
+    - name: worker
+      image: registry.harbor.lan/flexinfer/vllm:rocm6.3.4-multiarch
+      imagePullPolicy: IfNotPresent
+      command: ["/bin/bash","/launch/worker.sh"]
+      securityContext: {privileged: true}
+      env:
+        - {name: WORKER_IP, value: "192.168.50.166"}
+        - {name: WORKER_IFNAME, value: "ens2"}
+        # AMD_LOG_LEVEL=2: ROCm runtime logs the failing HIP API at error time
+        # (async-safe attribution; serialization deadlocks RCCL init cross-rank)
+        - {name: AMD_LOG_LEVEL, value: "2"}
+        - {name: HIP_VISIBLE_DEVICES, value: "0"}
+        - {name: VLLM_PP_LAYER_PARTITION, value: "31,18,31"}
+        - {name: ROCR_VISIBLE_DEVICES, value: "0"}
+        - {name: PYTORCH_HIP_ALLOC_CONF, value: "garbage_collection_threshold:0.9,max_split_size_mb:512"}
+        - {name: NCCL_SOCKET_IFNAME, value: "enp7s0,ens4,ens2"}
+        - {name: NCCL_IB_DISABLE, value: "1"}
+        - {name: NCCL_DEBUG, value: "INFO"}
+        - {name: HF_HUB_DISABLE_XET, value: "1"}
+        - {name: VLLM_USE_V1, value: "0"}
+        - {name: VLLM_USE_TRITON_FLASH_ATTN, value: "0"}
+        - {name: VLLM_ROCM_USE_AITER, value: "0"}
+      resources:
+        requests: {cpu: "2", memory: 8Gi, amd.com/gpu: "1"}
+        limits: {cpu: "8", memory: 24Gi, amd.com/gpu: "1"}
+      volumeMounts:
+        - {name: launch, mountPath: /launch}
+        - {name: models, mountPath: /models, readOnly: true}
+        - {name: dshm, mountPath: /dev/shm}
+        - {name: kfd, mountPath: /dev/kfd}
+        - {name: dri, mountPath: /dev/dri}
+  volumes:
+    - {name: launch, configMap: {name: f5-3way-llama33-launch, defaultMode: 0755}}
+    - {name: models, persistentVolumeClaim: {claimName: llm-models-nfs}}
+    - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 16Gi}}
+    - {name: kfd, hostPath: {path: /dev/kfd}}
+    - {name: dri, hostPath: {path: /dev/dri}}

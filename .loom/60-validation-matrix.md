@@ -2768,3 +2768,36 @@ window unless pinned; head wait-loop expiry + recreate is the expected path.
 
 **Restore**: verified clean (gemma lanes Ready, bge/tools Ready, canary Idle).
 Raw evidence: `.loom/local/validation/f5-72b-concurrency-2026-06-10/`.
+
+---
+
+### 2026-06-11 F5 Track A — kaitchup Llama-3.3-70B AutoRound-GPTQ: kill-test PASS, PP=2 preferred
+
+**Rig**: `deploy/debug/f5-3way-llama33-70b-window.yaml` (31,18,31, blocks=256) then
+`deploy/debug/f5-2way-llama33-70b-window.yaml` (two gfx1100, 40,40, util 0.95,
+profile-derived KV). Weights staged to `/models/llama33-70b-autoround-gptq-4bit`
+(39.8 GB, gptq/4/sym/desc_act=false/g128, AutoRound provenance).
+
+**Kill-test (riskiest assumption)**: PASS — modern gptqmodel/AutoRound export
+loads + decodes coherently on vLLM 0.6.3 ROCm Exllama (128 greedy tokens,
+13.0 tok/s, vs Qwen baseline 13.1). Unblocks Track B self-quant format.
+
+| C | 3-way agg | PP=2 agg | Qwen 3-way agg |
+|---|---|---|---|
+| 1 | 17.2 | 18.2 | 13.1 |
+| 2 | 36.3 | 23.5 | 26.6 |
+| 4 | 51.0 | 52.0 | 40.3 |
+| 8 | 89.5 | 108.7 | 68.4 |
+
+**Verdict**: Llama-3.3 beats the Qwen incumbent ~+31% at every 3-way rung.
+PP=2 fits with 548 KV blocks (8768 tok, 2.1× the Vega20-capped 3-way) and wins
+everywhere but C=2 → **preferred daily-driver topology** (frees radeonvii for
+the retrieval plane). Vega20 shard at 18L is only 7.49 GB for this model.
+
+**Ops notes**: image prepull BEFORE the window worked (no in-window pulls) but
+the head wait-loop still expired once on worker2 ContainerCreating latency —
+head-recreate path remains the expected first-launch flow. PP=2 at util 0.92
+fails KV validation by 48 tokens at max-model-len 4096; 0.95 clean.
+
+**Restore**: verified clean (gemma lanes Ready, canary Idle, whisper Idle).
+Raw evidence: `.loom/local/validation/f5-llama33-70b-2026-06-10/`.
