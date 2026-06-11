@@ -34,6 +34,13 @@ resources:
   # Qwen3.5 patch stack covers it. See .loom/qwen36-27b-hauhaucs-gptq-plan.md.
   - qwen36-27b-gptq-gfx1100.yaml    # qwen36-27b-gptq-gfx1100 (cblevins-5930k, ~8-14 hr cycle)
 
+  # === Track B: 70B daily-driver self-quant (Download → Quantize only) ===
+  # 2026-06-10: huihui-ai/Llama-3.3-70B-Instruct-abliterated → GPTQ INT4 on
+  # cblevins-5930k, staged on llm-models-nfs (existingClaimName). Source is
+  # pre-abliterated; artifact serves on the PP=2 gfx1100 topology. See
+  # docs/f5-daily-driver-70b-eval-2026-06-10.md (Track B).
+  - llama33-70b-abliterated-gptq.yaml
+
   # === Legacy OCI pull caches disabled with the old Qwen rollout ===
   # - qwen35-27b-opus-distill-oci.yaml # disabled
   # - qwen35-9b-oci.yaml               # disabled

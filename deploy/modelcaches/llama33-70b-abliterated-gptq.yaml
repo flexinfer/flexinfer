@@ -1,0 +1,66 @@
+# Llama-3.3-70B-Instruct-abliterated → GPTQ INT4 (Track B daily-driver build)
+#
+# Self-quant of the huihui-ai abliteration of the Track A winning base.
+# Track A (docs/f5-daily-driver-70b-eval-2026-06-10.md) proved:
+#   - kaitchup AutoRound/gptqmodel GPTQ-Int4 export serves coherently on
+#     vLLM 0.6.3 ROCm Exllama (kill-test PASS 2026-06-11) — Track B's format
+#     risk is dead (same modern gptqmodel provenance).
+#   - PP=2 across the two gfx1100s is the preferred serving topology.
+#
+# Pipeline: Download FP16 (141 GB) → GPTQ INT4 (~40 GB). No abliteration
+# step (source is pre-abliterated by huihui-ai); no OCI publish (the PP=2
+# lane reads weights directly from llm-models-nfs, same as the eval windows).
+#
+# Storage: rides the existing llm-models-nfs RWX PVC (NFS export had 869 GB
+# free at 2026-06-10 probe; peak usage here ≈ 320 GB incl. GPTQModel
+# offload_to_disk scratch). Longhorn nvme-1r-gpu is NOT usable for this:
+# every GPU-node disk has allowScheduling=false, and cblevins-5930k has only
+# ~168 GiB free locally.
+#
+# Node: quantization pinned to cblevins-5930k (precedent: qwen36-27b 8-14 h
+# cycles run there to avoid preempting the 7900xtx primary lane). The quant
+# job claims the node's single amd.com/gpu, so the gemma4-26b-a4b-gptq-5930k
+# twin lane must be scaled to zero for the quant window (primary on 7900xtx
+# keeps serving the same model). Restore gotcha: a directly scaled-down lane
+# does NOT auto-reclaim — re-activate via flexinfer_activate_model.
+#
+# Recipe (proven in-house): sym=true + descAct=false + groupSize=128 →
+# ExllamaLinearKernel on gfx1100. GPTQModel quantizes layer-at-a-time with
+# offload_to_disk, so the 141 GB FP16 never needs to fit in the 64 GB host
+# RAM or 24 GB VRAM. Est. 8-16 h wall on local disk; NFS adds I/O overhead,
+# hence the 48 h timeout. Checkpoint resume via .flexinfer-gptq-cache.
+#
+# Gate: wire the artifact through the weekly eval gauntlet before promoting
+# it over the kaitchup stock quant (eval doc "Open questions" #3).
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: llama33-70b-abliterated-gptq
+  namespace: flexinfer-system
+spec:
+  source: "huihui-ai/Llama-3.3-70B-Instruct-abliterated"
+  storageStrategy: SharedPVC
+  existingClaimName: llm-models-nfs
+  modelPath: llama33-70b-instruct-abliterated
+  storageSize: "400Gi"           # nominal — NFS export does not enforce quota
+  secretRef: "hf-token"
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true                    # ExllamaLinearKernel (72-73 tok/s class on gfx1100)
+    descAct: false
+    useGPU: true
+    maxMemoryGB: 44              # gfx1100 profile maxCPUMemoryGB ceiling (64 GB host)
+    timeoutSeconds: 172800       # 48 h: 70B layer-at-a-time + NFS-backed offload scratch
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx1100
+      kubernetes.io/hostname: cblevins-5930k
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 256
