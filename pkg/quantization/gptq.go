@@ -1503,7 +1503,11 @@ GPTQ_PY_IMPORTS="import tokenicer, pcre, kernels"
 GPTQ_PIP_ARGS=(
     "tokenicer>=0.0.10"
     "pypcre>=0.2.13"
-    "kernels>=0.12.2"
+    # Upper bound matches transformers' own declared requirement
+    # (kernels>=0.12.0,<0.13 as of transformers 5.8.0). kernels 0.15+ made
+    # LayerRepository require an explicit revision/version, which crashes
+    # transformers.integrations.hub_kernels at import time.
+    "kernels>=0.12.2,<0.13"
     "accelerate>=1.13.0"
     "hf_transfer>=0.1.9"
     "numpy>=1.26,<2"
