@@ -55,6 +55,12 @@ spec:
     groupSize: 128
     sym: true                    # ExllamaLinearKernel (72-73 tok/s class on gfx1100)
     descAct: false
+    # 0.80 default (19.19 GiB allowed) OOM'd on the 3.06 GiB down_proj
+    # Hessian at layer 8/80 (2026-06-11; 8.97 GiB reserved-unallocated
+    # fragmentation). 0.90 = 21.6 GiB; the GPU is otherwise idle during the
+    # quant window. Pairs with PYTORCH_HIP_ALLOC_CONF=expandable_segments
+    # injected by the GPTQ job builder on gfx1100.
+    gpuMemoryFraction: "0.90"
     useGPU: true
     maxMemoryGB: 44              # gfx1100 profile maxCPUMemoryGB ceiling (64 GB host)
     timeoutSeconds: 172800       # 48 h: 70B layer-at-a-time + NFS-backed offload scratch
