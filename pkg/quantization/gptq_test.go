@@ -275,18 +275,18 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
-	t.Run("resume_layers default off", func(t *testing.T) {
+	t.Run("resume_layers default on", func(t *testing.T) {
 		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
-		if v := findEnv(env, "GPTQ_RESUME_LAYERS"); v != "false" {
-			t.Errorf("GPTQ_RESUME_LAYERS = %q, want false (Phase A: writer off by default)", v)
+		if v := findEnv(env, "GPTQ_RESUME_LAYERS"); v != "true" {
+			t.Errorf("GPTQ_RESUME_LAYERS = %q, want true (default-on since 2026-06-11)", v)
 		}
 	})
 
 	t.Run("resume_layers env override", func(t *testing.T) {
-		t.Setenv("FLEXINFER_GPTQ_RESUME_LAYERS", "true")
+		t.Setenv("FLEXINFER_GPTQ_RESUME_LAYERS", "false")
 		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
-		if v := findEnv(env, "GPTQ_RESUME_LAYERS"); v != "true" {
-			t.Errorf("GPTQ_RESUME_LAYERS = %q, want true", v)
+		if v := findEnv(env, "GPTQ_RESUME_LAYERS"); v != "false" {
+			t.Errorf("GPTQ_RESUME_LAYERS = %q, want false", v)
 		}
 	})
 
