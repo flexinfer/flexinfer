@@ -250,6 +250,13 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
 	env = append(env, BuildCalibrationEnv(calib)...)
+	// Per-layer Hessian buffers on large models (e.g. 70B mlp.down_proj =
+	// 28672² fp32 = 3.06 GiB) fail with "reserved but unallocated" allocator
+	// fragmentation under the default caching allocator. expandable_segments
+	// requires VMM, which Vega20 (gfx906, reports gfx900) does not support.
+	if strings.HasPrefix(gpuArch, "gfx") && gpuArch != "gfx906" && gpuArch != "gfx900" {
+		env = append(env, corev1.EnvVar{Name: "PYTORCH_HIP_ALLOC_CONF", Value: "expandable_segments:True"})
+	}
 	return env
 }
 
