@@ -1,7 +1,7 @@
 # F5 Daily Driver: 70B-Class Candidate Evaluation
 
 **Date**: 2026-06-10
-**Status**: Track A bench COMPLETE 2026-06-11 — kill-test PASS, Llama-3.3 wins, PP=2 is the preferred topology (see [Track A results](#track-a-results-2026-06-11))
+**Status**: Track A COMPLETE 2026-06-11 (kill-test PASS, Llama-3.3 wins, PP=2 preferred — see [Track A results](#track-a-results-2026-06-11)); Track B self-quant COMPLETE 2026-06-12 (39.8 GB abliterated artifact on NFS — see [Track B results](#track-b-results-2026-06-12)); next: PP=2 serve + eval gauntlet
 **Context**: The F5 3-way window (PP=3 across 7900xtx + 5930k + radeonvii) serves
 Qwen2.5-72B-Instruct-GPTQ-Int4 at 13.1 tok/s single-stream, 68.4 tok/s aggregate at C=8
 (see [f5-72b-3way-window-runbook.md](user/f5-72b-3way-window-runbook.md)). Goal: select the
@@ -154,6 +154,42 @@ and the riskiest assumption is dead — Track B's self-quantized abliteration
 (same modern gptqmodel provenance) is format-safe. Next: Track B picks
 **Llama-3.3** as base (`huihui-ai/Llama-3.3-70B-Instruct-abliterated`, 141 GB
 FP16) with the proven recipe; serve the result on the PP=2 topology.
+
+## Track B results (2026-06-12)
+
+**Self-quant COMPLETE**: `huihui-ai/Llama-3.3-70B-Instruct-abliterated`
+(141.1 GB FP16) → **39.8 GB GPTQ INT4** (3.55×) via ModelCache
+`llama33-70b-abliterated-gptq` (MR !604) on cblevins-5930k, staged entirely
+on `llm-models-nfs`. Artifact: `llama33-70b-instruct-abliterated/gptq-w4-g128/`
+(10 shards, `.save-complete`), `quantize_config`: bits=4 / group_size=128 /
+desc_act=false / quant_method=gptq / checkpoint_format=gptq, quantizer
+`gptqmodel:7.0.0` — the exact profile Track A proved on vLLM 0.6.3 ROCm
+Exllama. Quantize wall: 6.5 h (calibration 2048×256).
+
+Pipeline-robustness fixes shipped en route (each found by a real failure):
+
+| Blocker | Fix |
+|---|---|
+| `kernels` 0.15.2 (unpinned runtime dep) broke transformers `hub_kernels` import — 3 fast failures | !605: pin `kernels>=0.12.2,<0.13` (transformers' own bound), probed on the live quantizer image |
+| HIP allocator fragmentation: 3.06 GiB down_proj Hessian OOM at layer ~8 with 8.97 GiB reserved-unallocated — 3 failures | !606: `PYTORCH_HIP_ALLOC_CONF=expandable_segments:True` (GPTQ jobs, gfx-with-VMM only) + per-cache `gpuMemoryFraction: 0.90`; warning storms → zero, run sailed past the wall |
+| Latent `hessian_repair` NameError in resume fingerprint, dormant since April — 3 fast failures once !607 armed resume | !608: fix + guarded wrapper patch (no quantizer-image rebuild); pyflakes swept the script clean |
+
+**Per-layer resume (!607 default-on) — honest verdict**: SAFE but currently a
+**silent no-op on gptqmodel 7.0.0**. The deliberate pod-kill test at layer 16
+produced a clean full re-quantize: the Phase A writer never wrote the layer
+cache (looper callback API drift since the v5.x-era integration), and both
+writer and reload exit silently. Follow-up: v7 callback compat + explicit
+"resume armed but inactive" diagnostics.
+
+Ops: ran inside an operator-approved surgical exception to the 2026-06-11
+etcd-io incident quarantine (gitops !256: 5930k cordon lifted, taint kept,
+quantize job tolerates `etcd-io`; restored post-window by !258). The
+gemma4 twin lane on 5930k stays down until the incident taint lifts —
+primary on 7900xtx carries Gemma service.
+
+**Next slice**: serve the artifact on PP=2 (window protocol), kill-test +
+ladder vs the kaitchup stock quant, then the eval gauntlet gates any
+promotion (open question 3).
 
 ## Open questions (not blockers for the bench)
 

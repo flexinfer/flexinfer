@@ -45,6 +45,14 @@ spec:
   modelPath: llama33-70b-instruct-abliterated
   storageSize: "400Gi"           # nominal — NFS export does not enforce quota
   secretRef: "hf-token"
+  # Pipeline jobs tolerate the 2026-06-11 etcd-io incident quarantine on
+  # cblevins-5930k (gitops !256 surgical exception): quant I/O is NFS-bound.
+  # Mirrors the live CR patch made while flexinfer-models Flux is suspended.
+  tolerations:
+    - key: node.flexstack.io/incident-quarantine
+      operator: Equal
+      value: "etcd-io"
+      effect: NoSchedule
   download:
     maxMemoryGB: 8
     hfTransfer: false
