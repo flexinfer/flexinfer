@@ -28,7 +28,20 @@ script) and/or re-enabling Longhorn scheduling on the 7900xtx 1.9 TB nvme
 disk for a local-disk PVC (requires displacing the primary lane instead of
 the twin).
 
-**Status**: not run
+**Status**: passed 2026-06-12 — artifact completed: 141.1 GB FP16 →
+39.8 GB GPTQ INT4 (3.55×), 10 shards + `.save-complete`, 6.5 h quantize
+wall on cblevins-5930k with model+scratch on `llm-models-nfs`. The
+offload path held; the wall-clock was *better* than the local-disk
+estimate. Three pre-quant blockers were found and fixed along the way
+(all merged): unpinned `kernels` runtime dep (!605), HIP allocator
+fragmentation on the 3.06 GiB down_proj Hessian (!606 —
+`expandable_segments` + fraction 0.90; warning storms went to zero),
+and a latent `hessian_repair` NameError in the resume fingerprint
+(!608). Separate honest result: per-layer resume (!607 default-on) is
+SAFE but currently a silent no-op on gptqmodel 7.0.0 — the Phase A
+writer never fires (callback API drift since the v5.x-era code), so the
+deliberate pod-kill test produced a full re-quantize, not a resume.
+Follow-up task filed.
 
 ## Scope
 
