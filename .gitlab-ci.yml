@@ -11,13 +11,15 @@ include:
 
 workflow:
   rules:
-    # Codex branches are validated through MR pipelines and then auto-deleted.
-    # Skipping their push pipelines avoids post-merge jobs trying to fetch a
-    # source branch that no longer exists.
-    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH =~ /^codex\//
-      when: never
-    # Avoid burning runner time on duplicate branch pipelines once an MR exists.
-    - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS && $CI_PIPELINE_SOURCE == "push"
+    # All feature branches are validated through MR pipelines (auto-ship
+    # policy) and the source branch is deleted on merge. Push pipelines for
+    # non-master branches are suppressed entirely: the previous
+    # $CI_OPEN_MERGE_REQUESTS dedup rule only caught pushes made *after* the
+    # MR existed, so the initial push pipeline raced fast auto-merges and its
+    # queued jobs failed with "couldn't find remote ref" once the branch was
+    # deleted. Every validation job that runs on branch pipelines also runs
+    # on MR pipelines (rule-parity audit, DEBT-CI-01), so no coverage is lost.
+    - if: $CI_PIPELINE_SOURCE == "push" && $CI_COMMIT_BRANCH && $CI_COMMIT_BRANCH != "master"
       when: never
     - when: always
 
