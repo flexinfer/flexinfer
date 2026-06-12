@@ -8,28 +8,33 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PIP_NO_CACHE_DIR=1 \
     PYTHONUNBUFFERED=1
 
+# build-essential: pypcre (gptqmodel dep) ships sdist-only and compiles C at install time.
 RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 \
     python3-pip \
     python3-venv \
     git \
     ca-certificates \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 RUN python3 -m pip install --upgrade pip setuptools wheel
 
-# Pin to CUDA 12.1 PyTorch wheels.
+# Pin to CUDA 12.6 PyTorch wheels. torch>=2.8 is required by gptqmodel 7.x
+# and transformers 5.x disables torch entirely below 2.4. CUDA 12 minor-version
+# driver compatibility makes cu126 wheels safe on the 12.2 base image.
 RUN python3 -m pip install \
-    --index-url https://download.pytorch.org/whl/cu121 \
-    torch==2.3.1 torchvision==0.18.1
+    --index-url https://download.pytorch.org/whl/cu126 \
+    torch==2.8.0 torchvision==0.23.0
 
 # GPTQModel auto-detects CUDA and builds kernels via --no-build-isolation.
-# Use --no-deps to prevent torch upgrade (gptqmodel 5.7.0 wants torch>=2.8.0
-# but we keep the pinned CUDA 12.1 torch for stability).
+# Use --no-deps so the dependency set stays explicit (see next layer).
 RUN python3 -m pip install -v gptqmodel --no-build-isolation --no-deps
 
 # Install gptqmodel runtime dependencies separately.
 # transformers>=5.0 needed for Qwen3.5 model_type support.
+# threadpoolctl/defuser/ninja: required at import time by gptqmodel 7.x.
+# torchao is deliberately omitted — it would upgrade the pinned torch.
 RUN python3 -m pip install \
     "transformers>=5.0" \
     accelerate \
@@ -48,6 +53,9 @@ RUN python3 -m pip install \
     pyarrow \
     dill \
     pypcre \
-    zstandard
+    zstandard \
+    threadpoolctl \
+    defuser \
+    ninja
 
 ENTRYPOINT ["/bin/bash"]
