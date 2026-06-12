@@ -35,9 +35,7 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 )
 
-// ---------------------------------------------------------------------------
 // fakeGPUBackend implements backend.Backend for testing GPU validation logic.
-// ---------------------------------------------------------------------------
 
 type fakeGPUBackend struct {
 	backend.BaseBackend
@@ -71,9 +69,7 @@ func (f *fakeGPUBackend) ReadinessProbe() *corev1.Probe {
 	}
 }
 
-// ---------------------------------------------------------------------------
 // helpers
-// ---------------------------------------------------------------------------
 
 func gpuInt64Ptr(v int64) *int64 { return &v }
 func gpuInt32Ptr(v int32) *int32 { return &v }
@@ -161,10 +157,6 @@ func gpuTestScheme() *k8sruntime.Scheme {
 	_ = aiv1alpha2.AddToScheme(s)
 	return s
 }
-
-// ---------------------------------------------------------------------------
-// TestValidateVRAMFit
-// ---------------------------------------------------------------------------
 
 func TestValidateVRAMFit(t *testing.T) {
 	// Use the "vllm" backend name so LookupGPUArchSupport finds
@@ -305,10 +297,6 @@ func TestValidateVRAMFit(t *testing.T) {
 		assert.Contains(t, err.Error(), "exceeds 95%")
 	})
 }
-
-// ---------------------------------------------------------------------------
-// TestValidateBackendGPUCompatibility
-// ---------------------------------------------------------------------------
 
 func TestValidateBackendGPUCompatibility(t *testing.T) {
 	tests := []struct {
@@ -479,10 +467,6 @@ func TestValidateBackendGPUCompatibility(t *testing.T) {
 	})
 }
 
-// ---------------------------------------------------------------------------
-// TestValidateMaxwellSpecifics
-// ---------------------------------------------------------------------------
-
 func TestValidateMaxwellSpecifics(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -591,10 +575,6 @@ func TestValidateMaxwellSpecifics(t *testing.T) {
 	}
 }
 
-// ---------------------------------------------------------------------------
-// TestEmitVLLMOptInEvents
-// ---------------------------------------------------------------------------
-
 func TestEmitVLLMOptInEvents(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -672,10 +652,6 @@ func TestEmitVLLMOptInEvents(t *testing.T) {
 		})
 	}
 }
-
-// ---------------------------------------------------------------------------
-// TestDetectGPU
-// ---------------------------------------------------------------------------
 
 func TestDetectGPU(t *testing.T) {
 	scheme := gpuTestScheme()

@@ -10,9 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ---------------------------------------------------------------------------
 // modelToOpenAI (v1alpha2 Model -> OpenAIModel)
-// ---------------------------------------------------------------------------
 
 func TestModelToOpenAI_FullMetadata(t *testing.T) {
 	p := setupTestProxy(t)
@@ -148,9 +146,7 @@ func TestModelToOpenAI_NotReady(t *testing.T) {
 	assert.Equal(t, "Pending", result.Metadata["phase"])
 }
 
-// ---------------------------------------------------------------------------
 // modelDeploymentToOpenAI (v1alpha1 ModelDeployment -> OpenAIModel)
-// ---------------------------------------------------------------------------
 
 func TestModelDeploymentToOpenAI_Deprecated(t *testing.T) {
 	p := setupTestProxy(t)

@@ -31,9 +31,7 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
 
-// =============================================================================
 // 1. Source Detection (modelcache_shared_pvc.go)
-// =============================================================================
 
 func TestIsMlcModel(t *testing.T) {
 	tests := []struct {
@@ -184,9 +182,7 @@ func TestModelCache_ExtractOCIRegistry(t *testing.T) {
 	}
 }
 
-// =============================================================================
 // 2. Eviction Candidate Selection (modelcache_eviction.go)
-// =============================================================================
 
 func makeCache(name string, createdAgo, accessedAgo time.Duration, accessCount int64, retentionPriority *int32, evictionPolicy aiv1alpha1.EvictionPolicy) aiv1alpha1.ModelCache {
 	now := time.Now()
@@ -368,9 +364,7 @@ func TestSelectEvictionCandidate_Filters(t *testing.T) {
 	})
 }
 
-// =============================================================================
 // 3. Quantization Utilities (modelcache_quantization.go)
-// =============================================================================
 
 func TestGPUVendorFromNodeSelector(t *testing.T) {
 	tests := []struct {
@@ -805,9 +799,7 @@ func TestAblitSpecHash(t *testing.T) {
 	})
 }
 
-// =============================================================================
 // 4. Metadata Parsing (modelcache_quantization.go)
-// =============================================================================
 
 func TestModelCache_ParseQuantizationMetadata(t *testing.T) {
 	t.Run("valid JSON parses correctly", func(t *testing.T) {

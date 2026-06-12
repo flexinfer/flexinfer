@@ -197,15 +197,6 @@ func writeAdmissionRejection(w http.ResponseWriter, modelName string, d admissio
 	})
 }
 
-// boolLabel returns the Prometheus-friendly label form of a bool ("true" or
-// "false"). Used to label admission decisions by allow/deny.
-func boolLabel(b bool) string {
-	if b {
-		return "true"
-	}
-	return "false"
-}
-
 // logAdmission emits a structured log line for the decision when enforcement
 // happened. Allow decisions are logged at DEBUG so they don't drown logs in
 // steady-state; reject decisions are logged at INFO so operators can spot

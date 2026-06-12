@@ -10,10 +10,6 @@ import (
 	"golang.org/x/time/rate"
 )
 
-// ---------------------------------------------------------------------------
-// checkAuth tests
-// ---------------------------------------------------------------------------
-
 func TestCheckAuth_Disabled(t *testing.T) {
 	p := setupTestProxy(t)
 	p.authEnabled = false
@@ -77,10 +73,6 @@ func TestCheckAuth_EmptyBearerToken(t *testing.T) {
 	assert.False(t, p.checkAuth(req), "empty bearer value should not match a non-empty token")
 }
 
-// ---------------------------------------------------------------------------
-// checkRateLimit tests
-// ---------------------------------------------------------------------------
-
 func TestCheckRateLimit_Disabled(t *testing.T) {
 	p := setupTestProxy(t)
 	p.rateLimitEnabled = false
@@ -116,10 +108,6 @@ func TestCheckRateLimit_PerModelLimit(t *testing.T) {
 	assert.True(t, p.checkRateLimit("model-b"), "first request to model-b should pass (independent limiter)")
 }
 
-// ---------------------------------------------------------------------------
-// getModelLimiter tests
-// ---------------------------------------------------------------------------
-
 func TestGetModelLimiter_CreateNew(t *testing.T) {
 	p := setupTestProxy(t)
 	p.rateLimitPerModel = 10.0
@@ -142,10 +130,6 @@ func TestGetModelLimiter_ReturnsCached(t *testing.T) {
 	// Must be the exact same pointer -- no new allocation on second call
 	assert.Same(t, first, second, "second call should return the cached limiter")
 }
-
-// ---------------------------------------------------------------------------
-// generateRequestID tests
-// ---------------------------------------------------------------------------
 
 func TestGenerateRequestID_UsesExistingHeader(t *testing.T) {
 	req := httptest.NewRequest("GET", "/v1/chat/completions", nil)

@@ -123,10 +123,6 @@ func TestPreserveActiveSharedLoadingDuringCacheRefresh(t *testing.T) {
 	assert.False(t, preserveActiveSharedLoadingDuringCacheRefresh(activeIdle, now))
 }
 
-// --------------------------------------------------------------------------
-// chooseSharedGroupLeader
-// --------------------------------------------------------------------------
-
 func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 	now := time.Now()
 	past := now.Add(-10 * time.Minute)
@@ -541,10 +537,6 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// queuePositionForSharedModel
-// --------------------------------------------------------------------------
-
 func TestQueuePositionForSharedModel_EdgeCases(t *testing.T) {
 	active := makeSharedModel("active", 200, aiv1alpha2.ModelPhaseReady, nil, nil)
 	highQ := makeSharedModel("high-q", 150, aiv1alpha2.ModelPhasePending, nil, nil)
@@ -624,10 +616,6 @@ func TestQueuePositionForSharedModel_EdgeCases(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// sharedGroupStatusEqual
-// --------------------------------------------------------------------------
-
 func TestSharedGroupStatusEqual(t *testing.T) {
 	ts := metav1.Now()
 	ts2 := metav1.NewTime(ts.Add(1 * time.Second))
@@ -701,10 +689,6 @@ func TestSharedGroupStatusEqual(t *testing.T) {
 	}
 }
 
-// --------------------------------------------------------------------------
-// cloneSharedGroupStatus
-// --------------------------------------------------------------------------
-
 func TestCloneSharedGroupStatus(t *testing.T) {
 	t.Run("nil input returns nil", func(t *testing.T) {
 		got := cloneSharedGroupStatus(nil)
@@ -756,10 +740,6 @@ func TestCloneSharedGroupStatus(t *testing.T) {
 		assert.True(t, original.PreemptedAt.Equal(clone.PreemptedAt), "PreemptedAt should be equal")
 	})
 }
-
-// --------------------------------------------------------------------------
-// handleSharedGPU nil safety
-// --------------------------------------------------------------------------
 
 func TestHandleSharedGPU_NilSafety(t *testing.T) {
 	t.Run("nil GPU spec returns empty result", func(t *testing.T) {

@@ -26,9 +26,7 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
-// =============================================================================
 // 1. configStringValue (model_cache.go)
-// =============================================================================
 
 func TestConfigStringValue(t *testing.T) {
 	tests := []struct {
@@ -97,9 +95,7 @@ func TestConfigStringValue(t *testing.T) {
 	}
 }
 
-// =============================================================================
 // 2. configStringListValue (model_cache.go)
-// =============================================================================
 
 func TestConfigStringListValue(t *testing.T) {
 	tests := []struct {
@@ -180,9 +176,7 @@ func TestConfigStringListValue(t *testing.T) {
 	}
 }
 
-// =============================================================================
 // 3. sanitizeHFPatterns (model_cache.go)
-// =============================================================================
 
 func TestSanitizeHFPatterns(t *testing.T) {
 	tests := []struct {
@@ -253,9 +247,7 @@ func TestSanitizeHFPatterns(t *testing.T) {
 	}
 }
 
-// =============================================================================
 // 4. resolveHFDownloadOptions (model_cache.go)
-// =============================================================================
 
 // makeModelWithConfig creates a v1alpha2.Model with the given backend, source,
 // and config key/value pairs serialized as JSON.
@@ -381,9 +373,7 @@ func TestResolveHFDownloadOptions(t *testing.T) {
 	})
 }
 
-// =============================================================================
 // 5. parsePVCSource (model_backend.go)
-// =============================================================================
 
 func TestParsePVCSource(t *testing.T) {
 	tests := []struct {
@@ -453,9 +443,7 @@ func TestParsePVCSource(t *testing.T) {
 	}
 }
 
-// =============================================================================
 // 6. cacheStrategy (model_backend.go)
-// =============================================================================
 
 func TestCacheStrategy(t *testing.T) {
 	tests := []struct {

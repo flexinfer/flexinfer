@@ -10,9 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
-// ---------------------------------------------------------------------------
 // extractModelFromSource (pure function, no Proxy receiver)
-// ---------------------------------------------------------------------------
 
 func TestExtractModelFromSource_HF(t *testing.T) {
 	got := extractModelFromSource("HF://org/model")
@@ -49,9 +47,7 @@ func TestExtractModelFromSource_Empty(t *testing.T) {
 	assert.Equal(t, "", got)
 }
 
-// ---------------------------------------------------------------------------
 // resolveLoRAAdapter (requires fake K8s client via setupTestProxy)
-// ---------------------------------------------------------------------------
 
 func TestResolveLoRAAdapter_Found(t *testing.T) {
 	p := setupTestProxy(t)

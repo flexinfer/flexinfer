@@ -46,9 +46,7 @@ import (
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 )
 
-// ---------------------------------------------------------------------------
 // Error types for GPU detection
-// ---------------------------------------------------------------------------
 
 type noMatchingNodesError struct {
 	reason string
@@ -71,10 +69,6 @@ func isAmbiguousGPUVendorError(err error) bool {
 	var e *ambiguousGPUVendorError
 	return stderrors.As(err, &e)
 }
-
-// ---------------------------------------------------------------------------
-// ModelReconciler
-// ---------------------------------------------------------------------------
 
 // ModelReconciler reconciles a Model object
 type ModelReconciler struct {

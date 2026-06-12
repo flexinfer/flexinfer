@@ -34,9 +34,7 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
 
-// =============================================================================
 // Test helpers
-// =============================================================================
 
 // makeCacheOpt builds a ModelCache with functional options applied.
 func makeCacheOpt(name string, opts ...func(*aiv1alpha1.ModelCache)) aiv1alpha1.ModelCache {
@@ -140,17 +138,11 @@ func newFakeReconciler(objs ...runtime.Object) *ModelCacheReconciler {
 	}
 }
 
-// =============================================================================
-// 1. selectEvictionCandidate
-// =============================================================================
-
 func TestSelectEvictionCandidate(t *testing.T) {
 	now := time.Now()
 	r := &ModelCacheReconciler{}
 
-	// -------------------------------------------------------------------------
 	// LRU policy
-	// -------------------------------------------------------------------------
 
 	t.Run("LRU/oldest_access_time_selected", func(t *testing.T) {
 		caches := []aiv1alpha1.ModelCache{
@@ -265,9 +257,7 @@ func TestSelectEvictionCandidate(t *testing.T) {
 		assert.Equal(t, "c2", got.Name, "c2 was accessed 30 min ago, the oldest")
 	})
 
-	// -------------------------------------------------------------------------
 	// LFU policy
-	// -------------------------------------------------------------------------
 
 	t.Run("LFU/lowest_access_count_first", func(t *testing.T) {
 		caches := []aiv1alpha1.ModelCache{
@@ -291,9 +281,7 @@ func TestSelectEvictionCandidate(t *testing.T) {
 		assert.Equal(t, "low-prio", got.Name)
 	})
 
-	// -------------------------------------------------------------------------
 	// FIFO policy
-	// -------------------------------------------------------------------------
 
 	t.Run("FIFO/oldest_creation_time_first", func(t *testing.T) {
 		caches := []aiv1alpha1.ModelCache{
@@ -318,9 +306,7 @@ func TestSelectEvictionCandidate(t *testing.T) {
 		assert.Equal(t, "low-prio", got.Name)
 	})
 
-	// -------------------------------------------------------------------------
 	// Default priority when RetentionPriority is nil
-	// -------------------------------------------------------------------------
 
 	t.Run("default_priority_used_when_RetentionPriority_nil", func(t *testing.T) {
 		sameTime := now.Add(-30 * time.Minute)
@@ -349,9 +335,7 @@ func TestSelectEvictionCandidate(t *testing.T) {
 		assert.Equal(t, "default-prio", got.Name, "default priority 50 < explicit 60")
 	})
 
-	// -------------------------------------------------------------------------
 	// Current cache name always excluded
-	// -------------------------------------------------------------------------
 
 	t.Run("current_cache_name_always_excluded_even_best_candidate", func(t *testing.T) {
 		caches := []aiv1alpha1.ModelCache{
@@ -380,9 +364,7 @@ func TestSelectEvictionCandidate(t *testing.T) {
 		}
 	})
 
-	// -------------------------------------------------------------------------
 	// EvictionPolicyNone caches always excluded
-	// -------------------------------------------------------------------------
 
 	t.Run("EvictionPolicyNone_caches_always_excluded", func(t *testing.T) {
 		caches := []aiv1alpha1.ModelCache{
@@ -402,9 +384,7 @@ func TestSelectEvictionCandidate(t *testing.T) {
 		}
 	})
 
-	// -------------------------------------------------------------------------
 	// Mixed policies: some None, some LRU
-	// -------------------------------------------------------------------------
 
 	t.Run("mixed_policies_some_None_some_LRU", func(t *testing.T) {
 		caches := []aiv1alpha1.ModelCache{
@@ -423,10 +403,6 @@ func TestSelectEvictionCandidate(t *testing.T) {
 		assert.Equal(t, "evictable-old", got.Name, "oldest evictable non-None cache should be selected")
 	})
 }
-
-// =============================================================================
-// 2. checkAndPerformEviction
-// =============================================================================
 
 func TestCheckAndPerformEviction(t *testing.T) {
 	now := time.Now()
@@ -504,10 +480,6 @@ func TestCheckAndPerformEviction(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// 3. updateCacheAccessTime
-// =============================================================================
-
 func TestUpdateCacheAccessTime(t *testing.T) {
 	t.Run("increments_AccessCount_and_sets_LastAccessTime", func(t *testing.T) {
 		cache := makeCacheOpt("test-cache", withAccessCount(5))
@@ -536,10 +508,6 @@ func TestUpdateCacheAccessTime(t *testing.T) {
 		require.NotNil(t, cache.Status.LastAccessTime)
 	})
 }
-
-// =============================================================================
-// 4. markCacheResident
-// =============================================================================
 
 func TestMarkCacheResident(t *testing.T) {
 	t.Run("sets_ResidentSince_when_nil", func(t *testing.T) {

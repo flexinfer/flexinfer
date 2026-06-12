@@ -108,7 +108,7 @@ func parseBytes(s string) uint64 {
 	return val
 }
 
-// detectAMDGPUSysfs reads comprehensive AMD GPU metrics from sysfs.
+// detectAMDGPUSysfs reads AMD GPU metrics from sysfs.
 // This is the fallback when rocm-smi (Python) is not available.
 func (a *Agent) detectAMDGPUSysfs() []AMDGPUSysfs {
 	root := a.sysfsRoot

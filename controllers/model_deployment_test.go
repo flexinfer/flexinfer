@@ -17,6 +17,7 @@ limitations under the License.
 package controllers
 
 import (
+	"maps"
 	"strings"
 	"testing"
 
@@ -66,30 +67,14 @@ func baseDeployment() *appsv1.Deployment {
 	}
 }
 
-// copyMap returns a shallow copy of a string map. Returns nil for nil input.
-func copyMap(m map[string]string) map[string]string {
-	if m == nil {
-		return nil
-	}
-	out := make(map[string]string, len(m))
-	for k, v := range m {
-		out[k] = v
-	}
-	return out
-}
-
-// =============================================================================
-// 1. TestDeploymentManagedFieldChanges
-// =============================================================================
-
 func TestDeploymentManagedFieldChanges(t *testing.T) {
 	t.Run("no changes", func(t *testing.T) {
 		dep := baseDeployment()
 		desired := dep.Spec.DeepCopy()
-		labels := copyMap(dep.Labels)
-		annotations := copyMap(dep.Annotations)
-		templateLabels := copyMap(dep.Spec.Template.Labels)
-		podAnnotations := copyMap(dep.Spec.Template.Annotations)
+		labels := maps.Clone(dep.Labels)
+		annotations := maps.Clone(dep.Annotations)
+		templateLabels := maps.Clone(dep.Spec.Template.Labels)
+		podAnnotations := maps.Clone(dep.Spec.Template.Annotations)
 
 		fields := deploymentManagedFieldChanges(dep, desired, labels, annotations, templateLabels, podAnnotations)
 		if len(fields) != 0 {
@@ -198,10 +183,6 @@ func TestParseModelImagePullSecrets(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// 2. TestContainerManagedFieldsChanged
-// =============================================================================
-
 func TestContainerManagedFieldsChanged(t *testing.T) {
 	baseContainers := func() []corev1.Container {
 		return []corev1.Container{{
@@ -290,10 +271,6 @@ func TestContainerManagedFieldsChanged(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// 3. TestMergeContainers
-// =============================================================================
-
 func TestMergeContainers(t *testing.T) {
 	t.Run("updates managed fields from desired", func(t *testing.T) {
 		existing := []corev1.Container{{
@@ -364,10 +341,6 @@ func TestMergeContainers(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// 4. TestPodSecurityContextEqual
-// =============================================================================
-
 func TestPodSecurityContextEqual(t *testing.T) {
 	t.Run("nil vs nil", func(t *testing.T) {
 		if !podSecurityContextEqual(nil, nil) {
@@ -402,10 +375,6 @@ func TestPodSecurityContextEqual(t *testing.T) {
 		}
 	})
 }
-
-// =============================================================================
-// 5. TestPodObjectEqual
-// =============================================================================
 
 func TestPodObjectEqual(t *testing.T) {
 	t.Run("nil vs nil", func(t *testing.T) {

@@ -6,9 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-// ---------------------------------------------------------------------------
 // Pod-level connection tracking tests
-// ---------------------------------------------------------------------------
 
 func TestPodConnectionTracking(t *testing.T) {
 	p := setupTestProxy(t)

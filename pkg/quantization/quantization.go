@@ -5,6 +5,7 @@ package quantization
 
 import (
 	"fmt"
+	"slices"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -92,12 +93,7 @@ var ValidGGUFTypes = []string{
 
 // IsValidGGUFType checks if a GGUF type string is recognized.
 func IsValidGGUFType(t string) bool {
-	for _, valid := range ValidGGUFTypes {
-		if t == valid {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ValidGGUFTypes, t)
 }
 
 // GetBuilder returns the appropriate JobBuilder for the given format.
