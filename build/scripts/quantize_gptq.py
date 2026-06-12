@@ -476,7 +476,9 @@ def dynamic_config_excludes_moe_experts(dynamic_config):
 
 def should_require_moe_expert_quantization(config, dynamic_config):
     """Decide whether this run must expose and save quantized expert tensors."""
-    mode = os.environ.get("GPTQ_REQUIRE_MOE_EXPERT_QUANTIZATION", "auto").strip().lower()
+    mode = (
+        os.environ.get("GPTQ_REQUIRE_MOE_EXPERT_QUANTIZATION", "auto").strip().lower()
+    )
     moe_summary = detect_moe_architecture_from_config(config)
 
     if mode in ("0", "false", "no", "off"):
@@ -528,7 +530,9 @@ def inspect_moe_expert_visibility(model):
     return {
         "model_class": cls.__name__,
         "module_tree_has_moe": module_tree_has_moe,
-        "module_tree_entry_count": len(module_tree) if isinstance(module_tree, list) else 0,
+        "module_tree_entry_count": (
+            len(module_tree) if isinstance(module_tree, list) else 0
+        ),
         "defused_expert_module_count": len(defused_expert_modules),
         "expert_gate_module_count": len(expert_gate_modules),
         "fused_3d_expert_parameter_count": len(fused_3d_params),
@@ -564,9 +568,7 @@ def assert_moe_expert_visibility(visibility, reason):
 
 def discover_saved_moe_expert_quantization(save_dir):
     modules = _discover_quantized_module_suffixes(save_dir)
-    hf_expert_re = re.compile(
-        r"(?:^|\.)experts\.\d+\.(?:gate_proj|up_proj|down_proj)$"
-    )
+    hf_expert_re = re.compile(r"(?:^|\.)experts\.\d+\.(?:gate_proj|up_proj|down_proj)$")
     vllm_modules = [m for m in modules if m in ("moe.gate_up_proj", "moe.down_proj")]
     hf_native_modules = [m for m in modules if hf_expert_re.search(m)]
     return {
@@ -1960,8 +1962,10 @@ def patch_gptq_lm_head_cpu_quantize():
         name = getattr(task, "name", "")
         named_module = getattr(task, "_named_module", None)
         full_name = getattr(named_module, "full_name", "")
-        return name == "lm_head" or full_name == "lm_head" or full_name.endswith(
-            ".lm_head"
+        return (
+            name == "lm_head"
+            or full_name == "lm_head"
+            or full_name.endswith(".lm_head")
         )
 
     def _describe_gpu_memory():
@@ -3692,6 +3696,25 @@ for key, value in (policy or {}).get("quantize_config_overrides", {}).items():
         f"Applied QuantizeConfig override from policy={active_policy or 'none'}: {key}={value}"
     )
 quantize_config = QuantizeConfig(**qcfg_kwargs)
+# Activation-group-aware reordering (gptqmodel >=7 default ON) permutes weight
+# columns into activation-magnitude groups at quantize time but leaves g_idx
+# identity when desc_act=False. Static GPTQ kernels (vLLM 0.6.3 ROCm Exllama
+# v1) read only bits/group_size/sym/desc_act and dequantize in plain column
+# order -> coherent-looking but garbage logits (Track B serve kill-test,
+# 2026-06-12). Force it OFF unless a policy explicitly re-enables it, so the
+# on-disk layout matches what the serving kernel assumes. Version-guarded:
+# older gptqmodel builds lack the attribute and are unaffected.
+_gar_override = (
+    (policy or {}).get("quantize_config_overrides", {}).get("act_group_aware")
+)
+if hasattr(quantize_config, "act_group_aware"):
+    if _gar_override is None:
+        quantize_config.act_group_aware = False
+        print(
+            "Forced QuantizeConfig.act_group_aware=False (static-kernel layout safety)"
+        )
+    else:
+        print(f"Policy retains QuantizeConfig.act_group_aware={_gar_override}")
 if qcfg_damp_percent_override:
     quantize_config.damp_percent = float(qcfg_damp_percent_override)
     print(
@@ -3797,7 +3820,9 @@ if _has_defused_experts:
         from gptqmodel.models.moe_lifecycle import GateUpDownMoELifecycleHooks
 
         _cls = type(model)
-        _module_tree_has_moe = module_tree_declares_moe(getattr(_cls, "module_tree", None))
+        _module_tree_has_moe = module_tree_declares_moe(
+            getattr(_cls, "module_tree", None)
+        )
         _patched_tree = False
         if not _module_tree_has_moe:
             for _entry in getattr(_cls, "module_tree", []):
