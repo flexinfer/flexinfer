@@ -69,6 +69,26 @@ func (r *GPUProfileReconciler) LookupProfile(arch string) (*aiv1alpha2.GPUProfil
 	return profile, ok
 }
 
+// Prime stores the given profile in the in-memory cache immediately, without
+// waiting for this controller's own reconcile of the event. The
+// ModelReconciler's GPUProfile watch calls it from its map function so Model
+// reconciles fanned out by a profile edit never read a stale cached spec
+// while the two controllers' event handlers race.
+func (r *GPUProfileReconciler) Prime(profile *aiv1alpha2.GPUProfile) {
+	if profile == nil {
+		return
+	}
+	arch := profile.Spec.Architecture
+	if arch == "" {
+		arch = profile.Name
+	}
+	if arch == "" {
+		return
+	}
+	r.profiles.Store(arch, profile.Spec.DeepCopy())
+	r.profileObjects.Store(arch, profile.DeepCopy())
+}
+
 // LookupOrFetch returns a cached GPU profile when available and falls back to
 // the API server when the in-memory cache is cold after a controller restart.
 func (r *GPUProfileReconciler) LookupOrFetch(ctx context.Context, namespace, arch string) (*aiv1alpha2.GPUProfileSpec, bool, error) {
