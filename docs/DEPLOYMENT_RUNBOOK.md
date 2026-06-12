@@ -20,7 +20,7 @@ exec /agent: permission denied
 
 **Root Cause**: The agent Dockerfile used `gcr.io/distroless/static:nonroot` base image but didn't set the USER directive, causing permission issues when the container tried to execute the binary.
 
-**Solution**: Add USER directive to `build/Dockerfile.agent`:
+**Solution**: Add USER directive to `build/Dockerfile.agent.bin`:
 ```dockerfile
 FROM gcr.io/distroless/static:nonroot
 WORKDIR /

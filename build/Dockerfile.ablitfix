@@ -1,2 +1,0 @@
-FROM registry.harbor.lan/flexinfer/runtime@sha256:d9def647d3f0520390ff8e1addd00762111b07a4bd77eec1108eb430f6cc8ff2
-COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py

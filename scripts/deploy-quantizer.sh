@@ -77,10 +77,12 @@ DOCKERFILE=""
 case "${FORMAT}" in
     gptq)
         if [[ "${ARCH}" == "gfx906" ]]; then
-            DOCKERFILE="build/Dockerfile.quantizer-gptq-rocm-gfx906"
-        else
-            DOCKERFILE="build/Dockerfile.quantizer-gptq-rocm"
+            echo "ERROR: gfx906 GPTQ quantize uses runtime:unified-gfx906 (GPUProfile" >&2
+            echo "quantizerImage / USE_RUNTIME_FOR_QUANTIZE), not a standalone quantizer image." >&2
+            echo "The Dockerfile.quantizer-gptq-rocm-gfx906 recipe was removed 2026-06-12." >&2
+            exit 1
         fi
+        DOCKERFILE="build/Dockerfile.quantizer-gptq-rocm"
         ;;
     awq)
         DOCKERFILE="build/Dockerfile.quantizer-awq-rocm"

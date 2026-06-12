@@ -94,7 +94,7 @@ There is no workaround or compatibility shim.
 |------|---------|-------------|-------------------|--------|
 | 5.7 | 2.0-2.1 | < 5.0 | Yes (full support) | Official |
 | 6.1 | 2.4.1 | >= 5.0 | **Likely yes** (untested) | Official wheel: `torch==2.4.1+rocm6.1` |
-| 6.2.3 | 2.3.0 | < 5.0 only | Yes (with HSA override) | `Dockerfile.quantizer-gptq-rocm-gfx906` |
+| 6.2.3 | 2.3.0 | < 5.0 only | Yes (with HSA override) | `Dockerfile.quantizer-gptq-rocm-gfx906` (removed 2026-06-12; recipe in git history) |
 | 6.4.1 | 2.6.0 | >= 5.0 | **No** (GPU alloc broken) | `Dockerfile.quantizer-gptq-rocm64-gfx906` |
 | 6.3-7.2 | 2.7-2.8 | >= 5.0 | **Likely yes** (community) | mixa3607/ML-gfx906 |
 

@@ -181,8 +181,6 @@ Look for models with `-MLC` suffix that include ROCm-compatible quantizations.
 | Dockerfile | Description |
 |------------|-------------|
 | `Dockerfile.mlc-rocm` | Older ROCm version, less stable |
-| `Dockerfile.mlc-rocm64-build` | Build stage only |
-| `Dockerfile.mlc-rocm64-hipblas` | HIPBlas backend variant |
 | `Dockerfile.mlc-rocm64-full` | Recommended, generic ROCm source build |
 | `Dockerfile.mlc-rocm64-gfx1100` | GFX1100 (RX 7900 series) optimized build |
 | `Dockerfile.vllm-rocm-gfx1100` | vLLM for GFX1100 with flash attention disabled |

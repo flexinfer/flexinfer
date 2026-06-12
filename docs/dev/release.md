@@ -11,18 +11,20 @@ FlexInfer uses multiple container images (controller, agent, scheduler, proxy, b
 
 Component images:
 
-- `services/flexinfer/build/Dockerfile.manager`
-- `services/flexinfer/build/Dockerfile.agent`
-- `services/flexinfer/build/Dockerfile.sched`
-- `services/flexinfer/build/Dockerfile.proxy`
-- `services/flexinfer/build/Dockerfile.bench`
+- `services/flexinfer/build/Dockerfile.manager.bin`
+- `services/flexinfer/build/Dockerfile.agent.bin`
+- `services/flexinfer/build/Dockerfile.sched.bin`
+- `services/flexinfer/build/Dockerfile.proxy.bin`
+- `services/flexinfer/build/Dockerfile.bench.bin`
+
+The `.bin` Dockerfiles copy a prebuilt binary (build it first with `make build`); see `build/README.md` for the full image map.
 
 Backend images (examples; not required for the control plane itself):
 
 - `services/flexinfer/build/Dockerfile.mlc-*`
 - `services/flexinfer/build/Dockerfile.vllm-*`
 - `services/flexinfer/build/Dockerfile.diffusers-rocm`
-- `services/flexinfer/build/Dockerfile.comfyui-rocm`
+- `services/flexinfer/build/Dockerfile.comfyui-rocm-gfx1100`
 
 ## Build an image
 
@@ -30,7 +32,8 @@ Example (proxy):
 
 ```bash
 cd services/flexinfer
-docker build -f build/Dockerfile.proxy -t ghcr.io/flexinfer/flexinfer-proxy:dev .
+make build
+docker build -f build/Dockerfile.proxy.bin -t ghcr.io/flexinfer/flexinfer-proxy:dev .
 ```
 
 ## Wire images into Helm
