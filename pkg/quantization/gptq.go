@@ -594,6 +594,33 @@ if [ -f "${GPTQ_SCRIPT}" ] && grep -q '"hessian_repair": hessian_repair,' "${GPT
     sed -i 's/"hessian_repair": hessian_repair,/"hessian_repair": hessian_repair_enabled,/' "${GPTQ_SCRIPT}"
     echo "Patched resume_config_fingerprint hessian_repair NameError"
 fi
+
+# Force act_group_aware OFF on images baked before 2026-06-12. gptqmodel >=7
+# defaults it ON, which permutes weight columns into activation-magnitude
+# groups but leaves g_idx identity (desc_act=False) -> static GPTQ kernels
+# (vLLM 0.6.3 ROCm Exllama) dequantize in plain order and emit garbage
+# (Track B serve kill-test). Inject the disable right after QuantizeConfig
+# construction. Guarded: no-ops once the baked script carries the inline fix.
+if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "act_group_aware=False (static-kernel layout safety)" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'PY'
+from pathlib import Path
+p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = p.read_text()
+anchor = "quantize_config = QuantizeConfig(**qcfg_kwargs)\n"
+inject = (
+    'if hasattr(quantize_config, "act_group_aware") and '
+    '(policy or {}).get("quantize_config_overrides", {}).get("act_group_aware") is None:\n'
+    '    quantize_config.act_group_aware = False\n'
+    '    print("Forced QuantizeConfig.act_group_aware=False (static-kernel layout safety)")\n'
+)
+if anchor in src and "act_group_aware=False (static-kernel layout safety)" not in src:
+    src = src.replace(anchor, anchor + inject, 1)
+    p.write_text(src)
+    print("Patched: forced act_group_aware=False after QuantizeConfig construction")
+else:
+    print("act_group_aware patch anchor not found or already present; skipping")
+PY
+fi
 if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Disabled GPTQ offload_to_disk for model_type=" "${GPTQ_SCRIPT}" 2>/dev/null; then
     python3 - <<'PY'
 from pathlib import Path
