@@ -34,10 +34,6 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 )
 
-// =============================================================================
-// 1. setModelCondition
-// =============================================================================
-
 func TestSetModelConditionTransitionTime(t *testing.T) {
 	t.Run("no-op when condition is identical", func(t *testing.T) {
 		model := &aiv1alpha2.Model{}
@@ -103,10 +99,6 @@ func TestSetModelConditionTransitionTime(t *testing.T) {
 	})
 }
 
-// =============================================================================
-// 2. modelCondition
-// =============================================================================
-
 func TestModelCondition(t *testing.T) {
 	t.Run("returns existing condition", func(t *testing.T) {
 		conds := []metav1.Condition{
@@ -141,10 +133,6 @@ func TestModelCondition(t *testing.T) {
 		}
 	})
 }
-
-// =============================================================================
-// 3. matchingModelCache
-// =============================================================================
 
 func TestMatchingModelCache(t *testing.T) {
 	s := runtime.NewScheme()
@@ -293,10 +281,6 @@ func TestMatchingModelCache(t *testing.T) {
 		}
 	})
 }
-
-// =============================================================================
-// 4. readQuantizationMetadataFromJob
-// =============================================================================
 
 func TestReadQuantizationMetadataFromJob(t *testing.T) {
 	s := runtime.NewScheme()
@@ -540,9 +524,7 @@ func TestReadQuantizationMetadataFromJob(t *testing.T) {
 	})
 }
 
-// =============================================================================
 // 5. ensureCache — edge cases not covered by model_cache_reconcile_test.go
-// =============================================================================
 
 func TestEnsureCacheBackendNoVolume(t *testing.T) {
 	model := modelWithCache("ollama-model", "flexinfer-system", "HF://org/model", nil)
@@ -1437,9 +1419,7 @@ func TestEnsureCacheSharedPVCHFSourceChangeDeletesOldPrefetchJob(t *testing.T) {
 	}
 }
 
-// =============================================================================
 // 6. ensureQuantization — edge cases
-// =============================================================================
 
 func TestEnsureQuantizationIdempotentWhenAlreadyCompleted(t *testing.T) {
 	// When quantization status already reflects a completed quantization
@@ -1710,10 +1690,8 @@ func TestEnsureCachePvcUIDMatch(t *testing.T) {
 	}
 }
 
-// =============================================================================
 // Helper: newModelCacheReconciler with client.Object variadic (reuse from
 // model_cache_reconcile_test.go via same package).
-// =============================================================================
 // Note: newModelCacheReconciler, modelWithCache, modelWithQuantization,
 // sourcePVC, cachePVC, copyJob, quantizationJob, quantizationMetadataPod,
 // mustBackend, getModelFromClient, assertCacheStatus, and findCondition are all

@@ -74,10 +74,6 @@ func makeNode(name string, labels map[string]string) *corev1.Node {
 
 func boolPtr(v bool) *bool { return &v }
 
-// ---------------------------------------------------------------------------
-// 1. TestNewRuntimeCache
-// ---------------------------------------------------------------------------
-
 func TestNewRuntimeCache(t *testing.T) {
 	scheme := runtime.NewScheme()
 	require.NoError(t, clientgoscheme.AddToScheme(scheme))
@@ -91,10 +87,6 @@ func TestNewRuntimeCache(t *testing.T) {
 	assert.Nil(t, rc.endpoints)
 	assert.True(t, rc.lastFetch.IsZero(), "lastFetch should be zero-value on creation")
 }
-
-// ---------------------------------------------------------------------------
-// 2. TestRuntimeCache_Refresh_DiscoversPods
-// ---------------------------------------------------------------------------
 
 func TestRuntimeCache_Refresh_DiscoversPods(t *testing.T) {
 	readyTrue := boolPtr(true)
@@ -119,10 +111,6 @@ func TestRuntimeCache_Refresh_DiscoversPods(t *testing.T) {
 	assert.True(t, names["rt-pod-2"])
 }
 
-// ---------------------------------------------------------------------------
-// 3. TestRuntimeCache_Refresh_SkipsNonRunning
-// ---------------------------------------------------------------------------
-
 func TestRuntimeCache_Refresh_SkipsNonRunning(t *testing.T) {
 	readyTrue := boolPtr(true)
 	runningPod := makePod("running-pod", "10.0.0.1", "node-a", corev1.PodRunning, readyTrue)
@@ -138,10 +126,6 @@ func TestRuntimeCache_Refresh_SkipsNonRunning(t *testing.T) {
 	require.Len(t, rc.endpoints, 1)
 	assert.Equal(t, "running-pod", rc.endpoints[0].PodName)
 }
-
-// ---------------------------------------------------------------------------
-// 4. TestRuntimeCache_Refresh_PodReadyCondition
-// ---------------------------------------------------------------------------
 
 func TestRuntimeCache_Refresh_PodReadyCondition(t *testing.T) {
 	readyPod := makePod("ready-pod", "10.0.0.1", "node-a", corev1.PodRunning, boolPtr(true))
@@ -163,10 +147,6 @@ func TestRuntimeCache_Refresh_PodReadyCondition(t *testing.T) {
 	assert.False(t, epMap["not-ready-pod"].Ready)
 }
 
-// ---------------------------------------------------------------------------
-// 5. TestRuntimeCache_ForModel_MatchingNodeSelector
-// ---------------------------------------------------------------------------
-
 func TestRuntimeCache_ForModel_MatchingNodeSelector(t *testing.T) {
 	pod := makePod("gpu-pod", "10.0.0.1", "gpu-node", corev1.PodRunning, boolPtr(true))
 	node := makeNode("gpu-node", map[string]string{
@@ -187,10 +167,6 @@ func TestRuntimeCache_ForModel_MatchingNodeSelector(t *testing.T) {
 	assert.Equal(t, pkgrt.RuntimeAPIPort, ep.Port)
 }
 
-// ---------------------------------------------------------------------------
-// 6. TestRuntimeCache_ForModel_NoMatch
-// ---------------------------------------------------------------------------
-
 func TestRuntimeCache_ForModel_NoMatch(t *testing.T) {
 	pod := makePod("cpu-pod", "10.0.0.1", "cpu-node", corev1.PodRunning, boolPtr(true))
 	node := makeNode("cpu-node", map[string]string{
@@ -206,10 +182,6 @@ func TestRuntimeCache_ForModel_NoMatch(t *testing.T) {
 	assert.Nil(t, ep, "should return nil when node labels do not match selector")
 }
 
-// ---------------------------------------------------------------------------
-// 7. TestRuntimeCache_ForModel_EmptySelector
-// ---------------------------------------------------------------------------
-
 func TestRuntimeCache_ForModel_EmptySelector(t *testing.T) {
 	pod := makePod("any-pod", "10.0.0.1", "any-node", corev1.PodRunning, boolPtr(true))
 	// Node not needed since empty selector matches any pod.
@@ -222,10 +194,6 @@ func TestRuntimeCache_ForModel_EmptySelector(t *testing.T) {
 	assert.Equal(t, "any-pod", ep.PodName)
 }
 
-// ---------------------------------------------------------------------------
-// 8. TestRuntimeCache_ForModel_SkipsNotReady
-// ---------------------------------------------------------------------------
-
 func TestRuntimeCache_ForModel_SkipsNotReady(t *testing.T) {
 	notReadyPod := makePod("not-ready", "10.0.0.1", "node-a", corev1.PodRunning, boolPtr(false))
 
@@ -235,10 +203,6 @@ func TestRuntimeCache_ForModel_SkipsNotReady(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, ep, "should skip pods that are not ready")
 }
-
-// ---------------------------------------------------------------------------
-// 9. TestRuntimeCache_EnsureFresh_WithinTTL
-// ---------------------------------------------------------------------------
 
 func TestRuntimeCache_EnsureFresh_WithinTTL(t *testing.T) {
 	pod := makePod("ttl-pod", "10.0.0.1", "node-a", corev1.PodRunning, boolPtr(true))
@@ -260,10 +224,6 @@ func TestRuntimeCache_EnsureFresh_WithinTTL(t *testing.T) {
 	require.Len(t, rc.endpoints, 1)
 	assert.Equal(t, "stale-sentinel", rc.endpoints[0].PodName)
 }
-
-// ---------------------------------------------------------------------------
-// 10. TestRuntimeCache_EnsureFresh_Stale
-// ---------------------------------------------------------------------------
 
 func TestRuntimeCache_EnsureFresh_Stale(t *testing.T) {
 	pod := makePod("fresh-pod", "10.0.0.5", "node-x", corev1.PodRunning, boolPtr(true))
@@ -287,10 +247,6 @@ func TestRuntimeCache_EnsureFresh_Stale(t *testing.T) {
 	assert.Equal(t, "10.0.0.5", rc.endpoints[0].PodIP)
 }
 
-// ---------------------------------------------------------------------------
-// 11. TestIsPodReadyFromConditions_Ready
-// ---------------------------------------------------------------------------
-
 func TestIsPodReadyFromConditions_Ready(t *testing.T) {
 	pod := &corev1.Pod{
 		Status: corev1.PodStatus{
@@ -303,10 +259,6 @@ func TestIsPodReadyFromConditions_Ready(t *testing.T) {
 	assert.True(t, isPodReadyFromConditions(pod))
 }
 
-// ---------------------------------------------------------------------------
-// 12. TestIsPodReadyFromConditions_NotReady
-// ---------------------------------------------------------------------------
-
 func TestIsPodReadyFromConditions_NotReady(t *testing.T) {
 	pod := &corev1.Pod{
 		Status: corev1.PodStatus{
@@ -317,10 +269,6 @@ func TestIsPodReadyFromConditions_NotReady(t *testing.T) {
 	}
 	assert.False(t, isPodReadyFromConditions(pod))
 }
-
-// ---------------------------------------------------------------------------
-// 13. TestIsPodReadyFromConditions_NoPodReadyCond
-// ---------------------------------------------------------------------------
 
 func TestIsPodReadyFromConditions_NoPodReadyCond(t *testing.T) {
 	pod := &corev1.Pod{
@@ -334,18 +282,10 @@ func TestIsPodReadyFromConditions_NoPodReadyCond(t *testing.T) {
 	assert.False(t, isPodReadyFromConditions(pod))
 }
 
-// ---------------------------------------------------------------------------
-// 14. TestNodeMatches_EmptySelector
-// ---------------------------------------------------------------------------
-
 func TestNodeMatches_EmptySelector(t *testing.T) {
 	rc := newTestRuntimeCache(t, time.Minute)
 	assert.True(t, rc.nodeMatches(context.Background(), "any-node", map[string]string{}))
 }
-
-// ---------------------------------------------------------------------------
-// 15. TestNodeMatches_MismatchedLabels
-// ---------------------------------------------------------------------------
 
 func TestNodeMatches_MismatchedLabels(t *testing.T) {
 	node := makeNode("label-node", map[string]string{
@@ -358,10 +298,6 @@ func TestNodeMatches_MismatchedLabels(t *testing.T) {
 	})
 	assert.False(t, result)
 }
-
-// ---------------------------------------------------------------------------
-// 16. TestNodeMatches_AllLabelsMatch
-// ---------------------------------------------------------------------------
 
 func TestNodeMatches_AllLabelsMatch(t *testing.T) {
 	node := makeNode("multi-label-node", map[string]string{

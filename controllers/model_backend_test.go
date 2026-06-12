@@ -29,9 +29,7 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 )
 
-// =============================================================================
 // fakeBackend satisfies the backend.Backend interface for testing.
-// =============================================================================
 
 type fakeBackend struct {
 	name        string
@@ -61,18 +59,12 @@ func (f *fakeBackend) DefaultIdleTimeout() time.Duration          { return 5 * t
 // Compile-time check that fakeBackend satisfies backend.Backend.
 var _ backend.Backend = (*fakeBackend)(nil)
 
-// =============================================================================
 // helpers
-// =============================================================================
 
 func timeNow() *metav1.Time {
 	t := metav1.Now()
 	return &t
 }
-
-// =============================================================================
-// 1. resolveBackendStoragePlan
-// =============================================================================
 
 func TestResolveBackendStoragePlan(t *testing.T) {
 	tests := []struct {
@@ -309,10 +301,6 @@ func TestResolveBackendStoragePlan(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// 2. quantizedOutputDir
-// =============================================================================
-
 func TestQuantizedOutputDir(t *testing.T) {
 	tests := []struct {
 		name string
@@ -374,10 +362,6 @@ func TestQuantizedOutputDir(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// 3. resolveGGUFFile
-// =============================================================================
-
 func TestResolveGGUFFile_Comprehensive(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -429,10 +413,6 @@ func TestResolveGGUFFile_Comprehensive(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// 4. extractModelFromSource
-// =============================================================================
-
 func TestExtractModelFromSource_EdgeCases(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -483,10 +463,6 @@ func TestExtractModelFromSource_EdgeCases(t *testing.T) {
 		})
 	}
 }
-
-// =============================================================================
-// 5. shouldStagePVCSourceToCache
-// =============================================================================
 
 func TestShouldStagePVCSourceToCache(t *testing.T) {
 	tests := []struct {
@@ -587,9 +563,7 @@ func TestGetVolumeSource_PVCSourceLocalCache(t *testing.T) {
 	}
 }
 
-// =============================================================================
 // 6. cachePVCName / cacheStorageClass / cacheSize
-// =============================================================================
 
 func TestCachePVCName(t *testing.T) {
 	tests := []struct {
@@ -716,10 +690,6 @@ func TestCacheSize(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// 7. resolveCompilationCache
-// =============================================================================
-
 func TestResolveCompilationCache(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -821,10 +791,6 @@ func TestResolveCompilationCache(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// 8. resolveLocalCachePath
-// =============================================================================
-
 func TestResolveLocalCachePath(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -867,10 +833,6 @@ func TestResolveLocalCachePath(t *testing.T) {
 	}
 }
 
-// =============================================================================
-// 9. hfCacheEnvVars
-// =============================================================================
-
 func TestHfCacheEnvVars(t *testing.T) {
 	t.Run("standard output", func(t *testing.T) {
 		envs := hfCacheEnvVars("/models/.cache/huggingface")
@@ -898,10 +860,6 @@ func TestHfCacheEnvVars(t *testing.T) {
 		assert.Equal(t, "/models/.cache/huggingface", envs[0].Value)
 	})
 }
-
-// =============================================================================
-// 10. mergeEnv
-// =============================================================================
 
 func TestMergeEnv(t *testing.T) {
 	tests := []struct {

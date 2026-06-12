@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -537,7 +538,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		); decision.Enforced {
 			logAdmission(ctx, modelName, decision)
 			admissionDecisionsTotal.WithLabelValues(
-				modelName, decision.Reason, boolLabel(decision.Allow),
+				modelName, decision.Reason, strconv.FormatBool(decision.Allow),
 			).Inc()
 			if !decision.Allow {
 				writeAdmissionRejection(w, modelName, decision)
