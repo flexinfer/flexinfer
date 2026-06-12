@@ -70,5 +70,10 @@ test_*.go
 /flexinfer
 /flexinfer-flash-loader
 /flexinfer-sched
+/flexinfer-global-proxy
+/flexinfer-runtime
+/agent-loop
+/voice-loop
+/spec-decode-bench
 /seed-issues
 bin/

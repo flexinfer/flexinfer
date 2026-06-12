@@ -1,4 +1,0 @@
-ARG BASE_IMAGE
-FROM ${BASE_IMAGE}
-
-COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
