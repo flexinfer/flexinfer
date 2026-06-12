@@ -507,7 +507,27 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&aiv1alpha2.Model{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForSharedGroupSiblings),
 			builder.WithPredicates(siblingDeleteOnly)).
+		Watches(&aiv1alpha2.GPUProfile{},
+			handler.EnqueueRequestsFromMapFunc(r.requestsForGPUProfileModels),
+			builder.WithPredicates(gpuProfileSpecChange)).
 		Complete(r)
+}
+
+// gpuProfileSpecChange admits GPUProfile events that can alter Model
+// reconcile outcomes: profile creation and spec edits (generation bumps).
+// Status-only updates (e.g. the GPUProfileReconciler's own Cached/LastCached
+// writes) bump resourceVersion but not generation and must not fan out.
+// Delete is dropped: the map function primes the profile cache with the
+// observed object, and priming a deleted profile would race the cache
+// removal in GPUProfileReconciler.Reconcile; Models pick up arch defaults on
+// their next natural reconcile instead.
+var gpuProfileSpecChange = predicate.Funcs{
+	CreateFunc: func(event.CreateEvent) bool { return true },
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		return e.ObjectOld.GetGeneration() != e.ObjectNew.GetGeneration()
+	},
+	DeleteFunc:  func(event.DeleteEvent) bool { return false },
+	GenericFunc: func(event.GenericEvent) bool { return false },
 }
 
 // Start implements manager.Runnable. It performs a one-time sweep after the
@@ -612,6 +632,74 @@ func (r *ModelReconciler) requestsForSharedGroupSiblings(ctx context.Context, ob
 		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(m)})
 	}
 	return requests
+}
+
+// requestsForGPUProfileModels returns reconcile requests for every Model
+// whose resolved GPU architecture matches the changed GPUProfile. Combined
+// with the create/generation-change predicate in SetupWithManager, this
+// propagates profile spec edits to dependent Models without operators
+// manually annotating CRs (DEBT-CTL-01). The map function first primes the
+// GPUProfileReconciler cache with the observed object so Model reconciles
+// fanned out by this watch never read a stale profile while the sibling
+// controller's own cache update races.
+func (r *ModelReconciler) requestsForGPUProfileModels(ctx context.Context, obj client.Object) []ctrl.Request {
+	profile, ok := obj.(*aiv1alpha2.GPUProfile)
+	if !ok || profile == nil {
+		return nil
+	}
+	arch := profile.Spec.Architecture
+	if arch == "" {
+		arch = profile.Name
+	}
+	if arch == "" {
+		return nil
+	}
+
+	if r.GPUProfiles != nil {
+		r.GPUProfiles.Prime(profile)
+	}
+
+	log := log.FromContext(ctx)
+	models := &aiv1alpha2.ModelList{}
+	if err := r.List(ctx, models, client.InNamespace(profile.Namespace)); err != nil {
+		log.Error(err, "Failed to list models for GPUProfile event", "profile", profile.Name)
+		return nil
+	}
+
+	requests := make([]ctrl.Request, 0, len(models.Items))
+	for i := range models.Items {
+		m := &models.Items[i]
+		if !r.modelUsesGPUArch(ctx, m, arch) {
+			continue
+		}
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(m)})
+	}
+	if len(requests) > 0 {
+		log.Info("GPUProfile change fan-out to dependent models",
+			"profile", profile.Name, "arch", arch, "models", len(requests))
+	}
+	return requests
+}
+
+// modelUsesGPUArch reports whether the Model resolves to the given GPU
+// architecture via either resolution path used at reconcile time: the
+// nodeSelector-derived arch (quantization/abliteration job lane) or the
+// node-derived arch from detectGPU (runtime/deployment lane). An explicit
+// arch in the nodeSelector is authoritative even when its node is currently
+// absent. A detectGPU error on selector-less models enqueues conservatively:
+// an extra idempotent reconcile is cheaper than a missed profile propagation.
+func (r *ModelReconciler) modelUsesGPUArch(ctx context.Context, model *aiv1alpha2.Model, arch string) bool {
+	if selectorArch := gpuArchFromNodeSelector(model.Spec.NodeSelector); selectorArch != "" {
+		return selectorArch == arch
+	}
+	if model.Spec.GetGPUCount() == 0 {
+		return false
+	}
+	_, detected, err := r.detectGPU(ctx, model)
+	if err != nil {
+		return true
+	}
+	return detected == arch
 }
 
 func (r *ModelReconciler) requestsForRuntimePod(ctx context.Context, obj client.Object) []ctrl.Request {
