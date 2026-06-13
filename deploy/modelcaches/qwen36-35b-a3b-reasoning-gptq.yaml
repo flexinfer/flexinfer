@@ -1,0 +1,52 @@
+# Qwen3.6-35B-A3B Claude-4.6-Opus-Reasoning-Distilled → GPTQ INT4 (vLLM daily-driver candidate)
+#
+# MoE: 35B total / ~3B active, 40 layers, 256 experts top-8, GQA 16:2 head_dim 256,
+# 262144 (256K) native context, model_type qwen3_5_moe (multimodal base — text_config
+# extracted by the qwen3.5-moe-text quant policy; vision dropped for vLLM serving).
+#
+# Recipe mirrors the proven gemma4-26b-a4b MoE GPTQ: bits=4 g128 sym descAct=false,
+# dynamicExclusion=auto (detects MoE, quantizes experts -> ~18GB; experts MUST quantize
+# or it won't fit 24GB). act_group_aware=False is now the script default (MR !613 GAR fix).
+#
+# Serves on the runtime vLLM (V1) single gfx1100 with kv_cache_dtype=fp8_e4m3
+# (proven on gfx1100 by the gemma4 lane) -> ~78-86K context on one card.
+#
+# 67GB BF16 source -> ~18GB GPTQ INT4. Staged on llm-models-nfs.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen36-35b-a3b-reasoning-gptq
+  namespace: flexinfer-system
+spec:
+  source: "hesamation/Qwen3.6-35B-A3B-Claude-4.6-Opus-Reasoning-Distilled"
+  storageStrategy: SharedPVC
+  existingClaimName: llm-models-nfs
+  modelPath: qwen36-35b-a3b-reasoning
+  storageSize: "240Gi"
+  secretRef: "hf-token"
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    dynamicExclusion: "auto"
+    useGPU: true
+    maxMemoryGB: 44
+    timeoutSeconds: 86400
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx1100
+      kubernetes.io/hostname: cblevins-5930k
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 256
+  tolerations:
+    - key: node.flexstack.io/incident-quarantine
+      operator: Equal
+      value: "etcd-io"
+      effect: NoSchedule
