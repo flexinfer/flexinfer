@@ -560,9 +560,19 @@ def assert_moe_expert_visibility(visibility, reason):
             f"modules are visible after load/defuse ({reason})"
         )
     if not visibility.get("module_tree_has_moe"):
-        raise RuntimeError(
-            "MoE expert visibility gate failed: selected GPTQModel module_tree "
-            f"does not include experts/MoE entries ({reason})"
+        # GPTQModel >=7 AutoCompat discovers expert Linears dynamically (logs
+        # "Module Tree AutoCompat: found N Linear/Conv modules ... mlp.experts..")
+        # without declaring them in the static module_tree. Defused experts are
+        # present as nn.Linear (defused_expert_module_count > 0, checked above),
+        # so they ARE in quantization scope. The definitive enforcement is the
+        # post-save assert_saved_moe_expert_quantization gate, which fails the
+        # run if the artifact lacks expert qweights. Warn here, don't block —
+        # blocking was a false-negative on qwen3_5_moe (GDN-hybrid MoE).
+        print(
+            "WARN: static module_tree does not declare MoE experts, but "
+            f"{visibility.get('defused_expert_module_count')} defused expert "
+            "Linear modules are visible (GPTQModel AutoCompat path); relying on "
+            f"post-save expert-qweight verification ({reason})"
         )
 
 
