@@ -621,6 +621,43 @@ else:
     print("act_group_aware patch anchor not found or already present; skipping")
 PY
 fi
+
+# Relax the pre-quant MoE expert-visibility gate to accept GPTQModel >=7's
+# AutoCompat path on images baked before 2026-06-14. The gate raised when the
+# static module_tree lacked expert entries, but AutoCompat discovers expert
+# Linears dynamically (qwen3_5_moe GDN-hybrid) and the post-save
+# assert_saved_moe_expert_quantization gate is the real enforcement. Convert
+# the second raise to a warning. Guarded: no-ops once the baked script carries
+# the inline fix.
+if [ -f "${GPTQ_SCRIPT}" ] && grep -q "does not include experts/MoE entries" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'PY'
+from pathlib import Path
+p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = p.read_text()
+old = (
+    '    if not visibility.get("module_tree_has_moe"):\n'
+    '        raise RuntimeError(\n'
+    '            "MoE expert visibility gate failed: selected GPTQModel module_tree "\n'
+    '            f"does not include experts/MoE entries ({reason})"\n'
+    '        )\n'
+)
+new = (
+    '    if not visibility.get("module_tree_has_moe"):\n'
+    '        print(\n'
+    '            "WARN: static module_tree does not declare MoE experts, but "\n'
+    '            f"{visibility.get(\'defused_expert_module_count\')} defused expert "\n'
+    '            "Linear modules visible (GPTQModel AutoCompat); relying on "\n'
+    '            f"post-save expert-qweight verification ({reason})"\n'
+    '        )\n'
+)
+if old in src:
+    src = src.replace(old, new, 1)
+    p.write_text(src)
+    print("Patched: MoE expert-visibility gate -> warn on AutoCompat path")
+else:
+    print("MoE gate patch anchor not found (already patched?); skipping")
+PY
+fi
 if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Disabled GPTQ offload_to_disk for model_type=" "${GPTQ_SCRIPT}" 2>/dev/null; then
     python3 - <<'PY'
 from pathlib import Path
