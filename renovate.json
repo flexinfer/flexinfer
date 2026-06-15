@@ -59,10 +59,19 @@
       "groupName": "prometheus"
     },
     {
-      "description": "Pin Go version in go.mod",
+      "description": "Pin Go version in go.mod (toolchain driven by GO_VERSION CI var instead)",
       "matchManagers": ["gomod"],
       "matchDepTypes": ["golang"],
       "enabled": false
+    },
+    {
+      "description": "Track the Go toolchain pinned as GO_VERSION in .gitlab-ci.yml. govulncheck stdlib CVEs hard-block merges until the toolchain is bumped, so MR Go security/patch releases promptly (at any time, not the Monday window) rather than reactively.",
+      "matchManagers": ["custom.regex"],
+      "matchDepNames": ["golang"],
+      "matchDatasources": ["golang-version"],
+      "labels": ["dependencies", "security", "go-toolchain"],
+      "schedule": ["at any time"],
+      "prPriority": 10
     },
     {
       "description": "Helm chart updates",
@@ -73,6 +82,18 @@
       "description": "Docker base images",
       "matchManagers": ["dockerfile"],
       "groupName": "docker"
+    }
+  ],
+  "customManagers": [
+    {
+      "customType": "regex",
+      "description": "Go toolchain version pinned as the GO_VERSION CI variable, which drives GO_IMAGE (golang:${GO_VERSION}) used by the lint, test, build, and govulncheck jobs.",
+      "fileMatch": ["^\\.gitlab-ci\\.yml$"],
+      "matchStrings": [
+        "GO_VERSION:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
+      ],
+      "depNameTemplate": "golang",
+      "datasourceTemplate": "golang-version"
     }
   ],
   "gomod": {
