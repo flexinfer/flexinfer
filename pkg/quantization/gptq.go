@@ -279,9 +279,12 @@ func defaultGPTQModelPoliciesJSON() string {
 			MatchModelTypes:   []string{"qwen3_5_moe_text", "qwen3_5_moe"},
 			ExtractTextConfig: true,
 			CopyRootKeys:      []string{"bos_token_id", "eos_token_id", "pad_token_id"},
-			RemapModelType:    "qwen3_5_moe_text",
-			Architectures:     []string{"Qwen3_5MoeForCausalLM"},
-			Loader:            "gptqmodel",
+			// gptqmodel MODEL_MAP registers the MoE definition under "qwen3_5_moe"
+			// (no "qwen3_5_moe_text" key) — remapping to the _text alias loads as
+			// generic BaseQModel and silently drops the experts from quantization.
+			RemapModelType: "qwen3_5_moe",
+			Architectures:  []string{"Qwen3_5MoeForCausalLM"},
+			Loader:         "gptqmodel",
 			PythonPackages: []string{
 				"git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea",
 			},
