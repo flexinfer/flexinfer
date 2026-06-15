@@ -62,7 +62,7 @@ DEFAULT_MODEL_POLICIES = [
         "match_model_types": ["qwen3_5_moe_text", "qwen3_5_moe"],
         "extract_text_config": True,
         "copy_root_keys": ["bos_token_id", "eos_token_id", "pad_token_id"],
-        "remap_model_type": "qwen3_5_moe_text",
+        "remap_model_type": "qwen3_5_moe",
         "architectures": ["Qwen3_5MoeForCausalLM"],
         "loader": "gptqmodel",
         "python_packages": [
@@ -1654,6 +1654,27 @@ def select_model_policy(model_dir, cfg, policy_state, policies):
     return None
 
 
+# gptqmodel's MODEL_MAP (models/auto.py) keys the MoE Qwen3.5/3.6 definition
+# under "qwen3_5_moe" — there is NO "qwen3_5_moe_text" entry (only the dense
+# path also registers a "_text" alias: qwen3_5_text). A policy that remaps an
+# extracted text_config to "qwen3_5_moe_text" therefore makes GPTQModel.load()
+# fall back to the generic BaseQModel, whose module_tree has no MoE entry, so
+# the routed experts are silently excluded from quantization (the long-standing
+# "experts stayed FP16" failure). Normalize the flexinfer text-config suffix
+# back to the registered MoE key before the config reaches GPTQModel. Belt-and-
+# suspenders: the controller can inject QUANTIZE_MODEL_POLICIES via env, which
+# overrides DEFAULT_MODEL_POLICIES, so the fix must run on whatever policy is
+# active, not just the in-script default.
+_GPTQMODEL_MODEL_TYPE_ALIASES = {
+    "qwen3_5_moe_text": "qwen3_5_moe",
+}
+
+
+def normalize_gptqmodel_model_type(model_type):
+    """Map flexinfer text-config model_type suffixes to gptqmodel MODEL_MAP keys."""
+    return _GPTQMODEL_MODEL_TYPE_ALIASES.get(model_type, model_type)
+
+
 def apply_model_policy(cfg, policy, policy_state):
     root_model_type = cfg.get("model_type", "")
     text_model_type = cfg.get("text_config", {}).get("model_type", "")
@@ -1670,8 +1691,15 @@ def apply_model_policy(cfg, policy, policy_state):
 
     remapped_type = policy.get("remap_model_type", "")
     if remapped_type:
-        active_cfg["model_type"] = remapped_type
-        print(f"Remapped model_type to {remapped_type}")
+        normalized_type = normalize_gptqmodel_model_type(remapped_type)
+        active_cfg["model_type"] = normalized_type
+        if normalized_type != remapped_type:
+            print(
+                f"Remapped model_type to {normalized_type} (normalized from "
+                f"{remapped_type}; gptqmodel MODEL_MAP has no qwen3_5_moe_text key)"
+            )
+        else:
+            print(f"Remapped model_type to {normalized_type}")
     remapped_architectures = policy.get("architectures")
     if remapped_architectures:
         active_cfg["architectures"] = remapped_architectures

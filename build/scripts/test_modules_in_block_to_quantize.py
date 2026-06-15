@@ -34,6 +34,7 @@ _HELPER_NAMES = (
     "module_tree_declares_moe",
     "_gptqmodel_version",
     "_import_moe_lifecycle_hooks",
+    "normalize_gptqmodel_model_type",
     "patch_moe_module_tree",
     "discover_saved_moe_expert_quantization",
     "_modules_in_block_shape_for_layout",
@@ -85,6 +86,7 @@ def _load_helpers() -> dict:
                 if isinstance(target, ast.Name) and target.id in (
                     "_GPTQ_QUANTIZED_LEAF_NAMES",
                     "_MOE_EXPERT_TENSOR_RE",
+                    "_GPTQMODEL_MODEL_TYPE_ALIASES",
                 ):
                     keep_nodes.append(node)
                     break
@@ -418,6 +420,16 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
         )
         self.assertFalse(required)
         self.assertIn("full precision", reason)
+
+    def test_normalize_gptqmodel_model_type_maps_moe_text_alias(self) -> None:
+        normalize = self.helpers["normalize_gptqmodel_model_type"]
+        # gptqmodel MODEL_MAP has no qwen3_5_moe_text key -> must map to the
+        # registered MoE definition key so experts are not silently dropped.
+        self.assertEqual(normalize("qwen3_5_moe_text"), "qwen3_5_moe")
+        # Registered keys and unrelated types pass through unchanged.
+        self.assertEqual(normalize("qwen3_5_moe"), "qwen3_5_moe")
+        self.assertEqual(normalize("qwen3_5_text"), "qwen3_5_text")
+        self.assertEqual(normalize("gemma4_text"), "gemma4_text")
 
     def test_discovers_saved_moe_expert_quantization_shapes(self) -> None:
         tensor_keys = [
