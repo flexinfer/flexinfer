@@ -32,10 +32,23 @@ _HELPER_NAMES = (
     "should_require_moe_expert_quantization",
     "inspect_moe_expert_visibility",
     "module_tree_declares_moe",
+    "_gptqmodel_version",
+    "_import_moe_lifecycle_hooks",
+    "patch_moe_module_tree",
     "discover_saved_moe_expert_quantization",
     "_modules_in_block_shape_for_layout",
     "write_modules_in_block_to_quantize",
+    "refuse_moe_expert_tensors",
 )
+
+try:
+    import torch as _torch  # noqa: F401
+    from safetensors.torch import load_file as _load_file  # noqa: F401
+    from safetensors.torch import save_file as _save_file  # noqa: F401
+
+    _TORCH_AVAILABLE = True
+except Exception:  # noqa: BLE001 - torch/safetensors optional at test time.
+    _TORCH_AVAILABLE = False
 
 
 def _load_helpers() -> dict:
@@ -69,10 +82,9 @@ def _load_helpers() -> dict:
             continue
         if isinstance(node, ast.Assign):
             for target in node.targets:
-                if (
-                    isinstance(target, ast.Name)
-                    and target.id
-                    in ("_GPTQ_QUANTIZED_LEAF_NAMES", "_MOE_EXPERT_TENSOR_RE")
+                if isinstance(target, ast.Name) and target.id in (
+                    "_GPTQ_QUANTIZED_LEAF_NAMES",
+                    "_MOE_EXPERT_TENSOR_RE",
                 ):
                     keep_nodes.append(node)
                     break
@@ -106,7 +118,9 @@ class _FakeSafeOpen:
         return None
 
     def keys(self) -> list[str]:
-        return json.loads((self.path.parent / f"{self.path.name}.keys.json").read_text())
+        return json.loads(
+            (self.path.parent / f"{self.path.name}.keys.json").read_text()
+        )
 
 
 def _fake_safe_open(path: str, framework: str = "pt") -> _FakeSafeOpen:
@@ -286,9 +300,7 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
             str(self.save_dir), layout="hf-native"
         )
 
-        expected = sorted(
-            ["self_attn.q_proj", "self_attn.k_proj", "mlp.down_proj"]
-        )
+        expected = sorted(["self_attn.q_proj", "self_attn.k_proj", "mlp.down_proj"])
         self.assertEqual(result, expected)
         self.assertEqual(
             self._read_modules(
@@ -422,9 +434,7 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
         )
 
         self.assertTrue(check["has_moe_expert_qweights"])
-        self.assertEqual(
-            check["vllm_modules"], ["moe.down_proj", "moe.gate_up_proj"]
-        )
+        self.assertEqual(check["vllm_modules"], ["moe.down_proj", "moe.gate_up_proj"])
         self.assertIn("mlp.experts.0.gate_proj", check["hf_native_modules"])
 
     def test_inspects_moe_expert_visibility(self) -> None:
@@ -463,6 +473,215 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
 
         self.assertTrue(declares(_FakeMoEModel.module_tree))
         self.assertFalse(declares(["model", "layers", {"self_attn": {}}]))
+
+
+class PatchMoEModuleTreeTests(unittest.TestCase):
+    """patch_moe_module_tree decouples the module_tree injection from the
+    lifecycle-hook import so a GPTQModel version bump can't silently skip it."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.helpers = _load_helpers()
+
+    @staticmethod
+    def _make_model(module_tree: list, module_names: list[str]) -> object:
+        # Fresh class per call: patch_moe_module_tree mutates class attrs.
+        class _Model:
+            pass
+
+        _Model.module_tree = module_tree
+
+        def named_modules(self) -> list[tuple[str, object]]:
+            return [(name, object()) for name in module_names]
+
+        _Model.named_modules = named_modules
+        return _Model()
+
+    def test_injects_moe_entry_when_hooks_import_fails(self) -> None:
+        # Regression: a failed lifecycle-hook import must NOT skip the
+        # import-independent module_tree injection (the original ~70-min
+        # silent-failure bug).
+        self.helpers["_import_moe_lifecycle_hooks"] = lambda: (None, None)
+        model = self._make_model(
+            ["model", "layers", "#", {"self_attn": {}, "mlp": {}}],
+            [
+                "model.layers.0.experts.0.gate_proj",
+                "model.layers.0.self_attn.q_proj",
+            ],
+        )
+        status = self.helpers["patch_moe_module_tree"](model)
+
+        self.assertTrue(status["module_tree_patched"])
+        self.assertTrue(status["module_tree_has_moe"])
+        self.assertFalse(status["hooks_attached"])
+        self.assertEqual(status["expert_layer_count"], 1)
+        entry = next(e for e in type(model).module_tree if isinstance(e, dict))
+        self.assertIn("experts:moe:?", entry)
+
+    def test_attaches_hooks_when_import_succeeds(self) -> None:
+        class _FakeHooks:
+            pass
+
+        self.helpers["_import_moe_lifecycle_hooks"] = lambda: (
+            _FakeHooks,
+            "fake.path",
+        )
+        model = self._make_model(
+            ["model", "layers", "#", {"self_attn": {}}],
+            ["model.layers.0.experts.0.gate_proj"],
+        )
+        status = self.helpers["patch_moe_module_tree"](model)
+
+        self.assertTrue(status["module_tree_patched"])
+        self.assertTrue(status["hooks_attached"])
+        self.assertEqual(status["hooks_import_path"], "fake.path")
+        self.assertEqual(type(model).dynamic_expert_index, "num_experts")
+        self.assertIsInstance(type(model).moe_lifecycle_hooks, _FakeHooks)
+
+    def test_respects_existing_moe_tree(self) -> None:
+        self.helpers["_import_moe_lifecycle_hooks"] = lambda: (None, None)
+        model = self._make_model(
+            [
+                "model",
+                "layers",
+                "#",
+                {"self_attn": {}, "mlp:moe:?": {"experts:0": {}}},
+            ],
+            ["model.layers.0.mlp.experts.0.gate_proj"],
+        )
+        status = self.helpers["patch_moe_module_tree"](model)
+
+        self.assertFalse(status["module_tree_patched"])
+        self.assertTrue(status["module_tree_has_moe"])
+
+    def test_no_self_attn_entry_reports_reason(self) -> None:
+        self.helpers["_import_moe_lifecycle_hooks"] = lambda: (None, None)
+        model = self._make_model(
+            ["model", "layers", "#", {"mlp": {}}],
+            ["model.layers.0.experts.0.gate_proj"],
+        )
+        status = self.helpers["patch_moe_module_tree"](model)
+
+        self.assertFalse(status["module_tree_patched"])
+        self.assertFalse(status["module_tree_has_moe"])
+        self.assertIn("self_attn", status["reason"])
+
+
+@unittest.skipUnless(_TORCH_AVAILABLE, "torch + safetensors required")
+class MoERefuseRoundTripTests(unittest.TestCase):
+    """End-to-end re-fuse of per-expert 2D GPTQ tensors → vLLM fused 3D."""
+
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.helpers = _load_helpers()
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.save_dir = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _write_min_config(self) -> None:
+        (self.save_dir / "config.json").write_text(
+            json.dumps({"model_type": "qwen3_5_moe", "quantization_config": {}})
+        )
+        (self.save_dir / "quantize_config.json").write_text(
+            json.dumps({"bits": 4, "group_size": 128, "sym": True})
+        )
+
+    def _save_shard(self, tensors: dict) -> None:
+        from safetensors.torch import save_file
+
+        save_file(tensors, str(self.save_dir / "model.safetensors"))
+        index = {
+            "metadata": {"total_size": 0},
+            "weight_map": {k: "model.safetensors" for k in tensors},
+        }
+        (self.save_dir / "model.safetensors.index.json").write_text(json.dumps(index))
+
+    def _load_result(self) -> tuple[dict, dict]:
+        from safetensors.torch import load_file
+
+        index = json.loads((self.save_dir / "model.safetensors.index.json").read_text())
+        out: dict = {}
+        for shard in sorted(set(index["weight_map"].values())):
+            out.update(load_file(str(self.save_dir / shard)))
+        return out, index["weight_map"]
+
+    def test_refuse_round_trip_fuses_and_drops_g_idx(self) -> None:
+        import torch
+
+        n_exp = 4
+        tensors = {
+            "model.layers.0.self_attn.q_proj.qweight": torch.zeros(
+                4, 4, dtype=torch.int32
+            ),
+        }
+        for e in range(n_exp):
+            p = f"model.layers.0.mlp.experts.{e}"
+            tensors[f"{p}.gate_proj.qweight"] = torch.full((4, 8), e, dtype=torch.int32)
+            tensors[f"{p}.up_proj.qweight"] = torch.full(
+                (4, 8), e + 10, dtype=torch.int32
+            )
+            tensors[f"{p}.down_proj.qweight"] = torch.full(
+                (8, 4), e + 20, dtype=torch.int32
+            )
+            tensors[f"{p}.gate_proj.scales"] = torch.zeros(4, 8, dtype=torch.float16)
+            tensors[f"{p}.up_proj.scales"] = torch.zeros(4, 8, dtype=torch.float16)
+            tensors[f"{p}.down_proj.scales"] = torch.zeros(8, 4, dtype=torch.float16)
+            tensors[f"{p}.gate_proj.g_idx"] = torch.zeros(8, dtype=torch.int32)
+        self._write_min_config()
+        self._save_shard(tensors)
+
+        ok = self.helpers["refuse_moe_expert_tensors"](str(self.save_dir))
+        self.assertTrue(ok)
+
+        out, _ = self._load_result()
+        gate_up = out["model.layers.0.moe.gate_up_proj.qweight"]
+        self.assertEqual(list(gate_up.shape), [n_exp, 8, 8])
+        down = out["model.layers.0.moe.down_proj.qweight"]
+        self.assertEqual(list(down.shape), [n_exp, 8, 4])
+        self.assertIn("model.layers.0.moe.gate_up_proj.scales", out)
+        self.assertIn("model.layers.0.moe.down_proj.scales", out)
+
+        # Per-expert keys removed.
+        self.assertNotIn("model.layers.0.mlp.experts.0.gate_proj.qweight", out)
+        # g_idx dropped entirely (vLLM MoeWNA16 ignores it).
+        self.assertNotIn("model.layers.0.moe.gate_up_proj.g_idx", out)
+        self.assertNotIn("model.layers.0.mlp.experts.0.gate_proj.g_idx", out)
+        # Non-expert tensor preserved.
+        self.assertIn("model.layers.0.self_attn.q_proj.qweight", out)
+        # Expert 0 fused gate_up: top half == gate (0), bottom == up (10).
+        self.assertTrue(bool((gate_up[0, :4, :] == 0).all()))
+        self.assertTrue(bool((gate_up[0, 4:, :] == 10).all()))
+
+    def test_refuse_keeps_incomplete_expert_set_intact(self) -> None:
+        import torch
+
+        n_exp = 4
+        tensors: dict = {}
+        for e in range(n_exp):
+            p = f"model.layers.0.mlp.experts.{e}"
+            tensors[f"{p}.gate_proj.qweight"] = torch.zeros(4, 8, dtype=torch.int32)
+            tensors[f"{p}.up_proj.qweight"] = torch.zeros(4, 8, dtype=torch.int32)
+        # down_proj for only 3 of 4 experts → incomplete; the guard must
+        # leave the per-expert down keys intact rather than silently drop them.
+        for e in range(n_exp - 1):
+            p = f"model.layers.0.mlp.experts.{e}"
+            tensors[f"{p}.down_proj.qweight"] = torch.zeros(8, 4, dtype=torch.int32)
+        self._write_min_config()
+        self._save_shard(tensors)
+
+        ok = self.helpers["refuse_moe_expert_tensors"](str(self.save_dir))
+        self.assertTrue(ok)  # gate/up still fuse
+
+        out, _ = self._load_result()
+        self.assertIn("model.layers.0.moe.gate_up_proj.qweight", out)
+        # Incomplete down set: NOT fused, per-expert keys preserved (no loss).
+        self.assertNotIn("model.layers.0.moe.down_proj.qweight", out)
+        self.assertIn("model.layers.0.mlp.experts.0.down_proj.qweight", out)
+        self.assertIn("model.layers.0.mlp.experts.2.down_proj.qweight", out)
 
 
 if __name__ == "__main__":

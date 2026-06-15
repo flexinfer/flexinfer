@@ -71,6 +71,12 @@ DEFAULT_MODEL_POLICIES = [
         "quantize_config_overrides": {
             "offload_to_disk": True,
         },
+        # MoE policy: re-fuse per-expert 2D GPTQ tensors into vLLM's fused 3D
+        # MoeWNA16 layout. Set explicitly rather than relying on the implicit
+        # default so the intent is visible alongside the gemma4-text policy.
+        "artifact_overrides": {
+            "refuse_moe_expert_tensors": True,
+        },
         "calibration_overrides": {
             "max_samples": 16,
             "max_seq_len": 512,
@@ -574,6 +580,126 @@ def assert_moe_expert_visibility(visibility, reason):
             "Linear modules are visible (GPTQModel AutoCompat path); relying on "
             f"post-save expert-qweight verification ({reason})"
         )
+
+
+def _gptqmodel_version():
+    """Best-effort GPTQModel version string for diagnostics."""
+    try:
+        from importlib import metadata
+
+        return metadata.version("gptqmodel")
+    except Exception:  # noqa: BLE001 - diagnostics only.
+        return "unknown"
+
+
+def _import_moe_lifecycle_hooks():
+    """Import GPTQModel's MoE lifecycle hooks across known module paths.
+
+    GPTQModel has relocated this symbol between releases, so a version bump
+    can silently disable MoE expert quantization. Try every known location
+    before giving up. Returns ``(hooks_cls, import_path)`` or ``(None, None)``.
+    """
+    import importlib
+
+    candidates = (
+        "gptqmodel.models.moe_lifecycle",
+        "gptqmodel.models._moe_lifecycle",
+        "gptqmodel.nn_modules.moe_lifecycle",
+        "gptqmodel.looper.moe_lifecycle",
+    )
+    for module_path in candidates:
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError:
+            continue
+        hooks_cls = getattr(module, "GateUpDownMoELifecycleHooks", None)
+        if hooks_cls is not None:
+            return hooks_cls, module_path
+    return None, None
+
+
+def patch_moe_module_tree(model):
+    """Make routed MoE experts visible + quantizable to GPTQModel.
+
+    Two deliberately decoupled steps so a failure in the second never
+    silently skips the first:
+
+      1. module_tree injection — add an ``experts:moe:?`` entry to the model
+         class ``module_tree`` when defused per-expert ``nn.Linear`` modules
+         exist but the tree does not yet model them. Pure attribute edit; it
+         needs no GPTQModel MoE imports.
+      2. lifecycle-hook attachment — wire ``dynamic_expert_index`` +
+         ``moe_lifecycle_hooks`` so the quantize loop captures per-expert
+         activations. This requires importing ``GateUpDownMoELifecycleHooks``.
+
+    Previously both lived under a single ``import GateUpDownMoELifecycleHooks``
+    try-block, so an import error on a GPTQModel version bump aborted the
+    module_tree patch as well, and the run only failed ~70 min later at the
+    visibility gate. Now step 1 always runs and step 2 reports its own status.
+
+    Returns a status dict (never raises for the import path) so the caller can
+    fail fast with an actionable message when experts MUST be quantized.
+    """
+    cls = type(model)
+    result = {
+        "model_class": cls.__name__,
+        "module_tree_has_moe": False,
+        "module_tree_patched": False,
+        "hooks_attached": False,
+        "hooks_import_path": None,
+        "expert_layer_count": 0,
+        "reason": "",
+    }
+
+    already_moe = module_tree_declares_moe(getattr(cls, "module_tree", None))
+    result["module_tree_has_moe"] = already_moe
+
+    # Step 1: inject MoE entry into module_tree (import-independent).
+    if not already_moe:
+        patched = False
+        for entry in getattr(cls, "module_tree", []) or []:
+            if isinstance(entry, dict) and "self_attn" in entry:
+                if "experts:moe:?" not in entry:
+                    entry["experts:moe:?"] = {
+                        "#": ("gate_proj:0", "up_proj:0", "down_proj:1"),
+                    }
+                    patched = True
+                break
+        result["module_tree_patched"] = patched
+        result["module_tree_has_moe"] = patched or result["module_tree_has_moe"]
+        if not patched:
+            result["reason"] = (
+                "no self_attn entry in module_tree to attach experts onto"
+            )
+
+    # Step 2: attach lifecycle hooks (best-effort, version-robust import).
+    if result["module_tree_has_moe"]:
+        existing_hooks = getattr(cls, "moe_lifecycle_hooks", None)
+        if existing_hooks is not None:
+            result["hooks_attached"] = True
+            result["hooks_import_path"] = "pre-existing"
+        else:
+            hooks_cls, import_path = _import_moe_lifecycle_hooks()
+            if hooks_cls is not None:
+                if not getattr(cls, "dynamic_expert_index", None):
+                    cls.dynamic_expert_index = "num_experts"
+                cls.moe_lifecycle_hooks = hooks_cls()
+                result["hooks_attached"] = True
+                result["hooks_import_path"] = import_path
+            else:
+                result["reason"] = (
+                    "GateUpDownMoELifecycleHooks not importable from any known "
+                    f"gptqmodel path (gptqmodel {_gptqmodel_version()}); "
+                    "module_tree patched but expert calibration hooks "
+                    "unavailable"
+                )
+
+    result["expert_layer_count"] = sum(
+        1
+        for name, _ in model.named_modules()
+        if re.search(r"\.experts\.0\.gate_proj$", name)
+    )
+    return result
 
 
 def discover_saved_moe_expert_quantization(save_dir):
@@ -1327,10 +1453,17 @@ def refuse_moe_expert_tensors(save_dir):
         # Remap HF expert prefixes to vLLM's FusedMoE module name.
         fused_prefix = _moe_fused_prefix(prefix)
 
-        # Collect gate, up, down per expert
+        # Collect gate, up, down per expert. Track the source keys alongside
+        # the tensors but DO NOT mark them for removal yet — removal is only
+        # safe once the fused replacement is actually produced below. Marking
+        # on collection meant an incomplete expert set (count != n_exp) dropped
+        # the per-expert keys without writing a fused tensor — silent loss.
         gate_list = []
         up_list = []
         down_list = []
+        gate_keys = []
+        up_keys = []
+        down_keys = []
 
         for expert_idx in range(n_exp):
             gate_key = subs.get((expert_idx, "gate_proj"))
@@ -1339,13 +1472,13 @@ def refuse_moe_expert_tensors(save_dir):
 
             if gate_key and gate_key in all_tensors:
                 gate_list.append(all_tensors[gate_key])
-                keys_to_remove.add(gate_key)
+                gate_keys.append(gate_key)
             if up_key and up_key in all_tensors:
                 up_list.append(all_tensors[up_key])
-                keys_to_remove.add(up_key)
+                up_keys.append(up_key)
             if down_key and down_key in all_tensors:
                 down_list.append(all_tensors[down_key])
-                keys_to_remove.add(down_key)
+                down_keys.append(down_key)
 
         # Fuse gate+up: cat(dim=0) per expert, then stack across experts
         if gate_list and up_list and len(gate_list) == len(up_list) == n_exp:
@@ -1357,24 +1490,39 @@ def refuse_moe_expert_tensors(save_dir):
             fused_gate_up = torch.stack(gate_up_per_expert, dim=0)
             fused_key = f"{fused_prefix}.gate_up_proj.{tensor_type}"
             fused_tensors[fused_key] = fused_gate_up
+            keys_to_remove.update(gate_keys)
+            keys_to_remove.update(up_keys)
             if layer_idx == 0:
                 print(
                     f"  gate_up_proj.{tensor_type}: "
                     f"[{n_exp}×({gate_list[0].shape} + {up_list[0].shape})] → "
                     f"{list(fused_gate_up.shape)}"
                 )
+        elif gate_keys or up_keys:
+            print(
+                f"WARN: incomplete gate/up experts for {fused_prefix}."
+                f"{tensor_type} ({len(gate_list)}/{n_exp} gate, "
+                f"{len(up_list)}/{n_exp} up); leaving per-expert keys intact"
+            )
 
         # Fuse down: just stack across experts
         if down_list and len(down_list) == n_exp:
             fused_down = torch.stack(down_list, dim=0)
             fused_key = f"{fused_prefix}.down_proj.{tensor_type}"
             fused_tensors[fused_key] = fused_down
+            keys_to_remove.update(down_keys)
             if layer_idx == 0:
                 print(
                     f"  down_proj.{tensor_type}: "
                     f"[{n_exp}×{list(down_list[0].shape)}] → "
                     f"{list(fused_down.shape)}"
                 )
+        elif down_keys:
+            print(
+                f"WARN: incomplete down experts for {fused_prefix}."
+                f"{tensor_type} ({len(down_list)}/{n_exp}); "
+                "leaving per-expert keys intact"
+            )
 
     if not fused_tensors:
         print("WARN: No tensors were re-fused (unexpected)")
@@ -3824,56 +3972,32 @@ if not _has_defused_experts:
     else:
         print("INFO: No fused 3D expert parameters found (non-MoE model)")
 
-# 4. Patch module_tree + lifecycle hooks
+# 4. Patch module_tree + lifecycle hooks (decoupled — see patch_moe_module_tree).
+# The module_tree injection and the lifecycle-hook import are independent: a
+# GPTQModel version bump that moves GateUpDownMoELifecycleHooks must not silently
+# skip the module_tree patch and let the run limp ~70 min to the visibility gate.
 if _has_defused_experts:
-    try:
-        from gptqmodel.models.moe_lifecycle import GateUpDownMoELifecycleHooks
-
-        _cls = type(model)
-        _module_tree_has_moe = module_tree_declares_moe(
-            getattr(_cls, "module_tree", None)
+    moe_tree_status = patch_moe_module_tree(model)
+    print(f"MoE module_tree patch: {moe_tree_status}")
+    emit_progress(
+        "moe_module_tree_patch",
+        phase="quantizing",
+        **moe_tree_status,
+    )
+    if require_moe_expert_quantization and not (
+        moe_tree_status["module_tree_has_moe"] and moe_tree_status["hooks_attached"]
+    ):
+        raise RuntimeError(
+            "MoE expert quantization gate failed early: "
+            + (
+                moe_tree_status["reason"]
+                or "module_tree/lifecycle-hook setup incomplete"
+            )
+            + " — experts cannot be quantized, so a full run would burn ~hours "
+            "and still save an attention-only artifact. Fix GPTQModel MoE "
+            "support or set GPTQ_REQUIRE_MOE_EXPERT_QUANTIZATION=0 to ship "
+            "attention-only intentionally."
         )
-        _patched_tree = False
-        if not _module_tree_has_moe:
-            for _entry in getattr(_cls, "module_tree", []):
-                if isinstance(_entry, dict) and "self_attn" in _entry:
-                    if "experts:moe:?" not in _entry:
-                        _entry["experts:moe:?"] = {
-                            "#": ("gate_proj:0", "up_proj:0", "down_proj:1"),
-                        }
-                        _patched_tree = True
-                    break
-
-        if _module_tree_has_moe or _patched_tree:
-            if not getattr(_cls, "dynamic_expert_index", None):
-                _cls.dynamic_expert_index = "num_experts"
-            if not getattr(_cls, "moe_lifecycle_hooks", None):
-                _cls.moe_lifecycle_hooks = GateUpDownMoELifecycleHooks()
-            _module_tree_has_moe = True
-
-        if _patched_tree:
-            _n_expert_layers = sum(
-                1
-                for n, _ in model.named_modules()
-                if re.search(r"\.experts\.0\.gate_proj$", n)
-            )
-            print(
-                f"Patched {_cls.__name__} module_tree with MoE experts "
-                f"({_n_expert_layers} layers with defused experts)"
-            )
-            print(
-                f"  module_tree entries: "
-                f"{[k for e in _cls.module_tree if isinstance(e, dict) for k in e.keys()]}"
-            )
-        else:
-            print(
-                "INFO: MoE experts already in module_tree"
-                if _module_tree_has_moe
-                else "INFO: MoE self_attn entry not found for module_tree patch"
-            )
-    except ImportError as e:
-        print(f"WARN: Could not import MoE lifecycle hooks: {e}")
-        print("  MoE experts will NOT be quantized")
 else:
     print("INFO: No MoE experts to defuse")
 
