@@ -755,6 +755,95 @@ func TestAbliterationMemoryBudgets(t *testing.T) {
 	}
 }
 
+func TestAbliterationGPUMaxMemoryFromVRAMMB(t *testing.T) {
+	cases := []struct {
+		name   string
+		vramMB int64
+		want   int32
+	}{
+		{"unknown vram", 0, 0},
+		{"negative vram", -1, 0},
+		{"sub-gigabyte vram", 512, 0},
+		{"gfx906 16GiB matches heuristic", 16384, 14},
+		{"gfx1100 24GiB", 24576, 21},
+		{"MI250 64GiB", 65536, 56},
+		{"MI300X 192GiB", 196608, 168},
+		{"tiny 6GiB reserves floor", 6144, 4},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := abliterationGPUMaxMemoryFromVRAMMB(tc.vramMB); got != tc.want {
+				t.Errorf("abliterationGPUMaxMemoryFromVRAMMB(%d) = %d, want %d", tc.vramMB, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestAbliterationEnv_VRAMDerivedGPUCap exercises the GPU-memory priority ladder:
+// env var > GPUProfile maxGPUMemoryGB > VRAM-derived (flag-gated) > arch heuristic.
+func TestAbliterationEnv_VRAMDerivedGPUCap(t *testing.T) {
+	spec := &aiv1alpha1.AbliterationSpec{UseGPU: true}
+	gpuCap := func(env []corev1.EnvVar) string {
+		for _, e := range env {
+			if e.Name == "ABLITERATION_GPU_MAX_MEMORY_GB" {
+				return e.Value
+			}
+		}
+		return ""
+	}
+
+	t.Run("flag off falls through to arch heuristic", func(t *testing.T) {
+		memCfg := DefaultGPUMemoryConfig()
+		memCfg.GPUVramMB = 65536 // would derive 56 if enabled
+		env := abliterationEnv("m", "gfx1100", spec, memCfg)
+		if got := gpuCap(env); got != "20" {
+			t.Errorf("GPU cap = %q, want arch heuristic 20 when flag off", got)
+		}
+	})
+
+	t.Run("flag on derives from vram when no explicit cap", func(t *testing.T) {
+		t.Setenv("FLEXINFER_ABLIT_PROFILE_CAPS", "true")
+		memCfg := DefaultGPUMemoryConfig()
+		memCfg.GPUVramMB = 65536 // 64 GiB -> 56
+		env := abliterationEnv("m", "gfx942", spec, memCfg)
+		if got := gpuCap(env); got != "56" {
+			t.Errorf("GPU cap = %q, want VRAM-derived 56", got)
+		}
+	})
+
+	t.Run("explicit maxGPUMemoryGB wins over vram derivation", func(t *testing.T) {
+		t.Setenv("FLEXINFER_ABLIT_PROFILE_CAPS", "true")
+		memCfg := DefaultGPUMemoryConfig()
+		memCfg.MaxGPUMemoryGB = 22
+		memCfg.GPUVramMB = 24576
+		env := abliterationEnv("m", "gfx1100", spec, memCfg)
+		if got := gpuCap(env); got != "22" {
+			t.Errorf("GPU cap = %q, want explicit profile cap 22", got)
+		}
+	})
+
+	t.Run("env var override wins over everything", func(t *testing.T) {
+		t.Setenv("FLEXINFER_ABLIT_PROFILE_CAPS", "true")
+		t.Setenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB", "18")
+		memCfg := DefaultGPUMemoryConfig()
+		memCfg.MaxGPUMemoryGB = 22
+		memCfg.GPUVramMB = 65536
+		env := abliterationEnv("m", "gfx942", spec, memCfg)
+		if got := gpuCap(env); got != "18" {
+			t.Errorf("GPU cap = %q, want env override 18", got)
+		}
+	})
+
+	t.Run("flag on but no vram falls through to heuristic", func(t *testing.T) {
+		t.Setenv("FLEXINFER_ABLIT_PROFILE_CAPS", "true")
+		memCfg := DefaultGPUMemoryConfig() // GPUVramMB = 0
+		env := abliterationEnv("m", "gfx906", spec, memCfg)
+		if got := gpuCap(env); got != "14" {
+			t.Errorf("GPU cap = %q, want arch heuristic 14", got)
+		}
+	})
+}
+
 func TestResolveImage_Abliteration_EnvOverride(t *testing.T) {
 	t.Setenv("FLEXINFER_USE_RUNTIME_FOR_QUANTIZE", "")
 	t.Setenv("FLEXINFER_ABLITERATOR_IMAGE", "custom-registry.io/abliterator:v1")
