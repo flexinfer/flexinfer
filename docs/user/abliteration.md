@@ -131,6 +131,25 @@ The controller automatically applies gfx906 workarounds:
 - Safe sharded load (avoids meta tensor crash)
 - GPU memory cap at 12 GB (not 20 GB)
 
+### GPU Memory Cap Resolution
+
+The abliteration GPU memory budget (`ABLITERATION_GPU_MAX_MEMORY_GB`, passed to
+accelerate's `max_memory` dict) is resolved in priority order:
+
+1. `FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB` env var (explicit operator override)
+2. `GPUProfile.spec.maxGPUMemoryGB` (explicit per-profile cap)
+3. VRAM-derived cap from `GPUProfile.spec.vramMB` — **only when
+   `FLEXINFER_ABLIT_PROFILE_CAPS=true`**. Reserves `max(2 GiB, vramMB/8)` of
+   headroom (a 16 GiB Radeon VII derives 14 GiB, matching the gfx906 heuristic;
+   larger cards scale automatically instead of pinning to the 20 GiB fallback).
+4. Per-arch heuristic (gfx906 → 14 GiB, otherwise 20 GiB)
+
+The VRAM-derived tier is **off by default** so existing per-arch behavior is
+preserved. Enable it for new arches (e.g. MI250/MI300X) where the hardcoded
+20 GiB fallback is far too conservative. The cap must never exceed physical VRAM:
+transformers `caching_allocator_warmup` calls `torch.empty(max_memory_bytes)`,
+which on gfx906 returns `HIP error: invalid argument` rather than an OOM.
+
 ## Spec Change Detection
 
 The controller computes a SHA-256 hash of `AbliterationSpec` and stores it in annotation `flexinfer.ai/ablit-spec-hash`. Changes to any abliteration parameter trigger:

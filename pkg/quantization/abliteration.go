@@ -103,7 +103,10 @@ func abliterationCPUMaxMemoryGB(limitGB int32) int32 {
 // torch.empty(max_memory_bytes) on the GPU -- if this exceeds VRAM, gfx906 returns
 // "HIP error: invalid argument" (not OOM). Radeon VII = 16GB, use 12 with headroom.
 // Override via FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB.
-// TODO: read from GPUProfile.spec.vramMB instead of hardcoding.
+//
+// This per-arch heuristic is the last-resort fallback. Prefer an explicit
+// GPUProfile.spec.maxGPUMemoryGB, or the VRAM-derived cap (see
+// abliterationGPUMaxMemoryFromVRAMMB) when FLEXINFER_ABLIT_PROFILE_CAPS is set.
 func abliterationGPUMaxMemoryGB(useGPU bool, gpuArch string) int32 {
 	if !useGPU {
 		return 0
@@ -115,6 +118,41 @@ func abliterationGPUMaxMemoryGB(useGPU bool, gpuArch string) int32 {
 		return 14
 	}
 	return 20
+}
+
+// abliterationProfileCapsEnabled reports whether VRAM-derived abliteration GPU
+// caps are enabled. Default off so current per-arch behavior is preserved; flip
+// the default once the derived caps are validated on new arches (e.g. MI250/MI300X
+// where the hardcoded 20 GiB fallback is far too conservative).
+func abliterationProfileCapsEnabled() bool {
+	v, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("FLEXINFER_ABLIT_PROFILE_CAPS")))
+	return err == nil && v
+}
+
+// abliterationGPUMaxMemoryFromVRAMMB derives the accelerate GPU memory budget from
+// the GPUProfile-reported physical VRAM (vramMB), reserving headroom so the
+// transformers caching_allocator_warmup torch.empty(max_memory) call stays within
+// physical VRAM. Reserve = max(2 GiB, vram/8): on a 16 GiB Radeon VII this yields 14
+// (matching the gfx906 heuristic); on larger cards it scales automatically instead of
+// pinning every unknown arch to the conservative 20 GiB fallback. Returns 0 when VRAM
+// is unknown so the caller falls through to the per-arch heuristic.
+func abliterationGPUMaxMemoryFromVRAMMB(vramMB int64) int32 {
+	if vramMB <= 0 {
+		return 0
+	}
+	vramGB := int32(vramMB / 1024)
+	if vramGB <= 0 {
+		return 0
+	}
+	reserve := vramGB / 8
+	if reserve < 2 {
+		reserve = 2
+	}
+	budgetGB := vramGB - reserve
+	if budgetGB < 1 {
+		budgetGB = 1
+	}
+	return budgetGB
 }
 
 // BuildAbliterationJob creates a Kubernetes Job that abliterates model weights on the PVC.
@@ -342,12 +380,19 @@ func abliterationEnv(modelPath, gpuArch string, spec *aiv1alpha1.AbliterationSpe
 		currentCPU = containerCap
 	}
 	cpuMaxMemoryGB := fmt.Sprintf("%d", currentCPU)
-	// GPU memory priority: env var > GPUProfile > arch-based heuristic.
+	// GPU memory priority: env var > GPUProfile maxGPUMemoryGB > VRAM-derived
+	// (flag-gated) > arch-based heuristic.
 	gpuMaxMemoryGB := os.Getenv("FLEXINFER_ABLITERATION_GPU_MAX_MEMORY_GB")
 	if gpuMaxMemoryGB == "" {
-		if memCfg.MaxGPUMemoryGB > 0 {
+		switch {
+		case memCfg.MaxGPUMemoryGB > 0:
 			gpuMaxMemoryGB = fmt.Sprintf("%d", memCfg.MaxGPUMemoryGB)
-		} else {
+		case spec.UseGPU && abliterationProfileCapsEnabled() && memCfg.GPUVramMB > 0:
+			if derived := abliterationGPUMaxMemoryFromVRAMMB(memCfg.GPUVramMB); derived > 0 {
+				gpuMaxMemoryGB = fmt.Sprintf("%d", derived)
+			}
+		}
+		if gpuMaxMemoryGB == "" {
 			gpuMaxMemoryGB = fmt.Sprintf("%d", abliterationGPUMaxMemoryGB(spec.UseGPU, gpuArch))
 		}
 	}
