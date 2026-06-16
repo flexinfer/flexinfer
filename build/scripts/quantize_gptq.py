@@ -1421,153 +1421,162 @@ def refuse_moe_expert_tensors(save_dir):
         f"{n_tensor_types} tensor types"
     )
 
-    # Load all shards
+    # ── Memory-bounded streaming re-fuse ─────────────────────────────────
+    # The previous implementation loaded EVERY shard via load_file (mmap) and
+    # built ALL fused 3D tensors in RAM at once. On a 256-expert MoE the fused
+    # set is ~20GB of fresh anonymous allocations, which pushed the gfx906 node
+    # past available RAM; with no memory left to fault in the mmap'd source
+    # pages, cat/stack SIGBUS'd (bus error, core dump) mid-re-fuse and a ~12h
+    # quant output was lost. Instead we PLAN the fusion from metadata only (no
+    # tensor loads), then materialize one output shard at a time below, reading
+    # sources on demand and freeing after each write so anonymous memory stays
+    # small enough for source pages to fault cleanly.
     shard_files = sorted(set(weight_map.values()))
-    shard_data = {}
+
+    from safetensors import safe_open
+
+    handles = {}
     for shard_name in shard_files:
-        shard_path = os.path.join(save_dir, shard_name)
-        shard_data[shard_name] = load_file(shard_path)
+        handles[shard_name] = safe_open(
+            os.path.join(save_dir, shard_name), framework="pt", device="cpu"
+        )
 
-    # Build flat key→tensor mapping
-    all_tensors = {}
-    for shard_name, tensors in shard_data.items():
-        for k, v in tensors.items():
-            all_tensors[k] = v
+    def _get(key):
+        return handles[weight_map[key]].get_tensor(key)
 
-    # Re-fuse per-expert tensors
-    fused_tensors = {}
+    # Map each layer to a shard holding a surviving (non-expert) tensor, so
+    # fused tensors land beside their layer's attention weights.
+    expert_key_re = re.compile(
+        r"(?:^|\.)experts\.\d+\.(?:gate_proj|up_proj|down_proj)\."
+    )
+    layer_shard = {}
+    for key, shard_name in weight_map.items():
+        m = re.search(r"model\.layers\.(\d+)\.", key)
+        if not m or expert_key_re.search(key):
+            continue
+        layer_shard.setdefault(int(m.group(1)), shard_name)
+
+    # Plan fused tensors (gate+up cat then stack; down stack) WITHOUT loading.
     keys_to_remove = set()
-
+    fused_plan = {}  # fused_key -> dict(kind, source keys, target shard, layer)
     for (prefix, layer_idx, tensor_type), subs in sorted(expert_keys.items()):
         n_exp = expert_counts[(prefix, layer_idx)]
 
-        # Skip g_idx — vLLM's MoeWNA16 weight loader explicitly ignores
-        # g_idx for MoE layers, and the fused 2D shape ([E, indices])
-        # can't be exploded by vLLM's _weight_iterator (expects 3D).
-        # Just remove per-expert g_idx keys from the output.
+        # vLLM's MoeWNA16 loader ignores per-expert g_idx; drop those keys.
         if tensor_type == "g_idx":
             for key in subs.values():
                 keys_to_remove.add(key)
             continue
 
-        # Remap HF expert prefixes to vLLM's FusedMoE module name.
         fused_prefix = _moe_fused_prefix(prefix)
+        target = layer_shard.get(layer_idx, shard_files[0])
+        gate_keys = [subs.get((e, "gate_proj")) for e in range(n_exp)]
+        up_keys = [subs.get((e, "up_proj")) for e in range(n_exp)]
+        down_keys = [subs.get((e, "down_proj")) for e in range(n_exp)]
+        gate_ok = all(k and k in weight_map for k in gate_keys)
+        up_ok = all(k and k in weight_map for k in up_keys)
+        down_ok = all(k and k in weight_map for k in down_keys)
 
-        # Collect gate, up, down per expert. Track the source keys alongside
-        # the tensors but DO NOT mark them for removal yet — removal is only
-        # safe once the fused replacement is actually produced below. Marking
-        # on collection meant an incomplete expert set (count != n_exp) dropped
-        # the per-expert keys without writing a fused tensor — silent loss.
-        gate_list = []
-        up_list = []
-        down_list = []
-        gate_keys = []
-        up_keys = []
-        down_keys = []
-
-        for expert_idx in range(n_exp):
-            gate_key = subs.get((expert_idx, "gate_proj"))
-            up_key = subs.get((expert_idx, "up_proj"))
-            down_key = subs.get((expert_idx, "down_proj"))
-
-            if gate_key and gate_key in all_tensors:
-                gate_list.append(all_tensors[gate_key])
-                gate_keys.append(gate_key)
-            if up_key and up_key in all_tensors:
-                up_list.append(all_tensors[up_key])
-                up_keys.append(up_key)
-            if down_key and down_key in all_tensors:
-                down_list.append(all_tensors[down_key])
-                down_keys.append(down_key)
-
-        # Fuse gate+up: cat(dim=0) per expert, then stack across experts
-        if gate_list and up_list and len(gate_list) == len(up_list) == n_exp:
-            # gate [rows, cols] + up [rows, cols] → [2*rows, cols] per expert
-            gate_up_per_expert = [
-                torch.cat([g, u], dim=0) for g, u in zip(gate_list, up_list)
-            ]
-            # Stack: [n_experts, 2*rows, cols]
-            fused_gate_up = torch.stack(gate_up_per_expert, dim=0)
-            fused_key = f"{fused_prefix}.gate_up_proj.{tensor_type}"
-            fused_tensors[fused_key] = fused_gate_up
+        # Only mark sources for removal once their fused replacement is planned;
+        # an incomplete expert set leaves the per-expert keys intact (no loss).
+        if gate_ok and up_ok:
+            fused_plan[f"{fused_prefix}.gate_up_proj.{tensor_type}"] = {
+                "kind": "gate_up",
+                "gate": gate_keys,
+                "up": up_keys,
+                "target": target,
+                "layer": layer_idx,
+            }
             keys_to_remove.update(gate_keys)
             keys_to_remove.update(up_keys)
-            if layer_idx == 0:
-                print(
-                    f"  gate_up_proj.{tensor_type}: "
-                    f"[{n_exp}×({gate_list[0].shape} + {up_list[0].shape})] → "
-                    f"{list(fused_gate_up.shape)}"
-                )
-        elif gate_keys or up_keys:
+        elif any(gate_keys) or any(up_keys):
             print(
                 f"WARN: incomplete gate/up experts for {fused_prefix}."
-                f"{tensor_type} ({len(gate_list)}/{n_exp} gate, "
-                f"{len(up_list)}/{n_exp} up); leaving per-expert keys intact"
+                f"{tensor_type} (gate={sum(bool(k) for k in gate_keys)}/{n_exp}, "
+                f"up={sum(bool(k) for k in up_keys)}/{n_exp}); leaving keys intact"
             )
 
-        # Fuse down: just stack across experts
-        if down_list and len(down_list) == n_exp:
-            fused_down = torch.stack(down_list, dim=0)
-            fused_key = f"{fused_prefix}.down_proj.{tensor_type}"
-            fused_tensors[fused_key] = fused_down
+        if down_ok:
+            fused_plan[f"{fused_prefix}.down_proj.{tensor_type}"] = {
+                "kind": "down",
+                "down": down_keys,
+                "target": target,
+                "layer": layer_idx,
+            }
             keys_to_remove.update(down_keys)
-            if layer_idx == 0:
-                print(
-                    f"  down_proj.{tensor_type}: "
-                    f"[{n_exp}×{list(down_list[0].shape)}] → "
-                    f"{list(fused_down.shape)}"
-                )
-        elif down_keys:
+        elif any(down_keys):
             print(
                 f"WARN: incomplete down experts for {fused_prefix}."
-                f"{tensor_type} ({len(down_list)}/{n_exp}); "
-                "leaving per-expert keys intact"
+                f"{tensor_type} ({sum(bool(k) for k in down_keys)}/{n_exp}); "
+                "leaving keys intact"
             )
 
-    if not fused_tensors:
+    if not fused_plan:
         print("WARN: No tensors were re-fused (unexpected)")
         return False
 
-    # Rebuild shard data: remove per-expert keys, add fused keys
-    # Put all fused MoE tensors into the first shard for simplicity,
-    # or spread across existing shards by layer assignment.
+    # Materialize one output shard at a time into a sibling dir, reading
+    # sources on demand. Keeping only a single shard's tensors live bounds
+    # anonymous memory to a few GB regardless of model/expert count, which is
+    # what prevents the SIGBUS. The per-expert input stays intact in save_dir
+    # until every re-fused shard is written, then we atomically swap.
+    refused_dir = save_dir + ".refused"
+    if os.path.exists(refused_dir):
+        shutil.rmtree(refused_dir)
+    os.makedirs(refused_dir)
+
+    fused_by_target = {}
+    for fused_key, plan in fused_plan.items():
+        fused_by_target.setdefault(plan["target"], []).append(fused_key)
+
     new_weight_map = {}
-    new_shard_data = {}
-
-    # First pass: rebuild non-expert tensors into their original shards
     for shard_name in shard_files:
-        new_shard_data[shard_name] = {}
-        for k, v in shard_data[shard_name].items():
+        out = {}
+        # Pass through every surviving (non-fused-away) tensor as a RAM copy.
+        for k in handles[shard_name].keys():
             if k not in keys_to_remove:
-                new_shard_data[shard_name][k] = v
+                out[k] = _get(k)
                 new_weight_map[k] = shard_name
+        # Build the fused 3D tensors assigned to this shard from on-demand reads.
+        for fused_key in fused_by_target.get(shard_name, []):
+            plan = fused_plan[fused_key]
+            if plan["kind"] == "gate_up":
+                tensor = torch.stack(
+                    [
+                        torch.cat([_get(g), _get(u)], dim=0)
+                        for g, u in zip(plan["gate"], plan["up"])
+                    ],
+                    dim=0,
+                )
+            else:
+                tensor = torch.stack([_get(d) for d in plan["down"]], dim=0)
+            out[fused_key] = tensor
+            new_weight_map[fused_key] = shard_name
+            if plan["layer"] == 0:
+                print(f"  {fused_key} → {list(tensor.shape)}")
+        if out:
+            save_file(out, os.path.join(refused_dir, shard_name))
+        del out
+        gc.collect()
 
-    # Assign fused tensors to shards based on layer index (match layer's shard)
-    for fused_key, fused_tensor in sorted(fused_tensors.items()):
-        # Find which shard has other tensors from this layer
-        layer_match = re.search(r"model\.layers\.(\d+)\.", fused_key)
-        target_shard = shard_files[0]  # default to first shard
-        if layer_match:
-            layer_prefix = f"model.layers.{layer_match.group(1)}."
-            for k, shard_name in weight_map.items():
-                if k.startswith(layer_prefix) and k not in keys_to_remove:
-                    target_shard = shard_name
-                    break
-        new_shard_data[target_shard][fused_key] = fused_tensor
-        new_weight_map[fused_key] = target_shard
+    # Sources are fully read; drop the mmap handles before swapping files.
+    handles.clear()
+    gc.collect()
 
-    # Write updated shards
-    total_fused = len(fused_tensors)
+    total_fused = len(fused_plan)
     total_removed = len(keys_to_remove)
-    for shard_name, tensors in new_shard_data.items():
-        if not tensors:
-            # Empty shard after removing expert keys — delete it
-            shard_path = os.path.join(save_dir, shard_name)
-            if os.path.exists(shard_path):
-                os.remove(shard_path)
-            continue
-        shard_path = os.path.join(save_dir, shard_name)
-        save_file(tensors, shard_path)
+
+    # Atomically replace each original shard with its re-fused version (same
+    # filesystem → os.replace is atomic). Shards emptied of all content (every
+    # tensor fused into another shard) are removed.
+    for shard_name in shard_files:
+        src = os.path.join(refused_dir, shard_name)
+        dst = os.path.join(save_dir, shard_name)
+        if os.path.exists(src):
+            os.replace(src, dst)
+        elif os.path.exists(dst):
+            os.remove(dst)
+    shutil.rmtree(refused_dir, ignore_errors=True)
 
     # Update index
     if os.path.exists(index_path):
@@ -4305,9 +4314,17 @@ if require_moe_expert_quantization:
     )
 
 artifact_overrides = artifact_overrides_for_policy(policy)
+# Default-on for MoE runs: copy the per-expert (HF-native) artifact to
+# {out_dir}-hf-native BEFORE the re-fuse step so a crash during re-fuse never
+# strands the ~12h quant with no recoverable source. Recovery is then a
+# re-fuse-only pass over the preserved copy (minutes) instead of a re-quant.
 preserve_native_output = env_bool(
     "GPTQ_PRESERVE_NATIVE_OUTPUT",
-    bool(artifact_overrides.get("preserve_native_output", False)),
+    bool(
+        artifact_overrides.get(
+            "preserve_native_output", require_moe_expert_quantization
+        )
+    ),
 )
 refuse_moe_expert_tensors_enabled = env_bool(
     "GPTQ_REFUSE_MOE_EXPERT_TENSORS",
