@@ -815,6 +815,56 @@ build_quantizer_gptq:
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
 
+build_quantizer_gptq_rocm:
+  stage: build
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 1h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building ROCm/gfx906 GPTQ quantizer image..."
+      attempts=3
+      delay=5
+      for i in $(seq 1 "${attempts}"); do
+        if buildctl --addr "${BUILDKIT_HOST}" build \
+          --frontend dockerfile.v0 \
+          --local context=. \
+          --local dockerfile=build \
+          --opt filename="Dockerfile.quantizer-gptq-rocm" \
+          --opt platform=linux/amd64 \
+          --import-cache "type=registry,ref=${REGISTRY}/quantizer:gptq-rocm-gfx906" \
+          --export-cache "type=inline" \
+          --output "type=image,name=${REGISTRY}/quantizer:gptq-rocm-gfx906,push=true"; then
+          break
+        fi
+        if [ "${i}" -eq "${attempts}" ]; then
+          echo "ERROR: ROCm GPTQ quantizer build/push failed after ${attempts} attempts"
+          exit 1
+        fi
+        echo "WARN: ROCm GPTQ quantizer build/push failed (${i}/${attempts}); retrying in ${delay}s..."
+        sleep "${delay}"
+        delay=$((delay * 2))
+      done
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - build/Dockerfile.quantizer-gptq-rocm
+        - build/scripts/quantize_gptq.py
+        - build/scripts/qwen35_wrap_to_vl_layout.py
+        - build/scripts/qwen35_unwrap_from_vl_layout.py
+        - build/scripts/abliterate.py
+    - if: $CI_COMMIT_TAG
+    - if: $CI_PIPELINE_SOURCE == "web"
+      when: manual
+
 # --- Diffusers Backend Images ---
 # OpenAI-compatible image generation API for AMD/NVIDIA GPUs
 publish_diffusers_rocm:
