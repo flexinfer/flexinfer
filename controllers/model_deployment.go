@@ -210,6 +210,16 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	if ic, ok := b.(backend.ImageAwareCommander); ok {
 		command = ic.CommandForImage(image)
 	}
+	// Explicit per-model command override. The dedicated Deployment sets Command
+	// verbatim with no PATH-resolution fallback, so upstream images whose
+	// entrypoint is not a flexinfer serve-wrapper (e.g. the official rocm/vllm
+	// image, whose entrypoint does not prepend the vLLM launcher) need the launch
+	// command supplied here. Operator sets spec.config.command as a string list,
+	// e.g. ["python3","-m","vllm.entrypoints.openai.api_server"]; the backend Args
+	// (--model, --quantization, --hf-overrides, ...) are appended after it.
+	if cmdOverride := spec.ConfigStringSlice("command"); len(cmdOverride) > 0 {
+		command = cmdOverride
+	}
 	args := b.Args(spec)
 	env := b.Env(spec)
 

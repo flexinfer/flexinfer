@@ -82,6 +82,40 @@ func (s *ModelSpec) ConfigString(key, defaultVal string) string {
 	return defaultVal
 }
 
+// ConfigStringSlice returns a []string config value (e.g. a container command
+// override). It accepts a YAML/JSON list of strings (decoded as []any or
+// []string) or a single string. Returns nil when the key is absent or empty.
+func (s *ModelSpec) ConfigStringSlice(key string) []string {
+	if s.Config == nil {
+		return nil
+	}
+	v, ok := s.Config[key]
+	if !ok {
+		return nil
+	}
+	switch val := v.(type) {
+	case []string:
+		return val
+	case []any:
+		out := make([]string, 0, len(val))
+		for _, item := range val {
+			if str, ok := item.(string); ok {
+				out = append(out, str)
+			}
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return out
+	case string:
+		if val == "" {
+			return nil
+		}
+		return []string{val}
+	}
+	return nil
+}
+
 // ConfigInt returns an int config value with a default.
 func (s *ModelSpec) ConfigInt(key string, defaultVal int) int {
 	if s.Config == nil {

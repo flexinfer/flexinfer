@@ -103,3 +103,34 @@ func TestROCmEnvVars(t *testing.T) {
 		})
 	}
 }
+
+func TestConfigStringSlice(t *testing.T) {
+	cases := []struct {
+		name string
+		cfg  map[string]any
+		want []string
+	}{
+		{"nil config", nil, nil},
+		{"absent key", map[string]any{"other": "x"}, nil},
+		{"[]any of strings (YAML/JSON list)", map[string]any{"command": []any{"python3", "-m", "vllm.entrypoints.openai.api_server"}}, []string{"python3", "-m", "vllm.entrypoints.openai.api_server"}},
+		{"[]string", map[string]any{"command": []string{"vllm", "serve"}}, []string{"vllm", "serve"}},
+		{"single string", map[string]any{"command": "vllm"}, []string{"vllm"}},
+		{"empty string -> nil", map[string]any{"command": ""}, nil},
+		{"empty list -> nil", map[string]any{"command": []any{}}, nil},
+		{"wrong type -> nil", map[string]any{"command": 42}, nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &ModelSpec{Config: tc.cfg}
+			got := s.ConfigStringSlice("command")
+			if len(got) != len(tc.want) {
+				t.Fatalf("ConfigStringSlice = %v, want %v", got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Fatalf("ConfigStringSlice[%d] = %q, want %q", i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
