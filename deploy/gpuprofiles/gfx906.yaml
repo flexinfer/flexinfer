@@ -85,6 +85,13 @@ spec:
       value: "0"
     - name: PYTORCH_ROCM_ARCH
       value: gfx906
+    # Force the MoE expert-quantization fail-fast gate for GPTQ jobs. Only affects
+    # MoE architectures (non-MoE returns early at the has_moe check); makes a run
+    # abort in seconds if experts can't be quantized rather than burning ~hours and
+    # silently saving an attention-only artifact. See quantize_gptq.py
+    # should_require_moe_expert_quantization + patch_moe_module_tree (MR !618).
+    - name: GPTQ_REQUIRE_MOE_EXPERT_QUANTIZATION
+      value: "1"
     - name: ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP
       value: "true"
     - name: ABLITERATION_SAFE_SHARDED_LOAD
@@ -132,5 +139,17 @@ spec:
       - gptq
       - gguf
     images:
-      gptq: registry.harbor.lan/flexinfer/quantizer@sha256:4738926c0c3798ea6cab1e4874b5c1fa5a942ae18279b2e9d82b237dc27b0a55
+      # MR !618 + qwen3_5_moe remap fix: proven gptqmodel-7.0.0 base (sha256:4738926c)
+      # + current quantize_gptq.py carrying patch_moe_module_tree (decoupled module_tree
+      # inject + version-robust GateUpDownMoELifecycleHooks import) AND the
+      # normalize_gptqmodel_model_type fix (qwen3_5_moe_text -> qwen3_5_moe, the
+      # registered MODEL_MAP key — without it the MoE model loads as BaseQModel and
+      # experts are silently dropped). Rebuilt off-CI as a thin COPY layer because CI
+      # no longer builds the gfx906 GPTQ quantizer (unified-gfx906 ships no importable
+      # gptqmodel). See build/scripts/quantize_gptq.py.
+      # Adds the streaming MoE re-fuse (MR !624): the prior re-fuse mmapped all
+      # shards + built ~20GB of fused tensors at once -> SIGBUS on gfx906 at 96%.
+      # Now streams one output shard at a time + preserves the per-expert artifact
+      # before re-fuse (re-fuse-only recovery, no 12h re-quant).
+      gptq: registry.harbor.lan/flexinfer/quantizer@sha256:30d4a92e061e9e0e18f963e915b695b6de07c2cba7078caf052114e1685a11fb
       abliteration: registry.harbor.lan/flexinfer/runtime@sha256:aefe41fac3e43a65982fb1da9744c9c485f08dd010bab859b0d1f90de3a6dc4e
