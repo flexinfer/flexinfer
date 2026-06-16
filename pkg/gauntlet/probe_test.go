@@ -18,13 +18,13 @@ func sseServer(t *testing.T, tokens []string, usage int) *httptest.Server {
 		w.Header().Set("Content-Type", "text/event-stream")
 		fl, _ := w.(http.Flusher)
 		for _, tok := range tokens {
-			fmt.Fprintf(w, "data: {\"choices\":[{\"text\":%q}]}\n\n", tok)
+			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"text\":%q}]}\n\n", tok)
 			if fl != nil {
 				fl.Flush()
 			}
 		}
-		fmt.Fprintf(w, "data: {\"choices\":[{\"text\":\"\"}],\"usage\":{\"completion_tokens\":%d}}\n\n", usage)
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"text\":\"\"}],\"usage\":{\"completion_tokens\":%d}}\n\n", usage)
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 }
 
@@ -101,8 +101,8 @@ func TestProbe_FallsBackToApproxTokens(t *testing.T) {
 	// No usage chunk -> approxTokens (word count) kicks in.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		fmt.Fprint(w, "data: {\"choices\":[{\"text\":\"one two three\"}]}\n\n")
-		fmt.Fprint(w, "data: [DONE]\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"text\":\"one two three\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 	}))
 	defer srv.Close()
 
