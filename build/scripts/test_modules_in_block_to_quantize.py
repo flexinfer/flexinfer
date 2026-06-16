@@ -63,7 +63,7 @@ def _load_helpers() -> dict:
 
     # Only keep stdlib imports — the helpers don't need transformers/datasets/
     # torch/etc., and pulling them in defeats the "no real model" promise.
-    allowed_modules = {"os", "re", "json", "sys", "time", "shutil"}
+    allowed_modules = {"os", "re", "json", "sys", "time", "shutil", "gc"}
 
     keep_nodes: list[ast.stmt] = []
     for node in tree.body:
