@@ -174,6 +174,17 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--kv-cache-dtype", kvDtype)
 	}
 
+	// HF config overrides — passed through verbatim to vLLM as --hf-overrides
+	// (a JSON object). Lets a Model remap fields the served artifact's
+	// config.json declares incorrectly without rewriting the artifact. Primary
+	// use: remap an architectures name that a newer vLLM registers under a
+	// different key — e.g. Qwen3.5/3.6-MoE GPTQ artifacts declare
+	// "Qwen3_5MoeForCausalLM", which vLLM 0.19.x does not register, but it does
+	// register "Qwen3NextForCausalLM" and "Qwen3_5MoeForConditionalGeneration".
+	if hfOverrides := spec.ConfigString("hfOverrides", ""); hfOverrides != "" {
+		args = append(args, "--hf-overrides", hfOverrides)
+	}
+
 	// Prefix caching is ON by default in vLLM V1.
 	// Newer argparse wiring uses BooleanOptionalAction, so the disable form is
 	// --no-enable-prefix-caching rather than --no-prefix-caching.

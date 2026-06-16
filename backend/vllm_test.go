@@ -222,6 +222,40 @@ func TestVLLMBackendArgs_AttentionBackend(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_HFOverrides(t *testing.T) {
+	b := &VLLMBackend{}
+
+	overrides := `{"architectures":["Qwen3NextForCausalLM"]}`
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"hfOverrides": overrides,
+		},
+	}
+
+	args := b.Args(spec)
+	argMap := make(map[string]string)
+	for i := 0; i < len(args)-1; i++ {
+		if len(args[i]) > 0 && args[i][0] == '-' {
+			argMap[args[i]] = args[i+1]
+		}
+	}
+
+	if v := argMap["--hf-overrides"]; v != overrides {
+		t.Fatalf("expected --hf-overrides=%q, got %q", overrides, v)
+	}
+}
+
+func TestVLLMBackendArgs_HFOverridesOmittedByDefault(t *testing.T) {
+	b := &VLLMBackend{}
+	spec := &ModelSpec{Model: "test-model", Config: map[string]any{}}
+	for _, a := range b.Args(spec) {
+		if a == "--hf-overrides" {
+			t.Fatal("--hf-overrides should not be emitted when hfOverrides is unset")
+		}
+	}
+}
+
 func TestVLLMBackendTurboQuantE4BPath(t *testing.T) {
 	b := &VLLMBackend{}
 
