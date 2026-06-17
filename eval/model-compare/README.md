@@ -88,10 +88,37 @@ On the 2026-06-17 set the two lanes' errors are not just disjoint but
 | **routed** | **100.0%** | **1.46s** (25% → reasoning) |
 | oracle | 100.0% | — |
 
-**Caveat (important):** this is an *in-sample upper bound* — the rules encode
-failure modes seen on this very set. It proves the errors are content-separable
-and that routing *can* capture best-of-both; it does **not** prove the rules
-generalize. Validate on a held-out tier before trusting in production.
+That table is an *in-sample* fit (the rules encode failure modes seen on that
+set), so it was validated on a held-out tier:
+
+### Held-out validation (the generalization kill-test) — PASSED 2026-06-17
+
+`prompts-heldout.json` is **24 fresh items written after `router.py` was frozen**
+(MR !635) and never used to tune it. Run live on both lanes, then analyzed
+out-of-sample:
+
+```bash
+python3 route_analysis.py --peritem results/per-item-heldout-2026-06-17.json \
+  --out results/FINDINGS-router-heldout-2026-06-17.md
+```
+
+| strategy | accuracy (24 unseen items) | mean answer latency |
+|---|---|---|
+| fast-only | 95.8% | 0.13s |
+| reasoning-only | 91.7% | 4.44s |
+| **routed** | **100.0%** | **1.57s** (33% → reasoning) |
+| oracle | 100.0% | — |
+
+The frozen router routed **every** unseen item to a correct lane — including the
+three discriminators: `wp-7` (overtime, fast slipped) → reasoning ✓; `cnt-1`
+(digit count, reasoning over-enumerated 40.9s) → fast ✓; `cmb-1` (LEVEL
+arrangements, reasoning answered 60) → fast ✓. So the content-separability of the
+two lanes' errors **generalizes out of sample** — it is not an artifact of
+fitting the tuning set. See `results/FINDINGS-router-heldout-2026-06-17.md`.
+
+**Remaining caveat:** still a small set written by the same author who knows the
+rules. A larger third-party / adversarial held-out set is the next confidence
+step before wiring the router into the proxy for production traffic.
 
 ## Notes & caveats
 

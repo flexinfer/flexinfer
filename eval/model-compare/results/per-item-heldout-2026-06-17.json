@@ -1,0 +1,18 @@
+{
+  "note": "HELD-OUT per-item correctness from the 2026-06-17 gfx1100 live run of prompts-heldout.json (24 fresh items the frozen router.py was NOT tuned on). This is the kill-test input for whether the content-only router GENERALIZES. 'wrong' lists the item ids each lane scored incorrect; every other item was correct. The two lanes' error sets are disjoint (fast missed wp-7; reasoning missed cnt-1 over-enumeration + cmb-1), so a per-item oracle scores 24/24. latency_p50_s is the per-lane p50 quality-answer latency from this run. Run via flexinfer-proxy from inside the gemma4 serve pod.",
+  "fast_lane": "gemma4-26b-a4b-gptq",
+  "reasoning_lane": "qwen35-moe-reasoning-5930k",
+  "tiers": {
+    "heldout": {
+      "dataset": "prompts-heldout.json",
+      "wrong": {
+        "gemma4-26b-a4b-gptq": ["wp-7"],
+        "qwen35-moe-reasoning-5930k": ["cnt-1", "cmb-1"]
+      },
+      "latency_p50_s": {
+        "gemma4-26b-a4b-gptq": 0.13,
+        "qwen35-moe-reasoning-5930k": 4.44
+      }
+    }
+  }
+}
