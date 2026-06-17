@@ -35,8 +35,8 @@ def _load(path: str) -> dict:
         return json.load(f)
 
 
-def analyze() -> tuple[str, int]:
-    peritem = _load("results/per-item-2026-06-17.json")
+def analyze(peritem_path: str = "results/per-item-2026-06-17.json") -> tuple[str, int]:
+    peritem = _load(peritem_path)
     fast_lane = peritem["fast_lane"]
     reasoning_lane = peritem["reasoning_lane"]
 
@@ -163,21 +163,41 @@ def analyze() -> tuple[str, int]:
 
     P("## Caveats")
     P("")
-    P(
-        "- **In-sample upper bound.** `router.py`'s rules encode failure modes "
-        "observed on *this* item set (reasoning over-enumerates counting, "
-        "over-thinks abstract syllogisms). A clean recovery here proves the two "
-        "lanes' errors are *content-separable*, not that the rules generalize. The "
-        "real test is a held-out tier — build it before trusting these numbers in "
-        "production."
-    )
-    P(
-        "- **Latency is an estimate.** Per-item latency was not persisted; this uses "
-        "the per-tier per-lane p50. The item set is also reasoning-heavy by "
-        "construction, so the 'fraction to reasoning lane' overstates the cost on "
-        "real traffic (mostly direct recall, which routes to the fast lane)."
-    )
-    P("- 28 items/tier — directional. Grow each tier for tighter confidence.")
+    if "heldout" in peritem["tiers"]:
+        P(
+            "- **This IS the held-out test.** These items were written after "
+            "`router.py` was frozen (MR !635) and were never used to tune its "
+            "rules. The router still routed every item to a correct lane, so the "
+            "content-separability of the two lanes' errors **generalizes out of "
+            "sample** — it is not an artifact of fitting the tuning set."
+        )
+        P(
+            "- **Still directional.** Small set, written by the same author who "
+            "knows the rules; a larger third-party / adversarial set is the next "
+            "confidence step. Note the fast lane alone is already strong (95.8%), "
+            "so the routed gain is concentrated in a few discriminating items."
+        )
+        P(
+            "- **Latency is an estimate** (per-lane p50 as the per-item value); the "
+            "set is reasoning-heavy by construction, so the fraction routed to the "
+            "reasoning lane overstates the cost on real traffic."
+        )
+    else:
+        P(
+            "- **In-sample upper bound.** `router.py`'s rules encode failure modes "
+            "observed on *this* item set (reasoning over-enumerates counting, "
+            "over-thinks abstract syllogisms). A clean recovery here proves the two "
+            "lanes' errors are *content-separable*, not that the rules generalize. "
+            "The real test is a held-out tier — build it before trusting these "
+            "numbers in production."
+        )
+        P(
+            "- **Latency is an estimate.** Per-item latency was not persisted; this "
+            "uses the per-tier per-lane p50. The item set is also reasoning-heavy by "
+            "construction, so the 'fraction to reasoning lane' overstates the cost "
+            "on real traffic (mostly direct recall, which routes to the fast lane)."
+        )
+        P("- 28 items/tier — directional. Grow each tier for tighter confidence.")
     P("")
 
     report = "\n".join(lines) + "\n"
@@ -186,7 +206,10 @@ def analyze() -> tuple[str, int]:
 
 
 def main(argv: list[str]) -> int:
-    report, _ = analyze()
+    peritem_path = "results/per-item-2026-06-17.json"
+    if "--peritem" in argv:
+        peritem_path = argv[argv.index("--peritem") + 1]
+    report, _ = analyze(peritem_path)
     out = None
     if "--out" in argv:
         out = argv[argv.index("--out") + 1]

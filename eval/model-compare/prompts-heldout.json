@@ -1,0 +1,36 @@
+{
+  "description": "HELD-OUT tier — a fresh set of objective, deterministically-checkable hard items the router rules were NOT tuned on. Purpose: test whether the content-only router (router.py, frozen at MR !635) GENERALIZES, i.e. still routes each item to the lane that gets it right on prompts it has never seen. Written naturally across the same fault-line categories (multi-step/trap word problems, abstract syllogisms, counting, unit conversion, plus neutral combinatorics/algebra/probability) — deliberately including cases where the router's surface cues might misfire (work-rate problems phrased as 'how many hours', 'all but N' traps), so the kill-test can actually fail. Answers are integers or simple a/b fractions to keep substring scoring robust. Run with --max-tokens 2048.",
+  "perf_prompt": "Prove step by step that the sum of the first n odd positive integers equals n^2, then compute it for n = 50.",
+  "items": [
+    {"id": "wp-1", "category": "word-problem", "prompt": "A shirt is marked $80. It is discounted 25%, then a 10% sales tax is added to the discounted price. What is the final price, in dollars? Reply with just the number.", "mode": "contains", "expect": ["66"]},
+    {"id": "wp-2", "category": "word-problem", "prompt": "A car drives 60 miles at 30 mph, then another 60 miles at 60 mph. What is the total travel time, in hours? Reply with just the number.", "mode": "contains", "expect": ["3"]},
+    {"id": "wp-3", "category": "word-problem", "prompt": "One pipe fills a tank in 6 hours and another fills it in 3 hours. Working together, how many hours does it take to fill the tank? Reply with just the number.", "mode": "contains", "expect": ["2"]},
+    {"id": "wp-4", "category": "word-problem", "prompt": "A recipe for 4 servings needs 6 eggs. How many eggs are needed for 10 servings at the same ratio? Reply with just the number.", "mode": "contains", "expect": ["15"]},
+    {"id": "wp-5", "category": "word-problem", "prompt": "Sam is twice as old as Beth. In 5 years, the sum of their ages will be 28. How old is Sam now? Reply with just the number.", "mode": "contains", "expect": ["12"]},
+    {"id": "wp-6", "category": "word-problem", "prompt": "A book costs $12 more than a pen. Together they cost $20. How many dollars does the pen cost? Reply with just the number.", "mode": "contains", "expect": ["4"]},
+    {"id": "wp-7", "category": "word-problem", "prompt": "A worker is paid $20 per hour for the first 35 hours and double that rate for any hours beyond. What is the pay for a 39-hour week, in dollars? Reply with just the number.", "mode": "contains", "expect": ["860"]},
+    {"id": "wp-8", "category": "word-problem", "prompt": "A phone costs $200. Its price rises by 10%, then falls by 10% from that new price. What is the final price, in dollars? Reply with just the number.", "mode": "contains", "expect": ["198"]},
+
+    {"id": "lg-1", "category": "logic", "prompt": "A farmer has 17 sheep. All but 9 run away. How many sheep are left? Reply with just the number.", "mode": "contains", "expect": ["9"]},
+    {"id": "lg-2", "category": "logic", "prompt": "You have 6 apples and you take away 4. How many apples do you have now? Reply with just the number.", "mode": "contains", "expect": ["4"]},
+    {"id": "lg-3", "category": "logic", "prompt": "Some Trins are Vops, and all Vops are Quibs. Can we conclude that some Trins are definitely Quibs? Answer yes or no.", "mode": "contains", "expect": ["yes"]},
+    {"id": "lg-4", "category": "logic", "prompt": "All Plonks are Greebs, and no Greebs are Wuffs. Can a Plonk be a Wuff? Answer yes or no.", "mode": "contains", "expect": ["no"]},
+    {"id": "lg-5", "category": "logic", "prompt": "If 3 cats catch 3 mice in 3 minutes, how many minutes will it take 100 cats to catch 100 mice at the same rate? Reply with just the number.", "mode": "contains", "expect": ["3"]},
+
+    {"id": "cnt-1", "category": "counting", "prompt": "How many times does the digit 1 appear when writing all the integers from 1 to 50 inclusive? Reply with just the number.", "mode": "contains", "expect": ["15"]},
+    {"id": "cnt-2", "category": "counting", "prompt": "How many integers from 1 to 60 inclusive are divisible by 4? Reply with just the number.", "mode": "contains", "expect": ["15"]},
+    {"id": "cnt-3", "category": "counting", "prompt": "How many letter 's' characters are in the word 'possessions'? Reply with just the number.", "mode": "contains", "expect": ["5"]},
+
+    {"id": "un-1", "category": "units", "prompt": "How many minutes are there in one week? Reply with just the number.", "mode": "contains", "expect": ["10080"]},
+    {"id": "un-2", "category": "units", "prompt": "How many centimeters are in 3.5 meters? Reply with just the number.", "mode": "contains", "expect": ["350"]},
+    {"id": "un-3", "category": "units", "prompt": "A tank holds 4 gallons. How many cups is that, given 16 cups per gallon? Reply with just the number.", "mode": "contains", "expect": ["64"]},
+
+    {"id": "cmb-1", "category": "combinatorics", "prompt": "How many distinct arrangements are there of the letters in the word LEVEL? Reply with just the number.", "mode": "contains", "expect": ["30"]},
+
+    {"id": "alg-1", "category": "algebra", "prompt": "If 5x - 3 = 2x + 12, what is x? Reply with just the number.", "mode": "contains", "expect": ["5"]},
+    {"id": "alg-2", "category": "algebra", "prompt": "What is the next number in the sequence 1, 4, 9, 16, 25, ...? Reply with just the number.", "mode": "contains", "expect": ["36"]},
+
+    {"id": "prob-1", "category": "probability", "prompt": "A jar has 4 red marbles and 6 green marbles. What is the probability of drawing a red one at random? Give the answer as a simplified fraction.", "mode": "contains", "expect": ["2/5"]},
+    {"id": "prob-2", "category": "probability", "prompt": "Two fair coins are flipped. What is the probability that both land heads? Give the answer as a simplified fraction.", "mode": "contains", "expect": ["1/4"]}
+  ]
+}
