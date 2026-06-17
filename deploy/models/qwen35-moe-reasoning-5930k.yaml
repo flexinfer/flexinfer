@@ -132,11 +132,12 @@ spec:
     warmPolicy: primary
   gpu:
     count: 1
-    # Owns the 5930k-textgen group: the gemma twin is set to minReplicas 0 in
-    # this same change, so it no longer demands the GPU. Parity priority 350;
-    # no forcePromotion needed (an idle scale-to-zero member never preempts a
-    # warm minReplicas-1 leader).
-    priority: 350
+    # Primary of the 5930k-textgen group at priority 360, ABOVE the retired gemma
+    # twin (350, minReplicas 0). Higher priority guarantees this warm lane wins
+    # leader election even if the idle twin briefly reclaims the GPU during a
+    # restart (parity 350 left them in a standoff during the live cutover; a
+    # one-time forcePromotion took leadership and is not needed in steady state).
+    priority: 360
     shared: 5930k-textgen
     vendor: amd
     vramEstimateMB: 20000
