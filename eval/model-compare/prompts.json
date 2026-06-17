@@ -1,0 +1,39 @@
+{
+  "description": "Objective, deterministically-scored prompt set for comparing two served LLMs on quality + (alongside) performance. Each item is checkable without an LLM judge: the model's FINAL answer (reasoning stripped) is normalized (lowercased, punctuation-trimmed) and matched against `expect` per `mode` (contains=any present, all=all present, exact=normalized equality). Phrased to elicit a short, checkable answer so reasoning and non-reasoning models are scored on the same ground.",
+  "perf_prompt": "Write a detailed, technical explanation of how a four-stroke internal combustion engine works, covering intake, compression, power, and exhaust.",
+  "items": [
+    {"id": "arith-1", "category": "arithmetic", "prompt": "What is 17 multiplied by 23? Reply with just the number.", "mode": "contains", "expect": ["391"]},
+    {"id": "arith-2", "category": "arithmetic", "prompt": "What is 144 divided by 12? Reply with just the number.", "mode": "contains", "expect": ["12"]},
+    {"id": "arith-3", "category": "arithmetic", "prompt": "What is 2 to the power of 10? Reply with just the number.", "mode": "contains", "expect": ["1024"]},
+    {"id": "arith-4", "category": "arithmetic", "prompt": "What is 15% of 240? Reply with just the number.", "mode": "contains", "expect": ["36"]},
+    {"id": "arith-5", "category": "arithmetic", "prompt": "What is 1000 minus 387? Reply with just the number.", "mode": "contains", "expect": ["613"]},
+
+    {"id": "fact-1", "category": "factual", "prompt": "What is the capital of Japan? Reply with just the city name.", "mode": "contains", "expect": ["tokyo"]},
+    {"id": "fact-2", "category": "factual", "prompt": "What is the chemical symbol for gold? Reply with just the symbol.", "mode": "contains", "expect": ["au"]},
+    {"id": "fact-3", "category": "factual", "prompt": "How many continents are there on Earth? Reply with just the number.", "mode": "contains", "expect": ["7", "seven"]},
+    {"id": "fact-4", "category": "factual", "prompt": "Who wrote the play 'Romeo and Juliet'? Reply with just the author's last name.", "mode": "contains", "expect": ["shakespeare"]},
+    {"id": "fact-5", "category": "factual", "prompt": "What planet is known as the Red Planet? Reply with just the planet name.", "mode": "contains", "expect": ["mars"]},
+
+    {"id": "reason-1", "category": "reasoning", "prompt": "A train travels at 60 miles per hour for 2.5 hours. How many miles does it travel? Reply with just the number.", "mode": "contains", "expect": ["150"]},
+    {"id": "reason-2", "category": "reasoning", "prompt": "Sally has 3 boxes with 12 apples each. She gives away 8 apples. How many apples does she have left? Reply with just the number.", "mode": "contains", "expect": ["28"]},
+    {"id": "reason-3", "category": "reasoning", "prompt": "A shirt costs $40 and is discounted by 25%. What is the sale price in dollars? Reply with just the number.", "mode": "contains", "expect": ["30"]},
+    {"id": "reason-4", "category": "reasoning", "prompt": "If it takes 5 machines 5 minutes to make 5 widgets, how many minutes does it take 100 machines to make 100 widgets? Reply with just the number.", "mode": "contains", "expect": ["5"]},
+    {"id": "reason-5", "category": "reasoning", "prompt": "There are 4 people in a room. Each person shakes hands once with every other person. How many handshakes happen in total? Reply with just the number.", "mode": "contains", "expect": ["6"]},
+    {"id": "reason-6", "category": "reasoning", "prompt": "A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How many cents does the ball cost? Reply with just the number.", "mode": "contains", "expect": ["5"]},
+
+    {"id": "logic-1", "category": "logic", "prompt": "If all bloops are razzies and all razzies are lazzies, are all bloops definitely lazzies? Answer yes or no.", "mode": "contains", "expect": ["yes"]},
+    {"id": "logic-2", "category": "logic", "prompt": "Tom is taller than Jane. Jane is taller than Sue. Is Tom taller than Sue? Answer yes or no.", "mode": "contains", "expect": ["yes"]},
+    {"id": "logic-3", "category": "logic", "prompt": "Which word does not belong with the others: apple, banana, carrot, grape? Reply with just the word.", "mode": "contains", "expect": ["carrot"]},
+    {"id": "logic-4", "category": "logic", "prompt": "What comes next in the sequence 2, 4, 8, 16, ...? Reply with just the number.", "mode": "contains", "expect": ["32"]},
+
+    {"id": "instr-1", "category": "instruction", "prompt": "Reply with exactly the single word BANANA in all uppercase and nothing else.", "mode": "exact", "expect": ["banana"]},
+    {"id": "instr-2", "category": "instruction", "prompt": "List exactly three primary colors of light, separated by commas, in lowercase.", "mode": "all", "expect": ["red", "green", "blue"]},
+    {"id": "instr-3", "category": "instruction", "prompt": "Spell the word 'cat' backwards. Reply with just the result.", "mode": "contains", "expect": ["tac"]},
+    {"id": "instr-4", "category": "instruction", "prompt": "Count the number of letter 'r' in the word 'strawberry'. Reply with just the number.", "mode": "contains", "expect": ["3", "three"]},
+
+    {"id": "code-1", "category": "code", "prompt": "In Python, what does the expression len('hello') evaluate to? Reply with just the number.", "mode": "contains", "expect": ["5"]},
+    {"id": "code-2", "category": "code", "prompt": "What is the output of: print(2 ** 3) in Python? Reply with just the number.", "mode": "contains", "expect": ["8"]},
+    {"id": "code-3", "category": "code", "prompt": "In Python, what is the result of the boolean expression: 3 > 2 and 1 > 5 ? Reply with just True or False.", "mode": "contains", "expect": ["false"]},
+    {"id": "code-4", "category": "code", "prompt": "What is the value of x after running: x = [1, 2, 3]; x.append(4); len(x) in Python? Reply with just the number.", "mode": "contains", "expect": ["4"]}
+  ]
+}

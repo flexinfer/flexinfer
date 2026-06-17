@@ -1,0 +1,52 @@
+# model-compare — quality + performance eval for served LLMs
+
+A focused, **deterministically-scored** comparison harness for two (or more)
+OpenAI-compatible models served by flexinfer. It fills the gap left by
+`cmd/flexinfer-bench` (throughput + substring coherence only): it measures
+**answer quality** across categories AND **performance** (TTFT, decode tok/s)
+in one side-by-side run — with **no LLM judge** (every item is checkable).
+
+## What it measures
+
+- **Quality** — `prompts.json` is a set of objective items across
+  `arithmetic, factual, reasoning, logic, instruction, code`. Each item declares
+  `expect` + a `mode` (`contains` / `all` / `exact`). The model's **final answer
+  is scored after stripping reasoning** (`reasoning_content` is taken from the
+  stream when the backend separates it, and any residual `<think>…</think>` is
+  removed), so reasoning and non-reasoning models are judged on the same ground.
+- **Performance** — a fixed-length streamed generation gives p50 **TTFT** and
+  **decode tok/s** (over `--perf-iters`), plus the p50 per-item quality latency.
+
+Output: `<out-prefix>.json` (full per-item detail) + `<out-prefix>.md`
+(summary + per-category + per-item ✓/✗ tables).
+
+## Running it (in-cluster, zero-dep)
+
+Runs with only the Python standard library, so it works inside any vLLM pod.
+Targets the flexinfer proxy, which routes `/model/{name}/…` to each backend:
+
+```bash
+python3 compare.py \
+  --base-url http://flexinfer-proxy.flexinfer-system.svc:80 \
+  --url-template '{base}/model/{model}/v1/chat/completions' \
+  --models gemma4-26b-a4b-gptq,qwen35-moe-reasoning-5930k \
+  --dataset prompts.json --out-prefix results --perf-iters 3
+```
+
+The model name is used both for proxy routing and as the OpenAI `model` field.
+To hit a model's Service directly instead of the proxy, pass e.g.
+`--base-url http://qwen35-moe-reasoning-5930k.flexinfer-system.svc:8000`
+`--url-template '{base}/v1/chat/completions'`.
+
+## Notes & caveats
+
+- This is an **as-deployed** comparison: each model runs at its production config
+  (context length, batching, spec-decoding, quant), which is the meaningful
+  real-world signal — not an isolated apples-to-apples kernel benchmark.
+- Reasoning models spend tokens "thinking", so their **per-answer latency is
+  higher** even at equal decode tok/s; the harness reports both so the trade-off
+  is visible (`reasoning_tokens_approx` per item in the JSON).
+- The item set is intentionally small and objective (fast, reproducible, no
+  judge). Extend `prompts.json` to add categories; scoring stays deterministic.
+- `mode: exact` is strict (the normalized answer must equal the expected token) —
+  it doubles as an instruction-following test.
