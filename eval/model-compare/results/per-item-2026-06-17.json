@@ -1,0 +1,29 @@
+{
+  "note": "Real per-item correctness from the 2026-06-17 gfx1100 runs (MR !633 easy, MR !634 hard), captured for offline routing analysis. 'wrong' lists the item ids each lane scored INCORRECT; every other item in the dataset was scored correct. latency_p50_s is the per-tier, per-lane p50 quality-answer latency from those same runs, used as a per-item latency estimate for the routing projection (per-item latency was not persisted, only the p50). The two lanes' error sets are DISJOINT within each tier, so a per-item oracle scores 100%.",
+  "fast_lane": "gemma4-26b-a4b-gptq",
+  "reasoning_lane": "qwen35-moe-reasoning-5930k",
+  "tiers": {
+    "easy": {
+      "dataset": "prompts.json",
+      "wrong": {
+        "gemma4-26b-a4b-gptq": [],
+        "qwen35-moe-reasoning-5930k": ["logic-1"]
+      },
+      "latency_p50_s": {
+        "gemma4-26b-a4b-gptq": 0.12,
+        "qwen35-moe-reasoning-5930k": 3.72
+      }
+    },
+    "hard": {
+      "dataset": "prompts-hard.json",
+      "wrong": {
+        "gemma4-26b-a4b-gptq": ["hmath-6", "hlogic-1", "hlogic-3"],
+        "qwen35-moe-reasoning-5930k": ["hcount-1", "hunit-1", "hlogic-4"]
+      },
+      "latency_p50_s": {
+        "gemma4-26b-a4b-gptq": 0.16,
+        "qwen35-moe-reasoning-5930k": 6.11
+      }
+    }
+  }
+}

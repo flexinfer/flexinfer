@@ -53,6 +53,46 @@ work the two lanes tie overall but are *complementary* — reasoning wins logic
 traps + multi-step, the fast lane wins direct-recall/enumeration — so **route by
 task** rather than picking one).
 
+## Task-router (`router.py`) + offline validation (`route_analysis.py`)
+
+The "route by task" finding is actualized as a zero-dependency, **content-only**
+classifier — no model call, ~no added latency:
+
+```bash
+python3 router.py "How many seconds are there in 2.5 hours?"   # -> fast
+python3 router.py "If 4 hens lay 4 eggs in 4 days, how many do 8 hens lay in 8?"  # -> reasoning
+python3 router.py --selftest          # pins intended routings (10/10)
+python3 router.py --dataset prompts-hard.json   # routing table for a dataset
+```
+
+Rules (derived from the observed failure modes, fast→reasoning escalation only
+where it pays): counting/enumeration & unit-conversion → **fast** (reasoning
+over-enumerates / misreads units); abstract symbolic syllogisms → **fast**
+(reasoning over-thinks them); concrete multi-step / trap word problems →
+**reasoning**; everything else → **fast** (default).
+
+`route_analysis.py` measures the router **offline** against the real per-item
+correctness (`results/per-item-2026-06-17.json`) — no model calls:
+
+```bash
+python3 route_analysis.py --out results/FINDINGS-router-2026-06-17.md
+```
+
+On the 2026-06-17 set the two lanes' errors are not just disjoint but
+**content-separable**, so the router recovers the full oracle:
+
+| strategy | accuracy (56 items) | mean answer latency |
+|---|---|---|
+| fast-only | 94.6% | 0.14s |
+| reasoning-only | 92.9% | 4.92s |
+| **routed** | **100.0%** | **1.46s** (25% → reasoning) |
+| oracle | 100.0% | — |
+
+**Caveat (important):** this is an *in-sample upper bound* — the rules encode
+failure modes seen on this very set. It proves the errors are content-separable
+and that routing *can* capture best-of-both; it does **not** prove the rules
+generalize. Validate on a held-out tier before trusting in production.
+
 ## Notes & caveats
 
 - This is an **as-deployed** comparison: each model runs at its production config
