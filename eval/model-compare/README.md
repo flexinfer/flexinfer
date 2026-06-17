@@ -38,6 +38,21 @@ To hit a model's Service directly instead of the proxy, pass e.g.
 `--base-url http://qwen35-moe-reasoning-5930k.flexinfer-system.svc:8000`
 `--url-template '{base}/v1/chat/completions'`.
 
+## Datasets / tiers
+
+- `prompts.json` — **easy/objective** tier (basic arithmetic, factual, simple
+  reasoning). Run with the default `--max-tokens 1024`.
+- `prompts-hard.json` — **hard** tier (multi-step word problems, combinatorics,
+  number theory, counting, logic traps). Run with `--max-tokens 2048` (hard
+  items legitimately need more reasoning):
+  `python3 compare.py ... --dataset prompts-hard.json --out-prefix hard --max-tokens 2048`
+
+See `results/` for the 2026-06-17 runs and `FINDINGS-*.md` for the two-tier
+takeaway (short version: the fast lane wins easy/objective work outright; on hard
+work the two lanes tie overall but are *complementary* — reasoning wins logic
+traps + multi-step, the fast lane wins direct-recall/enumeration — so **route by
+task** rather than picking one).
+
 ## Notes & caveats
 
 - This is an **as-deployed** comparison: each model runs at its production config

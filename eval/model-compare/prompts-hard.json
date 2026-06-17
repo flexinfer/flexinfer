@@ -1,0 +1,40 @@
+{
+  "description": "HARD tier — still objective and deterministically checkable (no LLM judge), but multi-step problems where a fast non-reasoning model is more likely to slip and a reasoning model's chain-of-thought should pay off. Answers are integers or simple a/b fractions to keep substring scoring robust (the normalizer drops punctuation, so avoid decimals/negatives). Run with a larger --max-tokens (e.g. 2048): hard items legitimately need more reasoning, and it avoids penalizing the reasoning lane for budget-timeout truncation.",
+  "perf_prompt": "Prove step by step that the sum of the first n positive integers equals n(n+1)/2, then compute it for n = 100.",
+  "items": [
+    {"id": "hmath-1", "category": "word-problem", "prompt": "A store sells pencils at 4 for $1.00. How much do 28 pencils cost, in dollars? Reply with just the number.", "mode": "contains", "expect": ["7"]},
+    {"id": "hmath-2", "category": "word-problem", "prompt": "A car travels 240 miles using 8 gallons of gas. At the same rate, how many gallons are needed for 600 miles? Reply with just the number.", "mode": "contains", "expect": ["20"]},
+    {"id": "hmath-3", "category": "word-problem", "prompt": "Tom's age is 4 years more than twice Jerry's age. If Tom is 28, how old is Jerry? Reply with just the number.", "mode": "contains", "expect": ["12"]},
+    {"id": "hmath-4", "category": "word-problem", "prompt": "A rectangle has a perimeter of 36 and its length is twice its width. What is its area? Reply with just the number.", "mode": "contains", "expect": ["72"]},
+    {"id": "hmath-5", "category": "word-problem", "prompt": "A number increased by 20% equals 96. What is the original number? Reply with just the number.", "mode": "contains", "expect": ["80"]},
+    {"id": "hmath-6", "category": "word-problem", "prompt": "A worker earns $15 per hour for the first 40 hours and 1.5 times that rate for overtime. What is the total pay, in dollars, for a 46-hour week? Reply with just the number.", "mode": "contains", "expect": ["735"]},
+    {"id": "hmath-7", "category": "word-problem", "prompt": "Three friends share a restaurant bill equally. The food costs $84 and they add a $12 tip. How much does each person pay, in dollars? Reply with just the number.", "mode": "contains", "expect": ["32"]},
+    {"id": "hmath-8", "category": "word-problem", "prompt": "A pen and a notebook cost $2.20 in total. The notebook costs $2.00 more than the pen. How many cents does the pen cost? Reply with just the number.", "mode": "contains", "expect": ["10"]},
+
+    {"id": "hcomb-1", "category": "combinatorics", "prompt": "How many distinct arrangements are there of the letters in the word BANANA? Reply with just the number.", "mode": "contains", "expect": ["60"]},
+    {"id": "hcomb-2", "category": "combinatorics", "prompt": "What is the smallest positive integer divisible by both 12 and 18? Reply with just the number.", "mode": "contains", "expect": ["36"]},
+    {"id": "hcomb-3", "category": "combinatorics", "prompt": "How many positive divisors does 36 have? Reply with just the number.", "mode": "contains", "expect": ["9"]},
+    {"id": "hcomb-4", "category": "combinatorics", "prompt": "In how many ways can you choose 2 items from a set of 5 distinct items, where order does not matter? Reply with just the number.", "mode": "contains", "expect": ["10"]},
+    {"id": "hcomb-5", "category": "combinatorics", "prompt": "What is the greatest common divisor of 48 and 36? Reply with just the number.", "mode": "contains", "expect": ["12"]},
+
+    {"id": "hcount-1", "category": "counting", "prompt": "How many times does the digit 7 appear when writing all the integers from 1 to 100 inclusive? Reply with just the number.", "mode": "contains", "expect": ["20"]},
+    {"id": "hcount-2", "category": "counting", "prompt": "How many integers from 1 to 100 inclusive are divisible by 3 or by 5? Reply with just the number.", "mode": "contains", "expect": ["47"]},
+
+    {"id": "hlogic-1", "category": "logic", "prompt": "A man has two coins that total 30 cents. One of them is not a nickel. Given that, what is the OTHER coin? Reply with just the coin name.", "mode": "contains", "expect": ["nickel"]},
+    {"id": "hlogic-2", "category": "logic", "prompt": "If 8 painters take 6 hours to paint a wall, how many hours would 12 painters take at the same rate? Reply with just the number.", "mode": "contains", "expect": ["4"]},
+    {"id": "hlogic-3", "category": "logic", "prompt": "If 4 hens lay 4 eggs in 4 days, how many eggs do 8 hens lay in 8 days? Reply with just the number.", "mode": "contains", "expect": ["16"]},
+    {"id": "hlogic-4", "category": "logic", "prompt": "All Gloops are Frinks, and some Frinks are Bloops. Can we conclude that some Gloops are definitely Bloops? Answer yes or no.", "mode": "contains", "expect": ["no"]},
+    {"id": "hlogic-5", "category": "logic", "prompt": "What is the angle, in degrees, between the hour and minute hands of a clock at exactly 3:00? Reply with just the number.", "mode": "contains", "expect": ["90"]},
+
+    {"id": "halg-1", "category": "algebra", "prompt": "If 3x + 7 = 2x + 18, what is x? Reply with just the number.", "mode": "contains", "expect": ["11"]},
+    {"id": "halg-2", "category": "algebra", "prompt": "What is the next number in the sequence 2, 6, 12, 20, 30, ...? Reply with just the number.", "mode": "contains", "expect": ["42"]},
+    {"id": "halg-3", "category": "algebra", "prompt": "What is the sum of all integers from 1 to 10 inclusive? Reply with just the number.", "mode": "contains", "expect": ["55"]},
+    {"id": "halg-4", "category": "algebra", "prompt": "If 2x - 5 = 11, what is x? Reply with just the number.", "mode": "contains", "expect": ["8"]},
+
+    {"id": "hprob-1", "category": "probability", "prompt": "Two fair six-sided dice are rolled. What is the probability that the sum is 7? Give the answer as a simplified fraction.", "mode": "contains", "expect": ["1/6"]},
+    {"id": "hprob-2", "category": "probability", "prompt": "A bag contains 3 red marbles and 2 blue marbles. If you draw one at random, what is the probability it is red? Give the answer as a simplified fraction.", "mode": "contains", "expect": ["3/5"]},
+
+    {"id": "hunit-1", "category": "units", "prompt": "How many seconds are there in 2.5 hours? Reply with just the number.", "mode": "contains", "expect": ["9000"]},
+    {"id": "hunit-2", "category": "units", "prompt": "A recipe uses 3/4 cup of sugar per batch. How many cups of sugar are needed for 8 batches? Reply with just the number.", "mode": "contains", "expect": ["6"]}
+  ]
+}
