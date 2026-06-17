@@ -16,7 +16,15 @@
 
 **Failure mode if wrong**: building the CRD/controller/MCP for a currency workload that can't actually run on AMD — re-running the "wire format correct, nothing serves" waste class.
 
-**Status**: not run — **GPU-gated by the in-flight qwen MoE quant** (single-GPU contention on the build/serve nodes). Run when the quant lane frees.
+**Status**: **PARTIAL PASS — 2026-06-17** (evidence: `deploy/debug/qwen36-currency-canary-model.yaml`, this session). The crux is confirmed: a current vLLM (official AMD prebuilt **rocm/vllm 0.19.1**, mirrored to Harbor — no custom build even needed) **boots and serves on gfx1100**. It loaded the brand-new Qwen3.5-MoE-VL 35B-A3B (text-only GPTQ) hybrid linear-attention + MoE arch, ran the gated-deltanet/FLA + rotary kernels on the 5930k 7900xtx, allocated a hybrid attention/mamba KV cache (42,432 tokens, 9.24x concurrency), reached `Application startup complete`, and returned **HTTP 200 generating tokens** via `/v1/completions` + `/v1/chat/completions`.
+
+Four layered blockers were solved (recipe captured in the canary YAML's startup plugin + hfOverrides): (1) arch registration via a `vllm.general_plugins` entry-point, (2) mRoPE-vs-standard-rotary position-shape (strip mrope), (3) hybrid KV page-size unify (`is_hybrid=True` + grafted `get_mamba_state_*`), (4) routed-expert weight rename `moe.* -> mlp.experts.*` (skip count 0).
+
+**Remaining (OPEN, not a ROCm/currency limit)**: coherent output of *this specific gptqmodel fused-MoE GPTQ artifact* is blocked by a **vLLM-internal bug** — `load_fused_expert_weights` builds GPTQ expert param name `experts.w2_weight.qweight` (the unquantized stacked-mapping name + `.qweight`) instead of `experts.w2_qweight` → `KeyError` (qwen3_5.py:258). Without the rename (blocker 4) it serves but is incoherent (all 256 experts unloaded → repetition loops). So the kill-test's "serves coherently" criterion is **not yet met for the exotic Qwen3.5-MoE GPTQ target**, for a *model-loader* reason, not a ROCm/build/currency reason.
+
+**Recommended next steps**: (a) get the unambiguous green the spec intended by serving a *standard existing* model (GPTQ Qwen3-14B / gemma4) on 0.19.1 — should serve coherently, confirming the image; (b) treat "nail the Qwen3.5-MoE GPTQ serving recipe on vLLM 0.19.1" — patch vLLM's Qwen3.5 GPTQ-MoE expert loader OR re-quantize in a vLLM-native MoE format (compressed-tensors/AWQ) — as the experiment platform's **first automated bring-up workload**.
+
+(GPU contention note: the run preempted the gemma4-5930k twin via forcePromotion; canary deleted after the verdict, twin reclaiming its GPU. Leftover: 30KB `_dbg_serve.log` at llm-models-nfs root — harmless cruft to sweep.)
 
 **Blocking rule**: per spec-riskiest-assumption policy, Slices 3–5 (CRD, controller, MCP) **do not ship until Slice 1's kill-test passes live**. Slice 2 (gauntlet harness) is allowed first because it is the verdict mechanism the kill-test itself needs.
 

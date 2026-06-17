@@ -1,0 +1,140 @@
+# Slice 1 vLLM-currency kill-test — flexinfer Model CR path.
+# Serves the new Qwen3.5-MoE-VL 35B-A3B (text-only GPTQ quant) on the official
+# AMD rocm/vllm gfx110X image (vLLM 0.19.1), via the flexinfer controller so the
+# shared-GPU group coordinates the gfx1100 handoff (a raw pod could not claim
+# the GPU held by the runtime DaemonSet).
+#
+# VERDICT (2026-06-17): the kill-test's core question — "can a current vLLM
+# serve, on ROCm gfx1100, an arch the old vLLM (0.17.0) rejects?" — is YES.
+# vLLM 0.19.1 loads this hybrid linear-attention (gated-deltanet/mamba) + MoE
+# arch, runs the GDN/FLA + rotary kernels on gfx1100, allocates a hybrid KV
+# cache, and serves HTTP 200 / generates tokens. Five layered blockers were hit;
+# 1-4 solved (this file is the recipe), the 5th is a vLLM-internal limitation:
+#
+#   1. arch unregistered: the artifact says architectures=[Qwen3_5MoeForCausalLM]
+#      which vLLM 0.19.1 has as a CLASS (qwen3_5.py:553, the multimodal wrapper's
+#      inner language_model) but does NOT register as a top-level servable arch.
+#      Qwen3NextForCausalLM -> AttributeError decoder_sparse_step;
+#      Qwen3_5MoeForConditionalGeneration (multimodal) -> "no module named 'model'"
+#      (it wants language_model.*+visual.*, the quant is text-only model.*).
+#      FIX: the startup plugin below registers Qwen3_5MoeForCausalLM via the
+#      vllm.general_plugins entry-point (runs in parent + EngineCore subprocess).
+#   2. mRoPE position shape: top-level rope_parameters.mrope_section makes
+#      uses_mrope True -> positions [3,N], but the text class builds a standard
+#      rotary expecting [N] -> "query, key and positions must have the same
+#      batch_size and seq_len". FIX: hfOverrides strips mrope (text needs none).
+#   3. hybrid KV page unify: the text class is not marked IsHybrid, so vLLM skips
+#      the mamba/attention page-size alignment -> "page size ... not divisible ...
+#      Cannot unify". FIX: plugin sets C.is_hybrid=True + grafts the Qwen3.5
+#      get_mamba_state_{shape,dtype,copy_func} classmethods from the multimodal
+#      class so HybridAttentionMambaModelConfig pads the mamba page to equal the
+#      attention page (the "Padding mamba page size 1.49%" path).
+#   4. routed experts skipped: the gptqmodel fused-MoE GPTQ checkpoint names the
+#      256 experts model.layers.N.moe.{gate_up_proj,down_proj}, but vLLM expects
+#      mlp.experts.* -> all 240 expert tensors silently skipped -> incoherent
+#      (repetition-loop) output. FIX: plugin wraps load_weights to rename
+#      .moe.gate_up_proj/.moe.down_proj -> .mlp.experts.* (drops skip count to 0).
+#   5. *** OPEN *** GPTQ fused-MoE expert loader bug: with experts routed in,
+#      vLLM's load_fused_expert_weights builds param name
+#      'layers.0.mlp.experts.w2_weight.qweight' but the GPTQ FusedMoE param is
+#      'experts.w2_qweight' -> KeyError. vLLM 0.19.1's Qwen3.5 expert stacked-
+#      mapping (qwen3_5.py:310-311, "experts.w2_weight") is the unquantized name;
+#      it does not handle the GPTQ ".qweight" suffix. NOT a serve-time fix.
+#      Coherent serving needs a vLLM patch to the Qwen3.5 GPTQ-MoE expert loader,
+#      OR re-quantizing the model in a vLLM-native MoE format (compressed-tensors
+#      / AWQ). Ideal first automated workload for the experiment platform.
+#
+# Requires the controller hfOverrides passthrough (MR !627) + per-model command
+# override (MR !628). Debug canary — delete after the kill-test verdict.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen36-35b-currency-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/canary: vllm-currency-slice1
+    flexinfer.ai/canary-plan: .loom/30-implementation-plan-experiment-platform-2026-06-15.md
+spec:
+  backend: vllm
+  # Official AMD prebuilt vLLM 0.19.1 (ROCm 7.13 / torch 2.10), mirrored to Harbor.
+  image: registry.harbor.lan/flexinfer/vllm:rocm7.13-gfx110X-vllm0.19.1
+  source: pvc://llm-models-nfs/qwen36-35b-a3b-reasoning/gptq-w4-g128
+  cache:
+    hostPath: /var/lib/flexinfer/models
+    size: 50Gi
+    storageClass: local-path
+    strategy: SharedPVC
+  config:
+    # Official rocm/vllm image's entrypoint is not a flexinfer serve-wrapper, so
+    # supply the launcher explicitly (the backend Args are appended after it).
+    #
+    # The artifact is a TEXT-ONLY GPTQ quant (keys: model.*) of the multimodal
+    # Qwen3.5-MoE-VL. vLLM 0.19.1 registers only the multimodal wrapper
+    # Qwen3_5MoeForConditionalGeneration (expects language_model.* + visual.*),
+    # which rejects the text-only checkpoint ("no module named 'model'"). The
+    # matching text class Qwen3_5MoeForCausalLM EXISTS in vllm (qwen3_5.py:553,
+    # the wrapper's inner language_model) but is not registered as a top-level
+    # arch. This wrapper installs a tiny vllm.general_plugins entry-point that
+    # registers it in every process (parent + EngineCore subprocess), then
+    # launches the OpenAI API server. base64 keeps the YAML/shell escaping clean.
+    command:
+      - bash
+      - -lc
+      - 'set -e; D=/tmp/q35build; mkdir -p $D/q35plugin; echo ZGVmIHJlZ2lzdGVyKCk6CiAgICBmcm9tIHZsbG0gaW1wb3J0IE1vZGVsUmVnaXN0cnkKICAgIGZyb20gdmxsbS5tb2RlbF9leGVjdXRvci5tb2RlbHMucXdlbjNfNSBpbXBvcnQgKAogICAgICAgIFF3ZW4zXzVNb2VGb3JDYXVzYWxMTSBhcyBDLAogICAgICAgIFF3ZW4zXzVGb3JDb25kaXRpb25hbEdlbmVyYXRpb24gYXMgTU0sCiAgICApCiAgICBDLmlzX2h5YnJpZCA9IFRydWUKICAgIGZvciBtIGluICgKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX3NoYXBlX2Zyb21fY29uZmlnIiwKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX2R0eXBlX2Zyb21fY29uZmlnIiwKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX2NvcHlfZnVuYyIsCiAgICApOgogICAgICAgIGlmIG0gaW4gTU0uX19kaWN0X186CiAgICAgICAgICAgIHNldGF0dHIoQywgbSwgTU0uX19kaWN0X19bbV0pCiAgICAjIFRoZSBncHRxbW9kZWwgZnVzZWQtTW9FIEdQVFEgY2hlY2twb2ludCBuYW1lcyByb3V0ZWQgZXhwZXJ0cwogICAgIyBtb2RlbC5sYXllcnMuTi5tb2Uue2dhdGVfdXBfcHJvaixkb3duX3Byb2p9IGJ1dCB0aGlzIHZMTE0gcG9ydCBleHBlY3RzCiAgICAjIHRoZW0gdW5kZXIgbWxwLmV4cGVydHMuKjsgcmVuYW1lIG9uIGxvYWQgc28gdGhlIEZ1c2VkTW9FIGxvYWRlciBiaW5kcyB0aGVtLgogICAgaWYgbm90IGdldGF0dHIoQywgIl9xMzVfbW9lX3JlbmFtZSIsIEZhbHNlKToKICAgICAgICBfb3JpZyA9IEMubG9hZF93ZWlnaHRzCiAgICAgICAgZGVmIF9wYXRjaGVkKHNlbGYsIHdlaWdodHMpOgogICAgICAgICAgICBkZWYgX2dlbigpOgogICAgICAgICAgICAgICAgZm9yIG5hbWUsIHcgaW4gd2VpZ2h0czoKICAgICAgICAgICAgICAgICAgICBpZiAiLm1vZS5nYXRlX3VwX3Byb2oiIGluIG5hbWU6CiAgICAgICAgICAgICAgICAgICAgICAgIG5hbWUgPSBuYW1lLnJlcGxhY2UoIi5tb2UuZ2F0ZV91cF9wcm9qIiwgIi5tbHAuZXhwZXJ0cy5nYXRlX3VwX3Byb2oiKQogICAgICAgICAgICAgICAgICAgIGVsaWYgIi5tb2UuZG93bl9wcm9qIiBpbiBuYW1lOgogICAgICAgICAgICAgICAgICAgICAgICBuYW1lID0gbmFtZS5yZXBsYWNlKCIubW9lLmRvd25fcHJvaiIsICIubWxwLmV4cGVydHMuZG93bl9wcm9qIikKICAgICAgICAgICAgICAgICAgICB5aWVsZCBuYW1lLCB3CiAgICAgICAgICAgIHJldHVybiBfb3JpZyhzZWxmLCBfZ2VuKCkpCiAgICAgICAgQy5sb2FkX3dlaWdodHMgPSBfcGF0Y2hlZAogICAgICAgIEMuX3EzNV9tb2VfcmVuYW1lID0gVHJ1ZQogICAgTW9kZWxSZWdpc3RyeS5yZWdpc3Rlcl9tb2RlbCgiUXdlbjNfNU1vZUZvckNhdXNhbExNIiwgQykKICAgIHRyeToKICAgICAgICBmcm9tIHZsbG0ubW9kZWxfZXhlY3V0b3IubW9kZWxzIGltcG9ydCBjb25maWcgYXMgY2ZnCiAgICAgICAgY2ZnLk1PREVMU19DT05GSUdfTUFQLnNldGRlZmF1bHQoCiAgICAgICAgICAgICJRd2VuM181TW9lRm9yQ2F1c2FsTE0iLCBjZmcuUXdlbjNfNUZvckNvbmRpdGlvbmFsR2VuZXJhdGlvbkNvbmZpZwogICAgICAgICkKICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMgZToKICAgICAgICBwcmludCgiY2ZnbWFwIHdhcm4iLCBlKQo= | base64 -d > $D/q35plugin/__init__.py; echo W2J1aWxkLXN5c3RlbV0KcmVxdWlyZXMgPSBbInNldHVwdG9vbHMiXQpidWlsZC1iYWNrZW5kID0gInNldHVwdG9vbHMuYnVpbGRfbWV0YSIKCltwcm9qZWN0XQpuYW1lID0gInEzNXBsdWdpbiIKdmVyc2lvbiA9ICIwLjEiCgpbcHJvamVjdC5lbnRyeS1wb2ludHMuInZsbG0uZ2VuZXJhbF9wbHVnaW5zIl0KcTM1ID0gInEzNXBsdWdpbjpyZWdpc3RlciIKClt0b29sLnNldHVwdG9vbHNdCnBhY2thZ2VzID0gWyJxMzVwbHVnaW4iXQo= | base64 -d > $D/pyproject.toml; pip install -e $D --no-deps -q; exec python3 -m vllm.entrypoints.openai.api_server "$@"'
+      - vllm
+    quantization: gptq
+    dtype: half
+    # Arch remap to the text-only class registered by the startup plugin above.
+    # (Qwen3NextForCausalLM wanted decoder_sparse_step; the multimodal
+    # Qwen3_5MoeForConditionalGeneration rejected the text-only weight names.)
+    #
+    # rope_parameters is also overridden to STRIP the multimodal mRoPE keys
+    # (mrope_section / mrope_interleaved). vLLM's uses_mrope keys off the
+    # top-level rope_parameters.mrope_section and makes the runner emit mRoPE
+    # positions of shape [3, N]; but the text class builds a STANDARD rotary
+    # (rope_type=default) that expects [N], so the rotary op crashed with
+    # "query, key and positions must have the same batch_size and seq_len"
+    # (3N != N). Text-only serving needs no mRoPE (it only encodes image/video
+    # tile positions), so removing mrope_section makes uses_mrope False -> [N].
+    hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+    maxModelLen: 16384
+    maxNumSeqs: 1
+    gpuMemoryUtilization: "0.92"
+    enforceEager: true
+    trustRemoteCode: true
+    servedModelName: qwen36-35b-currency-canary
+    warmPolicy: ondemand
+  gpu:
+    count: 1
+    # 400 > gemma4-5930k twin (350) so the shared-group leader election
+    # preempts the warm twin and grants this canary the 5930k GPU for the
+    # kill-test. Canary is deleted after the verdict; twin reclaims the GPU.
+    priority: 400
+    # forcePromotion bypasses the Ready-first preference so this canary takes
+    # shared-group leadership from the healthy warm twin (priority alone won't
+    # preempt a healthy Active member). Required to preempt a pri-350 warm lane.
+    forcePromotion: true
+    shared: 5930k-textgen
+    vendor: amd
+    vramEstimateMB: 20000
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    limits:
+      cpu: "4"
+      memory: 16Gi
+    requests:
+      cpu: "2"
+      memory: 8Gi
+  serverless:
+    enabled: true
+    # minReplicas 1 warm-pins the canary so it actively demands the GPU; with
+    # priority 400 > twin (350) the shared-group leader election preempts the
+    # warm twin. Reset to 0 / delete the canary after the kill-test verdict.
+    minReplicas: 1
+    coldStartTimeout: 15m0s
+    idleTimeout: 10m0s
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists

@@ -1,0 +1,103 @@
+# Slice 1 vLLM-currency kill-test (experiment platform).
+# Standalone vLLM-serve canary on the official AMD rocm/vllm gfx110X image
+# (vLLM 0.19.1 / ROCm 7.13 / torch 2.10), serving the newly-quantized
+# Qwen3.6-35B-A3B GPTQ artifact on a free gfx1100 node. Isolates the
+# vLLM-currency question from flexinfer controller integration.
+#
+# Riskiest assumption under test: a meaningfully-newer vLLM can serve, on ROCm
+# gfx1100, an arch the current vLLM (0.17.0) rejects (Qwen3_5MoeForCausalLM).
+#
+# Native arch first; if vLLM 0.19.1 does not register Qwen3_5MoeForCausalLM,
+# retry with: --hf-overrides '{"architectures":["Qwen3NextForCausalLM"]}'
+# (structurally Qwen3-Next per prior diagnosis). NOT a flexinfer Model CR —
+# delete after the kill-test verdict.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: qwen36-currency-killtest
+  namespace: flexinfer-system
+  labels:
+    app: qwen36-currency-killtest
+    flexinfer.ai/experiment: vllm-currency-slice1
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: qwen36-currency-killtest
+  template:
+    metadata:
+      labels:
+        app: qwen36-currency-killtest
+        flexinfer.ai/experiment: vllm-currency-slice1
+    spec:
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-5930k
+      tolerations:
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane
+          operator: Exists
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: gpu
+      containers:
+        - name: vllm
+          image: registry.harbor.lan/flexinfer/vllm:rocm7.13-gfx110X-vllm0.19.1
+          command: ["vllm"]
+          args:
+            - "serve"
+            - "/models/qwen36-35b-a3b-reasoning/gptq-w4-g128"
+            - "--served-model-name=qwen36-35b-a3b-reasoning-gptq"
+            - "--quantization=gptq"
+            - "--dtype=float16"
+            - "--gpu-memory-utilization=0.92"
+            - "--max-model-len=16384"
+            - "--max-num-seqs=1"
+            - "--enforce-eager"
+            - "--trust-remote-code"
+            - "--host=0.0.0.0"
+            - "--port=8000"
+          env:
+            - name: HIP_VISIBLE_DEVICES
+              value: "0"
+            - name: VLLM_USE_TRITON_FLASH_ATTN
+              value: "0"
+          ports:
+            - containerPort: 8000
+          resources:
+            limits:
+              amd.com/gpu: "1"
+              memory: 24Gi
+            requests:
+              amd.com/gpu: "1"
+              cpu: "2"
+              memory: 12Gi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: dshm
+              mountPath: /dev/shm
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: llm-models-nfs
+        - name: dshm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: qwen36-currency-killtest
+  namespace: flexinfer-system
+  labels:
+    app: qwen36-currency-killtest
+spec:
+  selector:
+    app: qwen36-currency-killtest
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
