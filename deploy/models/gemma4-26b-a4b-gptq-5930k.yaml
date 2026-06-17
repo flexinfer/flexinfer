@@ -62,7 +62,13 @@ spec:
     priority: 350
   serverless:
     enabled: true
-    minReplicas: 1
+    # 2026-06-17: RETIRED — replaced on the 5930k GPU by the warm-pinned
+    # qwen35-moe-reasoning-5930k reasoning lane (vLLM-currency kill-test full
+    # pass). Scaled to 0 (reversible) so it releases the 5930k-textgen GPU; the
+    # gemma fleet's shared routes (quality-chat, gpt-4, ...) now serve from the
+    # 7900xtx primary alone. Restore by setting minReplicas back to 1 (and idle
+    # the reasoning lane) if the second gemma instance is needed again.
+    minReplicas: 0
     idleTimeout: 30m
     # 2026-05-16: raised for the 2/256 concurrency canary. The controller now
     # sizes vLLM's startupProbe from this budget, so the first graph-capture

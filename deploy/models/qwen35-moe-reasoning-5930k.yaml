@@ -48,15 +48,23 @@
 #      upstreaming the fix would let any GPTQ Qwen3.5-MoE serve without the plugin.
 #
 # Requires the controller hfOverrides passthrough (MR !627) + per-model command
-# override (MR !628). Debug canary — delete after the kill-test verdict.
+# override (MR !628).
+#
+# PROMOTION (2026-06-17): warm-pinned reasoning lane on cblevins-5930k,
+# REPLACING the low-traffic gemma4-26b-a4b-gptq-5930k twin (set to minReplicas 0
+# in the same change). Benchmark-tuned: graph mode (74.6 tok/s single-stream,
+# 7.85x over eager), fp8 KV @ 32K ctx (122,208 KV tokens), maxNumSeqs 4
+# (~176 tok/s agg). FOLLOW-UP: bake the q35plugin into the image to drop the
+# startup pip-install (the plugin is a workaround for a real vLLM 0.19.1
+# Qwen3.5 GPTQ-MoE expert-loader bug — also an upstream-PR candidate).
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
-  name: qwen36-35b-currency-canary
+  name: qwen35-moe-reasoning-5930k
   namespace: flexinfer-system
   annotations:
-    flexinfer.ai/canary: vllm-currency-slice1
-    flexinfer.ai/canary-plan: .loom/30-implementation-plan-experiment-platform-2026-06-15.md
+    flexinfer.ai/promotion-state: vllm-currency-killtest-fullpass-2026-06-17
+    flexinfer.ai/promotion-evidence: deploy/debug/qwen36-currency-canary-model.yaml
 spec:
   backend: vllm
   # Official AMD prebuilt vLLM 0.19.1 (ROCm 7.13 / torch 2.10), mirrored to Harbor.
@@ -115,18 +123,20 @@ spec:
     gpuMemoryUtilization: "0.98"
     enforceEager: false
     trustRemoteCode: true
-    servedModelName: qwen36-35b-currency-canary
-    warmPolicy: ondemand
+    servedModelName: qwen35-moe-reasoning-5930k
+    # Reasoning model: separate <think>...</think> blocks in the API response.
+    reasoningParser: qwen3
+    enableToolCalling: true
+    toolCallParser: hermes
+    # Warm-pinned primary of the 5930k lane (replaces the gemma twin).
+    warmPolicy: primary
   gpu:
     count: 1
-    # 400 > gemma4-5930k twin (350) so the shared-group leader election
-    # preempts the warm twin and grants this canary the 5930k GPU for the
-    # kill-test. Canary is deleted after the verdict; twin reclaims the GPU.
-    priority: 400
-    # forcePromotion bypasses the Ready-first preference so this canary takes
-    # shared-group leadership from the healthy warm twin (priority alone won't
-    # preempt a healthy Active member). Required to preempt a pri-350 warm lane.
-    forcePromotion: true
+    # Owns the 5930k-textgen group: the gemma twin is set to minReplicas 0 in
+    # this same change, so it no longer demands the GPU. Parity priority 350;
+    # no forcePromotion needed (an idle scale-to-zero member never preempts a
+    # warm minReplicas-1 leader).
+    priority: 350
     shared: 5930k-textgen
     vendor: amd
     vramEstimateMB: 20000
@@ -141,13 +151,27 @@ spec:
       memory: 8Gi
   serverless:
     enabled: true
-    # minReplicas 1 warm-pins the canary so it actively demands the GPU; with
-    # priority 400 > twin (350) the shared-group leader election preempts the
-    # warm twin. Reset to 0 / delete the canary after the kill-test verdict.
+    # Warm-pinned (always hot) so the graph-compile cost is paid once per
+    # (re)start, not per request.
     minReplicas: 1
-    coldStartTimeout: 15m0s
-    idleTimeout: 10m0s
+    # 25m budget so the controller sizes vLLM's startupProbe to cover the first
+    # graph-capture compile (same as the gemma twin used).
+    coldStartTimeout: 25m0s
+    idleTimeout: 30m0s
   tolerations:
     - effect: NoSchedule
       key: node-role.kubernetes.io/control-plane
       operator: Exists
+  # Dedicated label only (NOT the gemma fleet's shared labels, and NOT the
+  # existing shared `reasoning` route served by qwen3-14b-claude-distill — adding
+  # this 35B there would silently change that route's load-balancing; opt in
+  # later if desired). The retired twin's gemma routes (quality-chat, gpt-4, ...)
+  # continue to serve via the 7900xtx primary.
+  serviceLabels:
+    - qwen35-moe-reasoning-5930k
+  litellm:
+    enabled: true
+    servedModelName: qwen35-moe-reasoning-5930k
+    aliases:
+      - qwen35-reasoning
+      - qwen3.5-moe-reasoning
