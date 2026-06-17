@@ -4,12 +4,14 @@
 # shared-GPU group coordinates the gfx1100 handoff (a raw pod could not claim
 # the GPU held by the runtime DaemonSet).
 #
-# VERDICT (2026-06-17): the kill-test's core question — "can a current vLLM
-# serve, on ROCm gfx1100, an arch the old vLLM (0.17.0) rejects?" — is YES.
-# vLLM 0.19.1 loads this hybrid linear-attention (gated-deltanet/mamba) + MoE
-# arch, runs the GDN/FLA + rotary kernels on gfx1100, allocates a hybrid KV
-# cache, and serves HTTP 200 / generates tokens. Five layered blockers were hit;
-# 1-4 solved (this file is the recipe), the 5th is a vLLM-internal limitation:
+# VERDICT (2026-06-17): FULL PASS. The kill-test's question — "can a current
+# vLLM serve, on ROCm gfx1100, an arch the old vLLM (0.17.0) rejects?" — is YES,
+# and it serves COHERENTLY. vLLM 0.19.1 loads this hybrid linear-attention
+# (gated-deltanet/mamba) + 256-expert MoE arch, runs the GDN/FLA + rotary kernels
+# on gfx1100, allocates a hybrid KV cache (42,432 tokens, 9.24x concurrency), and
+# returns correct answers ("The capital of France is" -> " Paris."; a coherent
+# reasoning trace for "what is photosynthesis?"). FIVE layered blockers were hit
+# and ALL SOLVED — this file (startup plugin + hfOverrides) is the full recipe:
 #
 #   1. arch unregistered: the artifact says architectures=[Qwen3_5MoeForCausalLM]
 #      which vLLM 0.19.1 has as a CLASS (qwen3_5.py:553, the multimodal wrapper's
@@ -34,15 +36,16 @@
 #      mlp.experts.* -> all 240 expert tensors silently skipped -> incoherent
 #      (repetition-loop) output. FIX: plugin wraps load_weights to rename
 #      .moe.gate_up_proj/.moe.down_proj -> .mlp.experts.* (drops skip count to 0).
-#   5. *** OPEN *** GPTQ fused-MoE expert loader bug: with experts routed in,
-#      vLLM's load_fused_expert_weights builds param name
-#      'layers.0.mlp.experts.w2_weight.qweight' but the GPTQ FusedMoE param is
-#      'experts.w2_qweight' -> KeyError. vLLM 0.19.1's Qwen3.5 expert stacked-
-#      mapping (qwen3_5.py:310-311, "experts.w2_weight") is the unquantized name;
-#      it does not handle the GPTQ ".qweight" suffix. NOT a serve-time fix.
-#      Coherent serving needs a vLLM patch to the Qwen3.5 GPTQ-MoE expert loader,
-#      OR re-quantizing the model in a vLLM-native MoE format (compressed-tensors
-#      / AWQ). Ideal first automated workload for the experiment platform.
+#   5. GPTQ fused-MoE expert loader bug: with experts routed in, vLLM's
+#      fused_expert_params_mapping maps experts.down_proj -> experts.w2_weight
+#      (the UNQUANTIZED name), so load_fused_expert_weights looks up
+#      'experts.w2_weight.qweight' -> KeyError; the GPTQ FusedMoE param (both
+#      gptq_marlin + moe_wna16) is 'experts.w2_qweight'. FIX: plugin monkeypatches
+#      Qwen3_5Model.load_fused_expert_weights to rewrite {w13,w2}_weight.{qweight,
+#      scales,qzeros,g_idx} -> {w13,w2}_{...} before lookup, and gracefully skips
+#      sub-tensors the quant method did not create (e.g. sym -> no qzeros). This
+#      is a real vLLM 0.19.1 bug (its Qwen3.5 expert mapping is unquantized-only);
+#      upstreaming the fix would let any GPTQ Qwen3.5-MoE serve without the plugin.
 #
 # Requires the controller hfOverrides passthrough (MR !627) + per-model command
 # override (MR !628). Debug canary — delete after the kill-test verdict.
@@ -80,7 +83,7 @@ spec:
     command:
       - bash
       - -lc
-      - 'set -e; D=/tmp/q35build; mkdir -p $D/q35plugin; echo ZGVmIHJlZ2lzdGVyKCk6CiAgICBmcm9tIHZsbG0gaW1wb3J0IE1vZGVsUmVnaXN0cnkKICAgIGZyb20gdmxsbS5tb2RlbF9leGVjdXRvci5tb2RlbHMucXdlbjNfNSBpbXBvcnQgKAogICAgICAgIFF3ZW4zXzVNb2VGb3JDYXVzYWxMTSBhcyBDLAogICAgICAgIFF3ZW4zXzVGb3JDb25kaXRpb25hbEdlbmVyYXRpb24gYXMgTU0sCiAgICApCiAgICBDLmlzX2h5YnJpZCA9IFRydWUKICAgIGZvciBtIGluICgKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX3NoYXBlX2Zyb21fY29uZmlnIiwKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX2R0eXBlX2Zyb21fY29uZmlnIiwKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX2NvcHlfZnVuYyIsCiAgICApOgogICAgICAgIGlmIG0gaW4gTU0uX19kaWN0X186CiAgICAgICAgICAgIHNldGF0dHIoQywgbSwgTU0uX19kaWN0X19bbV0pCiAgICAjIFRoZSBncHRxbW9kZWwgZnVzZWQtTW9FIEdQVFEgY2hlY2twb2ludCBuYW1lcyByb3V0ZWQgZXhwZXJ0cwogICAgIyBtb2RlbC5sYXllcnMuTi5tb2Uue2dhdGVfdXBfcHJvaixkb3duX3Byb2p9IGJ1dCB0aGlzIHZMTE0gcG9ydCBleHBlY3RzCiAgICAjIHRoZW0gdW5kZXIgbWxwLmV4cGVydHMuKjsgcmVuYW1lIG9uIGxvYWQgc28gdGhlIEZ1c2VkTW9FIGxvYWRlciBiaW5kcyB0aGVtLgogICAgaWYgbm90IGdldGF0dHIoQywgIl9xMzVfbW9lX3JlbmFtZSIsIEZhbHNlKToKICAgICAgICBfb3JpZyA9IEMubG9hZF93ZWlnaHRzCiAgICAgICAgZGVmIF9wYXRjaGVkKHNlbGYsIHdlaWdodHMpOgogICAgICAgICAgICBkZWYgX2dlbigpOgogICAgICAgICAgICAgICAgZm9yIG5hbWUsIHcgaW4gd2VpZ2h0czoKICAgICAgICAgICAgICAgICAgICBpZiAiLm1vZS5nYXRlX3VwX3Byb2oiIGluIG5hbWU6CiAgICAgICAgICAgICAgICAgICAgICAgIG5hbWUgPSBuYW1lLnJlcGxhY2UoIi5tb2UuZ2F0ZV91cF9wcm9qIiwgIi5tbHAuZXhwZXJ0cy5nYXRlX3VwX3Byb2oiKQogICAgICAgICAgICAgICAgICAgIGVsaWYgIi5tb2UuZG93bl9wcm9qIiBpbiBuYW1lOgogICAgICAgICAgICAgICAgICAgICAgICBuYW1lID0gbmFtZS5yZXBsYWNlKCIubW9lLmRvd25fcHJvaiIsICIubWxwLmV4cGVydHMuZG93bl9wcm9qIikKICAgICAgICAgICAgICAgICAgICB5aWVsZCBuYW1lLCB3CiAgICAgICAgICAgIHJldHVybiBfb3JpZyhzZWxmLCBfZ2VuKCkpCiAgICAgICAgQy5sb2FkX3dlaWdodHMgPSBfcGF0Y2hlZAogICAgICAgIEMuX3EzNV9tb2VfcmVuYW1lID0gVHJ1ZQogICAgTW9kZWxSZWdpc3RyeS5yZWdpc3Rlcl9tb2RlbCgiUXdlbjNfNU1vZUZvckNhdXNhbExNIiwgQykKICAgIHRyeToKICAgICAgICBmcm9tIHZsbG0ubW9kZWxfZXhlY3V0b3IubW9kZWxzIGltcG9ydCBjb25maWcgYXMgY2ZnCiAgICAgICAgY2ZnLk1PREVMU19DT05GSUdfTUFQLnNldGRlZmF1bHQoCiAgICAgICAgICAgICJRd2VuM181TW9lRm9yQ2F1c2FsTE0iLCBjZmcuUXdlbjNfNUZvckNvbmRpdGlvbmFsR2VuZXJhdGlvbkNvbmZpZwogICAgICAgICkKICAgIGV4Y2VwdCBFeGNlcHRpb24gYXMgZToKICAgICAgICBwcmludCgiY2ZnbWFwIHdhcm4iLCBlKQo= | base64 -d > $D/q35plugin/__init__.py; echo W2J1aWxkLXN5c3RlbV0KcmVxdWlyZXMgPSBbInNldHVwdG9vbHMiXQpidWlsZC1iYWNrZW5kID0gInNldHVwdG9vbHMuYnVpbGRfbWV0YSIKCltwcm9qZWN0XQpuYW1lID0gInEzNXBsdWdpbiIKdmVyc2lvbiA9ICIwLjEiCgpbcHJvamVjdC5lbnRyeS1wb2ludHMuInZsbG0uZ2VuZXJhbF9wbHVnaW5zIl0KcTM1ID0gInEzNXBsdWdpbjpyZWdpc3RlciIKClt0b29sLnNldHVwdG9vbHNdCnBhY2thZ2VzID0gWyJxMzVwbHVnaW4iXQo= | base64 -d > $D/pyproject.toml; pip install -e $D --no-deps -q; exec python3 -m vllm.entrypoints.openai.api_server "$@"'
+      - 'set -e; D=/tmp/q35build; mkdir -p $D/q35plugin; echo ZGVmIHJlZ2lzdGVyKCk6CiAgICBmcm9tIHZsbG0gaW1wb3J0IE1vZGVsUmVnaXN0cnkKICAgIGZyb20gdmxsbS5tb2RlbF9leGVjdXRvci5tb2RlbHMucXdlbjNfNSBpbXBvcnQgKAogICAgICAgIFF3ZW4zXzVNb2VGb3JDYXVzYWxMTSBhcyBDLAogICAgICAgIFF3ZW4zXzVGb3JDb25kaXRpb25hbEdlbmVyYXRpb24gYXMgTU0sCiAgICAgICAgUXdlbjNfNU1vZGVsIGFzIE0sCiAgICApCiAgICBDLmlzX2h5YnJpZCA9IFRydWUKICAgIGZvciBtIGluICgKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX3NoYXBlX2Zyb21fY29uZmlnIiwKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX2R0eXBlX2Zyb21fY29uZmlnIiwKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX2NvcHlfZnVuYyIsCiAgICApOgogICAgICAgIGlmIG0gaW4gTU0uX19kaWN0X186CiAgICAgICAgICAgIHNldGF0dHIoQywgbSwgTU0uX19kaWN0X19bbV0pCiAgICAjIEJsb2NrZXIgNDogZ3B0cW1vZGVsIGZ1c2VkLU1vRSBHUFRRIGNoZWNrcG9pbnQgbmFtZXMgcm91dGVkIGV4cGVydHMKICAgICMgbW9kZWwubGF5ZXJzLk4ubW9lLntnYXRlX3VwX3Byb2osZG93bl9wcm9qfTsgdGhpcyB2TExNIHBvcnQgZXhwZWN0cwogICAgIyBtbHAuZXhwZXJ0cy4qIC0+IHJlbmFtZSBvbiBsb2FkIHNvIHRoZSBGdXNlZE1vRSBsb2FkZXIgYmluZHMgdGhlbS4KICAgIGlmIG5vdCBnZXRhdHRyKEMsICJfcTM1X21vZV9yZW5hbWUiLCBGYWxzZSk6CiAgICAgICAgX29yaWcgPSBDLmxvYWRfd2VpZ2h0cwogICAgICAgIGRlZiBfcGF0Y2hlZChzZWxmLCB3ZWlnaHRzKToKICAgICAgICAgICAgZGVmIF9nZW4oKToKICAgICAgICAgICAgICAgIGZvciBuYW1lLCB3IGluIHdlaWdodHM6CiAgICAgICAgICAgICAgICAgICAgaWYgIi5tb2UuZ2F0ZV91cF9wcm9qIiBpbiBuYW1lOgogICAgICAgICAgICAgICAgICAgICAgICBuYW1lID0gbmFtZS5yZXBsYWNlKCIubW9lLmdhdGVfdXBfcHJvaiIsICIubWxwLmV4cGVydHMuZ2F0ZV91cF9wcm9qIikKICAgICAgICAgICAgICAgICAgICBlbGlmICIubW9lLmRvd25fcHJvaiIgaW4gbmFtZToKICAgICAgICAgICAgICAgICAgICAgICAgbmFtZSA9IG5hbWUucmVwbGFjZSgiLm1vZS5kb3duX3Byb2oiLCAiLm1scC5leHBlcnRzLmRvd25fcHJvaiIpCiAgICAgICAgICAgICAgICAgICAgeWllbGQgbmFtZSwgdwogICAgICAgICAgICByZXR1cm4gX29yaWcoc2VsZiwgX2dlbigpKQogICAgICAgIEMubG9hZF93ZWlnaHRzID0gX3BhdGNoZWQKICAgICAgICBDLl9xMzVfbW9lX3JlbmFtZSA9IFRydWUKICAgICMgQmxvY2tlciA1OiB0aGUgZnVzZWQtZXhwZXJ0IG1hcHBpbmcgeWllbGRzIGV4cGVydHMue3cxMyx3Mn1fd2VpZ2h0Lntxd2VpZ2h0LAogICAgIyBzY2FsZXMscXplcm9zLGdfaWR4fSAodW5xdWFudGl6ZWQgbmFtaW5nKSBidXQgdGhlIEdQVFEgRnVzZWRNb0UgcGFyYW1zIGFyZQogICAgIyBleHBlcnRzLnt3MTMsdzJ9X3txd2VpZ2h0LC4uLn0uIFJld3JpdGUgdGhlIHBhcmFtIG5hbWUgYmVmb3JlIGxvb2t1cDsgc2tpcAogICAgIyBzdWItdGVuc29ycyB0aGUgcXVhbnQgbWV0aG9kIGRpZCBub3QgY3JlYXRlIChlLmcuIHN5bSAtPiBubyBxemVyb3MpLgogICAgaWYgbm90IGdldGF0dHIoTSwgIl9xMzVfZ3B0cV9tb2VfZml4IiwgRmFsc2UpOgogICAgICAgIF9vbGZldyA9IE0ubG9hZF9mdXNlZF9leHBlcnRfd2VpZ2h0cwogICAgICAgIGRlZiBfbGZldyhzZWxmLCBuYW1lLCBwYXJhbXNfZGljdCwgbG9hZGVkX3dlaWdodCwgc2hhcmRfaWQsIG51bV9leHBlcnRzKToKICAgICAgICAgICAgZm9yIGJhc2UgaW4gKCJ3MTMiLCAidzIiKToKICAgICAgICAgICAgICAgIGZvciBzdWYgaW4gKCJxd2VpZ2h0IiwgInNjYWxlcyIsICJxemVyb3MiLCAiZ19pZHgiLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgImdfaWR4X3NvcnRfaW5kaWNlcyIpOgogICAgICAgICAgICAgICAgICAgIG5hbWUgPSBuYW1lLnJlcGxhY2UoYmFzZSArICJfd2VpZ2h0LiIgKyBzdWYsIGJhc2UgKyAiXyIgKyBzdWYpCiAgICAgICAgICAgIGlmIG5hbWUgbm90IGluIHBhcmFtc19kaWN0OgogICAgICAgICAgICAgICAgcmV0dXJuIEZhbHNlCiAgICAgICAgICAgIHJldHVybiBfb2xmZXcoc2VsZiwgbmFtZSwgcGFyYW1zX2RpY3QsIGxvYWRlZF93ZWlnaHQsIHNoYXJkX2lkLCBudW1fZXhwZXJ0cykKICAgICAgICBNLmxvYWRfZnVzZWRfZXhwZXJ0X3dlaWdodHMgPSBfbGZldwogICAgICAgIE0uX3EzNV9ncHRxX21vZV9maXggPSBUcnVlCiAgICBNb2RlbFJlZ2lzdHJ5LnJlZ2lzdGVyX21vZGVsKCJRd2VuM181TW9lRm9yQ2F1c2FsTE0iLCBDKQogICAgdHJ5OgogICAgICAgIGZyb20gdmxsbS5tb2RlbF9leGVjdXRvci5tb2RlbHMgaW1wb3J0IGNvbmZpZyBhcyBjZmcKICAgICAgICBjZmcuTU9ERUxTX0NPTkZJR19NQVAuc2V0ZGVmYXVsdCgKICAgICAgICAgICAgIlF3ZW4zXzVNb2VGb3JDYXVzYWxMTSIsIGNmZy5Rd2VuM181Rm9yQ29uZGl0aW9uYWxHZW5lcmF0aW9uQ29uZmlnCiAgICAgICAgKQogICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgIHByaW50KCJjZmdtYXAgd2FybiIsIGUpCg== | base64 -d > $D/q35plugin/__init__.py; echo W2J1aWxkLXN5c3RlbV0KcmVxdWlyZXMgPSBbInNldHVwdG9vbHMiXQpidWlsZC1iYWNrZW5kID0gInNldHVwdG9vbHMuYnVpbGRfbWV0YSIKCltwcm9qZWN0XQpuYW1lID0gInEzNXBsdWdpbiIKdmVyc2lvbiA9ICIwLjEiCgpbcHJvamVjdC5lbnRyeS1wb2ludHMuInZsbG0uZ2VuZXJhbF9wbHVnaW5zIl0KcTM1ID0gInEzNXBsdWdpbjpyZWdpc3RlciIKClt0b29sLnNldHVwdG9vbHNdCnBhY2thZ2VzID0gWyJxMzVwbHVnaW4iXQo= | base64 -d > $D/pyproject.toml; pip install -e $D --no-deps -q; exec python3 -m vllm.entrypoints.openai.api_server "$@"'
       - vllm
     quantization: gptq
     dtype: half
