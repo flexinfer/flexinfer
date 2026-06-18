@@ -1,0 +1,49 @@
+# MTP 35B quant RE-RUN on the now-quiesced radeonvii.
+#
+# The prior attempt churned to Failed because two placeholder models
+# (qwen3-1p7b-tools-radeonvii, qwen3-1p7b-vllm-radeonvii) were restart-looping
+# every 5 min on the single gfx906 card + a one-time full-stack Helm redeploy
+# (triggered by merge d7bd8086) bounced the controller mid-quant. Both loopers
+# are now scaled to minReplicas=0, so the node is quiet. maxMemoryGB bumped
+# 96->100 purely to bump .spec.generation and force the controller to recreate
+# the quant job (re-run the Failed cache). Download is already cached on NFS.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen36-35b-a3b-mtp-gptq
+  namespace: flexinfer-system
+spec:
+  source: "llmfan46/Qwen3.6-35B-A3B-uncensored-heretic-Native-MTP-Preserved"
+  storageStrategy: SharedPVC
+  existingClaimName: llm-models-nfs
+  modelPath: qwen36-35b-a3b-mtp
+  storageSize: "240Gi"
+  secretRef: "hf-token"
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    dynamicExclusion: "auto"
+    useGPU: true
+    maxMemoryGB: 102
+    timeoutSeconds: 86400
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx906
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 256
+  tolerations:
+    - key: node.flexstack.io/incident-quarantine
+      operator: Equal
+      value: "etcd-io"
+      effect: NoSchedule
+    - key: node.kubernetes.io/unschedulable
+      operator: Exists
+      effect: NoSchedule

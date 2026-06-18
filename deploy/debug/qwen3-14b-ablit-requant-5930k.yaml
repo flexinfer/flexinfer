@@ -1,0 +1,48 @@
+# Re-quant of the abliterated Qwen3-14B (its prior gptq-w4-g128 PVC was cleaned up).
+#
+# WHY THIS FILE: the MTP-35B quant (queue item #2) is crash-looping on the
+# unstable radeonvii node (pods evicted ~every 90s, 0% for hours). This dense
+# 14B fits a 62GB gfx1100 node's RAM, so it quants on cblevins-5930k and avoids
+# radeonvii entirely. Storage retargeted to the cluster-wide llm-models-nfs
+# (the original nvme-1r-gpu PVC was node-affine and is gone).
+#
+# Source: huihui-ai/Huihui-Qwen3-14B-abliterated-v2 (abliterated; matches the
+# daily-driver uncensored policy — see docs/dev/daily-driver-promotion-checklist.md).
+# Download phase needs no GPU; the GPU (quant calibration) phase needs the 5930k
+# card, so qwen35-moe-reasoning must be scaled to 0 once download completes.
+# flexinfer-models Flux is suspended -> applied live; this is the durable copy.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-14b-abliterated-v2-gptq
+  namespace: flexinfer-system
+spec:
+  source: "huihui-ai/Huihui-Qwen3-14B-abliterated-v2"
+  storageStrategy: SharedPVC
+  existingClaimName: llm-models-nfs
+  modelPath: qwen3-14b-abliterated-v2
+  storageSize: "50Gi"
+  secretRef: "hf-token"
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    useGPU: true
+    maxMemoryGB: 48
+    timeoutSeconds: 14400
+    calibration:
+      maxSeqLen: 4096
+      maxSamples: 256
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

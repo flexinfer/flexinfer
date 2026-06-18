@@ -1,0 +1,81 @@
+# Serve-test: abliterated Qwen3-14B (freshly re-quanted) on the NEW vLLM 0.19.1
+# image, on the now-free 5930k gfx1100 card. Dense Qwen3 arch => needs NONE of the
+# qwen3_5_moe q35plugin/hfOverrides machinery; just the launcher + tuned settings.
+# Coherence + uncensored probe before deciding whether it becomes the lane.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-14b-ablit-newimg
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: "huihui-ai/Huihui-Qwen3-14B-abliterated-v2"
+    flexinfer.ai/base-model-posture: "abliterated"
+    flexinfer.ai/promotion-state: serve-test-new-vllm-image-2026-06-18
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/vllm:rocm7.13-gfx110X-vllm0.19.1
+  source: pvc://llm-models-nfs/qwen3-14b-abliterated-v2/gptq-w4-g128
+  cache:
+    hostPath: /var/lib/flexinfer/models
+    size: 30Gi
+    storageClass: local-path
+    strategy: SharedPVC
+  config:
+    # Official rocm/vllm image entrypoint isn't the flexinfer serve-wrapper, so
+    # supply the launcher explicitly (backend Args appended after "vllm"). No
+    # plugin/hfOverrides: this is a standard dense Qwen3ForCausalLM.
+    command:
+      - bash
+      - -lc
+      - 'exec python3 -m vllm.entrypoints.openai.api_server "$@"'
+      - vllm
+    quantization: gptq
+    dtype: half
+    maxModelLen: 16384
+    maxNumSeqs: 8
+    kvCacheDtype: fp8_e4m3
+    gpuMemoryUtilization: "0.95"
+    enforceEager: false
+    trustRemoteCode: true
+    servedModelName: qwen3-14b-ablit-newimg
+    reasoningParser: qwen3
+    enableToolCalling: true
+    toolCallParser: hermes
+  gpu:
+    count: 1
+    # Priority 370 > qwen35's 360 keeps this the steady leader of the 5930k card
+    # (qwen35, the aligned distill, stays parked at minReplicas 0). forcePromotion
+    # was a one-time standoff-breaker, now removed for steady state.
+    priority: 370
+    shared: 5930k-textgen
+    vendor: amd
+    vramEstimateMB: 12000
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    limits:
+      cpu: "4"
+      memory: 16Gi
+    requests:
+      cpu: "2"
+      memory: 8Gi
+  serverless:
+    enabled: true
+    minReplicas: 1
+    coldStartTimeout: 20m0s
+    idleTimeout: 30m0s
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists
+  serviceLabels:
+    - qwen3-14b-ablit-newimg
+    - abliterated
+    - uncensored
+  litellm:
+    enabled: true
+    servedModelName: qwen3-14b-ablit-newimg
+    aliases:
+      - abliterated
+      - uncensored
+      - qwen3-14b-abliterated

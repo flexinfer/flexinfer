@@ -1,0 +1,55 @@
+# Qwen3.6-35B-A3B uncensored-heretic Native-MTP-Preserved → GPTQ INT4 (queue item #2)
+#
+# Same qwen3_5_moe hybrid-MoE arch as #1 (qwen36-35b-a3b-reasoning-gptq), now provably
+# servable via the patched vLLM 0.19.1 image (deploy/debug/qwen36-currency-canary-model.yaml,
+# GPTQ-MoE expert-loader fix landed 2026-06-17, commits e23ae7de/42661030).
+#
+# Recipe MIRRORS #1's LIVE working radeonvii spec (the one that produced 21.27GB w/ experts
+# quantized) — NOT the stale committed gfx1100/5930k recipe: gfx906 (radeonvii, 125GB RAM,
+# RAM-bound 256-expert MoE ~70GB RSS won't fit a 62GB gfx1100 node), maxMemoryGB=96, GPTQ
+# bits=4 g128 sym descAct=false dynamicExclusion=auto (quantizes experts → ~18-22GB),
+# act_group_aware=False (script default, MR !613 GAR fix). BOTH tolerations (etcd-io +
+# unschedulable) so it schedules when Flux re-cordons. flexinfer-models Flux is SUSPENDED →
+# applied live with kubectl; this file is the durable git copy (will not reconcile).
+#
+# Serves (when Ready) on the runtime/patched vLLM single gfx1100 + kv_cache_dtype=fp8_e4m3.
+---
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen36-35b-a3b-mtp-gptq
+  namespace: flexinfer-system
+spec:
+  source: "llmfan46/Qwen3.6-35B-A3B-uncensored-heretic-Native-MTP-Preserved"
+  storageStrategy: SharedPVC
+  existingClaimName: llm-models-nfs
+  modelPath: qwen36-35b-a3b-mtp
+  storageSize: "240Gi"
+  secretRef: "hf-token"
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    dynamicExclusion: "auto"
+    useGPU: true
+    maxMemoryGB: 96
+    timeoutSeconds: 86400
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx906
+    calibration:
+      maxSeqLen: 2048
+      maxSamples: 256
+  tolerations:
+    - key: node.flexstack.io/incident-quarantine
+      operator: Equal
+      value: "etcd-io"
+      effect: NoSchedule
+    - key: node.kubernetes.io/unschedulable
+      operator: Exists
+      effect: NoSchedule
