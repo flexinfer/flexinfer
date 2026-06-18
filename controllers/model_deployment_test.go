@@ -117,6 +117,33 @@ func TestDeploymentManagedFieldChanges(t *testing.T) {
 		}
 	})
 
+	// Regression: non-GPU models leave desired.Strategy as the zero value so the
+	// API server applies its default (RollingUpdate{25%,25%}). The controller must
+	// NOT report that default as a "strategy" change, or it rewrites the Deployment
+	// every reconcile forever (observed on cpu-vendor models like
+	// qwen3-1p7b-tools-radeonvii). See isManagedStrategy.
+	t.Run("unmanaged strategy vs k8s default is not a change", func(t *testing.T) {
+		dep := baseDeployment()
+		// Existing deployment carries the API-server-defaulted strategy.
+		maxSurge := intstr.FromString("25%")
+		maxUnavailable := intstr.FromString("25%")
+		dep.Spec.Strategy = appsv1.DeploymentStrategy{
+			Type: appsv1.RollingUpdateDeploymentStrategyType,
+			RollingUpdate: &appsv1.RollingUpdateDeployment{
+				MaxSurge:       &maxSurge,
+				MaxUnavailable: &maxUnavailable,
+			},
+		}
+		// Desired is the zero value (controller does not manage strategy here).
+		desired := dep.Spec.DeepCopy()
+		desired.Strategy = appsv1.DeploymentStrategy{}
+
+		fields := deploymentManagedFieldChanges(dep, desired, dep.Labels, dep.Annotations, dep.Spec.Template.Labels, dep.Spec.Template.Annotations)
+		if containsField(fields, "strategy") {
+			t.Errorf("zero-value desired strategy must not report a change vs the k8s default; got %v", fields)
+		}
+	})
+
 	t.Run("labels change", func(t *testing.T) {
 		dep := baseDeployment()
 		desired := dep.Spec.DeepCopy()

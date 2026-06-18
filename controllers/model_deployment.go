@@ -657,7 +657,13 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 
 	// Apply all controller-managed fields onto the existing deployment.
 	deployment.Spec.Replicas = desired.Replicas
-	deployment.Spec.Strategy = desired.Strategy
+	// Only assign strategy when the controller manages it (GPU models disable
+	// surge). For non-GPU models desired.Strategy is the zero value; assigning it
+	// would clear the K8s-defaulted RollingUpdate{25%,25%} on every reconcile and
+	// hot-loop the Deployment update (see deploymentManagedFieldChanges).
+	if isManagedStrategy(desired.Strategy) {
+		deployment.Spec.Strategy = desired.Strategy
+	}
 	deployment.Spec.Template.Labels = desiredTemplateLabels
 	deployment.Spec.Template.Annotations = desiredPodAnnotations
 	deployment.Spec.Template.Spec.NodeSelector = desired.Template.Spec.NodeSelector
@@ -803,7 +809,13 @@ func deploymentManagedFieldChanges(
 		fields = append(fields, fmt.Sprintf("replicas(%d→%d)",
 			ptr.Deref(e.Replicas, 1), ptr.Deref(desired.Replicas, 1)))
 	}
-	if !apiequality.Semantic.DeepEqual(e.Strategy, desired.Strategy) {
+	// Only reconcile strategy when the controller sets one explicitly (GPU models,
+	// which disable rolling-update surge on single-GPU nodes). For non-GPU models
+	// desired.Strategy is the zero value, which the API server defaults to
+	// RollingUpdate{25%,25%}; comparing zero-vs-default reports a perpetual change
+	// and hot-loops the Deployment update (observed on cpu-vendor models like
+	// qwen3-1p7b-tools-radeonvii writing "strategy" every ~300ms).
+	if isManagedStrategy(desired.Strategy) && !apiequality.Semantic.DeepEqual(e.Strategy, desired.Strategy) {
 		fields = append(fields, "strategy")
 	}
 
@@ -951,6 +963,16 @@ func mergeContainers(existing []corev1.Container, desired []corev1.Container) {
 		e.WorkingDir = d.WorkingDir
 		e.ImagePullPolicy = d.ImagePullPolicy
 	}
+}
+
+// isManagedStrategy reports whether the controller explicitly set a Deployment
+// strategy (as it does for GPU models, to disable rolling-update surge on
+// tightly-constrained single-GPU nodes). A zero-value strategy means "let the
+// API server apply its default" — the controller must then neither write it nor
+// diff against it, otherwise the read-back default (RollingUpdate{25%,25%})
+// never equals the empty desired value and the Deployment update loops forever.
+func isManagedStrategy(s appsv1.DeploymentStrategy) bool {
+	return s.Type != "" || s.RollingUpdate != nil
 }
 
 // podSecurityContextEqual compares two PodSecurityContext pointers, treating nil
