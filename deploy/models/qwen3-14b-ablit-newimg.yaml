@@ -39,7 +39,11 @@ spec:
       - vllm
     quantization: gptq
     dtype: half
-    maxModelLen: 16384
+    # 40960 = the model's full native max_position_embeddings (no rope_scaling,
+    # no sliding window in config.json), so no YaRN/quality risk. Fits the 24GB
+    # card: ~12GB GPTQ weights + 0.95 util leaves ~10.8GB for fp8 KV (~80KB/tok)
+    # = ~140K-token pool, >3x one full 40K sequence.
+    maxModelLen: 40960
     maxNumSeqs: 8
     kvCacheDtype: fp8_e4m3
     gpuMemoryUtilization: "0.95"
