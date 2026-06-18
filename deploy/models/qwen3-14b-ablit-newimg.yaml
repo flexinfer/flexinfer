@@ -51,6 +51,14 @@ spec:
     toolCallParser: hermes
   gpu:
     count: 1
+    # forcePromotion REQUIRED for steady state, not a one-time breaker: the
+    # displaced qwen35-moe-reasoning-5930k keeps a warm Active pod holding this
+    # shared card until it is explicitly demoted, so higher priority alone does
+    # NOT trigger the handover (observed 2026-06-18: phase=Preempted "preempted
+    # by qwen35-moe-reasoning-5930k" with pri 370 > 360). forcePromotion forces
+    # the claim; it's safe to leave on because qwen35 is parked at minReplicas 0
+    # and will not re-warm to contest the lane.
+    forcePromotion: true
     # Priority 370 > qwen35's 360 keeps this the steady leader of the 5930k card
     # (qwen35, the aligned reasoning lane, stays parked at minReplicas 0).
     priority: 370
