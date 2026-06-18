@@ -59,7 +59,12 @@ spec:
     enforceEager: false
     trustRemoteCode: true
     servedModelName: qwen36-35b-mtp-uncensored-5930k
-    reasoningParser: qwen3
+    # reasoningParser REMOVED 2026-06-18: this heretic checkpoint emits no clean
+    # </think> boundary in no-think mode, so the qwen3 parser classified the
+    # whole (clean) answer as `reasoning` and left `content` empty — OpenWebUI
+    # renders content, so replies showed blank. Without a reasoning parser the
+    # full output goes to content. Pair with the chat_template default
+    # enable_thinking=false so content stays clean (minimal <think> clutter).
     enableToolCalling: true
     toolCallParser: hermes
     warmPolicy: primary
