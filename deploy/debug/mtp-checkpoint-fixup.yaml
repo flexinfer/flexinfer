@@ -1,0 +1,47 @@
+# One-shot fixup: the llmfan46 MTP checkpoint lacks preprocessor_config.json, so
+# GPTQModel.load -> AutoProcessor.from_pretrained crashes (the qwen3_5_moe arch is
+# multimodal and tries to load a vision image-processor). The reasoning checkpoint
+# on the same NFS quantized fine, so copy its processor files into the MTP dir.
+# Text-only GPTQ doesn't use the image processor at inference; the file just has
+# to exist for AutoProcessor.from_pretrained to succeed during load.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mtp-checkpoint-fixup
+  namespace: flexinfer-system
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 1200
+  template:
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: fixup
+          image: busybox:1.37
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              echo "=== MTP dir (processor/json) ==="
+              ls -la /cache/qwen36-35b-a3b-mtp/ 2>/dev/null | grep -iE 'process|\.json' || echo "(none / dir missing)"
+              echo "=== reasoning dir (processor/json) ==="
+              ls -la /cache/qwen36-35b-a3b-reasoning/ 2>/dev/null | grep -iE 'process|\.json' || echo "(none / dir missing)"
+              echo "=== copying processor files reasoning -> mtp (if missing) ==="
+              for f in preprocessor_config.json processor_config.json video_preprocessor_config.json; do
+                if [ -f "/cache/qwen36-35b-a3b-reasoning/$f" ] && [ ! -f "/cache/qwen36-35b-a3b-mtp/$f" ]; then
+                  cp "/cache/qwen36-35b-a3b-reasoning/$f" "/cache/qwen36-35b-a3b-mtp/" && echo "COPIED $f"
+                else
+                  echo "skip $f (src missing or dst exists)"
+                fi
+              done
+              echo "=== MTP dir after ==="
+              ls /cache/qwen36-35b-a3b-mtp/ | grep -iE 'process' || echo "(still no processor files)"
+          volumeMounts:
+            - name: cache
+              mountPath: /cache
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: llm-models-nfs
