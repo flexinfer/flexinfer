@@ -17,17 +17,40 @@ limitations under the License.
 package controllers
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/types"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
+
+// freshModelForRender returns the Model re-read from the API server (uncached),
+// so Deployment rendering reflects the CURRENT spec rather than a possibly-stale
+// informer cache. The cached client has been observed serving a stale
+// spec.config for minutes: a maxModelLen edit reached the API server (and the
+// cached CR read), yet ensureDeployment kept rendering the old value and never
+// rolled the Deployment until a manual `kubectl delete deploy` forced a fresh
+// create (reproduced on both the 14B and 35B 5930k lanes, 2026-06-18). Reading
+// through r.APIReader (mgr.GetAPIReader, already wired in
+// cmd/flexinfer-manager/main.go) bypasses the cache. Falls back to the passed
+// model when no APIReader is configured (unit tests) or the read fails.
+func (r *ModelReconciler) freshModelForRender(ctx context.Context, model *aiv1alpha2.Model) *aiv1alpha2.Model {
+	if r.APIReader == nil {
+		return model
+	}
+	fresh := &aiv1alpha2.Model{}
+	if err := r.APIReader.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, fresh); err != nil {
+		return model
+	}
+	return fresh
+}
 
 // buildBackendModelSpec converts Model spec to backend.ModelSpec.
 func (r *ModelReconciler) buildBackendModelSpec(model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor) *backend.ModelSpec {

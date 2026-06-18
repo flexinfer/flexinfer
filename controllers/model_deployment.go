@@ -161,6 +161,11 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		return err
 	}
 
+	// Render the Deployment from the CURRENT API state, not the (possibly stale)
+	// informer cache. Without this, spec.config edits (e.g. maxModelLen) can fail
+	// to roll the Deployment until a manual delete — see freshModelForRender.
+	model = r.freshModelForRender(ctx, model)
+
 	// Build ModelSpec for backend, applying GPUProfile-declared backend
 	// defaults before container args are rendered.
 	spec := r.buildBackendModelSpecForArch(model, b, gpuVendor, gpuArch)
