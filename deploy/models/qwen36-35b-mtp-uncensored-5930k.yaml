@@ -44,7 +44,12 @@ spec:
     quantization: gptq
     dtype: half
     hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
-    maxModelLen: 32768
+    # 2026-06-18: raised 32768 -> 65536. This reasoning model emits very long
+    # think blocks; at 32K a no-max_tokens client (OpenWebUI) can exhaust the
+    # window mid-think and return empty content. 64K doubles the think+answer
+    # budget. Native ceiling is 262144, but the gfx1100 fp8 KV pool (~81K tokens
+    # at util 0.98) is the real cap — 65536 still holds one full sequence (~1.24x).
+    maxModelLen: 65536
     maxNumSeqs: 4
     kvCacheDtype: fp8_e4m3
     gpuMemoryUtilization: '0.98'
