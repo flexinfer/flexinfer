@@ -55,17 +55,17 @@ spec:
     maxModelLen: 32768
     maxNumSeqs: 4
     kvCacheDtype: fp8_e4m3
-    # 0.95 (was 0.98): MTP speculative decoding loads an extra draft head
-    # (mtp.layers.0 + its MoE experts), so leave a little more VRAM headroom.
-    gpuMemoryUtilization: '0.95'
+    gpuMemoryUtilization: '0.98'
     enforceEager: false
-    # MTP speculative decoding 2026-06-18: this is the "Native-MTP-Preserved"
-    # checkpoint (mtp_num_hidden_layers=1, mtp.* weights present). vLLM 0.19.1
-    # registers Qwen3_5MoeMTP (registry.py) which loads mtp.*->model.* as the
-    # draft head. num_speculative_tokens=1 (one MTP layer). KILL-TEST: confirm it
-    # loads (the GPTQ-MoE draft experts may hit the same fused-expert loader bug
-    # the q35plugin patches for the main model) + serves coherent + faster.
-    speculativeConfig: '{"method": "qwen3_5_mtp", "num_speculative_tokens": 1}'
+    # MTP speculative decoding ATTEMPTED + REVERTED 2026-06-18 (MR !652 -> revert):
+    # speculativeConfig {"method":"qwen3_5_mtp","num_speculative_tokens":1} crashed
+    # the engine on load — the Qwen3_5MTP draft class has its OWN
+    # load_fused_expert_weights (qwen3_5_mtp.py:158) that hits the SAME GPTQ
+    # fused-expert KeyError ('layers.0.mlp.experts.w2_weight' vs the GPTQ
+    # 'experts.w2_qweight') the q35plugin already patches for the main
+    # Qwen3_5Model. To enable MTP: extend the q35plugin to also monkeypatch
+    # Qwen3_5MTP.load_fused_expert_weights with the same {w13,w2}_weight.* ->
+    # {w13,w2}_* rewrite + graceful-skip. Known, bounded; deferred.
     trustRemoteCode: true
     servedModelName: qwen36-35b-mtp-uncensored-5930k
     # reasoningParser REMOVED 2026-06-18: this heretic checkpoint emits no clean
