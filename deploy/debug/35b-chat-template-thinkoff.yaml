@@ -1,0 +1,55 @@
+# One-shot durability patch: flip the uncensored 35B-MTP chat_template default to
+# enable_thinking=false on the SOURCE NFS artifact.
+#
+# Why: the llmfan46 heretic checkpoint has an extremely strong reasoning bias —
+# with thinking ON it over-thinks past the output budget and returns empty
+# content; and even with thinking off, vLLM's qwen3 reasoning parser mis-routed
+# the (clean) answer to the `reasoning` field, leaving `content` empty in
+# OpenWebUI. The serving fix is two parts:
+#   1. reasoningParser removed from the Model CR (MR !648, in git) so output -> content.
+#   2. chat_template.jinja line `set ns_flags = namespace(enable_thinking=true)`
+#      flipped to `false` so non-thinking is the default (clients still opt in via
+#      chat_template_kwargs.enable_thinking=true or the <|think_on|> system marker).
+#
+# (2) was applied live to the node-local cache (immediate effect); this Job patches
+# the NFS SOURCE so a future cache rebuild keeps it. Idempotent + backs up first.
+# No model restart needed — the running pod already serves the patched cache.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: qwen36-35b-mtp-chat-template-thinkoff
+  namespace: flexinfer-system
+spec:
+  backoffLimit: 1
+  ttlSecondsAfterFinished: 1200
+  template:
+    spec:
+      restartPolicy: Never
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: patch
+          image: busybox:1.37
+          command: ["sh", "-c"]
+          args:
+            - |
+              set -e
+              F=/cache/qwen36-35b-a3b-mtp/gptq-w4-g128/chat_template.jinja
+              echo "=== before ==="
+              grep -n 'namespace(enable_thinking' "$F" || { echo "pattern not found — aborting"; exit 1; }
+              if grep -q 'set ns_flags = namespace(enable_thinking=false)' "$F"; then
+                echo "already patched (default false) — nothing to do"; exit 0
+              fi
+              cp "$F" "${F}.thinkon.bak"
+              sed -i 's/set ns_flags = namespace(enable_thinking=true)/set ns_flags = namespace(enable_thinking=false)/' "$F"
+              echo "=== after ==="
+              grep -n 'namespace(enable_thinking' "$F"
+              echo "=== conditional opt-in lines intact ==="
+              grep -nE 'set ns_flags.enable_thinking' "$F" | head
+          volumeMounts:
+            - name: cache
+              mountPath: /cache
+      volumes:
+        - name: cache
+          persistentVolumeClaim:
+            claimName: llm-models-nfs
