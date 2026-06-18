@@ -91,6 +91,7 @@ resources:
   - sdxl-inpainting-radeonvii.yaml   # diffusers gfx906, SDXL inpainting
   - bge-radeonvii.yaml               # llamacpp bge-large embeddings on gfx906 HBM2; additive lane (priority 100, serverless, label embeddings-hbm2). Kill-test PASS 2026-06-03; hardware-util arc Sprint 1.
   - bge-reranker-radeonvii.yaml      # llamacpp bge-reranker-v2-m3 on gfx906; co-Active with bge embeddings (priority 115, serverless, label rerank). R5 multi-Active payoff — needs gfx906 features.multiModel + FLEXINFER_RUNTIME_MULTI_MODEL.
+  - gte-qwen2-1p5b-radeonvii.yaml    # llamacpp gte-Qwen2-1.5B-instruct on gfx906, 1536-dim lane. WRITE-PATH fallback for agent-context when hosted Morph embeddings are down; minReplicas 0 (cold), priority 90 (never preempts bge/reranker), label embeddings-1536, alias gte-qwen2-1.5b.
 
   # === cblevins-gtx980ti (6 GB sm_52) ===
   - gemma4-e4b-gguf-gtx980ti.yaml   # llama.cpp GGUF, node-local cache for Maxwell cold starts

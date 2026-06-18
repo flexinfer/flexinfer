@@ -1,0 +1,76 @@
+# gte-Qwen2-1.5B-instruct embeddings on Radeon VII (gfx906) — 1536-dim lane
+#
+# Purpose: a self-hosted 1536-dimension embedding model that MATCHES the
+# agent_context_v1 collection dimension (built by the hosted Morph
+# morph-embedding-v3 model, 1536-dim). It serves as the WRITE-PATH fallback for
+# agent-context's embedder: when the hosted Morph embeddings provider is down
+# (Cloudflare 522 outages), agent_context_add embeds new entries here instead of
+# erroring. Queries do NOT use this lane (different vector space than Morph) —
+# search degrades to keyword fallback. See loom-core
+# pkg/codebase/embed/fallback.go (FallbackEmbedder).
+#
+# Sizing: Q8_0 GGUF ~1.6 GB; fits in gfx906 16 GB alongside the bge embedding +
+# reranker co-Active lanes. Cold/serverless (minReplicas 0) and LOW priority so
+# it never preempts the warm bge-large-radeonvii retrieval plane (priority 120)
+# or the reranker (115) — it activates on demand only during a Morph outage.
+#
+# Mirrors the proven bge-radeonvii.yaml llamacpp embedding lane (Local node
+# hostPath cache; the gfx906 runtime only sees node-local staged caches).
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gte-qwen2-1p5b-radeonvii
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://second-state/gte-Qwen2-1.5B-instruct-GGUF
+  cache:
+    size: 3Gi
+    storageClass: nvme-1r
+    strategy: Local
+  gpu:
+    vendor: amd
+    shared: radeonvii-models
+    # Below bge (120) and bge-reranker (115): the fallback lane must never
+    # preempt the warm retrieval plane. Cold-activated on demand.
+    priority: 90
+    count: 1
+    vramEstimateMB: 2200
+  serverless:
+    enabled: true
+    # Cold by default: only spun up when the Morph write-path fallback fires.
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 5m
+  config:
+    ggufFile: gte-Qwen2-1.5B-instruct-Q8_0.gguf
+    contextSize: 512
+    nGPULayers: 999
+    batchSize: 2048
+    ubatchSize: 512
+    embedding: true
+    flashAttention: false
+    fitOff: true
+    metrics: true
+    rocrVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: "2"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  # Distinct label so it does NOT join the default `embeddings`/`rag` routing
+  # group (which routes to bge/morph). Addressed explicitly via the litellm
+  # served-model name + `gte-qwen2-1.5b` alias only.
+  serviceLabels:
+    - embeddings-1536
+  litellm:
+    enabled: true
+    servedModelName: gte-qwen2-1p5b-radeonvii
+    aliases:
+      - gte-qwen2-1.5b
+      - embeddings-1536
