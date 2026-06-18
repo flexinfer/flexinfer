@@ -152,9 +152,12 @@ spec:
       memory: 8Gi
   serverless:
     enabled: true
-    # Warm-pinned (always hot) so the graph-compile cost is paid once per
-    # (re)start, not per request.
-    minReplicas: 1
+    # 2026-06-18: PARKED at minReplicas 0. The abliterated qwen3-14b-ablit-newimg
+    # lane (priority 370) was promoted to the warm leader of the 5930k-textgen
+    # shared group; the two can't co-fit warm on one 24GB card. Kept enabled +
+    # reconciled so it can be restored by flipping this back to 1.
+    # (Was: warm-pinned at 1 so graph-compile cost is paid once per (re)start.)
+    minReplicas: 0
     # 25m budget so the controller sizes vLLM's startupProbe to cover the first
     # graph-capture compile (same as the gemma twin used).
     coldStartTimeout: 25m0s

@@ -1,7 +1,15 @@
-# Serve-test: abliterated Qwen3-14B (freshly re-quanted) on the NEW vLLM 0.19.1
-# image, on the now-free 5930k gfx1100 card. Dense Qwen3 arch => needs NONE of the
-# qwen3_5_moe q35plugin/hfOverrides machinery; just the launcher + tuned settings.
-# Coherence + uncensored probe before deciding whether it becomes the lane.
+# Abliterated Qwen3-14B (huihui-ai v2, self-requanted GPTQ-w4-g128) — warm lane
+# on the cblevins-5930k gfx1100 card, served on the NEW vLLM 0.19.1 image.
+#
+# Promoted from a deploy/debug/ serve-test (2026-06-18) after it PASSED:
+# coherent + correct (17x23->391, capital of Japan->Tokyo), genuinely
+# uncensored, and a standard dense Qwen3ForCausalLM so it needs NONE of the
+# qwen3_5_moe q35plugin/hfOverrides machinery — just the launcher + tuned
+# settings. As the warm leader of the 5930k-textgen shared group it displaces
+# qwen35-moe-reasoning-5930k (parked at minReplicas 0 in kustomization.yaml).
+#
+# Name retained from the serve-test so Flux adopts the already-running live
+# object in place (no orphaned hand-applied CR, no cold restart).
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -10,7 +18,7 @@ metadata:
   annotations:
     flexinfer.ai/base-model-source: "huihui-ai/Huihui-Qwen3-14B-abliterated-v2"
     flexinfer.ai/base-model-posture: "abliterated"
-    flexinfer.ai/promotion-state: serve-test-new-vllm-image-2026-06-18
+    flexinfer.ai/promotion-state: promoted-warm-5930k-2026-06-18
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/vllm:rocm7.13-gfx110X-vllm0.19.1
@@ -44,8 +52,7 @@ spec:
   gpu:
     count: 1
     # Priority 370 > qwen35's 360 keeps this the steady leader of the 5930k card
-    # (qwen35, the aligned distill, stays parked at minReplicas 0). forcePromotion
-    # was a one-time standoff-breaker, now removed for steady state.
+    # (qwen35, the aligned reasoning lane, stays parked at minReplicas 0).
     priority: 370
     shared: 5930k-textgen
     vendor: amd
