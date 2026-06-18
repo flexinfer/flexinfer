@@ -195,6 +195,36 @@ func TestLlamaCppBackendArgs_EmbeddingFlag(t *testing.T) {
 	})
 }
 
+func TestLlamaCppBackendArgs_PoolingFlag(t *testing.T) {
+	b := &LlamaCppBackend{}
+
+	t.Run("set", func(t *testing.T) {
+		spec := &ModelSpec{
+			ModelPath: "/models/gte/model.gguf",
+			Config: map[string]any{
+				"embedding": true,
+				"pooling":   "last",
+			},
+		}
+		args := b.Args(spec)
+		joined := strings.Join(args, " ")
+		if !strings.Contains(joined, "--pooling last") {
+			t.Fatalf("expected args to contain --pooling last, got %#v", args)
+		}
+	})
+
+	t.Run("not set by default", func(t *testing.T) {
+		spec := &ModelSpec{
+			ModelPath: "/models/bge/model.gguf",
+			Config:    map[string]any{"embedding": true},
+		}
+		args := b.Args(spec)
+		if strings.Contains(strings.Join(args, " "), "--pooling") {
+			t.Fatalf("expected no --pooling without config, got %#v", args)
+		}
+	})
+}
+
 func TestLlamaCppBackendArgs_RerankingFlag(t *testing.T) {
 	b := &LlamaCppBackend{}
 

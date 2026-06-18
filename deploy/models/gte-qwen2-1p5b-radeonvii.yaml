@@ -50,6 +50,10 @@ spec:
     batchSize: 2048
     ubatchSize: 512
     embedding: true
+    # gte-Qwen2 GGUF defaults to pooling 'none' (token-level), which the
+    # OpenAI-compatible /v1/embeddings endpoint rejects. Qwen2 instruct
+    # embedding models use last-token pooling.
+    pooling: last
     flashAttention: false
     fitOff: true
     metrics: true
