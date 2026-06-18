@@ -397,17 +397,26 @@ publish:
       flash_loader_tags="${REGISTRY}/flexinfer-flash-loader:${CI_COMMIT_SHORT_SHA}"
       model_tools_tags="${REGISTRY}/model-tools:${CI_COMMIT_SHORT_SHA}"
 
+      # Immutable, chronologically-sortable UTC timestamp tag (YYYYMMDD-HHMMSS).
+      # This is what Flux image-automation selects (ImagePolicy filterTags
+      # `^[0-9]{8}-[0-9]{6}$`, alphabetical asc) to pin deployments to the exact
+      # image that finished publishing — eliminating the rollout/image race the
+      # mutable ":master" tag has (the HelmRelease reconcileStrategy:Revision rolls
+      # on git commit, which fires before this publish job pushes the new image).
+      # See platform/gitops/k3s/flux/image-automation/flexinfer-*.
+      BUILD_TS="$(date -u +%Y%m%d-%H%M%S)"
+
       # "master" tags are used for continuous deployment in homelab clusters.
-      # The Helm chart forces a rollout on each revision, and imagePullPolicy=Always
-      # ensures we always pull the latest "master" image.
+      # imagePullPolicy=Always ensures the mutable tag is re-pulled; the timestamp
+      # tag above is the one image-automation actually pins for deterministic rollouts.
       if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
-        controller_tags="${controller_tags} ${REGISTRY}/flexinfer-controller:master"
-        agent_tags="${agent_tags} ${REGISTRY}/flexinfer-agent:master"
-        scheduler_tags="${scheduler_tags} ${REGISTRY}/flexinfer-scheduler:master"
-        bench_tags="${bench_tags} ${REGISTRY}/flexinfer-bench:master"
-        proxy_tags="${proxy_tags} ${REGISTRY}/flexinfer-proxy:master"
-        flash_loader_tags="${flash_loader_tags} ${REGISTRY}/flexinfer-flash-loader:master"
-        model_tools_tags="${model_tools_tags} ${REGISTRY}/model-tools:master"
+        controller_tags="${controller_tags} ${REGISTRY}/flexinfer-controller:master ${REGISTRY}/flexinfer-controller:${BUILD_TS}"
+        agent_tags="${agent_tags} ${REGISTRY}/flexinfer-agent:master ${REGISTRY}/flexinfer-agent:${BUILD_TS}"
+        scheduler_tags="${scheduler_tags} ${REGISTRY}/flexinfer-scheduler:master ${REGISTRY}/flexinfer-scheduler:${BUILD_TS}"
+        bench_tags="${bench_tags} ${REGISTRY}/flexinfer-bench:master ${REGISTRY}/flexinfer-bench:${BUILD_TS}"
+        proxy_tags="${proxy_tags} ${REGISTRY}/flexinfer-proxy:master ${REGISTRY}/flexinfer-proxy:${BUILD_TS}"
+        flash_loader_tags="${flash_loader_tags} ${REGISTRY}/flexinfer-flash-loader:master ${REGISTRY}/flexinfer-flash-loader:${BUILD_TS}"
+        model_tools_tags="${model_tools_tags} ${REGISTRY}/model-tools:master ${REGISTRY}/model-tools:${BUILD_TS}"
       fi
 
       if [ "${PUBLISH_LATEST_TAGS}" = "1" ] && [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
