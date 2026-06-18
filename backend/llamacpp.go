@@ -194,6 +194,15 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--embeddings")
 	}
 
+	// Embedding pooling type (llama-server --pooling: none|mean|cls|last|rank).
+	// Required for embedding models whose GGUF defaults to pooling 'none'
+	// (token-level), which the OpenAI-compatible /v1/embeddings endpoint rejects
+	// ("Pooling type 'none' is not OAI compatible"). gte-Qwen2 needs 'last';
+	// bge models bake a compatible pooling head into the GGUF and need no override.
+	if pooling := spec.ConfigString("pooling", ""); pooling != "" {
+		args = append(args, "--pooling", pooling)
+	}
+
 	// Reranking mode (required for /v1/rerank endpoint). Mutually exclusive with
 	// --embeddings in llama-server (both set the pooling head); reranking implies
 	// pooling type RANK. Kill-test 2026-06-03 PASS: bge-reranker-v2-m3 GGUF
