@@ -1,0 +1,93 @@
+# Uncensored-heretic Qwen3.6-35B-A3B-MoE (Native-MTP-Preserved), self-quantized
+# GPTQ-w4-g128 from llmfan46/Qwen3.6-35B-A3B-uncensored-heretic-Native-MTP-Preserved.
+# Promoted OVER the 14B abliterated lane on the cblevins-5930k gfx1100 card as the
+# uncensored daily-driver (priority 380 > 14B's 370, forcePromotion to claim the
+# shared card; qwen3-14b-ablit-newimg parked at minReplicas 0).
+#
+# SAME MoE serving recipe as qwen35-moe-reasoning-5930k.yaml (see that file for the
+# full 5-blocker explanation: startup q35plugin registering Qwen3_5MoeForCausalLM +
+# is_hybrid + mamba-state graft + moe.*->mlp.experts.* rename + GPTQ fused-expert
+# loader fix; hfOverrides stripping mRoPE). ONLY the source artifact differs.
+#
+# RISKIEST ASSUMPTION / kill-test: the "Native-MTP-Preserved" variant retains
+# Multi-Token-Prediction head weights the reasoning quant lacks. The plugin's
+# graceful-skip (load_fused_expert_weights returns False for params not in
+# params_dict) should drop unexpected MTP tensors, but whether the checkpoint
+# loads AND serves COHERENTLY on vLLM 0.19.1 is unproven until the first cold
+# start. Failure mode: load error on MTP weights, or incoherent output. If it
+# fails, unpark the 14B (this file's followers revert) — the 14B reclaims the card.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen36-35b-mtp-uncensored-5930k
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: llmfan46/Qwen3.6-35B-A3B-uncensored-heretic-Native-MTP-Preserved
+    flexinfer.ai/base-model-posture: uncensored-heretic
+    flexinfer.ai/promotion-state: mtp-serve-test-2026-06-18
+    flexinfer.ai/promotion-evidence: deploy/models/qwen35-moe-reasoning-5930k.yaml
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/vllm:rocm7.13-gfx110X-vllm0.19.1
+  source: pvc://llm-models-nfs/qwen36-35b-a3b-mtp/gptq-w4-g128
+  cache:
+    hostPath: /var/lib/flexinfer/models
+    size: 50Gi
+    storageClass: local-path
+    strategy: SharedPVC
+  config:
+    command:
+    - bash
+    - -lc
+    - set -e; D=/tmp/q35build; mkdir -p $D/q35plugin; echo ZGVmIHJlZ2lzdGVyKCk6CiAgICBmcm9tIHZsbG0gaW1wb3J0IE1vZGVsUmVnaXN0cnkKICAgIGZyb20gdmxsbS5tb2RlbF9leGVjdXRvci5tb2RlbHMucXdlbjNfNSBpbXBvcnQgKAogICAgICAgIFF3ZW4zXzVNb2VGb3JDYXVzYWxMTSBhcyBDLAogICAgICAgIFF3ZW4zXzVGb3JDb25kaXRpb25hbEdlbmVyYXRpb24gYXMgTU0sCiAgICAgICAgUXdlbjNfNU1vZGVsIGFzIE0sCiAgICApCiAgICBDLmlzX2h5YnJpZCA9IFRydWUKICAgIGZvciBtIGluICgKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX3NoYXBlX2Zyb21fY29uZmlnIiwKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX2R0eXBlX2Zyb21fY29uZmlnIiwKICAgICAgICAiZ2V0X21hbWJhX3N0YXRlX2NvcHlfZnVuYyIsCiAgICApOgogICAgICAgIGlmIG0gaW4gTU0uX19kaWN0X186CiAgICAgICAgICAgIHNldGF0dHIoQywgbSwgTU0uX19kaWN0X19bbV0pCiAgICAjIEJsb2NrZXIgNDogZ3B0cW1vZGVsIGZ1c2VkLU1vRSBHUFRRIGNoZWNrcG9pbnQgbmFtZXMgcm91dGVkIGV4cGVydHMKICAgICMgbW9kZWwubGF5ZXJzLk4ubW9lLntnYXRlX3VwX3Byb2osZG93bl9wcm9qfTsgdGhpcyB2TExNIHBvcnQgZXhwZWN0cwogICAgIyBtbHAuZXhwZXJ0cy4qIC0+IHJlbmFtZSBvbiBsb2FkIHNvIHRoZSBGdXNlZE1vRSBsb2FkZXIgYmluZHMgdGhlbS4KICAgIGlmIG5vdCBnZXRhdHRyKEMsICJfcTM1X21vZV9yZW5hbWUiLCBGYWxzZSk6CiAgICAgICAgX29yaWcgPSBDLmxvYWRfd2VpZ2h0cwogICAgICAgIGRlZiBfcGF0Y2hlZChzZWxmLCB3ZWlnaHRzKToKICAgICAgICAgICAgZGVmIF9nZW4oKToKICAgICAgICAgICAgICAgIGZvciBuYW1lLCB3IGluIHdlaWdodHM6CiAgICAgICAgICAgICAgICAgICAgaWYgIi5tb2UuZ2F0ZV91cF9wcm9qIiBpbiBuYW1lOgogICAgICAgICAgICAgICAgICAgICAgICBuYW1lID0gbmFtZS5yZXBsYWNlKCIubW9lLmdhdGVfdXBfcHJvaiIsICIubWxwLmV4cGVydHMuZ2F0ZV91cF9wcm9qIikKICAgICAgICAgICAgICAgICAgICBlbGlmICIubW9lLmRvd25fcHJvaiIgaW4gbmFtZToKICAgICAgICAgICAgICAgICAgICAgICAgbmFtZSA9IG5hbWUucmVwbGFjZSgiLm1vZS5kb3duX3Byb2oiLCAiLm1scC5leHBlcnRzLmRvd25fcHJvaiIpCiAgICAgICAgICAgICAgICAgICAgeWllbGQgbmFtZSwgdwogICAgICAgICAgICByZXR1cm4gX29yaWcoc2VsZiwgX2dlbigpKQogICAgICAgIEMubG9hZF93ZWlnaHRzID0gX3BhdGNoZWQKICAgICAgICBDLl9xMzVfbW9lX3JlbmFtZSA9IFRydWUKICAgICMgQmxvY2tlciA1OiB0aGUgZnVzZWQtZXhwZXJ0IG1hcHBpbmcgeWllbGRzIGV4cGVydHMue3cxMyx3Mn1fd2VpZ2h0Lntxd2VpZ2h0LAogICAgIyBzY2FsZXMscXplcm9zLGdfaWR4fSAodW5xdWFudGl6ZWQgbmFtaW5nKSBidXQgdGhlIEdQVFEgRnVzZWRNb0UgcGFyYW1zIGFyZQogICAgIyBleHBlcnRzLnt3MTMsdzJ9X3txd2VpZ2h0LC4uLn0uIFJld3JpdGUgdGhlIHBhcmFtIG5hbWUgYmVmb3JlIGxvb2t1cDsgc2tpcAogICAgIyBzdWItdGVuc29ycyB0aGUgcXVhbnQgbWV0aG9kIGRpZCBub3QgY3JlYXRlIChlLmcuIHN5bSAtPiBubyBxemVyb3MpLgogICAgaWYgbm90IGdldGF0dHIoTSwgIl9xMzVfZ3B0cV9tb2VfZml4IiwgRmFsc2UpOgogICAgICAgIF9vbGZldyA9IE0ubG9hZF9mdXNlZF9leHBlcnRfd2VpZ2h0cwogICAgICAgIGRlZiBfbGZldyhzZWxmLCBuYW1lLCBwYXJhbXNfZGljdCwgbG9hZGVkX3dlaWdodCwgc2hhcmRfaWQsIG51bV9leHBlcnRzKToKICAgICAgICAgICAgZm9yIGJhc2UgaW4gKCJ3MTMiLCAidzIiKToKICAgICAgICAgICAgICAgIGZvciBzdWYgaW4gKCJxd2VpZ2h0IiwgInNjYWxlcyIsICJxemVyb3MiLCAiZ19pZHgiLAogICAgICAgICAgICAgICAgICAgICAgICAgICAgImdfaWR4X3NvcnRfaW5kaWNlcyIpOgogICAgICAgICAgICAgICAgICAgIG5hbWUgPSBuYW1lLnJlcGxhY2UoYmFzZSArICJfd2VpZ2h0LiIgKyBzdWYsIGJhc2UgKyAiXyIgKyBzdWYpCiAgICAgICAgICAgIGlmIG5hbWUgbm90IGluIHBhcmFtc19kaWN0OgogICAgICAgICAgICAgICAgcmV0dXJuIEZhbHNlCiAgICAgICAgICAgIHJldHVybiBfb2xmZXcoc2VsZiwgbmFtZSwgcGFyYW1zX2RpY3QsIGxvYWRlZF93ZWlnaHQsIHNoYXJkX2lkLCBudW1fZXhwZXJ0cykKICAgICAgICBNLmxvYWRfZnVzZWRfZXhwZXJ0X3dlaWdodHMgPSBfbGZldwogICAgICAgIE0uX3EzNV9ncHRxX21vZV9maXggPSBUcnVlCiAgICBNb2RlbFJlZ2lzdHJ5LnJlZ2lzdGVyX21vZGVsKCJRd2VuM181TW9lRm9yQ2F1c2FsTE0iLCBDKQogICAgdHJ5OgogICAgICAgIGZyb20gdmxsbS5tb2RlbF9leGVjdXRvci5tb2RlbHMgaW1wb3J0IGNvbmZpZyBhcyBjZmcKICAgICAgICBjZmcuTU9ERUxTX0NPTkZJR19NQVAuc2V0ZGVmYXVsdCgKICAgICAgICAgICAgIlF3ZW4zXzVNb2VGb3JDYXVzYWxMTSIsIGNmZy5Rd2VuM181Rm9yQ29uZGl0aW9uYWxHZW5lcmF0aW9uQ29uZmlnCiAgICAgICAgKQogICAgZXhjZXB0IEV4Y2VwdGlvbiBhcyBlOgogICAgICAgIHByaW50KCJjZmdtYXAgd2FybiIsIGUpCg== | base64 -d > $D/q35plugin/__init__.py; echo W2J1aWxkLXN5c3RlbV0KcmVxdWlyZXMgPSBbInNldHVwdG9vbHMiXQpidWlsZC1iYWNrZW5kID0gInNldHVwdG9vbHMuYnVpbGRfbWV0YSIKCltwcm9qZWN0XQpuYW1lID0gInEzNXBsdWdpbiIKdmVyc2lvbiA9ICIwLjEiCgpbcHJvamVjdC5lbnRyeS1wb2ludHMuInZsbG0uZ2VuZXJhbF9wbHVnaW5zIl0KcTM1ID0gInEzNXBsdWdpbjpyZWdpc3RlciIKClt0b29sLnNldHVwdG9vbHNdCnBhY2thZ2VzID0gWyJxMzVwbHVnaW4iXQo= | base64 -d > $D/pyproject.toml; pip install -e $D --no-deps -q; exec python3 -m vllm.entrypoints.openai.api_server "$@"
+    - vllm
+    quantization: gptq
+    dtype: half
+    hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+    maxModelLen: 32768
+    maxNumSeqs: 4
+    kvCacheDtype: fp8_e4m3
+    gpuMemoryUtilization: '0.98'
+    enforceEager: false
+    trustRemoteCode: true
+    servedModelName: qwen36-35b-mtp-uncensored-5930k
+    reasoningParser: qwen3
+    enableToolCalling: true
+    toolCallParser: hermes
+    warmPolicy: primary
+  gpu:
+    count: 1
+    priority: 380
+    shared: 5930k-textgen
+    vendor: amd
+    vramEstimateMB: 20000
+    forcePromotion: true
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    limits:
+      cpu: '4'
+      memory: 16Gi
+    requests:
+      cpu: '2'
+      memory: 8Gi
+  serverless:
+    enabled: true
+    minReplicas: 1
+    coldStartTimeout: 25m0s
+    idleTimeout: 30m0s
+  tolerations:
+  - effect: NoSchedule
+    key: node-role.kubernetes.io/control-plane
+    operator: Exists
+  serviceLabels:
+  - qwen36-35b-mtp-uncensored-5930k
+  - uncensored
+  - heretic
+  litellm:
+    enabled: true
+    servedModelName: qwen36-35b-mtp-uncensored-5930k
+    aliases:
+    - uncensored
+    - heretic
+    - qwen36-35b-uncensored

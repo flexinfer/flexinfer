@@ -55,16 +55,10 @@ spec:
     toolCallParser: hermes
   gpu:
     count: 1
-    # forcePromotion REQUIRED for steady state, not a one-time breaker: the
-    # displaced qwen35-moe-reasoning-5930k keeps a warm Active pod holding this
-    # shared card until it is explicitly demoted, so higher priority alone does
-    # NOT trigger the handover (observed 2026-06-18: phase=Preempted "preempted
-    # by qwen35-moe-reasoning-5930k" with pri 370 > 360). forcePromotion forces
-    # the claim; it's safe to leave on because qwen35 is parked at minReplicas 0
-    # and will not re-warm to contest the lane.
-    forcePromotion: true
-    # Priority 370 > qwen35's 360 keeps this the steady leader of the 5930k card
-    # (qwen35, the aligned reasoning lane, stays parked at minReplicas 0).
+    # 2026-06-18: DEMOTED. forcePromotion removed and minReplicas set to 0 below —
+    # the uncensored qwen36-35b-mtp-uncensored-5930k lane (priority 380,
+    # forcePromotion) was promoted to the warm leader of this shared card. This
+    # 14B abliterated lane is parked (kept enabled/reconciled for restore).
     priority: 370
     shared: 5930k-textgen
     vendor: amd
@@ -80,21 +74,23 @@ spec:
       memory: 8Gi
   serverless:
     enabled: true
-    minReplicas: 1
+    # PARKED 2026-06-18 (displaced by qwen36-35b-mtp-uncensored-5930k). Restore by
+    # flipping back to 1 (and re-add forcePromotion if the 35B still holds the card).
+    minReplicas: 0
     coldStartTimeout: 20m0s
     idleTimeout: 30m0s
   tolerations:
     - effect: NoSchedule
       key: node-role.kubernetes.io/control-plane
       operator: Exists
+  # `uncensored` label/alias released to the promoted 35B lane (avoids alias
+  # conflict); this parked lane keeps only its abliterated-specific routes.
   serviceLabels:
     - qwen3-14b-ablit-newimg
     - abliterated
-    - uncensored
   litellm:
     enabled: true
     servedModelName: qwen3-14b-ablit-newimg
     aliases:
       - abliterated
-      - uncensored
       - qwen3-14b-abliterated
