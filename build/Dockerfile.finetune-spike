@@ -1,0 +1,44 @@
+# Minimal training-spike image for the F1 fine-tuning kill-test (gfx1100).
+#
+# Purpose: prove the existing build/scripts/finetune.py path actually runs on
+# gfx1100 (RDNA3). NOT a production image — deps are deliberately pinned to the
+# *old* TRL SFTTrainer API that finetune.py was written against
+# (tokenizer=/max_seq_length=/dataset_text_field= as direct kwargs).
+#
+# Base: the repo's proven GPTQ-quantizer base (torch 2.6 / ROCm 6.4, runs on
+# gfx1100). Training does not need vLLM, so we avoid the heavier vllm-dev base.
+ARG BASE_IMAGE=rocm/pytorch:rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.6.0
+FROM ${BASE_IMAGE}
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HUB_ENABLE_HF_TRANSFER=0
+
+# Training stack. PROVEN pins (kill-test 2026-06-19):
+#   - transformers==4.55.4: >=4.51 for Qwen3, <4.56 to dodge the py3.10
+#     numpy-annotation crash in data_collator.py (np.ndarray[np.ndarray[...]]).
+#   - trl==0.11.4: matches finetune.py's SFTTrainer(tokenizer=,max_seq_length=,
+#     dataset_text_field=) kwarg API (deprecation warnings only).
+#   - rich: required transitively by trl 0.11.4's SFTTrainer import.
+RUN pip install --no-cache-dir \
+      "transformers==4.55.4" \
+      "trl==0.11.4" \
+      "peft>=0.13,<0.15" \
+      "datasets>=2.20" \
+      "accelerate>=0.34" \
+      safetensors huggingface-hub sentencepiece protobuf rich
+
+# bitsandbytes is only needed for the QLoRA (4-bit) stage; the LoRA (bf16) path
+# does not touch it. ROCm bnb is preview-quality, so make install best-effort and
+# never block the image build on it.
+RUN pip install --no-cache-dir bitsandbytes \
+      || echo "WARN: bitsandbytes install failed — LoRA path unaffected, QLoRA stage will need a ROCm bnb wheel"
+
+COPY build/scripts/finetune.py /opt/flexinfer/scripts/finetune.py
+
+# Fail the build early if the pinned stack is internally inconsistent.
+RUN python -c "import torch, transformers, trl, peft, datasets; \
+print('torch', torch.__version__, 'hip', torch.version.hip); \
+print('transformers', transformers.__version__, 'trl', trl.__version__, 'peft', peft.__version__, 'datasets', datasets.__version__)"
+
+WORKDIR /workspace

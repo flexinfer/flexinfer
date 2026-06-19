@@ -1,0 +1,54 @@
+# Fine-tuning image for the F1 training lane (LoRA / QLoRA via build/scripts/finetune.py).
+#
+# Productized successor to Dockerfile.finetune-spike (the 2026-06-19 kill-test recipe).
+# Wire into a GPUProfile via `quantization.images.finetune`; controllers/modelcache_finetune.go
+# prefers the "finetune" image and falls back to the "gptq" quantizer image.
+#
+# Base: the repo's GPTQ-quantizer base (torch 2.6 / ROCm 6.4, proven on gfx1100).
+ARG BASE_IMAGE=rocm/pytorch:rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.6.0
+FROM ${BASE_IMAGE}
+
+ARG GPU_ARCH=gfx1100
+# Install Unsloth (faster + lower-VRAM, enables true 4-bit QLoRA). Best-effort: ROCm
+# support is preview-quality and finetune.py falls back to the PEFT path if it is absent.
+ARG INCLUDE_UNSLOTH=false
+
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    HF_HUB_ENABLE_HF_TRANSFER=0 \
+    GPU_ARCH=${GPU_ARCH}
+
+# PROVEN pin set (kill-test 2026-06-19, see .loom/f1-training-killtest-verdict-2026-06-19.md):
+#   - transformers==4.55.4: >=4.51 for Qwen3, <4.56 to dodge the py3.10 numpy-annotation
+#     crash in data_collator.py (np.ndarray[np.ndarray[...]] -> "Too few arguments").
+#   - trl==0.11.4: matches finetune.py's SFTTrainer(tokenizer=,max_seq_length=,
+#     dataset_text_field=) kwarg API. (Slice 3 migrates finetune.py to SFTConfig and lifts this.)
+#   - rich: required transitively by trl 0.11.4's SFTTrainer import.
+RUN pip install --no-cache-dir \
+      "transformers==4.55.4" \
+      "trl==0.11.4" \
+      "peft>=0.13,<0.15" \
+      "datasets>=2.20" \
+      "accelerate>=0.34" \
+      safetensors huggingface-hub hf_transfer sentencepiece protobuf rich
+
+# bitsandbytes: needed for QLoRA (8-bit optimizer proven; NF4 4-bit is slice 3's kill-test).
+# ROCm bnb is preview-quality, so keep install best-effort — the LoRA path does not need it.
+RUN pip install --no-cache-dir bitsandbytes \
+      || echo "WARN: bitsandbytes install failed - bf16 LoRA path unaffected"
+
+RUN if [ "${INCLUDE_UNSLOTH}" = "true" ]; then \
+      pip install --no-cache-dir unsloth \
+        || echo "WARN: unsloth install failed - finetune.py falls back to the PEFT path"; \
+    fi
+
+COPY build/scripts/ /opt/flexinfer/scripts/
+RUN chmod +x /opt/flexinfer/scripts/*.py /opt/flexinfer/scripts/*.sh 2>/dev/null || true
+
+# Fail the build early if the training stack is internally inconsistent.
+RUN python -c "import torch, transformers, trl, peft, datasets; \
+print('torch', torch.__version__, 'hip', torch.version.hip); \
+print('transformers', transformers.__version__, 'trl', trl.__version__, 'peft', peft.__version__); \
+from trl import SFTTrainer; print('SFTTrainer import OK')"
+
+WORKDIR /workspace
