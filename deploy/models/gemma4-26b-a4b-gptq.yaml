@@ -90,6 +90,12 @@ spec:
     # the shared-group election (prefer warm minR>=1 over a podless higher-pri
     # member); tracked separately.
     priority: 410
+    # 2026-06-19: the pri bump alone did NOT break it — the phantom whisper is a
+    # STICKY Active incumbent, and higher priority alone does not trigger a
+    # handover (same lesson as the 14B/qwen35 standoff). forcePromotion forces
+    # gemma4 to claim the card. TRANSIENT: revert this + priority once gemma4 is
+    # Active+serving (else whisper can never preempt for real ASR).
+    forcePromotion: true
   serverless:
     enabled: true
     # 2026-05-13: promoted to warm primary for project-management and other
