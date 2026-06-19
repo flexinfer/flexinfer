@@ -52,11 +52,13 @@ spec:
     # VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 and risks NaN/OOB (RoPE trained to 32K).
     # The empty-response issue is NOT context — it's the model's over-thinking;
     # fix that with enable_thinking=false, not a larger window.
-    maxModelLen: 32768
-    maxNumSeqs: 4
+    # 16384 (was 32768): leave KV room for the BF16 MTP draft head (v4 loads
+    # the draft experts unquantized -> weights 22.68 GiB; 32K KV would not fit).
+    maxModelLen: 16384
+    maxNumSeqs: 2
     kvCacheDtype: fp8_e4m3
-    # 0.95 (was 0.98): MTP speculative decoding loads an extra BF16 draft head.
-    gpuMemoryUtilization: '0.95'
+    # 0.98 + reduced maxModelLen/maxNumSeqs: BF16 MTP draft head needs KV room.
+    gpuMemoryUtilization: '0.98'
     enforceEager: false
     # MTP speculative decoding v4 2026-06-19: the q35plugin "Blocker 6" patch forces
     # the BF16-unquantized MTP draft block to build with the UNQUANTIZED method
