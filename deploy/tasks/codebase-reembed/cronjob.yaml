@@ -63,6 +63,8 @@ spec:
                   value: "loom-core"
                 - name: BATCH_SIZE
                   value: "64"
+                - name: MAX_INPUT_CHARS
+                  value: "700"
                 # The canonical Qdrant enforces an api-key. Provide it via a
                 # `qdrant-credentials` secret (key `api-key`) in this namespace.
                 # optional:true keeps pod creation from hard-failing if absent (the

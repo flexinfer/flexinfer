@@ -53,11 +53,14 @@ data:
     BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "64"))
     CHUNK_LINES = int(os.environ.get("CHUNK_LINES", "45"))
     CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "8"))
-    # bge-large-en-v1.5 has a 512-token max sequence. Token density for code can be
-    # as low as ~2.0 chars/token (symbol-dense), so cap each input at ~900 chars
-    # (~450 tokens worst case) to stay safely under 512. Over-long line windows are
-    # split into multiple inputs, not dropped/truncated.
-    MAX_CHUNK_CHARS = int(os.environ.get("MAX_CHUNK_CHARS", "900"))
+    # bge-large-en-v1.5 has a 512-token max sequence. Token density for code can
+    # be much lower than prose, and the repo/path prefix counts too, so cap the
+    # final embedding input instead of only the body slice. MAX_CHUNK_CHARS is
+    # kept as a compatibility alias for older ad-hoc jobs.
+    MAX_INPUT_CHARS = int(os.environ.get(
+        "MAX_INPUT_CHARS",
+        os.environ.get("MAX_CHUNK_CHARS", "700"),
+    ))
     MAX_FILES = int(os.environ.get("MAX_FILES", "0"))      # 0 = unbounded
     MAX_CHUNKS = int(os.environ.get("MAX_CHUNKS", "0"))    # 0 = unbounded
     MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(512 * 1024)))
@@ -98,6 +101,8 @@ data:
             return
         rel = os.path.relpath(path, REPO_PATH)
         prefix = f"# {REPO_NAME}/{rel}\n"
+        if len(prefix) >= MAX_INPUT_CHARS:
+            prefix = prefix[:MAX_INPUT_CHARS - 1] + "\n"
         step = max(1, CHUNK_LINES - CHUNK_OVERLAP)
         idx = 0
         for start in range(0, len(lines), step):
@@ -105,13 +110,14 @@ data:
             body = "".join(window).strip()
             last = start + CHUNK_LINES >= len(lines)
             if body:
-                # Split over-long windows so no single input exceeds the model's
-                # 512-token sequence limit (per-input char budget).
-                for off in range(0, len(body), MAX_CHUNK_CHARS):
+                # Split over-long windows so the complete embedding input
+                # (metadata prefix + body slice) stays under the char budget.
+                body_budget = max(1, MAX_INPUT_CHARS - len(prefix))
+                for off in range(0, len(body), body_budget):
                     yield {
                         "rel": rel, "chunk_index": idx,
                         "start_line": start + 1, "end_line": start + len(window),
-                        "text": prefix + body[off:off + MAX_CHUNK_CHARS],
+                        "text": prefix + body[off:off + body_budget],
                     }
                     idx += 1
             if last:

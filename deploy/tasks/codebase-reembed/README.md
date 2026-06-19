@@ -39,7 +39,8 @@ All knobs are env vars on the container (`cronjob.yaml`):
 | `COLLECTION` | `codebase_memory_bge_v1` | target collection (1024-dim, Cosine) |
 | `REPO_PATH` / `REPO_NAME` | `/workspace/services/loom-core` | source repo |
 | `BATCH_SIZE` | `64` | embeddings batch size |
-| `CHUNK_LINES` / `CHUNK_OVERLAP` | `60` / `10` | line-window chunking |
+| `CHUNK_LINES` / `CHUNK_OVERLAP` | `45` / `8` | line-window chunking |
+| `MAX_INPUT_CHARS` | `700` | cap for the complete embedding input, including the repo/path prefix |
 | `MAX_FILES` / `MAX_CHUNKS` | `0` (unbounded) | safety clamps; truncation is logged |
 
 ## Prerequisites
