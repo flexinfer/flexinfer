@@ -147,3 +147,8 @@ spec:
     images:
       gptq: registry.harbor.lan/flexinfer/quantizer@sha256:753e0c21bf578725d152045209970922330c6f08398e27c4ddee08770a0171a9
       abliteration: registry.harbor.lan/flexinfer/runtime@sha256:eb977b01cd8751bcc111cbaed5f8b5171f3968eccc783bfcfc25f36cef7f0365
+      # Fine-tuning lane (LoRA/QLoRA via build/scripts/finetune.py). Controller prefers
+      # this "finetune" image and falls back to "gptq" when absent. Built from
+      # build/Dockerfile.finetune; carries peft/trl/bitsandbytes (NF4 4-bit QLoRA proven
+      # on gfx1100, 2026-06-19). See .loom/f1-training-killtest-verdict-2026-06-19.md.
+      finetune: registry.harbor.lan/flexinfer/finetune@sha256:c9ee307c3b6ed1b7ab98d423e101d93a3c6f6ff638aeb8652fe8cfa2a36d67b6
