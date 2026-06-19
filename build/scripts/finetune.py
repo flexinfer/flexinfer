@@ -65,12 +65,23 @@ except Exception as e:
     import torch
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
-    model = AutoModelForCausalLM.from_pretrained(
-        model_dir,
-        torch_dtype=torch.bfloat16,
-        device_map="auto",
-        trust_remote_code=True,
-    )
+    model_kwargs = dict(device_map="auto", trust_remote_code=True)
+    if mode == "qlora":
+        # True 4-bit NF4 QLoRA (Unsloth absent). Without this the fallback loaded
+        # bf16 weights and only the optimizer was 8-bit — i.e. not actually QLoRA.
+        from transformers import BitsAndBytesConfig
+
+        model_kwargs["quantization_config"] = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_quant_type="nf4",
+            bnb_4bit_compute_dtype=torch.bfloat16,
+            bnb_4bit_use_double_quant=True,
+        )
+        print("Loading base in 4-bit NF4 (QLoRA) via bitsandbytes")
+    else:
+        model_kwargs["torch_dtype"] = torch.bfloat16
+
+    model = AutoModelForCausalLM.from_pretrained(model_dir, **model_kwargs)
     tokenizer = AutoTokenizer.from_pretrained(model_dir, trust_remote_code=True)
     print(f"Model loaded via transformers in {time.time() - load_start:.1f}s")
 
@@ -102,6 +113,15 @@ if mode in ("lora", "qlora"):
         )
     else:
         from peft import get_peft_model, LoraConfig, TaskType
+
+        if mode == "qlora":
+            # Required for stable 4-bit training: casts norms/embeddings to fp32,
+            # enables input-grad hooks, and wires gradient checkpointing.
+            from peft import prepare_model_for_kbit_training
+
+            model = prepare_model_for_kbit_training(
+                model, use_gradient_checkpointing=grad_checkpoint
+            )
 
         peft_config = LoraConfig(
             r=lora_rank,
