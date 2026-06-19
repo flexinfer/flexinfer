@@ -81,7 +81,15 @@ spec:
     shared: 7900xtx-textgen
     # 2026-05-13: priority raised above qwen3-8b-fast-7900xtx (300) so the
     # 26B owns the warm lane for downstream services.
-    priority: 350
+    # 2026-06-19 TRANSIENT BUMP 350->410: post power-outage, whisper (pri 400)
+    # was left a PHANTOM shared-group leader (Active in status, NO pod) holding
+    # the 7900xtx card and keeping the warm gemma4 primary Preempted at
+    # replicas=0. Bump above whisper so gemma4 preempts the phantom and reclaims;
+    # REVERT to 350 once gemma4 is Active+serving (so whisper's real ASR
+    # preemption still works). Recurs on every gemma4 vacate — durable fix is in
+    # the shared-group election (prefer warm minR>=1 over a podless higher-pri
+    # member); tracked separately.
+    priority: 410
   serverless:
     enabled: true
     # 2026-05-13: promoted to warm primary for project-management and other
