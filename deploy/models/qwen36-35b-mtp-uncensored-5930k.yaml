@@ -52,26 +52,27 @@ spec:
     # VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 and risks NaN/OOB (RoPE trained to 32K).
     # The empty-response issue is NOT context — it's the model's over-thinking;
     # fix that with enable_thinking=false, not a larger window.
-    # 2048 (MEASUREMENT-ONLY, throwaway): BF16 MTP draft head leaves only ~0.04
-    # GiB for KV at util 0.98 (weights 22.68 GiB on a 24GB card) -> 16K needs 0.25
-    # GiB and OOM'd. Tiny context just to MEASURE draft acceptance length + tok/s.
-    # NOT shippable; revert after the kill-test reads out.
-    maxModelLen: 1024
-    maxNumSeqs: 1
+    maxModelLen: 32768
+    maxNumSeqs: 4
     kvCacheDtype: fp8_e4m3
-    # 0.98 + reduced maxModelLen/maxNumSeqs: BF16 MTP draft head needs KV room.
     gpuMemoryUtilization: '0.98'
-    # enforceEager TRUE (measurement): frees cudagraph-capture VRAM so the BF16
-    # MTP draft + 35B GPTQ leave enough KV to boot. Eager tok/s is NOT comparable
-    # to the graph-mode ~71 baseline, but draft ACCEPTANCE LENGTH (the kill-test)
-    # is kernel-independent. Throwaway.
-    enforceEager: true
-    # MTP speculative decoding v4 2026-06-19: the q35plugin "Blocker 6" patch forces
-    # the BF16-unquantized MTP draft block to build with the UNQUANTIZED method
-    # (gptqmodel left the whole MTP block in BF16; vLLM was quantizing it -> draft
-    # weights skipped -> ~0-4% accept). v4 lets the draft's real BF16 experts/attn
-    # load. Kill-test: does acceptance length climb above ~1.0 and beat ~71 tok/s?
-    speculativeConfig: '{"method": "qwen3_5_mtp", "num_speculative_tokens": 1}'
+    enforceEager: false
+    # MTP speculative decoding v4 RESULT 2026-06-19: the q35plugin "Blocker 6"
+    # patch (build the BF16-unquantized MTP draft block with the UNQUANTIZED
+    # method) WORKS — the draft's real BF16 experts/attn load (no skips) and the
+    # draft became COMPETENT: 82.4% acceptance (281/341 draft tokens), mean
+    # acceptance length ~1.82, vs v3's ~0-4% / ~1.0. The v3 "draft experts can't
+    # load" conclusion was WRONG — gptqmodel left the MTP block in BF16 and vLLM
+    # was quantizing it (qwen3_5 GPTQ get_moe_quant_method quantizes every
+    # FusedMoE unconditionally). BUT it does NOT fit this 24GB card: the BF16
+    # draft (~1.8 GiB + overhead) pushes weights to 22.69 GiB; graph mode at 32K
+    # OOM'd on KV (only 0.04 GiB free), and even eager only fits ~2176-token
+    # context. The 82% was measured eager @ ctx 1024 (tok/s there is eager, not
+    # comparable to the ~71 graph baseline). To SHIP MTP we must self-quantize the
+    # draft experts to 4-bit (frees ~1.4 GiB -> graph + full context fits) or use
+    # a larger card. speculativeConfig DISABLED to restore the fast no-MTP daily-
+    # driver; v4 plugin draft-patches kept (harmless) for that future work.
+    # Diagnosis + recipe: .loom/brainstorm-gptq-mtp-next-2026-06-19.md
     trustRemoteCode: true
     servedModelName: qwen36-35b-mtp-uncensored-5930k
     # reasoningParser REMOVED 2026-06-18: this heretic checkpoint emits no clean
