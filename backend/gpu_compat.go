@@ -341,3 +341,14 @@ func QuantizerImageFromProfile(profile *aiv1alpha2.GPUProfileSpec, format string
 	}
 	return img, true
 }
+
+// FinetuneImageFromProfile returns the container image for finetune Jobs. It prefers a
+// dedicated "finetune" image (carrying unsloth/peft/trl/bitsandbytes) and falls back to the
+// "gptq" quantizer image for backward compatibility with profiles that predate the finetune
+// lane. Returns ("", false) if neither is configured.
+func FinetuneImageFromProfile(profile *aiv1alpha2.GPUProfileSpec) (string, bool) {
+	if img, ok := QuantizerImageFromProfile(profile, "finetune"); ok {
+		return img, true
+	}
+	return QuantizerImageFromProfile(profile, "gptq")
+}

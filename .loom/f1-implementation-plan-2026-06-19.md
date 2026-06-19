@@ -48,7 +48,10 @@ installs the **proven pin set**: `transformers==4.55.4`, `trl==0.11.4`, `peft`, 
   `import trl` succeeds in-Job (the spike already proved training itself).
 - **Failure mode:** the shared image lookup couples quant and train images, forcing a rebuild
   of the (heavy) GPTQ image for every training dep bump.
-- **Status:** not run.
+- **Status:** PASSED 2026-06-19. `backend.FinetuneImageFromProfile` (prefers `finetune`, falls
+  back to `gptq`) wired into `modelcache_finetune.go`; unit-tested. `build/Dockerfile.finetune`
+  built + pushed (`registry.harbor.lan/flexinfer/finetune:gfx1100`); its baked
+  `from trl import SFTTrainer` smoke test passed (transformers 4.55.4 / trl 0.11.4 / peft 0.14).
 
 **Acceptance:** finetune Job launched by the controller runs in an image where
 `from trl import SFTTrainer` + `import peft` succeed; transformers pinned 4.51–4.55 (avoids the

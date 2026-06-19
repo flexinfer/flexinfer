@@ -649,6 +649,41 @@ func TestQuantizerImageFromProfile_NormalizesFormatCase(t *testing.T) {
 	}
 }
 
+func TestFinetuneImageFromProfile(t *testing.T) {
+	dedicated := "registry.harbor.lan/flexinfer/finetune@sha256:ft"
+	gptq := "registry.harbor.lan/flexinfer/runtime@sha256:gptq"
+
+	tests := []struct {
+		name   string
+		images map[string]string
+		want   string
+		wantOK bool
+	}{
+		{"prefers dedicated finetune image", map[string]string{"finetune": dedicated, "gptq": gptq}, dedicated, true},
+		{"falls back to gptq when no finetune", map[string]string{"gptq": gptq}, gptq, true},
+		{"none configured", map[string]string{"awq": "x"}, "", false},
+		{"nil images", nil, "", false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var profile *aiv1alpha2.GPUProfileSpec
+			if tt.images != nil {
+				profile = &aiv1alpha2.GPUProfileSpec{
+					Quantization: &aiv1alpha2.QuantizationProfile{Images: tt.images},
+				}
+			} else {
+				profile = &aiv1alpha2.GPUProfileSpec{
+					Quantization: &aiv1alpha2.QuantizationProfile{},
+				}
+			}
+			got, ok := FinetuneImageFromProfile(profile)
+			if ok != tt.wantOK || got != tt.want {
+				t.Fatalf("FinetuneImageFromProfile() = (%q, %v), want (%q, %v)", got, ok, tt.want, tt.wantOK)
+			}
+		})
+	}
+}
+
 // TestResolveBackendGPUSupport asserts the slice-5 contract: profile-declared
 // support wins, no entry on the profile falls through to the legacy
 // BackendGPUCompatibility table, and explicit nil profile uses the legacy table.
