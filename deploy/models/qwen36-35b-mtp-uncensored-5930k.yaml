@@ -56,12 +56,16 @@ spec:
     # GiB for KV at util 0.98 (weights 22.68 GiB on a 24GB card) -> 16K needs 0.25
     # GiB and OOM'd. Tiny context just to MEASURE draft acceptance length + tok/s.
     # NOT shippable; revert after the kill-test reads out.
-    maxModelLen: 2048
+    maxModelLen: 8192
     maxNumSeqs: 1
     kvCacheDtype: fp8_e4m3
     # 0.98 + reduced maxModelLen/maxNumSeqs: BF16 MTP draft head needs KV room.
     gpuMemoryUtilization: '0.98'
-    enforceEager: false
+    # enforceEager TRUE (measurement): frees cudagraph-capture VRAM so the BF16
+    # MTP draft + 35B GPTQ leave enough KV to boot. Eager tok/s is NOT comparable
+    # to the graph-mode ~71 baseline, but draft ACCEPTANCE LENGTH (the kill-test)
+    # is kernel-independent. Throwaway.
+    enforceEager: true
     # MTP speculative decoding v4 2026-06-19: the q35plugin "Blocker 6" patch forces
     # the BF16-unquantized MTP draft block to build with the UNQUANTIZED method
     # (gptqmodel left the whole MTP block in BF16; vLLM was quantizing it -> draft
