@@ -55,16 +55,16 @@ spec:
     maxModelLen: 32768
     maxNumSeqs: 4
     kvCacheDtype: fp8_e4m3
-    # 0.95 (was 0.98): MTP speculative decoding loads an extra draft head.
-    gpuMemoryUtilization: '0.95'
+    gpuMemoryUtilization: '0.98'
     enforceEager: false
-    # MTP speculative decoding RETRY 2026-06-19: the q35plugin above now ALSO
-    # patches the draft class Qwen3_5MultiTokenPredictor.load_fused_expert_weights
-    # (the blocker-5 GPTQ fused-expert fix) so the MTP draft loads. The draft's
-    # routed experts are the same single-packed gptqmodel format as the main
-    # model. Output stays correct regardless of draft quality (spec-decode
-    # verifies drafts). num_speculative_tokens=1 (mtp_num_hidden_layers=1).
-    speculativeConfig: '{"method": "qwen3_5_mtp", "num_speculative_tokens": 1}'
+    # MTP speculative decoding: v2 REVERTED 2026-06-19. The extended q35plugin
+    # (kept above — harmless without speculativeConfig) fixed the draft expert
+    # loader (blocker 5), but the MTP draft then hit a graph-compile shape error
+    # (torch._dynamo FX: view(3*s18,-1,256) on a 4096-wide tensor) — the draft
+    # retains mRoPE/shape config the hfOverrides only strip for the MAIN model
+    # (its own blocker-2). MTP needs the draft config patched too (mRoPE strip /
+    # enforceEager for the draft). Multi-blocker like the main model's 5; each
+    # kill-test costs production-lane downtime. DEFERRED — do with a spare card.
     trustRemoteCode: true
     servedModelName: qwen36-35b-mtp-uncensored-5930k
     # reasoningParser REMOVED 2026-06-18: this heretic checkpoint emits no clean
