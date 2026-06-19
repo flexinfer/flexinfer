@@ -55,14 +55,16 @@ spec:
     maxModelLen: 32768
     maxNumSeqs: 4
     kvCacheDtype: fp8_e4m3
-    # 0.95 (was 0.98): MTP speculative decoding loads an extra draft head.
-    gpuMemoryUtilization: '0.95'
+    gpuMemoryUtilization: '0.98'
     enforceEager: false
-    # MTP speculative decoding v3 2026-06-19: q35plugin above now patches BOTH
-    # draft blockers — #5 expert loader AND #2 mRoPE (wraps
-    # SpeculativeConfig.hf_config_override to strip mrope_section from the draft
-    # config). num_speculative_tokens=1.
-    speculativeConfig: '{"method": "qwen3_5_mtp", "num_speculative_tokens": 1}'
+    # MTP speculative decoding: v3 LOADS + SERVES CORRECTLY (all 3 draft blockers
+    # cleared by the q35plugin above — #5 expert loader, #2 mRoPE) but the draft's
+    # GPTQ-MoE experts are graceful-SKIPPED (experts.w2_weight not in the GPTQ
+    # params_dict), so the draft predicts garbage -> ~0-4% acceptance -> NET
+    # SLOWER (37-41 vs ~70 tok/s). Disabled. A real speedup needs the draft's
+    # gptqmodel-fused experts to actually load (deep vLLM/gptqmodel FusedMoE work;
+    # the graceful-skip only avoids the crash). The plugin draft-patches are kept
+    # (harmless) for a future attempt that solves the draft expert loading.
     trustRemoteCode: true
     servedModelName: qwen36-35b-mtp-uncensored-5930k
     # reasoningParser REMOVED 2026-06-18: this heretic checkpoint emits no clean
