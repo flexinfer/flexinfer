@@ -79,7 +79,12 @@ quantizes the base even without Unsloth — today it silently loads bf16 + `adam
   adapter serves coherently via vLLM (reuse the slice-1 harness/dataset).
 - **Failure mode:** NF4 ROCm is broken → 4-bit QLoRA is off the table on this fleet; fall back
   to bf16 LoRA (already proven) for larger models, or require Unsloth-ROCm (separate kill-test).
-- **Status:** not run.
+- **Status:** NF4 kill-test PASSED 2026-06-19. `finetune.py` now loads 4-bit NF4 via
+  `BitsAndBytesConfig` + `prepare_model_for_kbit_training` for `qlora` mode. Live on gfx1100:
+  *"Loading base in 4-bit NF4 (QLoRA) via bitsandbytes"*, trained loss 3.86→0.20 (no NaN, 16s),
+  adapter learned the fact (`KILLTEST_LORA_PASS`). **bnb-ROCm NF4 4-bit works on gfx1100** —
+  arc-level residual risk retired. (3b — TRL `SFTConfig`/`processing_class` migration to drop
+  the `trl==0.11.4` pin — remains a follow-up; the 0.11.4 pin works with deprecation warnings.)
 
 **Acceptance:** unit/import test green on a modern-trl image OR pin retained with a documented
 reason; `MODE=qlora` demonstrably loads 4-bit (VRAM drop vs bf16) and serves; regression test
