@@ -52,10 +52,12 @@ spec:
     # VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 and risks NaN/OOB (RoPE trained to 32K).
     # The empty-response issue is NOT context — it's the model's over-thinking;
     # fix that with enable_thinking=false, not a larger window.
-    # 16384 (was 32768): leave KV room for the BF16 MTP draft head (v4 loads
-    # the draft experts unquantized -> weights 22.68 GiB; 32K KV would not fit).
-    maxModelLen: 16384
-    maxNumSeqs: 2
+    # 2048 (MEASUREMENT-ONLY, throwaway): BF16 MTP draft head leaves only ~0.04
+    # GiB for KV at util 0.98 (weights 22.68 GiB on a 24GB card) -> 16K needs 0.25
+    # GiB and OOM'd. Tiny context just to MEASURE draft acceptance length + tok/s.
+    # NOT shippable; revert after the kill-test reads out.
+    maxModelLen: 2048
+    maxNumSeqs: 1
     kvCacheDtype: fp8_e4m3
     # 0.98 + reduced maxModelLen/maxNumSeqs: BF16 MTP draft head needs KV room.
     gpuMemoryUtilization: '0.98'
