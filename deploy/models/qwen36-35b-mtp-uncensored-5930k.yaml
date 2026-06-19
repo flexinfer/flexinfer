@@ -56,7 +56,7 @@ spec:
     # GiB for KV at util 0.98 (weights 22.68 GiB on a 24GB card) -> 16K needs 0.25
     # GiB and OOM'd. Tiny context just to MEASURE draft acceptance length + tok/s.
     # NOT shippable; revert after the kill-test reads out.
-    maxModelLen: 8192
+    maxModelLen: 1024
     maxNumSeqs: 1
     kvCacheDtype: fp8_e4m3
     # 0.98 + reduced maxModelLen/maxNumSeqs: BF16 MTP draft head needs KV room.
