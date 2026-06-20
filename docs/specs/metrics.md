@@ -41,6 +41,8 @@ Defined in `services/flexinfer/pkg/metrics/exporter.go`:
 - `flexinfer_quantization_cache_size_bytes{model,format}`
 - `flexinfer_model_cold_start_duration_seconds{model,namespace,backend,cache_strategy}` (histogram)
 - `flexinfer_model_swap_duration_seconds{model,namespace,backend,group}` (histogram)
+- `flexinfer_gpu_lease_active{group,namespace,owner}` (1 while a training/quant GPU lease holds a shared-GPU group and the serving incumbent is parked, 0 once released)
+- `flexinfer_gpu_lease_acquired_total{group,namespace,owner}` (counter — total GPU lease acquisitions by training workloads)
 
 ### Registry Note (Important)
 

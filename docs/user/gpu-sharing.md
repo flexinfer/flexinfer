@@ -40,6 +40,75 @@ See:
 - `services/flexinfer/examples/gpugroup-multi-model.yaml`
 - `docs/DEPLOYMENT_RUNBOOK.md` (operational notes)
 
+## Training on a shared card (GPU lease)
+
+Serving models time-share a card through the leader election above. A finetune or
+quantization **Job**, however, requests `amd.com/gpu` directly through the
+device-plugin layer — it is invisible to the election and would sit `Pending`
+forever behind a serving leader that holds the card.
+
+A **`GPULease`** lets a training Job park the serving incumbent for the duration
+of training, then restore it. While an unexpired lease exists for a shared group,
+the election yields *no leader* for that group, so every serving member parks
+(scales to 0, `Status.Phase=Preempted`, `PreemptedBy=gpu-lease/<owner>`) and stays
+parked — this beats even `forcePromotion`. Deleting the lease (or letting it
+expire) re-promotes serving.
+
+### Opting in from a finetune `ModelCache`
+
+Set `spec.finetune.gpuLease.group` to the shared-GPU group whose card the Job
+should borrow. The controller acquires the lease before launching the Job and
+releases it when the Job reaches a terminal state. Without this field, the Job
+grabs `amd.com/gpu` directly and contends (unchanged legacy behavior).
+
+```yaml
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen3-1p7b-lora
+spec:
+  # ... source, finetune config ...
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k   # the lease's Node is derived from this
+  finetune:
+    # ... training params ...
+    gpuLease:
+      group: 5930k-textgen     # Model.spec.gpu.shared group to park
+      ttlSeconds: 3600         # optional; crash-safety backstop, see below
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `gpuLease.group` | yes | The `Model.spec.gpu.shared` group to hold. Serving members park until the Job finishes. |
+| `gpuLease.ttlSeconds` | no (min `60`) | How long the lease is honored without a refresh. Defaults to the finetune timeout plus a 10-minute margin. |
+
+### Crash-safety
+
+The lease cannot strand serving if the controller dies. Two independent backstops:
+
+- **Owner reference** — the `GPULease` is owner-referenced to the `ModelCache`, so it is garbage-collected if the cache is deleted.
+- **TTL** — the election ignores the lease once `now >= expiresAt`. A live controller refreshes the TTL every reconcile while the Job is `Active`, so it never lapses in practice; the TTL only fires if the controller crashes and stops refreshing.
+
+On a lease read error the controller **fails open toward serving** (proceeds as
+unleased), so a transient API blip cannot park the lane.
+
+### Inspecting active leases
+
+```bash
+kubectl get gpuleases -n flexinfer-system
+# NAME                       GROUP          OWNER             NODE             EXPIRES
+# qwen3-1p7b-lora-gpu-lease  5930k-textgen  qwen3-1p7b-lora   cblevins-5930k   ...
+```
+
+Metrics: `flexinfer_gpu_lease_active{group,namespace,owner}` is `1` while a lease
+holds a group, and `flexinfer_gpu_lease_acquired_total{group,namespace,owner}`
+counts acquisitions.
+
+The election still honors a legacy labeled-ConfigMap lease (`gpu-lease-<group>`,
+label `ai.flexinfer/gpu-lease=<group>`) for backward compatibility; the `GPULease`
+CRD is the first-class carrier. The serving park/restore path is exercised live in
+`.loom/runbook-gpu-lease-kill-test-2026-06-20.md`.
+
 ## Practical guidance
 
 - Use `shared`/`GPUGroup` when you have one GPU and multiple “sometimes” models.
