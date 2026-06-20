@@ -54,7 +54,7 @@ attention + VAE slicing to fit the 6 GB budget.
 | Model class | **SD 1.5 only** (UNet ~860M params). SDXL (~12 GiB) does **not** fit 6 GB. |
 | Resolution | 512×512 default (`MAX_IMAGE_EDGE` 768). 1024px SDXL-class output is out of reach. |
 | Precision | fp16 weights + slicing (~4 GiB resident). No FP16 tensor cores → decode slower than modern cards. |
-| Honored config | `numInferenceSteps`, `guidanceScale`, request `size`. ROCm-only knobs (scheduler, negativePrompt, vae) are ignored by the CUDA server. |
+| Honored config | `numInferenceSteps`, `guidanceScale`, `scheduler` (euler/euler-a/dpm++2m/unipc/ddim → `DEFAULT_SCHEDULER`), request `size`. Pin `scheduler: euler` for checkpoints whose default is `DEISMultistepScheduler` (e.g. Dreamshaper 8), which otherwise raises an `IndexError` on the final denoise step. Other ROCm-only knobs (negativePrompt, vae) are ignored by the CUDA server. |
 
 The controller injects `runtimeClassName: nvidia` automatically for NVIDIA GPU
 models so the NVIDIA container runtime mounts the driver — without it, torch
