@@ -374,6 +374,25 @@ var (
 		[]string{"group", "namespace", "from", "to"},
 	)
 
+	// GPULeaseActive is 1 while a training/quant GPU lease holds a shared-GPU
+	// group (the serving incumbent is parked), 0 once released.
+	GPULeaseActive = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_lease_active",
+			Help: "1 while a training GPU lease holds a shared-GPU group (serving parked), 0 otherwise.",
+		},
+		[]string{"group", "namespace", "owner"},
+	)
+
+	// GPULeaseAcquiredTotal counts GPU lease acquisitions by training workloads.
+	GPULeaseAcquiredTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_gpu_lease_acquired_total",
+			Help: "Total GPU lease acquisitions (a training workload parked a serving group).",
+		},
+		[]string{"group", "namespace", "owner"},
+	)
+
 	// Cache job metrics
 
 	// ModelCacheJobDurationSeconds tracks duration of ModelCache pipeline jobs.
@@ -544,6 +563,8 @@ func init() {
 	// Shared-group scheduling metrics (v1alpha2)
 	ctrlmetrics.Registry.MustRegister(SharedGroupState)
 	ctrlmetrics.Registry.MustRegister(SharedGroupPreemptionsTotal)
+	ctrlmetrics.Registry.MustRegister(GPULeaseActive)
+	ctrlmetrics.Registry.MustRegister(GPULeaseAcquiredTotal)
 
 	// Cache job metrics
 	ctrlmetrics.Registry.MustRegister(ModelCacheJobDurationSeconds)

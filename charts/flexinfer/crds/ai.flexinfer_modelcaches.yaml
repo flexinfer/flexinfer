@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.20.1
+    controller-gen.kubebuilder.io/version: v0.21.0
   name: modelcaches.ai.flexinfer
 spec:
   group: ai.flexinfer
@@ -257,6 +257,34 @@ spec:
                     maximum: 100
                     minimum: 1
                     type: integer
+                  gpuLease:
+                    description: |-
+                      GPULease, when set, makes the controller acquire a scheduler-honored GPU
+                      lease on a shared-GPU group before launching the finetune Job, so the
+                      serving incumbent parks and frees the card; the lease is released when the
+                      Job reaches a terminal state. Without this, the Job requests amd.com/gpu
+                      directly and contends with any serving leader holding the card (Pending
+                      until the card happens to free).
+                    properties:
+                      group:
+                        description: |-
+                          Group is the shared-GPU group (Model.spec.gpu.shared) to hold while the
+                          finetune Job runs. Serving members of this group park (and stay parked)
+                          until the Job completes and the lease is released.
+                        type: string
+                      ttlSeconds:
+                        description: |-
+                          TTLSeconds bounds how long the lease is honored without a refresh. The
+                          controller refreshes it each reconcile while the Job is active; if the
+                          controller dies, the lease expires after this many seconds and serving
+                          re-promotes (crash-safety backstop). Defaults to the finetune timeout
+                          plus a margin.
+                        format: int64
+                        minimum: 60
+                        type: integer
+                    required:
+                    - group
+                    type: object
                   gradientCheckpointing:
                     description: |-
                       GradientCheckpointing enables gradient checkpointing to reduce VRAM.

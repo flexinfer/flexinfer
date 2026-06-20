@@ -478,6 +478,34 @@ type FinetuneSpec struct {
 	// Default true.
 	// +optional
 	GradientCheckpointing *bool `json:"gradientCheckpointing,omitempty"`
+
+	// GPULease, when set, makes the controller acquire a scheduler-honored GPU
+	// lease on a shared-GPU group before launching the finetune Job, so the
+	// serving incumbent parks and frees the card; the lease is released when the
+	// Job reaches a terminal state. Without this, the Job requests amd.com/gpu
+	// directly and contends with any serving leader holding the card (Pending
+	// until the card happens to free).
+	// +optional
+	GPULease *FinetuneGPULeaseSpec `json:"gpuLease,omitempty"`
+}
+
+// FinetuneGPULeaseSpec configures the GPU lease taken around the finetune Job.
+// +kubebuilder:object:generate=true
+type FinetuneGPULeaseSpec struct {
+	// Group is the shared-GPU group (Model.spec.gpu.shared) to hold while the
+	// finetune Job runs. Serving members of this group park (and stay parked)
+	// until the Job completes and the lease is released.
+	// +kubebuilder:validation:Required
+	Group string `json:"group"`
+
+	// TTLSeconds bounds how long the lease is honored without a refresh. The
+	// controller refreshes it each reconcile while the Job is active; if the
+	// controller dies, the lease expires after this many seconds and serving
+	// re-promotes (crash-safety backstop). Defaults to the finetune timeout
+	// plus a margin.
+	// +kubebuilder:validation:Minimum=60
+	// +optional
+	TTLSeconds *int64 `json:"ttlSeconds,omitempty"`
 }
 
 // FinetuneStatus records the result of finetuning.
