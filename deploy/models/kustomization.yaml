@@ -77,18 +77,28 @@ resources:
   # disk for forensic rebuilds, but do not advertise or reconcile it.
   # - omnicoder-9b.yaml
 
-  # === cblevins-radeonvii (16 GB gfx906) — image-gen primary ===
-  # 2026-05-13: FluxPony relocated here from cblevins-5930k. The Radeon VII
-  # now owns ALL image generation (SDXL text-to-image + SDXL inpainting),
-  # both on the `radeonvii-imagegen` shared lane. Disk pressure on the node
-  # root FS is the main risk -- monitor /var/lib once both caches are warm.
-  # The 1.7B Qwen tool/canary lanes stay for routing experiments.
-  - qwen3-1.7b-tools-radeonvii.yaml # llama.cpp GGUF, fast tool-router lane
-  - qwen3-1p7b-vllm-radeonvii.yaml  # vllm canary, scaled to 0; explicit canary traffic can preempt CPU fallback
-  - qwen3-8b-radeonvii.yaml         # llama.cpp GGUF on gfx906, cold tertiary fast-chat-fallback (Lane 1C 2026-05-25)
+  # === cblevins-radeonvii (16 GB gfx906) — embedding/rerank retrieval plane ===
+  # 2026-06-20: re-dedicated to the retrieval plane (bge embeddings + bge-reranker
+  # + gte-qwen2 1536-dim) after image-gen and the experimental qwen3 GPU lanes
+  # starved embeddings (see the de-contention note below). The Radeon VII HBM2
+  # bandwidth is the intended home for retrieval (hardware-util arc Sprint 1).
+  # Image generation was relocated OFF this node 2026-05-13→2026-06-20; it now has
+  # no fleet home until rehomed to a card with headroom.
+  # 2026-06-20 retrieval-plane de-contention: the gfx906 (16 GiB) is dedicated to
+  # the embedding/rerank retrieval plane (bge + reranker + gte). Co-tenants that
+  # cannot fit alongside the resident ~6.8 GiB plane were starving embeddings via
+  # cross-group preemption (image-gen priority 200 @ ~12 GiB each physically
+  # cannot coexist; first gte-qwen2 /v1/embeddings call timed out at 25s during an
+  # SDXL warmup). Disabled below — manifests kept on disk for restore. Image-gen
+  # has no other viable home on this fleet: the 980ti is 6 GiB CUDA Maxwell (too
+  # small + ROCm-only diffusers image), and the gfx1100 pair is textgen-dedicated.
+  # Re-enable image-gen only after it is rehomed to a card with real headroom.
+  - qwen3-1.7b-tools-radeonvii.yaml # llama.cpp GGUF tool-router; vendor:cpu (off-GPU per #62) — does NOT contend the gfx906 retrieval plane
+  # - qwen3-1p7b-vllm-radeonvii.yaml  # DISABLED 2026-06-20: broken OPT-125m vLLM canary (segfaults on gfx906); GPU contender, retired from retrieval plane
+  # - qwen3-8b-radeonvii.yaml         # DISABLED 2026-06-20: cold tertiary fast-chat fallback; ~6 GiB GPU contender retired from retrieval plane (two warm Gemma4 26B primaries remain)
   - gemma4-e4b-radeonvii.yaml       # llama.cpp Gemma 3 4B IT GGUF on gfx906, draft for cross-card spec decode (CC-DR-1b precursor, 2026-05-25)
-  - gonzalomo-fluxpony-imagegen.yaml # diffusers gfx906, SDXL text-to-image (relocated 2026-05-13 from 5930k)
-  - sdxl-inpainting-radeonvii.yaml   # diffusers gfx906, SDXL inpainting
+  # - gonzalomo-fluxpony-imagegen.yaml # DISABLED 2026-06-20: SDXL text-to-image ~12 GiB @ priority 200 — primary embedding starver; rehome before re-enabling
+  # - sdxl-inpainting-radeonvii.yaml   # DISABLED 2026-06-20: SDXL inpainting ~12 GiB @ priority 200 — primary embedding starver; rehome before re-enabling
   - bge-radeonvii.yaml               # llamacpp bge-large embeddings on gfx906 HBM2; additive lane (priority 100, serverless, label embeddings-hbm2). Kill-test PASS 2026-06-03; hardware-util arc Sprint 1.
   - bge-reranker-radeonvii.yaml      # llamacpp bge-reranker-v2-m3 on gfx906; co-Active with bge embeddings (priority 115, serverless, label rerank). R5 multi-Active payoff — needs gfx906 features.multiModel + FLEXINFER_RUNTIME_MULTI_MODEL.
   - gte-qwen2-1p5b-radeonvii.yaml    # llamacpp gte-Qwen2-1.5B-instruct on gfx906, 1536-dim lane. WRITE-PATH fallback for agent-context when hosted Morph embeddings are down; minReplicas 0 (cold), priority 90 (never preempts bge/reranker), label embeddings-1536, alias gte-qwen2-1.5b.
