@@ -97,6 +97,8 @@ type ModelReconciler struct {
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models/finalizers,verbs=update
+//+kubebuilder:rbac:groups=ai.flexinfer,resources=gpuleases,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=ai.flexinfer,resources=gpuleases/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete

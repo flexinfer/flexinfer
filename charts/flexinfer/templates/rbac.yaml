@@ -149,6 +149,8 @@ rules:
       - federatedmodels
       - federatedmodels/status
       - federatedmodels/finalizers
+      - gpuleases
+      - gpuleases/status
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]
