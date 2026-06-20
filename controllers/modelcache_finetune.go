@@ -161,6 +161,11 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 
 	// If finetune succeeded previously but quantization is pending, dispatch there.
 	if finetuneCompleted(modelCache.Status.Finetune) {
+		// Finetune is done -- drop any GPU lease so the serving incumbent
+		// re-promotes (quiet no-op if none / already released).
+		if err := r.releaseFinetuneGPULease(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
 		if modelCache.Spec.Quantization != nil {
 			return r.reconcileQuantization(ctx, modelCache, pvcName, modelPath)
 		}
@@ -201,6 +206,15 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 				}
 			}
 			return ctrl.Result{}, nil
+		}
+
+		// Acquire (or refresh) the GPU lease before launching the Job so the
+		// serving incumbent on the shared card parks and frees amd.com/gpu.
+		// No-op unless the ModelCache opted in via finetune.gpuLease. The Job is
+		// created right after; it stays Pending until the incumbent's pod exits
+		// and the device frees, then binds -- no explicit wait needed.
+		if err := r.ensureFinetuneGPULease(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
 		}
 
 		// Build GPU and operator-provided tolerations for pipeline jobs.
@@ -288,6 +302,12 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		log.Info("Finetune job succeeded", "cache", modelCache.Name)
 		metrics.JobProgressPercent.DeleteLabelValues(modelCache.Name, modelCache.Namespace, "finetune")
 
+		// Finetune is done -- release the GPU lease so serving re-promotes
+		// before we hand off to quantize/publish/Ready.
+		if err := r.releaseFinetuneGPULease(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
+
 		if finetuneJob.Status.StartTime != nil && finetuneJob.Status.CompletionTime != nil {
 			dur := finetuneJob.Status.CompletionTime.Sub(finetuneJob.Status.StartTime.Time).Seconds()
 			metrics.ModelCacheJobDurationSeconds.WithLabelValues(modelCache.Name, modelCache.Namespace, "finetune", "succeeded").Observe(dur)
@@ -347,6 +367,13 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 	}
 
 	if finetuneJob.Status.Active > 0 {
+		// Refresh the GPU lease TTL while the Job runs so a healthy controller
+		// keeps the serving incumbent parked; a dead controller lets it lapse
+		// (crash-safety). Best-effort -- a transient error is retried next tick.
+		if err := r.ensureFinetuneGPULease(ctx, modelCache); err != nil {
+			log.Error(err, "Failed to refresh finetune GPU lease", "cache", modelCache.Name)
+		}
+
 		elapsed := time.Duration(0)
 		if finetuneJob.Status.StartTime != nil {
 			elapsed = time.Since(finetuneJob.Status.StartTime.Time).Truncate(time.Second)
@@ -417,6 +444,12 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		}
 
 		metrics.FinetuneJobsTotal.WithLabelValues(modelCache.Name, "failed").Inc()
+
+		// Terminal failure (retries exhausted) -- release the GPU lease so the
+		// serving incumbent re-promotes. (Retries above keep the lease held.)
+		if err := r.releaseFinetuneGPULease(ctx, modelCache); err != nil {
+			return ctrl.Result{}, err
+		}
 
 		ftStatus := &aiv1alpha1.FinetuneStatus{
 			FailureMessage: failureMsg,
