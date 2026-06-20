@@ -49,11 +49,11 @@ Add a lightweight **`GPULease`** the shared-GPU election treats as the highest-p
 
 ## Slices
 
-> Progress: **Slice 1 ✅ (MR !672, live kill-test PASSED 2026-06-20)** · **Slice 2 ✅ (MR !674, `GPULease` CRD)** · Slices 3–5 open.
+> Progress: **Slice 1 ✅ (MR !672, live kill-test PASSED 2026-06-20)** · **Slice 2 ✅ (MR !674, `GPULease` CRD)** · **Slice 3 ✅ (MR !675, finetune-controller acquire/release)** · Slices 4–5 open.
 
 1. **Slice 1 ✅ — Lease kill-test (riskiest assumption)** — implement the minimal `GPULease` honored by `chooseSharedGroupLeader` + the acquire/poll/release loop in the finetune controller; run the live kill-test above on the 5930k-textgen group with a trivial GPU Job. Gate everything else on this.
 2. **Slice 2 ✅ — `GPULease` carrier + election integration** — `GPULease` CRD (`api/v1alpha2/gpulease_types.go`) + deepcopy/manifests/RBAC; `findActiveLease` reads CRs first with legacy-ConfigMap fallback; internal struct renamed `GPULease`→`activeLease`; CR + fallback unit tests. (Election park-and-hold + re-promote already landed in slice 1.)
-3. **Slice 3 — Finetune controller integration** — acquire-before-Job / release-after-Job in `reconcileFinetune`; crash-safety (owner-ref + TTL + reconcile-on-restart); `ModelCache.spec.gpu.priority` + preempt policy; metrics (lease held duration, serving downtime).
+3. **Slice 3 ✅ — Finetune controller integration** — opt-in `ModelCache.spec.finetune.gpuLease {group, ttlSeconds}`; `ensure`/`release` helpers in `modelcache_finetune_gpulease.go`; acquire-before-Job + refresh-while-Active + release-on-terminal in `reconcileFinetune`; crash-safety = owner-ref (GC) + TTL (expiry); metrics `flexinfer_gpu_lease_active`/`_acquired_total`. (Priority/preempt-policy threshold deferred to slice 5.)
 4. **Slice 4 — Wire into F1 slice 4** — the original CRD-driven train→serve→validate kill-test now schedules without manual preemption; example `ModelCache(Finetune)` + Qwen3-1.7B LoRA-enabled vLLM lane + `LoRAAdapter`.
 5. **Slice 5 — Hardening** — SwapCooldown interplay, multi-GPU cards (7900xtx 2-slot: lease one slot vs both), training-vs-training queueing, observability + a runbook.
 
