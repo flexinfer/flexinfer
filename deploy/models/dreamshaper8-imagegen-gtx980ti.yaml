@@ -53,6 +53,10 @@ spec:
   config:
     # SD 1.5 fine-tune. The CUDA diffusers server auto-detects the pipeline.
     modelFamily: "sd"
+    # Dreamshaper 8 ships DEISMultistepScheduler, whose second-order update
+    # raises an IndexError (sigmas[step_index+1]) on the final denoise step.
+    # Override to Euler — robust, ~3.8 GiB peak at 512x512 (proven on the 980 Ti).
+    scheduler: "euler"
     # Dreamshaper 8's published recipe: ~25 steps, CFG ~5-7. 512x512 fits 6 GiB.
     numInferenceSteps: "25"
     guidanceScale: "6.0"

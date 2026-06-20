@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 # doesn't provide it. Provide a tiny shim to keep imports working on standard CUDA
 # torch builds.
 if not hasattr(torch, "xpu"):
+
     class _XPU:
         @staticmethod
         def empty_cache():
@@ -44,6 +45,52 @@ app = FastAPI()
 
 pipe = None
 current_model = None
+
+
+def _apply_scheduler(pipeline, scheduler_name: Optional[str] = None):
+    """Override the pipeline scheduler if requested via the DEFAULT_SCHEDULER env.
+
+    Some checkpoints ship a scheduler whose multistep update indexes
+    ``sigmas[step_index + 1]`` on the final step and raises an IndexError
+    (notably DEISMultistepScheduler — e.g. Lykon/dreamshaper-8). Allowing an
+    explicit override lets a Model pin a robust scheduler (euler, dpm++2m, ...)
+    instead of the checkpoint default. Mirrors the ROCm diffusers server.
+    """
+    if not scheduler_name:
+        scheduler_name = os.environ.get("DEFAULT_SCHEDULER", "")
+    if not scheduler_name:
+        return
+    from diffusers import (
+        DDIMScheduler,
+        DPMSolverMultistepScheduler,
+        EulerAncestralDiscreteScheduler,
+        EulerDiscreteScheduler,
+        UniPCMultistepScheduler,
+    )
+
+    cfg = pipeline.scheduler.config
+    scheduler_map = {
+        "euler": lambda c: EulerDiscreteScheduler.from_config(c),
+        "euler-a": lambda c: EulerAncestralDiscreteScheduler.from_config(c),
+        "dpm++2m": lambda c: DPMSolverMultistepScheduler.from_config(c),
+        "dpm++2m-karras": lambda c: DPMSolverMultistepScheduler.from_config(
+            c, use_karras_sigmas=True
+        ),
+        "unipc": lambda c: UniPCMultistepScheduler.from_config(c),
+        "ddim": lambda c: DDIMScheduler.from_config(c),
+    }
+    key = scheduler_name.lower().strip()
+    if key in scheduler_map:
+        pipeline.scheduler = scheduler_map[key](cfg)
+        sys.stdout.write(
+            f"Scheduler overridden to: {key} ({type(pipeline.scheduler).__name__})\n"
+        )
+    else:
+        sys.stdout.write(
+            f"WARNING: unknown scheduler '{scheduler_name}', keeping "
+            f"{type(pipeline.scheduler).__name__}. Options: {list(scheduler_map)}\n"
+        )
+    sys.stdout.flush()
 
 
 def _parse_size(size: str) -> tuple[int, int]:
@@ -113,6 +160,10 @@ def _load_model(model_id: str):
             torch_dtype=torch.float16,
         )
 
+    # Override the checkpoint's default scheduler if requested (e.g. to avoid
+    # the DEISMultistepScheduler final-step IndexError on SD 1.5 checkpoints).
+    _apply_scheduler(pipe)
+
     pipe.to("cuda")
     pipe.enable_attention_slicing()
     try:
@@ -151,8 +202,16 @@ def images_generations(req: ImageGenerationRequest):
     _load_model(model_id)
 
     width, height = _parse_size(req.size)
-    steps = req.num_inference_steps if req.num_inference_steps is not None else _default_steps(model_id)
-    guidance = req.guidance_scale if req.guidance_scale is not None else _default_guidance(model_id)
+    steps = (
+        req.num_inference_steps
+        if req.num_inference_steps is not None
+        else _default_steps(model_id)
+    )
+    guidance = (
+        req.guidance_scale
+        if req.guidance_scale is not None
+        else _default_guidance(model_id)
+    )
 
     images = []
     with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
