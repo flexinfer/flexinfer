@@ -82,17 +82,17 @@ resources:
   # + gte-qwen2 1536-dim) after image-gen and the experimental qwen3 GPU lanes
   # starved embeddings (see the de-contention note below). The Radeon VII HBM2
   # bandwidth is the intended home for retrieval (hardware-util arc Sprint 1).
-  # Image generation was relocated OFF this node 2026-05-13→2026-06-20; it now has
-  # no fleet home until rehomed to a card with headroom.
+  # Image generation was relocated OFF this node 2026-05-13→2026-06-20 and
+  # rehomed to the GTX 980 Ti (see the gtx980ti section below).
   # 2026-06-20 retrieval-plane de-contention: the gfx906 (16 GiB) is dedicated to
   # the embedding/rerank retrieval plane (bge + reranker + gte). Co-tenants that
   # cannot fit alongside the resident ~6.8 GiB plane were starving embeddings via
   # cross-group preemption (image-gen priority 200 @ ~12 GiB each physically
   # cannot coexist; first gte-qwen2 /v1/embeddings call timed out at 25s during an
-  # SDXL warmup). Disabled below — manifests kept on disk for restore. Image-gen
-  # has no other viable home on this fleet: the 980ti is 6 GiB CUDA Maxwell (too
-  # small + ROCm-only diffusers image), and the gfx1100 pair is textgen-dedicated.
-  # Re-enable image-gen only after it is rehomed to a card with real headroom.
+  # SDXL warmup). Disabled below — manifests kept on disk for restore. The SDXL
+  # lanes that lived here (~12 GiB each) are rehomed to the GTX 980 Ti as a
+  # smaller SD 1.5 lane (Dreamshaper 8, ~4 GiB) on the CUDA 11.8 diffusers-api
+  # build — the 6 GiB Maxwell card fits SD 1.5 but not SDXL.
   - qwen3-1.7b-tools-radeonvii.yaml # llama.cpp GGUF tool-router; vendor:cpu (off-GPU per #62) — does NOT contend the gfx906 retrieval plane
   # - qwen3-1p7b-vllm-radeonvii.yaml  # DISABLED 2026-06-20: broken OPT-125m vLLM canary (segfaults on gfx906); GPU contender, retired from retrieval plane
   # - qwen3-8b-radeonvii.yaml         # DISABLED 2026-06-20: cold tertiary fast-chat fallback; ~6 GiB GPU contender retired from retrieval plane (two warm Gemma4 26B primaries remain)
@@ -103,6 +103,12 @@ resources:
   - bge-reranker-radeonvii.yaml      # llamacpp bge-reranker-v2-m3 on gfx906; co-Active with bge embeddings (priority 115, serverless, label rerank). R5 multi-Active payoff — needs gfx906 features.multiModel + FLEXINFER_RUNTIME_MULTI_MODEL.
   - gte-qwen2-1p5b-radeonvii.yaml    # llamacpp gte-Qwen2-1.5B-instruct on gfx906, 1536-dim lane. WRITE-PATH fallback for agent-context when hosted Morph embeddings are down; minReplicas 0 (cold), priority 90 (never preempts bge/reranker), label embeddings-1536, alias gte-qwen2-1.5b.
 
-  # === cblevins-gtx980ti (6 GB sm_52) ===
-  - gemma4-e4b-gguf-gtx980ti.yaml   # llama.cpp GGUF, node-local cache for Maxwell cold starts
-  - embeddings.yaml                  # ollama, nomic-embed-text, always warm
+  # === cblevins-gtx980ti (6 GB sm_52) — image-gen lane (sole GPU tenant) ===
+  # 2026-06-20: re-dedicated to image generation. SD 1.5 class models fit the
+  # 6 GiB Maxwell card via the CUDA 11.8 diffusers-api build; SDXL does not.
+  # The gemma4-e4b-gguf textgen lane and the nomic-embed cold fallback were
+  # removed (radeonvii owns embeddings/rerank now). Kill-test PASS 2026-06-20:
+  # coherent 512x512 generation on the live 980 Ti.
+  - dreamshaper8-imagegen-gtx980ti.yaml  # diffusers SD 1.5 (Dreamshaper 8) on CUDA Maxwell image; warm (minReplicas 1).
+  # - gemma4-e4b-gguf-gtx980ti.yaml   # REMOVED 2026-06-20: 980ti re-dedicated to image-gen (sole occupant). Manifest kept on disk for restore.
+  # - embeddings.yaml                  # REMOVED 2026-06-20: nomic cold fallback retired; radeonvii bge-large is the embeddings lane.

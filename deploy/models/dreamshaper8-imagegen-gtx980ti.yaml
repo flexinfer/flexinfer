@@ -1,0 +1,90 @@
+# Dreamshaper 8 (SD 1.5 fine-tune) text-to-image on cblevins-gtx980ti (sm_52).
+#
+# 2026-06-20: rehomes image generation onto the GTX 980 Ti after the Radeon VII
+# (gfx906) was re-dedicated to the embedding/rerank retrieval plane. The 980 Ti
+# is now the fleet's sole image-gen lane and its sole GPU tenant — the old
+# gemma4-e4b-gguf textgen lane and the nomic-embed cold fallback were removed
+# from this node (radeonvii owns embeddings now).
+#
+# Maxwell / sm_52 quirks:
+#   - 6 GiB VRAM. SDXL (~12 GiB) does NOT fit; SD 1.5 class models (~3.5 GiB in
+#     fp16 + attention/VAE slicing) do. Dreamshaper 8 is an SD 1.5 fine-tune.
+#   - Served by the CUDA 11.8 / torch 2.1.2 diffusers-api build
+#     (registry.harbor.lan/library/diffusers-api:cuda) — the last toolkit
+#     supporting compute capability 5.x. Selected automatically via the sm-52
+#     GPUProfile backends.diffusers.image. The controller injects
+#     runtimeClassName: nvidia so the NVIDIA container runtime mounts the driver.
+#   - No FP16 tensor cores: fp16 storage halves memory but math runs slower than
+#     modern cards. 512x512 / 20 steps generates in a few seconds once warm.
+#   - The diffusers-api:cuda server honors num_inference_steps, guidance_scale,
+#     and size (default 512x512, MAX_IMAGE_EDGE 768) per request. Other config
+#     knobs (scheduler, negativePrompt, vae) are ROCm-server-only and ignored
+#     here.
+#
+# Kill-test (2026-06-20): a throwaway diffusers pod on this node generated a
+# coherent 512x512 "astronaut riding a horse on the moon" in ~90s cold (incl.
+# the one-time ~2 GiB model download). torch.cuda reported "NVIDIA GeForce
+# GTX 980 Ti".
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: dreamshaper8-imagegen-gtx980ti
+  namespace: flexinfer-system
+spec:
+  backend: diffusers
+  source: HF://Lykon/dreamshaper-8
+  cache:
+    strategy: Local
+    flashLoader:
+      enabled: false
+  gpu:
+    vendor: nvidia
+    count: 1
+    # Sole GPU tenant on this node — no shared group, no contention.
+    vramEstimateMB: 4000
+  serverless:
+    enabled: true
+    # Warm by default: this card is dedicated to image generation, so keep the
+    # lane ready. Flip to minReplicas 0 (idle scale-to-zero) to save power if
+    # generations are infrequent.
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  config:
+    # SD 1.5 fine-tune. The CUDA diffusers server auto-detects the pipeline.
+    modelFamily: "sd"
+    # Dreamshaper 8's published recipe: ~25 steps, CFG ~5-7. 512x512 fits 6 GiB.
+    numInferenceSteps: "25"
+    guidanceScale: "6.0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-gtx980ti
+  resources:
+    requests:
+      cpu: "2"
+      memory: 6Gi
+    limits:
+      cpu: "4"
+      memory: 12Gi
+  serviceLabels:
+    - image-gen
+    - text-to-image
+    - dall-e-3
+    - imagegen
+    - dreamshaper
+  litellm:
+    enabled: true
+    servedModelName: dreamshaper8-imagegen-gtx980ti
+    aliases:
+      - image-gen
+      - dall-e-3
+      - text-to-image
+      - imagegen
+      - dreamshaper-8
+  tolerations:
+    - key: "dedicated"
+      operator: "Equal"
+      value: "gpu"
+      effect: "NoSchedule"
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

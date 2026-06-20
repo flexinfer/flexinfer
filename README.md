@@ -91,7 +91,7 @@ FlexInfer supports multiple GPU architectures with backend-specific consideratio
 
 | GPU Architecture | Compute Capability | Ollama | vLLM | MLC-LLM | Diffusers | Notes |
 |-----------------|-------------------|--------|------|---------|-----------|-------|
-| Maxwell (GTX 980 Ti) | 5.x | ✅ | ❌ | ✅* | ❌ | *FP32 only, see [Maxwell Guide](build/README-maxwell.md) |
+| Maxwell (GTX 980 Ti) | 5.x | ✅ | ❌ | ✅* | ⚠️*** | *FP32 only, see [Maxwell Guide](build/README-maxwell.md). ***SD 1.5 class only (fp16 + slicing, ~4 GiB) via CUDA 11.8 `diffusers-api:cuda`; SDXL too large for 6 GiB |
 | Pascal (GTX 1080) | 6.x | ✅ | ✅ | ✅ | ✅ | Full support |
 | Volta+ (RTX 20xx+) | 7.0+ | ✅ | ✅ | ✅ | ✅ | Full support with Tensor Cores |
 | AMD RDNA3 (RX 7900) | ROCm gfx1100 | ✅ | ✅ | ✅ | ✅** | ROCm 6.4+ recommended (stable baseline) |

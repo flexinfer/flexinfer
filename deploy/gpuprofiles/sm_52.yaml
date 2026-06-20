@@ -2,11 +2,12 @@
 #
 # Node: cblevins-gtx980ti (single dGPU, 6 GB GDDR5)
 #
-# Maxwell GPUs only support ollama and llamacpp backends in the current
-# unified runtime matrix. Image generation stays unsupported here until a
-# separate compatibility path is added.
+# Maxwell supports ollama + llamacpp (text gen) and diffusers (image gen) via
+# the CUDA 11.8 / torch 2.1.2 build — the last toolkit supporting sm_5.x.
 # CUDA compute capability 5.2 — no FP16 tensor cores, no INT8/INT4 acceleration.
-# vLLM, diffusers, comfyui all require higher compute capability.
+# Diffusers runs in fp16 with attention + VAE slicing at 512x512 to fit the 6 GB
+# budget (proven on SD 1.5 class models; SDXL is too large here). vLLM and
+# comfyui still require higher compute capability and stay unsupported.
 apiVersion: ai.flexinfer/v1alpha2
 kind: GPUProfile
 metadata:
@@ -36,7 +37,12 @@ spec:
     vllm:
       support: unsupported
     diffusers:
-      support: unsupported
+      # Image generation via the CUDA 11.8 / torch 2.1.2 diffusers-api build.
+      # fp16 + attention/VAE slicing at 512x512 fits the 6 GB budget on SD 1.5
+      # class models. Experimental: Maxwell has no FP16 tensor cores, so decode
+      # is slower than modern cards.
+      support: experimental
+      image: registry.harbor.lan/library/diffusers-api:cuda
     comfyui:
       support: unsupported
   runtime:

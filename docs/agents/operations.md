@@ -327,7 +327,7 @@ kubectl get modeldeployment -n flexinfer-system -o json | jq '.items[] | select(
 |------|-----|-----|------|------|
 | `cblevins-5930k` | Intel i7-5930K | AMD RX 7900 XTX | 24GB | Fast models (8B, 4B) |
 | `cblevins-7900xtx` | AMD Zen4 | AMD RX 7900 XTX | 24GB | Quality models (14B, 32B) + ComfyUI |
-| `cblevins-gtx980ti` | Intel i7 (legacy) | NVIDIA GTX 980 Ti (Maxwell, sm_52) | 6GB | Legacy / small models (FP32 MLC) |
+| `cblevins-gtx980ti` | Intel i7 (legacy) | NVIDIA GTX 980 Ti (Maxwell, sm_52) | 6GB | Image generation (SD 1.5 / Dreamshaper 8 via CUDA diffusers) — sole GPU tenant |
 
 #### GPUGroups
 
