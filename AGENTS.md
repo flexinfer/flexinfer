@@ -60,9 +60,10 @@ CRD/chart change flow: edit types → `make manifests` → `make test` → bump 
 | vLLM | ✅ | ✅ (BUILD_FA=0 image) | ❌ |
 | MLC-LLM | ✅ | ✅ | ⚠️ pre-compiled lib only |
 | llama.cpp | ✅ | ✅ | ✅ |
-| Diffusers / ComfyUI | ✅ | ⚠️ experimental | ❌ |
+| Diffusers | ✅ | ⚠️ experimental | ⚠️ experimental (SD 1.5 only, CUDA 11.8 image) |
+| ComfyUI | ✅ | ⚠️ experimental | ❌ |
 
-GPU nodes: `cblevins-5930k` (7900XTX), `cblevins-7900xtx` (7900XTX), `cblevins-gtx980ti` (980 Ti, sm_52, 6GB). Per-arch config blocks: [gpu-compatibility.md](docs/agents/gpu-compatibility.md).
+GPU nodes: `cblevins-5930k` (7900XTX), `cblevins-7900xtx` (7900XTX), `cblevins-gtx980ti` (980 Ti, sm_52, 6GB — image-gen lane: SD 1.5 / Dreamshaper 8). Per-arch config blocks: [gpu-compatibility.md](docs/agents/gpu-compatibility.md).
 
 ## Model Deployment (quick shape)
 

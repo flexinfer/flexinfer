@@ -65,6 +65,14 @@ func TestLookupGPUArchSupport_PrefixMatching(t *testing.T) {
 			wantFound: true,
 		},
 		{
+			name:      "diffusers Maxwell sm_52 experimental",
+			backend:   "diffusers",
+			arch:      "sm_52",
+			wantLevel: SupportExperimental,
+			wantVRAM:  6144,
+			wantFound: true,
+		},
+		{
 			name:      "comfyui gfx906 experimental",
 			backend:   "comfyui",
 			arch:      "gfx906",

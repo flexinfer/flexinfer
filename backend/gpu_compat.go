@@ -75,7 +75,10 @@ var BackendGPUCompatibility = map[string]map[string]GPUArchSupport{
 		"gfx90a": {SupportFull, 65536},
 		"gfx942": {SupportFull, 196608},
 		"gfx906": {SupportFull, 16384},
-		"sm_5":   {SupportUnsupported, 0},
+		// Maxwell (sm_52): CUDA 11.8 / torch 2.1.2 diffusers-api build runs SD 1.5
+		// class models in fp16 + attention/VAE slicing within 6 GB. Experimental —
+		// no FP16 tensor cores, so decode is slower than modern cards.
+		"sm_5": {SupportExperimental, 6144},
 	},
 	"comfyui": {
 		"gfx110": {SupportFull, 24576},

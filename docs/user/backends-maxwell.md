@@ -41,6 +41,32 @@ Models verified to work on Maxwell GPUs with 6GB VRAM:
 
 **Finding models:** Search HuggingFace for `q0f32-MLC` or `q4f32-MLC`.
 
+## Image Generation (Diffusers)
+
+Maxwell also runs Stable Diffusion **image generation** via the `diffusers` backend,
+served by the CUDA 11.8 / torch 2.1.2 build (`registry.harbor.lan/library/diffusers-api:cuda`)
+— the last CUDA toolkit supporting compute capability 5.x. Unlike text gen, this path
+uses **fp16** weights (Maxwell supports fp16 storage; only the math is slow) plus
+attention + VAE slicing to fit the 6 GB budget.
+
+| Constraint | Detail |
+|------------|--------|
+| Model class | **SD 1.5 only** (UNet ~860M params). SDXL (~12 GiB) does **not** fit 6 GB. |
+| Resolution | 512×512 default (`MAX_IMAGE_EDGE` 768). 1024px SDXL-class output is out of reach. |
+| Precision | fp16 weights + slicing (~4 GiB resident). No FP16 tensor cores → decode slower than modern cards. |
+| Honored config | `numInferenceSteps`, `guidanceScale`, request `size`. ROCm-only knobs (scheduler, negativePrompt, vae) are ignored by the CUDA server. |
+
+The controller injects `runtimeClassName: nvidia` automatically for NVIDIA GPU
+models so the NVIDIA container runtime mounts the driver — without it, torch
+reports "no NVIDIA driver" even though the pod holds `nvidia.com/gpu`.
+
+Live example: [`deploy/models/dreamshaper8-imagegen-gtx980ti.yaml`](../../deploy/models/dreamshaper8-imagegen-gtx980ti.yaml)
+(Dreamshaper 8, an SD 1.5 fine-tune). Kill-test 2026-06-20: coherent 512×512
+generation in ~90s cold (incl. one-time ~2 GiB download) on a live GTX 980 Ti.
+
+Enable it in the [sm-52 GPUProfile](../../deploy/gpuprofiles/sm_52.yaml)
+(`backends.diffusers.support: experimental` + `image`).
+
 ## FlexInfer Configuration
 
 FlexInfer supports Maxwell via `ai.flexinfer/v1alpha2` (recommended). `v1alpha1` resources still work, but the docs below focus on v1alpha2 because it matches how the controller enforces compatibility.
