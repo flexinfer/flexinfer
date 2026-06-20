@@ -56,8 +56,15 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 	if err := p.client.List(ctx, &ms, client.InNamespace(p.namespace)); err != nil {
 		slog.Warn("error listing Models", "error", err)
 	} else {
-		for _, m := range ms.Items {
-			models = append(models, p.modelToOpenAI(&m))
+		for i := range ms.Items {
+			m := &ms.Items[i]
+			// Hide parked / de-advertised models (spec.litellm.enabled=false)
+			// from the catalog so the router table and any prober iterating
+			// /v1/models no longer discover models we do not intend to serve.
+			if litellmExplicitlyDisabled(m) {
+				continue
+			}
+			models = append(models, p.modelToOpenAI(m))
 		}
 	}
 

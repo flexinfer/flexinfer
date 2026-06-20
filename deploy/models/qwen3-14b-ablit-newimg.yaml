@@ -85,12 +85,14 @@ spec:
       operator: Exists
   # `uncensored` label/alias released to the promoted 35B lane (avoids alias
   # conflict); this parked lane keeps only its abliterated-specific routes.
-  serviceLabels:
-    - qwen3-14b-ablit-newimg
-    - abliterated
+  # 2026-06-20: PARKED / de-advertised (displaced as 5930k warm leader by
+  # qwen36-35b-mtp-uncensored, minReplicas 0). serviceLabels removed and
+  # litellm.enabled=false so the proxy hides it from /v1/models, won't
+  # alias-resolve it, and never cold-starts it by name. The `abliterated` role
+  # label MOVED to qwen36-35b-mtp-uncensored-5930k (the active 36B abliterated
+  # daily-driver) — do NOT re-add it here while the 36B owns that role. Restore
+  # this lane by re-adding its own-name serviceLabel + flip enabled true +
+  # minReplicas 1 + forcePromotion.
   litellm:
-    enabled: true
+    enabled: false
     servedModelName: qwen3-14b-ablit-newimg
-    aliases:
-      - abliterated
-      - qwen3-14b-abliterated

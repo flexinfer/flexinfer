@@ -171,11 +171,12 @@ spec:
   # this 35B there would silently change that route's load-balancing; opt in
   # later if desired). The retired twin's gemma routes (quality-chat, gpt-4, ...)
   # continue to serve via the 7900xtx primary.
-  serviceLabels:
-    - qwen35-moe-reasoning-5930k
+  # 2026-06-20: PARKED / de-advertised (displaced as 5930k warm leader by
+  # qwen36-35b-mtp-uncensored, minReplicas 0). serviceLabels removed and
+  # litellm.enabled=false so the proxy hides it from /v1/models, won't
+  # alias-resolve it, and never cold-starts it by name — stopping the stale
+  # per-model queue it was accumulating. Restore by re-adding the serviceLabel +
+  # aliases + flip enabled true + minReplicas 1 + forcePromotion.
   litellm:
-    enabled: true
+    enabled: false
     servedModelName: qwen35-moe-reasoning-5930k
-    aliases:
-      - qwen35-reasoning
-      - qwen3.5-moe-reasoning

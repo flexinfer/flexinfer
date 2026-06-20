@@ -9,6 +9,16 @@ const (
 	AnnotationVRAMEstimateMB = "flexinfer.ai/gpu.vram-estimate-mb"
 )
 
+// Model routing-policy annotations consumed by the proxy.
+const (
+	// AnnotationServePaths optionally restricts which inference path prefixes a
+	// Model serves (comma-separated, e.g. "/v1/audio/transcriptions" for an
+	// ASR-only model). The proxy rejects requests to any other path at the edge
+	// without serving, cold-starting, or touching demand. Absent/empty means the
+	// model serves all paths (default).
+	AnnotationServePaths = "flexinfer.ai/serve-paths"
+)
+
 // Node annotations written by the flexinfer-agent for scheduler scoring.
 const (
 	NodeAnnotationGPUUtil           = "flexinfer.ai/gpu.util"

@@ -138,32 +138,17 @@ spec:
     limits:
       cpu: "4"
       memory: 16Gi
-  serviceLabels:
-    # Shared routes — must match gemma4-26b-a4b-gptq.yaml exactly so the proxy
-    # treats both as load-balanced backends for the same logical service.
-    # Routing policy is round-robin among Ready members (see primary manifest
-    # for the longer note). A 20-request probe through `quality-chat` on
-    # 2026-05-14 split 10/10 across the two instances; evidence captured in
-    # .loom/60-validation-matrix.md.
-    - gemma4-26b
-    - quality-chat
-    - mid-chat
-    - fast-chat
-    - fast-text
-    - gpt-4
-    - gpt-3.5-turbo
-    - copilot
-    - qwen3-default
-    - project-mgmt
+  # 2026-06-20: PARKED / de-advertised. This instance was retired to
+  # minReplicas 0 (5930k card reassigned to the 5930k-textgen shared lane led by
+  # qwen36-35b). It must not be advertised: serviceLabels removed and
+  # litellm.enabled=false so the proxy hides it from /v1/models, refuses to
+  # resolve it as an alias, and never cold-starts it by name — stopping the
+  # stale per-model queue it was accumulating. Restore by re-adding the shared
+  # serviceLabels (copy from gemma4-26b-a4b-gptq.yaml) + flip enabled true +
+  # minReplicas 1.
   litellm:
-    enabled: true
-    # Unique per-instance servedModelName + aliases. Downstream services that
-    # need explicit 5930k addressing use one of these; shared service-level
-    # routing happens via serviceLabels above.
+    enabled: false
     servedModelName: gemma4-26b-a4b-gptq-5930k
-    aliases:
-      - gemma4-26b-5930k
-      - gemma4-26b-a4b-5930k
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
