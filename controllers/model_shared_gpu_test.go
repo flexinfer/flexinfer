@@ -798,14 +798,14 @@ func TestChooseSharedGroupLeaders(t *testing.T) {
 		// Two warm-pinned members; single-slot must still elect only one.
 		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 1500)
 		b := withVRAMEst(markWarmPinned(makeSharedModel("b", 100, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 600)
-		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, false, 16000)
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, false, 16000, false)
 		assert.Len(t, got, 1)
 	})
 
 	t.Run("multi-model admits multiple wanters within budget", func(t *testing.T) {
 		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 1500)
 		b := withVRAMEst(markWarmPinned(makeSharedModel("b", 100, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 600)
-		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 16000)
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 16000, false)
 		assert.Len(t, got, 2)
 		assert.True(t, names(got)["a"] && names(got)["b"])
 	})
@@ -814,14 +814,14 @@ func TestChooseSharedGroupLeaders(t *testing.T) {
 		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 1500)
 		b := withVRAMEst(markWarmPinned(makeSharedModel("b", 100, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 600)
 		// Budget fits the primary (1500) but not +600.
-		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 1800)
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 1800, false)
 		assert.Len(t, got, 1)
 		assert.True(t, names(got)["a"], "primary must be retained")
 	})
 
 	t.Run("multi-model always includes the primary even if it exceeds budget", func(t *testing.T) {
 		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 20000)
-		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a}, now, true, 1000)
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a}, now, true, 1000, false)
 		assert.Len(t, got, 1)
 		assert.True(t, names(got)["a"])
 	})
@@ -830,13 +830,34 @@ func TestChooseSharedGroupLeaders(t *testing.T) {
 		// a: warm-pinned Ready (wants). b: idle scale-to-zero, not Ready, no demand.
 		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 1500)
 		b := withVRAMEst(makeSharedModel("b", 100, aiv1alpha2.ModelPhaseIdle, nil, nil), 600)
-		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 16000)
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 16000, false)
 		assert.Len(t, got, 1)
 		assert.True(t, names(got)["a"])
 		assert.False(t, names(got)["b"], "idle non-wanter must be excluded")
 	})
 
 	t.Run("empty group returns nil", func(t *testing.T) {
-		assert.Nil(t, chooseSharedGroupLeaders(nil, now, true, 16000))
+		assert.Nil(t, chooseSharedGroupLeaders(nil, now, true, 16000, false))
+	})
+
+	t.Run("leased group yields no leader (park-and-hold)", func(t *testing.T) {
+		// Even a Ready warm-primary AND a force-promoted member park while a
+		// training lease holds the card: the lease is the top-priority member.
+		ready := markWarmPrimary(makeSharedModel("ready", 200, aiv1alpha2.ModelPhaseReady, timePtr(now), nil))
+		forced := markForcePromoted(makeSharedModel("forced", 500, aiv1alpha2.ModelPhaseReady, timePtr(now), nil))
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{ready, forced}, now, false, 0, true)
+		assert.Empty(t, got, "leased group must elect no leader")
+
+		// Releasing the lease (leased=false) restores normal election.
+		got = chooseSharedGroupLeaders([]*aiv1alpha2.Model{ready, forced}, now, false, 0, false)
+		assert.Len(t, got, 1)
+		assert.True(t, names(got)["forced"], "force-promoted member re-promotes on release")
+	})
+
+	t.Run("leased multi-model group also yields nothing", func(t *testing.T) {
+		a := withVRAMEst(markWarmPinned(makeSharedModel("a", 120, aiv1alpha2.ModelPhaseReady, timePtr(now), nil)), 1500)
+		b := withVRAMEst(makeSharedModel("b", 100, aiv1alpha2.ModelPhaseReady, timePtr(now), nil), 600)
+		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 16000, true)
+		assert.Empty(t, got, "leased group parks the whole Active set")
 	})
 }

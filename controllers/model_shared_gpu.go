@@ -261,7 +261,15 @@ func sharedModelWantsToRun(m *aiv1alpha2.Model, now time.Time) bool {
 // always included (parity with the single-slot guarantee that the elected leader
 // runs, even if its own estimate exceeds the budget). budgetMB<=0 disables the
 // VRAM bound (admit all wanters); callers pass the GPUProfile VRAMMB.
-func chooseSharedGroupLeaders(groupModels []*aiv1alpha2.Model, now time.Time, multiModel bool, budgetMB int64) []*aiv1alpha2.Model {
+// When leased is true a training/quant workload holds a scheduler-honored GPU
+// lease on the group: the election yields NO servable leader so every serving
+// member parks (scale-to-0 -> Preempted) and stays parked until the lease is
+// released or expires. The lease is the highest-priority transient member of
+// the group -- it beats even forcePromotion (the spec's "park-and-hold").
+func chooseSharedGroupLeaders(groupModels []*aiv1alpha2.Model, now time.Time, multiModel bool, budgetMB int64, leased bool) []*aiv1alpha2.Model {
+	if leased {
+		return nil
+	}
 	primary := chooseSharedGroupLeader(groupModels, now)
 	if primary == nil {
 		return nil
@@ -455,20 +463,49 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		}
 	}
 
+	now := time.Now()
+
+	// GPU lease: a training/quant workload may hold a scheduler-honored hold on
+	// this group's card. While leased, the election yields no leader so every
+	// serving member parks (and stays parked) until the lease releases/expires,
+	// freeing amd.com/gpu for the training Job. A lease read error fails OPEN
+	// toward serving -- we proceed as unleased rather than risk a strand.
+	leaseHolder, leaseErr := r.groupHasActiveLease(ctx, model.Namespace, groupName, now)
+	if leaseErr != nil {
+		log.Error(leaseErr, "Failed to read GPU lease; proceeding as unleased", "group", groupName)
+	}
+	leased := leaseHolder != nil
+
 	// Multi-model election: when the group's GPU runtime can host concurrent
 	// subprocesses (GPUProfile feature flag), keep a VRAM-bounded SET of members
 	// Active instead of a single leader. Single-slot (default) returns exactly
 	// the one leader, so behavior is unchanged for every existing group.
 	multiModel, budgetMB := r.sharedGroupMultiModel(model)
-	activeModels := chooseSharedGroupLeaders(groupModels, time.Now(), multiModel, budgetMB)
-	if len(activeModels) == 0 {
+	activeModels := chooseSharedGroupLeaders(groupModels, now, multiModel, budgetMB, leased)
+	// An empty active set is normal under a lease (everyone parks). Without a
+	// lease it is the "shouldn't happen" guard -- requeue and retry.
+	if len(activeModels) == 0 && !leased {
 		return ctrl.Result{RequeueAfter: requeueFast}, nil
 	}
 	// primary is the elected leader (set[0]); used for PreemptedBy/queue position.
-	primary := activeModels[0]
+	// It is nil while leased (no leader); preemptedBy then attributes to the lease.
+	var primary *aiv1alpha2.Model
+	if len(activeModels) > 0 {
+		primary = activeModels[0]
+	}
 	activeSet := make(map[string]bool, len(activeModels))
 	for _, am := range activeModels {
 		activeSet[am.Name] = true
+	}
+
+	// preemptedBy attributes the park: the elected leader's name normally, or a
+	// "gpu-lease/<owner>" sentinel while a lease holds the card.
+	preemptedBy := ""
+	switch {
+	case primary != nil:
+		preemptedBy = primary.Name
+	case leaseHolder != nil:
+		preemptedBy = "gpu-lease/" + leaseHolder.Owner
 	}
 
 	// Update this model's shared group status
@@ -497,19 +534,24 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		// This model should be preempted/queued (not in the Active set).
 		model.Status.SharedGroup.State = "Queued"
 		model.Status.SharedGroup.QueuePosition = queuePositionForSharedModel(model.Name, primary, groupModels)
-		model.Status.SharedGroup.PreemptedBy = primary.Name
+		model.Status.SharedGroup.PreemptedBy = preemptedBy
 
 		if model.Status.Phase == aiv1alpha2.ModelPhaseReady {
 			// Preempt this model
-			log.Info("Preempting model in favor of higher priority", "preemptedBy", primary.Name)
+			log.Info("Preempting model", "preemptedBy", preemptedBy, "leased", leased)
 			model.Status.Phase = aiv1alpha2.ModelPhasePreempted
 			model.Status.LoadingSubstage = aiv1alpha2.LoadingSubstagePreempted
 			model.Status.Message = preemptedStatusMessage(model)
 			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonPreempted, model.Status.Message)
 			model.Status.SharedGroup.PreemptedAt = &metav1.Time{Time: time.Now()}
-			r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
-				fmt.Sprintf("Preempted by %s with priority %d", primary.Name, primary.Spec.GetPriority()))
-			metrics.SharedGroupPreemptionsTotal.WithLabelValues(groupName, model.Namespace, model.Name, primary.Name).Inc()
+			if leased {
+				r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
+					fmt.Sprintf("Preempted by GPU lease %q (training holds the card)", preemptedBy))
+			} else {
+				r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
+					fmt.Sprintf("Preempted by %s with priority %d", primary.Name, primary.Spec.GetPriority()))
+			}
+			metrics.SharedGroupPreemptionsTotal.WithLabelValues(groupName, model.Namespace, model.Name, preemptedBy).Inc()
 			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Preempted").Set(1)
 			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Active").Set(0)
 			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Queued").Set(0)
