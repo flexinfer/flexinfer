@@ -526,6 +526,19 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// 3. Fetch v1alpha2 Model first (preferred)
 	m, err := p.getModel(ctx, modelName)
 	if err == nil {
+		// 3-pre. Endpoint guard: if the Model declares which inference paths it
+		// serves (flexinfer.ai/serve-paths) and this request isn't one of them,
+		// reject immediately — do NOT serve, cold-start, or touch demand. This
+		// stops e.g. chat-completion probes from warming an ASR-only model
+		// (whisper, /v1/audio/transcriptions only) and preempting its shared GPU.
+		if !modelServesPath(m, r.URL.Path) {
+			slog.Debug("rejecting request: model does not serve path",
+				"model", modelName, "path", r.URL.Path, "request_id", requestID)
+			validation.WriteModelNotFound(w, modelName)
+			requestsTotal.WithLabelValues(modelName, "endpoint_unsupported").Inc()
+			return
+		}
+
 		// 3a. Context-bounded admission (CC-6a-2): refuse over-budget
 		// requests at the proxy edge instead of forwarding and waiting
 		// 30s for the runtime to reject. Opt-in per Model via the
@@ -550,6 +563,20 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// If model is ready, serve directly.
 		if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 			p.trackAndServe(w, r, modelName, start)
+			return
+		}
+
+		// Parked / de-advertised models (spec.litellm.enabled=false) are not
+		// part of the servable fleet: never cold-start them by name. Return 404
+		// immediately WITHOUT touching demand, so a stale client or prober
+		// hitting a model we do not intend to serve cannot build an unbounded
+		// queue or trigger shared-GPU preemption of the warm leader. (A warm
+		// minReplicas>=1 parked model would have served via the Ready branch.)
+		if litellmExplicitlyDisabled(m) {
+			slog.Debug("rejecting cold start: model is parked (litellm disabled)",
+				"model", modelName, "request_id", requestID)
+			validation.WriteModelNotFound(w, modelName)
+			requestsTotal.WithLabelValues(modelName, "parked").Inc()
 			return
 		}
 

@@ -103,14 +103,22 @@ spec:
   - effect: NoSchedule
     key: node-role.kubernetes.io/control-plane
     operator: Exists
+  # Normalized model-independent role labels: this is the core abliterated /
+  # uncensored / reasoning daily-driver (operator: "qwen3 36b ablit"). The
+  # `abliterated` role moved here from the parked qwen3-14b-ablit-newimg so
+  # services route by role, not by exact model name.
   serviceLabels:
   - qwen36-35b-mtp-uncensored-5930k
+  - abliterated
   - uncensored
   - heretic
+  - reasoning
   litellm:
     enabled: true
     servedModelName: qwen36-35b-mtp-uncensored-5930k
     aliases:
+    - abliterated
     - uncensored
     - heretic
+    - reasoning
     - qwen36-35b-uncensored

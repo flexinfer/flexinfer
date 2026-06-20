@@ -106,16 +106,15 @@ spec:
     limits:
       cpu: "4"
       memory: 16Gi
-  # Isolated routes — no shared aliases. The warm primary keeps every
-  # production label (quality-chat / fast-chat / gpt-4 / etc.); this canary
-  # is only addressable by its own name.
-  serviceLabels:
-    - gemma4-26b-apc-canary
+  # 2026-06-20: PARKED / de-advertised (operator-activated kill-test lane,
+  # minReplicas 0). serviceLabels removed and litellm.enabled=false so the proxy
+  # hides it from /v1/models, won't alias-resolve it, and never cold-starts it
+  # by name — stopping the stale per-model queue it was accumulating. Restore by
+  # re-adding the isolated serviceLabel + alias + flip enabled true to run the
+  # APC canary again.
   litellm:
-    enabled: true
+    enabled: false
     servedModelName: gemma4-26b-a4b-gptq-apc-canary
-    aliases:
-      - gemma4-26b-apc-canary
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"

@@ -36,6 +36,14 @@ metadata:
     flexinfer.ai/purpose: "ASR — OpenAI /v1/audio/transcriptions for ICC meeting transcription (Slice 3a)"
     flexinfer.ai/plan: ".loom/asr-diarization-7900xtx-plan-2026-05-18.md"
     flexinfer.ai/kill-test-evidence: ".loom/ralph-whisper-kill-test-v6-evidence-2026-05-21.md"
+    # ASR-ONLY endpoint guard: whisper serves ONLY /v1/audio/transcriptions. The
+    # proxy rejects any other path (e.g. chat-completion probes) at the edge with
+    # 404 and WITHOUT cold-starting or touching demand. This is what keeps
+    # whisper's priority-400 preempt+drain honest: only a REAL transcription
+    # request preempts the gemma4 warm primary on this shared 7900xtx card —
+    # chat-completion health probes can no longer flap whisper Active and starve
+    # gemma4. See internal/proxy/serving_policy.go (modelServesPath).
+    flexinfer.ai/serve-paths: "/v1/audio/transcriptions"
 spec:
   backend: vllm
   # Image inherits from the gfx1100 GPUProfile vllm.image pin
@@ -98,10 +106,14 @@ spec:
       memory: 8Gi
   serviceLabels:
     # Routable names so the proxy gives ICC a single base URL. `asr` is the
-    # generic alias so callers can request model=asr.
+    # generic role label so callers can request model=asr (or transcription)
+    # without knowing the exact model. NOTE: these only route /v1/audio/
+    # transcriptions traffic — the serve-paths annotation above 404s any other
+    # endpoint before it can warm this lane.
     - whisper-large-v3-turbo
     - whisper
     - asr
+    - transcription
   litellm:
     enabled: true
     servedModelName: whisper-large-v3-turbo

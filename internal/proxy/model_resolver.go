@@ -252,9 +252,15 @@ func (r *ModelResolver) refreshModelAliasCache(ctx context.Context) {
 		aliasClaims[alias] = append(aliasClaims[alias], resourceName)
 	}
 
-	for _, m := range models.Items {
+	for i := range models.Items {
+		m := &models.Items[i]
 		resourceName := m.Name
 		if m.Spec.LiteLLM == nil {
+			continue
+		}
+		// Parked models (spec.litellm.enabled=false) must not be alias-resolvable
+		// — a stale alias should never route a request to a de-advertised model.
+		if litellmExplicitlyDisabled(m) {
 			continue
 		}
 		if served := m.Spec.LiteLLM.ServedModelName; served != "" && served != resourceName {
