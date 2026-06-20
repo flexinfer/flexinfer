@@ -1,0 +1,116 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: gpuleases.ai.flexinfer
+spec:
+  group: ai.flexinfer
+  names:
+    kind: GPULease
+    listKind: GPULeaseList
+    plural: gpuleases
+    shortNames:
+    - gpulease
+    singular: gpulease
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.group
+      name: Group
+      type: string
+    - jsonPath: .spec.owner
+      name: Owner
+      type: string
+    - jsonPath: .spec.node
+      name: Node
+      type: string
+    - jsonPath: .spec.expiresAt
+      name: Expires
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha2
+    schema:
+      openAPIV3Schema:
+        description: |-
+          GPULease is the Schema for transient training-vs-serving GPU holds on a
+          shared-GPU group. A training/quant workload creates one to park the serving
+          incumbent, then deletes it to restore serving.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: |-
+              GPULeaseSpec describes a transient, scheduler-honored hold on a shared-GPU
+              group. While an unexpired lease exists for a group, the shared-GPU election
+              (chooseSharedGroupLeaders) yields no leader so every serving member parks and
+              stays parked, freeing amd.com/gpu for a training/quant Job, until the lease is
+              deleted or expires.
+
+              This is the first-class carrier that replaces the slice-1 labeled-ConfigMap
+              sentinel; the election contract is unchanged (groupHasActiveLease). The
+              controller still honors a legacy ConfigMap lease for backward compatibility.
+            properties:
+              expiresAt:
+                description: |-
+                  ExpiresAt is the TTL deadline. The election ignores the lease once
+                  now >= ExpiresAt, so a dead acquirer cannot strand serving forever
+                  (crash-safety backstop). A nil ExpiresAt means the lease is honored for
+                  as long as the object exists -- pair it with an ownerReference so it is
+                  still garbage-collected when the owning workload is deleted.
+                format: date-time
+                type: string
+              group:
+                description: Group is the shared-GPU group (Model.spec.gpu.shared)
+                  this lease holds.
+                type: string
+              node:
+                description: |-
+                  Node is the node whose card the lease holds. Informational/targeting; the
+                  election keys on Group, not Node.
+                type: string
+              owner:
+                description: |-
+                  Owner is the workload that acquired the lease (e.g. a ModelCache name),
+                  used for PreemptedBy attribution and observability.
+                type: string
+            required:
+            - group
+            type: object
+          status:
+            description: GPULeaseStatus is the observed state of a GPU lease.
+            properties:
+              acquiredAt:
+                description: AcquiredAt is when the controller first observed the
+                  lease as active.
+                format: date-time
+                type: string
+              active:
+                description: |-
+                  Active reflects whether the lease is currently honored by the election
+                  (group held). False once it has expired.
+                type: boolean
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

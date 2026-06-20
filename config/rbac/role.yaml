@@ -33,6 +33,7 @@ rules:
   resources:
   - clusters
   - federatedmodels
+  - gpuleases
   - loraadapters
   - modelcaches
   - modelcatalogs
@@ -60,6 +61,7 @@ rules:
   resources:
   - clusters/status
   - federatedmodels/status
+  - gpuleases/status
   - gpuprofiles/status
   - loraadapters/status
   - modelcaches/status

@@ -25,10 +25,12 @@ import (
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/pkg/constants"
 )
 
@@ -36,6 +38,7 @@ func leaseScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	scheme := runtime.NewScheme()
 	require.NoError(t, corev1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
 	return scheme
 }
 
@@ -43,14 +46,14 @@ func TestGPULeaseActive(t *testing.T) {
 	now := time.Now()
 	tests := []struct {
 		name  string
-		lease *GPULease
+		lease *activeLease
 		want  bool
 	}{
 		{"nil", nil, false},
-		{"empty group", &GPULease{}, false},
-		{"no ttl honored", &GPULease{Group: "g"}, true},
-		{"future expiry honored", &GPULease{Group: "g", ExpiresAt: now.Add(time.Minute)}, true},
-		{"past expiry ignored", &GPULease{Group: "g", ExpiresAt: now.Add(-time.Minute)}, false},
+		{"empty group", &activeLease{}, false},
+		{"no ttl honored", &activeLease{Group: "g"}, true},
+		{"future expiry honored", &activeLease{Group: "g", ExpiresAt: now.Add(time.Minute)}, true},
+		{"past expiry ignored", &activeLease{Group: "g", ExpiresAt: now.Add(-time.Minute)}, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -62,7 +65,7 @@ func TestGPULeaseActive(t *testing.T) {
 func TestLeaseFromConfigMapRoundTrip(t *testing.T) {
 	acquired := time.Now().Truncate(time.Second).UTC()
 	expires := acquired.Add(30 * time.Minute)
-	in := GPULease{
+	in := activeLease{
 		Group:      "5930k-textgen",
 		Node:       "k3s-w-09",
 		Owner:      "qwen3-1p7b-lora",
@@ -102,7 +105,7 @@ func TestAcquireFindReleaseGPULease(t *testing.T) {
 	assert.Nil(t, got)
 
 	// Acquire with a TTL.
-	_, err = acquireGPULease(ctx, c, "flexinfer", GPULease{
+	_, err = acquireGPULease(ctx, c, "flexinfer", activeLease{
 		Group:      "g1",
 		Owner:      "trainer",
 		AcquiredAt: now,
@@ -138,7 +141,7 @@ func TestFindActiveLeaseIgnoresExpired(t *testing.T) {
 
 	// Acquire a lease that has already expired (TTL backstop: a dead acquirer's
 	// stale lease must not strand serving).
-	_, err := acquireGPULease(ctx, c, "flexinfer", GPULease{
+	_, err := acquireGPULease(ctx, c, "flexinfer", activeLease{
 		Group:      "g1",
 		Owner:      "dead-trainer",
 		AcquiredAt: now.Add(-time.Hour),
@@ -165,12 +168,12 @@ func TestAcquireGPULeaseRefreshesTTL(t *testing.T) {
 	now := time.Now()
 
 	first := now.Add(time.Minute)
-	_, err := acquireGPULease(ctx, c, "flexinfer", GPULease{Group: "g1", Owner: "t", AcquiredAt: now, ExpiresAt: first})
+	_, err := acquireGPULease(ctx, c, "flexinfer", activeLease{Group: "g1", Owner: "t", AcquiredAt: now, ExpiresAt: first})
 	require.NoError(t, err)
 
 	// Re-acquire extends the TTL in place (idempotent renew).
 	second := now.Add(20 * time.Minute)
-	_, err = acquireGPULease(ctx, c, "flexinfer", GPULease{Group: "g1", Owner: "t", AcquiredAt: now, ExpiresAt: second})
+	_, err = acquireGPULease(ctx, c, "flexinfer", activeLease{Group: "g1", Owner: "t", AcquiredAt: now, ExpiresAt: second})
 	require.NoError(t, err)
 
 	cm := &corev1.ConfigMap{}
@@ -201,4 +204,132 @@ func TestFindActiveLeaseNotFound(t *testing.T) {
 	assert.Nil(t, got)
 	// Ensure we didn't accidentally treat a real error as not-found.
 	assert.False(t, apierrors.IsNotFound(err))
+}
+
+func TestLeaseFromCR(t *testing.T) {
+	now := time.Now().Truncate(time.Second)
+	exp := now.Add(15 * time.Minute)
+	cr := &aiv1alpha2.GPULease{
+		ObjectMeta: metav1.ObjectMeta{Name: "l1", Namespace: "flexinfer", CreationTimestamp: metav1.Time{Time: now}},
+		Spec: aiv1alpha2.GPULeaseSpec{
+			Group:     "5930k-textgen",
+			Node:      "cblevins-5930k",
+			Owner:     "qwen3-1p7b-lora",
+			ExpiresAt: &metav1.Time{Time: exp},
+		},
+	}
+	l := leaseFromCR(cr)
+	require.NotNil(t, l)
+	assert.Equal(t, "5930k-textgen", l.Group)
+	assert.Equal(t, "cblevins-5930k", l.Node)
+	assert.Equal(t, "qwen3-1p7b-lora", l.Owner)
+	assert.True(t, exp.Equal(l.ExpiresAt))
+	assert.True(t, now.Equal(l.AcquiredAt), "AcquiredAt falls back to creationTimestamp")
+
+	// A CR without spec.group is not a lease.
+	assert.Nil(t, leaseFromCR(&aiv1alpha2.GPULease{}))
+	assert.Nil(t, leaseFromCR(nil))
+}
+
+func TestAcquireFindReleaseGPULeaseCR(t *testing.T) {
+	ctx := context.Background()
+	scheme := leaseScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	now := time.Now()
+
+	got, err := findActiveLease(ctx, c, "flexinfer", "g1", now)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+
+	// Acquire a GPULease CR (first-class carrier).
+	_, err = acquireGPULeaseCR(ctx, c, "flexinfer", "g1-lease", activeLease{
+		Group:     "g1",
+		Owner:     "trainer",
+		ExpiresAt: now.Add(10 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	got, err = findActiveLease(ctx, c, "flexinfer", "g1", now)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "trainer", got.Owner)
+
+	// Re-acquire updates spec in place (idempotent renew); still one CR.
+	_, err = acquireGPULeaseCR(ctx, c, "flexinfer", "g1-lease", activeLease{
+		Group:     "g1",
+		Owner:     "trainer",
+		ExpiresAt: now.Add(30 * time.Minute),
+	})
+	require.NoError(t, err)
+	list := &aiv1alpha2.GPULeaseList{}
+	require.NoError(t, c.List(ctx, list))
+	assert.Len(t, list.Items, 1)
+
+	// Release deletes it.
+	require.NoError(t, releaseGPULeaseCR(ctx, c, "flexinfer", "g1-lease"))
+	got, err = findActiveLease(ctx, c, "flexinfer", "g1", now)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+	// Releasing a missing CR is a no-op success (crash-safe idempotency).
+	require.NoError(t, releaseGPULeaseCR(ctx, c, "flexinfer", "g1-lease"))
+}
+
+func TestFindActiveLeaseCRIgnoresExpired(t *testing.T) {
+	ctx := context.Background()
+	scheme := leaseScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	now := time.Now()
+
+	// An expired GPULease CR must not hold the group (TTL backstop).
+	_, err := acquireGPULeaseCR(ctx, c, "flexinfer", "dead-lease", activeLease{
+		Group:     "g1",
+		Owner:     "dead-trainer",
+		ExpiresAt: now.Add(-time.Minute),
+	})
+	require.NoError(t, err)
+
+	got, err := findActiveLease(ctx, c, "flexinfer", "g1", now)
+	require.NoError(t, err)
+	assert.Nil(t, got, "expired CR is ignored")
+}
+
+func TestFindActiveLeaseCRTakesPrecedenceOverConfigMap(t *testing.T) {
+	ctx := context.Background()
+	scheme := leaseScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	now := time.Now()
+
+	// Legacy ConfigMap carrier present...
+	_, err := acquireGPULease(ctx, c, "flexinfer", activeLease{
+		Group: "g1", Owner: "legacy-cm", ExpiresAt: now.Add(10 * time.Minute),
+	})
+	require.NoError(t, err)
+	// ...and a first-class CR for the same group.
+	_, err = acquireGPULeaseCR(ctx, c, "flexinfer", "g1-lease", activeLease{
+		Group: "g1", Owner: "crd-owner", ExpiresAt: now.Add(10 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	got, err := findActiveLease(ctx, c, "flexinfer", "g1", now)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "crd-owner", got.Owner, "CR is the primary carrier")
+}
+
+func TestFindActiveLeaseFallsBackToConfigMap(t *testing.T) {
+	ctx := context.Background()
+	scheme := leaseScheme(t)
+	c := fake.NewClientBuilder().WithScheme(scheme).Build()
+	now := time.Now()
+
+	// No CR, only a legacy ConfigMap (manual kill-test runbook path).
+	_, err := acquireGPULease(ctx, c, "flexinfer", activeLease{
+		Group: "g1", Owner: "manual", ExpiresAt: now.Add(10 * time.Minute),
+	})
+	require.NoError(t, err)
+
+	got, err := findActiveLease(ctx, c, "flexinfer", "g1", now)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, "manual", got.Owner, "legacy ConfigMap still honored")
 }
