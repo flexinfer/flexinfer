@@ -2,7 +2,7 @@
 
 - **Date**: 2026-06-20
 - **Spec**: [spec-training-shared-gpu-lease-2026-06-20.md](spec-training-shared-gpu-lease-2026-06-20.md)
-- **Status**: not run (procedure ready; needs controller image with `feat/gpu-lease-scheduler` rolled out)
+- **Status**: **PASSED 2026-06-20** on `5930k-textgen` / `qwen36-35b-mtp-uncensored-5930k`. Park-and-hold → freed `amd.com/gpu` → probe Job `Completed` on `cblevins-5930k` (`cuda_available True`, 7900 XTX) → release → 35B re-promoted `Ready` in 2m46s + coherent round-trip. No strand/flap/double-book. NOTE: the live controller needed a `kubectl -n flexinfer-system rollout restart deploy/flexinfer-controller` to pick up the lease-aware `:master` (the pre-existing pod predated the post-merge publish); honored within one reconcile after leader-election.
 
 ## What this proves
 

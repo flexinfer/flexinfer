@@ -25,7 +25,7 @@ There is no "hold/suspend/maintenance" concept on `Model` to lean on.
 
 **Pair with negative search**: before declaring pass, check the inverse — does releasing the lease while the Job is *still running* (crash/restart of the finetune controller mid-train) leave the card double-booked or the serving lane stranded? The lease must be crash-safe (owner-ref / TTL / reconcile-on-restart).
 
-**Status**: election mechanism + carrier landed 2026-06-20 (unit tests green); live kill-test **not yet run** (needs controller image rebuild + rollout). Runbook: [runbook-gpu-lease-kill-test-2026-06-20.md](runbook-gpu-lease-kill-test-2026-06-20.md).
+**Status**: **PASSED 2026-06-20** — live kill-test ran on the `5930k-textgen` group against the `qwen36-35b-mtp-uncensored-5930k` daily-driver. Acquire lease → 35B parked (`Preempted`/`Queued`, `PreemptedBy=gpu-lease/killtest-manual`, pod terminated, card freed) → GPU probe Job bound to `cblevins-5930k` and reached `Completed` (`cuda_available True`, `AMD Radeon RX 7900 XTX`) → release lease → 35B re-promoted `Loading`→`Ready` in 2m46s and served a coherent round-trip. No strand, no flap, no double-book (probe completed before release). Operational note: the running controller had to be `rollout restart`ed to pick up the lease-aware `:master` image (`imagePullPolicy: Always`); after restart the lease was honored within one reconcile of leader-election. Runbook: [runbook-gpu-lease-kill-test-2026-06-20.md](runbook-gpu-lease-kill-test-2026-06-20.md).
 
 ### Slice-1 implementation note (what landed 2026-06-20)
 
