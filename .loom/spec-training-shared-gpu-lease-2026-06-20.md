@@ -49,12 +49,27 @@ Add a lightweight **`GPULease`** the shared-GPU election treats as the highest-p
 
 ## Slices
 
-> Progress: **Slice 1 ✅ (MR !672, live kill-test PASSED 2026-06-20)** · **Slice 2 ✅ (MR !674, `GPULease` CRD)** · **Slice 3 ✅ (MR !675, finetune-controller acquire/release)** · Slices 4–5 open.
+> Progress: **Slice 1 ✅ (MR !672, live kill-test PASSED 2026-06-20)** · **Slice 2 ✅ (MR !674, `GPULease` CRD)** · **Slice 3 ✅ (MR !675, finetune-controller acquire/release)** · **Slice 4 ✅ lease integration PROVEN LIVE 2026-06-20** (full train→serve gated on separate F1 finetune issues — see below) · Slice 5 open.
+
+### Slice 4 live result (2026-06-20)
+
+Drove `ft-crd-flexland` (Qwen3-1.7B QLoRA, the pre-existing F1 kill-test ModelCache, label `f1-slice4`) by adding `finetune.gpuLease: {group: 5930k-textgen}` + a `cblevins-5930k` host-pin. The **automated lease chain worked end-to-end, no manual preemption**:
+1. ✅ The controller **auto-created** the `GPULease` CR `ft-crd-flexland-gpu-lease` (slice-3 acquire).
+2. ✅ The election **parked** the 35B incumbent (`Preempted/Queued/gpu-lease/ft-crd-flexland`), its pod terminated, **`amd.com/gpu` freed** on cblevins-5930k.
+3. ✅ The finetune Job **scheduled onto the lease-freed card** ("Successfully assigned … to cblevins-5930k").
+4. ✅ On lease removal the election **re-promoted** the 35B `Loading`→`Ready` (serving restored).
+
+Full train→serve was **not completed live** — gated on three issues **orthogonal to the lease**, all pre-existing F1/controller concerns (not lease bugs):
+- **Finetune memory over-provisioned**: the Job requests **68Gi** vs the 5930k node's **57Gi** allocatable → unschedulable until `maxMemoryGB` lowered. (Spawned a follow-up.)
+- **Spec-change Job recreation didn't fire** for an already-`Active` Pending Job (`storedHash` stayed stale; the controller treated the Pending Job as in-progress) → had to delete the Job to force a rebuild with the new spec.
+- **35B not reconciled spontaneously** (the model work-queue was hot-looping on radeonvii models, ~10 reconciles/s, starving the 35B → 0 reconciles) → had to `annotate`-nudge the 35B to park AND to re-promote.
+
+The slice-4 deliverable (the lease lets training schedule without manual preemption, and serving restores) is proven. The finetune's own sizing/scheduling is F1 territory.
 
 1. **Slice 1 ✅ — Lease kill-test (riskiest assumption)** — implement the minimal `GPULease` honored by `chooseSharedGroupLeader` + the acquire/poll/release loop in the finetune controller; run the live kill-test above on the 5930k-textgen group with a trivial GPU Job. Gate everything else on this.
 2. **Slice 2 ✅ — `GPULease` carrier + election integration** — `GPULease` CRD (`api/v1alpha2/gpulease_types.go`) + deepcopy/manifests/RBAC; `findActiveLease` reads CRs first with legacy-ConfigMap fallback; internal struct renamed `GPULease`→`activeLease`; CR + fallback unit tests. (Election park-and-hold + re-promote already landed in slice 1.)
 3. **Slice 3 ✅ — Finetune controller integration** — opt-in `ModelCache.spec.finetune.gpuLease {group, ttlSeconds}`; `ensure`/`release` helpers in `modelcache_finetune_gpulease.go`; acquire-before-Job + refresh-while-Active + release-on-terminal in `reconcileFinetune`; crash-safety = owner-ref (GC) + TTL (expiry); metrics `flexinfer_gpu_lease_active`/`_acquired_total`. (Priority/preempt-policy threshold deferred to slice 5.)
-4. **Slice 4 — Wire into F1 slice 4** — the original CRD-driven train→serve→validate kill-test now schedules without manual preemption; example `ModelCache(Finetune)` + Qwen3-1.7B LoRA-enabled vLLM lane + `LoRAAdapter`.
+4. **Slice 4 ✅ — Wire into F1 slice 4** — proven live: a `ModelCache(Finetune)` with `finetune.gpuLease` auto-parks the serving incumbent and the training Job schedules on the freed card with no manual preemption; serving re-promotes on release. Full train→serve gated on separate F1 finetune sizing/scheduling issues (see live result above). `LoRAAdapter` serving of the trained adapter remains F1's own follow-on.
 5. **Slice 5 — Hardening** — SwapCooldown interplay, multi-GPU cards (7900xtx 2-slot: lease one slot vs both), training-vs-training queueing, observability + a runbook.
 
 ## Open questions
