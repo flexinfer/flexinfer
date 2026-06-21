@@ -615,6 +615,55 @@ func TestEnsureCachePvcSourceChangeCleansUpOldJob(t *testing.T) {
 	}
 }
 
+// TestEnsureCacheLocalStageUsesIdempotentCreate verifies the cache-stage job
+// (Local pvc-source mode) is created through the shared idempotent path: the job
+// is created, status reflects "started", and the job carries the controller
+// provenance annotation that only createJobIdempotent stamps. Regression guard
+// for unifying model_cache.go cache jobs onto createJobIdempotent (issue #49) so
+// they emit the conflict metric and provenance annotation like the pipeline jobs.
+func TestEnsureCacheLocalStageUsesIdempotentCreate(t *testing.T) {
+	model := modelWithCache("stage-local", "flexinfer-system", "pvc://source-pvc/model", &aiv1alpha2.CacheSpec{
+		Strategy: "Local",
+	})
+	r, cl := newModelCacheReconciler(t,
+		model,
+		sourcePVC("source-pvc", "flexinfer-system", corev1.ClaimBound),
+		cachePVC("stage-local-cache", "flexinfer-system"),
+	)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatal("ensureCache() ready = true, want false right after the staging job starts")
+	}
+
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	if cached.Status.Cache == nil {
+		t.Fatal("status.cache is nil")
+	}
+	if cached.Status.Cache.JobPhase != "Running" {
+		t.Fatalf("status.cache.jobPhase = %q, want Running", cached.Status.Cache.JobPhase)
+	}
+	if cached.Status.Cache.Message != "local cache staging job started" {
+		t.Fatalf("status.cache.message = %q, want 'local cache staging job started'", cached.Status.Cache.Message)
+	}
+
+	// The staging job must exist and, when an instance ID is resolvable, carry the
+	// provenance annotation stamped only by createJobIdempotent -- proof the call
+	// site routes through the shared guard rather than a raw Create.
+	stageJob := &batchv1.Job{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "stage-local-cache-stage", Namespace: model.Namespace}, stageJob); err != nil {
+		t.Fatalf("expected cache-stage job to be created: %v", err)
+	}
+	if id := ControllerInstanceID(); id != "" {
+		if got := stageJob.Annotations[AnnotationControllerInstance]; got != id {
+			t.Fatalf("cache-stage job controller-instance annotation = %q, want %q (must route through createJobIdempotent)", got, id)
+		}
+	}
+}
+
 func TestEnsureCachePvcSourceReadyJobGatesCacheCopy(t *testing.T) {
 	model := modelWithCache("ready-gated", "flexinfer-system", "pvc://source-pvc/model-a", &aiv1alpha2.CacheSpec{
 		Strategy: "SharedPVC",
