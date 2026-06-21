@@ -761,8 +761,12 @@ func (m *Manager) healthCheckLoop(ctx context.Context, loaded *LoadedModel, b ba
 	logger := log.FromContext(ctx).WithValues("model", name, "startupTimeout", startupTimeout)
 
 	probe := b.ReadinessProbe()
-	if probe == nil || probe.HTTPGet == nil {
-		// No HTTP probe defined — mark ready after startup timeout.
+	checkHealth, probeDesc := healthProbeFor(probe, port)
+	if checkHealth == nil {
+		// No usable probe (neither HTTP GET nor TCP socket) — mark ready after
+		// startup timeout. This is the only path that reports Ready without
+		// verifying the backend actually serves, so it is reserved for backends
+		// that genuinely expose no probe.
 		select {
 		case <-time.After(startupTimeout):
 		case <-ctx.Done():
@@ -777,9 +781,6 @@ func (m *Manager) healthCheckLoop(ctx context.Context, loaded *LoadedModel, b ba
 		m.mu.Unlock()
 		return
 	}
-
-	healthPath := probe.HTTPGet.Path
-	healthURL := fmt.Sprintf("http://127.0.0.1:%d%s", port, healthPath)
 
 	ticker := time.NewTicker(2 * time.Second)
 	defer ticker.Stop()
@@ -801,22 +802,44 @@ func (m *Manager) healthCheckLoop(ctx context.Context, loaded *LoadedModel, b ba
 			m.mu.Unlock()
 			return
 		case <-ticker.C:
-			if checkHTTPHealth(healthURL) {
+			if checkHealth() {
 				m.mu.Lock()
 				if m.stillLoadingLocked(loaded) {
 					loaded.State = ModelStateReady
-					logger.Info("Model is ready", "healthURL", healthURL)
+					logger.Info("Model is ready", "probe", probeDesc)
 					setModelStateMetric(name, loaded.Backend, "Ready")
 					ModelLoadDurationSeconds.WithLabelValues(name, loaded.Backend).Observe(time.Since(loaded.LoadedAt).Seconds())
 				}
 				m.mu.Unlock()
 
 				// Continue monitoring for ongoing health.
-				m.continuousHealthCheck(ctx, loaded, healthURL)
+				m.continuousHealthCheck(ctx, loaded, checkHealth)
 				return
 			}
 		}
 	}
+}
+
+// healthProbeFor builds a health-check closure for the backend's readiness
+// probe. It dials the runtime-managed port (the port the subprocess was
+// actually launched on) rather than the probe's declared port, which reflects
+// the default Deployment port and not the runtime subprocess port — mirroring
+// the HTTP path's long-standing behaviour. It returns nil when the probe
+// defines neither an HTTP GET nor a TCP socket check, signalling the caller to
+// fall back to a startup-timer that marks the model ready unconditionally.
+func healthProbeFor(probe *corev1.Probe, port int32) (func() bool, string) {
+	if probe == nil {
+		return nil, ""
+	}
+	if probe.HTTPGet != nil {
+		url := fmt.Sprintf("http://127.0.0.1:%d%s", port, probe.HTTPGet.Path)
+		return func() bool { return checkHTTPHealth(url) }, "http " + url
+	}
+	if probe.TCPSocket != nil {
+		addr := fmt.Sprintf("127.0.0.1:%d", port)
+		return func() bool { return checkTCPHealth(addr) }, "tcp " + addr
+	}
+	return nil, ""
 }
 
 func runtimeBackendPort(b backend.Backend, spec *backend.ModelSpec) int32 {
@@ -835,7 +858,8 @@ func runtimeBackendPort(b backend.Backend, spec *backend.ModelSpec) int32 {
 }
 
 // continuousHealthCheck monitors a ready model and marks it failed if unhealthy.
-func (m *Manager) continuousHealthCheck(ctx context.Context, loaded *LoadedModel, healthURL string) {
+// checkHealth is the same probe closure used during startup (HTTP or TCP).
+func (m *Manager) continuousHealthCheck(ctx context.Context, loaded *LoadedModel, checkHealth func() bool) {
 	name := loaded.Name
 	logger := log.FromContext(ctx).WithValues("model", name)
 	ticker := time.NewTicker(m.healthCheckInterval)
@@ -849,7 +873,7 @@ func (m *Manager) continuousHealthCheck(ctx context.Context, loaded *LoadedModel
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			if checkHTTPHealth(healthURL) {
+			if checkHealth() {
 				failures = 0
 				continue
 			}
