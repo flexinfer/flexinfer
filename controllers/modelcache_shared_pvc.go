@@ -226,7 +226,7 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 			return ctrl.Result{}, jobErr
 		}
 		log.Info("Creating Downloader Job", "Job", newJob.Name, "modelPath", modelPath, "isOCI", isOCISource(modelCache.Spec.Source))
-		if _, err := createJobIdempotent(ctx, r.Client, newJob, "download"); err != nil {
+		if _, err := createJobIdempotent(ctx, r.Client, newJob, "download", modelCache.Generation); err != nil {
 			return ctrl.Result{}, err
 		}
 

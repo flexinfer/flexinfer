@@ -121,7 +121,7 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 		}
 
 		log.Info("Creating publish job", "Job", newJob.Name)
-		if _, err := createJobIdempotent(ctx, r.Client, newJob, "publish"); err != nil {
+		if _, err := createJobIdempotent(ctx, r.Client, newJob, "publish", modelCache.Generation); err != nil {
 			return ctrl.Result{}, err
 		}
 

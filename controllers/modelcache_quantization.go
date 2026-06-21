@@ -284,7 +284,7 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		}
 
 		log.Info("Creating quantization job", "Job", newJob.Name, "format", modelCache.Spec.Quantization.Format)
-		if _, err := createJobIdempotent(ctx, r.Client, newJob, "quantize"); err != nil {
+		if _, err := createJobIdempotent(ctx, r.Client, newJob, "quantize", modelCache.Generation); err != nil {
 			return ctrl.Result{}, err
 		}
 

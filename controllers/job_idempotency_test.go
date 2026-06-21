@@ -96,7 +96,7 @@ func TestCreateJobIdempotent_CreatesWhenAbsent(t *testing.T) {
 	cl := fake.NewClientBuilder().WithScheme(s).Build()
 
 	job := newTestJob("quant-job")
-	created, err := createJobIdempotent(context.Background(), cl, job, "quantize")
+	created, err := createJobIdempotent(context.Background(), cl, job, "quantize", 0)
 	require.NoError(t, err)
 	assert.True(t, created, "expected created=true on first create")
 
@@ -123,7 +123,7 @@ func TestCreateJobIdempotent_SwallowsAlreadyExists(t *testing.T) {
 	const jobType = "conflict-test-stage"
 	before := testutil.ToFloat64(metrics.ModelCacheJobCreateConflictsTotal.WithLabelValues(jobType))
 
-	created, err := createJobIdempotent(context.Background(), cl, newTestJob("dup-job"), jobType)
+	created, err := createJobIdempotent(context.Background(), cl, newTestJob("dup-job"), jobType, 0)
 	require.NoError(t, err, "AlreadyExists must be treated as success")
 	assert.False(t, created, "expected created=false when the job already exists")
 
@@ -142,8 +142,32 @@ func TestCreateJobIdempotent_StampsAnnotationOnNilMap(t *testing.T) {
 
 	job := newTestJob("ann-job")
 	job.Annotations = nil
-	created, err := createJobIdempotent(context.Background(), cl, job, "image_warmup")
+	created, err := createJobIdempotent(context.Background(), cl, job, "image_warmup", 0)
 	require.NoError(t, err)
 	require.True(t, created)
 	assert.Equal(t, ControllerInstanceID(), job.Annotations[AnnotationControllerInstance])
+}
+
+func TestCreateJobIdempotent_StampsOwnerGeneration(t *testing.T) {
+	s := jobIdempotencyScheme(t)
+
+	t.Run("stamps generation when positive", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(s).Build()
+		job := newTestJob("gen-job")
+		created, err := createJobIdempotent(context.Background(), cl, job, "quantize", 7)
+		require.NoError(t, err)
+		require.True(t, created)
+		assert.Equal(t, "7", job.Annotations[AnnotationOwnerGeneration],
+			"owner generation must be stamped when > 0")
+	})
+
+	t.Run("omits generation when zero", func(t *testing.T) {
+		cl := fake.NewClientBuilder().WithScheme(s).Build()
+		job := newTestJob("nogen-job")
+		created, err := createJobIdempotent(context.Background(), cl, job, "quantize", 0)
+		require.NoError(t, err)
+		require.True(t, created)
+		_, ok := job.Annotations[AnnotationOwnerGeneration]
+		assert.False(t, ok, "owner generation annotation must be omitted when ownerGeneration is 0")
+	})
 }

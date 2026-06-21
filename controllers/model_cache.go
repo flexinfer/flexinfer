@@ -263,7 +263,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 						if err != nil {
 							return false, err
 						}
-						created, err := createJobIdempotent(ctx, r.Client, newJob, "cache-stage")
+						created, err := createJobIdempotent(ctx, r.Client, newJob, "cache-stage", model.Generation)
 						if err != nil {
 							return false, err
 						}
@@ -343,7 +343,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 					if err != nil {
 						return false, err
 					}
-					created, err := createJobIdempotent(ctx, r.Client, newJob, "cache-check")
+					created, err := createJobIdempotent(ctx, r.Client, newJob, "cache-check", model.Generation)
 					if err != nil {
 						return false, err
 					}
@@ -616,7 +616,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			if err != nil {
 				return false, err
 			}
-			if _, err := createJobIdempotent(ctx, r.Client, newJob, "cache-prefetch"); err != nil {
+			if _, err := createJobIdempotent(ctx, r.Client, newJob, "cache-prefetch", model.Generation); err != nil {
 				return false, err
 			}
 			model.Status.Cache.JobPhase = "Running"
