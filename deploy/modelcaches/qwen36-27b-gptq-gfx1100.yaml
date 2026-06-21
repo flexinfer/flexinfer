@@ -29,6 +29,10 @@
 #   BF16 source ~56 GB + abliterate inplace (modifies in place) +
 #   GPTQ output ~14 GB + checkpoint cache ~2 GB → 90 Gi minimum.
 #   Use 120Gi for safety; matches Qwen3.5-27B opus distill envelope.
+#   2026-06-21: keep this on NAS RWX instead of nvme-1r-gpu. The 5930k
+#   Longhorn disk is intentionally blocked from new replica scheduling after
+#   prior large-source-cache instability, and the remaining GPU/NVMe pool
+#   cannot reliably fit another 120Gi source PVC.
 #
 # Node placement: download and abliteration stay on cblevins-5930k/gfx1100.
 # GPTQ runs on cblevins-radeonvii/gfx906 for host-memory headroom during the
@@ -47,7 +51,7 @@ spec:
   source: "Qwen/Qwen3.6-27B"
   storageStrategy: SharedPVC
   storageSize: "120Gi"
-  clusterStorageClassName: nvme-1r-gpu
+  clusterStorageClassName: nas-bulk-rwx
   secretRef: "hf-token"
   nodeSelector:
     flexinfer.ai/gpu.arch: gfx1100
