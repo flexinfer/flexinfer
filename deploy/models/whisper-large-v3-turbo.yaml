@@ -9,24 +9,27 @@
 # from the WhisperForConditionalGeneration architecture — no `task:` field
 # (dropped in MR !464; v5 evidence showed --task is rejected by 0.17+ argparse).
 #
-# === Demand-driven, NOT permanent eviction ===
-# Unlike the kill-test (forcePromotion=true + minReplicas=1, which permanently
-# evicts the warm 26B), this CR is idle-to-zero. While idle it holds ZERO
-# replicas, so the 7900xtx warm primary (gemma4-26b-a4b-gptq, priority 350)
-# keeps the GPU and chat traffic is unaffected. Deploying this is a no-op for
-# the 26B. The FIRST /v1/audio/transcriptions request routed by the proxy
-# writes LastActiveTime; priority 400 (> 350) then satisfies the strict-greater
-# demand-swap branch (controllers/model_shared_gpu.go), the 26B yields, Whisper
-# loads (~8s weight load, ~67s cold start observed in v6), transcribes, and
-# after idleTimeout releases the GPU back to the 26B. The sister 26B on
-# cblevins-5930k carries chat throughout the swap via shared serviceLabels.
-#
-# RESIDUAL RISK (validate live, see execution plan STEP 1): demand-driven
-# swap-from-idle is unproven on-cluster — the kill-test used forcePromotion to
-# sidestep it. If this Model gets stuck at State: Queued / replicas: 0 and never
-# activates, the fallback is operator-flipped `gpu.forcePromotion: true` for
-# batch transcription windows (the proven path), or a controller follow-up to
-# make the proxy activation path emit demand for queued shared-GPU members.
+# === Chat-primary, ASR is best-effort on the shared card ===
+# This CR is idle-to-zero AND ranks BELOW the warm primary
+# (gemma4-26b-a4b-gptq, priority 350) on the shared 7900xtx-textgen card.
+# Priority 340 (< 350) is deliberate: the daily-driver chat model must stay
+# primary regardless of ASR load. Mechanics on controllers/model_shared_gpu.go:
+#   - When gemma4 holds the card (warm or demanded), a transcribe request does
+#     NOT preempt it — whisper(340) loses the strict-greater demand-swap to
+#     gemma4(350) and queues until gemma4 idles out (30m idleTimeout). ASR is
+#     therefore best-effort while chat is active.
+#   - When gemma4 is idle-to-zero with no chat demand, an ASR request activates
+#     whisper on the freed card (~8s weight load, ~67s cold start observed in
+#     v6); it transcribes and releases after idleTimeout.
+#   - If chat demand arrives while whisper is the active incumbent, gemma4(350)
+#     wins the strict-greater branch and reclaims the card — chat is restored.
+# History: this lane previously ran at priority 400 (> 350) so ASR preempted
+# chat. That inverted the intended primacy — a sustained transcription stream
+# evicted the gemma4 daily driver and queued chat (observed live 2026-06-21).
+# Re-ranked below the primary so chat wins contention by default. To force a
+# dedicated batch transcription window, operators can still flip
+# `gpu.forcePromotion: true` (the proven kill-test path) temporarily. The
+# sister 26B on cblevins-5930k carries chat throughout via shared serviceLabels.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -38,11 +41,11 @@ metadata:
     flexinfer.ai/kill-test-evidence: ".loom/ralph-whisper-kill-test-v6-evidence-2026-05-21.md"
     # ASR-ONLY endpoint guard: whisper serves ONLY /v1/audio/transcriptions. The
     # proxy rejects any other path (e.g. chat-completion probes) at the edge with
-    # 404 and WITHOUT cold-starting or touching demand. This is what keeps
-    # whisper's priority-400 preempt+drain honest: only a REAL transcription
-    # request preempts the gemma4 warm primary on this shared 7900xtx card —
-    # chat-completion health probes can no longer flap whisper Active and starve
-    # gemma4. See internal/proxy/serving_policy.go (modelServesPath).
+    # 404 and WITHOUT cold-starting or touching demand. With whisper now ranked
+    # below gemma4 this no longer gates a preempt, but it still keeps the lane
+    # honest: only a REAL transcription warms whisper at all, so chat-completion
+    # health probes can never flap it Active and consume an otherwise-idle card.
+    # See internal/proxy/serving_policy.go (modelServesPath).
     flexinfer.ai/serve-paths: "/v1/audio/transcriptions"
 spec:
   backend: vllm
@@ -70,10 +73,11 @@ spec:
     count: 2
     vramEstimateMB: 4000
     shared: 7900xtx-textgen
-    # priority 400 > the 26B's 350 so a routed transcribe request fires the
-    # demand-based swap. NO forcePromotion — idle-to-zero keeps the 26B warm
-    # until a transcribe actually arrives.
-    priority: 400
+    # priority 340 < the 26B's 350: the gemma4 daily-driver chat stays primary.
+    # ASR only takes the card when gemma4 is idle-to-zero, and yields back as
+    # soon as chat demand returns. NO forcePromotion — idle-to-zero keeps the
+    # card free for the primary. See the "Chat-primary" block above.
+    priority: 340
   serverless:
     enabled: true
     # idle-to-zero: the 24 GiB lane is not double-claimed while idle.
