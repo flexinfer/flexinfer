@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"os"
+	"strconv"
 	"sync"
 
 	"github.com/flexinfer/flexinfer/pkg/metrics"
@@ -33,6 +34,13 @@ import (
 // becomes ready). Stamping the creating instance lets a later sweep identify
 // and reap Jobs left behind by a superseded generation.
 const AnnotationControllerInstance = "flexinfer.ai/controller-instance"
+
+// AnnotationOwnerGeneration records the spec generation (metadata.generation) of
+// the owning Model/ModelCache at the moment the Job was created. metadata.generation
+// increments on every spec change, so a Job stamped with a generation older than
+// its current owner's generation was created for a superseded spec. A later sweep
+// can reap such Jobs; a missing annotation means "unknown — never reap".
+const AnnotationOwnerGeneration = "flexinfer.ai/owner-generation"
 
 var (
 	controllerInstanceOnce sync.Once
@@ -73,8 +81,9 @@ func resolveControllerInstanceID(envHostname string, osHostname func() (string, 
 // hard error and requeues, producing error spam and (for expensive pipeline
 // jobs) repeated churn.
 //
-// The Job is stamped with AnnotationControllerInstance for provenance before
-// the create attempt.
+// The Job is stamped with AnnotationControllerInstance and (when
+// ownerGeneration > 0) AnnotationOwnerGeneration for provenance before the
+// create attempt.
 //
 // It returns created=true only when this call actually created the Job.
 // created=false with err=nil means an equivalent Job already existed (the
@@ -84,13 +93,12 @@ func resolveControllerInstanceID(envHostname string, osHostname func() (string, 
 // jobType labels the conflict counter so the rollout race can be observed per
 // pipeline stage (e.g. "abliterate", "quantize", "download"). It does not
 // affect the create itself.
-func createJobIdempotent(ctx context.Context, w client.Writer, job *batchv1.Job, jobType string) (created bool, err error) {
-	if id := ControllerInstanceID(); id != "" {
-		if job.Annotations == nil {
-			job.Annotations = map[string]string{}
-		}
-		job.Annotations[AnnotationControllerInstance] = id
-	}
+//
+// ownerGeneration is the metadata.generation of the owning Model/ModelCache;
+// pass 0 when it is unavailable (e.g. an unpersisted object in tests) to omit
+// the generation stamp.
+func createJobIdempotent(ctx context.Context, w client.Writer, job *batchv1.Job, jobType string, ownerGeneration int64) (created bool, err error) {
+	stampJobProvenance(job, ownerGeneration)
 	if err := w.Create(ctx, job); err != nil {
 		if apierrors.IsAlreadyExists(err) {
 			// The race fired: another controller generation already created an
@@ -102,4 +110,24 @@ func createJobIdempotent(ctx context.Context, w client.Writer, job *batchv1.Job,
 		return false, err
 	}
 	return true, nil
+}
+
+// stampJobProvenance records the creating controller instance and (when
+// ownerGeneration > 0) the owning object's spec generation on the Job, so a
+// later sweep can identify Jobs left behind by a superseded controller
+// generation. It is a no-op when neither signal is available.
+func stampJobProvenance(job *batchv1.Job, ownerGeneration int64) {
+	id := ControllerInstanceID()
+	if id == "" && ownerGeneration <= 0 {
+		return
+	}
+	if job.Annotations == nil {
+		job.Annotations = map[string]string{}
+	}
+	if id != "" {
+		job.Annotations[AnnotationControllerInstance] = id
+	}
+	if ownerGeneration > 0 {
+		job.Annotations[AnnotationOwnerGeneration] = strconv.FormatInt(ownerGeneration, 10)
+	}
 }

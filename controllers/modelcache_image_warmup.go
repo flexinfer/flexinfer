@@ -65,7 +65,7 @@ func (r *ModelCacheReconciler) ensureImageWarmup(ctx context.Context, modelCache
 			return imageWarmupFailed, "", err
 		}
 		logger.Info("Creating image warmup job", "job", job.Name, "image", req.Image, "phase", req.Phase)
-		if _, err := createJobIdempotent(ctx, r.Client, job, "image_warmup"); err != nil {
+		if _, err := createJobIdempotent(ctx, r.Client, job, "image_warmup", modelCache.Generation); err != nil {
 			return imageWarmupFailed, "", err
 		}
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "ImageWarmupStarted",

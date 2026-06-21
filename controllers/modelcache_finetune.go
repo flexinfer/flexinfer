@@ -265,7 +265,7 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 		}
 
 		log.Info("Creating finetune job", "Job", newJob.Name)
-		if _, err := createJobIdempotent(ctx, r.Client, newJob, "finetune"); err != nil {
+		if _, err := createJobIdempotent(ctx, r.Client, newJob, "finetune", modelCache.Generation); err != nil {
 			return ctrl.Result{}, err
 		}
 

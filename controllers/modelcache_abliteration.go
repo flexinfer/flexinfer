@@ -283,7 +283,7 @@ func (r *ModelCacheReconciler) reconcileAbliteration(ctx context.Context, modelC
 		}
 
 		log.Info("Creating abliteration job", "Job", newJob.Name)
-		if _, err := createJobIdempotent(ctx, r.Client, newJob, "abliterate"); err != nil {
+		if _, err := createJobIdempotent(ctx, r.Client, newJob, "abliterate", modelCache.Generation); err != nil {
 			return ctrl.Result{}, err
 		}
 
