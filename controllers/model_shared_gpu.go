@@ -186,6 +186,26 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		}
 	}
 
+	// Warm-primary reclaim: the operator-designated primary (warmPolicy=primary)
+	// reclaims the shared slot from an idle Ready borrower whose demand window
+	// has lapsed -- even a higher-priority one. A higher-priority lane still
+	// preempts the primary the instant it sees real traffic (the demand path
+	// above fires first), so this only governs the idle case: an on-demand lane
+	// may borrow the card under load but must not squat on it once quiet.
+	// Without this, an on-demand high-priority lane that briefly went Ready holds
+	// the slot indefinitely against the warm primary because the Ready preference
+	// below returns unconditionally -- the 7900xtx-textgen "swap-from-idle" gap
+	// where whisper (ASR, priority 400) parked gemma4 (chat primary, priority
+	// 350) after a burst of probes left whisper Ready. The reclaim is bounded by
+	// the anti-thrashing cooldown checked above, so it cannot flap the slot.
+	if warmPrimaryLeader != nil && readyLeader != nil && !isWarmPrimaryModel(readyLeader) {
+		readyIdle := readyLeader.Status.LastActiveTime == nil ||
+			now.Sub(readyLeader.Status.LastActiveTime.Time) > sharedDemandWindow
+		if readyIdle {
+			return warmPrimaryLeader
+		}
+	}
+
 	if readyLeader != nil {
 		return readyLeader
 	}
