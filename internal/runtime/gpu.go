@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"fmt"
+	"net"
 	"net/http"
 	"os/exec"
 	"strconv"
@@ -133,6 +134,18 @@ func checkHTTPHealth(url string) bool {
 	}
 	defer func() { _ = resp.Body.Close() }()
 	return resp.StatusCode == http.StatusOK
+}
+
+// checkTCPHealth returns true if a TCP connection to addr can be established.
+// Used for backends whose readiness probe is a TCP socket check (no HTTP
+// endpoint), e.g. ComfyUI (WebSocket) and the Steam backend.
+func checkTCPHealth(addr string) bool {
+	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 // GPUDeviceAccessible returns true if the GPU device path is accessible.
