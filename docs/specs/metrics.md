@@ -157,7 +157,8 @@ The following metrics were added as part of the Sprint 1 observability initiativ
 - **Cache/prefetch** (emitted by `flexinfer-manager`): ✅
   - `flexinfer_model_cache_job_duration_seconds{model,namespace,job_type,result}` (histogram; download/abliterate/quantize)
   - `flexinfer_model_cache_failures_total{model,namespace,reason}` (counter)
-  - `flexinfer_model_cache_job_create_conflicts_total{job_type}` (counter; AlreadyExists races tolerated by the idempotent-create guard during controller rolling updates — `job_type` is the pipeline stage: download/abliterate/quantize/publish/publish_validate/stage_publish/finetune/image_warmup)
+  - `flexinfer_model_cache_job_create_conflicts_total{job_type}` (counter; AlreadyExists races tolerated by the idempotent-create guard during controller rolling updates — `job_type` is the stage: download/abliterate/quantize/publish/publish_validate/stage_publish/finetune/image_warmup/cache-stage/cache-check/cache-prefetch)
+  - `flexinfer_owned_jobs_stale_generation{owner_kind,namespace,owner}` (gauge; Jobs owned by a Model/ModelCache whose `flexinfer.ai/owner-generation` stamp is older than the owner's current `metadata.generation` — i.e. created under a superseded spec. Observability only, never auto-deleted: `metadata.generation` bumps on any spec change, so an older stamp does not imply the Job is unwanted. Series present ⟺ stale Jobs exist for that owner)
 - **Benchmarks** (emitted by benchmarker via `pkg/metrics`): ✅
   - `flexinfer_benchmark_tokens_per_second{model,backend,gpu_vendor,gpu_arch}` (gauge)
   - `flexinfer_benchmark_vram_used_bytes{model,backend,gpu_vendor,gpu_arch}` (gauge; defined, not yet populated)

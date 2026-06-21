@@ -109,6 +109,10 @@ func (r *ModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 		}
 	}
 
+	// Surface (without deleting) any pipeline Jobs left from a superseded spec
+	// generation. Best-effort: never blocks reconcile.
+	observeStaleGenerationJobs(ctx, r.Client, "ModelCache", modelCache.Namespace, modelCache.Name, modelCache.UID, modelCache.Generation, LabelCache)
+
 	// Determine strategy
 	strategy := modelCache.Spec.StorageStrategy
 	if strategy == aiv1alpha1.StorageStrategyAuto {

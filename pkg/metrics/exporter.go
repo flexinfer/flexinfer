@@ -374,6 +374,19 @@ var (
 		[]string{"group", "namespace", "from", "to"},
 	)
 
+	// OwnedJobsStaleGeneration reports how many Jobs owned by a Model/ModelCache
+	// were created under a superseded spec generation — their
+	// flexinfer.ai/owner-generation stamp is older than the owner's current
+	// metadata.generation. A nonzero value flags stale Jobs lingering after a
+	// spec change or controller rollout. The series is cleared when none remain.
+	OwnedJobsStaleGeneration = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_owned_jobs_stale_generation",
+			Help: "Jobs owned by a Model/ModelCache created under a superseded spec generation (owner-generation annotation older than the owner's current generation).",
+		},
+		[]string{"owner_kind", "namespace", "owner"},
+	)
+
 	// GPULeaseActive is 1 while a training/quant GPU lease holds a shared-GPU
 	// group (the serving incumbent is parked), 0 once released.
 	GPULeaseActive = prometheus.NewGaugeVec(
@@ -563,6 +576,7 @@ func init() {
 	// Shared-group scheduling metrics (v1alpha2)
 	ctrlmetrics.Registry.MustRegister(SharedGroupState)
 	ctrlmetrics.Registry.MustRegister(SharedGroupPreemptionsTotal)
+	ctrlmetrics.Registry.MustRegister(OwnedJobsStaleGeneration)
 	ctrlmetrics.Registry.MustRegister(GPULeaseActive)
 	ctrlmetrics.Registry.MustRegister(GPULeaseAcquiredTotal)
 
