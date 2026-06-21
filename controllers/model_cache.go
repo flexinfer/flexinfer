@@ -263,16 +263,15 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 						if err != nil {
 							return false, err
 						}
-						if err := r.Create(ctx, newJob); err != nil {
-							if errors.IsAlreadyExists(err) {
-								jobPhase = "Running"
-								message = "local cache staging job already exists"
-							} else {
-								return false, err
-							}
-						} else {
-							jobPhase = "Running"
+						created, err := createJobIdempotent(ctx, r.Client, newJob, "cache-stage")
+						if err != nil {
+							return false, err
+						}
+						jobPhase = "Running"
+						if created {
 							message = "local cache staging job started"
+						} else {
+							message = "local cache staging job already exists"
 						}
 					} else {
 						if job.Status.Succeeded > 0 {
@@ -344,16 +343,15 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 					if err != nil {
 						return false, err
 					}
-					if err := r.Create(ctx, newJob); err != nil {
-						if errors.IsAlreadyExists(err) {
-							jobPhase = "Running"
-							message = "cache check job already exists"
-						} else {
-							return false, err
-						}
-					} else {
-						jobPhase = "Running"
+					created, err := createJobIdempotent(ctx, r.Client, newJob, "cache-check")
+					if err != nil {
+						return false, err
+					}
+					jobPhase = "Running"
+					if created {
 						message = "cache check job started"
+					} else {
+						message = "cache check job already exists"
 					}
 				}
 			}
@@ -618,10 +616,8 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			if err != nil {
 				return false, err
 			}
-			if err := r.Create(ctx, newJob); err != nil {
-				if !errors.IsAlreadyExists(err) {
-					return false, err
-				}
+			if _, err := createJobIdempotent(ctx, r.Client, newJob, "cache-prefetch"); err != nil {
+				return false, err
 			}
 			model.Status.Cache.JobPhase = "Running"
 			model.Status.Cache.Message = "prefetch job started"
