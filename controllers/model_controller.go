@@ -164,6 +164,10 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// This is a warning condition, not a blocker — the model still reconciles.
 	r.checkAliasConflicts(ctx, model)
 
+	// Surface (without deleting) any cache Jobs left from a superseded spec
+	// generation. Best-effort: never blocks reconcile.
+	observeStaleGenerationJobs(ctx, r.Client, "Model", model.Namespace, model.Name, model.UID, model.Generation, LabelModel)
+
 	desiredReplicas := r.desiredReplicasForContext(ctx, model, b)
 	desiredReplicas = applyPromotionGate(model, desiredReplicas)
 	requeueAfter := requeueLong
