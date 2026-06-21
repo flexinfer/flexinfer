@@ -522,6 +522,52 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 			},
 			wantName: "high-idle",
 		},
+		// Warm-primary reclaim (warmPolicy=primary): the 7900xtx-textgen
+		// "swap-from-idle" gap. The designated primary reclaims the single
+		// slot from an idle Ready borrower -- even a higher-priority one --
+		// once the borrower's demand window has lapsed.
+		{
+			name: "warm primary reclaims idle higher-priority ready borrower",
+			models: []*aiv1alpha2.Model{
+				// whisper analog: on-demand ASR, priority 400, briefly went
+				// Ready then fell idle (last-active 10min ago) -> must release.
+				makeSharedModel("whisper", 400, aiv1alpha2.ModelPhaseReady, timePtr(past), nil),
+				// gemma4 analog: warmPolicy=primary chat lane, priority 350, idle.
+				markWarmPrimary(makeSharedModel("gemma4", 350, aiv1alpha2.ModelPhaseIdle, nil, nil)),
+			},
+			wantName: "gemma4",
+		},
+		{
+			name: "warm primary reclaims ready borrower with nil last-active",
+			models: []*aiv1alpha2.Model{
+				makeSharedModel("whisper", 400, aiv1alpha2.ModelPhaseReady, nil, nil),
+				markWarmPrimary(makeSharedModel("gemma4", 350, aiv1alpha2.ModelPhaseIdle, nil, nil)),
+			},
+			wantName: "gemma4",
+		},
+		{
+			name: "warm primary does not reclaim while borrower is actively serving",
+			models: []*aiv1alpha2.Model{
+				// whisper is Ready AND recently active (mid-transcription) -> it
+				// keeps the card; the primary reclaims only once it goes idle.
+				makeSharedModel("whisper", 400, aiv1alpha2.ModelPhaseReady, timePtr(recent), nil),
+				markWarmPrimary(makeSharedModel("gemma4", 350, aiv1alpha2.ModelPhaseIdle, nil, nil)),
+			},
+			wantName: "whisper",
+		},
+		{
+			name: "warm primary reclaim respects anti-thrash cooldown",
+			models: []*aiv1alpha2.Model{
+				// A swap happened 1min ago (inside the 5min cooldown) and whisper
+				// is the current Active model -> cooldown pins it; primary waits.
+				makeSharedModel("whisper", 400, aiv1alpha2.ModelPhaseReady, timePtr(past), &aiv1alpha2.SharedGroupStatus{
+					State:       "Active",
+					PreemptedAt: &metav1.Time{Time: now.Add(-1 * time.Minute)},
+				}),
+				markWarmPrimary(makeSharedModel("gemma4", 350, aiv1alpha2.ModelPhaseIdle, nil, nil)),
+			},
+			wantName: "whisper",
+		},
 	}
 
 	for _, tc := range tests {
