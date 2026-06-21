@@ -418,7 +418,13 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 	slog.Info("direct load: matched runtime endpoint", "model", modelName, "runtimePod", endpoint.PodName, "node", endpoint.NodeName, "runtimeURL", endpoint.URL())
 	profile := p.lookupGPUProfile(ctx, endpoint.GPUArch)
 	if ok, reason := pkgrt.DirectRuntimeLoadEligibility(m, b.Name(), profile); !ok {
-		slog.Info("direct load: skipping runtime path", "model", modelName, "reason", reason)
+		// Expected branch: the model is not runtime-eligible (e.g. a SharedPVC
+		// pvc:// source the node-local runtime can't mount), so activation falls
+		// back to the controller Deployment path. Logged at Debug to match the
+		// controller's V(1) level for the same condition (model_controller.go);
+		// an INFO line here reads like a failure and has sent cold-start
+		// investigations down the wrong path.
+		slog.Debug("direct load: model not runtime-eligible, using controller path", "model", modelName, "reason", reason)
 		return false
 	}
 
