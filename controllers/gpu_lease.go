@@ -45,6 +45,12 @@ type activeLease struct {
 	Owner      string
 	AcquiredAt time.Time
 	ExpiresAt  time.Time
+	// Priority is the preempt-policy threshold (slice-5). When non-nil the lease
+	// frees the card only if it strictly outranks every serving member of the
+	// group; nil means honored unconditionally (legacy park-and-hold). The
+	// legacy ConfigMap carrier never sets this, so ConfigMap leases stay
+	// unconditional. See leaseFreesCard.
+	Priority *int32
 }
 
 // active reports whether the lease is currently honored at time now. A zero
@@ -67,9 +73,10 @@ func leaseFromCR(cr *aiv1alpha2.GPULease) *activeLease {
 		return nil
 	}
 	l := &activeLease{
-		Group: cr.Spec.Group,
-		Node:  cr.Spec.Node,
-		Owner: cr.Spec.Owner,
+		Group:    cr.Spec.Group,
+		Node:     cr.Spec.Node,
+		Owner:    cr.Spec.Owner,
+		Priority: cr.Spec.Priority,
 	}
 	if cr.Spec.ExpiresAt != nil {
 		l.ExpiresAt = cr.Spec.ExpiresAt.Time
@@ -118,9 +125,10 @@ func gpuLeaseCR(namespace, name string, lease activeLease) *aiv1alpha2.GPULease 
 			},
 		},
 		Spec: aiv1alpha2.GPULeaseSpec{
-			Group: lease.Group,
-			Node:  lease.Node,
-			Owner: lease.Owner,
+			Group:    lease.Group,
+			Node:     lease.Node,
+			Owner:    lease.Owner,
+			Priority: lease.Priority,
 		},
 	}
 	if !lease.ExpiresAt.IsZero() {

@@ -272,6 +272,17 @@ spec:
                           finetune Job runs. Serving members of this group park (and stay parked)
                           until the Job completes and the lease is released.
                         type: string
+                      priority:
+                        description: |-
+                          Priority is the preempt-policy threshold: the serving priority this
+                          training lease outranks. The election frees the shared card only when
+                          every serving member of the group has a gpu.priority strictly below this
+                          value; any member at or above it keeps the card and the finetune Job
+                          waits (stays Pending) instead of preempting a lane it does not outrank.
+                          Leave unset for the original unconditional park-and-hold (the lease parks
+                          every serving member regardless of priority).
+                        format: int32
+                        type: integer
                       ttlSeconds:
                         description: |-
                           TTLSeconds bounds how long the lease is honored without a refresh. The

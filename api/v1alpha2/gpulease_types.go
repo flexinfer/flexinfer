@@ -52,6 +52,16 @@ type GPULeaseSpec struct {
 	// still garbage-collected when the owning workload is deleted.
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// Priority is the preempt-policy threshold (slice-5 hardening): the serving
+	// priority this lease outranks. The shared-GPU election frees the card only
+	// when every serving member of the group has a gpu.priority strictly below
+	// this value; a member at or above it keeps the card and the leasing
+	// workload waits instead of preempting a higher- or equal-priority lane. A
+	// nil Priority means the lease is honored unconditionally (every serving
+	// member parks) -- the original pre-slice-5 park-and-hold behavior.
+	// +optional
+	Priority *int32 `json:"priority,omitempty"`
 }
 
 // GPULeaseStatus is the observed state of a GPU lease.

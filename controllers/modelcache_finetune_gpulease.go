@@ -78,6 +78,7 @@ func (r *ModelCacheReconciler) ensureFinetuneGPULease(ctx context.Context, model
 		Owner:      modelCache.Name,
 		AcquiredAt: now,
 		ExpiresAt:  now.Add(finetuneGPULeaseTTL(modelCache)),
+		Priority:   ls.Priority,
 	}
 	name := finetuneGPULeaseName(modelCache)
 	desired := gpuLeaseCR(modelCache.Namespace, name, lease)
