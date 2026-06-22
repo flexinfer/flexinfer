@@ -231,8 +231,8 @@ func TestBuildFinetuneJob_CPUOnlyAndDefaults(t *testing.T) {
 	if got := container.Resources.Requests[corev1.ResourceCPU]; got.String() != "8" {
 		t.Fatalf("CPU request = %s, want 8", got.String())
 	}
-	if got := container.Resources.Requests[corev1.ResourceMemory]; got.String() != "56Gi" {
-		t.Fatalf("memory request = %s, want 56Gi", got.String())
+	if got := container.Resources.Requests[corev1.ResourceMemory]; got.String() != "32Gi" {
+		t.Fatalf("memory request = %s, want 32Gi", got.String())
 	}
 	if got := findEnvVar(container.Env, "DATASET_PVC_PATH"); got != "" {
 		t.Fatalf("DATASET_PVC_PATH = %q, want empty", got)
@@ -240,8 +240,8 @@ func TestBuildFinetuneJob_CPUOnlyAndDefaults(t *testing.T) {
 	if len(job.Spec.Template.Spec.Volumes) != 2 {
 		t.Fatalf("len(volumes) = %d, want 2", len(job.Spec.Template.Spec.Volumes))
 	}
-	if vol := job.Spec.Template.Spec.Volumes[1].EmptyDir; vol == nil || vol.SizeLimit == nil || vol.SizeLimit.String() != "112Gi" {
-		t.Fatalf("workspace volume = %#v, want 112Gi emptyDir", vol)
+	if vol := job.Spec.Template.Spec.Volumes[1].EmptyDir; vol == nil || vol.SizeLimit == nil || vol.SizeLimit.String() != "64Gi" {
+		t.Fatalf("workspace volume = %#v, want 64Gi emptyDir", vol)
 	}
 }
 
@@ -337,6 +337,59 @@ func TestBuildFinetuneJob_NoDriverOverhead(t *testing.T) {
 	container := job.Spec.Template.Spec.Containers[0]
 	if got := container.Resources.Limits[corev1.ResourceMemory]; got.String() != "32Gi" {
 		t.Fatalf("memory limit = %s, want 32Gi (no driver overhead)", got.String())
+	}
+}
+
+// TestBuildFinetuneJob_DefaultFitsGFX1100Node is the regression test for the
+// 2026-06-20 finding: a QLoRA finetune Job built from a default FinetuneSpec
+// (no maxMemoryGB override) requested ~68Gi on gfx1100 and stayed Pending with
+// "Insufficient memory" because the cblevins-5930k node only has ~57Gi
+// allocatable. The default must now fit a 64 GiB node after GPU-driver
+// inflation, so no manual maxMemoryGB override is required.
+func TestBuildFinetuneJob_DefaultFitsGFX1100Node(t *testing.T) {
+	// 64 GiB node: kubelet/system reserve leaves ~57Gi allocatable.
+	const nodeAllocatableGi = 57
+
+	// Default spec for a small QLoRA finetune — no MaxMemoryGB set, mirroring
+	// the live ft-crd-flexland (Qwen3-1.7B) ModelCache.
+	spec := &aiv1alpha1.FinetuneSpec{
+		UseGPU:  boolPtrFT(true),
+		Dataset: aiv1alpha1.FinetuneDatasetSpec{},
+	}
+	params := JobParams{
+		Name:      "ft-crd-flexland",
+		Namespace: "flexinfer-system",
+		PVCName:   "model-pvc",
+		ModelPath: "qwen3-1.7b",
+		GPUVendor: "amd",
+		GPUArch:   "gfx1100",
+		// Mirrors deploy/gpuprofiles/gfx1100.yaml::gpuDriverMemoryMB.
+		MemoryConfig: GPUMemoryConfig{GPUDriverMemoryMB: 12288},
+	}
+
+	job, err := BuildFinetuneJob(params, spec)
+	if err != nil {
+		t.Fatalf("BuildFinetuneJob() error = %v", err)
+	}
+
+	container := job.Spec.Template.Spec.Containers[0]
+
+	// Default 32 + 12Gi driver inflation = 44Gi, well under the 50Gi target.
+	limit := container.Resources.Limits[corev1.ResourceMemory]
+	if limit.String() != "44Gi" {
+		t.Fatalf("memory limit = %s, want 44Gi (32 default + 12Gi driver overhead)", limit.String())
+	}
+
+	// The scheduler reserves on the request — it must fit the node allocatable
+	// so the Job binds without a manual maxMemoryGB override.
+	request := container.Resources.Requests[corev1.ResourceMemory]
+	requestGi := request.Value() / (1 << 30)
+	if requestGi > nodeAllocatableGi {
+		t.Fatalf("memory request = %s (%dGi) exceeds node allocatable %dGi — Job would stay Pending",
+			request.String(), requestGi, nodeAllocatableGi)
+	}
+	if requestGi > 50 {
+		t.Fatalf("memory request = %s (%dGi) exceeds 50Gi target after driver inflation", request.String(), requestGi)
 	}
 }
 

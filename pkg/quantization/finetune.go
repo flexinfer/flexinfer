@@ -18,7 +18,18 @@ import (
 
 const (
 	// DefaultFinetuneMemoryGB is the default memory limit for finetune jobs.
-	DefaultFinetuneMemoryGB = 56
+	//
+	// Sized for the common QLoRA case (default mode) on commodity 64 GiB GPU
+	// nodes. The K8s scheduler reserves request == limit, then inflates by the
+	// GPUProfile's GPUDriverMemoryMB (12 GiB on gfx1100). 32 + 12 = 44 GiB,
+	// which fits a 64 GiB node's ~57 GiB allocatable. The previous default of 56
+	// rendered 68 GiB after inflation and was unschedulable on these nodes
+	// (Insufficient memory) regardless of GPU availability.
+	//
+	// QLoRA of a small model (e.g. Qwen3-1.7B) needs well under 16 GiB of host
+	// RAM, so 32 leaves generous headroom. Larger models or full finetuning
+	// should raise spec.finetune.maxMemoryGB on a node with enough allocatable.
+	DefaultFinetuneMemoryGB = 32
 
 	// DefaultFinetuneDeadlineSeconds is the default 6-hour deadline.
 	DefaultFinetuneDeadlineSeconds = 21600
