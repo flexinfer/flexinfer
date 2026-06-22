@@ -460,7 +460,7 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 			swapStart := time.Time{}
 			if model.Status.SharedGroup.PreemptedAt != nil {
 				swapStart = model.Status.SharedGroup.PreemptedAt.Time
-			} else if prevReadyReason == aiv1alpha2.ReasonPreempted && !readyStartedAt.IsZero() {
+			} else if (prevReadyReason == aiv1alpha2.ReasonPreempted || prevReadyReason == aiv1alpha2.ReasonGPULeaseHeld) && !readyStartedAt.IsZero() {
 				swapStart = readyStartedAt
 			}
 			if !swapStart.IsZero() {
@@ -479,10 +479,10 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 			model.Status.Phase = aiv1alpha2.ModelPhaseIdle
 			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonWaitingForActivation, "Model is idle, waiting for traffic")
 		} else {
-			msg := preemptedStatusMessage(model)
+			reason, msg := preemptedConditionReasonMessage(model)
 			model.Status.LoadingSubstage = aiv1alpha2.LoadingSubstagePreempted
 			model.Status.Message = msg
-			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonPreempted, msg)
+			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, reason, msg)
 		}
 	} else if deployment.Status.UnavailableReplicas > 0 {
 		model.Status.Phase = aiv1alpha2.ModelPhaseLoading
@@ -505,6 +505,27 @@ func preemptedStatusMessage(model *aiv1alpha2.Model) string {
 		return fmt.Sprintf("preempted by %s", model.Status.SharedGroup.PreemptedBy)
 	}
 	return "Model was preempted by higher priority model"
+}
+
+// gpuLeasePreemptedByPrefix marks a SharedGroup.PreemptedBy attribution as a GPU
+// lease (training/quant) rather than a sibling serving model. The election sets
+// "gpu-lease/<owner>"; consumers detect a lease park via this prefix.
+const gpuLeasePreemptedByPrefix = "gpu-lease/"
+
+// preemptedConditionReasonMessage returns the ModelReady condition reason and
+// message for a parked shared-GPU model, distinguishing a training/quant GPU
+// lease hold (ReasonGPULeaseHeld) from a serving-vs-serving preemption
+// (ReasonPreempted). A lease park is intentional and transient, so surfacing it
+// with a distinct reason keeps dashboards/proxy/operators from reading the
+// parked lane as an outage.
+func preemptedConditionReasonMessage(model *aiv1alpha2.Model) (reason, message string) {
+	if model != nil && model.Status.SharedGroup != nil &&
+		strings.HasPrefix(model.Status.SharedGroup.PreemptedBy, gpuLeasePreemptedByPrefix) {
+		owner := strings.TrimPrefix(model.Status.SharedGroup.PreemptedBy, gpuLeasePreemptedByPrefix)
+		return aiv1alpha2.ReasonGPULeaseHeld,
+			fmt.Sprintf("Card held by training (GPU lease %q); serving parked until the lease releases", owner)
+	}
+	return aiv1alpha2.ReasonPreempted, preemptedStatusMessage(model)
 }
 
 func clearLoadingStatus(model *aiv1alpha2.Model) {

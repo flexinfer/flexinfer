@@ -133,8 +133,10 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		r.unloadFromRuntime(ctx, model, endpoint)
 		if model.Status.Phase == aiv1alpha2.ModelPhasePreempted {
 			model.Status.Endpoint = ""
-			reason := aiv1alpha2.ReasonPreempted
-			message := "Model was preempted by higher priority model"
+			// Preserve the lease-vs-preempt distinction the election recorded in
+			// SharedGroup.PreemptedBy; otherwise this later status write would
+			// clobber it back to a generic "Preempted" on the same reconcile.
+			reason, message := preemptedConditionReasonMessage(model)
 			if !cacheReady {
 				reason = "CacheNotReady"
 				message = "Waiting for cache to be ready"

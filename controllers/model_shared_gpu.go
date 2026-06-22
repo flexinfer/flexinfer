@@ -558,7 +558,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	case primary != nil:
 		preemptedBy = primary.Name
 	case leaseHolder != nil:
-		preemptedBy = "gpu-lease/" + leaseHolder.Owner
+		preemptedBy = gpuLeasePreemptedByPrefix + leaseHolder.Owner
 	}
 
 	// Update this model's shared group status
@@ -594,8 +594,9 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 			log.Info("Preempting model", "preemptedBy", preemptedBy, "leased", leased)
 			model.Status.Phase = aiv1alpha2.ModelPhasePreempted
 			model.Status.LoadingSubstage = aiv1alpha2.LoadingSubstagePreempted
-			model.Status.Message = preemptedStatusMessage(model)
-			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonPreempted, model.Status.Message)
+			preemptReason, preemptMsg := preemptedConditionReasonMessage(model)
+			model.Status.Message = preemptMsg
+			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, preemptReason, preemptMsg)
 			model.Status.SharedGroup.PreemptedAt = &metav1.Time{Time: time.Now()}
 			if leased {
 				r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
