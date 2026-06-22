@@ -367,6 +367,39 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 	}
 
 	if finetuneJob.Status.Active > 0 {
+		// Spec-change recreation for a job whose pod never started.
+		//
+		// detectAndApplySpecChange only fires in a terminal phase (Ready/Failed),
+		// so a spec edit made while the cache is Finetuning never reaches an
+		// existing job. When the pod is stuck Pending (e.g. unschedulable because
+		// the memory/GPU request exceeds the node, or the GPU lease has not freed
+		// the card yet), Job.Status.Active counts it as active and the controller
+		// would otherwise refresh the lease and requeue forever — the operator's
+		// fix to the spec would never take effect without manually deleting the
+		// job. A pod that never scheduled has done no training work, so recreating
+		// it with the new spec is free. A pod that has actually started training is
+		// left alone (recreation cannot resume mid-run).
+		if storedHash != "" && storedHash != currentHash {
+			notStarted, err := r.finetuneJobNotStarted(ctx, modelCache.Namespace, finetuneJob.Name)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if notStarted {
+				log.Info("Finetune spec changed while job pending, recreating",
+					"cache", modelCache.Name, "job", finetuneJob.Name,
+					"storedHash", storedHash, "currentHash", currentHash)
+				r.Recorder.Event(modelCache, corev1.EventTypeWarning, "RefinetuneTriggered",
+					"Finetune spec changed while job pending; recreating job with new spec")
+				if err := r.deleteJob(ctx, modelCache.Namespace, finetuneJob.Name); err != nil {
+					return ctrl.Result{}, fmt.Errorf("deleting stale pending finetune job: %w", err)
+				}
+				// Leave the stored hash untouched: the NotFound branch rebuilds the
+				// job from the current spec and re-seeds the annotation, so drift
+				// resolves on the next reconcile without a delete/recreate loop.
+				return ctrl.Result{RequeueAfter: requeueShort}, nil
+			}
+		}
+
 		// Refresh the GPU lease TTL while the Job runs so a healthy controller
 		// keeps the serving incumbent parked; a dead controller lets it lapse
 		// (crash-safety). Best-effort -- a transient error is retried next tick.
@@ -474,6 +507,26 @@ func (r *ModelCacheReconciler) reconcileFinetune(ctx context.Context, modelCache
 	}
 
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+}
+
+// finetuneJobNotStarted reports whether a finetune job's pod has yet to begin
+// real work — i.e. no pod has been scheduled onto a node. It returns true when
+// there are no pods yet or every observed pod is still unscheduled-Pending
+// (NodeName == "" and phase Pending), and false as soon as any pod has been
+// assigned a node or has progressed past Pending. Used to gate spec-change
+// recreation so an actively-training job is never blown away (training cannot
+// resume mid-run), while a stuck-Pending job is safe to recreate.
+func (r *ModelCacheReconciler) finetuneJobNotStarted(ctx context.Context, namespace, jobName string) (bool, error) {
+	podList := &corev1.PodList{}
+	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
+		return false, err
+	}
+	for _, pod := range podList.Items {
+		if pod.Spec.NodeName != "" || pod.Status.Phase != corev1.PodPending {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // finetuneJobMetadata is parsed from the finetuner container's termination log.
