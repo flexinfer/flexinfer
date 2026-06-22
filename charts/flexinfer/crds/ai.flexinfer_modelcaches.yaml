@@ -322,7 +322,9 @@ spec:
                   maxMemoryGB:
                     description: |-
                       MaxMemoryGB limits memory for the finetune job container.
-                      Default 56.
+                      Default 32 (fits a 64 GiB GPU node after GPU-driver memory inflation).
+                      Raise this for larger models or full finetuning on a node with more
+                      allocatable RAM.
                     format: int32
                     type: integer
                   maxSeqLen:

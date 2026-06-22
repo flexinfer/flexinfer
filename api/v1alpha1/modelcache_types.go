@@ -464,7 +464,9 @@ type FinetuneSpec struct {
 	UseGPU *bool `json:"useGPU,omitempty"`
 
 	// MaxMemoryGB limits memory for the finetune job container.
-	// Default 56.
+	// Default 32 (fits a 64 GiB GPU node after GPU-driver memory inflation).
+	// Raise this for larger models or full finetuning on a node with more
+	// allocatable RAM.
 	// +optional
 	MaxMemoryGB *int32 `json:"maxMemoryGB,omitempty"`
 
