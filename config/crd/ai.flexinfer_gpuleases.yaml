@@ -92,6 +92,17 @@ spec:
                   Owner is the workload that acquired the lease (e.g. a ModelCache name),
                   used for PreemptedBy attribution and observability.
                 type: string
+              priority:
+                description: |-
+                  Priority is the preempt-policy threshold (slice-5 hardening): the serving
+                  priority this lease outranks. The shared-GPU election frees the card only
+                  when every serving member of the group has a gpu.priority strictly below
+                  this value; a member at or above it keeps the card and the leasing
+                  workload waits instead of preempting a higher- or equal-priority lane. A
+                  nil Priority means the lease is honored unconditionally (every serving
+                  member parks) -- the original pre-slice-5 park-and-hold behavior.
+                format: int32
+                type: integer
             required:
             - group
             type: object

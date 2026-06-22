@@ -23,7 +23,7 @@ package v1alpha2
 import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -624,6 +624,11 @@ func (in *GPULeaseSpec) DeepCopyInto(out *GPULeaseSpec) {
 	if in.ExpiresAt != nil {
 		in, out := &in.ExpiresAt, &out.ExpiresAt
 		*out = (*in).DeepCopy()
+	}
+	if in.Priority != nil {
+		in, out := &in.Priority, &out.Priority
+		*out = new(int32)
+		**out = **in
 	}
 }
 

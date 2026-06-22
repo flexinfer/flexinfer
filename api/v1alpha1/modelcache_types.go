@@ -508,6 +508,16 @@ type FinetuneGPULeaseSpec struct {
 	// +kubebuilder:validation:Minimum=60
 	// +optional
 	TTLSeconds *int64 `json:"ttlSeconds,omitempty"`
+
+	// Priority is the preempt-policy threshold: the serving priority this
+	// training lease outranks. The election frees the shared card only when
+	// every serving member of the group has a gpu.priority strictly below this
+	// value; any member at or above it keeps the card and the finetune Job
+	// waits (stays Pending) instead of preempting a lane it does not outrank.
+	// Leave unset for the original unconditional park-and-hold (the lease parks
+	// every serving member regardless of priority).
+	// +optional
+	Priority *int32 `json:"priority,omitempty"`
 }
 
 // FinetuneStatus records the result of finetuning.

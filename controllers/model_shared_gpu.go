@@ -330,6 +330,32 @@ func chooseSharedGroupLeaders(groupModels []*aiv1alpha2.Model, now time.Time, mu
 	return active
 }
 
+// leaseFreesCard reports whether an active GPU lease should actually free the
+// shared card by parking the serving incumbents (slice-5 preempt policy).
+//
+//   - No lease -> false (serving runs normally).
+//   - Lease with nil Priority -> true: unconditional park-and-hold, the original
+//     behavior the legacy ConfigMap carrier and pre-slice-5 CRs rely on.
+//   - Priority-gated lease -> honored only when the lease strictly outranks
+//     EVERY serving member of the group (every member's gpu.priority is below
+//     lease.Priority). A single member at or above the threshold keeps the card
+//     and the leasing workload waits (its Job stays Pending), so a low-priority
+//     training run can never evict a higher- or equal-priority serving lane.
+func leaseFreesCard(lease *activeLease, groupModels []*aiv1alpha2.Model) bool {
+	if lease == nil {
+		return false
+	}
+	if lease.Priority == nil {
+		return true
+	}
+	for _, m := range groupModels {
+		if m.Spec.GetPriority() >= *lease.Priority {
+			return false
+		}
+	}
+	return true
+}
+
 // isWarmPinnedSharedModel reports whether the operator has pinned this model
 // warm via minReplicas>=1. Such a model is meant to stay running, so in a
 // single-slot shared group it should hold leadership over an idle scale-to-zero
@@ -494,7 +520,14 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	if leaseErr != nil {
 		log.Error(leaseErr, "Failed to read GPU lease; proceeding as unleased", "group", groupName)
 	}
-	leased := leaseHolder != nil
+	// A lease only parks serving when its preempt-policy threshold permits it
+	// (slice-5). An ungated lease (nil Priority) parks unconditionally; a
+	// priority-gated lease parks only when it strictly outranks every serving
+	// member, otherwise the higher/equal-priority lane keeps the card and the
+	// leasing workload waits. PreemptedBy attribution below still reads
+	// leaseHolder directly, so a not-honored lease correctly falls back to
+	// normal leader-based preemption.
+	leased := leaseFreesCard(leaseHolder, groupModels)
 
 	// Multi-model election: when the group's GPU runtime can host concurrent
 	// subprocesses (GPUProfile feature flag), keep a VRAM-bounded SET of members
