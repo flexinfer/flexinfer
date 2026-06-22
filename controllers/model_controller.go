@@ -509,7 +509,9 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
-		Watches(&corev1.Pod{}, handler.EnqueueRequestsFromMapFunc(r.requestsForRuntimePod)).
+		Watches(&corev1.Pod{},
+			handler.EnqueueRequestsFromMapFunc(r.requestsForRuntimePod),
+			builder.WithPredicates(runtimePodMeaningfulChange)).
 		Watches(&aiv1alpha2.Model{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForSharedGroupSiblings),
 			builder.WithPredicates(siblingDeleteOnly)).
@@ -517,6 +519,44 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.requestsForGPUProfileModels),
 			builder.WithPredicates(gpuProfileSpecChange)).
 		Complete(r)
+}
+
+// runtimePodMeaningfulChange admits Pod events that can change a
+// runtime-served Model's reconcile outcome and drops the high-frequency
+// status-only churn a healthy runtime pod emits (probe results, metrics,
+// kubelet status resyncs, periodic informer relists).
+//
+// This watch fans a single Pod event out to EVERY Model the pod serves (see
+// requestsForRuntimePod). A multi-model runtime pod (e.g. the gfx906 embedding
+// plane: bge + reranker + gte as subprocesses of one pod) therefore amplifies
+// each unfiltered heartbeat into N reconcile requests — enough to saturate the
+// work queue at several reconciles/sec and starve unrelated Models (a 35B on a
+// sibling card) of their reconcile turn. The reconcile only reads the pod's IP,
+// phase, and readiness, so re-enqueue solely on those (plus create/delete);
+// model-internal health is still caught by the periodic requeue and the runtime
+// health-check HTTP probe. Mirrors the predicate discipline already applied to
+// the sibling and GPUProfile watches.
+var runtimePodMeaningfulChange = predicate.Funcs{
+	CreateFunc:  func(event.CreateEvent) bool { return true },
+	DeleteFunc:  func(event.DeleteEvent) bool { return true },
+	GenericFunc: func(event.GenericEvent) bool { return false },
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		oldPod, ok1 := e.ObjectOld.(*corev1.Pod)
+		newPod, ok2 := e.ObjectNew.(*corev1.Pod)
+		if !ok1 || !ok2 {
+			return true // unexpected types — admit rather than risk missing a change
+		}
+		if oldPod.Status.PodIP != newPod.Status.PodIP {
+			return true
+		}
+		if oldPod.Status.Phase != newPod.Status.Phase {
+			return true
+		}
+		if isPodReady(oldPod) != isPodReady(newPod) {
+			return true
+		}
+		return (oldPod.DeletionTimestamp == nil) != (newPod.DeletionTimestamp == nil)
+	},
 }
 
 // gpuProfileSpecChange admits GPUProfile events that can alter Model
