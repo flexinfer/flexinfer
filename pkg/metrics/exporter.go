@@ -441,6 +441,18 @@ var (
 		[]string{"job_type"},
 	)
 
+	// OwnedJobsReapedTotal counts pipeline Jobs reaped because their stage was
+	// removed from the owner's current spec (orphans from a superseded
+	// generation). Only non-running orphans are reaped, so this never reflects
+	// killed in-flight work.
+	OwnedJobsReapedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_owned_jobs_reaped_total",
+			Help: "Total orphaned-stage pipeline Jobs reaped (stage removed from the owner spec; non-running only).",
+		},
+		[]string{"owner_kind", "namespace", "stage"},
+	)
+
 	// Controller reconcile metrics
 
 	// ReconcileDurationSeconds tracks the duration of each controller reconcile loop.
@@ -584,6 +596,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ModelCacheJobDurationSeconds)
 	ctrlmetrics.Registry.MustRegister(ModelCacheJobFailuresTotal)
 	ctrlmetrics.Registry.MustRegister(ModelCacheJobCreateConflictsTotal)
+	ctrlmetrics.Registry.MustRegister(OwnedJobsReapedTotal)
 
 	// Controller reconcile metrics
 	ctrlmetrics.Registry.MustRegister(ReconcileDurationSeconds)
