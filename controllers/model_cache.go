@@ -1084,19 +1084,6 @@ func modelCondition(conds []metav1.Condition, condType string) *metav1.Condition
 	return nil
 }
 
-func cacheConditionReadyForGeneration(model *aiv1alpha2.Model, reason string) bool {
-	if model == nil || model.Status.Cache == nil || !model.Status.Cache.Ready {
-		return false
-	}
-	cond := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelCached)
-	if cond == nil {
-		return false
-	}
-	return cond.Status == metav1.ConditionTrue &&
-		cond.Reason == reason &&
-		cond.ObservedGeneration == model.Generation
-}
-
 // localCacheStageAlreadyReady reports whether a local HF cache stage already
 // completed for the current generation, so a TTL-GC'd stage Job must not be
 // recreated.
