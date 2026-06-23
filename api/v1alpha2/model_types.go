@@ -108,6 +108,11 @@ const (
 	ReasonBackendReady = "BackendReady"
 	// ReasonPreempted - model was preempted by higher priority model
 	ReasonPreempted = "Preempted"
+	// ReasonGPULeaseHeld - serving is parked because a training/quant GPU lease
+	// holds the shared card. Distinct from ReasonPreempted so dashboards, the
+	// proxy, and operators can tell an intentional, transient training park from
+	// a serving-vs-serving preemption or an outage.
+	ReasonGPULeaseHeld = "GPULeaseHeld"
 	// ReasonAliasConflict - litellm alias or copilotAlias conflicts with another model
 	ReasonAliasConflict = "AliasConflict"
 	// ReasonConfigValid - model config has no conflicts
