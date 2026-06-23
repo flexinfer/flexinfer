@@ -1130,6 +1130,56 @@ func TestEnsureCacheLocalHFStageJobMissingUsesCurrentReadyStatus(t *testing.T) {
 	}
 }
 
+func TestEnsureCacheLocalHFStageJobMissingSkipsAfterBackendReadyReasonRewrite(t *testing.T) {
+	// Regression: once the backend comes up, setModelStatus rewrites the Cached
+	// condition reason from "CacheStage" to "BackendReady". When the stage Job is
+	// later GC'd (TTLSecondsAfterFinished=300s), the guard must still recognize
+	// the cache as staged for the current generation and NOT recreate the job.
+	// The previous reason-matching guard failed here, forcing a 1->0->1 scale
+	// flap (a cold start every 5 minutes) for warm-pinned local HF models.
+	model := modelWithCache("hf-local-backendready", "flexinfer-system", "HF://org/model", &aiv1alpha2.CacheSpec{
+		Strategy: "Local",
+	})
+	model.Generation = 3
+	model.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": "node-a"}
+	model.Status.Cache = &aiv1alpha2.CacheStatus{
+		Strategy: "Local",
+		Ready:    true,
+		JobName:  "hf-local-backendready-cache-stage",
+		JobPhase: "Succeeded",
+		Message:  "artifact staged to local cache",
+	}
+	model.Status.Conditions = []metav1.Condition{
+		{
+			Type:               aiv1alpha2.ConditionModelCached,
+			Status:             metav1.ConditionTrue,
+			Reason:             aiv1alpha2.ReasonBackendReady,
+			Message:            "Cache is ready",
+			ObservedGeneration: 3,
+		},
+	}
+
+	r, cl := newModelCacheReconciler(t, model)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if !ready {
+		t.Fatal("ensureCache() ready = false, want true when local HF cache was already staged (reason rewritten to BackendReady)")
+	}
+
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, true, "Succeeded", "local cache previously staged", "CacheStage", true)
+
+	job := &batchv1.Job{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "hf-local-backendready-cache-stage", Namespace: model.Namespace}, job); err == nil {
+		t.Fatal("expected no new cache stage job to be recreated after the Cached reason was rewritten to BackendReady (would cause a 1->0->1 flap)")
+	} else if !apierrors.IsNotFound(err) {
+		t.Fatalf("Get(stage job) error = %v, want not found", err)
+	}
+}
+
 func TestEnsureCacheLocalHFStageJobMissingWithStaleGenerationRestages(t *testing.T) {
 	model := modelWithCache("hf-local-stale", "flexinfer-system", "HF://org/model", &aiv1alpha2.CacheSpec{
 		Strategy: "Local",

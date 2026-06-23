@@ -410,7 +410,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 			job := &batchv1.Job{}
 			err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
 			if errors.IsNotFound(err) {
-				if cacheConditionReadyForGeneration(original, "CacheStage") {
+				if localCacheStageAlreadyReady(original) {
 					model.Status.Cache.Ready = true
 					model.Status.Cache.JobName = jobName
 					model.Status.Cache.JobPhase = "Succeeded"
@@ -1094,5 +1094,29 @@ func cacheConditionReadyForGeneration(model *aiv1alpha2.Model, reason string) bo
 	}
 	return cond.Status == metav1.ConditionTrue &&
 		cond.Reason == reason &&
+		cond.ObservedGeneration == model.Generation
+}
+
+// localCacheStageAlreadyReady reports whether a local HF cache stage already
+// completed for the current generation, so a TTL-GC'd stage Job must not be
+// recreated.
+//
+// It intentionally does NOT match on the Cached condition's Reason. Once the
+// backend comes up, setModelStatus rewrites that reason from "CacheStage" to
+// "BackendReady" (see model_helpers.go). The previous guard required reason
+// "CacheStage", so after the stage Job's TTLSecondsAfterFinished (300s) GC'd it,
+// the guard failed every cycle, the stage Job was recreated with Ready=false,
+// and the model flapped 1->0->1 — a cold start every 5 minutes. Matching on the
+// persisted Cache.Ready sub-status plus generation (reason-agnostic) mirrors the
+// non-HF cache-check guard and re-stages only on a genuine spec change.
+func localCacheStageAlreadyReady(model *aiv1alpha2.Model) bool {
+	if model == nil || model.Status.Cache == nil || !model.Status.Cache.Ready {
+		return false
+	}
+	cond := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelCached)
+	if cond == nil {
+		return false
+	}
+	return cond.Status == metav1.ConditionTrue &&
 		cond.ObservedGeneration == model.Generation
 }
