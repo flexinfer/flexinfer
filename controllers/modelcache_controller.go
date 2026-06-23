@@ -113,6 +113,11 @@ func (r *ModelCacheReconciler) Reconcile(ctx context.Context, req ctrl.Request) 
 	// generation. Best-effort: never blocks reconcile.
 	observeStaleGenerationJobs(ctx, r.Client, "ModelCache", modelCache.Namespace, modelCache.Name, modelCache.UID, modelCache.Generation, LabelCache)
 
+	// Reap pipeline Jobs whose stage was removed from the spec (pure orphans no
+	// stage path reads). Conservative: controller-owned, stale generation, and
+	// not running only -- never disturbs in-flight or in-spec stages.
+	r.reapOrphanedStageJobs(ctx, modelCache)
+
 	// Determine strategy
 	strategy := modelCache.Spec.StorageStrategy
 	if strategy == aiv1alpha1.StorageStrategyAuto {
