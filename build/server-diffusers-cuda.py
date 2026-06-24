@@ -40,6 +40,20 @@ from diffusers import AutoPipelineForText2Image
 
 DEFAULT_SIZE = os.environ.get("DEFAULT_SIZE", "512x512")
 MAX_IMAGE_EDGE = int(os.environ.get("MAX_IMAGE_EDGE", "768"))
+# Total-pixel budget. A single edge <= MAX_IMAGE_EDGE is not enough on small
+# cards: 768x768 (590k px) has 2.25x the pixels of 512x512 (262k px) and OOMs a
+# 6 GiB Maxwell card mid-decode, while 768x512 (393k px) fits. Cap on area so the
+# server returns a clean 400 instead of an OOM 500 that renders as a black tile.
+# Default budget = 768*512 px: allows 512x512, 768x512, 512x768; rejects 768x768.
+MAX_IMAGE_PIXELS = int(os.environ.get("MAX_IMAGE_PIXELS", str(768 * 512)))
+# Floor on inference steps. SD 1.5 + Euler at 1 step is degenerate: the latent is
+# never denoised and the VAE decodes to a fully black image (max pixel = 0). Clamp
+# up so a low slider value still produces a real image. Turbo models want ~4.
+MIN_INFERENCE_STEPS = int(os.environ.get("MIN_INFERENCE_STEPS", "4"))
+# /health reports unhealthy below this much free VRAM once a model is resident, so
+# the liveness probe recycles the pod if the card ever saturates (fragmentation /
+# leak backstop). Set well below normal peak (512x512 leaves ~3 GiB free).
+HEALTH_MIN_FREE_MB = int(os.environ.get("HEALTH_MIN_FREE_MB", "256"))
 
 app = FastAPI()
 
@@ -107,6 +121,14 @@ def _parse_size(size: str) -> tuple[int, int]:
         raise HTTPException(
             status_code=400,
             detail=f"size too large for this GPU (max edge {MAX_IMAGE_EDGE})",
+        )
+    if w * h > MAX_IMAGE_PIXELS:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"size {w}x{h} ({w * h} px) exceeds this GPU's pixel budget "
+                f"({MAX_IMAGE_PIXELS} px). Try 512x512, 768x512, or 512x768."
+            ),
         )
     return w, h
 
@@ -190,7 +212,28 @@ class ImageGenerationRequest(BaseModel):
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "cuda": torch.cuda.is_available()}
+    cuda_ok = torch.cuda.is_available()
+    free_mb = None
+    if cuda_ok:
+        try:
+            free_b, _total_b = torch.cuda.mem_get_info()
+            free_mb = free_b // (1024 * 1024)
+        except Exception:
+            free_mb = None
+    # Once a model is resident, treat a near-full card as unhealthy so the
+    # liveness probe recycles the pod (fragmentation / leak self-heal). Skip the
+    # check before the model loads — free VRAM is naturally high then.
+    if (
+        cuda_ok
+        and pipe is not None
+        and free_mb is not None
+        and free_mb < HEALTH_MIN_FREE_MB
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail=f"low VRAM: {free_mb} MiB free (< {HEALTH_MIN_FREE_MB})",
+        )
+    return {"status": "ok", "cuda": cuda_ok, "vram_free_mb": free_mb}
 
 
 @app.post("/v1/images/generations")
@@ -207,6 +250,8 @@ def images_generations(req: ImageGenerationRequest):
         if req.num_inference_steps is not None
         else _default_steps(model_id)
     )
+    # Clamp up: 1 step is degenerate (black image) on non-turbo SD checkpoints.
+    steps = max(steps, MIN_INFERENCE_STEPS)
     guidance = (
         req.guidance_scale
         if req.guidance_scale is not None
@@ -214,29 +259,47 @@ def images_generations(req: ImageGenerationRequest):
     )
 
     images = []
-    with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
-        for _ in range(req.n):
-            out = pipe(
-                prompt=req.prompt,
-                negative_prompt=req.negative_prompt,
-                num_inference_steps=steps,
-                guidance_scale=guidance,
-                width=width,
-                height=height,
-            )
-            image = out.images[0]
-            if not isinstance(image, Image.Image):
-                image = Image.fromarray(image)
-            buf = io.BytesIO()
-            image.save(buf, format="PNG")
-            b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-            images.append({"b64_json": b64})
-            del out, image, buf  # break reference cycles
-
-    # Free leaked tensors from reference cycles before clearing GPU cache
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
+    try:
+        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
+            for _ in range(req.n):
+                out = pipe(
+                    prompt=req.prompt,
+                    negative_prompt=req.negative_prompt,
+                    num_inference_steps=steps,
+                    guidance_scale=guidance,
+                    width=width,
+                    height=height,
+                )
+                image = out.images[0]
+                if not isinstance(image, Image.Image):
+                    image = Image.fromarray(image)
+                buf = io.BytesIO()
+                image.save(buf, format="PNG")
+                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                images.append({"b64_json": b64})
+                del out, image, buf  # break reference cycles
+    except RuntimeError as e:
+        # CUDA OOM bubbles as torch.cuda.OutOfMemoryError (a RuntimeError
+        # subclass) or a driver-level "CUDA error: out of memory" RuntimeError.
+        # Return a clean 507 instead of a 500 that the UI renders as a black
+        # tile. Cleanup still runs in finally; if the context is wedged, the
+        # VRAM-aware /health check recycles the pod.
+        if "out of memory" in str(e).lower():
+            raise HTTPException(
+                status_code=507,
+                detail=(
+                    f"GPU out of memory generating {width}x{height} (n={req.n}). "
+                    "Reduce the image size or batch count."
+                ),
+            ) from e
+        raise
+    finally:
+        # Always free tensors + GPU cache, including on the error path — a
+        # mid-generation failure that skipped cleanup is what let VRAM creep to
+        # the ceiling over time and OOM every subsequent request.
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
     return {"created": int(time.time()), "data": images}
 
