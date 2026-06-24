@@ -39,6 +39,10 @@ if not hasattr(torch, "xpu"):
 
 from diffusers import AutoPipelineForText2Image
 
+# Concurrency invariant: this server holds ONE global pipeline whose scheduler is
+# stateful, so all GPU work is serialized behind _GEN_LOCK (see below). Do not add
+# a second code path that touches `pipe` outside that lock.
+
 DEFAULT_SIZE = os.environ.get("DEFAULT_SIZE", "512x512")
 MAX_IMAGE_EDGE = int(os.environ.get("MAX_IMAGE_EDGE", "768"))
 # Total-pixel budget. A single edge <= MAX_IMAGE_EDGE is not enough on small
