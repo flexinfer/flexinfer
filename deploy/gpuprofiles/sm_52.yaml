@@ -49,7 +49,7 @@ spec:
       # build/server-diffusers-cuda.py (_apply_scheduler retained) so DEIS-default
       # checkpoints (e.g. Dreamshaper 8) still pin a robust scheduler instead of
       # crashing on the final denoise step.
-      image: registry.harbor.lan/flexinfer/diffusers:cuda-maxwell-5d5a3121@sha256:5be69785e4f167c26d023c02fad64de397dee00827b36a16c1c68879ca6284b3
+      image: registry.harbor.lan/flexinfer/diffusers:cuda-maxwell-694a1404@sha256:063e89e207b80dd69b001e5da76b11ea66efee28ced5d7f9cd8a3ef824afa76c
     comfyui:
       support: unsupported
   runtime:
