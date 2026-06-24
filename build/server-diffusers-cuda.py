@@ -55,6 +55,19 @@ MAX_IMAGE_PIXELS = int(os.environ.get("MAX_IMAGE_PIXELS", str(768 * 512)))
 # never denoised and the VAE decodes to a fully black image (max pixel = 0). Clamp
 # up so a low slider value still produces a real image. Turbo models want ~4.
 MIN_INFERENCE_STEPS = int(os.environ.get("MIN_INFERENCE_STEPS", "4"))
+# Disable the Stable Diffusion safety checker. When it flags an image as potential
+# NSFW it replaces the result with an all-black image (and returns 200), and the
+# SD 1.5 checker false-positives heavily (portraits, people, lots of innocuous
+# prompts). On a self-hosted single-user service that just looks like "image
+# generation is broken". Default off; set DISABLE_SAFETY_CHECKER=false to restore.
+DISABLE_SAFETY_CHECKER = os.environ.get(
+    "DISABLE_SAFETY_CHECKER", "true"
+).strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 # /health reports unhealthy below this much free VRAM once a model is resident, so
 # the liveness probe recycles the pod if the card ever saturates (fragmentation /
 # leak backstop). Set well below normal peak (512x512 leaves ~3 GiB free).
@@ -199,6 +212,17 @@ def _load_model(model_id: str):
     # Override the checkpoint's default scheduler if requested (e.g. to avoid
     # the DEISMultistepScheduler final-step IndexError on SD 1.5 checkpoints).
     _apply_scheduler(pipe)
+
+    # Disable the NSFW safety checker: it swaps flagged images for an all-black
+    # one (200 OK), and the SD 1.5 checker false-positives constantly, which
+    # presents as "generation returns black images". Guard on the attribute since
+    # not every pipeline (e.g. SDXL) carries one.
+    if DISABLE_SAFETY_CHECKER and hasattr(pipe, "safety_checker"):
+        pipe.safety_checker = None
+        if hasattr(pipe, "requires_safety_checker"):
+            pipe.requires_safety_checker = False
+        sys.stdout.write("Safety checker disabled (DISABLE_SAFETY_CHECKER)\\n")
+        sys.stdout.flush()
 
     pipe.to("cuda")
     pipe.enable_attention_slicing()
