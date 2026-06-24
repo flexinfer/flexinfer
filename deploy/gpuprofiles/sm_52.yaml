@@ -42,12 +42,14 @@ spec:
       # class models. Experimental: Maxwell has no FP16 tensor cores, so decode
       # is slower than modern cards.
       support: experimental
-      # CUDA 11.8 diffusers-api with the scheduler-override fix: forked from
-      # library/diffusers-api:cuda + server-diffusers-cuda.py _apply_scheduler so
-      # DEIS-default checkpoints (e.g. Dreamshaper 8) can be pinned to a robust
-      # scheduler (config.scheduler -> DEFAULT_SCHEDULER) instead of crashing on
-      # the final denoise step.
-      image: registry.harbor.lan/flexinfer/diffusers:cuda-maxwell-schedfix@sha256:e1224247a11769d8b1f2cfc3ac7db5aec521def698541ced5c9258054a37c46f
+      # CUDA 11.8 diffusers-api with the scheduler-override fix + black-image /
+      # VRAM guards (services/flexinfer!698): step floor (steps=1 -> black on SD
+      # 1.5), pixel-area budget (768x768 OOMs the 6 GiB card -> clean 400), and
+      # finally-block cache cleanup + VRAM-aware /health self-heal. Built from
+      # build/server-diffusers-cuda.py (_apply_scheduler retained) so DEIS-default
+      # checkpoints (e.g. Dreamshaper 8) still pin a robust scheduler instead of
+      # crashing on the final denoise step.
+      image: registry.harbor.lan/flexinfer/diffusers:cuda-maxwell-5d5a3121@sha256:5be69785e4f167c26d023c02fad64de397dee00827b36a16c1c68879ca6284b3
     comfyui:
       support: unsupported
   runtime:
