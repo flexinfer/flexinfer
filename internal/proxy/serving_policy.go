@@ -20,6 +20,24 @@ func litellmExplicitlyDisabled(m *aiv1alpha2.Model) bool {
 		m.Spec.LiteLLM.Enabled != nil && !*m.Spec.LiteLLM.Enabled
 }
 
+// parkedBehindPrimary reports whether a Model is statically un-promotable on its
+// shared GPU: the controller's election determined a warm-pinned/warm-primary
+// leader of higher priority holds the single slot and never idles, so this
+// member can never win the demand-swap. The election encodes that by prefixing
+// SharedGroupStatus.PreemptedBy with PreemptedByPrimaryPrefix ("primary/").
+//
+// A request for such a model must NOT cold-start it: the controller parks the
+// backend the instant it spawns (signal: terminated), so every attempt is a
+// guaranteed 10-25m timeout plus GPU-runtime churn. The proxy fast-fails (503)
+// instead — no queue, no cold-start, no demand-touch. The prefix is cleared the
+// moment the member becomes promotable (leader vacates or priorities change), so
+// the gate self-heals. The bare PreemptedBy name (no prefix) means an ordinary
+// transient preemption that demand CAN promote, so it is left to cold-start.
+func parkedBehindPrimary(m *aiv1alpha2.Model) bool {
+	return m != nil && m.Status.SharedGroup != nil &&
+		strings.HasPrefix(m.Status.SharedGroup.PreemptedBy, aiv1alpha2.PreemptedByPrimaryPrefix)
+}
+
 // modelServesPath reports whether a Model serves the given request path.
 //
 // A Model may declare the inference endpoints it serves via the

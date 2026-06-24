@@ -580,6 +580,25 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Statically parked behind a warm primary it can never outrank: the
+		// controller has determined this shared-group member is not promotable by
+		// demand (the warm leader never idles and outranks it). Cold-starting it is
+		// doomed — the election parks the backend the instant it spawns, so the
+		// request would burn a 10-25m timeout and churn the GPU runtime. Fast-fail
+		// 503 WITHOUT queueing, cold-starting, or touching demand. Unlike the
+		// litellm-disabled park (404, model removed from the fleet), the model is
+		// still advertised and could serve once contention clears, so 503 is the
+		// honest status. The gate self-heals when the controller clears the prefix.
+		if parkedBehindPrimary(m) {
+			slog.Debug("rejecting cold start: model is parked behind a warm primary",
+				"model", modelName, "preemptedBy", m.Status.SharedGroup.PreemptedBy,
+				"request_id", requestID)
+			validation.WriteServiceUnavailable(w,
+				fmt.Sprintf("model %q is parked behind a higher-priority primary on its shared GPU and is not currently servable", modelName))
+			requestsTotal.WithLabelValues(modelName, "parked_behind_primary").Inc()
+			return
+		}
+
 		// Model is scaled to zero or not ready - use queue.
 		if err := p.handleColdStart(ctx, w, r, modelName, start); err != nil {
 			slog.Error("cold start failed", "model", modelName, "error", err)
