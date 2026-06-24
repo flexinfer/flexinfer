@@ -9,27 +9,34 @@
 # from the WhisperForConditionalGeneration architecture — no `task:` field
 # (dropped in MR !464; v5 evidence showed --task is rejected by 0.17+ argparse).
 #
-# === Chat-primary, ASR is best-effort on the shared card ===
-# This CR is idle-to-zero AND ranks BELOW the warm primary
-# (gemma4-26b-a4b-gptq, priority 350) on the shared 7900xtx-textgen card.
-# Priority 340 (< 350) is deliberate: the daily-driver chat model must stay
-# primary regardless of ASR load. Mechanics on controllers/model_shared_gpu.go:
-#   - When gemma4 holds the card (warm or demanded), a transcribe request does
-#     NOT preempt it — whisper(340) loses the strict-greater demand-swap to
-#     gemma4(350) and queues until gemma4 idles out (30m idleTimeout). ASR is
-#     therefore best-effort while chat is active.
-#   - When gemma4 is idle-to-zero with no chat demand, an ASR request activates
-#     whisper on the freed card (~8s weight load, ~67s cold start observed in
-#     v6); it transcribes and releases after idleTimeout.
-#   - If chat demand arrives while whisper is the active incumbent, gemma4(350)
-#     wins the strict-greater branch and reclaims the card — chat is restored.
-# History: this lane previously ran at priority 400 (> 350) so ASR preempted
-# chat. That inverted the intended primacy — a sustained transcription stream
-# evicted the gemma4 daily driver and queued chat (observed live 2026-06-21).
-# Re-ranked below the primary so chat wins contention by default. To force a
-# dedicated batch transcription window, operators can still flip
-# `gpu.forcePromotion: true` (the proven kill-test path) temporarily. The
-# sister 26B on cblevins-5930k carries chat throughout via shared serviceLabels.
+# === PARKED 2026-06-23: ASR is un-servable on this card, so it is de-advertised ===
+# litellm.enabled=false (below) removes whisper from the servable fleet: it is
+# hidden from /v1/models, not alias/label-resolvable, and never cold-started by
+# name. This stops a doomed-cold-start loop, NOT a working lane.
+#
+# Why it could never serve here:
+#   The warm primary gemma4-26b-a4b-gptq (priority 350) on this shared
+#   7900xtx-textgen card runs minReplicas:1 + warmPolicy:primary, so it holds the
+#   single slot at gpuMemoryUtilization 0.98 and NEVER idles to zero. whisper
+#   (priority 340) is therefore statically un-promotable: the demand-swap in
+#   controllers/model_shared_gpu.go requires whisper.priority >= gemma4.priority
+#   (never true), and the Ready-leader branch returns gemma4 unconditionally.
+#   The earlier comment here ("queues until gemma4 idles out 30m") was wrong —
+#   a minReplicas:1 warm primary does not idle out, so every transcribe request
+#   spun a backend the election immediately parked (signal: terminated), timing
+#   out after 10-25m. Live impact (2026-06-23): ~4k requests/24h, 100% error,
+#   repeated gfx1100-runtime churn. See model_shared_gpu.go:180 (demand path).
+#
+# History: priority 400 (> 350) inverted primacy — a sustained transcription
+# stream evicted the gemma4 daily driver (MR !687 dropped it to 340). 340 stopped
+# the flap but left ASR permanently starved behind the warm primary; parking
+# (this change) makes that honest until ASR is rehomed to its own GPU.
+#
+# To restore ASR: rehome whisper to a GPU it can hold (own card / multiModel
+# coexistence with a lowered gemma4 gpuMemoryUtilization), then re-enable
+# litellm + the serviceLabels/aliases below. A dedicated batch window via
+# `gpu.forcePromotion: true` (the proven kill-test path) also still works.
+# The sister 26B on cblevins-5930k carries chat throughout via shared serviceLabels.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -108,18 +115,21 @@ spec:
     limits:
       cpu: "2"
       memory: 8Gi
-  serviceLabels:
-    # Routable names so the proxy gives ICC a single base URL. `asr` is the
-    # generic role label so callers can request model=asr (or transcription)
-    # without knowing the exact model. NOTE: these only route /v1/audio/
-    # transcriptions traffic — the serve-paths annotation above 404s any other
-    # endpoint before it can warm this lane.
-    - whisper-large-v3-turbo
-    - whisper
-    - asr
-    - transcription
+  # serviceLabels STRIPPED while parked: label-group routing (model=asr|
+  # transcription|whisper) builds from Services and can bypass the litellm
+  # disabled gate, so a label-keyed caller could still warm this lane. Removing
+  # them guarantees nothing routes here. RESTORE these (and litellm below) when
+  # ASR is rehomed.
+  # serviceLabels:
+  #   - whisper-large-v3-turbo
+  #   - whisper
+  #   - asr
+  #   - transcription
   litellm:
-    enabled: true
+    # PARKED: de-advertised from the servable fleet — see the header block.
+    # Flip back to true (and restore serviceLabels/aliases above) to re-list.
+    enabled: false
     servedModelName: whisper-large-v3-turbo
-    aliases:
-      - whisper-large-v3-turbo-7900xtx
+    # aliases STRIPPED while parked (would otherwise stay alias-resolvable):
+    # aliases:
+    #   - whisper-large-v3-turbo-7900xtx
