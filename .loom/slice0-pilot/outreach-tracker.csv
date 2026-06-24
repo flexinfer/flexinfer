@@ -1,0 +1,3 @@
+company,contact_name,contact_email,persona,sent_date,status,call_date,notes
+# status values: sent | replied | booked | disqualified | no_response
+# KILL-TEST METRIC: count rows where status=booked within 14 days of sent_date. Gate = >=2.

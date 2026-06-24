@@ -1,0 +1,30 @@
+# ICP v1 sourcing seeds — seed/Series-A B2B SaaS / dev-tools / vertical-AI, 10-40 staff,
+# founder-led, thin sales. One query per line; blank lines and # comments ignored.
+# Broad listicle/directory queries are intentional — the pipeline MINES them for names.
+
+# --- recently funded (budget + pipeline pressure) ---
+"raised seed round" B2B SaaS startup 2026 announcement
+"announced our seed" AI startup 2026
+seed funded B2B SaaS startups 2026 site:techcrunch.com
+Series A B2B SaaS startup funding 2026
+new AI startups raised seed 2026 list
+YC W26 batch B2B startups
+YC S25 batch B2B SaaS companies
+recently funded vertical SaaS startups 2026
+
+# --- hiring signal (feels the GTM gap) ---
+Series A AI startup hiring "founding account executive" 2026
+seed startup hiring "first sales hire" 2026
+B2B SaaS startup hiring "head of growth" founder 2026
+
+# --- founder doing manual outbound ---
+"we just raised" seed B2B SaaS founder outbound 2026
+founder "doing cold outreach" early stage startup 2026
+solo founder B2B SaaS looking for first customers 2026
+
+# --- product/vertical (ships AI -> easier sell) ---
+dev tools startup seed round 2026 product launch
+vertical AI SaaS startup seed funded 2026
+AI agent startup B2B seed stage 2026
+self-hosted AI tooling startup B2B 2026
+new B2B SaaS product launch small team 2026
