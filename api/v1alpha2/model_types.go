@@ -113,6 +113,14 @@ const (
 	// proxy, and operators can tell an intentional, transient training park from
 	// a serving-vs-serving preemption or an outage.
 	ReasonGPULeaseHeld = "GPULeaseHeld"
+	// ReasonParkedBehindPrimary - this shared-GPU member is statically
+	// un-promotable: a warm-pinned/warm-primary leader of strictly higher
+	// priority holds the single slot and never idles out, so the demand-swap
+	// (which requires this member's priority >= the leader's) can never promote
+	// it. Distinct from ReasonPreempted because the park is permanent under the
+	// current config, not transient contention — the proxy uses it to fast-fail
+	// instead of spinning a cold-start the election will immediately kill.
+	ReasonParkedBehindPrimary = "ParkedBehindPrimary"
 	// ReasonAliasConflict - litellm alias or copilotAlias conflicts with another model
 	ReasonAliasConflict = "AliasConflict"
 	// ReasonConfigValid - model config has no conflicts
@@ -703,11 +711,25 @@ type SharedGroupStatus struct {
 	State string `json:"state,omitempty"`
 	// QueuePosition when waiting to be loaded.
 	QueuePosition int32 `json:"queuePosition,omitempty"`
-	// PreemptedBy is which model caused preemption.
+	// PreemptedBy is which model caused preemption. The election may prefix the
+	// attribution to encode the park class: GPULeasePreemptedByPrefix
+	// ("gpu-lease/") for a training lease hold, or PreemptedByPrimaryPrefix
+	// ("primary/") for a statically-un-promotable park behind a warm leader.
+	// The bare leader/owner name follows the prefix.
 	PreemptedBy string `json:"preemptedBy,omitempty"`
 	// PreemptedAt is when preemption occurred.
 	PreemptedAt *metav1.Time `json:"preemptedAt,omitempty"`
 }
+
+// PreemptedByPrimaryPrefix marks a SharedGroupStatus.PreemptedBy attribution as
+// a statically-un-promotable park: the named leader is warm-pinned/warm-primary
+// and outranks this member, so it can never be promoted by demand under the
+// current config. Consumers (the proxy fast-fail gate, dashboards) detect this
+// park class via the prefix; the bare leader name follows it. Kept in the API
+// package so both the controller and the proxy share one definition. The GPU
+// lease equivalent (gpu-lease/) lives in the controller package because nothing
+// cross-package needs it.
+const PreemptedByPrimaryPrefix = "primary/"
 
 // CacheStatus tracks the cache state.
 // +kubebuilder:object:generate=true

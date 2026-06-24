@@ -365,6 +365,29 @@ func isWarmPinnedSharedModel(model *aiv1alpha2.Model) bool {
 	return model != nil && model.Spec.GetMinReplicas() >= 1
 }
 
+// staticallyParkedBehindPrimary reports whether member can NEVER be promoted off
+// its park while leader holds the shared slot under the current config. It is
+// true only when the leader will not yield by idling (it is warm-pinned via
+// minReplicas>=1, or the operator-designated warmPolicy=primary) AND the leader
+// outranks member on strict priority. The demand-swap in chooseSharedGroupLeader
+// requires member.priority >= leader.priority to preempt, so a strictly-lower
+// member behind a never-idling leader is doomed: every cold-start it attempts is
+// parked the instant it spawns. The proxy reads this (via the PreemptedBy
+// "primary/" prefix the election stamps) to fast-fail instead of cold-starting.
+//
+// It is deliberately conservative: an equal-or-higher-priority member still
+// demand-swaps, and a member behind a scale-to-zero leader can serve once that
+// leader idles out (warm-primary reclaim / demand path), so neither is flagged.
+func staticallyParkedBehindPrimary(member, leader *aiv1alpha2.Model) bool {
+	if member == nil || leader == nil || member.Name == leader.Name {
+		return false
+	}
+	if !isWarmPinnedSharedModel(leader) && !isWarmPrimaryModel(leader) {
+		return false
+	}
+	return leader.Spec.GetPriority() > member.Spec.GetPriority()
+}
+
 func sharedModelCanTakeDemand(model *aiv1alpha2.Model) bool {
 	if model == nil {
 		return false
@@ -585,13 +608,21 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Preempted").Set(0)
 	} else {
 		// This model should be preempted/queued (not in the Active set).
+		// Tag a statically-un-promotable park (lower priority behind a never-idling
+		// warm leader) with the "primary/" PreemptedBy prefix, so the reason
+		// resolver surfaces ReasonParkedBehindPrimary and the proxy fast-fails its
+		// doomed cold-starts. Lease parks take precedence and keep their own prefix.
+		effectivePreemptedBy := preemptedBy
+		if !leased && primary != nil && staticallyParkedBehindPrimary(model, primary) {
+			effectivePreemptedBy = aiv1alpha2.PreemptedByPrimaryPrefix + primary.Name
+		}
 		model.Status.SharedGroup.State = "Queued"
 		model.Status.SharedGroup.QueuePosition = queuePositionForSharedModel(model.Name, primary, groupModels)
-		model.Status.SharedGroup.PreemptedBy = preemptedBy
+		model.Status.SharedGroup.PreemptedBy = effectivePreemptedBy
 
 		if model.Status.Phase == aiv1alpha2.ModelPhaseReady {
 			// Preempt this model
-			log.Info("Preempting model", "preemptedBy", preemptedBy, "leased", leased)
+			log.Info("Preempting model", "preemptedBy", effectivePreemptedBy, "leased", leased)
 			model.Status.Phase = aiv1alpha2.ModelPhasePreempted
 			model.Status.LoadingSubstage = aiv1alpha2.LoadingSubstagePreempted
 			preemptReason, preemptMsg := preemptedConditionReasonMessage(model)
@@ -605,7 +636,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 				r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
 					fmt.Sprintf("Preempted by %s with priority %d", primary.Name, primary.Spec.GetPriority()))
 			}
-			metrics.SharedGroupPreemptionsTotal.WithLabelValues(groupName, model.Namespace, model.Name, preemptedBy).Inc()
+			metrics.SharedGroupPreemptionsTotal.WithLabelValues(groupName, model.Namespace, model.Name, effectivePreemptedBy).Inc()
 			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Preempted").Set(1)
 			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Active").Set(0)
 			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Queued").Set(0)

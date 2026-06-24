@@ -519,11 +519,18 @@ const gpuLeasePreemptedByPrefix = "gpu-lease/"
 // with a distinct reason keeps dashboards/proxy/operators from reading the
 // parked lane as an outage.
 func preemptedConditionReasonMessage(model *aiv1alpha2.Model) (reason, message string) {
-	if model != nil && model.Status.SharedGroup != nil &&
-		strings.HasPrefix(model.Status.SharedGroup.PreemptedBy, gpuLeasePreemptedByPrefix) {
-		owner := strings.TrimPrefix(model.Status.SharedGroup.PreemptedBy, gpuLeasePreemptedByPrefix)
-		return aiv1alpha2.ReasonGPULeaseHeld,
-			fmt.Sprintf("Card held by training (GPU lease %q); serving parked until the lease releases", owner)
+	if model != nil && model.Status.SharedGroup != nil {
+		pb := model.Status.SharedGroup.PreemptedBy
+		if strings.HasPrefix(pb, gpuLeasePreemptedByPrefix) {
+			owner := strings.TrimPrefix(pb, gpuLeasePreemptedByPrefix)
+			return aiv1alpha2.ReasonGPULeaseHeld,
+				fmt.Sprintf("Card held by training (GPU lease %q); serving parked until the lease releases", owner)
+		}
+		if strings.HasPrefix(pb, aiv1alpha2.PreemptedByPrimaryPrefix) {
+			primary := strings.TrimPrefix(pb, aiv1alpha2.PreemptedByPrimaryPrefix)
+			return aiv1alpha2.ReasonParkedBehindPrimary,
+				fmt.Sprintf("Parked behind warm primary %q (lower priority; not promotable on demand under current config)", primary)
+		}
 	}
 	return aiv1alpha2.ReasonPreempted, preemptedStatusMessage(model)
 }

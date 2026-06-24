@@ -192,3 +192,65 @@ func TestHandleRequest_AudioOnlyModel_ChatProbe404NoColdStart(t *testing.T) {
 	_, queued := p.queues.Load("whisper")
 	assert.False(t, queued, "chat probe must NOT create a cold-start queue for whisper")
 }
+
+// TestHandleRequest_ParkedBehindPrimary_503NoColdStart covers the durable gate:
+// a still-advertised shared-group member that the controller marked statically
+// un-promotable (PreemptedBy "primary/<leader>") must fast-fail 503 instead of
+// spinning a doomed cold-start the election would immediately kill.
+func TestHandleRequest_ParkedBehindPrimary_503NoColdStart(t *testing.T) {
+	act := &countingActivator{}
+	starved := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "whisper-starved", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{Backend: "vllm", Source: "pvc://a/b",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{Enabled: boolPtr(true)}}, // still advertised
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhasePreempted,
+			SharedGroup: &aiv1alpha2.SharedGroupStatus{
+				GroupName:   "7900xtx-textgen",
+				State:       "Queued",
+				PreemptedBy: aiv1alpha2.PreemptedByPrimaryPrefix + "gemma4-26b-a4b-gptq",
+			},
+		},
+	}
+	p := newGateTestProxy(t, act, starved)
+
+	rec := httptest.NewRecorder()
+	p.handleRequest(rec, chatReq("whisper-starved"))
+
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code, "statically-parked member returns 503 fast")
+	assert.Equal(t, 0, act.touches, "parked-behind-primary must NOT touch demand")
+	_, queued := p.queues.Load("whisper-starved")
+	assert.False(t, queued, "parked-behind-primary must NOT create a cold-start queue")
+}
+
+// TestHandleRequest_OrdinaryPreemption_StillColdStarts guards against
+// over-eager fast-fail: a transient preemption (bare PreemptedBy, no "primary/"
+// prefix) is promotable by demand, so it MUST still cold-start.
+func TestHandleRequest_OrdinaryPreemption_StillColdStarts(t *testing.T) {
+	act := &countingActivator{}
+	preempted := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen-preempted", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{Backend: "vllm", Source: "pvc://a/b",
+			LiteLLM: &aiv1alpha2.LiteLLMSpec{Enabled: boolPtr(true)}},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhasePreempted,
+			SharedGroup: &aiv1alpha2.SharedGroupStatus{
+				GroupName:   "7900xtx-textgen",
+				State:       "Queued",
+				PreemptedBy: "gemma4-26b-a4b-gptq", // bare name: promotable on demand
+			},
+		},
+	}
+	p := newGateTestProxy(t, act, preempted)
+
+	rec := httptest.NewRecorder()
+	p.handleRequest(rec, chatReq("qwen-preempted"))
+
+	// The fast-fail gate never touches demand; the cold-start path does. A
+	// non-zero touch count proves the request proceeded to cold-start (promotable
+	// on demand) rather than being short-circuited as parked-behind-primary. The
+	// fake activator then times out in ~1ms, which is the expected cold-start
+	// outcome here — not the gate firing.
+	assert.Positive(t, act.touches,
+		"ordinary preemption must proceed to cold-start (touch demand), not fast-fail")
+}
