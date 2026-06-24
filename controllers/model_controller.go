@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -92,7 +93,18 @@ type ModelReconciler struct {
 	ModelImagePullSecrets []corev1.LocalObjectReference
 
 	mgr ctrl.Manager // set by SetupWithManager, used for startup sweep
+
+	// vramPressureLastEmit throttles the per-reconcile VRAMPressure warning
+	// event to one per model per vramPressureEventCooldown. The event reflects a
+	// static spec property (VRAM estimate vs card capacity), so re-emitting it on
+	// every reconcile is pure noise. Keyed by model UID -> time.Time of last emit.
+	vramPressureLastEmit sync.Map
 }
+
+// vramPressureEventCooldown is the minimum interval between VRAMPressure warning
+// events for a given model. The condition is static (estimate vs capacity), so a
+// generous cooldown keeps the event visible without flooding the event stream.
+const vramPressureEventCooldown = 10 * time.Minute
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models/status,verbs=get;update;patch
