@@ -3,6 +3,7 @@ import gc
 import io
 import os
 import sys
+import threading
 import time
 import uuid
 from typing import Optional
@@ -54,6 +55,15 @@ MIN_INFERENCE_STEPS = int(os.environ.get("MIN_INFERENCE_STEPS", "4"))
 # the liveness probe recycles the pod if the card ever saturates (fragmentation /
 # leak backstop). Set well below normal peak (512x512 leaves ~3 GiB free).
 HEALTH_MIN_FREE_MB = int(os.environ.get("HEALTH_MIN_FREE_MB", "256"))
+
+# Serialize all GPU work behind one lock. The server holds a single global
+# pipeline whose scheduler is STATEFUL (step_index): two concurrent generations
+# race that state — one request's loop sees step_index past the end and raises
+# `sigmas[step_index + 1]` IndexError (-> 500) or yields a black image. The lone
+# 6 GiB card can only run one diffusion at a time anyway, so queue instead of
+# colliding. Requests wait up to GEN_LOCK_TIMEOUT_SECONDS, then 503 (retryable).
+_GEN_LOCK = threading.Lock()
+GEN_LOCK_TIMEOUT_SECONDS = int(os.environ.get("GEN_LOCK_TIMEOUT_SECONDS", "300"))
 
 app = FastAPI()
 
@@ -238,12 +248,17 @@ def health():
 
 @app.post("/v1/images/generations")
 def images_generations(req: ImageGenerationRequest):
-    model_id = req.model or os.environ.get("MODEL_ID") or os.environ.get("MODEL")
+    # Pin to the checkpoint this pod actually serves (MODEL_ID env). The request's
+    # `model` is an alias / served-name chosen upstream and is NOT a loadable
+    # repo id — honoring it made `_load_model` try `from_pretrained("imagegen")`
+    # etc., which failed/garbled into 500s and black images. Prefer the env so
+    # every alias maps to the one resident pipeline.
+    model_id = os.environ.get("MODEL_ID") or os.environ.get("MODEL") or req.model
     if not model_id:
         raise HTTPException(status_code=400, detail="Missing model id")
 
-    _load_model(model_id)
-
+    # Validate cheap request params BEFORE queuing on the GPU lock, so bad
+    # requests fail fast without holding up real work.
     width, height = _parse_size(req.size)
     steps = (
         req.num_inference_steps
@@ -258,48 +273,61 @@ def images_generations(req: ImageGenerationRequest):
         else _default_guidance(model_id)
     )
 
-    images = []
+    # Serialize load + generate: the shared pipeline/scheduler is not concurrency
+    # safe (see _GEN_LOCK). Concurrent callers queue here rather than corrupting
+    # each other.
+    if not _GEN_LOCK.acquire(timeout=GEN_LOCK_TIMEOUT_SECONDS):
+        raise HTTPException(
+            status_code=503,
+            detail="image generator busy; retry shortly",
+        )
     try:
-        with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
-            for _ in range(req.n):
-                out = pipe(
-                    prompt=req.prompt,
-                    negative_prompt=req.negative_prompt,
-                    num_inference_steps=steps,
-                    guidance_scale=guidance,
-                    width=width,
-                    height=height,
-                )
-                image = out.images[0]
-                if not isinstance(image, Image.Image):
-                    image = Image.fromarray(image)
-                buf = io.BytesIO()
-                image.save(buf, format="PNG")
-                b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-                images.append({"b64_json": b64})
-                del out, image, buf  # break reference cycles
-    except RuntimeError as e:
-        # CUDA OOM bubbles as torch.cuda.OutOfMemoryError (a RuntimeError
-        # subclass) or a driver-level "CUDA error: out of memory" RuntimeError.
-        # Return a clean 507 instead of a 500 that the UI renders as a black
-        # tile. Cleanup still runs in finally; if the context is wedged, the
-        # VRAM-aware /health check recycles the pod.
-        if "out of memory" in str(e).lower():
-            raise HTTPException(
-                status_code=507,
-                detail=(
-                    f"GPU out of memory generating {width}x{height} (n={req.n}). "
-                    "Reduce the image size or batch count."
-                ),
-            ) from e
-        raise
+        _load_model(model_id)
+
+        images = []
+        try:
+            with torch.inference_mode(), torch.autocast("cuda", dtype=torch.float16):
+                for _ in range(req.n):
+                    out = pipe(
+                        prompt=req.prompt,
+                        negative_prompt=req.negative_prompt,
+                        num_inference_steps=steps,
+                        guidance_scale=guidance,
+                        width=width,
+                        height=height,
+                    )
+                    image = out.images[0]
+                    if not isinstance(image, Image.Image):
+                        image = Image.fromarray(image)
+                    buf = io.BytesIO()
+                    image.save(buf, format="PNG")
+                    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+                    images.append({"b64_json": b64})
+                    del out, image, buf  # break reference cycles
+        except RuntimeError as e:
+            # CUDA OOM bubbles as torch.cuda.OutOfMemoryError (a RuntimeError
+            # subclass) or a driver-level "CUDA error: out of memory" RuntimeError.
+            # Return a clean 507 instead of a 500 that the UI renders as a black
+            # tile. Cleanup still runs in finally; if the context is wedged, the
+            # VRAM-aware /health check recycles the pod.
+            if "out of memory" in str(e).lower():
+                raise HTTPException(
+                    status_code=507,
+                    detail=(
+                        f"GPU out of memory generating {width}x{height} (n={req.n}). "
+                        "Reduce the image size or batch count."
+                    ),
+                ) from e
+            raise
+        finally:
+            # Always free tensors + GPU cache, including on the error path — a
+            # mid-generation failure that skipped cleanup is what let VRAM creep
+            # to the ceiling over time and OOM every subsequent request.
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
     finally:
-        # Always free tensors + GPU cache, including on the error path — a
-        # mid-generation failure that skipped cleanup is what let VRAM creep to
-        # the ceiling over time and OOM every subsequent request.
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        _GEN_LOCK.release()
 
     return {"created": int(time.time()), "data": images}
 
