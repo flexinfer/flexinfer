@@ -20,6 +20,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 
@@ -75,14 +76,32 @@ func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Bac
 			estimateMB, totalVRAMMB, gpuCount, b.Name(), gpuArch)
 	}
 
-	// Warn if estimate exceeds 80% of total VRAM
-	if estimateMB > totalVRAMMB*80/100 {
+	// Warn if estimate exceeds 80% of total VRAM. Throttled per model: the
+	// pressure is a static spec property, so emitting it on every reconcile only
+	// floods the event stream (and historically rode a reconcile hot loop to
+	// thousands of duplicate events/day).
+	if estimateMB > totalVRAMMB*80/100 && r.shouldEmitVRAMPressure(model) {
 		r.Recorder.Event(model, corev1.EventTypeWarning, "VRAMPressure",
 			fmt.Sprintf("model VRAM estimate (%dMB) exceeds 80%% of GPU VRAM (%dMB); performance may be degraded",
 				estimateMB, totalVRAMMB))
 	}
 
 	return nil
+}
+
+// shouldEmitVRAMPressure reports whether enough time has elapsed since the last
+// VRAMPressure event for this model to emit another, recording the emit time
+// when it returns true. Keyed by UID so a delete+recreate re-arms immediately.
+func (r *ModelReconciler) shouldEmitVRAMPressure(model *aiv1alpha2.Model) bool {
+	key := string(model.UID)
+	now := time.Now()
+	if v, ok := r.vramPressureLastEmit.Load(key); ok {
+		if last, ok := v.(time.Time); ok && now.Sub(last) < vramPressureEventCooldown {
+			return false
+		}
+	}
+	r.vramPressureLastEmit.Store(key, now)
+	return true
 }
 
 // validateBackendGPUCompatibility checks if the backend is compatible with the target GPU arch.

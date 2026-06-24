@@ -24,6 +24,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -381,6 +382,14 @@ func (r *ModelReconciler) checkAliasConflicts(ctx context.Context, model *aiv1al
 // updateStatusFromDeployment updates the Model status based on the deployment state.
 func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model *aiv1alpha2.Model) error {
 	log := log.FromContext(ctx)
+	// Snapshot the status before any mutation so the trailing writes can be
+	// skipped when nothing meaningful changed. An unconditional Status().Update
+	// on a steady idle/preempted model still bumps the object's
+	// resourceVersion (field-manager bookkeeping churns because the `proxy`
+	// manager co-owns status.lastActiveTime), and the unfiltered For(&Model{})
+	// watch then re-enqueues the Model on its own write — a self-sustaining
+	// ~1Hz reconcile loop that also re-emits the VRAMPressure event every pass.
+	origStatus := model.Status.DeepCopy()
 	prevPhase := model.Status.Phase
 	prevReadyCond := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelReady)
 	readyStartedAt := time.Time{}
@@ -418,7 +427,7 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
 			model.Status.Phase = aiv1alpha2.ModelPhasePending
 		}
-		return r.Status().Update(ctx, model)
+		return r.statusUpdateIfChanged(ctx, model, origStatus)
 	}
 
 	// Cache is ready (or not applicable)
@@ -497,6 +506,20 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	// Emit model lifecycle metrics for phase changes computed above.
 	r.recordPhaseMetrics(model, prevPhase, model.Status.Phase)
 
+	return r.statusUpdateIfChanged(ctx, model, origStatus)
+}
+
+// statusUpdateIfChanged writes the Model status only when it differs from the
+// supplied snapshot. Skipping no-op writes is what breaks the idle-reconcile
+// hot loop: a Status().Update with byte-identical status still advances the
+// object's resourceVersion (field-manager time bookkeeping), and the
+// unfiltered For(&Model{}) watch re-enqueues the Model on its own write. The
+// generated DeepEqual is conservative — any genuine phase/condition/endpoint
+// change still falls through to the write.
+func (r *ModelReconciler) statusUpdateIfChanged(ctx context.Context, model *aiv1alpha2.Model, orig *aiv1alpha2.ModelStatus) error {
+	if orig != nil && apiequality.Semantic.DeepEqual(orig, &model.Status) {
+		return nil
+	}
 	return r.Status().Update(ctx, model)
 }
 
