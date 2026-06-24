@@ -378,7 +378,10 @@ func (r *ModelReconciler) updateRuntimeStatus(
 }
 
 func (r *ModelReconciler) ensureRuntimeNetworking(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, port int32) error {
-	if err := r.ensureServiceWithPort(ctx, model, b, port); err != nil {
+	// enforcePort=true: the runtime path is authoritative over the Service port
+	// for runtime-managed models. The early ensureService call (enforcePort=false)
+	// must not fight this once the selector has been cleared below.
+	if err := r.ensureServiceWithPort(ctx, model, b, port, true); err != nil {
 		return err
 	}
 	return r.removeRuntimeServiceSelector(ctx, model)

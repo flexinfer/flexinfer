@@ -1779,6 +1779,10 @@ func TestEnsureServicePreservesClusterIP(t *testing.T) {
 	}
 
 	clusterIP := "10.43.0.10"
+	// Deployment-managed Service (selector present): ensureService enforces the
+	// port for these. Runtime-managed (selectorless) Services are covered by
+	// TestEnsureService_RuntimeManagedPortIsIdempotent.
+	selector := map[string]string{"app": model.Name}
 	existing := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      model.Name,
@@ -1790,6 +1794,7 @@ func TestEnsureServicePreservesClusterIP(t *testing.T) {
 			ClusterIPs: []string{
 				clusterIP,
 			},
+			Selector: selector,
 			Ports: []corev1.ServicePort{
 				{
 					Name: "http",
@@ -1837,8 +1842,9 @@ func TestEnsureServicePreservesClusterIP(t *testing.T) {
 
 	// ensureService intentionally leaves selector management alone on updates.
 	// Runtime-managed flows clear the selector separately, and deployment flows
-	// restore it via restoreServiceSelector.
-	if updated.Spec.Selector != nil {
+	// restore it via restoreServiceSelector. The deployment-managed selector set
+	// in the fixture must therefore survive unchanged.
+	if !apiequality.Semantic.DeepEqual(updated.Spec.Selector, selector) {
 		t.Fatalf("expected selector to remain unchanged on service update, got %v", updated.Spec.Selector)
 	}
 }
