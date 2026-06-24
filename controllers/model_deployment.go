@@ -42,11 +42,33 @@ import (
 )
 
 // ensureService creates or updates the Service for the model.
+//
+// This is the early, management-mode-agnostic call (it runs before runtime
+// discovery), so it does NOT enforce the port on an already-runtime-managed
+// Service — the runtime networking path owns the port for those. See
+// ensureServiceWithPort for the port-ownership contract.
 func (r *ModelReconciler) ensureService(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) error {
-	return r.ensureServiceWithPort(ctx, model, b, b.Port())
+	return r.ensureServiceWithPort(ctx, model, b, b.Port(), false)
 }
 
-func (r *ModelReconciler) ensureServiceWithPort(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, port int32) error {
+// ensureServiceWithPort creates or updates the Service for the model.
+//
+// Port ownership: two reconcile paths can call this in a single reconcile of a
+// runtime-managed (multiModel) model — the early deployment-path call
+// (ensureService, enforcePort=false, port=b.Port()) and the runtime-networking
+// path (ensureRuntimeNetworking, enforcePort=true, port=RuntimePortForBackend).
+// For these models b.Port() (the runtime API port) differs from the runtime
+// backend port, so if both writers asserted their port unconditionally they
+// would flap Spec.Ports every reconcile. Each Service write fires the
+// Owns(&Service{}) watch and re-enqueues the Model, producing a hot reconcile
+// loop (~10 writes/sec across the shared-GPU group).
+//
+// enforcePort=true makes the runtime path authoritative over the port.
+// enforcePort=false (the early call) only sets the port on creation or for a
+// deployment-managed Service (selector present); for a runtime-managed Service
+// (selector cleared by removeRuntimeServiceSelector) it preserves whatever port
+// the runtime path set, breaking the flap at its source.
+func (r *ModelReconciler) ensureServiceWithPort(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, port int32, enforcePort bool) error {
 	log := log.FromContext(ctx)
 
 	service := &corev1.Service{}
@@ -116,7 +138,13 @@ func (r *ModelReconciler) ensureServiceWithPort(ctx context.Context, model *aiv1
 	existingLabels := service.Labels
 	existingAnnotations := service.Annotations
 
-	service.Spec.Ports = desiredService.Spec.Ports
+	// Only assert the port when this caller owns it (enforcePort) or the Service
+	// is deployment-managed (selector present). A runtime-managed Service
+	// (selector == nil) has its port owned by the runtime path; re-asserting
+	// b.Port() here would flap Spec.Ports against it every reconcile.
+	if enforcePort || service.Spec.Selector != nil {
+		service.Spec.Ports = desiredService.Spec.Ports
+	}
 	service.Labels = desiredService.Labels
 	service.Annotations = applyManagedAnnotations(service.Annotations, annotations, managedModelAnnotations)
 

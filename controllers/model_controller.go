@@ -28,6 +28,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -518,7 +519,7 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiv1alpha2.Model{}).
 		Owns(&appsv1.Deployment{}).
-		Owns(&corev1.Service{}).
+		Owns(&corev1.Service{}, builder.WithPredicates(serviceMeaningfulChange)).
 		Owns(&corev1.PersistentVolumeClaim{}).
 		Owns(&batchv1.Job{}).
 		Watches(&corev1.Pod{},
@@ -568,6 +569,37 @@ var runtimePodMeaningfulChange = predicate.Funcs{
 			return true
 		}
 		return (oldPod.DeletionTimestamp == nil) != (newPod.DeletionTimestamp == nil)
+	},
+}
+
+// serviceMeaningfulChange admits Service events that can change a Model's
+// reconcile outcome and drops the metadata-only churn an idempotent Service
+// write must not trigger (resourceVersion bumps, managedFields time updates,
+// status-only writes). Without this, any no-op Service Update re-enqueues the
+// owning Model via the Owns(&Service{}) watch; for the multi-model gfx906
+// embedding plane (bge-large + bge-reranker + gemma4-e4b co-Active on one card)
+// that amplified a port flap into a ~10-write/sec hot reconcile loop. The
+// reconcile only acts on the Service's Spec (ports/selector/type) and the
+// managed Labels/Annotations, so re-enqueue solely on those (plus create/delete).
+// Mirrors the predicate discipline applied to the runtime-pod, sibling, and
+// GPUProfile watches.
+var serviceMeaningfulChange = predicate.Funcs{
+	CreateFunc:  func(event.CreateEvent) bool { return true },
+	DeleteFunc:  func(event.DeleteEvent) bool { return true },
+	GenericFunc: func(event.GenericEvent) bool { return false },
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		oldSvc, ok1 := e.ObjectOld.(*corev1.Service)
+		newSvc, ok2 := e.ObjectNew.(*corev1.Service)
+		if !ok1 || !ok2 {
+			return true // unexpected types — admit rather than risk missing a change
+		}
+		if !apiequality.Semantic.DeepEqual(oldSvc.Spec, newSvc.Spec) {
+			return true
+		}
+		if !apiequality.Semantic.DeepEqual(oldSvc.Labels, newSvc.Labels) {
+			return true
+		}
+		return !apiequality.Semantic.DeepEqual(oldSvc.Annotations, newSvc.Annotations)
 	},
 }
 
