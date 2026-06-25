@@ -29,6 +29,14 @@ Slice 0 is the kill-test and **blocks every later slice** (workspace spec-riskie
 ## Slice 1 — Corteza CRM enablement (config, not deploy) · `platform/gitops/k3s/crm`
 **Goal:** Corteza usable as a programmatic, multi-tenant pipeline-of-record.
 
+> **Progress 2026-06-24 (gate-override start):** ✅ **Initial admin user bootstrapped** —
+> `admin@flexinfer.ai` created in-pod via `corteza-server users add … --role super-admin`
+> (verified in DB; web login live). Runbook + gotchas: `platform/gitops/k3s/crm/SLICE1-corteza-gtm-bootstrap.md`.
+> Key findings: `AUTH_PROVISION_SUPER_USER` is dev-only (halts in `ENVIRONMENT=production`,
+> the default) → CLI is the path; REST API base = `/system` + `/compose` (no `/api`);
+> REST auth is OAuth2 (→ Slice 2). **Remaining:** modules + pipeline stages, `flexinfer-self`
+> namespace, OAuth2 service client + SOPS token, Compose API round-trip.
+
 - **Verified 2026-06-21 (on-LAN):** Corteza + Postgres pods healthy (img 2024.9.7, 128d), but install is FRESH — 0 namespaces, 0 modules, no human admin (only 3 system users). So this slice MUST: (i) **create the initial admin user** (first-run init was never done); (ii) build or import the GTM namespace + modules via Compose.
 - **Cloudflare Access gate (confirmed via probe):** `crm.flexinfer.ai` sits behind `flexinfer.cloudflareaccess.com`. Reach the API in-cluster via `http://corteza.crm.svc.cluster.local` (bypasses CF), or provision a CF Access service token for any out-of-cluster client. `mcp-gtm` will deploy in-cluster (Slice 2) for this reason.
 - Determine whether the shipped **CRM namespace** is imported. If yes, adopt its modules; if no, build a lean GTM namespace via Compose: `Lead`, `Company`, `Opportunity` (with pipeline stages), `OutreachStep`. Add fields `icp_score`, `source`, `last_touch`.
