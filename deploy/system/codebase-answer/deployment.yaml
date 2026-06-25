@@ -1,0 +1,84 @@
+# codebase-answer read-path RAG service [F3 Slice 2].
+#
+# CPU-only sibling Deployment (no GPU, no NFS): it only orchestrates HTTP calls
+# to flexinfer-proxy (embeddings/rerank/chat) + qdrant. Mirrors the voice-stack
+# sibling pattern (pyannote/kokoro) but with a ConfigMap-mounted stdlib script
+# on python:3.12-slim, like deploy/tasks/codebase-reembed.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codebase-answer
+  namespace: flexinfer-system
+  labels:
+    app: codebase-answer
+    app.kubernetes.io/part-of: flexinfer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: codebase-answer
+  template:
+    metadata:
+      labels:
+        app: codebase-answer
+        app.kubernetes.io/part-of: flexinfer
+    spec:
+      containers:
+        - name: rag
+          image: python:3.12-slim
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/app/rag_answer.py"]
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: PROXY_URL
+              value: "http://flexinfer-proxy.flexinfer-system.svc.cluster.local"
+            - name: EMBED_MODEL
+              value: "bge-large-radeonvii"
+            - name: RERANK_MODEL
+              value: "bge-reranker-radeonvii"
+            - name: CHAT_MODEL
+              value: "qwen36-35b-mtp-uncensored-5930k"
+            - name: QDRANT_URL
+              value: "http://192.168.50.176:6333"
+            - name: DEFAULT_COLLECTION
+              value: "codebase_memory_bge_v1"
+            - name: QDRANT_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: qdrant-credentials
+                  key: api-key
+            - name: RETR_N
+              value: "24"
+            - name: RETR_K
+              value: "6"
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 3
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 10
+            periodSeconds: 30
+            failureThreshold: 4
+          resources:
+            requests:
+              cpu: "200m"
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: script
+              mountPath: /app
+              readOnly: true
+      volumes:
+        - name: script
+          configMap:
+            name: codebase-answer-script
+            defaultMode: 0755

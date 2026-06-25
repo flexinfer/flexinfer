@@ -13,3 +13,4 @@ resources:
   - benchmark-results/
   - pyannote-diarization/
   - kokoro-tts/
+  - codebase-answer/

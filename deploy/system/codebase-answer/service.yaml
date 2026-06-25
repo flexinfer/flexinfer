@@ -1,0 +1,18 @@
+# ClusterIP for the codebase-answer read-path RAG service. In-cluster consumers
+# (agents, codebase-memory MCP, other services) POST /v1/answer here:
+#   http://codebase-answer.flexinfer-system.svc:8000/v1/answer
+# A proxy front-door route (/v1/rag -> here) is the Slice 2.1 follow-up.
+apiVersion: v1
+kind: Service
+metadata:
+  name: codebase-answer
+  namespace: flexinfer-system
+  labels:
+    app: codebase-answer
+spec:
+  selector:
+    app: codebase-answer
+  ports:
+    - name: http
+      port: 8000
+      targetPort: http

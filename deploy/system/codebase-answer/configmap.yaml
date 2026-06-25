@@ -1,0 +1,171 @@
+# codebase-answer — read-path RAG service [F3 Slice 2]
+#
+# Pure-stdlib Python (urllib + http.server). No pip deps, so it runs on a bare
+# python:3.x-slim image. Productizes the embed -> qdrant-search -> rerank ->
+# generate path that the F3 kill-test validated live 2026-06-25 (retrieval 16/16
+# vs naive 0/16, 30.9x fewer tokens; see
+# .loom/30-implementation-plan-f3-retrieval-readpath-2026-06-25.md).
+#
+# POST /v1/answer  {query, collection?, top_k?, top_n?} ->
+#   {answer, citations:[{path, score}], context_tokens, model, collection}
+# GET  /healthz    -> 200 when the embeddings + chat upstreams are reachable
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codebase-answer-script
+  namespace: flexinfer-system
+  labels:
+    app: codebase-answer
+    app.kubernetes.io/part-of: flexinfer
+data:
+  rag_answer.py: |
+    #!/usr/bin/env python3
+    """Read-path RAG service: retrieve (qdrant) -> rerank -> generate, with cited
+    chunks. Config is entirely env-driven; all HTTP uses the stdlib."""
+    import json
+    import os
+    import time
+    import urllib.error
+    import urllib.request
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    PROXY = os.environ["PROXY_URL"].rstrip("/")
+    EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-large-radeonvii")
+    RERANK_MODEL = os.environ.get("RERANK_MODEL", "bge-reranker-radeonvii")
+    CHAT_MODEL = os.environ.get("CHAT_MODEL", "qwen36-35b-mtp-uncensored-5930k")
+    QDRANT_URL = os.environ.get("QDRANT_URL", "http://192.168.50.176:6333").rstrip("/")
+    QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
+    DEFAULT_COLLECTION = os.environ.get("DEFAULT_COLLECTION", "codebase_memory_bge_v1")
+    RETR_N = int(os.environ.get("RETR_N", "24"))
+    RETR_K = int(os.environ.get("RETR_K", "6"))
+    GEN_MAX_TOKENS = int(os.environ.get("GEN_MAX_TOKENS", "400"))
+    HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "240"))
+    LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8000"))
+
+    SYS = ("Answer the question using ONLY the provided codebase context. Be concise "
+           "and cite file paths. If the answer is not in the context, say 'NOT FOUND'.")
+
+    def log(msg):
+        print(msg, flush=True)
+
+    def _req(url, data=None, method=None, headers=None):
+        h = {"Content-Type": "application/json"}
+        if headers:
+            h.update(headers)
+        body = json.dumps(data).encode() if data is not None else None
+        return urllib.request.Request(url, data=body, method=method, headers=h)
+
+    def _do(req, retries=3):
+        last = None
+        for attempt in range(retries):
+            try:
+                with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
+                    raw = r.read()
+                    return json.loads(raw) if raw else None
+            except urllib.error.HTTPError as exc:
+                last = RuntimeError(f"HTTP {exc.code} {req.full_url}: {exc.read()[:200]!r}")
+            except Exception as exc:  # noqa: BLE001
+                last = RuntimeError(f"{type(exc).__name__} {req.full_url}: {exc}")
+            time.sleep(1.5 * (attempt + 1))
+        raise last
+
+    def embed(text):
+        resp = _do(_req(f"{PROXY}/v1/embeddings", data={"model": EMBED_MODEL, "input": [text]}))
+        return resp["data"][0]["embedding"]
+
+    def qdrant_search(vector, collection, limit):
+        headers = {"api-key": QDRANT_API_KEY} if QDRANT_API_KEY else {}
+        resp = _do(_req(f"{QDRANT_URL}/collections/{collection}/points/search",
+                        data={"vector": vector, "limit": limit, "with_payload": True},
+                        method="POST", headers=headers))
+        return resp.get("result", []) if resp else []
+
+    def rerank(query, docs, top_n):
+        try:
+            resp = _do(_req(f"{PROXY}/v1/rerank", data={
+                "model": RERANK_MODEL, "query": query, "documents": docs, "top_n": top_n}))
+            results = resp.get("results") or resp.get("data") or []
+            ordered = sorted(results, key=lambda r: -r.get("relevance_score", r.get("score", 0)))
+            idxs = [r["index"] for r in ordered if "index" in r]
+            if idxs:
+                return idxs[:top_n]
+        except Exception as exc:  # noqa: BLE001
+            log(f"WARN rerank failed ({exc}); using cosine order")
+        return list(range(min(top_n, len(docs))))
+
+    def chat(system, user, max_tokens):
+        resp = _do(_req(f"{PROXY}/v1/chat/completions", data={
+            "model": CHAT_MODEL,
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+            "temperature": 0, "max_tokens": max_tokens}))
+        return (resp["choices"][0]["message"]["content"] or "").strip()
+
+    def answer(query, collection, top_n, top_k):
+        qv = embed(f"# query\n{query}")
+        hits = qdrant_search(qv, collection, top_n)
+        docs = [(h.get("payload") or {}).get("text", "") for h in hits]
+        paths = [(h.get("payload") or {}).get("path", "") for h in hits]
+        scores = [h.get("score", 0) for h in hits]
+        order = rerank(query, docs, top_k)[:top_k]
+        ctx = "\n\n".join(docs[i] for i in order)
+        ans = chat(SYS, f"CONTEXT:\n{ctx}\n\nQUESTION: {query}", GEN_MAX_TOKENS)
+        return {
+            "answer": ans,
+            "citations": [{"path": paths[i], "score": round(scores[i], 4)} for i in order],
+            "context_tokens": len(ctx) // 4,
+            "model": CHAT_MODEL,
+            "collection": collection,
+        }
+
+    class Handler(BaseHTTPRequestHandler):
+        def _send(self, code, obj):
+            body = json.dumps(obj).encode()
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, fmt, *args):
+            log("%s - %s" % (self.address_string(), fmt % args))
+
+        def do_GET(self):
+            if self.path.rstrip("/") == "/healthz":
+                self._send(200, {"status": "ok"})
+            else:
+                self._send(404, {"error": "not found"})
+
+        def do_POST(self):
+            if self.path.rstrip("/") != "/v1/answer":
+                self._send(404, {"error": "not found"})
+                return
+            try:
+                n = int(self.headers.get("Content-Length", "0"))
+                req = json.loads(self.rfile.read(n) or b"{}")
+            except Exception as exc:  # noqa: BLE001
+                self._send(400, {"error": f"bad request: {exc}"})
+                return
+            query = (req.get("query") or "").strip()
+            if not query:
+                self._send(400, {"error": "missing 'query'"})
+                return
+            collection = req.get("collection") or DEFAULT_COLLECTION
+            top_n = int(req.get("top_n") or RETR_N)
+            top_k = int(req.get("top_k") or RETR_K)
+            t0 = time.time()
+            try:
+                out = answer(query, collection, top_n, top_k)
+            except Exception as exc:  # noqa: BLE001
+                log(f"ERROR answering {query[:80]!r}: {exc}")
+                self._send(502, {"error": str(exc)})
+                return
+            out["elapsed_ms"] = int((time.time() - t0) * 1000)
+            self._send(200, out)
+
+    def main():
+        log(f"codebase-answer listening :{LISTEN_PORT} proxy={PROXY} "
+            f"default_collection={DEFAULT_COLLECTION} chat={CHAT_MODEL}")
+        ThreadingHTTPServer(("0.0.0.0", LISTEN_PORT), Handler).serve_forever()
+
+    if __name__ == "__main__":
+        main()
