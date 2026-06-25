@@ -54,6 +54,20 @@ try:
 except ImportError:
     psutil = None
 
+# abliterate.py is executed via exec(open(...).read()) from a known absolute
+# path (see pkg/quantization/abliteration.go), so __file__ is unset and the
+# script directory is not on sys.path. Bootstrap it so the sibling
+# abliterate_safety module (extracted, unit-tested safeguard logic) imports
+# both at runtime and when the file is run directly.
+_SCRIPT_DIR = (
+    os.path.dirname(os.path.abspath(__file__))
+    if "__file__" in globals()
+    else "/opt/flexinfer/scripts"
+)
+if _SCRIPT_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPT_DIR)
+import abliterate_safety
+
 
 DEFAULT_MODEL_POLICIES = [
     {
@@ -1657,43 +1671,19 @@ if skip_gdn:
 
         with open(config_path) as _cf:
             _cfg = _json.load(_cf)
-        _text_cfg = _cfg.get("text_config") or {}
-        layer_types = _text_cfg.get("layer_types") or _cfg.get("layer_types") or []
-        full_attn_indices = set()
-        source_detail = ""
-        if isinstance(layer_types, list) and layer_types:
-            full_attn_indices = {
-                i
-                for i, layer_type in enumerate(layer_types[:total_layers])
-                if layer_type == "full_attention"
-            }
-            if full_attn_indices:
-                source_detail = "layer_types"
-        if not full_attn_indices:
-            full_attention_interval = (
-                _text_cfg.get("full_attention_interval")
-                or _cfg.get("full_attention_interval")
-                or _text_cfg.get("decoder_sparse_step")
-                or _cfg.get("decoder_sparse_step")
-                or 0
+        before_count = len(layer_indices)
+        layer_indices, source_detail, gdn_filtered = (
+            abliterate_safety.select_full_attention_layers(
+                _cfg, total_layers, layer_indices
             )
-            if full_attention_interval > 0:
-                full_attn_indices = set(
-                    i
-                    for i in range(total_layers)
-                    if (i + 1) % int(full_attention_interval) == 0
-                )
-                source_detail = f"full_attention_interval={full_attention_interval}"
-        if full_attn_indices:
-            before_count = len(layer_indices)
-            layer_indices = [i for i in layer_indices if i in full_attn_indices]
+        )
+        if gdn_filtered:
             gdn_count = before_count - len(layer_indices)
             print(
                 f"GDN layer skip: source={source_detail}, "
                 f"skipped {gdn_count} GDN layers, "
                 f"keeping {len(layer_indices)} full-attention layers: {layer_indices}"
             )
-            gdn_filtered = True
     if not gdn_filtered:
         print(
             "GDN layer skip: no layer_types/full_attention_interval/decoder_sparse_step found, abliterating all target layers"
@@ -1978,7 +1968,7 @@ print(f"Max targeted refusal direction norm: {guard_norm:.4f} at layer {guard_la
 # Refusal direction norm guard: abort if the max targeted norm exceeds the threshold.
 # A very high norm (>100) typically means the computed direction captures model
 # capability rather than just refusal behavior -- applying it would destroy coherence.
-if guard_norm > REFUSAL_NORM_THRESHOLD:
+if abliterate_safety.refusal_norm_exceeds(guard_norm, REFUSAL_NORM_THRESHOLD):
     msg = (
         f"ABORTING: Max targeted refusal direction norm {guard_norm:.2f} at layer "
         f"{guard_layer} exceeds threshold {REFUSAL_NORM_THRESHOLD}. "
@@ -2237,12 +2227,8 @@ if validate_perplexity:
                     gen_ids[0][inputs["input_ids"].shape[1] :],
                     skip_special_tokens=True,
                 )
-                if not gen_text.strip():
+                if abliterate_safety.is_degenerate_generation(gen_text):
                     degenerate_count += 1
-                elif len(set(gen_text.split())) <= 2 and len(gen_text) > 10:
-                    degenerate_count += 1  # repetition loop
-                elif any(c * 5 in gen_text for c in "!?.#*"):
-                    degenerate_count += 1  # character loops
                 print(f"  '{cp}' -> '{gen_text[:80]}'")
             except Exception as e:
                 print(f"  WARNING: Generation failed for '{cp}': {e}")

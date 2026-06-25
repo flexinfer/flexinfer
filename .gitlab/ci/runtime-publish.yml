@@ -11,6 +11,7 @@ runtime_patch_contracts:
     - python3 scripts/check-runtime-patch-contracts.py
     - python3 build/scripts/test_modules_in_block_to_quantize.py
     - python3 build/scripts/test_validate_quantized_artifact.py
+    - python3 build/scripts/test_abliterate_safety.py
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
       changes:
@@ -29,6 +30,9 @@ runtime_patch_contracts:
         - build/scripts/qwen35_wrap_to_vl_layout.py
         - build/scripts/qwen35_unwrap_from_vl_layout.py
         - scripts/check-runtime-patch-contracts.py
+        - build/scripts/abliterate.py
+        - build/scripts/abliterate_safety.py
+        - build/scripts/test_abliterate_safety.py
     - if: $CI_MERGE_REQUEST_ID
       changes:
         - .gitlab/ci/runtime-publish.yml
@@ -46,6 +50,9 @@ runtime_patch_contracts:
         - build/scripts/qwen35_wrap_to_vl_layout.py
         - build/scripts/qwen35_unwrap_from_vl_layout.py
         - scripts/check-runtime-patch-contracts.py
+        - build/scripts/abliterate.py
+        - build/scripts/abliterate_safety.py
+        - build/scripts/test_abliterate_safety.py
     - if: $CI_COMMIT_BRANCH
       changes:
         - .gitlab/ci/runtime-publish.yml
@@ -63,6 +70,9 @@ runtime_patch_contracts:
         - build/scripts/qwen35_wrap_to_vl_layout.py
         - build/scripts/qwen35_unwrap_from_vl_layout.py
         - scripts/check-runtime-patch-contracts.py
+        - build/scripts/abliterate.py
+        - build/scripts/abliterate_safety.py
+        - build/scripts/test_abliterate_safety.py
     - when: never
 
 publish_serving_rocm_gfx1100:
