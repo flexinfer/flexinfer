@@ -110,16 +110,36 @@ def _apply_scheduler(pipeline, scheduler_name: Optional[str] = None):
     )
 
     cfg = pipeline.scheduler.config
+
+    # DPM++ override: build DPMSolverMultistepScheduler.from_config() forcing
+    # algorithm_type="dpmsolver++". Some SD 1.5 checkpoints (e.g. Dreamshaper 8)
+    # ship a scheduler_config.json carrying a leftover `algorithm_type: deis`;
+    # without this override from_config() inherits deis + final_sigmas_type=zero
+    # and raises ValueError at load ("final_sigmas_type zero is not supported for
+    # algorithm_type deis"). final_sigmas_type="sigma_min" pairs cleanly with the
+    # dpmsolver++ family and is the deis-compatible end sigma.
+    def _dpmpp(c, **extra):
+        return DPMSolverMultistepScheduler.from_config(
+            c, algorithm_type="dpmsolver++", final_sigmas_type="sigma_min", **extra
+        )
+
     scheduler_map = {
         "euler": lambda c: EulerDiscreteScheduler.from_config(c),
         "euler-a": lambda c: EulerAncestralDiscreteScheduler.from_config(c),
-        "dpm++2m": lambda c: DPMSolverMultistepScheduler.from_config(c),
-        "dpm++2m-karras": lambda c: DPMSolverMultistepScheduler.from_config(
-            c, use_karras_sigmas=True
-        ),
+        "dpm++2m": lambda c: _dpmpp(c),
+        "dpm++2m-karras": lambda c: _dpmpp(c, use_karras_sigmas=True),
         "unipc": lambda c: UniPCMultistepScheduler.from_config(c),
         "ddim": lambda c: DDIMScheduler.from_config(c),
     }
+    # LCM (4-8 step latent-consistency sampling) — only usable with LCM-distilled
+    # weights / an LCM-LoRA, but expose it when the installed diffusers provides
+    # the scheduler. Guarded so an older diffusers can't break the other options.
+    try:
+        from diffusers import LCMScheduler
+
+        scheduler_map["lcm"] = lambda c: LCMScheduler.from_config(c)
+    except Exception:
+        pass
     key = scheduler_name.lower().strip()
     if key in scheduler_map:
         pipeline.scheduler = scheduler_map[key](cfg)
