@@ -44,16 +44,20 @@ spec:
     quantization: gptq
     dtype: half
     hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
-    # EXPERIMENT 2026-06-25: forced 64K context. text_config.max_position_embeddings
-    # is 32768 (top-level 262144 is the vision envelope), so vLLM derives a 32K
-    # ceiling and rejects 65536 unless VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 (exported in
-    # the command below). rope_theta=10M is aggressive enough that extrapolation
-    # MAY stay coherent past 32K — being kill-tested with a >32K needle probe.
-    # If output degrades past 32K, revert this file to maxModelLen 32768 /
-    # maxNumSeqs 4 and drop the export. KV pool (195 blocks x 1088 tok, fp8) holds
-    # ~212K tok, so 64K @ 2 seqs (2 x 61 = 122 blocks) fits with margin; the open
-    # risk is RoPE quality, not VRAM.
-    maxModelLen: 65536
+    # Forced long context via VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 (exported in the
+    # command below): text_config.max_position_embeddings is 32768 (top-level
+    # 262144 is the vision envelope) so vLLM derives a 32K ceiling, but
+    # rope_theta=10M extrapolates coherently far past it.
+    #   - 64K (!711) PASSED needle-in-haystack at 42.6K AND 60.6K tokens (exact
+    #     recall, no nan); vLLM reported 2.91x KV concurrency at 64K.
+    #   - 96K (this change): pushing to 98304. At 64K concurrency was 2.91x
+    #     (total KV ~190K tok), so 96K should land ~1.9x (still > 1, single
+    #     request fits); the hybrid mamba state grows with max_model_len so the
+    #     pool shrinks somewhat — being re-kill-tested with a ~90K needle probe
+    #     AND re-checked for OOM at load. If it OOMs or degrades past ~64K,
+    #     revert to maxModelLen 65536 (proven good). VRAM/KV is the risk here,
+    #     not RoPE (already proven to 60K).
+    maxModelLen: 98304
     maxNumSeqs: 2
     kvCacheDtype: fp8_e4m3
     gpuMemoryUtilization: '0.98'
