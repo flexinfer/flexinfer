@@ -47,17 +47,23 @@ spec:
     # Forced long context via VLLM_ALLOW_LONG_MAX_MODEL_LEN=1 (exported in the
     # command below): text_config.max_position_embeddings is 32768 (top-level
     # 262144 is the vision envelope) so vLLM derives a 32K ceiling, but
-    # rope_theta=10M extrapolates coherently far past it.
-    #   - 64K (!711) PASSED needle-in-haystack at 42.6K AND 60.6K tokens (exact
-    #     recall, no nan); vLLM reported 2.91x KV concurrency at 64K.
-    #   - 96K (this change): pushing to 98304. At 64K concurrency was 2.91x
-    #     (total KV ~190K tok), so 96K should land ~1.9x (still > 1, single
-    #     request fits); the hybrid mamba state grows with max_model_len so the
-    #     pool shrinks somewhat — being re-kill-tested with a ~90K needle probe
-    #     AND re-checked for OOM at load. If it OOMs or degrades past ~64K,
-    #     revert to maxModelLen 65536 (proven good). VRAM/KV is the risk here,
-    #     not RoPE (already proven to 60K).
-    maxModelLen: 98304
+    # rope_theta=10M extrapolates COHERENTLY past it — up to a point.
+    #
+    # Empirically mapped the coherence cliff with scripts/context-needle-bench.py
+    # (needle planted at prompt start, recalled at end, temperature 0):
+    #     42.6K tok -> PASS (exact recall)
+    #     60.6K tok -> PASS (exact recall)
+    #     73.5K tok -> FAIL (degenerate "!!!!", no recall)
+    #     87.5K tok -> FAIL (degenerate)
+    # The cliff is between 60.6K and 73.5K. 96K *loads fine* (vLLM reported 2.01x
+    # KV concurrency at 98304, no OOM) but output past ~64K is garbage, so the
+    # limit is RoPE coherence, NOT VRAM — dropping to 1 seq buys nothing.
+    #
+    # 64K is the largest proven-coherent window AND fits 2 concurrent requests
+    # with margin (2.91x KV concurrency at 65536). Do NOT raise past 65536 without
+    # re-running the needle bench; the model produces silent garbage above the
+    # cliff. Floor is 32768 (the declared trained window) if you want zero risk.
+    maxModelLen: 65536
     maxNumSeqs: 2
     kvCacheDtype: fp8_e4m3
     gpuMemoryUtilization: '0.98'
