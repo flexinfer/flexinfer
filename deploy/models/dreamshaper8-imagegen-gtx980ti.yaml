@@ -15,11 +15,13 @@
 #     GPUProfile backends.diffusers.image. The controller injects
 #     runtimeClassName: nvidia so the NVIDIA container runtime mounts the driver.
 #   - No FP16 tensor cores: fp16 storage halves memory but math runs slower than
-#     modern cards. 512x512 / 20 steps generates in a few seconds once warm.
-#   - The diffusers-api:cuda server honors num_inference_steps, guidance_scale,
-#     and size (default 512x512, MAX_IMAGE_EDGE 768) per request. Other config
-#     knobs (scheduler, negativePrompt, vae) are ROCm-server-only and ignored
-#     here.
+#     modern cards. 512x512 / 18 steps generates in a few seconds once warm.
+#   - This node runs the flexinfer/diffusers:cuda-maxwell server (our
+#     build/server-diffusers-cuda.py), which honors num_inference_steps,
+#     guidance_scale, size AND scheduler (via the DEFAULT_SCHEDULER env the
+#     controller injects from config.scheduler). negativePrompt/vae remain
+#     ROCm-server-only. Supported schedulers: euler, euler-a, dpm++2m,
+#     dpm++2m-karras, unipc, ddim.
 #
 # Kill-test (2026-06-20): a throwaway diffusers pod on this node generated a
 # coherent 512x512 "astronaut riding a horse on the moon" in ~90s cold (incl.
@@ -55,10 +57,13 @@ spec:
     modelFamily: "sd"
     # Dreamshaper 8 ships DEISMultistepScheduler, whose second-order update
     # raises an IndexError (sigmas[step_index+1]) on the final denoise step.
-    # Override to Euler — robust, ~3.8 GiB peak at 512x512 (proven on the 980 Ti).
-    scheduler: "euler"
-    # Dreamshaper 8's published recipe: ~25 steps, CFG ~5-7. 512x512 fits 6 GiB.
-    numInferenceSteps: "25"
+    # DPM++ 2M Karras is a robust multistep sampler that converges in far fewer
+    # steps than Euler at equal quality — the standard "fewer steps, same look"
+    # choice for SD 1.5. Lets us cut steps 25 -> 18 (~30% faster on Maxwell)
+    # with no quality loss and no extra VRAM (~3.8 GiB peak at 512x512).
+    scheduler: "dpm++2m-karras"
+    # 18 steps @ CFG 6 with DPM++ 2M Karras ≈ Euler @ 25 for Dreamshaper 8.
+    numInferenceSteps: "18"
     guidanceScale: "6.0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-gtx980ti
