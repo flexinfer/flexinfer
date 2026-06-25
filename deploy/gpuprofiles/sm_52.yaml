@@ -49,7 +49,11 @@ spec:
       # build/server-diffusers-cuda.py (_apply_scheduler retained) so DEIS-default
       # checkpoints (e.g. Dreamshaper 8) still pin a robust scheduler instead of
       # crashing on the final denoise step.
-      image: registry.harbor.lan/flexinfer/diffusers:cuda-maxwell-b04cc3b4@sha256:7bbb9b7f6359ec44d574c47109fa9318ab5d721b1a4c53b6fa15bfcf81607ee0
+      # cuda-maxwell-0b19f7a8 (!712): _apply_scheduler now forces
+      # algorithm_type=dpmsolver++ so dpm++2m/dpm++2m-karras no longer crash on
+      # Dreamshaper 8's leftover algorithm_type=deis, plus an optional lcm
+      # scheduler for a future LCM 4-8 step path.
+      image: registry.harbor.lan/flexinfer/diffusers:cuda-maxwell-0b19f7a8@sha256:145ee5526017e75674e771739523962124aa00a8fc364797ca7c01b6880a0ce2
     comfyui:
       support: unsupported
   runtime:
