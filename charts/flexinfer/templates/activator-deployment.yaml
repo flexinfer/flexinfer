@@ -38,6 +38,10 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- if $proxy.codebaseAnswerUpstream }}
+            - name: FLEXINFER_CODEBASE_ANSWER_UPSTREAM
+              value: {{ $proxy.codebaseAnswerUpstream | quote }}
+            {{- end }}
             {{- if $tracing.enabled }}
             - name: FLEXINFER_OTEL_ENABLED
               value: "true"

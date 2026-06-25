@@ -118,6 +118,11 @@ type Config struct {
 	// set, POST /v1/audio/speech is reverse-proxied to it so the voice stack
 	// exposes ASR + diarization + TTS under one base URL. Empty → 503.
 	KokoroUpstream string
+	// CodebaseAnswerUpstream is the base URL of the codebase-answer read-path
+	// sibling service. When set, POST /v1/rag is reverse-proxied to it so
+	// retrieval-augmented codebase Q&A is reachable through the proxy front
+	// door. Empty → /v1/rag returns 503.
+	CodebaseAnswerUpstream string
 }
 
 // Validate checks the Config for conflicting or invalid settings. Returns a
@@ -210,6 +215,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		LabelGroupRouting:                os.Getenv("FLEXINFER_PROXY_LABEL_GROUP_ROUTING"),
 		PyannoteUpstream:                 os.Getenv("FLEXINFER_PYANNOTE_UPSTREAM"),
 		KokoroUpstream:                   os.Getenv("FLEXINFER_KOKORO_UPSTREAM"),
+		CodebaseAnswerUpstream:           os.Getenv("FLEXINFER_CODEBASE_ANSWER_UPSTREAM"),
 	}
 
 	return cfg
@@ -321,6 +327,10 @@ type Proxy struct {
 	// disables the /v1/audio/speech route (returns 503).
 	kokoroUpstream string
 
+	// codebaseAnswerUpstream is the base URL of the codebase-answer read-path
+	// sibling service; empty disables the /v1/rag route (returns 503).
+	codebaseAnswerUpstream string
+
 	// Lifecycle context for background goroutines
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -369,13 +379,14 @@ func New(cfg Config) *Proxy {
 			SafetyMarginPercent: cfg.AdmissionSafetyMarginPercent,
 			DefaultMaxTokens:    cfg.AdmissionDefaultMaxTokens,
 		},
-		directRuntimeEnabled: cfg.DirectRuntimeEnabled,
-		labelGroupRouting:    canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting),
-		pyannoteUpstream:     cfg.PyannoteUpstream,
-		kokoroUpstream:       cfg.KokoroUpstream,
-		ctx:                  ctx,
-		cancel:               cancel,
-		debugConfig:          newDebugConfigView(cfg),
+		directRuntimeEnabled:   cfg.DirectRuntimeEnabled,
+		labelGroupRouting:      canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting),
+		pyannoteUpstream:       cfg.PyannoteUpstream,
+		kokoroUpstream:         cfg.KokoroUpstream,
+		codebaseAnswerUpstream: cfg.CodebaseAnswerUpstream,
+		ctx:                    ctx,
+		cancel:                 cancel,
+		debugConfig:            newDebugConfigView(cfg),
 	}
 
 	if cfg.DirectRuntimeEnabled {
@@ -423,6 +434,7 @@ func (p *Proxy) Run(port int) error {
 	mux.HandleFunc("/debug/config", p.handleDebugConfig)
 	mux.HandleFunc("/diarize", p.handleDiarize)
 	mux.HandleFunc("/v1/audio/speech", p.handleSpeech)
+	mux.HandleFunc("/v1/rag", p.handleCodebaseAnswer)
 	mux.HandleFunc("/", p.handleRequest)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
