@@ -161,6 +161,9 @@ agent:
 proxy:
   enabled: true
   replicaCount: 1
+  # Front-door for the codebase-answer read-path sibling (F3 Slice 2.1). When
+  # set, the proxy reverse-proxies POST /v1/rag to it. Empty → /v1/rag returns 503.
+  codebaseAnswerUpstream: "http://codebase-answer.flexinfer-system.svc:8000"
   image:
     repository: ghcr.io/flexinfer/flexinfer-proxy
     tag: "latest"

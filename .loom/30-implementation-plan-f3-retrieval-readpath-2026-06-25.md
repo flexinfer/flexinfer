@@ -44,9 +44,10 @@ Prove retrieve+rerank ≥ stuffing on real repo-Q&A. ✓ PASS (above).
 Productized the validated `f3eval.py` retrieval logic into a serving capability: the **`codebase-answer`** sibling service (`deploy/system/codebase-answer/`) — a CPU-only Deployment+Service running a stdlib `POST /v1/answer {query, collection?, top_k?, top_n?} → {answer, citations[{path,score}], context_tokens}` over `embed → qdrant-search → rerank → generate`. Mirrors the voice-stack sibling pattern (pyannote/kokoro). In-cluster consumers hit `http://codebase-answer.flexinfer-system.svc:8000/v1/answer`. Reuses the proven primitives; no new model work.
 - Acceptance: live `/v1/answer` returns correct cited answers on loom-core questions (validated against the same kill-test question set).
 
-### Slice 2.1 — proxy front-door (follow-up)
-Expose Slice 2 through the platform endpoint: a `/v1/rag` reverse-proxy route in `flexinfer-proxy` mirroring `/diarize` (`handleCodebaseAnswer` + `CodebaseAnswerUpstream` config + `FLEXINFER_CODEBASE_ANSWER_UPSTREAM` env). Deferred from Slice 2 because it needs a proxy rebuild + rollout that deserves its own validated deploy (the serving-critical proxy), whereas the sibling service is independently usable now.
-- Acceptance: `POST /v1/rag` through the proxy returns the same as the sibling `/v1/answer`.
+### Slice 2.1 — proxy front-door — BUILT (code) 2026-06-25
+Exposes Slice 2 through the platform endpoint: a `/v1/rag` reverse-proxy route in `flexinfer-proxy` mirroring `/diarize` — `handleCodebaseAnswer` (rewrites `/v1/rag` → sibling `/v1/answer`), `CodebaseAnswerUpstream` config + `FLEXINFER_CODEBASE_ANSWER_UPSTREAM` env, wired in the chart (`proxy.codebaseAnswerUpstream` defaults to the sibling Service). 4 unit tests pass (503-unset / 500-bad-url / forwards-with-path-rewrite / 502-down); full proxy package green; helm renders the env.
+- **Activation:** dormant until the next proxy image publish + digest repin (the proxy image is digest-pinned; merging Go doesn't auto-roll it). Route is config-gated (empty upstream → 503), so zero serving-path risk meanwhile.
+- Acceptance (post-rollout): `POST /v1/rag` through the proxy returns the same as the sibling `/v1/answer`.
 
 ### Slice 3 — chunking quality bake-off
 The bge index uses naive line-windows; the morph `codebase_memory_v1` uses AST chunking. Run the kill-test harness against BOTH indexes (swap `COLLECTION`) and pick the winner, or justify keeping line-windows. Cheap: the harness already parameterizes the collection.
