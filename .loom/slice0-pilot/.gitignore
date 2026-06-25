@@ -1,0 +1,8 @@
+# never commit secrets or generated data from the pilot
+.env
+*.db
+*.db-shm
+*.db-wal
+__pycache__/
+*.prev.csv
+pipeline-skips.csv
