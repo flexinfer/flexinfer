@@ -55,14 +55,20 @@ spec:
   config:
     # SD 1.5 fine-tune. The CUDA diffusers server auto-detects the pipeline.
     modelFamily: "sd"
-    # Dreamshaper 8 ships DEISMultistepScheduler, whose second-order update
-    # raises an IndexError (sigmas[step_index+1]) on the final denoise step.
-    # DPM++ 2M Karras is a robust multistep sampler that converges in far fewer
-    # steps than Euler at equal quality — the standard "fewer steps, same look"
-    # choice for SD 1.5. Lets us cut steps 25 -> 18 (~30% faster on Maxwell)
-    # with no quality loss and no extra VRAM (~3.8 GiB peak at 512x512).
-    scheduler: "dpm++2m-karras"
-    # 18 steps @ CFG 6 with DPM++ 2M Karras ≈ Euler @ 25 for Dreamshaper 8.
+    # UniPC is a fast-converging multistep solver that reaches Euler @ 25 quality
+    # in ~18 steps — letting us cut steps 25 -> 18 for ~30% faster generation on
+    # this no-tensor-core Maxwell card, with no quality loss and no extra VRAM
+    # (~3.8 GiB peak at 512x512).
+    #
+    # NOTE: do NOT use dpm++2m / dpm++2m-karras here. Dreamshaper 8's bundled
+    # scheduler_config.json carries a leftover `algorithm_type: deis`, so the
+    # server's DPMSolverMultistepScheduler.from_config() inherits deis +
+    # final_sigmas_type=zero and raises ValueError at load (verified live, 500s).
+    # UniPC and euler/euler-a ignore that key and construct cleanly. Making
+    # dpm++ robust needs a server fix (force algorithm_type=dpmsolver++) +
+    # cuda-maxwell image rebuild — tracked separately.
+    scheduler: "unipc"
+    # 18 steps @ CFG 6 with UniPC ≈ Euler @ 25 for Dreamshaper 8.
     numInferenceSteps: "18"
     guidanceScale: "6.0"
   nodeSelector:
