@@ -160,6 +160,90 @@ func TestAutotuner_Run_CoordinateDescent(t *testing.T) {
 	assert.Contains(t, cm.Data, "summary.json")
 }
 
+// TestAutotuner_Run_QualityVeto proves the Goodhart guard flips the outcome:
+// maxNumSeqs=2 wins on aggregate TPS (90 > 70) but craters the long-form "novel"
+// class (72 -> 38 tok/s, the n-gram-SD pattern from the 2026-06-26 kill-test).
+// Without a QualityFn the config is accepted; with one it is vetoed and baseline
+// is preserved.
+func TestAutotuner_Run_QualityVeto(t *testing.T) {
+	t.Parallel()
+
+	run := func(withGuard bool) (map[string]any, string) {
+		initialCfg := map[string]any{"maxNumSeqs": float64(8)}
+		model := makeModel("test-model", "test-ns", "vllm", initialCfg)
+		deploy := makeDeployment("test-model", "test-ns", 1)
+		fc := fakeclient.NewClientBuilder().
+			WithScheme(testScheme()).
+			WithObjects(model, deploy).
+			WithStatusSubresource(model).
+			Build()
+		clientset := fake.NewSimpleClientset()
+
+		isCandidate2 := func(ctx context.Context) bool {
+			m := &aiv1alpha2.Model{}
+			if err := fc.Get(ctx, ctrlclient.ObjectKey{Name: "test-model", Namespace: "test-ns"}, m); err != nil {
+				return false
+			}
+			if v, ok := m.Spec.GetConfigMap()["maxNumSeqs"]; ok {
+				if f, ok := v.(float64); ok && f == 2 {
+					return true
+				}
+			}
+			return false
+		}
+
+		baseline := true
+		benchFn := func(ctx context.Context) (float64, error) {
+			if baseline {
+				baseline = false
+				return 70.0, nil // baseline aggregate TPS
+			}
+			if isCandidate2(ctx) {
+				return 90.0, nil // higher aggregate -> tempting to accept
+			}
+			return 65.0, nil // other candidates lose on TPS
+		}
+
+		opts := Options{
+			Client:         fc,
+			KubeClient:     clientset,
+			ModelName:      "test-model",
+			Namespace:      "test-ns",
+			BenchFn:        benchFn,
+			RolloutTimeout: 5 * time.Second,
+			Space:          SearchSpace{Parameters: []Parameter{{Name: "maxNumSeqs", Values: []any{float64(1), float64(2)}}}},
+		}
+		if withGuard {
+			opts.QualityFn = func(ctx context.Context) (map[string]float64, error) {
+				if isCandidate2(ctx) {
+					return map[string]float64{"lookup": 140, "novel": 38}, nil // long-form regressed
+				}
+				return map[string]float64{"lookup": 67, "novel": 72}, nil
+			}
+		}
+
+		tuner := New(opts)
+		require.NoError(t, tuner.Run(context.Background()))
+
+		finalModel := &aiv1alpha2.Model{}
+		require.NoError(t, fc.Get(context.Background(), ctrlclient.ObjectKey{Name: "test-model", Namespace: "test-ns"}, finalModel))
+		cm, err := clientset.CoreV1().ConfigMaps("test-ns").Get(context.Background(), "test-model-autotune-log", metav1.GetOptions{})
+		require.NoError(t, err)
+		return finalModel.Spec.GetConfigMap(), cm.Data["results.tsv"]
+	}
+
+	// Without the guard the throughput-gaming config is accepted.
+	noGuardCfg, noGuardTSV := run(false)
+	assert.Equal(t, float64(2), noGuardCfg["maxNumSeqs"], "without guard, the higher-TPS config is accepted")
+	assert.Contains(t, noGuardTSV, "accepted")
+
+	// With the guard the same config is vetoed and baseline (maxNumSeqs=8) is kept.
+	guardCfg, guardTSV := run(true)
+	assert.Equal(t, float64(8), guardCfg["maxNumSeqs"], "guard must veto the long-form-regressing config")
+	assert.Contains(t, guardTSV, "quality_vetoed")
+	assert.NotContains(t, guardTSV, "\taccepted\t")
+}
+
 func TestAutotuner_ValidateCandidate_RejectsHighGPUMem(t *testing.T) {
 	t.Parallel()
 

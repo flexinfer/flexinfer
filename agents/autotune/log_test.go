@@ -50,7 +50,7 @@ func TestExperimentLogger_FormatTSV(t *testing.T) {
 	require.Len(t, lines, 5) // header + 4 entries
 
 	// Check header.
-	assert.Equal(t, "step\ttimestamp\taction\ttps\timprovement\tconfig_delta\terror", lines[0])
+	assert.Equal(t, "step\ttimestamp\taction\ttps\timprovement\tconfig_delta\terror\tquality_note", lines[0])
 
 	// Baseline row: TPS present, improvement is "-".
 	assert.Contains(t, lines[1], "baseline")
