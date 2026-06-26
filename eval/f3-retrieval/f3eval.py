@@ -52,6 +52,12 @@ NAIVE_ROOTS = [
 ]
 RETR_N = int(os.environ.get("RETR_N", "24"))
 RETR_K = int(os.environ.get("RETR_K", "6"))
+# Per-file cap on how many reranked chunks one path may contribute to the
+# top-K context. <=0 disables (plain top-K slice = original behaviour). A small
+# cap (e.g. 3 with RETR_K=6) forces multi-file coverage so the answer model gets
+# secondary files instead of one file dominating the window — the Slice 3
+# "answer synthesis on multi-file questions" lever (F3 plan Slice 3.1).
+MAX_PER_PATH = int(os.environ.get("MAX_PER_PATH", "0"))
 GEN_MAX_TOKENS = int(os.environ.get("GEN_MAX_TOKENS", "300"))
 MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(512 * 1024)))
 HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "240"))
@@ -146,6 +152,47 @@ def rerank(query, docs, top_n):
     except Exception as exc:  # noqa: BLE001
         log(f"  WARN rerank failed ({exc}); using cosine order")
     return list(range(min(top_n, len(docs))))
+
+
+def diversify_selection(order, paths, top_k, max_per_path):
+    """Select up to ``top_k`` indices from a reranked ``order`` while capping how
+    many chunks any single file path may contribute to ``max_per_path``.
+
+    Pure (no I/O) so it is unit-tested directly. ``order`` is reranked candidate
+    indices (best first); ``paths`` is the per-candidate path list (indexed by
+    the values in ``order``). Two passes preserve rerank order:
+
+      pass 1  take chunks in rerank order, skipping any whose path already hit
+              the per-path cap — this is what pulls *secondary* files into the
+              window instead of letting one file dominate;
+      pass 2  if fewer than ``top_k`` were taken (e.g. every candidate shares one
+              path), back-fill from the remaining rerank order so the context is
+              never starved below the plain top-K slice.
+
+    ``max_per_path <= 0`` disables diversification and returns ``order[:top_k]``
+    byte-for-byte — the original behaviour, so this is opt-in and reversible.
+    """
+    if max_per_path <= 0:
+        return list(order[:top_k])
+    selected, counts, used = [], {}, set()
+    for i in order:
+        if len(selected) >= top_k:
+            break
+        p = paths[i] if 0 <= i < len(paths) else ""
+        if counts.get(p, 0) >= max_per_path:
+            continue
+        selected.append(i)
+        used.add(i)
+        counts[p] = counts.get(p, 0) + 1
+    if len(selected) < top_k:
+        for i in order:
+            if len(selected) >= top_k:
+                break
+            if i in used:
+                continue
+            selected.append(i)
+            used.add(i)
+    return selected
 
 
 def chat(model, system, user, max_tokens=GEN_MAX_TOKENS):
@@ -295,8 +342,8 @@ def main():
             hits = qdrant_search(qv, RETR_N)
             cand_docs = [(h.get("payload") or {}).get("text", "") for h in hits]
             cand_paths = [(h.get("payload") or {}).get("path", "") for h in hits]
-            order = rerank(question, cand_docs, RETR_K)
-            chosen = order[:RETR_K]
+            order = rerank(question, cand_docs, RETR_N)
+            chosen = diversify_selection(order, cand_paths, RETR_K, MAX_PER_PATH)
             retr_files = [cand_paths[i] for i in chosen]
             ev_retrieved = any(ev_match(ev, f) for f in retr_files)
             retr_ctx = "\n\n".join(cand_docs[i] for i in chosen)

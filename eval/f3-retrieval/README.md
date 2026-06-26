@@ -57,6 +57,25 @@ Findings:
   (`RETR_K`↑, pull `secondary_paths`), or a stronger answer model — not chunk tuning.
 - `kw` (exact multi-substring) is too strict for long-form answers; trust `judge` here.
 
+### Slice 3.1 — multi-file context diversification
+
+Finding (3) above (right files found, multi-file answers not assembled) is acted on
+by `diversify_selection` in `f3eval.py`: it caps how many reranked chunks one file
+contributes to the top-K context (`MAX_PER_PATH`, default `0` = disabled = original
+top-K slice) and back-fills so context is never starved. This pulls *secondary*
+files into the window with no extra upstream calls (it re-selects from the same
+top-N rerank). The pure logic is unit-tested in `test_readpath.py` (CI `readpath_test`
+job); the `codebase-answer` service carries an inline mirror.
+
+To measure it, re-run the hard set twice on the **same** collection and diff `judge`:
+
+```bash
+# baseline (diversification off)
+MAX_PER_PATH=0 SKIP_NAIVE=1 ...   # via the Job env
+# diversified
+MAX_PER_PATH=3 SKIP_NAIVE=1 ...
+```
+
 ## Run it (in-cluster Job)
 
 `job.example.yaml` is the exact Job used (mirrors `deploy/tasks/codebase-reembed`:
@@ -77,4 +96,6 @@ Key env knobs (see `f3eval.py`): `COLLECTION` (swap to compare indexes — Slice
 
 - `f3eval.py` — the harness
 - `questions.loomcore.json` — 16 adversarially-verified, non-guessable loom-core Q&A
+- `questions.hard.loomcore.json` — 18 harder, non-saturating Q&A (Slice 3+)
+- `test_readpath.py` — unit tests for `diversify_selection` (Slice 3.1)
 - `job.example.yaml` — in-cluster runner

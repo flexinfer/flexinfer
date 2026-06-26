@@ -188,6 +188,33 @@ vet:
   script:
     - go vet ./...
 
+# Pure-stdlib unit tests for the F3 read-path context-selection logic.
+# Gates the diversify_selection helper shared (by inline mirror) between the
+# kill-test harness and the codebase-answer service. No pip deps -> alpine.
+readpath_test:
+  stage: lint
+  image: python:3.12-alpine
+  needs: []
+  script:
+    - python3 eval/f3-retrieval/test_readpath.py
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - eval/f3-retrieval/f3eval.py
+        - eval/f3-retrieval/test_readpath.py
+        - deploy/system/codebase-answer/configmap.yaml
+    - if: $CI_MERGE_REQUEST_ID
+      changes:
+        - eval/f3-retrieval/f3eval.py
+        - eval/f3-retrieval/test_readpath.py
+        - deploy/system/codebase-answer/configmap.yaml
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - eval/f3-retrieval/f3eval.py
+        - eval/f3-retrieval/test_readpath.py
+        - deploy/system/codebase-answer/configmap.yaml
+    - when: never
+
 # --- Test Stage ---
 unit_test:
   stage: test

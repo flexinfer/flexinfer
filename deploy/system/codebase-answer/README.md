@@ -50,6 +50,10 @@ GET /healthz -> 200 {"status":"ok"}
 | `QDRANT_API_KEY` | _(secret)_ | `qdrant-credentials/api-key` |
 | `DEFAULT_COLLECTION` | `codebase_memory_bge_v1` | embedded-codebase index |
 | `RETR_N` / `RETR_K` | `24` / `6` | cosine candidates / reranked into context |
+| `MAX_PER_PATH` | `0` | per-file cap on chunks in the top-K context; `0` = off (Slice 3.1) |
+
+`POST /v1/answer` also accepts an optional `"max_per_path"` to override the env per
+request.
 
 ## Prerequisites
 
@@ -73,6 +77,11 @@ kubectl -n flexinfer-system run rag-curl --rm -it --image=curlimages/curl --rest
   wiring; deferred so it can be validated on its own rollout.
 - **Slice 3** — chunking bake-off (line-window `codebase_memory_bge_v1` vs AST
   `codebase_memory_v1`), reusing the kill-test harness.
+- **Slice 3.1** — multi-file context diversification (`MAX_PER_PATH`): caps how
+  many chunks one file contributes to the top-K context so multi-file answers get
+  secondary files into the window. Shipped dormant (`0`); activate with
+  `MAX_PER_PATH=3` on this Deployment once the harness measures a judge gain on the
+  hard 18-Q set (`eval/f3-retrieval`).
 
 ## Reversibility
 
