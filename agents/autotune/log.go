@@ -20,6 +20,7 @@ const (
 	ActionBaseline      ExperimentAction = "baseline"
 	ActionAccepted      ExperimentAction = "accepted"
 	ActionRejected      ExperimentAction = "rejected"
+	ActionQualityVetoed ExperimentAction = "quality_vetoed"
 	ActionRolloutFailed ExperimentAction = "rollout_failed"
 	ActionSkipped       ExperimentAction = "skipped"
 )
@@ -33,6 +34,12 @@ type ExperimentEntry struct {
 	Improvement float64 // percentage improvement vs baseline; 0 for baseline
 	ConfigDelta string  // human-readable config change, e.g. "maxNumSeqs=16"
 	Error       string  // error message if action is rollout_failed
+	// QualityNote explains a quality_vetoed action: which workload class regressed
+	// and by how much (from goodhart.WorkloadRegression). Empty otherwise.
+	QualityNote string
+	// QualityDelta is the worst-class throughput regression (percent, negative)
+	// that triggered a quality veto; 0 when not vetoed.
+	QualityDelta float64
 }
 
 // ExperimentSummary captures the final outcome of an autotune run.
@@ -81,7 +88,7 @@ func (l *ExperimentLogger) Entries() []ExperimentEntry {
 // FormatTSV formats the experiment log as tab-separated values.
 func (l *ExperimentLogger) FormatTSV() string {
 	var sb strings.Builder
-	sb.WriteString("step\ttimestamp\taction\ttps\timprovement\tconfig_delta\terror\n")
+	sb.WriteString("step\ttimestamp\taction\ttps\timprovement\tconfig_delta\terror\tquality_note\n")
 	for _, e := range l.entries {
 		tpsStr := "-"
 		if e.TPS > 0 {
@@ -96,10 +103,11 @@ func (l *ExperimentLogger) FormatTSV() string {
 			delta = "-"
 		}
 		errStr := e.Error
-		if errStr == "" {
-			errStr = ""
+		qualStr := e.QualityNote
+		if qualStr == "" {
+			qualStr = "-"
 		}
-		sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		sb.WriteString(fmt.Sprintf("%d\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			e.Step,
 			e.Timestamp.Format(time.RFC3339),
 			e.Action,
@@ -107,6 +115,7 @@ func (l *ExperimentLogger) FormatTSV() string {
 			impStr,
 			delta,
 			errStr,
+			qualStr,
 		))
 	}
 	return sb.String()

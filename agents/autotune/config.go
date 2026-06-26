@@ -55,3 +55,10 @@ func (s SearchSpace) TotalExperiments() int {
 
 // MaxGPUMemoryUtilization is the safety cap. Configs above this value are rejected.
 const MaxGPUMemoryUtilization = 0.98
+
+// DefaultQualityTolerancePct is the per-workload-class throughput regression the
+// Goodhart guard tolerates before vetoing a TPS-improving candidate. Used when a
+// QualityFunc is supplied without an explicit tolerance. The 2026-06-26 kill-test
+// (.loom/killtest-autotune-goodhart-2026-06-26.md) observed a 47.6% long-form
+// regression hidden behind a +26.7% aggregate gain, so 10% is a conservative gate.
+const DefaultQualityTolerancePct = 10.0
