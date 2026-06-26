@@ -260,11 +260,18 @@ def main():
         questions = questions.get("questions", [])
     log(f"loaded {len(questions)} questions")
 
-    naive_ctx, naive_files = build_naive_context()
-    log(
-        f"naive window: {len(naive_files)} files, ~{est_tokens(naive_ctx)} tok "
-        f"({len(naive_ctx)} chars)"
-    )
+    skip_naive = os.environ.get("SKIP_NAIVE", "").lower() in ("1", "true", "yes")
+    if skip_naive:
+        # naive/baseline are index-independent; skip them for chunking-comparison
+        # runs (which only vary the retrieval COLLECTION) to save the big prefills.
+        naive_ctx, naive_files = "", set()
+        log("SKIP_NAIVE set: retrieval-only run (naive + baseline skipped)")
+    else:
+        naive_ctx, naive_files = build_naive_context()
+        log(
+            f"naive window: {len(naive_files)} files, ~{est_tokens(naive_ctx)} tok "
+            f"({len(naive_ctx)} chars)"
+        )
 
     SYS = (
         "Answer the question using ONLY the provided codebase context. Be concise. "
@@ -300,17 +307,20 @@ def main():
             retr_files, ev_retrieved, retr_ctx, a_retr = [], False, "", f"[ERR {exc}]"
 
         # --- naive stuff ---
-        try:
-            a_naive = chat(
-                CHAT_MODEL, SYS, f"CONTEXT:\n{naive_ctx}\n\nQUESTION: {question}"
-            )
-        except Exception as exc:  # noqa: BLE001
-            a_naive = f"[ERR {exc}]"
-        # --- baseline ---
-        try:
-            a_base = chat(CHAT_MODEL, SYS_BASE, f"QUESTION: {question}")
-        except Exception as exc:  # noqa: BLE001
-            a_base = f"[ERR {exc}]"
+        if skip_naive:
+            a_naive = a_base = "[skipped]"
+        else:
+            try:
+                a_naive = chat(
+                    CHAT_MODEL, SYS, f"CONTEXT:\n{naive_ctx}\n\nQUESTION: {question}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                a_naive = f"[ERR {exc}]"
+            # --- baseline ---
+            try:
+                a_base = chat(CHAT_MODEL, SYS_BASE, f"QUESTION: {question}")
+            except Exception as exc:  # noqa: BLE001
+                a_base = f"[ERR {exc}]"
 
         row = {
             "q": question,

@@ -49,9 +49,17 @@ Exposes Slice 2 through the platform endpoint: a `/v1/rag` reverse-proxy route i
 - **Activation:** dormant until the next proxy image publish + digest repin (the proxy image is digest-pinned; merging Go doesn't auto-roll it). Route is config-gated (empty upstream → 503), so zero serving-path risk meanwhile.
 - Acceptance (post-rollout): `POST /v1/rag` through the proxy returns the same as the sibling `/v1/answer`.
 
-### Slice 3 — chunking quality bake-off
-The bge index uses naive line-windows; the morph `codebase_memory_v1` uses AST chunking. Run the kill-test harness against BOTH indexes (swap `COLLECTION`) and pick the winner, or justify keeping line-windows. Cheap: the harness already parameterizes the collection.
-- Acceptance: a measured retrieval-quality comparison (line-window vs AST) on ≥30 questions.
+### Slice 3 — chunking quality bake-off — UNBLOCKED + first finding 2026-06-25
+The easy 16-Q set saturates retrieval at 16/16, so it can't discriminate chunking. Built a **harder** 18-Q set (`eval/f3-retrieval/questions.hard.loomcore.json`: multi-file / behavioral / long-construct / semantic-distance) that does NOT saturate → Slice 3 unblocked. Ran the harness (retrieval-only, `SKIP_NAIVE`) on the hard set across two bge chunkings:
+
+| chunking | chunks | ev_retrieved | judge CORRECT |
+|---|---|---|---|
+| current 45/8 | 21,607 | 15/18 | 8/18 |
+| high-overlap 40/20 | 34,379 | 16/18 | 9/18 |
+
+Findings: (1) the hard set discriminates (8–9/18 vs 16/16); (2) **chunk overlap is not the lever** — +59% chunks bought a within-noise +1, even with a freshness confound favoring high-overlap (collection dropped); (3) **the bottleneck is answer synthesis, not retrieval recall** — `ev_retrieved` 15–16/18 but `judge` ~8–9/18: the right file is usually found, the model fails to assemble the answer on multi-file questions. (bge-vs-morph-AST compare is still blocked: morph embed API is down (522) + qdrant unreachable from the Mac.)
+- **Redirect:** Slice 3+ effort → more/multi-file context per query (`RETR_K`↑, pull `secondary_paths`) or a stronger answer model — NOT chunk tuning. A clean same-snapshot bake-off (tooling ready) would tighten finding (2) but is low-priority given finding (3).
+- Acceptance: ✅ measured discriminating comparison on 18 questions (above).
 
 ### Slice 4 — index coverage + freshness
 `codebase-reembed` indexes loom-core only, and the NFS `devbox-ws` export mirrors only loom/loom-core (flexinfer is absent — discovered during the kill-test). Generalize: index the repos agents actually work in; fix the source mount or repoint. Decide nightly vs on-change.

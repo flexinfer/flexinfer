@@ -33,6 +33,30 @@ retrieval-vs-naive comparison; the judge is the semantic backstop.
 favoring naive (relevant dirs only, ~42.5K tok near the 64K ceiling) still gave
 retrieval 16/16, naive 0/16 (43.7×) — a 1,720-file repo doesn't fit any window.
 
+## Hard set + Slice 3 (chunking bake-off)
+
+`questions.hard.loomcore.json` (18 Q) is the **harder** set: multi-file /
+behavioral / long-construct / semantic-distance questions that do NOT saturate
+retrieval, so chunking strategies can be told apart. Run with `SKIP_NAIVE=1`
+(naive/baseline are index-independent — skip the big prefills for comparison runs).
+
+Bake-off 2026-06-25 (retrieval-only, `qwen36-35b` answerer, gemma4 judge):
+
+| chunking | chunks | ev_retrieved | judge CORRECT | kw |
+|---|---|---|---|---|
+| current 45/8 (`codebase_memory_bge_v1`) | 21,607 | 15/18 | 8/18 | 4/18 |
+| high-overlap 40/20 (throwaway) | 34,379 | 16/18 | 9/18 | 2/18 |
+
+Findings:
+- **Hard set discriminates** (judge 8–9/18 vs the easy set's 16/16) — Slice 3 unblocked.
+- **Overlap is not the lever**: +59% chunks (4× slower indexing) → within-noise +1 judge,
+  even with a freshness confound favoring the high-overlap (fresher) collection. Dropped it.
+- **The bottleneck is answer synthesis, not retrieval recall**: `ev_retrieved` 15–16/18 but
+  `judge` ~8–9/18 — the right file is usually found; the model fails to assemble the answer
+  on multi-file/behavioral questions. Next levers: more/multi-file context per query
+  (`RETR_K`↑, pull `secondary_paths`), or a stronger answer model — not chunk tuning.
+- `kw` (exact multi-substring) is too strict for long-form answers; trust `judge` here.
+
 ## Run it (in-cluster Job)
 
 `job.example.yaml` is the exact Job used (mirrors `deploy/tasks/codebase-reembed`:
