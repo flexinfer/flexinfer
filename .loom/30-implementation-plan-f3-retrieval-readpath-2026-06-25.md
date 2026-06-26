@@ -61,6 +61,13 @@ Findings: (1) the hard set discriminates (8–9/18 vs 16/16); (2) **chunk overla
 - **Redirect:** Slice 3+ effort → more/multi-file context per query (`RETR_K`↑, pull `secondary_paths`) or a stronger answer model — NOT chunk tuning. A clean same-snapshot bake-off (tooling ready) would tighten finding (2) but is low-priority given finding (3).
 - Acceptance: ✅ measured discriminating comparison on 18 questions (above).
 
+### Slice 3.1 — multi-file context diversification — BUILT (code, dormant) 2026-06-25
+Acts on Slice 3 finding (3): the right files are retrieved (`ev_retrieved` 15–16/18) but the top-K context can be **dominated by one file**, so multi-file questions never get the secondary file into the window even when it was in top-N. Added `diversify_selection(order, paths, top_k, max_per_path)` — a pure, unit-tested selection that caps per-file chunk count and back-fills so context is never starved below the plain top-K slice. Pulls `secondary_paths` into context (the named lever) with **no new upstream calls** (re-selects from the already-fetched top-N rerank), so zero added latency / failure modes. Wired into both read paths: `eval/f3-retrieval/f3eval.py` (retrieval condition) and `deploy/system/codebase-answer/configmap.yaml` (inline mirror; the service also accepts a per-request `max_per_path`).
+- **Opt-in / reversible:** env `MAX_PER_PATH` default **0 = disabled = byte-for-byte current behavior** (asserted by a test case + a live parity check vs the canonical fn). The live service is unchanged until the env is flipped — mirrors the Slice 2.1 dormant-until-validated pattern. Activation = `MAX_PER_PATH=3` on the `codebase-answer` Deployment (GitOps one-liner).
+- **Proven:** `eval/f3-retrieval/test_readpath.py` (11 stdlib-`unittest` cases) green; new `readpath_test` CI lint job (`python:3.12-alpine`) gates it; ConfigMap inline Python compiles; mirror parity verified.
+- **Handoff (live measurement):** run the harness on the hard 18-Q set with `MAX_PER_PATH=3` vs `0` (same snapshot, `SKIP_NAIVE=1`) and compare `judge`. If multi-file judge improves, flip the service env. Needs the cluster (proxy + qdrant) — out of reach from the Mac.
+- Acceptance: ✅ correct, tested, CI-gated diversification wired into both read paths, dormant by default; live judge-delta measurement queued.
+
 ### Slice 4 — index coverage + freshness
 `codebase-reembed` indexes loom-core only, and the NFS `devbox-ws` export mirrors only loom/loom-core (flexinfer is absent — discovered during the kill-test). Generalize: index the repos agents actually work in; fix the source mount or repoint. Decide nightly vs on-change.
 - Acceptance: ≥2 agent-relevant repos queryable through the Slice-2 endpoint.

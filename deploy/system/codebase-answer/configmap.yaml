@@ -38,6 +38,12 @@ data:
     DEFAULT_COLLECTION = os.environ.get("DEFAULT_COLLECTION", "codebase_memory_bge_v1")
     RETR_N = int(os.environ.get("RETR_N", "24"))
     RETR_K = int(os.environ.get("RETR_K", "6"))
+    # Per-file cap on reranked chunks contributed to the top-K context. <=0
+    # disables (plain top-K slice = original behaviour); a small cap (e.g. 3 with
+    # RETR_K=6) forces multi-file coverage so the answer model sees secondary
+    # files instead of one file dominating (F3 plan Slice 3.1). Opt-in: default
+    # 0 keeps the live read path byte-for-byte until validated on the hard set.
+    MAX_PER_PATH = int(os.environ.get("MAX_PER_PATH", "0"))
     GEN_MAX_TOKENS = int(os.environ.get("GEN_MAX_TOKENS", "400"))
     HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "240"))
     LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8000"))
@@ -93,6 +99,33 @@ data:
             log(f"WARN rerank failed ({exc}); using cosine order")
         return list(range(min(top_n, len(docs))))
 
+    def diversify_selection(order, paths, top_k, max_per_path):
+        """Cap how many reranked chunks one file contributes to the top-K
+        context so multi-file answers get secondary files into the window.
+        Mirror of eval/f3-retrieval/f3eval.py:diversify_selection (unit-tested
+        there). max_per_path<=0 returns order[:top_k] (original behaviour)."""
+        if max_per_path <= 0:
+            return list(order[:top_k])
+        selected, counts, used = [], {}, set()
+        for i in order:
+            if len(selected) >= top_k:
+                break
+            p = paths[i] if 0 <= i < len(paths) else ""
+            if counts.get(p, 0) >= max_per_path:
+                continue
+            selected.append(i)
+            used.add(i)
+            counts[p] = counts.get(p, 0) + 1
+        if len(selected) < top_k:
+            for i in order:
+                if len(selected) >= top_k:
+                    break
+                if i in used:
+                    continue
+                selected.append(i)
+                used.add(i)
+        return selected
+
     def chat(system, user, max_tokens):
         resp = _do(_req(f"{PROXY}/v1/chat/completions", data={
             "model": CHAT_MODEL,
@@ -100,13 +133,14 @@ data:
             "temperature": 0, "max_tokens": max_tokens}))
         return (resp["choices"][0]["message"]["content"] or "").strip()
 
-    def answer(query, collection, top_n, top_k):
+    def answer(query, collection, top_n, top_k, max_per_path):
         qv = embed(f"# query\n{query}")
         hits = qdrant_search(qv, collection, top_n)
         docs = [(h.get("payload") or {}).get("text", "") for h in hits]
         paths = [(h.get("payload") or {}).get("path", "") for h in hits]
         scores = [h.get("score", 0) for h in hits]
-        order = rerank(query, docs, top_k)[:top_k]
+        ranked = rerank(query, docs, top_n)
+        order = diversify_selection(ranked, paths, top_k, max_per_path)
         ctx = "\n\n".join(docs[i] for i in order)
         ans = chat(SYS, f"CONTEXT:\n{ctx}\n\nQUESTION: {query}", GEN_MAX_TOKENS)
         return {
@@ -152,9 +186,11 @@ data:
             collection = req.get("collection") or DEFAULT_COLLECTION
             top_n = int(req.get("top_n") or RETR_N)
             top_k = int(req.get("top_k") or RETR_K)
+            mpp = req.get("max_per_path")
+            max_per_path = int(mpp) if mpp is not None else MAX_PER_PATH
             t0 = time.time()
             try:
-                out = answer(query, collection, top_n, top_k)
+                out = answer(query, collection, top_n, top_k, max_per_path)
             except Exception as exc:  # noqa: BLE001
                 log(f"ERROR answering {query[:80]!r}: {exc}")
                 self._send(502, {"error": str(exc)})
