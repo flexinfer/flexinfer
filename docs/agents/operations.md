@@ -186,6 +186,19 @@ tolerance — even though the proxy went up. Vetoed steps roll back and are reco
 as `quality_vetoed` in the `<model>-autotune-log` ConfigMap (`results.tsv`,
 `quality_note` column).
 
+#### n-gram speculative decoding is guard-gated
+
+The search space includes a `speculativeConfig` parameter that toggles n-gram
+(prompt-lookup) speculative decoding **on/off** (off = no `--speculative-config`;
+on = `{"method":"ngram","num_speculative_tokens":7,"prompt_lookup_max":6,"prompt_lookup_min":1}`).
+This is the single parameter whose value is the n-gram-SD lever from the kill-test,
+so it is **only tuned when `--quality-guard` is set**. Without the guard the CLI
+drops it from the search space (and prints a one-line notice), because tuning it on
+the aggregate-throughput proxy alone re-introduces the exact Goodhart trap above —
+the throughput-only tuner would accept the +27% aggregate gain and silently ship the
+−47% long-form regression. With the guard, n-gram SD is accepted for copy-heavy
+serving (where it is a real win) and vetoed for long-form-heavy serving.
+
 ```bash
 # Throughput-only autotune (legacy default — guard off)
 flexinfer autotune qwen3-14b-gptq -n flexinfer-system
@@ -200,7 +213,7 @@ flexinfer autotune qwen3-14b-gptq --quality-guard --quality-tolerance 5 --qualit
 
 | Flag | Default | Meaning |
 |------|---------|---------|
-| `--quality-guard` | `false` | Enable the guard. Off = legacy throughput-only behavior. |
+| `--quality-guard` | `false` | Enable the guard. Off = legacy throughput-only behavior **and** n-gram speculative-decoding tuning is skipped (it is unsafe to tune without the guard). |
 | `--quality-tolerance` | `10` | Per-workload-class throughput regression tolerated (percent) before veto. |
 | `--quality-repeats` | `2` | Repeats per workload class in the quality canary (median is used). |
 

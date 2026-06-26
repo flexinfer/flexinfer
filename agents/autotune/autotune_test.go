@@ -244,6 +244,66 @@ func TestAutotuner_Run_QualityVeto(t *testing.T) {
 	assert.NotContains(t, guardTSV, "\taccepted\t")
 }
 
+// TestAutotuner_ApplyConfig_SerializesSpeculativeConfig proves applyConfig writes
+// the string-valued speculativeConfig parameter onto Model.spec.config as an
+// opaque JSON string (not a nested object), round-tripping through the same
+// ConfigString accessor the vLLM backend uses to build --speculative-config.
+func TestAutotuner_ApplyConfig_SerializesSpeculativeConfig(t *testing.T) {
+	t.Parallel()
+
+	model := makeModel("spec-model", "test-ns", "vllm", map[string]any{"maxNumSeqs": float64(8)})
+	fc := fakeclient.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(model).
+		Build()
+
+	tuner := &Autotuner{
+		client:    fc,
+		modelName: "spec-model",
+		namespace: "test-ns",
+	}
+
+	cfg := map[string]any{
+		"maxNumSeqs":             float64(8),
+		SpeculativeDecodingParam: NgramSpeculativeConfigJSON,
+	}
+	require.NoError(t, tuner.applyConfig(context.Background(), cfg))
+
+	got := &aiv1alpha2.Model{}
+	require.NoError(t, fc.Get(context.Background(), ctrlclient.ObjectKey{Name: "spec-model", Namespace: "test-ns"}, got))
+
+	// Stored as a string and read back identically by ConfigString (what the
+	// backend uses), i.e. it is opaque JSON, not a decoded nested object.
+	assert.Equal(t, NgramSpeculativeConfigJSON, got.Spec.GetConfigMap()[SpeculativeDecodingParam])
+	assert.Equal(t, NgramSpeculativeConfigJSON, got.Spec.ConfigString(SpeculativeDecodingParam, ""))
+
+	// The raw spec.config JSON carries the inner JSON as an escaped string value,
+	// confirming we did not flatten it into a nested object.
+	assert.Contains(t, string(got.Spec.Config.Raw), `"speculativeConfig":"{\"method\":\"ngram\"`)
+}
+
+// TestAutotuner_ApplyConfig_SpeculativeDecodingOff proves the "off" value is an
+// empty string, which the backend treats as absent (no --speculative-config).
+func TestAutotuner_ApplyConfig_SpeculativeDecodingOff(t *testing.T) {
+	t.Parallel()
+
+	model := makeModel("spec-off-model", "test-ns", "vllm",
+		map[string]any{SpeculativeDecodingParam: NgramSpeculativeConfigJSON})
+	fc := fakeclient.NewClientBuilder().
+		WithScheme(testScheme()).
+		WithObjects(model).
+		Build()
+
+	tuner := &Autotuner{client: fc, modelName: "spec-off-model", namespace: "test-ns"}
+
+	require.NoError(t, tuner.applyConfig(context.Background(),
+		map[string]any{SpeculativeDecodingParam: ""}))
+
+	got := &aiv1alpha2.Model{}
+	require.NoError(t, fc.Get(context.Background(), ctrlclient.ObjectKey{Name: "spec-off-model", Namespace: "test-ns"}, got))
+	assert.Equal(t, "", got.Spec.ConfigString(SpeculativeDecodingParam, "<unset>"))
+}
+
 func TestAutotuner_ValidateCandidate_RejectsHighGPUMem(t *testing.T) {
 	t.Parallel()
 
