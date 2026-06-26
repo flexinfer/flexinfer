@@ -127,6 +127,7 @@ make build-cli
 | `flexinfer delete <name>` | Delete a ModelDeployment |
 | `flexinfer scale <name> <replicas>` | Scale a deployment |
 | `flexinfer benchmark <name>` | Trigger a fresh benchmark run (recreates benchmark Job + results ConfigMap) |
+| `flexinfer autotune <name>` | Coordinate-descent search over the vLLM config space; keeps faster configs, rolls back worse ones. See the Goodhart guard below. |
 | `flexinfer cache status` | Show status of all ModelCaches (strategy, path, ready state) |
 
 ### Examples
@@ -162,6 +163,51 @@ NAME           STRATEGY   PATH                             READY  SOURCE
 qwen3-8b-ram   Memory     /dev/shm/flexinfer/qwen3-8b-ram  Ready  HF://mlc-ai/...
 qwen3-3b-ram   Memory     /dev/shm/flexinfer/qwen3-3b-ram  Ready  HF://mlc-ai/...
 ```
+
+### Autotune & the Goodhart guard
+
+`flexinfer autotune` runs coordinate descent over the vLLM config space, keeping
+configs that improve benchmark throughput and rolling back ones that don't. By
+default it optimizes a single aggregate tok/s number — which can be **gamed**.
+
+The 2026-06-26 kill-test proved the failure live: enabling n-gram speculative
+decoding on `gemma4-26b-a4b-gptq` lifted aggregate decode throughput **+27%**
+while a long-form generation workload **regressed −47%** (n-gram SD accelerates
+prompt-copy workloads but wastes draft+verify compute on novel generation; it is
+lossless, so this is a throughput regression, not a quality one). A throughput-only
+tuner would happily accept it. Evidence:
+`.loom/killtest-autotune-goodhart-2026-06-26.md`.
+
+The **Goodhart guard** (`--quality-guard`) defends against this. It probes the
+model's chat endpoint for **per-workload-class** decode tok/s (a prompt-copy
+`lookup` class and an open-ended `novel` class) and vetoes any candidate that
+improves aggregate throughput while regressing a protected class beyond a
+tolerance — even though the proxy went up. Vetoed steps roll back and are recorded
+as `quality_vetoed` in the `<model>-autotune-log` ConfigMap (`results.tsv`,
+`quality_note` column).
+
+```bash
+# Throughput-only autotune (legacy default — guard off)
+flexinfer autotune qwen3-14b-gptq -n flexinfer-system
+
+# With the Goodhart guard (recommended for any model where serving includes
+# long-form generation), 10% per-class regression tolerance by default:
+flexinfer autotune qwen3-14b-gptq -n flexinfer-system --quality-guard
+
+# Tighter tolerance and more canary repeats:
+flexinfer autotune qwen3-14b-gptq --quality-guard --quality-tolerance 5 --quality-repeats 3
+```
+
+| Flag | Default | Meaning |
+|------|---------|---------|
+| `--quality-guard` | `false` | Enable the guard. Off = legacy throughput-only behavior. |
+| `--quality-tolerance` | `10` | Per-workload-class throughput regression tolerated (percent) before veto. |
+| `--quality-repeats` | `2` | Repeats per workload class in the quality canary (median is used). |
+
+The guard is implemented in `pkg/goodhart` (`WorkloadRegression` + online
+overoptimization detectors, ported from the RewardSpy project) and wired through
+`agents/autotune` via an optional `QualityFunc`. A live-validation harness lives
+in `agents/autotune/quality_live_test.go` (`TestLiveQualityProbe`, env-gated).
 
 ### Flags
 

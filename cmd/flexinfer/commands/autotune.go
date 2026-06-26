@@ -3,8 +3,10 @@ package commands
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +25,9 @@ var (
 	atBenchIter      int
 	atBenchWarmup    int
 	atProxyURL       string
+	atQualityGuard   bool
+	atQualityTol     float64
+	atQualityRepeats int
 )
 
 var autotuneCmd = &cobra.Command{
@@ -53,6 +58,9 @@ func init() {
 	autotuneCmd.Flags().IntVar(&atBenchIter, "bench-iterations", 5, "Minimum benchmark iterations per step")
 	autotuneCmd.Flags().IntVar(&atBenchWarmup, "bench-warmup", 2, "Warmup iterations before each benchmark")
 	autotuneCmd.Flags().StringVar(&atProxyURL, "proxy-url", "", "Proxy URL (default: auto-detect from namespace)")
+	autotuneCmd.Flags().BoolVar(&atQualityGuard, "quality-guard", false, "Enable the Goodhart guard: veto a throughput gain that regresses a protected long-form workload class (e.g. n-gram speculative decoding)")
+	autotuneCmd.Flags().Float64Var(&atQualityTol, "quality-tolerance", autotune.DefaultQualityTolerancePct, "Per-workload-class throughput regression tolerated before veto, percent (with --quality-guard)")
+	autotuneCmd.Flags().IntVar(&atQualityRepeats, "quality-repeats", 2, "Repeats per workload class in the quality canary (with --quality-guard)")
 }
 
 func runAutotune(cmd *cobra.Command, args []string) error {
@@ -104,14 +112,25 @@ func runAutotune(cmd *cobra.Command, args []string) error {
 		return record.TokensPerSecond, nil
 	}
 
-	tuner := autotune.New(autotune.Options{
+	tuneOpts := autotune.Options{
 		Client:         k8sClient,
 		KubeClient:     clientset,
 		ModelName:      modelName,
 		Namespace:      ns,
 		BenchFn:        benchFn,
 		RolloutTimeout: atRolloutTimeout,
-	})
+	}
+	if atQualityGuard {
+		// Probe the model's chat-completions endpoint for per-workload-class
+		// decode tok/s, so a candidate that lifts aggregate throughput but
+		// regresses a long-form class is vetoed (the n-gram-SD pattern).
+		chatURL := fmt.Sprintf("%s/model/%s/v1/chat/completions", strings.TrimRight(proxyURL, "/"), modelName)
+		tuneOpts.QualityFn = autotune.NewWorkloadQualityFunc(http.DefaultClient, chatURL, modelName, atQualityRepeats)
+		tuneOpts.QualityTolerancePct = atQualityTol
+		fmt.Printf("[autotune] Goodhart guard ENABLED: quality canary %s, regression tolerance %.1f%%\n", chatURL, atQualityTol)
+	}
+
+	tuner := autotune.New(tuneOpts)
 
 	// Capture baseline config for signal-handler rollback.
 	baselineConfig := model.Spec.GetConfigMap()
