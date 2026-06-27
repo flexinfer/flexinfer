@@ -53,14 +53,19 @@ spec:
                 # in-cluster pods; requires an api-key (see qdrant-credentials below).
                 - name: QDRANT_URL
                   value: "http://192.168.50.176:6333"
-                - name: COLLECTION
-                  value: "codebase_memory_bge_v1"
                 - name: VECTOR_DIM
                   value: "1024"
-                - name: REPO_PATH
-                  value: "/workspace/services/loom-core"
-                - name: REPO_NAME
-                  value: "loom-core"
+                # Multi-repo index set (F3 Slice 4): ';'-separated name=path=collection
+                # records, one per agent-relevant repo on the NFS workspace mirror.
+                # loom-core keeps its established collection (codebase_memory_bge_v1)
+                # so existing read-path consumers are unaffected; loom lands in its
+                # own collection. Callers pick a repo via the /v1/answer `collection`
+                # field. NOTE: the devbox-ws NFS export currently mirrors only
+                # loom/loom-core -- flexinfer + other repos need the platform/gitops
+                # NFS sync widened before they can be added here (a missing path is
+                # skipped with a WARN, never fatal).
+                - name: REPOS
+                  value: "loom-core=/workspace/services/loom-core=codebase_memory_bge_v1;loom=/workspace/services/loom=codebase_memory_bge_loom_v1"
                 - name: BATCH_SIZE
                   value: "64"
                 - name: MAX_INPUT_CHARS

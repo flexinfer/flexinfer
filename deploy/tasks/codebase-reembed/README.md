@@ -14,17 +14,42 @@ throughput actually lands. See `.loom/60-validation-matrix.md` and
 ## What it does
 
 1. Mounts the shared devbox workspace NFS export read-only.
-2. Walks `REPO_PATH` for source/doc files (extension allowlist, dir denylist).
+2. For **each repo** in `REPOS`, walks its path for source/doc files (extension
+   allowlist, dir denylist).
 3. Splits each file into overlapping line-window chunks.
 4. Embeds chunks in batches via the OpenAI-compatible `/v1/embeddings` endpoint
    (`bge-large-radeonvii` on gfx906).
-5. Upserts vectors into Qdrant with deterministic UUIDv5 point IDs, so nightly
-   re-runs overwrite in place (no duplicates).
+5. Upserts vectors into the repo's Qdrant collection with deterministic UUIDv5
+   point IDs (namespaced by repo name), so nightly re-runs overwrite in place
+   (no duplicates) and two repos never collide.
 
 The chunker is deliberately simple (line windows, not AST) — the goal is to prove
 batch throughput, not to mirror codebase-memory's AST chunker. The morph
-`codebase_memory_v1` collection is **not touched**; this writes only
-`codebase_memory_bge_v1`.
+`codebase_memory_v1` collection is **not touched**.
+
+## Multi-repo coverage (F3 Slice 4)
+
+The job indexes **one or more repos in a single run**, each into its **own**
+collection, configured via the `REPOS` env (`;`-separated `name=path[=collection]`
+records). Per-repo collections keep retrieval isolated — the read-path
+(`codebase-answer` `/v1/answer`) selects a repo via its `collection` field, and
+there is no cross-repo result mixing. Current set:
+
+| Repo | Path (NFS mirror) | Collection |
+|------|-------------------|------------|
+| `loom-core` | `/workspace/services/loom-core` | `codebase_memory_bge_v1` (legacy name — unchanged) |
+| `loom` | `/workspace/services/loom` | `codebase_memory_bge_loom_v1` |
+
+A missing repo path is **skipped with a `WARN`** (one absent repo never fails the
+nightly); the job exits non-zero only if *no* repo indexed. An omitted collection
+defaults to `codebase_memory_bge_<sanitized-name>_v1`.
+
+When `REPOS` is empty, the legacy single-repo `REPO_PATH`/`REPO_NAME`/`COLLECTION`
+env is used — byte-for-byte the pre-Slice-4 behaviour.
+
+> **NFS gap:** the `devbox-ws` export currently mirrors only `loom`/`loom-core`.
+> Indexing **flexinfer** (or other repos) requires widening the platform/gitops
+> NFS sync first; add the repo to `REPOS` once its path is present on the mirror.
 
 ## Configuration
 
@@ -36,12 +61,13 @@ All knobs are env vars on the container (`cronjob.yaml`):
 | `EMBED_MODEL` | `bge-large-radeonvii` | gfx906 bge lane |
 | `QDRANT_URL` | `http://192.168.50.176:6333` | canonical Qdrant (holds morph `codebase_memory_v1`) |
 | `QDRANT_API_KEY` | _(from secret)_ | `qdrant-credentials/api-key` (required for the default target) |
-| `COLLECTION` | `codebase_memory_bge_v1` | target collection (1024-dim, Cosine) |
-| `REPO_PATH` / `REPO_NAME` | `/workspace/services/loom-core` | source repo |
+| `REPOS` | `loom-core=…;loom=…` | multi-repo index set: `;`-sep `name=path[=collection]` (see above) |
+| `COLLECTION` | `codebase_memory_bge_v1` | single-repo fallback collection (used only when `REPOS` is empty) |
+| `REPO_PATH` / `REPO_NAME` | _(unset)_ | single-repo fallback source (used only when `REPOS` is empty) |
 | `BATCH_SIZE` | `64` | embeddings batch size |
 | `CHUNK_LINES` / `CHUNK_OVERLAP` | `45` / `8` | line-window chunking |
 | `MAX_INPUT_CHARS` | `700` | cap for the complete embedding input, including the repo/path prefix |
-| `MAX_FILES` / `MAX_CHUNKS` | `0` (unbounded) | safety clamps; truncation is logged |
+| `MAX_FILES` / `MAX_CHUNKS` | `0` (unbounded) | per-repo safety clamps; truncation is logged |
 
 ## Prerequisites
 
@@ -64,7 +90,24 @@ kubectl -n flexinfer-system logs -f job/reembed-adhoc
 kubectl -n flexinfer-system patch cronjob/codebase-reembed -p '{"spec":{"suspend":true}}'
 ```
 
-Expected final log line: `re-embed DONE files=… chunks=… elapsed=…s emb/s=…`.
+Expected final log line: `re-embed DONE repos=2/2 files=… chunks=… elapsed=…s emb/s=…`
+(`repos=N/M` = N indexed of M configured; N<M means a path was missing/skipped).
+
+After a run, query a specific repo through the read-path service by passing its
+collection, e.g. `curl -s codebase-answer.flexinfer-system.svc:8000/v1/answer -d
+'{"query":"…","collection":"codebase_memory_bge_loom_v1"}'`.
+
+## Tests
+
+The multi-repo parsing/chunking logic is unit-tested offline (no cluster):
+
+```bash
+python3 deploy/tasks/codebase-reembed/test_reembed.py
+```
+
+The test extracts the canonical script from `configmap.yaml` (single source of
+truth) and exercises `parse_repos` / `point_id` / `chunk_file`. CI gates it via
+the `reembed_test` lint job on changes to the ConfigMap or test.
 
 ## Reversibility
 
