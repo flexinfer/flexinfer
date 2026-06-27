@@ -68,9 +68,11 @@ Acts on Slice 3 finding (3): the right files are retrieved (`ev_retrieved` 15–
 - **Handoff (live measurement):** run the harness on the hard 18-Q set with `MAX_PER_PATH=3` vs `0` (same snapshot, `SKIP_NAIVE=1`) and compare `judge`. If multi-file judge improves, flip the service env. Needs the cluster (proxy + qdrant) — out of reach from the Mac.
 - Acceptance: ✅ correct, tested, CI-gated diversification wired into both read paths, dormant by default; live judge-delta measurement queued.
 
-### Slice 4 — index coverage + freshness
-`codebase-reembed` indexes loom-core only, and the NFS `devbox-ws` export mirrors only loom/loom-core (flexinfer is absent — discovered during the kill-test). Generalize: index the repos agents actually work in; fix the source mount or repoint. Decide nightly vs on-change.
-- Acceptance: ≥2 agent-relevant repos queryable through the Slice-2 endpoint.
+### Slice 4 — index coverage + freshness — BUILT (code) 2026-06-26
+Generalized `codebase-reembed` from loom-core-only to a **multi-repo** nightly run: new `REPOS` env (`;`-sep `name=path[=collection]`) indexes ≥2 repos in one job, **each into its own Qdrant collection** (loom-core keeps `codebase_memory_bge_v1` unchanged; loom → `codebase_memory_bge_loom_v1`). Per-repo collections were chosen over single-collection+repo-filter because `qdrant_search` has no filter and the read-path already takes a `collection` param — so retrieval for existing loom-core consumers is byte-for-byte unchanged. Point IDs are repo-namespaced (no cross-repo collision). A missing repo path is skipped with a `WARN` (resilient nightly); empty `REPOS` falls back to the legacy single-repo behaviour. Offline `test_reembed.py` (15 cases, extracts the canonical script from the ConfigMap) + new `reembed_test` CI lint gate.
+- **NFS gap (flagged → platform/gitops):** the `devbox-ws` export mirrors only loom/loom-core, so flexinfer itself can't be indexed until the platform/gitops NFS sync is widened. The ≥2 acceptance is met today by loom + loom-core (both present); flexinfer is a follow-up.
+- **Activation:** Flux applies the new CronJob; next nightly (04:00) indexes both repos. Live verify: `kubectl -n flexinfer-system create job --from=cronjob/codebase-reembed reembed-adhoc` → `re-embed DONE repos=2/2 …`; then `/v1/answer` with `collection=codebase_memory_bge_loom_v1` on a loom question. (Cluster-only; not runnable from the Mac.)
+- Acceptance: ✅ (code) ≥2 repos configured + queryable-by-collection through the Slice-2 endpoint; live one-shot is the activation step. Iteration plan: [.loom/32-iteration-plan-f3-slice4-index-coverage-2026-06-26.md](32-iteration-plan-f3-slice4-index-coverage-2026-06-26.md).
 
 ### Slice 5 — retrieval-quality gate (F1 tie-in)
 Extend `model-eval-gauntlet` (currently throughput-only) with a retrieval-quality + coherence dimension built from the kill-test harness, so index/chunker/model changes are gated, not hoped. This is the brainstorm's repurposed F1.

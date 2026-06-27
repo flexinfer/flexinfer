@@ -215,6 +215,30 @@ readpath_test:
         - deploy/system/codebase-answer/configmap.yaml
     - when: never
 
+# Pure-stdlib unit tests for the nightly re-embed script's multi-repo logic
+# (F3 Slice 4). Extracts the canonical script from the ConfigMap literal block
+# and exercises parse_repos / point_id / chunk_file offline. No pip deps -> alpine.
+reembed_test:
+  stage: lint
+  image: python:3.12-alpine
+  needs: []
+  script:
+    - python3 deploy/tasks/codebase-reembed/test_reembed.py
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - deploy/tasks/codebase-reembed/configmap.yaml
+        - deploy/tasks/codebase-reembed/test_reembed.py
+    - if: $CI_MERGE_REQUEST_ID
+      changes:
+        - deploy/tasks/codebase-reembed/configmap.yaml
+        - deploy/tasks/codebase-reembed/test_reembed.py
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - deploy/tasks/codebase-reembed/configmap.yaml
+        - deploy/tasks/codebase-reembed/test_reembed.py
+    - when: never
+
 # --- Test Stage ---
 unit_test:
   stage: test

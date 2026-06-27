@@ -46,10 +46,17 @@ data:
     EMBED_MODEL = os.environ["EMBED_MODEL"]
     QDRANT_URL = os.environ["QDRANT_URL"].rstrip("/")
     QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
-    COLLECTION = os.environ["COLLECTION"]
+    # Multi-repo (F3 Slice 4): REPOS indexes one or more repos in a single run,
+    # each into its own Qdrant collection. Format is ';'-separated records, each
+    # 'name=path[=collection]' (field sep '=', record sep ';' -- neither occurs
+    # in repo names, filesystem paths, or collection names). When REPOS is empty
+    # the legacy single-repo REPO_PATH/REPO_NAME/COLLECTION env is used,
+    # byte-for-byte the pre-Slice-4 behaviour.
+    REPOS = os.environ.get("REPOS", "")
+    COLLECTION = os.environ.get("COLLECTION", "codebase_memory_bge_v1")
     VECTOR_DIM = int(os.environ.get("VECTOR_DIM", "1024"))
-    REPO_PATH = os.environ["REPO_PATH"].rstrip("/")
-    REPO_NAME = os.environ.get("REPO_NAME") or os.path.basename(REPO_PATH)
+    REPO_PATH = os.environ.get("REPO_PATH", "").rstrip("/")
+    REPO_NAME = os.environ.get("REPO_NAME", "")
     BATCH_SIZE = int(os.environ.get("BATCH_SIZE", "64"))
     CHUNK_LINES = int(os.environ.get("CHUNK_LINES", "45"))
     CHUNK_OVERLAP = int(os.environ.get("CHUNK_OVERLAP", "8"))
@@ -80,6 +87,40 @@ data:
     def log(msg):
         print(msg, flush=True)
 
+    # ---- multi-repo config (F3 Slice 4) -------------------------------------
+    def sanitize_repo_name(name):
+        slug = "".join(c if c.isalnum() else "_" for c in name).strip("_").lower()
+        return slug or "repo"
+
+    def default_collection(name):
+        return f"codebase_memory_bge_{sanitize_repo_name(name)}_v1"
+
+    def parse_repos(repos_env, repo_path="", repo_name="", collection=""):
+        """Return [(name, path, collection)] from the REPOS env, or the legacy
+        single-repo fallback when REPOS is empty. Each REPOS record is
+        'name=path[=collection]'; an omitted collection defaults to
+        default_collection(name). Raises ValueError on a malformed record."""
+        repos_env = (repos_env or "").strip()
+        if not repos_env:
+            if not repo_path:
+                return []
+            path = repo_path.rstrip("/")
+            name = repo_name or os.path.basename(path)
+            return [(name, path, collection or default_collection(name))]
+        out = []
+        for rec in repos_env.split(";"):
+            rec = rec.strip()
+            if not rec:
+                continue
+            parts = [p.strip() for p in rec.split("=")]
+            if len(parts) < 2 or not parts[0] or not parts[1]:
+                raise ValueError(
+                    f"bad REPOS record {rec!r}; want name=path[=collection]")
+            name, path = parts[0], parts[1].rstrip("/")
+            coll = parts[2] if len(parts) >= 3 and parts[2] else default_collection(name)
+            out.append((name, path, coll))
+        return out
+
     # ---- file discovery + chunking ------------------------------------------
     def iter_files(root):
         for dirpath, dirnames, filenames in os.walk(root):
@@ -90,7 +131,7 @@ data:
                 if fn.endswith(EXTS) and not fn.startswith("."):
                     yield os.path.join(dirpath, fn)
 
-    def chunk_file(path):
+    def chunk_file(path, repo_name, repo_path):
         try:
             if os.path.getsize(path) > MAX_FILE_BYTES:
                 return
@@ -99,8 +140,8 @@ data:
         except OSError as exc:
             log(f"WARN read {path}: {exc}")
             return
-        rel = os.path.relpath(path, REPO_PATH)
-        prefix = f"# {REPO_NAME}/{rel}\n"
+        rel = os.path.relpath(path, repo_path)
+        prefix = f"# {repo_name}/{rel}\n"
         if len(prefix) >= MAX_INPUT_CHARS:
             prefix = prefix[:MAX_INPUT_CHARS - 1] + "\n"
         step = max(1, CHUNK_LINES - CHUNK_OVERLAP)
@@ -152,13 +193,13 @@ data:
     def qdrant_headers():
         return {"api-key": QDRANT_API_KEY} if QDRANT_API_KEY else {}
 
-    def ensure_collection():
-        url = f"{QDRANT_URL}/collections/{COLLECTION}"
+    def ensure_collection(collection):
+        url = f"{QDRANT_URL}/collections/{collection}"
         status, _ = _do(_req(url, headers=qdrant_headers()), expect=(200, 404))
         if status == 200:
-            log(f"collection {COLLECTION} exists")
+            log(f"collection {collection} exists")
             return
-        log(f"creating collection {COLLECTION} (dim={VECTOR_DIM}, Cosine)")
+        log(f"creating collection {collection} (dim={VECTOR_DIM}, Cosine)")
         _do(_req(url, data={"vectors": {"size": VECTOR_DIM, "distance": "Cosine"}},
                  method="PUT", headers=qdrant_headers()))
 
@@ -168,53 +209,52 @@ data:
         rows = sorted(resp["data"], key=lambda d: d["index"])
         return [row["embedding"] for row in rows]
 
-    def upsert(points):
-        _do(_req(f"{QDRANT_URL}/collections/{COLLECTION}/points?wait=true",
+    def upsert(collection, points):
+        _do(_req(f"{QDRANT_URL}/collections/{collection}/points?wait=true",
                  data={"points": points}, method="PUT", headers=qdrant_headers()))
 
-    def point_id(rel, chunk_index):
-        return str(uuid.uuid5(NS, f"{REPO_NAME}:{rel}:{chunk_index}"))
+    def point_id(repo_name, rel, chunk_index):
+        return str(uuid.uuid5(NS, f"{repo_name}:{rel}:{chunk_index}"))
 
-    # ---- main ----------------------------------------------------------------
-    def main():
-        log(f"re-embed start repo={REPO_NAME} path={REPO_PATH} model={EMBED_MODEL} "
-            f"-> {QDRANT_URL}/{COLLECTION}")
-        if not os.path.isdir(REPO_PATH):
-            log(f"FATAL REPO_PATH not found: {REPO_PATH}")
-            sys.exit(1)
-        ensure_collection()
+    # ---- per-repo indexing ---------------------------------------------------
+    def process_repo(repo_name, repo_path, collection):
+        log(f"  repo={repo_name} path={repo_path} -> {collection}")
+        if not os.path.isdir(repo_path):
+            log(f"  WARN repo path not found, skipping: {repo_path}")
+            return 0, 0, False
+        ensure_collection(collection)
 
-        batch, total, files, t0 = [], 0, 0, time.time()
+        batch = []
+        counters = {"total": 0, "files": 0}
         clamped_files = clamped_chunks = False
 
         def flush():
-            nonlocal total
             if not batch:
                 return
             texts = [b["text"] for b in batch]
             vecs = embed(texts)
             points = [{
-                "id": point_id(b["rel"], b["chunk_index"]),
+                "id": point_id(repo_name, b["rel"], b["chunk_index"]),
                 "vector": vec,
                 "payload": {
-                    "repo": REPO_NAME, "path": b["rel"],
+                    "repo": repo_name, "path": b["rel"],
                     "chunk_index": b["chunk_index"],
                     "start_line": b["start_line"], "end_line": b["end_line"],
                     "text": b["text"],
                     "embed_model": EMBED_MODEL,
                 },
             } for b, vec in zip(batch, vecs)]
-            upsert(points)
-            total += len(points)
+            upsert(collection, points)
+            counters["total"] += len(points)
             batch.clear()
 
-        for path in iter_files(REPO_PATH):
-            if MAX_FILES and files >= MAX_FILES:
+        for path in iter_files(repo_path):
+            if MAX_FILES and counters["files"] >= MAX_FILES:
                 clamped_files = True
                 break
-            files += 1
-            for ch in chunk_file(path):
-                if MAX_CHUNKS and (total + len(batch)) >= MAX_CHUNKS:
+            counters["files"] += 1
+            for ch in chunk_file(path, repo_name, repo_path):
+                if MAX_CHUNKS and (counters["total"] + len(batch)) >= MAX_CHUNKS:
                     clamped_chunks = True
                     break
                 batch.append(ch)
@@ -224,14 +264,39 @@ data:
                 break
         flush()
 
-        elapsed = time.time() - t0
-        rate = total / elapsed if elapsed > 0 else 0.0
-        log(f"re-embed DONE files={files} chunks={total} elapsed={elapsed:.1f}s "
-            f"emb/s={rate:.1f}")
         if clamped_files:
-            log(f"NOTE: stopped at MAX_FILES={MAX_FILES} (coverage truncated)")
+            log(f"  NOTE repo={repo_name} stopped at MAX_FILES={MAX_FILES}")
         if clamped_chunks:
-            log(f"NOTE: stopped at MAX_CHUNKS={MAX_CHUNKS} (coverage truncated)")
+            log(f"  NOTE repo={repo_name} stopped at MAX_CHUNKS={MAX_CHUNKS}")
+        return counters["files"], counters["total"], True
+
+    # ---- main ----------------------------------------------------------------
+    def main():
+        try:
+            repos = parse_repos(REPOS, REPO_PATH, REPO_NAME, COLLECTION)
+        except ValueError as exc:
+            log(f"FATAL {exc}")
+            sys.exit(1)
+        if not repos:
+            log("FATAL no repos configured (set REPOS or REPO_PATH)")
+            sys.exit(1)
+
+        log(f"re-embed start repos={len(repos)} model={EMBED_MODEL} -> {QDRANT_URL}")
+        t0 = time.time()
+        grand_files = grand_chunks = indexed = 0
+        for repo_name, repo_path, collection in repos:
+            files, chunks, ok = process_repo(repo_name, repo_path, collection)
+            grand_files += files
+            grand_chunks += chunks
+            indexed += 1 if ok else 0
+
+        elapsed = time.time() - t0
+        rate = grand_chunks / elapsed if elapsed > 0 else 0.0
+        log(f"re-embed DONE repos={indexed}/{len(repos)} files={grand_files} "
+            f"chunks={grand_chunks} elapsed={elapsed:.1f}s emb/s={rate:.1f}")
+        if indexed == 0:
+            log("FATAL no repos indexed (all paths missing?)")
+            sys.exit(1)
 
     if __name__ == "__main__":
         main()
