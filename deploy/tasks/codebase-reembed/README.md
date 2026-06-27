@@ -39,6 +39,8 @@ there is no cross-repo result mixing. Current set:
 |------|-------------------|------------|
 | `loom-core` | `/workspace/services/loom-core` | `codebase_memory_bge_v1` (legacy name — unchanged) |
 | `loom` | `/workspace/services/loom` | `codebase_memory_bge_loom_v1` |
+| `flexinfer` | `/workspace/services/flexinfer` | `codebase_memory_bge_flexinfer_v1` |
+| `flexdeck` | `/workspace/services/flexdeck` | `codebase_memory_bge_flexdeck_v1` |
 
 A missing repo path is **skipped with a `WARN`** (one absent repo never fails the
 nightly); the job exits non-zero only if *no* repo indexed. An omitted collection
@@ -47,9 +49,14 @@ defaults to `codebase_memory_bge_<sanitized-name>_v1`.
 When `REPOS` is empty, the legacy single-repo `REPO_PATH`/`REPO_NAME`/`COLLECTION`
 env is used — byte-for-byte the pre-Slice-4 behaviour.
 
-> **NFS gap:** the `devbox-ws` export currently mirrors only `loom`/`loom-core`.
-> Indexing **flexinfer** (or other repos) requires widening the platform/gitops
-> NFS sync first; add the repo to `REPOS` once its path is present on the mirror.
+> **NFS mirror:** the `devbox-ws` export is kept populated for these repos by the
+> platform/gitops **`devbox-repo-mirror`** CronJob (`k3s/devbox/repo-mirror.yaml`),
+> which clones `flexinfer`/`flexdeck` from gitlab-vm into
+> `/workspace/services/<repo>` at 03:00 America/New_York — one hour before this
+> job's window. `loom`/`loom-core` remain operator-maintained working copies on
+> the same export. To add a new repo: append it to the mirror's `MIRROR_REPOS`
+> **and** to `REPOS` here (a path that is missing on the mirror is skipped with a
+> `WARN`, never fatal, so the two changes can land in either order).
 
 ## Configuration
 
@@ -90,7 +97,7 @@ kubectl -n flexinfer-system logs -f job/reembed-adhoc
 kubectl -n flexinfer-system patch cronjob/codebase-reembed -p '{"spec":{"suspend":true}}'
 ```
 
-Expected final log line: `re-embed DONE repos=2/2 files=… chunks=… elapsed=…s emb/s=…`
+Expected final log line: `re-embed DONE repos=4/4 files=… chunks=… elapsed=…s emb/s=…`
 (`repos=N/M` = N indexed of M configured; N<M means a path was missing/skipped).
 
 After a run, query a specific repo through the read-path service by passing its
