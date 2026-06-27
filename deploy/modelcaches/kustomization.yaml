@@ -32,7 +32,18 @@ resources:
   # publishes to OCI then pulls to 7900xtx for serving. Qwen3.6 is Qwen3.5
   # modeling code under the hood (verified upstream config.json) — existing
   # Qwen3.5 patch stack covers it. See .loom/qwen36-27b-hauhaucs-gptq-plan.md.
-  - qwen36-27b-gptq-gfx1100.yaml    # qwen36-27b-gptq-gfx1100 (cblevins-5930k, ~8-14 hr cycle)
+  #
+  # PAUSED 2026-06-27: the note above is stale — this cache's quantization stage
+  # is pinned to cblevins-radeonvii/gfx906 (quantization.nodeSelector) for host-RAM
+  # headroom during the full lm_head solve. That Job requests the Radeon VII's
+  # single amd.com/gpu at PriorityClass flexinfer-modelcache-transform (100000),
+  # which outranks the embed/rerank serving plane — so it starves
+  # bge-large-radeonvii + bge-reranker-radeonvii and 502s the retrieval lane (it
+  # killed a codebase-reembed run on 2026-06-27, and was itself failing 3/3 at the
+  # lm_head offloaded-tensor save bug). Re-enable only in a dedicated window with
+  # the retrieval plane scaled down, or after the GPTQ stage is rehomed off the
+  # retrieval card. Retrieval plane: deploy/models/{bge-radeonvii,bge-reranker-radeonvii}.yaml.
+  # - qwen36-27b-gptq-gfx1100.yaml    # PAUSED: GPTQ stage on radeonvii starves the embed/rerank plane (~8-14 hr cycle)
 
   # === Track B: 70B daily-driver self-quant (Download → Quantize only) ===
   # 2026-06-10: huihui-ai/Llama-3.3-70B-Instruct-abliterated → GPTQ INT4 on
