@@ -117,6 +117,32 @@ func TestDeploymentManagedFieldChanges(t *testing.T) {
 		}
 	})
 
+	t.Run("priority class change", func(t *testing.T) {
+		// Setting flexinfer.ai/serving-priority-class on a Model writes
+		// PriorityClassName onto the serving pod; the reconcile must detect and
+		// roll it so the protected lane (radeonvii embed/rerank) actually gets
+		// the higher scheduling priority.
+		dep := baseDeployment()
+		desired := dep.Spec.DeepCopy()
+		desired.Template.Spec.PriorityClassName = "flexinfer-serving-critical"
+
+		fields := deploymentManagedFieldChanges(dep, desired, dep.Labels, dep.Annotations, dep.Spec.Template.Labels, dep.Spec.Template.Annotations)
+		if !containsField(fields, "priorityClassName") {
+			t.Errorf("expected 'priorityClassName' in %v", fields)
+		}
+	})
+
+	t.Run("priority class unchanged", func(t *testing.T) {
+		dep := baseDeployment()
+		dep.Spec.Template.Spec.PriorityClassName = "flexinfer-serving-critical"
+		desired := dep.Spec.DeepCopy()
+
+		fields := deploymentManagedFieldChanges(dep, desired, dep.Labels, dep.Annotations, dep.Spec.Template.Labels, dep.Spec.Template.Annotations)
+		if containsField(fields, "priorityClassName") {
+			t.Errorf("did not expect 'priorityClassName' change in %v", fields)
+		}
+	})
+
 	// Regression: non-GPU models leave desired.Strategy as the zero value so the
 	// API server applies its default (RollingUpdate{25%,25%}). The controller must
 	// NOT report that default as a "strategy" change, or it rewrites the Deployment

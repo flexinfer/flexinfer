@@ -38,6 +38,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/flexinfer/flexinfer/pkg/modelmeta"
 )
 
@@ -563,6 +564,12 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				Spec: corev1.PodSpec{
 					NodeSelector: nodeSelector,
 					Tolerations:  tolerations,
+					// Opt-in protection from GPU preemption by lower-priority
+					// ModelCache transform/quant Jobs on the same single-GPU node.
+					// Empty unless the Model sets flexinfer.ai/serving-priority-class
+					// (e.g. "flexinfer-serving-critical" on the radeonvii embed/rerank
+					// plane), so behavior is unchanged for every other model.
+					PriorityClassName: model.Annotations[constants.AnnotationServingPriorityClass],
 					// ROCm devices (/dev/kfd, /dev/dri/renderD*) are typically 0660 root:render.
 					// Add the render group GID (992 on most systems) to supplementalGroups so
 					// non-root users can access GPU devices without running as root.
@@ -700,6 +707,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	deployment.Spec.Template.Labels = desiredTemplateLabels
 	deployment.Spec.Template.Annotations = desiredPodAnnotations
 	deployment.Spec.Template.Spec.NodeSelector = desired.Template.Spec.NodeSelector
+	deployment.Spec.Template.Spec.PriorityClassName = desired.Template.Spec.PriorityClassName
 	deployment.Spec.Template.Spec.Tolerations = desired.Template.Spec.Tolerations
 	deployment.Spec.Template.Spec.SecurityContext = desired.Template.Spec.SecurityContext
 	deployment.Spec.Template.Spec.Affinity = desired.Template.Spec.Affinity
@@ -863,6 +871,9 @@ func deploymentManagedFieldChanges(
 	// Pod spec (only controller-managed fields).
 	if !apiequality.Semantic.DeepEqual(e.Template.Spec.NodeSelector, desired.Template.Spec.NodeSelector) {
 		fields = append(fields, "nodeSelector")
+	}
+	if e.Template.Spec.PriorityClassName != desired.Template.Spec.PriorityClassName {
+		fields = append(fields, "priorityClassName")
 	}
 	if !apiequality.Semantic.DeepEqual(e.Template.Spec.Tolerations, desired.Template.Spec.Tolerations) {
 		fields = append(fields, "tolerations")

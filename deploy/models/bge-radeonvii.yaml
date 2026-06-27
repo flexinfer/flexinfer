@@ -23,6 +23,12 @@ kind: Model
 metadata:
   name: bge-large-radeonvii
   namespace: flexinfer-system
+  annotations:
+    # Protect this warm retrieval lane from GPU preemption: the serving pod runs
+    # at PriorityClass flexinfer-serving-critical (150000) > flexinfer-modelcache-
+    # transform (100000), so a quant/transform Job cannot grab the radeonvii GPU
+    # out from under embeddings (the 2026-06-27 reembed 502 root cause).
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
 spec:
   backend: llamacpp
   source: HF://CompendiumLabs/bge-large-en-v1.5-gguf

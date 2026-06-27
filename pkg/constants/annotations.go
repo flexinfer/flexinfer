@@ -17,6 +17,16 @@ const (
 	// without serving, cold-starting, or touching demand. Absent/empty means the
 	// model serves all paths (default).
 	AnnotationServePaths = "flexinfer.ai/serve-paths"
+
+	// AnnotationServingPriorityClass, when set on a Model, is written to the
+	// serving Deployment pod's PriorityClassName. Use it to protect a warm
+	// retrieval/serving lane from GPU preemption by lower-priority ModelCache
+	// transform/quant Jobs that share the same single-GPU node -- e.g. the
+	// radeonvii embed/rerank plane set to "flexinfer-serving-critical" (150000),
+	// above flexinfer-modelcache-transform (100000). The named PriorityClass MUST
+	// already exist in the cluster or the pod fails admission; absent/empty means
+	// no PriorityClass (the default, unchanged for every other model).
+	AnnotationServingPriorityClass = "flexinfer.ai/serving-priority-class"
 )
 
 // Node annotations written by the flexinfer-agent for scheduler scoring.
