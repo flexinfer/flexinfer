@@ -58,7 +58,7 @@ func init() {
 	autotuneCmd.Flags().IntVar(&atBenchIter, "bench-iterations", 5, "Minimum benchmark iterations per step")
 	autotuneCmd.Flags().IntVar(&atBenchWarmup, "bench-warmup", 2, "Warmup iterations before each benchmark")
 	autotuneCmd.Flags().StringVar(&atProxyURL, "proxy-url", "", "Proxy URL (default: auto-detect from namespace)")
-	autotuneCmd.Flags().BoolVar(&atQualityGuard, "quality-guard", false, "Enable the Goodhart guard: veto a throughput gain that regresses a protected long-form workload class (e.g. n-gram speculative decoding)")
+	autotuneCmd.Flags().BoolVar(&atQualityGuard, "quality-guard", false, "Enable the Goodhart guard: veto a throughput gain that regresses a protected long-form workload class. REQUIRED to tune n-gram speculative decoding (speculativeConfig) — that parameter is skipped without this flag, because tuning it on aggregate throughput alone re-introduces the Goodhart trap (long-form −47% behind aggregate +27%; .loom/killtest-autotune-goodhart-2026-06-26.md)")
 	autotuneCmd.Flags().Float64Var(&atQualityTol, "quality-tolerance", autotune.DefaultQualityTolerancePct, "Per-workload-class throughput regression tolerated before veto, percent (with --quality-guard)")
 	autotuneCmd.Flags().IntVar(&atQualityRepeats, "quality-repeats", 2, "Repeats per workload class in the quality canary (with --quality-guard)")
 }
@@ -112,6 +112,17 @@ func runAutotune(cmd *cobra.Command, args []string) error {
 		return record.TokensPerSecond, nil
 	}
 
+	// Build the search space. n-gram speculative decoding (speculativeConfig) is
+	// only safe to tune with the Goodhart guard: on the aggregate-throughput proxy
+	// alone it would be accepted while regressing long-form generation (the trap the
+	// guard exists to catch). Drop it from the space when the guard is off.
+	space := autotune.DefaultVLLMSearchSpace()
+	if !atQualityGuard {
+		space = space.WithoutSpeculativeDecoding()
+		fmt.Println("[autotune] note: n-gram speculative-decoding tuning is SKIPPED without --quality-guard " +
+			"(tuning it on throughput alone re-introduces the Goodhart trap; see --quality-guard help)")
+	}
+
 	tuneOpts := autotune.Options{
 		Client:         k8sClient,
 		KubeClient:     clientset,
@@ -119,6 +130,7 @@ func runAutotune(cmd *cobra.Command, args []string) error {
 		Namespace:      ns,
 		BenchFn:        benchFn,
 		RolloutTimeout: atRolloutTimeout,
+		Space:          space,
 	}
 	if atQualityGuard {
 		// Probe the model's chat-completions endpoint for per-workload-class

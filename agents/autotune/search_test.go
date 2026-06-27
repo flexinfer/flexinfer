@@ -59,6 +59,58 @@ func TestCoordinateDescent_SkipsSameValue(t *testing.T) {
 	assert.Equal(t, 3, candidates[1]["a"])
 }
 
+// TestCoordinateDescent_HandlesJSONStringParameter verifies the search handles a
+// string/JSON-valued parameter (speculativeConfig) the same way it handles the
+// existing string-valued gpuMemoryUtilization param — by plain value comparison,
+// with no panic from comparing non-comparable types. The "on" value is the opaque
+// JSON string written verbatim to spec.config.speculativeConfig.
+func TestCoordinateDescent_HandlesJSONStringParameter(t *testing.T) {
+	t.Parallel()
+	space := SearchSpace{
+		Parameters: []Parameter{
+			{Name: SpeculativeDecodingParam, Values: []any{"", NgramSpeculativeConfigJSON}},
+		},
+	}
+
+	cd := NewCoordinateDescent(space)
+	// Baseline has no speculativeConfig key (SD off / absent).
+	current := map[string]any{"maxNumSeqs": float64(8)}
+
+	var candidates []map[string]any
+	for {
+		c := cd.Next(current, nil)
+		if c == nil {
+			break
+		}
+		candidates = append(candidates, *c)
+	}
+
+	// Both "" and the JSON string are offered; values stay strings (no map panic).
+	require.Len(t, candidates, 2)
+	for _, c := range candidates {
+		v, ok := c[SpeculativeDecodingParam].(string)
+		require.True(t, ok, "speculativeConfig candidate value must remain a string")
+		_ = v
+	}
+	assert.Equal(t, "", candidates[0][SpeculativeDecodingParam])
+	assert.Equal(t, NgramSpeculativeConfigJSON, candidates[1][SpeculativeDecodingParam])
+
+	// A candidate equal to the current value is skipped without panicking.
+	cd2 := NewCoordinateDescent(space)
+	onCurrent := map[string]any{SpeculativeDecodingParam: NgramSpeculativeConfigJSON}
+	var onCandidates []map[string]any
+	for {
+		c := cd2.Next(onCurrent, nil)
+		if c == nil {
+			break
+		}
+		onCandidates = append(onCandidates, *c)
+	}
+	// Only the "off" value differs from the current "on" value.
+	require.Len(t, onCandidates, 1)
+	assert.Equal(t, "", onCandidates[0][SpeculativeDecodingParam])
+}
+
 func TestCoordinateDescent_EmptySpace(t *testing.T) {
 	t.Parallel()
 	cd := NewCoordinateDescent(SearchSpace{})
