@@ -35,6 +35,7 @@ data:
     import hashlib
     import json
     import os
+    import random
     import sys
     import time
     import urllib.error
@@ -72,6 +73,15 @@ data:
     MAX_CHUNKS = int(os.environ.get("MAX_CHUNKS", "0"))    # 0 = unbounded
     MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(512 * 1024)))
     HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "120"))
+    # Transient-failure retry. The bge embeddings model is serverless + shared-GPU
+    # (bge-large-radeonvii on gfx906); a mid-run reclaim/reload makes
+    # flexinfer-proxy return 502/503/504 for several seconds, which must not abort
+    # a 10+ minute batch. Bounded exponential backoff + jitter rides out the flap.
+    # All knobs are env-tunable from the CronJob spec for slower cold starts.
+    HTTP_RETRIES = int(os.environ.get("HTTP_RETRIES", "5"))
+    RETRY_BACKOFF = float(os.environ.get("RETRY_BACKOFF", "1.0"))       # base seconds
+    RETRY_BACKOFF_CAP = float(os.environ.get("RETRY_BACKOFF_CAP", "30.0"))
+    RETRY_STATUS = (502, 503, 504)  # transient upstream; everything else fails fast
 
     EXTS = tuple(e.strip() for e in os.environ.get(
         "EXTENSIONS",
@@ -172,23 +182,37 @@ data:
         body = json.dumps(data).encode() if data is not None else None
         return urllib.request.Request(url, data=body, method=method, headers=h)
 
+    def _sleep_backoff(attempt):
+        # Exponential backoff with equal jitter: wait a random time in [d/2, d]
+        # where d = RETRY_BACKOFF * 2**attempt (capped). Jitter keeps retries from
+        # synchronizing on the backend's recovery moment.
+        d = min(RETRY_BACKOFF_CAP, RETRY_BACKOFF * (2 ** attempt))
+        time.sleep(d / 2 + random.uniform(0, d / 2))
+
     def _do(req, expect=(200,)):
-        for attempt in range(3):
+        last = None
+        for attempt in range(HTTP_RETRIES):
             try:
                 with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
                     raw = r.read()
                     return r.status, (json.loads(raw) if raw else None)
             except urllib.error.HTTPError as exc:
-                detail = exc.read()[:300]
                 if exc.code in expect:
                     return exc.code, None
-                if attempt == 2:
-                    raise RuntimeError(f"HTTP {exc.code} {req.full_url}: {detail!r}")
+                detail = exc.read()[:300]
+                last = RuntimeError(f"HTTP {exc.code} {req.full_url}: {detail!r}")
+                # Only transient upstream failures self-heal; a 4xx or a hard 5xx
+                # won't recover by retrying, so surface it immediately.
+                if exc.code not in RETRY_STATUS:
+                    raise last
+            except urllib.error.URLError as exc:
+                # Connection-level failure (proxy restarting, DNS blip, timeout).
+                last = RuntimeError(f"{type(exc).__name__} {req.full_url}: {exc.reason}")
             except Exception as exc:  # noqa: BLE001
-                if attempt == 2:
-                    raise RuntimeError(f"{type(exc).__name__} {req.full_url}: {exc}")
-            time.sleep(2 * (attempt + 1))
-        raise RuntimeError(f"unreachable {req.full_url}")
+                last = RuntimeError(f"{type(exc).__name__} {req.full_url}: {exc}")
+            if attempt + 1 < HTTP_RETRIES:
+                _sleep_backoff(attempt)
+        raise last or RuntimeError(f"unreachable {req.full_url}")
 
     def qdrant_headers():
         return {"api-key": QDRANT_API_KEY} if QDRANT_API_KEY else {}

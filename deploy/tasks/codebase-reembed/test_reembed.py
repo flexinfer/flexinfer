@@ -15,10 +15,13 @@ Run standalone like the other repo unittest scripts (no pip deps)::
 from __future__ import annotations
 
 import importlib.util
+import io
 import os
 import tempfile
 import textwrap
 import unittest
+import urllib.error
+import urllib.request
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIGMAP = os.path.join(HERE, "configmap.yaml")
@@ -178,6 +181,126 @@ class ChunkFileMultiRepo(unittest.TestCase):
         self.assertTrue(chunks)
         self.assertEqual(chunks[0]["rel"], "cmd/main.go")
         self.assertTrue(chunks[0]["text"].startswith("# loom/cmd/main.go\n"))
+
+
+class _FakeResp:
+    """Minimal context-manager stand-in for an http.client.HTTPResponse."""
+
+    def __init__(self, status, body):
+        self.status = status
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _http_error(code, body=b"upstream_unavailable"):
+    return urllib.error.HTTPError(
+        "http://proxy/v1/embeddings", code, "err", None, io.BytesIO(body)
+    )
+
+
+class _ScriptedUrlopen:
+    """Replays a scripted list of urlopen outcomes (raise if Exception, else
+    return), counting calls. Outcomes past the end repeat the last entry."""
+
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+        self.calls = 0
+
+    def __call__(self, req, timeout=None):
+        outcome = self.outcomes[min(self.calls, len(self.outcomes) - 1)]
+        self.calls += 1
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+class DoRetry(unittest.TestCase):
+    """`_do` rides out transient 502/503/504 + connection errors but fails fast on
+    deterministic ones. Regression for the 2026-06-27 run that aborted on a single
+    bge-proxy ``502 upstream_unavailable`` when the model reloaded mid-batch."""
+
+    def setUp(self):
+        self._orig_urlopen = reembed.urllib.request.urlopen
+        self._orig_sleep = reembed.time.sleep
+        self.sleeps = []
+        reembed.time.sleep = lambda d: self.sleeps.append(d)
+
+    def tearDown(self):
+        reembed.urllib.request.urlopen = self._orig_urlopen
+        reembed.time.sleep = self._orig_sleep
+
+    def _run(self, outcomes, **kw):
+        fake = _ScriptedUrlopen(outcomes)
+        reembed.urllib.request.urlopen = fake
+        req = reembed._req("http://proxy/v1/embeddings", data={"x": 1})
+        return reembed._do(req, **kw), fake
+
+    def test_retries_502_then_succeeds(self):
+        ok = _FakeResp(200, b'{"ok": true}')
+        (status, body), fake = self._run([_http_error(502), _http_error(502), ok])
+        self.assertEqual(status, 200)
+        self.assertEqual(body, {"ok": True})
+        self.assertEqual(fake.calls, 3)  # two failures + one success
+        self.assertEqual(len(self.sleeps), 2)  # one backoff per retry
+
+    def test_retries_connection_error_then_succeeds(self):
+        ok = _FakeResp(200, b"{}")
+        err = urllib.error.URLError("connection refused")
+        (status, _body), fake = self._run([err, ok])
+        self.assertEqual(status, 200)
+        self.assertEqual(fake.calls, 2)
+        self.assertEqual(len(self.sleeps), 1)
+
+    def test_non_transient_status_fails_fast(self):
+        # A 400 is deterministic; retrying just burns time on a 10-minute batch.
+        with self.assertRaises(RuntimeError):
+            self._run([_http_error(400)])
+        self.assertEqual(self.sleeps, [])
+
+    def test_expected_status_short_circuits(self):
+        # ensure_collection probes with expect=(200, 404); a 404 must not retry.
+        (status, body), fake = self._run([_http_error(404)], expect=(200, 404))
+        self.assertEqual(status, 404)
+        self.assertIsNone(body)
+        self.assertEqual(fake.calls, 1)
+        self.assertEqual(self.sleeps, [])
+
+    def test_exhausts_retries_then_raises(self):
+        orig_retries = reembed.HTTP_RETRIES
+        reembed.HTTP_RETRIES = 3
+        try:
+            with self.assertRaises(RuntimeError) as ctx:
+                self._run([_http_error(503) for _ in range(3)])
+        finally:
+            reembed.HTTP_RETRIES = orig_retries
+        self.assertIn("503", str(ctx.exception))
+        self.assertEqual(len(self.sleeps), 2)  # 3 attempts -> 2 backoffs
+
+
+class SleepBackoff(unittest.TestCase):
+    def test_exponential_with_jitter_within_bounds(self):
+        # Equal jitter: each wait lands in [d/2, d] for d = base * 2**attempt,
+        # capped. Verify monotonic growth of the lower bound and the cap.
+        orig_sleep = reembed.time.sleep
+        recorded = []
+        reembed.time.sleep = lambda d: recorded.append(d)
+        try:
+            for attempt in range(6):
+                reembed._sleep_backoff(attempt)
+        finally:
+            reembed.time.sleep = orig_sleep
+        for attempt, waited in enumerate(recorded):
+            d = min(reembed.RETRY_BACKOFF_CAP, reembed.RETRY_BACKOFF * (2**attempt))
+            self.assertGreaterEqual(waited, d / 2)
+            self.assertLessEqual(waited, d)
 
 
 if __name__ == "__main__":
