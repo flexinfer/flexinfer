@@ -35,24 +35,12 @@ spec:
   source: mlc://mlc-ai/Qwen3-14B-q4f16_1-MLC
   storageSize: 50Gi
   storageStrategy: SharedPVC
----
-# Qwen3 14B abliterated (custom MLC build on the shared PVC).
-# The build job template lives at:
-#   k3s/ai/flexinfer/modelcaches/manual/build-qwen3-14b-abliterated-q4f16_1.yaml
-apiVersion: ai.flexinfer/v1alpha1
-kind: ModelCache
-metadata:
-  name: qwen3-14b-abliterated-mlc
-  namespace: flexinfer-system
-spec:
-  existingClaimName: mlc-models-nfs
-  modelPath: Qwen3-14B-abliterated-q4f16_1-MLC
-  # Custom build artifact is produced by the manual build job and written to modelPath.
-  # Use an MLC-style source so the controller treats this as a compiled artifact (checks for mlc-chat-config.json).
-  # If the directory is missing, fail fast rather than downloading raw HF weights into an MLC artifact path.
-  source: mlc://custom/Qwen3-14B-abliterated-q4f16_1-MLC
-  storageSize: 50Gi
-  storageStrategy: SharedPVC
+# Removed 2026-06-27: qwen3-14b-abliterated-mlc was stuck Provisioning since
+# 2026-03-16 -- its custom MLC artifact (mlc://custom/Qwen3-14B-abliterated-q4f16_1-MLC)
+# was never built, so the downloader Job retried indefinitely. The dependent
+# ModelDeployment (k3s/ai/flexinfer/modeldeployments/qwen3-14b-abliterated.yaml)
+# is removed alongside it. Rebuild recipe kept at
+# k3s/ai/flexinfer/modelcaches/manual/build-qwen3-14b-abliterated-q4f16_1.yaml.
 ---
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
