@@ -41,3 +41,22 @@ metadata:
 value: 100000
 globalDefault: false
 description: High-priority transform jobs such as abliteration and finetuning.
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: flexinfer-serving-critical
+  labels:
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/instance: {{ .Release.Name }}
+# Above flexinfer-modelcache-transform (100000) so a ModelCache quant/transform
+# Job sharing a single-GPU node cannot starve protected inference serving: the
+# scheduler preempts the lower-priority transform pod for the serving pod instead
+# of leaving serving Pending ("no preemption victims found"). Opt-in per Model via
+# the flexinfer.ai/serving-priority-class annotation; intended for the radeonvii
+# embed/rerank retrieval plane (bge-large-radeonvii + bge-reranker-radeonvii),
+# which is pinned warm and must not 502 when a quant Job lands on the same card.
+value: 150000
+globalDefault: false
+preemptionPolicy: PreemptLowerPriority
+description: Protected inference serving that must not be preempted by ModelCache transform/quant jobs sharing the same GPU.
