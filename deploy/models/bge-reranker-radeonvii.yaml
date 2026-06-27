@@ -30,6 +30,12 @@ kind: Model
 metadata:
   name: bge-reranker-radeonvii
   namespace: flexinfer-system
+  annotations:
+    # Protect this warm retrieval lane from GPU preemption: the serving pod runs
+    # at PriorityClass flexinfer-serving-critical (150000) > flexinfer-modelcache-
+    # transform (100000), so a quant/transform Job cannot grab the radeonvii GPU
+    # out from under the reranker (co-resident with bge embeddings via multiModel).
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
 spec:
   backend: llamacpp
   source: HF://gpustack/bge-reranker-v2-m3-GGUF
