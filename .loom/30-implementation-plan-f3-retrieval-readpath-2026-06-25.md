@@ -74,9 +74,30 @@ Generalized `codebase-reembed` from loom-core-only to a **multi-repo** nightly r
 - **Activation:** Flux applies the new CronJob; next nightly (04:00) indexes both repos. Live verify: `kubectl -n flexinfer-system create job --from=cronjob/codebase-reembed reembed-adhoc` → `re-embed DONE repos=2/2 …`; then `/v1/answer` with `collection=codebase_memory_bge_loom_v1` on a loom question. (Cluster-only; not runnable from the Mac.)
 - Acceptance: ✅ (code) ≥2 repos configured + queryable-by-collection through the Slice-2 endpoint; live one-shot is the activation step. Iteration plan: [.loom/32-iteration-plan-f3-slice4-index-coverage-2026-06-26.md](32-iteration-plan-f3-slice4-index-coverage-2026-06-26.md).
 
-### Slice 5 — retrieval-quality gate (F1 tie-in)
-Extend `model-eval-gauntlet` (currently throughput-only) with a retrieval-quality + coherence dimension built from the kill-test harness, so index/chunker/model changes are gated, not hoped. This is the brainstorm's repurposed F1.
-- Acceptance: a gauntlet run emits a retrieval-quality score row alongside throughput.
+### Slice 5 — retrieval-quality gate (F1 tie-in) — BUILT (code) 2026-06-29
+Gave the throughput-only gauntlet a **retrieval-quality dimension** built from the
+kill-test harness, so an index / chunker / answer-model change is *gated*, not
+hoped. New pure-stdlib kernel `eval/f3-retrieval/rqgate.py` turns the per-question
+rows `f3eval.py` already builds into an aggregate score + a **two-axis** gate
+(`ev_ratio` = retrieval recall, `judge_ratio` = answer synthesis — the two failure
+modes Slice 3 separated) + a flat `result_row`. `f3eval.py` emits one
+`RQ_RESULT_JSON` gate row when `RQ_GATE=1` (reuses the existing retrieval loop →
+**zero new I/O**; with `RQ_GATE` unset, output is byte-for-byte unchanged). The
+chosen scope ships the kernel (proven offline) + the activation recipe, not a
+scheduled Flux CronJob — embedding a self-contained copy of the primitives in a
+Flux ConfigMap would two-source-drift vs `f3eval.py`, and you should not schedule
+an unvalidated gate. Iteration plan: [.loom/32-iteration-plan-f3-slice5-retrieval-quality-gate-2026-06-29.md](32-iteration-plan-f3-slice5-retrieval-quality-gate-2026-06-29.md).
+- **Proven offline:** `rqgate.py --self-check` (12/12) + `test_rqgate.py` (16
+  cases) + a monkeypatched f3eval driver (RQ_GATE=1 → exactly one `RQ_RESULT_JSON`;
+  unset → none, `F3_RESULT_JSON` still present); `test_readpath.py` (11) still
+  green; new `rqgate_test` CI lint gate. Thresholds (`ev` 0.8 / `judge` 0.6,
+  partial-credit 0.5) are provisional from the Slice-3 hard-set, env-overridable.
+- **Activation (cluster-only, queued):** `eval/f3-retrieval/job.rq.example.yaml`
+  (retrieval-only, no NFS) → expect one `RQ_RESULT_JSON {… "verdict": …}` row per
+  answer model. Fast-follow: tune thresholds live, then promote to a scheduled Flux
+  CronJob beside `model-eval-gauntlet`.
+- Acceptance: ✅ (code) a gauntlet run emits a retrieval-quality score row; live row
+  is the activation step.
 
 ### Slice 6 — multi-turn prefill (F5 tie-in)
 Validate the APC prefix-cache canary for agent loops (growing context re-sent each turn). Bench TTFT on turn N with/without APC.

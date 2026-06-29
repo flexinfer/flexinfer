@@ -28,6 +28,11 @@ import time
 import urllib.error
 import urllib.request
 
+try:
+    import rqgate  # retrieval-quality gate kernel (F3 Slice 5); optional sibling
+except Exception:  # noqa: BLE001
+    rqgate = None
+
 # ---- config (env) ----------------------------------------------------------
 PROXY = os.environ["PROXY_URL"].rstrip("/")
 EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-large-radeonvii")
@@ -61,6 +66,16 @@ MAX_PER_PATH = int(os.environ.get("MAX_PER_PATH", "0"))
 GEN_MAX_TOKENS = int(os.environ.get("GEN_MAX_TOKENS", "300"))
 MAX_FILE_BYTES = int(os.environ.get("MAX_FILE_BYTES", str(512 * 1024)))
 HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "240"))
+
+# --- retrieval-quality gate (F3 Slice 5) ---
+# When RQ_GATE is truthy, after the kill-test aggregation also emit a single
+# RQ_RESULT_JSON gate row (rqgate kernel) so a gauntlet run yields a
+# retrieval-quality verdict alongside throughput. Thresholds are env-overridable;
+# a FAIL is advisory unless RQ_FAIL_ON_GATE is set (the runner/wrapper decides).
+RQ_GATE = os.environ.get("RQ_GATE", "").lower() in ("1", "true", "yes")
+RQ_MIN_JUDGE_RATIO = float(os.environ.get("RQ_MIN_JUDGE_RATIO", "0.6"))
+RQ_MIN_EV_RATIO = float(os.environ.get("RQ_MIN_EV_RATIO", "0.8"))
+RQ_PARTIAL_WEIGHT = float(os.environ.get("RQ_PARTIAL_WEIGHT", "0.5"))
 
 EXTS = tuple(
     e.strip()
@@ -470,6 +485,31 @@ def main():
         ),
         flush=True,
     )
+
+    # ---- retrieval-quality gate row (F3 Slice 5) ----
+    # Reuses the rows already built above (retrieval kw/judge + ev_retrieved) to
+    # emit an absolute-threshold gate verdict — the gauntlet's retrieval-quality
+    # output, sibling of the throughput row the bench binary stores per model.
+    if RQ_GATE:
+        if rqgate is None:
+            log("RQ_GATE set but rqgate module not importable; skipping gate row")
+        else:
+            rq_row = rqgate.evaluate(
+                rows,
+                CHAT_MODEL,
+                COLLECTION,
+                partial_weight=RQ_PARTIAL_WEIGHT,
+                min_judge_ratio=RQ_MIN_JUDGE_RATIO,
+                min_ev_ratio=RQ_MIN_EV_RATIO,
+                extra={"elapsed_s": round(time.time() - t0, 1)},
+            )
+            log(
+                f"retrieval-quality gate: {rq_row['verdict']} "
+                f"(judge_ratio={rq_row['judge_ratio']} ev_ratio={rq_row['ev_ratio']}"
+                + (f"; {', '.join(rq_row['reasons'])}" if rq_row["reasons"] else "")
+                + ")"
+            )
+            print("RQ_RESULT_JSON " + json.dumps(rq_row), flush=True)
 
 
 if __name__ == "__main__":

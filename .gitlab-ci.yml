@@ -215,6 +215,34 @@ readpath_test:
         - deploy/system/codebase-answer/configmap.yaml
     - when: never
 
+# Pure-stdlib unit tests for the F3 retrieval-quality gate kernel (Slice 5).
+# Gates rqgate (aggregate/gate/result_row) + the f3eval RQ_RESULT_JSON wiring it
+# feeds. No pip deps -> alpine. Mirrors readpath_test.
+rqgate_test:
+  stage: lint
+  image: python:3.12-alpine
+  needs: []
+  script:
+    - python3 eval/f3-retrieval/rqgate.py --self-check
+    - python3 eval/f3-retrieval/test_rqgate.py
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - eval/f3-retrieval/rqgate.py
+        - eval/f3-retrieval/test_rqgate.py
+        - eval/f3-retrieval/f3eval.py
+    - if: $CI_MERGE_REQUEST_ID
+      changes:
+        - eval/f3-retrieval/rqgate.py
+        - eval/f3-retrieval/test_rqgate.py
+        - eval/f3-retrieval/f3eval.py
+    - if: $CI_COMMIT_BRANCH
+      changes:
+        - eval/f3-retrieval/rqgate.py
+        - eval/f3-retrieval/test_rqgate.py
+        - eval/f3-retrieval/f3eval.py
+    - when: never
+
 # Pure-stdlib unit tests for the nightly re-embed script's multi-repo logic
 # (F3 Slice 4). Extracts the canonical script from the ConfigMap literal block
 # and exercises parse_repos / point_id / chunk_file offline. No pip deps -> alpine.

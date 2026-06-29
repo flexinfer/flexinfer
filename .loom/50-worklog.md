@@ -2,6 +2,48 @@
 
 Chronological notes while executing the plan (useful for handoffs and debugging).
 
+## 2026-06-29
+
+### RALPH slice — F3 Slice 5: retrieval-quality gate (BUILT, code; live row queued)
+
+Picked F3 Slice 5 as the next RALPH increment (Slice 6 / multi-turn prefill needs
+live APC-canary measurement — cluster-only, out of reach from the Mac; Slice 5 is
+mostly offline, testable code). Gave the throughput-only `model-eval-gauntlet` a
+**retrieval-quality dimension** built from the existing kill-test harness.
+
+- **New pure kernel `eval/f3-retrieval/rqgate.py`** (no I/O, no env at import →
+  unit-testable + importable). Turns the per-question rows `f3eval.py` already
+  builds into: an aggregate score, a **two-axis** gate (`ev_ratio` = retrieval
+  recall; `judge_ratio` = answer synthesis with partial credit — the two failure
+  modes Slice 3 separated), and a flat `result_row`. `n=0` is always a FAIL (never
+  a vacuous pass). `--self-check` runs the kernel on a synthetic fixture offline.
+- **`f3eval.py` extension:** when `RQ_GATE=1`, after its existing aggregation it
+  emits one `RQ_RESULT_JSON {…}` gate row via `rqgate.evaluate` — reuses the
+  existing retrieval loop, so **zero new I/O**. Best-effort import + env-gated, so
+  with `RQ_GATE` unset the output is byte-for-byte unchanged (proven).
+- **Proven offline:** `rqgate.py --self-check` (12/12); `test_rqgate.py` (16
+  cases); a monkeypatched f3eval driver (RQ_GATE=1 → exactly one `RQ_RESULT_JSON`
+  with correct schema+verdict; unset → none, `F3_RESULT_JSON` still present);
+  `test_readpath.py` (11) still green (regression). New `rqgate_test` CI lint job
+  (`python:3.12-alpine`) gates rqgate + test + f3eval. YAML parse OK.
+- **Scope decision:** ship the kernel (proven) + activation recipe
+  `eval/f3-retrieval/job.rq.example.yaml` (retrieval-only, `RQ_GATE=1 SKIP_NAIVE=1`,
+  **no NFS mount** since naive is skipped) — NOT a scheduled Flux CronJob.
+  Embedding a self-contained copy of the retrieval primitives in a Flux ConfigMap
+  would two-source-drift vs the canonical `f3eval.py`, and you should not schedule
+  an *unvalidated* gate. Promote to a scheduled CronJob as a fast-follow once
+  thresholds are tuned live. Thresholds (`ev` 0.8 / `judge` 0.6, partial 0.5) are
+  provisional from the Slice-3 hard-set (`ev` ~0.83, `judge` ~0.47), env-overridable;
+  a FAIL is advisory (emitted, not enforced) until a wrapper acts on it.
+- **Activation (cluster-only, queued):** create the `f3-rqgate-script` (f3eval.py +
+  rqgate.py) + `f3-rqgate-questions` ConfigMaps, apply the example Job → expect one
+  `RQ_RESULT_JSON {… "verdict": …}` row per answer model against
+  `codebase_memory_bge_v1`.
+
+Artifacts: `.loom/32-iteration-plan-f3-slice5-retrieval-quality-gate-2026-06-29.md`;
+parent plan Slice 5 marked BUILT. F3 remaining build slice after this: Slice 6
+(multi-turn prefill, live).
+
 ## 2026-05-28
 
 ### RALPH slice — F4-prefix-cache-flip canary live kill-test (verdict: conditional)
