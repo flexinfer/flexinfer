@@ -76,6 +76,51 @@ MAX_PER_PATH=0 SKIP_NAIVE=1 ...   # via the Job env
 MAX_PER_PATH=3 SKIP_NAIVE=1 ...
 ```
 
+## Slice 5 — retrieval-quality gate
+
+The kill-test's verdict is *retrieval-vs-naive* (a comparison). A **promotion
+gate** needs an *absolute* bar, so an index / chunker / answer-model change is
+caught when quality drops — not only when it loses to stuffing. `rqgate.py` is the
+pure kernel for that: it turns the per-question rows `f3eval.py` already builds into
+an aggregate score, a **two-dimension** PASS/FAIL verdict, and a flat score row.
+
+The two axes mirror the Slice-3 finding (recall and synthesis are distinct failure
+modes):
+
+- `ev_ratio` — fraction of questions whose evidence file reached the top-K context
+  (**recall**: did we even fetch the right file);
+- `judge_ratio` — fraction judged CORRECT, with partial credit (**synthesis**: did
+  the model assemble the answer).
+
+A regression in *either* fails the gate. Defaults (`RQ_MIN_EV_RATIO=0.8`,
+`RQ_MIN_JUDGE_RATIO=0.6`, `RQ_PARTIAL_WEIGHT=0.5`) are provisional, set from the
+Slice-3 hard-set numbers (`ev` ~0.83, `judge` ~0.47) and env-overridable.
+
+`f3eval.py` emits the gate row when `RQ_GATE=1` — it reuses the existing retrieval
+loop, so this adds **zero new I/O**; with `RQ_GATE` unset the output is
+byte-for-byte unchanged (no `RQ_RESULT_JSON`). A run prints one machine-readable
+line:
+
+```
+RQ_RESULT_JSON {"kind":"retrieval_quality","model":"…","collection":"…","n":18,
+  "judge_correct":…,"ev_retrieved":…,"judge_ratio":…,"ev_ratio":…,"verdict":"PASS|FAIL",…}
+```
+
+This is the gauntlet's retrieval-quality output — the sibling of the throughput row
+`model-eval-gauntlet` stores per model. `job.rq.example.yaml` runs it in-cluster
+(retrieval-only, `RQ_GATE=1 SKIP_NAIVE=1`, **no NFS mount** since naive is skipped).
+Pure logic is unit-tested in `test_rqgate.py` (CI `rqgate_test`); the kernel has an
+offline wiring gate:
+
+```bash
+python3 rqgate.py --self-check      # offline, no cluster
+python3 test_rqgate.py              # kernel unit tests
+```
+
+**Promotion to a scheduled Flux CronJob is a documented fast-follow** once the
+thresholds are validated against a first live run (you should not schedule an
+unvalidated gate). Until then the gate row is advisory — emitted, not enforced.
+
 ## Run it (in-cluster Job)
 
 `job.example.yaml` is the exact Job used (mirrors `deploy/tasks/codebase-reembed`:
@@ -94,8 +139,11 @@ Key env knobs (see `f3eval.py`): `COLLECTION` (swap to compare indexes — Slice
 
 ## Files
 
-- `f3eval.py` — the harness
+- `f3eval.py` — the harness (emits `RQ_RESULT_JSON` when `RQ_GATE=1`)
+- `rqgate.py` — pure retrieval-quality gate kernel (Slice 5): aggregate / gate / row
 - `questions.loomcore.json` — 16 adversarially-verified, non-guessable loom-core Q&A
 - `questions.hard.loomcore.json` — 18 harder, non-saturating Q&A (Slice 3+)
 - `test_readpath.py` — unit tests for `diversify_selection` (Slice 3.1)
-- `job.example.yaml` — in-cluster runner
+- `test_rqgate.py` — unit tests for the retrieval-quality gate kernel (Slice 5)
+- `job.example.yaml` — in-cluster kill-test runner
+- `job.rq.example.yaml` — in-cluster retrieval-quality gate runner (Slice 5)

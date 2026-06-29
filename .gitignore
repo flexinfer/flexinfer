@@ -82,3 +82,8 @@ bin/
 # docs/ root). Treated as ephemeral — they dirtied every agent session. See
 # DEBT-DOC-01 (.loom/tech-debt-plan-2026-06-11.md).
 docs/roadmap-reconciliation-*.md
+
+# Python bytecode from running the stdlib eval/task tests (eval/f3-retrieval,
+# deploy/tasks/*). Build artifact — never committed.
+__pycache__/
+*.pyc

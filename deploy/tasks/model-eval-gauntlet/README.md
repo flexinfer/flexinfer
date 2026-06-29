@@ -61,6 +61,20 @@ PGPASSWORD=changeme-app psql -h langgraph-postgres-postgresql.ai.svc -U langgrap
 kubectl -n flexinfer-system patch cronjob/model-eval-gauntlet -p '{"spec":{"suspend":true}}'
 ```
 
+## Retrieval-quality companion (F3 Slice 5)
+
+This gauntlet measures **throughput**. The **retrieval-quality** dimension — does
+the retrieve→rerank→generate read path still answer repo-Q&A correctly after an
+index / chunker / answer-model change — lives in
+[`eval/f3-retrieval/`](../../../eval/f3-retrieval/). The `rqgate.py` kernel turns
+the F3 kill-test's per-question rows into a two-axis gate (`ev_ratio` recall +
+`judge_ratio` synthesis) and `f3eval.py` emits an `RQ_RESULT_JSON` score row when
+`RQ_GATE=1` — the retrieval-quality sibling of the throughput row above.
+
+Run it in-cluster with `eval/f3-retrieval/job.rq.example.yaml` (retrieval-only, no
+NFS mount). Promoting it to a scheduled Flux CronJob alongside this one is a
+documented fast-follow, gated on validating the thresholds against a first live run.
+
 ## Known limitation
 
 `device_class` currently reflects the **bench runner pod's** node (often a CPU
