@@ -68,7 +68,8 @@ spec:
     # gemma fleet's shared routes (quality-chat, gpt-4, ...) now serve from the
     # 7900xtx primary alone. Restore by setting minReplicas back to 1 (and idle
     # the reasoning lane) if the second gemma instance is needed again.
-    minReplicas: 0
+    # 2026-06-30 GAMING CUTOVER: promoted to warm primary (7900xtx -> gaming).
+    minReplicas: 1
     idleTimeout: 30m
     # 2026-05-16: raised for the 2/256 concurrency canary. The controller now
     # sizes vLLM's startupProbe from this budget, so the first graph-capture
@@ -138,17 +139,28 @@ spec:
     limits:
       cpu: "4"
       memory: 16Gi
-  # 2026-06-20: PARKED / de-advertised. This instance was retired to
-  # minReplicas 0 (5930k card reassigned to the 5930k-textgen shared lane led by
-  # qwen36-35b). It must not be advertised: serviceLabels removed and
-  # litellm.enabled=false so the proxy hides it from /v1/models, refuses to
-  # resolve it as an alias, and never cold-starts it by name — stopping the
-  # stale per-model queue it was accumulating. Restore by re-adding the shared
-  # serviceLabels (copy from gemma4-26b-a4b-gptq.yaml) + flip enabled true +
-  # minReplicas 1.
+  # 2026-06-30 GAMING CUTOVER: PROMOTED to sole gemma primary. cblevins-7900xtx
+  # moved to gaming mode, so the shared 26B routes were moved here from the
+  # 7900xtx sister (which now has serviceLabels: [] + litellm.enabled=false).
+  # Revert this block (drop serviceLabels, litellm.enabled=false, minReplicas 0)
+  # and restore them on the 7900xtx sister to hand the fleet back.
+  serviceLabels:
+    - gemma4-26b
+    - quality-chat
+    - mid-chat
+    - fast-chat
+    - fast-text
+    - gpt-4
+    - gpt-3.5-turbo
+    - copilot
+    - qwen3-default
+    - project-mgmt
   litellm:
-    enabled: false
+    enabled: true
     servedModelName: gemma4-26b-a4b-gptq-5930k
+    aliases:
+      - gemma4-26b-5930k
+      - gemma4-26b-a4b-5930k
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"

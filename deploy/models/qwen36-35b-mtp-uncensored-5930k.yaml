@@ -107,7 +107,8 @@ spec:
       memory: 8Gi
   serverless:
     enabled: true
-    minReplicas: 1
+    # 2026-06-30 GAMING CUTOVER: scaled to 0 so gemma4-26b takes the 5930k card.
+    minReplicas: 0
     coldStartTimeout: 25m0s
     idleTimeout: 30m0s
   tolerations:
@@ -118,14 +119,13 @@ spec:
   # uncensored / reasoning daily-driver (operator: "qwen3 36b ablit"). The
   # `abliterated` role moved here from the parked qwen3-14b-ablit-newimg so
   # services route by role, not by exact model name.
-  serviceLabels:
-  - qwen36-35b-mtp-uncensored-5930k
-  - abliterated
-  - uncensored
-  - heretic
-  - reasoning
+  # 2026-06-30 GAMING CUTOVER: de-advertised (serviceLabels cleared, litellm off)
+  # so nothing cold-starts it to preempt gemma on the 5930k-textgen card. Restore
+  # the serviceLabels list + litellm.enabled=true + minReplicas 1 to bring the
+  # abliterated/uncensored/reasoning lane back.
+  serviceLabels: []
   litellm:
-    enabled: true
+    enabled: false
     servedModelName: qwen36-35b-mtp-uncensored-5930k
     aliases:
     - abliterated
