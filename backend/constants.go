@@ -24,4 +24,9 @@ const (
 	PortComfyUI   int32 = 8188
 	PortOllama    int32 = 11434
 	PortSteam     int32 = 27036
+	// PortSunshine is Sunshine's Moonlight HTTP control port (base 47989). It is
+	// the canonical "is the gaming host up" TCP target; the HTTPS Moonlight port
+	// (47984), HTTPS web UI (47990), RTSP (48010/tcp) and the UDP media ports
+	// (47998-48010) are exposed at the DaemonSet/networking layer, not here.
+	PortSunshine int32 = 47989
 )
