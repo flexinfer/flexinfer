@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -101,6 +102,23 @@ type Manager struct {
 	// path. Resolved via backend.Get, so aliases (e.g. "gaming") also work.
 	gamingBackend string
 
+	// gamingIdleTimeout, when > 0, opts into auto-reverting a gaming node back to
+	// inference after this long with no connected Moonlight client. 0 (default)
+	// disables it — matching the SteamBackend/SunshineBackend "never auto-idle"
+	// contract; gaming sessions then persist until an explicit inference switch.
+	gamingIdleTimeout time.Duration
+
+	// gamingClientActive reports whether a Moonlight client is currently streaming
+	// (injectable for tests; default probes the Sunshine ports). Used only by the
+	// idle guard when gamingIdleTimeout > 0.
+	gamingClientActive func() bool
+
+	// nowFn is the clock (injectable for tests; default time.Now).
+	nowFn func() time.Time
+
+	// gamingIdleCancel stops the idle-guard goroutine when leaving gaming mode.
+	gamingIdleCancel context.CancelFunc
+
 	// gpuVendor and gpuArch describe the GPU on this node.
 	gpuVendor backend.GPUVendor
 	gpuArch   string
@@ -136,6 +154,11 @@ type ManagerConfig struct {
 	// GamingBackend overrides the backend loaded for gaming mode. Empty =
 	// "sunshine" (the default). Set to "steam" for the legacy Remote Play path.
 	GamingBackend string
+
+	// GamingIdleTimeout opts into auto-reverting a gaming node to inference after
+	// this long with no Moonlight client (0 = disabled, the default). Wired from
+	// the GAMING_IDLE_TIMEOUT env var by the runtime entrypoint.
+	GamingIdleTimeout time.Duration
 }
 
 // NewManager creates a runtime process manager.
@@ -155,18 +178,25 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.GamingBackend == "" {
 		cfg.GamingBackend = backend.NameSunshine
 	}
-	return &Manager{
+	m := &Manager{
 		models:              make(map[string]*LoadedModel),
 		multiModel:          cfg.MultiModel,
 		vramHeadroomMB:      cfg.VRAMHeadroomMB,
 		mode:                ModeInference,
 		gamingBackend:       cfg.GamingBackend,
+		gamingIdleTimeout:   cfg.GamingIdleTimeout,
+		nowFn:               time.Now,
 		gpuVendor:           cfg.GPUVendor,
 		gpuArch:             cfg.GPUArch,
 		shutdownTimeout:     cfg.ShutdownTimeout,
 		healthCheckInterval: cfg.HealthCheckInterval,
 		modelBasePath:       cfg.ModelBasePath,
 	}
+	m.gamingClientActive = m.sunshineClientActive
+	// Reflect the initial mode in the gauge.
+	NodeModeGauge.WithLabelValues(string(ModeInference)).Set(1)
+	NodeModeGauge.WithLabelValues(string(ModeGaming)).Set(0)
+	return m
 }
 
 // allModelStates enumerates the state label values used by ModelActiveState, so
@@ -660,8 +690,10 @@ func (m *Manager) Mode() NodeMode {
 }
 
 // SetMode switches the node between inference and gaming mode.
-// Gaming mode unloads any active model and starts the steam backend.
-// Inference mode unloads steam and leaves the node available for models.
+// Gaming mode unloads any active model and starts the gaming backend (Sunshine
+// by default; see gamingBackend). Inference mode unloads it and leaves the node
+// available for models. It updates NodeModeGauge and, when GamingIdleTimeout > 0,
+// starts/stops the opt-in idle guard that auto-reverts an unused gaming session.
 //
 // Lock ordering: this method does NOT hold m.mu across the Load() call.
 // Load() acquires m.mu internally. Holding it here would deadlock.
@@ -706,12 +738,146 @@ func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 			m.mu.Lock()
 			m.mode = ModeInference
 			m.mu.Unlock()
+			m.setModeGauge(ModeInference)
 			return fmt.Errorf("failed to start gaming mode: %w", err)
 		}
 	}
 
+	// Reflect the new mode and (re)configure the idle guard. Any prior guard is
+	// cancelled first so entering inference stops it and re-entering gaming
+	// restarts it cleanly.
+	m.setModeGauge(target)
+	m.stopGamingIdleGuard()
+	if target == ModeGaming && m.gamingIdleTimeout > 0 {
+		m.startGamingIdleGuard()
+	}
+
 	logger.Info("Mode switch complete", "mode", target)
 	return nil
+}
+
+// setModeGauge sets NodeModeGauge to 1 for the active mode and 0 for the other.
+func (m *Manager) setModeGauge(active NodeMode) {
+	NodeModeGauge.WithLabelValues(string(ModeInference)).Set(boolToFloat(active == ModeInference))
+	NodeModeGauge.WithLabelValues(string(ModeGaming)).Set(boolToFloat(active == ModeGaming))
+}
+
+func boolToFloat(b bool) float64 {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// stopGamingIdleGuard cancels a running idle-guard goroutine (no-op if none).
+func (m *Manager) stopGamingIdleGuard() {
+	m.mu.Lock()
+	cancel := m.gamingIdleCancel
+	m.gamingIdleCancel = nil
+	m.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+}
+
+// startGamingIdleGuard launches the opt-in idle-revert goroutine.
+func (m *Manager) startGamingIdleGuard() {
+	ctx, cancel := context.WithCancel(context.Background())
+	m.mu.Lock()
+	m.gamingIdleCancel = cancel
+	m.mu.Unlock()
+	go m.gamingIdleLoop(ctx)
+}
+
+// gamingIdleLoop reverts the node to inference after gamingIdleTimeout with no
+// connected Moonlight client. It ticks at a fraction of the timeout and resets
+// the idle clock whenever a client is active.
+func (m *Manager) gamingIdleLoop(ctx context.Context) {
+	logger := log.FromContext(ctx)
+	interval := m.gamingIdleTimeout / 4
+	if interval < 15*time.Second {
+		interval = 15 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
+	idleSince := m.nowFn()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if m.Mode() != ModeGaming {
+				return
+			}
+			active := m.gamingClientActive != nil && m.gamingClientActive()
+			revert, newIdleSince := gamingShouldRevert(active, idleSince, m.nowFn(), m.gamingIdleTimeout)
+			idleSince = newIdleSince
+			if revert {
+				logger.Info("Gaming idle timeout reached with no client; reverting to inference",
+					"idleTimeout", m.gamingIdleTimeout)
+				GamingIdleRevertsTotal.Inc()
+				if err := m.SetMode(context.Background(), ModeInference); err != nil {
+					logger.Error(err, "Idle auto-revert to inference failed")
+				}
+				return
+			}
+		}
+	}
+}
+
+// gamingShouldRevert is the pure idle-guard decision. A live client resets the
+// idle clock (never revert); with the guard disabled (timeout <= 0) it never
+// reverts; otherwise it reverts once the no-client span reaches the timeout.
+func gamingShouldRevert(clientActive bool, idleSince, now time.Time, timeout time.Duration) (revert bool, newIdleSince time.Time) {
+	if clientActive {
+		return false, now
+	}
+	if timeout <= 0 {
+		return false, idleSince
+	}
+	return now.Sub(idleSince) >= timeout, idleSince
+}
+
+// sunshineClientActive reports whether a Moonlight client currently holds a
+// connection to Sunshine, by scanning /proc/net/tcp{,6} for ESTABLISHED sockets
+// on the Moonlight control (47989) or RTSP (48010) ports. Best-effort: if no
+// /proc file can be read it returns true (assume active) so a broken probe never
+// auto-reverts a live gaming session.
+func (m *Manager) sunshineClientActive() bool {
+	const stateEstablished = "01" // TCP_ESTABLISHED in /proc/net/tcp
+	watched := map[int64]bool{
+		int64(backend.PortSunshine): true, // 47989 Moonlight HTTP control
+		48010:                       true, // RTSP
+	}
+	readAny := false
+	for _, f := range []string{"/proc/net/tcp", "/proc/net/tcp6"} {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			continue
+		}
+		readAny = true
+		for i, line := range strings.Split(string(data), "\n") {
+			if i == 0 { // header row
+				continue
+			}
+			fields := strings.Fields(line)
+			if len(fields) < 4 || fields[3] != stateEstablished {
+				continue
+			}
+			_, portHex, ok := strings.Cut(fields[1], ":") // local_address = HEXIP:HEXPORT
+			if !ok {
+				continue
+			}
+			if p, err := strconv.ParseInt(portHex, 16, 32); err == nil && watched[p] {
+				return true
+			}
+		}
+	}
+	if !readAny {
+		return true // could not probe; do not auto-revert on probe failure
+	}
+	return false
 }
 
 // RuntimeStatus is the serializable status of the runtime manager.

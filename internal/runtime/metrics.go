@@ -122,6 +122,26 @@ var (
 		},
 		[]string{"gpu_vendor", "gpu_arch"},
 	)
+
+	// NodeModeGauge reports the node's current operating mode: 1 for the active
+	// mode, 0 for the other. Lets a dashboard/alert see when a node is gaming
+	// (inference drained) vs serving. Set on every SetMode transition.
+	NodeModeGauge = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_runtime_node_mode",
+			Help: "Node operating mode (1 for the active mode: inference|gaming).",
+		},
+		[]string{"mode"},
+	)
+
+	// GamingIdleRevertsTotal counts opt-in idle auto-reverts from gaming back to
+	// inference (no Moonlight client for GAMING_IDLE_TIMEOUT).
+	GamingIdleRevertsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "flexinfer_runtime_gaming_idle_reverts_total",
+			Help: "Total automatic gaming->inference reverts triggered by the idle guard.",
+		},
+	)
 )
 
 // RegisterMetrics registers all runtime metrics with the default Prometheus registry.
@@ -139,6 +159,8 @@ func RegisterMetrics() {
 		GPUVRAMUsedBytesRT,
 		GPUVRAMFreeBytesRT,
 		GPUTemperatureCelsiusRT,
+		NodeModeGauge,
+		GamingIdleRevertsTotal,
 	)
 }
 

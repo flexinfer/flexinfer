@@ -36,14 +36,15 @@ import (
 
 func main() {
 	var (
-		listenAddr      string
-		gpuVendor       string
-		gpuArch         string
-		modelBasePath   string
-		shutdownTimeout time.Duration
-		healthInterval  time.Duration
-		multiModel      bool
-		vramHeadroomMB  int
+		listenAddr        string
+		gpuVendor         string
+		gpuArch           string
+		modelBasePath     string
+		shutdownTimeout   time.Duration
+		healthInterval    time.Duration
+		multiModel        bool
+		vramHeadroomMB    int
+		gamingIdleTimeout time.Duration
 	)
 
 	flag.StringVar(&listenAddr, "listen", ":8080", "Address for the runtime API server.")
@@ -56,6 +57,8 @@ func main() {
 		"Allow multiple concurrent VRAM-bounded model subprocesses on this node (default: single-slot).")
 	flag.IntVar(&vramHeadroomMB, "vram-headroom-mb", envutil.IntOrDefault("FLEXINFER_RUNTIME_VRAM_HEADROOM_MB", 0),
 		"Free-VRAM safety margin (MB) kept when admitting a concurrent model in multi-model mode (0 = default).")
+	flag.DurationVar(&gamingIdleTimeout, "gaming-idle-timeout", envutil.DurationOrDefault("GAMING_IDLE_TIMEOUT", 0),
+		"Opt-in: auto-revert a gaming node to inference after this long with no Moonlight client (0 = disabled).")
 
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
@@ -120,6 +123,7 @@ func main() {
 		ModelBasePath:       modelBasePath,
 		MultiModel:          multiModel,
 		VRAMHeadroomMB:      int64(vramHeadroomMB),
+		GamingIdleTimeout:   gamingIdleTimeout,
 	})
 
 	srv := runtime.NewServer(mgr)
