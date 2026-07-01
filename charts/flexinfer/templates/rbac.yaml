@@ -151,6 +151,9 @@ rules:
       - federatedmodels/finalizers
       - gpuleases
       - gpuleases/status
+      - gamingsessions
+      - gamingsessions/status
+      - gamingsessions/finalizers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]
