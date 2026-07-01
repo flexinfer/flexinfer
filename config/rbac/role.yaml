@@ -80,6 +80,32 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ai.flexinfer.ai
+  resources:
+  - gamingsessions
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ai.flexinfer.ai
+  resources:
+  - gamingsessions/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - ai.flexinfer.ai
+  resources:
+  - gamingsessions/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
   - apps
   resources:
   - daemonsets
