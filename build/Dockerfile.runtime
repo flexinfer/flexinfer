@@ -371,19 +371,21 @@ RUN chmod +x /opt/flexinfer/steam-headless.sh
 #     NOT packaged for Ubuntu 24.04; it can be layered from source later as an
 #     in-session micro-compositor for scaling/HDR/frame-limit ergonomics.
 #   - vulkan-tools/vainfo for diagnostics.
-#   - PipeWire/PulseAudio for game audio over Moonlight; steamcmd so Steam/Proton
-#     titles can be launched under Sunshine.
+#   - PipeWire/PulseAudio for game audio over Moonlight.
+# Steam/Proton game-launching is a follow-up: steamcmd's .deb pre-install aborts
+# a non-interactive build ("Steam License Agreement was DECLINED") unless the
+# license is debconf-preseeded; it also drags in i386. Sunshine streams any
+# app/desktop without it, so it's omitted here (add steamcmd + the debconf
+# preseed + `dpkg --add-architecture i386` when wiring Steam under Sunshine).
 # Sunshine itself is fetched from the LizardByte release (.deb) for Ubuntu 24.04.
 ARG SUNSHINE_VERSION=0.23.1
 RUN if [ "${INCLUDE_GAMING}" = "true" ]; then \
-      dpkg --add-architecture i386 && \
       apt-get update && apt-get install -y --no-install-recommends \
         mesa-vulkan-drivers mesa-va-drivers libva2 vainfo \
         vulkan-tools libgl1-mesa-dri \
         sway foot libseat1 seatd dbus-x11 \
         avahi-daemon avahi-utils \
         pipewire pipewire-pulse wireplumber pulseaudio-utils \
-        steamcmd lib32gcc-s1 \
         curl ca-certificates && \
       curl -fsSL -o /tmp/sunshine.deb \
         "https://github.com/LizardByte/Sunshine/releases/download/v${SUNSHINE_VERSION}/sunshine-ubuntu-24.04-amd64.deb" && \
