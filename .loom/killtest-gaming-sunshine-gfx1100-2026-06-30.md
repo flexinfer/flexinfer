@@ -113,8 +113,13 @@ v0.23.1 from the LizardByte .deb. Findings:
 - Only gap: `Failed to create client: Daemon not running` = no Avahi/mDNS in the
   container → Moonlight won't auto-discover (pair by IP, or bundle
   `avahi-daemon`, now added to the image + launch script).
-- Still needs a human Moonlight client for the live-stream + `radeontop`
-  confirmation (criteria 3/5); everything up to "pair and press play" is proven.
+- **Live Moonlight pairing CONFIRMED 2026-06-30**: operator paired Moonlight from
+  a LAN client and saw live motion (weston-simple-egl triangle + glmark2 horse)
+  streamed off the node → criteria 2/3/5 all pass end-to-end (RADV render →
+  VA-API HW encode → Moonlight). GOTCHA: an empty headless sway session streams
+  as a static gray desktop (looks "stalled") — needs on-screen content; and
+  vkcube in vulkan-tools is XCB-only (no Wayland WSI), so use weston-simple-egl /
+  glmark2-es2-wayland as headless test clients.
 
 Recipe artifacts: `build/sunshine-headless.sh` (sway + Sunshine launch),
 `build/Dockerfile.runtime` INCLUDE_GAMING layer, `backend/sunshine.go`

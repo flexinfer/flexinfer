@@ -162,6 +162,18 @@ func main() {
 		setupLog.Error(err, "unable to register model startup sweep")
 		os.Exit(1)
 	}
+	// GamingSession controller - declarative node mode (inference<->gaming).
+	// Reuses runtimeReconciler for per-node runtime discovery + the mode API.
+	if err = (&controllers.GamingSessionReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("gamingsession-controller"),
+		Runtime:  runtimeReconciler,
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "GamingSession")
+		os.Exit(1)
+	}
+
 	// ModelCatalog controller - registry sync and model discovery
 	if err = (&controllers.ModelCatalogReconciler{
 		Client:   mgr.GetClient(),

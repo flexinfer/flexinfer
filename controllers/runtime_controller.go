@@ -301,6 +301,41 @@ func (r *RuntimeReconciler) GetMode(ctx context.Context, endpoint *RuntimeEndpoi
 	return status.Mode, nil
 }
 
+// SetMode switches a node's runtime between "inference" and "gaming" via the
+// runtime management API (PUT /api/v1/mode). Gaming mode drains all loaded
+// models on the node and starts the gaming backend; inference mode unloads the
+// gaming backend and returns the node to the servable fleet. The runtime
+// performs the actual drain — this call is idempotent (a no-op when the node is
+// already in the target mode).
+func (r *RuntimeReconciler) SetMode(ctx context.Context, endpoint *RuntimeEndpoint, mode string) error {
+	url := fmt.Sprintf("%s/api/v1/mode", endpoint.URL())
+
+	body, err := json.Marshal(RuntimeModeStatus{Mode: mode})
+	if err != nil {
+		return fmt.Errorf("encoding mode request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, url, nil)
+	if err != nil {
+		return fmt.Errorf("creating set-mode request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Body = io.NopCloser(toReader(body))
+
+	httpClient := &http.Client{Timeout: httpClientTimeout}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("set-mode request failed: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode >= 300 {
+		b, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("runtime set-mode failed (status %d): %s", resp.StatusCode, string(b))
+	}
+	return nil
+}
+
 // isPodReady returns true if all containers in the pod are ready.
 func isPodReady(pod *corev1.Pod) bool {
 	for _, c := range pod.Status.Conditions {
