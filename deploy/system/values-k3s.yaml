@@ -376,6 +376,12 @@ runtime:
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
+      # 2026-07-01 GAMING CUTOVER: this is the dedicated gaming node (7900xtx).
+      # hostNetwork + gaming expose Sunshine on the node's fixed Moonlight ports
+      # so a LAN client can pair + stream the declarative GamingSession host.
+      # (Only this profile; the 5930k serving profile stays pod-networked.)
+      hostNetwork: true
+      gaming: true
       shmSize: "8Gi"
       memoryLimit: "48Gi"
       memoryRequest: "8Gi"
