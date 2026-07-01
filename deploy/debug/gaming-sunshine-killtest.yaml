@@ -1,0 +1,106 @@
+# Gaming mode v2 — Slice 1 kill-test (throwaway, debug-only).
+#
+# Reproduces, as a faithful k8s Job on the target gfx1100 node, the substrate
+# probe that proved RADV Vulkan render + VA-API hardware encode work inside a
+# privileged container with /dev/dri (see
+# .loom/killtest-gaming-sunshine-gfx1100-2026-06-30.md).
+#
+# Mirrors the production runtime DaemonSet's GPU access (privileged + /dev/dri
+# hostPath) so a PASS here means the real runtime pod can do the same.
+#
+# Run:
+#   export KUBECONFIG=~/workspace/platform/gitops/.kube/k3s.yaml
+#   kubectl apply -f deploy/debug/gaming-sunshine-killtest.yaml
+#   kubectl -n flexinfer-system logs -f job/gaming-sunshine-killtest
+#   kubectl -n flexinfer-system delete -f deploy/debug/gaming-sunshine-killtest.yaml
+#
+# VRAM-light by design (vainfo + a 3s 1080p VAAPI encode) so it can run alongside
+# the gemma4 primary without evicting inference. It does NOT run a full game.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gaming-sunshine-killtest
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/component: gaming-killtest
+    flexinfer.ai/debug: "true"
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/component: gaming-killtest
+    spec:
+      restartPolicy: Never
+      # Pin to the RDNA3 box. (gpu-arch label is not populated cluster-wide; the
+      # 7900xtx node is unambiguous by hostname.)
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-7900xtx
+      tolerations:
+        - key: dedicated
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: probe
+          image: ubuntu:24.04
+          securityContext:
+            privileged: true          # matches AMD runtime DaemonSet
+          env:
+            - name: DEBIAN_FRONTEND
+              value: noninteractive
+            - name: LIBVA_DRIVER_NAME
+              value: radeonsi
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -e
+              apt-get update -qq >/dev/null
+              apt-get install -y -qq mesa-vulkan-drivers mesa-va-drivers \
+                vulkan-tools vainfo ffmpeg libgl1-mesa-dri >/dev/null
+              echo "=== /dev/dri ===" ; ls -l /dev/dri
+              echo "=== RADV (expect a DISCRETE 7900 XTX / NAVI31, driverName=radv) ==="
+              vulkaninfo --summary 2>/dev/null | grep -iE "GPU[0-9]|deviceName|driverName|deviceType"
+              # Pick the NAVI31 (dGPU) render node; the iGPU also exposes VAAPI.
+              NAVI=/dev/dri/renderD128
+              for d in /dev/dri/renderD12*; do
+                vainfo --display drm --device "$d" 2>/dev/null | grep -qi "7900 XTX" && NAVI=$d
+              done
+              echo "=== NAVI31 render node = $NAVI ==="
+              vainfo --display drm --device "$NAVI" 2>&1 | grep -iE "Driver version|Enc"
+              echo "=== HW encode smoke (H264/HEVC/AV1, must report frames + >1x speed) ==="
+              for c in h264_vaapi hevc_vaapi av1_vaapi; do
+                echo "--- $c ---"
+                ffmpeg -hide_banner -loglevel error -stats -vaapi_device "$NAVI" \
+                  -f lavfi -i testsrc=size=1920x1080:rate=60:duration=3 \
+                  -vf format=nv12,hwupload -c:v "$c" -f null - 2>&1 | tail -1
+              done
+              echo "=== KILLTEST_SUBSTRATE_PASS ==="
+          volumeMounts:
+            - name: dev-dri
+              mountPath: /dev/dri
+          resources:
+            requests:
+              memory: 512Mi
+            limits:
+              memory: 2Gi
+      volumes:
+        - name: dev-dri
+          hostPath:
+            path: /dev/dri
+            type: Directory
+---
+# ── Full end-to-end stream check (manual, needs a human Moonlight client) ──────
+# Not encoded as an automated Job because Moonlight pairing is interactive (PIN)
+# and a real game would evict the gemma4 primary. To complete criteria 2/3/5:
+#
+#   1. Run a headless Sunshine container on the node (network host for Moonlight
+#      ports 47984/47989/48010 TCP + 47998-48010 UDP), e.g. Games-on-Whales/Wolf
+#      (ghcr.io/games-on-whales/wolf:stable) or a Sunshine + headless-gamescope
+#      image built per build/sunshine-headless.sh.
+#   2. From a LAN device, pair Moonlight (enter the PIN) and start the stream.
+#   3. Confirm live moving video; on the node, `radeontop` shows the graphics +
+#      VCN (encode) engines active during the stream.
+#
+# This is Slice-2 build/validation territory; the substrate it depends on is
+# already proven by the Job above.

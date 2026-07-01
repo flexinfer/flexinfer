@@ -35,7 +35,12 @@ profiles:
       llamacpp: true
       ollama: true
       diffusers: true
-      steam: true
+      # Gaming mode v2: Sunshine + gamescope + Mesa RADV/VA-API HW encode,
+      # validated on this gfx1100 host by the Slice 1 kill-test. Supersedes the
+      # never-worked Xvfb `steam` layer, which stays off (opt into it only for
+      # the legacy Remote Play backend).
+      gaming: true
+      steam: false
     # bitsandbytes pip wheel ships gfx1100 HIP kernels
     include_bitsandbytes: true
     # Include quantizer packages (GPTQModel, datasets, oras CLI) in the runtime image.

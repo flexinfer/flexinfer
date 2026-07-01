@@ -122,13 +122,14 @@ build_profile() {
     fi
 
     # Backend flags
-    local include_vllm include_llamacpp include_ollama include_diffusers include_steam include_quantizer
+    local include_vllm include_llamacpp include_ollama include_diffusers include_steam include_gaming include_quantizer
     local include_turboquant
     include_vllm=$(pcfg "${profile}" "backends.vllm" "false")
     include_llamacpp=$(pcfg "${profile}" "backends.llamacpp" "true")
     include_ollama=$(pcfg "${profile}" "backends.ollama" "true")
     include_diffusers=$(pcfg "${profile}" "backends.diffusers" "false")
     include_steam=$(pcfg "${profile}" "backends.steam" "false")
+    include_gaming=$(pcfg "${profile}" "backends.gaming" "false")
     include_quantizer=$(pcfg "${profile}" "include_quantizer" "false")
     include_turboquant=$(pcfg "${profile}" "include_turboquant" "false")
 
@@ -240,6 +241,7 @@ build_profile() {
         "--build-arg" "INCLUDE_DIFFUSERS=${include_diffusers}"
         "--build-arg" "INCLUDE_BITSANDBYTES=${include_bitsandbytes}"
         "--build-arg" "INCLUDE_STEAM=${include_steam}"
+        "--build-arg" "INCLUDE_GAMING=${include_gaming}"
         "--build-arg" "INCLUDE_QUANTIZER=${include_quantizer}"
         "--build-arg" "TRANSFORMERS_CONSTRAINT=${transformers_constraint}"
         "--build-arg" "TRANSFORMERS_INSTALL_MODE=${transformers_install_mode}"

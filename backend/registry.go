@@ -18,6 +18,7 @@ const (
 	NameComfyUI   = "comfyui"
 	NameMLCLLM    = "mlc-llm"
 	NameSteam     = "steam"
+	NameSunshine  = "sunshine"
 )
 
 var (

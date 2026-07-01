@@ -6,9 +6,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 )
 
-// SteamBackend implements the Backend interface for headless Steam gaming.
-// When loaded via the runtime manager, it launches a headless Steam process
-// that accepts Remote Play connections, enabling GPU gaming mode on inference nodes.
+// SteamBackend implements the Backend interface for headless Steam Remote Play.
+//
+// DEPRECATED / EXPERIMENTAL: the Xvfb software-GL path here never ran a game
+// (see .loom/killtest-gaming-sunshine-gfx1100-2026-06-30.md). The default
+// gaming backend is now SunshineBackend (Sunshine + gamescope + Mesa RADV +
+// VA-API HW encode). Steam is kept only for explicit opt-in via the "steam"
+// name; it no longer claims the "gaming" alias, so SetMode(gaming) resolves to
+// Sunshine.
 type SteamBackend struct {
 	BaseBackend
 }
@@ -22,7 +27,9 @@ func (b *SteamBackend) Name() string {
 }
 
 func (b *SteamBackend) Aliases() []string {
-	return []string{"gaming", "steam-headless"}
+	// The "gaming" alias now belongs to SunshineBackend. Keep only the
+	// Steam-specific alias so existing "steam-headless" references still work.
+	return []string{"steam-headless"}
 }
 
 func (b *SteamBackend) Image(gpuVendor GPUVendor, gpuArch string) string {

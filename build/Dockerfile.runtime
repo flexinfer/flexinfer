@@ -24,6 +24,7 @@ ARG INCLUDE_OLLAMA=true
 ARG INCLUDE_DIFFUSERS=false
 ARG INCLUDE_BITSANDBYTES=false
 ARG INCLUDE_STEAM=false
+ARG INCLUDE_GAMING=false
 ARG INCLUDE_QUANTIZER=false
 ARG TRANSFORMERS_CONSTRAINT=">=5.0"
 ARG TRANSFORMERS_INSTALL_MODE=constraint
@@ -148,6 +149,7 @@ ARG INCLUDE_OLLAMA
 ARG INCLUDE_DIFFUSERS
 ARG INCLUDE_BITSANDBYTES
 ARG INCLUDE_STEAM
+ARG INCLUDE_GAMING
 ARG INCLUDE_QUANTIZER
 ARG TRANSFORMERS_CONSTRAINT
 ARG TRANSFORMERS_INSTALL_MODE
@@ -358,6 +360,39 @@ RUN if [ "${INCLUDE_STEAM}" = "true" ]; then \
     fi
 COPY build/steam-headless.sh /opt/flexinfer/steam-headless.sh
 RUN chmod +x /opt/flexinfer/steam-headless.sh
+
+# ── Gaming mode: Sunshine + headless wlroots + Mesa RADV/VA-API (conditional) ──
+# The default gaming backend (SunshineBackend). Installs the GPU graphics +
+# hardware-encode userspace the ROCm compute base lacks:
+#   - Mesa RADV (Vulkan render) + radeonsi VA-API (H.264/HEVC/AV1 HW encode),
+#     validated on gfx1100 by the Slice 1 kill-test.
+#   - sway: a headless wlroots compositor (WLR_BACKENDS=headless) that hosts the
+#     game and exposes the wlr-screencopy output Sunshine captures. gamescope is
+#     NOT packaged for Ubuntu 24.04; it can be layered from source later as an
+#     in-session micro-compositor for scaling/HDR/frame-limit ergonomics.
+#   - vulkan-tools/vainfo for diagnostics.
+#   - PipeWire/PulseAudio for game audio over Moonlight; steamcmd so Steam/Proton
+#     titles can be launched under Sunshine.
+# Sunshine itself is fetched from the LizardByte release (.deb) for Ubuntu 24.04.
+ARG SUNSHINE_VERSION=0.23.1
+RUN if [ "${INCLUDE_GAMING}" = "true" ]; then \
+      dpkg --add-architecture i386 && \
+      apt-get update && apt-get install -y --no-install-recommends \
+        mesa-vulkan-drivers mesa-va-drivers libva2 vainfo \
+        vulkan-tools libgl1-mesa-dri \
+        sway foot libseat1 seatd dbus-x11 \
+        avahi-daemon avahi-utils \
+        pipewire pipewire-pulse wireplumber pulseaudio-utils \
+        steamcmd lib32gcc-s1 \
+        curl ca-certificates && \
+      curl -fsSL -o /tmp/sunshine.deb \
+        "https://github.com/LizardByte/Sunshine/releases/download/v${SUNSHINE_VERSION}/sunshine-ubuntu-24.04-amd64.deb" && \
+      apt-get install -y --no-install-recommends /tmp/sunshine.deb && \
+      rm -f /tmp/sunshine.deb && \
+      rm -rf /var/lib/apt/lists/*; \
+    fi
+COPY build/sunshine-headless.sh /opt/flexinfer/sunshine-headless.sh
+RUN chmod +x /opt/flexinfer/sunshine-headless.sh
 
 # ── Quantizer packages (conditional) ─────────────────────────────────
 # Adds GPTQModel, datasets, and oras CLI to the runtime image so that

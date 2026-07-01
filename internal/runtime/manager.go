@@ -96,6 +96,11 @@ type Manager struct {
 	// mode tracks whether the node is in inference or gaming mode.
 	mode NodeMode
 
+	// gamingBackend is the backend name loaded when switching to gaming mode.
+	// Defaults to "sunshine"; set to "steam" to opt into the legacy Remote Play
+	// path. Resolved via backend.Get, so aliases (e.g. "gaming") also work.
+	gamingBackend string
+
 	// gpuVendor and gpuArch describe the GPU on this node.
 	gpuVendor backend.GPUVendor
 	gpuArch   string
@@ -127,6 +132,10 @@ type ManagerConfig struct {
 	MultiModel bool
 	// VRAMHeadroomMB overrides the default free-VRAM admission margin.
 	VRAMHeadroomMB int64
+
+	// GamingBackend overrides the backend loaded for gaming mode. Empty =
+	// "sunshine" (the default). Set to "steam" for the legacy Remote Play path.
+	GamingBackend string
 }
 
 // NewManager creates a runtime process manager.
@@ -143,11 +152,15 @@ func NewManager(cfg ManagerConfig) *Manager {
 	if cfg.VRAMHeadroomMB <= 0 {
 		cfg.VRAMHeadroomMB = defaultVRAMHeadroomMB
 	}
+	if cfg.GamingBackend == "" {
+		cfg.GamingBackend = backend.NameSunshine
+	}
 	return &Manager{
 		models:              make(map[string]*LoadedModel),
 		multiModel:          cfg.MultiModel,
 		vramHeadroomMB:      cfg.VRAMHeadroomMB,
 		mode:                ModeInference,
+		gamingBackend:       cfg.GamingBackend,
 		gpuVendor:           cfg.GPUVendor,
 		gpuArch:             cfg.GPUArch,
 		shutdownTimeout:     cfg.ShutdownTimeout,
@@ -686,7 +699,7 @@ func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 	// Load() acquires m.mu internally for its own state management.
 	if target == ModeGaming {
 		err := m.Load(ctx, "__gaming__", LoadRequest{
-			Backend: "steam",
+			Backend: m.gamingBackend,
 		})
 		if err != nil {
 			// Phase 3: revert mode under lock on failure.

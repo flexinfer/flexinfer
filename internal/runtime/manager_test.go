@@ -48,6 +48,27 @@ func TestManagerDefaults(t *testing.T) {
 	assert.Equal(t, "/models", m.modelBasePath)
 }
 
+func TestGamingBackendDefaultsToSunshine(t *testing.T) {
+	// SetMode(gaming) must load Sunshine by default, and the configured name
+	// must resolve to a registered backend.
+	m := NewManager(ManagerConfig{})
+	assert.Equal(t, backend.NameSunshine, m.gamingBackend)
+
+	b, ok := backend.Get(m.gamingBackend)
+	require.True(t, ok, "default gaming backend %q must be registered", m.gamingBackend)
+	assert.Equal(t, backend.NameSunshine, b.Name())
+}
+
+func TestGamingBackendOverride(t *testing.T) {
+	// Operators can opt into the legacy Steam Remote Play path.
+	m := NewManager(ManagerConfig{GamingBackend: backend.NameSteam})
+	assert.Equal(t, backend.NameSteam, m.gamingBackend)
+
+	b, ok := backend.Get(m.gamingBackend)
+	require.True(t, ok)
+	assert.Equal(t, backend.NameSteam, b.Name())
+}
+
 func TestStatusEmpty(t *testing.T) {
 	m := NewManager(ManagerConfig{
 		GPUVendor: backend.GPUVendorAMD,
