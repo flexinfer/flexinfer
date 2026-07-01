@@ -93,7 +93,8 @@ spec:
     # 2026-05-13: promoted to warm primary for project-management and other
     # quality-tier consumers. Pair-edited fast-chat-7900xtx down to
     # minReplicas: 0 so the 24 GiB lane is not double-claimed.
-    minReplicas: 1
+    # 2026-07-01 GAMING CUTOVER: 0 so nothing warms on the gaming node.
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
@@ -173,26 +174,15 @@ spec:
     limits:
       cpu: "4"
       memory: 16Gi
-  serviceLabels:
-    # 2026-05-16: shared route names live here so the proxy load-balances them
-    # across both 26B instances (this one + sister on cblevins-5930k). Routing
-    # policy is round-robin among Ready members (alphabetical fallback when
-    # none Ready); see internal/proxy/resolver.go:pickReadyMember. Adding or
-    # removing a name requires the same change in the sister manifest, or the
-    # alias drops out of the multi-claimant set and reverts to single-target
-    # routing for that name only.
-    - gemma4-26b
-    - quality-chat
-    - mid-chat
-    - fast-chat
-    - fast-text
-    - gpt-4
-    - gpt-3.5-turbo
-    - copilot
-    - qwen3-default
-    - project-mgmt
+  # 2026-07-01 GAMING CUTOVER: cblevins-7900xtx moved to gaming mode. The shared
+  # 26B routes (gemma4-26b/quality-chat/mid-chat/fast-chat/fast-text/gpt-4/
+  # gpt-3.5-turbo/copilot/qwen3-default/project-mgmt) were MOVED to the sister
+  # gemma4-26b-a4b-gptq-5930k (now the sole primary, priority 385). Nothing
+  # routes to this de-scheduled node. Restore (re-add the list here + drop it on
+  # 5930k + reset that priority to 350) to return 7900xtx to the inference fleet.
+  serviceLabels: []
   litellm:
-    enabled: true
+    enabled: false
     servedModelName: gemma4-26b-a4b-gptq
     # Shared/default routes moved to serviceLabels so the proxy can load-balance
     # them across both instances (this one + sister on 5930k). litellm.aliases
