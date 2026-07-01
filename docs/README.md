@@ -22,6 +22,7 @@ This directory is the canonical documentation for `services/flexinfer`.
 | [Caching](user/caching.md) | Model weight caching strategies |
 | [Quantization Pipelines](user/quantization.md) | GGUF/AWQ/GPTQ ModelCache quantization workflows |
 | [Operations](user/operations.md) | Day-2 operations and troubleshooting |
+| [Gaming Mode](user/gaming-mode-runbook.md) | Declarative Sunshine/Moonlight game streaming on a GPU node |
 
 ## Developer Guides
 

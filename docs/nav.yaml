@@ -37,6 +37,8 @@ sections:
         path: user/abliteration.md
       - title: Operations
         path: user/operations.md
+      - title: Gaming Mode (Sunshine/Moonlight)
+        path: user/gaming-mode-runbook.md
 
   - id: dev
     title: Developer
