@@ -72,10 +72,11 @@ spec:
     limits:
       cpu: "8"
       memory: 24Gi
-  serviceLabels:
-    - gemma4-26b-a4b-gptq-5930k-8k-canary
+  # 2026-06-30 GAMING CUTOVER: de-advertised so this priority-360 canary can't
+  # cold-start and preempt the gemma primary on the 5930k-textgen card.
+  serviceLabels: []
   litellm:
-    enabled: true
+    enabled: false
     servedModelName: gemma4-26b-a4b-gptq-5930k-8k-canary
     aliases:
       - gemma4-26b-5930k-8k
