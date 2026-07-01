@@ -88,7 +88,11 @@ spec:
     # enable_thinking=false so content stays clean (minimal <think> clutter).
     enableToolCalling: true
     toolCallParser: hermes
-    warmPolicy: primary
+    # 2026-06-30 GAMING CUTOVER: demoted primary -> ondemand so this de-advertised
+    # lane releases the 5930k-textgen card (warmPolicy:primary kept it warm at
+    # minReplicas 0, parking the promoted gemma4-26b-5930k behind it at 380>350).
+    # Restore to primary + minReplicas 1 + serviceLabels to bring the lane back.
+    warmPolicy: ondemand
   gpu:
     count: 1
     priority: 380
