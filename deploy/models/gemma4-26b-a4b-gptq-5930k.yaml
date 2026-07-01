@@ -59,7 +59,12 @@ spec:
     shared: 5930k-textgen
     # Same priority as the 7900xtx instance so neither preempts the other; the
     # proxy serviceLabel routing load-balances between them.
-    priority: 350
+    # 2026-07-01 GAMING CUTOVER: raised 350 -> 385 to outrank the de-advertised
+    # qwen36-35b-mtp-uncensored (380) so the 5930k-textgen election hands gemma
+    # the card immediately (the 35B held it as the Ready incumbent — de-advertise
+    # + minReplicas 0 + warmPolicy ondemand alone did not preempt it). Revert to
+    # 350 when handing the 5930k lane back / bringing 7900xtx out of gaming.
+    priority: 385
   serverless:
     enabled: true
     # 2026-06-17: RETIRED — replaced on the 5930k GPU by the warm-pinned
