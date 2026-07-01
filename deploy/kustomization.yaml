@@ -6,6 +6,9 @@ resources:
   - modelcaches/
   - gpuprofiles/
   - gpugroups.yaml
+  # Declarative node gaming mode (Sunshine/Moonlight). Deleting the GamingSession
+  # reverts the node to inference (controller finalizer).
+  - gaming/
   # One-shot, Flux-managed artifact-transform tasks. Each subdirectory
   # is idempotent so Flux re-reconciles are no-ops once complete.
   - tasks/gemma4-31b-keqv/

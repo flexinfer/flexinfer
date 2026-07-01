@@ -1,0 +1,22 @@
+# Declarative gaming mode for cblevins-7900xtx (Sunshine/Moonlight).
+#
+# The GamingSessionReconciler (Slice 3) drives the node's runtime into gaming
+# mode: it drains any inference on the node and issues PUT /api/v1/mode {gaming}
+# to the runtime, which starts the Sunshine host (sunshine-headless.sh). The
+# node's runtime DaemonSet must already run the gaming image
+# (deploy/system/values-k3s.yaml gfx1100 profile -> runtime:rocm-gfx1100-gaming)
+# and the node's inference lanes must be de-advertised
+# (deploy/models/gemma4-26b-a4b-gptq.yaml + whisper + apc-canary) so nothing
+# contends for the card.
+#
+# Deleting this object reverts the node to inference (the reconciler's finalizer
+# calls SetMode(inference)); to fully hand 7900xtx back also revert the runtime
+# image + re-advertise the gemma/whisper lanes.
+apiVersion: ai.flexinfer/v1alpha2
+kind: GamingSession
+metadata:
+  name: gaming-7900xtx
+  namespace: flexinfer-system
+spec:
+  nodeName: cblevins-7900xtx
+  mode: gaming

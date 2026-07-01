@@ -367,8 +367,12 @@ runtime:
   modelHostPath: "/var/lib/flexinfer/models"
   terminationGracePeriodSeconds: 60
   profiles:
+    # 2026-07-01 GAMING CUTOVER: cblevins-7900xtx runtime pinned to the dedicated
+    # gaming image (Sunshine/sway/Mesa RADV/VAAPI HW-encode). The 5930k profile
+    # below stays on the serving digest. Revert this image to the serving digest
+    # (matching gfx1100-5930k) to return 7900xtx to the inference fleet.
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:25a589759c20faae77393ecf7cbf980e8d62550537fc579cb1f642bb35af9a14"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
