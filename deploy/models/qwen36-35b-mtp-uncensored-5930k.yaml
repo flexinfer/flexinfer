@@ -99,7 +99,14 @@ spec:
     shared: 5930k-textgen
     vendor: amd
     vramEstimateMB: 20000
-    forcePromotion: true
+    # 2026-07-01 GAMING CUTOVER: forcePromotion REMOVED. It made the election
+    # (chooseSharedGroupLeader) pick this model as the unconditional leader,
+    # bypassing priority/warm logic — so de-advertising + minReplicas 0 +
+    # warmPolicy ondemand + a gemma priority bump to 385 all failed to hand the
+    # 5930k-textgen card to gemma. With this gone, the highest-priority warm
+    # member (gemma4-26b-a4b-gptq-5930k @385) wins. Restore alongside
+    # re-advertising this lane.
+    forcePromotion: false
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:
