@@ -29,6 +29,15 @@ spec:
         app.kubernetes.io/component: flexinfer-runtime
         flexinfer.ai/gpu-arch: {{ .gpuArch }}
     spec:
+      {{- if .hostNetwork }}
+      # Gaming profile: share the host network namespace so a LAN Moonlight client
+      # can reach Sunshine on its fixed ports (Sunshine/Moonlight hardcode
+      # 47984/47989/48010 + UDP 47998-48010; NodePort's 30000-32767 range cannot
+      # serve them). ClusterFirstWithHostNet keeps cluster DNS working so the
+      # controller can still reach the runtime API and the pod resolves services.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      {{- end }}
       serviceAccountName: {{ include "flexinfer.agentServiceAccountName" $ }}
       terminationGracePeriodSeconds: {{ $.Values.runtime.terminationGracePeriodSeconds | default 60 }}
       containers:
@@ -45,6 +54,34 @@ spec:
             - name: metrics
               containerPort: 9090
               protocol: TCP
+            {{- if .gaming }}
+            # Sunshine/Moonlight (gaming profile). With hostNetwork above these
+            # bind the node directly so a LAN Moonlight client pairs + streams.
+            - name: sun-https
+              containerPort: 47984
+              protocol: TCP
+            - name: sun-http
+              containerPort: 47989
+              protocol: TCP
+            - name: sun-web
+              containerPort: 47990
+              protocol: TCP
+            - name: sun-rtsp
+              containerPort: 48010
+              protocol: TCP
+            - name: sun-video
+              containerPort: 47998
+              protocol: UDP
+            - name: sun-control
+              containerPort: 47999
+              protocol: UDP
+            - name: sun-audio
+              containerPort: 48000
+              protocol: UDP
+            - name: sun-mic
+              containerPort: 48002
+              protocol: UDP
+            {{- end }}
           env:
             - name: GPU_VENDOR
               value: {{ .gpuVendor | quote }}
