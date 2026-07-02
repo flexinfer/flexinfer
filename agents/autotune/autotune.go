@@ -37,6 +37,7 @@ type Autotuner struct {
 	namespace      string
 	benchFn        BenchmarkFunc
 	rolloutTimeout time.Duration
+	pollInterval   time.Duration
 	searchSpace    SearchSpace
 	logger         *ExperimentLogger
 	now            func() time.Time
@@ -55,7 +56,12 @@ type Options struct {
 	Namespace      string
 	BenchFn        BenchmarkFunc
 	RolloutTimeout time.Duration
-	Space          SearchSpace
+	// PollInterval is the readiness poll cadence during rollout waits. The first
+	// poll happens one interval after the wait starts — that delay gives the
+	// controller time to react to a Model patch before readiness is trusted, so
+	// keep it well below RolloutTimeout. Defaults to 5s.
+	PollInterval time.Duration
+	Space        SearchSpace
 
 	// QualityFn enables the Goodhart guard when set (nil = legacy throughput-only).
 	QualityFn QualityFunc
@@ -68,6 +74,9 @@ type Options struct {
 func New(opts Options) *Autotuner {
 	if opts.RolloutTimeout <= 0 {
 		opts.RolloutTimeout = 5 * time.Minute
+	}
+	if opts.PollInterval <= 0 {
+		opts.PollInterval = 5 * time.Second
 	}
 	if len(opts.Space.Parameters) == 0 {
 		opts.Space = DefaultVLLMSearchSpace()
@@ -82,6 +91,7 @@ func New(opts Options) *Autotuner {
 		namespace:           opts.Namespace,
 		benchFn:             opts.BenchFn,
 		rolloutTimeout:      opts.RolloutTimeout,
+		pollInterval:        opts.PollInterval,
 		searchSpace:         opts.Space,
 		logger:              NewExperimentLogger(opts.KubeClient, opts.Namespace, opts.ModelName),
 		now:                 time.Now,
@@ -365,8 +375,7 @@ func (a *Autotuner) applyConfig(ctx context.Context, cfg map[string]any) error {
 }
 
 func (a *Autotuner) waitForReady(ctx context.Context) error {
-	deployName := a.modelName
-	ticker := time.NewTicker(5 * time.Second)
+	ticker := time.NewTicker(a.pollInterval)
 	defer ticker.Stop()
 
 	deadline := time.After(a.rolloutTimeout)
@@ -376,31 +385,42 @@ func (a *Autotuner) waitForReady(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-deadline:
+			// On a loaded host the deadline and a poll tick can become runnable in
+			// the same scheduling window (e.g. timeout that is a multiple of the
+			// poll interval) and select picks between them arbitrarily; a final
+			// poll lets readiness win that race instead of reporting a timeout.
+			if a.deploymentReady(ctx) {
+				return nil
+			}
 			return fmt.Errorf("rollout timeout after %s", a.rolloutTimeout)
 		case <-ticker.C:
-			deploy := &appsv1.Deployment{}
-			key := types.NamespacedName{Name: deployName, Namespace: a.namespace}
-			if err := a.client.Get(ctx, key, deploy); err != nil {
-				continue // Deployment might not exist yet.
-			}
-
-			if deploy.Status.ObservedGeneration < deploy.Generation {
-				continue // Controller hasn't observed this generation yet.
-			}
-			if deploy.Spec.Replicas == nil {
-				continue
-			}
-			desired := *deploy.Spec.Replicas
-			if desired == 0 {
-				continue // Scaled to zero, not ready.
-			}
-			if deploy.Status.UpdatedReplicas == desired &&
-				deploy.Status.ReadyReplicas == desired &&
-				deploy.Status.AvailableReplicas == desired {
+			if a.deploymentReady(ctx) {
 				return nil
 			}
 		}
 	}
+}
+
+func (a *Autotuner) deploymentReady(ctx context.Context) bool {
+	deploy := &appsv1.Deployment{}
+	key := types.NamespacedName{Name: a.modelName, Namespace: a.namespace}
+	if err := a.client.Get(ctx, key, deploy); err != nil {
+		return false // Deployment might not exist yet.
+	}
+
+	if deploy.Status.ObservedGeneration < deploy.Generation {
+		return false // Controller hasn't observed this generation yet.
+	}
+	if deploy.Spec.Replicas == nil {
+		return false
+	}
+	desired := *deploy.Spec.Replicas
+	if desired == 0 {
+		return false // Scaled to zero, not ready.
+	}
+	return deploy.Status.UpdatedReplicas == desired &&
+		deploy.Status.ReadyReplicas == desired &&
+		deploy.Status.AvailableReplicas == desired
 }
 
 func (a *Autotuner) validateCandidate(cfg map[string]any) (rejected bool, reason string) {
