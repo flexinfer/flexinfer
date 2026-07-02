@@ -9,7 +9,12 @@ import (
 	"github.com/flexinfer/flexinfer/internal/proxy/spec_decode"
 )
 
-// mockBackend simulates a Draft + Verify pair using sleep-based timing.
+// mockBackend simulates a Draft + Verify pair using a per-token latency
+// model. Real time.Sleep calls pace the run, but every call also charges
+// its modeled cost to a simulated clock (SimulatedSeconds) — the bench
+// computes tok/s from the simulated clock, not the wall clock, so
+// mock-mode reports and the verdict are deterministic even when sleep
+// ticks overshoot on a loaded machine.
 // Acceptance rate is controlled by cfg.mockAcceptance: at each verify
 // position, with probability F the verifier's argmax matches the draft's
 // candidate (= acceptance under AcceptGreedy); otherwise it differs.
@@ -29,6 +34,16 @@ type mockBackend struct {
 	acceptance    float64
 	rng           *rand.Rand
 	draftCounter  int
+	simulated     time.Duration
+}
+
+// SimulatedSeconds returns the total latency the timing model has charged
+// across all calls so far. The bench reads elapsed time from here instead
+// of the wall clock: with 1ms-scale latencies, scheduler jitter on a
+// loaded CI runner is the same magnitude as the whole run and was flipping
+// the speedup verdict.
+func (m *mockBackend) SimulatedSeconds() float64 {
+	return m.simulated.Seconds()
 }
 
 func newMockBackend(cfg benchConfig) *mockBackend {
@@ -56,6 +71,7 @@ func (m *mockBackend) Draft(ctx context.Context, _ string, n int) ([]spec_decode
 		if err := sleepOrCancel(ctx, m.draftLatency); err != nil {
 			return out, err
 		}
+		m.simulated += m.draftLatency
 		m.draftCounter++
 		id := m.draftCounter
 		out = append(out, spec_decode.Token{
@@ -90,6 +106,7 @@ func (m *mockBackend) Verify(
 	if err := sleepOrCancel(ctx, m.verifyLatency); err != nil {
 		return nil, err
 	}
+	m.simulated += m.verifyLatency
 	out := make([]spec_decode.Logprob, len(candidates))
 	for i, cand := range candidates {
 		accept := m.rng.Float64() < m.acceptance
@@ -134,6 +151,7 @@ func (m *mockBackend) Decode(ctx context.Context, _ string, maxTokens int) ([]sp
 		if err := sleepOrCancel(ctx, m.verifyLatency); err != nil {
 			return out, err
 		}
+		m.simulated += m.verifyLatency
 		m.draftCounter++
 		out = append(out, spec_decode.Token{
 			ID:   m.draftCounter,

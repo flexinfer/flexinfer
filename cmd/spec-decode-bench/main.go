@@ -77,6 +77,17 @@ type benchBackend interface {
 	Decode(ctx context.Context, prompt string, maxTokens int) ([]spec_decode.Token, error)
 }
 
+// simulatedTimer is implemented by backends whose latencies come from a
+// timing model (the mock) rather than a real engine. When present, run
+// stats read elapsed time from the model instead of the wall clock, so
+// tok/s — and therefore the speedup verdict — are immune to scheduler
+// jitter. At the mock's 1ms-scale latencies, wall-clock sleep overshoot
+// on a loaded CI runner is the same magnitude as the run itself and was
+// flipping the all-reject verdict.
+type simulatedTimer interface {
+	SimulatedSeconds() float64
+}
+
 func main() {
 	cfg, err := parseFlags(os.Args[1:])
 	if err != nil {
@@ -357,6 +368,11 @@ func runBaseline(
 	prompt string,
 	maxTokens int,
 ) BaselineRunStats {
+	sim, hasSim := be.(simulatedTimer)
+	simStart := 0.0
+	if hasSim {
+		simStart = sim.SimulatedSeconds()
+	}
 	start := time.Now()
 	tokens, err := be.Decode(ctx, prompt, maxTokens)
 	if err != nil {
@@ -367,6 +383,9 @@ func runBaseline(
 		emitted = maxTokens
 	}
 	elapsed := time.Since(start).Seconds()
+	if hasSim {
+		elapsed = sim.SimulatedSeconds() - simStart
+	}
 	tps := 0.0
 	if elapsed > 0 {
 		tps = float64(emitted) / elapsed
@@ -392,6 +411,11 @@ func runSpecDecode(
 	stop := func(_ []spec_decode.Token, total int) bool {
 		return total >= maxTokens
 	}
+	sim, hasSim := be.(simulatedTimer)
+	simStart := 0.0
+	if hasSim {
+		simStart = sim.SimulatedSeconds()
+	}
 	start := time.Now()
 	res, err := coord(ctx, prompt, cfg.draftN, be.Draft, be.Verify, acceptFn, stop, cfg.maxRounds)
 	if err != nil {
@@ -400,10 +424,14 @@ func runSpecDecode(
 	wall := time.Since(start).Seconds()
 	// Prefer Coordinate's own elapsed accounting when it is populated, but
 	// fall back to wall clock so the bench works against a Coordinate that
-	// hasn't filled in the timing fields yet.
+	// hasn't filled in the timing fields yet. A simulated backend overrides
+	// both: its modeled time is what the verdict should be judged on.
 	elapsed := res.ElapsedSeconds
 	if elapsed == 0 {
 		elapsed = wall
+	}
+	if hasSim {
+		elapsed = sim.SimulatedSeconds() - simStart
 	}
 	tokens := len(res.AcceptedTokens)
 	if tokens > maxTokens {
