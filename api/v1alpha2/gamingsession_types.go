@@ -37,6 +37,10 @@ const (
 	GamingSessionActivating GamingSessionPhase = "Activating"
 	// GamingSessionActive means the node is confirmed in the desired mode.
 	GamingSessionActive GamingSessionPhase = "Active"
+	// GamingSessionDegraded means the node reports the desired mode but its
+	// backing subprocess (e.g. Sunshine) is down; the runtime is supervising
+	// restarts and the session recovers to Active once one succeeds.
+	GamingSessionDegraded GamingSessionPhase = "Degraded"
 	// GamingSessionReverting means the session is being deleted and the node is
 	// being returned to inference mode.
 	GamingSessionReverting GamingSessionPhase = "Reverting"

@@ -218,6 +218,11 @@ type RuntimeStatusResponse struct {
 
 type RuntimeModeStatus struct {
 	Mode string `json:"mode"`
+	// Degraded is set when the runtime is in Mode but the mode's backing
+	// subprocess is not running (e.g. the gaming backend crashed and a
+	// supervised restart is pending). Detail explains why.
+	Degraded bool   `json:"degraded,omitempty"`
+	Detail   string `json:"detail,omitempty"`
 }
 
 // CheckModelHealth queries the runtime for a model's current state.
@@ -280,25 +285,33 @@ func (r *RuntimeReconciler) GetStatus(ctx context.Context, endpoint *RuntimeEndp
 }
 
 func (r *RuntimeReconciler) GetMode(ctx context.Context, endpoint *RuntimeEndpoint) (string, error) {
+	status, err := r.GetModeStatus(ctx, endpoint)
+	return status.Mode, err
+}
+
+// GetModeStatus returns the runtime's full mode report, including the degraded
+// flag the runtime sets when the mode's backing subprocess (e.g. Sunshine in
+// gaming mode) has crashed and is awaiting a supervised restart.
+func (r *RuntimeReconciler) GetModeStatus(ctx context.Context, endpoint *RuntimeEndpoint) (RuntimeModeStatus, error) {
 	url := fmt.Sprintf("%s/api/v1/mode", endpoint.URL())
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return "", fmt.Errorf("creating mode request: %w", err)
+		return RuntimeModeStatus{}, fmt.Errorf("creating mode request: %w", err)
 	}
 
 	httpClient := &http.Client{Timeout: httpClientShort}
 	resp, err := httpClient.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("mode request failed: %w", err)
+		return RuntimeModeStatus{}, fmt.Errorf("mode request failed: %w", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	var status RuntimeModeStatus
 	if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
-		return "", fmt.Errorf("decoding mode response: %w", err)
+		return RuntimeModeStatus{}, fmt.Errorf("decoding mode response: %w", err)
 	}
-	return status.Mode, nil
+	return status, nil
 }
 
 // SetMode switches a node's runtime between "inference" and "gaming" via the

@@ -115,3 +115,49 @@ func TestMetricsEndpoint(t *testing.T) {
 	// Prometheus handler returns text/plain with metrics.
 	assert.Contains(t, w.Header().Get("Content-Type"), "text/plain")
 }
+
+func getMode(t *testing.T, srv *Server) map[string]any {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/mode", nil)
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+	return body
+}
+
+// GET /api/v1/mode must expose degraded=true while the node is in gaming mode
+// with a crashed backend, so the GamingSession controller can reflect the
+// outage instead of reporting Active against a dead Sunshine.
+func TestGetModeReportsGamingDegraded(t *testing.T) {
+	srv := newTestServer()
+
+	body := getMode(t, srv)
+	assert.Equal(t, "inference", body["mode"])
+	assert.NotContains(t, body, "degraded")
+
+	// Gaming mode with the backend crashed (Failed, awaiting supervised restart).
+	srv.manager.mu.Lock()
+	srv.manager.mode = ModeGaming
+	srv.manager.models[gamingModelName] = &LoadedModel{
+		Name: gamingModelName, Backend: backend.NameSunshine,
+		State: ModelStateFailed, Error: "exit status 4",
+	}
+	srv.manager.mu.Unlock()
+
+	body = getMode(t, srv)
+	assert.Equal(t, "gaming", body["mode"])
+	assert.Equal(t, true, body["degraded"])
+	assert.Contains(t, body["detail"], "exit status 4")
+
+	// Healthy gaming backend: not degraded.
+	srv.manager.mu.Lock()
+	srv.manager.models[gamingModelName].State = ModelStateReady
+	srv.manager.models[gamingModelName].Error = ""
+	srv.manager.mu.Unlock()
+
+	body = getMode(t, srv)
+	assert.Equal(t, "gaming", body["mode"])
+	assert.NotContains(t, body, "degraded")
+}

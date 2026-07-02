@@ -67,6 +67,20 @@ const (
 	ModeGaming    NodeMode = "gaming"
 )
 
+// gamingModelName is the reserved model slot for the gaming backend subprocess.
+const gamingModelName = "__gaming__"
+
+// gamingStableUptime is how long the gaming backend must have been up for a
+// crash to be treated as fresh (backoff restarts from the base delay) rather
+// than a continuation of a crash loop.
+const gamingStableUptime = 5 * time.Minute
+
+// Supervised-restart backoff bounds for the gaming backend.
+const (
+	defaultGamingRestartBase = 2 * time.Second
+	defaultGamingRestartMax  = time.Minute
+)
+
 // Manager controls backend subprocess lifecycle on a GPU node.
 //
 // By default a single backend subprocess runs at a time (single-GPU,
@@ -118,6 +132,20 @@ type Manager struct {
 
 	// gamingIdleCancel stops the idle-guard goroutine when leaving gaming mode.
 	gamingIdleCancel context.CancelFunc
+
+	// gamingRestart re-drives the gaming backend after a subprocess crash
+	// (injectable for tests; default reloads gamingBackend via Load).
+	gamingRestart func(ctx context.Context) error
+
+	// gamingRestartBase and gamingRestartMax bound the supervised-restart
+	// exponential backoff for the gaming backend.
+	gamingRestartBase time.Duration
+	gamingRestartMax  time.Duration
+
+	// gamingRestartAttempt counts consecutive gaming-backend crashes and failed
+	// restarts, driving the backoff. Guarded by mu; reset on mode switches and
+	// on a crash after gamingStableUptime of healthy runtime.
+	gamingRestartAttempt int
 
 	// gpuVendor and gpuArch describe the GPU on this node.
 	gpuVendor backend.GPUVendor
@@ -185,6 +213,8 @@ func NewManager(cfg ManagerConfig) *Manager {
 		mode:                ModeInference,
 		gamingBackend:       cfg.GamingBackend,
 		gamingIdleTimeout:   cfg.GamingIdleTimeout,
+		gamingRestartBase:   defaultGamingRestartBase,
+		gamingRestartMax:    defaultGamingRestartMax,
 		nowFn:               time.Now,
 		gpuVendor:           cfg.GPUVendor,
 		gpuArch:             cfg.GPUArch,
@@ -193,6 +223,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		modelBasePath:       cfg.ModelBasePath,
 	}
 	m.gamingClientActive = m.sunshineClientActive
+	m.gamingRestart = m.loadGamingBackend
 	// Reflect the initial mode in the gauge.
 	NodeModeGauge.WithLabelValues(string(ModeInference)).Set(1)
 	NodeModeGauge.WithLabelValues(string(ModeGaming)).Set(0)
@@ -718,6 +749,8 @@ func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 	}
 
 	m.mode = target
+	// A mode switch starts a fresh crash-supervision history.
+	m.gamingRestartAttempt = 0
 	m.mu.Unlock()
 
 	for _, lm := range all {
@@ -730,9 +763,7 @@ func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 	// Phase 2: if gaming mode, call Load() without holding the lock.
 	// Load() acquires m.mu internally for its own state management.
 	if target == ModeGaming {
-		err := m.Load(ctx, "__gaming__", LoadRequest{
-			Backend: m.gamingBackend,
-		})
+		err := m.loadGamingBackend(ctx)
 		if err != nil {
 			// Phase 3: revert mode under lock on failure.
 			m.mu.Lock()
@@ -904,7 +935,11 @@ type ModelSummary struct {
 	Error    string    `json:"error,omitempty"`
 }
 
-// monitorProcess waits for the subprocess to exit and updates state.
+// monitorProcess waits for the subprocess to exit and updates state. When the
+// gaming backend exits while the node is still in gaming mode, it also kicks
+// off supervised restarts — otherwise the runtime keeps reporting mode=gaming
+// with no Sunshine process, the GamingSession reconciler's idempotent
+// SetMode(gaming) no-ops, and the session stays dead until a pod restart.
 func (m *Manager) monitorProcess(ctx context.Context, loaded *LoadedModel) {
 	logger := log.FromContext(ctx).WithValues("model", loaded.Name)
 
@@ -913,18 +948,121 @@ func (m *Manager) monitorProcess(ctx context.Context, loaded *LoadedModel) {
 	close(loaded.done)
 
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	// Only update if this exact instance is still loaded (survives reload races).
-	if cur, ok := m.models[loaded.Name]; ok && cur == loaded {
-		if err != nil && loaded.State != ModelStateStopping {
-			logger.Error(err, "Backend subprocess crashed")
-			loaded.State = ModelStateFailed
+	cur, ok := m.models[loaded.Name]
+	unexpected := ok && cur == loaded && loaded.State != ModelStateStopping
+	// The gaming backend has no work-complete exit: while the node is in gaming
+	// mode ANY exit — even status 0 — is a crash that must be supervised.
+	gamingCrash := unexpected && loaded.Name == gamingModelName && m.mode == ModeGaming
+	if unexpected && (err != nil || gamingCrash) {
+		logger.Error(err, "Backend subprocess crashed")
+		loaded.State = ModelStateFailed
+		if err != nil {
 			loaded.Error = err.Error()
-			BackendSubprocessCrashesTotal.WithLabelValues(loaded.Name, loaded.Backend).Inc()
-			setModelStateMetric(loaded.Name, loaded.Backend, "Failed")
+		} else {
+			loaded.Error = "backend exited unexpectedly"
+		}
+		BackendSubprocessCrashesTotal.WithLabelValues(loaded.Name, loaded.Backend).Inc()
+		setModelStateMetric(loaded.Name, loaded.Backend, "Failed")
+	}
+	var delay time.Duration
+	var attempt int
+	if gamingCrash {
+		delay = m.nextGamingRestartDelayLocked(loaded.LoadedAt)
+		attempt = m.gamingRestartAttempt
+	}
+	m.mu.Unlock()
+
+	if gamingCrash {
+		logger.Info("Gaming backend crashed while node is in gaming mode; scheduling supervised restart",
+			"attempt", attempt, "delay", delay)
+		go m.superviseGamingRestart(ctx, delay)
+	}
+}
+
+// loadGamingBackend (re)loads the configured gaming backend subprocess. It is
+// the default gamingRestart hook; tests stub gamingRestart to observe
+// supervised restarts without a real Sunshine binary.
+func (m *Manager) loadGamingBackend(ctx context.Context) error {
+	return m.Load(ctx, gamingModelName, LoadRequest{Backend: m.gamingBackend})
+}
+
+// nextGamingRestartDelayLocked advances the crash counter and returns the
+// backoff delay before the next restart attempt. A crash after
+// gamingStableUptime of runtime resets the counter, so an occasional crash
+// restarts fast while a tight crash loop backs off toward gamingRestartMax.
+// Caller must hold m.mu.
+func (m *Manager) nextGamingRestartDelayLocked(loadedAt time.Time) time.Duration {
+	if !loadedAt.IsZero() && m.nowFn().Sub(loadedAt) >= gamingStableUptime {
+		m.gamingRestartAttempt = 0
+	}
+	m.gamingRestartAttempt++
+	delay := m.gamingRestartMax
+	if n := m.gamingRestartAttempt - 1; n < 16 {
+		if d := m.gamingRestartBase << n; d < delay {
+			delay = d
 		}
 	}
+	return delay
+}
+
+// superviseGamingRestart restarts the crashed gaming backend after delay and
+// keeps retrying with growing backoff while the node stays in gaming mode. It
+// exits once a restart succeeds (a later crash schedules a fresh supervisor
+// via monitorProcess) or the node leaves gaming mode.
+func (m *Manager) superviseGamingRestart(ctx context.Context, delay time.Duration) {
+	logger := log.FromContext(ctx).WithValues("model", gamingModelName, "backend", m.gamingBackend)
+	for {
+		time.Sleep(delay)
+		if m.Mode() != ModeGaming {
+			logger.Info("Node left gaming mode; stopping gaming backend restart supervision")
+			return
+		}
+		m.mu.RLock()
+		attempt := m.gamingRestartAttempt
+		m.mu.RUnlock()
+		logger.Info("Restarting crashed gaming backend", "attempt", attempt)
+		if err := m.gamingRestart(ctx); err != nil {
+			GamingBackendRestartsTotal.WithLabelValues("error").Inc()
+			logger.Error(err, "Gaming backend restart failed; backing off", "attempt", attempt)
+			m.mu.Lock()
+			delay = m.nextGamingRestartDelayLocked(time.Time{})
+			m.mu.Unlock()
+			continue
+		}
+		GamingBackendRestartsTotal.WithLabelValues("ok").Inc()
+		// The mode may have flipped while the restart was in flight; don't leave
+		// an orphaned gaming subprocess on an inference node.
+		if m.Mode() != ModeGaming {
+			logger.Info("Mode changed during gaming backend restart; unloading")
+			_ = m.Unload(context.Background(), gamingModelName)
+		}
+		return
+	}
+}
+
+// GamingDegraded reports whether the node is in gaming mode but its backend
+// subprocess is not running (crashed and awaiting a supervised restart). The
+// mode API surfaces this so the GamingSession controller can reflect a broken
+// session (phase Degraded) instead of Active.
+func (m *Manager) GamingDegraded() (bool, string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.mode != ModeGaming {
+		return false, ""
+	}
+	lm, ok := m.models[gamingModelName]
+	if !ok {
+		return true, "gaming backend not loaded"
+	}
+	if lm.State == ModelStateFailed {
+		detail := fmt.Sprintf("gaming backend crashed; supervised restart attempt %d pending", m.gamingRestartAttempt)
+		if lm.Error != "" {
+			detail += ": " + lm.Error
+		}
+		return true, detail
+	}
+	return false, ""
 }
 
 // stillLoadingLocked reports whether loaded is still the registered instance for
