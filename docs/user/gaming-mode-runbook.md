@@ -6,8 +6,9 @@ Moonlight client pairs against; deleting the CR returns the node to the
 inference fleet.
 
 - **Validated on:** `cblevins-7900xtx` (AMD RX 7900 XTX, gfx1100/RDNA3), 2026-07-01.
-- **Stack:** Sunshine + headless `sway` (wlroots) + Mesa RADV (Vulkan render) +
-  VA-API HW encode (H.264/HEVC/AV1 via `radeonsi`). See
+- **Stack:** Sunshine + headless `sway` (wlroots, Xwayland) + Mesa RADV (Vulkan
+  render) + VA-API HW encode (H.264/HEVC/AV1 via `radeonsi`) + Steam client
+  (running as the non-root `gamer` session user). See
   `backend/sunshine.go`, `build/sunshine-headless.sh`, `build/Dockerfile.runtime`
   (`INCLUDE_GAMING`), and the kill-test evidence in
   `.loom/killtest-gaming-sunshine-gfx1100-2026-06-30.md`.
@@ -39,6 +40,15 @@ client reaches Sunshine on its fixed ports (see below).
    `gaming` in `deploy/system/values-k3s.yaml` (`runtime.profiles[].{image,hostNetwork,gaming}`).
 3. **Controller** on Slice 3+ (has the `gamingsessions` controller and the
    chart ClusterRole grants `gamingsessions`).
+4. **Gaming state volume** on the profile (`extraVolumes`/`extraVolumeMounts`):
+   a hostPath (on `cblevins-7900xtx`: `/home/flexinfer-gaming`, on the 1.8T
+   NVMe) mounted at `/var/lib/flexinfer-gaming` (`GAMING_STATE_DIR`). Layout,
+   managed by `sunshine-headless.sh`:
+   - `sunshine/` — `sunshine.conf`, pairing state, `apps.json`: Moonlight
+     clients stay paired across pod restarts.
+   - `home/` — the `gamer` user's `$HOME`: Steam client bootstrap, account
+     login, and the game library (games install to
+     `home/.local/share/Steam/steamapps` by default).
 
 ## Enable gaming on a node
 
@@ -80,8 +90,27 @@ profile). Do **not** `kubectl apply`/`edit` directly.
   `48010` (RTSP); UDP `47998/47999/48000/48002`.
 - **First run:** open `https://<node-ip>:47990`, set a username/password.
 - **Pair:** in Moonlight add `<node-ip>`; enter the PIN it shows into the web UI.
-- **Play:** pick an app (Desktop, or a launched game). An empty headless desktop
-  streams as a static gray screen — that is expected; launch something to render.
+- **Play:** pick an app — `Desktop` (Steam autostarts in the session) or
+  `Steam Big Picture`. An empty headless desktop streams as a static gray
+  screen — that is expected; launch something to render.
+
+## Steam (one-time account login)
+
+Steam starts automatically inside the sway session (set
+`GAMING_STEAM_AUTOSTART=false` on the profile env to disable, or
+`GAMING_LAUNCH_CMD` to autostart something else). Because credentials and
+Steam Guard are interactive, the first sign-in must be done by a human:
+
+1. Connect with Moonlight and pick `Desktop`.
+2. In the Steam login window, sign in (approve the Steam Guard prompt on your
+   phone).
+3. Done — the login token, client, and all installed games persist on the
+   gaming volume (`/home/flexinfer-gaming/home` on the node's NVMe), so pod
+   restarts and image rolls do not sign you out or lose the library.
+
+Install games from the Steam UI over the stream. For Windows titles enable
+Proton: Steam → Settings → Compatibility → "Enable Steam Play for all other
+titles". `steamcmd` is also in the image for scripted/depot installs.
 
 ## Revert to inference
 
@@ -122,7 +151,10 @@ Scraped by the existing `flexinfer-runtime` PodMonitor (`/metrics` on the api po
 | Node won't warm the new primary after freeing the card | Election prefers the higher-priority incumbent; raise the intended primary's `gpu.priority` above it (it must also be `litellm.enabled: true` + `minReplicas ≥ 1`). |
 | Controller crashlooping `gamingsessions ... is forbidden` | Chart ClusterRole missing `gamingsessions` — add to `charts/flexinfer/templates/rbac.yaml` (the `ai.flexinfer` rule). A new CRD needs both `config/rbac/role.yaml` and the chart ClusterRole. |
 | Moonlight can't reach the node | The gaming runtime profile needs `hostNetwork: true` + `gaming: true`; NodePort's 30000–32767 range cannot serve Moonlight's fixed ports. Ensure no other process holds 47984/47989/47990/48010 on the host. |
-| Sunshine build fails `Steam License Agreement was DECLINED` | `steamcmd` needs a debconf license preseed; the gaming image omits it (Sunshine streams any app without Steam). Add steamcmd + preseed only when wiring Steam/Proton. |
+| Image build fails `Steam License Agreement was DECLINED` | The `steam`/`steamcmd` debconf license preseeds must run **before** `apt-get install` in the `INCLUDE_GAMING` layer (both selectors: `steam steam/question` and `steamcmd steam/question`). |
+| Steam exits immediately / `Cannot run as root` | Steam refuses uid 0. The session (sway/PipeWire/Steam) runs as the `gamer` user; only Sunshine + avahi stay root. Don't launch `steam` from a root shell — use the `steam-app.sh` wrapper on the gaming volume. |
+| Steam window never appears on the stream | Xwayland missing (Steam is X11): the sway config needs `xwayland enable` and the image needs the `xwayland` package (sway's Recommends are suppressed by `--no-install-recommends`). |
+| Games/login lost after a pod restart | The gaming state volume isn't mounted — check the profile's `extraVolumes` (`/home/flexinfer-gaming` → `/var/lib/flexinfer-gaming`) and `GAMING_STATE_DIR`. |
 | A dedicated-Deployment model (pvc:// source) still runs on the gaming node | `SetMode(gaming)` drains runtime-managed models, not dedicated Deployments. De-advertise it (`litellm.enabled: false`, `minReplicas: 0`) so it idles out. |
 
 ## Related

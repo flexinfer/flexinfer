@@ -387,7 +387,21 @@ runtime:
       memoryRequest: "8Gi"
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
+      # Persistent gaming state on the node's NVMe (/home, ~1.8T): Sunshine
+      # pairing survives pod restarts, and the Steam account login + game
+      # library live in <mount>/home so signing in and installing games are
+      # one-time operations. Layout is managed by build/sunshine-headless.sh.
+      extraVolumeMounts:
+        - name: gaming-data
+          mountPath: /var/lib/flexinfer-gaming
+      extraVolumes:
+        - name: gaming-data
+          hostPath:
+            path: /home/flexinfer-gaming
+            type: DirectoryOrCreate
       env:
+        - name: GAMING_STATE_DIR
+          value: "/var/lib/flexinfer-gaming"
         - name: HIP_VISIBLE_DEVICES
           value: "0"
         - name: ROCR_VISIBLE_DEVICES
