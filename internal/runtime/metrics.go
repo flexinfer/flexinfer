@@ -142,6 +142,16 @@ var (
 			Help: "Total automatic gaming->inference reverts triggered by the idle guard.",
 		},
 	)
+
+	// GamingBackendRestartsTotal counts supervised restarts of the gaming
+	// backend after a subprocess crash while the node is in gaming mode.
+	GamingBackendRestartsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_runtime_gaming_backend_restarts_total",
+			Help: "Supervised gaming backend restart attempts after a crash, by result.",
+		},
+		[]string{"result"},
+	)
 )
 
 // RegisterMetrics registers all runtime metrics with the default Prometheus registry.
@@ -161,6 +171,7 @@ func RegisterMetrics() {
 		GPUTemperatureCelsiusRT,
 		NodeModeGauge,
 		GamingIdleRevertsTotal,
+		GamingBackendRestartsTotal,
 	)
 }
 

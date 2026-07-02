@@ -178,9 +178,17 @@ func writeError(w http.ResponseWriter, code int, msg string) {
 }
 
 // handleGetMode returns the current node mode ("inference" or "gaming").
+// While in gaming mode with a crashed backend (supervised restart pending),
+// it additionally reports degraded=true so the GamingSession controller can
+// reflect the failure instead of Active.
 func (s *Server) handleGetMode(w http.ResponseWriter, r *http.Request) {
 	mode := s.manager.Mode()
-	writeJSON(w, http.StatusOK, map[string]string{"mode": string(mode)})
+	resp := map[string]any{"mode": string(mode)}
+	if degraded, detail := s.manager.GamingDegraded(); degraded {
+		resp["degraded"] = true
+		resp["detail"] = detail
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // handleSetMode switches the node between inference and gaming mode.

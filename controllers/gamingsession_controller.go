@@ -23,7 +23,7 @@ const nodeModeInference = "inference"
 // *RuntimeReconciler satisfies it.
 type runtimeModeClient interface {
 	FindRuntimeForNode(ctx context.Context, namespace string, nodeSelector map[string]string) (*RuntimeEndpoint, error)
-	GetMode(ctx context.Context, endpoint *RuntimeEndpoint) (string, error)
+	GetModeStatus(ctx context.Context, endpoint *RuntimeEndpoint) (RuntimeModeStatus, error)
 	SetMode(ctx context.Context, endpoint *RuntimeEndpoint, mode string) error
 }
 
@@ -101,13 +101,24 @@ func (r *GamingSessionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
 
-	current, err := r.Runtime.GetMode(ctx, endpoint)
+	modeStatus, err := r.Runtime.GetModeStatus(ctx, endpoint)
 	if err != nil {
 		_ = r.syncStatus(ctx, gs, aiv1alpha2.GamingSessionPending, gs.Status.ObservedMode, endpoint.PodName, fmt.Sprintf("querying mode: %v", err))
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	}
+	current := modeStatus.Mode
 
 	if current == desired {
+		// In-mode but the backing subprocess is down (e.g. Sunshine crashed):
+		// the runtime supervises restarts; reflect the outage instead of Active
+		// and poll fast until it recovers.
+		if modeStatus.Degraded {
+			if r.Recorder != nil && gs.Status.Phase != aiv1alpha2.GamingSessionDegraded {
+				r.Recorder.Event(gs, "Warning", "GamingDegraded", modeStatus.Detail)
+			}
+			_ = r.syncStatus(ctx, gs, aiv1alpha2.GamingSessionDegraded, current, endpoint.PodName, modeStatus.Detail)
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
 		if gs.Status.ActivatedAt == nil && desired == nodeModeGaming {
 			now := metav1.Now()
 			gs.Status.ActivatedAt = &now

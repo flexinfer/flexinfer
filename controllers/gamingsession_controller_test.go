@@ -17,9 +17,12 @@ import (
 )
 
 // fakeRuntimeMode is an in-memory runtimeModeClient. It models a single node's
-// current mode, records SetMode calls, and can simulate an unreachable runtime.
+// current mode, records SetMode calls, and can simulate an unreachable runtime
+// or a degraded mode (backend subprocess down while in-mode).
 type fakeRuntimeMode struct {
 	mode        string
+	degraded    bool
+	detail      string
 	unreachable bool
 	findErr     error
 	setErr      error
@@ -36,11 +39,12 @@ func (f *fakeRuntimeMode) FindRuntimeForNode(_ context.Context, _ string, _ map[
 	return &RuntimeEndpoint{PodName: "flexinfer-runtime-test", PodIP: "10.0.0.1", Port: 8080, NodeName: "cblevins-7900xtx", Ready: true}, nil
 }
 
-func (f *fakeRuntimeMode) GetMode(_ context.Context, _ *RuntimeEndpoint) (string, error) {
-	if f.mode == "" {
-		return nodeModeInference, nil
+func (f *fakeRuntimeMode) GetModeStatus(_ context.Context, _ *RuntimeEndpoint) (RuntimeModeStatus, error) {
+	mode := f.mode
+	if mode == "" {
+		mode = nodeModeInference
 	}
-	return f.mode, nil
+	return RuntimeModeStatus{Mode: mode, Degraded: f.degraded, Detail: f.detail}, nil
 }
 
 func (f *fakeRuntimeMode) SetMode(_ context.Context, _ *RuntimeEndpoint, mode string) error {
@@ -189,6 +193,46 @@ func TestGamingSessionPendingWhenRuntimeUnreachable(t *testing.T) {
 	}
 	if getGS(t, fakeClient, "gs4").Status.Phase != aiv1alpha2.GamingSessionPending {
 		t.Fatal("expected Pending phase")
+	}
+}
+
+// Runtime reports gaming but the backend subprocess is down (crashed Sunshine,
+// supervised restart pending) -> Degraded phase + fast requeue, not Active;
+// recovers to Active once the runtime clears the degraded flag.
+func TestGamingSessionDegradedWhenBackendCrashed(t *testing.T) {
+	s := gsScheme(t)
+	gs := newGS("gs6")
+	gs.Finalizers = []string{aiv1alpha2.GamingSessionFinalizer}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).WithRuntimeObjects(gs).
+		WithStatusSubresource(&aiv1alpha2.GamingSession{}).Build()
+	rt := &fakeRuntimeMode{
+		mode:     "gaming",
+		degraded: true,
+		detail:   "gaming backend crashed; supervised restart attempt 1 pending: exit status 4",
+	}
+	r := &GamingSessionReconciler{Client: fakeClient, Scheme: s, Recorder: record.NewFakeRecorder(10), Runtime: rt}
+
+	res := reconcileGS(t, r, "gs6")
+	if res.RequeueAfter != requeueShort {
+		t.Fatalf("requeueAfter = %v, want %v (poll fast while degraded)", res.RequeueAfter, requeueShort)
+	}
+	if len(rt.setModes) != 0 {
+		t.Fatalf("expected no SetMode while degraded (runtime supervises restarts), got %v", rt.setModes)
+	}
+	got := getGS(t, fakeClient, "gs6")
+	if got.Status.Phase != aiv1alpha2.GamingSessionDegraded {
+		t.Fatalf("phase = %q, want Degraded", got.Status.Phase)
+	}
+	if got.Status.ObservedMode != "gaming" || got.Status.Message != rt.detail {
+		t.Fatalf("observed=%q message=%q, want gaming + crash detail", got.Status.ObservedMode, got.Status.Message)
+	}
+
+	// Supervised restart succeeded -> back to Active.
+	rt.degraded, rt.detail = false, ""
+	reconcileGS(t, r, "gs6")
+	if got := getGS(t, fakeClient, "gs6"); got.Status.Phase != aiv1alpha2.GamingSessionActive {
+		t.Fatalf("phase = %q, want Active after recovery", got.Status.Phase)
 	}
 }
 

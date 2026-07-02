@@ -82,6 +82,11 @@ profile). Do **not** `kubectl apply`/`edit` directly.
    ```
    `phase=Active`, `observedMode=gaming` means Sunshine is up. Check the runtime
    pod log for `Found H.264 encoder: h264_vaapi` / `Configuration UI available`.
+   `phase=Degraded` means the node is in gaming mode but the Sunshine subprocess
+   crashed; the runtime restarts it with exponential backoff (2s → 60s) and the
+   phase returns to Active once a restart succeeds. A session stuck in Degraded
+   means every restart is failing — check the runtime pod log for the crash
+   (`Backend subprocess crashed`) and the restart attempts.
 
 ## Pair Moonlight
 
@@ -142,6 +147,7 @@ Scraped by the existing `flexinfer-runtime` PodMonitor (`/metrics` on the api po
 | `flexinfer_runtime_node_mode{mode="gaming"}` | 1 when the node is in gaming mode |
 | `flexinfer_runtime_node_mode{mode="inference"}` | 1 when serving inference |
 | `flexinfer_runtime_gaming_idle_reverts_total` | count of idle auto-reverts |
+| `flexinfer_runtime_gaming_backend_restarts_total{result}` | supervised Sunshine restarts after a crash (`ok`/`error`) |
 
 ## Troubleshooting
 
@@ -151,6 +157,7 @@ Scraped by the existing `flexinfer-runtime` PodMonitor (`/metrics` on the api po
 | Node won't warm the new primary after freeing the card | Election prefers the higher-priority incumbent; raise the intended primary's `gpu.priority` above it (it must also be `litellm.enabled: true` + `minReplicas ≥ 1`). |
 | Controller crashlooping `gamingsessions ... is forbidden` | Chart ClusterRole missing `gamingsessions` — add to `charts/flexinfer/templates/rbac.yaml` (the `ai.flexinfer` rule). A new CRD needs both `config/rbac/role.yaml` and the chart ClusterRole. |
 | Moonlight can't reach the node | The gaming runtime profile needs `hostNetwork: true` + `gaming: true`; NodePort's 30000–32767 range cannot serve Moonlight's fixed ports. Ensure no other process holds 47984/47989/47990/48010 on the host. |
+| GamingSession stuck `Degraded`; no sunshine process in the pod | Sunshine crashes on every supervised restart (e.g. the 2026-07-01 `useradd` exit-4 wrapper crash). The runtime retries with backoff forever while in gaming mode — fix the crash cause; check `flexinfer_runtime_gaming_backend_restarts_total{result="error"}` and the pod log. |
 | Image build fails `Steam License Agreement was DECLINED` | The `steam`/`steamcmd` debconf license preseeds must run **before** `apt-get install` in the `INCLUDE_GAMING` layer (both selectors: `steam steam/question` and `steamcmd steam/question`). |
 | Steam exits immediately / `Cannot run as root` | Steam refuses uid 0. The session (sway/PipeWire/Steam) runs as the `gamer` user; only Sunshine + avahi stay root. Don't launch `steam` from a root shell — use the `steam-app.sh` wrapper on the gaming volume. |
 | Steam window never appears on the stream | Xwayland missing (Steam is X11): the sway config needs `xwayland enable` and the image needs the `xwayland` package (sway's Recommends are suppressed by `--no-install-recommends`). |
