@@ -284,10 +284,10 @@ def assert_sunshine_input_contract(launcher: str, values_yaml: str) -> None:
     required_mounts = (
         "mountPath: /dev/input",
         "mountPath: /dev/uinput",
-        "mountPath: /run/udev/data",
+        "mountPath: /run/udev",
         "path: /dev/input",
         "path: /dev/uinput",
-        "path: /run/udev/data",
+        "path: /run/udev",
     )
     for snippet in required_mounts:
         if snippet not in values_yaml:

@@ -373,7 +373,7 @@ runtime:
     # (matching gfx1100-5930k) to return 7900xtx to the inference fleet.
     - name: gfx1100
       # rocm-gfx1100-gaming w/ Steam client + steamcmd (2026-07-01)
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:180f0d3dcb9c8e5c2fe665001e4920cb52a2ecd5458fd94c2696c12d86d0d7ca"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:6c20688de909fea03876a65282cc1af3bc3cf31313594ebad2396ce9b4a176ad"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -400,8 +400,8 @@ runtime:
           mountPath: /dev/input
         - name: dev-uinput
           mountPath: /dev/uinput
-        - name: run-udev-data
-          mountPath: /run/udev/data
+        - name: run-udev
+          mountPath: /run/udev
           readOnly: true
         - name: gaming-data
           mountPath: /var/lib/flexinfer-gaming
@@ -414,9 +414,9 @@ runtime:
           hostPath:
             path: /dev/uinput
             type: CharDevice
-        - name: run-udev-data
+        - name: run-udev
           hostPath:
-            path: /run/udev/data
+            path: /run/udev
             type: Directory
         - name: gaming-data
           hostPath:
