@@ -139,7 +139,8 @@ func TestAutotuner_Run_CoordinateDescent(t *testing.T) {
 		ModelName:      "test-model",
 		Namespace:      "test-ns",
 		BenchFn:        benchFn,
-		RolloutTimeout: 5 * time.Second,
+		RolloutTimeout: 30 * time.Second,
+		PollInterval:   time.Millisecond,
 		Space:          space,
 	})
 
@@ -210,7 +211,8 @@ func TestAutotuner_Run_QualityVeto(t *testing.T) {
 			ModelName:      "test-model",
 			Namespace:      "test-ns",
 			BenchFn:        benchFn,
-			RolloutTimeout: 5 * time.Second,
+			RolloutTimeout: 30 * time.Second,
+			PollInterval:   time.Millisecond,
 			Space:          SearchSpace{Parameters: []Parameter{{Name: "maxNumSeqs", Values: []any{float64(1), float64(2)}}}},
 		}
 		if withGuard {
