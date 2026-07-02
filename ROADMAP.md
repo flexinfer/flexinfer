@@ -1,197 +1,64 @@
-# Project Roadmap
+# FlexInfer Roadmap
 
-## Tracking
-- [Roadmap tracking issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1)
+> Last Updated: 2026-07-02
+> Tier: 1 (see workspace AGENTS.md "Portfolio Tiers")
+> Tracking Issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/63
 
-
-> Last Updated: 2026-03-05
+<!--
+Convention (portfolio-refresh 2026-H2, see libs/STANDARDS.md "Roadmap & Backlog"):
+- This file states CURRENT TRUTH, derived from git activity and deployed state —
+  never re-date stale content. Each refresh MR must cite its evidence (git-log
+  window inspected, deploy-state query used).
+- Backlog lives in GitLab issues (P1/P2/P3 labels + milestones), NOT in this file.
+  This file links the backlog; it does not duplicate it.
+- If a live plan exists in the agent-context plan store, reference its plan_id
+  here; the store is canonical and this file is a rendered summary.
+- Staleness SLO: Tier 1/2 repos must have this file dated within 90 days.
+  `bin/portfolio-inventory --roadmaps` reports conformance.
+-->
 
 ## Current Status
 
-FlexInfer is **production-ready** at 95%+ completion. Phases 1-4 are complete plus 6 Advanced Features have shipped:
-- Hardened controller reconciliation with immutable field handling
-- Production-grade serverless/activator with OpenAI API compatibility
-- KV-cache-aware routing with session affinity and least-loaded strategies
-- Comprehensive E2E testing and documentation
-- KV-Cache tiering with configurable eviction policies (LRU/LFU/FIFO)
-- Dynamic Multi-LoRA hot-swapping via `LoRAAdapter` CRD
-- OCI model registry integration (Harbor, GHCR, ECR) via `ModelCatalog` CRD
-- Flash-Loader sidecar for P2P/RDMA model preloading
-- Spot-instance resilience with proactive draining (AWS, Azure, GCP, Harvester)
-- CNCF Sandbox prep (GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM, license scanning)
+FlexInfer is the production Kubernetes AI-inference operator running the homelab
+LLM stack: CRD-driven model deployments (models, GPU groups, `LoRAAdapter`,
+`ModelCatalog`), an OpenAI-compatible serverless proxy with scale-to-zero,
+KV-cache-aware routing, quantization pipelines with a quality gate, and
+multi-cluster support. Core phases 1–5 plus the advanced-feature wave (KV-cache
+tiering, dynamic multi-LoRA, OCI model registry, flash-loader, spot resilience,
+CNCF-prep) shipped by 2026-03; the full completed-phase history lives in git and
+`docs/planning/`. Recent activity (git log `master`, 2026-06-25..2026-07-02): the
+gaming-mode program landed — Steam client + persistent game storage on the
+7900xtx gaming node, hostNetwork/Sunshine ports, runbook + node-mode metrics +
+opt-in idle auto-revert, and crash supervision with degraded-session reporting —
+alongside model-routing fixes keeping gemma4-26b primary on the 5930k card. A
+weekly model-eval gauntlet CronJob publishes benchmark rows to Postgres and
+per-model ConfigMaps ([#27](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/27)).
+No known-broken areas; latest default-branch pipeline success 2026-07-01
+(functional-health baseline 2026-07-02).
 
-Open roadmap scope is currently maintenance and delivery-process focused:
-- Dependency refresh and scheduled upgrade rollout ([Issue #9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)) — in progress, with Prometheus + golang-x minor/patch batches merged to `master` (`a16b2d1`)
-- Next roadmap slice selection and tracking updates ([Issue #1](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/1))
-- Spec-driven delivery acceleration: source-backed spec capsules, PR-sized implementation slices, validation matrices, and roadmap reconciliation discipline ([Template](docs/planning/spec-capsule-template.md))
+- **Plan store**: plan-workspace-portfolio-refresh-2026-h2-roadmaps-quality-baselin-f3db23 (this refresh; no repo-scoped live plan)
+- **Deployed**: K3s GPU cluster via Flux (flexinfer stack incl. fi-mcp-gateway)
+- **CI**: custom (bespoke `.gitlab-ci.yml` + `.gitlab/ci/` includes: BuildKit image matrix, Go build/test, Trivy, Helm)
 
-Recently closed roadmap slices (Feb-Mar 2026):
-- FLUX.1 diffusers support with NF4 quantization for 24GB VRAM (three-layer dtype strategy, gc.collect OOM fix, PyTorch 2.3 polyfills) (`db4cfde`..`053a2d6`)
-- ROCm gfx1100 perf tuning: HipBLASLt, prefill-decode split attention (`45d311c`)
-- Configurable CRD tolerations ([#24](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/24)), dedicated scheduler ClusterRole ([#25](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/25))
-- Benchmark sidecar termination for service mesh ([#23](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/23)), K8s allocatable GPU fallback ([#22](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/22))
-- Multipart proxy support for image editing (`7892613`)
-- Quantization hardening: status preservation, idempotent completion, CompletedAt path redirect
-- Context-aware router completion ([Issue #8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8), [Execution Plan](docs/planning/context-aware-router-execution.md), [Routing Docs](docs/user/routing.md))
-- Quantization pipelines and quality validation gate ([Issue #7](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/7), [Issue #10](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/10), [Execution Plan](docs/planning/quantization-pipelines-execution.md), [Design](docs/design/quantization-pipelines.md))
-- Cold-start reliability guardrails for long-loading models merged to `master` (Loading-phase idle timeout guard + proxy conflict retry + per-model GPUGroup timeout path) (`fad43a7`)
-- Diffusers ROCm robustness updates merged to `master` (single-file checkpoint support + SDXL auto-detection/offload path) (`a16b2d1`)
+## Now
 
-### Implemented Features
-- ✅ **Node Agent**: Hardware detection and labeling system
-- ✅ **Controller Manager**: Complete CRD reconciliation with status management
-- ✅ **Scheduler Extender**: Advanced filtering and scoring algorithms
-- ✅ **Benchmarker**: Model performance measurement framework
-- ✅ **API Types**: Comprehensive CRD definitions with status tracking
-- ✅ **Test Suite**: Extensive unit tests across all components
-- ✅ **Model Caching**: Intelligent model artifact management with deduplication
-- ✅ **Resource Management**: Complete lifecycle management of AI workload deployments
-- ✅ **Serverless Proxy**: OpenAI-compatible proxy with scale-to-zero activation
-- ✅ **Advanced Routing**: Session affinity, prefix-based, and least-loaded routing
-- ✅ **Quantization Pipelines**: GGUF/AWQ/GPTQ/EXL2/FP8 builders, recommendation flow, and quality validation gate (`flexinfer quantize validate`)
-- ✅ **KV-Cache Tiering**: LRU/LFU/FIFO eviction policies with /dev/shm Memory strategy
-- ✅ **Dynamic Multi-LoRA**: Hot-swap adapters via `LoRAAdapter` CRD + vLLM backend
-- ✅ **OCI Model Registry**: Harbor/GHCR/ECR integration via `ModelCatalog` CRD and `pkg/registry/`
-- ✅ **Flash-Loader Sidecar**: Parallel model preloading from PVC to tmpfs
-- ✅ **Spot-Instance Resilience**: Proactive draining on termination notice (AWS, Azure, GCP, Harvester)
-- ✅ **CNCF Sandbox Prep**: Governance, security policy, adopters, SBOM generation, license scanning
-- ✅ **FLUX.1 Image Generation**: Schnell (text-to-image) + Fill (inpainting) with NF4 quantization on ROCm gfx1100
-- ✅ **Multipart Proxy**: form-data model extraction for `/v1/images/edits`
-- ✅ **Configurable Tolerations**: User-specified tolerations in CRD spec ([#24](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/24))
-- ✅ **Scheduler RBAC Hardening**: Dedicated `flexinfer-kube-scheduler` ClusterRole ([#25](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/25))
-- ✅ **Benchmark Sidecar Termination**: Istio/Linkerd-compatible job cleanup ([#23](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/23))
-- ✅ **GPU Detection Fallback**: K8s allocatable-based GPU detection when vendor tools unavailable ([#22](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/22))
-- ✅ **gfx1100 Perf Tuning**: HipBLASLt preference, prefill-decode split attention for vLLM
+- [ ] Extend the benchmark gauntlet: CI/CD-triggered runs and a model-coherence dimension alongside throughput ([#27](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/27))
 
-## Completed Phases
+## Next
 
-### Phase 1: Controller & API Hardening ✅
-- [x] Service reconciliation preserves immutable fields (clusterIP)
-- [x] Deployment reconciliation handles selector immutability
-- [x] Multi-replica placement with anti-affinity and topology spread
-- [x] NVIDIA runtime requirements codified
-- [x] Status clarity with actionable conditions
-- [x] Image pinning guidance documented
+- [ ] Stage major docker dependency updates (Python 3.14 / CUDA 12.9 / ROCm 6.4) in a controlled rollout ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
+- [ ] Qwen3.5 recovery: re-download clean FP16 and re-quantize without abliteration ([#51](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/51))
+- [ ] Docker build node disk space management ([#35](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/35))
 
-### Phase 2: Serverless/Activator Hardening ✅
-- [x] OpenAI API compatibility documented
-- [x] Streaming (SSE) behavior documented
-- [x] Cold start budget configuration
-- [x] Concurrency caps during activation
-- [x] Activation metrics (10 metric families)
+## Later
 
-### Phase 3: Routing & Performance ✅
-- [x] Session affinity via consistent hashing
-- [x] Prefix-based routing (opt-in)
-- [x] Endpoint discovery for multi-replica models
-- [x] Least-loaded routing (opt-in)
-- [x] Routing documentation
+- Gaming-mode hardening follow-ups as usage feedback lands (idle auto-revert default-on, session telemetry)
+- Renovate-driven dependency hygiene via the Dependency Dashboard ([#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9))
+- CNCF Sandbox submission (prep artifacts shipped; submit when adoption evidence justifies it)
 
-### Phase 4: Operational Polish ✅
-- [x] E2E test harness (`make test-e2e`)
-- [x] INSTALL.md refresh
-- [x] User quickstart guide
-- [x] GPU/backend quirks runbook
-- [x] Documentation index/navigation
+## Backlog
 
-## Phase: Advanced Features ✅
-
-Shipped in pipeline #498 across 3 commits.
-
-- [x] **KV-Cache Tiering** - LRU/LFU/FIFO eviction policies, /dev/shm Memory strategy, eviction metrics
-- [x] **Dynamic Multi-LoRA** - `LoRAAdapter` CRD, hot-swap adapters on running vLLM deployments
-- [x] **OCI Model Registry** - `ModelCatalog` CRD, Harbor/GHCR/ECR support via `pkg/registry/`
-- [x] **Flash-Loader Sidecar** - `flexinfer-flash-loader` binary, parallel PVC→tmpfs preloading, P2P transfer
-- [x] **Spot-Instance Resilience** - Termination detectors for AWS, Azure, GCP, Harvester; proactive draining
-- [x] **CNCF Sandbox Prep** - GOVERNANCE.md, SECURITY.md, ADOPTERS.md, SBOM generation, license scanning
-
-## Upcoming Work
-
-### High Priority (Deployment Ready)
-- [x] **Complete Helm templates** - Finish charts/flexinfer/ with proper configurations
-- [x] **Helm security templates** - NetworkPolicy and PodDisruptionBudget templates
-- [x] **Installation documentation** - Step-by-step deployment guides (INSTALL.md)
-- [x] **Integration tests** - End-to-end testing scenarios (e2e/)
-- [x] **Real benchmarking** - Real inference benchmarking (Ollama, vLLM, MLC-LLM, llama.cpp)
-- [x] **GPUGroup exclusive scheduling** - Single model per GPU group with demand-based swapping
-- [x] **AntiThrashing configuration** - Configurable cooldown periods for model swaps
-
-### Backend-Specific Work
-- [x] **ROCm GFX1100 image builds** - MLC-LLM ROCm 6.4 image with gfx1100 tuning (supplementalGroups fix for non-root GPU access)
-- [x] **Maxwell pre-compiled model docs** - Document FP32 model requirements and pre-compilation
-- [x] **CPU backend support** - Add explicit CPU-only inference via llama.cpp (v1alpha2 docs + HF GGUF selection via config.ggufFile)
-- [x] **VRAM detection** - Implement real free VRAM detection + utilization telemetry in node agent (sysfs fallback + chroot host tooling)
-
-### Medium Priority (Production Ready)
-- [x] **Structured logging migration** - Migrate proxy from log.Printf to slog
-- [x] **Environment variable documentation** - Complete docs/CONFIGURATION.md
-- [x] **Routing optimization** - Session affinity, prefix-based, least-loaded (Phase 3)
-- [x] **Security hardening** - RBAC reviewed (controller can list/watch nodes) + reduced SA token mounting for v1alpha2 model/cache pods
-- [x] **Monitoring dashboards** - Basic dashboards exist (may need expansion)
-- [x] **Documentation** - API docs, operations guide, quickstart complete
-
-### Tech Debt (High Priority)
-- [x] **TD-1**: Add error handling to ignored returns - Fixed JSON encode-after-header-sent in proxy `handleModels` and scheduler Filter/Score handlers (pre-marshal pattern)
-- [x] **TD-3**: Increase CLI test coverage to 50%+ (now 78.6% for `cmd/flexinfer/commands`)
-- [x] **TD-4**: Replace panic with graceful error handling - backend registration now captures init errors and manager startup exits cleanly with actionable logs
-- [x] **TD-11**: E2E test names violate RFC 1123 - Fixed with lowercase + "/" replacement
-- [x] **TD-12**: GPUGroup v1alpha1 not registered in e2e test scheme - Added to scheme
-
-### Tech Debt (Medium Priority)
-- [x] **TD-5**: Create v1alpha1 → v1alpha2 migration guide (docs/migration/v1alpha1-to-v1alpha2.md)
-- [~] **TD-6**: Centralize hardcoded URLs/ConfigMap names (backends already support env var overrides)
-- [~] **TD-7**: E2E tests for GPU scenarios - 6/7 pass on K3s GPU cluster (AMD 7900XTX). GPUGroup tests (3/3) pass, inference basic+streaming+multi-model (3/4) pass. ColdStart gracefully skips (iGPU not usable with ROCm, no spare discrete GPU)
-
-### Tech Debt (Low Priority)
-- [x] **TD-8**: Logging consistency - servers use slog, CLI uses fmt.Print (correct pattern)
-- [x] **TD-9**: Deprecated benchmark flag cleanup - added warning for --max-tokens
-- [x] **TD-10**: Namespace "default" fallback - added warning when POD_NAMESPACE not set
-
-### Low Priority (Advanced Features)
-- [x] **KV-Cache tiering** - Advanced memory management (shipped: LRU/LFU/FIFO eviction)
-- [x] **Harbor OCI integration** - Direct model registry support (shipped: `pkg/registry/`, `ModelCatalog` CRD)
-- [x] **Multi-tenancy** - Namespace isolation baseline + admission guardrails + tenant fair-share scheduling shipped ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/2), [Design](docs/design/multi-tenancy.md))
-- [x] **CNCF submission** - Sandbox application preparation (shipped: governance, security, SBOM, licenses)
-
-### Delivery Acceleration (Spec-Driven Development)
-- [x] **Spec capsule template** - Add a reusable template for goal, non-goals, requirements, acceptance criteria, validation, rollout/backout, and sources ([Issue #55](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/55))
-- [x] **Slice readiness gate** - Require target modules, validation commands, and rollback notes before multi-file feature implementation ([Issue #56](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/56))
-- [x] **Validation matrix expansion** - Make `.loom/60-validation-matrix.md` the canonical canary and runtime-promotion evidence table, with the SD-3 contract in `docs/planning/spec-driven-delivery.md` ([Issue #57](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/57))
-- [x] **Agent-ready work slices** - Add delegation notes, disjoint ownership boundaries, safe-to-edit modules, local verification commands, and expected output signals to feature plans ([Issue #58](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/58))
-- [x] **Roadmap reconciliation discipline** - Keep roadmap docs, `.loom` context, and tracking issues aligned after planning cycles through `docs/planning/roadmap-reconciliation.md` ([Issue #59](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/59))
-
-## Phase 5: Multi-Cluster (Mostly Complete)
-
-See `docs/design/multi-cluster.md` and `docs/planning/phase-5-multi-cluster.md` for details.
-
-- [x] Cluster Registry (MVP) ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/3))
-- [x] Cross-Cluster Model Sync ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/4))
-- [x] Global Routing ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/5))
-- [x] Advanced Features (weighted routing, cross-cluster GPU sharing, aggregate metrics/dashboard) ([Issue](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/6))
-
-## Innovation Roadmap
-
-- ✅ **"Flash-Loader" Sidecar**: P2P/RDMA model loading to bypass disk I/O. (shipped: `flexinfer-flash-loader` binary)
-- ✅ **Context-Aware Router**: L7 Prefix-Caching router for "Chat with Doc" workloads. (shipped with canonical keying, explicit key contract, safety/fallback controls, observability, and E2E validation) ([Issue #8](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/8), [Execution Plan](docs/planning/context-aware-router-execution.md), [Routing Docs](docs/user/routing.md))
-- ✅ **Dynamic Multi-LoRA**: Hot-swapping adapters on running deployments. (shipped: `LoRAAdapter` CRD + vLLM integration)
-- ✅ **Spot-Instance Resilience**: Proactive draining on termination notice. (shipped: AWS, Azure, GCP, Harvester detectors)
-
-## References
-
-| Document | Purpose |
-|----------|---------|
-| [README.md](README.md) | Project overview and architecture |
-| [AGENTS.md](AGENTS.md) | Agent guidance |
-| [CONTRIBUTING.md](CONTRIBUTING.md) | Development guidelines |
-| [GOVERNANCE.md](GOVERNANCE.md) | Project governance model |
-| [SECURITY.md](SECURITY.md) | Security policy and vulnerability reporting |
-| [ADOPTERS.md](ADOPTERS.md) | Production adopters |
-| [docs/planning/](docs/planning/) | Phase planning documents |
-| [docs/planning/spec-capsule-template.md](docs/planning/spec-capsule-template.md) | Reusable spec capsule template and examples |
-| [docs/planning/slice-readiness-gate.md](docs/planning/slice-readiness-gate.md) | Ready-for-implementation gate for feature slices and agent delegation notes |
-| [docs/planning/spec-driven-delivery.md](docs/planning/spec-driven-delivery.md) | Spec-driven delivery contract plus SD-3 validation matrix and SD-4 delegation acceptance criteria |
-| [docs/planning/roadmap-reconciliation.md](docs/planning/roadmap-reconciliation.md) | Post-merge roadmap, `.loom`, and issue reconciliation checklist |
-| [.loom/60-validation-matrix.md](.loom/60-validation-matrix.md) | Canonical gfx1100 canary and runtime-promotion evidence matrix |
-| [docs/design/multi-cluster.md](docs/design/multi-cluster.md) | Multi-cluster design |
-| [docs/design/model-registry-integration.md](docs/design/model-registry-integration.md) | Model registry design (implemented) |
-| [docs/design/quantization-pipelines.md](docs/design/quantization-pipelines.md) | Quantization pipelines design |
+Full backlog: [P1 issues](https://gitlab.flexinfer.ai/services/flexinfer/-/issues?label_name[]=P1) ·
+[P2](https://gitlab.flexinfer.ai/services/flexinfer/-/issues?label_name[]=P2) ·
+[P3](https://gitlab.flexinfer.ai/services/flexinfer/-/issues?label_name[]=P3) ·
+[Milestones](https://gitlab.flexinfer.ai/services/flexinfer/-/milestones)
