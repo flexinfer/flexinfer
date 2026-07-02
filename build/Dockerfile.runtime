@@ -366,8 +366,9 @@ RUN chmod +x /opt/flexinfer/steam-headless.sh
 # hardware-encode userspace the ROCm compute base lacks:
 #   - Mesa RADV (Vulkan render) + radeonsi VA-API (H.264/HEVC/AV1 HW encode),
 #     validated on gfx1100 by the Slice 1 kill-test.
-#   - sway: a headless wlroots compositor (WLR_BACKENDS=headless) that hosts the
-#     game and exposes the wlr-screencopy output Sunshine captures. gamescope is
+#   - sway: a headless wlroots compositor (WLR_BACKENDS=headless,libinput) that
+#     hosts the game, consumes Sunshine's uinput devices, and exposes the
+#     wlr-screencopy output Sunshine captures. gamescope is
 #     NOT packaged for Ubuntu 24.04; it can be layered from source later as an
 #     in-session micro-compositor for scaling/HDR/frame-limit ergonomics.
 #   - vulkan-tools/vainfo for diagnostics.

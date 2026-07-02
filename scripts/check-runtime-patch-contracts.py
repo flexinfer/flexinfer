@@ -40,11 +40,13 @@ CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
     "scripts/check-runtime-patch-contracts.py",
     "build/build-runtime.sh",
     "build/Dockerfile.runtime",
+    "build/sunshine-headless.sh",
     "build/Dockerfile.runtime-serving",
     "build/Dockerfile.vllm-rocm-gfx906",
     "build/runtime-entrypoint.sh",
     "build/runtime.yaml",
     "build/scripts/install_vllm_gfx906_compat.py",
+    "deploy/system/values-k3s.yaml",
     ".gitlab/ci/runtime-publish.yml",
 )
 
@@ -264,6 +266,32 @@ def assert_gfx906_vllm_compat_hooks_contract(install_script: str) -> None:
             )
 
 
+def assert_sunshine_input_contract(launcher: str, values_yaml: str) -> None:
+    required_launcher = (
+        'export WLR_BACKENDS="${WLR_BACKENDS:-headless,libinput}"',
+        "for dev in /dev/input/event* /dev/input/js*; do",
+        'group_name="$(getent group "$gid" | cut -d: -f1 || true)"',
+        'group_name="input-$gid"',
+        'groupadd -g "$gid" "$group_name"',
+        "usermod -aG \"$group_name\" \"$GAMING_USER\"",
+    )
+    for snippet in required_launcher:
+        if snippet not in launcher:
+            fail(f"sunshine-headless.sh missing input contract: {snippet!r}")
+
+    required_mounts = (
+        "mountPath: /dev/input",
+        "mountPath: /dev/uinput",
+        "mountPath: /run/udev/data",
+        "path: /dev/input",
+        "path: /dev/uinput",
+        "path: /run/udev/data",
+    )
+    for snippet in required_mounts:
+        if snippet not in values_yaml:
+            fail(f"values-k3s.yaml missing gaming input mount: {snippet!r}")
+
+
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     fast_job = ci_yaml.find("runtime_patch_contracts:")
     serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
@@ -346,6 +374,8 @@ def main(argv: list[str]) -> int:
     serving_dockerfile = read("build/Dockerfile.runtime-serving")
     gfx906_vllm_dockerfile = read("build/Dockerfile.vllm-rocm-gfx906")
     gfx906_vllm_install_script = read("build/scripts/install_vllm_gfx906_compat.py")
+    sunshine_launcher = read("build/sunshine-headless.sh")
+    values_yaml = read("deploy/system/values-k3s.yaml")
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
@@ -355,6 +385,7 @@ def main(argv: list[str]) -> int:
     assert_serving_dockerfile_contract(serving_dockerfile)
     assert_gfx906_vllm_diagnostics_contract(gfx906_vllm_dockerfile)
     assert_gfx906_vllm_compat_hooks_contract(gfx906_vllm_install_script)
+    assert_sunshine_input_contract(sunshine_launcher, values_yaml)
     assert_ci_fast_check_wiring(ci_yaml)
 
     if run_tests:

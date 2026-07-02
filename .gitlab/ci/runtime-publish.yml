@@ -18,10 +18,12 @@ runtime_patch_contracts:
         - .gitlab/ci/runtime-publish.yml
         - build/build-runtime.sh
         - build/Dockerfile.runtime
+        - build/sunshine-headless.sh
         - build/Dockerfile.runtime-serving
         - build/Dockerfile.vllm-rocm-gfx906
         - build/runtime-entrypoint.sh
         - build/runtime.yaml
+        - deploy/system/values-k3s.yaml
         - build/scripts/install_vllm_gfx906_compat.py
         - build/scripts/patch_turboquant_quantizer_gpu_qr.py
         - build/scripts/patch_vllm_env_override_torch29.py
@@ -38,10 +40,12 @@ runtime_patch_contracts:
         - .gitlab/ci/runtime-publish.yml
         - build/build-runtime.sh
         - build/Dockerfile.runtime
+        - build/sunshine-headless.sh
         - build/Dockerfile.runtime-serving
         - build/Dockerfile.vllm-rocm-gfx906
         - build/runtime-entrypoint.sh
         - build/runtime.yaml
+        - deploy/system/values-k3s.yaml
         - build/scripts/install_vllm_gfx906_compat.py
         - build/scripts/patch_turboquant_quantizer_gpu_qr.py
         - build/scripts/patch_vllm_env_override_torch29.py
@@ -58,10 +62,12 @@ runtime_patch_contracts:
         - .gitlab/ci/runtime-publish.yml
         - build/build-runtime.sh
         - build/Dockerfile.runtime
+        - build/sunshine-headless.sh
         - build/Dockerfile.runtime-serving
         - build/Dockerfile.vllm-rocm-gfx906
         - build/runtime-entrypoint.sh
         - build/runtime.yaml
+        - deploy/system/values-k3s.yaml
         - build/scripts/install_vllm_gfx906_compat.py
         - build/scripts/patch_turboquant_quantizer_gpu_qr.py
         - build/scripts/patch_vllm_env_override_torch29.py
@@ -256,6 +262,7 @@ publish_unified_rocm_gfx1100:
       changes:
         - .gitlab/ci/runtime-publish.yml
         - build/Dockerfile.runtime
+        - build/sunshine-headless.sh
         - build/runtime.yaml
         - build/runtime-entrypoint.sh
         - build/steam-headless.sh
