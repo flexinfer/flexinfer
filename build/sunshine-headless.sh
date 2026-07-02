@@ -18,6 +18,8 @@
 #   root:             avahi (mDNS discovery) and Sunshine — Sunshine needs
 #                     /dev/uinput for virtual gamepad/mouse input, and as root
 #                     it can reach the gamer session's Wayland/Pulse sockets.
+#   pod mounts:       /dev/input, /dev/uinput, and /run/udev/data so libinput
+#                     sees Sunshine's virtual devices inside the sway session.
 #
 # Persistent state lives under GAMING_STATE_DIR (a hostPath volume on the
 # gaming node — deploy/system/values-k3s.yaml gfx1100 profile):
@@ -64,6 +66,19 @@ for dev in /dev/dri/renderD* /dev/dri/card*; do
     getent group "$gid" >/dev/null || groupadd -g "$gid" "drm-$gid"
     usermod -aG "$gid" "$GAMING_USER"
 done
+# Input access for the non-root compositor: Sunshine creates virtual
+# keyboard/mouse/gamepad devices through /dev/uinput, then sway/libinput
+# consumes the resulting /dev/input/event* devices as $GAMING_USER.
+for dev in /dev/input/event* /dev/input/js*; do
+    [ -e "$dev" ] || continue
+    gid="$(stat -c %g "$dev")"
+    group_name="$(getent group "$gid" | cut -d: -f1 || true)"
+    if [ -z "$group_name" ]; then
+        group_name="input-$gid"
+        groupadd -g "$gid" "$group_name"
+    fi
+    usermod -aG "$group_name" "$GAMING_USER"
+done
 # Own the persistent state. Top-level dirs only — recursing into a multi-100GB
 # game library on every start would take minutes.
 chown "$GAMING_USER:$GAMING_GID" "$GAMING_STATE_DIR" "$GAMER_HOME" "$SUNSHINE_STATE_DIR" 2>/dev/null || true
@@ -72,7 +87,9 @@ chown "$GAMING_USER:$GAMING_GID" "$GAMING_STATE_DIR" "$GAMER_HOME" "$SUNSHINE_ST
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime}"
 mkdir -p "$XDG_RUNTIME_DIR"
 chown "$GAMING_USER:$GAMING_GID" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
-export WLR_BACKENDS=headless
+# Headless renders the virtual display; libinput is required for Moonlight
+# controller/keyboard/mouse events that Sunshine injects through uinput.
+export WLR_BACKENDS="${WLR_BACKENDS:-headless,libinput}"
 export WLR_LIBINPUT_NO_DEVICES=1
 export LIBSEAT_BACKEND=noop
 export WLR_NO_HARDWARE_CURSORS=1

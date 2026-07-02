@@ -373,7 +373,7 @@ runtime:
     # (matching gfx1100-5930k) to return 7900xtx to the inference fleet.
     - name: gfx1100
       # rocm-gfx1100-gaming w/ Steam client + steamcmd (2026-07-01)
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:fa125da30c1cebe7fe9e0affaace7a2064c58580a767a28ebeb22420299dc7c0"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:815083fc9c44157376e83f1a231846decfb3e12b73f758c579258d2e26550512"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -393,9 +393,31 @@ runtime:
       # library live in <mount>/home so signing in and installing games are
       # one-time operations. Layout is managed by build/sunshine-headless.sh.
       extraVolumeMounts:
+        # Sunshine injects Moonlight/Steam Deck controller, keyboard, and mouse
+        # events via uinput; sway consumes them through libinput as the non-root
+        # gamer user, which also needs host udev metadata for classification.
+        - name: dev-input
+          mountPath: /dev/input
+        - name: dev-uinput
+          mountPath: /dev/uinput
+        - name: run-udev-data
+          mountPath: /run/udev/data
+          readOnly: true
         - name: gaming-data
           mountPath: /var/lib/flexinfer-gaming
       extraVolumes:
+        - name: dev-input
+          hostPath:
+            path: /dev/input
+            type: Directory
+        - name: dev-uinput
+          hostPath:
+            path: /dev/uinput
+            type: CharDevice
+        - name: run-udev-data
+          hostPath:
+            path: /run/udev/data
+            type: Directory
         - name: gaming-data
           hostPath:
             path: /home/flexinfer-gaming
