@@ -372,20 +372,33 @@ RUN chmod +x /opt/flexinfer/steam-headless.sh
 #     in-session micro-compositor for scaling/HDR/frame-limit ergonomics.
 #   - vulkan-tools/vainfo for diagnostics.
 #   - PipeWire/PulseAudio for game audio over Moonlight.
-# Steam/Proton game-launching is a follow-up: steamcmd's .deb pre-install aborts
-# a non-interactive build ("Steam License Agreement was DECLINED") unless the
-# license is debconf-preseeded; it also drags in i386. Sunshine streams any
-# app/desktop without it, so it's omitted here (add steamcmd + the debconf
-# preseed + `dpkg --add-architecture i386` when wiring Steam under Sunshine).
+#   - Steam client (steam-installer bootstrap) + steamcmd for game launching
+#     under Sunshine. The client is a 32-bit binary: i386 arch + 32-bit
+#     GL/Vulkan userspace are required, and both .debs need their Steam
+#     License Agreement debconf-preseeded or the non-interactive build aborts
+#     ("Steam License Agreement was DECLINED"). Steam is X11 — xwayland must
+#     be explicit because sway's Recommends are suppressed. The client
+#     bootstrap, account login, and game library all live in the session
+#     user's $HOME on the persistent gaming volume (sunshine-headless.sh).
+#   - grim: headless screenshot of the wlroots output, for remote diagnostics.
 # Sunshine itself is fetched from the LizardByte release (.deb) for Ubuntu 24.04.
 ARG SUNSHINE_VERSION=0.23.1
 RUN if [ "${INCLUDE_GAMING}" = "true" ]; then \
+      dpkg --add-architecture i386 && \
+      echo "steam steam/question select I AGREE" | debconf-set-selections && \
+      echo "steam steam/license note" | debconf-set-selections && \
+      echo "steamcmd steam/question select I AGREE" | debconf-set-selections && \
+      echo "steamcmd steam/license note" | debconf-set-selections && \
       apt-get update && apt-get install -y --no-install-recommends \
         mesa-vulkan-drivers mesa-va-drivers libva2 vainfo \
         vulkan-tools libgl1-mesa-dri \
-        sway foot libseat1 seatd dbus-x11 \
+        sway foot libseat1 seatd dbus-x11 xwayland grim \
         avahi-daemon avahi-utils \
         pipewire pipewire-pulse wireplumber pulseaudio-utils \
+        steam-installer steamcmd \
+        libc6:i386 libgl1:i386 libgl1-mesa-dri:i386 \
+        mesa-vulkan-drivers:i386 libvulkan1:i386 \
+        fonts-dejavu-core \
         curl ca-certificates && \
       curl -fsSL -o /tmp/sunshine.deb \
         "https://github.com/LizardByte/Sunshine/releases/download/v${SUNSHINE_VERSION}/sunshine-ubuntu-24.04-amd64.deb" && \
