@@ -278,6 +278,8 @@ def assert_sunshine_input_contract(launcher: str, values_yaml: str) -> None:
     for snippet in required_launcher:
         if snippet not in launcher:
             fail(f"sunshine-headless.sh missing input contract: {snippet!r}")
+    if "export WLR_LIBINPUT_NO_DEVICES" in launcher:
+        fail("sunshine-headless.sh must not set WLR_LIBINPUT_NO_DEVICES; it hides Sunshine uinput devices from Sway")
 
     required_mounts = (
         "mountPath: /dev/input",

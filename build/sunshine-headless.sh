@@ -90,7 +90,9 @@ chown "$GAMING_USER:$GAMING_GID" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_D
 # Headless renders the virtual display; libinput is required for Moonlight
 # controller/keyboard/mouse events that Sunshine injects through uinput.
 export WLR_BACKENDS="${WLR_BACKENDS:-headless,libinput}"
-export WLR_LIBINPUT_NO_DEVICES=1
+# Do not set WLR_LIBINPUT_NO_DEVICES here. In the Ubuntu 24.04 wlroots build
+# used by Sway 1.9, setting it kept the backend alive but prevented Sunshine's
+# uinput devices from being added to the Sway seat.
 export LIBSEAT_BACKEND=noop
 export WLR_NO_HARDWARE_CURSORS=1
 export WLR_RENDERER="${WLR_RENDERER:-vulkan}"
