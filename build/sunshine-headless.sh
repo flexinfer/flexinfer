@@ -18,8 +18,8 @@
 #   root:             avahi (mDNS discovery) and Sunshine — Sunshine needs
 #                     /dev/uinput for virtual gamepad/mouse input, and as root
 #                     it can reach the gamer session's Wayland/Pulse sockets.
-#   pod mounts:       /dev/input, /dev/uinput, and /run/udev/data so libinput
-#                     sees Sunshine's virtual devices inside the sway session.
+#   pod mounts:       /dev/input, /dev/uinput, and /run/udev so libinput sees
+#                     Sunshine's virtual devices inside the sway session.
 #
 # Persistent state lives under GAMING_STATE_DIR (a hostPath volume on the
 # gaming node — deploy/system/values-k3s.yaml gfx1100 profile):
