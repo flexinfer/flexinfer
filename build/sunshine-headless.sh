@@ -43,10 +43,19 @@ GAMER_HOME="${GAMING_STATE_DIR}/home"
 SUNSHINE_STATE_DIR="${GAMING_STATE_DIR}/sunshine"
 mkdir -p "$GAMER_HOME" "$SUNSHINE_STATE_DIR"
 
-if ! id -u "$GAMING_USER" >/dev/null 2>&1; then
+if id -u "$GAMING_USER" >/dev/null 2>&1; then
+    usermod -d "$GAMER_HOME" "$GAMING_USER"
+elif existing="$(getent passwd "$GAMING_UID" | cut -d: -f1)" && [ -n "$existing" ]; then
+    # The uid is already taken (Ubuntu 24.04 bases ship an `ubuntu` uid-1000
+    # user): rename that account instead of failing useradd (exit 4).
+    usermod -l "$GAMING_USER" -d "$GAMER_HOME" "$existing"
+else
     groupadd -g "$GAMING_UID" "$GAMING_USER" 2>/dev/null || true
     useradd -u "$GAMING_UID" -g "$GAMING_UID" -d "$GAMER_HOME" -s /bin/bash -M "$GAMING_USER"
 fi
+# Primary gid, numeric: a renamed base-image account keeps its old group NAME
+# (usermod -l does not touch the group), so setpriv must not resolve by name.
+GAMING_GID="$(id -g "$GAMING_USER")"
 # GPU access for the non-root session: join the gids that own the DRM nodes
 # (host gids leak through the /dev/dri hostPath; create matching groups).
 for dev in /dev/dri/renderD* /dev/dri/card*; do
@@ -57,12 +66,12 @@ for dev in /dev/dri/renderD* /dev/dri/card*; do
 done
 # Own the persistent state. Top-level dirs only — recursing into a multi-100GB
 # game library on every start would take minutes.
-chown "$GAMING_USER:$GAMING_USER" "$GAMING_STATE_DIR" "$GAMER_HOME" "$SUNSHINE_STATE_DIR" 2>/dev/null || true
+chown "$GAMING_USER:$GAMING_GID" "$GAMING_STATE_DIR" "$GAMER_HOME" "$SUNSHINE_STATE_DIR" 2>/dev/null || true
 
 # ── Headless wlroots session (no physical display / HDMI dummy) ────────────────
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime}"
 mkdir -p "$XDG_RUNTIME_DIR"
-chown "$GAMING_USER:$GAMING_USER" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
+chown "$GAMING_USER:$GAMING_GID" "$XDG_RUNTIME_DIR" && chmod 700 "$XDG_RUNTIME_DIR"
 export WLR_BACKENDS=headless
 export WLR_LIBINPUT_NO_DEVICES=1
 export LIBSEAT_BACKEND=noop
@@ -77,11 +86,25 @@ GAMING_FPS="${GAMING_FPS:-60}"
 STEAM_BIN="$(command -v steam || true)"
 [ -z "$STEAM_BIN" ] && [ -x /usr/games/steam ] && STEAM_BIN=/usr/games/steam
 
+# Debian's steam launcher gates its first-run bootstrap on a zenity
+# Install/Cancel question (--default-cancel, no env override) — on a headless
+# host nobody clicks it and the client never downloads. Shim just that dialog
+# to "Install"; every other zenity call passes through to the real binary.
+SHIM_DIR="${XDG_RUNTIME_DIR}/shim"
+mkdir -p "$SHIM_DIR"
+cat > "$SHIM_DIR/zenity" <<'SH'
+#!/bin/bash
+for a in "$@"; do case "$a" in "--title=Steam installer") exit 0;; esac; done
+exec /usr/bin/zenity "$@"
+SH
+chmod 755 "$SHIM_DIR/zenity"
+
 # Run a command as the session user. Overrides the pod's inference-cache XDG_*
 # env — Steam state must land in the persistent $GAMER_HOME, not the
 # compile-cache hostPath the runtime profile points XDG_CACHE_HOME at.
 GAMER_ENV=(
     HOME="$GAMER_HOME" USER="$GAMING_USER" LOGNAME="$GAMING_USER"
+    PATH="$SHIM_DIR:$PATH:/usr/games"
     XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR"
     XDG_CACHE_HOME="$GAMER_HOME/.cache"
     XDG_CONFIG_HOME="$GAMER_HOME/.config"
@@ -89,7 +112,7 @@ GAMER_ENV=(
     DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 )
 as_gamer() {
-    setpriv --reuid "$GAMING_USER" --regid "$GAMING_USER" --init-groups \
+    setpriv --reuid "$GAMING_USER" --regid "$GAMING_GID" --init-groups \
         env "${GAMER_ENV[@]}" "$@"
 }
 
@@ -109,7 +132,7 @@ SWAY_CONFIG="${XDG_RUNTIME_DIR}/sway.config"
         echo "exec ${STEAM_BIN}"
     fi
 } > "$SWAY_CONFIG"
-chown "$GAMING_USER:$GAMING_USER" "$SWAY_CONFIG"
+chown "$GAMING_USER:$GAMING_GID" "$SWAY_CONFIG"
 
 cleanup() {
     [ -n "${SUNSHINE_PID:-}" ] && kill "$SUNSHINE_PID" 2>/dev/null || true
@@ -165,7 +188,7 @@ STEAM_APP_SH="${SUNSHINE_STATE_DIR}/steam-app.sh"
 if [ -n "$STEAM_BIN" ]; then
     {
         echo "#!/bin/bash"
-        echo "exec setpriv --reuid ${GAMING_USER} --regid ${GAMING_USER} --init-groups \\"
+        echo "exec setpriv --reuid ${GAMING_USER} --regid ${GAMING_GID} --init-groups \\"
         echo "  env ${GAMER_ENV[*]} DISPLAY=:0 \\"
         echo "  ${STEAM_BIN} steam://open/bigpicture"
     } > "$STEAM_APP_SH"
