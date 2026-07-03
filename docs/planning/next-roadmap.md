@@ -163,7 +163,7 @@ Tracking issue: [#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9)
 - [x] Merge first minor/patch dependency batches (`prometheus`, `golang-x`) into `master` (`a16b2d1`)
 - [x] Merge `helm` Renovate batch: oras v1.3.0, busybox 1.37, kube-scheduler pinned to v1.33.4 (cluster-matched) (`32c4c74`)
 - [x] Merge safe `docker` minor/patch subset: alpine 3.23, golang 1.26.0, rocm 6.4.4, cuda 12.2.2 (`7a3f95a`)
-- [ ] Stage major docker updates in a separate rollout: python 3.14, pytorch 2.3, cuda 12.9, rocm 6.4 (mlc) ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
+- [x] Stage major docker updates in a separate rollout: python 3.14, pytorch 2.3, cuda 12.9, rocm 6.4 (mlc) ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21); staged in `docs/planning/docker-major-dependency-rollout.md`)
 - [x] Keep roadmap tracking issue `#1` synchronized with dependency rollout status (updated 2026-02-26)
 
 ## Delivery Acceleration: Spec-Driven Development ✅ COMPLETE
