@@ -183,10 +183,11 @@ spec:
   serviceLabels: []
   litellm:
     enabled: false
-    servedModelName: gemma4-26b-a4b-gptq
+    servedModelName: gemma4-26b-a4b-gptq-7900xtx
     # Shared/default routes moved to serviceLabels so the proxy can load-balance
-    # them across both instances (this one + sister on 5930k). litellm.aliases
-    # stays node-specific.
+    # them across both instances (this one + sister on 5930k). litellm is
+    # disabled while this lane is parked for gaming mode, and its served name
+    # stays node-specific so the active 5930k sister can own the bare stable id.
     aliases:
       - gemma4-26b-7900xtx
       - gemma4-26b-a4b-7900xtx

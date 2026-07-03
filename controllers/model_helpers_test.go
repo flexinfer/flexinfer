@@ -478,6 +478,102 @@ func TestCheckAliasConflicts(t *testing.T) {
 		}
 	})
 
+	t.Run("disabled litellm model ignores its own aliases", func(t *testing.T) {
+		disabled := false
+		other := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{Name: "other-model", Namespace: "default"},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Source:  "HF://org/other",
+				LiteLLM: &aiv1alpha2.LiteLLMSpec{
+					ServedModelName: "shared-name",
+					Aliases:         []string{"shared-alias"},
+				},
+			},
+		}
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-model", Namespace: "default"},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Source:  "HF://org/model",
+				LiteLLM: &aiv1alpha2.LiteLLMSpec{
+					Enabled:         &disabled,
+					ServedModelName: "shared-name",
+					Aliases:         []string{"shared-alias"},
+				},
+			},
+		}
+
+		cb := fake.NewClientBuilder().WithScheme(scheme).WithObjects(model, other).WithStatusSubresource(&aiv1alpha2.Model{})
+		recorder := &FakeEventRecorder{}
+		r := &ModelReconciler{
+			Client:   cb.Build(),
+			Recorder: recorder,
+		}
+
+		r.checkAliasConflicts(context.Background(), model)
+
+		cond := findCondition(model, aiv1alpha2.ConditionConfigValid)
+		if cond == nil {
+			t.Fatalf("expected ConfigValid condition to be set")
+		}
+		if cond.Status != metav1.ConditionTrue {
+			t.Errorf("ConfigValid status = %s, want True", cond.Status)
+		}
+		if len(recorder.Events) != 0 {
+			t.Errorf("expected no warning events, got %d", len(recorder.Events))
+		}
+	})
+
+	t.Run("disabled litellm model does not reserve served name or aliases", func(t *testing.T) {
+		disabled := false
+		other := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{Name: "other-model", Namespace: "default"},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Source:  "HF://org/other",
+				LiteLLM: &aiv1alpha2.LiteLLMSpec{
+					Enabled:         &disabled,
+					ServedModelName: "shared-name",
+					Aliases:         []string{"shared-alias"},
+					CopilotAlias:    "shared-copilot",
+				},
+			},
+		}
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{Name: "my-model", Namespace: "default"},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Source:  "HF://org/model",
+				LiteLLM: &aiv1alpha2.LiteLLMSpec{
+					ServedModelName: "shared-name",
+					Aliases:         []string{"shared-alias"},
+					CopilotAlias:    "shared-copilot",
+				},
+			},
+		}
+
+		cb := fake.NewClientBuilder().WithScheme(scheme).WithObjects(model, other).WithStatusSubresource(&aiv1alpha2.Model{})
+		recorder := &FakeEventRecorder{}
+		r := &ModelReconciler{
+			Client:   cb.Build(),
+			Recorder: recorder,
+		}
+
+		r.checkAliasConflicts(context.Background(), model)
+
+		cond := findCondition(model, aiv1alpha2.ConditionConfigValid)
+		if cond == nil {
+			t.Fatalf("expected ConfigValid condition to be set")
+		}
+		if cond.Status != metav1.ConditionTrue {
+			t.Errorf("ConfigValid status = %s, want True", cond.Status)
+		}
+		if len(recorder.Events) != 0 {
+			t.Errorf("expected no warning events, got %d", len(recorder.Events))
+		}
+	})
+
 	t.Run("ServedModelName conflict sets ConfigValid false", func(t *testing.T) {
 		other := &aiv1alpha2.Model{
 			ObjectMeta: metav1.ObjectMeta{Name: "other-model", Namespace: "default"},
