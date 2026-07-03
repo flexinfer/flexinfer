@@ -23,8 +23,9 @@
 #
 # Persistent state lives under GAMING_STATE_DIR (a hostPath volume on the
 # gaming node — deploy/system/values-k3s.yaml gfx1100 profile):
-#   sunshine/  — sunshine.conf, pairing state, apps.json (survives restarts:
-#                Moonlight clients stay paired)
+#   sunshine/  — sunshine.conf, pairing state, apps.json, and Sunshine's
+#                TLS credentials (survives restarts: Moonlight clients stay
+#                paired)
 #   home/      — gamer $HOME: Steam client, account login, game library
 set -euo pipefail
 
@@ -43,7 +44,14 @@ GAMING_USER="${GAMING_USER:-gamer}"
 GAMING_UID="${GAMING_UID:-1000}"
 GAMER_HOME="${GAMING_STATE_DIR}/home"
 SUNSHINE_STATE_DIR="${GAMING_STATE_DIR}/sunshine"
-mkdir -p "$GAMER_HOME" "$SUNSHINE_STATE_DIR"
+SUNSHINE_HOME="${SUNSHINE_STATE_DIR}/home"
+SUNSHINE_CONFIG_HOME="${SUNSHINE_STATE_DIR}/xdg-config"
+SUNSHINE_DATA_HOME="${SUNSHINE_STATE_DIR}/xdg-data"
+SUNSHINE_CONFIG_DIR="${SUNSHINE_CONFIG_HOME}/sunshine"
+mkdir -p "$GAMER_HOME" "$SUNSHINE_STATE_DIR" "$SUNSHINE_HOME/.config" "$SUNSHINE_CONFIG_DIR" "$SUNSHINE_DATA_HOME"
+if [ ! -e "${SUNSHINE_HOME}/.config/sunshine" ]; then
+    ln -s "$SUNSHINE_CONFIG_DIR" "${SUNSHINE_HOME}/.config/sunshine"
+fi
 
 if id -u "$GAMING_USER" >/dev/null 2>&1; then
     usermod -d "$GAMER_HOME" "$GAMING_USER"
@@ -82,6 +90,14 @@ done
 # Own the persistent state. Top-level dirs only — recursing into a multi-100GB
 # game library on every start would take minutes.
 chown "$GAMING_USER:$GAMING_GID" "$GAMING_STATE_DIR" "$GAMER_HOME" "$SUNSHINE_STATE_DIR" 2>/dev/null || true
+
+# Sunshine runs as root so it can inject virtual input devices, but its default
+# config home would be pod-local /root/.config/sunshine. Keep the root-run
+# Sunshine credentials on the gaming hostPath so Moonlight/Steam Deck clients
+# do not see a new host certificate after every runtime pod recreation.
+if [ ! -d "${SUNSHINE_CONFIG_DIR}/credentials" ] && [ -d /root/.config/sunshine/credentials ]; then
+    cp -a /root/.config/sunshine/credentials "$SUNSHINE_CONFIG_DIR/"
+fi
 
 # ── Headless wlroots session (no physical display / HDMI dummy) ────────────────
 export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/xdg-runtime}"
@@ -230,6 +246,9 @@ EOF
 fi
 
 env PULSE_SERVER="unix:${XDG_RUNTIME_DIR}/pulse/native" \
+    HOME="$SUNSHINE_HOME" \
+    XDG_CONFIG_HOME="$SUNSHINE_CONFIG_HOME" \
+    XDG_DATA_HOME="$SUNSHINE_DATA_HOME" \
     sunshine "$SUNSHINE_CONF" &
 SUNSHINE_PID=$!
 wait "$SUNSHINE_PID"
