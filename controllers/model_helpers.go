@@ -310,12 +310,17 @@ func modelUsesPersistentVolume(model *aiv1alpha2.Model) bool {
 }
 
 // checkAliasConflicts detects litellm.aliases and copilotAlias conflicts
-// across all Models in the namespace. Sets the ConfigValid condition accordingly.
-// litellm.aliases are global (proxy resolves across ALL models), so duplicates
-// cause non-deterministic routing. serviceLabels are exempt -- they are group-aware.
+// across all advertised Models in the namespace. Sets the ConfigValid condition
+// accordingly. litellm.aliases are global (proxy resolves across ALL advertised
+// models), so duplicates cause non-deterministic routing. serviceLabels are
+// exempt -- they are group-aware.
 func (r *ModelReconciler) checkAliasConflicts(ctx context.Context, model *aiv1alpha2.Model) {
 	if model.Spec.LiteLLM == nil {
 		setModelCondition(model, aiv1alpha2.ConditionConfigValid, true, aiv1alpha2.ReasonConfigValid, "No litellm config to validate")
+		return
+	}
+	if !litellmEnabled(model) {
+		setModelCondition(model, aiv1alpha2.ConditionConfigValid, true, aiv1alpha2.ReasonConfigValid, "litellm disabled; aliases ignored")
 		return
 	}
 
@@ -334,7 +339,7 @@ func (r *ModelReconciler) checkAliasConflicts(ctx context.Context, model *aiv1al
 	aliasOwners := make(map[string]string) // alias -> model name
 	for i := range allModels.Items {
 		m := &allModels.Items[i]
-		if m.Name == model.Name || m.Spec.LiteLLM == nil {
+		if m.Name == model.Name || m.Spec.LiteLLM == nil || !litellmEnabled(m) {
 			continue
 		}
 		if served := m.Spec.LiteLLM.ServedModelName; served != "" {
