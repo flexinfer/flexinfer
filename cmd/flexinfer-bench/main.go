@@ -102,7 +102,7 @@ func main() {
 			CoherenceExpect:     splitNonEmpty(*gauntletExpect),
 			CoherenceMode:       *gauntletMode2,
 		}
-		verdict := runGauntlet(sigCtx, setupLog, bm, *model, *modelName, *batchSize, *gauntletPrompt, thr)
+		verdict := runGauntlet(sigCtx, setupLog, bm, *model, *modelName, *configMapName, *batchSize, *gauntletPrompt, thr)
 		out, err := json.MarshalIndent(verdict, "", "  ")
 		if err != nil {
 			setupLog.Error(err, "Failed to marshal gauntlet verdict")
@@ -133,13 +133,17 @@ func main() {
 // single probe, then scores the combined Sample against thr. A serve/benchmark
 // failure is reported as a failed Sample rather than crashing, so the caller
 // always gets a structured verdict.
-func runGauntlet(ctx context.Context, log logr.Logger, bm *benchmarker.Benchmarker, model, modelName string, maxTokens int, prompt string, thr gauntlet.Thresholds) gauntlet.Verdict {
+func runGauntlet(ctx context.Context, log logr.Logger, bm *benchmarker.Benchmarker, model, modelName, configMapName string, maxTokens int, prompt string, thr gauntlet.Thresholds) gauntlet.Verdict {
 	// RunAndReturn waits for the backend to become ready (cold start) and yields a
 	// robust multi-iteration throughput number.
 	record, err := bm.RunAndReturn(ctx, model)
 	if err != nil {
 		log.Error(err, "Gauntlet benchmark phase failed")
 		return gauntlet.Evaluate(gauntlet.Sample{Served: false, Err: err.Error()}, thr)
+	}
+	if err := bm.SaveRecord(ctx, record, configMapName); err != nil {
+		log.Error(err, "Gauntlet benchmark persistence failed")
+		return gauntlet.Evaluate(gauntlet.Sample{Served: false, Err: "save benchmark result: " + err.Error()}, thr)
 	}
 
 	completionsURL := fmt.Sprintf("%s/model/%s/v1/completions",

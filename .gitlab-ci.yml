@@ -30,6 +30,7 @@ stages:
   - promote
   - security
   - publish
+  - benchmark
   - security-images
 
 default:
@@ -541,6 +542,60 @@ publish:
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_COMMIT_TAG
+
+model_eval_gauntlet_trigger:
+  stage: benchmark
+  image: alpine/k8s:1.31.13
+  needs:
+    - job: publish
+      artifacts: false
+  variables:
+    KUBECONFIG: /etc/kubeconfig/k3s.yaml
+    MODEL_EVAL_GAUNTLET_NAMESPACE: flexinfer-system
+    MODEL_EVAL_GAUNTLET_TIMEOUT_SECONDS: "2700"
+  script:
+    - |
+      set -eu
+
+      ns="${MODEL_EVAL_GAUNTLET_NAMESPACE}"
+      if [ ! -f "${KUBECONFIG}" ]; then
+        echo "Kubeconfig not found at ${KUBECONFIG}; skipping model-eval gauntlet trigger"
+        exit 0
+      fi
+
+      kubectl -n "${ns}" get cronjob/model-eval-gauntlet
+
+      job="${MODEL_EVAL_GAUNTLET_JOB_NAME:-model-eval-gauntlet-ci-${CI_PIPELINE_ID}}"
+      echo "Triggering ${ns}/${job} from cronjob/model-eval-gauntlet"
+      kubectl -n "${ns}" delete job "${job}" --ignore-not-found
+      kubectl -n "${ns}" create job "${job}" --from=cronjob/model-eval-gauntlet
+
+      deadline=$(( $(date +%s) + ${MODEL_EVAL_GAUNTLET_TIMEOUT_SECONDS} ))
+      while [ "$(date +%s)" -lt "${deadline}" ]; do
+        succeeded="$(kubectl -n "${ns}" get job "${job}" -o jsonpath='{.status.succeeded}' 2>/dev/null || true)"
+        failed="$(kubectl -n "${ns}" get job "${job}" -o jsonpath='{.status.failed}' 2>/dev/null || true)"
+        if [ "${succeeded:-0}" = "1" ]; then
+          kubectl -n "${ns}" logs "job/${job}" --all-containers=true --tail=-1 || true
+          echo "model-eval gauntlet completed successfully"
+          exit 0
+        fi
+        if [ -n "${failed}" ] && [ "${failed}" != "0" ]; then
+          kubectl -n "${ns}" logs "job/${job}" --all-containers=true --tail=-1 || true
+          kubectl -n "${ns}" describe "job/${job}" || true
+          echo "model-eval gauntlet failed"
+          exit 1
+        fi
+        sleep 15
+      done
+
+      kubectl -n "${ns}" logs "job/${job}" --all-containers=true --tail=-1 || true
+      kubectl -n "${ns}" describe "job/${job}" || true
+      echo "model-eval gauntlet timed out"
+      exit 1
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
 
 publish_binaries:
   stage: publish

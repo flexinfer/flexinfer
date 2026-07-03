@@ -157,3 +157,35 @@ func TestMultiStore_EmptyStores(t *testing.T) {
 	err := multi.Save(context.Background(), sampleRecord())
 	require.NoError(t, err)
 }
+
+func TestSaveRecord_PersistsMeasuredResult(t *testing.T) {
+	t.Parallel()
+	clientset := fake.NewSimpleClientset()
+	store := &fakeStore{}
+	b := &Benchmarker{
+		kubeClient: clientset,
+		namespace:  "default",
+		resultsCM:  defaultBenchmarkResultsConfigMap,
+		store:      store,
+	}
+
+	record := sampleRecord()
+	record.ConfigMapName = ""
+	record.GlobalConfigMap = ""
+
+	err := b.SaveRecord(context.Background(), &record, "gauntlet-result")
+	require.NoError(t, err)
+
+	require.Len(t, store.saved, 1)
+	assert.Equal(t, "gauntlet-result", store.saved[0].ConfigMapName)
+	assert.Equal(t, defaultBenchmarkResultsConfigMap, store.saved[0].GlobalConfigMap)
+	assert.Equal(t, record.TokensPerSecond, store.saved[0].TokensPerSecond)
+}
+
+func TestSaveRecord_RejectsNilRecord(t *testing.T) {
+	t.Parallel()
+	b := &Benchmarker{}
+
+	err := b.SaveRecord(context.Background(), nil, "gauntlet-result")
+	assert.ErrorContains(t, err, "benchmark record is nil")
+}
