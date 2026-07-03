@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
@@ -73,6 +74,11 @@ func newGS(name string) *aiv1alpha2.GamingSession {
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "flexinfer-system"},
 		Spec:       aiv1alpha2.GamingSessionSpec{NodeName: "cblevins-7900xtx", Mode: "gaming"},
 	}
+}
+
+func expireGS(gs *aiv1alpha2.GamingSession, at time.Time) *aiv1alpha2.GamingSession {
+	gs.Spec.ExpiresAt = &metav1.Time{Time: at}
+	return gs
 }
 
 func reconcileGS(t *testing.T, r *GamingSessionReconciler, name string) ctrl.Result {
@@ -170,6 +176,109 @@ func TestGamingSessionRevertsOnDelete(t *testing.T) {
 	err := fakeClient.Get(context.Background(), types.NamespacedName{Name: "gs3", Namespace: "flexinfer-system"}, out)
 	if err == nil && len(out.Finalizers) != 0 {
 		t.Fatalf("finalizer not removed: %v", out.Finalizers)
+	}
+}
+
+// Expired gaming sessions are lease-bounded: the controller drives the runtime
+// back to inference and keeps the CR Expired instead of reactivating gaming.
+func TestGamingSessionExpiresAndRevertsToInference(t *testing.T) {
+	s := gsScheme(t)
+	gs := expireGS(newGS("gs-expire"), time.Now().Add(-1*time.Minute))
+	gs.Finalizers = []string{aiv1alpha2.GamingSessionFinalizer}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).WithRuntimeObjects(gs).
+		WithStatusSubresource(&aiv1alpha2.GamingSession{}).Build()
+	rt := &fakeRuntimeMode{mode: "gaming"}
+	r := &GamingSessionReconciler{Client: fakeClient, Scheme: s, Recorder: record.NewFakeRecorder(10), Runtime: rt}
+
+	res := reconcileGS(t, r, "gs-expire")
+	if res.RequeueAfter != requeueShort {
+		t.Fatalf("requeueAfter = %v, want %v while reverting expired session", res.RequeueAfter, requeueShort)
+	}
+	if len(rt.setModes) != 1 || rt.setModes[0] != nodeModeInference {
+		t.Fatalf("expected SetMode(inference), got %v", rt.setModes)
+	}
+	got := getGS(t, fakeClient, "gs-expire")
+	if got.Status.Phase != aiv1alpha2.GamingSessionExpired {
+		t.Fatalf("phase = %q, want Expired", got.Status.Phase)
+	}
+	if got.Status.ExpiredAt == nil {
+		t.Fatal("ExpiredAt not set")
+	}
+
+	// Runtime now reports inference. The expired CR must not request gaming again.
+	reconcileGS(t, r, "gs-expire")
+	if len(rt.setModes) != 1 {
+		t.Fatalf("expired session reactivated or reissued mode switch: %v", rt.setModes)
+	}
+	got = getGS(t, fakeClient, "gs-expire")
+	if got.Status.Phase != aiv1alpha2.GamingSessionExpired || got.Status.ObservedMode != nodeModeInference {
+		t.Fatalf("phase=%q observed=%q, want Expired + inference", got.Status.Phase, got.Status.ObservedMode)
+	}
+}
+
+func TestGamingSessionExpiredDoesNotActivateFromInference(t *testing.T) {
+	s := gsScheme(t)
+	gs := expireGS(newGS("gs-expired-inference"), time.Now().Add(-1*time.Minute))
+	gs.Finalizers = []string{aiv1alpha2.GamingSessionFinalizer}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).WithRuntimeObjects(gs).
+		WithStatusSubresource(&aiv1alpha2.GamingSession{}).Build()
+	rt := &fakeRuntimeMode{mode: nodeModeInference}
+	r := &GamingSessionReconciler{Client: fakeClient, Scheme: s, Recorder: record.NewFakeRecorder(10), Runtime: rt}
+
+	reconcileGS(t, r, "gs-expired-inference")
+	if len(rt.setModes) != 0 {
+		t.Fatalf("expired session must not request gaming, got %v", rt.setModes)
+	}
+	if got := getGS(t, fakeClient, "gs-expired-inference"); got.Status.Phase != aiv1alpha2.GamingSessionExpired {
+		t.Fatalf("phase = %q, want Expired", got.Status.Phase)
+	}
+}
+
+func TestGamingSessionFutureExtensionReactivatesExpiredSession(t *testing.T) {
+	s := gsScheme(t)
+	expiredAt := metav1.NewTime(time.Now().Add(-1 * time.Minute))
+	gs := expireGS(newGS("gs-extended"), time.Now().Add(10*time.Minute))
+	gs.Finalizers = []string{aiv1alpha2.GamingSessionFinalizer}
+	gs.Status.Phase = aiv1alpha2.GamingSessionExpired
+	gs.Status.ObservedMode = nodeModeInference
+	gs.Status.ExpiredAt = &expiredAt
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).WithRuntimeObjects(gs).
+		WithStatusSubresource(&aiv1alpha2.GamingSession{}).Build()
+	rt := &fakeRuntimeMode{mode: nodeModeInference}
+	r := &GamingSessionReconciler{Client: fakeClient, Scheme: s, Recorder: record.NewFakeRecorder(10), Runtime: rt}
+
+	reconcileGS(t, r, "gs-extended")
+	if len(rt.setModes) != 1 || rt.setModes[0] != nodeModeGaming {
+		t.Fatalf("extended session should reactivate gaming, got %v", rt.setModes)
+	}
+	got := getGS(t, fakeClient, "gs-extended")
+	if got.Status.Phase != aiv1alpha2.GamingSessionActivating {
+		t.Fatalf("phase = %q, want Activating", got.Status.Phase)
+	}
+	if got.Status.ExpiredAt != nil {
+		t.Fatalf("ExpiredAt = %v, want cleared after future extension", got.Status.ExpiredAt)
+	}
+}
+
+func TestGamingSessionActiveRequeuesAtUpcomingExpiry(t *testing.T) {
+	s := gsScheme(t)
+	gs := expireGS(newGS("gs-expiring-soon"), time.Now().Add(2*time.Second))
+	gs.Finalizers = []string{aiv1alpha2.GamingSessionFinalizer}
+	fakeClient := fake.NewClientBuilder().
+		WithScheme(s).WithRuntimeObjects(gs).
+		WithStatusSubresource(&aiv1alpha2.GamingSession{}).Build()
+	rt := &fakeRuntimeMode{mode: "gaming"}
+	r := &GamingSessionReconciler{Client: fakeClient, Scheme: s, Recorder: record.NewFakeRecorder(10), Runtime: rt}
+
+	res := reconcileGS(t, r, "gs-expiring-soon")
+	if res.RequeueAfter <= 0 || res.RequeueAfter >= requeueLong {
+		t.Fatalf("requeueAfter = %v, want positive value before requeueLong", res.RequeueAfter)
+	}
+	if got := getGS(t, fakeClient, "gs-expiring-soon"); got.Status.Phase != aiv1alpha2.GamingSessionActive {
+		t.Fatalf("phase = %q, want Active before expiry", got.Status.Phase)
 	}
 }
 

@@ -65,7 +65,13 @@ profile). Do **not** `kubectl apply`/`edit` directly.
    apiVersion: ai.flexinfer/v1alpha2
    kind: GamingSession
    metadata: { name: gaming-<node>, namespace: flexinfer-system }
-   spec: { nodeName: <node>, mode: gaming }
+   spec:
+     nodeName: <node>
+     mode: gaming
+     owner: <operator-or-workflow>
+     # Optional hard stop. Once reached, the controller reverts runtime mode to
+     # inference and leaves the session Expired until deleted or extended.
+     # expiresAt: "2026-07-04T03:00:00Z"
    ```
 3. After merge, force reconcile if impatient:
    ```bash
@@ -87,6 +93,19 @@ profile). Do **not** `kubectl apply`/`edit` directly.
    phase returns to Active once a restart succeeds. A session stuck in Degraded
    means every restart is failing — check the runtime pod log for the crash
    (`Backend subprocess crashed`) and the restart attempts.
+
+## Lease expiry
+
+`GamingSession.spec.expiresAt` is an optional hard deadline for the session. If
+the deadline passes while the node is in gaming mode, the controller requests
+`SetMode(inference)`, records `status.expiredAt`, and reports
+`phase=Expired`. An expired CR is intentionally inert: it will not switch the
+node back to gaming again until you either delete it and create a new session,
+or extend `spec.expiresAt` to a future time.
+
+This is separate from runtime idle auto-revert. `expiresAt` is a control-plane
+lease bound that fires even if a Moonlight client is connected; idle auto-revert
+only fires after no connected client is observed for the configured timeout.
 
 ## Pair Moonlight
 

@@ -12,6 +12,12 @@
 # Deleting this object reverts the node to inference (the reconciler's finalizer
 # calls SetMode(inference)); to fully hand 7900xtx back also revert the runtime
 # image + re-advertise the gemma/whisper lanes.
+#
+# Optional lease fields:
+# - spec.owner attributes the session in status/events.
+# - spec.expiresAt bounds the session; once reached, the controller reverts the
+#   runtime to inference and leaves the CR in phase=Expired until deleted or
+#   extended.
 apiVersion: ai.flexinfer/v1alpha2
 kind: GamingSession
 metadata:
@@ -20,3 +26,5 @@ metadata:
 spec:
   nodeName: cblevins-7900xtx
   mode: gaming
+  owner: cblevins
+  # expiresAt: "2026-07-04T03:00:00Z"

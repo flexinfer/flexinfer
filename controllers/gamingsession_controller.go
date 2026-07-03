@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"time"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -108,6 +109,32 @@ func (r *GamingSessionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	current := modeStatus.Mode
 
+	if gamingSessionExpired(gs, desired, time.Now()) {
+		if gs.Status.ExpiredAt == nil {
+			now := metav1.Now()
+			gs.Status.ExpiredAt = &now
+		}
+		if current != nodeModeInference {
+			if err := r.Runtime.SetMode(ctx, endpoint, nodeModeInference); err != nil {
+				if r.Recorder != nil {
+					r.Recorder.Event(gs, "Warning", "GamingSessionExpireRevertFailed", err.Error())
+				}
+				_ = r.syncStatus(ctx, gs, aiv1alpha2.GamingSessionFailed, current, endpoint.PodName, fmt.Sprintf("session expired; revert to inference failed: %v", err))
+				return ctrl.Result{RequeueAfter: requeueShort}, nil
+			}
+			if r.Recorder != nil {
+				r.Recorder.Eventf(gs, "Normal", "GamingSessionExpired", "gaming session for node %s expired; requested inference mode", gs.Spec.NodeName)
+			}
+			_ = r.syncStatus(ctx, gs, aiv1alpha2.GamingSessionExpired, current, endpoint.PodName, "session expired; requested inference mode")
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
+		_ = r.syncStatus(ctx, gs, aiv1alpha2.GamingSessionExpired, current, endpoint.PodName, "session expired; node in inference mode")
+		return ctrl.Result{RequeueAfter: requeueLong}, nil
+	}
+	if gs.Status.ExpiredAt != nil {
+		gs.Status.ExpiredAt = nil
+	}
+
 	if current == desired {
 		// In-mode but the backing subprocess is down (e.g. Sunshine crashed):
 		// the runtime supervises restarts; reflect the outage instead of Active
@@ -124,7 +151,7 @@ func (r *GamingSessionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			gs.Status.ActivatedAt = &now
 		}
 		_ = r.syncStatus(ctx, gs, aiv1alpha2.GamingSessionActive, current, endpoint.PodName, fmt.Sprintf("node in %s mode", current))
-		return ctrl.Result{RequeueAfter: requeueLong}, nil
+		return ctrl.Result{RequeueAfter: gamingSessionRequeueAfter(gs, time.Now())}, nil
 	}
 
 	// Drive the switch. SetMode is idempotent and the runtime performs the drain.
@@ -141,6 +168,24 @@ func (r *GamingSessionReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	_ = r.syncStatus(ctx, gs, aiv1alpha2.GamingSessionActivating, current, endpoint.PodName, fmt.Sprintf("requested %s mode", desired))
 	// Re-check shortly to confirm the runtime reached the target mode.
 	return ctrl.Result{RequeueAfter: requeueShort}, nil
+}
+
+func gamingSessionExpired(gs *aiv1alpha2.GamingSession, desired string, now time.Time) bool {
+	return desired == nodeModeGaming && gs != nil && gs.Spec.ExpiresAt != nil && !now.Before(gs.Spec.ExpiresAt.Time)
+}
+
+func gamingSessionRequeueAfter(gs *aiv1alpha2.GamingSession, now time.Time) time.Duration {
+	if gs == nil || gs.Spec.ExpiresAt == nil {
+		return requeueLong
+	}
+	untilExpiry := gs.Spec.ExpiresAt.Time.Sub(now)
+	if untilExpiry <= 0 {
+		return requeueShort
+	}
+	if untilExpiry < requeueLong {
+		return untilExpiry
+	}
+	return requeueLong
 }
 
 // revertToInference best-effort returns the node to inference mode. A missing
