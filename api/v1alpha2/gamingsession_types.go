@@ -44,6 +44,10 @@ const (
 	// GamingSessionReverting means the session is being deleted and the node is
 	// being returned to inference mode.
 	GamingSessionReverting GamingSessionPhase = "Reverting"
+	// GamingSessionExpired means the session lease deadline passed and the
+	// controller has stopped or is stopping gaming mode. An expired session is
+	// not reactivated; delete or extend it to start gaming again.
+	GamingSessionExpired GamingSessionPhase = "Expired"
 	// GamingSessionFailed means the mode switch could not be completed.
 	GamingSessionFailed GamingSessionPhase = "Failed"
 )
@@ -64,6 +68,20 @@ type GamingSessionSpec struct {
 	// +kubebuilder:default=gaming
 	// +optional
 	Mode string `json:"mode,omitempty"`
+
+	// Owner identifies the person, tool, or workflow that requested the gaming
+	// lease. It is informational and used in events/status so stuck sessions can
+	// be attributed.
+	// +optional
+	Owner string `json:"owner,omitempty"`
+
+	// ExpiresAt is the lease deadline for this gaming session. Once now >=
+	// ExpiresAt, the controller drives the node back to inference mode and keeps
+	// the session Expired until the object is deleted or the deadline is
+	// extended. A nil value means the session persists until explicit deletion
+	// or runtime idle-revert policy.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
 }
 
 // GamingSessionStatus is the observed state of a gaming session.
@@ -88,6 +106,11 @@ type GamingSessionStatus struct {
 	// ActivatedAt is when the node first reached the desired gaming mode.
 	// +optional
 	ActivatedAt *metav1.Time `json:"activatedAt,omitempty"`
+
+	// ExpiredAt is when the controller first observed the session past its
+	// lease deadline and began reverting the node to inference.
+	// +optional
+	ExpiredAt *metav1.Time `json:"expiredAt,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -97,6 +120,8 @@ type GamingSessionStatus struct {
 //+kubebuilder:printcolumn:name="Mode",type="string",JSONPath=".spec.mode"
 //+kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 //+kubebuilder:printcolumn:name="Observed",type="string",JSONPath=".status.observedMode"
+//+kubebuilder:printcolumn:name="Owner",type="string",JSONPath=".spec.owner"
+//+kubebuilder:printcolumn:name="Expires",type="date",JSONPath=".spec.expiresAt"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // GamingSession is the declarative carrier for putting a GPU node into gaming

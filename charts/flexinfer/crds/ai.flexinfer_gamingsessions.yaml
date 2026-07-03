@@ -30,6 +30,12 @@ spec:
     - jsonPath: .status.observedMode
       name: Observed
       type: string
+    - jsonPath: .spec.owner
+      name: Owner
+      type: string
+    - jsonPath: .spec.expiresAt
+      name: Expires
+      type: date
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -64,6 +70,15 @@ spec:
               Creating a GamingSession drives the node to spec.mode (default "gaming"),
               which drains inference; deleting it always reverts the node to "inference".
             properties:
+              expiresAt:
+                description: |-
+                  ExpiresAt is the lease deadline for this gaming session. Once now >=
+                  ExpiresAt, the controller drives the node back to inference mode and keeps
+                  the session Expired until the object is deleted or the deadline is
+                  extended. A nil value means the session persists until explicit deletion
+                  or runtime idle-revert policy.
+                format: date-time
+                type: string
               mode:
                 default: gaming
                 description: |-
@@ -77,6 +92,12 @@ spec:
                 description: NodeName is the GPU node to switch (matched via kubernetes.io/hostname).
                 minLength: 1
                 type: string
+              owner:
+                description: |-
+                  Owner identifies the person, tool, or workflow that requested the gaming
+                  lease. It is informational and used in events/status so stuck sessions can
+                  be attributed.
+                type: string
             required:
             - nodeName
             type: object
@@ -86,6 +107,12 @@ spec:
               activatedAt:
                 description: ActivatedAt is when the node first reached the desired
                   gaming mode.
+                format: date-time
+                type: string
+              expiredAt:
+                description: |-
+                  ExpiredAt is when the controller first observed the session past its
+                  lease deadline and began reverting the node to inference.
                 format: date-time
                 type: string
               message:
