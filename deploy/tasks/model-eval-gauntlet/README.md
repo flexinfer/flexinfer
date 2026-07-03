@@ -1,8 +1,10 @@
 # model-eval-gauntlet — offline benchmark automation (Sprint 2 / S2.3)
 
-Weekly CronJob that runs `flexinfer-bench` against a configurable set of warm text
-models and records a throughput row per model to **Postgres** (the `benchmarks`
-table in `flexinfer_benchmarks`) and a per-model results ConfigMap.
+Weekly CronJob that runs `flexinfer-bench --gauntlet` against a configurable set
+of warm text models. Each successful model records a throughput row to
+**Postgres** (the `benchmarks` table in `flexinfer_benchmarks`), writes a
+per-model results ConfigMap, and emits a structured PASS/FAIL verdict that
+includes a small coherence probe.
 
 This is the automation leg of **#27** (keep benchmark/scheduling inputs current),
 riding on the **#34** Postgres storage backend, which was validated end-to-end
@@ -15,10 +17,12 @@ live on 2026-06-04 (see `.loom/60-validation-matrix.md` → "2026-06-04 S2.3").
 2. A shell wrapper loops `MODELS` (space-separated `name=backend` entries) and runs
    the bench binary once per model, routing through `flexinfer-proxy` (models
    cold-start on demand).
-3. Each run stores a row to Postgres (`POSTGRES_DSN`) and to
-   `flexinfer-benchmarks-<model>` ConfigMap.
-4. One cold/missing model is logged (`GAUNTLET FAIL <name>`) but does not abort the
-   gauntlet; the job exits non-zero only if **every** model failed.
+3. Each gauntlet run stores the throughput artifact to Postgres
+   (`POSTGRES_DSN`) and to `flexinfer-benchmarks-<model>` ConfigMap, then probes
+   `/v1/completions` once for TTFT/token/coherence checks.
+4. One cold/missing/coherence-failing model is logged (`GAUNTLET FAIL <name>`) but
+   does not abort the gauntlet; the job exits non-zero only if **every** model
+   failed.
 
 ## Configuration (env on the container)
 
@@ -27,6 +31,9 @@ live on 2026-06-04 (see `.loom/60-validation-matrix.md` → "2026-06-04 S2.3").
 | `MODELS` | `gemma4-26b-a4b-gptq=vllm gemma4-26b-a4b-gptq-5930k=vllm` | `name=backend` list |
 | `ITERS` / `MIN_DURATION` / `BATCH_SIZE` | `3` / `30s` / `64` | bench knobs |
 | `COLD_START_TIMEOUT` | `5m` | per-model activation wait |
+| `GAUNTLET_ENABLED` | `1` | set `0` to run throughput-only compatibility mode |
+| `GAUNTLET_MIN_TPS` / `GAUNTLET_MAX_TTFT` / `GAUNTLET_MIN_TOKENS` | `0` / `0s` / `1` | optional pass/fail gates |
+| `GAUNTLET_PROMPT` / `GAUNTLET_EXPECT` / `GAUNTLET_EXPECT_MODE` | `What is 2 + 2?...` / `4` / `all` | coherence probe contract |
 | `POSTGRES_DSN` | langgraph `flexinfer_benchmarks` | mirrors `values-k3s.yaml` |
 | `FLEXINFER_PROXY_URL` | `http://flexinfer-proxy…:80` | proxy base |
 
@@ -48,7 +55,7 @@ PGPASSWORD=changeme-app psql -h langgraph-postgres-postgresql.ai.svc -U langgrap
 ## Operations
 
 ```bash
-# Manual one-shot run:
+# Manual one-shot run from the scheduled CronJob template:
 kubectl -n flexinfer-system create job --from=cronjob/model-eval-gauntlet gauntlet-adhoc
 kubectl -n flexinfer-system logs -f job/gauntlet-adhoc
 
@@ -61,9 +68,19 @@ PGPASSWORD=changeme-app psql -h langgraph-postgres-postgresql.ai.svc -U langgrap
 kubectl -n flexinfer-system patch cronjob/model-eval-gauntlet -p '{"spec":{"suspend":true}}'
 ```
 
+## CI/CD trigger
+
+The `model_eval_gauntlet_trigger` GitLab job runs after the `publish` job on
+`master` and creates a one-shot Kubernetes Job from this CronJob template. That
+gives every newly published `flexinfer-bench:master` artifact an immediate
+throughput + coherence pass while keeping the weekly CronJob as a drift detector.
+The CI job skips only when the runner lacks `/etc/kubeconfig/k3s.yaml`; otherwise
+it waits for the one-shot Job and fails the pipeline if every model fails.
+
 ## Retrieval-quality companion (F3 Slice 5)
 
-This gauntlet measures **throughput**. The **retrieval-quality** dimension — does
+This gauntlet measures **throughput plus model coherence**. The
+**retrieval-quality** dimension — does
 the retrieve→rerank→generate read path still answer repo-Q&A correctly after an
 index / chunker / answer-model change — lives in
 [`eval/f3-retrieval/`](../../../eval/f3-retrieval/). The `rqgate.py` kernel turns

@@ -1,15 +1,15 @@
 # Offline model-eval gauntlet [Sprint 2 / S2.3] — automated benchmark generation.
 #
 # Periodically runs flexinfer-bench against a configurable set of warm text
-# models and stores a throughput row per model to:
+# models, checks a small coherence probe, and stores a throughput row per model to:
 #   - Postgres  (`benchmarks` table in flexinfer_benchmarks, the #34 store), and
 #   - a per-model results ConfigMap (the existing ConfigMapStore).
 #
 # This is the automation leg of #27 (keep benchmark/scheduling inputs current)
 # riding on the #34 Postgres storage backend validated live 2026-06-04. The bench
 # binary benchmarks one model per invocation; the wrapper loops the MODELS list so
-# one cold/missing model does not abort the gauntlet (it exits non-zero only if
-# EVERY model failed, so a single idle model is logged, not fatal).
+# one cold/missing/coherence-failing model does not abort the gauntlet (it exits
+# non-zero only if EVERY model failed, so a single idle model is logged, not fatal).
 #
 # Uses the flexinfer-benchmarker ServiceAccount (nodes get + configmaps RBAC) and
 # routes through flexinfer-proxy, so models cold-start on demand.
@@ -58,13 +58,31 @@ spec:
                   for entry in $MODELS; do
                     name="${entry%%=*}"; backend="${entry#*=}"
                     echo "=== gauntlet: $name ($backend) ==="
-                    if /flexinfer-bench \
+                    if [ "${GAUNTLET_ENABLED:-1}" = "1" ]; then
+                      /flexinfer-bench \
                         --model="$name" --model-name="$name" --backend="$backend" \
                         --configmap="flexinfer-benchmarks-${name}" \
                         --warmup-iterations="${WARMUP:-1}" --iterations="${ITERS:-3}" \
                         --min-duration="${MIN_DURATION:-30s}" \
                         --batch-size="${BATCH_SIZE:-64}" \
-                        --cold-start-timeout="${COLD_START_TIMEOUT:-5m}"; then
+                        --cold-start-timeout="${COLD_START_TIMEOUT:-5m}" \
+                        --gauntlet \
+                        --gauntlet-min-tps="${GAUNTLET_MIN_TPS:-0}" \
+                        --gauntlet-max-ttft="${GAUNTLET_MAX_TTFT:-0s}" \
+                        --gauntlet-min-tokens="${GAUNTLET_MIN_TOKENS:-1}" \
+                        --gauntlet-prompt="${GAUNTLET_PROMPT:-What is 2 + 2? Answer with just the number.}" \
+                        --gauntlet-expect="${GAUNTLET_EXPECT:-4}" \
+                        --gauntlet-expect-mode="${GAUNTLET_EXPECT_MODE:-all}"
+                    else
+                      /flexinfer-bench \
+                        --model="$name" --model-name="$name" --backend="$backend" \
+                        --configmap="flexinfer-benchmarks-${name}" \
+                        --warmup-iterations="${WARMUP:-1}" --iterations="${ITERS:-3}" \
+                        --min-duration="${MIN_DURATION:-30s}" \
+                        --batch-size="${BATCH_SIZE:-64}" \
+                        --cold-start-timeout="${COLD_START_TIMEOUT:-5m}"
+                    fi
+                    if [ "$?" -eq 0 ]; then
                       echo "GAUNTLET OK $name"; ok=$((ok+1))
                     else
                       echo "GAUNTLET FAIL $name (continuing)"; fail=$((fail+1))
@@ -90,6 +108,16 @@ spec:
                   value: "30s"
                 - name: BATCH_SIZE
                   value: "64"
+                - name: GAUNTLET_ENABLED
+                  value: "1"
+                - name: GAUNTLET_MIN_TOKENS
+                  value: "1"
+                - name: GAUNTLET_PROMPT
+                  value: "What is 2 + 2? Answer with just the number."
+                - name: GAUNTLET_EXPECT
+                  value: "4"
+                - name: GAUNTLET_EXPECT_MODE
+                  value: "all"
                 # Mirrors deploy/system/values-k3s.yaml benchmarker.postgresDsn.
                 # Password is already plaintext in that committed value.
                 - name: POSTGRES_DSN

@@ -235,6 +235,16 @@ func (b *Benchmarker) Run(ctx context.Context, model, configMapName string) erro
 		return err
 	}
 
+	return b.SaveRecord(ctx, record, configMapName)
+}
+
+// SaveRecord stores an already measured benchmark record in the configured
+// persistence backends and emits the same metrics as Run.
+func (b *Benchmarker) SaveRecord(ctx context.Context, record *BenchmarkRecord, configMapName string) error {
+	if record == nil {
+		return fmt.Errorf("benchmark record is nil")
+	}
+
 	record.ConfigMapName = configMapName
 	record.GlobalConfigMap = b.resultsCM
 
