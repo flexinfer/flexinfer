@@ -15,7 +15,9 @@ Build-node disk pressure is tracked in GitLab issue
 [#35](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/35). Before large
 ROCm/CUDA rebuilds, run `scripts/check-build-node-disk.sh` and follow
 [Docker build node disk management](../docs/dev/build-node-disk-management.md)
-for BuildKit GC, pruning, alert thresholds, and free-space requirements.
+for BuildKit GC, pruning, alert thresholds, and free-space requirements. The
+checked-in BuildKit GC profile is `build/buildkitd-gc.toml`; scheduled builder
+cleanup should use `scripts/prune-build-node-disk.sh`.
 
 ## ⚠ The two-image vLLM trap
 

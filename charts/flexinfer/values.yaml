@@ -544,6 +544,18 @@ alerting:
     gpuTempFor: "5m"
     vramFreeRatio: 0.1  # <10% free VRAM
     vramLowFor: "5m"
+  # Optional node-exporter alerts for Docker/BuildKit builder filesystems.
+  # Enable only in clusters where Prometheus can see node_filesystem_* metrics.
+  buildNodeDisk:
+    enabled: false
+    instanceRegex: ".*"
+    mountpointRegex: "/var/lib/docker|/var/lib/buildkit|/"
+    warningUsedRatio: 0.80
+    warningFreeBytes: 161061273600   # 150 GiB
+    warningFor: "30m"
+    criticalUsedRatio: 0.90
+    criticalFreeBytes: 85899345920   # 80 GiB
+    criticalFor: "10m"
 
 # Network Policy configuration
 # Restricts pod communication for improved security

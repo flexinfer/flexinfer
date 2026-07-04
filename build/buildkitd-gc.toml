@@ -1,0 +1,27 @@
+# FlexInfer BuildKit garbage-collection profile.
+#
+# Mount or copy this into the buildkitd daemon configuration
+# (commonly /etc/buildkit/buildkitd.toml for a host daemon, or a ConfigMap for
+# the Kubernetes daemon) and restart buildkitd. The numbers match the build-node
+# headroom policy in docs/dev/build-node-disk-management.md.
+
+[worker.oci]
+  gc = true
+  reservedSpace = "80GB"
+  maxUsedSpace = "350GB"
+  minFreeSpace = "120GB"
+
+[[worker.oci.gcpolicy]]
+  filters = [
+    "type==source.local",
+    "type==exec.cachemount",
+    "type==source.git.checkout",
+  ]
+  keepDuration = "168h"
+  maxUsedSpace = "80GB"
+
+[[worker.oci.gcpolicy]]
+  all = true
+  keepDuration = "720h"
+  reservedSpace = "80GB"
+  maxUsedSpace = "350GB"

@@ -40,7 +40,8 @@ larger peak working set than the central BuildKit deployment can safely absorb.
 Enable BuildKit garbage collection on builder nodes instead of relying only on
 manual pruning. The exact file path depends on how buildkitd is deployed
 (`/etc/buildkit/buildkitd.toml` for a host daemon; a ConfigMap or mounted config
-for the Kubernetes daemon), but the policy shape should stay close to this:
+for the Kubernetes daemon). The checked-in baseline is
+[`build/buildkitd-gc.toml`](../../build/buildkitd-gc.toml):
 
 ```toml
 [worker.oci]
@@ -66,6 +67,28 @@ After changing the daemon config, restart buildkitd and confirm it responds:
 ```bash
 buildctl --addr "${BUILDKIT_HOST}" debug info
 scripts/check-build-node-disk.sh --kubernetes-buildkit --buildctl-du
+```
+
+## Scheduled Pruning
+
+Use the checked-in prune wrapper for periodic cleanup. It prunes only age-bounded
+builder/system cache and intentionally avoids `docker system prune -a --volumes`.
+
+```bash
+# Preview the commands first.
+BUILDKIT_HOST=tcp://buildkitd-central.ci-build.svc.cluster.local:1234 \
+scripts/prune-build-node-disk.sh --all --dry-run
+
+# Run manually after confirming active builds are idle.
+BUILDKIT_HOST=tcp://buildkitd-central.ci-build.svc.cluster.local:1234 \
+FLEXINFER_BUILD_PRUNE_UNTIL=168h \
+scripts/prune-build-node-disk.sh --all
+```
+
+Example host cron entry for a dedicated Docker builder:
+
+```cron
+17 3 * * * root cd /opt/flexinfer && FLEXINFER_BUILD_PRUNE_UNTIL=168h scripts/prune-build-node-disk.sh --local-docker >>/var/log/flexinfer-build-prune.log 2>&1
 ```
 
 ## Manual Cleanup
@@ -99,6 +122,19 @@ For Kubernetes-hosted BuildKit, the Prometheus signal usually comes from
 node-exporter `node_filesystem_*` metrics on the node that backs the BuildKit
 PVC or hostPath. For a single host builder, alert on `/var/lib/docker` and the
 filesystem containing BuildKit's root.
+
+The Helm chart includes opt-in PrometheusRule entries under
+`alerting.buildNodeDisk`. Keep them disabled until the deployment's
+node-exporter labels and mountpoints are confirmed:
+
+```yaml
+alerting:
+  enabled: true
+  buildNodeDisk:
+    enabled: true
+    instanceRegex: "cblevins-7900xtx.*|buildkitd-central.*"
+    mountpointRegex: "/var/lib/docker|/var/lib/buildkit|/"
+```
 
 ## Build-Sizing Notes
 
