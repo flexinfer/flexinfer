@@ -249,28 +249,38 @@ build_node_disk_check_test:
   image: ${GO_IMAGE}
   needs: []
   script:
-    - bash -n scripts/check-build-node-disk.sh scripts/test-check-build-node-disk.sh
+    - bash -n scripts/check-build-node-disk.sh scripts/test-check-build-node-disk.sh scripts/prune-build-node-disk.sh scripts/test-prune-build-node-disk.sh
     - scripts/test-check-build-node-disk.sh
+    - scripts/test-prune-build-node-disk.sh
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
       changes:
         - scripts/check-build-node-disk.sh
         - scripts/test-check-build-node-disk.sh
+        - scripts/prune-build-node-disk.sh
+        - scripts/test-prune-build-node-disk.sh
         - docs/dev/build-node-disk-management.md
+        - build/buildkitd-gc.toml
         - build/README.md
         - .gitlab-ci.yml
     - if: $CI_MERGE_REQUEST_ID
       changes:
         - scripts/check-build-node-disk.sh
         - scripts/test-check-build-node-disk.sh
+        - scripts/prune-build-node-disk.sh
+        - scripts/test-prune-build-node-disk.sh
         - docs/dev/build-node-disk-management.md
+        - build/buildkitd-gc.toml
         - build/README.md
         - .gitlab-ci.yml
     - if: $CI_COMMIT_BRANCH
       changes:
         - scripts/check-build-node-disk.sh
         - scripts/test-check-build-node-disk.sh
+        - scripts/prune-build-node-disk.sh
+        - scripts/test-prune-build-node-disk.sh
         - docs/dev/build-node-disk-management.md
+        - build/buildkitd-gc.toml
         - build/README.md
         - .gitlab-ci.yml
     - when: never

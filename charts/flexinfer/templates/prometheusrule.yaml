@@ -1,5 +1,6 @@
 {{- $alerting := default (dict) .Values.alerting -}}
 {{- $thresholds := default (dict) $alerting.thresholds -}}
+{{- $buildNodeDisk := default (dict) $alerting.buildNodeDisk -}}
 {{- if default false $alerting.enabled }}
 apiVersion: monitoring.coreos.com/v1
 kind: PrometheusRule
@@ -112,6 +113,46 @@ spec:
           annotations:
             summary: "Low VRAM on GPU {{ "{{ $labels.gpu }}" }} (node {{ "{{ $labels.node }}" }})"
             description: "GPU {{ "{{ $labels.gpu }}" }} on node {{ "{{ $labels.node }}" }} has only {{ "{{ $value | humanizePercentage }}" }} VRAM free."
+
+{{- if default false $buildNodeDisk.enabled }}
+    - name: flexinfer-build-node-disk
+      rules:
+        - alert: FlexInferBuildNodeDiskSpaceWarning
+          expr: |
+            (
+              1 - (
+                node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs",instance=~{{ default ".*" $buildNodeDisk.instanceRegex | quote }},mountpoint=~{{ default "/var/lib/docker|/var/lib/buildkit|/" $buildNodeDisk.mountpointRegex | quote }}}
+                /
+                node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs",instance=~{{ default ".*" $buildNodeDisk.instanceRegex | quote }},mountpoint=~{{ default "/var/lib/docker|/var/lib/buildkit|/" $buildNodeDisk.mountpointRegex | quote }}}
+              )
+            ) > {{ default 0.80 $buildNodeDisk.warningUsedRatio }}
+            or
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs",instance=~{{ default ".*" $buildNodeDisk.instanceRegex | quote }},mountpoint=~{{ default "/var/lib/docker|/var/lib/buildkit|/" $buildNodeDisk.mountpointRegex | quote }}} < {{ default 161061273600 $buildNodeDisk.warningFreeBytes }}
+          for: {{ default "30m" $buildNodeDisk.warningFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Build node disk headroom low on {{ "{{ $labels.instance }}" }}"
+            description: "Filesystem {{ "{{ $labels.mountpoint }}" }} on {{ "{{ $labels.instance }}" }} is above the warning threshold or has less than the configured warning free-space floor."
+
+        - alert: FlexInferBuildNodeDiskSpaceCritical
+          expr: |
+            (
+              1 - (
+                node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs",instance=~{{ default ".*" $buildNodeDisk.instanceRegex | quote }},mountpoint=~{{ default "/var/lib/docker|/var/lib/buildkit|/" $buildNodeDisk.mountpointRegex | quote }}}
+                /
+                node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs",instance=~{{ default ".*" $buildNodeDisk.instanceRegex | quote }},mountpoint=~{{ default "/var/lib/docker|/var/lib/buildkit|/" $buildNodeDisk.mountpointRegex | quote }}}
+              )
+            ) > {{ default 0.90 $buildNodeDisk.criticalUsedRatio }}
+            or
+            node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs",instance=~{{ default ".*" $buildNodeDisk.instanceRegex | quote }},mountpoint=~{{ default "/var/lib/docker|/var/lib/buildkit|/" $buildNodeDisk.mountpointRegex | quote }}} < {{ default 85899345920 $buildNodeDisk.criticalFreeBytes }}
+          for: {{ default "10m" $buildNodeDisk.criticalFor }}
+          labels:
+            severity: critical
+          annotations:
+            summary: "Build node disk headroom critical on {{ "{{ $labels.instance }}" }}"
+            description: "Filesystem {{ "{{ $labels.mountpoint }}" }} on {{ "{{ $labels.instance }}" }} is above the critical threshold or has less than the configured critical free-space floor. Prune old BuildKit/Docker cache before starting large ROCm builds."
+{{- end }}
 
     - name: flexinfer-scheduler
       rules:
