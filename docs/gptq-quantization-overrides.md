@@ -13,7 +13,7 @@ GPTQModel + ROCm + Qwen3.5/Gemma4 hybrid architectures require extensive workaro
 | torchao removal | `gptq.go:615-624` | SIGABRT on torch dev builds |
 | gptqmodel pip install | `gptq.go:654-660` | Image may lack gptqmodel |
 | pip-show dep guard | `gptq.go:662-669` | Python import guard SIGABRT |
-| CPU device map (gfx906+gfx1100) | `gptq.go:153-164` | Meta tensor crash |
+| CPU device map (gfx906/gfx900 default) | `pkg/quantization/gptq.go` | Avoid GPTQModel meta tensor crash on high-RAM Radeon VII hosts |
 | writer.py ZeroDivisionError | `gptq.go:300-305` | Cleanup race on save |
 | loader.py direct CPU path | `gptq.go:312-350` | GPTQModel re-injects device_map |
 | VLM text_config extraction | `gptq.go:352-390` | Qwen3.5 VLM nested vocab_size |
@@ -67,6 +67,7 @@ Source: `pkg/quantization/image.go:22-44`
 
 | Env Var | Default (gfx906) | Purpose |
 |---------|-------------------|---------|
+| `QUANTIZE_DEVICE_MAP` | `cpu` | Load model weights directly in host RAM and avoid GPTQModel meta tensor materialization failures |
 | `ABLITERATION_GPU_MAX_MEMORY_GB` | 14 | Headroom for 16GB VRAM |
 | `ABLITERATION_CPU_MAX_MEMORY_GB` | 56 | Avoid disk offload stall |
 | `ABLITERATION_SKIP_CACHING_ALLOCATOR_WARMUP` | true | Skip GPU warmup crash |

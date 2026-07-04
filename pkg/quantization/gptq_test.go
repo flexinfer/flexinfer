@@ -290,6 +290,28 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
+	t.Run("gfx906 defaults to cpu device map", func(t *testing.T) {
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "gfx906", 16384, nil)
+		if v := findEnv(env, "QUANTIZE_DEVICE_MAP"); v != "cpu" {
+			t.Errorf("QUANTIZE_DEVICE_MAP = %q, want cpu for gfx906", v)
+		}
+	})
+
+	t.Run("gfx900 defaults to cpu device map", func(t *testing.T) {
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "gfx900", 16384, nil)
+		if v := findEnv(env, "QUANTIZE_DEVICE_MAP"); v != "cpu" {
+			t.Errorf("QUANTIZE_DEVICE_MAP = %q, want cpu for gfx900", v)
+		}
+	})
+
+	t.Run("gfx906 device map override", func(t *testing.T) {
+		t.Setenv("FLEXINFER_GPTQ_DEVICE_MAP", "auto")
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "gfx906", 16384, nil)
+		if v := findEnv(env, "QUANTIZE_DEVICE_MAP"); v != "auto" {
+			t.Errorf("QUANTIZE_DEVICE_MAP = %q, want env override auto", v)
+		}
+	})
+
 	t.Run("wrapper script has version check", func(t *testing.T) {
 		script := builder.gptqWrapperScript()
 		if !strings.Contains(script, "mkdir -p /workspace") {

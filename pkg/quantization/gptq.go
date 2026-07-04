@@ -215,13 +215,15 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 	// (quantization_resume_fallback event). Artifact quality is gated by
 	// the eval gauntlet regardless of resume path.
 	resumeLayersEnabled := getenvDefault("FLEXINFER_GPTQ_RESUME_LAYERS", "true")
-	deviceMap := getenvDefault("FLEXINFER_GPTQ_DEVICE_MAP", "auto")
+	deviceMap := resolveGPTQDeviceMap(gpuArch)
 	// GPU path uses init_empty_weights + infer_auto_device_map +
 	// load_checkpoint_in_model, which correctly materializes tensors on the
 	// target device before GPTQModel sees them. Accelerate splits layers
 	// between GPU and CPU RAM based on available memory. Per-layer
-	// quantization moves each layer to GPU individually.
-	// Override with FLEXINFER_GPTQ_DEVICE_MAP=cpu to force CPU-only loading.
+	// quantization moves each layer to GPU individually. On gfx906/gfx900,
+	// default to CPU loading because 128 GB host RAM can hold the FP16 model,
+	// and the meta-device path crashes GPTQModel shell_module_materialize.
+	// Override with FLEXINFER_GPTQ_DEVICE_MAP to force another loading mode.
 	layoutAdapterEnabled := getenvDefault("FLEXINFER_GPTQ_LAYOUT_ADAPTER", "0")
 	layoutAdapterStrategy := getenvDefault("FLEXINFER_GPTQ_LAYOUT_ADAPTER_VISION", "none")
 
@@ -270,6 +272,18 @@ func getenvDefault(name, fallback string) string {
 		return value
 	}
 	return fallback
+}
+
+func resolveGPTQDeviceMap(gpuArch string) string {
+	if value := os.Getenv("FLEXINFER_GPTQ_DEVICE_MAP"); value != "" {
+		return value
+	}
+	switch gpuArch {
+	case "gfx906", "gfx900":
+		return "cpu"
+	default:
+		return "auto"
+	}
 }
 
 func defaultGPTQModelPoliciesJSON() string {

@@ -702,8 +702,8 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
 		t.Fatalf("container.Image = %q, want %q", container.Image, DefaultGPTQROCmGFX906Image)
 	}
 	env := containerEnvMap(container.Env)
-	if env["QUANTIZE_DEVICE_MAP"] != "auto" {
-		t.Fatalf("QUANTIZE_DEVICE_MAP = %q, want auto", env["QUANTIZE_DEVICE_MAP"])
+	if env["QUANTIZE_DEVICE_MAP"] != "cpu" {
+		t.Fatalf("QUANTIZE_DEVICE_MAP = %q, want cpu for gfx906", env["QUANTIZE_DEVICE_MAP"])
 	}
 
 	// amd.com/gpu should be set
