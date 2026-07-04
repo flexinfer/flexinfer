@@ -179,6 +179,57 @@ kubectl annotate modelcache -n flexinfer-system <name> \
 
 Then delete the Job. The controller will recreate with the current GPUProfile image. Remove the annotation after.
 
+### 6.5 Qwen3.5 recovery after unsafe abliteration
+
+Use this path when a Qwen3.5 GPTQ artifact serves garbage text even though the
+quantization Job completed. This is the failure from GitLab issue
+[#51](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/51): the GPTQ
+weights faithfully preserved a corrupted FP16 source produced by unsafe
+abliteration. The root-cause report is
+[`docs/dev/qwen35-gptq-root-cause.md`](../dev/qwen35-gptq-root-cause.md).
+
+Before rebuilding, prove the serving runtime is not the only problem:
+
+```bash
+kubectl apply -f deploy/debug/qwen35-gptq-direct-test.yaml
+kubectl logs -n flexinfer-system job/qwen35-gptq-direct-test -f
+```
+
+If direct GPTQModel inference produces multilingual token noise or fails a
+deterministic smoke such as "2 + 2", treat the artifact as corrupted. Do not try
+to promote it by changing vLLM flags.
+
+Safe recovery sequence:
+
+1. Pause the parent `Model` that consumes the cache, or keep its manifest disabled
+   in `deploy/models/kustomization.yaml`, so no runtime pod mounts the artifact
+   during rebuild.
+2. Rebuild from a clean upstream FP16 source. For the first recovery pass, remove
+   `spec.abliteration` from the `ModelCache` and quantize directly with GPTQ
+   (`format: GPTQ`, `bits: 4`, `groupSize: 128`, `sym: true`,
+   `descAct: false`).
+3. If the old download directory is already marked complete, clear the corrupted
+   source through the parent `ModelCache` lifecycle rather than deleting child
+   Jobs or pods. In GitOps, that usually means disabling/deleting the
+   `ModelCache` CR, letting the controller clean up owned resources, then
+   re-enabling it with the clean-source spec. Only perform manual PVC cleanup
+   after confirming no `Model` or Job is mounting it.
+4. Let the controller re-run download then quantize. Watch the status and logs:
+   ```bash
+   kubectl get modelcache -n flexinfer-system qwen35-27b-opus-distill-gptq -w
+   kubectl logs -n flexinfer-system job/qwen35-27b-opus-distill-gptq-quantize -f
+   ```
+5. Validate the new GPTQ artifact with the direct GPTQModel Job before any vLLM
+   deployment or alias promotion. Passing means short deterministic prompts are
+   coherent and the "2 + 2" top token is sane, not random multilingual noise.
+6. Only after direct validation passes, publish/pull the OCI cache and re-enable
+   the serving `Model`.
+
+If an abliterated Qwen3.5 artifact is still required after the direct GPTQ
+recovery passes, use the guarded pipeline only: `skipGDNLayers: true`, narrowly
+target full-attention layers, keep `ablitateLmHead: false`, and enforce a refusal
+norm/perplexity gate. Do not reintroduce all-layer abliteration.
+
 ## 7. Alert response matrix
 
 These alerts ship from `charts/flexinfer/templates/prometheusrule.yaml` when `alerting.enabled=true`.
@@ -254,6 +305,7 @@ Look for these Loki events to confirm resume behavior on a restarted job:
 - `build/scripts/quantize_gptq.py` — the actual Python quantize driver (Hessian-recovery patch starts around `patch_gptq_hessian_inverse`).
 - `pkg/quantization/gptq.go` — controller-side Job construction.
 - `controllers/modelcache_quantization.go` — reconcile loop, image-drift handling, telemetry.
+- `docs/dev/qwen35-gptq-root-cause.md` — Qwen3.5 corrupted-source incident and recovery rationale.
 - MR !156 — Hessian recovery on gfx906.
 - MR !160 — image-drift grace window + deploy-script md5 check.
 - MR !161 — `timeoutSeconds` CRD cap raised to 48 h.

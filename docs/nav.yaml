@@ -33,6 +33,8 @@ sections:
         path: user/caching.md
       - title: Quantization Pipelines
         path: user/quantization.md
+      - title: GPTQ Quantization Runbook
+        path: user/gptq-quantization-runbook.md
       - title: Abliteration Pipeline
         path: user/abliteration.md
       - title: Operations

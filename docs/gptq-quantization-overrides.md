@@ -89,6 +89,13 @@ Qwen3.5 models. Key fields:
 | `disable_qwen35_fla` | true | FLA Triton kernels crash on ROCm |
 | `attn_implementation` | eager | No flash attention on gfx906 |
 
+Operational recovery reference: if a Qwen3.5 GPTQ artifact serves garbage,
+validate it with direct GPTQModel inference before changing vLLM runtime flags.
+The incident and fix rationale are documented in
+[`docs/dev/qwen35-gptq-root-cause.md`](dev/qwen35-gptq-root-cause.md), and the
+operator procedure is in
+[`docs/user/gptq-quantization-runbook.md#65-qwen35-recovery-after-unsafe-abliteration`](user/gptq-quantization-runbook.md#65-qwen35-recovery-after-unsafe-abliteration).
+
 ## vLLM Runtime Patches (vllm_qwen35_patches.py)
 
 16 patches for Qwen3.5 on vLLM/ROCm. Highlights:

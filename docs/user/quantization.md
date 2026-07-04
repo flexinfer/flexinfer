@@ -306,6 +306,13 @@ Pending → Download → Abliterate → Quantize → Publishing → Ready
 
 Each phase blocks until its predecessor reaches `Ready`. Configure the full pipeline in a single `ModelCache`:
 
+For Qwen3.5 recovery work, validate a clean GPTQ artifact before reintroducing
+abliteration. The Qwen3.5-27B incident in
+[`docs/dev/qwen35-gptq-root-cause.md`](../dev/qwen35-gptq-root-cause.md)
+showed that unsafe all-layer abliteration can corrupt the FP16 source before
+quantization; the operator checklist lives in
+[`docs/user/gptq-quantization-runbook.md#65-qwen35-recovery-after-unsafe-abliteration`](gptq-quantization-runbook.md#65-qwen35-recovery-after-unsafe-abliteration).
+
 ```yaml
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
