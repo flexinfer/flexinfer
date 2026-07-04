@@ -11,6 +11,12 @@ for f in build/Dockerfile.*; do b=$(basename "$f"); \
 
 A file with no CI/Makefile/script reference is either an orphan (delete it) or an **off-CI manual recipe** (document it in the off-CI table below). Heavy ROCm images are deliberately built off-CI on the `7900xtx` Docker context because the in-cluster buildkit nodes cannot hold large from-source builds.
 
+Build-node disk pressure is tracked in GitLab issue
+[#35](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/35). Before large
+ROCm/CUDA rebuilds, run `scripts/check-build-node-disk.sh` and follow
+[Docker build node disk management](../docs/dev/build-node-disk-management.md)
+for BuildKit GC, pruning, alert thresholds, and free-space requirements.
+
 ## ⚠ The two-image vLLM trap
 
 There are TWO separate vLLM image families. Bumping one does not fix the other:
