@@ -383,7 +383,12 @@ RUN chmod +x /opt/flexinfer/steam-headless.sh
 #     user's $HOME on the persistent gaming volume (sunshine-headless.sh).
 #   - grim: headless screenshot of the wlroots output, for remote diagnostics.
 # Sunshine itself is fetched from the LizardByte release (.deb) for Ubuntu 24.04.
-ARG SUNSHINE_VERSION=0.23.1
+# >=v2024.712 required on AMD/VAAPI: 0.23.1 predates PR #2821 (merged 2024-07-08),
+# so its encoder applies NO_RC_BUF_LIMIT with no bufsize on AMD → the VCN encoder
+# overshoots its bitrate target, emits oversized frames that exceed the FEC
+# Reed-Solomon shard limit ("exceeds DATA_SHARDS_MAX ... skipping error
+# correction"), and any packet loss then stutters (Sunshine #2788).
+ARG SUNSHINE_VERSION=2026.516.143833
 RUN if [ "${INCLUDE_GAMING}" = "true" ]; then \
       dpkg --add-architecture i386 && \
       echo "steam steam/question select I AGREE" | debconf-set-selections && \

@@ -373,9 +373,11 @@ runtime:
     # (matching gfx1100-5930k) to return 7900xtx to the inference fleet.
     - name: gfx1100
       # rocm-gfx1100-gaming w/ Steam + Sunshine pairing certs + per-client resolution
-      # (3440x1440 21:9 ultrawide dynamic resize, !768). Rebuilt 2026-07-05 with the
-      # empty-global_prep_cmd wiring fix so the resize helper actually attaches.
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:a6e72b9d0a7275f587d49860d6d8d35d163ae0eeae7d759ae2c3ef674cb1d2c8"
+      # (3440x1440 21:9 ultrawide dynamic resize, !768). Rebuilt 2026-07-05 with
+      # Sunshine 2026.516.143833 (AMD VAAPI rate-control fix, PR #2821 — stops the
+      # encoder frame-size overshoot that exceeded FEC DATA_SHARDS_MAX and caused
+      # streaming hiccups) + the empty-global_prep_cmd resize-helper wiring fix.
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:b35ed6d2edcbdc990628b44f9bc8fe9b70f6bd11bc953e4b6e74865a40945801"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
