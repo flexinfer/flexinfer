@@ -21,41 +21,41 @@
     {
       "description": "Auto-merge patch updates for trusted packages",
       "matchUpdateTypes": ["patch"],
-      "matchPackagePatterns": [
-        "^k8s.io/",
-        "^sigs.k8s.io/",
-        "^golang.org/x/"
+      "matchPackageNames": [
+        "/^k8s\\.io\\//",
+        "/^sigs\\.k8s\\.io\\//",
+        "/^golang\\.org\\/x\\//"
       ],
       "automerge": true,
       "automergeType": "pr"
     },
     {
       "description": "Group Kubernetes packages",
-      "matchPackagePatterns": ["^k8s.io/"],
+      "matchPackageNames": ["/^k8s\\.io\\//"],
       "groupName": "kubernetes"
     },
     {
       "description": "Group controller-runtime with k8s",
-      "matchPackagePatterns": ["^sigs.k8s.io/controller-runtime"],
+      "matchPackageNames": ["/^sigs\\.k8s\\.io\\/controller-runtime/"],
       "groupName": "kubernetes"
     },
     {
       "description": "Group golang.org/x packages",
-      "matchPackagePatterns": ["^golang.org/x/"],
+      "matchPackageNames": ["/^golang\\.org\\/x\\//"],
       "groupName": "golang-x"
     },
     {
       "description": "Group testing packages",
-      "matchPackagePatterns": [
-        "github.com/onsi/ginkgo",
-        "github.com/onsi/gomega",
+      "matchPackageNames": [
+        "/^github\\.com\\/onsi\\/ginkgo/",
+        "/^github\\.com\\/onsi\\/gomega/",
         "github.com/stretchr/testify"
       ],
       "groupName": "testing"
     },
     {
       "description": "Group Prometheus packages",
-      "matchPackagePatterns": ["github.com/prometheus/"],
+      "matchPackageNames": ["/^github\\.com\\/prometheus\\//"],
       "groupName": "prometheus"
     },
     {
@@ -88,7 +88,7 @@
     {
       "customType": "regex",
       "description": "Go toolchain version pinned as the GO_VERSION CI variable, which drives GO_IMAGE (golang:${GO_VERSION}) used by the lint, test, build, and govulncheck jobs.",
-      "fileMatch": ["^\\.gitlab-ci\\.yml$"],
+      "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
       "matchStrings": [
         "GO_VERSION:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
@@ -102,10 +102,13 @@
   },
   "dockerfile": {
     "enabled": true,
-    "fileMatch": ["(^|/|\\.)Dockerfile[^/]*$", "(^|/)Dockerfile\\.[^/]*$"]
+    "managerFilePatterns": [
+      "/(^|/|\\.)Dockerfile[^/]*$/",
+      "/(^|/)Dockerfile\\.[^/]*$/"
+    ]
   },
   "helm-values": {
     "enabled": true,
-    "fileMatch": ["charts/.+/values\\.yaml$"]
+    "managerFilePatterns": ["/charts/.+/values\\.yaml$/"]
   }
 }
