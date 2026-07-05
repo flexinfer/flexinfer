@@ -372,8 +372,9 @@ runtime:
     # below stays on the serving digest. Revert this image to the serving digest
     # (matching gfx1100-5930k) to return 7900xtx to the inference fleet.
     - name: gfx1100
-      # rocm-gfx1100-gaming w/ Steam client + persistent Sunshine pairing certs (2026-07-03)
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:7d587575b306617fd3c29234c7a1a06a686da06d76430b052e80e42131e62de2"
+      # rocm-gfx1100-gaming w/ Steam + Sunshine pairing certs + per-client resolution
+      # (3440x1440 21:9 ultrawide dynamic resize, !768). Rebuilt 2026-07-05.
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:6b84e4fdbbde41c806d4fb6de74a2443a5434665aea0e357d6fa5eab5ea014e7"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
