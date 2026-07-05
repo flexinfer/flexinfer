@@ -109,14 +109,65 @@ only fires after no connected client is observed for the configured timeout.
 
 ## Pair Moonlight
 
-- **Host:** the node IP (e.g. `192.168.50.125`); auto-discovers via mDNS.
+- **Host:** the node IP (e.g. `192.168.50.125`); auto-discovers via mDNS on the
+  same LAN. From a different subnet/VLAN, mDNS won't cross — add the node by IP.
 - **Ports (hostNetwork):** TCP `47984` (HTTPS), `47989` (HTTP), `47990` (web UI),
-  `48010` (RTSP); UDP `47998/47999/48000/48002`.
+  `48010` (RTSP); UDP `47998/47999/48000/48002`. This set covers a single
+  high-resolution stream (e.g. 3440×1440@120) — bitrate rides the existing video
+  port, so no extra ports are needed for the ultrawide.
+- **Resolution/refresh:** the host output matches the client automatically —
+  see "Resolution & refresh rate" below (for a Mac/LG34 → Custom 3440×1440@120).
 - **First run:** open `https://<node-ip>:47990`, set a username/password.
 - **Pair:** in Moonlight add `<node-ip>`; enter the PIN it shows into the web UI.
 - **Play:** pick an app — `Desktop` (Steam autostarts in the session) or
   `Steam Big Picture`. An empty headless desktop streams as a static gray
   screen — that is expected; launch something to render.
+
+## Resolution & refresh rate (per-client / ultrawide)
+
+The headless `sway` output has no physical panel, so it presents whatever mode
+we tell it. Two mechanisms set that mode:
+
+1. **Base mode** — `GAMING_RESOLUTION` × `GAMING_FPS` on the gaming runtime
+   profile env (`deploy/system/values-k3s.yaml`). This is the pre-connection /
+   desktop mode. On `cblevins-7900xtx` it is `3440x1440` @ `120` — native for
+   the operator's **LG 34" 21:9 ultrawide (3440×1440)** driven from a Mac.
+2. **Per-client override** — `sunshine-headless.sh` writes a Sunshine
+   `global_prep_cmd` (the `sunshine-resize.sh` helper on the gaming volume) that
+   resizes the `sway` output to the **connecting client's** requested
+   width/height/fps on stream start, then reverts to the base mode on stream
+   end. So a 3440×1440 Mac, a 1920×1080 TV, and a 1280×800 Steam Deck each get a
+   pixel-matched stream with no per-client server config. Set
+   `GAMING_DYNAMIC_RESOLUTION=false` to pin the base mode for every client.
+
+   The helper is best-effort: an invalid or out-of-range client mode (caps at
+   3840×2160) leaves the client on the base mode rather than aborting the stream.
+   Verify inside the runtime pod after a client connects:
+   ```bash
+   swaymsg -t get_outputs | grep -A2 HEADLESS-1   # current_mode should match the client
+   ```
+
+### Streaming to a Mac on the LG 34" ultrawide (3440×1440)
+
+The Mac and the gaming node are on the **same LAN** (`192.168.50.0/24`), so no
+router/port-forward changes are needed — the host ports below are already bound
+on the node and Moonlight auto-discovers via mDNS (or add `192.168.50.125` by
+IP). In **Moonlight (macOS)** → Settings:
+
+- **Resolution:** add **Custom → 3440×1440** (Moonlight ships common 16:9 modes
+  only; add 3440×1440 as a custom resolution so the aspect ratio matches the
+  LG 34 and the per-client hook sets the host output to 21:9).
+- **Frame rate:** `120` FPS (the base mode is 120; the Mac's LG34 must be at a
+  ≥120 Hz refresh for tear-free playback).
+- **Video bitrate:** ~100–150 Mbps for 3440×1440@120 over wired GbE (Moonlight's
+  auto value for this mode is a good start; lower it if you see network drops).
+- **Codec:** HEVC or AV1 (both HW-encoded on the 7900 XTX; they hold realtime at
+  this pixel rate with more headroom than H.264 — see the kill-test).
+- **Fullscreen**, and (Mac) disable "Optimize game settings" if a game keeps
+  overriding the streamed resolution.
+
+The 21:9 VA-API encode path (3440×1440@120, H.264/HEVC/AV1) is exercised by
+`deploy/debug/gaming-sunshine-killtest.yaml` alongside the 1080p60 baseline.
 
 ## Steam (one-time account login)
 
@@ -176,6 +227,7 @@ Scraped by the existing `flexinfer-runtime` PodMonitor (`/metrics` on the api po
 | Node won't warm the new primary after freeing the card | Election prefers the higher-priority incumbent; raise the intended primary's `gpu.priority` above it (it must also be `litellm.enabled: true` + `minReplicas ≥ 1`). |
 | Controller crashlooping `gamingsessions ... is forbidden` | Chart ClusterRole missing `gamingsessions` — add to `charts/flexinfer/templates/rbac.yaml` (the `ai.flexinfer` rule). A new CRD needs both `config/rbac/role.yaml` and the chart ClusterRole. |
 | Moonlight can't reach the node | The gaming runtime profile needs `hostNetwork: true` + `gaming: true`; NodePort's 30000–32767 range cannot serve Moonlight's fixed ports. Ensure no other process holds 47984/47989/47990/48010 on the host. |
+| Stream is letterboxed / pillarboxed / blurry on the ultrawide | The host output did not match the client. Confirm `swaymsg -t get_outputs` shows `HEADLESS-1` at the client's mode after connect; if it is stuck on the base mode, check the runtime pod log for `[sunshine-resize]` warnings (missing sway socket, out-of-range mode), that `GAMING_DYNAMIC_RESOLUTION` is not `false`, and that Moonlight is set to a real 3440×1440 (not "native/auto" scaling a 16:9 mode). |
 | Moonlight video connects but controller/keyboard/mouse input does nothing | Sway must run with `WLR_BACKENDS=headless,libinput`, must not set `WLR_LIBINPUT_NO_DEVICES`, `gamer` must be in the host gids that own `/dev/input/event*`, and the gaming profile must mount `/dev/input`, `/dev/uinput`, and `/run/udev`. Verify with `swaymsg -t get_inputs` inside the runtime pod; it should include Sunshine passthrough devices after a client connects. |
 | GamingSession stuck `Degraded`; no sunshine process in the pod | Sunshine crashes on every supervised restart (e.g. the 2026-07-01 `useradd` exit-4 wrapper crash). The runtime retries with backoff forever while in gaming mode — fix the crash cause; check `flexinfer_runtime_gaming_backend_restarts_total{result="error"}` and the pod log. |
 | Image build fails `Steam License Agreement was DECLINED` | The `steam`/`steamcmd` debconf license preseeds must run **before** `apt-get install` in the `INCLUDE_GAMING` layer (both selectors: `steam steam/question` and `steamcmd steam/question`). |
