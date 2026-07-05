@@ -425,6 +425,16 @@ runtime:
       env:
         - name: GAMING_STATE_DIR
           value: "/var/lib/flexinfer-gaming"
+        # Base headless-display mode: native 3440x1440 21:9 @120Hz for the
+        # operator's LG 34 ultrawide (Moonlight on macOS). sunshine-headless.sh
+        # additionally resizes the sway output to each connecting client's
+        # requested mode via a Sunshine global_prep_cmd, so a 1080p/Steam Deck
+        # client is not forced onto 21:9 — this is only the pre-connection base.
+        # Set GAMING_DYNAMIC_RESOLUTION=false to pin this mode for every client.
+        - name: GAMING_RESOLUTION
+          value: "3440x1440"
+        - name: GAMING_FPS
+          value: "120"
         - name: HIP_VISIBLE_DEVICES
           value: "0"
         - name: ROCR_VISIBLE_DEVICES

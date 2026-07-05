@@ -69,11 +69,17 @@ spec:
               echo "=== NAVI31 render node = $NAVI ==="
               vainfo --display drm --device "$NAVI" 2>&1 | grep -iE "Driver version|Enc"
               echo "=== HW encode smoke (H264/HEVC/AV1, must report frames + >1x speed) ==="
-              for c in h264_vaapi hevc_vaapi av1_vaapi; do
-                echo "--- $c ---"
-                ffmpeg -hide_banner -loglevel error -stats -vaapi_device "$NAVI" \
-                  -f lavfi -i testsrc=size=1920x1080:rate=60:duration=3 \
-                  -vf format=nv12,hwupload -c:v "$c" -f null - 2>&1 | tail -1
+              # 1080p60 = the original streaming baseline; 3440x1440@120 = the
+              # LG 34 21:9 ultrawide target (must also hold >1x realtime — VCN on
+              # NAVI31 has the headroom; H264 is tightest at this pixel rate).
+              for res in "1920x1080:rate=60" "3440x1440:rate=120"; do
+                echo "=== resolution ${res} ==="
+                for c in h264_vaapi hevc_vaapi av1_vaapi; do
+                  echo "--- $c ---"
+                  ffmpeg -hide_banner -loglevel error -stats -vaapi_device "$NAVI" \
+                    -f lavfi -i "testsrc=size=${res}:duration=3" \
+                    -vf format=nv12,hwupload -c:v "$c" -f null - 2>&1 | tail -1
+                done
               done
               echo "=== KILLTEST_SUBSTRATE_PASS ==="
           volumeMounts:
