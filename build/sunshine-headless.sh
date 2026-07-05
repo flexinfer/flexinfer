@@ -292,9 +292,15 @@ exit 0
 RESIZE_BODY
     } > "$RESIZE_HELPER"
     chmod +x "$RESIZE_HELPER"
-    # Wire the helper into Sunshine, but only if the persisted conf does not
-    # already carry a global_prep_cmd (preserve operator edits from the web UI).
-    if ! grep -q '^[[:space:]]*global_prep_cmd' "$SUNSHINE_CONF" 2>/dev/null; then
+    # Wire the helper into Sunshine. (Re)write the global_prep_cmd when it is
+    # absent, an empty placeholder, or already ours; preserve a real
+    # operator-authored one (a non-empty "do" pointing elsewhere). Sunshine
+    # writes an empty `[{"do":"","undo":""}]` line whenever settings are saved
+    # via the web UI, so a plain "does a global_prep_cmd line exist" guard would
+    # wrongly skip wiring on a persisted conf — key off the actual "do" value.
+    existing_do=$(grep -oE '"do":"[^"]*"' "$SUNSHINE_CONF" 2>/dev/null | head -1 | sed 's/^"do":"//; s/"$//')
+    if [ -z "$existing_do" ] || [ "$existing_do" = "$RESIZE_HELPER" ]; then
+        sed -i -E '/^[[:space:]]*global_prep_cmd/d' "$SUNSHINE_CONF"
         echo "global_prep_cmd = [{\"do\":\"${RESIZE_HELPER}\",\"undo\":\"${RESIZE_HELPER} --undo\"}]" >> "$SUNSHINE_CONF"
     fi
 elif [ -f "$SUNSHINE_CONF" ]; then
