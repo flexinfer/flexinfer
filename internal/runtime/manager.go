@@ -7,6 +7,7 @@ package runtime
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -20,6 +21,7 @@ import (
 
 	"github.com/flexinfer/flexinfer/backend"
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
+	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
@@ -1281,16 +1283,90 @@ func overlayEnvVars(base []corev1.EnvVar, overlay []corev1.EnvVar) []corev1.EnvV
 	return merged
 }
 
-// streamLogs reads from r line-by-line and logs each line.
-func streamLogs(r io.ReadCloser, logger interface {
-	Info(msg string, keysAndValues ...any)
-}, stream string) {
+// maxBackendLogLine caps a single streamed subprocess line. Loki's default
+// max_line_size is 256KB and rejects longer lines (reason=line_too_long); keep
+// headroom for the structured wrapper fields.
+const maxBackendLogLine = 200 * 1024
+
+// errBackendReported is the sentinel error attached when a backend log line is
+// classified as an error, so it renders at error level (queryable by level and
+// picked up by the log alert rules) without inventing a fake Go error value.
+var errBackendReported = errors.New("backend reported an error")
+
+// backendLogNoise are high-frequency, low-signal lines emitted by streamed
+// backends — chiefly the headless Sunshine gaming host. Under that volume the
+// log pipeline falls behind and Loki drops the late (real) events as
+// too_far_behind, which is exactly how the gaming crash lines were lost. Matched
+// lines are demoted to V(1)/debug: suppressed at the default info level so they
+// don't drown the signal, still recoverable with -zap-log-level debug.
+var backendLogNoise = []string{
+	"exceeds DATA_SHARDS_MAX",           // Sunshine FEC-overflow flood
+	"Could not resolve keysym",          // Xwayland keymap warnings at session start
+	"Errors from xkbcomp are not fatal", // Xwayland keymap compile noise
+	"failed to start server on 'unix",   // pipewire/pulse re-init on supervised restart
+	"pending linkable(s) not activated", // wireplumber startup churn
+}
+
+// backendLineSeverity classifies a raw backend log line by the severity markers
+// common to the backends we run (Sunshine "Error:"/"Warning:", wlroots/pipewire
+// "[ERROR]"/"[E][", plus generic crash markers) so real failures leave the flat
+// info stream — filterable by level and able to trip the Loki error/segfault
+// alert rules.
+func backendLineSeverity(line string) string {
+	switch {
+	case strings.Contains(line, "Error:"),
+		strings.Contains(line, "[ERROR]"),
+		strings.Contains(line, "[E]["),
+		strings.Contains(line, "Frame capture failed"),
+		strings.Contains(line, "panic:"),
+		strings.Contains(line, "segfault"),
+		strings.Contains(line, "Segmentation fault"):
+		return "error"
+	case strings.Contains(line, "Warning:"),
+		strings.Contains(line, "[WARN"),
+		strings.Contains(line, "[W]["):
+		return "warn"
+	default:
+		return "info"
+	}
+}
+
+func backendLineIsNoise(line string) bool {
+	for _, n := range backendLogNoise {
+		if strings.Contains(line, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// streamLogs reads a backend's stdout/stderr line-by-line and re-emits each line
+// through the structured logger, classifying severity, demoting known flood
+// noise to debug, and truncating over-long lines so downstream ingestion (Loki)
+// preserves the real events instead of dropping them under load.
+func streamLogs(r io.ReadCloser, logger logr.Logger, stream string) {
 	scanner := bufio.NewScanner(r)
-	// Allow up to 1MB lines (some backends produce verbose JSON output).
+	// Allow reading up to 1MB lines (some backends produce verbose JSON output),
+	// but truncate before logging so we stay under Loki's max_line_size.
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
-		if line != "" {
+		if line == "" {
+			continue
+		}
+		if len(line) > maxBackendLogLine {
+			line = line[:maxBackendLogLine] + "…[truncated]"
+		}
+		if backendLineIsNoise(line) {
+			logger.V(1).Info(line, "stream", stream)
+			continue
+		}
+		switch backendLineSeverity(line) {
+		case "error":
+			logger.Error(errBackendReported, line, "stream", stream)
+		case "warn":
+			logger.Info(line, "stream", stream, "backend_severity", "warn")
+		default:
 			logger.Info(line, "stream", stream)
 		}
 	}
