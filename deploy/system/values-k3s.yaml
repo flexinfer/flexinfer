@@ -441,6 +441,15 @@ runtime:
           value: "3440x1440"
         - name: GAMING_FPS
           value: "120"
+        # Composite the headless sway output with the GLES2 renderer, not Vulkan.
+        # Sunshine >=2025.x captures via zwlr_screencopy DMA-BUF export; the RADV
+        # Vulkan renderer hands it compressed-modifier buffers that screencopy
+        # cannot export → Sunshine logs "Frame capture failed" and crash-loops on
+        # every client connect. GLES2 produces linear/exportable buffers so the
+        # DMA-BUF capture succeeds. (0.23.1 used the older zwlr_export_dmabuf path,
+        # which worked with Vulkan — hence this was only needed after the upgrade.)
+        - name: WLR_RENDERER
+          value: "gles2"
         - name: HIP_VISIBLE_DEVICES
           value: "0"
         - name: ROCR_VISIBLE_DEVICES
