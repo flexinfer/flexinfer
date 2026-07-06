@@ -383,12 +383,20 @@ RUN chmod +x /opt/flexinfer/steam-headless.sh
 #     user's $HOME on the persistent gaming volume (sunshine-headless.sh).
 #   - grim: headless screenshot of the wlroots output, for remote diagnostics.
 # Sunshine itself is fetched from the LizardByte release (.deb) for Ubuntu 24.04.
-# >=v2024.712 required on AMD/VAAPI: 0.23.1 predates PR #2821 (merged 2024-07-08),
-# so its encoder applies NO_RC_BUF_LIMIT with no bufsize on AMD → the VCN encoder
-# overshoots its bitrate target, emits oversized frames that exceed the FEC
-# Reed-Solomon shard limit ("exceeds DATA_SHARDS_MAX ... skipping error
-# correction"), and any packet loss then stutters (Sunshine #2788).
-ARG SUNSHINE_VERSION=2026.516.143833
+# VERSION must thread a narrow window (live-tested on cblevins-7900xtx):
+#   - LOWER bound: >=v2024.712 (after PR #2821, merged 2024-07-08). Earlier builds
+#     (0.23.1) apply NO_RC_BUF_LIMIT with no bufsize on AMD → the VCN encoder
+#     overshoots, emits oversized frames past the FEC Reed-Solomon shard limit
+#     ("exceeds DATA_SHARDS_MAX ... skipping error correction") → streaming
+#     stutter on any packet loss (Sunshine #2788).
+#   - UPPER bound: <v2026.407. The wlroots capture path regressed there and stays
+#     broken through v2026.516 (Sunshine #5018): on this headless sway/VAAPI host
+#     the video thread SEGFAULTS on stream start (kernel: `session::video ...
+#     segfault at 28 ... in sunshine`) → crash-loop, no client can connect.
+# v2025.924.154138 is the newest STABLE release inside the window (post-#2821,
+# pre-#5018-break). Do NOT bump past v2026.330 until #5018 (PR #5030) ships in a
+# release AND it's re-validated with a live Moonlight stream here.
+ARG SUNSHINE_VERSION=2025.924.154138
 RUN if [ "${INCLUDE_GAMING}" = "true" ]; then \
       dpkg --add-architecture i386 && \
       echo "steam steam/question select I AGREE" | debconf-set-selections && \
