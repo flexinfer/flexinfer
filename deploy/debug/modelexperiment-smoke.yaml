@@ -1,0 +1,50 @@
+# Safe lifecycle smoke: uses the cached Qwen3-1.7B GGUF on the Radeon VII host
+# but hides ROCm devices, avoiding preemption of a production GPU lane.
+apiVersion: ai.flexinfer/v1alpha2
+kind: ModelExperiment
+metadata:
+  name: qwen-router-smoke
+  namespace: flexinfer-system
+spec:
+  timeout: 15m
+  candidate:
+    backend: llamacpp
+    image: registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3
+    source: HF://rippertnt/Qwen3-1.7B-Q4_K_M-GGUF
+    cache:
+      size: 2Gi
+      storageClass: nvme-1r
+      strategy: Local
+    gpu:
+      vendor: cpu
+    config:
+      ggufFile: qwen3-1.7b-q4_k_m.gguf
+      contextSize: 8192
+      nGPULayers: 0
+      batchSize: 1024
+      ubatchSize: 512
+      parallel: 2
+      flashAttention: false
+      fitOff: true
+      jinja: true
+      reasoningFormat: none
+      reasoningBudget: 0
+      hipVisibleDevices: "-1"
+      rocrVisibleDevices: "-1"
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-radeonvii
+    resources:
+      requests: {cpu: "2", memory: 4Gi}
+      limits: {cpu: "8", memory: 8Gi}
+  gauntlet:
+    templateRef: model-eval-gauntlet
+    env:
+      ITERS: "1"
+      MIN_DURATION: 5s
+      BATCH_SIZE: "16"
+      COLD_START_TIMEOUT: 5m
+      GAUNTLET_API: chat
+      GAUNTLET_MIN_TOKENS: "1"
+      GAUNTLET_PROMPT: "What is 2 + 2? Answer with just the number."
+      GAUNTLET_EXPECT: "4"
+      GAUNTLET_EXPECT_MODE: all

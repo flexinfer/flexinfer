@@ -1,0 +1,855 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: modelexperiments.ai.flexinfer
+spec:
+  group: ai.flexinfer
+  names:
+    kind: ModelExperiment
+    listKind: ModelExperimentList
+    plural: modelexperiments
+    shortNames:
+    - mexp
+    - modelexperiment
+    singular: modelexperiment
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.candidateName
+      name: Candidate
+      type: string
+    - jsonPath: .status.jobName
+      name: Job
+      type: string
+    - jsonPath: .status.verdict.pass
+      name: Pass
+      type: boolean
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha2
+    schema:
+      openAPIV3Schema:
+        description: ModelExperiment runs a bounded canary Model through an evaluation
+          gauntlet.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ModelExperimentSpec declares an isolated serving candidate
+              and its gauntlet.
+            properties:
+              candidate:
+                description: Candidate is the complete Model spec deployed only for
+                  this experiment.
+                properties:
+                  backend:
+                    description: |-
+                      Backend is the inference backend to use.
+                      Supported: ollama, vllm, mlc-llm, llamacpp, diffusers, comfyui, vllm-omni
+                    type: string
+                  cache:
+                    description: |-
+                      Cache configures model caching behavior.
+                      If not specified, cache strategy is inferred from gpu.shared.
+                    properties:
+                      compilationCache:
+                        description: |-
+                          CompilationCache configures persistent GPU kernel compilation caching.
+                          When enabled, MIOpen/PyTorch/Triton compilation artifacts are stored on
+                          a hostPath volume that survives pod restarts, eliminating recompilation
+                          on GPU swaps. Only effective for AMD ROCm backends.
+                        properties:
+                          enabled:
+                            description: |-
+                              Enabled controls whether compilation cache persistence is active.
+                              Default: true when gpu.shared is set and gpu.vendor is amd.
+                            type: boolean
+                          hostPath:
+                            default: /var/lib/flexinfer/compile-cache
+                            description: |-
+                              HostPath is the base directory on the node for compilation caches.
+                              A subdirectory per model is created automatically: <hostPath>/<namespace>/<model-name>/
+                            type: string
+                          sizeLimit:
+                            default: 2Gi
+                            description: |-
+                              SizeLimit is a soft limit for the compilation cache directory.
+                              Not enforced by Kubernetes (hostPath has no built-in quota), but
+                              used by the controller to set resource expectations.
+                            type: string
+                        type: object
+                      flashLoader:
+                        description: |-
+                          FlashLoader configures the flash-loader init container for multi-tier model loading.
+                          When enabled, model files are parallel-copied from the source volume (PVC or hostPath)
+                          to a tmpfs volume before the backend starts, reducing cold-start I/O latency.
+                        properties:
+                          bufferSizeKB:
+                            default: 4096
+                            description: |-
+                              BufferSizeKB sets the per-worker I/O buffer in KB.
+                              Larger buffers improve NVMe sequential throughput.
+                            format: int32
+                            maximum: 16384
+                            minimum: 32
+                            type: integer
+                          concurrency:
+                            default: 4
+                            description: Concurrency is the number of parallel copy
+                              goroutines.
+                            format: int32
+                            maximum: 32
+                            minimum: 1
+                            type: integer
+                          enabled:
+                            description: |-
+                              Enabled activates flash-loader. Default: auto (true when cache.strategy
+                              is Local or SharedPVC with gpu.shared set).
+                            type: boolean
+                          image:
+                            description: Image overrides the flash-loader init container
+                              image.
+                            type: string
+                          tmpfsSizeLimit:
+                            description: |-
+                              TmpfsSizeLimit caps the tmpfs destination volume.
+                              Defaults to cache.size if not specified.
+                            type: string
+                          verifyIntegrity:
+                            description: VerifyIntegrity enables post-copy size verification.
+                            type: boolean
+                        type: object
+                      hostPath:
+                        default: /var/lib/flexinfer/models
+                        description: |-
+                          HostPath is the base directory on the node for Local strategy model storage.
+                          A subdirectory per model is created automatically: <hostPath>/<namespace>/<model-name>/
+                        type: string
+                      pvcName:
+                        description: |-
+                          PVCName is the PVC to use for SharedPVC strategy.
+                          Auto-created if not specified.
+                        type: string
+                      size:
+                        default: 50Gi
+                        description: Size is the storage size for auto-created PVCs.
+                        type: string
+                      storageClass:
+                        default: longhorn
+                        description: StorageClass for auto-created PVCs.
+                        type: string
+                      strategy:
+                        description: |-
+                          Strategy for caching models.
+                          - Memory: Keep model weights in RAM (fast reload, uses RAM)
+                          - SharedPVC: Store on shared PVC (slower reload, saves RAM)
+                          - Local: Use a hostPath directory (e.g., NVMe) for model storage
+                          - None: No caching (downloads each time)
+                          Default: Memory if gpu.shared is set, SharedPVC otherwise.
+                        enum:
+                        - Memory
+                        - SharedPVC
+                        - Local
+                        - None
+                        type: string
+                    type: object
+                  capabilities:
+                    description: |-
+                      Capabilities declares model capabilities for downstream consumers.
+                      Unset fields are auto-inferred from backend type and config.
+                    properties:
+                      imageGeneration:
+                        description: |-
+                          ImageGeneration marks this as an image generation model.
+                          Auto: true for diffusers, comfyui, vllm-omni.
+                        type: boolean
+                      toolCalling:
+                        description: |-
+                          ToolCalling enables OpenAI-compatible function/tool calling.
+                          Auto: true for vllm, ollama; true for llamacpp when jinja=true.
+                        type: boolean
+                      vision:
+                        description: |-
+                          Vision enables multimodal image input.
+                          Auto: true for llamacpp when mmproj is configured.
+                        type: boolean
+                    type: object
+                  config:
+                    description: |-
+                      Config contains backend-specific configuration as JSON.
+                      These are passed to the backend plugin for container configuration.
+                      See backend documentation for available options.
+                      Example: {"mode": "server", "maxNumSequence": 4}
+                    x-kubernetes-preserve-unknown-fields: true
+                  gpu:
+                    description: GPU configures GPU allocation and sharing.
+                    properties:
+                      count:
+                        description: Count is the number of GPUs required.
+                        format: int32
+                        maximum: 8
+                        minimum: 1
+                        type: integer
+                      forcePromotion:
+                        description: |-
+                          ForcePromotion makes this model bypass the Ready-first preference and
+                          anti-thrashing cooldown in the shared-group leader chooser. When true,
+                          this model is selected as the active leader purely on Priority among
+                          other force-promoted members, evicting the current Ready leader even
+                          without proxy traffic (LastActiveTime) or a higher priority than the
+                          demand-swap threshold. Intended for operator-driven canary rollouts
+                          and Slice 1-style kill-tests where the new claimant needs a Deployment
+                          before it can become Ready (chicken-and-egg breaker). Use sparingly:
+                          while true, the normal warm-primary protection is disabled for this
+                          group. Set back to false (or remove) once the forced-active model is
+                          no longer wanted active. Default: false.
+                        type: boolean
+                      priority:
+                        default: 100
+                        description: |-
+                          Priority within a shared group. Higher = more important.
+                          Models with higher priority preempt lower priority ones.
+                        format: int32
+                        maximum: 1000
+                        minimum: 0
+                        type: integer
+                      shared:
+                        description: |-
+                          Shared groups models together for time-sharing a GPU.
+                          Models with the same shared value compete for the same GPU,
+                          with higher priority models preempting lower priority ones.
+                          If not set, model gets exclusive GPU access.
+                        type: string
+                      swapCooldown:
+                        description: |-
+                          SwapCooldown overrides the default anti-thrashing cooldown for this
+                          model's shared group. After a swap, the controller blocks further
+                          demand-based swaps for this duration. Defaults to 5m if unset.
+                          Set lower for small models that load quickly, higher for large ones.
+                        type: string
+                      vendor:
+                        default: auto
+                        description: |-
+                          Vendor selects the GPU vendor to target.
+                          Use "auto" (or omit) to auto-detect based on available nodes.
+                          Use "cpu" for CPU-only inference (no GPU resource requests).
+                        enum:
+                        - auto
+                        - nvidia
+                        - amd
+                        - cpu
+                        type: string
+                      vramEstimateMB:
+                        description: |-
+                          VRAMEstimateMB is the estimated VRAM usage in MB.
+                          Used for scheduling decisions in shared groups.
+                        format: int64
+                        type: integer
+                    type: object
+                    x-kubernetes-validations:
+                    - message: gpu.count must be omitted when gpu.vendor is cpu
+                      rule: self.vendor != 'cpu' || !has(self.count)
+                    - message: gpu.vramEstimateMB must be omitted when gpu.vendor
+                        is cpu
+                      rule: self.vendor != 'cpu' || !has(self.vramEstimateMB)
+                    - message: gpu.shared must be empty when gpu.vendor is cpu
+                      rule: self.vendor != 'cpu' || !has(self.shared) || size(self.shared)
+                        == 0
+                  image:
+                    description: |-
+                      Image overrides the container image for this model's backend.
+                      When set, takes precedence over GPUProfile and backend-default images.
+                    type: string
+                  imageDigest:
+                    description: |-
+                      ImageDigest pins the resolved backend image to an immutable content
+                      digest for reproducible deployments. When set, the digest is applied to
+                      whatever image is otherwise resolved (per-model Image override, GPUProfile
+                      image, or backend default): any existing tag/digest is stripped and
+                      replaced with "@sha256:<digest>". Keeping the human-readable tag in Image
+                      while pinning reproducibility here is the recommended pattern.
+                      Accepts a bare 64-char hex digest or the "sha256:<hex>" form.
+                    pattern: ^(sha256:)?[a-f0-9]{64}$
+                    type: string
+                  kvCache:
+                    description: |-
+                      KVCache configures KV-cache pressure management.
+                      Only effective with backends that support KV-cache tuning (vLLM).
+                    properties:
+                      highWatermark:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: HighWatermark is the KV-cache utilization ratio
+                          that triggers the pressure policy.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      lowWatermark:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: LowWatermark is the target KV-cache utilization
+                          ratio after pressure mitigation.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                      maxBlockSize:
+                        description: MaxBlockSize overrides the vLLM --block-size
+                          argument for KV-cache block allocation.
+                        type: integer
+                      pressurePolicy:
+                        default: Observe
+                        description: PressurePolicy defines how to react when KV-cache
+                          usage exceeds watermarks.
+                        enum:
+                        - Observe
+                        - Reconfigure
+                        - Evict
+                        type: string
+                      reconfigureCooldown:
+                        description: |-
+                          ReconfigureCooldown is how long after a reconfigure action before
+                          the controller considers restoring the original config.
+                          Prevents thrashing between reduced and original settings.
+                          Default: 5m.
+                        type: string
+                      reconfigureStrategy:
+                        default: ReduceSeqs
+                        description: |-
+                          ReconfigureStrategy defines which vLLM config knobs the Reconfigure
+                          pressure policy reduces. Defaults to reducing maxNumSeqs.
+                        enum:
+                        - ReduceSeqs
+                        - ReduceMaxLen
+                        - Both
+                        type: string
+                      swapSpace:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        description: SwapSpace configures the vLLM --swap-space argument
+                          (GiB) for CPU-offloaded KV-cache.
+                        pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  litellm:
+                    description: LiteLLM configures proxy integration for unified
+                      API access.
+                    properties:
+                      aliases:
+                        description: Aliases are additional model names that route
+                          to this model.
+                        items:
+                          type: string
+                        type: array
+                      copilotAlias:
+                        description: CopilotAlias enables IDE/Copilot compatibility
+                          mode.
+                        type: string
+                      enabled:
+                        default: true
+                        description: Enabled controls whether LiteLLM annotations
+                          are added.
+                        type: boolean
+                      servedModelName:
+                        description: |-
+                          ServedModelName is the model name exposed to clients.
+                          Defaults to Model resource name.
+                        type: string
+                    type: object
+                  nodeSelector:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      NodeSelector for scheduling the model to specific nodes.
+                      If not specified, auto-detects GPU nodes.
+                    type: object
+                  quantize:
+                    description: |-
+                      Quantize configures post-download quantization of model weights.
+                      When set, the controller downloads the source model, quantizes it,
+                      and serves the quantized output.
+                    properties:
+                      bits:
+                        description: Bits is the quantization bit width for AWQ/GPTQ/COMPRESSED_TENSORS
+                          formats.
+                        format: int32
+                        type: integer
+                      calibration:
+                        description: |-
+                          Calibration configures calibration parameters for AWQ/GPTQ quantization.
+                          Ignored for GGUF and EXL2 formats.
+                        properties:
+                          dataset:
+                            description: |-
+                              Dataset is the HuggingFace dataset used for calibration samples.
+                              Defaults to "mit-han-lab/pile-val-backup".
+                            type: string
+                          maxSamples:
+                            description: |-
+                              MaxSamples is the number of calibration samples to use.
+                              Defaults to 256.
+                            format: int32
+                            maximum: 2048
+                            minimum: 8
+                            type: integer
+                          maxSeqLen:
+                            description: |-
+                              MaxSeqLen is the maximum sequence length for calibration samples.
+                              Defaults to 4096.
+                            format: int32
+                            maximum: 32768
+                            minimum: 128
+                            type: integer
+                          nParallelCalibSamples:
+                            description: |-
+                              NParallelCalibSamples controls how many calibration samples are processed
+                              in parallel during AWQ quantization. Lower values reduce peak VRAM usage.
+                              Defaults to 16 for models >10B params on <=24GB VRAM.
+                            format: int32
+                            maximum: 256
+                            minimum: 1
+                            type: integer
+                        type: object
+                      denseModuleCosineThreshold:
+                        description: |-
+                          DenseModuleCosineThreshold is the minimum cosine similarity required when
+                          DenseModulePolicy is "validate". It is formatted as a string to avoid
+                          floating-point serialization drift in CRD specs. Defaults to "0.98".
+                          Only used for GPTQ format.
+                        type: string
+                      denseModulePolicy:
+                        description: |-
+                          DenseModulePolicy controls how GPTQ dense linear module families are
+                          handled after quantization when a family-specific validator is available.
+                          Defaults to "fallback", which restores dense modules to source precision.
+                          "validate" keeps dense GPTQ modules only after the validator accepts every
+                          layer in the family. Only used for GPTQ format.
+                        enum:
+                        - fallback
+                        - validate
+                        type: string
+                      descAct:
+                        description: |-
+                          DescAct enables activation reordering (desc_act) for GPTQ (default false).
+                          desc_act=false gives faster inference; true gives slightly better quality.
+                          Ignored for non-GPTQ formats.
+                        type: boolean
+                      dynamicExclusion:
+                        description: |-
+                          DynamicExclusion controls which module patterns are excluded from
+                          quantization (kept at full precision). Defaults to "auto".
+                            - "auto": auto-detect hybrid architectures and exclude attention/expert/
+                              vision/MTP modules (matches official Qwen GPTQ-Int4 approach).
+                            - "gdn": exclude only GDN (linear_attn) layers but keep full attention
+                              quantized. Fits single-GPU (24 GB) while preserving GDN recurrence
+                              quality. Use for Qwen3.5/Qwen3.6 on single-GPU deployments.
+                            - "none": quantize all modules to the target bit width (pure INT4).
+                              WARNING: corrupts GDN recurrence in Qwen3.5/Qwen3.6.
+                          Only used for GPTQ format.
+                        enum:
+                        - auto
+                        - gdn
+                        - none
+                        type: string
+                      format:
+                        description: Format is the target quantization format.
+                        enum:
+                        - GGUF
+                        - AWQ
+                        - GPTQ
+                        - EXL2
+                        - FP8
+                        - COMPRESSED_TENSORS
+                        type: string
+                      ggufType:
+                        description: |-
+                          GGUFType is the GGUF quantization level (e.g., Q4_K_M, Q5_K_M, Q8_0).
+                          Only used when Format is GGUF.
+                        type: string
+                      gpuMemoryFraction:
+                        description: |-
+                          GPUMemoryFraction caps the fraction of GPU VRAM available to the
+                          quantization process (e.g. "0.80"). Defaults to "0.80".
+                          Lower values leave more headroom for GPU driver overhead (important on ROCm
+                          where HIP/GTT allocations bypass container cgroup limits).
+                          Only used for GPTQ format.
+                        type: string
+                      groupSize:
+                        description: GroupSize is the quantization group size for
+                          AWQ/GPTQ/COMPRESSED_TENSORS formats.
+                        format: int32
+                        type: integer
+                      maxMemoryGB:
+                        description: |-
+                          MaxMemoryGB limits the memory available to the quantization job.
+                          Defaults to 32GB for GGUF, 48GB for AWQ/GPTQ/COMPRESSED_TENSORS.
+                        format: int32
+                        type: integer
+                      nodeSelector:
+                        additionalProperties:
+                          type: string
+                        description: |-
+                          NodeSelector overrides spec.nodeSelector for quantization jobs.
+                          Useful when quantization needs a different node (e.g., more RAM).
+                        type: object
+                      sym:
+                        description: |-
+                          Sym enables symmetric quantization for GPTQ (default true).
+                          sym=true is required for ExLlama kernels (best ROCm performance).
+                          Ignored for non-GPTQ formats.
+                        type: boolean
+                      timeoutSeconds:
+                        description: TimeoutSeconds overrides the default 2-hour deadline
+                          for quantization jobs.
+                        format: int64
+                        maximum: 43200
+                        minimum: 300
+                        type: integer
+                      useGPU:
+                        description: |-
+                          UseGPU enables GPU-accelerated quantization
+                          (required for AWQ/GPTQ/COMPRESSED_TENSORS).
+                          GGUF quantization runs on CPU only.
+                        type: boolean
+                    required:
+                    - format
+                    type: object
+                  resources:
+                    description: Resources defines compute resources for the model
+                      container.
+                    properties:
+                      claims:
+                        description: |-
+                          Claims lists the names of resources, defined in spec.resourceClaims,
+                          that are used by this container.
+
+                          This field depends on the
+                          DynamicResourceAllocation feature gate.
+
+                          This field is immutable. It can only be set for containers.
+                        items:
+                          description: ResourceClaim references one entry in PodSpec.ResourceClaims.
+                          properties:
+                            name:
+                              description: |-
+                                Name must match the name of one entry in pod.spec.resourceClaims of
+                                the Pod where this field is used. It makes that resource available
+                                inside a container.
+                              type: string
+                            request:
+                              description: |-
+                                Request is the name chosen for a request in the referenced claim.
+                                If empty, everything from the claim is made available, otherwise
+                                only the result of this request.
+                              type: string
+                          required:
+                          - name
+                          type: object
+                        type: array
+                        x-kubernetes-list-map-keys:
+                        - name
+                        x-kubernetes-list-type: map
+                      limits:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Limits describes the maximum amount of compute resources allowed.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                      requests:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: |-
+                          Requests describes the minimum amount of compute resources required.
+                          If Requests is omitted for a container, it defaults to Limits if that is explicitly specified,
+                          otherwise to an implementation-defined value. Requests cannot exceed Limits.
+                          More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+                        type: object
+                    type: object
+                  serverless:
+                    description: |-
+                      Serverless configures scale-to-zero behavior.
+                      Enabled by default for homelab use.
+                    properties:
+                      coldStartTimeout:
+                        default: 60s
+                        description: |-
+                          ColdStartTimeout is max time to wait for model activation.
+                          Requests exceeding this get 503 Service Unavailable.
+                        type: string
+                      enabled:
+                        default: true
+                        description: Enabled controls scale-to-zero.
+                        type: boolean
+                      idleTimeout:
+                        description: |-
+                          IdleTimeout is how long to wait before scaling to zero.
+                          Default: 5m for LLMs, 10m for image generation backends.
+                        type: string
+                      minReplicas:
+                        default: 0
+                        description: |-
+                          MinReplicas is the minimum number of replicas to keep running.
+                          Use 0 for true scale-to-zero. Use 1 for "warm start" behavior.
+                        format: int32
+                        maximum: 10
+                        minimum: 0
+                        type: integer
+                    type: object
+                  serviceLabels:
+                    description: |-
+                      ServiceLabels are semantic labels describing model capabilities.
+                      Used for dynamic routing (e.g., ["textgen", "code", "fast"]).
+                    items:
+                      type: string
+                    maxItems: 10
+                    type: array
+                  source:
+                    description: |-
+                      Source is the model source URI.
+                      Formats:
+                        - HF://org/model        - HuggingFace model
+                        - ollama://model:tag   - Ollama model
+                        - file:///path/to/model - Local file path
+                        - pvc://name/path      - PVC-backed model
+                    type: string
+                  tolerations:
+                    description: |-
+                      Tolerations are appended to the pod's tolerations.
+                      The controller always adds a GPU-node toleration (dedicated=gpu:NoSchedule);
+                      any tolerations specified here are merged with that default.
+                    items:
+                      description: |-
+                        The pod this Toleration is attached to tolerates any taint that matches
+                        the triple <key,value,effect> using the matching operator <operator>.
+                      properties:
+                        effect:
+                          description: |-
+                            Effect indicates the taint effect to match. Empty means match all taint effects.
+                            When specified, allowed values are NoSchedule, PreferNoSchedule and NoExecute.
+                          type: string
+                        key:
+                          description: |-
+                            Key is the taint key that the toleration applies to. Empty means match all taint keys.
+                            If the key is empty, operator must be Exists; this combination means to match all values and all keys.
+                          type: string
+                        operator:
+                          description: |-
+                            Operator represents a key's relationship to the value.
+                            Valid operators are Exists, Equal, Lt, and Gt. Defaults to Equal.
+                            Exists is equivalent to wildcard for value, so that a pod can
+                            tolerate all taints of a particular category.
+                            Lt and Gt perform numeric comparisons (requires feature gate TaintTolerationComparisonOperators).
+                          type: string
+                        tolerationSeconds:
+                          description: |-
+                            TolerationSeconds represents the period of time the toleration (which must be
+                            of effect NoExecute, otherwise this field is ignored) tolerates the taint. By default,
+                            it is not set, which means tolerate the taint forever (do not evict). Zero and
+                            negative values will be treated as 0 (evict immediately) by the system.
+                          format: int64
+                          type: integer
+                        value:
+                          description: |-
+                            Value is the taint value the toleration matches to.
+                            If the operator is Exists, the value should be empty, otherwise just a regular string.
+                          type: string
+                      type: object
+                    type: array
+                required:
+                - backend
+                - source
+                type: object
+                x-kubernetes-validations:
+                - message: spec.cache.strategy must be SharedPVC, Local, or None when
+                    spec.source is pvc://... (SharedPVC copies to a cache PVC; Local
+                    stages onto node-local storage for unified runtimes; None mounts
+                    the source directly)
+                  rule: '!self.source.startsWith(''pvc://'') || !has(self.cache) ||
+                    !has(self.cache.strategy) || size(self.cache.strategy) == 0 ||
+                    self.cache.strategy == ''SharedPVC'' || self.cache.strategy ==
+                    ''Local'' || self.cache.strategy == ''None'''
+                - message: Do not set GPU limits in spec.resources.limits; use spec.gpu.vendor/spec.gpu.count
+                    instead
+                  rule: '!has(self.resources) || !has(self.resources.limits) || (!(''nvidia.com/gpu''
+                    in self.resources.limits) && !(''amd.com/gpu'' in self.resources.limits)
+                    && !(''gpu.intel.com/i915'' in self.resources.limits))'
+                - message: Do not set GPU requests in spec.resources.requests; use
+                    spec.gpu.vendor/spec.gpu.count instead
+                  rule: '!has(self.resources) || !has(self.resources.requests) ||
+                    (!(''nvidia.com/gpu'' in self.resources.requests) && !(''amd.com/gpu''
+                    in self.resources.requests) && !(''gpu.intel.com/i915'' in self.resources.requests))'
+                - message: spec.nodeSelector['node.flexstack.io/gpu-vendor'] must
+                    match spec.gpu.vendor
+                  rule: '!has(self.gpu) || self.gpu.vendor == ''auto'' || !has(self.nodeSelector)
+                    || !(''node.flexstack.io/gpu-vendor'' in self.nodeSelector) ||
+                    self.nodeSelector[''node.flexstack.io/gpu-vendor''] == self.gpu.vendor'
+              gauntlet:
+                description: Gauntlet defines the evaluation Job template and threshold
+                  overrides.
+                properties:
+                  env:
+                    additionalProperties:
+                      type: string
+                    description: |-
+                      Env contains literal environment overrides applied to every regular
+                      container in the copied Job. MODELS is controller-managed.
+                    maxProperties: 32
+                    type: object
+                  templateRef:
+                    description: |-
+                      TemplateRef names a CronJob in the same namespace. Its Job template is
+                      copied after the candidate Model becomes Ready.
+                    minLength: 1
+                    type: string
+                required:
+                - templateRef
+                type: object
+              suspend:
+                description: Suspend prevents new work and removes active experiment
+                  resources.
+                type: boolean
+              timeout:
+                description: |-
+                  Timeout bounds the experiment from candidate creation through verdict.
+                  Zero defaults to thirty minutes.
+                type: string
+            required:
+            - candidate
+            - gauntlet
+            type: object
+          status:
+            description: ModelExperimentStatus reports the owned resources and current
+              verdict.
+            properties:
+              candidateName:
+                type: string
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              jobName:
+                type: string
+              message:
+                type: string
+              observedGeneration:
+                format: int64
+                type: integer
+              phase:
+                type: string
+              reason:
+                type: string
+              startedAt:
+                format: date-time
+                type: string
+              verdict:
+                description: ModelExperimentVerdict is the durable result of the gauntlet
+                  Job.
+                properties:
+                  completedAt:
+                    format: date-time
+                    type: string
+                  pass:
+                    type: boolean
+                  reason:
+                    description: Reason is a stable machine-readable result classification.
+                    type: string
+                  summary:
+                    description: |-
+                      Summary is a human-readable result description. Detailed checks remain in
+                      the retained Job logs and benchmark result store.
+                    type: string
+                required:
+                - completedAt
+                - pass
+                - reason
+                - summary
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
