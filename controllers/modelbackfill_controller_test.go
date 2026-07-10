@@ -135,7 +135,15 @@ func envValue(container corev1.Container, name string) string {
 func TestModelBackfillCreatesBoundedBackgroundJobAfterIdle(t *testing.T) {
 	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
 	backfill := modelBackfill("nightly-eval")
-	f := newBackfillFixture(t, backfill, readyBackfillModel(now), backfillCronJob())
+	backfill.Spec.Env = map[string]string{
+		"GAUNTLET_EXPECT": "READY",
+		"MODELS":          "warm-model=vllm",
+	}
+	template := backfillCronJob()
+	template.Spec.JobTemplate.Spec.Template.Spec.Containers[0].Env = []corev1.EnvVar{
+		{Name: "MODELS", ValueFrom: &corev1.EnvVarSource{FieldRef: &corev1.ObjectFieldSelector{FieldPath: "metadata.name"}}},
+	}
+	f := newBackfillFixture(t, backfill, readyBackfillModel(now), template)
 	f.now = now
 
 	res := f.reconcile(backfill.Name)
@@ -163,6 +171,17 @@ func TestModelBackfillCreatesBoundedBackgroundJobAfterIdle(t *testing.T) {
 	if value := envValue(job.Spec.Template.Spec.InitContainers[0], backgroundWorkloadEnv); value != "background" {
 		t.Fatalf("init container workload class = %q", value)
 	}
+	if value := envValue(job.Spec.Template.Spec.Containers[0], "MODELS"); value != "warm-model=vllm" {
+		t.Fatalf("container MODELS = %q", value)
+	}
+	if value := envValue(job.Spec.Template.Spec.Containers[0], "GAUNTLET_EXPECT"); value != "READY" {
+		t.Fatalf("container GAUNTLET_EXPECT = %q", value)
+	}
+	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == "MODELS" && env.ValueFrom != nil {
+			t.Fatal("MODELS override retained valueFrom")
+		}
+	}
 	if job.Annotations[modelBackfillNodeAnno] != "gpu-node-a" || job.Annotations[modelBackfillModelAnno] != "warm-model" {
 		t.Fatalf("job annotations = %#v", job.Annotations)
 	}
@@ -171,6 +190,53 @@ func TestModelBackfillCreatesBoundedBackgroundJobAfterIdle(t *testing.T) {
 	f.reconcile(backfill.Name)
 	if gotJobs := f.jobs(); len(gotJobs) != 1 {
 		t.Fatalf("jobs after idempotent reconcile = %d", len(gotJobs))
+	}
+}
+
+func TestModelBackfillRejectsInvalidEnvironmentOverrides(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name string
+		env  map[string]string
+	}{
+		{name: "reserved workload class", env: map[string]string{backgroundWorkloadEnv: "foreground"}},
+		{name: "invalid variable name", env: map[string]string{"NOT VALID": "value"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			backfill := modelBackfill("invalid-env")
+			backfill.Spec.Env = tc.env
+			f := newBackfillFixture(t, backfill, readyBackfillModel(now), backfillCronJob())
+			f.now = now
+
+			f.reconcile(backfill.Name)
+			got := f.getBackfill(backfill.Name)
+			if got.Status.Phase != aiv1alpha2.ModelBackfillBlocked || got.Status.Reason != "InvalidEnvironment" || len(f.jobs()) != 0 {
+				t.Fatalf("status=%#v jobs=%d", got.Status, len(f.jobs()))
+			}
+		})
+	}
+}
+
+func TestApplyBackfillEnvUsesDeterministicAppendOrder(t *testing.T) {
+	container := corev1.Container{Env: []corev1.EnvVar{{Name: "EXISTING", Value: "old"}}}
+	applyBackfillEnv(&container, map[string]string{
+		"Z_NEW":    "last",
+		"EXISTING": "new",
+		"A_NEW":    "first",
+	})
+
+	want := []corev1.EnvVar{
+		{Name: "EXISTING", Value: "new"},
+		{Name: "A_NEW", Value: "first"},
+		{Name: "Z_NEW", Value: "last"},
+	}
+	if len(container.Env) != len(want) {
+		t.Fatalf("env count = %d, want %d", len(container.Env), len(want))
+	}
+	for i := range want {
+		if container.Env[i] != want[i] {
+			t.Fatalf("env[%d] = %#v, want %#v", i, container.Env[i], want[i])
+		}
 	}
 }
 

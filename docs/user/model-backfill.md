@@ -27,6 +27,9 @@ model, change routing, or mutate a Flux-owned `Model`.
 - `idleFor` is continuous. Any foreground request resets the window.
 - `maxRunDuration` becomes the Job active deadline. The default is 30 minutes;
   set an explicit bound for production declarations.
+- `env` can override up to 32 literal environment variables in every regular
+  Job container. Invalid variable names are blocked. The controller reserves
+  `FLEXINFER_WORKLOAD_CLASS` so declarations cannot weaken background safety.
 - Foreground demand, a GamingSession targeting the model node, suspension, a
   spec change, or deletion cancels the owned Job.
 
@@ -50,11 +53,15 @@ spec:
   templateRef: model-eval-gauntlet
   idleFor: 30m
   maxRunDuration: 15m
+  env:
+    MODELS: gemma4-26b-a4b-gptq-5930k=vllm
+    GAUNTLET_API: chat
 ```
 
-The CronJob remains the source of its command, model list, thresholds, and
-result stores. Make sure `spec.modelRef` is present in the template's configured
-model list; ModelBackfill does not rewrite the Job payload.
+The CronJob remains the source of its command and result stores. Use `spec.env`
+to specialize a shared template's model list, probe, or thresholds. Overrides
+replace existing literal or `valueFrom` entries in every regular container;
+variables absent from the template are appended.
 
 ## Operate
 
@@ -102,7 +109,7 @@ utilization percentage by itself is not.
 | Symptom | Check |
 |---|---|
 | Stays `WaitingForIdle` | The model must be Ready and receive no foreground requests for the full `idleFor` window. Inspect `status.reason`, `status.message`, and `status.idleSince`. |
-| Becomes `Blocked` | Confirm the CronJob exists in the same namespace and none of its init containers or containers requests a GPU resource. |
+| Becomes `Blocked` | Confirm the CronJob exists in the same namespace, none of its containers requests a GPU resource, and every `spec.env` key is a valid non-reserved environment name. |
 | Repeatedly preempted | This is correct under foreground traffic. Increase `idleFor`, shorten the template, or schedule the declaration for a quieter lane. |
 | Coherence fails but chat requests look healthy | Confirm the template uses `GAUNTLET_API=chat`. Reserve `completions` for base models that implement the legacy text-completion prompt shape. |
 | Job reaches its deadline | Increase `maxRunDuration` only after confirming the work remains safely preemptible and useful. |

@@ -3,3 +3,4 @@ kind: Kustomization
 namespace: flexinfer-system
 resources:
   - model-eval-5930k.yaml
+  - model-eval-radeonvii.yaml

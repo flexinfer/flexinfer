@@ -55,6 +55,14 @@ type ModelBackfillSpec struct {
 	// +optional
 	MaxRunDuration metav1.Duration `json:"maxRunDuration,omitempty"`
 
+	// Env contains literal environment overrides applied to every regular
+	// container in the copied Job template. Existing values are replaced and
+	// new values are appended. FLEXINFER_WORKLOAD_CLASS is controller-managed
+	// and cannot be overridden.
+	// +optional
+	// +kubebuilder:validation:MaxProperties=32
+	Env map[string]string `json:"env,omitempty"`
+
 	// Suspend prevents new work and cancels a running attempt.
 	// +optional
 	Suspend bool `json:"suspend,omitempty"`

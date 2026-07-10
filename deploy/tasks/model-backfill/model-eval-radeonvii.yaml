@@ -1,0 +1,28 @@
+# Opportunistic evaluation tuned for the already-warm Radeon VII Qwen lane.
+# The literal READY probe is intentional: this model's current chat template
+# answers the generic 2+2 probe incorrectly even though direct instruction
+# following and serving health are stable.
+apiVersion: ai.flexinfer/v1alpha2
+kind: ModelBackfill
+metadata:
+  name: model-eval-qwen3-radeonvii
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: idle-batch
+spec:
+  modelRef: qwen3-1p7b-tools-radeonvii
+  templateRef: model-eval-gauntlet
+  idleFor: 30m
+  maxRunDuration: 10m
+  env:
+    MODELS: qwen3-1p7b-tools-radeonvii=llamacpp
+    ITERS: "3"
+    MIN_DURATION: 15s
+    BATCH_SIZE: "32"
+    GAUNTLET_ENABLED: "1"
+    GAUNTLET_API: chat
+    GAUNTLET_MIN_TOKENS: "1"
+    GAUNTLET_PROMPT: Reply with exactly READY.
+    GAUNTLET_EXPECT: READY
+    GAUNTLET_EXPECT_MODE: all
