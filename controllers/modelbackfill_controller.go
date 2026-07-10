@@ -9,6 +9,7 @@ import (
 	"time"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
@@ -134,10 +135,20 @@ func (r *ModelBackfillReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if complete, failed, completion := modelBackfillJobTerminal(jobs[0]); complete || failed {
 			backfill.Status.JobName = jobs[0].Name
 			backfill.Status.CompletionTime = completion
+			result := "success"
 			if failed {
-				return r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillFailed, "JobFailed", "background Job failed", 0)
+				result = "failure"
+				reconcileResult, statusErr := r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillFailed, "JobFailed", "background Job failed", 0)
+				if statusErr == nil {
+					observeModelBackfillCompletion(backfill, result, completion)
+				}
+				return reconcileResult, statusErr
 			}
-			return r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillSucceeded, "JobComplete", "background Job completed", 0)
+			reconcileResult, statusErr := r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillSucceeded, "JobComplete", "background Job completed", 0)
+			if statusErr == nil {
+				observeModelBackfillCompletion(backfill, result, completion)
+			}
+			return reconcileResult, statusErr
 		}
 		if previousNode != "" && previousNode != nodeName {
 			return r.cancel(ctx, backfill, jobs, "NodeChanged", fmt.Sprintf("model moved from %s to %s; cancelling the active attempt", previousNode, nodeName))
@@ -222,6 +233,7 @@ func (r *ModelBackfillReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	backfill.Status.StartedAt = &metav1.Time{Time: now}
 	backfill.Status.CompletionTime = nil
 	backfill.Status.Attempts++
+	metrics.ModelBackfillStartsTotal.WithLabelValues(backfill.Name, backfill.Namespace, backfill.Spec.ModelRef).Inc()
 	if r.Recorder != nil {
 		r.Recorder.Eventf(backfill, corev1.EventTypeNormal, "BackfillStarted", "Started background Job %s", job.Name)
 	}
@@ -247,6 +259,7 @@ func (r *ModelBackfillReconciler) finalize(ctx context.Context, backfill *aiv1al
 }
 
 func (r *ModelBackfillReconciler) cancel(ctx context.Context, backfill *aiv1alpha2.ModelBackfill, jobs []*batchv1.Job, reason, message string) (ctrl.Result, error) {
+	firstCancellation := backfill.Status.Phase != aiv1alpha2.ModelBackfillCancelling
 	if err := r.deleteJobs(ctx, jobs); err != nil {
 		return ctrl.Result{}, err
 	}
@@ -254,7 +267,54 @@ func (r *ModelBackfillReconciler) cancel(ctx context.Context, backfill *aiv1alph
 		r.Recorder.Event(backfill, corev1.EventTypeNormal, "BackfillCancelled", message)
 	}
 	backfill.Status.IdleSince = &metav1.Time{Time: r.now()}
-	return r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillCancelling, reason, message, modelBackfillPollInterval)
+	reconcileResult, statusErr := r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillCancelling, reason, message, modelBackfillPollInterval)
+	if statusErr == nil && firstCancellation {
+		metrics.ModelBackfillPreemptionsTotal.WithLabelValues(
+			backfill.Name,
+			backfill.Namespace,
+			backfill.Spec.ModelRef,
+			modelBackfillMetricReason(reason),
+		).Inc()
+		observeModelBackfillUsefulSeconds(backfill, r.now())
+	}
+	return reconcileResult, statusErr
+}
+
+func observeModelBackfillCompletion(backfill *aiv1alpha2.ModelBackfill, result string, completion *metav1.Time) {
+	metrics.ModelBackfillCompletionsTotal.WithLabelValues(backfill.Name, backfill.Namespace, backfill.Spec.ModelRef, result).Inc()
+	if completion != nil {
+		observeModelBackfillUsefulSeconds(backfill, completion.Time)
+	}
+}
+
+func observeModelBackfillUsefulSeconds(backfill *aiv1alpha2.ModelBackfill, endedAt time.Time) {
+	if backfill.Status.StartedAt == nil || !endedAt.After(backfill.Status.StartedAt.Time) {
+		return
+	}
+	metrics.ModelBackfillUsefulRunningSecondsTotal.WithLabelValues(
+		backfill.Name,
+		backfill.Namespace,
+		backfill.Spec.ModelRef,
+	).Add(endedAt.Sub(backfill.Status.StartedAt.Time).Seconds())
+}
+
+func modelBackfillMetricReason(reason string) string {
+	switch reason {
+	case "ForegroundDemand":
+		return "foreground"
+	case "GamingIntent":
+		return "gaming"
+	case "GPULeaseActive":
+		return "gpu_lease"
+	case "Suspended":
+		return "suspended"
+	case "SpecChanged":
+		return "spec_changed"
+	case "ModelNotFound", "NodeUnresolved":
+		return "model_unavailable"
+	default:
+		return "other"
+	}
 }
 
 func (r *ModelBackfillReconciler) deleteJobs(ctx context.Context, jobs []*batchv1.Job) error {

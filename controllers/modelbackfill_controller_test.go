@@ -6,6 +6,8 @@ import (
 	"time"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -418,6 +420,46 @@ func TestModelBackfillSuspendSpecChangeAndFinalizerCleanup(t *testing.T) {
 			t.Fatalf("finalizer remains: %v", out.Finalizers)
 		}
 	})
+}
+
+func TestModelBackfillMetricHelpers(t *testing.T) {
+	backfill := modelBackfill("metric-helpers")
+	started := metav1.NewTime(time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC))
+	completed := metav1.NewTime(started.Add(90 * time.Second))
+	backfill.Status.StartedAt = &started
+
+	completionCounter := metrics.ModelBackfillCompletionsTotal.WithLabelValues(
+		backfill.Name, backfill.Namespace, backfill.Spec.ModelRef, "success",
+	)
+	usefulCounter := metrics.ModelBackfillUsefulRunningSecondsTotal.WithLabelValues(
+		backfill.Name, backfill.Namespace, backfill.Spec.ModelRef,
+	)
+	beforeCompletions := promtestutil.ToFloat64(completionCounter)
+	beforeUseful := promtestutil.ToFloat64(usefulCounter)
+
+	observeModelBackfillCompletion(backfill, "success", &completed)
+
+	if got := promtestutil.ToFloat64(completionCounter); got != beforeCompletions+1 {
+		t.Fatalf("completion counter = %v, want %v", got, beforeCompletions+1)
+	}
+	if got := promtestutil.ToFloat64(usefulCounter); got != beforeUseful+90 {
+		t.Fatalf("useful seconds = %v, want %v", got, beforeUseful+90)
+	}
+
+	wantReasons := map[string]string{
+		"ForegroundDemand": "foreground",
+		"GamingIntent":     "gaming",
+		"GPULeaseActive":   "gpu_lease",
+		"Suspended":        "suspended",
+		"SpecChanged":      "spec_changed",
+		"ModelNotFound":    "model_unavailable",
+		"unexpected":       "other",
+	}
+	for input, want := range wantReasons {
+		if got := modelBackfillMetricReason(input); got != want {
+			t.Errorf("metric reason %q = %q, want %q", input, got, want)
+		}
+	}
 }
 
 func slicesContains(values []string, want string) bool {
