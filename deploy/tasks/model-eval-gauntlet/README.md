@@ -19,7 +19,8 @@ live on 2026-06-04 (see `.loom/60-validation-matrix.md` → "2026-06-04 S2.3").
    cold-start on demand).
 3. Each gauntlet run stores the throughput artifact to Postgres
    (`POSTGRES_DSN`) and to `flexinfer-benchmarks-<model>` ConfigMap, then probes
-   `/v1/completions` once for TTFT/token/coherence checks.
+   `/v1/chat/completions` once for TTFT/token/coherence checks. Base models can
+   use the legacy `/v1/completions` shape with `GAUNTLET_API=completions`.
 4. One cold/missing/coherence-failing model is logged (`GAUNTLET FAIL <name>`) but
    does not abort the gauntlet; the job exits non-zero only if **every** model
    failed.
@@ -32,6 +33,7 @@ live on 2026-06-04 (see `.loom/60-validation-matrix.md` → "2026-06-04 S2.3").
 | `ITERS` / `MIN_DURATION` / `BATCH_SIZE` | `3` / `30s` / `64` | bench knobs |
 | `COLD_START_TIMEOUT` | `5m` | per-model activation wait |
 | `GAUNTLET_ENABLED` | `1` | set `0` to run throughput-only compatibility mode |
+| `GAUNTLET_API` | `chat` | probe shape: `chat` for instruction-tuned models or `completions` for base models |
 | `GAUNTLET_MIN_TPS` / `GAUNTLET_MAX_TTFT` / `GAUNTLET_MIN_TOKENS` | `0` / `0s` / `1` | optional pass/fail gates |
 | `GAUNTLET_PROMPT` / `GAUNTLET_EXPECT` / `GAUNTLET_EXPECT_MODE` | `What is 2 + 2?...` / `4` / `all` | coherence probe contract |
 | `POSTGRES_DSN` | langgraph `flexinfer_benchmarks` | mirrors `values-k3s.yaml` |

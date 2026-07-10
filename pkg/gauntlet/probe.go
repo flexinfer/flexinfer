@@ -14,9 +14,43 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 )
 
+// ProbeAPI selects the OpenAI-compatible request and streaming response shape.
+type ProbeAPI string
+
+const (
+	ProbeAPICompletions ProbeAPI = "completions"
+	ProbeAPIChat        ProbeAPI = "chat"
+)
+
+// ParseProbeAPI validates a probe API name. The empty value preserves the
+// original package behavior for callers that predate chat support.
+func ParseProbeAPI(value string) (ProbeAPI, error) {
+	switch ProbeAPI(strings.ToLower(strings.TrimSpace(value))) {
+	case "", ProbeAPICompletions:
+		return ProbeAPICompletions, nil
+	case ProbeAPIChat:
+		return ProbeAPIChat, nil
+	default:
+		return "", fmt.Errorf("unsupported gauntlet API %q (want %q or %q)", value, ProbeAPIChat, ProbeAPICompletions)
+	}
+}
+
+// EndpointPath returns the OpenAI-compatible endpoint for the probe mode.
+func (api ProbeAPI) EndpointPath() (string, error) {
+	parsed, err := ParseProbeAPI(string(api))
+	if err != nil {
+		return "", err
+	}
+	if parsed == ProbeAPIChat {
+		return "/v1/chat/completions", nil
+	}
+	return "/v1/completions", nil
+}
+
 // ProbeRequest describes a single coherence/latency probe against an
-// OpenAI-compatible /v1/completions endpoint.
+// OpenAI-compatible text or chat completions endpoint.
 type ProbeRequest struct {
+	API       ProbeAPI
 	Model     string
 	Prompt    string
 	MaxTokens int
@@ -27,7 +61,7 @@ type ProbeRequest struct {
 // rough decode throughput. Transport/parse failures populate Sample.Err with
 // Served=false rather than returning an error; a non-nil error is reserved for
 // caller-side programming mistakes (e.g. a malformed request).
-func Probe(ctx context.Context, client *http.Client, completionsURL string, pr ProbeRequest, now func() time.Time) (Sample, error) {
+func Probe(ctx context.Context, client *http.Client, endpointURL string, pr ProbeRequest, now func() time.Time) (Sample, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
@@ -37,20 +71,30 @@ func Probe(ctx context.Context, client *http.Client, completionsURL string, pr P
 	if pr.MaxTokens <= 0 {
 		pr.MaxTokens = 64
 	}
+	api, err := ParseProbeAPI(string(pr.API))
+	if err != nil {
+		return Sample{}, err
+	}
 
-	reqBody, err := json.Marshal(map[string]any{
+	payload := map[string]any{
 		"model":          pr.Model,
-		"prompt":         pr.Prompt,
 		"max_tokens":     pr.MaxTokens,
 		"stream":         true,
 		"temperature":    0,
 		"stream_options": map[string]any{"include_usage": true},
-	})
+	}
+	if api == ProbeAPIChat {
+		payload["messages"] = []map[string]string{{"role": "user", "content": pr.Prompt}}
+	} else {
+		payload["prompt"] = pr.Prompt
+	}
+
+	reqBody, err := json.Marshal(payload)
 	if err != nil {
 		return Sample{}, fmt.Errorf("marshal probe request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, completionsURL, bytes.NewReader(reqBody))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpointURL, bytes.NewReader(reqBody))
 	if err != nil {
 		return Sample{}, fmt.Errorf("build probe request: %w", err)
 	}
@@ -143,7 +187,10 @@ func parseSSEChunk(line string) (text string, usageTokens int, ok bool) {
 	}
 	var c struct {
 		Choices []struct {
-			Text string `json:"text"`
+			Text  string `json:"text"`
+			Delta struct {
+				Content string `json:"content"`
+			} `json:"delta"`
 		} `json:"choices"`
 		Usage *struct {
 			CompletionTokens int `json:"completion_tokens"`
@@ -155,6 +202,7 @@ func parseSSEChunk(line string) (text string, usageTokens int, ok bool) {
 	var b strings.Builder
 	for _, ch := range c.Choices {
 		b.WriteString(ch.Text)
+		b.WriteString(ch.Delta.Content)
 	}
 	if c.Usage != nil {
 		usageTokens = c.Usage.CompletionTokens

@@ -37,6 +37,7 @@ flexinfer-bench \
   --backend vllm \
   --configmap unused-for-gauntlet \
   --gauntlet \
+  --gauntlet-api chat \
   --gauntlet-min-tps 20 \
   --gauntlet-max-ttft 2s \
   --gauntlet-min-tokens 8 \
@@ -49,6 +50,10 @@ Throughput comes from the existing benchmarker (robust, multi-iteration);
 coherence, TTFT, and the generated text come from a single streaming probe. The
 command prints the verdict as JSON and **exits non-zero on FAIL**, so it gates CI
 and controller steps directly. Example output:
+
+`chat` is the CLI default and sends an OpenAI `messages` payload to
+`/v1/chat/completions`. Use `--gauntlet-api completions` only for base models
+that expect a raw `prompt` at `/v1/completions`.
 
 ```json
 {
@@ -65,8 +70,11 @@ and controller steps directly. Example output:
 ## Programmatic use
 
 ```go
-sample, _ := gauntlet.Probe(ctx, http.DefaultClient, completionsURL,
-    gauntlet.ProbeRequest{Model: model, Prompt: "What is 2 + 2?", MaxTokens: 16}, nil)
+sample, _ := gauntlet.Probe(ctx, http.DefaultClient, chatCompletionsURL,
+    gauntlet.ProbeRequest{
+        API: gauntlet.ProbeAPIChat, Model: model,
+        Prompt: "What is 2 + 2?", MaxTokens: 16,
+    }, nil)
 verdict := gauntlet.Evaluate(sample, gauntlet.Thresholds{
     MinTokensPerSecond: 20,
     CoherenceExpect:    []string{"4"},
