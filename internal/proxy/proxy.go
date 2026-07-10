@@ -10,6 +10,7 @@ import (
 	"net/http/httputil"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -17,6 +18,7 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/internal/routing"
+	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 	"github.com/flexinfer/flexinfer/pkg/envutil"
 	"github.com/flexinfer/flexinfer/pkg/modelmeta"
 	"github.com/flexinfer/flexinfer/pkg/validation"
@@ -466,12 +468,14 @@ func (p *Proxy) Run(port int) error {
 
 func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	start := time.Now()
+	background := isBackgroundRequest(r)
 	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
 	ctx, span := otel.Tracer("flexinfer/proxy").Start(ctx, "proxy.handle_request")
 	defer span.End()
 	span.SetAttributes(
 		attribute.String("http.method", r.Method),
 		attribute.String("http.path", r.URL.Path),
+		attribute.Bool("flexinfer.workload.background", background),
 	)
 
 	// 0a. Generate/propagate request ID
@@ -574,7 +578,22 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// If model is ready, serve directly.
 		if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
-			p.trackAndServe(w, r, modelName, start)
+			if background {
+				p.trackAndServeBackground(w, r, modelName, start)
+			} else {
+				p.trackAndServe(w, r, modelName, start)
+			}
+			return
+		}
+
+		// Background work may consume only an already-warm model. It must never
+		// create demand, enter the cold-start queue, or activate a parked model.
+		if background {
+			slog.Debug("rejecting background request: model is not ready",
+				"model", modelName, "phase", m.Status.Phase, "request_id", requestID)
+			validation.WriteServiceUnavailable(w,
+				fmt.Sprintf("background request requires model %q to already be Ready", modelName))
+			requestsTotal.WithLabelValues(modelName, "background_not_ready").Inc()
 			return
 		}
 
@@ -644,7 +663,20 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// If model is ready, serve directly.
 	if isReady(md) && (md.Spec.Replicas != nil && *md.Spec.Replicas > 0) {
-		p.trackAndServe(w, r, modelName, start)
+		if background {
+			p.trackAndServeBackground(w, r, modelName, start)
+		} else {
+			p.trackAndServe(w, r, modelName, start)
+		}
+		return
+	}
+
+	if background {
+		slog.Debug("rejecting background request: legacy model is not ready",
+			"model", modelName, "request_id", requestID)
+		validation.WriteServiceUnavailable(w,
+			fmt.Sprintf("background request requires model %q to already be Ready", modelName))
+		requestsTotal.WithLabelValues(modelName, "background_not_ready").Inc()
 		return
 	}
 
@@ -661,6 +693,19 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		slog.Error("cold start failed", "model", modelName, "error", err)
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
 	}
+}
+
+// isBackgroundRequest consumes the proxy-internal workload-class header. The
+// header is removed regardless of value so internal scheduling metadata can
+// never leak to model servers. Only the recognized background value changes
+// request behavior; missing or unknown values remain foreground-compatible.
+func isBackgroundRequest(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	raw := r.Header.Get(benchmarkconfig.HeaderInternalWorkloadClass)
+	r.Header.Del(benchmarkconfig.HeaderInternalWorkloadClass)
+	return strings.EqualFold(strings.TrimSpace(raw), benchmarkconfig.WorkloadClassBackground)
 }
 
 // isReady checks if a ModelDeployment has the Ready condition set to True.

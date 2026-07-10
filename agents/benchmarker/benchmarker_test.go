@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	corev1 "k8s.io/api/core/v1"
@@ -48,6 +49,22 @@ func stripProxyModelPrefix(path, modelName string) string {
 		return "/"
 	}
 	return rest
+}
+
+func TestDoAppliesBackgroundWorkloadClass(t *testing.T) {
+	t.Setenv(benchmarkconfig.EnvWorkloadClass, benchmarkconfig.WorkloadClassBackground)
+	var got string
+	b := &Benchmarker{httpClient: &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
+		got = r.Header.Get(benchmarkconfig.HeaderInternalWorkloadClass)
+		return httpResponse(http.StatusOK, "ok"), nil
+	})}}
+	req, err := http.NewRequest(http.MethodGet, "http://backend/health", nil)
+	require.NoError(t, err)
+
+	resp, err := b.do(req)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	assert.Equal(t, benchmarkconfig.WorkloadClassBackground, got)
 }
 
 func TestRun_Ollama_UpsertsConfigMapAndComputesTPS(t *testing.T) {

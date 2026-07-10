@@ -280,6 +280,36 @@ func allMetrics() []metricSpec {
 			collector:  SharedGroupPreemptionsTotal,
 		},
 
+		// --- ModelBackfill ---
+		{
+			name:       "flexinfer_model_backfill_starts_total",
+			help:       "Total ModelBackfill Job attempts admitted after the foreground-idle gate.",
+			metricType: dto.MetricType_COUNTER,
+			labels:     []string{"backfill", "namespace", "model"},
+			collector:  ModelBackfillStartsTotal,
+		},
+		{
+			name:       "flexinfer_model_backfill_completions_total",
+			help:       "Total terminal ModelBackfill Job attempts by result.",
+			metricType: dto.MetricType_COUNTER,
+			labels:     []string{"backfill", "namespace", "model", "result"},
+			collector:  ModelBackfillCompletionsTotal,
+		},
+		{
+			name:       "flexinfer_model_backfill_preemptions_total",
+			help:       "Total ModelBackfill Job attempts preempted by bounded reason.",
+			metricType: dto.MetricType_COUNTER,
+			labels:     []string{"backfill", "namespace", "model", "reason"},
+			collector:  ModelBackfillPreemptionsTotal,
+		},
+		{
+			name:       "flexinfer_model_backfill_useful_running_seconds_total",
+			help:       "Total seconds ModelBackfill Jobs spent running useful background work.",
+			metricType: dto.MetricType_COUNTER,
+			labels:     []string{"backfill", "namespace", "model"},
+			collector:  ModelBackfillUsefulRunningSecondsTotal,
+		},
+
 		// --- Cache job ---
 		{
 			name:       "flexinfer_model_cache_job_duration_seconds",
@@ -440,7 +470,7 @@ func TestMetricTypes(t *testing.T) {
 // TestMetricCount verifies the table is exhaustive. If a developer adds a metric
 // to exporter.go but forgets to add it to the test table, this test fails.
 func TestMetricCount(t *testing.T) {
-	const expectedMetricCount = 44 // total exported metrics in exporter.go
+	const expectedMetricCount = 48 // total exported metrics in exporter.go
 	got := len(allMetrics())
 	assert.Equal(t, expectedMetricCount, got,
 		"metric count changed — update allMetrics() table when adding/removing metrics")
@@ -464,6 +494,35 @@ func TestCounterVecIncAndRead(t *testing.T) {
 	ReconcileErrorsTotal.WithLabelValues("model").Inc()
 	got := promtestutil.ToFloat64(ReconcileErrorsTotal.WithLabelValues("model"))
 	assert.GreaterOrEqual(t, got, 2.0, "counter should be at least 2 after two Inc() calls")
+}
+
+func TestModelBackfillCounters(t *testing.T) {
+	labels := []string{"eval-5930k", "flexinfer-system", "gemma4-26b-a4b-gptq-5930k"}
+
+	starts := ModelBackfillStartsTotal.WithLabelValues(labels...)
+	startsBefore := promtestutil.ToFloat64(starts)
+	starts.Inc()
+	assert.Equal(t, 1.0, promtestutil.ToFloat64(starts)-startsBefore)
+
+	completions := ModelBackfillCompletionsTotal.WithLabelValues(append(labels, "succeeded")...)
+	completionsBefore := promtestutil.ToFloat64(completions)
+	completions.Inc()
+	assert.Equal(t, 1.0, promtestutil.ToFloat64(completions)-completionsBefore)
+
+	preemptions := ModelBackfillPreemptionsTotal.WithLabelValues(append(labels, "foreground")...)
+	preemptionsBefore := promtestutil.ToFloat64(preemptions)
+	preemptions.Inc()
+	assert.Equal(t, 1.0, promtestutil.ToFloat64(preemptions)-preemptionsBefore)
+
+	usefulSeconds := ModelBackfillUsefulRunningSecondsTotal.WithLabelValues(labels...)
+	secondsBefore := promtestutil.ToFloat64(usefulSeconds)
+	usefulSeconds.Add(42.5)
+	assert.InDelta(t, 42.5, promtestutil.ToFloat64(usefulSeconds)-secondsBefore, 0.001)
+
+	ModelBackfillStartsTotal.DeleteLabelValues(labels...)
+	ModelBackfillCompletionsTotal.DeleteLabelValues(append(labels, "succeeded")...)
+	ModelBackfillPreemptionsTotal.DeleteLabelValues(append(labels, "foreground")...)
+	ModelBackfillUsefulRunningSecondsTotal.DeleteLabelValues(labels...)
 }
 
 func TestKVCachePressureEvictionsTotal_IncAndRead(t *testing.T) {

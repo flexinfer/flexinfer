@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 )
 
 // sseServer returns a mock OpenAI-compatible completions endpoint that streams
@@ -112,5 +114,28 @@ func TestProbe_FallsBackToApproxTokens(t *testing.T) {
 	}
 	if s.CompletionTokens != 3 {
 		t.Errorf("approx tokens = %d, want 3", s.CompletionTokens)
+	}
+}
+
+func TestProbe_AppliesBackgroundWorkloadClass(t *testing.T) {
+	t.Setenv(benchmarkconfig.EnvWorkloadClass, benchmarkconfig.WorkloadClassBackground)
+	seen := make(chan string, 1)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seen <- r.Header.Get(benchmarkconfig.HeaderInternalWorkloadClass)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"text\":\"ok\"}]}\n\n")
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer srv.Close()
+
+	s, err := Probe(context.Background(), srv.Client(), srv.URL, ProbeRequest{Model: "m", Prompt: "x"}, nil)
+	if err != nil {
+		t.Fatalf("Probe returned error: %v", err)
+	}
+	if !s.Served {
+		t.Fatalf("expected served, got %+v", s)
+	}
+	if got := <-seen; got != benchmarkconfig.WorkloadClassBackground {
+		t.Fatalf("workload header = %q, want %q", got, benchmarkconfig.WorkloadClassBackground)
 	}
 }
