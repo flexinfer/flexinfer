@@ -38,7 +38,8 @@ runs bounded CPU-side Jobs against an already-warm model only after a continuous
 foreground-idle window, and cancels them for foreground demand or gaming intent
 without unloading the serving model. Qwen3.5 recovery safeguards, build-node
 disk controls, and Renovate dashboard validation also landed in this window.
-No known-broken areas; live functional-health baseline 2026-07-09.
+No known-broken inference areas; Renovate configuration follow-up
+[#64](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/64) remains open.
 
 - **Plan**: `.loom/32-iteration-plan-model-backfill-2026-07-09.md` (frontier iteration; kill-test passed)
 - **Deployed**: K3s GPU cluster via Flux (flexinfer stack incl. fi-mcp-gateway)
@@ -58,6 +59,7 @@ No known-broken areas; live functional-health baseline 2026-07-09.
 ## Later
 
 - Gaming-mode hardening follow-ups as usage feedback lands (idle auto-revert default-on, session telemetry)
+- Renovate-driven dependency hygiene via the Dependency Dashboard ([#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9))
 - CNCF Sandbox submission (prep artifacts shipped; submit when adoption evidence justifies it)
 
 ## Backlog

@@ -1,6 +1,6 @@
 # ModelBackfill frontier iteration
 
-**Date:** 2026-07-09  
+**Date:** 2026-07-09
 **Goal:** turn otherwise-idle, already-warm inference capacity into useful eval
 artifacts without evicting serving models or delaying foreground work.
 
