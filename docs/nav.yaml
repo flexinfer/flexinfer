@@ -41,6 +41,8 @@ sections:
         path: user/operations.md
       - title: Gaming Mode (Sunshine/Moonlight)
         path: user/gaming-mode-runbook.md
+      - title: Opportunistic Model Backfill
+        path: user/model-backfill.md
 
   - id: dev
     title: Developer

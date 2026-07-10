@@ -406,6 +406,46 @@ var (
 		[]string{"group", "namespace", "owner"},
 	)
 
+	// ModelBackfillStartsTotal counts admitted background Job attempts. A retry
+	// after foreground or gaming preemption is a new start.
+	ModelBackfillStartsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_model_backfill_starts_total",
+			Help: "Total ModelBackfill Job attempts admitted after the foreground-idle gate.",
+		},
+		[]string{"backfill", "namespace", "model"},
+	)
+
+	// ModelBackfillCompletionsTotal counts terminal Job attempts. Result is a
+	// bounded controller value such as succeeded or failed.
+	ModelBackfillCompletionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_model_backfill_completions_total",
+			Help: "Total terminal ModelBackfill Job attempts by result.",
+		},
+		[]string{"backfill", "namespace", "model", "result"},
+	)
+
+	// ModelBackfillPreemptionsTotal counts attempts cancelled so foreground
+	// demand or gaming intent can take precedence.
+	ModelBackfillPreemptionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_model_backfill_preemptions_total",
+			Help: "Total ModelBackfill Job attempts preempted by bounded reason.",
+		},
+		[]string{"backfill", "namespace", "model", "reason"},
+	)
+
+	// ModelBackfillUsefulRunningSecondsTotal accumulates completed background
+	// execution time. It intentionally excludes time spent waiting for idle.
+	ModelBackfillUsefulRunningSecondsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_model_backfill_useful_running_seconds_total",
+			Help: "Total seconds ModelBackfill Jobs spent running useful background work.",
+		},
+		[]string{"backfill", "namespace", "model"},
+	)
+
 	// Cache job metrics
 
 	// ModelCacheJobDurationSeconds tracks duration of ModelCache pipeline jobs.
@@ -591,6 +631,10 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(OwnedJobsStaleGeneration)
 	ctrlmetrics.Registry.MustRegister(GPULeaseActive)
 	ctrlmetrics.Registry.MustRegister(GPULeaseAcquiredTotal)
+	ctrlmetrics.Registry.MustRegister(ModelBackfillStartsTotal)
+	ctrlmetrics.Registry.MustRegister(ModelBackfillCompletionsTotal)
+	ctrlmetrics.Registry.MustRegister(ModelBackfillPreemptionsTotal)
+	ctrlmetrics.Registry.MustRegister(ModelBackfillUsefulRunningSecondsTotal)
 
 	// Cache job metrics
 	ctrlmetrics.Registry.MustRegister(ModelCacheJobDurationSeconds)

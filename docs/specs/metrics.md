@@ -43,6 +43,10 @@ Defined in `services/flexinfer/pkg/metrics/exporter.go`:
 - `flexinfer_model_swap_duration_seconds{model,namespace,backend,group}` (histogram)
 - `flexinfer_gpu_lease_active{group,namespace,owner}` (1 while a training/quant GPU lease holds a shared-GPU group and the serving incumbent is parked, 0 once released)
 - `flexinfer_gpu_lease_acquired_total{group,namespace,owner}` (counter — total GPU lease acquisitions by training workloads)
+- `flexinfer_model_backfill_starts_total{backfill,namespace,model}` (counter — admitted background Job attempts)
+- `flexinfer_model_backfill_completions_total{backfill,namespace,model,result}` (counter — terminal attempts by result)
+- `flexinfer_model_backfill_preemptions_total{backfill,namespace,model,reason}` (counter — foreground/gaming cancellations)
+- `flexinfer_model_backfill_useful_running_seconds_total{backfill,namespace,model}` (counter — cumulative running time, excluding idle waits)
 
 ### Registry Note (Important)
 

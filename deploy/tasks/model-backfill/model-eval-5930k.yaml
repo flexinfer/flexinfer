@@ -1,0 +1,18 @@
+# One-shot opportunistic evaluation against the already-warm 5930k text lane.
+# The controller copies the same-namespace model-eval-gauntlet CronJob template
+# only after this Model has seen no foreground demand for 30 continuous minutes.
+# The copied Job remains CPU-side and calls the warm endpoint; it never requests
+# a GPU, acquires a GPULease, or unloads the serving model.
+apiVersion: ai.flexinfer/v1alpha2
+kind: ModelBackfill
+metadata:
+  name: model-eval-gemma4-5930k
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: idle-batch
+spec:
+  modelRef: gemma4-26b-a4b-gptq-5930k
+  templateRef: model-eval-gauntlet
+  idleFor: 30m
+  maxRunDuration: 15m
