@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/flexinfer/flexinfer/pkg/benchmarkconfig"
 )
 
 // ProbeRequest describes a single coherence/latency probe against an
@@ -54,6 +56,7 @@ func Probe(ctx context.Context, client *http.Client, completionsURL string, pr P
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
+	benchmarkconfig.ApplyWorkloadClass(req)
 
 	start := now()
 	resp, err := client.Do(req)

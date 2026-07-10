@@ -172,6 +172,15 @@ func (b *Benchmarker) buildModelURL(path string) string {
 	return fmt.Sprintf("%s/model/%s/%s", b.proxyURL, b.modelName, path)
 }
 
+// do sends a benchmark request after applying the process-wide internal
+// workload class. Keeping this at the single HTTP dispatch seam ensures health
+// checks, warmups, measurements, streaming probes, and backend-specific calls
+// all carry the same foreground/background contract.
+func (b *Benchmarker) do(req *http.Request) (*http.Response, error) {
+	benchmarkconfig.ApplyWorkloadClass(req)
+	return b.httpClient.Do(req)
+}
+
 // RunAndReturn executes the benchmark and returns the result without persisting it.
 // This is useful for callers that need the result for further processing (e.g., autotune).
 func (b *Benchmarker) RunAndReturn(ctx context.Context, model string) (*BenchmarkRecord, error) {
@@ -319,7 +328,7 @@ func (b *Benchmarker) waitForBackend(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			resp, err := b.httpClient.Do(req)
+			resp, err := b.do(req)
 			if err != nil {
 				log.V(1).Info("Proxy request failed (model may be starting)", "error", err.Error())
 				continue
@@ -537,7 +546,7 @@ func (b *Benchmarker) generateOnceVLLM(ctx context.Context, model, prompt string
 		return 0, 0, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.do(req)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -581,7 +590,7 @@ func (b *Benchmarker) generateOnceVLLMServerTiming(ctx context.Context, model, p
 		return 0, 0, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.do(req)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -627,7 +636,7 @@ func (b *Benchmarker) getVLLMServerTimingSnapshot(ctx context.Context) (vllmTimi
 	if err != nil {
 		return vllmTimingSnapshot{}, false, err
 	}
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.do(req)
 	if err != nil {
 		return vllmTimingSnapshot{}, false, nil
 	}
@@ -735,7 +744,7 @@ func (b *Benchmarker) generateOnceVLLMStream(ctx context.Context, model, prompt 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "text/event-stream")
 
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.do(req)
 	if err != nil {
 		return streamSample{}, false, err
 	}
@@ -853,7 +862,7 @@ func (b *Benchmarker) generateOnceOllama(ctx context.Context, model, prompt stri
 		return 0, 0, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.do(req)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -897,7 +906,7 @@ func (b *Benchmarker) generateOnceOllamaStream(ctx context.Context, model, promp
 		return streamSample{}, false, err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.do(req)
 	if err != nil {
 		return streamSample{}, false, err
 	}
@@ -989,7 +998,7 @@ func (b *Benchmarker) generateOnceComfyUI(ctx context.Context, model string) (to
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.do(req)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -1032,7 +1041,7 @@ func (b *Benchmarker) generateOnceDiffusers(ctx context.Context, model string) (
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.do(req)
 	if err != nil {
 		return 0, 0, false, err
 	}
@@ -1073,7 +1082,7 @@ func (b *Benchmarker) generateOnceTEI(ctx context.Context, prompt string) (token
 	}
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := b.httpClient.Do(req)
+	resp, err := b.do(req)
 	if err != nil {
 		return 0, 0, false, err
 	}

@@ -1,6 +1,7 @@
 package benchmarkconfig
 
 import (
+	"net/http"
 	"os"
 	"strings"
 
@@ -26,6 +27,17 @@ const (
 	DefaultProxyServiceName      = "flexinfer-proxy"
 	DefaultProxyServiceNamespace = "flexinfer-system"
 	DefaultProxyServicePort      = 80
+
+	// EnvWorkloadClass selects the internal request class used by benchmark and
+	// gauntlet clients. Only "background" has special behavior; unset and all
+	// other values preserve normal foreground demand semantics.
+	EnvWorkloadClass = "FLEXINFER_WORKLOAD_CLASS"
+	// HeaderInternalWorkloadClass carries the request class to flexinfer-proxy.
+	// The proxy always strips it before forwarding to a model backend.
+	HeaderInternalWorkloadClass = "X-FlexInfer-Internal-Workload-Class"
+	// WorkloadClassBackground marks work that may use an already-warm model but
+	// must never create cold-start demand.
+	WorkloadClassBackground = "background"
 )
 
 // GlobalResultsConfigMapName returns the global benchmark results ConfigMap name.
@@ -56,6 +68,20 @@ func ProxyURL() string {
 		return v
 	}
 	return DefaultProxyURL(os.Getenv(EnvBenchmarkProxyNamespace))
+}
+
+// ApplyWorkloadClass marks req as background work when requested by the
+// benchmark process environment. Unsupported values are ignored so a typo can
+// never accidentally opt traffic out of normal foreground demand handling.
+func ApplyWorkloadClass(req *http.Request) {
+	if req == nil {
+		return
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv(EnvWorkloadClass)), WorkloadClassBackground) {
+		req.Header.Set(HeaderInternalWorkloadClass, WorkloadClassBackground)
+		return
+	}
+	req.Header.Del(HeaderInternalWorkloadClass)
 }
 
 func envOrDefault(name, def string) string {
