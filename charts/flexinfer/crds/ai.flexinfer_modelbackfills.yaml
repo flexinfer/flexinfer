@@ -36,7 +36,7 @@ spec:
     - jsonPath: .status.nextRunTime
       name: Next Run
       priority: 1
-      type: date
+      type: string
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
