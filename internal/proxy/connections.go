@@ -9,12 +9,25 @@ import (
 
 // trackAndServe serves a request while tracking active connections.
 func (p *Proxy) trackAndServe(w http.ResponseWriter, r *http.Request, modelName string, start time.Time) {
+	p.trackAndServeWithDemand(w, r, modelName, start, true)
+}
+
+// trackAndServeBackground serves an already-Ready model without publishing a
+// foreground LastActiveTime signal. Connection and request metrics still apply;
+// only the demand heartbeat is suppressed.
+func (p *Proxy) trackAndServeBackground(w http.ResponseWriter, r *http.Request, modelName string, start time.Time) {
+	p.trackAndServeWithDemand(w, r, modelName, start, false)
+}
+
+func (p *Proxy) trackAndServeWithDemand(w http.ResponseWriter, r *http.Request, modelName string, start time.Time, recordDemand bool) {
 	// Track connection
 	p.incrementConnections(modelName)
 	defer p.decrementConnections(modelName)
 
-	stopHeartbeat := p.startLastAccessHeartbeat(modelName)
-	defer stopHeartbeat()
+	if recordDemand {
+		stopHeartbeat := p.startLastAccessHeartbeat(modelName)
+		defer stopHeartbeat()
+	}
 
 	// Forward Request
 	p.serveProxy(w, r, modelName)
