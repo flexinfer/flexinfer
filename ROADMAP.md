@@ -37,25 +37,27 @@ mode ([#27](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/27)).
 The next hardware-utilization frontier is also implemented: `ModelBackfill`
 runs bounded CPU-side Jobs against an already-warm model only after a continuous
 foreground-idle window, and cancels them for foreground demand or gaming intent
-without unloading the serving model. Qwen3.5 recovery safeguards, build-node
-disk controls, and Renovate dashboard validation also landed in this window.
+without unloading the serving model. Successful evaluations can recur after an
+opt-in cooldown, while failures remain terminal. Qwen3.5 recovery safeguards,
+build-node disk controls, and Renovate dashboard validation also landed in this
+window.
 No known-broken inference areas; Renovate configuration follow-up
 [#64](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/64) remains open.
 
 - **Plan**: `.loom/32-iteration-plan-model-backfill-2026-07-09.md` (frontier iteration; kill-test passed)
 - **Follow-on**: `.loom/33-iteration-plan-chat-gauntlet-2026-07-10.md` (live chat-vs-completions kill-test passed)
 - **Frontier profile**: `.loom/34-iteration-plan-backfill-eval-profiles-2026-07-10.md` (Radeon VII profile kill-test passed)
+- **Recurring frontier**: `.loom/35-iteration-plan-recurring-model-backfill-2026-07-10.md` (durable-history kill-test passed)
 - **Deployed**: K3s GPU cluster via Flux (flexinfer stack incl. fi-mcp-gateway)
 - **CI**: custom (bespoke `.gitlab-ci.yml` + `.gitlab/ci/` includes: BuildKit image matrix, Go build/test, Trivy, Helm)
 
 ## Now
 
-- Extend `ModelBackfill` declarations with bounded per-model evaluation
-  profiles and activate the idle Radeon VII Qwen lane. The stock arithmetic
-  probe exposed a model-specific false failure; a literal readiness contract
-  passed 3/3 without changing foreground activity or restarting the model.
-  Useful artifacts and foreground latency—not raw utilization—remain the
-  promotion gate.
+- Keep the proven Gemma and Radeon VII evaluations producing fresh daily
+  Postgres artifacts through opt-in successful-run recurrence. Four distinct
+  Radeon rows prove durable history, while the serving pod and foreground
+  activity timestamp remained unchanged. Useful artifacts and foreground
+  latency—not raw utilization—remain the promotion gate.
 
 ## Next
 

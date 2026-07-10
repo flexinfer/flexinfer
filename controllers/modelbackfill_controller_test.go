@@ -417,10 +417,113 @@ func TestModelBackfillTerminalSuccessAndFailure(t *testing.T) {
 			}
 			f.reconcile(backfill.Name)
 			got := f.getBackfill(backfill.Name)
-			if got.Status.Phase != tc.phase || got.Status.CompletionTime == nil {
+			if got.Status.Phase != tc.phase || got.Status.CompletionTime == nil || got.Status.NextRunTime != nil {
 				t.Fatalf("status = %#v", got.Status)
 			}
 		})
+	}
+}
+
+func TestModelBackfillSuccessfulAttemptRepeatsAfterCooldown(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	backfill := modelBackfill("recurring")
+	backfill.Spec.RepeatAfter = metav1.Duration{Duration: 10 * time.Minute}
+	f := newBackfillFixture(t, backfill, readyBackfillModel(now), backfillCronJob())
+	f.now = now
+	f.reconcile(backfill.Name)
+	firstJob := f.jobs()[0].DeepCopy()
+
+	f.now = now.Add(time.Minute)
+	completion := metav1.NewTime(f.now)
+	firstJob.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: completion}}
+	if err := f.client.Status().Update(context.Background(), firstJob); err != nil {
+		t.Fatal(err)
+	}
+	result := f.reconcile(backfill.Name)
+	got := f.getBackfill(backfill.Name)
+	wantNext := f.now.Add(10 * time.Minute)
+	if got.Status.Phase != aiv1alpha2.ModelBackfillSucceeded || got.Status.Reason != "RepeatScheduled" || got.Status.NextRunTime == nil || !got.Status.NextRunTime.Time.Equal(wantNext) {
+		t.Fatalf("scheduled status = %#v, want next run %s", got.Status, wantNext)
+	}
+	if result.RequeueAfter != 10*time.Minute {
+		t.Fatalf("requeue = %s, want 10m", result.RequeueAfter)
+	}
+
+	f.now = now.Add(6 * time.Minute)
+	result = f.reconcile(backfill.Name)
+	if result.RequeueAfter != 5*time.Minute || len(f.jobs()) != 1 {
+		t.Fatalf("before due requeue=%s jobs=%d", result.RequeueAfter, len(f.jobs()))
+	}
+
+	f.now = wantNext
+	f.reconcile(backfill.Name)
+	if got := f.getBackfill(backfill.Name); got.Status.Reason != "RepeatCleanup" || len(f.jobs()) != 0 {
+		t.Fatalf("cleanup status=%#v jobs=%d", got.Status, len(f.jobs()))
+	}
+	f.reconcile(backfill.Name)
+	if got := f.getBackfill(backfill.Name); got.Status.Phase != aiv1alpha2.ModelBackfillWaiting || got.Status.Reason != "RepeatDue" || got.Status.NextRunTime != nil {
+		t.Fatalf("rearmed status=%#v", got.Status)
+	}
+	f.reconcile(backfill.Name)
+	jobs := f.jobs()
+	got = f.getBackfill(backfill.Name)
+	if len(jobs) != 1 || jobs[0].Name == firstJob.Name || got.Status.Attempts != 2 || got.Status.Phase != aiv1alpha2.ModelBackfillStarting {
+		t.Fatalf("repeat jobs=%#v status=%#v", jobs, got.Status)
+	}
+}
+
+func TestModelBackfillFailedAttemptDoesNotRepeat(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	backfill := modelBackfill("failed-repeat")
+	backfill.Spec.RepeatAfter = metav1.Duration{Duration: time.Minute}
+	f := newBackfillFixture(t, backfill, readyBackfillModel(now), backfillCronJob())
+	f.now = now
+	f.reconcile(backfill.Name)
+	job := f.jobs()[0].DeepCopy()
+	job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobFailed, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(now)}}
+	if err := f.client.Status().Update(context.Background(), job); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile(backfill.Name)
+
+	f.now = now.Add(2 * time.Minute)
+	result := f.reconcile(backfill.Name)
+	got := f.getBackfill(backfill.Name)
+	if got.Status.Phase != aiv1alpha2.ModelBackfillFailed || got.Status.NextRunTime != nil || got.Status.Attempts != 1 || result.RequeueAfter != 0 || len(f.jobs()) != 1 {
+		t.Fatalf("status=%#v result=%#v jobs=%d", got.Status, result, len(f.jobs()))
+	}
+}
+
+func TestModelBackfillRejectsUnsafeRepeatIntervals(t *testing.T) {
+	now := time.Date(2026, 7, 9, 12, 0, 0, 0, time.UTC)
+	for _, repeatAfter := range []time.Duration{-time.Minute, 30 * time.Second} {
+		t.Run(repeatAfter.String(), func(t *testing.T) {
+			backfill := modelBackfill("invalid-repeat")
+			backfill.Spec.RepeatAfter = metav1.Duration{Duration: repeatAfter}
+			f := newBackfillFixture(t, backfill, readyBackfillModel(now), backfillCronJob())
+			f.now = now
+			f.reconcile(backfill.Name)
+			got := f.getBackfill(backfill.Name)
+			if got.Status.Phase != aiv1alpha2.ModelBackfillBlocked || got.Status.Reason != "InvalidRepeatAfter" || len(f.jobs()) != 0 {
+				t.Fatalf("status=%#v jobs=%d", got.Status, len(f.jobs()))
+			}
+		})
+	}
+}
+
+func TestModelBackfillRecurringSuccessWithoutCompletionTimeBlocks(t *testing.T) {
+	backfill := modelBackfill("missing-completion")
+	backfill.Generation = 1
+	backfill.Spec.RepeatAfter = metav1.Duration{Duration: time.Minute}
+	backfill.Status = aiv1alpha2.ModelBackfillStatus{
+		Phase:              aiv1alpha2.ModelBackfillSucceeded,
+		ObservedGeneration: 1,
+	}
+	f := newBackfillFixture(t, backfill, readyBackfillModel(time.Now()), backfillCronJob())
+	f.reconcile(backfill.Name)
+	got := f.getBackfill(backfill.Name)
+	if got.Status.Phase != aiv1alpha2.ModelBackfillBlocked || got.Status.Reason != "RepeatStateInvalid" || len(f.jobs()) != 0 {
+		t.Fatalf("status=%#v jobs=%d", got.Status, len(f.jobs()))
 	}
 }
 
@@ -462,6 +565,36 @@ func TestModelBackfillSuspendSpecChangeAndFinalizerCleanup(t *testing.T) {
 		f.reconcile(backfill.Name)
 		got = f.getBackfill(backfill.Name)
 		if len(f.jobs()) != 0 || got.Status.Reason != "SpecChanged" {
+			t.Fatalf("status=%#v jobs=%d", got.Status, len(f.jobs()))
+		}
+	})
+
+	t.Run("generation change cleans up completed Job without preemption", func(t *testing.T) {
+		backfill := modelBackfill("terminal-spec-change")
+		backfill.Generation = 1
+		f := newBackfillFixture(t, backfill, readyBackfillModel(now), backfillCronJob())
+		f.now = now
+		f.reconcile(backfill.Name)
+		job := f.jobs()[0].DeepCopy()
+		job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(now)}}
+		if err := f.client.Status().Update(context.Background(), job); err != nil {
+			t.Fatal(err)
+		}
+		f.reconcile(backfill.Name)
+		got := f.getBackfill(backfill.Name)
+		got.Spec.RepeatAfter = metav1.Duration{Duration: time.Hour}
+		got.Generation = 2
+		if err := f.client.Update(context.Background(), got); err != nil {
+			t.Fatal(err)
+		}
+
+		f.reconcile(backfill.Name)
+		if len(f.jobs()) != 0 || f.getBackfill(backfill.Name).Status.Reason == "SpecChanged" {
+			t.Fatalf("completed Job was treated as a preemption: status=%#v jobs=%d", f.getBackfill(backfill.Name).Status, len(f.jobs()))
+		}
+		f.reconcile(backfill.Name)
+		got = f.getBackfill(backfill.Name)
+		if len(f.jobs()) != 1 || got.Status.Attempts != 2 || got.Status.Phase != aiv1alpha2.ModelBackfillStarting {
 			t.Fatalf("status=%#v jobs=%d", got.Status, len(f.jobs()))
 		}
 	})
