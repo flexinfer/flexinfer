@@ -104,5 +104,6 @@ utilization percentage by itself is not.
 | Stays `WaitingForIdle` | The model must be Ready and receive no foreground requests for the full `idleFor` window. Inspect `status.reason`, `status.message`, and `status.idleSince`. |
 | Becomes `Blocked` | Confirm the CronJob exists in the same namespace and none of its init containers or containers requests a GPU resource. |
 | Repeatedly preempted | This is correct under foreground traffic. Increase `idleFor`, shorten the template, or schedule the declaration for a quieter lane. |
+| Coherence fails but chat requests look healthy | Confirm the template uses `GAUNTLET_API=chat`. Reserve `completions` for base models that implement the legacy text-completion prompt shape. |
 | Job reaches its deadline | Increase `maxRunDuration` only after confirming the work remains safely preemptible and useful. |
 | Need a raw GPU Job | Do not weaken the template guard. ModelBackfill has no exclusive-GPU safety contract. |

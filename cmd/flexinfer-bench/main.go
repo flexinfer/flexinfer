@@ -39,6 +39,7 @@ func main() {
 	gauntletPrompt := flag.String("gauntlet-prompt", "What is 2 + 2? Answer with just the number.", "Gauntlet: coherence probe prompt.")
 	gauntletExpect := flag.String("gauntlet-expect", "", "Gauntlet: comma-separated substrings the completion must contain (case-insensitive). Empty = skip coherence check.")
 	gauntletMode2 := flag.String("gauntlet-expect-mode", "all", "Gauntlet: 'all' or 'any' for --gauntlet-expect matching.")
+	gauntletAPI := flag.String("gauntlet-api", string(gauntlet.ProbeAPIChat), "Gauntlet: OpenAI probe API ('chat' or 'completions').")
 
 	opts := zap.Options{
 		Development: true,
@@ -95,6 +96,11 @@ func main() {
 	defer stop()
 
 	if *gauntletMode {
+		probeAPI, err := gauntlet.ParseProbeAPI(*gauntletAPI)
+		if err != nil {
+			setupLog.Error(err, "Invalid gauntlet API")
+			os.Exit(1)
+		}
 		thr := gauntlet.Thresholds{
 			MinTokensPerSecond:  *gauntletMinTPS,
 			MaxTTFT:             *gauntletMaxTTFT,
@@ -102,7 +108,7 @@ func main() {
 			CoherenceExpect:     splitNonEmpty(*gauntletExpect),
 			CoherenceMode:       *gauntletMode2,
 		}
-		verdict := runGauntlet(sigCtx, setupLog, bm, *model, *modelName, *configMapName, *batchSize, *gauntletPrompt, thr)
+		verdict := runGauntlet(sigCtx, setupLog, bm, *model, *modelName, *configMapName, *batchSize, *gauntletPrompt, probeAPI, thr)
 		out, err := json.MarshalIndent(verdict, "", "  ")
 		if err != nil {
 			setupLog.Error(err, "Failed to marshal gauntlet verdict")
@@ -133,7 +139,7 @@ func main() {
 // single probe, then scores the combined Sample against thr. A serve/benchmark
 // failure is reported as a failed Sample rather than crashing, so the caller
 // always gets a structured verdict.
-func runGauntlet(ctx context.Context, log logr.Logger, bm *benchmarker.Benchmarker, model, modelName, configMapName string, maxTokens int, prompt string, thr gauntlet.Thresholds) gauntlet.Verdict {
+func runGauntlet(ctx context.Context, log logr.Logger, bm *benchmarker.Benchmarker, model, modelName, configMapName string, maxTokens int, prompt string, probeAPI gauntlet.ProbeAPI, thr gauntlet.Thresholds) gauntlet.Verdict {
 	// RunAndReturn waits for the backend to become ready (cold start) and yields a
 	// robust multi-iteration throughput number.
 	record, err := bm.RunAndReturn(ctx, model)
@@ -146,10 +152,13 @@ func runGauntlet(ctx context.Context, log logr.Logger, bm *benchmarker.Benchmark
 		return gauntlet.Evaluate(gauntlet.Sample{Served: false, Err: "save benchmark result: " + err.Error()}, thr)
 	}
 
-	completionsURL := fmt.Sprintf("%s/model/%s/v1/completions",
-		strings.TrimRight(benchmarkconfig.ProxyURL(), "/"), modelName)
-	sample, err := gauntlet.Probe(ctx, http.DefaultClient, completionsURL,
-		gauntlet.ProbeRequest{Model: model, Prompt: prompt, MaxTokens: maxTokens}, nil)
+	probeURL, err := gauntletProbeURL(benchmarkconfig.ProxyURL(), modelName, probeAPI)
+	if err != nil {
+		log.Error(err, "Gauntlet probe configuration failed")
+		return gauntlet.Evaluate(gauntlet.Sample{Served: false, Err: err.Error()}, thr)
+	}
+	sample, err := gauntlet.Probe(ctx, http.DefaultClient, probeURL,
+		gauntlet.ProbeRequest{API: probeAPI, Model: model, Prompt: prompt, MaxTokens: maxTokens}, nil)
 	if err != nil {
 		log.Error(err, "Gauntlet probe phase failed")
 		return gauntlet.Evaluate(gauntlet.Sample{Served: false, Err: err.Error()}, thr)
@@ -160,6 +169,14 @@ func runGauntlet(ctx context.Context, log logr.Logger, bm *benchmarker.Benchmark
 		sample.TokensPerSecond = record.TokensPerSecond
 	}
 	return gauntlet.Evaluate(sample, thr)
+}
+
+func gauntletProbeURL(baseURL, modelName string, probeAPI gauntlet.ProbeAPI) (string, error) {
+	path, err := probeAPI.EndpointPath()
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%s/model/%s%s", strings.TrimRight(baseURL, "/"), modelName, path), nil
 }
 
 func splitNonEmpty(csv string) []string {

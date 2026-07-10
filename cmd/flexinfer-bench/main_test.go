@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flexinfer/flexinfer/pkg/gauntlet"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -19,6 +20,7 @@ func TestBenchFlags_Defaults(t *testing.T) {
 	iterations := fs.Int("iterations", 5, "")
 	batchSize := fs.Int("batch-size", 128, "")
 	coldStartTimeout := fs.Duration("cold-start-timeout", 5*time.Minute, "")
+	gauntletAPI := fs.String("gauntlet-api", string(gauntlet.ProbeAPIChat), "")
 
 	err := fs.Parse([]string{})
 	assert.NoError(t, err)
@@ -32,6 +34,33 @@ func TestBenchFlags_Defaults(t *testing.T) {
 	assert.Equal(t, 5, *iterations)
 	assert.Equal(t, 128, *batchSize)
 	assert.Equal(t, 5*time.Minute, *coldStartTimeout)
+	assert.Equal(t, "chat", *gauntletAPI)
+}
+
+func TestGauntletProbeURL(t *testing.T) {
+	tests := []struct {
+		name string
+		api  gauntlet.ProbeAPI
+		want string
+	}{
+		{name: "chat default", api: gauntlet.ProbeAPIChat, want: "http://proxy/model/gemma/v1/chat/completions"},
+		{name: "raw completions", api: gauntlet.ProbeAPICompletions, want: "http://proxy/model/gemma/v1/completions"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := gauntletProbeURL("http://proxy/", "gemma", tt.api)
+			if err != nil {
+				t.Fatalf("gauntletProbeURL: %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("url = %q, want %q", got, tt.want)
+			}
+		})
+	}
+
+	if _, err := gauntletProbeURL("http://proxy", "gemma", gauntlet.ProbeAPI("responses")); err == nil {
+		t.Fatal("gauntletProbeURL accepted unsupported API")
+	}
 }
 
 func TestBenchFlags_RequiredFlags(t *testing.T) {

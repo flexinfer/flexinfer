@@ -32,7 +32,8 @@ gaming-mode program landed — Steam client + persistent game storage on the
 opt-in idle auto-revert, and crash supervision with degraded-session reporting —
 alongside model-routing fixes keeping gemma4-26b primary on the 5930k card. The
 benchmark gauntlet now runs weekly and after publish with throughput plus
-coherence verdicts ([#27](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/27)).
+chat-aware coherence verdicts while retaining a raw-completions compatibility
+mode ([#27](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/27)).
 The next hardware-utilization frontier is also implemented: `ModelBackfill`
 runs bounded CPU-side Jobs against an already-warm model only after a continuous
 foreground-idle window, and cancels them for foreground demand or gaming intent
@@ -42,13 +43,15 @@ No known-broken inference areas; Renovate configuration follow-up
 [#64](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/64) remains open.
 
 - **Plan**: `.loom/32-iteration-plan-model-backfill-2026-07-09.md` (frontier iteration; kill-test passed)
+- **Follow-on**: `.loom/33-iteration-plan-chat-gauntlet-2026-07-10.md` (live chat-vs-completions kill-test passed)
 - **Deployed**: K3s GPU cluster via Flux (flexinfer stack incl. fi-mcp-gateway)
 - **CI**: custom (bespoke `.gitlab-ci.yml` + `.gitlab/ci/` includes: BuildKit image matrix, Go build/test, Trivy, Helm)
 
 ## Now
 
-- Observe the first deployed 5930k `ModelBackfill` through completion or safe
-  preemption before adding more background templates. Useful artifacts and
+- Rerun the first deployed 5930k `ModelBackfill` with the chat-aware gauntlet.
+  The initial attempt proved lifecycle safety and persisted throughput, then
+  exposed the legacy raw-completions coherence mismatch. Useful artifacts and
   foreground latency—not raw utilization—remain the promotion gate.
 
 ## Next

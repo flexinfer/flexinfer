@@ -67,6 +67,7 @@ spec:
                         --batch-size="${BATCH_SIZE:-64}" \
                         --cold-start-timeout="${COLD_START_TIMEOUT:-5m}" \
                         --gauntlet \
+                        --gauntlet-api="${GAUNTLET_API:-chat}" \
                         --gauntlet-min-tps="${GAUNTLET_MIN_TPS:-0}" \
                         --gauntlet-max-ttft="${GAUNTLET_MAX_TTFT:-0s}" \
                         --gauntlet-min-tokens="${GAUNTLET_MIN_TOKENS:-1}" \
@@ -110,6 +111,10 @@ spec:
                   value: "64"
                 - name: GAUNTLET_ENABLED
                   value: "1"
+                # Chat is correct for instruction-tuned models. Set
+                # "completions" explicitly for base text-completion models.
+                - name: GAUNTLET_API
+                  value: "chat"
                 - name: GAUNTLET_MIN_TOKENS
                   value: "1"
                 - name: GAUNTLET_PROMPT
