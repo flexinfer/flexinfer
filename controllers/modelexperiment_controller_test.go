@@ -252,6 +252,39 @@ func TestModelExperimentTimeoutReleasesCandidate(t *testing.T) {
 	}
 }
 
+func TestModelExperimentSpecChangeCannotReuseOldVerdict(t *testing.T) {
+	experiment, template := experimentTestObjects()
+	experiment.Generation = 3
+	experiment.Finalizers = []string{aiv1alpha2.ModelExperimentFinalizer}
+	experiment.Status = aiv1alpha2.ModelExperimentStatus{
+		ObservedGeneration: 2,
+		Phase:              aiv1alpha2.ModelExperimentSucceeded,
+		JobName:            "currency-smoke-gauntlet",
+		Verdict: &aiv1alpha2.ModelExperimentVerdict{
+			Pass: true, Reason: "GauntletPassed", Summary: "old verdict", CompletedAt: metav1.NewTime(time.Now()),
+		},
+	}
+	oldJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "currency-smoke-gauntlet", Namespace: "flexinfer-system"},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(time.Now()),
+		}}},
+	}
+	f := newModelExperimentFixture(t, experiment, template, oldJob)
+	f.reconcile()
+
+	got := f.experiment()
+	if got.Status.ObservedGeneration != 3 || got.Status.Phase != aiv1alpha2.ModelExperimentDeploying || got.Status.Reason != "SpecChanged" {
+		t.Fatalf("generation restart was not checkpointed: %#v", got.Status)
+	}
+	if got.Status.Verdict != nil {
+		t.Fatalf("old verdict leaked into generation 3: %#v", got.Status.Verdict)
+	}
+	if err := f.c.Get(f.ctx, types.NamespacedName{Namespace: f.key.Namespace, Name: oldJob.Name}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("old evidence Job was not deleted: %v", err)
+	}
+}
+
 func envMap(values []corev1.EnvVar) map[string]string {
 	result := make(map[string]string, len(values))
 	for _, value := range values {

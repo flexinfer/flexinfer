@@ -78,6 +78,11 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 			return ctrl.Result{}, err
 		}
 		resetExperimentStatus(experiment)
+		// Persist the generation boundary and stop. A just-deleted terminal Job
+		// can remain visible through the controller-runtime cache briefly; if we
+		// continue this reconcile, that stale Job can stamp its old verdict onto
+		// the new generation.
+		return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentDeploying, "SpecChanged", "spec changed; restarting experiment resources", modelExperimentPollInterval)
 	}
 	experiment.Status.ObservedGeneration = experiment.Generation
 	if err := validateExperiment(experiment); err != nil {
