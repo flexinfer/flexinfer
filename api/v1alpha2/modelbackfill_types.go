@@ -144,7 +144,7 @@ type ModelBackfillStatus struct {
 //+kubebuilder:printcolumn:name="Node",type="string",JSONPath=".status.nodeName"
 //+kubebuilder:printcolumn:name="Job",type="string",JSONPath=".status.jobName"
 //+kubebuilder:printcolumn:name="Attempts",type="integer",JSONPath=".status.attempts"
-//+kubebuilder:printcolumn:name="Next Run",type="date",JSONPath=".status.nextRunTime",priority=1
+//+kubebuilder:printcolumn:name="Next Run",type="string",JSONPath=".status.nextRunTime",priority=1
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // ModelBackfill declares opportunistic work against an already-warm model.
