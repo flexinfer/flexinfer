@@ -173,6 +173,16 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "GamingSession")
 		os.Exit(1)
 	}
+	// ModelBackfill controller - opportunistic CPU-side work against an idle,
+	// already-warm Model. Foreground demand and gaming intent always preempt it.
+	if err = (&controllers.ModelBackfillReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("modelbackfill-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ModelBackfill")
+		os.Exit(1)
+	}
 
 	// ModelCatalog controller - registry sync and model discovery
 	if err = (&controllers.ModelCatalogReconciler{

@@ -154,6 +154,9 @@ rules:
       - gamingsessions
       - gamingsessions/status
       - gamingsessions/finalizers
+      - modelbackfills
+      - modelbackfills/status
+      - modelbackfills/finalizers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]
@@ -162,7 +165,7 @@ rules:
     resources: ["pods", "services", "endpoints", "persistentvolumeclaims", "configmaps", "events", "secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["batch"]
-    resources: ["jobs"]
+    resources: ["jobs", "cronjobs"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["coordination.k8s.io"]
     resources: ["leases"]
