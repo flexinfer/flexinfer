@@ -40,7 +40,10 @@ foreground-idle window, and cancels them for foreground demand or gaming intent
 without unloading the serving model. Successful evaluations can recur after an
 opt-in cooldown, while failures remain terminal. Qwen3.5 recovery safeguards,
 build-node disk controls, and Renovate dashboard validation also landed in this
-window.
+window. The experiment-platform frontier now has an end-to-end
+`ModelExperiment`: it owns an isolated candidate, runs the gauntlet as a
+one-shot Job, records a typed verdict, and releases hardware without mutating
+production or Flux-owned Models.
 No known-broken inference areas; Renovate configuration follow-up
 [#64](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/64) remains open.
 
@@ -48,6 +51,7 @@ No known-broken inference areas; Renovate configuration follow-up
 - **Follow-on**: `.loom/33-iteration-plan-chat-gauntlet-2026-07-10.md` (live chat-vs-completions kill-test passed)
 - **Frontier profile**: `.loom/34-iteration-plan-backfill-eval-profiles-2026-07-10.md` (Radeon VII profile kill-test passed)
 - **Recurring frontier**: `.loom/35-iteration-plan-recurring-model-backfill-2026-07-10.md` (durable-history kill-test passed)
+- **Experiment frontier**: `.loom/36-iteration-plan-model-experiment-mvp-2026-07-10.md` (canonical plan `plan-modelexperiment-mvp-ab03ee`)
 - **Deployed**: K3s GPU cluster via Flux (flexinfer stack incl. fi-mcp-gateway)
 - **CI**: custom (bespoke `.gitlab-ci.yml` + `.gitlab/ci/` includes: BuildKit image matrix, Go build/test, Trivy, Helm)
 

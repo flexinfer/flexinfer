@@ -38,6 +38,7 @@ rules:
   - modelbackfills
   - modelcaches
   - modelcatalogs
+  - modelexperiments
   - models
   verbs:
   - create
@@ -55,6 +56,7 @@ rules:
   - loraadapters/finalizers
   - modelbackfills/finalizers
   - modelcaches/finalizers
+  - modelexperiments/finalizers
   - models/finalizers
   verbs:
   - update
@@ -69,6 +71,7 @@ rules:
   - modelbackfills/status
   - modelcaches/status
   - modelcatalogs/status
+  - modelexperiments/status
   - models/status
   verbs:
   - get

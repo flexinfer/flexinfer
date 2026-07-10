@@ -157,6 +157,9 @@ rules:
       - modelbackfills
       - modelbackfills/status
       - modelbackfills/finalizers
+      - modelexperiments
+      - modelexperiments/status
+      - modelexperiments/finalizers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]

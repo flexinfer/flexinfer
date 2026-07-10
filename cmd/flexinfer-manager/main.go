@@ -183,6 +183,16 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "ModelBackfill")
 		os.Exit(1)
 	}
+	// ModelExperiment controller - creates a bounded canary Model, evaluates it
+	// with a gauntlet Job, persists the verdict, and releases the GPU.
+	if err = (&controllers.ModelExperimentReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("modelexperiment-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "ModelExperiment")
+		os.Exit(1)
+	}
 
 	// ModelCatalog controller - registry sync and model discovery
 	if err = (&controllers.ModelCatalogReconciler{

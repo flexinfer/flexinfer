@@ -3,7 +3,7 @@
 The gauntlet turns raw inference measurements into a structured **PASS/FAIL
 verdict** against operator-supplied thresholds. It is the shared verdict
 mechanism for the experiment platform: the vLLM currency-canary kill-test, the
-weekly eval gauntlet, and (later) the `ModelExperiment` controller all decide
+weekly eval gauntlet, and the `ModelExperiment` controller all decide
 whether a serving canary is healthy by feeding a measured `Sample` through
 `gauntlet.Evaluate`.
 
