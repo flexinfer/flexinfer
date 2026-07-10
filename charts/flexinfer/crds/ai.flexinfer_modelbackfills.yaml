@@ -65,6 +65,16 @@ spec:
               Model. It deliberately cannot claim a GPU; exclusive GPU work requires a
               separate GPULease-backed contract and live promotion gate.
             properties:
+              env:
+                additionalProperties:
+                  type: string
+                description: |-
+                  Env contains literal environment overrides applied to every regular
+                  container in the copied Job template. Existing values are replaced and
+                  new values are appended. FLEXINFER_WORKLOAD_CLASS is controller-managed
+                  and cannot be overridden.
+                maxProperties: 32
+                type: object
               idleFor:
                 description: |-
                   IdleFor is the continuous foreground-idle window required before a Job is

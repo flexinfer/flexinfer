@@ -18,6 +18,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 	"k8s.io/client-go/tools/record"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -105,6 +106,9 @@ func (r *ModelBackfillReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 	if terminalBackfillPhase(backfill.Status.Phase) && backfill.Status.ObservedGeneration == backfill.Generation {
 		return ctrl.Result{}, nil
+	}
+	if err := validateBackfillEnv(backfill.Spec.Env); err != nil {
+		return r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillBlocked, "InvalidEnvironment", err.Error(), requeueLong)
 	}
 
 	model := &aiv1alpha2.Model{}
@@ -437,6 +441,7 @@ func (r *ModelBackfillReconciler) buildJob(backfill *aiv1alpha2.ModelBackfill, t
 		injectBackgroundWorkloadClass(&job.Spec.Template.Spec.InitContainers[i])
 	}
 	for i := range job.Spec.Template.Spec.Containers {
+		applyBackfillEnv(&job.Spec.Template.Spec.Containers[i], backfill.Spec.Env)
 		injectBackgroundWorkloadClass(&job.Spec.Template.Spec.Containers[i])
 	}
 	if err := ctrl.SetControllerReference(backfill, job, r.Scheme); err != nil {
@@ -541,6 +546,46 @@ func injectBackgroundWorkloadClass(container *corev1.Container) {
 		}
 	}
 	container.Env = append(container.Env, corev1.EnvVar{Name: backgroundWorkloadEnv, Value: "background"})
+}
+
+func validateBackfillEnv(overrides map[string]string) error {
+	names := sortedBackfillEnvNames(overrides)
+	for _, name := range names {
+		if name == backgroundWorkloadEnv {
+			return fmt.Errorf("environment variable %q is controller-managed", name)
+		}
+		if problems := utilvalidation.IsEnvVarName(name); len(problems) > 0 {
+			return fmt.Errorf("invalid environment variable %q: %s", name, strings.Join(problems, "; "))
+		}
+	}
+	return nil
+}
+
+func applyBackfillEnv(container *corev1.Container, overrides map[string]string) {
+	for _, name := range sortedBackfillEnvNames(overrides) {
+		found := false
+		for i := range container.Env {
+			if container.Env[i].Name != name {
+				continue
+			}
+			container.Env[i].Value = overrides[name]
+			container.Env[i].ValueFrom = nil
+			found = true
+			break
+		}
+		if !found {
+			container.Env = append(container.Env, corev1.EnvVar{Name: name, Value: overrides[name]})
+		}
+	}
+}
+
+func sortedBackfillEnvNames(overrides map[string]string) []string {
+	names := make([]string, 0, len(overrides))
+	for name := range overrides {
+		names = append(names, name)
+	}
+	slices.Sort(names)
+	return names
 }
 
 func terminalBackfillPhase(phase aiv1alpha2.ModelBackfillPhase) bool {

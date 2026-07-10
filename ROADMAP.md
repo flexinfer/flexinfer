@@ -1,6 +1,6 @@
 # FlexInfer Roadmap
 
-> Last Updated: 2026-07-09
+> Last Updated: 2026-07-10
 > Tier: 1 (see workspace AGENTS.md "Portfolio Tiers")
 > Tracking Issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/63
 
@@ -44,15 +44,18 @@ No known-broken inference areas; Renovate configuration follow-up
 
 - **Plan**: `.loom/32-iteration-plan-model-backfill-2026-07-09.md` (frontier iteration; kill-test passed)
 - **Follow-on**: `.loom/33-iteration-plan-chat-gauntlet-2026-07-10.md` (live chat-vs-completions kill-test passed)
+- **Frontier profile**: `.loom/34-iteration-plan-backfill-eval-profiles-2026-07-10.md` (Radeon VII profile kill-test passed)
 - **Deployed**: K3s GPU cluster via Flux (flexinfer stack incl. fi-mcp-gateway)
 - **CI**: custom (bespoke `.gitlab-ci.yml` + `.gitlab/ci/` includes: BuildKit image matrix, Go build/test, Trivy, Helm)
 
 ## Now
 
-- Rerun the first deployed 5930k `ModelBackfill` with the chat-aware gauntlet.
-  The initial attempt proved lifecycle safety and persisted throughput, then
-  exposed the legacy raw-completions coherence mismatch. Useful artifacts and
-  foreground latency—not raw utilization—remain the promotion gate.
+- Extend `ModelBackfill` declarations with bounded per-model evaluation
+  profiles and activate the idle Radeon VII Qwen lane. The stock arithmetic
+  probe exposed a model-specific false failure; a literal readiness contract
+  passed 3/3 without changing foreground activity or restarting the model.
+  Useful artifacts and foreground latency—not raw utilization—remain the
+  promotion gate.
 
 ## Next
 
