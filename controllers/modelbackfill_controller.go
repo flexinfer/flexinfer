@@ -28,6 +28,7 @@ import (
 const (
 	modelBackfillDefaultIdleFor = 10 * time.Minute
 	modelBackfillDefaultMaxRun  = 30 * time.Minute
+	modelBackfillMinRepeatAfter = time.Minute
 	modelBackfillPollInterval   = 5 * time.Second
 
 	modelBackfillOwnerLabel = "ai.flexinfer/model-backfill"
@@ -92,6 +93,12 @@ func (r *ModelBackfillReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	if backfill.Status.ObservedGeneration != 0 && backfill.Status.ObservedGeneration != backfill.Generation {
 		if len(jobs) > 0 {
+			if modelBackfillJobsTerminal(jobs) {
+				if err := r.deleteJobs(ctx, jobs); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: modelBackfillPollInterval}, nil
+			}
 			return r.cancel(ctx, backfill, jobs, "SpecChanged", "spec changed; cancelling the active attempt")
 		}
 		resetBackfillAttempt(backfill)
@@ -104,11 +111,17 @@ func (r *ModelBackfillReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		}
 		return r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillSuspended, "Suspended", "backfill is suspended", requeueLong)
 	}
-	if terminalBackfillPhase(backfill.Status.Phase) && backfill.Status.ObservedGeneration == backfill.Generation {
-		return ctrl.Result{}, nil
-	}
 	if err := validateBackfillEnv(backfill.Spec.Env); err != nil {
 		return r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillBlocked, "InvalidEnvironment", err.Error(), requeueLong)
+	}
+	if err := validateBackfillRepeatAfter(backfill.Spec.RepeatAfter.Duration); err != nil {
+		return r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillBlocked, "InvalidRepeatAfter", err.Error(), requeueLong)
+	}
+	if backfill.Status.Phase == aiv1alpha2.ModelBackfillSucceeded && backfill.Status.ObservedGeneration == backfill.Generation && backfill.Spec.RepeatAfter.Duration > 0 {
+		return r.reconcileSuccessfulRepeat(ctx, backfill, jobs, now)
+	}
+	if terminalBackfillPhase(backfill.Status.Phase) && backfill.Status.ObservedGeneration == backfill.Generation {
+		return ctrl.Result{}, nil
 	}
 
 	model := &aiv1alpha2.Model{}
@@ -139,6 +152,7 @@ func (r *ModelBackfillReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if complete, failed, completion := modelBackfillJobTerminal(jobs[0]); complete || failed {
 			backfill.Status.JobName = jobs[0].Name
 			backfill.Status.CompletionTime = completion
+			backfill.Status.NextRunTime = nil
 			result := "success"
 			if failed {
 				result = "failure"
@@ -148,7 +162,22 @@ func (r *ModelBackfillReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 				}
 				return reconcileResult, statusErr
 			}
-			reconcileResult, statusErr := r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillSucceeded, "JobComplete", "background Job completed", 0)
+			reason := "JobComplete"
+			message := "background Job completed"
+			requeue := time.Duration(0)
+			if nextRun, ok := modelBackfillNextRun(backfill); ok {
+				backfill.Status.NextRunTime = &metav1.Time{Time: nextRun}
+				reason = "RepeatScheduled"
+				message = fmt.Sprintf("background Job completed; next run is eligible at %s", nextRun.UTC().Format(time.RFC3339))
+				requeue = nextRun.Sub(now)
+				if requeue <= 0 {
+					requeue = modelBackfillPollInterval
+				}
+				if r.Recorder != nil {
+					r.Recorder.Eventf(backfill, corev1.EventTypeNormal, "BackfillRepeatScheduled", "Next attempt is eligible at %s", nextRun.UTC().Format(time.RFC3339))
+				}
+			}
+			reconcileResult, statusErr := r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillSucceeded, reason, message, requeue)
 			if statusErr == nil {
 				observeModelBackfillCompletion(backfill, result, completion)
 			}
@@ -282,6 +311,37 @@ func (r *ModelBackfillReconciler) cancel(ctx context.Context, backfill *aiv1alph
 		observeModelBackfillUsefulSeconds(backfill, r.now())
 	}
 	return reconcileResult, statusErr
+}
+
+func (r *ModelBackfillReconciler) reconcileSuccessfulRepeat(ctx context.Context, backfill *aiv1alpha2.ModelBackfill, jobs []*batchv1.Job, now time.Time) (ctrl.Result, error) {
+	nextRun, ok := modelBackfillNextRun(backfill)
+	if !ok {
+		return r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillBlocked, "RepeatStateInvalid", "successful recurring backfill has no completion time", requeueLong)
+	}
+	backfill.Status.NextRunTime = &metav1.Time{Time: nextRun}
+	if remaining := nextRun.Sub(now); remaining > 0 {
+		return r.setStatus(
+			ctx,
+			backfill,
+			aiv1alpha2.ModelBackfillSucceeded,
+			"RepeatScheduled",
+			fmt.Sprintf("next run is eligible at %s", nextRun.UTC().Format(time.RFC3339)),
+			remaining,
+		)
+	}
+	if len(jobs) > 0 {
+		if err := r.deleteJobs(ctx, jobs); err != nil {
+			return ctrl.Result{}, err
+		}
+		return r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillSucceeded, "RepeatCleanup", "repeat is due; removing the completed Job", modelBackfillPollInterval)
+	}
+
+	resetBackfillAttempt(backfill)
+	backfill.Status.ObservedGeneration = backfill.Generation
+	if r.Recorder != nil {
+		r.Recorder.Event(backfill, corev1.EventTypeNormal, "BackfillRepeatDue", "Repeat cooldown elapsed; re-entering idle admission")
+	}
+	return r.setStatus(ctx, backfill, aiv1alpha2.ModelBackfillWaiting, "RepeatDue", "repeat cooldown elapsed; re-entering idle admission", modelBackfillPollInterval)
 }
 
 func observeModelBackfillCompletion(backfill *aiv1alpha2.ModelBackfill, result string, completion *metav1.Time) {
@@ -518,6 +578,19 @@ func modelBackfillJobTerminal(job *batchv1.Job) (complete, failed bool, completi
 	return false, false, nil
 }
 
+func modelBackfillJobsTerminal(jobs []*batchv1.Job) bool {
+	if len(jobs) == 0 {
+		return false
+	}
+	for _, job := range jobs {
+		complete, failed, _ := modelBackfillJobTerminal(job)
+		if !complete && !failed {
+			return false
+		}
+	}
+	return true
+}
+
 func modelBackfillGPUResource(spec corev1.PodSpec) (corev1.ResourceName, bool) {
 	containers := append([]corev1.Container{}, spec.InitContainers...)
 	containers = append(containers, spec.Containers...)
@@ -561,6 +634,23 @@ func validateBackfillEnv(overrides map[string]string) error {
 	return nil
 }
 
+func validateBackfillRepeatAfter(repeatAfter time.Duration) error {
+	if repeatAfter < 0 {
+		return fmt.Errorf("repeatAfter must not be negative")
+	}
+	if repeatAfter > 0 && repeatAfter < modelBackfillMinRepeatAfter {
+		return fmt.Errorf("repeatAfter must be zero or at least %s", modelBackfillMinRepeatAfter)
+	}
+	return nil
+}
+
+func modelBackfillNextRun(backfill *aiv1alpha2.ModelBackfill) (time.Time, bool) {
+	if backfill.Spec.RepeatAfter.Duration <= 0 || backfill.Status.CompletionTime == nil {
+		return time.Time{}, false
+	}
+	return backfill.Status.CompletionTime.Add(backfill.Spec.RepeatAfter.Duration), true
+}
+
 func applyBackfillEnv(container *corev1.Container, overrides map[string]string) {
 	for _, name := range sortedBackfillEnvNames(overrides) {
 		found := false
@@ -598,6 +688,7 @@ func resetBackfillAttempt(backfill *aiv1alpha2.ModelBackfill) {
 	backfill.Status.IdleSince = nil
 	backfill.Status.StartedAt = nil
 	backfill.Status.CompletionTime = nil
+	backfill.Status.NextRunTime = nil
 	backfill.Status.Reason = ""
 	backfill.Status.Message = ""
 }

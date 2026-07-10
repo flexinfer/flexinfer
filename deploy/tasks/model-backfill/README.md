@@ -1,7 +1,8 @@
 # ModelBackfill example
 
-The examples run the existing `model-eval-gauntlet` CronJob template once their
-warm model lanes have been foreground-idle for 30 continuous minutes. The
+The examples run the existing `model-eval-gauntlet` CronJob template after their
+warm model lanes have been foreground-idle for 30 continuous minutes. A
+successful run repeats after a 24-hour cooldown; failures remain terminal. The
 copied Jobs have bounded active deadlines and are cancelled if new foreground
 demand or gaming intent appears.
 
@@ -10,6 +11,10 @@ settings. A declaration can set literal `spec.env` overrides for its copied Job
 containers, allowing each model to select its own target, probe, and thresholds
 without duplicating the CronJob. `FLEXINFER_WORKLOAD_CLASS` is reserved and
 always injected as `background` by the controller.
+
+Recurrence is opt-in through `spec.repeatAfter`. Use it only with idempotent
+templates and durable result storage. The benchmark ConfigMap is a latest-value
+projection; the configured Postgres store preserves each timestamped run.
 
 `model-eval-qwen3-radeonvii` uses a literal `READY` probe because the deployed
 Qwen chat template does not satisfy the generic arithmetic probe. Its live

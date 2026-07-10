@@ -33,6 +33,10 @@ spec:
     - jsonPath: .status.attempts
       name: Attempts
       type: integer
+    - jsonPath: .status.nextRunTime
+      name: Next Run
+      priority: 1
+      type: date
     - jsonPath: .metadata.creationTimestamp
       name: Age
       type: date
@@ -88,6 +92,12 @@ spec:
                 description: ModelRef names the v1alpha2 Model whose idle window gates
                   this work.
                 minLength: 1
+                type: string
+              repeatAfter:
+                description: |-
+                  RepeatAfter re-arms a successful attempt after this cooldown. Zero keeps
+                  the declaration one-shot. Failed attempts never repeat automatically. A
+                  nonzero interval must be at least one minute.
                 type: string
               suspend:
                 description: Suspend prevents new work and cancels a running attempt.
@@ -185,6 +195,12 @@ spec:
                 type: string
               message:
                 description: Message is a human-readable phase detail.
+                type: string
+              nextRunTime:
+                description: |-
+                  NextRunTime is when a successful recurring declaration may re-enter the
+                  normal Ready and foreground-idle admission gates.
+                format: date-time
                 type: string
               nodeName:
                 description: NodeName is the node hosting the referenced warm Model.

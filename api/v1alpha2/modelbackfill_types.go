@@ -55,6 +55,12 @@ type ModelBackfillSpec struct {
 	// +optional
 	MaxRunDuration metav1.Duration `json:"maxRunDuration,omitempty"`
 
+	// RepeatAfter re-arms a successful attempt after this cooldown. Zero keeps
+	// the declaration one-shot. Failed attempts never repeat automatically. A
+	// nonzero interval must be at least one minute.
+	// +optional
+	RepeatAfter metav1.Duration `json:"repeatAfter,omitempty"`
+
 	// Env contains literal environment overrides applied to every regular
 	// container in the copied Job template. Existing values are replaced and
 	// new values are appended. FLEXINFER_WORKLOAD_CLASS is controller-managed
@@ -107,6 +113,11 @@ type ModelBackfillStatus struct {
 	// +optional
 	CompletionTime *metav1.Time `json:"completionTime,omitempty"`
 
+	// NextRunTime is when a successful recurring declaration may re-enter the
+	// normal Ready and foreground-idle admission gates.
+	// +optional
+	NextRunTime *metav1.Time `json:"nextRunTime,omitempty"`
+
 	// Attempts counts Jobs created for this declaration, including attempts
 	// preempted by foreground demand.
 	// +optional
@@ -133,6 +144,7 @@ type ModelBackfillStatus struct {
 //+kubebuilder:printcolumn:name="Node",type="string",JSONPath=".status.nodeName"
 //+kubebuilder:printcolumn:name="Job",type="string",JSONPath=".status.jobName"
 //+kubebuilder:printcolumn:name="Attempts",type="integer",JSONPath=".status.attempts"
+//+kubebuilder:printcolumn:name="Next Run",type="date",JSONPath=".status.nextRunTime",priority=1
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // ModelBackfill declares opportunistic work against an already-warm model.

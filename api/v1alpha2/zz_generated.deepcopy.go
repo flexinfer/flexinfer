@@ -1463,6 +1463,7 @@ func (in *ModelBackfillSpec) DeepCopyInto(out *ModelBackfillSpec) {
 	*out = *in
 	out.IdleFor = in.IdleFor
 	out.MaxRunDuration = in.MaxRunDuration
+	out.RepeatAfter = in.RepeatAfter
 	if in.Env != nil {
 		in, out := &in.Env, &out.Env
 		*out = make(map[string]string, len(*in))
@@ -1495,6 +1496,10 @@ func (in *ModelBackfillStatus) DeepCopyInto(out *ModelBackfillStatus) {
 	}
 	if in.CompletionTime != nil {
 		in, out := &in.CompletionTime, &out.CompletionTime
+		*out = (*in).DeepCopy()
+	}
+	if in.NextRunTime != nil {
+		in, out := &in.NextRunTime, &out.NextRunTime
 		*out = (*in).DeepCopy()
 	}
 	if in.Conditions != nil {

@@ -15,6 +15,7 @@ spec:
   templateRef: model-eval-gauntlet
   idleFor: 30m
   maxRunDuration: 10m
+  repeatAfter: 24h
   env:
     MODELS: qwen3-1p7b-tools-radeonvii=llamacpp
     ITERS: "3"
