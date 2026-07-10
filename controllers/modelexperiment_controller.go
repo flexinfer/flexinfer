@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,10 +28,11 @@ import (
 )
 
 const (
-	modelExperimentDefaultTimeout = 30 * time.Minute
-	modelExperimentPollInterval   = 5 * time.Second
-	modelExperimentOwnerLabel     = "ai.flexinfer/model-experiment"
-	modelExperimentModelsEnv      = "MODELS"
+	modelExperimentDefaultTimeout  = 30 * time.Minute
+	modelExperimentPollInterval    = 5 * time.Second
+	modelExperimentOwnerLabel      = "ai.flexinfer/model-experiment"
+	modelExperimentGenerationLabel = "ai.flexinfer/experiment-generation"
+	modelExperimentModelsEnv       = "MODELS"
 )
 
 // ModelExperimentReconciler runs an isolated candidate Model through a copied
@@ -111,6 +113,12 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 	if job != nil {
+		if !experimentResourceCurrent(job.Labels, experiment.Generation) {
+			if err := r.Delete(ctx, job); err != nil && !apierrors.IsNotFound(err) {
+				return ctrl.Result{}, err
+			}
+			return ctrl.Result{RequeueAfter: modelExperimentPollInterval}, nil
+		}
 		complete, failed, completedAt := experimentJobTerminal(job)
 		if complete || failed {
 			if err := r.deleteCandidate(ctx, experiment); err != nil {
@@ -183,6 +191,12 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentDeploying, "CandidateCreated", fmt.Sprintf("created candidate Model %s", candidate.Name), modelExperimentPollInterval)
 	}
+	if !experimentResourceCurrent(candidate.Labels, experiment.Generation) {
+		if err := r.Delete(ctx, candidate); err != nil && !apierrors.IsNotFound(err) {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: modelExperimentPollInterval}, nil
+	}
 	experiment.Status.CandidateName = candidate.Name
 	if candidate.Status.Phase == aiv1alpha2.ModelPhaseFailed {
 		if err := r.deleteCandidate(ctx, experiment); err != nil {
@@ -230,7 +244,10 @@ func (r *ModelExperimentReconciler) buildCandidate(experiment *aiv1alpha2.ModelE
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: experiment.Namespace,
-			Labels:    map[string]string{modelExperimentOwnerLabel: experimentLabelValue(experiment.Name)},
+			Labels: map[string]string{
+				modelExperimentOwnerLabel:      experimentLabelValue(experiment.Name),
+				modelExperimentGenerationLabel: strconv.FormatInt(experiment.Generation, 10),
+			},
 			Annotations: map[string]string{
 				"flexinfer.ai/canary":     "model-experiment",
 				"flexinfer.ai/experiment": experiment.Name,
@@ -253,10 +270,12 @@ func (r *ModelExperimentReconciler) buildJob(experiment *aiv1alpha2.ModelExperim
 		applyExperimentEnv(&spec.Template.Spec.Containers[i], experiment.Spec.Gauntlet.Env)
 		setContainerEnv(&spec.Template.Spec.Containers[i], modelExperimentModelsEnv, candidate.Name+"="+candidate.Spec.Backend)
 	}
-	labels := map[string]string{modelExperimentOwnerLabel: experimentLabelValue(experiment.Name)}
+	labels := make(map[string]string, len(template.Spec.JobTemplate.Labels)+2)
 	for key, value := range template.Spec.JobTemplate.Labels {
 		labels[key] = value
 	}
+	labels[modelExperimentOwnerLabel] = experimentLabelValue(experiment.Name)
+	labels[modelExperimentGenerationLabel] = strconv.FormatInt(experiment.Generation, 10)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      modelExperimentResourceName(experiment.Name, "gauntlet"),
@@ -460,6 +479,10 @@ func terminalExperimentPhase(phase aiv1alpha2.ModelExperimentPhase) bool {
 
 func resetExperimentStatus(experiment *aiv1alpha2.ModelExperiment) {
 	experiment.Status = aiv1alpha2.ModelExperimentStatus{}
+}
+
+func experimentResourceCurrent(labels map[string]string, generation int64) bool {
+	return labels[modelExperimentGenerationLabel] == strconv.FormatInt(generation, 10)
 }
 
 func experimentLabelValue(name string) string {

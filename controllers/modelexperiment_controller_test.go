@@ -111,6 +111,9 @@ func TestModelExperimentPositiveLifecycle(t *testing.T) {
 	if candidate.Spec.LiteLLM != nil {
 		t.Fatalf("candidate retained production LiteLLM registration: %#v", candidate.Spec.LiteLLM)
 	}
+	if got := candidate.Labels[modelExperimentGenerationLabel]; got != "1" {
+		t.Fatalf("candidate generation label = %q, want 1", got)
+	}
 	var config map[string]any
 	if err := json.Unmarshal(candidate.Spec.Config.Raw, &config); err != nil {
 		t.Fatal(err)
@@ -142,6 +145,9 @@ func TestModelExperimentPositiveLifecycle(t *testing.T) {
 	}
 	if job.Spec.TTLSecondsAfterFinished != nil {
 		t.Fatalf("evidence Job inherited TTL: %d", *job.Spec.TTLSecondsAfterFinished)
+	}
+	if got := job.Labels[modelExperimentGenerationLabel]; got != "1" {
+		t.Fatalf("job generation label = %q, want 1", got)
 	}
 
 	completed := metav1.NewTime(f.now.Add(time.Minute))
@@ -282,6 +288,36 @@ func TestModelExperimentSpecChangeCannotReuseOldVerdict(t *testing.T) {
 	}
 	if err := f.c.Get(f.ctx, types.NamespacedName{Namespace: f.key.Namespace, Name: oldJob.Name}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
 		t.Fatalf("old evidence Job was not deleted: %v", err)
+	}
+}
+
+func TestModelExperimentRejectsVisibleJobFromPriorGeneration(t *testing.T) {
+	experiment, template := experimentTestObjects()
+	experiment.Generation = 3
+	experiment.Finalizers = []string{aiv1alpha2.ModelExperimentFinalizer}
+	experiment.Status = aiv1alpha2.ModelExperimentStatus{
+		ObservedGeneration: 3,
+		Phase:              aiv1alpha2.ModelExperimentDeploying,
+		Reason:             "SpecChanged",
+	}
+	oldJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "currency-smoke-gauntlet", Namespace: "flexinfer-system",
+			Labels: map[string]string{modelExperimentGenerationLabel: "2"},
+		},
+		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
+			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(time.Now()),
+		}}},
+	}
+	f := newModelExperimentFixture(t, experiment, template, oldJob)
+	f.reconcile()
+
+	got := f.experiment()
+	if got.Status.Verdict != nil || got.Status.Phase != aiv1alpha2.ModelExperimentDeploying {
+		t.Fatalf("prior-generation Job contaminated current status: %#v", got.Status)
+	}
+	if err := f.c.Get(f.ctx, types.NamespacedName{Namespace: f.key.Namespace, Name: oldJob.Name}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("prior-generation Job was not deleted: %v", err)
 	}
 }
 
