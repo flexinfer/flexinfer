@@ -13,6 +13,7 @@ FlexInfer is a Kubernetes-native set of controllers and agents for running AI wo
 - `docs/user/models-v1alpha2.md` for the recommended CRD (`Model`).
 - `docs/user/workflow-profiles.md` for stable serving-intent names over existing models.
 - `docs/user/proxy.md` for how requests are routed (OpenAI-style payloads supported).
+- `docs/user/model-backfill.md` for bounded background evaluations on warm models.
 
 ## API versions
 

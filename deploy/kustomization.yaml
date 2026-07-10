@@ -18,3 +18,6 @@ resources:
   # Offline model-eval gauntlet (Sprint 2 / S2.3): weekly flexinfer-bench runs
   # -> Postgres benchmarks table (#34) + per-model ConfigMaps (#27).
   - tasks/model-eval-gauntlet/
+  # Opportunistic one-shot evaluation: reuse the gauntlet template only after
+  # the warm 5930k model has been foreground-idle for a bounded window.
+  - tasks/model-backfill/
