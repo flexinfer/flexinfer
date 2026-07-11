@@ -110,6 +110,49 @@ func TestRequestsForSharedGroupSiblings_NoFanoutForNonModelObject(t *testing.T) 
 	}
 }
 
+func TestRequestsForGamingSessionModels_FansOutToTargetNode(t *testing.T) {
+	s := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme,
+		aiv1alpha2.AddToScheme,
+	} {
+		if err := add(s); err != nil {
+			t.Fatalf("AddToScheme() error = %v", err)
+		}
+	}
+
+	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{
+		Name: "gaming-node",
+		Labels: map[string]string{
+			"kubernetes.io/hostname": "gaming-node",
+			"gpu.amd.com/model":      "7900xtx",
+		},
+	}}
+	target := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "target", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha2.ModelSpec{NodeSelector: map[string]string{
+			"gpu.amd.com/model": "7900xtx",
+		}},
+	}
+	other := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "other", Namespace: "flexinfer-system"},
+		Spec: aiv1alpha2.ModelSpec{NodeSelector: map[string]string{
+			"kubernetes.io/hostname": "other-node",
+		}},
+	}
+	cl := fake.NewClientBuilder().WithScheme(s).WithObjects(node, target, other).Build()
+	r := &ModelReconciler{Client: cl}
+	session := &aiv1alpha2.GamingSession{
+		ObjectMeta: metav1.ObjectMeta{Name: "gaming", Namespace: "flexinfer-system"},
+		Spec:       aiv1alpha2.GamingSessionSpec{NodeName: node.Name, Mode: "gaming"},
+	}
+
+	requests := r.requestsForGamingSessionModels(context.Background(), session)
+	if len(requests) != 1 || requests[0].Name != target.Name || requests[0].Namespace != target.Namespace {
+		t.Fatalf("requests = %#v, want only %s/%s", requests, target.Namespace, target.Name)
+	}
+}
+
 func newSharedModel(name, ns, shared string) *aiv1alpha2.Model {
 	model := &aiv1alpha2.Model{
 		ObjectMeta: metav1.ObjectMeta{

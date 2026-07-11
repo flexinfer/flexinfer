@@ -407,6 +407,17 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// intermittent (cache timing). Creating a 0-replica deployment only causes
 	// a flip-flop: the runtime path deletes it on the next reconcile.
 	if desiredReplicas == 0 && model.Status.Phase == aiv1alpha2.ModelPhaseIdle {
+		steady, err := r.steadyIdleDeployment(ctx, model)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if steady {
+			// A parked Deployment already at zero needs no template render or
+			// status write. Activation renders the current Model spec before it
+			// scales up, so keeping an unused template hot is unnecessary and can
+			// monopolize the single reconcile worker when child events are noisy.
+			return ctrl.Result{RequeueAfter: requeueMedium}, nil
+		}
 		exists, err := r.deploymentExists(ctx, model)
 		if err != nil {
 			return ctrl.Result{}, err
@@ -414,7 +425,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		if !exists {
 			return ctrl.Result{RequeueAfter: requeueMedium}, nil
 		}
-		log.V(1).Info("Reconciling idle Deployment template", "model", model.Name)
+		log.V(1).Info("Scaling idle Deployment to zero", "model", model.Name)
 	}
 
 	// Restore Service selector if it was cleared during runtime management.
@@ -531,7 +542,23 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&aiv1alpha2.GPUProfile{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForGPUProfileModels),
 			builder.WithPredicates(gpuProfileSpecChange)).
+		Watches(&aiv1alpha2.GamingSession{},
+			handler.EnqueueRequestsFromMapFunc(r.requestsForGamingSessionModels)).
 		Complete(r)
+}
+
+// steadyIdleDeployment reports whether a parked Model already has a zero-scale
+// Deployment. Such a deployment is quiescent until demand returns, and its
+// template can be rendered from the current Model spec as part of scale-up.
+func (r *ModelReconciler) steadyIdleDeployment(ctx context.Context, model *aiv1alpha2.Model) (bool, error) {
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(model), deployment); err != nil {
+		if errors.IsNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0, nil
 }
 
 // runtimePodMeaningfulChange admits Pod events that can change a
@@ -814,6 +841,31 @@ func (r *ModelReconciler) requestsForRuntimePod(ctx context.Context, obj client.
 			continue
 		}
 		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(model)})
+	}
+	return requests
+}
+
+// requestsForGamingSessionModels re-enqueues every Model whose node selector
+// matches the session node. This makes a mode transition immediately recalculate
+// warm-primary policy instead of waiting for an unrelated Model or child event.
+func (r *ModelReconciler) requestsForGamingSessionModels(ctx context.Context, obj client.Object) []ctrl.Request {
+	session, ok := obj.(*aiv1alpha2.GamingSession)
+	if !ok || session.Spec.NodeName == "" {
+		return nil
+	}
+
+	models := &aiv1alpha2.ModelList{}
+	if err := r.List(ctx, models, client.InNamespace(session.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list models for GamingSession event", "session", session.Name)
+		return nil
+	}
+
+	requests := make([]ctrl.Request, 0, len(models.Items))
+	for i := range models.Items {
+		model := &models.Items[i]
+		if nodeMatchesSelector(ctx, r.Client, session.Spec.NodeName, model.Spec.NodeSelector) {
+			requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(model)})
+		}
 	}
 	return requests
 }
