@@ -123,3 +123,45 @@ func TestShouldEmitVRAMPressure_Throttled(t *testing.T) {
 		t.Fatal("first emit for model b (distinct UID) should be allowed")
 	}
 }
+
+func TestSteadyIdleDeployment(t *testing.T) {
+	s := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		appsv1.AddToScheme,
+		aiv1alpha2.AddToScheme,
+	} {
+		if err := add(s); err != nil {
+			t.Fatalf("AddToScheme() error = %v", err)
+		}
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "parked", Namespace: "flexinfer-system"},
+		Status:     aiv1alpha2.ModelStatus{Phase: aiv1alpha2.ModelPhaseIdle},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: model.Name, Namespace: model.Namespace},
+		Spec:       appsv1.DeploymentSpec{Replicas: ptr.To(int32(0))},
+	}
+	r := &ModelReconciler{Client: fake.NewClientBuilder().WithScheme(s).WithObjects(deployment).Build()}
+
+	steady, err := r.steadyIdleDeployment(context.Background(), model)
+	if err != nil {
+		t.Fatalf("steadyIdleDeployment() error = %v", err)
+	}
+	if !steady {
+		t.Fatal("zero-replica idle Deployment should be steady")
+	}
+
+	deployment.Spec.Replicas = ptr.To(int32(1))
+	if err := r.Update(context.Background(), deployment); err != nil {
+		t.Fatalf("update Deployment: %v", err)
+	}
+	steady, err = r.steadyIdleDeployment(context.Background(), model)
+	if err != nil {
+		t.Fatalf("steadyIdleDeployment() after scale-up error = %v", err)
+	}
+	if steady {
+		t.Fatal("running Deployment must reconcile down to zero")
+	}
+}
