@@ -1,5 +1,5 @@
-# Clean Qwen3.5-35B-A3B long-context workhorse experiment for the idle gfx1100
-# lane. This deliberately starts with Qwen's official GPTQ-Int4 artifact so the
+# Clean Qwen3.5-35B-A3B long-context workhorse experiment for a gfx1100 lane.
+# This deliberately starts with Qwen's official GPTQ-Int4 artifact so the
 # first verdict isolates model/runtime/context quality from FlexInfer's local
 # quantizer. A clean FlexInfer self-quant is the follow-up artifact once this
 # runtime gate passes.
@@ -33,8 +33,8 @@ spec:
       size: 40Gi
     gpu:
       vendor: amd
-      count: 2
-      shared: 7900xtx-textgen
+      count: 1
+      shared: 5930k-textgen
       priority: 425
       forcePromotion: true
       vramEstimateMB: 22000
@@ -68,7 +68,10 @@ spec:
       servedModelName: qwen35-35b-workhorse-128k
       disableLogStats: false
     nodeSelector:
-      kubernetes.io/hostname: cblevins-7900xtx
+      # cblevins-7900xtx currently has DiskPressure on its nearly-full NVMe
+      # image filesystem. Run the canary on the healthy sister card; the higher
+      # shared-group priority temporarily preempts and later restores Gemma.
+      kubernetes.io/hostname: cblevins-5930k
     resources:
       requests:
         cpu: "4"
