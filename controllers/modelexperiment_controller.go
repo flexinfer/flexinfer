@@ -30,8 +30,10 @@ import (
 const (
 	modelExperimentDefaultTimeout  = 30 * time.Minute
 	modelExperimentPollInterval    = 5 * time.Second
+	modelExperimentDefaultHistory  = 5
 	modelExperimentOwnerLabel      = "ai.flexinfer/model-experiment"
 	modelExperimentGenerationLabel = "ai.flexinfer/experiment-generation"
+	modelExperimentRunLabel        = "ai.flexinfer/experiment-run"
 	modelExperimentModelsEnv       = "MODELS"
 )
 
@@ -76,7 +78,7 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	if experiment.Status.ObservedGeneration != 0 && experiment.Status.ObservedGeneration != experiment.Generation {
-		if err := r.deleteActiveResources(ctx, experiment, true); err != nil {
+		if err := r.deleteOwnedResources(ctx, experiment); err != nil {
 			return ctrl.Result{}, err
 		}
 		resetExperimentStatus(experiment)
@@ -87,6 +89,9 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentDeploying, "SpecChanged", "spec changed; restarting experiment resources", modelExperimentPollInterval)
 	}
 	experiment.Status.ObservedGeneration = experiment.Generation
+	if experiment.Status.Run == 0 {
+		experiment.Status.Run = 1
+	}
 	if err := validateExperiment(experiment); err != nil {
 		if cleanupErr := r.deleteActiveResources(ctx, experiment, true); cleanupErr != nil {
 			return ctrl.Result{}, cleanupErr
@@ -104,6 +109,9 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		if err := r.deleteCandidate(ctx, experiment); err != nil {
 			return ctrl.Result{}, err
 		}
+		if experiment.Status.Phase == aiv1alpha2.ModelExperimentSucceeded && experiment.Spec.RepeatAfter.Duration > 0 {
+			return r.reconcileRecurrence(ctx, experiment)
+		}
 		return ctrl.Result{}, nil
 	}
 
@@ -113,7 +121,7 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 	if job != nil {
-		if !experimentResourceCurrent(job.Labels, experiment.Generation) {
+		if !experimentResourceCurrent(job.Labels, experiment.Generation, experimentRun(experiment)) {
 			if err := r.Delete(ctx, job); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, err
 			}
@@ -191,7 +199,7 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentDeploying, "CandidateCreated", fmt.Sprintf("created candidate Model %s", candidate.Name), modelExperimentPollInterval)
 	}
-	if !experimentResourceCurrent(candidate.Labels, experiment.Generation) {
+	if !experimentResourceCurrent(candidate.Labels, experiment.Generation, experimentRun(experiment)) {
 		if err := r.Delete(ctx, candidate); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
@@ -226,7 +234,7 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 }
 
 func (r *ModelExperimentReconciler) buildCandidate(experiment *aiv1alpha2.ModelExperiment) (*aiv1alpha2.Model, error) {
-	name := modelExperimentResourceName(experiment.Name, "candidate")
+	name := modelExperimentChildName(experiment, "candidate")
 	spec := experiment.Spec.Candidate.DeepCopy()
 	// Experiment candidates must not publish production aliases or LiteLLM
 	// registrations copied from a source Model. Routing is exclusively through
@@ -247,6 +255,7 @@ func (r *ModelExperimentReconciler) buildCandidate(experiment *aiv1alpha2.ModelE
 			Labels: map[string]string{
 				modelExperimentOwnerLabel:      experimentLabelValue(experiment.Name),
 				modelExperimentGenerationLabel: strconv.FormatInt(experiment.Generation, 10),
+				modelExperimentRunLabel:        strconv.FormatInt(experimentRun(experiment), 10),
 			},
 			Annotations: map[string]string{
 				"flexinfer.ai/canary":     "model-experiment",
@@ -270,15 +279,16 @@ func (r *ModelExperimentReconciler) buildJob(experiment *aiv1alpha2.ModelExperim
 		applyExperimentEnv(&spec.Template.Spec.Containers[i], experiment.Spec.Gauntlet.Env)
 		setContainerEnv(&spec.Template.Spec.Containers[i], modelExperimentModelsEnv, candidate.Name+"="+candidate.Spec.Backend)
 	}
-	labels := make(map[string]string, len(template.Spec.JobTemplate.Labels)+2)
+	labels := make(map[string]string, len(template.Spec.JobTemplate.Labels)+3)
 	for key, value := range template.Spec.JobTemplate.Labels {
 		labels[key] = value
 	}
 	labels[modelExperimentOwnerLabel] = experimentLabelValue(experiment.Name)
 	labels[modelExperimentGenerationLabel] = strconv.FormatInt(experiment.Generation, 10)
+	labels[modelExperimentRunLabel] = strconv.FormatInt(experimentRun(experiment), 10)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      modelExperimentResourceName(experiment.Name, "gauntlet"),
+			Name:      modelExperimentChildName(experiment, "gauntlet"),
 			Namespace: experiment.Namespace,
 			Labels:    labels,
 		},
@@ -314,6 +324,15 @@ func (r *ModelExperimentReconciler) finish(ctx context.Context, experiment *aiv1
 	experiment.Status.Verdict = &aiv1alpha2.ModelExperimentVerdict{
 		Pass: pass, Reason: reason, Summary: summary, CompletedAt: metav1.NewTime(completedAt),
 	}
+	requeue := time.Duration(0)
+	if pass && experiment.Spec.RepeatAfter.Duration > 0 {
+		next := metav1.NewTime(completedAt.Add(experiment.Spec.RepeatAfter.Duration))
+		experiment.Status.NextRunAt = &next
+		requeue = next.Sub(r.now())
+		if now := r.now(); next.Time.Before(now) {
+			requeue = 0
+		}
+	}
 	if r.Recorder != nil {
 		eventType := corev1.EventTypeWarning
 		if pass {
@@ -321,7 +340,57 @@ func (r *ModelExperimentReconciler) finish(ctx context.Context, experiment *aiv1
 		}
 		r.Recorder.Eventf(experiment, eventType, reason, "%s", summary)
 	}
-	return r.setStatus(ctx, experiment, phase, reason, summary, 0)
+	return r.setStatus(ctx, experiment, phase, reason, summary, requeue)
+}
+
+func (r *ModelExperimentReconciler) reconcileRecurrence(ctx context.Context, experiment *aiv1alpha2.ModelExperiment) (ctrl.Result, error) {
+	if experiment.Status.Verdict == nil {
+		return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentBlocked, "MissingVerdict", "successful experiment has no verdict to schedule", 0)
+	}
+	if experiment.Status.NextRunAt == nil {
+		next := metav1.NewTime(experiment.Status.Verdict.CompletedAt.Add(experiment.Spec.RepeatAfter.Duration))
+		experiment.Status.NextRunAt = &next
+	}
+	now := r.now()
+	if now.Before(experiment.Status.NextRunAt.Time) {
+		return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentSucceeded, "RepeatScheduled", fmt.Sprintf("next run scheduled for %s", experiment.Status.NextRunAt.Time.UTC().Format(time.RFC3339)), experiment.Status.NextRunAt.Sub(now))
+	}
+
+	history := append(experiment.Status.History, aiv1alpha2.ModelExperimentRun{
+		Run:           experimentRun(experiment),
+		CandidateName: experiment.Status.CandidateName,
+		JobName:       experiment.Status.JobName,
+		Verdict:       *experiment.Status.Verdict.DeepCopy(),
+	})
+	limit := experimentHistoryLimit(experiment)
+	if len(history) > limit {
+		if err := r.deleteExpiredEvidence(ctx, experiment.Namespace, history[:len(history)-limit]); err != nil {
+			return ctrl.Result{}, err
+		}
+		history = history[len(history)-limit:]
+	}
+	experiment.Status.Run = experimentRun(experiment) + 1
+	experiment.Status.CandidateName = ""
+	experiment.Status.JobName = ""
+	experiment.Status.StartedAt = nil
+	experiment.Status.Verdict = nil
+	experiment.Status.NextRunAt = nil
+	experiment.Status.History = history
+	experiment.Status.Conditions = nil
+	return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentDeploying, "RepeatDue", fmt.Sprintf("starting experiment run %d", experiment.Status.Run), modelExperimentPollInterval)
+}
+
+func (r *ModelExperimentReconciler) deleteExpiredEvidence(ctx context.Context, namespace string, runs []aiv1alpha2.ModelExperimentRun) error {
+	for _, run := range runs {
+		if run.JobName == "" {
+			continue
+		}
+		job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: run.JobName, Namespace: namespace}}
+		if err := r.Delete(ctx, job); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *ModelExperimentReconciler) setStatus(ctx context.Context, experiment *aiv1alpha2.ModelExperiment, phase aiv1alpha2.ModelExperimentPhase, reason, message string, requeue time.Duration) (ctrl.Result, error) {
@@ -348,7 +417,7 @@ func (r *ModelExperimentReconciler) setStatus(ctx context.Context, experiment *a
 
 func (r *ModelExperimentReconciler) getCandidate(ctx context.Context, experiment *aiv1alpha2.ModelExperiment) (*aiv1alpha2.Model, error) {
 	candidate := &aiv1alpha2.Model{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: experiment.Namespace, Name: modelExperimentResourceName(experiment.Name, "candidate")}, candidate)
+	err := r.Get(ctx, types.NamespacedName{Namespace: experiment.Namespace, Name: modelExperimentChildName(experiment, "candidate")}, candidate)
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}
@@ -357,7 +426,7 @@ func (r *ModelExperimentReconciler) getCandidate(ctx context.Context, experiment
 
 func (r *ModelExperimentReconciler) getJob(ctx context.Context, experiment *aiv1alpha2.ModelExperiment) (*batchv1.Job, error) {
 	job := &batchv1.Job{}
-	err := r.Get(ctx, types.NamespacedName{Namespace: experiment.Namespace, Name: modelExperimentResourceName(experiment.Name, "gauntlet")}, job)
+	err := r.Get(ctx, types.NamespacedName{Namespace: experiment.Namespace, Name: modelExperimentChildName(experiment, "gauntlet")}, job)
 	if apierrors.IsNotFound(err) {
 		return nil, nil
 	}
@@ -388,6 +457,29 @@ func (r *ModelExperimentReconciler) deleteActiveResources(ctx context.Context, e
 	return nil
 }
 
+func (r *ModelExperimentReconciler) deleteOwnedResources(ctx context.Context, experiment *aiv1alpha2.ModelExperiment) error {
+	labels := client.MatchingLabels{modelExperimentOwnerLabel: experimentLabelValue(experiment.Name)}
+	models := &aiv1alpha2.ModelList{}
+	if err := r.List(ctx, models, client.InNamespace(experiment.Namespace), labels); err != nil {
+		return err
+	}
+	for i := range models.Items {
+		if err := r.Delete(ctx, &models.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	jobs := &batchv1.JobList{}
+	if err := r.List(ctx, jobs, client.InNamespace(experiment.Namespace), labels); err != nil {
+		return err
+	}
+	for i := range jobs.Items {
+		if err := r.Delete(ctx, &jobs.Items[i]); err != nil && !apierrors.IsNotFound(err) {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *ModelExperimentReconciler) finalize(ctx context.Context, experiment *aiv1alpha2.ModelExperiment) (ctrl.Result, error) {
 	if !slices.Contains(experiment.Finalizers, aiv1alpha2.ModelExperimentFinalizer) {
 		return ctrl.Result{}, nil
@@ -413,6 +505,15 @@ func validateExperiment(experiment *aiv1alpha2.ModelExperiment) error {
 	}
 	if experiment.Spec.Timeout.Duration < 0 {
 		return fmt.Errorf("timeout must not be negative")
+	}
+	if experiment.Spec.RepeatAfter.Duration < 0 {
+		return fmt.Errorf("repeatAfter must not be negative")
+	}
+	if experiment.Spec.HistoryLimit != nil && experiment.Spec.RepeatAfter.Duration == 0 {
+		return fmt.Errorf("historyLimit requires repeatAfter")
+	}
+	if experiment.Spec.HistoryLimit != nil && (*experiment.Spec.HistoryLimit < 1 || *experiment.Spec.HistoryLimit > 20) {
+		return fmt.Errorf("historyLimit must be between 1 and 20")
 	}
 	for name := range experiment.Spec.Gauntlet.Env {
 		if name == modelExperimentModelsEnv {
@@ -481,8 +582,34 @@ func resetExperimentStatus(experiment *aiv1alpha2.ModelExperiment) {
 	experiment.Status = aiv1alpha2.ModelExperimentStatus{}
 }
 
-func experimentResourceCurrent(labels map[string]string, generation int64) bool {
-	return labels[modelExperimentGenerationLabel] == strconv.FormatInt(generation, 10)
+func experimentRun(experiment *aiv1alpha2.ModelExperiment) int64 {
+	if experiment.Status.Run > 0 {
+		return experiment.Status.Run
+	}
+	return 1
+}
+
+func experimentHistoryLimit(experiment *aiv1alpha2.ModelExperiment) int {
+	if experiment.Spec.HistoryLimit != nil {
+		return int(*experiment.Spec.HistoryLimit)
+	}
+	return modelExperimentDefaultHistory
+}
+
+func experimentResourceCurrent(labels map[string]string, generation, run int64) bool {
+	if labels[modelExperimentGenerationLabel] != strconv.FormatInt(generation, 10) {
+		return false
+	}
+	resourceRun := labels[modelExperimentRunLabel]
+	return resourceRun == strconv.FormatInt(run, 10) || (run == 1 && resourceRun == "")
+}
+
+func modelExperimentChildName(experiment *aiv1alpha2.ModelExperiment, kind string) string {
+	if experimentRun(experiment) == 1 {
+		return modelExperimentResourceName(experiment.Name, kind)
+	}
+	suffix := fmt.Sprintf("g%d-r%d-%s", experiment.Generation, experimentRun(experiment), kind)
+	return modelExperimentResourceName(experiment.Name, suffix)
 }
 
 func experimentLabelValue(name string) string {

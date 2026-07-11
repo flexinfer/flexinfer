@@ -21,6 +21,9 @@ spec:
     - jsonPath: .status.phase
       name: Phase
       type: string
+    - jsonPath: .status.run
+      name: Run
+      type: integer
     - jsonPath: .status.candidateName
       name: Candidate
       type: string
@@ -735,6 +738,19 @@ spec:
                 required:
                 - templateRef
                 type: object
+              historyLimit:
+                description: |-
+                  HistoryLimit bounds prior successful runs retained in status when
+                  RepeatAfter is enabled. Omitted defaults to five.
+                format: int32
+                maximum: 20
+                minimum: 1
+                type: integer
+              repeatAfter:
+                description: |-
+                  RepeatAfter starts another run this long after a successful verdict.
+                  Failed runs remain terminal. Zero keeps the experiment one-shot.
+                type: string
               suspend:
                 description: Suspend prevents new work and removes active experiment
                   resources.
@@ -810,9 +826,55 @@ spec:
                   - type
                   type: object
                 type: array
+              history:
+                items:
+                  description: ModelExperimentRun records a prior completed run after
+                    recurrence advances.
+                  properties:
+                    candidateName:
+                      type: string
+                    jobName:
+                      type: string
+                    run:
+                      format: int64
+                      type: integer
+                    verdict:
+                      description: ModelExperimentVerdict is the durable result of
+                        the gauntlet Job.
+                      properties:
+                        completedAt:
+                          format: date-time
+                          type: string
+                        pass:
+                          type: boolean
+                        reason:
+                          description: Reason is a stable machine-readable result
+                            classification.
+                          type: string
+                        summary:
+                          description: |-
+                            Summary is a human-readable result description. Detailed checks remain in
+                            the retained Job logs and benchmark result store.
+                          type: string
+                      required:
+                      - completedAt
+                      - pass
+                      - reason
+                      - summary
+                      type: object
+                  required:
+                  - candidateName
+                  - jobName
+                  - run
+                  - verdict
+                  type: object
+                type: array
               jobName:
                 type: string
               message:
+                type: string
+              nextRunAt:
+                format: date-time
                 type: string
               observedGeneration:
                 format: int64
@@ -821,6 +883,9 @@ spec:
                 type: string
               reason:
                 type: string
+              run:
+                format: int64
+                type: integer
               startedAt:
                 format: date-time
                 type: string

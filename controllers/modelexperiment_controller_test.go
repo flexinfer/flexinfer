@@ -114,6 +114,9 @@ func TestModelExperimentPositiveLifecycle(t *testing.T) {
 	if got := candidate.Labels[modelExperimentGenerationLabel]; got != "1" {
 		t.Fatalf("candidate generation label = %q, want 1", got)
 	}
+	if got := candidate.Labels[modelExperimentRunLabel]; got != "1" {
+		t.Fatalf("candidate run label = %q, want 1", got)
+	}
 	var config map[string]any
 	if err := json.Unmarshal(candidate.Spec.Config.Raw, &config); err != nil {
 		t.Fatal(err)
@@ -148,6 +151,15 @@ func TestModelExperimentPositiveLifecycle(t *testing.T) {
 	}
 	if got := job.Labels[modelExperimentGenerationLabel]; got != "1" {
 		t.Fatalf("job generation label = %q, want 1", got)
+	}
+	if got := job.Labels[modelExperimentRunLabel]; got != "1" {
+		t.Fatalf("job run label = %q, want 1", got)
+	}
+	// Controllers upgrading from the one-shot release can observe a run-1 Job
+	// that predates the run label. It must remain valid for generation 1.
+	delete(job.Labels, modelExperimentRunLabel)
+	if err := f.c.Update(f.ctx, job); err != nil {
+		t.Fatal(err)
 	}
 
 	completed := metav1.NewTime(f.now.Add(time.Minute))
@@ -265,13 +277,21 @@ func TestModelExperimentSpecChangeCannotReuseOldVerdict(t *testing.T) {
 	experiment.Status = aiv1alpha2.ModelExperimentStatus{
 		ObservedGeneration: 2,
 		Phase:              aiv1alpha2.ModelExperimentSucceeded,
+		Run:                1,
 		JobName:            "currency-smoke-gauntlet",
 		Verdict: &aiv1alpha2.ModelExperimentVerdict{
 			Pass: true, Reason: "GauntletPassed", Summary: "old verdict", CompletedAt: metav1.NewTime(time.Now()),
 		},
 	}
 	oldJob := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{Name: "currency-smoke-gauntlet", Namespace: "flexinfer-system"},
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "currency-smoke-gauntlet", Namespace: "flexinfer-system",
+			Labels: map[string]string{
+				modelExperimentOwnerLabel:      experimentLabelValue(experiment.Name),
+				modelExperimentGenerationLabel: "2",
+				modelExperimentRunLabel:        "1",
+			},
+		},
 		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
 			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(time.Now()),
 		}}},
@@ -297,13 +317,14 @@ func TestModelExperimentRejectsVisibleJobFromPriorGeneration(t *testing.T) {
 	experiment.Finalizers = []string{aiv1alpha2.ModelExperimentFinalizer}
 	experiment.Status = aiv1alpha2.ModelExperimentStatus{
 		ObservedGeneration: 3,
+		Run:                1,
 		Phase:              aiv1alpha2.ModelExperimentDeploying,
 		Reason:             "SpecChanged",
 	}
 	oldJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: "currency-smoke-gauntlet", Namespace: "flexinfer-system",
-			Labels: map[string]string{modelExperimentGenerationLabel: "2"},
+			Labels: map[string]string{modelExperimentGenerationLabel: "2", modelExperimentRunLabel: "1"},
 		},
 		Status: batchv1.JobStatus{Conditions: []batchv1.JobCondition{{
 			Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: metav1.NewTime(time.Now()),
@@ -321,6 +342,155 @@ func TestModelExperimentRejectsVisibleJobFromPriorGeneration(t *testing.T) {
 	}
 }
 
+func TestModelExperimentSuccessfulRunRecursWithFencedChildren(t *testing.T) {
+	experiment, template := experimentTestObjects()
+	experiment.Spec.RepeatAfter = metav1.Duration{Duration: time.Hour}
+	experiment.Spec.HistoryLimit = experimentPtr(int32(2))
+	f := newModelExperimentFixture(t, experiment, template)
+	f.reconcile() // finalizer
+	f.reconcile() // run 1 candidate
+
+	run1CandidateKey := types.NamespacedName{Namespace: f.key.Namespace, Name: "currency-smoke-candidate"}
+	run1Candidate := &aiv1alpha2.Model{}
+	if err := f.c.Get(f.ctx, run1CandidateKey, run1Candidate); err != nil {
+		t.Fatal(err)
+	}
+	run1Candidate.Status.Phase = aiv1alpha2.ModelPhaseReady
+	if err := f.c.Status().Update(f.ctx, run1Candidate); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile() // run 1 Job
+
+	run1JobKey := types.NamespacedName{Namespace: f.key.Namespace, Name: "currency-smoke-gauntlet"}
+	run1Job := &batchv1.Job{}
+	if err := f.c.Get(f.ctx, run1JobKey, run1Job); err != nil {
+		t.Fatal(err)
+	}
+	run1Completed := metav1.NewTime(f.now.Add(time.Minute))
+	run1Job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: run1Completed}}
+	if err := f.c.Status().Update(f.ctx, run1Job); err != nil {
+		t.Fatal(err)
+	}
+	f.now = run1Completed.Time
+	f.reconcile() // run 1 verdict
+
+	got := f.experiment()
+	if got.Status.Run != 1 || got.Status.Verdict == nil || got.Status.NextRunAt == nil {
+		t.Fatalf("run 1 was not scheduled for recurrence: %#v", got.Status)
+	}
+	f.now = run1Completed.Add(30 * time.Minute)
+	f.reconcile()
+	if got = f.experiment(); got.Status.Run != 1 || got.Status.Phase != aiv1alpha2.ModelExperimentSucceeded {
+		t.Fatalf("run advanced before repeatAfter: %#v", got.Status)
+	}
+
+	f.now = run1Completed.Add(time.Hour)
+	f.reconcile() // archive run 1 and advance identity
+	got = f.experiment()
+	if got.Status.Run != 2 || got.Status.Verdict != nil || got.Status.NextRunAt != nil || len(got.Status.History) != 1 {
+		t.Fatalf("run 2 boundary is incomplete: %#v", got.Status)
+	}
+	if got.Status.History[0].Run != 1 || got.Status.History[0].JobName != run1JobKey.Name || !got.Status.History[0].Verdict.Pass {
+		t.Fatalf("run 1 evidence was not archived: %#v", got.Status.History)
+	}
+	if err := f.c.Get(f.ctx, run1JobKey, &batchv1.Job{}); err != nil {
+		t.Fatalf("run 1 evidence Job was not retained: %v", err)
+	}
+
+	f.reconcile() // run 2 candidate
+	run2CandidateKey := types.NamespacedName{Namespace: f.key.Namespace, Name: "currency-smoke-g1-r2-candidate"}
+	run2Candidate := &aiv1alpha2.Model{}
+	if err := f.c.Get(f.ctx, run2CandidateKey, run2Candidate); err != nil {
+		t.Fatal(err)
+	}
+	if got := run2Candidate.Labels[modelExperimentRunLabel]; got != "2" {
+		t.Fatalf("run 2 candidate label = %q", got)
+	}
+	if got := f.experiment(); got.Status.Verdict != nil {
+		t.Fatalf("retained run 1 Job contaminated run 2: %#v", got.Status)
+	}
+
+	run2Candidate.Status.Phase = aiv1alpha2.ModelPhaseReady
+	if err := f.c.Status().Update(f.ctx, run2Candidate); err != nil {
+		t.Fatal(err)
+	}
+	f.reconcile()
+	run2JobKey := types.NamespacedName{Namespace: f.key.Namespace, Name: "currency-smoke-g1-r2-gauntlet"}
+	run2Job := &batchv1.Job{}
+	if err := f.c.Get(f.ctx, run2JobKey, run2Job); err != nil {
+		t.Fatal(err)
+	}
+	if got := run2Job.Labels[modelExperimentRunLabel]; got != "2" {
+		t.Fatalf("run 2 Job label = %q", got)
+	}
+	run2Completed := metav1.NewTime(f.now.Add(time.Minute))
+	run2Job.Status.Conditions = []batchv1.JobCondition{{Type: batchv1.JobComplete, Status: corev1.ConditionTrue, LastTransitionTime: run2Completed}}
+	if err := f.c.Status().Update(f.ctx, run2Job); err != nil {
+		t.Fatal(err)
+	}
+	f.now = run2Completed.Time
+	f.reconcile()
+	got = f.experiment()
+	if got.Status.Run != 2 || got.Status.Verdict == nil || !got.Status.Verdict.Pass {
+		t.Fatalf("run 2 did not require its own verdict Job: %#v", got.Status)
+	}
+}
+
+func TestModelExperimentFailureDoesNotRecur(t *testing.T) {
+	experiment, template := experimentTestObjects()
+	experiment.Spec.RepeatAfter = metav1.Duration{Duration: time.Hour}
+	experiment.Finalizers = []string{aiv1alpha2.ModelExperimentFinalizer}
+	experiment.Status = aiv1alpha2.ModelExperimentStatus{
+		ObservedGeneration: 1,
+		Run:                1,
+		Phase:              aiv1alpha2.ModelExperimentFailed,
+		Verdict: &aiv1alpha2.ModelExperimentVerdict{
+			Pass: false, Reason: "GauntletFailed", Summary: "failed", CompletedAt: metav1.NewTime(time.Now()),
+		},
+	}
+	f := newModelExperimentFixture(t, experiment, template)
+	f.now = f.now.Add(24 * time.Hour)
+	f.reconcile()
+	got := f.experiment()
+	if got.Status.Run != 1 || got.Status.Phase != aiv1alpha2.ModelExperimentFailed || got.Status.NextRunAt != nil {
+		t.Fatalf("failed experiment unexpectedly recurred: %#v", got.Status)
+	}
+}
+
+func TestModelExperimentHistoryLimitDeletesExpiredEvidence(t *testing.T) {
+	experiment, template := experimentTestObjects()
+	experiment.Spec.RepeatAfter = metav1.Duration{Duration: time.Hour}
+	experiment.Spec.HistoryLimit = experimentPtr(int32(2))
+	experiment.Finalizers = []string{aiv1alpha2.ModelExperimentFinalizer}
+	completed := metav1.NewTime(time.Date(2026, 7, 10, 20, 0, 0, 0, time.UTC))
+	experiment.Status = aiv1alpha2.ModelExperimentStatus{
+		ObservedGeneration: 1,
+		Run:                3,
+		Phase:              aiv1alpha2.ModelExperimentSucceeded,
+		JobName:            "currency-smoke-g1-r3-gauntlet",
+		Verdict:            &aiv1alpha2.ModelExperimentVerdict{Pass: true, Reason: "GauntletPassed", Summary: "run 3", CompletedAt: completed},
+		NextRunAt:          experimentTimePtr(completed.Add(time.Hour)),
+		History: []aiv1alpha2.ModelExperimentRun{
+			{Run: 1, JobName: "currency-smoke-gauntlet", Verdict: aiv1alpha2.ModelExperimentVerdict{Pass: true, Reason: "GauntletPassed", Summary: "run 1", CompletedAt: completed}},
+			{Run: 2, JobName: "currency-smoke-g1-r2-gauntlet", Verdict: aiv1alpha2.ModelExperimentVerdict{Pass: true, Reason: "GauntletPassed", Summary: "run 2", CompletedAt: completed}},
+		},
+	}
+	run1Job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "currency-smoke-gauntlet", Namespace: "flexinfer-system"}}
+	run2Job := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{Name: "currency-smoke-g1-r2-gauntlet", Namespace: "flexinfer-system"}}
+	f := newModelExperimentFixture(t, experiment, template, run1Job, run2Job)
+	f.reconcile()
+	got := f.experiment()
+	if got.Status.Run != 4 || len(got.Status.History) != 2 || got.Status.History[0].Run != 2 || got.Status.History[1].Run != 3 {
+		t.Fatalf("history was not bounded to the newest runs: %#v", got.Status)
+	}
+	if err := f.c.Get(f.ctx, client.ObjectKeyFromObject(run1Job), &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("expired run 1 Job was not deleted: %v", err)
+	}
+	if err := f.c.Get(f.ctx, client.ObjectKeyFromObject(run2Job), &batchv1.Job{}); err != nil {
+		t.Fatalf("retained run 2 Job was deleted: %v", err)
+	}
+}
+
 func envMap(values []corev1.EnvVar) map[string]string {
 	result := make(map[string]string, len(values))
 	for _, value := range values {
@@ -330,3 +500,8 @@ func envMap(values []corev1.EnvVar) map[string]string {
 }
 
 func experimentPtr[T any](value T) *T { return &value }
+
+func experimentTimePtr(value time.Time) *metav1.Time {
+	result := metav1.NewTime(value)
+	return &result
+}

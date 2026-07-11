@@ -6,9 +6,31 @@
 2. After the candidate reports `Ready`, it copies the referenced CronJob into a one-shot Job.
 3. The Job is forced to evaluate only the owned candidate through `MODELS=<candidate>=<backend>`.
 4. Job success or failure becomes a durable typed verdict in status.
-5. The candidate is deleted immediately to release hardware. The Job remains for evidence until the experiment is deleted.
+5. The candidate is deleted immediately to release hardware. The Job remains as evidence while its run is retained.
 
 This version is a verdict system, not an automatic promotion system. It never edits an existing or Flux-owned `Model`.
+
+## Recurring certification
+
+Set `spec.repeatAfter` to re-run a successful experiment after a cooldown. Failed
+runs remain terminal, so a broken candidate cannot repeatedly claim hardware.
+Every recurring run receives distinct generation-and-run names, and all newly
+created children carry generation and run fence labels. Run 1 keeps the original
+one-shot child names for upgrade compatibility. Retained evidence from an
+earlier run cannot satisfy a later run.
+
+```yaml
+spec:
+  repeatAfter: 24h
+  historyLimit: 5
+```
+
+`status.run` identifies the active or most recently completed run,
+`status.nextRunAt` reports the next successful-run recurrence, and
+`status.history` contains prior typed verdicts. `historyLimit` defaults to five
+and may be set from 1–20. When the limit is exceeded, the oldest status record
+and its retained evidence Job are deleted. The current verdict stays in
+`status.verdict` until the next run begins.
 
 ## Example
 
@@ -51,10 +73,11 @@ spec:
 ```bash
 kubectl -n flexinfer-system get modelexperiment
 kubectl -n flexinfer-system describe modelexperiment qwen-router-smoke
-kubectl -n flexinfer-system logs job/qwen-router-smoke-gauntlet
+JOB=$(kubectl -n flexinfer-system get modelexperiment qwen-router-smoke -o jsonpath='{.status.jobName}')
+kubectl -n flexinfer-system logs "job/$JOB"
 kubectl -n flexinfer-system delete modelexperiment qwen-router-smoke
 ```
 
-Phases progress through `Deploying`, `Serving`, and `Evaluating`, then terminate as `Succeeded` or `Failed`. `Blocked` means the declaration or referenced CronJob needs correction. Setting `spec.suspend: true` removes active candidate and Job resources.
+Phases progress through `Deploying`, `Serving`, and `Evaluating`, then terminate as `Succeeded` or `Failed`. A recurring successful experiment remains `Succeeded` until `status.nextRunAt`, then advances to a fresh `Deploying` run. `Blocked` means the declaration or referenced CronJob needs correction. Setting `spec.suspend: true` removes active candidate and Job resources.
 
 The default timeout is 30 minutes. A timeout, candidate startup failure, lost candidate, or failed gauntlet produces a failed verdict and releases the candidate.

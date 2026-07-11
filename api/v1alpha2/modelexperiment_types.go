@@ -65,6 +65,18 @@ type ModelExperimentSpec struct {
 	// Suspend prevents new work and removes active experiment resources.
 	// +optional
 	Suspend bool `json:"suspend,omitempty"`
+
+	// RepeatAfter starts another run this long after a successful verdict.
+	// Failed runs remain terminal. Zero keeps the experiment one-shot.
+	// +optional
+	RepeatAfter metav1.Duration `json:"repeatAfter,omitempty"`
+
+	// HistoryLimit bounds prior successful runs retained in status when
+	// RepeatAfter is enabled. Omitted defaults to five.
+	// +optional
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:validation:Maximum=20
+	HistoryLimit *int32 `json:"historyLimit,omitempty"`
 }
 
 // ModelExperimentVerdict is the durable result of the gauntlet Job.
@@ -82,6 +94,18 @@ type ModelExperimentVerdict struct {
 	CompletedAt metav1.Time `json:"completedAt"`
 }
 
+// ModelExperimentRun records a prior completed run after recurrence advances.
+// +kubebuilder:object:generate=true
+type ModelExperimentRun struct {
+	Run int64 `json:"run"`
+
+	CandidateName string `json:"candidateName"`
+
+	JobName string `json:"jobName"`
+
+	Verdict ModelExperimentVerdict `json:"verdict"`
+}
+
 // ModelExperimentStatus reports the owned resources and current verdict.
 // +kubebuilder:object:generate=true
 type ModelExperimentStatus struct {
@@ -90,6 +114,8 @@ type ModelExperimentStatus struct {
 	// +optional
 	ObservedGeneration int64 `json:"observedGeneration,omitempty"`
 	// +optional
+	Run int64 `json:"run,omitempty"`
+	// +optional
 	CandidateName string `json:"candidateName,omitempty"`
 	// +optional
 	JobName string `json:"jobName,omitempty"`
@@ -97,6 +123,10 @@ type ModelExperimentStatus struct {
 	StartedAt *metav1.Time `json:"startedAt,omitempty"`
 	// +optional
 	Verdict *ModelExperimentVerdict `json:"verdict,omitempty"`
+	// +optional
+	NextRunAt *metav1.Time `json:"nextRunAt,omitempty"`
+	// +optional
+	History []ModelExperimentRun `json:"history,omitempty"`
 	// +optional
 	Reason string `json:"reason,omitempty"`
 	// +optional
@@ -109,6 +139,7 @@ type ModelExperimentStatus struct {
 //+kubebuilder:subresource:status
 //+kubebuilder:resource:shortName=mexp;modelexperiment
 //+kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
+//+kubebuilder:printcolumn:name="Run",type="integer",JSONPath=".status.run"
 //+kubebuilder:printcolumn:name="Candidate",type="string",JSONPath=".status.candidateName"
 //+kubebuilder:printcolumn:name="Job",type="string",JSONPath=".status.jobName"
 //+kubebuilder:printcolumn:name="Pass",type="boolean",JSONPath=".status.verdict.pass"
