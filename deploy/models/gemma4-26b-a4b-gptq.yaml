@@ -138,9 +138,10 @@ spec:
     disableAiter: true
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
-    # 2026-05-13: ondemand → primary. 26B-A4B is the warm quality lane for
-    # downstream services on the discrete 7900 XTX.
-    warmPolicy: primary
+    # 2026-07-01 GAMING CUTOVER: park this de-advertised lane on demand so a
+    # transient runtime-mode lookup failure cannot warm it onto the gaming GPU.
+    # The 5930k sister remains the warm primary for all shared routes.
+    warmPolicy: ondemand
     # 2026-06-06 S3.4 — n-gram speculative decoding REMOVED from this lane.
     #
     # Earlier history: the 5/4 config (MR !512) measured p50 1.95× on SHORT
