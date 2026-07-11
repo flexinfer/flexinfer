@@ -67,7 +67,9 @@ resources:
   # that hot-looped reconciles (controller fix shipped separately in !697). The
   # vLLM-currency kill-test recipe it carried lives on in
   # deploy/debug/qwen36-currency-canary-model.yaml and git history.
-  - qwen3-14b-ablit-newimg.yaml  # 2026-06-18: PARKED (minReplicas 0) — displaced as 5930k warm leader by qwen36-35b-mtp-uncensored-5930k; keeps abliterated alias only. Restore by flipping minReplicas 1 + forcePromotion.
+  # qwen3-14b-ablit-newimg.yaml is retained as a restore recipe but excluded
+  # while parked; reconciling its idle Deployment template can hot-loop and
+  # starve active Model updates. Restore only with minReplicas 1 + promotion.
   - qwen36-35b-mtp-uncensored-5930k.yaml  # 2026-06-18: PROMOTED warm leader of 5930k-textgen (pri 380, forcePromotion) — uncensored-heretic Qwen3.6-35B-A3B-MoE Native-MTP self-quant GPTQ on vLLM 0.19.1; same MoE recipe as qwen35-moe-reasoning; FIRST cold start = MTP-serving kill-test. aliases uncensored/heretic.
   # - gemma4-26b-a4b-gptq-5930k-8k-canary.yaml # disabled 2026-05-16; keep XTX lanes to the two 26B primaries.
   # - fast-chat-5930k-llamacpp.yaml # disabled 2026-05-13; 8B path consolidated onto cblevins-7900xtx
