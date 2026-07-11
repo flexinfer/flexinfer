@@ -304,6 +304,18 @@ func TestDirectRuntimeLoadEligibility(t *testing.T) {
 			wantReason: "model is nil",
 		},
 		{
+			name: "dedicated deployment opt-out bypasses bundled runtime",
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+					Config: &apiextensionsv1.JSON{Raw: []byte(`{"dedicatedDeployment":true}`)},
+				},
+			},
+			backend:    "vllm",
+			wantOK:     false,
+			wantReason: "config.dedicatedDeployment requires the model-specific image and Deployment path",
+		},
+		{
 			name: "raw pvc source without staged local cache is not eligible",
 			model: &aiv1alpha2.Model{
 				Spec: aiv1alpha2.ModelSpec{

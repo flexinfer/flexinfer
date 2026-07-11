@@ -256,6 +256,35 @@ func TestVLLMBackendArgs_HFOverridesOmittedByDefault(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_LanguageModelOnly(t *testing.T) {
+	b := &VLLMBackend{}
+	spec := &ModelSpec{
+		Model: "Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+		Config: map[string]any{
+			"languageModelOnly": true,
+		},
+	}
+
+	args := b.Args(spec)
+	found := false
+	for _, arg := range args {
+		if arg == "--language-model-only" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("expected --language-model-only when languageModelOnly=true")
+	}
+
+	unset := &ModelSpec{Model: "test-model", Config: map[string]any{}}
+	for _, arg := range b.Args(unset) {
+		if arg == "--language-model-only" {
+			t.Fatal("--language-model-only should not be emitted by default")
+		}
+	}
+}
+
 func TestVLLMBackendTurboQuantE4BPath(t *testing.T) {
 	b := &VLLMBackend{}
 

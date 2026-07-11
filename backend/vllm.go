@@ -90,6 +90,14 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--trust-remote-code")
 	}
 
+	// Skip a multimodal model's vision encoder and serve only its language
+	// model. This is particularly useful for Qwen3.5 on memory-constrained
+	// cards: the official checkpoint stays intact on disk while vLLM avoids
+	// loading and profiling the unused vision tower, leaving more VRAM for KV.
+	if spec.ConfigBool("languageModelOnly", false) {
+		args = append(args, "--language-model-only")
+	}
+
 	// Max concurrent sequences
 	if maxSeqs := spec.ConfigInt("maxNumSeqs", 0); maxSeqs > 0 {
 		args = append(args, "--max-num-seqs", fmt.Sprintf("%d", maxSeqs))
