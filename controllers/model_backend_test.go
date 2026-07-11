@@ -133,6 +133,25 @@ func TestResolveBackendStoragePlan(t *testing.T) {
 			},
 		},
 		{
+			name: "HF source with ready Local cache uses staged model root",
+			model: &aiv1alpha2.Model{
+				ObjectMeta: metav1.ObjectMeta{Name: "local-vllm", Namespace: "default"},
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://org/model",
+					Cache:  &aiv1alpha2.CacheSpec{Strategy: "Local"},
+				},
+				Status: aiv1alpha2.ModelStatus{
+					Cache: &aiv1alpha2.CacheStatus{Strategy: "Local", Ready: true},
+				},
+			},
+			backend: &fakeBackend{name: "vllm", needsVolume: true},
+			config:  nil,
+			wantPlan: backendStoragePlan{
+				ModelPath:       "/models",
+				HFCacheBasePath: "/models/.cache/huggingface",
+			},
+		},
+		{
 			name: "pvc:// absolute subpath",
 			model: &aiv1alpha2.Model{
 				ObjectMeta: metav1.ObjectMeta{Name: "pvc-model"},

@@ -125,6 +125,15 @@ func resolveBackendStoragePlan(model *aiv1alpha2.Model, b backend.Backend, confi
 		}
 	}
 
+	// Local HF caches are copied into the model container with the staged
+	// repository rooted directly at /models. Point the backend at that local
+	// directory instead of the original Hub ID; otherwise backends such as vLLM
+	// try to download the checkpoint again into the bounded flash/tmpfs cache.
+	if strings.HasPrefix(source, "HF://") && strategy == "Local" && needsVolume &&
+		model.Status.Cache != nil && model.Status.Cache.Ready {
+		plan.ModelPath = "/models"
+	}
+
 	// pvc://<pvc>/<subpath> is mounted at /models.
 	if strings.HasPrefix(source, "pvc://") {
 		if pvcStageMode == pvcSourceCacheModeLocal {
