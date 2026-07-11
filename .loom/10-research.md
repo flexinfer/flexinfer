@@ -926,3 +926,139 @@ How can the `cblevins-5930k` 7900 XTX lane reach parity with the `cblevins-7900x
 - vLLM serve CLI docs for `--cudagraph-capture-sizes`, `--max-cudagraph-capture-size`, and `--compilation-config`: https://docs.vllm.ai/en/latest/cli/serve.html
 - PyTorch compile caching docs: https://docs.pytorch.org/tutorials/recipes/torch_compile_caching_tutorial.html
 - PyTorch compile caching configuration docs: https://docs.pytorch.org/tutorials/recipes/torch_compile_caching_configuration_tutorial.html
+
+## Update (2026-07-11): Long-Context Council Workhorse on Dual RX 7900 XTX Nodes
+
+### Question
+
+Which current open-weight model should replace or complement the warm Gemma4
+26B-A4B lane for Loom Mills council/agent work, while preserving one complete
+worker per 24 GiB RX 7900 XTX and materially extending the proven context window?
+
+### Current local baseline
+
+- The live warm workhorse is `gemma4-26b-a4b-gptq-5930k` at 16K context on
+  `cblevins-5930k`; the sister 7900 XTX has a cold 32K Gemma canary.
+- The parked `qwen36-35b-mtp-uncensored-5930k` is self-quantized GPTQ W4G128,
+  uses about 20--21 GiB of weights, and has a proven-coherent 64K ceiling. It
+  loads at 96K, but the existing community checkpoint becomes degenerate between
+  about 60.6K and 73.5K, so the limit is model/RoPE coherence rather than VRAM.
+- The gfx1100 profile still disables AITER, defaults to eager execution/auto KV,
+  and calls fused-MoE INT4 experimental. The serving build defaults to vLLM
+  0.17 while special model images have moved to 0.19.x.
+
+Local anchors:
+
+- `deploy/models/qwen36-35b-mtp-uncensored-5930k.yaml`
+- `deploy/models/gemma4-26b-a4b-gptq-5930k.yaml`
+- `deploy/gpuprofiles/gfx1100.yaml`
+- `build/runtime.yaml`
+- `build/Dockerfile.runtime-serving`
+- `docs/dev/qwen35-gptq-root-cause.md`
+
+### Candidate ranking
+
+1. **Qwen/Qwen3.5-35B-A3B, clean official weights, text-only self-quant** -- best
+   fit for the production shape. It is 35B total/3B active, uses hybrid Gated
+   DeltaNet plus sparse MoE, has MTP and native 262,144-token context, and is
+   Apache-2.0. Qwen's own scores show strong tool/agent behavior (TAU2 81.2,
+   BFCL-V4 67.3) while retaining useful coding performance. The existing local
+   Qwen3.5/3.6 loader, quantization, GDN safeguards, MTP, and gauntlet work make
+   this much lower risk than adding another architecture.
+2. **zai-org/GLM-4.7-Flash** -- strongest challenger. It is MIT-licensed,
+   30B-A3B, declares 202,752 context, preserved thinking, MTP, and very strong
+   published agent/coding scores (SWE-bench Verified 59.2, TAU2 79.5). It needs
+   a new FlexInfer architecture/quant/ROCm compatibility spike and currently has
+   less local evidence than Qwen.
+3. **Qwen/Qwen3.5-27B** -- quality-first dense alternative. Qwen's own table has
+   it slightly ahead of 35B-A3B on several knowledge, coding, and long-context
+   measures, with the same native 262K context. However, the local incident
+   proved its GDN modules must remain full precision; that hybrid artifact is a
+   tighter fit and slower than the 3B-active MoE for council fan-out.
+4. **Qwen/Qwen3-Coder-Next** -- Loom-specialist stretch target, not the first
+   workhorse. Its 80B total/3B active weights and native 262K context are ideal
+   for coding agents, but INT4 is too large for one 24 GiB card. Cross-node PP or
+   sub-4-bit weights would give up simple one-model-per-node redundancy and add
+   network/quality risk.
+
+### Recommendation
+
+Run a clean official **Qwen3.5-35B-A3B text-only** experiment first, with no
+abliteration. Self-quantize from BF16 through FlexInfer rather than adopting the
+24.5 GB official full multimodal GPTQ artifact, using FlexInfer's existing
+VLM-to-text-only extraction so the vision tower is stripped from the saved
+checkpoint and the artifact validator can prove expert coverage and GDN policy.
+Keep a separately named abliterated/uncensored derivative only if Mills has an
+explicit workload that needs it; abliteration should not be in the quality
+workhorse's critical path.
+
+Pair the checkpoint canary with a **vLLM 0.23 / ROCm 7.2.3 gfx1100 runtime
+canary**. vLLM 0.23 adds native W4A16 and fused-MoE W4A16 HIP kernels for RDNA3,
+AITER sampling/attention improvements, blocks-first AMD KV layout, and improved
+speculative decode. Do not flip the shared GPUProfile globally until the model
+passes with and without AITER; the current `VLLM_ROCM_USE_AITER=0` setting is
+based on older MI300-centric behavior.
+
+Implementation preflight on 2026-07-11 refined that AITER step: the upstream
+`vllm/vllm-openai-rocm:v0.23.0` image config includes `gfx1100` in
+`PYTORCH_ROCM_ARCH`, but its `AITER_ROCM_ARCH` contains only `gfx942;gfx950`.
+The first RDNA3 canary therefore keeps AITER off and isolates vLLM's new native
+W4A16/fused-MoE HIP path. It also starts from Qwen's official GPTQ artifact to
+separate runtime/context correctness from local quantizer quality; a clean
+FlexInfer text-only self-quant follows only after that runtime gate passes.
+
+First live attempt (2026-07-11): the 24.5 GB official artifact downloaded in
+about six minutes and all 14 shards loaded, but the Model never exercised its
+explicit image. Because vLLM is bundled in the gfx1100 persistent runtime,
+FlexInfer silently launched the checkpoint under vLLM 0.17.0. That older runtime
+then failed the 128K profile with `No available memory for the cache blocks`.
+This falsified the runtime-isolation assumption, not the Qwen3.5/vLLM 0.23 fit
+assumption. The implementation adds `config.dedicatedDeployment: true` as an
+explicit runtime opt-out; the experiment must be repeated only after that
+controller change is deployed.
+
+Initial serving profile:
+
+- `--language-model-only`
+- GPTQ symmetric W4A16, group size 128, no desc-act
+- preserve all GDN/linear-attention modules in full precision; quantize MoE
+  experts and ordinary linear modules
+- FP8 E4M3 KV canary, one sequence initially, prefix caching tested separately
+- 128K initial ceiling, then 160K/192K/256K context ladder
+- MTP off for correctness baseline, then one- and two-token MTP acceptance tests
+- tool parser `qwen3_coder`, reasoning parser `qwen3`
+
+### Riskiest assumption and kill test
+
+**Assumption:** a clean text-only W4A16 artifact leaves enough VRAM for at least
+128K coherent context on one 24 GiB gfx1100 card while the new native RDNA3
+kernels deliver a useful speedup over the patched vLLM 0.19 lane.
+
+**Kill test:** use `ModelExperiment` on the currently idle `cblevins-7900xtx`
+lane. Pass only if all of the following hold:
+
+1. artifact validation shows every intended MoE expert quantized, no repeated or
+   missing tensors, and no prohibited GDN qweights;
+2. 128K startup succeeds with at least 1.0 KV concurrency and no host offload;
+3. needle recall passes at 64K, 96K, and 128K with no degeneration;
+4. tool-call and multi-turn council prompts remain coherent;
+5. the model beats the warm Gemma baseline on the project gauntlet and reaches a
+   practical interactive decode rate; and
+6. AITER/native W4A16 is faster without changing deterministic outputs versus
+   the safe ROCm fallback.
+
+If the clean 35B cannot pass 128K, run the same experiment with GLM-4.7-Flash
+before investing in cross-node Qwen3-Coder-Next. If both fail, the honest upgrade
+is a 64K quality model plus retrieval/context folding, not an advertised 200K
+window that is incoherent or offloaded.
+
+### External sources
+
+- https://huggingface.co/Qwen/Qwen3.5-35B-A3B
+- https://huggingface.co/Qwen/Qwen3.5-35B-A3B-GPTQ-Int4
+- https://huggingface.co/Qwen/Qwen3.5-27B-GPTQ-Int4
+- https://huggingface.co/Qwen/Qwen3-Coder-Next
+- https://huggingface.co/zai-org/GLM-4.7-Flash
+- https://huggingface.co/zai-org/GLM-4.7-Flash/blob/main/config.json
+- https://github.com/vllm-project/vllm/releases/tag/v0.23.0
+- https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2/docs/compatibility/compatibilityrad/native_linux/native_linux_compatibility.html

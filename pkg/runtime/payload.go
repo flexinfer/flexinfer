@@ -81,6 +81,13 @@ func DirectRuntimeLoadEligibility(model *aiv1alpha2.Model, backendName string, p
 	if model == nil {
 		return false, "model is nil"
 	}
+	// A model-specific image can intentionally carry a newer or otherwise
+	// incompatible backend than the node's persistent runtime. Let canaries opt
+	// into the dedicated Deployment path so their image is actually exercised
+	// instead of silently loading through the bundled runtime version.
+	if model.Spec.ConfigBool("dedicatedDeployment", false) {
+		return false, "config.dedicatedDeployment requires the model-specific image and Deployment path"
+	}
 	// Require an explicit gpu.vendor: cpu. GetGPUVendor() also returns CPU when
 	// the GPU block is absent entirely, but GPU-less models keep their existing
 	// runtime eligibility — only an explicit CPU declaration opts out.

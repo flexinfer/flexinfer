@@ -135,7 +135,14 @@ Common imagegen knobs in this repo include `pipelineMode`, `modelFamily`,
 Common `vllm` knobs include `maxModelLen`, `gpuMemoryUtilization`,
 `maxNumSeqs`, `maxNumBatchedTokens`, `startupTimeout` or
 `startupTimeoutSeconds`, `cudagraphCaptureSizes`,
-`maxCudagraphCaptureSize`, and `compilationConfig`. `startupTimeout`
+`maxCudagraphCaptureSize`, `compilationConfig`, and `languageModelOnly`.
+Set `languageModelOnly: true` for a multimodal checkpoint when the endpoint only
+serves text; FlexInfer passes vLLM's `--language-model-only` flag so the unused
+vision encoder is not loaded or profiled and the freed VRAM can hold more KV
+cache. Set `dedicatedDeployment: true` when a Model's explicit image must bypass
+the persistent node runtime—for example, when canarying a newer vLLM release.
+Without that opt-out, a backend bundled in the selected `GPUProfile` runs inside
+the persistent runtime and the Model's image is not used. `startupTimeout`
 accepts duration strings such as `15m`; `startupTimeoutSeconds` accepts a
 second count. If neither is set, vLLM uses the larger of its backend default
 and `spec.serverless.coldStartTimeout`.

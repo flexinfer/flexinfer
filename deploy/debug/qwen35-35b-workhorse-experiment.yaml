@@ -1,0 +1,97 @@
+# Clean Qwen3.5-35B-A3B long-context workhorse experiment for the idle gfx1100
+# lane. This deliberately starts with Qwen's official GPTQ-Int4 artifact so the
+# first verdict isolates model/runtime/context quality from FlexInfer's local
+# quantizer. A clean FlexInfer self-quant is the follow-up artifact once this
+# runtime gate passes.
+#
+# Runtime: upstream vLLM 0.23 ROCm image pinned by digest. Its published image
+# metadata includes gfx1100 kernels, including the native/fused-MoE W4A16 HIP
+# path. AITER is explicitly disabled because the same image only compiles AITER
+# for gfx942/gfx950; this experiment tests the RDNA3-native path.
+#
+# Context gate: start at 128K (half the model's native 262,144-token window).
+# After the ModelExperiment gauntlet passes, run scripts/context-needle-bench.py
+# manually at 64K, 96K, and 128K before raising the declared ceiling.
+apiVersion: ai.flexinfer/v1alpha2
+kind: ModelExperiment
+metadata:
+  name: qwen35-35b-workhorse-128k
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/canary: qwen35-clean-workhorse
+    flexinfer.ai/runtime: vllm-0.23-rocm-gfx1100-native-w4a16
+    flexinfer.ai/kill-test: .loom/10-research.md#update-2026-07-11-long-context-council-workhorse-on-dual-rx-7900-xtx-nodes
+spec:
+  timeout: 90m
+  candidate:
+    backend: vllm
+    image: docker.io/vllm/vllm-openai-rocm@sha256:3813e31cc3ab56f71ba83a72da77a84f3c75030e54c9c316951a99317b818ce4
+    source: HF://Qwen/Qwen3.5-35B-A3B-GPTQ-Int4
+    cache:
+      strategy: Local
+      storageClass: nvme-1r-gpu
+      size: 40Gi
+    gpu:
+      vendor: amd
+      count: 2
+      shared: 7900xtx-textgen
+      priority: 425
+      forcePromotion: true
+      vramEstimateMB: 22000
+    serverless:
+      enabled: true
+      minReplicas: 1
+      idleTimeout: 30m
+      coldStartTimeout: 60m
+    config:
+      # Force the model-specific vLLM 0.23 image. Without this opt-out, gfx1100
+      # vLLM is bundled in the persistent node runtime and the canary would
+      # silently exercise that older runtime instead.
+      dedicatedDeployment: true
+      quantization: gptq
+      dtype: half
+      languageModelOnly: true
+      maxModelLen: 131072
+      maxNumSeqs: 1
+      maxNumBatchedTokens: 4096
+      gpuMemoryUtilization: "0.98"
+      kvCacheDtype: fp8_e4m3
+      enforceEager: false
+      enablePrefixCaching: false
+      disableAiter: true
+      rocmCustomPagedAttn: false
+      hipVisibleDevices: "0"
+      trustRemoteCode: true
+      enableToolCalling: true
+      toolCallParser: qwen3_coder
+      reasoningParser: qwen3
+      servedModelName: qwen35-35b-workhorse-128k
+      disableLogStats: false
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-7900xtx
+    resources:
+      requests:
+        cpu: "4"
+        memory: 16Gi
+      limits:
+        cpu: "8"
+        memory: 48Gi
+    tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+        operator: Exists
+  gauntlet:
+    templateRef: model-eval-gauntlet
+    env:
+      WARMUP: "1"
+      ITERS: "2"
+      MIN_DURATION: 15s
+      BATCH_SIZE: "32"
+      COLD_START_TIMEOUT: 60m
+      GAUNTLET_API: chat
+      GAUNTLET_MIN_TPS: "5"
+      GAUNTLET_MAX_TTFT: 30s
+      GAUNTLET_MIN_TOKENS: "8"
+      GAUNTLET_PROMPT: "Use a tool-call-ready concise answer: explain why preserving Gated DeltaNet layers matters when quantizing a long-context hybrid model."
+      GAUNTLET_EXPECT: "Gated,DeltaNet,quant"
+      GAUNTLET_EXPECT_MODE: any
