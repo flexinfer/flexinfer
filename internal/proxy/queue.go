@@ -219,6 +219,12 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 			if ctx.Err() != nil {
 				reason = "context_cancelled"
 			}
+			if _, notFound := isModelNotFoundError(err); notFound {
+				// Terminal: no CR exists for this name, so backoff retries
+				// only re-run the same doomed poll. Fail the queue now.
+				activationFailuresTotal.WithLabelValues(modelName, "not_found").Inc()
+				break
+			}
 			activationFailuresTotal.WithLabelValues(modelName, reason).Inc()
 			continue
 		}
@@ -273,15 +279,21 @@ func (p *Proxy) drainQueue(queue *RequestQueue) {
 func (p *Proxy) drainQueueWithError(queue *RequestQueue, err error) {
 	queue.draining.Store(true)
 	stall, stalled := isStalledLoadError(err)
+	_, notFound := isModelNotFoundError(err)
 	for {
 		select {
 		case qr := <-queue.items:
 			queueDepth.WithLabelValues(queue.model).Dec()
 			qr.err = err
 			if qr.responded.CompareAndSwap(false, true) {
-				if stalled {
+				switch {
+				case stalled:
 					validation.WriteStalledLoad(qr.w, stall.Error(), defaultStalledLoadRetryAfter)
-				} else {
+				case notFound:
+					// Match the front door: a name with no backing CR is 404,
+					// not a retryable 503.
+					validation.WriteModelNotFound(qr.w, queue.model)
+				default:
 					validation.WriteActivationFailed(qr.w, fmt.Sprintf("Failed to activate model: %v", err))
 				}
 			}
@@ -330,8 +342,21 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	notFoundGrace := p.activationNotFoundGrace
+	if notFoundGrace == 0 {
+		notFoundGrace = defaultActivationNotFoundGrace
+	}
+
 	ticker := time.NewTicker(readyPollInterval)
 	defer ticker.Stop()
+
+	// Start of the current run of polls where neither the Model nor the
+	// fallback ModelDeployment exists. Zero while either CR has been seen (or
+	// a transient error left existence unconfirmed). Once the run outlasts
+	// notFoundGrace the activation fails fast: no CR means nothing can ever
+	// reconcile the model to Ready, so burning the full cold-start timeout
+	// only strands the queued requests.
+	var notFoundSince time.Time
 
 	for {
 		select {
@@ -341,6 +366,7 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 			// Check v1alpha2 Model first
 			m, err := p.getModel(ctx, modelName)
 			if err == nil {
+				notFoundSince = time.Time{}
 				if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 					return nil
 				}
@@ -357,6 +383,9 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 				continue
 			}
 			if !errors.IsNotFound(err) {
+				// Transient error: existence unconfirmed, so restart the
+				// not-found clock rather than fast-failing on stale evidence.
+				notFoundSince = time.Time{}
 				slog.Warn("error checking model readiness", "model", modelName, "error", err)
 				continue
 			}
@@ -364,9 +393,24 @@ func (p *Proxy) waitForReady(ctx context.Context, modelName string) error {
 			// Fallback: v1alpha1 ModelDeployment (deprecated)
 			md, err := p.getModelDeployment(ctx, modelName)
 			if err != nil {
-				slog.Warn("error checking model deployment readiness", "model", modelName, "error", err)
+				if !errors.IsNotFound(err) {
+					notFoundSince = time.Time{}
+					slog.Warn("error checking model deployment readiness", "model", modelName, "error", err)
+					continue
+				}
+				// Neither CR exists. Tolerate a short creation race, then
+				// fail the activation instead of polling out the timeout.
+				if notFoundSince.IsZero() {
+					notFoundSince = time.Now()
+				}
+				if age := time.Since(notFoundSince); age >= notFoundGrace {
+					return &ModelNotFoundError{Model: modelName, Age: age}
+				}
+				slog.Debug("model CR not found, waiting out creation grace window",
+					"model", modelName, "grace", notFoundGrace)
 				continue
 			}
+			notFoundSince = time.Time{}
 			if isReady(md) {
 				return nil
 			}
