@@ -35,6 +35,9 @@ _HELPER_NAMES = (
     "_gptqmodel_version",
     "_import_moe_lifecycle_hooks",
     "normalize_gptqmodel_model_type",
+    "apply_model_policy",
+    "patch_qwen35_text_processor_loading",
+    "patch_qwen35_moe_text_model_map",
     "patch_moe_module_tree",
     "discover_saved_moe_expert_quantization",
     "_modules_in_block_shape_for_layout",
@@ -63,7 +66,7 @@ def _load_helpers() -> dict:
 
     # Only keep stdlib imports — the helpers don't need transformers/datasets/
     # torch/etc., and pulling them in defeats the "no real model" promise.
-    allowed_modules = {"os", "re", "json", "sys", "time", "shutil", "gc"}
+    allowed_modules = {"os", "re", "json", "sys", "time", "shutil", "gc", "copy"}
 
     keep_nodes: list[ast.stmt] = []
     for node in tree.body:
@@ -421,15 +424,100 @@ class ModulesInBlockToQuantizeTests(unittest.TestCase):
         self.assertFalse(required)
         self.assertIn("full precision", reason)
 
-    def test_normalize_gptqmodel_model_type_maps_moe_text_alias(self) -> None:
+    def test_normalize_gptqmodel_model_type_preserves_moe_text_alias(self) -> None:
         normalize = self.helpers["normalize_gptqmodel_model_type"]
-        # gptqmodel MODEL_MAP has no qwen3_5_moe_text key -> must map to the
-        # registered MoE definition key so experts are not silently dropped.
-        self.assertEqual(normalize("qwen3_5_moe_text"), "qwen3_5_moe")
+        # The runtime patches GPTQModel's missing alias directly. Preserve the
+        # text type so Transformers constructs Qwen3_5MoeTextConfig defaults.
+        self.assertEqual(normalize("qwen3_5_moe_text"), "qwen3_5_moe_text")
         # Registered keys and unrelated types pass through unchanged.
         self.assertEqual(normalize("qwen3_5_moe"), "qwen3_5_moe")
         self.assertEqual(normalize("qwen3_5_text"), "qwen3_5_text")
         self.assertEqual(normalize("gemma4_text"), "gemma4_text")
+
+    def test_text_policy_synthesizes_missing_pad_token_from_eos(self) -> None:
+        apply_policy = self.helpers["apply_model_policy"]
+        cfg = {
+            "model_type": "qwen3_5_moe",
+            "eos_token_id": 248044,
+            "text_config": {
+                "model_type": "qwen3_5_moe_text",
+                "vocab_size": 248320,
+            },
+        }
+        policy = {
+            "name": "qwen3.5-moe-text",
+            "extract_text_config": True,
+            "copy_root_keys": ["eos_token_id", "pad_token_id"],
+            "remap_model_type": "qwen3_5_moe_text",
+        }
+
+        active, _ = apply_policy(cfg, policy, {})
+
+        self.assertEqual(active["eos_token_id"], 248044)
+        self.assertEqual(active["pad_token_id"], 248044)
+        self.assertEqual(active["model_type"], "qwen3_5_moe_text")
+
+    def test_qwen_text_policy_disables_vlm_processor_loading(self) -> None:
+        class FakeQwenDefinition:
+            require_load_processor = True
+
+        module_names = (
+            "gptqmodel.models.definitions.qwen3_5",
+            "gptqmodel.models.definitions.qwen3_5_moe",
+        )
+        previous = {name: sys.modules.get(name) for name in module_names}
+        try:
+            for name in module_names:
+                sys.modules[name] = types.SimpleNamespace(
+                    FakeQwenDefinition=FakeQwenDefinition
+                )
+            self.helpers["patch_qwen35_text_processor_loading"]()
+        finally:
+            for name, old_module in previous.items():
+                if old_module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = old_module
+
+        self.assertFalse(FakeQwenDefinition.require_load_processor)
+
+    def test_registers_qwen_moe_text_model_map_alias(self) -> None:
+        class FakeQwenMoEDefinition:
+            pass
+
+        auto_module = types.ModuleType("gptqmodel.models.auto")
+        auto_module.MODEL_MAP = {}
+        auto_module.SUPPORTED_MODELS = []
+        models_module = types.ModuleType("gptqmodel.models")
+        models_module.auto = auto_module
+        definition_module = types.ModuleType(
+            "gptqmodel.models.definitions.qwen3_5_moe"
+        )
+        definition_module.Qwen3_5_MoeQModel = FakeQwenMoEDefinition
+        fake_modules = {
+            "gptqmodel": types.ModuleType("gptqmodel"),
+            "gptqmodel.models": models_module,
+            "gptqmodel.models.auto": auto_module,
+            "gptqmodel.models.definitions": types.ModuleType(
+                "gptqmodel.models.definitions"
+            ),
+            "gptqmodel.models.definitions.qwen3_5_moe": definition_module,
+        }
+        previous = {name: sys.modules.get(name) for name in fake_modules}
+        try:
+            sys.modules.update(fake_modules)
+            self.helpers["patch_qwen35_moe_text_model_map"]()
+        finally:
+            for name, old_module in previous.items():
+                if old_module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = old_module
+
+        self.assertIs(
+            auto_module.MODEL_MAP["qwen3_5_moe_text"], FakeQwenMoEDefinition
+        )
+        self.assertEqual(auto_module.SUPPORTED_MODELS, ["qwen3_5_moe_text"])
 
     def test_discovers_saved_moe_expert_quantization_shapes(self) -> None:
         tensor_keys = [

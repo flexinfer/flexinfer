@@ -349,6 +349,15 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		if !strings.Contains(script, "Patched GPTQModel save path to skip meta-backed tensors") {
 			t.Error("wrapper missing save-path meta tensor patch")
 		}
+		if !strings.Contains(script, "Synthesized pad_token_id from eos_token_id") {
+			t.Error("wrapper missing extracted text-config pad token fallback")
+		}
+		if !strings.Contains(script, "Disabled GPTQModel VLM processor loading") {
+			t.Error("wrapper missing Qwen text-only processor bypass")
+		}
+		if !strings.Contains(script, "Registered GPTQModel qwen3_5_moe_text alias") {
+			t.Error("wrapper missing Qwen3.5 MoE text alias registration")
+		}
 	})
 
 	t.Run("wrapper script has save-complete short-circuit", func(t *testing.T) {
@@ -370,9 +379,9 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
-	t.Run("wrapper script version is v18", func(t *testing.T) {
-		if GPTQScriptVersion != "v18" {
-			t.Errorf("GPTQScriptVersion = %q, want v18 (safe GPTQ CPU packing)", GPTQScriptVersion)
+	t.Run("wrapper script version is v21", func(t *testing.T) {
+		if GPTQScriptVersion != "v21" {
+			t.Errorf("GPTQScriptVersion = %q, want v21 (Qwen MoE text alias)", GPTQScriptVersion)
 		}
 	})
 

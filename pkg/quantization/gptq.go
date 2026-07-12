@@ -29,7 +29,11 @@ import (
 // mlp.experts tensors into vLLM's fused MoE layout.
 // v18: Disable GPTQModel's native CPU pack extension by default because it can
 // SIGILL on older CPU nodes before Python can fall back to the safe path.
-const GPTQScriptVersion = "v18"
+// v19: Synthesize a missing text-config pad_token_id from eos_token_id so
+// Qwen3.5-MoE's Transformers model shell can be constructed.
+// v20: Disable GPTQModel's VLM processor hook for the extracted text model.
+// v21: Register GPTQModel's missing Qwen3.5-MoE text-config alias.
+const GPTQScriptVersion = "v21"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
@@ -293,10 +297,9 @@ func defaultGPTQModelPoliciesJSON() string {
 			MatchModelTypes:   []string{"qwen3_5_moe_text", "qwen3_5_moe"},
 			ExtractTextConfig: true,
 			CopyRootKeys:      []string{"bos_token_id", "eos_token_id", "pad_token_id"},
-			// gptqmodel MODEL_MAP registers the MoE definition under "qwen3_5_moe"
-			// (no "qwen3_5_moe_text" key) — remapping to the _text alias loads as
-			// generic BaseQModel and silently drops the experts from quantization.
-			RemapModelType: "qwen3_5_moe",
+			// Preserve the text-config type so Transformers supplies text-model
+			// defaults. The wrapper registers GPTQModel's missing MoE text alias.
+			RemapModelType: "qwen3_5_moe_text",
 			Architectures:  []string{"Qwen3_5MoeForCausalLM"},
 			Loader:         "gptqmodel",
 			PythonPackages: []string{
@@ -602,6 +605,37 @@ fi
 # transformers when materializing Qwen3.5 weights from meta tensors.
 GPTQ_SCRIPT=/opt/flexinfer/scripts/quantize_gptq.py
 
+# Qwen3.5's composite config exposes eos_token_id but no pad_token_id at either
+# the wrapper or text-config root. Transformers 5.3's Qwen3_5MoeTextModel reads
+# config.pad_token_id while constructing the shell, so synthesize the standard
+# causal-LM fallback during text-config extraction. Guarded for rebuilt images.
+if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Synthesized pad_token_id from eos_token_id" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'PY'
+from pathlib import Path
+
+p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = p.read_text()
+anchor = (
+    '        for key in policy.get("copy_root_keys", []):\n'
+    '            if key in cfg and key not in active_cfg:\n'
+    '                active_cfg[key] = cfg[key]\n'
+)
+inject = (
+    '        if (\n'
+    '            "pad_token_id" in policy.get("copy_root_keys", [])\n'
+    '            and active_cfg.get("pad_token_id") is None\n'
+    '            and active_cfg.get("eos_token_id") is not None\n'
+    '        ):\n'
+    '            active_cfg["pad_token_id"] = active_cfg["eos_token_id"]\n'
+    '            print("Synthesized pad_token_id from eos_token_id for extracted text config")\n'
+)
+if anchor not in src:
+    raise SystemExit("pad_token_id extraction patch anchor not found")
+p.write_text(src.replace(anchor, anchor + inject, 1))
+print("Patched text-config extraction with pad_token_id fallback")
+PY
+fi
+
 # Fix latent NameError in resume_config_fingerprint() on images baked before
 # 2026-06-11: the fingerprint payload referenced 'hessian_repair' but the
 # global is 'hessian_repair_enabled'. Dormant while GPTQ_RESUME_LAYERS
@@ -741,6 +775,62 @@ src = src.replace(
 path.write_text(src)
 PY
     echo "Patched quantize_gptq.py for Qwen3.5 direct load + text-only module tree"
+fi
+
+# GPTQModel's Qwen3.5 definitions are VLM-oriented even after their loader and
+# module tree are redirected to the causal LM. Disable their AutoProcessor hook
+# as well; the text-only source deliberately has no image processor artifacts.
+if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Disabled GPTQModel VLM processor loading" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'PY'
+from pathlib import Path
+
+p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = p.read_text()
+anchor = "patch_gptq_save_meta_tensors()\n"
+inject = '''try:
+    import importlib
+    for _module_path in (
+        "gptqmodel.models.definitions.qwen3_5",
+        "gptqmodel.models.definitions.qwen3_5_moe",
+    ):
+        _mod = importlib.import_module(_module_path)
+        for _cls_name in dir(_mod):
+            _cls = getattr(_mod, _cls_name, None)
+            if isinstance(_cls, type) and getattr(_cls, "require_load_processor", False):
+                _cls.require_load_processor = False
+                print(f"Disabled GPTQModel VLM processor loading for {_module_path}.{_cls_name}")
+except Exception as _exc:
+    print(f"INFO: Qwen3.5 processor patch skipped: {_exc}")
+'''
+if anchor not in src:
+    raise SystemExit("Qwen3.5 processor patch anchor not found")
+p.write_text(src.replace(anchor, anchor + inject, 1))
+print("Patched Qwen3.5 definitions to skip VLM processor loading")
+PY
+fi
+
+# GPTQModel 7 registers qwen3_5_moe but omits the qwen3_5_moe_text alias.
+# Keep the extracted config as a Transformers text config (so its defaults are
+# populated) and route that type to GPTQModel's native MoE definition.
+if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Registered GPTQModel qwen3_5_moe_text alias" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'PY'
+from pathlib import Path
+
+p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = p.read_text()
+anchor = "patch_gptq_save_meta_tensors()\n"
+inject = '''from gptqmodel.models import auto as _gptq_auto
+from gptqmodel.models.definitions.qwen3_5_moe import Qwen3_5_MoeQModel as _Qwen3_5_MoeQModel
+_gptq_auto.MODEL_MAP["qwen3_5_moe_text"] = _Qwen3_5_MoeQModel
+if "qwen3_5_moe_text" not in _gptq_auto.SUPPORTED_MODELS:
+    _gptq_auto.SUPPORTED_MODELS.append("qwen3_5_moe_text")
+print("Registered GPTQModel qwen3_5_moe_text alias")
+'''
+if anchor not in src:
+    raise SystemExit("Qwen3.5 MoE text alias patch anchor not found")
+p.write_text(src.replace(anchor, anchor + inject, 1))
+print("Patched GPTQModel with Qwen3.5 MoE text alias")
+PY
 fi
 
 # Remap safetensors weight keys for VLM→text-only extraction.
