@@ -1052,6 +1052,55 @@ before investing in cross-node Qwen3-Coder-Next. If both fail, the honest upgrad
 is a 64K quality model plus retrieval/context folding, not an advertised 200K
 window that is incoherent or offloaded.
 
+#### Live 128K vLLM 0.23 result and next kill test (2026-07-11)
+
+The corrected dedicated-deployment run proved the cache and image-isolation
+fixes, then failed at a narrower startup boundary:
+
+- vLLM 0.23 resolved `/models` locally and did not redownload from Hugging Face;
+- all 14 official GPTQ shards loaded in 32 seconds;
+- weights consumed 20.15 GiB on the 24 GiB RX 7900 XTX;
+- ROCm selected Triton/FLA GDN prefill plus `ROCM_ATTN`; unsupported GPTQ MoE
+  layers fell back to WNA16 as expected;
+- torch.compile completed in 110.47 seconds and saved its AOT graph; and
+- the API never opened `/health`, so ModelExperiment timed out after 90 minutes
+  and restored the warm Gemma model automatically.
+
+This rejects download, local-cache, image selection, and basic weight fit as the
+current blockers. It does not yet distinguish graph-capture warmup from an
+infeasible 128K KV allocation because the final KV-sizing log was never emitted.
+The next kill test changes only two context/runtime variables: 96K context and
+`enforceEager: true`. A successful 96K run requires a follow-up 128K eager run;
+a failed 96K eager run steps down to 64K and makes a clean text-only self-quant
+the required artifact before this model can be promoted.
+
+The 96K eager run loaded the same 20.15 GiB of weights, explicitly disabled
+torch.compile and CUDA graphs, then stalled at the same point immediately after
+setting the hybrid attention block size to 2,096 tokens. The engine main thread
+remained near 100% CPU, GPU utilization stayed at 0%, and VRAM remained at
+25.17/25.75 GB with no KV-sizing log or `/health` listener. This falsifies graph
+capture as the cause. The final official-artifact fit gate is therefore 64K
+eager; repeating the stall there rejects this 22.74 GiB checkpoint for a 24 GiB
+workhorse and triggers the clean text-only self-quant path.
+
+The 64K eager run repeated that boundary: all weights loaded, the hybrid page
+size was set to 2,096 tokens, VRAM stabilized at 25.17/25.75 GB, the engine main
+thread consumed one CPU core, and GPU utilization remained zero without a KV
+capacity line or health listener. The official artifact's own config explains
+the footprint: its GPTQ `dynamic` policy keeps every `.*attn.*` module, shared
+experts, MTP, and vision modules out of quantization. With ten full-attention
+layers, two KV heads, head dimension 256, and FP8 K/V, attention KV alone costs
+about 0.625 GiB at 64K and 1.25 GiB at 128K, before GDN recurrent state and graph
+workspace. The measured ~0.54 GiB physical headroom cannot satisfy even 64K.
+
+The production path is therefore a clean BF16 `Qwen/Qwen3.5-35B-A3B` rebuild
+through FlexInfer's proven Qwen3.5-MoE text extraction and GPTQModel module-tree
+policy. It quantizes experts and ordinary linear/full-attention modules while
+preserving GDN-sensitive exclusions and emits a fused text-only W4A16 artifact.
+While that long-running build proceeds, the already-proven self-quantized
+Qwen3.6-35B-A3B bridge runs at coherent 64K with graph mode and speculative MTP
+disabled. The bridge is not the final native-long-context promotion.
+
 ### External sources
 
 - https://huggingface.co/Qwen/Qwen3.5-35B-A3B

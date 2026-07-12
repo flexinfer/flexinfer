@@ -64,7 +64,9 @@ func (r *ModelReconciler) cleanupFlashTmpfs(ctx context.Context, model *aiv1alph
 	}
 
 	log := log.FromContext(ctx)
-	flashDir := filepath.Join("/dev/shm/flexinfer", model.Namespace, model.Name)
+	flashRoot := "/dev/shm/flexinfer"
+	flashDir := filepath.Join(flashRoot, model.Namespace, model.Name)
+	directoryOrCreate := corev1.HostPathDirectoryOrCreate
 
 	// Tolerate dedicated GPU nodes so the cleanup pod can schedule on tainted nodes.
 	var tolerations []corev1.Toleration
@@ -96,6 +98,10 @@ func (r *ModelReconciler) cleanupFlashTmpfs(ctx context.Context, model *aiv1alph
 						Name:    "cleanup",
 						Image:   "busybox:1.37",
 						Command: []string{"rm", "-rf", flashDir},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "flash-tmpfs-root",
+							MountPath: flashRoot,
+						}},
 						Resources: corev1.ResourceRequirements{
 							Requests: corev1.ResourceList{
 								corev1.ResourceCPU:    resource.MustParse("10m"),
@@ -103,6 +109,15 @@ func (r *ModelReconciler) cleanupFlashTmpfs(ctx context.Context, model *aiv1alph
 							},
 							Limits: corev1.ResourceList{
 								corev1.ResourceMemory: resource.MustParse("32Mi"),
+							},
+						},
+					}},
+					Volumes: []corev1.Volume{{
+						Name: "flash-tmpfs-root",
+						VolumeSource: corev1.VolumeSource{
+							HostPath: &corev1.HostPathVolumeSource{
+								Path: flashRoot,
+								Type: &directoryOrCreate,
 							},
 						},
 					}},

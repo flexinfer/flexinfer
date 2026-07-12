@@ -3786,6 +3786,19 @@ func TestCleanupFlashTmpfs(t *testing.T) {
 				t.Errorf("Command[%d] = %q, want %q", i, c.Command[i], wantCmd[i])
 			}
 		}
+		if len(c.VolumeMounts) != 1 || c.VolumeMounts[0].Name != "flash-tmpfs-root" || c.VolumeMounts[0].MountPath != "/dev/shm/flexinfer" {
+			t.Errorf("VolumeMounts = %+v, want flash-tmpfs-root mounted at /dev/shm/flexinfer", c.VolumeMounts)
+		}
+		if len(podSpec.Volumes) != 1 || podSpec.Volumes[0].HostPath == nil {
+			t.Fatalf("Volumes = %+v, want one hostPath volume", podSpec.Volumes)
+		}
+		hostPath := podSpec.Volumes[0].HostPath
+		if podSpec.Volumes[0].Name != "flash-tmpfs-root" || hostPath.Path != "/dev/shm/flexinfer" {
+			t.Errorf("Volume = %+v, want flash-tmpfs-root hostPath /dev/shm/flexinfer", podSpec.Volumes[0])
+		}
+		if hostPath.Type == nil || *hostPath.Type != corev1.HostPathDirectoryOrCreate {
+			t.Errorf("HostPath type = %v, want DirectoryOrCreate", hostPath.Type)
+		}
 
 		// No owner references (model is being deleted).
 		if len(job.OwnerReferences) != 0 {
