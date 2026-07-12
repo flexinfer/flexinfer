@@ -434,9 +434,9 @@ quantization:
         - bos_token_id
         - eos_token_id
         - pad_token_id
-      # gptqmodel MODEL_MAP keys the MoE definition as qwen3_5_moe (no
-      # qwen3_5_moe_text); the _text alias loads BaseQModel and drops experts.
-      remap_model_type: qwen3_5_moe
+      # Preserve the Transformers text config so MoE router/GDN defaults are
+      # populated; the quantizer registers this alias to GPTQModel's MoE class.
+      remap_model_type: qwen3_5_moe_text
       architectures:
         - Qwen3_5MoeForCausalLM
       loader: gptqmodel
