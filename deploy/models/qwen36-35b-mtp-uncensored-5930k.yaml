@@ -88,7 +88,11 @@ spec:
     # full output goes to content. Pair with the chat_template default
     # enable_thinking=false so content stays clean (minimal <think> clutter).
     enableToolCalling: true
-    toolCallParser: hermes
+    # Qwen3.5/3.6 emits its native XML-like function-call format. The Hermes
+    # parser leaves that payload in message.content instead of populating the
+    # OpenAI-compatible tool_calls field.
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
     # Re-activated as the proven 64K graph-mode bridge while the clean native-
     # context Qwen3.5 artifact is built and validated.
     warmPolicy: primary
