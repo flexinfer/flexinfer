@@ -722,6 +722,9 @@ func TestGPTQJobBuilder_BuildJob_AMDVendor_GFX906(t *testing.T) {
 	if !contains(script, "cat > /tmp/pcre.py") {
 		t.Fatal("expected gfx906 wrapper script to inject a stdlib-backed pcre shim")
 	}
+	if !contains(script, "CASELESS = IGNORECASE") {
+		t.Fatal("expected gfx906 pcre shim to expose the pcre.Flag API")
+	}
 	if !contains(script, "GPTQ_PY_IMPORTS=\"import tokenicer; from gptqmodel import GPTQModel, QuantizeConfig\"") {
 		t.Fatal("expected gfx906 wrapper script to verify the GPTQModel API import path")
 	}
@@ -1475,6 +1478,9 @@ func TestGPTQJobBuilder_BuildJob_Calibration(t *testing.T) {
 	}
 	if !contains(script, "cat > /tmp/pcre.py") {
 		t.Error("expected GPTQ wrapper script to create a stdlib-backed pcre shim")
+	}
+	if !contains(script, "CASELESS = IGNORECASE") {
+		t.Error("expected GPTQ wrapper script to expose the pcre.Flag API")
 	}
 	if !contains(script, "\"hf_transfer>=0.1.9\"") {
 		t.Error("expected GPTQ wrapper script self-heal path to install hf_transfer")

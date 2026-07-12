@@ -1716,6 +1716,10 @@ if [ "${PYTORCH_ROCM_ARCH:-}" = "gfx906" ] || [ "${GPU_GFX:-}" = "gfx900" ] || [
     python3 -m pip uninstall -y pypcre >/dev/null 2>&1 || true
     cat > /tmp/pcre.py <<'PY'
 from re import *
+class Flag:
+    CASELESS = IGNORECASE
+    DOTALL = DOTALL
+    MULTILINE = MULTILINE
 PY
     export PYTHONPATH="/tmp${PYTHONPATH:+:${PYTHONPATH}}"
     GPTQ_PY_IMPORTS="import tokenicer; from gptqmodel import GPTQModel, QuantizeConfig"
