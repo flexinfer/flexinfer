@@ -141,9 +141,13 @@ def probe(
     base_url, model, target_tokens, needles, tokens_per_line, max_tokens, timeout
 ):
     """Run one request with the given needle set; return a result dict."""
-    prompt = build_prompt(target_tokens, needles, tokens_per_line)
     # Multi-needle answers need room for one line per needle.
     out_tokens = max(max_tokens, 18 * len(needles) + 16)
+    # max_model_len covers prompt plus generated tokens. Reserve the requested
+    # output budget so a point equal to the server limit (for example 64K) does
+    # not fail request validation before the attention test starts.
+    prompt_budget = max(1, target_tokens - out_tokens)
+    prompt = build_prompt(prompt_budget, needles, tokens_per_line)
     body = json.dumps(
         {
             "model": model,
