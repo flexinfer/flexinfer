@@ -20,6 +20,7 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 type countingActivator struct {
@@ -191,6 +192,36 @@ func TestDrainQueueWithError(t *testing.T) {
 	assert.False(t, loaded, "queue should be deleted after drain with error")
 }
 
+// TestDrainQueueWithError_NotFound: queued clients whose model has no backing
+// CR get a 404 (matching the front door), not a retryable 503.
+func TestDrainQueueWithError_NotFound(t *testing.T) {
+	p := setupTestProxy(t)
+
+	queue := &RequestQueue{
+		model: "ghost-model",
+		items: make(chan *QueuedRequest, 10),
+	}
+	rec := httptest.NewRecorder()
+	qr := &QueuedRequest{
+		w:          rec,
+		r:          httptest.NewRequest("POST", "/v1/chat/completions", nil),
+		modelName:  "ghost-model",
+		done:       make(chan struct{}),
+		enqueuedAt: time.Now(),
+	}
+	queue.items <- qr
+
+	p.drainQueueWithError(queue, &ModelNotFoundError{Model: "ghost-model", Age: time.Minute})
+
+	select {
+	case <-qr.done:
+	default:
+		t.Fatal("done channel not closed")
+	}
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+	assert.Contains(t, rec.Body.String(), "ghost-model")
+}
+
 func TestWaitForReady_V1Alpha2Ready(t *testing.T) {
 	RegisterMetrics()
 
@@ -357,6 +388,133 @@ func TestWaitForReady_V1Alpha1Fallback(t *testing.T) {
 
 	err := p.waitForReady(context.Background(), "test-model")
 	assert.NoError(t, err)
+}
+
+// TestWaitForReady_NotFoundFastFail: when neither a Model nor a
+// ModelDeployment CR exists for the name, waitForReady must fail once the
+// not-found grace window elapses instead of polling out the full cold-start
+// timeout (observed in prod: 1h of once-per-second not-found warnings
+// stranding 9 queued requests).
+func TestWaitForReady_NotFoundFastFail(t *testing.T) {
+	RegisterMetrics()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
+
+	// No CRs at all.
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	coldStart := 60 * time.Second
+	p := &Proxy{
+		client:                  k8sClient,
+		namespace:               "default",
+		coldStartTimeout:        coldStart,
+		activationNotFoundGrace: 500 * time.Millisecond,
+	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", coldStart)
+
+	start := time.Now()
+	err := p.waitForReady(context.Background(), "ghost-model")
+	elapsed := time.Since(start)
+
+	require.Error(t, err)
+	nf, ok := isModelNotFoundError(err)
+	require.True(t, ok, "expected *ModelNotFoundError, got %T: %v", err, err)
+	assert.Equal(t, "ghost-model", nf.Model)
+	assert.Contains(t, err.Error(), "not found")
+	assert.Less(t, elapsed, coldStart/2,
+		"not-found fast-fail should return well before the cold-start timeout")
+}
+
+// TestWaitForReady_NotFoundGraceToleratesCreationRace: a Model CR that
+// appears within the grace window must still activate normally.
+func TestWaitForReady_NotFoundGraceToleratesCreationRace(t *testing.T) {
+	RegisterMetrics()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
+
+	// Starts empty; the Model CR is created after the first not-found poll.
+	k8sClient := fake.NewClientBuilder().WithScheme(scheme).Build()
+
+	p := &Proxy{
+		client:                  k8sClient,
+		namespace:               "default",
+		coldStartTimeout:        10 * time.Second,
+		activationNotFoundGrace: 5 * time.Second,
+	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", 10*time.Second)
+
+	created := make(chan struct{})
+	go func() {
+		defer close(created)
+		// Land between the first poll (1s, not found) and the grace expiry.
+		time.Sleep(readyPollInterval + 200*time.Millisecond)
+		model := &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      "late-model",
+				Namespace: "default",
+			},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Source:  "HF://org/model",
+			},
+			Status: aiv1alpha2.ModelStatus{
+				Phase: aiv1alpha2.ModelPhaseReady,
+			},
+		}
+		// No status subresource registered on this builder, so Create
+		// preserves Status.
+		if err := k8sClient.Create(context.Background(), model); err != nil {
+			t.Errorf("failed to create late model: %v", err)
+		}
+	}()
+
+	err := p.waitForReady(context.Background(), "late-model")
+	<-created
+	assert.NoError(t, err, "model created within the grace window should activate")
+}
+
+// TestWaitForReady_TransientErrorKeepsRetrying: non-NotFound errors from the
+// API server must NOT trip the not-found fast-fail; the loop keeps retrying
+// until the cold-start deadline as before.
+func TestWaitForReady_TransientErrorKeepsRetrying(t *testing.T) {
+	RegisterMetrics()
+
+	scheme := runtime.NewScheme()
+	require.NoError(t, clientgoscheme.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha1.AddToScheme(scheme))
+	require.NoError(t, aiv1alpha2.AddToScheme(scheme))
+
+	k8sClient := fake.NewClientBuilder().
+		WithScheme(scheme).
+		WithInterceptorFuncs(interceptor.Funcs{
+			Get: func(context.Context, client.WithWatch, client.ObjectKey, client.Object, ...client.GetOption) error {
+				return fmt.Errorf("etcdserver: leader changed")
+			},
+		}).
+		Build()
+
+	coldStart := 2500 * time.Millisecond
+	p := &Proxy{
+		client:           k8sClient,
+		namespace:        "default",
+		coldStartTimeout: coldStart,
+		// Aggressive grace: would fire on the very first not-found poll,
+		// proving transient errors never advance the not-found clock.
+		activationNotFoundGrace: time.Nanosecond,
+	}
+	p.activator = NewK8sModelActivator(k8sClient, "default", coldStart)
+
+	err := p.waitForReady(context.Background(), "flaky-model")
+	require.Error(t, err)
+	_, ok := isModelNotFoundError(err)
+	assert.False(t, ok, "transient errors must not be classified as not-found: %v", err)
+	assert.Contains(t, err.Error(), "timeout")
 }
 
 func TestTriggerScaleUp_V1Alpha2(t *testing.T) {

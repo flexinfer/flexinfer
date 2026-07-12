@@ -60,6 +60,43 @@ func isStalledLoadError(err error) (*StalledLoadError, bool) {
 	return nil, false
 }
 
+// defaultActivationNotFoundGrace is how long waitForReady tolerates neither
+// the v1alpha2 Model nor the fallback v1alpha1 ModelDeployment existing before
+// failing the activation fast. Nonzero to absorb creation races (a request
+// racing the CR apply), but far below the cold-start timeout: a name with no
+// backing CR can never become ready, and polling it for the full timeout
+// (observed: 1h of once-per-second not-found warnings) strands every queued
+// request behind a doomed activation.
+const defaultActivationNotFoundGrace = 45 * time.Second
+
+// ModelNotFoundError is returned when neither a Model nor a ModelDeployment
+// CR exists for the requested name for longer than the not-found grace
+// window. Terminal: retrying activation cannot succeed until the CR appears.
+type ModelNotFoundError struct {
+	Model string
+	Age   time.Duration
+}
+
+func (e *ModelNotFoundError) Error() string {
+	if e == nil {
+		return "model not found"
+	}
+	return fmt.Sprintf(
+		"model %q not found: no Model or ModelDeployment CR observed for %s",
+		e.Model, e.Age.Round(time.Second),
+	)
+}
+
+// isModelNotFoundError reports whether err (or anything wrapped in err) is a
+// *ModelNotFoundError.
+func isModelNotFoundError(err error) (*ModelNotFoundError, bool) {
+	var nf *ModelNotFoundError
+	if errors.As(err, &nf) {
+		return nf, true
+	}
+	return nil, false
+}
+
 // ModelFailedError is returned when a Model has reached a terminal Failed
 // phase. The proxy should fail queued activation requests immediately instead
 // of waiting for the full cold-start timeout.

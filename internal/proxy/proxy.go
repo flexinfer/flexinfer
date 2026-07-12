@@ -251,6 +251,11 @@ type Proxy struct {
 	coldStartTimeout   time.Duration                // Default: 60s (how long to wait for model to become ready)
 	connectionTracking TypedSyncMap[string, *int64] // tracking active connections per model
 
+	// activationNotFoundGrace bounds how long waitForReady tolerates a fully
+	// missing Model/ModelDeployment before fast-failing the activation.
+	// Zero means defaultActivationNotFoundGrace; overridable in tests.
+	activationNotFoundGrace time.Duration
+
 	// Routing for multi-replica models
 	router             *routing.Router
 	routingEnabled     bool                         // Enable advanced routing (session affinity, prefix-based)
