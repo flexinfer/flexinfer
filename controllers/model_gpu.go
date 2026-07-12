@@ -268,56 +268,20 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 	}
 
 	findFirst := func(vendor backend.GPUVendor) (nodeMatch, bool) {
-		for _, node := range nodes {
-			if !isNodeReady(node) {
+		for i := range nodes {
+			node := &nodes[i]
+			if !isNodeReady(*node) {
 				continue
 			}
 			switch vendor {
 			case backend.GPUVendorNVIDIA:
-				qty, ok := node.Status.Capacity["nvidia.com/gpu"]
-				if !ok || qty.Value() < 1 {
-					continue
+				if arch, ok := nvidiaGPUArchFromNode(node); ok {
+					return nodeMatch{vendor: backend.GPUVendorNVIDIA, arch: arch}, true
 				}
-				major := ""
-				if node.Labels != nil {
-					major = node.Labels["nvidia.com/gpu.compute.major"]
-				}
-				arch := ""
-				if major != "" {
-					arch = "sm_" + major
-				}
-				// Fall back to flexinfer.ai/gpu.arch label (same as AMD detection).
-				if arch == "" && node.Labels != nil {
-					arch = node.Labels[LabelGPUArch]
-				}
-				return nodeMatch{vendor: backend.GPUVendorNVIDIA, arch: arch}, true
 			case backend.GPUVendorAMD:
-				qty, ok := node.Status.Capacity["amd.com/gpu"]
-				if !ok || qty.Value() < 1 {
-					continue
+				if arch, ok := amdGPUArchFromNode(node); ok {
+					return nodeMatch{vendor: backend.GPUVendorAMD, arch: arch}, true
 				}
-				arch := ""
-				if node.Labels != nil {
-					arch = node.Labels["gpu.amd.com/gpu-architecture"]
-					if arch == "" {
-						// FlexInfer agent sets this label via rocminfo detection.
-						arch = node.Labels[LabelGPUArch]
-					}
-					if arch == "" {
-						// ROCm arch label isn't always present; fall back to common node-level labels.
-						// Prefer RDNA3 dGPU (GC 11.0.0) when multiple AMD GPUs exist on the same node.
-						if node.Labels["amd.com/gpu.family.GC_11_0_0"] != "" {
-							arch = "gfx1100"
-						} else if node.Labels["amd.com/gpu.family.GC_10_3_6"] != "" {
-							arch = "gfx1036"
-						} else if modelName := node.Labels["gpu.amd.com/model"]; strings.Contains(modelName, "7900") {
-							arch = "gfx1100"
-						}
-					}
-				}
-				return nodeMatch{vendor: backend.GPUVendorAMD, arch: arch}, true
-			default:
-				continue
 			}
 		}
 		return nodeMatch{}, false
