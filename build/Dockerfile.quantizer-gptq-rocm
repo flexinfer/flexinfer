@@ -74,7 +74,7 @@ RUN python3 -m pip uninstall -y numba llvmlite && \
 COPY build/scripts/quantize_gptq.py /opt/flexinfer/scripts/quantize_gptq.py
 COPY build/scripts/qwen35_wrap_to_vl_layout.py /opt/flexinfer/scripts/qwen35_wrap_to_vl_layout.py
 COPY build/scripts/qwen35_unwrap_from_vl_layout.py /opt/flexinfer/scripts/qwen35_unwrap_from_vl_layout.py
-RUN mkdir -p /app && printf 'FLEXINFER_SCRIPT_VERSION = "v20"\n' > /app/quantize_gptq.py
+RUN mkdir -p /app && printf 'FLEXINFER_SCRIPT_VERSION = "v21"\n' > /app/quantize_gptq.py
 COPY build/scripts/abliterate.py /opt/flexinfer/scripts/abliterate.py
 COPY build/scripts/abliterate_safety.py /opt/flexinfer/scripts/abliterate_safety.py
 RUN printf 'FLEXINFER_SCRIPT_VERSION = "v1"\n' > /app/abliterate.py
@@ -86,7 +86,7 @@ RUN mv /bin/bash /bin/bash.real && \
       '#!/bin/sh' \
       'mkdir -p /workspace' \
       'if [ ! -f /workspace/quantize_gptq.py ]; then' \
-      '  printf '\''FLEXINFER_SCRIPT_VERSION = "v20"\n'\'' > /workspace/quantize_gptq.py' \
+      '  printf '\''FLEXINFER_SCRIPT_VERSION = "v21"\n'\'' > /workspace/quantize_gptq.py' \
       'fi' \
       'if [ ! -f /workspace/abliterate.py ]; then' \
       '  printf '\''FLEXINFER_SCRIPT_VERSION = "v1"\n'\'' > /workspace/abliterate.py' \

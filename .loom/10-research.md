@@ -1133,12 +1133,15 @@ artifact quantizes.
 The first clean-artifact quantization retries then exposed a config-extraction
 bug before any layer solve: Qwen's composite config supplies `eos_token_id` but
 no `pad_token_id`, while Transformers 5.3's `Qwen3_5MoeTextModel` reads
-`config.pad_token_id` when constructing its shell. The v20 quantizer contract
+`config.pad_token_id` when constructing its shell. The v21 quantizer contract
 synthesizes `pad_token_id = eos_token_id` only when the extracted policy asks
 for a padding token and none exists, and disables GPTQModel's residual VLM
-`AutoProcessor` hook for the extracted causal-LM definition. The controller
-wrapper injects both guards into pinned v18 quantizer images, so the fix does
-not wait for an image rebuild. Focused tests cover both upstream boundaries.
+`AutoProcessor` hook for the extracted causal-LM definition. It also preserves
+the `qwen3_5_moe_text` type so Transformers supplies text defaults such as
+`output_router_logits`, while registering that missing alias against GPTQModel's
+native MoE lifecycle. The controller wrapper injects all guards into pinned v18
+quantizer images, so the fix does not wait for an image rebuild. Focused tests
+cover these upstream boundaries.
 
 ### External sources
 
