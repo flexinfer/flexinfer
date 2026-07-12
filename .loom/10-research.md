@@ -1121,6 +1121,15 @@ the reservation reduction leaves roughly 1.9 GiB for transient GDN workspace.
 The expected KV pool remains about 2.7 GiB, enough for one 64K FP8 request. The
 same near-limit needle test must pass before the bridge is called 64K reliable.
 
+The corrected deployment reported 2.68 GiB of KV cache and 69,680 KV tokens,
+then passed the former kill test without restarting. Three requests contained
+64,774/64,775 prompt tokens and planted the needle at 0%, 50%, and 100% depth;
+all three recalled it exactly in 72.28-72.67 seconds. A post-stress structured
+tool call through the `workhorse` proxy alias also passed. The bridge is
+therefore reliable at its advertised 64K window with graph mode and native
+Triton/FLA GDN attention. It remains the interim lane while the clean 128K
+artifact quantizes.
+
 ### External sources
 
 - https://huggingface.co/Qwen/Qwen3.5-35B-A3B
