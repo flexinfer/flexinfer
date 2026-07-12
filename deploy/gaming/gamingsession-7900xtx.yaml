@@ -27,5 +27,3 @@ spec:
   nodeName: cblevins-7900xtx
   mode: gaming
   owner: cblevins
-  # Active through midnight America/New_York for the 2026-07-11 stream.
-  expiresAt: "2026-07-12T04:00:00Z"
