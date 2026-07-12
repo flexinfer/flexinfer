@@ -69,6 +69,9 @@ profiles:
       # GPUProfile fallback/runtime defaults stay on the broad unified image.
       gpuprofile: false
       values_runtime_profiles: true
+      # This heavyweight persona must be resident on its target node(s) before
+      # promotion edits consumer manifests.
+      require_prewarm: true
     # Serving persona for persistent runtime pods. This keeps vLLM/diffusers
     # changes away from the legacy utility layers: quantizer, Steam,
     # llama.cpp, and Ollama.

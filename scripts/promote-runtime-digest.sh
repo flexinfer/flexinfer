@@ -16,6 +16,10 @@ IMAGE_REF=""
 RESOLVE_TOOL="auto"
 VALIDATION_ROW=""
 ROLLBACK_DIGEST=""
+PREWARM_NAMESPACE="flexinfer-system"
+PREWARM_TIMEOUT="30m"
+PREWARM_CHECKER="${PREWARM_CHECKER:-}"
+PREWARM_PROFILES=()
 
 usage() {
   cat <<'USAGE'
@@ -28,6 +32,9 @@ Flags:
   --apply                 Update files in place. Default is dry-run diff only.
   --validation-row <id>   Required with --apply. Matrix row/artifact proving the canary.
   --rollback-digest <sha> Required with --apply. Previous known-good runtime digest.
+  --prewarm-profile <name> Require this imagePrewarm profile to hold the target digest; repeatable.
+  --prewarm-namespace <ns> Namespace for prewarm checks (default: flexinfer-system).
+  --prewarm-timeout <time> Per-profile rollout timeout (default: 30m).
   --repo-root <path>      Repository root, for tests or unusual launch paths.
   --resolve-tool <tool>   auto, crane, or docker. Default: auto.
   -h, --help              Show this help.
@@ -46,6 +53,8 @@ Promotion gate:
   Before --apply, update .loom/60-validation-matrix.md with a promotion-ready
   row covering the digest, canary command, result, rollback digest/ref, and
   relevant hardware lane.
+  For heavyweight images, pass one --prewarm-profile per target node/profile;
+  --apply then blocks until every profile holds the exact target digest.
 USAGE
 }
 
@@ -400,6 +409,21 @@ while [[ $# -gt 0 ]]; do
       ROLLBACK_DIGEST="$2"
       shift 2
       ;;
+    --prewarm-profile)
+      [[ $# -ge 2 ]] || fail "--prewarm-profile requires a value"
+      PREWARM_PROFILES+=("$2")
+      shift 2
+      ;;
+    --prewarm-namespace)
+      [[ $# -ge 2 ]] || fail "--prewarm-namespace requires a value"
+      PREWARM_NAMESPACE="$2"
+      shift 2
+      ;;
+    --prewarm-timeout)
+      [[ $# -ge 2 ]] || fail "--prewarm-timeout requires a value"
+      PREWARM_TIMEOUT="$2"
+      shift 2
+      ;;
     --repo-root)
       [[ $# -ge 2 ]] || fail "--repo-root requires a value"
       REPO_ROOT="$(cd "$2" && pwd)"
@@ -437,6 +461,7 @@ fi
 ARCH="$(profile_arch "${PROFILE}")"
 UPDATE_GPUPROFILE="$(promotion_bool "${PROFILE}" "gpuprofile" "true")"
 UPDATE_VALUES="$(promotion_bool "${PROFILE}" "values_runtime_profiles" "true")"
+REQUIRE_PREWARM="$(promotion_bool "${PROFILE}" "require_prewarm" "false")"
 mapfile -t MODEL_MANIFESTS < <(promotion_model_manifests "${PROFILE}")
 if [[ "${UPDATE_GPUPROFILE}" == "true" ]]; then
   PROFILE_FILE="$(profile_consumer_file "${PROFILE}" "${ARCH}")"
@@ -453,6 +478,19 @@ fi
 if [[ "${APPLY}" == "true" ]]; then
   [[ -n "${VALIDATION_ROW}" ]] || fail "--apply requires --validation-row pointing at the populated .loom/60-validation-matrix.md row"
   [[ -n "${ROLLBACK_DIGEST}" ]] || fail "--apply requires --rollback-digest with the previous known-good runtime digest"
+  if [[ "${REQUIRE_PREWARM}" == "true" && "${#PREWARM_PROFILES[@]}" -eq 0 ]]; then
+    fail "profile=${PROFILE} requires at least one --prewarm-profile before --apply"
+  fi
+  if [[ "${#PREWARM_PROFILES[@]}" -gt 0 ]]; then
+    checker="${PREWARM_CHECKER:-${REPO_ROOT}/scripts/check-image-prewarm.sh}"
+    [[ -x "${checker}" ]] || fail "prewarm checker is not executable: ${checker}"
+    for prewarm_profile in "${PREWARM_PROFILES[@]}"; do
+      "${checker}" "${prewarm_profile}" \
+        --digest "${TARGET_DIGEST}" \
+        --namespace "${PREWARM_NAMESPACE}" \
+        --timeout "${PREWARM_TIMEOUT}"
+    done
+  fi
 fi
 
 if [[ "${UPDATE_GPUPROFILE}" == "true" ]]; then
@@ -479,6 +517,9 @@ echo "  target:  ${TARGET_IMAGE}"
 echo "  mode:    $([[ "${APPLY}" == "true" ]] && echo apply || echo dry-run)"
 [[ -n "${VALIDATION_ROW}" ]] && echo "  evidence row: ${VALIDATION_ROW}"
 [[ -n "${ROLLBACK_DIGEST}" ]] && echo "  rollback: ${ROLLBACK_DIGEST}"
+for prewarm_profile in "${PREWARM_PROFILES[@]}"; do
+  echo "  prewarm gate: ${PREWARM_NAMESPACE}/${prewarm_profile}"
+done
 echo ""
 print_current_consumers "${PROFILE_FILE}" "${VALUES_FILE}" "${PROFILE}" "${ARCH}" "${UPDATE_GPUPROFILE}" "${UPDATE_VALUES}" "${MODEL_MANIFESTS[@]}"
 echo ""

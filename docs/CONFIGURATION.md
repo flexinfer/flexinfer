@@ -312,6 +312,61 @@ Each profile creates a low-priority DaemonSet whose containers sleep after the
 image is pulled. This keeps the image in use on the selected node, reducing the
 first activation path to scheduling, cache staging, and backend/model loading.
 
+For release-critical ROCm images, enable the profile's immutable release gate:
+
+```yaml
+imagePrewarm:
+  enabled: true
+  minReadySeconds: 30
+  profiles:
+    - name: gfx1100-runtime-candidate
+      releaseGate: true
+      nodeSelector:
+        kubernetes.io/hostname: gpu-node-1
+      images:
+        - registry.example.com/flexinfer/runtime@sha256:...
+```
+
+`releaseGate: true` makes Helm reject mutable image references. The DaemonSet
+also records the candidate images in `flexinfer.ai/prewarm-images` annotations
+and must remain Ready for `minReadySeconds`. Verify the exact digest before
+promoting a consumer:
+
+```bash
+scripts/check-image-prewarm.sh gfx1100-runtime-candidate \
+  --digest sha256:...
+```
+
+The check waits for the DaemonSet rollout, requires desired, updated, Ready,
+and available counts to match, and confirms every selected pod reports the
+candidate digest as an image ID.
+
+### Two-phase runtime image promotion
+
+Heavyweight runtime releases use two separate GitOps reconciliations:
+
+1. Add the candidate digest to one release-gated `imagePrewarm` profile per
+   target node, commit, reconcile Flux, and wait for the profiles to become
+   Ready. The current runtime keeps serving during this pull.
+2. Promote the same digest to runtime consumers and require the live prewarm
+   checks:
+
+   ```bash
+   scripts/promote-runtime-digest.sh gfx1100-serving \
+     --digest sha256:... \
+     --validation-row "gfx1100 serving canary" \
+     --rollback-digest sha256:... \
+     --prewarm-profile 5930k-gfx1100-runtime-candidate \
+     --prewarm-profile 7900xtx-gfx1100-runtime-candidate \
+     --apply
+   ```
+
+Keep the previous digest in a holder profile through the rollback soak window.
+After the candidate is stable, remove the old holder and let normal node image
+garbage collection reclaim it. A pull taking a long time is not by itself a
+stall: kubelet events and node image-store growth must both stop advancing
+before treating it as stuck.
+
 #### Configuring default images
 
 Override default backend images via controller environment variables:

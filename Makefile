@@ -232,6 +232,12 @@ promote-runtime-digest-%: ## Dry-run runtime digest promotion for a profile (DIG
 		./scripts/promote-runtime-digest.sh $*; \
 	fi
 
+.PHONY: check-image-prewarm
+check-image-prewarm: ## Verify a staged digest (PROFILE=name DIGEST=sha256:... required)
+	@test -n "$(PROFILE)" || { echo "PROFILE is required" >&2; exit 1; }
+	@test -n "$(DIGEST)" || { echo "DIGEST is required" >&2; exit 1; }
+	./scripts/check-image-prewarm.sh "$(PROFILE)" --digest "$(DIGEST)"
+
 .PHONY: apply-runtime-digest-%
 apply-runtime-digest-%: ## Apply runtime digest promotion for a profile (DIGEST=sha256:... optional)
 	@if [ -n "$(DIGEST)" ]; then \

@@ -3,6 +3,14 @@
 {{- range $profile := default (list) $prewarm.profiles }}
 {{- $images := default (list) $profile.images }}
 {{- if gt (len $images) 0 }}
+{{- $releaseGate := default false $profile.releaseGate }}
+{{- if $releaseGate }}
+{{- range $image := $images }}
+{{- if not (regexMatch "@sha256:[0-9a-fA-F]{64}$" $image) }}
+{{- fail (printf "imagePrewarm profile %q enables releaseGate but image %q is not digest-pinned" $profile.name $image) }}
+{{- end }}
+{{- end }}
+{{- end }}
 ---
 apiVersion: apps/v1
 kind: DaemonSet
@@ -13,7 +21,13 @@ metadata:
     {{- include "flexinfer.labels" $ | nindent 4 }}
     app.kubernetes.io/component: flexinfer-image-prewarm
     flexinfer.ai/prewarm-profile: {{ $profile.name | quote }}
+  annotations:
+    flexinfer.ai/prewarm-release-gate: {{ $releaseGate | quote }}
+    flexinfer.ai/prewarm-images: {{ join "," $images | quote }}
 spec:
+  {{- if $releaseGate }}
+  minReadySeconds: {{ default 30 $prewarm.minReadySeconds }}
+  {{- end }}
   selector:
     matchLabels:
       {{- include "flexinfer.selectorLabels" $ | nindent 6 }}
@@ -27,6 +41,8 @@ spec:
     metadata:
       annotations:
         flexinfer.ai/chart-version: {{ $.Chart.Version | quote }}
+        flexinfer.ai/prewarm-release-gate: {{ $releaseGate | quote }}
+        flexinfer.ai/prewarm-images: {{ join "," $images | quote }}
       labels:
         {{- include "flexinfer.selectorLabels" $ | nindent 8 }}
         app.kubernetes.io/component: flexinfer-image-prewarm
