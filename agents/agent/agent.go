@@ -477,6 +477,11 @@ func (a *Agent) collectNodeMetrics(ctx context.Context) NodeMetrics {
 	var count int
 
 	for _, pod := range podItems {
+		// Image-generation backends (diffusers) have no KV cache and no
+		// Prometheus endpoint; probing them just 404s every interval.
+		if pod.Labels["flexinfer.ai/backend"] == "diffusers" {
+			continue
+		}
 		// Scrape Prometheus metrics from the pod
 		usage := a.scrapeKVCache(ctx, pod.Status.PodIP)
 		if usage >= 0 {
@@ -724,22 +729,26 @@ func (a *Agent) scrapeKVCache(ctx context.Context, ip string) float64 {
 
 	client := http.Client{Timeout: 2 * time.Second}
 	var resp *http.Response
-	var err error
 
-	// 1. Try vLLM (8000)
-	resp, err = client.Get(fmt.Sprintf("http://%s:8000/metrics", ip))
-
-	// 2. Try Llama.cpp (8080) if vLLM failed
-	if err != nil {
-		resp, err = client.Get(fmt.Sprintf("http://%s:8080/metrics", ip))
+	// Try vLLM (8000), then Llama.cpp (8080), then Ollama (11434). A non-200
+	// answer (e.g. a diffusers server that has :8000 but no /metrics route)
+	// counts as a failed attempt, not a scrape to parse.
+	for _, port := range []int{8000, 8080, 11434} {
+		r, err := client.Get(fmt.Sprintf("http://%s:%d/metrics", ip, port))
+		if err != nil {
+			continue
+		}
+		if r.StatusCode != http.StatusOK {
+			if cerr := r.Body.Close(); cerr != nil {
+				log.V(1).Info("failed to close metrics response body", "error", cerr)
+			}
+			continue
+		}
+		resp = r
+		break
 	}
 
-	// 3. Try Ollama (11434) if others failed
-	if err != nil {
-		resp, err = client.Get(fmt.Sprintf("http://%s:11434/metrics", ip))
-	}
-
-	if err != nil {
+	if resp == nil {
 		// All attempts failed
 		return -1
 	}
