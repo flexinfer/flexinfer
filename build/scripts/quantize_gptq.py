@@ -29,7 +29,9 @@ All configuration is read from environment variables set by the controller:
 # v19: Synthesize pad_token_id from eos_token_id when composite text-config
 # extraction finds no root padding token (required by Qwen3.5-MoE shells).
 # v20: Disable GPTQModel's VLM AutoProcessor hook for text-only Qwen3.5.
-FLEXINFER_SCRIPT_VERSION = "v20"
+# v21: Register the missing qwen3_5_moe_text GPTQModel alias so Transformers
+# uses the text config class while GPTQModel retains its native MoE lifecycle.
+FLEXINFER_SCRIPT_VERSION = "v21"
 import copy
 import gc
 import json
@@ -65,7 +67,7 @@ DEFAULT_MODEL_POLICIES = [
         "match_model_types": ["qwen3_5_moe_text", "qwen3_5_moe"],
         "extract_text_config": True,
         "copy_root_keys": ["bos_token_id", "eos_token_id", "pad_token_id"],
-        "remap_model_type": "qwen3_5_moe",
+        "remap_model_type": "qwen3_5_moe_text",
         "architectures": ["Qwen3_5MoeForCausalLM"],
         "loader": "gptqmodel",
         "python_packages": [
@@ -1666,24 +1668,15 @@ def select_model_policy(model_dir, cfg, policy_state, policies):
     return None
 
 
-# gptqmodel's MODEL_MAP (models/auto.py) keys the MoE Qwen3.5/3.6 definition
-# under "qwen3_5_moe" — there is NO "qwen3_5_moe_text" entry (only the dense
-# path also registers a "_text" alias: qwen3_5_text). A policy that remaps an
-# extracted text_config to "qwen3_5_moe_text" therefore makes GPTQModel.load()
-# fall back to the generic BaseQModel, whose module_tree has no MoE entry, so
-# the routed experts are silently excluded from quantization (the long-standing
-# "experts stayed FP16" failure). Normalize the flexinfer text-config suffix
-# back to the registered MoE key before the config reaches GPTQModel. Belt-and-
-# suspenders: the controller can inject QUANTIZE_MODEL_POLICIES via env, which
-# overrides DEFAULT_MODEL_POLICIES, so the fix must run on whatever policy is
-# active, not just the in-script default.
-_GPTQMODEL_MODEL_TYPE_ALIASES = {
-    "qwen3_5_moe_text": "qwen3_5_moe",
-}
+# Preserve extracted text model types so Transformers constructs its text
+# config class and fills defaults such as output_router_logits. GPTQModel 7
+# omits the corresponding MoE text alias; patch_qwen35_moe_text_model_map()
+# registers it against the native MoE definition before loading.
+_GPTQMODEL_MODEL_TYPE_ALIASES = {}
 
 
 def normalize_gptqmodel_model_type(model_type):
-    """Map flexinfer text-config model_type suffixes to gptqmodel MODEL_MAP keys."""
+    """Apply explicit model-type compatibility aliases, if any."""
     return _GPTQMODEL_MODEL_TYPE_ALIASES.get(model_type, model_type)
 
 
@@ -1999,6 +1992,18 @@ def patch_qwen35_text_processor_loading():
                 "Disabled GPTQModel VLM processor loading for "
                 f"{module_path}.{class_name}"
             )
+
+
+def patch_qwen35_moe_text_model_map():
+    """Register GPTQModel's missing Qwen3.5-MoE text-config alias."""
+
+    from gptqmodel.models import auto as gptq_auto
+    from gptqmodel.models.definitions.qwen3_5_moe import Qwen3_5_MoeQModel
+
+    gptq_auto.MODEL_MAP["qwen3_5_moe_text"] = Qwen3_5_MoeQModel
+    if "qwen3_5_moe_text" not in gptq_auto.SUPPORTED_MODELS:
+        gptq_auto.SUPPORTED_MODELS.append("qwen3_5_moe_text")
+    print("Registered GPTQModel qwen3_5_moe_text alias")
 
 
 def patch_gptq_save_meta_tensors():
@@ -3542,6 +3547,7 @@ from transformers import AutoTokenizer
 from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict
 
 patch_qwen35_text_processor_loading()
+patch_qwen35_moe_text_model_map()
 patch_gptq_save_meta_tensors()
 patch_gptq_lm_head_norm_post_quantize()
 patch_gptq_lm_head_cpu_quantize()

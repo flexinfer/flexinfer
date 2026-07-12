@@ -32,7 +32,8 @@ import (
 // v19: Synthesize a missing text-config pad_token_id from eos_token_id so
 // Qwen3.5-MoE's Transformers model shell can be constructed.
 // v20: Disable GPTQModel's VLM processor hook for the extracted text model.
-const GPTQScriptVersion = "v20"
+// v21: Register GPTQModel's missing Qwen3.5-MoE text-config alias.
+const GPTQScriptVersion = "v21"
 
 // GPTQJobBuilder generates Kubernetes Jobs for GPTQ quantization.
 type GPTQJobBuilder struct{}
@@ -296,10 +297,9 @@ func defaultGPTQModelPoliciesJSON() string {
 			MatchModelTypes:   []string{"qwen3_5_moe_text", "qwen3_5_moe"},
 			ExtractTextConfig: true,
 			CopyRootKeys:      []string{"bos_token_id", "eos_token_id", "pad_token_id"},
-			// gptqmodel MODEL_MAP registers the MoE definition under "qwen3_5_moe"
-			// (no "qwen3_5_moe_text" key) — remapping to the _text alias loads as
-			// generic BaseQModel and silently drops the experts from quantization.
-			RemapModelType: "qwen3_5_moe",
+			// Preserve the text-config type so Transformers supplies text-model
+			// defaults. The wrapper registers GPTQModel's missing MoE text alias.
+			RemapModelType: "qwen3_5_moe_text",
 			Architectures:  []string{"Qwen3_5MoeForCausalLM"},
 			Loader:         "gptqmodel",
 			PythonPackages: []string{
@@ -806,6 +806,30 @@ if anchor not in src:
     raise SystemExit("Qwen3.5 processor patch anchor not found")
 p.write_text(src.replace(anchor, anchor + inject, 1))
 print("Patched Qwen3.5 definitions to skip VLM processor loading")
+PY
+fi
+
+# GPTQModel 7 registers qwen3_5_moe but omits the qwen3_5_moe_text alias.
+# Keep the extracted config as a Transformers text config (so its defaults are
+# populated) and route that type to GPTQModel's native MoE definition.
+if [ -f "${GPTQ_SCRIPT}" ] && ! grep -q "Registered GPTQModel qwen3_5_moe_text alias" "${GPTQ_SCRIPT}" 2>/dev/null; then
+    python3 - <<'PY'
+from pathlib import Path
+
+p = Path("/opt/flexinfer/scripts/quantize_gptq.py")
+src = p.read_text()
+anchor = "patch_gptq_save_meta_tensors()\n"
+inject = '''from gptqmodel.models import auto as _gptq_auto
+from gptqmodel.models.definitions.qwen3_5_moe import Qwen3_5_MoeQModel as _Qwen3_5_MoeQModel
+_gptq_auto.MODEL_MAP["qwen3_5_moe_text"] = _Qwen3_5_MoeQModel
+if "qwen3_5_moe_text" not in _gptq_auto.SUPPORTED_MODELS:
+    _gptq_auto.SUPPORTED_MODELS.append("qwen3_5_moe_text")
+print("Registered GPTQModel qwen3_5_moe_text alias")
+'''
+if anchor not in src:
+    raise SystemExit("Qwen3.5 MoE text alias patch anchor not found")
+p.write_text(src.replace(anchor, anchor + inject, 1))
+print("Patched GPTQModel with Qwen3.5 MoE text alias")
 PY
 fi
 

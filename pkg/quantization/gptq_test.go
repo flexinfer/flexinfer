@@ -355,6 +355,9 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		if !strings.Contains(script, "Disabled GPTQModel VLM processor loading") {
 			t.Error("wrapper missing Qwen text-only processor bypass")
 		}
+		if !strings.Contains(script, "Registered GPTQModel qwen3_5_moe_text alias") {
+			t.Error("wrapper missing Qwen3.5 MoE text alias registration")
+		}
 	})
 
 	t.Run("wrapper script has save-complete short-circuit", func(t *testing.T) {
@@ -376,9 +379,9 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
-	t.Run("wrapper script version is v20", func(t *testing.T) {
-		if GPTQScriptVersion != "v20" {
-			t.Errorf("GPTQScriptVersion = %q, want v20 (Qwen text-only processor bypass)", GPTQScriptVersion)
+	t.Run("wrapper script version is v21", func(t *testing.T) {
+		if GPTQScriptVersion != "v21" {
+			t.Errorf("GPTQScriptVersion = %q, want v21 (Qwen MoE text alias)", GPTQScriptVersion)
 		}
 	})
 
