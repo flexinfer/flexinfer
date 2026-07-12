@@ -3516,6 +3516,25 @@ if moe_config_summary["has_moe"]:
 # ── Memory management ──────────────────────────────────────────────────
 import torch
 from datasets import load_dataset
+
+# gfx906 uses a stdlib-backed pcre shim because the native pypcre wheel can
+# SIGILL on its Broadwell-era host CPU. GPTQModel 7 expects the newer
+# pcre.Flag API, which maps directly to re.RegexFlag.
+try:
+    import pcre as _pcre
+    import re as _re
+
+    if not hasattr(_pcre, "Flag"):
+        class _PcreFlagCompat:
+            CASELESS = _re.IGNORECASE
+            DOTALL = _re.DOTALL
+            MULTILINE = _re.MULTILINE
+
+        _pcre.Flag = _PcreFlagCompat
+        print("Patched stdlib pcre shim with Flag compatibility")
+except ImportError:
+    pass
+
 from gptqmodel import GPTQModel, QuantizeConfig
 from gptqmodel.quantization.gptq import GPTQ
 

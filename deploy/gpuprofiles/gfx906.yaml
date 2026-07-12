@@ -151,5 +151,7 @@ spec:
       # shards + built ~20GB of fused tensors at once -> SIGBUS on gfx906 at 96%.
       # Now streams one output shard at a time + preserves the per-expert artifact
       # before re-fuse (re-fuse-only recovery, no 12h re-quant).
-      gptq: registry.harbor.lan/flexinfer/quantizer@sha256:30d4a92e061e9e0e18f963e915b695b6de07c2cba7078caf052114e1685a11fb
+      # v21 script overlay on the proven gfx906 dependency image; includes the
+      # stdlib pcre.Flag compatibility shim required by GPTQModel 7.
+      gptq: registry.harbor.lan/flexinfer/quantizer@sha256:12c88adf40ce92314508fc8a10fd8da677d1acbefb698fc0df36cb4e3939b588
       abliteration: registry.harbor.lan/flexinfer/runtime@sha256:aefe41fac3e43a65982fb1da9744c9c485f08dd010bab859b0d1f90de3a6dc4e
