@@ -117,6 +117,12 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		return ctrl.Result{}, err
 	}
 
+	// Record placement (status.gpu): the runtime pod on endpoint.NodeName holds
+	// the GPU this model serves from. Every status write below persists it, so
+	// consumers can attribute the model to a node without parsing spec
+	// scheduling hints.
+	setGPUStatus(model, endpoint.NodeName, gpuVendor, gpuArch)
+
 	// Preserve in-flight runtime loads unless the model has already been
 	// preempted. This avoids tearing down a load that the runtime is already
 	// progressing through because cache state or desired replicas briefly

@@ -415,6 +415,10 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 		return err
 	}
 
+	// Record actual placement (status.gpu) from the scheduled backend pod
+	// before the metric blocks below read Status.GPU.Node.
+	r.stampGPUStatusFromPods(ctx, model)
+
 	// Update endpoint
 	port := int32(80)
 	if b, ok := backend.Get(model.Spec.Backend); ok {

@@ -124,6 +124,9 @@ runtime:
 imagePrewarm:
   enabled: false
   imagePullPolicy: IfNotPresent
+  # Release-gated profiles are held Ready for this long before promotion can
+  # proceed. Per-profile releaseGate enables immutable digest validation.
+  minReadySeconds: 30
   priorityClassName: flexinfer-modelcache-warmup
   terminationGracePeriodSeconds: 5
   maxUnavailable: 1
@@ -137,6 +140,7 @@ imagePrewarm:
   profiles: []
   # Example:
   # - name: gfx1100-textgen
+  #   releaseGate: true
   #   nodeSelector:
   #     kubernetes.io/hostname: cblevins-5930k
   #   images:
