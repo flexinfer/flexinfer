@@ -56,6 +56,27 @@ scripts/promote-runtime-digest.sh gfx1100-serving \
   --apply
 ```
 
+For heavyweight runtime images, stage the exact digest first with a
+release-gated `imagePrewarm` profile. Then make live cache readiness part of
+the apply gate (repeat `--prewarm-profile` for every target profile):
+
+```bash
+scripts/promote-runtime-digest.sh gfx1100-serving \
+  --digest sha256:3333333333333333333333333333333333333333333333333333333333333333 \
+  --validation-row "Required canary: gfx1100 serving" \
+  --rollback-digest <previous-serving-sha256> \
+  --prewarm-profile 5930k-gfx1100-runtime-candidate \
+  --prewarm-profile 7900xtx-gfx1100-runtime-candidate \
+  --apply
+```
+
+The promotion script calls `scripts/check-image-prewarm.sh` before editing any
+consumer manifest. It fails closed if the DaemonSet does not reference the
+candidate digest, is not fully available, or any selected pod reports a
+different image ID. The `gfx1100-serving` build profile declares
+`promotion.require_prewarm: true`, so its `--apply` path also fails when no
+`--prewarm-profile` is supplied.
+
 `--apply` is intentionally gated. The matching row in
 `.loom/60-validation-matrix.md` must already name the target digest, rollback
 digest, canary command, result, and GitOps manifest pointer. `--validation-row`

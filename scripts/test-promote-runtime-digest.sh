@@ -21,6 +21,7 @@ cp "${REPO_ROOT}/deploy/models/gemma4-e4b-turboquant.yaml" "${TMP_ROOT}/deploy/m
 cp "${REPO_ROOT}/deploy/models/gemma4-31b-gptq-long.yaml" "${TMP_ROOT}/deploy/models/gemma4-31b-gptq-long.yaml"
 cp "${REPO_ROOT}/scripts/promote-runtime-digest.sh" "${TMP_ROOT}/scripts/promote-runtime-digest.sh"
 cp "${REPO_ROOT}/scripts/check-runtime-profile-consistency.sh" "${TMP_ROOT}/scripts/check-runtime-profile-consistency.sh"
+cp "${REPO_ROOT}/scripts/check-image-prewarm.sh" "${TMP_ROOT}/scripts/check-image-prewarm.sh"
 
 digest="sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 rollback_digest="sha256:fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210"
@@ -82,12 +83,16 @@ if grep -F "GPUProfile runtime image:" /tmp/flexinfer-promote-runtime-serving-dr
   echo "serving dry-run unexpectedly targeted GPUProfile" >&2
   exit 1
 fi
-"${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100-serving \
+PREWARM_CHECKER=/usr/bin/true "${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100-serving \
   --repo-root "${TMP_ROOT}" \
   --digest "${serving_digest}" \
   --validation-row "Required canary: gfx1100 serving" \
   --rollback-digest "${serving_rollback_digest}" \
+  --prewarm-profile "5930k-gfx1100-serving" \
+  --prewarm-profile "7900xtx-gfx1100-serving" \
   --apply >/tmp/flexinfer-promote-runtime-serving-test.log
+grep -F "prewarm gate: flexinfer-system/5930k-gfx1100-serving" /tmp/flexinfer-promote-runtime-serving-test.log >/dev/null
+grep -F "prewarm gate: flexinfer-system/7900xtx-gfx1100-serving" /tmp/flexinfer-promote-runtime-serving-test.log >/dev/null
 serving_after="$(shasum "${TMP_ROOT}/deploy/gpuprofiles/gfx1100.yaml")"
 if [[ "${serving_before}" != "${serving_after}" ]]; then
   echo "serving promotion mutated GPUProfile" >&2
@@ -110,6 +115,17 @@ if "${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100 \
   exit 1
 fi
 grep -E -- "--apply requires --validation-row" /tmp/flexinfer-promote-runtime-missing-gate.log >/dev/null
+
+if "${TMP_ROOT}/scripts/promote-runtime-digest.sh" gfx1100-serving \
+  --repo-root "${TMP_ROOT}" \
+  --digest "${serving_digest}" \
+  --validation-row "Required canary: gfx1100 serving" \
+  --rollback-digest "${serving_rollback_digest}" \
+  --apply >/tmp/flexinfer-promote-runtime-missing-prewarm.log 2>&1; then
+  echo "required serving prewarm gate unexpectedly succeeded without a profile" >&2
+  exit 1
+fi
+grep -F "requires at least one --prewarm-profile" /tmp/flexinfer-promote-runtime-missing-prewarm.log >/dev/null
 
 canary_digest="sha256:1111111111111111111111111111111111111111111111111111111111111111"
 canary_rollback_digest="sha256:2222222222222222222222222222222222222222222222222222222222222222"

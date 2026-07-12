@@ -181,6 +181,23 @@ helm:
   script:
     - helm lint charts/flexinfer
     - helm template flexinfer charts/flexinfer --namespace flexinfer-system >/dev/null
+    - >-
+      helm template flexinfer charts/flexinfer --namespace flexinfer-system
+      --set imagePrewarm.enabled=true
+      --set-string 'imagePrewarm.profiles[0].name=release-gate-test'
+      --set 'imagePrewarm.profiles[0].releaseGate=true'
+      --set-string 'imagePrewarm.profiles[0].images[0]=registry.example/runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef'
+      >/dev/null
+    - >-
+      if helm template flexinfer charts/flexinfer --namespace flexinfer-system
+      --set imagePrewarm.enabled=true
+      --set-string 'imagePrewarm.profiles[0].name=release-gate-test'
+      --set 'imagePrewarm.profiles[0].releaseGate=true'
+      --set-string 'imagePrewarm.profiles[0].images[0]=registry.example/runtime:mutable'
+      >/dev/null 2>&1; then
+      echo 'release-gated mutable image unexpectedly rendered' >&2;
+      exit 1;
+      fi
 
 renovate_config:
   stage: lint
