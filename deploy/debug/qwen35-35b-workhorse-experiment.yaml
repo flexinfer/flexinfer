@@ -9,12 +9,17 @@
 # path. AITER is explicitly disabled because the same image only compiles AITER
 # for gfx942/gfx950; this experiment tests the RDNA3-native path.
 #
-# Context gate: start at 128K (half the model's native 262,144-token window).
-# After the ModelExperiment gauntlet passes, run scripts/context-needle-bench.py
-# manually at 64K, 96K, and 128K before raising the declared ceiling.
+# Context gate: the 128K graph-mode run loaded all weights and completed
+# torch.compile, but never opened /health before its 90-minute timeout. This
+# 96K eager mode repeated the post-load stall with graph capture absent. This
+# 64K eager run is the final fit gate for the official multimodal artifact. If
+# it also stalls, switch to a clean text-only self-quant rather than lowering
+# the advertised workhorse window again.
 apiVersion: ai.flexinfer/v1alpha2
 kind: ModelExperiment
 metadata:
+  # Retain the original experiment identity so the 23 GiB Local cache staged by
+  # the 128K run is reused; later generations are the eager context ladder.
   name: qwen35-35b-workhorse-128k
   namespace: flexinfer-system
   annotations:
@@ -22,7 +27,7 @@ metadata:
     flexinfer.ai/runtime: vllm-0.23-rocm-gfx1100-native-w4a16
     flexinfer.ai/kill-test: .loom/10-research.md#update-2026-07-11-long-context-council-workhorse-on-dual-rx-7900-xtx-nodes
 spec:
-  timeout: 90m
+  timeout: 60m
   candidate:
     backend: vllm
     image: docker.io/vllm/vllm-openai-rocm@sha256:3813e31cc3ab56f71ba83a72da77a84f3c75030e54c9c316951a99317b818ce4
@@ -51,12 +56,14 @@ spec:
       quantization: gptq
       dtype: half
       languageModelOnly: true
-      maxModelLen: 131072
+      maxModelLen: 65536
       maxNumSeqs: 1
       maxNumBatchedTokens: 4096
       gpuMemoryUtilization: "0.98"
       kvCacheDtype: fp8_e4m3
-      enforceEager: false
+      # Kill test for the 128K run's post-compile startup stall. Eager mode
+      # avoids CUDA-graph capture while retaining the same weights and kernels.
+      enforceEager: true
       enablePrefixCaching: false
       disableAiter: true
       rocmCustomPagedAttn: false
@@ -65,12 +72,12 @@ spec:
       enableToolCalling: true
       toolCallParser: qwen3_coder
       reasoningParser: qwen3
-      servedModelName: qwen35-35b-workhorse-128k
+      servedModelName: qwen35-35b-workhorse-64k-eager
       disableLogStats: false
     nodeSelector:
-      # cblevins-7900xtx currently has DiskPressure on its nearly-full NVMe
-      # image filesystem. Run the canary on the healthy sister card; the higher
-      # shared-group priority temporarily preempts and later restores Gemma.
+      # Keep cblevins-7900xtx available for the independent workhorse/gaming
+      # lane. Run the canary on the sister card; the higher shared-group
+      # priority temporarily preempts and later restores Gemma.
       kubernetes.io/hostname: cblevins-5930k
     resources:
       requests:

@@ -77,7 +77,8 @@ spec:
     # unquantize only the MTP *linear* layers (attn/fc/shared_expert stay BF16);
     # the 4-bit experts load as normal GPTQ. KILL-TEST: does it (a) fit graph+32K
     # and (b) keep useful acceptance after RTN quant (~13% L1 err) + beat 72 tok/s?
-    speculativeConfig: '{"method": "qwen3_5_mtp", "num_speculative_tokens": 1}'
+    # Reliability-first interim workhorse: keep speculative MTP disabled until
+    # the clean Qwen3.5 artifact passes its own deterministic acceptance gate.
     trustRemoteCode: true
     servedModelName: qwen36-35b-mtp-uncensored-5930k
     # reasoningParser REMOVED 2026-06-18: this heretic checkpoint emits no clean
@@ -88,25 +89,18 @@ spec:
     # enable_thinking=false so content stays clean (minimal <think> clutter).
     enableToolCalling: true
     toolCallParser: hermes
-    # 2026-06-30 GAMING CUTOVER: demoted primary -> ondemand so this de-advertised
-    # lane releases the 5930k-textgen card (warmPolicy:primary kept it warm at
-    # minReplicas 0, parking the promoted gemma4-26b-5930k behind it at 380>350).
-    # Restore to primary + minReplicas 1 + serviceLabels to bring the lane back.
-    warmPolicy: ondemand
+    # Re-activated as the proven 64K graph-mode bridge while the clean native-
+    # context Qwen3.5 artifact is built and validated.
+    warmPolicy: primary
   gpu:
     count: 1
-    priority: 380
+    priority: 390
     shared: 5930k-textgen
     vendor: amd
     vramEstimateMB: 20000
-    # 2026-07-01 GAMING CUTOVER: forcePromotion REMOVED. It made the election
-    # (chooseSharedGroupLeader) pick this model as the unconditional leader,
-    # bypassing priority/warm logic — so de-advertising + minReplicas 0 +
-    # warmPolicy ondemand + a gemma priority bump to 385 all failed to hand the
-    # 5930k-textgen card to gemma. With this gone, the highest-priority warm
-    # member (gemma4-26b-a4b-gptq-5930k @385) wins. Restore alongside
-    # re-advertising this lane.
-    forcePromotion: false
+    # Explicitly preempt the warm Gemma bridge for this operator-requested
+    # workhorse activation. Remove after the clean dual-node model is promoted.
+    forcePromotion: true
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:
@@ -118,25 +112,24 @@ spec:
       memory: 8Gi
   serverless:
     enabled: true
-    # 2026-06-30 GAMING CUTOVER: scaled to 0 so gemma4-26b takes the 5930k card.
-    minReplicas: 0
+    minReplicas: 1
     coldStartTimeout: 25m0s
     idleTimeout: 30m0s
   tolerations:
   - effect: NoSchedule
     key: node-role.kubernetes.io/control-plane
     operator: Exists
-  # Normalized model-independent role labels: this is the core abliterated /
-  # uncensored / reasoning daily-driver (operator: "qwen3 36b ablit"). The
-  # `abliterated` role moved here from the parked qwen3-14b-ablit-newimg so
-  # services route by role, not by exact model name.
-  # 2026-06-30 GAMING CUTOVER: de-advertised (serviceLabels cleared, litellm off)
-  # so nothing cold-starts it to preempt gemma on the 5930k-textgen card. Restore
-  # the serviceLabels list + litellm.enabled=true + minReplicas 1 to bring the
-  # abliterated/uncensored/reasoning lane back.
-  serviceLabels: []
+  # Model-independent aliases let Loom/Mills/Council use the bridge without
+  # coupling to its checkpoint name. The clean Qwen3.5 promotion inherits them.
+  serviceLabels:
+  - workhorse
+  - loom-workhorse
+  - mills-council
+  - abliterated
+  - uncensored
+  - reasoning
   litellm:
-    enabled: false
+    enabled: true
     servedModelName: qwen36-35b-mtp-uncensored-5930k
     aliases:
     - abliterated
@@ -144,3 +137,6 @@ spec:
     - heretic
     - reasoning
     - qwen36-35b-uncensored
+    - workhorse
+    - loom-workhorse
+    - mills-council
