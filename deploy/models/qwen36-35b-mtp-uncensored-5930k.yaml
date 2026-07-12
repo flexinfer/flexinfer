@@ -57,16 +57,18 @@ spec:
     #     87.5K tok -> FAIL (degenerate)
     # The cliff is between 60.6K and 73.5K. 96K *loads fine* (vLLM reported 2.01x
     # KV concurrency at 98304, no OOM) but output past ~64K is garbage, so the
-    # limit is RoPE coherence, NOT VRAM — dropping to 1 seq buys nothing.
+    # original coherence cliff was RoPE-related, but a later 64.7K prefill also
+    # proved that reserving 98% of VRAM leaves no GDN workspace headroom.
     #
-    # 64K is the largest proven-coherent window AND fits 2 concurrent requests
-    # with margin (2.91x KV concurrency at 65536). Do NOT raise past 65536 without
-    # re-running the needle bench; the model produces silent garbage above the
-    # cliff. Floor is 32768 (the declared trained window) if you want zero risk.
+    # 64K remains the largest proven-coherent window. Serve one sequence and
+    # leave ~1.9 GiB outside vLLM's reservation for transient Triton/FLA GDN
+    # prefill allocations. Do NOT raise past 65536 without re-running the needle
+    # bench; the model produces silent garbage above the cliff. Floor is 32768
+    # (the declared trained window) if you want zero risk.
     maxModelLen: 65536
-    maxNumSeqs: 2
+    maxNumSeqs: 1
     kvCacheDtype: fp8_e4m3
-    gpuMemoryUtilization: '0.98'
+    gpuMemoryUtilization: '0.90'
     enforceEager: false
     # MTP speculative decoding v5 2026-06-19: SELF-QUANTIZED DRAFT. v4 proved MTP
     # works (82.4% accept w/ BF16 draft) but the BF16 draft was VRAM-infeasible

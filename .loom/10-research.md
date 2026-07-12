@@ -1101,6 +1101,26 @@ While that long-running build proceeds, the already-proven self-quantized
 Qwen3.6-35B-A3B bridge runs at coherent 64K with graph mode and speculative MTP
 disabled. The bridge is not the final native-long-context promotion.
 
+#### Bridge prefill headroom correction (2026-07-12)
+
+The reactivated bridge started successfully in graph mode, used the native
+Triton/FLA GDN prefill kernel plus `ROCM_ATTN`, loaded 18.17 GiB of weights, and
+reported 4.59 GiB of KV cache (120,064 tokens). Short deterministic generation,
+all three workhorse aliases, and structured Qwen tool calls passed. A 64,774
+token needle prompt then killed the engine on its first 2,048-token prefill
+chunk. The failure was not eager attention or a missing kernel:
+
+- the stack ended in `recompute_w_u_fwd()` for the GDN prefill path;
+- PyTorch attempted one additional 16 MiB allocation;
+- `gpuMemoryUtilization: 0.98` had left zero physical VRAM free; and
+- the API restarted after the fatal `HIP out of memory` error.
+
+The reliability correction keeps graph mode and proper GDN attention, reduces
+`gpuMemoryUtilization` to `0.90`, and sets `maxNumSeqs: 1`. On a 23.98 GiB card,
+the reservation reduction leaves roughly 1.9 GiB for transient GDN workspace.
+The expected KV pool remains about 2.7 GiB, enough for one 64K FP8 request. The
+same near-limit needle test must pass before the bridge is called 64K reliable.
+
 ### External sources
 
 - https://huggingface.co/Qwen/Qwen3.5-35B-A3B
