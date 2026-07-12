@@ -1130,6 +1130,16 @@ therefore reliable at its advertised 64K window with graph mode and native
 Triton/FLA GDN attention. It remains the interim lane while the clean 128K
 artifact quantizes.
 
+The first clean-artifact quantization retries then exposed a config-extraction
+bug before any layer solve: Qwen's composite config supplies `eos_token_id` but
+no `pad_token_id`, while Transformers 5.3's `Qwen3_5MoeTextModel` reads
+`config.pad_token_id` when constructing its shell. The v20 quantizer contract
+synthesizes `pad_token_id = eos_token_id` only when the extracted policy asks
+for a padding token and none exists, and disables GPTQModel's residual VLM
+`AutoProcessor` hook for the extracted causal-LM definition. The controller
+wrapper injects both guards into pinned v18 quantizer images, so the fix does
+not wait for an image rebuild. Focused tests cover both upstream boundaries.
+
 ### External sources
 
 - https://huggingface.co/Qwen/Qwen3.5-35B-A3B

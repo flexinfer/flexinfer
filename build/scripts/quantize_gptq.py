@@ -26,7 +26,10 @@ All configuration is read from environment variables set by the controller:
 # re-fuse mlp.experts GPTQ tensors into vLLM's fused MoE layout.
 # v18: Disable GPTQModel's native CPU pack extension by default; on older
 # CPUs it can SIGILL during post-layer packing before Python can fall back.
-FLEXINFER_SCRIPT_VERSION = "v18"
+# v19: Synthesize pad_token_id from eos_token_id when composite text-config
+# extraction finds no root padding token (required by Qwen3.5-MoE shells).
+# v20: Disable GPTQModel's VLM AutoProcessor hook for text-only Qwen3.5.
+FLEXINFER_SCRIPT_VERSION = "v20"
 import copy
 import gc
 import json
@@ -1696,6 +1699,16 @@ def apply_model_policy(cfg, policy, policy_state):
         for key in policy.get("copy_root_keys", []):
             if key in cfg and key not in active_cfg:
                 active_cfg[key] = cfg[key]
+        if (
+            "pad_token_id" in policy.get("copy_root_keys", [])
+            and active_cfg.get("pad_token_id") is None
+            and active_cfg.get("eos_token_id") is not None
+        ):
+            active_cfg["pad_token_id"] = active_cfg["eos_token_id"]
+            print(
+                "Synthesized pad_token_id from eos_token_id for extracted "
+                "text config"
+            )
         print(f"Extracted text_config: model_type={text_model_type}")
 
     remapped_type = policy.get("remap_model_type", "")
@@ -1960,6 +1973,32 @@ def adapt_model_definition_for_loaded_model(model_definition, model):
         "Adapted GPTQModel module tree for text-only Qwen3.5 causal LM "
         "(model.layers.*)"
     )
+
+
+def patch_qwen35_text_processor_loading():
+    """Disable VLM processor loading for extracted Qwen3.5 text models."""
+
+    import importlib
+
+    for module_path in (
+        "gptqmodel.models.definitions.qwen3_5",
+        "gptqmodel.models.definitions.qwen3_5_moe",
+    ):
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError:
+            continue
+        for class_name in dir(module):
+            model_class = getattr(module, class_name, None)
+            if not isinstance(model_class, type) or not getattr(
+                model_class, "require_load_processor", False
+            ):
+                continue
+            model_class.require_load_processor = False
+            print(
+                "Disabled GPTQModel VLM processor loading for "
+                f"{module_path}.{class_name}"
+            )
 
 
 def patch_gptq_save_meta_tensors():
@@ -3502,6 +3541,7 @@ from transformers import AutoModelForCausalLM
 from transformers import AutoTokenizer
 from transformers.modeling_utils import get_checkpoint_shard_files, load_state_dict
 
+patch_qwen35_text_processor_loading()
 patch_gptq_save_meta_tensors()
 patch_gptq_lm_head_norm_post_quantize()
 patch_gptq_lm_head_cpu_quantize()
