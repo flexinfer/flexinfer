@@ -4,10 +4,10 @@
 # and loads at 20.15 GiB, leaving too little room for hybrid GDN/full-attention
 # KV cache on a 24 GiB RX 7900 XTX. This pipeline starts from the clean BF16
 # source and uses FlexInfer's proven Qwen3.5 MoE policy: extract text_config,
-# quantize routed experts through GPTQModel's native MoE lifecycle, preserve the
-# model definition's GDN-sensitive exclusions, and emit a fused text-only
-# W4A16 artifact. The same pipeline produced the existing 21.26 GB Qwen3.6
-# artifacts that serve coherently at 64K on gfx1100.
+# quantize routed experts through GPTQModel's native MoE lifecycle, explicitly
+# preserve every GDN/linear-attention projection, and emit a fused text-only
+# W4A16 artifact. The native MoE lifecycle is already proven by the existing
+# Qwen3.6 artifacts; this rebuild adds the stricter recurrence-safety policy.
 #
 # Quantization runs on the Radeon VII because the 72 GB source plus GPTQModel
 # working set needs ~100 GiB host RAM. The finished artifact is stored on the
@@ -37,9 +37,13 @@ spec:
     groupSize: 128
     sym: true
     descAct: false
-    # "auto" is the proven MoE path: GPTQModel's patched module_tree preserves
-    # GDN-sensitive modules while retaining expert defuse/refuse lifecycle hooks.
-    dynamicExclusion: auto
+    # The first completed cycle used "auto", which correctly exercised the
+    # native MoE defuse/refuse lifecycle but also quantized in_proj_qkv,
+    # in_proj_z, and out_proj on all 30 GDN layers. That is the exact artifact
+    # shape previously correlated with recurrent-state/logit collapse. Use the
+    # explicit GDN policy: GPTQModel still quantizes routed/shared experts and
+    # full-attention projections, while every linear_attn module remains BF16.
+    dynamicExclusion: gdn
     useGPU: true
     maxMemoryGB: 102
     gpuMemoryFraction: "0.85"

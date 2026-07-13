@@ -376,6 +376,111 @@ class ValidateQuantizedArtifactTests(unittest.TestCase):
             result["checks"]["gdn_gptq_policy"]["quantized_gdn_modules"], {}
         )
 
+    def test_qwen35_35b_moe_detects_family_and_accepts_fp_gdn(self) -> None:
+        self._write_json(
+            "config.json",
+            {
+                "model_type": "qwen3_5_moe_text",
+                "architectures": ["Qwen3_5MoeForCausalLM"],
+                "num_hidden_layers": 40,
+                "num_experts": 256,
+                "num_experts_per_tok": 8,
+                "vocab_size": 248320,
+                "layer_types": ["linear_attention"] * 30
+                + ["full_attention"] * 10,
+                "quantization_config": {
+                    "modules_in_block_to_quantize": [
+                        "mlp.shared_expert.gate_proj",
+                        "mlp.shared_expert.up_proj",
+                        "mlp.shared_expert.down_proj",
+                        "moe.gate_up_proj",
+                        "moe.down_proj",
+                        "self_attn.q_proj",
+                    ]
+                },
+            },
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.0.linear_attn.in_proj_qkv.weight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.moe.gate_up_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.moe.down_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.mlp.shared_expert.gate_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.3.self_attn.q_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.3.self_attn.q_proj.qzeros": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(self.artifact, requested_layout="auto")
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["family"], "qwen35-35b-a3b")
+        self.assertEqual(result["checks"]["modules_in_block_to_quantize_shape"], "flat")
+        self.assertEqual(
+            result["checks"]["gdn_gptq_policy"]["quantized_gdn_modules"], {}
+        )
+        self.assertEqual(
+            result["checks"]["qwen_moe_expert_quantization"]["missing_modules"],
+            [],
+        )
+
+    def test_qwen35_35b_moe_surfaces_quantized_gdn_modules(self) -> None:
+        self._write_json(
+            "config.json",
+            {
+                "model_type": "qwen3_5_moe_text",
+                "architectures": ["Qwen3_5MoeForCausalLM"],
+                "num_hidden_layers": 40,
+                "num_experts": 256,
+                "vocab_size": 248320,
+                "quantization_config": {
+                    "modules_in_block_to_quantize": [
+                        "linear_attn.in_proj_qkv",
+                        "linear_attn.in_proj_z",
+                        "linear_attn.out_proj",
+                        "mlp.shared_expert.down_proj",
+                        "moe.gate_up_proj",
+                        "moe.down_proj",
+                    ]
+                },
+            },
+        )
+        self._write_json(
+            "model.safetensors.index.json",
+            {
+                "weight_map": {
+                    "model.layers.0.linear_attn.in_proj_qkv.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.linear_attn.in_proj_z.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.linear_attn.out_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.mlp.shared_expert.down_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.moe.gate_up_proj.qweight": "model-00001-of-00001.safetensors",
+                    "model.layers.0.moe.down_proj.qweight": "model-00001-of-00001.safetensors",
+                }
+            },
+        )
+        self._touch("model-00001-of-00001.safetensors")
+
+        result = validator.validate_artifact(self.artifact, requested_layout="auto")
+
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["family"], "qwen35-35b-a3b")
+        self.assertTrue(
+            any("GDN GPTQ policy warning" in warning for warning in result["warnings"]),
+            result["warnings"],
+        )
+        self.assertEqual(
+            result["checks"]["gdn_gptq_policy"]["quantized_gdn_modules"],
+            {
+                "linear_attn.in_proj_qkv": 1,
+                "linear_attn.in_proj_z": 1,
+                "linear_attn.out_proj": 1,
+            },
+        )
+
     def test_qwen36_moe_expert_gate_fails_when_expert_qweights_missing(
         self,
     ) -> None:

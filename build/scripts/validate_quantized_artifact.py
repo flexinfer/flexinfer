@@ -62,6 +62,9 @@ _QWEN35_VLLM_FLAT_MODULES = frozenset(
     (
         "moe.gate_up_proj",
         "moe.down_proj",
+        "mlp.shared_expert.gate_proj",
+        "mlp.shared_expert.up_proj",
+        "mlp.shared_expert.down_proj",
         "self_attn.q_proj",
         "self_attn.k_proj",
         "self_attn.v_proj",
@@ -118,6 +121,24 @@ FAMILY_PROFILES: dict[str, FamilyProfile] = {
         gdn_fp_module_prefixes=("linear_attn.",),
         variant_hints_required=True,
         variant_hints=("num_hidden_layers=64", "vocab_size=248320"),
+    ),
+    "qwen35-35b-a3b": FamilyProfile(
+        name="qwen35-35b-a3b",
+        aliases=(
+            "qwen/qwen3.5-35b-a3b",
+            "qwen3.5-35b-a3b",
+            "qwen35-35b-a3b",
+            "qwen3_5_moe_text",
+            "qwen3_5moeforcausallm",
+        ),
+        known_vllm_flat_modules=_QWEN35_VLLM_FLAT_MODULES,
+        gdn_fp_module_prefixes=("linear_attn.",),
+        variant_hints_required=True,
+        variant_hints=(
+            "num_hidden_layers=40",
+            "num_experts=256",
+            "vocab_size=248320",
+        ),
     ),
 }
 
