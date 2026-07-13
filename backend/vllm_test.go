@@ -122,6 +122,7 @@ func TestVLLMBackendArgs_TuningKnobs(t *testing.T) {
 			"gpuMemoryUtilization": "0.92",
 			"maxNumSeqs":           256,
 			"maxNumBatchedTokens":  16384,
+			"enableChunkedPrefill": true,
 			"disableSlidingWindow": true,
 			"enforceEager":         true,
 		},
@@ -141,6 +142,9 @@ func TestVLLMBackendArgs_TuningKnobs(t *testing.T) {
 	}
 	if v := argMap["--max-num-batched-tokens"]; v != "16384" {
 		t.Errorf("expected --max-num-batched-tokens=16384, got %q", v)
+	}
+	if !containsVLLMArg(args, "--enable-chunked-prefill") {
+		t.Error("expected --enable-chunked-prefill to be present")
 	}
 	foundDisableSlidingWindow := false
 	for _, a := range args {
@@ -219,6 +223,9 @@ func TestVLLMBackendArgs_AttentionBackend(t *testing.T) {
 
 	if v := argMap["--attention-backend"]; v != "CUSTOM" {
 		t.Fatalf("expected --attention-backend=CUSTOM, got %q", v)
+	}
+	if count := countVLLMArg(args, "--attention-backend"); count != 1 {
+		t.Fatalf("expected exactly one --attention-backend, got %d in %v", count, args)
 	}
 }
 
@@ -883,6 +890,70 @@ func TestVLLMBackendArgs_KVCacheDtype(t *testing.T) {
 	if v := argMap["--kv-cache-dtype"]; v != "fp8_e5m2" {
 		t.Errorf("expected --kv-cache-dtype=fp8_e5m2, got %q", v)
 	}
+}
+
+func TestVLLMBackendArgs_BooleanOptionalCacheFlags(t *testing.T) {
+	b := &VLLMBackend{}
+
+	tests := []struct {
+		name    string
+		config  map[string]any
+		want    string
+		notWant string
+	}{
+		{
+			name:    "calculate KV scales enabled",
+			config:  map[string]any{"calculateKvScales": true},
+			want:    "--calculate-kv-scales",
+			notWant: "--no-calculate-kv-scales",
+		},
+		{
+			name:    "calculate KV scales disabled",
+			config:  map[string]any{"calculateKvScales": false},
+			want:    "--no-calculate-kv-scales",
+			notWant: "--calculate-kv-scales",
+		},
+		{
+			name:    "chunked prefill disabled",
+			config:  map[string]any{"enableChunkedPrefill": false},
+			want:    "--no-enable-chunked-prefill",
+			notWant: "--enable-chunked-prefill",
+		},
+		{
+			name:    "unset cache flags remain omitted",
+			config:  map[string]any{},
+			notWant: "--calculate-kv-scales",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := b.Args(&ModelSpec{Model: "test-model", Config: tt.config})
+			if tt.want != "" && !containsVLLMArg(args, tt.want) {
+				t.Fatalf("expected %s in %v", tt.want, args)
+			}
+			if tt.notWant != "" && containsVLLMArg(args, tt.notWant) {
+				t.Fatalf("did not expect %s in %v", tt.notWant, args)
+			}
+			if len(tt.config) == 0 && containsVLLMArg(args, "--no-calculate-kv-scales") {
+				t.Fatalf("unset calculateKvScales must not emit a negative flag: %v", args)
+			}
+		})
+	}
+}
+
+func containsVLLMArg(args []string, want string) bool {
+	return countVLLMArg(args, want) > 0
+}
+
+func countVLLMArg(args []string, want string) int {
+	count := 0
+	for _, arg := range args {
+		if arg == want {
+			count++
+		}
+	}
+	return count
 }
 
 func TestVLLMBackendArgs_PrefixCachingExplicitDisable(t *testing.T) {

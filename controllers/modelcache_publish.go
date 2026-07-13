@@ -155,6 +155,9 @@ func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache 
 		}
 
 		pubStatus := &aiv1alpha1.PublishStatus{}
+		if modelCache.Status.Publish != nil && modelCache.Status.Publish.Validate != nil {
+			pubStatus.Validate = modelCache.Status.Publish.Validate.DeepCopy()
+		}
 		if publishJob.Status.StartTime != nil {
 			pubStatus.StartedAt = publishJob.Status.StartTime
 		}
