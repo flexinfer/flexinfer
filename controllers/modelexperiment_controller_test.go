@@ -3,9 +3,11 @@ package controllers
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -32,13 +34,20 @@ type modelExperimentFixture struct {
 func newModelExperimentFixture(t *testing.T, objects ...client.Object) *modelExperimentFixture {
 	t.Helper()
 	scheme := runtime.NewScheme()
-	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, batchv1.AddToScheme, aiv1alpha2.AddToScheme} {
+	for _, add := range []func(*runtime.Scheme) error{corev1.AddToScheme, batchv1.AddToScheme, aiv1alpha1.AddToScheme, aiv1alpha2.AddToScheme} {
 		if err := add(scheme); err != nil {
 			t.Fatal(err)
 		}
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(objects...).
-		WithStatusSubresource(&aiv1alpha2.ModelExperiment{}, &aiv1alpha2.Model{}, &batchv1.Job{}).Build()
+		WithIndex(&aiv1alpha2.ModelExperiment{}, modelExperimentArtifactIndex, func(object client.Object) []string {
+			experiment := object.(*aiv1alpha2.ModelExperiment)
+			if experiment.Spec.ArtifactGate == nil {
+				return nil
+			}
+			return []string{experiment.Spec.ArtifactGate.ModelCacheRef}
+		}).
+		WithStatusSubresource(&aiv1alpha1.ModelCache{}, &aiv1alpha2.ModelExperiment{}, &aiv1alpha2.Model{}, &batchv1.Job{}).Build()
 	f := &modelExperimentFixture{
 		t: t, ctx: context.Background(), now: time.Date(2026, 7, 10, 22, 0, 0, 0, time.UTC), c: c,
 		key: types.NamespacedName{Namespace: "flexinfer-system", Name: "currency-smoke"},
@@ -179,6 +188,150 @@ func TestModelExperimentPositiveLifecycle(t *testing.T) {
 	}
 	if err := f.c.Get(f.ctx, jobKey, &batchv1.Job{}); err != nil {
 		t.Fatalf("evidence Job was not retained: %v", err)
+	}
+}
+
+func TestModelExperimentArtifactGateWaitsWithoutStartingTimeout(t *testing.T) {
+	experiment, template := experimentTestObjects()
+	experiment.Spec.ArtifactGate = &aiv1alpha2.ModelExperimentArtifactGateSpec{
+		ModelCacheRef: "candidate-cache", RequireValidation: true, RequirePublishedDigest: true, RequireSourceMatch: true,
+	}
+	progress := int32(20)
+	cache := artifactGateTestCache()
+	cache.Status = aiv1alpha1.ModelCacheStatus{
+		Phase:        aiv1alpha1.ModelCachePhaseQuantizing,
+		Quantization: &aiv1alpha1.QuantizationStatus{Progress: &progress},
+	}
+	f := newModelExperimentFixture(t, experiment, template, cache)
+	f.reconcile() // finalizer
+	f.reconcile() // blocked on cache
+
+	got := f.experiment()
+	if got.Status.Phase != aiv1alpha2.ModelExperimentBlocked || got.Status.Reason != "ArtifactCacheNotReady" {
+		t.Fatalf("unexpected gate status: %#v", got.Status)
+	}
+	if got.Status.StartedAt != nil {
+		t.Fatalf("artifact wait started experiment timeout: %s", got.Status.StartedAt)
+	}
+	if !strings.Contains(got.Status.Message, "progress=20%") {
+		t.Fatalf("progress missing from gate message: %q", got.Status.Message)
+	}
+	assertExperimentCandidateMissing(t, f)
+}
+
+func TestModelExperimentArtifactGateCreatesDigestAnnotatedCandidate(t *testing.T) {
+	experiment, template := experimentTestObjects()
+	experiment.Spec.ArtifactGate = &aiv1alpha2.ModelExperimentArtifactGateSpec{
+		ModelCacheRef: "candidate-cache", RequireValidation: true, RequirePublishedDigest: true, RequireSourceMatch: true,
+	}
+	cache := artifactGateTestCache()
+	validatedAt := metav1.NewTime(time.Date(2026, 7, 13, 20, 0, 0, 0, time.UTC))
+	publishedAt := metav1.NewTime(validatedAt.Add(time.Minute))
+	cache.Status = aiv1alpha1.ModelCacheStatus{
+		Phase: aiv1alpha1.ModelCachePhaseReady, Path: "models:candidate",
+		Publish: &aiv1alpha1.PublishStatus{
+			OCIDigest: "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef", PublishedAt: &publishedAt,
+			Validate: &aiv1alpha1.PublishValidateStatus{Ok: true, ValidatedAt: &validatedAt},
+		},
+	}
+	f := newModelExperimentFixture(t, experiment, template, cache)
+	f.reconcile() // finalizer
+	f.reconcile() // candidate
+
+	candidate := &aiv1alpha2.Model{}
+	key := types.NamespacedName{Namespace: f.key.Namespace, Name: "currency-smoke-candidate"}
+	if err := f.c.Get(f.ctx, key, candidate); err != nil {
+		t.Fatal(err)
+	}
+	if got := candidate.Annotations["flexinfer.ai/artifact-cache"]; got != cache.Name {
+		t.Fatalf("artifact cache annotation = %q", got)
+	}
+	if got := candidate.Annotations["flexinfer.ai/artifact-cache-uid"]; got != string(cache.UID) {
+		t.Fatalf("artifact cache UID annotation = %q", got)
+	}
+	if got := candidate.Annotations["flexinfer.ai/artifact-digest"]; got != "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" {
+		t.Fatalf("artifact digest annotation = %q", got)
+	}
+	if got := candidate.Annotations["flexinfer.ai/artifact-cache-generation"]; got != "7" {
+		t.Fatalf("artifact cache generation annotation = %q", got)
+	}
+}
+
+func TestModelExperimentArtifactGateRejectsIncompleteEvidence(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*aiv1alpha1.ModelCache)
+		reason string
+	}{
+		{name: "failed", mutate: func(cache *aiv1alpha1.ModelCache) {
+			cache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+			cache.Status.CurrentPhase = "publish-validate"
+		}, reason: "ArtifactCacheFailed"},
+		{name: "validation missing", mutate: func(cache *aiv1alpha1.ModelCache) {
+			cache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+		}, reason: "ArtifactValidationMissing"},
+		{name: "digest missing", mutate: func(cache *aiv1alpha1.ModelCache) {
+			validatedAt := metav1.Now()
+			cache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+			cache.Status.Publish = &aiv1alpha1.PublishStatus{Validate: &aiv1alpha1.PublishValidateStatus{Ok: true, ValidatedAt: &validatedAt}}
+		}, reason: "ArtifactDigestMissing"},
+		{name: "source mismatch", mutate: func(cache *aiv1alpha1.ModelCache) {
+			validatedAt := metav1.Now()
+			publishedAt := metav1.Now()
+			cache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+			cache.Status.Path = "other-pvc:other-model"
+			cache.Status.Publish = &aiv1alpha1.PublishStatus{
+				OCIDigest:   "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+				PublishedAt: &publishedAt, Validate: &aiv1alpha1.PublishValidateStatus{Ok: true, ValidatedAt: &validatedAt},
+			}
+		}, reason: "ArtifactSourceMismatch"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			experiment, template := experimentTestObjects()
+			experiment.Spec.ArtifactGate = &aiv1alpha2.ModelExperimentArtifactGateSpec{
+				ModelCacheRef: "candidate-cache", RequireValidation: true, RequirePublishedDigest: true, RequireSourceMatch: true,
+			}
+			cache := artifactGateTestCache()
+			test.mutate(cache)
+			f := newModelExperimentFixture(t, experiment, template, cache)
+			f.reconcile()
+			f.reconcile()
+			if got := f.experiment(); got.Status.Reason != test.reason {
+				t.Fatalf("reason = %q, want %q: %#v", got.Status.Reason, test.reason, got.Status)
+			}
+			assertExperimentCandidateMissing(t, f)
+		})
+	}
+}
+
+func TestModelExperimentArtifactGateWatchTargetsMatchingExperiment(t *testing.T) {
+	experiment, template := experimentTestObjects()
+	experiment.Spec.ArtifactGate = &aiv1alpha2.ModelExperimentArtifactGateSpec{ModelCacheRef: "candidate-cache"}
+	cache := artifactGateTestCache()
+	f := newModelExperimentFixture(t, experiment, template, cache)
+	requests := f.r.experimentsForModelCache(f.ctx, cache)
+	if len(requests) != 1 || requests[0].NamespacedName != f.key {
+		t.Fatalf("artifact cache watch requests = %#v", requests)
+	}
+}
+
+func artifactGateTestCache() *aiv1alpha1.ModelCache {
+	ociRef := "registry.harbor.lan/flexinfer/candidate:gptq"
+	return &aiv1alpha1.ModelCache{
+		ObjectMeta: metav1.ObjectMeta{Name: "candidate-cache", Namespace: "flexinfer-system", UID: types.UID("cache-uid"), Generation: 7},
+		Spec: aiv1alpha1.ModelCacheSpec{Publish: &aiv1alpha1.PublishSpec{
+			Targets: []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI}, OCIRef: &ociRef,
+			Validate: &aiv1alpha1.PublishValidateSpec{Enabled: true},
+		}},
+	}
+}
+
+func assertExperimentCandidateMissing(t *testing.T, f *modelExperimentFixture) {
+	t.Helper()
+	key := types.NamespacedName{Namespace: f.key.Namespace, Name: "currency-smoke-candidate"}
+	if err := f.c.Get(f.ctx, key, &aiv1alpha2.Model{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("candidate exists before artifact gate opened: %v", err)
 	}
 }
 
