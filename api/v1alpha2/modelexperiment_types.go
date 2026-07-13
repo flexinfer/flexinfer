@@ -48,11 +48,41 @@ type ModelExperimentGauntletSpec struct {
 	Env map[string]string `json:"env,omitempty"`
 }
 
+// ModelExperimentArtifactGateSpec gates candidate creation on a ModelCache.
+// +kubebuilder:object:generate=true
+type ModelExperimentArtifactGateSpec struct {
+	// ModelCacheRef names a ModelCache in the experiment namespace.
+	// +kubebuilder:validation:Required
+	// +kubebuilder:validation:MinLength=1
+	ModelCacheRef string `json:"modelCacheRef"`
+
+	// RequireValidation requires a successful, timestamped publish validator
+	// result before the candidate may be created.
+	// +optional
+	RequireValidation bool `json:"requireValidation,omitempty"`
+
+	// RequirePublishedDigest requires a completed OCI publish with an immutable
+	// digest before the candidate may be created.
+	// +optional
+	RequirePublishedDigest bool `json:"requirePublishedDigest,omitempty"`
+
+	// RequireSourceMatch requires the candidate PVC or OCI source to resolve to
+	// the gated cache rather than merely waiting on an unrelated cache.
+	// +optional
+	RequireSourceMatch bool `json:"requireSourceMatch,omitempty"`
+}
+
 // ModelExperimentSpec declares an isolated serving candidate and its gauntlet.
 // +kubebuilder:object:generate=true
 type ModelExperimentSpec struct {
 	// Candidate is the complete Model spec deployed only for this experiment.
 	Candidate ModelSpec `json:"candidate"`
+
+	// ArtifactGate optionally prevents candidate creation until a same-namespace
+	// ModelCache has produced the required artifact evidence. Time spent waiting
+	// at this gate does not consume the experiment timeout.
+	// +optional
+	ArtifactGate *ModelExperimentArtifactGateSpec `json:"artifactGate,omitempty"`
 
 	// Gauntlet defines the evaluation Job template and threshold overrides.
 	Gauntlet ModelExperimentGauntletSpec `json:"gauntlet"`

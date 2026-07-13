@@ -1,9 +1,10 @@
 # Staged long-context canary for the GDN-preserving Qwen3.5-35B-A3B artifact.
 #
-# Do not add this file to deploy/debug/kustomization.yaml. Apply this parent CR
-# only after ModelCache/qwen35-35b-a3b-clean-gptq is Ready and strict publish
-# validation passes. The bounded first run can mount the validated PVC path;
-# pin the published OCI digest before promotion:
+# Do not add this file to deploy/debug/kustomization.yaml. It is safe to apply
+# while ModelCache/qwen35-35b-a3b-clean-gptq is still running: artifactGate
+# blocks candidate creation until strict validation and immutable OCI publish
+# evidence exist. The bounded first run mounts the validated PVC path; pin the
+# published OCI digest before promotion:
 #
 #   kubectl apply -f deploy/debug/qwen35-35b-clean-gptq-canary.yaml
 #
@@ -23,6 +24,11 @@ metadata:
     flexinfer.ai/kill-test: .loom/10-research.md#update-2026-07-11-long-context-council-workhorse-on-dual-rx-7900-xtx-nodes
 spec:
   timeout: 90m
+  artifactGate:
+    modelCacheRef: qwen35-35b-a3b-clean-gptq
+    requireValidation: true
+    requirePublishedDigest: true
+    requireSourceMatch: true
   candidate:
     backend: vllm
     image: docker.io/vllm/vllm-openai-rocm@sha256:3813e31cc3ab56f71ba83a72da77a84f3c75030e54c9c316951a99317b818ce4

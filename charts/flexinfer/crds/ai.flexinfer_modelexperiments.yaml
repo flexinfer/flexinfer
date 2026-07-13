@@ -63,6 +63,35 @@ spec:
             description: ModelExperimentSpec declares an isolated serving candidate
               and its gauntlet.
             properties:
+              artifactGate:
+                description: |-
+                  ArtifactGate optionally prevents candidate creation until a same-namespace
+                  ModelCache has produced the required artifact evidence. Time spent waiting
+                  at this gate does not consume the experiment timeout.
+                properties:
+                  modelCacheRef:
+                    description: ModelCacheRef names a ModelCache in the experiment
+                      namespace.
+                    minLength: 1
+                    type: string
+                  requirePublishedDigest:
+                    description: |-
+                      RequirePublishedDigest requires a completed OCI publish with an immutable
+                      digest before the candidate may be created.
+                    type: boolean
+                  requireSourceMatch:
+                    description: |-
+                      RequireSourceMatch requires the candidate PVC or OCI source to resolve to
+                      the gated cache rather than merely waiting on an unrelated cache.
+                    type: boolean
+                  requireValidation:
+                    description: |-
+                      RequireValidation requires a successful, timestamped publish validator
+                      result before the candidate may be created.
+                    type: boolean
+                required:
+                - modelCacheRef
+                type: object
               candidate:
                 description: Candidate is the complete Model spec deployed only for
                   this experiment.

@@ -3,6 +3,7 @@ package controllers
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
@@ -25,6 +27,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 )
 
 const (
@@ -35,6 +38,7 @@ const (
 	modelExperimentGenerationLabel = "ai.flexinfer/experiment-generation"
 	modelExperimentRunLabel        = "ai.flexinfer/experiment-run"
 	modelExperimentModelsEnv       = "MODELS"
+	modelExperimentArtifactIndex   = "spec.artifactGate.modelCacheRef"
 )
 
 // ModelExperimentReconciler runs an isolated candidate Model through a copied
@@ -50,6 +54,7 @@ type ModelExperimentReconciler struct {
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=modelexperiments/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=modelexperiments/finalizers,verbs=update
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models,verbs=get;list;watch;create;delete
+//+kubebuilder:rbac:groups=ai.flexinfer,resources=modelcaches,verbs=get;list;watch
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;delete
 //+kubebuilder:rbac:groups=batch,resources=cronjobs,verbs=get;list;watch
 
@@ -180,10 +185,15 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 	if candidate == nil {
+		artifactCache, ready, result, err := r.reconcileArtifactGate(ctx, experiment)
+		if err != nil || !ready {
+			return result, err
+		}
 		candidate, err = r.buildCandidate(experiment)
 		if err != nil {
 			return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentBlocked, "InvalidCandidate", err.Error(), 0)
 		}
+		annotateArtifactGateEvidence(candidate, artifactCache)
 		if err := r.Create(ctx, candidate); err != nil {
 			if apierrors.IsAlreadyExists(err) {
 				return ctrl.Result{RequeueAfter: modelExperimentPollInterval}, nil
@@ -231,6 +241,130 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		r.Recorder.Eventf(experiment, corev1.EventTypeNormal, "GauntletStarted", "Started gauntlet Job %s", job.Name)
 	}
 	return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentEvaluating, "GauntletCreated", fmt.Sprintf("created gauntlet Job %s", job.Name), modelExperimentPollInterval)
+}
+
+func (r *ModelExperimentReconciler) reconcileArtifactGate(
+	ctx context.Context,
+	experiment *aiv1alpha2.ModelExperiment,
+) (*aiv1alpha1.ModelCache, bool, ctrl.Result, error) {
+	gate := experiment.Spec.ArtifactGate
+	if gate == nil {
+		return nil, true, ctrl.Result{}, nil
+	}
+
+	cache := &aiv1alpha1.ModelCache{}
+	key := types.NamespacedName{Namespace: experiment.Namespace, Name: strings.TrimSpace(gate.ModelCacheRef)}
+	if err := r.Get(ctx, key, cache); err != nil {
+		if apierrors.IsNotFound(err) {
+			result, statusErr := r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentBlocked, "ArtifactCacheNotFound", fmt.Sprintf("waiting for ModelCache %q", key.Name), 0)
+			return nil, false, result, statusErr
+		}
+		return nil, false, ctrl.Result{}, err
+	}
+	if cache.Status.Phase == aiv1alpha1.ModelCachePhaseFailed {
+		result, err := r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentBlocked, "ArtifactCacheFailed", fmt.Sprintf("ModelCache %q failed in phase %s", cache.Name, cache.Status.CurrentPhase), 0)
+		return cache, false, result, err
+	}
+	if cache.Status.Phase != aiv1alpha1.ModelCachePhaseReady {
+		message := fmt.Sprintf("waiting for ModelCache %q; phase=%s", cache.Name, cache.Status.Phase)
+		if cache.Status.Quantization != nil && cache.Status.Quantization.Progress != nil {
+			message = fmt.Sprintf("%s progress=%d%%", message, *cache.Status.Quantization.Progress)
+		}
+		result, err := r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentBlocked, "ArtifactCacheNotReady", message, 0)
+		return cache, false, result, err
+	}
+	if gate.RequireValidation {
+		if cache.Spec.Publish == nil || cache.Spec.Publish.Validate == nil || !cache.Spec.Publish.Validate.Enabled {
+			result, err := r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentBlocked, "ArtifactValidationNotConfigured", fmt.Sprintf("ModelCache %q does not enable publish validation", cache.Name), 0)
+			return cache, false, result, err
+		}
+		if cache.Status.Publish == nil || cache.Status.Publish.Validate == nil || !cache.Status.Publish.Validate.Ok || cache.Status.Publish.Validate.ValidatedAt == nil {
+			result, err := r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentBlocked, "ArtifactValidationMissing", fmt.Sprintf("ModelCache %q has no successful timestamped validation", cache.Name), 0)
+			return cache, false, result, err
+		}
+	}
+	if gate.RequirePublishedDigest {
+		if !modelCachePublishesOCI(cache) {
+			result, err := r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentBlocked, "ArtifactOCINotConfigured", fmt.Sprintf("ModelCache %q does not publish to OCI", cache.Name), 0)
+			return cache, false, result, err
+		}
+		if cache.Status.Publish == nil || cache.Status.Publish.PublishedAt == nil || !validSHA256Digest(cache.Status.Publish.OCIDigest) {
+			result, err := r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentBlocked, "ArtifactDigestMissing", fmt.Sprintf("ModelCache %q has no completed immutable OCI publish", cache.Name), 0)
+			return cache, false, result, err
+		}
+	}
+	if gate.RequireSourceMatch && !modelExperimentSourceMatchesCache(experiment, cache) {
+		result, err := r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentBlocked, "ArtifactSourceMismatch", fmt.Sprintf("candidate source %q does not resolve to ModelCache %q", experiment.Spec.Candidate.Source, cache.Name), 0)
+		return cache, false, result, err
+	}
+	return cache, true, ctrl.Result{}, nil
+}
+
+func validSHA256Digest(value string) bool {
+	value = strings.TrimSpace(value)
+	if !strings.HasPrefix(value, "sha256:") || len(value) != len("sha256:")+64 {
+		return false
+	}
+	_, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
+	return err == nil
+}
+
+func modelExperimentSourceMatchesCache(experiment *aiv1alpha2.ModelExperiment, cache *aiv1alpha1.ModelCache) bool {
+	source := strings.TrimSpace(experiment.Spec.Candidate.Source)
+	if strings.HasPrefix(source, "pvc://") {
+		path := strings.TrimSpace(cache.Status.Path)
+		separator := strings.Index(path, ":")
+		if separator < 1 || separator == len(path)-1 {
+			return false
+		}
+		cacheSource := "pvc://" + path[:separator] + "/" + strings.TrimLeft(path[separator+1:], "/")
+		return source == cacheSource || strings.HasPrefix(source, cacheSource+"/")
+	}
+	if strings.HasPrefix(source, "oci://") || strings.HasPrefix(source, "oras://") {
+		if cache.Spec.Publish == nil || cache.Spec.Publish.OCIRef == nil || ociRepository(source) != ociRepository(*cache.Spec.Publish.OCIRef) {
+			return false
+		}
+		if experiment.Spec.ArtifactGate.RequirePublishedDigest {
+			at := strings.LastIndex(source, "@")
+			return at > 0 && cache.Status.Publish != nil && source[at+1:] == cache.Status.Publish.OCIDigest
+		}
+		return true
+	}
+	return false
+}
+
+func ociRepository(value string) string {
+	value = strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(value, "oci://"), "oras://"))
+	if at := strings.LastIndex(value, "@"); at >= 0 {
+		value = value[:at]
+	}
+	lastSlash := strings.LastIndex(value, "/")
+	if colon := strings.LastIndex(value, ":"); colon > lastSlash {
+		value = value[:colon]
+	}
+	return value
+}
+
+func modelCachePublishesOCI(cache *aiv1alpha1.ModelCache) bool {
+	if cache.Spec.Publish == nil || cache.Spec.Publish.OCIRef == nil || strings.TrimSpace(*cache.Spec.Publish.OCIRef) == "" {
+		return false
+	}
+	return slices.Contains(cache.Spec.Publish.Targets, aiv1alpha1.PublishTargetOCI)
+}
+
+func annotateArtifactGateEvidence(candidate *aiv1alpha2.Model, cache *aiv1alpha1.ModelCache) {
+	if cache == nil {
+		return
+	}
+	if candidate.Annotations == nil {
+		candidate.Annotations = map[string]string{}
+	}
+	candidate.Annotations["flexinfer.ai/artifact-cache"] = cache.Name
+	candidate.Annotations["flexinfer.ai/artifact-cache-uid"] = string(cache.UID)
+	candidate.Annotations["flexinfer.ai/artifact-cache-generation"] = strconv.FormatInt(cache.Generation, 10)
+	if cache.Status.Publish != nil && strings.TrimSpace(cache.Status.Publish.OCIDigest) != "" {
+		candidate.Annotations["flexinfer.ai/artifact-digest"] = cache.Status.Publish.OCIDigest
+	}
 }
 
 func (r *ModelExperimentReconciler) buildCandidate(experiment *aiv1alpha2.ModelExperiment) (*aiv1alpha2.Model, error) {
@@ -503,6 +637,9 @@ func validateExperiment(experiment *aiv1alpha2.ModelExperiment) error {
 	if strings.TrimSpace(experiment.Spec.Gauntlet.TemplateRef) == "" {
 		return fmt.Errorf("gauntlet.templateRef is required")
 	}
+	if experiment.Spec.ArtifactGate != nil && strings.TrimSpace(experiment.Spec.ArtifactGate.ModelCacheRef) == "" {
+		return fmt.Errorf("artifactGate.modelCacheRef is required")
+	}
 	if experiment.Spec.Timeout.Duration < 0 {
 		return fmt.Errorf("timeout must not be negative")
 	}
@@ -627,10 +764,40 @@ func modelExperimentResourceName(name, suffix string) string {
 }
 
 func (r *ModelExperimentReconciler) SetupWithManager(mgr ctrl.Manager) error {
+	if err := mgr.GetFieldIndexer().IndexField(context.Background(), &aiv1alpha2.ModelExperiment{}, modelExperimentArtifactIndex, func(object client.Object) []string {
+		experiment := object.(*aiv1alpha2.ModelExperiment)
+		if experiment.Spec.ArtifactGate == nil {
+			return nil
+		}
+		name := strings.TrimSpace(experiment.Spec.ArtifactGate.ModelCacheRef)
+		if name == "" {
+			return nil
+		}
+		return []string{name}
+	}); err != nil {
+		return fmt.Errorf("index ModelExperiment artifact gates: %w", err)
+	}
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiv1alpha2.ModelExperiment{}).
 		Owns(&aiv1alpha2.Model{}).
 		Owns(&batchv1.Job{}).
+		Watches(&aiv1alpha1.ModelCache{}, handler.EnqueueRequestsFromMapFunc(r.experimentsForModelCache)).
 		Named("modelexperiment").
 		Complete(r)
+}
+
+func (r *ModelExperimentReconciler) experimentsForModelCache(ctx context.Context, object client.Object) []ctrl.Request {
+	cache, ok := object.(*aiv1alpha1.ModelCache)
+	if !ok {
+		return nil
+	}
+	experiments := &aiv1alpha2.ModelExperimentList{}
+	if err := r.List(ctx, experiments, client.InNamespace(cache.Namespace), client.MatchingFields{modelExperimentArtifactIndex: cache.Name}); err != nil {
+		return nil
+	}
+	requests := make([]ctrl.Request, 0, len(experiments.Items))
+	for i := range experiments.Items {
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(&experiments.Items[i])})
+	}
+	return requests
 }

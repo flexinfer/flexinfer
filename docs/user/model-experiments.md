@@ -10,6 +10,38 @@
 
 This version is a verdict system, not an automatic promotion system. It never edits an existing or Flux-owned `Model`.
 
+## Artifact-gated launch
+
+Use `spec.artifactGate` when the candidate depends on a long-running
+`ModelCache` pipeline. The experiment may be applied immediately, but it does
+not create its GPU candidate until the referenced same-namespace cache is
+`Ready` and the requested evidence is present:
+
+```yaml
+spec:
+  artifactGate:
+    modelCacheRef: qwen35-35b-a3b-clean-gptq
+    requireValidation: true
+    requirePublishedDigest: true
+    requireSourceMatch: true
+```
+
+`requireValidation` requires a successful validator result with a completion
+timestamp. `requirePublishedDigest` requires a completed OCI publish and a
+valid `sha256` digest. `requireSourceMatch` prevents a ready but unrelated cache
+from opening the gate: PVC candidates must live at or below the cache's status
+path, while OCI candidates must use the published repository (and the exact
+digest when immutable publish evidence is required). The created candidate is
+annotated with the cache name, UID, generation, and published digest,
+preserving the artifact evidence used to open the gate. Waiting at the gate
+does not start the experiment timeout or claim a GPU. Cache status changes wake
+matching experiments through an indexed watch, so blocked experiments do not
+poll.
+
+Missing, failed, unvalidated, and digestless caches leave the experiment in
+`Blocked` with a specific reason and no candidate. Repairing or completing the
+cache automatically retries the gate.
+
 ## Recurring certification
 
 Set `spec.repeatAfter` to re-run a successful experiment after a cooldown. Failed
