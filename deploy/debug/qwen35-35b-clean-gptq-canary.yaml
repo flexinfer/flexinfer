@@ -1,0 +1,101 @@
+# Staged long-context canary for the GDN-preserving Qwen3.5-35B-A3B artifact.
+#
+# Do not add this file to deploy/debug/kustomization.yaml. Apply this parent CR
+# only after ModelCache/qwen35-35b-a3b-clean-gptq is Ready and the offline
+# validator reports no linear_attn qweights:
+#
+#   kubectl apply -f deploy/debug/qwen35-35b-clean-gptq-canary.yaml
+#
+# The experiment temporarily preempts the warm 5930k workhorse, runs the
+# project gauntlet, and then restores that workhorse automatically. The gaming
+# lease on cblevins-7900xtx remains untouched. Start at 64K; promote this same
+# manifest to 96K and 128K only after direct needle tests pass at each rung.
+apiVersion: ai.flexinfer/v1alpha2
+kind: ModelExperiment
+metadata:
+  name: qwen35-35b-clean-gptq-64k-graph
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/canary: qwen35-clean-workhorse
+    flexinfer.ai/runtime: vllm-0.23-rocm-gfx1100-native-w4a16
+    flexinfer.ai/artifact-policy: qwen35-35b-a3b-gdn-fp
+    flexinfer.ai/kill-test: .loom/10-research.md#update-2026-07-11-long-context-council-workhorse-on-dual-rx-7900-xtx-nodes
+spec:
+  timeout: 90m
+  candidate:
+    backend: vllm
+    image: docker.io/vllm/vllm-openai-rocm@sha256:3813e31cc3ab56f71ba83a72da77a84f3c75030e54c9c316951a99317b818ce4
+    source: pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128
+    cache:
+      # Mount the immutable shared artifact directly; avoid a second 20+ GiB
+      # copy before each bounded experiment run.
+      strategy: None
+      compilationCache:
+        enabled: true
+        hostPath: /var/lib/flexinfer/compile-cache
+        sizeLimit: 4Gi
+    gpu:
+      vendor: amd
+      count: 1
+      shared: 5930k-textgen
+      priority: 425
+      forcePromotion: true
+      vramEstimateMB: 23500
+    serverless:
+      enabled: true
+      minReplicas: 1
+      idleTimeout: 30m
+      coldStartTimeout: 60m
+    config:
+      # Force the pinned per-model runtime instead of the older persistent
+      # gfx1100 runtime bundled on the node.
+      dedicatedDeployment: true
+      quantization: gptq
+      dtype: half
+      languageModelOnly: true
+      maxModelLen: 65536
+      maxNumSeqs: 1
+      maxNumBatchedTokens: 4096
+      # Keep physical headroom for transient Triton/FLA GDN prefill workspace.
+      gpuMemoryUtilization: "0.90"
+      kvCacheDtype: fp8_e4m3
+      # Required outcome: torch.compile + piecewise graphs, never eager mode.
+      enforceEager: false
+      enablePrefixCaching: false
+      # AITER has no gfx1100 build in this image. Use native Triton/FLA GDN
+      # prefill and ROCm attention instead of falling into unsupported kernels.
+      disableAiter: true
+      rocmCustomPagedAttn: false
+      trustRemoteCode: true
+      enableToolCalling: true
+      toolCallParser: qwen3_coder
+      servedModelName: qwen35-35b-clean-gptq-64k-graph
+      disableLogStats: false
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-5930k
+    resources:
+      requests:
+        cpu: "4"
+        memory: 16Gi
+      limits:
+        cpu: "8"
+        memory: 48Gi
+    tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+        operator: Exists
+  gauntlet:
+    templateRef: model-eval-gauntlet
+    env:
+      WARMUP: "1"
+      ITERS: "2"
+      MIN_DURATION: 15s
+      BATCH_SIZE: "32"
+      COLD_START_TIMEOUT: 60m
+      GAUNTLET_API: chat
+      GAUNTLET_MIN_TPS: "5"
+      GAUNTLET_MAX_TTFT: 30s
+      GAUNTLET_MIN_TOKENS: "8"
+      GAUNTLET_PROMPT: "Use a tool-call-ready concise answer: explain why preserving Gated DeltaNet layers matters when quantizing a long-context hybrid model."
+      GAUNTLET_EXPECT: "Gated,DeltaNet,quant"
+      GAUNTLET_EXPECT_MODE: any

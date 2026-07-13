@@ -1143,6 +1143,33 @@ native MoE lifecycle. The controller wrapper injects all guards into pinned v18
 quantizer images, so the fix does not wait for an image rebuild. Focused tests
 cover these upstream boundaries.
 
+#### Clean artifact validation verdict and corrected rebuild (2026-07-13)
+
+The first completed clean-source artifact was structurally complete but failed
+the load-bearing GDN policy gate. Offline validation found five shards, 2,388
+indexed tensor entries, and quantized routed experts in all 40 layers, but it
+also found `linear_attn.in_proj_qkv`, `linear_attn.in_proj_z`, and
+`linear_attn.out_proj` qweights in all 30 GDN layers. The cause was narrower than
+the quantizer lifecycle: `dynamicExclusion: auto` correctly retained the native
+MoE defuse/refuse hooks, but it left GPTQModel's Qwen3.5-MoE module tree in full
+control, and that tree explicitly quantizes those three GDN projections.
+
+The corrected rebuild uses `dynamicExclusion: gdn`. GPTQModel's pinned 7.0.0
+definition confirms that its static Qwen3.5-MoE module tree contains separate
+`linear_attn`, shared-expert, and routed-expert entries plus
+`GateUpDownMoELifecycleHooks`; the negative `linear_attn.*` dynamic rule therefore
+preserves GDN projections without excluding the expert lifecycle. The artifact
+validator now recognizes the 40-layer/256-expert Qwen3.5-35B-A3B family and its
+shared-expert module names, so the replacement must show zero GDN qweights and
+complete fused expert qweights before serving.
+
+The staged runtime gate is a 64K `ModelExperiment` on `cblevins-5930k` with the
+pinned vLLM 0.23 ROCm image, `enforceEager: false`, FP8 KV, one sequence,
+`gpuMemoryUtilization: 0.90`, AITER disabled, and native Triton/FLA GDN plus ROCm
+attention. It temporarily preempts and automatically restores the bridge; the
+active gaming lease on `cblevins-7900xtx` is not modified. Only a passing 64K
+artifact/needle/tool gate permits the 96K and 128K ladder.
+
 ### External sources
 
 - https://huggingface.co/Qwen/Qwen3.5-35B-A3B
