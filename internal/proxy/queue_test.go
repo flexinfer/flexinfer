@@ -91,6 +91,30 @@ func TestHandleColdStartRefreshesDemandForExistingQueue(t *testing.T) {
 	assert.Equal(t, 1, activator.touches)
 }
 
+func TestHandleColdStartConsumesCanceledQueuedRequest(t *testing.T) {
+	activator := &countingActivator{}
+	queue := &RequestQueue{
+		model:   "test-model",
+		items:   make(chan *QueuedRequest, 1),
+		created: time.Now(),
+	}
+	p := &Proxy{
+		activator:    activator,
+		maxQueueSize: 1,
+		queueTimeout: time.Minute,
+	}
+	p.queues.Store("test-model", queue)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil).WithContext(ctx)
+	err := p.handleColdStart(req.Context(), httptest.NewRecorder(), req, "test-model", time.Now())
+
+	require.ErrorIs(t, err, context.Canceled)
+	queued := <-queue.items
+	assert.True(t, queued.responded.Load(), "canceled request must not be forwarded when the queue drains")
+}
+
 func TestDrainQueue(t *testing.T) {
 	p := setupTestProxy(t)
 
