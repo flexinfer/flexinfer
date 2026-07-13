@@ -102,7 +102,11 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	case <-queueCtx.Done():
 		// Distinguish an actual queue timeout from caller cancellation.
 		queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
-		if stderrors.Is(queueCtx.Err(), context.DeadlineExceeded) && qr.responded.CompareAndSwap(false, true) {
+		// Claim the item before returning so a later queue drain cannot forward a
+		// request whose client has already disconnected. The request stays in the
+		// bounded channel until the processor drains it, but drainQueue will skip it.
+		claimed := qr.responded.CompareAndSwap(false, true)
+		if stderrors.Is(queueCtx.Err(), context.DeadlineExceeded) && claimed {
 			validation.WriteColdStartTimeout(w, timeout.String())
 		}
 		if stderrors.Is(queueCtx.Err(), context.Canceled) {
