@@ -40,7 +40,6 @@ spec:
   template:
     metadata:
       annotations:
-        flexinfer.ai/chart-version: {{ $.Chart.Version | quote }}
         flexinfer.ai/prewarm-release-gate: {{ $releaseGate | quote }}
         flexinfer.ai/prewarm-images: {{ join "," $images | quote }}
       labels:
