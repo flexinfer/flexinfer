@@ -53,6 +53,7 @@ const (
 	annotationPublishAblitRef      = "flexinfer.ai/publish-abliterated-ref"
 	annotationPublishAblitDigest   = "flexinfer.ai/publish-abliterated-digest"
 	annotationPublishAblitVersion  = "flexinfer.ai/publish-abliterated-version"
+	annotationPublishStages        = "flexinfer.ai/publish-intermediate-stages"
 
 	// DefaultDownloadMemoryGB is the default memory limit for download jobs (in GiB).
 	DefaultDownloadMemoryGB = 16
