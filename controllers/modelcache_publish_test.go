@@ -1,12 +1,16 @@
 package controllers
 
 import (
+	"context"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	ctrl "sigs.k8s.io/controller-runtime"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
@@ -105,6 +109,70 @@ func TestPublishCompletedRequiresPublishedAt(t *testing.T) {
 			assert.Equal(t, tt.want, publishCompleted(tt.status))
 		})
 	}
+}
+
+func TestReconcilePublishPreservesValidationEvidence(t *testing.T) {
+	cache := newQuantizationCache("publish-validated")
+	ociRef := "registry.harbor.lan/models/test:v1"
+	cache.Spec.Publish = &aiv1alpha1.PublishSpec{
+		Targets: []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+		OCIRef:  &ociRef,
+		Validate: &aiv1alpha1.PublishValidateSpec{
+			Enabled: true,
+		},
+	}
+	validatedAt := metav1.Now()
+	cache.Status.Phase = aiv1alpha1.ModelCachePhasePublishing
+	cache.Status.Publish = &aiv1alpha1.PublishStatus{
+		Validate: &aiv1alpha1.PublishValidateStatus{
+			Ok:          true,
+			Layout:      "vllm-gptq",
+			Family:      "qwen35-35b-a3b",
+			ValidatedAt: &validatedAt,
+		},
+	}
+
+	started := metav1.NewTime(validatedAt.Add(time.Minute))
+	completed := metav1.NewTime(started.Add(time.Minute))
+	jobName := cache.Name + "-publish"
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: jobName, Namespace: cache.Namespace},
+		Status: batchv1.JobStatus{
+			Succeeded:      1,
+			StartTime:      &started,
+			CompletionTime: &completed,
+		},
+	}
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      jobName + "-pod",
+			Namespace: cache.Namespace,
+			Labels:    map[string]string{"job-name": jobName},
+		},
+		Status: corev1.PodStatus{ContainerStatuses: []corev1.ContainerStatus{{
+			Name: "publisher",
+			State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{
+				Message:    `{"status":"success","phase":"publishing","target":"oci","ociDigest":"sha256:new","pushedTags":"registry.harbor.lan/models/test:v1-sha256-new"}`,
+				FinishedAt: completed,
+			}},
+		}}},
+	}
+
+	r, cl := newQuantizationTestReconciler(t, nil, cache, job, pod)
+	result, err := r.reconcilePublish(context.Background(), cache, "cache-pvc", "/models/base/gptq")
+	require.NoError(t, err)
+	assert.Equal(t, ctrl.Result{}, result)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhaseReady, updated.Status.Phase)
+	require.NotNil(t, updated.Status.Publish)
+	assert.Equal(t, "sha256:new", updated.Status.Publish.OCIDigest)
+	require.NotNil(t, updated.Status.Publish.Validate)
+	assert.True(t, updated.Status.Publish.Validate.Ok)
+	assert.Equal(t, "vllm-gptq", updated.Status.Publish.Validate.Layout)
+	assert.Equal(t, "qwen35-35b-a3b", updated.Status.Publish.Validate.Family)
+	require.NotNil(t, updated.Status.Publish.Validate.ValidatedAt)
+	assert.WithinDuration(t, validatedAt.Time, updated.Status.Publish.Validate.ValidatedAt.Time, time.Second)
 }
 
 func TestBuildPublishJob(t *testing.T) {

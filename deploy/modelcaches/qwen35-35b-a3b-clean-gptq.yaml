@@ -57,6 +57,23 @@ spec:
       # calibration budget; keep the requested envelope explicit for provenance.
       maxSeqLen: 2048
       maxSamples: 256
+  # Ready is only safe after the GDN-preserving artifact passes the strict
+  # family/layout gate. Publish with a digest-suffixed tag so downstream
+  # prewarm and promotion can pin the immutable content rather than this RWX
+  # PVC path.
+  publish:
+    targets:
+      - oci
+    ociRef: "registry.harbor.lan/flexinfer/qwen35-35b-a3b-clean:gptq-w4-g128-gdn"
+    secretRef: "harbor-oci-creds"
+    tagPolicy: digest-suffix
+    maxMemoryGB: 8
+    timeoutSeconds: 7200
+    validate:
+      enabled: true
+      layout: vllm-gptq
+      family: qwen35-35b-a3b
+      failOnWarnings: true
   tolerations:
     - key: node.flexstack.io/gpu-shared
       operator: Equal

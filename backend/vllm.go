@@ -107,6 +107,15 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if maxBatched := spec.ConfigInt("maxNumBatchedTokens", 0); maxBatched > 0 {
 		args = append(args, "--max-num-batched-tokens", fmt.Sprintf("%d", maxBatched))
 	}
+	if spec.Config != nil {
+		if _, ok := spec.Config["enableChunkedPrefill"]; ok {
+			if spec.ConfigBool("enableChunkedPrefill", false) {
+				args = append(args, "--enable-chunked-prefill")
+			} else {
+				args = append(args, "--no-enable-chunked-prefill")
+			}
+		}
+	}
 
 	// Disable model sliding-window attention. This is useful for ROCm backends
 	// where the selected attention kernel cannot serve SWA-capable models.
@@ -152,12 +161,6 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--quantization", quant)
 	}
 
-	// Attention backend override (e.g. FLASH_ATTN, XFORMERS, ROCM_AITER_FA, CUSTOM).
-	// Experimental runtimes such as TurboQuant rely on CUSTOM to activate their plugin backend.
-	if attentionBackend := spec.ConfigString("attentionBackend", ""); attentionBackend != "" {
-		args = append(args, "--attention-backend", attentionBackend)
-	}
-
 	// Tokenizer override — required for GGUF models which lack HF tokenizer files.
 	// Points to the base HF repo (e.g., "Qwen/Qwen3.5-35B-A3B").
 	if tok := spec.ConfigString("tokenizer", ""); tok != "" {
@@ -180,6 +183,15 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	// KV cache dtype (auto, fp8_e5m2). FP8 requires MI300X+ hardware.
 	if kvDtype := spec.ConfigString("kvCacheDtype", ""); kvDtype != "" {
 		args = append(args, "--kv-cache-dtype", kvDtype)
+	}
+	if spec.Config != nil {
+		if _, ok := spec.Config["calculateKvScales"]; ok {
+			if spec.ConfigBool("calculateKvScales", false) {
+				args = append(args, "--calculate-kv-scales")
+			} else {
+				args = append(args, "--no-calculate-kv-scales")
+			}
+		}
 	}
 
 	// HF config overrides — passed through verbatim to vLLM as --hf-overrides

@@ -1,8 +1,9 @@
 # Staged long-context canary for the GDN-preserving Qwen3.5-35B-A3B artifact.
 #
 # Do not add this file to deploy/debug/kustomization.yaml. Apply this parent CR
-# only after ModelCache/qwen35-35b-a3b-clean-gptq is Ready and the offline
-# validator reports no linear_attn qweights:
+# only after ModelCache/qwen35-35b-a3b-clean-gptq is Ready and strict publish
+# validation passes. The bounded first run can mount the validated PVC path;
+# pin the published OCI digest before promotion:
 #
 #   kubectl apply -f deploy/debug/qwen35-35b-clean-gptq-canary.yaml
 #
@@ -27,8 +28,9 @@ spec:
     image: docker.io/vllm/vllm-openai-rocm@sha256:3813e31cc3ab56f71ba83a72da77a84f3c75030e54c9c316951a99317b818ce4
     source: pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn
     cache:
-      # Mount the immutable shared artifact directly; avoid a second 20+ GiB
-      # copy before each bounded experiment run.
+      # The first run mounts the validated shared artifact directly. Replace
+      # candidate.source with the published OCI digest before promotion; this
+      # RWX path is not immutable.
       strategy: None
       compilationCache:
         enabled: true
@@ -56,9 +58,14 @@ spec:
       maxModelLen: 65536
       maxNumSeqs: 1
       maxNumBatchedTokens: 4096
+      enableChunkedPrefill: true
       # Keep physical headroom for transient Triton/FLA GDN prefill workspace.
       gpuMemoryUtilization: "0.90"
       kvCacheDtype: fp8_e4m3
+      # vLLM 0.23 disables dynamic KV-scale calculation for hybrid GDN/Mamba
+      # models because an uninitialized recurrent state corrupts calibration.
+      # Keep this explicit and make FP8-vs-BF16 attention quality an A/B gate.
+      calculateKvScales: false
       # Required outcome: torch.compile + piecewise graphs, never eager mode.
       enforceEager: false
       enablePrefixCaching: false
