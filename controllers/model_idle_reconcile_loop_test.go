@@ -103,6 +103,87 @@ func TestUpdateStatusFromDeployment_IdleNoOpDoesNotRewrite(t *testing.T) {
 	}
 }
 
+// TestUpdateStatusFromDeployment_PreservesCacheConditionOwner guards against
+// two reconcile stages alternately rewriting the same Cached condition. ensureCache
+// owns the detailed reason/message (CacheCopy, CacheStage, CacheCheck, etc.);
+// deployment readiness must not replace it with the generic BackendReady state.
+// That ping-pong advances resourceVersion and re-arms the Model watch forever.
+func TestUpdateStatusFromDeployment_PreservesCacheConditionOwner(t *testing.T) {
+	s := runtime.NewScheme()
+	for _, add := range []func(*runtime.Scheme) error{
+		corev1.AddToScheme,
+		appsv1.AddToScheme,
+		aiv1alpha2.AddToScheme,
+	} {
+		if err := add(s); err != nil {
+			t.Fatalf("AddToScheme() error = %v", err)
+		}
+	}
+
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "cached-model", Namespace: "flexinfer-system", Generation: 3},
+		Spec:       aiv1alpha2.ModelSpec{Backend: "vllm", Source: "pvc://weights/model"},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhaseReady,
+			Cache: &aiv1alpha2.CacheStatus{
+				Strategy: "SharedPVC",
+				Ready:    true,
+				JobPhase: "Succeeded",
+				Message:  "artifact copied to cache PVC",
+			},
+			Conditions: []metav1.Condition{
+				{
+					Type:               aiv1alpha2.ConditionModelCached,
+					Status:             metav1.ConditionTrue,
+					Reason:             "CacheCopy",
+					Message:            "artifact copied to cache PVC",
+					ObservedGeneration: 3,
+				},
+				{
+					Type:               aiv1alpha2.ConditionModelReady,
+					Status:             metav1.ConditionTrue,
+					Reason:             aiv1alpha2.ReasonBackendReady,
+					Message:            "Backend is ready to serve requests",
+					ObservedGeneration: 3,
+				},
+			},
+		},
+	}
+	deployment := &appsv1.Deployment{
+		ObjectMeta: metav1.ObjectMeta{Name: model.Name, Namespace: model.Namespace},
+		Spec:       appsv1.DeploymentSpec{Replicas: ptr.To(int32(1))},
+		Status:     appsv1.DeploymentStatus{ReadyReplicas: 1},
+	}
+
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithStatusSubresource(&aiv1alpha2.Model{}, &appsv1.Deployment{}).
+		WithObjects(model, deployment).
+		Build()
+	r := &ModelReconciler{Client: cl, Scheme: s}
+	ctx := context.Background()
+
+	current := &aiv1alpha2.Model{}
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(model), current); err != nil {
+		t.Fatalf("get model: %v", err)
+	}
+	if err := r.updateStatusFromDeployment(ctx, current); err != nil {
+		t.Fatalf("updateStatusFromDeployment: %v", err)
+	}
+
+	updated := &aiv1alpha2.Model{}
+	if err := cl.Get(ctx, client.ObjectKeyFromObject(model), updated); err != nil {
+		t.Fatalf("get updated model: %v", err)
+	}
+	cached := modelCondition(updated.Status.Conditions, aiv1alpha2.ConditionModelCached)
+	if cached == nil {
+		t.Fatal("Cached condition missing")
+	}
+	if cached.Reason != "CacheCopy" || cached.Message != "artifact copied to cache PVC" {
+		t.Fatalf("Cached condition ownership lost: reason=%q message=%q", cached.Reason, cached.Message)
+	}
+}
+
 // TestShouldEmitVRAMPressure_Throttled verifies the per-model cooldown collapses
 // the VRAMPressure warning to one emission per window, even across many
 // reconciles, while a distinct model (different UID) is unaffected.

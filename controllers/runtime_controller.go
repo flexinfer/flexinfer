@@ -14,8 +14,11 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/predicate"
 )
 
 // RuntimeReconciler watches runtime pods and provides runtime discovery
@@ -62,6 +65,37 @@ const (
 	runtimeComponentLabel = "flexinfer-runtime"
 )
 
+// runtimeControllerPodMeaningfulChange keeps the runtime discovery controller
+// scoped to the pods it actually discovers. The previous unfiltered For(Pod)
+// watch reconciled every pod status update in the cluster, even though
+// Reconcile only logs runtime discovery state. Runtime pods still enqueue on
+// create/delete and on the IP, phase, readiness, or deletion transitions used
+// by model routing.
+var runtimeControllerPodMeaningfulChange = predicate.Funcs{
+	CreateFunc: func(e event.CreateEvent) bool {
+		return isRuntimeComponentPod(e.Object)
+	},
+	DeleteFunc: func(e event.DeleteEvent) bool {
+		return isRuntimeComponentPod(e.Object)
+	},
+	GenericFunc: func(event.GenericEvent) bool { return false },
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		oldRuntime := isRuntimeComponentPod(e.ObjectOld)
+		newRuntime := isRuntimeComponentPod(e.ObjectNew)
+		if oldRuntime != newRuntime {
+			return true
+		}
+		if !newRuntime {
+			return false
+		}
+		return runtimePodMeaningfulChange.Update(e)
+	},
+}
+
+func isRuntimeComponentPod(obj client.Object) bool {
+	return obj != nil && obj.GetLabels()["app.kubernetes.io/component"] == runtimeComponentLabel
+}
+
 // Reconcile handles runtime pod lifecycle events.
 func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	ctx, _, endSpan := observability.StartReconcileSpan(ctx, "runtime", req.Namespace, req.Name)
@@ -75,6 +109,11 @@ func (r *RuntimeReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ct
 			return ctrl.Result{}, nil
 		}
 		return ctrl.Result{}, err
+	}
+	if !isRuntimeComponentPod(pod) {
+		// A runtime label removal is intentionally admitted by the predicate so
+		// any outstanding scheduled requeue is drained without being renewed.
+		return ctrl.Result{}, nil
 	}
 
 	logger.V(1).Info("Runtime pod reconciled",
@@ -407,7 +446,7 @@ func (r *bytesReader) Close() error { return nil }
 // SetupWithManager registers the RuntimeReconciler.
 func (r *RuntimeReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&corev1.Pod{}).
+		For(&corev1.Pod{}, builder.WithPredicates(runtimeControllerPodMeaningfulChange)).
 		Named("runtime").
 		Complete(r)
 }

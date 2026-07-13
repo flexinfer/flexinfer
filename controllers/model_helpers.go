@@ -428,20 +428,19 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	}
 	model.Status.Endpoint = k8surl.ServiceURL(model.Name, model.Namespace, port, false)
 
+	// ensureCache is the sole owner of the Cached condition's detailed
+	// reason/message. Rewriting it here from CacheCopy/CacheStage/CacheCheck to a
+	// generic deployment reason makes the two reconcile stages fight over status
+	// and continuously re-arm the Model watch.
+	//
 	// If the cache is not ready, keep the model in Pending regardless of deployment replicas.
 	if model.Status.Cache != nil && !model.Status.Cache.Ready {
-		setModelCondition(model, aiv1alpha2.ConditionModelCached, false, aiv1alpha2.ReasonCacheNotReady, "Cache is not ready")
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonCacheNotReady, "Waiting for cache to be ready")
 		clearLoadingStatus(model)
 		if model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
 			model.Status.Phase = aiv1alpha2.ModelPhasePending
 		}
 		return r.statusUpdateIfChanged(ctx, model, origStatus)
-	}
-
-	// Cache is ready (or not applicable)
-	if model.Status.Cache != nil && model.Status.Cache.Ready {
-		setModelCondition(model, aiv1alpha2.ConditionModelCached, true, aiv1alpha2.ReasonBackendReady, "Cache is ready")
 	}
 
 	// Determine phase from deployment status and set conditions.

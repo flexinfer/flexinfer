@@ -119,3 +119,30 @@ func TestRuntimePodMeaningfulChange_CreateDeleteGeneric(t *testing.T) {
 	assert.False(t, runtimePodMeaningfulChange.Generic(event.GenericEvent{Object: pod}),
 		"generic events are dropped")
 }
+
+func TestRuntimeControllerPodMeaningfulChange_FiltersUnrelatedPods(t *testing.T) {
+	runtime := runtimePod(nil)
+	unrelated := runtimePod(func(p *corev1.Pod) {
+		p.Name = "ordinary-workload"
+		p.Labels = map[string]string{"app.kubernetes.io/component": "api"}
+	})
+
+	assert.True(t, runtimeControllerPodMeaningfulChange.Create(event.CreateEvent{Object: runtime}),
+		"runtime pod creation must enqueue runtime discovery")
+	assert.False(t, runtimeControllerPodMeaningfulChange.Create(event.CreateEvent{Object: unrelated}),
+		"unrelated pod creation must not enqueue the runtime controller")
+
+	statusOnly := runtimePod(func(p *corev1.Pod) {
+		p.ResourceVersion = "1001"
+		p.Status.StartTime = &metav1.Time{}
+	})
+	assert.False(t, runtimeControllerPodMeaningfulChange.Update(event.UpdateEvent{ObjectOld: runtime, ObjectNew: statusOnly}),
+		"runtime status noise must not enqueue discovery")
+
+	notReady := runtimePod(func(p *corev1.Pod) {
+		p.ResourceVersion = "1002"
+		p.Status.Conditions = []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionFalse}}
+	})
+	assert.True(t, runtimeControllerPodMeaningfulChange.Update(event.UpdateEvent{ObjectOld: runtime, ObjectNew: notReady}),
+		"runtime readiness transitions must enqueue discovery")
+}
