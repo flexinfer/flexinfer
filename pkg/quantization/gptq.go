@@ -132,7 +132,7 @@ func (b *GPTQJobBuilder) BuildJob(params JobParams) (*batchv1.Job, error) {
 
 	image := ResolveImage(ImageFormatGPTQ, params.ProfileQuantizerImage, params.GPUVendor, params.GPUArch)
 
-	outSubdir := GPTQOutputSubdir(params.ModelPath, bits, groupSize)
+	outSubdir := GPTQOutputSubdirForPolicy(params.ModelPath, bits, groupSize, dynamicExclusion)
 
 	env := b.buildEnv(params.ModelPath, outSubdir, bits, groupSize, sym, descAct, memoryGB, gpuMemFraction, dynamicExclusion, params.GPUArch, params.MemoryConfig.GPUVramMB, params.Spec.Calibration)
 	env = append(env, b.buildDenseModuleValidationEnv(params.Spec)...)
@@ -153,6 +153,19 @@ func GPTQOutputSubdir(modelPath string, bits, groupSize int) string {
 		// Version this experimental hybrid path so managed rebuilds cannot
 		// overwrite the currently serving clean hybrid artifact in-place.
 		return outSubdir + "-hybrid-v12"
+	}
+	return outSubdir
+}
+
+// GPTQOutputSubdirForPolicy keeps artifact shapes with incompatible module
+// policies in separate directories. In particular, a GDN-preserving rebuild
+// must never short-circuit against a prior all-INT4/auto .save-complete marker.
+// Keep the historical path for the default auto policy so existing manifests
+// and Ready caches remain compatible.
+func GPTQOutputSubdirForPolicy(modelPath string, bits, groupSize int, dynamicExclusion string) string {
+	outSubdir := GPTQOutputSubdir(modelPath, bits, groupSize)
+	if strings.EqualFold(strings.TrimSpace(dynamicExclusion), "gdn") {
+		return outSubdir + "-gdn"
 	}
 	return outSubdir
 }

@@ -1163,6 +1163,14 @@ validator now recognizes the 40-layer/256-expert Qwen3.5-35B-A3B family and its
 shared-expert module names, so the replacement must show zero GDN qweights and
 complete fused expert qweights before serving.
 
+The first reconcile of that spec exposed an independent cache-key bug: the
+controller reset status and created a new Job, but the Job reused the old
+`gptq-w4-g128/.save-complete` marker because the output directory encoded bits
+and group size but not the module-exclusion policy. GDN-preserving outputs now
+use `gptq-w4-g128-gdn`; default `auto` outputs keep the legacy path. This keeps
+the previous artifact available while making a policy change physically unable
+to short-circuit against an incompatible artifact.
+
 The staged runtime gate is a 64K `ModelExperiment` on `cblevins-5930k` with the
 pinned vLLM 0.23 ROCm image, `enforceEager: false`, FP8 KV, one sequence,
 `gpuMemoryUtilization: 0.90`, AITER disabled, and native Triton/FLA GDN plus ROCm

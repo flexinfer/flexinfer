@@ -892,7 +892,16 @@ func quantizedOutputPath(spec *aiv1alpha1.QuantizationSpec, basePath string) str
 		if spec.GroupSize != nil {
 			groupSize = *spec.GroupSize
 		}
-		subdir = quantization.GPTQOutputSubdir(basePath, int(bits), int(groupSize))
+		dynamicExclusion := "auto"
+		if spec.DynamicExclusion != nil {
+			dynamicExclusion = *spec.DynamicExclusion
+		}
+		subdir = quantization.GPTQOutputSubdirForPolicy(
+			basePath,
+			int(bits),
+			int(groupSize),
+			dynamicExclusion,
+		)
 	case aiv1alpha1.QuantizationFormatAWQ:
 		bits := int32(quantization.DefaultAWQBits)
 		if spec.Bits != nil {
