@@ -57,6 +57,10 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		"--port", fmt.Sprintf("%d", b.Port()),
 	}
 
+	// Fail closed when vLLM detects a runtime environment mismatch. Keep this
+	// optional because older images do not expose the BooleanOptionalAction.
+	args = appendVLLMBooleanOptionalArg(args, spec, "failOnEnvironValidation", "--fail-on-environ-validation", "--no-fail-on-environ-validation")
+
 	// Model path
 	if spec.ModelPath != "" {
 		args = append(args, "--model", spec.ModelPath)
@@ -84,6 +88,9 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if attentionBackend := resolveVLLMAttentionBackend(spec); attentionBackend != "" {
 		args = append(args, "--attention-backend", attentionBackend)
 	}
+	if gdnBackend := spec.ConfigString("gdnPrefillBackend", ""); gdnBackend != "" {
+		args = append(args, "--gdn-prefill-backend", gdnBackend)
+	}
 
 	// Trust remote code
 	if spec.ConfigBool("trustRemoteCode", false) {
@@ -107,15 +114,17 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if maxBatched := spec.ConfigInt("maxNumBatchedTokens", 0); maxBatched > 0 {
 		args = append(args, "--max-num-batched-tokens", fmt.Sprintf("%d", maxBatched))
 	}
-	if spec.Config != nil {
-		if _, ok := spec.Config["enableChunkedPrefill"]; ok {
-			if spec.ConfigBool("enableChunkedPrefill", false) {
-				args = append(args, "--enable-chunked-prefill")
-			} else {
-				args = append(args, "--no-enable-chunked-prefill")
-			}
-		}
+	args = appendVLLMBooleanOptionalArg(args, spec, "enableChunkedPrefill", "--enable-chunked-prefill", "--no-enable-chunked-prefill")
+	if maxPartial := spec.ConfigInt("maxNumPartialPrefills", 0); maxPartial > 0 {
+		args = append(args, "--max-num-partial-prefills", strconv.Itoa(maxPartial))
 	}
+	if maxLongPartial := spec.ConfigInt("maxLongPartialPrefills", 0); maxLongPartial > 0 {
+		args = append(args, "--max-long-partial-prefills", strconv.Itoa(maxLongPartial))
+	}
+	if longThreshold := spec.ConfigInt("longPrefillTokenThreshold", 0); longThreshold > 0 {
+		args = append(args, "--long-prefill-token-threshold", strconv.Itoa(longThreshold))
+	}
+	args = appendVLLMBooleanOptionalArg(args, spec, "schedulerReserveFullISL", "--scheduler-reserve-full-isl", "--no-scheduler-reserve-full-isl")
 
 	// Disable model sliding-window attention. This is useful for ROCm backends
 	// where the selected attention kernel cannot serve SWA-capable models.
@@ -139,6 +148,7 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if compilation := configValueAsArg(spec, "compilationConfig"); compilation != "" {
 		args = append(args, "--compilation-config", compilation)
 	}
+	args = appendVLLMBooleanOptionalArg(args, spec, "cudagraphMetrics", "--cudagraph-metrics", "--no-cudagraph-metrics")
 
 	// CPU weight offload — moves part of model weights to CPU-pinned memory.
 	// Required when model weights exceed single-GPU VRAM (e.g. 27B GPTQ on 24 GB).
@@ -184,14 +194,10 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if kvDtype := spec.ConfigString("kvCacheDtype", ""); kvDtype != "" {
 		args = append(args, "--kv-cache-dtype", kvDtype)
 	}
-	if spec.Config != nil {
-		if _, ok := spec.Config["calculateKvScales"]; ok {
-			if spec.ConfigBool("calculateKvScales", false) {
-				args = append(args, "--calculate-kv-scales")
-			} else {
-				args = append(args, "--no-calculate-kv-scales")
-			}
-		}
+	args = appendVLLMBooleanOptionalArg(args, spec, "calculateKvScales", "--calculate-kv-scales", "--no-calculate-kv-scales")
+	args = appendVLLMBooleanOptionalArg(args, spec, "kvCacheMetrics", "--kv-cache-metrics", "--no-kv-cache-metrics")
+	if sample := configValueAsArg(spec, "kvCacheMetricsSample"); sample != "" {
+		args = append(args, "--kv-cache-metrics-sample", sample)
 	}
 
 	// HF config overrides — passed through verbatim to vLLM as --hf-overrides
@@ -257,6 +263,19 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	}
 
 	return args
+}
+
+func appendVLLMBooleanOptionalArg(args []string, spec *ModelSpec, key, enabledArg, disabledArg string) []string {
+	if spec == nil || spec.Config == nil {
+		return args
+	}
+	if _, ok := spec.Config[key]; !ok {
+		return args
+	}
+	if spec.ConfigBool(key, false) {
+		return append(args, enabledArg)
+	}
+	return append(args, disabledArg)
 }
 
 func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {

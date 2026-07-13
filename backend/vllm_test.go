@@ -203,6 +203,89 @@ func TestVLLMBackendArgs_CompilationControls(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_ServingEfficiencyControls(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"failOnEnvironValidation":   true,
+			"gdnPrefillBackend":         "triton",
+			"maxNumPartialPrefills":     2,
+			"maxLongPartialPrefills":    1,
+			"longPrefillTokenThreshold": 4096,
+			"schedulerReserveFullISL":   true,
+			"cudagraphMetrics":          true,
+			"kvCacheMetrics":            true,
+			"kvCacheMetricsSample":      "0.25",
+		},
+	}
+
+	args := b.Args(spec)
+	wantValues := map[string]string{
+		"--gdn-prefill-backend":          "triton",
+		"--max-num-partial-prefills":     "2",
+		"--max-long-partial-prefills":    "1",
+		"--long-prefill-token-threshold": "4096",
+		"--kv-cache-metrics-sample":      "0.25",
+	}
+	for flag, want := range wantValues {
+		for i := 0; i < len(args)-1; i++ {
+			if args[i] == flag && args[i+1] == want {
+				delete(wantValues, flag)
+				break
+			}
+		}
+	}
+	for flag, want := range wantValues {
+		t.Errorf("expected %s=%s in %v", flag, want, args)
+	}
+	for _, flag := range []string{
+		"--fail-on-environ-validation",
+		"--scheduler-reserve-full-isl",
+		"--cudagraph-metrics",
+		"--kv-cache-metrics",
+	} {
+		if !containsVLLMArg(args, flag) {
+			t.Errorf("expected %s in %v", flag, args)
+		}
+	}
+}
+
+func TestVLLMBackendArgs_ServingEfficiencyBooleanOverrides(t *testing.T) {
+	b := &VLLMBackend{}
+
+	args := b.Args(&ModelSpec{Model: "test-model", Config: map[string]any{
+		"failOnEnvironValidation": false,
+		"schedulerReserveFullISL": false,
+		"cudagraphMetrics":        false,
+		"kvCacheMetrics":          false,
+	}})
+
+	for _, flag := range []string{
+		"--no-fail-on-environ-validation",
+		"--no-scheduler-reserve-full-isl",
+		"--no-cudagraph-metrics",
+		"--no-kv-cache-metrics",
+	} {
+		if !containsVLLMArg(args, flag) {
+			t.Errorf("expected %s in %v", flag, args)
+		}
+	}
+
+	unsetArgs := b.Args(&ModelSpec{Model: "test-model", Config: map[string]any{}})
+	for _, flag := range []string{
+		"--fail-on-environ-validation", "--no-fail-on-environ-validation",
+		"--scheduler-reserve-full-isl", "--no-scheduler-reserve-full-isl",
+		"--cudagraph-metrics", "--no-cudagraph-metrics",
+		"--kv-cache-metrics", "--no-kv-cache-metrics",
+	} {
+		if containsVLLMArg(unsetArgs, flag) {
+			t.Errorf("unset config must not emit %s: %v", flag, unsetArgs)
+		}
+	}
+}
+
 func TestVLLMBackendArgs_AttentionBackend(t *testing.T) {
 	b := &VLLMBackend{}
 
