@@ -18,8 +18,6 @@ spec:
       app: flexinfer-proxy
   template:
     metadata:
-      annotations:
-        flexinfer.ai/chart-version: {{ .Chart.Version | quote }}
       labels:
         {{- include "flexinfer.selectorLabels" . | nindent 8 }}
         app: flexinfer-proxy

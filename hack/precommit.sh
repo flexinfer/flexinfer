@@ -100,7 +100,12 @@ run_helm_lint_if_available() {
 
   warn "running helm lint/template"
   helm lint charts/flexinfer
-  helm template flexinfer charts/flexinfer --namespace flexinfer-system >/dev/null
+  local rendered
+  rendered="$(helm template flexinfer charts/flexinfer --namespace flexinfer-system)"
+  if echo "$rendered" | grep -q 'flexinfer.ai/chart-version'; then
+    echo "chart version must not be embedded in pod templates; it causes fleet-wide rollouts on metadata-only chart upgrades" >&2
+    return 1
+  fi
 }
 
 mode="${1:-}"

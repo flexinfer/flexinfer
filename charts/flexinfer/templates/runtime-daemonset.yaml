@@ -22,8 +22,6 @@ spec:
       maxUnavailable: 1
   template:
     metadata:
-      annotations:
-        flexinfer.ai/chart-version: {{ $.Chart.Version | quote }}
       labels:
         {{- include "flexinfer.selectorLabels" $ | nindent 8 }}
         app.kubernetes.io/component: flexinfer-runtime

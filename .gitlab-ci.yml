@@ -180,7 +180,12 @@ helm:
   needs: []
   script:
     - helm lint charts/flexinfer
-    - helm template flexinfer charts/flexinfer --namespace flexinfer-system >/dev/null
+    - |
+      rendered="$(helm template flexinfer charts/flexinfer --namespace flexinfer-system)"
+      if printf '%s\n' "$rendered" | grep -q 'flexinfer.ai/chart-version'; then
+        echo "chart version must not be embedded in pod templates; it causes fleet-wide rollouts on metadata-only chart upgrades" >&2
+        exit 1
+      fi
     - >-
       helm template flexinfer charts/flexinfer --namespace flexinfer-system
       --set imagePrewarm.enabled=true
