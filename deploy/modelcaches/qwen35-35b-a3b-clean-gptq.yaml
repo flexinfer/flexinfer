@@ -17,6 +17,10 @@ kind: ModelCache
 metadata:
   name: qwen35-35b-a3b-clean-gptq
   namespace: flexinfer-system
+  annotations:
+    # This cache only needs the validated final GPTQ artifact. Avoid an
+    # implicit 72 GB BF16 source mirror before the active quantization phase.
+    flexinfer.ai/publish-intermediate-stages: "false"
 spec:
   source: Qwen/Qwen3.5-35B-A3B
   storageStrategy: SharedPVC

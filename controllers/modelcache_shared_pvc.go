@@ -398,10 +398,20 @@ func (r *ModelCacheReconciler) reconcileSharedPVC(ctx context.Context, modelCach
 // defense-in-depth against race conditions even if called out of order.
 func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, modelCache *aiv1alpha1.ModelCache, pvcName, modelPath string) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
+	intermediatePublish := intermediateStagePublishEnabled(modelCache)
+	if !intermediatePublish {
+		deleted, err := r.cleanupDisabledStagePublishJobs(ctx, modelCache)
+		if err != nil {
+			return ctrl.Result{}, err
+		}
+		if deleted {
+			return ctrl.Result{RequeueAfter: requeueShort}, nil
+		}
+	}
 
 	// Publish a source mirror before any destructive downstream phase mutates
 	// the downloaded model tree.
-	if hasOCIPublishTarget(modelCache.Spec.Publish) {
+	if intermediatePublish && hasOCIPublishTarget(modelCache.Spec.Publish) {
 		if !stagePublishUpToDate(modelCache, publishStageSource, stagePublishDesiredRef(modelCache.Spec.Publish, publishStageSource), stagePublishDesiredVersion(modelCache, publishStageSource)) {
 			modelCache.Status.CurrentPhase = stagePublishCurrentPhase(publishStageSource)
 			return r.reconcileStagePublish(ctx, modelCache, pvcName, modelPath, publishStageSource)
@@ -420,7 +430,7 @@ func (r *ModelCacheReconciler) reconcileDownstreamPhases(ctx context.Context, mo
 	}
 
 	// Publish an abliterated-but-unquantized artifact before finetune or quantization.
-	if modelCache.Spec.Abliteration != nil && hasOCIPublishTarget(modelCache.Spec.Publish) {
+	if intermediatePublish && modelCache.Spec.Abliteration != nil && hasOCIPublishTarget(modelCache.Spec.Publish) {
 		if !stagePublishUpToDate(modelCache, publishStageAbliterated, stagePublishDesiredRef(modelCache.Spec.Publish, publishStageAbliterated), stagePublishDesiredVersion(modelCache, publishStageAbliterated)) {
 			modelCache.Status.CurrentPhase = stagePublishCurrentPhase(publishStageAbliterated)
 			return r.reconcileStagePublish(ctx, modelCache, pvcName, modelPath, publishStageAbliterated)

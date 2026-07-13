@@ -8,8 +8,10 @@ import (
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -118,6 +120,46 @@ func stagePublishJobName(cacheName string, stage publishStage) string {
 
 func stagePublishCurrentPhase(stage publishStage) string {
 	return "publish-" + string(stage)
+}
+
+func intermediateStagePublishEnabled(mc *aiv1alpha1.ModelCache) bool {
+	if mc == nil || mc.Annotations == nil {
+		return true
+	}
+	return !strings.EqualFold(strings.TrimSpace(mc.Annotations[annotationPublishStages]), "false")
+}
+
+// cleanupDisabledStagePublishJobs enforces the parent ModelCache annotation by
+// removing controller-owned intermediate publisher jobs. Operators should
+// never need to delete those child jobs directly.
+func (r *ModelCacheReconciler) cleanupDisabledStagePublishJobs(
+	ctx context.Context,
+	modelCache *aiv1alpha1.ModelCache,
+) (bool, error) {
+	deleted := false
+	for _, stage := range []publishStage{publishStageSource, publishStageAbliterated} {
+		job := &batchv1.Job{}
+		err := r.Get(ctx, types.NamespacedName{
+			Name:      stagePublishJobName(modelCache.Name, stage),
+			Namespace: modelCache.Namespace,
+		}, job)
+		if errors.IsNotFound(err) {
+			continue
+		}
+		if err != nil {
+			return false, err
+		}
+		if !metav1.IsControlledBy(job, modelCache) {
+			continue
+		}
+		if err := r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !errors.IsNotFound(err) {
+			return false, err
+		}
+		deleted = true
+		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "StagePublishDisabled",
+			fmt.Sprintf("removed disabled %s artifact publish job", stage))
+	}
+	return deleted, nil
 }
 
 func stagePublishUpToDate(mc *aiv1alpha1.ModelCache, stage publishStage, desiredRef, desiredVersion string) bool {

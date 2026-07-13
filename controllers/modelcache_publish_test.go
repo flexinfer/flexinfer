@@ -9,8 +9,10 @@ import (
 	"github.com/stretchr/testify/require"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
@@ -369,6 +371,53 @@ func TestStagePublishUpToDate(t *testing.T) {
 	assert.True(t, stagePublishUpToDate(cache, publishStageSource, sourceRef, sourceVersion))
 	assert.False(t, stagePublishUpToDate(cache, publishStageSource, sourceRef, "other-version"))
 	assert.False(t, stagePublishUpToDate(cache, publishStageSource, "registry.harbor.lan/models/test:v2-source", sourceVersion))
+}
+
+func TestIntermediateStagePublishEnabled(t *testing.T) {
+	tests := []struct {
+		name        string
+		annotations map[string]string
+		want        bool
+	}{
+		{name: "default enabled", want: true},
+		{name: "explicit enabled", annotations: map[string]string{annotationPublishStages: "true"}, want: true},
+		{name: "explicit disabled", annotations: map[string]string{annotationPublishStages: "false"}, want: false},
+		{name: "disabled is case insensitive", annotations: map[string]string{annotationPublishStages: " FALSE "}, want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cache := &aiv1alpha1.ModelCache{ObjectMeta: metav1.ObjectMeta{Annotations: tt.annotations}}
+			assert.Equal(t, tt.want, intermediateStagePublishEnabled(cache))
+		})
+	}
+}
+
+func TestCleanupDisabledStagePublishJobsDeletesOnlyOwnedJobs(t *testing.T) {
+	cache := newQuantizationCache("publish-stage-disabled")
+	cache.UID = "cache-uid"
+	cache.Annotations = map[string]string{annotationPublishStages: "false"}
+	owner := *metav1.NewControllerRef(cache, aiv1alpha1.GroupVersion.WithKind("ModelCache"))
+
+	owned := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name:            stagePublishJobName(cache.Name, publishStageSource),
+		Namespace:       cache.Namespace,
+		OwnerReferences: []metav1.OwnerReference{owner},
+	}}
+	unowned := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name:      stagePublishJobName(cache.Name, publishStageAbliterated),
+		Namespace: cache.Namespace,
+	}}
+	r, cl := newQuantizationTestReconciler(t, nil, cache, owned, unowned)
+
+	deleted, err := r.cleanupDisabledStagePublishJobs(context.Background(), cache)
+	require.NoError(t, err)
+	assert.True(t, deleted)
+
+	err = cl.Get(context.Background(), client.ObjectKeyFromObject(owned), &batchv1.Job{})
+	assert.True(t, apierrors.IsNotFound(err))
+	err = cl.Get(context.Background(), client.ObjectKeyFromObject(unowned), &batchv1.Job{})
+	require.NoError(t, err)
 }
 
 func TestStagePublishDesiredVersion(t *testing.T) {
