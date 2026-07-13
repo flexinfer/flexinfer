@@ -355,6 +355,14 @@ func TestQuantizedOutputDir(t *testing.T) {
 			want: "gptq-w3-g256",
 		},
 		{
+			name: "GPTQ GDN policy uses isolated output",
+			spec: &aiv1alpha2.QuantizationSpec{
+				Format:           aiv1alpha2.QuantizationFormatGPTQ,
+				DynamicExclusion: stringPtr("gdn"),
+			},
+			want: "gptq-w4-g128-gdn",
+		},
+		{
 			name: "COMPRESSED_TENSORS defaults",
 			spec: &aiv1alpha2.QuantizationSpec{
 				Format: aiv1alpha2.QuantizationFormatCompressedTensors,

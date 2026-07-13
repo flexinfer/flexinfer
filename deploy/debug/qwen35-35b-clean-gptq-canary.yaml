@@ -25,7 +25,7 @@ spec:
   candidate:
     backend: vllm
     image: docker.io/vllm/vllm-openai-rocm@sha256:3813e31cc3ab56f71ba83a72da77a84f3c75030e54c9c316951a99317b818ce4
-    source: pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128
+    source: pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn
     cache:
       # Mount the immutable shared artifact directly; avoid a second 20+ GiB
       # copy before each bounded experiment run.

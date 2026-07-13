@@ -43,6 +43,8 @@ spec:
     # shape previously correlated with recurrent-state/logit collapse. Use the
     # explicit GDN policy: GPTQModel still quantizes routed/shared experts and
     # full-attention projections, while every linear_attn module remains BF16.
+    # The controller isolates this shape under gptq-w4-g128-gdn so the rebuild
+    # cannot reuse the rejected auto-policy artifact's .save-complete marker.
     dynamicExclusion: gdn
     useGPU: true
     maxMemoryGB: 102

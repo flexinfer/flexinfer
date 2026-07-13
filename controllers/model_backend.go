@@ -214,7 +214,13 @@ func quantizedOutputDir(spec *aiv1alpha2.QuantizationSpec) string {
 		if spec.GroupSize != nil {
 			groupSize = *spec.GroupSize
 		}
-		return fmt.Sprintf("gptq-w%d-g%d", bits, groupSize)
+		dynamicExclusion := "auto"
+		if spec.DynamicExclusion != nil {
+			dynamicExclusion = *spec.DynamicExclusion
+		}
+		return quantization.GPTQOutputSubdirForPolicy(
+			"", int(bits), int(groupSize), dynamicExclusion,
+		)
 	case aiv1alpha2.QuantizationFormatCompressedTensors:
 		bits := int32(quantization.DefaultCompressedTensorsBits)
 		if spec.Bits != nil {

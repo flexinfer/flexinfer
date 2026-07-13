@@ -593,4 +593,47 @@ func TestGPTQJobBuilder_BuildJob_Gemma4MoEHybridOutput(t *testing.T) {
 	t.Fatal("missing OUT_DIR env var")
 }
 
+func TestGPTQJobBuilder_BuildJob_GDNPolicyUsesDistinctOutput(t *testing.T) {
+	builder := &GPTQJobBuilder{}
+	dynamicExclusion := "gdn"
+	params := JobParams{
+		Name:      "qwen35-35b-a3b-clean-gptq",
+		Namespace: "default",
+		PVCName:   "llm-models-nfs",
+		ModelPath: "qwen35-35b-a3b-clean",
+		Spec: &aiv1alpha2.QuantizationSpec{
+			Format:           aiv1alpha2.QuantizationFormatGPTQ,
+			UseGPU:           true,
+			DynamicExclusion: &dynamicExclusion,
+		},
+		GPUVendor: "amd",
+		GPUArch:   "gfx906",
+	}
+
+	job, err := builder.BuildJob(params)
+	if err != nil {
+		t.Fatalf("BuildJob error: %v", err)
+	}
+
+	for _, env := range job.Spec.Template.Spec.Containers[0].Env {
+		if env.Name == "OUT_DIR" {
+			want := "/cache/qwen35-35b-a3b-clean/gptq-w4-g128-gdn"
+			if env.Value != want {
+				t.Fatalf("OUT_DIR = %q, want %q", env.Value, want)
+			}
+			return
+		}
+	}
+	t.Fatal("missing OUT_DIR env var")
+}
+
+func TestGPTQOutputSubdirForPolicyPreservesLegacyAutoPath(t *testing.T) {
+	if got := GPTQOutputSubdirForPolicy("qwen35", 4, 128, "auto"); got != "gptq-w4-g128" {
+		t.Fatalf("auto output = %q, want legacy path", got)
+	}
+	if got := GPTQOutputSubdirForPolicy("qwen35", 4, 128, "gdn"); got != "gptq-w4-g128-gdn" {
+		t.Fatalf("gdn output = %q, want policy-isolated path", got)
+	}
+}
+
 func stringPtrGPTQ(v string) *string { return &v }
