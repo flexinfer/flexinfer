@@ -275,12 +275,19 @@ Use a per-phase `quantization.nodeSelector` when quantization needs a different 
 Watch both the Kubernetes Job and the ModelCache status. The Job tells you whether the pod is active, failed, or complete; the ModelCache status carries FlexInfer's phase and progress detail.
 
 ```bash
-kubectl get modelcache my-model-gptq -n flexinfer-system -o jsonpath='{.status.currentPhase}{"\n"}{.status.quantization.progressDetail}{"\n"}'
+kubectl get modelcache my-model-gptq -n flexinfer-system -o jsonpath='{.status.currentPhase}{"\n"}{.status.quantization.progress}{"% "}{.status.quantization.progressDetail}{"\nsource="}{.status.quantization.progressSource}{" lastProgressAt="}{.status.quantization.lastProgressAt}{"\n"}'
 kubectl get jobs -n flexinfer-system | grep my-model-gptq
 kubectl logs -n flexinfer-system job/my-model-gptq-quantize -c quantizer -f
 ```
 
-During an active job, `status.currentPhase` is `quantization`, `status.quantization.progress` is a best-effort percentage capped below 100 until completion, and `status.quantization.progressDetail` shows elapsed time or the latest completed layer when the controller can read it from pod logs.
+During an active job, `status.currentPhase` is `quantization`. Newer quantizer
+images emit structured work-unit progress; the controller exposes it through
+`status.quantization.progress`, `progressDetail`, `progressSource: telemetry`,
+and `lastProgressAt`. The last trustworthy telemetry value is preserved if a
+later pod-log read fails, so progress does not move backwards. Older images
+without structured events use a bounded timeout ratio and report
+`progressSource: elapsed-estimate`; that fallback is scheduling time consumed,
+not measured work completed.
 
 After success, `status.quantization` records the format, quantization type, original and compressed size, compression ratio, start/completion time, and any calibration parameters used. This status survives quantizer image updates while the ModelCache is Ready; a GPUProfile image drift only restarts jobs that are still inside the early image-drift grace window.
 

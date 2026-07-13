@@ -258,9 +258,45 @@ func TestReconcileQuantizationActiveJobUpdatesProgress(t *testing.T) {
 	assert.Greater(t, *updated.Status.Quantization.Progress, int32(0))
 	assert.LessOrEqual(t, *updated.Status.Quantization.Progress, int32(99))
 	assert.Contains(t, updated.Status.Quantization.ProgressDetail, "elapsed")
+	assert.Equal(t, quantizationProgressSourceEstimate, updated.Status.Quantization.ProgressSource)
+	assert.Nil(t, updated.Status.Quantization.LastProgressAt)
 	require.NotNil(t, updated.Status.Quantization.StartedAt)
 	assert.Equal(t, started.Unix(), updated.Status.Quantization.StartedAt.Unix())
 	assert.Empty(t, updated.Status.Quantization.FailureMessage)
+}
+
+func TestReconcileQuantizationActiveJobPrefersStructuredProgress(t *testing.T) {
+	started := metav1.NewTime(time.Now().Add(-5 * time.Hour))
+	cache := newQuantizationCache("quant-telemetry")
+	cache.Spec.Quantization.TimeoutSeconds = int64Ptr(86400)
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "quant-telemetry-quantize", Namespace: "default"},
+		Status:     batchv1.JobStatus{Active: 1, StartTime: &started},
+	}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{
+		Name: "quant-telemetry-pod", Namespace: "default", Labels: map[string]string{"job-name": job.Name},
+	}}
+	kubeClient := newLogClient(t, func(w http.ResponseWriter, request *http.Request) {
+		assert.Equal(t, "/api/v1/namespaces/default/pods/quant-telemetry-pod/log", request.URL.Path)
+		assert.Equal(t, "quantizer", request.URL.Query().Get("container"))
+		assert.Equal(t, "2000", request.URL.Query().Get("tailLines"))
+		_, err := fmt.Fprintln(w, `{"event":"progress","ts":"2026-07-13T19:45:10Z","phase":"quantizing","percent":42.0,"detail":"layer 17 subset 1/2 via name"}`)
+		require.NoError(t, err)
+	})
+	r, cl := newQuantizationTestReconciler(t, kubeClient, cache, job, pod)
+
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueLong, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	require.NotNil(t, updated.Status.Quantization)
+	require.NotNil(t, updated.Status.Quantization.Progress)
+	assert.Equal(t, int32(42), *updated.Status.Quantization.Progress)
+	assert.Equal(t, "layer 17 subset 1/2 via name", updated.Status.Quantization.ProgressDetail)
+	assert.Equal(t, quantizationProgressSourceTelemetry, updated.Status.Quantization.ProgressSource)
+	require.NotNil(t, updated.Status.Quantization.LastProgressAt)
+	assert.Equal(t, time.Date(2026, 7, 13, 19, 45, 10, 0, time.UTC).Unix(), updated.Status.Quantization.LastProgressAt.Unix())
 }
 
 func TestReconcileQuantizationSucceededMarksReadyAndCapturesMetadata(t *testing.T) {

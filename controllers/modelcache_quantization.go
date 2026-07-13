@@ -24,6 +24,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -45,6 +46,11 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/gpu"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 	"github.com/flexinfer/flexinfer/pkg/quantization"
+)
+
+const (
+	quantizationProgressSourceTelemetry = "telemetry"
+	quantizationProgressSourceEstimate  = "elapsed-estimate"
 )
 
 // reconcileQuantization handles the quantization phase of the ModelCache lifecycle.
@@ -479,34 +485,34 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		r.Recorder.Event(modelCache, corev1.EventTypeNormal, "QuantizationProgress",
 			fmt.Sprintf("Quantization in progress (elapsed %s)", elapsed))
 
-		// Pull the latest "completed layer N" telemetry out of the pod log so
-		// dashboards and alerts can distinguish real per-layer progress from
-		// elapsed-time progress. This is what drives the stall alert (and
-		// lets us tell "we're at 80% time but layer 2/59" apart from "we're
-		// at 80% time and layer 50/59").
-		progressDetail := fmt.Sprintf("elapsed %s", elapsed)
-		if layerIdx := r.readLatestQuantizationLayer(ctx, modelCache.Namespace, quantJob.Name); layerIdx >= 0 {
-			metrics.QuantizationLayerIndex.WithLabelValues(modelCache.Name, modelCache.Namespace).Set(float64(layerIdx))
-			progressDetail = fmt.Sprintf("elapsed %s, layer %d completed", elapsed, layerIdx)
+		// Read the structured work-unit telemetry already emitted by the
+		// quantizer. One log request supplies both the latest progress event and
+		// the highest completed-layer metric; noisy TQDM output is ignored.
+		telemetry := r.readLatestQuantizationTelemetry(ctx, modelCache.Namespace, quantJob.Name)
+		if telemetry.CompletedLayer >= 0 {
+			metrics.QuantizationLayerIndex.WithLabelValues(modelCache.Name, modelCache.Namespace).Set(float64(telemetry.CompletedLayer))
 		}
 
-		// Update time-based progress estimate.
+		// Structured work progress is authoritative. The timeout ratio remains a
+		// fallback for older images that do not emit telemetry. Once trustworthy
+		// telemetry has been observed, preserve it across transient log failures
+		// instead of regressing to the elapsed-time estimate.
 		deadline := effectiveQuantizationDeadline(modelCache.Spec.Quantization)
 		if deadline > 0 {
-			pct := int32(float64(elapsed.Seconds()) / float64(deadline) * 100)
-			if pct > 99 {
-				pct = 99 // Cap at 99% until completion is confirmed
-			}
 			if modelCache.Status.Quantization == nil {
 				modelCache.Status.Quantization = &aiv1alpha1.QuantizationStatus{}
 			}
+			quantStatus := modelCache.Status.Quantization
+			pct, detail, source, lastProgressAt := quantizationProgressStatus(elapsed, deadline, telemetry.Progress, quantStatus)
 			modelCache.Status.Phase = aiv1alpha1.ModelCachePhaseQuantizing
 			modelCache.Status.CurrentPhase = "quantization"
 			modelCache.Status.Publish = nil
-			modelCache.Status.Quantization.FailureMessage = ""
-			modelCache.Status.Quantization.Progress = &pct
-			modelCache.Status.Quantization.ProgressDetail = progressDetail
-			modelCache.Status.Quantization.StartedAt = quantJob.Status.StartTime
+			quantStatus.FailureMessage = ""
+			quantStatus.Progress = &pct
+			quantStatus.ProgressDetail = detail
+			quantStatus.ProgressSource = source
+			quantStatus.LastProgressAt = lastProgressAt
+			quantStatus.StartedAt = quantJob.Status.StartTime
 			if err := r.Status().Update(ctx, modelCache); err != nil {
 				log.Error(err, "Failed to update quantization progress")
 			}
@@ -1008,9 +1014,27 @@ func (r *ModelCacheReconciler) resolveCurrentQuantizerImage(ctx context.Context,
 // reads "layer 34 of 59" consistently with what a user sees in the log.
 var completedLayerPattern = regexp.MustCompile(`completed layer (\d+)`)
 
-// readLatestQuantizationLayer tails the quantize pod's log and returns the
-// highest `completed layer N` value it finds, or -1 if none has been
-// emitted yet (job is still in model-load / calibration / first layer).
+type quantizationProgressEvent struct {
+	Percent int32
+	Detail  string
+	At      metav1.Time
+}
+
+type quantizationLogTelemetry struct {
+	Progress       *quantizationProgressEvent
+	CompletedLayer int
+}
+
+type quantizationProgressPayload struct {
+	Event   string   `json:"event"`
+	TS      string   `json:"ts"`
+	Phase   string   `json:"phase"`
+	Percent *float64 `json:"percent"`
+	Detail  string   `json:"detail"`
+}
+
+// readLatestQuantizationTelemetry tails the quantize pod's log and returns the
+// newest valid structured progress event plus the highest completed layer.
 //
 // One Kubelet logs call per reconcile (every requeueLong ≈ 30 s). The tail
 // window needs enough headroom that GPTQModel's per-forward-pass "Forward
@@ -1018,17 +1042,17 @@ var completedLayerPattern = regexp.MustCompile(`completed layer (\d+)`)
 // don't push every completion event out of the window — empirically ~1
 // completion per 140 noise lines, so 2000 covers ~14 layers even under
 // the chattiest segments. We scan oldest→newest and always report the max.
-func (r *ModelCacheReconciler) readLatestQuantizationLayer(ctx context.Context, namespace, jobName string) int {
+func (r *ModelCacheReconciler) readLatestQuantizationTelemetry(ctx context.Context, namespace, jobName string) quantizationLogTelemetry {
+	result := quantizationLogTelemetry{CompletedLayer: -1}
 	if r.KubeClient == nil {
-		return -1
+		return result
 	}
 
 	podList := &corev1.PodList{}
 	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
-		return -1
+		return result
 	}
 
-	best := -1
 	for _, pod := range podList.Items {
 		req := r.KubeClient.CoreV1().Pods(namespace).GetLogs(pod.Name, &corev1.PodLogOptions{
 			Container: "quantizer",
@@ -1038,35 +1062,89 @@ func (r *ModelCacheReconciler) readLatestQuantizationLayer(ctx context.Context, 
 		if err != nil {
 			continue
 		}
-		if layer := scanLatestQuantizationLayer(stream); layer > best {
-			best = layer
+		podTelemetry := scanQuantizationTelemetry(stream)
+		if podTelemetry.CompletedLayer > result.CompletedLayer {
+			result.CompletedLayer = podTelemetry.CompletedLayer
+		}
+		if podTelemetry.Progress != nil && (result.Progress == nil || podTelemetry.Progress.At.After(result.Progress.At.Time)) {
+			result.Progress = podTelemetry.Progress
 		}
 		_ = stream.Close()
 	}
-	return best
+	return result
 }
 
-// scanLatestQuantizationLayer returns the highest `completed layer N`
-// value found in the given log stream, or -1 if none exists. Split from
-// the pod-fetch path to make the parsing testable without a kubeClient.
-func scanLatestQuantizationLayer(r io.Reader) int {
+// scanQuantizationTelemetry ignores non-JSON progress noise, accepts carriage-
+// return TQDM redraws, and selects progress by event timestamp rather than
+// stream order. CompletedLayer remains a max so older replayed events cannot
+// move that metric backwards.
+func scanQuantizationTelemetry(r io.Reader) quantizationLogTelemetry {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
-	best := -1
+	result := quantizationLogTelemetry{CompletedLayer: -1}
 	for scanner.Scan() {
-		line := scanner.Text()
-		// Fast path: the detail field contains `completed layer N`. Grab the
-		// match directly rather than JSON-parsing every log line — GPTQModel's
-		// TQDM output is interleaved into the same stream and parses as
-		// non-JSON.
-		match := completedLayerPattern.FindStringSubmatch(line)
-		if match == nil {
-			continue
-		}
-		if n, err := strconv.Atoi(match[1]); err == nil && n > best {
-			best = n
+		for _, record := range strings.Split(scanner.Text(), "\r") {
+			if match := completedLayerPattern.FindStringSubmatch(record); match != nil {
+				if n, err := strconv.Atoi(match[1]); err == nil && n > result.CompletedLayer {
+					result.CompletedLayer = n
+				}
+			}
+
+			start := strings.Index(record, `{"event"`)
+			end := strings.LastIndex(record, "}")
+			if start < 0 || end < start {
+				continue
+			}
+			payload := quantizationProgressPayload{}
+			if err := json.Unmarshal([]byte(record[start:end+1]), &payload); err != nil || payload.Event != "progress" || payload.Phase != "quantizing" || payload.Percent == nil {
+				continue
+			}
+			if math.IsNaN(*payload.Percent) || math.IsInf(*payload.Percent, 0) || *payload.Percent < 0 || *payload.Percent > 99 {
+				continue
+			}
+			at, err := time.Parse(time.RFC3339, payload.TS)
+			if err != nil {
+				continue
+			}
+			candidate := &quantizationProgressEvent{
+				Percent: int32(math.Floor(*payload.Percent)),
+				Detail:  truncateString(strings.TrimSpace(payload.Detail), 512),
+				At:      metav1.NewTime(at),
+			}
+			if result.Progress == nil || !candidate.At.Before(&result.Progress.At) {
+				result.Progress = candidate
+			}
 		}
 	}
-	return best
+	return result
+}
+
+// scanLatestQuantizationLayer preserves the focused completed-layer parser
+// contract for callers and tests while sharing the unified log scan.
+func scanLatestQuantizationLayer(r io.Reader) int {
+	return scanQuantizationTelemetry(r).CompletedLayer
+}
+
+func quantizationProgressStatus(
+	elapsed time.Duration,
+	deadlineSeconds int64,
+	progress *quantizationProgressEvent,
+	existing *aiv1alpha1.QuantizationStatus,
+) (int32, string, string, *metav1.Time) {
+	if progress != nil {
+		at := progress.At.DeepCopy()
+		return progress.Percent, progress.Detail, quantizationProgressSourceTelemetry, at
+	}
+	if existing != nil && existing.Progress != nil && existing.ProgressSource == quantizationProgressSourceTelemetry && existing.LastProgressAt != nil {
+		return *existing.Progress, existing.ProgressDetail, existing.ProgressSource, existing.LastProgressAt.DeepCopy()
+	}
+	pct := int32(elapsed.Seconds() / float64(deadlineSeconds) * 100)
+	if pct > 99 {
+		pct = 99
+	}
+	if pct < 0 {
+		pct = 0
+	}
+	return pct, fmt.Sprintf("elapsed %s", elapsed), quantizationProgressSourceEstimate, nil
 }

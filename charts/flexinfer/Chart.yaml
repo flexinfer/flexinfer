@@ -2,7 +2,7 @@ apiVersion: v2
 name: flexinfer
 description: FlexInfer - Kubernetes-native AI inference operator with multi-backend support, GPU scheduling, and serverless autoscaling
 type: application
-version: 1.0.9
+version: 1.0.10
 appVersion: "1.0.0"
 kubeVersion: ">=1.26.0-0"
 home: https://flexinfer.ai

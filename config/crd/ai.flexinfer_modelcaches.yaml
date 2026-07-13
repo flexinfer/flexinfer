@@ -1176,6 +1176,12 @@ spec:
                   format:
                     description: Format is the quantization format that was applied.
                     type: string
+                  lastProgressAt:
+                    description: |-
+                      LastProgressAt is the timestamp of the structured progress event currently
+                      represented in Progress and ProgressDetail. It is omitted for estimates.
+                    format: date-time
+                    type: string
                   originalSizeBytes:
                     description: OriginalSizeBytes is the size of the model before
                       quantization.
@@ -1189,6 +1195,14 @@ spec:
                   progressDetail:
                     description: ProgressDetail is a human-readable description of
                       current progress (e.g., "layer 152/336").
+                    type: string
+                  progressSource:
+                    description: |-
+                      ProgressSource identifies whether Progress came from structured job
+                      telemetry or an elapsed-time estimate.
+                    enum:
+                    - telemetry
+                    - elapsed-estimate
                     type: string
                   quantizationTime:
                     description: QuantizationTime is the wall-clock duration of the

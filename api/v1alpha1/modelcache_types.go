@@ -261,6 +261,17 @@ type QuantizationStatus struct {
 	// +optional
 	ProgressDetail string `json:"progressDetail,omitempty"`
 
+	// ProgressSource identifies whether Progress came from structured job
+	// telemetry or an elapsed-time estimate.
+	// +optional
+	// +kubebuilder:validation:Enum=telemetry;elapsed-estimate
+	ProgressSource string `json:"progressSource,omitempty"`
+
+	// LastProgressAt is the timestamp of the structured progress event currently
+	// represented in Progress and ProgressDetail. It is omitted for estimates.
+	// +optional
+	LastProgressAt *metav1.Time `json:"lastProgressAt,omitempty"`
+
 	// FailureMessage contains the last lines of pod logs on failure.
 	// +optional
 	FailureMessage string `json:"failureMessage,omitempty"`
