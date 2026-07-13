@@ -59,6 +59,10 @@ spec:
       maxNumSeqs: 1
       maxNumBatchedTokens: 4096
       enableChunkedPrefill: true
+      # Admit a long request only when its full input can remain resident. This
+      # turns insufficient 64K KV capacity into a canary failure instead of
+      # repeated preemption and cache thrashing.
+      schedulerReserveFullISL: true
       # Keep physical headroom for transient Triton/FLA GDN prefill workspace.
       gpuMemoryUtilization: "0.90"
       kvCacheDtype: fp8_e4m3
@@ -68,6 +72,14 @@ spec:
       calculateKvScales: false
       # Required outcome: torch.compile + piecewise graphs, never eager mode.
       enforceEager: false
+      # ROCm always resolves Qwen's GDN prefill to Triton/FLA in vLLM 0.23;
+      # pin it so the active kernel is visible and reproducible.
+      gdnPrefillBackend: triton
+      # The bounded canary samples every block and reports actual HIP-graph
+      # dispatch. Reduce kvCacheMetricsSample to 0.01 before warm promotion.
+      cudagraphMetrics: true
+      kvCacheMetrics: true
+      kvCacheMetricsSample: "1.0"
       enablePrefixCaching: false
       # AITER has no gfx1100 build in this image. Use native Triton/FLA GDN
       # prefill and ROCm attention instead of falling into unsupported kernels.
@@ -78,6 +90,7 @@ spec:
       toolCallParser: qwen3_coder
       servedModelName: qwen35-35b-clean-gptq-64k-graph
       disableLogStats: false
+      failOnEnvironValidation: true
     nodeSelector:
       kubernetes.io/hostname: cblevins-5930k
     resources:
