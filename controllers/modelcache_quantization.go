@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -1047,9 +1048,11 @@ func (r *ModelCacheReconciler) readLatestQuantizationTelemetry(ctx context.Conte
 	if r.KubeClient == nil {
 		return result
 	}
+	logger := log.FromContext(ctx)
 
 	podList := &corev1.PodList{}
 	if err := r.List(ctx, podList, client.InNamespace(namespace), client.MatchingLabels{"job-name": jobName}); err != nil {
+		logger.Error(err, "Failed to list quantization pods for telemetry", "namespace", namespace, "job", jobName)
 		return result
 	}
 
@@ -1058,18 +1061,24 @@ func (r *ModelCacheReconciler) readLatestQuantizationTelemetry(ctx context.Conte
 			Container: "quantizer",
 			TailLines: func() *int64 { v := int64(2000); return &v }(),
 		})
-		stream, err := req.Stream(ctx)
+		// DoRaw reads the complete bounded tail in one request. Stream can
+		// return a successful response whose body later fails while scanning;
+		// the old path silently interpreted that as "no telemetry" and fell
+		// back to an elapsed-time estimate. Keeping the response bounded by
+		// TailLines avoids unbounded memory while making transport failures
+		// explicit before parsing.
+		raw, err := req.DoRaw(ctx)
 		if err != nil {
+			logger.Error(err, "Failed to read quantization pod telemetry", "namespace", namespace, "job", jobName, "pod", pod.Name)
 			continue
 		}
-		podTelemetry := scanQuantizationTelemetry(stream)
+		podTelemetry := scanQuantizationTelemetry(bytes.NewReader(raw))
 		if podTelemetry.CompletedLayer > result.CompletedLayer {
 			result.CompletedLayer = podTelemetry.CompletedLayer
 		}
 		if podTelemetry.Progress != nil && (result.Progress == nil || podTelemetry.Progress.At.After(result.Progress.At.Time)) {
 			result.Progress = podTelemetry.Progress
 		}
-		_ = stream.Close()
 	}
 	return result
 }
