@@ -4,7 +4,56 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
+	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 )
+
+func TestScanQuantizationTelemetrySelectsNewestValidProgress(t *testing.T) {
+	log := strings.Join([]string{
+		`TQDM redraw\r{"event":"progress","ts":"2026-07-13T19:45:10Z","phase":"quantizing","percent":42.0,"detail":"layer 17 subset 1/2 via name"}`,
+		`{"event":"progress","ts":"2026-07-13T19:44:00Z","phase":"quantizing","percent":41.0,"detail":"older replay"}`,
+		`{"event":"progress","ts":"2026-07-13T19:46:00Z","phase":"loading","percent":90.0,"detail":"wrong phase"}`,
+	}, "\n")
+
+	got := scanQuantizationTelemetry(strings.NewReader(strings.ReplaceAll(log, `\r`, "\r")))
+	if got.Progress == nil {
+		t.Fatal("structured progress was not parsed")
+	}
+	if got.Progress.Percent != 42 || got.Progress.Detail != "layer 17 subset 1/2 via name" {
+		t.Fatalf("progress = %#v", got.Progress)
+	}
+	if want := metav1.NewTime(time.Date(2026, 7, 13, 19, 45, 10, 0, time.UTC)); !got.Progress.At.Equal(&want) {
+		t.Fatalf("progress timestamp = %s, want %s", got.Progress.At.Time, want)
+	}
+}
+
+func TestScanQuantizationTelemetryRejectsMalformedProgress(t *testing.T) {
+	log := `
+{"event":"progress","ts":"bad","phase":"quantizing","percent":44,"detail":"bad timestamp"}
+{"event":"progress","ts":"2026-07-13T19:45:10Z","phase":"quantizing","percent":101,"detail":"out of range"}
+{"event":"progress","ts":"2026-07-13T19:45:10Z","phase":"quantizing","percent":"forty","detail":"bad type"}
+not json
+`
+	got := scanQuantizationTelemetry(strings.NewReader(log))
+	if got.Progress != nil {
+		t.Fatalf("malformed progress was accepted: %#v", got.Progress)
+	}
+}
+
+func TestQuantizationProgressStatusPreservesTelemetryAcrossReadFailure(t *testing.T) {
+	at := metav1.NewTime(time.Date(2026, 7, 13, 19, 45, 10, 0, time.UTC))
+	pct := int32(42)
+	existing := &aiv1alpha1.QuantizationStatus{
+		Progress: &pct, ProgressDetail: "layer 17 subset 1/2", ProgressSource: quantizationProgressSourceTelemetry, LastProgressAt: &at,
+	}
+	gotPct, detail, source, gotAt := quantizationProgressStatus(6*time.Hour, int64((24 * time.Hour).Seconds()), nil, existing)
+	if gotPct != 42 || detail != existing.ProgressDetail || source != quantizationProgressSourceTelemetry || gotAt == nil || !gotAt.Equal(&at) {
+		t.Fatalf("preserved status = %d %q %q %#v", gotPct, detail, source, gotAt)
+	}
+}
 
 func TestScanLatestQuantizationLayer_PicksLatestCompletion(t *testing.T) {
 	// Realistic quantize-pod log interleaves TQDM redraws with the JSON
