@@ -138,6 +138,32 @@ RUN if [ "${GPU_VENDOR}" = "nvidia" ]; then \
     fi && \
     go generate ./... && go build -trimpath -o /build/ollama .
 
+# ── Optional component selectors ─────────────────────────────────────
+# A conditional RUN in the final image is too late: unconditional COPY
+# --from edges make BuildKit execute the full llama.cpp and Ollama builders even
+# when their feature flags are false. Resolve each edge through a FROM selector
+# instead. BuildKit prunes the unselected builder branch from its dependency
+# graph, while the disabled branch supplies empty directories so COPY remains
+# deterministic.
+FROM ${BASE_IMAGE} AS optional-components-disabled
+RUN mkdir -p /opt/llamacpp/bin /opt/ollama/bin
+
+FROM llamacpp-builder AS llamacpp-true
+RUN mkdir -p /opt/llamacpp/bin \
+    && cp -a /opt/src/llama.cpp/build/bin/. /opt/llamacpp/bin/
+
+FROM optional-components-disabled AS llamacpp-false
+
+FROM llamacpp-${INCLUDE_LLAMACPP} AS llamacpp-output
+
+FROM ollama-builder AS ollama-true
+RUN mkdir -p /opt/ollama/bin \
+    && cp /build/ollama /opt/ollama/bin/ollama
+
+FROM optional-components-disabled AS ollama-false
+
+FROM ollama-${INCLUDE_OLLAMA} AS ollama-output
+
 # ── Stage 4: Runtime ─────────────────────────────────────────────────
 FROM ${BASE_IMAGE} AS runtime
 
@@ -519,13 +545,13 @@ COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
 COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
 RUN chmod +x /usr/local/bin/runtime-entrypoint.sh
 
-# ── Copy llama.cpp binary ────────────────────────────────────────────
-COPY --from=llamacpp-builder /opt/src/llama.cpp/build/bin/ /opt/llamacpp/bin/
+# ── Copy optional llama.cpp payload ──────────────────────────────────
+COPY --from=llamacpp-output /opt/llamacpp/bin/ /opt/llamacpp/bin/
 ENV PATH="/opt/llamacpp/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/llamacpp/bin:${LD_LIBRARY_PATH}"
 
-# ── Copy ollama binary ───────────────────────────────────────────────
-COPY --from=ollama-builder /build/ollama /usr/local/bin/ollama
+# ── Copy optional Ollama payload ─────────────────────────────────────
+COPY --from=ollama-output /opt/ollama/bin/ /usr/local/bin/
 ENV OLLAMA_MODELS=/models/ollama
 
 # ── Copy flexinfer-runtime binary ────────────────────────────────────
