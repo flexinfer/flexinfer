@@ -238,6 +238,9 @@ imagePrewarm:
         kubernetes.io/hostname: cblevins-5930k
       images:
         - registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
+        # Keep the 64K Qwen workhorse overlay referenced across containerd GC;
+        # its first cold pull/unpack took 9m05s on this node.
+        - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
