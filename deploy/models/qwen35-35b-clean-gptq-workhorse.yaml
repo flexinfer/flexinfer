@@ -48,8 +48,11 @@ spec:
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
     schedulerReserveFullISL: true
-    # Leave transient GDN/FLA workspace outside vLLM's reservation.
-    gpuMemoryUtilization: "0.90"
+    # The first production graph profile left only 0.03 GiB for KV at 0.90,
+    # while one 64K request requires 0.66 GiB. Reserve 94% so KV has roughly
+    # 1 GiB while still leaving about 1.4 GiB outside vLLM for transient
+    # GDN/FLA workspace on a 24 GiB card.
+    gpuMemoryUtilization: "0.94"
     kvCacheDtype: fp8_e4m3
     calculateKvScales: false
     # Required serving posture: torch.compile plus piecewise HIP graphs.
