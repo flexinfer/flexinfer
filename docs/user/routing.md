@@ -249,10 +249,22 @@ Monitor routing effectiveness with these metrics:
 |--------|-------------|
 | `flexinfer_proxy_requests_total{model,status}` | Total requests per model (by status) |
 | `flexinfer_proxy_active_connections{model}` | Current connections per model |
+| `flexinfer_proxy_label_group_route_decisions_total{label,strategy,outcome}` | Shared-label decisions; `least_loaded` confirms active-load selection |
+| `flexinfer_proxy_label_group_route_target_hits_total{label,strategy,model}` | Shared-label traffic distribution by selected Model |
 | `flexinfer_proxy_routing_decisions_total{model,strategy,key_source,outcome}` | Routing decisions by strategy and key source (`outcome`: `pod` or `service-fallback`) |
 | `flexinfer_proxy_routing_target_hits_total{model,strategy,target}` | Route-hit distribution by selected target (`target` is pod IP:port or `service-dns`) |
 | `flexinfer_proxy_routing_key_cardinality{model,strategy,key_source}` | Approximate unique routing-key count per source (bounded in-memory tracker) |
 | `flexinfer_proxy_routing_key_cardinality_overflow_total{model,strategy,key_source}` | Number of times cardinality tracking reached its cap |
+
+### Shared service-label routing
+
+When multiple Ready Models claim the same service label, set
+`proxy.routing.labelGroupMode` (or
+`FLEXINFER_PROXY_LABEL_GROUP_ROUTING`) to control member selection. The default
+is `round-robin`. `least-loaded` selects the Ready Model with the fewest active
+proxy connections and round-robins ties; it is the recommended mode for
+single-sequence long-context replicas. Prefix and session modes remain
+available when cache affinity matters more than current load.
 
 ### Logs
 
