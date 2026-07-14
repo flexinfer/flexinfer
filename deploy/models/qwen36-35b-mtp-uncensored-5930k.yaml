@@ -94,18 +94,15 @@ spec:
     # parser leaves that payload in message.content instead of populating the
     # OpenAI-compatible tool_calls field.
     toolCallParser: qwen3_coder
-    # Re-activated as the proven 64K graph-mode bridge while the clean native-
-    # context Qwen3.5 artifact is built and validated.
-    warmPolicy: primary
+    # Retained as an operator-activated uncensored/heretic fallback. The clean
+    # Qwen3.5 model now owns the warm workhorse and council routes.
+    warmPolicy: ondemand
   gpu:
     count: 1
     priority: 390
     shared: 5930k-textgen
     vendor: amd
     vramEstimateMB: 20000
-    # Explicitly preempt the warm Gemma bridge for this operator-requested
-    # workhorse activation. Remove after the clean dual-node model is promoted.
-    forcePromotion: true
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:
@@ -117,22 +114,17 @@ spec:
       memory: 8Gi
   serverless:
     enabled: true
-    minReplicas: 1
+    minReplicas: 0
     coldStartTimeout: 25m0s
     idleTimeout: 30m0s
   tolerations:
   - effect: NoSchedule
     key: node-role.kubernetes.io/control-plane
     operator: Exists
-  # Model-independent aliases let Loom/Mills/Council use the bridge without
-  # coupling to its checkpoint name. The clean Qwen3.5 promotion inherits them.
   serviceLabels:
-  - workhorse
-  - loom-workhorse
-  - mills-council
   - abliterated
   - uncensored
-  - reasoning
+  - qwen36-35b-uncensored
   litellm:
     enabled: true
     servedModelName: qwen36-35b-mtp-uncensored-5930k
@@ -140,8 +132,4 @@ spec:
     - abliterated
     - uncensored
     - heretic
-    - reasoning
     - qwen36-35b-uncensored
-    - workhorse
-    - loom-workhorse
-    - mills-council
