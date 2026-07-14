@@ -364,6 +364,26 @@ def assert_long_context_gauntlet_contract(
         fail("Qwen 128K experiment no longer references its context gauntlet")
 
 
+def assert_qwen128_production_contract(model_yaml: str) -> None:
+    required = (
+        "name: qwen35-35b-clean-gptq-workhorse-128k",
+        "maxModelLen: 131072",
+        'gpuMemoryUtilization: "0.94"',
+        'hipVisibleDevices: "0"',
+        "count: 2",
+        "shared: 7900xtx-textgen",
+        "kubernetes.io/hostname: cblevins-7900xtx",
+        "minReplicas: 1",
+        "coldStartTimeout: 25m",
+        "- qwen35-128k",
+        "- workhorse-128k",
+        "- mills-council-128k",
+    )
+    for snippet in required:
+        if snippet not in model_yaml:
+            fail(f"Qwen 128K production model contract regressed: {snippet!r}")
+
+
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     fast_job = ci_yaml.find("runtime_patch_contracts:")
     serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
@@ -474,6 +494,9 @@ def main(argv: list[str]) -> int:
     long_context_experiment_yaml = read(
         "deploy/experiments/qwen35-35b-clean-gptq-128k.yaml"
     )
+    qwen128_production_yaml = read(
+        "deploy/models/qwen35-35b-clean-gptq-workhorse-128k.yaml"
+    )
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
@@ -489,6 +512,7 @@ def main(argv: list[str]) -> int:
     assert_long_context_gauntlet_contract(
         long_context_cronjob_yaml, long_context_experiment_yaml
     )
+    assert_qwen128_production_contract(qwen128_production_yaml)
     assert_ci_fast_check_wiring(ci_yaml)
 
     if run_tests:

@@ -1,61 +1,55 @@
-# Clean Qwen3.5-35B-A3B text-only GPTQ workhorse for Loom, Mills, and Council.
+# Clean Qwen3.5-35B-A3B 128K workhorse sister on cblevins-7900xtx.
 #
-# Promotion evidence:
-# - GDN-preserving W4_G128 artifact validated as qwen35-35b-a3b/vllm-gptq.
-# - vLLM 0.23 ROCm overlay registers the text-only hybrid architecture and
-#   constrains the gfx1100 FLA KKT autotuner to its proven non-hanging kernel.
-# - The 64K graph-mode experiment passed its full 5/5 proxy gauntlet at
-#   79.353 tok/s and 1.0688s TTFT (benchmark 94dc02b0-e332-4501-9b7c-5af0d0f8d4c7).
+# Promotion evidence (2026-07-14, exact artifact/runtime pair below):
+# - 97,309-token prompt: 5/5 needles recalled in 184.33s.
+# - 129,919-token prompt: 5/5 needles recalled in 297.17s.
+# - Final global-proxy route smoke returned ROUTE_OK.
+# - ModelExperiment qwen35-35b-clean-gptq-128k-graph run 1 completed with
+#   phase=Succeeded, reason=GauntletPassed.
 #
-# The model is intentionally clean, not abliterated. The older Qwen3.6 lane
-# retains the uncensored/heretic aliases as an operator-activated fallback.
+# Shared service labels add this GPU to ordinary workhorse/Mills/Council
+# routing. Long prompts must use one of this Model's explicit *-128k aliases;
+# those labels are not advertised by the 64K sister on cblevins-5930k.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
-  name: qwen35-35b-clean-gptq-workhorse
+  name: qwen35-35b-clean-gptq-workhorse-128k
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/base-model-source: Qwen/Qwen3.5-35B-A3B
     flexinfer.ai/base-model-posture: clean
     flexinfer.ai/artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
     flexinfer.ai/runtime-digest: sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
-    flexinfer.ai/promotion-state: 64k-graph-gauntlet-passed
-    flexinfer.ai/promotion-evidence: benchmark/94dc02b0-e332-4501-9b7c-5af0d0f8d4c7
+    flexinfer.ai/promotion-state: 128k-graph-five-depth-gauntlet-passed
+    flexinfer.ai/promotion-evidence: modelexperiment/qwen35-35b-clean-gptq-128k-graph@run-1
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
   source: pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn
   cache:
-    # Mount the controller-validated shared artifact directly. The immutable
-    # OCI digest above records exactly what was validated and is the recovery
-    # source if the RWX cache ever needs to be reconstructed.
     strategy: None
     compilationCache:
       enabled: true
       hostPath: /var/lib/flexinfer/compile-cache
       sizeLimit: 4Gi
   config:
-    # Keep this runtime isolated from the older persistent serving image.
     dedicatedDeployment: true
     quantization: gptq
     dtype: half
     hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
     languageModelOnly: true
-    # Keep this 5930k replica at its qualified 64K envelope. The separately
-    # qualified cblevins-7900xtx sister owns the explicit *-128k routes.
-    maxModelLen: 65536
+    maxModelLen: 131072
     maxNumSeqs: 1
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
     schedulerReserveFullISL: true
-    # The first production graph profile left only 0.03 GiB for KV at 0.90,
-    # while one 64K request requires 0.66 GiB. Reserve 94% so KV has roughly
-    # 1 GiB while still leaving about 1.4 GiB outside vLLM for transient
-    # GDN/FLA workspace on a 24 GiB card.
+    # This is the exact qualified setting. A first-ever uncached compile can
+    # exit once after populating the persistent AOT cache; the automatic
+    # restart then has 1.94 GiB KV / 196,608-token capacity. Do not delete the
+    # host compilation cache during routine model cleanup.
     gpuMemoryUtilization: "0.94"
     kvCacheDtype: fp8_e4m3
     calculateKvScales: false
-    # Required serving posture: torch.compile plus piecewise HIP graphs.
     enforceEager: false
     gdnPrefillBackend: triton
     cudagraphMetrics: true
@@ -64,22 +58,25 @@ spec:
     enablePrefixCaching: false
     disableAiter: true
     rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
     trustRemoteCode: true
     enableToolCalling: true
     toolCallParser: qwen3_coder
-    servedModelName: qwen35-35b-clean-gptq-workhorse
+    servedModelName: qwen35-35b-clean-gptq-workhorse-128k
     disableLogStats: false
     failOnEnvironValidation: true
     warmPolicy: primary
   gpu:
     vendor: amd
-    count: 1
-    shared: 5930k-textgen
+    # This host exposes the discrete 7900 XTX plus its Raphael iGPU. Claim
+    # both device-plugin slots and select the discrete card explicitly above.
+    count: 2
+    shared: 7900xtx-textgen
     priority: 425
     forcePromotion: true
     vramEstimateMB: 23200
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "4"
@@ -91,7 +88,9 @@ spec:
     enabled: true
     minReplicas: 1
     idleTimeout: 30m
-    coldStartTimeout: 60m
+    # Allow a cache-loss recovery to complete its cold compile plus the
+    # self-healing cached restart without a competing controller timeout.
+    coldStartTimeout: 25m
   serviceLabels:
     - qwen35
     - qwen35-35b
@@ -99,16 +98,18 @@ spec:
     - loom-workhorse
     - mills-council
     - reasoning
+    - qwen35-128k
+    - workhorse-128k
+    - loom-workhorse-128k
+    - mills-council-128k
   litellm:
     enabled: true
-    servedModelName: qwen35-35b-clean-gptq-workhorse
+    servedModelName: qwen35-35b-clean-gptq-workhorse-128k
     aliases:
-      - qwen35
-      - qwen35-35b
-      - workhorse
-      - loom-workhorse
-      - mills-council
-      - reasoning
+      - qwen35-128k
+      - workhorse-128k
+      - loom-workhorse-128k
+      - mills-council-128k
   tolerations:
     - effect: NoSchedule
       key: node-role.kubernetes.io/control-plane
