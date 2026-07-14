@@ -48,7 +48,10 @@ spec:
       shared: 5930k-textgen
       priority: 425
       forcePromotion: true
-      vramEstimateMB: 23500
+      # Stay below the controller's hard 95% admission ceiling (23,347 MiB on
+      # a 24 GiB card); runtime allocation remains bounded separately by
+      # gpuMemoryUtilization and the 64K gauntlet.
+      vramEstimateMB: 23200
     serverless:
       enabled: true
       minReplicas: 1
@@ -113,6 +116,10 @@ spec:
   gauntlet:
     templateRef: model-eval-gauntlet
     env:
+      # Generation fence for the first run against the validated immutable
+      # artifact. Updating this value restarts a terminal experiment without
+      # mutating or rebuilding the underlying ModelCache.
+      FLEXINFER_EXPERIMENT_REVISION: "artifact-ed9cd20f-vram23200"
       WARMUP: "1"
       ITERS: "2"
       MIN_DURATION: 15s
