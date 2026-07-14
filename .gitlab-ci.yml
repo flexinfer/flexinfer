@@ -420,6 +420,24 @@ integration_test:
     - export KUBEBUILDER_ASSETS=$(setup-envtest use 1.28.x --bin-dir "${CI_PROJECT_DIR}/.go/envtest" -p path)
     - go test -v ./controllers/...
 
+vllm_qwen35_text_plugin_test:
+  stage: test
+  image: python:3.12-slim
+  needs: []
+  script:
+    - python3 build/scripts/test_vllm_qwen35_text_plugin.py
+    - python3 -m py_compile build/vllm-qwen35-text-plugin/src/flexinfer_vllm_qwen35_text/__init__.py
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &qwen35-text-plugin-changes
+        - .gitlab-ci.yml
+        - build/Dockerfile.vllm-rocm-v023-qwen35-text
+        - build/vllm-qwen35-text-plugin/**/*
+        - build/scripts/test_vllm_qwen35_text_plugin.py
+        - deploy/debug/qwen35-35b-clean-gptq-canary.yaml
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *qwen35-text-plugin-changes
+
 # Targeted promotion gate for master/merge pipelines.
 # This validates the ModelCache readiness contract without requiring a live cluster.
 promotion_gate_test:
@@ -1728,6 +1746,35 @@ publish_vllm_rocm_gfx1100_qwen35_patched:
         --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg" \
         --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg,${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - when: manual
+      allow_failure: true
+
+publish_vllm_rocm_v023_qwen35_text:
+  stage: publish
+  image: moby/buildkit:v0.28.0
+  timeout: 1h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building vLLM 0.23 ROCm Qwen3.5 text-only overlay..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.vllm-rocm-v023-qwen35-text" \
+        --opt platform=linux/amd64 \
+        --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text" \
+        --export-cache "type=inline" \
+        --output "type=image,\"name=${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text,${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
     - when: manual
       allow_failure: true
