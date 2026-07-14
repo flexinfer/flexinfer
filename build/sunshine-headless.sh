@@ -53,26 +53,34 @@ if [ ! -e "${SUNSHINE_HOME}/.config/sunshine" ]; then
     ln -s "$SUNSHINE_CONFIG_DIR" "${SUNSHINE_HOME}/.config/sunshine"
 fi
 
-if id -u "$GAMING_USER" >/dev/null 2>&1; then
-    usermod -d "$GAMER_HOME" "$GAMING_USER"
-elif existing="$(getent passwd "$GAMING_UID" | cut -d: -f1)" && [ -n "$existing" ]; then
-    # The uid is already taken (Ubuntu 24.04 bases ship an `ubuntu` uid-1000
-    # user): rename that account instead of failing useradd (exit 4).
-    usermod -l "$GAMING_USER" -d "$GAMER_HOME" "$existing"
-else
-    groupadd -g "$GAMING_UID" "$GAMING_USER" 2>/dev/null || true
-    useradd -u "$GAMING_UID" -g "$GAMING_UID" -d "$GAMER_HOME" -s /bin/bash -M "$GAMING_USER"
+if ! id -u "$GAMING_USER" >/dev/null 2>&1; then
+    existing="$(getent passwd "$GAMING_UID" | cut -d: -f1)"
+    if [ -z "$existing" ]; then
+        echo "gaming image has no account for uid ${GAMING_UID}; bake the session user into the image" >&2
+        exit 1
+    fi
+    # Ubuntu bases already provide uid 1000 as `ubuntu`. Reuse it instead of
+    # renaming accounts every time the supervised backend starts. HOME is
+    # supplied explicitly below, so the passwd entry does not need mutation.
+    GAMING_USER="$existing"
 fi
-# Primary gid, numeric: a renamed base-image account keeps its old group NAME
-# (usermod -l does not touch the group), so setpriv must not resolve by name.
+GAMING_UID="$(id -u "$GAMING_USER")"
 GAMING_GID="$(id -g "$GAMING_USER")"
-# GPU access for the non-root session: join the gids that own the DRM nodes
-# (host gids leak through the /dev/dri hostPath; create matching groups).
+
+# Pass host device gids directly to setpriv. This avoids groupadd/usermod races
+# against /etc/.pwd.lock on every supervised Sunshine restart while retaining
+# access to DRM and dynamically-created Sunshine input devices.
+SESSION_SUPPLEMENTARY_GIDS="$GAMING_GID"
+append_session_gid() {
+    case ",${SESSION_SUPPLEMENTARY_GIDS}," in
+        *",$1,"*) ;;
+        *) SESSION_SUPPLEMENTARY_GIDS="${SESSION_SUPPLEMENTARY_GIDS},$1" ;;
+    esac
+}
 for dev in /dev/dri/renderD* /dev/dri/card*; do
     [ -e "$dev" ] || continue
     gid="$(stat -c %g "$dev")"
-    getent group "$gid" >/dev/null || groupadd -g "$gid" "drm-$gid"
-    usermod -aG "$gid" "$GAMING_USER"
+    append_session_gid "$gid"
 done
 # Input access for the non-root compositor: Sunshine creates virtual
 # keyboard/mouse/gamepad devices through /dev/uinput, then sway/libinput
@@ -80,12 +88,7 @@ done
 for dev in /dev/input/event* /dev/input/js*; do
     [ -e "$dev" ] || continue
     gid="$(stat -c %g "$dev")"
-    group_name="$(getent group "$gid" | cut -d: -f1 || true)"
-    if [ -z "$group_name" ]; then
-        group_name="input-$gid"
-        groupadd -g "$gid" "$group_name"
-    fi
-    usermod -aG "$group_name" "$GAMING_USER"
+    append_session_gid "$gid"
 done
 # Own the persistent state. Top-level dirs only — recursing into a multi-100GB
 # game library on every start would take minutes.
@@ -154,7 +157,8 @@ GAMER_ENV=(
     DBUS_SESSION_BUS_ADDRESS="unix:path=$XDG_RUNTIME_DIR/bus"
 )
 as_gamer() {
-    setpriv --reuid "$GAMING_USER" --regid "$GAMING_GID" --init-groups \
+    setpriv --reuid "$GAMING_UID" --regid "$GAMING_GID" \
+        --groups "$SESSION_SUPPLEMENTARY_GIDS" \
         env "${GAMER_ENV[@]}" "$@"
 }
 
