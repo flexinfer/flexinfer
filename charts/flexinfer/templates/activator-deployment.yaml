@@ -63,6 +63,10 @@ spec:
             {{- end }}
             {{- end }}
             {{- if $proxy.routing }}
+            {{- if $proxy.routing.labelGroupMode }}
+            - name: FLEXINFER_PROXY_LABEL_GROUP_ROUTING
+              value: {{ $proxy.routing.labelGroupMode | quote }}
+            {{- end }}
             {{- if $proxy.routing.explicitKeyMaxLength }}
             - name: PROXY_ROUTING_EXPLICIT_KEY_MAX_LENGTH
               value: {{ $proxy.routing.explicitKeyMaxLength | quote }}

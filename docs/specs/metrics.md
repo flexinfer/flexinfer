@@ -66,6 +66,8 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
 - `flexinfer_proxy_queue_rejected_total{model}`
 - `flexinfer_proxy_queue_wait_duration_seconds{model}` (histogram)
 - `flexinfer_proxy_active_connections{model}`
+- `flexinfer_proxy_label_group_route_decisions_total{label,strategy,outcome}`
+- `flexinfer_proxy_label_group_route_target_hits_total{label,strategy,model}`
 - `flexinfer_proxy_queue_depth{model}`
 - `flexinfer_proxy_endpoint_changes_total{model,change_type}`
 - `flexinfer_proxy_endpoint_count{model}`

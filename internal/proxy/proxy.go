@@ -107,6 +107,7 @@ type Config struct {
 	// LabelGroupRouting controls how pickReadyMember picks within a shared
 	// service-label group when more than one member is Ready.
 	// Empty / "round-robin": legacy per-label RR (default).
+	// "least-loaded": fewest active proxy connections; RR among ties.
 	// "prefix-or-rr": extract routing prefix key; consistent-hash to a
 	// candidate when present, else RR.
 	// "session-or-rr": session key, else RR.
@@ -173,8 +174,9 @@ func (c Config) Validate() error {
 	}
 	if !isValidLabelGroupRoutingMode(c.LabelGroupRouting) {
 		errs = append(errs, fmt.Errorf(
-			"FLEXINFER_PROXY_LABEL_GROUP_ROUTING must be one of %q,%q,%q,%q,%q (got %q)",
+			"FLEXINFER_PROXY_LABEL_GROUP_ROUTING must be one of %q,%q,%q,%q,%q,%q (got %q)",
 			labelGroupRoutingRR, labelGroupRoutingRRAlias,
+			labelGroupRoutingLeastLoaded,
 			labelGroupRoutingPrefixOrRR, labelGroupRoutingSessionOrRR,
 			labelGroupRoutingPrefixSessionOrRR, c.LabelGroupRouting,
 		))
@@ -749,12 +751,17 @@ type debugConfigView struct {
 	AdmissionEnabled             bool    `json:"admissionEnabled"`
 	AdmissionSafetyMarginPercent int     `json:"admissionSafetyMarginPercent"`
 	AdmissionDefaultMaxTokens    int     `json:"admissionDefaultMaxTokens"`
+	LabelGroupRouting            string  `json:"labelGroupRouting"`
 }
 
 func newDebugConfigView(cfg Config) debugConfigView {
 	tokenDisplay := ""
 	if cfg.AuthToken != "" {
 		tokenDisplay = "***redacted***"
+	}
+	labelGroupRouting := canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting)
+	if labelGroupRouting == labelGroupRoutingRR {
+		labelGroupRouting = labelGroupRoutingRRAlias
 	}
 	return debugConfigView{
 		Namespace:                    cfg.Namespace,
@@ -780,6 +787,7 @@ func newDebugConfigView(cfg Config) debugConfigView {
 		AdmissionEnabled:             cfg.AdmissionEnabled,
 		AdmissionSafetyMarginPercent: cfg.AdmissionSafetyMarginPercent,
 		AdmissionDefaultMaxTokens:    cfg.AdmissionDefaultMaxTokens,
+		LabelGroupRouting:            labelGroupRouting,
 	}
 }
 

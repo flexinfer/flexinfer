@@ -26,6 +26,7 @@ import (
 const (
 	labelGroupRoutingRR                = ""
 	labelGroupRoutingRRAlias           = "round-robin"
+	labelGroupRoutingLeastLoaded       = "least-loaded"
 	labelGroupRoutingPrefixOrRR        = "prefix-or-rr"
 	labelGroupRoutingSessionOrRR       = "session-or-rr"
 	labelGroupRoutingPrefixSessionOrRR = "prefix-session-or-rr"
@@ -37,6 +38,7 @@ func isValidLabelGroupRoutingMode(mode string) bool {
 	switch mode {
 	case labelGroupRoutingRR,
 		labelGroupRoutingRRAlias,
+		labelGroupRoutingLeastLoaded,
 		labelGroupRoutingPrefixOrRR,
 		labelGroupRoutingSessionOrRR,
 		labelGroupRoutingPrefixSessionOrRR:
@@ -120,25 +122,66 @@ func (p *Proxy) pickReadyMember(ctx context.Context, label string, members []str
 		return candidates[0]
 	}
 
+	return p.pickRoundRobin(label, candidates)
+}
+
+// pickRoundRobin chooses from an already-filtered candidate set. Keeping this
+// separate lets least-loaded routing retain fair tie-breaking without
+// repeating Model readiness lookups or accidentally widening the candidate
+// set back to every Ready member.
+func (p *Proxy) pickRoundRobin(label string, candidates []string) string {
+	if len(candidates) == 0 {
+		return ""
+	}
+	if len(candidates) == 1 {
+		return candidates[0]
+	}
+
 	counterAny, _ := p.labelRRCounters.LoadOrStore(label, new(atomic.Uint64))
-	counter := counterAny
-	idx := counter.Add(1) - 1
+	idx := counterAny.Add(1) - 1
 	return candidates[idx%uint64(len(candidates))]
+}
+
+// pickLeastLoaded chooses the Ready model with the fewest in-flight proxy
+// connections. Ties round-robin so an idle fleet still spreads burst arrivals
+// instead of pinning to the first member in stable resolver order.
+func (p *Proxy) pickLeastLoaded(label string, candidates []string) string {
+	if len(candidates) <= 1 {
+		return p.pickRoundRobin(label, candidates)
+	}
+
+	minConnections := p.GetActiveConnections(candidates[0])
+	leastLoaded := []string{candidates[0]}
+	for _, name := range candidates[1:] {
+		connections := p.GetActiveConnections(name)
+		switch {
+		case connections < minConnections:
+			minConnections = connections
+			leastLoaded = []string{name}
+		case connections == minConnections:
+			leastLoaded = append(leastLoaded, name)
+		}
+	}
+
+	return p.pickRoundRobin(label, leastLoaded)
 }
 
 // pickReadyMemberRouted is the production entry point for label-group
 // resolution. It honors the configured FLEXINFER_PROXY_LABEL_GROUP_ROUTING
 // mode: when empty / "round-robin", delegates to pickReadyMember for exact
-// legacy behavior. Otherwise extracts a routing key (prefix and/or session)
-// and consistent-hashes across the Ready candidates so multi-turn agent
+// legacy behavior. "least-loaded" chooses the Ready member with the fewest
+// in-flight connections. Other modes extract a routing key (prefix and/or
+// session) and consistent-hash across the Ready candidates so multi-turn
 // traffic pins to the same replica, raising the chance of an APC hit on
 // turn-2+ (see F4-proxy-prefix-pinning in `.loom/brainstorm-f4-long-context-
 // agent-2026-05-25.md`).
 //
 // Every call emits exactly one
 // flexinfer_proxy_label_group_route_decisions_total{label,strategy,outcome}
-// increment. `strategy` is the configured mode; `outcome` is one of:
+// increment plus one target-hit increment. `strategy` is the configured mode;
+// `outcome` is one of:
 //   - default_rr: mode was empty / round-robin
+//   - least_loaded: lowest active-connection count won
 //   - fallback_single: only one (Ready) candidate
 //   - fallback_no_ready: zero Ready candidates; deterministic cold-start path
 //   - fallback_no_key: mode was non-default but no key was extractable
@@ -156,13 +199,11 @@ func (p *Proxy) pickReadyMemberRouted(
 ) string {
 	strategy := p.labelGroupRouting
 	if strategy == labelGroupRoutingRR {
-		labelGroupRouteDecisionsTotal.WithLabelValues(label, "round-robin", "default_rr").Inc()
-		return p.pickReadyMember(ctx, label, members)
+		return observeLabelGroupPick(label, "round-robin", "default_rr", p.pickReadyMember(ctx, label, members))
 	}
 
 	if len(members) == 1 {
-		labelGroupRouteDecisionsTotal.WithLabelValues(label, strategy, "fallback_single").Inc()
-		return members[0]
+		return observeLabelGroupPick(label, strategy, "fallback_single", members[0])
 	}
 
 	ready := make([]string, 0, len(members))
@@ -174,22 +215,28 @@ func (p *Proxy) pickReadyMemberRouted(
 	}
 
 	if len(ready) == 0 {
-		labelGroupRouteDecisionsTotal.WithLabelValues(label, strategy, "fallback_no_ready").Inc()
-		return p.pickReadyMember(ctx, label, members)
+		return observeLabelGroupPick(label, strategy, "fallback_no_ready", p.pickReadyMember(ctx, label, members))
 	}
 	if len(ready) == 1 {
-		labelGroupRouteDecisionsTotal.WithLabelValues(label, strategy, "fallback_single").Inc()
-		return ready[0]
+		return observeLabelGroupPick(label, strategy, "fallback_single", ready[0])
+	}
+
+	if strategy == labelGroupRoutingLeastLoaded {
+		return observeLabelGroupPick(label, strategy, "least_loaded", p.pickLeastLoaded(label, ready))
 	}
 
 	key, outcome := extractRoutingKey(strategy, req, bodyBytes)
 	if key == "" {
-		labelGroupRouteDecisionsTotal.WithLabelValues(label, strategy, "fallback_no_key").Inc()
-		return p.pickReadyMember(ctx, label, members)
+		return observeLabelGroupPick(label, strategy, "fallback_no_key", p.pickReadyMember(ctx, label, members))
 	}
 
+	return observeLabelGroupPick(label, strategy, outcome, consistentHashPick(key, ready))
+}
+
+func observeLabelGroupPick(label, strategy, outcome, model string) string {
 	labelGroupRouteDecisionsTotal.WithLabelValues(label, strategy, outcome).Inc()
-	return consistentHashPick(key, ready)
+	labelGroupRouteTargetHitsTotal.WithLabelValues(label, strategy, model).Inc()
+	return model
 }
 
 // extractRoutingKey returns the routing key and outcome label appropriate for

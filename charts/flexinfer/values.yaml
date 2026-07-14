@@ -192,6 +192,9 @@ proxy:
   # Prefix-routing key strictness knobs.
   # Tune these to reduce key cardinality or allow longer context-derived segments.
   routing:
+    # Shared service-label selection. Supported modes: round-robin,
+    # least-loaded, prefix-or-rr, session-or-rr, prefix-session-or-rr.
+    labelGroupMode: ""
     explicitKeyMaxLength: 128
     systemSegmentMaxLength: 512
     documentSegmentMaxLength: 256

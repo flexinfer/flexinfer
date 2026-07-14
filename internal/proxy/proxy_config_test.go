@@ -110,7 +110,7 @@ func TestConfigValidate_Errors(t *testing.T) {
 		{
 			name: "label group routing unknown mode",
 			modify: func(c *Config) {
-				c.LabelGroupRouting = "least-loaded"
+				c.LabelGroupRouting = "random"
 			},
 			wantErr: "FLEXINFER_PROXY_LABEL_GROUP_ROUTING must be one of",
 		},
@@ -170,6 +170,7 @@ func TestDebugConfigEndpoint(t *testing.T) {
 	cfg := validConfig()
 	cfg.AuthEnabled = true
 	cfg.AuthToken = "super-secret-token"
+	cfg.LabelGroupRouting = labelGroupRoutingLeastLoaded
 
 	p := &Proxy{debugConfig: newDebugConfigView(cfg)}
 
@@ -200,6 +201,9 @@ func TestDebugConfigEndpoint(t *testing.T) {
 	}
 	if result.MaxTokensClampPromptReserve != defaultPromptReserveTokens {
 		t.Errorf("expected maxTokensClampPromptReserve=%d, got %d", defaultPromptReserveTokens, result.MaxTokensClampPromptReserve)
+	}
+	if result.LabelGroupRouting != labelGroupRoutingLeastLoaded {
+		t.Errorf("expected labelGroupRouting=%s, got %s", labelGroupRoutingLeastLoaded, result.LabelGroupRouting)
 	}
 }
 
@@ -237,6 +241,18 @@ func TestConfigFromEnv_RoutingKeyStrictness(t *testing.T) {
 	}
 	if cfg.RoutingDocSegmentMaxLength != 120 {
 		t.Fatalf("document max length=%d want 120", cfg.RoutingDocSegmentMaxLength)
+	}
+}
+
+func TestConfigFromEnv_LabelGroupRouting(t *testing.T) {
+	t.Setenv("FLEXINFER_PROXY_LABEL_GROUP_ROUTING", labelGroupRoutingLeastLoaded)
+
+	cfg := ConfigFromEnv(nil, "flexinfer-system")
+	if cfg.LabelGroupRouting != labelGroupRoutingLeastLoaded {
+		t.Fatalf("label group routing=%q want %q", cfg.LabelGroupRouting, labelGroupRoutingLeastLoaded)
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("least-loaded environment config should validate: %v", err)
 	}
 }
 

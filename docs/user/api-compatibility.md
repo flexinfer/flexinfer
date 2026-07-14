@@ -295,7 +295,8 @@ When the queue is full, new requests receive:
 1. **No request validation**: The proxy does not validate request schemas against the OpenAI spec (opt-in validation available via `PROXY_VALIDATE_REQUESTS=true`)
 2. **No rate limiting**: Rate limiting must be implemented externally
 3. **No authentication**: Auth should be handled by ingress or service mesh
-4. **Single-model requests**: Each request targets one model (no routing/load balancing across models)
+4. **Single-model requests**: Each resolved request targets one Model Service;
+   shared service labels can select among multiple Ready Models before proxying.
 
 ## Metrics
 
@@ -323,6 +324,8 @@ The proxy exports Prometheus metrics at `/metrics`:
 
 | Metric | Type | Labels | Description |
 |--------|------|--------|-------------|
+| `flexinfer_proxy_label_group_route_decisions_total` | counter | label, strategy, outcome | Shared-label selection decisions |
+| `flexinfer_proxy_label_group_route_target_hits_total` | counter | label, strategy, model | Shared-label selections by target Model |
 | `flexinfer_proxy_endpoint_changes_total` | counter | model, change_type | Endpoint additions/removals (change_type: added, removed) |
 | `flexinfer_proxy_endpoint_count` | gauge | model | Current number of endpoints per model |
 | `flexinfer_proxy_endpoint_refresh_duration_seconds` | histogram | - | Time spent refreshing endpoints |

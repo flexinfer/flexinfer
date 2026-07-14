@@ -273,6 +273,46 @@ func TestPickReadyMemberRouted_SessionOrRR_UsesSessionHeader(t *testing.T) {
 	}
 }
 
+func TestPickReadyMemberRouted_LeastLoaded_AvoidsBusyMember(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	p.labelGroupRouting = labelGroupRoutingLeastLoaded
+	makeModel(t, p, "model-a", aiv1alpha2.ModelPhaseReady)
+	makeModel(t, p, "model-b", aiv1alpha2.ModelPhaseReady)
+	p.incrementConnections("model-a")
+	t.Cleanup(func() { p.decrementConnections("model-a") })
+
+	for i := 0; i < 10; i++ {
+		got := p.pickReadyMemberRouted(context.Background(), "quality-chat", []string{"model-a", "model-b"}, nil, nil)
+		assert.Equal(t, "model-b", got)
+	}
+}
+
+func TestPickReadyMemberRouted_LeastLoaded_RoundRobinsTies(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	p.labelGroupRouting = labelGroupRoutingLeastLoaded
+	makeModel(t, p, "model-a", aiv1alpha2.ModelPhaseReady)
+	makeModel(t, p, "model-b", aiv1alpha2.ModelPhaseReady)
+
+	picks := map[string]int{}
+	for i := 0; i < 20; i++ {
+		picks[p.pickReadyMemberRouted(context.Background(), "quality-chat", []string{"model-a", "model-b"}, nil, nil)]++
+	}
+	assert.Equal(t, 10, picks["model-a"])
+	assert.Equal(t, 10, picks["model-b"])
+}
+
+func TestPickReadyMemberRouted_LeastLoaded_OnlyConsidersReadyMembers(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	p.labelGroupRouting = labelGroupRoutingLeastLoaded
+	makeModel(t, p, "model-a", aiv1alpha2.ModelPhaseReady)
+	makeModel(t, p, "model-b", aiv1alpha2.ModelPhaseIdle)
+	p.incrementConnections("model-a")
+	t.Cleanup(func() { p.decrementConnections("model-a") })
+
+	got := p.pickReadyMemberRouted(context.Background(), "quality-chat", []string{"model-a", "model-b"}, nil, nil)
+	assert.Equal(t, "model-a", got, "an idle Model is not a serving candidate even when its connection count is lower")
+}
+
 func TestConsistentHashPick_Stable(t *testing.T) {
 	members := []string{"model-b", "model-a", "model-c"}
 	first := consistentHashPick("session-key-xyz", members)
@@ -298,7 +338,7 @@ func TestConsistentHashPick_EdgeCases(t *testing.T) {
 }
 
 func TestIsValidLabelGroupRoutingMode(t *testing.T) {
-	valid := []string{"", "round-robin", "prefix-or-rr", "session-or-rr", "prefix-session-or-rr"}
+	valid := []string{"", "round-robin", "least-loaded", "prefix-or-rr", "session-or-rr", "prefix-session-or-rr"}
 	for _, mode := range valid {
 		assert.True(t, isValidLabelGroupRoutingMode(mode), "must accept %q", mode)
 	}
