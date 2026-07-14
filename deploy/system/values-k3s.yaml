@@ -115,10 +115,6 @@ proxy:
   timeouts:
     queue: "25m"
     coldStart: "25m"
-  # Both 128K workhorse members are maxNumSeqs=1. Keep new label-group
-  # requests off a member that is already processing a long prompt.
-  routing:
-    labelGroupMode: "least-loaded"
   # Keep the proxy on any healthy amd64 control-plane node. Host pinning makes
   # control-plane service recovery depend on a single machine.
   nodeSelector:
