@@ -290,8 +290,14 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 }
 
 func (b *DiffusersBackend) ReadinessProbe() *corev1.Probe {
-	// InitialDelay=0: startup probe handles cold start; readiness only runs after startup succeeds.
-	return HTTPReadinessProbe("/health", 8000, 0, 5, 3)
+	// The HTTP server runs synchronous diffusion work in-process, so /health can
+	// time out while the GPU is busy even though the server is healthy. Startup
+	// retains the semantic HTTP check; after it succeeds, readiness only verifies
+	// that the serving socket remains open and avoids removing a busy model from
+	// EndpointSlices. Fail a genuinely closed socket after three probes (15s).
+	probe := TCPReadinessProbe(8000, 0, 5, 3)
+	probe.FailureThreshold = 3
+	return probe
 }
 
 func (b *DiffusersBackend) StartupProbe() *corev1.Probe {

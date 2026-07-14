@@ -3433,6 +3433,9 @@ func TestEnsureDeploymentStartupProbe(t *testing.T) {
 	if c.StartupProbe.PeriodSeconds > 5 {
 		t.Errorf("StartupProbe.PeriodSeconds = %d, want <= 5", c.StartupProbe.PeriodSeconds)
 	}
+	if c.StartupProbe.HTTPGet == nil || c.StartupProbe.HTTPGet.Path != "/health" {
+		t.Fatal("StartupProbe must retain the semantic HTTP /health check")
+	}
 
 	// ReadinessProbe should have a small InitialDelaySeconds (startup probe handles cold start)
 	if c.ReadinessProbe == nil {
@@ -3440,6 +3443,12 @@ func TestEnsureDeploymentStartupProbe(t *testing.T) {
 	}
 	if c.ReadinessProbe.InitialDelaySeconds > 5 {
 		t.Errorf("ReadinessProbe.InitialDelaySeconds = %d, want <= 5", c.ReadinessProbe.InitialDelaySeconds)
+	}
+	if c.ReadinessProbe.HTTPGet != nil {
+		t.Fatal("ReadinessProbe must not use the busy inference worker's HTTP endpoint")
+	}
+	if c.ReadinessProbe.TCPSocket == nil || c.ReadinessProbe.TCPSocket.Port.IntVal != 8000 {
+		t.Fatal("ReadinessProbe must use the serving TCP socket on port 8000")
 	}
 }
 
