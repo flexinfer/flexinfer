@@ -270,16 +270,23 @@ def assert_sunshine_input_contract(launcher: str, values_yaml: str) -> None:
     required_launcher = (
         'export WLR_BACKENDS="${WLR_BACKENDS:-headless,libinput}"',
         "for dev in /dev/input/event* /dev/input/js*; do",
-        'group_name="$(getent group "$gid" | cut -d: -f1 || true)"',
-        'group_name="input-$gid"',
-        'groupadd -g "$gid" "$group_name"',
-        "usermod -aG \"$group_name\" \"$GAMING_USER\"",
+        'SESSION_SUPPLEMENTARY_GIDS="$GAMING_GID"',
+        'append_session_gid "$gid"',
+        '--groups "$SESSION_SUPPLEMENTARY_GIDS"',
     )
     for snippet in required_launcher:
         if snippet not in launcher:
             fail(f"sunshine-headless.sh missing input contract: {snippet!r}")
     if "export WLR_LIBINPUT_NO_DEVICES" in launcher:
         fail("sunshine-headless.sh must not set WLR_LIBINPUT_NO_DEVICES; it hides Sunshine uinput devices from Sway")
+    for line in launcher.splitlines():
+        stripped = line.strip()
+        for forbidden in ("usermod ", "groupadd "):
+            if stripped.startswith(forbidden):
+                fail(
+                    "sunshine-headless.sh must not mutate account databases at "
+                    f"backend startup: {stripped!r}"
+                )
 
     required_mounts = (
         "mountPath: /dev/input",
@@ -292,6 +299,17 @@ def assert_sunshine_input_contract(launcher: str, values_yaml: str) -> None:
     for snippet in required_mounts:
         if snippet not in values_yaml:
             fail(f"values-k3s.yaml missing gaming input mount: {snippet!r}")
+
+
+def assert_validator_image_contract(values_yaml: str, qwen35_cache_yaml: str) -> None:
+    image = (
+        "registry.harbor.lan/flexinfer/model-tools@sha256:"
+        "d1515f57e5e92ad62a8f3820eb428fc32436cf979fa130817fbe3f038edd14d1"
+    )
+    if f'validatorImage: "{image}"' not in values_yaml:
+        fail("values-k3s.yaml must override stale validator images with model-tools")
+    if f'image: "{image}"' not in qwen35_cache_yaml:
+        fail("qwen35 cache must revalidate with the model-tools image")
 
 
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
@@ -378,6 +396,9 @@ def main(argv: list[str]) -> int:
     gfx906_vllm_install_script = read("build/scripts/install_vllm_gfx906_compat.py")
     sunshine_launcher = read("build/sunshine-headless.sh")
     values_yaml = read("deploy/system/values-k3s.yaml")
+    qwen35_cache_yaml = read(
+        "deploy/modelcaches/qwen35-35b-a3b-clean-gptq.yaml"
+    )
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
@@ -388,6 +409,7 @@ def main(argv: list[str]) -> int:
     assert_gfx906_vllm_diagnostics_contract(gfx906_vllm_dockerfile)
     assert_gfx906_vllm_compat_hooks_contract(gfx906_vllm_install_script)
     assert_sunshine_input_contract(sunshine_launcher, values_yaml)
+    assert_validator_image_contract(values_yaml, qwen35_cache_yaml)
     assert_ci_fast_check_wiring(ci_yaml)
 
     if run_tests:

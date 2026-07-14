@@ -75,6 +75,9 @@ spec:
     timeoutSeconds: 7200
     validate:
       enabled: true
+      # Re-run the failed publish gate with the current validator without
+      # touching the completed 22.75 GB GPTQ artifact.
+      image: "registry.harbor.lan/flexinfer/model-tools@sha256:d1515f57e5e92ad62a8f3820eb428fc32436cf979fa130817fbe3f038edd14d1"
       layout: vllm-gptq
       family: qwen35-35b-a3b
       failOnWarnings: true

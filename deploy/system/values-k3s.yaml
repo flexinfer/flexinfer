@@ -247,6 +247,10 @@ imagePrewarm:
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
 quantization:
   modelToolsImage: "registry.harbor.lan/flexinfer/model-tools:master"
+  # Explicitly overwrite a legacy live Deployment field that pointed publish
+  # validation at a stale ROCm runtime. Model tools is the canonical CPU-only
+  # image and carries the validator from the same FlexInfer revision.
+  validatorImage: "registry.harbor.lan/flexinfer/model-tools@sha256:d1515f57e5e92ad62a8f3820eb428fc32436cf979fa130817fbe3f038edd14d1"
   useRuntimeForQuantize: false
   runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166"
   gptqDeviceMap: "auto"
