@@ -312,17 +312,21 @@ def assert_sunshine_input_contract(launcher: str, values_yaml: str) -> None:
                     f"backend startup: {stripped!r}"
                 )
 
-    required_mounts = (
-        "mountPath: /dev/input",
-        "mountPath: /dev/uinput",
-        "mountPath: /run/udev",
-        "path: /dev/input",
-        "path: /dev/uinput",
-        "path: /run/udev",
-    )
-    for snippet in required_mounts:
-        if snippet not in values_yaml:
-            fail(f"values-k3s.yaml missing gaming input mount: {snippet!r}")
+    # An inference-only deployment intentionally omits privileged host input
+    # mounts. Require the full input plumbing whenever a gaming profile is
+    # enabled, without making a valid lease rollback fail this static gate.
+    if re.search(r"^\s+gaming:\s*true\s*$", values_yaml, re.MULTILINE):
+        required_mounts = (
+            "mountPath: /dev/input",
+            "mountPath: /dev/uinput",
+            "mountPath: /run/udev",
+            "path: /dev/input",
+            "path: /dev/uinput",
+            "path: /run/udev",
+        )
+        for snippet in required_mounts:
+            if snippet not in values_yaml:
+                fail(f"values-k3s.yaml missing gaming input mount: {snippet!r}")
 
 
 def assert_validator_image_contract(values_yaml: str, qwen35_cache_yaml: str) -> None:

@@ -247,6 +247,9 @@ imagePrewarm:
         kubernetes.io/hostname: cblevins-7900xtx
       images:
         - registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
+        # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
+        # subsequent second workhorse replica. Keep it resident across GC.
+        - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
 quantization:
   modelToolsImage: "registry.harbor.lan/flexinfer/model-tools:master"
@@ -374,95 +377,20 @@ runtime:
   modelHostPath: "/var/lib/flexinfer/models"
   terminationGracePeriodSeconds: 60
   profiles:
-    # 2026-07-01 GAMING CUTOVER: cblevins-7900xtx runtime pinned to the dedicated
-    # gaming image (Sunshine/sway/Mesa RADV/VAAPI HW-encode). The 5930k profile
-    # below stays on the serving digest. Revert this image to the serving digest
-    # (matching gfx1100-5930k) to return 7900xtx to the inference fleet.
+    # cblevins-7900xtx returned to inference on 2026-07-14. Its persistent
+    # Sunshine/Steam data remains under /home/flexinfer-gaming for the next
+    # explicit gaming lease, but the runtime no longer exposes or starts it.
     - name: gfx1100
-      # rocm-gfx1100-gaming w/ Steam + Sunshine pairing certs + per-client resolution
-      # (3440x1440 21:9 ultrawide dynamic resize, !768) + empty-global_prep_cmd
-      # resize-helper wiring fix. Sunshine pinned to 2025.924.154138: the newest
-      # stable release AFTER the AMD VAAPI rate-control fix (PR #2821, kills the
-      # DATA_SHARDS_MAX hiccups) but BEFORE the wlroots-capture regression that
-      # segfaults on stream start (Sunshine #5018, broke at v2026.407). The
-      # 2026.516 build (image b35ed6d2) had that crash — do not re-pin it.
-      # Rebuilt 2026-07-14 from master 6432dff2. The bounded gaming publisher
-      # excludes llama.cpp, Ollama, quantizer, diffusers, and serving extras;
-      # its corrected selector DAG avoids even pulling disabled builders. The
-      # startup path reuses the image's uid-1000 account instead of mutating the
-      # read-only pod /etc. Pairs with WLR_RENDERER=gles2 (env below), which
-      # fixed the screencopy DMA-BUF capture crash.
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:a58e4f36ac7101f8b06afc34ddc338b52064b18317a9385837fda59e3d5b462f"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
-      # 2026-07-01 GAMING CUTOVER: this is the dedicated gaming node (7900xtx).
-      # hostNetwork + gaming expose Sunshine on the node's fixed Moonlight ports
-      # so a LAN client can pair + stream the declarative GamingSession host.
-      # (Only this profile; the 5930k serving profile stays pod-networked.)
-      hostNetwork: true
-      gaming: true
       shmSize: "8Gi"
       memoryLimit: "48Gi"
       memoryRequest: "8Gi"
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
-      # Persistent gaming state on the node's NVMe (/home, ~1.8T): Sunshine
-      # pairing survives pod restarts, and the Steam account login + game
-      # library live in <mount>/home so signing in and installing games are
-      # one-time operations. Layout is managed by build/sunshine-headless.sh.
-      extraVolumeMounts:
-        # Sunshine injects Moonlight/Steam Deck controller, keyboard, and mouse
-        # events via uinput; sway consumes them through libinput as the non-root
-        # gamer user, which also needs host udev metadata for classification.
-        - name: dev-input
-          mountPath: /dev/input
-        - name: dev-uinput
-          mountPath: /dev/uinput
-        - name: run-udev
-          mountPath: /run/udev
-          readOnly: true
-        - name: gaming-data
-          mountPath: /var/lib/flexinfer-gaming
-      extraVolumes:
-        - name: dev-input
-          hostPath:
-            path: /dev/input
-            type: Directory
-        - name: dev-uinput
-          hostPath:
-            path: /dev/uinput
-            type: CharDevice
-        - name: run-udev
-          hostPath:
-            path: /run/udev
-            type: Directory
-        - name: gaming-data
-          hostPath:
-            path: /home/flexinfer-gaming
-            type: DirectoryOrCreate
       env:
-        - name: GAMING_STATE_DIR
-          value: "/var/lib/flexinfer-gaming"
-        # Base headless-display mode: native 3440x1440 21:9 @120Hz for the
-        # operator's LG 34 ultrawide (Moonlight on macOS). sunshine-headless.sh
-        # additionally resizes the sway output to each connecting client's
-        # requested mode via a Sunshine global_prep_cmd, so a 1080p/Steam Deck
-        # client is not forced onto 21:9 — this is only the pre-connection base.
-        # Set GAMING_DYNAMIC_RESOLUTION=false to pin this mode for every client.
-        - name: GAMING_RESOLUTION
-          value: "3440x1440"
-        - name: GAMING_FPS
-          value: "120"
-        # Composite the headless sway output with the GLES2 renderer, not Vulkan.
-        # Sunshine >=2025.x captures via zwlr_screencopy DMA-BUF export; the RADV
-        # Vulkan renderer hands it compressed-modifier buffers that screencopy
-        # cannot export → Sunshine logs "Frame capture failed" and crash-loops on
-        # every client connect. GLES2 produces linear/exportable buffers so the
-        # DMA-BUF capture succeeds. (0.23.1 used the older zwlr_export_dmabuf path,
-        # which worked with Vulkan — hence this was only needed after the upgrade.)
-        - name: WLR_RENDERER
-          value: "gles2"
         - name: HIP_VISIBLE_DEVICES
           value: "0"
         - name: ROCR_VISIBLE_DEVICES

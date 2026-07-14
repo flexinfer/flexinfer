@@ -6,9 +6,13 @@ resources:
   - modelcaches/
   - gpuprofiles/
   - gpugroups.yaml
-  # Declarative node gaming mode (Sunshine/Moonlight). Deleting the GamingSession
-  # reverts the node to inference (controller finalizer).
-  - gaming/
+  # Gaming lease released 2026-07-14 so cblevins-7900xtx can serve inference.
+  # Re-add gaming/ to lease the node again; its Sunshine/Steam state remains on
+  # the host and survives this inference-mode interval.
+  # - gaming/
+  # Bounded, one-shot long-context qualification. The experiment deletes its
+  # candidate after the retained 96K/128K recall gauntlet reaches a verdict.
+  - experiments/
   # One-shot, Flux-managed artifact-transform tasks. Each subdirectory
   # is idempotent so Flux re-reconciles are no-ops once complete.
   - tasks/gemma4-31b-keqv/
