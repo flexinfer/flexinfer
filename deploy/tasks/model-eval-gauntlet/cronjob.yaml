@@ -44,6 +44,11 @@ spec:
         spec:
           restartPolicy: Never
           serviceAccountName: flexinfer-benchmarker
+          # flexinfer-bench:master is currently published for amd64. Without
+          # this fence the scheduler can place a copied ModelExperiment Job on
+          # the arm64 utility node, where /bin/sh fails with exec format error.
+          nodeSelector:
+            kubernetes.io/arch: amd64
           imagePullSecrets:
             - name: harbor-creds
           containers:

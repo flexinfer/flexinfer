@@ -94,6 +94,7 @@ func experimentTestObjects() (*aiv1alpha2.ModelExperiment, *batchv1.CronJob) {
 			TTLSecondsAfterFinished: experimentPtr(int32(60)),
 			Template: corev1.PodTemplateSpec{Spec: corev1.PodSpec{
 				RestartPolicy: corev1.RestartPolicyNever,
+				NodeSelector:  map[string]string{"kubernetes.io/arch": "amd64"},
 				Containers: []corev1.Container{{Name: "gauntlet", Image: "bench:test", Env: []corev1.EnvVar{
 					{Name: "MODELS", Value: "production=vllm"}, {Name: "MIN_DURATION", Value: "30s"},
 				}}},
@@ -154,6 +155,9 @@ func TestModelExperimentPositiveLifecycle(t *testing.T) {
 	}
 	if got := env["MIN_DURATION"]; got != "1s" {
 		t.Fatalf("MIN_DURATION = %q", got)
+	}
+	if got := job.Spec.Template.Spec.NodeSelector["kubernetes.io/arch"]; got != "amd64" {
+		t.Fatalf("gauntlet architecture selector = %q, want amd64", got)
 	}
 	if job.Spec.TTLSecondsAfterFinished != nil {
 		t.Fatalf("evidence Job inherited TTL: %d", *job.Spec.TTLSecondsAfterFinished)
