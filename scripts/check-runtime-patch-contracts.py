@@ -177,6 +177,30 @@ def assert_runtime_entrypoint_contract(entrypoint: str, build_script: str) -> No
         fail("runtime-entrypoint.sh no longer wires the Gemma4 MoE patch script")
 
 
+def assert_optional_runtime_component_contract(dockerfile: str) -> None:
+    required = (
+        "FROM ${BASE_IMAGE} AS optional-components-disabled",
+        "FROM llamacpp-${INCLUDE_LLAMACPP} AS llamacpp-output",
+        "FROM ollama-${INCLUDE_OLLAMA} AS ollama-output",
+        "COPY --from=llamacpp-output /opt/llamacpp/bin/ /opt/llamacpp/bin/",
+        "COPY --from=ollama-output /opt/ollama/bin/ /usr/local/bin/",
+    )
+    for snippet in required:
+        if snippet not in dockerfile:
+            fail(f"Dockerfile.runtime optional component graph missing {snippet!r}")
+
+    forbidden = (
+        "COPY --from=llamacpp-builder",
+        "COPY --from=ollama-builder",
+    )
+    for snippet in forbidden:
+        if snippet in dockerfile:
+            fail(
+                "Dockerfile.runtime still forces a disabled component builder: "
+                f"{snippet!r}"
+            )
+
+
 def assert_serving_dockerfile_contract(dockerfile: str) -> None:
     required = (
         "Serving-focused flexinfer-runtime Dockerfile.",
@@ -422,6 +446,7 @@ def main(argv: list[str]) -> int:
     assert_runtime_yaml_patch_refs(runtime_yaml)
     assert_dockerfile_patch_order(dockerfile)
     assert_runtime_entrypoint_contract(entrypoint, build_script)
+    assert_optional_runtime_component_contract(dockerfile)
     assert_serving_dockerfile_contract(serving_dockerfile)
     assert_gfx906_vllm_diagnostics_contract(gfx906_vllm_dockerfile)
     assert_gfx906_vllm_compat_hooks_contract(gfx906_vllm_install_script)
