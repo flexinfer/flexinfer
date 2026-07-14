@@ -1,0 +1,96 @@
+# Exact-artifact 128K qualification for the clean Qwen3.5 workhorse.
+#
+# This runs beside the 64K production lane on the newly released 7900 XTX. The
+# controller deletes the candidate after the context gauntlet completes, while
+# retaining the Job and typed verdict as evidence. Promotion requires this
+# artifact/runtime pair to recall every needle at both 96K and 128K.
+apiVersion: ai.flexinfer/v1alpha2
+kind: ModelExperiment
+metadata:
+  name: qwen35-35b-clean-gptq-128k-graph
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/canary: qwen35-clean-workhorse
+    flexinfer.ai/runtime: vllm-0.23-rocm-gfx1100-native-w4a16
+    flexinfer.ai/artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+    flexinfer.ai/artifact-policy: qwen35-35b-a3b-gdn-fp
+spec:
+  timeout: 120m
+  artifactGate:
+    modelCacheRef: qwen35-35b-a3b-clean-gptq
+    requireValidation: true
+    requirePublishedDigest: true
+    requireSourceMatch: true
+  candidate:
+    backend: vllm
+    image: registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
+    source: pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn
+    cache:
+      strategy: None
+      compilationCache:
+        enabled: true
+        hostPath: /var/lib/flexinfer/compile-cache
+        sizeLimit: 4Gi
+    gpu:
+      vendor: amd
+      # This host exposes the dGPU and Raphael iGPU through the device plugin.
+      # Claim both slots, then select the discrete card deterministically.
+      count: 2
+      shared: 7900xtx-textgen
+      priority: 425
+      forcePromotion: true
+      vramEstimateMB: 23200
+    serverless:
+      enabled: true
+      minReplicas: 1
+      idleTimeout: 30m
+      coldStartTimeout: 60m
+    config:
+      dedicatedDeployment: true
+      quantization: gptq
+      dtype: half
+      hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+      languageModelOnly: true
+      maxModelLen: 131072
+      maxNumSeqs: 1
+      maxNumBatchedTokens: 4096
+      enableChunkedPrefill: true
+      schedulerReserveFullISL: true
+      gpuMemoryUtilization: "0.94"
+      kvCacheDtype: fp8_e4m3
+      calculateKvScales: false
+      enforceEager: false
+      gdnPrefillBackend: triton
+      cudagraphMetrics: true
+      kvCacheMetrics: true
+      kvCacheMetricsSample: "1.0"
+      enablePrefixCaching: false
+      disableAiter: true
+      rocmCustomPagedAttn: false
+      hipVisibleDevices: "0"
+      trustRemoteCode: true
+      enableToolCalling: true
+      toolCallParser: qwen3_coder
+      servedModelName: qwen35-35b-clean-gptq-128k-graph
+      disableLogStats: false
+      failOnEnvironValidation: true
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-7900xtx
+    resources:
+      requests:
+        cpu: "4"
+        memory: 16Gi
+      limits:
+        cpu: "8"
+        memory: 48Gi
+    tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+        operator: Exists
+  gauntlet:
+    templateRef: qwen35-long-context-gauntlet
+    env:
+      FLEXINFER_EXPERIMENT_REVISION: "artifact-ed9cd20f-96k-128k-five-depths"
+      CONTEXT_POINTS: "98304,131072"
+      NEEDLE_COUNT: "5"
+      REQUEST_TIMEOUT: "900"
