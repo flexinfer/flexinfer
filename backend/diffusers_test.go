@@ -202,6 +202,18 @@ func TestDiffusersReadinessNoLargeDelay(t *testing.T) {
 	if probe.InitialDelaySeconds > 5 {
 		t.Errorf("InitialDelaySeconds = %d, want <= 5 (startup probe handles cold start)", probe.InitialDelaySeconds)
 	}
+	if probe.ProbeHandler.HTTPGet != nil {
+		t.Fatal("readiness must not use the inference worker's HTTP endpoint")
+	}
+	if probe.ProbeHandler.TCPSocket == nil {
+		t.Fatal("readiness must use a busy-safe TCP socket probe")
+	}
+	if got := probe.ProbeHandler.TCPSocket.Port.IntVal; got != 8000 {
+		t.Errorf("TCPSocket.Port = %d, want 8000", got)
+	}
+	if probe.FailureThreshold != 3 {
+		t.Errorf("FailureThreshold = %d, want 3 for closed-port detection", probe.FailureThreshold)
+	}
 }
 
 func TestDiffusersSkipWarmupEnv(t *testing.T) {
