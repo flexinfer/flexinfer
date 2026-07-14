@@ -2,12 +2,98 @@ package quantization
 
 import (
 	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	corev1 "k8s.io/api/core/v1"
 )
+
+func TestGPTQWrapperShellSyntax(t *testing.T) {
+	cmd := exec.Command("bash", "-n")
+	cmd.Stdin = strings.NewReader((&GPTQJobBuilder{}).gptqWrapperScript())
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("GPTQ wrapper shell syntax: %v\n%s", err, output)
+	}
+}
+
+func TestGPTQWrapperRTNFallbackGate(t *testing.T) {
+	script := (&GPTQJobBuilder{}).gptqWrapperScript()
+	start := strings.Index(script, "write_gptq_quality()")
+	end := strings.Index(script, "cleanup()")
+	if start < 0 || end <= start {
+		t.Fatal("could not extract GPTQ quality functions from wrapper")
+	}
+	qualityFunctions := script[start:end]
+
+	for _, tc := range []struct {
+		name      string
+		modules   int
+		fallbacks int
+		wantErr   bool
+	}{
+		{name: "five percent passes", modules: 200, fallbacks: 10},
+		{name: "twenty percent fails", modules: 200, fallbacks: 40, wantErr: true},
+		{name: "missing module telemetry fails", wantErr: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			var log strings.Builder
+			for i := 0; i < tc.modules; i++ {
+				loss := "0.001"
+				if i < tc.fallbacks {
+					loss = "fallback(rtn): 0.001"
+				}
+				fmt.Fprintf(&log, "INFO  | gptq    | 1 | module.%d | %s\n", i, loss)
+			}
+			if err := os.WriteFile(filepath.Join(root, "quantize.log"), []byte(log.String()), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			shell := `set -euo pipefail
+TYPE=W4_G128
+MODEL_DIR="${TEST_ROOT}/model"
+OUT_DIR="${TEST_ROOT}/out"
+LOGFILE="${TEST_ROOT}/quantize.log"
+GPTQ_MAX_RTN_FALLBACK_PERCENT=10
+GPTQ_MIN_MODULES_FOR_FALLBACK_GATE=100
+emit_event() { :; }
+` + qualityFunctions + `
+write_gptq_quality
+enforce_gptq_quality "${OUT_DIR}/.quantization-quality.json"
+`
+			cmd := exec.Command("bash", "-c", shell)
+			cmd.Env = append(os.Environ(), "TEST_ROOT="+root)
+			output, err := cmd.CombinedOutput()
+			if tc.wantErr && err == nil {
+				t.Fatalf("quality gate passed unexpectedly: %s", output)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("quality gate failed: %v\n%s", err, output)
+			}
+
+			data, readErr := os.ReadFile(filepath.Join(root, "out", ".quantization-quality.json"))
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			var quality struct {
+				Modules   int    `json:"gptqModules"`
+				Fallbacks int    `json:"rtnFallbackModules"`
+				Percent   string `json:"rtnFallbackPercent"`
+			}
+			if err := json.Unmarshal(data, &quality); err != nil {
+				t.Fatal(err)
+			}
+			if quality.Modules != tc.modules || quality.Fallbacks != tc.fallbacks {
+				t.Fatalf("quality = %+v, want modules=%d fallbacks=%d", quality, tc.modules, tc.fallbacks)
+			}
+		})
+	}
+}
 
 func TestGPTQJobBuilder_Validate_EdgeCases(t *testing.T) {
 	builder := &GPTQJobBuilder{}
@@ -290,6 +376,26 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 	})
 
+	t.Run("RTN fallback quality gate defaults and overrides", func(t *testing.T) {
+		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
+		if v := findEnv(env, "GPTQ_MAX_RTN_FALLBACK_PERCENT"); v != "10" {
+			t.Errorf("GPTQ_MAX_RTN_FALLBACK_PERCENT = %q, want 10", v)
+		}
+		if v := findEnv(env, "GPTQ_MIN_MODULES_FOR_FALLBACK_GATE"); v != "100" {
+			t.Errorf("GPTQ_MIN_MODULES_FOR_FALLBACK_GATE = %q, want 100", v)
+		}
+
+		t.Setenv("FLEXINFER_GPTQ_MAX_RTN_FALLBACK_PERCENT", "7.5")
+		t.Setenv("FLEXINFER_GPTQ_MIN_MODULES_FOR_FALLBACK_GATE", "250")
+		env = builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "", 0, nil)
+		if v := findEnv(env, "GPTQ_MAX_RTN_FALLBACK_PERCENT"); v != "7.5" {
+			t.Errorf("GPTQ_MAX_RTN_FALLBACK_PERCENT = %q, want 7.5", v)
+		}
+		if v := findEnv(env, "GPTQ_MIN_MODULES_FOR_FALLBACK_GATE"); v != "250" {
+			t.Errorf("GPTQ_MIN_MODULES_FOR_FALLBACK_GATE = %q, want 250", v)
+		}
+	})
+
 	t.Run("gfx906 defaults to cpu device map", func(t *testing.T) {
 		env := builder.buildEnv("model", "gptq-w4-g128", 4, 128, true, false, 48, "0.80", "auto", "gfx906", 16384, nil)
 		if v := findEnv(env, "QUANTIZE_DEVICE_MAP"); v != "cpu" {
@@ -357,6 +463,31 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		}
 		if !strings.Contains(script, "Registered GPTQModel qwen3_5_moe_text alias") {
 			t.Error("wrapper missing Qwen3.5 MoE text alias registration")
+		}
+	})
+
+	t.Run("wrapper gates RTN fallback quality for fresh and cached artifacts", func(t *testing.T) {
+		script := builder.gptqWrapperScript()
+		for _, marker := range []string{
+			"write_gptq_quality()",
+			"enforce_gptq_quality()",
+			".quantization-quality.json",
+			"fallback(rtn)",
+			"quantization_quality",
+			"GPTQ_MAX_RTN_FALLBACK_PERCENT",
+		} {
+			if !strings.Contains(script, marker) {
+				t.Errorf("wrapper missing RTN fallback quality marker %q", marker)
+			}
+		}
+		if got := strings.Count(script, `enforce_gptq_quality "${OUT_DIR}/.quantization-quality.json"`); got != 3 {
+			t.Errorf("quality enforcement count = %d, want 3 (save-complete, heuristic cache, fresh artifact)", got)
+		}
+		freshWrite := strings.LastIndex(script, "write_gptq_quality")
+		freshEnforce := strings.LastIndex(script, "enforce_gptq_quality")
+		trapDisable := strings.Index(script, "trap - EXIT")
+		if freshWrite < 0 || freshEnforce <= freshWrite || trapDisable <= freshEnforce {
+			t.Error("fresh-artifact quality gate must run after summary creation and before disabling failure cleanup")
 		}
 	})
 

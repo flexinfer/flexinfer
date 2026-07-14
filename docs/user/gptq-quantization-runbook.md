@@ -230,6 +230,29 @@ recovery passes, use the guarded pipeline only: `skipGDNLayers: true`, narrowly
 target full-attention layers, keep `ablitateLmHead: false`, and enforce a refusal
 norm/perplexity gate. Do not reintroduce all-layer abliteration.
 
+### 6.6 RTN fallback quality gate
+
+GPTQModel uses round-to-nearest (RTN) quantization when calibration does not
+exercise a sparse module enough to build a useful Hessian. This is expected for
+a small fraction of MoE experts, but a large fraction means the artifact no
+longer represents the requested GPTQ calibration.
+
+After a fresh run, FlexInfer writes
+`${OUT_DIR}/.quantization-quality.json`, emits a `quantization_quality` event,
+and fails the Job when the RTN fallback percentage exceeds the configured
+limit. The default gate applies after 100 completed GPTQ modules and allows at
+most 10% RTN fallbacks. Configure the controller with:
+
+- `FLEXINFER_GPTQ_MAX_RTN_FALLBACK_PERCENT` to change the percentage limit.
+- `FLEXINFER_GPTQ_MIN_MODULES_FOR_FALLBACK_GATE` to change the minimum sample.
+
+The cached-artifact short circuit enforces the same sidecar, so a failed gate
+cannot pass on the next Job retry merely because `.save-complete` already
+exists. Older cached artifacts without a quality sidecar remain loadable but
+emit `quantization_quality_unavailable`; validate those from the persisted
+quantization log before promotion. Passing this guardrail does not replace the
+ModelExperiment coherence and long-context kill-tests.
+
 ## 7. Alert response matrix
 
 These alerts ship from `charts/flexinfer/templates/prometheusrule.yaml` when `alerting.enabled=true`.

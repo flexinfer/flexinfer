@@ -243,6 +243,13 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 	// Override with FLEXINFER_GPTQ_DEVICE_MAP to force another loading mode.
 	layoutAdapterEnabled := getenvDefault("FLEXINFER_GPTQ_LAYOUT_ADAPTER", "0")
 	layoutAdapterStrategy := getenvDefault("FLEXINFER_GPTQ_LAYOUT_ADAPTER_VISION", "none")
+	// GPTQModel can fall back to round-to-nearest (RTN) when calibration does
+	// not exercise a sparse module enough to build a useful Hessian. A small
+	// fraction is expected for MoE models; a large fraction means the artifact
+	// no longer represents the requested GPTQ calibration. Keep the guardrail
+	// configurable while making silent quality degradation fail closed.
+	maxRTNFallbackPercent := getenvDefault("FLEXINFER_GPTQ_MAX_RTN_FALLBACK_PERCENT", "10")
+	minModulesForFallbackGate := getenvDefault("FLEXINFER_GPTQ_MIN_MODULES_FOR_FALLBACK_GATE", "100")
 
 	env := []corev1.EnvVar{
 		{Name: "MODEL_DIR", Value: fmt.Sprintf("/cache/%s", modelPath)},
@@ -271,6 +278,8 @@ func (b *GPTQJobBuilder) buildEnv(modelPath, outSubdir string, bits, groupSize i
 		{Name: "QUANTIZE_DEVICE_MAP", Value: deviceMap},
 		{Name: "FLEXINFER_GPTQ_LAYOUT_ADAPTER", Value: layoutAdapterEnabled},
 		{Name: "FLEXINFER_GPTQ_LAYOUT_ADAPTER_VISION", Value: layoutAdapterStrategy},
+		{Name: "GPTQ_MAX_RTN_FALLBACK_PERCENT", Value: maxRTNFallbackPercent},
+		{Name: "GPTQ_MIN_MODULES_FOR_FALLBACK_GATE", Value: minModulesForFallbackGate},
 		{Name: "FLEXINFER_TELEMETRY", Value: "true"},
 	}
 	env = append(env, BuildCalibrationEnv(calib)...)
@@ -523,6 +532,103 @@ emit_event() {
     echo "${json}"
 }
 
+write_gptq_quality() {
+    local quality_file="${OUT_DIR}/.quantization-quality.json"
+    python3 - "${LOGFILE}" "${quality_file}" \
+        "${GPTQ_MAX_RTN_FALLBACK_PERCENT}" \
+        "${GPTQ_MIN_MODULES_FOR_FALLBACK_GATE}" <<'GPTQ_QUALITY'
+import json
+import os
+import re
+import sys
+
+log_path, quality_path, limit_raw, minimum_raw = sys.argv[1:]
+try:
+    limit = float(limit_raw)
+    minimum = int(minimum_raw)
+except ValueError as exc:
+    raise SystemExit(f"invalid GPTQ RTN fallback gate configuration: {exc}")
+if not 0 <= limit <= 100:
+    raise SystemExit("GPTQ_MAX_RTN_FALLBACK_PERCENT must be between 0 and 100")
+if minimum < 1:
+    raise SystemExit("GPTQ_MIN_MODULES_FOR_FALLBACK_GATE must be at least 1")
+
+with open(log_path, errors="replace") as fh:
+    lines = fh.read().replace("\r", "\n").splitlines()
+
+module_pattern = re.compile(r"^INFO\s+\|\s*gptq\s+\|")
+total = sum(1 for line in lines if module_pattern.search(line))
+fallback = sum(1 for line in lines if "fallback(rtn)" in line)
+percent = (100.0 * fallback / total) if total else 0.0
+quality = {
+    "gptqModules": total,
+    "rtnFallbackModules": fallback,
+    "rtnFallbackPercent": f"{percent:.4f}",
+    "maxRtnFallbackPercent": f"{limit:g}",
+    "minimumModules": minimum,
+}
+os.makedirs(os.path.dirname(quality_path), exist_ok=True)
+temporary = quality_path + ".tmp"
+with open(temporary, "w") as fh:
+    json.dump(quality, fh, indent=2, sort_keys=True)
+    fh.write("\n")
+os.replace(temporary, quality_path)
+GPTQ_QUALITY
+}
+
+enforce_gptq_quality() {
+    local quality_file="$1"
+    if [ ! -f "${quality_file}" ]; then
+        emit_event "quantization_quality_unavailable" "model" "${MODEL_DIR}" "type" "${TYPE}" "reason" "missing quality summary"
+        echo "WARN: GPTQ RTN fallback quality summary is unavailable for this cached artifact"
+        return 0
+    fi
+
+    if python3 - "${quality_file}" <<'GPTQ_QUALITY_GATE'
+import datetime
+import json
+import sys
+
+with open(sys.argv[1]) as fh:
+    quality = json.load(fh)
+total = int(quality.get("gptqModules", 0))
+fallback = int(quality.get("rtnFallbackModules", 0))
+percent = float(quality.get("rtnFallbackPercent", 0))
+limit = float(quality.get("maxRtnFallbackPercent", 10))
+minimum = int(quality.get("minimumModules", 100))
+event = {
+    "ts": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+    "component": "gptq-quantizer",
+    "event": "quantization_quality",
+    "gptq_modules": total,
+    "rtn_fallback_modules": fallback,
+    "rtn_fallback_percent": percent,
+    "max_rtn_fallback_percent": limit,
+    "gate_applied": total >= minimum,
+}
+if total == 0:
+    event["gate_result"] = "failed-no-module-telemetry"
+    print(json.dumps(event, separators=(",", ":")))
+    raise SystemExit(1)
+if total < minimum:
+    event["gate_result"] = "insufficient-sample"
+    print(json.dumps(event, separators=(",", ":")))
+    raise SystemExit(0)
+if percent > limit:
+    event["gate_result"] = "failed"
+    print(json.dumps(event, separators=(",", ":")))
+    raise SystemExit(1)
+event["gate_result"] = "passed"
+print(json.dumps(event, separators=(",", ":")))
+GPTQ_QUALITY_GATE
+    then
+        return 0
+    fi
+
+    echo "ERROR: GPTQ RTN fallback rate exceeded the configured quality limit"
+    return 1
+}
+
 cleanup() {
     local ec=$?
     # Persist log to PVC before anything else
@@ -553,6 +659,23 @@ trap cleanup EXIT
 
 # Tee all output so cleanup can capture tail on failure
 exec > >(tee -a "${LOGFILE}") 2>&1
+
+# Reject invalid operator overrides before spending hours on quantization.
+python3 - "${GPTQ_MAX_RTN_FALLBACK_PERCENT}" \
+    "${GPTQ_MIN_MODULES_FOR_FALLBACK_GATE}" <<'GPTQ_QUALITY_CONFIG'
+import sys
+
+try:
+    limit = float(sys.argv[1])
+    minimum = int(sys.argv[2])
+except ValueError as exc:
+    raise SystemExit(f"invalid GPTQ RTN fallback gate configuration: {exc}")
+if not 0 <= limit <= 100:
+    raise SystemExit("GPTQ_MAX_RTN_FALLBACK_PERCENT must be between 0 and 100")
+if minimum < 1:
+    raise SystemExit("GPTQ_MIN_MODULES_FOR_FALLBACK_GATE must be at least 1")
+print(f"GPTQ RTN fallback gate: max={limit:g}% min_modules={minimum}")
+GPTQ_QUALITY_CONFIG
 
 # GPTQModel's pack_block_cpu native extension is optional. It can SIGILL on
 # older CPU nodes during post-layer packing, which bypasses the library's
@@ -1586,6 +1709,9 @@ VERIFY_SAVE_COMPLETE
     fi
 
     if [ "${SAVE_COMPLETE_OK}" = "yes" ]; then
+        if ! enforce_gptq_quality "${OUT_DIR}/.quantization-quality.json"; then
+            exit 1
+        fi
         emit_event "quantization_cached" "model" "${MODEL_DIR}" "type" "${TYPE}" "original_bytes" "${ORIGINAL_SIZE}" "compressed_bytes" "${COMPRESSED_SIZE}" "source" "save_complete"
         echo "Quantization already complete in ${OUT_DIR} (verified via .save-complete)"
         echo "Output size: ${COMPRESSED_SIZE} bytes (original: ${ORIGINAL_SIZE})"
@@ -1605,6 +1731,9 @@ TERMINATION
         fi
         exit 0
     elif { [ -f "${SHARD_INDEX}" ] || [ -f "${SINGLE_MODEL}" ]; } && [ "${COMPRESSED_SIZE}" -gt "${MIN_SIZE}" ]; then
+        if ! enforce_gptq_quality "${OUT_DIR}/.quantization-quality.json"; then
+            exit 1
+        fi
         emit_event "quantization_cached" "model" "${MODEL_DIR}" "type" "${TYPE}" "original_bytes" "${ORIGINAL_SIZE}" "compressed_bytes" "${COMPRESSED_SIZE}" "source" "heuristic"
         echo "Quantization already complete in ${OUT_DIR} (heuristic: no .save-complete marker)"
         echo "Output size: ${COMPRESSED_SIZE} bytes (original: ${ORIGINAL_SIZE})"
@@ -1921,6 +2050,11 @@ MAGMA_PATCH
 
 python3 /tmp/_magma_fallback.py
 
+write_gptq_quality
+if ! enforce_gptq_quality "${OUT_DIR}/.quantization-quality.json"; then
+    exit 1
+fi
+
 trap - EXIT
 
 if ! ls "${OUT_DIR}"/*.safetensors &>/dev/null; then
@@ -2057,8 +2191,23 @@ if isinstance(samples, int) and samples > 0:
     calibration["maxSamples"] = samples
 if isinstance(max_seq_len, int) and max_seq_len > 0:
     calibration["maxSeqLen"] = max_seq_len
+updated = False
 if calibration:
     status["calibrationParams"] = calibration
+    updated = True
+
+output_dir = status.get("outputDir")
+quality_path = os.path.join(model_dir, output_dir, ".quantization-quality.json") if output_dir else ""
+try:
+    with open(quality_path) as fh:
+        quality = json.load(fh)
+except Exception:
+    quality = None
+if isinstance(quality, dict):
+    status["quality"] = quality
+    updated = True
+
+if updated:
     with open(status_path, "w") as fh:
         json.dump(status, fh, indent=2, sort_keys=True)
         fh.write("\n")
