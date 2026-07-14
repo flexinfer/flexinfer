@@ -43,6 +43,10 @@ import (
 func (r *ModelCacheReconciler) reconcilePublish(ctx context.Context, modelCache *aiv1alpha1.ModelCache, pvcName, modelPath string) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
+	if changed, result, err := r.reconcilePublishValidateSpecChange(ctx, modelCache); err != nil || changed {
+		return result, err
+	}
+
 	// If already Ready with publish status, nothing to do.
 	if modelCache.Status.Phase == aiv1alpha1.ModelCachePhaseReady && publishCompleted(modelCache.Status.Publish) {
 		return ctrl.Result{}, nil
