@@ -340,6 +340,25 @@ def assert_validator_image_contract(values_yaml: str, qwen35_cache_yaml: str) ->
         fail("qwen35 cache must revalidate with the model-tools image")
 
 
+def assert_long_context_gauntlet_contract(
+    cronjob_yaml: str, experiment_yaml: str
+) -> None:
+    required_cronjob = (
+        "name: qwen35-long-context-gauntlet",
+        "kubernetes.io/hostname: cblevins-7900xtx",
+        "key: node-role.kubernetes.io/control-plane",
+        "key: dedicated",
+        "operator: Equal",
+        "value: gpu",
+    )
+    for snippet in required_cronjob:
+        if snippet not in cronjob_yaml:
+            fail(f"Qwen long-context gauntlet missing scheduling fence: {snippet!r}")
+
+    if "templateRef: qwen35-long-context-gauntlet" not in experiment_yaml:
+        fail("Qwen 128K experiment no longer references its context gauntlet")
+
+
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     fast_job = ci_yaml.find("runtime_patch_contracts:")
     serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
@@ -444,6 +463,12 @@ def main(argv: list[str]) -> int:
     qwen35_cache_yaml = read(
         "deploy/modelcaches/qwen35-35b-a3b-clean-gptq.yaml"
     )
+    long_context_cronjob_yaml = read(
+        "deploy/tasks/model-eval-gauntlet/qwen35-long-context-cronjob.yaml"
+    )
+    long_context_experiment_yaml = read(
+        "deploy/experiments/qwen35-35b-clean-gptq-128k.yaml"
+    )
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
@@ -456,6 +481,9 @@ def main(argv: list[str]) -> int:
     assert_gfx906_vllm_compat_hooks_contract(gfx906_vllm_install_script)
     assert_sunshine_input_contract(sunshine_launcher, values_yaml)
     assert_validator_image_contract(values_yaml, qwen35_cache_yaml)
+    assert_long_context_gauntlet_contract(
+        long_context_cronjob_yaml, long_context_experiment_yaml
+    )
     assert_ci_fast_check_wiring(ci_yaml)
 
     if run_tests:

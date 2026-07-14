@@ -36,6 +36,12 @@ spec:
             - effect: NoSchedule
               key: node-role.kubernetes.io/control-plane
               operator: Exists
+            # The gauntlet is CPU-only but deliberately co-locates with the
+            # candidate to use the node-cached Python image and direct LAN path.
+            - effect: NoSchedule
+              key: dedicated
+              operator: Equal
+              value: gpu
           containers:
             - name: context-gauntlet
               image: docker.io/library/python@sha256:25976e9d34a0fab1f278cae931f34c8303d97bf0c0d7f85b6b4dcf641d7702a4
