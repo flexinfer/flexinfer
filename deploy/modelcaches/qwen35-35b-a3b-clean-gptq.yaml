@@ -21,6 +21,9 @@ metadata:
     # This cache only needs the validated final GPTQ artifact. Avoid an
     # implicit 72 GB BF16 source mirror before the active quantization phase.
     flexinfer.ai/publish-intermediate-stages: "false"
+    # Retry only the publish validation stage after the validator delivery fix.
+    # The controller preserves the completed GPTQ artifact and quantization status.
+    flexinfer.ai/revalidate: "validator-d1515f57"
 spec:
   source: Qwen/Qwen3.5-35B-A3B
   storageStrategy: SharedPVC

@@ -113,6 +113,69 @@ func TestPublishCompletedRequiresPublishedAt(t *testing.T) {
 	}
 }
 
+func TestReconcilePublishRevalidatePreservesQuantizationAndDeletesPublishJobs(t *testing.T) {
+	cache := newQuantizationCache("publish-revalidate")
+	cache.Spec.Publish = &aiv1alpha1.PublishSpec{
+		Targets: []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+		Validate: &aiv1alpha1.PublishValidateSpec{
+			Enabled: true,
+			Image:   stringPtr("registry.example/validator@sha256:new"),
+		},
+	}
+	cache.Annotations = map[string]string{
+		annotationRevalidate:       "validator-digest-new",
+		annotationValidateSpecHash: "stale-hash",
+	}
+	cache.Status.Phase = aiv1alpha1.ModelCachePhaseFailed
+	cache.Status.CurrentPhase = "publish-validate"
+	cache.Status.Quantization = &aiv1alpha1.QuantizationStatus{
+		Type:                "W4_G128",
+		CompressedSizeBytes: 22_754_709_851,
+	}
+	cache.Status.Publish = &aiv1alpha1.PublishStatus{
+		FailureMessage: "validator: stale failure",
+		Validate: &aiv1alpha1.PublishValidateStatus{
+			Ok:     false,
+			Errors: []string{"stale failure"},
+		},
+	}
+
+	validatorJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name: cache.Name + quantization.ValidatorJobSuffix, Namespace: cache.Namespace,
+	}}
+	publishJob := &batchv1.Job{ObjectMeta: metav1.ObjectMeta{
+		Name: cache.Name + "-publish", Namespace: cache.Namespace,
+	}}
+	r, cl := newQuantizationTestReconciler(t, nil, cache, validatorJob, publishJob)
+
+	result, err := r.reconcilePublish(context.Background(), cache, "cache-pvc", "/models/base/gptq")
+	require.NoError(t, err)
+	assert.Equal(t, requeueShort, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhasePublishing, updated.Status.Phase)
+	assert.Equal(t, "publish-validate", updated.Status.CurrentPhase)
+	assert.Nil(t, updated.Status.Publish)
+	require.NotNil(t, updated.Status.Quantization)
+	assert.Equal(t, int64(22_754_709_851), updated.Status.Quantization.CompressedSizeBytes)
+	assert.Equal(t, publishValidateSpecHash(updated.Spec.Publish.Validate), updated.Annotations[annotationValidateSpecHash])
+	assert.Equal(t, "validator-digest-new", updated.Annotations[annotationRevalidate])
+	assert.Equal(t, "validator-digest-new", updated.Annotations[annotationRevalidateHandled])
+	assert.False(t, publishValidateNeedsReprocess(updated, publishValidateSpecHash(updated.Spec.Publish.Validate)))
+
+	for _, name := range []string{validatorJob.Name, publishJob.Name} {
+		err := cl.Get(context.Background(), client.ObjectKey{Name: name, Namespace: cache.Namespace}, &batchv1.Job{})
+		assert.True(t, apierrors.IsNotFound(err), "expected %s to be deleted", name)
+	}
+}
+
+func TestPublishValidateSpecHashChangesWithImage(t *testing.T) {
+	first := &aiv1alpha1.PublishValidateSpec{Enabled: true, Image: stringPtr("validator@sha256:first")}
+	second := first.DeepCopy()
+	second.Image = stringPtr("validator@sha256:second")
+	assert.NotEqual(t, publishValidateSpecHash(first), publishValidateSpecHash(second))
+}
+
 func TestReconcilePublishPreservesValidationEvidence(t *testing.T) {
 	cache := newQuantizationCache("publish-validated")
 	ociRef := "registry.harbor.lan/models/test:v1"

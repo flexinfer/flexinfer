@@ -20,6 +20,8 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -45,6 +47,116 @@ type validatorJobMetadata struct {
 	Family   string   `json:"family,omitempty"`
 	Errors   []string `json:"errors,omitempty"`
 	Warnings []string `json:"warnings,omitempty"`
+}
+
+// reconcilePublishValidateSpecChange makes validator configuration changes
+// retryable without invalidating an already-completed quantization. A failed
+// validator result is otherwise terminal, so merely changing the image or
+// validation policy would leave the cache permanently stuck on stale status.
+func (r *ModelCacheReconciler) reconcilePublishValidateSpecChange(
+	ctx context.Context,
+	modelCache *aiv1alpha1.ModelCache,
+) (bool, ctrl.Result, error) {
+	if modelCache.Spec.Publish == nil || modelCache.Spec.Publish.Validate == nil ||
+		!modelCache.Spec.Publish.Validate.Enabled {
+		return false, ctrl.Result{}, nil
+	}
+
+	currentHash := publishValidateSpecHash(modelCache.Spec.Publish.Validate)
+	storedHash := ""
+	triggerValue := ""
+	handledTrigger := ""
+	if modelCache.Annotations != nil {
+		storedHash = modelCache.Annotations[annotationValidateSpecHash]
+		triggerValue = modelCache.Annotations[annotationRevalidate]
+		handledTrigger = modelCache.Annotations[annotationRevalidateHandled]
+	}
+	triggered := triggerValue != "" && triggerValue != handledTrigger
+
+	// Seed the hash for new and pre-upgrade caches. Existing terminal results
+	// are preserved unless the operator explicitly requests a retry.
+	if storedHash == "" && !triggered {
+		key := types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}
+		if err := r.updateModelCacheAnnotations(ctx, key, func(annotations map[string]string) {
+			annotations[annotationValidateSpecHash] = currentHash
+		}); err != nil {
+			return false, ctrl.Result{}, err
+		}
+		// Refresh resourceVersion before the caller performs any status update
+		// during this same reconcile pass.
+		if err := r.Get(ctx, key, modelCache); err != nil {
+			return false, ctrl.Result{}, err
+		}
+		return false, ctrl.Result{}, nil
+	}
+
+	specChanged := storedHash != "" && storedHash != currentHash
+	if !specChanged && !triggered {
+		return false, ctrl.Result{}, nil
+	}
+	if modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseReady &&
+		modelCache.Status.Phase != aiv1alpha1.ModelCachePhaseFailed {
+		return false, ctrl.Result{}, nil
+	}
+
+	propagation := metav1.DeletePropagationBackground
+	for _, suffix := range []string{quantization.ValidatorJobSuffix, "-publish"} {
+		job := &batchv1.Job{}
+		key := types.NamespacedName{Name: modelCache.Name + suffix, Namespace: modelCache.Namespace}
+		if err := r.Get(ctx, key, job); err == nil {
+			if err := r.Delete(ctx, job, &client.DeleteOptions{PropagationPolicy: &propagation}); err != nil && !errors.IsNotFound(err) {
+				return false, ctrl.Result{}, fmt.Errorf("deleting stale publish job %s: %w", job.Name, err)
+			}
+		} else if !errors.IsNotFound(err) {
+			return false, ctrl.Result{}, err
+		}
+	}
+
+	// Reset only validation/publish-derived state. The source, transformed
+	// artifact, quantization evidence, and artifact path remain intact.
+	modelCache.Status.Publish = nil
+	modelCache.Status.Phase = aiv1alpha1.ModelCachePhasePublishing
+	modelCache.Status.CurrentPhase = "publish-validate"
+	if err := r.Status().Update(ctx, modelCache); err != nil {
+		return false, ctrl.Result{}, err
+	}
+
+	key := types.NamespacedName{Name: modelCache.Name, Namespace: modelCache.Namespace}
+	if err := r.updateModelCacheAnnotations(ctx, key, func(annotations map[string]string) {
+		annotations[annotationValidateSpecHash] = currentHash
+		if triggerValue != "" {
+			annotations[annotationRevalidateHandled] = triggerValue
+		}
+	}); err != nil {
+		return false, ctrl.Result{}, err
+	}
+	r.Recorder.Event(modelCache, corev1.EventTypeNormal, "RevalidationTriggered",
+		"Publish validation configuration changed; validation and publish jobs reset")
+
+	return true, ctrl.Result{RequeueAfter: requeueShort}, nil
+}
+
+func publishValidateNeedsReprocess(modelCache *aiv1alpha1.ModelCache, currentHash string) bool {
+	if modelCache == nil || modelCache.Annotations == nil {
+		return false
+	}
+	storedHash := modelCache.Annotations[annotationValidateSpecHash]
+	triggerValue := modelCache.Annotations[annotationRevalidate]
+	handledTrigger := modelCache.Annotations[annotationRevalidateHandled]
+	return (storedHash != "" && storedHash != currentHash) ||
+		(triggerValue != "" && triggerValue != handledTrigger)
+}
+
+func publishValidateSpecHash(spec *aiv1alpha1.PublishValidateSpec) string {
+	if spec == nil {
+		return ""
+	}
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return ""
+	}
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:8])
 }
 
 // reconcilePublishValidate runs the pre-publish validator gate. The bool
