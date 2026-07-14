@@ -106,10 +106,11 @@ profiles:
     build_context: 7900xtx
 
   # Dedicated gaming persona for cblevins-7900xtx (Sunshine/Moonlight). Uses the
-  # broad Dockerfile (which carries the INCLUDE_GAMING layer) but with quantizer
-  # + llama.cpp / ollama / diffusers OFF: the quantizer git-SHA pins are broken
-  # and none of those are needed to game. vLLM stays (already in the base image)
-  # so the node can still serve inference if this profile is reverted. Pinned
+  # broad Dockerfile (which carries the INCLUDE_GAMING layer) but with vLLM,
+  # quantizer, llama.cpp, Ollama, and diffusers OFF: the ROCm base already
+  # contains vLLM, and none of those install layers are needed to game. Keeping
+  # them off makes a Sunshine repair a bounded image build instead of a multi-
+  # hour model-runtime rebuild. Pinned
   # MANUALLY on the 7900xtx runtime DaemonSet (values_runtime_profiles:false) so
   # it never touches the 5930k serving lane.
   gfx1100-gaming:
@@ -124,7 +125,7 @@ profiles:
     rocm_dev_image: "rocm/dev-ubuntu-24.04:6.4.4"
     amdgpu_targets: gfx1100
     backends:
-      vllm: true
+      vllm: false
       llamacpp: false
       ollama: false
       diffusers: false

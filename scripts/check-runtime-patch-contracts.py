@@ -316,12 +316,15 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     fast_job = ci_yaml.find("runtime_patch_contracts:")
     serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
     publish_job = ci_yaml.find("publish_unified_rocm_gfx1100:")
+    gaming_job = ci_yaml.find("publish_gaming_rocm_gfx1100:")
     if fast_job == -1:
         fail("runtime-publish CI is missing runtime_patch_contracts")
     if serving_job == -1:
         fail("runtime-publish CI is missing publish_serving_rocm_gfx1100")
     if publish_job == -1:
         fail("runtime-publish CI is missing publish_unified_rocm_gfx1100")
+    if gaming_job == -1:
+        fail("runtime-publish CI is missing publish_gaming_rocm_gfx1100")
     if not (fast_job < serving_job < publish_job):
         fail(
             "runtime-publish CI order changed; expected runtime_patch_contracts "
@@ -367,10 +370,24 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
             f"{missing_serving_rules}"
         )
 
-    unified_job_body = ci_yaml[publish_job:]
+    unified_job_body = ci_yaml[publish_job:gaming_job]
     for path in UNIFIED_SERVING_ONLY_RULE_FILES:
         if path in unified_job_body:
             fail(f"serving-only file still auto-triggers unified runtime: {path}")
+
+    gaming_job_body = ci_yaml[gaming_job:]
+    gaming_required_snippets = (
+        'filename="Dockerfile.runtime"',
+        "${REGISTRY}/runtime:rocm-gfx1100-gaming",
+        '--opt build-arg:INCLUDE_GAMING="true"',
+        '--opt build-arg:INCLUDE_VLLM="false"',
+        '--opt build-arg:INCLUDE_LLAMACPP="false"',
+        '--opt build-arg:INCLUDE_QUANTIZER="false"',
+        "build/sunshine-headless.sh",
+    )
+    for snippet in gaming_required_snippets:
+        if snippet not in gaming_job_body:
+            fail(f"publish_gaming_rocm_gfx1100 missing {snippet!r}")
 
 
 def run_python_tests() -> None:
