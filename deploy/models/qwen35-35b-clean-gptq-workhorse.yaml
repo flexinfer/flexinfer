@@ -6,6 +6,8 @@
 #   constrains the gfx1100 FLA KKT autotuner to its proven non-hanging kernel.
 # - The 64K graph-mode experiment passed its full 5/5 proxy gauntlet at
 #   79.353 tok/s and 1.0688s TTFT (benchmark 94dc02b0-e332-4501-9b7c-5af0d0f8d4c7).
+# - The exact artifact/runtime pair subsequently recalled 5/5 needles at
+#   129,919 prompt tokens in the 128K ModelExperiment qualification.
 #
 # The model is intentionally clean, not abliterated. The older Qwen3.6 lane
 # retains the uncensored/heretic aliases as an operator-activated fallback.
@@ -19,8 +21,8 @@ metadata:
     flexinfer.ai/base-model-posture: clean
     flexinfer.ai/artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
     flexinfer.ai/runtime-digest: sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
-    flexinfer.ai/promotion-state: 64k-graph-gauntlet-passed
-    flexinfer.ai/promotion-evidence: benchmark/94dc02b0-e332-4501-9b7c-5af0d0f8d4c7
+    flexinfer.ai/promotion-state: 128k-graph-fleet-parity
+    flexinfer.ai/promotion-evidence: modelexperiment/qwen35-35b-clean-gptq-128k-graph@run-1
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
@@ -41,17 +43,16 @@ spec:
     dtype: half
     hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
     languageModelOnly: true
-    # Keep this 5930k replica at its qualified 64K envelope. The separately
-    # qualified cblevins-7900xtx sister owns the explicit *-128k routes.
-    maxModelLen: 65536
+    # Match the exact 128K graph envelope qualified on the 7900 XTX sister.
+    # Both nodes now advertise the explicit *-128k service-label routes.
+    maxModelLen: 131072
     maxNumSeqs: 1
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
     schedulerReserveFullISL: true
-    # The first production graph profile left only 0.03 GiB for KV at 0.90,
-    # while one 64K request requires 0.66 GiB. Reserve 94% so KV has roughly
-    # 1 GiB while still leaving about 1.4 GiB outside vLLM for transient
-    # GDN/FLA workspace on a 24 GiB card.
+    # This is the exact qualified setting. A first-ever uncached 128K compile
+    # can exit once after populating AOT; the automatic cached restart has
+    # 1.94 GiB KV / 196,608-token capacity.
     gpuMemoryUtilization: "0.94"
     kvCacheDtype: fp8_e4m3
     calculateKvScales: false
@@ -91,7 +92,8 @@ spec:
     enabled: true
     minReplicas: 1
     idleTimeout: 30m
-    coldStartTimeout: 60m
+    # Covers an empty-cache compile plus the self-healing cached restart.
+    coldStartTimeout: 25m
   serviceLabels:
     - qwen35
     - qwen35-35b
@@ -99,6 +101,10 @@ spec:
     - loom-workhorse
     - mills-council
     - reasoning
+    - qwen35-128k
+    - workhorse-128k
+    - loom-workhorse-128k
+    - mills-council-128k
   litellm:
     enabled: true
     servedModelName: qwen35-35b-clean-gptq-workhorse

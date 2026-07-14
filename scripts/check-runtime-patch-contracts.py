@@ -364,8 +364,10 @@ def assert_long_context_gauntlet_contract(
         fail("Qwen 128K experiment no longer references its context gauntlet")
 
 
-def assert_qwen128_production_contract(model_yaml: str) -> None:
-    required = (
+def assert_qwen128_production_contract(
+    primary_yaml: str, sister_yaml: str
+) -> None:
+    required_sister = (
         "name: qwen35-35b-clean-gptq-workhorse-128k",
         "maxModelLen: 131072",
         'gpuMemoryUtilization: "0.94"',
@@ -379,9 +381,26 @@ def assert_qwen128_production_contract(model_yaml: str) -> None:
         "- workhorse-128k",
         "- mills-council-128k",
     )
-    for snippet in required:
-        if snippet not in model_yaml:
-            fail(f"Qwen 128K production model contract regressed: {snippet!r}")
+    for snippet in required_sister:
+        if snippet not in sister_yaml:
+            fail(f"Qwen 128K sister model contract regressed: {snippet!r}")
+
+    required_primary = (
+        "name: qwen35-35b-clean-gptq-workhorse",
+        "maxModelLen: 131072",
+        'gpuMemoryUtilization: "0.94"',
+        "count: 1",
+        "shared: 5930k-textgen",
+        "kubernetes.io/hostname: cblevins-5930k",
+        "minReplicas: 1",
+        "coldStartTimeout: 25m",
+        "- qwen35-128k",
+        "- workhorse-128k",
+        "- mills-council-128k",
+    )
+    for snippet in required_primary:
+        if snippet not in primary_yaml:
+            fail(f"Qwen 128K primary model contract regressed: {snippet!r}")
 
 
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
@@ -497,6 +516,9 @@ def main(argv: list[str]) -> int:
     qwen128_production_yaml = read(
         "deploy/models/qwen35-35b-clean-gptq-workhorse-128k.yaml"
     )
+    qwen128_primary_yaml = read(
+        "deploy/models/qwen35-35b-clean-gptq-workhorse.yaml"
+    )
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
@@ -512,7 +534,9 @@ def main(argv: list[str]) -> int:
     assert_long_context_gauntlet_contract(
         long_context_cronjob_yaml, long_context_experiment_yaml
     )
-    assert_qwen128_production_contract(qwen128_production_yaml)
+    assert_qwen128_production_contract(
+        qwen128_primary_yaml, qwen128_production_yaml
+    )
     assert_ci_fast_check_wiring(ci_yaml)
 
     if run_tests:
