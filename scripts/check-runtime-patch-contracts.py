@@ -350,6 +350,11 @@ def assert_long_context_gauntlet_contract(
         "key: dedicated",
         "operator: Equal",
         "value: gpu",
+        "FLEXINFER_DIRECT_URL_TEMPLATE",
+        "http://{model}.flexinfer-system.svc.cluster.local:8000",
+        "http.client.RemoteDisconnected",
+        "TRANSPORT_RETRIES",
+        "results.append(proxy_smoke())",
     )
     for snippet in required_cronjob:
         if snippet not in cronjob_yaml:
