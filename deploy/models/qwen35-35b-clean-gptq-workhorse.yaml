@@ -1,0 +1,112 @@
+# Clean Qwen3.5-35B-A3B text-only GPTQ workhorse for Loom, Mills, and Council.
+#
+# Promotion evidence:
+# - GDN-preserving W4_G128 artifact validated as qwen35-35b-a3b/vllm-gptq.
+# - vLLM 0.23 ROCm overlay registers the text-only hybrid architecture and
+#   constrains the gfx1100 FLA KKT autotuner to its proven non-hanging kernel.
+# - The 64K graph-mode experiment passed its full 5/5 proxy gauntlet at
+#   79.353 tok/s and 1.0688s TTFT (benchmark 94dc02b0-e332-4501-9b7c-5af0d0f8d4c7).
+#
+# The model is intentionally clean, not abliterated. The older Qwen3.6 lane
+# retains the uncensored/heretic aliases as an operator-activated fallback.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-35b-clean-gptq-workhorse
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.5-35B-A3B
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+    flexinfer.ai/runtime-digest: sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
+    flexinfer.ai/promotion-state: 64k-graph-gauntlet-passed
+    flexinfer.ai/promotion-evidence: benchmark/94dc02b0-e332-4501-9b7c-5af0d0f8d4c7
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
+  source: pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn
+  cache:
+    # Mount the controller-validated shared artifact directly. The immutable
+    # OCI digest above records exactly what was validated and is the recovery
+    # source if the RWX cache ever needs to be reconstructed.
+    strategy: None
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache
+      sizeLimit: 4Gi
+  config:
+    # Keep this runtime isolated from the older persistent serving image.
+    dedicatedDeployment: true
+    quantization: gptq
+    dtype: half
+    hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+    languageModelOnly: true
+    # 64K is the largest coherence- and workspace-qualified envelope. Do not
+    # raise it without repeating the deterministic needle and gauntlet tests.
+    maxModelLen: 65536
+    maxNumSeqs: 1
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    # Leave transient GDN/FLA workspace outside vLLM's reservation.
+    gpuMemoryUtilization: "0.90"
+    kvCacheDtype: fp8_e4m3
+    calculateKvScales: false
+    # Required serving posture: torch.compile plus piecewise HIP graphs.
+    enforceEager: false
+    gdnPrefillBackend: triton
+    cudagraphMetrics: true
+    kvCacheMetrics: true
+    kvCacheMetricsSample: "0.01"
+    enablePrefixCaching: false
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    trustRemoteCode: true
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    servedModelName: qwen35-35b-clean-gptq-workhorse
+    disableLogStats: false
+    failOnEnvironValidation: true
+    warmPolicy: primary
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    priority: 425
+    forcePromotion: true
+    vramEstimateMB: 23200
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 48Gi
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 60m
+  serviceLabels:
+    - qwen35
+    - qwen35-35b
+    - workhorse
+    - loom-workhorse
+    - mills-council
+    - reasoning
+  litellm:
+    enabled: true
+    servedModelName: qwen35-35b-clean-gptq-workhorse
+    aliases:
+      - qwen35
+      - qwen35-35b
+      - workhorse
+      - loom-workhorse
+      - mills-council
+      - reasoning
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists

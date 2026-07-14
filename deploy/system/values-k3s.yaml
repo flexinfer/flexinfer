@@ -383,11 +383,13 @@ runtime:
       # DATA_SHARDS_MAX hiccups) but BEFORE the wlroots-capture regression that
       # segfaults on stream start (Sunshine #5018, broke at v2026.407). The
       # 2026.516 build (image b35ed6d2) had that crash — do not re-pin it.
-      # Rebuilt 2026-07-06 with the runtime streamLogs log-hygiene change (!775:
-      # severity classification + flood-noise demotion so gaming crash logs are
-      # preserved, not dropped under burst). Pairs with WLR_RENDERER=gles2 (env
-      # below) which fixed the screencopy DMA-BUF capture crash.
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:2a372bb479781464382f75de12bff672420da13def2b6e308b1a354e3c54c8e4"
+      # Rebuilt 2026-07-14 from master 6432dff2. The bounded gaming publisher
+      # excludes llama.cpp, Ollama, quantizer, diffusers, and serving extras;
+      # its corrected selector DAG avoids even pulling disabled builders. The
+      # startup path reuses the image's uid-1000 account instead of mutating the
+      # read-only pod /etc. Pairs with WLR_RENDERER=gles2 (env below), which
+      # fixed the screencopy DMA-BUF capture crash.
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:a58e4f36ac7101f8b06afc34ddc338b52064b18317a9385837fda59e3d5b462f"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
