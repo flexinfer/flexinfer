@@ -1,0 +1,8 @@
+# Keep the upstream runtime immutable: this overlay only installs the missing
+# text-only Qwen3.5 registration plugin. The digest is the tested vLLM 0.23
+# ROCm image used by the long-context canary.
+FROM docker.io/vllm/vllm-openai-rocm@sha256:3813e31cc3ab56f71ba83a72da77a84f3c75030e54c9c316951a99317b818ce4
+
+COPY build/vllm-qwen35-text-plugin /opt/flexinfer/qwen35-text-plugin
+RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-text-plugin \
+    && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_text" for ep in entry_points(group="vllm.general_plugins"))'

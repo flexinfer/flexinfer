@@ -1,0 +1,154 @@
+#!/usr/bin/env python3
+"""Unit contract for the Qwen3.5 text-only vLLM plugin."""
+
+from __future__ import annotations
+
+import importlib.util
+import sys
+import types
+import unittest
+from pathlib import Path
+
+
+PLUGIN = (
+    Path(__file__).parents[1]
+    / "vllm-qwen35-text-plugin"
+    / "src"
+    / "flexinfer_vllm_qwen35_text"
+    / "__init__.py"
+)
+
+
+class FakeRegistry:
+    def __init__(self) -> None:
+        self.models: dict[str, type] = {}
+
+    def register_model(self, architecture: str, model_class: type) -> None:
+        self.models[architecture] = model_class
+
+
+class FakeConfig:
+    def __init__(self, bk: int, warps: int, stages: int) -> None:
+        self.kwargs = {"BK": bk}
+        self.num_warps = warps
+        self.num_stages = stages
+
+
+class FakeKernel:
+    fn = types.SimpleNamespace(
+        configs=[
+            FakeConfig(32, 2, 2),
+            FakeConfig(32, 2, 3),
+            FakeConfig(32, 2, 4),
+        ]
+    )
+
+
+class Qwen3_5MoeForCausalLM:
+    def load_weights(self, weights):
+        self.loaded_weights = list(weights)
+        return {name for name, _ in self.loaded_weights}
+
+
+class Qwen3_5Model:
+    def load_fused_expert_weights(
+        self, name, params_dict, loaded_weight, shard_id, num_experts
+    ):
+        self.loaded_expert = (name, loaded_weight, shard_id, num_experts)
+        return name in params_dict
+
+
+class Qwen3_5ForConditionalGeneration:
+    @classmethod
+    def get_mamba_state_shape_from_config(cls, config):
+        return (cls, config)
+
+    @classmethod
+    def get_mamba_state_dtype_from_config(cls, config):
+        return (cls, config)
+
+    @classmethod
+    def get_mamba_state_copy_func(cls):
+        return cls
+
+
+class PluginTest(unittest.TestCase):
+    def test_registers_text_architecture_with_hybrid_contract(self) -> None:
+        registry = FakeRegistry()
+        vllm = types.ModuleType("vllm")
+        vllm.ModelRegistry = registry
+        models = types.ModuleType("vllm.model_executor.models.qwen3_5")
+        models.Qwen3_5MoeForCausalLM = Qwen3_5MoeForCausalLM
+        models.Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration
+        models.Qwen3_5Model = Qwen3_5Model
+
+        torch = types.ModuleType("torch")
+        torch.version = types.SimpleNamespace(hip="7.2")
+        fla = types.ModuleType(
+            "vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt"
+        )
+        fla.chunk_scaled_dot_kkt_fwd_kernel = FakeKernel
+
+        fake_modules = {
+            "torch": torch,
+            "vllm": vllm,
+            models.__name__: models,
+            fla.__name__: fla,
+        }
+        saved = {name: sys.modules.get(name) for name in fake_modules}
+        sys.modules.update(fake_modules)
+        try:
+            spec = importlib.util.spec_from_file_location("qwen35_text_plugin", PLUGIN)
+            assert spec and spec.loader
+            plugin = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(plugin)
+            plugin.register()
+        finally:
+            for name, module in saved.items():
+                if module is None:
+                    sys.modules.pop(name, None)
+                else:
+                    sys.modules[name] = module
+
+        model_class = registry.models["Qwen3_5MoeForCausalLM"]
+        self.assertTrue(model_class.is_hybrid)
+        self.assertEqual(
+            model_class.get_mamba_state_shape_from_config("cfg"),
+            (model_class, "cfg"),
+        )
+        self.assertIs(model_class.get_mamba_state_copy_func(), model_class)
+        self.assertEqual(len(FakeKernel.fn.configs), 1)
+        self.assertEqual(FakeKernel.fn.configs[0].num_stages, 2)
+        instance = model_class()
+        instance.load_weights(
+            [
+                ("model.layers.0.moe.gate_up_proj.qweight", 1),
+                ("model.layers.0.moe.down_proj.scales", 2),
+            ]
+        )
+        self.assertEqual(
+            [name for name, _ in instance.loaded_weights],
+            [
+                "model.layers.0.mlp.experts.gate_up_proj.qweight",
+                "model.layers.0.mlp.experts.down_proj.scales",
+            ],
+        )
+
+        qwen_model = Qwen3_5Model()
+        self.assertTrue(
+            qwen_model.load_fused_expert_weights(
+                "model.layers.0.mlp.experts.w2_weight.qweight",
+                {"model.layers.0.mlp.experts.w2_qweight": object()},
+                "tensor",
+                "w2",
+                256,
+            )
+        )
+        self.assertEqual(
+            qwen_model.loaded_expert[0],
+            "model.layers.0.mlp.experts.w2_qweight",
+        )
+
+
+if __name__ == "__main__":
+    unittest.main()
