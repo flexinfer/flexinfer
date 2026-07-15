@@ -233,7 +233,7 @@ Example request routing:
 
 ```bash
 curl http://litellm.ai.svc:8000/v1/chat/completions \
-  -H "Authorization: Bearer sk-litellm-master-key" \
+  -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" \
   -H "Content-Type: application/json" \
   -d '{
     "model": "gemma4-e4b-long",

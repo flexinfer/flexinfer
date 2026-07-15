@@ -174,7 +174,7 @@ Direct service URL with cluster metadata/log hints:
 
 ```bash
 ENDPOINT=http://litellm.ai.svc.cluster.local:8000 \
-  AUTH_TOKEN=sk-litellm-master-key \
+  AUTH_TOKEN=${LITELLM_MASTER_KEY} \
   MODEL=gemma4-26b-a4b-gptq \
   POD_SELECTOR='app=gemma4-26b-a4b' \
   ./scripts/probe-gemma4-long-context.sh

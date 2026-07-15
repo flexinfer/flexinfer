@@ -50,7 +50,7 @@ catalog directly:
 ```bash
 kubectl -n ai port-forward svc/litellm 8000:8000
 curl -s http://127.0.0.1:8000/v1/models \
-  -H "Authorization: Bearer sk-litellm-master-key" | jq '.data[].id'
+  -H "Authorization: Bearer ${LITELLM_MASTER_KEY}" | jq '.data[].id'
 ```
 
 ## Pin a model image to a digest
