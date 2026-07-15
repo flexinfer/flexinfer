@@ -44,10 +44,41 @@
 - Lint/static checks: gofmt, go vet/build through repository quality gates.
 - CI checks: GitLab pipeline green before merge; Flux Ready after merge.
 
+### Live verdict: PASS
+
+- Shipped through FlexInfer MRs !830 (implementation), !831 (safe config
+  rollback while the image baked), and !832 (image-gated enablement).
+- Final runtime: proxy image `20260715-001254`,
+  `labelGroupRouting=least-loaded`, Ready with zero restarts; both Qwen3.5 128K
+  Models remained Ready.
+- Stable-window kill-test: held a direct request on
+  `qwen35-35b-clean-gptq-workhorse` until its active-connection gauge was 1.
+  All 4/4 `workhorse-128k` probes selected
+  `qwen35-35b-clean-gptq-workhorse-128k` in 0.25–0.46 seconds. The held request
+  completed successfully in 25.7 seconds.
+- Metrics at the decision point: primary active=1, sister active=0,
+  `least_loaded` decisions=4, sister target hits=4.
+- Full repository `make test`, targeted proxy tests, Helm lint, and rendered
+  environment assertion passed before merge.
+
+### Harvested rollout defect
+
+An earlier, longer hold was interrupted when image automation rolled the
+single proxy replica. The Model stayed Ready and did not restart; the new proxy
+pod was healthy, proving this is missing in-flight HTTP drain behavior rather
+than a model or least-loaded failure. Tracked as P1
+[#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65).
+
+The same rollout exposed a revoked shared GitLab credential. Platform GitOps
+MRs !399 and !400 rotated the SOPS-managed source credential, removed an
+accidental trailing newline, restored `GitRepository/gitops-gitlab`, and proved
+`ImageUpdateAutomation/flexinfer` could push the final immutable image tag.
+
 ## Handoff/Harvest
 
 - Docs to update: this plan with the live verdict; `ROADMAP.md` current truth.
 - Agent-context entries to add: unavailable while the context transport is
   closed; preserve decisions and evidence in this tracked plan instead.
-- Next-slice candidates: connection-aware admission/reservations for bursts;
-  load-plus-prefix hybrid routing once APC is enabled and measured.
+- Next-slice candidates: graceful proxy drain during rollouts ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65));
+  connection-aware admission/reservations for bursts; load-plus-prefix hybrid
+  routing once APC is enabled and measured.
