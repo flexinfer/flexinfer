@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import tempfile
 import textwrap
@@ -136,6 +137,29 @@ class DeclarativeRouting(unittest.TestCase):
         self.assertIn("kube_cronjob_status_last_successful_time", rule)
         self.assertIn("kube_job_status_completion_time", rule)
         self.assertIn('job_name=~"codebase-reembed.*"', rule)
+
+
+class GenerationMode(unittest.TestCase):
+    def setUp(self):
+        self._orig_do = rag._do
+
+    def tearDown(self):
+        rag._do = self._orig_do
+
+    def test_chat_disables_reasoning_trace_in_answer_content(self):
+        captured = {}
+
+        def fake_do(req, retries=3):
+            captured.update(json.loads(req.data))
+            return {"choices": [{"message": {"content": "final answer"}}]}
+
+        rag._do = fake_do
+        answer = rag.chat("system", "question", 80)
+
+        self.assertEqual(answer, "final answer")
+        self.assertEqual(
+            captured["chat_template_kwargs"], {"enable_thinking": False}
+        )
 
 
 if __name__ == "__main__":
