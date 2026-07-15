@@ -95,10 +95,13 @@ ffprobe -v error -select_streams v:0 \
 ```
 
 The live 2026-07-14 gate produced exactly 33 H.264 frames at 832x480 and 16 fps
-without OOM or restart. The 20-step request took 6m57s, so callers should allow
-for a long synchronous response in addition to cold activation. Detailed
-evidence and the immutable image digest are recorded in
-`.loom/30-implementation-plan-video-gen-gfx1100-2026-07-14.md`.
+without OOM or restart. A matched warm eager request took 142.180s; compiling
+the Wan transformer in place with `max-autotune-no-cudagraphs` reduced the
+matched warm request to 106.123s (25.36%) and denoising from 125.493s to
+90.875s (27.59%). The first request that populated the compilation cache took
+375.484s, so cold callers must still allow for activation and a one-time compile
+pass. Detailed evidence and immutable image digests are recorded in
+`.loom/30-implementation-plan-video-gen-gfx1100-optimization-2026-07-14.md`.
 
 To disable the lane, remove or delete the parent `Model`; do not scale or delete
 its generated Deployment or pod because the controller recreates children.

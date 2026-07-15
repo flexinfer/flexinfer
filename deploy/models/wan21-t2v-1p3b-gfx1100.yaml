@@ -17,7 +17,7 @@ spec:
   # Wan requires PyTorch >=2.4. This dedicated tag uses the ROCm 6.4.1 /
   # PyTorch 2.6 build and leaves the proven image-generation runtime untouched.
   image: registry.harbor.lan/flexinfer/diffusers-video:rocm-gfx1100
-  imageDigest: sha256:e0ce46364bf8768ece95955e0c88234ab19dd1214760d3324cc30e58dd651a6f
+  imageDigest: sha256:f03bfc2fbde17528aec2f95f656630c8a402385a70f591ff52931748a34ff599
   source: HF://Wan-AI/Wan2.1-T2V-1.3B-Diffusers
   cache:
     strategy: Local
@@ -54,7 +54,16 @@ spec:
     modelFamily: wan
     dtype: bfloat16
     cpuOffload: "true"
-    enableVaeTiling: "1"
+    # The transformer accounts for ~88% of matched warm-request latency. Wan
+    # supports combining model CPU offload with torch.compile; the host-backed
+    # compilation cache amortizes the first-request compilation cost.
+    # `reduce-overhead` captures CUDA graphs whose output is overwritten by
+    # Wan's second classifier-free-guidance transformer call. Autotune without
+    # CUDA graphs keeps the safe execution model while tuning generated kernels.
+    compileMode: max-autotune-no-cudagraphs
+    # Accelerate's model-offload hook performs device moves that cannot be
+    # captured in a single full graph; allow graph breaks around those hooks.
+    compileFullgraph: "false"
     # Image warmup assumes a 2D pipeline. The first video request is the
     # bounded compile/warm pass for this cold lane.
     skipWarmup: "1"
