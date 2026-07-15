@@ -74,6 +74,8 @@ All knobs are env vars on the container (`cronjob.yaml`):
 | `BATCH_SIZE` | `64` | embeddings batch size |
 | `CHUNK_LINES` / `CHUNK_OVERLAP` | `45` / `8` | line-window chunking |
 | `MAX_INPUT_CHARS` | `700` | cap for the complete embedding input, including the repo/path prefix |
+| `EMBED_TOKEN_HEADROOM` | `480` | adaptive retry target below BGE/llama.cpp's 512-token limit |
+| `QDRANT_INDEXING_THRESHOLD_KB` | `5000` | build HNSW once a segment exceeds ~5 MiB |
 | `MAX_FILES` / `MAX_CHUNKS` | `0` (unbounded) | per-repo safety clamps; truncation is logged |
 
 ## Prerequisites

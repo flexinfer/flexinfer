@@ -4,4 +4,5 @@ namespace: flexinfer-system
 resources:
   - configmap.yaml
   - deployment.yaml
+  - prometheusrule.yaml
   - service.yaml

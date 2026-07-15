@@ -22,6 +22,8 @@ spec:
       labels:
         app: codebase-answer
         app.kubernetes.io/part-of: flexinfer
+      annotations:
+        flexinfer.ai/config-rev: "2026-07-15-rag-reliability-v1"
     spec:
       containers:
         - name: rag
@@ -39,7 +41,9 @@ spec:
             - name: RERANK_MODEL
               value: "bge-reranker-radeonvii"
             - name: CHAT_MODEL
-              value: "qwen36-35b-mtp-uncensored-5930k"
+              # Stable least-loaded label shared by both Ready 128K workhorses.
+              # Avoid pinning RAG to a preempted single-card Model.
+              value: "loom-workhorse"
             - name: QDRANT_URL
               value: "http://192.168.50.176:6333"
             - name: DEFAULT_COLLECTION
@@ -55,16 +59,19 @@ spec:
               value: "6"
           readinessProbe:
             httpGet:
-              path: /healthz
+              path: /readyz
               port: http
             initialDelaySeconds: 3
             periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
           livenessProbe:
             httpGet:
-              path: /healthz
+              path: /livez
               port: http
             initialDelaySeconds: 10
             periodSeconds: 30
+            timeoutSeconds: 2
             failureThreshold: 4
           resources:
             requests:

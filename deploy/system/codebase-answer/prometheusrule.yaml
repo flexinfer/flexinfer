@@ -1,0 +1,57 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: codebase-answer-alerts
+  namespace: flexinfer-system
+  labels:
+    app: codebase-answer
+    app.kubernetes.io/part-of: flexinfer
+    release: kube-prometheus-stack
+    role: alert-rules
+spec:
+  groups:
+    - name: flexinfer-codebase-rag
+      rules:
+        - alert: FlexInferCodebaseReembedStale
+          expr: |
+            (
+              time() - max(kube_cronjob_status_last_successful_time{
+                namespace="flexinfer-system", cronjob="codebase-reembed"
+              }) > 108000
+            )
+            or on() absent(kube_cronjob_status_last_successful_time{
+              namespace="flexinfer-system", cronjob="codebase-reembed"
+            })
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "FlexInfer codebase index is stale"
+            description: "codebase-reembed has not completed successfully in over 30 hours. Check the CronJob logs and the Radeon VII embedding lane."
+
+        - alert: FlexInferCodebaseReembedFailed
+          expr: |
+            max_over_time(kube_job_status_failed{
+              namespace="flexinfer-system", job_name=~"codebase-reembed-.*"
+            }[30m]) > 0
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "FlexInfer codebase re-embed job failed"
+            description: "A codebase-reembed Job has remained failed for five minutes. Inspect its logs before the Job TTL removes the pod."
+
+        - alert: FlexInferCodebaseAnswerUnavailable
+          expr: |
+            max(kube_deployment_status_replicas_available{
+              namespace="flexinfer-system", deployment="codebase-answer"
+            }) < 1
+            or on() absent(kube_deployment_status_replicas_available{
+              namespace="flexinfer-system", deployment="codebase-answer"
+            })
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "FlexInfer codebase RAG is unavailable"
+            description: "codebase-answer has no Ready replica. Its readiness checks the BGE embed/rerank routes, the loom-workhorse route, and Qdrant."

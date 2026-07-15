@@ -8,7 +8,8 @@
 #
 # POST /v1/answer  {query, collection?, top_k?, top_n?} ->
 #   {answer, citations:[{path, score}], context_tokens, model, collection}
-# GET  /healthz    -> 200 when the embeddings + chat upstreams are reachable
+# GET  /readyz     -> 200 when embed/rerank/chat routes + qdrant are Ready
+# GET  /livez      -> 200 when the local HTTP process is alive
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -32,7 +33,7 @@ data:
     PROXY = os.environ["PROXY_URL"].rstrip("/")
     EMBED_MODEL = os.environ.get("EMBED_MODEL", "bge-large-radeonvii")
     RERANK_MODEL = os.environ.get("RERANK_MODEL", "bge-reranker-radeonvii")
-    CHAT_MODEL = os.environ.get("CHAT_MODEL", "qwen36-35b-mtp-uncensored-5930k")
+    CHAT_MODEL = os.environ.get("CHAT_MODEL", "loom-workhorse")
     QDRANT_URL = os.environ.get("QDRANT_URL", "http://192.168.50.176:6333").rstrip("/")
     QDRANT_API_KEY = os.environ.get("QDRANT_API_KEY", "")
     DEFAULT_COLLECTION = os.environ.get("DEFAULT_COLLECTION", "codebase_memory_bge_v1")
@@ -46,6 +47,9 @@ data:
     MAX_PER_PATH = int(os.environ.get("MAX_PER_PATH", "0"))
     GEN_MAX_TOKENS = int(os.environ.get("GEN_MAX_TOKENS", "400"))
     HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "240"))
+    # Two sequential dependency probes fit inside readinessProbe.timeoutSeconds=5
+    # even when both reach their individual timeout.
+    HEALTH_TIMEOUT = int(os.environ.get("HEALTH_TIMEOUT", "2"))
     LISTEN_PORT = int(os.environ.get("LISTEN_PORT", "8000"))
 
     SYS = ("Answer the question using ONLY the provided codebase context. Be concise "
@@ -74,6 +78,50 @@ data:
                 last = RuntimeError(f"{type(exc).__name__} {req.full_url}: {exc}")
             time.sleep(1.5 * (attempt + 1))
         raise last
+
+    def _fetch_json(url, headers=None, timeout=None):
+        """Single-attempt GET for readiness checks.
+
+        Readiness must finish inside the kubelet probe timeout and must not use
+        the inference path's multi-minute retry budget.
+        """
+        req = _req(url, method="GET", headers=headers)
+        with urllib.request.urlopen(req, timeout=timeout or HEALTH_TIMEOUT) as r:
+            raw = r.read()
+            return json.loads(raw) if raw else {}
+
+    def _model_route_ready(catalog, identifier):
+        for row in catalog.get("data", []):
+            metadata = row.get("metadata") or {}
+            names = {row.get("id"), metadata.get("served_model_name")}
+            names.update(metadata.get("aliases") or [])
+            names.update(metadata.get("service_labels") or [])
+            if identifier in names and metadata.get("ready") is True:
+                return True
+        return False
+
+    def readiness_status():
+        checks = {}
+        try:
+            catalog = _fetch_json(f"{PROXY}/v1/models")
+            missing = [name for name in (EMBED_MODEL, RERANK_MODEL, CHAT_MODEL)
+                       if not _model_route_ready(catalog, name)]
+            checks["models"] = "ok" if not missing else "not-ready: " + ",".join(missing)
+        except Exception as exc:  # noqa: BLE001
+            checks["models"] = f"error: {type(exc).__name__}"
+
+        try:
+            headers = {"api-key": QDRANT_API_KEY} if QDRANT_API_KEY else {}
+            info = _fetch_json(f"{QDRANT_URL}/collections/{DEFAULT_COLLECTION}",
+                               headers=headers)
+            checks["qdrant"] = (info.get("result") or {}).get("status", "unknown")
+        except Exception as exc:  # noqa: BLE001
+            checks["qdrant"] = f"error: {type(exc).__name__}"
+
+        # Qdrant remains searchable while status=yellow (optimizers running).
+        # Only red/grey/unknown states should remove this read path from service.
+        qdrant_ready = checks.get("qdrant") in ("green", "yellow")
+        return checks.get("models") == "ok" and qdrant_ready, checks
 
     def embed(text):
         resp = _do(_req(f"{PROXY}/v1/embeddings", data={"model": EMBED_MODEL, "input": [text]}))
@@ -164,8 +212,13 @@ data:
             log("%s - %s" % (self.address_string(), fmt % args))
 
         def do_GET(self):
-            if self.path.rstrip("/") == "/healthz":
+            path = self.path.rstrip("/")
+            if path == "/livez":
                 self._send(200, {"status": "ok"})
+            elif path in ("/healthz", "/readyz"):
+                ready, checks = readiness_status()
+                self._send(200 if ready else 503,
+                           {"status": "ready" if ready else "unready", "checks": checks})
             else:
                 self._send(404, {"error": "not found"})
 
