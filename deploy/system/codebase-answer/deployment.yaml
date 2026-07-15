@@ -23,7 +23,7 @@ spec:
         app: codebase-answer
         app.kubernetes.io/part-of: flexinfer
       annotations:
-        flexinfer.ai/config-rev: "2026-07-15-rag-reliability-v1"
+        flexinfer.ai/config-rev: "2026-07-15-rag-final-answer-v2"
     spec:
       containers:
         - name: rag

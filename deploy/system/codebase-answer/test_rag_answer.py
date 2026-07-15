@@ -125,6 +125,10 @@ class DeclarativeRouting(unittest.TestCase):
             deployment = fh.read()
         self.assertIn('value: "loom-workhorse"', deployment)
         self.assertNotIn('value: "qwen36-35b-mtp-uncensored-5930k"', deployment)
+        self.assertIn(
+            'flexinfer.ai/config-rev: "2026-07-15-rag-final-answer-v2"',
+            deployment,
+        )
 
     def test_cluster_values_explicitly_wire_rag_upstream(self):
         with open(os.path.normpath(VALUES), "r", encoding="utf-8") as fh:
