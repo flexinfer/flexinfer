@@ -264,6 +264,7 @@ LLAMACPP_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/llamacpp:cuda-maxwell
 OLLAMA_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/ollama:cuda-maxwell
 DIFFUSERS_ROCM_IMAGE ?= $(HARBOR_REGISTRY)/library/diffusers-api:rocm-$(shell git rev-parse --short HEAD)
 DIFFUSERS_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers:rocm-gfx1100
+DIFFUSERS_VIDEO_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers-video:rocm-gfx1100
 DIFFUSERS_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers:rocm-gfx906
 UNIFIED_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/runtime:unified-gfx906
 DIFFUSERS_CUDA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers:cuda-maxwell
@@ -390,6 +391,16 @@ build-diffusers-gfx1100: ## Build Diffusers ROCm image for gfx1100 (uses generic
 .PHONY: push-diffusers-gfx1100
 push-diffusers-gfx1100: ## Push Diffusers ROCm gfx1100 image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_GFX1100_IMAGE)
+
+.PHONY: build-diffusers-video-gfx1100
+build-diffusers-video-gfx1100: ## Build text-to-video Diffusers image for gfx1100 (ROCm 6.4.1 / PyTorch 2.6)
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.diffusers-rocm \
+		--build-arg ROCM_PYTORCH_TAG=rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.6.0 \
+		-t $(DIFFUSERS_VIDEO_GFX1100_IMAGE) .
+
+.PHONY: push-diffusers-video-gfx1100
+push-diffusers-video-gfx1100: ## Push text-to-video Diffusers gfx1100 image to Harbor
+	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_VIDEO_GFX1100_IMAGE)
 
 .PHONY: build-diffusers-gfx906
 build-diffusers-gfx906: ## Build Diffusers ROCm image for gfx906 (Radeon VII, bitsandbytes from source)

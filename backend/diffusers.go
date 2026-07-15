@@ -52,6 +52,7 @@ func (b *DiffusersBackend) Args(spec *ModelSpec) []string {
 }
 
 func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
+	pipelineMode := spec.ConfigString("pipelineMode", "")
 	env := []corev1.EnvVar{
 		{
 			Name:  "MODEL_ID",
@@ -174,8 +175,8 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	}
 
 	// Image editing pipeline mode (inpainting, instruct, or default text2image)
-	if mode := spec.ConfigString("pipelineMode", ""); mode != "" {
-		env = append(env, corev1.EnvVar{Name: "PIPELINE_MODE", Value: mode})
+	if pipelineMode != "" {
+		env = append(env, corev1.EnvVar{Name: "PIPELINE_MODE", Value: pipelineMode})
 	}
 	if strength := spec.ConfigString("strength", ""); strength != "" {
 		env = append(env, corev1.EnvVar{Name: "DEFAULT_STRENGTH", Value: strength})
@@ -188,6 +189,21 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			Name:  "USE_ROCM_AITER_ROPE_BACKEND",
 			Value: aiterRope,
 		})
+	}
+	if dtype := spec.ConfigString("dtype", ""); dtype != "" {
+		env = append(env, corev1.EnvVar{Name: "DIFFUSERS_DTYPE", Value: dtype})
+	}
+	if frames := spec.ConfigString("videoFrames", ""); frames != "" {
+		env = append(env, corev1.EnvVar{Name: "DEFAULT_VIDEO_NUM_FRAMES", Value: frames})
+	}
+	if fps := spec.ConfigString("videoFps", ""); fps != "" {
+		env = append(env, corev1.EnvVar{Name: "DEFAULT_VIDEO_FPS", Value: fps})
+	}
+	if size := spec.ConfigString("videoSize", ""); size != "" {
+		env = append(env, corev1.EnvVar{Name: "DEFAULT_VIDEO_SIZE", Value: size})
+	}
+	if tiling := spec.ConfigString("enableVaeTiling", ""); tiling != "" {
+		env = append(env, corev1.EnvVar{Name: "ENABLE_VAE_TILING", Value: tiling})
 	}
 
 	// ControlNet support
@@ -217,7 +233,7 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		if warmupH := spec.ConfigString("warmupHeight", ""); warmupH != "" {
 			env = append(env, corev1.EnvVar{Name: "WARMUP_HEIGHT", Value: warmupH})
 		}
-	} else if spec.GPUVendor == GPUVendorAMD {
+	} else if spec.GPUVendor == GPUVendorAMD && pipelineMode != "text2video" {
 		// Auto-default: AMD GPUs use MIOpen which compiles resolution-specific kernels.
 		switch {
 		case strings.HasPrefix(spec.GPUArch, "gfx110"):

@@ -1179,6 +1179,48 @@ publish_diffusers_rocm_gfx1100:
       when: manual
     - when: never
 
+# Diffusers text-to-video - gfx1100 (RDNA3)
+# Wan requires PyTorch >=2.4; keep this newer base isolated from proven image lanes.
+publish_diffusers_video_rocm_gfx1100:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 1h
+  needs: []
+  resource_group: buildkit-rocm-images
+  retry:
+    max: 1
+    when: [runner_system_failure, stuck_or_timeout_failure]
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building Diffusers text-to-video image for gfx1100..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.diffusers-rocm" \
+        --opt platform=linux/amd64 \
+        --opt build-arg:ROCM_PYTORCH_TAG=rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.6.0 \
+        --import-cache "type=registry,ref=${REGISTRY}/diffusers-video:rocm-gfx1100" \
+        --export-cache "type=inline" \
+        --output "type=image,\"name=${REGISTRY}/diffusers-video:rocm-gfx1100,${REGISTRY}/diffusers-video:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - build/Dockerfile.diffusers-rocm
+        - build/server-diffusers.py
+        - build/requirements-diffusers-rocm.txt
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
 # Diffusers API ROCm - gfx906 (Vega20 / Radeon VII) architecture-specific image
 publish_diffusers_rocm_gfx906:
   stage: publish

@@ -62,6 +62,47 @@ PyTorch-based backends (diffusers, vLLM) on gfx1100 (RX 7900 XTX) require specif
 
 These variables are automatically injected by the `ROCmEnvVars()` helper in `backend/interface.go` and are baked into all ROCm Dockerfiles.
 
+## gfx1100 Video Generation
+
+`deploy/models/wan21-t2v-1p3b-gfx1100.yaml` provides the first validated video
+lane: Wan 2.1 T2V 1.3B at up to 832x480 through a dedicated ROCm 6.4.1 /
+PyTorch 2.6 Diffusers image. It is cold by default (`minReplicas: 0`) and shares
+the `7900xtx-textgen` GPU group, so a request temporarily preempts that node's
+text model while the other gfx1100 workhorse remains available.
+
+The synchronous endpoint returns one base64-encoded MP4. Frames must be `4k+1`
+and no greater than 81; width and height must be multiples of 16 and no larger
+than 832x480 by pixel count.
+
+```bash
+curl -sS http://flexinfer-proxy.flexinfer-system.svc/v1/videos/generations \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "video-gen",
+    "prompt": "a red fox running through a meadow, cinematic tracking shot",
+    "size": "832x480",
+    "num_frames": 33,
+    "fps": 16,
+    "num_inference_steps": 20,
+    "guidance_scale": 5,
+    "seed": 42,
+    "response_format": "b64_json"
+  }' | jq -r '.data[0].b64_json' | base64 --decode > wan.mp4
+
+ffprobe -v error -select_streams v:0 \
+  -show_entries stream=codec_name,width,height,avg_frame_rate,nb_frames \
+  -show_entries format=duration wan.mp4
+```
+
+The live 2026-07-14 gate produced exactly 33 H.264 frames at 832x480 and 16 fps
+without OOM or restart. The 20-step request took 6m57s, so callers should allow
+for a long synchronous response in addition to cold activation. Detailed
+evidence and the immutable image digest are recorded in
+`.loom/30-implementation-plan-video-gen-gfx1100-2026-07-14.md`.
+
+To disable the lane, remove or delete the parent `Model`; do not scale or delete
+its generated Deployment or pod because the controller recreates children.
+
 ## Vega20 (gfx906) Configuration
 
 AMD Radeon VII / MI50 with 16GB HBM2 VRAM:

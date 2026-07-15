@@ -1,0 +1,92 @@
+# Wan 2.1 1.3B text-to-video lane for the RX 7900 XTX (gfx1100).
+#
+# This Model stays cold until requested and temporarily preempts only the
+# 7900xtx text-generation sibling. The 5930k workhorse remains available.
+# Remove this parent Model (not its Deployment/pod) to roll the lane back.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: wan21-t2v-1p3b-gfx1100
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/serve-paths: /v1/videos/generations
+    flexinfer.ai/purpose: 480p text-to-video on ROCm gfx1100
+    flexinfer.ai/plan: .loom/30-implementation-plan-video-gen-gfx1100-2026-07-14.md
+spec:
+  backend: diffusers
+  # Wan requires PyTorch >=2.4. This dedicated tag uses the ROCm 6.4.1 /
+  # PyTorch 2.6 build and leaves the proven image-generation runtime untouched.
+  image: registry.harbor.lan/flexinfer/diffusers-video:rocm-gfx1100
+  imageDigest: sha256:e0ce46364bf8768ece95955e0c88234ab19dd1214760d3324cc30e58dd651a6f
+  source: HF://Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 32Gi
+    flashLoader:
+      enabled: true
+      concurrency: 8
+      tmpfsSizeLimit: 28Gi
+      bufferSizeKB: 4096
+      verifyIntegrity: true
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache
+      sizeLimit: 6Gi
+  gpu:
+    vendor: amd
+    # cblevins-7900xtx exposes the discrete card plus a Raphael iGPU. Claim
+    # both plugin slots, then select device zero through the backend config.
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 500
+    vramEstimateMB: 18000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 30m
+  config:
+    # The gfx1100 GPUProfile bundles the older generic Diffusers runtime. This
+    # lane must exercise its model-specific PyTorch 2.6 image instead.
+    dedicatedDeployment: true
+    pipelineMode: text2video
+    modelFamily: wan
+    dtype: bfloat16
+    cpuOffload: "true"
+    enableVaeTiling: "1"
+    # Image warmup assumes a 2D pipeline. The first video request is the
+    # bounded compile/warm pass for this cold lane.
+    skipWarmup: "1"
+    numInferenceSteps: "30"
+    guidanceScale: "5.0"
+    videoSize: 832x480
+    videoFrames: "81"
+    videoFps: "16"
+    negativePrompt: "static, blurry, low quality, distorted, watermark, subtitles, text"
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 48Gi
+  serviceLabels:
+    - video-gen
+    - text-to-video
+    - wan21
+    - wan21-t2v-480p
+  litellm:
+    enabled: true
+    servedModelName: wan21-t2v-1p3b-gfx1100
+    aliases:
+      - video-gen
+      - text-to-video
+      - wan21-t2v-480p
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists

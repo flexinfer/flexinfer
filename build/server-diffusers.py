@@ -1,7 +1,7 @@
 """
-Diffusers API Server with OpenAI-compatible /v1/images/generations and /v1/images/edits endpoints.
+Diffusers API Server with image and synchronous video generation endpoints.
 ROCm-compatible version for AMD GPUs (gfx1100 / RX 7900 XTX).
-Supports text2image, inpainting, and InstructPix2Pix modes via PIPELINE_MODE env var.
+Supports text2image, inpainting, InstructPix2Pix, and text2video modes via PIPELINE_MODE.
 """
 
 import asyncio
@@ -14,6 +14,7 @@ import uuid
 import time
 import sys
 import re
+import tempfile
 from typing import Optional, List
 from contextlib import asynccontextmanager, contextmanager
 
@@ -84,6 +85,7 @@ from diffusers import (
     FluxImg2ImgPipeline,
     FluxControlNetPipeline,
     FluxControlNetModel,
+    WanPipeline,
 )
 
 
@@ -180,6 +182,35 @@ class ImageGenerationRequest(BaseModel):
     controlnet_conditioning_scale: Optional[float] = Field(default=None, ge=0.0, le=2.0)
 
 
+class VideoGenerationRequest(BaseModel):
+    prompt: str = Field(min_length=1, max_length=4000)
+    model: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    size: Optional[str] = None
+    num_frames: Optional[int] = Field(default=None, ge=1, le=81)
+    fps: Optional[int] = Field(default=None, ge=1, le=24)
+    num_inference_steps: Optional[int] = Field(default=None, ge=1, le=50)
+    guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+    seed: Optional[int] = None
+    response_format: str = "b64_json"
+
+
+class VideoData(BaseModel):
+    b64_json: str
+    mime_type: str = "video/mp4"
+    width: int
+    height: int
+    num_frames: int
+    fps: int
+    duration: float
+    seed: int
+
+
+class VideoGenerationResponse(BaseModel):
+    created: int
+    data: List[VideoData]
+
+
 def _env_int(name: str) -> Optional[int]:
     value = os.environ.get(name)
     if value is None or value == "":
@@ -225,9 +256,11 @@ def _normalize_model_family(value: Optional[str]) -> Optional[str]:
         "stable-diffusion-1.5": "sd15",
         "stable-diffusion-v1-5": "sd15",
         "sd-1.5": "sd15",
+        "wan2.1": "wan",
+        "wan-2.1": "wan",
     }
     value = aliases.get(value, value)
-    return value if value in {"flux", "sdxl", "sd3", "sd15"} else None
+    return value if value in {"flux", "sdxl", "sd3", "sd15", "wan"} else None
 
 
 def _configured_model_family() -> Optional[str]:
@@ -251,6 +284,8 @@ def _class_name_model_family(class_name: Optional[str]) -> Optional[str]:
         return "sdxl"
     if class_name.startswith("StableDiffusion"):
         return "sd15"
+    if class_name == "WanPipeline":
+        return "wan"
     return None
 
 
@@ -276,6 +311,8 @@ def _heuristic_model_family(model_id: Optional[str]) -> Optional[str]:
         return "sd15"
     if _looks_like_flux_id(lower):
         return "flux"
+    if re.search(r"(^|[\/_-])wan(?:2[._-]?1)?($|[\/._-])", lower):
+        return "wan"
     return None
 
 
@@ -356,6 +393,8 @@ def _default_steps(model_id: str) -> int:
         return 28
     if family == "sd3":
         return 28
+    if family == "wan":
+        return 30
     return 20
 
 
@@ -372,6 +411,8 @@ def _default_guidance_scale(model_id: str) -> float:
         return 3.5
     if family == "sd3":
         return 4.5
+    if family == "wan":
+        return 5.0
     return 7.5
 
 
@@ -389,6 +430,33 @@ def _resolve_negative_prompt(value: Optional[str]) -> Optional[str]:
     if value is None:
         return _default_negative_prompt()
     return value.strip()
+
+
+def _default_video_num_frames() -> int:
+    return _env_int("DEFAULT_VIDEO_NUM_FRAMES") or 81
+
+
+def _default_video_fps() -> int:
+    return _env_int("DEFAULT_VIDEO_FPS") or 16
+
+
+def _parse_video_size(value: Optional[str]) -> tuple[int, int]:
+    raw = (value or os.environ.get("DEFAULT_VIDEO_SIZE") or "832x480").lower()
+    try:
+        width, height = map(int, raw.split("x", 1))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="size must use WIDTHxHEIGHT")
+    if width <= 0 or height <= 0 or width % 16 != 0 or height % 16 != 0:
+        raise HTTPException(status_code=400, detail="video dimensions must be positive multiples of 16")
+    if width * height > 832 * 480:
+        raise HTTPException(status_code=400, detail="video size exceeds the gfx1100 480p lane limit")
+    return width, height
+
+
+def _validate_video_num_frames(value: int) -> int:
+    if value < 1 or value > 81 or (value - 1) % 4 != 0:
+        raise HTTPException(status_code=400, detail="num_frames must be 4k+1 and no greater than 81")
+    return value
 
 
 def _default_strength() -> float:
@@ -1144,7 +1212,23 @@ def load_pipeline(model_id: str):
     is_rocm = hasattr(torch.version, "hip") and torch.version.hip is not None
     fp16_default = "0" if is_rocm else "1"
     use_fp16 = os.environ.get("USE_FP16", fp16_default) == "1"
-    dtype = torch.float16 if use_fp16 else torch.float32
+    dtype_name = os.environ.get("DIFFUSERS_DTYPE", "").strip().lower()
+    dtype_map = {
+        "float32": torch.float32,
+        "fp32": torch.float32,
+        "float16": torch.float16,
+        "fp16": torch.float16,
+        "bfloat16": torch.bfloat16,
+        "bf16": torch.bfloat16,
+    }
+    if dtype_name:
+        if dtype_name not in dtype_map:
+            raise RuntimeError(f"Unsupported DIFFUSERS_DTYPE: {dtype_name}")
+        dtype = dtype_map[dtype_name]
+    elif PIPELINE_MODE == "text2video" and is_rocm:
+        dtype = torch.bfloat16
+    else:
+        dtype = torch.float16 if use_fp16 else torch.float32
     print(f"Using dtype: {dtype}")
     print(f"USE_FP16 env: {os.environ.get('USE_FP16', 'not set')}")
 
@@ -1266,7 +1350,16 @@ def load_pipeline(model_id: str):
         is_flux_pipeline = detected_family == "flux"
 
         # FLUX pipelines use explicit classes and do not use safety_checker or custom VAE overrides.
-        if is_flux_pipeline:
+        if PIPELINE_MODE == "text2video":
+            video_kwargs = {
+                k: v
+                for k, v in pipeline_kwargs.items()
+                if k not in ("safety_checker", "vae", "variant")
+            }
+            print("Loading WanPipeline (loading to CPU, local files only)...")
+            sys.stdout.flush()
+            pipeline = WanPipeline.from_pretrained(resolved_path, **video_kwargs)
+        elif is_flux_pipeline:
             flux_kwargs = {
                 k: v
                 for k, v in pipeline_kwargs.items()
@@ -1606,6 +1699,17 @@ def load_pipeline(model_id: str):
         except Exception as e:
             print(f"Could not enable VAE slicing: {e}")
 
+    if os.environ.get("ENABLE_VAE_TILING", "0") == "1":
+        try:
+            if hasattr(pipeline, "enable_vae_tiling"):
+                pipeline.enable_vae_tiling()
+                print("Enabled VAE tiling")
+            elif hasattr(pipeline, "vae") and hasattr(pipeline.vae, "enable_tiling"):
+                pipeline.vae.enable_tiling()
+                print("Enabled VAE tiling through pipeline.vae")
+        except Exception as e:
+            print(f"Could not enable VAE tiling: {e}")
+
     _apply_compile_controls(pipeline, loaded_family, use_cpu_offload)
 
     # Apply scheduler override if configured
@@ -1856,8 +1960,87 @@ async def refresh_checkpoints():
     }
 
 
+@app.post("/v1/videos/generations")
+async def generate_video(request: VideoGenerationRequest):
+    """Generate one bounded MP4 synchronously with a text-to-video pipeline."""
+    if PIPELINE_MODE != "text2video":
+        raise HTTPException(status_code=404, detail="This deployment is not configured for video generation")
+    if request.response_format != "b64_json":
+        raise HTTPException(status_code=400, detail="Only response_format=b64_json is supported")
+
+    model_id, pipe = await _prepare_pipeline_for_request(request.model)
+    if not isinstance(pipe, WanPipeline):
+        raise HTTPException(status_code=500, detail=f"Loaded pipeline does not support video generation: {type(pipe).__name__}")
+
+    width, height = _parse_video_size(request.size)
+    num_frames = _validate_video_num_frames(request.num_frames or _default_video_num_frames())
+    fps = request.fps or _default_video_fps()
+    steps = request.num_inference_steps or _default_steps(model_id)
+    guidance_scale = request.guidance_scale if request.guidance_scale is not None else _default_guidance_scale(model_id)
+    negative_prompt = _resolve_negative_prompt(request.negative_prompt)
+    seed = request.seed if request.seed is not None else int.from_bytes(os.urandom(8), "big") % (2**63 - 1)
+
+    print(
+        f"[video] model={model_id} size={width}x{height} frames={num_frames} "
+        f"fps={fps} steps={steps} guidance={guidance_scale} seed={seed}"
+    )
+
+    def _run_inference():
+        output_path = None
+        try:
+            generator = torch.Generator(device="cpu").manual_seed(seed)
+            kwargs = {
+                "prompt": request.prompt,
+                "num_frames": num_frames,
+                "num_inference_steps": steps,
+                "guidance_scale": guidance_scale,
+                "height": height,
+                "width": width,
+                "generator": generator,
+            }
+            if negative_prompt:
+                kwargs["negative_prompt"] = negative_prompt
+            with torch.inference_mode():
+                result = pipe(**kwargs)
+
+            from diffusers.utils import export_to_video
+
+            with tempfile.NamedTemporaryFile(suffix=".mp4", delete=False) as tmp:
+                output_path = tmp.name
+            export_to_video(
+                result.frames[0],
+                output_video_path=output_path,
+                fps=fps,
+                macro_block_size=16,
+            )
+            with open(output_path, "rb") as video_file:
+                encoded = base64.b64encode(video_file.read()).decode("utf-8")
+            return VideoData(
+                b64_json=encoded,
+                width=width,
+                height=height,
+                num_frames=num_frames,
+                fps=fps,
+                duration=round(num_frames / fps, 3),
+                seed=seed,
+            )
+        finally:
+            if output_path and os.path.exists(output_path):
+                os.unlink(output_path)
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    async with _generation_lock:
+        video = await asyncio.to_thread(_run_inference)
+
+    return VideoGenerationResponse(created=int(time.time()), data=[video])
+
+
 @app.post("/v1/images/generations")
 async def generate_images(request: ImageGenerationRequest):
+    if PIPELINE_MODE == "text2video":
+        raise HTTPException(status_code=404, detail="This deployment serves /v1/videos/generations")
     model_id, pipe = await _prepare_pipeline_for_request(request.model)
 
     steps = (
