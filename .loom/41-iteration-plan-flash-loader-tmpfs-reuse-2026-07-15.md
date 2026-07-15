@@ -84,6 +84,20 @@ contract requires it to recopy.
   completed local gate above and the branch pipeline are the authoritative
   proof for this slice.
 
+### Harvested publication defect
+
+The master publish job produced
+`registry.harbor.lan/flexinfer/flexinfer-flash-loader:534d910a`, but the
+controller and chart still defaulted to the legacy
+`registry.harbor.lan/flexinfer/flash-loader:latest` repository. The follow-up
+aligns controller, Helm, and documentation defaults with the CI-owned image
+repository so future init containers select the shipped fix without a per-Model
+override.
+
+Validation passed: targeted controller tests, Helm lint/render assertion,
+`golangci-lint run ./controllers/...`, the full `go test ./...` suite, and a
+repository search proving the legacy image reference is gone.
+
 ## Handoff/Harvest
 
 - Docs to update: `docs/user/caching.md`
