@@ -204,6 +204,7 @@ class VideoData(BaseModel):
     fps: int
     duration: float
     seed: int
+    timings: dict[str, float]
 
 
 class VideoGenerationResponse(BaseModel):
@@ -723,11 +724,15 @@ def _apply_compile_controls(pipe, family: Optional[str], cpu_offload: bool) -> N
         return
     compile_mode = _compile_mode() or "reduce-overhead"
 
-    if cpu_offload:
+    # Diffusers supports combining model CPU offload with compilation. Keep the
+    # conservative default for existing image lanes, but allow the measured Wan
+    # path where the transformer dominates generation latency and the upstream
+    # offload-then-compile ordering is supported.
+    if cpu_offload and family != "wan":
         print("Skipping torch.compile because CPU offload is enabled")
         return
 
-    if family not in {"sdxl", "sd3", "sd15", "flux"}:
+    if family not in {"sdxl", "sd3", "sd15", "flux", "wan"}:
         print(f"Skipping torch.compile for unsupported family: {family or 'unknown'}")
         return
 
@@ -782,6 +787,15 @@ def _apply_compile_controls(pipe, family: Optional[str], cpu_offload: bool) -> N
                             f"WARNING: repeated-block compilation failed on {target_name}: {repeated_error}"
                         )
                     raise exc
+        elif cpu_offload and hasattr(target, "compile"):
+            # Preserve Accelerate's hooks and the component identity. Wrapping
+            # an already-hooked module with torch.compile() breaks Diffusers'
+            # end-of-pipeline hook removal in the ROCm video runtime.
+            target.compile(**compile_kwargs)
+            compiled_target = target
+            print(
+                f"Compiled {target_name} in place with torch.compile (mode={compile_mode}, fullgraph={fullgraph}, dynamic={dynamic})"
+            )
         else:
             compiled_target = torch.compile(target, **compile_kwargs)
             print(
@@ -1988,6 +2002,17 @@ async def generate_video(request: VideoGenerationRequest):
     def _run_inference():
         output_path = None
         try:
+            started_at = time.perf_counter()
+            last_step_at = None
+
+            def _record_last_denoising_step(_pipe, step, _timestep, callback_kwargs):
+                nonlocal last_step_at
+                if step + 1 == steps:
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    last_step_at = time.perf_counter()
+                return callback_kwargs
+
             generator = torch.Generator(device="cpu").manual_seed(seed)
             kwargs = {
                 "prompt": request.prompt,
@@ -1997,11 +2022,18 @@ async def generate_video(request: VideoGenerationRequest):
                 "height": height,
                 "width": width,
                 "generator": generator,
+                "callback_on_step_end": _record_last_denoising_step,
+                "callback_on_step_end_tensor_inputs": [],
             }
             if negative_prompt:
                 kwargs["negative_prompt"] = negative_prompt
             with torch.inference_mode():
                 result = pipe(**kwargs)
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
+            pipeline_returned_at = time.perf_counter()
+            if last_step_at is None:
+                last_step_at = pipeline_returned_at
 
             from diffusers.utils import export_to_video
 
@@ -2013,8 +2045,21 @@ async def generate_video(request: VideoGenerationRequest):
                 fps=fps,
                 macro_block_size=16,
             )
+            export_finished_at = time.perf_counter()
             with open(output_path, "rb") as video_file:
                 encoded = base64.b64encode(video_file.read()).decode("utf-8")
+            encoded_at = time.perf_counter()
+            timings = {
+                "denoise_seconds": round(last_step_at - started_at, 3),
+                "decode_postprocess_seconds": round(
+                    pipeline_returned_at - last_step_at, 3
+                ),
+                "pipeline_seconds": round(pipeline_returned_at - started_at, 3),
+                "export_seconds": round(export_finished_at - pipeline_returned_at, 3),
+                "encode_seconds": round(encoded_at - export_finished_at, 3),
+                "total_seconds": round(encoded_at - started_at, 3),
+            }
+            print(f"[video-timing] {json.dumps(timings, sort_keys=True)}")
             return VideoData(
                 b64_json=encoded,
                 width=width,
@@ -2023,6 +2068,7 @@ async def generate_video(request: VideoGenerationRequest):
                 fps=fps,
                 duration=round(num_frames / fps, 3),
                 seed=seed,
+                timings=timings,
             )
         finally:
             if output_path and os.path.exists(output_path):

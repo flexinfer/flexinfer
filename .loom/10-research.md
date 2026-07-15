@@ -1219,3 +1219,42 @@ timings, hashes, and evidence paths are in the implementation plan.
 - https://huggingface.co/docs/diffusers/api/utilities
 - https://github.com/Wan-Video/Wan2.1/issues/106
 - https://rocm.docs.amd.com/en/docs-6.1.5/reference/gpu-arch-specs.html
+
+### gfx1100 video latency follow-up (2026-07-14)
+
+The first matched live request spent about 2m01s in the visible 20-step
+denoising loop but 6m57s end to end, leaving roughly 296 seconds unattributed.
+The optimization loop will instrument that tail before changing inference.
+
+Current upstream guidance rules out the initial VAE-memory idea: Diffusers says
+`AutoencoderKLWan` supports neither slicing nor tiling. The lane's
+`enableVaeTiling` setting is therefore ineffective for Wan and should be
+removed when a replacement digest is validated. Upstream recommends compile
+and caching for transformer speed, documents group offload as a memory/speed
+tradeoff, and exposes the callbacks/latent output needed to separate denoising
+from decode without forking Diffusers 0.36.
+
+Plan and live gate:
+`.loom/30-implementation-plan-video-gen-gfx1100-optimization-2026-07-14.md`.
+
+Matched live evidence changed the target and established the winning compiler
+configuration:
+
+- Warm eager: 142.180s total; 125.493s denoise, 14.593s decode/postprocess,
+  2.094s export. The VAE hypothesis failed because denoising was 88.3% of the
+  request.
+- Wrapping an Accelerate-hooked transformer with `torch.compile` breaks hook
+  removal; `nn.Module.compile()` must compile the existing module in place.
+- `fullgraph=true` cannot capture Accelerate's device moves, and
+  `reduce-overhead` CUDA graphs overwrite Wan's first classifier-free-guidance
+  output on the second transformer call. The safe configuration is in-place
+  compilation, `fullgraph=false`, and `max-autotune-no-cudagraphs`.
+- Warm compiled: 106.123s total; 90.875s denoise. This is 25.36% faster end to
+  end with a structurally valid and visually coherent 33-frame MP4.
+
+Sources:
+
+- https://huggingface.co/docs/diffusers/main/api/pipelines/wan
+- https://huggingface.co/docs/diffusers/main/optimization/memory
+- https://github.com/huggingface/diffusers/blob/v0.36.0/src/diffusers/pipelines/wan/pipeline_wan.py
+- https://github.com/huggingface/diffusers/blob/v0.36.0/src/diffusers/models/autoencoders/autoencoder_kl_wan.py
