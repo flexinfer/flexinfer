@@ -78,7 +78,10 @@ models using `cache.strategy: Local` are auto-enabled for flash-loader unless
 Shared models use a persistent host path at
 `/dev/shm/flexinfer/<namespace>/<model-name>` so a warm cache can survive pod
 replacement on the same node. Non-shared models use an ephemeral `emptyDir`
-tmpfs, optionally capped by `tmpfsSizeLimit`.
+tmpfs, optionally capped by `tmpfsSizeLimit`. On a persistent destination,
+flash-loader reuses files whose sizes match the source and checks free space
+only for missing or size-mismatched files. Its startup log reports the planned
+copy and reuse file counts and bytes.
 
 ## v1alpha1 `ModelCache`
 

@@ -143,11 +143,16 @@ func main() {
 	}
 	totalMB := float64(totalBytes) / (1024 * 1024)
 
-	log.Printf("discovered %d files to copy (%.1f MB), excluded=%d (%.1f MB) symlinks=%d",
+	log.Printf("discovered %d candidate files (%.1f MB), excluded=%d (%.1f MB) symlinks=%d",
 		len(files), totalMB, excludedCount, float64(excludedBytes)/(1024*1024), symlinkCount)
 
-	// Pre-flight space check: verify tmpfs has enough room before copying
-	if err := checkAvailableSpace(dst, totalBytes); err != nil {
+	// Charge the preflight check only for files that will be written. Persistent
+	// flash-loader destinations may already contain most or all model artifacts.
+	requiredBytes, reusableBytes, reusableCount := requiredCopyBytes(dst, files)
+	log.Printf("incremental copy plan: copy=%d (%.1f MB) reuse=%d (%.1f MB)",
+		len(files)-reusableCount, float64(requiredBytes)/(1024*1024),
+		reusableCount, float64(reusableBytes)/(1024*1024))
+	if err := checkAvailableSpace(dst, requiredBytes); err != nil {
 		log.Fatalf("pre-flight space check failed: %v", err)
 	}
 
@@ -316,6 +321,11 @@ func filterFP32Variants(files []fileEntry) []fileEntry {
 // for the files to be copied. Returns an error with a clear message if space
 // is insufficient, preventing the "no space left on device" crash-loop.
 func checkAvailableSpace(dst string, requiredBytes int64) error {
+	if requiredBytes <= 0 {
+		log.Printf("space check: no additional capacity required; destination is fully reusable")
+		return nil
+	}
+
 	var stat syscall.Statfs_t
 	if err := statfs(dst, &stat); err != nil {
 		log.Printf("WARN: cannot check destination space: %v (proceeding anyway)", err)
@@ -355,6 +365,22 @@ func shouldCopy(src, dst string) bool {
 		return true // can't stat source, try copying anyway
 	}
 	return srcInfo.Size() != dstInfo.Size()
+}
+
+// requiredCopyBytes calculates the additional destination capacity needed by
+// the incremental copy. Existing files with matching sizes are reusable and do
+// not consume new tmpfs capacity.
+func requiredCopyBytes(dst string, files []fileEntry) (requiredBytes, reusableBytes int64, reusableCount int) {
+	for _, entry := range files {
+		dstInfo, err := os.Stat(filepath.Join(dst, entry.rel))
+		if err != nil || dstInfo.Size() != entry.size {
+			requiredBytes += entry.size
+			continue
+		}
+		reusableBytes += entry.size
+		reusableCount++
+	}
+	return requiredBytes, reusableBytes, reusableCount
 }
 
 // copyFileAtomic copies src to dst using a temporary file and atomic rename.

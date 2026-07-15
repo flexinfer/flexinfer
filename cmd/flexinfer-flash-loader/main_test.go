@@ -56,6 +56,69 @@ func TestShouldCopy_DifferentSize(t *testing.T) {
 	}
 }
 
+func TestRequiredCopyBytes_ExistingDestination(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	files := []fileEntry{
+		{rel: "config.json", size: 6},
+		{rel: "model.safetensors", size: 16},
+	}
+	for _, file := range files {
+		data := make([]byte, file.size)
+		if err := os.WriteFile(filepath.Join(srcDir, file.rel), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dstDir, file.rel), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	requiredBytes, reusableBytes, reusableCount := requiredCopyBytes(dstDir, files)
+	if requiredBytes != 0 {
+		t.Fatalf("required bytes = %d, want 0", requiredBytes)
+	}
+	if reusableBytes != 22 {
+		t.Fatalf("reusable bytes = %d, want 22", reusableBytes)
+	}
+	if reusableCount != 2 {
+		t.Fatalf("reusable count = %d, want 2", reusableCount)
+	}
+}
+
+func TestRequiredCopyBytes_PartialDestination(t *testing.T) {
+	srcDir := t.TempDir()
+	dstDir := t.TempDir()
+
+	files := []fileEntry{
+		{rel: "reused.bin", size: 4},
+		{rel: "changed.bin", size: 8},
+		{rel: "missing.bin", size: 16},
+	}
+	for _, file := range files {
+		if err := os.WriteFile(filepath.Join(srcDir, file.rel), make([]byte, file.size), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(dstDir, "reused.bin"), make([]byte, 4), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dstDir, "changed.bin"), make([]byte, 3), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	requiredBytes, reusableBytes, reusableCount := requiredCopyBytes(dstDir, files)
+	if requiredBytes != 24 {
+		t.Fatalf("required bytes = %d, want 24", requiredBytes)
+	}
+	if reusableBytes != 4 {
+		t.Fatalf("reusable bytes = %d, want 4", reusableBytes)
+	}
+	if reusableCount != 1 {
+		t.Fatalf("reusable count = %d, want 1", reusableCount)
+	}
+}
+
 func TestCopyFileAtomic_LargeBuffer(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "src.bin")
@@ -311,6 +374,17 @@ func TestCheckAvailableSpace_Sufficient(t *testing.T) {
 	err := checkAvailableSpace("/models", 1024)
 	if err != nil {
 		t.Fatalf("expected space check to pass: %v", err)
+	}
+}
+
+func TestCheckAvailableSpace_NoCopyNeeded(t *testing.T) {
+	withStatfs(t, func(path string, stat *syscall.Statfs_t) error {
+		stat.Bsize = 4096
+		stat.Bavail = 0
+		return nil
+	})
+	if err := checkAvailableSpace("/models", 0); err != nil {
+		t.Fatalf("expected zero-byte reuse to pass without headroom: %v", err)
 	}
 }
 
