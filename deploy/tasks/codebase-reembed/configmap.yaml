@@ -99,7 +99,7 @@ data:
     ).split(",") if e.strip())
     DENY_DIRS = set(d.strip() for d in os.environ.get(
         "DENY_DIRS",
-        ".git,node_modules,vendor,dist,build,.cache,.venv,venv,__pycache__,testdata,.worktrees,bin,.loom",
+        ".git,node_modules,vendor,dist,build,coverage,htmlcov,.nyc_output,.cache,.venv,venv,__pycache__,testdata,.worktrees,bin,.loom",
     ).split(",") if d.strip())
 
     NS = uuid.UUID("6f1d9e3a-2b7c-4f5e-9a10-c0ffee5217c2")  # stable namespace for IDs
@@ -315,6 +315,49 @@ data:
         _do(_req(f"{QDRANT_URL}/collections/{collection}/points?wait=true",
                  data={"points": points}, method="PUT", headers=qdrant_headers()))
 
+    def prune_stale_points(collection, repo_name, active_ids, batch_size=256):
+        """Remove point IDs no longer produced by a completed repository scan.
+
+        Upserts happen before this sweep, so a partial/failed run preserves the
+        prior index. Filtering by repo also makes this safe for shared legacy
+        collections. The bounded scroll/delete batches keep memory and request
+        sizes predictable.
+        """
+        scroll_url = f"{QDRANT_URL}/collections/{collection}/points/scroll"
+        stale = []
+        offset = None
+        while True:
+            body = {
+                "filter": {"must": [
+                    {"key": "repo", "match": {"value": repo_name}},
+                ]},
+                "limit": batch_size,
+                "with_payload": False,
+                "with_vector": False,
+            }
+            if offset is not None:
+                body["offset"] = offset
+            _, response = _do(_req(scroll_url, data=body, method="POST",
+                                   headers=qdrant_headers()))
+            result = (response or {}).get("result") or {}
+            stale.extend(
+                point["id"] for point in result.get("points", [])
+                if point.get("id") not in active_ids
+            )
+            next_offset = result.get("next_page_offset")
+            if next_offset is None:
+                break
+            if next_offset == offset:
+                raise RuntimeError(f"qdrant scroll cursor did not advance: {offset}")
+            offset = next_offset
+
+        delete_url = f"{QDRANT_URL}/collections/{collection}/points/delete?wait=true"
+        for start in range(0, len(stale), batch_size):
+            _do(_req(delete_url, data={"points": stale[start:start + batch_size]},
+                     method="POST", headers=qdrant_headers()))
+        log(f"  repo={repo_name} pruned {len(stale)} stale point(s)")
+        return len(stale)
+
     def point_id(repo_name, rel, chunk_index):
         return str(uuid.uuid5(NS, f"{repo_name}:{rel}:{chunk_index}"))
 
@@ -327,6 +370,7 @@ data:
         ensure_collection(collection)
 
         batch = []
+        active_point_ids = set()
         counters = {"total": 0, "files": 0}
         clamped_files = clamped_chunks = False
 
@@ -334,17 +378,21 @@ data:
             if not batch:
                 return
             embedded = embed_records(batch)
-            points = [{
-                "id": point_id(repo_name, b["rel"], b["chunk_index"]),
-                "vector": vec,
-                "payload": {
-                    "repo": repo_name, "path": b["rel"],
-                    "chunk_index": b["chunk_index"],
-                    "start_line": b["start_line"], "end_line": b["end_line"],
-                    "text": b["text"],
-                    "embed_model": EMBED_MODEL,
-                },
-            } for b, vec in embedded]
+            points = []
+            for b, vec in embedded:
+                point = point_id(repo_name, b["rel"], b["chunk_index"])
+                active_point_ids.add(point)
+                points.append({
+                    "id": point,
+                    "vector": vec,
+                    "payload": {
+                        "repo": repo_name, "path": b["rel"],
+                        "chunk_index": b["chunk_index"],
+                        "start_line": b["start_line"], "end_line": b["end_line"],
+                        "text": b["text"],
+                        "embed_model": EMBED_MODEL,
+                    },
+                })
             upsert(collection, points)
             counters["total"] += len(points)
             batch.clear()
@@ -364,6 +412,10 @@ data:
             if clamped_chunks:
                 break
         flush()
+        if clamped_files or clamped_chunks:
+            log(f"  NOTE repo={repo_name} stale-point prune skipped for partial scan")
+        else:
+            prune_stale_points(collection, repo_name, active_point_ids)
         tune_collection(collection)
 
         if clamped_files:

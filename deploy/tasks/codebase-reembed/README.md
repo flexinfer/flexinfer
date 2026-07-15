@@ -22,6 +22,12 @@ throughput actually lands. See `.loom/60-validation-matrix.md` and
 5. Upserts vectors into the repo's Qdrant collection with deterministic UUIDv5
    point IDs (namespaced by repo name), so nightly re-runs overwrite in place
    (no duplicates) and two repos never collide.
+6. After a complete repository scan, removes obsolete point IDs that were not
+   produced by the new scan. A partial or failed run keeps the prior index.
+
+Generated output trees such as `coverage`, `htmlcov`, and `.nyc_output` are
+excluded from discovery so test reports do not pollute retrieval or consume the
+Radeon VII embedding window.
 
 The chunker is deliberately simple (line windows, not AST) — the goal is to prove
 batch throughput, not to mirror codebase-memory's AST chunker. The morph
