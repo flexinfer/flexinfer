@@ -183,6 +183,20 @@ class ChunkFileMultiRepo(unittest.TestCase):
         self.assertEqual(chunks[0]["rel"], "cmd/main.go")
         self.assertTrue(chunks[0]["text"].startswith("# loom/cmd/main.go\n"))
 
+    def test_iter_files_excludes_generated_coverage_trees(self):
+        root = tempfile.mkdtemp()
+        kept = os.path.join(root, "src", "main.js")
+        generated = os.path.join(root, "coverage", "prettify.js")
+        os.makedirs(os.path.dirname(kept))
+        os.makedirs(os.path.dirname(generated))
+        for path in (kept, generated):
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write("const value = 1;\n")
+
+        files = list(reembed.iter_files(root))
+
+        self.assertEqual(files, [kept])
+
 
 class EmbeddingOverflowRecovery(unittest.TestCase):
     """A dense-code chunk can exceed BGE's 512-token physical batch even when
@@ -293,6 +307,60 @@ class QdrantCollectionTuning(unittest.TestCase):
         reembed._do = fake_do
         reembed.tune_collection("codebase_memory_bge_v1")
         self.assertEqual(len(self.requests), 1)
+
+
+class QdrantStalePointPruning(unittest.TestCase):
+    def setUp(self):
+        self._orig_do = reembed._do
+        self._orig_log = reembed.log
+        self.requests = []
+        self.logs = []
+        reembed.log = self.logs.append
+
+    def tearDown(self):
+        reembed._do = self._orig_do
+        reembed.log = self._orig_log
+
+    def test_prunes_only_obsolete_repo_points_after_paginated_scroll(self):
+        active = {"keep-a", "keep-b"}
+
+        def fake_do(req, **_kwargs):
+            self.requests.append(req)
+            if req.full_url.endswith("/points/scroll"):
+                payload = json.loads(req.data)
+                if "offset" not in payload:
+                    return 200, {
+                        "result": {
+                            "points": [{"id": "keep-a"}, {"id": "stale-a"}],
+                            "next_page_offset": "cursor-2",
+                        }
+                    }
+                self.assertEqual(payload["offset"], "cursor-2")
+                return 200, {
+                    "result": {
+                        "points": [{"id": "keep-b"}, {"id": "stale-b"}],
+                        "next_page_offset": None,
+                    }
+                }
+            return 200, {"result": True}
+
+        reembed._do = fake_do
+        removed = reembed.prune_stale_points("collection", "loom", active)
+
+        self.assertEqual(removed, 2)
+        delete_requests = [r for r in self.requests if "/points/delete" in r.full_url]
+        self.assertEqual(len(delete_requests), 1)
+        self.assertEqual(delete_requests[0].get_method(), "POST")
+        self.assertEqual(
+            set(json.loads(delete_requests[0].data)["points"]),
+            {"stale-a", "stale-b"},
+        )
+        scroll_payload = json.loads(self.requests[0].data)
+        self.assertEqual(
+            scroll_payload["filter"]["must"][0],
+            {"key": "repo", "match": {"value": "loom"}},
+        )
+        self.assertTrue(any("pruned 2 stale" in line for line in self.logs))
 
 
 class _FakeResp:
