@@ -43,6 +43,10 @@ sections:
         path: user/gaming-mode-runbook.md
       - title: Opportunistic Model Backfill
         path: user/model-backfill.md
+      - title: Model Experiments
+        path: user/model-experiments.md
+      - title: Benchmark Gauntlet
+        path: user/gauntlet.md
 
   - id: dev
     title: Developer
@@ -51,8 +55,6 @@ sections:
         path: dev/README.md
       - title: Local Dev
         path: dev/local-dev.md
-      - title: Rapid Iteration
-        path: dev/rapid-iteration.md
       - title: Architecture
         path: dev/architecture.md
       - title: Backends
