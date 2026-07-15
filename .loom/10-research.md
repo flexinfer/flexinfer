@@ -1188,3 +1188,34 @@ artifact/needle/tool gate permits the 96K and 128K ladder.
 - https://huggingface.co/zai-org/GLM-4.7-Flash/blob/main/config.json
 - https://github.com/vllm-project/vllm/releases/tag/v0.23.0
 - https://rocm.docs.amd.com/projects/radeon-ryzen/en/docs-7.2/docs/compatibility/compatibilityrad/native_linux/native_linux_compatibility.html
+
+## gfx1100 video-generation lane (2026-07-14)
+
+Wan 2.1 T2V 1.3B is the smallest practical first Diffusers video lane for the
+24 GiB RX 7900 XTX fleet. The official model card supports and recommends 480p,
+and Diffusers supplies `WanPipeline` plus MP4 export. The implementation reuses
+the existing Diffusers backend and adds a bounded synchronous video endpoint.
+
+The load-bearing uncertainty is ROCm execution, not API shape. Wan's native
+repository still has an open AMD-support request, no upstream source confirms
+this exact model on gfx1100, and the model card requires PyTorch >=2.4 while the
+existing FlexInfer image lane is pinned to PyTorch 2.3. The video lane therefore
+uses its own ROCm 6.4.1 / PyTorch 2.6 image and remains gated by a live 832x480
+MP4 kill-test. Existing SD/FLUX runtime pins do not move.
+
+Plan and gate: `.loom/30-implementation-plan-video-gen-gfx1100-2026-07-14.md`.
+
+The live gate passed on 2026-07-14. The immutable ROCm 6.4.1 / PyTorch 2.6
+image loaded Wan locally on an RX 7900 XTX and returned a decodable 832x480,
+33-frame H.264 MP4 in 6m57s without OOM or restart. `ffprobe` confirmed all 33
+frames at 16 fps, and a four-frame contact sheet showed coherent motion. The
+validated Harbor digest is pinned in the production Model manifest; detailed
+timings, hashes, and evidence paths are in the implementation plan.
+
+### External sources
+
+- https://huggingface.co/docs/diffusers/main/api/pipelines/wan
+- https://huggingface.co/Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+- https://huggingface.co/docs/diffusers/api/utilities
+- https://github.com/Wan-Video/Wan2.1/issues/106
+- https://rocm.docs.amd.com/en/docs-6.1.5/reference/gpu-arch-specs.html

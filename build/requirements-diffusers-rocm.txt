@@ -14,6 +14,9 @@ pillow==11.1.0
 pydantic==2.10.5
 python-multipart==0.0.20
 aiofiles==24.1.0
+ftfy==6.3.1
+imageio==2.37.0
+imageio-ffmpeg==0.6.0
 
 # bitsandbytes is installed separately with --no-deps to prevent CUDA torch contamination
 # See Dockerfile for the install command

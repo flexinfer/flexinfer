@@ -50,6 +50,25 @@ func TestDiffusersBackendEnv(t *testing.T) {
 			absentEnv: []string{"DEFAULT_STRENGTH"},
 		},
 		{
+			name: "text2video mode maps bounded video defaults",
+			config: map[string]any{
+				"pipelineMode":    "text2video",
+				"dtype":           "bfloat16",
+				"videoFrames":     "81",
+				"videoFps":        "16",
+				"videoSize":       "832x480",
+				"enableVaeTiling": "1",
+			},
+			wantEnv: map[string]string{
+				"PIPELINE_MODE":            "text2video",
+				"DIFFUSERS_DTYPE":          "bfloat16",
+				"DEFAULT_VIDEO_NUM_FRAMES": "81",
+				"DEFAULT_VIDEO_FPS":        "16",
+				"DEFAULT_VIDEO_SIZE":       "832x480",
+				"ENABLE_VAE_TILING":        "1",
+			},
+		},
+		{
 			name:   "no pipelineMode omits all three env vars",
 			config: map[string]any{},
 			absentEnv: []string{
