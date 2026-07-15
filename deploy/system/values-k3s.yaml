@@ -115,6 +115,11 @@ proxy:
   timeouts:
     queue: "25m"
     coldStart: "25m"
+  # Both 128K workhorse members are maxNumSeqs=1. Enable only after image
+  # automation pins a proxy binary that supports least-loaded routing
+  # (first verified tag: 20260714-234146).
+  routing:
+    labelGroupMode: "least-loaded"
   # Keep the proxy on any healthy amd64 control-plane node. Host pinning makes
   # control-plane service recovery depend on a single machine.
   nodeSelector:
