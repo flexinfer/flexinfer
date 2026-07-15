@@ -69,6 +69,38 @@ buildctl --addr "${BUILDKIT_HOST}" debug info
 scripts/check-build-node-disk.sh --kubernetes-buildkit --buildctl-du
 ```
 
+## Publish Observability
+
+The main `publish` job uses `scripts/buildkit-publish-image.sh` for component
+images. Each tag receives a separate BuildKit invocation because the pinned
+v0.12.x client supports only one image output per invocation. The helper keeps
+that behavior while making long cache loads and layer extraction visible:
+
+- `--progress=plain` produces durable progress lines in the GitLab job log;
+- progress is streamed through `tee` without replacing the `buildctl` exit
+  status, so failed extractions still trigger the existing retry policy;
+- each attempt ends with a `buildkit_publish_summary` line containing elapsed
+  seconds, cached/completed step counts, extraction events, and image digest;
+- raw attempt logs and BuildKit metadata JSON are retained for seven days in
+  the publish job's `.buildkit-observability/` artifact.
+
+Start with the summary line when a publish stalls. A high
+`extraction_events` count with few `cached_steps` points toward a cold or
+evicted daemon cache. Repeated extraction lines followed by a failed status
+identify the exact attempt log to inspect. A successful cached retag should
+show cached steps, a short elapsed time, and the same digest as the first tag.
+
+Run the local contract test after changing the helper:
+
+```bash
+sh -n scripts/buildkit-publish-image.sh scripts/test-buildkit-publish-image.sh
+sh scripts/test-buildkit-publish-image.sh
+```
+
+CI additionally checks that the pinned `registry.harbor.lan/library/buildkit:v0.12.5`
+client advertises both `--progress` and `--metadata-file` before accepting a
+publish workflow change.
+
 ## Scheduled Pruning
 
 Use the checked-in prune wrapper for periodic cleanup. It prunes only age-bounded

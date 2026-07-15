@@ -325,6 +325,36 @@ build_node_disk_check_test:
         - .gitlab-ci.yml
     - when: never
 
+buildkit_publish_observability_test:
+  stage: lint
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  needs: []
+  script:
+    - sh -n scripts/buildkit-publish-image.sh scripts/test-buildkit-publish-image.sh
+    - sh scripts/test-buildkit-publish-image.sh
+    - |
+      buildctl_help="$(buildctl build --help)"
+      case "${buildctl_help}" in
+        *--progress*) ;;
+        *) echo "ERROR: pinned buildctl lacks --progress" >&2; exit 1 ;;
+      esac
+      case "${buildctl_help}" in
+        *--metadata-file*) ;;
+        *) echo "ERROR: pinned buildctl lacks --metadata-file" >&2; exit 1 ;;
+      esac
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: &buildkit-observability-changes
+        - scripts/buildkit-publish-image.sh
+        - scripts/test-buildkit-publish-image.sh
+        - docs/dev/build-node-disk-management.md
+        - .gitlab-ci.yml
+    - if: $CI_MERGE_REQUEST_ID
+      changes: *buildkit-observability-changes
+    - if: $CI_COMMIT_BRANCH
+      changes: *buildkit-observability-changes
+    - when: never
+
 # Pure-stdlib unit tests for the nightly re-embed script's multi-repo logic
 # (F3 Slice 4). Extracts the canonical script from the ConfigMap literal block
 # and exercises parse_repos / point_id / chunk_file offline. No pip deps -> alpine.
@@ -541,6 +571,11 @@ publish:
       artifacts: true
   before_script:
     - echo "Assuming CI runner has auth for ${REGISTRY} or it is open."
+  artifacts:
+    when: always
+    paths:
+      - .buildkit-observability/
+    expire_in: 7 days
   script:
     - |
       echo "Waiting for BuildKit..."
@@ -553,38 +588,11 @@ publish:
       buildctl --addr "${BUILDKIT_HOST}" debug info
     - |
       build_image() {
-        name="$1"
-        dockerfile="$2"
-        shift 2
-
-        echo "Publishing ${name}: $*"
-
         # BuildKit v0.12.x only supports a single --output and treats commas
         # in --output as option delimiters. Push each tag with a separate
         # buildctl invocation; layers are cached so only the first build
         # compiles, subsequent calls just push the manifest.
-        for tag in "$@"; do
-          attempts=5
-          delay=2
-          for i in $(seq 1 "${attempts}"); do
-            if buildctl --addr "${BUILDKIT_HOST}" --timeout 2700 build \
-              --frontend dockerfile.v0 \
-              --local context=. \
-              --local dockerfile=build \
-              --opt filename="${dockerfile}" \
-              --opt platform=linux/amd64 \
-              --output "type=image,name=${tag},push=true"; then
-              break
-            fi
-            if [ "${i}" -eq "${attempts}" ]; then
-              echo "ERROR: failed to publish ${name} (${tag}) after ${attempts} attempts"
-              exit 1
-            fi
-            echo "WARN: publish ${tag} failed (${i}/${attempts}); retrying in ${delay}s..."
-            sleep "${delay}"
-            delay=$((delay * 2))
-          done
-        done
+        sh scripts/buildkit-publish-image.sh "$@"
       }
 
       controller_tags="${REGISTRY}/flexinfer-controller:${CI_COMMIT_SHORT_SHA}"
