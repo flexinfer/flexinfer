@@ -15,19 +15,31 @@ spec:
         - alert: FlexInferCodebaseReembedStale
           expr: |
             (
-              time() - max(kube_cronjob_status_last_successful_time{
-                namespace="flexinfer-system", cronjob="codebase-reembed"
-              }) > 108000
+              time() - max(
+                kube_cronjob_status_last_successful_time{
+                  namespace="flexinfer-system", cronjob="codebase-reembed"
+                }
+                or
+                kube_job_status_completion_time{
+                  namespace="flexinfer-system", job_name=~"codebase-reembed.*"
+                }
+              ) > 108000
             )
-            or on() absent(kube_cronjob_status_last_successful_time{
-              namespace="flexinfer-system", cronjob="codebase-reembed"
-            })
+            or on() (
+              absent(kube_cronjob_status_last_successful_time{
+                namespace="flexinfer-system", cronjob="codebase-reembed"
+              })
+              and on()
+              absent(kube_job_status_completion_time{
+                namespace="flexinfer-system", job_name=~"codebase-reembed.*"
+              })
+            )
           for: 15m
           labels:
             severity: warning
           annotations:
             summary: "FlexInfer codebase index is stale"
-            description: "codebase-reembed has not completed successfully in over 30 hours. Check the CronJob logs and the Radeon VII embedding lane."
+            description: "No scheduled or manual codebase-reembed Job has completed successfully in over 30 hours. Check the Job logs and the Radeon VII embedding lane."
 
         - alert: FlexInferCodebaseReembedFailed
           expr: |

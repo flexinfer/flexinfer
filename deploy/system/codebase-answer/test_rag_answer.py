@@ -12,6 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CONFIGMAP = os.path.join(HERE, "configmap.yaml")
 DEPLOYMENT = os.path.join(HERE, "deployment.yaml")
 VALUES = os.path.join(HERE, "..", "values-k3s.yaml")
+PROMETHEUS_RULE = os.path.join(HERE, "prometheusrule.yaml")
 
 
 def _load_script():
@@ -128,6 +129,13 @@ class DeclarativeRouting(unittest.TestCase):
         with open(os.path.normpath(VALUES), "r", encoding="utf-8") as fh:
             values = fh.read()
         self.assertIn("codebaseAnswerUpstream:", values)
+
+    def test_stale_alert_accepts_manual_job_success(self):
+        with open(PROMETHEUS_RULE, "r", encoding="utf-8") as fh:
+            rule = fh.read()
+        self.assertIn("kube_cronjob_status_last_successful_time", rule)
+        self.assertIn("kube_job_status_completion_time", rule)
+        self.assertIn('job_name=~"codebase-reembed.*"', rule)
 
 
 if __name__ == "__main__":
