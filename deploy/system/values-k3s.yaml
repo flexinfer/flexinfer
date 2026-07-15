@@ -95,6 +95,10 @@ proxy:
   service:
     type: ClusterIP
     port: 80
+  # Explicit in the cluster values file because Flux HelmChart valuesFiles are
+  # packaged as chart defaults; relying only on charts/flexinfer/values.yaml
+  # left FLEXINFER_CODEBASE_ANSWER_UPSTREAM absent from the live proxy.
+  codebaseAnswerUpstream: "http://codebase-answer.flexinfer-system.svc:8000"
   # Static upstream for the /diarize route → pyannote diarization sibling
   # Deployment on gfx906 (deploy/system/pyannote-diarization/). Gives ICC one
   # base URL for ASR + diarization. Empty disables the route (503).

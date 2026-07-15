@@ -35,7 +35,8 @@ POST /v1/answer
    "citations": [{"path": "pkg/...", "score": 0.79}, ...],
    "context_tokens": 972, "model": "...", "collection": "...", "elapsed_ms": 1234}
 
-GET /healthz -> 200 {"status":"ok"}
+GET /readyz -> 200 only when BGE embed/rerank, `loom-workhorse`, and Qdrant are Ready
+GET /livez  -> 200 when the local HTTP process is alive
 ```
 
 ## Configuration (env on the container)
@@ -45,7 +46,7 @@ GET /healthz -> 200 {"status":"ok"}
 | `PROXY_URL` | `http://flexinfer-proxy…` | OpenAI-compatible base (embed/rerank/chat) |
 | `EMBED_MODEL` | `bge-large-radeonvii` | gfx906 bge embeddings lane |
 | `RERANK_MODEL` | `bge-reranker-radeonvii` | gfx906 reranker lane |
-| `CHAT_MODEL` | `qwen36-35b-mtp-uncensored-5930k` | answer generator (64K) |
+| `CHAT_MODEL` | `loom-workhorse` | least-loaded Ready 128K answer generator |
 | `QDRANT_URL` | `http://192.168.50.176:6333` | canonical qdrant |
 | `QDRANT_API_KEY` | _(secret)_ | `qdrant-credentials/api-key` |
 | `DEFAULT_COLLECTION` | `codebase_memory_bge_v1` | embedded-codebase index |
@@ -68,6 +69,17 @@ kubectl -n flexinfer-system run rag-curl --rm -it --image=curlimages/curl --rest
   -H 'Content-Type: application/json' \
   -d '{"query":"What env var disables TLS verification in the httpclient package?"}'
 ```
+
+## Reliability
+
+- Readiness checks the proxy model catalog for all three serving routes and
+  verifies that the default Qdrant collection is searchable (green or yellow
+  while its optimizer runs). Liveness is separate, so a downstream outage
+  removes the pod from service without restart-looping it.
+- `codebase-answer-alerts` fires when the nightly index is older than 30 hours,
+  a re-embed Job fails, or this Deployment has no Ready replica.
+- The re-embed job adaptively isolates and trims tokenizer-overflow chunks while
+  preserving vector/payload alignment, then enables HNSW for small collections.
 
 ## Follow-ups
 

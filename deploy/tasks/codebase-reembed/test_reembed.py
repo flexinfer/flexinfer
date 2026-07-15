@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import json
 import os
 import tempfile
 import textwrap
@@ -181,6 +182,117 @@ class ChunkFileMultiRepo(unittest.TestCase):
         self.assertTrue(chunks)
         self.assertEqual(chunks[0]["rel"], "cmd/main.go")
         self.assertTrue(chunks[0]["text"].startswith("# loom/cmd/main.go\n"))
+
+
+class EmbeddingOverflowRecovery(unittest.TestCase):
+    """A dense-code chunk can exceed BGE's 512-token physical batch even when
+    it fits the character budget. The batch must isolate and shrink that one
+    record without dropping its neighbors or embedding text that differs from
+    the Qdrant payload."""
+
+    def setUp(self):
+        self._orig_embed_once = getattr(reembed, "_embed_once", None)
+        self._orig_log = reembed.log
+        self.logs = []
+        reembed.log = self.logs.append
+
+    def tearDown(self):
+        if self._orig_embed_once is None:
+            reembed.__dict__.pop("_embed_once", None)
+        else:
+            reembed._embed_once = self._orig_embed_once
+        reembed.log = self._orig_log
+
+    def test_isolates_and_shrinks_only_the_oversized_record(self):
+        records = [
+            {
+                "repo": "loom",
+                "rel": "src/dense.ts",
+                "chunk_index": 7,
+                "text": "# loom/src/dense.ts\n" + "x=>y??z::" * 80,
+            },
+            {
+                "repo": "loom",
+                "rel": "README.md",
+                "chunk_index": 2,
+                "text": "# loom/README.md\nshort prose",
+            },
+        ]
+        original_short = records[1]["text"]
+
+        def fake_embed_once(texts):
+            if any(len(text) > 550 for text in texts):
+                raise reembed.EmbeddingInputTooLarge(564, 512)
+            return [[float(len(text))] for text in texts]
+
+        reembed._embed_once = fake_embed_once
+        embedded = reembed.embed_records(records)
+
+        self.assertEqual(len(embedded), 2)
+        long_record, long_vector = embedded[0]
+        short_record, short_vector = embedded[1]
+        self.assertLessEqual(len(long_record["text"]), 550)
+        self.assertTrue(long_record["text"].startswith("# loom/src/dense.ts\n"))
+        self.assertEqual(long_vector, [float(len(long_record["text"]))])
+        self.assertEqual(short_record["text"], original_short)
+        self.assertEqual(short_vector, [float(len(original_short))])
+        self.assertTrue(any("src/dense.ts" in line for line in self.logs))
+        self.assertTrue(any("564" in line and "512" in line for line in self.logs))
+
+    def test_parses_llamacpp_physical_batch_error(self):
+        error = RuntimeError(
+            'HTTP 500: {"message":"input (564 tokens) is too large to process. '
+            'increase the physical batch size (current batch size: 512)"}'
+        )
+        parsed = reembed.embedding_limit_from_error(error)
+        self.assertEqual(parsed, (564, 512))
+
+
+class QdrantCollectionTuning(unittest.TestCase):
+    def setUp(self):
+        self._orig_do = reembed._do
+        self.requests = []
+
+    def tearDown(self):
+        reembed._do = self._orig_do
+
+    def test_patches_indexing_threshold_when_collection_is_unindexed(self):
+        def fake_do(req, **_kwargs):
+            self.requests.append(req)
+            if len(self.requests) == 1:
+                return 200, {
+                    "result": {
+                        "config": {"optimizer_config": {"indexing_threshold": 20000}}
+                    }
+                }
+            return 200, {"result": True}
+
+        reembed._do = fake_do
+        reembed.tune_collection("codebase_memory_bge_v1")
+        self.assertEqual(len(self.requests), 2)
+        self.assertEqual(self.requests[1].get_method(), "PATCH")
+        payload = json.loads(self.requests[1].data)
+        self.assertEqual(
+            payload["optimizers_config"]["indexing_threshold"],
+            reembed.QDRANT_INDEXING_THRESHOLD_KB,
+        )
+
+    def test_skips_patch_when_threshold_is_already_correct(self):
+        def fake_do(req, **_kwargs):
+            self.requests.append(req)
+            return 200, {
+                "result": {
+                    "config": {
+                        "optimizer_config": {
+                            "indexing_threshold": reembed.QDRANT_INDEXING_THRESHOLD_KB
+                        }
+                    }
+                }
+            }
+
+        reembed._do = fake_do
+        reembed.tune_collection("codebase_memory_bge_v1")
+        self.assertEqual(len(self.requests), 1)
 
 
 class _FakeResp:

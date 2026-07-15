@@ -349,6 +349,25 @@ reembed_test:
         - deploy/tasks/codebase-reembed/test_reembed.py
     - when: never
 
+# Pure-stdlib regression tests for RAG readiness and declarative routing.
+rag_answer_test:
+  stage: lint
+  image: python:3.12-alpine
+  needs: []
+  script:
+    - python3 deploy/system/codebase-answer/test_rag_answer.py
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: &rag-answer-test-changes
+        - deploy/system/codebase-answer/**/*
+        - deploy/system/values-k3s.yaml
+        - .gitlab-ci.yml
+    - if: $CI_MERGE_REQUEST_ID
+      changes: *rag-answer-test-changes
+    - if: $CI_COMMIT_BRANCH
+      changes: *rag-answer-test-changes
+    - when: never
+
 # --- Test Stage ---
 unit_test:
   stage: test

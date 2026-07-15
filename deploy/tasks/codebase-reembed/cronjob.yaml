@@ -71,6 +71,13 @@ spec:
                   value: "64"
                 - name: MAX_INPUT_CHARS
                   value: "700"
+                # Adaptive recovery leaves 32 tokens of headroom below the
+                # bge-large/llama.cpp 512-token physical batch.
+                - name: EMBED_TOKEN_HEADROOM
+                  value: "480"
+                # KiB threshold; 5 MiB builds HNSW for these small collections.
+                - name: QDRANT_INDEXING_THRESHOLD_KB
+                  value: "5000"
                 # The canonical Qdrant enforces an api-key. Provide it via a
                 # `qdrant-credentials` secret (key `api-key`) in this namespace.
                 # optional:true keeps pod creation from hard-failing if absent (the

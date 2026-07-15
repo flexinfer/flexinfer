@@ -36,6 +36,7 @@ data:
     import json
     import os
     import random
+    import re
     import sys
     import time
     import urllib.error
@@ -82,6 +83,15 @@ data:
     RETRY_BACKOFF = float(os.environ.get("RETRY_BACKOFF", "1.0"))       # base seconds
     RETRY_BACKOFF_CAP = float(os.environ.get("RETRY_BACKOFF_CAP", "30.0"))
     RETRY_STATUS = (502, 503, 504)  # transient upstream; everything else fails fast
+    # Qdrant expresses indexing_threshold in KiB. At 1024 float32 dimensions,
+    # 5000 KiB is roughly 1,250 vectors per segment and is low enough to build
+    # HNSW for the 2K-22K point codebase collections instead of full-scanning.
+    QDRANT_INDEXING_THRESHOLD_KB = int(os.environ.get(
+        "QDRANT_INDEXING_THRESHOLD_KB", "5000"
+    ))
+    # Keep headroom below bge-large's 512-token context/physical batch. This is
+    # applied adaptively only when llama.cpp reports the real tokenizer count.
+    EMBED_TOKEN_HEADROOM = int(os.environ.get("EMBED_TOKEN_HEADROOM", "480"))
 
     EXTS = tuple(e.strip() for e in os.environ.get(
         "EXTENSIONS",
@@ -227,11 +237,79 @@ data:
         _do(_req(url, data={"vectors": {"size": VECTOR_DIM, "distance": "Cosine"}},
                  method="PUT", headers=qdrant_headers()))
 
-    def embed(texts):
-        _, resp = _do(_req(f"{EMBEDDINGS_URL}/v1/embeddings",
-                           data={"model": EMBED_MODEL, "input": texts}))
+    def tune_collection(collection):
+        """Enable HNSW after the bulk upsert, avoiding an index rebuild per batch."""
+        url = f"{QDRANT_URL}/collections/{collection}"
+        _, info = _do(_req(url, headers=qdrant_headers()))
+        current = (((info or {}).get("result") or {}).get("config") or {}).get(
+            "optimizer_config", {}
+        ).get("indexing_threshold")
+        if current == QDRANT_INDEXING_THRESHOLD_KB:
+            return
+        log(f"collection {collection} indexing_threshold "
+            f"{current}->{QDRANT_INDEXING_THRESHOLD_KB} KiB")
+        _do(_req(url, data={"optimizers_config": {
+            "indexing_threshold": QDRANT_INDEXING_THRESHOLD_KB,
+        }}, method="PATCH", headers=qdrant_headers()))
+
+    class EmbeddingInputTooLarge(RuntimeError):
+        def __init__(self, tokens, limit):
+            super().__init__(f"embedding input has {tokens} tokens; limit is {limit}")
+            self.tokens = tokens
+            self.limit = limit
+
+    def embedding_limit_from_error(exc):
+        match = re.search(
+            r"input \((\d+) tokens\).*current batch size: (\d+)", str(exc)
+        )
+        return (int(match.group(1)), int(match.group(2))) if match else None
+
+    def _embed_once(texts):
+        try:
+            _, resp = _do(_req(f"{EMBEDDINGS_URL}/v1/embeddings",
+                               data={"model": EMBED_MODEL, "input": texts}))
+        except RuntimeError as exc:
+            limit = embedding_limit_from_error(exc)
+            if limit:
+                raise EmbeddingInputTooLarge(*limit) from exc
+            raise
         rows = sorted(resp["data"], key=lambda d: d["index"])
         return [row["embedding"] for row in rows]
+
+    def _shrink_embedding_record(record, tokens, limit):
+        text = record["text"]
+        target_tokens = max(1, min(EMBED_TOKEN_HEADROOM, limit - 1))
+        target_chars = int(len(text) * target_tokens / max(tokens, 1) * 0.9)
+        target_chars = max(1, min(len(text) - 1, target_chars))
+        shrunk = dict(record)
+        shrunk["text"] = text[:target_chars].rstrip()
+        log(f"WARN embedding input too large path={record.get('rel', '?')} "
+            f"chunk={record.get('chunk_index', '?')} tokens={tokens} limit={limit}; "
+            f"shrinking chars={len(text)}->{len(shrunk['text'])}")
+        return shrunk
+
+    def embed_records(records):
+        """Embed records in order, isolating only tokenizer-overflow inputs.
+
+        llama.cpp reports the true token count but not the failing item index.
+        Bisecting the batch finds the offending record; a singleton is shrunk
+        using the observed token/character ratio and retried. The returned
+        record carries the exact text used for its vector, keeping Qdrant
+        payload and embedding semantically aligned.
+        """
+        if not records:
+            return []
+        try:
+            vectors = _embed_once([record["text"] for record in records])
+            return list(zip(records, vectors))
+        except EmbeddingInputTooLarge as exc:
+            if len(records) > 1:
+                middle = len(records) // 2
+                return embed_records(records[:middle]) + embed_records(records[middle:])
+            shrunk = _shrink_embedding_record(records[0], exc.tokens, exc.limit)
+            if not shrunk["text"] or len(shrunk["text"]) >= len(records[0]["text"]):
+                raise RuntimeError("unable to shrink oversized embedding input") from exc
+            return embed_records([shrunk])
 
     def upsert(collection, points):
         _do(_req(f"{QDRANT_URL}/collections/{collection}/points?wait=true",
@@ -255,8 +333,7 @@ data:
         def flush():
             if not batch:
                 return
-            texts = [b["text"] for b in batch]
-            vecs = embed(texts)
+            embedded = embed_records(batch)
             points = [{
                 "id": point_id(repo_name, b["rel"], b["chunk_index"]),
                 "vector": vec,
@@ -267,7 +344,7 @@ data:
                     "text": b["text"],
                     "embed_model": EMBED_MODEL,
                 },
-            } for b, vec in zip(batch, vecs)]
+            } for b, vec in embedded]
             upsert(collection, points)
             counters["total"] += len(points)
             batch.clear()
@@ -287,6 +364,7 @@ data:
             if clamped_chunks:
                 break
         flush()
+        tune_collection(collection)
 
         if clamped_files:
             log(f"  NOTE repo={repo_name} stopped at MAX_FILES={MAX_FILES}")
