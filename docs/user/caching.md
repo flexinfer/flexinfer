@@ -60,7 +60,7 @@ controller:
     shmSizeLimit: 8Gi
     flashLoader:
       enabled: true
-      image: registry.harbor.lan/flexinfer/flash-loader:latest
+      image: registry.harbor.lan/flexinfer/flexinfer-flash-loader:latest
       concurrency: 4
       tmpfsSizeLimit: 16Gi
 ```

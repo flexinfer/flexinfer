@@ -73,7 +73,7 @@ controller:
     # or when a matching v1alpha1 ModelCache enables flashLoader.
     flashLoader:
       enabled: false
-      image: "registry.harbor.lan/flexinfer/flash-loader:latest"
+      image: "registry.harbor.lan/flexinfer/flexinfer-flash-loader:latest"
       concurrency: 4
       # Optional tmpfs size limit for flash-loader staging volume.
       tmpfsSizeLimit: ""
@@ -231,7 +231,7 @@ proxy:
   # Authentication configuration
   auth:
     enabled: false
-    # Name of the Kubernetes Secret containing the bearer token
+    # Name of the Kubernetes Secret containing the [REDACTED]
     tokenSecretName: ""
     # Key within the Secret (default: "token")
     tokenSecretKey: "token"

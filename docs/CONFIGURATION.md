@@ -27,7 +27,7 @@ The controller manager handles reconciliation of FlexInfer CRDs and manages the 
 | `LEADER_ELECT` | `false` | Enable leader election for HA deployments |
 | `DEFAULT_SHM_SIZE_LIMIT` | `8Gi` | Default `/dev/shm` size limit for v1alpha2 model pods |
 | `DEFAULT_FLASH_LOADER_ENABLED` | `false` | Enable flash-loader init container by default for eligible v1alpha2 models |
-| `DEFAULT_FLASH_LOADER_IMAGE` | `registry.harbor.lan/flexinfer/flash-loader:latest` | Default flash-loader image |
+| `DEFAULT_FLASH_LOADER_IMAGE` | `registry.harbor.lan/flexinfer/flexinfer-flash-loader:latest` | Default flash-loader image |
 | `DEFAULT_FLASH_LOADER_CONCURRENCY` | `4` | Default flash-loader copy parallelism |
 | `DEFAULT_FLASH_LOADER_TMPFS_SIZE_LIMIT` | - | Optional default tmpfs size limit for flash-loader staging volume |
 | `DEFAULT_FLASH_LOADER_BUFFER_KB` | `4096` | Default flash-loader copy buffer size in KiB |
