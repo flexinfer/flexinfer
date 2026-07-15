@@ -1,6 +1,6 @@
 # FlexInfer Roadmap
 
-> Last Updated: 2026-07-10
+> Last Updated: 2026-07-14
 > Tier: 1 (see workspace AGENTS.md "Portfolio Tiers")
 > Tracking Issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/63
 
@@ -26,7 +26,7 @@ KV-cache-aware routing, quantization pipelines with a quality gate, and
 multi-cluster support. Core phases 1–5 plus the advanced-feature wave (KV-cache
 tiering, dynamic multi-LoRA, OCI model registry, flash-loader, spot resilience,
 CNCF-prep) shipped by 2026-03; the full completed-phase history lives in git and
-`docs/planning/`. Recent activity (git log `master`, 2026-06-25..2026-07-09): the
+`docs/planning/`. Recent activity (git log `master`, 2026-06-25..2026-07-14): the
 gaming-mode program landed — Steam client + persistent game storage on the
 7900xtx gaming node, hostNetwork/Sunshine ports, runbook + node-mode metrics +
 opt-in idle auto-revert, and crash supervision with degraded-session reporting —
@@ -45,8 +45,13 @@ window. The experiment-platform frontier now has an end-to-end
 run-fenced Job, records a typed verdict, and releases hardware without mutating
 production or Flux-owned Models. Successful experiments can opt into recurring
 certification with bounded verdict and Job history; failures remain terminal.
-No known-broken inference areas; Renovate configuration follow-up
-[#64](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/64) remains open.
+The clean, non-abliterated Qwen3.5 35B GPTQ artifact is now the dual-RX-7900-XTX
+workhorse: both replicas expose 128K context with graph mode, FP8 KV cache, and
+the same immutable ROCm runtime. Shared `workhorse-128k` traffic now selects the
+Ready Model with the fewest active proxy connections and round-robins ties; the
+live busy-member kill-test passed 4/4 with explicit decision and target metrics.
+Routine proxy rollouts can still interrupt an in-flight long request; graceful
+draining is tracked as [#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65).
 
 - **Plan**: `.loom/32-iteration-plan-model-backfill-2026-07-09.md` (frontier iteration; kill-test passed)
 - **Follow-on**: `.loom/33-iteration-plan-chat-gauntlet-2026-07-10.md` (live chat-vs-completions kill-test passed)
@@ -54,21 +59,21 @@ No known-broken inference areas; Renovate configuration follow-up
 - **Recurring frontier**: `.loom/35-iteration-plan-recurring-model-backfill-2026-07-10.md` (durable-history kill-test passed)
 - **Experiment frontier**: `.loom/36-iteration-plan-model-experiment-mvp-2026-07-10.md` (canonical plan `plan-modelexperiment-mvp-ab03ee`)
 - **Recurring experiments**: `.loom/37-iteration-plan-recurring-model-experiment-2026-07-10.md` (run-fencing kill test)
+- **128K workhorse routing**: `.loom/40-iteration-plan-label-group-least-loaded-2026-07-14.md` (live busy-member kill-test passed)
 - **Deployed**: K3s GPU cluster via Flux (flexinfer stack incl. fi-mcp-gateway)
 - **CI**: custom (bespoke `.gitlab-ci.yml` + `.gitlab/ci/` includes: BuildKit image matrix, Go build/test, Trivy, Helm)
 
 ## Now
 
-- Keep the proven Gemma and Radeon VII evaluations producing fresh daily
-  Postgres artifacts through opt-in successful-run recurrence. Four distinct
-  Radeon rows prove durable history, while the serving pod and foreground
-  activity timestamp remained unchanged. Useful artifacts and foreground
-  latency—not raw utilization—remain the promotion gate.
+- Operate the two clean Qwen3.5 35B GPTQ replicas as the shared 128K workhorse
+  for Loom, Mills, and Council traffic. Preserve exact artifact/runtime parity,
+  watch per-Model active connections plus label-group target hits, and keep
+  long-context coherence—not nominal window size—as the promotion gate.
 
 ## Next
 
 - [ ] Stage major docker dependency updates (Python 3.14 / CUDA 12.9 / ROCm 6.4) in a controlled rollout ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
-- [ ] Qwen3.5 recovery: re-download clean FP16 and re-quantize without abliteration ([#51](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/51))
+- [ ] Gracefully drain in-flight proxy requests during rollouts ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65))
 
 ## Later
 
