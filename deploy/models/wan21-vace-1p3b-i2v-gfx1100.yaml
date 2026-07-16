@@ -62,6 +62,12 @@ spec:
     modelFamily: wan
     dtype: bfloat16
     cpuOffload: "true"
+    # VACE encodes the whole 33-frame conditioning video through the float32
+    # Wan VAE before denoising; untiled, that conv3d alone wants 7.7 GiB and
+    # OOMs the 24 GiB card (kill-test attempt 3, HIP OOM at 15.3 GiB
+    # allocated). Tiling bounds the encode. T2V has no conditioning encode
+    # and does not need this.
+    enableVaeTiling: "1"
     # No torch.compile for bring-up: the T2V compile settings were qualified
     # on WanPipeline only. Qualify VACE latency separately after the kill test.
     skipWarmup: "1"
