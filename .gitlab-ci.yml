@@ -500,6 +500,7 @@ mtp_expert_quantizer_test:
     - if: $CI_MERGE_REQUEST_ID
       changes: &mtp-expert-quantizer-changes
         - .gitlab-ci.yml
+        - build/Dockerfile.quantizer-mtp-expert
         - build/Dockerfile.quantizer-gptq-rocm
         - build/scripts/quantize_mtp_experts.py
         - build/scripts/test_quantize_mtp_experts.py
@@ -1873,6 +1874,33 @@ publish_vllm_rocm_v023_qwen35_text:
         --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text" \
         --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text,${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - when: manual
+      allow_failure: true
+
+publish_mtp_expert_quantizer:
+  stage: publish
+  image: moby/buildkit:v0.28.0
+  timeout: 30m
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Publishing copy-only MTP expert quantizer overlay..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.quantizer-mtp-expert" \
+        --opt platform=linux/amd64 \
+        --output "type=image,name=${REGISTRY}/quantizer:gptq-rocm-gfx906-mtp-${CI_COMMIT_SHORT_SHA},push=true"
   rules:
     - when: manual
       allow_failure: true

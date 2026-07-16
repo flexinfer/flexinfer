@@ -1,5 +1,5 @@
-# Suspended-by-default kill-test for native Qwen3.5 MTP on the exact clean
-# gfx1100 workhorse artifact/runtime tuple.
+# Suspended-by-default kill-test for the surgically quantized native Qwen3.5
+# MTP experts on the exact clean gfx1100 workhorse target/runtime tuple.
 #
 # Do not add this file to a kustomization. Before unsuspending, confirm the
 # cblevins-7900xtx text GPU is idle and act on parent Model resources if a lane
@@ -135,6 +135,7 @@ data:
             "quantize_config.json",
             "model.safetensors.index.json",
             ".save-complete",
+            ".flexinfer-mtp-experts-gptq.json",
         ]
         fingerprints = {}
         for name in fingerprint_files:
@@ -146,6 +147,8 @@ data:
             config = json.load(handle)
         with (MODEL_PATH / "quantize_config.json").open() as handle:
             quantize_config = json.load(handle)
+        with (MODEL_PATH / ".flexinfer-mtp-experts-gptq.json").open() as handle:
+            mtp_expert_marker = json.load(handle)
         text_config = config.get("text_config") or config
         mtp_layers = text_config.get("mtp_num_hidden_layers")
         if mtp_layers is None:
@@ -169,6 +172,25 @@ data:
             key for key in mtp_keys if key.endswith(mtp_quantized_suffixes)
         ]
         mtp_plain_weights = [key for key in mtp_keys if key.endswith(".weight")]
+        require(
+            mtp_expert_marker.get("source_artifact_digest")
+            == os.environ["EXPECTED_SOURCE_ARTIFACT_DIGEST"],
+            "MTP expert marker does not bind the qualified source artifact",
+        )
+        require(
+            mtp_expert_marker.get("expert_count") == 256
+            and mtp_expert_marker.get("removed_plain_expert_tensor_count") == 768,
+            "MTP expert marker does not prove the complete 256x3 surgery",
+        )
+        require(
+            mtp_expert_marker.get("output_quantized_tensor_count") == 4
+            and len(mtp_quantized_keys) == 4,
+            "MTP artifact does not contain exactly four fused GPTQ tensors",
+        )
+        require(
+            mtp_expert_marker.get("bytes_freed", 0) >= 1138166333,
+            "MTP expert surgery did not free the failed allocation envelope",
+        )
         dynamic = quantize_config.get("dynamic") or {}
         if isinstance(dynamic, dict):
             mtp_dynamic_policy = {
@@ -192,6 +214,7 @@ data:
             "mtp_plain_weight_count": len(mtp_plain_weights),
             "mtp_plain_weight_sample": mtp_plain_weights[:12],
             "mtp_dynamic_policy": mtp_dynamic_policy,
+            "mtp_expert_marker": mtp_expert_marker,
             "fingerprints": fingerprints,
         }
         print("ARTIFACT_PREFLIGHT " + json.dumps(result, sort_keys=True), flush=True)
@@ -219,6 +242,9 @@ data:
             "device": torch.cuda.get_device_name(0),
             "plugins": plugins,
             "qwen35_plugin_version": plugin_version,
+            "mtp_experts_gptq": os.environ.get(
+                "FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ"
+            ),
             "expected_image_digest": os.environ["EXPECTED_IMAGE_DIGEST"],
         }
         print("RUNTIME_PREFLIGHT " + json.dumps(result, sort_keys=True), flush=True)
@@ -633,8 +659,9 @@ metadata:
     flexinfer.ai/probe: gfx1100-qwen35-mtp
   annotations:
     flexinfer.ai/canary: gfx1100-qwen35-mtp
-    flexinfer.ai/artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
-    flexinfer.ai/runtime-digest: sha256:4511e86d655acfee68e37c9a06e189f23aa8b367cdf593fd97be713842b2d54b
+    flexinfer.ai/source-artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+    flexinfer.ai/output-contract: qwen35-mtp-experts-gptq-w4g128-rtn-v1
+    flexinfer.ai/runtime-digest: sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85
     flexinfer.ai/kill-test: .loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md
 spec:
   suspend: true
@@ -660,17 +687,21 @@ spec:
           operator: Exists
       containers:
         - name: probe
-          image: registry.harbor.lan/flexinfer/vllm@sha256:4511e86d655acfee68e37c9a06e189f23aa8b367cdf593fd97be713842b2d54b
+          image: registry.harbor.lan/flexinfer/vllm@sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85
           imagePullPolicy: IfNotPresent
           command: ["bash", "-lc"]
           args: ["exec python3 /probe/probe.py"]
           env:
             - name: MODEL_PATH
-              value: /models/qwen35-35b-a3b-clean/gptq-w4-g128-gdn
+              value: /models/qwen35-35b-a3b-clean/gptq-w4-g128-gdn-mtp-experts-w4g128
+            - name: EXPECTED_SOURCE_ARTIFACT_DIGEST
+              value: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
             - name: EXPECTED_IMAGE_DIGEST
-              value: sha256:4511e86d655acfee68e37c9a06e189f23aa8b367cdf593fd97be713842b2d54b
+              value: sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85
             - name: EXPECTED_PLUGIN_VERSION
-              value: 0.3.0
+              value: 0.4.0
+            - name: FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ
+              value: "1"
             - name: HSA_OVERRIDE_GFX_VERSION
               value: 11.0.0
             - name: TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL

@@ -50,7 +50,7 @@ spec:
       containers:
         - name: quantize-mtp-experts
           # IMAGE_CANDIDATE: pin the successful MR build digest before use.
-          image: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906-IMAGE_CANDIDATE
+          image: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906-mtp-IMAGE_CANDIDATE
           imagePullPolicy: IfNotPresent
           command: ["bash", "-lc"]
           args:

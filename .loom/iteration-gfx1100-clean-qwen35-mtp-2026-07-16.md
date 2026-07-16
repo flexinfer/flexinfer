@@ -230,6 +230,8 @@ of this failed gate.
   `FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ=1`; the default remains the plain upstream
   artifact behavior. It also applies the GPTQ fused-expert name repair to the
   native `Qwen3_5MoeMTP` loader.
+- Runtime candidate: CI job 186211 published plugin v0.4.0 as immutable digest
+  `sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85`.
 - Kill-test: the output marker must prove at least 1.06 GiB was freed before the
   existing MTP-only graph+32K load/acceptance probe is repointed. If fit passes,
   require >=60% acceptance before returning to the full performance A/B.
