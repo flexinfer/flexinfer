@@ -311,6 +311,17 @@ of this failed gate.
   shape. The existing host cache mount is also bound through `VLLM_CACHE_ROOT`
   so graph artifacts survive arm/process restarts without changing execution
   semantics.
+- Attempt 18 result: the full A/B completed both arms with rc=0 and passed all
+  inference gates before log classification. Baseline medians were 76.35
+  tok/s code, 78.71 tok/s short QA, and 12.95 tok/s long context; MTP medians
+  were 93.81, 93.22, and 27.89 tok/s respectively. Ratios were 1.229x, 1.184x,
+  and 2.154x (median 1.229x), while 796 of 1,007 drafts were accepted (79.05%)
+  and every constrained parity hash matched. The remaining rejection came from
+  a second normal vLLM lifecycle message:
+  `[shutdown] EngineCore: start mode=abort timeout=0s`. Attempt 19 generalizes
+  the exemption only to `[shutdown] ... mode=abort timeout=0s`; untagged
+  aborts, nonzero-timeout aborts, and every ROCm/HSA/OOM/fault marker remain
+  fatal. Both arm-specific compilation caches now persist on the target host.
 
 ## Successor artifact gate
 
@@ -358,6 +369,5 @@ of this failed gate.
 
 ## Next
 
-1. Run the full graph baseline/MTP A/B with arm-correct capture shapes and
-   enforce parity, per-workload floors, acceptance, median speedup, and the
-   clean fault scan before certification.
+1. Re-run the unchanged full A/B from persistent graph caches and require the
+   machine-emitted `PROBE_RESULT PASS` certificate.

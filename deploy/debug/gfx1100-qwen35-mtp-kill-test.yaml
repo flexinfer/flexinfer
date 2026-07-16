@@ -58,8 +58,7 @@ data:
         re.IGNORECASE,
     )
     GRACEFUL_ABORT_RE = re.compile(
-        r"\[shutdown\] API server: stopping engine client "
-        r"mode=abort timeout=0s",
+        r"\[shutdown\].*\bmode=abort timeout=0s\b",
         re.IGNORECASE,
     )
 
@@ -612,9 +611,9 @@ data:
         graph_evidence = []
         for path in paths:
             for line in path.read_text(errors="replace").splitlines():
-                # vLLM names its normal zero-timeout engine-client shutdown
+                # vLLM names normal zero-timeout API and EngineCore shutdowns
                 # `mode=abort`; retain real abort/crash detection while excluding
-                # only that exact graceful lifecycle message.
+                # only explicitly tagged zero-timeout lifecycle messages.
                 if FAULT_RE.search(line) and not GRACEFUL_ABORT_RE.search(line):
                     faults.append(f"{path.name}: {line}")
                 if re.search(r"(cudagraph|cuda graph|hip graph)", line, re.IGNORECASE):
