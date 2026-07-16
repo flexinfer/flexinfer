@@ -136,4 +136,44 @@ spec:
 
 These variables are automatically injected by `ROCmEnvVars()` in `backend/interface.go`.
 
+## Certificate-gated llama.cpp features
+
+Stateful KV-slot snapshots and local n-gram speculation are explicit opt-ins.
+On a GPU, the controller admits them only when the selected `GPUProfile`
+contains a complete backend/capability certificate whose image exactly matches
+the digest-pinned image that the model will launch. A complete certificate has
+the artifact value plus `-since` and `-evidence` annotations. Missing evidence,
+tag-only images, artifact drift, and untested parameter envelopes fail closed.
+
+gfx906 currently certifies llama.cpp b8173 (`2e7e638`) for:
+
+- `slotSavePath` under the persistent `/models` mount;
+- `specType: ngram-simple` with exactly `draftMax: 16` and `draftMin: 1`.
+
+The proven artifact is
+`registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407`.
+The persistent runtime image has not passed this certificate yet, so GPU models
+must set `dedicatedDeployment: true`. gfx1100 remains locked until its own
+artifact/hardware kill-test is recorded; the gfx906 certificate does not carry
+across architectures or images.
+
+```yaml
+spec:
+  backend: llamacpp
+  config:
+    dedicatedDeployment: true
+    slotSavePath: /models/.flexinfer/slots/qwen3-8b
+    specType: ngram-simple
+    draftMax: 16
+    draftMin: 1
+```
+
+The gfx906 kill-test saved and restored 536 tokens across a full server restart,
+ran two parallel slots, accepted 528/528 draft tokens, and measured 2.99x the
+baseline decode rate without sequence divergence. llama.cpp b8173 can underfill
+the requested output by at most one final draft batch in this mode; clients that
+require exact `max_tokens` filling should leave speculation disabled. See
+`.loom/iteration-gfx906-llamacpp-stateful-spec-2026-07-15.md` for the pinned
+artifact, acceptance gate, measurements, and restoration evidence.
+
 See `build/README-gfx906.md` for detailed hardware documentation and troubleshooting.

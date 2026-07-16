@@ -27,6 +27,8 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
+
+	"github.com/flexinfer/flexinfer/backend"
 )
 
 // containsField returns true if any entry in fields contains substr.
@@ -64,6 +66,46 @@ func baseDeployment() *appsv1.Deployment {
 				},
 			},
 		},
+	}
+}
+
+func TestLlamaCppSlotDirectoryInitContainer(t *testing.T) {
+	b := &backend.LlamaCppBackend{}
+	modelContainer := corev1.Container{
+		Image:           "registry.example/llamacpp@sha256:certified",
+		ImagePullPolicy: corev1.PullAlways,
+		VolumeMounts: []corev1.VolumeMount{
+			{Name: "model", MountPath: "/models", SubPath: "qwen3-8b"},
+			{Name: "shm", MountPath: "/dev/shm"},
+		},
+	}
+	spec := &backend.ModelSpec{Config: map[string]any{
+		"slotSavePath": "/models/.flexinfer/slots/qwen3-8b",
+	}}
+
+	init := llamaCppSlotDirectoryInitContainer(b, spec, modelContainer)
+	if init == nil {
+		t.Fatal("expected slot directory init container")
+	}
+	if init.Image != modelContainer.Image || init.ImagePullPolicy != modelContainer.ImagePullPolicy {
+		t.Fatalf("init artifact = %s/%s, want model artifact = %s/%s", init.Image, init.ImagePullPolicy, modelContainer.Image, modelContainer.ImagePullPolicy)
+	}
+	if got := strings.Join(init.Command, " "); got != "/bin/sh -c" {
+		t.Fatalf("init command = %q", got)
+	}
+	if len(init.Args) != 3 || init.Args[0] != `mkdir -p -- "$1"` || init.Args[2] != "/models/.flexinfer/slots/qwen3-8b" {
+		t.Fatalf("init args do not keep path positional: %#v", init.Args)
+	}
+	if len(init.VolumeMounts) != 1 || init.VolumeMounts[0].Name != "model" || init.VolumeMounts[0].SubPath != "qwen3-8b" {
+		t.Fatalf("init model mount = %#v", init.VolumeMounts)
+	}
+
+	if got := llamaCppSlotDirectoryInitContainer(b, &backend.ModelSpec{}, modelContainer); got != nil {
+		t.Fatalf("unset slotSavePath created init container: %#v", got)
+	}
+	modelContainer.VolumeMounts = nil
+	if got := llamaCppSlotDirectoryInitContainer(b, spec, modelContainer); got != nil {
+		t.Fatalf("missing model mount created init container: %#v", got)
 	}
 }
 

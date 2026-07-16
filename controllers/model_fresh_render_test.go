@@ -18,8 +18,10 @@ package controllers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
+	appsv1 "k8s.io/api/apps/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -27,6 +29,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/backend"
 )
 
 // TestFreshModelForRender reproduces the stale-cache propagation bug: a
@@ -81,4 +84,47 @@ func TestFreshModelForRender(t *testing.T) {
 			t.Fatalf("expected fallback maxModelLen 32768 on read miss, got %v", v)
 		}
 	})
+}
+
+func TestEnsureDeploymentRevalidatesFreshLlamaCppFeatureConfig(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("add k8s scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("add flexinfer scheme: %v", err)
+	}
+
+	// Reconcile saw a safe cached object, but the API server now contains a
+	// certificate-gated opt-in. The final Deployment render must revalidate the
+	// fresh object rather than launch it under the stale validation result.
+	fresh := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "m", Namespace: "ns"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "pvc://models/model.gguf",
+			Config:  &apiextensionsv1.JSON{Raw: []byte(`{"dedicatedDeployment":true,"slotSavePath":"/models/.flexinfer/slots/m"}`)},
+		},
+	}
+	apiReader := fake.NewClientBuilder().WithScheme(s).WithObjects(fresh).Build()
+	workloadClient := fake.NewClientBuilder().WithScheme(s).Build()
+	r := &ModelReconciler{Client: workloadClient, APIReader: apiReader, Scheme: s}
+	stale := fresh.DeepCopy()
+	stale.Spec.Config = nil
+	b, ok := backend.Get(backend.NameLlamaCpp)
+	if !ok {
+		t.Fatal("llamacpp backend not registered")
+	}
+
+	err := r.ensureDeployment(context.Background(), stale, b, backend.GPUVendorAMD, "gfx906", 1)
+	if err == nil || !strings.Contains(err.Error(), "validating refreshed llama.cpp feature certificates") {
+		t.Fatalf("ensureDeployment error = %v, want refreshed certificate rejection", err)
+	}
+	var deployments appsv1.DeploymentList
+	if err := workloadClient.List(context.Background(), &deployments); err != nil {
+		t.Fatalf("list deployments: %v", err)
+	}
+	if len(deployments.Items) != 0 {
+		t.Fatalf("uncertified fresh config rendered %d deployments", len(deployments.Items))
+	}
 }

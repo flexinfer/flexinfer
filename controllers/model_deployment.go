@@ -213,25 +213,35 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			profileSpec = profile
 		}
 	}
-	image := backend.ResolveBackendImage(b, profileSpec, gpuVendor, gpuArch)
+	image := resolveModelBackendImage(model, b, profileSpec, gpuVendor, gpuArch)
+	// freshModelForRender may observe a newer config/image than the object that
+	// passed the reconcile-level compatibility check. Revalidate certified
+	// llama.cpp opt-ins at the final render boundary to prevent a one-rollout
+	// time-of-check/time-of-use escape.
+	if b.Name() == backend.NameLlamaCpp {
+		var profile *aiv1alpha2.GPUProfile
+		if r.GPUProfiles != nil {
+			profile, _ = r.GPUProfiles.LookupProfile(gpuArch)
+		}
+		if err := validateLlamaCppFeatureCertificates(model, profile, gpuArch, image); err != nil {
+			return fmt.Errorf("validating refreshed llama.cpp feature certificates: %w", err)
+		}
+	}
 	if profileSpec != nil {
 		if profileImage, ok := backend.ImageFromProfile(profileSpec, b.Name()); ok && image == profileImage {
 			log.V(1).Info("Using GPUProfile image override", "backend", b.Name(), "arch", gpuArch, "image", profileImage)
 		}
 	}
-	// Per-model image override takes highest precedence.
+	// Per-model image override takes highest precedence. Resolution already
+	// happened in resolveModelBackendImage; these branches retain useful logs.
 	if model.Spec.Image != "" {
 		log.V(1).Info("Using per-model image override", "model", model.Name, "image", model.Spec.Image)
-		image = model.Spec.Image
 	}
 	// Pin the resolved image to an immutable digest when requested. Applied
 	// last so it reproducibly fixes whatever image won the precedence chain
 	// above (per-model override, GPUProfile, or backend default).
 	if model.Spec.ImageDigest != "" {
-		if pinned := backend.ApplyImageDigest(image, model.Spec.ImageDigest); pinned != image {
-			log.V(1).Info("Pinning model image to digest", "model", model.Name, "image", pinned)
-			image = pinned
-		}
+		log.V(1).Info("Pinning model image to digest", "model", model.Name, "image", image)
 	}
 	port := b.Port()
 	// Most backends use a static command, but some (llamacpp) must adjust it to
@@ -479,6 +489,15 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				},
 			})
 		}
+	}
+
+	// llama.cpp b8173 validates --slot-save-path during argument parsing and
+	// refuses to start when the directory does not already exist. Create the
+	// opt-in directory on the same model volume before the server starts. The
+	// path is passed as a positional argument rather than interpolated into the
+	// shell program.
+	if slotDirInit := llamaCppSlotDirectoryInitContainer(b, spec, container); slotDirInit != nil {
+		initContainers = append(initContainers, *slotDirInit)
 	}
 
 	// Compilation cache: persistent hostPath for MIOpen/PyTorch/Triton caches.
@@ -732,6 +751,39 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	log.Info("Updating Deployment", "name", model.Name, "changedFields", changed)
 
 	return r.Update(ctx, deployment)
+}
+
+func llamaCppSlotDirectoryInitContainer(b backend.Backend, spec *backend.ModelSpec, modelContainer corev1.Container) *corev1.Container {
+	if b == nil || b.Name() != backend.NameLlamaCpp || spec == nil {
+		return nil
+	}
+	slotSavePath := strings.TrimSpace(spec.ConfigString("slotSavePath", ""))
+	if slotSavePath == "" {
+		return nil
+	}
+
+	var modelMount *corev1.VolumeMount
+	for i := range modelContainer.VolumeMounts {
+		if modelContainer.VolumeMounts[i].MountPath == "/models" {
+			mount := modelContainer.VolumeMounts[i]
+			modelMount = &mount
+			break
+		}
+	}
+	if modelMount == nil {
+		return nil
+	}
+
+	return &corev1.Container{
+		Name:                     "llamacpp-slot-state-dir",
+		Image:                    modelContainer.Image,
+		ImagePullPolicy:          modelContainer.ImagePullPolicy,
+		Command:                  []string{"/bin/sh", "-c"},
+		Args:                     []string{`mkdir -p -- "$1"`, "slot-state-dir", slotSavePath},
+		VolumeMounts:             []corev1.VolumeMount{*modelMount},
+		TerminationMessagePath:   "/dev/termination-log",
+		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
+	}
 }
 
 func backendStartupProbe(b backend.Backend, spec *backend.ModelSpec) *corev1.Probe {

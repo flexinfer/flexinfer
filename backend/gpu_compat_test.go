@@ -580,16 +580,12 @@ func TestResolveBackendROCmEnv_ProfileWithoutEnvFallsThrough(t *testing.T) {
 	if !envVarSliceEqual(got, want) {
 		t.Fatalf("ResolveBackendROCmEnv(profile w/o env) = %+v, want fallback %+v", got, want)
 	}
-	// Sanity: gfx906 fallback must include the HSA override at 9.0.6.
-	foundOverride := false
+	// Sanity: gfx906 fallback must retain the stability controls without
+	// rewriting the hardware architecture seen by the serving runtime.
 	for _, e := range got {
-		if e.Name == "HSA_OVERRIDE_GFX_VERSION" && e.Value == "9.0.6" {
-			foundOverride = true
-			break
+		if e.Name == "HSA_OVERRIDE_GFX_VERSION" {
+			t.Fatalf("gfx906 fallback must not set HSA_OVERRIDE_GFX_VERSION; got %+v", got)
 		}
-	}
-	if !foundOverride {
-		t.Fatalf("expected gfx906 fallback to include HSA_OVERRIDE_GFX_VERSION=9.0.6; got %+v", got)
 	}
 }
 

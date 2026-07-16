@@ -168,6 +168,25 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--parallel", fmt.Sprintf("%d", parallel))
 	}
 
+	// Restart-persistent KV slot snapshots. Controller validation requires the
+	// selected GPU/backend image to carry a matching hardware certificate before
+	// this opt-in reaches a workload.
+	if slotSavePath := strings.TrimSpace(spec.ConfigString("slotSavePath", "")); slotSavePath != "" {
+		args = append(args, "--slot-save-path", slotSavePath)
+	}
+
+	// Local speculative decoding. Keep this opt-in: b8173 ngram-simple is proven
+	// on gfx906 but can finish up to one final draft batch short of max_tokens.
+	if specType := strings.TrimSpace(spec.ConfigString("specType", "")); specType != "" {
+		args = append(args, "--spec-type", specType)
+	}
+	if draftMax, ok := configOptionalInt(spec, "draftMax"); ok {
+		args = append(args, "--draft-max", fmt.Sprintf("%d", draftMax))
+	}
+	if draftMin, ok := configOptionalInt(spec, "draftMin"); ok {
+		args = append(args, "--draft-min", fmt.Sprintf("%d", draftMin))
+	}
+
 	// KV cache quantization (for memory efficiency)
 	if cacheTypeK := spec.ConfigString("cacheTypeK", ""); cacheTypeK != "" {
 		args = append(args, "--cache-type-k", cacheTypeK)

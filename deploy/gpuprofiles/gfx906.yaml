@@ -2,9 +2,9 @@
 #
 # Node: cblevins-radeonvii (single dGPU, 16 GB HBM2)
 #
-# gfx906 hardware reports as gfx900 — HSA_OVERRIDE_GFX_VERSION=9.0.6 is
-# required for gfx906 ISA (bitsandbytes NF4 HIP kernels, etc.).
-# SDMA disabled for stability. SVM disabled to avoid hipMemGetInfo crash
+# Serving runtimes detect the Radeon VII as gfx906 directly; do not set
+# HSA_OVERRIDE_GFX_VERSION on this profile. SDMA is disabled for stability and
+# SVM is disabled to avoid hipMemGetInfo crashes
 # (VMM not supported on Vega20, ROCm/ROCm#2433).
 #
 # diffusers/comfyui are experimental — the unified runtime can run FLUX/SDXL
@@ -15,6 +15,13 @@ kind: GPUProfile
 metadata:
   name: gfx906
   namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/backend-certificate-llamacpp-stateful-slots: registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407
+    flexinfer.ai/backend-certificate-llamacpp-stateful-slots-since: "2026-07-15T20:36:31Z"
+    flexinfer.ai/backend-certificate-llamacpp-stateful-slots-evidence: .loom/iteration-gfx906-llamacpp-stateful-spec-2026-07-15.md
+    flexinfer.ai/backend-certificate-llamacpp-ngram-simple-draft16-min1: registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407
+    flexinfer.ai/backend-certificate-llamacpp-ngram-simple-draft16-min1-since: "2026-07-15T20:36:31Z"
+    flexinfer.ai/backend-certificate-llamacpp-ngram-simple-draft16-min1-evidence: .loom/iteration-gfx906-llamacpp-stateful-spec-2026-07-15.md
 spec:
   architecture: gfx906
   vendor: amd
@@ -64,7 +71,8 @@ spec:
           kvCacheDtype: auto
     llamacpp:
       support: full
-      image: registry.harbor.lan/library/llamacpp:rocm-gfx906-patched-v3
+      # b8173 / 2e7e638; stateful slots + ngram-simple certificate artifact.
+      image: registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407
     diffusers:
       support: experimental
       image: registry.harbor.lan/flexinfer/diffusers:rocm-gfx906
@@ -77,8 +85,6 @@ spec:
       support: experimental
       image: registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx906
   env:
-    - name: HSA_OVERRIDE_GFX_VERSION
-      value: "9.0.6"
     - name: HSA_ENABLE_SDMA
       value: "0"
     - name: HSA_USE_SVM
