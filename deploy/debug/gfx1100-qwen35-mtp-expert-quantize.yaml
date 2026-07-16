@@ -68,7 +68,7 @@ spec:
             - name: SOURCE_ARTIFACT_DIGEST
               value: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
             - name: EXPECTED_SCRIPT_SHA256
-              value: f902f181b1ad85c2242bdd83d610fa5bae7a1c52de914831abab7ec20cec3808
+              value: 2556bb12542893475bf86b40d23c3ae78eb45a3063590ba5bfb6d395375f7f9e
             - name: OMP_NUM_THREADS
               value: "8"
             - name: HSA_ENABLE_SDMA

@@ -149,12 +149,13 @@ def fuse_expert_tensors(
         gate_up_scales.append(np.concatenate((gate_s, up_s), axis=0))
         down_qweight.append(down_q)
         down_scales.append(down_s)
-    return {
+    fused = {
         "gate_up_proj.qweight": np.stack(gate_up_qweight),
         "gate_up_proj.scales": np.stack(gate_up_scales),
         "down_proj.qweight": np.stack(down_qweight),
         "down_proj.scales": np.stack(down_scales),
     }
+    return {name: np.ascontiguousarray(tensor) for name, tensor in fused.items()}
 
 
 def _atomic_json(path: Path, value: dict) -> None:

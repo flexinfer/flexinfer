@@ -49,12 +49,14 @@ class QuantizeMTPExpertsTest(unittest.TestCase):
         for expert in range(2):
             for offset, projection in enumerate(mtpq.PROJECTIONS):
                 qweight = np.full((2, 3), expert * 10 + offset, dtype=np.int32)
-                scales = np.full((1, 3), expert * 10 + offset, dtype=np.float16)
+                scales = np.full((3, 2), expert * 10 + offset, dtype=np.float16).T
+                self.assertFalse(scales.flags.c_contiguous)
                 tensors[(expert, projection)] = (qweight, scales)
         fused = mtpq.fuse_expert_tensors(tensors, 2)
         self.assertEqual(fused["gate_up_proj.qweight"].shape, (2, 4, 3))
-        self.assertEqual(fused["gate_up_proj.scales"].shape, (2, 2, 3))
+        self.assertEqual(fused["gate_up_proj.scales"].shape, (2, 4, 3))
         self.assertEqual(fused["down_proj.qweight"].shape, (2, 2, 3))
+        self.assertTrue(all(tensor.flags.c_contiguous for tensor in fused.values()))
         np.testing.assert_array_equal(
             fused["gate_up_proj.qweight"][1, :, 0],
             np.array([10, 10, 11, 11], dtype=np.int32),
