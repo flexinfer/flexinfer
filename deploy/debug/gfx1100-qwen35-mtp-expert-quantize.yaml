@@ -48,7 +48,7 @@ spec:
         - name: harbor-creds
       containers:
         - name: quantize-mtp-experts
-          image: registry.harbor.lan/flexinfer/quantizer@sha256:d18fe7f8e401abf0a76589a3b136fb911c75e414f145a27cb1659212834dbc87
+          image: registry.harbor.lan/flexinfer/quantizer@sha256:cb7394a155381ac55143425759f1b6d9f181c5e42939527ef4a0f124d1b9cf32
           imagePullPolicy: IfNotPresent
           command: ["bash", "-lc"]
           args:

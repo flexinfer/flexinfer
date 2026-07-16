@@ -217,9 +217,11 @@ of this failed gate.
 
 - Builder: `deploy/debug/gfx1100-qwen35-mtp-expert-quantize.yaml`, suspended by
   default and not included by any kustomization.
-- Builder image: copy-only overlay CI job 186343 pinned the audited script on
-  the proven gfx906 quantizer base as
-  `sha256:d18fe7f8e401abf0a76589a3b136fb911c75e414f145a27cb1659212834dbc87`.
+- Builder image: the first overlay exposed a non-contiguous fused-scale tensor
+  at safetensors publication and failed before the atomic output rename. The
+  regression-tested copy-only overlay from CI job 186429 pins the corrected
+  script on the same proven gfx906 quantizer base as
+  `sha256:cb7394a155381ac55143425759f1b6d9f181c5e42939527ef4a0f124d1b9cf32`.
 - Surgery: require exactly one MTP layer and all 768 plain routed-expert
   matrices; quantize each matrix with symmetric RTN W4G128; fuse the result into
   exactly four vLLM GPTQ tensors; retain all MTP linears and every target-model
