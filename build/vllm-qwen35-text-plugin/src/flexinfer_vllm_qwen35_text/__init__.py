@@ -44,6 +44,30 @@ def _select_gfx1100_safe_fla_config(kernel) -> None:
     autotuner.configs = safe
 
 
+def _patch_qwen35_text_mtp_config(speculative_config) -> None:
+    """Teach vLLM 0.23's MTP override about the text-only model type."""
+    if getattr(speculative_config, "_flexinfer_qwen35_text_mtp", False):
+        return
+
+    original_hf_config_override = speculative_config.hf_config_override
+
+    def hf_config_override(hf_config):
+        if getattr(hf_config, "model_type", None) == "qwen3_5_moe_text":
+            n_predict = getattr(hf_config, "mtp_num_hidden_layers", None)
+            hf_config.model_type = "qwen3_5_mtp"
+            hf_config.update(
+                {
+                    "n_predict": n_predict,
+                    "architectures": ["Qwen3_5MoeMTP"],
+                }
+            )
+            return hf_config
+        return original_hf_config_override(hf_config)
+
+    speculative_config.hf_config_override = staticmethod(hf_config_override)
+    speculative_config._flexinfer_qwen35_text_mtp = True
+
+
 def register() -> None:
     """Register the existing text class and its hybrid-state contract.
 
@@ -55,6 +79,7 @@ def register() -> None:
     """
     import torch
     from vllm import ModelRegistry
+    from vllm.config.speculative import SpeculativeConfig
     from vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt import (
         chunk_scaled_dot_kkt_fwd_kernel,
     )
@@ -66,6 +91,7 @@ def register() -> None:
 
     if torch.version.hip is not None:
         _select_gfx1100_safe_fla_config(chunk_scaled_dot_kkt_fwd_kernel)
+    _patch_qwen35_text_mtp_config(SpeculativeConfig)
 
     Qwen3_5MoeForCausalLM.is_hybrid = True
     for method_name in _MAMBA_METHODS:

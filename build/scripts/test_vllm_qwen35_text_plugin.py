@@ -72,6 +72,24 @@ class Qwen3_5ForConditionalGeneration:
         return cls
 
 
+class SpeculativeConfig:
+    @staticmethod
+    def hf_config_override(config):
+        config.delegated = True
+        return config
+
+
+class FakeHFConfig:
+    def __init__(self, model_type: str) -> None:
+        self.model_type = model_type
+        self.architectures = ["OriginalArchitecture"]
+        self.mtp_num_hidden_layers = 1
+
+    def update(self, values: dict) -> None:
+        for name, value in values.items():
+            setattr(self, name, value)
+
+
 class PluginTest(unittest.TestCase):
     def test_registers_text_architecture_with_hybrid_contract(self) -> None:
         registry = FakeRegistry()
@@ -81,6 +99,9 @@ class PluginTest(unittest.TestCase):
         models.Qwen3_5MoeForCausalLM = Qwen3_5MoeForCausalLM
         models.Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration
         models.Qwen3_5Model = Qwen3_5Model
+        config_package = types.ModuleType("vllm.config")
+        speculative = types.ModuleType("vllm.config.speculative")
+        speculative.SpeculativeConfig = SpeculativeConfig
 
         torch = types.ModuleType("torch")
         torch.version = types.SimpleNamespace(hip="7.2")
@@ -92,6 +113,8 @@ class PluginTest(unittest.TestCase):
         fake_modules = {
             "torch": torch,
             "vllm": vllm,
+            config_package.__name__: config_package,
+            speculative.__name__: speculative,
             models.__name__: models,
             fla.__name__: fla,
         }
@@ -148,6 +171,16 @@ class PluginTest(unittest.TestCase):
             qwen_model.loaded_expert[0],
             "model.layers.0.mlp.experts.w2_qweight",
         )
+
+        mtp_config = SpeculativeConfig.hf_config_override(
+            FakeHFConfig("qwen3_5_moe_text")
+        )
+        self.assertEqual(mtp_config.model_type, "qwen3_5_mtp")
+        self.assertEqual(mtp_config.n_predict, 1)
+        self.assertEqual(mtp_config.architectures, ["Qwen3_5MoeMTP"])
+
+        delegated = SpeculativeConfig.hf_config_override(FakeHFConfig("other"))
+        self.assertTrue(delegated.delegated)
 
 
 if __name__ == "__main__":
