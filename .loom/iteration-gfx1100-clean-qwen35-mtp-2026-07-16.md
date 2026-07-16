@@ -249,6 +249,19 @@ of this failed gate.
   Job and ConfigMap were removed, the parent `Model` fields and Flux
   reconciliation were restored, and the production pod returned Ready after
   kubelet completed its normal digest-pinned image pull.
+- Attempt 13 result: the pinned v0.6 runtime passed artifact/plugin/image
+  preflight, crossed the prior native-HIP RoPE profile run, reached
+  `SERVER_READY`, completed all eager MTP workloads, and emitted nonzero draft
+  and accepted-token counters. The first result reported 1,604 accepted for 999
+  drafts because the probe's fragment matcher summed both the canonical
+  accepted-total counter and an identical per-position counter (and also
+  selected `_created` timestamps). Auditing the recorded canonical totals gives
+  802 accepted of 999 drafts, or 80.28%, above the 60% gate. The probe now
+  selects only exact canonical total-counter names before graph mode. Eager
+  throughput evidence was 41.03 tok/s for code, 41.01 tok/s for short QA, and
+  24.98 tok/s for the long-context summary; it remains explicitly
+  non-certifying. Production was restored and Ready after the parent Job and
+  ConfigMap were removed.
 
 ## Successor artifact gate
 
@@ -296,10 +309,7 @@ of this failed gate.
 
 ## Next
 
-1. Publish and digest-pin plugin v0.6 with the draft RoPE alignment regression.
-2. Re-run the eager MTP-only probe. Require server readiness, nonzero drafts,
-   and at least 60% acceptance; eager output remains non-certifying.
-3. Re-run MTP-only in graph mode with the same immutable tuple and require graph
+1. Re-run MTP-only in graph mode with the same immutable tuple and require graph
    evidence plus the acceptance gate.
-4. Only after graph MTP-only passes, run the full baseline/MTP A/B and enforce
+2. Only after graph MTP-only passes, run the full baseline/MTP A/B and enforce
    parity, per-workload floors, and median speedup before certification.

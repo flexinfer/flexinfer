@@ -415,6 +415,25 @@ data:
         return total, matched
 
 
+    def metric_sum_exact(metrics, names):
+        total = 0.0
+        matched = []
+        for line in metrics.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            name = line.split("{", 1)[0].split(" ", 1)[0]
+            if name not in names:
+                continue
+            try:
+                value = float(line.rsplit(" ", 1)[1])
+            except ValueError:
+                continue
+            if value == value and value not in (float("inf"), float("-inf")):
+                total += value
+                matched.append(line)
+        return total, matched
+
+
     def chat_once(workload):
         payload = {
                 "model": MODEL_NAME,
@@ -532,19 +551,33 @@ data:
                     ],
                 }
             after = metrics_text()
-            draft_before, _ = metric_sum(
-                before, ["spec_decode_num_draft_tokens", "spec_decode_draft_tokens"]
-            )
-            draft_after, draft_lines = metric_sum(
-                after, ["spec_decode_num_draft_tokens", "spec_decode_draft_tokens"]
-            )
-            accepted_before, _ = metric_sum(
+            draft_before, _ = metric_sum_exact(
                 before,
-                ["spec_decode_num_accepted_tokens", "spec_decode_accepted_tokens"],
+                {
+                    "vllm:spec_decode_num_draft_tokens_total",
+                    "vllm:spec_decode_draft_tokens_total",
+                },
             )
-            accepted_after, accepted_lines = metric_sum(
+            draft_after, draft_lines = metric_sum_exact(
                 after,
-                ["spec_decode_num_accepted_tokens", "spec_decode_accepted_tokens"],
+                {
+                    "vllm:spec_decode_num_draft_tokens_total",
+                    "vllm:spec_decode_draft_tokens_total",
+                },
+            )
+            accepted_before, _ = metric_sum_exact(
+                before,
+                {
+                    "vllm:spec_decode_num_accepted_tokens_total",
+                    "vllm:spec_decode_accepted_tokens_total",
+                },
+            )
+            accepted_after, accepted_lines = metric_sum_exact(
+                after,
+                {
+                    "vllm:spec_decode_num_accepted_tokens_total",
+                    "vllm:spec_decode_accepted_tokens_total",
+                },
             )
             graph_total, graph_lines = metric_sum(
                 after, ["cudagraph", "cuda_graph", "hip_graph"]
@@ -746,7 +779,7 @@ spec:
             - name: PROBE_MODE
               value: mtp-only
             - name: PROBE_EXECUTION_MODE
-              value: eager
+              value: graph
             - name: FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ
               value: "1"
             - name: HSA_OVERRIDE_GFX_VERSION
