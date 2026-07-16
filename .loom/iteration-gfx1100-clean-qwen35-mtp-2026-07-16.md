@@ -236,6 +236,19 @@ of this failed gate.
   the same pinned tuple in explicit eager diagnostic mode to distinguish model
   execution from Dynamo lowering; eager success is evidence, not a graph-mode
   certificate.
+- Attempt 12 result: eager mode disabled CUDAGraph and loaded the six shards in
+  1.05 seconds after NFS page-cache warmup; vLLM reported 19.97 GiB of model
+  memory and 90.02 seconds total load time. It then failed during the draft
+  profile run in native HIP RoPE, not Dynamo:
+  `qwen3_5_mtp.py -> qwen3_next.py -> RotaryEmbedding.forward_hip` rejected
+  query/key and positions with different batch/sequence dimensions. This proves
+  the draft runner is producing three-axis MRoPE positions while its text-only
+  Qwen3Next attention owns generic RoPE. Plugin v0.6 now overwrites the draft
+  `rope_parameters` with the exact non-MRoPE target contract and has a
+  regression that starts from the artifact's raw `mrope_section`. The probe
+  Job and ConfigMap were removed, the parent `Model` fields and Flux
+  reconciliation were restored, and the production pod returned Ready after
+  kubelet completed its normal digest-pinned image pull.
 
 ## Successor artifact gate
 
@@ -268,19 +281,21 @@ of this failed gate.
   0.13244 and the minimum per-matrix cosine was 0.984898, passing both quality
   gates. Source index and quantization-config hashes remained bound in the
   publication marker.
-- Runtime candidate: CI job 186554 published plugin v0.5.0 as immutable digest
+- Runtime evidence: CI job 186554 published plugin v0.5.0 as immutable digest
   `sha256:850d1548199ba6ec428983b8235062b7a354812be1776328aa5f1d3faf68281a`.
+- Runtime candidate: plugin v0.6 aligns the speculative draft's RoPE config
+  with the target text-only override; publish and digest-pin it before Attempt
+  13.
 - Kill-test: the output marker must prove at least 1.06 GiB was freed before the
   existing MTP-only graph+32K load/acceptance probe is repointed. If fit passes,
   require >=60% acceptance before returning to the full performance A/B.
 
 ## Next
 
-1. Publish and digest-pin the ROCm quantizer image containing the surgical MTP
-   expert builder; replace both placeholders in its suspended Job.
-2. Run the builder on gfx906 host CPU/NFS and require its atomic artifact marker
-   to pass the tensor, byte-saving, and round-trip gates.
-3. Publish and pin plugin v0.4, then repoint the MTP-only gfx1100 probe to the
-   verified output with the explicit quantized-expert mode enabled.
-4. Only if MTP-only fit and acceptance pass, run the full baseline/MTP A/B. Add
-   certificate gating only after parity, graph-mode, and performance pass.
+1. Publish and digest-pin plugin v0.6 with the draft RoPE alignment regression.
+2. Re-run the eager MTP-only probe. Require server readiness, nonzero drafts,
+   and at least 60% acceptance; eager output remains non-certifying.
+3. Re-run MTP-only in graph mode with the same immutable tuple and require graph
+   evidence plus the acceptance gate.
+4. Only after graph MTP-only passes, run the full baseline/MTP A/B and enforce
+   parity, per-workload floors, and median speedup before certification.

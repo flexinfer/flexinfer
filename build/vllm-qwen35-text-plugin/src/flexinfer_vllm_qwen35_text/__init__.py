@@ -3,6 +3,11 @@
 import os
 
 ARCHITECTURE = "Qwen3_5MoeForCausalLM"
+_TEXT_ONLY_ROPE_PARAMETERS = {
+    "rope_type": "default",
+    "rope_theta": 10_000_000,
+    "partial_rotary_factor": 0.25,
+}
 _MAMBA_METHODS = (
     "get_mamba_state_shape_from_config",
     "get_mamba_state_dtype_from_config",
@@ -68,6 +73,12 @@ def _patch_qwen35_text_mtp_config(speculative_config) -> None:
                 {
                     "n_predict": n_predict,
                     "architectures": ["Qwen3_5MoeMTP"],
+                    # The target text model receives this same non-MRoPE
+                    # contract through --hf-overrides. SpeculativeConfig
+                    # otherwise reloads the raw multimodal artifact config,
+                    # marks the runner as MRoPE, and sends [3, N] positions to
+                    # the generic Qwen3Next rotary embedding.
+                    "rope_parameters": dict(_TEXT_ONLY_ROPE_PARAMETERS),
                 }
             )
             return hf_config

@@ -127,6 +127,13 @@ class FakeHFConfig:
         self.model_type = model_type
         self.architectures = ["OriginalArchitecture"]
         self.mtp_num_hidden_layers = 1
+        self.rope_parameters = {
+            "rope_type": "default",
+            "rope_theta": 10_000_000,
+            "partial_rotary_factor": 0.25,
+            "mrope_interleaved": True,
+            "mrope_section": [11, 11, 10],
+        }
 
     def update(self, values: dict) -> None:
         for name, value in values.items():
@@ -252,6 +259,14 @@ class PluginTest(unittest.TestCase):
         self.assertEqual(mtp_config.model_type, "qwen3_5_mtp")
         self.assertEqual(mtp_config.n_predict, 1)
         self.assertEqual(mtp_config.architectures, ["Qwen3_5MoeMTP"])
+        self.assertEqual(
+            mtp_config.rope_parameters,
+            {
+                "rope_type": "default",
+                "rope_theta": 10_000_000,
+                "partial_rotary_factor": 0.25,
+            },
+        )
 
         delegated = SpeculativeConfig.hf_config_override(FakeHFConfig("other"))
         self.assertTrue(delegated.delegated)
