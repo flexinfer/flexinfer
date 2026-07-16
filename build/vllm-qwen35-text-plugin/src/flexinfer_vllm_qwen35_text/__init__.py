@@ -1,8 +1,12 @@
-"""Complete vLLM 0.23's registration for text-only Qwen3.5 MoE models."""
+"""Complete vLLM's registration for text-only Qwen3.5 models."""
 
 import os
+import sys
 
-ARCHITECTURE = "Qwen3_5MoeForCausalLM"
+ARCHITECTURES = {
+    "Qwen3_5ForCausalLM": "dense",
+    "Qwen3_5MoeForCausalLM": "moe",
+}
 _TEXT_ONLY_ROPE_PARAMETERS = {
     "rope_type": "default",
     "rope_theta": 10_000_000,
@@ -32,23 +36,44 @@ def _gptq_expert_parameter_name(name: str) -> str:
     return name
 
 
-def _select_gfx1100_safe_fla_config(kernel) -> None:
-    """Avoid a Triton/LLVM codegen cliff in the FLA KKT autotuner.
+def _select_rocm_safe_fla_configs() -> int:
+    """Collapse loaded FLA autotuners to conservative consumer-ROCm configs.
 
-    The 4-stage gfx1100 variant can remain in LLVM codegen indefinitely. The
-    first 2-stage configuration is already compiled and proven on this model.
+    The 4-stage variant can remain in LLVM codegen indefinitely on consumer
+    ROCm targets. Qwen3.5's GDN prefill path contains several independent
+    autotuners, so pruning only KKT still leaves the engine stuck compiling
+    ``chunk_delta_h`` and later kernels. Preserve the first config among the
+    lowest stage/warp candidates for every loaded FLA autotuner.
     """
-    autotuner = kernel.fn
-    safe = [
-        config
-        for config in autotuner.configs
-        if config.kwargs.get("BK") == 32
-        and config.num_warps == 2
-        and config.num_stages == 2
-    ]
-    if not safe:
-        raise RuntimeError("vLLM FLA safe autotune configuration is missing")
-    autotuner.configs = safe
+    prefix = "vllm.model_executor.layers.fla.ops."
+    pruned: set[int] = set()
+    for module_name, module in tuple(sys.modules.items()):
+        if not module_name.startswith(prefix) or module is None:
+            continue
+        for value in vars(module).values():
+            candidate = value
+            for _ in range(5):
+                configs = getattr(candidate, "configs", None)
+                if isinstance(configs, (list, tuple)) and configs:
+                    candidate_id = id(candidate)
+                    if candidate_id not in pruned:
+                        _, safe = min(
+                            enumerate(configs),
+                            key=lambda item: (
+                                getattr(item[1], "num_stages", 1) or 1,
+                                getattr(item[1], "num_warps", 1) or 1,
+                                item[0],
+                            ),
+                        )
+                        candidate.configs = [safe]
+                        pruned.add(candidate_id)
+                    break
+                candidate = getattr(candidate, "fn", None)
+                if candidate is None:
+                    break
+    if not pruned:
+        raise RuntimeError("vLLM FLA safe autotune configurations are missing")
+    return len(pruned)
 
 
 def _strict_env_flag(name: str) -> bool:
@@ -66,13 +91,18 @@ def _patch_qwen35_text_mtp_config(speculative_config) -> None:
     original_hf_config_override = speculative_config.hf_config_override
 
     def hf_config_override(hf_config):
-        if getattr(hf_config, "model_type", None) == "qwen3_5_moe_text":
+        model_type = getattr(hf_config, "model_type", None)
+        if model_type in {"qwen3_5_text", "qwen3_5_moe_text"}:
             n_predict = getattr(hf_config, "mtp_num_hidden_layers", None)
             hf_config.model_type = "qwen3_5_mtp"
             hf_config.update(
                 {
                     "n_predict": n_predict,
-                    "architectures": ["Qwen3_5MoeMTP"],
+                    "architectures": [
+                        "Qwen3_5MoeMTP"
+                        if model_type == "qwen3_5_moe_text"
+                        else "Qwen3_5MTP"
+                    ],
                     # The target text model receives this same non-MRoPE
                     # contract through --hf-overrides. SpeculativeConfig
                     # otherwise reloads the raw multimodal artifact config,
@@ -86,6 +116,20 @@ def _patch_qwen35_text_mtp_config(speculative_config) -> None:
 
     speculative_config.hf_config_override = staticmethod(hf_config_override)
     speculative_config._flexinfer_qwen35_text_mtp = True
+
+
+def _needs_safe_fla_config(torch_module) -> bool:
+    """Return whether this process targets a consumer ROCm architecture."""
+    configured = os.environ.get("PYTORCH_ROCM_ARCH", "")
+    if configured:
+        return configured in {"gfx906", "gfx1100"}
+    try:
+        if torch_module.cuda.is_available():
+            arch = torch_module.cuda.get_device_properties(0).gcnArchName
+            return str(arch).split(":", 1)[0] in {"gfx906", "gfx1100"}
+    except (AttributeError, RuntimeError):
+        pass
+    return False
 
 
 def _patch_qwen35_mtp_gptq(
@@ -114,7 +158,11 @@ def _patch_qwen35_mtp_gptq(
 
     def get_quant_method(self, layer, prefix):
         if "mtp" in prefix.split("."):
-            if isinstance(layer, routed_experts) and not quantized_mtp_experts:
+            if (
+                routed_experts is not None
+                and isinstance(layer, routed_experts)
+                and not quantized_mtp_experts
+            ):
                 return unquantized_fused_moe_method(layer.moe_config)
             if isinstance(layer, linear_base):
                 return unquantized_linear_method()
@@ -166,27 +214,36 @@ def register() -> None:
     import torch
     from vllm import ModelRegistry
     from vllm.config.speculative import SpeculativeConfig
-    from vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt import (
-        chunk_scaled_dot_kkt_fwd_kernel,
-    )
-    from vllm.model_executor.layers.fused_moe import (
-        RoutedExperts,
-        UnquantizedFusedMoEMethod,
-    )
+    import vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt  # noqa: F401
+    from vllm.model_executor.layers.fused_moe import UnquantizedFusedMoEMethod
     from vllm.model_executor.layers.linear import (
         LinearBase,
         UnquantizedLinearMethod,
     )
-    from vllm.model_executor.layers.quantization.auto_gptq import AutoGPTQConfig
+    try:
+        from vllm.model_executor.layers.fused_moe import RoutedExperts
+    except ImportError:
+        # vLLM <=0.20 predates the modular RoutedExperts abstraction. Dense
+        # Qwen3.5 MTP only needs the LinearBase override; keep MoE registration
+        # available while declining to invent an unsafe expert type mapping.
+        RoutedExperts = None
+    try:
+        from vllm.model_executor.layers.quantization.auto_gptq import AutoGPTQConfig
+    except ImportError:
+        from vllm.model_executor.layers.quantization.gptq import (
+            GPTQConfig as AutoGPTQConfig,
+        )
     from vllm.model_executor.models.qwen3_5 import (
+        Qwen3_5ForCausalLM,
         Qwen3_5ForConditionalGeneration,
         Qwen3_5Model,
         Qwen3_5MoeForCausalLM,
     )
     from vllm.model_executor.models.qwen3_5_mtp import Qwen3_5MultiTokenPredictor
 
-    if torch.version.hip is not None:
-        _select_gfx1100_safe_fla_config(chunk_scaled_dot_kkt_fwd_kernel)
+    safe_fla_kernels = 0
+    if torch.version.hip is not None and _needs_safe_fla_config(torch):
+        safe_fla_kernels = _select_rocm_safe_fla_configs()
     _patch_qwen35_text_mtp_config(SpeculativeConfig)
     quantized_mtp_experts = _strict_env_flag(
         "FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ"
@@ -200,13 +257,14 @@ def register() -> None:
         quantized_mtp_experts=quantized_mtp_experts,
     )
 
-    Qwen3_5MoeForCausalLM.is_hybrid = True
-    for method_name in _MAMBA_METHODS:
-        setattr(
-            Qwen3_5MoeForCausalLM,
-            method_name,
-            Qwen3_5ForConditionalGeneration.__dict__[method_name],
-        )
+    for model_class in (Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM):
+        model_class.is_hybrid = True
+        for method_name in _MAMBA_METHODS:
+            setattr(
+                model_class,
+                method_name,
+                Qwen3_5ForConditionalGeneration.__dict__[method_name],
+            )
 
     if not getattr(Qwen3_5MoeForCausalLM, "_flexinfer_expert_names", False):
         original_load_weights = Qwen3_5MoeForCausalLM.load_weights
@@ -220,9 +278,12 @@ def register() -> None:
     _patch_gptq_expert_loader(Qwen3_5Model)
     _patch_gptq_expert_loader(Qwen3_5MultiTokenPredictor)
 
-    ModelRegistry.register_model(ARCHITECTURE, Qwen3_5MoeForCausalLM)
+    ModelRegistry.register_model("Qwen3_5ForCausalLM", Qwen3_5ForCausalLM)
+    ModelRegistry.register_model("Qwen3_5MoeForCausalLM", Qwen3_5MoeForCausalLM)
     print(
-        f"flexinfer: registered {ARCHITECTURE} with hybrid-state support "
+        "flexinfer: registered text-only Qwen3.5 dense + MoE architectures "
+        "with hybrid-state support "
         "and ROCm-safe FLA/MTP GPTQ handling "
-        f"(mtp_experts={'gptq' if quantized_mtp_experts else 'plain'})"
+        f"(fla_autotuners={safe_fla_kernels}, "
+        f"mtp_experts={'gptq' if quantized_mtp_experts else 'plain'})"
     )

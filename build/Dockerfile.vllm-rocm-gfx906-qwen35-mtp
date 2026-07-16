@@ -1,0 +1,28 @@
+# Modern gfx906 Qwen3.5/MTP canary runtime.
+#
+# The base is the published amd64 artifact built from ai-infos/vllm-gfx906-
+# mobydick commit eb450bdf (vLLM 0.20.1 lineage), triton-gfx906 3.6, and the
+# native gfx906 PyTorch/ROCm 6.3.3 stack. FlexInfer's overlay only installs the
+# text-only dense/MoE registration plugin and pins the safe runtime contract.
+ARG BASE_IMAGE=docker.io/mixa3607/vllm-gfx906:0.20.1-rocm-6.3.3-aiinfos@sha256:a5a54ee0494ef0a9a351cf7123620f8fe941492906ecb2afec88b3333dd7a6f0
+FROM ${BASE_IMAGE}
+
+ENV HSA_ENABLE_SDMA=0 \
+    HSA_USE_SVM=0 \
+    PYTORCH_ROCM_ARCH=gfx906 \
+    VLLM_USE_TRITON_FLASH_ATTN=0 \
+    VLLM_ROCM_USE_AITER=0
+
+# Vega20 cannot service several modern ROCm/VMM probes and kernels used by
+# vLLM during initialization. Reuse FlexInfer's established gfx906 shims for
+# memory accounting and safe CPU-mirrored parameter initialization.
+COPY build/scripts/install_vllm_gfx906_compat.py /tmp/install_vllm_gfx906_compat.py
+RUN python3 /tmp/install_vllm_gfx906_compat.py \
+    && rm -f /tmp/install_vllm_gfx906_compat.py
+
+COPY build/vllm-qwen35-text-plugin /opt/flexinfer/qwen35-text-plugin
+RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-text-plugin \
+    && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_text" for ep in entry_points(group="vllm.general_plugins"))'
+
+WORKDIR /workspace
+ENTRYPOINT ["vllm", "serve"]

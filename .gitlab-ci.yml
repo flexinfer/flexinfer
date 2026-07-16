@@ -481,7 +481,9 @@ vllm_qwen35_text_plugin_test:
       changes: &qwen35-text-plugin-changes
         - .gitlab-ci.yml
         - build/Dockerfile.vllm-rocm-v023-qwen35-text
+        - build/Dockerfile.vllm-rocm-gfx906-qwen35-mtp
         - build/vllm-qwen35-text-plugin/**/*
+        - build/scripts/install_vllm_gfx906_compat.py
         - build/scripts/test_vllm_qwen35_text_plugin.py
         - deploy/debug/qwen35-35b-clean-gptq-canary.yaml
     - if: $CI_COMMIT_BRANCH == "master"
@@ -495,7 +497,9 @@ mtp_expert_quantizer_test:
     - python3 -m pip install --disable-pip-version-check --no-cache-dir numpy
   script:
     - python3 build/scripts/test_quantize_mtp_experts.py
+    - python3 build/scripts/test_graft_qwen35_mtp.py
     - python3 -m py_compile build/scripts/quantize_mtp_experts.py
+    - python3 -m py_compile build/scripts/graft_qwen35_mtp.py
   rules:
     - if: $CI_MERGE_REQUEST_ID
       changes: &mtp-expert-quantizer-changes
@@ -504,6 +508,8 @@ mtp_expert_quantizer_test:
         - build/Dockerfile.quantizer-gptq-rocm
         - build/scripts/quantize_mtp_experts.py
         - build/scripts/test_quantize_mtp_experts.py
+        - build/scripts/graft_qwen35_mtp.py
+        - build/scripts/test_graft_qwen35_mtp.py
         - deploy/debug/gfx1100-qwen35-mtp-expert-quantize.yaml
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *mtp-expert-quantizer-changes
@@ -1874,6 +1880,35 @@ publish_vllm_rocm_v023_qwen35_text:
         --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text" \
         --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text,${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - when: manual
+      allow_failure: true
+
+publish_vllm_rocm_gfx906_qwen35_mtp:
+  stage: publish
+  image: moby/buildkit:v0.28.0
+  timeout: 1h
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building modern gfx906 Qwen3.5/MTP canary overlay..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.vllm-rocm-gfx906-qwen35-mtp" \
+        --opt platform=linux/amd64 \
+        --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm6.3.3-gfx906-v0201-qwen35-mtp" \
+        --export-cache "type=inline" \
+        --output "type=image,name=${REGISTRY}/vllm:rocm6.3.3-gfx906-v0201-qwen35-mtp-${CI_COMMIT_SHORT_SHA},push=true"
   rules:
     - when: manual
       allow_failure: true

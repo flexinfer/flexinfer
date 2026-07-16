@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 import types
 import unittest
@@ -44,6 +45,13 @@ class FakeKernel:
     )
 
 
+class FakeKernelTwo:
+    configs = [
+        FakeConfig(64, 4, 4),
+        FakeConfig(32, 2, 2),
+    ]
+
+
 class LinearBase:
     pass
 
@@ -76,6 +84,10 @@ class Qwen3_5MoeForCausalLM:
     def load_weights(self, weights):
         self.loaded_weights = list(weights)
         return {name for name, _ in self.loaded_weights}
+
+
+class Qwen3_5ForCausalLM:
+    pass
 
 
 class Qwen3_5Model:
@@ -147,6 +159,7 @@ class PluginTest(unittest.TestCase):
         vllm.ModelRegistry = registry
         models = types.ModuleType("vllm.model_executor.models.qwen3_5")
         models.Qwen3_5MoeForCausalLM = Qwen3_5MoeForCausalLM
+        models.Qwen3_5ForCausalLM = Qwen3_5ForCausalLM
         models.Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration
         models.Qwen3_5Model = Qwen3_5Model
         mtp_models = types.ModuleType("vllm.model_executor.models.qwen3_5_mtp")
@@ -162,6 +175,7 @@ class PluginTest(unittest.TestCase):
             "vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt"
         )
         fla.chunk_scaled_dot_kkt_fwd_kernel = FakeKernel
+        fla.chunk_gated_delta_rule_fwd_kernel_h_blockdim64 = FakeKernelTwo
         auto_gptq = types.ModuleType(
             "vllm.model_executor.layers.quantization.auto_gptq"
         )
@@ -187,6 +201,8 @@ class PluginTest(unittest.TestCase):
         }
         saved = {name: sys.modules.get(name) for name in fake_modules}
         sys.modules.update(fake_modules)
+        old_arch = os.environ.get("PYTORCH_ROCM_ARCH")
+        os.environ["PYTORCH_ROCM_ARCH"] = "gfx906"
         try:
             spec = importlib.util.spec_from_file_location("qwen35_text_plugin", PLUGIN)
             assert spec and spec.loader
@@ -194,6 +210,10 @@ class PluginTest(unittest.TestCase):
             spec.loader.exec_module(plugin)
             plugin.register()
         finally:
+            if old_arch is None:
+                os.environ.pop("PYTORCH_ROCM_ARCH", None)
+            else:
+                os.environ["PYTORCH_ROCM_ARCH"] = old_arch
             for name, module in saved.items():
                 if module is None:
                     sys.modules.pop(name, None)
@@ -209,6 +229,8 @@ class PluginTest(unittest.TestCase):
         self.assertIs(model_class.get_mamba_state_copy_func(), model_class)
         self.assertEqual(len(FakeKernel.fn.configs), 1)
         self.assertEqual(FakeKernel.fn.configs[0].num_stages, 2)
+        self.assertEqual(len(FakeKernelTwo.configs), 1)
+        self.assertEqual(FakeKernelTwo.configs[0].num_stages, 2)
         instance = model_class()
         instance.load_weights(
             [
@@ -223,6 +245,18 @@ class PluginTest(unittest.TestCase):
                 "model.layers.0.mlp.experts.down_proj.scales",
             ],
         )
+
+        dense_model_class = registry.models["Qwen3_5ForCausalLM"]
+        self.assertTrue(dense_model_class.is_hybrid)
+        self.assertEqual(
+            dense_model_class.get_mamba_state_shape_from_config("dense-cfg"),
+            (dense_model_class, "dense-cfg"),
+        )
+        os.environ["PYTORCH_ROCM_ARCH"] = "gfx906"
+        try:
+            self.assertTrue(plugin._needs_safe_fla_config(torch))
+        finally:
+            os.environ.pop("PYTORCH_ROCM_ARCH", None)
 
         qwen_model = Qwen3_5Model()
         self.assertTrue(
@@ -267,6 +301,13 @@ class PluginTest(unittest.TestCase):
                 "partial_rotary_factor": 0.25,
             },
         )
+
+        dense_mtp_config = SpeculativeConfig.hf_config_override(
+            FakeHFConfig("qwen3_5_text")
+        )
+        self.assertEqual(dense_mtp_config.model_type, "qwen3_5_mtp")
+        self.assertEqual(dense_mtp_config.n_predict, 1)
+        self.assertEqual(dense_mtp_config.architectures, ["Qwen3_5MTP"])
 
         delegated = SpeculativeConfig.hf_config_override(FakeHFConfig("other"))
         self.assertTrue(delegated.delegated)

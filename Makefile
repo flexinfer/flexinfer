@@ -255,6 +255,7 @@ MLC_MAXWELL_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/mlc-llm:cuda-maxwell-v7
 VLLM_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100
 VLLM_GFX1100_FA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100-fa
 VLLM_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx906
+VLLM_GFX906_QWEN35_MTP_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm6.3.3-gfx906-v0201-qwen35-mtp
 VLLM_GFX906_FA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx906-fa
 VLLM_GFX1100_NIGHTLY_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm:rocm-gfx1100-nightly
 VLLM_OMNI_GFX1100_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/vllm-omni:rocm-gfx1100
@@ -319,6 +320,14 @@ build-vllm-gfx906: ## Build custom vLLM gfx906 image from source (no FA)
 .PHONY: push-vllm-gfx906
 push-vllm-gfx906: ## Push vLLM gfx906 image to Harbor
 	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX906_IMAGE)
+
+.PHONY: build-vllm-gfx906-qwen35-mtp
+build-vllm-gfx906-qwen35-mtp: ## Build modern gfx906 Qwen3.5/MTP canary overlay
+	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-rocm-gfx906-qwen35-mtp -t $(VLLM_GFX906_QWEN35_MTP_IMAGE) .
+
+.PHONY: push-vllm-gfx906-qwen35-mtp
+push-vllm-gfx906-qwen35-mtp: ## Push modern gfx906 Qwen3.5/MTP canary overlay
+	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX906_QWEN35_MTP_IMAGE)
 
 .PHONY: build-vllm-gfx906-fa
 build-vllm-gfx906-fa: ## Build vLLM gfx906 flash attention image (DEPRECATED — see Dockerfile header)

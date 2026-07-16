@@ -130,11 +130,37 @@ spec:
 | Environment Variable | Value | Purpose |
 |---------------------|-------|---------|
 | `HSA_ENABLE_SDMA` | `0` | **Critical**: Disables SDMA engine to prevent memory faults |
+| `HSA_USE_SVM` | `0` | Avoids unsupported Vega20 VMM/SVM memory probes |
 | `PYTORCH_ROCM_ARCH` | `gfx906` | Target architecture |
 
 **Note**: `HSA_ENABLE_SDMA=0` is essential on gfx906 (Vega20). Without it, the SDMA engine causes `HSA_STATUS_ERROR_MEMORY_APERTURE_VIOLATION` errors. Unlike gfx1100, do NOT set `HSA_OVERRIDE_GFX_VERSION` or `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL`.
 
 These variables are automatically injected by `ROCmEnvVars()` in `backend/interface.go`.
+
+## Qwen3.5 native MTP canary certificate
+
+gfx906 has a canary certificate for dense Qwen3.5-9B GPTQ with one native MTP
+draft token. The certificate binds this exact pair:
+
+- runtime: `registry.harbor.lan/flexinfer/vllm@sha256:034f081861278a680fe54ddeb71db6446ce65f0a9c37ce9aecc061a99b1d40fc`;
+- graft contract: `sha256:64189493708ff203f65a08e0ebde92cf9998271212b69cb390173a694f453134`.
+
+The proven server uses eager mode, `TRITON_ATTN`, `maxNumSeqs: 1`,
+`maxNumBatchedTokens: 256`, and `gpuMemoryUtilization: 0.80`. It also strips
+the raw artifact's multimodal M-RoPE keys through `hfOverrides`. The 80% limit
+is part of the certificate: 90% allowed KV allocation to consume Vega20's
+GPTQ workspace floor and the first 256-token prefill returned
+`hipErrorInvalidValue`.
+
+The kill test completed a 9,001-token request at 16K and an 18,001-token
+request at 32K. Two meaningful greedy MTP requests matched the baseline output
+and accepted 8/12 draft tokens. Use
+`deploy/debug/gfx906-qwen35-mtp-long-context-kill-test.yaml` to reproduce the
+contract. Full evidence and artifact provenance are in
+`.loom/iteration-gfx906-qwen35-mtp-long-context-2026-07-16.md`.
+
+This certificate does not replace the generic gfx906 vLLM profile image.
+Models must opt into the pinned image and exact artifact/config tuple.
 
 ## Certificate-gated llama.cpp features
 
