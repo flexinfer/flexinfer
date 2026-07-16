@@ -320,11 +320,10 @@ data:
             "--language-model-only",
             "--max-num-seqs",
             "1",
-            # One request with one speculative token verifies two target tokens.
-            # vLLM's default also captures size 4 (max_num_seqs * decode_len * 2),
-            # reserving graph memory for concurrency this bounded probe forbids.
+            # A baseline request decodes one target token; one-token MTP verifies
+            # target+draft together. Keep each arm on its real one-request shape.
             "--cudagraph-capture-sizes",
-            "2",
+            "2" if speculative else "1",
             "--max-num-batched-tokens",
             "4096",
             "--enable-chunked-prefill",
@@ -790,9 +789,11 @@ spec:
             - name: EXPECTED_PLUGIN_VERSION
               value: 0.6.0
             - name: PROBE_MODE
-              value: mtp-only
+              value: full-ab
             - name: PROBE_EXECUTION_MODE
               value: graph
+            - name: VLLM_CACHE_ROOT
+              value: /var/lib/flexinfer/compile-cache
             - name: FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ
               value: "1"
             - name: HSA_OVERRIDE_GFX_VERSION

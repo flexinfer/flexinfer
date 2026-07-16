@@ -300,6 +300,17 @@ of this failed gate.
   a crash. Attempt 17 excludes only that exact `[shutdown]` message while
   retaining all other abort, ROCm, HSA, OOM, and segmentation-fault matches,
   then reruns the unchanged inference tuple for a machine-emitted graph pass.
+- Attempt 17 result: the immutable tuple emitted `MTP_ONLY_RESULT PASS` and the
+  Job Succeeded. vLLM captured one PIECEWISE mixed prefill/decode graph and one
+  FULL decode graph at size 2, served the full 32K envelope, and passed the
+  corrected fault scan. It produced 1,011 audited draft tokens with 791
+  accepted (78.24%); constrained parity hashes were stable; workload medians
+  were 95.08 tok/s code, 92.43 tok/s short QA, and 27.66 tok/s long context.
+  Before the full A/B, the baseline capture is corrected to size 1 while MTP
+  retains size 2 so the control is not padded into the speculative verify
+  shape. The existing host cache mount is also bound through `VLLM_CACHE_ROOT`
+  so graph artifacts survive arm/process restarts without changing execution
+  semantics.
 
 ## Successor artifact gate
 
@@ -347,8 +358,6 @@ of this failed gate.
 
 ## Next
 
-1. Re-run the unchanged MTP-only graph tuple with the corrected lifecycle
-   filter; require 32K KV fit, graph evidence, a clean fault scan, and the
-   acceptance gate.
-2. Only after graph MTP-only passes, run the full baseline/MTP A/B and enforce
-   parity, per-workload floors, and median speedup before certification.
+1. Run the full graph baseline/MTP A/B with arm-correct capture shapes and
+   enforce parity, per-workload floors, acceptance, median speedup, and the
+   clean fault scan before certification.
