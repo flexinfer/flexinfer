@@ -467,6 +467,129 @@ func TestValidateBackendGPUCompatibility(t *testing.T) {
 	})
 }
 
+func TestValidateLlamaCppFeatureCertificates(t *testing.T) {
+	const certifiedImage = "registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407"
+	const evidence = ".loom/iteration-gfx906-llamacpp-stateful-spec-2026-07-15.md"
+	newProfile := func() *aiv1alpha2.GPUProfile {
+		profile := &aiv1alpha2.GPUProfile{
+			ObjectMeta: metav1.ObjectMeta{Name: "gfx906"},
+			Spec: aiv1alpha2.GPUProfileSpec{
+				Architecture: "gfx906",
+				Backends: map[string]aiv1alpha2.BackendProfile{
+					backend.NameLlamaCpp: {Support: "full", Image: certifiedImage},
+				},
+			},
+		}
+		aiv1alpha2.SetBackendCapabilityCertificate(profile, backend.NameLlamaCpp, aiv1alpha2.LlamaCppCapabilityStatefulSlots, certifiedImage, evidence)
+		aiv1alpha2.SetBackendCapabilityCertificate(profile, backend.NameLlamaCpp, aiv1alpha2.LlamaCppCapabilityNgramSimpleDraft16, certifiedImage, evidence)
+		return profile
+	}
+	newModel := func(config map[string]any) *aiv1alpha2.Model {
+		return gpuTestModel("gfx906-certified-llamacpp", func(model *aiv1alpha2.Model) {
+			model.Spec.Backend = backend.NameLlamaCpp
+			model.Spec.Config = mustJSONConfig(config)
+		})
+	}
+	newReconciler := func(profile *aiv1alpha2.GPUProfile) *ModelReconciler {
+		profiles := &GPUProfileReconciler{}
+		profiles.Prime(profile)
+		return gpuTestReconciler(func(r *ModelReconciler) { r.GPUProfiles = profiles })
+	}
+	b := &fakeGPUBackend{name: backend.NameLlamaCpp}
+
+	t.Run("complete artifact-bound certificates pass", func(t *testing.T) {
+		model := newModel(map[string]any{
+			"dedicatedDeployment": true,
+			"slotSavePath":        "/models/.flexinfer/slots/qwen3-8b",
+			"specType":            "ngram-simple",
+			"draftMax":            16,
+			"draftMin":            1,
+		})
+		err := newReconciler(newProfile()).validateBackendGPUCompatibility(model, b, backend.GPUVendorAMD, "gfx906")
+		require.NoError(t, err)
+	})
+
+	t.Run("missing capability certificate fails closed", func(t *testing.T) {
+		profile := newProfile()
+		aiv1alpha2.ClearBackendCapabilityCertificate(profile, backend.NameLlamaCpp, aiv1alpha2.LlamaCppCapabilityStatefulSlots)
+		model := newModel(map[string]any{
+			"dedicatedDeployment": true,
+			"slotSavePath":        "/models/.flexinfer/slots/qwen3-8b",
+		})
+		err := newReconciler(profile).validateBackendGPUCompatibility(model, b, backend.GPUVendorAMD, "gfx906")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not fully certified")
+	})
+
+	t.Run("persistent runtime path is rejected until its artifact is certified", func(t *testing.T) {
+		model := newModel(map[string]any{
+			"slotSavePath": "/models/.flexinfer/slots/qwen3-8b",
+		})
+		err := newReconciler(newProfile()).validateBackendGPUCompatibility(model, b, backend.GPUVendorAMD, "gfx906")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "dedicatedDeployment=true")
+	})
+
+	t.Run("per-model image drift is rejected", func(t *testing.T) {
+		model := newModel(map[string]any{
+			"dedicatedDeployment": true,
+			"slotSavePath":        "/models/.flexinfer/slots/qwen3-8b",
+		})
+		model.Spec.Image = "registry.harbor.lan/library/llamacpp:mutable"
+		err := newReconciler(newProfile()).validateBackendGPUCompatibility(model, b, backend.GPUVendorAMD, "gfx906")
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "digest-pinned selected image")
+	})
+
+	t.Run("CPU path does not require a GPU certificate", func(t *testing.T) {
+		model := newModel(map[string]any{
+			"slotSavePath": "/models/.flexinfer/slots/cpu-model",
+		})
+		err := validateLlamaCppFeatureCertificates(model, nil, "", "ghcr.io/ggml-org/llama.cpp:server")
+		require.NoError(t, err)
+	})
+}
+
+func TestRequestedLlamaCppCapabilities(t *testing.T) {
+	tests := []struct {
+		name        string
+		config      map[string]any
+		want        []string
+		errContains string
+	}{
+		{name: "no opt-ins", config: map[string]any{}},
+		{
+			name: "stateful and proven speculation envelope",
+			config: map[string]any{
+				"slotSavePath": "/models/.flexinfer/slots/test",
+				"specType":     "ngram-simple",
+				"draftMax":     float64(16),
+				"draftMin":     float64(1),
+			},
+			want: []string{aiv1alpha2.LlamaCppCapabilityStatefulSlots, aiv1alpha2.LlamaCppCapabilityNgramSimpleDraft16},
+		},
+		{name: "slot path must persist", config: map[string]any{"slotSavePath": "/tmp/slots"}, errContains: "persistent /models mount"},
+		{name: "slot path must be a string", config: map[string]any{"slotSavePath": true}, errContains: "non-empty string"},
+		{name: "draft limits require speculation", config: map[string]any{"draftMax": 16}, errContains: "require spec.config.specType"},
+		{name: "speculation requires proven limits", config: map[string]any{"specType": "ngram-simple", "draftMax": 8, "draftMin": 1}, errContains: "draftMax=16"},
+		{name: "draft bounds must be integers", config: map[string]any{"specType": "ngram-simple", "draftMax": 16.5, "draftMin": 1}, errContains: "must be an integer"},
+		{name: "uncertified speculation type", config: map[string]any{"specType": "ngram-cache"}, errContains: "not exposed"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := requestedLlamaCppCapabilities(tt.config)
+			if tt.errContains != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestValidateMaxwellSpecifics(t *testing.T) {
 	tests := []struct {
 		name        string

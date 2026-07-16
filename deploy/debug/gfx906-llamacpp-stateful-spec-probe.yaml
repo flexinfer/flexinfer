@@ -1,0 +1,561 @@
+# gfx906 llama.cpp stateful-slot + local-speculation kill-test.
+#
+# This is the narrow feasibility gate for promoting the Radeon VII llama.cpp
+# lane from a stateless fallback into a compatibility-certified legacy server.
+# It deliberately bypasses FlexInfer reconciliation and changes no production
+# resources. The Job needs an exclusive GPU window. Existing gfx906 runtime
+# processes access /dev/kfd without claiming amd.com/gpu, so allocator capacity
+# does NOT prove the device is idle. Act on parent CRs to free the lane rather
+# than deleting controller-owned child pods.
+#
+# Proven baseline reused here:
+#   image: registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim
+#   digest: sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407
+#   llama.cpp: b8173
+#   model: Qwen3-8B-Q4_K_M.gguf from the Radeon VII node-local cache
+#
+# Acceptance contract:
+#   1. save slot 1, restart llama-server, restore it into slot 0, and prove the
+#      restored request processes fewer prompt tokens than the cold request;
+#   2. complete requests concurrently in both server slots;
+#   3. run the same repetitive greedy workload with speculation off and with
+#      --spec-type ngram-simple;
+#   4. require nonzero accepted draft tokens and byte-identical overlapping
+#      output, allowing only one final draft batch of prefix-only underfill;
+#   5. require speculative median generation throughput >= 90% of baseline;
+#   6. reject HSA faults, aperture violations, GPU faults, segfaults, or aborts.
+#
+# Install suspended / verify the lane / run / observe / clean up:
+#   kubectl apply -f deploy/debug/gfx906-llamacpp-stateful-spec-probe.yaml
+#   kubectl -n flexinfer-system get pods -o wide --field-selector spec.nodeName=cblevins-radeonvii
+#   # After parent-managed gfx906 model/runtime workloads are intentionally idle:
+#   kubectl -n flexinfer-system patch job gfx906-llamacpp-stateful-spec-probe --type=merge -p '{"spec":{"suspend":false}}'
+#   kubectl -n flexinfer-system logs -f job/gfx906-llamacpp-stateful-spec-probe
+#   kubectl -n flexinfer-system wait --for=condition=complete --timeout=2700s job/gfx906-llamacpp-stateful-spec-probe
+#   kubectl -n flexinfer-system delete -f deploy/debug/gfx906-llamacpp-stateful-spec-probe.yaml
+#
+# A terminal `PROBE_RESULT PASS` retires the brainstorm's riskiest assumption.
+# Any failure leaves the compatibility-firewall plan blocked at this gate.
+#
+# Rapid-iteration record (2026-07-15):
+#   Goal: prove stateful two-slot serving plus local speculation on pinned gfx906.
+#   Hypothesis: llama.cpp b8173 already carries both mechanisms; only the live
+#     Radeon VII interaction remains unproven.
+#   Artifact proof: YAML parsed, embedded Python compiled, and kubectl client
+#     dry-run accepted both resources.
+#   Live observation: the node is Ready, but bge-large-radeonvii is processing
+#     concurrent embedding traffic through a runtime that does not claim the
+#     device-plugin resource. The probe was installed with suspend=true and no
+#     pod was created.
+#   Next smallest step: acquire an explicit gfx906 maintenance window, idle the
+#     parent-managed GPU consumers, then unsuspend this exact Job and harvest its
+#     terminal JSON summary.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gfx906-llamacpp-stateful-spec-probe
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug-kill-test
+data:
+  probe.py: |
+    import concurrent.futures
+    import hashlib
+    import json
+    import os
+    import pathlib
+    import signal
+    import statistics
+    import subprocess
+    import sys
+    import time
+    import traceback
+    import urllib.error
+    import urllib.request
+
+    HOST = "127.0.0.1"
+    PORT = 8000
+    BASE_URL = f"http://{HOST}:{PORT}"
+    STATE_DIR = pathlib.Path("/state")
+    MODEL_PATH = os.environ.get(
+        "PROBE_MODEL_PATH",
+        "/models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf",
+    )
+    IMAGE_DIGEST = os.environ["PROBE_IMAGE_DIGEST"]
+    READY_TIMEOUT_SECONDS = int(os.environ.get("PROBE_READY_TIMEOUT_SECONDS", "600"))
+    REQUEST_TIMEOUT_SECONDS = int(os.environ.get("PROBE_REQUEST_TIMEOUT_SECONDS", "900"))
+    SPEC_MIN_BASELINE_RATIO = float(os.environ.get("PROBE_SPEC_MIN_BASELINE_RATIO", "0.90"))
+    PERF_RUNS = int(os.environ.get("PROBE_PERF_RUNS", "3"))
+    DRAFT_MAX = int(os.environ.get("PROBE_DRAFT_MAX", "16"))
+
+    FAULT_MARKERS = (
+        "HSA_STATUS_ERROR",
+        "memory aperture",
+        "GPU fault",
+        "segmentation fault",
+        "SIGSEGV",
+        "hipError",
+        "Aborted",
+    )
+
+    server_process = None
+    server_log_handle = None
+    server_log_path = None
+
+
+    def emit(event, **fields):
+        record = {"event": event, **fields}
+        print(json.dumps(record, sort_keys=True), flush=True)
+
+
+    def require(condition, message):
+        if not condition:
+            raise AssertionError(message)
+
+
+    def find_server_bin():
+        candidates = (
+            "/opt/src/llama.cpp/build/bin/llama-server",
+            "/opt/llamacpp/bin/llama-server",
+        )
+        for candidate in candidates:
+            if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+                return candidate
+        raise RuntimeError(f"llama-server not found in {candidates}")
+
+
+    SERVER_BIN = find_server_bin()
+
+
+    def request_json(method, path, payload=None, timeout=REQUEST_TIMEOUT_SECONDS):
+        body = None if payload is None else json.dumps(payload).encode("utf-8")
+        request = urllib.request.Request(
+            BASE_URL + path,
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method=method,
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                raw = response.read()
+                return json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"{method} {path} returned HTTP {exc.code}: {detail}") from exc
+
+
+    def wait_for_health():
+        deadline = time.monotonic() + READY_TIMEOUT_SECONDS
+        attempt = 0
+        while time.monotonic() < deadline:
+            attempt += 1
+            if server_process.poll() is not None:
+                raise RuntimeError(f"llama-server exited before ready with code {server_process.returncode}")
+            try:
+                with urllib.request.urlopen(BASE_URL + "/health", timeout=5) as response:
+                    response.read()
+                    emit("server_ready", attempt=attempt, status=response.status)
+                    return
+            except Exception as exc:
+                if attempt % 20 == 0:
+                    emit("server_wait", attempt=attempt, error=repr(exc))
+                time.sleep(1)
+        raise TimeoutError(f"llama-server was not ready within {READY_TIMEOUT_SECONDS}s")
+
+
+    def start_server(label, spec_type):
+        global server_process, server_log_handle, server_log_path
+        require(server_process is None, "attempted to start a second llama-server")
+        server_log_path = STATE_DIR / f"server-{label}.log"
+        server_log_handle = server_log_path.open("w", encoding="utf-8")
+
+        args = [
+            SERVER_BIN,
+            "--host", HOST,
+            "--port", str(PORT),
+            "--model", MODEL_PATH,
+            "--ctx-size", "8192",
+            "--n-gpu-layers", "999",
+            "--flash-attn", "on",
+            "--cache-type-k", "q4_0",
+            "--cache-type-v", "q4_0",
+            "--batch-size", "1024",
+            "--ubatch-size", "512",
+            "--threads", "12",
+            "--parallel", "2",
+            "--slot-save-path", str(STATE_DIR),
+            "--spec-type", spec_type,
+            "--draft-max", str(DRAFT_MAX),
+            "--draft-min", "1",
+            "--metrics",
+            "--jinja",
+            "-fit", "off",
+        ]
+        emit("server_start", label=label, spec_type=spec_type, args=args)
+        server_process = subprocess.Popen(
+            args,
+            stdout=server_log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+        wait_for_health()
+
+
+    def inspect_server_log(label):
+        text = server_log_path.read_text(encoding="utf-8", errors="replace")
+        faults = [line for line in text.splitlines() if any(marker.lower() in line.lower() for marker in FAULT_MARKERS)]
+        evidence = [
+            line for line in text.splitlines()
+            if any(marker in line for marker in (
+                "found 1 ROCm devices",
+                "AMD Radeon VII",
+                "model loaded",
+                "server is listening",
+                "statistics ngram-simple",
+            ))
+        ]
+        emit("server_log_evidence", label=label, lines=evidence[-30:])
+        require(not faults, f"{label} server log contains fault markers: {faults[-10:]}")
+
+
+    def stop_server(label):
+        global server_process, server_log_handle, server_log_path
+        if server_process is None:
+            return
+        process = server_process
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.wait(timeout=60)
+        except subprocess.TimeoutExpired:
+            emit("server_force_kill", label=label, pid=process.pid)
+            os.killpg(process.pid, signal.SIGKILL)
+            process.wait(timeout=15)
+        finally:
+            server_log_handle.close()
+            emit("server_stop", label=label, returncode=process.returncode)
+            server_process = None
+            server_log_handle = None
+        require(process.returncode in (0, -signal.SIGTERM), f"{label} server exited {process.returncode}")
+        inspect_server_log(label)
+
+
+    def completion(prompt, slot, n_predict, cache_prompt, ignore_eos=False):
+        return request_json("POST", "/completion", {
+            "prompt": prompt,
+            "id_slot": slot,
+            "n_predict": n_predict,
+            "temperature": 0,
+            "seed": 1,
+            "cache_prompt": cache_prompt,
+            "ignore_eos": ignore_eos,
+        })
+
+
+    def stateful_slot_gate():
+        prefix = " ".join(
+            f"record-{index:02d} remains stable across a server restart."
+            for index in range(48)
+        )
+        cold_prompt = prefix + "\nState key: alpha\nNext key:"
+        restored_prompt = prefix + "\nState key: beta\nNext key:"
+
+        cold = completion(cold_prompt, slot=1, n_predict=1, cache_prompt=True)
+        cold_timings = cold["timings"]
+        require(cold_timings["prompt_n"] > 0, "cold slot request processed no prompt tokens")
+
+        saved = request_json("POST", "/slots/1?action=save", {"filename": "slot-1.bin"})
+        slot_file = STATE_DIR / "slot-1.bin"
+        require(saved.get("n_saved", 0) > 0, f"slot save returned no tokens: {saved}")
+        require(slot_file.is_file() and slot_file.stat().st_size > 0, "slot save file is absent or empty")
+        emit(
+            "slot_saved",
+            n_saved=saved["n_saved"],
+            n_written=saved.get("n_written"),
+            file_bytes=slot_file.stat().st_size,
+            cold_prompt_n=cold_timings["prompt_n"],
+        )
+        return cold_timings["prompt_n"], saved["n_saved"]
+
+
+    def restored_slot_gate(cold_prompt_n, n_saved):
+        restored = request_json("POST", "/slots/0?action=restore", {"filename": "slot-1.bin"})
+        require(restored.get("n_restored") == n_saved, f"slot restore count mismatch: {restored}")
+
+        prefix = " ".join(
+            f"record-{index:02d} remains stable across a server restart."
+            for index in range(48)
+        )
+        prompt = prefix + "\nState key: beta\nNext key:"
+        result = completion(prompt, slot=0, n_predict=1, cache_prompt=True)
+        timings = result["timings"]
+        require(
+            timings["prompt_n"] < cold_prompt_n,
+            f"restored slot did not reduce prompt work: cold={cold_prompt_n}, restored={timings['prompt_n']}",
+        )
+        require(timings.get("cache_n", 0) > 0, f"restored request reported no cached tokens: {timings}")
+        emit(
+            "slot_restored",
+            n_restored=restored["n_restored"],
+            cold_prompt_n=cold_prompt_n,
+            restored_prompt_n=timings["prompt_n"],
+            cache_n=timings.get("cache_n", 0),
+        )
+
+
+    def parallel_slot_gate():
+        prompts = (
+            "Return exactly sixteen words about copper conductors and nothing else.",
+            "Return exactly sixteen words about silver conductors and nothing else.",
+        )
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(completion, prompt, slot, 32, False)
+                for slot, prompt in enumerate(prompts)
+            ]
+            results = [future.result(timeout=REQUEST_TIMEOUT_SECONDS + 30) for future in futures]
+        for slot, result in enumerate(results):
+            require(result.get("content"), f"parallel slot {slot} returned empty content")
+            require(result["timings"].get("predicted_n", 0) > 0, f"parallel slot {slot} generated no tokens")
+        emit(
+            "parallel_slots_pass",
+            slots=[result.get("id_slot", index) for index, result in enumerate(results)],
+            predicted_n=[result["timings"]["predicted_n"] for result in results],
+        )
+
+
+    def repetitive_prompt():
+        cycle = " red orange yellow green blue indigo violet black white silver gold bronze"
+        # End one token before the cycle boundary. Greedy decoding should emit
+        # " bronze", creating an exact prior n-gram with ample following tokens.
+        return (
+            "Continue the exact repeating sequence. Output sequence words only.\n"
+            + cycle * 18
+            + " red orange yellow green blue indigo violet black white silver gold"
+        )
+
+
+    def performance_arm(mode):
+        prompt = repetitive_prompt()
+        completion(prompt, slot=0, n_predict=64, cache_prompt=False, ignore_eos=True)
+        results = []
+        for run in range(PERF_RUNS):
+            result = completion(prompt, slot=run % 2, n_predict=192, cache_prompt=False, ignore_eos=True)
+            timings = result["timings"]
+            require(timings.get("predicted_n", 0) == 192, f"{mode} run {run} generated fewer than 192 tokens")
+            results.append(result)
+            emit(
+                "performance_sample",
+                mode=mode,
+                run=run,
+                predicted_per_second=timings["predicted_per_second"],
+                draft_n=timings.get("draft_n", 0),
+                draft_n_accepted=timings.get("draft_n_accepted", 0),
+            )
+        rates = [result["timings"]["predicted_per_second"] for result in results]
+        contents = [result["content"] for result in results]
+        content_hashes = [hashlib.sha256(content.encode("utf-8")).hexdigest() for content in contents]
+        emit(
+            "performance_outputs",
+            mode=mode,
+            unique_outputs=len(set(contents)),
+            content_hashes=content_hashes,
+            first_content=contents[0],
+        )
+        return {
+            "content": contents[0],
+            "content_hash": content_hashes[0],
+            "unique_outputs": len(set(contents)),
+            "median_tps": statistics.median(rates),
+            "rates": rates,
+            "draft_n": sum(result["timings"].get("draft_n", 0) for result in results),
+            "draft_n_accepted": sum(result["timings"].get("draft_n_accepted", 0) for result in results),
+        }
+
+
+    def main():
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        require(os.path.isfile(MODEL_PATH), f"model not found: {MODEL_PATH}")
+        version = subprocess.run(
+            [SERVER_BIN, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        emit(
+            "probe_start",
+            image_digest=IMAGE_DIGEST,
+            model_path=MODEL_PATH,
+            model_bytes=os.path.getsize(MODEL_PATH),
+            server_bin=SERVER_BIN,
+            server_version=(version.stdout + version.stderr).strip(),
+            rocm_env={
+                key: os.environ.get(key)
+                for key in (
+                    "HSA_ENABLE_SDMA",
+                    "HSA_USE_SVM",
+                    "HSA_OVERRIDE_GFX_VERSION",
+                    "LD_PRELOAD",
+                    "ROCR_VISIBLE_DEVICES",
+                )
+            },
+        )
+
+        start_server("baseline-state-save", "none")
+        cold_prompt_n, n_saved = stateful_slot_gate()
+        stop_server("baseline-state-save")
+
+        start_server("baseline-restore-perf", "none")
+        restored_slot_gate(cold_prompt_n, n_saved)
+        parallel_slot_gate()
+        baseline = performance_arm("baseline")
+        stop_server("baseline-restore-perf")
+
+        start_server("ngram-simple", "ngram-simple")
+        speculative = performance_arm("ngram-simple")
+        stop_server("ngram-simple")
+
+        emit(
+            "quality_comparison",
+            baseline_content=baseline["content"],
+            baseline_hash=baseline["content_hash"],
+            baseline_unique_outputs=baseline["unique_outputs"],
+            speculative_content=speculative["content"],
+            speculative_hash=speculative["content_hash"],
+            speculative_unique_outputs=speculative["unique_outputs"],
+        )
+
+        require(speculative["draft_n"] > 0, f"ngram-simple produced no draft tokens: {speculative}")
+        require(
+            speculative["draft_n_accepted"] > 0,
+            f"ngram-simple accepted no draft tokens: {speculative}",
+        )
+        require(baseline["unique_outputs"] == 1, "baseline output was nondeterministic across runs")
+        require(speculative["unique_outputs"] == 1, "speculative output was nondeterministic across runs")
+        underfill_words = len(baseline["content"].split()) - len(speculative["content"].split())
+        require(
+            baseline["content"].startswith(speculative["content"]),
+            "ngram-simple output diverged from the baseline token sequence",
+        )
+        require(
+            0 <= underfill_words <= DRAFT_MAX,
+            f"ngram-simple prefix underfill exceeded one draft batch: words={underfill_words}, draft_max={DRAFT_MAX}",
+        )
+        ratio = speculative["median_tps"] / baseline["median_tps"]
+        require(
+            ratio >= SPEC_MIN_BASELINE_RATIO,
+            f"ngram-simple throughput regression: ratio={ratio:.3f}, required={SPEC_MIN_BASELINE_RATIO:.3f}",
+        )
+        emit(
+            "probe_summary",
+            baseline_median_tps=baseline["median_tps"],
+            speculative_median_tps=speculative["median_tps"],
+            speculative_to_baseline_ratio=ratio,
+            draft_n=speculative["draft_n"],
+            draft_n_accepted=speculative["draft_n_accepted"],
+            draft_acceptance_ratio=speculative["draft_n_accepted"] / speculative["draft_n"],
+            speculative_prefix_underfill_words=underfill_words,
+        )
+        print("PROBE_RESULT PASS", flush=True)
+
+
+    if __name__ == "__main__":
+        try:
+            main()
+        except Exception as exc:
+            emit("probe_failure", error=repr(exc), traceback=traceback.format_exc())
+            print("PROBE_RESULT FAIL", flush=True)
+            sys.exit(1)
+        finally:
+            if server_process is not None:
+                try:
+                    stop_server("unexpected-finalizer")
+                except Exception as cleanup_exc:
+                    emit("cleanup_failure", error=repr(cleanup_exc))
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gfx906-llamacpp-stateful-spec-probe
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: debug-kill-test
+spec:
+  # Safety gate: applying this file must never contend with live gfx906 models.
+  suspend: true
+  backoffLimit: 0
+  activeDeadlineSeconds: 2700
+  ttlSecondsAfterFinished: 604800
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flexinfer
+        flexinfer.ai/purpose: debug-kill-test
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: probe
+          image: registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/scripts/probe.py"]
+          env:
+            - name: PROBE_IMAGE_DIGEST
+              value: sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407
+            - name: PROBE_MODEL_PATH
+              value: /models/flexinfer-system/qwen3-8b-radeonvii/Qwen3-8B-Q4_K_M.gguf
+            - name: PROBE_SPEC_MIN_BASELINE_RATIO
+              value: "0.90"
+            - name: PROBE_PERF_RUNS
+              value: "3"
+            - name: LD_PRELOAD
+              value: /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
+            - name: FLEXINFER_HIPMEMINFO_FALLBACK_TOTAL_MB
+              value: "16384"
+            - name: HSA_ENABLE_SDMA
+              value: "0"
+            - name: HSA_USE_SVM
+              value: "0"
+            - name: PYTORCH_ROCM_ARCH
+              value: gfx906
+            - name: ROCR_VISIBLE_DEVICES
+              value: "0"
+          resources:
+            requests:
+              cpu: "4"
+              memory: 12Gi
+              amd.com/gpu: "1"
+            limits:
+              cpu: "14"
+              memory: 24Gi
+              amd.com/gpu: "1"
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+              readOnly: true
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: state
+              mountPath: /state
+      volumes:
+        - name: script
+          configMap:
+            name: gfx906-llamacpp-stateful-spec-probe
+            defaultMode: 0555
+        - name: models
+          hostPath:
+            path: /var/lib/flexinfer/models
+            type: Directory
+        - name: state
+          emptyDir:
+            sizeLimit: 4Gi

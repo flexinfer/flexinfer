@@ -19,6 +19,8 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"math"
+	"path"
 	"strings"
 	"time"
 
@@ -149,12 +151,132 @@ func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Mode
 		r.Recorder.Event(model, corev1.EventTypeWarning, "BackendCanary", message)
 	}
 
+	if b.Name() == backend.NameLlamaCpp {
+		selectedImage := resolveModelBackendImage(model, b, profileSpec, gpuVendor, gpuArch)
+		if err := validateLlamaCppFeatureCertificates(model, profile, gpuArch, selectedImage); err != nil {
+			return err
+		}
+	}
+
 	// --- Maxwell-specific validation (sm_5x) ---
 	if err := r.validateMaxwellSpecifics(model, b, gpuVendor, gpuArch); err != nil {
 		return err
 	}
 
 	return nil
+}
+
+func validateLlamaCppFeatureCertificates(model *aiv1alpha2.Model, profile *aiv1alpha2.GPUProfile, gpuArch, selectedImage string) error {
+	if model == nil {
+		return nil
+	}
+	cfg := model.Spec.GetConfigMap()
+	capabilities, err := requestedLlamaCppCapabilities(cfg)
+	if err != nil {
+		return err
+	}
+	if len(capabilities) == 0 || gpuArch == "" {
+		return nil
+	}
+
+	// Runtime images carry their own bundled backend binary. Until that exact
+	// runtime artifact receives a certificate, force opt-ins through the
+	// dedicated backend image that the certificate can bind and verify.
+	if !model.Spec.ConfigBool("dedicatedDeployment", false) {
+		return fmt.Errorf("llamacpp certified features on %s require spec.config.dedicatedDeployment=true so the proven backend image is used instead of an uncertified persistent runtime", gpuArch)
+	}
+	if profile == nil {
+		return fmt.Errorf("llamacpp certified features require a GPUProfile with artifact-bound certificates for %s", gpuArch)
+	}
+	if !strings.Contains(selectedImage, "@sha256:") {
+		return fmt.Errorf("llamacpp certified features require a digest-pinned selected image on %s (got %q)", gpuArch, selectedImage)
+	}
+
+	for _, capability := range capabilities {
+		certifiedImage, since, evidence := aiv1alpha2.GetBackendCapabilityCertificate(profile, backend.NameLlamaCpp, capability)
+		key := aiv1alpha2.BackendCapabilityCertificateAnnotationKey(backend.NameLlamaCpp, capability)
+		if certifiedImage == "" || since.IsZero() || strings.TrimSpace(evidence) == "" {
+			return fmt.Errorf("llamacpp capability %q is not fully certified for %s; GPUProfile annotation %s and its since/evidence companions are required", capability, gpuArch, key)
+		}
+		if !strings.Contains(certifiedImage, "@sha256:") {
+			return fmt.Errorf("llamacpp capability %q certificate for %s is not digest-pinned: %q", capability, gpuArch, certifiedImage)
+		}
+		if selectedImage != certifiedImage {
+			return fmt.Errorf("llamacpp capability %q on %s is certified only for %q, but this model selects %q", capability, gpuArch, certifiedImage, selectedImage)
+		}
+	}
+	return nil
+}
+
+func requestedLlamaCppCapabilities(cfg map[string]any) ([]string, error) {
+	if len(cfg) == 0 {
+		return nil, nil
+	}
+	capabilities := make([]string, 0, 2)
+	if raw, exists := cfg["slotSavePath"]; exists {
+		slotPath, ok := raw.(string)
+		if !ok || strings.TrimSpace(slotPath) == "" {
+			return nil, fmt.Errorf("spec.config.slotSavePath must be a non-empty string")
+		}
+		clean := path.Clean(strings.TrimSpace(slotPath))
+		if !strings.HasPrefix(clean, "/models/") {
+			return nil, fmt.Errorf("spec.config.slotSavePath must be under the persistent /models mount (got %q)", slotPath)
+		}
+		capabilities = append(capabilities, aiv1alpha2.LlamaCppCapabilityStatefulSlots)
+	}
+
+	specType := ""
+	if raw, exists := cfg["specType"]; exists {
+		value, ok := raw.(string)
+		if !ok {
+			return nil, fmt.Errorf("spec.config.specType must be a string")
+		}
+		specType = strings.TrimSpace(value)
+	}
+	draftMax, hasDraftMax, err := strictConfigInt(cfg, "draftMax")
+	if err != nil {
+		return nil, err
+	}
+	draftMin, hasDraftMin, err := strictConfigInt(cfg, "draftMin")
+	if err != nil {
+		return nil, err
+	}
+
+	switch specType {
+	case "", "none":
+		if hasDraftMax || hasDraftMin {
+			return nil, fmt.Errorf("spec.config.draftMax and draftMin require spec.config.specType=ngram-simple")
+		}
+	case "ngram-simple":
+		if !hasDraftMax || !hasDraftMin || draftMax != 16 || draftMin != 1 {
+			return nil, fmt.Errorf("the certified ngram-simple envelope requires spec.config.draftMax=16 and draftMin=1")
+		}
+		capabilities = append(capabilities, aiv1alpha2.LlamaCppCapabilityNgramSimpleDraft16)
+	default:
+		return nil, fmt.Errorf("spec.config.specType %q is not exposed by the certified llama.cpp feature surface", specType)
+	}
+
+	return capabilities, nil
+}
+
+func strictConfigInt(cfg map[string]any, key string) (int, bool, error) {
+	raw, ok := cfg[key]
+	if !ok {
+		return 0, false, nil
+	}
+	switch value := raw.(type) {
+	case int:
+		return value, true, nil
+	case int32:
+		return int(value), true, nil
+	case int64:
+		return int(value), true, nil
+	case float64:
+		if math.Trunc(value) == value && value >= math.MinInt && value <= math.MaxInt {
+			return int(value), true, nil
+		}
+	}
+	return 0, false, fmt.Errorf("spec.config.%s must be an integer", key)
 }
 
 // validateMaxwellSpecifics handles Maxwell GPU (sm_5x) specific validation:

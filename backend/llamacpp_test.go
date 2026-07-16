@@ -65,6 +65,43 @@ func TestLlamaCppBackendArgs_PortOverride(t *testing.T) {
 	}
 }
 
+func TestLlamaCppBackendArgs_StatefulSlotsAndLocalSpeculation(t *testing.T) {
+	b := &LlamaCppBackend{}
+	spec := &ModelSpec{
+		ModelPath: "/models/test/model.gguf",
+		GPUVendor: GPUVendorAMD,
+		Config: map[string]any{
+			"slotSavePath": "/models/.flexinfer/slots/test",
+			"specType":     "ngram-simple",
+			"draftMax":     float64(16),
+			"draftMin":     float64(1),
+		},
+	}
+
+	args := b.Args(spec)
+	for key, want := range map[string]string{
+		"--slot-save-path": "/models/.flexinfer/slots/test",
+		"--spec-type":      "ngram-simple",
+		"--draft-max":      "16",
+		"--draft-min":      "1",
+	} {
+		if got := argValue(args, key); got != want {
+			t.Errorf("%s = %q, want %q in args %#v", key, got, want, args)
+		}
+	}
+}
+
+func TestLlamaCppBackendArgs_StatefulFeaturesRemainOptIn(t *testing.T) {
+	b := &LlamaCppBackend{}
+	args := b.Args(&ModelSpec{ModelPath: "/models/test/model.gguf", GPUVendor: GPUVendorAMD})
+	joined := strings.Join(args, " ")
+	for _, flag := range []string{"--slot-save-path", "--spec-type", "--draft-max", "--draft-min"} {
+		if strings.Contains(joined, flag) {
+			t.Errorf("default args unexpectedly contain %s: %#v", flag, args)
+		}
+	}
+}
+
 func TestLlamaCppBackendArgs_DefaultPort(t *testing.T) {
 	b := &LlamaCppBackend{}
 	spec := &ModelSpec{ModelPath: "/models/test/model.gguf"}

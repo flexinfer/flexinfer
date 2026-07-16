@@ -82,6 +82,20 @@ func (r *ModelReconciler) buildBackendModelSpecForArch(model *aiv1alpha2.Model, 
 	return spec
 }
 
+// resolveModelBackendImage applies the workload image precedence in one place
+// so compatibility gates validate the exact artifact that Deployment rendering
+// will launch.
+func resolveModelBackendImage(model *aiv1alpha2.Model, b backend.Backend, profile *aiv1alpha2.GPUProfileSpec, gpuVendor backend.GPUVendor, gpuArch string) string {
+	image := backend.ResolveBackendImage(b, profile, gpuVendor, gpuArch)
+	if model != nil && model.Spec.Image != "" {
+		image = model.Spec.Image
+	}
+	if model != nil && model.Spec.ImageDigest != "" {
+		image = backend.ApplyImageDigest(image, model.Spec.ImageDigest)
+	}
+	return image
+}
+
 func modelColdStartTimeout(model *aiv1alpha2.Model) time.Duration {
 	if model == nil || model.Spec.Serverless == nil || model.Spec.Serverless.ColdStartTimeout == nil {
 		return 0

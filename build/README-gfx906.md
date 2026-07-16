@@ -26,9 +26,6 @@ This document covers deploying inference backends on AMD gfx906 (Vega20) GPUs wi
 FlexInfer automatically injects these via `backend/interface.go:ROCmEnvVars()`:
 
 ```bash
-# Radeon VII reports as gfx900; override to target gfx906 kernels.
-HSA_OVERRIDE_GFX_VERSION=9.0.6
-
 # Critical: Disable SDMA engine on Vega20 (prevents memory access faults)
 HSA_ENABLE_SDMA=0
 
@@ -42,6 +39,7 @@ PYTORCH_ROCM_ARCH=gfx906
 ### What NOT to Set
 
 Unlike gfx1100, do **not** set these for gfx906:
+- `HSA_OVERRIDE_GFX_VERSION` — serving runtimes detect the real gfx906 target; overriding it changes the certified environment
 - `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL` — AOTriton is gfx1100-specific
 
 ## Quantization Guidance
