@@ -374,8 +374,10 @@ def assert_qwen128_production_contract(
         'hipVisibleDevices: "0"',
         "count: 2",
         "shared: 7900xtx-textgen",
+        "priority: 700",
         "kubernetes.io/hostname: cblevins-7900xtx",
-        "minReplicas: 1",
+        "warmPolicy: ondemand",
+        "minReplicas: 0",
         "coldStartTimeout: 25m",
         "- qwen35-128k",
         "- workhorse-128k",
@@ -384,6 +386,8 @@ def assert_qwen128_production_contract(
     for snippet in required_sister:
         if snippet not in sister_yaml:
             fail(f"Qwen 128K sister model contract regressed: {snippet!r}")
+    if "forcePromotion: true" in sister_yaml:
+        fail("Qwen 128K sister must yield the idle 7900 XTX to the warm video lane")
 
     required_primary = (
         "name: qwen35-35b-clean-gptq-workhorse",
@@ -401,6 +405,19 @@ def assert_qwen128_production_contract(
     for snippet in required_primary:
         if snippet not in primary_yaml:
             fail(f"Qwen 128K primary model contract regressed: {snippet!r}")
+
+
+def assert_wan_video_warm_contract(wan_yaml: str) -> None:
+    required = (
+        "name: wan21-t2v-1p3b-gfx1100",
+        "shared: 7900xtx-textgen",
+        "priority: 500",
+        "warmPolicy: primary",
+        "minReplicas: 1",
+    )
+    for snippet in required:
+        if snippet not in wan_yaml:
+            fail(f"Wan warm video contract regressed: {snippet!r}")
 
 
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
@@ -519,6 +536,7 @@ def main(argv: list[str]) -> int:
     qwen128_primary_yaml = read(
         "deploy/models/qwen35-35b-clean-gptq-workhorse.yaml"
     )
+    wan_video_yaml = read("deploy/models/wan21-t2v-1p3b-gfx1100.yaml")
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
@@ -537,6 +555,7 @@ def main(argv: list[str]) -> int:
     assert_qwen128_production_contract(
         qwen128_primary_yaml, qwen128_production_yaml
     )
+    assert_wan_video_warm_contract(wan_video_yaml)
     assert_ci_fast_check_wiring(ci_yaml)
 
     if run_tests:
