@@ -8,9 +8,8 @@
 # script hashes its source metadata before and after and never replaces a source
 # file.
 #
-# Do not unsuspend until IMAGE_CANDIDATE is replaced by a digest-pinned image
-# containing build/scripts/quantize_mtp_experts.py and the pod imageID is
-# recorded in the iteration log.
+# The image below is the digest-pinned output of CI job 186343. Before
+# unsuspending, record the pod imageID in the iteration log.
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -49,8 +48,7 @@ spec:
         - name: harbor-creds
       containers:
         - name: quantize-mtp-experts
-          # IMAGE_CANDIDATE: pin the successful MR build digest before use.
-          image: registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906-mtp-IMAGE_CANDIDATE
+          image: registry.harbor.lan/flexinfer/quantizer@sha256:d18fe7f8e401abf0a76589a3b136fb911c75e414f145a27cb1659212834dbc87
           imagePullPolicy: IfNotPresent
           command: ["bash", "-lc"]
           args:

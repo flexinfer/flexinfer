@@ -217,6 +217,9 @@ of this failed gate.
 
 - Builder: `deploy/debug/gfx1100-qwen35-mtp-expert-quantize.yaml`, suspended by
   default and not included by any kustomization.
+- Builder image: copy-only overlay CI job 186343 pinned the audited script on
+  the proven gfx906 quantizer base as
+  `sha256:d18fe7f8e401abf0a76589a3b136fb911c75e414f145a27cb1659212834dbc87`.
 - Surgery: require exactly one MTP layer and all 768 plain routed-expert
   matrices; quantize each matrix with symmetric RTN W4G128; fuse the result into
   exactly four vLLM GPTQ tensors; retain all MTP linears and every target-model
