@@ -72,7 +72,8 @@ resources:
   # starve active Model updates. Restore only with minReplicas 1 + promotion.
   - qwen35-35b-clean-gptq-workhorse.yaml  # 2026-07-14: PROMOTED clean 64K graph-mode workhorse; validated GDN-preserving GPTQ artifact + baked vLLM 0.23 ROCm text-MoE overlay; 5/5 proxy gauntlet at 79.353 tok/s.
   - qwen35-35b-clean-gptq-workhorse-128k.yaml  # 2026-07-14: PROMOTED 128K sister on released 7900xtx; exact 129,919-token five-depth pass + isolated proxy smoke.
-  - wan21-t2v-1p3b-gfx1100.yaml     # Wan 2.1 1.3B 480p video generation; live gfx1100 gate passed 2026-07-14, cold/on-demand at minReplicas=0.
+  - wan21-t2v-1p3b-gfx1100.yaml     # Wan 2.1 1.3B 480p text-to-video; live gfx1100 gate passed 2026-07-14, warm primary (minReplicas=1) since a4df75880.
+  - wan21-vace-1p3b-i2v-gfx1100.yaml  # Wan 2.1 VACE 1.3B image-to-video keyframe lane; on-demand (minReplicas=0, priority 600), kill-test slice 3 of .loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md.
   - qwen36-35b-mtp-uncensored-5930k.yaml  # 2026-07-14: RETAINED on demand for uncensored/heretic use; clean Qwen3.5 owns warm workhorse/Mills/Council routing.
   # - gemma4-26b-a4b-gptq-5930k-8k-canary.yaml # disabled 2026-05-16; keep XTX lanes to the two 26B primaries.
   # - fast-chat-5930k-llamacpp.yaml # disabled 2026-05-13; 8B path consolidated onto cblevins-7900xtx
