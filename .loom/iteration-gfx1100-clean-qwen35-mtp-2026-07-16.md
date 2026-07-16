@@ -111,7 +111,7 @@ contract passes.
   `gpuMemoryUtilization: 0.94`, AITER disabled.
 - Image tag: `registry.harbor.lan/flexinfer/vllm`
 - Image digest:
-  `sha256:1b35e3e83cfb4c68b34c06262943b2d0911725a56369609ad08233484bcec04b`
+  `sha256:4511e86d655acfee68e37c9a06e189f23aa8b367cdf593fd97be713842b2d54b`
 - Upstream ref/fork: upstream vLLM 0.23 ROCm base plus
   `build/vllm-qwen35-text-plugin`.
 - Probe manifest: `deploy/debug/gfx1100-qwen35-mtp-kill-test.yaml`
@@ -190,11 +190,12 @@ contract passes.
   the MTP head unquantized (`w2_weight`). Plugin v0.3.0 intercepts only
   AutoGPTQ `mtp.*` Linear and RoutedExperts prefixes and returns vLLM's native
   unquantized methods. A regression test proves MTP Linear/MoE exclusion and
-  target-layer delegation.
+  target-layer delegation. CI job 186124 published plugin v0.3.0 as digest
+  `sha256:4511e86d655acfee68e37c9a06e189f23aa8b367cdf593fd97be713842b2d54b`.
 
 ## Next
 
-1. Publish a v0.3.0 digest and rerun MTP-only mode on the 7900xtx lane.
+1. Run the pinned v0.3.0 digest in MTP-only mode on the 7900xtx lane.
 2. If the next failure is a plain-weight shape/name mismatch, patch only the
    Qwen3.5 MTP loader and retain the target GPTQ contract.
 3. If MTP-only passes, run the full baseline/MTP A/B. Add certificate gating

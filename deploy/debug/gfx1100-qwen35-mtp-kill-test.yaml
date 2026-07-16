@@ -634,7 +634,7 @@ metadata:
   annotations:
     flexinfer.ai/canary: gfx1100-qwen35-mtp
     flexinfer.ai/artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
-    flexinfer.ai/runtime-digest: sha256:1b35e3e83cfb4c68b34c06262943b2d0911725a56369609ad08233484bcec04b
+    flexinfer.ai/runtime-digest: sha256:4511e86d655acfee68e37c9a06e189f23aa8b367cdf593fd97be713842b2d54b
     flexinfer.ai/kill-test: .loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md
 spec:
   suspend: true
@@ -660,7 +660,7 @@ spec:
           operator: Exists
       containers:
         - name: probe
-          image: registry.harbor.lan/flexinfer/vllm@sha256:1b35e3e83cfb4c68b34c06262943b2d0911725a56369609ad08233484bcec04b
+          image: registry.harbor.lan/flexinfer/vllm@sha256:4511e86d655acfee68e37c9a06e189f23aa8b367cdf593fd97be713842b2d54b
           imagePullPolicy: IfNotPresent
           command: ["bash", "-lc"]
           args: ["exec python3 /probe/probe.py"]
@@ -668,7 +668,7 @@ spec:
             - name: MODEL_PATH
               value: /models/qwen35-35b-a3b-clean/gptq-w4-g128-gdn
             - name: EXPECTED_IMAGE_DIGEST
-              value: sha256:1b35e3e83cfb4c68b34c06262943b2d0911725a56369609ad08233484bcec04b
+              value: sha256:4511e86d655acfee68e37c9a06e189f23aa8b367cdf593fd97be713842b2d54b
             - name: EXPECTED_PLUGIN_VERSION
               value: 0.3.0
             - name: HSA_OVERRIDE_GFX_VERSION
