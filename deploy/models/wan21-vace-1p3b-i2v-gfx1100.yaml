@@ -28,12 +28,15 @@ spec:
     strategy: Local
     storageClass: nvme-1r-gpu
     size: 32Gi
-    # No flash-loader: staging 18.2 GB of weights in memory tmpfs cannot
+    # Explicitly OFF: staging 18.2 GB of weights in memory tmpfs cannot
     # coexist with the warm T2V sibling's tmpfs through a preemption handover
-    # on this 62 GiB node (first activation crash-looped with 4.2 GB free —
-    # kill-test evidence on !849/!850). An on-demand lane loads straight from
-    # the NVMe cache instead; the few extra cold-start seconds are irrelevant
-    # against the tmpfs OOM race.
+    # on this 62 GiB node (activations crash-looped with 4.2 GB free —
+    # kill-test evidence on !849/!850/!851). Omitting the block is NOT a
+    # disable: flash-loader defaults to enabled when cache.strategy is Local
+    # and gpu.shared is set (api/v1alpha2/model_types.go FlashLoaderSpec).
+    # This on-demand lane loads straight from the NVMe cache instead.
+    flashLoader:
+      enabled: false
     compilationCache:
       enabled: true
       hostPath: /var/lib/flexinfer/compile-cache
