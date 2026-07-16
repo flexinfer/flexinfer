@@ -28,14 +28,12 @@ spec:
     strategy: Local
     storageClass: nvme-1r-gpu
     size: 32Gi
-    flashLoader:
-      enabled: true
-      # Same immutable tag the T2V lane pins (published by master pipeline 19264).
-      image: registry.harbor.lan/flexinfer/flexinfer-flash-loader:a4df7588
-      concurrency: 8
-      tmpfsSizeLimit: 28Gi
-      bufferSizeKB: 4096
-      verifyIntegrity: true
+    # No flash-loader: staging 18.2 GB of weights in memory tmpfs cannot
+    # coexist with the warm T2V sibling's tmpfs through a preemption handover
+    # on this 62 GiB node (first activation crash-looped with 4.2 GB free —
+    # kill-test evidence on !849/!850). An on-demand lane loads straight from
+    # the NVMe cache instead; the few extra cold-start seconds are irrelevant
+    # against the tmpfs OOM race.
     compilationCache:
       enabled: true
       hostPath: /var/lib/flexinfer/compile-cache
