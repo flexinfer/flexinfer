@@ -1,0 +1,244 @@
+# Suspended-by-default Radeon VII certificate for dense Qwen3.5-9B GPTQ,
+# native one-token MTP, and a real prefill beyond 16K tokens.
+#
+# Prerequisite: PVC `gfx906-qwen35-9b-oci-preflight` contains the grafted model
+# at `/qwen35-9b-mtp`; see build/scripts/graft_qwen35_mtp.py and the evidence
+# document named by EXPECTED_MTP_CONTRACT_DIGEST below.
+#
+# Run only in an exclusive gfx906 GPU window:
+#   kubectl apply -f deploy/debug/gfx906-qwen35-mtp-long-context-kill-test.yaml
+#   kubectl patch job gfx906-qwen35-mtp-long-context-kill-test \
+#     -n flexinfer-system --type=merge -p '{"spec":{"suspend":false}}'
+#   kubectl logs -n flexinfer-system -f \
+#     job/gfx906-qwen35-mtp-long-context-kill-test
+#
+# Pass contract:
+# - immutable artifact marker proves the 15-tensor BF16 MTP graft;
+# - Qwen3_5MTP loads on physical gfx906 with the required Vega20 environment;
+# - greedy output is stable across repeated meaningful requests;
+# - native draft/accept counters are nonzero with >=50% acceptance;
+# - an 18,001-token prompt completes under a 32,768-token server contract;
+# - no HSA/aperture/SIGSEGV/HIP/OOM fault marker appears.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gfx906-qwen35-mtp-long-context-kill-test
+  namespace: flexinfer-system
+data:
+  probe.py: |
+    import json
+    import os
+    import re
+    import signal
+    import subprocess
+    import time
+    import urllib.request
+    from pathlib import Path
+
+    MODEL_PATH = Path(os.environ["MODEL_PATH"])
+    MODEL_NAME = "qwen35-9b-gfx906"
+    BASE_URL = "http://127.0.0.1:8000"
+    EXPECTED_TEXT = " Paris.\n\nThe capital of France is Paris."
+    FAULT_RE = re.compile(
+        r"(HSA_STATUS|memory aperture|SIGSEGV|segmentation fault|"
+        r"AcceleratorError|out of memory|fatal error)",
+        re.IGNORECASE,
+    )
+
+
+    def require(condition, message):
+        if not condition:
+            raise AssertionError(message)
+
+
+    def request(path, payload=None, timeout=900):
+        data = None if payload is None else json.dumps(payload).encode()
+        req = urllib.request.Request(
+            BASE_URL + path,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="GET" if data is None else "POST",
+        )
+        with urllib.request.urlopen(req, timeout=timeout) as response:
+            raw = response.read().decode()
+            return json.loads(raw) if "json" in response.headers.get("Content-Type", "") else raw
+
+
+    def metric(metrics, name):
+        match = re.search(rf"^{re.escape(name)}{{[^}}]*}} ([0-9.eE+-]+)$", metrics, re.MULTILINE)
+        require(match is not None, f"missing metric {name}")
+        return float(match.group(1))
+
+
+    marker = json.loads((MODEL_PATH / ".flexinfer-qwen35-mtp-graft.json").read_text())
+    require(
+        marker["contract_digest"] == os.environ["EXPECTED_MTP_CONTRACT_DIGEST"],
+        "unexpected MTP graft contract digest",
+    )
+    require(marker["mtp_tensor_count"] == 15, "MTP graft must contain 15 tensors")
+    require(marker["mtp_tensor_bytes"] == 486581248, "unexpected MTP payload size")
+    index = json.loads((MODEL_PATH / "model.safetensors.index.json").read_text())
+    mtp_keys = [key for key in index["weight_map"] if key.startswith("mtp.")]
+    require(len(mtp_keys) == 15, f"artifact index has {len(mtp_keys)} MTP tensors")
+    config = json.loads((MODEL_PATH / "config.json").read_text())
+    require(config.get("mtp_num_hidden_layers") == 1, "artifact declares no MTP layer")
+    print("ARTIFACT_PREFLIGHT " + json.dumps(marker, sort_keys=True), flush=True)
+
+    command = [
+        "vllm", "serve", str(MODEL_PATH),
+        "--served-model-name", MODEL_NAME,
+        "--host", "127.0.0.1", "--port", "8000",
+        "--dtype", "half", "--quantization", "gptq",
+        "--hf-overrides",
+        json.dumps(
+            {
+                "architectures": ["Qwen3_5ForCausalLM"],
+                "rope_parameters": {
+                    "rope_type": "default",
+                    "rope_theta": 10000000,
+                    "partial_rotary_factor": 0.25,
+                },
+            },
+            separators=(",", ":"),
+        ),
+        "--speculative-config",
+        json.dumps(
+            {"method": "mtp", "num_speculative_tokens": 1},
+            separators=(",", ":"),
+        ),
+        "--max-model-len", "32768",
+        # gfx906 GPTQ needs a physical GEMM-workspace floor after KV allocation.
+        # 0.90 reproduced hipErrorInvalidValue; 0.80 passed 9K and 18K prefills.
+        "--gpu-memory-utilization", "0.80",
+        "--max-num-seqs", "1",
+        "--max-num-batched-tokens", "256",
+        "--enforce-eager",
+        "--attention-backend", "TRITON_ATTN",
+        "--mamba-cache-mode", "align",
+        "--no-enable-prefix-caching",
+    ]
+    log_path = Path("/tmp/vllm.log")
+    with log_path.open("w") as log_handle:
+        process = subprocess.Popen(
+            command,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env=os.environ.copy(),
+        )
+    try:
+        deadline = time.monotonic() + 900
+        while time.monotonic() < deadline:
+            require(process.poll() is None, "vLLM exited during startup")
+            try:
+                request("/health", timeout=3)
+                break
+            except Exception:
+                time.sleep(2)
+        else:
+            raise TimeoutError("vLLM did not become healthy within 900 seconds")
+
+        payload = {
+            "model": MODEL_NAME,
+            "prompt": "Complete this fact in one short sentence: The capital of France is",
+            "temperature": 0,
+            "seed": 1234,
+            "max_tokens": 32,
+        }
+        outputs = [request("/v1/completions", payload) for _ in range(2)]
+        texts = [item["choices"][0]["text"] for item in outputs]
+        require(texts == [EXPECTED_TEXT, EXPECTED_TEXT], f"greedy parity failed: {texts!r}")
+
+        metrics = request("/metrics")
+        drafts = metric(metrics, "vllm:spec_decode_num_draft_tokens_total")
+        accepted = metric(metrics, "vllm:spec_decode_num_accepted_tokens_total")
+        require(drafts > 0 and accepted > 0, "native MTP emitted no accepted drafts")
+        require(accepted / drafts >= 0.50, f"MTP acceptance below 50%: {accepted}/{drafts}")
+
+        long_payload = {
+            "model": MODEL_NAME,
+            "prompt": "x " * 18000,
+            "temperature": 0,
+            "seed": 1234,
+            "max_tokens": 4,
+        }
+        started = time.monotonic()
+        long_result = request("/v1/completions", long_payload, timeout=1800)
+        long_seconds = time.monotonic() - started
+        require(long_result["usage"]["prompt_tokens"] == 18001, "long prompt token contract drifted")
+        require(long_result["usage"]["completion_tokens"] == 4, "long request did not complete")
+        result = {
+            "image_digest": os.environ["EXPECTED_IMAGE_DIGEST"],
+            "mtp_contract_digest": marker["contract_digest"],
+            "draft_tokens": drafts,
+            "accepted_tokens": accepted,
+            "acceptance": accepted / drafts,
+            "max_model_len": 32768,
+            "long_prompt_tokens": 18001,
+            "long_total_seconds": round(long_seconds, 3),
+        }
+        print("GFX906_QWEN35_MTP_LONG_CONTEXT_PASS " + json.dumps(result, sort_keys=True), flush=True)
+    finally:
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+        log_text = log_path.read_text(errors="replace")
+        if FAULT_RE.search(log_text):
+            print("\n".join(log_text.splitlines()[-500:]), flush=True)
+            raise AssertionError("runtime fault marker detected")
+        print("FAULT_SCAN_PASS", flush=True)
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gfx906-qwen35-mtp-long-context-kill-test
+  namespace: flexinfer-system
+spec:
+  suspend: true
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  template:
+    metadata:
+      labels:
+        app: gfx906-qwen35-mtp-long-context-kill-test
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      containers:
+        - name: probe
+          image: registry.harbor.lan/flexinfer/vllm@sha256:034f081861278a680fe54ddeb71db6446ce65f0a9c37ce9aecc061a99b1d40fc
+          imagePullPolicy: IfNotPresent
+          command: ["python3", "/probe/probe.py"]
+          env:
+            - {name: MODEL_PATH, value: /models/qwen35-9b-mtp}
+            - {name: HSA_ENABLE_SDMA, value: "0"}
+            - {name: HSA_USE_SVM, value: "0"}
+            - {name: PYTORCH_ROCM_ARCH, value: gfx906}
+            - {name: VLLM_ROCM_USE_AITER, value: "0"}
+            - name: EXPECTED_IMAGE_DIGEST
+              value: sha256:034f081861278a680fe54ddeb71db6446ce65f0a9c37ce9aecc061a99b1d40fc
+            - name: EXPECTED_MTP_CONTRACT_DIGEST
+              value: sha256:64189493708ff203f65a08e0ebde92cf9998271212b69cb390173a694f453134
+          resources:
+            requests: {amd.com/gpu: "1", cpu: "4", memory: 16Gi}
+            limits: {amd.com/gpu: "1", cpu: "12", memory: 32Gi}
+          volumeMounts:
+            - {name: model, mountPath: /models, readOnly: true}
+            - {name: probe, mountPath: /probe, readOnly: true}
+            - {name: shm, mountPath: /dev/shm}
+      volumes:
+        - name: model
+          persistentVolumeClaim:
+            claimName: gfx906-qwen35-9b-oci-preflight
+            readOnly: true
+        - name: probe
+          configMap:
+            name: gfx906-qwen35-mtp-long-context-kill-test
+            defaultMode: 0555
+        - name: shm
+          emptyDir: {medium: Memory, sizeLimit: 8Gi}

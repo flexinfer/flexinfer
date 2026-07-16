@@ -85,6 +85,27 @@ docker build \
   .
 ```
 
+### Qwen3.5-9B native-MTP canary
+
+The modern Qwen3.5 overlay is separate from the generic vLLM image:
+
+```bash
+make build-vllm-gfx906-qwen35-mtp
+make push-vllm-gfx906-qwen35-mtp
+```
+
+The hardware-qualified image is
+`registry.harbor.lan/flexinfer/vllm@sha256:034f081861278a680fe54ddeb71db6446ce65f0a9c37ce9aecc061a99b1d40fc`.
+It requires a Qwen3.5-9B GPTQ artifact produced by
+`build/scripts/graft_qwen35_mtp.py` with contract digest
+`sha256:64189493708ff203f65a08e0ebde92cf9998271212b69cb390173a694f453134`.
+
+Keep `gpuMemoryUtilization` at `0.80` for the certified 32K configuration.
+Vega20 needs the remaining physical VRAM for GPTQ GEMM workspace after vLLM
+allocates KV pages. The suspended reproduction is
+`deploy/debug/gfx906-qwen35-mtp-long-context-kill-test.yaml`; it verifies
+native MTP acceptance and an 18,001-token prefill.
+
 ## Kubernetes Deployment
 
 ### llama.cpp (GGUF)

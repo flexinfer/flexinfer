@@ -22,6 +22,12 @@ metadata:
     flexinfer.ai/backend-certificate-llamacpp-ngram-simple-draft16-min1: registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407
     flexinfer.ai/backend-certificate-llamacpp-ngram-simple-draft16-min1-since: "2026-07-15T20:36:31Z"
     flexinfer.ai/backend-certificate-llamacpp-ngram-simple-draft16-min1-evidence: .loom/iteration-gfx906-llamacpp-stateful-spec-2026-07-15.md
+    flexinfer.ai/backend-certificate-vllm-qwen35-dense-mtp1: registry.harbor.lan/flexinfer/vllm@sha256:034f081861278a680fe54ddeb71db6446ce65f0a9c37ce9aecc061a99b1d40fc
+    flexinfer.ai/backend-certificate-vllm-qwen35-dense-mtp1-artifact: sha256:64189493708ff203f65a08e0ebde92cf9998271212b69cb390173a694f453134
+    flexinfer.ai/backend-certificate-vllm-qwen35-dense-mtp1-max-model-len: "32768"
+    flexinfer.ai/backend-certificate-vllm-qwen35-dense-mtp1-gpu-util: "0.80"
+    flexinfer.ai/backend-certificate-vllm-qwen35-dense-mtp1-since: "2026-07-17T02:27:00Z"
+    flexinfer.ai/backend-certificate-vllm-qwen35-dense-mtp1-evidence: .loom/iteration-gfx906-qwen35-mtp-long-context-2026-07-16.md
 spec:
   architecture: gfx906
   vendor: amd
@@ -53,6 +59,13 @@ spec:
       # more than the opt-125m canary has soaked; profile-first contract:
       # per-model overrides go through Model spec.image or a profile patch,
       # not the in-code env-var rule slice.
+      # 2026-07-16: a separate immutable v0.20.1-lineage overlay is certified
+      # for dense Qwen3.5-9B GPTQ + native MTP-1 through a real 18,001-token
+      # prefill at maxModelLen=32768. It requires eager mode,
+      # maxNumBatchedTokens=256, gpuMemoryUtilization=0.80, the text-only
+      # non-MRoPE hfOverrides contract, and the image/artifact pair pinned in
+      # the annotations above. This certificate does not replace the generic
+      # v0.6.3 profile image or broaden its capability claims.
       support: experimental
       image: registry.harbor.lan/flexinfer/vllm:rocm6.3.4-multiarch-serve@sha256:2f3fe30651ae1cf52b1af12e5db2ad03ed4d36fa1c2b9da64d0e83da3b907920
       # Wave 1 capability matrix backfill (2026-05-15, spec .loom/21-product-spec-vllm-feature-parity-2026-05-15.md).
