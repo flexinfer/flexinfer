@@ -65,15 +65,17 @@ spec:
     servedModelName: qwen35-35b-clean-gptq-workhorse-128k
     disableLogStats: false
     failOnEnvironValidation: true
-    warmPolicy: primary
+    # Keep this second 128K replica available on explicit demand while the
+    # identical 5930k workhorse remains warm for ordinary and 128K routes.
+    # Its higher shared-GPU priority lets it preempt video when requested.
+    warmPolicy: ondemand
   gpu:
     vendor: amd
     # This host exposes the discrete 7900 XTX plus its Raphael iGPU. Claim
     # both device-plugin slots and select the discrete card explicitly above.
     count: 2
     shared: 7900xtx-textgen
-    priority: 425
-    forcePromotion: true
+    priority: 700
     vramEstimateMB: 23200
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
@@ -86,7 +88,7 @@ spec:
       memory: 48Gi
   serverless:
     enabled: true
-    minReplicas: 1
+    minReplicas: 0
     idleTimeout: 30m
     # Allow a cache-loss recovery to complete its cold compile plus the
     # self-healing cached restart without a competing controller timeout.

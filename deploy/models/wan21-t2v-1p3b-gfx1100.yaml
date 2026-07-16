@@ -1,7 +1,9 @@
 # Wan 2.1 1.3B text-to-video lane for the RX 7900 XTX (gfx1100).
 #
-# This Model stays cold until requested and temporarily preempts only the
-# 7900xtx text-generation sibling. The 5930k workhorse remains available.
+# This Model is the warm primary on the 7900 XTX. Explicit demand for the
+# higher-priority 128K Qwen sibling may temporarily preempt it; Wan reclaims
+# the card after that request becomes idle. The 5930k Qwen workhorse remains
+# continuously available during either transition.
 # Remove this parent Model (not its Deployment/pod) to roll the lane back.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -43,7 +45,7 @@ spec:
     vramEstimateMB: 18000
   serverless:
     enabled: true
-    minReplicas: 0
+    minReplicas: 1
     idleTimeout: 30m
     coldStartTimeout: 30m
   config:
@@ -74,6 +76,7 @@ spec:
     videoFps: "16"
     negativePrompt: "static, blurry, low quality, distorted, watermark, subtitles, text"
     hipVisibleDevices: "0"
+    warmPolicy: primary
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:

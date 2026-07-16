@@ -1,7 +1,8 @@
 """
 Diffusers API Server with image and synchronous video generation endpoints.
 ROCm-compatible version for AMD GPUs (gfx1100 / RX 7900 XTX).
-Supports text2image, inpainting, InstructPix2Pix, and text2video modes via PIPELINE_MODE.
+Supports text2image, inpainting, InstructPix2Pix, text2video, and image2video
+modes via PIPELINE_MODE.
 """
 
 import asyncio
@@ -85,7 +86,9 @@ from diffusers import (
     FluxImg2ImgPipeline,
     FluxControlNetPipeline,
     FluxControlNetModel,
+    AutoencoderKLWan,
     WanPipeline,
+    WanVACEPipeline,
 )
 
 
@@ -110,7 +113,8 @@ controlnet_model = None
 _available_checkpoints: dict[str, str] = {}
 _checkpoint_dir: Optional[str] = None
 
-# Pipeline mode: "text2image" (default), "inpainting", or "instruct"
+# Pipeline mode: "text2image" (default), "inpainting", "instruct",
+# "text2video", or "image2video".
 PIPELINE_MODE = os.environ.get("PIPELINE_MODE", "text2image")
 
 
@@ -193,6 +197,8 @@ class VideoGenerationRequest(BaseModel):
     guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
     seed: Optional[int] = None
     response_format: str = "b64_json"
+    # PNG/JPEG base64 (optionally a data URI). Required by image2video mode.
+    image: Optional[str] = Field(default=None, max_length=16 * 1024 * 1024)
 
 
 class VideoData(BaseModel):
@@ -285,7 +291,7 @@ def _class_name_model_family(class_name: Optional[str]) -> Optional[str]:
         return "sdxl"
     if class_name.startswith("StableDiffusion"):
         return "sd15"
-    if class_name == "WanPipeline":
+    if class_name in ("WanPipeline", "WanVACEPipeline"):
         return "wan"
     return None
 
@@ -479,6 +485,42 @@ def _decode_image(data: bytes) -> Image.Image:
     except Exception:
         img = Image.open(io.BytesIO(base64.b64decode(data)))
     return img.convert("RGB")
+
+
+def _decode_base64_image(value: str) -> Image.Image:
+    """Decode a bounded base64 image or data URI into RGB pixels."""
+    payload = value.strip()
+    if payload.startswith("data:"):
+        try:
+            metadata, payload = payload.split(",", 1)
+        except ValueError as exc:
+            raise ValueError("invalid image data URI") from exc
+        if ";base64" not in metadata.lower():
+            raise ValueError("image data URI must use base64 encoding")
+    try:
+        raw = base64.b64decode(payload, validate=True)
+    except Exception as exc:
+        raise ValueError("image must be valid base64") from exc
+    try:
+        image = _decode_image(raw)
+    except Exception as exc:
+        raise ValueError("image must be a valid PNG or JPEG") from exc
+    if image.width * image.height > 16_777_216:
+        raise ValueError("image exceeds the 16 megapixel input limit")
+    return image
+
+
+def _prepare_vace_i2v_condition(
+    image: Image.Image, width: int, height: int, num_frames: int
+) -> tuple[list[Image.Image], list[Image.Image]]:
+    """Build the first-frame video and mask expected by Wan VACE."""
+    first_frame = image.convert("RGB").resize((width, height), Image.LANCZOS)
+    neutral_frame = Image.new("RGB", (width, height), (128, 128, 128))
+    preserve = Image.new("L", (width, height), 0)
+    generate = Image.new("L", (width, height), 255)
+    video = [first_frame, *[neutral_frame] * (num_frames - 1)]
+    mask = [preserve, *[generate] * (num_frames - 1)]
+    return video, mask
 
 
 def _decode_mask(data: bytes, target_size: tuple) -> Image.Image:
@@ -1239,7 +1281,7 @@ def load_pipeline(model_id: str):
         if dtype_name not in dtype_map:
             raise RuntimeError(f"Unsupported DIFFUSERS_DTYPE: {dtype_name}")
         dtype = dtype_map[dtype_name]
-    elif PIPELINE_MODE == "text2video" and is_rocm:
+    elif PIPELINE_MODE in ("text2video", "image2video") and is_rocm:
         dtype = torch.bfloat16
     else:
         dtype = torch.float16 if use_fp16 else torch.float32
@@ -1364,15 +1406,28 @@ def load_pipeline(model_id: str):
         is_flux_pipeline = detected_family == "flux"
 
         # FLUX pipelines use explicit classes and do not use safety_checker or custom VAE overrides.
-        if PIPELINE_MODE == "text2video":
+        if PIPELINE_MODE in ("text2video", "image2video"):
             video_kwargs = {
                 k: v
                 for k, v in pipeline_kwargs.items()
                 if k not in ("safety_checker", "vae", "variant")
             }
-            print("Loading WanPipeline (loading to CPU, local files only)...")
-            sys.stdout.flush()
-            pipeline = WanPipeline.from_pretrained(resolved_path, **video_kwargs)
+            if PIPELINE_MODE == "image2video":
+                video_kwargs["vae"] = AutoencoderKLWan.from_pretrained(
+                    resolved_path,
+                    subfolder="vae",
+                    torch_dtype=torch.float32,
+                    local_files_only=local_only,
+                )
+                print("Loading WanVACEPipeline (loading to CPU, local files only)...")
+                sys.stdout.flush()
+                pipeline = WanVACEPipeline.from_pretrained(
+                    resolved_path, **video_kwargs
+                )
+            else:
+                print("Loading WanPipeline (loading to CPU, local files only)...")
+                sys.stdout.flush()
+                pipeline = WanPipeline.from_pretrained(resolved_path, **video_kwargs)
         elif is_flux_pipeline:
             flux_kwargs = {
                 k: v
@@ -1976,23 +2031,49 @@ async def refresh_checkpoints():
 
 @app.post("/v1/videos/generations")
 async def generate_video(request: VideoGenerationRequest):
-    """Generate one bounded MP4 synchronously with a text-to-video pipeline."""
-    if PIPELINE_MODE != "text2video":
-        raise HTTPException(status_code=404, detail="This deployment is not configured for video generation")
+    """Generate one bounded MP4 with a Wan text- or image-to-video pipeline."""
+    if PIPELINE_MODE not in ("text2video", "image2video"):
+        raise HTTPException(
+            status_code=404,
+            detail="This deployment is not configured for video generation",
+        )
     if request.response_format != "b64_json":
         raise HTTPException(status_code=400, detail="Only response_format=b64_json is supported")
 
     model_id, pipe = await _prepare_pipeline_for_request(request.model)
-    if not isinstance(pipe, WanPipeline):
-        raise HTTPException(status_code=500, detail=f"Loaded pipeline does not support video generation: {type(pipe).__name__}")
+    if not isinstance(pipe, (WanPipeline, WanVACEPipeline)):
+        raise HTTPException(
+            status_code=500,
+            detail=f"Loaded pipeline does not support video generation: {type(pipe).__name__}",
+        )
 
     width, height = _parse_video_size(request.size)
     num_frames = _validate_video_num_frames(request.num_frames or _default_video_num_frames())
     fps = request.fps or _default_video_fps()
     steps = request.num_inference_steps or _default_steps(model_id)
-    guidance_scale = request.guidance_scale if request.guidance_scale is not None else _default_guidance_scale(model_id)
+    guidance_scale = (
+        request.guidance_scale
+        if request.guidance_scale is not None
+        else _default_guidance_scale(model_id)
+    )
     negative_prompt = _resolve_negative_prompt(request.negative_prompt)
-    seed = request.seed if request.seed is not None else int.from_bytes(os.urandom(8), "big") % (2**63 - 1)
+    seed = (
+        request.seed
+        if request.seed is not None
+        else int.from_bytes(os.urandom(8), "big") % (2**63 - 1)
+    )
+
+    condition_image = None
+    if PIPELINE_MODE == "image2video":
+        if not request.image:
+            raise HTTPException(
+                status_code=400,
+                detail="image is required for image2video generation",
+            )
+        try:
+            condition_image = _decode_base64_image(request.image)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     print(
         f"[video] model={model_id} size={width}x{height} frames={num_frames} "
@@ -2027,6 +2108,12 @@ async def generate_video(request: VideoGenerationRequest):
             }
             if negative_prompt:
                 kwargs["negative_prompt"] = negative_prompt
+            if condition_image is not None:
+                condition_video, condition_mask = _prepare_vace_i2v_condition(
+                    condition_image, width, height, num_frames
+                )
+                kwargs["video"] = condition_video
+                kwargs["mask"] = condition_mask
             with torch.inference_mode():
                 result = pipe(**kwargs)
             if torch.cuda.is_available():
@@ -2085,8 +2172,11 @@ async def generate_video(request: VideoGenerationRequest):
 
 @app.post("/v1/images/generations")
 async def generate_images(request: ImageGenerationRequest):
-    if PIPELINE_MODE == "text2video":
-        raise HTTPException(status_code=404, detail="This deployment serves /v1/videos/generations")
+    if PIPELINE_MODE in ("text2video", "image2video"):
+        raise HTTPException(
+            status_code=404,
+            detail="This deployment serves /v1/videos/generations",
+        )
     model_id, pipe = await _prepare_pipeline_for_request(request.model)
 
     steps = (
