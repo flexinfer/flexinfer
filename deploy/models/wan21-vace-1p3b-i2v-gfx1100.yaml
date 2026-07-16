@@ -1,0 +1,100 @@
+# Wan 2.1 VACE 1.3B image-to-video lane for the RX 7900 XTX (gfx1100).
+#
+# On-demand keyframe animation: a first-frame image conditions the clip via
+# WanVACEPipeline (PIPELINE_MODE=image2video, added in a4df75880). Explicit
+# demand for this Model preempts the warm Wan T2V primary (priority 600 > 500);
+# T2V reclaims the card once this lane goes idle. The 128K Qwen sister
+# (priority 700) outranks both. The 5930k Qwen workhorse is unaffected.
+# Slice 3 of .loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md;
+# the kill test must pass before any downstream pipeline ships.
+# Remove this parent Model (not its Deployment/pod) to roll the lane back.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: wan21-vace-1p3b-i2v-gfx1100
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/serve-paths: /v1/videos/generations
+    flexinfer.ai/purpose: 480p image-to-video (first-frame keyframe) on ROCm gfx1100
+    flexinfer.ai/plan: .loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md
+spec:
+  backend: diffusers
+  # Same ROCm 6.4.1 / PyTorch 2.6 video build as the T2V lane, at the first
+  # digest published from a master commit containing the VACE server mode.
+  image: registry.harbor.lan/flexinfer/diffusers-video:rocm-gfx1100
+  imageDigest: sha256:52ebc2b978cec519843c0e28a7246e46d7d0bd24e56253e31862d951d62d4d7d
+  source: HF://Wan-AI/Wan2.1-VACE-1.3B-diffusers
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 32Gi
+    flashLoader:
+      enabled: true
+      # Same immutable tag the T2V lane pins (published by master pipeline 19264).
+      image: registry.harbor.lan/flexinfer/flexinfer-flash-loader:a4df7588
+      concurrency: 8
+      tmpfsSizeLimit: 28Gi
+      bufferSizeKB: 4096
+      verifyIntegrity: true
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache
+      sizeLimit: 6Gi
+  gpu:
+    vendor: amd
+    # cblevins-7900xtx exposes the discrete card plus a Raphael iGPU. Claim
+    # both plugin slots, then select device zero through the backend config.
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 600
+    vramEstimateMB: 18000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    # Shorter than the T2V lane's 30m so the warm primary reclaims the card
+    # promptly after keyframe demand expires (a kill-test pass criterion).
+    idleTimeout: 15m
+    coldStartTimeout: 30m
+  config:
+    dedicatedDeployment: true
+    pipelineMode: image2video
+    modelFamily: wan
+    dtype: bfloat16
+    cpuOffload: "true"
+    # No torch.compile for bring-up: the T2V compile settings were qualified
+    # on WanPipeline only. Qualify VACE latency separately after the kill test.
+    skipWarmup: "1"
+    numInferenceSteps: "20"
+    guidanceScale: "5.0"
+    videoSize: 832x480
+    # Bounded kill-test default (~2s @ 16fps); requests may still ask up to 81.
+    videoFrames: "33"
+    videoFps: "16"
+    negativePrompt: "static, blurry, low quality, distorted, watermark, subtitles, text"
+    hipVisibleDevices: "0"
+    warmPolicy: ondemand
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 48Gi
+  serviceLabels:
+    - video-i2v
+    - image-to-video
+    - wan21-vace
+    - wan21-vace-480p
+  litellm:
+    enabled: true
+    servedModelName: wan21-vace-1p3b-i2v-gfx1100
+    aliases:
+      - video-i2v
+      - image-to-video
+      - wan21-vace-480p
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists
