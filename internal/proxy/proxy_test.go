@@ -347,7 +347,7 @@ func TestGracefulShutdownDrainsInFlightAndStopsNewAccepts(t *testing.T) {
 			responseErr <- err
 			return
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		_, _ = io.Copy(io.Discard, resp.Body)
 		responseDone <- resp.StatusCode
 	}()
