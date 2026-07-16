@@ -1131,7 +1131,7 @@ build_quantizer_gptq_rocm:
           --opt platform=linux/amd64 \
           --import-cache "type=registry,ref=${REGISTRY}/quantizer:gptq-rocm-gfx906" \
           --export-cache "type=inline" \
-          --output "type=image,name=${REGISTRY}/quantizer:gptq-rocm-gfx906,${REGISTRY}/quantizer:gptq-rocm-gfx906-${CI_COMMIT_SHORT_SHA},push=true"; then
+          --output "type=image,\"name=${REGISTRY}/quantizer:gptq-rocm-gfx906,${REGISTRY}/quantizer:gptq-rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"; then
           break
         fi
         if [ "${i}" -eq "${attempts}" ]; then
