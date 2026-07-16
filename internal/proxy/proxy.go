@@ -6,6 +6,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"os"
@@ -64,6 +65,10 @@ const (
 	// proxyTTL is how long a cached httputil.ReverseProxy is valid before eviction.
 	// After this duration, the proxy is recreated to pick up backend pod IP changes.
 	proxyTTL = 5 * time.Minute
+
+	// defaultGracefulShutdownTimeout bounds proxy HTTP draining during rollout
+	// termination while leaving enough room for long-context completions.
+	defaultGracefulShutdownTimeout = 10 * time.Minute
 )
 
 // Scheme is the runtime scheme used by the proxy for K8s API types.
@@ -99,6 +104,7 @@ type Config struct {
 	AuthEnabled                      bool
 	AuthToken                        string
 	DirectRuntimeEnabled             bool // Enable direct proxy-to-runtime fast path
+	GracefulShutdownTimeout          time.Duration
 	MaxTokensClampEnabled            bool
 	MaxTokensClampPromptReserve      int
 	AdmissionEnabled                 bool
@@ -141,6 +147,9 @@ func (c Config) Validate() error {
 	}
 	if c.ColdStartTimeout <= 0 {
 		errs = append(errs, fmt.Errorf("PROXY_COLD_START_TIMEOUT must be > 0 (got %s)", c.ColdStartTimeout))
+	}
+	if c.GracefulShutdownTimeout < 0 {
+		errs = append(errs, fmt.Errorf("PROXY_GRACEFUL_SHUTDOWN_TIMEOUT must be >= 0 (got %s)", c.GracefulShutdownTimeout))
 	}
 	if c.BackoffEnabled {
 		if c.BackoffMaxRetries <= 0 {
@@ -211,6 +220,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		AuthEnabled:                      envutil.BoolOrDefault("PROXY_AUTH_ENABLED", false),
 		AuthToken:                        os.Getenv("PROXY_AUTH_TOKEN"),
 		DirectRuntimeEnabled:             envutil.BoolOrDefault("PROXY_DIRECT_RUNTIME_ENABLED", true),
+		GracefulShutdownTimeout:          envutil.DurationOrDefault("PROXY_GRACEFUL_SHUTDOWN_TIMEOUT", defaultGracefulShutdownTimeout),
 		MaxTokensClampEnabled:            envutil.BoolOrDefault("PROXY_MAX_TOKENS_CLAMP_ENABLED", true),
 		MaxTokensClampPromptReserve:      envutil.IntOrDefault("PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS", defaultPromptReserveTokens),
 		AdmissionEnabled:                 envutil.BoolOrDefault("PROXY_ADMISSION_ENABLED", false),
@@ -344,6 +354,9 @@ type Proxy struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	// gracefulShutdownTimeout bounds http.Server shutdown after SIGTERM/SIGINT.
+	gracefulShutdownTimeout time.Duration
+
 	// Stored config for debug endpoint (secrets redacted)
 	debugConfig debugConfigView
 }
@@ -388,14 +401,15 @@ func New(cfg Config) *Proxy {
 			SafetyMarginPercent: cfg.AdmissionSafetyMarginPercent,
 			DefaultMaxTokens:    cfg.AdmissionDefaultMaxTokens,
 		},
-		directRuntimeEnabled:   cfg.DirectRuntimeEnabled,
-		labelGroupRouting:      canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting),
-		pyannoteUpstream:       cfg.PyannoteUpstream,
-		kokoroUpstream:         cfg.KokoroUpstream,
-		codebaseAnswerUpstream: cfg.CodebaseAnswerUpstream,
-		ctx:                    ctx,
-		cancel:                 cancel,
-		debugConfig:            newDebugConfigView(cfg),
+		directRuntimeEnabled:    cfg.DirectRuntimeEnabled,
+		gracefulShutdownTimeout: cfg.GracefulShutdownTimeout,
+		labelGroupRouting:       canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting),
+		pyannoteUpstream:        cfg.PyannoteUpstream,
+		kokoroUpstream:          cfg.KokoroUpstream,
+		codebaseAnswerUpstream:  cfg.CodebaseAnswerUpstream,
+		ctx:                     ctx,
+		cancel:                  cancel,
+		debugConfig:             newDebugConfigView(cfg),
 	}
 
 	if cfg.DirectRuntimeEnabled {
@@ -417,8 +431,18 @@ func (p *Proxy) Shutdown() {
 	}
 }
 
-// Run starts the proxy HTTP server and background goroutines.
-func (p *Proxy) Run(port int) error {
+// Run starts the proxy HTTP server and background goroutines until ctx is
+// canceled. Cancellation drains in-flight requests before stopping background
+// work.
+func (p *Proxy) Run(ctx context.Context, port int) error {
+	server := &http.Server{
+		Addr:    fmt.Sprintf(":%d", port),
+		Handler: p.newServeMux(),
+	}
+	return p.runServer(ctx, server)
+}
+
+func (p *Proxy) runServer(ctx context.Context, server *http.Server) error {
 	// Start queue cleanup goroutine
 	go p.cleanupStaleQueues()
 
@@ -437,6 +461,95 @@ func (p *Proxy) Run(port int) error {
 		recoveryCancel()
 	}
 
+	slog.Info("starting proxy",
+		"addr", server.Addr,
+		"namespace", p.namespace,
+		"queue_size", p.maxQueueSize,
+		"queue_timeout", p.queueTimeout.String(),
+		"cold_start_timeout", p.coldStartTimeout.String(),
+		"graceful_shutdown_timeout", p.shutdownTimeout().String(),
+		"validate_requests", p.validateRequests,
+		"backoff_enabled", p.backoffEnabled,
+		"rate_limit_enabled", p.rateLimitEnabled,
+		"rate_limit_per_model", p.rateLimitPerModel,
+		"rate_limit_global", p.rateLimitGlobal,
+		"max_tokens_clamp_enabled", p.maxTokensClampEnabled,
+		"max_tokens_clamp_prompt_reserve", p.maxTokensClampPromptReserve,
+		"admission_enabled", p.admission.Enabled,
+		"admission_safety_margin_percent", p.admission.SafetyMarginPercent,
+		"admission_default_max_tokens", p.admission.DefaultMaxTokens,
+		"direct_runtime_enabled", p.directRuntimeEnabled)
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ListenAndServe()
+	}()
+
+	return p.waitForServer(ctx, server, errCh)
+}
+
+func (p *Proxy) runServerOnListener(ctx context.Context, server *http.Server, listener net.Listener) error {
+	go p.cleanupStaleQueues()
+	if p.routingEnabled {
+		go p.watchEndpoints(p.ctx)
+	}
+	if p.runtimeCache != nil {
+		p.runtimeCache.StartRefreshLoop(p.ctx)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Serve(listener)
+	}()
+
+	return p.waitForServer(ctx, server, errCh)
+}
+
+func (p *Proxy) waitForServer(ctx context.Context, server *http.Server, errCh <-chan error) error {
+	select {
+	case err := <-errCh:
+		if stderrors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		start := time.Now()
+		timeout := p.shutdownTimeout()
+		proxyShutdownsTotal.WithLabelValues("started").Inc()
+		slog.Info("proxy graceful shutdown started", "timeout", timeout.String())
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+
+		err := server.Shutdown(shutdownCtx)
+		duration := time.Since(start)
+		proxyShutdownDuration.Observe(duration.Seconds())
+		p.Shutdown()
+
+		if err != nil {
+			proxyShutdownsTotal.WithLabelValues("timeout").Inc()
+			slog.Error("proxy graceful shutdown timed out", "duration", duration.String(), "timeout", timeout.String(), "error", err)
+			return fmt.Errorf("proxy graceful shutdown timed out after %s: %w", timeout, err)
+		}
+
+		proxyShutdownsTotal.WithLabelValues("completed").Inc()
+		slog.Info("proxy graceful shutdown completed", "duration", duration.String())
+
+		if err := <-errCh; err != nil && !stderrors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
+	}
+}
+
+func (p *Proxy) shutdownTimeout() time.Duration {
+	if p.gracefulShutdownTimeout > 0 {
+		return p.gracefulShutdownTimeout
+	}
+	return defaultGracefulShutdownTimeout
+}
+
+func (p *Proxy) newServeMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/v1/models", p.handleModels)
@@ -452,25 +565,7 @@ func (p *Proxy) Run(port int) error {
 		}
 	})
 
-	slog.Info("starting proxy",
-		"port", port,
-		"namespace", p.namespace,
-		"queue_size", p.maxQueueSize,
-		"queue_timeout", p.queueTimeout.String(),
-		"cold_start_timeout", p.coldStartTimeout.String(),
-		"validate_requests", p.validateRequests,
-		"backoff_enabled", p.backoffEnabled,
-		"rate_limit_enabled", p.rateLimitEnabled,
-		"rate_limit_per_model", p.rateLimitPerModel,
-		"rate_limit_global", p.rateLimitGlobal,
-		"max_tokens_clamp_enabled", p.maxTokensClampEnabled,
-		"max_tokens_clamp_prompt_reserve", p.maxTokensClampPromptReserve,
-		"admission_enabled", p.admission.Enabled,
-		"admission_safety_margin_percent", p.admission.SafetyMarginPercent,
-		"admission_default_max_tokens", p.admission.DefaultMaxTokens,
-		"direct_runtime_enabled", p.directRuntimeEnabled)
-
-	return http.ListenAndServe(fmt.Sprintf(":%d", port), mux)
+	return mux
 }
 
 func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
@@ -746,6 +841,7 @@ type debugConfigView struct {
 	AuthEnabled                  bool    `json:"authEnabled"`
 	AuthToken                    string  `json:"authToken"` // always redacted
 	DirectRuntimeEnabled         bool    `json:"directRuntimeEnabled"`
+	GracefulShutdownTimeout      string  `json:"gracefulShutdownTimeout"`
 	MaxTokensClampEnabled        bool    `json:"maxTokensClampEnabled"`
 	MaxTokensClampPromptReserve  int     `json:"maxTokensClampPromptReserve"`
 	AdmissionEnabled             bool    `json:"admissionEnabled"`
@@ -762,6 +858,10 @@ func newDebugConfigView(cfg Config) debugConfigView {
 	labelGroupRouting := canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting)
 	if labelGroupRouting == labelGroupRoutingRR {
 		labelGroupRouting = labelGroupRoutingRRAlias
+	}
+	gracefulShutdownTimeout := cfg.GracefulShutdownTimeout
+	if gracefulShutdownTimeout == 0 {
+		gracefulShutdownTimeout = defaultGracefulShutdownTimeout
 	}
 	return debugConfigView{
 		Namespace:                    cfg.Namespace,
@@ -782,6 +882,7 @@ func newDebugConfigView(cfg Config) debugConfigView {
 		AuthEnabled:                  cfg.AuthEnabled,
 		AuthToken:                    tokenDisplay,
 		DirectRuntimeEnabled:         cfg.DirectRuntimeEnabled,
+		GracefulShutdownTimeout:      gracefulShutdownTimeout.String(),
 		MaxTokensClampEnabled:        cfg.MaxTokensClampEnabled,
 		MaxTokensClampPromptReserve:  cfg.MaxTokensClampPromptReserve,
 		AdmissionEnabled:             cfg.AdmissionEnabled,

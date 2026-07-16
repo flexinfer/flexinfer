@@ -153,6 +153,22 @@ var (
 		[]string{"model", "scope"},
 	)
 
+	proxyShutdownsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_shutdowns_total",
+			Help: "Total proxy graceful shutdown lifecycle events by result.",
+		},
+		[]string{"result"},
+	)
+
+	proxyShutdownDuration = prometheus.NewHistogram(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_shutdown_duration_seconds",
+			Help:    "Duration of proxy graceful shutdown drain attempts.",
+			Buckets: []float64{0.1, 0.5, 1, 2, 5, 10, 30, 60, 120, 300, 600},
+		},
+	)
+
 	// Backoff metrics
 	activationRetriesTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -336,6 +352,8 @@ func RegisterMetrics() {
 		prometheus.MustRegister(activationDurationSeconds)
 		prometheus.MustRegister(activationFailuresTotal)
 		prometheus.MustRegister(rateLimitedTotal)
+		prometheus.MustRegister(proxyShutdownsTotal)
+		prometheus.MustRegister(proxyShutdownDuration)
 		prometheus.MustRegister(maxTokensClampedTotal)
 		prometheus.MustRegister(requestPromptTokens)
 		prometheus.MustRegister(requestCompletionTokens)
