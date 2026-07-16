@@ -178,6 +178,11 @@ data:
             "MTP expert marker does not bind the qualified source artifact",
         )
         require(
+            mtp_expert_marker.get("contract_digest")
+            == os.environ["EXPECTED_MTP_EXPERT_CONTRACT_DIGEST"],
+            "MTP expert marker does not match the qualified surgery contract",
+        )
+        require(
             mtp_expert_marker.get("expert_count") == 256
             and mtp_expert_marker.get("removed_plain_expert_tensor_count") == 768,
             "MTP expert marker does not prove the complete 256x3 surgery",
@@ -660,6 +665,7 @@ metadata:
   annotations:
     flexinfer.ai/canary: gfx1100-qwen35-mtp
     flexinfer.ai/source-artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+    flexinfer.ai/mtp-expert-contract-digest: sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d
     flexinfer.ai/output-contract: qwen35-mtp-experts-gptq-w4g128-rtn-v1
     flexinfer.ai/runtime-digest: sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85
     flexinfer.ai/kill-test: .loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md
@@ -696,6 +702,8 @@ spec:
               value: /models/qwen35-35b-a3b-clean/gptq-w4-g128-gdn-mtp-experts-w4g128
             - name: EXPECTED_SOURCE_ARTIFACT_DIGEST
               value: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+            - name: EXPECTED_MTP_EXPERT_CONTRACT_DIGEST
+              value: sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d
             - name: EXPECTED_IMAGE_DIGEST
               value: sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85
             - name: EXPECTED_PLUGIN_VERSION

@@ -235,6 +235,15 @@ of this failed gate.
   `FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ=1`; the default remains the plain upstream
   artifact behavior. It also applies the GPTQ fused-expert name repair to the
   native `Qwen3_5MoeMTP` loader.
+- Artifact result: builder Job `gfx1100-qwen35-mtp-expert-quantize` completed
+  successfully with contract digest
+  `sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d`.
+  It replaced all 768 plain expert matrices with exactly four fused GPTQ
+  tensors, reducing expert storage from 1,610,612,736 to 415,236,096 bytes
+  (1,195,376,640 bytes freed, 3.879x compression). Aggregate relative L1 was
+  0.13244 and the minimum per-matrix cosine was 0.984898, passing both quality
+  gates. Source index and quantization-config hashes remained bound in the
+  publication marker.
 - Runtime candidate: CI job 186211 published plugin v0.4.0 as immutable digest
   `sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85`.
 - Kill-test: the output marker must prove at least 1.06 GiB was freed before the
