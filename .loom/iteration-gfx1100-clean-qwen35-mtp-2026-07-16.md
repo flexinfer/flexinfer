@@ -120,7 +120,7 @@ of this failed gate.
   `gpuMemoryUtilization: 0.94`, AITER disabled.
 - Image tag: `registry.harbor.lan/flexinfer/vllm`
 - Image digest:
-  `sha256:850d1548199ba6ec428983b8235062b7a354812be1776328aa5f1d3faf68281a`
+  `sha256:f467e202987671b321e215142a7a6be7b910940c1323fced6243b573d27c8669`
 - Upstream ref/fork: upstream vLLM 0.23 ROCm base plus
   `build/vllm-qwen35-text-plugin`.
 - Probe manifest: `deploy/debug/gfx1100-qwen35-mtp-kill-test.yaml`
@@ -284,8 +284,12 @@ of this failed gate.
 - Runtime evidence: CI job 186554 published plugin v0.5.0 as immutable digest
   `sha256:850d1548199ba6ec428983b8235062b7a354812be1776328aa5f1d3faf68281a`.
 - Runtime candidate: plugin v0.6 aligns the speculative draft's RoPE config
-  with the target text-only override; publish and digest-pin it before Attempt
-  13.
+  with the target text-only override. CI job 186804 published it as immutable
+  digest
+  `sha256:f467e202987671b321e215142a7a6be7b910940c1323fced6243b573d27c8669`;
+  the first publish was canceled during a BuildKit rollout and one retry stalled
+  during cold-cache extraction, while the fresh MR pipeline completed from the
+  exact `8b9e20ed` source SHA.
 - Kill-test: the output marker must prove at least 1.06 GiB was freed before the
   existing MTP-only graph+32K load/acceptance probe is repointed. If fit passes,
   require >=60% acceptance before returning to the full performance A/B.
