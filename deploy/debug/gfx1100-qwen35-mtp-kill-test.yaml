@@ -315,6 +315,11 @@ data:
             "--language-model-only",
             "--max-num-seqs",
             "1",
+            # One request with one speculative token verifies two target tokens.
+            # vLLM's default also captures size 4 (max_num_seqs * decode_len * 2),
+            # reserving graph memory for concurrency this bounded probe forbids.
+            "--cudagraph-capture-sizes",
+            "2",
             "--max-num-batched-tokens",
             "4096",
             "--enable-chunked-prefill",

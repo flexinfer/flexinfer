@@ -99,9 +99,10 @@ of this failed gate.
 
 - Iteration goal: retire or sharply narrow the clean-workhorse native-MTP
   assumption before any gfx1100 capability certificate ships.
-- Current result: plugin v0.3.0's prefix-scoped AutoGPTQ exclusion works in the
-  exact ROCm runtime, but the correctly loaded BF16 draft cannot fit the 24 GiB
-  graph+32K envelope.
+- Current result: plugin v0.6.0 and the surgical MTP-expert GPTQ artifact pass
+  eager load, execution, and an audited 80.28% acceptance gate. Graph mode now
+  compiles both the target backbone and MTP head, but vLLM's default size-4
+  capture leaves 0.18 GiB for a 0.42 GiB 32K KV-cache requirement.
 - Successor hypothesis: converting exactly the 256 x 3 MTP expert matrices to
   symmetric GPTQ W4G128 while retaining MTP attention/fc linears in BF16 frees
   at least the missing 1.06 GiB and preserves useful draft acceptance. This is
@@ -262,6 +263,21 @@ of this failed gate.
   24.98 tok/s for the long-context summary; it remains explicitly
   non-certifying. Production was restored and Ready after the parent Job and
   ConfigMap were removed.
+- Attempt 14 result: graph mode attested the same immutable image, plugin, and
+  artifact contract; loaded the model at 19.97 GiB; compiled the target
+  backbone in 64.96 seconds; and compiled the MTP `eagle_head` in 14.02
+  seconds. This crosses both prior RoPE failures and proves the repaired graph
+  is compilable on gfx1100. Startup then rejected KV-cache initialization:
+  32K requires 0.42 GiB, but the default candidate sizes `[1, 2, 4]` retained
+  an unused size-4 graph and left only 0.18 GiB (estimated maximum context
+  10,880). This is a deterministic
+  capacity guard, not an OOM or HIP fault; peak sampled VRAM was 22.709 GiB.
+  With one speculative token, the actual one-request target verification shape
+  is two tokens. Attempt 15 pins `--cudagraph-capture-sizes 2`, removing the
+  unused size-4 graph while preserving the exact graph path under test. Its
+  kill-test is at least 0.24 GiB recovered plus graph evidence at 32K. The
+  failed Job and ConfigMap were removed, Flux resumed, and the production
+  parent Model returned Ready with its original policy.
 
 ## Successor artifact gate
 
@@ -309,7 +325,8 @@ of this failed gate.
 
 ## Next
 
-1. Re-run MTP-only in graph mode with the same immutable tuple and require graph
-   evidence plus the acceptance gate.
+1. Run MTP-only graph mode with capture size 2; require 32K KV fit, graph
+   evidence, and the acceptance gate. If it still misses capacity, retain the
+   capture bound and test `gpu-memory-utilization: 0.96` as a separate change.
 2. Only after graph MTP-only passes, run the full baseline/MTP A/B and enforce
    parity, per-workload floors, and median speedup before certification.
