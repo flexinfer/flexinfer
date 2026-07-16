@@ -118,7 +118,7 @@ of this failed gate.
   - `.loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md`
 - Build profile: vLLM 0.23 ROCm Qwen3.5 text-only overlay, gfx1100, graph mode,
   GPTQ W4A16, FP8 E4M3 KV, one sequence, 32K context,
-  `gpuMemoryUtilization: 0.94`, AITER disabled.
+  `gpuMemoryUtilization: 0.96`, AITER disabled.
 - Image tag: `registry.harbor.lan/flexinfer/vllm`
 - Image digest:
   `sha256:f467e202987671b321e215142a7a6be7b910940c1323fced6243b573d27c8669`
@@ -278,6 +278,18 @@ of this failed gate.
   kill-test is at least 0.24 GiB recovered plus graph evidence at 32K. The
   failed Job and ConfigMap were removed, Flux resumed, and the production
   parent Model returned Ready with its original policy.
+- Attempt 15 result: vLLM accepted the explicit size-2 graph contract and
+  reported `cudagraph_capture_sizes: [2]` plus
+  `max_cudagraph_capture_size: 2`. It then reproduced Attempt 14 exactly:
+  19.97 GiB model load, successful backbone and `eagle_head` compilation, and
+  0.18 GiB available versus 0.42 GiB required for 32K. This falsifies the
+  assumption that unused capture candidates consume the missing budget: vLLM
+  profiles non-KV memory and validates KV capacity before graph capture. The
+  production parent Model was restored Ready before the next change. Attempt
+  16 retains the correct size-2 contract and raises utilization from 0.94 to
+  0.96, adding about 0.48 GiB of allocator budget against the measured 0.24
+  GiB shortfall while preserving 32K and roughly 0.96 GiB of physical-device
+  headroom.
 
 ## Successor artifact gate
 
@@ -325,8 +337,7 @@ of this failed gate.
 
 ## Next
 
-1. Run MTP-only graph mode with capture size 2; require 32K KV fit, graph
-   evidence, and the acceptance gate. If it still misses capacity, retain the
-   capture bound and test `gpu-memory-utilization: 0.96` as a separate change.
+1. Run MTP-only graph mode at utilization 0.96 with capture size 2; require 32K
+   KV fit, graph evidence, a clean fault scan, and the acceptance gate.
 2. Only after graph MTP-only passes, run the full baseline/MTP A/B and enforce
    parity, per-workload floors, and median speedup before certification.

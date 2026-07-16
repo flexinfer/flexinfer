@@ -292,7 +292,7 @@ data:
             "--max-model-len",
             "32768",
             "--gpu-memory-utilization",
-            "0.94",
+            "0.96",
             "--quantization",
             "gptq",
             "--served-model-name",
