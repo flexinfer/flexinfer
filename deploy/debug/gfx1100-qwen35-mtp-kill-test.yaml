@@ -667,7 +667,7 @@ metadata:
     flexinfer.ai/source-artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
     flexinfer.ai/mtp-expert-contract-digest: sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d
     flexinfer.ai/output-contract: qwen35-mtp-experts-gptq-w4g128-rtn-v1
-    flexinfer.ai/runtime-digest: sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85
+    flexinfer.ai/runtime-digest: sha256:850d1548199ba6ec428983b8235062b7a354812be1776328aa5f1d3faf68281a
     flexinfer.ai/kill-test: .loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md
 spec:
   suspend: true
@@ -693,7 +693,7 @@ spec:
           operator: Exists
       containers:
         - name: probe
-          image: registry.harbor.lan/flexinfer/vllm@sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85
+          image: registry.harbor.lan/flexinfer/vllm@sha256:850d1548199ba6ec428983b8235062b7a354812be1776328aa5f1d3faf68281a
           imagePullPolicy: IfNotPresent
           command: ["bash", "-lc"]
           args: ["exec python3 /probe/probe.py"]
@@ -705,7 +705,7 @@ spec:
             - name: EXPECTED_MTP_EXPERT_CONTRACT_DIGEST
               value: sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d
             - name: EXPECTED_IMAGE_DIGEST
-              value: sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85
+              value: sha256:850d1548199ba6ec428983b8235062b7a354812be1776328aa5f1d3faf68281a
             - name: EXPECTED_PLUGIN_VERSION
               value: 0.5.0
             - name: PROBE_MODE

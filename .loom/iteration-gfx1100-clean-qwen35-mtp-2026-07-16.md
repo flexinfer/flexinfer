@@ -120,7 +120,7 @@ of this failed gate.
   `gpuMemoryUtilization: 0.94`, AITER disabled.
 - Image tag: `registry.harbor.lan/flexinfer/vllm`
 - Image digest:
-  `sha256:4511e86d655acfee68e37c9a06e189f23aa8b367cdf593fd97be713842b2d54b`
+  `sha256:850d1548199ba6ec428983b8235062b7a354812be1776328aa5f1d3faf68281a`
 - Upstream ref/fork: upstream vLLM 0.23 ROCm base plus
   `build/vllm-qwen35-text-plugin`.
 - Probe manifest: `deploy/debug/gfx1100-qwen35-mtp-kill-test.yaml`
@@ -252,8 +252,8 @@ of this failed gate.
   0.13244 and the minimum per-matrix cosine was 0.984898, passing both quality
   gates. Source index and quantization-config hashes remained bound in the
   publication marker.
-- Runtime candidate: CI job 186211 published plugin v0.4.0 as immutable digest
-  `sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85`.
+- Runtime candidate: CI job 186554 published plugin v0.5.0 as immutable digest
+  `sha256:850d1548199ba6ec428983b8235062b7a354812be1776328aa5f1d3faf68281a`.
 - Kill-test: the output marker must prove at least 1.06 GiB was freed before the
   existing MTP-only graph+32K load/acceptance probe is repointed. If fit passes,
   require >=60% acceptance before returning to the full performance A/B.
