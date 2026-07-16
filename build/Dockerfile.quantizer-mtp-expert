@@ -1,0 +1,6 @@
+# Experimental, copy-only overlay for the Qwen3.5 MTP expert surgery. Keeping
+# this separate from the full ROCm quantizer build avoids unpacking its enormous
+# PyTorch/ROCm base just to add one audited offline script.
+FROM registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx906
+
+COPY build/scripts/quantize_mtp_experts.py /opt/flexinfer/scripts/quantize_mtp_experts.py

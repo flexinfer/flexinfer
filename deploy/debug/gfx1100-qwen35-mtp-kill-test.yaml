@@ -1,0 +1,899 @@
+# Suspended-by-default kill-test for the surgically quantized native Qwen3.5
+# MTP experts on the exact clean gfx1100 workhorse target/runtime tuple.
+#
+# Do not add this file to a kustomization. Before unsuspending, confirm the
+# cblevins-7900xtx text GPU is idle and act on parent Model resources if a lane
+# must be released. The Job claims both device-plugin resources on that host and
+# pins HIP/ROCr to the discrete GPU ordinal used by the proven 128K sister.
+#
+# Run:
+#   kubectl apply -f deploy/debug/gfx1100-qwen35-mtp-kill-test.yaml
+#   kubectl patch job gfx1100-qwen35-mtp-kill-test -n flexinfer-system \
+#     --type=merge -p '{"spec":{"suspend":false}}'
+#   kubectl logs -n flexinfer-system -f job/gfx1100-qwen35-mtp-kill-test
+#
+# Pass contract:
+# - exact greedy output parity on stable, constrained continuation probes;
+# - nonzero MTP drafts with >= 60% accepted;
+# - MTP median decode throughput >= 1.08x baseline across workloads;
+# - no workload slower than 0.95x baseline;
+# - graph dispatch evidence and no ROCm/HSA/OOM/restart fault markers.
+#
+# `PROBE_EXECUTION_MODE=eager` is a bounded diagnostic only: it proves model
+# load, draft emission, and acceptance without Dynamo/graph compilation. It
+# emits `EAGER_MTP_RESULT` and can never emit the graph-mode certificate.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gfx1100-qwen35-mtp-kill-test
+  namespace: flexinfer-system
+data:
+  probe.py: |
+    import hashlib
+    import importlib.metadata
+    import json
+    import os
+    import re
+    import signal
+    import statistics
+    import subprocess
+    import time
+    import urllib.error
+    import urllib.request
+    from pathlib import Path
+
+    MODEL_PATH = Path(os.environ["MODEL_PATH"])
+    MODEL_NAME = "gfx1100-qwen35-mtp-kill-test"
+    PORT = 8000
+    BASE_URL = f"http://127.0.0.1:{PORT}"
+    START_TIMEOUT_SECONDS = 1800
+    MIN_ACCEPTANCE = 0.60
+    MIN_MEDIAN_SPEEDUP = 1.08
+    MIN_WORKLOAD_RATIO = 0.95
+    WARMUP_RUNS = 6
+    MIN_WARMUP_TOKENS = 768
+    STARTUP_FAILURE_TAIL_LINES = 800
+    SPEC_CONFIG = {"method": "qwen3_5_mtp", "num_speculative_tokens": 1}
+    FAULT_RE = re.compile(
+        r"(hsa.*(fault|error)|memory aperture|segmentation fault|sigsegv|"
+        r"hip error|gpu fault|out of memory|hipoutofmemory|abort(?:ed)?)",
+        re.IGNORECASE,
+    )
+    GRACEFUL_ABORT_RE = re.compile(
+        r"\[shutdown\].*\bmode=abort timeout=0s\b",
+        re.IGNORECASE,
+    )
+
+    WORKLOADS = [
+        {
+            "name": "short_qa",
+            "max_tokens": 128,
+            "prompt": (
+                "Answer directly and precisely. Explain why a GPU runtime "
+                "certificate must bind both an image digest and a model artifact digest."
+            ),
+        },
+        {
+            "name": "code",
+            "max_tokens": 192,
+            "prompt": (
+                "Write a compact Go function that validates a sha256 digest-pinned "
+                "OCI image reference. Include errors for mutable tags and malformed "
+                "digests, then explain two edge cases."
+            ),
+        },
+        {
+            "name": "long_context_summary",
+            "max_tokens": 256,
+            "prompt": (
+                "Summarize the following synthetic incident timeline into cause, "
+                "impact, evidence, and corrective action. Do not copy sentences.\n\n"
+                + "\n".join(
+                    f"Event {i:03d}: worker-{i % 7} observed queue depth {17 + i % 13}; "
+                    f"trace {i * 7919 % 100000:05d} linked the delay to cache shard "
+                    f"{i % 11}, while request class {chr(65 + i % 6)} remained coherent."
+                    for i in range(180)
+                )
+            ),
+        },
+    ]
+
+    PARITY_PROBES = [
+        {
+            "name": "literal",
+            "max_tokens": 16,
+            "min_completion_tokens": 1,
+            "prompt": "Reply with exactly this text and nothing else: ROCM_CERTIFIED",
+        },
+        {
+            "name": "json",
+            "max_tokens": 32,
+            "min_completion_tokens": 1,
+            "prompt": (
+                'Return exactly this minified JSON and nothing else: '
+                '{"arch":"gfx1100","status":"ok"}'
+            ),
+        },
+        {
+            "name": "hex",
+            "max_tokens": 24,
+            "min_completion_tokens": 1,
+            "prompt": (
+                "Reply with exactly sha256: followed by sixteen lowercase zero "
+                "digits and nothing else."
+            ),
+        },
+    ]
+
+
+    def require(condition, message):
+        if not condition:
+            raise AssertionError(message)
+
+
+    def sha256_file(path):
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+
+    def artifact_preflight():
+        require(MODEL_PATH.is_dir(), f"model path missing: {MODEL_PATH}")
+        fingerprint_files = [
+            "config.json",
+            "quantize_config.json",
+            "model.safetensors.index.json",
+            ".save-complete",
+            ".flexinfer-mtp-experts-gptq.json",
+        ]
+        fingerprints = {}
+        for name in fingerprint_files:
+            path = MODEL_PATH / name
+            require(path.is_file(), f"artifact evidence file missing: {path}")
+            fingerprints[name] = sha256_file(path)
+
+        with (MODEL_PATH / "config.json").open() as handle:
+            config = json.load(handle)
+        with (MODEL_PATH / "quantize_config.json").open() as handle:
+            quantize_config = json.load(handle)
+        with (MODEL_PATH / ".flexinfer-mtp-experts-gptq.json").open() as handle:
+            mtp_expert_marker = json.load(handle)
+        text_config = config.get("text_config") or config
+        mtp_layers = text_config.get("mtp_num_hidden_layers")
+        if mtp_layers is None:
+            mtp_layers = text_config.get("num_nextn_predict_layers")
+        require(
+            isinstance(mtp_layers, int) and mtp_layers > 0,
+            f"artifact config declares no native MTP layers: {mtp_layers!r}",
+        )
+
+        with (MODEL_PATH / "model.safetensors.index.json").open() as handle:
+            index = json.load(handle)
+        weight_map = index.get("weight_map") or {}
+        mtp_keys = sorted(
+            key
+            for key in weight_map
+            if re.search(r"(^|\.)mtp(\.|_)", key, re.IGNORECASE)
+        )
+        require(mtp_keys, "artifact index contains no MTP weight keys")
+        mtp_quantized_suffixes = (".qweight", ".qzeros", ".scales", ".g_idx")
+        mtp_quantized_keys = [
+            key for key in mtp_keys if key.endswith(mtp_quantized_suffixes)
+        ]
+        mtp_plain_weights = [key for key in mtp_keys if key.endswith(".weight")]
+        require(
+            mtp_expert_marker.get("source_artifact_digest")
+            == os.environ["EXPECTED_SOURCE_ARTIFACT_DIGEST"],
+            "MTP expert marker does not bind the qualified source artifact",
+        )
+        require(
+            mtp_expert_marker.get("contract_digest")
+            == os.environ["EXPECTED_MTP_EXPERT_CONTRACT_DIGEST"],
+            "MTP expert marker does not match the qualified surgery contract",
+        )
+        require(
+            mtp_expert_marker.get("expert_count") == 256
+            and mtp_expert_marker.get("removed_plain_expert_tensor_count") == 768,
+            "MTP expert marker does not prove the complete 256x3 surgery",
+        )
+        require(
+            mtp_expert_marker.get("output_quantized_tensor_count") == 4
+            and len(mtp_quantized_keys) == 4,
+            "MTP artifact does not contain exactly four fused GPTQ tensors",
+        )
+        require(
+            mtp_expert_marker.get("bytes_freed", 0) >= 1138166333,
+            "MTP expert surgery did not free the failed allocation envelope",
+        )
+        dynamic = quantize_config.get("dynamic") or {}
+        if isinstance(dynamic, dict):
+            mtp_dynamic_policy = {
+                pattern: policy
+                for pattern, policy in dynamic.items()
+                if "mtp" in pattern.lower()
+            }
+        else:
+            mtp_dynamic_policy = {
+                "unexpected_dynamic_type": type(dynamic).__name__,
+                "value": dynamic,
+            }
+        result = {
+            "config_model_type": text_config.get("model_type"),
+            "architectures": text_config.get("architectures"),
+            "mtp_layers": mtp_layers,
+            "mtp_weight_count": len(mtp_keys),
+            "mtp_weight_sample": mtp_keys[:12],
+            "mtp_quantized_tensor_count": len(mtp_quantized_keys),
+            "mtp_quantized_tensor_sample": mtp_quantized_keys[:12],
+            "mtp_plain_weight_count": len(mtp_plain_weights),
+            "mtp_plain_weight_sample": mtp_plain_weights[:12],
+            "mtp_dynamic_policy": mtp_dynamic_policy,
+            "mtp_expert_marker": mtp_expert_marker,
+            "fingerprints": fingerprints,
+        }
+        print("ARTIFACT_PREFLIGHT " + json.dumps(result, sort_keys=True), flush=True)
+        return result
+
+
+    def runtime_preflight():
+        import torch
+        import vllm
+
+        plugins = sorted(
+            ep.name
+            for ep in importlib.metadata.entry_points(group="vllm.general_plugins")
+        )
+        require("flexinfer_qwen35_text" in plugins, "FlexInfer Qwen3.5 plugin missing")
+        plugin_version = importlib.metadata.version("flexinfer-vllm-qwen35-text")
+        require(
+            plugin_version == os.environ["EXPECTED_PLUGIN_VERSION"],
+            f"unexpected Qwen3.5 plugin version {plugin_version}",
+        )
+        result = {
+            "vllm": getattr(vllm, "__version__", "unknown"),
+            "torch": torch.__version__,
+            "torch_hip": torch.version.hip,
+            "device": torch.cuda.get_device_name(0),
+            "plugins": plugins,
+            "qwen35_plugin_version": plugin_version,
+            "mtp_experts_gptq": os.environ.get(
+                "FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ"
+            ),
+            "expected_image_digest": os.environ["EXPECTED_IMAGE_DIGEST"],
+            "probe_execution_mode": os.environ.get(
+                "PROBE_EXECUTION_MODE", "graph"
+            ),
+        }
+        print("RUNTIME_PREFLIGHT " + json.dumps(result, sort_keys=True), flush=True)
+        return result
+
+
+    def request_json(path, payload=None, timeout=900):
+        data = None if payload is None else json.dumps(payload).encode()
+        request = urllib.request.Request(
+            BASE_URL + path,
+            data=data,
+            headers={"Content-Type": "application/json"},
+            method="GET" if payload is None else "POST",
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            raw = response.read().decode()
+            content_type = response.headers.get("Content-Type", "")
+            return json.loads(raw) if "json" in content_type else raw
+
+
+    def server_command(speculative):
+        command = [
+            "vllm",
+            "serve",
+            str(MODEL_PATH),
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(PORT),
+            "--dtype",
+            "half",
+            "--max-model-len",
+            "32768",
+            "--gpu-memory-utilization",
+            "0.96",
+            "--quantization",
+            "gptq",
+            "--served-model-name",
+            MODEL_NAME,
+            "--kv-cache-dtype",
+            "fp8_e4m3",
+            "--no-calculate-kv-scales",
+            "--hf-overrides",
+            json.dumps(
+                {
+                    "architectures": ["Qwen3_5MoeForCausalLM"],
+                    "rope_parameters": {
+                        "rope_type": "default",
+                        "rope_theta": 10000000,
+                        "partial_rotary_factor": 0.25,
+                    },
+                },
+                separators=(",", ":"),
+            ),
+            "--language-model-only",
+            "--max-num-seqs",
+            "1",
+            # A baseline request decodes one target token; one-token MTP verifies
+            # target+draft together. Keep each arm on its real one-request shape.
+            "--cudagraph-capture-sizes",
+            "2" if speculative else "1",
+            "--max-num-batched-tokens",
+            "4096",
+            "--enable-chunked-prefill",
+            "--scheduler-reserve-full-isl",
+            "--gdn-prefill-backend",
+            "triton",
+            "--no-enable-prefix-caching",
+            "--trust-remote-code",
+            "--cudagraph-metrics",
+            "--kv-cache-metrics",
+            "--kv-cache-metrics-sample",
+            "1.0",
+            "--fail-on-environ-validation",
+        ]
+        if speculative:
+            command.extend(
+                ["--speculative-config", json.dumps(SPEC_CONFIG, separators=(",", ":"))]
+            )
+        execution_mode = os.environ.get("PROBE_EXECUTION_MODE", "graph")
+        if execution_mode == "eager":
+            command.append("--enforce-eager")
+        elif execution_mode != "graph":
+            raise ValueError(f"unsupported PROBE_EXECUTION_MODE={execution_mode!r}")
+        return command
+
+
+    def start_server(label, speculative):
+        log_path = Path(f"/tmp/{label}.log")
+        log_handle = log_path.open("w")
+        command = server_command(speculative)
+        print("SERVER_COMMAND " + label + " " + json.dumps(command), flush=True)
+        process = subprocess.Popen(
+            command,
+            stdout=log_handle,
+            stderr=subprocess.STDOUT,
+            start_new_session=True,
+            env=os.environ.copy(),
+        )
+        deadline = time.monotonic() + START_TIMEOUT_SECONDS
+        last_error = None
+        while time.monotonic() < deadline:
+            if process.poll() is not None:
+                log_handle.close()
+                tail = "\n".join(
+                    log_path.read_text(errors="replace").splitlines()[
+                        -STARTUP_FAILURE_TAIL_LINES:
+                    ]
+                )
+                raise RuntimeError(
+                    f"{label} server exited during startup rc={process.returncode}\n{tail}"
+                )
+            try:
+                health = request_json("/health", timeout=5)
+                print(f"SERVER_READY {label} health={health!r}", flush=True)
+                return process, log_handle, log_path
+            except (OSError, urllib.error.URLError) as error:
+                last_error = error
+                time.sleep(2)
+        os.killpg(process.pid, signal.SIGKILL)
+        log_handle.close()
+        raise TimeoutError(f"{label} server readiness timeout: {last_error}")
+
+
+    def stop_server(process, log_handle, label):
+        if process.poll() is None:
+            os.killpg(process.pid, signal.SIGTERM)
+            try:
+                process.wait(timeout=90)
+            except subprocess.TimeoutExpired:
+                os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=30)
+        log_handle.close()
+        print(f"SERVER_STOPPED {label} rc={process.returncode}", flush=True)
+
+
+    def metrics_text():
+        request = urllib.request.Request(BASE_URL + "/metrics")
+        with urllib.request.urlopen(request, timeout=30) as response:
+            return response.read().decode()
+
+
+    def metric_sum(metrics, fragments):
+        total = 0.0
+        matched = []
+        for line in metrics.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            name = line.split("{", 1)[0].split(" ", 1)[0]
+            if not any(fragment in name for fragment in fragments):
+                continue
+            try:
+                value = float(line.rsplit(" ", 1)[1])
+            except ValueError:
+                continue
+            if value == value and value not in (float("inf"), float("-inf")):
+                total += value
+                matched.append(line)
+        return total, matched
+
+
+    def metric_sum_exact(metrics, names):
+        total = 0.0
+        matched = []
+        for line in metrics.splitlines():
+            if not line or line.startswith("#"):
+                continue
+            name = line.split("{", 1)[0].split(" ", 1)[0]
+            if name not in names:
+                continue
+            try:
+                value = float(line.rsplit(" ", 1)[1])
+            except ValueError:
+                continue
+            if value == value and value not in (float("inf"), float("-inf")):
+                total += value
+                matched.append(line)
+        return total, matched
+
+
+    def chat_once(workload):
+        payload = {
+                "model": MODEL_NAME,
+                "messages": [{"role": "user", "content": workload["prompt"]}],
+                "temperature": 0,
+                "top_p": 1,
+                "seed": 17,
+                "max_tokens": workload["max_tokens"],
+                "chat_template_kwargs": {"enable_thinking": False},
+                "stream": True,
+                "stream_options": {"include_usage": True},
+        }
+        request = urllib.request.Request(
+            BASE_URL + "/v1/chat/completions",
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        streams = {"reasoning_content": [], "content": []}
+        first_token_at = None
+        last_token_at = None
+        completion_tokens = None
+        with urllib.request.urlopen(request, timeout=900) as response:
+            for raw_line in response:
+                line = raw_line.decode(errors="replace").strip()
+                if not line.startswith("data: "):
+                    continue
+                data = line[6:]
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
+                usage = chunk.get("usage")
+                if usage:
+                    completion_tokens = usage.get("completion_tokens")
+                choices = chunk.get("choices") or []
+                if not choices:
+                    continue
+                delta = choices[0].get("delta") or {}
+                for field in ("reasoning_content", "content"):
+                    value = delta.get(field)
+                    if not value:
+                        continue
+                    now = time.monotonic()
+                    if first_token_at is None:
+                        first_token_at = now
+                    last_token_at = now
+                    streams[field].append(value)
+        require(any(streams.values()), f"empty completion for {workload['name']}")
+        require(completion_tokens is not None, f"missing usage for {workload['name']}")
+        min_completion_tokens = workload.get("min_completion_tokens", 8)
+        require(
+            completion_tokens >= min_completion_tokens,
+            f"too few tokens for {workload['name']}: {completion_tokens}",
+        )
+        require(last_token_at > first_token_at, f"no decode interval for {workload['name']}")
+        elapsed = last_token_at - first_token_at
+        transcript = json.dumps(
+            {field: "".join(values) for field, values in streams.items()},
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return {
+            "content_hash": hashlib.sha256(transcript.encode()).hexdigest(),
+            "transcript": transcript,
+            "completion_tokens": completion_tokens,
+            "elapsed": elapsed,
+            "tps": (completion_tokens - 1) / elapsed,
+        }
+
+
+    def run_arm(label, speculative):
+        process, log_handle, log_path = start_server(label, speculative)
+        try:
+            # A cache hit skips enough compiler work that lazy ROCm kernels and
+            # device clocks can enter the first timed workload cold. Use the
+            # same fixed decoded-token warmup for both arms; never adapt it to
+            # observed performance.
+            warmups = [chat_once(WORKLOADS[0]) for _ in range(WARMUP_RUNS)]
+            warmup_tokens = sum(run["completion_tokens"] for run in warmups)
+            require(
+                warmup_tokens >= MIN_WARMUP_TOKENS,
+                f"{label} warmup produced only {warmup_tokens} tokens",
+            )
+            print(
+                "WARMUP_RESULT "
+                + label
+                + " "
+                + json.dumps(
+                    {
+                        "tokens": warmup_tokens,
+                        "tps": [run["tps"] for run in warmups],
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            before = metrics_text()
+            parity = {}
+            for probe in PARITY_PROBES:
+                runs = [chat_once(probe) for _ in range(2)]
+                hashes = {run["content_hash"] for run in runs}
+                if len(hashes) != 1:
+                    print(
+                        "PARITY_INSTABILITY "
+                        + label
+                        + "/"
+                        + probe["name"]
+                        + " "
+                        + json.dumps(runs, sort_keys=True),
+                        flush=True,
+                    )
+                require(
+                    len(hashes) == 1,
+                    f"{label}/{probe['name']} constrained parity changed",
+                )
+                parity[probe["name"]] = {
+                    "content_hash": runs[0]["content_hash"],
+                    "transcript": runs[0]["transcript"],
+                    "completion_tokens": runs[0]["completion_tokens"],
+                }
+            workloads = {}
+            for workload in WORKLOADS:
+                runs = [chat_once(workload) for _ in range(3)]
+                workloads[workload["name"]] = {
+                    "content_hash": runs[0]["content_hash"],
+                    "completion_tokens": runs[0]["completion_tokens"],
+                    "median_tps": statistics.median(run["tps"] for run in runs),
+                    "runs": [
+                        {
+                            "elapsed": run["elapsed"],
+                            "tps": run["tps"],
+                            "completion_tokens": run["completion_tokens"],
+                        }
+                        for run in runs
+                    ],
+                }
+            after = metrics_text()
+            draft_before, _ = metric_sum_exact(
+                before,
+                {
+                    "vllm:spec_decode_num_draft_tokens_total",
+                    "vllm:spec_decode_draft_tokens_total",
+                },
+            )
+            draft_after, draft_lines = metric_sum_exact(
+                after,
+                {
+                    "vllm:spec_decode_num_draft_tokens_total",
+                    "vllm:spec_decode_draft_tokens_total",
+                },
+            )
+            accepted_before, _ = metric_sum_exact(
+                before,
+                {
+                    "vllm:spec_decode_num_accepted_tokens_total",
+                    "vllm:spec_decode_accepted_tokens_total",
+                },
+            )
+            accepted_after, accepted_lines = metric_sum_exact(
+                after,
+                {
+                    "vllm:spec_decode_num_accepted_tokens_total",
+                    "vllm:spec_decode_accepted_tokens_total",
+                },
+            )
+            graph_total, graph_lines = metric_sum(
+                after, ["cudagraph", "cuda_graph", "hip_graph"]
+            )
+            result = {
+                "parity": parity,
+                "workloads": workloads,
+                "draft_tokens": max(0.0, draft_after - draft_before),
+                "accepted_tokens": max(0.0, accepted_after - accepted_before),
+                "draft_metric_lines": draft_lines,
+                "accepted_metric_lines": accepted_lines,
+                "graph_metric_total": graph_total,
+                "graph_metric_lines": graph_lines,
+            }
+            print("ARM_RESULT " + label + " " + json.dumps(result, sort_keys=True), flush=True)
+            return result, log_path
+        finally:
+            stop_server(process, log_handle, label)
+
+
+    def scan_logs(paths):
+        faults = []
+        graph_evidence = []
+        for path in paths:
+            for line in path.read_text(errors="replace").splitlines():
+                # vLLM names normal zero-timeout API and EngineCore shutdowns
+                # `mode=abort`; retain real abort/crash detection while excluding
+                # only explicitly tagged zero-timeout lifecycle messages.
+                if FAULT_RE.search(line) and not GRACEFUL_ABORT_RE.search(line):
+                    faults.append(f"{path.name}: {line}")
+                if re.search(r"(cudagraph|cuda graph|hip graph)", line, re.IGNORECASE):
+                    graph_evidence.append(f"{path.name}: {line}")
+        require(not faults, "runtime fault markers:\n" + "\n".join(faults[-40:]))
+        require(graph_evidence, "no graph-mode evidence found in server logs")
+        return graph_evidence[-40:]
+
+
+    def main():
+        artifact = artifact_preflight()
+        runtime = runtime_preflight()
+        if os.environ.get("PROBE_MODE") == "mtp-only":
+            speculative, speculative_log = run_arm("mtp", True)
+            draft_tokens = speculative["draft_tokens"]
+            accepted_tokens = speculative["accepted_tokens"]
+            require(draft_tokens > 0, "MTP emitted no draft-token metric delta")
+            acceptance = accepted_tokens / draft_tokens
+            require(
+                acceptance >= MIN_ACCEPTANCE,
+                f"MTP acceptance {acceptance:.3f} below {MIN_ACCEPTANCE:.3f}",
+            )
+            execution_mode = os.environ.get("PROBE_EXECUTION_MODE", "graph")
+            if execution_mode == "eager":
+                print(
+                    "EAGER_MTP_RESULT PASS "
+                    + json.dumps(
+                        {
+                            "artifact": artifact,
+                            "runtime": runtime,
+                            "speculative_config": SPEC_CONFIG,
+                            "speculative": speculative,
+                            "acceptance": acceptance,
+                            "certificate": False,
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+                return
+            graph_evidence = scan_logs([speculative_log])
+            print(
+                "MTP_ONLY_RESULT PASS "
+                + json.dumps(
+                    {
+                        "artifact": artifact,
+                        "runtime": runtime,
+                        "speculative_config": SPEC_CONFIG,
+                        "speculative": speculative,
+                        "acceptance": acceptance,
+                        "graph_evidence": graph_evidence,
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
+            return
+        baseline, baseline_log = run_arm("baseline", False)
+        speculative, speculative_log = run_arm("mtp", True)
+
+        for probe in PARITY_PROBES:
+            name = probe["name"]
+            base = baseline["parity"][name]
+            spec = speculative["parity"][name]
+            require(
+                spec["content_hash"] == base["content_hash"],
+                f"MTP changed constrained greedy output for {name}",
+            )
+            require(
+                spec["completion_tokens"] == base["completion_tokens"],
+                f"MTP changed constrained completion length for {name}",
+            )
+
+        ratios = {}
+        for workload in WORKLOADS:
+            name = workload["name"]
+            base = baseline["workloads"][name]
+            spec = speculative["workloads"][name]
+            ratios[name] = spec["median_tps"] / base["median_tps"]
+            require(
+                ratios[name] >= MIN_WORKLOAD_RATIO,
+                f"MTP workload regression {name}: ratio={ratios[name]:.3f}",
+            )
+
+        draft_tokens = speculative["draft_tokens"]
+        accepted_tokens = speculative["accepted_tokens"]
+        require(draft_tokens > 0, "MTP emitted no draft-token metric delta")
+        acceptance = accepted_tokens / draft_tokens
+        require(
+            acceptance >= MIN_ACCEPTANCE,
+            f"MTP acceptance {acceptance:.3f} below {MIN_ACCEPTANCE:.3f}",
+        )
+        median_speedup = statistics.median(ratios.values())
+        require(
+            median_speedup >= MIN_MEDIAN_SPEEDUP,
+            f"MTP median speedup {median_speedup:.3f} below {MIN_MEDIAN_SPEEDUP:.3f}",
+        )
+        graph_evidence = scan_logs([baseline_log, speculative_log])
+        result = {
+            "artifact": artifact,
+            "runtime": runtime,
+            "speculative_config": SPEC_CONFIG,
+            "ratios": ratios,
+            "median_speedup": median_speedup,
+            "draft_tokens": draft_tokens,
+            "accepted_tokens": accepted_tokens,
+            "acceptance": acceptance,
+            "graph_evidence": graph_evidence,
+        }
+        print("PROBE_RESULT PASS " + json.dumps(result, sort_keys=True), flush=True)
+
+
+    if __name__ == "__main__":
+        try:
+            main()
+        except Exception as error:
+            print(f"PROBE_RESULT FAIL {type(error).__name__}: {error}", flush=True)
+            raise
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gfx1100-qwen35-mtp-kill-test
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/name: gfx1100-qwen35-mtp-kill-test
+    flexinfer.ai/probe: gfx1100-qwen35-mtp
+  annotations:
+    flexinfer.ai/canary: gfx1100-qwen35-mtp
+    flexinfer.ai/source-artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+    flexinfer.ai/mtp-expert-contract-digest: sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d
+    flexinfer.ai/output-contract: qwen35-mtp-experts-gptq-w4g128-rtn-v1
+    flexinfer.ai/runtime-digest: sha256:f467e202987671b321e215142a7a6be7b910940c1323fced6243b573d27c8669
+    flexinfer.ai/kill-test: .loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md
+spec:
+  suspend: true
+  backoffLimit: 0
+  activeDeadlineSeconds: 5400
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gfx1100-qwen35-mtp-kill-test
+        flexinfer.ai/probe: gfx1100-qwen35-mtp
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-7900xtx
+      tolerations:
+        - effect: NoSchedule
+          key: dedicated
+          operator: Equal
+          value: gpu
+        - effect: NoSchedule
+          key: node-role.kubernetes.io/control-plane
+          operator: Exists
+      containers:
+        - name: probe
+          image: registry.harbor.lan/flexinfer/vllm@sha256:f467e202987671b321e215142a7a6be7b910940c1323fced6243b573d27c8669
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "-lc"]
+          args: ["exec python3 /probe/probe.py"]
+          env:
+            - name: MODEL_PATH
+              value: /models/qwen35-35b-a3b-clean/gptq-w4-g128-gdn-mtp-experts-w4g128
+            - name: EXPECTED_SOURCE_ARTIFACT_DIGEST
+              value: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+            - name: EXPECTED_MTP_EXPERT_CONTRACT_DIGEST
+              value: sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d
+            - name: EXPECTED_IMAGE_DIGEST
+              value: sha256:f467e202987671b321e215142a7a6be7b910940c1323fced6243b573d27c8669
+            - name: EXPECTED_PLUGIN_VERSION
+              value: 0.6.0
+            - name: PROBE_MODE
+              value: full-ab
+            - name: PROBE_EXECUTION_MODE
+              value: graph
+            - name: VLLM_CACHE_ROOT
+              value: /var/lib/flexinfer/compile-cache
+            - name: FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ
+              value: "1"
+            - name: HSA_OVERRIDE_GFX_VERSION
+              value: 11.0.0
+            - name: TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL
+              value: "1"
+            - name: HIP_FORCE_DEV_KERNARG
+              value: "1"
+            - name: TORCH_BLAS_PREFER_HIPBLASLT
+              value: "1"
+            - name: PYTORCH_ROCM_ARCH
+              value: gfx1100
+            - name: HIP_VISIBLE_DEVICES
+              value: "0"
+            - name: ROCR_VISIBLE_DEVICES
+              value: "0"
+            - name: GPU_DEVICE_ORDINAL
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_PAGED_ATTN
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_LINEAR
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_MOE
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_RMSNORM
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_MLA
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_MHA
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_FP4_ASM_GEMM
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_TRITON_ROPE
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_FP8BMM
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_FP4BMM
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS
+              value: "0"
+            - name: VLLM_ROCM_USE_AITER_TRITON_GEMM
+              value: "0"
+          resources:
+            requests:
+              cpu: "4"
+              memory: 16Gi
+              amd.com/gpu: "2"
+            limits:
+              cpu: "8"
+              memory: 48Gi
+              amd.com/gpu: "2"
+          volumeMounts:
+            - name: models
+              mountPath: /models
+              readOnly: true
+            - name: compilation-cache
+              mountPath: /var/lib/flexinfer/compile-cache
+            - name: shm
+              mountPath: /dev/shm
+            - name: probe
+              mountPath: /probe
+              readOnly: true
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: llm-models-nfs
+        - name: compilation-cache
+          hostPath:
+            path: /var/lib/flexinfer/compile-cache
+            type: DirectoryOrCreate
+        - name: shm
+          emptyDir:
+            medium: Memory
+            sizeLimit: 8Gi
+        - name: probe
+          configMap:
+            name: gfx1100-qwen35-mtp-kill-test

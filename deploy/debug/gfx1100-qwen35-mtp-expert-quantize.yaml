@@ -1,0 +1,89 @@
+# Suspended-by-default builder for the clean Qwen3.5 native MTP expert draft.
+#
+# This is a CPU/NFS surgery job despite using the ROCm quantizer image. It
+# hard-links the validated clean artifact into a sibling staging directory,
+# rewrites only the MTP expert shard(s), and atomically publishes only after the
+# 256 x 3 input contract and RTN round-trip quality gates pass. The source tree
+# is mounted read/write only because POSIX hard links require the same PVC; the
+# script hashes its source metadata before and after and never replaces a source
+# file.
+#
+# The image below is the digest-pinned output of CI job 186343. Before
+# unsuspending, record the pod imageID in the iteration log.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: gfx1100-qwen35-mtp-expert-quantize
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/name: gfx1100-qwen35-mtp-expert-quantize
+    flexinfer.ai/artifact-builder: qwen35-mtp-expert-gptq
+  annotations:
+    flexinfer.ai/source-artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+    flexinfer.ai/output-contract: qwen35-mtp-experts-gptq-w4g128-rtn-v1
+spec:
+  suspend: true
+  backoffLimit: 0
+  activeDeadlineSeconds: 10800
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: gfx1100-qwen35-mtp-expert-quantize
+    spec:
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      tolerations:
+        - key: node.flexstack.io/gpu-shared
+          operator: Exists
+        - key: node.flexstack.io/incident-quarantine
+          operator: Equal
+          value: etcd-io
+          effect: NoSchedule
+        - key: node.kubernetes.io/unschedulable
+          operator: Exists
+          effect: NoSchedule
+      imagePullSecrets:
+        - name: harbor-creds
+      containers:
+        - name: quantize-mtp-experts
+          image: registry.harbor.lan/flexinfer/quantizer@sha256:cb7394a155381ac55143425759f1b6d9f181c5e42939527ef4a0f124d1b9cf32
+          imagePullPolicy: IfNotPresent
+          command: ["bash", "-lc"]
+          args:
+            - |
+              set -euo pipefail
+              test "$(sha256sum /opt/flexinfer/scripts/quantize_mtp_experts.py | awk '{print $1}')" = "${EXPECTED_SCRIPT_SHA256}"
+              exec python3 /opt/flexinfer/scripts/quantize_mtp_experts.py \
+                --source /models/qwen35-35b-a3b-clean/gptq-w4-g128-gdn \
+                --output /models/qwen35-35b-a3b-clean/gptq-w4-g128-gdn-mtp-experts-w4g128 \
+                --source-artifact-digest "${SOURCE_ARTIFACT_DIGEST}" \
+                --expected-experts 256 \
+                --group-size 128 \
+                --min-bytes-freed 1138166333 \
+                --max-relative-l1 0.18 \
+                --min-matrix-cosine 0.97
+          env:
+            - name: SOURCE_ARTIFACT_DIGEST
+              value: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+            - name: EXPECTED_SCRIPT_SHA256
+              value: 2556bb12542893475bf86b40d23c3ae78eb45a3063590ba5bfb6d395375f7f9e
+            - name: OMP_NUM_THREADS
+              value: "8"
+            - name: HSA_ENABLE_SDMA
+              value: "0"
+          resources:
+            requests:
+              cpu: "8"
+              memory: 24Gi
+            limits:
+              cpu: "16"
+              memory: 64Gi
+          volumeMounts:
+            - name: models
+              mountPath: /models
+      volumes:
+        - name: models
+          persistentVolumeClaim:
+            claimName: llm-models-nfs

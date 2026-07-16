@@ -487,6 +487,27 @@ vllm_qwen35_text_plugin_test:
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *qwen35-text-plugin-changes
 
+mtp_expert_quantizer_test:
+  stage: test
+  image: python:3.12-slim
+  needs: []
+  before_script:
+    - python3 -m pip install --disable-pip-version-check --no-cache-dir numpy
+  script:
+    - python3 build/scripts/test_quantize_mtp_experts.py
+    - python3 -m py_compile build/scripts/quantize_mtp_experts.py
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &mtp-expert-quantizer-changes
+        - .gitlab-ci.yml
+        - build/Dockerfile.quantizer-mtp-expert
+        - build/Dockerfile.quantizer-gptq-rocm
+        - build/scripts/quantize_mtp_experts.py
+        - build/scripts/test_quantize_mtp_experts.py
+        - deploy/debug/gfx1100-qwen35-mtp-expert-quantize.yaml
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *mtp-expert-quantizer-changes
+
 # Targeted promotion gate for master/merge pipelines.
 # This validates the ModelCache readiness contract without requiring a live cluster.
 promotion_gate_test:
@@ -1111,7 +1132,7 @@ build_quantizer_gptq_rocm:
           --opt platform=linux/amd64 \
           --import-cache "type=registry,ref=${REGISTRY}/quantizer:gptq-rocm-gfx906" \
           --export-cache "type=inline" \
-          --output "type=image,name=${REGISTRY}/quantizer:gptq-rocm-gfx906,push=true"; then
+          --output "type=image,\"name=${REGISTRY}/quantizer:gptq-rocm-gfx906,${REGISTRY}/quantizer:gptq-rocm-gfx906-${CI_COMMIT_SHORT_SHA}\",push=true"; then
           break
         fi
         if [ "${i}" -eq "${attempts}" ]; then
@@ -1127,10 +1148,15 @@ build_quantizer_gptq_rocm:
       changes:
         - build/Dockerfile.quantizer-gptq-rocm
         - build/scripts/quantize_gptq.py
+        - build/scripts/quantize_mtp_experts.py
         - build/scripts/qwen35_wrap_to_vl_layout.py
         - build/scripts/qwen35_unwrap_from_vl_layout.py
         - build/scripts/abliterate.py
     - if: $CI_COMMIT_TAG
+    - if: $CI_MERGE_REQUEST_ID
+      changes: *mtp-expert-quantizer-changes
+      when: manual
+      allow_failure: true
     - if: $CI_PIPELINE_SOURCE == "web"
       when: manual
 
@@ -1848,6 +1874,33 @@ publish_vllm_rocm_v023_qwen35_text:
         --import-cache "type=registry,ref=${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text" \
         --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text,${REGISTRY}/vllm:rocm-v0.23.0-qwen35-text-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - when: manual
+      allow_failure: true
+
+publish_mtp_expert_quantizer:
+  stage: publish
+  image: moby/buildkit:v0.28.0
+  timeout: 30m
+  needs: []
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Publishing copy-only MTP expert quantizer overlay..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.quantizer-mtp-expert" \
+        --opt platform=linux/amd64 \
+        --output "type=image,name=${REGISTRY}/quantizer:gptq-rocm-gfx906-mtp-${CI_COMMIT_SHORT_SHA},push=true"
   rules:
     - when: manual
       allow_failure: true
