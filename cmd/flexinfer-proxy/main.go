@@ -5,7 +5,9 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
+	"syscall"
 
 	"github.com/flexinfer/flexinfer/internal/proxy"
 	"github.com/flexinfer/flexinfer/pkg/observability"
@@ -72,8 +74,11 @@ func main() {
 		slog.Error("invalid proxy configuration", "error", err)
 		os.Exit(1)
 	}
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	p := proxy.New(proxyCfg)
-	if err := p.Run(port); err != nil {
+	if err := p.Run(ctx, port); err != nil {
 		slog.Error("server failed", "error", err)
 		os.Exit(1)
 	}
