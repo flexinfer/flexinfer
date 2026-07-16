@@ -47,9 +47,11 @@ type flashLoaderRuntimeConfig struct {
 
 const defaultFlashLoaderConcurrency = 4
 
+const defaultFlashLoaderImageRef = "registry.harbor.lan/flexinfer/flexinfer-flash-loader:master"
+
 var defaultFlashLoaderImage = envutil.StringOrDefault(
 	"FLEXINFER_FLASH_LOADER_IMAGE",
-	"registry.harbor.lan/flexinfer/flexinfer-flash-loader:latest",
+	defaultFlashLoaderImageRef,
 )
 
 // cleanupFlashTmpfs creates a short-lived Job to remove the persistent

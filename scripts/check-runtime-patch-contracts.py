@@ -420,6 +420,18 @@ def assert_wan_video_warm_contract(wan_yaml: str) -> None:
             fail(f"Wan warm video contract regressed: {snippet!r}")
 
 
+def assert_flash_loader_image_contract(
+    controller_source: str, deployment_source: str, values_yaml: str
+) -> None:
+    published_ref = "registry.harbor.lan/flexinfer/flexinfer-flash-loader:master"
+    if published_ref not in controller_source:
+        fail("controller flash-loader default must use the always-published :master tag")
+    if published_ref not in values_yaml:
+        fail("chart flash-loader default must use the always-published :master tag")
+    if "ImagePullPolicy: corev1.PullAlways" not in deployment_source:
+        fail("flash-loader init container must refresh its mutable :master tag")
+
+
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     fast_job = ci_yaml.find("runtime_patch_contracts:")
     serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
@@ -521,6 +533,7 @@ def main(argv: list[str]) -> int:
     gfx906_vllm_install_script = read("build/scripts/install_vllm_gfx906_compat.py")
     sunshine_launcher = read("build/sunshine-headless.sh")
     values_yaml = read("deploy/system/values-k3s.yaml")
+    chart_values_yaml = read("charts/flexinfer/values.yaml")
     qwen35_cache_yaml = read(
         "deploy/modelcaches/qwen35-35b-a3b-clean-gptq.yaml"
     )
@@ -537,6 +550,8 @@ def main(argv: list[str]) -> int:
         "deploy/models/qwen35-35b-clean-gptq-workhorse.yaml"
     )
     wan_video_yaml = read("deploy/models/wan21-t2v-1p3b-gfx1100.yaml")
+    flash_loader_source = read("controllers/flash_loader.go")
+    model_deployment_source = read("controllers/model_deployment.go")
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     assert_patch_scripts_exist_and_parse()
@@ -556,6 +571,9 @@ def main(argv: list[str]) -> int:
         qwen128_primary_yaml, qwen128_production_yaml
     )
     assert_wan_video_warm_contract(wan_video_yaml)
+    assert_flash_loader_image_contract(
+        flash_loader_source, model_deployment_source, chart_values_yaml
+    )
     assert_ci_fast_check_wiring(ci_yaml)
 
     if run_tests:

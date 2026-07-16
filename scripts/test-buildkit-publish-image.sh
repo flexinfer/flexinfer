@@ -63,6 +63,9 @@ BUILDKIT_HOST="tcp://buildkitd.example:1234" \
 BUILDKIT_OBSERVABILITY_DIR="${observability_dir}" \
 BUILDKIT_PUBLISH_ATTEMPTS=2 \
 BUILDKIT_PUBLISH_INITIAL_DELAY=0 \
+BUILDKIT_IMPORT_CACHE_REF="registry.example/example:cache" \
+BUILDKIT_BUILD_ARG="BASE_TAG=example" \
+BUILDKIT_EXPORT_INLINE_CACHE=1 \
   sh "${script}" example Dockerfile.example \
     registry.example/example:commit registry.example/example:stable \
     >"${output_file}" 2>&1
@@ -84,6 +87,9 @@ assert_contains 'tag=registry.example/example:stable attempt=1 status=success ex
 assert_contains 'retrying in 0s' "${output_file}"
 assert_contains '--progress=plain' "${command_log}"
 assert_contains '--metadata-file' "${command_log}"
+assert_contains '--import-cache type=registry,ref=registry.example/example:cache' "${command_log}"
+assert_contains '--opt build-arg:BASE_TAG=example' "${command_log}"
+assert_contains '--export-cache type=inline' "${command_log}"
 
 log_count="$(find "${observability_dir}" -type f -name '*.log' | wc -l | tr -d ' ')"
 metadata_count="$(find "${observability_dir}" -type f -name '*.metadata.json' | wc -l | tr -d ' ')"

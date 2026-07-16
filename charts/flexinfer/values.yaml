@@ -73,7 +73,7 @@ controller:
     # or when a matching v1alpha1 ModelCache enables flashLoader.
     flashLoader:
       enabled: false
-      image: "registry.harbor.lan/flexinfer/flexinfer-flash-loader:latest"
+      image: "registry.harbor.lan/flexinfer/flexinfer-flash-loader:master"
       concurrency: 4
       # Optional tmpfs size limit for flash-loader staging volume.
       tmpfsSizeLimit: ""

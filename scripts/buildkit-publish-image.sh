@@ -14,6 +14,9 @@ Environment:
   BUILDKIT_PUBLISH_ATTEMPTS        Attempts per tag (default: 5).
   BUILDKIT_PUBLISH_INITIAL_DELAY   Initial retry delay in seconds (default: 2).
   BUILDKIT_PUBLISH_TIMEOUT         buildctl timeout in seconds (default: 2700).
+  BUILDKIT_IMPORT_CACHE_REF        Optional registry cache reference.
+  BUILDKIT_BUILD_ARG               Optional single Docker build arg (KEY=VALUE).
+  BUILDKIT_EXPORT_INLINE_CACHE     Set to 1 to export inline cache metadata.
 EOF
 }
 
@@ -124,16 +127,26 @@ stream_build() {
   tee "${log_file}" <"${current_fifo}" &
   tee_pid="$!"
 
-  if buildctl --addr "${BUILDKIT_HOST}" --timeout "${timeout_seconds}" build \
+  set -- buildctl --addr "${BUILDKIT_HOST}" --timeout "${timeout_seconds}" build \
     --frontend dockerfile.v0 \
     --local context=. \
     --local dockerfile=build \
     --opt filename="${dockerfile}" \
     --opt platform=linux/amd64 \
     --progress=plain \
-    --metadata-file "${metadata_file}" \
-    --output "type=image,name=${tag},push=true" \
-    >"${current_fifo}" 2>&1; then
+    --metadata-file "${metadata_file}"
+  if [ -n "${BUILDKIT_IMPORT_CACHE_REF:-}" ]; then
+    set -- "$@" --import-cache "type=registry,ref=${BUILDKIT_IMPORT_CACHE_REF}"
+  fi
+  if [ -n "${BUILDKIT_BUILD_ARG:-}" ]; then
+    set -- "$@" --opt "build-arg:${BUILDKIT_BUILD_ARG}"
+  fi
+  if [ "${BUILDKIT_EXPORT_INLINE_CACHE:-0}" = "1" ]; then
+    set -- "$@" --export-cache "type=inline"
+  fi
+  set -- "$@" --output "type=image,name=${tag},push=true"
+
+  if "$@" >"${current_fifo}" 2>&1; then
     build_status=0
   else
     build_status="$?"

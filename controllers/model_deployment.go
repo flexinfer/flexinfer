@@ -428,9 +428,11 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		}
 
 		flashContainer := corev1.Container{
-			Name:            "flash-loader",
-			Image:           flashCfg.Image,
-			ImagePullPolicy: corev1.PullIfNotPresent,
+			Name:  "flash-loader",
+			Image: flashCfg.Image,
+			// The default :master tag advances on every successful publish.
+			// Always resolve it so a node cannot retain a stale loader binary.
+			ImagePullPolicy: corev1.PullAlways,
 			Env: []corev1.EnvVar{
 				{Name: "FLASH_SRC", Value: "/src"},
 				{Name: "FLASH_DST", Value: "/models"},

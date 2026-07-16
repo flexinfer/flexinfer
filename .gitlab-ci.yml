@@ -1217,6 +1217,11 @@ publish_diffusers_video_rocm_gfx1100:
   retry:
     max: 1
     when: [runner_system_failure, stuck_or_timeout_failure]
+  artifacts:
+    when: always
+    paths:
+      - .buildkit-observability/
+    expire_in: 7 days
   script:
     - |
       echo "Waiting for BuildKit..."
@@ -1228,22 +1233,21 @@ publish_diffusers_video_rocm_gfx1100:
       done
     - |
       echo "Building Diffusers text-to-video image for gfx1100..."
-      buildctl --addr "${BUILDKIT_HOST}" build \
-        --frontend dockerfile.v0 \
-        --local context=. \
-        --local dockerfile=build \
-        --opt filename="Dockerfile.diffusers-rocm" \
-        --opt platform=linux/amd64 \
-        --opt build-arg:ROCM_PYTORCH_TAG=rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.6.0 \
-        --import-cache "type=registry,ref=${REGISTRY}/diffusers-video:rocm-gfx1100" \
-        --export-cache "type=inline" \
-        --output "type=image,\"name=${REGISTRY}/diffusers-video:rocm-gfx1100,${REGISTRY}/diffusers-video:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}\",push=true"
+      BUILDKIT_PUBLISH_ATTEMPTS=2 \
+      BUILDKIT_IMPORT_CACHE_REF="${REGISTRY}/diffusers-video:rocm-gfx1100" \
+      BUILDKIT_BUILD_ARG="ROCM_PYTORCH_TAG=rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.6.0" \
+      BUILDKIT_EXPORT_INLINE_CACHE=1 \
+        sh scripts/buildkit-publish-image.sh \
+          diffusers-video Dockerfile.diffusers-rocm \
+          "${REGISTRY}/diffusers-video:rocm-gfx1100" \
+          "${REGISTRY}/diffusers-video:rocm-gfx1100-${CI_COMMIT_SHORT_SHA}"
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
       changes:
         - build/Dockerfile.diffusers-rocm
         - build/server-diffusers.py
         - build/requirements-diffusers-rocm.txt
+        - scripts/buildkit-publish-image.sh
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
