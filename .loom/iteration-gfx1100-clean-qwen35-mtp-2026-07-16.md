@@ -100,9 +100,8 @@ of this failed gate.
 - Iteration goal: retire or sharply narrow the clean-workhorse native-MTP
   assumption before any gfx1100 capability certificate ships.
 - Current result: plugin v0.6.0 and the surgical MTP-expert GPTQ artifact pass
-  eager load, execution, and an audited 80.28% acceptance gate. Graph mode now
-  compiles both the target backbone and MTP head, but vLLM's default size-4
-  capture leaves 0.18 GiB for a 0.42 GiB 32K KV-cache requirement.
+  the full 32K graph-mode baseline/MTP certificate on gfx1100: exact constrained
+  parity, 80.18% acceptance, no runtime fault, and a 1.230x median speedup.
 - Successor hypothesis: converting exactly the 256 x 3 MTP expert matrices to
   symmetric GPTQ W4G128 while retaining MTP attention/fc linears in BF16 frees
   at least the missing 1.06 GiB and preserves useful draft acceptance. This is
@@ -146,14 +145,15 @@ of this failed gate.
   unsuspend the parent Job and follow its logs. Record the pod `imageID` and
   terminal status.
 - Pod/job: Job `gfx1100-qwen35-mtp-kill-test` in `flexinfer-system`.
-- Confirmed image ID: pending live run.
+- Confirmed image ID:
+  `registry.harbor.lan/flexinfer/vllm@sha256:f467e202987671b321e215142a7a6be7b910940c1323fced6243b573d27c8669`.
 - Expected success condition: `PROBE_RESULT PASS` with exact tuple, weight-key
   count, workload ratios, draft/accepted-token counters, graph evidence, and a
   clean fault scan.
 
 ## Result
 
-- Outcome: in progress.
+- Outcome: PASS.
 - Attempt 1 artifact evidence: one native MTP layer; 785 plain MTP weights; zero
   quantized MTP tensors; pinned runtime image ID confirmed.
 - Attempt 1 failure: baseline startup rejected 32K because graph capture at
@@ -332,6 +332,17 @@ of this failed gate.
   reproducible cold-measurement defect, not grounds to relax the 0.95x floor.
   Attempt 20 applies a fixed, symmetric six-run/768-token untimed warmup before
   either arm's metrics and timings; it never adapts to observed throughput.
+- Attempt 20 result: `PROBE_RESULT PASS`; the Job Succeeded on the immutable
+  image/artifact tuple. Both arms completed their exact 768-token warmup, all
+  constrained parity hashes matched, 801 of 999 audited drafts were accepted
+  (80.18%), and the log scan found explicit PIECEWISE and FULL graph captures
+  with no ROCm/HSA/OOM/abort fault. Baseline medians were 77.00 tok/s code,
+  79.34 tok/s short QA, and 12.99 tok/s long context; MTP medians were 94.73,
+  91.63, and 28.62 tok/s. Ratios were 1.230x, 1.155x, and 2.203x, giving a
+  1.230x median speedup and clearing every per-workload floor. The probe
+  resources were removed, Flux resumed, and the production parent Model
+  returned Ready at its original primary policy after its normal cold image
+  pull.
 
 ## Successor artifact gate
 
@@ -379,5 +390,7 @@ of this failed gate.
 
 ## Next
 
-1. Re-run the full cached A/B with the fixed 768-token warmup and require the
-   machine-emitted `PROBE_RESULT PASS` certificate.
+1. Promote the certified digest/artifact/runtime tuple into a declarative
+   `Model` rollout as a separate, rollback-safe slice.
+2. Reuse the artifact-marker, persistent-compile-cache, fixed-warmup, and exact
+   metric contracts for the next gfx906 native-MTP/long-context kill-test.
