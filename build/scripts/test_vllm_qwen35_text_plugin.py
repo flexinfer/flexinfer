@@ -86,8 +86,19 @@ class Qwen3_5Model:
         return name in params_dict
 
 
-class Qwen3_5MoeMTP(Qwen3_5Model):
-    pass
+class Qwen3_5MultiTokenPredictor:
+    def load_fused_expert_weights(
+        self, name, params_dict, loaded_weight, shard_id, num_experts
+    ):
+        self.loaded_expert = (name, loaded_weight, shard_id, num_experts)
+        return name in params_dict
+
+
+class Qwen3_5MoeMTP:
+    """Match vLLM 0.23: the fused loader lives on the inner predictor."""
+
+    def __init__(self) -> None:
+        self.model = Qwen3_5MultiTokenPredictor()
 
 
 class Qwen3_5ForConditionalGeneration:
@@ -133,6 +144,7 @@ class PluginTest(unittest.TestCase):
         models.Qwen3_5Model = Qwen3_5Model
         mtp_models = types.ModuleType("vllm.model_executor.models.qwen3_5_mtp")
         mtp_models.Qwen3_5MoeMTP = Qwen3_5MoeMTP
+        mtp_models.Qwen3_5MultiTokenPredictor = Qwen3_5MultiTokenPredictor
         config_package = types.ModuleType("vllm.config")
         speculative = types.ModuleType("vllm.config.speculative")
         speculative.SpeculativeConfig = SpeculativeConfig
@@ -219,7 +231,7 @@ class PluginTest(unittest.TestCase):
             qwen_model.loaded_expert[0],
             "model.layers.0.mlp.experts.w2_qweight",
         )
-        mtp_model = Qwen3_5MoeMTP()
+        mtp_model = Qwen3_5MoeMTP().model
         self.assertTrue(
             mtp_model.load_fused_expert_weights(
                 "mtp.layers.0.mlp.experts.w13_weight.scales",

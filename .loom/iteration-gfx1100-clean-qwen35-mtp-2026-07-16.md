@@ -212,6 +212,14 @@ of this failed gate.
   were removed, Flux reconciliation was resumed, and
   `Model/wan21-t2v-1p3b-gfx1100` returned to `Ready` under its original primary
   warm policy.
+- Attempt 10 result: the quantized artifact preflight passed and bound all four
+  fused GPTQ tensors to contract digest `sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d`.
+  Runtime startup then failed during plugin registration, before model load,
+  because v0.4 patched `load_fused_expert_weights` on outer class
+  `Qwen3_5MoeMTP`. In vLLM 0.23 that method lives on the inner
+  `Qwen3_5MultiTokenPredictor`. Plugin v0.5 patches the real owner; its fake
+  runtime contract now mirrors that upstream class topology. The next probe is
+  explicitly `PROBE_MODE=mtp-only` so fit and acceptance precede a full A/B.
 
 ## Successor artifact gate
 

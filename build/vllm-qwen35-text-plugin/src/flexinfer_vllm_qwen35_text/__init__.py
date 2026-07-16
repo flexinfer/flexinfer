@@ -172,7 +172,7 @@ def register() -> None:
         Qwen3_5Model,
         Qwen3_5MoeForCausalLM,
     )
-    from vllm.model_executor.models.qwen3_5_mtp import Qwen3_5MoeMTP
+    from vllm.model_executor.models.qwen3_5_mtp import Qwen3_5MultiTokenPredictor
 
     if torch.version.hip is not None:
         _select_gfx1100_safe_fla_config(chunk_scaled_dot_kkt_fwd_kernel)
@@ -207,7 +207,7 @@ def register() -> None:
         Qwen3_5MoeForCausalLM._flexinfer_expert_names = True
 
     _patch_gptq_expert_loader(Qwen3_5Model)
-    _patch_gptq_expert_loader(Qwen3_5MoeMTP)
+    _patch_gptq_expert_loader(Qwen3_5MultiTokenPredictor)
 
     ModelRegistry.register_model(ARCHITECTURE, Qwen3_5MoeForCausalLM)
     print(

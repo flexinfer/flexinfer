@@ -707,7 +707,9 @@ spec:
             - name: EXPECTED_IMAGE_DIGEST
               value: sha256:14f2d931abdc1c43b73398b1b2c10de1f17d7e3632216ee429b7fb1f0784de85
             - name: EXPECTED_PLUGIN_VERSION
-              value: 0.4.0
+              value: 0.5.0
+            - name: PROBE_MODE
+              value: mtp-only
             - name: FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ
               value: "1"
             - name: HSA_OVERRIDE_GFX_VERSION
