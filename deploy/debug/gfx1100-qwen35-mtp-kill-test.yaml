@@ -18,6 +18,10 @@
 # - MTP median decode throughput >= 1.08x baseline across workloads;
 # - no workload slower than 0.95x baseline;
 # - graph dispatch evidence and no ROCm/HSA/OOM/restart fault markers.
+#
+# `PROBE_EXECUTION_MODE=eager` is a bounded diagnostic only: it proves model
+# load, draft emission, and acceptance without Dynamo/graph compilation. It
+# emits `EAGER_MTP_RESULT` and can never emit the graph-mode certificate.
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -46,6 +50,7 @@ data:
     MIN_ACCEPTANCE = 0.60
     MIN_MEDIAN_SPEEDUP = 1.08
     MIN_WORKLOAD_RATIO = 0.95
+    STARTUP_FAILURE_TAIL_LINES = 800
     SPEC_CONFIG = {"method": "qwen3_5_mtp", "num_speculative_tokens": 1}
     FAULT_RE = re.compile(
         r"(hsa.*(fault|error)|memory aperture|segmentation fault|sigsegv|"
@@ -251,6 +256,9 @@ data:
                 "FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ"
             ),
             "expected_image_digest": os.environ["EXPECTED_IMAGE_DIGEST"],
+            "probe_execution_mode": os.environ.get(
+                "PROBE_EXECUTION_MODE", "graph"
+            ),
         }
         print("RUNTIME_PREFLIGHT " + json.dumps(result, sort_keys=True), flush=True)
         return result
@@ -325,6 +333,11 @@ data:
             command.extend(
                 ["--speculative-config", json.dumps(SPEC_CONFIG, separators=(",", ":"))]
             )
+        execution_mode = os.environ.get("PROBE_EXECUTION_MODE", "graph")
+        if execution_mode == "eager":
+            command.append("--enforce-eager")
+        elif execution_mode != "graph":
+            raise ValueError(f"unsupported PROBE_EXECUTION_MODE={execution_mode!r}")
         return command
 
 
@@ -345,7 +358,11 @@ data:
         while time.monotonic() < deadline:
             if process.poll() is not None:
                 log_handle.close()
-                tail = "\n".join(log_path.read_text(errors="replace").splitlines()[-120:])
+                tail = "\n".join(
+                    log_path.read_text(errors="replace").splitlines()[
+                        -STARTUP_FAILURE_TAIL_LINES:
+                    ]
+                )
                 raise RuntimeError(
                     f"{label} server exited during startup rc={process.returncode}\n{tail}"
                 )
@@ -575,6 +592,24 @@ data:
                 acceptance >= MIN_ACCEPTANCE,
                 f"MTP acceptance {acceptance:.3f} below {MIN_ACCEPTANCE:.3f}",
             )
+            execution_mode = os.environ.get("PROBE_EXECUTION_MODE", "graph")
+            if execution_mode == "eager":
+                print(
+                    "EAGER_MTP_RESULT PASS "
+                    + json.dumps(
+                        {
+                            "artifact": artifact,
+                            "runtime": runtime,
+                            "speculative_config": SPEC_CONFIG,
+                            "speculative": speculative,
+                            "acceptance": acceptance,
+                            "certificate": False,
+                        },
+                        sort_keys=True,
+                    ),
+                    flush=True,
+                )
+                return
             graph_evidence = scan_logs([speculative_log])
             print(
                 "MTP_ONLY_RESULT PASS "
@@ -710,6 +745,8 @@ spec:
               value: 0.5.0
             - name: PROBE_MODE
               value: mtp-only
+            - name: PROBE_EXECUTION_MODE
+              value: eager
             - name: FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ
               value: "1"
             - name: HSA_OVERRIDE_GFX_VERSION

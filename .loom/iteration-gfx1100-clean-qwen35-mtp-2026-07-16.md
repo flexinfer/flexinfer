@@ -220,6 +220,22 @@ of this failed gate.
   `Qwen3_5MultiTokenPredictor`. Plugin v0.5 patches the real owner; its fake
   runtime contract now mirrors that upstream class topology. The next probe is
   explicitly `PROBE_MODE=mtp-only` so fit and acceptance precede a full A/B.
+- Attempt 11 result: the pinned v0.5.0 overlay attested runtime digest
+  `sha256:850d1548199ba6ec428983b8235062b7a354812be1776328aa5f1d3faf68281a`,
+  passed the quantized-artifact preflight, registered the inner predictor
+  repair, and loaded far enough to hold about 20.35 GiB on the active gfx1100.
+  That crosses the residency boundary that failed at 23.03 GiB allocated plus
+  a 1.06 GiB request for plain BF16 MTP experts. Startup then failed without an
+  OOM during Dynamo fake-tensor compilation: a three-axis MRoPE position tensor
+  reached generic `RotaryEmbedding.forward_static`, which flattened it to
+  `3*N` before a `[3*N, -1, 256]` query reshape. The target text model receives
+  an explicit non-MRoPE `--hf-overrides` block while the draft model reloads the
+  artifact's raw `mrope_section`; this graph/config boundary is now the leading
+  hypothesis. Production was restored through the parent `Model`, and
+  `flexinfer-models` returned Ready at its original revision. Attempt 12 runs
+  the same pinned tuple in explicit eager diagnostic mode to distinguish model
+  execution from Dynamo lowering; eager success is evidence, not a graph-mode
+  certificate.
 
 ## Successor artifact gate
 
@@ -238,11 +254,11 @@ of this failed gate.
   MTP-bearing shards with replace-on-write, enforce relative-L1 <= 0.18 and
   per-matrix cosine >= 0.97, verify source metadata hashes remain unchanged,
   then atomically rename the staging directory.
-- Runtime contract: plugin v0.4 keeps MTP linears unquantized but delegates MTP
+- Runtime contract: plugin v0.5 keeps MTP linears unquantized but delegates MTP
   routed experts to AutoGPTQ only when
   `FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ=1`; the default remains the plain upstream
   artifact behavior. It also applies the GPTQ fused-expert name repair to the
-  native `Qwen3_5MoeMTP` loader.
+  inner native `Qwen3_5MultiTokenPredictor` loader.
 - Artifact result: builder Job `gfx1100-qwen35-mtp-expert-quantize` completed
   successfully with contract digest
   `sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d`.
