@@ -322,6 +322,16 @@ of this failed gate.
   the exemption only to `[shutdown] ... mode=abort timeout=0s`; untagged
   aborts, nonzero-timeout aborts, and every ROCm/HSA/OOM/fault marker remain
   fatal. Both arm-specific compilation caches now persist on the target host.
+- Attempt 19 result: both arms loaded from the persistent compilation cache,
+  but the old single 128-token warmup no longer covered the device/kernel
+  ramp previously hidden by 70+ seconds of compiler activity. Baseline was
+  stable at 76.83 tok/s code, 79.28 tok/s short QA, and 12.93 tok/s long
+  context. MTP short QA remained near 63 tok/s, then code ramped from 66.86 to
+  74.30 to 93.62 tok/s, and long context stabilized at 28.42 tok/s. Parity
+  still matched and 797 of 1,006 drafts were accepted (79.22%). This is a
+  reproducible cold-measurement defect, not grounds to relax the 0.95x floor.
+  Attempt 20 applies a fixed, symmetric six-run/768-token untimed warmup before
+  either arm's metrics and timings; it never adapts to observed throughput.
 
 ## Successor artifact gate
 
@@ -369,5 +379,5 @@ of this failed gate.
 
 ## Next
 
-1. Re-run the unchanged full A/B from persistent graph caches and require the
+1. Re-run the full cached A/B with the fixed 768-token warmup and require the
    machine-emitted `PROBE_RESULT PASS` certificate.

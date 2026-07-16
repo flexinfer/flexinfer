@@ -50,6 +50,8 @@ data:
     MIN_ACCEPTANCE = 0.60
     MIN_MEDIAN_SPEEDUP = 1.08
     MIN_WORKLOAD_RATIO = 0.95
+    WARMUP_RUNS = 6
+    MIN_WARMUP_TOKENS = 768
     STARTUP_FAILURE_TAIL_LINES = 800
     SPEC_CONFIG = {"method": "qwen3_5_mtp", "num_speculative_tokens": 1}
     FAULT_RE = re.compile(
@@ -516,8 +518,29 @@ data:
     def run_arm(label, speculative):
         process, log_handle, log_path = start_server(label, speculative)
         try:
-            # Compile/warm the exact chat path before measurement.
-            chat_once(WORKLOADS[0])
+            # A cache hit skips enough compiler work that lazy ROCm kernels and
+            # device clocks can enter the first timed workload cold. Use the
+            # same fixed decoded-token warmup for both arms; never adapt it to
+            # observed performance.
+            warmups = [chat_once(WORKLOADS[0]) for _ in range(WARMUP_RUNS)]
+            warmup_tokens = sum(run["completion_tokens"] for run in warmups)
+            require(
+                warmup_tokens >= MIN_WARMUP_TOKENS,
+                f"{label} warmup produced only {warmup_tokens} tokens",
+            )
+            print(
+                "WARMUP_RESULT "
+                + label
+                + " "
+                + json.dumps(
+                    {
+                        "tokens": warmup_tokens,
+                        "tps": [run["tps"] for run in warmups],
+                    },
+                    sort_keys=True,
+                ),
+                flush=True,
+            )
             before = metrics_text()
             parity = {}
             for probe in PARITY_PROBES:
