@@ -207,12 +207,18 @@ data:
             for ep in importlib.metadata.entry_points(group="vllm.general_plugins")
         )
         require("flexinfer_qwen35_text" in plugins, "FlexInfer Qwen3.5 plugin missing")
+        plugin_version = importlib.metadata.version("flexinfer-vllm-qwen35-text")
+        require(
+            plugin_version == os.environ["EXPECTED_PLUGIN_VERSION"],
+            f"unexpected Qwen3.5 plugin version {plugin_version}",
+        )
         result = {
             "vllm": getattr(vllm, "__version__", "unknown"),
             "torch": torch.__version__,
             "torch_hip": torch.version.hip,
             "device": torch.cuda.get_device_name(0),
             "plugins": plugins,
+            "qwen35_plugin_version": plugin_version,
             "expected_image_digest": os.environ["EXPECTED_IMAGE_DIGEST"],
         }
         print("RUNTIME_PREFLIGHT " + json.dumps(result, sort_keys=True), flush=True)
@@ -628,7 +634,7 @@ metadata:
   annotations:
     flexinfer.ai/canary: gfx1100-qwen35-mtp
     flexinfer.ai/artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
-    flexinfer.ai/runtime-digest: sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
+    flexinfer.ai/runtime-digest: sha256:1b35e3e83cfb4c68b34c06262943b2d0911725a56369609ad08233484bcec04b
     flexinfer.ai/kill-test: .loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md
 spec:
   suspend: true
@@ -654,7 +660,7 @@ spec:
           operator: Exists
       containers:
         - name: probe
-          image: registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
+          image: registry.harbor.lan/flexinfer/vllm@sha256:1b35e3e83cfb4c68b34c06262943b2d0911725a56369609ad08233484bcec04b
           imagePullPolicy: IfNotPresent
           command: ["bash", "-lc"]
           args: ["exec python3 /probe/probe.py"]
@@ -662,7 +668,9 @@ spec:
             - name: MODEL_PATH
               value: /models/qwen35-35b-a3b-clean/gptq-w4-g128-gdn
             - name: EXPECTED_IMAGE_DIGEST
-              value: sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
+              value: sha256:1b35e3e83cfb4c68b34c06262943b2d0911725a56369609ad08233484bcec04b
+            - name: EXPECTED_PLUGIN_VERSION
+              value: 0.3.0
             - name: HSA_OVERRIDE_GFX_VERSION
               value: 11.0.0
             - name: TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL

@@ -68,6 +68,37 @@ def _patch_qwen35_text_mtp_config(speculative_config) -> None:
     speculative_config._flexinfer_qwen35_text_mtp = True
 
 
+def _patch_qwen35_mtp_gptq(
+    auto_gptq_config,
+    linear_base,
+    routed_experts,
+    unquantized_linear_method,
+    unquantized_fused_moe_method,
+) -> None:
+    """Keep the plain Qwen3.5 MTP head out of target-model GPTQ.
+
+    Qwen GPTQ checkpoints preserve ``mtp.*`` weights in floating point. On
+    ROCm, AutoGPTQ's MoE path falls back to WNA16 and otherwise registers
+    quantized parameter names, so the native MTP loader cannot find its plain
+    expert weights. Prefix-scoping this override keeps target layers quantized.
+    """
+    if getattr(auto_gptq_config, "_flexinfer_qwen35_mtp_plain", False):
+        return
+
+    original_get_quant_method = auto_gptq_config.get_quant_method
+
+    def get_quant_method(self, layer, prefix):
+        if "mtp" in prefix.split("."):
+            if isinstance(layer, routed_experts):
+                return unquantized_fused_moe_method(layer.moe_config)
+            if isinstance(layer, linear_base):
+                return unquantized_linear_method()
+        return original_get_quant_method(self, layer, prefix)
+
+    auto_gptq_config.get_quant_method = get_quant_method
+    auto_gptq_config._flexinfer_qwen35_mtp_plain = True
+
+
 def register() -> None:
     """Register the existing text class and its hybrid-state contract.
 
@@ -83,6 +114,15 @@ def register() -> None:
     from vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt import (
         chunk_scaled_dot_kkt_fwd_kernel,
     )
+    from vllm.model_executor.layers.fused_moe import (
+        RoutedExperts,
+        UnquantizedFusedMoEMethod,
+    )
+    from vllm.model_executor.layers.linear import (
+        LinearBase,
+        UnquantizedLinearMethod,
+    )
+    from vllm.model_executor.layers.quantization.auto_gptq import AutoGPTQConfig
     from vllm.model_executor.models.qwen3_5 import (
         Qwen3_5ForConditionalGeneration,
         Qwen3_5Model,
@@ -92,6 +132,13 @@ def register() -> None:
     if torch.version.hip is not None:
         _select_gfx1100_safe_fla_config(chunk_scaled_dot_kkt_fwd_kernel)
     _patch_qwen35_text_mtp_config(SpeculativeConfig)
+    _patch_qwen35_mtp_gptq(
+        AutoGPTQConfig,
+        LinearBase,
+        RoutedExperts,
+        UnquantizedLinearMethod,
+        UnquantizedFusedMoEMethod,
+    )
 
     Qwen3_5MoeForCausalLM.is_hybrid = True
     for method_name in _MAMBA_METHODS:
@@ -139,5 +186,5 @@ def register() -> None:
     ModelRegistry.register_model(ARCHITECTURE, Qwen3_5MoeForCausalLM)
     print(
         f"flexinfer: registered {ARCHITECTURE} with hybrid-state support "
-        "and ROCm-safe FLA autotuning"
+        "and ROCm-safe FLA/MTP GPTQ handling"
     )

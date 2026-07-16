@@ -42,8 +42,14 @@ attempt 6 gives constrained probes their own one-token minimum. Attempt 6 then
 proved the full baseline arm, but pinned vLLM 0.23 rejected the newer `mtp`
 method alias. Attempt 7 uses the runtime-era `qwen3_5_mtp` spelling in MTP-only
 mode before another full A/B. Attempt 7 exposed a vLLM 0.23/text-overlay config
-gap; plugin v0.2.0 now repairs it and awaits a candidate image. Downstream
-certificate work remains blocked until the full A/B contract passes.
+gap. Plugin v0.2.0 repairs it; CI job 185922 published candidate digest
+`sha256:1b35e3e83cfb4c68b34c06262943b2d0911725a56369609ad08233484bcec04b`.
+Attempt 8 proved that config repair live, then failed inside the native MTP
+expert loader with `KeyError: layers.0.mlp.experts.w2_weight`: target GPTQ was
+incorrectly inherited by the intentionally plain MTP head. Plugin v0.3.0 now
+prefix-scopes unquantized Linear/MoE methods to `mtp.*`; target GPTQ remains
+unchanged. Downstream certificate work remains blocked until the full A/B
+contract passes.
 
 ### Positive and disconfirming evidence
 
@@ -54,6 +60,10 @@ certificate work remains blocked until the full A/B contract passes.
 - Positive: vLLM's current speculative config recognizes `qwen3_5_mtp` and maps
   Qwen3.5 MoE config to `Qwen3_5MoeMTP`:
   <https://github.com/vllm-project/vllm/blob/main/vllm/config/speculative.py>.
+- Positive: upstream PR #39475 identifies the same plain-MTP versus inherited
+  quantization mismatch and reports successful Qwen3.5 GPTQ MTP validation from
+  two users. Its proposed fix scopes unquantized methods to the MTP prefix:
+  <https://github.com/vllm-project/vllm/pull/39475>.
 - Positive: the upstream BF16 Qwen3.5-35B-A3B config declares one native MTP
   layer and its safetensors index contains MTP weights:
   <https://huggingface.co/Qwen/Qwen3.5-35B-A3B/blob/main/config.json> and
@@ -64,6 +74,10 @@ certificate work remains blocked until the full A/B contract passes.
 - Negative: a current Qwen3.5 report shows that a model may initialize with MTP
   yet produce 0% acceptance, so successful startup is not the gate:
   <https://github.com/vllm-project/vllm/issues/36331>.
+- Negative: upstream issue #36954 reproduces the exact
+  `layers.0.mlp.experts.w2_weight` KeyError when a Qwen3.5 GPTQ checkpoint's
+  plain MTP head inherits target MoE quantization:
+  <https://github.com/vllm-project/vllm/issues/36954>.
 - Negative: Qwen's official GPTQ artifact deliberately excludes MTP modules
   from quantization, while its compatibility discussion records 785 retained
   MTP tensors and a vLLM loader failure on quantized expert names. The local
@@ -80,11 +94,11 @@ certificate work remains blocked until the full A/B contract passes.
 
 - Iteration goal: retire or sharply narrow the clean-workhorse native-MTP
   assumption before any gfx1100 capability certificate ships.
-- Current blocker: the live artifact's MTP keys and the exact runtime's draft
-  loader/VRAM behavior have not been tested together.
-- Hypothesis: the clean quantization policy preserved a native one-layer MTP
-  head, and vLLM 0.23's native `mtp` path can load it through the existing
-  Qwen3.5 text plugin without a new image.
+- Current blocker: plugin v0.3.0's prefix-scoped AutoGPTQ exclusion has not yet
+  been exercised in the exact ROCm runtime.
+- Hypothesis: forcing only `mtp.*` Linear and RoutedExperts modules through
+  vLLM's unquantized methods resolves the plain-weight loader mismatch without
+  changing target-model GPTQ or exceeding the 24 GiB graph+32K envelope.
 
 ## Artifact Pinning
 
@@ -97,7 +111,7 @@ certificate work remains blocked until the full A/B contract passes.
   `gpuMemoryUtilization: 0.94`, AITER disabled.
 - Image tag: `registry.harbor.lan/flexinfer/vllm`
 - Image digest:
-  `sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604`
+  `sha256:1b35e3e83cfb4c68b34c06262943b2d0911725a56369609ad08233484bcec04b`
 - Upstream ref/fork: upstream vLLM 0.23 ROCm base plus
   `build/vllm-qwen35-text-plugin`.
 - Probe manifest: `deploy/debug/gfx1100-qwen35-mtp-kill-test.yaml`
@@ -167,14 +181,22 @@ certificate work remains blocked until the full A/B contract passes.
   text-only `qwen3_5_moe_text` model type. The upstream override only handles
   `qwen3_5` and `qwen3_5_moe`. Plugin v0.2.0 adds the missing translation to
   `qwen3_5_mtp` with architecture `Qwen3_5MoeMTP`; its regression test fails
-  without the hook and passes with it. The next step is a digest-pinned overlay
-  build and MTP-only live retry.
+  without the hook and passes with it. CI job 185922 published the repaired
+  digest-pinned overlay.
+- Attempt 8 result: the v0.2.0 overlay reached `Qwen3_5MoeMTP.load_weights`,
+  then failed after four of six shards with
+  `KeyError: layers.0.mlp.experts.w2_weight`. The exact upstream root cause is
+  quantized parameter registration (`w2_qweight`) for a checkpoint that stores
+  the MTP head unquantized (`w2_weight`). Plugin v0.3.0 intercepts only
+  AutoGPTQ `mtp.*` Linear and RoutedExperts prefixes and returns vLLM's native
+  unquantized methods. A regression test proves MTP Linear/MoE exclusion and
+  target-layer delegation.
 
 ## Next
 
-1. Restore the k3s route and run the suspended probe on the idle 7900xtx lane.
-2. If MTP keys are absent, patch only the clean quantization policy/artifact and
-   regenerate a digest-pinned candidate before retrying.
-3. If load or acceptance fails, patch only the Qwen3.5 MTP draft loader in a new
-   runtime overlay. Add certificate gating only after the full A/B contract
+1. Publish a v0.3.0 digest and rerun MTP-only mode on the 7900xtx lane.
+2. If the next failure is a plain-weight shape/name mismatch, patch only the
+   Qwen3.5 MTP loader and retain the target GPTQ contract.
+3. If MTP-only passes, run the full baseline/MTP A/B. Add certificate gating
+   only after its parity, acceptance, graph-mode, and performance contract
    passes.

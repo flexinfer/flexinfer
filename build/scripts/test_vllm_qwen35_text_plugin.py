@@ -44,6 +44,29 @@ class FakeKernel:
     )
 
 
+class LinearBase:
+    pass
+
+
+class RoutedExperts:
+    def __init__(self) -> None:
+        self.moe_config = "moe-config"
+
+
+class UnquantizedLinearMethod:
+    pass
+
+
+class UnquantizedFusedMoEMethod:
+    def __init__(self, moe_config) -> None:
+        self.moe_config = moe_config
+
+
+class AutoGPTQConfig:
+    def get_quant_method(self, layer, prefix):
+        return ("quantized", layer, prefix)
+
+
 class Qwen3_5MoeForCausalLM:
     def load_weights(self, weights):
         self.loaded_weights = list(weights)
@@ -109,6 +132,16 @@ class PluginTest(unittest.TestCase):
             "vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt"
         )
         fla.chunk_scaled_dot_kkt_fwd_kernel = FakeKernel
+        auto_gptq = types.ModuleType(
+            "vllm.model_executor.layers.quantization.auto_gptq"
+        )
+        auto_gptq.AutoGPTQConfig = AutoGPTQConfig
+        fused_moe = types.ModuleType("vllm.model_executor.layers.fused_moe")
+        fused_moe.RoutedExperts = RoutedExperts
+        fused_moe.UnquantizedFusedMoEMethod = UnquantizedFusedMoEMethod
+        linear = types.ModuleType("vllm.model_executor.layers.linear")
+        linear.LinearBase = LinearBase
+        linear.UnquantizedLinearMethod = UnquantizedLinearMethod
 
         fake_modules = {
             "torch": torch,
@@ -117,6 +150,9 @@ class PluginTest(unittest.TestCase):
             speculative.__name__: speculative,
             models.__name__: models,
             fla.__name__: fla,
+            auto_gptq.__name__: auto_gptq,
+            fused_moe.__name__: fused_moe,
+            linear.__name__: linear,
         }
         saved = {name: sys.modules.get(name) for name in fake_modules}
         sys.modules.update(fake_modules)
@@ -181,6 +217,20 @@ class PluginTest(unittest.TestCase):
 
         delegated = SpeculativeConfig.hf_config_override(FakeHFConfig("other"))
         self.assertTrue(delegated.delegated)
+
+        quant_config = AutoGPTQConfig()
+        mtp_linear = quant_config.get_quant_method(LinearBase(), "mtp.fc")
+        self.assertIsInstance(mtp_linear, UnquantizedLinearMethod)
+        mtp_experts = quant_config.get_quant_method(
+            RoutedExperts(), "mtp.layers.0.mlp.experts"
+        )
+        self.assertIsInstance(mtp_experts, UnquantizedFusedMoEMethod)
+        self.assertEqual(mtp_experts.moe_config, "moe-config")
+        target_linear = LinearBase()
+        self.assertEqual(
+            quant_config.get_quant_method(target_linear, "model.layers.0.mlp"),
+            ("quantized", target_linear, "model.layers.0.mlp"),
+        )
 
 
 if __name__ == "__main__":
