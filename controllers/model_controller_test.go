@@ -2296,6 +2296,12 @@ func TestResolveFlashLoaderConfig_GlobalDefaults(t *testing.T) {
 	}
 }
 
+func TestDefaultFlashLoaderImageUsesPublishedMasterTag(t *testing.T) {
+	if defaultFlashLoaderImageRef != "registry.harbor.lan/flexinfer/flexinfer-flash-loader:master" {
+		t.Fatalf("default flash-loader image = %q, want published :master tag", defaultFlashLoaderImageRef)
+	}
+}
+
 func TestResolveFlashLoaderConfig_ModelCacheOverrides(t *testing.T) {
 	t.Setenv("DEFAULT_FLASH_LOADER_ENABLED", "true")
 	t.Setenv("DEFAULT_FLASH_LOADER_IMAGE", "registry.example/flash-loader:default")
