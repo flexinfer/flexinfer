@@ -25,7 +25,7 @@ promotion machinery around an artifact whose MTP tensors were removed or whose
 draft path either cannot fit the 24 GiB envelope, silently loads incorrect expert
 weights, changes output, or costs more verification time than it saves.
 
-**Status**: live iteration in progress. Attempt 1 proved the artifact contract
+**Status**: **FAILED 2026-07-16 for the plain-BF16 MTP artifact**. Attempt 1 proved the artifact contract
 but rejected the probe's initial `gpuMemoryUtilization: 0.90`: baseline graph
 capture left 0.03 GiB KV while 32K requires 0.35 GiB. Attempt 2 proved baseline
 startup at the qualified `0.94` setting, then exposed a probe-only parity bug:
@@ -48,8 +48,13 @@ Attempt 8 proved that config repair live, then failed inside the native MTP
 expert loader with `KeyError: layers.0.mlp.experts.w2_weight`: target GPTQ was
 incorrectly inherited by the intentionally plain MTP head. Plugin v0.3.0 now
 prefix-scopes unquantized Linear/MoE methods to `mtp.*`; target GPTQ remains
-unchanged. Downstream certificate work remains blocked until the full A/B
-contract passes.
+unchanged. Attempt 9 proved that repair: all six shards loaded into the native
+MTP class, then the engine failed while padding the unquantized expert weights.
+It needed another 1.06 GiB with only 716 MiB free (23.03 GiB already allocated).
+The load-bearing graph+32K/24-GiB fit assumption is therefore false, and no
+certificate or full A/B may ship for the plain artifact. The next independent
+kill-test is a surgically quantized MTP-expert artifact; it is not a relaxation
+of this failed gate.
 
 ### Positive and disconfirming evidence
 
@@ -94,11 +99,15 @@ contract passes.
 
 - Iteration goal: retire or sharply narrow the clean-workhorse native-MTP
   assumption before any gfx1100 capability certificate ships.
-- Current blocker: plugin v0.3.0's prefix-scoped AutoGPTQ exclusion has not yet
-  been exercised in the exact ROCm runtime.
-- Hypothesis: forcing only `mtp.*` Linear and RoutedExperts modules through
-  vLLM's unquantized methods resolves the plain-weight loader mismatch without
-  changing target-model GPTQ or exceeding the 24 GiB graph+32K envelope.
+- Current result: plugin v0.3.0's prefix-scoped AutoGPTQ exclusion works in the
+  exact ROCm runtime, but the correctly loaded BF16 draft cannot fit the 24 GiB
+  graph+32K envelope.
+- Successor hypothesis: converting exactly the 256 x 3 MTP expert matrices to
+  symmetric GPTQ W4G128 while retaining MTP attention/fc linears in BF16 frees
+  at least the missing 1.06 GiB and preserves useful draft acceptance. This is
+  gated by `build/scripts/quantize_mtp_experts.py` plus the suspended builder
+  `deploy/debug/gfx1100-qwen35-mtp-expert-quantize.yaml` before another live
+  serving attempt.
 
 ## Artifact Pinning
 
@@ -192,12 +201,46 @@ contract passes.
   unquantized methods. A regression test proves MTP Linear/MoE exclusion and
   target-layer delegation. CI job 186124 published plugin v0.3.0 as digest
   `sha256:4511e86d655acfee68e37c9a06e189f23aa8b367cdf593fd97be713842b2d54b`.
+- Attempt 9 result: the pinned v0.3.0 overlay attested plugin `0.3.0`, the exact
+  runtime digest, 785 plain MTP weights, and zero quantized MTP tensors. The
+  prior KeyError disappeared and vLLM constructed the native unquantized MTP
+  experts. Startup then failed in
+  `UnquantizedFusedMoEMethod._maybe_pad_weight` with `HIP out of memory`: a
+  1.06 GiB allocation was requested with 716 MiB free on the 23.98 GiB device;
+  PyTorch reported 23.03 GiB allocated and 32.31 MiB reserved. This is model
+  residency, not a KV-cache or utilization knob failure. The probe resources
+  were removed, Flux reconciliation was resumed, and
+  `Model/wan21-t2v-1p3b-gfx1100` returned to `Ready` under its original primary
+  warm policy.
+
+## Successor artifact gate
+
+- Builder: `deploy/debug/gfx1100-qwen35-mtp-expert-quantize.yaml`, suspended by
+  default and not included by any kustomization.
+- Surgery: require exactly one MTP layer and all 768 plain routed-expert
+  matrices; quantize each matrix with symmetric RTN W4G128; fuse the result into
+  exactly four vLLM GPTQ tensors; retain all MTP linears and every target-model
+  tensor byte-for-byte.
+- Publication safety: create a hard-linked sibling staging tree, rewrite only
+  MTP-bearing shards with replace-on-write, enforce relative-L1 <= 0.18 and
+  per-matrix cosine >= 0.97, verify source metadata hashes remain unchanged,
+  then atomically rename the staging directory.
+- Runtime contract: plugin v0.4 keeps MTP linears unquantized but delegates MTP
+  routed experts to AutoGPTQ only when
+  `FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ=1`; the default remains the plain upstream
+  artifact behavior. It also applies the GPTQ fused-expert name repair to the
+  native `Qwen3_5MoeMTP` loader.
+- Kill-test: the output marker must prove at least 1.06 GiB was freed before the
+  existing MTP-only graph+32K load/acceptance probe is repointed. If fit passes,
+  require >=60% acceptance before returning to the full performance A/B.
 
 ## Next
 
-1. Run the pinned v0.3.0 digest in MTP-only mode on the 7900xtx lane.
-2. If the next failure is a plain-weight shape/name mismatch, patch only the
-   Qwen3.5 MTP loader and retain the target GPTQ contract.
-3. If MTP-only passes, run the full baseline/MTP A/B. Add certificate gating
-   only after its parity, acceptance, graph-mode, and performance contract
-   passes.
+1. Publish and digest-pin the ROCm quantizer image containing the surgical MTP
+   expert builder; replace both placeholders in its suspended Job.
+2. Run the builder on gfx906 host CPU/NFS and require its atomic artifact marker
+   to pass the tensor, byte-saving, and round-trip gates.
+3. Publish and pin plugin v0.4, then repoint the MTP-only gfx1100 probe to the
+   verified output with the explicit quantized-expert mode enabled.
+4. Only if MTP-only fit and acceptance pass, run the full baseline/MTP A/B. Add
+   certificate gating only after parity, graph-mode, and performance pass.

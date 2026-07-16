@@ -67,6 +67,11 @@ class AutoGPTQConfig:
         return ("quantized", layer, prefix)
 
 
+class QuantizedMTPAutoGPTQConfig:
+    def get_quant_method(self, layer, prefix):
+        return ("quantized-mtp", layer, prefix)
+
+
 class Qwen3_5MoeForCausalLM:
     def load_weights(self, weights):
         self.loaded_weights = list(weights)
@@ -79,6 +84,10 @@ class Qwen3_5Model:
     ):
         self.loaded_expert = (name, loaded_weight, shard_id, num_experts)
         return name in params_dict
+
+
+class Qwen3_5MoeMTP(Qwen3_5Model):
+    pass
 
 
 class Qwen3_5ForConditionalGeneration:
@@ -122,6 +131,8 @@ class PluginTest(unittest.TestCase):
         models.Qwen3_5MoeForCausalLM = Qwen3_5MoeForCausalLM
         models.Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration
         models.Qwen3_5Model = Qwen3_5Model
+        mtp_models = types.ModuleType("vllm.model_executor.models.qwen3_5_mtp")
+        mtp_models.Qwen3_5MoeMTP = Qwen3_5MoeMTP
         config_package = types.ModuleType("vllm.config")
         speculative = types.ModuleType("vllm.config.speculative")
         speculative.SpeculativeConfig = SpeculativeConfig
@@ -149,6 +160,7 @@ class PluginTest(unittest.TestCase):
             config_package.__name__: config_package,
             speculative.__name__: speculative,
             models.__name__: models,
+            mtp_models.__name__: mtp_models,
             fla.__name__: fla,
             auto_gptq.__name__: auto_gptq,
             fused_moe.__name__: fused_moe,
@@ -207,6 +219,20 @@ class PluginTest(unittest.TestCase):
             qwen_model.loaded_expert[0],
             "model.layers.0.mlp.experts.w2_qweight",
         )
+        mtp_model = Qwen3_5MoeMTP()
+        self.assertTrue(
+            mtp_model.load_fused_expert_weights(
+                "mtp.layers.0.mlp.experts.w13_weight.scales",
+                {"mtp.layers.0.mlp.experts.w13_scales": object()},
+                "tensor",
+                "w13",
+                256,
+            )
+        )
+        self.assertEqual(
+            mtp_model.loaded_expert[0],
+            "mtp.layers.0.mlp.experts.w13_scales",
+        )
 
         mtp_config = SpeculativeConfig.hf_config_override(
             FakeHFConfig("qwen3_5_moe_text")
@@ -230,6 +256,31 @@ class PluginTest(unittest.TestCase):
         self.assertEqual(
             quant_config.get_quant_method(target_linear, "model.layers.0.mlp"),
             ("quantized", target_linear, "model.layers.0.mlp"),
+        )
+
+        plugin._patch_qwen35_mtp_gptq(
+            QuantizedMTPAutoGPTQConfig,
+            LinearBase,
+            RoutedExperts,
+            UnquantizedLinearMethod,
+            UnquantizedFusedMoEMethod,
+            quantized_mtp_experts=True,
+        )
+        quantized_mtp_config = QuantizedMTPAutoGPTQConfig()
+        quantized_mtp_linear = quantized_mtp_config.get_quant_method(
+            LinearBase(), "mtp.fc"
+        )
+        self.assertIsInstance(quantized_mtp_linear, UnquantizedLinearMethod)
+        quantized_mtp_experts = RoutedExperts()
+        self.assertEqual(
+            quantized_mtp_config.get_quant_method(
+                quantized_mtp_experts, "mtp.layers.0.mlp.experts"
+            ),
+            (
+                "quantized-mtp",
+                quantized_mtp_experts,
+                "mtp.layers.0.mlp.experts",
+            ),
         )
 
 

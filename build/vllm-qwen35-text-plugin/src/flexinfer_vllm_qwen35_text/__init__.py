@@ -1,5 +1,7 @@
 """Complete vLLM 0.23's registration for text-only Qwen3.5 MoE models."""
 
+import os
+
 ARCHITECTURE = "Qwen3_5MoeForCausalLM"
 _MAMBA_METHODS = (
     "get_mamba_state_shape_from_config",
@@ -44,6 +46,13 @@ def _select_gfx1100_safe_fla_config(kernel) -> None:
     autotuner.configs = safe
 
 
+def _strict_env_flag(name: str) -> bool:
+    value = os.environ.get(name, "0")
+    if value not in {"0", "1"}:
+        raise RuntimeError(f"{name} must be 0 or 1, got {value!r}")
+    return value == "1"
+
+
 def _patch_qwen35_text_mtp_config(speculative_config) -> None:
     """Teach vLLM 0.23's MTP override about the text-only model type."""
     if getattr(speculative_config, "_flexinfer_qwen35_text_mtp", False):
@@ -74,29 +83,64 @@ def _patch_qwen35_mtp_gptq(
     routed_experts,
     unquantized_linear_method,
     unquantized_fused_moe_method,
+    *,
+    quantized_mtp_experts: bool = False,
 ) -> None:
-    """Keep the plain Qwen3.5 MTP head out of target-model GPTQ.
+    """Select the checkpoint-declared quantization contract for the MTP head.
 
-    Qwen GPTQ checkpoints preserve ``mtp.*`` weights in floating point. On
-    ROCm, AutoGPTQ's MoE path falls back to WNA16 and otherwise registers
-    quantized parameter names, so the native MTP loader cannot find its plain
-    expert weights. Prefix-scoping this override keeps target layers quantized.
+    The normal Qwen artifact preserves all ``mtp.*`` weights in floating point.
+    The gfx1100 surgery artifact keeps only MTP linear layers floating point and
+    stores its routed experts as GPTQ W4G128. The latter must be explicitly
+    enabled by the probe; the default remains the upstream plain-head contract.
     """
-    if getattr(auto_gptq_config, "_flexinfer_qwen35_mtp_plain", False):
+    mode = "quantized-experts" if quantized_mtp_experts else "plain"
+    if auto_gptq_config.__dict__.get("_flexinfer_qwen35_mtp_mode") == mode:
         return
+    if "_flexinfer_qwen35_mtp_mode" in auto_gptq_config.__dict__:
+        raise RuntimeError("Qwen3.5 MTP GPTQ mode cannot change after registration")
 
     original_get_quant_method = auto_gptq_config.get_quant_method
 
     def get_quant_method(self, layer, prefix):
         if "mtp" in prefix.split("."):
-            if isinstance(layer, routed_experts):
+            if isinstance(layer, routed_experts) and not quantized_mtp_experts:
                 return unquantized_fused_moe_method(layer.moe_config)
             if isinstance(layer, linear_base):
                 return unquantized_linear_method()
         return original_get_quant_method(self, layer, prefix)
 
     auto_gptq_config.get_quant_method = get_quant_method
-    auto_gptq_config._flexinfer_qwen35_mtp_plain = True
+    auto_gptq_config._flexinfer_qwen35_mtp_mode = mode
+
+
+def _patch_gptq_expert_loader(model_class) -> None:
+    """Normalize vLLM's mapped GPTQ expert parameter names for one model class."""
+    if model_class.__dict__.get("_flexinfer_gptq_expert_names", False):
+        return
+    original_load_fused_expert_weights = model_class.load_fused_expert_weights
+
+    def load_fused_expert_weights(
+        self,
+        name,
+        params_dict,
+        loaded_weight,
+        shard_id,
+        num_experts,
+    ):
+        name = _gptq_expert_parameter_name(name)
+        if name not in params_dict:
+            return False
+        return original_load_fused_expert_weights(
+            self,
+            name,
+            params_dict,
+            loaded_weight,
+            shard_id,
+            num_experts,
+        )
+
+    model_class.load_fused_expert_weights = load_fused_expert_weights
+    model_class._flexinfer_gptq_expert_names = True
 
 
 def register() -> None:
@@ -128,16 +172,21 @@ def register() -> None:
         Qwen3_5Model,
         Qwen3_5MoeForCausalLM,
     )
+    from vllm.model_executor.models.qwen3_5_mtp import Qwen3_5MoeMTP
 
     if torch.version.hip is not None:
         _select_gfx1100_safe_fla_config(chunk_scaled_dot_kkt_fwd_kernel)
     _patch_qwen35_text_mtp_config(SpeculativeConfig)
+    quantized_mtp_experts = _strict_env_flag(
+        "FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ"
+    )
     _patch_qwen35_mtp_gptq(
         AutoGPTQConfig,
         LinearBase,
         RoutedExperts,
         UnquantizedLinearMethod,
         UnquantizedFusedMoEMethod,
+        quantized_mtp_experts=quantized_mtp_experts,
     )
 
     Qwen3_5MoeForCausalLM.is_hybrid = True
@@ -157,34 +206,12 @@ def register() -> None:
         Qwen3_5MoeForCausalLM.load_weights = load_weights
         Qwen3_5MoeForCausalLM._flexinfer_expert_names = True
 
-    if not getattr(Qwen3_5Model, "_flexinfer_gptq_expert_names", False):
-        original_load_fused_expert_weights = Qwen3_5Model.load_fused_expert_weights
-
-        def load_fused_expert_weights(
-            self,
-            name,
-            params_dict,
-            loaded_weight,
-            shard_id,
-            num_experts,
-        ):
-            name = _gptq_expert_parameter_name(name)
-            if name not in params_dict:
-                return False
-            return original_load_fused_expert_weights(
-                self,
-                name,
-                params_dict,
-                loaded_weight,
-                shard_id,
-                num_experts,
-            )
-
-        Qwen3_5Model.load_fused_expert_weights = load_fused_expert_weights
-        Qwen3_5Model._flexinfer_gptq_expert_names = True
+    _patch_gptq_expert_loader(Qwen3_5Model)
+    _patch_gptq_expert_loader(Qwen3_5MoeMTP)
 
     ModelRegistry.register_model(ARCHITECTURE, Qwen3_5MoeForCausalLM)
     print(
         f"flexinfer: registered {ARCHITECTURE} with hybrid-state support "
-        "and ROCm-safe FLA/MTP GPTQ handling"
+        "and ROCm-safe FLA/MTP GPTQ handling "
+        f"(mtp_experts={'gptq' if quantized_mtp_experts else 'plain'})"
     )
