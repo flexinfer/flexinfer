@@ -290,6 +290,16 @@ of this failed gate.
   0.96, adding about 0.48 GiB of allocator budget against the measured 0.24
   GiB shortfall while preserving 32K and roughly 0.96 GiB of physical-device
   headroom.
+- Attempt 16 result: utilization 0.96 crossed the 32K KV-capacity guard and
+  reached `SERVER_READY` in graph mode. The complete workload suite produced
+  1,003 draft tokens with 800 accepted (79.76%), stable constrained parity,
+  and medians of 94.23 tok/s code, 91.80 tok/s short QA, and 27.44 tok/s long
+  context. The server exited cleanly with rc=0, but the probe rejected that
+  evidence because vLLM logs its normal engine-client shutdown as
+  `mode=abort timeout=0s`; the broad fault regex treated the lifecycle label as
+  a crash. Attempt 17 excludes only that exact `[shutdown]` message while
+  retaining all other abort, ROCm, HSA, OOM, and segmentation-fault matches,
+  then reruns the unchanged inference tuple for a machine-emitted graph pass.
 
 ## Successor artifact gate
 
@@ -337,7 +347,8 @@ of this failed gate.
 
 ## Next
 
-1. Run MTP-only graph mode at utilization 0.96 with capture size 2; require 32K
-   KV fit, graph evidence, a clean fault scan, and the acceptance gate.
+1. Re-run the unchanged MTP-only graph tuple with the corrected lifecycle
+   filter; require 32K KV fit, graph evidence, a clean fault scan, and the
+   acceptance gate.
 2. Only after graph MTP-only passes, run the full baseline/MTP A/B and enforce
    parity, per-workload floors, and median speedup before certification.

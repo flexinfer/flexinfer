@@ -57,6 +57,11 @@ data:
         r"hip error|gpu fault|out of memory|hipoutofmemory|abort(?:ed)?)",
         re.IGNORECASE,
     )
+    GRACEFUL_ABORT_RE = re.compile(
+        r"\[shutdown\] API server: stopping engine client "
+        r"mode=abort timeout=0s",
+        re.IGNORECASE,
+    )
 
     WORKLOADS = [
         {
@@ -608,7 +613,10 @@ data:
         graph_evidence = []
         for path in paths:
             for line in path.read_text(errors="replace").splitlines():
-                if FAULT_RE.search(line):
+                # vLLM names its normal zero-timeout engine-client shutdown
+                # `mode=abort`; retain real abort/crash detection while excluding
+                # only that exact graceful lifecycle message.
+                if FAULT_RE.search(line) and not GRACEFUL_ABORT_RE.search(line):
                     faults.append(f"{path.name}: {line}")
                 if re.search(r"(cudagraph|cuda graph|hip graph)", line, re.IGNORECASE):
                     graph_evidence.append(f"{path.name}: {line}")
