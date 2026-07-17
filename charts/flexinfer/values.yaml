@@ -189,6 +189,17 @@ proxy:
   timeouts:
     queue: 10m
     coldStart: 10m
+  # Rollout draining (issue #65). On SIGTERM the proxy flips /readyz to 503 so
+  # the pod leaves the Service endpoints, waits `drainDelay` for that removal to
+  # propagate, then drains in-flight requests up to `timeout` before closing the
+  # listener. `terminationGracePeriodSeconds` must exceed timeout + drainDelay so
+  # Kubernetes does not SIGKILL the pod mid-drain. Omitting this block falls back
+  # to the binary defaults (10m timeout, 5s drain delay) and the Kubernetes
+  # default 30s grace — set it explicitly for long-context lanes.
+  gracefulShutdown:
+    timeout: "10m"          # PROXY_GRACEFUL_SHUTDOWN_TIMEOUT
+    drainDelay: "5s"        # PROXY_SHUTDOWN_DRAIN_DELAY
+    terminationGracePeriodSeconds: 640   # timeout + delay + buffer
   # Prefix-routing key strictness knobs.
   # Tune these to reduce key cardinality or allow longer context-derived segments.
   routing:

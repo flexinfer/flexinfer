@@ -318,3 +318,62 @@ Key metrics:
 - `flexinfer_models_total{phase}` - Models by phase
 - `flexinfer_proxy_requests_total{model,status}` - Request counts
 - `flexinfer_proxy_queue_depth{model}` - Pending requests per model
+
+## Verify rollout draining
+
+The proxy drains in-flight requests during rollouts instead of dropping
+them (issue #65). See [Proxy → Rollout draining](proxy.md#rollout-draining)
+for how the contract works (readiness flip → drain delay → bounded
+`server.Shutdown` → `terminationGracePeriodSeconds`). This is the live
+kill-test.
+
+1. **Start a long request and hold the connection open.** Pick a model on
+   the proxy and issue a completion large enough to run for tens of
+   seconds:
+
+   ```bash
+   kubectl -n flexinfer-system port-forward svc/flexinfer-proxy 8080:80 &
+   curl -sS http://localhost:8080/v1/chat/completions \
+     -H 'Content-Type: application/json' \
+     -d '{"model":"<model>","max_tokens":2048,
+          "messages":[{"role":"user","content":"Write a long essay."}]}' \
+     > /tmp/held-request.json &
+   HELD=$!
+   ```
+
+2. **Restart the proxy while the request is in flight:**
+
+   ```bash
+   kubectl -n flexinfer-system rollout restart deployment/flexinfer-proxy
+   ```
+
+3. **The held request must complete.** `wait $HELD` returns success and
+   `/tmp/held-request.json` contains a full completion — the old pod
+   drained it rather than dropping the connection.
+
+4. **Probes through the label group keep succeeding.** New traffic routed
+   through the Service is served by the new (or still-Ready) pods; the
+   draining pod is already out of the endpoints because `/readyz` returned
+   `503`:
+
+   ```bash
+   for i in $(seq 1 20); do
+     curl -sf -o /dev/null -w '%{http_code}\n' http://localhost:8080/v1/models
+     sleep 1
+   done
+   # expect: all 200
+   ```
+
+5. **Confirm the completed-drain metric increments.** Scrape the *old* pod
+   before it exits (or check the recording rule):
+
+   ```bash
+   kubectl -n flexinfer-system exec <old-proxy-pod> -- \
+     wget -qO- localhost:8080/metrics | grep flexinfer_proxy_shutdowns_total
+   # flexinfer_proxy_shutdowns_total{result="started"}   1
+   # flexinfer_proxy_shutdowns_total{result="completed"} 1
+   ```
+
+   A `result="timeout"` increment instead means an in-flight request
+   outlasted `PROXY_GRACEFUL_SHUTDOWN_TIMEOUT`; raise the timeout (and
+   `terminationGracePeriodSeconds` with it) for that lane.

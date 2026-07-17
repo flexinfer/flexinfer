@@ -119,6 +119,15 @@ proxy:
   timeouts:
     queue: "25m"
     coldStart: "25m"
+  # Rollout draining (issue #65). SIGTERM flips /readyz to 503 (pod leaves
+  # Service endpoints), waits drainDelay for propagation, then drains in-flight
+  # requests up to timeout before closing the listener.
+  # terminationGracePeriodSeconds must exceed timeout + drainDelay so the
+  # kubelet does not SIGKILL the proxy mid-drain.
+  gracefulShutdown:
+    timeout: "10m"
+    drainDelay: "5s"
+    terminationGracePeriodSeconds: 640
   # Both 128K workhorse members are maxNumSeqs=1. Enable only after image
   # automation pins a proxy binary that supports least-loaded routing
   # (first verified tag: 20260714-234146).
