@@ -151,8 +151,15 @@ committed.
       `helm lint` 0 failed, rendered chart carries readyz/grace/drain wiring.
       Integration refactor: reservation ledger moved from package-level
       `sync.Map` to a lazily-initialized Proxy struct field (`e377e5f1d`).
-- [ ] MR merged
-- [ ] Live rollout-under-load kill-test run; #65 closed
+- [x] MR merged 2026-07-17: !855 (`fa01da929`) + lint follow-up !856
+      (`2f282816f`, errcheck in reservations_test — the CI lint job runs
+      golangci-lint, which slice verification with plain `go vet` missed).
+      Master pipeline 19733 fully green; publish jobs shipped the new
+      proxy image.
+- [ ] Live rollout-under-load kill-test run; #65 closed. Prereqs: Flux
+      applies the chart/values (readyz probe, grace 640s, drain env) and the
+      proxy Deployment rolls onto the freshly published image. Procedure in
+      `docs/user/operations.md` "Verify rollout draining".
 
 Harvest note (process): the slice-2 agent committed on local `master` in the
 canonical repo instead of its branch (worktree-path drift — the known
