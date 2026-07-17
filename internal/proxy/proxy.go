@@ -69,6 +69,12 @@ const (
 	// defaultGracefulShutdownTimeout bounds proxy HTTP draining during rollout
 	// termination while leaving enough room for long-context completions.
 	defaultGracefulShutdownTimeout = 10 * time.Minute
+
+	// defaultShutdownDrainDelay is the in-process pause between flipping the
+	// /readyz probe to 503 and closing the HTTP listener. It gives Kubernetes
+	// time to remove this pod from the Service endpoints so no new request
+	// lands on a listener that is about to close. See issue #65.
+	defaultShutdownDrainDelay = 5 * time.Second
 )
 
 // Scheme is the runtime scheme used by the proxy for K8s API types.
@@ -105,11 +111,15 @@ type Config struct {
 	AuthToken                        string
 	DirectRuntimeEnabled             bool // Enable direct proxy-to-runtime fast path
 	GracefulShutdownTimeout          time.Duration
-	MaxTokensClampEnabled            bool
-	MaxTokensClampPromptReserve      int
-	AdmissionEnabled                 bool
-	AdmissionSafetyMarginPercent     int
-	AdmissionDefaultMaxTokens        int
+	// ShutdownDrainDelay is the pause between flipping /readyz to 503 and
+	// closing the HTTP listener during graceful shutdown. It lets endpoint
+	// removal propagate before the listener stops accepting. See issue #65.
+	ShutdownDrainDelay           time.Duration
+	MaxTokensClampEnabled        bool
+	MaxTokensClampPromptReserve  int
+	AdmissionEnabled             bool
+	AdmissionSafetyMarginPercent int
+	AdmissionDefaultMaxTokens    int
 	// LabelGroupRouting controls how pickReadyMember picks within a shared
 	// service-label group when more than one member is Ready.
 	// Empty / "round-robin": legacy per-label RR (default).
@@ -150,6 +160,9 @@ func (c Config) Validate() error {
 	}
 	if c.GracefulShutdownTimeout < 0 {
 		errs = append(errs, fmt.Errorf("PROXY_GRACEFUL_SHUTDOWN_TIMEOUT must be >= 0 (got %s)", c.GracefulShutdownTimeout))
+	}
+	if c.ShutdownDrainDelay < 0 {
+		errs = append(errs, fmt.Errorf("PROXY_SHUTDOWN_DRAIN_DELAY must be >= 0 (got %s)", c.ShutdownDrainDelay))
 	}
 	if c.BackoffEnabled {
 		if c.BackoffMaxRetries <= 0 {
@@ -221,6 +234,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		AuthToken:                        os.Getenv("PROXY_AUTH_TOKEN"),
 		DirectRuntimeEnabled:             envutil.BoolOrDefault("PROXY_DIRECT_RUNTIME_ENABLED", true),
 		GracefulShutdownTimeout:          envutil.DurationOrDefault("PROXY_GRACEFUL_SHUTDOWN_TIMEOUT", defaultGracefulShutdownTimeout),
+		ShutdownDrainDelay:               envutil.DurationOrDefault("PROXY_SHUTDOWN_DRAIN_DELAY", defaultShutdownDrainDelay),
 		MaxTokensClampEnabled:            envutil.BoolOrDefault("PROXY_MAX_TOKENS_CLAMP_ENABLED", true),
 		MaxTokensClampPromptReserve:      envutil.IntOrDefault("PROXY_MAX_TOKENS_CLAMP_PROMPT_RESERVE_TOKENS", defaultPromptReserveTokens),
 		AdmissionEnabled:                 envutil.BoolOrDefault("PROXY_ADMISSION_ENABLED", false),
@@ -354,8 +368,25 @@ type Proxy struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	// reservationLedger tracks short-lived least-loaded pick reservations;
+	// lazily constructed via reservations() so struct-literal test proxies
+	// work without a constructor hook.
+	reservationsOnce  sync.Once
+	reservationLedger *reservationLedger
+
 	// gracefulShutdownTimeout bounds http.Server shutdown after SIGTERM/SIGINT.
 	gracefulShutdownTimeout time.Duration
+
+	// shutdownDrainDelay is the pause between flipping /readyz to 503 and
+	// calling server.Shutdown. It gives Kubernetes time to remove this pod
+	// from the Service endpoints before the listener closes. Zero means no
+	// delay. See readiness.go and issue #65.
+	shutdownDrainDelay time.Duration
+
+	// shuttingDown flips to true the moment graceful shutdown begins so
+	// /readyz reports 503 (endpoint drain) while the listener still accepts
+	// in-flight completions. See readiness.go.
+	shuttingDown atomic.Bool
 
 	// Stored config for debug endpoint (secrets redacted)
 	debugConfig debugConfigView
@@ -403,6 +434,7 @@ func New(cfg Config) *Proxy {
 		},
 		directRuntimeEnabled:    cfg.DirectRuntimeEnabled,
 		gracefulShutdownTimeout: cfg.GracefulShutdownTimeout,
+		shutdownDrainDelay:      cfg.ShutdownDrainDelay,
 		labelGroupRouting:       canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting),
 		pyannoteUpstream:        cfg.PyannoteUpstream,
 		kokoroUpstream:          cfg.KokoroUpstream,
@@ -468,6 +500,7 @@ func (p *Proxy) runServer(ctx context.Context, server *http.Server) error {
 		"queue_timeout", p.queueTimeout.String(),
 		"cold_start_timeout", p.coldStartTimeout.String(),
 		"graceful_shutdown_timeout", p.shutdownTimeout().String(),
+		"shutdown_drain_delay", p.shutdownDrainDelay.String(),
 		"validate_requests", p.validateRequests,
 		"backoff_enabled", p.backoffEnabled,
 		"rate_limit_enabled", p.rateLimitEnabled,
@@ -515,8 +548,23 @@ func (p *Proxy) waitForServer(ctx context.Context, server *http.Server, errCh <-
 	case <-ctx.Done():
 		start := time.Now()
 		timeout := p.shutdownTimeout()
+		drainDelay := p.shutdownDrainDelay
+
+		// Flip /readyz to 503 first so the kubelet pulls this pod out of the
+		// Service endpoints. The listener still accepts during the drain delay,
+		// so requests that raced the endpoint update still reach a live backend.
+		p.shuttingDown.Store(true)
 		proxyShutdownsTotal.WithLabelValues("started").Inc()
-		slog.Info("proxy graceful shutdown started", "timeout", timeout.String())
+		slog.Info("proxy graceful shutdown started",
+			"timeout", timeout.String(),
+			"drain_delay", drainDelay.String(),
+			"in_flight_connections", p.totalActiveConnections())
+
+		// Wait for endpoint removal to propagate before closing the listener so
+		// no new request lands on a pod that is about to stop accepting.
+		if drainDelay > 0 {
+			time.Sleep(drainDelay)
+		}
 
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
 		defer cancel()
@@ -564,6 +612,11 @@ func (p *Proxy) newServeMux() *http.ServeMux {
 			slog.Warn("healthz write failed", "error", err)
 		}
 	})
+	// /readyz gates rollout draining: 200 while serving, 503 the moment
+	// shutdown begins so the kubelet removes this pod from Service endpoints
+	// before the listener closes. /healthz stays 200 throughout so a long
+	// drain is never SIGKILLed by a liveness probe. See readiness.go, issue #65.
+	mux.HandleFunc("/readyz", p.handleReadyz)
 
 	return mux
 }

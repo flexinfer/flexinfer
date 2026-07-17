@@ -306,6 +306,29 @@ var (
 		},
 		[]string{"label", "strategy", "model"},
 	)
+
+	// Least-loaded reservation ledger observability. A reservation is recorded
+	// each time pickLeastLoaded steers a request to a member; it counts as load
+	// until a real connection consumes it or its TTL
+	// (PROXY_LEAST_LOADED_RESERVATION_TTL) elapses. A rising _total with a flat
+	// active_connections rate marks a burst the ledger spread; a rising
+	// _expired_total marks picks that never became served connections (dropped
+	// callers, rejected queue slots, cold-start timeouts).
+	leastLoadedReservationsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_least_loaded_reservations_total",
+			Help: "Total least-loaded pick reservations recorded per model (burst-spread placeholders ahead of the connection gauge).",
+		},
+		[]string{"model"},
+	)
+
+	leastLoadedReservationsExpiredTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_least_loaded_reservations_expired_total",
+			Help: "Total least-loaded reservations that expired before a real connection consumed them, per model.",
+		},
+		[]string{"model"},
+	)
 )
 
 var metricsOnce sync.Once
@@ -362,5 +385,7 @@ func RegisterMetrics() {
 		prometheus.MustRegister(admissionDecisionsTotal)
 		prometheus.MustRegister(labelGroupRouteDecisionsTotal)
 		prometheus.MustRegister(labelGroupRouteTargetHitsTotal)
+		prometheus.MustRegister(leastLoadedReservationsTotal)
+		prometheus.MustRegister(leastLoadedReservationsExpiredTotal)
 	})
 }

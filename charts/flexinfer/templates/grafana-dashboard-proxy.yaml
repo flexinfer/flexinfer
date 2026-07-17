@@ -500,6 +500,162 @@ data:
               "color": { "mode": "palette-classic" }
             }
           }
+        },
+        {
+          "title": "Graceful Shutdown & Drain",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 40, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Graceful Shutdown Events",
+          "description": "Proxy graceful-shutdown lifecycle events over a rolling 15m window, by result. started = SIGTERM drain begun; completed = drained before deadline; timeout = drain deadline exceeded, in-flight requests cut off.",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 41, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (result) (increase(flexinfer_proxy_shutdowns_total[15m]))",
+              "legendFormat": "{{ "{{" }}result{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "short",
+              "custom": {
+                "drawStyle": "bars",
+                "lineInterpolation": "linear",
+                "fillOpacity": 50,
+                "lineWidth": 1,
+                "pointSize": 5,
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byName", "options": "timeout" },
+                "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } }]
+              },
+              {
+                "matcher": { "id": "byName", "options": "completed" },
+                "properties": [{ "id": "color", "value": { "mode": "fixed", "fixedColor": "green" } }]
+              }
+            ]
+          }
+        },
+        {
+          "title": "Shutdown Drain Duration",
+          "description": "Time spent draining in-flight requests during graceful shutdown (p50/p95/p99). Approaching the 600s (10m) drain deadline means replicas are about to time out drains. Rare-event metric: quantiles use a 1h window so a recent drain remains visible.",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 41, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "histogram_quantile(0.50, sum by (le) (rate(flexinfer_proxy_shutdown_duration_seconds_bucket[1h])))",
+              "legendFormat": "p50",
+              "refId": "A"
+            },
+            {
+              "expr": "histogram_quantile(0.95, sum by (le) (rate(flexinfer_proxy_shutdown_duration_seconds_bucket[1h])))",
+              "legendFormat": "p95",
+              "refId": "B"
+            },
+            {
+              "expr": "histogram_quantile(0.99, sum by (le) (rate(flexinfer_proxy_shutdown_duration_seconds_bucket[1h])))",
+              "legendFormat": "p99",
+              "refId": "C"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "s",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" },
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  { "color": "green", "value": null },
+                  { "color": "yellow", "value": 480 },
+                  { "color": "red", "value": 600 }
+                ]
+              }
+            }
+          }
+        },
+        {
+          "title": "Label-Group Routing",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 49, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "Route Decisions by Mode",
+          "description": "Label-group routing decisions per second by configured strategy and per-call outcome. outcome=least_loaded (least-loaded pick), hashed_prefix/hashed_session (consistent-hash pin), default_rr/fallback_* (round-robin or fallback).",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 50, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (strategy, outcome) (rate(flexinfer_proxy_label_group_route_decisions_total[5m]))",
+              "legendFormat": "{{ "{{" }}strategy{{ "}}" }} / {{ "{{" }}outcome{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
+        },
+        {
+          "title": "Label-Group Target Hits",
+          "description": "Which model in each label group actually receives shared-label traffic (per second, by label and selected model). Skew here shows the least-loaded / hash routing decisions landing on real backends.",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 50, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (label, model) (rate(flexinfer_proxy_label_group_route_target_hits_total[5m]))",
+              "legendFormat": "{{ "{{" }}label{{ "}}" }} → {{ "{{" }}model{{ "}}" }}",
+              "refId": "A"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "reqps",
+              "custom": {
+                "drawStyle": "line",
+                "lineInterpolation": "smooth",
+                "fillOpacity": 10,
+                "lineWidth": 2,
+                "pointSize": 5,
+                "showPoints": "auto",
+                "spanNulls": false,
+                "stacking": { "mode": "none" }
+              },
+              "color": { "mode": "palette-classic" }
+            }
+          }
         }
       ],
       "refresh": "10s",
