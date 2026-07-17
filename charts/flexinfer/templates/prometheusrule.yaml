@@ -75,6 +75,33 @@ spec:
             summary: "Queue rejections for model {{ "{{ $labels.model }}" }}"
             description: "Model {{ "{{ $labels.model }}" }} is rejecting requests due to queue overflow at {{ "{{ $value }}" }}/s."
 
+        # A proxy replica exceeded its graceful-shutdown drain deadline
+        # (default 10m, PROXY_GRACEFUL_SHUTDOWN_TIMEOUT). A timeout means
+        # in-flight requests were cut off mid-flight instead of draining
+        # cleanly. Fires on any NEW timeout in the window (increase > 0),
+        # matching the fresh-failure style of FlexInferQuantizationJobFailed.
+        - alert: FlexInferProxyGracefulShutdownTimeout
+          expr: |
+            increase(flexinfer_proxy_shutdowns_total{result="timeout"}[15m]) > 0
+          labels:
+            severity: warning
+          annotations:
+            summary: "Proxy graceful shutdown timed out"
+            description: "A flexinfer-proxy replica exceeded its graceful-shutdown drain deadline in the last 15 minutes, forcing in-flight requests to be cut off. Check for long-running/streaming requests, the pod's terminationGracePeriodSeconds vs PROXY_GRACEFUL_SHUTDOWN_TIMEOUT, and `kubectl describe pod` events. See docs/user/proxy-observability.md."
+
+        # p99 drain duration is climbing toward the 600s (10m) deadline.
+        # Warn before drains actually start timing out so an operator can
+        # investigate long-lived requests or raise the deadline in advance.
+        - alert: FlexInferProxyDrainDurationHigh
+          expr: |
+            histogram_quantile(0.99, sum by (le) (rate(flexinfer_proxy_shutdown_duration_seconds_bucket[1h]))) > {{ default 480 $thresholds.proxyDrainSecondsWarn }}
+          for: {{ default "5m" $thresholds.proxyDrainDurationFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Proxy drain duration approaching timeout"
+            description: "p99 graceful-shutdown drain duration is {{ "{{ $value | humanizeDuration }}" }}, approaching the 600s (10m) drain deadline. Replicas may soon time out drains and cut off in-flight requests. Investigate long-running/streaming requests on the proxy or raise PROXY_GRACEFUL_SHUTDOWN_TIMEOUT."
+
     - name: flexinfer-gpu
       rules:
         # GPU temperature too high
