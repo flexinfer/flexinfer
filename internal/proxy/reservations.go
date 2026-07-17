@@ -159,21 +159,16 @@ func (l *reservationLedger) storeLocked(model string, live []time.Time) {
 	l.deadlines[model] = live
 }
 
-// reservationLedgers associates a lazily-constructed reservationLedger with each
-// Proxy without adding a field to the Proxy struct (proxy.go is owned by a
-// parallel change; the file boundary must stay disjoint). Keys are pinned by
-// sync.Map for the process lifetime, which prevents address-reuse aliasing;
-// production runs a single long-lived Proxy so the retained entry is a non-issue.
-var reservationLedgers sync.Map // map[*Proxy]*reservationLedger
-
 // reservations returns the Proxy's reservation ledger, constructing it (and
 // reading PROXY_LEAST_LOADED_RESERVATION_TTL) on first access. Lazy
 // construction is required because tests build Proxy struct literals directly
-// rather than through New, so there is no single constructor to hook.
+// rather than through New, so there is no single constructor to hook; a test
+// may pre-set reservationLedger before first use to pin an explicit TTL.
 func (p *Proxy) reservations() *reservationLedger {
-	if v, ok := reservationLedgers.Load(p); ok {
-		return v.(*reservationLedger)
-	}
-	v, _ := reservationLedgers.LoadOrStore(p, newReservationLedger())
-	return v.(*reservationLedger)
+	p.reservationsOnce.Do(func() {
+		if p.reservationLedger == nil {
+			p.reservationLedger = newReservationLedger()
+		}
+	})
+	return p.reservationLedger
 }

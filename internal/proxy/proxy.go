@@ -368,6 +368,12 @@ type Proxy struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
+	// reservationLedger tracks short-lived least-loaded pick reservations;
+	// lazily constructed via reservations() so struct-literal test proxies
+	// work without a constructor hook.
+	reservationsOnce  sync.Once
+	reservationLedger *reservationLedger
+
 	// gracefulShutdownTimeout bounds http.Server shutdown after SIGTERM/SIGINT.
 	gracefulShutdownTimeout time.Duration
 

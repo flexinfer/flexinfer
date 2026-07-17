@@ -15,16 +15,14 @@ import (
 )
 
 // setReservationLedger installs a reservation ledger with an explicit TTL for
-// the given proxy and removes it on cleanup. A ttl of 0 disables reservations,
-// reproducing the pre-reservation least-loaded behavior; a positive ttl enables
-// burst-spread. Because the package associates ledgers with proxies lazily via
-// a package-level map, tests set the ledger before the first pick so the
-// auto-constructed (env-driven) ledger never gets created for this proxy.
+// the given proxy. A ttl of 0 disables reservations, reproducing the
+// pre-reservation least-loaded behavior; a positive ttl enables burst-spread.
+// Ledgers are lazily constructed on first use, so tests must call this before
+// the first pick to keep the auto-constructed (env-driven) ledger from winning.
 func setReservationLedger(t *testing.T, p *Proxy, ttl time.Duration) *reservationLedger {
 	t.Helper()
 	l := newReservationLedgerWithTTL(ttl)
-	reservationLedgers.Store(p, l)
-	t.Cleanup(func() { reservationLedgers.Delete(p) })
+	p.reservationLedger = l
 	return l
 }
 
