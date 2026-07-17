@@ -210,10 +210,34 @@ metadata:
 - Requests route to the pod with fewest active connections
 - Falls back to first available pod if all have equal load
 
+**Burst safety (reservations):**
+
+The active-connection gauge only advances once the proxy actually starts serving
+a request upstream. A burst of concurrent requests for the same service label
+can therefore all observe the same lowest load and stampede one member before
+any gauge moves. To close that window, each least-loaded pick records a
+short-lived **reservation** for the member it selects. Subsequent picks in the
+same burst count unexpired reservations as load, so the burst spreads across
+members instead of piling onto one. When the real connection begins, it consumes
+the reservation (a tracked connection replaces its placeholder); reservations
+that never become connections — dropped callers, rejected queue slots,
+cold-start timeouts — expire on their own.
+
+- `PROXY_LEAST_LOADED_RESERVATION_TTL` — reservation lifetime (default `10s`).
+  The TTL is a self-healing bound: a picked request that never turns into a
+  served connection stops counting as phantom load after this long.
+- Set `PROXY_LEAST_LOADED_RESERVATION_TTL=0` to disable the reservation ledger
+  entirely. Least-loaded then behaves exactly as before: raw active connections
+  plus a round-robin tie-break.
+- Reservations are observable via `flexinfer_proxy_least_loaded_reservations_total`
+  (picks steered) and `flexinfer_proxy_least_loaded_reservations_expired_total`
+  (picks that never became connections).
+
 **Best for:**
 - Workloads with variable request durations
 - Models where some requests are much slower (e.g., long generations)
 - Preventing hot spots on individual pods
+- Bursty arrivals where many requests land before any connection registers
 
 ## How It Works
 
@@ -251,6 +275,8 @@ Monitor routing effectiveness with these metrics:
 | `flexinfer_proxy_active_connections{model}` | Current connections per model |
 | `flexinfer_proxy_label_group_route_decisions_total{label,strategy,outcome}` | Shared-label decisions; `least_loaded` confirms active-load selection |
 | `flexinfer_proxy_label_group_route_target_hits_total{label,strategy,model}` | Shared-label traffic distribution by selected Model |
+| `flexinfer_proxy_least_loaded_reservations_total{model}` | Least-loaded pick reservations recorded per model (burst-spread placeholders ahead of the connection gauge) |
+| `flexinfer_proxy_least_loaded_reservations_expired_total{model}` | Reservations that expired before a real connection consumed them (dropped callers, rejected queue slots, cold-start timeouts) |
 | `flexinfer_proxy_routing_decisions_total{model,strategy,key_source,outcome}` | Routing decisions by strategy and key source (`outcome`: `pod` or `service-fallback`) |
 | `flexinfer_proxy_routing_target_hits_total{model,strategy,target}` | Route-hit distribution by selected target (`target` is pod IP:port or `service-dns`) |
 | `flexinfer_proxy_routing_key_cardinality{model,strategy,key_source}` | Approximate unique routing-key count per source (bounded in-memory tracker) |
@@ -263,7 +289,11 @@ When multiple Ready Models claim the same service label, set
 `FLEXINFER_PROXY_LABEL_GROUP_ROUTING`) to control member selection. The default
 is `round-robin`. `least-loaded` selects the Ready Model with the fewest active
 proxy connections and round-robins ties; it is the recommended mode for
-single-sequence long-context replicas. Prefix and session modes remain
+single-sequence long-context replicas. Least-loaded also reserves each pick for
+`PROXY_LEAST_LOADED_RESERVATION_TTL` (default `10s`, `0` to disable) so a burst
+of concurrent requests spreads across members instead of stampeding whichever
+member the connection gauge still shows as idle — see
+[Least-Loaded](#least-loaded) for details. Prefix and session modes remain
 available when cache affinity matters more than current load.
 
 ### Logs
