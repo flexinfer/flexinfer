@@ -64,10 +64,18 @@ func (p *Proxy) startLastAccessHeartbeat(modelName string) func() {
 }
 
 // incrementConnections atomically increments the connection count.
+//
+// It also consumes one least-loaded reservation for the model: a real
+// connection is now replacing the placeholder that pickLeastLoaded recorded
+// when it steered the request here, so the reservation must stop double-counting
+// as load. Direct / non-label-group requests never reserved, and consume is a
+// cheap no-op when the model has no pending reservation (or the ledger is
+// disabled).
 func (p *Proxy) incrementConnections(modelName string) {
 	count, _ := p.connectionTracking.LoadOrStore(modelName, new(int64))
 	atomic.AddInt64(count, 1)
 	activeConnections.WithLabelValues(modelName).Inc()
+	p.reservations().consume(modelName)
 }
 
 // decrementConnections atomically decrements the connection count.

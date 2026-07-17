@@ -145,25 +145,43 @@ func (p *Proxy) pickRoundRobin(label string, candidates []string) string {
 // pickLeastLoaded chooses the Ready model with the fewest in-flight proxy
 // connections. Ties round-robin so an idle fleet still spreads burst arrivals
 // instead of pinning to the first member in stable resolver order.
+//
+// Observed load is active connections PLUS unexpired reservations from the
+// least-loaded ledger. The connection gauge only moves once trackAndServe
+// starts serving upstream, so without reservations a burst of concurrent
+// requests would all read load 0 (or all read the same lowest count) and
+// stampede one member before any gauge advances. Each pick records a
+// short-lived reservation that counts as load for subsequent picks in the same
+// burst; incrementConnections consumes it when the real connection begins. The
+// ledger is disabled (reserve/pending are no-ops) when
+// PROXY_LEAST_LOADED_RESERVATION_TTL is 0, in which case this is exactly the
+// legacy active-connections-plus-round-robin behavior.
 func (p *Proxy) pickLeastLoaded(label string, candidates []string) string {
 	if len(candidates) <= 1 {
 		return p.pickRoundRobin(label, candidates)
 	}
 
-	minConnections := p.GetActiveConnections(candidates[0])
+	ledger := p.reservations()
+	load := func(name string) int64 {
+		return p.GetActiveConnections(name) + int64(ledger.pending(name))
+	}
+
+	minLoad := load(candidates[0])
 	leastLoaded := []string{candidates[0]}
 	for _, name := range candidates[1:] {
-		connections := p.GetActiveConnections(name)
+		l := load(name)
 		switch {
-		case connections < minConnections:
-			minConnections = connections
+		case l < minLoad:
+			minLoad = l
 			leastLoaded = []string{name}
-		case connections == minConnections:
+		case l == minLoad:
 			leastLoaded = append(leastLoaded, name)
 		}
 	}
 
-	return p.pickRoundRobin(label, leastLoaded)
+	picked := p.pickRoundRobin(label, leastLoaded)
+	ledger.reserve(picked)
+	return picked
 }
 
 // pickReadyMemberRouted is the production entry point for label-group
