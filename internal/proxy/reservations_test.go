@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"os"
 	"sync"
 	"testing"
 	"time"
@@ -145,8 +144,7 @@ func TestReservationLedger_NilIsDisabled(t *testing.T) {
 // PROXY_LEAST_LOADED_RESERVATION_TTL and honors the documented default.
 func TestReservationLedger_DefaultTTLFromEnv(t *testing.T) {
 	t.Setenv(reservationEnvTTL, "")
-	os.Unsetenv(reservationEnvTTL)
-	assert.Equal(t, defaultReservationTTL, newReservationLedger().ttl, "unset env uses the 10s default")
+	assert.Equal(t, defaultReservationTTL, newReservationLedger().ttl, "empty/unset env uses the 10s default")
 
 	t.Setenv(reservationEnvTTL, "250ms")
 	assert.Equal(t, 250*time.Millisecond, newReservationLedger().ttl, "env value overrides the default")
