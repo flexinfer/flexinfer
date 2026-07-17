@@ -2,6 +2,7 @@
 {{- $proxyImage := default (dict) $proxy.image -}}
 {{- $observability := default (dict) .Values.observability -}}
 {{- $tracing := default (dict) $observability.tracing -}}
+{{- $gracefulShutdown := default (dict) $proxy.gracefulShutdown -}}
 {{- if $proxy.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -23,6 +24,12 @@ spec:
         app: flexinfer-proxy
     spec:
       serviceAccountName: {{ include "flexinfer.proxyServiceAccountName" . }}
+      {{- if $gracefulShutdown.terminationGracePeriodSeconds }}
+      # Must exceed drainDelay + timeout so Kubernetes lets the in-process
+      # drain finish before SIGKILL. See gracefulShutdown in values.yaml and
+      # issue #65.
+      terminationGracePeriodSeconds: {{ $gracefulShutdown.terminationGracePeriodSeconds }}
+      {{- end }}
       containers:
         - name: proxy
           image: {{ include "flexinfer.imageRef" (merge (deepCopy $proxyImage) (dict "tag" (.Chart.AppVersion | toString))) | quote }}
@@ -31,6 +38,25 @@ spec:
             - name: http
               containerPort: 8080
               protocol: TCP
+          # Readiness gate for rollout draining (issue #65). /readyz returns 200
+          # while serving and flips to 503 the moment the proxy receives
+          # SIGTERM, so the kubelet removes this pod from the Service endpoints
+          # before the in-process drain delay (PROXY_SHUTDOWN_DRAIN_DELAY)
+          # elapses and the listener closes. A low failureThreshold keeps
+          # endpoint removal fast once draining begins.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+            failureThreshold: 2
+            timeoutSeconds: 2
+          # No livenessProbe against the HTTP server on purpose: graceful
+          # shutdown closes the listener while long in-flight completions drain
+          # (up to gracefulShutdown.timeout, default 10m). A liveness probe
+          # would start failing the instant the listener closes and SIGKILL the
+          # pod mid-drain, defeating the rollout drain contract (issue #65).
+          # /healthz stays 200 throughout and is intentionally left unprobed.
           env:
             - name: POD_NAMESPACE
               valueFrom:
@@ -61,6 +87,14 @@ spec:
             - name: PROXY_COLD_START_TIMEOUT
               value: {{ $proxy.timeouts.coldStart | quote }}
             {{- end }}
+            {{- end }}
+            {{- if $gracefulShutdown.timeout }}
+            - name: PROXY_GRACEFUL_SHUTDOWN_TIMEOUT
+              value: {{ $gracefulShutdown.timeout | quote }}
+            {{- end }}
+            {{- if $gracefulShutdown.drainDelay }}
+            - name: PROXY_SHUTDOWN_DRAIN_DELAY
+              value: {{ $gracefulShutdown.drainDelay | quote }}
             {{- end }}
             {{- if $proxy.routing }}
             {{- if $proxy.routing.labelGroupMode }}

@@ -14,7 +14,8 @@ The FlexInfer proxy (`flexinfer-proxy`) is the entrypoint for:
 
 ## Endpoints
 
-- `GET /healthz` → `200 ok`
+- `GET /healthz` → `200 ok` (liveness; stays `200` even during shutdown)
+- `GET /readyz` → `200 ok` while serving, `503 draining` once shutdown begins (readiness)
 - `GET /metrics` → Prometheus metrics
 - `GET /v1/models` → OpenAI-compatible model list
 - `/*` → reverse proxy to the active model backend
@@ -60,6 +61,70 @@ does not advance for the stalled-load threshold, fresh queued requests receive
 `503 Service Unavailable` with `Retry-After` instead of continuing to build an
 unbounded cold-start queue. Check `status.message` for the last observed shard
 or backend progress hint.
+
+## Rollout draining
+
+During a rollout (`kubectl rollout restart`, image bump, or any pod
+replacement) the proxy drains in-flight requests instead of dropping them.
+This matters because a single completion can run for minutes, and the
+default Kubernetes 30s grace would otherwise kill the pod mid-response
+(issue #65).
+
+The drain sequence on `SIGTERM`:
+
+1. **Readiness flip.** `/readyz` immediately returns `503`. The kubelet
+   removes this pod from the Service endpoints, so no *new* request is
+   routed to it. `/healthz` stays `200` — there is intentionally **no**
+   liveness probe on the HTTP server (see the caveat below).
+2. **Drain delay.** The proxy pauses for `PROXY_SHUTDOWN_DRAIN_DELAY`
+   (default `5s`) with the listener still open. This lets the endpoint
+   removal propagate through kube-proxy/iptables so requests that raced
+   the update still reach a live backend.
+3. **Graceful shutdown.** The proxy calls `server.Shutdown`, which stops
+   accepting new connections and waits for in-flight requests to finish,
+   bounded by `PROXY_GRACEFUL_SHUTDOWN_TIMEOUT` (default `10m`).
+4. **Termination grace.** `terminationGracePeriodSeconds` on the pod must
+   exceed `drainDelay + timeout` so the kubelet does not `SIGKILL` the pod
+   before the drain finishes.
+
+### Configuration
+
+| Env var | Helm value (`proxy.gracefulShutdown.*`) | Default | Meaning |
+|---------|------------------------------------------|---------|---------|
+| `PROXY_SHUTDOWN_DRAIN_DELAY` | `drainDelay` | `5s` | Pause between the readiness flip and closing the listener. Must be `>= 0`. |
+| `PROXY_GRACEFUL_SHUTDOWN_TIMEOUT` | `timeout` | `10m` | Upper bound on draining in-flight requests. Must be `>= 0`. |
+| — | `terminationGracePeriodSeconds` | `640` | Pod grace period; keep it above `timeout + drainDelay`. |
+
+```yaml
+# values.yaml
+proxy:
+  gracefulShutdown:
+    timeout: "10m"
+    drainDelay: "5s"
+    terminationGracePeriodSeconds: 640
+```
+
+Omitting the `gracefulShutdown` block falls back to the binary defaults
+(`10m` timeout, `5s` drain delay) and the Kubernetes default 30s grace —
+set it explicitly for long-context lanes so the grace period covers a
+worst-case completion.
+
+### Liveness-probe caveat
+
+Do **not** point a `livenessProbe` at the proxy's HTTP server. Graceful
+shutdown closes the listener while in-flight completions are still
+draining; a liveness probe would start failing the instant the listener
+closes and `SIGKILL` the pod mid-drain, defeating the whole contract.
+`/healthz` stays `200` throughout and is left deliberately unprobed.
+
+### Metrics
+
+- `flexinfer_proxy_shutdowns_total{result}` — `started`, then `completed`
+  or `timeout`.
+- `flexinfer_proxy_shutdown_duration_seconds` — histogram of drain time.
+
+The live kill-test procedure is in
+[Operations → Verify rollout draining](operations.md#verify-rollout-draining).
 
 ## GPUGroup demand signaling (v1alpha1)
 
