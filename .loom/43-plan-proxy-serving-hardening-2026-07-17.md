@@ -142,10 +142,20 @@ committed.
 
 ## Status
 
-- [ ] Slice 1 implemented
-- [ ] Slice 2 implemented
-- [ ] Slice 3 implemented
-- [ ] Slice 4 implemented
-- [ ] Integration branch green (full tests + helm lint)
+- [x] Slice 1 implemented (`11e01e229`, branch `feat/proxy-rollout-drain-sequencing`)
+- [x] Slice 2 implemented (`a48d8abb1`, branch `feat/proxy-least-loaded-reservations`)
+- [x] Slice 3 implemented (`9c4bea8a9`, branch `feat/proxy-drain-routing-observability`)
+- [x] Slice 4 implemented (`13030974c`, branch `feat/global-proxy-graceful-shutdown`)
+- [x] Integration branch green 2026-07-17: `gofmt`/`go vet ./...`/`go build ./...`
+      clean, `go test -count=1 ./...` exit 0, targeted `-race` proxy tests pass,
+      `helm lint` 0 failed, rendered chart carries readyz/grace/drain wiring.
+      Integration refactor: reservation ledger moved from package-level
+      `sync.Map` to a lazily-initialized Proxy struct field (`e377e5f1d`).
 - [ ] MR merged
 - [ ] Live rollout-under-load kill-test run; #65 closed
+
+Harvest note (process): the slice-2 agent committed on local `master` in the
+canonical repo instead of its branch (worktree-path drift — the known
+`feedback_worktree_absolute_paths` failure mode). Recovered by re-pointing the
+slice branch at the commit and resetting local `master` to `origin/master`;
+canonical baseline dirt untouched, nothing was pushed.
