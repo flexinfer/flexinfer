@@ -1,0 +1,144 @@
+# Clean Qwen3.5-35B-A3B native-MTP 32K lane on cblevins-7900xtx (gfx1100).
+#
+# This is the declarative promotion of the 2026-07-16 gfx1100 native-MTP
+# certificate (.loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md):
+# - Artifact: the surgical MTP-expert GPTQ sibling of the clean workhorse
+#   artifact. All target-model tensors are byte-identical to the qualified
+#   source (sha256:ed9cd20f...); only the 256x3 MTP routed-expert matrices are
+#   RTN W4G128-quantized into four fused GPTQ tensors (contract digest
+#   sha256:46d21a2b..., 1.19 GiB freed, min per-matrix cosine 0.984898).
+# - Runtime: text-only Qwen3.5 plugin v0.6.0 overlay on vLLM 0.23 ROCm,
+#   pinned to the exact certified digest below.
+# - Certificate (kill-test PROBE_RESULT PASS, graph mode + 32K + FP8 KV):
+#   exact constrained greedy parity across arms, 80.18% draft acceptance,
+#   1.230x median decode speedup (code 1.230x, short QA 1.155x,
+#   long-context 2.203x), no ROCm/HSA/OOM/abort fault markers.
+#   Reproduction: deploy/debug/gfx1100-qwen35-mtp-kill-test.yaml (suspended).
+#
+# ROLLBACK: this lane is additive and demand-only (ondemand, minReplicas 0,
+# priority 90, unique aliases). The 128K sister and the 5930k warm workhorse
+# are untouched. To roll back, remove this file from kustomization.yaml —
+# no other manifest references it.
+#
+# ENVELOPE GUARD: the certificate covers exactly maxModelLen=32768 at
+# gpuMemoryUtilization=0.96 with maxNumSeqs=1. The plain-BF16 MTP head does
+# NOT fit graph+32K (kill-test FAILED 2026-07-16 needing 1.06 GiB more), so
+# do not repoint spec.source at the plain artifact, and do not raise
+# maxModelLen without a new certificate.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-35b-clean-mtp-32k
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.5-35B-A3B
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+    flexinfer.ai/mtp-expert-contract-digest: sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d
+    flexinfer.ai/runtime-digest: sha256:f467e202987671b321e215142a7a6be7b910940c1323fced6243b573d27c8669
+    flexinfer.ai/promotion-state: gfx1100-native-mtp-32k-graph-certified
+    flexinfer.ai/promotion-evidence: .loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/vllm@sha256:f467e202987671b321e215142a7a6be7b910940c1323fced6243b573d27c8669
+  source: pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn-mtp-experts-w4g128
+  cache:
+    # Mount the controller-validated shared artifact directly. The source
+    # artifact digest plus the MTP-expert contract digest above record exactly
+    # what was certified; build/scripts/quantize_mtp_experts.py plus the
+    # suspended builder deploy/debug/gfx1100-qwen35-mtp-expert-quantize.yaml
+    # reconstruct the artifact if the RWX cache is ever lost.
+    strategy: None
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache
+      sizeLimit: 4Gi
+  config:
+    # Plugin v0.6 loads the four fused GPTQ MTP expert tensors only when this
+    # flag is set; without it the draft head expects the plain BF16 experts
+    # and the load fails. The controller has no per-Model env passthrough, so
+    # inject it via the supported spec.config.command override (same pattern
+    # as qwen36-35b-mtp-uncensored-5930k.yaml). Backend args are appended
+    # after the "vllm" argv[0] placeholder and reach the launcher via "$@".
+    command:
+    - bash
+    - -lc
+    - export FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ=1; exec python3 -m vllm.entrypoints.openai.api_server "$@"
+    - vllm
+    # Keep this runtime isolated from the older persistent serving image.
+    dedicatedDeployment: true
+    quantization: gptq
+    dtype: half
+    hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+    languageModelOnly: true
+    # Exact certified envelope — see ENVELOPE GUARD above.
+    maxModelLen: 32768
+    maxNumSeqs: 1
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: fp8_e4m3
+    calculateKvScales: false
+    # Required serving posture: torch.compile plus piecewise HIP graphs.
+    # One-token MTP verifies target+draft together, so the steady decode
+    # batch is 2 tokens at maxNumSeqs=1 — capture exactly that shape.
+    enforceEager: false
+    cudagraphCaptureSizes: "2"
+    speculativeConfig: '{"method":"qwen3_5_mtp","num_speculative_tokens":1}'
+    gdnPrefillBackend: triton
+    cudagraphMetrics: true
+    kvCacheMetrics: true
+    # The certificate ran full-sample metrics; production matches the sister
+    # lanes' observability-only 1% sampling to avoid steady-state overhead.
+    kvCacheMetricsSample: "0.01"
+    enablePrefixCaching: false
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    servedModelName: qwen35-35b-clean-mtp-32k
+    disableLogStats: false
+    failOnEnvironValidation: true
+    warmPolicy: ondemand
+  gpu:
+    vendor: amd
+    # This host exposes the discrete 7900 XTX plus its Raphael iGPU. Claim
+    # both device-plugin slots and select the discrete card explicitly above.
+    count: 2
+    shared: 7900xtx-textgen
+    # Demand-only canary: below every production lane in the group (128K
+    # sister 700, gemma primary chain 350-240) and below the apc-canary (100)
+    # so it never wins an idle election; explicit aliases are its only demand.
+    priority: 90
+    vramEstimateMB: 23200
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 48Gi
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    # Covers a first-ever uncached torch.compile plus the cached restart.
+    coldStartTimeout: 25m
+  serviceLabels:
+    - qwen35-mtp
+    - qwen35-mtp-32k
+  litellm:
+    enabled: true
+    servedModelName: qwen35-35b-clean-mtp-32k
+    aliases:
+      - qwen35-mtp
+      - qwen35-mtp-32k
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists

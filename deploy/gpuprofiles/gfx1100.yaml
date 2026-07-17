@@ -15,6 +15,20 @@ kind: GPUProfile
 metadata:
   name: gfx1100
   namespace: flexinfer-system
+  annotations:
+    # 2026-07-16: clean Qwen3.5-35B-A3B MoE + native MTP-1 certificate. The
+    # pinned plugin v0.6.0 overlay serves the surgical MTP-expert GPTQ artifact
+    # (contract digest below) in graph mode at 32K/FP8-KV with exact constrained
+    # greedy parity, 80.18% draft acceptance, and a 1.230x median decode
+    # speedup. Certified on cblevins-7900xtx; promoted as the demand-only
+    # deploy/models/qwen35-35b-clean-mtp-32k.yaml lane. This certificate does
+    # not replace the generic profile image below or broaden its claims.
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1: registry.harbor.lan/flexinfer/vllm@sha256:f467e202987671b321e215142a7a6be7b910940c1323fced6243b573d27c8669
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-artifact: sha256:46d21a2b84818bd319bf774bd385ecd73eeeec4bdb5770df09cc9b8c8be0e78d
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-max-model-len: "32768"
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-gpu-util: "0.96"
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-since: "2026-07-16T19:38:00Z"
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-evidence: .loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md
 spec:
   architecture: gfx1100
   vendor: amd

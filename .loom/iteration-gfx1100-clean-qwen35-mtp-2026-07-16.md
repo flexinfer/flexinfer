@@ -390,7 +390,22 @@ of this failed gate.
 
 ## Next
 
-1. Promote the certified digest/artifact/runtime tuple into a declarative
-   `Model` rollout as a separate, rollback-safe slice.
+1. ~~Promote the certified digest/artifact/runtime tuple into a declarative
+   `Model` rollout as a separate, rollback-safe slice.~~ **DONE 2026-07-16**:
+   `deploy/models/qwen35-35b-clean-mtp-32k.yaml` — demand-only lane on
+   `cblevins-7900xtx` (`7900xtx-textgen`, priority 90, `minReplicas: 0`,
+   aliases `qwen35-mtp` / `qwen35-mtp-32k`). It pins the exact certified
+   tuple (plugin v0.6.0 digest, MTP-expert artifact, `qwen3_5_mtp`/1,
+   graph+32K at `gpuMemoryUtilization: 0.96`, `cudagraphCaptureSizes: "2"`)
+   and injects `FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ=1` through the supported
+   `spec.config.command` override. The certificate is also recorded on the
+   `gfx1100` GPUProfile as `backend-certificate-vllm-qwen35-moe-mtp1`
+   annotations. Rollback = remove the one kustomization entry; the 128K
+   sister and 5930k warm workhorse are untouched.
 2. Reuse the artifact-marker, persistent-compile-cache, fixed-warmup, and exact
    metric contracts for the next gfx906 native-MTP/long-context kill-test.
+   **DONE 2026-07-16**: shipped as the gfx906 certificate
+   (`.loom/iteration-gfx906-qwen35-mtp-long-context-2026-07-16.md`).
+3. After the promoted lane's first live demand-driven cold start serves real
+   traffic, consider widening routing (e.g. sharing the plain `qwen35`
+   alias) as its own gated slice — not before.
