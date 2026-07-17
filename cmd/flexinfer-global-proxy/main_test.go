@@ -1,11 +1,20 @@
 package main
 
 import (
+	"context"
+	"io"
+	"net"
+	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/internal/globalrouting"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
@@ -204,5 +213,189 @@ func TestRequirementsFromRequest(t *testing.T) {
 	}
 	if got.MinFreeGPUs != 3 {
 		t.Fatalf("MinFreeGPUs = %d, want 3", got.MinFreeGPUs)
+	}
+}
+
+func TestGracefulShutdownTimeoutFromEnv(t *testing.T) {
+	t.Run("default when unset", func(t *testing.T) {
+		got, err := gracefulShutdownTimeoutFromEnv()
+		require.NoError(t, err)
+		assert.Equal(t, defaultGlobalProxyGracefulShutdownTimeout, got)
+	})
+
+	t.Run("override", func(t *testing.T) {
+		t.Setenv("GLOBAL_PROXY_GRACEFUL_SHUTDOWN_TIMEOUT", "30s")
+		got, err := gracefulShutdownTimeoutFromEnv()
+		require.NoError(t, err)
+		assert.Equal(t, 30*time.Second, got)
+	})
+
+	t.Run("zero drains immediately", func(t *testing.T) {
+		t.Setenv("GLOBAL_PROXY_GRACEFUL_SHUTDOWN_TIMEOUT", "0s")
+		got, err := gracefulShutdownTimeoutFromEnv()
+		require.NoError(t, err)
+		assert.Equal(t, time.Duration(0), got)
+	})
+
+	t.Run("negative rejected", func(t *testing.T) {
+		t.Setenv("GLOBAL_PROXY_GRACEFUL_SHUTDOWN_TIMEOUT", "-5s")
+		_, err := gracefulShutdownTimeoutFromEnv()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "must be >= 0")
+	})
+}
+
+func TestReadyzReflectsShutdownState(t *testing.T) {
+	state, err := newProxyState(runtimeConfig{
+		strategy: globalrouting.StrategyRoundRobin,
+		clusters: []globalrouting.ClusterEndpoint{
+			{Name: "c1", URL: "https://c1.example.com", Healthy: true, Weight: 1},
+		},
+	})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	state.handleReadyz(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	state.markShuttingDown()
+	assert.True(t, state.isShuttingDown())
+
+	rec = httptest.NewRecorder()
+	state.handleReadyz(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	assert.Equal(t, http.StatusServiceUnavailable, rec.Code)
+}
+
+func TestRunServerDrainsInFlightAndStopsNewAccepts(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != "/blocked" {
+				http.Error(w, "unexpected new request", http.StatusServiceUnavailable)
+				return
+			}
+			startedOnce.Do(func() { close(started) })
+			<-release
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("drained"))
+		}),
+	}
+
+	var shutdownCalled atomic.Bool
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- runServerOnListener(ctx, server, listener, 2*time.Second, func() { shutdownCalled.Store(true) })
+	}()
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	responseDone := make(chan int, 1)
+	responseErr := make(chan error, 1)
+	go func() {
+		resp, err := client.Get("http://" + addr + "/blocked")
+		if err != nil {
+			responseErr <- err
+			return
+		}
+		defer func() { _ = resp.Body.Close() }()
+		_, _ = io.Copy(io.Discard, resp.Body)
+		responseDone <- resp.StatusCode
+	}()
+
+	select {
+	case <-started:
+	case err := <-responseErr:
+		t.Fatalf("blocked request failed before shutdown: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked request did not start")
+	}
+
+	cancel()
+	require.Eventually(t, func() bool {
+		conn, err := net.DialTimeout("tcp", addr, 25*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return false
+		}
+		return true
+	}, time.Second, 10*time.Millisecond, "server still accepted new connections after shutdown started")
+
+	assert.True(t, shutdownCalled.Load(), "onShutdown callback should fire on shutdown start")
+
+	close(release)
+
+	select {
+	case status := <-responseDone:
+		assert.Equal(t, http.StatusOK, status)
+	case err := <-responseErr:
+		t.Fatalf("in-flight request failed during graceful shutdown: %v", err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("in-flight request did not complete")
+	}
+
+	select {
+	case err := <-runDone:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("server did not finish graceful shutdown")
+	}
+}
+
+func TestRunServerTimeoutReturnsError(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	addr := listener.Addr().String()
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var startedOnce sync.Once
+	server := &http.Server{
+		Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			startedOnce.Do(func() { close(started) })
+			<-release
+			w.WriteHeader(http.StatusOK)
+		}),
+	}
+	defer func() {
+		close(release)
+		_ = server.Close()
+	}()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- runServerOnListener(ctx, server, listener, 50*time.Millisecond, nil)
+	}()
+
+	client := &http.Client{Timeout: time.Second}
+	requestDone := make(chan struct{})
+	go func() {
+		resp, err := client.Get("http://" + addr + "/blocked")
+		if err == nil {
+			_ = resp.Body.Close()
+		}
+		close(requestDone)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("blocked request did not start")
+	}
+
+	cancel()
+
+	select {
+	case err := <-runDone:
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "global proxy graceful shutdown timed out")
+	case <-time.After(time.Second):
+		t.Fatal("server shutdown did not time out")
 	}
 }

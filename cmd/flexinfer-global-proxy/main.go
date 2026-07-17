@@ -2,18 +2,23 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
+	"syscall"
 	"time"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -41,6 +46,10 @@ type proxyState struct {
 	mu       sync.RWMutex
 	strategy globalrouting.Strategy
 	proxies  map[string]*httputil.ReverseProxy
+
+	// shuttingDown flips true once graceful shutdown begins so /readyz can
+	// fail closed and drain the pod from load-balancer rotation.
+	shuttingDown atomic.Bool
 }
 
 func newProxyState(cfg runtimeConfig) (*proxyState, error) {
@@ -99,6 +108,30 @@ func (s *proxyState) strategyValue() globalrouting.Strategy {
 func (s *proxyState) clusterNames() []string {
 	clusters := s.registry.Clusters()
 	return clusterNames(clusters)
+}
+
+// markShuttingDown records that graceful shutdown has begun so readiness
+// probes start failing and traffic drains away from this instance.
+func (s *proxyState) markShuttingDown() {
+	s.shuttingDown.Store(true)
+}
+
+func (s *proxyState) isShuttingDown() bool {
+	return s.shuttingDown.Load()
+}
+
+// handleReadyz reports readiness. It fails closed (503) once shutdown starts
+// and whenever no healthy downstream cluster can serve traffic.
+func (s *proxyState) handleReadyz(w http.ResponseWriter, _ *http.Request) {
+	if s.isShuttingDown() {
+		http.Error(w, "shutting down", http.StatusServiceUnavailable)
+		return
+	}
+	if _, _, err := s.selectCluster(globalrouting.Requirements{}); err != nil {
+		http.Error(w, "no healthy downstream clusters", http.StatusServiceUnavailable)
+		return
+	}
+	w.WriteHeader(http.StatusOK)
 }
 
 func main() {
@@ -180,13 +213,7 @@ func main() {
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
 	})
-	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if _, _, err := state.selectCluster(globalrouting.Requirements{}); err != nil {
-			http.Error(w, "no healthy downstream clusters", http.StatusServiceUnavailable)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	})
+	mux.HandleFunc("/readyz", state.handleReadyz)
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		required := requirementsFromRequest(r)
 		selected, strategy, err := state.selectCluster(required)
@@ -206,7 +233,18 @@ func main() {
 		proxy.ServeHTTP(w, r)
 	})
 
+	shutdownTimeout, err := gracefulShutdownTimeoutFromEnv()
+	if err != nil {
+		slog.Error("invalid graceful shutdown configuration", "error", err)
+		os.Exit(1)
+	}
+
 	addr := fmt.Sprintf(":%d", port)
+	server := &http.Server{Addr: addr, Handler: mux}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	slog.Info("starting global proxy",
 		"addr", addr,
 		"strategy", state.strategyValue(),
@@ -215,10 +253,83 @@ func main() {
 		"probeInterval", probeEvery,
 		"globalProxyName", globalProxyName,
 		"globalProxyNamespace", globalProxyNamespace,
+		"graceful_shutdown_timeout", shutdownTimeout.String(),
 	)
-	if err := http.ListenAndServe(addr, mux); err != nil {
+	if err := runServer(ctx, server, shutdownTimeout, state.markShuttingDown); err != nil {
 		slog.Error("server exited", "error", err)
 		os.Exit(1)
+	}
+}
+
+// defaultGlobalProxyGracefulShutdownTimeout bounds HTTP draining during
+// rollout. It mirrors the single-cluster proxy default so long LLM requests
+// flowing through the global proxy are not severed on SIGTERM.
+const defaultGlobalProxyGracefulShutdownTimeout = 10 * time.Minute
+
+// gracefulShutdownTimeoutFromEnv reads GLOBAL_PROXY_GRACEFUL_SHUTDOWN_TIMEOUT,
+// defaulting to defaultGlobalProxyGracefulShutdownTimeout. A zero value drains
+// immediately; a negative value is rejected.
+func gracefulShutdownTimeoutFromEnv() (time.Duration, error) {
+	timeout := envutil.DurationOrDefault("GLOBAL_PROXY_GRACEFUL_SHUTDOWN_TIMEOUT", defaultGlobalProxyGracefulShutdownTimeout)
+	if timeout < 0 {
+		return 0, fmt.Errorf("GLOBAL_PROXY_GRACEFUL_SHUTDOWN_TIMEOUT must be >= 0 (got %s)", timeout)
+	}
+	return timeout, nil
+}
+
+// runServer starts server.ListenAndServe and blocks until ctx is canceled,
+// then drains in-flight requests bounded by timeout.
+func runServer(ctx context.Context, server *http.Server, timeout time.Duration, onShutdown func()) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.ListenAndServe()
+	}()
+	return waitForServer(ctx, server, errCh, timeout, onShutdown)
+}
+
+// runServerOnListener is the ephemeral-listener variant of runServer, used by
+// tests to exercise the drain contract on a real socket.
+func runServerOnListener(ctx context.Context, server *http.Server, listener net.Listener, timeout time.Duration, onShutdown func()) error {
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- server.Serve(listener)
+	}()
+	return waitForServer(ctx, server, errCh, timeout, onShutdown)
+}
+
+// waitForServer blocks until the server exits on its own or ctx is canceled.
+// On cancellation it runs onShutdown (e.g. flip /readyz to 503), then calls
+// server.Shutdown bounded by timeout, returning an error only if draining
+// exceeds the timeout.
+func waitForServer(ctx context.Context, server *http.Server, errCh <-chan error, timeout time.Duration, onShutdown func()) error {
+	select {
+	case err := <-errCh:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-ctx.Done():
+		start := time.Now()
+		if onShutdown != nil {
+			onShutdown()
+		}
+		slog.Info("global proxy graceful shutdown started", "timeout", timeout.String())
+
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		defer cancel()
+
+		err := server.Shutdown(shutdownCtx)
+		duration := time.Since(start)
+		if err != nil {
+			slog.Error("global proxy graceful shutdown timed out", "duration", duration.String(), "timeout", timeout.String(), "error", err)
+			return fmt.Errorf("global proxy graceful shutdown timed out after %s: %w", timeout, err)
+		}
+
+		slog.Info("global proxy graceful shutdown completed", "duration", duration.String())
+		if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+		return nil
 	}
 }
 
