@@ -52,12 +52,22 @@ func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.
 		}
 	}
 
+	// LoRA support flows through the payload config so the runtime launches vLLM
+	// with the same --enable-lora flags a dedicated Deployment would get. Without
+	// this, a runtime-managed model can never hot-load an adapter.
+	var loraCount, loraMaxRank int
+	if ls, ok := b.(backend.LoRASupporter); ok && ls.SupportsLoRA() {
+		loraCount, loraMaxRank = r.loraRuntimeConfig(ctx, model)
+	}
+
 	// Build the load request payload using the shared runtime launch builder.
 	// This keeps the reconcile path aligned with the proxy fast path.
 	data, err := pkgrt.BuildLoadPayloadForModel(model, b, pkgrt.BuildLoadOptions{
 		ModelBasePath: "/models",
 		GPUVendor:     gpuVendor,
 		GPUProfile:    profile,
+		LoRAAdapters:  loraCount,
+		LoRAMaxRank:   loraMaxRank,
 	})
 	if err != nil {
 		return err

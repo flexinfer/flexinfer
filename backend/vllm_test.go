@@ -3,6 +3,8 @@ package backend
 import (
 	"testing"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
 )
 
 func TestVLLMBackendImage_GFX1100(t *testing.T) {
@@ -1534,28 +1536,34 @@ func TestVLLMStartupProbeForSpec_ConfigOverridesBudget(t *testing.T) {
 	}
 }
 
-func TestVLLMBackendLoRABaseArgs(t *testing.T) {
+// TestVLLMBackendArgs_LoRA covers LoRA flag emission from config keys — the same
+// path both the dedicated Deployment and the runtime-managed load use.
+func TestVLLMBackendArgs_LoRA(t *testing.T) {
 	b := &VLLMBackend{}
 
 	tests := []struct {
-		name        string
-		maxAdapters int
-		maxRank     int
-		wantRank    string // "" means --max-lora-rank must be absent
+		name     string
+		config   map[string]any
+		wantLoRA bool
+		wantRank string // "" means --max-lora-rank must be absent
 	}{
-		{name: "default rank omits flag", maxAdapters: 4, maxRank: 0, wantRank: ""},
-		{name: "rank 16 omits flag (vLLM default)", maxAdapters: 4, maxRank: 16, wantRank: ""},
-		{name: "rank 64 emits exact tier", maxAdapters: 4, maxRank: 64, wantRank: "64"},
-		{name: "rank 24 rounds up to 32", maxAdapters: 4, maxRank: 24, wantRank: "32"},
-		{name: "rank 300 caps at 256", maxAdapters: 4, maxRank: 300, wantRank: "256"},
+		{name: "disabled by default", config: map[string]any{}, wantLoRA: false},
+		{name: "enabled rank 64 emits exact tier", config: map[string]any{"enableLora": true, "maxLoras": 4, "maxLoraRank": 64}, wantLoRA: true, wantRank: "64"},
+		{name: "rank 16 omits rank flag (vLLM default)", config: map[string]any{"enableLora": true, "maxLoras": 2, "maxLoraRank": 16}, wantLoRA: true, wantRank: ""},
+		{name: "rank 24 rounds up to 32", config: map[string]any{"enableLora": true, "maxLoras": 1, "maxLoraRank": 24}, wantLoRA: true, wantRank: "32"},
+		{name: "rank 300 caps at 256", config: map[string]any{"enableLora": true, "maxLoras": 1, "maxLoraRank": 300}, wantLoRA: true, wantRank: "256"},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			args := b.LoRABaseArgs(tt.maxAdapters, tt.maxRank)
+			args := b.Args(&ModelSpec{Model: "m", Config: tt.config})
 
-			if !containsSeq(args, "--enable-lora") {
-				t.Fatalf("args %v missing --enable-lora", args)
+			hasLoRA := containsSeq(args, "--enable-lora")
+			if hasLoRA != tt.wantLoRA {
+				t.Fatalf("--enable-lora present=%v want=%v (args=%v)", hasLoRA, tt.wantLoRA, args)
+			}
+			if !tt.wantLoRA {
+				return
 			}
 			gotRank, hasRank := flagValue(args, "--max-lora-rank")
 			if tt.wantRank == "" {
@@ -1572,6 +1580,30 @@ func TestVLLMBackendLoRABaseArgs(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestVLLMBackendEnv_LoRARuntimeUpdating covers the hot-load env gate, which
+// vLLM requires before it exposes /v1/load_lora_adapter.
+func TestVLLMBackendEnv_LoRARuntimeUpdating(t *testing.T) {
+	b := &VLLMBackend{}
+	const key = "VLLM_ALLOW_RUNTIME_LORA_UPDATING"
+
+	if _, ok := flagValue(envNames(b.Env(&ModelSpec{Config: map[string]any{"enableLora": true}})), key); !ok {
+		t.Errorf("%s missing when enableLora=true", key)
+	}
+	if _, ok := flagValue(envNames(b.Env(&ModelSpec{Config: map[string]any{}})), key); ok {
+		t.Errorf("%s present when LoRA disabled", key)
+	}
+}
+
+// envNames flattens env vars to a [name, value, name, value, ...] slice so the
+// flagValue helper can probe for a key's presence.
+func envNames(env []corev1.EnvVar) []string {
+	out := make([]string, 0, len(env)*2)
+	for _, e := range env {
+		out = append(out, e.Name, e.Value)
+	}
+	return out
 }
 
 // containsSeq reports whether s contains the given string.
