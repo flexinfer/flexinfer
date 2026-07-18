@@ -2,6 +2,12 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: flexinfer-system
 resources:
+  # === cblevins-7900xtx (24 GB gfx1100) — abliterated RP test model ===
+  # Abliterated Qwen3.5-9B @ 32K + NSFW-RP LoRA (deploy/loras/qwen35-9b-nsfw-rp.yaml)
+  # for the psyche-simulator kill-test. Standalone (non-shared), litellm off the
+  # public fleet until the kill-test passes. See .loom/plan-qwen35-9b-nsfw-rp-lora-2026-07-18.md.
+  - qwen35-9b-ablit-rp.yaml
+
   # === cblevins-7900xtx (24 GB gfx1100) — primary orchestrator ===
   # qwen35-27b-opus-distill.yaml and qwen35-9b.yaml are intentionally disabled
   # for the Gemma4 rollout. Keep the manifests on disk for rollback/reference,

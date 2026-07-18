@@ -1,0 +1,6 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: flexinfer-system
+resources:
+  # NSFW-RP rank-64 adapter for qwen35-9b-ablit-rp (psyche-simulator test).
+  - qwen35-9b-nsfw-rp.yaml

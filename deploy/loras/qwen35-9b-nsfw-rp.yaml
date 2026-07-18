@@ -1,0 +1,26 @@
+# NSFW roleplay LoRA for the abliterated long-context Qwen3.5-9B — psyche-simulator test.
+#
+# Adapter: rank-64 rsLoRA over all 7 projections (q,k,v,o,gate,up,down),
+# trained on techwithsergiu/Qwen3.5-text-9B-bnb-4bit (same text/base lineage as
+# our Qwen/Qwen3.5-9B GPTQ artifact). Rank 64 → the controller emits
+# --max-lora-rank 64 and VLLM_ALLOW_RUNTIME_LORA_UPDATING=True on the serving pod.
+#
+# Clients select the adapter with model="nsfw-rp" in the OpenAI request.
+#
+# Source repo is flagged Not-For-All-Audiences (public content warning, not gated).
+# If vLLM's runtime download 401/403s, either give the serving pod HF creds
+# (HUGGING_FACE_HUB_TOKEN from the hf-token secret) or pre-stage the weights on the
+# model volume and switch source.type to LocalPath (uri: /models/<path>/adapter).
+apiVersion: ai.flexinfer/v1alpha2
+kind: LoRAAdapter
+metadata:
+  name: qwen35-9b-nsfw-rp
+  namespace: flexinfer-system
+spec:
+  modelRef: qwen35-9b-ablit-rp        # must equal the serving Model's metadata.name
+  adapterName: nsfw-rp                 # value clients pass in the "model" field
+  source:
+    type: HuggingFace
+    uri: mirazrafi/NSFW-RP-RolePlay-LoRA-Qwen-3.5-9B
+  maxRank: 64
+  preload: true                        # NOTE: preload is currently a no-op; adapter loads on first reconcile after Ready

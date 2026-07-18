@@ -1,0 +1,66 @@
+# Abliterated Qwen3.5-9B @ 32K context + NSFW-RP LoRA — psyche-simulator test model.
+#
+# Standalone (non-shared) deployment on the free gfx1100 node cblevins-7900xtx.
+# The LoRAAdapter qwen35-9b-nsfw-rp targets this model; the controller auto-injects
+# --enable-lora, --max-loras, --max-lora-rank 64, and VLLM_ALLOW_RUNTIME_LORA_UPDATING.
+#
+# Kept OFF the public litellm fleet (litellm.enabled:false) until the kill-test
+# passes; reach it during the test via port-forward on svc/qwen35-9b-ablit-rp.
+#
+# VERIFY ON APPLY:
+#   - source PVC path produced by qwen35-9b-oci-gfx1100 (drafted below).
+#   - gfx1100 default image registers the qwen3_5_text hybrid arch + supports LoRA.
+#   - 9B native max_position_embeddings >= 32768 (else add VLLM_ALLOW_LONG_MAX_MODEL_LEN).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-9b-ablit-rp
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.5-9B
+    flexinfer.ai/base-model-posture: abliterated
+    flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128
+spec:
+  backend: vllm
+  # From the OCI-pull cache PVC. Confirm exact path once qwen35-9b-oci-gfx1100 is Ready.
+  source: pvc://qwen35-9b-oci-gfx1100/qwen35-9b
+  cache:
+    strategy: Local
+  gpu:
+    vendor: amd
+    count: 1
+    vramEstimateMB: 12000        # ~6GB GPTQ weights + rank-64 LoRA buffers + 32K KV headroom
+    priority: 200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 15m
+  config:
+    dtype: "half"
+    quantization: gptq
+    maxModelLen: 32768
+    gpuMemoryUtilization: "0.90"
+    maxNumSeqs: 2
+    enforceEager: true           # stability for the kill-test; revisit for throughput later
+    trustRemoteCode: true
+    servedModelName: qwen35-9b-ablit-rp
+    enableToolCalling: false     # roleplay model — no tool parser
+    disableLogStats: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "2"
+      memory: 8Gi
+    limits:
+      cpu: "4"
+      memory: 24Gi
+  serviceLabels:
+    - qwen35-9b-ablit-rp
+  litellm:
+    enabled: false               # off the public fleet until the kill-test passes
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

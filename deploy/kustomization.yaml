@@ -4,6 +4,7 @@ namespace: flexinfer-system
 resources:
   - models/
   - modelcaches/
+  - loras/
   - gpuprofiles/
   - gpugroups.yaml
   # Gaming lease released 2026-07-14 so cblevins-7900xtx can serve inference.

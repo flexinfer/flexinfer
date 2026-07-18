@@ -5,6 +5,10 @@ resources:
   # MLC compiled model references (shared NFS PVC)
   - mlc-shared-caches.yaml
 
+  # OCI pull of the abliterated Qwen3.5-9B GPTQ artifact onto cblevins-7900xtx,
+  # for the qwen35-9b-ablit-rp psyche-simulator test model.
+  - qwen35-9b-oci-gfx1100.yaml
+
   # === Legacy pipelines disabled during Gemma rollout ===
   # Keep the manifests on disk for rebuild/reference, but stop reconciling the
   # old source caches so their detached Longhorn volumes can be pruned.
