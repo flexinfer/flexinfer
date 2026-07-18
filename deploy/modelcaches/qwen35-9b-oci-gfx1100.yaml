@@ -1,0 +1,28 @@
+# OCI pull cache for the abliterated Qwen3.5-9B GPTQ artifact onto cblevins-7900xtx.
+#
+# Stages the already-published Harbor artifact (built by the qwen35-9b-gptq
+# ModelCache: abliterate full-attn layers 11/15/19 → GPTQ INT4) so the gfx1100
+# node can serve it without re-running the abliteration/quantization pipeline.
+# Tag confirmed present in Harbor via `crane ls registry.harbor.lan/flexinfer/qwen35-9b`.
+#
+# Pipeline: Harbor OCI → this SharedPVC (local-path on 7900xtx) → Model CR.
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen35-9b-oci-gfx1100
+  namespace: flexinfer-system
+spec:
+  source: "oci://registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128"
+  modelPath: "qwen35-9b"
+  storageStrategy: SharedPVC
+  storageSize: "12Gi"
+  clusterStorageClassName: local-path
+  secretRef: "harbor-oci-creds"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  download:
+    maxMemoryGB: 4
+    backoffLimit: 3
+  retentionPriority: 50
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85
