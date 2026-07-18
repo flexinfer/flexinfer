@@ -283,11 +283,9 @@ type KVCacheConfigurer interface {
 // to support dynamic LoRA adapter loading and unloading at runtime.
 type LoRASupporter interface {
 	// SupportsLoRA returns true if the backend supports hot-loading LoRA adapters.
+	// When true, the controller sets config.enableLora (plus maxLoras/maxLoraRank)
+	// so the backend's Args/Env emit the LoRA launch flags on every serving path.
 	SupportsLoRA() bool
-
-	// LoRABaseArgs returns CLI arguments to enable LoRA support with a max adapter
-	// count and the largest adapter rank the model's adapters declare.
-	LoRABaseArgs(maxAdapters, maxRank int) []string
 
 	// LoadLoRAEndpoint returns the HTTP path for loading a LoRA adapter.
 	LoadLoRAEndpoint() string

@@ -40,7 +40,31 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/flexinfer/flexinfer/pkg/modelmeta"
+	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 )
+
+// loraRuntimeConfig returns the LoRA launch parameters for a model: the number
+// of LoRAAdapter CRs targeting it and the largest rank they declare. count == 0
+// means the model has no adapters and LoRA stays off. Both the dedicated
+// Deployment path and the runtime-managed load path use this so a model gets
+// identical LoRA support however it is served.
+func (r *ModelReconciler) loraRuntimeConfig(ctx context.Context, model *aiv1alpha2.Model) (count, maxRank int) {
+	loraList := &aiv1alpha2.LoRAAdapterList{}
+	if err := r.List(ctx, loraList, client.InNamespace(model.Namespace)); err != nil {
+		return 0, 0
+	}
+	for i := range loraList.Items {
+		la := &loraList.Items[i]
+		if la.Spec.ModelRef != model.Name {
+			continue
+		}
+		count++
+		if la.Spec.MaxRank != nil && int(*la.Spec.MaxRank) > maxRank {
+			maxRank = int(*la.Spec.MaxRank)
+		}
+	}
+	return count, maxRank
+}
 
 // ensureService creates or updates the Service for the model.
 //
@@ -200,6 +224,16 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	spec := r.buildBackendModelSpecForArch(model, b, gpuVendor, gpuArch)
 	spec.GPUArch = gpuArch
 
+	// LoRA: when the model has LoRAAdapter CRs and the backend supports them,
+	// set the config knobs that b.Args/b.Env translate into --enable-lora and
+	// VLLM_ALLOW_RUNTIME_LORA_UPDATING. Injecting via config (rather than
+	// appending args here) keeps the Deployment and runtime-managed load paths
+	// identical — both build their launch from the same backend.Args/Env.
+	if ls, ok := b.(backend.LoRASupporter); ok && ls.SupportsLoRA() {
+		count, maxRank := r.loraRuntimeConfig(ctx, model)
+		spec.Config = pkgrt.ApplyLoRAConfig(spec.Config, count, maxRank)
+	}
+
 	applyKVCacheReconfigureOverrides(model, spec)
 
 	storagePlan := resolveBackendStoragePlan(model, b, spec.Config)
@@ -288,39 +322,6 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			}
 			if extra := kvc.KVCacheArgs(model.Spec.KVCache.MaxBlockSize, swapGiB); len(extra) > 0 {
 				args = append(args, extra...)
-			}
-		}
-	}
-
-	// Append LoRA base args if the model has LoRA adapters and backend supports it.
-	if ls, ok := b.(backend.LoRASupporter); ok && ls.SupportsLoRA() {
-		// Check for LoRA adapter CRs referencing this model.
-		loraList := &aiv1alpha2.LoRAAdapterList{}
-		if err := r.List(ctx, loraList, client.InNamespace(model.Namespace)); err == nil {
-			count := 0
-			maxRank := 0
-			for _, la := range loraList.Items {
-				if la.Spec.ModelRef != model.Name {
-					continue
-				}
-				count++
-				if la.Spec.MaxRank != nil && int(*la.Spec.MaxRank) > maxRank {
-					maxRank = int(*la.Spec.MaxRank)
-				}
-			}
-			if count > 0 {
-				maxAdapters := count
-				if maxAdapters < 4 {
-					maxAdapters = 4 // minimum headroom
-				}
-				args = append(args, ls.LoRABaseArgs(maxAdapters, maxRank)...)
-				// vLLM only exposes the runtime load/unload endpoints the LoRA
-				// controller POSTs to when this env is set. Without it the
-				// hot-load call is rejected and adapters never register.
-				env = mergeEnv(env, []corev1.EnvVar{{
-					Name:  "VLLM_ALLOW_RUNTIME_LORA_UPDATING",
-					Value: "True",
-				}})
 			}
 		}
 	}

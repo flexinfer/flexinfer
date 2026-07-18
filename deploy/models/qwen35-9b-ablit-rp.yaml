@@ -39,6 +39,12 @@ spec:
   config:
     dtype: "half"
     quantization: gptq
+    # The artifact config carries multimodal mRoPE fields (mrope_interleaved,
+    # mrope_section) that vLLM's qwen3_5 config parser rejects (validate_rope:
+    # "set -= list"). Override with a clean text-only rope block (same trick the
+    # 35B workhorse uses). Native max_position_embeddings is 262144, so 32K needs
+    # no long-context flag.
+    hfOverrides: '{"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
     maxModelLen: 32768
     gpuMemoryUtilization: "0.90"
     maxNumSeqs: 2

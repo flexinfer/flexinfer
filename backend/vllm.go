@@ -262,6 +262,23 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--mm-processor-kwargs", mmKwargs)
 	}
 
+	// LoRA: the controller sets config.enableLora (plus maxLoras/maxLoraRank)
+	// when the model has LoRAAdapter CRs. Emitting the flags here means both the
+	// dedicated Deployment path and the runtime-managed load path (both call
+	// Args) launch vLLM with identical LoRA support. maxLoraRank must cover the
+	// largest adapter rank or a higher-rank adapter is rejected at load time.
+	if spec.ConfigBool("enableLora", false) {
+		args = append(args, "--enable-lora")
+		maxLoras := spec.ConfigInt("maxLoras", 1)
+		if maxLoras < 1 {
+			maxLoras = 1
+		}
+		args = append(args, "--max-loras", fmt.Sprintf("%d", maxLoras))
+		if r := normalizeLoRARank(spec.ConfigInt("maxLoraRank", 0)); r > 0 {
+			args = append(args, "--max-lora-rank", fmt.Sprintf("%d", r))
+		}
+	}
+
 	return args
 }
 
@@ -366,6 +383,14 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		)
 	}
 
+	// LoRA hot-load: vLLM only exposes /v1/load_lora_adapter (the endpoint the
+	// LoRA controller POSTs to) when this is set. The controller flips
+	// config.enableLora when the model has LoRAAdapter CRs; both serving paths
+	// call Env, so this covers the Deployment and runtime-managed paths alike.
+	if spec.ConfigBool("enableLora", false) {
+		env = append(env, corev1.EnvVar{Name: "VLLM_ALLOW_RUNTIME_LORA_UPDATING", Value: "True"})
+	}
+
 	return env
 }
 
@@ -444,19 +469,6 @@ func (b *VLLMBackend) SupportsSwapSpace() bool {
 // SupportsLoRA returns true — vLLM supports hot-loading LoRA adapters.
 func (b *VLLMBackend) SupportsLoRA() bool {
 	return true
-}
-
-// LoRABaseArgs returns CLI arguments to enable LoRA support with a max adapter
-// count. maxRank is the largest rank the model's adapters declare; vLLM reserves
-// LoRA buffers for --max-lora-rank at launch (default 16), so a higher-rank
-// adapter (e.g. a rank-64 fine-tune) is rejected at load time unless the flag is
-// bumped here.
-func (b *VLLMBackend) LoRABaseArgs(maxAdapters, maxRank int) []string {
-	args := []string{"--enable-lora", "--max-loras", fmt.Sprintf("%d", maxAdapters)}
-	if r := normalizeLoRARank(maxRank); r > 0 {
-		args = append(args, "--max-lora-rank", fmt.Sprintf("%d", r))
-	}
-	return args
 }
 
 // normalizeLoRARank rounds a requested LoRA rank up to the nearest tier vLLM

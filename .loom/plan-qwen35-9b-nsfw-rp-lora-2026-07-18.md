@@ -37,7 +37,24 @@ can serve the **abliterated GPTQ** Qwen3.5-9B (hybrid: 24 GDN linear-attention +
   `HUGGING_FACE_HUB_TOKEN`, or switch adapter `source.type` to `LocalPath` after
   pre-staging weights on the model volume.
 
-**Status**: not run (2026-07-18)
+**Status**: FAILED 2026-07-18 — but *before* LoRA. Two blockers surfaced live:
+1. Base model crashed at config parse on the default gfx1100 image (`a9b306af`):
+   `vllm/transformers_utils/configs/qwen3_5.py` `validate_rope` →
+   `TypeError: unsupported operand type(s) for -=: 'set' and 'list'`. The
+   abliterated Qwen3.5-9B's rope config trips the image's validator before any
+   weights/LoRA load. The workhorse avoids this on image `7bc680b4` + explicit
+   `hfOverrides` rope block.
+2. gfx1100 serves via the shared `flexinfer-runtime-gfx1100` pod (load request),
+   NOT a dedicated Deployment — the controller deleted the Deployment. So the
+   merged LoRA wiring (`--enable-lora` / `VLLM_ALLOW_RUNTIME_LORA_UPDATING` added
+   in `model_deployment.go`) never applies here. `dedicatedDeployment: true` is
+   required to run as a real Deployment (as the workhorse does).
+
+**Proposed fix (next iteration)**: on the Model — `dedicatedDeployment: true`
+(forces the Deployment path where the LoRA wiring applies) + pin `image:` to a
+qwen3_5-parsing digest (workhorse `7bc680b4` or profile MTP cert `f467e202`) +
+`hfOverrides` with a sane rope config to dodge `validate_rope`. Then re-run the
+kill-test — which will FINALLY exercise the actual GPTQ+rank-64-LoRA assumption.
 
 ## What's done (this branch)
 

@@ -60,6 +60,36 @@ type BuildLoadOptions struct {
 	ModelBasePath string
 	GPUVendor     backend.GPUVendor
 	GPUProfile    *aiv1alpha2.GPUProfileSpec
+	// LoRAAdapters is the number of LoRAAdapter CRs targeting the model; when
+	// >0 the payload enables LoRA support. LoRAMaxRank is the largest rank they
+	// declare (0 = use vLLM's default). The controller computes both.
+	LoRAAdapters int
+	LoRAMaxRank  int
+}
+
+// ApplyLoRAConfig sets the vLLM LoRA launch knobs on a config map when the model
+// has adapters. count is the number of adapters targeting the model; maxRank the
+// largest rank they declare. These keys are read by backend.VLLMBackend.Args/Env
+// on both the dedicated Deployment and runtime-managed load paths, so LoRA is
+// enabled identically regardless of how the model is served. Returns config
+// unchanged when count <= 0.
+func ApplyLoRAConfig(config map[string]any, count, maxRank int) map[string]any {
+	if count <= 0 {
+		return config
+	}
+	if config == nil {
+		config = make(map[string]any, 3)
+	}
+	maxLoras := count
+	if maxLoras < 4 {
+		maxLoras = 4 // minimum headroom for hot-swapping additional adapters
+	}
+	config["enableLora"] = true
+	config["maxLoras"] = maxLoras
+	if maxRank > 0 {
+		config["maxLoraRank"] = maxRank
+	}
+	return config
 }
 
 // DirectRuntimeLoadEligibility reports whether a Model can be loaded via the
@@ -148,6 +178,7 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 	config = backend.ApplyVLLMDefaultsFromProfile(config, opts.GPUProfile, b.Name())
 	config = applyGPUProfileDeviceDefaults(config, vendor, opts.GPUProfile)
 	config = applyRuntimeBackendPort(config, b)
+	config = ApplyLoRAConfig(config, opts.LoRAAdapters, opts.LoRAMaxRank)
 
 	payload := LoadPayload{
 		Backend: b.Name(),
