@@ -156,10 +156,17 @@ committed.
       golangci-lint, which slice verification with plain `go vet` missed).
       Master pipeline 19733 fully green; publish jobs shipped the new
       proxy image.
-- [ ] Live rollout-under-load kill-test run; #65 closed. Prereqs: Flux
-      applies the chart/values (readyz probe, grace 640s, drain env) and the
-      proxy Deployment rolls onto the freshly published image. Procedure in
-      `docs/user/operations.md` "Verify rollout draining".
+- [x] Live rollout-under-load kill-test passed 2026-07-18; #65 was already
+      closed when the proof run began. Flux had applied master `6e136fcd2` and
+      chart `1.0.13+6e136fcd2df5.3`; the live Deployment used proxy image
+      `20260717-232506`, `/readyz`, a 5s drain delay, a 10m shutdown timeout,
+      and 640s termination grace. One request through `workhorse-128k`
+      completed all 2,048 requested tokens (HTTP 200) while the old pod drained
+      one in-flight connection for 38.235s. All 60 Service probes returned 200,
+      the replacement pod became Ready, 23 direct scrapes observed
+      `flexinfer_proxy_shutdowns_total{result="started"} 1`, and the old pod
+      logged shutdown completion with no timeout log or metric. Full certificate:
+      `.loom/44-iteration-plan-proxy-drain-live-killtest-2026-07-18.md`.
 
 Harvest note (process): the slice-2 agent committed on local `master` in the
 canonical repo instead of its branch (worktree-path drift — the known

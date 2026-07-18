@@ -50,8 +50,10 @@ workhorse: both replicas expose 128K context with graph mode, FP8 KV cache, and
 the same immutable ROCm runtime. Shared `workhorse-128k` traffic now selects the
 Ready Model with the fewest active proxy connections and round-robins ties; the
 live busy-member kill-test passed 4/4 with explicit decision and target metrics.
-Routine proxy rollouts can still interrupt an in-flight long request; graceful
-draining is tracked as [#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65).
+Routine proxy rollouts now use readiness-first graceful draining. The live
+rollout-under-load certificate passed on 2026-07-18: a 2,048-token request
+survived the old pod's 38.2-second drain while all 60 Service probes returned
+HTTP 200 ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65)).
 
 - **Plan**: `.loom/32-iteration-plan-model-backfill-2026-07-09.md` (frontier iteration; kill-test passed)
 - **Follow-on**: `.loom/33-iteration-plan-chat-gauntlet-2026-07-10.md` (live chat-vs-completions kill-test passed)
@@ -60,6 +62,7 @@ draining is tracked as [#65](https://gitlab.flexinfer.ai/services/flexinfer/-/is
 - **Experiment frontier**: `.loom/36-iteration-plan-model-experiment-mvp-2026-07-10.md` (canonical plan `plan-modelexperiment-mvp-ab03ee`)
 - **Recurring experiments**: `.loom/37-iteration-plan-recurring-model-experiment-2026-07-10.md` (run-fencing kill test)
 - **128K workhorse routing**: `.loom/40-iteration-plan-label-group-least-loaded-2026-07-14.md` (live busy-member kill-test passed)
+- **Proxy rollout draining**: `.loom/44-iteration-plan-proxy-drain-live-killtest-2026-07-18.md` (live rollout-under-load kill-test passed)
 - **Deployed**: K3s GPU cluster via Flux (flexinfer stack incl. fi-mcp-gateway)
 - **CI**: custom (bespoke `.gitlab-ci.yml` + `.gitlab/ci/` includes: BuildKit image matrix, Go build/test, Trivy, Helm)
 
@@ -73,7 +76,7 @@ draining is tracked as [#65](https://gitlab.flexinfer.ai/services/flexinfer/-/is
 ## Next
 
 - [ ] Stage major docker dependency updates (Python 3.14 / CUDA 12.9 / ROCm 6.4) in a controlled rollout ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
-- [ ] Gracefully drain in-flight proxy requests during rollouts ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65))
+- [x] Gracefully drain in-flight proxy requests during rollouts ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65); live certificate passed 2026-07-18)
 
 ## Later
 
