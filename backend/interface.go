@@ -285,8 +285,9 @@ type LoRASupporter interface {
 	// SupportsLoRA returns true if the backend supports hot-loading LoRA adapters.
 	SupportsLoRA() bool
 
-	// LoRABaseArgs returns CLI arguments to enable LoRA support with a max adapter count.
-	LoRABaseArgs(maxAdapters int) []string
+	// LoRABaseArgs returns CLI arguments to enable LoRA support with a max adapter
+	// count and the largest adapter rank the model's adapters declare.
+	LoRABaseArgs(maxAdapters, maxRank int) []string
 
 	// LoadLoRAEndpoint returns the HTTP path for loading a LoRA adapter.
 	LoadLoRAEndpoint() string

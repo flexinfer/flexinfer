@@ -298,9 +298,14 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		loraList := &aiv1alpha2.LoRAAdapterList{}
 		if err := r.List(ctx, loraList, client.InNamespace(model.Namespace)); err == nil {
 			count := 0
+			maxRank := 0
 			for _, la := range loraList.Items {
-				if la.Spec.ModelRef == model.Name {
-					count++
+				if la.Spec.ModelRef != model.Name {
+					continue
+				}
+				count++
+				if la.Spec.MaxRank != nil && int(*la.Spec.MaxRank) > maxRank {
+					maxRank = int(*la.Spec.MaxRank)
 				}
 			}
 			if count > 0 {
@@ -308,7 +313,14 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				if maxAdapters < 4 {
 					maxAdapters = 4 // minimum headroom
 				}
-				args = append(args, ls.LoRABaseArgs(maxAdapters)...)
+				args = append(args, ls.LoRABaseArgs(maxAdapters, maxRank)...)
+				// vLLM only exposes the runtime load/unload endpoints the LoRA
+				// controller POSTs to when this env is set. Without it the
+				// hot-load call is rejected and adapters never register.
+				env = mergeEnv(env, []corev1.EnvVar{{
+					Name:  "VLLM_ALLOW_RUNTIME_LORA_UPDATING",
+					Value: "True",
+				}})
 			}
 		}
 	}

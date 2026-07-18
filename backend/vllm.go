@@ -446,9 +446,33 @@ func (b *VLLMBackend) SupportsLoRA() bool {
 	return true
 }
 
-// LoRABaseArgs returns CLI arguments to enable LoRA support with a max adapter count.
-func (b *VLLMBackend) LoRABaseArgs(maxAdapters int) []string {
-	return []string{"--enable-lora", "--max-loras", fmt.Sprintf("%d", maxAdapters)}
+// LoRABaseArgs returns CLI arguments to enable LoRA support with a max adapter
+// count. maxRank is the largest rank the model's adapters declare; vLLM reserves
+// LoRA buffers for --max-lora-rank at launch (default 16), so a higher-rank
+// adapter (e.g. a rank-64 fine-tune) is rejected at load time unless the flag is
+// bumped here.
+func (b *VLLMBackend) LoRABaseArgs(maxAdapters, maxRank int) []string {
+	args := []string{"--enable-lora", "--max-loras", fmt.Sprintf("%d", maxAdapters)}
+	if r := normalizeLoRARank(maxRank); r > 0 {
+		args = append(args, "--max-lora-rank", fmt.Sprintf("%d", r))
+	}
+	return args
+}
+
+// normalizeLoRARank rounds a requested LoRA rank up to the nearest tier vLLM
+// accepts for --max-lora-rank. vLLM only allows {8,16,32,64,128,256}; a rank at
+// or below the default (16) returns 0 so the flag is omitted and vLLM keeps its
+// default. Larger ranks round up to the next allowed tier.
+func normalizeLoRARank(rank int) int {
+	if rank <= 16 {
+		return 0
+	}
+	for _, allowed := range []int{32, 64, 128, 256} {
+		if rank <= allowed {
+			return allowed
+		}
+	}
+	return 256
 }
 
 // LoadLoRAEndpoint returns the vLLM API path for loading a LoRA adapter.

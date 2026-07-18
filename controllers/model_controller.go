@@ -544,6 +544,8 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(gpuProfileSpecChange)).
 		Watches(&aiv1alpha2.GamingSession{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForGamingSessionModels)).
+		Watches(&aiv1alpha2.LoRAAdapter{},
+			handler.EnqueueRequestsFromMapFunc(r.requestsForLoRAAdapterModel)).
 		Complete(r)
 }
 
@@ -759,6 +761,22 @@ func (r *ModelReconciler) requestsForSharedGroupSiblings(ctx context.Context, ob
 // GPUProfileReconciler cache with the observed object so Model reconciles
 // fanned out by this watch never read a stale profile while the sibling
 // controller's own cache update races.
+// requestsForLoRAAdapterModel re-enqueues the parent Model when a LoRAAdapter
+// targeting it is created, changed, or deleted. Without this fan-out the
+// Deployment only gains --enable-lora / VLLM_ALLOW_RUNTIME_LORA_UPDATING if the
+// adapter already existed when the template was rendered; creating an adapter
+// against an already-running model would otherwise never flip it into LoRA mode.
+func (r *ModelReconciler) requestsForLoRAAdapterModel(ctx context.Context, obj client.Object) []ctrl.Request {
+	adapter, ok := obj.(*aiv1alpha2.LoRAAdapter)
+	if !ok || adapter == nil || adapter.Spec.ModelRef == "" {
+		return nil
+	}
+	return []ctrl.Request{{NamespacedName: client.ObjectKey{
+		Namespace: adapter.Namespace,
+		Name:      adapter.Spec.ModelRef,
+	}}}
+}
+
 func (r *ModelReconciler) requestsForGPUProfileModels(ctx context.Context, obj client.Object) []ctrl.Request {
 	profile, ok := obj.(*aiv1alpha2.GPUProfile)
 	if !ok || profile == nil {

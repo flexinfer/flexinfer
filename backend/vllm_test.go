@@ -1533,3 +1533,63 @@ func TestVLLMStartupProbeForSpec_ConfigOverridesBudget(t *testing.T) {
 		t.Errorf("FailureThreshold = %d, want 300 (600s / 2s)", probe.FailureThreshold)
 	}
 }
+
+func TestVLLMBackendLoRABaseArgs(t *testing.T) {
+	b := &VLLMBackend{}
+
+	tests := []struct {
+		name        string
+		maxAdapters int
+		maxRank     int
+		wantRank    string // "" means --max-lora-rank must be absent
+	}{
+		{name: "default rank omits flag", maxAdapters: 4, maxRank: 0, wantRank: ""},
+		{name: "rank 16 omits flag (vLLM default)", maxAdapters: 4, maxRank: 16, wantRank: ""},
+		{name: "rank 64 emits exact tier", maxAdapters: 4, maxRank: 64, wantRank: "64"},
+		{name: "rank 24 rounds up to 32", maxAdapters: 4, maxRank: 24, wantRank: "32"},
+		{name: "rank 300 caps at 256", maxAdapters: 4, maxRank: 300, wantRank: "256"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := b.LoRABaseArgs(tt.maxAdapters, tt.maxRank)
+
+			if !containsSeq(args, "--enable-lora") {
+				t.Fatalf("args %v missing --enable-lora", args)
+			}
+			gotRank, hasRank := flagValue(args, "--max-lora-rank")
+			if tt.wantRank == "" {
+				if hasRank {
+					t.Errorf("args %v unexpectedly set --max-lora-rank=%s", args, gotRank)
+				}
+				return
+			}
+			if !hasRank {
+				t.Fatalf("args %v missing --max-lora-rank", args)
+			}
+			if gotRank != tt.wantRank {
+				t.Errorf("--max-lora-rank = %s, want %s", gotRank, tt.wantRank)
+			}
+		})
+	}
+}
+
+// containsSeq reports whether s contains the given string.
+func containsSeq(args []string, want string) bool {
+	for _, a := range args {
+		if a == want {
+			return true
+		}
+	}
+	return false
+}
+
+// flagValue returns the argument following flag, and whether flag is present.
+func flagValue(args []string, flag string) (string, bool) {
+	for i, a := range args {
+		if a == flag && i+1 < len(args) {
+			return args[i+1], true
+		}
+	}
+	return "", false
+}
