@@ -1,9 +1,10 @@
-# Wan 2.1 1.3B text-to-video lane for the RX 7900 XTX (gfx1100).
+# Wan 2.1 1.3B text-to-video lane on cblevins-5930k (gfx1100).
 #
-# This Model is the warm primary on the 7900 XTX. Explicit demand for the
-# higher-priority 128K Qwen sibling may temporarily preempt it; Wan reclaims
-# the card after that request becomes idle. The 5930k Qwen workhorse remains
-# continuously available during either transition.
+# 2026-07-18 psyche fleet layout: rehomed from cblevins-7900xtx so the 7900xtx
+# card is the psyche TEXT lane (warm qwen35-9b-ablit-rp) and the 5930k gfx1100
+# card is the psyche VIDEO lane. This Model is the warm video primary here;
+# the demoted 5930k Qwen workhorse (priority 300, minReplicas 0) cold-starts
+# on demand but loses the election to video.
 # Remove this parent Model (not its Deployment/pod) to roll the lane back.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -39,10 +40,9 @@ spec:
       sizeLimit: 6Gi
   gpu:
     vendor: amd
-    # cblevins-7900xtx exposes the discrete card plus a Raphael iGPU. Claim
-    # both plugin slots, then select device zero through the backend config.
-    count: 2
-    shared: 7900xtx-textgen
+    # cblevins-5930k exposes a single gfx1100 device-plugin slot (no iGPU).
+    count: 1
+    shared: 5930k-textgen
     priority: 500
     vramEstimateMB: 18000
   serverless:
@@ -80,7 +80,7 @@ spec:
     hipVisibleDevices: "0"
     warmPolicy: primary
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   resources:
     requests:
       cpu: "4"

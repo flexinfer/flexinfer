@@ -76,8 +76,11 @@ spec:
     vendor: amd
     count: 1
     shared: 5930k-textgen
-    priority: 425
-    forcePromotion: true
+    # 2026-07-18 psyche fleet layout: demoted below the rehomed wan video
+    # lanes (t2v 500 / vace 600) — cold-starts on explicit demand, loses the
+    # election to video. forcePromotion removed: it bypasses priority in the
+    # leader chooser and would defeat this demotion.
+    priority: 300
     vramEstimateMB: 23200
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
@@ -90,7 +93,10 @@ spec:
       memory: 48Gi
   serverless:
     enabled: true
-    minReplicas: 1
+    # 2026-07-18 psyche fleet layout: scale-to-zero; the 5930k card belongs to
+    # the wan video lanes now. Loom is not routing through flexinfer currently,
+    # so the workhorse does not need to stay warm.
+    minReplicas: 0
     idleTimeout: 30m
     # Covers an empty-cache compile plus the self-healing cached restart.
     coldStartTimeout: 25m

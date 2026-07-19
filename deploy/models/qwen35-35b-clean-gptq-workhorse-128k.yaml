@@ -65,9 +65,10 @@ spec:
     servedModelName: qwen35-35b-clean-gptq-workhorse-128k
     disableLogStats: false
     failOnEnvironValidation: true
-    # Keep this second 128K replica available on explicit demand while the
-    # identical 5930k workhorse remains warm for ordinary and 128K routes.
-    # Its higher shared-GPU priority lets it preempt video when requested.
+    # Keep this second 128K replica available on explicit demand. 2026-07-18
+    # psyche fleet layout: demoted below the warm qwen35-9b-ablit-rp leader
+    # (priority 500) — servable on demand, but it no longer wins the 7900xtx
+    # election while the psyche text lane is active.
     warmPolicy: ondemand
   gpu:
     vendor: amd
@@ -75,7 +76,7 @@ spec:
     # both device-plugin slots and select the discrete card explicitly above.
     count: 2
     shared: 7900xtx-textgen
-    priority: 700
+    priority: 300
     vramEstimateMB: 23200
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
