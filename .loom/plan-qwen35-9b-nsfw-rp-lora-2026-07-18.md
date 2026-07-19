@@ -169,3 +169,46 @@ forcePromotion removed. This clears the kill-test capacity gate permanently.
 → LoRA kill-test at 32K → context maxing (native max_position_embeddings is
 262144; stepwise 65536 → 131072 → 262144 with needle checks via
 scripts/context-needle-bench.py).
+
+## Kill-test results 2026-07-19 (image 5069e96c, fleet layout live)
+
+**Mechanics: PASS.** On the patched runtime image the base model parses, loads,
+and serves via the runtime-managed path with `--enable-lora --max-lora-rank 64`
+and `VLLM_ALLOW_RUNTIME_LORA_UPDATING`. The rank-64 rsLoRA adapter hot-loaded
+successfully (`Loaded new LoRA adapter: name 'nsfw-rp'` → 200 OK) and appears
+in `GET /v1/models`. The GPTQ-base + rank-64-LoRA + hybrid-GDN + hot-load
+mechanical assumption is TRUE.
+
+**Quality: FAIL — but the fault is BELOW the LoRA.** Both `nsfw-rp` AND the
+raw base model emit deterministic multilingual token salad (greedy
+"The capital of France is" → 'नुeniiske在线阅读ัส...'). Findings:
+
+1. NOT the LoRA (base is equally degenerate without it).
+2. NOT the artifact's head/embeddings: `lm_head.weight` (248320x4096,
+   std 0.0155, zero-frac 0), `embed_tokens`, `model.norm` all healthy.
+3. NOT (solely) the `gdn_attention_core` ROCm custom-op corruption: live
+   bypass test in the serving pod (patch section 17 extended to
+   `qwen3_5.py`'s own call site, process restarted, patch confirmed active)
+   produced BYTE-IDENTICAL garbage — the corruption is deterministic and
+   elsewhere.
+4. Remaining suspects, in order: (a) the qwen35 fastpath patch layer's
+   dense-arch weight-mapping/head-expansion paths (patch 3
+   `stacked_params_mapping` shard IDs, patch 8 `repeat_interleave` q/k head
+   expansion in `rearrange_mixed_qkv`) — engineered against the MoE flow,
+   never certified for the dense 9B head geometry; (b) the generic vLLM
+   `0.17.0+rocm700` wheel's numerics on gfx1100 for this arch (the base
+   image's navi-built vLLM was replaced by this wheel at build);
+   (c) the artifact itself (abliteration/GPTQ damage) — it has NEVER passed a
+   generation gauntlet; no clean-9B GPTQ twin exists for A/B (the
+   `qwen35-9b-gptq` ModelCache spec abliterates before quantizing).
+
+**Follow-up (blocking the psyche text lane):** discriminate (a)/(b)/(c) with a
+reference-implementation A/B — e.g. wrap the artifact to VL layout and run
+gptqmodel/transformers greedy tokens on CPU (`build/scripts/
+qwen35_wrap_to_vl_layout.py`), or serve one layer's activations against a
+reference. Context maxing (32K→262144) is queued behind a coherent base.
+
+**LoRAAdapter controller bug found:** the reconciler re-POSTs
+`/v1/load_lora_adapter` after a successful load; vLLM answers 400
+"already been loaded" and the CR is marked Failed despite the adapter being
+live. Treat that 400 as success (or check GET /v1/models first).
