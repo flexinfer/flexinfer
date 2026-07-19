@@ -100,3 +100,42 @@ Controller/runtime fixes required for any rank>16 external adapter to hot-load
 - Placement: `cblevins-7900xtx` chosen because it has the most free VRAM (24GB,
   only a small `wan21-t2v` diffuser resident) and does not contend with the 5930k
   primary chat model or the radeonvii retrieval plane.
+
+## Status update 2026-07-18 (runtime build fix shipped; kill-test capacity-gated)
+
+**Blocker 1 (gfx1100 runtime image build) — ROOT-CAUSED, FIXED, SHIPPED.**
+`./build/build-runtime.sh gfx1100` failed rc=1 in the `INCLUDE_QUANTIZER=true`
+layer. Root cause: the extra-deps `pip install` used an **unpinned** `kernels`,
+which now resolves to `kernels==0.16.0`. That release made `version`/`revision`
+mandatory on `kernels.LayerRepository`; the baked transformers build
+(`529504b2`, 5.3.0.dev0) constructs `LayerRepository(repo_id=..., layer_name=...)`
+without one in `integrations/hub_kernels.py`, so `import transformers` — and the
+layer's final `import gptqmodel` smoke test — raised
+`ValueError: Either a revision or a version must be specified.`
+(tokenicer/pypcre/gptqmodel wheels all built fine; only the import test failed.)
+Fix: pin `kernels>=0.10.2,<0.11` in `build/Dockerfile.runtime` — the exact range
+transformers `529504b2` declares in its own `setup.py`/deptable. Rebuild resolved
+`kernels-0.10.5`, import test passed, image pushed. First rebuild attempt died on
+a transient `proxy.golang.org` TLS handshake timeout in `go mod download`
+(busy-builder network flake) — retry with warm cache succeeded.
+
+New image: `registry.harbor.lan/flexinfer/runtime:rocm-gfx1100` @
+`sha256:62bf47e8a8918d4b338d57d83677fc9f383fabfab7d870dab963ffbd597fba8f`.
+Digest pins bumped in `deploy/system/values-k3s.yaml` (runtimeImage + gfx1100 +
+gfx1100-5930k runtime profiles) and `deploy/gpuprofiles/gfx1100.yaml`.
+
+**Blocker 2 (kill-test) — BLOCKED ON CAPACITY (guardrail respected).**
+`qwen35-35b-clean-gptq-workhorse-128k` is Ready and actively holding the gfx1100
+card (~24.6/25.7 GB); `qwen35-9b-ablit-rp` sits Queued at position 1 behind it.
+Workhorse not displaced per hard guardrail.
+
+**NEW blocker surfaced for the kill-test (independent of LoRA):** the model's
+last runtime load crashed at base-model config parse with `validate_rope` →
+`TypeError: unsupported operand type(s) for -=: 'set' and 'list'` — *despite*
+the Model spec carrying the intended `hfOverrides` rope block. Root cause: the
+runtime-managed serving path drops `hfOverrides` — it is only consumed in
+`backend/vllm.go` (dedicated-Deployment arg builder); `pkg/runtime/payload.go`
+(runtime load payload builder, used by `controllers/model_runtime.go`) never
+references it. Next required step before the GPTQ+rank-64-LoRA assumption can be
+exercised: thread `hfOverrides` through `pkg/runtime/payload.go` (or serve this
+model via `dedicatedDeployment: true`), then retry once the card frees.

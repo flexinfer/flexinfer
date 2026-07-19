@@ -276,7 +276,7 @@ quantization:
   # image and carries the validator from the same FlexInfer revision.
   validatorImage: "registry.harbor.lan/flexinfer/model-tools@sha256:d1515f57e5e92ad62a8f3820eb428fc32436cf979fa130817fbe3f038edd14d1"
   useRuntimeForQuantize: false
-  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166"
+  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:62bf47e8a8918d4b338d57d83677fc9f383fabfab7d870dab963ffbd597fba8f"
   gptqDeviceMap: "auto"
   gptqModelPolicies:
     - name: qwen3.5-moe-text
@@ -399,7 +399,7 @@ runtime:
     # Sunshine/Steam data remains under /home/flexinfer-gaming for the next
     # explicit gaming lease, but the runtime no longer exposes or starts it.
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:62bf47e8a8918d4b338d57d83677fc9f383fabfab7d870dab963ffbd597fba8f"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -432,7 +432,7 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx1100-5930k
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:592c0a751c89c6e7c79c0854a4a41fc2b86d6423af3ffe148b61174416dce166"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:62bf47e8a8918d4b338d57d83677fc9f383fabfab7d870dab963ffbd597fba8f"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 1
