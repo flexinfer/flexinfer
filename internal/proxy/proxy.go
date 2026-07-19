@@ -694,8 +694,25 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		span.SetAttributes(attribute.String("flexinfer.model", modelName))
 	}
 
-	// 3. Fetch v1alpha2 Model first (preferred)
-	m, err := p.getModel(ctx, modelName)
+	// 2c. LoRA adapter routing: if the requested model is a registered
+	// LoRAAdapter adapterName, route to its PARENT Model's runtime while keeping
+	// the adapter name as the served identity. vLLM selects the adapter weights
+	// from the model name in the request body (serveProxy preserves it), so the
+	// Model-CR gates below (serve-paths, admission, readiness, park) must run
+	// against the parent Model — the adapter name has no Model CR of its own and
+	// would otherwise 404 here before serveProxy's existing LoRA passthrough ever
+	// runs. For a non-adapter request lookupName == modelName (no behavior change).
+	lookupName := modelName
+	if parent, isLoRA := p.resolver.ResolveLoRAAdapter(ctx, modelName); isLoRA && parent != modelName {
+		slog.Debug("resolved lora adapter to parent model",
+			"adapter", modelName, "parent", parent, "request_id", requestID)
+		lookupName = parent
+		span.SetAttributes(attribute.String("flexinfer.lora_parent", parent))
+	}
+
+	// 3. Fetch v1alpha2 Model first (preferred). For a LoRA adapter this fetches
+	// the parent Model; the request continues to be served under the adapter name.
+	m, err := p.getModel(ctx, lookupName)
 	if err == nil {
 		// 3-pre. Endpoint guard: if the Model declares which inference paths it
 		// serves (flexinfer.ai/serve-paths) and this request isn't one of them,
@@ -785,9 +802,13 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		// Model is scaled to zero or not ready - use queue.
-		if err := p.handleColdStart(ctx, w, r, modelName, start); err != nil {
-			slog.Error("cold start failed", "model", modelName, "error", err)
+		// Model is scaled to zero or not ready - use queue. For a LoRA adapter
+		// request this cold-starts the PARENT model (lookupName); the adapter has
+		// no Model CR of its own to warm. The parent's runtime reloads its
+		// adapters on startup, so a client retry once the parent is Ready serves
+		// under the adapter name via the Ready branch above.
+		if err := p.handleColdStart(ctx, w, r, lookupName, start); err != nil {
+			slog.Error("cold start failed", "model", lookupName, "error", err)
 			requestsTotal.WithLabelValues(modelName, "error").Inc()
 		}
 		return
@@ -801,7 +822,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// v1alpha1 fallback (deprecated)
-	md, err := p.getModelDeployment(ctx, modelName)
+	md, err := p.getModelDeployment(ctx, lookupName)
 	if err != nil {
 		if errors.IsNotFound(err) {
 			validation.WriteModelNotFound(w, modelName)
