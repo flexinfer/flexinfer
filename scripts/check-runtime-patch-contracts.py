@@ -139,6 +139,30 @@ def assert_runtime_yaml_patch_refs(runtime_yaml: str) -> None:
         )
 
 
+def assert_qwen35_gptq_stock_path(patch_script: str) -> None:
+    # The ROCm "reference" GPTQ fallback unpacked qweight AFTER ops.gptq_shuffle
+    # permuted it into the ExLlama layout, corrupting every quantized projection
+    # (root-caused 2026-07-18). The stock fused gptq_gemm is accurate on gfx1100.
+    forbidden = (
+        "unpacked_qweight",
+        "torch.version.hip is not None and self.quant_config.weight_bits == 4",
+    )
+    for snippet in forbidden:
+        if snippet in patch_script:
+            fail(
+                "vllm_qwen35_patches_nodiag.py reintroduced the ROCm GPTQ "
+                f"reference fallback ({snippet!r}); it misreads gptq_shuffle-"
+                "permuted qweight and corrupts all quantized projections"
+            )
+
+    if "FLEXINFER_QWEN35_GPTQ_ROCM_REFERENCE_PATCH" not in patch_script:
+        fail(
+            "vllm_qwen35_patches_nodiag.py lost the stale-image guard that "
+            "fails the build when gptq.py still carries the removed ROCm "
+            "reference fallback"
+        )
+
+
 def assert_dockerfile_patch_order(dockerfile: str) -> None:
     scripts_copy = dockerfile.find("COPY build/scripts/ /opt/flexinfer/scripts/")
     qwen_patch = dockerfile.find(
@@ -558,7 +582,10 @@ def main(argv: list[str]) -> int:
     model_deployment_source = read("controllers/model_deployment.go")
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
+    qwen35_patch_script = read("build/scripts/vllm_qwen35_patches_nodiag.py")
+
     assert_patch_scripts_exist_and_parse()
+    assert_qwen35_gptq_stock_path(qwen35_patch_script)
     assert_runtime_yaml_patch_refs(runtime_yaml)
     assert_dockerfile_patch_order(dockerfile)
     assert_runtime_entrypoint_contract(entrypoint, build_script)
