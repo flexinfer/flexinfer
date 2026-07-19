@@ -31,6 +31,7 @@ spec:
   gpu:
     vendor: amd
     count: 1
+    shared: 7900xtx-textgen
     # ~6GB GPTQ weights + rank-64 LoRA buffers; the pod reserves
     # gpuMemoryUtilization (0.90) of the 24GB card up front (~22GB) for
     # weights + activations + the 128K KV pool. It is the sole 7900xtx tenant
