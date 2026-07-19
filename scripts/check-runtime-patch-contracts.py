@@ -302,7 +302,9 @@ def assert_sunshine_input_contract(launcher: str, values_yaml: str) -> None:
         if snippet not in launcher:
             fail(f"sunshine-headless.sh missing input contract: {snippet!r}")
     if "export WLR_LIBINPUT_NO_DEVICES" in launcher:
-        fail("sunshine-headless.sh must not set WLR_LIBINPUT_NO_DEVICES; it hides Sunshine uinput devices from Sway")
+        fail(
+            "sunshine-headless.sh must not set WLR_LIBINPUT_NO_DEVICES; it hides Sunshine uinput devices from Sway"
+        )
     for line in launcher.splitlines():
         stripped = line.strip()
         for forbidden in ("usermod ", "groupadd "):
@@ -364,9 +366,7 @@ def assert_long_context_gauntlet_contract(
         fail("Qwen 128K experiment no longer references its context gauntlet")
 
 
-def assert_qwen128_production_contract(
-    primary_yaml: str, sister_yaml: str
-) -> None:
+def assert_qwen128_production_contract(primary_yaml: str, sister_yaml: str) -> None:
     required_sister = (
         "name: qwen35-35b-clean-gptq-workhorse-128k",
         "maxModelLen: 131072",
@@ -374,7 +374,9 @@ def assert_qwen128_production_contract(
         'hipVisibleDevices: "0"',
         "count: 2",
         "shared: 7900xtx-textgen",
-        "priority: 700",
+        # 2026-07-18 psyche fleet layout (MR !862): demoted below the warm
+        # qwen35-9b-ablit-rp text-lane leader (500); on-demand only.
+        "priority: 300",
         "kubernetes.io/hostname: cblevins-7900xtx",
         "warmPolicy: ondemand",
         "minReplicas: 0",
@@ -396,7 +398,9 @@ def assert_qwen128_production_contract(
         "count: 1",
         "shared: 5930k-textgen",
         "kubernetes.io/hostname: cblevins-5930k",
-        "minReplicas: 1",
+        # 2026-07-18 psyche fleet layout (MR !862): scale-to-zero; the 5930k
+        # card belongs to the rehomed wan video lanes now.
+        "minReplicas: 0",
         "coldStartTimeout: 25m",
         "- qwen35-128k",
         "- workhorse-128k",
@@ -410,7 +414,9 @@ def assert_qwen128_production_contract(
 def assert_wan_video_warm_contract(wan_yaml: str) -> None:
     required = (
         "name: wan21-t2v-1p3b-gfx1100",
-        "shared: 7900xtx-textgen",
+        # 2026-07-18 psyche fleet layout (MR !862): video lanes rehomed to
+        # cblevins-5930k; T2V remains the warm video primary there.
+        "shared: 5930k-textgen",
         "priority: 500",
         "warmPolicy: primary",
         "minReplicas: 1",
@@ -425,7 +431,9 @@ def assert_flash_loader_image_contract(
 ) -> None:
     published_ref = "registry.harbor.lan/flexinfer/flexinfer-flash-loader:master"
     if published_ref not in controller_source:
-        fail("controller flash-loader default must use the always-published :master tag")
+        fail(
+            "controller flash-loader default must use the always-published :master tag"
+        )
     if published_ref not in values_yaml:
         fail("chart flash-loader default must use the always-published :master tag")
     if "ImagePullPolicy: corev1.PullAlways" not in deployment_source:
@@ -534,9 +542,7 @@ def main(argv: list[str]) -> int:
     sunshine_launcher = read("build/sunshine-headless.sh")
     values_yaml = read("deploy/system/values-k3s.yaml")
     chart_values_yaml = read("charts/flexinfer/values.yaml")
-    qwen35_cache_yaml = read(
-        "deploy/modelcaches/qwen35-35b-a3b-clean-gptq.yaml"
-    )
+    qwen35_cache_yaml = read("deploy/modelcaches/qwen35-35b-a3b-clean-gptq.yaml")
     long_context_cronjob_yaml = read(
         "deploy/tasks/model-eval-gauntlet/qwen35-long-context-cronjob.yaml"
     )
@@ -546,9 +552,7 @@ def main(argv: list[str]) -> int:
     qwen128_production_yaml = read(
         "deploy/models/qwen35-35b-clean-gptq-workhorse-128k.yaml"
     )
-    qwen128_primary_yaml = read(
-        "deploy/models/qwen35-35b-clean-gptq-workhorse.yaml"
-    )
+    qwen128_primary_yaml = read("deploy/models/qwen35-35b-clean-gptq-workhorse.yaml")
     wan_video_yaml = read("deploy/models/wan21-t2v-1p3b-gfx1100.yaml")
     flash_loader_source = read("controllers/flash_loader.go")
     model_deployment_source = read("controllers/model_deployment.go")
@@ -567,9 +571,7 @@ def main(argv: list[str]) -> int:
     assert_long_context_gauntlet_contract(
         long_context_cronjob_yaml, long_context_experiment_yaml
     )
-    assert_qwen128_production_contract(
-        qwen128_primary_yaml, qwen128_production_yaml
-    )
+    assert_qwen128_production_contract(qwen128_primary_yaml, qwen128_production_yaml)
     assert_wan_video_warm_contract(wan_video_yaml)
     assert_flash_loader_image_contract(
         flash_loader_source, model_deployment_source, chart_values_yaml
