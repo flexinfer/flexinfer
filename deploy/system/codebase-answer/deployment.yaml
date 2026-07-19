@@ -23,7 +23,7 @@ spec:
         app: codebase-answer
         app.kubernetes.io/part-of: flexinfer
       annotations:
-        flexinfer.ai/config-rev: "2026-07-15-rag-final-answer-v2"
+        flexinfer.ai/config-rev: "2026-07-19-serverless-chat-readiness"
     spec:
       containers:
         - name: rag
@@ -41,8 +41,9 @@ spec:
             - name: RERANK_MODEL
               value: "bge-reranker-radeonvii"
             - name: CHAT_MODEL
-              # Stable least-loaded label shared by both Ready 128K workhorses.
-              # Avoid pinning RAG to a preempted single-card Model.
+              # Stable label shared by both serverless 128K workhorses. The
+              # proxy cold-starts a member when the fleet intentionally parks
+              # both at zero replicas.
               value: "loom-workhorse"
             - name: QDRANT_URL
               value: "http://192.168.50.176:6333"

@@ -35,7 +35,7 @@ POST /v1/answer
    "citations": [{"path": "pkg/...", "score": 0.79}, ...],
    "context_tokens": 972, "model": "...", "collection": "...", "elapsed_ms": 1234}
 
-GET /readyz -> 200 only when BGE embed/rerank, `loom-workhorse`, and Qdrant are Ready
+GET /readyz -> 200 when BGE embed/rerank and Qdrant are Ready and `loom-workhorse` is advertised
 GET /livez  -> 200 when the local HTTP process is alive
 ```
 
@@ -46,7 +46,7 @@ GET /livez  -> 200 when the local HTTP process is alive
 | `PROXY_URL` | `http://flexinfer-proxy…` | OpenAI-compatible base (embed/rerank/chat) |
 | `EMBED_MODEL` | `bge-large-radeonvii` | gfx906 bge embeddings lane |
 | `RERANK_MODEL` | `bge-reranker-radeonvii` | gfx906 reranker lane |
-| `CHAT_MODEL` | `loom-workhorse` | least-loaded Ready 128K answer generator |
+| `CHAT_MODEL` | `loom-workhorse` | serverless 128K answer-generator route |
 | `QDRANT_URL` | `http://192.168.50.176:6333` | canonical qdrant |
 | `QDRANT_API_KEY` | _(secret)_ | `qdrant-credentials/api-key` |
 | `DEFAULT_COLLECTION` | `codebase_memory_bge_v1` | embedded-codebase index |
@@ -72,10 +72,11 @@ kubectl -n flexinfer-system run rag-curl --rm -it --image=curlimages/curl --rest
 
 ## Reliability
 
-- Readiness checks the proxy model catalog for all three serving routes and
-  verifies that the default Qdrant collection is searchable (green or yellow
-  while its optimizer runs). Liveness is separate, so a downstream outage
-  removes the pod from service without restart-looping it.
+- Readiness requires the embedding and reranker routes to be warm, the chat
+  route to remain advertised, and the default Qdrant collection to be
+  searchable (green or yellow while its optimizer runs). The chat route may be
+  cold: keeping this pod Ready lets an answer request reach the proxy and
+  trigger its serverless cold-start queue. Liveness remains separate.
 - `codebase-answer-alerts` fires when the nightly index is older than 30 hours,
   a re-embed Job fails, or this Deployment has no Ready replica.
 - The re-embed job adaptively isolates and trims tokenizer-overflow chunks while

@@ -20,7 +20,11 @@ def _load_script():
     with open(CONFIGMAP, "r", encoding="utf-8") as fh:
         lines = fh.readlines()
     start = next(
-        (i + 1 for i, line in enumerate(lines) if line.rstrip().endswith("rag_answer.py: |")),
+        (
+            i + 1
+            for i, line in enumerate(lines)
+            if line.rstrip().endswith("rag_answer.py: |")
+        ),
         None,
     )
     if start is None:
@@ -51,26 +55,32 @@ def _load_script():
 rag = _load_script()
 
 
-def _catalog(workhorse_ready=True):
-    return {
-        "data": [
-            {
-                "id": "bge-large-radeonvii",
-                "metadata": {"ready": True, "service_labels": ["embeddings"]},
+def _catalog(*, workhorse_ready=True, include_workhorse=True, embed_ready=True):
+    data = [
+        {
+            "id": "bge-large-radeonvii",
+            "metadata": {
+                "ready": embed_ready,
+                "service_labels": ["embeddings"],
             },
-            {
-                "id": "bge-reranker-radeonvii",
-                "metadata": {"ready": True, "service_labels": ["rerank"]},
-            },
+        },
+        {
+            "id": "bge-reranker-radeonvii",
+            "metadata": {"ready": True, "service_labels": ["rerank"]},
+        },
+    ]
+    if include_workhorse:
+        data.append(
             {
                 "id": "qwen35-workhorse-a",
                 "metadata": {
                     "ready": workhorse_ready,
+                    "phase": "Ready" if workhorse_ready else "Idle",
                     "service_labels": ["loom-workhorse", "workhorse-128k"],
                 },
-            },
-        ]
-    }
+            }
+        )
+    return {"data": data}
 
 
 class Readiness(unittest.TestCase):
@@ -83,10 +93,21 @@ class Readiness(unittest.TestCase):
         else:
             rag._fetch_json = self._orig_fetch
 
-    def _install_fetch(self, *, workhorse_ready=True, qdrant_status="green"):
+    def _install_fetch(
+        self,
+        *,
+        workhorse_ready=True,
+        include_workhorse=True,
+        embed_ready=True,
+        qdrant_status="green",
+    ):
         def fake_fetch(url, headers=None, timeout=None):
             if url.endswith("/v1/models"):
-                return _catalog(workhorse_ready)
+                return _catalog(
+                    workhorse_ready=workhorse_ready,
+                    include_workhorse=include_workhorse,
+                    embed_ready=embed_ready,
+                )
             if "/collections/" in url:
                 return {"result": {"status": qdrant_status}}
             raise AssertionError(f"unexpected readiness URL: {url}")
@@ -98,13 +119,28 @@ class Readiness(unittest.TestCase):
         ready, checks = rag.readiness_status()
         self.assertTrue(ready)
         self.assertEqual(checks["models"], "ok")
+        self.assertEqual(checks["chat"], "ready")
         self.assertEqual(checks["qdrant"], "green")
 
-    def test_preempted_workhorse_makes_readiness_fail(self):
+    def test_serverless_workhorse_route_keeps_readiness_ready(self):
         self._install_fetch(workhorse_ready=False)
+        ready, checks = rag.readiness_status()
+        self.assertTrue(ready)
+        self.assertEqual(checks["models"], "ok")
+        self.assertEqual(checks["chat"], "cold-startable")
+
+    def test_missing_workhorse_route_makes_readiness_fail(self):
+        self._install_fetch(include_workhorse=False)
         ready, checks = rag.readiness_status()
         self.assertFalse(ready)
         self.assertIn("loom-workhorse", checks["models"])
+        self.assertEqual(checks["chat"], "not-advertised")
+
+    def test_serverless_embedding_route_makes_readiness_fail(self):
+        self._install_fetch(embed_ready=False)
+        ready, checks = rag.readiness_status()
+        self.assertFalse(ready)
+        self.assertIn("bge-large-radeonvii", checks["models"])
 
     def test_yellow_collection_remains_ready_during_optimization(self):
         self._install_fetch(qdrant_status="yellow")
@@ -126,7 +162,7 @@ class DeclarativeRouting(unittest.TestCase):
         self.assertIn('value: "loom-workhorse"', deployment)
         self.assertNotIn('value: "qwen36-35b-mtp-uncensored-5930k"', deployment)
         self.assertIn(
-            'flexinfer.ai/config-rev: "2026-07-15-rag-final-answer-v2"',
+            'flexinfer.ai/config-rev: "2026-07-19-serverless-chat-readiness"',
             deployment,
         )
 
@@ -161,9 +197,7 @@ class GenerationMode(unittest.TestCase):
         answer = rag.chat("system", "question", 80)
 
         self.assertEqual(answer, "final answer")
-        self.assertEqual(
-            captured["chat_template_kwargs"], {"enable_thinking": False}
-        )
+        self.assertEqual(captured["chat_template_kwargs"], {"enable_thinking": False})
 
 
 if __name__ == "__main__":
