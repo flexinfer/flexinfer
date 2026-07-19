@@ -162,6 +162,20 @@ def assert_qwen35_gptq_stock_path(patch_script: str) -> None:
             "reference fallback"
         )
 
+    # Removing the fallback is necessary but NOT sufficient. ops.gptq_shuffle()
+    # permutes qweight for the ExLlama kernel, but on gfx1100 that kernel is not
+    # the one consuming the weights, so the permutation is never undone. Live
+    # A/B on the gfx1100 runtime (2026-07-19): shuffle -> token salad on BOTH
+    # the fallback and the stock fused path; shuffle skipped -> correct output
+    # (' Paris.') on both. The guard is load-bearing for generation quality.
+    if "FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP" not in patch_script:
+        fail(
+            "vllm_qwen35_patches_nodiag.py lost the ROCm gptq_shuffle skip "
+            "guard (FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP); without it every "
+            "4-bit GPTQ projection is served with ExLlama-permuted rows and "
+            "generation degenerates into token salad"
+        )
+
 
 def assert_dockerfile_patch_order(dockerfile: str) -> None:
     scripts_copy = dockerfile.find("COPY build/scripts/ /opt/flexinfer/scripts/")
