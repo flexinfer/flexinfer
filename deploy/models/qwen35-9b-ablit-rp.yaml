@@ -4,8 +4,10 @@
 # The LoRAAdapter qwen35-9b-nsfw-rp targets this model; the controller auto-injects
 # --enable-lora, --max-loras, --max-lora-rank 64, and VLLM_ALLOW_RUNTIME_LORA_UPDATING.
 #
-# Kept OFF the public litellm fleet (litellm.enabled:false) until the kill-test
-# passes; reach it during the test via port-forward on svc/qwen35-9b-ablit-rp.
+# Kill-test PASSED 2026-07-19 (base numerics + rank-64 LoRA quality both coherent
+# on runtime image 6ee8b3ed, gptq_shuffle-skip fix). Now ON the public litellm
+# fleet (litellm.enabled:true) as the general local text lane for news-analyzer
+# and other in-cluster consumers (OpenWebUI). Reach the LoRA via model="nsfw-rp".
 #
 # VERIFY ON APPLY:
 #   - source PVC path produced by qwen35-9b-oci-gfx1100 (drafted below).
@@ -68,7 +70,7 @@ spec:
   serviceLabels:
     - qwen35-9b-ablit-rp
   litellm:
-    enabled: false               # off the public fleet until the kill-test passes
+    enabled: true                # kill-test passed 2026-07-19; joined the public fleet
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
