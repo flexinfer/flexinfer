@@ -128,7 +128,7 @@ spec:
     bundledBackends:
       - vllm
       - diffusers
-    image: registry.harbor.lan/flexinfer/runtime@sha256:62bf47e8a8918d4b338d57d83677fc9f383fabfab7d870dab963ffbd597fba8f
+    image: registry.harbor.lan/flexinfer/runtime@sha256:5069e96c1b9f46e66a1fcf451bef330c331f8a02aa5a51d606d190dd8ba906b3
   containerMemoryGB: 48
   # 2026-05-25: bumped 18 → 22 to make room for `gemma4-26b-a4b-gptq` at
   # maxModelLen=32768 with kvCacheDtype=fp8_e4m3. Math:
