@@ -31,7 +31,11 @@ spec:
   gpu:
     vendor: amd
     count: 1
-    vramEstimateMB: 12000        # ~6GB GPTQ weights + rank-64 LoRA buffers + 32K KV headroom
+    # ~6GB GPTQ weights + rank-64 LoRA buffers; at maxModelLen 262144 the pod
+    # reserves gpuMemoryUtilization (0.90) of the 24GB card up front (~22GB) for
+    # weights + activations + the 262K KV pool. It is the sole 7900xtx tenant
+    # (wan video lanes live on cblevins-5930k), so estimate the full reservation.
+    vramEstimateMB: 22000
     # 2026-07-18 psyche fleet layout: warm-pinned leader of the 7900xtx text
     # lane. Outranks the demoted workhorse-128k (300) and every other group
     # member; the wan video lanes moved to cblevins-5930k in the same change.
@@ -47,12 +51,16 @@ spec:
     # The artifact config carries multimodal mRoPE fields (mrope_interleaved,
     # mrope_section) that vLLM's qwen3_5 config parser rejects (validate_rope:
     # "set -= list"). Override with a clean text-only rope block (same trick the
-    # 35B workhorse uses). Native max_position_embeddings is 262144, so 32K needs
-    # no long-context flag.
+    # 35B workhorse uses). Native max_position_embeddings is 262144 with NO RoPE
+    # extrapolation anywhere in range (unlike the 35B, which cliffs ~64K), so the
+    # ceiling is KV VRAM, not coherence. Maxed to the native 262144 on 2026-07-19:
+    # the model loads Ready at maxNumSeqs 1 / gpuMemoryUtilization 0.90 on the
+    # 24GB gfx1100 (only the 8 full-attention layers accrue KV; the 24 GDN layers
+    # hold constant state), and needle-in-haystack recall stays coherent at depth.
     hfOverrides: '{"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
-    maxModelLen: 32768
+    maxModelLen: 262144
     gpuMemoryUtilization: "0.90"
-    maxNumSeqs: 2
+    maxNumSeqs: 1                 # 262144 KV pool needs the single-sequence budget on 24GB
     enforceEager: true           # stability for the kill-test; revisit for throughput later
     trustRemoteCode: true
     servedModelName: qwen35-9b-ablit-rp
