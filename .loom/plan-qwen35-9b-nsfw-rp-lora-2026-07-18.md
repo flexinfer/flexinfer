@@ -262,3 +262,44 @@ serving coherently); a pod restart before the rebuilt image rolls reverts to
 salad. Rollout: rebuild `./build/build-runtime.sh gfx1100 --push` from master
 (carries !866), repin digest at 4 sites, roll DaemonSet, rerun the greedy
 canary (expect `' Paris.…'`), then LoRA quality re-test + context-max 262K.
+
+## CORRECTION 2026-07-19: the shuffle is the root cause, not the fallback (!866 insufficient)
+
+The two previous entries (!866's and the confirmation above) both named the
+patch-0c reference fallback as the root cause. **That is wrong**, and the
+`85efaa3e` image built from master proved it: with the fallback removed and the
+stock fused `gptq_gemm` restored, the canary still emitted the original salad
+(`'नुeniiske在线阅读ัส…'`, byte-identical to the first report).
+
+Full 2x2, run live on the gfx1100 runtime, reloading the model between each
+cell and comparing greedy "The capital of France is" against the CPU gptqmodel
+ground truth (`' Paris.'`):
+
+| GEMM path | `ops.gptq_shuffle` | Output |
+|---|---|---|
+| reference fallback (old 0c) | runs | salad |
+| reference fallback (old 0c) | skipped | `' Paris.'` correct |
+| stock fused `gptq_gemm` (!866) | runs | salad |
+| stock fused `gptq_gemm` (!866) | skipped | `' Paris.'` correct |
+
+**The GEMM path is irrelevant. `ops.gptq_shuffle()` is the sole corruptor.**
+`process_weights_after_loading()` permutes qweight in place for the ExLlama
+kernel layout, but on gfx1100 the GEMM actually consuming those weights is not
+the ExLlama kernel, so the permutation is never undone — every quantized
+projection is served with scrambled rows.
+
+!866 is therefore harmless but **insufficient**: it removed a fallback that
+was itself broken (it unpacked post-shuffle), without addressing the shuffle.
+Fix = patch **0c2** (`FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP`): skip
+`gptq_shuffle` when `torch.version.hip` and `weight_bits == 4`. Composes
+cleanly with !866's stock-gemm path; contract-enforced in
+`scripts/check-runtime-patch-contracts.py` so it cannot be silently dropped.
+
+**Method note (cost me a wrong conclusion):** an intermediate "stock gemm +
+shuffle skipped" test appeared to fail, which briefly looked like proof that
+the fused GEMM was broken on gfx1100. That test was invalid — it used
+`kubectl exec` with an *external* heredoc, which needs `-i` to forward stdin,
+so the edit never reached the pod and the run merely repeated the default
+config. The byte-identical output was the tell. Wrap in-pod heredocs as
+`kubectl exec … -- sh -c 'python3 - <<"PYEOF" … PYEOF'`, and always verify the
+edit landed (`grep` the target file) before trusting a negative result.

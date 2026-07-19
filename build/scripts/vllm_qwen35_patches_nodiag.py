@@ -66,15 +66,12 @@ else:
     print("0b. WARNING: Could not find expected pattern in FLA ops/op.py")
 
 # 0c. GPTQ path: keep the stock fused ops.gptq_gemm on ROCm.
-# A previous "correctness-first" torch reference fallback here was itself the
-# numerics bug (root-caused 2026-07-18): GPTQLinearMethod.process_weights_after_
-# loading() runs ops.gptq_shuffle(), which permutes qweight into the ExLlama
-# kernel layout (99.97% of packed words move). The fallback then unpacked that
-# shuffled tensor as if it were still checkpoint row-packed order, misaligning
-# qweight against the untouched qzeros/scales and deterministically corrupting
-# every quantized projection (layer-3 k_proj matmul cosine 0.208 / 127% rel
-# error, vs 0.9999995 / 0.10% for the stock fused kernel). The fused GEMM is
-# accurate on gfx1100 — never re-add a post-shuffle unpack here.
+# A previous "correctness-first" torch reference fallback here unpacked qweight
+# assuming the checkpoint row-packed order after process_weights_after_loading()
+# had already permuted it via ops.gptq_shuffle(), misaligning qweight against
+# the untouched qzeros/scales. Removing that fallback is correct — the stock
+# fused GEMM is accurate on gfx1100 — but it is NOT sufficient on its own:
+# see 0c2, the shuffle itself is the end-to-end corruptor here.
 gptq_path = f"{BASE}/model_executor/layers/quantization/gptq.py"
 if os.path.exists(gptq_path):
     with open(gptq_path) as f:
@@ -89,6 +86,57 @@ if os.path.exists(gptq_path):
     print("0c. GPTQ stock fused gptq_gemm path confirmed (reference fallback removed)")
 else:
     print(f"0c. WARNING: {gptq_path} not found")
+
+# 0c2. Skip ops.gptq_shuffle() on ROCm 4-bit GPTQ.
+#
+# process_weights_after_loading() unconditionally permutes qweight in place for
+# the ExLlama kernel layout. On gfx1100 the GEMM that actually consumes those
+# weights is NOT the ExLlama kernel, so the permutation is never undone and
+# every quantized projection is served with scrambled rows — deterministic
+# multilingual token salad from qwen35-9b-ablit-rp.
+#
+# Empirically isolated on the live gfx1100 runtime (2026-07-19), reloading the
+# model between each combination and diffing greedy output for
+# "The capital of France is" against a CPU gptqmodel ground truth (' Paris.'):
+#
+#   reference fallback + shuffle          -> salad
+#   reference fallback + shuffle SKIPPED  -> ' Paris.'  (correct)
+#   stock fused gemm   + shuffle          -> salad
+#   stock fused gemm   + shuffle SKIPPED  -> ' Paris.'  (correct)
+#
+# The GEMM path is irrelevant; the shuffle is the sole corruptor. Guard it and
+# both paths are correct. Keep this guard whenever the checkpoint is 4-bit GPTQ
+# on ROCm — removing it silently regresses generation quality while every
+# tensor stat and load-time check still looks healthy.
+if os.path.exists(gptq_path):
+    with open(gptq_path) as f:
+        gptq_content = f.read()
+    old_shuffle = (
+        "            layer.exllama_state = ExllamaState.READY\n"
+        "            ops.gptq_shuffle(layer.qweight, layer.g_idx, self.quant_config.weight_bits)\n"
+    )
+    new_shuffle = (
+        "            layer.exllama_state = ExllamaState.READY\n"
+        "            if torch.version.hip is None or self.quant_config.weight_bits != 4:\n"
+        "                # FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP: on ROCm the GEMM\n"
+        "                # consuming these weights is not the ExLlama kernel, so this\n"
+        "                # permutation is never undone and corrupts every projection.\n"
+        "                ops.gptq_shuffle(layer.qweight, layer.g_idx, self.quant_config.weight_bits)\n"
+    )
+    if "FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP" in gptq_content:
+        print("0c2. gptq_shuffle ROCm skip guard already patched")
+    elif old_shuffle in gptq_content:
+        gptq_content = gptq_content.replace(old_shuffle, new_shuffle, 1)
+        with open(gptq_path, "w") as f:
+            f.write(gptq_content)
+        print("0c2. PATCHED: gptq_shuffle skipped on ROCm 4-bit GPTQ")
+    else:
+        sys.exit(
+            "0c2. FATAL: could not find the ops.gptq_shuffle call in "
+            "process_weights_after_loading(). The ROCm shuffle guard is "
+            "required for correct GPTQ generation on gfx1100 — refusing to "
+            "build an image that would serve scrambled weights."
+        )
 
 # Clear Triton cache to force recompilation with new wrappers
 import shutil
