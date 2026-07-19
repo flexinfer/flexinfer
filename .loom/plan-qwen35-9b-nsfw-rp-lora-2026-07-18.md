@@ -212,3 +212,53 @@ reference. Context maxing (32K→262144) is queued behind a coherent base.
 `/v1/load_lora_adapter` after a successful load; vLLM answers 400
 "already been loaded" and the CR is marked Failed despite the adapter being
 live. Treat that 400 as success (or check GET /v1/models first).
+
+## Independent root-cause confirmation + live validation 2026-07-19 (second session, converged with !866)
+
+A parallel investigation independently reached the same root cause as !866
+(patch-0c reference fallback dequantizing gptq_shuffle-permuted qweight) via a
+different evidence chain, and validated the mechanism live:
+
+1. **CPU ground truth — artifact healthy (suspect c eliminated).** In the
+   serving pod: `pip install --no-deps optimum` (2.2.0) makes plain
+   transformers 5.3.0.dev0 + gptqmodel 6.0.0 load the checkpoint directly —
+   the VL-layout wrap is NOT needed. Recipe: `GPTQConfig(bits=4,
+   group_size=128, desc_act=False, backend="gptq_torch")` (default
+   `torch_fused` CPU kernel crashes building its permutation index), GPU
+   masked via `HIP_VISIBLE_DEVICES=""`, and the 48 unquantized
+   `in_proj_a/b` modules (24 GDN layers × 2, shipped fp16 in the checkpoint)
+   swapped back to `nn.Linear` post-load (transformers' loader otherwise
+   random-inits them as QuantLinear). Greedy: "The capital of France is" →
+   `' Paris.\nThe capital of France is Paris.\nThe'`; "2 + 2 =" → `' ?\n4\n**2.**\n3 + 4'`.
+2. **GDN kernels pass parity on gfx1100** (in-pod, alongside serving):
+   `fused_gdn_gating` maxerr 1e-6; `causal_conv1d_fn` 7e-3 (bf16);
+   `causal_conv1d_update` chained decode 5e-3; conv_state handoff exact.
+   Cache layout gotcha: conv_states must be `(slots, state_len, dim)`
+   transposed to dim-contiguous, mirroring the qwen3_next call site.
+3. **Shuffle experiment (smoking gun replicated):** `ops.gptq_shuffle` on
+   layer-0 `in_proj_qkv` qweight → naive disk-layout dequant differs on 75%
+   of rows afterwards (maxdiff 0.40 vs weight std 0.017).
+4. **Mechanism validated live:** hot-editing the pod's `gptq.py` to keep the
+   reference fallback but SKIP the shuffle (`torch.version.hip and
+   weight_bits == 4`), then reloading via manager DELETE (controller
+   re-added), produced greedy output **byte-identical to the CPU ground
+   truth** plus coherent chat output. This is the inverse experiment of
+   !866's matmul-level measurement and confirms shuffle-vs-unpack mismatch
+   as the sole corruption.
+
+**Also eliminated en route** (useful for future dense-9B work): patch 3's
+contiguous `[Q|K|V|Z]` split matches HF dense `in_proj_qkv` layout
+(`modeling_qwen3_5.py:506,564` — dense is NOT per-head interleaved); patch 8
+`repeat_interleave` matches HF (ratio 2 for 32/16 heads); vLLM builds
+`in_proj_ba` unquantized via `is_layer_gptq_quantized`'s fused-mapping shard
+check, so patch 16/16b "found nothing" is correct; naive FLA kernels match HF
+reference math including the 1/sqrt(K) scale; g_idx is trivial everywhere
+(no act_group_aware permutation mismatch despite gptqmodel 6.0.0 metadata).
+
+**Resolution**: !866's fix (remove fallback, stock fused `gptq_gemm`) is the
+durable one — this session's shuffle-skip variant was superseded and dropped.
+NOTE: the live pod currently runs the hot-edited venv (reference+skip-shuffle,
+serving coherently); a pod restart before the rebuilt image rolls reverts to
+salad. Rollout: rebuild `./build/build-runtime.sh gfx1100 --push` from master
+(carries !866), repin digest at 4 sites, roll DaemonSet, rerun the greedy
+canary (expect `' Paris.…'`), then LoRA quality re-test + context-max 262K.
