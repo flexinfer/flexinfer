@@ -26,14 +26,9 @@ spec:
     strategy: Local
     storageClass: nvme-1r-gpu
     size: 32Gi
-    flashLoader:
-      enabled: true
-      # Immutable tag published by master pipeline 19264 before this rollout.
-      image: registry.harbor.lan/flexinfer/flexinfer-flash-loader:a4df7588
-      concurrency: 8
-      tmpfsSizeLimit: 28Gi
-      bufferSizeKB: 4096
-      verifyIntegrity: true
+    # Keep the warm model on persistent local NVMe. A shared-model flash loader
+    # uses a persistent /dev/shm hostPath, so its 28Gi copy plus Wan CPU offload
+    # leaves this 63Gi node with less than 2Gi available memory.
     compilationCache:
       enabled: true
       hostPath: /var/lib/flexinfer/compile-cache
