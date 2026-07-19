@@ -303,3 +303,31 @@ so the edit never reached the pod and the run merely repeated the default
 config. The byte-identical output was the tell. Wrap in-pod heredocs as
 `kubectl exec … -- sh -c 'python3 - <<"PYEOF" … PYEOF'`, and always verify the
 edit landed (`grep` the target file) before trusting a negative result.
+
+## BASE NUMERICS PASS — verified on shipped image 2026-07-19 (!868)
+
+Runtime image `sha256:6ee8b3ed` (carries patch 0c2) rolled via Flux; canary run
+on a **fresh pod with the guard baked in** (`guard_in_image=1`, 0 restarts, no
+hot edits):
+
+| Probe | Output | CPU ground truth |
+|---|---|---|
+| `"The capital of France is"` (greedy) | `' Paris.\nThe capital of France is Paris.\nThe'` | identical |
+| `"2 + 2 ="` (greedy) | `' ?\n\n4\n\n**2.**\n3 +'` | identical |
+| chat: three primary colors | structured reasoning prose | coherent |
+
+`GET /v1/models` → `['qwen35-9b-ablit-rp', 'nsfw-rp']` — the LoRAAdapter
+reconciler re-loaded the rank-64 adapter onto the new pod automatically.
+
+**The 2026-07-19 kill-test's quality FAIL is resolved at the base level.** The
+original riskiest assumption (GPTQ base + rank-64 rsLoRA on hybrid GDN /
+gfx1100) is now PASS on both axes: mechanics (proven earlier) and base
+numerics (here).
+
+Rollout chain for the record: !866 (remove broken fallback — necessary, not
+sufficient) → !867 (evidence + repin; its image `85efaa3e` still served salad,
+which is what exposed the real cause) → !868 (patch 0c2 shuffle guard +
+contract; image `6ee8b3ed`, verified above).
+
+**Unblocked next:** LoRA *quality* re-test through `nsfw-rp` (operator-gated —
+it generates NSFW output), and context maxing 32K → 262144 native.
