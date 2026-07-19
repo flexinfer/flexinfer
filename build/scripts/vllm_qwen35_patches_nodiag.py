@@ -221,27 +221,36 @@ for cfg_path in _glob.glob(f"{configs_dir}/*.py"):
 # 0e. Fix ignore_keys_at_rope_validation handling without mutating config values
 # into sets. Transformers config __repr__ JSON-serializes config attributes, so
 # storing a set crashes at startup. Instead, keep model config values as lists
-# and coerce the ignore list at the subtraction site in configuration_utils.py.
-configuration_utils_path = None
-for cfg_utils in _glob.glob("/opt/venv/lib/python*/site-packages/transformers/configuration_utils.py"):
-    configuration_utils_path = cfg_utils
-    break
-if configuration_utils_path:
-    with open(configuration_utils_path) as f:
+# and coerce the ignore list at the subtraction site. The buggy subtraction
+# (`received_keys -= ignore_keys`, TypeError when vLLM's qwen3_5.py passes a
+# list) originally lived in configuration_utils.py; newer transformers builds
+# (e.g. 5.3.0.dev0) moved `_check_received_keys` to modeling_rope_utils.py —
+# patch whichever file(s) carry it.
+_rope_patch_candidates = []
+for _tf_file in ("configuration_utils.py", "modeling_rope_utils.py"):
+    _rope_patch_candidates.extend(
+        _glob.glob(f"/opt/venv/lib/python*/site-packages/transformers/{_tf_file}")
+    )
+_rope_patched_any = False
+for _rope_path in _rope_patch_candidates:
+    with open(_rope_path) as f:
         content = f.read()
     old_received_keys = "received_keys -= ignore_keys"
     new_received_keys = "received_keys -= set(ignore_keys)"
+    _rope_name = os.path.basename(_rope_path)
     if new_received_keys in content:
-        print("0e. configuration_utils.py already coerces ignore_keys")
+        print(f"0e. {_rope_name} already coerces ignore_keys")
+        _rope_patched_any = True
     elif old_received_keys in content:
         content = content.replace(old_received_keys, new_received_keys)
-        with open(configuration_utils_path, "w") as f:
+        with open(_rope_path, "w") as f:
             f.write(content)
-        print("0e. PATCHED: configuration_utils.py coerces ignore_keys_at_rope_validation")
-    else:
-        print("0e. WARNING: Could not find received_keys ignore_keys subtraction")
-else:
-    print("0e. WARNING: transformers/configuration_utils.py not found")
+        print(f"0e. PATCHED: {_rope_name} coerces ignore_keys_at_rope_validation")
+        _rope_patched_any = True
+if not _rope_patched_any:
+    print(
+        "0e. WARNING: Could not find received_keys ignore_keys subtraction in any transformers file"
+    )
 
 # 1. Register qwen3_5_text config type
 config_path = f"{BASE}/transformers_utils/config.py"
