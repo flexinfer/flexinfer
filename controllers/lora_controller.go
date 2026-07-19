@@ -258,15 +258,24 @@ func isLoRAAdapterAlreadyLoaded(statusCode int, body []byte, adapterName string)
 		return false
 	}
 
+	// vLLM nests the message under "error" ({"error":{"message":...}});
+	// accept a top-level "message" too for older/flat error shapes.
 	var response struct {
 		Message string `json:"message"`
+		Error   struct {
+			Message string `json:"message"`
+		} `json:"error"`
 	}
 	if err := json.Unmarshal(body, &response); err != nil {
 		return false
 	}
+	msg := response.Message
+	if msg == "" {
+		msg = response.Error.Message
+	}
 
 	expected := fmt.Sprintf("lora adapter '%s' has already been loaded", adapterName)
-	return strings.Contains(strings.ToLower(response.Message), strings.ToLower(expected))
+	return strings.Contains(strings.ToLower(msg), strings.ToLower(expected))
 }
 
 // unloadFromAllReplicas attempts to unload the adapter from all model replicas.
