@@ -74,7 +74,14 @@ spec:
     # 7900xtx primary alone. Restore by setting minReplicas back to 1 (and idle
     # the reasoning lane) if the second gemma instance is needed again.
     # 2026-06-30 GAMING CUTOVER: promoted to warm primary (7900xtx -> gaming).
-    minReplicas: 1
+    # 2026-07-19 PSYCHE VIDEO LAYOUT: demoted back to 0. cblevins-5930k is the
+    # psyche video lane now — wan21-t2v-1p3b-gfx1100 (priority 500, minReplicas 1)
+    # is the intended warm primary of 5930k-textgen. Gemma held the card as the
+    # warm incumbent despite its lower priority (385) and preempted both wan
+    # lanes; it is quiet (0 proxy hits over the observation window) and not part
+    # of the psyche layout. minReplicas 0 keeps it servable on-demand via its
+    # shared routes off the 7900xtx primary without contending for the 5930k card.
+    minReplicas: 0
     idleTimeout: 30m
     # 2026-05-16: raised for the 2/256 concurrency canary. The controller now
     # sizes vLLM's startupProbe from this budget, so the first graph-capture
