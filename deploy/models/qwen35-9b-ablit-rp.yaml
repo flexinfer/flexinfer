@@ -1,6 +1,6 @@
 # Abliterated Qwen3.5-9B @ 32K context + NSFW-RP LoRA — psyche-simulator test model.
 #
-# Standalone (non-shared) deployment on the free gfx1100 node cblevins-7900xtx.
+# Warm-primary member of the 7900xtx-textgen shared group on cblevins-7900xtx.
 # The LoRAAdapter qwen35-9b-nsfw-rp targets this model; the controller auto-injects
 # --enable-lora, --max-loras, --max-lora-rank 64, and VLLM_ALLOW_RUNTIME_LORA_UPDATING.
 #
@@ -47,6 +47,9 @@ spec:
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
+    # Reclaim the shared card after an on-demand borrower goes idle. Priority
+    # alone only controls demand-driven swaps and does not evict a Ready model.
+    warmPolicy: primary
     dtype: "half"
     quantization: gptq
     # The artifact config carries multimodal mRoPE fields (mrope_interleaved,
