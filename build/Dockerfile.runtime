@@ -63,7 +63,18 @@ FROM golang:${GO_VERSION} AS go-builder
 
 WORKDIR /workspace
 COPY go.mod go.sum ./
-RUN go mod download
+# Retry + direct-fallback: proxy.golang.org TLS handshake timeouts are a
+# recurring flake on the shared builder (2 of 3 recent builds died here).
+# GOPROXY "|direct" falls back to VCS on any proxy error; the loop absorbs
+# transient network stalls that kill the whole 30-layer build otherwise.
+RUN set -e; \
+    export GOPROXY="https://proxy.golang.org|direct"; \
+    for i in 1 2 3; do \
+      go mod download && break; \
+      echo "go mod download failed (attempt ${i}/3); retrying in 15s..." >&2; \
+      [ "${i}" = "3" ] && exit 1; \
+      sleep 15; \
+    done
 
 COPY cmd/ cmd/
 COPY api/ api/

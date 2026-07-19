@@ -139,3 +139,33 @@ runtime-managed serving path drops `hfOverrides` — it is only consumed in
 references it. Next required step before the GPTQ+rank-64-LoRA assumption can be
 exercised: thread `hfOverrides` through `pkg/runtime/payload.go` (or serve this
 model via `dedicatedDeployment: true`), then retry once the card frees.
+
+## Status update 2026-07-19 (rope-validator root cause CORRECTED + fleet layout)
+
+**Correction to the previous update:** the `validate_rope` crash is NOT fixable
+by threading `hfOverrides` (dict overrides apply after `cls(**config_dict)`, the
+TypeError fires inside `__init__` validation). Actual root cause: vLLM's
+`transformers_utils/configs/qwen3_5.py:77` passes
+`ignore_keys_at_rope_validation` as a **list**; transformers 5.3.0.dev0 moved
+`_check_received_keys` (with its `received_keys -= ignore_keys` set-subtraction)
+from `configuration_utils.py` to `modeling_rope_utils.py`, so patch section 0e
+of `build/scripts/vllm_qwen35_patches_nodiag.py` missed it → every Qwen3.5
+dense model crashed at config parse. The artifact's own rope block is clean (no
+mrope poison). Fix: 0e now patches both candidate files; repro + fix validated
+in the live image against the real artifact config. Also hardened
+`go mod download` (3x retry + GOPROXY `|direct`) after proxy.golang.org TLS
+timeouts killed 2 of 3 full builds.
+
+Patched image: `sha256:5069e96c1b9f46e66a1fcf451bef330c331f8a02aa5a51d606d190dd8ba906b3`
+(supersedes `62bf47e8`; all 4 digest pins bumped).
+
+**Fleet layout (MR !862, merged):** operator-directed psyche layout —
+qwen35-9b-ablit-rp is now the warm-pinned 7900xtx leader (priority 500),
+workhorse-128k demoted to 300; wan t2v/vace rehomed to cblevins-5930k
+(5930k-textgen, count 1), 5930k workhorse demoted to 300/minReplicas 0 with
+forcePromotion removed. This clears the kill-test capacity gate permanently.
+
+**Next:** DS roll to 5069e96c → 9b loads with `--enable-lora --max-lora-rank 64`
+→ LoRA kill-test at 32K → context maxing (native max_position_embeddings is
+262144; stepwise 65536 → 131072 → 262144 with needle checks via
+scripts/context-needle-bench.py).
