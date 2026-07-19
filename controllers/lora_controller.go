@@ -24,6 +24,7 @@ import (
 	"io"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -246,7 +247,26 @@ func (r *LoRAAdapterReconciler) loadAdapterOnPod(ctx context.Context, podAddr st
 	}
 
 	respBody, _ := io.ReadAll(resp.Body)
+	if isLoRAAdapterAlreadyLoaded(resp.StatusCode, respBody, adapter.Spec.AdapterName) {
+		return nil
+	}
 	return fmt.Errorf("load adapter returned %d: %s", resp.StatusCode, string(respBody))
+}
+
+func isLoRAAdapterAlreadyLoaded(statusCode int, body []byte, adapterName string) bool {
+	if statusCode != http.StatusBadRequest {
+		return false
+	}
+
+	var response struct {
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return false
+	}
+
+	expected := fmt.Sprintf("lora adapter '%s' has already been loaded", adapterName)
+	return strings.Contains(strings.ToLower(response.Message), strings.ToLower(expected))
 }
 
 // unloadFromAllReplicas attempts to unload the adapter from all model replicas.

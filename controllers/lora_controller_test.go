@@ -612,6 +612,40 @@ func TestLoadAdapterOnPod_WithMaxRank(t *testing.T) {
 	assert.Equal(t, float64(64), receivedPayload["max_lora_rank"])
 }
 
+func TestLoadAdapterOnPod_AlreadyLoaded(t *testing.T) {
+	s := newLoRATestScheme(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"The lora adapter 'nsfw-rp' has already been loaded. If you want to load the adapter in place, set 'load_inplace' to True."}`))
+	}))
+	defer server.Close()
+
+	adapter := &aiv1alpha2.LoRAAdapter{
+		Spec: aiv1alpha2.LoRAAdapterSpec{
+			AdapterName: "nsfw-rp",
+			Source: aiv1alpha2.LoRAAdapterSource{
+				Type: aiv1alpha2.LoRASourceLocalPath,
+				URI:  "/models/lora/nsfw-rp",
+			},
+		},
+	}
+
+	vllmBackend, ok := backend.Get("vllm")
+	require.True(t, ok)
+	ls := vllmBackend.(backend.LoRASupporter)
+
+	r := &LoRAAdapterReconciler{
+		Client:     fake.NewClientBuilder().WithScheme(s).Build(),
+		Scheme:     s,
+		Recorder:   &FakeEventRecorder{},
+		HTTPClient: server.Client(),
+	}
+
+	err := r.loadAdapterOnPod(context.Background(), server.Listener.Addr().String(), adapter, ls)
+	require.NoError(t, err)
+}
+
 func TestLoadAdapterOnPod_ServerError(t *testing.T) {
 	s := newLoRATestScheme(t)
 
