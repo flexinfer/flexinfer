@@ -30,7 +30,10 @@ spec:
     vendor: amd
     count: 1
     vramEstimateMB: 12000        # ~6GB GPTQ weights + rank-64 LoRA buffers + 32K KV headroom
-    priority: 200
+    # 2026-07-18 psyche fleet layout: warm-pinned leader of the 7900xtx text
+    # lane. Outranks the demoted workhorse-128k (300) and every other group
+    # member; the wan video lanes moved to cblevins-5930k in the same change.
+    priority: 500
   serverless:
     enabled: true
     minReplicas: 1

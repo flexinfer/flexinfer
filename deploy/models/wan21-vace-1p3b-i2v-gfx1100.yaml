@@ -1,10 +1,12 @@
-# Wan 2.1 VACE 1.3B image-to-video lane for the RX 7900 XTX (gfx1100).
+# Wan 2.1 VACE 1.3B image-to-video lane on cblevins-5930k (gfx1100).
 #
+# 2026-07-18 psyche fleet layout: rehomed from cblevins-7900xtx together with
+# the T2V sibling; the 5930k gfx1100 card is now the psyche VIDEO lane.
 # On-demand keyframe animation: a first-frame image conditions the clip via
 # WanVACEPipeline (PIPELINE_MODE=image2video, added in a4df75880). Explicit
 # demand for this Model preempts the warm Wan T2V primary (priority 600 > 500);
-# T2V reclaims the card once this lane goes idle. The 128K Qwen sister
-# (priority 700) outranks both. The 5930k Qwen workhorse is unaffected.
+# T2V reclaims the card once this lane goes idle. The demoted 5930k Qwen
+# workhorse (300) cold-starts on demand but loses the election to video.
 # Slice 3 of .loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md;
 # the kill test must pass before any downstream pipeline ships.
 # Remove this parent Model (not its Deployment/pod) to roll the lane back.
@@ -43,10 +45,9 @@ spec:
       sizeLimit: 6Gi
   gpu:
     vendor: amd
-    # cblevins-7900xtx exposes the discrete card plus a Raphael iGPU. Claim
-    # both plugin slots, then select device zero through the backend config.
-    count: 2
-    shared: 7900xtx-textgen
+    # cblevins-5930k exposes a single gfx1100 device-plugin slot (no iGPU).
+    count: 1
+    shared: 5930k-textgen
     priority: 600
     vramEstimateMB: 18000
   serverless:
@@ -81,7 +82,7 @@ spec:
     hipVisibleDevices: "0"
     warmPolicy: ondemand
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-5930k
   resources:
     requests:
       cpu: "4"
