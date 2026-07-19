@@ -66,4 +66,4 @@ spec:
             severity: critical
           annotations:
             summary: "FlexInfer codebase RAG is unavailable"
-            description: "codebase-answer has no Ready replica. Its readiness checks the BGE embed/rerank routes, the loom-workhorse route, and Qdrant."
+            description: "codebase-answer has no Ready replica. Its readiness checks warm BGE embed/rerank routes, an advertised loom-workhorse route, and Qdrant."

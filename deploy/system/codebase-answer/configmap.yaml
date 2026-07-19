@@ -8,7 +8,7 @@
 #
 # POST /v1/answer  {query, collection?, top_k?, top_n?} ->
 #   {answer, citations:[{path, score}], context_tokens, model, collection}
-# GET  /readyz     -> 200 when embed/rerank/chat routes + qdrant are Ready
+# GET  /readyz     -> 200 when embed/rerank + qdrant are Ready and chat is routed
 # GET  /livez      -> 200 when the local HTTP process is alive
 apiVersion: v1
 kind: ConfigMap
@@ -90,25 +90,51 @@ data:
             raw = r.read()
             return json.loads(raw) if raw else {}
 
-    def _model_route_ready(catalog, identifier):
+    def _matching_model_routes(catalog, identifier):
         for row in catalog.get("data", []):
             metadata = row.get("metadata") or {}
             names = {row.get("id"), metadata.get("served_model_name")}
             names.update(metadata.get("aliases") or [])
             names.update(metadata.get("service_labels") or [])
-            if identifier in names and metadata.get("ready") is True:
-                return True
-        return False
+            if identifier in names:
+                yield metadata
+
+    def _model_route_ready(catalog, identifier):
+        return any(
+            metadata.get("ready") is True
+            for metadata in _matching_model_routes(catalog, identifier)
+        )
+
+    def _model_route_advertised(catalog, identifier):
+        return next(_matching_model_routes(catalog, identifier), None) is not None
 
     def readiness_status():
         checks = {}
         try:
             catalog = _fetch_json(f"{PROXY}/v1/models")
-            missing = [name for name in (EMBED_MODEL, RERANK_MODEL, CHAT_MODEL)
-                       if not _model_route_ready(catalog, name)]
+            missing = [
+                name
+                for name in (EMBED_MODEL, RERANK_MODEL)
+                if not _model_route_ready(catalog, name)
+            ]
+            # Embedding and reranking must be warm, but chat may be serverless.
+            # Keeping this pod Ready lets the first answer request reach the
+            # proxy and trigger its cold-start queue.
+            chat_advertised = _model_route_advertised(catalog, CHAT_MODEL)
+            chat_ready = _model_route_ready(catalog, CHAT_MODEL)
+            if not chat_advertised:
+                missing.append(CHAT_MODEL)
+            checks["chat"] = (
+                "ready"
+                if chat_ready
+                else "cold-startable"
+                if chat_advertised
+                else "not-advertised"
+            )
             checks["models"] = "ok" if not missing else "not-ready: " + ",".join(missing)
         except Exception as exc:  # noqa: BLE001
             checks["models"] = f"error: {type(exc).__name__}"
+            checks["chat"] = "unknown"
 
         try:
             headers = {"api-key": QDRANT_API_KEY} if QDRANT_API_KEY else {}
