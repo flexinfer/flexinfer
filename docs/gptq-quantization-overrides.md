@@ -85,10 +85,14 @@ Qwen3.5 models. Key fields:
 | `extract_text_config` | true | VLM nests `vocab_size` in `text_config` |
 | `remap_model_type` | `qwen3_5_text` | Avoid VLM loader (`ForConditionalGeneration`) |
 | `architectures` | `[Qwen3_5ForCausalLM]` | Text-only, not VLM |
-| `loader` | `manual_sharded_state_dict` | Default path crashes on meta tensors |
+| `loader` | `gptqmodel` | Uses GPTQModel's LazyTurtle disk-offload path so layers materialize on demand |
 | `python_packages` | transformers@529504b | Pin for Qwen3.5 support |
 | `disable_qwen35_fla` | true | FLA Triton kernels crash on ROCm |
 | `attn_implementation` | eager | No flash attention on gfx906 |
+
+Policies are first-match. The narrower `qwen3.6-fable-text` policy must appear
+before `qwen3.6-text`; it matches `modelPath=qwen36-27b-fable` and raises the
+calibration corpus to 128 samples x 1024 tokens for that exact-source artifact.
 
 Operational recovery reference: if a Qwen3.5 GPTQ artifact serves garbage,
 validate it with direct GPTQModel inference before changing vLLM runtime flags.

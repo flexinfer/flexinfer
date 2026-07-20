@@ -1,0 +1,32 @@
+# Artifact-only pull cache for the Qwen3.6-27B Fable Fusion GPTQ candidate.
+#
+# Activation order:
+#   1. Enable qwen36-27b-fable-gptq.yaml for a dedicated quantization window.
+#   2. Record the published OCI digest after its ModelCache reaches Ready.
+#   3. Replace the mutable tag below with that digest, then enable this file.
+#   4. Enable deploy/models/qwen36-27b-fable-gptq.yaml for the live smoke.
+#
+# This manifest is intentionally staged off kustomization until steps 1-2 pass.
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen36-27b-fable-oci
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/source-revision: 5ae530c3ab85033856e75cb1efc63fb1bf82a133
+    flexinfer.ai/promotion-state: awaiting-published-oci-digest
+spec:
+  source: "oci://registry.harbor.lan/flexinfer/qwen36-27b-fable:gptq-w4-g128-gfx1100-v1"
+  modelPath: qwen36-27b-fable
+  storageStrategy: SharedPVC
+  storageSize: "30Gi"
+  clusterStorageClassName: local-path
+  secretRef: harbor-oci-creds
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  download:
+    maxMemoryGB: 8
+    backoffLimit: 3
+  retentionPriority: 70
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85

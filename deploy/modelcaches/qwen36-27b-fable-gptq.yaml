@@ -1,0 +1,96 @@
+# Qwen3.6-27B Fable Fusion BF16 -> text-only GPTQ W4A16 for gfx1100.
+#
+# Exact source provenance:
+#   GGUF requested by the operator:
+#     DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF
+#   BF16 safetensors source named by DavidAU in discussion #3:
+#     nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451
+#     revision 5ae530c3ab85033856e75cb1efc63fb1bf82a133
+#
+# Do not quantize the GGUF. The source above is the original 55.5 GB BF16
+# checkpoint, so this pipeline avoids a lossy GGUF -> BF16 -> GPTQ round trip.
+# It is already uncensored/heretic and merged; there is intentionally no
+# abliteration stage.
+#
+# Artifact v1 is text-only. The qwen3.6-fable-text quantizer policy extracts
+# text_config and uses 128 x 1024 calibration tokens. The source carries 14
+# root-level MTP tensors, but the currently certified dense-Qwen MTP graft
+# contract requires 15 (including fc.weight). Keep native MTP disabled until a
+# source-specific graft and gfx1100 kill test prove that contract.
+#
+# `dynamicExclusion: none` is deliberate. The older Qwen3.6 canary blamed
+# quantized GDN projections for token salad, but the 2026-07-19 gfx1100 2x2 A/B
+# isolated the actual cause to vLLM's ROCm gptq_shuffle. The current persistent
+# runtime skips that shuffle and serves the fully quantized Qwen3.5-9B artifact
+# coherently. Full W4 keeps this dense 27B candidate inside a 24 GiB card;
+# retaining all GDN projections in BF16 is too close to the VRAM ceiling.
+#
+# This manifest is staged off kustomization. Quantization needs the high-RAM
+# Radeon VII node and claims its only GPU for up to 24 hours, displacing the
+# retrieval plane. Enable only in a declared build window, then wait for Ready
+# and a successful publish before enabling qwen36-27b-fable-oci.yaml.
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen36-27b-fable-gptq
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/source-revision: 5ae530c3ab85033856e75cb1efc63fb1bf82a133
+    flexinfer.ai/source-gguf: DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF
+    flexinfer.ai/promotion-state: staged-build-window-required
+spec:
+  source: "nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451"
+  storageStrategy: SharedPVC
+  existingClaimName: llm-models-nfs
+  modelPath: qwen36-27b-fable
+  storageSize: "160Gi"
+  secretRef: hf-token
+  download:
+    maxMemoryGB: 8
+    hfTransfer: false
+    backoffLimit: 3
+  quantization:
+    format: GPTQ
+    bits: 4
+    groupSize: 128
+    sym: true
+    descAct: false
+    dynamicExclusion: "none"
+    useGPU: true
+    maxMemoryGB: 96
+    gpuMemoryFraction: "0.95"
+    timeoutSeconds: 86400
+    nodeSelector:
+      flexinfer.ai/gpu.arch: gfx906
+      kubernetes.io/hostname: cblevins-radeonvii
+    calibration:
+      # The source-specific policy pins these exact values. Keeping them here
+      # makes the effective artifact recipe visible in the CR.
+      maxSeqLen: 1024
+      maxSamples: 128
+  publish:
+    targets:
+      - oci
+    ociRef: "registry.harbor.lan/flexinfer/qwen36-27b-fable:gptq-w4-g128-gfx1100-v1"
+    secretRef: harbor-oci-creds
+    maxMemoryGB: 8
+    timeoutSeconds: 7200
+    validate:
+      enabled: true
+      layout: vllm-gptq
+      family: qwen36-27b
+      # The validator still warns whenever Qwen3.6 GDN qweights are present.
+      # The warning predates the gfx1100 shuffle root cause; require the live
+      # coherence gate below instead of blocking publication on that warning.
+      failOnWarnings: false
+  tolerations:
+    - key: node.flexstack.io/incident-quarantine
+      operator: Equal
+      value: "etcd-io"
+      effect: NoSchedule
+    - key: node.kubernetes.io/unschedulable
+      operator: Exists
+      effect: NoSchedule
+  retentionPriority: 65
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85
