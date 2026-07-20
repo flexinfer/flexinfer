@@ -69,12 +69,14 @@ spec:
     # queued). KV pool is shared and was at ~1% under 2×128K-capable seqs;
     # vLLM preempts if concurrent sequences ever outgrow the pool.
     maxNumSeqs: 4
-    # Throughput revisit (2026-07-19, as planned at kill-test): eager mode had
-    # the warm-primary lane decoding at ~4.8 tok/s aggregate (~2.4 tok/s per
-    # stream — a 500-token psyche turn took 3.5 min). HIP graphs re-enabled;
-    # revert to enforceEager: true if the qwen3_5 hybrid arch fails graph
-    # capture on the gfx1100 runtime image.
-    enforceEager: false
+    # Throughput revisit attempted 2026-07-20: enforceEager: false CONFIRMED
+    # BROKEN — qwen3_5 hybrid arch fails vLLM cuda_graph capture on the
+    # gfx1100 runtime image (torch.compile graph break, gb0059; engine core
+    # init fails and the backend crashloops). Eager mode is load-bearing
+    # until the runtime image's vllm/torch handles this arch's graph
+    # capture. The ~4.8 tok/s decode ceiling stands; next levers are a
+    # runtime image bump or a non-GPTQ artifact, not this flag.
+    enforceEager: true
     trustRemoteCode: true
     servedModelName: qwen35-9b-ablit-rp
     enableToolCalling: false     # roleplay model — no tool parser
