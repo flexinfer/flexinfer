@@ -38,6 +38,9 @@ metadata:
     flexinfer.ai/source-revision: 5ae530c3ab85033856e75cb1efc63fb1bf82a133
     flexinfer.ai/source-gguf: DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF
     flexinfer.ai/promotion-state: quantization-window-active
+    # Only the final GPTQ artifact is needed. Avoid mirroring the 55.5 GB BF16
+    # source to OCI before the active quantization phase.
+    flexinfer.ai/publish-intermediate-stages: "false"
 spec:
   source: "nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451"
   storageStrategy: SharedPVC
