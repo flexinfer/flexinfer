@@ -56,7 +56,9 @@ spec:
     # Warm co-Active member of radeonvii-models alongside the bge embeddings
     # leader. Held GPU-resident so /v1/rerank has no cold-start once multiModel
     # is enabled.
-    minReplicas: 1
+    # Temporarily parked for the 2026-07-20 Qwen3.6 Fable GPTQ build window.
+    # Restore to 1 after the quantization/publish job leaves Radeon VII.
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 5m
   config:

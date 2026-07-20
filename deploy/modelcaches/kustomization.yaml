@@ -50,10 +50,10 @@ resources:
   # - qwen36-27b-gptq-gfx1100.yaml    # PAUSED: GPTQ stage on radeonvii starves the embed/rerank plane (~8-14 hr cycle)
 
   # 2026-07-20: exact BF16 source for DavidAU's Qwen3.6-27B Fable Fusion 711
-  # GGUF -> text-only GPTQ W4_G128 candidate. Keep staged until a declared
-  # Radeon VII build window; its 96 GiB quantization job displaces retrieval.
+  # GGUF -> text-only GPTQ W4_G128 candidate. Build window ACTIVE: the warm
+  # Radeon VII retrieval lanes and pyannote are parked for this 96 GiB job.
   # After publish, pin the OCI digest before enabling the pull cache.
-  # - qwen36-27b-fable-gptq.yaml
+  - qwen36-27b-fable-gptq.yaml
   # - qwen36-27b-fable-oci.yaml
 
   # === Track B: 70B daily-driver self-quant (Download → Quantize only) ===
