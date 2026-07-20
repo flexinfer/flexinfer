@@ -150,7 +150,7 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 
 	maxTokensForLog, streamForLog := parseRequestForUsageLog(forwardBody)
 	startedAt := time.Now()
-	userAgent := r.Header.Get("User-Agent")
+	caller := callerIdentityFrom(r)
 	wantPrefix := prefixHitOptIn(r.Header.Get(headerWantPrefixHit))
 	path := r.URL.Path
 
@@ -170,7 +170,8 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 			path:          path,
 			maxTokens:     maxTokensForLog,
 			stream:        streamForLog,
-			userAgent:     userAgent,
+			userAgent:     caller.userAgent,
+			requestID:     caller.requestID,
 			startedAt:     startedAt,
 			wantPrefixHit: wantPrefix,
 			targetURL:     targetURL,
@@ -211,9 +212,13 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 
 		reason, retryable := classifyUpstreamErr(fr.err)
 		if !retryable || attempt == maxAttempts-1 {
+			// Include caller identity so a failure pattern (e.g. a client that
+			// times out and cancels every request) is attributable to a workload.
 			slog.Warn("upstream forward failed",
-				"model", resolvedModel, "target", targetURL,
-				"attempt", attempt, "retryable", retryable, "error", fr.err)
+				append([]any{
+					"model", resolvedModel, "target", targetURL,
+					"attempt", attempt, "retryable", retryable, "error", fr.err,
+				}, caller.logAttrs()...)...)
 			break
 		}
 		upstreamRetriesTotal.WithLabelValues(resolvedModel, reason).Inc()
