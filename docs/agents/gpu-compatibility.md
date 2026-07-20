@@ -162,6 +162,41 @@ contract. Full evidence and artifact provenance are in
 This certificate does not replace the generic gfx906 vLLM profile image.
 Models must opt into the pinned image and exact artifact/config tuple.
 
+## Qwen3.6-27B Fable Fusion GPTQ candidate
+
+DavidAU's `Qwen3.6-27B-Fable-Fusion-711-...-MTP-GGUF` has an exact BF16
+safetensors source at
+`nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451`, revision
+`5ae530c3ab85033856e75cb1efc63fb1bf82a133`. DavidAU identified that source in
+the GGUF repository's discussion #3. Use the BF16 source for GPTQ; do not
+dequantize a GGUF and quantize it again.
+
+The staged build is `deploy/modelcaches/qwen36-27b-fable-gptq.yaml`. It emits a
+text-only, symmetric W4/G128 artifact with a source-specific 128 x 1024
+calibration policy. The first serving lane is deliberately demand-only at 8K
+and uses the persistent gfx1100 runtime. Native MTP is not part of v1: the
+source contains 14 `mtp.*` tensors, while FlexInfer's certified dense Qwen3.5
+graft contract requires 15, including `fc.weight`.
+
+Upstream vLLM's current compatibility table marks GPTQ unsupported on AMD GPU.
+FlexInfer support is therefore a local runtime certificate, not portable
+upstream support. The load-bearing patch skips `gptq_shuffle` for ROCm 4-bit
+GPTQ; without it, projections load successfully but generate deterministic
+token salad. Never point this artifact at a stock vLLM ROCm image.
+
+The riskiest assumption is that the fully quantized GDN projections proven
+coherent for the 9B Qwen3.5 artifact remain coherent for dense Qwen3.6-27B on
+the same shuffle-guarded runtime. Publication remains warning-first, but
+promotion requires a deterministic greedy coherence test and a multi-prompt
+quality smoke on physical gfx1100.
+
+Sources:
+
+- https://huggingface.co/DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF/discussions/3
+- https://huggingface.co/nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451
+- https://docs.vllm.ai/en/latest/features/quantization/
+- https://docs.vllm.ai/en/latest/features/speculative_decoding/mtp/
+
 ## Certificate-gated llama.cpp features
 
 Stateful KV-slot snapshots and local n-gram speculation are explicit opt-ins.

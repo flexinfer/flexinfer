@@ -229,7 +229,7 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 		if v := findEnv(env, "DYNAMIC_EXCLUSION"); v != "auto" {
 			t.Errorf("DYNAMIC_EXCLUSION = %q, want auto", v)
 		}
-		if v := findEnv(env, "QUANTIZE_MODEL_POLICIES"); !strings.Contains(v, "qwen3.5-text") || !strings.Contains(v, "qwen3.5-moe-text") || !strings.Contains(v, "qwen3.6-text") {
+		if v := findEnv(env, "QUANTIZE_MODEL_POLICIES"); !strings.Contains(v, "qwen3.5-text") || !strings.Contains(v, "qwen3.5-moe-text") || !strings.Contains(v, "qwen3.6-text") || !strings.Contains(v, "qwen3.6-fable-text") {
 			t.Errorf("QUANTIZE_MODEL_POLICIES = %q, want default Qwen policy JSON", v)
 		} else {
 			var policies []map[string]any
@@ -239,7 +239,17 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 			if len(policies) == 0 {
 				t.Fatalf("expected at least one default policy")
 			}
-			overrides, ok := policies[0]["calibration_overrides"].(map[string]any)
+			var baselinePolicy map[string]any
+			for _, policy := range policies {
+				if policy["name"] == "qwen3.5-moe-text" {
+					baselinePolicy = policy
+					break
+				}
+			}
+			if baselinePolicy == nil {
+				t.Fatalf("expected qwen3.5-moe-text default policy in %v", policies)
+			}
+			overrides, ok := baselinePolicy["calibration_overrides"].(map[string]any)
 			if !ok {
 				t.Fatalf("expected calibration_overrides in default policy JSON")
 			}
@@ -252,7 +262,7 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 			if got := int(overrides["max_tokens"].(float64)); got != 8192 {
 				t.Fatalf("default max_tokens override = %d, want 8192", got)
 			}
-			runtimeOverrides, ok := policies[0]["runtime_overrides"].(map[string]any)
+			runtimeOverrides, ok := baselinePolicy["runtime_overrides"].(map[string]any)
 			if !ok {
 				t.Fatalf("expected runtime_overrides in default policy JSON")
 			}
@@ -282,6 +292,40 @@ func TestGPTQJobBuilder_BuildEnv_Content(t *testing.T) {
 			}
 			if _, ok := qwen36Overrides["lm_head"]; ok {
 				t.Fatalf("qwen3.6 lm_head override should be absent to avoid ROCm/CPU LAPACK fallback path: %v", qwen36Overrides)
+			}
+
+			var fablePolicy map[string]any
+			var fableIndex, qwen36Index = -1, -1
+			for i, policy := range policies {
+				switch policy["name"] {
+				case "qwen3.6-fable-text":
+					fablePolicy, fableIndex = policy, i
+				case "qwen3.6-text":
+					qwen36Index = i
+				}
+			}
+			if fablePolicy == nil {
+				t.Fatalf("expected qwen3.6-fable-text default policy in %v", policies)
+			}
+			if fableIndex >= qwen36Index {
+				t.Fatalf("fable policy index %d must precede generic qwen3.6 index %d", fableIndex, qwen36Index)
+			}
+			fableMatchers, ok := fablePolicy["match_path_substrings"].([]any)
+			if !ok || len(fableMatchers) != 1 || fableMatchers[0] != "qwen36-27b-fable" {
+				t.Fatalf("fable path matcher = %v, want qwen36-27b-fable", fablePolicy["match_path_substrings"])
+			}
+			fableCalibration, ok := fablePolicy["calibration_overrides"].(map[string]any)
+			if !ok {
+				t.Fatalf("expected calibration_overrides in fable policy JSON")
+			}
+			if got := int(fableCalibration["max_samples"].(float64)); got != 128 {
+				t.Fatalf("fable max_samples override = %d, want 128", got)
+			}
+			if got := int(fableCalibration["max_seq_len"].(float64)); got != 1024 {
+				t.Fatalf("fable max_seq_len override = %d, want 1024", got)
+			}
+			if got := int(fableCalibration["max_tokens"].(float64)); got != 131072 {
+				t.Fatalf("fable max_tokens override = %d, want 131072", got)
 			}
 
 			var gemmaPolicy map[string]any

@@ -1,0 +1,93 @@
+# Demand-only Qwen3.6-27B Fable Fusion GPTQ canary on gfx1100.
+#
+# The artifact is produced from the exact BF16 source of DavidAU's Fable
+# Fusion 711 GGUF by deploy/modelcaches/qwen36-27b-fable-gptq.yaml. It uses the
+# persistent gfx1100 runtime, whose current digest carries the load-bearing
+# ROCm 4-bit GPTQ shuffle guard. Upstream vLLM's compatibility matrix still
+# marks GPTQ unsupported on AMD; this lane therefore must not run on an
+# unpatched stock image.
+#
+# v1 is intentionally text-only and does not enable native MTP. Promotion
+# requires: OCI digest pin, artifact validation, deterministic greedy coherence,
+# 5-prompt quality smoke, and a short throughput/VRAM measurement on gfx1100.
+# Keep unique aliases and minReplicas=0 until those gates pass.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen36-27b-fable-gptq
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451
+    flexinfer.ai/source-revision: 5ae530c3ab85033856e75cb1efc63fb1bf82a133
+    flexinfer.ai/base-model-posture: uncensored-heretic-fable-fusion
+    flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen36-27b-fable:gptq-w4-g128-gfx1100-v1
+    flexinfer.ai/promotion-state: awaiting-artifact-and-gfx1100-smoke
+spec:
+  backend: vllm
+  source: pvc://qwen36-27b-fable-oci/qwen36-27b-fable
+  cache:
+    strategy: Local
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    priority: 80
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 20m
+  config:
+    warmPolicy: ondemand
+    quantization: gptq
+    dtype: half
+    languageModelOnly: true
+    # Strip multimodal M-RoPE fields and force the text model class emitted by
+    # the source-specific quantizer policy.
+    hfOverrides: '{"architectures":["Qwen3_5ForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+    # Start with a small qualification envelope. Qwen3.6 is native 262K, but
+    # context is raised only after the artifact's weight fit and coherence pass.
+    maxModelLen: 8192
+    maxInputTokens: 6144
+    maxOutputTokens: 2048
+    maxNumSeqs: 1
+    maxNumBatchedTokens: 2048
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    gpuMemoryUtilization: "0.90"
+    kvCacheDtype: auto
+    calculateKvScales: false
+    # Match the known-safe Qwen3.5 hybrid posture on the current gfx1100 image.
+    enforceEager: true
+    gdnPrefillBackend: triton
+    enablePrefixCaching: false
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    servedModelName: qwen36-27b-fable-gptq
+    disableLogStats: false
+    failOnEnvironValidation: true
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  serviceLabels:
+    - qwen36-27b-fable-gptq
+  litellm:
+    enabled: true
+    servedModelName: qwen36-27b-fable-gptq
+    aliases:
+      - qwen36-27b-fable-gptq
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

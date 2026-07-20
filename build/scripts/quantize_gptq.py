@@ -63,6 +63,34 @@ LAYER_CACHE_MANIFEST = "manifest.json"
 SAVE_COMPLETE_MARKER = ".save-complete"
 DEFAULT_MODEL_POLICIES = [
     {
+        # Source-specific policy for the Qwen3.6 27B Fable Fusion merge. The
+        # high-RAM quantization node can afford a stronger calibration corpus
+        # than the generic recovery policy below. Keep this matcher first.
+        "name": "qwen3.6-fable-text",
+        "match_path_substrings": ["qwen36-27b-fable"],
+        "extract_text_config": True,
+        "copy_root_keys": ["bos_token_id", "eos_token_id", "pad_token_id"],
+        "remap_model_type": "qwen3_5_text",
+        "architectures": ["Qwen3_5ForCausalLM"],
+        "loader": "gptqmodel",
+        "python_packages": [
+            "git+https://github.com/huggingface/transformers.git@529504b2fa98970c6c44d3fafaeb07a39c40e7ea",
+        ],
+        "quantize_config_overrides": {
+            "offload_to_disk": True,
+        },
+        "calibration_overrides": {
+            "max_samples": 128,
+            "max_seq_len": 1024,
+            "max_tokens": 131072,
+        },
+        "runtime_overrides": {
+            "attn_implementation": "eager",
+            "disable_qwen35_fla": True,
+            "fix_mistral_regex": True,
+        },
+    },
+    {
         "name": "qwen3.5-moe-text",
         "match_model_types": ["qwen3_5_moe_text", "qwen3_5_moe"],
         "extract_text_config": True,
@@ -1747,7 +1775,12 @@ def ensure_policy_python_packages(policy):
 
 def policy_python_packages_satisfied(policy, packages):
     name = (policy or {}).get("name", "")
-    if name not in ("qwen3.5-text", "qwen3.5-moe-text", "qwen3.6-text"):
+    if name not in (
+        "qwen3.5-text",
+        "qwen3.5-moe-text",
+        "qwen3.6-text",
+        "qwen3.6-fable-text",
+    ):
         return False
     if len(packages) != 1 or "transformers.git@" not in packages[0]:
         return False

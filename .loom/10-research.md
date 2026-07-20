@@ -1258,3 +1258,49 @@ Sources:
 - https://huggingface.co/docs/diffusers/main/optimization/memory
 - https://github.com/huggingface/diffusers/blob/v0.36.0/src/diffusers/pipelines/wan/pipeline_wan.py
 - https://github.com/huggingface/diffusers/blob/v0.36.0/src/diffusers/models/autoencoders/autoencoder_kl_wan.py
+
+## Qwen3.6-27B Fable Fusion GPTQ for gfx1100 (2026-07-20)
+
+The requested DavidAU repository contains GGUF files only. Its owner confirmed
+that the exact BF16 safetensors source is
+`nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451`. The source is public,
+Apache-2.0, 55,457,998,304 bytes, and pinned at revision
+`5ae530c3ab85033856e75cb1efc63fb1bf82a133`. Its config is the dense
+`qwen3_5` hybrid architecture used by Qwen3.6: 64 layers, full attention every
+fourth layer, 262,144 native context, and one MTP layer.
+
+No matching GPTQ repository was discoverable on Hugging Face as of 2026-07-20.
+Several GPTQ versions of the upstream Qwen3.6-27B base exist and demonstrate
+that GPTQModel can produce vLLM-shaped artifacts, but they do not contain this
+Fable/Polaris/F451 merge. A new quantization is required; using the exact BF16
+source avoids compound GGUF dequantization loss.
+
+FlexInfer already has the required Qwen3.5/Qwen3.6 text loader, GDN runtime
+patches, GPTQ artifact validation, and the gfx1100 ROCm shuffle correction.
+The new `qwen3.6-fable-text` policy raises calibration from the generic recovery
+setting (16 x 512) to 128 x 1024. The staged artifact is text-only W4/G128,
+fully quantized to fit 24 GiB, and published under a unique OCI tag before a
+demand-only 8K gfx1100 smoke.
+
+The source index contains 14 root-level MTP tensors and lacks `mtp.fc.weight`.
+FlexInfer's current certified dense-Qwen graft requires 15 tensors, so v1 does
+not claim native MTP. This separates the target-model GPTQ correctness gate
+from a later source-specific MTP contract.
+
+The riskiest load-bearing assumption is that fully quantized GDN projections
+scale from the coherent Qwen3.5-9B result to dense Qwen3.6-27B. The earlier
+Qwen3.6 token-salad canary cannot refute this: the 2026-07-19 2x2 runtime A/B
+isolated `gptq_shuffle`, not GDN quantization, as the corruption source. The
+candidate therefore publishes with the legacy GDN warning but cannot be
+promoted without deterministic coherence and multi-prompt quality checks on
+the shuffle-guarded physical gfx1100 runtime.
+
+Sources:
+
+- https://huggingface.co/DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF
+- https://huggingface.co/DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF/discussions/3
+- https://huggingface.co/nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451
+- https://huggingface.co/AxisQuant/Qwen3.6-27b-gptq-int4
+- https://huggingface.co/palmfuture/Qwen3.6-27B-GPTQ-Int4
+- https://docs.vllm.ai/en/latest/features/quantization/
+- https://docs.vllm.ai/en/latest/features/speculative_decoding/mtp/
