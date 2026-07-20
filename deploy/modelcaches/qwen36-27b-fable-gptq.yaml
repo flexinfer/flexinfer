@@ -25,10 +25,10 @@
 # coherently. Full W4 keeps this dense 27B candidate inside a 24 GiB card;
 # retaining all GDN projections in BF16 is too close to the VRAM ceiling.
 #
-# This manifest is staged off kustomization. Quantization needs the high-RAM
-# Radeon VII node and claims its only GPU for up to 24 hours, displacing the
-# retrieval plane. Enable only in a declared build window, then wait for Ready
-# and a successful publish before enabling qwen36-27b-fable-oci.yaml.
+# The 2026-07-20 build window is active. Quantization needs the high-RAM Radeon
+# VII node and claims its only GPU for up to 24 hours, displacing the retrieval
+# plane. Wait for Ready and a successful publish before enabling
+# qwen36-27b-fable-oci.yaml; restore the parked consumers when the job ends.
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
 metadata:
@@ -37,7 +37,7 @@ metadata:
   annotations:
     flexinfer.ai/source-revision: 5ae530c3ab85033856e75cb1efc63fb1bf82a133
     flexinfer.ai/source-gguf: DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF
-    flexinfer.ai/promotion-state: staged-build-window-required
+    flexinfer.ai/promotion-state: quantization-window-active
 spec:
   source: "nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451"
   storageStrategy: SharedPVC

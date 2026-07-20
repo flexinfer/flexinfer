@@ -52,7 +52,9 @@ spec:
     # radeonvii-models priority-120 leader it holds the gfx906 runtime slot — an
     # intentional allocation (HBM2 -> embeddings) over the low-use gemma4-e4b draft
     # and qwen3-8b fallback lanes.
-    minReplicas: 1
+    # Temporarily parked for the 2026-07-20 Qwen3.6 Fable GPTQ build window.
+    # Restore to 1 after the quantization/publish job leaves Radeon VII.
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 5m
   config:
