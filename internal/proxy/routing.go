@@ -316,6 +316,19 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		isLoRA = true
 	}
 
+	// Caller attribution: one INFO line per completion request at the moment
+	// it enters forwarding, naming the client (remote address, forwarded-for
+	// chain, user agent, request ID). This is what lets an operator tie a
+	// misbehaving traffic pattern back to a workload. See caller_identity.go.
+	if isCompletionPath(r.URL.Path) {
+		slog.Info("request start", append([]any{
+			"event", "request_start",
+			"model", modelName,
+			"resolved_model", resolvedModel,
+			"path", r.URL.Path,
+		}, callerIdentityFrom(r).logAttrs()...)...)
+	}
+
 	// Get the backend port for this model (defaults to 8000 if not found)
 	port := p.getBackendPort(ctx, resolvedModel)
 

@@ -1,9 +1,11 @@
 package proxy
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -157,5 +159,49 @@ func TestForwardWithRetry_InvalidatesStaleDirectTarget(t *testing.T) {
 	}
 	if _, ok := p.directLoadTargets.Load("bge"); ok {
 		t.Fatal("stale direct-load target was not invalidated after dial failure")
+	}
+}
+
+// The terminal "upstream forward failed" WARN must carry the caller identity
+// fields so a failure pattern (e.g. a client cancelling every request on a
+// timeout) is attributable to a workload without packet captures.
+func TestForwardWithRetry_FailureLogIncludesCallerIdentity(t *testing.T) {
+	t.Setenv(envMaxForwardAttempts, "1") // single attempt: dead direct target only
+
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	deadURL := srv.URL
+	srv.Close()
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	p := &Proxy{namespace: "flexinfer-system"}
+	p.directLoadTargets.Store("qwen", deadURL)
+
+	body := []byte(`{"model":"qwen"}`)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(string(body)))
+	req.RemoteAddr = "10.42.9.9:33333"
+	req.Header.Set("User-Agent", "burner-client/1.0")
+	req.Header.Set("X-Forwarded-For", "172.16.0.5")
+	req = req.WithContext(context.WithValue(req.Context(), requestIDKey{}, "rid-42"))
+	rec := httptest.NewRecorder()
+
+	p.forwardWithRetry(rec, req, "qwen", "qwen", 8000, body, body)
+
+	out := buf.String()
+	if !strings.Contains(out, "upstream forward failed") {
+		t.Fatalf("expected forward-failure WARN, got logs:\n%s", out)
+	}
+	for _, want := range []string{
+		"remote_addr=10.42.9.9:33333",
+		"user_agent=burner-client/1.0",
+		"x_forwarded_for=172.16.0.5",
+		"request_id=rid-42",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("forward-failure WARN missing %q; logs:\n%s", want, out)
+		}
 	}
 }

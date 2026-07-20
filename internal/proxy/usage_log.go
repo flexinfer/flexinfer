@@ -25,7 +25,11 @@ type usageLogCtx struct {
 	maxTokens     int // -1 when not present in body
 	stream        bool
 	userAgent     string
-	startedAt     time.Time
+	// requestID is the propagated/generated X-Request-ID, carried so the
+	// "request usage" line correlates with the "request start" line and any
+	// forward-failure WARNs for the same request.
+	requestID string
+	startedAt time.Time
 
 	// wantPrefixHit is set when the inbound request opts in via the
 	// X-Flexinfer-Want-Prefix-Hit header. Only then does the response hook
@@ -439,6 +443,7 @@ func (p *Proxy) logUpstreamUsage(resp *http.Response) error {
 		"max_tokens", lc.maxTokens,
 		"stream", lc.stream,
 		"user_agent", lc.userAgent,
+		"request_id", lc.requestID,
 		"duration_ms", durMs,
 	}
 
