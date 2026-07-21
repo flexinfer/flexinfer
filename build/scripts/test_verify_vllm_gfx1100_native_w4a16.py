@@ -100,6 +100,22 @@ class NativeW4A16VerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "failed to load"):
             verifier.verify_compiled_contract(torch_module, importer)
 
+    def test_accepts_qwen35_text_plugin_entry_point(self) -> None:
+        verifier = _load_verifier()
+        entry_points = mock.Mock(
+            return_value=[types.SimpleNamespace(name="flexinfer_qwen35_text")]
+        )
+
+        verifier.verify_text_plugin_contract(entry_points)
+
+        entry_points.assert_called_once_with(group="vllm.general_plugins")
+
+    def test_rejects_missing_qwen35_text_plugin_entry_point(self) -> None:
+        verifier = _load_verifier()
+
+        with self.assertRaisesRegex(RuntimeError, "missing flexinfer_qwen35_text"):
+            verifier.verify_text_plugin_contract(mock.Mock(return_value=[]))
+
 
 if __name__ == "__main__":
     unittest.main()

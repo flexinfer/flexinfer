@@ -49,6 +49,14 @@ RUN --mount=type=cache,target=/root/.cache/ccache \
     && python3 -m pip install --no-deps --force-reinstall /tmp/vllm-wheel/vllm-*.whl \
     && rm -rf /tmp/vllm-src /tmp/vllm-wheel
 
+# vLLM 0.23 ships Qwen3.5's text class but only registers the multimodal
+# wrapper. Install FlexInfer's existing general plugin so the extracted
+# Qwen3_5TextConfig artifact resolves to Qwen3_5ForCausalLM in both the API and
+# EngineCore processes instead of falling through to a vision_config access.
+COPY build/vllm-qwen35-text-plugin /opt/flexinfer/qwen35-text-plugin
+RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-text-plugin \
+    && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_text" for ep in entry_points(group="vllm.general_plugins"))'
+
 COPY build/scripts/verify_vllm_gfx1100_native_w4a16.py /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
 
 RUN python3 /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
