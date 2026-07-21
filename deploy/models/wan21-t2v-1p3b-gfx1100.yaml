@@ -44,7 +44,9 @@ spec:
     vramEstimateMB: 18000
   serverless:
     enabled: true
-    minReplicas: 1
+    # Temporarily park the warm 5930k GPU leader so the Fable GPTQ canary tests
+    # only artifact/runtime coherence. Restore to 1 after the smoke verdict.
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 30m
   config:

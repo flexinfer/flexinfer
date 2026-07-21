@@ -6,7 +6,8 @@
 #   3. Replace the mutable tag below with that digest, then enable this file.
 #   4. Enable deploy/models/qwen36-27b-fable-gptq.yaml for the live smoke.
 #
-# This manifest is intentionally staged off kustomization until steps 1-2 pass.
+# Steps 1-3 completed on 2026-07-20. This digest-pinned pull is the only
+# artifact accepted by the first gfx1100 serving canary.
 apiVersion: ai.flexinfer/v1alpha1
 kind: ModelCache
 metadata:
@@ -14,9 +15,9 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/source-revision: 5ae530c3ab85033856e75cb1efc63fb1bf82a133
-    flexinfer.ai/promotion-state: awaiting-published-oci-digest
+    flexinfer.ai/promotion-state: digest-pinned-for-gfx1100-smoke
 spec:
-  source: "oci://registry.harbor.lan/flexinfer/qwen36-27b-fable:gptq-w4-g128-gfx1100-v1"
+  source: "oci://registry.harbor.lan/flexinfer/qwen36-27b-fable@sha256:285a044529f6321f954353c93c5a91f771cfdfc7445ad25af5d64b7926d83710"
   modelPath: qwen36-27b-fable
   storageStrategy: SharedPVC
   storageSize: "30Gi"
