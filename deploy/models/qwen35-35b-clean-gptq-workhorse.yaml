@@ -71,7 +71,9 @@ spec:
     servedModelName: qwen35-35b-clean-gptq-workhorse
     disableLogStats: false
     failOnEnvironValidation: true
-    warmPolicy: primary
+    # Temporarily demand-only while the digest-pinned Qwen3.6 Fable GPTQ
+    # canary qualifies the shared gfx1100 lane. Restore primary after verdict.
+    warmPolicy: ondemand
   gpu:
     vendor: amd
     count: 1
