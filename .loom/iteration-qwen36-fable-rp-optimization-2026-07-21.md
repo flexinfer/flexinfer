@@ -198,7 +198,7 @@
 
 ### Generation 6 — 32K graph/FP16-KV two-session scheduler
 
-- Outcome: pending.
+- Outcome: success.
 - Change from generation 5: `maxNumSeqs=2`, `maxNumBatchedTokens=4096`, graph
   capture shapes one and two, two partial-prefill slots, and at most one long
   partial prefill. The harness adds three batches of two simultaneous 2,278-
@@ -216,12 +216,41 @@
   controls; two-sequence scheduling, chunked prefill, graph shapes one/two,
   and the concurrency workload remain unchanged. The failed v1-v3 pods
   produced no performance evidence and are excluded from the runtime verdict.
+- Clean-start proof: revision v4 loaded on its first container start with zero
+  restarts. Model residency remained 16.68 GiB, Torch compilation took 25.67s,
+  graph shapes one/two used 0.39 GiB, and 2.39 GiB remained for 37,394 KV
+  tokens (1.14x one maximum-length 32K request).
+- Sequential parity: RP dialogue median decode was 41.6907 tok/s with 4.7542s
+  complete-answer latency; the 2,278-token multi-turn median was 24.5617 tok/s
+  with 9.5431s latency. All three 19,841-token prompts returned exactly
+  `CINNABAR-48271`, with 5.7509 tok/s median decode and 22.1927s latency.
+- Concurrent result: three two-stream batches delivered 31.3472, 32.1575, and
+  31.9306 aggregate output tok/s. Median aggregate was 31.9306 tok/s; p95
+  per-stream complete-answer latency was 12.2128s and the worst reported
+  per-stream TTFT was 3.8352s. Every stream returned 192 tokens with zero
+  reasoning characters and no malformed usage.
+- Graph proof: concurrent decode dispatched the FULL graph at shape two while
+  prompt chunks remained in NONE mode. The runtime emitted no ROCm/HSA/OOM/
+  NaN fault; one late Triton GDN JIT warning identifies a warmup-shape gap but
+  did not fail or materially perturb the three concurrency batches.
+- Cleanup proof: typed PASS verdict at generation 11 and automatic candidate
+  deletion; the 9B parent reacquired the shared-group lease through its own CR.
+
+### Generation 7 — 32K graph/FP16-KV four-session scheduler
+
+- Outcome: pending.
+- Change from generation 6: `maxNumSeqs=4`, capture sizes `[1,2,4]`, and four
+  simultaneous 2,278-token/192-output RP streams. Context, artifact, runtime,
+  memory budget, chunked prefill, and sequential controls are unchanged.
+- Scope: this tests four ordinary RP sessions, not four full 32K contexts. The
+  generation 6 pool held only 1.14x one maximum-length request.
+- Gate: all four streams must complete without restart/fault/usage/reasoning
+  failure; median aggregate output must be at least 25 tok/s and p95 per-stream
+  complete-answer latency must stay at or below 30s.
 
 ## Next
 
-1. Run generation 6 and compare two-session aggregate throughput and per-stream
-   tail latency with generation 5's single multi-turn result.
-2. If it passes cleanly, test four simultaneous partial-context sessions with
-   graph shape four; do not infer full-32K concurrency from the partial test.
-3. Keep 9B as the rollback lane until blinded RP preference and a warm soak
+1. Run generation 7 and compare four-session aggregate throughput, per-stream
+   tail latency, graph memory, and KV headroom with generations 5 and 6.
+2. Keep 9B as the rollback lane until blinded RP preference and a warm soak
    close the remaining product-quality and stability gates.
