@@ -115,9 +115,7 @@ spec:
     disableAiter: true
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
-    # Temporarily demand-only while the digest-pinned Qwen3.6 Fable GPTQ
-    # canary qualifies the shared gfx1100 lane. Restore primary after verdict.
-    warmPolicy: ondemand
+    warmPolicy: primary
     # 2026-05-25 CC-DR-2 follow-up: enable in-process n-gram (prompt-lookup)
     # spec decoding on the 5930k twin.
     #
