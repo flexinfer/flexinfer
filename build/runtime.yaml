@@ -105,6 +105,37 @@ profiles:
       PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512"
     build_context: 7900xtx
 
+  # Isolated vLLM 0.23 canary for upstream's native RDNA3 W4A16 GPTQ kernel.
+  # It intentionally bypasses every legacy 0.17 Qwen/Gemma patch; promote only
+  # after full-checkpoint coherence and production-shape parity on gfx1100.
+  gfx1100-native-w4a16:
+    tag: "runtime:rocm-gfx1100-v023-native-w4a16"
+    promotion:
+      gpuprofile: false
+      values_runtime_profiles: false
+      require_prewarm: true
+    dockerfile: build/Dockerfile.runtime-serving-native-w4a16
+    gpu_vendor: amd
+    gpu_arch: gfx1100
+    base_image: "vllm/vllm-openai-rocm:v0.23.0"
+    rocm_dev_image: "rocm/dev-ubuntu-24.04:7.2.3"
+    amdgpu_targets: gfx1100
+    backends:
+      vllm: true
+      llamacpp: false
+      ollama: false
+      diffusers: false
+      steam: false
+    include_bitsandbytes: false
+    include_quantizer: false
+    transformers_constraint: ""
+    env:
+      HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+      PYTORCH_ROCM_ARCH: gfx1100
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+      VLLM_ROCM_USE_AITER: "0"
+    build_context: 7900xtx
+
   # Dedicated gaming persona for cblevins-7900xtx (Sunshine/Moonlight). Uses the
   # broad Dockerfile (which carries the INCLUDE_GAMING layer) but with vLLM,
   # quantizer, llama.cpp, Ollama, and diffusers OFF: the ROCm base already

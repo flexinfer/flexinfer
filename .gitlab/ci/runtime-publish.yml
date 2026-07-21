@@ -12,6 +12,7 @@ runtime_patch_contracts:
     - python3 build/scripts/test_modules_in_block_to_quantize.py
     - python3 build/scripts/test_validate_quantized_artifact.py
     - python3 build/scripts/test_runtime_gptq_patch_composition.py
+    - python3 build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
     - python3 build/scripts/test_abliterate_safety.py
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
@@ -21,6 +22,7 @@ runtime_patch_contracts:
         - build/Dockerfile.runtime
         - build/sunshine-headless.sh
         - build/Dockerfile.runtime-serving
+        - build/Dockerfile.runtime-serving-native-w4a16
         - build/Dockerfile.vllm-rocm-gfx906
         - build/runtime-entrypoint.sh
         - build/runtime.yaml
@@ -37,6 +39,8 @@ runtime_patch_contracts:
         - build/scripts/abliterate_safety.py
         - build/scripts/test_abliterate_safety.py
         - build/scripts/test_runtime_gptq_patch_composition.py
+        - build/scripts/verify_vllm_gfx1100_native_w4a16.py
+        - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
     - if: $CI_MERGE_REQUEST_ID
       changes:
         - .gitlab/ci/runtime-publish.yml
@@ -44,6 +48,7 @@ runtime_patch_contracts:
         - build/Dockerfile.runtime
         - build/sunshine-headless.sh
         - build/Dockerfile.runtime-serving
+        - build/Dockerfile.runtime-serving-native-w4a16
         - build/Dockerfile.vllm-rocm-gfx906
         - build/runtime-entrypoint.sh
         - build/runtime.yaml
@@ -60,6 +65,8 @@ runtime_patch_contracts:
         - build/scripts/abliterate_safety.py
         - build/scripts/test_abliterate_safety.py
         - build/scripts/test_runtime_gptq_patch_composition.py
+        - build/scripts/verify_vllm_gfx1100_native_w4a16.py
+        - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
     - if: $CI_COMMIT_BRANCH
       changes:
         - .gitlab/ci/runtime-publish.yml
@@ -67,6 +74,7 @@ runtime_patch_contracts:
         - build/Dockerfile.runtime
         - build/sunshine-headless.sh
         - build/Dockerfile.runtime-serving
+        - build/Dockerfile.runtime-serving-native-w4a16
         - build/Dockerfile.vllm-rocm-gfx906
         - build/runtime-entrypoint.sh
         - build/runtime.yaml
@@ -83,6 +91,8 @@ runtime_patch_contracts:
         - build/scripts/abliterate_safety.py
         - build/scripts/test_abliterate_safety.py
         - build/scripts/test_runtime_gptq_patch_composition.py
+        - build/scripts/verify_vllm_gfx1100_native_w4a16.py
+        - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
     - when: never
 
 publish_serving_rocm_gfx1100:
@@ -171,6 +181,49 @@ publish_serving_rocm_gfx1100:
         - build/scripts/vllm_qwen35_patches_nodiag.py
         - build/scripts/qwen35_wrap_to_vl_layout.py
         - build/scripts/qwen35_unwrap_from_vl_layout.py
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
+publish_serving_rocm_gfx1100_native_w4a16:
+  stage: publish
+  image: registry.harbor.lan/library/buildkit:v0.12.5
+  timeout: 3h
+  needs: []
+  resource_group: buildkit-rocm-images
+  retry:
+    max: 1
+    when: [runner_system_failure, stuck_or_timeout_failure]
+  script:
+    - |
+      echo "Waiting for BuildKit..."
+      for i in $(seq 1 30); do
+        if buildctl --addr "${BUILDKIT_HOST}" debug info >/dev/null 2>&1; then
+          echo "BuildKit is ready"; break
+        fi
+        echo "[$i/30] not ready yet"; sleep 2
+      done
+    - |
+      echo "Building native gfx1100 W4A16 canary runtime..."
+      buildctl --addr "${BUILDKIT_HOST}" build \
+        --frontend dockerfile.v0 \
+        --local context=. \
+        --local dockerfile=build \
+        --opt filename="Dockerfile.runtime-serving-native-w4a16" \
+        --opt platform=linux/amd64 \
+        --opt build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.23.0" \
+        --opt build-arg:GPU_ARCH="gfx1100" \
+        --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100-v023-native-w4a16" \
+        --export-cache "type=inline" \
+        --output "type=image,\"name=${REGISTRY}/runtime:rocm-gfx1100-v023-native-w4a16,${REGISTRY}/runtime:rocm-gfx1100-v023-native-w4a16-${CI_COMMIT_SHORT_SHA}\",push=true"
+  rules:
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - .gitlab/ci/runtime-publish.yml
+        - build/Dockerfile.runtime-serving-native-w4a16
+        - build/runtime.yaml
+        - build/scripts/verify_vllm_gfx1100_native_w4a16.py
+        - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never

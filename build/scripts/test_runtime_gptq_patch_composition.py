@@ -21,8 +21,8 @@ def _load_patch_module():
 
 
 class GPTQPatchCompositionTests(unittest.TestCase):
-    def test_gemma_patch_preserves_qwen_stock_fused_gptq_path(self) -> None:
-        """Gemma compatibility must not undo Qwen's fused-GEMM contract."""
+    def test_gemma_patch_replaces_legacy_qwen_fused_path_on_rocm(self) -> None:
+        """Production-shape gfx1100 GPTQ must retain the coherent fallback."""
 
         patch_module = _load_patch_module()
         with tempfile.TemporaryDirectory() as tmp:
@@ -37,17 +37,41 @@ class GPTQPatchCompositionTests(unittest.TestCase):
             gptq_path.parent.mkdir(parents=True)
             original = (
                 "# FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP\n"
-                "# stock ops.gptq_gemm remains active\n"
+                "class GPTQLinearMethod:\n"
+                "    def apply(\n"
+                "        self,\n"
+                "        layer: torch.nn.Module,\n"
+                "        x: torch.Tensor,\n"
+                "        bias: torch.Tensor | None = None,\n"
+                "    ) -> torch.Tensor:\n"
+                "        out_shape = x.shape[:-1] + (layer.qweight.shape[-1],)\n"
+                "        reshaped_x = x.reshape(-1, x.shape[-1])\n"
+                "\n"
+                "        # GPTQ v1 and v2 format checkpoints deals with zero points differently,\n"
+                "        # and require different gemm kernels.\n"
+                "        output = ops.gptq_gemm(\n"
+                "            reshaped_x,\n"
+                "            layer.qweight,\n"
+                "            layer.qzeros,\n"
+                "            layer.scales,\n"
+                "            layer.g_idx,\n"
+                "            layer.exllama_state == ExllamaState.READY,\n"
+                "            self.use_v2_format,\n"
+                "            self.quant_config.weight_bits,\n"
+                "        )\n"
+                "        if bias is not None:\n"
+                "            output.add_(bias)\n"
+                "        return output.reshape(out_shape)\n"
             )
             gptq_path.write_text(original)
 
             self.assertTrue(
                 patch_module.patch_gptq_rocm_reference_fallback(vllm_root)
             )
-            self.assertEqual(gptq_path.read_text(), original)
-            self.assertNotIn(
-                "GEMMA4_GPTQ_ROCM_REFERENCE_PATCH", gptq_path.read_text()
-            )
+            patched = gptq_path.read_text()
+            self.assertNotEqual(patched, original)
+            self.assertIn("GEMMA4_GPTQ_ROCM_REFERENCE_PATCH", patched)
+            self.assertIn("unpacked_qweight", patched)
 
 
 if __name__ == "__main__":

@@ -65,13 +65,13 @@ elif "@triton.jit\ndef exp(x):" in op_content:
 else:
     print("0b. WARNING: Could not find expected pattern in FLA ops/op.py")
 
-# 0c. GPTQ path: keep the stock fused ops.gptq_gemm on ROCm.
+# 0c. GPTQ path: remove the stale pre-shuffle reference patch first.
 # A previous "correctness-first" torch reference fallback here unpacked qweight
 # assuming the checkpoint row-packed order after process_weights_after_loading()
 # had already permuted it via ops.gptq_shuffle(), misaligning qweight against
-# the untouched qzeros/scales. Removing that fallback is correct — the stock
-# fused GEMM is accurate on gfx1100 — but it is NOT sufficient on its own:
-# see 0c2, the shuffle itself is the end-to-end corruptor here.
+# the untouched qzeros/scales. Remove that badly ordered patch, then let 0c2
+# preserve checkpoint order. The later compatibility stage installs the
+# coherent reference fallback against that unshuffled representation.
 gptq_path = f"{BASE}/model_executor/layers/quantization/gptq.py"
 if os.path.exists(gptq_path):
     with open(gptq_path) as f:
@@ -81,9 +81,9 @@ if os.path.exists(gptq_path):
             "0c. FATAL: gptq.py still carries the removed ROCm reference "
             "fallback (FLEXINFER_QWEN35_GPTQ_ROCM_REFERENCE_PATCH), which "
             "corrupts gptq_shuffle-permuted qweight. Rebuild from a clean "
-            "vLLM base so the stock fused gptq_gemm path is used."
+            "vLLM base before applying the checkpoint-order fallback."
         )
-    print("0c. GPTQ stock fused gptq_gemm path confirmed (reference fallback removed)")
+    print("0c. Removed stale pre-shuffle GPTQ reference patch")
 else:
     print(f"0c. WARNING: {gptq_path} not found")
 
@@ -102,12 +102,13 @@ else:
 #   reference fallback + shuffle          -> salad
 #   reference fallback + shuffle SKIPPED  -> ' Paris.'  (correct)
 #   stock fused gemm   + shuffle          -> salad
-#   stock fused gemm   + shuffle SKIPPED  -> ' Paris.'  (correct)
+#   stock fused gemm   + shuffle SKIPPED  -> ' Paris.' on the 9B probe only
 #
-# The GEMM path is irrelevant; the shuffle is the sole corruptor. Guard it and
-# both paths are correct. Keep this guard whenever the checkpoint is 4-bit GPTQ
-# on ROCm — removing it silently regresses generation quality while every
-# tensor stat and load-time check still looks healthy.
+# The later full 27B Fable probe disproved general stock-kernel correctness:
+# production tensor shapes still produced token salad with shuffle skipped.
+# The skip remains load-bearing because the coherent 0.17 reference fallback
+# requires checkpoint-order qweight. New high-throughput gfx1100 profiles use
+# vLLM 0.23's dedicated RDNA3 W4A16 kernel instead of this legacy path.
 if os.path.exists(gptq_path):
     with open(gptq_path) as f:
         gptq_content = f.read()
