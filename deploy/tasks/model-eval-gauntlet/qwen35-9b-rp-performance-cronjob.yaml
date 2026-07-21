@@ -81,17 +81,25 @@ spec:
                           data=json.dumps(payload).encode(),
                           headers={"Content-Type": "application/json"},
                       )
+
+                      def parse_body(body):
+                          if not body:
+                              return {}
+                          try:
+                              return json.loads(body)
+                          except json.JSONDecodeError:
+                              # vLLM's successful LoRA hot-load response is
+                              # plain text (for example, "Success"). Preserve
+                              # it as evidence instead of rejecting a 2xx.
+                              return {"body": body}
+
                       try:
                           with urllib.request.urlopen(request, timeout=timeout) as response:
                               body = response.read().decode("utf-8", "replace")
-                              return response.status, json.loads(body) if body else {}
+                              return response.status, parse_body(body)
                       except urllib.error.HTTPError as error:
                           body = error.read().decode("utf-8", "replace")
-                          try:
-                              parsed = json.loads(body)
-                          except json.JSONDecodeError:
-                              parsed = {"body": body}
-                          return error.code, parsed
+                          return error.code, parse_body(body)
 
                   def list_model_ids():
                       with urllib.request.urlopen(base + "/v1/models", timeout=30) as response:

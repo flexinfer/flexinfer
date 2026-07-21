@@ -54,7 +54,8 @@
     `make check-runtime-patch-contracts` passed.
 - Pod/job: `ModelExperiment/qwen35-9b-v023-rp-canary`; child names are reported
   in status.
-- Confirmed image ID: pending live run.
+- Confirmed image ID:
+  `registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d`.
 - Expected success condition: first-start Ready with zero restart; vLLM 0.23 +
   `RDNA3W4A16LinearKernel`; graph capture sizes only 1/2/4; coherent base and
   adapter output; median adapter decode >=15 tok/s and >=50% of base; two-stream
@@ -63,13 +64,32 @@
 
 ## Result
 
-- Outcome: pending cluster connectivity and GitOps run.
-- Exact failure or success evidence: pending.
-- Relevant logs / stack frame: pending.
+### Generation 1
+
+- Outcome: infrastructure and base-model gates passed; the gauntlet failed on
+  a false-negative response parser before it could exercise the adapter.
+- Candidate reached `Ready` on gfx1100 with zero restarts about 146 seconds
+  after creation. The pod reported the exact pinned image digest.
+- Runtime evidence: vLLM `0.23.0`, `RDNA3W4A16LinearKernel`, Triton/FLA GDN
+  prefill, `enforce_eager=False`, FULL_AND_PIECEWISE graph sizes `1/2/4`, and
+  graph capture completed in 14 seconds using 0.57 GiB.
+- Capacity evidence: model weights used 7.56 GiB; 12.0 GiB remained for KV;
+  vLLM reported 390,513 KV tokens and 2.98x maximum concurrency at 131,072
+  tokens per request.
+- Base evidence: literal warmup passed at 107.37 decode tok/s; the 192-token RP
+  control was coherent at 103.17 decode tok/s with 0.27-second TTFT.
+- Exact failure: the adapter download completed, then `post_json` called
+  `json.loads` on vLLM's successful non-JSON response body and raised
+  `JSONDecodeError: Expecting value`. The production LoRA controller already
+  treats any 2xx response as success and does not require a JSON body.
+- Narrow fix: preserve a non-JSON response as `{body: ...}` for both success
+  and error responses, keep the HTTP status as the success gate, and retain
+  `/v1/models` as the authoritative registration check. Bump the experiment
+  revision to `131k-graph-fp16kv-lora-v2` so GitOps starts generation 2.
 
 ## Next
 
-1. Validate and ship the experiment manifests.
-2. Observe the exact runtime and retained gauntlet evidence.
+1. Validate and ship the generation-2 response-parser fix.
+2. Observe LoRA, concurrency, and 128K recall evidence through typed verdict.
 3. If memory alone fails, reduce graph capture to shape one before considering
    a split fast-RP/long-context profile; do not introduce FP8 KV in this arm.
