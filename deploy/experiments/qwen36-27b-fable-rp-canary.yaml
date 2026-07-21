@@ -4,8 +4,11 @@
 # physical 7900 XTX used by the 9B lane. Generation 2 passed the matched 32K
 # eager/FP16-KV control with exact 19,841-token recall. Generation 3's combined
 # bounded-graph/FP8-KV arm improved short decode but failed the multi-turn and
-# long-context no-regression gates. Generation 4 keeps bounded graphs and
-# restores FP16 KV to isolate the cause. The
+# long-context no-regression gates. Generation 4 proved bounded graphs with
+# FP16 KV are faster, but a cold compile left too little KV headroom and forced
+# one restart before the cached compile loaded cleanly. Generation 5 raises the
+# dedicated engine budget and uses a fresh compile-cache path to certify a
+# clean cold start. The
 # ModelExperiment controller removes every candidate at verdict, after which
 # the existing 9B parent Model resumes its warm-primary shared-group lease.
 apiVersion: ai.flexinfer/v1alpha2
@@ -31,7 +34,9 @@ spec:
       strategy: None
       compilationCache:
         enabled: true
-        hostPath: /var/lib/flexinfer/compile-cache
+        # A fresh namespace makes generation 5 exercise the cold compile path;
+        # reusing the prior cache would hide the startup-memory regression.
+        hostPath: /var/lib/flexinfer/compile-cache-fable-cold-v1
         sizeLimit: 4Gi
     gpu:
       vendor: amd
@@ -60,7 +65,10 @@ spec:
       maxNumSeqs: 1
       maxNumBatchedTokens: 2048
       enableChunkedPrefill: true
-      gpuMemoryUtilization: "0.90"
+      # Cold graph compilation left only 1.52 GiB for KV at 0.90 while 32K
+      # FP16 KV needs 2.08 GiB. 0.94 adds about 0.96 GiB of bounded headroom;
+      # this dedicated pod has exclusive use of the discrete card.
+      gpuMemoryUtilization: "0.94"
       kvCacheDtype: auto
       calculateKvScales: false
       enforceEager: false
@@ -99,8 +107,8 @@ spec:
   gauntlet:
     templateRef: fable-rp-performance-gauntlet
     env:
-      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-attribution-v1"
-      EXPERIMENT_PHASE: "32k_graph_fp16kv_attribution"
+      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-cold-headroom-v1"
+      EXPERIMENT_PHASE: "32k_graph_fp16kv_cold_headroom"
       ITERS: "3"
       RP_OUTPUT_TOKENS: "192"
       LONG_CONTEXT_TOKENS: "18000"
