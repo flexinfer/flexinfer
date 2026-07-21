@@ -135,18 +135,55 @@
 
 ### Generation 4 — 32K graph/FP16-KV attribution
 
-- Outcome: pending.
+- Outcome: performance pass, stability reject due to one cold-start restart.
 - Change from generation 3: restore `kvCacheDtype=auto` only. Graph mode,
   capture shape, context, scheduler, artifact, image, prompts, and metrics are
   unchanged.
 - Purpose: determine whether FP8 KV caused the multi-turn, long-context, and KV
   capacity regressions while preserving bounded graph mode's short-dialogue
   gain.
+- Cold-start failure: the first process performed a cold 24.51s Torch compile,
+  then found 1.52 GiB available KV. FP16 KV needs 2.08 GiB for 32,768 tokens,
+  so vLLM rejected startup with an estimated maximum length of 23,600. The
+  container restarted once, reused the compiled artifacts in 7.88s, and then
+  found 3.88 GiB, 60,909 KV tokens, and 1.86x maximum 32K concurrency.
+- Cause isolation: the 9B runtime received SIGTERM at 14:41:30Z and exited;
+  Fable did not begin until 14:42:29Z. The one-minute gap rules out overlapping
+  model residency. The material difference between attempts is cold compile
+  versus cached compile memory.
+- Graph proof: PIECEWISE mixed prefill/decode and FULL shape-one decode graphs
+  captured in one second using 0.26 GiB. Runtime counters reported FULL graph
+  dispatch for every decode token and NONE only for prefill shapes.
+- RP dialogue: median decode 41.5326 tok/s and median complete-answer latency
+  4.7781s, respectively 31.4% faster decode and 23.2% lower latency than the
+  eager/FP16-KV control.
+- 2,278-token multi-turn scene: median decode 24.4957 tok/s and median latency
+  9.6040s, respectively 17.8% faster decode and 13.2% lower latency than
+  control.
+- Long-context recall: all three 19,841-token prompts returned exactly
+  `CINNABAR-48271`; median decode was 5.7412 tok/s and median latency 22.5847s,
+  respectively 3.8% faster decode and 2.6% lower latency than control. Median
+  TTFT was 20.8429s.
+- Summary: median non-long-context decode 32.9440 tok/s, p95 TTFT 21.0046s,
+  zero reasoning characters, and no ROCm/HSA/OOM/NaN inference faults. vLLM
+  recorded 1,181 inter-token observations in 42.58960s. FP8 KV, not bounded
+  graphs, caused generation 3's prompt-length regression.
+
+### Generation 5 — 32K graph/FP16-KV cold-start headroom
+
+- Outcome: pending.
+- Change from generation 4: `gpuMemoryUtilization` 0.90 -> 0.94 and a fresh
+  host compilation-cache namespace. Runtime, graph mode, FP16 KV, context,
+  scheduler, artifact, and workloads are unchanged.
+- Purpose: force a new cold compile and prove 32K FP16 KV initializes without a
+  restart while retaining generation 4's steady-state result.
 
 ## Next
 
-1. Run generation 4 with bounded graphs and FP16 KV.
-2. Compare its per-workload latency, TTFT, decode, recall, KV capacity, and
-   faults with both generation 2 and generation 3.
-3. Attempt concurrency only if a single-sequence tuple meets the 15% latency
-   improvement target without breaching the 0.95 per-workload throughput floor.
+1. Run generation 5 against an empty compilation cache and require zero
+   restarts plus at least 32,768 KV tokens.
+2. Retain graph/FP16-KV as the runtime winner only if its per-workload floors,
+   exact recall, and steady-state gains reproduce at the higher budget.
+3. Then test two simultaneous RP sessions with capture shapes one and two;
+   60,909 cached-start KV tokens do not support two simultaneous full 32K
+   prompts, so concurrency must use realistic partial-context workloads.
