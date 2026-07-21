@@ -81,20 +81,43 @@
 
 ### Generation 2 — 32K eager/FP16-KV control
 
-- Outcome: running.
+- Outcome: success.
 - Change from generation 1: `maxModelLen` 8,192 -> 32,768,
   `maxInputTokens` 6,144 -> 28,672, and the gauntlet adds the 18K synthetic
   passphrase-recall workload. Runtime, dtype, KV dtype, eager mode, scheduler,
   artifact, image, and one-sequence posture are unchanged.
+- Runtime fit: 16.68 GiB model residency, 3.93 GiB available KV, 62,066 GPU
+  KV tokens, and 1.89x maximum concurrency at 32,768 tokens. The pod used the
+  pinned image, selected `RDNA3W4A16LinearKernel`, and restarted zero times.
+- RP dialogue: 192 tokens at 31.2434, 31.6134, and 31.8501 tok/s; median
+  complete-answer latency 6.2241s and TTFT about 0.19s.
+- 2,278-token multi-turn scene: 192, 192, and 168 output tokens at 19.7096,
+  20.7970, and 20.8414 tok/s; median complete-answer latency 11.0635s and
+  median TTFT 1.8850s.
+- Long-context recall: all three 19,841-token prompts returned exactly
+  `CINNABAR-48271`; median complete-answer latency 23.1980s and median TTFT
+  21.3891s.
+- Summary: median non-long-context decode 26.0424 tok/s, p95 TTFT 21.4266s,
+  zero reasoning characters and no gauntlet failures. vLLM recorded 1,157
+  inter-token observations in 50.65660s across the complete probe.
+- Cleanup proof: typed PASS verdict and the 9B parent returned to `Ready`.
+
+### Generation 3 — 32K graph/FP8-KV candidate
+
+- Outcome: running.
+- Change from generation 2: `kvCacheDtype=fp8_e4m3`, `enforceEager=false`,
+  graph capture bounded to shape one, GDN prefill pinned to Triton, and graph/KV
+  metrics enabled at full sampling. Artifact, dtype, context, one-sequence
+  scheduler, prompts, and fixed KV scales are unchanged.
 - Exact failure or success evidence: pending.
 - Relevant logs / stack frame: pending.
 
 ## Next
 
-1. Complete the 32K eager/FP16-KV control and retain its direct-service Job
-   logs as the matched baseline.
-2. If the 32K control passes, change only execution/KV to bounded graph and
-   FP8 E4M3 using fixed scales; dynamic warmup scale calculation is unsafe for
-   this vLLM 0.23 hybrid recurrent path.
-3. Compare complete-answer latency, TTFT, decode, recall, graph evidence, VRAM,
+1. Complete the 32K bounded-graph/FP8-KV candidate and retain its direct-service
+   Job logs as the matched candidate.
+2. Compare complete-answer latency, TTFT, decode, recall, graph evidence, VRAM,
    and fault logs before attempting two/four-session scheduling.
+3. Promote the runtime tuple to a concurrency canary only if median
+   complete-answer latency improves at least 15% and no workload regresses
+   below the 0.95 throughput floor.
