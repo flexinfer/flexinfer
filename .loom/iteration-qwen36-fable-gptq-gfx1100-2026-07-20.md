@@ -37,6 +37,11 @@
   Gemma4 and Qwen3.5 text leaders still had `warmPolicy: primary` in the same
   `5930k-textgen` shared group. Temporarily make both demand-only as well; this
   changes no aliases, priorities, artifacts, or serving parameters.
+- Runtime correction: the first scheduled pod inherited the generic gfx1100
+  `vllm@sha256:a9b306...` profile image and exited before load because it does
+  not recognize `--gdn-prefill-backend` or `--scheduler-reserve-full-isl`.
+  Explicitly pin `spec.image` to the already-recorded Qwen3.6-capable unified
+  `runtime@sha256:6ee8b3...`; keep the GDN safety settings intact.
 
 ## Probe
 
