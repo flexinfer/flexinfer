@@ -33,6 +33,10 @@
 - Isolation correction: `minReplicas: 0` alone did not park WAN because its
   explicit `warmPolicy: primary` still created a backend pod. Set that policy
   to `ondemand` for the canary window; restore both fields after the verdict.
+- Proxy correction: the first cold-start request was rejected because the
+  Gemma4 and Qwen3.5 text leaders still had `warmPolicy: primary` in the same
+  `5930k-textgen` shared group. Temporarily make both demand-only as well; this
+  changes no aliases, priorities, artifacts, or serving parameters.
 
 ## Probe
 
