@@ -1,0 +1,25 @@
+# Dedicated gfx1100 GPTQ canary runtime.
+#
+# vLLM 0.23 is the first upstream release with the native RDNA3 W4A16 HIP
+# kernel. Keep this image separate from the legacy 0.17 serving persona until
+# full-checkpoint logit/coherence and throughput acceptance passes.
+ARG BASE_IMAGE=vllm/vllm-openai-rocm:v0.23.0
+
+FROM ${BASE_IMAGE}
+
+ARG GPU_ARCH=gfx1100
+
+ENV GPU_VENDOR=amd \
+    GPU_ARCH=${GPU_ARCH} \
+    HSA_OVERRIDE_GFX_VERSION=11.0.0 \
+    PYTORCH_ROCM_ARCH=${GPU_ARCH} \
+    TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 \
+    VLLM_ROCM_USE_AITER=0
+
+COPY build/scripts/verify_vllm_gfx1100_native_w4a16.py /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
+
+RUN python3 /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
+
+# The Model controller appends the normal vLLM backend flags. An explicit
+# entrypoint avoids all legacy FlexInfer Qwen/Gemma source rewriting.
+ENTRYPOINT ["vllm", "serve"]

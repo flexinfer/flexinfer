@@ -29,12 +29,14 @@ PATCH_TESTS = (
     "build/scripts/test_modules_in_block_to_quantize.py",
     "build/scripts/test_validate_quantized_artifact.py",
     "build/scripts/test_runtime_gptq_patch_composition.py",
+    "build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
 )
 
 COMPILE_ONLY = PATCH_SCRIPTS + (
     "build/scripts/install_vllm_gfx906_compat.py",
     "build/scripts/quantize_gptq.py",
     "build/scripts/validate_quantized_artifact.py",
+    "build/scripts/verify_vllm_gfx1100_native_w4a16.py",
 )
 
 CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
@@ -44,10 +46,13 @@ CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
     "build/Dockerfile.runtime",
     "build/sunshine-headless.sh",
     "build/Dockerfile.runtime-serving",
+    "build/Dockerfile.runtime-serving-native-w4a16",
     "build/Dockerfile.vllm-rocm-gfx906",
     "build/runtime-entrypoint.sh",
     "build/runtime.yaml",
     "build/scripts/install_vllm_gfx906_compat.py",
+    "build/scripts/verify_vllm_gfx1100_native_w4a16.py",
+    "build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
     "deploy/system/values-k3s.yaml",
     ".gitlab/ci/runtime-publish.yml",
 )
@@ -141,10 +146,11 @@ def assert_runtime_yaml_patch_refs(runtime_yaml: str) -> None:
         )
 
 
-def assert_qwen35_gptq_stock_path(patch_script: str) -> None:
-    # The ROCm "reference" GPTQ fallback unpacked qweight AFTER ops.gptq_shuffle
-    # permuted it into the ExLlama layout, corrupting every quantized projection
-    # (root-caused 2026-07-18). The stock fused gptq_gemm is accurate on gfx1100.
+def assert_qwen35_gptq_checkpoint_order_path(patch_script: str) -> None:
+    # The old Qwen-local reference fallback could unpack qweight after an
+    # ExLlama shuffle and was therefore unsafe. This stage must first remove
+    # that stale fallback and skip the shuffle. The later Gemma compatibility
+    # stage then installs the coherent fallback against checkpoint-order data.
     forbidden = (
         "unpacked_qweight",
         "torch.version.hip is not None and self.quant_config.weight_bits == 4",
@@ -153,8 +159,8 @@ def assert_qwen35_gptq_stock_path(patch_script: str) -> None:
         if snippet in patch_script:
             fail(
                 "vllm_qwen35_patches_nodiag.py reintroduced the ROCm GPTQ "
-                f"reference fallback ({snippet!r}); it misreads gptq_shuffle-"
-                "permuted qweight and corrupts all quantized projections"
+                f"reference fallback ({snippet!r}) before the shuffle-skip "
+                "stage; that ordering can corrupt all quantized projections"
             )
 
     if "FLEXINFER_QWEN35_GPTQ_ROCM_REFERENCE_PATCH" not in patch_script:
@@ -164,12 +170,10 @@ def assert_qwen35_gptq_stock_path(patch_script: str) -> None:
             "reference fallback"
         )
 
-    # Removing the fallback is necessary but NOT sufficient. ops.gptq_shuffle()
-    # permutes qweight for the ExLlama kernel, but on gfx1100 that kernel is not
-    # the one consuming the weights, so the permutation is never undone. Live
-    # A/B on the gfx1100 runtime (2026-07-19): shuffle -> token salad on BOTH
-    # the fallback and the stock fused path; shuffle skipped -> correct output
-    # (' Paris.') on both. The guard is load-bearing for generation quality.
+    # Removing the stale fallback is necessary but not sufficient:
+    # ops.gptq_shuffle() permutes qweight into an ExLlama layout that the ROCm
+    # reference implementation cannot unpack. Keep checkpoint-order qweight so
+    # the following compatibility stage can dequantize it coherently.
     if "FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP" not in patch_script:
         fail(
             "vllm_qwen35_patches_nodiag.py lost the ROCm gptq_shuffle skip "
@@ -179,21 +183,44 @@ def assert_qwen35_gptq_stock_path(patch_script: str) -> None:
         )
 
 
-def assert_gemma_patch_preserves_qwen_gptq_stock_path(patch_script: str) -> None:
-    guard = patch_script.find(
-        'if "FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP" in src:'
+def assert_legacy_gptq_uses_reference_after_qwen_shuffle_skip(
+    patch_script: str,
+) -> None:
+    if 'if "FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP" in src:' in patch_script:
+        fail(
+            "vllm_gemma4_moe_gptq_patch.py bypasses the coherent ROCm GPTQ "
+            "reference fallback when the Qwen shuffle-skip marker is present; "
+            "full 27B tensor shapes corrupt on vLLM 0.17 stock gptq_gemm"
+        )
+    for snippet in (
+        "GEMMA4_GPTQ_ROCM_REFERENCE_PATCH",
+        "unpacked_qweight",
+        "src = src.replace(old_apply, new_apply, 1)",
+    ):
+        if snippet not in patch_script:
+            fail(f"legacy ROCm GPTQ reference fallback lost {snippet!r}")
+
+
+def assert_native_w4a16_dockerfile_contract(dockerfile: str) -> None:
+    required = (
+        "vllm/vllm-openai-rocm:v0.23.0",
+        "verify_vllm_gfx1100_native_w4a16.py",
+        'ENTRYPOINT ["vllm", "serve"]',
     )
-    dense_fallback = patch_script.find("src = src.replace(old_apply, new_apply, 1)")
-    if guard == -1:
-        fail(
-            "vllm_gemma4_moe_gptq_patch.py can overwrite the Qwen stock fused "
-            "GPTQ path; missing the ROCm shuffle-skip composition guard"
-        )
-    if dense_fallback == -1 or guard > dense_fallback:
-        fail(
-            "vllm_gemma4_moe_gptq_patch.py checks the Qwen shuffle-skip guard "
-            "after installing its dense reference fallback"
-        )
+    for snippet in required:
+        if snippet not in dockerfile:
+            fail(f"native gfx1100 W4A16 Dockerfile missing {snippet!r}")
+
+    forbidden = (
+        "vllm_qwen35_patches_nodiag.py",
+        "vllm_gemma4_moe_gptq_patch.py",
+    )
+    for snippet in forbidden:
+        if snippet in dockerfile:
+            fail(
+                "native gfx1100 W4A16 image must bypass legacy source patches: "
+                f"{snippet}"
+            )
 
 
 def assert_dockerfile_patch_order(dockerfile: str) -> None:
@@ -500,20 +527,29 @@ def assert_flash_loader_image_contract(
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     fast_job = ci_yaml.find("runtime_patch_contracts:")
     serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
+    native_w4a16_job = ci_yaml.find(
+        "publish_serving_rocm_gfx1100_native_w4a16:"
+    )
     publish_job = ci_yaml.find("publish_unified_rocm_gfx1100:")
     gaming_job = ci_yaml.find("publish_gaming_rocm_gfx1100:")
     if fast_job == -1:
         fail("runtime-publish CI is missing runtime_patch_contracts")
     if serving_job == -1:
         fail("runtime-publish CI is missing publish_serving_rocm_gfx1100")
+    if native_w4a16_job == -1:
+        fail(
+            "runtime-publish CI is missing "
+            "publish_serving_rocm_gfx1100_native_w4a16"
+        )
     if publish_job == -1:
         fail("runtime-publish CI is missing publish_unified_rocm_gfx1100")
     if gaming_job == -1:
         fail("runtime-publish CI is missing publish_gaming_rocm_gfx1100")
-    if not (fast_job < serving_job < publish_job):
+    if not (fast_job < serving_job < native_w4a16_job < publish_job):
         fail(
             "runtime-publish CI order changed; expected runtime_patch_contracts "
-            "-> publish_serving_rocm_gfx1100 -> publish_unified_rocm_gfx1100"
+            "-> publish_serving_rocm_gfx1100 -> native W4A16 canary "
+            "-> publish_unified_rocm_gfx1100"
         )
 
     fast_job_body = ci_yaml[fast_job:serving_job]
@@ -524,6 +560,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
         "python3 build/scripts/test_modules_in_block_to_quantize.py",
         "python3 build/scripts/test_validate_quantized_artifact.py",
         "python3 build/scripts/test_runtime_gptq_patch_composition.py",
+        "python3 build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
     )
     for snippet in required_snippets:
         if snippet not in fast_job_body:
@@ -533,7 +570,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     if missing_rules:
         fail(f"runtime_patch_contracts rules do not include: {missing_rules}")
 
-    serving_job_body = ci_yaml[serving_job:publish_job]
+    serving_job_body = ci_yaml[serving_job:native_w4a16_job]
     serving_required_snippets = (
         'filename="Dockerfile.runtime-serving"',
         "${REGISTRY}/runtime:rocm-gfx1100-serving",
@@ -555,6 +592,21 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
             "publish_serving_rocm_gfx1100 rules do not include: "
             f"{missing_serving_rules}"
         )
+
+    native_w4a16_job_body = ci_yaml[native_w4a16_job:publish_job]
+    native_required_snippets = (
+        'filename="Dockerfile.runtime-serving-native-w4a16"',
+        'build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.23.0"',
+        "${REGISTRY}/runtime:rocm-gfx1100-v023-native-w4a16",
+        "build/scripts/verify_vllm_gfx1100_native_w4a16.py",
+        "build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
+    )
+    for snippet in native_required_snippets:
+        if snippet not in native_w4a16_job_body:
+            fail(
+                "publish_serving_rocm_gfx1100_native_w4a16 missing "
+                f"{snippet!r}"
+            )
 
     unified_job_body = ci_yaml[publish_job:gaming_job]
     for path in UNIFIED_SERVING_ONLY_RULE_FILES:
@@ -595,6 +647,9 @@ def main(argv: list[str]) -> int:
     build_script = read("build/build-runtime.sh")
     entrypoint = read("build/runtime-entrypoint.sh")
     serving_dockerfile = read("build/Dockerfile.runtime-serving")
+    native_w4a16_dockerfile = read(
+        "build/Dockerfile.runtime-serving-native-w4a16"
+    )
     gfx906_vllm_dockerfile = read("build/Dockerfile.vllm-rocm-gfx906")
     gfx906_vllm_install_script = read("build/scripts/install_vllm_gfx906_compat.py")
     sunshine_launcher = read("build/sunshine-headless.sh")
@@ -620,13 +675,16 @@ def main(argv: list[str]) -> int:
     gemma4_patch_script = read("build/scripts/vllm_gemma4_moe_gptq_patch.py")
 
     assert_patch_scripts_exist_and_parse()
-    assert_qwen35_gptq_stock_path(qwen35_patch_script)
-    assert_gemma_patch_preserves_qwen_gptq_stock_path(gemma4_patch_script)
+    assert_qwen35_gptq_checkpoint_order_path(qwen35_patch_script)
+    assert_legacy_gptq_uses_reference_after_qwen_shuffle_skip(
+        gemma4_patch_script
+    )
     assert_runtime_yaml_patch_refs(runtime_yaml)
     assert_dockerfile_patch_order(dockerfile)
     assert_runtime_entrypoint_contract(entrypoint, build_script)
     assert_optional_runtime_component_contract(dockerfile)
     assert_serving_dockerfile_contract(serving_dockerfile)
+    assert_native_w4a16_dockerfile_contract(native_w4a16_dockerfile)
     assert_gfx906_vllm_diagnostics_contract(gfx906_vllm_dockerfile)
     assert_gfx906_vllm_compat_hooks_contract(gfx906_vllm_install_script)
     assert_sunshine_input_contract(sunshine_launcher, values_yaml)
