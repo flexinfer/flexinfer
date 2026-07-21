@@ -75,7 +75,10 @@ spec:
     toolCallParser: qwen3_coder
     servedModelName: qwen36-27b-fable-gptq
     disableLogStats: false
-    failOnEnvironValidation: true
+    # The pinned unified runtime carries legacy VLLM_USE_TRITON_FLASH_ATTN in
+    # its image environment; vLLM 0.17 no longer recognizes that variable.
+    # Unknown-env validation must remain non-fatal for this immutable image.
+    failOnEnvironValidation: false
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:

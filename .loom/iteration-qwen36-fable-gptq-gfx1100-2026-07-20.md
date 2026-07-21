@@ -46,6 +46,10 @@
   those two newer CLI options. Omit only `gdnPrefillBackend` and
   `schedulerReserveFullISL`; retain the runtime's built-in ROCm GPTQ reference
   fallback, eager mode, text-only architecture override, and AIter disablement.
+- Environment correction: after argument parsing, strict validation rejected
+  legacy `VLLM_USE_TRITON_FLASH_ATTN` baked into the pinned runtime image.
+  Set `failOnEnvironValidation: false` for this immutable runtime; all explicit
+  Model/GPUProfile environment values remain unchanged and auditable.
 
 ## Probe
 
