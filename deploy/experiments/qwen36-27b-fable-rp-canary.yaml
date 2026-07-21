@@ -77,7 +77,7 @@ spec:
       calculateKvScales: false
       enforceEager: false
       # Generation 6 exercises one and two simultaneous decode streams only.
-      cudagraphCaptureSizes: "1,2"
+      cudagraphCaptureSizes: [1, 2]
       maxCudagraphCaptureSize: 2
       gdnPrefillBackend: triton
       cudagraphMetrics: true
@@ -110,7 +110,7 @@ spec:
   gauntlet:
     templateRef: fable-rp-performance-gauntlet
     env:
-      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-two-session-v1"
+      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-two-session-v2"
       EXPERIMENT_PHASE: "32k_graph_fp16kv_two_session"
       ITERS: "3"
       RP_OUTPUT_TOKENS: "192"
