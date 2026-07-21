@@ -20,8 +20,9 @@ metadata:
     flexinfer.ai/base-model-source: nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451
     flexinfer.ai/source-revision: 5ae530c3ab85033856e75cb1efc63fb1bf82a133
     flexinfer.ai/base-model-posture: uncensored-heretic-fable-fusion
-    flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen36-27b-fable:gptq-w4-g128-gfx1100-v1
-    flexinfer.ai/promotion-state: awaiting-artifact-and-gfx1100-smoke
+    flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen36-27b-fable@sha256:285a044529f6321f954353c93c5a91f771cfdfc7445ad25af5d64b7926d83710
+    flexinfer.ai/runtime-image: registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e
+    flexinfer.ai/promotion-state: digest-pinned-gfx1100-smoke-active
 spec:
   backend: vllm
   source: pvc://qwen36-27b-fable-oci/qwen36-27b-fable

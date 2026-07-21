@@ -47,7 +47,7 @@ resources:
   # coherent deterministic smoke passes and .loom/60-validation-matrix.md is
   # moved out of fail.
   # - qwen36-27b-gptq.yaml            # disabled; broken + slow canary
-  # - qwen36-27b-fable-gptq.yaml      # staged exact-source GPTQ canary; enable only after OCI digest pin
+  - qwen36-27b-fable-gptq.yaml        # digest-pinned, demand-only gfx1100 coherence canary
   # - gemma4-26b-a4b-gptq-22k.yaml  # superseded until 18K-22K is re-qualified
   # gemma4-31b-gptq-long.yaml: SUPERSEDED on 2026-04-25. Canary boot OOM'd at
   # 23.59/24 GiB during weight load — plugin rotation-matrix allocations

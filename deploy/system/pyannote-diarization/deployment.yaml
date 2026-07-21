@@ -19,9 +19,7 @@ metadata:
     app: pyannote-diarization
     app.kubernetes.io/part-of: flexinfer
 spec:
-  # Temporarily parked for the 2026-07-20 Qwen3.6 Fable GPTQ build window.
-  # Restore to 1 after the quantization/publish job leaves Radeon VII.
-  replicas: 0
+  replicas: 1
   strategy:
     type: Recreate # single GPU service; never run two pods at once
   selector:
