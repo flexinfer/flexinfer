@@ -2,8 +2,10 @@
 #
 # Generation 1 passed the exact qualified 8K eager/FP16-KV sentinel on the same
 # physical 7900 XTX used by the 9B lane. Generation 2 passed the matched 32K
-# eager/FP16-KV control with exact 19,841-token recall. Generation 3 changes
-# only execution/KV to bounded graph/FP8-KV. The
+# eager/FP16-KV control with exact 19,841-token recall. Generation 3's combined
+# bounded-graph/FP8-KV arm improved short decode but failed the multi-turn and
+# long-context no-regression gates. Generation 4 keeps bounded graphs and
+# restores FP16 KV to isolate the cause. The
 # ModelExperiment controller removes every candidate at verdict, after which
 # the existing 9B parent Model resumes its warm-primary shared-group lease.
 apiVersion: ai.flexinfer/v1alpha2
@@ -59,7 +61,7 @@ spec:
       maxNumBatchedTokens: 2048
       enableChunkedPrefill: true
       gpuMemoryUtilization: "0.90"
-      kvCacheDtype: fp8_e4m3
+      kvCacheDtype: auto
       calculateKvScales: false
       enforceEager: false
       # One active sequence means the only decode graph shape needed in this
@@ -97,8 +99,8 @@ spec:
   gauntlet:
     templateRef: fable-rp-performance-gauntlet
     env:
-      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp8kv-candidate-v1"
-      EXPERIMENT_PHASE: "32k_graph_fp8kv_candidate"
+      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-attribution-v1"
+      EXPERIMENT_PHASE: "32k_graph_fp16kv_attribution"
       ITERS: "3"
       RP_OUTPUT_TOKENS: "192"
       LONG_CONTEXT_TOKENS: "18000"

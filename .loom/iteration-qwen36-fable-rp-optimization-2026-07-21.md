@@ -104,20 +104,49 @@
 
 ### Generation 3 — 32K graph/FP8-KV candidate
 
-- Outcome: running.
+- Outcome: rejected by the relative kill gate. The typed gauntlet verdict was
+  `Succeeded` because parity, recall, and absolute safety floors passed, but it
+  is not a promotion verdict.
 - Change from generation 2: `kvCacheDtype=fp8_e4m3`, `enforceEager=false`,
   graph capture bounded to shape one, GDN prefill pinned to Triton, and graph/KV
   metrics enabled at full sampling. Artifact, dtype, context, one-sequence
   scheduler, prompts, and fixed KV scales are unchanged.
-- Exact failure or success evidence: pending.
-- Relevant logs / stack frame: pending.
+- Runtime proof: the native `RDNA3W4A16LinearKernel` remained active, Dynamo
+  compile took 7.87s (54.60s total compile), PIECEWISE mixed prefill/decode and
+  FULL shape-one decode graphs were captured, and graph capture consumed
+  0.32 GiB. The pod restarted zero times and emitted no ROCm/HSA/OOM/NaN fault.
+- Capacity regression: only 1.52 GiB remained for KV, yielding 46,173 GPU KV
+  tokens and 1.41x maximum concurrency at 32K, versus 3.93 GiB, 62,066 tokens,
+  and 1.89x for eager/FP16-KV.
+- RP dialogue: median decode 38.5112 tok/s and median complete-answer latency
+  5.1362s, respectively 21.8% faster decode and 17.5% lower latency than the
+  eager/FP16-KV control.
+- 2,278-token multi-turn scene: median decode 17.4231 tok/s and median latency
+  12.3625s, respectively 16.2% lower throughput and 11.7% higher latency than
+  control. This breaches the 0.95 per-workload throughput floor.
+- Long-context recall: all three 19,841-token prompts still returned exactly
+  `CINNABAR-48271`, but median decode fell to 3.2216 tok/s and median latency
+  rose to 29.9428s, respectively 41.7% lower throughput and 29.1% higher
+  latency. Median TTFT was 26.8388s and p95 TTFT was 27.6322s.
+- Summary: median non-long-context decode was 27.9436 tok/s, all requests kept
+  `reasoning_chars=0`, and vLLM recorded 1,141 inter-token observations in
+  54.91508s. The aggregate median hides the prompt-length regressions and is
+  therefore not sufficient for promotion.
+
+### Generation 4 — 32K graph/FP16-KV attribution
+
+- Outcome: pending.
+- Change from generation 3: restore `kvCacheDtype=auto` only. Graph mode,
+  capture shape, context, scheduler, artifact, image, prompts, and metrics are
+  unchanged.
+- Purpose: determine whether FP8 KV caused the multi-turn, long-context, and KV
+  capacity regressions while preserving bounded graph mode's short-dialogue
+  gain.
 
 ## Next
 
-1. Complete the 32K bounded-graph/FP8-KV candidate and retain its direct-service
-   Job logs as the matched candidate.
-2. Compare complete-answer latency, TTFT, decode, recall, graph evidence, VRAM,
-   and fault logs before attempting two/four-session scheduling.
-3. Promote the runtime tuple to a concurrency canary only if median
-   complete-answer latency improves at least 15% and no workload regresses
-   below the 0.95 throughput floor.
+1. Run generation 4 with bounded graphs and FP16 KV.
+2. Compare its per-workload latency, TTFT, decode, recall, KV capacity, and
+   faults with both generation 2 and generation 3.
+3. Attempt concurrency only if a single-sequence tuple meets the 15% latency
+   improvement target without breaching the 0.95 per-workload throughput floor.
