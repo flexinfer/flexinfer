@@ -55,6 +55,7 @@ resources:
   # digest onto gfx1100 for the isolated serving canary.
   - qwen36-27b-fable-gptq.yaml
   - qwen36-27b-fable-oci.yaml
+  - qwen36-27b-fable-oci-7900xtx.yaml  # exact artifact staged for same-card 9B-RP replacement A/B
 
   # === Track B: 70B daily-driver self-quant (Download → Quantize only) ===
   # 2026-06-10: huihui-ai/Llama-3.3-70B-Instruct-abliterated → GPTQ INT4 on

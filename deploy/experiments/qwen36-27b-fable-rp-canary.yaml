@@ -1,0 +1,97 @@
+# Fable 27B replacement canary for the warm qwen35-9b-ablit-rp lane.
+#
+# Generation 1 is the exact qualified 8K eager/FP16-KV sentinel, moved to the
+# same physical 7900 XTX used by the 9B lane. Later generations change one
+# runtime boundary at a time: 32K eager/FP16-KV, then 32K graph/FP8-KV. The
+# ModelExperiment controller removes every candidate at verdict, after which
+# the existing 9B parent Model resumes its warm-primary shared-group lease.
+apiVersion: ai.flexinfer/v1alpha2
+kind: ModelExperiment
+metadata:
+  name: qwen36-27b-fable-rp-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/canary: qwen36-fable-rp-replacement
+    flexinfer.ai/artifact-digest: sha256:285a044529f6321f954353c93c5a91f771cfdfc7445ad25af5d64b7926d83710
+    flexinfer.ai/runtime-digest: sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+    flexinfer.ai/kill-test: .loom/brainstorm-fable-rp-lane-optimization-2026-07-21.md#riskiest-assumption--kill-test
+spec:
+  timeout: 30m
+  artifactGate:
+    modelCacheRef: qwen36-27b-fable-oci-7900xtx
+    requireSourceMatch: true
+  candidate:
+    backend: vllm
+    image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+    source: pvc://qwen36-27b-fable-oci-7900xtx/qwen36-27b-fable
+    cache:
+      strategy: None
+      compilationCache:
+        enabled: true
+        hostPath: /var/lib/flexinfer/compile-cache
+        sizeLimit: 4Gi
+    gpu:
+      vendor: amd
+      # This node exposes its Raphael iGPU alongside the discrete card. Match
+      # the previously certified graph probes: claim both plugin resources and
+      # select the discrete gfx1100 as HIP ordinal zero.
+      count: 2
+      shared: 7900xtx-textgen
+      priority: 650
+      forcePromotion: true
+      vramEstimateMB: 22000
+    serverless:
+      enabled: true
+      minReplicas: 1
+      idleTimeout: 30m
+      coldStartTimeout: 20m
+    config:
+      dedicatedDeployment: true
+      quantization: gptq
+      dtype: half
+      languageModelOnly: true
+      hfOverrides: '{"architectures":["Qwen3_5ForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+      maxModelLen: 8192
+      maxInputTokens: 6144
+      maxOutputTokens: 2048
+      maxNumSeqs: 1
+      maxNumBatchedTokens: 2048
+      enableChunkedPrefill: true
+      gpuMemoryUtilization: "0.90"
+      kvCacheDtype: auto
+      calculateKvScales: false
+      enforceEager: true
+      enablePrefixCaching: false
+      disableAiter: true
+      rocmCustomPagedAttn: false
+      hipVisibleDevices: "0"
+      trustRemoteCode: true
+      enableToolCalling: true
+      toolCallParser: qwen3_coder
+      servedModelName: qwen36-27b-fable-rp-canary
+      disableLogStats: false
+      failOnEnvironValidation: false
+      warmPolicy: primary
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-7900xtx
+    resources:
+      requests:
+        cpu: "4"
+        memory: 16Gi
+      limits:
+        cpu: "8"
+        memory: 40Gi
+    tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+        operator: Exists
+  gauntlet:
+    templateRef: fable-rp-performance-gauntlet
+    env:
+      FLEXINFER_EXPERIMENT_REVISION: "8k-eager-fp16kv-sentinel-v1"
+      EXPERIMENT_PHASE: "8k_eager_fp16kv_sentinel"
+      ITERS: "2"
+      RP_OUTPUT_TOKENS: "192"
+      LONG_CONTEXT_TOKENS: "0"
+      MIN_MEDIAN_TPS: "7.5"
+      MAX_P95_TTFT: "30"

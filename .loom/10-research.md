@@ -1304,3 +1304,131 @@ Sources:
 - https://huggingface.co/palmfuture/Qwen3.6-27B-GPTQ-Int4
 - https://docs.vllm.ai/en/latest/features/quantization/
 - https://docs.vllm.ai/en/latest/features/speculative_decoding/mtp/
+
+## Fable 27B gfx1100 optimization and 9B-RP replacement (2026-07-21)
+
+### Correct comparison baseline
+
+The current 9B-RP lane is coherent after the gfx1100 `gptq_shuffle` skip fix;
+the earlier token-salad result is stale. It is a warm-primary W4/G128 GPTQ
+model with a rank-64 RP LoRA, a needle-verified 131,072-token window, four
+sequence slots, and a controlled decode ceiling of about 4.8 tok/s. The exact
+Fable 27B W4/G128 artifact is qualified at 8K on vLLM 0.23's native gfx1100
+W4A16 kernel: 16.68 GiB model memory, about 54,954 available GPU KV tokens,
+zero smoke-test restarts, and coherent output at about 8.4-8.8 tok/s. Fable is
+already roughly 1.8x faster in controlled single-stream decode; its replacement
+gaps are warm availability, response-token overhead, context validation,
+concurrency, and direct RP quality evidence.
+
+Live aggregate counters are not an apples-to-apples throughput benchmark. The
+9B service's production inter-token histogram spans mixed prompts, queueing,
+concurrency, and long requests, so replacement decisions should use a matched
+sequential A/B on one card and report TTFT, decode, complete-answer latency, and
+aggregate throughput separately.
+
+### Highest-leverage optimizations
+
+1. **Warm, non-thinking RP profile**: promote Fable to a warm-primary canary and
+   demote 9B to the rollback target only after qualification. Default the RP
+   alias to `enable_thinking=false`; trivial Fable answers currently spend
+   roughly 160-194 tokens on visible thinking. Test request-level
+   `chat_template_kwargs` first. FlexInfer's vLLM backend does not yet wire
+   `--default-chat-template-kwargs`, so a durable service default needs a small
+   backend/config addition.
+2. **Bounded graph canary on the native runtime**: the 9B graph crash occurred
+   on an older runtime and does not disqualify vLLM 0.23. A separate local
+   gfx1100/Qwen3.5 certificate captured graph mode successfully and later
+   delivered a 1.23x median MTP speedup. Test Fable with capture sizes 1/2/4
+   against its qualified eager control, failing closed on graph breaks or
+   memory loss.
+3. **FP8 E4M3 KV and context ladder**: use explicit fixed scales for the first
+   32K canary, then calibrate them on the RP/long-context corpus before
+   promotion. The local vLLM 0.23 hybrid-GDN certificate found warmup scale
+   calculation unsafe because its recurrent state is not initialized there.
+   FP8 KV expands capacity; it does not guarantee faster decode. Validate 16K,
+   32K, 48K, then 64K. Do not promise 128K on 24 GiB from the current 54,954
+   FP16-token capacity.
+4. **Scheduler/concurrency A/B**: compare 1/2/4/8 sequence slots and
+   2048/4096/8192 batched tokens. Start with two partial prefills and one long
+   partial prefill so long scenes do not starve short turns. The native W4A16
+   kernel's scalar decode path covers M<16, so four sequences may improve
+   aggregate throughput without making one stream faster.
+5. **Automatic prefix caching only after a multi-turn canary**: APC can reduce
+   repeated-prefix prefill/TTFT but cannot accelerate token generation. Qwen's
+   hybrid/Mamba path makes alignment and parity evidence important. Report
+   cache hits, output parity, memory cost, and TTFT rather than counting APC as
+   a decode win.
+6. **Profile before changing FLA kernels**: the current plugin selects the
+   lowest-stage/lowest-warp candidate for every loaded FLA autotuner to avoid a
+   gfx1100 LLVM compile hang. Profile the graph winner, then build a baked
+   per-operator safe map only for material GDN/FLA hot spots. The blanket
+   conservative selection likely leaves performance available, but this is not
+   proven without operator attribution.
+
+### Quantization and speculative options
+
+Keep W4 symmetric quantization and avoid sub-four-bit artifacts because the
+qualified RDNA3 path is specifically W4A16. The current G128 quant is coherent.
+W4/G32 or selective BF16 modules are quality experiments, not assumed speed
+wins; both spend scale/weight memory needed by graph capture, KV, or MTP.
+Preserving all GDN modules is outside the 24 GiB envelope.
+
+The source-specific native MTP path is plausible but second-stage. Fable has 14
+root MTP tensors and lacks only `mtp.fc.weight` relative to the official 27B
+shape. Grafting that one official tensor is a mixed-provenance assumption and
+must be isolated in a new artifact. The gate should require at least 60%
+target-verified acceptance, at least 1.15x median speedup, no workload below
+0.95x, constrained greedy parity, and no ROCm/HSA/OOM faults. A local Qwen3.5
+gfx1100 certificate reached 80.18% acceptance and a 1.23x median speedup after
+surgical draft-head quantization, proving the runtime mechanism but not Fable's
+head compatibility.
+
+DavidAU's exact Q4K MTP GGUF plus llama.cpp `draft-mtp` is the alternate
+substrate. It can provide an early signal about Fable-specific MTP acceptance
+without a safetensors graft. It should replace vLLM only if a matched ROCm A/B
+shows a substantial end-to-end advantage; otherwise it adds an operational
+surface while surrendering vLLM batching and existing integration.
+
+### Hardware posture
+
+Keep weights resident and cache the artifact locally on the target text card.
+The observed 7900 XTX PCIe link is x4, which penalizes cold loading and offload
+but should not dominate GPU-resident decode. Fixed performance/memory clocks
+and a repeatable power cap deserve a thermally controlled A/B, not an assumed
+promotion. Keep AITER disabled: its official supported hardware is Instinct
+gfx942/gfx950 rather than consumer gfx1100.
+
+### Recommended research-to-implementation ladder
+
+Use the immutable qualified artifact and runtime for an isolated
+`fable-rp-canary`. Compare eager against bounded graph at 8K, then add FP8 KV at
+32K, then tune sequences/batched tokens, then test prefix caching on an exact
+multi-turn transcript. Default thinking off in both candidate and 9B RP
+controls. Require at least 8.0 tok/s single-stream, at least 1.5x the controlled
+9B result, no candidate workload more than 10% below the qualified Fable
+control, 32K recall, direct blinded RP parity or preference, and a clean fault
+soak. Treat 48K/64K as stretch gates. If 131K is a hard lane contract, Fable is
+not yet a full replacement and may instead become the premium RP lane.
+
+The first load-bearing kill-test is whether bounded graph mode plus FP8 E4M3 KV
+at 32K preserves constrained output and recall while improving median warm
+complete-answer latency at least 15% over a 32K eager/FP16-KV control. Replay
+one qualified 8K sentinel first, then run the two 32K arms sequentially on an
+idle, cached gfx1100 with capture size 1, fixed FP8 scales, and identical thinking-off
+workloads. Fail on any restart, ROCm/HSA fault, NaN, recall miss, constrained
+parity miss, or workload below 0.95x the 32K control. Full framing, tensions,
+replacement gates, and the <=30-minute procedure are recorded in
+`.loom/brainstorm-fable-rp-lane-optimization-2026-07-21.md`.
+
+Primary sources:
+
+- https://github.com/vllm-project/vllm/pull/41394
+- https://github.com/vllm-project/vllm/releases
+- https://docs.vllm.ai/en/v0.23.0/api/vllm/config/compilation/
+- https://docs.vllm.ai/en/v0.23.0/features/quantization/quantized_kvcache/
+- https://docs.vllm.ai/en/v0.23.0/features/automatic_prefix_caching/
+- https://github.com/vllm-project/recipes/blob/main/Qwen/Qwen3.5.md
+- https://huggingface.co/Qwen/Qwen3.5-27B
+- https://huggingface.co/DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF
+- https://github.com/ROCm/aiter
+- https://github.com/ggml-org/llama.cpp/blob/master/docs/speculative.md

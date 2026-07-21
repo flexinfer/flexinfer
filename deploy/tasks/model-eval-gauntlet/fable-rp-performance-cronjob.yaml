@@ -1,0 +1,292 @@
+# ModelExperiment template for the Fable 27B versus 9B-RP replacement gate.
+#
+# The CronJob never runs on its schedule. ModelExperiment copies its Job
+# template, injects MODELS=<owned-candidate>=vllm, and retains the completed Job
+# as evidence. The harness uses the candidate's direct service so production
+# aliases and proxy queueing cannot contaminate the runtime A/B.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: fable-rp-performance-gauntlet
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: fable-rp-replacement-canary
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flexinfer
+        flexinfer.ai/purpose: fable-rp-replacement-canary
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 1500
+      template:
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            kubernetes.io/arch: amd64
+          containers:
+            - name: fable-rp-gauntlet
+              image: docker.io/library/python@sha256:25976e9d34a0fab1f278cae931f34c8303d97bf0c0d7f85b6b4dcf641d7702a4
+              imagePullPolicy: IfNotPresent
+              command: [python3, -c]
+              args:
+                - |
+                  import hashlib
+                  import json
+                  import os
+                  import statistics
+                  import sys
+                  import time
+                  import urllib.error
+                  import urllib.request
+
+                  model = os.environ["MODELS"].split("=", 1)[0]
+                  base = os.environ.get(
+                      "FLEXINFER_DIRECT_URL_TEMPLATE",
+                      "http://{model}.flexinfer-system.svc.cluster.local:8000",
+                  ).format(model=model).rstrip("/")
+                  iterations = int(os.environ.get("ITERS", "2"))
+                  output_tokens = int(os.environ.get("RP_OUTPUT_TOKENS", "192"))
+                  long_context_tokens = int(os.environ.get("LONG_CONTEXT_TOKENS", "0"))
+                  request_timeout = float(os.environ.get("REQUEST_TIMEOUT", "300"))
+                  min_median_tps = float(os.environ.get("MIN_MEDIAN_TPS", "7.5"))
+                  max_p95_ttft = float(os.environ.get("MAX_P95_TTFT", "30"))
+                  phase = os.environ.get("EXPERIMENT_PHASE", "unknown")
+
+                  def percentile(values, fraction):
+                      ordered = sorted(values)
+                      index = max(0, min(len(ordered) - 1, round((len(ordered) - 1) * fraction)))
+                      return ordered[index]
+
+                  def stream_chat(name, messages, max_tokens, expected=None):
+                      payload = json.dumps({
+                          "model": model,
+                          "messages": messages,
+                          "max_tokens": max_tokens,
+                          "temperature": 0,
+                          "top_p": 1,
+                          "stream": True,
+                          "stream_options": {"include_usage": True},
+                          "chat_template_kwargs": {"enable_thinking": False},
+                      }).encode()
+                      request = urllib.request.Request(
+                          base + "/v1/chat/completions",
+                          data=payload,
+                          headers={"Content-Type": "application/json"},
+                      )
+                      started = time.perf_counter()
+                      first_token_at = None
+                      content = []
+                      reasoning = []
+                      usage = {}
+                      with urllib.request.urlopen(request, timeout=request_timeout) as response:
+                          for raw_line in response:
+                              line = raw_line.decode("utf-8", "replace").strip()
+                              if not line.startswith("data: "):
+                                  continue
+                              data = line[6:]
+                              if data == "[DONE]":
+                                  break
+                              event = json.loads(data)
+                              if event.get("usage"):
+                                  usage = event["usage"]
+                              choices = event.get("choices") or []
+                              if not choices:
+                                  continue
+                              delta = choices[0].get("delta") or {}
+                              text = delta.get("content") or ""
+                              thought = delta.get("reasoning_content") or delta.get("reasoning") or ""
+                              if (text or thought) and first_token_at is None:
+                                  first_token_at = time.perf_counter()
+                              if text:
+                                  content.append(text)
+                              if thought:
+                                  reasoning.append(thought)
+                      finished = time.perf_counter()
+                      answer = "".join(content)
+                      thought = "".join(reasoning)
+                      if first_token_at is None:
+                          first_token_at = finished
+                      elapsed = finished - started
+                      ttft = first_token_at - started
+                      completion_tokens = int(usage.get("completion_tokens") or 0)
+                      prompt_tokens = int(usage.get("prompt_tokens") or 0)
+                      decode_seconds = max(0.001, finished - first_token_at)
+                      decode_tps = max(0, completion_tokens - 1) / decode_seconds
+                      exact = None if expected is None else answer.strip() == expected
+                      result = {
+                          "phase": phase,
+                          "workload": name,
+                          "prompt_tokens": prompt_tokens,
+                          "completion_tokens": completion_tokens,
+                          "ttft_s": round(ttft, 4),
+                          "elapsed_s": round(elapsed, 4),
+                          "decode_tps": round(decode_tps, 4),
+                          "reasoning_chars": len(thought),
+                          "answer_sha256": hashlib.sha256(answer.encode()).hexdigest(),
+                          "answer_preview": answer[:240],
+                          "exact": exact,
+                      }
+                      print("FABLE_RP_RESULT " + json.dumps(result, sort_keys=True), flush=True)
+                      return result, answer
+
+                  def metrics_snapshot():
+                      try:
+                          body = urllib.request.urlopen(base + "/metrics", timeout=20).read().decode()
+                      except Exception as error:
+                          print(f"FABLE_RP_METRICS_ERROR {type(error).__name__}: {error}", flush=True)
+                          return
+                      selected = [
+                          line for line in body.splitlines()
+                          if not line.startswith("#")
+                          and any(term in line.lower() for term in (
+                              "cudagraph", "graph_dispatch", "kv_cache_usage",
+                              "time_to_first_token", "inter_token_latency",
+                          ))
+                      ]
+                      for line in selected[:100]:
+                          print("FABLE_RP_METRIC " + line, flush=True)
+
+                  literal_messages = [{
+                      "role": "user",
+                      "content": "Reply with exactly ROCM_FABLE_OK and nothing else.",
+                  }]
+                  rp_messages = [
+                      {
+                          "role": "system",
+                          "content": (
+                              "You are writing grounded, immersive roleplay. Stay in character, "
+                              "advance the scene, avoid repetition, and do not discuss being an AI."
+                          ),
+                      },
+                      {
+                          "role": "user",
+                          "content": (
+                              "At a rain-soaked midnight train platform, Mara realizes the courier "
+                              "beside her has the wrong silver ring. Continue in close third person "
+                              "for two compact paragraphs, preserving tension without resolving it."
+                          ),
+                      },
+                  ]
+                  history = (
+                      "The observatory is sealed by winter. Ilya distrusts Sera after the missing "
+                      "ledger, but neither has admitted they saw the blue signal over the ridge. "
+                      "The generator fails every third hour; the brass key remains inside Ilya's "
+                      "left glove; Sera promised never to enter the east archive alone. "
+                  )
+                  multi_turn_messages = [{"role": "system", "content": "Maintain continuity and character voice."}]
+                  for index in range(10):
+                      multi_turn_messages.append({
+                          "role": "user",
+                          "content": f"Scene memory {index}: {history * 3} What does Sera notice next?",
+                      })
+                      multi_turn_messages.append({
+                          "role": "assistant",
+                          "content": (
+                              f"Sera records detail {index} without touching the brass key. "
+                              "She keeps the blue signal and the east archive in mind."
+                          ),
+                      })
+                  multi_turn_messages.append({
+                      "role": "user",
+                      "content": (
+                          "Continue for two compact paragraphs. Preserve who holds the key, the "
+                          "unresolved distrust, and the promise about the east archive."
+                      ),
+                  })
+
+                  workloads = [
+                      ("rp_dialogue", rp_messages, output_tokens, None),
+                      ("multi_turn", multi_turn_messages, output_tokens, None),
+                  ]
+                  needle = "CINNABAR-48271"
+                  if long_context_tokens > 0:
+                      filler_line = (
+                          "Routine station telemetry reports stable pressure, ordinary wind, and no alarm; "
+                          "the operator files the line without comment. "
+                      )
+                      # The line is about twenty tokenizer tokens for this model. The response
+                      # usage is authoritative and is recorded for every run.
+                      lines = max(100, long_context_tokens // 20)
+                      filler = [filler_line] * lines
+                      filler[len(filler) // 2] = (
+                          f"The hidden observatory passphrase is {needle}. " + filler[len(filler) // 2]
+                      )
+                      long_messages = [{
+                          "role": "user",
+                          "content": "".join(filler) + "\nRepeat the hidden observatory passphrase exactly, then stop.",
+                      }]
+                      workloads.append(("long_context_recall", long_messages, 48, needle))
+
+                  print("FABLE_RP_CONFIG " + json.dumps({
+                      "phase": phase,
+                      "model": model,
+                      "endpoint": base,
+                      "iterations": iterations,
+                      "long_context_tokens": long_context_tokens,
+                      "min_median_tps": min_median_tps,
+                      "max_p95_ttft": max_p95_ttft,
+                  }, sort_keys=True), flush=True)
+
+                  # Warm the model and prove request-level thinking suppression before timing.
+                  warmup, _ = stream_chat("literal_warmup", literal_messages, 32, "ROCM_FABLE_OK")
+                  failures = []
+                  if not warmup["exact"]:
+                      failures.append("literal warmup mismatch")
+                  if warmup["reasoning_chars"]:
+                      failures.append("thinking was not disabled")
+
+                  results = []
+                  for name, messages, budget, expected in workloads:
+                      for iteration in range(1, iterations + 1):
+                          result, answer = stream_chat(name, messages, budget, expected)
+                          result["iteration"] = iteration
+                          results.append(result)
+                          if not result["completion_tokens"]:
+                              failures.append(f"{name} iteration {iteration} missing usage")
+                          if result["reasoning_chars"]:
+                              failures.append(f"{name} iteration {iteration} emitted reasoning")
+                          if expected is not None and expected not in answer:
+                              failures.append(f"{name} iteration {iteration} recall miss")
+                          if name == "long_context_recall" and result["prompt_tokens"] < int(long_context_tokens * 0.75):
+                              failures.append(
+                                  f"{name} iteration {iteration} prompt too short: {result['prompt_tokens']}"
+                              )
+
+                  measured = [result for result in results if result["workload"] != "long_context_recall"]
+                  median_tps = statistics.median(result["decode_tps"] for result in measured)
+                  p95_ttft = percentile([result["ttft_s"] for result in results], 0.95)
+                  summary = {
+                      "phase": phase,
+                      "median_decode_tps": round(median_tps, 4),
+                      "p95_ttft_s": round(p95_ttft, 4),
+                      "workload_count": len(results),
+                      "failures": failures,
+                  }
+                  print("FABLE_RP_SUMMARY " + json.dumps(summary, sort_keys=True), flush=True)
+                  metrics_snapshot()
+                  if median_tps < min_median_tps:
+                      failures.append(f"median decode {median_tps:.4f} < {min_median_tps:.4f}")
+                  if p95_ttft > max_p95_ttft:
+                      failures.append(f"p95 TTFT {p95_ttft:.4f} > {max_p95_ttft:.4f}")
+                  if failures:
+                      print("FABLE_RP_GAUNTLET_FAIL " + json.dumps(failures), flush=True)
+                      sys.exit(1)
+                  print("FABLE_RP_GAUNTLET_OK " + json.dumps(summary, sort_keys=True), flush=True)
+              env:
+                - name: FLEXINFER_DIRECT_URL_TEMPLATE
+                  value: http://{model}.flexinfer-system.svc.cluster.local:8000
+                - name: REQUEST_TIMEOUT
+                  value: "300"
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 256Mi
+                limits:
+                  cpu: "2"
+                  memory: 1Gi
