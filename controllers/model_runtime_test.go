@@ -141,6 +141,86 @@ func TestRuntimeEndpointCanAcceptLoadWhenPodRunningButNotReady(t *testing.T) {
 	}
 }
 
+func TestUnloadRuntimeModelForDedicatedDeploymentHandoff(t *testing.T) {
+	deleteCalls := 0
+	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		switch {
+		case req.Method == http.MethodGet && req.URL.Path == "/api/v1/models/qwen35-9b-ablit-rp/health":
+			_ = json.NewEncoder(w).Encode(RuntimeModelStatus{
+				Name:  "qwen35-9b-ablit-rp",
+				State: "Ready",
+			})
+		case req.Method == http.MethodDelete && req.URL.Path == "/api/v1/models/qwen35-9b-ablit-rp":
+			deleteCalls++
+			_ = json.NewEncoder(w).Encode(map[string]string{"status": "unloaded"})
+		default:
+			http.NotFound(w, req)
+		}
+	}))
+	defer runtimeServer.Close()
+
+	parsed, err := url.Parse(runtimeServer.URL)
+	if err != nil {
+		t.Fatalf("parse runtime url: %v", err)
+	}
+	var port int
+	if _, err := fmt.Sscanf(parsed.Port(), "%d", &port); err != nil {
+		t.Fatalf("parse runtime port: %v", err)
+	}
+
+	r := &ModelReconciler{Runtime: &RuntimeReconciler{}}
+	unloaded, err := r.unloadRuntimeModel(
+		context.Background(),
+		&aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: "qwen35-9b-ablit-rp"}},
+		&RuntimeEndpoint{PodIP: parsed.Hostname(), Port: int32(port)},
+	)
+	if err != nil {
+		t.Fatalf("unloadRuntimeModel() error: %v", err)
+	}
+	if !unloaded {
+		t.Fatal("unloadRuntimeModel() unloaded=false, want true")
+	}
+	if deleteCalls != 1 {
+		t.Fatalf("delete calls = %d, want 1", deleteCalls)
+	}
+}
+
+func TestUnloadRuntimeModelForDedicatedDeploymentHandoffAlreadyAbsent(t *testing.T) {
+	deleteCalls := 0
+	runtimeServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodDelete {
+			deleteCalls++
+		}
+		http.NotFound(w, req)
+	}))
+	defer runtimeServer.Close()
+
+	parsed, err := url.Parse(runtimeServer.URL)
+	if err != nil {
+		t.Fatalf("parse runtime url: %v", err)
+	}
+	var port int
+	if _, err := fmt.Sscanf(parsed.Port(), "%d", &port); err != nil {
+		t.Fatalf("parse runtime port: %v", err)
+	}
+
+	r := &ModelReconciler{Runtime: &RuntimeReconciler{}}
+	unloaded, err := r.unloadRuntimeModel(
+		context.Background(),
+		&aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: "qwen35-9b-ablit-rp"}},
+		&RuntimeEndpoint{PodIP: parsed.Hostname(), Port: int32(port)},
+	)
+	if err != nil {
+		t.Fatalf("unloadRuntimeModel() error: %v", err)
+	}
+	if unloaded {
+		t.Fatal("unloadRuntimeModel() unloaded=true for an absent model")
+	}
+	if deleteCalls != 0 {
+		t.Fatalf("delete calls = %d, want 0", deleteCalls)
+	}
+}
+
 func TestFindRuntimeForNode_RunningNotReadyStillAcceptsLoad(t *testing.T) {
 	s := runtime.NewScheme()
 	if err := corev1.AddToScheme(s); err != nil {
