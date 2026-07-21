@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import importlib.util
 import tempfile
+import types
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT_PATH = Path(__file__).parent / "verify_vllm_gfx1100_native_w4a16.py"
@@ -65,6 +67,38 @@ class NativeW4A16VerifierTests(unittest.TestCase):
 
             with self.assertRaisesRegex(RuntimeError, "gptq_gemm_rdna3"):
                 verifier.verify_source_contract(root, "0.23.0")
+
+    def test_loads_rocm_extension_before_checking_operator(self) -> None:
+        verifier = _load_verifier()
+        torch_module = types.SimpleNamespace(ops=types.SimpleNamespace())
+
+        def register_operator(module_name: str) -> object:
+            torch_module.ops._rocm_C = types.SimpleNamespace(
+                gptq_gemm_rdna3=object()
+            )
+            return object()
+
+        importer = mock.Mock(side_effect=register_operator)
+        verifier.verify_compiled_contract(torch_module, importer)
+
+        importer.assert_called_once_with("vllm._rocm_C")
+
+    def test_rejects_rocm_extension_without_native_operator(self) -> None:
+        verifier = _load_verifier()
+        torch_module = types.SimpleNamespace(
+            ops=types.SimpleNamespace(_rocm_C=types.SimpleNamespace())
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "does not register"):
+            verifier.verify_compiled_contract(torch_module, mock.Mock())
+
+    def test_reports_rocm_extension_load_failure(self) -> None:
+        verifier = _load_verifier()
+        torch_module = types.SimpleNamespace(ops=types.SimpleNamespace())
+        importer = mock.Mock(side_effect=ImportError("missing shared object"))
+
+        with self.assertRaisesRegex(RuntimeError, "failed to load"):
+            verifier.verify_compiled_contract(torch_module, importer)
 
 
 if __name__ == "__main__":
