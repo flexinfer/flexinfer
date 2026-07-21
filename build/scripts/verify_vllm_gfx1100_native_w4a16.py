@@ -14,6 +14,7 @@ MINIMUM_VLLM_VERSION = (0, 23, 0)
 KERNEL_RELATIVE_PATH = pathlib.Path(
     "model_executor/kernels/linear/mixed_precision/rdna3_w4a16.py"
 )
+TEXT_PLUGIN_ENTRY_POINT = "flexinfer_qwen35_text"
 
 
 def _parse_version(raw: str) -> tuple[int, int, int]:
@@ -61,6 +62,16 @@ def verify_compiled_contract(
         )
 
 
+def verify_text_plugin_contract(entry_points: Any) -> None:
+    """Verify the text-only Qwen3.5 adapter will load in every vLLM process."""
+    plugins = entry_points(group="vllm.general_plugins")
+    if not any(plugin.name == TEXT_PLUGIN_ENTRY_POINT for plugin in plugins):
+        raise RuntimeError(
+            "missing flexinfer_qwen35_text vLLM general plugin; text-only "
+            "Qwen3.5 configs would fall through to the multimodal wrapper"
+        )
+
+
 def main() -> None:
     import torch
     import vllm
@@ -68,6 +79,7 @@ def main() -> None:
     version = importlib.metadata.version("vllm")
     vllm_root = pathlib.Path(vllm.__file__).resolve().parent
     verify_source_contract(vllm_root, version)
+    verify_text_plugin_contract(importlib.metadata.entry_points)
 
     # Image assembly has no GPU, so vLLM cannot detect ROCm and its generic
     # platform loader does not import this extension. Load it explicitly: the
