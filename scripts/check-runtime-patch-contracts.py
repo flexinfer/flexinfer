@@ -28,6 +28,7 @@ PATCH_SCRIPTS = (
 PATCH_TESTS = (
     "build/scripts/test_modules_in_block_to_quantize.py",
     "build/scripts/test_validate_quantized_artifact.py",
+    "build/scripts/test_runtime_gptq_patch_composition.py",
 )
 
 COMPILE_ONLY = PATCH_SCRIPTS + (
@@ -37,6 +38,7 @@ COMPILE_ONLY = PATCH_SCRIPTS + (
 )
 
 CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
+    "build/scripts/test_runtime_gptq_patch_composition.py",
     "scripts/check-runtime-patch-contracts.py",
     "build/build-runtime.sh",
     "build/Dockerfile.runtime",
@@ -174,6 +176,23 @@ def assert_qwen35_gptq_stock_path(patch_script: str) -> None:
             "guard (FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP); without it every "
             "4-bit GPTQ projection is served with ExLlama-permuted rows and "
             "generation degenerates into token salad"
+        )
+
+
+def assert_gemma_patch_preserves_qwen_gptq_stock_path(patch_script: str) -> None:
+    guard = patch_script.find(
+        'if "FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP" in src:'
+    )
+    dense_fallback = patch_script.find("src = src.replace(old_apply, new_apply, 1)")
+    if guard == -1:
+        fail(
+            "vllm_gemma4_moe_gptq_patch.py can overwrite the Qwen stock fused "
+            "GPTQ path; missing the ROCm shuffle-skip composition guard"
+        )
+    if dense_fallback == -1 or guard > dense_fallback:
+        fail(
+            "vllm_gemma4_moe_gptq_patch.py checks the Qwen shuffle-skip guard "
+            "after installing its dense reference fallback"
         )
 
 
@@ -504,6 +523,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
         "python3 scripts/check-runtime-patch-contracts.py",
         "python3 build/scripts/test_modules_in_block_to_quantize.py",
         "python3 build/scripts/test_validate_quantized_artifact.py",
+        "python3 build/scripts/test_runtime_gptq_patch_composition.py",
     )
     for snippet in required_snippets:
         if snippet not in fast_job_body:
@@ -597,9 +617,11 @@ def main(argv: list[str]) -> int:
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
 
     qwen35_patch_script = read("build/scripts/vllm_qwen35_patches_nodiag.py")
+    gemma4_patch_script = read("build/scripts/vllm_gemma4_moe_gptq_patch.py")
 
     assert_patch_scripts_exist_and_parse()
     assert_qwen35_gptq_stock_path(qwen35_patch_script)
+    assert_gemma_patch_preserves_qwen_gptq_stock_path(gemma4_patch_script)
     assert_runtime_yaml_patch_refs(runtime_yaml)
     assert_dockerfile_patch_order(dockerfile)
     assert_runtime_entrypoint_contract(entrypoint, build_script)
