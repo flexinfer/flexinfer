@@ -208,8 +208,11 @@
   complete-answer latency must stay at or below 25s.
 - Initial deployment correction: revision v1 encoded graph sizes as the scalar
   string `1,2`; vLLM rejected it as an invalid integer before model loading.
-  Revision v2 uses the backend-tested JSON array `[1, 2]`. The failed v1 pod
-  produced no performance evidence and is excluded from the runtime verdict.
+  Revision v2 exposed a backend defect: FlexInfer JSON-encoded the array into
+  the single CLI token `[1,2]`, which the variadic vLLM argument also rejected.
+  Revision v3 fixes the backend to render the array as separate `1 2` tokens.
+  The failed v1 and v2 pods produced no performance evidence and are excluded
+  from the runtime verdict.
 
 ## Next
 
