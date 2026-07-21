@@ -3,12 +3,14 @@
 ## Scope
 
 - Iteration goal: prove that the exact-source Fable Fusion W4/G128 artifact
-  serves coherently on the shuffle-guarded FlexInfer gfx1100 vLLM runtime.
-- Current blocker: structural GPTQ validation cannot prove live GDN/logit
-  coherence on AMD; the artifact has not yet run on physical gfx1100.
-- Hypothesis: the prior Qwen3.6 token corruption came from ROCm
-  `gptq_shuffle`, so this full-GDN artifact will be coherent when loaded by the
-  current shuffle-guarded runtime.
+  serves coherently and at useful speed on the FlexInfer gfx1100 vLLM runtime.
+- Final status: qualified on physical gfx1100 with the native RDNA3 W4A16
+  operator. The digest-pinned lane is coherent and about 14x faster than the
+  legacy ROCm GPTQ reference path.
+- Root cause: generic ROCm fused GPTQ handling corrupted production-shaped
+  output, while the legacy reference path was correct but too slow. The proper
+  fix was a vLLM 0.23 source build containing the gfx1100 operator plus the
+  repository's text-only Qwen3.5 architecture plugin.
 
 ## Artifact pinning
 
@@ -16,7 +18,8 @@
 - Files touched: digest-pinned cache/Model activation plus temporary GPU-window
   and completed-build-window restoration manifests.
 - Build profile: text-only GPTQ W4/G128, 128 x 1024 calibration.
-- Image digest: `registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e`
+- Qualified image digest: `registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d`
+- Reference image digest: `registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e`
 - Artifact digest: `sha256:285a044529f6321f954353c93c5a91f771cfdfc7445ad25af5d64b7926d83710`
 - Upstream ref: `nightmedia/Qwen3.6-27B-Architect-Polaris2-Fable-B-F451@5ae530c3ab85033856e75cb1efc63fb1bf82a133`
 - Probe manifest: `deploy/models/qwen36-27b-fable-gptq.yaml`
@@ -50,6 +53,13 @@
   legacy `VLLM_USE_TRITON_FLASH_ATTN` baked into the pinned runtime image.
   Set `failOnEnvironValidation: false` for this immutable runtime; all explicit
   Model/GPUProfile environment values remain unchanged and auditable.
+- Native runtime correction: build vLLM 0.23 from source for gfx1100 and make
+  the image verifier import `vllm._rocm_C` directly. Importing the dispatcher
+  on a GPU-less builder did not prove that the ROCm extension was loadable.
+- Architecture correction: the first native image stopped before weight load
+  because upstream vLLM registers the multimodal Qwen3.5 wrapper but not the
+  text-only architecture emitted by this quantizer. Install the existing
+  `vllm-qwen35-text-plugin` in the native image and verify its entry point.
 
 ## Probe
 
@@ -64,7 +74,7 @@
 - Expected success: stable English answers across repeated greedy prompts, no
   token salad, no engine errors, and VRAM fit below the 24 GiB card ceiling.
 
-## Result
+## Reference result
 
 - Outcome: **PASS for coherence and gfx1100 fit; performance-constrained**.
 - Load proof: all 5 safetensor shards loaded in 12.35s; vLLM reported 16.87 GiB
@@ -88,13 +98,34 @@
   unavailable optional Triton kernels. The active engine used Triton Attention
   plus the runtime's built-in ROCm GPTQ reference fallback.
 
+## Native W4A16 result
+
+- Outcome: **PASS for coherence, fit, determinism, and throughput**.
+- Runtime identity: the serving pod used the qualified `2e9652ed...` digest
+  with zero restarts. Both API and EngineCore loaded the text architecture
+  plugin, resolved `Qwen3_5ForCausalLM`, and logged
+  `Using RDNA3W4A16LinearKernel for AutoGPTQLinearMethod`.
+- Load proof: all 5 checkpoint shards loaded. vLLM reported 16.68 GiB model
+  memory and 54,954 GPU KV-cache tokens within the 24 GiB card envelope.
+- Determinism: three temperature-0 requests returned identical coherent output.
+  The chat template exposes a verbose `Thinking Process:` in `content`, but a
+  256-token `2+2` request completed its reasoning and returned the final `4`.
+- Quality smoke: coherent and correct responses for arithmetic, France's
+  capital, a Python addition function, Rayleigh scattering, and exact JSON.
+  No token salad or engine errors were observed.
+- Throughput: short completions sustained about 8.4 tok/s; a 194-token response
+  completed in 22.13s, about **8.77 output tok/s** gross. This is roughly 14x
+  the 0.61 tok/s reference lane.
+- Lifecycle: keep `minReplicas: 0`. A 10-minute serverless timeout covers the
+  roughly two-minute cold start and multi-prompt sessions. The independent
+  two-minute shared-GPU demand window still returns the card to the WAN warm
+  primary promptly after traffic stops.
+
 ## Next
 
 1. Keep this exact artifact/runtime pair available under the unique
-   `qwen36-27b-fable-gptq` alias at minReplicas 0 and 8K context.
-2. Restore the WAN, Gemma4, and Qwen3.5 warm-primary policies after this
-   isolated window. Use equal priority 500 so explicit Fable demand can borrow
-   an idle WAN slot without preempting active video demand.
-3. Treat a newer fused ROCm GPTQ/GDN kernel path as a separate performance
-   experiment; require greedy parity against this reference lane before any
-   runtime or default-alias promotion.
+   `qwen36-27b-fable-gptq` alias at minReplicas 0 and an 8K context.
+2. Keep WAN as the warm primary. Equal priority 500 lets explicit Fable demand
+   borrow its idle card while active video demand remains authoritative.
+3. Treat larger context, MTP, alternative scheduler settings, and default-alias
+   routing as separate changes with their own correctness and VRAM gates.
