@@ -778,7 +778,10 @@ publish_binaries:
       upload "bin/proxy" "proxy_linux_amd64"
       upload "bin/flash-loader" "flash-loader_linux_amd64"
   rules:
-    - if: $CI_COMMIT_BRANCH == "master"
+    # Generic packages are release artifacts, not per-commit build outputs.
+    # Publishing every master SHA retained hundreds of large binary bundles
+    # and exhausted the GitLab data disk. Merge pipelines still validate the
+    # binaries through build_binaries; only tags persist them in the registry.
     - if: $CI_COMMIT_TAG
 
 publish_helm_chart:
@@ -812,7 +815,9 @@ publish_helm_chart:
         echo "HELM_OCI_REPO not set; skipping OCI push"
       fi
   rules:
-    - if: $CI_COMMIT_BRANCH == "master"
+    # The chart is deployed from this repository by Flux. Keep the generic
+    # package registry for tagged releases only so commit builds do not grow
+    # GitLab storage without bound.
     - if: $CI_COMMIT_TAG
 
 # --- Optional: MLC-LLM Backend Images ---
