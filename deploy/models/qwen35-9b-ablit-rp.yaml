@@ -1,18 +1,13 @@
-# Abliterated Qwen3.5-9B @ 32K context + NSFW-RP LoRA — psyche-simulator test model.
+# Abliterated Qwen3.5-9B @ 131K context + NSFW-RP LoRA — primary RP lane.
 #
 # Warm-primary member of the 7900xtx-textgen shared group on cblevins-7900xtx.
 # The LoRAAdapter qwen35-9b-nsfw-rp targets this model; the controller auto-injects
 # --enable-lora, --max-loras, --max-lora-rank 64, and VLLM_ALLOW_RUNTIME_LORA_UPDATING.
 #
-# Kill-test PASSED 2026-07-19 (base numerics + rank-64 LoRA quality both coherent
-# on runtime image 6ee8b3ed, gptq_shuffle-skip fix). Now ON the public litellm
-# fleet (litellm.enabled:true) as the general local text lane for news-analyzer
-# and other in-cluster consumers (OpenWebUI). Reach the LoRA via model="nsfw-rp".
-#
-# VERIFY ON APPLY:
-#   - source PVC path produced by qwen35-9b-oci-gfx1100 (drafted below).
-#   - gfx1100 default image registers the qwen3_5_text hybrid arch + supports LoRA.
-#   - 9B native max_position_embeddings >= 32768 (else add VLLM_ALLOW_LONG_MAX_MODEL_LEN).
+# ModelExperiment/qwen35-9b-v023-rp-canary PASSED 2026-07-21 on the exact
+# digest below: native RDNA3 W4A16, FULL_AND_PIECEWISE graphs 1/2/4, rank-64
+# LoRA, 55.68 aggregate tok/s across two RP streams, and exact 5/5 recall in a
+# 127,969-token prompt. Reach the adapter via model="nsfw-rp".
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -22,21 +17,28 @@ metadata:
     flexinfer.ai/base-model-source: Qwen/Qwen3.5-9B
     flexinfer.ai/base-model-posture: abliterated
     flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128
+    flexinfer.ai/runtime-digest: sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+    flexinfer.ai/canary-certificate: qwen35-9b-v023-rp-canary-generation-5
 spec:
   backend: vllm
-  # From the OCI-pull cache PVC. Confirm exact path once qwen35-9b-oci-gfx1100 is Ready.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+  # Exact OCI-pull cache PVC path certified by the canary artifact gate.
   source: pvc://qwen35-9b-oci-gfx1100/qwen35-9b
   cache:
     strategy: Local
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen35-9b-v023-production
+      sizeLimit: 4Gi
   gpu:
     vendor: amd
-    count: 1
+    # The host advertises both the discrete XTX and Raphael iGPU. Claim both
+    # resources and expose ordinal zero, matching the certified canary.
+    count: 2
     shared: 7900xtx-textgen
-    # ~6GB GPTQ weights + rank-64 LoRA buffers; the pod reserves
-    # gpuMemoryUtilization (0.90) of the 24GB card up front (~22GB) for
-    # weights + activations + the 128K KV pool. It is the sole 7900xtx tenant
-    # (wan video lanes live on cblevins-5930k), so estimate the full reservation.
-    vramEstimateMB: 22000
+    # The certified profile reserves 94% of the discrete 24 GiB card and left
+    # 13.77 GiB for 448,077 KV tokens after warm compilation.
+    vramEstimateMB: 23200
     # 2026-07-18 psyche fleet layout: warm-pinned leader of the 7900xtx text
     # lane. Outranks the demoted workhorse-128k (300) and every other group
     # member; the wan video lanes moved to cblevins-5930k in the same change.
@@ -45,13 +47,17 @@ spec:
     enabled: true
     minReplicas: 1
     idleTimeout: 30m
-    coldStartTimeout: 15m
+    coldStartTimeout: 25m
   config:
     # Reclaim the shared card after an on-demand borrower goes idle. Priority
     # alone only controls demand-driven swaps and does not evict a Ready model.
     warmPolicy: primary
+    # Pin this model to the certified vLLM 0.23 image instead of the node's
+    # older persistent runtime bundle.
+    dedicatedDeployment: true
     dtype: "half"
     quantization: gptq
+    languageModelOnly: true
     # The artifact config carries multimodal mRoPE fields (mrope_interleaved,
     # mrope_section) that vLLM's qwen3_5 config parser rejects (validate_rope:
     # "set -= list"). Override with a clean text-only rope block (same trick the
@@ -61,35 +67,48 @@ spec:
     # context-needle-bench): 131072 PASS (recall 1/1, coherent); 245760 FAIL
     # (coherent prose but recall 0/1) despite loading Ready at 262144. Recall
     # ceiling sits in (131072, 245760) — bisect before raising this again.
-    hfOverrides: '{"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+    hfOverrides: '{"architectures":["Qwen3_5ForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
     maxModelLen: 131072
-    gpuMemoryUtilization: "0.90"
+    maxInputTokens: 130048
+    maxOutputTokens: 1024
+    gpuMemoryUtilization: "0.94"
     # 4 slots so two slow/stuck streams can't monopolize the engine (observed
     # 2026-07-19: a 2-req retry loop pinned both slots for 6h while psyche
     # queued). KV pool is shared and was at ~1% under 2×128K-capable seqs;
     # vLLM preempts if concurrent sequences ever outgrow the pool.
     maxNumSeqs: 4
-    # Throughput revisit attempted 2026-07-20: enforceEager: false CONFIRMED
-    # BROKEN — qwen3_5 hybrid arch fails vLLM cuda_graph capture on the
-    # gfx1100 runtime image (torch.compile graph break, gb0059; engine core
-    # init fails and the backend crashloops). Eager mode is load-bearing
-    # until the runtime image's vllm/torch handles this arch's graph
-    # capture. The ~4.8 tok/s decode ceiling stands; next levers are a
-    # runtime image bump or a non-GPTQ artifact, not this flag.
-    enforceEager: true
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    kvCacheDtype: auto
+    calculateKvScales: false
+    # vLLM 0.23 plugin certificate: bounded graph shapes avoid the v0.17
+    # hybrid-architecture crash and deliver ~102 base / ~60 short-LoRA tok/s.
+    enforceEager: false
+    cudagraphCaptureSizes: [1, 2, 4]
+    maxCudagraphCaptureSize: 4
+    gdnPrefillBackend: triton
+    cudagraphMetrics: true
+    kvCacheMetrics: true
+    kvCacheMetricsSample: "1.0"
+    enablePrefixCaching: false
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
     trustRemoteCode: true
     servedModelName: qwen35-9b-ablit-rp
     enableToolCalling: false     # roleplay model — no tool parser
     disableLogStats: false
+    failOnEnvironValidation: false
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
-      cpu: "2"
-      memory: 8Gi
-    limits:
       cpu: "4"
-      memory: 24Gi
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
   serviceLabels:
     - qwen35-9b-ablit-rp
   litellm:

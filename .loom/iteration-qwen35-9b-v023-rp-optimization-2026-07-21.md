@@ -112,9 +112,29 @@
   15 tok/s floor independently to both dialogue and multi-turn medians. Bump
   the experiment revision to `131k-graph-fp16kv-lora-v3`.
 
+### Generation 3
+
+- Outcome: PASS. `ModelExperiment/qwen35-9b-v023-rp-canary` generation 5
+  reached the durable typed verdict `Succeeded / GauntletPassed` with an empty
+  failure list. The candidate was deleted and the original parent restored.
+- Exact image digest and zero-restart startup were reconfirmed on gfx1100.
+- Base RP decode: 101.99 tok/s. Matched LoRA dialogue median: 59.59 tok/s
+  (`0.5843` of base). Multi-turn median: 40.51 tok/s. Short p95 TTFT: 0.60s.
+- Two-stream median aggregate output: 55.68 tok/s; p95 stream elapsed: 4.60s.
+- Long context: exact 5/5 recall from 127,969 prompt tokens, 123.32-second
+  TTFT, 156.57-second total, no reasoning text, OOM, fault, abort, or error.
+
+### Production promotion
+
+- Promote only the certified profile to `Model/qwen35-9b-ablit-rp`: exact
+  runtime digest, dedicated Deployment, native W4A16, graph shapes 1/2/4,
+  chunked 4K prefill, FP16 KV, 131K reservation, rank-64 LoRA injection, and a
+  production-specific persistent compilation-cache namespace.
+- Preserve the parent name, `nsfw-rp` adapter, LiteLLM registration, aliases,
+  source artifact, shared-group policy, and warm-primary priority.
+
 ## Next
 
-1. Validate and ship the generation-3 workload-matched performance gate.
-2. Re-run through a typed passing verdict and verify production restoration.
-3. If memory alone fails, reduce graph capture to shape one before considering
-   a split fast-RP/long-context profile; do not introduce FP8 KV in this arm.
+1. Validate and ship the certified production profile.
+2. Confirm exact production image/graph logs and zero-restart Ready state.
+3. Confirm the `nsfw-rp` LoRA status and smoke both base and adapter aliases.
