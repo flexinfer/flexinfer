@@ -44,9 +44,10 @@ spec:
   serverless:
     enabled: true
     minReplicas: 0
-    # Reap failed/experimental activations quickly so the warm WAN leader is
-    # restored without leaving this demand-only canary on the shared GPU.
-    idleTimeout: 1m
+    # Native vLLM cold start is about two minutes. Keep the demand-only canary
+    # alive long enough for qualification and ordinary responses; one minute
+    # caused it to self-reap immediately after readiness and between probes.
+    idleTimeout: 10m
     coldStartTimeout: 20m
   config:
     warmPolicy: ondemand
