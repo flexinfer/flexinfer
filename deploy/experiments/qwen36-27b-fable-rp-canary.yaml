@@ -1,9 +1,9 @@
 # Fable 27B replacement canary for the warm qwen35-9b-ablit-rp lane.
 #
 # Generation 1 passed the exact qualified 8K eager/FP16-KV sentinel on the same
-# physical 7900 XTX used by the 9B lane. Generation 2 changes only the context
-# envelope to a matched 32K eager/FP16-KV control. The next generation changes
-# execution/KV to 32K graph/FP8-KV. The
+# physical 7900 XTX used by the 9B lane. Generation 2 passed the matched 32K
+# eager/FP16-KV control with exact 19,841-token recall. Generation 3 changes
+# only execution/KV to bounded graph/FP8-KV. The
 # ModelExperiment controller removes every candidate at verdict, after which
 # the existing 9B parent Model resumes its warm-primary shared-group lease.
 apiVersion: ai.flexinfer/v1alpha2
@@ -59,9 +59,17 @@ spec:
       maxNumBatchedTokens: 2048
       enableChunkedPrefill: true
       gpuMemoryUtilization: "0.90"
-      kvCacheDtype: auto
+      kvCacheDtype: fp8_e4m3
       calculateKvScales: false
-      enforceEager: true
+      enforceEager: false
+      # One active sequence means the only decode graph shape needed in this
+      # arm is one. Larger shapes belong to the later concurrency experiment.
+      cudagraphCaptureSizes: "1"
+      maxCudagraphCaptureSize: 1
+      gdnPrefillBackend: triton
+      cudagraphMetrics: true
+      kvCacheMetrics: true
+      kvCacheMetricsSample: "1.0"
       enablePrefixCaching: false
       disableAiter: true
       rocmCustomPagedAttn: false
@@ -89,8 +97,8 @@ spec:
   gauntlet:
     templateRef: fable-rp-performance-gauntlet
     env:
-      FLEXINFER_EXPERIMENT_REVISION: "32k-eager-fp16kv-control-v1"
-      EXPERIMENT_PHASE: "32k_eager_fp16kv_control"
+      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp8kv-candidate-v1"
+      EXPERIMENT_PHASE: "32k_graph_fp8kv_candidate"
       ITERS: "3"
       RP_OUTPUT_TOKENS: "192"
       LONG_CONTEXT_TOKENS: "18000"
