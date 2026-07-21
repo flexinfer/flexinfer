@@ -59,13 +59,13 @@ spec:
     maxNumSeqs: 1
     maxNumBatchedTokens: 2048
     enableChunkedPrefill: true
-    schedulerReserveFullISL: true
     gpuMemoryUtilization: "0.90"
     kvCacheDtype: auto
     calculateKvScales: false
-    # Match the known-safe Qwen3.5 hybrid posture on the current gfx1100 image.
+    # Match the supported Qwen3.5 hybrid posture on the pinned gfx1100 image.
+    # Do not emit the newer gdnPrefillBackend or schedulerReserveFullISL flags:
+    # runtime 6ee8b3 is vLLM 0.17 and rejects both before model loading.
     enforceEager: true
-    gdnPrefillBackend: triton
     enablePrefixCaching: false
     disableAiter: true
     rocmCustomPagedAttn: false
