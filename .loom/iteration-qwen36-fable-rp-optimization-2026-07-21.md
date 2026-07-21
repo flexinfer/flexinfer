@@ -206,6 +206,10 @@
 - Gate: both streams must complete without missing usage/reasoning/faults,
   median aggregate output must be at least 15 tok/s, and p95 per-stream
   complete-answer latency must stay at or below 25s.
+- Initial deployment correction: revision v1 encoded graph sizes as the scalar
+  string `1,2`; vLLM rejected it as an invalid integer before model loading.
+  Revision v2 uses the backend-tested JSON array `[1, 2]`. The failed v1 pod
+  produced no performance evidence and is excluded from the runtime verdict.
 
 ## Next
 
