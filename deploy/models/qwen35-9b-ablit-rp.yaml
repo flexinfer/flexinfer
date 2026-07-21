@@ -26,6 +26,11 @@ spec:
   source: pvc://qwen35-9b-oci-gfx1100/qwen35-9b
   cache:
     strategy: Local
+    # The staged cache is 14.7 GB while this node has only ~4.2 GB free in
+    # /dev/shm. Mount the proven EXT4 cache directly, as the canary did,
+    # instead of auto-copying it through an unsatisfiable tmpfs init step.
+    flashLoader:
+      enabled: false
     compilationCache:
       enabled: true
       hostPath: /var/lib/flexinfer/compile-cache-qwen35-9b-v023-production

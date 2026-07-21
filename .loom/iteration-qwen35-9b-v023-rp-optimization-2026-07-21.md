@@ -132,6 +132,12 @@
   production-specific persistent compilation-cache namespace.
 - Preserve the parent name, `nsfw-rp` adapter, LiteLLM registration, aliases,
   source artifact, shared-group policy, and warm-primary priority.
+- First rollout storage blocker: `cache.strategy: Local` auto-enabled the
+  flash-loader, which found 14,684.4 MB to copy but only 4,155.9 MB free in the
+  node's persistent `/dev/shm`; the init container correctly refused to start.
+  The canary loaded the same artifact directly from EXT4. Explicitly disable
+  flash-loader on this model so the dedicated deployment mounts the already-
+  staged Local cache directly and retains the certified storage path.
 
 ## Next
 
