@@ -48,7 +48,7 @@
   candidate pod `imageID`, then follow the retained gauntlet Job logs.
 - Pod/job: `ModelExperiment/qwen36-27b-fable-rp-canary`; child names recorded
   in status.
-- Confirmed image ID: pending.
+- Confirmed image ID: `registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d`.
 - Expected success condition: exact literal response, zero reasoning tokens,
   coherent synthetic RP continuations, median decode at least 7.5 tok/s, p95
   TTFT at most 30s, no restart or ROCm/HSA/NaN/OOM markers, typed PASS verdict,
@@ -56,14 +56,43 @@
 
 ## Result
 
-- Outcome: pending.
+### Generation 1 — 8K eager/FP16-KV sentinel
+
+- Outcome: success.
+- Flux revision: `master@sha1:35ddefb1294c6239051e34bd67532a5c0b23f8d8`.
+- Typed verdict: `Succeeded`, `pass=true`, Job
+  `qwen36-27b-fable-rp-canary-gauntlet`.
+- Runtime proof: vLLM 0.23, plugin registration reported 11 constrained FLA
+  autotuners, and `AutoGPTQLinearMethod` selected
+  `RDNA3W4A16LinearKernel`. The candidate pod used the pinned image digest
+  above and restarted zero times.
+- Thinking-off proof: every request reported `reasoning_chars=0`; the literal
+  warmup returned exactly `ROCM_FABLE_OK`.
+- RP dialogue: 192 tokens at 31.6611 and 31.3775 tok/s, with 0.1942s and
+  0.1800s TTFT.
+- 2,278-token multi-turn scene: 192 and 168 output tokens at 20.8414 and
+  20.8205 tok/s, with 2.1753s and 1.8934s TTFT.
+- Summary: median decode 26.1095 tok/s, p95 TTFT 2.1753s, no gauntlet
+  failures. vLLM's own histogram recorded 745 inter-token observations in
+  29.47099s (25.28 tok/s aggregate over the complete probe).
+- Cleanup proof: the experiment controller deleted the candidate after the
+  verdict and `Model/qwen35-9b-ablit-rp` returned to `Ready` through its parent
+  CR without a direct scale or pod operation.
+
+### Generation 2 — 32K eager/FP16-KV control
+
+- Outcome: running.
+- Change from generation 1: `maxModelLen` 8,192 -> 32,768,
+  `maxInputTokens` 6,144 -> 28,672, and the gauntlet adds the 18K synthetic
+  passphrase-recall workload. Runtime, dtype, KV dtype, eager mode, scheduler,
+  artifact, image, and one-sequence posture are unchanged.
 - Exact failure or success evidence: pending.
 - Relevant logs / stack frame: pending.
 
 ## Next
 
-1. If the 8K sentinel passes, change only context to 32K while retaining eager
-   mode and FP16 KV.
+1. Complete the 32K eager/FP16-KV control and retain its direct-service Job
+   logs as the matched baseline.
 2. If the 32K control passes, change only execution/KV to bounded graph and
    FP8 E4M3 using fixed scales; dynamic warmup scale calculation is unsafe for
    this vLLM 0.23 hybrid recurrent path.
