@@ -87,9 +87,34 @@
   `/v1/models` as the authoritative registration check. Bump the experiment
   revision to `131k-graph-fp16kv-lora-v2` so GitOps starts generation 2.
 
+### Generation 2
+
+- Outcome: every runtime, quality, absolute-throughput, concurrency, and long-
+  context gate passed. The job failed only on a mis-specified relative metric.
+- Warm candidate startup fell to about 76 seconds. The persistent cache loaded
+  the compiled range in 2.61 seconds; total compile time fell from 45.90 to
+  5.97 seconds, and graph capture fell from 14 to 6 seconds.
+- Capacity improved to 13.77 GiB available KV, 448,077 KV tokens, and 3.42x
+  reported concurrency at 131,072 tokens. The exact image remained restart-free.
+- LoRA hot-load passed with HTTP 200 and `/v1/models` listed `nsfw-rp`.
+  Dialogue median decode was 59.13 tok/s; 2,268-token multi-turn median decode
+  was 40.14 tok/s. Outputs were coherent and emitted no reasoning text.
+- Two concurrent 2,268-token sessions sustained a median 53.13 aggregate
+  output tok/s with 4.90-second p95 stream elapsed time.
+- Long context passed exactly: 127,969 prompt tokens, all five needles recalled
+  at five depths, 121.17-second TTFT, and 154.99-second total elapsed time.
+- Exact failure: the combined median of the short and ~28x-longer LoRA
+  workloads was 49.63 tok/s, or 0.4885 relative to the short base control,
+  narrowly below the 0.50 gate. Combining unlike prompt lengths made this an
+  invalid adapter-overhead comparison.
+- Narrow fix: compute the relative ratio from the matched 80-token base and
+  LoRA dialogue workload (observed ratio 0.5821), while applying the absolute
+  15 tok/s floor independently to both dialogue and multi-turn medians. Bump
+  the experiment revision to `131k-graph-fp16kv-lora-v3`.
+
 ## Next
 
-1. Validate and ship the generation-2 response-parser fix.
-2. Observe LoRA, concurrency, and 128K recall evidence through typed verdict.
+1. Validate and ship the generation-3 workload-matched performance gate.
+2. Re-run through a typed passing verdict and verify production restoration.
 3. If memory alone fails, reduce graph capture to shape one before considering
    a split fast-RP/long-context profile; do not introduce FP8 KV in this arm.

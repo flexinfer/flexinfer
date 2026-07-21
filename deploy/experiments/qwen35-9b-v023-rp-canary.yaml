@@ -97,9 +97,9 @@ spec:
   gauntlet:
     templateRef: qwen35-9b-rp-performance-gauntlet
     env:
-      # v2 accepts vLLM's successful plain-text LoRA hot-load response while
-      # retaining /v1/models as the authoritative adapter-registration gate.
-      FLEXINFER_EXPERIMENT_REVISION: "131k-graph-fp16kv-lora-v2"
+      # v3 compares adapter/base throughput on the same short RP workload and
+      # independently applies the absolute throughput floor to every workload.
+      FLEXINFER_EXPERIMENT_REVISION: "131k-graph-fp16kv-lora-v3"
       EXPERIMENT_PHASE: "131k_graph_fp16kv_lora"
       ITERS: "3"
       RP_OUTPUT_TOKENS: "192"

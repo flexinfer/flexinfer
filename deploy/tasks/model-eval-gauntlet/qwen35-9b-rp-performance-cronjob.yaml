@@ -495,16 +495,19 @@ spec:
                   load_adapter()
 
                   lora_results = []
+                  lora_results_by_workload = {}
                   for workload, messages in (
                       ("lora_rp_dialogue", rp_messages),
                       ("lora_multi_turn", multi_turn_messages),
                   ):
+                      workload_results = []
                       for iteration in range(1, iterations + 1):
                           result, answer = stream_chat(
                               workload, adapter, messages, output_tokens
                           )
                           result["iteration"] = iteration
                           lora_results.append(result)
+                          workload_results.append(result)
                           if result["completion_tokens"] < 48:
                               failures.append(
                                   f"{workload} iteration {iteration} returned only "
@@ -517,22 +520,35 @@ spec:
                               failures.append(
                                   f"{workload} iteration {iteration} incoherent: {coherence}"
                               )
+                      lora_results_by_workload[workload] = workload_results
 
                   lora_median_tps = statistics.median(
                       result["decode_tps"] for result in lora_results
                   )
+                  lora_workload_medians = {
+                      workload: statistics.median(
+                          result["decode_tps"] for result in results
+                      )
+                      for workload, results in lora_results_by_workload.items()
+                  }
                   short_p95_ttft = percentile(
                       [base_result["ttft_s"]]
                       + [result["ttft_s"] for result in lora_results],
                       0.95,
                   )
-                  lora_to_base_ratio = lora_median_tps / max(
-                      0.001, base_result["decode_tps"]
-                  )
-                  if lora_median_tps < min_lora_median_tps:
-                      failures.append(
-                          f"LoRA median decode {lora_median_tps:.4f} < {min_lora_median_tps:.4f}"
-                      )
+                  # Compare the adapter and base on the same short RP prompt.
+                  # The multi-turn prompt is ~28x longer and has its own
+                  # absolute floor, so folding it into this ratio is not a
+                  # meaningful adapter-overhead measurement.
+                  lora_to_base_ratio = lora_workload_medians[
+                      "lora_rp_dialogue"
+                  ] / max(0.001, base_result["decode_tps"])
+                  for workload, median_tps in lora_workload_medians.items():
+                      if median_tps < min_lora_median_tps:
+                          failures.append(
+                              f"{workload} median decode {median_tps:.4f} < "
+                              f"{min_lora_median_tps:.4f}"
+                          )
                   if lora_to_base_ratio < min_lora_to_base_ratio:
                       failures.append(
                           f"LoRA/base decode ratio {lora_to_base_ratio:.4f} < "
@@ -597,6 +613,11 @@ spec:
                       "phase": phase,
                       "base_decode_tps": base_result["decode_tps"],
                       "lora_median_decode_tps": round(lora_median_tps, 4),
+                      "lora_workload_median_decode_tps": {
+                          workload: round(median_tps, 4)
+                          for workload, median_tps in lora_workload_medians.items()
+                      },
+                      "lora_ratio_workload": "lora_rp_dialogue",
                       "lora_to_base_ratio": round(lora_to_base_ratio, 4),
                       "short_p95_ttft_s": round(short_p95_ttft, 4),
                       "long_prompt_tokens": long_result["prompt_tokens"],
