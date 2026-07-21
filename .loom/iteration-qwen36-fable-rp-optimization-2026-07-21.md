@@ -199,10 +199,11 @@
 ### Generation 6 — 32K graph/FP16-KV two-session scheduler
 
 - Outcome: success.
-- Change from generation 5: `maxNumSeqs=2`, `maxNumBatchedTokens=4096`, graph
-  capture shapes one and two, two partial-prefill slots, and at most one long
-  partial prefill. The harness adds three batches of two simultaneous 2,278-
-  token RP sessions and reports per-stream tail latency plus aggregate output.
+- Change from generation 5: `maxNumSeqs=2`, `maxNumBatchedTokens=4096`, and
+  graph capture shapes one/two. The harness adds three batches of two
+  simultaneous 2,278-token RP sessions and reports per-stream tail latency
+  plus aggregate output. The initial revisions also attempted concurrent
+  partial-prefill controls; the final v4 profile omits them as described below.
 - Gate: both streams must complete without missing usage/reasoning/faults,
   median aggregate output must be at least 15 tok/s, and p95 per-stream
   complete-answer latency must stay at or below 25s.

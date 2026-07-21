@@ -240,9 +240,10 @@ decision about the 9B lane's verified 131K context contract.
 
 ## Handoff
 
-- If chosen → next step is: `plan-loom-core`, then `rapid-dev-iteration-loop` for the isolated canary.
+- The isolated `rapid-dev-iteration-loop` is complete; next steps are the warm
+  mixed-prompt/cancellation soak and blinded RP preference evaluation.
 - Linked research: `.loom/10-research.md` section “Fable 27B gfx1100 optimization and 9B-RP replacement (2026-07-21)”.
-- Suggested implementation plan: `.loom/30-implementation-plan-fable-rp-lane-optimization-2026-07-21.md` after the context requirement is decided.
+- Do not promote the public alias until the context requirement is decided.
 
 ## Primary sources
 
