@@ -8,7 +8,8 @@
 # FP16 KV are faster, but a cold compile left too little KV headroom and forced
 # one restart before the cached compile loaded cleanly. Generation 5 raises the
 # dedicated engine budget and uses a fresh compile-cache path to certify a
-# clean cold start. The
+# clean cold start. Generation 6 keeps that winner and adds two-session
+# scheduling, partial-prefill guards, and graph shape two. The
 # ModelExperiment controller removes every candidate at verdict, after which
 # the existing 9B parent Model resumes its warm-primary shared-group lease.
 apiVersion: ai.flexinfer/v1alpha2
@@ -62,9 +63,12 @@ spec:
       maxModelLen: 32768
       maxInputTokens: 28672
       maxOutputTokens: 2048
-      maxNumSeqs: 1
-      maxNumBatchedTokens: 2048
+      maxNumSeqs: 2
+      maxNumBatchedTokens: 4096
       enableChunkedPrefill: true
+      maxNumPartialPrefills: 2
+      maxLongPartialPrefills: 1
+      longPrefillTokenThreshold: 4096
       # Cold graph compilation left only 1.52 GiB for KV at 0.90 while 32K
       # FP16 KV needs 2.08 GiB. 0.94 adds about 0.96 GiB of bounded headroom;
       # this dedicated pod has exclusive use of the discrete card.
@@ -72,10 +76,9 @@ spec:
       kvCacheDtype: auto
       calculateKvScales: false
       enforceEager: false
-      # One active sequence means the only decode graph shape needed in this
-      # arm is one. Larger shapes belong to the later concurrency experiment.
-      cudagraphCaptureSizes: "1"
-      maxCudagraphCaptureSize: 1
+      # Generation 6 exercises one and two simultaneous decode streams only.
+      cudagraphCaptureSizes: "1,2"
+      maxCudagraphCaptureSize: 2
       gdnPrefillBackend: triton
       cudagraphMetrics: true
       kvCacheMetrics: true
@@ -107,10 +110,13 @@ spec:
   gauntlet:
     templateRef: fable-rp-performance-gauntlet
     env:
-      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-cold-headroom-v1"
-      EXPERIMENT_PHASE: "32k_graph_fp16kv_cold_headroom"
+      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-two-session-v1"
+      EXPERIMENT_PHASE: "32k_graph_fp16kv_two_session"
       ITERS: "3"
       RP_OUTPUT_TOKENS: "192"
       LONG_CONTEXT_TOKENS: "18000"
       MIN_MEDIAN_TPS: "7.5"
       MAX_P95_TTFT: "30"
+      CONCURRENT_STREAMS: "2"
+      MIN_CONCURRENT_AGGREGATE_TPS: "15"
+      MAX_CONCURRENT_P95_ELAPSED: "25"
