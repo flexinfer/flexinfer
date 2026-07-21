@@ -1313,12 +1313,13 @@ The current 9B-RP lane is coherent after the gfx1100 `gptq_shuffle` skip fix;
 the earlier token-salad result is stale. It is a warm-primary W4/G128 GPTQ
 model with a rank-64 RP LoRA, a needle-verified 131,072-token window, four
 sequence slots, and a controlled decode ceiling of about 4.8 tok/s. The exact
-Fable 27B W4/G128 artifact is qualified at 8K on vLLM 0.23's native gfx1100
-W4A16 kernel: 16.68 GiB model memory, about 54,954 available GPU KV tokens,
-zero smoke-test restarts, and coherent output at about 8.4-8.8 tok/s. Fable is
-already roughly 1.8x faster in controlled single-stream decode; its replacement
-gaps are warm availability, response-token overhead, context validation,
-concurrency, and direct RP quality evidence.
+Fable 27B W4/G128 artifact is qualified on vLLM 0.23's native gfx1100 W4A16
+kernel. The later direct-service harness supersedes the early 8.4-8.8 tok/s
+smoke estimate: the matched 32K eager control reached 31.61 tok/s on short RP,
+20.80 tok/s on a 2,278-token scene, and 5.53 tok/s after a 19,841-token prompt.
+Model residency is 16.68 GiB. Its remaining replacement gaps are warm
+availability, a durable non-thinking default, direct RP quality evidence, and
+the product decision about reducing the verified context contract from 131K.
 
 Live aggregate counters are not an apples-to-apples throughput benchmark. The
 9B service's production inter-token histogram spans mixed prompts, queueing,
@@ -1335,24 +1336,19 @@ aggregate throughput separately.
    `chat_template_kwargs` first. FlexInfer's vLLM backend does not yet wire
    `--default-chat-template-kwargs`, so a durable service default needs a small
    backend/config addition.
-2. **Bounded graph canary on the native runtime**: the 9B graph crash occurred
-   on an older runtime and does not disqualify vLLM 0.23. A separate local
-   gfx1100/Qwen3.5 certificate captured graph mode successfully and later
-   delivered a 1.23x median MTP speedup. Test Fable with capture sizes 1/2/4
-   against its qualified eager control, failing closed on graph breaks or
-   memory loss.
-3. **FP8 E4M3 KV and context ladder**: use explicit fixed scales for the first
-   32K canary, then calibrate them on the RP/long-context corpus before
-   promotion. The local vLLM 0.23 hybrid-GDN certificate found warmup scale
-   calculation unsafe because its recurrent state is not initialized there.
-   FP8 KV expands capacity; it does not guarantee faster decode. Validate 16K,
-   32K, 48K, then 64K. Do not promise 128K on 24 GiB from the current 54,954
-   FP16-token capacity.
-4. **Scheduler/concurrency A/B**: compare 1/2/4/8 sequence slots and
-   2048/4096/8192 batched tokens. Start with two partial prefills and one long
-   partial prefill so long scenes do not starve short turns. The native W4A16
-   kernel's scalar decode path covers M<16, so four sequences may improve
-   aggregate throughput without making one stream faster.
+2. **Bounded graph mode is qualified**: graph/FP16-KV at a 0.94 memory budget
+   passed a fresh compile, exact 32K recall, and capture sizes 1/2/4. The
+   four-slot profile retained about 41.83 tok/s short-RP decode and used 0.52
+   GiB for graphs without reducing the 37,394-token KV pool.
+3. **FP8 E4M3 KV is rejected for this profile**: it improved short dialogue but
+   regressed the 2,278-token workload by 16.2% and long-context decode by 41.7%
+   versus eager/FP16-KV, while also reducing useful capacity. Context expansion
+   should not reuse FP8 until calibrated scales or a newer runtime overturn
+   that direct evidence.
+4. **Four-slot scheduling is qualified**: three four-stream RP batches reached
+   47.0744 median aggregate output tok/s with 16.5238s p95 per-stream latency.
+   vLLM 0.23 explicitly rejects concurrent partial prefill for this hybrid
+   path, so the winner keeps chunked prefill but omits those controls.
 5. **Automatic prefix caching only after a multi-turn canary**: APC can reduce
    repeated-prefix prefill/TTFT but cannot accelerate token generation. Qwen's
    hybrid/Mamba path makes alignment and parity evidence important. Report
@@ -1419,6 +1415,23 @@ workloads. Fail on any restart, ROCm/HSA fault, NaN, recall miss, constrained
 parity miss, or workload below 0.95x the 32K control. Full framing, tensions,
 replacement gates, and the <=30-minute procedure are recorded in
 `.loom/brainstorm-fable-rp-lane-optimization-2026-07-21.md`.
+
+### Execution result and decision
+
+The load-bearing graph/FP8 assumption was false, but the attribution ladder
+found a better tuple: graph mode with FP16 KV, `gpuMemoryUtilization=0.94`,
+capture sizes `[1,2,4]`, four sequence slots, 4,096 batched tokens, chunked
+prefill, and no concurrent partial prefill. It cold-started without restart,
+kept exact 19,841-token recall, and passed both two- and four-session gates.
+The four-session median aggregate was 47.0744 output tok/s, p95 per-stream
+complete-answer latency was 16.5238s, and the fault scan found no ROCm/HSA/OOM/
+NaN marker. The immutable artifact/runtime digests and detailed seven-generation
+record are in `.loom/iteration-qwen36-fable-rp-optimization-2026-07-21.md`.
+
+This is now a technically qualified 32K premium/replacement runtime profile.
+It should not take the public 9B alias yet: blinded RP preference, a warm mixed-
+prompt/cancellation soak, durable thinking-off behavior, and the 131K-versus-
+32K product contract remain open. The 9B parent stays the tested rollback lane.
 
 Primary sources:
 

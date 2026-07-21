@@ -238,7 +238,7 @@
 
 ### Generation 7 — 32K graph/FP16-KV four-session scheduler
 
-- Outcome: pending.
+- Outcome: success; this is the certified throughput-oriented RP profile.
 - Change from generation 6: `maxNumSeqs=4`, capture sizes `[1,2,4]`, and four
   simultaneous 2,278-token/192-output RP streams. Context, artifact, runtime,
   memory budget, chunked prefill, and sequential controls are unchanged.
@@ -247,10 +247,48 @@
 - Gate: all four streams must complete without restart/fault/usage/reasoning
   failure; median aggregate output must be at least 25 tok/s and p95 per-stream
   complete-answer latency must stay at or below 30s.
+- Clean-start proof: the candidate loaded on its first container start with
+  zero restarts. Model residency was 16.68 GiB, Torch compilation took 25.88s,
+  and graph shapes one/two/four used 0.52 GiB. The KV allocation remained 2.39
+  GiB and 37,394 tokens (1.14x one maximum-length 32K request).
+- Sequential parity: RP dialogue median decode was 41.8270 tok/s with 4.7398s
+  complete-answer latency; the 2,278-token multi-turn median was 24.4358 tok/s
+  with 9.5855s latency. All three 19,841-token prompts returned exactly
+  `CINNABAR-48271`, with 5.6856 tok/s median decode and 22.2926s latency.
+- Concurrent result: three four-stream batches delivered 46.4041, 47.1994,
+  and 47.0744 aggregate output tok/s. Median aggregate was 47.0744 tok/s; p95
+  per-stream complete-answer latency was 16.5238s and the worst per-stream
+  TTFT was 7.4903s. Every stream returned 192 tokens with zero reasoning
+  characters and complete usage accounting.
+- Scaling result: doubling from two to four streams raised median aggregate
+  throughput 47.4% while p95 stream latency increased 35.3%. Single-stream
+  controls remained within normal run variance, so the four-slot scheduler did
+  not trade away the graph/FP16 single-user win.
+- Graph and fault proof: concurrent decode dispatched FULL graphs at shape
+  four (including padded three-request tail steps). The runtime had zero
+  restart, traceback, ROCm/HSA/OOM, or NaN markers. First-use Triton JIT
+  warnings for short warmup and a GDN long-context shape identify production
+  warmup coverage to extend; they did not breach either concurrency gate.
+- Cleanup proof: typed PASS verdict at generation 12, automatic candidate
+  deletion, and automatic restoration of `qwen35-9b-ablit-rp` to Ready.
+
+## Certified runtime tuple
+
+- Exact W4/G128 GPTQ artifact and immutable vLLM 0.23 runtime digests above.
+- `dtype=half`, FP16/auto KV, `gpuMemoryUtilization=0.94`, 32,768-token window.
+- Bounded FULL_AND_PIECEWISE graphs at sizes `[1,2,4]`, `maxNumSeqs=4`,
+  `maxNumBatchedTokens=4096`, and chunked prefill enabled.
+- Concurrent partial prefill disabled because this hybrid path rejects it;
+  AITER and ROCm custom paged attention remain disabled/fallback-safe.
+- Thinking disabled at request level for the qualified RP profile.
 
 ## Next
 
-1. Run generation 7 and compare four-session aggregate throughput, per-stream
-   tail latency, graph memory, and KV headroom with generations 5 and 6.
-2. Keep 9B as the rollback lane until blinded RP preference and a warm soak
-   close the remaining product-quality and stability gates.
+1. Extend production warmup to cover capture sizes 1/2/4 plus one long GDN
+   shape, then run a warm soak with cancellations and mixed prompt lengths.
+2. Run blinded multi-turn RP preference against the repaired 9B rank-64 LoRA.
+3. Decide whether the 9B lane's verified 131K context is a hard contract; this
+   profile proves one 32K maximum request plus four ordinary RP sessions.
+4. Keep 9B as the rollback lane until those product gates close. The runtime
+   profile is technically qualified, but public-alias replacement is not yet
+   justified by performance evidence alone.
