@@ -223,9 +223,20 @@ only a new premium RP lane.
 
 **Failure mode if wrong**: The proposed successor would be optimized around a graph/FP8 tuple that crashloops, loses long-context quality, or consumes enough graph memory to erase its useful KV headroom. The lane must then remain eager, and the next work should be profiler-guided FLA tuning or the llama.cpp/MTP alternate rather than broader rollout.
 
-**Status**: not run
+**Status**: run; disconfirmed as written. The 32K graph/FP8-KV arm preserved
+exact recall and accelerated short dialogue, but regressed the 2,278-token
+multi-turn workload by 16.2% and long-context decode by 41.7% versus the matched
+eager/FP16 control. It also reduced useful KV capacity. FP8 KV is rejected for
+this profile.
 
-> The downstream slice plan is BLOCKED until this kill-test passes.
+The failure isolated FP8 rather than graph mode. Graph/FP16-KV at a 0.94 GPU
+memory budget subsequently passed a cold start, exact 32K recall, and one/two/
+four-stream bounded-graph tests. The four-stream result reached 47.0744 median
+aggregate output tok/s with 16.5238s p95 per-stream complete-answer latency,
+zero restarts/faults, and automatic restoration of the 9B parent. The repaired
+downstream runtime slice is therefore unblocked; public replacement remains
+gated on blinded RP preference, a warm fault/cancellation soak, and the product
+decision about the 9B lane's verified 131K context contract.
 
 ## Handoff
 
