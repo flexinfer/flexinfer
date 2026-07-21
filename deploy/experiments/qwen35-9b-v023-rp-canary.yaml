@@ -1,0 +1,110 @@
+# Disposable vLLM 0.23 graph + rank-64 LoRA + 131K certificate for the repaired
+# Qwen3.5-9B RP lane. The experiment candidate owns no public aliases. It takes
+# the 7900xtx shared-group lease only while the bounded gauntlet runs, then the
+# controller deletes it and the existing qwen35-9b-ablit-rp parent resumes.
+apiVersion: ai.flexinfer/v1alpha2
+kind: ModelExperiment
+metadata:
+  name: qwen35-9b-v023-rp-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/canary: qwen35-9b-v023-rp-performance
+    flexinfer.ai/runtime-digest: sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+    flexinfer.ai/kill-test: .loom/brainstorm-qwen35-9b-long-context-performance-2026-07-21.md#riskiest-assumption--kill-test
+spec:
+  timeout: 60m
+  artifactGate:
+    modelCacheRef: qwen35-9b-oci-gfx1100
+    requireSourceMatch: true
+  candidate:
+    backend: vllm
+    image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+    source: pvc://qwen35-9b-oci-gfx1100/qwen35-9b
+    cache:
+      strategy: None
+      compilationCache:
+        enabled: true
+        # Fresh namespace proves cold graph + LoRA memory fit instead of
+        # inheriting Fable's already-compiled shapes.
+        hostPath: /var/lib/flexinfer/compile-cache-qwen35-9b-v023-v1
+        sizeLimit: 4Gi
+    gpu:
+      vendor: amd
+      # The host advertises the discrete 7900 XTX and its Raphael iGPU. Match
+      # the certified v0.23 candidates: claim both resources, select ordinal 0.
+      count: 2
+      shared: 7900xtx-textgen
+      priority: 700
+      forcePromotion: true
+      vramEstimateMB: 23200
+    serverless:
+      enabled: true
+      minReplicas: 1
+      idleTimeout: 30m
+      coldStartTimeout: 25m
+    config:
+      dedicatedDeployment: true
+      quantization: gptq
+      dtype: half
+      languageModelOnly: true
+      hfOverrides: '{"architectures":["Qwen3_5ForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+      # Preserve the production lane's highest needle-verified context. This
+      # first generation changes the runtime/kernel path, not the model window.
+      maxModelLen: 131072
+      maxInputTokens: 130048
+      maxOutputTokens: 1024
+      maxNumSeqs: 4
+      maxNumBatchedTokens: 4096
+      enableChunkedPrefill: true
+      schedulerReserveFullISL: true
+      gpuMemoryUtilization: "0.94"
+      kvCacheDtype: auto
+      calculateKvScales: false
+      enforceEager: false
+      cudagraphCaptureSizes: [1, 2, 4]
+      maxCudagraphCaptureSize: 4
+      gdnPrefillBackend: triton
+      cudagraphMetrics: true
+      kvCacheMetrics: true
+      kvCacheMetricsSample: "1.0"
+      enablePrefixCaching: false
+      # The gauntlet hot-loads the rank-64 adapter directly. These explicit
+      # knobs expose the runtime LoRA API without another LoRAAdapter CR.
+      enableLora: true
+      maxLoras: 1
+      maxLoraRank: 64
+      disableAiter: true
+      rocmCustomPagedAttn: false
+      hipVisibleDevices: "0"
+      trustRemoteCode: true
+      enableToolCalling: false
+      disableLogStats: false
+      failOnEnvironValidation: false
+      warmPolicy: primary
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-7900xtx
+    resources:
+      requests:
+        cpu: "4"
+        memory: 16Gi
+      limits:
+        cpu: "8"
+        memory: 40Gi
+    tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+        operator: Exists
+  gauntlet:
+    templateRef: qwen35-9b-rp-performance-gauntlet
+    env:
+      FLEXINFER_EXPERIMENT_REVISION: "131k-graph-fp16kv-lora-v1"
+      EXPERIMENT_PHASE: "131k_graph_fp16kv_lora"
+      ITERS: "3"
+      RP_OUTPUT_TOKENS: "192"
+      LONG_CONTEXT_TOKENS: "128000"
+      MIN_LORA_MEDIAN_TPS: "15"
+      MIN_LORA_TO_BASE_RATIO: "0.50"
+      MAX_SHORT_P95_TTFT: "30"
+      CONCURRENT_STREAMS: "2"
+      MIN_CONCURRENT_AGGREGATE_TPS: "20"
+      MAX_CONCURRENT_P95_ELAPSED: "45"

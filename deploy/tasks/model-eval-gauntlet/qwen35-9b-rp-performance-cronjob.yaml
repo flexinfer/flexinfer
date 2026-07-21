@@ -1,0 +1,643 @@
+# Suspended ModelExperiment template for the Qwen3.5-9B vLLM 0.23 graph +
+# rank-64 LoRA + 131K gate. The owned Job talks only to the owned candidate's
+# direct service and hot-loads the adapter through vLLM's runtime API.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: qwen35-9b-rp-performance-gauntlet
+  namespace: flexinfer-system
+  labels:
+    app.kubernetes.io/part-of: flexinfer
+    flexinfer.ai/purpose: qwen35-9b-v023-rp-canary
+spec:
+  schedule: "0 0 1 1 *"
+  suspend: true
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: flexinfer
+        flexinfer.ai/purpose: qwen35-9b-v023-rp-canary
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 2700
+      template:
+        spec:
+          restartPolicy: Never
+          nodeSelector:
+            kubernetes.io/arch: amd64
+          containers:
+            - name: qwen35-9b-rp-gauntlet
+              image: docker.io/library/python@sha256:25976e9d34a0fab1f278cae931f34c8303d97bf0c0d7f85b6b4dcf641d7702a4
+              imagePullPolicy: IfNotPresent
+              command: [python3, -c]
+              args:
+                - |
+                  import concurrent.futures
+                  import hashlib
+                  import json
+                  import os
+                  import re
+                  import statistics
+                  import sys
+                  import time
+                  import urllib.error
+                  import urllib.request
+
+                  model = os.environ["MODELS"].split("=", 1)[0]
+                  adapter = os.environ.get("LORA_NAME", "nsfw-rp")
+                  adapter_path = os.environ["LORA_PATH"]
+                  base = os.environ.get(
+                      "FLEXINFER_DIRECT_URL_TEMPLATE",
+                      "http://{model}.flexinfer-system.svc.cluster.local:8000",
+                  ).format(model=model).rstrip("/")
+                  iterations = int(os.environ.get("ITERS", "3"))
+                  output_tokens = int(os.environ.get("RP_OUTPUT_TOKENS", "192"))
+                  long_context_tokens = int(os.environ.get("LONG_CONTEXT_TOKENS", "128000"))
+                  request_timeout = float(os.environ.get("REQUEST_TIMEOUT", "1200"))
+                  min_lora_median_tps = float(os.environ.get("MIN_LORA_MEDIAN_TPS", "15"))
+                  min_lora_to_base_ratio = float(os.environ.get("MIN_LORA_TO_BASE_RATIO", "0.5"))
+                  max_short_p95_ttft = float(os.environ.get("MAX_SHORT_P95_TTFT", "30"))
+                  concurrent_streams = int(os.environ.get("CONCURRENT_STREAMS", "2"))
+                  min_concurrent_aggregate_tps = float(
+                      os.environ.get("MIN_CONCURRENT_AGGREGATE_TPS", "20")
+                  )
+                  max_concurrent_p95_elapsed = float(
+                      os.environ.get("MAX_CONCURRENT_P95_ELAPSED", "45")
+                  )
+                  phase = os.environ.get("EXPERIMENT_PHASE", "unknown")
+
+                  def percentile(values, fraction):
+                      ordered = sorted(values)
+                      index = max(
+                          0,
+                          min(len(ordered) - 1, round((len(ordered) - 1) * fraction)),
+                      )
+                      return ordered[index]
+
+                  def post_json(path, payload, timeout=120):
+                      request = urllib.request.Request(
+                          base + path,
+                          data=json.dumps(payload).encode(),
+                          headers={"Content-Type": "application/json"},
+                      )
+                      try:
+                          with urllib.request.urlopen(request, timeout=timeout) as response:
+                              body = response.read().decode("utf-8", "replace")
+                              return response.status, json.loads(body) if body else {}
+                      except urllib.error.HTTPError as error:
+                          body = error.read().decode("utf-8", "replace")
+                          try:
+                              parsed = json.loads(body)
+                          except json.JSONDecodeError:
+                              parsed = {"body": body}
+                          return error.code, parsed
+
+                  def list_model_ids():
+                      with urllib.request.urlopen(base + "/v1/models", timeout=30) as response:
+                          payload = json.load(response)
+                      return sorted(item.get("id", "") for item in payload.get("data", []))
+
+                  def load_adapter():
+                      status, payload = post_json(
+                          "/v1/load_lora_adapter",
+                          {
+                              "lora_name": adapter,
+                              "lora_path": adapter_path,
+                              "max_lora_rank": 64,
+                          },
+                          timeout=300,
+                      )
+                      detail = json.dumps(payload, sort_keys=True)
+                      already_loaded = status == 400 and "already" in detail.lower()
+                      print(
+                          "QWEN35_9B_LORA_LOAD "
+                          + json.dumps(
+                              {
+                                  "status": status,
+                                  "already_loaded": already_loaded,
+                                  "payload": payload,
+                              },
+                              sort_keys=True,
+                          ),
+                          flush=True,
+                      )
+                      if not (200 <= status < 300 or already_loaded):
+                          raise RuntimeError(f"LoRA load failed: HTTP {status}: {detail}")
+                      ids = list_model_ids()
+                      print("QWEN35_9B_MODELS " + json.dumps(ids), flush=True)
+                      if adapter not in ids:
+                          raise RuntimeError(f"loaded adapter {adapter!r} absent from /v1/models")
+
+                  def stream_chat(name, served_model, messages, max_tokens, expected=None):
+                      payload = json.dumps(
+                          {
+                              "model": served_model,
+                              "messages": messages,
+                              "max_tokens": max_tokens,
+                              "temperature": 0,
+                              "top_p": 1,
+                              "stream": True,
+                              "stream_options": {"include_usage": True},
+                              "chat_template_kwargs": {"enable_thinking": False},
+                          }
+                      ).encode()
+                      request = urllib.request.Request(
+                          base + "/v1/chat/completions",
+                          data=payload,
+                          headers={"Content-Type": "application/json"},
+                      )
+                      started = time.perf_counter()
+                      first_token_at = None
+                      content = []
+                      reasoning = []
+                      usage = {}
+                      with urllib.request.urlopen(request, timeout=request_timeout) as response:
+                          for raw_line in response:
+                              line = raw_line.decode("utf-8", "replace").strip()
+                              if not line.startswith("data: "):
+                                  continue
+                              data = line[6:]
+                              if data == "[DONE]":
+                                  break
+                              event = json.loads(data)
+                              if event.get("usage"):
+                                  usage = event["usage"]
+                              choices = event.get("choices") or []
+                              if not choices:
+                                  continue
+                              delta = choices[0].get("delta") or {}
+                              text = delta.get("content") or ""
+                              thought = (
+                                  delta.get("reasoning_content")
+                                  or delta.get("reasoning")
+                                  or ""
+                              )
+                              if (text or thought) and first_token_at is None:
+                                  first_token_at = time.perf_counter()
+                              if text:
+                                  content.append(text)
+                              if thought:
+                                  reasoning.append(thought)
+                      finished = time.perf_counter()
+                      answer = "".join(content)
+                      thought = "".join(reasoning)
+                      if first_token_at is None:
+                          first_token_at = finished
+                      elapsed = finished - started
+                      ttft = first_token_at - started
+                      completion_tokens = int(usage.get("completion_tokens") or 0)
+                      prompt_tokens = int(usage.get("prompt_tokens") or 0)
+                      decode_seconds = max(0.001, finished - first_token_at)
+                      decode_tps = max(0, completion_tokens - 1) / decode_seconds
+                      exact = None if expected is None else answer.strip() == expected
+                      result = {
+                          "phase": phase,
+                          "workload": name,
+                          "served_model": served_model,
+                          "prompt_tokens": prompt_tokens,
+                          "completion_tokens": completion_tokens,
+                          "ttft_s": round(ttft, 4),
+                          "elapsed_s": round(elapsed, 4),
+                          "decode_tps": round(decode_tps, 4),
+                          "reasoning_chars": len(thought),
+                          "answer_sha256": hashlib.sha256(answer.encode()).hexdigest(),
+                          "answer_preview": answer[:320],
+                          "exact": exact,
+                      }
+                      print(
+                          "QWEN35_9B_RESULT " + json.dumps(result, sort_keys=True),
+                          flush=True,
+                      )
+                      return result, answer
+
+                  def coherence_failure(answer):
+                      text = answer.strip()
+                      if len(text) < 120:
+                          return f"answer too short ({len(text)} chars)"
+                      if re.search(r"(.)\1{11,}", text, re.DOTALL):
+                          return "repeated-character collapse"
+                      if re.search(r"\b([a-zA-Z]{2,})(?:\s+\1){7,}\b", text, re.IGNORECASE):
+                          return "repeated-word collapse"
+                      alpha_ratio = sum(char.isalpha() for char in text) / max(1, len(text))
+                      if alpha_ratio < 0.45:
+                          return f"low alphabetic ratio ({alpha_ratio:.3f})"
+                      words = re.findall(r"[a-zA-Z']+", text.lower())
+                      if len(words) >= 40 and len(set(words)) / len(words) < 0.16:
+                          return "low lexical diversity"
+                      lowered = text.lower()
+                      if any(
+                          marker in lowered
+                          for marker in (
+                              "as an ai language model",
+                              "i cannot continue this roleplay",
+                              "i can't continue this roleplay",
+                          )
+                      ):
+                          return "roleplay refusal"
+                      return ""
+
+                  def concurrent_batch(messages, batch):
+                      started = time.perf_counter()
+                      with concurrent.futures.ThreadPoolExecutor(
+                          max_workers=concurrent_streams
+                      ) as executor:
+                          futures = [
+                              executor.submit(
+                                  stream_chat,
+                                  f"concurrent_rp_stream_{stream}",
+                                  adapter,
+                                  messages,
+                                  output_tokens,
+                              )
+                              for stream in range(1, concurrent_streams + 1)
+                          ]
+                          outcomes = [future.result() for future in futures]
+                      elapsed = time.perf_counter() - started
+                      stream_results = [outcome[0] for outcome in outcomes]
+                      answers = [outcome[1] for outcome in outcomes]
+                      total_tokens = sum(item["completion_tokens"] for item in stream_results)
+                      result = {
+                          "phase": phase,
+                          "workload": "concurrent_rp",
+                          "batch": batch,
+                          "streams": concurrent_streams,
+                          "completion_tokens": total_tokens,
+                          "elapsed_s": round(elapsed, 4),
+                          "aggregate_output_tps": round(
+                              total_tokens / max(0.001, elapsed), 4
+                          ),
+                          "p95_stream_elapsed_s": round(
+                              percentile([item["elapsed_s"] for item in stream_results], 0.95),
+                              4,
+                          ),
+                          "p95_stream_ttft_s": round(
+                              percentile([item["ttft_s"] for item in stream_results], 0.95),
+                              4,
+                          ),
+                      }
+                      print(
+                          "QWEN35_9B_CONCURRENCY " + json.dumps(result, sort_keys=True),
+                          flush=True,
+                      )
+                      return result, stream_results, answers
+
+                  def metrics_snapshot():
+                      try:
+                          body = urllib.request.urlopen(base + "/metrics", timeout=20).read().decode()
+                      except Exception as error:
+                          print(
+                              f"QWEN35_9B_METRICS_ERROR {type(error).__name__}: {error}",
+                              flush=True,
+                          )
+                          return
+                      selected = [
+                          line
+                          for line in body.splitlines()
+                          if not line.startswith("#")
+                          and any(
+                              term in line.lower()
+                              for term in (
+                                  "cudagraph",
+                                  "graph_dispatch",
+                                  "kv_cache_usage",
+                                  "time_to_first_token",
+                                  "inter_token_latency",
+                              )
+                          )
+                      ]
+                      for line in selected[:140]:
+                          print("QWEN35_9B_METRIC " + line, flush=True)
+
+                  rp_messages = [
+                      {
+                          "role": "system",
+                          "content": (
+                              "Write grounded, immersive roleplay. Stay in character, advance "
+                              "the scene, avoid repetition, and do not discuss being an AI."
+                          ),
+                      },
+                      {
+                          "role": "user",
+                          "content": (
+                              "At a rain-soaked midnight train platform, Mara realizes the courier "
+                              "beside her has the wrong silver ring. Continue in close third person "
+                              "for two compact paragraphs, preserving tension without resolving it."
+                          ),
+                      },
+                  ]
+                  history = (
+                      "The observatory is sealed by winter. Ilya distrusts Sera after the missing "
+                      "ledger, but neither has admitted they saw the blue signal over the ridge. "
+                      "The generator fails every third hour; the brass key remains inside Ilya's "
+                      "left glove; Sera promised never to enter the east archive alone. "
+                  )
+                  multi_turn_messages = [
+                      {"role": "system", "content": "Maintain continuity and character voice."}
+                  ]
+                  for index in range(10):
+                      multi_turn_messages.append(
+                          {
+                              "role": "user",
+                              "content": f"Scene memory {index}: {history * 3} What does Sera notice next?",
+                          }
+                      )
+                      multi_turn_messages.append(
+                          {
+                              "role": "assistant",
+                              "content": (
+                                  f"Sera records detail {index} without touching the brass key. "
+                                  "She keeps the blue signal and east archive in mind."
+                              ),
+                          }
+                      )
+                  multi_turn_messages.append(
+                      {
+                          "role": "user",
+                          "content": (
+                              "Continue for two compact paragraphs. Preserve who holds the key, "
+                              "the unresolved distrust, and the promise about the east archive."
+                          ),
+                      }
+                  )
+
+                  needles = [
+                      "MARMALADE-73118-ALPHA",
+                      "MARMALADE-73118-BRAVO",
+                      "MARMALADE-73118-CHARLIE",
+                      "MARMALADE-73118-DELTA",
+                      "MARMALADE-73118-ECHO",
+                  ]
+                  filler_line = (
+                      "Routine telemetry sample: subsystem nominal; no anomaly was recorded in this interval. "
+                  )
+
+                  def long_messages(lines):
+                      haystack = [filler_line] * lines
+                      for index, needle in enumerate(needles):
+                          depth = index / (len(needles) - 1)
+                          position = min(lines - 1, int(depth * (lines - 1)))
+                          haystack[position] = (
+                              f"Vault {index + 1} passphrase is {needle}. " + haystack[position]
+                          )
+                      return [
+                          {
+                              "role": "user",
+                              "content": "".join(haystack)
+                              + "\nRepeat all five vault passphrases exactly, one per line, then stop.",
+                          }
+                      ]
+
+                  def calibrated_long_context():
+                      small_lines = 128
+                      large_lines = 384
+                      small, _ = stream_chat(
+                          "long_calibration_small", adapter, long_messages(small_lines), 1
+                      )
+                      large, _ = stream_chat(
+                          "long_calibration_large", adapter, long_messages(large_lines), 1
+                      )
+                      slope = (large["prompt_tokens"] - small["prompt_tokens"]) / (
+                          large_lines - small_lines
+                      )
+                      if slope <= 0:
+                          raise RuntimeError(f"invalid long-context calibration slope {slope}")
+                      intercept = small["prompt_tokens"] - slope * small_lines
+                      lines = max(
+                          len(needles) + 1,
+                          int((long_context_tokens - intercept) / slope) - 2,
+                      )
+                      print(
+                          "QWEN35_9B_LONG_CALIBRATION "
+                          + json.dumps(
+                              {
+                                  "small_prompt_tokens": small["prompt_tokens"],
+                                  "large_prompt_tokens": large["prompt_tokens"],
+                                  "tokens_per_line": round(slope, 6),
+                                  "intercept": round(intercept, 3),
+                                  "target_tokens": long_context_tokens,
+                                  "selected_lines": lines,
+                              },
+                              sort_keys=True,
+                          ),
+                          flush=True,
+                      )
+                      result, answer = stream_chat(
+                          "long_context_five_depth",
+                          adapter,
+                          long_messages(lines),
+                          192,
+                      )
+                      missing = [needle for needle in needles if needle not in answer]
+                      print(
+                          "QWEN35_9B_LONG_RECALL "
+                          + json.dumps(
+                              {
+                                  "prompt_tokens": result["prompt_tokens"],
+                                  "recalled": len(needles) - len(missing),
+                                  "missing": missing,
+                                  "ttft_s": result["ttft_s"],
+                                  "elapsed_s": result["elapsed_s"],
+                              },
+                              sort_keys=True,
+                          ),
+                          flush=True,
+                      )
+                      return result, missing
+
+                  print(
+                      "QWEN35_9B_CONFIG "
+                      + json.dumps(
+                          {
+                              "phase": phase,
+                              "model": model,
+                              "adapter": adapter,
+                              "endpoint": base,
+                              "iterations": iterations,
+                              "long_context_tokens": long_context_tokens,
+                              "min_lora_median_tps": min_lora_median_tps,
+                              "min_lora_to_base_ratio": min_lora_to_base_ratio,
+                              "concurrent_streams": concurrent_streams,
+                          },
+                          sort_keys=True,
+                      ),
+                      flush=True,
+                  )
+
+                  failures = []
+                  literal, _ = stream_chat(
+                      "base_literal_warmup",
+                      model,
+                      [{"role": "user", "content": "Reply with exactly ROCM_9B_BASE_OK and nothing else."}],
+                      32,
+                      "ROCM_9B_BASE_OK",
+                  )
+                  if not literal["exact"]:
+                      failures.append("base literal warmup mismatch")
+                  if literal["reasoning_chars"]:
+                      failures.append("base warmup emitted reasoning")
+
+                  base_result, base_answer = stream_chat(
+                      "base_rp_control", model, rp_messages, output_tokens
+                  )
+                  base_coherence = coherence_failure(base_answer)
+                  if base_coherence:
+                      failures.append(f"base RP incoherent: {base_coherence}")
+
+                  load_adapter()
+
+                  lora_results = []
+                  for workload, messages in (
+                      ("lora_rp_dialogue", rp_messages),
+                      ("lora_multi_turn", multi_turn_messages),
+                  ):
+                      for iteration in range(1, iterations + 1):
+                          result, answer = stream_chat(
+                              workload, adapter, messages, output_tokens
+                          )
+                          result["iteration"] = iteration
+                          lora_results.append(result)
+                          if result["completion_tokens"] < 48:
+                              failures.append(
+                                  f"{workload} iteration {iteration} returned only "
+                                  f"{result['completion_tokens']} tokens"
+                              )
+                          if result["reasoning_chars"]:
+                              failures.append(f"{workload} iteration {iteration} emitted reasoning")
+                          coherence = coherence_failure(answer)
+                          if coherence:
+                              failures.append(
+                                  f"{workload} iteration {iteration} incoherent: {coherence}"
+                              )
+
+                  lora_median_tps = statistics.median(
+                      result["decode_tps"] for result in lora_results
+                  )
+                  short_p95_ttft = percentile(
+                      [base_result["ttft_s"]]
+                      + [result["ttft_s"] for result in lora_results],
+                      0.95,
+                  )
+                  lora_to_base_ratio = lora_median_tps / max(
+                      0.001, base_result["decode_tps"]
+                  )
+                  if lora_median_tps < min_lora_median_tps:
+                      failures.append(
+                          f"LoRA median decode {lora_median_tps:.4f} < {min_lora_median_tps:.4f}"
+                      )
+                  if lora_to_base_ratio < min_lora_to_base_ratio:
+                      failures.append(
+                          f"LoRA/base decode ratio {lora_to_base_ratio:.4f} < "
+                          f"{min_lora_to_base_ratio:.4f}"
+                      )
+                  if short_p95_ttft > max_short_p95_ttft:
+                      failures.append(
+                          f"short p95 TTFT {short_p95_ttft:.4f} > {max_short_p95_ttft:.4f}"
+                      )
+
+                  concurrency_results = []
+                  if concurrent_streams > 1:
+                      for batch in range(1, iterations + 1):
+                          batch_result, stream_results, answers = concurrent_batch(
+                              multi_turn_messages, batch
+                          )
+                          concurrency_results.append(batch_result)
+                          for stream, (result, answer) in enumerate(
+                              zip(stream_results, answers), start=1
+                          ):
+                              if result["reasoning_chars"]:
+                                  failures.append(
+                                      f"concurrency batch {batch} stream {stream} emitted reasoning"
+                                  )
+                              coherence = coherence_failure(answer)
+                              if coherence:
+                                  failures.append(
+                                      f"concurrency batch {batch} stream {stream} incoherent: {coherence}"
+                                  )
+                      median_concurrent_tps = statistics.median(
+                          result["aggregate_output_tps"] for result in concurrency_results
+                      )
+                      concurrent_p95_elapsed = percentile(
+                          [result["p95_stream_elapsed_s"] for result in concurrency_results],
+                          0.95,
+                      )
+                      if median_concurrent_tps < min_concurrent_aggregate_tps:
+                          failures.append(
+                              f"median concurrent aggregate {median_concurrent_tps:.4f} < "
+                              f"{min_concurrent_aggregate_tps:.4f}"
+                          )
+                      if concurrent_p95_elapsed > max_concurrent_p95_elapsed:
+                          failures.append(
+                              f"concurrent p95 elapsed {concurrent_p95_elapsed:.4f} > "
+                              f"{max_concurrent_p95_elapsed:.4f}"
+                          )
+
+                  long_result, missing_needles = calibrated_long_context()
+                  minimum_long_prompt = long_context_tokens - max(
+                      2048, int(long_context_tokens * 0.02)
+                  )
+                  if long_result["prompt_tokens"] < minimum_long_prompt:
+                      failures.append(
+                          f"long prompt {long_result['prompt_tokens']} < {minimum_long_prompt}"
+                      )
+                  if missing_needles:
+                      failures.append(f"long-context recall missed {missing_needles}")
+                  if long_result["reasoning_chars"]:
+                      failures.append("long-context request emitted reasoning")
+
+                  summary = {
+                      "phase": phase,
+                      "base_decode_tps": base_result["decode_tps"],
+                      "lora_median_decode_tps": round(lora_median_tps, 4),
+                      "lora_to_base_ratio": round(lora_to_base_ratio, 4),
+                      "short_p95_ttft_s": round(short_p95_ttft, 4),
+                      "long_prompt_tokens": long_result["prompt_tokens"],
+                      "long_recalled": len(needles) - len(missing_needles),
+                      "failures": failures,
+                  }
+                  if concurrency_results:
+                      summary["median_concurrent_aggregate_output_tps"] = round(
+                          statistics.median(
+                              result["aggregate_output_tps"]
+                              for result in concurrency_results
+                          ),
+                          4,
+                      )
+                      summary["concurrent_p95_stream_elapsed_s"] = round(
+                          percentile(
+                              [result["p95_stream_elapsed_s"] for result in concurrency_results],
+                              0.95,
+                          ),
+                          4,
+                      )
+                  print(
+                      "QWEN35_9B_SUMMARY " + json.dumps(summary, sort_keys=True),
+                      flush=True,
+                  )
+                  metrics_snapshot()
+                  if failures:
+                      print(
+                          "QWEN35_9B_GAUNTLET_FAIL " + json.dumps(failures),
+                          flush=True,
+                      )
+                      sys.exit(1)
+                  print(
+                      "QWEN35_9B_GAUNTLET_OK " + json.dumps(summary, sort_keys=True),
+                      flush=True,
+                  )
+              env:
+                - name: FLEXINFER_DIRECT_URL_TEMPLATE
+                  value: http://{model}.flexinfer-system.svc.cluster.local:8000
+                - name: LORA_NAME
+                  value: nsfw-rp
+                - name: LORA_PATH
+                  value: mirazrafi/NSFW-RP-RolePlay-LoRA-Qwen-3.5-9B
+                - name: REQUEST_TIMEOUT
+                  value: "1200"
+              resources:
+                requests:
+                  cpu: 250m
+                  memory: 256Mi
+                limits:
+                  cpu: "2"
+                  memory: 1Gi
