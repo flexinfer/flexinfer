@@ -2,16 +2,15 @@
 #
 # The artifact is produced from the exact BF16 source of DavidAU's Fable
 # Fusion 711 GGUF by deploy/modelcaches/qwen36-27b-fable-gptq.yaml. It uses the
-# persistent gfx1100 serving runtime, whose current digest carries both the
-# ROCm 4-bit GPTQ shuffle guard and the patch-composition guard that preserves
-# stock fused ops.gptq_gemm. Upstream vLLM's compatibility matrix still marks
-# GPTQ unsupported on AMD; this lane therefore must not run on an unpatched
-# stock image.
+# persistent gfx1100 runtime, whose current digest carries the load-bearing
+# ROCm 4-bit GPTQ shuffle guard plus the correctness-first dense fallback.
+# Upstream vLLM's compatibility matrix still marks GPTQ unsupported on AMD;
+# this lane therefore must not run on an unpatched stock image.
 #
 # v1 is intentionally text-only and does not enable native MTP. Its 2026-07-21
 # gfx1100 qualification passed artifact validation, deterministic greedy
 # coherence, a 5-prompt quality smoke, and VRAM fit. Keep the unique alias and
-# minReplicas=0 while the fused path completes its live gfx1100 qualification.
+# minReplicas=0: the ROCm GPTQ reference path is correct but only ~0.61 tok/s.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -22,13 +21,13 @@ metadata:
     flexinfer.ai/source-revision: 5ae530c3ab85033856e75cb1efc63fb1bf82a133
     flexinfer.ai/base-model-posture: uncensored-heretic-fable-fusion
     flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen36-27b-fable@sha256:285a044529f6321f954353c93c5a91f771cfdfc7445ad25af5d64b7926d83710
-    flexinfer.ai/runtime-image: registry.harbor.lan/flexinfer/runtime@sha256:bb2b2b19e86da9d7e7e468fca6c980f0c9418b4f5133d4a687428d281d3c65d1
-    flexinfer.ai/promotion-state: gfx1100-fused-gptq-canary
+    flexinfer.ai/runtime-image: registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e
+    flexinfer.ai/promotion-state: gfx1100-fused-gptq-failed-token-corruption
 spec:
   backend: vllm
-  # Pin the serving runtime whose Qwen patch keeps checkpoint-order qweight
-  # and stock fused ops.gptq_gemm after all later compatibility patches run.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:bb2b2b19e86da9d7e7e468fca6c980f0c9418b4f5133d4a687428d281d3c65d1
+  # Keep the known-coherent reference implementation pinned until the fused
+  # kernel passes full production-shape logit parity on gfx1100.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e
   source: pvc://qwen36-27b-fable-oci/qwen36-27b-fable
   cache:
     strategy: Local
@@ -44,7 +43,9 @@ spec:
   serverless:
     enabled: true
     minReplicas: 0
-    idleTimeout: 30m
+    # Reap failed/experimental activations quickly so the warm WAN leader is
+    # restored without leaving this demand-only canary on the shared GPU.
+    idleTimeout: 1m
     coldStartTimeout: 20m
   config:
     warmPolicy: ondemand
@@ -78,7 +79,7 @@ spec:
     toolCallParser: qwen3_coder
     servedModelName: qwen36-27b-fable-gptq
     disableLogStats: false
-    # The pinned serving runtime carries legacy VLLM_USE_TRITON_FLASH_ATTN in
+    # The pinned unified runtime carries legacy VLLM_USE_TRITON_FLASH_ATTN in
     # its image environment; vLLM 0.17 no longer recognizes that variable.
     # Unknown-env validation must remain non-fatal for this immutable image.
     failOnEnvironValidation: false
