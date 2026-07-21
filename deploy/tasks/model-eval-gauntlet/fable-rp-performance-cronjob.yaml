@@ -36,6 +36,7 @@ spec:
               command: [python3, -c]
               args:
                 - |
+                  import concurrent.futures
                   import hashlib
                   import json
                   import os
@@ -56,6 +57,13 @@ spec:
                   request_timeout = float(os.environ.get("REQUEST_TIMEOUT", "300"))
                   min_median_tps = float(os.environ.get("MIN_MEDIAN_TPS", "7.5"))
                   max_p95_ttft = float(os.environ.get("MAX_P95_TTFT", "30"))
+                  concurrent_streams = int(os.environ.get("CONCURRENT_STREAMS", "0"))
+                  min_concurrent_aggregate_tps = float(
+                      os.environ.get("MIN_CONCURRENT_AGGREGATE_TPS", "0")
+                  )
+                  max_concurrent_p95_elapsed = float(
+                      os.environ.get("MAX_CONCURRENT_P95_ELAPSED", "300")
+                  )
                   phase = os.environ.get("EXPERIMENT_PHASE", "unknown")
 
                   def percentile(values, fraction):
@@ -134,6 +142,41 @@ spec:
                       }
                       print("FABLE_RP_RESULT " + json.dumps(result, sort_keys=True), flush=True)
                       return result, answer
+
+                  def concurrent_batch(messages, budget, streams, batch):
+                      started = time.perf_counter()
+                      with concurrent.futures.ThreadPoolExecutor(max_workers=streams) as executor:
+                          futures = [
+                              executor.submit(
+                                  stream_chat,
+                                  f"concurrent_multi_turn_stream_{stream}",
+                                  messages,
+                                  budget,
+                              )
+                              for stream in range(1, streams + 1)
+                          ]
+                          outcomes = [future.result() for future in futures]
+                      elapsed = time.perf_counter() - started
+                      stream_results = [outcome[0] for outcome in outcomes]
+                      total_tokens = sum(result["completion_tokens"] for result in stream_results)
+                      aggregate_tps = total_tokens / max(0.001, elapsed)
+                      result = {
+                          "phase": phase,
+                          "workload": "concurrent_multi_turn",
+                          "batch": batch,
+                          "streams": streams,
+                          "completion_tokens": total_tokens,
+                          "elapsed_s": round(elapsed, 4),
+                          "aggregate_output_tps": round(aggregate_tps, 4),
+                          "p95_stream_elapsed_s": round(
+                              percentile([item["elapsed_s"] for item in stream_results], 0.95), 4
+                          ),
+                          "p95_stream_ttft_s": round(
+                              percentile([item["ttft_s"] for item in stream_results], 0.95), 4
+                          ),
+                      }
+                      print("FABLE_RP_CONCURRENCY " + json.dumps(result, sort_keys=True), flush=True)
+                      return result, stream_results
 
                   def metrics_snapshot():
                       try:
@@ -231,6 +274,9 @@ spec:
                       "long_context_tokens": long_context_tokens,
                       "min_median_tps": min_median_tps,
                       "max_p95_ttft": max_p95_ttft,
+                      "concurrent_streams": concurrent_streams,
+                      "min_concurrent_aggregate_tps": min_concurrent_aggregate_tps,
+                      "max_concurrent_p95_elapsed": max_concurrent_p95_elapsed,
                   }, sort_keys=True), flush=True)
 
                   # Warm the model and prove request-level thinking suppression before timing.
@@ -258,6 +304,43 @@ spec:
                                   f"{name} iteration {iteration} prompt too short: {result['prompt_tokens']}"
                               )
 
+                  concurrency_results = []
+                  if concurrent_streams > 1:
+                      for batch in range(1, iterations + 1):
+                          batch_result, stream_results = concurrent_batch(
+                              multi_turn_messages,
+                              output_tokens,
+                              concurrent_streams,
+                              batch,
+                          )
+                          concurrency_results.append(batch_result)
+                          for stream, result in enumerate(stream_results, start=1):
+                              if not result["completion_tokens"]:
+                                  failures.append(
+                                      f"concurrency batch {batch} stream {stream} missing usage"
+                                  )
+                              if result["reasoning_chars"]:
+                                  failures.append(
+                                      f"concurrency batch {batch} stream {stream} emitted reasoning"
+                                  )
+
+                      median_concurrent_tps = statistics.median(
+                          result["aggregate_output_tps"] for result in concurrency_results
+                      )
+                      concurrent_p95_elapsed = percentile(
+                          [result["p95_stream_elapsed_s"] for result in concurrency_results], 0.95
+                      )
+                      if median_concurrent_tps < min_concurrent_aggregate_tps:
+                          failures.append(
+                              "median concurrent aggregate output "
+                              f"{median_concurrent_tps:.4f} < {min_concurrent_aggregate_tps:.4f}"
+                          )
+                      if concurrent_p95_elapsed > max_concurrent_p95_elapsed:
+                          failures.append(
+                              "concurrent p95 stream elapsed "
+                              f"{concurrent_p95_elapsed:.4f} > {max_concurrent_p95_elapsed:.4f}"
+                          )
+
                   measured = [result for result in results if result["workload"] != "long_context_recall"]
                   median_tps = statistics.median(result["decode_tps"] for result in measured)
                   p95_ttft = percentile([result["ttft_s"] for result in results], 0.95)
@@ -266,8 +349,21 @@ spec:
                       "median_decode_tps": round(median_tps, 4),
                       "p95_ttft_s": round(p95_ttft, 4),
                       "workload_count": len(results),
+                      "concurrency_batch_count": len(concurrency_results),
                       "failures": failures,
                   }
+                  if concurrency_results:
+                      summary["median_concurrent_aggregate_output_tps"] = round(
+                          statistics.median(
+                              result["aggregate_output_tps"] for result in concurrency_results
+                          ), 4
+                      )
+                      summary["concurrent_p95_stream_elapsed_s"] = round(
+                          percentile(
+                              [result["p95_stream_elapsed_s"] for result in concurrency_results],
+                              0.95,
+                          ), 4
+                      )
                   print("FABLE_RP_SUMMARY " + json.dumps(summary, sort_keys=True), flush=True)
                   metrics_snapshot()
                   if median_tps < min_median_tps:

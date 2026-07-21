@@ -171,19 +171,47 @@
 
 ### Generation 5 — 32K graph/FP16-KV cold-start headroom
 
-- Outcome: pending.
+- Outcome: success; graph/FP16-KV at 0.94 is the certified single-sequence
+  runtime winner.
 - Change from generation 4: `gpuMemoryUtilization` 0.90 -> 0.94 and a fresh
   host compilation-cache namespace. Runtime, graph mode, FP16 KV, context,
   scheduler, artifact, and workloads are unchanged.
 - Purpose: force a new cold compile and prove 32K FP16 KV initializes without a
   restart while retaining generation 4's steady-state result.
+- Cold-start proof: a fresh cache forced 45.31s of Torch compilation. The first
+  and only container start retained 2.48 GiB for KV, yielding 38,936 tokens and
+  1.19x maximum 32K concurrency. Graph capture used 0.26 GiB. Kubernetes
+  recorded one pull/start and no restart; Loki contained no startup traceback,
+  ROCm/HSA/OOM, or NaN marker.
+- RP dialogue: median decode 41.6889 tok/s, median latency 4.7780s, and median
+  TTFT 0.2045s. That is 31.9% faster decode and 23.2% lower latency than the
+  eager/FP16-KV control.
+- 2,278-token multi-turn scene: median decode 24.4742 tok/s and median latency
+  9.6414s, respectively 17.7% faster decode and 12.9% lower latency than
+  control.
+- Long-context recall: all three 19,841-token prompts returned exactly
+  `CINNABAR-48271`; median decode 5.7308 tok/s and median latency 22.9100s,
+  respectively 3.7% faster decode and 1.2% lower latency than control.
+- Summary: median non-long-context decode 33.0902 tok/s, p95 TTFT 21.4344s,
+  zero reasoning characters, and 1,181 inter-token observations in 42.73101s.
+  The higher memory budget reproduced generation 4's outputs and performance.
+
+### Generation 6 — 32K graph/FP16-KV two-session scheduler
+
+- Outcome: pending.
+- Change from generation 5: `maxNumSeqs=2`, `maxNumBatchedTokens=4096`, graph
+  capture shapes one and two, two partial-prefill slots, and at most one long
+  partial prefill. The harness adds three batches of two simultaneous 2,278-
+  token RP sessions and reports per-stream tail latency plus aggregate output.
+- Gate: both streams must complete without missing usage/reasoning/faults,
+  median aggregate output must be at least 15 tok/s, and p95 per-stream
+  complete-answer latency must stay at or below 25s.
 
 ## Next
 
-1. Run generation 5 against an empty compilation cache and require zero
-   restarts plus at least 32,768 KV tokens.
-2. Retain graph/FP16-KV as the runtime winner only if its per-workload floors,
-   exact recall, and steady-state gains reproduce at the higher budget.
-3. Then test two simultaneous RP sessions with capture shapes one and two;
-   60,909 cached-start KV tokens do not support two simultaneous full 32K
-   prompts, so concurrency must use realistic partial-context workloads.
+1. Run generation 6 and compare two-session aggregate throughput and per-stream
+   tail latency with generation 5's single multi-turn result.
+2. If it passes cleanly, test four simultaneous partial-context sessions with
+   graph shape four; do not infer full-32K concurrency from the partial test.
+3. Keep 9B as the rollback lane until blinded RP preference and a warm soak
+   close the remaining product-quality and stability gates.
