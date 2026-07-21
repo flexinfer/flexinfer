@@ -210,9 +210,12 @@
   string `1,2`; vLLM rejected it as an invalid integer before model loading.
   Revision v2 exposed a backend defect: FlexInfer JSON-encoded the array into
   the single CLI token `[1,2]`, which the variadic vLLM argument also rejected.
-  Revision v3 fixes the backend to render the array as separate `1 2` tokens.
-  The failed v1 and v2 pods produced no performance evidence and are excluded
-  from the runtime verdict.
+  Revision v3 fixed the backend to render the array as separate `1 2` tokens,
+  then exposed vLLM 0.23's explicit rejection of concurrent partial prefill for
+  this hybrid Qwen path. Revision v4 removes only the three partial-prefill
+  controls; two-sequence scheduling, chunked prefill, graph shapes one/two,
+  and the concurrency workload remain unchanged. The failed v1-v3 pods
+  produced no performance evidence and are excluded from the runtime verdict.
 
 ## Next
 
