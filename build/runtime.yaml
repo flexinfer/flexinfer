@@ -118,6 +118,9 @@ profiles:
     gpu_vendor: amd
     gpu_arch: gfx1100
     base_image: "vllm/vllm-openai-rocm:v0.23.0"
+    vllm_install_mode: source
+    vllm_repo: "https://github.com/vllm-project/vllm.git"
+    vllm_ref: "v0.23.0"
     rocm_dev_image: "rocm/dev-ubuntu-24.04:7.2.3"
     amdgpu_targets: gfx1100
     backends:

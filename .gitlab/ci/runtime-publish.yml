@@ -213,6 +213,8 @@ publish_serving_rocm_gfx1100_native_w4a16:
         --opt platform=linux/amd64 \
         --opt build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.23.0" \
         --opt build-arg:GPU_ARCH="gfx1100" \
+        --opt build-arg:VLLM_REPO="https://github.com/vllm-project/vllm.git" \
+        --opt build-arg:VLLM_REF="v0.23.0" \
         --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100-v023-native-w4a16" \
         --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/runtime:rocm-gfx1100-v023-native-w4a16,${REGISTRY}/runtime:rocm-gfx1100-v023-native-w4a16-${CI_COMMIT_SHORT_SHA}\",push=true"
