@@ -77,7 +77,9 @@ spec:
     videoFps: "16"
     negativePrompt: "static, blurry, low quality, distorted, watermark, subtitles, text"
     hipVisibleDevices: "0"
-    warmPolicy: primary
+    # Pair with minReplicas=0 during the Fable GPTQ canary. `primary` forces a
+    # backend start even at zero replicas and would confound the VRAM smoke.
+    warmPolicy: ondemand
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:

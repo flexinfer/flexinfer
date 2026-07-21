@@ -30,6 +30,9 @@
   demand-only Model; park the existing 5930k GPU leader for an isolated smoke.
 - Why this is minimal: it changes no runtime image, quantization recipe,
   default alias, or production routing group.
+- Isolation correction: `minReplicas: 0` alone did not park WAN because its
+  explicit `warmPolicy: primary` still created a backend pod. Set that policy
+  to `ondemand` for the canary window; restore both fields after the verdict.
 
 ## Probe
 
