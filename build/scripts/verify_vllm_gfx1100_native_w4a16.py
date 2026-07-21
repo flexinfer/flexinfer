@@ -7,6 +7,7 @@ import importlib
 import importlib.metadata
 import pathlib
 import re
+from typing import Any, Callable
 
 
 MINIMUM_VLLM_VERSION = (0, 23, 0)
@@ -40,6 +41,26 @@ def verify_source_contract(vllm_root: pathlib.Path, version: str) -> None:
         )
 
 
+def verify_compiled_contract(
+    torch_module: Any,
+    importer: Callable[[str], Any] = importlib.import_module,
+) -> None:
+    """Load the ROCm extension directly and verify its gfx1100 operator."""
+    try:
+        importer("vllm._rocm_C")
+    except (ImportError, OSError) as exc:
+        raise RuntimeError(
+            "failed to load vLLM's compiled ROCm extension vllm._rocm_C"
+        ) from exc
+
+    rocm_ops = getattr(torch_module.ops, "_rocm_C", None)
+    if rocm_ops is None or not hasattr(rocm_ops, "gptq_gemm_rdna3"):
+        raise RuntimeError(
+            "vLLM's compiled _rocm_C extension loaded but does not register "
+            "gptq_gemm_rdna3"
+        )
+
+
 def main() -> None:
     import torch
     import vllm
@@ -48,16 +69,10 @@ def main() -> None:
     vllm_root = pathlib.Path(vllm.__file__).resolve().parent
     verify_source_contract(vllm_root, version)
 
-    # Importing the kernel wrapper loads vLLM's custom-op extension and
-    # registers the ROCm op without requiring a GPU during image assembly.
-    importlib.import_module(
-        "vllm.model_executor.kernels.linear.mixed_precision.rdna3_w4a16"
-    )
-    if not hasattr(torch.ops._rocm_C, "gptq_gemm_rdna3"):
-        raise RuntimeError(
-            "vLLM package has the RDNA3 wrapper but its compiled _rocm_C "
-            "extension does not register gptq_gemm_rdna3"
-        )
+    # Image assembly has no GPU, so vLLM cannot detect ROCm and its generic
+    # platform loader does not import this extension. Load it explicitly: the
+    # Torch operator registration itself does not require a visible device.
+    verify_compiled_contract(torch)
 
     print(
         "verified vLLM",
