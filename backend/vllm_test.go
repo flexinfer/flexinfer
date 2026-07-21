@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -188,14 +189,20 @@ func TestVLLMBackendArgs_CompilationControls(t *testing.T) {
 
 	args := b.Args(spec)
 	argMap := make(map[string]string)
+	captureSizes := make([]string, 0, 3)
 	for i := 0; i < len(args)-1; i++ {
 		if args[i][0] == '-' {
 			argMap[args[i]] = args[i+1]
 		}
+		if args[i] == "--cudagraph-capture-sizes" {
+			for j := i + 1; j < len(args) && args[j][0] != '-'; j++ {
+				captureSizes = append(captureSizes, args[j])
+			}
+		}
 	}
 
-	if v := argMap["--cudagraph-capture-sizes"]; v != "[1,2,4]" {
-		t.Errorf("expected --cudagraph-capture-sizes=[1,2,4], got %q", v)
+	if want := []string{"1", "2", "4"}; !reflect.DeepEqual(captureSizes, want) {
+		t.Errorf("unexpected --cudagraph-capture-sizes values: want %v, got %v", want, captureSizes)
 	}
 	if v := argMap["--max-cudagraph-capture-size"]; v != "4" {
 		t.Errorf("expected --max-cudagraph-capture-size=4, got %q", v)
@@ -203,6 +210,20 @@ func TestVLLMBackendArgs_CompilationControls(t *testing.T) {
 	if v := argMap["--compilation-config"]; v != `{"cudagraph_capture_sizes":[1,2,4],"mode":3}` {
 		t.Errorf("expected --compilation-config JSON, got %q", v)
 	}
+
+	scalarArgs := b.Args(&ModelSpec{
+		Model:  "test-model",
+		Config: map[string]any{"cudagraphCaptureSizes": "2"},
+	})
+	for i, arg := range scalarArgs {
+		if arg == "--cudagraph-capture-sizes" {
+			if i+1 >= len(scalarArgs) || scalarArgs[i+1] != "2" {
+				t.Fatalf("expected scalar capture size to remain one token, got %v", scalarArgs[i:])
+			}
+			return
+		}
+	}
+	t.Fatal("expected scalar --cudagraph-capture-sizes argument")
 }
 
 func TestVLLMBackendArgs_ServingEfficiencyControls(t *testing.T) {

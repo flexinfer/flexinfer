@@ -136,6 +136,9 @@ Common `vllm` knobs include `maxModelLen`, `gpuMemoryUtilization`,
 `maxNumSeqs`, `maxNumBatchedTokens`, `startupTimeout` or
 `startupTimeoutSeconds`, `cudagraphCaptureSizes`,
 `maxCudagraphCaptureSize`, `compilationConfig`, and `languageModelOnly`.
+Use a YAML integer list for multiple `cudagraphCaptureSizes` values (for
+example, `[1, 2, 4]`); FlexInfer renders each size as a separate value for
+vLLM's variadic CLI option. A scalar remains supported for a single size.
 Set `languageModelOnly: true` for a multimodal checkpoint when the endpoint only
 serves text; FlexInfer passes vLLM's `--language-model-only` flag so the unused
 vision encoder is not loaded or profiled and the freed VRAM can hold more KV

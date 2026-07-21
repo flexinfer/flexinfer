@@ -3,6 +3,7 @@ package backend
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -139,8 +140,9 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 
 	// CUDA/HIP graph and torch.compile controls. These are useful on slower
 	// startup nodes where limiting capture sizes can reduce compile pressure.
-	if sizes := configValueAsArg(spec, "cudagraphCaptureSizes"); sizes != "" {
-		args = append(args, "--cudagraph-capture-sizes", sizes)
+	if sizes := configValuesAsArgs(spec, "cudagraphCaptureSizes"); len(sizes) > 0 {
+		args = append(args, "--cudagraph-capture-sizes")
+		args = append(args, sizes...)
 	}
 	if maxSize := configValueAsArg(spec, "maxCudagraphCaptureSize"); maxSize != "" {
 		args = append(args, "--max-cudagraph-capture-size", maxSize)
@@ -566,6 +568,37 @@ func configValueAsArg(spec *ModelSpec, key string) string {
 	default:
 		return fmt.Sprint(raw)
 	}
+}
+
+// configValuesAsArgs preserves list values as separate CLI tokens. This is
+// required for argparse options that use nargs, such as vLLM's
+// --cudagraph-capture-sizes. Scalar values remain a single token for backward
+// compatibility with existing one-size model configurations.
+func configValuesAsArgs(spec *ModelSpec, key string) []string {
+	if spec == nil || spec.Config == nil {
+		return nil
+	}
+	raw, ok := spec.Config[key]
+	if !ok || raw == nil {
+		return nil
+	}
+
+	value := reflect.ValueOf(raw)
+	if value.Kind() != reflect.Slice && value.Kind() != reflect.Array {
+		if arg := configValueAsArg(spec, key); arg != "" {
+			return []string{arg}
+		}
+		return nil
+	}
+
+	args := make([]string, 0, value.Len())
+	for i := 0; i < value.Len(); i++ {
+		arg := strings.TrimSpace(fmt.Sprint(value.Index(i).Interface()))
+		if arg != "" {
+			args = append(args, arg)
+		}
+	}
+	return args
 }
 
 func rocmAiterDisabledEnvVars() []corev1.EnvVar {

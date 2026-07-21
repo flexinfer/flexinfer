@@ -110,7 +110,7 @@ spec:
   gauntlet:
     templateRef: fable-rp-performance-gauntlet
     env:
-      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-two-session-v2"
+      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-two-session-v3"
       EXPERIMENT_PHASE: "32k_graph_fp16kv_two_session"
       ITERS: "3"
       RP_OUTPUT_TOKENS: "192"
