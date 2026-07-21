@@ -1,8 +1,9 @@
 # Fable 27B replacement canary for the warm qwen35-9b-ablit-rp lane.
 #
-# Generation 1 is the exact qualified 8K eager/FP16-KV sentinel, moved to the
-# same physical 7900 XTX used by the 9B lane. Later generations change one
-# runtime boundary at a time: 32K eager/FP16-KV, then 32K graph/FP8-KV. The
+# Generation 1 passed the exact qualified 8K eager/FP16-KV sentinel on the same
+# physical 7900 XTX used by the 9B lane. Generation 2 changes only the context
+# envelope to a matched 32K eager/FP16-KV control. The next generation changes
+# execution/KV to 32K graph/FP8-KV. The
 # ModelExperiment controller removes every candidate at verdict, after which
 # the existing 9B parent Model resumes its warm-primary shared-group lease.
 apiVersion: ai.flexinfer/v1alpha2
@@ -16,7 +17,7 @@ metadata:
     flexinfer.ai/runtime-digest: sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
     flexinfer.ai/kill-test: .loom/brainstorm-fable-rp-lane-optimization-2026-07-21.md#riskiest-assumption--kill-test
 spec:
-  timeout: 30m
+  timeout: 45m
   artifactGate:
     modelCacheRef: qwen36-27b-fable-oci-7900xtx
     requireSourceMatch: true
@@ -51,8 +52,8 @@ spec:
       dtype: half
       languageModelOnly: true
       hfOverrides: '{"architectures":["Qwen3_5ForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
-      maxModelLen: 8192
-      maxInputTokens: 6144
+      maxModelLen: 32768
+      maxInputTokens: 28672
       maxOutputTokens: 2048
       maxNumSeqs: 1
       maxNumBatchedTokens: 2048
@@ -88,10 +89,10 @@ spec:
   gauntlet:
     templateRef: fable-rp-performance-gauntlet
     env:
-      FLEXINFER_EXPERIMENT_REVISION: "8k-eager-fp16kv-sentinel-v1"
-      EXPERIMENT_PHASE: "8k_eager_fp16kv_sentinel"
-      ITERS: "2"
+      FLEXINFER_EXPERIMENT_REVISION: "32k-eager-fp16kv-control-v1"
+      EXPERIMENT_PHASE: "32k_eager_fp16kv_control"
+      ITERS: "3"
       RP_OUTPUT_TOKENS: "192"
-      LONG_CONTEXT_TOKENS: "0"
+      LONG_CONTEXT_TOKENS: "18000"
       MIN_MEDIAN_TPS: "7.5"
       MAX_P95_TTFT: "30"
