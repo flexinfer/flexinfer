@@ -9,7 +9,8 @@
 # one restart before the cached compile loaded cleanly. Generation 5 raises the
 # dedicated engine budget and uses a fresh compile-cache path to certify a
 # clean cold start. Generation 6 keeps that winner and adds two-session
-# scheduling, partial-prefill guards, and graph shape two. The
+# scheduling and graph shape two. Concurrent partial prefill is intentionally
+# omitted because vLLM 0.23 rejects it for this hybrid Qwen execution path. The
 # ModelExperiment controller removes every candidate at verdict, after which
 # the existing 9B parent Model resumes its warm-primary shared-group lease.
 apiVersion: ai.flexinfer/v1alpha2
@@ -66,9 +67,6 @@ spec:
       maxNumSeqs: 2
       maxNumBatchedTokens: 4096
       enableChunkedPrefill: true
-      maxNumPartialPrefills: 2
-      maxLongPartialPrefills: 1
-      longPrefillTokenThreshold: 4096
       # Cold graph compilation left only 1.52 GiB for KV at 0.90 while 32K
       # FP16 KV needs 2.08 GiB. 0.94 adds about 0.96 GiB of bounded headroom;
       # this dedicated pod has exclusive use of the discrete card.
@@ -110,7 +108,7 @@ spec:
   gauntlet:
     templateRef: fable-rp-performance-gauntlet
     env:
-      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-two-session-v3"
+      FLEXINFER_EXPERIMENT_REVISION: "32k-graph-fp16kv-two-session-v4"
       EXPERIMENT_PHASE: "32k_graph_fp16kv_two_session"
       ITERS: "3"
       RP_OUTPUT_TOKENS: "192"
