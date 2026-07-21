@@ -7,10 +7,10 @@
 # marks GPTQ unsupported on AMD; this lane therefore must not run on an
 # unpatched stock image.
 #
-# v1 is intentionally text-only and does not enable native MTP. Promotion
-# requires: OCI digest pin, artifact validation, deterministic greedy coherence,
-# 5-prompt quality smoke, and a short throughput/VRAM measurement on gfx1100.
-# Keep unique aliases and minReplicas=0 until those gates pass.
+# v1 is intentionally text-only and does not enable native MTP. Its 2026-07-21
+# gfx1100 qualification passed artifact validation, deterministic greedy
+# coherence, a 5-prompt quality smoke, and VRAM fit. Keep the unique alias and
+# minReplicas=0: the ROCm GPTQ reference path is correct but only ~0.61 tok/s.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -22,7 +22,7 @@ metadata:
     flexinfer.ai/base-model-posture: uncensored-heretic-fable-fusion
     flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen36-27b-fable@sha256:285a044529f6321f954353c93c5a91f771cfdfc7445ad25af5d64b7926d83710
     flexinfer.ai/runtime-image: registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e
-    flexinfer.ai/promotion-state: digest-pinned-gfx1100-smoke-active
+    flexinfer.ai/promotion-state: gfx1100-coherence-passed-reference-fallback
 spec:
   backend: vllm
   # The generic gfx1100 vLLM image does not carry the Qwen3.6 GDN CLI/runtime
@@ -36,7 +36,10 @@ spec:
     vendor: amd
     count: 1
     shared: 5930k-textgen
-    priority: 80
+    # Match the warm WAN primary so explicit Fable demand may borrow an idle
+    # card without preempting active video traffic. Higher-priority VACE stays
+    # authoritative. A lower priority is statically parked by proxy design.
+    priority: 500
     vramEstimateMB: 22000
   serverless:
     enabled: true
