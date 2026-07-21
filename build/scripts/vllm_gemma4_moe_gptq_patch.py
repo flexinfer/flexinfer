@@ -253,6 +253,18 @@ def patch_gptq_rocm_reference_fallback(vllm_root: pathlib.Path) -> bool:
 
     src = gptq_py.read_text()
 
+    if "FLEXINFER_QWEN35_GPTQ_ROCM_SHUFFLE_SKIP" in src:
+        # The Qwen runtime patch has already selected the validated gfx1100
+        # path: checkpoint-order qweight (no ExLlama shuffle) consumed by the
+        # stock fused ops.gptq_gemm kernel. Do not replace that path with the
+        # dense reference implementation below. The Gemma-specific MoeWNA16
+        # fallback is patched separately and remains available for MoE layers.
+        print(
+            "[gemma4-moe-patch] Preserving Qwen ROCm stock fused GPTQ path "
+            "(gptq_shuffle skip guard present)"
+        )
+        return True
+
     if "GEMMA4_GPTQ_ROCM_REFERENCE_PATCH" in src:
         print("[gemma4-moe-patch] GPTQ ROCm reference fallback already patched")
         return True
