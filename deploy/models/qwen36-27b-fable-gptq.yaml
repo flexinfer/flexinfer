@@ -1,17 +1,18 @@
-# Demand-only Qwen3.6-27B Fable Fusion GPTQ canary on gfx1100.
+# Demand-only Qwen3.6-27B Fable Fusion GPTQ lane qualified on gfx1100.
 #
 # The artifact is produced from the exact BF16 source of DavidAU's Fable
 # Fusion 711 GGUF by deploy/modelcaches/qwen36-27b-fable-gptq.yaml. It uses the
 # dedicated vLLM 0.23 gfx1100 runtime, compiled from the upstream release with
-# its native RDNA3 W4A16 HIP operator. Keep this digest isolated from the
-# legacy serving persona until full-checkpoint coherence and throughput pass.
+# its native RDNA3 W4A16 HIP operator. Keep the qualified runtime digest pinned
+# so profile defaults cannot silently move this model back to a generic kernel.
 #
 # v1 is intentionally text-only and does not enable native MTP. Its 2026-07-21
 # gfx1100 qualification passed artifact validation, deterministic greedy
 # coherence, a 5-prompt quality smoke, and VRAM fit. Keep the unique alias and
 # minReplicas=0: the legacy ROCm GPTQ reference path was correct but only
 # ~0.61 tok/s, while an earlier generic fused path corrupted production-shape
-# output. This canary must prove both correctness and speed before promotion.
+# output. The native lane produced coherent deterministic output at about
+# 8.7 tok/s, roughly 14x the legacy reference path.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -23,7 +24,7 @@ metadata:
     flexinfer.ai/base-model-posture: uncensored-heretic-fable-fusion
     flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen36-27b-fable@sha256:285a044529f6321f954353c93c5a91f771cfdfc7445ad25af5d64b7926d83710
     flexinfer.ai/runtime-image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
-    flexinfer.ai/promotion-state: gfx1100-native-w4a16-text-canary
+    flexinfer.ai/promotion-state: gfx1100-native-w4a16-text-qualified
 spec:
   backend: vllm
   # vLLM 0.23 is source-built for gfx1100 because the generic upstream ROCm
@@ -44,7 +45,7 @@ spec:
   serverless:
     enabled: true
     minReplicas: 0
-    # Native vLLM cold start is about two minutes. Keep the demand-only canary
+    # Native vLLM cold start is about two minutes. Keep the demand-only lane
     # alive long enough for qualification and ordinary responses; one minute
     # caused it to self-reap immediately after readiness and between probes.
     idleTimeout: 10m
@@ -57,8 +58,8 @@ spec:
     # Strip multimodal M-RoPE fields and force the text model class emitted by
     # the source-specific quantizer policy.
     hfOverrides: '{"architectures":["Qwen3_5ForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
-    # Start with a small qualification envelope. Qwen3.6 is native 262K, but
-    # context is raised only after the artifact's weight fit and coherence pass.
+    # Keep the qualified 8K safety envelope. Qwen3.6 is native 262K, but larger
+    # contexts require a separate VRAM and latency qualification on this card.
     maxModelLen: 8192
     maxInputTokens: 6144
     maxOutputTokens: 2048
@@ -68,9 +69,8 @@ spec:
     gpuMemoryUtilization: "0.90"
     kvCacheDtype: auto
     calculateKvScales: false
-    # Keep the conservative hybrid posture used by the coherent fallback while
-    # isolating the W4A16 kernel change. Context and scheduler tuning follow
-    # only after production-shape output passes.
+    # Keep the conservative scheduler posture used for the successful native
+    # W4A16 qualification. Context and scheduler tuning remain separate work.
     enforceEager: true
     enablePrefixCaching: false
     disableAiter: true
