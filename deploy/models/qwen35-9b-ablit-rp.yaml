@@ -43,8 +43,8 @@ spec:
     # resources and expose ordinal zero, matching the certified canary.
     count: 2
     shared: 7900xtx-textgen
-    # The certified profile reserves 94% of the discrete 24 GiB card and left
-    # 12.0 GiB for 391,320 KV tokens after warm compilation.
+    # Production reserves four LoRA slots and leaves 355,302 KV tokens after
+    # warm compilation: 1.55 full-window requests at the promoted ceiling.
     vramEstimateMB: 23200
     # 2026-07-18 psyche fleet layout: warm-pinned leader of the 7900xtx text
     # lane. Outranks the demoted workhorse-128k (300) and every other group
@@ -81,9 +81,9 @@ spec:
     gpuMemoryUtilization: "0.94"
     # 4 slots so two slow/stuck streams can't monopolize the engine (observed
     # 2026-07-19: a 2-req retry loop pinned both slots for 6h while psyche
-    # queued). The 391,320-token KV pool provides 1.71 full-window requests;
-    # the certificate still cleared its two-stream short-RP concurrency floor,
-    # and vLLM preempts if concurrent long sequences outgrow the pool.
+    # queued). The production KV pool provides 1.55 full-window requests; the
+    # certificate still cleared its two-stream short-RP concurrency floor, and
+    # vLLM preempts if concurrent long sequences outgrow the pool.
     maxNumSeqs: 4
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true

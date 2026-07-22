@@ -39,7 +39,7 @@ window when memory is insufficient; vLLM has also documented a
 when a request is within `max_model_len` but exceeds real KV capacity. Most
 importantly, this exact artifact already failed recall near 245K.
 
-**Status**: 192K passed; 224K passed twice and is ready for promotion
+**Status**: 192K passed; 224K passed twice and is promoted
 
 ## Artifact Pinning
 
@@ -136,10 +136,30 @@ make those defaults explicit so this cannot masquerade as a recall failure.
   execution generation; real spec changes still invalidate old evidence.
 - Status: passed twice; promotion condition satisfied.
 
+## Production rollout
+
+- Promotion merge: `f64b12587f47d7eb4d12da617636b1e3749175a5`.
+- Live production spec: `maxModelLen=229376`, `maxInputTokens=228352`, exact
+  certified runtime digest, native `RDNA3W4A16LinearKernel`, Triton/FLA GDN,
+  FP16 KV, and graph sizes `[1,2,4]`.
+- Production reserves four LoRA slots rather than the candidate's one. Its
+  measured KV pool is therefore 355,302 tokens, or 1.55 full-window requests;
+  a single certified maximum-length request still fits with headroom.
+- Rollout state: parent `Ready`, adapter `Loaded 1/1`, and zero pod restarts.
+- Direct production smoke: base returned exactly `PROD_224K_BASE_OK`; the
+  `nsfw-rp` adapter returned exactly `PROD_224K_LORA_OK`; neither leaked
+  reasoning content under the server default.
+- Controller repair image: `flexinfer-controller:20260722-165252`, digest
+  `sha256:09567f7cea873aecb401a6510cc7d617b1bafd511716e5b77bb52c2ab761b86f`.
+- Live regression proof: a deliberate Flux reapply advanced the experiment
+  from generation 5 to 6 with an unchanged fingerprint. The repaired
+  controller emitted `GenerationUnchanged`, preserved
+  `Succeeded/GauntletPassed`, advanced `observedGeneration` to 6, and created
+  no candidate.
+
 ## Next
 
-1. Promote production to `maxModelLen=229376` and
-   `maxInputTokens=228352` after the controller fix rolls out.
-2. Re-run the production smoke/LoRA readiness check after rollout.
-3. Keep the older roughly 245K miss as the current unsafe upper bound; bisect
+1. Monitor real RP traffic at the new ceiling, especially concurrent long
+   requests given the measured 1.55 full-window KV capacity.
+2. Keep the older roughly 245K miss as the current unsafe upper bound; bisect
    between 224K and 245K only if the extra window is operationally valuable.
