@@ -4,10 +4,12 @@
 # The LoRAAdapter qwen35-9b-nsfw-rp targets this model; the controller auto-injects
 # --enable-lora, --max-loras, --max-lora-rank 64, and VLLM_ALLOW_RUNTIME_LORA_UPDATING.
 #
-# ModelExperiment/qwen35-9b-v023-rp-canary PASSED 2026-07-21 on the exact
-# digest below: native RDNA3 W4A16, FULL_AND_PIECEWISE graphs 1/2/4, rank-64
-# LoRA, 55.68 aggregate tok/s across two RP streams, and exact 5/5 recall in a
-# 127,969-token prompt. Reach the adapter via model="nsfw-rp".
+# ModelExperiment/qwen35-9b-default-nonthinking-canary generation 4 PASSED
+# 2026-07-22 on the exact digest below: native RDNA3 W4A16, graphs 1/2/4,
+# rank-64 LoRA, 56.01 aggregate tok/s across two RP streams, and exact 5/5
+# recall in a 127,969-token prompt. Normal requests default to non-thinking;
+# clients can opt in with chat_template_kwargs.enable_thinking=true. Reach the
+# adapter via model="nsfw-rp".
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -18,7 +20,7 @@ metadata:
     flexinfer.ai/base-model-posture: abliterated
     flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128
     flexinfer.ai/runtime-digest: sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
-    flexinfer.ai/canary-certificate: qwen35-9b-v023-rp-canary-generation-5
+    flexinfer.ai/canary-certificate: qwen35-9b-default-nonthinking-canary-generation-4
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
@@ -102,6 +104,10 @@ spec:
     hipVisibleDevices: "0"
     trustRemoteCode: true
     servedModelName: qwen35-9b-ablit-rp
+    # RP is the default interaction mode. Per-request chat_template_kwargs
+    # still take precedence, so callers can explicitly opt into thinking.
+    defaultChatTemplateKwargs:
+      enable_thinking: false
     enableToolCalling: false     # roleplay model — no tool parser
     disableLogStats: false
     failOnEnvironValidation: false
