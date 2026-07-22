@@ -380,6 +380,31 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 		if ok, reason := pkgrt.DirectRuntimeLoadEligibility(model, b.Name(), runtimeProfile); !ok {
 			log.V(1).Info("Skipping runtime-managed flow for model", "reason", reason)
+			// A model that was previously runtime-managed may opt into a newer,
+			// model-specific image with dedicatedDeployment. Unload that same
+			// model from the persistent runtime before creating the Deployment;
+			// otherwise both processes race for the GPU and the Deployment
+			// crash-loops with almost no free VRAM.
+			if model.Spec.ConfigBool("dedicatedDeployment", false) {
+				runtimeEndpoint, err := r.Runtime.FindRuntimeForNode(ctx, model.Namespace, model.Spec.NodeSelector)
+				if err != nil {
+					return ctrl.Result{}, fmt.Errorf("discovering runtime for dedicated deployment handoff: %w", err)
+				}
+				if runtimeEndpoint != nil && runtimeEndpoint.CanAcceptLoad() {
+					unloaded, err := r.unloadRuntimeModel(ctx, model, runtimeEndpoint)
+					if err != nil {
+						return ctrl.Result{}, fmt.Errorf("preparing dedicated deployment handoff: %w", err)
+					}
+					if unloaded {
+						log.Info("Unloaded runtime-managed model before dedicated Deployment handoff",
+							"model", model.Name,
+							"runtimePod", runtimeEndpoint.PodName,
+						)
+						r.removeRuntimeEndpoints(ctx, model)
+						return ctrl.Result{RequeueAfter: requeueShort}, nil
+					}
+				}
+			}
 		} else {
 			runtimeEndpoint, err := r.Runtime.FindRuntimeForNode(ctx, model.Namespace, model.Spec.NodeSelector)
 			if err != nil {

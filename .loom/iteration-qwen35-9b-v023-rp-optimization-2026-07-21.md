@@ -138,9 +138,24 @@
   The canary loaded the same artifact directly from EXT4. Explicitly disable
   flash-loader on this model so the dedicated deployment mounts the already-
   staged Local cache directly and retains the certified storage path.
+- Second rollout ownership blocker: after the model opted out of the persistent
+  runtime, the controller created its dedicated Deployment without unloading
+  the same model from that runtime. The old process held 22,495 MB of VRAM;
+  vLLM correctly rejected the new process because only 2.03/23.98 GiB was free.
+- Operational recovery unloaded only `qwen35-9b-ablit-rp` through the runtime
+  API. GPU use fell to 26 MB and the existing dedicated pod completed startup.
+  It confirmed vLLM 0.23, native RDNA3 W4A16, Triton GDN, graph capture in 14s,
+  354,570 KV tokens (2.71x at 131,072), and the exact pinned image.
+- Production `Model` reached `Ready`; `LoRAAdapter/qwen35-9b-nsfw-rp` reached
+  `Loaded` on 1/1 replicas. Direct service smokes returned exact
+  `PROD_BASE_OK` and `PROD_LORA_OK` with no reasoning output.
+- Permanent controller fix: when a previously runtime-managed model opts into
+  `dedicatedDeployment`, health-check and unload that same model, clear its
+  runtime endpoints, and requeue before a Deployment can claim the GPU. A
+  failed unload blocks the handoff; an already-absent model proceeds normally.
 
 ## Next
 
-1. Validate and ship the certified production profile.
-2. Confirm exact production image/graph logs and zero-restart Ready state.
-3. Confirm the `nsfw-rp` LoRA status and smoke both base and adapter aliases.
+1. Validate and ship the runtime-to-dedicated ownership handoff fix.
+2. Confirm controller CI and deployment health.
+3. Reconfirm the production parent and adapter remain Ready/Loaded.

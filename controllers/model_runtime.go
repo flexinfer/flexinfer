@@ -441,22 +441,37 @@ func (r *ModelReconciler) deleteLegacyDeploymentForRuntime(ctx context.Context, 
 	return nil
 }
 
-// unloadFromRuntime sends an unload request to the runtime if the model is loaded.
-func (r *ModelReconciler) unloadFromRuntime(ctx context.Context, model *aiv1alpha2.Model, endpoint *RuntimeEndpoint) {
-	log := log.FromContext(ctx)
-
+// unloadRuntimeModel sends an unload request when the named model is still
+// present in the persistent runtime. The boolean distinguishes an actual
+// handoff from the already-unloaded steady state.
+func (r *ModelReconciler) unloadRuntimeModel(ctx context.Context, model *aiv1alpha2.Model, endpoint *RuntimeEndpoint) (bool, error) {
 	// Check if the model is actually loaded.
 	status, err := r.Runtime.CheckModelHealth(ctx, endpoint, model.Name)
 	if err != nil {
-		log.V(1).Info("Could not check runtime model health for unload", "error", err)
+		return false, fmt.Errorf("checking runtime model health before unload: %w", err)
 	}
 	if status == nil {
-		return // Not loaded — nothing to do.
+		return false, nil
 	}
 
-	log.Info("Unloading model from runtime", "model", model.Name)
 	if err := r.Runtime.UnloadModel(ctx, endpoint, model.Name); err != nil {
+		return false, fmt.Errorf("unloading model from runtime: %w", err)
+	}
+	return true, nil
+}
+
+// unloadFromRuntime performs the best-effort unload used by idle/preempted
+// runtime-managed models. Dedicated-deployment handoffs call the strict helper
+// above directly so a failed unload cannot race a second GPU owner into place.
+func (r *ModelReconciler) unloadFromRuntime(ctx context.Context, model *aiv1alpha2.Model, endpoint *RuntimeEndpoint) {
+	log := log.FromContext(ctx)
+	unloaded, err := r.unloadRuntimeModel(ctx, model, endpoint)
+	if err != nil {
 		log.Error(err, "Failed to unload model from runtime")
+		return
+	}
+	if unloaded {
+		log.Info("Unloaded model from runtime", "model", model.Name)
 	}
 }
 
