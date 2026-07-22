@@ -243,6 +243,14 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--reasoning-parser", rp)
 	}
 
+	// Default keyword arguments for the model's chat-template renderer. vLLM
+	// merges these with request-level chat_template_kwargs, with the request
+	// taking precedence. Accept either an already-encoded string or a native
+	// YAML/JSON map so manifests can express model-family defaults cleanly.
+	if kwargs := configValueAsArg(spec, "defaultChatTemplateKwargs"); kwargs != "" {
+		args = append(args, "--default-chat-template-kwargs", kwargs)
+	}
+
 	// Disable stats logging to reduce log noise in production
 	if spec.ConfigBool("disableLogStats", false) {
 		args = append(args, "--disable-log-stats")
