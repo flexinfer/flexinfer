@@ -91,7 +91,7 @@ spec:
   gauntlet:
     templateRef: qwen35-9b-rp-performance-gauntlet
     env:
-      FLEXINFER_EXPERIMENT_REVISION: "default-nonthinking-v1"
+      FLEXINFER_EXPERIMENT_REVISION: "default-nonthinking-v2"
       EXPERIMENT_PHASE: "default_nonthinking"
       REQUIRE_DEFAULT_NON_THINKING: "true"
       ITERS: "3"
