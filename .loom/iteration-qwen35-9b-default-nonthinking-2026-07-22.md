@@ -56,8 +56,29 @@
 - Kubeconform validated all four retained CronJobs: four valid, zero invalid.
 - `make test-unit`, `go vet ./...`, `make check-runtime-patch-contracts`,
   focused backend tests, and `git diff --check` passed.
-- Status: waiting for the master controller image from merge `74fcca3b8`
-  before the executable canary MR is allowed to merge.
+- The executable canary remained withheld until the master controller image
+  from merge `74fcca3b8` was deployed Ready.
+
+### Live run 1
+
+- Controller `20260722-151147` deployed Ready at digest
+  `sha256:af7c17d6afe1444f66f366b3aacdfafd2dea795c7c07194b929871f9655019bf`
+  with one ready replica and zero restarts before the canary was released.
+- Candidate startup passed on the exact runtime digest with vLLM 0.23,
+  `RDNA3W4A16LinearKernel`, Triton/FLA GDN prefill, graphs 1/2/4, 131K,
+  rank-64 LoRA support, and zero restarts. vLLM parsed
+  `default_chat_template_kwargs={'enable_thinking': False}`.
+- Base default probe returned exact `ROCM_9B_BASE_OK` with no reasoning;
+  explicit true produced `Thinking Process:`. The dynamically loaded
+  `nsfw-rp` adapter behaved identically for its default and override probes.
+- Base RP decoded at 101.612 tok/s. LoRA dialogue median was 59.1161 tok/s;
+  2,268-token multi-turn median was 40.5334 tok/s. All exceeded the 5%
+  regression floors and emitted no thinking markers.
+- Long context passed exact 5/5 recall from 127,969 prompt tokens with
+  118.6716-second TTFT and 152.002-second elapsed time.
+- Typed outcome: FAIL only because two-stream median aggregate was 52.7527
+  tok/s against the strict 52.9000 floor, a 0.1473 tok/s miss. Preserve the
+  threshold and bump only the experiment revision for a warm-cache rerun.
 
 ## Next
 
