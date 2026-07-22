@@ -150,6 +150,25 @@ behavior without scraping engine metrics:
 | `X-Flexinfer-Cached-Tokens` | non-streaming, engine reports it | `usage.prompt_tokens_details.cached_tokens`. Omitted when the engine does not report it (e.g. gemma4, llama.cpp) — absence ≠ zero. |
 | `X-Flexinfer-Prefix-Cache-Hit-Rate` | non-streaming, **opt-in** | Engine prefix-cache hit rate in `[0,1]`, scraped from the upstream's `/metrics`. Closes the gap for engines that omit `cached_tokens`. |
 
+Both cache headers depend on the lane's engine configuration:
+
+- **`X-Flexinfer-Cached-Tokens` requires two Model config keys.** vLLM only
+  reports `usage.prompt_tokens_details.cached_tokens` when launched with
+  `--enable-prompt-tokens-details` (`config.enablePromptTokensDetails: true`,
+  default off) *and* prefix caching produced a nonzero hit. A lane without
+  both never emits the header.
+- **`X-Flexinfer-Prefix-Cache-Hit-Rate` requires prefix caching to be on.**
+  With `config.enablePrefixCaching: false` the engine's
+  `vllm:prefix_cache_queries_total` stays `0`, and the proxy deliberately
+  omits the header rather than report a rate with an empty denominator.
+- Lanes that disable APC on purpose therefore report **neither** header even
+  for an identical repeated prompt. As of 2026-07-22 that includes
+  `qwen35-9b-ablit-rp` (hybrid GDN arch; upstream labels hybrid-model prefix
+  caching experimental — see the rationale in
+  `deploy/models/qwen35-9b-ablit-rp.yaml`). Downstream consumers (e.g.
+  psyche-simulation's Long Memory panel) should treat the absent headers as
+  "unknown", not as a cold cache.
+
 ### Prefix-cache hit rate (opt-in)
 
 Engines such as gemma4 don't surface per-request `cached_tokens`, so the only
