@@ -56,6 +56,13 @@ spec:
                   long_context_tokens = int(os.environ.get("LONG_CONTEXT_TOKENS", "128000"))
                   request_timeout = float(os.environ.get("REQUEST_TIMEOUT", "1200"))
                   min_lora_median_tps = float(os.environ.get("MIN_LORA_MEDIAN_TPS", "15"))
+                  min_base_decode_tps = float(os.environ.get("MIN_BASE_DECODE_TPS", "0"))
+                  min_lora_dialogue_median_tps = float(
+                      os.environ.get("MIN_LORA_DIALOGUE_MEDIAN_TPS", str(min_lora_median_tps))
+                  )
+                  min_lora_multi_turn_median_tps = float(
+                      os.environ.get("MIN_LORA_MULTI_TURN_MEDIAN_TPS", str(min_lora_median_tps))
+                  )
                   min_lora_to_base_ratio = float(os.environ.get("MIN_LORA_TO_BASE_RATIO", "0.5"))
                   max_short_p95_ttft = float(os.environ.get("MAX_SHORT_P95_TTFT", "30"))
                   concurrent_streams = int(os.environ.get("CONCURRENT_STREAMS", "2"))
@@ -66,6 +73,10 @@ spec:
                       os.environ.get("MAX_CONCURRENT_P95_ELAPSED", "45")
                   )
                   phase = os.environ.get("EXPERIMENT_PHASE", "unknown")
+                  require_default_non_thinking = os.environ.get(
+                      "REQUIRE_DEFAULT_NON_THINKING", "false"
+                  ).lower() in ("1", "true", "yes")
+                  default_enable_thinking = None if require_default_non_thinking else False
 
                   def percentile(values, fraction):
                       ordered = sorted(values)
@@ -137,19 +148,28 @@ spec:
                       if adapter not in ids:
                           raise RuntimeError(f"loaded adapter {adapter!r} absent from /v1/models")
 
-                  def stream_chat(name, served_model, messages, max_tokens, expected=None):
-                      payload = json.dumps(
-                          {
-                              "model": served_model,
-                              "messages": messages,
-                              "max_tokens": max_tokens,
-                              "temperature": 0,
-                              "top_p": 1,
-                              "stream": True,
-                              "stream_options": {"include_usage": True},
-                              "chat_template_kwargs": {"enable_thinking": False},
+                  def stream_chat(
+                      name,
+                      served_model,
+                      messages,
+                      max_tokens,
+                      expected=None,
+                      enable_thinking=default_enable_thinking,
+                  ):
+                      request_payload = {
+                          "model": served_model,
+                          "messages": messages,
+                          "max_tokens": max_tokens,
+                          "temperature": 0,
+                          "top_p": 1,
+                          "stream": True,
+                          "stream_options": {"include_usage": True},
+                      }
+                      if enable_thinking is not None:
+                          request_payload["chat_template_kwargs"] = {
+                              "enable_thinking": enable_thinking
                           }
-                      ).encode()
+                      payload = json.dumps(request_payload).encode()
                       request = urllib.request.Request(
                           base + "/v1/chat/completions",
                           data=payload,
@@ -209,6 +229,9 @@ spec:
                           "elapsed_s": round(elapsed, 4),
                           "decode_tps": round(decode_tps, 4),
                           "reasoning_chars": len(thought),
+                          "enable_thinking": (
+                              "server_default" if enable_thinking is None else enable_thinking
+                          ),
                           "answer_sha256": hashlib.sha256(answer.encode()).hexdigest(),
                           "answer_preview": answer[:320],
                           "exact": exact,
@@ -218,6 +241,55 @@ spec:
                           flush=True,
                       )
                       return result, answer
+
+                  def thinking_marker(answer):
+                      lowered = answer.lower()
+                      return next(
+                          (
+                              marker
+                              for marker in ("thinking process:", "<think>", "</think>")
+                              if marker in lowered
+                          ),
+                          "",
+                      )
+
+                  def verify_thinking_override(served_model, label, expected):
+                      result, answer = stream_chat(
+                          f"{label}_thinking_override",
+                          served_model,
+                          [
+                              {
+                                  "role": "user",
+                                  "content": f"Reply with exactly {expected} and nothing else.",
+                              }
+                          ],
+                          32,
+                          expected,
+                          enable_thinking=True,
+                      )
+                      marker = thinking_marker(answer)
+                      override_observed = (
+                          result["reasoning_chars"] > 0
+                          or bool(marker)
+                          or (
+                              not result["exact"]
+                              and result["completion_tokens"] >= 12
+                          )
+                      )
+                      print(
+                          "QWEN35_9B_THINKING_OVERRIDE "
+                          + json.dumps(
+                              {
+                                  "served_model": served_model,
+                                  "observed": override_observed,
+                                  "marker": marker,
+                                  "result": result,
+                              },
+                              sort_keys=True,
+                          ),
+                          flush=True,
+                      )
+                      return override_observed
 
                   def coherence_failure(answer):
                       text = answer.strip()
@@ -451,7 +523,7 @@ spec:
                           ),
                           flush=True,
                       )
-                      return result, missing
+                      return result, missing, answer
 
                   print(
                       "QWEN35_9B_CONFIG "
@@ -464,8 +536,12 @@ spec:
                               "iterations": iterations,
                               "long_context_tokens": long_context_tokens,
                               "min_lora_median_tps": min_lora_median_tps,
+                              "min_base_decode_tps": min_base_decode_tps,
+                              "min_lora_dialogue_median_tps": min_lora_dialogue_median_tps,
+                              "min_lora_multi_turn_median_tps": min_lora_multi_turn_median_tps,
                               "min_lora_to_base_ratio": min_lora_to_base_ratio,
                               "concurrent_streams": concurrent_streams,
+                              "require_default_non_thinking": require_default_non_thinking,
                           },
                           sort_keys=True,
                       ),
@@ -473,7 +549,7 @@ spec:
                   )
 
                   failures = []
-                  literal, _ = stream_chat(
+                  literal, literal_answer = stream_chat(
                       "base_literal_warmup",
                       model,
                       [{"role": "user", "content": "Reply with exactly ROCM_9B_BASE_OK and nothing else."}],
@@ -484,6 +560,13 @@ spec:
                       failures.append("base literal warmup mismatch")
                   if literal["reasoning_chars"]:
                       failures.append("base warmup emitted reasoning")
+                  marker = thinking_marker(literal_answer)
+                  if marker:
+                      failures.append(f"base warmup emitted thinking marker {marker!r}")
+                  if require_default_non_thinking and not verify_thinking_override(
+                      model, "base", "ROCM_9B_BASE_OVERRIDE_OK"
+                  ):
+                      failures.append("base request-level thinking override was not observed")
 
                   base_result, base_answer = stream_chat(
                       "base_rp_control", model, rp_messages, output_tokens
@@ -491,8 +574,30 @@ spec:
                   base_coherence = coherence_failure(base_answer)
                   if base_coherence:
                       failures.append(f"base RP incoherent: {base_coherence}")
+                  marker = thinking_marker(base_answer)
+                  if marker:
+                      failures.append(f"base RP emitted thinking marker {marker!r}")
 
                   load_adapter()
+
+                  lora_literal, lora_literal_answer = stream_chat(
+                      "lora_literal_default",
+                      adapter,
+                      [{"role": "user", "content": "Reply with exactly ROCM_9B_LORA_OK and nothing else."}],
+                      32,
+                      "ROCM_9B_LORA_OK",
+                  )
+                  if not lora_literal["exact"]:
+                      failures.append("LoRA literal default mismatch")
+                  if lora_literal["reasoning_chars"]:
+                      failures.append("LoRA literal default emitted reasoning")
+                  marker = thinking_marker(lora_literal_answer)
+                  if marker:
+                      failures.append(f"LoRA literal default emitted thinking marker {marker!r}")
+                  if require_default_non_thinking and not verify_thinking_override(
+                      adapter, "lora", "ROCM_9B_LORA_OVERRIDE_OK"
+                  ):
+                      failures.append("LoRA request-level thinking override was not observed")
 
                   lora_results = []
                   lora_results_by_workload = {}
@@ -515,6 +620,11 @@ spec:
                               )
                           if result["reasoning_chars"]:
                               failures.append(f"{workload} iteration {iteration} emitted reasoning")
+                          marker = thinking_marker(answer)
+                          if marker:
+                              failures.append(
+                                  f"{workload} iteration {iteration} emitted thinking marker {marker!r}"
+                              )
                           coherence = coherence_failure(answer)
                           if coherence:
                               failures.append(
@@ -531,6 +641,10 @@ spec:
                       )
                       for workload, results in lora_results_by_workload.items()
                   }
+                  lora_workload_floors = {
+                      "lora_rp_dialogue": min_lora_dialogue_median_tps,
+                      "lora_multi_turn": min_lora_multi_turn_median_tps,
+                  }
                   short_p95_ttft = percentile(
                       [base_result["ttft_s"]]
                       + [result["ttft_s"] for result in lora_results],
@@ -543,11 +657,17 @@ spec:
                   lora_to_base_ratio = lora_workload_medians[
                       "lora_rp_dialogue"
                   ] / max(0.001, base_result["decode_tps"])
+                  if base_result["decode_tps"] < min_base_decode_tps:
+                      failures.append(
+                          f"base decode {base_result['decode_tps']:.4f} < "
+                          f"{min_base_decode_tps:.4f}"
+                      )
                   for workload, median_tps in lora_workload_medians.items():
-                      if median_tps < min_lora_median_tps:
+                      floor = lora_workload_floors[workload]
+                      if median_tps < floor:
                           failures.append(
                               f"{workload} median decode {median_tps:.4f} < "
-                              f"{min_lora_median_tps:.4f}"
+                              f"{floor:.4f}"
                           )
                   if lora_to_base_ratio < min_lora_to_base_ratio:
                       failures.append(
@@ -573,6 +693,12 @@ spec:
                                   failures.append(
                                       f"concurrency batch {batch} stream {stream} emitted reasoning"
                                   )
+                              marker = thinking_marker(answer)
+                              if marker:
+                                  failures.append(
+                                      f"concurrency batch {batch} stream {stream} emitted "
+                                      f"thinking marker {marker!r}"
+                                  )
                               coherence = coherence_failure(answer)
                               if coherence:
                                   failures.append(
@@ -596,7 +722,7 @@ spec:
                               f"{max_concurrent_p95_elapsed:.4f}"
                           )
 
-                  long_result, missing_needles = calibrated_long_context()
+                  long_result, missing_needles, long_answer = calibrated_long_context()
                   minimum_long_prompt = long_context_tokens - max(
                       2048, int(long_context_tokens * 0.02)
                   )
@@ -608,6 +734,9 @@ spec:
                       failures.append(f"long-context recall missed {missing_needles}")
                   if long_result["reasoning_chars"]:
                       failures.append("long-context request emitted reasoning")
+                  marker = thinking_marker(long_answer)
+                  if marker:
+                      failures.append(f"long-context request emitted thinking marker {marker!r}")
 
                   summary = {
                       "phase": phase,

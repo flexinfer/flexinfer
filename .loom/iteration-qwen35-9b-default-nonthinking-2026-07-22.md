@@ -42,7 +42,22 @@
 
 ## Result
 
-- Status: not run.
+### Controller support
+
+- Backend passthrough merged as MR !927, merge commit `74fcca3b8`, after the
+  full merge-request pipeline passed.
+- The canary was intentionally withheld from that MR so Flux could not start
+  it under the previous controller binary.
+
+### Local canary proof
+
+- Embedded gauntlet Python compiled successfully.
+- Task and experiment kustomizations rendered successfully.
+- Kubeconform validated all four retained CronJobs: four valid, zero invalid.
+- `make test-unit`, `go vet ./...`, `make check-runtime-patch-contracts`,
+  focused backend tests, and `git diff --check` passed.
+- Status: waiting for the master controller image from merge `74fcca3b8`
+  before the executable canary MR is allowed to merge.
 
 ## Next
 

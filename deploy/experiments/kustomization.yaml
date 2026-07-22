@@ -5,3 +5,4 @@ resources:
   - qwen35-35b-clean-gptq-128k.yaml
   - qwen36-27b-fable-rp-canary.yaml
   - qwen35-9b-v023-rp-canary.yaml
+  - qwen35-9b-default-nonthinking-canary.yaml
