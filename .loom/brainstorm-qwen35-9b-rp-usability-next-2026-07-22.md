@@ -163,6 +163,8 @@ same-threshold warm-cache rerun passed at 56.0145 median aggregate tok/s,
 preserved 102.6556 base / 60.113 short-LoRA / 40.6942 multi-turn tok/s, and
 recalled all five needles from 127,969 prompt tokens. Default non-thinking and
 explicit thinking opt-in both passed for the base and dynamically loaded LoRA.
+MR !930 promoted the single tested behavior key to production; direct base and
+LoRA production probes passed with the Model Ready and adapter Loaded 1/1.
 
 ## Handoff
 
