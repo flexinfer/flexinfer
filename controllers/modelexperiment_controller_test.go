@@ -468,6 +468,90 @@ func TestModelExperimentSpecChangeCannotReuseOldVerdict(t *testing.T) {
 	}
 }
 
+func TestModelExperimentNoopGenerationAdvancePreservesActiveRun(t *testing.T) {
+	experiment, template := experimentTestObjects()
+	specHash, err := modelExperimentSpecFingerprint(experiment.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	experiment.Generation = 3
+	experiment.Finalizers = []string{aiv1alpha2.ModelExperimentFinalizer}
+	experiment.Annotations = map[string]string{
+		"ai.flexinfer/experiment-spec-hash":            specHash,
+		"ai.flexinfer/experiment-execution-generation": "2",
+	}
+	experiment.Status = aiv1alpha2.ModelExperimentStatus{
+		ObservedGeneration: 2,
+		Run:                2,
+		Phase:              aiv1alpha2.ModelExperimentEvaluating,
+		Reason:             "GauntletRunning",
+		CandidateName:      "currency-smoke-g2-r2-candidate",
+		JobName:            "currency-smoke-g2-r2-gauntlet",
+	}
+	labels := map[string]string{
+		modelExperimentOwnerLabel:      experimentLabelValue(experiment.Name),
+		modelExperimentGenerationLabel: "2",
+		modelExperimentRunLabel:        "2",
+	}
+	candidate := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "currency-smoke-g2-r2-candidate", Namespace: experiment.Namespace, Labels: labels},
+		Status:     aiv1alpha2.ModelStatus{Phase: aiv1alpha2.ModelPhaseReady},
+	}
+	job := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: "currency-smoke-g2-r2-gauntlet", Namespace: experiment.Namespace, Labels: labels},
+		Status:     batchv1.JobStatus{Active: 1},
+	}
+	f := newModelExperimentFixture(t, experiment, template, candidate, job)
+
+	f.reconcile()
+	f.reconcile() // active child lookup must continue using execution generation 2
+
+	got := f.experiment()
+	if got.Status.ObservedGeneration != 3 || got.Status.Phase != aiv1alpha2.ModelExperimentEvaluating || got.Status.Reason != "GauntletRunning" {
+		t.Fatalf("no-op generation advance restarted active run: %#v", got.Status)
+	}
+	if err := f.c.Get(f.ctx, types.NamespacedName{Namespace: f.key.Namespace, Name: candidate.Name}, &aiv1alpha2.Model{}); err != nil {
+		t.Fatalf("active candidate was not preserved: %v", err)
+	}
+	if err := f.c.Get(f.ctx, types.NamespacedName{Namespace: f.key.Namespace, Name: job.Name}, &batchv1.Job{}); err != nil {
+		t.Fatalf("active gauntlet was not preserved: %v", err)
+	}
+}
+
+func TestModelExperimentPreStatusSpecChangeRefreshesExecution(t *testing.T) {
+	experiment, template := experimentTestObjects()
+	originalHash, err := modelExperimentSpecFingerprint(experiment.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	experiment.Generation = 2
+	experiment.Finalizers = []string{aiv1alpha2.ModelExperimentFinalizer}
+	experiment.Annotations = map[string]string{
+		modelExperimentSpecHashAnnotation:            originalHash,
+		modelExperimentExecutionGenerationAnnotation: "1",
+	}
+	experiment.Spec.Timeout = metav1.Duration{Duration: time.Hour}
+	f := newModelExperimentFixture(t, experiment, template)
+
+	f.reconcile()
+
+	got := f.experiment()
+	updatedHash, err := modelExperimentSpecFingerprint(got.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Annotations[modelExperimentSpecHashAnnotation] != updatedHash || got.Annotations[modelExperimentExecutionGenerationAnnotation] != "2" {
+		t.Fatalf("pre-status spec change did not refresh execution metadata: %#v", got.Annotations)
+	}
+	candidate := &aiv1alpha2.Model{}
+	if err := f.c.Get(f.ctx, types.NamespacedName{Namespace: f.key.Namespace, Name: "currency-smoke-candidate"}, candidate); err != nil {
+		t.Fatal(err)
+	}
+	if candidate.Labels[modelExperimentGenerationLabel] != "2" {
+		t.Fatalf("candidate execution generation = %q, want 2", candidate.Labels[modelExperimentGenerationLabel])
+	}
+}
+
 func TestModelExperimentRejectsVisibleJobFromPriorGeneration(t *testing.T) {
 	experiment, template := experimentTestObjects()
 	experiment.Generation = 3
