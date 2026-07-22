@@ -39,7 +39,7 @@ window when memory is insufficient; vLLM has also documented a
 when a request is within `max_model_len` but exceeds real KV capacity. Most
 importantly, this exact artifact already failed recall near 245K.
 
-**Status**: 192K passed; 224K upper-half arm in progress
+**Status**: 192K passed; 224K passed twice and is ready for promotion
 
 ## Artifact Pinning
 
@@ -110,11 +110,36 @@ make those defaults explicit so this cannot masquerade as a recall failure.
   `deploy/experiments/qwen35-9b-context-ceiling-224k-canary.yaml`.
 - Compile cache:
   `/var/lib/flexinfer/compile-cache-qwen35-9b-context-224k-v1`.
-- Status: not run.
+- Capacity: 391,320 KV tokens, or 1.71 full-window requests at the
+  229,376-token serving ceiling.
+- Run 1 (`context-ceiling-224k-v1`, generation 3):
+  `Succeeded/GauntletPassed`; 5/5 exact recall at 223,969 prompt tokens;
+  332.106-second TTFT and 389.499 seconds elapsed; 101.255 base tok/s;
+  59.629 LoRA dialogue median tok/s; 40.483 LoRA multi-turn median tok/s;
+  0.589 LoRA/base ratio; 55.476 concurrent aggregate tok/s median; 0.603-second
+  short p95 TTFT; zero restarts.
+- Run 2 (`context-ceiling-224k-v2`, generation 4):
+  `Succeeded/GauntletPassed`; 5/5 exact recall at 223,969 prompt tokens;
+  343.877-second TTFT and 403.128 seconds elapsed; 101.330 base tok/s;
+  59.131 LoRA dialogue median tok/s; 40.101 LoRA multi-turn median tok/s;
+  0.584 LoRA/base ratio; 55.353 concurrent aggregate tok/s median; 0.598-second
+  short p95 TTFT; zero restarts.
+- Both runs proved the pinned digest, native `RDNA3W4A16LinearKernel`,
+  Triton/FLA GDN, FP16 KV, graph sizes `[1,2,4]`, default non-thinking base and
+  LoRA behavior, and a working explicit thinking override.
+- The first v1 attempt was interrupted at the five-minute Flux interval before
+  the successful generation-3 run. Decoded desired/live specs were identical,
+  but Flux server-side apply advanced the CR generation and the old controller
+  treated that as a real spec edit. MR
+  [!934](https://gitlab.flexinfer.ai/services/flexinfer/-/merge_requests/934)
+  fixes this by fencing runs on a canonical spec fingerprint plus stable
+  execution generation; real spec changes still invalidate old evidence.
+- Status: passed twice; promotion condition satisfied.
 
 ## Next
 
-1. Run the 224K upper-half arm.
-2. If 224K passes, repeat it before promotion.
-3. If 224K fails, repeat 192K before promotion.
-4. Promote no context increase until the selected ceiling passes twice.
+1. Promote production to `maxModelLen=229376` and
+   `maxInputTokens=228352` after the controller fix rolls out.
+2. Re-run the production smoke/LoRA readiness check after rollout.
+3. Keep the older roughly 245K miss as the current unsafe upper bound; bisect
+   between 224K and 245K only if the extra window is operationally valuable.
