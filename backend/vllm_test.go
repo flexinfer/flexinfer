@@ -1149,6 +1149,55 @@ func TestVLLMBackendArgs_ReasoningParser(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_DefaultChatTemplateKwargs(t *testing.T) {
+	b := &VLLMBackend{}
+
+	tests := []struct {
+		name   string
+		config map[string]any
+		want   string
+	}{
+		{
+			name: "native map is encoded as JSON",
+			config: map[string]any{
+				"defaultChatTemplateKwargs": map[string]any{
+					"enable_thinking": false,
+				},
+			},
+			want: `{"enable_thinking":false}`,
+		},
+		{
+			name: "encoded JSON is preserved",
+			config: map[string]any{
+				"defaultChatTemplateKwargs": `{"enable_thinking":false}`,
+			},
+			want: `{"enable_thinking":false}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := b.Args(&ModelSpec{Model: "qwen", Config: tt.config})
+			argMap := make(map[string]string)
+			for i := 0; i < len(args)-1; i++ {
+				if args[i][0] == '-' {
+					argMap[args[i]] = args[i+1]
+				}
+			}
+			if got := argMap["--default-chat-template-kwargs"]; got != tt.want {
+				t.Fatalf("expected --default-chat-template-kwargs=%q, got %q", tt.want, got)
+			}
+		})
+	}
+}
+
+func TestVLLMBackendArgs_DefaultChatTemplateKwargsUnset(t *testing.T) {
+	args := (&VLLMBackend{}).Args(&ModelSpec{Model: "qwen", Config: map[string]any{}})
+	if containsVLLMArg(args, "--default-chat-template-kwargs") {
+		t.Fatal("should not emit --default-chat-template-kwargs when unset")
+	}
+}
+
 func TestVLLMBackendArgs_NumGpuBlocksOverride(t *testing.T) {
 	b := &VLLMBackend{}
 
