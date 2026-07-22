@@ -157,10 +157,12 @@ thinking client loses control, or the adapter differs from the base. Keep the
 production profile unchanged and require clients to send the known-good false
 kwarg while isolating the plugin behavior.
 
-**Status**: run 1 proved every behavior, quality, context, and single-stream
-gate, but narrowly missed the strict concurrent floor: 52.7527 vs 52.9000
-aggregate tok/s. A same-threshold warm-cache rerun is pending to distinguish
-normal measurement variance from a repeatable greater-than-5% regression.
+**Status**: validated. Run 1 proved every behavior, quality, context, and
+single-stream gate but narrowly missed the strict concurrent floor. The
+same-threshold warm-cache rerun passed at 56.0145 median aggregate tok/s,
+preserved 102.6556 base / 60.113 short-LoRA / 40.6942 multi-turn tok/s, and
+recalled all five needles from 127,969 prompt tokens. Default non-thinking and
+explicit thinking opt-in both passed for the base and dynamically loaded LoRA.
 
 ## Handoff
 

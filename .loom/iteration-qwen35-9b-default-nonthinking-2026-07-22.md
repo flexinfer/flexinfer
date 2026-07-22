@@ -80,8 +80,31 @@
   tok/s against the strict 52.9000 floor, a 0.1473 tok/s miss. Preserve the
   threshold and bump only the experiment revision for a warm-cache rerun.
 
+### Live run 2
+
+- The warm-cache rerun changed only the experiment revision; all performance
+  gates and the candidate profile remained unchanged.
+- Base and LoRA requests with no request-level chat-template kwargs returned
+  exact `ROCM_9B_BASE_OK` and `ROCM_9B_LORA_OK`, with zero reasoning content or
+  thinking markers. Explicit `enable_thinking=true` produced
+  `Thinking Process:` for both served models, proving request precedence.
+- Base RP decoded at 102.6556 tok/s. LoRA dialogue median was 60.113 tok/s and
+  the 2,268-token multi-turn median was 40.6942 tok/s. LoRA/base was 0.5856.
+- Two-stream aggregate output was 56.7472, 56.0145, and 55.8076 tok/s; the
+  56.0145 median passed the unchanged 52.9000 floor.
+- Long context passed exact 5/5 recall from 127,969 prompt tokens with
+  120.1712-second TTFT and 153.5372-second elapsed time.
+- Typed outcome: `Succeeded/GauntletPassed`, generation 4. The candidate had
+  zero restarts and the experiment restored the production parent.
+
+### Promotion
+
+- Promote only `defaultChatTemplateKwargs.enable_thinking=false` to the
+  production Model and update its certificate annotation to generation 4.
+- Preserve every execution, memory, context, LoRA, and performance parameter.
+
 ## Next
 
-1. Implement and validate the backend passthrough and canary gates.
-2. Run the disposable candidate.
-3. Promote the one config key only after PASS.
+1. Merge the production manifest promotion.
+2. Reconcile the source and model Kustomization.
+3. Verify production defaults and the explicit thinking override directly.
