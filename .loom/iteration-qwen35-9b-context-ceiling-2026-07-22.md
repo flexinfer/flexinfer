@@ -39,7 +39,7 @@ window when memory is insufficient; vLLM has also documented a
 when a request is within `max_model_len` but exceeds real KV capacity. Most
 importantly, this exact artifact already failed recall near 245K.
 
-**Status**: not run
+**Status**: 192K passed; 224K upper-half arm in progress
 
 ## Artifact Pinning
 
@@ -73,11 +73,48 @@ importantly, this exact artifact already failed recall near 245K.
 
 ## Result
 
-- Outcome: pending.
-- Exact evidence: pending.
+- Outcome: 192K passed (`Succeeded/GauntletPassed`, generation 3).
+- Recall: 5/5 exact needles at 191,959 prompt tokens; no missing needles.
+- Long request: 249.253-second TTFT, 299.240 seconds elapsed.
+- Short performance: 102.481 base decode tok/s; 59.681 LoRA dialogue
+  median tok/s; 40.379 LoRA multi-turn median tok/s; 0.582 LoRA/base ratio;
+  0.593-second short p95 TTFT.
+- Concurrency: 56.352 aggregate tok/s median.
+- Runtime: exact pinned digest, native `RDNA3W4A16LinearKernel`, Triton/FLA
+  GDN, FP16 KV, graph sizes `[1,2,4]`, and zero candidate restarts.
+- Capacity: 391,320 KV tokens, 1.99x maximum full-window concurrency at the
+  196,608-token serving ceiling.
+- Thinking behavior: default base and LoRA calls remained non-thinking; the
+  explicit `enable_thinking=true` override still passed.
+- Recovery: production returned `Ready`; the rank-64 adapter returned
+  `Loaded 1/1`.
+
+The first attempt was interrupted by an orchestration-only generation change:
+the experiment controller materialized `repeatAfter` and cache defaults, and a
+later Flux apply caused the controller to replace the candidate during prefill.
+The stable generation-3 rerun produced the passing evidence above. New arms
+make those defaults explicit so this cannot masquerade as a recall failure.
+
+## 224K upper-half arm
+
+- Hypothesis: the exact passing profile retains 5/5 recall near 224K without
+  exhausting the measured 391,320-token KV capacity.
+- Single model variable: raise `maxModelLen` from 196,608 to 229,376 and
+  `maxInputTokens` from 195,584 to 228,352; move the retained long prompt from
+  192,000 to 224,000 tokens. All runtime, quantization, adapter, execution, and
+  performance gates remain unchanged.
+- Kill test: require `Succeeded/GauntletPassed`, 5/5 exact depth-distributed
+  recall within two percent of 224,000 tokens, the unchanged short/concurrent
+  floors, exact runtime proof, zero restarts, and automatic production restore.
+- Probe manifest:
+  `deploy/experiments/qwen35-9b-context-ceiling-224k-canary.yaml`.
+- Compile cache:
+  `/var/lib/flexinfer/compile-cache-qwen35-9b-context-224k-v1`.
+- Status: not run.
 
 ## Next
 
-1. If 192K passes, test 224K as the upper-half midpoint.
-2. If 192K fails, test 160K as the lower-half midpoint.
-3. Promote no context increase until a new ceiling passes twice.
+1. Run the 224K upper-half arm.
+2. If 224K passes, repeat it before promotion.
+3. If 224K fails, repeat 192K before promotion.
+4. Promote no context increase until the selected ceiling passes twice.
