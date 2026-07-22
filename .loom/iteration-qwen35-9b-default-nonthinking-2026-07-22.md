@@ -99,12 +99,24 @@
 
 ### Promotion
 
-- Promote only `defaultChatTemplateKwargs.enable_thinking=false` to the
-  production Model and update its certificate annotation to generation 4.
-- Preserve every execution, memory, context, LoRA, and performance parameter.
+- MR !930 promoted only `defaultChatTemplateKwargs.enable_thinking=false` and
+  the generation-4 certificate annotation. Every execution, memory, context,
+  LoRA, and performance parameter remained unchanged.
+- Flux applied merge commit `1549c8af6`; the production Deployment reached
+  one ready replica with zero restarts on the pinned runtime digest.
+- The rendered container args contain
+  `--default-chat-template-kwargs {"enable_thinking":false}`. Startup confirmed
+  vLLM 0.23, native `RDNA3W4A16LinearKernel`, Triton/FLA GDN, graphs 1/2/4,
+  and the 131,072-token window.
+- Direct production requests without request kwargs returned exact
+  `PROD_9B_BASE_OK` and `PROD_9B_LORA_OK`, both with null reasoning. Explicit
+  true requests restored thinking behavior; the LoRA emitted the expected
+  `Thinking Process:` marker and the base emitted internal-analysis prose.
+- Final state: Model `Ready`, LoRA `Loaded` on 1/1 replica, and no startup or
+  runtime faults in the promoted pod.
 
 ## Next
 
-1. Merge the production manifest promotion.
-2. Reconcile the source and model Kustomization.
-3. Verify production defaults and the explicit thinking override directly.
+1. Observe normal RP traffic for any client-specific generation regressions.
+2. Treat recall-ceiling bisection as the next isolated experiment; do not
+   couple it to this now-certified interaction default.
