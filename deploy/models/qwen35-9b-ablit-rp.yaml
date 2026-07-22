@@ -99,6 +99,21 @@ spec:
     cudagraphMetrics: true
     kvCacheMetrics: true
     kvCacheMetricsSample: "1.0"
+    # APC stays OFF: qwen3_5 is a hybrid GDN/attention arch and upstream vLLM
+    # 0.23 labels prefix caching for hybrid models experimental. Enabling it is
+    # the F4 framing in .loom/brainstorm-qwen35-9b-rp-usability-next-2026-07-22.md
+    # (disposable canary arm, cache-hit + output-parity evidence) — do not flip
+    # it here without that canary certificate.
+    #
+    # Known consumer effect: with APC off this lane reports NO prefix-cache
+    # instrumentation — vllm:prefix_cache_queries_total stays 0 so the proxy
+    # omits X-Flexinfer-Prefix-Cache-Hit-Rate (its queries>0 guard), and
+    # cached_tokens never appears in usage so X-Flexinfer-Cached-Tokens is
+    # omitted too. psyche-simulation's Long Memory panel therefore shows
+    # "unknown" warm share for this lane by design. When the F4 canary
+    # promotes, set enablePrefixCaching: true AND enablePromptTokensDetails:
+    # true together — vLLM only reports usage.prompt_tokens_details.cached_tokens
+    # when launched with --enable-prompt-tokens-details.
     enablePrefixCaching: false
     disableAiter: true
     rocmCustomPagedAttn: false

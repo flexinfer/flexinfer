@@ -231,6 +231,13 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		}
 	}
 
+	// vLLM's OpenAI server omits usage.prompt_tokens_details.cached_tokens
+	// unless launched with this flag (default false), independent of whether
+	// prefix caching itself is on. The proxy's X-Flexinfer-Cached-Tokens
+	// response header reads that usage field, so a lane that wants the header
+	// must set enablePromptTokensDetails: true alongside prefix caching.
+	args = appendVLLMBooleanOptionalArg(args, spec, "enablePromptTokensDetails", "--enable-prompt-tokens-details", "--no-enable-prompt-tokens-details")
+
 	// Tool calling support
 	if spec.ConfigBool("enableToolCalling", false) {
 		args = append(args, "--enable-auto-tool-choice")

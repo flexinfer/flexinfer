@@ -1126,6 +1126,60 @@ func TestVLLMBackendArgs_PrefixCachingNotSetByDefault(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendArgs_PromptTokensDetailsEnable(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"enablePromptTokensDetails": true,
+		},
+	}
+
+	args := b.Args(spec)
+	if !containsVLLMArg(args, "--enable-prompt-tokens-details") {
+		t.Error("expected --enable-prompt-tokens-details when enablePromptTokensDetails=true")
+	}
+	if containsVLLMArg(args, "--no-enable-prompt-tokens-details") {
+		t.Error("should not emit --no-enable-prompt-tokens-details when enabled")
+	}
+}
+
+func TestVLLMBackendArgs_PromptTokensDetailsExplicitDisable(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model: "test-model",
+		Config: map[string]any{
+			"enablePromptTokensDetails": false,
+		},
+	}
+
+	args := b.Args(spec)
+	if !containsVLLMArg(args, "--no-enable-prompt-tokens-details") {
+		t.Error("expected --no-enable-prompt-tokens-details when enablePromptTokensDetails=false")
+	}
+	if containsVLLMArg(args, "--enable-prompt-tokens-details") {
+		t.Error("should not emit --enable-prompt-tokens-details when disabled")
+	}
+}
+
+func TestVLLMBackendArgs_PromptTokensDetailsNotSetByDefault(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		Model:  "test-model",
+		Config: map[string]any{},
+	}
+
+	args := b.Args(spec)
+	for _, a := range args {
+		if a == "--enable-prompt-tokens-details" || a == "--no-enable-prompt-tokens-details" {
+			t.Errorf("should not emit prompt-tokens-details flag when not set in config, got %q", a)
+		}
+	}
+}
+
 func TestVLLMBackendArgs_ReasoningParser(t *testing.T) {
 	b := &VLLMBackend{}
 

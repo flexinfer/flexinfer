@@ -4,6 +4,12 @@
 # Mirrors the production warm primary `gemma4-26b-a4b-gptq` exactly EXCEPT for:
 #
 #   - enablePrefixCaching: true        (vs false on primary)
+#   - enablePromptTokensDetails: true  (vs unset on primary; vLLM only reports
+#                                       usage.prompt_tokens_details.cached_tokens
+#                                       with --enable-prompt-tokens-details, so
+#                                       this gives the kill-test per-request
+#                                       cache-hit evidence and exercises the
+#                                       proxy's X-Flexinfer-Cached-Tokens header)
 #   - gpuMemoryUtilization: "0.94"     (vs "0.98" on primary; leaves headroom
 #                                       for APC block pool at 32k FP8 KV)
 #
@@ -84,6 +90,10 @@ spec:
     # THE FLIP. Everything else in this manifest mirrors the warm primary
     # so the kill-test isolates APC's effect cleanly.
     enablePrefixCaching: true
+    # Surfaces usage.prompt_tokens_details.cached_tokens per request so the
+    # kill-test can read hits off X-Flexinfer-Cached-Tokens, not just the
+    # engine-windowed /metrics rate.
+    enablePromptTokensDetails: true
     maxNumBatchedTokens: 256
     disableLogStats: false
     enforceEager: false

@@ -349,6 +349,12 @@ func scrapePrefixCacheHitRate(ctx context.Context, targetURL string) (rate float
 //	                              for non-streaming completions; omitted
 //	                              when the engine does not report it (e.g.
 //	                              llama.cpp without prefix-cache stats).
+//	                              vLLM reports the field only when launched
+//	                              with --enable-prompt-tokens-details
+//	                              (Model config enablePromptTokensDetails)
+//	                              AND prefix caching produced a nonzero hit,
+//	                              so lanes with enablePrefixCaching: false
+//	                              never emit this header by design.
 //	X-Flexinfer-Prefix-Cache-Hit-Rate
 //	                            — engine-windowed prefix-cache hit rate in
 //	                              [0,1], scraped from the upstream's /metrics
