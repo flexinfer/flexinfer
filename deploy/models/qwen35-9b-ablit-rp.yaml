@@ -1,15 +1,15 @@
-# Abliterated Qwen3.5-9B @ 131K context + NSFW-RP LoRA — primary RP lane.
+# Abliterated Qwen3.5-9B @ 224K context + NSFW-RP LoRA — primary RP lane.
 #
 # Warm-primary member of the 7900xtx-textgen shared group on cblevins-7900xtx.
 # The LoRAAdapter qwen35-9b-nsfw-rp targets this model; the controller auto-injects
 # --enable-lora, --max-loras, --max-lora-rank 64, and VLLM_ALLOW_RUNTIME_LORA_UPDATING.
 #
-# ModelExperiment/qwen35-9b-default-nonthinking-canary generation 4 PASSED
-# 2026-07-22 on the exact digest below: native RDNA3 W4A16, graphs 1/2/4,
-# rank-64 LoRA, 56.01 aggregate tok/s across two RP streams, and exact 5/5
-# recall in a 127,969-token prompt. Normal requests default to non-thinking;
-# clients can opt in with chat_template_kwargs.enable_thinking=true. Reach the
-# adapter via model="nsfw-rp".
+# ModelExperiment/qwen35-9b-context-ceiling-224k-canary PASSED twice on
+# 2026-07-22 with the exact digest below: native RDNA3 W4A16, graphs 1/2/4,
+# rank-64 LoRA, >55 aggregate tok/s across two RP streams, and exact 5/5 recall
+# in two independent 223,969-token prompts. Normal requests default to
+# non-thinking; clients can opt in with chat_template_kwargs.enable_thinking=true.
+# Reach the adapter via model="nsfw-rp".
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -20,7 +20,7 @@ metadata:
     flexinfer.ai/base-model-posture: abliterated
     flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128
     flexinfer.ai/runtime-digest: sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
-    flexinfer.ai/canary-certificate: qwen35-9b-default-nonthinking-canary-generation-4
+    flexinfer.ai/canary-certificate: qwen35-9b-context-ceiling-224k-canary-generation-4
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
@@ -44,7 +44,7 @@ spec:
     count: 2
     shared: 7900xtx-textgen
     # The certified profile reserves 94% of the discrete 24 GiB card and left
-    # 13.77 GiB for 448,077 KV tokens after warm compilation.
+    # 12.0 GiB for 391,320 KV tokens after warm compilation.
     vramEstimateMB: 23200
     # 2026-07-18 psyche fleet layout: warm-pinned leader of the 7900xtx text
     # lane. Outranks the demoted workhorse-128k (300) and every other group
@@ -70,19 +70,20 @@ spec:
     # "set -= list"). Override with a clean text-only rope block (same trick the
     # 35B workhorse uses). Native max_position_embeddings is 262144 with NO RoPE
     # extrapolation anywhere in range (unlike the 35B, which cliffs ~64K).
-    # 131072 is the highest NEEDLE-VERIFIED window (2026-07-19, in-pod
-    # context-needle-bench): 131072 PASS (recall 1/1, coherent); 245760 FAIL
-    # (coherent prose but recall 0/1) despite loading Ready at 262144. Recall
-    # ceiling sits in (131072, 245760) — bisect before raising this again.
+    # The retained five-depth gauntlet passed twice at 223,969 prompt tokens on
+    # 2026-07-22. An older one-needle probe at roughly 245K missed 0/1 despite
+    # coherent prose, so 229,376 remains the certified serving ceiling rather
+    # than the native 262,144-token metadata maximum.
     hfOverrides: '{"architectures":["Qwen3_5ForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
-    maxModelLen: 131072
-    maxInputTokens: 130048
+    maxModelLen: 229376
+    maxInputTokens: 228352
     maxOutputTokens: 1024
     gpuMemoryUtilization: "0.94"
     # 4 slots so two slow/stuck streams can't monopolize the engine (observed
     # 2026-07-19: a 2-req retry loop pinned both slots for 6h while psyche
-    # queued). KV pool is shared and was at ~1% under 2×128K-capable seqs;
-    # vLLM preempts if concurrent sequences ever outgrow the pool.
+    # queued). The 391,320-token KV pool provides 1.71 full-window requests;
+    # the certificate still cleared its two-stream short-RP concurrency floor,
+    # and vLLM preempts if concurrent long sequences outgrow the pool.
     maxNumSeqs: 4
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
