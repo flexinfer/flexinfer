@@ -31,14 +31,16 @@ import (
 )
 
 const (
-	modelExperimentDefaultTimeout  = 30 * time.Minute
-	modelExperimentPollInterval    = 5 * time.Second
-	modelExperimentDefaultHistory  = 5
-	modelExperimentOwnerLabel      = "ai.flexinfer/model-experiment"
-	modelExperimentGenerationLabel = "ai.flexinfer/experiment-generation"
-	modelExperimentRunLabel        = "ai.flexinfer/experiment-run"
-	modelExperimentModelsEnv       = "MODELS"
-	modelExperimentArtifactIndex   = "spec.artifactGate.modelCacheRef"
+	modelExperimentDefaultTimeout                = 30 * time.Minute
+	modelExperimentPollInterval                  = 5 * time.Second
+	modelExperimentDefaultHistory                = 5
+	modelExperimentOwnerLabel                    = "ai.flexinfer/model-experiment"
+	modelExperimentGenerationLabel               = "ai.flexinfer/experiment-generation"
+	modelExperimentRunLabel                      = "ai.flexinfer/experiment-run"
+	modelExperimentSpecHashAnnotation            = "ai.flexinfer/experiment-spec-hash"
+	modelExperimentExecutionGenerationAnnotation = "ai.flexinfer/experiment-execution-generation"
+	modelExperimentModelsEnv                     = "MODELS"
+	modelExperimentArtifactIndex                 = "spec.artifactGate.modelCacheRef"
 )
 
 // ModelExperimentReconciler runs an isolated candidate Model through a copied
@@ -74,8 +76,13 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	if !experiment.DeletionTimestamp.IsZero() {
 		return r.finalize(ctx, experiment)
 	}
+	specHash, err := modelExperimentSpecFingerprint(experiment.Spec)
+	if err != nil {
+		return ctrl.Result{}, fmt.Errorf("fingerprint ModelExperiment spec: %w", err)
+	}
 	if !slices.Contains(experiment.Finalizers, aiv1alpha2.ModelExperimentFinalizer) {
 		experiment.Finalizers = append(experiment.Finalizers, aiv1alpha2.ModelExperimentFinalizer)
+		setModelExperimentExecution(experiment, specHash, experiment.Generation)
 		if err := r.Update(ctx, experiment); err != nil {
 			return ctrl.Result{}, err
 		}
@@ -83,15 +90,41 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 	}
 
 	if experiment.Status.ObservedGeneration != 0 && experiment.Status.ObservedGeneration != experiment.Generation {
+		if modelExperimentExecutionMatches(experiment, specHash) {
+			experiment.Status.ObservedGeneration = experiment.Generation
+			for i := range experiment.Status.Conditions {
+				experiment.Status.Conditions[i].ObservedGeneration = experiment.Generation
+			}
+			if err := r.Status().Update(ctx, experiment); err != nil {
+				return ctrl.Result{}, err
+			}
+			if r.Recorder != nil {
+				r.Recorder.Event(experiment, corev1.EventTypeNormal, "GenerationUnchanged", "generation advanced without a semantic spec change; preserving the active run")
+			}
+			return ctrl.Result{RequeueAfter: modelExperimentPollInterval}, nil
+		}
 		if err := r.deleteOwnedResources(ctx, experiment); err != nil {
 			return ctrl.Result{}, err
 		}
+		resetExperimentStatus(experiment)
+		setModelExperimentExecution(experiment, specHash, experiment.Generation)
+		if err := r.Update(ctx, experiment); err != nil {
+			return ctrl.Result{}, err
+		}
+		// The main-resource update returns the server's still-persisted status;
+		// clear it again before crossing the new execution boundary in /status.
 		resetExperimentStatus(experiment)
 		// Persist the generation boundary and stop. A just-deleted terminal Job
 		// can remain visible through the controller-runtime cache briefly; if we
 		// continue this reconcile, that stale Job can stamp its old verdict onto
 		// the new generation.
 		return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentDeploying, "SpecChanged", "spec changed; restarting experiment resources", modelExperimentPollInterval)
+	}
+	if !modelExperimentExecutionMatches(experiment, specHash) {
+		setModelExperimentExecution(experiment, specHash, experiment.Generation)
+		if err := r.Update(ctx, experiment); err != nil {
+			return ctrl.Result{}, err
+		}
 	}
 	experiment.Status.ObservedGeneration = experiment.Generation
 	if experiment.Status.Run == 0 {
@@ -126,7 +159,7 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		return ctrl.Result{}, err
 	}
 	if job != nil {
-		if !experimentResourceCurrent(job.Labels, experiment.Generation, experimentRun(experiment)) {
+		if !experimentResourceCurrent(job.Labels, modelExperimentExecutionGeneration(experiment), experimentRun(experiment)) {
 			if err := r.Delete(ctx, job); err != nil && !apierrors.IsNotFound(err) {
 				return ctrl.Result{}, err
 			}
@@ -209,7 +242,7 @@ func (r *ModelExperimentReconciler) Reconcile(ctx context.Context, req ctrl.Requ
 		}
 		return r.setStatus(ctx, experiment, aiv1alpha2.ModelExperimentDeploying, "CandidateCreated", fmt.Sprintf("created candidate Model %s", candidate.Name), modelExperimentPollInterval)
 	}
-	if !experimentResourceCurrent(candidate.Labels, experiment.Generation, experimentRun(experiment)) {
+	if !experimentResourceCurrent(candidate.Labels, modelExperimentExecutionGeneration(experiment), experimentRun(experiment)) {
 		if err := r.Delete(ctx, candidate); err != nil && !apierrors.IsNotFound(err) {
 			return ctrl.Result{}, err
 		}
@@ -388,7 +421,7 @@ func (r *ModelExperimentReconciler) buildCandidate(experiment *aiv1alpha2.ModelE
 			Namespace: experiment.Namespace,
 			Labels: map[string]string{
 				modelExperimentOwnerLabel:      experimentLabelValue(experiment.Name),
-				modelExperimentGenerationLabel: strconv.FormatInt(experiment.Generation, 10),
+				modelExperimentGenerationLabel: strconv.FormatInt(modelExperimentExecutionGeneration(experiment), 10),
 				modelExperimentRunLabel:        strconv.FormatInt(experimentRun(experiment), 10),
 			},
 			Annotations: map[string]string{
@@ -418,7 +451,7 @@ func (r *ModelExperimentReconciler) buildJob(experiment *aiv1alpha2.ModelExperim
 		labels[key] = value
 	}
 	labels[modelExperimentOwnerLabel] = experimentLabelValue(experiment.Name)
-	labels[modelExperimentGenerationLabel] = strconv.FormatInt(experiment.Generation, 10)
+	labels[modelExperimentGenerationLabel] = strconv.FormatInt(modelExperimentExecutionGeneration(experiment), 10)
 	labels[modelExperimentRunLabel] = strconv.FormatInt(experimentRun(experiment), 10)
 	job := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -733,6 +766,56 @@ func experimentHistoryLimit(experiment *aiv1alpha2.ModelExperiment) int {
 	return modelExperimentDefaultHistory
 }
 
+func modelExperimentSpecFingerprint(spec aiv1alpha2.ModelExperimentSpec) (string, error) {
+	raw, err := json.Marshal(spec)
+	if err != nil {
+		return "", err
+	}
+	// Decode and re-encode once so preserved JSON fields and maps have a stable
+	// key order. Flux server-side apply can rewrite their wire order without
+	// changing the semantic experiment spec.
+	var canonical any
+	if err := json.Unmarshal(raw, &canonical); err != nil {
+		return "", err
+	}
+	raw, err = json.Marshal(canonical)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+func setModelExperimentExecution(experiment *aiv1alpha2.ModelExperiment, specHash string, generation int64) {
+	if experiment.Annotations == nil {
+		experiment.Annotations = map[string]string{}
+	}
+	experiment.Annotations[modelExperimentSpecHashAnnotation] = specHash
+	experiment.Annotations[modelExperimentExecutionGenerationAnnotation] = strconv.FormatInt(generation, 10)
+}
+
+func modelExperimentExecutionRecorded(experiment *aiv1alpha2.ModelExperiment) bool {
+	if experiment.Annotations == nil || experiment.Annotations[modelExperimentSpecHashAnnotation] == "" {
+		return false
+	}
+	generation, err := strconv.ParseInt(experiment.Annotations[modelExperimentExecutionGenerationAnnotation], 10, 64)
+	return err == nil && generation > 0
+}
+
+func modelExperimentExecutionMatches(experiment *aiv1alpha2.ModelExperiment, specHash string) bool {
+	return modelExperimentExecutionRecorded(experiment) && experiment.Annotations[modelExperimentSpecHashAnnotation] == specHash
+}
+
+func modelExperimentExecutionGeneration(experiment *aiv1alpha2.ModelExperiment) int64 {
+	if experiment.Annotations != nil {
+		generation, err := strconv.ParseInt(experiment.Annotations[modelExperimentExecutionGenerationAnnotation], 10, 64)
+		if err == nil && generation > 0 {
+			return generation
+		}
+	}
+	return experiment.Generation
+}
+
 func experimentResourceCurrent(labels map[string]string, generation, run int64) bool {
 	if labels[modelExperimentGenerationLabel] != strconv.FormatInt(generation, 10) {
 		return false
@@ -745,7 +828,7 @@ func modelExperimentChildName(experiment *aiv1alpha2.ModelExperiment, kind strin
 	if experimentRun(experiment) == 1 {
 		return modelExperimentResourceName(experiment.Name, kind)
 	}
-	suffix := fmt.Sprintf("g%d-r%d-%s", experiment.Generation, experimentRun(experiment), kind)
+	suffix := fmt.Sprintf("g%d-r%d-%s", modelExperimentExecutionGeneration(experiment), experimentRun(experiment), kind)
 	return modelExperimentResourceName(experiment.Name, suffix)
 }
 
