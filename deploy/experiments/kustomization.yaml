@@ -6,3 +6,4 @@ resources:
   - qwen36-27b-fable-rp-canary.yaml
   - qwen35-9b-v023-rp-canary.yaml
   - qwen35-9b-default-nonthinking-canary.yaml
+  - qwen35-9b-context-ceiling-192k-canary.yaml
