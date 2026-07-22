@@ -1,0 +1,109 @@
+# Disposable certificate for the Qwen3.5-9B RP server-default behavior.
+# The model/runtime/performance profile matches the production certificate;
+# only defaultChatTemplateKwargs is new. The candidate owns no public aliases.
+apiVersion: ai.flexinfer/v1alpha2
+kind: ModelExperiment
+metadata:
+  name: qwen35-9b-default-nonthinking-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/canary: qwen35-9b-default-nonthinking
+    flexinfer.ai/runtime-digest: sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+    flexinfer.ai/kill-test: .loom/brainstorm-qwen35-9b-rp-usability-next-2026-07-22.md#riskiest-assumption--kill-test
+spec:
+  timeout: 60m
+  artifactGate:
+    modelCacheRef: qwen35-9b-oci-gfx1100
+    requireSourceMatch: true
+  candidate:
+    backend: vllm
+    image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+    source: pvc://qwen35-9b-oci-gfx1100/qwen35-9b
+    cache:
+      strategy: None
+      compilationCache:
+        enabled: true
+        hostPath: /var/lib/flexinfer/compile-cache-qwen35-9b-default-nonthinking-v1
+        sizeLimit: 4Gi
+    gpu:
+      vendor: amd
+      count: 2
+      shared: 7900xtx-textgen
+      priority: 700
+      forcePromotion: true
+      vramEstimateMB: 23200
+    serverless:
+      enabled: true
+      minReplicas: 1
+      idleTimeout: 30m
+      coldStartTimeout: 25m
+    config:
+      dedicatedDeployment: true
+      quantization: gptq
+      dtype: half
+      languageModelOnly: true
+      hfOverrides: '{"architectures":["Qwen3_5ForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+      maxModelLen: 131072
+      maxInputTokens: 130048
+      maxOutputTokens: 1024
+      maxNumSeqs: 4
+      maxNumBatchedTokens: 4096
+      enableChunkedPrefill: true
+      schedulerReserveFullISL: true
+      gpuMemoryUtilization: "0.94"
+      kvCacheDtype: auto
+      calculateKvScales: false
+      enforceEager: false
+      cudagraphCaptureSizes: [1, 2, 4]
+      maxCudagraphCaptureSize: 4
+      gdnPrefillBackend: triton
+      cudagraphMetrics: true
+      kvCacheMetrics: true
+      kvCacheMetricsSample: "1.0"
+      enablePrefixCaching: false
+      enableLora: true
+      maxLoras: 1
+      maxLoraRank: 64
+      disableAiter: true
+      rocmCustomPagedAttn: false
+      hipVisibleDevices: "0"
+      trustRemoteCode: true
+      enableToolCalling: false
+      disableLogStats: false
+      failOnEnvironValidation: false
+      warmPolicy: primary
+      # The single experiment variable. Requests remain free to override it.
+      defaultChatTemplateKwargs:
+        enable_thinking: false
+    nodeSelector:
+      kubernetes.io/hostname: cblevins-7900xtx
+    resources:
+      requests:
+        cpu: "4"
+        memory: 16Gi
+      limits:
+        cpu: "8"
+        memory: 40Gi
+    tolerations:
+      - effect: NoSchedule
+        key: node-role.kubernetes.io/control-plane
+        operator: Exists
+  gauntlet:
+    templateRef: qwen35-9b-rp-performance-gauntlet
+    env:
+      FLEXINFER_EXPERIMENT_REVISION: "default-nonthinking-v1"
+      EXPERIMENT_PHASE: "default_nonthinking"
+      REQUIRE_DEFAULT_NON_THINKING: "true"
+      ITERS: "3"
+      RP_OUTPUT_TOKENS: "192"
+      LONG_CONTEXT_TOKENS: "128000"
+      # Five-percent regression budget relative to the generation-5
+      # production certificate (101.99 / 59.59 / 40.51 / 55.68 tok/s).
+      MIN_BASE_DECODE_TPS: "96.8"
+      MIN_LORA_DIALOGUE_MEDIAN_TPS: "56.6"
+      MIN_LORA_MULTI_TURN_MEDIAN_TPS: "38.4"
+      MIN_LORA_TO_BASE_RATIO: "0.50"
+      MAX_SHORT_P95_TTFT: "30"
+      CONCURRENT_STREAMS: "2"
+      MIN_CONCURRENT_AGGREGATE_TPS: "52.9"
+      MAX_CONCURRENT_P95_ELAPSED: "45"
