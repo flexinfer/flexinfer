@@ -1,0 +1,30 @@
+# OCI pull cache for the abliterated Qwen3.5-9B GPTQ artifact — twin on cblevins-5930k.
+#
+# Sister to qwen35-9b-oci-gfx1100 (cblevins-7900xtx), same published Harbor
+# artifact; artifact-only (no pipeline), so the 5930k node never re-runs the
+# abliteration/quantization pipeline.
+#
+# Pipeline: Harbor OCI → this SharedPVC (local-path on 5930k) → Model CR
+# qwen35-9b-ablit-rp-5930k (the psyche twin lane).
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: qwen35-9b-oci-5930k
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/promotion-state: oci-pull-from-7900xtx-source
+spec:
+  source: "oci://registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128"
+  modelPath: "qwen35-9b"
+  storageStrategy: SharedPVC
+  storageSize: "12Gi"
+  clusterStorageClassName: local-path
+  secretRef: "harbor-oci-creds"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  download:
+    maxMemoryGB: 4
+    backoffLimit: 3
+  retentionPriority: 60
+  evictionPolicy: LRU
+  evictionThresholdPercent: 85

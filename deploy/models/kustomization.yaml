@@ -7,6 +7,10 @@ resources:
   # for the psyche-simulator kill-test. Standalone (non-shared), litellm off the
   # public fleet until the kill-test passes. See .loom/plan-qwen35-9b-nsfw-rp-lora-2026-07-18.md.
   - qwen35-9b-ablit-rp.yaml
+  # Twin lane on cblevins-5930k: second full KV pool for psyche slice E,
+  # designated APC canary (gdn-prefix-cache-flip). Seeded from the live
+  # promoted 224K spec.
+  - qwen35-9b-ablit-rp-5930k.yaml
 
   # === cblevins-7900xtx (24 GB gfx1100) — primary orchestrator ===
   # qwen35-27b-opus-distill.yaml and qwen35-9b.yaml are intentionally disabled

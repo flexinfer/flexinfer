@@ -4,3 +4,5 @@ namespace: flexinfer-system
 resources:
   # NSFW-RP rank-64 adapter for qwen35-9b-ablit-rp (psyche-simulator test).
   - qwen35-9b-nsfw-rp.yaml
+  # Sister adapter for the twin lane (client-facing name: nsfw-rp-twin).
+  - qwen35-9b-nsfw-rp-5930k.yaml

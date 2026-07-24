@@ -1,0 +1,115 @@
+# Abliterated Qwen3.5-9B @ 229K + NSFW-RP LoRA — TWIN lane on cblevins-5930k.
+#
+# Sister to qwen35-9b-ablit-rp (the warm primary on cblevins-7900xtx). Seeded
+# from the primary's LIVE promoted spec (canary-certified 224K context,
+# generation 4) rather than its original 32K git draft — the promotion
+# machinery certified those fields on the primary; the twin inherits them
+# explicitly here.
+#
+# Purpose (psyche roadmap slice E + APC canary):
+#   - Second full ~355K-token KV pool: one psyche per lane at full 64K
+#     journal budgets, dream cycles offloaded off the primary's turn path.
+#   - Designated APC canary for the hybrid-GDN prefix-caching flip
+#     (enablePrefixCaching stays false until the canary plan runs; see
+#     annotations). The primary is never the experiment.
+#
+# Election: joins 5930k-textgen at priority 550 — above the idle gemma/qwen36
+# residents, below the wan video lanes (600), so invoked video still wins the
+# card; serverless ondemand (minReplicas 0) hands it back when idle.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-9b-ablit-rp-5930k
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.5-9B
+    flexinfer.ai/base-model-posture: abliterated
+    flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128
+    flexinfer.ai/canary: gdn-prefix-cache-flip
+    flexinfer.ai/canary-plan: .loom/psyche-next-level-roadmap.md
+    flexinfer.ai/promotion-state: vanilla-parity-pending
+spec:
+  backend: vllm
+  source: pvc://qwen35-9b-oci-5930k/qwen35-9b
+  cache:
+    strategy: Local
+    hostPath: /var/lib/flexinfer/models
+    size: 50Gi
+    storageClass: longhorn
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen35-9b-v023-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    vramEstimateMB: 23200
+    # 5930k-textgen election: wan video lanes (600) outrank on demand; the
+    # idle gemma4/qwen36 residents (<=300) yield to the twin.
+    priority: 550
+    shared: 5930k-textgen
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    dtype: "half"
+    quantization: gptq
+    # Same text-only rope override as the primary: the artifact config carries
+    # multimodal mRoPE fields vLLM's qwen3_5 parser rejects.
+    hfOverrides: '{"architectures":["Qwen3_5ForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+    maxModelLen: 229376
+    maxInputTokens: 228352
+    maxOutputTokens: 1024
+    gpuMemoryUtilization: "0.94"
+    maxNumSeqs: 4
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    enforceEager: false
+    cudagraphCaptureSizes: [1, 2, 4]
+    maxCudagraphCaptureSize: 4
+    cudagraphMetrics: true
+    kvCacheDtype: auto
+    kvCacheMetrics: true
+    kvCacheMetricsSample: "1.0"
+    gdnPrefillBackend: triton
+    languageModelOnly: true
+    dedicatedDeployment: true
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    calculateKvScales: false
+    # APC canary target: stays FALSE for vanilla parity; the gdn-prefix-cache
+    # flip happens as its own change with before/after probes.
+    enablePrefixCaching: false
+    # Exact usage details in responses from day one (harmless without APC;
+    # carries prompt_tokens_details.cached_tokens once the flip lands).
+    enablePromptTokensDetails: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    trustRemoteCode: true
+    servedModelName: qwen35-9b-ablit-rp-5930k
+    enableToolCalling: false
+    disableLogStats: false
+    failOnEnvironValidation: false
+    warmPolicy: ondemand
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  serviceLabels:
+    - qwen35-9b-ablit-rp-5930k
+    - nsfw-rp-twin-base
+  litellm:
+    enabled: true
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"
