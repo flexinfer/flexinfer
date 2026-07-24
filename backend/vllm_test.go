@@ -213,6 +213,7 @@ func TestVLLMBackendArgs_ServingEfficiencyControls(t *testing.T) {
 		Config: map[string]any{
 			"failOnEnvironValidation":   true,
 			"gdnPrefillBackend":         "triton",
+			"mambaCacheMode":            "align",
 			"maxNumPartialPrefills":     2,
 			"maxLongPartialPrefills":    1,
 			"longPrefillTokenThreshold": 4096,
@@ -226,6 +227,7 @@ func TestVLLMBackendArgs_ServingEfficiencyControls(t *testing.T) {
 	args := b.Args(spec)
 	wantValues := map[string]string{
 		"--gdn-prefill-backend":          "triton",
+		"--mamba-cache-mode":             "align",
 		"--max-num-partial-prefills":     "2",
 		"--max-long-partial-prefills":    "1",
 		"--long-prefill-token-threshold": "4096",

@@ -91,6 +91,13 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if gdnBackend := spec.ConfigString("gdnPrefillBackend", ""); gdnBackend != "" {
 		args = append(args, "--gdn-prefill-backend", gdnBackend)
 	}
+	// Hybrid (mamba/GDN) prefix caching: linear-attention layers checkpoint
+	// recurrent state at block boundaries. GDN models require "align" mode —
+	// "all" is unsupported for GDN, and without a mode APC on hybrids stays
+	// inert. Pairs with enablePrefixCaching on Qwen3.5/3.6-class lanes.
+	if mambaCacheMode := spec.ConfigString("mambaCacheMode", ""); mambaCacheMode != "" {
+		args = append(args, "--mamba-cache-mode", mambaCacheMode)
+	}
 
 	// Trust remote code
 	if spec.ConfigBool("trustRemoteCode", false) {
