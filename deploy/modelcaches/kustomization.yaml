@@ -8,6 +8,8 @@ resources:
   # OCI pull of the abliterated Qwen3.5-9B GPTQ artifact onto cblevins-7900xtx,
   # for the qwen35-9b-ablit-rp psyche-simulator test model.
   - qwen35-9b-oci-gfx1100.yaml
+  # Sister OCI pull cache on cblevins-5930k for the twin lane.
+  - qwen35-9b-oci-5930k.yaml
 
   # === Legacy pipelines disabled during Gemma rollout ===
   # Keep the manifests on disk for rebuild/reference, but stop reconciling the

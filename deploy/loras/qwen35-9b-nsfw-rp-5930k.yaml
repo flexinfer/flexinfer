@@ -1,0 +1,19 @@
+# NSFW roleplay LoRA bound to the 9B TWIN lane on cblevins-5930k.
+#
+# Sister to qwen35-9b-nsfw-rp (primary lane). Same rank-64 rsLoRA adapter,
+# distinct client-facing name so routing stays explicit: psyche's primary
+# psyche targets model="nsfw-rp" (primary lane), a second psyche or offloaded
+# dream cycles target model="nsfw-rp-twin" (this lane). No alias collision.
+apiVersion: ai.flexinfer/v1alpha2
+kind: LoRAAdapter
+metadata:
+  name: qwen35-9b-nsfw-rp-5930k
+  namespace: flexinfer-system
+spec:
+  modelRef: qwen35-9b-ablit-rp-5930k   # must equal the serving Model's metadata.name
+  adapterName: nsfw-rp-twin            # value clients pass in the "model" field
+  source:
+    type: HuggingFace
+    uri: mirazrafi/NSFW-RP-RolePlay-LoRA-Qwen-3.5-9B
+  maxRank: 64
+  preload: true
