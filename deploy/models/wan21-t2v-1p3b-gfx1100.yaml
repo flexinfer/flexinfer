@@ -44,7 +44,11 @@ spec:
     vramEstimateMB: 18000
   serverless:
     enabled: true
-    minReplicas: 1
+    # Parked (1 -> 0) for the qwen35-9b twin canary window: minReplicas=1 makes
+    # this holder unpreemptable, which starves every higher-priority member of
+    # 5930k-textgen (VACE at 600 and the twin at 550 both queued for hours).
+    # Restore to 1 + warmPolicy: primary when the twin canary cascade closes.
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 30m
   config:
@@ -75,7 +79,10 @@ spec:
     videoFps: "16"
     negativePrompt: "static, blurry, low quality, distorted, watermark, subtitles, text"
     hipVisibleDevices: "0"
-    warmPolicy: primary
+    # Pair with minReplicas=0 during the twin canary window (same parking shape
+    # as the Fable GPTQ smoke). `primary` forces a backend start even at zero
+    # replicas and would keep the GPU held.
+    warmPolicy: ondemand
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:
