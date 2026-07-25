@@ -99,6 +99,12 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if mambaCacheMode := spec.ConfigString("mambaCacheMode", ""); mambaCacheMode != "" {
 		args = append(args, "--mamba-cache-mode", mambaCacheMode)
 	}
+	// Quantize the mamba/GDN SSM state cache (e.g. "float32" -> "bfloat16").
+	// Smaller recurrent-state checkpoints mean more align-mode blocks stay
+	// resident, which lifts hybrid prefix-cache hit rates.
+	if ssmCacheDtype := spec.ConfigString("mambaSsmCacheDtype", ""); ssmCacheDtype != "" {
+		args = append(args, "--mamba-ssm-cache-dtype", ssmCacheDtype)
+	}
 
 	// Trust remote code
 	if spec.ConfigBool("trustRemoteCode", false) {
@@ -133,6 +139,12 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--long-prefill-token-threshold", strconv.Itoa(longThreshold))
 	}
 	args = appendVLLMBooleanOptionalArg(args, spec, "schedulerReserveFullISL", "--scheduler-reserve-full-isl", "--no-scheduler-reserve-full-isl")
+	// Scheduler policy ("fcfs" or "priority"). "priority" honors per-request
+	// priority values, letting background traffic (e.g. dream cycles) yield
+	// to live turns on the same lane.
+	if schedulingPolicy := spec.ConfigString("schedulingPolicy", ""); schedulingPolicy != "" {
+		args = append(args, "--scheduling-policy", schedulingPolicy)
+	}
 
 	// Disable model sliding-window attention. This is useful for ROCm backends
 	// where the selected attention kernel cannot serve SWA-capable models.
