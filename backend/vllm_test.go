@@ -241,6 +241,7 @@ func TestVLLMBackendArgs_ServingEfficiencyControls(t *testing.T) {
 			"maxLongPartialPrefills":    1,
 			"longPrefillTokenThreshold": 4096,
 			"schedulerReserveFullISL":   true,
+			"enableSleepMode":           true,
 			"cudagraphMetrics":          true,
 			"kvCacheMetrics":            true,
 			"kvCacheMetricsSample":      "0.25",
@@ -272,6 +273,7 @@ func TestVLLMBackendArgs_ServingEfficiencyControls(t *testing.T) {
 	for _, flag := range []string{
 		"--fail-on-environ-validation",
 		"--scheduler-reserve-full-isl",
+		"--enable-sleep-mode",
 		"--cudagraph-metrics",
 		"--kv-cache-metrics",
 	} {
