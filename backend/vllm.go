@@ -241,15 +241,13 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--hf-overrides", hfOverrides)
 	}
 
-	// Prefix caching is ON by default in vLLM V1.
-	// Newer argparse wiring uses BooleanOptionalAction, so the disable form is
-	// --no-enable-prefix-caching rather than --no-prefix-caching.
+	// Prefix caching: emit the explicit form for BOTH values. "V1 defaults ON"
+	// is false for hybrid-GDN lanes — vLLM 0.23 boots them with
+	// enable_prefix_caching=False and then silently resets mamba-cache-mode to
+	// "none" (config.py:390), so relying on the default made
+	// enablePrefixCaching:true a no-op on exactly the lanes that set it.
+	args = appendVLLMBooleanOptionalArg(args, spec, "enablePrefixCaching", "--enable-prefix-caching", "--no-enable-prefix-caching")
 	if spec.Config != nil {
-		if _, ok := spec.Config["enablePrefixCaching"]; ok {
-			if !spec.ConfigBool("enablePrefixCaching", true) {
-				args = append(args, "--no-enable-prefix-caching")
-			}
-		}
 		if _, ok := spec.Config["disableHybridKVCacheManager"]; ok {
 			if spec.ConfigBool("disableHybridKVCacheManager", false) {
 				args = append(args, "--disable-hybrid-kv-cache-manager")

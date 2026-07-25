@@ -1095,10 +1095,13 @@ func TestVLLMBackendArgs_PrefixCachingExplicitDisable(t *testing.T) {
 	}
 }
 
-func TestVLLMBackendArgs_PrefixCachingExplicitEnableIsNoop(t *testing.T) {
+func TestVLLMBackendArgs_PrefixCachingExplicitEnableEmitsFlag(t *testing.T) {
 	b := &VLLMBackend{}
 
-	// enablePrefixCaching=true should NOT emit --enable-prefix-caching (it's default in V1)
+	// enablePrefixCaching=true must emit --enable-prefix-caching explicitly.
+	// "Default ON in V1" is false for hybrid-GDN lanes: vLLM 0.23 boots them
+	// with enable_prefix_caching=False and resets mamba-cache-mode to "none",
+	// so the twin's 2026-07-25 APC canary silently ran with APC off.
 	spec := &ModelSpec{
 		Model: "test-model",
 		Config: map[string]any{
@@ -1107,13 +1110,17 @@ func TestVLLMBackendArgs_PrefixCachingExplicitEnableIsNoop(t *testing.T) {
 	}
 
 	args := b.Args(spec)
+	found := false
 	for _, a := range args {
 		if a == "--enable-prefix-caching" {
-			t.Error("should not emit --enable-prefix-caching (default in V1)")
+			found = true
 		}
 		if a == "--no-enable-prefix-caching" {
 			t.Error("should not emit --no-enable-prefix-caching when enabled")
 		}
+	}
+	if !found {
+		t.Error("expected --enable-prefix-caching when enablePrefixCaching=true")
 	}
 }
 
