@@ -27,7 +27,7 @@ metadata:
     flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128
     flexinfer.ai/canary: gdn-prefix-cache-flip
     flexinfer.ai/canary-plan: .loom/psyche-next-level-roadmap.md
-    flexinfer.ai/promotion-state: vanilla-parity-pending
+    flexinfer.ai/promotion-state: apc-canary-running
 spec:
   backend: vllm
   # Pin the same runtime the primary was certified on. Without this the twin
@@ -87,9 +87,17 @@ spec:
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
     calculateKvScales: false
-    # APC canary target: stays FALSE for vanilla parity; the gdn-prefix-cache
-    # flip happens as its own change with before/after probes.
-    enablePrefixCaching: false
+    # THE gdn-prefix-cache-flip canary, live (vanilla parity proven
+    # 2026-07-25: pinned-runtime boot, 0 restarts, served completions,
+    # baseline depth-recall probes recorded). GDN hybrids checkpoint
+    # recurrent state at block boundaries; "align" is the only mode GDN
+    # supports, and without it APC stays inert. bfloat16 SSM state halves
+    # each checkpoint so more stay resident (runtime accepts
+    # auto|float32|float16|bfloat16 — verified in the live pod).
+    # Rollback = revert this block to enablePrefixCaching: false.
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
     # Exact usage details in responses from day one (harmless without APC;
     # carries prompt_tokens_details.cached_tokens once the flip lands).
     enablePromptTokensDetails: true
