@@ -105,16 +105,20 @@ spec:
     # (disposable canary arm, cache-hit + output-parity evidence) — do not flip
     # it here without that canary certificate.
     #
-    # Known consumer effect: with APC off this lane reports NO prefix-cache
-    # instrumentation — vllm:prefix_cache_queries_total stays 0 so the proxy
-    # omits X-Flexinfer-Prefix-Cache-Hit-Rate (its queries>0 guard), and
-    # cached_tokens never appears in usage so X-Flexinfer-Cached-Tokens is
-    # omitted too. psyche-simulation's Long Memory panel therefore shows
-    # "unknown" warm share for this lane by design. When the F4 canary
-    # promotes, set enablePrefixCaching: true AND enablePromptTokensDetails:
-    # true together — vLLM only reports usage.prompt_tokens_details.cached_tokens
-    # when launched with --enable-prompt-tokens-details.
-    enablePrefixCaching: false
+    # Hybrid-GDN APC, promoted from the twin's gdn-prefix-cache-flip canary
+    # (PASSED 2026-07-25, flexinfer #67): warm repeat served 99.4% of the
+    # prompt from cache at 7x speed, engine hit rate 79.3% on shared-prefix
+    # traffic, recall-at-depth parity vs the APC-off baseline across two bench
+    # repetitions. Requires all three keys together — vLLM 0.23 boots hybrid
+    # lanes APC-off unless the flag is explicit (!945), "align" is the only
+    # GDN-supported cache mode, and cached_tokens only appears in usage when
+    # launched with --enable-prompt-tokens-details. psyche's Long Memory panel
+    # reads real warm share from this lane once this lands.
+    # Rollback = revert this block to enablePrefixCaching: false.
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
     disableAiter: true
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
