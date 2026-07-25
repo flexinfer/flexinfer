@@ -119,6 +119,15 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--language-model-only")
 	}
 
+	// Level-1 sleep mode: parks model weights in CPU RAM so a subsequent wake
+	// skips the multi-minute cold reload. Inert on its own — nothing sleeps or
+	// wakes the runtime without orchestration; drive it manually via the
+	// runtime's /sleep and /wake_up endpoints. Groundwork for issue #68
+	// (sleep-mode election integration).
+	if spec.ConfigBool("enableSleepMode", false) {
+		args = append(args, "--enable-sleep-mode")
+	}
+
 	// Max concurrent sequences
 	if maxSeqs := spec.ConfigInt("maxNumSeqs", 0); maxSeqs > 0 {
 		args = append(args, "--max-num-seqs", fmt.Sprintf("%d", maxSeqs))
