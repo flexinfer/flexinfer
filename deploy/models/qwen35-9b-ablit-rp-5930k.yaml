@@ -30,6 +30,12 @@ metadata:
     flexinfer.ai/promotion-state: vanilla-parity-pending
 spec:
   backend: vllm
+  # Pin the same runtime the primary was certified on. Without this the twin
+  # got the 5930k's older prewarmed image, which predates
+  # --gdn-prefill-backend / --scheduler-reserve-full-isl (crash-looped on
+  # unrecognized args) and hand-patches qwen3-next instead of speaking
+  # qwen3_5 natively.
+  image: "registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d"
   source: pvc://qwen35-9b-oci-5930k/qwen35-9b
   cache:
     strategy: Local
