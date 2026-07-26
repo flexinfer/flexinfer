@@ -116,6 +116,15 @@ spec:
     defaultChatTemplateKwargs:
       enable_thinking: false
     trustRemoteCode: true
+    # sleep-mode kill-test canary (#68 stage 2, 2026-07-26): boots the engine
+    # with --enable-sleep-mode and (via the paired VLLM_SERVER_DEV_MODE=1)
+    # exposes POST /sleep, POST /wake_up, GET /is_sleeping. Nothing sleeps or
+    # wakes on its own -- purely manual, driven by hand against the pod, to
+    # measure level-1 wake latency on our ROCm gfx1100 runtime digest before
+    # any controller integration ships. Inert on the serving path: no arg
+    # changes decode behavior and no election code reads this key yet.
+    # Rollback = remove this key.
+    enableSleepMode: true
     servedModelName: qwen35-9b-ablit-rp-5930k
     enableToolCalling: false
     disableLogStats: false
