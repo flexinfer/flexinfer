@@ -25,7 +25,7 @@ metadata:
     flexinfer.ai/base-model-source: Qwen/Qwen3.5-9B
     flexinfer.ai/base-model-posture: abliterated
     flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128
-    flexinfer.ai/canary: ngram-spec-flip
+    flexinfer.ai/canary: fp8-kv-flip
     flexinfer.ai/canary-plan: .loom/psyche-next-level-roadmap.md
     flexinfer.ai/promotion-state: apc-canary-running
 spec:
@@ -90,13 +90,6 @@ spec:
     # values the gemma lanes certified (incl. the 7900xtx primary run of
     # 2026-05-25). Distribution-preserving, so the gate is decode tok/s vs
     # the fp8 A/B numbers in flexinfer #67. Rollback = remove this key.
-    # num_speculative_tokens must satisfy the cudagraph geometry: capture
-    # sizes are rounded to multiples of (num_speculative_tokens + 1), and this
-    # lane's ladder is [1,2,4] with max 4 (tuned for the 5930k's compile
-    # pressure). 5 -> multiplier 6 left no valid size and crash-looped the
-    # boot (ValueError, kill-tested 2026-07-26); 3 -> multiplier 4 fits the
-    # existing ladder exactly.
-    speculativeConfig: '{"method": "ngram", "num_speculative_tokens": 3, "prompt_lookup_max": 4, "prompt_lookup_min": 1}' 
     kvCacheMetrics: true
     kvCacheMetricsSample: "1.0"
     gdnPrefillBackend: triton
