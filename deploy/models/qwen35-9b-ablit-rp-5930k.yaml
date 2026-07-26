@@ -116,15 +116,14 @@ spec:
     defaultChatTemplateKwargs:
       enable_thinking: false
     trustRemoteCode: true
-    # sleep-mode kill-test canary (#68 stage 2, 2026-07-26): boots the engine
-    # with --enable-sleep-mode and (via the paired VLLM_SERVER_DEV_MODE=1)
-    # exposes POST /sleep, POST /wake_up, GET /is_sleeping. Nothing sleeps or
-    # wakes on its own -- purely manual, driven by hand against the pod, to
-    # measure level-1 wake latency on our ROCm gfx1100 runtime digest before
-    # any controller integration ships. Inert on the serving path: no arg
-    # changes decode behavior and no election code reads this key yet.
-    # Rollback = remove this key.
-    enableSleepMode: true
+    # sleep-mode kill-test (#68 stage 2) ran 2026-07-26 and FAILED on this
+    # runtime: --enable-sleep-mode forces vLLM's cumem allocator ("Enabling
+    # cumem allocator because sleep mode requires it"), and engine init then
+    # dies with an HSA "Memory access fault by GPU node-1 ... Page not present
+    # or supervisor privilege" immediately after weight load / PunicaWrapperGPU
+    # init. Deterministic crash-loop, so sleep mode is not usable here at all.
+    # Do NOT re-flip enableSleepMode on this lane before a runtime bump; see
+    # issue #68 for the full trace and the next probe to run.
     servedModelName: qwen35-9b-ablit-rp-5930k
     enableToolCalling: false
     disableLogStats: false
