@@ -434,6 +434,20 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		env = append(env, corev1.EnvVar{Name: "VLLM_ALLOW_RUNTIME_LORA_UPDATING", Value: "True"})
 	}
 
+	// Sleep mode control plane: --enable-sleep-mode (Args) only teaches the
+	// engine to support sleeping. The HTTP verbs that actually drive it --
+	// POST /sleep, POST /wake_up, GET /is_sleeping -- live in vLLM's dev API
+	// router, which api_server.py registers only when VLLM_SERVER_DEV_MODE is
+	// set (verified against vLLM 0.23.0: vllm/entrypoints/serve/dev/sleep/
+	// api_router.py, reachable solely through register_vllm_dev_api_routers).
+	// Without this the flag is unusable -- every sleep/wake call 404s. Same
+	// shape as the enableLora -> VLLM_ALLOW_RUNTIME_LORA_UPDATING pairing
+	// above. Scoped to lanes that opt into enableSleepMode so no other lane
+	// gains the dev endpoints.
+	if spec.ConfigBool("enableSleepMode", false) {
+		env = append(env, corev1.EnvVar{Name: "VLLM_SERVER_DEV_MODE", Value: "1"})
+	}
+
 	return env
 }
 
