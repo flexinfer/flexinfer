@@ -88,7 +88,13 @@ spec:
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
     schedulerReserveFullISL: true
-    kvCacheDtype: auto
+    # fp8 KV promoted from the twin's fp8-kv-flip canary (#67, 2026-07-25):
+    # pool 355,302 -> 703,133 tokens (1.98x), clean boot with APC, prefix
+    # caching works under fp8, recall parity vs the APC-on baseline (one
+    # noise-level flap in nine samples; #67 holds waived by operator
+    # 2026-07-26). Doubled pool = the budget lever for multi-psyche
+    # (roadmap slice E). Rollback = kvCacheDtype: auto.
+    kvCacheDtype: fp8_e4m3
     calculateKvScales: false
     # vLLM 0.23 plugin certificate: bounded graph shapes avoid the v0.17
     # hybrid-architecture crash and deliver ~102 base / ~60 short-LoRA tok/s.
