@@ -1377,6 +1377,46 @@ func TestVLLMBackendEnv_DisabledKernels_NotSetByDefault(t *testing.T) {
 	}
 }
 
+func TestVLLMBackendEnv_SleepModeEnablesDevAPI(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+		Config: map[string]any{
+			"enableSleepMode": true,
+		},
+	}
+
+	env := b.Env(spec)
+	envMap := make(map[string]string)
+	for _, e := range env {
+		envMap[e.Name] = e.Value
+	}
+
+	// Without VLLM_SERVER_DEV_MODE the engine supports sleeping but the
+	// /sleep, /wake_up and /is_sleeping verbs are never registered, so
+	// --enable-sleep-mode is inert.
+	if v, ok := envMap["VLLM_SERVER_DEV_MODE"]; !ok || v != "1" {
+		t.Errorf("expected VLLM_SERVER_DEV_MODE=1, got %q (present=%v)", v, ok)
+	}
+}
+
+func TestVLLMBackendEnv_SleepModeDevAPINotSetByDefault(t *testing.T) {
+	b := &VLLMBackend{}
+
+	spec := &ModelSpec{
+		GPUVendor: GPUVendorAMD,
+		GPUArch:   "gfx1100",
+	}
+
+	for _, e := range b.Env(spec) {
+		if e.Name == "VLLM_SERVER_DEV_MODE" {
+			t.Error("expected VLLM_SERVER_DEV_MODE to be absent unless enableSleepMode is set")
+		}
+	}
+}
+
 func TestVLLMBackendEnv_PytorchCudaAllocConf(t *testing.T) {
 	b := &VLLMBackend{}
 
