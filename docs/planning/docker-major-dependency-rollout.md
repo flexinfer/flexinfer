@@ -2,8 +2,9 @@
 
 Tracking issue: [#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21)
 
-Status: staged; implementation is intentionally split from routine Renovate
-minor/patch batches.
+Status: implementation in progress; the first Python 3.14 utility candidate is
+published but intentionally not promoted. Major lanes remain split from routine
+Renovate minor/patch batches.
 
 ## Goal
 
@@ -25,8 +26,11 @@ The rollout covers these families:
 - No `gfx906` promotion from experimental to default support as part of the
   dependency refresh. Runtime promotion still requires canary evidence in the
   validation matrix.
-- No scheduler/controller contract changes unless a runtime canary proves a
-  compatibility break that cannot be contained in image tags or GPUProfiles.
+- No serving scheduler/controller contract changes unless a runtime canary
+  proves a compatibility break that cannot be contained in image tags or
+  GPUProfiles. One additive `PublishSpec.image` override is permitted solely to
+  isolate a ModelCache publisher canary; it must preserve the existing
+  controller-wide default when omitted.
 
 ## Current Evidence
 
@@ -39,6 +43,22 @@ The rollout covers these families:
 - `build/README-maxwell.md` documents the Maxwell CUDA 11.8 constraint.
 - `.gitlab/ci/runtime-publish.yml` keeps long-running runtime-image publish jobs
   isolated and includes manual break-glass jobs for heavyweight ROCm rebuilds.
+- Phase-0 model-tools rollback anchor: the former mutable `model-tools:master`
+  reference resolved to and is now configured as
+  `sha256:fe048a433779b7c1f6f8e9cfa4373117e846f071440eaf8575762a640125bf5a`.
+- Phase-1 model-tools candidate: source `1db78d5e`, tag
+  `model-tools:1db78d5e`, digest
+  `sha256:41f948bafa42c154a17ac567a0ade1f49fd3e17e6241c7e8bb44dc7a48265f30`.
+  Its Python 3.14.6 build gate passed with the full Python 3.11 runtime
+  dependency set locked to target-specific wheel hashes, binary-only
+  installation, an exact Python base digest, and an exact ORAS image digest.
+  The earlier `ec0efeeb` exploratory publication is superseded and remains
+  unpromoted. No candidate is referenced by a production value, and CI now
+  publishes model-tools commit tags only. Promotion updates GitOps to the
+  already-tested digest; CI never rebuilds it under `master`, timestamp, or
+  `latest`.
+- Full evidence and the promotion boundary are recorded in
+  `.loom/45-iteration-plan-model-tools-python314-canary-2026-08-01.md`.
 
 ## Rollout Sequence
 
@@ -89,8 +109,12 @@ The rollout covers these families:
 
 ## Ready-for-Implementation Slices
 
-1. Python utility images: update only Python-based non-GPU helper images, build
-   them locally or in CI, and run import smoke tests.
+1. Python utility images: model-tools build/import smoke is complete; add a
+   per-ModelCache publisher-image override and run a real isolated job canary
+   before digest promotion. That slice owns `api/v1alpha1/modelcache_types.go`,
+   `pkg/quantization/publish.go`, `controllers/modelcache_stage_publish.go`,
+   their focused tests, and both generated ModelCache CRDs. Then repeat the
+   isolated process for the GGUF helper image.
 2. CUDA 12.9 modern NVIDIA quantizer images: update one quantizer path, publish
    a commit-specific tag, and run a fixture-backed quantizer check before adding
    another CUDA image.

@@ -36,6 +36,7 @@
 - RALPH F4 agent-loop ReAct client — slice 1/CLI (2026-06-01): `ralph-f4-agent-loop-client-2026-06-01.md`
 - Hardware-utilization sprints brainstorm (2026-06-03): `brainstorm-hardware-utilization-sprints-2026-06-03.md`
 - Hardware-utilization arc implementation plan (2026-06-03): `30-implementation-plan-hardware-utilization-2026-06-03.md`
+- RALPH model-tools Python 3.14 candidate (2026-08-01): `45-iteration-plan-model-tools-python314-canary-2026-08-01.md`
 
 ## Current Goal (2026-06-03) - Hardware-utilization arc (retrieval + throughput)
 
