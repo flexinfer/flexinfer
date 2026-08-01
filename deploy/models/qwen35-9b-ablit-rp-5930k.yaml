@@ -98,10 +98,11 @@ spec:
     disableAiter: true
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
-    # Same flip as the primary: pinned 1.0 scales clip fp8 KV outliers (word-
-    # substitution noise). Twin inherits it so the lanes stay spec-identical.
-    # Rollback = calculateKvScales: false.
-    calculateKvScales: true
+    # Do NOT flip to true: inert on this runtime — vLLM 0.23 force-disables
+    # calculate_kv_scales for hybrid GDN models and pins scales at 1.0
+    # regardless (probed on the primary 2026-08-01, MR !956 reverted).
+    # fp8-KV outlier clipping needs checkpoint-embedded scales; see #69.
+    calculateKvScales: false
     # THE gdn-prefix-cache-flip canary, live (vanilla parity proven
     # 2026-07-25: pinned-runtime boot, 0 restarts, served completions,
     # baseline depth-recall probes recorded). GDN hybrids checkpoint

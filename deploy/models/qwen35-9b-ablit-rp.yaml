@@ -95,14 +95,18 @@ spec:
     # 2026-07-26). Doubled pool = the budget lever for multi-psyche
     # (roadmap slice E). Rollback = kvCacheDtype: auto.
     kvCacheDtype: fp8_e4m3
-    # With fp8 KV and calculate OFF, k/v scales sit pinned at 1.0 and outlier
-    # activations clip on write — a contributor to the mid-sentence word
-    # substitutions observed on this lane (psyche .loom/decision-sampling-
-    # hygiene.md; psyche MR !71 guarded the sampling tail, this is the engine
-    # half). Dynamic scale calculation costs a little prefill overhead; the
-    # gate is KV pool parity (~703k) + depth-recall parity.
-    # Rollback = calculateKvScales: false.
-    calculateKvScales: true
+    # Scales are pinned at 1.0 and outlier activations clip on cache write —
+    # a contributor to the lane's mid-sentence word substitutions (psyche
+    # .loom/decision-sampling-hygiene.md; psyche MR !71 guarded the sampling
+    # tail). Do NOT flip this to true: probed 2026-08-01 (MR !956, reverted)
+    # and vLLM 0.23 force-disables calculate_kv_scales for hybrid GDN models
+    # ("recurrent state is uninitialized" -> "Using default scale of 1.0
+    # instead"), so the flag only adds boot warnings while the config lies.
+    # The flag is deprecated upstream; the real fix is checkpoint-embedded
+    # k_scale/v_scale (requantized artifact) or a runtime bump — see #69.
+    # Probe boot for the record: clean 2.5 min restart, pool 817,285 tokens,
+    # 3.56x concurrency @ 229,376.
+    calculateKvScales: false
     # vLLM 0.23 plugin certificate: bounded graph shapes avoid the v0.17
     # hybrid-architecture crash and deliver ~102 base / ~60 short-LoRA tok/s.
     enforceEager: false
