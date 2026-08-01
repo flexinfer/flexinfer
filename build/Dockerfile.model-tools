@@ -1,29 +1,22 @@
 # Dockerfile.model-tools
 # Lightweight CPU-only helper image for ModelCache publish and validation jobs.
 
+FROM ghcr.io/oras-project/oras:v1.2.2@sha256:cd549d80c4aa89638aea5964a3cd8193a6dd8abf939a43b5d562c24dbab08ff1 AS oras
+
 FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
 
-ARG ORAS_VERSION=1.2.2
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates \
-    curl \
-    tar \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN curl -fsSL "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
-    | tar -xz -C /usr/local/bin oras
+COPY --from=oras /bin/oras /usr/local/bin/oras
 
 COPY build/requirements-model-tools.txt /opt/flexinfer/requirements-model-tools.txt
 
-RUN pip install --no-cache-dir \
+RUN pip install --no-cache-dir --only-binary=:all: --require-hashes \
     --requirement /opt/flexinfer/requirements-model-tools.txt \
     && pip check
 
 COPY build/scripts/validate_quantized_artifact.py /opt/flexinfer/scripts/validate_quantized_artifact.py
 COPY build/scripts/publish_hf.py /opt/flexinfer/scripts/publish_hf.py
 
-RUN python --version \
+RUN python -c "import sys; assert sys.version_info[:2] == (3, 14), sys.version; print(sys.version)" \
     && oras version \
     && python -c "import huggingface_hub, safetensors; print(huggingface_hub.__version__, safetensors.__version__)" \
     && python -m py_compile \
