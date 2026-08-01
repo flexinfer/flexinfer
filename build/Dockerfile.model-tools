@@ -1,7 +1,7 @@
 # Dockerfile.model-tools
 # Lightweight CPU-only helper image for ModelCache publish and validation jobs.
 
-FROM python:3.11-slim
+FROM python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6
 
 ARG ORAS_VERSION=1.2.2
 
@@ -14,11 +14,24 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN curl -fsSL "https://github.com/oras-project/oras/releases/download/v${ORAS_VERSION}/oras_${ORAS_VERSION}_linux_amd64.tar.gz" \
     | tar -xz -C /usr/local/bin oras
 
+COPY build/requirements-model-tools.txt /opt/flexinfer/requirements-model-tools.txt
+
 RUN pip install --no-cache-dir \
-    huggingface_hub \
-    safetensors
+    --requirement /opt/flexinfer/requirements-model-tools.txt \
+    && pip check
 
 COPY build/scripts/validate_quantized_artifact.py /opt/flexinfer/scripts/validate_quantized_artifact.py
 COPY build/scripts/publish_hf.py /opt/flexinfer/scripts/publish_hf.py
+
+RUN python --version \
+    && oras version \
+    && python -c "import huggingface_hub, safetensors; print(huggingface_hub.__version__, safetensors.__version__)" \
+    && python -m py_compile \
+        /opt/flexinfer/scripts/validate_quantized_artifact.py \
+        /opt/flexinfer/scripts/publish_hf.py \
+    && PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/opt/flexinfer/scripts \
+        python -c "import publish_hf, validate_quantized_artifact" \
+    && python /opt/flexinfer/scripts/validate_quantized_artifact.py --help >/dev/null \
+    && rm -rf /opt/flexinfer/scripts/__pycache__
 
 ENTRYPOINT ["/bin/sh"]
