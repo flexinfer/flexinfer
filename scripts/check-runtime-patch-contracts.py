@@ -497,19 +497,19 @@ def assert_qwen128_production_contract(primary_yaml: str, sister_yaml: str) -> N
             fail(f"Qwen 128K primary model contract regressed: {snippet!r}")
 
 
-def assert_wan_video_warm_contract(wan_yaml: str) -> None:
+def assert_wan_video_parked_contract(wan_yaml: str) -> None:
     required = (
         "name: wan21-t2v-1p3b-gfx1100",
-        # 2026-07-18 psyche fleet layout (MR !862): video lanes rehomed to
-        # cblevins-5930k; T2V remains the warm video primary there.
+        # 2026-07-24 twin canary window: WAN remains on cblevins-5930k but is
+        # parked so higher-priority members can acquire the shared GPU.
         "shared: 5930k-textgen",
         "priority: 500",
-        "warmPolicy: primary",
-        "minReplicas: 1",
+        "minReplicas: 0",
+        "warmPolicy: ondemand",
     )
     for snippet in required:
         if snippet not in wan_yaml:
-            fail(f"Wan warm video contract regressed: {snippet!r}")
+            fail(f"Wan parked video contract regressed: {snippet!r}")
 
 
 def assert_flash_loader_image_contract(
@@ -696,7 +696,7 @@ def main(argv: list[str]) -> int:
         long_context_cronjob_yaml, long_context_experiment_yaml
     )
     assert_qwen128_production_contract(qwen128_primary_yaml, qwen128_production_yaml)
-    assert_wan_video_warm_contract(wan_video_yaml)
+    assert_wan_video_parked_contract(wan_video_yaml)
     assert_flash_loader_image_contract(
         flash_loader_source, model_deployment_source, chart_values_yaml
     )

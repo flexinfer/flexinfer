@@ -72,7 +72,8 @@ substitute for the image kill test.
 - Planned file areas: `.gitlab-ci.yml`, `build/Dockerfile.model-tools`,
   `build/requirements-model-tools.txt`,
   `deploy/system/values-k3s.yaml`, this plan, `.loom/00-index.md`, `ROADMAP.md`,
-  and `docs/planning/docker-major-dependency-rollout.md`.
+  `docs/planning/docker-major-dependency-rollout.md`, and the runtime contract
+  checker if the immutable values pin exposes pre-existing fleet-test drift.
 - Implementation steps:
   1. Resolve and pin the existing production digest as the rollback anchor.
   2. Pin the Python 3.14 base and current package versions, then build and smoke
@@ -126,6 +127,11 @@ substitute for the image kill test.
 - Repository proof: `go test ./pkg/quantization/...`, `make test`, `helm lint`,
   Helm rendering with `deploy/system/values-k3s.yaml`, and `git diff --check`
   passed. Test-generated controller-gen drift was removed from the slice.
+- CI drift repair: the values change triggered a stale WAN warm-lane assertion
+  even though GitOps and the read-only live parent Model both intentionally use
+  `minReplicas: 0` plus `warmPolicy: ondemand` (live phase `Preempted`) for the
+  twin-canary window. The checker now asserts that parked shape; no Model or
+  other cluster object was mutated.
 - Promotion boundary: negative searches found no deployment, chart, runtime,
   or config reference to the candidate tag. Post-merge CI publishes model-tools
   commit tags only and cannot rebuild a candidate under Harbor/GitLab `master`,
