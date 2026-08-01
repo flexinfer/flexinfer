@@ -26,7 +26,8 @@ KV-cache-aware routing, quantization pipelines with a quality gate, and
 multi-cluster support. Core phases 1–5 plus the advanced-feature wave (KV-cache
 tiering, dynamic multi-LoRA, OCI model registry, flash-loader, spot resilience,
 CNCF-prep) shipped by 2026-03; the full completed-phase history lives in git and
-`docs/planning/`. Recent activity (git log `master`, 2026-06-25..2026-07-14): the
+`docs/planning/`. Recent activity (git log `origin/master`,
+2026-06-25..2026-08-01): the
 gaming-mode program landed — Steam client + persistent game storage on the
 7900xtx gaming node, hostNetwork/Sunshine ports, runbook + node-mode metrics +
 opt-in idle auto-revert, and crash supervision with degraded-session reporting —
@@ -45,20 +46,26 @@ window. The experiment-platform frontier now has an end-to-end
 run-fenced Job, records a typed verdict, and releases hardware without mutating
 production or Flux-owned Models. Successful experiments can opt into recurring
 certification with bounded verdict and Job history; failures remain terminal.
-The clean, non-abliterated Qwen3.5 35B GPTQ artifact is now the dual-RX-7900-XTX
-workhorse: both replicas expose 128K context with graph mode, FP8 KV cache, and
-the same immutable ROCm runtime. Shared `workhorse-128k` traffic now selects the
-Ready Model with the fewest active proxy connections and round-robins ties; the
-live busy-member kill-test passed 4/4 with explicit decision and target metrics.
-Routine proxy rollouts now use readiness-first graceful draining. The live
-rollout-under-load certificate passed on 2026-07-18: a 2,048-token request
-survived the old pod's 38.2-second drain while all 60 Service probes returned
-HTTP 200 ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65)).
+The clean, non-abliterated Qwen3.5 35B GPTQ pair proved 128K graph-mode routing
+and least-loaded failover in July, then moved to Idle as the production text
+lane advanced to Qwen3.5 9B RP. That lane now has a 224K certified primary and a
+5930k twin with the same immutable runtime; APC and FP8-KV promotions landed,
+while engine-fatal deep-context n-gram speculation and the failed sleep-mode
+canary were rolled back. Routine proxy rollouts use readiness-first graceful
+draining. The live rollout-under-load certificate passed on 2026-07-18: a
+2,048-token request survived the old pod's 38.2-second drain while all 60
+Service probes returned HTTP 200
+([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65)).
+Refresh evidence captured 2026-08-01: `origin/master` was inspected through
+`a7836a6a5`; read-only Flux state showed both `flexinfer-system` and
+`flexinfer-models` Ready at that revision; both Qwen3.5 9B RP parent `Model`s and
+all cluster nodes were Ready; the two 35B workhorse `Model`s were Idle.
 The controlled Docker-major rollout is now in implementation: production
 model-tools configuration is pinned to its resolved Python 3.11 digest, while
-the commit-specific Python 3.14 candidate `model-tools:ec0efeeb` passed its
-dependency, import, script, and CLI build gate. It remains unpromoted until a
-real ModelCache job canary passes.
+the commit-specific Python 3.14 candidate `model-tools:1db78d5e`
+(`sha256:41f948bafa42c154a17ac567a0ade1f49fd3e17e6241c7e8bb44dc7a48265f30`)
+passed its hash-locked dependency, import, script, and CLI build gate. It
+remains unpromoted until a real ModelCache job canary passes.
 
 - **Plan**: `.loom/32-iteration-plan-model-backfill-2026-07-09.md` (frontier iteration; kill-test passed)
 - **Follow-on**: `.loom/33-iteration-plan-chat-gauntlet-2026-07-10.md` (live chat-vs-completions kill-test passed)
@@ -74,15 +81,17 @@ real ModelCache job canary passes.
 
 ## Now
 
-- Operate the two clean Qwen3.5 35B GPTQ replicas as the shared 128K workhorse
-  for Loom, Mills, and Council traffic. Preserve exact artifact/runtime parity,
-  watch per-Model active connections plus label-group target hits, and keep
-  long-context coherence—not nominal window size—as the promotion gate.
+- Operate the two Ready Qwen3.5 9B RP replicas across the gfx1100 nodes as the
+  current production text lane. Preserve exact artifact/runtime parity, watch
+  per-Model active connections and the 5930k twin after its recent reload, and
+  keep long-context coherence—not nominal window size—as the promotion gate.
 
 ## Next
 
 - [x] Stage major Docker dependency updates (Python 3.14 / CUDA 12.9 / ROCm 6.4) as a controlled rollout capsule ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
-- [ ] Run the commit-tagged Python 3.14 model-tools candidate through a real ModelCache job canary before promotion, then continue one image family per MR
+- [ ] Add a per-ModelCache publisher-image override, run the Python 3.14
+  model-tools candidate through an isolated publish/validation job canary, and
+  promote only the tested digest before continuing one image family per MR
 - [x] Gracefully drain in-flight proxy requests during rollouts ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65); live certificate passed 2026-07-18)
 
 ## Later

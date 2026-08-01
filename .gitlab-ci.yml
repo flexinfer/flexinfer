@@ -104,9 +104,6 @@ variables:
   # Default: avoid building + pushing duplicate ":latest" tags during publish
   # (faster and keeps GitOps pinned to commit SHAs).
   PUBLISH_LATEST_TAGS: "0"
-  # Controlled major-rollout gate. Keep model-tools on commit-only tags until
-  # a real ModelCache job canary passes and a dedicated promotion MR opts in.
-  PUBLISH_MODEL_TOOLS_STABLE_TAGS: "0"
   # Optional: OCI repo for Helm chart publishing (example: oci://registry.harbor.lan/flexinfer-charts)
   HELM_OCI_REPO: ""
 
@@ -631,6 +628,8 @@ publish:
       bench_tags="${REGISTRY}/flexinfer-bench:${CI_COMMIT_SHORT_SHA}"
       proxy_tags="${REGISTRY}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
       flash_loader_tags="${REGISTRY}/flexinfer-flash-loader:${CI_COMMIT_SHORT_SHA}"
+      # model-tools major candidates are promoted to GitOps values by tested
+      # digest. Never rebuild a candidate under a mutable/timestamp stable tag.
       model_tools_tags="${REGISTRY}/model-tools:${CI_COMMIT_SHORT_SHA}"
 
       # Immutable, chronologically-sortable UTC timestamp tag (YYYYMMDD-HHMMSS).
@@ -652,9 +651,6 @@ publish:
         bench_tags="${bench_tags} ${REGISTRY}/flexinfer-bench:master ${REGISTRY}/flexinfer-bench:${BUILD_TS}"
         proxy_tags="${proxy_tags} ${REGISTRY}/flexinfer-proxy:master ${REGISTRY}/flexinfer-proxy:${BUILD_TS}"
         flash_loader_tags="${flash_loader_tags} ${REGISTRY}/flexinfer-flash-loader:master ${REGISTRY}/flexinfer-flash-loader:${BUILD_TS}"
-        if [ "${PUBLISH_MODEL_TOOLS_STABLE_TAGS}" = "1" ]; then
-          model_tools_tags="${model_tools_tags} ${REGISTRY}/model-tools:master ${REGISTRY}/model-tools:${BUILD_TS}"
-        fi
       fi
 
       if [ "${PUBLISH_LATEST_TAGS}" = "1" ] && [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
@@ -664,9 +660,6 @@ publish:
         bench_tags="${bench_tags} ${REGISTRY}/flexinfer-bench:latest"
         proxy_tags="${proxy_tags} ${REGISTRY}/flexinfer-proxy:latest"
         flash_loader_tags="${flash_loader_tags} ${REGISTRY}/flexinfer-flash-loader:latest"
-        if [ "${PUBLISH_MODEL_TOOLS_STABLE_TAGS}" = "1" ]; then
-          model_tools_tags="${model_tools_tags} ${REGISTRY}/model-tools:latest"
-        fi
       fi
 
       if [ "${PUBLISH_GITLAB_IMAGES}" = "1" ] && [ -n "${CI_REGISTRY_IMAGE:-}" ]; then
@@ -679,9 +672,6 @@ publish:
         model_tools_tags="${model_tools_tags} ${CI_REGISTRY_IMAGE}/model-tools:${CI_COMMIT_SHORT_SHA}"
         if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
           controller_tags="${controller_tags} ${CI_REGISTRY_IMAGE}/flexinfer-controller:latest"
-          if [ "${PUBLISH_MODEL_TOOLS_STABLE_TAGS}" = "1" ]; then
-            model_tools_tags="${model_tools_tags} ${CI_REGISTRY_IMAGE}/model-tools:latest"
-          fi
         fi
       fi
 

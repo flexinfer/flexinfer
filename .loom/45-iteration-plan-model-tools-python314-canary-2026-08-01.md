@@ -48,8 +48,8 @@ substitute for the image kill test.
 - Slice name: immutable model-tools baseline plus Python 3.14 candidate.
 - Scope in: pin the current live model-tools digest; pin the Python 3.14 base
   and the baseline's fully resolved Python dependency set; build, smoke, and
-  publish one commit-specific candidate; gate post-merge stable tags off; record
-  evidence and roadmap state.
+  publish one commit-specific candidate; remove post-merge stable-tag rebuilds;
+  record evidence and roadmap state.
 - Scope out: changing `validatorImage`, promoting the candidate into a job,
   moving `master`/`latest`, changing GGUF or GPU images, and cluster mutations.
 - Acceptance criteria:
@@ -58,8 +58,9 @@ substitute for the image kill test.
     the baseline's resolved Python package versions.
   - The bounded image kill test passes and the commit-specific candidate digest
     is recorded.
-  - Post-merge CI continues publishing commit tags but cannot move model-tools
-    `master`, timestamp, or `latest` tags without an explicit promotion opt-in.
+  - Post-merge CI continues publishing commit tags but never rebuilds
+    model-tools under `master`, timestamp, or `latest` tags; promotion changes
+    GitOps values to the already-tested digest.
   - Relevant Go tests, repository tests, Helm rendering, and whitespace checks
     pass.
   - No production value references the candidate.
@@ -94,9 +95,10 @@ substitute for the image kill test.
   capsule, and top-level roadmap.
 - Agent-context entries to add: immutable baseline finding, compatibility
   decision, kill-test verdict, candidate digest, and promotion boundary.
-- Next-slice candidates: run a real ModelCache publish/validation job against
-  the candidate and promote it only if that canary passes; otherwise isolate
-  the first failing dependency or script as a corrective slice.
+- Next-slice candidates: add an additive per-ModelCache publisher-image override
+  (validation already has one), then run one isolated publish/validation job
+  against the candidate and promote it only if that canary passes. Otherwise,
+  isolate the first failing dependency or script as a corrective slice.
 
 ## Evidence
 
@@ -104,28 +106,33 @@ substitute for the image kill test.
   `sha256:fe048a433779b7c1f6f8e9cfa4373117e846f071440eaf8575762a640125bf5a`.
   `deploy/system/values-k3s.yaml` now uses that digest, not the mutable tag.
 - Baseline isolation: the production image's 16 resolved Python runtime
-  packages are locked in `build/requirements-model-tools.txt`; ORAS remains
-  1.2.2. The first exploratory build was discarded after it demonstrated that
-  three transitive packages would otherwise drift.
+  packages are version- and wheel-hash-locked in
+  `build/requirements-model-tools.txt`, with binary wheels required. ORAS
+  remains 1.2.2 and is copied from
+  `ghcr.io/oras-project/oras@sha256:cd549d80c4aa89638aea5964a3cd8193a6dd8abf939a43b5d562c24dbab08ff1`;
+  no mutable apt, curl, or release-archive input remains.
 - Candidate base: Python 3.14.6 from
   `python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6`.
 - Build kill test: PASS. The final Docker build reported Python 3.14.6, ORAS
   1.2.2, `huggingface_hub` 1.24.0, and `safetensors` 0.8.0; `pip check`, both
   script imports and byte-compilation, and validator `--help` all succeeded.
-- Candidate publication: source commit `ec0efeeb`; tag
-  `registry.harbor.lan/flexinfer/model-tools:ec0efeeb`; registry digest
-  `sha256:546dcb2450d76ddf17369da99ba7ca9918011d249130d39292ae2410109e4d8e`.
+- Candidate publication: source commit `1db78d5e`; tag
+  `registry.harbor.lan/flexinfer/model-tools:1db78d5e`; registry digest
+  `sha256:41f948bafa42c154a17ac567a0ade1f49fd3e17e6241c7e8bb44dc7a48265f30`.
   Pulling the tag back from Harbor resolved to the same digest.
+- Superseded evidence: the earlier `ec0efeeb` image was an exploratory
+  publication made before the ORAS digest and wheel hashes were locked. It was
+  left unpromoted and is not the candidate authorized for a job canary.
 - Repository proof: `go test ./pkg/quantization/...`, `make test`, `helm lint`,
   Helm rendering with `deploy/system/values-k3s.yaml`, and `git diff --check`
   passed. Test-generated controller-gen drift was removed from the slice.
 - Promotion boundary: negative searches found no deployment, chart, runtime,
-  or config reference to the candidate tag. `PUBLISH_MODEL_TOOLS_STABLE_TAGS`
-  defaults to `0`, so the post-merge publisher retains the commit tag but does
-  not move Harbor/GitLab `master`, timestamp, or `latest` tags. No stable tag or
-  cluster object was changed. The loaded remote Docker daemon was too I/O-bound
-  for a reliable post-build container run, so the next slice remains a real
-  ModelCache job canary before promotion.
+  or config reference to the candidate tag. Post-merge CI publishes model-tools
+  commit tags only and cannot rebuild a candidate under Harbor/GitLab `master`,
+  timestamp, or `latest`. No stable tag or cluster object was changed. The
+  loaded remote Docker daemon was too I/O-bound for a reliable post-build
+  container run, so the next slice remains an isolated ModelCache job canary
+  before digest promotion.
 
 ## Slice Handoff
 
@@ -148,18 +155,22 @@ substitute for the image kill test.
 
 ### What Is Still Open
 
-- Remaining acceptance criterion for promotion: run a representative
-  ModelCache publish/validation Job against the candidate digest.
+- Remaining acceptance criterion for promotion: first add a per-ModelCache
+  publisher-image override, then run a representative publish/validation Job
+  with both publisher and validator pinned to the candidate digest.
 - Known issue: the remote Docker daemon was under extreme load during proof;
   container-start behavior was therefore left to the Kubernetes job canary.
-- Dependencies: a safe representative artifact and a bounded job-canary window.
+- Dependencies: the additive publisher-image API/CRD field, a safe
+  representative artifact, and a bounded job-canary window.
 
 ### Next Actions
 
-1. Override one representative ModelCache job to the candidate digest without
-   changing the stable/default value.
-2. Require publish/validation success and inspect termination metadata/logs.
-3. Promote by digest in a separate MR only if the job canary passes; otherwise
+1. Add a per-ModelCache publisher-image override; preserve the controller-wide
+   default for backward compatibility.
+2. Pin one representative publisher and validator to the candidate digest,
+   then require success and inspect termination metadata/logs.
+3. Promote the tested digest in a separate MR only if the job canary passes;
+   otherwise
    retain the Python 3.11 rollback anchor and isolate the failure.
 
 ### Context Links
