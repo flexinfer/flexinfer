@@ -1,6 +1,6 @@
 # FlexInfer Roadmap
 
-> Last Updated: 2026-07-14
+> Last Updated: 2026-08-01
 > Tier: 1 (see workspace AGENTS.md "Portfolio Tiers")
 > Tracking Issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/63
 
@@ -54,6 +54,11 @@ Routine proxy rollouts now use readiness-first graceful draining. The live
 rollout-under-load certificate passed on 2026-07-18: a 2,048-token request
 survived the old pod's 38.2-second drain while all 60 Service probes returned
 HTTP 200 ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65)).
+The controlled Docker-major rollout is now in implementation: production
+model-tools configuration is pinned to its resolved Python 3.11 digest, while
+the commit-specific Python 3.14 candidate `model-tools:ec0efeeb` passed its
+dependency, import, script, and CLI build gate. It remains unpromoted until a
+real ModelCache job canary passes.
 
 - **Plan**: `.loom/32-iteration-plan-model-backfill-2026-07-09.md` (frontier iteration; kill-test passed)
 - **Follow-on**: `.loom/33-iteration-plan-chat-gauntlet-2026-07-10.md` (live chat-vs-completions kill-test passed)
@@ -63,6 +68,7 @@ HTTP 200 ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65)).
 - **Recurring experiments**: `.loom/37-iteration-plan-recurring-model-experiment-2026-07-10.md` (run-fencing kill test)
 - **128K workhorse routing**: `.loom/40-iteration-plan-label-group-least-loaded-2026-07-14.md` (live busy-member kill-test passed)
 - **Proxy rollout draining**: `.loom/44-iteration-plan-proxy-drain-live-killtest-2026-07-18.md` (live rollout-under-load kill-test passed)
+- **Python 3.14 model-tools candidate**: `.loom/45-iteration-plan-model-tools-python314-canary-2026-08-01.md` (build kill-test passed; job canary pending)
 - **Deployed**: K3s GPU cluster via Flux (flexinfer stack incl. fi-mcp-gateway)
 - **CI**: custom (bespoke `.gitlab-ci.yml` + `.gitlab/ci/` includes: BuildKit image matrix, Go build/test, Trivy, Helm)
 
@@ -75,7 +81,8 @@ HTTP 200 ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65)).
 
 ## Next
 
-- [ ] Stage major docker dependency updates (Python 3.14 / CUDA 12.9 / ROCm 6.4) in a controlled rollout ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
+- [x] Stage major Docker dependency updates (Python 3.14 / CUDA 12.9 / ROCm 6.4) as a controlled rollout capsule ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
+- [ ] Run the commit-tagged Python 3.14 model-tools candidate through a real ModelCache job canary before promotion, then continue one image family per MR
 - [x] Gracefully drain in-flight proxy requests during rollouts ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65); live certificate passed 2026-07-18)
 
 ## Later

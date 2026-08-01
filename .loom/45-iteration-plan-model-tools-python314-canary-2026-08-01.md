@@ -41,14 +41,14 @@ resolved `huggingface_hub==1.24.0` and `safetensors==0.8.0`; safetensors ships a
 abi3 Linux wheel usable by Python 3.14. These are supporting signals, not a
 substitute for the image kill test.
 
-**Status**: not run.
+**Status**: passed 2026-08-01.
 
 ## Align
 
 - Slice name: immutable model-tools baseline plus Python 3.14 candidate.
 - Scope in: pin the current live model-tools digest; pin the Python 3.14 base
-  and the baseline's fully resolved Python dependency set; build, smoke, and publish one
-  commit-specific candidate; record evidence and roadmap state.
+  and the baseline's fully resolved Python dependency set; build, smoke, and
+  publish one commit-specific candidate; record evidence and roadmap state.
 - Scope out: changing `validatorImage`, promoting the candidate into a job,
   moving `master`/`latest`, changing GGUF or GPU images, and cluster mutations.
 - Acceptance criteria:
@@ -94,3 +94,71 @@ substitute for the image kill test.
 - Next-slice candidates: run a real ModelCache publish/validation job against
   the candidate and promote it only if that canary passes; otherwise isolate
   the first failing dependency or script as a corrective slice.
+
+## Evidence
+
+- Rollback anchor: `model-tools:master` resolved on 2026-08-01 to
+  `sha256:fe048a433779b7c1f6f8e9cfa4373117e846f071440eaf8575762a640125bf5a`.
+  `deploy/system/values-k3s.yaml` now uses that digest, not the mutable tag.
+- Baseline isolation: the production image's 16 resolved Python runtime
+  packages are locked in `build/requirements-model-tools.txt`; ORAS remains
+  1.2.2. The first exploratory build was discarded after it demonstrated that
+  three transitive packages would otherwise drift.
+- Candidate base: Python 3.14.6 from
+  `python:3.14-slim@sha256:cea0e6040540fb2b965b6e7fb5ffa00871e632eef63719f0ea54bca189ce14a6`.
+- Build kill test: PASS. The final Docker build reported Python 3.14.6, ORAS
+  1.2.2, `huggingface_hub` 1.24.0, and `safetensors` 0.8.0; `pip check`, both
+  script imports and byte-compilation, and validator `--help` all succeeded.
+- Candidate publication: source commit `ec0efeeb`; tag
+  `registry.harbor.lan/flexinfer/model-tools:ec0efeeb`; registry digest
+  `sha256:546dcb2450d76ddf17369da99ba7ca9918011d249130d39292ae2410109e4d8e`.
+  Pulling the tag back from Harbor resolved to the same digest.
+- Repository proof: `go test ./pkg/quantization/...`, `make test`, `helm lint`,
+  Helm rendering with `deploy/system/values-k3s.yaml`, and `git diff --check`
+  passed. Test-generated controller-gen drift was removed from the slice.
+- Promotion boundary: negative searches found no deployment, chart, runtime,
+  or config reference to the candidate tag. No stable tag or cluster object was
+  changed. The loaded remote Docker daemon was too I/O-bound for a reliable
+  post-build container run, so the next slice remains a real ModelCache job
+  canary before promotion.
+
+## Slice Handoff
+
+### Slice Summary
+
+- Milestone: controlled major Docker dependency rollout, phases 0 and 1.
+- Slice: immutable model-tools baseline plus Python 3.14 candidate.
+- Status: implementation and bounded proof complete; promotion intentionally
+  remains open.
+
+### What Landed
+
+- Key changes: immutable Python 3.11 rollback pin, exact Python 3.14 base,
+  locked baseline dependencies, embedded build gate, and a commit-specific
+  Harbor candidate.
+- Key files: `build/Dockerfile.model-tools`,
+  `build/requirements-model-tools.txt`, and `deploy/system/values-k3s.yaml`.
+- Validation results: image gate, targeted quantization tests, full repository
+  tests, Helm validation, and candidate digest round-trip all passed.
+
+### What Is Still Open
+
+- Remaining acceptance criterion for promotion: run a representative
+  ModelCache publish/validation Job against the candidate digest.
+- Known issue: the remote Docker daemon was under extreme load during proof;
+  container-start behavior was therefore left to the Kubernetes job canary.
+- Dependencies: a safe representative artifact and a bounded job-canary window.
+
+### Next Actions
+
+1. Override one representative ModelCache job to the candidate digest without
+   changing the stable/default value.
+2. Require publish/validation success and inspect termination metadata/logs.
+3. Promote by digest in a separate MR only if the job canary passes; otherwise
+   retain the Python 3.11 rollback anchor and isolate the failure.
+
+### Context Links
+
+- Agent-context session: `b989c83a4f16f73e`.
+- Task ID: `fa1c1a379a2b9100`.
+- Rollout capsule: `docs/planning/docker-major-dependency-rollout.md`.
