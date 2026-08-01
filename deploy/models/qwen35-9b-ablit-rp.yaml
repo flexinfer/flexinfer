@@ -116,11 +116,23 @@ spec:
     cudagraphMetrics: true
     kvCacheMetrics: true
     kvCacheMetricsSample: "1.0"
-    # APC stays OFF: qwen3_5 is a hybrid GDN/attention arch and upstream vLLM
-    # 0.23 labels prefix caching for hybrid models experimental. Enabling it is
-    # the F4 framing in .loom/brainstorm-qwen35-9b-rp-usability-next-2026-07-22.md
-    # (disposable canary arm, cache-hit + output-parity evidence) — do not flip
-    # it here without that canary certificate.
+    # MEASURING APC ON THIS LANE — read before filing a "cache is broken" bug.
+    # "align" makes vLLM round the attention block UP to the mamba page size:
+    #   [interface.py:670] Setting attention block size to 544 tokens
+    # 544 is the floor of cache-hit *reporting*, not just of caching. vLLM
+    # counts cached_tokens in whole blocks and omits prompt_tokens_details
+    # entirely when the count is zero, so any prompt shorter than 544 tokens
+    # comes back with prompt_tokens_details: null and no X-Flexinfer-Cached-
+    # Tokens header no matter how warm the cache is. null means ZERO, not
+    # "unknown". Probe with a repeated prompt of several blocks (~4k+ tokens);
+    # verified 2026-08-01 at 7252 tokens -> cached_tokens 7072 (= 13 x 544).
+    #
+    # The block size is not fixed: it is whatever makes the attention page
+    # match the mamba page, so it moves when KV bytes/token move. fp8 KV
+    # (9acebff46, promoted 2026-07-25 right after APC) halved KV bytes and
+    # so doubled the block 272 -> 544. That is why #67's contemporaneous
+    # proof reads 8976 = 33 x 272 while today's reads 13 x 544. Re-measure
+    # the boot line after any kvCacheDtype change rather than assuming.
     #
     # Hybrid-GDN APC, promoted from the twin's gdn-prefix-cache-flip canary
     # (PASSED 2026-07-25, flexinfer #67): warm repeat served 99.4% of the
