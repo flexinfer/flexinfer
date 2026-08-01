@@ -1,11 +1,14 @@
 # Dedicated gfx1100 GPTQ canary runtime.
 #
-# vLLM 0.23 is the first upstream release with the native RDNA3 W4A16 HIP
-# kernel. Keep this image separate from the legacy 0.17 serving persona until
+# vLLM 0.23 was the first upstream release with the native RDNA3 W4A16 HIP
+# kernel; this image now tracks 0.26.0, the first release carrying the
+# hybrid-GDN mamba-block-split clamp (upstream PR #47782) that the ngram
+# speculative-decoding re-canary depends on — see services/flexinfer#66. Keep
+# this image separate from the legacy 0.17 serving persona until
 # full-checkpoint logit/coherence and throughput acceptance passes.
-ARG BASE_IMAGE=vllm/vllm-openai-rocm:v0.23.0
+ARG BASE_IMAGE=vllm/vllm-openai-rocm:v0.26.0
 ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
-ARG VLLM_REF=v0.23.0
+ARG VLLM_REF=v0.26.0
 
 FROM ${BASE_IMAGE}
 
@@ -28,7 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && python3 -m pip install --no-cache-dir \
       "setuptools>=74" setuptools-rust setuptools-scm wheel packaging
 
-# The published v0.23 ROCm image carries the RDNA3 Python dispatcher but its
+# The published v0.26 ROCm image carries the RDNA3 Python dispatcher but its
 # generic wheel omits the compiled gfx1100 op. Rebuild the same release against
 # the image's pinned ROCm/PyTorch stack, constrained to gfx1100. Reuse the Rust
 # frontend already shipped by the base image so this layer only rebuilds the
@@ -40,7 +43,7 @@ RUN --mount=type=cache,target=/root/.cache/ccache \
     --mount=type=cache,target=/root/.cache/pip \
     cd /tmp/vllm-src \
     && export VLLM_TARGET_DEVICE=rocm \
-       VLLM_VERSION_OVERRIDE=0.23.0 \
+       VLLM_VERSION_OVERRIDE=0.26.0 \
        PYTORCH_ROCM_ARCH="${GPU_ARCH}" \
        GPU_TARGETS="${GPU_ARCH}" \
        MAX_JOBS=4 \
@@ -49,8 +52,10 @@ RUN --mount=type=cache,target=/root/.cache/ccache \
     && python3 -m pip install --no-deps --force-reinstall /tmp/vllm-wheel/vllm-*.whl \
     && rm -rf /tmp/vllm-src /tmp/vllm-wheel
 
-# vLLM 0.23 ships Qwen3.5's text class but only registers the multimodal
-# wrapper. Install FlexInfer's existing general plugin so the extracted
+# vLLM 0.26 still ships Qwen3.5's text class while registering only the
+# multimodal wrapper (upstream registration lands after this release, so the
+# next bump must re-check for duplicate registration — services/flexinfer#66).
+# Install FlexInfer's existing general plugin so the extracted
 # Qwen3_5TextConfig artifact resolves to Qwen3_5ForCausalLM in both the API and
 # EngineCore processes instead of falling through to a vision_config access.
 COPY build/vllm-qwen35-text-plugin /opt/flexinfer/qwen35-text-plugin

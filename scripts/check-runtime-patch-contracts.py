@@ -203,7 +203,7 @@ def assert_legacy_gptq_uses_reference_after_qwen_shuffle_skip(
 
 def assert_native_w4a16_dockerfile_contract(dockerfile: str) -> None:
     required = (
-        "vllm/vllm-openai-rocm:v0.23.0",
+        "vllm/vllm-openai-rocm:v0.26.0",
         'CMAKE_ARGS="-DGPU_TARGETS=${GPU_ARCH}"',
         "pip wheel --no-build-isolation --no-deps",
         "verify_vllm_gfx1100_native_w4a16.py",
@@ -598,9 +598,9 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     native_w4a16_job_body = ci_yaml[native_w4a16_job:publish_job]
     native_required_snippets = (
         'filename="Dockerfile.runtime-serving-native-w4a16"',
-        'build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.23.0"',
-        'build-arg:VLLM_REF="v0.23.0"',
-        "${REGISTRY}/runtime:rocm-gfx1100-v023-native-w4a16",
+        'build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.26.0"',
+        'build-arg:VLLM_REF="v0.26.0"',
+        "${REGISTRY}/runtime:rocm-gfx1100-v026-native-w4a16",
         "build/scripts/verify_vllm_gfx1100_native_w4a16.py",
         "build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
     )
