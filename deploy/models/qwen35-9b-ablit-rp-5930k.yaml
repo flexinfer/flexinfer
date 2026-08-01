@@ -111,6 +111,10 @@ spec:
     # each checkpoint so more stay resident (runtime accepts
     # auto|float32|float16|bfloat16 — verified in the live pod).
     # Rollback = revert this block to enablePrefixCaching: false.
+    # Boots to the same 544-token aligned attention block as the primary, so
+    # the same reporting floor applies: prompts under one block always come
+    # back with prompt_tokens_details: null (= zero cached, not "unknown").
+    # See the MEASURING APC note in qwen35-9b-ablit-rp.yaml before probing.
     enablePrefixCaching: true
     mambaCacheMode: "align"
     mambaSsmCacheDtype: "bfloat16"

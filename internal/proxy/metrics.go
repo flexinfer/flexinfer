@@ -260,6 +260,48 @@ var (
 		[]string{"model", "stream"},
 	)
 
+	// Prefix-cache (APC) effectiveness, in tokens, by resolved model.
+	//
+	//	rate(flexinfer_proxy_cached_prompt_tokens_total[5m])
+	//	  / rate(flexinfer_proxy_prompt_tokens_total[5m])
+	//
+	// is the windowed share of prompt tokens served from the prefix cache —
+	// the durable, app-visible answer to "is APC actually working on this
+	// lane". It replaces eyeballing the per-request
+	// X-Flexinfer-Prefix-Cache-Hit-Rate header, which carries the engine's
+	// *lifetime* ratio and so cannot show a recent regression.
+	//
+	// Both counters advance only when the engine actually reported
+	// prompt_tokens_details.cached_tokens. Keeping the denominator on the
+	// same population as the numerator means engines that never report the
+	// field (llama.cpp) stay absent rather than pinning the ratio to zero.
+	//
+	// Recorded on non-streaming completions AND on streaming completions
+	// that carry a terminal usage chunk (stream_options.include_usage) —
+	// streamed traffic is the majority shape for chat clients, and before
+	// this it contributed nothing to prefix-cache observability.
+	//
+	// NOTE: vLLM reports cached_tokens in whole KV blocks. On hybrid
+	// GDN/Mamba lanes the attention block is aligned up to the mamba page
+	// size (qwen35-9b: 544 tokens), so prompts shorter than one block
+	// always report zero cached tokens. A low ratio on a short-prompt lane
+	// is expected, not a fault.
+	observedPromptTokensTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_prompt_tokens_total",
+			Help: "Total prompt tokens on completions where the engine reported prefix-cache detail. Denominator for flexinfer_proxy_cached_prompt_tokens_total.",
+		},
+		[]string{"model"},
+	)
+
+	cachedPromptTokensTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_cached_prompt_tokens_total",
+			Help: "Total prompt tokens served from the engine's prefix cache (usage.prompt_tokens_details.cached_tokens), by resolved model. Divide by flexinfer_proxy_prompt_tokens_total for the APC hit share.",
+		},
+		[]string{"model"},
+	)
+
 	stalledLoadTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_stalled_load_total",
@@ -381,6 +423,8 @@ func RegisterMetrics() {
 		prometheus.MustRegister(requestPromptTokens)
 		prometheus.MustRegister(requestCompletionTokens)
 		prometheus.MustRegister(completionsTotal)
+		prometheus.MustRegister(observedPromptTokensTotal)
+		prometheus.MustRegister(cachedPromptTokensTotal)
 		prometheus.MustRegister(stalledLoadTotal)
 		prometheus.MustRegister(admissionDecisionsTotal)
 		prometheus.MustRegister(labelGroupRouteDecisionsTotal)

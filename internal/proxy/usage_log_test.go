@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
+	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
@@ -603,11 +604,13 @@ func TestLogUpstreamUsage_SkipsTokenShapeMetricsForStreamingWithoutUsageChunk(t 
 
 func TestExtractStreamingUsage(t *testing.T) {
 	tests := []struct {
-		name   string
-		tail   string
-		wantPT int
-		wantCT int
-		wantOK bool
+		name         string
+		tail         string
+		wantPT       int
+		wantCT       int
+		wantCached   int
+		wantCachedOK bool
+		wantOK       bool
 	}{
 		{
 			name: "vllm terminal usage chunk after null frames",
@@ -615,16 +618,70 @@ func TestExtractStreamingUsage(t *testing.T) {
 				"data: {\"choices\":[{\"delta\":{\"content\":\"b\"}}],\"usage\":null}\n\n" +
 				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":1500,\"completion_tokens\":900,\"total_tokens\":2400}}\n\n" +
 				"data: [DONE]\n\n",
-			wantPT: 1500,
-			wantCT: 900,
-			wantOK: true,
+			wantPT:     1500,
+			wantCT:     900,
+			wantCached: -1,
+			wantOK:     true,
 		},
 		{
 			name:   "truncated leading partial line then valid usage chunk",
 			tail:   " delta\":{\"content\":\"xyz\"}}],\"usage\":null}\n\ndata: {\"usage\":{\"prompt_tokens\":42,\"completion_tokens\":7}}\n\ndata: [DONE]\n\n",
 			wantPT: 42,
 			wantCT: 7,
-			wantOK: true,
+
+			wantCached: -1,
+			wantOK:     true,
+		},
+		{
+			// The live RP-lane shape: a warm repeat streams cached_tokens on
+			// the terminal chunk. This is the only place a streaming client
+			// can see it — headers are long flushed by now.
+			name: "terminal chunk carries prompt_tokens_details.cached_tokens",
+			tail: "data: {\"choices\":[{\"delta\":{\"content\":\"a\"}}],\"usage\":null}\n\n" +
+				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7252,\"completion_tokens\":12," +
+				"\"prompt_tokens_details\":{\"cached_tokens\":7072}}}\n\n" +
+				"data: [DONE]\n\n",
+			wantPT:       7252,
+			wantCT:       12,
+			wantCached:   7072,
+			wantCachedOK: true,
+			wantOK:       true,
+		},
+		{
+			// A cold request on an APC lane: vLLM omits the detail block
+			// entirely rather than sending cached_tokens: 0. Must stay
+			// distinguishable from "engine never reports it".
+			name: "cold request omits detail block",
+			tail: "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7252,\"completion_tokens\":12}}\n\n" +
+				"data: [DONE]\n\n",
+			wantPT:     7252,
+			wantCT:     12,
+			wantCached: -1,
+			wantOK:     true,
+		},
+		{
+			name: "explicit cached_tokens zero is reported, not treated as absent",
+			tail: "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":300,\"completion_tokens\":5," +
+				"\"prompt_tokens_details\":{\"cached_tokens\":0}}}\n\n" +
+				"data: [DONE]\n\n",
+			wantPT:       300,
+			wantCT:       5,
+			wantCached:   0,
+			wantCachedOK: true,
+			wantOK:       true,
+		},
+		{
+			// Guards the per-frame reset: a later usage frame without the
+			// detail block must not inherit the earlier frame's cached count.
+			name: "later usage frame without details does not inherit earlier cached count",
+			tail: "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":100,\"completion_tokens\":1," +
+				"\"prompt_tokens_details\":{\"cached_tokens\":64}}}\n\n" +
+				"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":200,\"completion_tokens\":2}}\n\n" +
+				"data: [DONE]\n\n",
+			wantPT:     200,
+			wantCT:     2,
+			wantCached: -1,
+			wantOK:     true,
 		},
 		{
 			name:   "no usage chunk (include_usage not set)",
@@ -654,11 +711,13 @@ func TestExtractStreamingUsage(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			pt, ct, ok := extractStreamingUsage([]byte(tc.tail))
+			pt, ct, cached, cachedOK, ok := extractStreamingUsage([]byte(tc.tail))
 			require.Equal(t, tc.wantOK, ok)
 			if tc.wantOK {
 				require.Equal(t, tc.wantPT, pt)
 				require.Equal(t, tc.wantCT, ct)
+				require.Equal(t, tc.wantCachedOK, cachedOK)
+				require.Equal(t, tc.wantCached, cached)
 			}
 		})
 	}
@@ -785,4 +844,89 @@ func TestLogUpstreamUsage_CountsCompletionCoverage(t *testing.T) {
 		"non-streaming completion should increment the false-stream counter")
 	require.Equal(t, beforeStream+1, counterValue(t, model, "true"),
 		"streaming completion should increment the true-stream counter")
+}
+
+// apcTokens reads the prefix-cache counters for a lane.
+func apcTokens(t *testing.T, model string) (observed, cached float64) {
+	t.Helper()
+	return promtestutil.ToFloat64(observedPromptTokensTotal.WithLabelValues(model)),
+		promtestutil.ToFloat64(cachedPromptTokensTotal.WithLabelValues(model))
+}
+
+// The regression this slice fixes: streamed completions carry cached_tokens on
+// their terminal usage chunk, but the proxy used to drop it on the floor, so
+// prefix-cache health was unmeasurable for the majority (streamed) traffic
+// shape. The header cannot carry it — headers are flushed before the chunk
+// exists — so the counters are the contract.
+func TestUsageSniffingBody_RecordsPrefixCacheTokens(t *testing.T) {
+	const model = "apc-stream-lane"
+	sse := "data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}],\"usage\":null}\n\n" +
+		"data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7252,\"completion_tokens\":12," +
+		"\"prompt_tokens_details\":{\"cached_tokens\":7072}}}\n\n" +
+		"data: [DONE]\n\n"
+
+	obsBefore, cachedBefore := apcTokens(t, model)
+
+	b := newUsageSniffingBody(io.NopCloser(bytes.NewReader([]byte(sse))), model)
+	out, err := io.ReadAll(b)
+	require.NoError(t, err)
+	require.NoError(t, b.Close())
+	require.Equal(t, sse, string(out), "stream must pass through byte-for-byte")
+
+	obsAfter, cachedAfter := apcTokens(t, model)
+	require.Equal(t, float64(7252), obsAfter-obsBefore)
+	require.Equal(t, float64(7072), cachedAfter-cachedBefore)
+}
+
+// A cold request on an APC lane reports no detail block at all. Recording a
+// zero-cached denominator would be wrong in the other direction, so neither
+// counter may move — otherwise engines that never report the field would drag
+// every lane's hit share toward zero.
+func TestUsageSniffingBody_NoPrefixCacheDetailLeavesCountersUntouched(t *testing.T) {
+	const model = "apc-stream-lane-silent"
+	sse := "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":7252,\"completion_tokens\":12}}\n\n" +
+		"data: [DONE]\n\n"
+
+	obsBefore, cachedBefore := apcTokens(t, model)
+
+	b := newUsageSniffingBody(io.NopCloser(bytes.NewReader([]byte(sse))), model)
+	_, err := io.ReadAll(b)
+	require.NoError(t, err)
+	require.NoError(t, b.Close())
+
+	obsAfter, cachedAfter := apcTokens(t, model)
+	require.Equal(t, obsBefore, obsAfter, "denominator must not move without a cached_tokens report")
+	require.Equal(t, cachedBefore, cachedAfter)
+}
+
+// The non-streamed path feeds the same counters, so the APC hit share is one
+// number across both traffic shapes.
+func TestLogUpstreamUsage_NonStreamedFeedsPrefixCacheCounters(t *testing.T) {
+	const model = "apc-nonstream-lane"
+	body := `{"choices":[{"finish_reason":"stop"}],"usage":{"prompt_tokens":9028,` +
+		`"completion_tokens":40,"prompt_tokens_details":{"cached_tokens":8976}}}`
+
+	obsBefore, cachedBefore := apcTokens(t, model)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	req = req.WithContext(withUsageLogCtx(req.Context(), &usageLogCtx{
+		model:         model,
+		resolvedModel: model,
+		path:          "/v1/chat/completions",
+		startedAt:     time.Now(),
+	}))
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+		Body:       io.NopCloser(bytes.NewReader([]byte(body))),
+		Request:    req,
+	}
+
+	p := &Proxy{}
+	require.NoError(t, p.logUpstreamUsage(resp))
+	require.Equal(t, "8976", resp.Header.Get(headerCachedTokens))
+
+	obsAfter, cachedAfter := apcTokens(t, model)
+	require.Equal(t, float64(9028), obsAfter-obsBefore)
+	require.Equal(t, float64(8976), cachedAfter-cachedBefore)
 }

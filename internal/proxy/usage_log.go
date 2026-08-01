@@ -128,17 +128,26 @@ func extractUsageFieldsFull(body []byte) (promptTokens, completionTokens int, fi
 
 // extractStreamingUsage scans the trailing bytes of an OpenAI-style streaming
 // (SSE) completion body for the terminal `usage` chunk and returns its
-// prompt/completion token counts. OpenAI emits this chunk only when the client
-// sets `stream_options.include_usage`: the engine streams content frames with
-// `usage: null`, then a final `data: {... "usage": {...}}` frame (cumulative
-// totals) before `data: [DONE]`.
+// prompt/completion token counts plus the prefix-cache detail. OpenAI emits
+// this chunk only when the client sets `stream_options.include_usage`: the
+// engine streams content frames with `usage: null`, then a final
+// `data: {... "usage": {...}}` frame (cumulative totals) before `data: [DONE]`.
+//
+// The terminal chunk carries the same `prompt_tokens_details.cached_tokens`
+// the non-streaming body does, so streamed traffic is just as measurable for
+// prefix-cache purposes — it simply has to be read off the stream instead of
+// the response headers, which are long since flushed by the time the usage
+// chunk arrives. cachedTokens is -1 / cachedOK=false when the engine omits the
+// detail block, matching extractUsageFieldsFull's "not reported" vs "reported
+// as zero" distinction.
 //
 // The input may begin mid-line (it is a bounded tail of the full stream); such
 // partial leading frames simply fail to parse and are skipped. The last frame
 // carrying non-zero usage wins. ok=false when no usage frame is present — the
 // caller then records nothing (the completionsTotal stream-share counter still
 // quantifies the gap).
-func extractStreamingUsage(tail []byte) (promptTokens, completionTokens int, ok bool) {
+func extractStreamingUsage(tail []byte) (promptTokens, completionTokens, cachedTokens int, cachedOK, ok bool) {
+	cachedTokens = -1
 	for _, raw := range bytes.Split(tail, []byte("\n")) {
 		line := bytes.TrimSpace(raw)
 		if !bytes.HasPrefix(line, []byte("data:")) {
@@ -150,8 +159,11 @@ func extractStreamingUsage(tail []byte) (promptTokens, completionTokens int, ok 
 		}
 		var chunk struct {
 			Usage *struct {
-				PromptTokens     int `json:"prompt_tokens"`
-				CompletionTokens int `json:"completion_tokens"`
+				PromptTokens        int `json:"prompt_tokens"`
+				CompletionTokens    int `json:"completion_tokens"`
+				PromptTokensDetails *struct {
+					CachedTokens *int `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
 			} `json:"usage"`
 		}
 		if err := json.Unmarshal(payload, &chunk); err != nil {
@@ -167,6 +179,13 @@ func extractStreamingUsage(tail []byte) (promptTokens, completionTokens int, ok 
 		}
 		promptTokens = chunk.Usage.PromptTokens
 		completionTokens = chunk.Usage.CompletionTokens
+		// Reset per winning frame so a later usage chunk without the detail
+		// block does not inherit an earlier frame's cached count.
+		cachedTokens, cachedOK = -1, false
+		if d := chunk.Usage.PromptTokensDetails; d != nil && d.CachedTokens != nil {
+			cachedTokens = *d.CachedTokens
+			cachedOK = true
+		}
 		ok = true
 	}
 	return
@@ -221,19 +240,39 @@ func (b *usageSniffingBody) Close() error {
 }
 
 // sniff parses the retained tail once and records the token-shape histograms
-// when a usage chunk is present. Best-effort: a parse miss leaves the
-// histograms untouched.
+// and the prefix-cache counters when a usage chunk is present. Best-effort: a
+// parse miss leaves both untouched.
 func (b *usageSniffingBody) sniff() {
 	if b.parsed {
 		return
 	}
 	b.parsed = true
-	pt, ct, ok := extractStreamingUsage(b.tail)
+	pt, ct, cached, cachedOK, ok := extractStreamingUsage(b.tail)
 	if !ok {
 		return
 	}
 	requestPromptTokens.WithLabelValues(b.model).Observe(float64(pt))
 	requestCompletionTokens.WithLabelValues(b.model).Observe(float64(ct))
+	recordPrefixCacheTokens(b.model, pt, cached, cachedOK)
+}
+
+// recordPrefixCacheTokens advances the APC hit-share counters for one
+// completion. Called from both the streaming sniffer and the non-streaming
+// body parse so the ratio covers all observable traffic rather than only the
+// non-streamed minority.
+//
+// No-ops when the engine did not report cached_tokens: leaving both counters
+// untouched keeps numerator and denominator on the same population, so a lane
+// whose engine never reports the field is absent from the ratio instead of
+// reading as a flat 0% hit rate.
+func recordPrefixCacheTokens(model string, promptTokens, cachedTokens int, cachedOK bool) {
+	if !cachedOK || promptTokens <= 0 {
+		return
+	}
+	observedPromptTokensTotal.WithLabelValues(model).Add(float64(promptTokens))
+	if cachedTokens > 0 {
+		cachedPromptTokensTotal.WithLabelValues(model).Add(float64(cachedTokens))
+	}
 }
 
 // parsePrefixCacheHitRate extracts a prefix-cache hit rate in [0,1] from a
@@ -355,6 +394,32 @@ func scrapePrefixCacheHitRate(ctx context.Context, targetURL string) (rate float
 //	                              AND prefix caching produced a nonzero hit,
 //	                              so lanes with enablePrefixCaching: false
 //	                              never emit this header by design.
+//
+//	                              STREAMING: this header is structurally
+//	                              unavailable. Response headers are flushed
+//	                              when the upstream returns 200, long before
+//	                              the terminal SSE usage chunk that carries
+//	                              cached_tokens. Streaming clients must read
+//	                              usage.prompt_tokens_details.cached_tokens
+//	                              off the final chunk instead, which requires
+//	                              stream_options.include_usage. The proxy
+//	                              forwards that chunk byte-for-byte and, as
+//	                              of this slice, also folds it into the
+//	                              flexinfer_proxy_*_prompt_tokens_total
+//	                              counters so APC health is measurable for
+//	                              streamed traffic server-side.
+//
+//	                              A MISSING header (and a null
+//	                              prompt_tokens_details) means ZERO cached
+//	                              tokens, not "unknown": vLLM only attaches
+//	                              the detail block when cached_tokens is
+//	                              nonzero. Because vLLM caches whole KV
+//	                              blocks, and hybrid GDN/Mamba lanes align
+//	                              the attention block up to the mamba page
+//	                              size (qwen35-9b: 544 tokens), any prompt
+//	                              shorter than one block reports zero by
+//	                              construction. Probe APC with a repeated
+//	                              prompt of at least a few blocks.
 //	X-Flexinfer-Prefix-Cache-Hit-Rate
 //	                            — engine-windowed prefix-cache hit rate in
 //	                              [0,1], scraped from the upstream's /metrics
@@ -526,6 +591,7 @@ func (p *Proxy) logUpstreamUsage(resp *http.Response) error {
 				args = append(args, "cached_tokens", cached)
 				resp.Header.Set(headerCachedTokens, strconv.Itoa(cached))
 			}
+			recordPrefixCacheTokens(shapeModel, pt, cached, cachedOK)
 		}
 	}
 	slog.Info("request usage", args...)
