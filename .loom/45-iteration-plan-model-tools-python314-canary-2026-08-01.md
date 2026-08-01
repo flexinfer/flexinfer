@@ -48,7 +48,8 @@ substitute for the image kill test.
 - Slice name: immutable model-tools baseline plus Python 3.14 candidate.
 - Scope in: pin the current live model-tools digest; pin the Python 3.14 base
   and the baseline's fully resolved Python dependency set; build, smoke, and
-  publish one commit-specific candidate; record evidence and roadmap state.
+  publish one commit-specific candidate; gate post-merge stable tags off; record
+  evidence and roadmap state.
 - Scope out: changing `validatorImage`, promoting the candidate into a job,
   moving `master`/`latest`, changing GGUF or GPU images, and cluster mutations.
 - Acceptance criteria:
@@ -57,6 +58,8 @@ substitute for the image kill test.
     the baseline's resolved Python package versions.
   - The bounded image kill test passes and the commit-specific candidate digest
     is recorded.
+  - Post-merge CI continues publishing commit tags but cannot move model-tools
+    `master`, timestamp, or `latest` tags without an explicit promotion opt-in.
   - Relevant Go tests, repository tests, Helm rendering, and whitespace checks
     pass.
   - No production value references the candidate.
@@ -65,7 +68,7 @@ substitute for the image kill test.
 
 ## Land
 
-- Planned file areas: `build/Dockerfile.model-tools`,
+- Planned file areas: `.gitlab-ci.yml`, `build/Dockerfile.model-tools`,
   `build/requirements-model-tools.txt`,
   `deploy/system/values-k3s.yaml`, this plan, `.loom/00-index.md`, `ROADMAP.md`,
   and `docs/planning/docker-major-dependency-rollout.md`.
@@ -117,10 +120,12 @@ substitute for the image kill test.
   Helm rendering with `deploy/system/values-k3s.yaml`, and `git diff --check`
   passed. Test-generated controller-gen drift was removed from the slice.
 - Promotion boundary: negative searches found no deployment, chart, runtime,
-  or config reference to the candidate tag. No stable tag or cluster object was
-  changed. The loaded remote Docker daemon was too I/O-bound for a reliable
-  post-build container run, so the next slice remains a real ModelCache job
-  canary before promotion.
+  or config reference to the candidate tag. `PUBLISH_MODEL_TOOLS_STABLE_TAGS`
+  defaults to `0`, so the post-merge publisher retains the commit tag but does
+  not move Harbor/GitLab `master`, timestamp, or `latest` tags. No stable tag or
+  cluster object was changed. The loaded remote Docker daemon was too I/O-bound
+  for a reliable post-build container run, so the next slice remains a real
+  ModelCache job canary before promotion.
 
 ## Slice Handoff
 
@@ -134,8 +139,8 @@ substitute for the image kill test.
 ### What Landed
 
 - Key changes: immutable Python 3.11 rollback pin, exact Python 3.14 base,
-  locked baseline dependencies, embedded build gate, and a commit-specific
-  Harbor candidate.
+  locked baseline dependencies, embedded build gate, commit-only CI publishing,
+  and a commit-specific Harbor candidate.
 - Key files: `build/Dockerfile.model-tools`,
   `build/requirements-model-tools.txt`, and `deploy/system/values-k3s.yaml`.
 - Validation results: image gate, targeted quantization tests, full repository

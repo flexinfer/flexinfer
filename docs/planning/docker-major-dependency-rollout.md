@@ -47,7 +47,9 @@ The rollout covers these families:
   `model-tools:ec0efeeb`, digest
   `sha256:546dcb2450d76ddf17369da99ba7ca9918011d249130d39292ae2410109e4d8e`.
   Its Python 3.14.6 build gate passed with the full Python 3.11 runtime
-  dependency set locked. It is not referenced by a production value.
+  dependency set locked. It is not referenced by a production value, and CI's
+  `PUBLISH_MODEL_TOOLS_STABLE_TAGS=0` default prevents post-merge publication
+  from moving `master`, timestamp, or `latest` tags before the job canary.
 - Full evidence and the promotion boundary are recorded in
   `.loom/45-iteration-plan-model-tools-python314-canary-2026-08-01.md`.
 
