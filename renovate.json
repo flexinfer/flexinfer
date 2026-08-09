@@ -88,7 +88,7 @@
     {
       "customType": "regex",
       "description": "Go toolchain version pinned as the GO_VERSION CI variable, which drives GO_IMAGE (golang:${GO_VERSION}) used by the lint, test, build, and govulncheck jobs.",
-      "managerFilePatterns": ["/^\\.gitlab-ci\\.yml$/"],
+      "fileMatch": ["^\\.gitlab-ci\\.yml$"],
       "matchStrings": [
         "GO_VERSION:\\s*\"(?<currentValue>\\d+\\.\\d+\\.\\d+)\""
       ],
@@ -102,13 +102,10 @@
   },
   "dockerfile": {
     "enabled": true,
-    "managerFilePatterns": [
-      "/(^|/|\\.)Dockerfile[^/]*$/",
-      "/(^|/)Dockerfile\\.[^/]*$/"
-    ]
+    "fileMatch": ["(^|/|\\.)Dockerfile[^/]*$", "(^|/)Dockerfile\\.[^/]*$"]
   },
   "helm-values": {
     "enabled": true,
-    "managerFilePatterns": ["/charts/.+/values\\.yaml$/"]
+    "fileMatch": ["charts/.+/values\\.yaml$"]
   }
 }
