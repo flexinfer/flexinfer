@@ -86,7 +86,6 @@ variables:
   GOLANGCI_LINT_VERSION: "v2.10.1"
   GOVULNCHECK_VERSION: "latest"
   GO_LICENSES_VERSION: "v1.6.0"
-  RENOVATE_CONFIG_VALIDATOR_VERSION: "43.251.3"
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
   REGISTRY: "registry.harbor.lan/flexinfer"
@@ -206,7 +205,9 @@ helm:
 
 renovate_config:
   stage: lint
-  image: node:24.11.1-alpine
+  image:
+    name: renovate/renovate:39.107.0
+    entrypoint: [""]
   needs: []
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
@@ -219,7 +220,7 @@ renovate_config:
       changes:
         - renovate.json
   script:
-    - npx --yes --package renovate@${RENOVATE_CONFIG_VALIDATOR_VERSION} -- renovate-config-validator --strict
+    - renovate-config-validator --strict
 
 vet:
   stage: lint
