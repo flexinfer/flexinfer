@@ -10,9 +10,15 @@
 # pkg/codebase/embed/fallback.go (FallbackEmbedder).
 #
 # Sizing: Q8_0 GGUF ~1.6 GB; fits in gfx906 16 GB alongside the bge embedding +
-# reranker co-Active lanes. Cold/serverless (minReplicas 0) and LOW priority so
-# it never preempts the warm bge-large-radeonvii retrieval plane (priority 120)
-# or the reranker (115) — it activates on demand only during a Morph outage.
+# reranker co-Active lanes. Warm-pinned (minReplicas 1) since 2026-08-13: Morph
+# retired its hosted embedding line entirely (HTTP 404 model_not_found), and
+# loom-core defaults agent-context/pm/codebase writes to this lane (loom-core
+# !1583) — it is the PRIMARY write-path embedder now, not an outage spare.
+# Cold on-demand activation cannot work here: a scale-to-zero member below the
+# warm-pinned bge-large leader is statically parked (see
+# controllers/model_shared_gpu.go staticallyParkedBehindPrimary) and the proxy
+# fast-fails its requests, so demand never registers. Warm-pinned membership is
+# how bge-reranker co-actives; gte joins the same tier. See flexinfer#70.
 #
 # Mirrors the proven bge-radeonvii.yaml llamacpp embedding lane (Local node
 # hostPath cache; the gfx906 runtime only sees node-local staged caches).
@@ -32,15 +38,19 @@ spec:
   gpu:
     vendor: amd
     shared: radeonvii-models
-    # Below bge (120) and bge-reranker (115): the fallback lane must never
-    # preempt the warm retrieval plane. Cold-activated on demand.
-    priority: 90
+    # Co-Active tier: above the idle chat lanes (gemma4-e4b 110), below the
+    # reranker (115) and bge-large leader (120) so group leadership stays with
+    # the retrieval plane. Warm-pinning (minReplicas 1), not priority, is what
+    # admits this lane; priority only orders VRAM admission under contention.
+    priority: 114
     count: 1
     vramEstimateMB: 2200
   serverless:
     enabled: true
-    # Cold by default: only spun up when the Morph write-path fallback fires.
-    minReplicas: 0
+    # Warm-pinned: this is the default write-path embedder for loom-core
+    # (agent-context/pm/codebase) since the Morph retirement — it must hold a
+    # co-Active slot alongside the bge plane, like bge-reranker does.
+    minReplicas: 1
     idleTimeout: 30m
     coldStartTimeout: 5m
   config:
