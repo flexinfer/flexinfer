@@ -44,7 +44,7 @@ spec:
     # admits this lane; priority only orders VRAM admission under contention.
     priority: 114
     count: 1
-    vramEstimateMB: 2200
+    vramEstimateMB: 2600
   serverless:
     enabled: true
     # Warm-pinned: this is the default write-path embedder for loom-core
@@ -55,7 +55,7 @@ spec:
     coldStartTimeout: 5m
   config:
     ggufFile: gte-Qwen2-1.5B-instruct-Q8_0.gguf
-    contextSize: 512
+    contextSize: 1024
     nGPULayers: 999
     batchSize: 2048
     ubatchSize: 512
