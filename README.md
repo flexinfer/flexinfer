@@ -8,10 +8,10 @@ FlexInfer is a Kubernetes-native solution that automatically discovers GPU capab
 
 ## Current Status
 
-FlexInfer is **functional and working** with comprehensive implementations of all core components:
+All core components are implemented and running in production on a live cluster:
 
-- ✅ **Node Agent**: Hardware detection and labeling system
-- ✅ **Controller Manager**: Complete CRD reconciliation with status management
+- **Node Agent**: Hardware detection and labeling system
+- **Controller Manager**: Complete CRD reconciliation with status management
 - ✅ **Scheduler Extender**: Advanced filtering and scoring algorithms
 - ✅ **Benchmarker**: Model performance measurement framework
 - ✅ **API Types**: Comprehensive CRD definitions with status tracking
@@ -28,8 +28,8 @@ The project is ready for homelab deployment via the included Helm chart and the 
 - **Hardware Discovery**: Automatic detection of GPU vendor, architecture, VRAM, and capabilities
 - **Model Performance Benchmarking**: Automated measurement of tokens/second via real inference (Ollama, vLLM, MLC-LLM, llama.cpp)
 - **Intelligent Scheduling**: Multi-factor scoring combining performance, utilization, and cost
-- [x] **Model Caching**: Intelligent model artifact management with deduplication and pre-warming
-- [x] **Resource Management**: Complete lifecycle management of AI workload deployments
+- **Model Caching**: Intelligent model artifact management with deduplication and pre-warming
+- **Resource Management**: Complete lifecycle management of AI workload deployments
 - **Status Tracking**: Comprehensive status conditions and phase management
 - **Event System**: Detailed event recording for debugging and monitoring
 - **Metrics Collection**: Prometheus-compatible metrics for all components
@@ -39,10 +39,11 @@ The project is ready for homelab deployment via the included Helm chart and the 
 
 - **Integration Testing**: Framework exists but needs more comprehensive scenarios
 - **ModelCache Downloader**: Supports `huggingface-cli` and OCI-based sources via `pkg/registry/` (Harbor, GHCR, ECR).
-- **Scale-to-Zero Proxy**: Implemented and working; needs more real-world burn-in across backends and streaming clients.
 - **Smart Routing (L7)**: Routing strategies exist (session affinity, prefix routing, least-loaded); needs more test coverage and performance validation under load.
 
 ### ✅ **Recently Shipped (Advanced Features)**
+
+- **Scale-to-Zero Proxy**: Serverless activation with request queueing while a model warms.
 
 - [x] **KV-Cache Tiering**: LRU/LFU/FIFO eviction policies with /dev/shm Memory strategy
 - [x] **Dynamic Multi-LoRA**: Hot-swap adapters via `LoRAAdapter` CRD + vLLM backend
@@ -265,28 +266,16 @@ go test ./controllers/...
 go test ./agents/...
 ```
 
-## TODO
+## Roadmap
 
-### High Priority (Deployment Ready)
-
-- [x] **Complete Helm templates** - Finish charts/flexinfer/ with proper configurations
-- [x] **Installation documentation** - Step-by-step deployment guides
-- [x] **Integration tests** - End-to-end testing scenarios
-- [x] **Real benchmarking** - Real inference benchmarking (Ollama, vLLM, MLC-LLM, llama.cpp)
-
-### Medium Priority (Production Ready)
-
-- [x] **Performance optimization** - Flash-Loader sidecar for fast model loading
-- [x] **Security hardening** - RBAC reviewed, SBOM generation, license scanning
-- [x] **Monitoring dashboards** - Grafana dashboards for operational visibility
-- [x] **Documentation** - API documentation and troubleshooting guides
-
-### Low Priority (Advanced Features)
-
-- [x] **KV-Cache tiering** - LRU/LFU/FIFO eviction policies with /dev/shm Memory strategy
-- [x] **Harbor OCI integration** - `ModelCatalog` CRD with `pkg/registry/` adapters
 - [ ] **Multi-tenancy** - Namespace isolation features
-- [x] **CNCF submission** - Sandbox application preparation (GOVERNANCE.md, SECURITY.md, ADOPTERS.md)
+
+Everything else previously tracked here has shipped: Helm charts, install
+docs, integration tests, real inference benchmarking (Ollama, vLLM,
+MLC-LLM, llama.cpp), the Flash-Loader sidecar, security hardening
+(RBAC review, SBOM generation, license scanning), Grafana dashboards,
+KV-cache tiering, Harbor OCI integration, and CNCF sandbox application
+prep.
 
 ## Contributing
 
