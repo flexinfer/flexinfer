@@ -96,6 +96,8 @@ remains unpromoted until a real ModelCache job canary passes.
 
 ## Later
 
+- Multi-tenancy: namespace isolation features (migrated from the README's
+  former TODO list; no issue filed yet)
 - Gaming-mode hardening follow-ups as usage feedback lands (idle auto-revert default-on, session telemetry)
 - Renovate-driven dependency hygiene via the Dependency Dashboard ([#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9))
 - CNCF Sandbox submission (prep artifacts shipped; submit when adoption evidence justifies it)
