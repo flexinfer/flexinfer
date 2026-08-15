@@ -268,14 +268,8 @@ go test ./agents/...
 
 ## Roadmap
 
-- [ ] **Multi-tenancy** - Namespace isolation features
-
-Everything else previously tracked here has shipped: Helm charts, install
-docs, integration tests, real inference benchmarking (Ollama, vLLM,
-MLC-LLM, llama.cpp), the Flash-Loader sidecar, security hardening
-(RBAC review, SBOM generation, license scanning), Grafana dashboards,
-KV-cache tiering, Harbor OCI integration, and CNCF sandbox application
-prep.
+Planned work lives in [ROADMAP.md](ROADMAP.md) (Now / Next / Later), with the
+full backlog in [GitLab issues](https://gitlab.flexinfer.ai/services/flexinfer/-/issues).
 
 ## Contributing
 
