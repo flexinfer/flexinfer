@@ -100,13 +100,13 @@ spec:
     idleTimeout: 30m
     # Covers an empty-cache compile plus the self-healing cached restart.
     coldStartTimeout: 25m
+  # 2026-08-16 slice-4 promotion: base workhorse/mills-council/reasoning role
+  # labels and aliases moved to qwen36-27b-autoround-workhorse (higher quality
+  # dense 27B). This lane keeps the *-128k routes for >64K recall jobs plus
+  # its identity aliases.
   serviceLabels:
     - qwen35
     - qwen35-35b
-    - workhorse
-    - loom-workhorse
-    - mills-council
-    - reasoning
     - qwen35-128k
     - workhorse-128k
     - loom-workhorse-128k
@@ -117,10 +117,6 @@ spec:
     aliases:
       - qwen35
       - qwen35-35b
-      - workhorse
-      - loom-workhorse
-      - mills-council
-      - reasoning
   tolerations:
     - effect: NoSchedule
       key: node-role.kubernetes.io/control-plane
