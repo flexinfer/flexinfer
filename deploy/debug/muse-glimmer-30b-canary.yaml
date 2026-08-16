@@ -29,8 +29,8 @@ metadata:
     flexinfer.ai/artifact-source: HF://meta-models/Muse-Glimmer-30B-GGUF (muse-glimmer-30B-kquant-17gb.gguf)
     flexinfer.ai/purpose: "Canary — Glimmer 30B tool/MCP lane on gfx1100 via llama.cpp b10453"
     flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
-    flexinfer.ai/promotion-state: canary-gauntlet-passed-tool-lane-candidate
-    flexinfer.ai/promotion-evidence: "2026-08-16 6/6 gauntlet PASS on llama.cpp b10453 gfx1100: coherent (Paris/fib/14-apples/JSON), tool_calls get_weather{city:Paris} exact, no-tool restraint clean, 30.5 tok/s decode; cache stage 4.5m, boot 2.5m. Known quirk: chat content echoes prompt after answer (reasoning channel inline) — tune reasoning-format before chat use; tool path clean."
+    flexinfer.ai/promotion-state: canary-qualified-promoted-as-muse-glimmer-30b-tools
+    flexinfer.ai/promotion-evidence: "2026-08-16 6/6 gauntlet PASS on llama.cpp b10453 gfx1100: coherent (Paris/fib/14-apples/JSON), tool_calls get_weather{city:Paris} exact, no-tool restraint clean, 30.5 tok/s decode; cache stage 4.5m, boot 2.5m. Known quirk: chat content echoes prompt after answer (reasoning channel inline) — tune reasoning-format before chat use; tool path clean. 2026-08-16 re-gauntlet with reasoningFormat auto: 6/6 again @31.5 tok/s, content=Paris clean with deliberation split into reasoning_content — quirk FIXED."
 spec:
   backend: llamacpp
   # In-house llama.cpp ROCm gfx1100 build at release b10453 (>= b10353 where
@@ -75,6 +75,9 @@ spec:
     flashAttention: true
     # jinja chat template is REQUIRED for tool calling (ATEM parser).
     jinja: true
+    # Split Glimmer's reasoning channel into reasoning_content instead of
+    # rendering it inline after the answer (the slice-canary quirk).
+    reasoningFormat: auto
     # f16 KV on purpose for the quality canary — no q4_0 cache quant.
     metrics: true
   nodeSelector:

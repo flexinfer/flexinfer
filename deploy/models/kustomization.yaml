@@ -82,7 +82,8 @@ resources:
   # while parked; reconciling its idle Deployment template can hot-loop and
   # starve active Model updates. Restore only with minReplicas 1 + promotion.
   - qwen35-35b-clean-gptq-workhorse.yaml  # 2026-07-14: PROMOTED clean 64K graph-mode workhorse; 2026-08-16: base role aliases moved to qwen36-27b-autoround-workhorse, keeps *-128k routes.
-  - qwen36-27b-autoround-workhorse.yaml  # 2026-08-16: PROMOTED slice-4 quality workhorse — Qwen3.6-27B dense INT4 AutoRound, 64K fp16-KV graph mode, owns workhorse/mills-council/reasoning; qualification .loom/10-research-gfx1100-model-quality-2026-08-15.md.
+  - qwen36-27b-autoround-workhorse.yaml
+  - muse-glimmer-30b-tools.yaml  # 2026-08-16: PROMOTED Mills tool/judge lane — Muse Glimmer 30B official K-Quant GGUF on llama.cpp b10453 gfx1100; aliases glimmer/mills-tools/judge; qualification .loom/10-research-gfx1100-model-quality-2026-08-15.md §8e.  # 2026-08-16: PROMOTED slice-4 quality workhorse — Qwen3.6-27B dense INT4 AutoRound, 64K fp16-KV graph mode, owns workhorse/mills-council/reasoning; qualification .loom/10-research-gfx1100-model-quality-2026-08-15.md.
   - qwen35-35b-clean-gptq-workhorse-128k.yaml  # 2026-07-14: PROMOTED 128K sister on released 7900xtx; exact 129,919-token five-depth pass + isolated proxy smoke.
   - qwen35-35b-clean-mtp-32k.yaml  # 2026-07-16: PROMOTED native-MTP 32K lane on 7900xtx (demand-only, priority 90, aliases qwen35-mtp/qwen35-mtp-32k); certified 1.230x median decode speedup at 80.18% draft acceptance (.loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md).
   - wan21-t2v-1p3b-gfx1100.yaml     # Wan 2.1 1.3B 480p text-to-video; live gfx1100 gate passed 2026-07-14, warm primary (minReplicas=1) since a4df75880.
