@@ -61,10 +61,11 @@ spec:
     warmPolicy: ondemand
     # Meta's 24GB-card target quant (Q4_K_M-class).
     ggufFile: muse-glimmer-30B-kquant-17gb.gguf
-    # 32K qualification envelope. Model default is 131,072 (262K max) —
-    # raise only after coherence + KV headroom are proven. Local:global 3:1
-    # sliding-window attention keeps KV small, but qualify before stretching.
-    contextSize: 32768
+    # Context-push qualification (2026-08-16): raise to the model-default
+    # 131,072. KV is cheap on this layout (13 global layers f16 ~1.7 GB;
+    # local layers are 2048-token sliding windows); 17 GB weights + KV fits
+    # 24 GB. Needle ladder is the arbiter.
+    contextSize: 131072
     nGPULayers: 999
     batchSize: 2048
     ubatchSize: 512
