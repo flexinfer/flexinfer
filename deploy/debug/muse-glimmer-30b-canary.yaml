@@ -75,6 +75,9 @@ spec:
     flashAttention: true
     # jinja chat template is REQUIRED for tool calling (ATEM parser).
     jinja: true
+    # Split Glimmer's reasoning channel into reasoning_content instead of
+    # rendering it inline after the answer (the slice-canary quirk).
+    reasoningFormat: auto
     # f16 KV on purpose for the quality canary — no q4_0 cache quant.
     metrics: true
   nodeSelector:
