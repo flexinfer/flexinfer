@@ -1,0 +1,141 @@
+# Qwen3.8-27B dense INT4 AutoRound — the Mills/Council QUALITY workhorse.
+#
+# Successor to qwen36-27b-autoround-workhorse (parked as fallback until soak):
+# identical serving contract (Qwen3_5ForConditionalGeneration / qwen3_5, 64
+# layers, full_attention_interval 4, native 262144 ctx) with generational
+# agentic gains — SWE-bench Pro 61.7 vs 53.5, Terminal-Bench 73.0 vs 59.3.
+# Research: .loom/10-research-gfx1100-model-quality-2026-08-15.md (8g) +
+# canary deploy/debug/qwen38-27b-clean-autoround-canary.yaml.
+#
+# Artifact: biMEMO/Qwen3.8-27B-int4-AutoRound (community; Intel has no official
+# 3.8 AutoRound release). Intel-recipe shape: auto_round:auto_gptq, INT4 sym
+# g128, GDN in_proj_a/b + norms + lm_head FP16, 19.0 GB; INT4 census verified
+# 2026-08-16 = the same 10-module list as the 3.6 artifact, so the inc
+# workaround hfOverrides carries over unchanged. MTP block is INT4 in this
+# artifact (Intel's 3.6 kept mtp.fc FP16) — irrelevant while MTP stays off.
+#
+# Qualified envelope (mirrors the 3.6 lane; do not casually change):
+#   - 64K, fp16 KV, graph mode (FULL_AND_PIECEWISE, GDN split out), no MTP.
+#   - TRITON_ATTN (the !967 RDNA3 split-KV decode fix) from day one.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-autoround-workhorse
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
+    flexinfer.ai/promotion-state: promoted-64k-fp16-graph
+    flexinfer.ai/promotion-evidence: "canary qwen38-27b-clean-autoround-canary ladder 2026-08-16: eager 6/6 gauntlet + graph 6/6 (34.9-40.5 tok/s vs 3.6's 39.0), needle 1/1 @28,842 + 1/1 @60,973 tokens, decode 35.4 tok/s @31,602 ctx (3.6: 36.3), RDNA3W4A16LinearKernel, KV pool 68,549 tok @64K"
+spec:
+  backend: vllm
+  # Pinned vLLM 0.23 gfx1100 runtime with the native RDNA3 W4A16 HIP operator —
+  # the exact digest the 3.6 AND 3.8 qualification ladders passed against.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    # 19.0 GB artifact. Serving needs NO on-disk config surgery (hfOverrides
+    # rewrites quantization_config in-process); only an MTP retry does.
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    # 19 GB of shards exceed this 63Gi node's tmpfs budget — serve from the
+    # PVC directly, same as the wan21 lanes on this host.
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-autoround-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # Borrow-idle posture (fable/wan pattern): explicit workhorse demand may
+    # take an idle card, while the higher-priority VACE video lane stays
+    # authoritative. Cold-load window: demand must persist ~4-6 min; Mills'
+    # proxy retries cover this.
+    priority: 500
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    # First activation on a cold cache covers the 19 GB HF prefetch + fresh
+    # torch.compile (~5 min); cached restarts are ~3 min.
+    coldStartTimeout: 25m
+  config:
+    # RDNA3 long-context decode fix (research doc 8d/!967): ROCm default
+    # ROCM_ATTN has no KV-length decode parallelism; TRITON_ATTN engages the
+    # unified-attention 3D split-KV decode path.
+    attentionBackend: TRITON_ATTN
+    warmPolicy: ondemand
+    # vLLM 0.23 resolves quant_method "auto-round" to "inc" (rejected on
+    # ROCm) before honoring --quantization. hfOverrides therefore rewrites
+    # quantization_config wholesale to plain GPTQ form; the checkpoint's
+    # auto_round:auto_gptq packing is GPTQ-shaped (sym, g128) and selects the
+    # native RDNA3W4A16LinearKernel. modules_in_block_to_quantize is the
+    # exact INT4 census from this artifact's safetensors index (in_proj_a/b,
+    # conv1d, norms, lm_head are FP16).
+    quantization: gptq
+    hfOverrides: '{"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 65536
+    maxNumSeqs: 1
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    gpuMemoryUtilization: "0.94"
+    # fp16 KV on purpose — fp8 KV halves long-context decode on this runtime
+    # (dequant tax, research doc 8c). Pool is ~70K tokens (1.07x @64K).
+    kvCacheDtype: auto
+    calculateKvScales: false
+    enforceEager: false
+    enablePrefixCaching: false
+    # MTP stays OFF (3.6 finding: ~33% pos-0 acceptance = net zero on this
+    # runtime; the draft ModelConfig also re-reads config.json from disk and
+    # ignores hfOverrides). This artifact's MTP block is INT4 — a retry needs
+    # the PVC config.json patch AND fresh acceptance numbers.
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    # Clean checkpoint with proper <think> boundaries — split reasoning into
+    # reasoning_content so Mills/agent flows get clean content + tool_calls.
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-autoround-workhorse
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  serviceLabels:
+    - qwen38-27b
+    - workhorse
+    - loom-workhorse
+    - mills-council
+    - reasoning
+  litellm:
+    enabled: true
+    servedModelName: qwen38-27b-autoround-workhorse
+    aliases:
+      - qwen38-27b
+      - workhorse
+      - loom-workhorse
+      - mills-council
+      - reasoning
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

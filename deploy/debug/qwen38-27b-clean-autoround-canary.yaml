@@ -1,0 +1,151 @@
+# Qualification canary: CLEAN Qwen3.8-27B INT4 AutoRound on gfx1100 —
+# drop-in successor candidate for the promoted qwen36-27b-autoround-workhorse.
+#
+# Research: .loom/10-research-gfx1100-model-quality-2026-08-15.md (8g: identical
+# serving contract to 3.6 — Qwen3_5ForConditionalGeneration / model_type
+# qwen3_5, 64 layers, full_attention_interval 4, native 262144 ctx, MTP,
+# vision — with generational agentic gains: SWE-bench Pro 61.7 vs 53.5,
+# Terminal-Bench 73.0 vs 59.3).
+#
+# Artifact provenance (2026-08-16): Intel has NOT published an official
+# Qwen3.8-27B-int4-AutoRound (the repo 401s). biMEMO/Qwen3.8-27B-int4-AutoRound
+# is a community AutoRound artifact matching the Intel 3.6 recipe shape exactly:
+# quant_method auto-round (0.14.2), packing auto_round:auto_gptq, INT4 sym
+# g128, GDN in_proj_a/b + norms + lm_head FP16, ~19.0 GB. INT4 census from its
+# model.safetensors.index.json verified 2026-08-16 = the SAME 10-module list as
+# the 3.6 artifact (attn q/k/v/o, mlp gate/up/down, linear_attn
+# in_proj_qkv/in_proj_z/out_proj) — hfOverrides below is unchanged from 3.6.
+# Unlike Intel's 3.6, the MTP block is INT4 too (irrelevant while MTP is off).
+# Mirror trivia: three same-recipe uploads exist (biMEMO/devan-carlin/
+# Frozenlock) sharing byte-identical shards 5-7 + mtp extras but divergent
+# shards 1-4; biMEMO picked for adoption (389 dl) + complete file set. The
+# 6-probe gauntlet, not the model card, is the quality arbiter.
+#
+# Ladder (mirrors the 3.6 qualification, research doc 8/8b/8c):
+#   slice 1: eager coherence 6-probe (this posture)
+#   slice 2: enforceEager false, graph-mode 6-probe + decode (3.6: 39 tok/s)
+#   slice 3: needle ladder within the 64K fp16 envelope + decode-at-context
+#            spot-check @30K (3.6 w/ TRITON_ATTN: 36.3 tok/s)
+#   pass at parity-or-better => promotion MR moves the workhorse role aliases.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-clean-autoround-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/purpose: "Qualification canary — Qwen3.8-27B dense AutoRound INT4 as qwen36-27b workhorse successor on gfx1100"
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
+    flexinfer.ai/promotion-state: qualified-promoted-64k-fp16-graph
+    flexinfer.ai/promotion-evidence: "ladder 2026-08-16: eager 6/6 gauntlet (RDNA3W4A16LinearKernel, 16.77 GiB / 32.9 s load, ~7 tok/s); graph 6/6 (FULL_AND_PIECEWISE, GDN split out, AOT cached, 34.9-40.5 tok/s single-stream vs 3.6's 39.0); needle 1/1 @28,842 + 1/1 @60,973 actual tokens; decode 35.4 tok/s @31,602 ctx (3.6: 36.3 @30K, TRITON_ATTN); KV pool 68,549-70,055 tok @64K"
+spec:
+  backend: vllm
+  # Pinned vLLM 0.23 gfx1100 runtime with the native RDNA3 W4A16 HIP operator —
+  # the exact digest the 3.6 qualification slices passed against.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    # 19.0 GB artifact (7 safetensors shards + mtp extra tensors); 40Gi buys
+    # download scratch headroom. nvme-1r-gpu binds on cblevins-5930k.
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    # 19 GB of shards cannot stage into this 63Gi node's tmpfs budget —
+    # serve from the PVC directly (wan21/3.6-canary posture).
+    flashLoader:
+      enabled: false
+    # Persist the torch.compile AOT cache across restarts for the graph-mode
+    # slice. Per-model dir avoids collisions with other lanes on this host.
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-autoround-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    priority: 500
+    vramEstimateMB: 22000
+    # NOTE for future qualification windows: cold load ~4-6 min outlives the
+    # 2-min demand window, and minReplicas=1 alone does not win the election
+    # back from the warm primary. Use minReplicas: 1 + gpu.forcePromotion:
+    # true for the window, then revert (ladder completed 2026-08-16).
+  serverless:
+    enabled: true
+    minReplicas: 0
+    # Long enough to run the gauntlet between probes without self-reaping,
+    # short enough to hand the card back if the window is abandoned.
+    idleTimeout: 15m
+    # First activation covers the 19 GB HF prefetch + cold vLLM load.
+    coldStartTimeout: 25m
+  config:
+    # RDNA3 long-context decode fix (research doc 8d/!967): ROCm default
+    # ROCM_ATTN has no KV-length decode parallelism; TRITON_ATTN engages the
+    # unified-attention 3D split-KV path (3.6 canary: 36 tok/s @30K, 32 @60K).
+    attentionBackend: TRITON_ATTN
+    warmPolicy: ondemand
+    # vLLM 0.23 resolves quant_method "auto-round" to "inc" (rejected on ROCm)
+    # BEFORE honoring --quantization. hfOverrides therefore rewrites
+    # quantization_config wholesale to plain GPTQ form; the checkpoint's
+    # auto_round:auto_gptq packing is GPTQ-shaped (sym, g128) and selects the
+    # native RDNA3W4A16LinearKernel. modules_in_block_to_quantize is the exact
+    # INT4 census from THIS artifact's safetensors index (verified 2026-08-16;
+    # in_proj_a/b, conv1d, norms, lm_head are FP16) — same list as 3.6.
+    quantization: gptq
+    hfOverrides: '{"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    # 3.6-qualified envelope, adopted as the parity target: 64K, fp16 KV.
+    # Native context is 262144 — no RoPE forcing needed at 64K.
+    maxModelLen: 65536
+    maxNumSeqs: 1
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    gpuMemoryUtilization: "0.94"
+    kvCacheDtype: auto
+    calculateKvScales: false
+    # Slice 1 (eager) PASSED 2026-08-16: 6/6 gauntlet, RDNA3W4A16LinearKernel,
+    # 16.77 GiB weights / 32.9 s load, KV pool 70,055 tok @64K, eager ~7 tok/s.
+    # Slice 2: graph mode (FULL_AND_PIECEWISE with GDN in splitting_ops).
+    enforceEager: false
+    enablePrefixCaching: false
+    # MTP head exists (INT4 in this artifact) but stays OFF: the 3.6
+    # qualification measured ~33% pos-0 acceptance = net zero on this runtime,
+    # and the draft ModelConfig re-reads config.json from disk (ignores
+    # hfOverrides) — an MTP retry needs the PVC config.json patch (see the 3.6
+    # canary notes) plus this artifact's INT4 mtp census.
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    servedModelName: qwen38-27b-clean-autoround-canary
+    disableLogStats: false
+    # Immutable ROCm base image carries env vars outside vLLM's registry.
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Demand-only lane (fable pattern): NO service labels, litellm ENABLED with
+  # only the unique name — nothing routes here unless the canary is named
+  # explicitly. litellm.enabled=false would park the lane entirely.
+  serviceLabels: []
+  litellm:
+    enabled: true
+    servedModelName: qwen38-27b-clean-autoround-canary
+    aliases:
+      - qwen38-27b-clean-autoround-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
