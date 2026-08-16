@@ -300,6 +300,38 @@ been living on short-context decode + long-context *recall*.
 3. Re-check newer vLLM (0.24/0.25) ROCm attention for RDNA3 improvements
    before writing custom kernels.
 
+## 8d. Slice-4 RESULT (2026-08-16): **PROMOTED — shipped via MR !965, routed kill-test PASS**
+
+`qwen36-27b-autoround-workhorse` (cblevins-5930k, 64K/fp16-KV/graph, no MTP)
+now owns the base `workhorse` / `loom-workhorse` / `mills-council` /
+`reasoning` aliases; the 35B lanes keep only `*-128k` + identity aliases for
+>64K recall. Merged to master as MR !965 and rolled by Flux.
+
+**Ops discoveries during promotion:**
+1. **Flux `flexinfer-models` is ACTIVE again** (unsuspended, prune=true,
+   reconciling ./deploy from master) — the June "suspended + direct-apply"
+   posture is DEAD. Direct kubectl edits to Model CRs get reverted within a
+   reconcile cycle; promotions must go through git. (This is why the first
+   alias flip silently un-applied.)
+2. The plain `workhorse` alias had been quietly 503ing ("parked behind a
+   higher-priority primary") since the 2026-07-18 psyche layout — the 35B
+   base lane at priority 300 was statically parked behind gemma4's 385 warm
+   primary. The 27B lane's priority 500 borrow-idle posture fixes the role
+   route as a side effect.
+3. The retrying-client demand pattern (poke every ≤60s) carries a ~10-min
+   cold start (19 GB prefetch + boot) through the 2-min demand window —
+   validated end-to-end: `workhorse` routed, cold-started, and returned
+   ROUTE_OK through the proxy; `mills-council` answered the apples probe
+   correctly with clean content (reasoning parser strips <think>; the proxy
+   does not forward reasoning_content — content is clean either way).
+
+**Full program status**: slices 1-4 complete. Remaining follow-ups:
+(a) runtime RDNA3 decode-attention split-K work — spawned as its own task;
+(b) optional 7900xtx sister lane + 262K stretch after the decode fix;
+(c) MTP revisit (needs FP16-draft artifact or runtime fix + PVC config patch);
+(d) Muse Glimmer llamacpp canary (needs llama.cpp b10353+ image) — untouched
+    this cycle.
+
 ## 9. Source index
 
 - Qwen3.6-27B release blog + full benchmark table: https://qwen.ai/blog?id=qwen3.6-27b
