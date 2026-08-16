@@ -45,7 +45,12 @@ spec:
     dtype: half
     hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
     languageModelOnly: true
-    maxModelLen: 131072
+    # Context stretch 128K -> 180K (2026-08-16 context-push): fp8 KV pool =
+    # 199,065 tokens (1.08x at 184320); stretch-canary needles 1/1 @146,560,
+    # 1/1 @167,973, 1/1 @180,830, 5/5 @180,930. Native 262144 — no RoPE
+    # forcing; pool margin, not coherence, caps the envelope. The *-128k
+    # aliases remain the route names; 128K is the guaranteed minimum tier.
+    maxModelLen: 184320
     maxNumSeqs: 1
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true

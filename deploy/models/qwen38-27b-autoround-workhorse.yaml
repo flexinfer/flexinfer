@@ -83,7 +83,12 @@ spec:
     hfOverrides: '{"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
     dtype: half
     languageModelOnly: true
-    maxModelLen: 65536
+    # Context envelope raised 64K -> 128K (2026-08-16 context-push): fp8 KV
+    # pool = 137,098 tokens (1.05x at 131072); needle 1/1 @99,498, 1/1
+    # @128,409, 5/5 @128,509 on the canary at this exact artifact/runtime/
+    # TRITON_ATTN posture. Native 262144 — no RoPE forcing. Prefill at depth:
+    # 198 tok/s @60K, 129 @100K (quadratic-normal).
+    maxModelLen: 131072
     maxNumSeqs: 1
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
@@ -91,7 +96,7 @@ spec:
     gpuMemoryUtilization: "0.94"
     # fp16 KV on purpose — fp8 KV halves long-context decode on this runtime
     # (dequant tax, research doc 8c). Pool is ~70K tokens (1.07x @64K).
-    kvCacheDtype: auto
+    kvCacheDtype: fp8_e4m3
     calculateKvScales: false
     enforceEager: false
     enablePrefixCaching: false
@@ -103,6 +108,9 @@ spec:
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
     trustRemoteCode: true
+    # Consumer note (F3 session 2026-08-16): callers must set
+    # chat_template_kwargs {"enable_thinking": false} OR budget max_tokens
+    # for the <think> phase — otherwise answers can come back EMPTY.
     enableToolCalling: true
     toolCallParser: qwen3_coder
     # Clean checkpoint with proper <think> boundaries — split reasoning into
