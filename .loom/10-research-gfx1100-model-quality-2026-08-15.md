@@ -216,6 +216,43 @@ Next: slice 2 — `enforceEager: false` graph qualification (expect ~30-45
  tok/s), then MTP speculative (`qwen3_next_mtp`); slice 3 — context ladder
 32K→128K with fp8 KV + needle bench.
 
+## 8b. Slice-2 RESULT (2026-08-16): **graph mode QUALIFIED at 39 tok/s; MTP tested and disabled**
+
+Graph mode (`enforceEager: false` + persistent compilationCache):
+- CompilationMode VLLM_COMPILE, cudagraph FULL_AND_PIECEWISE, with
+  `vllm::qwen_gdn_attention_core` in splitting_ops (GDN runs eager inside the
+  piecewise graph — the hybrid-safe path, same shape as the 35B win).
+- torch.compile 124.9 s fresh, AOT saved to
+  `/var/lib/flexinfer/compile-cache-qwen36-27b-autoround-5930k`; subsequent
+  boots reuse it (~3 min cold start incl. 43 s weight load).
+- **6/6 gauntlet coherent; single-stream greedy decode 39.0 tok/s = 4.7×
+  eager (8.3)** — mid-prediction band. Council-concurrency (C=2/4 agg) still
+  to measure in slice 3/4.
+
+MTP speculative — tested, currently a no-win, DISABLED for promotion:
+- Blocker found: the DRAFT ModelConfig re-reads config.json from disk and
+  does NOT inherit hf_overrides → the auto-round→inc ROCm rejection returns
+  inside SpeculativeConfig. Fixed by patching quantization_config in the
+  PVC's `/models/config.json` to the plain-GPTQ form (backup kept:
+  `config.json.bak-autoround`). A promoted lane must bake this into the
+  published artifact or an entrypoint normalize — the PVC edit is lost if the
+  cache re-stages.
+- `qwen3_next_mtp` is deprecated on 0.23 (maps to `mtp`).
+- Acceptance is the real blocker: pos-0 ≈33% with either method (2-token:
+  33.7%/3.3% per-pos, net 35.0 tok/s; 1-token: 33.0%, net 39.4 tok/s vs 39.0
+  baseline). Reference stacks report ~97% pos-0 on 0.19-nightly forks, so the
+  draft head is likely mishandled by this runtime/artifact combo (candidates:
+  INT4-quantized mtp.layers.0, overlay MTP weight path). Coherence unaffected
+  (6/6 with MTP on). Revisit on a newer runtime or with an artifact that
+  keeps the MTP block FP16.
+
+Ops note repeated from slice 1: qualification windows need `minReplicas: 1` +
+`gpu.forcePromotion: true` (reverted after; lane is back to demand-only).
+
+Next: slice 3 — context ladder 32K→64K→128K with `kvCacheDtype: fp8_e4m3`,
+needle-bench each rung (`scripts/context-needle-bench.py`), then promotion
+(aliases, both nodes) as slice 4.
+
 ## 9. Source index
 
 - Qwen3.6-27B release blog + full benchmark table: https://qwen.ai/blog?id=qwen3.6-27b

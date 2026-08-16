@@ -32,8 +32,8 @@ metadata:
     flexinfer.ai/artifact-source: HF://Intel/Qwen3.6-27B-int4-AutoRound
     flexinfer.ai/purpose: "Slice-1 kill-test — Qwen3.6-27B dense AutoRound INT4 coherence on gfx1100 (workhorse quality uplift)"
     flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
-    flexinfer.ai/promotion-state: slice1-coherence-gauntlet-passed
-    flexinfer.ai/promotion-evidence: "2026-08-16 6/6 greedy gauntlet PASS (exact Paris, fib code, JSON, 14-apples); RDNA3W4A16LinearKernel active; weights load 43.7s no skips; KV 46,811 tok @8K fp16; eager single-stream 8.3 tok/s (= fable eager floor; graph mode is slice 2)"
+    flexinfer.ai/promotion-state: slice2-graph-mode-qualified
+    flexinfer.ai/promotion-evidence: "slice1 2026-08-16: 6/6 gauntlet, RDNA3W4A16LinearKernel, eager 8.3 tok/s. slice2 2026-08-16: graph mode FULL_AND_PIECEWISE w/ qwen_gdn_attention_core in splitting_ops, compile 124.9s AOT-cached, 6/6 gauntlet, single-stream 39.0 tok/s (4.7x eager); MTP tested (33% pos0 accept, net 0) and disabled"
 spec:
   backend: vllm
   # Pinned vLLM 0.23 gfx1100 runtime with the native RDNA3 W4A16 HIP operator —
@@ -52,6 +52,13 @@ spec:
     # same as the wan21 lanes on this host.
     flashLoader:
       enabled: false
+    # Slice-2 graph mode: persist the torch.compile AOT cache across restarts
+    # (~100s fresh compile vs ~6s cached; workhorse-lane pattern). Per-model
+    # dir avoids collisions with other lanes' caches on this host.
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen36-27b-autoround-5930k
+      sizeLimit: 4Gi
   gpu:
     vendor: amd
     count: 1
@@ -98,8 +105,31 @@ spec:
     gpuMemoryUtilization: "0.90"
     kvCacheDtype: auto
     calculateKvScales: false
-    enforceEager: true
+    # Slice-2: graph mode. The hybrid-compatible path runs GDN/mamba ops eager
+    # inside splitting_ops and graphs the rest (proven FULL_AND_PIECEWISE on
+    # the 35B hybrid: 9.5 -> 74.6 tok/s). First-ever compile may self-exit once
+    # after populating the AOT cache; the automatic restart then boots cached.
+    enforceEager: false
     enablePrefixCaching: false
+    # Slice-2 phase B: native MTP head speculative decoding. Intel's reference
+    # serve command for this exact artifact uses qwen3_next_mtp with 2 draft
+    # tokens; mtp.fc is FP16 in this checkpoint so the Lorbus 0%-acceptance
+    # packing bug does not apply. RTX 3090 datapoint: AL 3.4-3.8, 85 tok/s.
+    # MTP speculative: qualified 2026-08-16 and DISABLED (reliability-first,
+    # same call as the 35B lane). Findings, so a retry doesn't rediscover them:
+    # - The DRAFT ModelConfig re-reads config.json from disk and does NOT
+    #   inherit hf_overrides -> the auto-round->inc rejection returns inside
+    #   SpeculativeConfig. Fixed by patching quantization_config in the PVC's
+    #   config.json to the same plain-GPTQ form (backup:
+    #   /models/config.json.bak-autoround). A promoted lane must bake that into
+    #   the published artifact; the PVC edit is lost if the cache re-stages.
+    # - method "qwen3_next_mtp" is deprecated (maps to "mtp") on 0.23.
+    # - Acceptance is the blocker: pos0 ~33% either way (2358 drafts, 778
+    #   accepted with method=mtp/1 token; 2-token run added pos1 at 3.3%).
+    #   Net tok/s: 35.0 (2 tokens) / 39.4 (1 token) vs 39.0 graph-only = no
+    #   win. Reference stacks report ~97% pos0 on 0.19-nightlies, so suspect
+    #   draft-head handling in this runtime/artifact combo, not MTP itself.
+    # speculativeConfig: '{"method":"mtp","num_speculative_tokens":1}' 
     disableAiter: true
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
