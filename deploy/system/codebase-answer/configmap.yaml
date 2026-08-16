@@ -6,10 +6,15 @@
 # vs naive 0/16, 30.9x fewer tokens; see
 # .loom/30-implementation-plan-f3-retrieval-readpath-2026-06-25.md).
 #
-# POST /v1/answer  {query, collection?, top_k?, top_n?} ->
+# POST /v1/answer  {query, collection?, top_k?, top_n?, max_per_path?,
+#                   retrieve_only?} ->
 #   {answer, citations:[{path, score}], context_tokens, model, collection}
+#   With retrieve_only:true the chat stage is skipped entirely: answer/model are
+#   null and each citation carries its chunk `text` so the caller (an agent with
+#   its own LLM) synthesizes locally. This path never touches a chat lane, so it
+#   stays sub-second even when the big-GPU lanes are cold or contended.
 # GET  /readyz     -> 200 when embed/rerank + qdrant are Ready and chat is routed
-# GET  /livez      -> 200 when the local HTTP process is alive
+# GET  /livez     -> 200 when the local HTTP process is alive
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -47,6 +52,19 @@ data:
     MAX_PER_PATH = int(os.environ.get("MAX_PER_PATH", "0"))
     GEN_MAX_TOKENS = int(os.environ.get("GEN_MAX_TOKENS", "400"))
     HTTP_TIMEOUT = int(os.environ.get("HTTP_TIMEOUT", "240"))
+    # Chat gets ONE long attempt, not the retrieval path's 3x240s retry ladder:
+    # a serverless chat request is held in the proxy's cold-start queue, so a
+    # client-side retry abandons the queue slot and re-queues from the back —
+    # under lane contention the old 3x240s ladder turned a slow answer into a
+    # guaranteed 12-minute failure. A single attempt with a longer deadline
+    # rides the same queue slot to completion.
+    CHAT_TIMEOUT = int(os.environ.get("CHAT_TIMEOUT", "600"))
+    CHAT_RETRIES = int(os.environ.get("CHAT_RETRIES", "1"))
+    # Optional degraded-mode synthesis model tried once when CHAT_MODEL fails
+    # (e.g. its GPU lane is preempted). Point it at a small llamacpp lane on the
+    # same gfx906 retrieval plane (gemma4-e4b-radeonvii) so the whole RAG stack
+    # can answer without any big-GPU lane. Empty = disabled.
+    CHAT_FALLBACK_MODEL = os.environ.get("CHAT_FALLBACK_MODEL", "")
     # Two sequential dependency probes fit inside readinessProbe.timeoutSeconds=5
     # even when both reach their individual timeout.
     HEALTH_TIMEOUT = int(os.environ.get("HEALTH_TIMEOUT", "2"))
@@ -65,11 +83,11 @@ data:
         body = json.dumps(data).encode() if data is not None else None
         return urllib.request.Request(url, data=body, method=method, headers=h)
 
-    def _do(req, retries=3):
+    def _do(req, retries=3, timeout=None):
         last = None
         for attempt in range(retries):
             try:
-                with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT) as r:
+                with urllib.request.urlopen(req, timeout=timeout or HTTP_TIMEOUT) as r:
                     raw = r.read()
                     return json.loads(raw) if raw else None
             except urllib.error.HTTPError as exc:
@@ -200,9 +218,9 @@ data:
                 used.add(i)
         return selected
 
-    def chat(system, user, max_tokens):
+    def _chat_once(model, system, user, max_tokens):
         resp = _do(_req(f"{PROXY}/v1/chat/completions", data={
-            "model": CHAT_MODEL,
+            "model": model,
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "temperature": 0,
             "max_tokens": max_tokens,
@@ -210,10 +228,24 @@ data:
             # content field. RAG needs the concise final answer so it does not
             # consume GEN_MAX_TOKENS before reaching the response.
             "chat_template_kwargs": {"enable_thinking": False},
-        }))
+        }), retries=CHAT_RETRIES, timeout=CHAT_TIMEOUT)
         return (resp["choices"][0]["message"]["content"] or "").strip()
 
-    def answer(query, collection, top_n, top_k, max_per_path):
+    def chat(system, user, max_tokens):
+        """Returns (answer_text, model_used). Tries CHAT_MODEL, then (if set)
+        one attempt on CHAT_FALLBACK_MODEL so a preempted primary lane degrades
+        to a slower/smaller answer instead of an error."""
+        try:
+            return _chat_once(CHAT_MODEL, system, user, max_tokens), CHAT_MODEL
+        except Exception as exc:  # noqa: BLE001
+            if not CHAT_FALLBACK_MODEL:
+                raise
+            log(f"WARN chat via {CHAT_MODEL} failed ({exc}); "
+                f"falling back to {CHAT_FALLBACK_MODEL}")
+            return (_chat_once(CHAT_FALLBACK_MODEL, system, user, max_tokens),
+                    CHAT_FALLBACK_MODEL)
+
+    def answer(query, collection, top_n, top_k, max_per_path, retrieve_only=False):
         qv = embed(f"# query\n{query}")
         hits = qdrant_search(qv, collection, top_n)
         docs = [(h.get("payload") or {}).get("text", "") for h in hits]
@@ -222,12 +254,24 @@ data:
         ranked = rerank(query, docs, top_n)
         order = diversify_selection(ranked, paths, top_k, max_per_path)
         ctx = "\n\n".join(docs[i] for i in order)
-        ans = chat(SYS, f"CONTEXT:\n{ctx}\n\nQUESTION: {query}", GEN_MAX_TOKENS)
+        if retrieve_only:
+            # Agent fast path: no chat lane involved; hand back the reranked
+            # chunks themselves so the caller synthesizes with its own LLM.
+            return {
+                "answer": None,
+                "citations": [{"path": paths[i], "score": round(scores[i], 4),
+                               "text": docs[i]} for i in order],
+                "context_tokens": len(ctx) // 4,
+                "model": None,
+                "collection": collection,
+            }
+        ans, model_used = chat(SYS, f"CONTEXT:\n{ctx}\n\nQUESTION: {query}",
+                               GEN_MAX_TOKENS)
         return {
             "answer": ans,
             "citations": [{"path": paths[i], "score": round(scores[i], 4)} for i in order],
             "context_tokens": len(ctx) // 4,
-            "model": CHAT_MODEL,
+            "model": model_used,
             "collection": collection,
         }
 
@@ -273,9 +317,11 @@ data:
             top_k = int(req.get("top_k") or RETR_K)
             mpp = req.get("max_per_path")
             max_per_path = int(mpp) if mpp is not None else MAX_PER_PATH
+            retrieve_only = bool(req.get("retrieve_only"))
             t0 = time.time()
             try:
-                out = answer(query, collection, top_n, top_k, max_per_path)
+                out = answer(query, collection, top_n, top_k, max_per_path,
+                             retrieve_only=retrieve_only)
             except Exception as exc:  # noqa: BLE001
                 log(f"ERROR answering {query[:80]!r}: {exc}")
                 self._send(502, {"error": str(exc)})
