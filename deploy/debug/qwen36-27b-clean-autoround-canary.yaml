@@ -45,6 +45,11 @@ spec:
     strategy: Local
     storageClass: nvme-1r-gpu
     size: 40Gi
+    # 18 GB of shards cannot stage into this 63Gi node's tmpfs budget
+    # (flash-loader pre-flight: 7.7 GB available). Serve from the PVC directly,
+    # same as the wan21 lanes on this host.
+    flashLoader:
+      enabled: false
   gpu:
     vendor: amd
     count: 1
@@ -99,13 +104,16 @@ spec:
     limits:
       cpu: "8"
       memory: 40Gi
-  # Canary is intentionally unroutable: no service labels, no litellm listing.
-  # Probe it via pod exec against localhost:8000.
+  # Demand-only lane (fable pattern): NO service labels, litellm ENABLED with
+  # only the unique name — nothing routes here unless the canary is named
+  # explicitly, but explicit demand can cold-start it. litellm.enabled=false
+  # would park the lane entirely (never cold-started by name — whisper lesson).
   serviceLabels: []
   litellm:
-    enabled: false
+    enabled: true
     servedModelName: qwen36-27b-clean-autoround-canary
-    aliases: []
+    aliases:
+      - qwen36-27b-clean-autoround-canary
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
