@@ -95,6 +95,15 @@ spec:
     enablePrefixCaching: false
     disableAiter: true
     rocmCustomPagedAttn: false
+    # RDNA3 decode-backend fix, MTP follow-up to MR !967 (research doc §8f):
+    # vLLM's Radeon default picks ROCM_ATTN, whose decode has no KV-length
+    # parallelism. Probe-measured on this 35B-A3B geometry (16q/2kv/hd256,
+    # fp8 KV, deploy/debug/gfx1100-unified-attn-decode-probe.yaml): TRITON_ATTN
+    # beats ROCM_ATTN 2.4-2.9x at the MTP verify shape (qlen 2; unified-2D vs
+    # context_attention_fwd) and 10-21x at qlen 1 (3D split-KV vs serialized
+    # paged-2D). Free-form config key on purpose — the typed v1alpha1 enum
+    # does not list TRITON_ATTN.
+    attentionBackend: TRITON_ATTN
     hipVisibleDevices: "0"
     trustRemoteCode: true
     enableToolCalling: true
