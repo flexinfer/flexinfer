@@ -466,6 +466,51 @@ an upstream issue/patch eventually, but NOT needed for the flip decision
 (TRITON already wins 2D-vs-ROCM), and the 2D verify cost is amortized
 over 1+accepted tokens per step. Deferred.
 
+## 8g. Qwen3.8-27B succession (2026-08-16): **qualified at parity — workhorse aliases moved**
+
+Qwen3.8-27B (Apache-2.0, released 2026-08-14) is a drop-in successor for the
+qwen36-27b-autoround-workhorse lane: identical serving contract
+(Qwen3_5ForConditionalGeneration / model_type qwen3_5, 64 layers,
+full_attention_interval 4, native 262144 ctx, MTP head, vision tower) with
+generational agentic gains — SWE-bench Pro 61.7 vs 53.5, Terminal-Bench 73.0
+vs 59.3.
+
+**Artifact selection** (the step-1 gate): Intel published no official
+Qwen3.8-27B-int4-AutoRound (repo 401s). Hub census of every INT4 candidate on
+2026-08-16 found one qualifying class — community AutoRound quants in the
+Intel recipe shape. Selected **biMEMO/Qwen3.8-27B-int4-AutoRound**:
+auto_round:auto_gptq packing, INT4 sym g128 (autoround 0.14.2), GDN
+in_proj_a/b + norms + lm_head FP16, 19.0 GB; safetensors-index census =
+exactly the 3.6 artifact's 10-module INT4 list, so the auto-round→inc
+hfOverrides workaround carries over byte-for-byte. Rejected: goldhub
+(linear_attn kept FP16 → 28.3 GB, no 24 GB fit), Vishva007 (real AutoRound
+but g64), Pilcothink (mixed-bit), SergiioB/Chungulus g128 (vanilla self-quant
+GPTQ = the +8.45% PPL tier), all FP8/AWQ/GGUF/NVFP4/MLX. Provenance caveat,
+recorded in the canary header: three same-recipe mirrors
+(biMEMO/devan-carlin/Frozenlock) share byte-identical shards 5-7 + MTP extras
+but diverge on shards 1-4 — the gauntlet, not the model card, was the
+arbiter. Unlike Intel's 3.6, the MTP block is INT4 here (moot while MTP is
+off; an MTP retry needs fresh acceptance numbers on THIS artifact).
+
+**Qualification ladder** (deploy/debug/qwen38-27b-clean-autoround-canary.yaml
+on cblevins-5930k, same pinned vLLM 0.23 runtime digest, TRITON_ATTN from
+day one, 64K fp16 envelope):
+- Eager: 6/6 gauntlet, RDNA3W4A16LinearKernel, 16.77 GiB / 32.9 s load,
+  KV pool 70,055 tok, ~7 tok/s (3.6 eager floor: 8.3).
+- Graph: 6/6 gauntlet, FULL_AND_PIECEWISE with qwen_gdn_attention_core split
+  out, first compile self-exited into the AOT cache then booted cached
+  (20.8 s), 34.9-40.5 tok/s single-stream (3.6: 39.0). Greedy outputs
+  token-identical eager vs graph.
+- Context: needle 1/1 @28,842 and 1/1 @60,973 actual prompt tokens; decode
+  35.4 tok/s @31,602 ctx (3.6: 36.3 @30K) — the !967 TRITON_ATTN fix holds;
+  prefill ~570 tok/s @30K (3.6: 591).
+
+**Verdict: parity on serving, generational gain on quality → promoted.**
+qwen38-27b-autoround-workhorse takes workhorse/loom-workhorse/mills-council/
+reasoning (+ qwen38-27b); qwen36-27b-autoround-workhorse parked as the
+rollback fallback with only its qwen36-27b alias until the 3.8 lane soaks,
+then remove. The 35B *-128k lanes keep the >64K recall routes unchanged.
+
 ## 9. Source index
 
 - Qwen3.6-27B release blog + full benchmark table: https://qwen.ai/blog?id=qwen3.6-27b
