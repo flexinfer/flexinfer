@@ -32,8 +32,8 @@ metadata:
     flexinfer.ai/artifact-source: HF://Intel/Qwen3.6-27B-int4-AutoRound
     flexinfer.ai/purpose: "Slice-1 kill-test — Qwen3.6-27B dense AutoRound INT4 coherence on gfx1100 (workhorse quality uplift)"
     flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
-    flexinfer.ai/promotion-state: slice2-graph-mode-qualified
-    flexinfer.ai/promotion-evidence: "slice1 2026-08-16: 6/6 gauntlet, RDNA3W4A16LinearKernel, eager 8.3 tok/s. slice2 2026-08-16: graph mode FULL_AND_PIECEWISE w/ qwen_gdn_attention_core in splitting_ops, compile 124.9s AOT-cached, 6/6 gauntlet, single-stream 39.0 tok/s (4.7x eager); MTP tested (33% pos0 accept, net 0) and disabled"
+    flexinfer.ai/promotion-state: slice3-64k-coherent-decode-ceiling-mapped
+    flexinfer.ai/promotion-evidence: "slice1 2026-08-16: 6/6 gauntlet, RDNA3W4A16LinearKernel, eager 8.3 tok/s. slice2 2026-08-16: graph mode FULL_AND_PIECEWISE w/ qwen_gdn_attention_core in splitting_ops, compile 124.9s AOT-cached, 6/6 gauntlet, single-stream 39.0 tok/s (4.7x eager); MTP tested (33% pos0 accept, net 0) and disabled. slice3 2026-08-16: needle recall PASS 32K+64K; 128K fp8 boots (137K-token KV pool) but decode-at-context collapses linearly on unified Triton attn (4.0 tok/s @30K fp16 KV, 1.9 fp8); parked at 64K fp16 pending RDNA3 attention split-K work"
 spec:
   backend: vllm
   # Pinned vLLM 0.23 gfx1100 runtime with the native RDNA3 W4A16 HIP operator —
@@ -94,15 +94,27 @@ spec:
     hfOverrides: '{"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
     dtype: half
     languageModelOnly: true
-    # Conservative qualification envelope, mirroring the fable smoke posture.
-    # Native context is 262144; slice 3 raises this after coherence passes.
-    maxModelLen: 8192
-    maxInputTokens: 6144
-    maxOutputTokens: 2048
+    # Slice-3 envelope: 128K with fp8 KV, mirroring the qualified
+    # qwen35-35b-clean-gptq-workhorse-128k posture. Native context is 262144 —
+    # 128K needs NO RoPE forcing; the needle ladder verifies retrieval, not an
+    # extrapolation cliff. 262K stretch is future work.
+    # PARKED ENVELOPE (slice-3 verdict): 64K, fp16 KV. Needle recall proven at
+    # 32K and 64K (fp8 run) — native-262K arch, no RoPE cliff. The limiter is
+    # DECODE-at-context on the unified Triton attention path (gfx1100):
+    # ~25.6ms + 7.5us/ctx-token per step at fp16 KV (16.6us at fp8 — the fp8
+    # dequant is ~2x worse per byte): 24 tok/s @2K, ~12 @8K, 4.0 @30K,
+    # 2.0 @60K. rocmCustomPagedAttn no-op for this arch; FLASH_ATTN backend
+    # not compiled into this image ("FlashAttention version not detected").
+    # 128K + fp8 KV boots fine (137,098-token pool) but is not worth the fp8
+    # decode tax until the attention kernel gains split-K/flash-decoding on
+    # RDNA3 — the incumbent 35B lanes share this ceiling (their 130K
+    # qualification decoded needles at ~2-3 tok/s too; nobody had measured).
+    maxModelLen: 65536
     maxNumSeqs: 1
-    maxNumBatchedTokens: 2048
+    maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
-    gpuMemoryUtilization: "0.90"
+    schedulerReserveFullISL: true
+    gpuMemoryUtilization: "0.94"
     kvCacheDtype: auto
     calculateKvScales: false
     # Slice-2: graph mode. The hybrid-compatible path runs GDN/mamba ops eager
@@ -131,6 +143,9 @@ spec:
     #   draft-head handling in this runtime/artifact combo, not MTP itself.
     # speculativeConfig: '{"method":"mtp","num_speculative_tokens":1}' 
     disableAiter: true
+    # Slice-3 A/B result: rocmCustomPagedAttn true had ZERO effect on the
+    # long-context decode collapse (1.9 tok/s @30K unchanged) — the knob does
+    # not engage this hybrid arch's unified-attention path. Reverted.
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
     trustRemoteCode: true

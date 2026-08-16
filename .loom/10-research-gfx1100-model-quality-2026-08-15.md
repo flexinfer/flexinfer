@@ -253,6 +253,53 @@ Next: slice 3 — context ladder 32K→64K→128K with `kvCacheDtype: fp8_e4m3`,
 needle-bench each rung (`scripts/context-needle-bench.py`), then promotion
 (aliases, both nodes) as slice 4.
 
+## 8c. Slice-3 RESULT (2026-08-16): **coherent to 64K; decode-at-context is the real fleet ceiling**
+
+Coherence: **PASS.** Needle recall 1/1 at 32K and 64K (fp8-KV 128K envelope);
+128K + fp8 KV boots cleanly with a 137,098-token KV pool (1.05× concurrency at
+131,072). No RoPE cliff — native-262K arch. Two bench-harness gotchas for this
+model: thinking mode needs `--max-tokens 2048` (the answer follows a long
+`<think>`), and the dense 27B needs `--timeout 900` (the bench's 240s default
+was tuned on the A3B).
+
+The real finding — **decode speed collapses linearly with context length** on
+the unified Triton attention path (gfx1100, vLLM 0.23):
+
+| context | decode fp8 KV | decode fp16 KV |
+|---|---|---|
+| ~0 | 39 tok/s | 39-42 tok/s |
+| 2K | 17.2 | ~25 |
+| 30K | 1.9 | 4.0 |
+| 60K | — | 2.0 |
+
+Cost model: ~25.6 ms + 16.6 µs/ctx-token (fp8) or ~7.5 µs (fp16) per decoded
+token — the fp8 dequant path is ~2× worse *per byte*, and both are far off
+bandwidth (serialized KV walk, no split-K/flash-decoding). Prefill is fine
+(946-1049 tok/s ≤14K, 591 @30K — normal quadratic decay).
+
+A/B eliminations: `rocmCustomPagedAttn: true` = no-op for this hybrid arch;
+`attentionBackend: FLASH_ATTN` + `FLASH_ATTENTION_TRITON_AMD_ENABLE=TRUE` =
+"FlashAttention version not detected" (not compiled into this runtime image).
+
+**Fleet context**: the incumbent lanes share this ceiling — back-computing the
+35B workhorse-128k qualification (129,919-token prompt, 297s total, ~245s
+prefill) puts its needle-answer decode at ~2-3 tok/s. Long-context decode was
+never separately measured before; the 27B is not a regression, the fleet has
+been living on short-context decode + long-context *recall*.
+
+**Parked posture**: 64K, fp16 KV, graph mode, no MTP, demand-only.
+
+**Slice-4 options** (promotion + the decode fix):
+1. Promote the 27B at 64K/fp16 now for QUALITY (it beats the 35B everywhere on
+   benchmarks; decode at working-set contexts 2-16K is 12-25 tok/s — usable
+   for Mills turns), keep the 35B-128k lane for >64K recall jobs.
+2. Runtime work (the real unlock, benefits every lane): RDNA3 decode-attention
+   split-K/flash-decoding in the unified Triton kernel, or build the Triton-FA
+   package into the runtime image; plus the fp8-KV dequant fix. File as a
+   runtime-image backlog item.
+3. Re-check newer vLLM (0.24/0.25) ROCm attention for RDNA3 improvements
+   before writing custom kernels.
+
 ## 9. Source index
 
 - Qwen3.6-27B release blog + full benchmark table: https://qwen.ai/blog?id=qwen3.6-27b
