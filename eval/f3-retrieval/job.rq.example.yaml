@@ -49,10 +49,14 @@ spec:
               value: "bge-large-radeonvii"
             - name: RERANK_MODEL
               value: "bge-reranker-radeonvii"
+            # Answerer = what the loom-workhorse label resolves to (the lane
+            # codebase-answer actually uses), pinned by name so a mid-run label
+            # re-election can't switch answerers. Judge on the OTHER GPU (5930k).
+            # Repointed 2026-08-16: the old 35B/gemma4-gfx1100 pair was parked.
             - name: CHAT_MODEL
-              value: "qwen36-35b-mtp-uncensored-5930k"
+              value: "qwen38-27b-autoround-workhorse"
             - name: JUDGE_MODEL
-              value: "gemma4-26b-a4b-gptq"
+              value: "gemma4-26b-a4b-gptq-5930k"
             - name: QUESTIONS_FILE
               value: "/questions/questions.json"
             - name: QDRANT_URL
@@ -73,14 +77,22 @@ spec:
               value: "24"
             - name: RETR_K
               value: "6"
-            # Provisional thresholds (Slice-3 hard-set: ev ~0.83, judge ~0.47).
-            # Tune against the first live run; FAIL is advisory unless a wrapper
-            # acts on the RQ_RESULT_JSON verdict (RQ_FAIL_ON_GATE is read by a
-            # looping wrapper, not by f3eval itself).
+            # Thresholds tuned 2026-08-16 against the first live runs
+            # (qwen38 answerer + gemma4-5930k judge: judge 0.806-0.861,
+            # ev 0.889-0.944; observed run-to-run noise ~±0.055). judge<0.7 or
+            # ev<0.8 = real regression for THIS pairing; re-tune on answerer or
+            # judge change. FAIL stays advisory unless a wrapper acts on the
+            # RQ_RESULT_JSON verdict (RQ_FAIL_ON_GATE is read by a looping
+            # wrapper, not by f3eval itself).
             - name: RQ_MIN_JUDGE_RATIO
-              value: "0.6"
+              value: "0.7"
             - name: RQ_MIN_EV_RATIO
               value: "0.8"
+            # One long attempt must outlast the serverless cold-start queue: a
+            # client timeout+retry abandons the proxy queue slot and re-queues
+            # from the back (same reason codebase-answer uses CHAT_TIMEOUT=600).
+            - name: HTTP_TIMEOUT
+              value: "600"
           volumeMounts:
             - name: script
               mountPath: /scripts

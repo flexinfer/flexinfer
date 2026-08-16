@@ -121,6 +121,47 @@ python3 test_rqgate.py              # kernel unit tests
 thresholds are validated against a first live run (you should not schedule an
 unvalidated gate). Until then the gate row is advisory — emitted, not enforced.
 
+### Live activation + MAX_PER_PATH A/B (2026-08-16)
+
+The gate ran live twice (same `codebase_memory_bge_v1` snapshot, post-mirror-fix
+index; answerer `qwen38-27b-autoround-workhorse` = the `loom-workhorse` label's
+resolution that day, judge `gemma4-26b-a4b-gptq-5930k`), doubling as the Slice
+3.1 A/B:
+
+| run | judge_ratio | ev_ratio | judge CORRECT | ev top-6 | verdict |
+|---|---|---|---|---|---|
+| `MAX_PER_PATH=0` (baseline) | **0.861** | 0.889 | 15+1 partial /18 | 16/18 | PASS |
+| `MAX_PER_PATH=3` | 0.806 | **0.944** | 14+1 partial /18 | 17/18 | PASS |
+
+- **MAX_PER_PATH stays dormant (0) on `codebase-answer`**: diversification moved
+  recall +1 file exactly as designed, but the judge diff is −1 (within ±1 noise,
+  no positive signal). The Slice-3 "synthesis bottleneck" this lever targeted
+  largely evaporated with the qwen38 workhorse (judge 15.5/18 vs the 35B-era
+  ~8/18) — a same-file secondary chunk is now worth more than a second file.
+  The request-level `max_per_path` override remains for multi-file callers.
+- **Thresholds tuned from these rows**: `RQ_MIN_JUDGE_RATIO` 0.6 → 0.7
+  (observed 0.806–0.861, noise ~±0.055), `RQ_MIN_EV_RATIO` stays 0.8 (observed
+  0.889–0.944). Bars are answerer+judge-pairing-specific — re-tune on lane swap.
+- **CronJob promotion remains blocked on packaging**, deliberately: embedding
+  `f3eval.py` copies in a Flux ConfigMap would two-source the harness. Bake an
+  image or generate the ConfigMap from this directory in CI first.
+
+Operational learnings baked into the harness by these runs:
+
+- **Judging is a deferred second pass**: answerer and judge lanes can share one
+  GPU via serverless election (they did — both on `cblevins-5930k`); inline
+  judging costs a multi-minute model swap per question, batched passes cost two
+  per run.
+- **`enable_thinking: false` is mandatory for Qwen thinking-mode answerers**
+  (mirrors `codebase-answer`'s `_chat_once`): without it qwen38 spent the whole
+  `GEN_MAX_TOKENS=300` on `reasoning_content` and returned 12/18 empty answers
+  (judge_ratio 0.278 artifact run).
+- **Recall survives chat outages**: retrieval and generation now fail
+  independently, so `ev_ratio` stays meaningful when the answerer lane 503s
+  (a flexinfer-proxy rollout mid-run zeroed a whole run once).
+- Don't run evals during flexinfer-proxy rollouts; one long `HTTP_TIMEOUT`
+  attempt (600s) instead of client retries against the cold-start queue.
+
 ## Run it (in-cluster Job)
 
 `job.example.yaml` is the exact Job used (mirrors `deploy/tasks/codebase-reembed`:

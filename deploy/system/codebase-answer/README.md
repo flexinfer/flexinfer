@@ -102,9 +102,11 @@ kubectl -n flexinfer-system run rag-curl --rm -it --image=curlimages/curl --rest
   `codebase_memory_v1`), reusing the kill-test harness.
 - **Slice 3.1** — multi-file context diversification (`MAX_PER_PATH`): caps how
   many chunks one file contributes to the top-K context so multi-file answers get
-  secondary files into the window. Shipped dormant (`0`); activate with
-  `MAX_PER_PATH=3` on this Deployment once the harness measures a judge gain on the
-  hard 18-Q set (`eval/f3-retrieval`).
+  secondary files into the window. Shipped dormant (`0`). **Measured live
+  2026-08-16** (hard 18-Q set, qwen38 workhorse answerer): recall +1 file but
+  judge −1 (0.861 → 0.806) — no gain, so the env stays `0`; the per-request
+  `max_per_path` override remains for callers that want it. See
+  `eval/f3-retrieval/README.md` for the full A/B.
 
 ## Reversibility
 
