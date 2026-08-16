@@ -61,7 +61,12 @@ spec:
     vramEstimateMB: 22000
   serverless:
     enabled: true
-    minReplicas: 0
+    # QUALIFICATION WINDOW POSTURE: the ~6-min cold load (19 GB PVC read +
+    # FLA JIT) outlives the 2-minute demand window, so an on-demand start gets
+    # preempted mid-load by the warm primary. minReplicas=1 makes this lane
+    # the warm-pinned leader for the window (the !563 election rule). Set back
+    # to 0 when the gauntlet finishes.
+    minReplicas: 1
     # Long enough to run the qualification gauntlet between probes without
     # self-reaping (fable's 1m lesson), short enough to hand the card back.
     idleTimeout: 15m
@@ -69,7 +74,16 @@ spec:
     coldStartTimeout: 25m
   config:
     warmPolicy: ondemand
-    # No `quantization` key on purpose — see header.
+    # vLLM 0.23 resolves quant_method "auto-round" to "inc" (Intel Neural
+    # Compressor) BEFORE honoring --quantization, and ROCm rejects inc
+    # outright. The checkpoint's auto_round:auto_gptq packing is GPTQ-shaped
+    # (qweight/qzeros/scales, sym=true, g128), so rewrite quantization_config
+    # to plain GPTQ form via hf-overrides (applied before quant resolution).
+    # modules_in_block_to_quantize = exact INT4 module census from the
+    # safetensors index; in_proj_a/b, conv1d, norms, and lm_head are FP16 in
+    # the checkpoint (gemma4 partial-quant pattern).
+    quantization: gptq
+    hfOverrides: '{"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
     dtype: half
     languageModelOnly: true
     # Conservative qualification envelope, mirroring the fable smoke posture.
