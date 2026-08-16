@@ -1,0 +1,127 @@
+# Clean Qwen3.5-35B-A3B text-only GPTQ workhorse for Loom, Mills, and Council.
+#
+# Promotion evidence:
+# - GDN-preserving W4_G128 artifact validated as qwen35-35b-a3b/vllm-gptq.
+# - vLLM 0.23 ROCm overlay registers the text-only hybrid architecture and
+#   constrains the gfx1100 FLA KKT autotuner to its proven non-hanging kernel.
+# - The 64K graph-mode experiment passed its full 5/5 proxy gauntlet at
+#   79.353 tok/s and 1.0688s TTFT (benchmark 94dc02b0-e332-4501-9b7c-5af0d0f8d4c7).
+# - The exact artifact/runtime pair subsequently recalled 5/5 needles at
+#   129,919 prompt tokens in the 128K ModelExperiment qualification.
+#
+# The model is intentionally clean, not abliterated. The older Qwen3.6 lane
+# retains the uncensored/heretic aliases as an operator-activated fallback.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-35b-stretch-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.5-35B-A3B
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-digest: sha256:ed9cd20ffca20cdff54a581276c3b448aeb04fed234485995b308a10b360b6ba
+    flexinfer.ai/runtime-digest: sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
+    flexinfer.ai/promotion-state: 128k-graph-fleet-parity
+    flexinfer.ai/promotion-evidence: modelexperiment/qwen35-35b-clean-gptq-128k-graph@run-1
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
+  source: pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn
+  cache:
+    # Mount the controller-validated shared artifact directly. The immutable
+    # OCI digest above records exactly what was validated and is the recovery
+    # source if the RWX cache ever needs to be reconstructed.
+    strategy: None
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache
+      sizeLimit: 4Gi
+  config:
+    # RDNA3 long-context decode fix (2026-08-16): vLLM's ROCm default picks
+    # ROCM_ATTN, whose decode has no KV-length parallelism — single-stream
+    # decode collapses linearly with context (research doc 8c/8e fleet
+    # ceiling). TRITON_ATTN engages the unified-attention 3D split-KV decode:
+    # canary 36 tok/s @30K and 32 @60K vs 4.0/2.0 baseline (9-16x). Kernel
+    # evidence: deploy/debug/gfx1100-unified-attn-decode-probe.yaml.
+    attentionBackend: TRITON_ATTN
+    # Keep this runtime isolated from the older persistent serving image.
+    dedicatedDeployment: true
+    quantization: gptq
+    dtype: half
+    hfOverrides: '{"architectures":["Qwen3_5MoeForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+    languageModelOnly: true
+    # Match the exact 128K graph envelope qualified on the 7900 XTX sister.
+    # Both nodes now advertise the explicit *-128k service-label routes.
+    # Context-stretch qualification (2026-08-16): the fp8 pool on this A3B
+    # hybrid held 196,608 tokens at util 0.94 — 180K fits at 1.09x margin.
+    # Native context is 262144; the needle ladder is the coherence arbiter.
+    maxModelLen: 184320
+    maxNumSeqs: 1
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    # This is the exact qualified setting. A first-ever uncached 128K compile
+    # can exit once after populating AOT; the automatic cached restart has
+    # 1.94 GiB KV / 196,608-token capacity.
+    gpuMemoryUtilization: "0.94"
+    kvCacheDtype: fp8_e4m3
+    calculateKvScales: false
+    # Required serving posture: torch.compile plus piecewise HIP graphs.
+    enforceEager: false
+    gdnPrefillBackend: triton
+    cudagraphMetrics: true
+    kvCacheMetrics: true
+    kvCacheMetricsSample: "0.01"
+    enablePrefixCaching: false
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    trustRemoteCode: true
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    servedModelName: qwen35-35b-stretch-canary
+    disableLogStats: false
+    failOnEnvironValidation: true
+    warmPolicy: ondemand
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # 2026-07-18 psyche fleet layout: demoted below the rehomed wan video
+    # lanes (t2v 500 / vace 600) — cold-starts on explicit demand, loses the
+    # election to video. forcePromotion removed: it bypasses priority in the
+    # leader chooser and would defeat this demotion.
+    priority: 300
+    vramEstimateMB: 23200
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 48Gi
+  serverless:
+    enabled: true
+    # 2026-07-18 psyche fleet layout: scale-to-zero; the 5930k card belongs to
+    # the wan video lanes now. Loom is not routing through flexinfer currently,
+    # so the workhorse does not need to stay warm.
+    minReplicas: 0
+    idleTimeout: 30m
+    # Covers an empty-cache compile plus the self-healing cached restart.
+    coldStartTimeout: 25m
+  # 2026-08-16 slice-4 promotion: base workhorse/mills-council/reasoning role
+  # labels and aliases moved to qwen36-27b-autoround-workhorse (higher quality
+  # dense 27B). This lane keeps the *-128k routes for >64K recall jobs plus
+  # its identity aliases.
+  serviceLabels: []
+  litellm:
+    enabled: true
+    servedModelName: qwen35-35b-stretch-canary
+      # unique-name only
+    aliases:
+      - qwen35-35b-stretch-canary
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists

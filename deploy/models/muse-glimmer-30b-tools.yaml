@@ -57,7 +57,10 @@ spec:
   config:
     warmPolicy: ondemand
     ggufFile: muse-glimmer-30B-kquant-17gb.gguf
-    contextSize: 32768
+    # Context raised 32K -> 131,072 (model default; 2026-08-16 context-push):
+    # canary needles 1/1 @90,869 and 1/1 @120,206 actual tokens; KV is cheap
+    # on the 3:1 SWA layout (13 global layers f16), fits beside 17 GB weights.
+    contextSize: 131072
     nGPULayers: 999
     batchSize: 2048
     ubatchSize: 512

@@ -511,6 +511,35 @@ reasoning (+ qwen38-27b); qwen36-27b-autoround-workhorse parked as the
 rollback fallback with only its qwen36-27b alias until the 3.8 lane soaks,
 then remove. The 35B *-128k lanes keep the >64K recall routes unchanged.
 
+## 8h. Context push (2026-08-16 evening): **every lane raised to its qualified ceiling**
+
+With !967's TRITON_ATTN decode fix in place fleet-wide, the context envelopes
+were pushed on debug canaries (Flux self-heals live patches, so qualification
+runs on non-Flux debug CRs, promotion via git):
+
+| Lane | Before | After | Pool margin | Needle evidence (actual tokens) |
+|---|---|---|---|---|
+| qwen38-27b workhorse | 65,536 / fp16 | **131,072 / fp8_e4m3** | 137,098 tok, 1.05x | 1/1 @99,498 · 1/1 @128,409 · **5/5 @128,509** |
+| qwen35-35b lanes (x2) | 131,072 | **184,320** | 199,065 tok, 1.08x | 1/1 @146,560 · @167,973 · @180,830 · **5/5 @180,930** |
+| muse-glimmer-30b-tools | 32,768 | **131,072** | llama.cpp KV fits | 1/1 @90,869 · 1/1 @120,206 |
+
+Notes:
+- No coherence cliff found on any lane — all three run native-262K (Qwen) or
+  native-131K-default (Glimmer) architectures; the ceilings are KV-pool
+  margins, not RoPE. The 27B-class max on one 24 GB card is 131,072 (fp8
+  pool 137K); the A3B hybrid's cheaper KV buys 184,320; going past either
+  needs KV quantization below fp8 or a second card.
+- Prefill at depth on the 27B: 198 tok/s @60K, 129 @100K (quadratic-normal);
+  the 123K needle points complete in ~21 min each. The A3B does 180K points
+  in ~10-12 min. Long-context work remains prefill-bound.
+- Decode-at-context beyond 60K: the two-run TTFT-delta method is noise-
+  dominated when prefill is 300-800s — use streaming or metrics counters for
+  future decode figures at 100K+.
+- The 35B *-128k aliases keep their names (128K = guaranteed minimum tier);
+  the real ceiling is documented in the lane annotations.
+- Consumer note (F3 session): qwen38 callers must set enable_thinking:false
+  or budget for the <think> phase — otherwise answers come back empty.
+
 ## 9. Source index
 
 - Qwen3.6-27B release blog + full benchmark table: https://qwen.ai/blog?id=qwen3.6-27b
