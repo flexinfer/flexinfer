@@ -412,6 +412,38 @@ v0.26 image (`rocm-gfx1100-v026-native-w4a16`, harbor 2026-08-01) needs the
 same per-lane override when adopted. Triton-FA package (§8c option 2) is
 moot for decode: TRITON_ATTN suffices.
 
+## 8g. Qwen3.8-27B assessment (2026-08-16): **successor-in-waiting — blocked only on a fast-kernel INT4 artifact**
+
+Qwen3.8-27B shipped as Apache-2.0 open weights ~2026-08-14 (announced Aug 3
+with the 2.4T Max). Verified from its HF config.json: **identical serving
+contract to Qwen3.6-27B** — `Qwen3_5ForConditionalGeneration` / model_type
+`qwen3_5` / `qwen3_5_text`, 64 layers, `full_attention_interval: 4` (same 3:1
+GDN hybrid, same head geometry per the model card), native 262,144 ctx (YaRN
+to 1M), native vision, MTP-trained. Our vLLM 0.23 runtime + the exact
+qwen36-27b canary recipe (hfOverrides quant rewrite, languageModelOnly,
+graph mode, TRITON_ATTN per !967) should serve it unchanged.
+
+Benchmark deltas vs the promoted 3.6-27B workhorse (vendor + third-party
+analysis): **SWE-bench Pro 61.7 vs 53.5 (+8.2), Terminal-Bench 73.0 vs 59.3
+(+13.7), OSWorld-Verified 84.3** — a generational agentic jump at the same
+deploy cost. Verdict: supersede when servable at quality.
+
+**Blocker: quant availability** (2 days post-release):
+- Official: FP8 only (no gfx1100 FP8 compute).
+- Community: GGUFs everywhere (unsloth 1.9M downloads, bartowski, ggml-org),
+  one AWQ-INT4 (cyankiwi — RDNA3 Triton slow path), mlx 4-bit. **No
+  AutoRound/GPTQ-format INT4 yet** — the fast-kernel format the vLLM lane
+  needs. Intel published the 3.6-27B AutoRound; expect theirs within days
+  (watch `Intel/Qwen3.8-27B-int4-AutoRound`).
+
+Plan: when an AutoRound/auto_gptq artifact appears, clone
+`deploy/debug/qwen36-27b-clean-autoround-canary.yaml` → point at the new
+source → refresh the modules census from its safetensors index → run the
+slice-1/2/3 gauntlet ladder (add `attentionBackend: TRITON_ATTN` from the
+start) → alias handover from the 3.6 lane. Fallbacks if no artifact appears:
+in-house AutoRound self-quant (unproven on ROCm) or interim llamacpp GGUF
+lane (bartowski Q4_K_M on the b10453 image).
+
 ## 9. Source index
 
 - Qwen3.6-27B release blog + full benchmark table: https://qwen.ai/blog?id=qwen3.6-27b
