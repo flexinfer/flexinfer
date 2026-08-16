@@ -69,6 +69,13 @@ spec:
     # torch.compile (~5 min); cached restarts are ~3 min.
     coldStartTimeout: 25m
   config:
+    # RDNA3 long-context decode fix (2026-08-16): vLLM's ROCm default picks
+    # ROCM_ATTN, whose decode has no KV-length parallelism — single-stream
+    # decode collapses linearly with context (research doc 8c/8e fleet
+    # ceiling). TRITON_ATTN engages the unified-attention 3D split-KV decode:
+    # canary 36 tok/s @30K and 32 @60K vs 4.0/2.0 baseline (9-16x). Kernel
+    # evidence: deploy/debug/gfx1100-unified-attn-decode-probe.yaml.
+    attentionBackend: TRITON_ATTN
     warmPolicy: ondemand
     # vLLM 0.23 resolves quant_method "auto-round" to "inc" (rejected on
     # ROCm) before honoring --quantization. hfOverrides therefore rewrites

@@ -1,0 +1,157 @@
+# gfx1100 unified-attention DECODE probe — zero-displacement, co-residency safe.
+#
+# Times vllm.v1.attention.ops.triton_unified_attention.unified_attention at
+# single-seq decode shapes (Qwen3.6-27B full-attn geometry: 24 q heads,
+# 4 KV heads, head_dim 256, block 16) across context lengths, comparing the
+# serialized 2D path vs the 3D split-KV path (flash-decoding style) and
+# fp16 vs fp8_e4m3 KV. Motivated by the fleet-wide long-context decode
+# ceiling measured 2026-08-16 (25.6ms + 16.6µs/ctx-tok fp8, 7.5µs fp16 —
+# .loom/10-research-gfx1100-model-quality-2026-08-15.md §8c on branch
+# claude/gfx1100-model-quality-context-07fbae): code reading says the 3D
+# path should already engage for 1-seq decode (threshold 128//4=32), but
+# the measured slope matches the 2D serialized walk (grid = 1×4 workgroups
+# on 96 CUs). This probe attributes the miss: gate-not-firing vs
+# 3D-engaged-but-slow (RDNA3 Triton codegen), and scopes the fix
+# (segment count, fp8 dequant cost).
+#
+# Runs on the DEPLOYED v0.23 runtime digest (same Triton/torch stack the
+# lanes serve with). VRAM footprint <400MB — fits beside the warm lane on
+# the node (no amd.com/gpu claim; hostPath /dev/kfd — gemm-probe pattern).
+#
+#   kubectl apply -f deploy/debug/gfx1100-unified-attn-decode-probe.yaml
+#   kubectl exec gfx1100-unified-attn-decode-probe -n flexinfer-system -- \
+#     python3 /scripts/decode_bench.py 2d 0 fp16 2048,8192,16384,30720
+#   # modes: 2d | 3d <nsegs> | auto <nsegs>; kv: fp16 | fp8
+#   kubectl delete -f deploy/debug/gfx1100-unified-attn-decode-probe.yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gfx1100-unified-attn-decode-probe
+  namespace: flexinfer-system
+  labels: {app: gfx1100-unified-attn-decode-probe}
+data:
+  decode_bench.py: |
+    import sys, torch
+    from vllm.platforms import current_platform
+    from vllm.v1.attention.ops.triton_unified_attention import unified_attention
+    from vllm.v1.kv_cache_interface import KVQuantMode
+
+    torch.set_grad_enabled(False)
+    dev = "cuda"
+    # Qwen3.6-27B full-attention layer geometry
+    NUM_Q, NUM_KV, HEAD, BLOCK = 24, 4, 256, 16
+    THRESHOLD = 128 // NUM_KV  # MIN_LAUNCH_GRID_SIZE_2D // num_heads_kv
+
+    mode = sys.argv[1]            # 2d | 3d | auto
+    nsegs = int(sys.argv[2])      # segments for 3d/auto (server default: 16)
+    kvdt = sys.argv[3]            # fp16 | fp8
+    ctxs = [int(x) for x in sys.argv[4].split(",")]
+
+    fp8 = kvdt == "fp8"
+    cache_dtype = current_platform.fp8_dtype() if fp8 else torch.float16
+    kv_quant_mode = KVQuantMode.FP8_PER_TENSOR if fp8 else KVQuantMode.NONE
+
+    q = torch.randn((1, NUM_Q, HEAD), dtype=torch.float16, device=dev)
+    out = torch.empty_like(q)
+    cu = torch.tensor([0, 1], dtype=torch.int32, device=dev)
+    ones = torch.ones((), dtype=torch.float32, device=dev)
+    k_descale = ones.expand(1, NUM_KV)
+    v_descale = ones.expand(1, NUM_KV)
+
+    if mode in ("3d", "auto"):
+        segm_out = torch.empty((THRESHOLD, NUM_Q, nsegs, HEAD),
+                               dtype=torch.float32, device=dev)
+        segm_max = torch.empty((THRESHOLD, NUM_Q, nsegs),
+                               dtype=torch.float32, device=dev)
+        segm_expsum = torch.empty_like(segm_max)
+        seg_kwargs = dict(seq_threshold_3D=THRESHOLD,
+                          num_par_softmax_segments=nsegs,
+                          softmax_segm_output=segm_out,
+                          softmax_segm_max=segm_max,
+                          softmax_segm_expsum=segm_expsum)
+    else:
+        seg_kwargs = dict(seq_threshold_3D=None, num_par_softmax_segments=None,
+                          softmax_segm_output=None, softmax_segm_max=None,
+                          softmax_segm_expsum=None)
+
+    print(f"cfg mode={mode} nsegs={nsegs} kv={kvdt} cache_dtype={cache_dtype} "
+          f"threshold={THRESHOLD} grid2d=(1,{NUM_KV}) grid3d=(1,{NUM_KV},{nsegs})",
+          flush=True)
+
+    for ctx in ctxs:
+        nblocks = ctx // BLOCK + 2
+        kv = torch.randn((nblocks, 2, BLOCK, NUM_KV, HEAD),
+                         dtype=torch.float16, device=dev)
+        if fp8:
+            kv = kv.clamp(-2, 2).to(cache_dtype)
+        k_cache, v_cache = kv.unbind(1)
+        block_table = torch.arange(nblocks, dtype=torch.int32,
+                                   device=dev).unsqueeze(0)
+        seqused = torch.tensor([ctx], dtype=torch.int32, device=dev)
+
+        def call():
+            unified_attention(
+                q=q, k=k_cache, v=v_cache, out=out,
+                cu_seqlens_q=cu, max_seqlen_q=1,
+                seqused_k=seqused, max_seqlen_k=ctx,
+                softmax_scale=HEAD ** -0.5, causal=True,
+                window_size=(-1, -1), block_table=block_table, softcap=0.0,
+                q_descale=None, k_descale=k_descale, v_descale=v_descale,
+                kv_quant_mode=kv_quant_mode, **seg_kwargs)
+
+        for _ in range(3):
+            call()
+        torch.cuda.synchronize()
+        evs = [(torch.cuda.Event(enable_timing=True),
+                torch.cuda.Event(enable_timing=True)) for _ in range(20)]
+        for s, e in evs:
+            s.record(); call(); e.record()
+        torch.cuda.synchronize()
+        ts = sorted(s.elapsed_time(e) for s, e in evs)
+        med_ms = ts[len(ts) // 2]
+        kv_bytes = ctx * 2 * NUM_KV * HEAD * (1 if fp8 else 2)
+        gbs = kv_bytes / (med_ms * 1e-3) / 1e9
+        # model-level projection: 16 full-attn layers per decoded token
+        print(f"RESULT ctx={ctx} med_ms={med_ms:.3f} min_ms={ts[0]:.3f} "
+              f"kv_read_GBs={gbs:.1f} model16x_ms={med_ms * 16:.1f}", flush=True)
+        del kv, k_cache, v_cache, block_table
+        torch.cuda.empty_cache()
+    print("PROBE_PASS", flush=True)
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gfx1100-unified-attn-decode-probe
+  namespace: flexinfer-system
+  labels: {app: gfx1100-unified-attn-decode-probe}
+spec:
+  restartPolicy: Never
+  nodeSelector: {kubernetes.io/hostname: cblevins-5930k}
+  imagePullSecrets: [{name: harbor-creds}]
+  containers:
+    - name: probe
+      # Deployed gfx1100 v0.23 W4A16 runtime digest — the exact stack the
+      # decode ceiling was measured on (cached on this node by the canary).
+      image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+      imagePullPolicy: IfNotPresent
+      securityContext: {privileged: true}
+      command: ["/bin/bash", "-c", "echo PROBE_IDLE; sleep 7200"]
+      env:
+        - {name: HIP_VISIBLE_DEVICES, value: "0"}
+        - {name: ROCR_VISIBLE_DEVICES, value: "0"}
+        # No AMD_SERIALIZE_KERNEL / HIP_LAUNCH_BLOCKING: this is a perf probe.
+        - {name: PYTORCH_HIP_ALLOC_CONF, value: "garbage_collection_threshold:0.8,max_split_size_mb:256"}
+        - {name: VLLM_ROCM_USE_AITER, value: "0"}
+      resources:
+        requests: {cpu: "2", memory: 6Gi}
+        limits: {cpu: "6", memory: 12Gi}
+      volumeMounts:
+        - {name: scripts, mountPath: /scripts}
+        - {name: dshm, mountPath: /dev/shm}
+        - {name: kfd, mountPath: /dev/kfd}
+        - {name: dri, mountPath: /dev/dri}
+  volumes:
+    - {name: scripts, configMap: {name: gfx1100-unified-attn-decode-probe, defaultMode: 0755}}
+    - {name: dshm, emptyDir: {medium: Memory, sizeLimit: 2Gi}}
+    - {name: kfd, hostPath: {path: /dev/kfd}}
+    - {name: dri, hostPath: {path: /dev/dri}}
