@@ -177,7 +177,46 @@ build may already carry the fix.
 5. Vision (multimodal) intentionally deferred: `languageModelOnly: true` first; a vision-on
    variant is a later bonus lane (the 3090 stack runs vision + 125K on 24 GB, so it fits).
 
-## 8. Source index
+## 8. Slice-1 kill-test RESULT (2026-08-16): **PASS — riskiest assumption dead**
+
+`deploy/debug/qwen36-27b-clean-autoround-canary.yaml` served
+Intel/Qwen3.6-27B-int4-AutoRound coherently on the pinned vLLM 0.23 gfx1100
+runtime on cblevins-5930k: **6/6 greedy gauntlet PASS** (exact " Paris.",
+correct Fibonacci code, valid JSON extraction, 14-apples arithmetic, clean
+summaries; zero degenerate output). Weights loaded in 43.7 s with no skipped
+tensors; KV pool 46,811 tokens at the 8K/fp16 envelope; **eager single-stream
+8.3 tok/s** — the same eager floor as the fable lane (8.7), as predicted;
+throughput comes from slice 2 (graph mode + MTP).
+
+Blockers hit and solved (all encoded in the canary YAML):
+1. **auto-round → inc rejection**: vLLM 0.23 resolves `quant_method:
+   "auto-round"` to `inc` (Intel Neural Compressor) *before* honoring
+   `--quantization`, and ROCm rejects inc. `--quantization gptq` alone does
+   NOT fix it. FIX: `hfOverrides` rewrites `quantization_config` wholesale to
+   plain GPTQ form (bits 4, g128, sym, desc_act false) +
+   `modules_in_block_to_quantize` = exact INT4 census from the safetensors
+   index (attn q/k/v/o, mlp gate/up/down, linear_attn in_proj_qkv/in_proj_z/
+   out_proj; in_proj_a/b + conv1d + norms + lm_head are FP16). vLLM then logs
+   `Using RDNA3W4A16LinearKernel for AutoGPTQLinearMethod` — the native fast
+   kernel — plus the Triton/FLA GDN prefill kernel.
+2. **Flash-loader tmpfs**: 18 GB of shards vs 7.7 GB tmpfs budget on the 63Gi
+   node → `flashLoader.enabled: false` (wan21 posture).
+3. **Demand-window vs cold load**: the ~4-6 min cold load outlives the 2-min
+   demand window → the warm primary (gemma4-5930k) preempts an on-demand
+   start mid-load, and `minReplicas: 1` alone does not win the election back.
+   Qualification windows need `minReplicas: 1` + `gpu.forcePromotion: true`,
+   reverted afterward. Also: `litellm.enabled: false` parks a lane entirely
+   (never cold-started by name) — demand-only canaries need litellm enabled
+   with the unique alias.
+4. Serve the artifact's stock multimodal wrapper class with
+   `languageModelOnly: true` — do NOT force the text class (that was for
+   text-layout artifacts like fable's).
+
+Next: slice 2 — `enforceEager: false` graph qualification (expect ~30-45
+ tok/s), then MTP speculative (`qwen3_next_mtp`); slice 3 — context ladder
+32K→128K with fp8 KV + needle bench.
+
+## 9. Source index
 
 - Qwen3.6-27B release blog + full benchmark table: https://qwen.ai/blog?id=qwen3.6-27b
 - Model card: https://huggingface.co/Qwen/Qwen3.6-27B (262K native, YaRN beyond; vLLM ≥0.19)

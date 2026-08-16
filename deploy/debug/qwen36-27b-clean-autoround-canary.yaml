@@ -32,6 +32,8 @@ metadata:
     flexinfer.ai/artifact-source: HF://Intel/Qwen3.6-27B-int4-AutoRound
     flexinfer.ai/purpose: "Slice-1 kill-test — Qwen3.6-27B dense AutoRound INT4 coherence on gfx1100 (workhorse quality uplift)"
     flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
+    flexinfer.ai/promotion-state: slice1-coherence-gauntlet-passed
+    flexinfer.ai/promotion-evidence: "2026-08-16 6/6 greedy gauntlet PASS (exact Paris, fib code, JSON, 14-apples); RDNA3W4A16LinearKernel active; weights load 43.7s no skips; KV 46,811 tok @8K fp16; eager single-stream 8.3 tok/s (= fable eager floor; graph mode is slice 2)"
 spec:
   backend: vllm
   # Pinned vLLM 0.23 gfx1100 runtime with the native RDNA3 W4A16 HIP operator —
@@ -61,12 +63,11 @@ spec:
     vramEstimateMB: 22000
   serverless:
     enabled: true
-    # QUALIFICATION WINDOW POSTURE: the ~6-min cold load (19 GB PVC read +
-    # FLA JIT) outlives the 2-minute demand window, so an on-demand start gets
-    # preempted mid-load by the warm primary. minReplicas=1 makes this lane
-    # the warm-pinned leader for the window (the !563 election rule). Set back
-    # to 0 when the gauntlet finishes.
-    minReplicas: 1
+    # NOTE for future qualification windows: an on-demand start of this lane is
+    # preempted mid-load by the warm primary (cold load ~4-6 min > 2-min demand
+    # window; minReplicas=1 alone does not win the election back). Use
+    # minReplicas=1 + gpu.forcePromotion=true for the window, then revert.
+    minReplicas: 0
     # Long enough to run the qualification gauntlet between probes without
     # self-reaping (fable's 1m lesson), short enough to hand the card back.
     idleTimeout: 15m
