@@ -1,0 +1,99 @@
+# Muse Glimmer 30B llamacpp canary — Mills MCP/tool-orchestration specialist.
+#
+# Research: .loom/10-research-gfx1100-model-quality-2026-08-15.md (follow-up d).
+# Why: Meta Muse Glimmer 30B (2026-08-10, Apache 2.0, dense, multimodal,
+# 131K ctx) leads Qwen3.6-27B decisively on MCP Atlas (75.5 vs 62.5), Gaia2,
+# and DeepSearch QA while losing on SWE-bench — a candidate tool-runner/judge
+# lane beside the 27B coding workhorse, NOT a workhorse replacement.
+#
+# Serving path: llama.cpp (arch merged 2026-08-10, PR #26841, needs b10353+;
+# this lane pins the in-house rocm-gfx1100 build at release b10453). Official
+# Meta GGUF: the K-Quant-17GB file is Meta's explicitly-targeted 24GB-card
+# quant. Text-only v1: no mmproj (vision), no DFlash drafter — add both only
+# after the coherence + tool-call gauntlet passes.
+#
+# Qualification posture notes (learned on the 27B canary, same host):
+#   - cache stage downloads ONLY ggufFile (controller adds it to
+#     HF_ALLOW_PATTERNS) — the repo's other variants stay remote.
+#   - a cold start longer than the 2-min demand window gets preempted by the
+#     warm primary; use minReplicas=1 + gpu.forcePromotion=true for the
+#     qualification window, then revert to the demand-only posture below.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: muse-glimmer-30b-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: meta-models/Muse-Glimmer-30B
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://meta-models/Muse-Glimmer-30B-GGUF (muse-glimmer-30B-kquant-17gb.gguf)
+    flexinfer.ai/purpose: "Canary — Glimmer 30B tool/MCP lane on gfx1100 via llama.cpp b10453"
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
+    flexinfer.ai/promotion-state: canary-gauntlet-passed-tool-lane-candidate
+    flexinfer.ai/promotion-evidence: "2026-08-16 6/6 gauntlet PASS on llama.cpp b10453 gfx1100: coherent (Paris/fib/14-apples/JSON), tool_calls get_weather{city:Paris} exact, no-tool restraint clean, 30.5 tok/s decode; cache stage 4.5m, boot 2.5m. Known quirk: chat content echoes prompt after answer (reasoning channel inline) — tune reasoning-format before chat use; tool path clean."
+spec:
+  backend: llamacpp
+  # In-house llama.cpp ROCm gfx1100 build at release b10453 (>= b10353 where
+  # the muse-glimmer arch, ATEM tool parser, and DFlash support landed).
+  image: registry.harbor.lan/library/llamacpp:rocm-gfx1100-b10453
+  source: HF://meta-models/Muse-Glimmer-30B-GGUF
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    # Single 16.76 GB GGUF + headroom.
+    size: 24Gi
+    flashLoader:
+      enabled: false
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # Borrow-idle canary posture: may take an idle card on explicit demand;
+    # VACE (600) stays authoritative for video.
+    priority: 500
+    vramEstimateMB: 21000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 15m
+    coldStartTimeout: 25m
+  config:
+    warmPolicy: ondemand
+    # Meta's 24GB-card target quant (Q4_K_M-class).
+    ggufFile: muse-glimmer-30B-kquant-17gb.gguf
+    # 32K qualification envelope. Model default is 131,072 (262K max) —
+    # raise only after coherence + KV headroom are proven. Local:global 3:1
+    # sliding-window attention keeps KV small, but qualify before stretching.
+    contextSize: 32768
+    nGPULayers: 999
+    batchSize: 2048
+    ubatchSize: 512
+    # One slot with the full context (the default 4 slots SPLIT the context
+    # pool and large prompts fail — llama.cpp server semantics).
+    parallel: 1
+    threads: 12
+    flashAttention: true
+    # jinja chat template is REQUIRED for tool calling (ATEM parser).
+    jinja: true
+    # f16 KV on purpose for the quality canary — no q4_0 cache quant.
+    metrics: true
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 12Gi
+    limits:
+      cpu: "8"
+      memory: 28Gi
+  # Demand-only, unroutable-by-role: unique alias only.
+  serviceLabels: []
+  litellm:
+    enabled: true
+    servedModelName: muse-glimmer-30b-canary
+    aliases:
+      - muse-glimmer-30b-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

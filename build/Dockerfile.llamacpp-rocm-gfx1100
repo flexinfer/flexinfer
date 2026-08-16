@@ -22,8 +22,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     rocblas-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Clone llama.cpp at pinned release
-ARG LLAMACPP_VERSION=b8173
+# Clone llama.cpp at pinned release.
+# b10453 (2026-08): includes muse-glimmer arch support (PR #26841, merged
+# 2026-08-10, first shipped in b10353) with the ATEM tool-call parser, the
+# Glimmer vision projector, and DFlash speculative decoding.
+ARG LLAMACPP_VERSION=b10453
 WORKDIR /opt/src
 RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 

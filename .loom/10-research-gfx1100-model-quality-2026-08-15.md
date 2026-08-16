@@ -329,8 +329,33 @@ now owns the base `workhorse` / `loom-workhorse` / `mills-council` /
 (a) runtime RDNA3 decode-attention split-K work — spawned as its own task;
 (b) optional 7900xtx sister lane + 262K stretch after the decode fix;
 (c) MTP revisit (needs FP16-draft artifact or runtime fix + PVC config patch);
-(d) Muse Glimmer llamacpp canary (needs llama.cpp b10353+ image) — untouched
-    this cycle.
+(d) Muse Glimmer llamacpp canary — **DONE 2026-08-16, gauntlet PASS**, see 8e.
+
+## 8e. Muse Glimmer canary RESULT (2026-08-16): **6/6 PASS — tool-lane candidate qualified**
+
+Built `registry.harbor.lan/library/llamacpp:rocm-gfx1100-b10453` (llama.cpp
+release b10453 ≥ b10353 where the muse-glimmer arch + ATEM tool parser +
+DFlash landed; Dockerfile default bumped from b8173) off-CI via
+`docker --context 7900xtx`. Canary `deploy/debug/muse-glimmer-30b-canary.yaml`
+serves Meta's official K-Quant-17GB GGUF (16.76 GB; the controller's
+`ggufFile` doubles as the HF allow-pattern so only that file stages),
+text-only, 32K envelope, f16 KV, on cblevins-5930k.
+
+Results: coherence 4/4 (Paris, correct iterative fib, 14 apples, exact JSON);
+**tool call exact** (`get_weather {"city":"Paris"}` via OpenAI tools API +
+--jinja/ATEM); **no-tool restraint clean** ("4", zero hallucinated calls);
+**30.5 tok/s** greedy decode. Cache stage 4.5 min, boot 2.5 min.
+
+Known quirk: chat `content` echoes the prompt and inline deliberation after
+the answer — Glimmer's reasoning channel isn't split by the current server
+config. Tool-calling output is unaffected (the lane's purpose). Before any
+chat-facing use, tune llama.cpp reasoning-format/template handling.
+
+Next steps if promoted to a real Mills tool/judge lane: reasoning-channel
+handling, DFlash drafter (`--spec-type draft-dflash`, official
+`dflash-kquant.gguf`), optional vision (`mmproj-kquant.gguf`), context
+stretch past 32K, and a role alias (e.g. `mills-tools` / `judge`) — deferred
+for operator decision.
 
 ## 8e. Decode-ceiling RESOLUTION (2026-08-16): **backend misattribution — fix is one config line, 9-16x**
 
