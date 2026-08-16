@@ -1,0 +1,99 @@
+# Muse Glimmer 30B — the Mills TOOL/JUDGE lane (llama.cpp, gfx1100).
+#
+# Qualification: .loom/10-research-gfx1100-model-quality-2026-08-15.md §8e +
+# reasoning-format re-gauntlet (2026-08-16). Role rationale: Glimmer leads
+# Qwen3.6-27B decisively on MCP Atlas (75.5 vs 62.5), Gaia2, and DeepSearch QA
+# — it complements the qwen36-27b-autoround-workhorse coding lane as the
+# tool-orchestration / LLM-as-judge specialist. It is NOT a coding workhorse
+# (SWE-bench V 65.9 vs 77.2).
+#
+# Qualified envelope: official Meta K-Quant-17GB GGUF, text-only, 32K,
+# f16 KV, llama.cpp b10453 (muse-glimmer arch + ATEM tool parser), jinja
+# template ON (required for OpenAI tool_calls), reasoning channel split via
+# --reasoning-format auto. Evidence: 6/6 gauntlet incl. exact
+# get_weather{city:Paris} tool call and clean no-tool restraint; 30.5 tok/s.
+#
+# Deferred (revisit when needed):
+#   - DFlash speculative drafter: needs a --model-draft passthrough in
+#     backend/llamacpp.go (only specType/draftMax/draftMin exist today).
+#   - Vision (mmproj-kquant.gguf) via config.mmproj.
+#   - Context stretch past 32K (131,072 default / 262,144 max).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: muse-glimmer-30b-tools
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: meta-models/Muse-Glimmer-30B
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://meta-models/Muse-Glimmer-30B-GGUF (muse-glimmer-30B-kquant-17gb.gguf)
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
+    flexinfer.ai/promotion-state: promoted-tool-lane-32k
+    flexinfer.ai/promotion-evidence: "canary muse-glimmer-30b-canary 2026-08-16: 6/6 gauntlet on llama.cpp b10453 gfx1100 (exact tool_calls, clean restraint, 30.5 tok/s); reasoning channel split re-verified with reasoningFormat auto"
+spec:
+  backend: llamacpp
+  image: registry.harbor.lan/library/llamacpp:rocm-gfx1100-b10453
+  source: HF://meta-models/Muse-Glimmer-30B-GGUF
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 24Gi
+    flashLoader:
+      enabled: false
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # Peer of the qwen36-27b workhorse (also 500): explicit demand borrows an
+    # idle card; neither statically parks the other; VACE (600) stays
+    # authoritative for video.
+    priority: 500
+    vramEstimateMB: 21000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    warmPolicy: ondemand
+    ggufFile: muse-glimmer-30B-kquant-17gb.gguf
+    contextSize: 32768
+    nGPULayers: 999
+    batchSize: 2048
+    ubatchSize: 512
+    # One slot owns the full context pool (llama.cpp splits it per slot).
+    parallel: 1
+    threads: 12
+    flashAttention: true
+    # jinja is REQUIRED for tool calling (ATEM parser).
+    jinja: true
+    # Split Glimmer's reasoning channel into reasoning_content instead of
+    # rendering it inline after the answer.
+    reasoningFormat: auto
+    metrics: true
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 12Gi
+    limits:
+      cpu: "8"
+      memory: 28Gi
+  serviceLabels:
+    - glimmer
+    - muse-glimmer
+    - mills-tools
+    - judge
+  litellm:
+    enabled: true
+    servedModelName: muse-glimmer-30b-tools
+    aliases:
+      - glimmer
+      - muse-glimmer
+      - mills-tools
+      - judge
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
