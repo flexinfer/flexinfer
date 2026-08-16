@@ -23,7 +23,7 @@ spec:
         app: codebase-answer
         app.kubernetes.io/part-of: flexinfer
       annotations:
-        flexinfer.ai/config-rev: "2026-07-19-serverless-chat-readiness"
+        flexinfer.ai/config-rev: "2026-08-16-retrieve-only-and-chat-fallback"
     spec:
       containers:
         - name: rag
@@ -45,6 +45,12 @@ spec:
               # proxy cold-starts a member when the fleet intentionally parks
               # both at zero replicas.
               value: "loom-workhorse"
+            - name: CHAT_FALLBACK_MODEL
+              # Degraded-mode synthesis on the gfx906 retrieval plane itself:
+              # when the workhorse lane is preempted/contended, a small llamacpp
+              # lane on radeonvii still produces a cited answer without any
+              # big-GPU dependency. retrieve_only requests bypass chat entirely.
+              value: "gemma4-e4b-radeonvii"
             - name: QDRANT_URL
               value: "http://192.168.50.176:6333"
             - name: DEFAULT_COLLECTION

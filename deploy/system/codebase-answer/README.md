@@ -29,7 +29,8 @@ CPU-only orchestration (no GPU, no NFS).
 
 ```
 POST /v1/answer
-  {"query": "...", "collection"?: "...", "top_n"?: 24, "top_k"?: 6}
+  {"query": "...", "collection"?: "...", "top_n"?: 24, "top_k"?: 6,
+   "max_per_path"?: 0, "retrieve_only"?: false}
 ->
   {"answer": "...",
    "citations": [{"path": "pkg/...", "score": 0.79}, ...],
@@ -38,6 +39,13 @@ POST /v1/answer
 GET /readyz -> 200 when BGE embed/rerank and Qdrant are Ready and `loom-workhorse` is advertised
 GET /livez  -> 200 when the local HTTP process is alive
 ```
+
+With `"retrieve_only": true` the chat stage is skipped entirely: `answer` and
+`model` are `null` and each citation additionally carries its chunk `"text"`.
+This is the **agent fast path** — the caller (an agent with its own LLM)
+synthesizes locally, the request stays sub-second, and no chat GPU lane is
+touched. The same body works through the proxy front door
+(`flexinfer-proxy /v1/rag`, which rewrites to this service's `/v1/answer`).
 
 ## Configuration (env on the container)
 
@@ -52,6 +60,8 @@ GET /livez  -> 200 when the local HTTP process is alive
 | `DEFAULT_COLLECTION` | `codebase_memory_bge_v1` | embedded-codebase index |
 | `RETR_N` / `RETR_K` | `24` / `6` | cosine candidates / reranked into context |
 | `MAX_PER_PATH` | `0` | per-file cap on chunks in the top-K context; `0` = off (Slice 3.1) |
+| `CHAT_TIMEOUT` / `CHAT_RETRIES` | `600` / `1` | one long chat attempt: a serverless chat request is held in the proxy cold-start queue, so client retries abandon the slot and re-queue from the back |
+| `CHAT_FALLBACK_MODEL` | `""` (deployment sets `gemma4-e4b-radeonvii`) | one degraded-mode attempt on a small gfx906 llamacpp lane when the workhorse lane fails, so a cited answer never depends on a big-GPU lane |
 
 `POST /v1/answer` also accepts an optional `"max_per_path"` to override the env per
 request.

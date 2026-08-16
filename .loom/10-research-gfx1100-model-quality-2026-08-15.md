@@ -357,6 +357,61 @@ handling, DFlash drafter (`--spec-type draft-dflash`, official
 stretch past 32K, and a role alias (e.g. `mills-tools` / `judge`) — deferred
 for operator decision.
 
+## 8e. Decode-ceiling RESOLUTION (2026-08-16): **backend misattribution — fix is one config line, 9-16x**
+
+The §8c ceiling was attributed to the unified Triton attention kernel. It is
+not that kernel. The deployed lanes never ran it: on Radeon, vLLM's backend
+priority selects **ROCM_ATTN** by default (`rocm.py`:
+`Overriding with ROCM_ATTN out of potential backends: ['ROCM_ATTN',
+'TRITON_ATTN']` — visible in every canary boot log), and ROCM_ATTN's decode
+path has **no KV-length parallelism** at all. The actual unified Triton kernel
+(TRITON_ATTN backend) has carried a 3D split-KV decode path (flash-decoding
+style, `NUM_PAR_SOFTMAX_SEGMENTS=16` + `reduce_segments`) since before v0.23,
+and its gate (pure-decode batch, `num_seqs <= 128//num_kv_heads`) passes for
+our single-stream decode shapes.
+
+**Kernel microbench** (`deploy/debug/gfx1100-unified-attn-decode-probe.yaml`,
+deployed v0.23 digest, 27B full-attn geometry 24q/4kv/hd256, 1-seq decode,
+per-layer):
+
+| ctx | 2D serialized | 3D split-KV (16 seg) | KV read |
+|---|---|---|---|
+| 30720 fp16 | 4.63 ms | 0.506 ms | 27 → 248 GB/s |
+| 61440 fp16 | — | 0.516 ms | 487 GB/s |
+| 30720 fp8 | 12.7 ms | 0.508 ms | 4.9 → 124 GB/s |
+| 61440 fp8 | — | 0.956 ms | 132 GB/s |
+
+16 segments already saturates at 60K (32/64 segments: no further gain). The
+fp8 dequant penalty is hidden by the split path to ~30K and costs 1.85x at
+60K — livable; no custom dequant work needed for current envelopes.
+
+**End-to-end canary validation** (`attentionBackend: TRITON_ATTN` on
+qwen36-27b-clean-autoround-canary, parked 64K/fp16/graph posture, 128-token
+greedy decode-at-context probe):
+
+| ctx | decode before | decode after | prefill after |
+|---|---|---|---|
+| 2K | ~25 tok/s | **41.7** | 1134 tok/s |
+| 30K | 4.0 | **36.3** (9.1x) | 543 |
+| 60K | 2.0 | **32.2** (16x) | 316 |
+
+Slope collapsed from 7.5 µs/ctx-token to ~0.12 µs (~60x). Boot log confirms
+`Using TRITON_ATTN backend (selected via --attention-backend)`.
+
+**Fleet rollout**: `config.attentionBackend: TRITON_ATTN` added to the six
+v0.23 gfx1100 qwen lanes (27B autoround workhorse, 27B fable, 9B RP x2,
+35B workhorse x2). Excluded: MTP/spec-decode lanes (verify-step qlen > 1
+fails the 3D gate — they'd fall back to the 2D unified path; separate
+follow-up), gemma4 lanes (different arch family, existing explicit
+overrides), gfx906 lanes (different image).
+
+**Upstream check (closes 8d follow-up (a) and slice-4 option 3)**: v0.24.0/v0.25.0/v0.26.0 diff of
+`triton_unified_attention.py` + `triton_attn.py` + `rocm.py` shows no RDNA3
+decode changes and the same ROCM_ATTN-first default — the already-built
+v0.26 image (`rocm-gfx1100-v026-native-w4a16`, harbor 2026-08-01) needs the
+same per-lane override when adopted. Triton-FA package (§8c option 2) is
+moot for decode: TRITON_ATTN suffices.
+
 ## 9. Source index
 
 - Qwen3.6-27B release blog + full benchmark table: https://qwen.ai/blog?id=qwen3.6-27b

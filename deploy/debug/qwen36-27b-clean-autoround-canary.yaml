@@ -32,8 +32,8 @@ metadata:
     flexinfer.ai/artifact-source: HF://Intel/Qwen3.6-27B-int4-AutoRound
     flexinfer.ai/purpose: "Slice-1 kill-test — Qwen3.6-27B dense AutoRound INT4 coherence on gfx1100 (workhorse quality uplift)"
     flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
-    flexinfer.ai/promotion-state: slice3-64k-coherent-decode-ceiling-mapped
-    flexinfer.ai/promotion-evidence: "slice1 2026-08-16: 6/6 gauntlet, RDNA3W4A16LinearKernel, eager 8.3 tok/s. slice2 2026-08-16: graph mode FULL_AND_PIECEWISE w/ qwen_gdn_attention_core in splitting_ops, compile 124.9s AOT-cached, 6/6 gauntlet, single-stream 39.0 tok/s (4.7x eager); MTP tested (33% pos0 accept, net 0) and disabled. slice3 2026-08-16: needle recall PASS 32K+64K; 128K fp8 boots (137K-token KV pool) but decode-at-context collapses linearly on unified Triton attn (4.0 tok/s @30K fp16 KV, 1.9 fp8); parked at 64K fp16 pending RDNA3 attention split-K work"
+    flexinfer.ai/promotion-state: slice3-resolved-triton-attn-split-kv
+    flexinfer.ai/promotion-evidence: "slice1 2026-08-16: 6/6 gauntlet, RDNA3W4A16LinearKernel, eager 8.3 tok/s. slice2 2026-08-16: graph mode FULL_AND_PIECEWISE w/ qwen_gdn_attention_core in splitting_ops, compile 124.9s AOT-cached, 6/6 gauntlet, single-stream 39.0 tok/s (4.7x eager); MTP tested (33% pos0 accept, net 0) and disabled. slice3 2026-08-16: needle recall PASS 32K+64K; 128K fp8 boots (137K-token KV pool) but decode-at-context collapses linearly on unified Triton attn (4.0 tok/s @30K fp16 KV, 1.9 fp8); parked at 64K fp16 pending RDNA3 attention split-K work. slice3-resolution 2026-08-16: ceiling was ROCM_ATTN default backend (no split-KV decode), not the unified Triton kernel; attentionBackend=TRITON_ATTN engages the 3D split-KV path: decode 41.7 tok/s @2K, 36.3 @30K (9.1x), 32.2 @60K (16x), prefill unregressed (research doc 8d)"
 spec:
   backend: vllm
   # Pinned vLLM 0.23 gfx1100 runtime with the native RDNA3 W4A16 HIP operator —
@@ -81,6 +81,13 @@ spec:
     # First activation must cover the 19 GB HF prefetch + cold vLLM load.
     coldStartTimeout: 25m
   config:
+    # RDNA3 long-context decode fix (2026-08-16): vLLM's ROCm default picks
+    # ROCM_ATTN, whose decode has no KV-length parallelism — single-stream
+    # decode collapses linearly with context (research doc 8c/8e fleet
+    # ceiling). TRITON_ATTN engages the unified-attention 3D split-KV decode:
+    # canary 36 tok/s @30K and 32 @60K vs 4.0/2.0 baseline (9-16x). Kernel
+    # evidence: deploy/debug/gfx1100-unified-attn-decode-probe.yaml.
+    attentionBackend: TRITON_ATTN
     warmPolicy: ondemand
     # vLLM 0.23 resolves quant_method "auto-round" to "inc" (Intel Neural
     # Compressor) BEFORE honoring --quantization, and ROCm rejects inc

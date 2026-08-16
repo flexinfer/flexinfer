@@ -41,6 +41,35 @@ spec:
             summary: "FlexInfer codebase index is stale"
             description: "No scheduled or manual codebase-reembed Job has completed successfully in over 30 hours. Check the Job logs and the Radeon VII embedding lane."
 
+        - alert: FlexInferCodebaseRepoMirrorStale
+          expr: |
+            (
+              time() - max(
+                kube_cronjob_status_last_successful_time{
+                  namespace="devbox", cronjob="devbox-repo-mirror"
+                }
+                or
+                kube_job_status_completion_time{
+                  namespace="devbox", job_name=~"devbox-repo-mirror.*"
+                }
+              ) > 108000
+            )
+            or on() (
+              absent(kube_cronjob_status_last_successful_time{
+                namespace="devbox", cronjob="devbox-repo-mirror"
+              })
+              and on()
+              absent(kube_job_status_completion_time{
+                namespace="devbox", job_name=~"devbox-repo-mirror.*"
+              })
+            )
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: "FlexInfer codebase index source mirror is stale"
+            description: "The devbox-repo-mirror CronJob (which refreshes the git trees that codebase-reembed indexes, including loom-core/loom under /workspace/mirror/services) has not succeeded in over 30 hours. Without it the nightly re-embed keeps 'succeeding' against a frozen tree and the RAG index silently drifts from git — the exact failure mode found on 2026-08-16."
+
         - alert: FlexInferCodebaseReembedFailed
           expr: |
             max_over_time(kube_job_status_failed{

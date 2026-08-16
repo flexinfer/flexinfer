@@ -161,8 +161,9 @@ class DeclarativeRouting(unittest.TestCase):
             deployment = fh.read()
         self.assertIn('value: "loom-workhorse"', deployment)
         self.assertNotIn('value: "qwen36-35b-mtp-uncensored-5930k"', deployment)
+        self.assertIn('value: "gemma4-e4b-radeonvii"', deployment)
         self.assertIn(
-            'flexinfer.ai/config-rev: "2026-07-19-serverless-chat-readiness"',
+            'flexinfer.ai/config-rev: "2026-08-16-retrieve-only-and-chat-fallback"',
             deployment,
         )
 
@@ -182,22 +183,118 @@ class DeclarativeRouting(unittest.TestCase):
 class GenerationMode(unittest.TestCase):
     def setUp(self):
         self._orig_do = rag._do
+        self._orig_fallback = rag.CHAT_FALLBACK_MODEL
 
     def tearDown(self):
         rag._do = self._orig_do
+        rag.CHAT_FALLBACK_MODEL = self._orig_fallback
 
     def test_chat_disables_reasoning_trace_in_answer_content(self):
         captured = {}
 
-        def fake_do(req, retries=3):
+        def fake_do(req, retries=3, timeout=None):
             captured.update(json.loads(req.data))
             return {"choices": [{"message": {"content": "final answer"}}]}
 
         rag._do = fake_do
-        answer = rag.chat("system", "question", 80)
+        answer, model_used = rag.chat("system", "question", 80)
 
         self.assertEqual(answer, "final answer")
+        self.assertEqual(model_used, rag.CHAT_MODEL)
         self.assertEqual(captured["chat_template_kwargs"], {"enable_thinking": False})
+
+    def test_chat_uses_single_long_attempt_not_retry_ladder(self):
+        captured = {}
+
+        def fake_do(req, retries=3, timeout=None):
+            captured["retries"] = retries
+            captured["timeout"] = timeout
+            return {"choices": [{"message": {"content": "ok"}}]}
+
+        rag._do = fake_do
+        rag.chat("system", "question", 80)
+
+        # A serverless chat request is held in the proxy cold-start queue;
+        # client-side retries abandon the queue slot and re-queue from the
+        # back, so chat must ride ONE attempt with the long chat deadline.
+        self.assertEqual(captured["retries"], rag.CHAT_RETRIES)
+        self.assertEqual(captured["timeout"], rag.CHAT_TIMEOUT)
+
+    def test_chat_falls_back_to_secondary_model_when_primary_fails(self):
+        rag.CHAT_FALLBACK_MODEL = "small-fallback"
+        calls = []
+
+        def fake_do(req, retries=3, timeout=None):
+            body = json.loads(req.data)
+            calls.append(body["model"])
+            if body["model"] == rag.CHAT_MODEL:
+                raise RuntimeError("primary lane preempted")
+            return {"choices": [{"message": {"content": "degraded answer"}}]}
+
+        rag._do = fake_do
+        answer, model_used = rag.chat("system", "question", 80)
+
+        self.assertEqual(calls, [rag.CHAT_MODEL, "small-fallback"])
+        self.assertEqual(answer, "degraded answer")
+        self.assertEqual(model_used, "small-fallback")
+
+    def test_chat_raises_when_primary_fails_and_no_fallback_configured(self):
+        rag.CHAT_FALLBACK_MODEL = ""
+
+        def fake_do(req, retries=3, timeout=None):
+            raise RuntimeError("primary lane preempted")
+
+        rag._do = fake_do
+        with self.assertRaises(RuntimeError):
+            rag.chat("system", "question", 80)
+
+
+class RetrieveOnly(unittest.TestCase):
+    def setUp(self):
+        self._orig = {
+            name: getattr(rag, name)
+            for name in ("embed", "qdrant_search", "rerank", "chat")
+        }
+
+    def tearDown(self):
+        for name, fn in self._orig.items():
+            setattr(rag, name, fn)
+
+    def _install_retrieval(self):
+        rag.embed = lambda text: [0.0] * 4
+        rag.qdrant_search = lambda vector, collection, limit: [
+            {"payload": {"text": "chunk a", "path": "pkg/a.go"}, "score": 0.9},
+            {"payload": {"text": "chunk b", "path": "pkg/b.go"}, "score": 0.8},
+        ]
+        rag.rerank = lambda query, docs, top_n: [1, 0]
+
+    def test_retrieve_only_returns_chunk_text_and_skips_chat(self):
+        self._install_retrieval()
+
+        def exploding_chat(system, user, max_tokens):
+            raise AssertionError("retrieve_only must never reach the chat lane")
+
+        rag.chat = exploding_chat
+        out = rag.answer(
+            "q", "col", top_n=2, top_k=2, max_per_path=0, retrieve_only=True
+        )
+
+        self.assertIsNone(out["answer"])
+        self.assertIsNone(out["model"])
+        self.assertEqual(
+            [c["path"] for c in out["citations"]], ["pkg/b.go", "pkg/a.go"]
+        )
+        self.assertEqual([c["text"] for c in out["citations"]], ["chunk b", "chunk a"])
+
+    def test_full_answer_reports_model_actually_used(self):
+        self._install_retrieval()
+        rag.chat = lambda system, user, max_tokens: ("done", "fallback-model")
+        out = rag.answer("q", "col", top_n=2, top_k=2, max_per_path=0)
+
+        self.assertEqual(out["answer"], "done")
+        self.assertEqual(out["model"], "fallback-model")
+        # Non-retrieve_only responses keep the lean citation shape.
+        self.assertNotIn("text", out["citations"][0])
 
 
 if __name__ == "__main__":

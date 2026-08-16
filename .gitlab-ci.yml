@@ -6,6 +6,26 @@ include:
     file:
       - /k3s/ci/caches/gitlab-ci-cache.yml
 
+  # Fleet security baseline. This ADDS to, and does not duplicate, the
+  # hand-rolled `security` / `security-images` stages below — the two sets are
+  # disjoint:
+  #
+  #   from security.yml   Security/SAST (static analysis) and
+  #                       Security/Secret-Detection (committed credentials).
+  #                       FlexInfer had neither.
+  #   hand-rolled here    govulncheck, trivy_scan_deps (go.mod CVEs),
+  #                       sbom_generate, go_licenses_check, and the per-image
+  #                       trivy_scan_* jobs. The template provides none of
+  #                       these, so they stay.
+  #
+  # Both template jobs land in the `test` stage and are allow_failure by
+  # GitLab default, so they cannot gate build/promote/publish/benchmark.
+  # Uplift item w1-core-g1-security-scanning-includes.
+  - project: platform/gitops
+    ref: main
+    file:
+      - /ci/templates/security.yml
+
   - project: 'services/tech-radar'
     file: '/ci/radar.yml'
 
@@ -23,6 +43,32 @@ workflow:
       when: never
     - when: always
 
+# Stage set. The canonical fleet set (platform/gitops/ci/README.md) is
+# lint -> test -> build -> publish. FlexInfer runs four additional stages.
+# Each is a deliberate exception, not drift; recorded here so
+# platform/gitops/scripts/ci/ci_audit.py's KNOWN_EXTRA list stays honest
+# (uplift item w1-core-g3-stage-names).
+#
+#   promote          GPU runtime-image promotion (.gitlab/ci/runtime-publish.yml).
+#                    Runs after build and before publish so published manifests
+#                    only ever reference an already-promoted runtime base.
+#   security         Source-level scanning: govulncheck, trivy_scan_deps,
+#                    sbom_generate, go_licenses_check, go_mod_outdated. Kept out
+#                    of `test` so the scheduled security pipeline can run without
+#                    re-running the unit/envtest matrix on GPU-less runners.
+#   benchmark        Real inference benchmarks and the model-eval gauntlet.
+#                    Needs physical GPU runners and runs against the image that
+#                    publish just pushed, so it can fold into neither `test`
+#                    nor `build`.
+#   security-images  Trivy scans of the published OCI images. Must follow
+#                    `publish` — before it there is no image to scan.
+#
+# ci_audit.py already tolerates promote/security/security-images via
+# KNOWN_EXTRA. `benchmark` is NOT yet in that list and is currently reported as
+# `unknown-stages: ['benchmark']`. The fix belongs in platform/gitops (add
+# `benchmark` to KNOWN_EXTRA), not here: renaming or folding away this stage
+# would break the GPU benchmark pipeline. Tracked as a follow-up with the
+# platform/gitops owner.
 stages:
   - lint
   - test
@@ -80,10 +126,24 @@ variables:
   # upstream patch releases and govulncheck flags vulnerable stdlib builds.
   # 1.25.12 additionally patches GO-2026-5856 (crypto/tls) and GO-2026-4970 (os).
   # Bump promptly on Go security releases; Trivy/govulncheck will flag vulnerable stdlib builds.
-  GO_VERSION: "1.25.12"
+  GO_VERSION: "1.25.13"
   GO_IMAGE: "golang:${GO_VERSION}"
   ENVTEST_VERSION: "release-0.23"
   GOLANGCI_LINT_VERSION: "v2.10.1"
+  # NOTE (`latest` triage, w1-flexinfer-g4-latest-refs): this value is
+  # unpinned in name but frozen in fact, and should be pinned.
+  #   - it is interpolated into the `gotools-...` cache key below, so while it
+  #     reads "latest" the key never changes;
+  #   - `.go/bin/` is cached and the install is guarded by
+  #     `command -v govulncheck || go install ...@${GOVULNCHECK_VERSION}`.
+  # Net effect: govulncheck is frozen at whichever version first populated that
+  # cache key, and "latest" neither tracks upstream nor is reproducible.
+  # Pinning is safe — govulncheck fetches its vulnerability data at runtime
+  # from https://vuln.go.dev, so the pin freezes the tool, not the CVE feed.
+  # Not changed in this MR: `govulncheck` is allow_failure: false, so a tool
+  # bump can turn the pipeline red on a live platform and deserves its own MR
+  # where CI can be watched. Target pin: "v1.7.0" (released 2026-08-13,
+  # verified against proxy.golang.org).
   GOVULNCHECK_VERSION: "latest"
   GO_LICENSES_VERSION: "v1.6.0"
   # Disable CGO for static binaries where possible
@@ -100,8 +160,14 @@ variables:
   DOCKER_HOST: ""
   # Set to "1" to additionally push OCI images to the GitLab Container Registry.
   PUBLISH_GITLAB_IMAGES: "0"
-  # Default: avoid building + pushing duplicate ":latest" tags during publish
+  # Default: avoid building + pushing duplicate `latest` tags during publish
   # (faster and keeps GitOps pinned to commit SHAs).
+  # Policy note: when set to "1" the `latest` tags are pushed only on master
+  # and only alongside the immutable :${CI_COMMIT_SHORT_SHA} and :${BUILD_TS}
+  # tags, which is the one form platform/gitops/ci/README.md permits — an
+  # ADDITIONAL convenience tag on the default branch. Nothing consumes
+  # `latest`: Flux ImagePolicy pins `^[0-9]{8}-[0-9]{6}$` (the BUILD_TS tag)
+  # and cluster CD tracks ":master".
   PUBLISH_LATEST_TAGS: "0"
   # Optional: OCI repo for Helm chart publishing (example: oci://registry.harbor.lan/flexinfer-charts)
   HELM_OCI_REPO: ""
@@ -654,6 +720,11 @@ publish:
         flash_loader_tags="${flash_loader_tags} ${REGISTRY}/flexinfer-flash-loader:master ${REGISTRY}/flexinfer-flash-loader:${BUILD_TS}"
       fi
 
+      # IN POLICY (platform/gitops/ci/README.md, `latest` section): these are
+      # ADDITIONAL convenience tags. The guard requires the default branch, and
+      # each *_tags variable already carries the immutable :${CI_COMMIT_SHORT_SHA}
+      # tag (set above) plus :${BUILD_TS}, so `latest` is never the only
+      # published tag and never the tag anything deploys from.
       if [ "${PUBLISH_LATEST_TAGS}" = "1" ] && [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
         controller_tags="${controller_tags} ${REGISTRY}/flexinfer-controller:latest"
         agent_tags="${agent_tags} ${REGISTRY}/flexinfer-agent:latest"
@@ -671,6 +742,13 @@ publish:
         proxy_tags="${proxy_tags} ${CI_REGISTRY_IMAGE}/flexinfer-proxy:${CI_COMMIT_SHORT_SHA}"
         flash_loader_tags="${flash_loader_tags} ${CI_REGISTRY_IMAGE}/flexinfer-flash-loader:${CI_COMMIT_SHORT_SHA}"
         model_tools_tags="${model_tools_tags} ${CI_REGISTRY_IMAGE}/model-tools:${CI_COMMIT_SHORT_SHA}"
+        # IN POLICY: additional convenience tag, default branch only, pushed
+        # alongside the immutable :${CI_COMMIT_SHORT_SHA} tag set just above.
+        # This whole block is off by default (PUBLISH_GITLAB_IMAGES=0); the
+        # GitLab registry is a mirror, Harbor is the registry of record.
+        # Known asymmetry (cosmetic, not a policy violation): only the
+        # controller gets the GitLab `latest` tag while all seven images get
+        # the SHA tag, and this branch does not honour PUBLISH_LATEST_TAGS.
         if [ "${CI_COMMIT_BRANCH:-}" = "master" ]; then
           controller_tags="${controller_tags} ${CI_REGISTRY_IMAGE}/flexinfer-controller:latest"
         fi
@@ -1173,6 +1251,21 @@ build_quantizer_gptq_rocm:
 
 # --- Diffusers Backend Images ---
 # OpenAI-compatible image generation API for AMD/NVIDIA GPUs
+#
+# `latest` triage (w1-flexinfer-g4-latest-refs) — OUT OF POLICY, deferred.
+# The --output below pushes `diffusers-api:rocm-latest` next to the immutable
+# `rocm-${CI_COMMIT_SHORT_SHA}` tag, which would be in policy, except that this
+# job's only rule is a bare `when: manual` with no branch condition: a manual
+# run from any feature branch overwrites the shared floating `rocm-latest` tag.
+# Policy allows the convenience tag on the DEFAULT BRANCH only.
+# Not fixed here because the tag list is embedded in a single buildctl
+# --output string (BuildKit v0.12 takes one --output and treats commas as
+# option delimiters), so gating it needs the tag set restructured into shell
+# logic rather than a rule tweak — a real change to a GPU image build.
+# The sibling publish_diffusers_rocm_gfx1100 job below already shows the
+# correct shape: branch-gated rules plus a non-`latest` floating tag.
+# Follow-up: either branch-gate this job or rename the floating tag to
+# `rocm-master`, matching the sibling.
 publish_diffusers_rocm:
   stage: publish
   image: registry.harbor.lan/library/buildkit:v0.12.5
@@ -2154,6 +2247,11 @@ go_mod_outdated:
     - export GOPATH=${CI_PROJECT_DIR}/.go
     - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
     - export PATH=$PATH:$GOPATH/bin
+    # `latest` triage (w1-flexinfer-g4-latest-refs): unpinned tool install, but
+    # not an image reference and not a policy violation under criterion 37.
+    # Left unpinned deliberately — this job is schedule-only, informational and
+    # allow_failure: true, so a surprise upstream release cannot affect any
+    # pipeline outcome. Pin it if it ever becomes blocking.
     - go install github.com/psampaz/go-mod-outdated@latest
   script:
     - echo "Checking for outdated Go dependencies..."
@@ -2317,13 +2415,24 @@ trivy_scan_nightly:
       echo "=== Nightly Security Scan ==="
       echo "Scanning all FlexInfer images..."
 
+      # Scan the ":master" tags, NOT `latest`.
+      #
+      # `latest` is only pushed when PUBLISH_LATEST_TAGS=1, which defaults to
+      # "0" — so these tags are stale at best and absent at worst, and this
+      # nightly scan was not looking at anything the cluster runs. ":master" is
+      # pushed unconditionally by the publish job on every master build and is
+      # the same image content Flux pins via the ${BUILD_TS} timestamp tag
+      # (ImagePolicy filterTags `^[0-9]{8}-[0-9]{6}$`), so it is the closest
+      # stable handle on "what production is actually running".
+      # Fixes the out-of-policy unpinned consumption flagged by
+      # w1-flexinfer-g4-latest-refs.
       IMAGES="
-        ${REGISTRY}/flexinfer-controller:latest
-        ${REGISTRY}/flexinfer-agent:latest
-        ${REGISTRY}/flexinfer-proxy:latest
-        ${REGISTRY}/flexinfer-scheduler:latest
-        ${REGISTRY}/flexinfer-bench:latest
-        ${REGISTRY}/flexinfer-flash-loader:latest
+        ${REGISTRY}/flexinfer-controller:master
+        ${REGISTRY}/flexinfer-agent:master
+        ${REGISTRY}/flexinfer-proxy:master
+        ${REGISTRY}/flexinfer-scheduler:master
+        ${REGISTRY}/flexinfer-bench:master
+        ${REGISTRY}/flexinfer-flash-loader:master
       "
 
       all_passed=true
