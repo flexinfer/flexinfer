@@ -33,6 +33,13 @@ spec:
       hostPath: /var/lib/flexinfer/compile-cache
       sizeLimit: 4Gi
   config:
+    # RDNA3 long-context decode fix (2026-08-16): vLLM's ROCm default picks
+    # ROCM_ATTN, whose decode has no KV-length parallelism — single-stream
+    # decode collapses linearly with context (research doc 8c/8e fleet
+    # ceiling). TRITON_ATTN engages the unified-attention 3D split-KV decode:
+    # canary 36 tok/s @30K and 32 @60K vs 4.0/2.0 baseline (9-16x). Kernel
+    # evidence: deploy/debug/gfx1100-unified-attn-decode-probe.yaml.
+    attentionBackend: TRITON_ATTN
     dedicatedDeployment: true
     quantization: gptq
     dtype: half
