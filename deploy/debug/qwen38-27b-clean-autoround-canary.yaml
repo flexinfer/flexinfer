@@ -99,13 +99,16 @@ spec:
     languageModelOnly: true
     # 3.6-qualified envelope, adopted as the parity target: 64K, fp16 KV.
     # Native context is 262144 — no RoPE forcing needed at 64K.
-    maxModelLen: 65536
+    # Context-push qualification (2026-08-16): 128K envelope. fp8 KV pool on
+    # this geometry is ~140K tokens at util 0.94 (fp16 was 70,055) — one full
+    # 131072 request fits. Native 262144, so no RoPE forcing anywhere.
+    maxModelLen: 131072
     maxNumSeqs: 1
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
     schedulerReserveFullISL: true
     gpuMemoryUtilization: "0.94"
-    kvCacheDtype: auto
+    kvCacheDtype: fp8_e4m3
     calculateKvScales: false
     # Slice 1 (eager) PASSED 2026-08-16: 6/6 gauntlet, RDNA3W4A16LinearKernel,
     # 16.77 GiB weights / 32.9 s load, KV pool 70,055 tok @64K, eager ~7 tok/s.
