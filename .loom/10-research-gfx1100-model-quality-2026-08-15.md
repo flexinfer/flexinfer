@@ -387,6 +387,60 @@ v0.26 image (`rocm-gfx1100-v026-native-w4a16`, harbor 2026-08-01) needs the
 same per-lane override when adopted. Triton-FA package (§8c option 2) is
 moot for decode: TRITON_ATTN suffices.
 
+## 8f. MTP/spec-decode follow-up (2026-08-16): **TRITON_ATTN wins at verify qlen 2-4 too — flip the MTP lanes**
+
+The §8e fleet flip excluded the MTP lanes because spec-decode verify steps
+(qlen 2 with `num_speculative_tokens: 1`) fail the unified kernel's 3D
+split-KV gate (`max_seqlen_q > 1` → 2D fallback). Open question: does
+TRITON_ATTN's 2D path still beat ROCM_ATTN at qlen 2-4?
+
+**What ROCM_ATTN actually runs at qlen > 1** (deployed v0.23 source,
+`chunked_prefill_paged_decode.py`): NOT the serialized paged-2D kernel —
+it branches at `max_query_len > 1` into `context_attention_fwd` (the
+prefix-prefill Triton kernel), grid = (1 seq, num_q_heads, 1 q-block).
+So the verify-step matchup is context_attention_fwd (16-24 WGs) vs
+kernel_unified_attention_2d ((qlen//2+1) x num_kv_heads = 4-12 WGs). Grid
+arithmetic favors ROCM; measurement does not — the unified 2D kernel's
+per-WG walk is far more efficient.
+
+**Probe** (`deploy/debug/gfx1100-unified-attn-decode-probe.yaml` v2: qlen
+sweep + rocm arm + SDPA cross-check, all arms max_abs_diff <= 1e-4;
+per-layer med ms on the deployed v0.23 digest beside the warm lane):
+
+35B-A3B geometry (16q/2kv/hd256 — both MTP lanes), fp8 KV (as served):
+
+| ctx | qlen1 ROCM | qlen1 TRITON(3D) | qlen2 ROCM | qlen2 TRITON(2D) | verify win |
+|---|---|---|---|---|---|
+| 2K | 0.77 | 0.27 | 2.56 | 0.97 | 2.6x |
+| 8K | 2.27 | 0.28 | 9.63 | 3.39 | 2.8x |
+| 16K | 4.45 | 0.34 | 19.1 | 6.72 | 2.8x |
+| 30K | 8.17 | 0.45 | 35.7 | 12.6 | 2.8x |
+| 60K | 16.5 | 0.78 | 58.4 | 24.1 | 2.4x |
+
+qlen4 ≈ qlen2 on both arms (same q-block count). fp16 shows the same
+shape (TRITON qlen2 win 3.5-4.9x; qlen1 3D win up to 15x). 27B geometry
+(24q/4kv) cross-check: TRITON qlen2/4 win 2.2-4.3x. **TRITON_ATTN wins
+every cell — both MTP-relevant qlens, both dtypes, both geometries, all
+contexts.** The draft-side and non-spec decode (qlen 1) additionally gets
+the full 3D split-KV win (10-21x fp8).
+
+**Decision**: flip `qwen35-35b-clean-mtp-32k` (v0.23 plugin runtime) via
+`spec.config.attentionBackend: TRITON_ATTN`. Expected MTP-lane effect at
+30K: verify step ~357→126 ms model-level (10 full-attn layers), plus
+draft decode collapse — roughly 2.8x faster steady-state decode at deep
+context, ~2.6x at 2K.
+
+`qwen36-35b-mtp-uncensored-5930k` runs the **vllm0.19.1** image, not the
+v0.23 stack the probe measured — verified against that image's source
+before deciding (see below).
+
+**Upstream-gate patch idea** (from the follow-up): the win at qlen 1 (3D)
+vs qlen 2 (2D) is still ~28x per layer at 30K fp8 — a 3D path that
+accepted small qlen would collapse the verify step to ~1ms class. Worth
+an upstream issue/patch eventually, but NOT needed for the flip decision
+(TRITON already wins 2D-vs-ROCM), and the 2D verify cost is amortized
+over 1+accepted tokens per step. Deferred.
+
 ## 9. Source index
 
 - Qwen3.6-27B release blog + full benchmark table: https://qwen.ai/blog?id=qwen3.6-27b
