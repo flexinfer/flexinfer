@@ -30,6 +30,10 @@ spec:
         flexinfer.ai/purpose: idle-batch
     spec:
       backoffLimit: 1
+      # Full 4-repo pass takes ~30 min at ~28 emb/s; kill anything that runs
+      # past 2h so a wedged run can't hold the Forbid concurrency lock and
+      # silently skip every following night.
+      activeDeadlineSeconds: 7200
       ttlSecondsAfterFinished: 86400
       template:
         metadata:
@@ -60,13 +64,17 @@ spec:
                 # loom-core keeps its established collection (codebase_memory_bge_v1)
                 # so existing read-path consumers are unaffected; loom/flexinfer/flexdeck
                 # each land in their own collection. Callers pick a repo via the
-                # /v1/answer `collection` field. flexinfer + flexdeck are kept present
-                # on the devbox-ws NFS export by the platform/gitops devbox-repo-mirror
+                # /v1/answer `collection` field. All four repos are kept fresh on the
+                # devbox-ws NFS export by the platform/gitops devbox-repo-mirror
                 # CronJob (k3s/devbox/repo-mirror.yaml), which clones them from gitlab-vm
-                # ahead of this job's window. A missing path is skipped with a WARN
-                # (never fatal), so this list is safe even if the mirror lags.
+                # ahead of this job's window. loom-core + loom are read from the
+                # job-owned /workspace/mirror/services root (NOT /workspace/services,
+                # whose loom/loom-core trees are stale hand-synced operator copies —
+                # they had drifted >6 weeks behind git main by 2026-08-16). A missing
+                # path is skipped with a WARN (never fatal), so this list is safe even
+                # if the mirror lags.
                 - name: REPOS
-                  value: "loom-core=/workspace/services/loom-core=codebase_memory_bge_v1;loom=/workspace/services/loom=codebase_memory_bge_loom_v1;flexinfer=/workspace/services/flexinfer=codebase_memory_bge_flexinfer_v1;flexdeck=/workspace/services/flexdeck=codebase_memory_bge_flexdeck_v1"
+                  value: "loom-core=/workspace/mirror/services/loom-core=codebase_memory_bge_v1;loom=/workspace/mirror/services/loom=codebase_memory_bge_loom_v1;flexinfer=/workspace/services/flexinfer=codebase_memory_bge_flexinfer_v1;flexdeck=/workspace/services/flexdeck=codebase_memory_bge_flexdeck_v1"
                 - name: BATCH_SIZE
                   value: "64"
                 - name: MAX_INPUT_CHARS
