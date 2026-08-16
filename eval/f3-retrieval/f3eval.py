@@ -222,6 +222,10 @@ def chat(model, system, user, max_tokens=GEN_MAX_TOKENS):
                 "messages": msgs,
                 "temperature": 0,
                 "max_tokens": max_tokens,
+                # Mirror codebase-answer's _chat_once: Qwen thinking-mode
+                # workhorses spend the whole budget on reasoning_content and
+                # return empty content (finish_reason=length at max_tokens).
+                "chat_template_kwargs": {"enable_thinking": False},
             },
         )
     )
@@ -278,6 +282,8 @@ def keyword_hit(answer, keywords):
 
 
 def judge(question, reference, candidate):
+    if candidate == "[skipped]":
+        return "SKIPPED"  # SKIP_NAIVE placeholder — never spend a judge call on it
     if not candidate.strip() or candidate.startswith("[ERR"):
         return "INCORRECT"
     prompt = (
@@ -313,7 +319,10 @@ def main():
         f"F3 kill-test start repo={REPO_PATH} chat={CHAT_MODEL} judge={JUDGE_MODEL} "
         f"collection={COLLECTION}"
     )
-    if not os.path.isdir(REPO_PATH):
+    skip_naive = os.environ.get("SKIP_NAIVE", "").lower() in ("1", "true", "yes")
+    # REPO_PATH backs the naive walk only; retrieval-only runs (job.rq.example.yaml)
+    # deliberately mount no workspace, so the check must not fire under SKIP_NAIVE.
+    if not skip_naive and not os.path.isdir(REPO_PATH):
         log(f"FATAL REPO_PATH not found: {REPO_PATH}")
         sys.exit(1)
     with open(QUESTIONS_FILE) as fh:
@@ -322,7 +331,6 @@ def main():
         questions = questions.get("questions", [])
     log(f"loaded {len(questions)} questions")
 
-    skip_naive = os.environ.get("SKIP_NAIVE", "").lower() in ("1", "true", "yes")
     if skip_naive:
         # naive/baseline are index-independent; skip them for chunking-comparison
         # runs (which only vary the retrieval COLLECTION) to save the big prefills.
@@ -352,6 +360,9 @@ def main():
         log(f"  evidence={ev} in_naive_window={in_naive}")
 
         # --- retrieval (production qdrant index) ---
+        # Retrieval and generation fail independently: ev_retrieved is the RQ
+        # gate's recall axis, so a chat-lane outage must not zero it (a shared
+        # try block here once turned an answerer 503 into ev_ratio=0.0).
         try:
             qv = embed([f"# query\n{question}"])[0]
             hits = qdrant_search(qv, RETR_N)
@@ -362,11 +373,16 @@ def main():
             retr_files = [cand_paths[i] for i in chosen]
             ev_retrieved = any(ev_match(ev, f) for f in retr_files)
             retr_ctx = "\n\n".join(cand_docs[i] for i in chosen)
-            a_retr = chat(
-                CHAT_MODEL, SYS, f"CONTEXT:\n{retr_ctx}\n\nQUESTION: {question}"
-            )
         except Exception as exc:  # noqa: BLE001
-            retr_files, ev_retrieved, retr_ctx, a_retr = [], False, "", f"[ERR {exc}]"
+            retr_files, ev_retrieved, retr_ctx = [], False, ""
+            a_retr = f"[ERR {exc}]"
+        else:
+            try:
+                a_retr = chat(
+                    CHAT_MODEL, SYS, f"CONTEXT:\n{retr_ctx}\n\nQUESTION: {question}"
+                )
+            except Exception as exc:  # noqa: BLE001
+                a_retr = f"[ERR {exc}]"
 
         # --- naive stuff ---
         if skip_naive:
@@ -392,31 +408,48 @@ def main():
             "retrieved_files": retr_files,
             "retrieval": {
                 "kw": keyword_hit(a_retr, kws),
-                "judge": judge(question, ref, a_retr),
+                "judge": None,
                 "tok": est_tokens(retr_ctx),
                 "ans": a_retr[:220],
+                "_full": a_retr,
             },
             "naive": {
                 "kw": keyword_hit(a_naive, kws),
-                "judge": judge(question, ref, a_naive),
+                "judge": None,
                 "tok": est_tokens(naive_ctx),
                 "ans": a_naive[:220],
+                "_full": a_naive,
             },
             "baseline": {
                 "kw": keyword_hit(a_base, kws),
-                "judge": judge(question, ref, a_base),
+                "judge": None,
                 "tok": 0,
                 "ans": a_base[:220],
+                "_full": a_base,
             },
         }
         rows.append(row)
         log(
-            f"  retrieval kw={row['retrieval']['kw']} judge={row['retrieval']['judge']} "
-            f"ev_retrieved={ev_retrieved} | naive kw={row['naive']['kw']} judge={row['naive']['judge']} "
-            f"| base kw={row['baseline']['kw']} judge={row['baseline']['judge']}"
+            f"  retrieval kw={row['retrieval']['kw']} ev_retrieved={ev_retrieved} "
+            f"| naive kw={row['naive']['kw']} | base kw={row['baseline']['kw']} "
+            f"(judging deferred)"
         )
         log(f"    R: {row['retrieval']['ans'][:150]!r}")
         log(f"    N: {row['naive']['ans'][:150]!r}")
+
+    # ---- deferred judging pass ---------------------------------------------
+    # All generations first, then all judgments: answerer and judge lanes can
+    # share one GPU (serverless election), so interleaving them costs a full
+    # model swap per question — batching costs two elections per run total.
+    log("\n--- judging pass (deferred so answerer/judge lanes swap GPUs once) ---")
+    for qi, (q, row) in enumerate(zip(questions, rows)):
+        ref = q.get("answer", "")
+        for cond in ("retrieval", "naive", "baseline"):
+            row[cond]["judge"] = judge(row["q"], ref, row[cond].pop("_full"))
+        log(
+            f"[Q{qi+1}/{len(rows)}] judge: retrieval={row['retrieval']['judge']} "
+            f"naive={row['naive']['judge']} base={row['baseline']['judge']}"
+        )
 
     # ---- aggregate ----
     n = len(rows)
@@ -455,10 +488,16 @@ def main():
         f"retrieval vs naive: kw {kw('retrieval')} vs {kw('naive')} | "
         f"judge {jg('retrieval')} vs {jg('naive')} | token savings {ratio:.1f}x"
     )
-    log(
-        f"VERDICT: {'PASS' if passed else 'FAIL'} "
-        f"(retrieval >= naive on correctness AND >= 3x fewer tokens)"
-    )
+    if skip_naive:
+        # The kill-test verdict compares retrieval vs naive; with naive skipped
+        # it always reads FAIL and has misled a reader once. The gate row
+        # (RQ_RESULT_JSON) is the meaningful output of a retrieval-only run.
+        log("VERDICT: N/A (SKIP_NAIVE retrieval-only run; see RQ_RESULT_JSON)")
+    else:
+        log(
+            f"VERDICT: {'PASS' if passed else 'FAIL'} "
+            f"(retrieval >= naive on correctness AND >= 3x fewer tokens)"
+        )
     log(f"elapsed {time.time()-t0:.0f}s")
     log("=" * 72)
     print(
