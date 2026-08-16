@@ -82,6 +82,17 @@ spec:
     # Reliability-first interim workhorse: keep speculative MTP disabled until
     # the clean Qwen3.5 artifact passes its own deterministic acceptance gate.
     trustRemoteCode: true
+    # RDNA3 decode-backend fix, MTP follow-up to MR !967 (research doc §8f):
+    # this 0.19.1 image has the same ROCM_ATTN-first Radeon default and the
+    # same unified-attention 3D split-KV path + --attention-backend override
+    # (verified against the image's vllm source). With speculative MTP
+    # currently disabled this lane decodes at qlen 1, where TRITON_ATTN's 3D
+    # path measured 10-21x faster per layer than ROCM_ATTN's serialized
+    # paged-2D walk on this exact 16q/2kv/hd256 fp8 geometry (2K-60K ctx,
+    # deploy/debug/gfx1100-unified-attn-decode-probe.yaml); if MTP is ever
+    # re-enabled the qlen-2 verify step still wins 2.4-2.9x. Verify
+    # "Using TRITON_ATTN backend" in the boot log on next cold start.
+    attentionBackend: TRITON_ATTN
     servedModelName: qwen36-35b-mtp-uncensored-5930k
     # reasoningParser REMOVED 2026-06-18: this heretic checkpoint emits no clean
     # </think> boundary in no-think mode, so the qwen3 parser classified the

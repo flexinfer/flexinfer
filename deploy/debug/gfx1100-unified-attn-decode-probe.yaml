@@ -1,27 +1,47 @@
 # gfx1100 unified-attention DECODE probe — zero-displacement, co-residency safe.
 #
-# Times vllm.v1.attention.ops.triton_unified_attention.unified_attention at
-# single-seq decode shapes (Qwen3.6-27B full-attn geometry: 24 q heads,
-# 4 KV heads, head_dim 256, block 16) across context lengths, comparing the
-# serialized 2D path vs the 3D split-KV path (flash-decoding style) and
-# fp16 vs fp8_e4m3 KV. Motivated by the fleet-wide long-context decode
-# ceiling measured 2026-08-16 (25.6ms + 16.6µs/ctx-tok fp8, 7.5µs fp16 —
-# .loom/10-research-gfx1100-model-quality-2026-08-15.md §8c on branch
-# claude/gfx1100-model-quality-context-07fbae): code reading says the 3D
-# path should already engage for 1-seq decode (threshold 128//4=32), but
-# the measured slope matches the 2D serialized walk (grid = 1×4 workgroups
-# on 96 CUs). This probe attributes the miss: gate-not-firing vs
-# 3D-engaged-but-slow (RDNA3 Triton codegen), and scopes the fix
-# (segment count, fp8 dequant cost).
+# v2 (2026-08-16): extended with a max_seqlen_q (qlen) sweep and a ROCM_ATTN
+# arm for the MTP/spec-decode follow-up left out of MR !967. Spec-decode
+# verify steps run qlen 2-4, which fails the unified kernel's 3D split-KV
+# gate (max_seqlen_q > 1 -> 2D), so the !967 TRITON_ATTN flip was withheld
+# from the MTP lanes pending this comparison:
+#   - TRITON_ATTN at qlen>1 -> kernel_unified_attention_2d,
+#     grid = (qlen//BLOCK_Q + 1, num_kv_heads)          (8 WGs @ qlen2 27B geom)
+#   - ROCM_ATTN   at qlen>1 -> context_attention_fwd (prefix-prefill),
+#     grid = (1, num_q_heads, 1)                        (24 WGs @ 27B geom)
+#   - ROCM_ATTN   at qlen=1 -> kernel_paged_attention_2d,
+#     grid = (1, num_kv_heads)                          (the §8c ceiling)
+#   - TRITON_ATTN at qlen=1 -> kernel_unified_attention_3d split-KV
+#     (the !967 9-16x win)
+# The decision needs measured per-layer latencies, not grid arithmetic: the
+# per-WG inner loops, tile sizes, and fp8 dequant costs differ across kernels.
+#
+# Times the public entrypoints the backends actually call at serving time
+# (vllm.v1.attention.ops.triton_unified_attention.unified_attention and
+# vllm.v1.attention.ops.chunked_prefill_paged_decode.chunked_prefill_paged_decode)
+# at single-seq decode/verify shapes across context lengths, fp16 vs fp8_e4m3
+# KV. Geometry is parameterized:
+#   27B dense full-attn:   24,4,256,16,16  (24 q heads, 4 KV, hd 256, block 16,
+#                                           16 full-attn layers)
+#   35B-A3B hybrid f-attn: 16,2,256,16,10  (GQA 16:2 hd 256 per
+#                                           deploy/modelcaches/qwen36-35b-a3b-
+#                                           reasoning-gptq.yaml; 40 layers at
+#                                           the Qwen3-Next 3:1 GDN:full ratio
+#                                           -> 10 full-attn layers)
 #
 # Runs on the DEPLOYED v0.23 runtime digest (same Triton/torch stack the
-# lanes serve with). VRAM footprint <400MB — fits beside the warm lane on
+# lanes serve with). VRAM footprint <500MB — fits beside the warm lane on
 # the node (no amd.com/gpu claim; hostPath /dev/kfd — gemm-probe pattern).
 #
 #   kubectl apply -f deploy/debug/gfx1100-unified-attn-decode-probe.yaml
 #   kubectl exec gfx1100-unified-attn-decode-probe -n flexinfer-system -- \
-#     python3 /scripts/decode_bench.py 2d 0 fp16 2048,8192,16384,30720
-#   # modes: 2d | 3d <nsegs> | auto <nsegs>; kv: fp16 | fp8
+#     python3 /scripts/decode_bench.py rocm 0 fp8 2 2048,8192,16384,30720 16,2,256,16,10 check
+#   # argv: mode nsegs kv qlen ctxs [geom qh,kvh,hd,block,fa_layers] [check]
+#   # modes: 2d (unified, no 3D buffers) | 3d/auto (unified + 3D buffers,
+#   #        gate decides: qlen==1 -> 3D split-KV, qlen>1 -> falls to 2D)
+#   #        | rocm (chunked_prefill_paged_decode: qlen==1 -> serialized
+#   #        paged-2D kernel, qlen>1 -> context_attention_fwd)
+#   # kv: fp16 | fp8;  check: cross-validate arm output vs SDPA reference
 #   kubectl delete -f deploy/debug/gfx1100-unified-attn-decode-probe.yaml
 apiVersion: v1
 kind: ConfigMap
@@ -34,29 +54,35 @@ data:
     import sys, torch
     from vllm.platforms import current_platform
     from vllm.v1.attention.ops.triton_unified_attention import unified_attention
+    from vllm.v1.attention.ops.chunked_prefill_paged_decode import (
+        chunked_prefill_paged_decode)
     from vllm.v1.kv_cache_interface import KVQuantMode
 
     torch.set_grad_enabled(False)
     dev = "cuda"
-    # Qwen3.6-27B full-attention layer geometry
-    NUM_Q, NUM_KV, HEAD, BLOCK = 24, 4, 256, 16
-    THRESHOLD = 128 // NUM_KV  # MIN_LAUNCH_GRID_SIZE_2D // num_heads_kv
 
-    mode = sys.argv[1]            # 2d | 3d | auto
+    mode = sys.argv[1]            # 2d | 3d | auto | rocm
     nsegs = int(sys.argv[2])      # segments for 3d/auto (server default: 16)
     kvdt = sys.argv[3]            # fp16 | fp8
-    ctxs = [int(x) for x in sys.argv[4].split(",")]
+    qlen = int(sys.argv[4])       # max_seqlen_q: 1 = pure decode, 2-4 = MTP verify
+    ctxs = [int(x) for x in sys.argv[5].split(",")]
+    geom = sys.argv[6] if len(sys.argv) > 6 else "24,4,256,16,16"
+    check = len(sys.argv) > 7 and sys.argv[7] == "check"
+    NUM_Q, NUM_KV, HEAD, BLOCK, FA_LAYERS = (int(x) for x in geom.split(","))
+    THRESHOLD = 128 // NUM_KV  # MIN_LAUNCH_GRID_SIZE_2D // num_heads_kv
 
     fp8 = kvdt == "fp8"
-    cache_dtype = current_platform.fp8_dtype() if fp8 else torch.float16
+    fp8_dtype = current_platform.fp8_dtype()
+    cache_dtype = fp8_dtype if fp8 else torch.float16
     kv_quant_mode = KVQuantMode.FP8_PER_TENSOR if fp8 else KVQuantMode.NONE
 
-    q = torch.randn((1, NUM_Q, HEAD), dtype=torch.float16, device=dev)
+    q = torch.randn((qlen, NUM_Q, HEAD), dtype=torch.float16, device=dev)
     out = torch.empty_like(q)
-    cu = torch.tensor([0, 1], dtype=torch.int32, device=dev)
+    cu = torch.tensor([0, qlen], dtype=torch.int32, device=dev)
     ones = torch.ones((), dtype=torch.float32, device=dev)
     k_descale = ones.expand(1, NUM_KV)
     v_descale = ones.expand(1, NUM_KV)
+    scale1 = torch.ones(1, dtype=torch.float32, device=dev)
 
     if mode in ("3d", "auto"):
         segm_out = torch.empty((THRESHOLD, NUM_Q, nsegs, HEAD),
@@ -74,30 +100,91 @@ data:
                           softmax_segm_output=None, softmax_segm_max=None,
                           softmax_segm_expsum=None)
 
-    print(f"cfg mode={mode} nsegs={nsegs} kv={kvdt} cache_dtype={cache_dtype} "
-          f"threshold={THRESHOLD} grid2d=(1,{NUM_KV}) grid3d=(1,{NUM_KV},{nsegs})",
-          flush=True)
+    print(f"cfg mode={mode} nsegs={nsegs} kv={kvdt} qlen={qlen} "
+          f"geom={NUM_Q}q/{NUM_KV}kv/hd{HEAD}/b{BLOCK}/{FA_LAYERS}L "
+          f"threshold={THRESHOLD} cache_dtype={cache_dtype}", flush=True)
 
     for ctx in ctxs:
         nblocks = ctx // BLOCK + 2
-        kv = torch.randn((nblocks, 2, BLOCK, NUM_KV, HEAD),
-                         dtype=torch.float16, device=dev)
-        if fp8:
-            kv = kv.clamp(-2, 2).to(cache_dtype)
-        k_cache, v_cache = kv.unbind(1)
+        torch.manual_seed(0)
+        kfull = torch.randn((nblocks * BLOCK, NUM_KV, HEAD),
+                            dtype=torch.float16, device=dev).clamp(-2, 2)
+        vfull = torch.randn((nblocks * BLOCK, NUM_KV, HEAD),
+                            dtype=torch.float16, device=dev).clamp(-2, 2)
         block_table = torch.arange(nblocks, dtype=torch.int32,
                                    device=dev).unsqueeze(0)
         seqused = torch.tensor([ctx], dtype=torch.int32, device=dev)
 
-        def call():
-            unified_attention(
-                q=q, k=k_cache, v=v_cache, out=out,
-                cu_seqlens_q=cu, max_seqlen_q=1,
-                seqused_k=seqused, max_seqlen_k=ctx,
-                softmax_scale=HEAD ** -0.5, causal=True,
-                window_size=(-1, -1), block_table=block_table, softcap=0.0,
-                q_descale=None, k_descale=k_descale, v_descale=v_descale,
-                kv_quant_mode=kv_quant_mode, **seg_kwargs)
+        if mode == "rocm":
+            # ROCM_ATTN backend layout (PagedAttention.split_kv_cache):
+            #   key:   (nblocks, kv_heads, head//x, block, x), x = 16//elem_size
+            #   value: (nblocks, kv_heads, head, block)
+            # New-token K/V for the qlen tail is passed as the fp16 key/value
+            # args (context_attention_fwd reads only the ctx-qlen prefix from
+            # cache); cache still holds all positions like serving does.
+            ksrc = kfull.to(cache_dtype) if fp8 else kfull
+            vsrc = vfull.to(cache_dtype) if fp8 else vfull
+            x = 16 // ksrc.element_size()
+            kb = ksrc.view(nblocks, BLOCK, NUM_KV, HEAD).permute(0, 2, 3, 1)
+            key_cache = kb.reshape(nblocks, NUM_KV, HEAD // x, x, BLOCK) \
+                          .permute(0, 1, 2, 4, 3).contiguous()
+            value_cache = vsrc.view(nblocks, BLOCK, NUM_KV, HEAD) \
+                              .permute(0, 2, 3, 1).contiguous()
+            del kb, ksrc, vsrc
+            k_new = kfull[ctx - qlen:ctx].contiguous()
+            v_new = vfull[ctx - qlen:ctx].contiguous()
+            kv_str = "fp8_e4m3" if fp8 else "auto"
+
+            def call():
+                chunked_prefill_paged_decode(
+                    query=q, key=k_new, value=v_new, output=out,
+                    kv_cache_dtype=kv_str,
+                    key_cache=key_cache, value_cache=value_cache,
+                    block_table=block_table, query_start_loc=cu,
+                    seq_lens=seqused, max_seq_len=ctx, max_query_len=qlen,
+                    k_scale=scale1, v_scale=scale1,
+                    sm_scale=HEAD ** -0.5)
+        else:
+            # Unified-attention layout: (nblocks, block, kv_heads, head);
+            # block_table=arange so position p lives at cache[p//B, p%B].
+            k_cache = kfull.view(nblocks, BLOCK, NUM_KV, HEAD)
+            v_cache = vfull.view(nblocks, BLOCK, NUM_KV, HEAD)
+            if fp8:
+                k_cache = k_cache.to(cache_dtype)
+                v_cache = v_cache.to(cache_dtype)
+
+            def call():
+                unified_attention(
+                    q=q, k=k_cache, v=v_cache, out=out,
+                    cu_seqlens_q=cu, max_seqlen_q=qlen,
+                    seqused_k=seqused, max_seqlen_k=ctx,
+                    softmax_scale=HEAD ** -0.5, causal=True,
+                    window_size=(-1, -1), block_table=block_table, softcap=0.0,
+                    q_descale=None, k_descale=k_descale, v_descale=v_descale,
+                    kv_quant_mode=kv_quant_mode, **seg_kwargs)
+
+        if check:
+            call()
+            torch.cuda.synchronize()
+            kd = kfull[:ctx] if not fp8 else kfull[:ctx].to(cache_dtype).half()
+            vd = vfull[:ctx] if not fp8 else vfull[:ctx].to(cache_dtype).half()
+            # In rocm mode the qlen tail comes from the fp16 k/v args, so the
+            # reference tail must stay unquantized to match.
+            if fp8 and mode == "rocm":
+                kd[ctx - qlen:] = kfull[ctx - qlen:ctx]
+                vd[ctx - qlen:] = vfull[ctx - qlen:ctx]
+            g = NUM_Q // NUM_KV
+            kr = kd.repeat_interleave(g, 1).permute(1, 0, 2)   # (Hq, ctx, hd)
+            vr = vd.repeat_interleave(g, 1).permute(1, 0, 2)
+            qr = q.permute(1, 0, 2)                            # (Hq, qlen, hd)
+            pos = torch.arange(ctx, device=dev)
+            qpos = ctx - qlen + torch.arange(qlen, device=dev)
+            mask = pos.unsqueeze(0) <= qpos.unsqueeze(1)       # (qlen, ctx)
+            ref = torch.nn.functional.scaled_dot_product_attention(
+                qr, kr, vr, attn_mask=mask.unsqueeze(0), scale=HEAD ** -0.5)
+            diff = (ref.permute(1, 0, 2) - out).abs().max().item()
+            print(f"CHECK ctx={ctx} max_abs_diff={diff:.4f}", flush=True)
+            del kd, vd, kr, vr, ref
 
         for _ in range(3):
             call()
@@ -111,10 +198,14 @@ data:
         med_ms = ts[len(ts) // 2]
         kv_bytes = ctx * 2 * NUM_KV * HEAD * (1 if fp8 else 2)
         gbs = kv_bytes / (med_ms * 1e-3) / 1e9
-        # model-level projection: 16 full-attn layers per decoded token
-        print(f"RESULT ctx={ctx} med_ms={med_ms:.3f} min_ms={ts[0]:.3f} "
-              f"kv_read_GBs={gbs:.1f} model16x_ms={med_ms * 16:.1f}", flush=True)
-        del kv, k_cache, v_cache, block_table
+        print(f"RESULT ctx={ctx} qlen={qlen} med_ms={med_ms:.3f} "
+              f"min_ms={ts[0]:.3f} kv_read_GBs={gbs:.1f} "
+              f"model{FA_LAYERS}x_ms={med_ms * FA_LAYERS:.1f}", flush=True)
+        del kfull, vfull, block_table
+        if mode == "rocm":
+            del key_cache, value_cache, k_new, v_new
+        else:
+            del k_cache, v_cache
         torch.cuda.empty_cache()
     print("PROBE_PASS", flush=True)
 ---

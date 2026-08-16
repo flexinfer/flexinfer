@@ -412,37 +412,104 @@ v0.26 image (`rocm-gfx1100-v026-native-w4a16`, harbor 2026-08-01) needs the
 same per-lane override when adopted. Triton-FA package (§8c option 2) is
 moot for decode: TRITON_ATTN suffices.
 
-## 8g. Qwen3.8-27B assessment (2026-08-16): **successor-in-waiting — blocked only on a fast-kernel INT4 artifact**
+## 8f. MTP/spec-decode follow-up (2026-08-16): **TRITON_ATTN wins at verify qlen 2-4 too — flip the MTP lanes**
 
-Qwen3.8-27B shipped as Apache-2.0 open weights ~2026-08-14 (announced Aug 3
-with the 2.4T Max). Verified from its HF config.json: **identical serving
-contract to Qwen3.6-27B** — `Qwen3_5ForConditionalGeneration` / model_type
-`qwen3_5` / `qwen3_5_text`, 64 layers, `full_attention_interval: 4` (same 3:1
-GDN hybrid, same head geometry per the model card), native 262,144 ctx (YaRN
-to 1M), native vision, MTP-trained. Our vLLM 0.23 runtime + the exact
-qwen36-27b canary recipe (hfOverrides quant rewrite, languageModelOnly,
-graph mode, TRITON_ATTN per !967) should serve it unchanged.
+The §8e fleet flip excluded the MTP lanes because spec-decode verify steps
+(qlen 2 with `num_speculative_tokens: 1`) fail the unified kernel's 3D
+split-KV gate (`max_seqlen_q > 1` → 2D fallback). Open question: does
+TRITON_ATTN's 2D path still beat ROCM_ATTN at qlen 2-4?
 
-Benchmark deltas vs the promoted 3.6-27B workhorse (vendor + third-party
-analysis): **SWE-bench Pro 61.7 vs 53.5 (+8.2), Terminal-Bench 73.0 vs 59.3
-(+13.7), OSWorld-Verified 84.3** — a generational agentic jump at the same
-deploy cost. Verdict: supersede when servable at quality.
+**What ROCM_ATTN actually runs at qlen > 1** (deployed v0.23 source,
+`chunked_prefill_paged_decode.py`): NOT the serialized paged-2D kernel —
+it branches at `max_query_len > 1` into `context_attention_fwd` (the
+prefix-prefill Triton kernel), grid = (1 seq, num_q_heads, 1 q-block).
+So the verify-step matchup is context_attention_fwd (16-24 WGs) vs
+kernel_unified_attention_2d ((qlen//2+1) x num_kv_heads = 4-12 WGs). Grid
+arithmetic favors ROCM; measurement does not — the unified 2D kernel's
+per-WG walk is far more efficient.
 
-**Blocker: quant availability** (2 days post-release):
-- Official: FP8 only (no gfx1100 FP8 compute).
-- Community: GGUFs everywhere (unsloth 1.9M downloads, bartowski, ggml-org),
-  one AWQ-INT4 (cyankiwi — RDNA3 Triton slow path), mlx 4-bit. **No
-  AutoRound/GPTQ-format INT4 yet** — the fast-kernel format the vLLM lane
-  needs. Intel published the 3.6-27B AutoRound; expect theirs within days
-  (watch `Intel/Qwen3.8-27B-int4-AutoRound`).
+**Probe** (`deploy/debug/gfx1100-unified-attn-decode-probe.yaml` v2: qlen
+sweep + rocm arm + SDPA cross-check, all arms max_abs_diff <= 1e-4;
+per-layer med ms on the deployed v0.23 digest beside the warm lane):
 
-Plan: when an AutoRound/auto_gptq artifact appears, clone
-`deploy/debug/qwen36-27b-clean-autoround-canary.yaml` → point at the new
-source → refresh the modules census from its safetensors index → run the
-slice-1/2/3 gauntlet ladder (add `attentionBackend: TRITON_ATTN` from the
-start) → alias handover from the 3.6 lane. Fallbacks if no artifact appears:
-in-house AutoRound self-quant (unproven on ROCm) or interim llamacpp GGUF
-lane (bartowski Q4_K_M on the b10453 image).
+35B-A3B geometry (16q/2kv/hd256 — both MTP lanes), fp8 KV (as served):
+
+| ctx | qlen1 ROCM | qlen1 TRITON(3D) | qlen2 ROCM | qlen2 TRITON(2D) | verify win |
+|---|---|---|---|---|---|
+| 2K | 0.77 | 0.27 | 2.56 | 0.97 | 2.6x |
+| 8K | 2.27 | 0.28 | 9.63 | 3.39 | 2.8x |
+| 16K | 4.45 | 0.34 | 19.1 | 6.72 | 2.8x |
+| 30K | 8.17 | 0.45 | 35.7 | 12.6 | 2.8x |
+| 60K | 16.5 | 0.78 | 58.4 | 24.1 | 2.4x |
+
+qlen4 ≈ qlen2 on both arms (same q-block count). fp16 shows the same
+shape (TRITON qlen2 win 3.5-4.9x; qlen1 3D win up to 15x). 27B geometry
+(24q/4kv) cross-check: TRITON qlen2/4 win 2.2-4.3x. **TRITON_ATTN wins
+every cell — both MTP-relevant qlens, both dtypes, both geometries, all
+contexts.** The draft-side and non-spec decode (qlen 1) additionally gets
+the full 3D split-KV win (10-21x fp8).
+
+**Decision**: flip `qwen35-35b-clean-mtp-32k` (v0.23 plugin runtime) via
+`spec.config.attentionBackend: TRITON_ATTN`. Expected MTP-lane effect at
+30K: verify step ~357→126 ms model-level (10 full-attn layers), plus
+draft decode collapse — roughly 2.8x faster steady-state decode at deep
+context, ~2.6x at 2K.
+
+`qwen36-35b-mtp-uncensored-5930k` runs the **vllm0.19.1** image, not the
+v0.23 stack the probe measured — verified against that image's source
+before deciding (see below).
+
+**Upstream-gate patch idea** (from the follow-up): the win at qlen 1 (3D)
+vs qlen 2 (2D) is still ~28x per layer at 30K fp8 — a 3D path that
+accepted small qlen would collapse the verify step to ~1ms class. Worth
+an upstream issue/patch eventually, but NOT needed for the flip decision
+(TRITON already wins 2D-vs-ROCM), and the 2D verify cost is amortized
+over 1+accepted tokens per step. Deferred.
+
+## 8g. Qwen3.8-27B succession (2026-08-16): **qualified at parity — workhorse aliases moved**
+
+Qwen3.8-27B (Apache-2.0, released 2026-08-14) is a drop-in successor for the
+qwen36-27b-autoround-workhorse lane: identical serving contract
+(Qwen3_5ForConditionalGeneration / model_type qwen3_5, 64 layers,
+full_attention_interval 4, native 262144 ctx, MTP head, vision tower) with
+generational agentic gains — SWE-bench Pro 61.7 vs 53.5, Terminal-Bench 73.0
+vs 59.3.
+
+**Artifact selection** (the step-1 gate): Intel published no official
+Qwen3.8-27B-int4-AutoRound (repo 401s). Hub census of every INT4 candidate on
+2026-08-16 found one qualifying class — community AutoRound quants in the
+Intel recipe shape. Selected **biMEMO/Qwen3.8-27B-int4-AutoRound**:
+auto_round:auto_gptq packing, INT4 sym g128 (autoround 0.14.2), GDN
+in_proj_a/b + norms + lm_head FP16, 19.0 GB; safetensors-index census =
+exactly the 3.6 artifact's 10-module INT4 list, so the auto-round→inc
+hfOverrides workaround carries over byte-for-byte. Rejected: goldhub
+(linear_attn kept FP16 → 28.3 GB, no 24 GB fit), Vishva007 (real AutoRound
+but g64), Pilcothink (mixed-bit), SergiioB/Chungulus g128 (vanilla self-quant
+GPTQ = the +8.45% PPL tier), all FP8/AWQ/GGUF/NVFP4/MLX. Provenance caveat,
+recorded in the canary header: three same-recipe mirrors
+(biMEMO/devan-carlin/Frozenlock) share byte-identical shards 5-7 + MTP extras
+but diverge on shards 1-4 — the gauntlet, not the model card, was the
+arbiter. Unlike Intel's 3.6, the MTP block is INT4 here (moot while MTP is
+off; an MTP retry needs fresh acceptance numbers on THIS artifact).
+
+**Qualification ladder** (deploy/debug/qwen38-27b-clean-autoround-canary.yaml
+on cblevins-5930k, same pinned vLLM 0.23 runtime digest, TRITON_ATTN from
+day one, 64K fp16 envelope):
+- Eager: 6/6 gauntlet, RDNA3W4A16LinearKernel, 16.77 GiB / 32.9 s load,
+  KV pool 70,055 tok, ~7 tok/s (3.6 eager floor: 8.3).
+- Graph: 6/6 gauntlet, FULL_AND_PIECEWISE with qwen_gdn_attention_core split
+  out, first compile self-exited into the AOT cache then booted cached
+  (20.8 s), 34.9-40.5 tok/s single-stream (3.6: 39.0). Greedy outputs
+  token-identical eager vs graph.
+- Context: needle 1/1 @28,842 and 1/1 @60,973 actual prompt tokens; decode
+  35.4 tok/s @31,602 ctx (3.6: 36.3 @30K) — the !967 TRITON_ATTN fix holds;
+  prefill ~570 tok/s @30K (3.6: 591).
+
+**Verdict: parity on serving, generational gain on quality → promoted.**
+qwen38-27b-autoround-workhorse takes workhorse/loom-workhorse/mills-council/
+reasoning (+ qwen38-27b); qwen36-27b-autoround-workhorse parked as the
+rollback fallback with only its qwen36-27b alias until the 3.8 lane soaks,
+then remove. The 35B *-128k lanes keep the >64K recall routes unchanged.
 
 ## 9. Source index
 
