@@ -2,8 +2,10 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: flexinfer-system
 resources:
-  # MLC compiled model references (shared NFS PVC)
-  - mlc-shared-caches.yaml
+  # 2026-08-19: mlc-shared-caches.yaml REMOVED — the MLC serving era is fully
+  # retired (fast-chat MLC lanes disabled since 2026-05-13, qwen3-8b-mlc
+  # downloader in a fail-loop since 2026-04-04). Flux prune deletes the cache
+  # CRs; the mlc-* PVs/PVCs are retired in deploy/system/ the same day.
 
   # OCI pull of the abliterated Qwen3.5-9B GPTQ artifact onto cblevins-7900xtx,
   # for the qwen35-9b-ablit-rp psyche-simulator test model.
@@ -25,7 +27,12 @@ resources:
   # active serving validation for Omnicoder. Re-enable only during a dedicated
   # rebuild window or after ModelCache grows a first-class suspend knob.
   # - gemma4-26b-a4b-gptq-dense.yaml  # gemma4-26b-a4b-gptq-dense (cblevins-5930k, denseModulePolicy=validate canary — issue #53 C)
-  - gemma4-31b-gptq.yaml            # gemma4-31b-gptq (radeonvii)
+  # 2026-08-19: gemma4-31b-gptq RETIRED — the 31B lane has been superseded
+  # since the 2026-04-25 24GB OOM analysis (docs/dev/gemma4-31b-turboquant-24gb-oom.md)
+  # and its keqv-postprocess Jobs were still re-running on reconcile. Flux
+  # prune deletes the cache CR and cascades the 120Gi nas-bulk-rwx PVC.
+  # Manifest kept on disk as the rebuild recipe (12h quant tuning notes).
+  # - gemma4-31b-gptq.yaml            # gemma4-31b-gptq (radeonvii)
 
   # === Pre-quantized HF artifacts (download-only, no Abliteration/Quantization) ===
   # 2026-05-05: replaced by qwen36-27b-oci. The old canary requested
@@ -57,7 +64,12 @@ resources:
   # digest onto gfx1100 for the isolated serving canary.
   - qwen36-27b-fable-gptq.yaml
   - qwen36-27b-fable-oci.yaml
-  - qwen36-27b-fable-oci-7900xtx.yaml  # exact artifact staged for same-card 9B-RP replacement A/B
+  # 2026-08-19: qwen36-27b-fable-oci-7900xtx RETIRED — the same-card 9B-RP
+  # replacement A/B it staged concluded (fable-rp gauntlet ran 2026-07-22;
+  # qwen35-9b-ablit-rp kept the lane). Flux prune cascades the 30Gi
+  # local-path PVC on cblevins-7900xtx. Digest-pinned manifest kept on disk;
+  # re-enable re-pulls the exact artifact from Harbor.
+  # - qwen36-27b-fable-oci-7900xtx.yaml  # exact artifact staged for same-card 9B-RP replacement A/B
 
   # === Track B: 70B daily-driver self-quant (Download → Quantize only) ===
   # 2026-06-10: huihui-ai/Llama-3.3-70B-Instruct-abliterated → GPTQ INT4 on

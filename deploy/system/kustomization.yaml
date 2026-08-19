@@ -4,7 +4,10 @@ namespace: flexinfer-system
 resources:
   - namespace.yaml
   - civitai-token.yaml
-  - mlc-models-pv.yaml
+  # 2026-08-19: mlc-models-pv.yaml REMOVED with the MLC-era retirement.
+  # NFS data dir (192.168.50.211:/srv/nas/pilot3/nas-media-bulk/mlc-models)
+  # is wiped separately; the namespace-`ai` twin PVC is retired via
+  # platform/gitops.
   - llm-models-pv.yaml
   - nvme-hostpath-pvs.yaml
   - helmrelease.yaml
