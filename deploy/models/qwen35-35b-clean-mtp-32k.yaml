@@ -142,7 +142,11 @@ spec:
     - qwen35-mtp
     - qwen35-mtp-32k
   litellm:
-    enabled: true
+    # 2026-08-19 gaming lease: parked so the unique qwen35-mtp aliases cannot
+    # cold-start on the gaming card (they go dark for the lease — demand-only
+    # experimental lane, no sister carries them). Restore `true` when the
+    # lease ends.
+    enabled: false
     servedModelName: qwen35-35b-clean-mtp-32k
     aliases:
       - qwen35-mtp

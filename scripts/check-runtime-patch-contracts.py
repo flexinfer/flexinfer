@@ -455,7 +455,9 @@ def assert_long_context_gauntlet_contract(
 def assert_qwen128_production_contract(primary_yaml: str, sister_yaml: str) -> None:
     required_sister = (
         "name: qwen35-35b-clean-gptq-workhorse-128k",
-        "maxModelLen: 131072",
+        # 2026-08-16 context push (!976): both 35B lanes raised to the
+        # qualified 184320 envelope (needle-proven 5/5 @180,930).
+        "maxModelLen: 184320",
         'gpuMemoryUtilization: "0.94"',
         'hipVisibleDevices: "0"',
         "count: 2",
@@ -479,7 +481,8 @@ def assert_qwen128_production_contract(primary_yaml: str, sister_yaml: str) -> N
 
     required_primary = (
         "name: qwen35-35b-clean-gptq-workhorse",
-        "maxModelLen: 131072",
+        # 2026-08-16 context push (!976): 184320 on the 5930k lane too.
+        "maxModelLen: 184320",
         'gpuMemoryUtilization: "0.94"',
         "count: 1",
         "shared: 5930k-textgen",
@@ -529,9 +532,7 @@ def assert_flash_loader_image_contract(
 def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     fast_job = ci_yaml.find("runtime_patch_contracts:")
     serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
-    native_w4a16_job = ci_yaml.find(
-        "publish_serving_rocm_gfx1100_native_w4a16:"
-    )
+    native_w4a16_job = ci_yaml.find("publish_serving_rocm_gfx1100_native_w4a16:")
     publish_job = ci_yaml.find("publish_unified_rocm_gfx1100:")
     gaming_job = ci_yaml.find("publish_gaming_rocm_gfx1100:")
     if fast_job == -1:
@@ -540,8 +541,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
         fail("runtime-publish CI is missing publish_serving_rocm_gfx1100")
     if native_w4a16_job == -1:
         fail(
-            "runtime-publish CI is missing "
-            "publish_serving_rocm_gfx1100_native_w4a16"
+            "runtime-publish CI is missing " "publish_serving_rocm_gfx1100_native_w4a16"
         )
     if publish_job == -1:
         fail("runtime-publish CI is missing publish_unified_rocm_gfx1100")
@@ -606,10 +606,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     )
     for snippet in native_required_snippets:
         if snippet not in native_w4a16_job_body:
-            fail(
-                "publish_serving_rocm_gfx1100_native_w4a16 missing "
-                f"{snippet!r}"
-            )
+            fail("publish_serving_rocm_gfx1100_native_w4a16 missing " f"{snippet!r}")
 
     unified_job_body = ci_yaml[publish_job:gaming_job]
     for path in UNIFIED_SERVING_ONLY_RULE_FILES:
@@ -650,9 +647,7 @@ def main(argv: list[str]) -> int:
     build_script = read("build/build-runtime.sh")
     entrypoint = read("build/runtime-entrypoint.sh")
     serving_dockerfile = read("build/Dockerfile.runtime-serving")
-    native_w4a16_dockerfile = read(
-        "build/Dockerfile.runtime-serving-native-w4a16"
-    )
+    native_w4a16_dockerfile = read("build/Dockerfile.runtime-serving-native-w4a16")
     gfx906_vllm_dockerfile = read("build/Dockerfile.vllm-rocm-gfx906")
     gfx906_vllm_install_script = read("build/scripts/install_vllm_gfx906_compat.py")
     sunshine_launcher = read("build/sunshine-headless.sh")
@@ -679,9 +674,7 @@ def main(argv: list[str]) -> int:
 
     assert_patch_scripts_exist_and_parse()
     assert_qwen35_gptq_checkpoint_order_path(qwen35_patch_script)
-    assert_legacy_gptq_uses_reference_after_qwen_shuffle_skip(
-        gemma4_patch_script
-    )
+    assert_legacy_gptq_uses_reference_after_qwen_shuffle_skip(gemma4_patch_script)
     assert_runtime_yaml_patch_refs(runtime_yaml)
     assert_dockerfile_patch_order(dockerfile)
     assert_runtime_entrypoint_contract(entrypoint, build_script)

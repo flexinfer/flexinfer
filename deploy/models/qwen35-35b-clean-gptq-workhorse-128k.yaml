@@ -117,7 +117,11 @@ spec:
     - loom-workhorse-128k
     - mills-council-128k
   litellm:
-    enabled: true
+    # 2026-08-19 gaming lease: parked so 128k demand cannot cold-start vLLM on
+    # the gaming card. All of this lane's serviceLabels/aliases stay served by
+    # the 5930k workhorse sister (same 184320 envelope). Restore `true` when
+    # the lease ends.
+    enabled: false
     servedModelName: qwen35-35b-clean-gptq-workhorse-128k
     aliases:
       - qwen35-128k

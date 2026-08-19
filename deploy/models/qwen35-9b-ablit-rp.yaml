@@ -52,7 +52,10 @@ spec:
     priority: 500
   serverless:
     enabled: true
-    minReplicas: 1
+    # 2026-08-19 gaming lease: warm hold released so the GamingSession can own
+    # the card (explicit minReplicas 1 overrides the controller's gaming-mode
+    # warm-primary drop). Restore minReplicas 1 when the lease ends.
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 25m
   config:
@@ -65,7 +68,9 @@ spec:
     attentionBackend: TRITON_ATTN
     # Reclaim the shared card after an on-demand borrower goes idle. Priority
     # alone only controls demand-driven swaps and does not evict a Ready model.
-    warmPolicy: primary
+    # 2026-08-19 gaming lease: primary → ondemand while cblevins-7900xtx is the
+    # gaming node. Restore primary when the lease ends.
+    warmPolicy: ondemand
     # Pin this model to the certified vLLM 0.23 image instead of the node's
     # older persistent runtime bundle.
     dedicatedDeployment: true
@@ -179,7 +184,10 @@ spec:
   serviceLabels:
     - qwen35-9b-ablit-rp
   litellm:
-    enabled: true                # kill-test passed 2026-07-19; joined the public fleet
+    # 2026-08-19 gaming lease: de-advertised so no demand touches the gaming
+    # card; the 5930k twin carries the qwen35-9b-ablit-rp label meanwhile.
+    # Restore `true` when the lease ends (kill-test passed 2026-07-19).
+    enabled: false
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"
       operator: "Exists"
