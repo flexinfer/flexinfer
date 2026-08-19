@@ -28,7 +28,8 @@ resources:
   # old 8B Qwen fallback is disabled so the 7900 XTX lanes stay unambiguous.
   # 31B / 22K / 26B-long canaries stay disabled until their own gates pass.
   # - gemma4-31b-gptq.yaml          # disabled; promoted-state pending dense rebuild
-  # - fast-chat-7900xtx.yaml        # disabled 2026-05-16; Gemma4 26B now serves fast-chat/default-chat.
+  # fast-chat-7900xtx.yaml: manifest DELETED 2026-08-19 with the MLC-era
+  # retirement (disabled since 2026-05-16; Gemma4 26B serves fast-chat).
   - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (7900xtx instance #1)
   - gemma4-26b-a4b-gptq-apc-canary.yaml  # F4-prefix-cache-flip canary; minReplicas=0, low priority, operator-activated kill-test lane (.loom/ralph-f4-prefix-cache-flip-canary-2026-05-26.md)
   - whisper-large-v3-turbo.yaml     # ASR (Slice 3a): vLLM Whisper on gfx1100, demand-driven (priority 400, minReplicas=0) so deploying is a no-op for the 26B until first transcribe. .loom/30-implementation-plan-voice-stack-2026-06-01.md
@@ -92,7 +93,8 @@ resources:
   - qwen36-35b-mtp-uncensored-5930k.yaml  # 2026-07-14: RETAINED on demand for uncensored/heretic use; clean Qwen3.5 owns warm workhorse/Mills/Council routing.
   # - gemma4-26b-a4b-gptq-5930k-8k-canary.yaml # disabled 2026-05-16; keep XTX lanes to the two 26B primaries.
   # - fast-chat-5930k-llamacpp.yaml # disabled 2026-05-13; 8B path consolidated onto cblevins-7900xtx
-  # - fast-chat.yaml                  # disabled MLC variant, kept on disk for one cycle as rollback
+  # fast-chat.yaml: MLC rollback manifest DELETED 2026-08-19 (rollback window
+  # long past; MLC caches/PVs retired the same day).
   # qwen3-14b-abliterated-v2-5930k.yaml references a GPTQ PVC that is not
   # present in the live cluster; keep disabled until that cache is rebuilt or
   # repointed to an OCI-backed artifact.
