@@ -156,6 +156,9 @@ spec:
   serviceLabels:
     - qwen35-9b-ablit-rp-5930k
     - nsfw-rp-twin-base
+    # 2026-08-19 gaming lease: carry the primary RP label while the 7900xtx
+    # lane is de-advertised for gaming. Remove when the lease ends.
+    - qwen35-9b-ablit-rp
   litellm:
     enabled: true
   tolerations:
