@@ -434,11 +434,15 @@ runtime:
     # gaming env, and remove gaming/ from deploy/kustomization.yaml — see the
     # 2026-07-14 revert (commit 534b32a89) for the exact shape.
     - name: gfx1100
-      # rocm-gfx1100-gaming rebuilt 2026-07-14 from master 6432dff2 (Sunshine
-      # pinned 2025.924.154138 — AFTER the AMD VAAPI rate-control fix PR #2821,
-      # BEFORE the wlroots-capture regression at v2026.407 / Sunshine #5018.
-      # Do not bump past v2026.330 without a live-stream re-validation.)
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:a58e4f36ac7101f8b06afc34ddc338b52064b18317a9385837fda59e3d5b462f"
+      # rocm-gfx1100-gaming rebuilt 2026-08-19: sway config gains
+      # `for_window [class="^steam_app_"] focus, fullscreen enable` so Proton
+      # game windows take fullscreen over Steam Big Picture instead of
+      # rendering hidden behind it (see gaming-mode-runbook troubleshooting).
+      # Sunshine stays pinned 2025.924.154138 — AFTER the AMD VAAPI
+      # rate-control fix PR #2821, BEFORE the wlroots-capture regression at
+      # v2026.407 / Sunshine #5018. Do not bump past v2026.330 without a
+      # live-stream re-validation.
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:b33fb5d3c8a0e7826703d26f9e85fe4f275be26b9600638bae5cd16df94b9eb7"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
