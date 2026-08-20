@@ -172,6 +172,11 @@ SWAY_CONFIG="${XDG_RUNTIME_DIR}/sway.config"
     echo "xwayland enable"
     echo "output HEADLESS-1 mode --custom ${GAMING_RES}@${GAMING_FPS}Hz"
     echo "output HEADLESS-1 background #101014 solid_color"
+    # Proton/Xwayland game windows (class steam_app_<appid>) must take over
+    # fullscreen from Steam Big Picture: sway keeps an existing fullscreen
+    # container (Big Picture) on top of new windows, so without this rule the
+    # game renders hidden while Sunshine keeps streaming Big Picture.
+    echo 'for_window [class="^steam_app_"] focus, fullscreen enable'
     if [ -n "${GAMING_LAUNCH_CMD:-}" ]; then
         echo "exec ${GAMING_LAUNCH_CMD}"
     elif [ "${GAMING_STEAM_AUTOSTART:-true}" = "true" ] && [ -n "$STEAM_BIN" ]; then
