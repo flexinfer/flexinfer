@@ -213,6 +213,35 @@ class VideoData(BaseModel):
     timings: dict[str, float]
 
 
+class AudioGenerationRequest(BaseModel):
+    """Text-to-audio (Stable Audio Open): prompt -> 44.1 kHz stereo WAV."""
+
+    prompt: str = Field(min_length=1, max_length=2000)
+    model: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    # SAO's training cap is ~47s; step count dominates wall time while
+    # duration is nearly free (kill-test 2026-08-22: 10s@100 steps = 12.1s
+    # wall on gfx1100, same as 3s@50).
+    seconds: float = Field(default=20.0, gt=0.0, le=47.0)
+    num_inference_steps: Optional[int] = Field(default=None, ge=10, le=200)
+    seed: Optional[int] = None
+    response_format: str = "b64_json"
+
+
+class AudioData(BaseModel):
+    b64_json: str
+    mime_type: str = "audio/wav"
+    sample_rate: int
+    duration: float
+    seed: int
+    timings: dict[str, float]
+
+
+class AudioGenerationResponse(BaseModel):
+    created: int
+    data: list[AudioData]
+
+
 class VideoGenerationResponse(BaseModel):
     created: int
     data: List[VideoData]
@@ -1406,7 +1435,18 @@ def load_pipeline(model_id: str):
         is_flux_pipeline = detected_family == "flux"
 
         # FLUX pipelines use explicit classes and do not use safety_checker or custom VAE overrides.
-        if PIPELINE_MODE in ("text2video", "image2video"):
+        if PIPELINE_MODE == "text2audio":
+            from diffusers import StableAudioPipeline
+
+            audio_kwargs = {
+                k: v
+                for k, v in pipeline_kwargs.items()
+                if k not in ("safety_checker", "vae", "variant")
+            }
+            print("Loading StableAudioPipeline (loading to CPU, local files only)...")
+            sys.stdout.flush()
+            pipeline = StableAudioPipeline.from_pretrained(resolved_path, **audio_kwargs)
+        elif PIPELINE_MODE in ("text2video", "image2video"):
             video_kwargs = {
                 k: v
                 for k, v in pipeline_kwargs.items()
@@ -2168,6 +2208,82 @@ async def generate_video(request: VideoGenerationRequest):
         video = await asyncio.to_thread(_run_inference)
 
     return VideoGenerationResponse(created=int(time.time()), data=[video])
+
+
+
+@app.post("/v1/audio/generations")
+async def generate_audio(request: AudioGenerationRequest):
+    """Generate one bounded WAV with the Stable Audio Open pipeline."""
+    if PIPELINE_MODE != "text2audio":
+        raise HTTPException(
+            status_code=404,
+            detail="This deployment is not configured for audio generation",
+        )
+    if request.response_format != "b64_json":
+        raise HTTPException(status_code=400, detail="Only response_format=b64_json is supported")
+
+    model_id, pipe = await _prepare_pipeline_for_request(request.model)
+
+    steps = request.num_inference_steps or _env_int("DEFAULT_NUM_INFERENCE_STEPS") or 100
+    negative_prompt = _resolve_negative_prompt(request.negative_prompt)
+    seed = (
+        request.seed
+        if request.seed is not None
+        else int.from_bytes(os.urandom(8), "big") % (2**63 - 1)
+    )
+    print(
+        f"[audio] model={model_id} seconds={request.seconds} steps={steps} seed={seed}",
+        flush=True,
+    )
+
+    def _run_inference() -> AudioData:
+        import io as _io
+        import wave as _wave
+
+        timings: dict[str, float] = {}
+        t_total = time.time()
+        try:
+            gen = torch.Generator(device=pipe.device).manual_seed(seed)
+            t0 = time.time()
+            audio = pipe(
+                prompt=request.prompt,
+                negative_prompt=negative_prompt,
+                num_inference_steps=steps,
+                audio_end_in_s=float(request.seconds),
+                num_waveforms_per_prompt=1,
+                generator=gen,
+            ).audios[0]
+            timings["denoise_seconds"] = round(time.time() - t0, 3)
+
+            t0 = time.time()
+            # [channels, samples] float -1..1 -> interleaved 16-bit stereo WAV
+            pcm = audio.T.float().cpu().clamp(-1, 1)
+            sample_rate = int(pipe.vae.sampling_rate)
+            frames = (pcm * 32767).to(torch.int16).numpy().tobytes()
+            buf = _io.BytesIO()
+            with _wave.open(buf, "wb") as w:
+                w.setnchannels(pcm.shape[1] if pcm.ndim == 2 else 1)
+                w.setsampwidth(2)
+                w.setframerate(sample_rate)
+                w.writeframes(frames)
+            timings["encode_seconds"] = round(time.time() - t0, 3)
+            timings["total_seconds"] = round(time.time() - t_total, 3)
+            return AudioData(
+                b64_json=base64.b64encode(buf.getvalue()).decode(),
+                sample_rate=sample_rate,
+                duration=round(len(pcm) / sample_rate, 3),
+                seed=seed,
+                timings=timings,
+            )
+        finally:
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+
+    async with _generation_lock:
+        audio_data = await asyncio.to_thread(_run_inference)
+
+    return AudioGenerationResponse(created=int(time.time()), data=[audio_data])
 
 
 @app.post("/v1/images/generations")

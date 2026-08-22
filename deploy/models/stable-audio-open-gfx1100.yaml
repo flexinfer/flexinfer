@@ -1,0 +1,72 @@
+# Stable Audio Open 1.0 — neural music lane on ROCm gfx1100
+#
+# Purpose: text-to-music for film scores and ambient beds that the note-based
+# chiptune engine can't reach (produced textures, sound design). Serves
+# POST /v1/audio/generations (44.1 kHz stereo WAV, b64_json envelope).
+# Consumers: filmfest instrumentation="neural" via flexinfer-proxy; anything
+# else that wants a prompt-to-audio lane.
+#
+# Kill-tested 2026-08-22 on the 7900 XTX builder in this exact image family:
+# 10 s @ 100 steps = 12.1 s wall — step count dominates wall time, audio
+# duration is nearly free, so a 40 s film score costs ~13 s.
+#
+# Placement: 5930k-textgen (demand-based elections since the 08-21/22
+# warm-policy cleanup). Priority 450 sits below the workhorse (500) and the
+# video lanes (600): a ~15 s music render queues politely behind film clips
+# and Jarvis. NOT on 7900xtx-textgen — that group has a warm-pinned leader
+# (orpheus twin), and cold members below a warm leader are statically parked
+# (see gte-qwen2-1p5b-radeonvii.yaml / flexinfer#70).
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: stable-audio-open-gfx1100
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/serve-paths: /v1/audio/generations
+    flexinfer.ai/purpose: "text-to-music (Stable Audio Open 1.0) for film scores and ambient beds"
+spec:
+  backend: diffusers
+  # First diffusers image carrying the text2audio server mode + torchsde.
+  image: registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-audio1
+  imageDigest: sha256:595810207615ab01fe42802f05a8b174d6ae9d7b4b206f4ed38fffd318d7ff50
+  source: HF://stabilityai/stable-audio-open-1.0
+  cache:
+    strategy: Local
+    storageClass: nvme-1r
+    size: 12Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    priority: 450
+    vramEstimateMB: 7000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 15m
+    coldStartTimeout: 15m
+  config:
+    pipelineMode: text2audio
+    dtype: float16
+    hipVisibleDevices: "0"
+    skipWarmup: "1"
+    numInferenceSteps: "100"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 6Gi
+    limits:
+      cpu: "6"
+      memory: 16Gi
+  litellm:
+    enabled: false
+    servedModelName: stable-audio-open-gfx1100
