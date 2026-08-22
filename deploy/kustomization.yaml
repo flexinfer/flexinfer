@@ -18,7 +18,11 @@ resources:
   - experiments/
   # One-shot, Flux-managed artifact-transform tasks. Each subdirectory
   # is idempotent so Flux re-reconciles are no-ops once complete.
-  - tasks/gemma4-31b-keqv/
+  # tasks/gemma4-31b-keqv/: REMOVED 2026-08-22 — the 2026-08-19 31B retirement
+  # (modelcaches) cascaded away the gemma4-31b-gptq PVC this Job mounts, so
+  # Flux kept recreating a Job whose pod sat Pending forever on a missing
+  # claim (47h+, 569 FailedScheduling events). Directory kept on disk as the
+  # recipe alongside the retired modelcache manifest.
   # Idle-time batch appliance (Sprint 2 / S2.2): nightly codebase re-embed
   # through the gfx906 bge HBM2 retrieval plane -> Qdrant codebase_memory_bge_v1.
   - tasks/codebase-reembed/
