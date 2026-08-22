@@ -34,7 +34,12 @@ spec:
     vramEstimateMB: 3300
   serverless:
     enabled: true
-    minReplicas: 0
+    # 2026-08-22: warm-pinned. Measured: the proxy routes orpheus-tts to Ready
+    # members only and never wakes an Idle one, so at minReplicas 0 this speed
+    # tier was permanently shadowed by the always-warm VII twin. Both tiers
+    # warm -> the group load-balances; a gaming lease still evicts this one
+    # and the VII carries the group alone.
+    minReplicas: 1
     idleTimeout: 15m
     coldStartTimeout: 5m
   config:
