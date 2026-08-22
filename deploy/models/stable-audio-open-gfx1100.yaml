@@ -67,6 +67,15 @@ spec:
     limits:
       cpu: "6"
       memory: 16Gi
+  # Advertised (enabled) even though litellm cannot proxy /v1/audio/generations:
+  # the proxy refuses to cold-start de-advertised (litellm.enabled=false)
+  # models by name — that 404 is the parked-model gate (internal/proxy
+  # proxy.go "parked / de-advertised"). Warm-pinned lanes may stay disabled
+  # (orpheus); cold on-demand lanes must be advertised. Same convention as
+  # the wan21 video lanes, whose routes litellm also cannot proxy.
   litellm:
-    enabled: false
+    enabled: true
     servedModelName: stable-audio-open-gfx1100
+    aliases:
+      - music-gen
+      - text-to-music
