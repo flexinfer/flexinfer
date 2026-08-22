@@ -70,6 +70,9 @@ spec:
     limits:
       cpu: "4"
       memory: 6Gi
+  # Availability tier of the orpheus-tts routing group (see the 7900xtx twin).
+  serviceLabels:
+    - orpheus-tts
   litellm:
     enabled: false
     servedModelName: orpheus-3b-radeonvii
