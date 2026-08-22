@@ -65,6 +65,12 @@ spec:
     # + minReplicas 0 + warmPolicy ondemand alone did not preempt it). Revert to
     # 350 when handing the 5930k lane back / bringing 7900xtx out of gaming.
     priority: 385
+    # 2026-08-21 thrash: group anti-thrash cooldown (controller takes the max
+    # across members, default 5m). 5m turns were shorter than real cold starts
+    # on this card, so every mid-load incumbent was evicted before Ready; the
+    # active-loading guard failed to protect them twice (qwen38 21:40Z,
+    # wan21-vace 00:11Z — see flexinfer issue for the guard bug).
+    swapCooldown: 10m
   serverless:
     enabled: true
     # 2026-06-17: RETIRED — replaced on the 5930k GPU by the warm-pinned
@@ -115,7 +121,12 @@ spec:
     disableAiter: true
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
-    warmPolicy: primary
+    # 2026-08-21 5930k-textgen thrash: warm-primary reclaim re-cold-started
+    # this model priority-blind whenever an on-demand lane (qwen38 500,
+    # wan21-vace 600) idled past the 2m demand window — exact-5m card
+    # ping-pong for ~7.5h, and VACE starved mid image pull. Demand-only now;
+    # the card parks with the last-served model when quiet.
+    warmPolicy: ondemand
     # 2026-05-25 CC-DR-2 follow-up: enable in-process n-gram (prompt-lookup)
     # spec decoding on the 5930k twin.
     #

@@ -83,7 +83,10 @@ spec:
     servedModelName: qwen35-35b-clean-gptq-workhorse
     disableLogStats: false
     failOnEnvironValidation: true
-    warmPolicy: primary
+    # 2026-08-21: stale primary flag from the pre-qwen36/38 workhorse era.
+    # With gemma-5930k dropping its flag this would have become the group's
+    # reclaiming warm primary (at prio 300) and re-created the thrash.
+    warmPolicy: ondemand
   gpu:
     vendor: amd
     count: 1

@@ -260,6 +260,10 @@ imagePrewarm:
         # its first cold pull/unpack took 9m05s on this node.
         - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
+        # wan21 video lanes (t2v/vace): first cold pull took 14m04s (22.7GB)
+        # on 2026-08-22 and the pod was preempted 30s after the pull finished.
+        # Keep it resident so VACE reaches Ready inside one election turn.
+        - registry.harbor.lan/flexinfer/diffusers-video@sha256:52ebc2b978cec519843c0e28a7246e46d7d0bd24e56253e31862d951d62d4d7d
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
