@@ -27,9 +27,10 @@ metadata:
     flexinfer.ai/purpose: "text-to-music (Stable Audio Open 1.0) for film scores and ambient beds"
 spec:
   backend: diffusers
-  # First diffusers image carrying the text2audio server mode + torchsde.
-  image: registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-audio1
-  imageDigest: sha256:595810207615ab01fe42802f05a8b174d6ae9d7b4b206f4ed38fffd318d7ff50
+  # audio2: audio1 + bitsandbytes==0.49.2 pin (0.50.1 crash-looped every
+  # diffusers import on this torch 2.3 base — see build MR !988).
+  image: registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-audio2
+  imageDigest: sha256:d87f75f8c69bd3e266b11fbb11ee6528d1134001721a960b6e738f6af7e788ce
   source: HF://stabilityai/stable-audio-open-1.0
   cache:
     strategy: Local
