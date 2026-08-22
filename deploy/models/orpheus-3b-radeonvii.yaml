@@ -1,0 +1,75 @@
+# Orpheus-3B TTS token generator on Radeon VII (gfx906) — voice lane
+#
+# Purpose: the LLM half of the Orpheus speech stack. A Llama-3.2-3B backbone
+# that turns "<|audio|>{voice}: {text}<|eot_id|>" prompts into SNAC audio
+# tokens via /v1/completions. The tts-lane service (namespace ai, tts.lan)
+# holds the other half: it parses the custom tokens and SNAC-decodes them to
+# 24 kHz WAV. This CR is deliberately NOT on litellm — raw audio-token
+# completions would look like garbage to chat clients; only tts-lane should
+# call it, through flexinfer-proxy with model=orpheus-3b-radeonvii.
+#
+# Placement: the VII is the uncontended card (retrieval plane only), and this
+# lane must be warm-pinned — a scale-to-zero member below the warm-pinned
+# bge-large leader is statically parked and its demand never registers (see
+# gte-qwen2-1p5b-radeonvii.yaml and flexinfer#70). Warm-pinning also gives
+# voice replies zero cold-start latency, which is the point of this lane.
+#
+# Sizing: Q8_0 GGUF ~3.8 GB + KV/compute ~1 GB. VII co-Active budget after
+# bge-large + bge-reranker + gte (~5.5 GB) leaves ~10 GB headroom — fits.
+# gfx906 HBM2 bandwidth (~1 TB/s) puts 3B Q8 decode near the ~81 tok/s
+# real-time threshold for streaming; batch narration is unaffected either way.
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: orpheus-3b-radeonvii
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/purpose: "TTS audio-token generator (Orpheus) for the tts.lan speech lane"
+    flexinfer.ai/serve-paths: /v1/completions
+spec:
+  backend: llamacpp
+  source: HF://PkmX/orpheus-3b-0.1-ft-Q8_0-GGUF
+  cache:
+    size: 6Gi
+    storageClass: nvme-1r
+    strategy: Local
+  gpu:
+    vendor: amd
+    shared: radeonvii-models
+    # Below the retrieval trio (bge-large 120, reranker 115, gte 114) so group
+    # leadership stays with the embedding plane; above the idle chat lane
+    # (gemma4-e4b 110). Warm-pinning, not priority, is what admits this lane.
+    priority: 113
+    count: 1
+    vramEstimateMB: 4800
+  serverless:
+    enabled: true
+    # Warm-pinned: co-Active membership on the VII group (parked lanes never
+    # see demand) and zero cold-start for voice latency.
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 5m
+  config:
+    ggufFile: orpheus-3b-0.1-ft-q8_0.gguf
+    # Prompts are short; generations run ~1200 tokens (~14 s of audio).
+    contextSize: 4096
+    nGPULayers: 999
+    batchSize: 1024
+    ubatchSize: 512
+    flashAttention: false
+    fitOff: true
+    metrics: true
+    rocrVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  resources:
+    requests:
+      cpu: "2"
+      memory: 3Gi
+    limits:
+      cpu: "4"
+      memory: 6Gi
+  litellm:
+    enabled: false
+    servedModelName: orpheus-3b-radeonvii
