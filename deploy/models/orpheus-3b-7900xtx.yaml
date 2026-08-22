@@ -1,0 +1,63 @@
+# Orpheus-3B TTS token generator — fast twin on the 7900 XTX (gfx1100)
+#
+# Joins the orpheus-tts routing group with orpheus-3b-radeonvii: the proxy
+# serves model=orpheus-tts from whichever member is Ready. This lane is the
+# speed tier (gfx1100 kernels put 3B Q4 well past realtime); the warm-pinned
+# VII twin is the availability tier. A future GamingSession evicts this lane
+# and voice degrades to the VII instead of going silent — which is the whole
+# point of the group.
+#
+# On-demand (not warm-pinned): 7900xtx-textgen has no warm-pinned leader, so
+# demand registers normally; a 2.3G GGUF cold-starts in seconds. Priority 480
+# stays below qwen35-9b-ablit-rp (500) to avoid preempting live chat.
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: orpheus-3b-7900xtx
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/purpose: "TTS audio-token generator (Orpheus) — gfx1100 speed tier of the orpheus-tts group"
+    flexinfer.ai/serve-paths: /v1/completions
+spec:
+  backend: llamacpp
+  source: HF://QuantFactory/orpheus-3b-0.1-ft-GGUF
+  cache:
+    size: 4Gi
+    storageClass: nvme-1r
+    strategy: Local
+  gpu:
+    vendor: amd
+    shared: 7900xtx-textgen
+    priority: 480
+    count: 1
+    vramEstimateMB: 3300
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 15m
+    coldStartTimeout: 5m
+  config:
+    ggufFile: orpheus-3b-0.1-ft.Q4_K_M.gguf
+    contextSize: 4096
+    nGPULayers: 999
+    batchSize: 1024
+    ubatchSize: 512
+    flashAttention: false
+    fitOff: true
+    metrics: true
+    rocrVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "2"
+      memory: 3Gi
+    limits:
+      cpu: "4"
+      memory: 6Gi
+  serviceLabels:
+    - orpheus-tts
+  litellm:
+    enabled: false
+    servedModelName: orpheus-3b-7900xtx

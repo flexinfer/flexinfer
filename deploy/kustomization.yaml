@@ -10,9 +10,6 @@ resources:
   # Gaming lease re-taken 2026-08-19 (Cyberpunk via Steam Deck/Moonlight).
   # cblevins-7900xtx leaves the inference fleet while this is reconciled; the
   # node's 9b-RP lane is de-advertised (twin on 5930k covers) and the
-  # 7900xtx-textgen demand lanes are parked. Remove gaming/ (and revert the
-  # values-k3s.yaml gfx1100 profile) to return the node to inference.
-  - gaming/
   # Bounded, one-shot long-context qualification. The experiment deletes its
   # candidate after the retained 96K/128K recall gauntlet reaches a verdict.
   - experiments/
