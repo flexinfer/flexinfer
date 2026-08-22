@@ -29,7 +29,12 @@ metadata:
     flexinfer.ai/serve-paths: /v1/completions
 spec:
   backend: llamacpp
-  source: HF://PkmX/orpheus-3b-0.1-ft-Q8_0-GGUF
+  # 2026-08-22 perf: Q8_0 -> Q4_K_M. llamacpp decode on gfx906 is
+  # bandwidth-bound; halving the weights (~3.8G -> ~2.3G) measured Q8 at
+  # 0.33-0.49x realtime and Q4 should land ~0.6-0.8x. Community consensus is
+  # the quality delta is inaudible for Orpheus. Rollback: restore
+  # HF://PkmX/orpheus-3b-0.1-ft-Q8_0-GGUF + orpheus-3b-0.1-ft-q8_0.gguf.
+  source: HF://QuantFactory/orpheus-3b-0.1-ft-GGUF
   cache:
     size: 6Gi
     storageClass: nvme-1r
@@ -42,7 +47,7 @@ spec:
     # (gemma4-e4b 110). Warm-pinning, not priority, is what admits this lane.
     priority: 113
     count: 1
-    vramEstimateMB: 4800
+    vramEstimateMB: 3300
   serverless:
     enabled: true
     # Warm-pinned: co-Active membership on the VII group (parked lanes never
@@ -51,7 +56,7 @@ spec:
     idleTimeout: 30m
     coldStartTimeout: 5m
   config:
-    ggufFile: orpheus-3b-0.1-ft-q8_0.gguf
+    ggufFile: orpheus-3b-0.1-ft.Q4_K_M.gguf
     # Prompts are short; generations run ~1200 tokens (~14 s of audio).
     contextSize: 4096
     nGPULayers: 999
