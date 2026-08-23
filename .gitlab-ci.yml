@@ -778,8 +778,13 @@ model_eval_gauntlet_trigger:
   stage: benchmark
   image: alpine/k8s:1.31.13
   needs:
+    # optional: pipelines whose changes-rules skip `publish` otherwise fail
+    # CREATION entirely ("needs 'publish' but 'publish' does not exist") —
+    # invisibly from the MR view, which is how snac-bundled-backend sat with
+    # zero pipelines and escalated at ci_watch (2026-08-23).
     - job: publish
       artifacts: false
+      optional: true
   variables:
     KUBECONFIG: /etc/kubeconfig/k3s.yaml
     MODEL_EVAL_GAUNTLET_NAMESPACE: flexinfer-system
