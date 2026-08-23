@@ -15,6 +15,7 @@ const (
 	NameOllama    = "ollama"
 	NameLlamaCpp  = "llamacpp"
 	NameDiffusers = "diffusers"
+	NameSNAC      = "snac"
 	NameComfyUI   = "comfyui"
 	NameMLCLLM    = "mlc-llm"
 	NameSteam     = "steam"

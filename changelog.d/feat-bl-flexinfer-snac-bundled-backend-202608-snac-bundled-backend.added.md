@@ -1,0 +1,1 @@
+- Add the bundled SNAC audio-decode backend, runtime launch wiring, FastAPI server, tests, runtime image packaging, and CI tracking.
