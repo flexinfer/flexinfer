@@ -313,7 +313,9 @@ RUN python3 -m pip install --no-cache-dir py-spy memray \
 COPY build/.runtime-env /etc/flexinfer/runtime.env
 
 # ── Diffusers server + entrypoint ────────────────────────────────────
+RUN python3 -m pip install --no-cache-dir "snac==1.2.1"
 COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
+COPY build/server-snac.py /opt/flexinfer/server-snac.py
 COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
 RUN chmod +x /usr/local/bin/runtime-entrypoint.sh
 

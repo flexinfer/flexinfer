@@ -1,1 +1,1 @@
-- Add the bundled SNAC audio-decode backend, runtime launch wiring, FastAPI server, tests, and runtime image CI tracking in `backend/snac.go`, `backend/snac_test.go`, `backend/registry.go`, `backend/constants.go`, `internal/runtime/manager.go`, `internal/runtime/manager_test.go`, `build/server-snac.py`, and `.gitlab-ci.yml`.
+- Add the bundled SNAC audio-decode backend, runtime launch wiring, FastAPI server, tests, runtime image packaging, and CI tracking.
