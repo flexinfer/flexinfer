@@ -20,6 +20,7 @@ const (
 	PortVLLM      int32 = 8000
 	PortMLCLLM    int32 = 8000
 	PortDiffusers int32 = 8000
+	PortSNAC      int32 = 8000
 	PortLlamaCpp  int32 = 8080
 	PortComfyUI   int32 = 8188
 	PortOllama    int32 = 11434

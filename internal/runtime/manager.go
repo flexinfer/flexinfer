@@ -1247,6 +1247,8 @@ func inferCommand(backendName string) (string, []string) {
 		return "python", []string{"-m", "vllm.entrypoints.openai.api_server"}
 	case backend.NameDiffusers:
 		return "python", []string{"/opt/flexinfer/server-diffusers.py"}
+	case backend.NameSNAC:
+		return "python", []string{"/opt/flexinfer/server-snac.py"}
 	case backend.NameLlamaCpp:
 		return "llama-server", nil
 	case backend.NameOllama:

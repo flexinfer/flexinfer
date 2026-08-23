@@ -213,6 +213,7 @@ func TestInferCommand(t *testing.T) {
 		{"llamacpp", "llama-server", nil},
 		{"ollama", "ollama", nil},
 		{"diffusers", "python", []string{"/opt/flexinfer/server-diffusers.py"}},
+		{"snac", "python", []string{"/opt/flexinfer/server-snac.py"}},
 		{"unknown", "unknown", nil},
 	}
 
