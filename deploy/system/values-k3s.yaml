@@ -431,11 +431,16 @@ runtime:
   profiles:
     # 2026-08-22 GAMING HANDBACK: the 08-19 lease went stale (no gaming in
     # progress); 7900xtx returns to inference for the voice lanes (orpheus
-    # twin, whisper). Serving digest matches gfx1100-5930k. The gaming stanza
+    # twin, whisper). Serving digest matches gfx1100-5930k.
+    # 2026-08-24: repinned both gfx1100 profiles to the unified build with
+    # the bundled snac decode backend (server-snac.py) and the torchao pin
+    # (pipeline job 244321). The previous pin predated the snac backend by
+    # five weeks; a hand-patched DS digest kept getting silently reverted on
+    # every values re-render, so the pin now lives here in git. The gaming stanza
     # shape lives in git history (534b32a89, and the 2026-08-19 lease commit)
     # for the next lease.
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:5d384ac4268310d50e01897c1a902e6cc819a6ff9352234ae95ffb221baae88c"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -468,7 +473,7 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx1100-5930k
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:5d384ac4268310d50e01897c1a902e6cc819a6ff9352234ae95ffb221baae88c"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 1
