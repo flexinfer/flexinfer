@@ -478,8 +478,13 @@ RUN set -e; \
       # transformers' hub_kernels.py constructs LayerRepository without one, so
       # `import transformers` (hence `import gptqmodel`) raises
       # `ValueError: Either a revision or a version must be specified.` at build.
+      # torchao pinned 2026-08-24: 0.18.0 (released 08-03) imports ScalingType /
+      # scaled_grouped_mm from torch.nn.functional, which this image's torch
+      # does not have — `import torchao` dies at build. The docker layer cache
+      # hid it until the 08-22 audio2 rebuild re-resolved pip. Same class as
+      # the kernels pin above: quantizer deps move faster than our torch.
       pip install --no-cache-dir \
-        "kernels>=0.10.2,<0.11" torchao \
+        "kernels>=0.10.2,<0.11" "torchao==0.17.0" \
         datasets zstandard safetensors accelerate sentencepiece \
         huggingface_hub protobuf pillow hf_transfer device-smi \
         tokenizers logbar maturin pyarrow dill defuser; \
