@@ -12,12 +12,12 @@
 # demand-scaled wan/stable-audio models need free to wake (reverted same day,
 # gitops!625). The runtime election is the only correct owner of the card.
 #
-# Placement: 5930k-textgen, priority 430 — below stable-audio (450), the
-# workhorse (500), and the video lanes (600). Decode bursts are ~1 s of GPU
-# per utterance; queueing behind a film clip is acceptable, and tts-lane
-# keeps its CPU fallback for when this lane is cold or preempted. NOT on
-# 7900xtx-textgen (warm-pinned orpheus leader statically parks cold members
-# — see stable-audio-open-gfx1100.yaml).
+# Placement: cblevins-7900xtx via the persistent gfx1100 runtime pod, which
+# owns the card and multiplexes backends without pod rolls or election
+# queues (the warm-leader parking caveat applies to election-path models,
+# not runtime-managed ones — orpheus itself runs this way). Decode bursts
+# are ~1 s of GPU per utterance; tts-lane keeps its CPU fallback for cold
+# or busy windows.
 #
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -39,7 +39,13 @@ spec:
   gpu:
     vendor: amd
     count: 1
-    shared: 5930k-textgen
+    # 2026-08-24 placement fix: persistent gfx1100 runtime pods exist only on
+    # cblevins-7900xtx (the 5930k has none, so FindRuntimeForNode came up
+    # empty and the runtime-managed flow could never place this model). The
+    # runtime pod owns the card continuously and multiplexes backends — no
+    # election queue — and it is the same node as tts.lan, so decode calls
+    # stay node-local. Mirrors orpheus-3b-7900xtx.
+    shared: 7900xtx-textgen
     priority: 430
     vramEstimateMB: 1500
   serverless:
@@ -53,7 +59,7 @@ spec:
     dtype: float16
     hipVisibleDevices: "0"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "1"
