@@ -1,0 +1,70 @@
+# SNAC 24 kHz audio decode — Orpheus TTS waveform lane on ROCm gfx1100
+#
+# Purpose: turn Orpheus SNAC code frames into WAV on the GPU, so tts-lane
+# (labs/tts-lane, tts.lan) stops decoding on CPU (~0.9x realtime; the lane's
+# dominant latency per the 2026-08-22 twin benchmark). Serves
+# POST /v1/audio/decode via the bundled server-snac.py inside the unified
+# runtime image (backend `snac`, merged in !990).
+#
+# Why a lane and not a pod-local GPU: 2026-08-23 kill-test — a standalone
+# tts-lane amd.com/gpu grant drew the Raphael iGPU (gfx1036, no torch
+# kernels) while pinning one of the node's two device-plugin slots that the
+# demand-scaled wan/stable-audio models need free to wake (reverted same day,
+# gitops!625). The runtime election is the only correct owner of the card.
+#
+# Placement: 5930k-textgen, priority 430 — below stable-audio (450), the
+# workhorse (500), and the video lanes (600). Decode bursts are ~1 s of GPU
+# per utterance; queueing behind a film clip is acceptable, and tts-lane
+# keeps its CPU fallback for when this lane is cold or preempted. NOT on
+# 7900xtx-textgen (warm-pinned orpheus leader statically parks cold members
+# — see stable-audio-open-gfx1100.yaml).
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: snac-decode-gfx1100
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/serve-paths: /v1/audio/decode
+    flexinfer.ai/purpose: "SNAC 24kHz waveform decode for Orpheus TTS (tts.lan GPU decode lane)"
+spec:
+  backend: snac
+  source: HF://hubertsiuzdak/snac_24khz
+  cache:
+    strategy: Local
+    storageClass: nvme-1r
+    size: 1Gi
+    flashLoader:
+      enabled: false
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    priority: 430
+    vramEstimateMB: 1500
+  serverless:
+    enabled: true
+    minReplicas: 0
+    # Conversational TTS is bursty: keep the decoder warm through a whole
+    # spoken session rather than cold-starting per utterance.
+    idleTimeout: 30m
+    coldStartTimeout: 10m
+  config:
+    dtype: float16
+    hipVisibleDevices: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 6Gi
+  # Advertised so the proxy's parked-model gate cold-starts it by name
+  # (cold on-demand lanes must be advertised — stable-audio convention).
+  litellm:
+    enabled: true
+    servedModelName: snac-decode-gfx1100
+    aliases:
+      - snac-decode
