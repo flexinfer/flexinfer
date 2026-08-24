@@ -86,6 +86,11 @@ spec:
     mlc-llm:
       support: full
       image: registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100
+    snac:
+      # SNAC 24kHz waveform decode (server-snac.py, bundled in the runtime
+      # image since !990) — the tts.lan GPU decode lane. No standalone image;
+      # runs as a runtime-manager subprocess.
+      support: full
   env:
     - name: HSA_OVERRIDE_GFX_VERSION
       value: "11.0.0"
@@ -128,7 +133,12 @@ spec:
     bundledBackends:
       - vllm
       - diffusers
-    image: registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e
+      - snac
+    # 2026-08-24: digest bump to the first runtime build carrying
+    # server-snac.py (!990) + the torchao==0.17.0 quantizer pin (!993 — the
+    # unpinned 0.18.0 had broken this image's build since the 08-22 cache
+    # bust). Tag rocm-gfx1100-57b56bb6.
+    image: registry.harbor.lan/flexinfer/runtime@sha256:5d384ac4268310d50e01897c1a902e6cc819a6ff9352234ae95ffb221baae88c
   containerMemoryGB: 48
   # 2026-05-25: bumped 18 → 22 to make room for `gemma4-26b-a4b-gptq` at
   # maxModelLen=32768 with kvCacheDtype=fp8_e4m3. Math:
