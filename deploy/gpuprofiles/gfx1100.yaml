@@ -43,6 +43,19 @@ spec:
     flashAttention: true
     int4: true
     int8: true
+    # 2026-08-24: multi-model shared-group election. Without this the
+    # 7900xtx-textgen group is single-slot, so snac-decode-gfx1100 (430) is
+    # statically parked behind the warm-pinned orpheus-3b-7900xtx (480) and
+    # the proxy fast-fails it 503 WITHOUT recording demand — a permanent
+    # deadlock for any lower-priority member behind a never-idling leader.
+    # With multiModel the election keeps a VRAM-bounded set (budget = vramMB):
+    # orpheus 3300 + snac 1500 co-reside; a waking qwen35-9b (23200) still
+    # evicts both, same as single-slot demand-swap does today. NOTE: true
+    # concurrent RUNTIME subprocesses also need FLEXINFER_RUNTIME_MULTI_MODEL=1
+    # on the runtime DaemonSet (pending its Helm re-adoption); until then this
+    # is safe because orpheus is a dedicated pod — the runtime pod hosts only
+    # snac, so the manager never sees two concurrent loads on this card.
+    multiModel: true
   backends:
     vllm:
       support: full

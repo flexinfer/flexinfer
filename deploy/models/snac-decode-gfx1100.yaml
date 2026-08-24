@@ -13,11 +13,18 @@
 # gitops!625). The runtime election is the only correct owner of the card.
 #
 # Placement: cblevins-7900xtx via the persistent gfx1100 runtime pod, which
-# owns the card and multiplexes backends without pod rolls or election
-# queues (the warm-leader parking caveat applies to election-path models,
-# not runtime-managed ones — orpheus itself runs this way). Decode bursts
+# owns the card and multiplexes backends without pod rolls. Decode bursts
 # are ~1 s of GPU per utterance; tts-lane keeps its CPU fallback for cold
 # or busy windows.
+#
+# 2026-08-24 election finding: the shared-group election applies to EVERY
+# member with gpu.shared set — runtime-managed placement is NOT exempt; the
+# earlier claim here that it was exempt shipped this model into a live deadlock.
+# Single-slot election statically parked this model (430) behind the
+# warm-pinned orpheus-3b-7900xtx (480), and the proxy fast-fails parked
+# models 503 without recording demand, so it could never earn its way in.
+# Fixed by gfx1100 GPUProfile features.multiModel (VRAM-bounded co-residency:
+# orpheus 3300 + snac 1500 of 24576) plus minReplicas: 1 below.
 #
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -50,9 +57,15 @@ spec:
     vramEstimateMB: 1500
   serverless:
     enabled: true
-    minReplicas: 0
-    # Conversational TTS is bursty: keep the decoder warm through a whole
-    # spoken session rather than cold-starting per utterance.
+    # Warm-pinned (minReplicas 1): joins the multi-model Active set via
+    # sharedModelWantsToRun without needing recorded demand — the proxy's
+    # parked-model fast-fail never records any, so a scale-to-zero member
+    # below a warm leader can otherwise never enter the set. An always-warm
+    # 1.5GB decoder is also the right steady state for conversational TTS:
+    # no first-utterance cold start. When a big vllm member (e.g. the 9B,
+    # 23200MB) wakes, the VRAM budget evicts snac and tts-lane falls back
+    # to CPU decode for that window.
+    minReplicas: 1
     idleTimeout: 30m
     coldStartTimeout: 10m
   config:
