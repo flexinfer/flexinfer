@@ -30,12 +30,12 @@ metadata:
 spec:
   backend: snac
   source: HF://hubertsiuzdak/snac_24khz
-  cache:
-    strategy: Local
-    storageClass: nvme-1r
-    size: 1Gi
-    flashLoader:
-      enabled: false
+  # NO cache block: SNACBackend.NeedsVolume() is false (server-snac.py pulls
+  # the ~80MB decoder from the HF hub at load). Declaring strategy: Local here
+  # deadlocks eligibility — ensureCache short-circuits on NeedsVolume without
+  # ever writing Status.Cache, while DirectRuntimeLoadEligibility requires
+  # Status.Cache.Ready whenever the SPEC declares a Local cache. Found live
+  # 2026-08-24 ("staged Local cache is not ready" x50 with no cache job).
   gpu:
     vendor: amd
     count: 1
