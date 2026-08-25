@@ -24,7 +24,12 @@
 # warm-pinned orpheus-3b-7900xtx (480), and the proxy fast-fails parked
 # models 503 without recording demand, so it could never earn its way in.
 # Fixed by gfx1100 GPUProfile features.multiModel (VRAM-bounded co-residency:
-# orpheus 3300 + snac 1500 of 24576) plus minReplicas: 1 below.
+# orpheus 3300 + snac 1500 of 24576) plus, at the root, !1000 (2026-08-25):
+# the controller no longer stamps the primary/ static park on multiModel
+# members whose vramEstimateMB fits the budget alongside the Active set, so
+# a cold request queues WITH demand and the election promotes it. The
+# interim !998 warm-pin (minReplicas 1) was relaxed back to 0 once the
+# fixed controller rolled out.
 #
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -57,15 +62,14 @@ spec:
     vramEstimateMB: 1500
   serverless:
     enabled: true
-    # Warm-pinned (minReplicas 1): joins the multi-model Active set via
-    # sharedModelWantsToRun without needing recorded demand — the proxy's
-    # parked-model fast-fail never records any, so a scale-to-zero member
-    # below a warm leader can otherwise never enter the set. An always-warm
-    # 1.5GB decoder is also the right steady state for conversational TTS:
-    # no first-utterance cold start. When a big vllm member (e.g. the 9B,
-    # 23200MB) wakes, the VRAM budget evicts snac and tts-lane falls back
-    # to CPU decode for that window.
-    minReplicas: 1
+    # Scale-to-zero (minReplicas 0), restored 2026-08-25: !1000 exempts
+    # budget-fitting multiModel members from the primary/ static-park stamp,
+    # so a cold snac request queues with demand and promotes instead of
+    # fast-failing 503 — the deadlock the !998 warm-pin worked around is
+    # fixed at the root. tts-lane's CPU decode fallback covers the
+    # cold-start window; when a big vllm member (e.g. the 9B, 23200MB)
+    # wakes, the VRAM budget still evicts snac for that window.
+    minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 10m
   config:
