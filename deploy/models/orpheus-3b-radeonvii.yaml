@@ -75,7 +75,10 @@ spec:
     limits:
       cpu: "4"
       memory: 6Gi
-  # Availability tier of the orpheus-tts routing group (see the 7900xtx twin).
+  # Availability tier (route-priority 0) of the orpheus-tts routing group: the
+  # XTX twin carries route-priority 100 and takes all traffic while Ready, so
+  # this warm lane serves only when the XTX is evicted (gaming lease) or down.
+  # RTF here is ~0.75 — degraded but audible beats silent.
   serviceLabels:
     - orpheus-tts
   litellm:

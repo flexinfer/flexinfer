@@ -9,6 +9,7 @@ import (
 	"time"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -465,6 +466,141 @@ func TestConsistentHashPick_DistributesKeys(t *testing.T) {
 func TestConsistentHashPick_EdgeCases(t *testing.T) {
 	assert.Equal(t, "", consistentHashPick("k", nil), "empty members returns empty")
 	assert.Equal(t, "solo", consistentHashPick("k", []string{"solo"}), "single member short-circuits")
+}
+
+// Route-priority tiering (flexinfer.ai/route-priority). A higher-priority
+// member shadows lower tiers while Ready; lower tiers serve the moment no
+// higher-tier member is Ready. Production shape: the orpheus-tts group's
+// gfx1100 speed tier over the always-warm gfx906 availability tier.
+
+// makeModelWithRoutePriority is makeModel plus the route-priority annotation
+// (set verbatim, so tests can also exercise unparsable values).
+func makeModelWithRoutePriority(t *testing.T, p *Proxy, name string, phase aiv1alpha2.ModelPhase, priority string) {
+	t.Helper()
+	m := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        name,
+			Namespace:   p.namespace,
+			Annotations: map[string]string{constants.AnnotationRoutePriority: priority},
+		},
+		Spec:   aiv1alpha2.ModelSpec{Backend: "vllm", Source: "HF://test/" + name},
+		Status: aiv1alpha2.ModelStatus{Phase: phase},
+	}
+	require.NoError(t, p.client.Create(context.Background(), m))
+}
+
+func TestPickReadyMember_RoutePriority_ShadowsLowerTier(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	makeModelWithRoutePriority(t, p, "orpheus-fast", aiv1alpha2.ModelPhaseReady, "100")
+	makeModel(t, p, "orpheus-fallback", aiv1alpha2.ModelPhaseReady) // default tier 0
+
+	members := []string{"orpheus-fallback", "orpheus-fast"}
+	for i := 0; i < 10; i++ {
+		got := p.pickReadyMember(context.Background(), "orpheus-tts", members)
+		assert.Equal(t, "orpheus-fast", got, "the Ready higher-priority member must shadow the lower tier on every pick")
+	}
+}
+
+func TestPickReadyMember_RoutePriority_FallsBackWhenPrimaryNotReady(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	makeModelWithRoutePriority(t, p, "orpheus-fast", aiv1alpha2.ModelPhaseIdle, "100")
+	makeModel(t, p, "orpheus-fallback", aiv1alpha2.ModelPhaseReady)
+
+	members := []string{"orpheus-fallback", "orpheus-fast"}
+	for i := 0; i < 10; i++ {
+		got := p.pickReadyMember(context.Background(), "orpheus-tts", members)
+		assert.Equal(t, "orpheus-fallback", got, "with the primary not Ready the lower tier must serve")
+	}
+}
+
+func TestPickReadyMember_RoutePriority_TieRoundRobins(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	makeModelWithRoutePriority(t, p, "model-a", aiv1alpha2.ModelPhaseReady, "100")
+	makeModelWithRoutePriority(t, p, "model-b", aiv1alpha2.ModelPhaseReady, "100")
+
+	members := []string{"model-a", "model-b"}
+	picks := make(map[string]int)
+	const N = 20
+	for i := 0; i < N; i++ {
+		picks[p.pickReadyMember(context.Background(), "tied-label", members)]++
+	}
+	assert.Equal(t, N/2, picks["model-a"], "equal priorities must keep round-robin — half to model-a")
+	assert.Equal(t, N/2, picks["model-b"], "equal priorities must keep round-robin — half to model-b")
+}
+
+func TestPickReadyMember_RoutePriority_ColdStartPrefersPrimary(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	// The primary sorts alphabetically LAST so this discriminates priority from
+	// the legacy alphabetical fallback.
+	makeModelWithRoutePriority(t, p, "model-z-fast", aiv1alpha2.ModelPhaseIdle, "100")
+	makeModel(t, p, "model-a-slow", aiv1alpha2.ModelPhaseIdle)
+
+	got := p.pickReadyMember(context.Background(), "cold-label", []string{"model-a-slow", "model-z-fast"})
+	assert.Equal(t, "model-z-fast", got, "the deterministic cold-start target must be the highest-priority member")
+}
+
+func TestPickReadyMember_RoutePriority_UnparsableIsDefaultTier(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	makeModelWithRoutePriority(t, p, "model-a", aiv1alpha2.ModelPhaseReady, "fast")
+	makeModel(t, p, "model-b", aiv1alpha2.ModelPhaseReady)
+
+	members := []string{"model-a", "model-b"}
+	picks := make(map[string]int)
+	const N = 20
+	for i := 0; i < N; i++ {
+		picks[p.pickReadyMember(context.Background(), "typo-label", members)]++
+	}
+	assert.Equal(t, N/2, picks["model-a"], "an unparsable priority is tier 0 — behavior stays round-robin")
+	assert.Equal(t, N/2, picks["model-b"], "an unparsable priority is tier 0 — behavior stays round-robin")
+}
+
+// TestPickReadyMemberRouted_LeastLoaded_RoutePriorityOutranksLoad is the
+// production discriminator for the orpheus-tts group: the live proxy runs
+// least-loaded, which on an idle fleet round-robins ties — splitting voice
+// traffic ~50/50 between the fast and slow twins. Route-priority must narrow
+// the candidate set BEFORE load comparison, so the busy primary still wins
+// over the idle fallback.
+func TestPickReadyMemberRouted_LeastLoaded_RoutePriorityOutranksLoad(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	p.labelGroupRouting = labelGroupRoutingLeastLoaded
+	makeModelWithRoutePriority(t, p, "orpheus-fast", aiv1alpha2.ModelPhaseReady, "100")
+	makeModel(t, p, "orpheus-fallback", aiv1alpha2.ModelPhaseReady)
+	p.incrementConnections("orpheus-fast")
+	t.Cleanup(func() { p.decrementConnections("orpheus-fast") })
+
+	members := []string{"orpheus-fallback", "orpheus-fast"}
+	for i := 0; i < 10; i++ {
+		got := p.pickReadyMemberRouted(context.Background(), "orpheus-tts", members, nil, nil)
+		assert.Equal(t, "orpheus-fast", got, "priority narrows candidates before load comparison — the busy primary still wins")
+	}
+}
+
+func TestPickReadyMemberRouted_LeastLoaded_RoutePriorityFallsBackWhenPrimaryNotReady(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	p.labelGroupRouting = labelGroupRoutingLeastLoaded
+	makeModelWithRoutePriority(t, p, "orpheus-fast", aiv1alpha2.ModelPhaseIdle, "100")
+	makeModel(t, p, "orpheus-fallback", aiv1alpha2.ModelPhaseReady)
+
+	members := []string{"orpheus-fallback", "orpheus-fast"}
+	got := p.pickReadyMemberRouted(context.Background(), "orpheus-tts", members, nil, nil)
+	assert.Equal(t, "orpheus-fallback", got, "an evicted primary hands the group to the availability tier")
+}
+
+func TestPickReadyMemberRouted_PrefixOrRR_RoutePriorityConstrainsHash(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	p.labelGroupRouting = labelGroupRoutingPrefixOrRR
+	makeModel(t, p, "model-a", aiv1alpha2.ModelPhaseReady)
+	makeModelWithRoutePriority(t, p, "model-b-fast", aiv1alpha2.ModelPhaseReady, "50")
+
+	members := []string{"model-a", "model-b-fast"}
+	// Across many distinct prefix keys the hash would spread over both members;
+	// the tier filter must confine every pin to the preferred member.
+	for i := 0; i < 25; i++ {
+		body := chatBodyWithSystem("some-label", fmt.Sprintf("distinct system prompt %d", i), "hi")
+		req := newChatReq(body)
+		got := p.pickReadyMemberRouted(context.Background(), "some-label", members, req, body)
+		assert.Equal(t, "model-b-fast", got, "hash pinning must stay within the highest-priority tier")
+	}
 }
 
 func TestIsValidLabelGroupRoutingMode(t *testing.T) {

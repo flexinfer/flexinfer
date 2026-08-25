@@ -12,6 +12,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 
@@ -79,17 +80,100 @@ func (p *Proxy) getModel(ctx context.Context, modelName string) (*aiv1alpha2.Mod
 	return m, err
 }
 
+// memberInfo is a per-pick snapshot of one label-group member: Ready phase
+// plus the parsed flexinfer.ai/route-priority annotation.
+type memberInfo struct {
+	name     string
+	priority int
+	ready    bool
+}
+
+// labelGroupMemberInfos snapshots phase and route-priority for every group
+// member. Model fetches go through the controller-runtime cache, which is
+// in-memory and indexed — cheap per call. A member whose Model CR cannot be
+// fetched is treated as not-Ready with default priority so it remains a valid
+// cold-start fallback target, matching the pre-priority behavior.
+func (p *Proxy) labelGroupMemberInfos(ctx context.Context, members []string) []memberInfo {
+	infos := make([]memberInfo, 0, len(members))
+	for _, name := range members {
+		info := memberInfo{name: name}
+		if m, err := p.getModel(ctx, name); err == nil {
+			info.ready = m.Status.Phase == aiv1alpha2.ModelPhaseReady
+			info.priority = modelRoutePriority(m)
+		}
+		infos = append(infos, info)
+	}
+	return infos
+}
+
+// modelRoutePriority parses the Model's flexinfer.ai/route-priority
+// annotation. Absent, empty, or unparsable values mean 0 (the default tier);
+// higher wins.
+func modelRoutePriority(m *aiv1alpha2.Model) int {
+	raw := strings.TrimSpace(m.Annotations[constants.AnnotationRoutePriority])
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil {
+		slog.Debug("ignoring unparsable route-priority annotation",
+			"model", m.Name, "value", raw)
+		return 0
+	}
+	return n
+}
+
+// readyInfos returns the subset of infos whose Model is Ready, preserving
+// input order.
+func readyInfos(infos []memberInfo) []memberInfo {
+	ready := make([]memberInfo, 0, len(infos))
+	for _, in := range infos {
+		if in.ready {
+			ready = append(ready, in)
+		}
+	}
+	return ready
+}
+
+// topPriorityNames returns the names in the highest route-priority tier of
+// infos, preserving input order. Members come from labelGroupCache in stable
+// sorted order, so RR counters and the deterministic cold-start fallback keep
+// predictable positions within a tier.
+func topPriorityNames(infos []memberInfo) []string {
+	if len(infos) == 0 {
+		return nil
+	}
+	top := infos[0].priority
+	for _, in := range infos[1:] {
+		if in.priority > top {
+			top = in.priority
+		}
+	}
+	names := make([]string, 0, len(infos))
+	for _, in := range infos {
+		if in.priority == top {
+			names = append(names, in.name)
+		}
+	}
+	return names
+}
+
 // pickReadyMember chooses one model from a shared service-label group.
 //
-// Policy: prefer Ready members and round-robin across them so a two-instance
-// fleet (e.g. gemma4-26b-a4b-gptq on 7900xtx + gemma4-26b-a4b-gptq-5930k on
-// 5930k claiming `quality-chat`) actually distributes traffic instead of
-// pinning to whichever claimant the resolver returned first. If no members
-// are Ready, returns the first one in the stable sorted order so the
-// existing cold-start path engages on a single deterministic target — picking
-// "the alphabetically first member" beats picking "whichever shows up first
-// in a random map iteration" because operators can predict which instance
-// will warm up.
+// Policy: prefer Ready members — and among them, only the highest
+// route-priority tier (flexinfer.ai/route-priority): a fast primary shadows
+// its availability fallback while Ready, and the group degrades to the lower
+// tier the moment the primary leaves Ready (e.g. orpheus-tts preferring the
+// gfx1100 twin until a gaming lease evicts it). Within a tier, round-robin so
+// a two-instance fleet (e.g. gemma4-26b-a4b-gptq on 7900xtx +
+// gemma4-26b-a4b-gptq-5930k on 5930k claiming `quality-chat`) actually
+// distributes traffic instead of pinning to whichever claimant the resolver
+// returned first. If no members are Ready, returns the first member of the
+// highest-priority tier in the stable sorted order so the existing cold-start
+// path engages on a single deterministic — and preferred — target: picking
+// "the alphabetically first member of the top tier" beats picking "whichever
+// shows up first in a random map iteration" because operators can predict
+// which instance will warm up.
 //
 // Single-member groups short-circuit (no counter increment, no Phase lookup)
 // so direct model-name requests stay zero-overhead.
@@ -102,21 +186,14 @@ func (p *Proxy) pickReadyMember(ctx context.Context, label string, members []str
 		return members[0]
 	}
 
-	// Snapshot Ready status. The Model fetch goes through the controller-
-	// runtime cache, which is in-memory and indexed — cheap per call.
-	ready := make([]string, 0, len(members))
-	for _, name := range members {
-		m, err := p.getModel(ctx, name)
-		if err == nil && m.Status.Phase == aiv1alpha2.ModelPhaseReady {
-			ready = append(ready, name)
-		}
-	}
+	infos := p.labelGroupMemberInfos(ctx, members)
 
-	candidates := ready
+	candidates := topPriorityNames(readyInfos(infos))
 	if len(candidates) == 0 {
-		// No member is Ready. Return the alphabetically first member so the
-		// cold-start path in serveOpenAI fires on a deterministic target.
-		candidates = members
+		// No member is Ready. Cold-start the highest-priority tier of the full
+		// membership (all members when nothing is annotated — the legacy
+		// behavior) so the deterministic target is also the preferred one.
+		candidates = topPriorityNames(infos)
 	}
 	if len(candidates) == 1 {
 		return candidates[0]
@@ -200,14 +277,18 @@ func (p *Proxy) pickLeastLoaded(label string, candidates []string) string {
 // `outcome` is one of:
 //   - default_rr: mode was empty / round-robin
 //   - least_loaded: lowest active-connection count won
+//   - priority_pick: route-priority narrowed multiple Ready members to one
 //   - fallback_single: only one (Ready) candidate
 //   - fallback_no_ready: zero Ready candidates; deterministic cold-start path
 //   - fallback_no_key: mode was non-default but no key was extractable
 //   - hashed_prefix | hashed_session: consistent-hash pin took effect
 //
-// Fallback paths preserve existing semantics by delegating to
-// pickReadyMember; the legacy RR counter still advances so consecutive
-// no-key requests distribute across replicas.
+// Route-priority tiers (flexinfer.ai/route-priority) narrow the Ready set to
+// its highest tier before the strategy runs, so least-loaded and hash pinning
+// distribute within the preferred tier only. Fallback paths preserve existing
+// semantics by delegating to pickReadyMember (itself priority-aware); the
+// legacy RR counter still advances so consecutive no-key requests distribute
+// across replicas.
 func (p *Proxy) pickReadyMemberRouted(
 	ctx context.Context,
 	label string,
@@ -224,23 +305,23 @@ func (p *Proxy) pickReadyMemberRouted(
 		return observeLabelGroupPick(label, strategy, "fallback_single", members[0])
 	}
 
-	ready := make([]string, 0, len(members))
-	for _, name := range members {
-		m, err := p.getModel(ctx, name)
-		if err == nil && m.Status.Phase == aiv1alpha2.ModelPhaseReady {
-			ready = append(ready, name)
-		}
-	}
+	ready := readyInfos(p.labelGroupMemberInfos(ctx, members))
 
 	if len(ready) == 0 {
 		return observeLabelGroupPick(label, strategy, "fallback_no_ready", p.pickReadyMember(ctx, label, members))
 	}
-	if len(ready) == 1 {
-		return observeLabelGroupPick(label, strategy, "fallback_single", ready[0])
+
+	candidates := topPriorityNames(ready)
+	if len(candidates) == 1 {
+		outcome := "fallback_single"
+		if len(ready) > 1 {
+			outcome = "priority_pick"
+		}
+		return observeLabelGroupPick(label, strategy, outcome, candidates[0])
 	}
 
 	if strategy == labelGroupRoutingLeastLoaded {
-		return observeLabelGroupPick(label, strategy, "least_loaded", p.pickLeastLoaded(label, ready))
+		return observeLabelGroupPick(label, strategy, "least_loaded", p.pickLeastLoaded(label, candidates))
 	}
 
 	key, outcome := extractRoutingKey(strategy, req, bodyBytes)
@@ -248,7 +329,7 @@ func (p *Proxy) pickReadyMemberRouted(
 		return observeLabelGroupPick(label, strategy, "fallback_no_key", p.pickReadyMember(ctx, label, members))
 	}
 
-	return observeLabelGroupPick(label, strategy, outcome, consistentHashPick(key, ready))
+	return observeLabelGroupPick(label, strategy, outcome, consistentHashPick(key, candidates))
 }
 
 func observeLabelGroupPick(label, strategy, outcome, model string) string {

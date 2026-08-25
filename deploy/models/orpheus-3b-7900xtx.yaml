@@ -1,10 +1,13 @@
 # Orpheus-3B TTS token generator — fast twin on the 7900 XTX (gfx1100)
 #
-# Joins the orpheus-tts routing group with orpheus-3b-radeonvii: the proxy
-# serves model=orpheus-tts from whichever member is Ready. This lane is the
-# speed tier (gfx1100 kernels put 3B Q4 well past realtime); the warm-pinned
-# VII twin is the availability tier. A future GamingSession evicts this lane
-# and voice degrades to the VII instead of going silent — which is the whole
+# Joins the orpheus-tts routing group with orpheus-3b-radeonvii. This lane is
+# the speed tier (gfx1100 kernels put 3B Q4 well past realtime; RTF ~1.6 vs
+# ~0.75 on the VII); the warm-pinned VII twin is the availability tier.
+# route-priority 100 makes the preference explicit: while this lane is Ready
+# the proxy routes every orpheus-tts request here — least-loaded would
+# otherwise round-robin the idle warm pair ~50/50 and push half the traffic
+# below realtime. A GamingSession evicting this lane drops it from Ready and
+# voice degrades to the VII instead of going silent — which is the whole
 # point of the group.
 #
 # On-demand (not warm-pinned): 7900xtx-textgen has no warm-pinned leader, so
@@ -19,6 +22,9 @@ metadata:
   annotations:
     flexinfer.ai/purpose: "TTS audio-token generator (Orpheus) — gfx1100 speed tier of the orpheus-tts group"
     flexinfer.ai/serve-paths: /v1/completions
+    # Preferred generation target of the orpheus-tts group: while Ready, this
+    # lane shadows the tier-0 VII twin (see internal/proxy/resolver.go).
+    flexinfer.ai/route-priority: "100"
 spec:
   backend: llamacpp
   source: HF://QuantFactory/orpheus-3b-0.1-ft-GGUF
@@ -37,8 +43,8 @@ spec:
     # 2026-08-22: warm-pinned. Measured: the proxy routes orpheus-tts to Ready
     # members only and never wakes an Idle one, so at minReplicas 0 this speed
     # tier was permanently shadowed by the always-warm VII twin. Both tiers
-    # warm -> the group load-balances; a gaming lease still evicts this one
-    # and the VII carries the group alone.
+    # warm + route-priority 100 -> this lane takes all traffic while Ready; a
+    # gaming lease still evicts this one and the VII carries the group alone.
     minReplicas: 1
     idleTimeout: 15m
     coldStartTimeout: 5m
