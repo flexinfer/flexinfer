@@ -2176,13 +2176,19 @@ trivy_scan_deps:
   script:
     - echo "Scanning go.mod for dependency vulnerabilities..."
     - trivy fs --scanners vuln --exit-code 0 --format table .
+    - echo "Generating JSON report for GitLab integration..."
+    - trivy fs --scanners vuln --exit-code 0 --format json --output trivy-deps-report.json .
     - echo ""
     - echo "=== Checking for HIGH/CRITICAL vulnerabilities ==="
     - trivy fs --scanners vuln --exit-code 1 --severity HIGH,CRITICAL .
   artifacts:
     reports:
       dependency_scanning: trivy-deps-report.json
+    paths:
+      - trivy-deps-report.json
+    expire_in: 7 days
     when: always
+
 # SBOM generation using syft (spdx-json format)
 # Generates Software Bill of Materials for CNCF compliance
 sbom_generate:
