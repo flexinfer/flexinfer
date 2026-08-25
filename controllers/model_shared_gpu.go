@@ -378,6 +378,11 @@ func isWarmPinnedSharedModel(model *aiv1alpha2.Model) bool {
 // It is deliberately conservative: an equal-or-higher-priority member still
 // demand-swaps, and a member behind a scale-to-zero leader can serve once that
 // leader idles out (warm-primary reclaim / demand path), so neither is flagged.
+//
+// This is the pairwise single-slot core. The stamping site in handleSharedGPU
+// goes through staticallyParkedInGroup, which adds the multi-model exemption:
+// under multi-model election, "loses to the leader on priority" does not mean
+// "can never serve".
 func staticallyParkedBehindPrimary(member, leader *aiv1alpha2.Model) bool {
 	if member == nil || leader == nil || member.Name == leader.Name {
 		return false
@@ -386,6 +391,40 @@ func staticallyParkedBehindPrimary(member, leader *aiv1alpha2.Model) bool {
 		return false
 	}
 	return leader.Spec.GetPriority() > member.Spec.GetPriority()
+}
+
+// staticallyParkedInGroup is the group-aware stamping predicate for the
+// "primary/" PreemptedBy prefix: staticallyParkedBehindPrimary, minus the
+// members multi-model election could still admit.
+//
+// Single-slot groups reduce to the pairwise check -- only outranking the
+// never-idling leader can promote the member. Multi-model groups admit members
+// by VRAM budget instead (chooseSharedGroupLeaders): a parked member whose
+// gpu.vramEstimateMB still fits budgetMB alongside the current Active set joins
+// that set the moment it registers demand, so it must NOT be stamped. The stamp
+// makes the proxy 503 WITHOUT recording demand, so a stamped scale-to-zero
+// member can never register the demand that would admit it -- the
+// snac-decode-gfx1100 deadlock of 2026-08-24 (worked around by warm-pinning the
+// member in MR !998). A member whose estimate no longer fits stays stamped:
+// demand cannot buy it a slot while the current Active set holds the budget,
+// and the stamp self-heals on the reconcile after the set shrinks.
+func staticallyParkedInGroup(member, leader *aiv1alpha2.Model, activeModels []*aiv1alpha2.Model, multiModel bool, budgetMB int64) bool {
+	if !staticallyParkedBehindPrimary(member, leader) {
+		return false
+	}
+	if !multiModel {
+		return true
+	}
+	if budgetMB <= 0 {
+		// Unbounded budget admits every wanter (chooseSharedGroupLeaders skips
+		// the VRAM bound), so no member is ever statically parked.
+		return false
+	}
+	var used int64
+	for _, m := range activeModels {
+		used += vramEstimateMB(m)
+	}
+	return used+vramEstimateMB(member) > budgetMB
 }
 
 func sharedModelCanTakeDemand(model *aiv1alpha2.Model) bool {
@@ -608,12 +647,15 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Preempted").Set(0)
 	} else {
 		// This model should be preempted/queued (not in the Active set).
-		// Tag a statically-un-promotable park (lower priority behind a never-idling
-		// warm leader) with the "primary/" PreemptedBy prefix, so the reason
-		// resolver surfaces ReasonParkedBehindPrimary and the proxy fast-fails its
-		// doomed cold-starts. Lease parks take precedence and keep their own prefix.
+		// Tag a statically-un-promotable park with the "primary/" PreemptedBy
+		// prefix, so the reason resolver surfaces ReasonParkedBehindPrimary and
+		// the proxy fast-fails its doomed cold-starts. Single-slot: lower
+		// priority behind a never-idling warm leader. Multi-model: additionally
+		// requires the member's VRAM estimate to exceed the remaining budget --
+		// a member that still fits is admitted by demand, so its cold-start must
+		// queue normally. Lease parks take precedence and keep their own prefix.
 		effectivePreemptedBy := preemptedBy
-		if !leased && primary != nil && staticallyParkedBehindPrimary(model, primary) {
+		if !leased && primary != nil && staticallyParkedInGroup(model, primary, activeModels, multiModel, budgetMB) {
 			effectivePreemptedBy = aiv1alpha2.PreemptedByPrimaryPrefix + primary.Name
 		}
 		model.Status.SharedGroup.State = "Queued"

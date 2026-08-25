@@ -22,8 +22,12 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
@@ -905,5 +909,109 @@ func TestChooseSharedGroupLeaders(t *testing.T) {
 		b := withVRAMEst(makeSharedModel("b", 100, aiv1alpha2.ModelPhaseReady, timePtr(now), nil), 600)
 		got := chooseSharedGroupLeaders([]*aiv1alpha2.Model{a, b}, now, true, 16000, true)
 		assert.Empty(t, got, "leased group parks the whole Active set")
+	})
+}
+
+// TestStaticallyParkedInGroup covers the group-aware stamping predicate: under
+// multi-model election a member does not need to outrank the leader, only to
+// fit the VRAM budget, so a budget-fitting member must never be stamped
+// statically parked. Mirrors the snac-decode-gfx1100 deadlock of 2026-08-24:
+// scale-to-zero decode lane (prio 430, est 1500MB) behind the warm-pinned
+// workhorse (prio 480) on a 24000MB multiModel profile.
+func TestStaticallyParkedInGroup(t *testing.T) {
+	leader := withVRAMEst(markWarmPinned(makeSharedModel("workhorse", 480, aiv1alpha2.ModelPhaseReady, nil, nil)), 20000)
+	active := []*aiv1alpha2.Model{leader}
+	member := func(estMB int64) *aiv1alpha2.Model {
+		return withVRAMEst(makeSharedModel("snac-decode", 430, aiv1alpha2.ModelPhaseIdle, nil, nil), estMB)
+	}
+
+	t.Run("multi-model member fitting the remaining budget -> NOT parked", func(t *testing.T) {
+		assert.False(t, staticallyParkedInGroup(member(1500), leader, active, true, 24000))
+	})
+
+	t.Run("multi-model member exceeding the remaining budget -> parked", func(t *testing.T) {
+		assert.True(t, staticallyParkedInGroup(member(5000), leader, active, true, 24000))
+	})
+
+	t.Run("single-slot ignores the budget -> parked", func(t *testing.T) {
+		assert.True(t, staticallyParkedInGroup(member(1500), leader, active, false, 24000))
+	})
+
+	t.Run("multi-model unbounded budget -> NOT parked", func(t *testing.T) {
+		assert.False(t, staticallyParkedInGroup(member(99999), leader, active, true, 0))
+	})
+
+	t.Run("whole Active set consumes the budget, not just the leader", func(t *testing.T) {
+		second := withVRAMEst(markWarmPinned(makeSharedModel("embed", 440, aiv1alpha2.ModelPhaseReady, nil, nil)), 3000)
+		// 20000+3000 used; +1500 = 24500 > 24000, no longer fits.
+		assert.True(t, staticallyParkedInGroup(member(1500), leader, []*aiv1alpha2.Model{leader, second}, true, 24000))
+	})
+
+	t.Run("exactly-at-budget member fits (same arithmetic as chooseSharedGroupLeaders)", func(t *testing.T) {
+		assert.False(t, staticallyParkedInGroup(member(4000), leader, active, true, 24000))
+	})
+
+	t.Run("pairwise core still gates: over-budget member behind a non-warm leader -> NOT parked", func(t *testing.T) {
+		idleLeader := withVRAMEst(makeSharedModel("idle-leader", 480, aiv1alpha2.ModelPhaseReady, nil, nil), 23000)
+		assert.False(t, staticallyParkedInGroup(member(5000), idleLeader, []*aiv1alpha2.Model{idleLeader}, true, 24000))
+	})
+}
+
+// TestHandleSharedGPU_MultiModelStaticParkStamp drives the real stamping site
+// through handleSharedGPU with a multiModel GPUProfile, mirroring the
+// snac-decode-gfx1100 group: warm-pinned leader prio 480 (est 20000MB) and an
+// idle scale-to-zero member prio 430 on a 24000MB gfx1100 profile. The member
+// must park Queued WITHOUT the "primary/" prefix while its estimate fits
+// (promotable by demand -- the proxy queues its cold start), and WITH the
+// prefix once it cannot fit or the profile is single-slot.
+func TestHandleSharedGPU_MultiModelStaticParkStamp(t *testing.T) {
+	run := func(t *testing.T, memberEstMB int64, multiModel bool) *aiv1alpha2.SharedGroupStatus {
+		t.Helper()
+		s := runtime.NewScheme()
+		require.NoError(t, corev1.AddToScheme(s))
+		require.NoError(t, aiv1alpha2.AddToScheme(s))
+
+		sel := map[string]string{"gpu.arch": "gfx1100"}
+		leader := withVRAMEst(markWarmPinned(makeSharedModel("workhorse", 480, aiv1alpha2.ModelPhaseReady, timePtr(time.Now()), nil)), 20000)
+		leader.Spec.NodeSelector = sel
+		member := withVRAMEst(makeSharedModel("snac-decode", 430, aiv1alpha2.ModelPhaseIdle, nil, nil), memberEstMB)
+		member.Spec.NodeSelector = sel
+
+		cl := fake.NewClientBuilder().WithScheme(s).
+			WithObjects(leader, member).
+			WithStatusSubresource(&aiv1alpha2.Model{}).
+			Build()
+		profiles := &GPUProfileReconciler{}
+		profiles.profiles.Store("gfx1100", &aiv1alpha2.GPUProfileSpec{
+			Architecture: "gfx1100",
+			VRAMMB:       24000,
+			Features:     aiv1alpha2.GPUFeatures{MultiModel: multiModel},
+		})
+		r := &ModelReconciler{Client: cl, Scheme: s, Recorder: &FakeEventRecorder{}, GPUProfiles: profiles}
+
+		got := &aiv1alpha2.Model{}
+		require.NoError(t, cl.Get(t.Context(), client.ObjectKey{Namespace: "default", Name: "snac-decode"}, got))
+		_, err := r.handleSharedGPU(t.Context(), got)
+		require.NoError(t, err)
+		require.NotNil(t, got.Status.SharedGroup)
+		return got.Status.SharedGroup
+	}
+
+	t.Run("fits remaining budget -> queued WITHOUT primary/ stamp", func(t *testing.T) {
+		sg := run(t, 1500, true)
+		assert.Equal(t, "Queued", sg.State)
+		assert.Equal(t, "workhorse", sg.PreemptedBy,
+			"a budget-fitting multi-model member must keep a demand-promotable park")
+	})
+
+	t.Run("exceeds remaining budget -> stamped primary/", func(t *testing.T) {
+		sg := run(t, 5000, true)
+		assert.Equal(t, "Queued", sg.State)
+		assert.Equal(t, aiv1alpha2.PreemptedByPrimaryPrefix+"workhorse", sg.PreemptedBy)
+	})
+
+	t.Run("single-slot profile keeps the stamp regardless of estimate", func(t *testing.T) {
+		sg := run(t, 1500, false)
+		assert.Equal(t, aiv1alpha2.PreemptedByPrimaryPrefix+"workhorse", sg.PreemptedBy)
 	})
 }
