@@ -1,0 +1,1 @@
+- Ensure `.gitlab-ci.yml` creates merge-request validation pipelines and runs Go, Helm, and dependency checks.

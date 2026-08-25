@@ -31,6 +31,10 @@ include:
 
 workflow:
   rules:
+    # Merge-request pipelines are the required validation path for feature
+    # branches.  This must precede the branch-push suppression below: MR
+    # variables and rules are only evaluated after a pipeline is created.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     # All feature branches are validated through MR pipelines (auto-ship
     # policy) and the source branch is deleted on merge. Push pipelines for
     # non-master branches are suppressed entirely: the previous
@@ -86,7 +90,7 @@ default:
   rules:
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH == "master"
-    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: &go-validation-changes
         - "**/*.go"
         - go.mod
@@ -102,7 +106,7 @@ default:
   rules:
     - if: $CI_COMMIT_TAG
     - if: $CI_COMMIT_BRANCH == "master"
-    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: &helm-validation-changes
         - charts/**/*
         - config/crd/**/*
@@ -114,7 +118,7 @@ default:
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
     - if: $CI_PIPELINE_SOURCE == "schedule"
-    - if: $CI_MERGE_REQUEST_ID
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
       changes: &dependency-validation-changes
         - go.mod
         - go.sum
