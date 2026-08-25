@@ -27,6 +27,19 @@ const (
 	// already exist in the cluster or the pod fails admission; absent/empty means
 	// no PriorityClass (the default, unchanged for every other model).
 	AnnotationServingPriorityClass = "flexinfer.ai/serving-priority-class"
+
+	// AnnotationRoutePriority ranks the members of a shared service-label group
+	// for routing preference. The proxy routes only within the highest-priority
+	// tier of Ready members; lower tiers serve only while no higher-tier member
+	// is Ready. That expresses "fast primary + availability fallback" — e.g. the
+	// orpheus-tts group prefers the gfx1100 speed tier and degrades to the warm
+	// gfx906 twin when a gaming lease evicts it. Parsed as an integer; higher
+	// wins (same direction as spec.gpu.priority, which governs GPU election, a
+	// separate mechanism). Absent, empty, or unparsable means 0, the default
+	// tier — annotation-less groups keep exact legacy behavior. Within a tier
+	// the configured label-group routing mode (round-robin, least-loaded, or
+	// hash pinning) applies unchanged.
+	AnnotationRoutePriority = "flexinfer.ai/route-priority"
 )
 
 // Node annotations written by the flexinfer-agent for scheduler scoring.

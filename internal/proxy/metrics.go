@@ -332,7 +332,9 @@ var (
 	// prefix-session-or-rr). `outcome` is what actually happened on this call:
 	// least_loaded, hashed_prefix, hashed_session, fallback_no_key (mode tried
 	// but no key extractable), fallback_single (only one Ready candidate so no
-	// choice to make), or default_rr (mode was round-robin or empty).
+	// choice to make), priority_pick (route-priority narrowed multiple Ready
+	// members to a single preferred one), or default_rr (mode was round-robin
+	// or empty).
 	labelGroupRouteDecisionsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_label_group_route_decisions_total",

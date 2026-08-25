@@ -296,6 +296,33 @@ member the connection gauge still shows as idle — see
 [Least-Loaded](#least-loaded) for details. Prefix and session modes remain
 available when cache affinity matters more than current load.
 
+#### Preferred member (route-priority)
+
+For asymmetric groups — a fast primary plus a slower availability fallback —
+annotate the preferred Model with `flexinfer.ai/route-priority` (integer,
+higher wins, absent = 0):
+
+```yaml
+metadata:
+  annotations:
+    flexinfer.ai/route-priority: "100"
+```
+
+The proxy narrows every pick to the highest-priority tier of the *Ready*
+members before the configured mode runs: while the primary is Ready it takes
+all traffic (decision outcome `priority_pick`), and the moment it leaves Ready
+the group degrades to the next tier. When no member is Ready, the
+deterministic cold-start target is the alphabetically first member of the
+highest-priority tier. Members without the annotation share tier 0, so
+symmetric fleets are unaffected. Within a tier the configured mode
+(round-robin, least-loaded, hash pinning) applies unchanged. This is a routing
+preference only — it is unrelated to `spec.gpu.priority`, which governs
+shared-GPU election.
+
+Example: the `orpheus-tts` TTS group prefers its gfx1100 twin (realtime
+generation) and falls back to the warm gfx906 twin only when a gaming lease
+evicts the primary.
+
 ### Logs
 
 Enable debug logging to see routing decisions:
