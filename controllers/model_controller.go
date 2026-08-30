@@ -441,6 +441,16 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			// status write. Activation renders the current Model spec before it
 			// scales up, so keeping an unused template hot is unnecessary and can
 			// monopolize the single reconcile worker when child events are noisy.
+			//
+			// Managed metadata is the exception: litellm's manager reads the
+			// advertisement annotations (aliases, service-labels) off the
+			// Deployment even while the lane is parked, so a spec edit must
+			// converge them here — without it, a removed serviceLabel stays
+			// advertised until the next activation.
+			if err := r.syncParkedDeploymentAnnotations(ctx, model, b); err != nil {
+				log.Error(err, "Failed to converge annotations on parked Deployment")
+				return ctrl.Result{}, err
+			}
 			return ctrl.Result{RequeueAfter: requeueMedium}, nil
 		}
 		exists, err := r.deploymentExists(ctx, model)
