@@ -437,12 +437,7 @@ func (r *ModelBackfillReconciler) admissionBlock(ctx context.Context, backfill *
 	}
 	for i := range sessions.Items {
 		s := &sessions.Items[i]
-		desired := s.Spec.Mode
-		if desired == "" {
-			desired = nodeModeGaming
-		}
-		if s.Spec.NodeName == nodeName && desired == nodeModeGaming &&
-			(s.Spec.ExpiresAt == nil || now.Before(s.Spec.ExpiresAt.Time)) {
+		if s.Spec.NodeName == nodeName && gamingSessionBlocksBatchWork(s, now) {
 			return "GamingIntent", fmt.Sprintf("GamingSession %q targets node %s", s.Name, nodeName), nil
 		}
 	}

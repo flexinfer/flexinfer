@@ -262,6 +262,10 @@ type RuntimeModeStatus struct {
 	// supervised restart is pending). Detail explains why.
 	Degraded bool   `json:"degraded,omitempty"`
 	Detail   string `json:"detail,omitempty"`
+	// ClientsActive reports whether a Moonlight client holds an established
+	// connection while in gaming mode. Nil when the runtime image predates the
+	// telemetry (or outside gaming mode); consumers must treat nil as unknown.
+	ClientsActive *bool `json:"clientsActive,omitempty"`
 }
 
 // CheckModelHealth queries the runtime for a model's current state.

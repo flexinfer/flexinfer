@@ -113,6 +113,10 @@ const (
 	// proxy, and operators can tell an intentional, transient training park from
 	// a serving-vs-serving preemption or an outage.
 	ReasonGPULeaseHeld = "GPULeaseHeld"
+	// ReasonGamingLeaseHeld - serving is parked because a GamingSession holds
+	// the model's node. Like ReasonGPULeaseHeld this is an intentional,
+	// transient park (the session carries a mandatory deadline), not an outage.
+	ReasonGamingLeaseHeld = "GamingLeaseHeld"
 	// ReasonParkedBehindPrimary - this shared-GPU member is statically
 	// un-promotable: a warm-pinned/warm-primary leader of strictly higher
 	// priority holds the single slot and never idles out, so the demand-swap

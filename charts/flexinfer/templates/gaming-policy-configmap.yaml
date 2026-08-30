@@ -1,0 +1,32 @@
+{{- /*
+GitOps-owned gaming lease policy. The GamingSession controller and the
+`flexinfer game` CLI read this ConfigMap by its fixed name (the node's gaming
+CAPABILITY and POLICY live in Git; individual play sessions are ephemeral
+API objects). When this ConfigMap is absent the controller falls back to
+built-in secure defaults: NO approved images (activation refused), owner
+required, 2h default TTL.
+
+approvedImages is the P0 security gate: it must only ever contain runtime
+image digests that passed the exact-hardware streaming + security canary
+(docs/dev/gaming-image-canary.md). It ships empty on purpose — the pinned
+Sunshine 2025.924 build is affected by GHSA-ph75-mgxh-mv57 and the patched
+2026.516 build crashes wlroots capture on the 7900 XTX, so no image is
+currently safe to approve.
+*/ -}}
+{{- $gaming := .Values.gaming | default dict }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: flexinfer-gaming-policy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+data:
+  approvedImages: |
+    {{- range ($gaming.approvedImages | default list) }}
+    {{ . }}
+    {{- end }}
+  defaultTTL: {{ $gaming.defaultTTL | default "2h" | quote }}
+  maxTTL: {{ $gaming.maxTTL | default "8h" | quote }}
+  drainTimeout: {{ $gaming.drainTimeout | default "10m" | quote }}
+  requireOwner: {{ (hasKey $gaming "requireOwner") | ternary $gaming.requireOwner true | quote }}

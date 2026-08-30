@@ -32,6 +32,10 @@ const (
 	// GamingSessionPending means the target node's runtime is not yet reachable
 	// (pod starting, or no runtime on that node).
 	GamingSessionPending GamingSessionPhase = "Pending"
+	// GamingSessionDraining means the scheduling overlay is parking the node's
+	// inference workloads and the controller is waiting for their pods to leave
+	// the node before starting the gaming backend.
+	GamingSessionDraining GamingSessionPhase = "Draining"
 	// GamingSessionActivating means the controller has requested the mode switch
 	// and is waiting for the runtime to report the target mode.
 	GamingSessionActivating GamingSessionPhase = "Activating"
@@ -50,6 +54,50 @@ const (
 	GamingSessionExpired GamingSessionPhase = "Expired"
 	// GamingSessionFailed means the mode switch could not be completed.
 	GamingSessionFailed GamingSessionPhase = "Failed"
+)
+
+// GamingSession status condition types. Each maps to one actionable question:
+// can this node game at all, is inference off the card, is the streaming host
+// up, and is anyone actually playing.
+const (
+	// GamingConditionCapabilityReady is True when the target node can host an
+	// approved gaming session: the runtime pod is reachable and its image is on
+	// the operator's approved list, and the session satisfies owner policy.
+	GamingConditionCapabilityReady = "CapabilityReady"
+	// GamingConditionDrainComplete is True when no inference model pods remain
+	// on the node (runtime-managed models are unloaded by the runtime during
+	// the mode switch itself).
+	GamingConditionDrainComplete = "DrainComplete"
+	// GamingConditionSunshineReady is True when the runtime reports gaming mode
+	// with a healthy (non-degraded) gaming backend.
+	GamingConditionSunshineReady = "SunshineReady"
+	// GamingConditionStreamActive is True while the runtime observes an
+	// established Moonlight client connection. Unknown when the runtime image
+	// predates client telemetry.
+	GamingConditionStreamActive = "StreamActive"
+)
+
+// GamingSession condition reasons (shared with the CLI so `flexinfer game`
+// can explain blockers with the same vocabulary).
+const (
+	GamingReasonRuntimeNotFound      = "RuntimeNotFound"
+	GamingReasonImageNotApproved     = "ImageNotApproved"
+	GamingReasonOwnerRequired        = "OwnerRequired"
+	GamingReasonPolicySatisfied      = "PolicySatisfied"
+	GamingReasonAdoptedActiveMode    = "AdoptedActiveMode"
+	GamingReasonDraining             = "Draining"
+	GamingReasonDrainBlocked         = "DrainBlocked"
+	GamingReasonDrainComplete        = "DrainComplete"
+	GamingReasonModeSwitchPending    = "ModeSwitchPending"
+	GamingReasonBackendDegraded      = "BackendDegraded"
+	GamingReasonSunshineUp           = "SunshineUp"
+	GamingReasonClientConnected      = "ClientConnected"
+	GamingReasonNoClient             = "NoClient"
+	GamingReasonTelemetryUnavailable = "TelemetryUnavailable"
+	GamingReasonSessionEnded         = "SessionEnded"
+	GamingReasonRuntimeReverted      = "RuntimeReverted"
+	GamingReasonIdleTimeout          = "IdleTimeout"
+	GamingReasonExpired              = "Expired"
 )
 
 // GamingSessionSpec declares that a GPU node should be placed in a given mode.
@@ -75,13 +123,36 @@ type GamingSessionSpec struct {
 	// +optional
 	Owner string `json:"owner,omitempty"`
 
-	// ExpiresAt is the lease deadline for this gaming session. Once now >=
-	// ExpiresAt, the controller drives the node back to inference mode and keeps
-	// the session Expired until the object is deleted or the deadline is
-	// extended. A nil value means the session persists until explicit deletion
-	// or runtime idle-revert policy.
+	// ExpiresAt is an absolute lease deadline for this gaming session. Once
+	// now >= the effective deadline, the controller drives the node back to
+	// inference mode and keeps the session Expired until the object is deleted
+	// or the deadline is extended.
+	//
+	// Every session has a deadline: the effective deadline is the earliest of
+	// ExpiresAt, creation+TTL, and creation+maxTTL (from the gaming policy).
+	// When neither ExpiresAt nor TTL is set, the policy's defaultTTL applies.
+	// The controller reports the effective deadline in status.expiresAt.
 	// +optional
 	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// TTL bounds the session relative to its creation time (e.g. "2h"). See
+	// ExpiresAt for how the effective deadline is derived.
+	// +optional
+	TTL *metav1.Duration `json:"ttl,omitempty"`
+
+	// IdleTimeout ends the session after no Moonlight client has been
+	// connected for this long (measured from activation or the last observed
+	// client, whichever is later). Enforcement requires a runtime image that
+	// reports client telemetry; without it the session only expires via its
+	// deadline or the runtime's own GAMING_IDLE_TIMEOUT guard.
+	// +optional
+	IdleTimeout *metav1.Duration `json:"idleTimeout,omitempty"`
+
+	// DrainTimeout bounds how long activation may wait for inference pods to
+	// leave the node before reporting DrainBlocked. Defaults to the gaming
+	// policy's drainTimeout (10m when unset).
+	// +optional
+	DrainTimeout *metav1.Duration `json:"drainTimeout,omitempty"`
 }
 
 // GamingSessionStatus is the observed state of a gaming session.
@@ -111,6 +182,30 @@ type GamingSessionStatus struct {
 	// lease deadline and began reverting the node to inference.
 	// +optional
 	ExpiredAt *metav1.Time `json:"expiredAt,omitempty"`
+
+	// ExpiresAt is the effective lease deadline the controller enforces: the
+	// earliest of spec.expiresAt, creation+spec.ttl, and creation+policy
+	// maxTTL, defaulted from the gaming policy when the spec is silent.
+	// +optional
+	ExpiresAt *metav1.Time `json:"expiresAt,omitempty"`
+
+	// LastStreamActiveAt is the last time the runtime reported an established
+	// Moonlight client. Drives spec.idleTimeout enforcement.
+	// +optional
+	LastStreamActiveAt *metav1.Time `json:"lastStreamActiveAt,omitempty"`
+
+	// EndReason records why a session concluded: Expired (deadline),
+	// IdleTimeout, or RuntimeReverted (the node left gaming mode outside the
+	// controller, e.g. the runtime's own idle guard). A deadline expiry can be
+	// undone by extending spec.expiresAt/ttl; IdleTimeout and RuntimeReverted
+	// are terminal — delete the session and start a new one to game again.
+	// +optional
+	EndReason string `json:"endReason,omitempty"`
+
+	// Conditions carry the actionable activation state: CapabilityReady,
+	// DrainComplete, SunshineReady, StreamActive.
+	// +optional
+	Conditions []metav1.Condition `json:"conditions,omitempty"`
 }
 
 //+kubebuilder:object:root=true
@@ -121,7 +216,7 @@ type GamingSessionStatus struct {
 //+kubebuilder:printcolumn:name="Phase",type="string",JSONPath=".status.phase"
 //+kubebuilder:printcolumn:name="Observed",type="string",JSONPath=".status.observedMode"
 //+kubebuilder:printcolumn:name="Owner",type="string",JSONPath=".spec.owner"
-//+kubebuilder:printcolumn:name="Expires",type="date",JSONPath=".spec.expiresAt"
+//+kubebuilder:printcolumn:name="Expires",type="date",JSONPath=".status.expiresAt"
 //+kubebuilder:printcolumn:name="Age",type="date",JSONPath=".metadata.creationTimestamp"
 
 // GamingSession is the declarative carrier for putting a GPU node into gaming

@@ -7,9 +7,10 @@ resources:
   - loras/
   - gpuprofiles/
   - gpugroups.yaml
-  # Gaming lease re-taken 2026-08-19 (Cyberpunk via Steam Deck/Moonlight).
-  # cblevins-7900xtx leaves the inference fleet while this is reconciled; the
-  # node's 9b-RP lane is de-advertised (twin on 5930k covers) and the
+  # Gaming sessions are NOT GitOps-authored: `flexinfer game start` creates
+  # the ephemeral, TTL-bound GamingSession directly, gated by the gaming
+  # policy in system/values-k3s.yaml (docs/user/gaming-mode-runbook.md).
+  # Only the node's gaming capability and that policy live in git.
   # Bounded, one-shot long-context qualification. The experiment deletes its
   # candidate after the retained 96K/128K recall gauntlet reaches a verdict.
   - experiments/
