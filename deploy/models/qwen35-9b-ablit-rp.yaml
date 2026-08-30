@@ -191,11 +191,14 @@ spec:
   serviceLabels:
     - qwen35-9b-ablit-rp
   litellm:
-    # 2026-08-30: stays de-advertised after the gaming handback. The 5930k twin
-    # carries the qwen35-9b-ablit-rp label for the live consumers (news-analyzer
-    # batch/digest, jobsearch daemon, psyche; Mills pins the twin's own name)
-    # while they migrate to qwen38-27b-autoround-workhorse. Re-advertising this
-    # lane would route demand back at the voice card.
+    # 2026-08-30: stays de-advertised after the gaming handback. The scheduled
+    # consumers (news-analyzer, jobsearch daemon, Mills reviewers/audit) are
+    # MIGRATED to qwen38-27b-autoround-workhorse (news-analyzer !20,
+    # jobsearch-app !118, gitops !639); psyche's text lane rides the
+    # "workhorse" label. The 9b lanes remain only for NSFW-RP (the nsfw-rp
+    # LoRAs target this abliterated base; no qwen38-era RP artifact exists) —
+    # retiring them awaits that operator decision. Re-advertising this lane
+    # would route demand back at the voice card.
     enabled: false
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"

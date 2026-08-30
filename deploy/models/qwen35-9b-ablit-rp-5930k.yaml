@@ -157,10 +157,14 @@ spec:
     - qwen35-9b-ablit-rp-5930k
     - nsfw-rp-twin-base
     # 2026-08-30: durable post-handback home of the primary RP label (the XTX
-    # is the voice card now — see qwen35-9b-ablit-rp.yaml). Load-bearing:
-    # news-analyzer and the jobsearch daemon pin qwen35-9b-ablit-rp; Mills
-    # reviewers pin this twin's own name. Keep until those consumers migrate
-    # to qwen38-27b-autoround-workhorse.
+    # is the voice card now — see qwen35-9b-ablit-rp.yaml). The text consumers
+    # that pinned it are MIGRATED to qwen38-27b-autoround-workhorse
+    # (news-analyzer !20, jobsearch-app !118, gitops !639 for Mills), so the
+    # label no longer serves scheduled traffic. It stays ONLY for the NSFW-RP
+    # use case: the nsfw-rp LoRAs target the abliterated 9b base and the
+    # clean qwen38 workhorse has no RP artifact. Retiring this label — and
+    # both 9b lanes — needs an operator decision first (qwen38-era RP
+    # artifact, or keep this twin RP-only).
     - qwen35-9b-ablit-rp
   litellm:
     enabled: true
