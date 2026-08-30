@@ -1042,7 +1042,12 @@ spec:
                     format: date-time
                     type: string
                   preemptedBy:
-                    description: PreemptedBy is which model caused preemption.
+                    description: |-
+                      PreemptedBy is which model caused preemption. The election may prefix the
+                      attribution to encode the park class: GPULeasePreemptedByPrefix
+                      ("gpu-lease/") for a training lease hold, or PreemptedByPrimaryPrefix
+                      ("primary/") for a statically-un-promotable park behind a warm leader.
+                      The bare leader/owner name follows the prefix.
                     type: string
                   queuePosition:
                     description: QueuePosition when waiting to be loaded.

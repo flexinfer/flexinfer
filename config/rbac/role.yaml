@@ -7,6 +7,7 @@ rules:
 - apiGroups:
   - ""
   resources:
+  - configmaps
   - endpoints
   - nodes
   - pods
@@ -39,6 +40,7 @@ rules:
   resources:
   - clusters
   - federatedmodels
+  - gamingsessions
   - gpuleases
   - loraadapters
   - modelbackfills
@@ -59,6 +61,7 @@ rules:
   resources:
   - clusters/finalizers
   - federatedmodels/finalizers
+  - gamingsessions/finalizers
   - loraadapters/finalizers
   - modelbackfills/finalizers
   - modelcaches/finalizers
@@ -71,6 +74,7 @@ rules:
   resources:
   - clusters/status
   - federatedmodels/status
+  - gamingsessions/status
   - gpuleases/status
   - gpuprofiles/status
   - loraadapters/status
@@ -86,38 +90,11 @@ rules:
 - apiGroups:
   - ai.flexinfer
   resources:
-  - gamingsessions
   - gpuprofiles
   verbs:
   - get
   - list
   - watch
-- apiGroups:
-  - ai.flexinfer.ai
-  resources:
-  - gamingsessions
-  verbs:
-  - create
-  - delete
-  - get
-  - list
-  - patch
-  - update
-  - watch
-- apiGroups:
-  - ai.flexinfer.ai
-  resources:
-  - gamingsessions/finalizers
-  verbs:
-  - update
-- apiGroups:
-  - ai.flexinfer.ai
-  resources:
-  - gamingsessions/status
-  verbs:
-  - get
-  - patch
-  - update
 - apiGroups:
   - apps
   resources:
