@@ -18,7 +18,6 @@ package controllers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"strconv"
@@ -39,7 +38,6 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/constants"
-	"github.com/flexinfer/flexinfer/pkg/modelmeta"
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 )
 
@@ -103,25 +101,7 @@ func (r *ModelReconciler) ensureServiceWithPort(ctx context.Context, model *aiv1
 	}
 
 	// Build annotations including LiteLLM and service labels
-	annotations := make(map[string]string)
-	if litellmEnabled(model) {
-		servedModel := litellmServedModel(model)
-		annotations[AnnotationLiteLLMServedModel] = servedModel
-		if aliases := litellmAliases(model, servedModel); len(aliases) > 0 {
-			annotations[AnnotationLiteLLMAliases] = strings.Join(aliases, ",")
-		}
-		if model.Spec.LiteLLM != nil && model.Spec.LiteLLM.CopilotAlias != "" {
-			annotations[AnnotationLiteLLMCopilot] = model.Spec.LiteLLM.CopilotAlias
-		}
-		capsJSON, _ := json.Marshal(resolveCapabilities(model, b))
-		annotations[AnnotationLiteLLMCapabilities] = string(capsJSON)
-		modelmeta.ApplyTokenLimitAnnotations(annotations, modelmeta.ResolveTokenLimits(&model.Spec))
-	}
-
-	// Add service labels for routing
-	if len(model.Spec.ServiceLabels) > 0 {
-		annotations[AnnotationServiceLabels] = strings.Join(model.Spec.ServiceLabels, ",")
-	}
+	annotations := r.managedAnnotationsForModel(model, b)
 
 	desiredService := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -542,23 +522,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			Namespace: model.Namespace,
 			Labels:    r.labelsForModel(model),
 			Annotations: func() map[string]string {
-				annotations := make(map[string]string)
-				if litellmEnabled(model) {
-					servedModel := litellmServedModel(model)
-					annotations[AnnotationLiteLLMServedModel] = servedModel
-					if aliases := litellmAliases(model, servedModel); len(aliases) > 0 {
-						annotations[AnnotationLiteLLMAliases] = strings.Join(aliases, ",")
-					}
-					if model.Spec.LiteLLM != nil && model.Spec.LiteLLM.CopilotAlias != "" {
-						annotations[AnnotationLiteLLMCopilot] = model.Spec.LiteLLM.CopilotAlias
-					}
-					capsJSON, _ := json.Marshal(resolveCapabilities(model, b))
-					annotations[AnnotationLiteLLMCapabilities] = string(capsJSON)
-					modelmeta.ApplyTokenLimitAnnotations(annotations, modelmeta.ResolveTokenLimits(&model.Spec))
-				}
-				if len(model.Spec.ServiceLabels) > 0 {
-					annotations[AnnotationServiceLabels] = strings.Join(model.Spec.ServiceLabels, ",")
-				}
+				annotations := r.managedAnnotationsForModel(model, b)
 				if len(annotations) == 0 {
 					return nil
 				}
@@ -765,6 +729,33 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 
 	log.Info("Updating Deployment", "name", model.Name, "changedFields", changed)
 
+	return r.Update(ctx, deployment)
+}
+
+// syncParkedDeploymentAnnotations converges the controller-managed annotations
+// on a parked (zero-replica) Deployment without rendering the pod template.
+// The steady-idle fast path skips ensureDeployment entirely, but litellm's
+// manager gathers its advertisement (litellm.flexinfer.ai/aliases,
+// flexinfer.ai/service-labels) from the Deployment annotations even while the
+// lane is scaled to zero — so a spec.serviceLabels or alias edit must re-stamp
+// the parked Deployment here, or the removed label keeps being advertised
+// until the next activation. Metadata-only: replicas and template untouched.
+func (r *ModelReconciler) syncParkedDeploymentAnnotations(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) error {
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, deployment); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+
+	desired := applyManagedAnnotations(deployment.Annotations, r.managedAnnotationsForModel(model, b), managedModelAnnotations)
+	if apiequality.Semantic.DeepEqual(deployment.Annotations, desired) {
+		return nil
+	}
+
+	deployment.Annotations = desired
+	log.FromContext(ctx).Info("Converging managed annotations on parked Deployment", "name", model.Name)
 	return r.Update(ctx, deployment)
 }
 
