@@ -108,9 +108,17 @@ spec:
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
     trustRemoteCode: true
-    # Consumer note (F3 session 2026-08-16): callers must set
-    # chat_template_kwargs {"enable_thinking": false} OR budget max_tokens
-    # for the <think> phase — otherwise answers can come back EMPTY.
+    # Non-thinking by default (2026-08-30, RP-consumer migration). This lane
+    # now serves naive OpenAI callers moving off the 9b RP lanes
+    # (news-analyzer, jobsearch daemon) that send no chat_template_kwargs
+    # and modest max_tokens; with thinking on, the <think> phase eats the
+    # budget and answers come back EMPTY (F3 session 2026-08-16). Same
+    # posture as both qwen35-9b lanes. Per-request chat_template_kwargs
+    # still take precedence, so Mills/loom clients that set enable_thinking
+    # explicitly (loom-core pkg/mills/clients/flexinfer.go) are unchanged,
+    # and any caller can opt back into thinking per request.
+    defaultChatTemplateKwargs:
+      enable_thinking: false
     enableToolCalling: true
     toolCallParser: qwen3_coder
     # Clean checkpoint with proper <think> boundaries — split reasoning into
