@@ -188,6 +188,11 @@ func (s *Server) handleGetMode(w http.ResponseWriter, r *http.Request) {
 		resp["degraded"] = true
 		resp["detail"] = detail
 	}
+	// Best-effort live-client telemetry (gaming mode only). Absent on older
+	// images; the controller maps absence to StreamActive=Unknown.
+	if active, ok := s.manager.GamingClientsActive(); ok {
+		resp["clientsActive"] = active
+	}
 	writeJSON(w, http.StatusOK, resp)
 }
 

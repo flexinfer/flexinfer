@@ -49,6 +49,14 @@ func (r *ModelReconciler) desiredReplicas(model *aiv1alpha2.Model, b backend.Bac
 }
 
 func (r *ModelReconciler) desiredReplicasForContext(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) int32 {
+	// Gaming overlay: while a GamingSession holds this model's pinned node,
+	// nothing inference-shaped runs there — including dedicated Deployments and
+	// explicit minReplicas warm floors, which previously had to be zeroed by
+	// hand-editing manifests for every lease.
+	if gs := r.gamingHoldForModel(ctx, model); gs != nil {
+		return 0
+	}
+
 	// KV-cache eviction: override to 0 replicas while an active KV-cache
 	// policy is evicting. Ignore stale status left behind after the policy is
 	// removed so old pressure events cannot pin a model at zero forever.
@@ -477,7 +485,7 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 			swapStart := time.Time{}
 			if model.Status.SharedGroup.PreemptedAt != nil {
 				swapStart = model.Status.SharedGroup.PreemptedAt.Time
-			} else if (prevReadyReason == aiv1alpha2.ReasonPreempted || prevReadyReason == aiv1alpha2.ReasonGPULeaseHeld) && !readyStartedAt.IsZero() {
+			} else if (prevReadyReason == aiv1alpha2.ReasonPreempted || prevReadyReason == aiv1alpha2.ReasonGPULeaseHeld || prevReadyReason == aiv1alpha2.ReasonGamingLeaseHeld) && !readyStartedAt.IsZero() {
 				swapStart = readyStartedAt
 			}
 			if !swapStart.IsZero() {
@@ -556,6 +564,11 @@ func preemptedConditionReasonMessage(model *aiv1alpha2.Model) (reason, message s
 			owner := strings.TrimPrefix(pb, gpuLeasePreemptedByPrefix)
 			return aiv1alpha2.ReasonGPULeaseHeld,
 				fmt.Sprintf("Card held by training (GPU lease %q); serving parked until the lease releases", owner)
+		}
+		if strings.HasPrefix(pb, gamingPreemptedByPrefix) {
+			session := strings.TrimPrefix(pb, gamingPreemptedByPrefix)
+			return aiv1alpha2.ReasonGamingLeaseHeld,
+				fmt.Sprintf("Node leased for gaming (session %q); serving parked until the session ends", session)
 		}
 		if strings.HasPrefix(pb, aiv1alpha2.PreemptedByPrimaryPrefix) {
 			primary := strings.TrimPrefix(pb, aiv1alpha2.PreemptedByPrimaryPrefix)

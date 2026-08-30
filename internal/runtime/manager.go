@@ -1043,6 +1043,25 @@ func (m *Manager) superviseGamingRestart(ctx context.Context, delay time.Duratio
 	}
 }
 
+// GamingClientsActive reports whether a Moonlight client currently holds an
+// established connection to the gaming backend. ok is false outside gaming
+// mode (the mode API then omits the field, so the controller reports
+// StreamActive=Unknown rather than a guess). Best-effort like the idle guard:
+// a broken probe reads as "active", which also keeps controller-side idle
+// expiry from killing a live session on probe failure.
+func (m *Manager) GamingClientsActive() (active bool, ok bool) {
+	if m.Mode() != ModeGaming {
+		return false, false
+	}
+	m.mu.RLock()
+	probe := m.gamingClientActive
+	m.mu.RUnlock()
+	if probe == nil {
+		return false, false
+	}
+	return probe(), true
+}
+
 // GamingDegraded reports whether the node is in gaming mode but its backend
 // subprocess is not running (crashed and awaiting a supervised restart). The
 // mode API surfaces this so the GamingSession controller can reflect a broken

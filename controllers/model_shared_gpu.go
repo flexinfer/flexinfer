@@ -591,6 +591,17 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	// normal leader-based preemption.
 	leased := leaseFreesCard(leaseHolder, groupModels)
 
+	// Gaming overlay: an active GamingSession on the group's pinned node parks
+	// the group exactly like an unconditional GPU lease — no leader elected,
+	// demand cannot promote onto the card — so a play session never needs the
+	// group's manifests edited. A real GPU lease keeps attribution precedence.
+	var gamingHolder *aiv1alpha2.GamingSession
+	if !leased {
+		if gamingHolder = r.gamingIntentForGroup(ctx, model.Namespace, groupModels, now); gamingHolder != nil {
+			leased = true
+		}
+	}
+
 	// Multi-model election: when the group's GPU runtime can host concurrent
 	// subprocesses (GPUProfile feature flag), keep a VRAM-bounded SET of members
 	// Active instead of a single leader. Single-slot (default) returns exactly
@@ -613,14 +624,17 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		activeSet[am.Name] = true
 	}
 
-	// preemptedBy attributes the park: the elected leader's name normally, or a
-	// "gpu-lease/<owner>" sentinel while a lease holds the card.
+	// preemptedBy attributes the park: the elected leader's name normally, a
+	// "gpu-lease/<owner>" sentinel while a training lease holds the card, or a
+	// "gaming/<session>" sentinel while a gaming session holds the node.
 	preemptedBy := ""
 	switch {
 	case primary != nil:
 		preemptedBy = primary.Name
 	case leaseHolder != nil:
 		preemptedBy = gpuLeasePreemptedByPrefix + leaseHolder.Owner
+	case gamingHolder != nil:
+		preemptedBy = gamingPreemptedByPrefix + gamingHolder.Name
 	}
 
 	// Update this model's shared group status
@@ -672,8 +686,9 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, preemptReason, preemptMsg)
 			model.Status.SharedGroup.PreemptedAt = &metav1.Time{Time: time.Now()}
 			if leased {
-				r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
-					fmt.Sprintf("Preempted by GPU lease %q (training holds the card)", preemptedBy))
+				// preemptMsg already distinguishes a training lease from a
+				// gaming session hold.
+				r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted", preemptMsg)
 			} else {
 				r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
 					fmt.Sprintf("Preempted by %s with priority %d", primary.Name, primary.Spec.GetPriority()))
