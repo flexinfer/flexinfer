@@ -57,11 +57,11 @@ spec:
     # warm-pinned 2026-08-22 + route-priority !1001, whisper co-resident on
     # demand); this lane's 0.94-util envelope needs the whole card, so a warm
     # floor here evicts the voice stack (priority 500 > 480, no VRAM co-fit).
-    # RP serving lives on the 5930k twin (carries the qwen35-9b-ablit-rp
-    # label); direction of travel is migrating RP/text consumers to
-    # qwen38-27b-autoround-workhorse, then retiring this lane. Restore recipe
-    # if that changes: minReplicas 1, warmPolicy primary, litellm true, drop
-    # the twin's borrowed label — and expect voice to degrade to the VII tier.
+    # RP serving lives on the 5930k twin (via its own name / nsfw-rp-twin-base;
+    # the borrowed qwen35-9b-ablit-rp label was removed 2026-08-30 once all
+    # text consumers migrated to qwen38-27b-autoround-workhorse). Restore
+    # recipe if this lane must serve again: minReplicas 1, warmPolicy primary,
+    # litellm true — and expect voice to degrade to the VII tier.
     minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 25m
