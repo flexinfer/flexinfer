@@ -10,9 +10,10 @@
 # voice degrades to the VII instead of going silent — which is the whole
 # point of the group.
 #
-# On-demand (not warm-pinned): 7900xtx-textgen has no warm-pinned leader, so
-# demand registers normally; a 2.3G GGUF cold-starts in seconds. Priority 480
-# stays below qwen35-9b-ablit-rp (500) to avoid preempting live chat.
+# Warm-pinned since 2026-08-22 (see serverless below): this lane is the
+# 7900xtx-textgen warm leader while the parked RP lane stays a deliberate
+# post-handback posture. Priority 480 stays below qwen35-9b-ablit-rp (500) so
+# a deliberate RP restore would win the card back without a priority edit.
 #
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
