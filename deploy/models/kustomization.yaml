@@ -131,6 +131,7 @@ resources:
   - bge-radeonvii.yaml               # llamacpp bge-large embeddings on gfx906 HBM2; additive lane (priority 100, serverless, label embeddings-hbm2). Kill-test PASS 2026-06-03; hardware-util arc Sprint 1.
   - bge-reranker-radeonvii.yaml      # llamacpp bge-reranker-v2-m3 on gfx906; co-Active with bge embeddings (priority 115, serverless, label rerank). R5 multi-Active payoff — needs gfx906 features.multiModel + FLEXINFER_RUNTIME_MULTI_MODEL.
   - gte-qwen2-1p5b-radeonvii.yaml    # llamacpp gte-Qwen2-1.5B-instruct on gfx906, 1536-dim lane. WRITE-PATH fallback for agent-context when hosted Morph embeddings are down; minReplicas 0 (cold), priority 90 (never preempts bge/reranker), label embeddings-1536, alias gte-qwen2-1.5b.
+  - gte-qwen2-1p5b-cpu-5930k.yaml    # CPU twin of the gte 1536-dim lane on the stable 5930k (2026-08-30): radeonvii flaps on root-disk pressure and kills the fleet write-path embedder mid-batch; warm-pinned, alias gte-qwen2-1.5b-cpu.
   - orpheus-3b-radeonvii.yaml        # llamacpp Orpheus-3B Q8 TTS token generator on gfx906; warm-pinned co-Active (priority 113, ~4.8 GiB), litellm disabled — only tts-lane calls it via flexinfer-proxy /v1/completions. Voice lane for tts.lan (2026-08-22). orpheus-tts group availability tier.
   - orpheus-3b-7900xtx.yaml        # llamacpp Orpheus-3B Q4 on the freed 7900xtx; on-demand speed tier of the orpheus-tts group (prio 480, below the RP lane). Gaming lease evicts it; VII twin keeps serving.
 

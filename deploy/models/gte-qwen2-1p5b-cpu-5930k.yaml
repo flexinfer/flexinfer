@@ -1,0 +1,72 @@
+# gte-Qwen2-1.5B-instruct embeddings on the 5930k, CPU backend — stable
+# 1536-dim twin of gte-qwen2-1p5b-radeonvii.
+#
+# Why (2026-08-30): the radeonvii lane is the fleet's primary write-path
+# embedder (loom-core agent-context/pm/codebase AND the daemon PDOS entity
+# index), but cblevins-radeonvii flaps on root-disk pressure (60G longhorn +
+# kubelet staging bursts on a 127G LV) — every eviction storm kills the
+# embedder mid-batch. The daemon's 11K-entity vector backfill stalled on
+# exactly this. This twin runs CPU-only on the stable 5930k: zero VRAM
+# contention with the 5930k text lanes, and a 1.5B Q8 embed pass is fast
+# enough on CPU (~100-300ms/doc) for both write paths and backfills.
+#
+# Same vector space as the radeonvii lane (identical GGUF), so consumers can
+# switch between them freely. Distinct served name + aliases — deliberately
+# NOT reusing the radeonvii lane's aliases to avoid routing-table collisions.
+#
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: gte-qwen2-1p5b-cpu-5930k
+  namespace: flexinfer-system
+spec:
+  backend: llamacpp
+  source: HF://second-state/gte-Qwen2-1.5B-instruct-GGUF
+  cache:
+    size: 3Gi
+    storageClass: nvme-1r
+    strategy: SharedPVC
+  gpu:
+    vendor: cpu
+  serverless:
+    enabled: true
+    # Warm-pinned like its radeonvii twin: it exists to be the always-there
+    # fallback, so it must not cold-start behind a wake it can't receive.
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 5m
+  config:
+    ggufFile: gte-Qwen2-1.5B-instruct-Q8_0.gguf
+    contextSize: 1024
+    nGPULayers: 0
+    batchSize: 2048
+    ubatchSize: 512
+    threads: 6
+    embedding: true
+    # gte-Qwen2 GGUF defaults to pooling 'none' (token-level), which the
+    # OpenAI-compatible /v1/embeddings endpoint rejects. Qwen2 instruct
+    # embedding models use last-token pooling.
+    pooling: last
+    flashAttention: false
+    fitOff: true
+    metrics: true
+    hipVisibleDevices: "-1"
+    rocrVisibleDevices: "-1"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "2"
+      memory: 3Gi
+    limits:
+      cpu: "6"
+      memory: 5Gi
+  # Distinct label so it does NOT join the default `embeddings`/`rag` routing
+  # group; addressed explicitly via its served-model name/aliases.
+  serviceLabels:
+    - embeddings-1536-cpu
+  litellm:
+    enabled: true
+    servedModelName: gte-qwen2-1p5b-cpu-5930k
+    aliases:
+      - gte-qwen2-1.5b-cpu
