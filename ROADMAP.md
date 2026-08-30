@@ -98,7 +98,13 @@ remains unpromoted until a real ModelCache job canary passes.
 
 - Multi-tenancy: namespace isolation features (migrated from the README's
   former TODO list; no issue filed yet)
-- Gaming-mode hardening follow-ups as usage feedback lands (idle auto-revert default-on, session telemetry)
+- Gaming-mode hardening follow-ups as usage feedback lands. 2026-08-30: the
+  secure one-command lease shipped (policy-gated `GamingSession` with
+  mandatory TTL, scheduling overlay that drains/restores pinned inference
+  without manifest edits, `flexinfer game` CLI, conditions + best-effort
+  stream telemetry). Remaining: the Sunshine secure-image canary
+  (docs/dev/gaming-image-canary.md) that unlocks `gaming.approvedImages`, and
+  idle auto-revert default-on.
 - Renovate-driven dependency hygiene via the Dependency Dashboard ([#9](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/9))
 - CNCF Sandbox submission (prep artifacts shipped; submit when adoption evidence justifies it)
 

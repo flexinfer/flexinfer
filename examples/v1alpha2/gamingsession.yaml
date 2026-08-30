@@ -1,0 +1,33 @@
+# Ephemeral GPU gaming lease. Prefer the CLI over hand-applying this:
+#
+#   flexinfer game preflight cblevins-7900xtx
+#   flexinfer game start cblevins-7900xtx --for 2h --wait
+#
+# Creating a GamingSession asks the controller to (1) vet the session against
+# the flexinfer-gaming-policy ConfigMap — the runtime image must be on the
+# approved list (docs/dev/gaming-image-canary.md) or nothing happens; (2) park
+# every hostname-pinned inference workload on the node via the scheduling
+# overlay (no model manifests are edited); (3) wait for the node to drain; and
+# only then (4) switch the runtime to gaming mode, starting Sunshine.
+# Deleting the session — or its TTL/idle expiry — restores inference
+# automatically.
+apiVersion: ai.flexinfer/v1alpha2
+kind: GamingSession
+metadata:
+  name: gaming-cblevins-7900xtx
+  namespace: flexinfer-system
+spec:
+  nodeName: cblevins-7900xtx
+  mode: gaming
+  # Required by the default policy so stuck sessions are attributable.
+  owner: cblevins
+  # Relative deadline; the effective deadline (status.expiresAt) is the
+  # earliest of expiresAt, creation+ttl, and creation+maxTTL from policy.
+  # Omit both and the policy's defaultTTL (2h) applies — sessions can never
+  # be unbounded.
+  ttl: 2h
+  # Optional: end the session after this long with no Moonlight client
+  # (needs a runtime image that reports client telemetry).
+  # idleTimeout: 45m
+  # Optional absolute hard stop.
+  # expiresAt: "2026-09-01T03:00:00Z"

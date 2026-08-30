@@ -716,3 +716,28 @@ podDisruptionBudget:
   scheduler:
     minAvailable: 1
     # maxUnavailable: 1
+
+# Gaming lease policy (rendered into the flexinfer-gaming-policy ConfigMap).
+# The node's gaming CAPABILITY and this POLICY are GitOps-owned; individual
+# play sessions are ephemeral GamingSession objects created via
+# `flexinfer game start` with a mandatory TTL.
+gaming:
+  # Runtime images allowed to host a gaming session. Entries are full image
+  # refs (registry/repo@sha256:...) or bare "sha256:..." digests. EMPTY MEANS
+  # THE CONTROLLER REFUSES ACTIVATION (CapabilityReady=False/ImageNotApproved).
+  # Only add a digest after it passes the exact-hardware streaming + security
+  # canary (docs/dev/gaming-image-canary.md): the historical Sunshine
+  # 2025.924 pin is affected by GHSA-ph75-mgxh-mv57 (critical auth bypass)
+  # and the patched 2026.516 release crashes wlroots capture on the 7900 XTX.
+  approvedImages: []
+  # Deadline applied when a session sets neither spec.ttl nor spec.expiresAt.
+  defaultTTL: "2h"
+  # Hard cap: every session expires no later than creation + maxTTL.
+  maxTTL: "8h"
+  # How long activation may wait for inference pods to leave the node before
+  # the session reports DrainBlocked (sessions can override via
+  # spec.drainTimeout).
+  drainTimeout: "10m"
+  # Refuse sessions without spec.owner (the CLI defaults it to the local
+  # username, so this only blocks anonymous hand-written manifests).
+  requireOwner: true

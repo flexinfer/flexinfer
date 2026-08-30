@@ -2,8 +2,29 @@
 
 Operate a GPU node as an on-demand game-streaming host. A `GamingSession` CR
 drains inference from the node and starts a headless Sunshine host that a
-Moonlight client pairs against; deleting the CR returns the node to the
-inference fleet.
+Moonlight client pairs against; deleting the CR (or its TTL/idle expiry)
+returns the node to the inference fleet.
+
+The node's gaming **capability** (image, mounts, hostNetwork) and **policy**
+(approved images, TTLs) are GitOps-owned; individual play **sessions** are
+ephemeral API objects driven by the CLI:
+
+```bash
+flexinfer game preflight cblevins-7900xtx          # read-only checks
+flexinfer game start cblevins-7900xtx --for 2h --wait
+flexinfer game status cblevins-7900xtx
+flexinfer game stop cblevins-7900xtx
+```
+
+Activation is refused (`CapabilityReady=False/ImageNotApproved`) until the
+runtime image is on the `gaming.approvedImages` policy list — see
+`docs/dev/gaming-image-canary.md` for the security + exact-hardware canary
+that gates that list. While a session holds the node, the controller's
+scheduling overlay parks every hostname-pinned inference workload (dedicated
+Deployments and explicit `minReplicas` floors included) and restores them
+automatically when the session ends — per-session edits to model manifests
+are obsolete. Client-side setup for the Steam Deck (and the Xbox path) lives
+in `docs/user/steamdeck-xbox-clients.md`.
 
 - **Validated on:** `cblevins-7900xtx` (AMD RX 7900 XTX, gfx1100/RDNA3), 2026-07-01.
 - **Stack:** Sunshine + headless `sway` (wlroots, Xwayland) + Mesa RADV (Vulkan
@@ -49,63 +70,66 @@ client reaches Sunshine on its fixed ports (see below).
    - `home/` — the `gamer` user's `$HOME`: Steam client bootstrap, account
      login, and the game library (games install to
      `home/.local/share/Steam/steamapps` by default).
+5. **Gaming policy approval**: the runtime image digest must be listed in
+   `gaming.approvedImages` (`deploy/system/values-k3s.yaml` → the
+   `flexinfer-gaming-policy` ConfigMap). The list is empty until a candidate
+   passes the canary in `docs/dev/gaming-image-canary.md`; until then every
+   session is refused before touching inference.
 
-## Enable gaming on a node
+## Start a session (one command)
 
-Everything is GitOps-managed — commit to `services/flexinfer` and let Flux
-reconcile (`flexinfer-models` for the CR/models, the HelmRelease for the runtime
-profile). Do **not** `kubectl apply`/`edit` directly.
+```bash
+flexinfer game preflight <node>                 # policy/image/runtime/drain/label checks, read-only
+flexinfer game start <node> --for 2h --wait     # creates GamingSession gaming-<node>
+```
 
-1. Move any warm primary off the node first (avoid a chat gap). Example: promote
-   the sister instance on another node and de-advertise the node's lane
-   (`litellm.enabled: false`, `serverless.minReplicas: 0`, clear `serviceLabels`,
-   `warmPolicy: ondemand`, and **remove `gpu.forcePromotion`** — see Troubleshooting).
-2. Add the `GamingSession` (see `deploy/gaming/gamingsession-7900xtx.yaml`):
-   ```yaml
-   apiVersion: ai.flexinfer/v1alpha2
-   kind: GamingSession
-   metadata: { name: gaming-<node>, namespace: flexinfer-system }
-   spec:
-     nodeName: <node>
-     mode: gaming
-     owner: <operator-or-workflow>
-     # Optional hard stop. Once reached, the controller reverts runtime mode to
-     # inference and leaves the session Expired until deleted or extended.
-     # expiresAt: "2026-07-04T03:00:00Z"
-   ```
-3. After merge, force reconcile if impatient:
-   ```bash
-   export KUBECONFIG=~/workspace/platform/gitops/.kube/k3s.yaml
-   flux reconcile source git flexinfer -n flux-system
-   flux reconcile helmrelease flexinfer -n flexinfer-system   # rolls the runtime to the gaming image
-   flux reconcile kustomization flexinfer-models -n flux-system
-   ```
-4. Verify:
-   ```bash
-   kubectl get gamingsession -n flexinfer-system
-   # NODE  MODE    PHASE
-   # ...   gaming  Active
-   ```
-   `phase=Active`, `observedMode=gaming` means Sunshine is up. Check the runtime
-   pod log for `Found H.264 encoder: h264_vaapi` / `Configuration UI available`.
-   `phase=Degraded` means the node is in gaming mode but the Sunshine subprocess
-   crashed; the runtime restarts it with exponential backoff (2s → 60s) and the
-   phase returns to Active once a restart succeeds. A session stuck in Degraded
-   means every restart is failing — check the runtime pod log for the crash
-   (`Backend subprocess crashed`) and the restart attempts.
+`start` creates the session directly against the API (sessions are ephemeral
+and TTL-bound by design — they do not belong in Git; only the node capability
+and the gaming policy do). The controller then walks the session through its
+conditions, all visible via `flexinfer game status <node>`:
 
-## Lease expiry
+1. `CapabilityReady` — runtime pod reachable, image on the approved list,
+   owner present. A refusal here parks **nothing**: inference continues
+   untouched until the session is vetted.
+2. `DrainComplete` — the scheduling overlay parks the node's hostname-pinned
+   models (election + `desiredReplicas` go to zero; no manifest edits) and the
+   controller waits until no model pods remain on the node
+   (`phase=Draining`). If pods are still there after the drain timeout the
+   reason flips to `DrainBlocked` with the blocker pod names — the session
+   never force-evicts silently.
+3. `SunshineReady` — only after the drain does the runtime switch to gaming
+   mode (unloading its in-process models) and start Sunshine.
+   `phase=Degraded` means Sunshine crashed and the runtime is supervising
+   restarts with backoff.
+4. `StreamActive` — best-effort live-client telemetry (`Unknown` on runtime
+   images that predate it).
 
-`GamingSession.spec.expiresAt` is an optional hard deadline for the session. If
-the deadline passes while the node is in gaming mode, the controller requests
-`SetMode(inference)`, records `status.expiredAt`, and reports
-`phase=Expired`. An expired CR is intentionally inert: it will not switch the
-node back to gaming again until you either delete it and create a new session,
-or extend `spec.expiresAt` to a future time.
+Manual fallback (GitOps-authored session or `kubectl` create) still works —
+the same gates apply; see `config/samples/ai_v1alpha2_gamingsession.yaml`.
 
-This is separate from runtime idle auto-revert. `expiresAt` is a control-plane
-lease bound that fires even if a Moonlight client is connected; idle auto-revert
-only fires after no connected client is observed for the configured timeout.
+## Lease expiry (mandatory TTL, idle, policy)
+
+Every session has an effective deadline — the earliest of `spec.expiresAt`,
+`creation + spec.ttl`, and `creation + maxTTL` from the gaming policy, with
+the policy's `defaultTTL` (2h) applied when the spec sets nothing. The
+controller stamps it in `status.expiresAt`. At the deadline it reverts the
+node to inference and reports `phase=Expired` (`status.endReason: Expired`).
+A deadline expiry can be undone by extending `spec.expiresAt`/`spec.ttl`.
+
+Two further conclusions are **terminal** (delete the session and `start`
+again to game more):
+
+- `IdleTimeout` — `spec.idleTimeout` (or `--idle-timeout`) ended the session
+  after the runtime reported no connected Moonlight client for that long.
+  Requires runtime client telemetry; without it only the deadline and the
+  runtime's own `GAMING_IDLE_TIMEOUT` guard apply.
+- `RuntimeReverted` — the node left gaming mode outside the controller (the
+  runtime idle guard fired, or an operator flipped the mode). The controller
+  concludes the session instead of fighting the revert.
+
+The policy (`flexinfer-gaming-policy` ConfigMap, rendered from
+`gaming:` in `deploy/system/values-k3s.yaml`) also carries `approvedImages`,
+`drainTimeout`, and `requireOwner`.
 
 ## Pair Moonlight
 
@@ -190,11 +214,13 @@ titles". `steamcmd` is also in the image for scripted/depot installs.
 ## Revert to inference
 
 ```bash
-kubectl delete gamingsession gaming-<node> -n flexinfer-system   # via GitOps: remove deploy/gaming/*
+flexinfer game stop <node> --wait     # or: kubectl delete gamingsession gaming-<node> -n flexinfer-system
 ```
-The reconciler's finalizer issues `SetMode(inference)`. To fully restore the
-inference fleet also revert the runtime image → serving digest and re-advertise
-the node's model lane (undo step 1).
+The reconciler's finalizer issues `SetMode(inference)`, and the scheduling
+overlay lifts the moment deletion starts — parked models re-elect, scale back
+up, and re-advertise on their own. No manifest reverts are needed for the
+session itself; the only GitOps-owned pieces are the node's capability stanza
+and the policy.
 
 ## Idle auto-revert (opt-in, default OFF)
 
@@ -207,6 +233,12 @@ GAMING_IDLE_TIMEOUT=45m
 The runtime probes `/proc/net/tcp*` for established connections on the Moonlight
 control/RTSP ports; if none for the timeout it calls `SetMode(inference)`. A
 failed probe assumes "active" (never auto-reverts a live session).
+
+When this guard fires under an active `GamingSession`, the controller notices
+the mode flip and concludes the session (`endReason: RuntimeReverted`) rather
+than re-asserting gaming. The controller-side equivalent is
+`spec.idleTimeout` (`flexinfer game start --idle-timeout 45m`), which uses
+the runtime's client telemetry and needs no env change or pod roll.
 
 ## Observability
 
@@ -236,11 +268,18 @@ Scraped by the existing `flexinfer-runtime` PodMonitor (`/metrics` on the api po
 | Launching a game from Big Picture keeps streaming Big Picture; game audio may play but the game never shows | Big Picture runs fullscreen, and sway keeps the existing fullscreen container on top when the Proton/Xwayland game window (`class steam_app_<appid>`, `visible: false` in `swaymsg -t get_tree`) appears. Fixed by the generated sway config rule `for_window [class="^steam_app_"] focus, fullscreen enable` (images ≥ 2026-08-19). Live rescue on an older image, inside the runtime pod (as root, `-s` on the session's `$XDG_RUNTIME_DIR/sway-ipc.*.sock`): `swaymsg '[class="^steam$"] fullscreen disable'`, then `swaymsg '[class="^steam_app_"] focus'` + `swaymsg '[class="^steam_app_"] fullscreen enable'`, and add the rule at runtime with `swaymsg 'for_window [class="^steam_app_"] fullscreen enable'` so subsequent launches work. |
 | Steam process alive but nothing downloads / no window for many minutes | Debian's launcher gates the first-run bootstrap on a zenity Install/Cancel dialog (`--default-cancel`) that nobody can click headlessly. `sunshine-headless.sh` shims that one dialog to "Install" (`$XDG_RUNTIME_DIR/shim/zenity`); if it regresses, check the shim is on the session PATH. |
 | Games/login lost after a pod restart | The gaming state volume isn't mounted — check the profile's `extraVolumes` (`/home/flexinfer-gaming` → `/var/lib/flexinfer-gaming`) and `GAMING_STATE_DIR`. |
-| A dedicated-Deployment model (pvc:// source) still runs on the gaming node | `SetMode(gaming)` drains runtime-managed models, not dedicated Deployments. De-advertise it (`litellm.enabled: false`, `minReplicas: 0`) so it idles out. |
+| Session stuck `Pending` with `CapabilityReady=False/ImageNotApproved` | Working as designed: the runtime image is not on `gaming.approvedImages` (the list ships empty until a Sunshine build passes the security + streaming canary — `docs/dev/gaming-image-canary.md`). No inference is disturbed while refused. |
+| Session stuck `Draining` / `DrainComplete=False,reason=DrainBlocked` | Pods named in the condition message are still on the node past the drain timeout. Usually a model **not** hostname-pinned (arch-only selector) that the overlay deliberately does not park, or a pod stuck Terminating. Investigate the pod; the session never force-evicts. |
+| A dedicated-Deployment model (pvc:// source) still runs on the gaming node | On current controllers the scheduling overlay parks hostname-pinned dedicated Deployments automatically once the session is vetted (`CapabilityReady=True`). If it persists, check the model actually pins `kubernetes.io/hostname` (see the DrainBlocked row) — legacy fallback: de-advertise it (`litellm.enabled: false`, `minReplicas: 0`) so it idles out. |
 
 ## Related
 
-- Plan / evidence: `.loom/30-implementation-plan-gaming-mode-sunshine-2026-06-30.md`,
+- Security/streaming canary gate: `docs/dev/gaming-image-canary.md`.
+- Steam Deck + Xbox client setup: `docs/user/steamdeck-xbox-clients.md`.
+- Plan / evidence: `.loom/implementation-plan-gaming-lease-overlay-2026-08-30.md`,
+  `.loom/30-implementation-plan-gaming-mode-sunshine-2026-06-30.md`,
   `.loom/killtest-gaming-sunshine-gfx1100-2026-06-30.md`.
 - Code: `api/v1alpha2/gamingsession_types.go`, `controllers/gamingsession_controller.go`,
-  `controllers/runtime_controller.go` (`SetMode`), `internal/runtime/manager.go`.
+  `controllers/gaming_overlay.go` (scheduling overlay), `pkg/gaming/policy.go`,
+  `cmd/flexinfer/commands/game.go`, `controllers/runtime_controller.go`
+  (`SetMode`), `internal/runtime/manager.go`.

@@ -267,6 +267,14 @@ build_profile() {
         "--build-arg" "LLAMACPP_BUILD_IMAGE=${llamacpp_build_image}"
         "--build-arg" "CUDA_ARCHITECTURES=${cuda_architectures}"
     )
+    # Canary override for the gaming layer's Sunshine build. Normally the ARG
+    # default pinned in Dockerfile.runtime is what gets baked; exporting
+    # SUNSHINE_VERSION lets the gaming-image canary (docs/dev/
+    # gaming-image-canary.md) try a candidate release without editing the
+    # Dockerfile's documented safe-window pin.
+    if [ -n "${SUNSHINE_VERSION:-}" ]; then
+        cmd+=("--build-arg" "SUNSHINE_VERSION=${SUNSHINE_VERSION}")
+    fi
     if [ -n "${NO_CACHE}" ]; then
         cmd+=("${NO_CACHE}")
     fi

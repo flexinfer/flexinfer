@@ -530,3 +530,23 @@ runtime:
 grafanaDashboard:
   enabled: true
   runtimeEnabled: false
+
+# Gaming lease policy for the k3s cluster (rendered into the
+# flexinfer-gaming-policy ConfigMap; consumed by the GamingSession controller
+# and `flexinfer game preflight`). Play sessions themselves are ephemeral
+# GamingSession objects created via `flexinfer game start` — per-session
+# GitOps edits to model manifests are obsolete (the controller's scheduling
+# overlay parks/restores pinned inference automatically).
+gaming:
+  # SECURITY GATE — intentionally empty. The last known-streaming Sunshine
+  # build (2025.924.154138, image sha256:a58e4f36...) is affected by
+  # GHSA-ph75-mgxh-mv57 (CVE-2026-32253, critical auth bypass) and the patched
+  # v2026.516 release segfaults on stream start on this exact headless
+  # sway/wlroots + VAAPI host (Sunshine #5018; reverted 2026-07-06). Do NOT
+  # add a digest here until a candidate passes the 30-minute exact-hardware
+  # kill test in docs/dev/gaming-image-canary.md.
+  approvedImages: []
+  defaultTTL: "2h"
+  maxTTL: "8h"
+  drainTimeout: "10m"
+  requireOwner: true
