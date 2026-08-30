@@ -117,10 +117,14 @@ spec:
     - loom-workhorse-128k
     - mills-council-128k
   litellm:
-    # 2026-08-19 gaming lease: parked so 128k demand cannot cold-start vLLM on
-    # the gaming card. All of this lane's serviceLabels/aliases stay served by
-    # the 5930k workhorse sister (same 184320 envelope). Restore `true` when
-    # the lease ends.
+    # 2026-08-30: stays dark after the gaming handback — DELIBERATE. The
+    # 64K-128K workhorse/mills-council roles belong to
+    # qwen38-27b-autoround-workhorse (131072 envelope) per the consumer
+    # migration direction; keeping these aliases out of the litellm catalog
+    # avoids steering consumers back to the legacy qwen35 tier, and at
+    # priority 300 this lane cannot win the XTX from the warm-pinned orpheus
+    # tier (480) anyway. >131K recall jobs still reach the pair via the proxy
+    # serviceLabels above, served by the 5930k sister (same 184320 envelope).
     enabled: false
     servedModelName: qwen35-35b-clean-gptq-workhorse-128k
     aliases:

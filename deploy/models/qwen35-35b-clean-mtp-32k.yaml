@@ -142,10 +142,12 @@ spec:
     - qwen35-mtp
     - qwen35-mtp-32k
   litellm:
-    # 2026-08-19 gaming lease: parked so the unique qwen35-mtp aliases cannot
-    # cold-start on the gaming card (they go dark for the lease — demand-only
-    # experimental lane, no sister carries them). Restore `true` when the
-    # lease ends.
+    # 2026-08-30: stays dark after the gaming handback — DELIBERATE and
+    # lease-independent. At priority 90 this lane can never win the card from
+    # a warm-pinned leader (orpheus 480 today; the RP lane at 500 before the
+    # lease) and 23.2GB cannot co-fit beside one, so advertised qwen35-mtp
+    # aliases would accept requests that hang rather than serve. Re-enable
+    # only together with a free-card posture or a priority/capacity rework.
     enabled: false
     servedModelName: qwen35-35b-clean-mtp-32k
     aliases:

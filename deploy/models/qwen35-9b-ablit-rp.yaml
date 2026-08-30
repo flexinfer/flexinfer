@@ -52,9 +52,16 @@ spec:
     priority: 500
   serverless:
     enabled: true
-    # 2026-08-19 gaming lease: warm hold released so the GamingSession can own
-    # the card (explicit minReplicas 1 overrides the controller's gaming-mode
-    # warm-primary drop). Restore minReplicas 1 when the lease ends.
+    # 2026-08-30: kept parked after the 08-22 gaming handback — DELIBERATE, not
+    # a lease leftover. The XTX is the voice card now (orpheus-3b speed tier
+    # warm-pinned 2026-08-22 + route-priority !1001, whisper co-resident on
+    # demand); this lane's 0.94-util envelope needs the whole card, so a warm
+    # floor here evicts the voice stack (priority 500 > 480, no VRAM co-fit).
+    # RP serving lives on the 5930k twin (carries the qwen35-9b-ablit-rp
+    # label); direction of travel is migrating RP/text consumers to
+    # qwen38-27b-autoround-workhorse, then retiring this lane. Restore recipe
+    # if that changes: minReplicas 1, warmPolicy primary, litellm true, drop
+    # the twin's borrowed label — and expect voice to degrade to the VII tier.
     minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 25m
@@ -68,8 +75,8 @@ spec:
     attentionBackend: TRITON_ATTN
     # Reclaim the shared card after an on-demand borrower goes idle. Priority
     # alone only controls demand-driven swaps and does not evict a Ready model.
-    # 2026-08-19 gaming lease: primary → ondemand while cblevins-7900xtx is the
-    # gaming node. Restore primary when the lease ends.
+    # 2026-08-30: stays ondemand after the gaming handback — the warm-pinned
+    # orpheus speed tier owns the card now (see serverless block above).
     warmPolicy: ondemand
     # Pin this model to the certified vLLM 0.23 image instead of the node's
     # older persistent runtime bundle.
@@ -184,9 +191,11 @@ spec:
   serviceLabels:
     - qwen35-9b-ablit-rp
   litellm:
-    # 2026-08-19 gaming lease: de-advertised so no demand touches the gaming
-    # card; the 5930k twin carries the qwen35-9b-ablit-rp label meanwhile.
-    # Restore `true` when the lease ends (kill-test passed 2026-07-19).
+    # 2026-08-30: stays de-advertised after the gaming handback. The 5930k twin
+    # carries the qwen35-9b-ablit-rp label for the live consumers (news-analyzer
+    # batch/digest, jobsearch daemon, psyche; Mills pins the twin's own name)
+    # while they migrate to qwen38-27b-autoround-workhorse. Re-advertising this
+    # lane would route demand back at the voice card.
     enabled: false
   tolerations:
     - key: "node-role.kubernetes.io/control-plane"

@@ -156,8 +156,11 @@ spec:
   serviceLabels:
     - qwen35-9b-ablit-rp-5930k
     - nsfw-rp-twin-base
-    # 2026-08-19 gaming lease: carry the primary RP label while the 7900xtx
-    # lane is de-advertised for gaming. Remove when the lease ends.
+    # 2026-08-30: durable post-handback home of the primary RP label (the XTX
+    # is the voice card now — see qwen35-9b-ablit-rp.yaml). Load-bearing:
+    # news-analyzer and the jobsearch daemon pin qwen35-9b-ablit-rp; Mills
+    # reviewers pin this twin's own name. Keep until those consumers migrate
+    # to qwen38-27b-autoround-workhorse.
     - qwen35-9b-ablit-rp
   litellm:
     enabled: true
