@@ -577,6 +577,12 @@ type PublishSpec struct {
 	// +kubebuilder:validation:MinItems=1
 	Targets []PublishTarget `json:"targets"`
 
+	// Image overrides the publisher container image for this ModelCache.
+	// Defaults to the controller-wide FLEXINFER_PUBLISH_IMAGE, then
+	// FLEXINFER_MODEL_TOOLS_IMAGE, then the built-in model-tools image.
+	// +optional
+	Image *string `json:"image,omitempty"`
+
 	// OCIRef is the OCI artifact reference to push to (e.g. "registry.harbor.lan/models/qwen3:gptq-int4").
 	// Required when targets includes "oci".
 	// +optional

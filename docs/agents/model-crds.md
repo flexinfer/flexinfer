@@ -72,6 +72,23 @@ spec:
   storageSize: 20Gi
 ```
 
+### Per-cache publisher image
+
+`spec.publish.image` pins the publisher image for one `ModelCache`, including
+its intermediate publish Jobs. This is intended for isolated image canaries;
+omit it for normal workloads so controller-wide defaults remain authoritative.
+
+```yaml
+spec:
+  publish:
+    image: registry.example/model-tools@sha256:0123456789abcdef
+    targets: [oci]
+    ociRef: registry.example/models/qwen3:canary
+```
+
+Image resolution order is `spec.publish.image`, `FLEXINFER_PUBLISH_IMAGE`,
+`FLEXINFER_MODEL_TOOLS_IMAGE`, then the built-in model-tools image.
+
 ### Storage Strategies
 
 | Strategy | Location | Switch Time | Use Case |

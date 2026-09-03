@@ -78,23 +78,61 @@ func TestPublishImage(t *testing.T) {
 	t.Run("default returns model-tools image", func(t *testing.T) {
 		_ = os.Unsetenv("FLEXINFER_PUBLISH_IMAGE")
 		_ = os.Unsetenv("FLEXINFER_MODEL_TOOLS_IMAGE")
-		got := publishImage()
+		got := publishImage(nil)
 		assert.Equal(t, DefaultModelToolsImage, got)
 	})
 
 	t.Run("shared model tools image overrides default", func(t *testing.T) {
 		_ = os.Unsetenv("FLEXINFER_PUBLISH_IMAGE")
 		_ = os.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", "model-tools:local")
-		got := publishImage()
+		got := publishImage(nil)
 		assert.Equal(t, "model-tools:local", got)
 	})
 
 	t.Run("env override takes precedence", func(t *testing.T) {
 		_ = os.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", "model-tools:local")
 		_ = os.Setenv("FLEXINFER_PUBLISH_IMAGE", "custom-publisher:v2")
-		got := publishImage()
+		got := publishImage(nil)
 		assert.Equal(t, "custom-publisher:v2", got)
 	})
+
+	t.Run("publish spec image takes precedence", func(t *testing.T) {
+		_ = os.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", "model-tools:local")
+		_ = os.Setenv("FLEXINFER_PUBLISH_IMAGE", "custom-publisher:v2")
+		image := "candidate-publisher@sha256:abc123"
+		got := publishImage(&aiv1alpha1.PublishSpec{Image: &image})
+		assert.Equal(t, image, got)
+	})
+
+	t.Run("empty publish spec image falls back to environment", func(t *testing.T) {
+		_ = os.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", "model-tools:local")
+		_ = os.Setenv("FLEXINFER_PUBLISH_IMAGE", "custom-publisher:v2")
+		image := ""
+		got := publishImage(&aiv1alpha1.PublishSpec{Image: &image})
+		assert.Equal(t, "custom-publisher:v2", got)
+	})
+}
+
+func TestBuildPublishJobUsesSpecImage(t *testing.T) {
+	t.Setenv("FLEXINFER_PUBLISH_IMAGE", "controller-publisher:v1")
+	t.Setenv("FLEXINFER_MODEL_TOOLS_IMAGE", "model-tools:v1")
+
+	ociRef := "registry.harbor.lan/models/test:v1"
+	image := "registry.example/flexinfer/model-tools@sha256:candidate"
+	job, err := BuildPublishJob(JobParams{
+		Name:      "candidate-cache",
+		Namespace: "flexinfer-system",
+		PVCName:   "models",
+		ModelPath: "candidate",
+	}, &aiv1alpha1.PublishSpec{
+		Targets: []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+		Image:   &image,
+		OCIRef:  &ociRef,
+	})
+	assert.NoError(t, err)
+	if assert.NotNil(t, job) && assert.Len(t, job.Spec.Template.Spec.Containers, 1) {
+		assert.Equal(t, image, job.Spec.Template.Spec.Containers[0].Image)
+	}
 }
 
 func TestOCIPublishScript(t *testing.T) {
