@@ -54,7 +54,7 @@ func BuildPublishJob(params JobParams, spec *aiv1alpha1.PublishSpec) (*batchv1.J
 		deadline = *spec.TimeoutSeconds
 	}
 
-	image := publishImage()
+	image := publishImage(spec)
 	env := publishEnv(params.ModelPath, spec)
 	script := publishWrapperScript(spec)
 
@@ -396,8 +396,11 @@ echo "Published to $PUSH_REF (digest: $DIGEST) in ${DURATION}s"
 }
 
 // publishImage returns the image to use for publish jobs.
-// Prefers FLEXINFER_PUBLISH_IMAGE, then the shared FLEXINFER_MODEL_TOOLS_IMAGE.
-func publishImage() string {
+// A per-ModelCache override takes precedence over controller-wide defaults.
+func publishImage(spec *aiv1alpha1.PublishSpec) string {
+	if spec != nil && spec.Image != nil && *spec.Image != "" {
+		return *spec.Image
+	}
 	if img := os.Getenv("FLEXINFER_PUBLISH_IMAGE"); img != "" {
 		return img
 	}

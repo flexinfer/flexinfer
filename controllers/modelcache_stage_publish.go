@@ -179,6 +179,7 @@ func stagePublishSpec(base *aiv1alpha1.PublishSpec, ref string) *aiv1alpha1.Publ
 	overwrite := "overwrite"
 	spec := &aiv1alpha1.PublishSpec{
 		Targets:        []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+		Image:          base.Image,
 		OCIRef:         &ref,
 		SecretRef:      base.SecretRef,
 		MaxMemoryGB:    base.MaxMemoryGB,

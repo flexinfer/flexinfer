@@ -472,6 +472,12 @@ spec:
                       HuggingFaceRepo is the HuggingFace repository to upload to (e.g. "myorg/qwen3-gptq-int4").
                       Required when targets includes "huggingface".
                     type: string
+                  image:
+                    description: |-
+                      Image overrides the publisher container image for this ModelCache.
+                      Defaults to the controller-wide FLEXINFER_PUBLISH_IMAGE, then
+                      FLEXINFER_MODEL_TOOLS_IMAGE, then the built-in model-tools image.
+                    type: string
                   maxMemoryGB:
                     description: |-
                       MaxMemoryGB limits the memory for the publish job container.

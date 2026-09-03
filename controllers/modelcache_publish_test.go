@@ -436,6 +436,15 @@ func TestStagePublishUpToDate(t *testing.T) {
 	assert.False(t, stagePublishUpToDate(cache, publishStageSource, "registry.harbor.lan/models/test:v2-source", sourceVersion))
 }
 
+func TestStagePublishSpecPreservesPublisherImage(t *testing.T) {
+	image := "registry.example/flexinfer/model-tools@sha256:candidate"
+	spec := stagePublishSpec(&aiv1alpha1.PublishSpec{Image: &image}, "registry.harbor.lan/models/test:v1-source")
+
+	require.NotNil(t, spec)
+	require.NotNil(t, spec.Image)
+	assert.Equal(t, image, *spec.Image)
+}
+
 func TestIntermediateStagePublishEnabled(t *testing.T) {
 	tests := []struct {
 		name        string

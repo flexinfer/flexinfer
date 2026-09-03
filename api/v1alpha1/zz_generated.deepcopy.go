@@ -1416,6 +1416,11 @@ func (in *PublishSpec) DeepCopyInto(out *PublishSpec) {
 		*out = make([]PublishTarget, len(*in))
 		copy(*out, *in)
 	}
+	if in.Image != nil {
+		in, out := &in.Image, &out.Image
+		*out = new(string)
+		**out = **in
+	}
 	if in.OCIRef != nil {
 		in, out := &in.OCIRef, &out.OCIRef
 		*out = new(string)
