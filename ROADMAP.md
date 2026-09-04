@@ -60,12 +60,13 @@ Refresh evidence captured 2026-08-01: `origin/master` was inspected through
 `a7836a6a5`; read-only Flux state showed both `flexinfer-system` and
 `flexinfer-models` Ready at that revision; both Qwen3.5 9B RP parent `Model`s and
 all cluster nodes were Ready; the two 35B workhorse `Model`s were Idle.
-The controlled Docker-major rollout is now in implementation: production
-model-tools configuration is pinned to its resolved Python 3.11 digest, while
-the commit-specific Python 3.14 candidate `model-tools:1db78d5e`
+The controlled Docker-major rollout is now in implementation: the
+commit-specific Python 3.14 candidate `model-tools:1db78d5e`
 (`sha256:41f948bafa42c154a17ac567a0ade1f49fd3e17e6241c7e8bb44dc7a48265f30`)
-passed its hash-locked dependency, import, script, and CLI build gate. It
-remains unpromoted until a real ModelCache job canary passes.
+passed its hash-locked dependency, import, script, and CLI build gate, then a
+live ModelCache validator/publisher canary on 2026-09-04. The tested digest is
+now the production model-tools and validator default; the former Python 3.11
+digest remains the exact rollback anchor.
 
 - **Plan**: `.loom/32-iteration-plan-model-backfill-2026-07-09.md` (frontier iteration; kill-test passed)
 - **Follow-on**: `.loom/33-iteration-plan-chat-gauntlet-2026-07-10.md` (live chat-vs-completions kill-test passed)
@@ -75,7 +76,7 @@ remains unpromoted until a real ModelCache job canary passes.
 - **Recurring experiments**: `.loom/37-iteration-plan-recurring-model-experiment-2026-07-10.md` (run-fencing kill test)
 - **128K workhorse routing**: `.loom/40-iteration-plan-label-group-least-loaded-2026-07-14.md` (live busy-member kill-test passed)
 - **Proxy rollout draining**: `.loom/44-iteration-plan-proxy-drain-live-killtest-2026-07-18.md` (live rollout-under-load kill-test passed)
-- **Python 3.14 model-tools candidate**: `.loom/45-iteration-plan-model-tools-python314-canary-2026-08-01.md` (build kill-test passed; job canary pending)
+- **Python 3.14 model-tools candidate**: `.loom/45-iteration-plan-model-tools-python314-canary-2026-08-01.md` (build and live job canaries passed; digest promoted 2026-09-04)
 - **Deployed**: K3s GPU cluster via Flux (flexinfer stack incl. fi-mcp-gateway)
 - **CI**: custom (bespoke `.gitlab-ci.yml` + `.gitlab/ci/` includes: BuildKit image matrix, Go build/test, Trivy, Helm)
 
@@ -89,9 +90,9 @@ remains unpromoted until a real ModelCache job canary passes.
 ## Next
 
 - [x] Stage major Docker dependency updates (Python 3.14 / CUDA 12.9 / ROCm 6.4) as a controlled rollout capsule ([#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21))
-- [ ] Add a per-ModelCache publisher-image override, run the Python 3.14
+- [x] Add a per-ModelCache publisher-image override, run the Python 3.14
   model-tools candidate through an isolated publish/validation job canary, and
-  promote only the tested digest before continuing one image family per MR
+  promote the tested digest ([#73](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/73); passed 2026-09-04)
 - [x] Gracefully drain in-flight proxy requests during rollouts ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65); live certificate passed 2026-07-18)
 
 ## Later
