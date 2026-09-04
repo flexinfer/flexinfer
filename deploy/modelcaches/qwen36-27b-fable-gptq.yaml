@@ -38,9 +38,6 @@ metadata:
     flexinfer.ai/source-revision: 5ae530c3ab85033856e75cb1efc63fb1bf82a133
     flexinfer.ai/source-gguf: DavidAU/Qwen3.6-27B-Fable-Fusion-711-Uncensored-Heretic-NM-DAU-NEO-MAX-MTP-GGUF
     flexinfer.ai/promotion-state: artifact-published-gfx1100-coherence-passed
-    # One-shot Python 3.14 model-tools canary. Changing this token retries only
-    # validation/publish against the already-completed GPTQ artifact.
-    flexinfer.ai/revalidate: "model-tools-python314-41f948ba"
     # Only the final GPTQ artifact is needed. Avoid mirroring the 55.5 GB BF16
     # source to OCI before the active quantization phase.
     flexinfer.ai/publish-intermediate-stages: "false"
@@ -77,17 +74,12 @@ spec:
   publish:
     targets:
       - oci
-    # Pin both canary stages to the same immutable image. Timestamp tagging
-    # keeps the stable artifact tag unchanged while exercising a real push.
-    image: "registry.harbor.lan/flexinfer/model-tools@sha256:41f948bafa42c154a17ac567a0ade1f49fd3e17e6241c7e8bb44dc7a48265f30"
     ociRef: "registry.harbor.lan/flexinfer/qwen36-27b-fable:gptq-w4-g128-gfx1100-v1"
     secretRef: harbor-oci-creds
-    tagPolicy: timestamp
     maxMemoryGB: 8
     timeoutSeconds: 7200
     validate:
       enabled: true
-      image: "registry.harbor.lan/flexinfer/model-tools@sha256:41f948bafa42c154a17ac567a0ade1f49fd3e17e6241c7e8bb44dc7a48265f30"
       layout: vllm-gptq
       family: qwen36-27b
       # The validator still warns whenever Qwen3.6 GDN qweights are present.

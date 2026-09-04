@@ -2,9 +2,9 @@
 
 Tracking issue: [#21](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/21)
 
-Status: implementation in progress; the first Python 3.14 utility candidate is
-published but intentionally not promoted. Major lanes remain split from routine
-Renovate minor/patch batches.
+Status: implementation in progress; the model-tools Python 3.14 utility image
+is promoted after a successful live validator/publisher canary. Major lanes
+remain split from routine Renovate minor/patch batches.
 
 ## Goal
 
@@ -53,10 +53,20 @@ The rollout covers these families:
   dependency set locked to target-specific wheel hashes, binary-only
   installation, an exact Python base digest, and an exact ORAS image digest.
   The earlier `ec0efeeb` exploratory publication is superseded and remains
-  unpromoted. No candidate is referenced by a production value, and CI now
-  publishes model-tools commit tags only. Promotion updates GitOps to the
-  already-tested digest; CI never rebuilds it under `master`, timestamp, or
-  `latest`.
+  unpromoted. CI publishes model-tools commit tags only and never rebuilds the
+  promoted candidate under `master`, timestamp, or `latest`.
+- Phase-1 Kubernetes canary: `qwen36-27b-fable-gptq` validation and publishing
+  both ran the candidate digest successfully on 2026-09-04. Validation exited
+  0 with `ok: true`; publishing transferred 17,808,736,564 bytes across 16
+  files and produced artifact digest
+  `sha256:2a04f841cdde05e6207b81b321503bfb5b862093238c22948958c9ab22208788`.
+  The canary used timestamp-only tag
+  `gptq-w4-g128-gfx1100-v1-20260904-003557`, leaving the stable tag untouched.
+  MR !1015 repaired Ready-cache revalidation, and post-merge pipeline 25568
+  passed all 24 executed jobs before the canary ran.
+- Phase-1 promotion: GitOps now uses the tested Python 3.14 digest for both
+  model tools and validation. The Python 3.11 rollback anchor remains
+  `sha256:fe048a433779b7c1f6f8e9cfa4373117e846f071440eaf8575762a640125bf5a`.
 - Full evidence and the promotion boundary are recorded in
   `.loom/45-iteration-plan-model-tools-python314-canary-2026-08-01.md`.
 
@@ -109,12 +119,9 @@ The rollout covers these families:
 
 ## Ready-for-Implementation Slices
 
-1. Python utility images: model-tools build/import smoke is complete; add a
-   per-ModelCache publisher-image override and run a real isolated job canary
-   before digest promotion. That slice owns `api/v1alpha1/modelcache_types.go`,
-   `pkg/quantization/publish.go`, `controllers/modelcache_stage_publish.go`,
-   their focused tests, and both generated ModelCache CRDs. Then repeat the
-   isolated process for the GGUF helper image.
+1. Python utility images: model-tools build/import smoke, additive per-cache
+   publisher override, live validation/publish canary, and digest promotion are
+   complete. Repeat the isolated process for the GGUF helper image.
 2. CUDA 12.9 modern NVIDIA quantizer images: update one quantizer path, publish
    a commit-specific tag, and run a fixture-backed quantizer check before adding
    another CUDA image.

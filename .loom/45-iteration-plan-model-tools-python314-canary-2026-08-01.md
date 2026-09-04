@@ -41,7 +41,8 @@ resolved `huggingface_hub==1.24.0` and `safetensors==0.8.0`; safetensors ships a
 abi3 Linux wheel usable by Python 3.14. These are supporting signals, not a
 substitute for the image kill test.
 
-**Status**: passed 2026-08-01.
+**Status**: build gate passed 2026-08-01; Kubernetes validator/publisher canary
+and promotion passed 2026-09-04.
 
 ## Align
 
@@ -49,9 +50,10 @@ substitute for the image kill test.
 - Scope in: pin the current live model-tools digest; pin the Python 3.14 base
   and the baseline's fully resolved Python dependency set; build, smoke, and
   publish one commit-specific candidate; remove post-merge stable-tag rebuilds;
-  record evidence and roadmap state.
-- Scope out: changing `validatorImage`, promoting the candidate into a job,
-  moving `master`/`latest`, changing GGUF or GPU images, and cluster mutations.
+  add an isolated per-cache publisher override; run a live validator/publisher
+  canary; promote only the tested digest; record evidence and roadmap state.
+- Scope out: moving `master`/`latest`, changing GGUF or GPU images, and changing
+  the completed canary artifact or its quantization recipe.
 - Acceptance criteria:
   - The prior `model-tools:master` image is recorded and configured by digest.
   - The candidate changes only the interpreter/base while preserving ORAS and
@@ -63,30 +65,36 @@ substitute for the image kill test.
     GitOps values to the already-tested digest.
   - Relevant Go tests, repository tests, Helm rendering, and whitespace checks
     pass.
-  - No production value references the candidate.
-- Dependencies/blockers: remote amd64 Docker builder, Harbor push access, and
-  availability of the pinned upstream Python base and Python wheels.
+  - Production values reference the candidate only after both live jobs pass,
+    with the prior Python 3.11 digest retained as the rollback anchor.
+- Dependencies/blockers: all cleared. The remote amd64 builder, Harbor,
+  Kubernetes canary window, CRD rollout, and fixed controller are verified.
 
 ## Land
 
 - Planned file areas: `.gitlab-ci.yml`, `build/Dockerfile.model-tools`,
-  `build/requirements-model-tools.txt`,
-  `deploy/system/values-k3s.yaml`, this plan, `.loom/00-index.md`, `ROADMAP.md`,
-  `docs/planning/docker-major-dependency-rollout.md`, and the runtime contract
-  checker if the immutable values pin exposes pre-existing fleet-test drift.
+  `build/requirements-model-tools.txt`, ModelCache API/controller/tests and
+  generated CRDs, `deploy/system/values-k3s.yaml`, the representative
+  ModelCache manifest, this plan, `.loom/00-index.md`, `ROADMAP.md`, and
+  `docs/planning/docker-major-dependency-rollout.md`.
 - Implementation steps:
   1. Resolve and pin the existing production digest as the rollback anchor.
   2. Pin the Python 3.14 base and current package versions, then build and smoke
      a commit-tagged candidate.
-  3. Record the candidate digest/verdict, synchronize roadmap truth, and land
-     through a green merge request without promotion.
+  3. Land the additive `spec.publish.image` API/CRD field through a green MR.
+  4. Pin one completed ModelCache's validator and publisher to the candidate,
+     use timestamp tagging, and inspect both Jobs' images and termination data.
+  5. Promote the tested digest through GitOps in a separate MR and rerun the
+     same ModelCache using controller-wide defaults.
 
 ## Prove
 
-- Tests to run: candidate image kill test; `go test ./pkg/quantization/...`;
-  `make test`; Helm template rendering.
+- Tests to run: candidate image kill test; focused publish/controller tests;
+  `make test`; Helm lint/template rendering; server-side ModelCache dry run;
+  live validator and publisher Job verification.
 - Lint/static checks: source scan for Python 3.14 removals, Dockerfile diff
-  review, `git diff --check`, and a negative search for live candidate refs.
+  review, `git diff --check`, controller lint/vet, and rendered environment
+  checks for the exact promoted digest.
 - CI checks: full GitLab merge-request pipeline and post-merge pipeline if the
   repository triggers one.
 
@@ -96,10 +104,8 @@ substitute for the image kill test.
   capsule, and top-level roadmap.
 - Agent-context entries to add: immutable baseline finding, compatibility
   decision, kill-test verdict, candidate digest, and promotion boundary.
-- Next-slice candidates: add an additive per-ModelCache publisher-image override
-  (validation already has one), then run one isolated publish/validation job
-  against the candidate and promote it only if that canary passes. Otherwise,
-  isolate the first failing dependency or script as a corrective slice.
+- Next-slice candidates: repeat the isolated build, job-canary, and promotion
+  sequence for the GGUF helper image, then advance one GPU image family per MR.
 
 ## Evidence
 
@@ -132,13 +138,30 @@ substitute for the image kill test.
   `minReplicas: 0` plus `warmPolicy: ondemand` (live phase `Preempted`) for the
   twin-canary window. The checker now asserts that parked shape; no Model or
   other cluster object was mutated.
-- Promotion boundary: negative searches found no deployment, chart, runtime,
-  or config reference to the candidate tag. Post-merge CI publishes model-tools
-  commit tags only and cannot rebuild a candidate under Harbor/GitLab `master`,
-  timestamp, or `latest`. No stable tag or cluster object was changed. The
-  loaded remote Docker daemon was too I/O-bound for a reliable post-build
-  container run, so the next slice remains an isolated ModelCache job canary
-  before digest promotion.
+- Canary API: MR !1012 added the optional `spec.publish.image` override with
+  precedence over controller defaults and generated both ModelCache CRDs.
+  MR !1013 pinned publisher and validator to the candidate on the completed
+  `qwen36-27b-fable-gptq` artifact without rerunning its quantization.
+- Ready-cache repair: the first reconciliation exposed that a Ready quantized
+  cache returned before publish/validation reprocessing. MR !1015 added a
+  regression test and dispatched changed publish/validation specifications
+  back through the publish state machine. Post-merge pipeline 25568 passed all
+  24 executed jobs and published the controller digest
+  `sha256:fd5bef16a9f0f6f11955c5996b9c9208f7d30a48d70dd85c98abe23ba72afded`.
+- Kubernetes job canary: PASS on 2026-09-04. Validator Job
+  `qwen36-27b-fable-gptq-validate-publish` ran the candidate digest to exit 0
+  with `ok: true`, layout `vllm-gptq`, and family `qwen36-27b`; it completed at
+  `00:35:55Z`. Publisher Job `qwen36-27b-fable-gptq-publish` ran the same
+  digest, pushed 17,808,736,564 bytes across 16 files, and completed at
+  `00:37:50Z` with artifact digest
+  `sha256:2a04f841cdde05e6207b81b321503bfb5b862093238c22948958c9ab22208788`.
+  Its timestamp-only canary tag was
+  `gptq-w4-g128-gfx1100-v1-20260904-003557`, so the stable tag was not moved.
+- Promotion: the proven candidate digest is now the GitOps default for model
+  tools and validation. The one-shot per-cache image pins, timestamp policy,
+  and revalidation annotation were removed so a post-promotion run proves the
+  controller-wide path. The exact Python 3.11 rollback digest remains
+  `sha256:fe048a433779b7c1f6f8e9cfa4373117e846f071440eaf8575762a640125bf5a`.
 
 ## Slice Handoff
 
@@ -146,8 +169,8 @@ substitute for the image kill test.
 
 - Milestone: controlled major Docker dependency rollout, phases 0 and 1.
 - Slice: immutable model-tools baseline plus Python 3.14 candidate.
-- Status: implementation and bounded proof complete; promotion intentionally
-  remains open.
+- Status: implementation, bounded proof, isolated job canary, and default
+  promotion complete.
 
 ### What Landed
 
@@ -161,23 +184,16 @@ substitute for the image kill test.
 
 ### What Is Still Open
 
-- Remaining acceptance criterion for promotion: first add a per-ModelCache
-  publisher-image override, then run a representative publish/validation Job
-  with both publisher and validator pinned to the candidate digest.
-- Known issue: the remote Docker daemon was under extreme load during proof;
-  container-start behavior was therefore left to the Kubernetes job canary.
-- Dependencies: the additive publisher-image API/CRD field, a safe
-  representative artifact, and a bounded job-canary window.
+- The model-tools Python 3.14 slice has no remaining acceptance criteria.
+- CUDA, ROCm, PyTorch-bearing, and GGUF helper lanes remain independently
+  gated follow-on work under the controlled major-dependency rollout.
 
 ### Next Actions
 
-1. Add a per-ModelCache publisher-image override; preserve the controller-wide
-   default for backward compatibility.
-2. Pin one representative publisher and validator to the candidate digest,
-   then require success and inspect termination metadata/logs.
-3. Promote the tested digest in a separate MR only if the job canary passes;
-   otherwise
-   retain the Python 3.11 rollback anchor and isolate the failure.
+1. Retain the Python 3.11 digest as the documented rollback anchor.
+2. Repeat the isolated candidate and Kubernetes job-canary sequence for the
+   GGUF helper image.
+3. Continue with one CUDA, ROCm, or PyTorch-bearing image family per MR.
 
 ### Context Links
 

@@ -274,14 +274,14 @@ imagePrewarm:
         - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
 quantization:
-  # Phase-0 rollback anchor for the Python 3.14 candidate. Keep production on
-  # this resolved Python 3.11 image until a commit-tagged candidate passes its
-  # job canary; never use the mutable master tag as the rollback target.
-  modelToolsImage: "registry.harbor.lan/flexinfer/model-tools@sha256:fe048a433779b7c1f6f8e9cfa4373117e846f071440eaf8575762a640125bf5a"
+  # Python 3.14 candidate promoted after the isolated ModelCache validator and
+  # publisher canary passed. The former Python 3.11 digest remains the rollback
+  # anchor; never use the mutable master tag as a rollback target.
+  modelToolsImage: "registry.harbor.lan/flexinfer/model-tools@sha256:41f948bafa42c154a17ac567a0ade1f49fd3e17e6241c7e8bb44dc7a48265f30"
   # Explicitly overwrite a legacy live Deployment field that pointed publish
   # validation at a stale ROCm runtime. Model tools is the canonical CPU-only
   # image and carries the validator from the same FlexInfer revision.
-  validatorImage: "registry.harbor.lan/flexinfer/model-tools@sha256:d1515f57e5e92ad62a8f3820eb428fc32436cf979fa130817fbe3f038edd14d1"
+  validatorImage: "registry.harbor.lan/flexinfer/model-tools@sha256:41f948bafa42c154a17ac567a0ade1f49fd3e17e6241c7e8bb44dc7a48265f30"
   useRuntimeForQuantize: false
   runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e"
   gptqDeviceMap: "auto"
