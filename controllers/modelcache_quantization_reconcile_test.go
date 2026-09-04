@@ -967,6 +967,49 @@ func TestReconcileQuantization_ImageChangeDoesNotInvalidateReadyCache(t *testing
 	assert.True(t, apierrors.IsNotFound(err), "image-only changes must not create a new quantization job")
 }
 
+func TestReconcileQuantization_ReadyCacheDispatchesPublishRevalidation(t *testing.T) {
+	now := metav1.Now()
+	cache := newQuantizationCache("quant-ready-revalidate")
+	cache.Spec.Publish = &aiv1alpha1.PublishSpec{
+		Targets: []aiv1alpha1.PublishTarget{aiv1alpha1.PublishTargetOCI},
+		Validate: &aiv1alpha1.PublishValidateSpec{
+			Enabled: true,
+			Image:   stringPtr("registry.example/validator@sha256:new"),
+		},
+	}
+	cache.Annotations = map[string]string{
+		annotationQuantSpecHash:    quantSpecHash(cache.Spec.Quantization),
+		annotationValidateSpecHash: publishValidateSpecHash(cache.Spec.Publish.Validate),
+		annotationRevalidate:       "model-tools-python314",
+	}
+	cache.Status.Phase = aiv1alpha1.ModelCachePhaseReady
+	cache.Status.CurrentPhase = "ready"
+	cache.Status.Quantization = &aiv1alpha1.QuantizationStatus{
+		Type:                "W4_G128",
+		CompressedSizeBytes: 1234,
+	}
+	cache.Status.Publish = &aiv1alpha1.PublishStatus{
+		PublishedAt: &now,
+		OCIDigest:   "sha256:old",
+		Validate: &aiv1alpha1.PublishValidateStatus{
+			Ok: true,
+		},
+	}
+
+	r, cl := newQuantizationTestReconciler(t, nil, cache)
+	result, err := r.reconcileQuantization(context.Background(), cache, "cache-pvc", "/models/base")
+	require.NoError(t, err)
+	assert.Equal(t, requeueShort, result.RequeueAfter)
+
+	updated := getModelCacheFromClient(t, cl, cache.Namespace, cache.Name)
+	assert.Equal(t, aiv1alpha1.ModelCachePhasePublishing, updated.Status.Phase)
+	assert.Equal(t, "publish-validate", updated.Status.CurrentPhase)
+	assert.Nil(t, updated.Status.Publish)
+	require.NotNil(t, updated.Status.Quantization)
+	assert.Equal(t, int64(1234), updated.Status.Quantization.CompressedSizeBytes)
+	assert.Equal(t, "model-tools-python314", updated.Annotations[annotationRevalidateHandled])
+}
+
 func TestReconcileQuantization_ImageDrift_DeletesJob(t *testing.T) {
 	started := metav1.NewTime(time.Now().Add(-5 * time.Minute))
 

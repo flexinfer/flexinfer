@@ -139,10 +139,18 @@ func (r *ModelCacheReconciler) reconcileQuantization(ctx context.Context, modelC
 		storedHash = modelCache.Annotations[annotationQuantSpecHash]
 	}
 
-	// If quantization completed and publishing is configured but not yet recorded,
-	// continue into publish instead of getting stuck in Ready.
+	publishNeedsReprocess := false
+	if modelCache.Spec.Publish != nil && modelCache.Spec.Publish.Validate != nil &&
+		modelCache.Spec.Publish.Validate.Enabled {
+		currentValidateHash := publishValidateSpecHash(modelCache.Spec.Publish.Validate)
+		publishNeedsReprocess = publishValidateNeedsReprocess(modelCache, currentValidateHash)
+	}
+
+	// If quantization completed and publishing is incomplete or explicitly needs
+	// revalidation, continue into publish instead of getting stuck in Ready.
 	if quantizationCompleted(modelCache.Status.Quantization) &&
-		modelCache.Spec.Publish != nil && !publishCompleted(modelCache.Status.Publish) {
+		modelCache.Spec.Publish != nil &&
+		(!publishCompleted(modelCache.Status.Publish) || publishNeedsReprocess) {
 		publishPath := quantizedOutputPath(modelCache.Spec.Quantization, modelPath)
 		return r.reconcilePublish(ctx, modelCache, pvcName, publishPath)
 	}
