@@ -418,13 +418,18 @@ def assert_sunshine_input_contract(launcher: str, values_yaml: str) -> None:
 
 
 def assert_validator_image_contract(values_yaml: str, qwen35_cache_yaml: str) -> None:
-    image = (
+    promoted_image = (
+        "registry.harbor.lan/flexinfer/model-tools@sha256:"
+        "41f948bafa42c154a17ac567a0ade1f49fd3e17e6241c7e8bb44dc7a48265f30"
+    )
+    qwen35_revalidation_image = (
         "registry.harbor.lan/flexinfer/model-tools@sha256:"
         "d1515f57e5e92ad62a8f3820eb428fc32436cf979fa130817fbe3f038edd14d1"
     )
-    if f'validatorImage: "{image}"' not in values_yaml:
-        fail("values-k3s.yaml must override stale validator images with model-tools")
-    if f'image: "{image}"' not in qwen35_cache_yaml:
+    for key in ("modelToolsImage", "validatorImage"):
+        if f'{key}: "{promoted_image}"' not in values_yaml:
+            fail(f"values-k3s.yaml must pin {key} to the promoted model-tools image")
+    if f'image: "{qwen35_revalidation_image}"' not in qwen35_cache_yaml:
         fail("qwen35 cache must revalidate with the model-tools image")
 
 
