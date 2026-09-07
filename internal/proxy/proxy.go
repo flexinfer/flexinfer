@@ -710,6 +710,21 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		span.SetAttributes(attribute.String("flexinfer.lora_parent", parent))
 	}
 
+	// 2d. A name that cannot be a Kubernetes resource name — e.g. a LiteLLM
+	// gateway alias such as "or/kimi-k3" that nothing above resolved — can never
+	// match a Model or ModelDeployment, and client-go rejects it with a plain
+	// (non-Status) error before dialing the API server. Answer 404 here rather
+	// than letting that error fall into the 500 "Internal error" branch below.
+	// This guards BOTH lookups (the Model CR and the v1alpha1 fallback) since
+	// they share lookupName. No demand-touch, no queue, no cold start.
+	if !isValidModelResourceName(lookupName) {
+		slog.Debug("rejecting request: model name is not a valid Kubernetes resource name",
+			"model", modelName, "lookup", lookupName, "request_id", requestID)
+		validation.WriteModelNotFound(w, modelName)
+		requestsTotal.WithLabelValues(modelName, "not_found").Inc()
+		return
+	}
+
 	// 3. Fetch v1alpha2 Model first (preferred). For a LoRA adapter this fetches
 	// the parent Model; the request continues to be served under the adapter name.
 	m, err := p.getModel(ctx, lookupName)
@@ -825,11 +840,15 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	md, err := p.getModelDeployment(ctx, lookupName)
 	if err != nil {
 		if errors.IsNotFound(err) {
+			// Neither CR exists: a client asked for a model we do not serve.
+			// That is a 404, not a proxy fault, so it is counted as not_found
+			// rather than error (which feeds the HighErrorRate alert).
 			validation.WriteModelNotFound(w, modelName)
-		} else {
-			slog.Error("error fetching model deployment", "model", modelName, "error", err)
-			validation.WriteInternalError(w, "Internal error fetching model deployment")
+			requestsTotal.WithLabelValues(modelName, "not_found").Inc()
+			return
 		}
+		slog.Error("error fetching model deployment", "model", modelName, "error", err)
+		validation.WriteInternalError(w, "Internal error fetching model deployment")
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
 		return
 	}
