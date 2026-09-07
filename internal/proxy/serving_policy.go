@@ -5,7 +5,26 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/pkg/constants"
+	utilvalidation "k8s.io/apimachinery/pkg/util/validation"
 )
+
+// isValidModelResourceName reports whether name could be the metadata.name of a
+// Model or ModelDeployment. Custom resources use the API server's default name
+// strategy (a DNS-1123 subdomain: lowercase alphanumerics, '-' and '.', max 253
+// chars), so a name outside that grammar can never resolve to a CR in any
+// namespace.
+//
+// This matters at the proxy edge because client-go refuses to build a request
+// for a name that is not a valid URL path segment (e.g. a LiteLLM gateway alias
+// like "or/kimi-k3" that no Model advertises) and fails the Get with a plain
+// fmt error before ever dialing the API server. errors.IsNotFound is false for
+// that error, so without this pre-check the generic error branch reports it as
+// 500 "Internal error fetching model" when the honest answer is 404. Checking
+// the stricter DNS-1123 grammar up front covers every name client-go would
+// reject, plus names the API server itself could never store.
+func isValidModelResourceName(name string) bool {
+	return len(utilvalidation.IsDNS1123Subdomain(name)) == 0
+}
 
 // litellmExplicitlyDisabled reports whether a Model opted OUT of the servable
 // fleet via spec.litellm.enabled=false. Such "parked" models are hidden from
