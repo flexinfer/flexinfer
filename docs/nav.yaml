@@ -23,6 +23,8 @@ sections:
         path: user/legacy-v1alpha1.md
       - title: Proxy & Requests
         path: user/proxy.md
+      - title: Proxy Observability
+        path: user/proxy-observability.md
       - title: API Compatibility
         path: user/api-compatibility.md
       - title: Routing
@@ -41,6 +43,8 @@ sections:
         path: user/operations.md
       - title: Gaming Mode (Sunshine/Moonlight)
         path: user/gaming-mode-runbook.md
+      - title: Steam Deck & Xbox Clients
+        path: user/steamdeck-xbox-clients.md
       - title: Opportunistic Model Backfill
         path: user/model-backfill.md
       - title: Model Experiments
@@ -67,6 +71,8 @@ sections:
         path: dev/testing.md
       - title: Release & Images
         path: dev/release.md
+      - title: Gaming Image Canary
+        path: dev/gaming-image-canary.md
 
   - id: specs
     title: Specs
