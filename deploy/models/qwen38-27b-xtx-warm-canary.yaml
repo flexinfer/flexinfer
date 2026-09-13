@@ -40,6 +40,12 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    # 2026-09-13: scheduler preemption guard. The serving pod carries
+    # flexinfer-serving-critical (150000) so it preempts priority-0 CI job
+    # pods for CPU on its node (17:11Z: the pod sat Pending on "Insufficient cpu" behind
+    # priority-0 CI job pods (1500m each) with "No preemption victims found").
+    # Same class the radeonvii retrieval lanes use; the class must exist.
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
     flexinfer.ai/base-model-posture: clean
     flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
     flexinfer.ai/purpose: "Warm-pinned Mills/loom text lane on the 7900 XTX (mills-warm / mills-council)"
