@@ -24,6 +24,11 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    # 2026-09-13: scheduler preemption guard. The serving pod carries
+    # flexinfer-serving-critical (150000) so it preempts priority-0 CI job
+    # pods for CPU on its node (the 5930k also hosts CI job pods).
+    # Same class the radeonvii retrieval lanes use; the class must exist.
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
     flexinfer.ai/base-model-posture: clean
     flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
     flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
