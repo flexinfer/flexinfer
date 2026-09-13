@@ -50,8 +50,10 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       workhorse; prepared XTX warm-lane canary (blocked, see research §7).
 - [ ] Slice 1 kill-test (48h post-merge): zero workhorse cold starts on Mills calls, video
       lanes still demand-swap (research §8).
-- [ ] Operator decision on the XTX: voice to the VII tier only (7a) vs runtime-bundle rebuild
-      with multi-model (7b) vs leave idle (7c).
+- [x] Operator decision on the XTX (2026-09-13): voice to the VII tier only (7a). Orpheus XTX
+      parked by MR; `deploy/debug/qwen38-27b-xtx-warm-canary.yaml` applied by hand.
+- [ ] XTX canary kill-test (research §8, 7a variant): Ready with orpheus at 0, zero cold starts
+      over 24h, TTFT p50 < 2 s from loom-mills, 6/6 gauntlet; then promotion MR for role aliases.
 - [ ] Slice 2 (gitops/loom-core): weaver stage, overseer triage, memory consolidation,
       user-impact lens → warm lane; shadow judge gauge; reranker on; HUD coordinator decision.
 - [ ] Slice 3: vLLM 0.28+ currency canary → Smaug-Mini A/B, Glimmer on vLLM, Laguna XS 2.1

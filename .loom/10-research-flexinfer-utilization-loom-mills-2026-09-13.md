@@ -282,7 +282,10 @@ Options, in order of cost:
 - **(a)** Accept voice on the warm-pinned Radeon VII tier only (RTF ~0.75 vs 1.6 on the XTX;
   zero voice requests in 30 days). Scale `orpheus-3b-7900xtx` to `minReplicas: 0`, apply
   `deploy/debug/qwen38-27b-xtx-warm-canary.yaml`, run the kill-test below. Reverses the
-  2026-08-19/08-30 posture; operator call.
+  2026-08-19/08-30 posture; operator call. **CHOSEN 2026-09-13**: orpheus-3b-7900xtx parked
+  (minReplicas 0, priority 460) by MR; canary applied by hand at priority 470 with whole-card
+  `vramEstimateMB: 23200` so snac/whisper stay parked (tts-lane falls back to CPU decode).
+  Outcome recorded in §7a below.
 - **(b)** Rebuild the gfx1100 runtime bundle on the certified vLLM 0.23 digest (or the 0.28
   currency candidate) and enable multi-model; then a runtime-managed 27B at 32K co-resides with
   orpheus and snac. Real image work; pairs naturally with slice 3.
