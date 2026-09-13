@@ -97,6 +97,11 @@ runtime_patch_contracts:
 
 publish_serving_rocm_gfx1100:
   stage: publish
+  # 2026-09-13 (issue #74): the repo-wide `interruptible: true` default let a
+  # docs/manifest merge auto-cancel the multi-hour image builds of the previous
+  # master pipeline (26743, the !1037 entrypoint fix). Image publishes are
+  # never redundant — the digest they push is the promotion input.
+  interruptible: false
   image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 3h
   needs: []
@@ -199,6 +204,11 @@ publish_serving_rocm_gfx1100:
 
 publish_serving_rocm_gfx1100_native_w4a16:
   stage: publish
+  # 2026-09-13 (issue #74): the repo-wide `interruptible: true` default let a
+  # docs/manifest merge auto-cancel the multi-hour image builds of the previous
+  # master pipeline (26743, the !1037 entrypoint fix). Image publishes are
+  # never redundant — the digest they push is the promotion input.
+  interruptible: false
   image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 3h
   needs: []
@@ -248,6 +258,11 @@ publish_serving_rocm_gfx1100_native_w4a16:
 # publish_serving_rocm_gfx1100.
 publish_unified_rocm_gfx1100:
   stage: publish
+  # 2026-09-13 (issue #74): the repo-wide `interruptible: true` default let a
+  # docs/manifest merge auto-cancel the multi-hour image builds of the previous
+  # master pipeline (26743, the !1037 entrypoint fix). Image publishes are
+  # never redundant — the digest they push is the promotion input.
+  interruptible: false
   image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 4h
   needs: []
@@ -361,6 +376,11 @@ publish_unified_rocm_gfx1100:
 # Ollama, diffusers, the quantizer stack, or vLLM's native fast-path wheels.
 publish_gaming_rocm_gfx1100:
   stage: publish
+  # 2026-09-13 (issue #74): the repo-wide `interruptible: true` default let a
+  # docs/manifest merge auto-cancel the multi-hour image builds of the previous
+  # master pipeline (26743, the !1037 entrypoint fix). Image publishes are
+  # never redundant — the digest they push is the promotion input.
+  interruptible: false
   image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 2h
   needs: []
@@ -458,6 +478,11 @@ publish_gaming_rocm_gfx1100:
 # will fail on buildkit. Downstream runtime images COPY --from=<image> /wheels/.
 publish_torch_multiarch:
   stage: publish
+  # 2026-09-13 (issue #74): the repo-wide `interruptible: true` default let a
+  # docs/manifest merge auto-cancel the multi-hour image builds of the previous
+  # master pipeline (26743, the !1037 entrypoint fix). Image publishes are
+  # never redundant — the digest they push is the promotion input.
+  interruptible: false
   image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 4h
   needs: []
@@ -525,6 +550,11 @@ publish_torch_multiarch:
 # and will fail on buildkit.
 publish_vllm_multiarch:
   stage: publish
+  # 2026-09-13 (issue #74): the repo-wide `interruptible: true` default let a
+  # docs/manifest merge auto-cancel the multi-hour image builds of the previous
+  # master pipeline (26743, the !1037 entrypoint fix). Image publishes are
+  # never redundant — the digest they push is the promotion input.
+  interruptible: false
   image: registry.harbor.lan/library/buildkit:v0.12.5
   timeout: 4h
   needs: []
