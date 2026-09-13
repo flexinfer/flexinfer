@@ -270,7 +270,12 @@ imagePrewarm:
         # wan21 video lanes (t2v/vace): first cold pull took 14m04s (22.7GB)
         # on 2026-08-22 and the pod was preempted 30s after the pull finished.
         # Keep it resident so VACE reaches Ready inside one election turn.
-        - registry.harbor.lan/flexinfer/diffusers-video@sha256:52ebc2b978cec519843c0e28a7246e46d7d0bd24e56253e31862d951d62d4d7d
+        # 2026-09-13 (issue #74 drift report): the previous pin (52ebc2b9) is no
+        # longer in Harbor (node cache only). Repinned to what the wan21 lanes
+        # actually pull — the floating diffusers-video:rocm-gfx1100 tag's current
+        # digest (2026-08-23); the newer rocm-gfx1100-0d631512 build (da07169c)
+        # never had the floating tag moved onto it.
+        - registry.harbor.lan/flexinfer/diffusers-video@sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
@@ -524,7 +529,7 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx906
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:89e8d0dc6757ffc318202e98c75372ba32567eb4487fdf585e5648f66acabd8e"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:25fce977bd032c016523b40ee732d9a5cf890becd9f3a2b7b28710351fa27bec"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
