@@ -111,7 +111,11 @@ vendors under `or/`, `oa/` prefixes (`platform/gitops/k3s/ai/litellm/`).
   (attempt 24; target retired to scale-to-zero on 06-17 and superseded on the card by the 27B on
   08-16; inherited the CronJob's default MODELS list that names the Pending XTX lane),
   `model-eval-qwen3-radeonvii` on 09-03 (attempt 57; target Ready; Job logs expired under the
-  24h TTL). Failed phases only reset on a spec generation change.
+  24h TTL). Failed phases only reset on a spec generation change. **Post-merge (07:35Z): the
+  re-armed radeonvii declaration ran attempt 59 immediately and PASSED 3/3 gauntlet checks
+  (`GAUNTLET OK`, phase Succeeded, next run 2026-09-14T07:36Z)** — the primitive works; the
+  operational gap is that one transient failure parks a declaration forever. Follow-up: a bounded
+  retry (or an alert on `phase=Failed`) in the ModelBackfill controller.
 - `gemma4-26b-a4b-gptq` + `-apc-canary` on the XTX: Pending since 07-11. Their ModelCache PVC
   `pvc-444d505e…` (Longhorn `nvme-1r-gpu`, single replica on the XTX) faulted 2026-09-05T21:31Z;
   the replica data directory is gone from `/mnt/nvme/longhorn/replicas/`; auto-salvage is on and
@@ -196,9 +200,63 @@ Laguna requant → Granite for tools → embeddings.
 
 Current video lanes: `wan21-t2v-1p3b-gfx1100` (text2video, 480p) and `wan21-vace-1p3b-i2v-gfx1100`
 (keyframe/i2v) on the 5930k diffusers backend (`diffusers-video:rocm-gfx1100`, diffusers 0.36.0,
-bf16 + cpuOffload). Evaluation of https://huggingface.co/Lightricks/LTX-2.5 against that stack
-(variant sizes, non-FP8 quantized artifacts, diffusers pipeline classes, 24 GB fit, ROCm reports)
-was in progress when this note was written; findings land in a follow-up section or MR.
+bf16 + cpuOffload). Web survey of https://huggingface.co/Lightricks/LTX-2.5 (2026-09-13; vendor
+numbers, unverified):
+
+**What it is.** Released 2026-08-11. One size only: a ~22B asymmetric dual-stream DiT (video
+4096-wide + audio 2048-wide; diffusers `transformer/` is 38 GB bf16 ≈ 19B, plus ~3B connectors)
+with a version-locked **Gemma 4 12B** text encoder (24 GB bf16). Variants `dev` (30 steps, CFG)
+and `distilled` (8 fixed sigmas, guidance 1.0). Modes: T2V, I2V, first/last-frame, arbitrary
+keyframe conditioning, video extension, retake, multishot, joint audio, duration head, 4K via a
+two-stage/diffusion decoder. `num_frames % 8 == 1`, 24 fps base, up to 20 s. License: LTX-2.x
+Community License, royalty-free incl. commercial under $10M annual revenue; **the HF repo is gated**
+(license acceptance + token; an operator action).
+
+**Fit on a 24 GB gfx1100 through diffusers.**
+
+| Variant | DiT footprint | Verdict |
+|---|---|---|
+| dev / distilled bf16 | 38 GB | no (sequential CPU offload only; impractical) |
+| official int8-convrot | 21.5 GB | not via diffusers (ComfyUI format); on RDNA3 in ComfyUI it loads but runs 2–3× slower than fp8 |
+| NVFP4 | 18.7 GB | no (Blackwell) |
+| community GGUF Q4_K_M / Q5_K_M / Q6_K | 15.7 / 18.1 / 18.6 GB | plausible with the text encoder offloaded + tiled VAE; LTX-2.5 GGUF loading in diffusers `from_single_file` unverified |
+| bitsandbytes NF4 on the fly (DiT + connectors + Gemma 4) | ≈ 10–11 GB DiT + ~1.7 GB + ~7–8 GB (estimates) | most likely fit and ROCm-compatible; **no published datapoint** |
+
+**Software.** diffusers **0.40.0** (2026-08-20) adds LTX-2.5 on the existing `LTX2Pipeline` /
+`LTX2ImageToVideoPipeline` / `LTX2ConditionPipeline` (FLF2V, keyframes, extension) classes;
+transformers **≥ 5.5.0** for the Gemma 4 encoder; bitsandbytes ≥ 0.49.2 on ROCm. The fleet image
+pins diffusers 0.36.0 → image rebuild. The 2.5 diffusion decoder needs flex/NATTEN attention
+(CUDA); on ROCm use the conv VAE with `enable_tiling()` and skip it. `server-diffusers.py` has no
+LTX2 pipeline mode (LTX2 returns video + audio and takes distilled `sigmas`), so this is a new
+pipeline family in the server, not a manifest change.
+
+**Speed and quality.** 24 GB NVIDIA reports (ComfyUI int8): RTX 4090 22.7 GiB resident, text
+encoder must be freed before sampling; RTX 3090 ~2.5 min per 5 s distilled clip. AMD: **zero
+LTX-2.5 datapoints**; LTX-2.3 on a 7900 XTX needed ComfyUI offload flags to load and int8 ran
+2–3× slower than fp8. Arena: LTX-2.5 Fast Elo 1216 T2V; community says 3–4× faster than Wan 2.2
+on NVIDIA but Wan still renders more photorealistic humans; known I2V identity drift and small-face
+failures, which bear directly on the VACE keyframe use case. Baseline here: Wan2.1-1.3B ≈ 4 min
+per 5 s 480p clip on a 4090 unoptimized, so on gfx1100 with NF4 dequant + SDPA-only attention a
+regression versus the 1.3B lanes is plausible.
+
+**Verdict.** Augment, not replace: it brings audio, FLF/keyframes, extension and far stronger
+prompt following, but only as a canary behind an image bump. Prerequisites in order: (1) operator
+accepts the gated license and stages the weights (exclude `transformer_full/`); (2) diffusers 0.40
+/ transformers 5.5 / bnb image (`build/requirements-diffusers-rocm.txt`) — check the Wan/Flux/SDXL
+paths against transformers 5.5; (3) an `ltx2` pipeline mode in `server-diffusers.py` (T2V + I2V +
+condition; NF4 loaders; tiled VAE; no diffusion decoder). Placement tension: video lives on the
+5930k card that slice 1 now keeps warm for Mills; a video canary demand-swaps the workhorse
+(equal priority 500, allowed once idle > 2 min) and the next Mills call then pays a 5-minute cold
+start — schedule LTX canary windows deliberately, or run video on the XTX under option 7(a).
+
+**Riskiest assumption + kill-test.** Assumption: NF4 LTX-2.5-distilled DiT + NF4 Gemma 4 12B
+encoder produce a coherent 5 s, 768×512, 121-frame clip with audio on one gfx1100 inside 24 GB in
+under 10 minutes. Kill-test (one operator, one canary Model on the 5930k or XTX, diffusers 0.40
+image): generate the clip; pass only if peak VRAM < 23 GiB, no OOM/restart, the MP4 decodes at
+121 frames with a coherent subject, and wall time < 10 min; then run the VACE keyframe prompt from
+`.loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md` through
+`LTX2ConditionPipeline` and compare first-frame preservation. Fail → stay on Wan2.1-1.3B and
+revisit with a GGUF Q5_K_M DiT or a vLLM/ComfyUI-side runtime.
 
 ## 7. The XTX co-residency blocker (needs an operator decision)
 

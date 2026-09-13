@@ -56,7 +56,9 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       user-impact lens → warm lane; shadow judge gauge; reranker on; HUD coordinator decision.
 - [ ] Slice 3: vLLM 0.28+ currency canary → Smaug-Mini A/B, Glimmer on vLLM, Laguna XS 2.1
       requant, Granite 4.2-30B tools, Qwen3-Embedding upgrade.
-- [ ] Video lane: LTX-2.5 evaluation (research §6b, pending).
+- [ ] Video lane: LTX-2.5 surveyed (research §6b) — 22B only, zero RDNA3 evidence; canary needs
+      operator license acceptance (gated repo), diffusers 0.40 / transformers 5.5 image, and an
+      `ltx2` pipeline mode in server-diffusers.py. Kill-test defined in §6b.
 
 ## Previous Goal (2026-06-03) - Hardware-utilization arc (retrieval + throughput)
 
