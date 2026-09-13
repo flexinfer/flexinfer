@@ -280,6 +280,17 @@ imagePrewarm:
         # digest (2026-08-23); the newer rocm-gfx1100-0d631512 build (da07169c)
         # never had the floating tag moved onto it.
         - registry.harbor.lan/flexinfer/diffusers-video@sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
+    # 2026-09-13 (issue #74 S3'): the gfx906 runtime DaemonSet hosts the whole
+    # retrieval plane (bge-large, bge-reranker, gte-qwen2) plus the only voice
+    # tier, and RollingUpdate terminates the old pod before the new one pulls.
+    # Prewarming the promotion target turns a pull-length outage into a load-
+    # length one. The Radeon VII root is 127 G — keep this list short.
+    - name: radeonvii-gfx906
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      images:
+        # rocm-gfx906-882d81ba: gfx906 runtime rebuilt with the entrypoint fix (!1037).
+        - registry.harbor.lan/flexinfer/runtime@sha256:171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
