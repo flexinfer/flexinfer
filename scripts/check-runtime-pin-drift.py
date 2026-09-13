@@ -128,10 +128,50 @@ def iter_yaml_files(root: Path, subdirs: tuple[str, ...]) -> list[Path]:
     return out
 
 
-def scan_pins(root: Path, files: list[Path]):
-    """Return (digest_pins, tag_pins) keyed by full ref, each with file refs."""
+def live_manifest_files(root: Path, files: list[Path]) -> set[str]:
+    """Return the repo-relative paths that Flux (or an operator) actually applies.
+
+    A manifest counts as live unless it sits under deploy/debug/ (hand-applied
+    canaries) or lives in a directory whose kustomization.yaml does not list
+    it (retired manifests "kept on disk for restore"). Directories without a
+    kustomization.yaml (deploy/system, charts/) are live wholesale.
+    """
+    listed: dict[str, set[str]] = {}
+    for path in files:
+        if path.name != "kustomization.yaml":
+            continue
+        try:
+            doc = load_yaml(path) or {}
+        except yaml.YAMLError:
+            continue
+        names = set()
+        for res in doc.get("resources") or []:
+            if isinstance(res, str) and not res.endswith("/"):
+                names.add(Path(res).name)
+        listed[path.parent.relative_to(root).as_posix()] = names
+    live: set[str] = set()
+    for path in files:
+        rel = path.relative_to(root).as_posix()
+        if rel.startswith("deploy/debug/"):
+            continue
+        parent = path.parent.relative_to(root).as_posix()
+        if parent in listed and path.name != "kustomization.yaml":
+            if path.name in listed[parent]:
+                live.add(rel)
+            continue
+        live.add(rel)
+    return live
+
+
+def scan_pins(root: Path, files: list[Path], live_files: set[str] | None = None):
+    """Return (digest_pins, tag_pins) keyed by full ref, each with file refs.
+
+    Each digest pin carries `live`: True when at least one non-comment
+    reference sits in a manifest Flux applies (see live_manifest_files).
+    """
     digest_pins: dict[str, dict] = {}
     tag_pins: dict[str, dict] = {}
+    live_files = live_files if live_files is not None else set()
     for path in files:
         rel = path.relative_to(root).as_posix()
         try:
@@ -144,11 +184,19 @@ def scan_pins(root: Path, files: list[Path]):
             for m in DIGEST_REF_RE.finditer(line):
                 ref = m.group(0)
                 entry = digest_pins.setdefault(
-                    ref, {**m.groupdict(), "files": [], "commented_only": True}
+                    ref,
+                    {
+                        **m.groupdict(),
+                        "files": [],
+                        "commented_only": True,
+                        "live": False,
+                    },
                 )
                 entry["files"].append(f"{rel}:{lineno}")
                 if not commented:
                     entry["commented_only"] = False
+                    if rel in live_files:
+                        entry["live"] = True
             for m in TAG_REF_RE.finditer(line):
                 if commented:
                     continue
@@ -270,7 +318,8 @@ def main() -> int:
     project = registry.split("/", 1)[1] if "/" in registry else "flexinfer"
 
     files = iter_yaml_files(root, ("deploy", "charts"))
-    digest_pins, tag_pins = scan_pins(root, files)
+    live_files = live_manifest_files(root, files)
+    digest_pins, tag_pins = scan_pins(root, files, live_files)
     now = dt.datetime.now(dt.timezone.utc)
     harbor = (
         None if args.offline else Harbor(args.api, args.ca_bundle, args.allow_insecure)
@@ -301,10 +350,16 @@ def main() -> int:
         if harbor is not None:
             art = harbor.artifact(pin["project"], pin["repo"], pin["digest"])
             if art is None:
-                status = "MISSING"
-                if pin["repo"] in GPU_REPOS:
-                    hard.append(
-                        f"{pin['repo']}@{short(pin['digest'])} is not in Harbor (files: {', '.join(pin['files'][:3])})"
+                if pin.get("live"):
+                    status = "MISSING"
+                    if pin["repo"] in GPU_REPOS:
+                        hard.append(
+                            f"{pin['repo']}@{short(pin['digest'])} is not in Harbor (files: {', '.join(pin['files'][:3])})"
+                        )
+                else:
+                    status = "MISSING (inactive manifest)"
+                    findings.append(
+                        f"inactive manifest pins {pin['repo']}@{short(pin['digest'])}, which is not in Harbor (files: {', '.join(pin['files'][:3])})"
                     )
             else:
                 tags = [t.get("name", "") for t in art.get("tags") or []]
@@ -375,6 +430,8 @@ def main() -> int:
                 current = art.get("digest")
                 current_pushed = art.get("push_time")
         for c in consumers:
+            if c["kind"] == "Model spec.image" and c["file"] not in live_files:
+                continue  # retired manifest kept on disk; inventory section reports it
             m = DIGEST_REF_RE.search(c["image"] or "")
             pinned = m.group("digest") if m else None
             pinned_tags: list[str] = []
@@ -466,7 +523,7 @@ def main() -> int:
     lines.append("## Summary")
     lines.append("")
     lines.append(
-        f"- digest pins scanned: {len(digest_pins)}; profiles with consumers: {len({r['profile'] for r in report['profiles']})}"
+        f"- digest pins scanned: {len(digest_pins)} ({sum(1 for p in digest_pins.values() if p.get('live'))} in live manifests); profiles with consumers: {len({r['profile'] for r in report['profiles']})}"
     )
     if harbor is not None and harbor.insecure_used:
         lines.append(
