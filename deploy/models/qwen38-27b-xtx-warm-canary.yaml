@@ -1,42 +1,38 @@
-# Warm Mills/loom text lane on cblevins-7900xtx — qualification canary.
+# Warm Mills/loom text lane on cblevins-7900xtx — Qwen3.8-27B INT4 AutoRound.
 #
+# PROMOTED 2026-09-13 (Flux-managed from this file; the object keeps the name
+# it was qualified under so adoption is a no-op for the running pod).
 # Research: .loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md
-# (slice 1). The 7900 XTX was 0.0015% busy over 30d with 3.2 GB of 24 GB in
-# use (orpheus-3b-7900xtx, 0 requests in 30d). APPLIED 2026-09-13 after the
-# operator chose option (a) below: orpheus-3b-7900xtx parked (minReplicas 0,
-# priority 460) so the device-plugin slot is free; voice runs on the Radeon
-# VII tier. Apply by hand (`kubectl apply -f`), never via Flux; promote the
-# role aliases by MR once the kill-test passes. Why it could not run before:
+# §7a. The 7900 XTX had been 0.0015% busy over 30d with the voice pod as its
+# only tenant (0 requests in 30d). Operator chose option 7(a): voice moved to
+# the warm-pinned Radeon VII tier (orpheus-3b-7900xtx parked at minReplicas 0,
+# priority 460) and this lane took the card.
 #
-#   1. Device-plugin slots. The node exposes amd.com/gpu=2 (dGPU + Raphael
-#      iGPU). A dedicated vLLM pod must claim count=2 so it never draws the
-#      iGPU (gfx1100 GPUProfile usableDeviceIndices ["0"]; snac 2026-08-23
-#      kill-test drew the iGPU with count=1). orpheus-3b-7900xtx is a dedicated
-#      llamacpp pod holding one slot, so count=2 stays Pending while it runs.
-#   2. Runtime-managed placement is the only co-residency channel with a
-#      dedicated pod, but the persistent runtime pod on this node
-#      (flexinfer-runtime-gfx1100) runs vLLM 0.17.0 without the RDNA3 W4A16
-#      kernel and cannot load the Qwen3.5-family hybrid-GDN architecture; it
-#      is also single-model until FLEXINFER_RUNTIME_MULTI_MODEL=1 lands.
+# Qualification 2026-09-13 14:38-14:47Z: Ready 6 min after apply (cache 3 min,
+# weights 42 s, engine 69 s incl. 51 s first compile — AOT-cached since),
+# RDNA3W4A16LinearKernel, KV pool 69,905 tokens fp8 = 1.07x @64K; probes
+# ROUTE_OK / 17x23=391 / coherent prose at ~34 tok/s; 2,317-token prompt in
+# 2.57 s; orpheus-tts served by the VII in 0.72 s with this lane Ready.
 #
-# Precondition options (operator decision, see the research note §7):
-#   (a) voice moves to the warm-pinned Radeon VII tier only: scale
-#       orpheus-3b-7900xtx to minReplicas 0 (or delete the lane), then apply
-#       this file; or
-#   (b) rebuild the gfx1100 runtime bundle on the certified vLLM 0.23 digest
-#       and enable multi-model, then convert this to a runtime-managed lane
-#       (drop dedicatedDeployment, count 1, vramEstimateMB ~19200, 32K).
+# Why it could not co-schedule before: the node exposes amd.com/gpu=2 (dGPU +
+# Raphael iGPU); a dedicated vLLM pod must claim count=2 so it never draws the
+# iGPU, and the dedicated orpheus pod held one slot. The runtime-managed
+# channel (flexinfer-runtime-gfx1100) is vLLM 0.17 without the RDNA3 W4A16
+# kernel and single-model — issue #74 (runtime-image CI program) fixes that.
 #
-# Envelope under (a): same artifact, digest, hfOverrides, TRITON_ATTN and
-# compile-cache recipe as the promoted 5930k lane; 64K fp8 KV (pool margin
-# is the only reason not to mirror 131072 on a first boot), maxNumSeqs 2 so
+# Envelope: same artifact, digest, hfOverrides, TRITON_ATTN and compile-cache
+# recipe as the promoted 5930k lane; 64K fp8 KV (pool margin), maxNumSeqs 2 so
 # a Mills review lens and a triage call can overlap, minReplicas 1 so it is
 # always there, priority 470 (below the RP lane's 500 so a deliberate RP
 # restore still wins the card; above parked orpheus 460 / snac 430 / whisper
 # 340), vramEstimateMB 23200 = whole card so the multiModel election never
-# admits snac (1500) or whisper (4000) beside a 0.94-util vLLM process,
-# demand-only alias so nothing routes here until the role aliases are moved
-# by a promotion MR.
+# admits snac (1500) or whisper (4000) beside a 0.94-util vLLM process.
+#
+# Roles: `mills-warm` (Mills council lenses, audit pool, spinning frames,
+# triage/consolidation — gitops k3s/mills/configmap-policy.yaml) and
+# `mills-council` (moved here from the 5930k workhorse). `workhorse`,
+# `loom-workhorse` and `reasoning` stay on the 5930k 131K lane for the research
+# stage and long prompts.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -46,9 +42,10 @@ metadata:
     flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
     flexinfer.ai/base-model-posture: clean
     flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
-    flexinfer.ai/purpose: "Warm-pinned Mills/loom text lane on the 7900 XTX (qualification canary, applied 2026-09-13)"
+    flexinfer.ai/purpose: "Warm-pinned Mills/loom text lane on the 7900 XTX (mills-warm / mills-council)"
     flexinfer.ai/plan: ".loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md"
-    flexinfer.ai/promotion-state: canary-applied-2026-09-13
+    flexinfer.ai/promotion-state: promoted-64k-fp8-graph-warm
+    flexinfer.ai/promotion-evidence: "2026-09-13 §7a: Ready +6min, RDNA3W4A16, KV 69,905 tok fp8 (1.07x @64K), probes 3/3 coherent ~34 tok/s, 2.3K-token prompt 2.57 s, orpheus-tts on VII 0.72 s"
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
@@ -114,13 +111,18 @@ spec:
     limits:
       cpu: "8"
       memory: 40Gi
-  # Demand-only until promoted: no service labels, unique litellm alias.
-  serviceLabels: []
+  serviceLabels:
+    - mills-warm
+    - mills-council
+    - xtx-warm
   litellm:
     enabled: true
     servedModelName: qwen38-27b-xtx-warm-canary
     aliases:
       - qwen38-27b-xtx-warm-canary
+      - mills-warm
+      - mills-council
+      - xtx-warm
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists

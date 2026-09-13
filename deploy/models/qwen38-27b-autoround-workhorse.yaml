@@ -148,11 +148,13 @@ spec:
     limits:
       cpu: "8"
       memory: 40Gi
+  # 2026-09-13: mills-council moved to the warm 7900xtx lane
+  # (qwen38-27b-xtx-warm-canary, alias mills-warm); this lane keeps the
+  # long-context roles (workhorse / loom-workhorse / reasoning, 131K).
   serviceLabels:
     - qwen38-27b
     - workhorse
     - loom-workhorse
-    - mills-council
     - reasoning
   litellm:
     enabled: true
@@ -161,7 +163,6 @@ spec:
       - qwen38-27b
       - workhorse
       - loom-workhorse
-      - mills-council
       - reasoning
   tolerations:
     - key: node-role.kubernetes.io/control-plane
