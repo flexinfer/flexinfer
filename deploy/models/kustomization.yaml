@@ -30,8 +30,19 @@ resources:
   # - gemma4-31b-gptq.yaml          # disabled; promoted-state pending dense rebuild
   # fast-chat-7900xtx.yaml: manifest DELETED 2026-08-19 with the MLC-era
   # retirement (disabled since 2026-05-16; Gemma4 26B serves fast-chat).
-  - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (7900xtx instance #1)
-  - gemma4-26b-a4b-gptq-apc-canary.yaml  # F4-prefix-cache-flip canary; minReplicas=0, low priority, operator-activated kill-test lane (.loom/ralph-f4-prefix-cache-flip-canary-2026-05-26.md)
+  # gemma4-26b-a4b-gptq.yaml + gemma4-26b-a4b-gptq-apc-canary.yaml: RETIRED
+  # 2026-09-13 (utilization slice 1). Both 7900xtx lanes had been Pending since
+  # 2026-07-11: their shared ModelCache PVC (gemma4-26b-a4b-gptq, Longhorn
+  # nvme-1r-gpu, single replica on the XTX) faulted 2026-09-05 and the replica
+  # data directory no longer exists on the host, so the cache-copy pods sat in
+  # ContainerCreating for 8 days with no path to Ready. They served 0 requests
+  # in 30d, were litellm-disabled, and can never co-schedule beside the
+  # dedicated orpheus-3b-7900xtx pod anyway (dedicated vLLM lanes need both
+  # device-plugin slots; orpheus holds one). The 5930k sister carries every
+  # shared alias. Manifests kept on disk for restore; the orphaned ModelCache
+  # + faulted PVC are a separate cleanup (data already lost).
+  # - gemma4-26b-a4b-gptq.yaml        # vLLM gfx1100 GPTQ INT4 hybrid, warm quality primary @ 16K (7900xtx instance #1)
+  # - gemma4-26b-a4b-gptq-apc-canary.yaml  # F4-prefix-cache-flip canary; minReplicas=0, low priority, operator-activated kill-test lane (.loom/ralph-f4-prefix-cache-flip-canary-2026-05-26.md)
   - whisper-large-v3-turbo.yaml     # ASR (Slice 3a): vLLM Whisper on gfx1100, demand-driven (priority 400, minReplicas=0) so deploying is a no-op for the 26B until first transcribe. .loom/30-implementation-plan-voice-stack-2026-06-01.md
   # ASR kill-test history: Slice 1 (whisper-kill-test-v3.yaml) was torn down
   # 2026-05-20; the runtime-side gate finally PASSED on v6 2026-05-21 after the

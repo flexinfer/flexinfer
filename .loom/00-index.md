@@ -5,6 +5,7 @@
 - Workspace snapshot: `00-workspace-snapshot.md`
 - MCP inventory: `00-mcp-inventory.md`
 - Research: `10-research.md`
+- Research (2026-09-13): idle gfx1100 cards → loom-core/Mills utilization + Sept-2026 24 GB model survey: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`
 - Product spec: `20-product-spec.md`
 - Implementation plan: `30-implementation-plan.md`
 - Decisions: `40-decisions.md`
@@ -38,7 +39,26 @@
 - Hardware-utilization arc implementation plan (2026-06-03): `30-implementation-plan-hardware-utilization-2026-06-03.md`
 - RALPH model-tools Python 3.14 candidate (2026-08-01): `45-iteration-plan-model-tools-python314-canary-2026-08-01.md`
 
-## Current Goal (2026-06-03) - Hardware-utilization arc (retrieval + throughput)
+## Current Goal (2026-09-13) - Idle gfx1100 cards → loom-core / Mills utilization
+
+Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900 XTX is
+0.0015% busy over 30d and the 5930k workhorse cold-starts (>300 s, 12/12) after every
+30-minute quiet spell, so Mills keeps every inline stage on vendor models.
+
+- [x] Slice 1 (this cycle's MR): workhorse `idleTimeout` 30m → 12h; retire the two Pending
+      7900xtx gemma4 lanes (faulted cache PVC, data gone); re-arm ModelBackfill against the
+      workhorse; prepared XTX warm-lane canary (blocked, see research §7).
+- [ ] Slice 1 kill-test (48h post-merge): zero workhorse cold starts on Mills calls, video
+      lanes still demand-swap (research §8).
+- [ ] Operator decision on the XTX: voice to the VII tier only (7a) vs runtime-bundle rebuild
+      with multi-model (7b) vs leave idle (7c).
+- [ ] Slice 2 (gitops/loom-core): weaver stage, overseer triage, memory consolidation,
+      user-impact lens → warm lane; shadow judge gauge; reranker on; HUD coordinator decision.
+- [ ] Slice 3: vLLM 0.28+ currency canary → Smaug-Mini A/B, Glimmer on vLLM, Laguna XS 2.1
+      requant, Granite 4.2-30B tools, Qwen3-Embedding upgrade.
+- [ ] Video lane: LTX-2.5 evaluation (research §6b, pending).
+
+## Previous Goal (2026-06-03) - Hardware-utilization arc (retrieval + throughput)
 
 Brainstorm: `brainstorm-hardware-utilization-sprints-2026-06-03.md`.
 Plan: `30-implementation-plan-hardware-utilization-2026-06-03.md`.

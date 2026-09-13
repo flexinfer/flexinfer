@@ -62,7 +62,19 @@ spec:
   serverless:
     enabled: true
     minReplicas: 0
-    idleTimeout: 30m
+    # 2026-09-13 (utilization slice 1, .loom/10-research-flexinfer-utilization-
+    # loom-mills-2026-09-13.md): 30m -> 12h. Every recorded cold start of this
+    # lane exceeded 300 s (12/12 in flexinfer_model_cold_start_duration_seconds)
+    # and the lane sat Idle at 15 of 17 four-hour samples in the week of 09-06,
+    # so each Mills council/audit/review call after a quiet half hour paid a
+    # 5+ minute cold start and every latency-sensitive Mills stage stayed on
+    # vendor models. A long idle window keeps the card warm across Mills'
+    # inter-call gaps (council cron every 6h, pipelines, audit sweeps) while
+    # warmPolicy stays ondemand: a higher-priority member (wan21 VACE 600, T2V
+    # 500, glimmer 500) can still demand-swap once this lane is idle > 2 min,
+    # which minReplicas 1 would block (whisper/!563 lesson). Card is otherwise
+    # 1.2% busy over 30d, so holding VRAM costs nothing.
+    idleTimeout: 12h
     # First activation on a cold cache covers the 19 GB HF prefetch + fresh
     # torch.compile (~5 min); cached restarts are ~3 min.
     coldStartTimeout: 25m

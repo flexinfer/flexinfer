@@ -94,6 +94,14 @@ digest remains the exact rollback anchor.
   model-tools candidate through an isolated publish/validation job canary, and
   promote the tested digest ([#73](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/73); passed 2026-09-04)
 - [x] Gracefully drain in-flight proxy requests during rollouts ([#65](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/65); live certificate passed 2026-07-18)
+- [ ] Put the idle gfx1100 cards to work for loom-core and Mills
+  (`.loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md`): slice 1
+  keeps the 5930k workhorse warm across Mills' inter-call gaps (idleTimeout
+  12h), retires the two dead 7900xtx gemma4 lanes, and re-arms ModelBackfill.
+  A warm text lane beside the XTX voice pod is blocked until either voice
+  moves to the Radeon VII tier or the gfx1100 runtime bundle leaves vLLM
+  0.17 and gains multi-model; the prepared recipe is
+  `deploy/debug/qwen38-27b-xtx-warm-canary.yaml`.
 
 ## Later
 

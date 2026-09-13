@@ -106,8 +106,12 @@ spec:
                   value: "http://flexinfer-proxy.flexinfer-system.svc.cluster.local:80"
                 # Space-separated name=backend entries. Default = the warm vllm
                 # primaries; add models here (or via a Flux patch) as artifacts land.
+                # 2026-09-13: the 7900xtx gemma4 lane was retired (Pending since
+                # 07-11 on a faulted cache PVC; utilization slice 1), so only the
+                # 5930k sister remains. ModelBackfill declarations override this
+                # list per lane (deploy/tasks/model-backfill/).
                 - name: MODELS
-                  value: "gemma4-26b-a4b-gptq=vllm gemma4-26b-a4b-gptq-5930k=vllm"
+                  value: "gemma4-26b-a4b-gptq-5930k=vllm"
                 - name: ITERS
                   value: "3"
                 - name: MIN_DURATION

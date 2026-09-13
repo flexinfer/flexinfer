@@ -14,7 +14,13 @@ spec:
   modelRef: qwen3-1p7b-tools-radeonvii
   templateRef: model-eval-gauntlet
   idleFor: 30m
-  maxRunDuration: 10m
+  # 2026-09-13 (utilization slice 1): 10m -> 12m is a deliberate spec touch to
+  # re-arm this declaration. It went terminal Failed on 2026-09-03 (attempt 57)
+  # against a model that IS Ready, and the copied Job's logs expired under the
+  # template's 24h TTL before anyone read them, so the failure is undiagnosed.
+  # Failed phases only reset on a generation change. Read the next
+  # model-eval-qwen3-radeonvii-58-* Job's logs within 24h of its run.
+  maxRunDuration: 12m
   repeatAfter: 24h
   env:
     MODELS: qwen3-1p7b-tools-radeonvii=llamacpp
