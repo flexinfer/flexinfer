@@ -104,10 +104,28 @@ makes CI the only producer, an immutable tag the only thing a pin may reference,
 | **S4** | CI | Trivy for runtime/vllm (nightly, advisory → blocking); `runtime_promote_mr` | a pin-bump MR is opened by CI after a green canary |
 | **S5** | gfx1100 | real master rules for `publish_vllm_rocm_gfx1100_qwen35_patched`; repin `backends.vllm.image` + prewarm; retire the two mutable-tag pins | no mutable-tag pins in the report |
 
+### Status (2026-09-13, end of day)
+
+| Slice | State | MRs |
+|---|---|---|
+| S0 | merged; gate advisory, 0 FAIL on master after the live-manifest filter | !1022, !1029, !1030 |
+| repins + prewarm | merged | !1025, !1031 |
+| S1 | merged, kill-test passed (XTX runtime pod on the serving persona, multi-model on) | !1027 |
+| S3 | merged, kill-test passed (retrieval +30 s, voice +4 min); Go default fixed | !1031, !1028 |
+| S4/S5 first half | in review, blocked by the `trivy_scan_deps` grpc CVE gate (!1033) and a CI runner node in DiskPressure | !1032 |
+| S2 | not started — needs a restored `v023` native-W4A16 lane (or a v0.26/0.28 currency canary) before the 15 `2e9652ed` pins can move | — |
+| S4 promote-MR bot, S5 rebuild + repin, gate → `--strict` | not started | — |
+
 ## Riskiest assumption + kill-test
 
 > Every spec must name its riskiest load-bearing assumption and a kill-test that proves it before
 > downstream slices ship (`spec-riskiest-assumption`).
+
+**Kill-test result (S1, 2026-09-13)**: passed on the only node with a runtime pod (the XTX).
+The runtime pod came up Ready on the serving persona with vLLM, diffusers and the snac server
+importable and both dedicated text lanes untouched. The 5930k half of the test could not run:
+its DaemonSet is desired=0 behind the `quantization-pause` selector. The snac-decode path on the
+serving persona remains unexercised until a voice window returns to that card.
 
 **Assumption**: the `gfx1100-serving` persona is sufficient for the managed DaemonSet lanes — i.e.
 nothing in production reaches the runtime pod for a layer only the unified image carries

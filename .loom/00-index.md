@@ -69,10 +69,13 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       and `{model="mills-warm"}` moving; research stage error rate stays 0.
 - [ ] Slice 3: vLLM 0.28+ currency canary → Smaug-Mini A/B, Glimmer on vLLM, Laguna XS 2.1
       requant, Granite 4.2-30B tools, Qwen3-Embedding upgrade.
-- [ ] Runtime-image CI program (issue #74, spec `20-product-spec-runtime-image-ci-2026-09-13.md`):
-      S0 drift gate + trigger parity shipped; S1 gfx1100 serving-persona promotion (kill-test on
-      the 5930k first), S2 vLLM currency + the 15 `2e9652ed` pins, S3 gfx906 rebuild/repin, S4
-      Trivy + promote-MR bot, S5 standalone vLLM pin.
+- [x] Runtime-image CI program (issue #74, spec `20-product-spec-runtime-image-ci-2026-09-13.md`):
+      S0 drift gate (0 FAIL on master), repins + prewarm, S1 gfx1100 serving persona (XTX runtime
+      pod on `522d0fe2`, multi-model on), S3 gfx906 (`25fce977`, retrieval + voice re-verified)
+      all landed 2026-09-13 (research §7c).
+- [ ] #74 remaining: S4/S5 first half (!1032, blocked on the grpc CVE gate !1033 + a CI node in
+      DiskPressure); S2 vLLM currency (restore a v023 native-W4A16 lane; move the 15 `2e9652ed`
+      pins); S4 promote-MR bot; S5 standalone vLLM rebuild + repin; gate → `--strict`.
 - [ ] Video lane: LTX-2.5 surveyed (research §6b) — 22B only, zero RDNA3 evidence; canary needs
       operator license acceptance (gated repo), diffusers 0.40 / transformers 5.5 image, and an
       `ltx2` pipeline mode in server-diffusers.py. Kill-test defined in §6b.
