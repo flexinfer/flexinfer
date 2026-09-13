@@ -62,7 +62,13 @@ spec:
   # Issue #66 (2026-08-16): every lane on this digest must keep
   # attentionBackend TRITON_ATTN (below). Rollback = the 2e9652ed digest.
   # Validation row: .loom/60-validation-matrix.md gfx1100-native-w4a16-2026-09-13.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:d6d18459bb6b8cf98f67e7806cf7367519773de6e5015b7d8cc22f4d337b4ce3
+  # ROLLED BACK 2026-09-13 18:40Z: on d6d18459 the pod crash-looped at startup —
+  # the image's bundled vLLM general plugin `flexinfer_vllm_qwen35_text`
+  # imports `vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt`, which
+  # vLLM 0.26 no longer ships (ModuleNotFoundError before the engine starts).
+  # The v0.26 build was never qualified for Qwen3.5 lanes; S2 needs a rebuilt
+  # native-W4A16 image whose plugin tracks 0.26's FLA layout. Back on v023.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     strategy: Local
