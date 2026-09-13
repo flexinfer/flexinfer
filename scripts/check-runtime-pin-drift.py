@@ -1,0 +1,497 @@
+#!/usr/bin/env python3
+"""Report drift between GPU runtime/vLLM image pins in git and what Harbor holds.
+
+Three questions, answered from build/runtime.yaml, deploy/, charts/ and the
+Harbor v2.0 API (anonymous read of the public `flexinfer` project):
+
+1. Does every `@sha256:` pin under deploy/ and charts/ still exist in Harbor,
+   and does it carry an immutable `<tag>-<sha>` tag (Harbor retention keeps
+   only tagged manifests, so a floating-tag-only digest is GC bait)?
+2. For every promotable profile in build/runtime.yaml, do its consumers (the
+   runtime DaemonSet profiles in deploy/system/values-k3s.yaml, the GPUProfile
+   `spec.runtime.image`, and `promotion.model_manifests`) pin the profile's
+   current build, or a build from another persona entirely?
+3. Which consumers still pin a mutable tag instead of a digest?
+
+Default mode prints a Markdown report and exits 0 unless a pinned digest is
+missing from Harbor. `--strict` also fails on floating-only digests, persona
+mismatches, and mutable-tag pins; `--max-behind-days N` fails when a consumer
+trails its profile's current build by more than N days. `--offline` skips
+Harbor and prints the inventory only (used as the CI smoke test).
+
+Tracking issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/74
+Spec: .loom/20-product-spec-runtime-image-ci-2026-09-13.md
+"""
+
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import re
+import ssl
+import sys
+import urllib.error
+import urllib.parse
+import urllib.request
+from pathlib import Path
+
+try:
+    import yaml
+except ImportError:  # pragma: no cover - surfaced as a clear CI error
+    sys.stderr.write(
+        "check-runtime-pin-drift: PyYAML is required (pip install pyyaml)\n"
+    )
+    sys.exit(2)
+
+REGISTRY_HOST = "registry.harbor.lan"
+DEFAULT_API = f"https://{REGISTRY_HOST}/api/v2.0"
+# Repos whose pins this report cares about. Diffusers/comfyui/mlc pins are
+# reported in the inventory but never fail the check.
+GPU_REPOS = ("runtime", "vllm")
+
+DIGEST_REF_RE = re.compile(
+    r"registry\.harbor\.lan/(?P<project>[a-z0-9_-]+)/(?P<repo>[a-z0-9_./-]+?)"
+    r"(?::(?P<tag>[A-Za-z0-9_.-]+))?@(?P<digest>sha256:[0-9a-f]{64})"
+)
+TAG_REF_RE = re.compile(
+    r"registry\.harbor\.lan/(?P<project>[a-z0-9_-]+)/(?P<repo>runtime|vllm)"
+    r":(?P<tag>[A-Za-z0-9_.-]+)(?![A-Za-z0-9_.@-])"
+)
+IMMUTABLE_SUFFIX_RE = re.compile(r"-[0-9a-f]{7,12}$")
+
+
+class Harbor:
+    """Minimal anonymous Harbor v2.0 client with a per-run cache."""
+
+    def __init__(self, api: str, ca_bundle: str | None, allow_insecure: bool):
+        self.api = api.rstrip("/")
+        self.cache: dict[str, dict | None] = {}
+        self.ctx = (
+            ssl.create_default_context(cafile=ca_bundle)
+            if ca_bundle
+            else ssl.create_default_context()
+        )
+        self.allow_insecure = allow_insecure
+        self.insecure_used = False
+
+    def artifact(self, project: str, repo: str, reference: str) -> dict | None:
+        key = f"{project}/{repo}@{reference}"
+        if key in self.cache:
+            return self.cache[key]
+        # Repository names with '/' must be double-encoded for the Harbor API.
+        repo_enc = urllib.parse.quote(urllib.parse.quote(repo, safe=""), safe="")
+        url = f"{self.api}/projects/{project}/repositories/{repo_enc}/artifacts/{reference}?with_tag=true"
+        data = self._get(url)
+        self.cache[key] = data
+        return data
+
+    def _get(self, url: str) -> dict | None:
+        req = urllib.request.Request(url, headers={"Accept": "application/json"})
+        try:
+            with urllib.request.urlopen(req, context=self.ctx, timeout=30) as resp:
+                return json.load(resp)
+        except urllib.error.HTTPError as exc:
+            if exc.code == 404:
+                return None
+            raise
+        except urllib.error.URLError as exc:
+            if isinstance(exc.reason, ssl.SSLError):
+                if self.allow_insecure and not self.insecure_used:
+                    # Internal Harbor CA not trusted by this runner image; the
+                    # check only reads public metadata, so degrade with a loud
+                    # note in the report.
+                    self.insecure_used = True
+                    self.ctx = ssl._create_unverified_context()  # noqa: SLF001
+                    return self._get(url)
+                if not self.allow_insecure:
+                    raise SystemExit(
+                        "check-runtime-pin-drift: Harbor TLS certificate is not trusted by this "
+                        "Python (internal CA). Pass --ca-bundle <harbor-ca.pem> (or set "
+                        "HARBOR_CA_BUNDLE), or --allow-insecure for an unverified read-only run."
+                    ) from exc
+            raise
+
+
+def load_yaml(path: Path):
+    with path.open("r", encoding="utf-8") as fh:
+        return yaml.safe_load(fh)
+
+
+def iter_yaml_files(root: Path, subdirs: tuple[str, ...]) -> list[Path]:
+    out: list[Path] = []
+    for sub in subdirs:
+        base = root / sub
+        if base.is_dir():
+            out.extend(sorted(p for p in base.rglob("*.y*ml") if p.is_file()))
+    return out
+
+
+def scan_pins(root: Path, files: list[Path]):
+    """Return (digest_pins, tag_pins) keyed by full ref, each with file refs."""
+    digest_pins: dict[str, dict] = {}
+    tag_pins: dict[str, dict] = {}
+    for path in files:
+        rel = path.relative_to(root).as_posix()
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError:
+            continue
+        for lineno, line in enumerate(text.splitlines(), 1):
+            stripped = line.lstrip()
+            commented = stripped.startswith("#")
+            for m in DIGEST_REF_RE.finditer(line):
+                ref = m.group(0)
+                entry = digest_pins.setdefault(
+                    ref, {**m.groupdict(), "files": [], "commented_only": True}
+                )
+                entry["files"].append(f"{rel}:{lineno}")
+                if not commented:
+                    entry["commented_only"] = False
+            for m in TAG_REF_RE.finditer(line):
+                if commented:
+                    continue
+                ref = m.group(0)
+                entry = tag_pins.setdefault(ref, {**m.groupdict(), "files": []})
+                entry["files"].append(f"{rel}:{lineno}")
+    # Drop pins that only ever appear in comments.
+    digest_pins = {k: v for k, v in digest_pins.items() if not v["commented_only"]}
+    return digest_pins, tag_pins
+
+
+def parse_tag(tag: str) -> tuple[str, str]:
+    """Split 'runtime:rocm-gfx1100-serving' into (repo, floating tag)."""
+    repo, _, floating = tag.partition(":")
+    return repo, floating
+
+
+def profile_consumers(root: Path, name: str, spec: dict, values: dict) -> list[dict]:
+    """Mirror scripts/promote-runtime-digest.sh's consumer selection."""
+    promotion = spec.get("promotion") or {}
+    update_gpuprofile = promotion.get("gpuprofile", True)
+    update_values = promotion.get("values_runtime_profiles", True)
+    arch = spec.get("gpu_arch", "")
+    consumers: list[dict] = []
+    if update_values:
+        for entry in (values.get("runtime") or {}).get("profiles") or []:
+            if entry.get("name") == name or entry.get("gpuArch") == arch:
+                consumers.append(
+                    {
+                        "kind": "runtime DaemonSet",
+                        "consumer": entry.get("name"),
+                        "file": "deploy/system/values-k3s.yaml",
+                        "image": entry.get("image", ""),
+                    }
+                )
+    if update_gpuprofile:
+        for candidate in (
+            root / "deploy/gpuprofiles" / f"{name}.yaml",
+            root / "deploy/gpuprofiles" / f"{arch}.yaml",
+        ):
+            if candidate.is_file():
+                doc = load_yaml(candidate) or {}
+                image = ((doc.get("spec") or {}).get("runtime") or {}).get("image", "")
+                consumers.append(
+                    {
+                        "kind": "GPUProfile runtime.image",
+                        "consumer": doc.get("metadata", {}).get("name", candidate.stem),
+                        "file": candidate.relative_to(root).as_posix(),
+                        "image": image,
+                    }
+                )
+                break
+    for manifest in promotion.get("model_manifests") or []:
+        path = root / manifest
+        if path.is_file():
+            doc = load_yaml(path) or {}
+            consumers.append(
+                {
+                    "kind": "Model spec.image",
+                    "consumer": doc.get("metadata", {}).get("name", path.stem),
+                    "file": manifest,
+                    "image": (doc.get("spec") or {}).get("image", ""),
+                }
+            )
+    return consumers
+
+
+def age_days(push_time: str | None, now: dt.datetime) -> int | None:
+    if not push_time:
+        return None
+    try:
+        pushed = dt.datetime.fromisoformat(push_time.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return (now - pushed).days
+
+
+def short(digest: str) -> str:
+    return digest[:19] if digest.startswith("sha256:") else digest
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
+    ap.add_argument(
+        "--repo-root",
+        default=None,
+        help="Repository root (default: parent of scripts/).",
+    )
+    ap.add_argument("--api", default=os.environ.get("HARBOR_API_URL", DEFAULT_API))
+    ap.add_argument("--ca-bundle", default=os.environ.get("HARBOR_CA_BUNDLE") or None)
+    ap.add_argument(
+        "--allow-insecure",
+        action="store_true",
+        help="Fall back to unverified TLS if the Harbor CA is untrusted.",
+    )
+    ap.add_argument(
+        "--offline", action="store_true", help="Inventory only; do not query Harbor."
+    )
+    ap.add_argument("--strict", action="store_true")
+    ap.add_argument("--max-behind-days", type=int, default=None)
+    ap.add_argument(
+        "--markdown",
+        default=None,
+        help="Write the Markdown report here as well as stdout.",
+    )
+    ap.add_argument("--json", dest="json_out", default=None)
+    args = ap.parse_args()
+
+    root = (
+        Path(args.repo_root).resolve()
+        if args.repo_root
+        else Path(__file__).resolve().parent.parent
+    )
+    runtime_cfg = load_yaml(root / "build/runtime.yaml") or {}
+    values = load_yaml(root / "deploy/system/values-k3s.yaml") or {}
+    registry = runtime_cfg.get("registry", f"{REGISTRY_HOST}/flexinfer")
+    project = registry.split("/", 1)[1] if "/" in registry else "flexinfer"
+
+    files = iter_yaml_files(root, ("deploy", "charts"))
+    digest_pins, tag_pins = scan_pins(root, files)
+    now = dt.datetime.now(dt.timezone.utc)
+    harbor = (
+        None if args.offline else Harbor(args.api, args.ca_bundle, args.allow_insecure)
+    )
+
+    findings: list[str] = []
+    hard: list[str] = []
+    lines: list[str] = []
+    report: dict = {
+        "generated": now.isoformat(),
+        "offline": args.offline,
+        "pins": [],
+        "profiles": [],
+        "mutable_tag_pins": [],
+    }
+
+    # ---- 1. Pin inventory -------------------------------------------------
+    lines.append("## Digest pins under deploy/ and charts/")
+    lines.append("")
+    lines.append(
+        "| Digest | Repo | Refs | Tags in Harbor | Pushed | Age (d) | Status |"
+    )
+    lines.append("|---|---|---|---|---|---|---|")
+    for ref, pin in sorted(digest_pins.items(), key=lambda kv: (kv[1]["repo"], kv[0])):
+        status = "not checked"
+        tags: list[str] = []
+        pushed = None
+        if harbor is not None:
+            art = harbor.artifact(pin["project"], pin["repo"], pin["digest"])
+            if art is None:
+                status = "MISSING"
+                if pin["repo"] in GPU_REPOS:
+                    hard.append(
+                        f"{pin['repo']}@{short(pin['digest'])} is not in Harbor (files: {', '.join(pin['files'][:3])})"
+                    )
+            else:
+                tags = [t.get("name", "") for t in art.get("tags") or []]
+                pushed = art.get("push_time")
+                immutable = [t for t in tags if IMMUTABLE_SUFFIX_RE.search(t)]
+                if not tags:
+                    status = "untagged (GC hazard)"
+                    findings.append(
+                        f"{pin['repo']}@{short(pin['digest'])} has no tag left in Harbor"
+                    )
+                elif not immutable:
+                    status = "floating-only (GC hazard)"
+                    findings.append(
+                        f"{pin['repo']}@{short(pin['digest'])} is only reachable through a floating tag ({', '.join(tags)})"
+                    )
+                else:
+                    status = "ok"
+        row = {
+            "ref": ref,
+            "repo": pin["repo"],
+            "digest": pin["digest"],
+            "files": pin["files"],
+            "tags": tags,
+            "push_time": pushed,
+            "age_days": age_days(pushed, now),
+            "status": status,
+        }
+        report["pins"].append(row)
+        lines.append(
+            f"| `{short(pin['digest'])}` | {pin['repo']} | {len(pin['files'])} | {', '.join(tags) or '-'} | "
+            f"{(pushed or '-')[:10]} | {row['age_days'] if row['age_days'] is not None else '-'} | {status} |"
+        )
+    lines.append("")
+
+    # ---- 2. Profile → consumer drift --------------------------------------
+    lines.append(
+        "## Profile consumers vs. current build (build/runtime.yaml promotion targets)"
+    )
+    lines.append("")
+    lines.append(
+        "| Profile | Floating tag | Current build | Pushed | Consumer | Pinned | Pinned tags | Status |"
+    )
+    lines.append("|---|---|---|---|---|---|---|---|")
+    for name, spec in (runtime_cfg.get("profiles") or {}).items():
+        promotion = spec.get("promotion") or {}
+        arch = spec.get("gpu_arch", "")
+        if "promotion" not in spec and name != arch:
+            # Experimental/canary profiles without a promotion block would
+            # otherwise be matched to the arch's DaemonSets by gpuArch (the
+            # same latent footgun scripts/promote-runtime-digest.sh has); only
+            # the canonical per-arch profile owns consumers by default.
+            continue
+        if (
+            promotion.get("gpuprofile", True) is False
+            and promotion.get("values_runtime_profiles", True) is False
+            and not promotion.get("model_manifests")
+        ):
+            continue  # canary-only lane; nothing to promote into
+        repo, floating = parse_tag(spec.get("tag", ""))
+        consumers = profile_consumers(root, name, spec, values)
+        if not consumers:
+            continue
+        current = None
+        current_pushed = None
+        if harbor is not None:
+            art = harbor.artifact(project, repo, floating)
+            if art:
+                current = art.get("digest")
+                current_pushed = art.get("push_time")
+        for c in consumers:
+            m = DIGEST_REF_RE.search(c["image"] or "")
+            pinned = m.group("digest") if m else None
+            pinned_tags: list[str] = []
+            pinned_pushed = None
+            status = "not checked"
+            if not pinned:
+                status = "mutable tag" if c["image"] else "unset"
+                findings.append(
+                    f"{c['kind']} {c['consumer']} pins '{c['image'] or '<unset>'}' (no digest)"
+                )
+            elif harbor is not None:
+                art = harbor.artifact(project, repo, pinned)
+                if art is None:
+                    status = "MISSING"
+                    hard.append(
+                        f"{c['kind']} {c['consumer']} pins {short(pinned)} which is not in Harbor"
+                    )
+                else:
+                    pinned_tags = [t.get("name", "") for t in art.get("tags") or []]
+                    pinned_pushed = art.get("push_time")
+                    persona_ok = any(
+                        t == floating or t.startswith(floating + "-")
+                        for t in pinned_tags
+                    )
+                    if not persona_ok:
+                        status = f"persona mismatch (expects {floating})"
+                        findings.append(
+                            f"{c['kind']} {c['consumer']} pins a build tagged {pinned_tags} but its profile '{name}' publishes {repo}:{floating}"
+                        )
+                    elif current and pinned == current:
+                        status = "current"
+                    else:
+                        behind = None
+                        if current_pushed and pinned_pushed:
+                            behind = age_days(pinned_pushed, now) - age_days(current_pushed, now)  # type: ignore[operator]
+                        status = (
+                            f"behind by {behind}d" if behind is not None else "behind"
+                        )
+                        if (
+                            args.max_behind_days is not None
+                            and behind is not None
+                            and behind > args.max_behind_days
+                        ):
+                            hard.append(
+                                f"{c['kind']} {c['consumer']} trails {repo}:{floating} by {behind} days (> {args.max_behind_days})"
+                            )
+                        else:
+                            findings.append(
+                                f"{c['kind']} {c['consumer']} trails {repo}:{floating}: {status}"
+                            )
+            report["profiles"].append(
+                {
+                    "profile": name,
+                    "tag": spec.get("tag"),
+                    "current": current,
+                    "current_push_time": current_pushed,
+                    "consumer": c["consumer"],
+                    "kind": c["kind"],
+                    "file": c["file"],
+                    "pinned": pinned,
+                    "pinned_tags": pinned_tags,
+                    "pinned_push_time": pinned_pushed,
+                    "status": status,
+                }
+            )
+            lines.append(
+                f"| {name} | `{repo}:{floating}` | `{short(current) if current else '-'}` | {(current_pushed or '-')[:10]} | "
+                f"{c['kind']} `{c['consumer']}` | `{short(pinned) if pinned else c['image'] or '-'}` | {', '.join(pinned_tags) or '-'} | {status} |"
+            )
+    lines.append("")
+
+    # ---- 3. Mutable-tag pins ---------------------------------------------
+    lines.append("## Mutable-tag pins (runtime/vllm without a digest)")
+    lines.append("")
+    if tag_pins:
+        lines.append("| Ref | Files |")
+        lines.append("|---|---|")
+        for ref, pin in sorted(tag_pins.items()):
+            report["mutable_tag_pins"].append({"ref": ref, "files": pin["files"]})
+            findings.append(f"mutable tag pin {ref} ({len(pin['files'])} refs)")
+            lines.append(
+                f"| `{ref}` | {', '.join(pin['files'][:4])}{' …' if len(pin['files']) > 4 else ''} |"
+            )
+    else:
+        lines.append("none")
+    lines.append("")
+
+    # ---- Summary ---------------------------------------------------------
+    lines.append("## Summary")
+    lines.append("")
+    lines.append(
+        f"- digest pins scanned: {len(digest_pins)}; profiles with consumers: {len({r['profile'] for r in report['profiles']})}"
+    )
+    if harbor is not None and harbor.insecure_used:
+        lines.append(
+            "- NOTE: Harbor TLS could not be verified on this runner; metadata was read without verification (--allow-insecure)."
+        )
+    for item in hard:
+        lines.append(f"- FAIL: {item}")
+    for item in findings:
+        lines.append(f"- warn: {item}")
+    report["hard"] = hard
+    report["findings"] = findings
+
+    text = "\n".join(lines) + "\n"
+    sys.stdout.write(text)
+    if args.markdown:
+        Path(args.markdown).write_text(text, encoding="utf-8")
+    if args.json_out:
+        Path(args.json_out).write_text(json.dumps(report, indent=2), encoding="utf-8")
+
+    if hard:
+        return 1
+    if args.strict and findings:
+        return 1
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

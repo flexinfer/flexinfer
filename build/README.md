@@ -26,7 +26,7 @@ There are TWO separate vLLM image families. Bumping one does not fix the other:
 | Image | Dockerfile | Built by | Used for |
 |---|---|---|---|
 | `flexinfer/vllm` (standalone) | `Dockerfile.vllm-gfx1100-qwen35-patched-nodiag` | CI `publish_vllm_rocm_gfx1100_qwen35_patched` | `backend: vllm` Models that get their own pod |
-| `flexinfer/runtime` (DaemonSet) | `Dockerfile.runtime` | `build/build-runtime.sh <arch> --push` (off-CI, manual) | In-process vLLM/transformers in the runtime DaemonSet |
+| `flexinfer/runtime` (DaemonSet) | `Dockerfile.runtime` (unified) / `Dockerfile.runtime-serving` (serving persona) | CI `publish_unified_rocm_gfx1100` / `publish_serving_rocm_gfx1100` (changes-gated, `.gitlab/ci/runtime-publish.yml`); `build/build-runtime.sh` is the off-CI fallback | In-process vLLM/transformers/diffusers/snac in the runtime DaemonSet. Pins are checked against Harbor by `scripts/check-runtime-pin-drift.py` (CI `runtime_pin_drift`, issue #74) |
 
 ## Go component images (CI `release` stage, `build_image` helper)
 
@@ -46,8 +46,9 @@ The old from-source variants (`Dockerfile.agent`, `.proxy`, `.manager`, `.sched`
 
 | Dockerfile | Built by | Image / consumer |
 |---|---|---|
-| `Dockerfile.runtime` | `build/build-runtime.sh <arch> --push` (off-CI, manual, 30–60 min) | `flexinfer/runtime:<arch>` DaemonSet runtime; contract-checked by `scripts/check-runtime-patch-contracts.py` |
-| `Dockerfile.runtime-serving` | `.gitlab/ci/runtime-publish.yml` | Serving-slim runtime |
+| `Dockerfile.runtime` | CI `publish_unified_rocm_gfx1100` (changes-gated, ~4 h) and `publish_gaming_rocm_gfx1100` (`INCLUDE_GAMING`); `build/build-runtime.sh <arch> --push` off-CI fallback | `flexinfer/runtime:rocm-gfx1100[-<sha>]` unified utility runtime (GPUProfile fallback surface) and `:rocm-gfx1100-gaming`; contract-checked by `scripts/check-runtime-patch-contracts.py` |
+| `Dockerfile.runtime-serving` | CI `publish_serving_rocm_gfx1100` (changes-gated, ~3 h) | `flexinfer/runtime:rocm-gfx1100-serving[-<sha>]` — the persona `build/runtime.yaml` assigns to the managed DaemonSet lanes (promotion via `scripts/promote-runtime-digest.sh gfx1100-serving`) |
+| `Dockerfile.runtime-serving-native-w4a16` | CI `publish_serving_rocm_gfx1100_native_w4a16` | `flexinfer/runtime:rocm-gfx1100-v026-native-w4a16[-<sha>]` — vLLM-from-source canary with the native RDNA3 W4A16 op; unpromotable by design (no Go runtime binary). The v0.23 build of this recipe (`…-v023-native-w4a16-037d0bc1`, digest `2e9652ed…`) is what promoted Models pin; its recipe was repointed to v0.26 in place, see issue #74 |
 | `Dockerfile.runtime-gfx906` | CI (changes-gated job in `.gitlab-ci.yml`) | gfx906 runtime variant |
 | `Dockerfile.runtime-torch-multiarch` | `build/build-torch-multiarch.sh` (off-CI, manual-only) | `flexinfer/torch:rocm6.3.4-multiarch` — one torch wheel carrying gfx906+gfx1100 device code |
 | `Dockerfile.unified-gfx906` | CI `publish_unified_rocm_gfx906` | `flexinfer/runtime:unified-gfx906` — community PyTorch, replaces old per-task gfx906 images (incl. quantize via `USE_RUNTIME_FOR_QUANTIZE`) |

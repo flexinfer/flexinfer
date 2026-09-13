@@ -171,12 +171,24 @@ publish_serving_rocm_gfx1100:
       done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
+      # 2026-09-13 (issue #74, S0): the image COPYs the Go runtime binary,
+      # build/scripts/ wholesale, and server-snac.py, so changes to any of
+      # them must rebuild it. Mirrors publish_runtime_rocm_gfx906's list. The
+      # explicit patch-script entries stay because
+      # scripts/check-runtime-patch-contracts.py asserts them by name.
       changes:
         - .gitlab/ci/runtime-publish.yml
+        - go.mod
+        - go.sum
+        - cmd/flexinfer-runtime/**/*
+        - internal/runtime/**/*
+        - backend/**/*
         - build/Dockerfile.runtime-serving
         - build/runtime.yaml
         - build/runtime-entrypoint.sh
         - build/server-diffusers.py
+        - build/server-snac.py
+        - build/scripts/**/*
         - build/scripts/vllm_gemma4_moe_gptq_patch.py
         - build/scripts/vllm_qwen35_patches_nodiag.py
         - build/scripts/qwen35_wrap_to_vl_layout.py
@@ -318,10 +330,24 @@ publish_unified_rocm_gfx1100:
       done
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
+      # 2026-09-13 (issue #74, S0): this image also COPYs the Go runtime
+      # binary and server-snac.py; a change to either shipped an image that
+      # did not contain it until the next unrelated Dockerfile edit. The root
+      # CI file stays out of this list on purpose (multi-hour build), and so
+      # do the serving-only inputs (server-diffusers.py, the vLLM patch
+      # scripts): scripts/check-runtime-patch-contracts.py forbids them here
+      # so a serving fix never drags the 4 h utility build along.
       changes:
+        - go.mod
+        - go.sum
+        - cmd/flexinfer-runtime/**/*
+        - internal/runtime/**/*
+        - backend/**/*
         - build/Dockerfile.runtime
+        - build/runtime.yaml
         - build/runtime-entrypoint.sh
         - build/steam-headless.sh
+        - build/server-snac.py
         - build/scripts/abliterate.py
         - build/scripts/quantize_gptq.py
         - build/scripts/qwen35_wrap_to_vl_layout.py
@@ -546,6 +572,62 @@ publish_vllm_multiarch:
   rules:
     # MANUAL-ONLY (break-glass). Canonical path is OFF-CI:
     # build/build-vllm-multiarch.sh. buildkitd-central cannot hold this build.
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
+
+# Drift gate (issue #74, S0). Fills the otherwise-empty `promote` stage with
+# the one signal every runtime-image slice needs: does what git pins still
+# exist in Harbor, under an immutable tag, and does it match what the profile
+# currently builds? Advisory (allow_failure) until it has been green for a
+# week on master; then drop allow_failure and add --strict. Kept at the end
+# of this file so it sits in none of the job-body slices that
+# scripts/check-runtime-patch-contracts.py inspects.
+runtime_pin_drift:
+  stage: promote
+  image: python:3.12-alpine
+  needs: []
+  allow_failure: true
+  variables:
+    HARBOR_API_URL: "https://registry.harbor.lan/api/v2.0"
+  before_script:
+    - python3 -m pip install --disable-pip-version-check --no-cache-dir pyyaml
+  script:
+    # Offline pass first: inventory parsing must never depend on the registry.
+    - python3 scripts/check-runtime-pin-drift.py --offline > /dev/null
+    # Online pass. Harbor's internal CA is not in this image's trust store;
+    # set HARBOR_CA_BUNDLE as a CI file variable to verify, otherwise the
+    # script degrades to unverified TLS for this read-only metadata call and
+    # says so in the report.
+    - python3 scripts/check-runtime-pin-drift.py --allow-insecure --markdown runtime-pin-drift.md --json runtime-pin-drift.json
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - runtime-pin-drift.md
+      - runtime-pin-drift.json
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - .gitlab/ci/runtime-publish.yml
+        - scripts/check-runtime-pin-drift.py
+        - build/runtime.yaml
+        - deploy/system/values-k3s.yaml
+        - deploy/gpuprofiles/**/*
+        - deploy/models/**/*
+        - deploy/experiments/**/*
+        - deploy/debug/**/*
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - .gitlab/ci/runtime-publish.yml
+        - scripts/check-runtime-pin-drift.py
+        - build/runtime.yaml
+        - deploy/system/values-k3s.yaml
+        - deploy/gpuprofiles/**/*
+        - deploy/models/**/*
+        - deploy/experiments/**/*
+        - deploy/debug/**/*
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
