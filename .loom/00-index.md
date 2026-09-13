@@ -73,9 +73,19 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       S0 drift gate (0 FAIL on master), repins + prewarm, S1 gfx1100 serving persona (XTX runtime
       pod on `522d0fe2`, multi-model on), S3 gfx906 (`25fce977`, retrieval + voice re-verified)
       all landed 2026-09-13 (research §7c).
-- [ ] #74 remaining: S4/S5 first half (!1032, blocked on the grpc CVE gate !1033 + a CI node in
-      DiskPressure); S2 vLLM currency (restore a v023 native-W4A16 lane; move the 15 `2e9652ed`
-      pins); S4 promote-MR bot; S5 standalone vLLM rebuild + repin; gate → `--strict`.
+- [x] Incident 2026-09-13 16:23Z (spec "Incident" section): three concurrent pipelines filled the
+      5930k root and kubelet evicted the Mills workhorse ahead of the CI job pods (no
+      ephemeral-storage request = exceeded at the first byte); ~20 min lane outage. !1035 (2Gi
+      requests on both Mills lanes + all runtime DaemonSets, `flexinfer-serving-critical` on the
+      runtime profiles) merged and rolled; !1036 adds the serving priority class to both Mills
+      lanes after the XTX pod sat Pending on CPU behind priority-0 CI pods; gitops !703 caps the
+      runner ephemeral overwrite ceiling at 25Gi. govulncheck `@latest` → x/vuln v1.8.0 (Go 1.26)
+      broke every pipeline; pinned to v1.7.0 in !1033.
+- [ ] #74 remaining: S4/S5 first half (!1032, waits on !1033); S2 vLLM currency — canary MR
+      (this branch) moves the XTX Mills lane onto the reproducible v0.26 native-W4A16 build
+      `d6d18459`, then the other 5 active `2e9652ed` pins + prewarm via `promotion.model_manifests`;
+      S4 promote-MR bot; S5 standalone vLLM rebuild + repin; gate → `--strict`; controller-default
+      ephemeral request + priority class for every serving Deployment (next controller release).
 - [ ] Video lane: LTX-2.5 surveyed (research §6b) — 22B only, zero RDNA3 evidence; canary needs
       operator license acceptance (gated repo), diffusers 0.40 / transformers 5.5 image, and an
       `ltx2` pipeline mode in server-diffusers.py. Kill-test defined in §6b.
