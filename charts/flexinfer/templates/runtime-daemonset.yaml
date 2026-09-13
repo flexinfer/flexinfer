@@ -37,6 +37,16 @@ spec:
       dnsPolicy: ClusterFirstWithHostNet
       {{- end }}
       serviceAccountName: {{ include "flexinfer.agentServiceAccountName" $ }}
+      {{- with .priorityClassName }}
+      # Optional per-profile PriorityClass. The runtime pod hosts every
+      # runtime-managed lane on its node (on gfx906: the whole retrieval plane
+      # plus the voice tier), so profiles set it to rank the pod above CI job
+      # pods and ModelCache transform Jobs for scheduler preemption. Pair it
+      # with a resources.requests.ephemeral-storage entry: kubelet's
+      # disk-pressure eviction ranks pods that exceed their ephemeral request
+      # first, and a pod with no request exceeds it at the first byte.
+      priorityClassName: {{ . | quote }}
+      {{- end }}
       terminationGracePeriodSeconds: {{ $.Values.runtime.terminationGracePeriodSeconds | default 60 }}
       containers:
         - name: runtime

@@ -115,6 +115,25 @@ makes CI the only producer, an immutable tag the only thing a pin may reference,
 | S4/S5 first half | in review, blocked by the `trivy_scan_deps` grpc CVE gate (!1033) and a CI runner node in DiskPressure | !1032 |
 | S2 | not started — needs a restored `v023` native-W4A16 lane (or a v0.26/0.28 currency canary) before the 15 `2e9652ed` pins can move | — |
 | S4 promote-MR bot, S5 rebuild + repin, gate → `--strict` | not started | — |
+| eviction guard (incident, below) | in review | fix/serving-eviction-guard |
+
+### Incident 2026-09-13 16:23Z — CI disk pressure evicted the workhorse lane
+
+Three pipelines at once (!1032, !1033, loom-core !1945) put ~10 job pods on `cblevins-5930k`
+(the main runner's job pods may land on every physical node; the overflow runner prefers
+`radeonvii`/`7900xtx`; 34 job pods peaked on the Radeon VII's 127 G root today). Root usage
+crossed the `nodefs.available<10%` line, image GC found 0.3 MB eligible, and kubelet's
+eviction ranking put the serving pods **ahead of the CI pods**: the ranking's first key is
+"usage exceeds the ephemeral-storage request", CI pods request 5Gi, and Model pods and the
+runtime DaemonSets requested nothing — 50 MB of logs counts as exceeding. The workhorse
+(Mills weaver primary) was evicted third, image GC then dropped its 11 GB runtime image, the
+replacement pulled for 10 min and was Ready at 16:45Z. The `flexinfer-image-prewarm-5930k`
+DaemonSet pod was denied admission under DiskPressure, so prewarm cannot cover this case.
+Fix: 2Gi ephemeral requests on the two Mills lanes + all three runtime profiles, and
+`flexinfer-serving-critical` on the runtime profiles (new chart key). Follow-up: a controller
+default ephemeral request for every serving Deployment (one-time reload of every lane on the
+controller roll, so it rides the next controller release). GitOps side: cap the runner
+`ephemeral_storage_limit_overwrite_max_allowed` 50Gi → 20Gi (gitops MR on the same day).
 
 ## Riskiest assumption + kill-test
 

@@ -108,6 +108,10 @@ spec:
     requests:
       cpu: "4"
       memory: 16Gi
+      # 2026-09-13: disk-pressure eviction guard, same reasoning as the
+      # workhorse lane (CI job pods share this node; pods with no
+      # ephemeral-storage request are evicted before CI pods).
+      ephemeral-storage: 2Gi
     limits:
       cpu: "8"
       memory: 40Gi

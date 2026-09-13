@@ -145,6 +145,13 @@ spec:
     requests:
       cpu: "4"
       memory: 16Gi
+      # 2026-09-13: CI job pods share this node. When three pipelines filled
+      # the root disk at 16:23Z, kubelet evicted this pod (and image GC then
+      # dropped its 11 GB runtime image: 10 min re-pull, ~20 min lane outage)
+      # ahead of the CI pods, because pods exceeding their ephemeral-storage
+      # request are ranked first and a pod with no request exceeds it at the
+      # first byte. Actual usage is ~50 MB; the request only changes ranking.
+      ephemeral-storage: 2Gi
     limits:
       cpu: "8"
       memory: 40Gi
