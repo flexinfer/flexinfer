@@ -1965,8 +1965,19 @@ publish_vllm_rocm_gfx1100_qwen35_patched:
         --export-cache "type=inline" \
         --output "type=image,\"name=${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg,${REGISTRY}/vllm:rocm-gfx1100-qwen35-patched-nodiag-textcfg-${CI_COMMIT_SHORT_SHA}\",push=true"
   rules:
-    - when: manual
+    # 2026-09-13 (issue #74 S5): this image is the gfx1100 GPUProfile
+    # backends.vllm.image + both imagePrewarm profiles, yet it was only ever
+    # rebuildable by hand (manual, allow_failure) — the live pin dated from
+    # 2026-05-20. Rebuild on master when its inputs change; manual elsewhere.
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - build/Dockerfile.vllm-gfx1100-qwen35-patched-nodiag
+        - build/scripts/vllm_qwen35_patches_nodiag.py
+        - build/vllm-patched-entrypoint.sh
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
       allow_failure: true
+    - when: never
 
 publish_vllm_rocm_v023_qwen35_text:
   stage: publish
@@ -2486,3 +2497,46 @@ trivy_scan_nightly:
 
 radar-scan:
   extends: .radar-scan
+
+# Nightly Trivy over the GPU runtime / standalone vLLM digests production
+# actually pins (issue #74 S4). Until now only the Go control-plane images were
+# scanned. Advisory: these are 8–12 GB ROCm images, the scan is slow, and the
+# finding volume from the ROCm base is unknown — promote to blocking once the
+# baseline is understood. Pins are read from git so the job scans exactly what
+# Flux deploys (values-k3s.yaml runtime profiles + GPUProfile backends.vllm).
+trivy_scan_runtime_images:
+  <<: *trivy-scan
+  allow_failure: true
+  timeout: 2h
+  script:
+    - |
+      echo "=== Nightly GPU runtime image scan (issue #74 S4) ==="
+      IMAGES="$(
+        { grep -ohE 'registry\.harbor\.lan/flexinfer/runtime@sha256:[0-9a-f]{64}' deploy/system/values-k3s.yaml deploy/gpuprofiles/*.yaml;
+          grep -ohE 'registry\.harbor\.lan/flexinfer/vllm[^ "]*@sha256:[0-9a-f]{64}' deploy/gpuprofiles/*.yaml; } | sort -u
+      )"
+      echo "${IMAGES}"
+      all_passed=true
+      : > trivy-report.json
+      for image in ${IMAGES}; do
+        echo ""
+        echo "=== Scanning ${image} ==="
+        if ! trivy image --severity HIGH,CRITICAL --ignore-unfixed --exit-code 1 --format json --output "trivy-$(echo "${image}" | sed 's#.*sha256:##' | cut -c1-12).json" "${image}"; then
+          all_passed=false
+        fi
+      done
+      # Keep the anchor's artifact contract satisfied even when a scan fails.
+      ls trivy-*.json | head -1 | xargs -I{} cp {} trivy-report.json 2>/dev/null || true
+      trivy image --severity HIGH,CRITICAL --ignore-unfixed --format sarif --output trivy-report.sarif "$(echo "${IMAGES}" | head -1)" || true
+      [ "${all_passed}" = "true" ]
+  artifacts:
+    paths:
+      - trivy-*.json
+      - trivy-report.sarif
+    expire_in: 14 days
+    when: always
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
