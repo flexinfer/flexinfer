@@ -1,0 +1,121 @@
+# PREPARED, NOT APPLIED — warm Mills/loom text lane on cblevins-7900xtx.
+#
+# Research: .loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md
+# (slice 1). The 7900 XTX is 0.0015% busy over 30d with 3.2 GB of 24 GB in use
+# (orpheus-3b-7900xtx, 0 requests in 30d). This canary is the recipe for a
+# warm-pinned Qwen3.8-27B lane there. It CANNOT be applied as-is today:
+#
+#   1. Device-plugin slots. The node exposes amd.com/gpu=2 (dGPU + Raphael
+#      iGPU). A dedicated vLLM pod must claim count=2 so it never draws the
+#      iGPU (gfx1100 GPUProfile usableDeviceIndices ["0"]; snac 2026-08-23
+#      kill-test drew the iGPU with count=1). orpheus-3b-7900xtx is a dedicated
+#      llamacpp pod holding one slot, so count=2 stays Pending while it runs.
+#   2. Runtime-managed placement is the only co-residency channel with a
+#      dedicated pod, but the persistent runtime pod on this node
+#      (flexinfer-runtime-gfx1100) runs vLLM 0.17.0 without the RDNA3 W4A16
+#      kernel and cannot load the Qwen3.5-family hybrid-GDN architecture; it
+#      is also single-model until FLEXINFER_RUNTIME_MULTI_MODEL=1 lands.
+#
+# Precondition options (operator decision, see the research note §7):
+#   (a) voice moves to the warm-pinned Radeon VII tier only: scale
+#       orpheus-3b-7900xtx to minReplicas 0 (or delete the lane), then apply
+#       this file; or
+#   (b) rebuild the gfx1100 runtime bundle on the certified vLLM 0.23 digest
+#       and enable multi-model, then convert this to a runtime-managed lane
+#       (drop dedicatedDeployment, count 1, vramEstimateMB ~19200, 32K).
+#
+# Envelope under (a): same artifact, digest, hfOverrides, TRITON_ATTN and
+# compile-cache recipe as the promoted 5930k lane; 64K fp8 KV (pool margin
+# is the only reason not to mirror 131072 on a first boot), maxNumSeqs 2 so
+# a Mills review lens and a triage call can overlap, minReplicas 1 so it is
+# always there, priority 470 (below the RP lane's 500 so a deliberate RP
+# restore still wins the card), demand-only alias so nothing routes here
+# until the role aliases are moved by a promotion MR.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-xtx-warm-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/purpose: "Warm-pinned Mills/loom text lane on the idle 7900 XTX (prepared canary; see header preconditions)"
+    flexinfer.ai/plan: ".loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md"
+    flexinfer.ai/promotion-state: prepared-unapplied
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-autoround-7900xtx
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    # Both device-plugin slots (see header); hipVisibleDevices pins the dGPU.
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 470
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 12h
+    coldStartTimeout: 25m
+  config:
+    attentionBackend: TRITON_ATTN
+    warmPolicy: primary
+    dedicatedDeployment: true
+    quantization: gptq
+    hfOverrides: '{"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 65536
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    gpuMemoryUtilization: "0.94"
+    kvCacheDtype: fp8_e4m3
+    calculateKvScales: false
+    enforceEager: false
+    enablePrefixCaching: false
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-xtx-warm-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Demand-only until promoted: no service labels, unique litellm alias.
+  serviceLabels: []
+  litellm:
+    enabled: true
+    servedModelName: qwen38-27b-xtx-warm-canary
+    aliases:
+      - qwen38-27b-xtx-warm-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

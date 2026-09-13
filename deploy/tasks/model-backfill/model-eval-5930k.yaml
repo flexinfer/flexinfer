@@ -3,17 +3,38 @@
 # only after this Model has seen no foreground demand for 30 continuous minutes.
 # The copied Job remains CPU-side and calls the warm endpoint; it never requests
 # a GPU, acquires a GPULease, or unloads the serving model.
+#
+# 2026-09-13 (utilization slice 1): re-pointed from gemma4-26b-a4b-gptq-5930k to
+# the fleet workhorse. The previous declaration (model-eval-gemma4-5930k) went
+# terminal Failed on 2026-08-12 at attempt 24 and never ran again: its target
+# was retired to scale-to-zero on 06-17 and superseded on the 5930k card by the
+# 27B on 08-16 (so it was almost never Ready when idle), and it inherited the
+# CronJob's default MODELS list, which also names the Pending 7900xtx gemma4
+# lane. The workhorse is the lane Mills depends on and the one that is Ready
+# whenever the card is idle; the explicit MODELS override keeps this Job
+# single-target. New object name so the controller starts from a clean phase.
 apiVersion: ai.flexinfer/v1alpha2
 kind: ModelBackfill
 metadata:
-  name: model-eval-gemma4-5930k
+  name: model-eval-qwen38-5930k
   namespace: flexinfer-system
   labels:
     app.kubernetes.io/part-of: flexinfer
     flexinfer.ai/purpose: idle-batch
 spec:
-  modelRef: gemma4-26b-a4b-gptq-5930k
+  modelRef: qwen38-27b-autoround-workhorse
   templateRef: model-eval-gauntlet
   idleFor: 30m
   maxRunDuration: 15m
   repeatAfter: 24h
+  env:
+    MODELS: qwen38-27b-autoround-workhorse=vllm
+    ITERS: "3"
+    MIN_DURATION: 30s
+    BATCH_SIZE: "64"
+    GAUNTLET_ENABLED: "1"
+    GAUNTLET_API: chat
+    GAUNTLET_MIN_TOKENS: "1"
+    GAUNTLET_PROMPT: What is 2 + 2? Answer with just the number.
+    GAUNTLET_EXPECT: "4"
+    GAUNTLET_EXPECT_MODE: all
