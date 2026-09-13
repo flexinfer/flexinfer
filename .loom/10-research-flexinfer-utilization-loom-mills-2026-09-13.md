@@ -292,6 +292,32 @@ Options, in order of cost:
 - **(c)** Leave the XTX as the idle voice card. Slice 1's 5930k change still removes most Mills
   cold starts.
 
+### 7a. Outcome of option (a) — applied 2026-09-13 14:38Z
+
+Orpheus XTX parked by !1021 (Flux applied in ~60 s; pod gone, device slots free). Canary applied by
+the operator; Ready at **+6 min**: cache staged to the node model store in 3 min (~140 MB/s; the
+controller used `/var/lib/flexinfer/models/...`, not a Longhorn PVC), weights 42 s, engine init
+69 s of which 51 s was the first graph compile (AOT-cached from now on), `RDNA3W4A16LinearKernel`
+engaged, KV pool **69,905 tokens fp8 = 1.07× a 64K request**, pod on cblevins-7900xtx with
+`amd.com/gpu: 2`.
+
+| Probe (through flexinfer-proxy, alias `qwen38-27b-xtx-warm-canary`) | Result |
+|---|---|
+| "Reply with exactly ROUTE_OK" | `ROUTE_OK`, 3.97 s (first request after boot) |
+| "17 × 23, just the number" | `391`, 0.29 s |
+| one-sentence Pending-pod explanation, 36 tokens | coherent, 1.06 s (≈ 34 tok/s) |
+| 2,317-token prompt, 2 output tokens (≈ TTFT) | `DONE`, **2.57 s** (target was < 2 s; prefill-bound, ~900 tok/s) |
+| Voice stack | orpheus-3b-radeonvii Ready; orpheus-3b-7900xtx / snac / whisper Idle; RP lane Idle |
+| `orpheus-tts` route probe (`/v1/completions`, 6 tokens) | served by the VII twin in 0.72 s (audio tokens returned; VII `lastActiveTime` advanced) |
+| Card | 22.6 GB VRAM in use (util 0.94), 2.5% busy over the probe window |
+| `flexinfer_model_cold_start_duration_seconds_count{model="qwen38-27b-xtx-warm-canary"}` | 1 (the initial boot, 367 s) — the 24h kill-test is "still 1 tomorrow" |
+
+Verdict: the warm lane is there and answers in well under a second for short work; long prompts
+pay prefill, not cold start. Remaining gates before a promotion MR moves Mills' role aliases:
+the 24h zero-cold-start soak and a Ready ≥ 90% sample rate; then decide which aliases move
+(proposal: `mills-council`, a new `mills-warm` for triage/consolidation/lenses; `workhorse` and
+`reasoning` stay on the 5930k 131K lane).
+
 ## 8. Riskiest assumption + kill-test (slice 1)
 
 **Assumption**: a 12h `idleTimeout` on the workhorse keeps it Ready across Mills' inter-call
