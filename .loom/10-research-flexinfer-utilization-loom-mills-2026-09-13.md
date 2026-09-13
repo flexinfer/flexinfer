@@ -341,6 +341,22 @@ the 24h zero-cold-start soak and a Ready ≥ 90% sample rate; then decide which 
   model="qwen38-27b-autoround-workhorse"}` and `{model="mills-warm"}` moving; research-stage
   error rate stays 0.
 
+### 7c. Runtime-image program, same day (issue #74; spec `20-product-spec-runtime-image-ci-2026-09-13.md`)
+
+| Slice | Landed | Evidence |
+|---|---|---|
+| S0 drift gate + trigger parity | !1022, !1029, !1030 | `runtime_pin_drift` on master; live-manifest filter → 0 FAIL after the repins |
+| repins + prewarm | !1025, !1031 | three dead quantization/abliteration digests and the dead `diffusers-video` prewarm pin replaced; serving persona prewarmed on both gfx1100 nodes |
+| S1 gfx1100 serving persona | !1027 | `ds/flexinfer-runtime-gfx1100` → `522d0fe2`; in-pod vLLM 0.17.0 + diffusers 0.39.0, snac/diffusers servers present, `FLEXINFER_RUNTIME_MULTI_MODEL=1`; both dedicated text lanes untouched. The 5930k DaemonSet is desired=0 behind its `quantization-pause` selector, so only the XTX pod rolled |
+| S3 gfx906 | !1031, !1028 | `ds/flexinfer-runtime-gfx906` → `25fce977` (08-25 build); embeddings back at +30 s, rerank at +45 s; Orpheus VII Ready at +4 min after the controller "deferred runtime load while active peer is protected" (retrieval lanes load first) — voice was unreachable for those four minutes; Go default `-v3` → `-v4` |
+| S4/S5 first half | !1032 (blocked) | nightly Trivy over the live GPU pins + master rules for the standalone vLLM job; blocked by a CI runner node in DiskPressure and the `trivy_scan_deps` gate on grpc CVE-2026-84445 (bump in !1033) |
+
+Observed on the way: a Model CR spec change (labels via Flux adoption) or a HelmRelease upgrade
+recreates the model pod (scale 0→1 inside the same ReplicaSet), so every values/lane MR costs the
+warm text lanes a 3–5 minute reload — batch such changes. loom-core follow-ups filed:
+overseer triage model knob (loom-core #754) and the shadow local judge with a per-role calibration
+series (loom-core #755); the agent-context reranker is enabled in loom-core !1945.
+
 ## 8. Riskiest assumption + kill-test (slice 1)
 
 **Assumption**: a 12h `idleTimeout` on the workhorse keeps it Ready across Mills' inter-call
