@@ -90,7 +90,10 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       `f7d2e967` on both gfx1100 profiles, kill-test passed.
 - [x] S2 canary FAILED and rolled back (!1039 → !1041): the 08-01 v0.26 native-W4A16 image's bundled
       plugin imports a v0.23 FLA module; matrix row `fail`.
-- [ ] #74 remaining: S3' gfx906 re-promotion once `rocm-gfx906-370c871f` lands (API pipeline 26760);
+- [x] S3' promoted (!1047): the entrypoint-fixed gfx906 runtime `171081de` on the Radeon VII, kill-test
+      passed (retrieval +2.5 min, voice +5 min, cache mtimes untouched). Both priority GPU lanes now run
+      images built by CI from master with the incident #2 fix.
+- [ ] #74 remaining:
       S2 = rebuild the native-W4A16 image with the plugin ported to 0.26's FLA layout (or vLLM ≥ 0.28),
       qualify on a debug canary, then move the 5 active `2e9652ed` pins + prewarm via
       `promotion.model_manifests`; S4 promote-MR bot; S5 standalone vLLM rebuild + repin; gate →
