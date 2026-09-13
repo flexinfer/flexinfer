@@ -262,6 +262,10 @@ imagePrewarm:
         # DaemonSet promotion (S1) will move to (rocm-gfx1100-serving-0d631512).
         - registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
         - registry.harbor.lan/flexinfer/runtime@sha256:522d0fe22a172dbbe018d0f284a1b836fd7bbfa56c84bebb34b9ab8b19e60970
+        # 2026-09-13 (issue #74 S1'): serving persona rebuilt with the entrypoint fix
+        # (!1037: no node-wide config.json surgery in manager mode) —
+        # rocm-gfx1100-serving-e4ad4d10, promotion target for the gfx1100 DaemonSets.
+        - registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
         - registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
         # Keep the 64K Qwen workhorse overlay referenced across containerd GC;
         # its first cold pull/unpack took 9m05s on this node.
@@ -284,6 +288,10 @@ imagePrewarm:
         # — this node now serves the warm Mills lane on the v023 image.
         - registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
         - registry.harbor.lan/flexinfer/runtime@sha256:522d0fe22a172dbbe018d0f284a1b836fd7bbfa56c84bebb34b9ab8b19e60970
+        # 2026-09-13 (issue #74 S1'): serving persona rebuilt with the entrypoint fix
+        # (!1037: no node-wide config.json surgery in manager mode) —
+        # rocm-gfx1100-serving-e4ad4d10, promotion target for the gfx1100 DaemonSets.
+        - registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
         - registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.
