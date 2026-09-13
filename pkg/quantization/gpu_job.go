@@ -111,7 +111,9 @@ const (
 	// ResolveImageFromProfile / backend.QuantizerImageFromProfile). The
 	// `FLEXINFER_QUANTIZER_GPTQ_ROCM_GFX906_IMAGE` env var remains a backstop
 	// for clusters running ahead of a GPUProfile reconcile.
-	DefaultGPTQROCmGFX906Image = "registry.harbor.lan/flexinfer/runtime:unified-gfx906-v3"
+	// 2026-09-13 (issue #74): CI publishes unified-gfx906-v4 (plus the immutable
+	// unified-gfx906-<sha> tag); -v3 was one version behind for weeks.
+	DefaultGPTQROCmGFX906Image = "registry.harbor.lan/flexinfer/runtime:unified-gfx906-v4"
 
 	// DefaultGPUQuantizationMemoryGB is the default memory limit for AWQ/GPTQ jobs.
 	DefaultGPUQuantizationMemoryGB = 48
