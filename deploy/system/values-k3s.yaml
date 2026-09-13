@@ -469,7 +469,7 @@ runtime:
     # shape lives in git history (534b32a89, and the 2026-08-19 lease commit)
     # for the next lease.
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:522d0fe22a172dbbe018d0f284a1b836fd7bbfa56c84bebb34b9ab8b19e60970"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -521,7 +521,7 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx1100-5930k
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:522d0fe22a172dbbe018d0f284a1b836fd7bbfa56c84bebb34b9ab8b19e60970"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 1
