@@ -100,6 +100,14 @@ runtime:
   #   shmSize: "8Gi"
   #   memoryLimit: "4Gi"
   #   memoryRequest: "1Gi"
+  #   # Optional: a full resources block replaces memoryLimit/memoryRequest.
+  #   # Give the pod an ephemeral-storage request so kubelet disk-pressure
+  #   # eviction ranks it behind pods that exceed theirs (CI job pods).
+  #   resources:
+  #     limits: {memory: "4Gi"}
+  #     requests: {memory: "1Gi", ephemeral-storage: "2Gi"}
+  #   # Optional: PriorityClass for the runtime pod (must exist in-cluster).
+  #   priorityClassName: flexinfer-serving-critical
   #   nodeSelector:
   #     kubernetes.io/hostname: cblevins-7900xtx
   # - name: gfx906

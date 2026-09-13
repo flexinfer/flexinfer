@@ -466,8 +466,21 @@ runtime:
       gpuArch: gfx1100
       gpuCount: 2
       shmSize: "8Gi"
-      memoryLimit: "48Gi"
-      memoryRequest: "8Gi"
+      # 2026-09-13 disk-pressure guard (issue #74): CI job pods share the
+      # physical GPU nodes. Three concurrent pipelines filled the 5930k root
+      # at 16:23Z and kubelet evicted the serving pods BEFORE the CI pods,
+      # because kubelet ranks pods exceeding their ephemeral-storage request
+      # first and a pod with no request exceeds it at the first byte. The
+      # request makes the runtime pod rank behind CI pods (5Gi request, up to
+      # 20Gi usage); the PriorityClass (150000, above modelcache-transform)
+      # protects it from scheduler preemption too. Memory unchanged.
+      priorityClassName: flexinfer-serving-critical
+      resources:
+        limits:
+          memory: "48Gi"
+        requests:
+          memory: "8Gi"
+          ephemeral-storage: "2Gi"
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
       env:
@@ -505,8 +518,14 @@ runtime:
       gpuArch: gfx1100
       gpuCount: 1
       shmSize: "8Gi"
-      memoryLimit: "48Gi"
-      memoryRequest: "8Gi"
+      # 2026-09-13 disk-pressure guard: see the gfx1100 profile comment.
+      priorityClassName: flexinfer-serving-critical
+      resources:
+        limits:
+          memory: "48Gi"
+        requests:
+          memory: "8Gi"
+          ephemeral-storage: "2Gi"
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
       env:
@@ -534,8 +553,17 @@ runtime:
       gpuArch: gfx906
       gpuCount: 1
       shmSize: "8Gi"
-      memoryLimit: "24Gi"
-      memoryRequest: "4Gi"
+      # 2026-09-13 disk-pressure guard: see the gfx1100 profile comment. This
+      # pod is the whole retrieval plane (bge-large, bge-reranker, gte-qwen2)
+      # plus the only voice tier, on a 127G root that CI job pods also use
+      # (34 job pods peaked here today; 25 GB of ephemeral at one point).
+      priorityClassName: flexinfer-serving-critical
+      resources:
+        limits:
+          memory: "24Gi"
+        requests:
+          memory: "4Gi"
+          ephemeral-storage: "2Gi"
       env:
         # R5 (hardware-utilization arc): the gfx906 runtime holds a VRAM-bounded
         # set of concurrent model subprocesses (per-model ports) instead of a

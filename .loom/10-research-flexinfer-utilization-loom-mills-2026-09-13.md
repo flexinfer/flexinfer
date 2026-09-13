@@ -381,3 +381,11 @@ Fail on the video half → revert to 30m and move the warm lane to option 7(a)/(
 - LiteLLM aliases for `gemini-3-flash-preview` and `text-embedding-3-small` callers.
 - loom-core docs drift (MILLS.md, weaver.md) and the squads ConfigMap model names.
 - Read `model-eval-qwen3-radeonvii-58-*` logs within 24h of its next run.
+- Controller default `ephemeral-storage` request on every serving Deployment (the 16:23Z
+  eviction incident in the runtime-image spec): today only the two Mills lanes and the
+  runtime DaemonSets carry one; every other dedicated lane still ranks ahead of CI job pods
+  for disk-pressure eviction. Ship with the next controller release (one reload per lane).
+- 5930k root headroom: 120 G of local-path model caches, of which `qwen36-27b-oci` (25 G) and
+  `qwen36-27b-fable-oci` (17 G) back Idle lanes and the two gemma4 caches (32 G) back
+  retired lanes; `qwen36-35b-mtp-uncensored` (40 G) is parked on purpose. Deleting the first
+  three needs a yes.
