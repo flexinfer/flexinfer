@@ -144,6 +144,30 @@ lanes) fixes that; !1036 sets it on both Mills lanes. Rule going forward: **ever
 lane carries both an ephemeral-storage request (eviction ranking) and the serving priority
 class (scheduler preemption)** — the controller-default follow-up should set both.
 
+### Incident 2026-09-13 16:22Z (found 17:35Z) — the S1 runtime pod rewrote the XTX lane's cache
+
+`build/runtime-entrypoint.sh` normalizes Qwen3.5 / Gemma4 `config.json` files **in place** under
+`/models` at every container start (architectures → the text-only class, text_config, M-RoPE
+fields). In a dedicated pod `/models` is that pod's cache; in the per-node runtime DaemonSet it
+is the node-wide hostPath holding every lane's cache. The S1 roll (pod `mf99r`, 16:22:15Z)
+logged `[entrypoint] Fixed architectures -> ['Qwen3_5ForCausalLM'] in
+/models/flexinfer-system/qwen38-27b-xtx-warm-canary/config.json`. The lane kept serving until
+its next restart (the !1035 roll), then died on every first request: vLLM 0.23's text-only
+class has no M-RoPE support (`AssertionError: M-RoPE support is not implemented` →
+`EngineDeadError` → CrashLoopBackOff, 4 restarts). The 5930k workhorse was untouched only
+because its DaemonSet is desired=0 — the same image would have done the same there. **The S1
+kill-test could not see this**: it checked the runtime pod, not the neighbours' caches.
+Stopgap 17:39Z: `config.json` restored to `Qwen3_5ForConditionalGeneration` in-pod (byte-identical
+to the 5930k copy, backup `.config.json.bad-20260913-1622Z`) and the container restarted; lane
+Ready at 17:43Z, answered in < 1 s. Fixes: !1037 gates the node-wide pass in manager mode
+behind `FLEXINFER_RUNTIME_NORMALIZE_MODEL_CONFIGS=1` (dedicated pods unchanged; contract lint
+asserts it) → master pipeline 26743 rebuilds serving / unified / gaming / gfx906 → promote the
+serving and gfx906 digests (S1'/S3') with the kill-test **"a runtime pod start leaves every
+`config.json` mtime under `/models` unchanged"**; and `hfOverrides` pins
+`architectures=["Qwen3_5ForConditionalGeneration"]` on both Mills lanes (applied before
+architecture resolution, immune to the on-disk rewrite). New rule for the matrix: every
+runtime-image kill-test on a node with dedicated lanes includes a `config.json` mtime check.
+
 ## Riskiest assumption + kill-test
 
 > Every spec must name its riskiest load-bearing assumption and a kill-test that proves it before

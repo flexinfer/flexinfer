@@ -81,6 +81,11 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       lanes after the XTX pod sat Pending on CPU behind priority-0 CI pods; gitops !703 caps the
       runner ephemeral overwrite ceiling at 25Gi. govulncheck `@latest` → x/vuln v1.8.0 (Go 1.26)
       broke every pipeline; pinned to v1.7.0 in !1033.
+- [x] Incident #2 (spec): the S1 runtime pod's entrypoint rewrote the XTX lane's cached
+      `config.json` to the text-only class (node-wide `/models` pass); the lane crashed on every
+      first request after its next restart (M-RoPE assertion). Restored in place 17:39Z; !1037
+      gates the pass in manager mode (rebuild + re-promote pending); `hfOverrides` architectures
+      pin on both Mills lanes.
 - [ ] #74 remaining: S4/S5 first half (!1032, waits on !1033); S2 vLLM currency — canary MR
       (this branch) moves the XTX Mills lane onto the reproducible v0.26 native-W4A16 build
       `d6d18459`, then the other 5 active `2e9652ed` pins + prewarm via `promotion.model_manifests`;
