@@ -7,6 +7,7 @@
 - Research: `10-research.md`
 - Research (2026-09-13): idle gfx1100 cards → loom-core/Mills utilization + Sept-2026 24 GB model survey: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`
 - Product spec: `20-product-spec.md`
+- Product spec (2026-09-13): runtime images built + promoted by CI, gfx1100/gfx906, issue #74: `20-product-spec-runtime-image-ci-2026-09-13.md`
 - Implementation plan: `30-implementation-plan.md`
 - Decisions: `40-decisions.md`
 - Worklog: `50-worklog.md`
@@ -58,6 +59,10 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       user-impact lens → warm lane; shadow judge gauge; reranker on; HUD coordinator decision.
 - [ ] Slice 3: vLLM 0.28+ currency canary → Smaug-Mini A/B, Glimmer on vLLM, Laguna XS 2.1
       requant, Granite 4.2-30B tools, Qwen3-Embedding upgrade.
+- [ ] Runtime-image CI program (issue #74, spec `20-product-spec-runtime-image-ci-2026-09-13.md`):
+      S0 drift gate + trigger parity shipped; S1 gfx1100 serving-persona promotion (kill-test on
+      the 5930k first), S2 vLLM currency + the 15 `2e9652ed` pins, S3 gfx906 rebuild/repin, S4
+      Trivy + promote-MR bot, S5 standalone vLLM pin.
 - [ ] Video lane: LTX-2.5 surveyed (research §6b) — 22B only, zero RDNA3 evidence; canary needs
       operator license acceptance (gated repo), diffusers 0.40 / transformers 5.5 image, and an
       `ltx2` pipeline mode in server-diffusers.py. Kill-test defined in §6b.

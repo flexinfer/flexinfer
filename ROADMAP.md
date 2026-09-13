@@ -102,6 +102,12 @@ digest remains the exact rollback anchor.
   moves to the Radeon VII tier or the gfx1100 runtime bundle leaves vLLM
   0.17 and gains multi-model; the prepared recipe is
   `deploy/debug/qwen38-27b-xtx-warm-canary.yaml`.
+- [ ] Runtime images built and promoted by CI for gfx1100 and gfx906, no pin drift
+  ([#74](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/74); spec
+  `.loom/20-product-spec-runtime-image-ci-2026-09-13.md`). S0 shipped the
+  `promote`-stage drift gate (`runtime_pin_drift`, advisory) and rebuild-trigger
+  parity for the gfx1100 publish jobs; next is the serving-persona promotion
+  kill-test on the 5930k, then vLLM currency, then the gfx906 rebuild.
 
 ## Later
 
