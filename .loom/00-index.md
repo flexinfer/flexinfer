@@ -53,8 +53,11 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       lanes still demand-swap (research §8).
 - [x] Operator decision on the XTX (2026-09-13): voice to the VII tier only (7a). Orpheus XTX
       parked by MR; `deploy/debug/qwen38-27b-xtx-warm-canary.yaml` applied by hand.
-- [ ] XTX canary kill-test (research §8, 7a variant): Ready with orpheus at 0, zero cold starts
-      over 24h, TTFT p50 < 2 s from loom-mills, 6/6 gauntlet; then promotion MR for role aliases.
+- [x] XTX canary applied 2026-09-13 14:38Z, Ready at +6 min (research §7a): 3/3 probes coherent,
+      ~34 tok/s, 2.3K-token prompt in 2.57 s, voice stack intact on the VII, cold-start count 1.
+- [ ] 24h soak: cold-start count still 1 on 2026-09-14, Ready ≥ 90% of samples → promotion MR
+      moving `mills-council` (+ a `mills-warm` alias) to the XTX lane; `workhorse`/`reasoning`
+      stay on the 5930k 131K lane.
 - [ ] Slice 2 (gitops/loom-core): weaver stage, overseer triage, memory consolidation,
       user-impact lens → warm lane; shadow judge gauge; reranker on; HUD coordinator decision.
 - [ ] Slice 3: vLLM 0.28+ currency canary → Smaug-Mini A/B, Glimmer on vLLM, Laguna XS 2.1
