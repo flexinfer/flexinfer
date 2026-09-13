@@ -148,7 +148,7 @@ spec:
       - llamacpp
       - ollama
       - diffusers
-    image: registry.harbor.lan/flexinfer/runtime@sha256:89e8d0dc6757ffc318202e98c75372ba32567eb4487fdf585e5648f66acabd8e
+    image: registry.harbor.lan/flexinfer/runtime@sha256:25fce977bd032c016523b40ee732d9a5cf890becd9f3a2b7b28710351fa27bec
   containerMemoryGB: 56
   maxGPUMemoryGB: 12
   maxCPUMemoryGB: 56
