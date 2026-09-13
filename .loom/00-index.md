@@ -55,11 +55,18 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       parked by MR; `deploy/debug/qwen38-27b-xtx-warm-canary.yaml` applied by hand.
 - [x] XTX canary applied 2026-09-13 14:38Z, Ready at +6 min (research §7a): 3/3 probes coherent,
       ~34 tok/s, 2.3K-token prompt in 2.57 s, voice stack intact on the VII, cold-start count 1.
-- [ ] 24h soak: cold-start count still 1 on 2026-09-14, Ready ≥ 90% of samples → promotion MR
-      moving `mills-council` (+ a `mills-warm` alias) to the XTX lane; `workhorse`/`reasoning`
-      stay on the 5930k 131K lane.
-- [ ] Slice 2 (gitops/loom-core): weaver stage, overseer triage, memory consolidation,
-      user-impact lens → warm lane; shadow judge gauge; reranker on; HUD coordinator decision.
+- [x] Soak waived by the operator ("move faster"). flexinfer !1024 promoted the XTX lane into
+      Flux (labels `mills-warm` / `mills-council` / `xtx-warm`; `mills-council` off the 5930k
+      workhorse). !1025 repinned the three dead quantization/abliteration digests and prewarms
+      the serving digests on both gfx1100 nodes.
+- [x] Slice 2 (gitops !696): council lenses ×3, audit pool ×2, spinning ring/open-end →
+      the XTX lane; research/weaver → flexinfer backend on the 5930k workhorse with the XTX lane
+      as fallback; judge unchanged. Operator rolled 2026-09-13. Correction !699: Mills must use
+      the serving name `qwen38-27b-xtx-warm-canary` (labels 404 in the reviewer client).
+- [ ] Slice 2 remainder (loom-core code): overseer triage model knob, shadow-judge calibration
+      gauge, reranker on, HUD coordinator decision. Verify slice 2 on the next council/audit run:
+      `mills_llm_prompt_tokens_total{component="mills-weaver",model="qwen38-27b-autoround-workhorse"}`
+      and `{model="mills-warm"}` moving; research stage error rate stays 0.
 - [ ] Slice 3: vLLM 0.28+ currency canary → Smaug-Mini A/B, Glimmer on vLLM, Laguna XS 2.1
       requant, Granite 4.2-30B tools, Qwen3-Embedding upgrade.
 - [ ] Runtime-image CI program (issue #74, spec `20-product-spec-runtime-image-ci-2026-09-13.md`):

@@ -318,6 +318,29 @@ the 24h zero-cold-start soak and a Ready ≥ 90% sample rate; then decide which 
 (proposal: `mills-council`, a new `mills-warm` for triage/consolidation/lenses; `workhorse` and
 `reasoning` stay on the 5930k 131K lane).
 
+### 7b. Slice 2 shipped the same day (soak waived by the operator)
+
+- flexinfer !1024 promoted the lane into Flux under its existing name (`deploy/models/
+  qwen38-27b-xtx-warm-canary.yaml`) with labels `mills-warm` / `mills-council` / `xtx-warm`;
+  `mills-council` left the 5930k workhorse. Observed: Flux adoption recreated the pod inside the
+  same ReplicaSet (no template change); back to Ready in ~2.5 min from the cached model store and
+  AOT cache. A `mills-warm` probe issued during that window waited 72 s and answered
+  `WARM_ROUTE_OK`.
+- gitops !696 pointed Mills at the local lanes: council lenses security / tech-debt / user-impact,
+  audit pool ×2, spinning ring / open-end → `mills-warm`; research/weaver stage → flexinfer backend
+  on `qwen38-27b-autoround-workhorse` (131K) with `mills-warm` fallback; `FLEXINFER_MEMORY_MODEL=
+  mills-warm`; judge and tiebreaker unchanged. The operator rolled at ~15:2xZ with the env live.
+  **Correction (gitops !699)**: `mills_audit_bulk_reviewers_available` fell 2 → 0 on that roll —
+  the flexinfer reviewer client resolves model ids against the proxy's `/v1/models` list, so a
+  bare label 404s (the 2026-08-23 lesson already in the audit-pool comment). Every Mills
+  reference now uses the serving name `qwen38-27b-xtx-warm-canary`; the `mills-warm` label stays
+  for chat-completions callers, which the proxy does route by label.
+- flexinfer !1025 repinned the three dead quantization/abliteration digests and prewarms
+  `2e9652ed` + `522d0fe2` (serving persona, S1 target) on both gfx1100 nodes.
+- Verify on the next council/audit run: `mills_llm_prompt_tokens_total{component="mills-weaver",
+  model="qwen38-27b-autoround-workhorse"}` and `{model="mills-warm"}` moving; research-stage
+  error rate stays 0.
+
 ## 8. Riskiest assumption + kill-test (slice 1)
 
 **Assumption**: a 12h `idleTimeout` on the workhorse keeps it Ready across Mills' inter-call
