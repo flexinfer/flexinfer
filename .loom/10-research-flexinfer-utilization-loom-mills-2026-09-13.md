@@ -337,9 +337,13 @@ the 24h zero-cold-start soak and a Ready ≥ 90% sample rate; then decide which 
   for chat-completions callers, which the proxy does route by label.
 - flexinfer !1025 repinned the three dead quantization/abliteration digests and prewarms
   `2e9652ed` + `522d0fe2` (serving persona, S1 target) on both gfx1100 nodes.
-- Verify on the next council/audit run: `mills_llm_prompt_tokens_total{component="mills-weaver",
-  model="qwen38-27b-autoround-workhorse"}` and `{model="mills-warm"}` moving; research-stage
-  error rate stays 0.
+- **Verified on the 18:00Z council (2026-09-13)** — Mills counters since the operator restart at 17:33Z:
+  `mills-council-reviewer` × `qwen38-27b-xtx-warm-canary` 15,064 prompt / 1,152 completion tokens (the three
+  local lenses, 384 max tokens each), `mills-flexinfer` × the XTX lane 9,805 / 1,429 (audit pool ×2,
+  `mills_audit_bulk_reviewers_available` = 2), `mills-weaver` × `qwen38-27b-autoround-workhorse` 14,342 / 530
+  (research stage); the frontier lens (kimi), editor (claude-fable-5-1) and judge (gpt-5.6-luna) unchanged.
+  Council cost $0.98 frontier / $0.003 local. Caveat: the `mills_llm_*` counters reset on every operator
+  restart, and proxy/vLLM log greps were unreliable for this question — use the counters.
 
 ### 7c. Runtime-image program, same day (issue #74; spec `20-product-spec-runtime-image-ci-2026-09-13.md`)
 

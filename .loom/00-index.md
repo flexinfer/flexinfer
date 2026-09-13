@@ -63,10 +63,10 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       the XTX lane; research/weaver → flexinfer backend on the 5930k workhorse with the XTX lane
       as fallback; judge unchanged. Operator rolled 2026-09-13. Correction !699: Mills must use
       the serving name `qwen38-27b-xtx-warm-canary` (labels 404 in the reviewer client).
-- [ ] Slice 2 remainder (loom-core code): overseer triage model knob, shadow-judge calibration
-      gauge, reranker on, HUD coordinator decision. Verify slice 2 on the next council/audit run:
-      `mills_llm_prompt_tokens_total{component="mills-weaver",model="qwen38-27b-autoround-workhorse"}`
-      and `{model="mills-warm"}` moving; research stage error rate stays 0.
+- [x] Slice 2 verified on the 18:00Z council (research §7b): three local lenses + audit pool on the XTX
+      lane, research weaver on the 5930k workhorse; $0.003 local vs $0.98 frontier for the run.
+- [ ] Slice 2 remainder (loom-core code): overseer triage model knob (#754), shadow-judge calibration
+      gauge (#755), reranker on (!1945, CI-flaky under the runner storm), HUD coordinator decision.
 - [ ] Slice 3: vLLM 0.28+ currency canary → Smaug-Mini A/B, Glimmer on vLLM, Laguna XS 2.1
       requant, Granite 4.2-30B tools, Qwen3-Embedding upgrade.
 - [x] Runtime-image CI program (issue #74, spec `20-product-spec-runtime-image-ci-2026-09-13.md`):
@@ -86,11 +86,16 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       first request after its next restart (M-RoPE assertion). Restored in place 17:39Z; !1037
       gates the pass in manager mode (rebuild + re-promote pending); `hfOverrides` architectures
       pin on both Mills lanes.
-- [ ] #74 remaining: S4/S5 first half (!1032, waits on !1033); S2 vLLM currency — canary MR
-      (this branch) moves the XTX Mills lane onto the reproducible v0.26 native-W4A16 build
-      `d6d18459`, then the other 5 active `2e9652ed` pins + prewarm via `promotion.model_manifests`;
-      S4 promote-MR bot; S5 standalone vLLM rebuild + repin; gate → `--strict`; controller-default
-      ephemeral request + priority class for every serving Deployment (next controller release).
+- [x] #74 S4/S5 first half merged (!1032); S1' promoted (!1043): the entrypoint-fixed serving persona
+      `f7d2e967` on both gfx1100 profiles, kill-test passed.
+- [x] S2 canary FAILED and rolled back (!1039 → !1041): the 08-01 v0.26 native-W4A16 image's bundled
+      plugin imports a v0.23 FLA module; matrix row `fail`.
+- [ ] #74 remaining: S3' gfx906 re-promotion once `rocm-gfx906-370c871f` lands (API pipeline 26760);
+      S2 = rebuild the native-W4A16 image with the plugin ported to 0.26's FLA layout (or vLLM ≥ 0.28),
+      qualify on a debug canary, then move the 5 active `2e9652ed` pins + prewarm via
+      `promotion.model_manifests`; S4 promote-MR bot; S5 standalone vLLM rebuild + repin; gate →
+      `--strict`; controller-default ephemeral request + priority class for every serving Deployment;
+      `interruptible: false` for the remaining publish jobs in `.gitlab-ci.yml`.
 - [ ] Video lane: LTX-2.5 surveyed (research §6b) — 22B only, zero RDNA3 evidence; canary needs
       operator license acceptance (gated repo), diffusers 0.40 / transformers 5.5 image, and an
       `ltx2` pipeline mode in server-diffusers.py. Kill-test defined in §6b.
