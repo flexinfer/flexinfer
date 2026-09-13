@@ -112,10 +112,10 @@ makes CI the only producer, an immutable tag the only thing a pin may reference,
 | repins + prewarm | merged | !1025, !1031 |
 | S1 | merged, kill-test passed (XTX runtime pod on the serving persona, multi-model on) | !1027 |
 | S3 | merged, kill-test passed (retrieval +30 s, voice +4 min); Go default fixed | !1031, !1028 |
-| S4/S5 first half | in review, blocked by the `trivy_scan_deps` grpc CVE gate (!1033) and a CI runner node in DiskPressure | !1032 |
-| S2 | not started — needs a restored `v023` native-W4A16 lane (or a v0.26/0.28 currency canary) before the 15 `2e9652ed` pins can move | — |
+| S4/S5 first half | in review, blocked by the `trivy_scan_deps` grpc CVE gate (!1033, which then hit the govulncheck `@latest` → x/vuln v1.8.0 / Go 1.26 regression; pinned to v1.7.0 on the same branch) and a CI runner node in DiskPressure | !1032 |
+| S2 | canary MR prepared: the XTX Mills lane onto `rocm-gfx1100-v026-native-w4a16-0d631512` (`d6d18459`, 08-01, reproducible from HEAD) with a daily gauntlet ModelBackfill and matrix row `gfx1100-native-w4a16-2026-09-13`; pushed after the 18:00Z council so the reload misses the council window. Pass → the other 5 active pins + prewarm via `promotion.model_manifests` | feat/runtime-s2-native-w4a16-v026 |
 | S4 promote-MR bot, S5 rebuild + repin, gate → `--strict` | not started | — |
-| eviction guard (incident, below) | in review | fix/serving-eviction-guard |
+| eviction guard (incident, below) | merged; rolled 17:11Z (three runtime DaemonSets carry the class + request; gfx906 embeddings/rerank back within 5 min; both Mills lanes reloaded). Follow-up: the XTX lane then sat Pending on CPU behind priority-0 CI job pods → serving priority class on both Mills lanes | !1035, !1036, gitops !703 |
 
 ### Incident 2026-09-13 16:23Z — CI disk pressure evicted the workhorse lane
 
@@ -133,7 +133,40 @@ Fix: 2Gi ephemeral requests on the two Mills lanes + all three runtime profiles,
 `flexinfer-serving-critical` on the runtime profiles (new chart key). Follow-up: a controller
 default ephemeral request for every serving Deployment (one-time reload of every lane on the
 controller roll, so it rides the next controller release). GitOps side: cap the runner
-`ephemeral_storage_limit_overwrite_max_allowed` 50Gi → 20Gi (gitops MR on the same day).
+`ephemeral_storage_limit_overwrite_max_allowed` 50Gi → 25Gi on both lanes (gitops !703, merged;
+25Gi is flexinfer-site's image-build opt-in, the largest in the fleet).
+
+Second finding from the !1035 roll: the XTX Mills lane pod sat Pending on `Insufficient cpu`
+for 8+ minutes — nine CI job pods at 1.5–2 CPU each held 23 of the node's 24 allocatable
+cores, and the serving pod was priority 0 too, so "no preemption victims found". The
+`flexinfer.ai/serving-priority-class` annotation (already used by the radeonvii retrieval
+lanes) fixes that; !1036 sets it on both Mills lanes. Rule going forward: **every dedicated
+lane carries both an ephemeral-storage request (eviction ranking) and the serving priority
+class (scheduler preemption)** — the controller-default follow-up should set both.
+
+### Incident 2026-09-13 16:22Z (found 17:35Z) — the S1 runtime pod rewrote the XTX lane's cache
+
+`build/runtime-entrypoint.sh` normalizes Qwen3.5 / Gemma4 `config.json` files **in place** under
+`/models` at every container start (architectures → the text-only class, text_config, M-RoPE
+fields). In a dedicated pod `/models` is that pod's cache; in the per-node runtime DaemonSet it
+is the node-wide hostPath holding every lane's cache. The S1 roll (pod `mf99r`, 16:22:15Z)
+logged `[entrypoint] Fixed architectures -> ['Qwen3_5ForCausalLM'] in
+/models/flexinfer-system/qwen38-27b-xtx-warm-canary/config.json`. The lane kept serving until
+its next restart (the !1035 roll), then died on every first request: vLLM 0.23's text-only
+class has no M-RoPE support (`AssertionError: M-RoPE support is not implemented` →
+`EngineDeadError` → CrashLoopBackOff, 4 restarts). The 5930k workhorse was untouched only
+because its DaemonSet is desired=0 — the same image would have done the same there. **The S1
+kill-test could not see this**: it checked the runtime pod, not the neighbours' caches.
+Stopgap 17:39Z: `config.json` restored to `Qwen3_5ForConditionalGeneration` in-pod (byte-identical
+to the 5930k copy, backup `.config.json.bad-20260913-1622Z`) and the container restarted; lane
+Ready at 17:43Z, answered in < 1 s. Fixes: !1037 gates the node-wide pass in manager mode
+behind `FLEXINFER_RUNTIME_NORMALIZE_MODEL_CONFIGS=1` (dedicated pods unchanged; contract lint
+asserts it) → master pipeline 26743 rebuilds serving / unified / gaming / gfx906 → promote the
+serving and gfx906 digests (S1'/S3') with the kill-test **"a runtime pod start leaves every
+`config.json` mtime under `/models` unchanged"**; and `hfOverrides` pins
+`architectures=["Qwen3_5ForConditionalGeneration"]` on both Mills lanes (applied before
+architecture resolution, immune to the on-disk rewrite). New rule for the matrix: every
+runtime-image kill-test on a node with dedicated lanes includes a `config.json` mtime check.
 
 ## Riskiest assumption + kill-test
 
