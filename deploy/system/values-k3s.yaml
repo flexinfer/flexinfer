@@ -456,7 +456,7 @@ runtime:
     # shape lives in git history (534b32a89, and the 2026-08-19 lease commit)
     # for the next lease.
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:5d384ac4268310d50e01897c1a902e6cc819a6ff9352234ae95ffb221baae88c"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:522d0fe22a172dbbe018d0f284a1b836fd7bbfa56c84bebb34b9ab8b19e60970"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -470,6 +470,12 @@ runtime:
           value: "0"
         - name: ROCR_VISIBLE_DEVICES
           value: "0"
+        # 2026-09-13 (issue #74 S1): let the runtime manager host concurrent
+        # subprocesses so the gfx1100 GPUProfile's features.multiModel election
+        # (VRAM-bounded co-residency, e.g. orpheus + snac) is honoured inside
+        # the pod as well as by the controller. Already set on gfx906.
+        - name: FLEXINFER_RUNTIME_MULTI_MODEL
+          value: "1"
         - name: MIOPEN_CUSTOM_CACHE_DIR
           value: "/var/lib/flexinfer/compile-cache/runtime/miopen"
         - name: MIOPEN_USER_DB_PATH
@@ -489,7 +495,7 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx1100-5930k
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:5d384ac4268310d50e01897c1a902e6cc819a6ff9352234ae95ffb221baae88c"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:522d0fe22a172dbbe018d0f284a1b836fd7bbfa56c84bebb34b9ab8b19e60970"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 1
