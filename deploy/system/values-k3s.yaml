@@ -255,6 +255,13 @@ imagePrewarm:
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
       images:
+        # 2026-09-13 (issue #74): keep the two runtime digests this node
+        # actually serves resident across Harbor/containerd GC — the promoted
+        # Model lanes' serving image (rocm-gfx1100-v023-native-w4a16-037d0bc1,
+        # 15 pins, recipe no longer at HEAD) and the serving persona the
+        # DaemonSet promotion (S1) will move to (rocm-gfx1100-serving-0d631512).
+        - registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+        - registry.harbor.lan/flexinfer/runtime@sha256:522d0fe22a172dbbe018d0f284a1b836fd7bbfa56c84bebb34b9ab8b19e60970
         - registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
         # Keep the 64K Qwen workhorse overlay referenced across containerd GC;
         # its first cold pull/unpack took 9m05s on this node.
@@ -268,6 +275,10 @@ imagePrewarm:
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
       images:
+        # 2026-09-13 (issue #74): same two runtime digests as the 5930k profile
+        # — this node now serves the warm Mills lane on the v023 image.
+        - registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+        - registry.harbor.lan/flexinfer/runtime@sha256:522d0fe22a172dbbe018d0f284a1b836fd7bbfa56c84bebb34b9ab8b19e60970
         - registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.
@@ -283,7 +294,12 @@ quantization:
   # image and carries the validator from the same FlexInfer revision.
   validatorImage: "registry.harbor.lan/flexinfer/model-tools@sha256:41f948bafa42c154a17ac567a0ade1f49fd3e17e6241c7e8bb44dc7a48265f30"
   useRuntimeForQuantize: false
-  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:6ee8b3ed6bd0f80ba669f9a5a8525c9323592d1aa84fdf64b2a48f061fa4220e"
+  # 2026-09-13 (issue #74 drift report): the previous pin (6ee8b3ed, the
+  # 2026-07-18 shuffle-guard build) is no longer in Harbor — retention keeps
+  # only tagged manifests. Repinned to the current unified gfx1100 build
+  # (immutable tag rocm-gfx1100-57b56bb6, 2026-08-24), which carries the same
+  # quantizer layer plus the torchao 0.17 pin and server-snac.py.
+  runtimeImage: "registry.harbor.lan/flexinfer/runtime@sha256:5d384ac4268310d50e01897c1a902e6cc819a6ff9352234ae95ffb221baae88c"
   gptqDeviceMap: "auto"
   gptqModelPolicies:
     # Exact-source Fable Fusion candidate gets a larger calibration corpus than

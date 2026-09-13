@@ -183,7 +183,12 @@ spec:
       - exl2
     images:
       gptq: registry.harbor.lan/flexinfer/quantizer@sha256:753e0c21bf578725d152045209970922330c6f08398e27c4ddee08770a0171a9
-      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:eb977b01cd8751bcc111cbaed5f8b5171f3968eccc783bfcfc25f36cef7f0365
+      # 2026-09-13 (issue #74 drift report): the previous abliteration pin
+      # (eb977b01) is no longer in Harbor. Repinned to the current unified
+      # gfx1100 build (immutable tag rocm-gfx1100-57b56bb6, 2026-08-24), which
+      # ships build/scripts/abliterate.py; the ABLITERATION_* env below still
+      # pins the transformers ref at job start.
+      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:5d384ac4268310d50e01897c1a902e6cc819a6ff9352234ae95ffb221baae88c
       # Fine-tuning lane (LoRA/QLoRA via build/scripts/finetune.py). Controller prefers
       # this "finetune" image and falls back to "gptq" when absent. Built from
       # build/Dockerfile.finetune; carries peft/trl/bitsandbytes (NF4 4-bit QLoRA proven
