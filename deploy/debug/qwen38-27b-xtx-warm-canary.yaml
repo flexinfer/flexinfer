@@ -1,9 +1,12 @@
-# PREPARED, NOT APPLIED — warm Mills/loom text lane on cblevins-7900xtx.
+# Warm Mills/loom text lane on cblevins-7900xtx — qualification canary.
 #
 # Research: .loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md
-# (slice 1). The 7900 XTX is 0.0015% busy over 30d with 3.2 GB of 24 GB in use
-# (orpheus-3b-7900xtx, 0 requests in 30d). This canary is the recipe for a
-# warm-pinned Qwen3.8-27B lane there. It CANNOT be applied as-is today:
+# (slice 1). The 7900 XTX was 0.0015% busy over 30d with 3.2 GB of 24 GB in
+# use (orpheus-3b-7900xtx, 0 requests in 30d). APPLIED 2026-09-13 after the
+# operator chose option (a) below: orpheus-3b-7900xtx parked (minReplicas 0,
+# priority 460) so the device-plugin slot is free; voice runs on the Radeon
+# VII tier. Apply by hand (`kubectl apply -f`), never via Flux; promote the
+# role aliases by MR once the kill-test passes. Why it could not run before:
 #
 #   1. Device-plugin slots. The node exposes amd.com/gpu=2 (dGPU + Raphael
 #      iGPU). A dedicated vLLM pod must claim count=2 so it never draws the
@@ -29,8 +32,11 @@
 # is the only reason not to mirror 131072 on a first boot), maxNumSeqs 2 so
 # a Mills review lens and a triage call can overlap, minReplicas 1 so it is
 # always there, priority 470 (below the RP lane's 500 so a deliberate RP
-# restore still wins the card), demand-only alias so nothing routes here
-# until the role aliases are moved by a promotion MR.
+# restore still wins the card; above parked orpheus 460 / snac 430 / whisper
+# 340), vramEstimateMB 23200 = whole card so the multiModel election never
+# admits snac (1500) or whisper (4000) beside a 0.94-util vLLM process,
+# demand-only alias so nothing routes here until the role aliases are moved
+# by a promotion MR.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -40,9 +46,9 @@ metadata:
     flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
     flexinfer.ai/base-model-posture: clean
     flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
-    flexinfer.ai/purpose: "Warm-pinned Mills/loom text lane on the idle 7900 XTX (prepared canary; see header preconditions)"
+    flexinfer.ai/purpose: "Warm-pinned Mills/loom text lane on the 7900 XTX (qualification canary, applied 2026-09-13)"
     flexinfer.ai/plan: ".loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md"
-    flexinfer.ai/promotion-state: prepared-unapplied
+    flexinfer.ai/promotion-state: canary-applied-2026-09-13
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
@@ -63,7 +69,7 @@ spec:
     count: 2
     shared: 7900xtx-textgen
     priority: 470
-    vramEstimateMB: 22000
+    vramEstimateMB: 23200
   serverless:
     enabled: true
     minReplicas: 1

@@ -10,10 +10,22 @@
 # voice degrades to the VII instead of going silent — which is the whole
 # point of the group.
 #
-# Warm-pinned since 2026-08-22 (see serverless below): this lane is the
-# 7900xtx-textgen warm leader while the parked RP lane stays a deliberate
-# post-handback posture. Priority 480 stays below qwen35-9b-ablit-rp (500) so
-# a deliberate RP restore would win the card back without a priority edit.
+# Warm-pinned 2026-08-22 → 2026-09-13: this lane was the 7900xtx-textgen warm
+# leader while the parked RP lane stayed a deliberate post-handback posture.
+#
+# 2026-09-13 PARKED (operator decision, utilization slice 1 —
+# .loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md §7): voice
+# moves to the warm-pinned Radeon VII tier only, and the XTX becomes the
+# warm Mills/loom text lane (deploy/debug/qwen38-27b-xtx-warm-canary.yaml,
+# priority 470, whole-card VRAM). Evidence: this lane served 0 requests in
+# the 30 days before the decision while the card sat at 0.0015% busy, and a
+# dedicated vLLM lane cannot co-schedule beside this dedicated pod (it holds
+# one of the node's two device-plugin slots; the other is the iGPU). Priority
+# drops 480 → 460 so a voice burst can never demand-preempt the text lane
+# during its cold-start window; the VII twin (route-priority 0) carries the
+# orpheus-tts group alone (RTF ~0.75). snac-decode-gfx1100 stays parked
+# behind the whole-card text lane, so tts-lane uses its CPU decode fallback.
+# Restore recipe: minReplicas 1, priority 480, and park the text lane first.
 #
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -36,7 +48,7 @@ spec:
   gpu:
     vendor: amd
     shared: 7900xtx-textgen
-    priority: 480
+    priority: 460
     count: 1
     vramEstimateMB: 3300
   serverless:
@@ -46,7 +58,8 @@ spec:
     # tier was permanently shadowed by the always-warm VII twin. Both tiers
     # warm + route-priority 100 -> this lane takes all traffic while Ready; a
     # gaming lease still evicts this one and the VII carries the group alone.
-    minReplicas: 1
+    # 2026-09-13: back to 0 — parked behind the warm text lane (header).
+    minReplicas: 0
     idleTimeout: 15m
     coldStartTimeout: 5m
   config:
