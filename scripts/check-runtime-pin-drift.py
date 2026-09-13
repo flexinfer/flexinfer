@@ -154,6 +154,11 @@ def live_manifest_files(root: Path, files: list[Path]) -> set[str]:
         rel = path.relative_to(root).as_posix()
         if rel.startswith("deploy/debug/"):
             continue
+        if rel.startswith("deploy/system/"):
+            # Helm values (values-k3s.yaml) and the HelmRelease are consumed by
+            # Flux's helm-controller, not listed as kustomize resources.
+            live.add(rel)
+            continue
         parent = path.parent.relative_to(root).as_posix()
         if parent in listed and path.name != "kustomization.yaml":
             if path.name in listed[parent]:
