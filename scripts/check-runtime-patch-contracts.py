@@ -261,6 +261,18 @@ def assert_runtime_entrypoint_contract(entrypoint: str, build_script: str) -> No
         fail("runtime-entrypoint.sh no longer respects SKIP_GEMMA4_MOE_PATCH")
     if "vllm_gemma4_moe_gptq_patch.py" not in entrypoint:
         fail("runtime-entrypoint.sh no longer wires the Gemma4 MoE patch script")
+    # 2026-09-13 (issue #74 S1 incident): in runtime-manager mode /models is
+    # the node-wide cache, and the in-place config normalizers rewrote a
+    # co-located dedicated Qwen3.5 lane's architectures. The pass must stay
+    # opt-in there and unconditional only for dedicated model pods.
+    if "FLEXINFER_RUNTIME_NORMALIZE_MODEL_CONFIGS:-0" not in entrypoint:
+        fail(
+            "runtime-entrypoint.sh no longer gates node-wide config normalization in runtime-manager mode"
+        )
+    if "Skipping model config normalization in runtime-manager mode" not in entrypoint:
+        fail(
+            "runtime-entrypoint.sh no longer logs the skipped node-wide config normalization"
+        )
 
 
 def assert_optional_runtime_component_contract(dockerfile: str) -> None:
