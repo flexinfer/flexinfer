@@ -247,10 +247,40 @@ NORMALIZE_GEMMA4_QCFG_PY
     done
 }
 
-if command -v python3 >/dev/null 2>&1; then
+run_config_normalizers() {
     normalize_qwen35_configs
     normalize_gemma4_configs
     normalize_gemma4_quantize_config
+}
+
+if command -v python3 >/dev/null 2>&1; then
+    # 2026-09-13 (issue #74 S1 incident): the normalizers rewrite config.json
+    # IN PLACE under /models. In a dedicated model pod /models is that model's
+    # own cache, which is what they were written for. In runtime-manager mode
+    # (`flexinfer-runtime`, the per-node DaemonSet) /models is the node-wide
+    # hostPath holding EVERY lane's cache, so the S1 roll rewrote the
+    # co-located dedicated Qwen3.5 lane's `architectures` to the text-only
+    # class, and that lane (vLLM 0.23 native W4A16, VL layout with
+    # --language-model-only) then died on its first request with "M-RoPE
+    # support is not implemented". The manager's own vLLM loads are spawned
+    # directly (not through this entrypoint), so the node-wide pass only ever
+    # touched other pods' caches. Opt back in per runtime profile with
+    # FLEXINFER_RUNTIME_NORMALIZE_MODEL_CONFIGS=1 if a runtime-managed
+    # Qwen3.5/Gemma4 vLLM lane needs it; the durable path is per-load
+    # hf-overrides in the manager.
+    case "$1" in
+        flexinfer-runtime)
+            if [ "${FLEXINFER_RUNTIME_NORMALIZE_MODEL_CONFIGS:-0}" = "1" ]; then
+                echo "[entrypoint] Normalizing model configs under /models (FLEXINFER_RUNTIME_NORMALIZE_MODEL_CONFIGS=1)"
+                run_config_normalizers
+            else
+                echo "[entrypoint] Skipping model config normalization in runtime-manager mode (/models is the node-wide cache; set FLEXINFER_RUNTIME_NORMALIZE_MODEL_CONFIGS=1 to opt in)"
+            fi
+            ;;
+        *)
+            run_config_normalizers
+            ;;
+    esac
 
     # Apply vLLM Gemma4 MoE GPTQ patch at runtime if not already applied
     # at build time. This patches GPTQConfig.get_quant_method to skip MoE
