@@ -97,7 +97,14 @@ spec:
     # exact INT4 census from this artifact's safetensors index (in_proj_a/b,
     # conv1d, norms, lm_head are FP16).
     quantization: gptq
-    hfOverrides: '{"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    # 2026-09-13: `architectures` pinned in-process (issue #74 incident #2).
+    # The runtime DaemonSet's entrypoint rewrote this lane's on-disk
+    # config.json to the text-only Qwen3_5ForCausalLM class (node-wide
+    # /models pass), and vLLM 0.23 then died on the first request with
+    # "M-RoPE support is not implemented". hf-overrides is applied before
+    # architecture resolution, so the lane loads the VL-layout class it was
+    # qualified on regardless of what the cache says on disk.
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
     dtype: half
     languageModelOnly: true
     # Context envelope raised 64K -> 128K (2026-08-16 context-push): fp8 KV
