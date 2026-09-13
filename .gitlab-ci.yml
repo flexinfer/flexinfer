@@ -144,11 +144,12 @@ variables:
   # cache key, and "latest" neither tracks upstream nor is reproducible.
   # Pinning is safe — govulncheck fetches its vulnerability data at runtime
   # from https://vuln.go.dev, so the pin freezes the tool, not the CVE feed.
-  # Not changed in this MR: `govulncheck` is allow_failure: false, so a tool
-  # bump can turn the pipeline red on a live platform and deserves its own MR
-  # where CI can be watched. Target pin: "v1.7.0" (released 2026-08-13,
-  # verified against proxy.golang.org).
-  GOVULNCHECK_VERSION: "latest"
+  # Pinned 2026-09-13: golang.org/x/vuln v1.8.0 (the new "latest") requires
+  # go >= 1.26 and the CI image runs GO_VERSION 1.25.x with GOTOOLCHAIN=local,
+  # so every `go install ...@latest` failed and turned the pipeline red
+  # (!1033). v1.7.0 is the last release whose go.mod says go 1.25 (verified
+  # against proxy.golang.org). Bump alongside GO_VERSION.
+  GOVULNCHECK_VERSION: "v1.7.0"
   GO_LICENSES_VERSION: "v1.6.0"
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
