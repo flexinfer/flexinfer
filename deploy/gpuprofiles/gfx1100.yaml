@@ -50,11 +50,13 @@ spec:
     # deadlock for any lower-priority member behind a never-idling leader.
     # With multiModel the election keeps a VRAM-bounded set (budget = vramMB):
     # orpheus 3300 + snac 1500 co-reside; a waking qwen35-9b (23200) still
-    # evicts both, same as single-slot demand-swap does today. NOTE: true
-    # concurrent RUNTIME subprocesses also need FLEXINFER_RUNTIME_MULTI_MODEL=1
-    # on the runtime DaemonSet (pending its Helm re-adoption); until then this
-    # is safe because orpheus is a dedicated pod — the runtime pod hosts only
-    # snac, so the manager never sees two concurrent loads on this card.
+    # evicts both, same as single-slot demand-swap does today. True concurrent
+    # RUNTIME subprocesses also need FLEXINFER_RUNTIME_MULTI_MODEL=1 on the
+    # runtime DaemonSet: set on the gfx1100 (7900xtx) profile in
+    # deploy/system/values-k3s.yaml since 2026-09-13 (issue #74 S1), alongside
+    # the serving-persona promotion. 2026-09-13 layout: the warm Mills text
+    # lane (qwen38-27b-xtx-warm-canary, whole-card estimate) is a dedicated
+    # pod, so the runtime pod hosts nothing until voice returns to this card.
     multiModel: true
   backends:
     vllm:
