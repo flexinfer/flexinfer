@@ -54,7 +54,15 @@ metadata:
     flexinfer.ai/promotion-evidence: "2026-09-13 §7a: Ready +6min, RDNA3W4A16, KV 69,905 tok fp8 (1.07x @64K), probes 3/3 coherent ~34 tok/s, 2.3K-token prompt 2.57 s, orpheus-tts on VII 0.72 s"
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+  # 2026-09-13 (issue #74 S2, vLLM currency): this lane is the qualification
+  # vehicle for `rocm-gfx1100-v026-native-w4a16-0d631512` (vLLM 0.26.0 +
+  # RDNA3 W4A16, built 2026-08-01 by publish_serving_rocm_gfx1100_native_w4a16
+  # and reproducible from HEAD). The previous pin `2e9652ed` is the 07-21 v023
+  # build whose job was repointed to v0.26 in place, so it cannot be rebuilt.
+  # Issue #66 (2026-08-16): every lane on this digest must keep
+  # attentionBackend TRITON_ATTN (below). Rollback = the 2e9652ed digest.
+  # Validation row: .loom/60-validation-matrix.md gfx1100-native-w4a16-2026-09-13.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:d6d18459bb6b8cf98f67e7806cf7367519773de6e5015b7d8cc22f4d337b4ce3
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     strategy: Local
