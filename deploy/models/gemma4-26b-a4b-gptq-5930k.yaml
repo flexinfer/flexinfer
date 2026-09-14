@@ -41,6 +41,11 @@ spec:
   # where the subdir is preserved). Cache-copy/serving paths derive from
   # this; do not append `gptq-w4-g128-attnfp16-clean` here or the cache-copy
   # job fails with `Missing source path: /src/.../gptq-w4-g128-attnfp16-clean`.
+  # 2026-09-13: this source cache (ModelCache gemma4-26b-a4b-gptq-oci-5930k) and
+  # the Model's own SharedPVC copy were DELETED to reclaim the 5930k root (the
+  # lane has been retired at minReplicas 0 since 06-17 and qwen38 replaced it as
+  # chat primary on 08-16). The lane cannot cold-start until the OCI ModelCache
+  # manifest is re-added from git history (artifact still in Harbor).
   source: pvc://gemma4-26b-a4b-gptq-oci-5930k/gemma4-26b-a4b-gptq
   cache:
     strategy: SharedPVC

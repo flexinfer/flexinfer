@@ -63,7 +63,10 @@ resources:
   # 2026-07-20; keep the source cache for reproducibility and pull the final
   # digest onto gfx1100 for the isolated serving canary.
   - qwen36-27b-fable-gptq.yaml
-  - qwen36-27b-fable-oci.yaml
+  # 2026-09-13: qwen36-27b-fable-oci DELETED (operator yes, 5930k root reclaim; 17 G).
+  # The fable canary Model now stages from the NFS cache above. Restore recipe:
+  # re-add deploy/modelcaches/qwen36-27b-fable-oci.yaml from git history
+  # (oci://registry.harbor.lan/flexinfer/qwen36-27b-fable@sha256:285a0445…).
   # 2026-08-19: qwen36-27b-fable-oci-7900xtx RETIRED — the same-card 9B-RP
   # replacement A/B it staged concluded (fable-rp gauntlet ran 2026-07-22;
   # qwen35-9b-ablit-rp kept the lane). Flux prune cascades the 30Gi
@@ -93,5 +96,9 @@ resources:
   # - omnicoder-9b-oci.yaml
 
   # === Active OCI pull caches (Harbor → local PVC → Model CRs) ===
-  - qwen36-27b-oci.yaml             # qwen36-27b (cblevins-5930k, artifact-only serving cache)
-  - gemma4-26b-a4b-gptq-oci-5930k.yaml  # gemma4-26b-a4b-gptq (cblevins-5930k, artifact-only serving cache). OCI artifact seeded 2026-05-13 via one-off oras push from cblevins-7900xtx cache PVC (digest sha256:ef26e6c7...).
+  # 2026-09-13: qwen36-27b-oci (25 G, unreferenced since the qwen38 promotion) and
+  # gemma4-26b-a4b-gptq-oci-5930k (16 G, the retired gemma4 5930k lane's only
+  # remaining source) DELETED — operator yes, 5930k root reclaim. Both artifacts
+  # stay in Harbor (oci://registry.harbor.lan/flexinfer/qwen36-27b:gptq-w4-g128-gfx1100,
+  # oci://registry.harbor.lan/flexinfer/gemma4-26b-a4b:gptq-w4-g128-attnfp16-clean);
+  # restore by re-adding the manifests from git history.

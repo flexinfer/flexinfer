@@ -1,0 +1,1 @@
+Deleted three 5930k local-path OCI model caches (`qwen36-27b-oci`, `qwen36-27b-fable-oci`, `gemma4-26b-a4b-gptq-oci-5930k`, ~58 G) plus the retired gemma4 5930k lane's SharedPVC copy (16 G) to reclaim the node's root disk; the artifacts remain in Harbor. `qwen36-27b-fable-gptq` now stages from the NFS ModelCache.
