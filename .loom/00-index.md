@@ -96,7 +96,8 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
 - [ ] #74 remaining:
       S2 = rebuild the native-W4A16 image with the plugin ported to 0.26's FLA layout (or vLLM ≥ 0.28),
       qualify on a debug canary, then move the 5 active `2e9652ed` pins + prewarm via
-      `promotion.model_manifests`; S4 promote-MR bot; S5 standalone vLLM rebuild + repin; gate →
+      `promotion.model_manifests`; S4 promote-MR bot (proposals job shipped 09-14 as `runtime_promotion_proposals`;
+      Draft-MR creation waits on a `FLEXINFER_PROMOTE_MR_TOKEN`); S5 standalone vLLM rebuild + repin; gate →
       `--strict`.
 - [x] Controller defaults (2026-09-14): every dedicated serving pod gets `flexinfer-serving-critical`
       and a 2Gi ephemeral-storage request unless the Model sets its own; `.gitlab-ci.yml` publish jobs

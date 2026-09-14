@@ -53,6 +53,15 @@ The old from-source variants (`Dockerfile.agent`, `.proxy`, `.manager`, `.sched`
 | `Dockerfile.runtime-torch-multiarch` | `build/build-torch-multiarch.sh` (off-CI, manual-only) | `flexinfer/torch:rocm6.3.4-multiarch` — one torch wheel carrying gfx906+gfx1100 device code |
 | `Dockerfile.unified-gfx906` | CI `publish_unified_rocm_gfx906` | `flexinfer/runtime:unified-gfx906` — community PyTorch, replaces old per-task gfx906 images (incl. quantize via `USE_RUNTIME_FOR_QUANTIZE`) |
 
+Promotion tooling (issue #74): `scripts/check-runtime-pin-drift.py` (CI `runtime_pin_drift`, advisory) compares every
+pinned runtime digest with the newest immutable tag in Harbor; `scripts/propose-runtime-promotions.py` (CI
+`runtime_promotion_proposals`, S4) turns that report into one Markdown proposal per trailing profile — the exact
+`scripts/promote-runtime-digest.sh … --apply` command, rollback digest, consumers and dry-run diff — kept as pipeline
+artifacts under `promotion-proposals/`. With `FLEXINFER_PROMOTE_MR_TOKEN` set (project access token, `api` +
+`write_repository`; unset today) a schedule/master run also pushes `bot/promote-<profile>-<digest>` with the promotion
+applied plus a `pending` matrix row and opens a Draft MR. Profiles with `promotion.require_prewarm` stay proposal-only
+(`--apply` gates on the live prewarm pods). Merge stays human: run the profile's kill-test, flip the matrix row.
+
 ## vLLM family
 
 | Dockerfile | Built by | Image / consumer |

@@ -664,3 +664,80 @@ runtime_pin_drift:
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
+
+# Issue #74 S4: turn the drift report into promotion proposals. One Markdown
+# proposal per profile whose consumers trail the newest immutable build (the
+# exact promote command, rollback digest, consumers, dry-run diff) plus an
+# index, kept as pipeline artifacts. Advisory: the job never edits master.
+# When FLEXINFER_PROMOTE_MR_TOKEN (a project access token with `api` +
+# `write_repository`) is set on a schedule/master run, it also pushes a
+# `bot/promote-<profile>-<digest>` branch with the promotion applied and a
+# `pending` matrix row, and opens a Draft MR; prewarm-gated profiles
+# (`promotion.require_prewarm`) stay proposal-only because `--apply` needs the
+# live prewarm check. Merge stays human either way.
+runtime_promotion_proposals:
+  stage: promote
+  image: python:3.12-alpine
+  needs:
+    - job: runtime_pin_drift
+      artifacts: true
+      optional: true
+  allow_failure: true
+  variables:
+    GIT_DEPTH: "0"
+    YQ_VERSION: v4.44.3
+  before_script:
+    - apk add --no-cache bash git jq wget
+    # scripts/promote-runtime-digest.sh needs mikefarah yq (strenv()); the pip
+    # `yq` is the jq wrapper and does not understand it.
+    - wget -qO /usr/local/bin/yq "https://github.com/mikefarah/yq/releases/download/${YQ_VERSION}/yq_linux_amd64" && chmod +x /usr/local/bin/yq
+    - python3 -m pip install --disable-pip-version-check --no-cache-dir pyyaml
+    - python3 scripts/test_propose_runtime_promotions.py
+  script:
+    - |
+      if [ ! -f runtime-pin-drift.json ]; then
+        echo "runtime_pin_drift did not run in this pipeline; nothing to propose"
+        mkdir -p promotion-proposals
+        printf '# Runtime promotion proposals\n\nNo drift report in this pipeline.\n' > promotion-proposals/README.md
+        exit 0
+      fi
+      create=""
+      if [ -n "${FLEXINFER_PROMOTE_MR_TOKEN:-}" ] && { [ "${CI_PIPELINE_SOURCE}" = "schedule" ] || [ "${CI_COMMIT_BRANCH:-}" = "master" ]; }; then
+        create="--create-mrs"
+      fi
+      python3 scripts/propose-runtime-promotions.py --report runtime-pin-drift.json --out-dir promotion-proposals ${create}
+    - cat promotion-proposals/README.md
+  artifacts:
+    when: always
+    expire_in: 30 days
+    paths:
+      - promotion-proposals/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "schedule"
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - .gitlab/ci/runtime-publish.yml
+        - scripts/check-runtime-pin-drift.py
+        - scripts/propose-runtime-promotions.py
+        - scripts/promote-runtime-digest.sh
+        - build/runtime.yaml
+        - deploy/system/values-k3s.yaml
+        - deploy/gpuprofiles/**/*
+        - deploy/models/**/*
+        - deploy/experiments/**/*
+        - deploy/debug/**/*
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - .gitlab/ci/runtime-publish.yml
+        - scripts/check-runtime-pin-drift.py
+        - scripts/propose-runtime-promotions.py
+        - scripts/promote-runtime-digest.sh
+        - build/runtime.yaml
+        - deploy/system/values-k3s.yaml
+        - deploy/gpuprofiles/**/*
+        - deploy/models/**/*
+        - deploy/experiments/**/*
+        - deploy/debug/**/*
+    - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
+      when: manual
+    - when: never
