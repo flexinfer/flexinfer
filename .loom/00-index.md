@@ -94,8 +94,8 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       passed (retrieval +2.5 min, voice +5 min, cache mtimes untouched). Both priority GPU lanes now run
       images built by CI from master with the incident #2 fix.
 - [ ] #74 remaining:
-      S2 = rebuild the native-W4A16 image with the plugin ported to 0.26's FLA layout (or vLLM ≥ 0.28),
-      qualify on a debug canary, then move the 5 active `2e9652ed` pins + prewarm via
+      S2 = native-W4A16 image REBUILT 09-14 (`ad93ae72`, plugin 0.8.0); debug canary on !1058 awaits the
+      operator's `kubectl create -f` (agent gate denies apply); then move the 5 active `2e9652ed` pins + prewarm via
       `promotion.model_manifests`; S4 promote-MR bot (proposals job shipped 09-14 as `runtime_promotion_proposals`;
       Draft-MR creation waits on a `FLEXINFER_PROMOTE_MR_TOKEN`); S5 standalone vLLM rebuild + repin; gate →
       `--strict`.
