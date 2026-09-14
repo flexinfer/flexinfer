@@ -379,8 +379,10 @@ Fail on the video half → revert to 30m and move the warm lane to option 7(a)/(
 
 ## 9. Follow-ups filed by this note
 
-- Orphaned ModelCache `gemma4-26b-a4b-gptq` + faulted 96Gi PVC on the XTX: delete (data
-  already lost; the artifact lives in Harbor and on the 5930k OCI cache). Needs a yes.
+- [x] Orphaned ModelCache `gemma4-26b-a4b-gptq` + faulted 96Gi PVC on the XTX — operator yes
+  2026-09-14; !1053 removed the manifest, Flux pruned the CR and the PVC, PV and faulted Longhorn
+  volume were gone within 30 s (no manual Longhorn step needed). The artifact remains in Harbor
+  only (the 5930k OCI cache was deleted the same night, !1049).
 - storyboard-generator: give it a LiteLLM key or stop polling `/v1/models`.
 - LiteLLM aliases for `gemini-3-flash-preview` and `text-embedding-3-small` callers.
 - loom-core docs drift (MILLS.md, weaver.md) and the squads ConfigMap model names.
