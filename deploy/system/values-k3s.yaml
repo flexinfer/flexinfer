@@ -61,6 +61,14 @@ controller:
   runtime:
     imagePullSecrets:
       - harbor-creds
+    # 2026-09-14 (issue #74): every dedicated serving pod preempts priority-0
+    # CI job pods and ranks behind them for disk-pressure eviction. Explicit
+    # here (not only in the chart defaults) because this file is the values
+    # the HelmRelease renders with; the two Mills lanes carried these by hand
+    # since 2026-09-13 (!1035/!1036) and stay unchanged.
+    servingDefaults:
+      priorityClass: flexinfer-serving-critical
+      ephemeralStorageRequest: "2Gi"
 
 agent:
   enabled: true

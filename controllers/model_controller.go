@@ -46,6 +46,7 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/observability"
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 // Error types for GPU detection
@@ -92,6 +93,20 @@ type ModelReconciler struct {
 	// This keeps private backend images pullable without relying on manual
 	// Deployment patches.
 	ModelImagePullSecrets []corev1.LocalObjectReference
+	// ServingDefaultPriorityClass is the PriorityClass every dedicated serving
+	// pod gets unless the Model sets flexinfer.ai/serving-priority-class (any
+	// value, including an explicit empty string, wins). Empty disables the
+	// default. 2026-09-13 incident: the XTX Mills lane sat Pending on
+	// "Insufficient cpu" behind priority-0 CI job pods with no preemption
+	// victims because serving pods were priority 0 too.
+	ServingDefaultPriorityClass string
+	// ServingDefaultEphemeralStorage is the ephemeral-storage request added to
+	// the serving container when the Model's resources.requests lacks one.
+	// kubelet ranks pods that exceed their ephemeral-storage request first for
+	// disk-pressure eviction, and a pod with no request exceeds it at the
+	// first byte of logs — that is how CI job pods (5Gi request) outlived the
+	// Mills workhorse on the 5930k on 2026-09-13. Nil disables the default.
+	ServingDefaultEphemeralStorage *resource.Quantity
 
 	mgr ctrl.Manager // set by SetupWithManager, used for startup sweep
 
