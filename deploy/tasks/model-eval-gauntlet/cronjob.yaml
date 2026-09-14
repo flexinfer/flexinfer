@@ -111,7 +111,7 @@ spec:
                 # 5930k sister remains. ModelBackfill declarations override this
                 # list per lane (deploy/tasks/model-backfill/).
                 - name: MODELS
-                  value: "gemma4-26b-a4b-gptq-5930k=vllm"
+                  value: "qwen38-27b-autoround-workhorse=vllm"
                 - name: ITERS
                   value: "3"
                 - name: MIN_DURATION

@@ -84,7 +84,13 @@ resources:
   # disabled; fast-chat/default-chat now route to the two warm Gemma4 26B
   # primaries only. See docs/planning/fast-chat-resilience.md for the current
   # decision record.
-  - gemma4-26b-a4b-gptq-5930k.yaml  # 2026-06-17: RETIRED to minReplicas 0; 5930k GPU reassigned to the 5930k-textgen shared lane (kept enabled so it can be restored).
+  # 2026-09-14: gemma4-26b-a4b-gptq-5930k UNLISTED — its only remaining source cache
+  # (ModelCache gemma4-26b-a4b-gptq-oci-5930k) and its SharedPVC copy were deleted
+  # with the operator's yes to reclaim the 5930k root (!1049), so the CR could only
+  # loop on "Failed to ensure cache resources". Restore = re-add
+  # deploy/modelcaches/gemma4-26b-a4b-gptq-oci-5930k.yaml (artifact in Harbor) and
+  # re-list the line below.
+  # - gemma4-26b-a4b-gptq-5930k.yaml  # 2026-06-17: RETIRED to minReplicas 0; 5930k GPU reassigned to the 5930k-textgen shared lane.
   # qwen35-moe-reasoning-5930k.yaml: REMOVED 2026-06-24 at operator request.
   # Parked reasoning lane (litellm disabled, never served) — and the idle Model
   # that hot-looped reconciles (controller fix shipped separately in !697). The
