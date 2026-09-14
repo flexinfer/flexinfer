@@ -2026,7 +2026,10 @@ publish_vllm_rocm_gfx1100_qwen35_patched:
   interruptible: false
   stage: publish
   image: registry.harbor.lan/library/buildkit:v0.12.5
-  timeout: 1h
+  # 2026-09-14 (issue #74 S5): the first master rebuild (pipeline 26932) died
+  # on this timeout while still extracting the 8 GB base image from Harbor
+  # (~11 min pull + layer extraction before a single build step ran).
+  timeout: 3h
   needs: []
   script:
     - |
