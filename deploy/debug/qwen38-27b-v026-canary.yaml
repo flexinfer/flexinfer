@@ -1,0 +1,178 @@
+# DEBUG CANARY — issue #74 S2 (vLLM currency), 2026-09-14. NOT in the models
+# kustomization: apply by hand, delete when the row is decided.
+#
+# Qualifies the rebuilt v0.26 native-W4A16 runtime (plugin 0.8.0, register()
+# verified at build time) on the 5930k with the workhorse's exact artifact and
+# envelope, before any production pin moves. Priority 510 > the workhorse's 500
+# and minReplicas 1: the shared 5930k-textgen election gives this canary the
+# card while it exists, and the Mills research stage falls back to the XTX lane
+# (FLEXINFER_WEAVER_MODEL_FALLBACKS) for the ~20 min window. No serviceLabels,
+# litellm disabled: nothing routes here except by served name.
+#
+# Kill-test (matrix row gfx1100-native-w4a16-2026-09-14): pod Ready; log shows
+# "flexinfer: registered text-only Qwen3.5 … fla_autotuners=N>0" and
+# RDNA3W4A16LinearKernel; KV pool >= 60K tokens fp8 at 64K; 3/3 probes coherent;
+# decode >= 30 tok/s; 2.3K-token prompt TTFT < 3 s. Pass -> move the 5 active
+# 2e9652ed pins via build/runtime.yaml promotion.model_manifests. Fail ->
+# delete this manifest (the workhorse reclaims the card on its next demand).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-v026-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    # 2026-09-13: scheduler preemption guard. The serving pod carries
+    # flexinfer-serving-critical (150000) so it preempts priority-0 CI job
+    # pods for CPU on its node (the 5930k also hosts CI job pods).
+    # Same class the radeonvii retrieval lanes use; the class must exist.
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
+    flexinfer.ai/promotion-state: debug-canary-v026-native-w4a16
+spec:
+  backend: vllm
+  # Rebuilt vLLM 0.26 gfx1100 native-W4A16 runtime (rocm-gfx1100-v026-native-
+  # w4a16-a106504c, master pipeline 26906, 2026-09-14 18:23Z): plugin 0.8.0 on
+  # 0.26's flash-linear-attention layout, register() verified at build time.
+  # The workhorse still pins the unreproducible 0.23 digest 2e9652ed.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    # 19.0 GB artifact. Serving needs NO on-disk config surgery (hfOverrides
+    # rewrites quantization_config in-process); only an MTP retry does.
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    # 19 GB of shards exceed this 63Gi node's tmpfs budget — serve from the
+    # PVC directly, same as the wan21 lanes on this host.
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v026-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # Borrow-idle posture (fable/wan pattern): explicit workhorse demand may
+    # take an idle card, while the higher-priority VACE video lane stays
+    # authoritative. Cold-load window: demand must persist ~4-6 min; Mills'
+    # proxy retries cover this.
+    priority: 510
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    # 2026-09-13 (utilization slice 1, .loom/10-research-flexinfer-utilization-
+    # loom-mills-2026-09-13.md): 30m -> 12h. Every recorded cold start of this
+    # lane exceeded 300 s (12/12 in flexinfer_model_cold_start_duration_seconds)
+    # and the lane sat Idle at 15 of 17 four-hour samples in the week of 09-06,
+    # so each Mills council/audit/review call after a quiet half hour paid a
+    # 5+ minute cold start and every latency-sensitive Mills stage stayed on
+    # vendor models. A long idle window keeps the card warm across Mills'
+    # inter-call gaps (council cron every 6h, pipelines, audit sweeps) while
+    # warmPolicy stays ondemand: a higher-priority member (wan21 VACE 600, T2V
+    # 500, glimmer 500) can still demand-swap once this lane is idle > 2 min,
+    # which minReplicas 1 would block (whisper/!563 lesson). Card is otherwise
+    # 1.2% busy over 30d, so holding VRAM costs nothing.
+    idleTimeout: 30m
+    # First activation on a cold cache covers the 19 GB HF prefetch + fresh
+    # torch.compile (~5 min); cached restarts are ~3 min.
+    coldStartTimeout: 25m
+  config:
+    # RDNA3 long-context decode fix (research doc 8d/!967): ROCm default
+    # ROCM_ATTN has no KV-length decode parallelism; TRITON_ATTN engages the
+    # unified-attention 3D split-KV decode path.
+    attentionBackend: TRITON_ATTN
+    warmPolicy: ondemand
+    # vLLM 0.23 resolves quant_method "auto-round" to "inc" (rejected on
+    # ROCm) before honoring --quantization. hfOverrides therefore rewrites
+    # quantization_config wholesale to plain GPTQ form; the checkpoint's
+    # auto_round:auto_gptq packing is GPTQ-shaped (sym, g128) and selects the
+    # native RDNA3W4A16LinearKernel. modules_in_block_to_quantize is the
+    # exact INT4 census from this artifact's safetensors index (in_proj_a/b,
+    # conv1d, norms, lm_head are FP16).
+    quantization: gptq
+    # 2026-09-13: `architectures` pinned in-process (issue #74 incident #2).
+    # The runtime DaemonSet's entrypoint rewrote this lane's on-disk
+    # config.json to the text-only Qwen3_5ForCausalLM class (node-wide
+    # /models pass), and vLLM 0.23 then died on the first request with
+    # "M-RoPE support is not implemented". hf-overrides is applied before
+    # architecture resolution, so the lane loads the VL-layout class it was
+    # qualified on regardless of what the cache says on disk.
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    # Context envelope raised 64K -> 128K (2026-08-16 context-push): fp8 KV
+    # pool = 137,098 tokens (1.05x at 131072); needle 1/1 @99,498, 1/1
+    # @128,409, 5/5 @128,509 on the canary at this exact artifact/runtime/
+    # TRITON_ATTN posture. Native 262144 — no RoPE forcing. Prefill at depth:
+    # 198 tok/s @60K, 129 @100K (quadratic-normal).
+    maxModelLen: 65536
+    maxNumSeqs: 1
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    gpuMemoryUtilization: "0.94"
+    # fp16 KV on purpose — fp8 KV halves long-context decode on this runtime
+    # (dequant tax, research doc 8c). Pool is ~70K tokens (1.07x @64K).
+    kvCacheDtype: fp8_e4m3
+    calculateKvScales: false
+    enforceEager: false
+    enablePrefixCaching: false
+    # MTP stays OFF (3.6 finding: ~33% pos-0 acceptance = net zero on this
+    # runtime; the draft ModelConfig also re-reads config.json from disk and
+    # ignores hfOverrides). This artifact's MTP block is INT4 — a retry needs
+    # the PVC config.json patch AND fresh acceptance numbers.
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    # Non-thinking by default (2026-08-30, RP-consumer migration). This lane
+    # now serves naive OpenAI callers moving off the 9b RP lanes
+    # (news-analyzer, jobsearch daemon) that send no chat_template_kwargs
+    # and modest max_tokens; with thinking on, the <think> phase eats the
+    # budget and answers come back EMPTY (F3 session 2026-08-16). Same
+    # posture as both qwen35-9b lanes. Per-request chat_template_kwargs
+    # still take precedence, so Mills/loom clients that set enable_thinking
+    # explicitly (loom-core pkg/mills/clients/flexinfer.go) are unchanged,
+    # and any caller can opt back into thinking per request.
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    # Clean checkpoint with proper <think> boundaries — split reasoning into
+    # reasoning_content so Mills/agent flows get clean content + tool_calls.
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-v026-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      # 2026-09-13: CI job pods share this node. When three pipelines filled
+      # the root disk at 16:23Z, kubelet evicted this pod (and image GC then
+      # dropped its 11 GB runtime image: 10 min re-pull, ~20 min lane outage)
+      # ahead of the CI pods, because pods exceeding their ephemeral-storage
+      # request are ranked first and a pod with no request exceeds it at the
+      # first byte. Actual usage is ~50 MB; the request only changes ranking.
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # 2026-09-13: mills-council moved to the warm 7900xtx lane
+  # (qwen38-27b-xtx-warm-canary, alias mills-warm); this lane keeps the
+  # long-context roles (workhorse / loom-workhorse / reasoning, 131K).
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-v026-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
