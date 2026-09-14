@@ -34,7 +34,10 @@ spec:
   # the node's root; stage from the NFS ModelCache (qwen36-27b-fable-gptq ->
   # llm-models-nfs:qwen36-27b-fable) instead. Same artifact; a cold start copies
   # from NFS into the Local cache once (demand-only canary, minReplicas 0).
-  source: pvc://llm-models-nfs/qwen36-27b-fable
+  # Point at the GPTQ output subdir: the NFS ModelCache root also holds the 12
+  # BF16 source shards (52 G), and the first re-stage (2026-09-14 01:23Z)
+  # copied all 69 G onto the 5930k root before this was corrected.
+  source: pvc://llm-models-nfs/qwen36-27b-fable/gptq-w4-g128
   cache:
     strategy: Local
   gpu:
