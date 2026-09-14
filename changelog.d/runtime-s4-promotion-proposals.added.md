@@ -1,0 +1,1 @@
+CI `runtime_promotion_proposals` job (`scripts/propose-runtime-promotions.py`, issue #74 S4): turns the runtime pin-drift report into one Markdown promotion proposal per trailing profile (promote command, rollback digest, consumers, dry-run diff) as pipeline artifacts, with optional Draft-MR creation behind `FLEXINFER_PROMOTE_MR_TOKEN`.

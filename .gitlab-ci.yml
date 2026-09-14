@@ -561,6 +561,24 @@ vllm_qwen35_text_plugin_test:
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *qwen35-text-plugin-changes
 
+propose_runtime_promotions_test:
+  stage: test
+  image: python:3.12-slim
+  needs: []
+  before_script:
+    - python3 -m pip install --disable-pip-version-check --no-cache-dir pyyaml
+  script:
+    - python3 scripts/test_propose_runtime_promotions.py
+    - python3 -m py_compile scripts/propose-runtime-promotions.py
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &propose-runtime-promotions-changes
+        - .gitlab-ci.yml
+        - scripts/propose-runtime-promotions.py
+        - scripts/test_propose_runtime_promotions.py
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *propose-runtime-promotions-changes
+
 mtp_expert_quantizer_test:
   stage: test
   image: python:3.12-slim
