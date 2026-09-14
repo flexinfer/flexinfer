@@ -22,7 +22,12 @@ resources:
   # - omnicoder-9b-gptq.yaml         # omnicoder-9b-gptq (disabled; OCI cache in use)
 
   # === Active Abliteration + GPTQ pipelines (Download → Abliterate → Quantize → Publish) ===
-  - gemma4-26b-a4b-gptq.yaml        # gemma4-26b-a4b-gptq (cblevins-7900xtx) — pipeline + OCI publish source
+  # 2026-09-14: gemma4-26b-a4b-gptq (cblevins-7900xtx, 96 Gi nvme-1r-gpu) DELETED with the
+  # operator's yes — its Longhorn volume went faulted/detached and the data was lost; the
+  # XTX gemma4 lanes that read it were unlisted on 2026-09-13. The quantized artifact
+  # lives in Harbor (oci://registry.harbor.lan/flexinfer/gemma4-26b-a4b:gptq-w4-g128-attnfp16-clean);
+  # restore = re-add the manifest from git history (re-downloads google/gemma-4-26B-A4B-it
+  # and re-quantizes) or stage an OCI ModelCache from the Harbor artifact.
   # Dense rebuild paused 2026-05-03: it monopolizes cblevins-5930k and blocks
   # active serving validation for Omnicoder. Re-enable only during a dedicated
   # rebuild window or after ModelCache grows a first-class suspend knob.
