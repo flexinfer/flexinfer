@@ -389,7 +389,7 @@ Fail on the video half → revert to 30m and move the warm lane to option 7(a)/(
   eviction incident in the runtime-image spec): today only the two Mills lanes and the
   runtime DaemonSets carry one; every other dedicated lane still ranks ahead of CI job pods
   for disk-pressure eviction. Ship with the next controller release (one reload per lane).
-- 5930k root headroom: 120 G of local-path model caches, of which `qwen36-27b-oci` (25 G) and
-  `qwen36-27b-fable-oci` (17 G) back Idle lanes and the two gemma4 caches (32 G) back
-  retired lanes; `qwen36-35b-mtp-uncensored` (40 G) is parked on purpose. Deleting the first
-  three needs a yes.
+- [x] 5930k root headroom — operator yes 2026-09-13; !1049 deleted `qwen36-27b-oci` (25 G),
+  `qwen36-27b-fable-oci` (17 G) and both gemma4 caches (32 G) at 01:2xZ on 09-14 (the PVCs
+  needed their Completed cache-copy/stage pods deleted before `pvc-protection` let go);
+  `qwen36-35b-mtp-uncensored` (40 G) stays parked on purpose. Root now 693 G used / 237 G free.
