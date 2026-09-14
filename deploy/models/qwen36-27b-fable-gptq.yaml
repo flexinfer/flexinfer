@@ -30,7 +30,11 @@ spec:
   # vLLM 0.23 is source-built for gfx1100 because the generic upstream ROCm
   # image does not carry the RDNA3 GPTQ operator in its compiled extension.
   image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
-  source: pvc://qwen36-27b-fable-oci/qwen36-27b-fable
+  # 2026-09-13: the 5930k OCI cache (qwen36-27b-fable-oci) was deleted to reclaim
+  # the node's root; stage from the NFS ModelCache (qwen36-27b-fable-gptq ->
+  # llm-models-nfs:qwen36-27b-fable) instead. Same artifact; a cold start copies
+  # from NFS into the Local cache once (demand-only canary, minReplicas 0).
+  source: pvc://llm-models-nfs/qwen36-27b-fable
   cache:
     strategy: Local
   gpu:
