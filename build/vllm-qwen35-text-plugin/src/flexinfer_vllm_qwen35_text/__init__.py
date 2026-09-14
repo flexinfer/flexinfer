@@ -17,6 +17,38 @@ _MAMBA_METHODS = (
     "get_mamba_state_dtype_from_config",
     "get_mamba_state_copy_func",
 )
+# vLLM's flash-linear-attention (GDN) kernels moved between releases:
+#   <= 0.23  vllm.model_executor.layers.fla.ops.*
+#   >= 0.26  vllm.third_party.flash_linear_attention.ops.*
+# Import the KKT kernel from whichever layout exists so the autotuner pruning
+# below sees the modules the Qwen3.5 GDN prefill path actually loads. A
+# layout this list does not know is a hard error: silently skipping the
+# import would leave the 4-stage autotune configs in place and the engine
+# stuck in LLVM codegen on consumer ROCm (the 2026-09-13 S2 canary failed
+# before this point with ModuleNotFoundError on the old path).
+_FLA_OPS_PREFIXES = (
+    "vllm.model_executor.layers.fla.ops.",
+    "vllm.third_party.flash_linear_attention.ops.",
+)
+_FLA_KKT_MODULE = "chunk_scaled_dot_kkt"
+
+
+def _import_fla_kkt_module():
+    """Import the FLA KKT kernel module from the layout this vLLM ships."""
+    import importlib
+
+    errors = []
+    for prefix in _FLA_OPS_PREFIXES:
+        name = prefix + _FLA_KKT_MODULE
+        try:
+            return importlib.import_module(name)
+        except ModuleNotFoundError as exc:
+            errors.append(f"{name}: {exc}")
+    raise RuntimeError(
+        "flexinfer_vllm_qwen35_text: no known flash-linear-attention layout "
+        "in this vLLM; extend _FLA_OPS_PREFIXES. Tried: " + "; ".join(errors)
+    )
+
 
 
 def _rename_expert_weights(weights):
@@ -45,10 +77,9 @@ def _select_rocm_safe_fla_configs() -> int:
     ``chunk_delta_h`` and later kernels. Preserve the first config among the
     lowest stage/warp candidates for every loaded FLA autotuner.
     """
-    prefix = "vllm.model_executor.layers.fla.ops."
     pruned: set[int] = set()
     for module_name, module in tuple(sys.modules.items()):
-        if not module_name.startswith(prefix) or module is None:
+        if not module_name.startswith(_FLA_OPS_PREFIXES) or module is None:
             continue
         for value in vars(module).values():
             candidate = value
@@ -172,10 +203,21 @@ def _patch_qwen35_mtp_gptq(
     auto_gptq_config._flexinfer_qwen35_mtp_mode = mode
 
 
-def _patch_gptq_expert_loader(model_class) -> None:
-    """Normalize vLLM's mapped GPTQ expert parameter names for one model class."""
+def _patch_gptq_expert_loader(model_class) -> bool:
+    """Normalize vLLM's mapped GPTQ expert parameter names for one model class.
+
+    Returns whether the hook is installed. vLLM 0.23 loads fused MoE experts
+    through ``load_fused_expert_weights`` on the model class; vLLM 0.26 no
+    longer has that method (expert loading moved into the generic weight
+    loader), so there is nothing to wrap and the MoE GPTQ expert-name contract
+    is NOT provided on that runtime. Dense Qwen3.5/3.8 lanes never reach this
+    path; MoE GPTQ lanes must stay on a runtime where the hook installs until
+    the 0.26 expert loader is re-qualified.
+    """
     if model_class.__dict__.get("_flexinfer_gptq_expert_names", False):
-        return
+        return True
+    if not hasattr(model_class, "load_fused_expert_weights"):
+        return False
     original_load_fused_expert_weights = model_class.load_fused_expert_weights
 
     def load_fused_expert_weights(
@@ -200,12 +242,13 @@ def _patch_gptq_expert_loader(model_class) -> None:
 
     model_class.load_fused_expert_weights = load_fused_expert_weights
     model_class._flexinfer_gptq_expert_names = True
+    return True
 
 
 def register() -> None:
     """Register the existing text class and its hybrid-state contract.
 
-    vLLM 0.23 ships the class but only registers the multimodal wrapper. A
+    vLLM 0.23 and 0.26 ship the class but only register the multimodal wrapper. A
     text-only checkpoint consequently falls through to that wrapper and tries
     to access ``vision_config``. The text class also omits the hybrid marker
     and state helpers that the wrapper supplies. General plugins run in both
@@ -214,7 +257,7 @@ def register() -> None:
     import torch
     from vllm import ModelRegistry
     from vllm.config.speculative import SpeculativeConfig
-    import vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt  # noqa: F401
+    _import_fla_kkt_module()
     from vllm.model_executor.layers.fused_moe import UnquantizedFusedMoEMethod
     from vllm.model_executor.layers.linear import (
         LinearBase,
@@ -275,8 +318,11 @@ def register() -> None:
         Qwen3_5MoeForCausalLM.load_weights = load_weights
         Qwen3_5MoeForCausalLM._flexinfer_expert_names = True
 
-    _patch_gptq_expert_loader(Qwen3_5Model)
-    _patch_gptq_expert_loader(Qwen3_5MultiTokenPredictor)
+    expert_loader_hooks = sum(
+        1
+        for model_class in (Qwen3_5Model, Qwen3_5MultiTokenPredictor)
+        if _patch_gptq_expert_loader(model_class)
+    )
 
     ModelRegistry.register_model("Qwen3_5ForCausalLM", Qwen3_5ForCausalLM)
     ModelRegistry.register_model("Qwen3_5MoeForCausalLM", Qwen3_5MoeForCausalLM)
@@ -285,5 +331,6 @@ def register() -> None:
         "with hybrid-state support "
         "and ROCm-safe FLA/MTP GPTQ handling "
         f"(fla_autotuners={safe_fla_kernels}, "
-        f"mtp_experts={'gptq' if quantized_mtp_experts else 'plain'})"
+        f"mtp_experts={'gptq' if quantized_mtp_experts else 'plain'}, "
+        f"gptq_expert_loader_hooks={expert_loader_hooks})"
     )

@@ -72,7 +72,38 @@ def verify_text_plugin_contract(entry_points: Any) -> None:
         )
 
 
+def verify_text_plugin_registers(entry_points: Any, environ: dict) -> None:
+    """Run the plugin's register() the way vLLM will, on this exact vLLM.
+
+    The entry-point check above only proves the plugin is installed. The
+    2026-09-13 S2 canary (issue #74) shipped an image whose plugin imported a
+    vLLM 0.23 kernel path that 0.26 no longer has; every engine start died in
+    load_general_plugins() before the model loaded. Executing register() at
+    image-build time catches that class of drift with no GPU: it exercises
+    every vLLM import the plugin relies on and the ModelRegistry hooks.
+    PYTORCH_ROCM_ARCH is cleared for the call because the consumer-ROCm FLA
+    autotuner pruning needs Triton's kernels, which a driverless build
+    container does not load; that path is verified by the runtime log line
+    (fla_autotuners > 0) on the first GPU start instead.
+    """
+    environ.pop("PYTORCH_ROCM_ARCH", None)
+    (plugin,) = [
+        ep for ep in entry_points(group="vllm.general_plugins")
+        if ep.name == TEXT_PLUGIN_ENTRY_POINT
+    ]
+    plugin.load()()
+    from vllm import ModelRegistry
+
+    supported = set(ModelRegistry.get_supported_archs())
+    missing = {"Qwen3_5ForCausalLM", "Qwen3_5MoeForCausalLM"} - supported
+    if missing:
+        raise RuntimeError(
+            f"flexinfer_qwen35_text register() ran but did not register {sorted(missing)}"
+        )
+
+
 def main() -> None:
+    import os
     import torch
     import vllm
 
@@ -80,6 +111,7 @@ def main() -> None:
     vllm_root = pathlib.Path(vllm.__file__).resolve().parent
     verify_source_contract(vllm_root, version)
     verify_text_plugin_contract(importlib.metadata.entry_points)
+    verify_text_plugin_registers(importlib.metadata.entry_points, os.environ)
 
     # Image assembly has no GPU, so vLLM cannot detect ROCm and its generic
     # platform loader does not import this extension. Load it explicitly: the
@@ -89,7 +121,8 @@ def main() -> None:
     print(
         "verified vLLM",
         version,
-        "native gfx1100 W4A16 op: torch.ops._rocm_C.gptq_gemm_rdna3",
+        "native gfx1100 W4A16 op: torch.ops._rocm_C.gptq_gemm_rdna3;",
+        "flexinfer_qwen35_text register() OK",
     )
 
 
