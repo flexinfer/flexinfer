@@ -61,7 +61,10 @@ spec:
   backends:
     vllm:
       support: full
-      image: registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
+      # 2026-09-14 (issue #74 S5): rebuilt by CI from master —
+      # rocm-gfx1100-qwen35-patched-nodiag-textcfg-aefeb697 (API pipeline 26956,
+      # job 276644). Previous pin a9b306af = …-4ef74842 (2026-05-20).
+      image: registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
       # Wave 1 capability matrix backfill (2026-05-15, spec .loom/21-product-spec-vllm-feature-parity-2026-05-15.md).
       # Controller/runtime load paths consume safe defaults when Model config omits them.
       vllm:

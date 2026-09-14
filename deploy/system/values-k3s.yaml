@@ -247,7 +247,7 @@ llamacpp:
 
 vllm:
   rocmImage: registry.harbor.lan/library/vllm-api:rocm-navi-fp8e5-v2
-  gfx1100Image: registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
+  gfx1100Image: registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
   gfx906Image: registry.harbor.lan/flexinfer/vllm:rocm-gfx906@sha256:2139c92b3ca00716216f9e5644e9fbd29b2bba7237dc0459017c86012ece51c3
 
 diffusers:
@@ -274,7 +274,7 @@ imagePrewarm:
         # (!1037: no node-wide config.json surgery in manager mode) —
         # rocm-gfx1100-serving-e4ad4d10, promotion target for the gfx1100 DaemonSets.
         - registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
-        - registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
+        - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Keep the 64K Qwen workhorse overlay referenced across containerd GC;
         # its first cold pull/unpack took 9m05s on this node.
         - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
@@ -311,7 +311,7 @@ imagePrewarm:
         # (!1037: no node-wide config.json surgery in manager mode) —
         # rocm-gfx1100-serving-e4ad4d10, promotion target for the gfx1100 DaemonSets.
         - registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
-        - registry.harbor.lan/flexinfer/vllm@sha256:a9b306af9122e39d2554d090fcc63e6f4317c4a69c5e0bf1055027f0f11345ba
+        - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.
         - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
