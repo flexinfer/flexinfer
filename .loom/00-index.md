@@ -97,8 +97,11 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       S2 = rebuild the native-W4A16 image with the plugin ported to 0.26's FLA layout (or vLLM ≥ 0.28),
       qualify on a debug canary, then move the 5 active `2e9652ed` pins + prewarm via
       `promotion.model_manifests`; S4 promote-MR bot; S5 standalone vLLM rebuild + repin; gate →
-      `--strict`; controller-default ephemeral request + priority class for every serving Deployment;
-      `interruptible: false` for the remaining publish jobs in `.gitlab-ci.yml`.
+      `--strict`.
+- [x] Controller defaults (2026-09-14): every dedicated serving pod gets `flexinfer-serving-critical`
+      and a 2Gi ephemeral-storage request unless the Model sets its own; `.gitlab-ci.yml` publish jobs
+      non-interruptible (!1045). S2 plugin ported to vLLM 0.26 (register() verified at build time);
+      rebuilt native-W4A16 digest pending qualification on a 5930k debug canary.
 - [ ] Video lane: LTX-2.5 surveyed (research §6b) — 22B only, zero RDNA3 evidence; canary needs
       operator license acceptance (gated repo), diffusers 0.40 / transformers 5.5 image, and an
       `ltx2` pipeline mode in server-diffusers.py. Kill-test defined in §6b.

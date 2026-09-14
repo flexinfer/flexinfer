@@ -44,6 +44,7 @@ import (
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 )
 
 func TestExtractModelFromSource(t *testing.T) {
@@ -3971,4 +3972,129 @@ func TestCleanupFlashTmpfs(t *testing.T) {
 			t.Fatalf("cleanupFlashTmpfs() with existing job should not error: %v", err)
 		}
 	})
+}
+
+func TestEnsureDeploymentServingDefaults(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+	b, ok := backend.Get("llamacpp")
+	if !ok {
+		t.Fatal("llamacpp backend not found")
+	}
+	twoGi := resource.MustParse("2Gi")
+
+	cases := []struct {
+		name         string
+		annotations  map[string]string
+		requests     corev1.ResourceList
+		wantPriority string
+		wantEphem    string
+	}{
+		{
+			name:         "defaults apply when the model sets nothing",
+			wantPriority: "flexinfer-serving-critical",
+			wantEphem:    "2Gi",
+		},
+		{
+			name:         "annotation overrides the default class",
+			annotations:  map[string]string{constants.AnnotationServingPriorityClass: "custom-class"},
+			wantPriority: "custom-class",
+			wantEphem:    "2Gi",
+		},
+		{
+			name:         "explicit empty annotation opts out of the class",
+			annotations:  map[string]string{constants.AnnotationServingPriorityClass: ""},
+			wantPriority: "",
+			wantEphem:    "2Gi",
+		},
+		{
+			name:         "explicit ephemeral request is kept",
+			requests:     corev1.ResourceList{corev1.ResourceEphemeralStorage: resource.MustParse("7Gi")},
+			wantPriority: "flexinfer-serving-critical",
+			wantEphem:    "7Gi",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			model := &aiv1alpha2.Model{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:        "defaults-model",
+					Namespace:   "default",
+					Annotations: tc.annotations,
+				},
+				Spec: aiv1alpha2.ModelSpec{
+					Backend:   "llamacpp",
+					Source:    "pvc://models-pvc/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+					GPU:       &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorCPU},
+					Resources: corev1.ResourceRequirements{Requests: tc.requests},
+				},
+			}
+			fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
+			r := &ModelReconciler{
+				Client:                         fakeClient,
+				Scheme:                         s,
+				ServingDefaultPriorityClass:    "flexinfer-serving-critical",
+				ServingDefaultEphemeralStorage: &twoGi,
+			}
+			ctx := context.Background()
+			if err := r.ensureDeployment(ctx, model, b, backend.GPUVendorCPU, "", 1); err != nil {
+				t.Fatalf("ensureDeployment() error: %v", err)
+			}
+			created := &appsv1.Deployment{}
+			if err := fakeClient.Get(ctx, client.ObjectKey{Name: model.Name, Namespace: model.Namespace}, created); err != nil {
+				t.Fatalf("failed to fetch created deployment: %v", err)
+			}
+			if got := created.Spec.Template.Spec.PriorityClassName; got != tc.wantPriority {
+				t.Fatalf("PriorityClassName = %q, want %q", got, tc.wantPriority)
+			}
+			got := created.Spec.Template.Spec.Containers[0].Resources.Requests[corev1.ResourceEphemeralStorage]
+			if got.String() != tc.wantEphem {
+				t.Fatalf("ephemeral-storage request = %q, want %q", got.String(), tc.wantEphem)
+			}
+			// The Model's own spec must not have been mutated by defaulting.
+			if _, mutated := model.Spec.Resources.Requests[corev1.ResourceEphemeralStorage]; mutated && tc.requests == nil {
+				t.Fatalf("defaulting mutated model.Spec.Resources.Requests: %v", model.Spec.Resources.Requests)
+			}
+		})
+	}
+}
+
+func TestEnsureDeploymentServingDefaultsDisabled(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+	b, _ := backend.Get("llamacpp")
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "no-defaults", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "llamacpp",
+			Source:  "pvc://models-pvc/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+			GPU:     &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorCPU},
+		},
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
+	r := &ModelReconciler{Client: fakeClient, Scheme: s}
+	ctx := context.Background()
+	if err := r.ensureDeployment(ctx, model, b, backend.GPUVendorCPU, "", 1); err != nil {
+		t.Fatalf("ensureDeployment() error: %v", err)
+	}
+	created := &appsv1.Deployment{}
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: model.Name, Namespace: model.Namespace}, created); err != nil {
+		t.Fatalf("failed to fetch created deployment: %v", err)
+	}
+	if got := created.Spec.Template.Spec.PriorityClassName; got != "" {
+		t.Fatalf("PriorityClassName = %q, want empty when no default is configured", got)
+	}
+	if _, present := created.Spec.Template.Spec.Containers[0].Resources.Requests[corev1.ResourceEphemeralStorage]; present {
+		t.Fatalf("ephemeral-storage request present with no default configured")
+	}
 }

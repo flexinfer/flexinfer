@@ -316,6 +316,18 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	if resources.Limits == nil {
 		resources.Limits = corev1.ResourceList{}
 	}
+	// Copy the requests map before defaulting so the Model's spec (shared
+	// with the informer cache) is never mutated.
+	requests := corev1.ResourceList{}
+	for name, quantity := range resources.Requests {
+		requests[name] = quantity
+	}
+	if r.ServingDefaultEphemeralStorage != nil {
+		if _, explicit := requests[corev1.ResourceEphemeralStorage]; !explicit {
+			requests[corev1.ResourceEphemeralStorage] = r.ServingDefaultEphemeralStorage.DeepCopy()
+		}
+	}
+	resources.Requests = requests
 	gpuCount := model.Spec.GetGPUCount()
 	if gpuCount > 0 {
 		gpuResourceName := gpuVendor.ResourceName()
@@ -562,12 +574,12 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 				Spec: corev1.PodSpec{
 					NodeSelector: nodeSelector,
 					Tolerations:  tolerations,
-					// Opt-in protection from GPU preemption by lower-priority
-					// ModelCache transform/quant Jobs on the same single-GPU node.
-					// Empty unless the Model sets flexinfer.ai/serving-priority-class
-					// (e.g. "flexinfer-serving-critical" on the radeonvii embed/rerank
-					// plane), so behavior is unchanged for every other model.
-					PriorityClassName: model.Annotations[constants.AnnotationServingPriorityClass],
+					// Protection from scheduler preemption by lower-priority pods
+					// (ModelCache transform/quant Jobs, priority-0 CI job pods) on the
+					// same node: the Model's flexinfer.ai/serving-priority-class wins
+					// when present (an explicit empty value opts out), otherwise the
+					// controller-wide default applies (see ServingDefaultPriorityClass).
+					PriorityClassName: r.servingPriorityClass(model),
 					// ROCm devices (/dev/kfd, /dev/dri/renderD*) are typically 0660 root:render.
 					// Add the render group GID (992 on most systems) to supplementalGroups so
 					// non-root users can access GPU devices without running as root.
@@ -1103,4 +1115,17 @@ func podObjectEqual[T any](a, b *T) bool {
 		return apiequality.Semantic.DeepEqual(a, new(T))
 	}
 	return apiequality.Semantic.DeepEqual(a, b)
+}
+
+// servingPriorityClass returns the PriorityClass for a Model's serving pod: the
+// flexinfer.ai/serving-priority-class annotation when it is present (an explicit
+// empty value means "no PriorityClass" and opts out of the default), otherwise
+// the controller-wide ServingDefaultPriorityClass ("" = none).
+func (r *ModelReconciler) servingPriorityClass(model *aiv1alpha2.Model) string {
+	if model != nil {
+		if value, present := model.Annotations[constants.AnnotationServingPriorityClass]; present {
+			return value
+		}
+	}
+	return r.ServingDefaultPriorityClass
 }

@@ -20,6 +20,7 @@ import (
 	"context"
 	"flag"
 	"os"
+	"strings"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -40,6 +41,7 @@ import (
 	"github.com/flexinfer/flexinfer/controllers"
 	"github.com/flexinfer/flexinfer/pkg/observability"
 	//+kubebuilder:scaffold:imports
+	"k8s.io/apimachinery/pkg/api/resource"
 )
 
 var (
@@ -151,6 +153,13 @@ func main() {
 		// clientset with the ModelCache reconciler above.
 		KubeClient:            kubeClient,
 		ModelImagePullSecrets: controllers.ParseModelImagePullSecrets(os.Getenv("DEFAULT_MODEL_IMAGE_PULL_SECRETS")),
+		// Serving-pod defaults (issue #74, 2026-09-13 incidents): a PriorityClass
+		// so dedicated lanes preempt priority-0 CI job pods, and an
+		// ephemeral-storage request so kubelet disk-pressure eviction ranks them
+		// behind pods that exceed theirs. Both come from the chart's
+		// controller.runtime.servingDefaults; empty disables either.
+		ServingDefaultPriorityClass:    os.Getenv("DEFAULT_SERVING_PRIORITY_CLASS"),
+		ServingDefaultEphemeralStorage: parseOptionalQuantity("DEFAULT_SERVING_EPHEMERAL_STORAGE_REQUEST"),
 	}
 	if err = modelReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Model")
@@ -249,4 +258,20 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// parseOptionalQuantity reads a resource.Quantity from the named environment
+// variable. Unset or empty means "no default" (nil); an unparsable value is a
+// startup error because silently ignoring it would drop a safety default.
+func parseOptionalQuantity(envName string) *resource.Quantity {
+	raw := strings.TrimSpace(os.Getenv(envName))
+	if raw == "" {
+		return nil
+	}
+	quantity, err := resource.ParseQuantity(raw)
+	if err != nil {
+		setupLog.Error(err, "invalid quantity", "env", envName, "value", raw)
+		os.Exit(1)
+	}
+	return &quantity
 }

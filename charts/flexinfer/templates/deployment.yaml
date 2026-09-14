@@ -103,6 +103,16 @@ spec:
             - name: DEFAULT_MODEL_IMAGE_PULL_SECRETS
               value: {{ join "," . | quote }}
             {{- end }}
+            {{- with $controllerRuntime.servingDefaults }}
+            {{- with .priorityClass }}
+            - name: DEFAULT_SERVING_PRIORITY_CLASS
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with .ephemeralStorageRequest }}
+            - name: DEFAULT_SERVING_EPHEMERAL_STORAGE_REQUEST
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
             {{- if $controllerRuntime.flashLoader }}
             - name: DEFAULT_FLASH_LOADER_ENABLED
               value: {{ default false $flashLoader.enabled | quote }}

@@ -24,8 +24,11 @@ const (
 	// transform/quant Jobs that share the same single-GPU node -- e.g. the
 	// radeonvii embed/rerank plane set to "flexinfer-serving-critical" (150000),
 	// above flexinfer-modelcache-transform (100000). The named PriorityClass MUST
-	// already exist in the cluster or the pod fails admission; absent/empty means
-	// no PriorityClass (the default, unchanged for every other model).
+	// already exist in the cluster or the pod fails admission. Since 2026-09-14
+	// the controller applies a fleet default (chart
+	// controller.runtime.servingDefaults.priorityClass, normally
+	// flexinfer-serving-critical) when the annotation is ABSENT; an explicit
+	// empty value opts a Model out (no PriorityClass).
 	AnnotationServingPriorityClass = "flexinfer.ai/serving-priority-class"
 
 	// AnnotationRoutePriority ranks the members of a shared service-label group

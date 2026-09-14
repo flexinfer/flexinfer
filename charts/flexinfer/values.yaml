@@ -69,6 +69,17 @@ controller:
     # Optional imagePullSecrets applied to model pods created by the v1alpha2 controller.
     # Use this when backend/runtime images live in a private registry.
     imagePullSecrets: []
+    # Defaults every dedicated serving pod gets (issue #74, 2026-09-13 incidents).
+    # priorityClass: scheduler preemption of lower-priority pods (ModelCache
+    # transform Jobs, priority-0 CI job pods) on the same node; the Model's
+    # flexinfer.ai/serving-priority-class annotation overrides it (an explicit
+    # empty value opts out). ephemeralStorageRequest: kubelet disk-pressure
+    # eviction ranks pods that exceed their ephemeral-storage request first,
+    # and a pod with no request exceeds it at the first byte of logs; the
+    # Model's own resources.requests.ephemeral-storage wins. Empty disables.
+    servingDefaults:
+      priorityClass: flexinfer-serving-critical
+      ephemeralStorageRequest: "2Gi"
     # Flash-loader defaults used by v1alpha2 model deployments when enabled globally
     # or when a matching v1alpha1 ModelCache enables flashLoader.
     flashLoader:
