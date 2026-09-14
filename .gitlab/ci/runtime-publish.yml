@@ -248,6 +248,9 @@ publish_serving_rocm_gfx1100_native_w4a16:
         - build/runtime.yaml
         - build/scripts/verify_vllm_gfx1100_native_w4a16.py
         - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
+        # 2026-09-14 (issue #74 S2): the image bundles this plugin; a plugin port
+        # must rebuild it (the 08-01 build shipped a plugin broken on 0.26).
+        - build/vllm-qwen35-text-plugin/**/*
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never

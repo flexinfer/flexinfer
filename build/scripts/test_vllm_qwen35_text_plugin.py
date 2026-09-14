@@ -152,7 +152,124 @@ class FakeHFConfig:
             setattr(self, name, value)
 
 
+class Qwen3_5ModelV026:
+    """vLLM 0.26 shape: expert loading is generic; no load_fused_expert_weights."""
+
+
+class Qwen3_5MultiTokenPredictorV026:
+    pass
+
+
+def _register_with(fla_module_name: str, model_cls: type, mtp_cls: type):
+    """Load the plugin against a fake vLLM and run register(); return (plugin, registry)."""
+    registry = FakeRegistry()
+    vllm = types.ModuleType("vllm")
+    vllm.ModelRegistry = registry
+    models = types.ModuleType("vllm.model_executor.models.qwen3_5")
+    models.Qwen3_5MoeForCausalLM = Qwen3_5MoeForCausalLM
+    models.Qwen3_5ForCausalLM = Qwen3_5ForCausalLM
+    models.Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration
+    models.Qwen3_5Model = model_cls
+    mtp_models = types.ModuleType("vllm.model_executor.models.qwen3_5_mtp")
+    mtp_models.Qwen3_5MoeMTP = Qwen3_5MoeMTP
+    mtp_models.Qwen3_5MultiTokenPredictor = mtp_cls
+    config_package = types.ModuleType("vllm.config")
+    speculative = types.ModuleType("vllm.config.speculative")
+    speculative.SpeculativeConfig = SpeculativeConfig
+    torch = types.ModuleType("torch")
+    torch.version = types.SimpleNamespace(hip="7.2")
+    fla = types.ModuleType(fla_module_name)
+    fla.chunk_scaled_dot_kkt_fwd_kernel = FakeKernel
+    fla.chunk_gated_delta_rule_fwd_kernel_h_blockdim64 = FakeKernelTwo
+    auto_gptq = types.ModuleType("vllm.model_executor.layers.quantization.auto_gptq")
+    auto_gptq.AutoGPTQConfig = AutoGPTQConfig
+    fused_moe = types.ModuleType("vllm.model_executor.layers.fused_moe")
+    fused_moe.RoutedExperts = RoutedExperts
+    fused_moe.UnquantizedFusedMoEMethod = UnquantizedFusedMoEMethod
+    linear = types.ModuleType("vllm.model_executor.layers.linear")
+    linear.LinearBase = LinearBase
+    linear.UnquantizedLinearMethod = UnquantizedLinearMethod
+    fake_modules = {
+        "torch": torch,
+        "vllm": vllm,
+        config_package.__name__: config_package,
+        speculative.__name__: speculative,
+        models.__name__: models,
+        mtp_models.__name__: mtp_models,
+        fla.__name__: fla,
+        auto_gptq.__name__: auto_gptq,
+        fused_moe.__name__: fused_moe,
+        linear.__name__: linear,
+    }
+    # Make sure the *other* FLA layout is absent so the resolver has to pick.
+    for name in (
+        "vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt",
+        "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+    ):
+        if name != fla_module_name:
+            fake_modules[name] = None
+    saved = {name: sys.modules.get(name) for name in fake_modules}
+    sys.modules.update(fake_modules)
+    old_arch = os.environ.get("PYTORCH_ROCM_ARCH")
+    os.environ["PYTORCH_ROCM_ARCH"] = "gfx1100"
+    try:
+        spec = importlib.util.spec_from_file_location("qwen35_text_plugin", PLUGIN)
+        assert spec and spec.loader
+        plugin = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(plugin)
+        plugin.register()
+    finally:
+        if old_arch is None:
+            os.environ.pop("PYTORCH_ROCM_ARCH", None)
+        else:
+            os.environ["PYTORCH_ROCM_ARCH"] = old_arch
+        for name, module in saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+    return plugin, registry
+
+
 class PluginTest(unittest.TestCase):
+    def test_registers_on_vllm_026_fla_layout(self) -> None:
+        """vLLM >= 0.26 ships the GDN kernels under vllm.third_party."""
+        FakeKernel.fn.configs = [FakeConfig(32, 2, 2), FakeConfig(32, 2, 4)]
+        FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
+        plugin, registry = _register_with(
+            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+            Qwen3_5Model,
+            Qwen3_5MultiTokenPredictor,
+        )
+        self.assertIn("Qwen3_5ForCausalLM", registry.models)
+        self.assertEqual(len(FakeKernel.fn.configs), 1)
+        self.assertEqual(len(FakeKernelTwo.configs), 1)
+        self.assertTrue(Qwen3_5Model.__dict__.get("_flexinfer_gptq_expert_names"))
+
+    def test_registers_without_fused_expert_loader(self) -> None:
+        """vLLM 0.26 has no load_fused_expert_weights: the hook is skipped, not fatal."""
+        FakeKernel.fn.configs = [FakeConfig(32, 2, 2), FakeConfig(32, 2, 4)]
+        FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
+        plugin, registry = _register_with(
+            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+            Qwen3_5ModelV026,
+            Qwen3_5MultiTokenPredictorV026,
+        )
+        self.assertIn("Qwen3_5ForCausalLM", registry.models)
+        self.assertIn("Qwen3_5MoeForCausalLM", registry.models)
+        self.assertFalse(hasattr(Qwen3_5ModelV026, "load_fused_expert_weights"))
+        self.assertFalse(plugin._patch_gptq_expert_loader(Qwen3_5ModelV026))
+
+    def test_unknown_fla_layout_is_fatal(self) -> None:
+        """A vLLM with neither known kernel path must fail loudly, not skip pruning."""
+        with self.assertRaises(RuntimeError) as ctx:
+            _register_with(
+                "vllm.somewhere_else.chunk_scaled_dot_kkt",
+                Qwen3_5Model,
+                Qwen3_5MultiTokenPredictor,
+            )
+        self.assertIn("_FLA_OPS_PREFIXES", str(ctx.exception))
+
     def test_registers_text_architecture_with_hybrid_contract(self) -> None:
         registry = FakeRegistry()
         vllm = types.ModuleType("vllm")
