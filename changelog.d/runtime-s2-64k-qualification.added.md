@@ -1,0 +1,1 @@
+Add bounded long-context, tool round-trip, cancellation, and concurrent-load probes for the isolated vLLM 0.26 canary. The debug manifest now exercises two request slots to match the intended 64K serving configuration; production rollout still requires node-specific validation.
