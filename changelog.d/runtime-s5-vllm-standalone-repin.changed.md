@@ -1,0 +1,1 @@
+Standalone gfx1100 vLLM image (`flexinfer/vllm` qwen35-patched) rebuilt by CI from master and repinned to `7ac257f3` as the gfx1100 GPUProfile `backends.vllm.image` default, `gfx1100Image` and both gfx1100 imagePrewarm lists (issue #74 S5); previous pin `a9b306af` (2026-05-20) kept as rollback.
