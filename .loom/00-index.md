@@ -94,10 +94,11 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       passed (retrieval +2.5 min, voice +5 min, cache mtimes untouched). Both priority GPU lanes now run
       images built by CI from master with the incident #2 fix.
 - [ ] #74 remaining:
-      S2 = rebuilt `ad93ae72` passes isolated 64K startup/HTTP smoke at 0.96 GPU utilization
-      after a fresh compile (!1058); the original 0.94 attempt fails KV capacity. Evidence:
-      `iteration-runtime-s2-v026-2026-09-14.md`. Production pins await their actual context,
-      LoRA, tool, and soak gates (128K is not certified). S4 proposals and nightly Trivy shipped;
+      S2 = rebuilt `ad93ae72` passes isolated 64K/two-request qualification at 0.96:
+      3/3 keys at 65,365 tokens in JSON mode, tools, cancellation, and an 82-request soak.
+      Evidence: `iteration-runtime-s2-64k-2026-09-14.md`; original smoke in !1058.
+      Production pins await target-node validation, longer workload soak, and their actual
+      context/LoRA envelopes (128K is not certified). S4 proposals and nightly Trivy shipped;
       Draft-MR creation waits on `FLEXINFER_PROMOTE_MR_TOKEN`. S5 standalone vLLM rebuilt/repinned
       in !1060. Remaining CI work: mutable debug pins and gate → `--strict` after observation.
 - [x] Controller defaults (2026-09-14): every dedicated serving pod gets `flexinfer-serving-critical`

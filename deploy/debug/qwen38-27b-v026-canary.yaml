@@ -15,7 +15,10 @@
 # HTTP probes (the script enforces a 10-minute wall-clock limit):
 #   kubectl -n flexinfer-system exec -i deploy/qwen38-27b-v026-canary -- \
 #     python3 - --model qwen38-27b-v026-canary < scripts/verify-vllm-canary.py
-# Kill-test (matrix row gfx1100-native-w4a16-2026-09-14-096): pod Ready; log shows
+# Extended two-request probes: scripts/qualify-vllm-canary.py (copy alongside
+# verify-vllm-canary.py in the pod). Evidence and instructions:
+# .loom/iteration-runtime-s2-64k-2026-09-14.md.
+# Kill-test (matrix row gfx1100-native-w4a16-2026-09-14-seqs2): pod Ready; log shows
 # "flexinfer: registered text-only Qwen3.5 … fla_autotuners=N>0" and
 # RDNA3W4A16LinearKernel; KV pool >= 65536 tokens fp8 at 64K; 3/3 probes coherent;
 # decode >= 30 tok/s; 2.3K-token prompt TTFT < 3 s. Pass -> move the 5 active
@@ -55,9 +58,9 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      # This path now contains the measured run's graphs. Choose a new empty
-      # canary-only path to repeat fresh-compilation qualification.
-      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v026-cold096-5930k
+      # Separate from the one-sequence smoke cache. Choose a new empty path
+      # when repeating first-boot qualification after this run.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v026-seqs2-5930k
       sizeLimit: 4Gi
   gpu:
     vendor: amd
@@ -85,6 +88,7 @@ spec:
     # unified-attention 3D split-KV decode path.
     attentionBackend: TRITON_ATTN
     warmPolicy: primary
+    dedicatedDeployment: true
     # Preserve the workhorse's GPTQ-shaped AutoRound override and exact INT4
     # tensor census. in_proj_a/b, conv1d, norms, and lm_head remain FP16.
     quantization: gptq
@@ -96,7 +100,8 @@ spec:
     # First qualification is 64K. The production workhorse's 128K needle
     # certificate belongs to v0.23 and must be repeated before its pin moves.
     maxModelLen: 65536
-    maxNumSeqs: 1
+    # Match the 64K XTX lane's two simultaneous requests.
+    maxNumSeqs: 2
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
     schedulerReserveFullISL: true
