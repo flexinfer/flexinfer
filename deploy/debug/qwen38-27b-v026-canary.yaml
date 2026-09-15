@@ -1,0 +1,144 @@
+# DEBUG CANARY — issue #74 S2 (vLLM currency), 2026-09-14. NOT in the models
+# kustomization: apply by hand, delete when the row is decided.
+#
+# Qualifies the rebuilt v0.26 native-W4A16 runtime (plugin 0.8.0, register()
+# verified at build time) on the 5930k with the workhorse's exact artifact and
+# 64K canary envelope, before any production pin moves. The production workhorse
+# remains qualified at 128K; a 64K pass does not certify its full context window.
+# Priority 510 > the workhorse's 500
+# and warmPolicy primary + minReplicas 1: the shared 5930k-textgen election
+# reclaims the idle card for this canary, and Mills research falls back to the XTX lane
+# (FLEXINFER_WEAVER_MODEL_FALLBACKS) for the ~20 min window. No serviceLabels,
+# litellm disabled: use direct in-pod HTTP probes. Proxy activation is parked
+# with this flag, so ondemand would leave the canary queued behind a Ready lane.
+#
+# HTTP probes (the script enforces a 10-minute wall-clock limit):
+#   kubectl -n flexinfer-system exec -i deploy/qwen38-27b-v026-canary -- \
+#     python3 - --model qwen38-27b-v026-canary < scripts/verify-vllm-canary.py
+# Kill-test (matrix row gfx1100-native-w4a16-2026-09-14-096): pod Ready; log shows
+# "flexinfer: registered text-only Qwen3.5 … fla_autotuners=N>0" and
+# RDNA3W4A16LinearKernel; KV pool >= 65536 tokens fp8 at 64K; 3/3 probes coherent;
+# decode >= 30 tok/s; 2.3K-token prompt TTFT < 3 s. Pass -> move the 5 active
+# 2e9652ed pins only after their context, LoRA, tool, and soak gates pass. On
+# completion (pass or fail), delete the canary Model; retain this manifest as
+# the reproducible probe. The workhorse reclaims the card on its next demand.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-v026-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    # Match the production serving class on this shared CI/GPU node.
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
+    flexinfer.ai/promotion-state: debug-canary-v026-native-w4a16
+spec:
+  backend: vllm
+  # Rebuilt vLLM 0.26 gfx1100 native-W4A16 runtime (rocm-gfx1100-v026-native-
+  # w4a16-a106504c, master pipeline 26906, 2026-09-14 18:23Z): plugin 0.8.0 on
+  # 0.26's flash-linear-attention layout, register() verified at build time.
+  # The workhorse still pins the unreproducible 0.23 digest 2e9652ed.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    # 19.0 GB artifact. Serving needs NO on-disk config surgery (hfOverrides
+    # rewrites quantization_config in-process); only an MTP retry does.
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    # Stage into the canary's own node-local hostPath; do not put 19 GB of
+    # shards into tmpfs or reuse the production model's config.json.
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # This path now contains the measured run's graphs. Choose a new empty
+      # canary-only path to repeat fresh-compilation qualification.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v026-cold096-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # The bounded test takes the idle card after cache staging. VACE (600)
+    # can still preempt on demand; Mills has the XTX serving-name fallback.
+    priority: 510
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    # minReplicas keeps this probe resident; idleTimeout is not a cleanup
+    # deadline. The operator must delete the Model after the bounded test.
+    idleTimeout: 30m
+    # First activation on a cold cache covers the 19 GB HF prefetch + fresh
+    # torch.compile (~5 min); cached restarts are ~3 min.
+    coldStartTimeout: 25m
+  config:
+    # Observed source revision for this run. All 18 non-README source file
+    # ETags match the production workhorse's 17c77026 revision.
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    # RDNA3 long-context decode fix (research doc 8d/!967): ROCm default
+    # ROCM_ATTN has no KV-length decode parallelism; TRITON_ATTN engages the
+    # unified-attention 3D split-KV decode path.
+    attentionBackend: TRITON_ATTN
+    warmPolicy: primary
+    # Preserve the workhorse's GPTQ-shaped AutoRound override and exact INT4
+    # tensor census. in_proj_a/b, conv1d, norms, and lm_head remain FP16.
+    quantization: gptq
+    # Match the qualified VL-layout architecture in-process; avoid on-disk
+    # config surgery (issue #74 incident #2).
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    # First qualification is 64K. The production workhorse's 128K needle
+    # certificate belongs to v0.23 and must be repeated before its pin moves.
+    maxModelLen: 65536
+    maxNumSeqs: 1
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    # Original 0.94 fresh compile left only 1.92 GiB KV: insufficient for 64K.
+    gpuMemoryUtilization: "0.96"
+    # Match the production FP8 E4M3 cache format; measure the new runtime's
+    # actual pool and decode rate rather than inheriting the v0.23 result.
+    kvCacheDtype: fp8_e4m3
+    calculateKvScales: false
+    enforceEager: false
+    enablePrefixCaching: false
+    # MTP stays off; this probe qualifies target-model inference only.
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    # The probes omit request-level kwargs to test this non-thinking default.
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    # Keep the production parsers configured; tool calling needs its own test.
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-v026-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      # Match the production disk-pressure eviction guard.
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Hidden from discovery; use direct in-pod HTTP after warm-primary startup.
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-v026-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

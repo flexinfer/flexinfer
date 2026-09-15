@@ -94,15 +94,16 @@ Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900
       passed (retrieval +2.5 min, voice +5 min, cache mtimes untouched). Both priority GPU lanes now run
       images built by CI from master with the incident #2 fix.
 - [ ] #74 remaining:
-      S2 = rebuild the native-W4A16 image with the plugin ported to 0.26's FLA layout (or vLLM ≥ 0.28),
-      qualify on a debug canary, then move the 5 active `2e9652ed` pins + prewarm via
-      `promotion.model_manifests`; S4 promote-MR bot (proposals job shipped 09-14 as `runtime_promotion_proposals`;
-      Draft-MR creation waits on a `FLEXINFER_PROMOTE_MR_TOKEN`); S5 standalone vLLM rebuild + repin; gate →
-      `--strict`.
+      S2 = rebuilt `ad93ae72` passes isolated 64K startup/HTTP smoke at 0.96 GPU utilization
+      after a fresh compile (!1058); the original 0.94 attempt fails KV capacity. Evidence:
+      `iteration-runtime-s2-v026-2026-09-14.md`. Production pins await their actual context,
+      LoRA, tool, and soak gates (128K is not certified). S4 proposals and nightly Trivy shipped;
+      Draft-MR creation waits on `FLEXINFER_PROMOTE_MR_TOKEN`. S5 standalone vLLM rebuilt/repinned
+      in !1060. Remaining CI work: mutable debug pins and gate → `--strict` after observation.
 - [x] Controller defaults (2026-09-14): every dedicated serving pod gets `flexinfer-serving-critical`
       and a 2Gi ephemeral-storage request unless the Model sets its own; `.gitlab-ci.yml` publish jobs
       non-interruptible (!1045). S2 plugin ported to vLLM 0.26 (register() verified at build time);
-      rebuilt native-W4A16 digest pending qualification on a 5930k debug canary.
+      rebuilt native-W4A16 digest smoke-tested on the 5930k; full lane qualification remains above.
 - [ ] Video lane: LTX-2.5 surveyed (research §6b) — 22B only, zero RDNA3 evidence; canary needs
       operator license acceptance (gated repo), diffusers 0.40 / transformers 5.5 image, and an
       `ltx2` pipeline mode in server-diffusers.py. Kill-test defined in §6b.
