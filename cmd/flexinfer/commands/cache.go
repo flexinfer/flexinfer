@@ -376,14 +376,28 @@ func runCacheWait(cmd *cobra.Command, args []string) error {
 
 // waitForCacheReady polls until the model's cache is staged, its staging job
 // fails, or the deadline passes.
+//
+// The signal context is built once and reused: ctx() registers a fresh signal
+// handler on every call and discards its cancel func, so calling it per poll
+// would leak one handler per iteration over a wait measured in tens of minutes.
 func waitForCacheReady(cmd *cobra.Command, k8sClient client.Client, key types.NamespacedName) error {
 	out := cmd.OutOrStdout()
 	deadline := time.Now().Add(cacheWaitTimeout)
 	lastMessage := ""
 
+	waitCtx := ctx()
+	interval := cacheWaitInterval
+	if interval <= 0 {
+		// time.NewTicker panics on a non-positive duration, and --interval 0
+		// would otherwise busy-loop the API server anyway.
+		interval = 10 * time.Second
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+
 	for {
 		model := &aiv1alpha2.Model{}
-		if err := k8sClient.Get(ctx(), key, model); err != nil {
+		if err := k8sClient.Get(waitCtx, key, model); err != nil {
 			return fmt.Errorf("failed to get Model %q: %w", key.Name, err)
 		}
 
@@ -417,9 +431,9 @@ func waitForCacheReady(cmd *cobra.Command, k8sClient client.Client, key types.Na
 		}
 
 		select {
-		case <-ctx().Done():
+		case <-waitCtx.Done():
 			return fmt.Errorf("interrupted while waiting for %s cache", key.Name)
-		case <-time.After(cacheWaitInterval):
+		case <-ticker.C:
 		}
 	}
 }
