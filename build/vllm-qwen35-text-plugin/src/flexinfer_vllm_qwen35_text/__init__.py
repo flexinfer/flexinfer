@@ -1,7 +1,23 @@
-"""Complete vLLM's registration for text-only Qwen3.5 models."""
+"""Complete vLLM's registration for text-only Qwen3.5 models.
+
+ROCm autotune pruning and the hybrid-state contract live in
+``flexinfer_vllm_common``, shared with every other FlexInfer vLLM plugin so the
+two copies cannot drift. Install ``build/vllm-plugin-common`` before this
+package.
+"""
 
 import os
-import sys
+
+from flexinfer_vllm_common import apply_hybrid_state
+from flexinfer_vllm_common.hybrid import MAMBA_STATE_METHODS as _MAMBA_METHODS
+from flexinfer_vllm_common.rocm import (
+    FLA_KKT_MODULE as _FLA_KKT_MODULE,
+    FLA_OPS_PREFIXES as _FLA_OPS_PREFIXES,
+    import_fla_kkt_module as _import_fla_kkt_module,
+    needs_safe_fla_config as _needs_safe_fla_config,
+    prune_fla_configs_if_needed,
+    select_rocm_safe_fla_configs as _select_rocm_safe_fla_configs,
+)
 
 ARCHITECTURES = {
     "Qwen3_5ForCausalLM": "dense",
@@ -12,45 +28,9 @@ _TEXT_ONLY_ROPE_PARAMETERS = {
     "rope_theta": 10_000_000,
     "partial_rotary_factor": 0.25,
 }
-_MAMBA_METHODS = (
-    "get_mamba_state_shape_from_config",
-    "get_mamba_state_dtype_from_config",
-    "get_mamba_state_copy_func",
-)
 # vLLM's flash-linear-attention (GDN) kernels moved between releases:
 #   <= 0.23  vllm.model_executor.layers.fla.ops.*
 #   >= 0.26  vllm.third_party.flash_linear_attention.ops.*
-# Import the KKT kernel from whichever layout exists so the autotuner pruning
-# below sees the modules the Qwen3.5 GDN prefill path actually loads. A
-# layout this list does not know is a hard error: silently skipping the
-# import would leave the 4-stage autotune configs in place and the engine
-# stuck in LLVM codegen on consumer ROCm (the 2026-09-13 S2 canary failed
-# before this point with ModuleNotFoundError on the old path).
-_FLA_OPS_PREFIXES = (
-    "vllm.model_executor.layers.fla.ops.",
-    "vllm.third_party.flash_linear_attention.ops.",
-)
-_FLA_KKT_MODULE = "chunk_scaled_dot_kkt"
-
-
-def _import_fla_kkt_module():
-    """Import the FLA KKT kernel module from the layout this vLLM ships."""
-    import importlib
-
-    errors = []
-    for prefix in _FLA_OPS_PREFIXES:
-        name = prefix + _FLA_KKT_MODULE
-        try:
-            return importlib.import_module(name)
-        except ModuleNotFoundError as exc:
-            errors.append(f"{name}: {exc}")
-    raise RuntimeError(
-        "flexinfer_vllm_qwen35_text: no known flash-linear-attention layout "
-        "in this vLLM; extend _FLA_OPS_PREFIXES. Tried: " + "; ".join(errors)
-    )
-
-
-
 def _rename_expert_weights(weights):
     for name, weight in weights:
         name = name.replace(
@@ -66,45 +46,6 @@ def _gptq_expert_parameter_name(name: str) -> str:
                 f"{projection}_weight.{suffix}", f"{projection}_{suffix}"
             )
     return name
-
-
-def _select_rocm_safe_fla_configs() -> int:
-    """Collapse loaded FLA autotuners to conservative consumer-ROCm configs.
-
-    The 4-stage variant can remain in LLVM codegen indefinitely on consumer
-    ROCm targets. Qwen3.5's GDN prefill path contains several independent
-    autotuners, so pruning only KKT still leaves the engine stuck compiling
-    ``chunk_delta_h`` and later kernels. Preserve the first config among the
-    lowest stage/warp candidates for every loaded FLA autotuner.
-    """
-    pruned: set[int] = set()
-    for module_name, module in tuple(sys.modules.items()):
-        if not module_name.startswith(_FLA_OPS_PREFIXES) or module is None:
-            continue
-        for value in vars(module).values():
-            candidate = value
-            for _ in range(5):
-                configs = getattr(candidate, "configs", None)
-                if isinstance(configs, (list, tuple)) and configs:
-                    candidate_id = id(candidate)
-                    if candidate_id not in pruned:
-                        _, safe = min(
-                            enumerate(configs),
-                            key=lambda item: (
-                                getattr(item[1], "num_stages", 1) or 1,
-                                getattr(item[1], "num_warps", 1) or 1,
-                                item[0],
-                            ),
-                        )
-                        candidate.configs = [safe]
-                        pruned.add(candidate_id)
-                    break
-                candidate = getattr(candidate, "fn", None)
-                if candidate is None:
-                    break
-    if not pruned:
-        raise RuntimeError("vLLM FLA safe autotune configurations are missing")
-    return len(pruned)
 
 
 def _strict_env_flag(name: str) -> bool:
@@ -147,20 +88,6 @@ def _patch_qwen35_text_mtp_config(speculative_config) -> None:
 
     speculative_config.hf_config_override = staticmethod(hf_config_override)
     speculative_config._flexinfer_qwen35_text_mtp = True
-
-
-def _needs_safe_fla_config(torch_module) -> bool:
-    """Return whether this process targets a consumer ROCm architecture."""
-    configured = os.environ.get("PYTORCH_ROCM_ARCH", "")
-    if configured:
-        return configured in {"gfx906", "gfx1100"}
-    try:
-        if torch_module.cuda.is_available():
-            arch = torch_module.cuda.get_device_properties(0).gcnArchName
-            return str(arch).split(":", 1)[0] in {"gfx906", "gfx1100"}
-    except (AttributeError, RuntimeError):
-        pass
-    return False
 
 
 def _patch_qwen35_mtp_gptq(
@@ -284,9 +211,7 @@ def register() -> None:
     )
     from vllm.model_executor.models.qwen3_5_mtp import Qwen3_5MultiTokenPredictor
 
-    safe_fla_kernels = 0
-    if torch.version.hip is not None and _needs_safe_fla_config(torch):
-        safe_fla_kernels = _select_rocm_safe_fla_configs()
+    safe_fla_kernels = prune_fla_configs_if_needed(torch)
     _patch_qwen35_text_mtp_config(SpeculativeConfig)
     quantized_mtp_experts = _strict_env_flag(
         "FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ"
@@ -300,14 +225,10 @@ def register() -> None:
         quantized_mtp_experts=quantized_mtp_experts,
     )
 
-    for model_class in (Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM):
-        model_class.is_hybrid = True
-        for method_name in _MAMBA_METHODS:
-            setattr(
-                model_class,
-                method_name,
-                Qwen3_5ForConditionalGeneration.__dict__[method_name],
-            )
+    apply_hybrid_state(
+        (Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM),
+        Qwen3_5ForConditionalGeneration,
+    )
 
     if not getattr(Qwen3_5MoeForCausalLM, "_flexinfer_expert_names", False):
         original_load_weights = Qwen3_5MoeForCausalLM.load_weights

@@ -268,7 +268,8 @@ class PluginTest(unittest.TestCase):
                 Qwen3_5Model,
                 Qwen3_5MultiTokenPredictor,
             )
-        self.assertIn("_FLA_OPS_PREFIXES", str(ctx.exception))
+        self.assertIn("FLA_OPS_PREFIXES", str(ctx.exception))
+        self.assertIn("flexinfer_vllm_common", str(ctx.exception))
 
     def test_registers_text_architecture_with_hybrid_contract(self) -> None:
         registry = FakeRegistry()

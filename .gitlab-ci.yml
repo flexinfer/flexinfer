@@ -545,6 +545,10 @@ vllm_qwen35_text_plugin_test:
   stage: test
   image: python:3.12-slim
   needs: []
+  variables:
+    # The plugins import the shared helpers at module scope; point at the
+    # source tree so the job needs no install step.
+    PYTHONPATH: build/vllm-plugin-common/src
   script:
     - python3 build/scripts/test_vllm_qwen35_text_plugin.py
     - python3 -m py_compile build/vllm-qwen35-text-plugin/src/flexinfer_vllm_qwen35_text/__init__.py
@@ -554,6 +558,7 @@ vllm_qwen35_text_plugin_test:
         - .gitlab-ci.yml
         - build/Dockerfile.vllm-rocm-v023-qwen35-text
         - build/Dockerfile.vllm-rocm-gfx906-qwen35-mtp
+        - build/vllm-plugin-common/**/*
         - build/vllm-qwen35-text-plugin/**/*
         - build/scripts/install_vllm_gfx906_compat.py
         - build/scripts/test_vllm_qwen35_text_plugin.py
@@ -578,6 +583,30 @@ propose_runtime_promotions_test:
         - scripts/test_propose_runtime_promotions.py
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *propose-runtime-promotions-changes
+
+vllm_qwen35_seqcls_plugin_test:
+  stage: test
+  image: python:3.12-slim
+  needs: []
+  variables:
+    PYTHONPATH: build/vllm-plugin-common/src
+  script:
+    - python3 build/scripts/test_vllm_qwen35_seqcls_plugin.py
+    - python3 -m py_compile build/vllm-qwen35-seqcls-plugin/src/flexinfer_vllm_qwen35_seqcls/__init__.py
+    - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/__init__.py
+    - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/rocm.py
+    - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/labels.py
+    - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/hybrid.py
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &qwen35-seqcls-plugin-changes
+        - .gitlab-ci.yml
+        - build/Dockerfile.runtime-serving-native-w4a16
+        - build/vllm-plugin-common/**/*
+        - build/vllm-qwen35-seqcls-plugin/**/*
+        - build/scripts/test_vllm_qwen35_seqcls_plugin.py
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *qwen35-seqcls-plugin-changes
 
 mtp_expert_quantizer_test:
   stage: test

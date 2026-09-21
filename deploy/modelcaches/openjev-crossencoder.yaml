@@ -1,0 +1,35 @@
+---
+# Materialise AlexWortega/openjev on a shared PVC.
+#
+# This exists because the platform has no way to point a Model at a SUBFOLDER of
+# a repo: `spec.source` is handed to the runtime as-is (HF:// is trimmed to
+# org/model), and openjev keeps all four checkpoints in subfolders with no
+# config.json at the repo root. Caching the repo once and addressing the
+# subfolder as a PATH is the same shape the existing Qwen3.5 lanes already use
+# (`pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn`), and needs no
+# platform change: the proxy's pvc:// resolver splits only on the FIRST slash,
+# so everything after the claim name is a path and may contain subdirectories.
+#
+# After this cache is Ready the lane addresses one checkpoint with, e.g.:
+#   source: pvc://llm-models-nfs/openjev/qwen3.5-0.8b-nli-v2s-long
+#
+# NOT in kustomization.yaml: apply deliberately when the lane is wanted.
+apiVersion: ai.flexinfer/v1alpha1
+kind: ModelCache
+metadata:
+  name: openjev-crossencoder
+  namespace: flexinfer-system
+  annotations:
+    # Pin the revision. The repo was published 2026-09-16 and amended again on
+    # 2026-09-21; a cross-encoder that silently changes its label calibration
+    # under a live judge is exactly the failure we do not want.
+    flexinfer.ai/source-revision: "f004f37e52695d6ddfb914a64dbf93942839ba1e"
+spec:
+  source: "HF://AlexWortega/openjev"
+  storageStrategy: SharedPVC
+  # 0.8B 1.71 GB + 4B v2 9.08 GB + 4B v1 9.08 GB + 35B MoE 69.2 GB + headroom.
+  # Drop to ~30Gi if the 35B variant is never wanted; it does not fit 24 GB.
+  storageSize: "120Gi"
+  clusterStorageClassName: nvme-1r-gpu
+  secretRef: "hf-token"
+  modelPath: "openjev"
