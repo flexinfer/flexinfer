@@ -30,6 +30,19 @@ metadata:
     flexinfer.ai/serve-paths: /v1/rerank,/v1/score,/classify,/pooling
 spec:
   backend: vllm
+  # The plugin lives in THIS image, so the pin is load-bearing, not cosmetic.
+  # Without spec.image the operator falls back to the gfx1100 GPUProfile
+  # default (registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3...), a
+  # different image with no FlexInfer plugins in it — so
+  # Qwen3_5ForSequenceClassification would never be registered and the lane
+  # would fail to resolve the architecture at all.
+  #
+  # rocm-gfx1100-v026-native-w4a16-497647ef, built 2026-09-21 by
+  # publish_serving_rocm_gfx1100_native_w4a16. This is also the first v0.26
+  # native-W4A16 build whose bundled text plugin loads: the 08-01 build was
+  # rolled back on 2026-09-13 because it imported an FLA module path vLLM 0.26
+  # no longer ships. The shared flexinfer_vllm_common resolves either layout.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:a28ef662bfe6e0640e83e4c48b41f4e2b773edd395f3c9f5f70c2505481774a2
   source: pvc://llm-models-nfs/openjev/qwen3.5-0.8b-nli-v2s-long
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
