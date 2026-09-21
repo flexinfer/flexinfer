@@ -20,6 +20,14 @@ COPY build/scripts/install_vllm_gfx906_compat.py /tmp/install_vllm_gfx906_compat
 RUN python3 /tmp/install_vllm_gfx906_compat.py \
     && rm -f /tmp/install_vllm_gfx906_compat.py
 
+# Shared helpers for FlexInfer's vLLM general plugins (ROCm FLA autotune
+# pruning, composite-config label resolution, hybrid-state wiring). Every
+# plugin below imports this at module scope, and the plugin installs use
+# --no-deps, so it must be installed FIRST.
+COPY build/vllm-plugin-common /opt/flexinfer/vllm-plugin-common
+RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/vllm-plugin-common \
+    && python3 -c 'import flexinfer_vllm_common; assert flexinfer_vllm_common.FLA_OPS_PREFIXES'
+
 COPY build/vllm-qwen35-text-plugin /opt/flexinfer/qwen35-text-plugin
 RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-text-plugin \
     && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_text" for ep in entry_points(group="vllm.general_plugins"))'

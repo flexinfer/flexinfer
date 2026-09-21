@@ -58,9 +58,27 @@ RUN --mount=type=cache,target=/root/.cache/ccache \
 # Install FlexInfer's existing general plugin so the extracted
 # Qwen3_5TextConfig artifact resolves to Qwen3_5ForCausalLM in both the API and
 # EngineCore processes instead of falling through to a vision_config access.
+# Shared helpers for FlexInfer's vLLM general plugins (ROCm FLA autotune
+# pruning, composite-config label resolution, hybrid-state wiring). Every
+# plugin below imports this at module scope, and the plugin installs use
+# --no-deps, so it must be installed FIRST.
+COPY build/vllm-plugin-common /opt/flexinfer/vllm-plugin-common
+RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/vllm-plugin-common \
+    && python3 -c 'import flexinfer_vllm_common; assert flexinfer_vllm_common.FLA_OPS_PREFIXES'
+
 COPY build/vllm-qwen35-text-plugin /opt/flexinfer/qwen35-text-plugin
 RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-text-plugin \
     && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_text" for ep in entry_points(group="vllm.general_plugins"))'
+
+# Register Qwen3.5 sequence-classification checkpoints (cross-encoder NLI /
+# rerank) as vLLM POOLING models. Pre-wrapping with as_seq_cls_model means
+# --runner auto resolves to pooling with no CLI flag and no backend change.
+# The build-time assertion covers the whole contract: the entry point is
+# discoverable, both architectures reach the registry, and they report as
+# pooling models. No GPU needed.
+COPY build/vllm-qwen35-seqcls-plugin /opt/flexinfer/qwen35-seqcls-plugin
+RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-seqcls-plugin \
+    && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_seqcls" for ep in entry_points(group="vllm.general_plugins"))'
 
 COPY build/scripts/verify_vllm_gfx1100_native_w4a16.py /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
 

@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flexinfer-vllm-qwen35-seqcls"
+version = "0.1.0"
+description = "Register Qwen3.5 cross-encoder sequence-classification checkpoints as vLLM pooling models"
+requires-python = ">=3.10"
+# Shared plugin helpers. Install build/vllm-plugin-common BEFORE this package;
+# it is a local path dependency, not published to an index.
+dependencies = ["flexinfer-vllm-plugin-common>=0.1.0"]
+
+[project.entry-points."vllm.general_plugins"]
+flexinfer_qwen35_seqcls = "flexinfer_vllm_qwen35_seqcls:register"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

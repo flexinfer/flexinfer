@@ -1,0 +1,51 @@
+---
+# openjev 0.8B cross-encoder NLI, served by vLLM as a POOLING model.
+#
+# Registration comes from build/vllm-qwen35-seqcls-plugin (sibling of
+# vllm-qwen35-text-plugin, sharing build/vllm-plugin-common): it pre-wraps the
+# Qwen3.5 causal class with as_seq_cls_model and registers it under
+# Qwen3_5ForSequenceClassification, so vLLM resolves `--runner auto` to pooling
+# with no extra CLI flag and no backend change.
+#
+# This lane answers /v1/rerank, /v1/score and /classify with a 3-class NLI
+# verdict (contradiction / entailment / neutral). It is NOT a chat model: the
+# checkpoint has no lm_head, hence serve-paths and litellm disabled.
+#
+# The source is a PVC PATH, not HF://, because the checkpoint lives in a
+# subfolder and the platform cannot express that on an HF source. See
+# deploy/modelcaches/openjev-crossencoder.yaml.
+#
+# NOT in kustomization.yaml: the plugin must be live in the serving image and
+# the logit-parity check must pass before this is applied. The verified fp32
+# reference is the 2026-09-21 gfx1100 kill-test (0/10 argmax flips, worst
+# probability delta 1e-6 against Apple Silicon).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: openjev-0p8b-crossencoder-gfx1100
+  namespace: flexinfer-system
+  annotations:
+    # Non-chat lane: refuse everything except the pooling routers, so a stray
+    # chat request fails fast instead of 500-ing inside vLLM.
+    flexinfer.ai/serve-paths: /v1/rerank,/v1/score,/classify,/pooling
+spec:
+  backend: vllm
+  source: pvc://llm-models-nfs/openjev/qwen3.5-0.8b-nli-v2s-long
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 10m
+  litellm:
+    # A 3-class classifier is not an OpenAI-shaped chat/embedding model.
+    enabled: false
+  config:
+    dtype: half
+    # Cross-encoder inputs are one premise plus one hypothesis; 4k is generous
+    # for the 0.8B v2s-long variant and keeps the KV/pooling footprint small.
+    maxModelLen: 4096
+  resources:
+    limits:
+      amd.com/gpu: 1
