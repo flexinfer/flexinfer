@@ -69,6 +69,13 @@ const (
 	AnnotationVRAMEstimate  = "flexinfer.ai/gpu.vram-estimate-mb"
 	AnnotationKVCacheUsage  = "flexinfer.ai/kv-cache-usage"
 
+	// AnnotationPrefetchRequestedAt requests an immediate cache prefetch on a
+	// Model, whatever spec.cache.prefetch.policy says. The value is an RFC3339
+	// timestamp; the controller honors a request strictly newer than
+	// status.cache.prefetchRequestedAt, so re-applying the same manifest does
+	// not replay it. A request also clears a Failed staging Job so it retries.
+	AnnotationPrefetchRequestedAt = "flexinfer.ai/prefetch-requested-at"
+
 	// AnnotationForceImageUpdate, when "true" on a ModelCache, bypasses the
 	// imageDriftGraceWindow and lets the controller preempt a running
 	// quantization job to pick up the current GPUProfile image. Used for
