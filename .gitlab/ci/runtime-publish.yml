@@ -251,6 +251,14 @@ publish_serving_rocm_gfx1100_native_w4a16:
         # 2026-09-14 (issue #74 S2): the image bundles this plugin; a plugin port
         # must rebuild it (the 08-01 build shipped a plugin broken on 0.26).
         - build/vllm-qwen35-text-plugin/**/*
+        # 2026-09-21: keep this list equal to the COPY lines in the Dockerfile.
+        # The image now bundles three packages, and the two below were missing:
+        # a change to either would have shipped nothing, which is the same
+        # failure the 08-01 build hit. vllm-plugin-common is the worst to miss
+        # because every plugin imports it at module scope, so a regression
+        # there breaks the whole image while looking like a no-op commit.
+        - build/vllm-plugin-common/**/*
+        - build/vllm-qwen35-seqcls-plugin/**/*
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
       when: manual
     - when: never
