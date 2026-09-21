@@ -59,6 +59,27 @@ spec:
     # Cross-encoder inputs are one premise plus one hypothesis; 4k is generous
     # for the 0.8B v2s-long variant and keeps the KV/pooling footprint small.
     maxModelLen: 4096
+  gpu:
+    # The webhook rejects a GPU in spec.resources.limits; device allocation
+    # belongs here. Joining 5930k-textgen matters: that group serialises the
+    # card, and every workhorse in it claims 20-23 GB of a 24 GB device, so a
+    # lane outside the group would contend at the device level instead of
+    # being scheduled against them.
+    vendor: amd
+    count: 1
+    # 0.8B at fp16 is ~1.6 GB of weights; the rest is HIP context and a 4k KV
+    # and pooling footprint. Deliberately far below the workhorses so the
+    # scheduler sees this as the cheap lane it is.
+    vramEstimateMB: 4000
+    shared: 5930k-textgen
+    # Below every text-gen workhorse (300-550): a judge helper must yield the
+    # card to chat traffic rather than evict it. With idleTimeout 30m it takes
+    # the GPU only while actually judging, and gives it straight back.
+    priority: 200
   resources:
     limits:
-      amd.com/gpu: 1
+      cpu: "4"
+      memory: 8Gi
+    requests:
+      cpu: "1"
+      memory: 4Gi
