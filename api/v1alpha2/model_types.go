@@ -796,6 +796,15 @@ type ModelStatus struct {
 	// +optional
 	LastActiveTime *metav1.Time `json:"lastActiveTime,omitempty"`
 
+	// ActivationRequestedAt is the explicit activation request the controller
+	// last honored, copied from the flexinfer.ai/activate-requested-at
+	// annotation. The controller only adopts a request strictly newer than this
+	// value, so re-applying a manifest that still carries an old timestamp
+	// cannot resurrect an idle model. It also anchors the activation window:
+	// the model is held warm until this instant plus activationDemandWindow.
+	// +optional
+	ActivationRequestedAt *metav1.Time `json:"activationRequestedAt,omitempty"`
+
 	// Metrics contains runtime performance metrics.
 	// +optional
 	Metrics *MetricsStatus `json:"metrics,omitempty"`

@@ -79,6 +79,15 @@ func (r *ModelReconciler) desiredReplicasForContext(ctx context.Context, model *
 	if minReplicas < 1 && r.shouldKeepWarmPrimary(ctx, model) {
 		minReplicas = 1
 	}
+
+	// An honored activation request is demand for a bounded window: it wakes a
+	// scale-to-zero model without pinning minReplicas, and expires on its own.
+	// It sits below the gaming, KV-eviction and shared-GPU overrides above, so
+	// an operator poke can never fight a lease or evict a group leader.
+	if activationDemand(model) {
+		return max(1, minReplicas)
+	}
+
 	if model.Status.LastActiveTime == nil {
 		// preload-on-deploy: warm a non-shared serverless model proactively from
 		// deploy until its first request, so the first post-deploy request skips

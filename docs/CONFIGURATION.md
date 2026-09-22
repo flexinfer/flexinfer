@@ -464,6 +464,38 @@ contend with or evict a group leader. Observe the warm state via the
 `flexinfer_model_preload_active{model,namespace}` gauge (1 while held warm before
 first request, 0 otherwise).
 
+#### On-demand activation
+
+To wake a scale-to-zero model *now* — ahead of a request, without pinning a warm
+floor — write an RFC3339 timestamp to `flexinfer.ai/activate-requested-at`:
+
+```bash
+kubectl -n flexinfer-system annotate model/<name> \
+  flexinfer.ai/activate-requested-at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" --overwrite
+```
+
+The controller records the request it honored in `status.activationRequestedAt`
+and holds the model at one replica (or its existing `minReplicas` floor, if
+higher) for **30 minutes** from that instant. The window then expires on its own,
+so scale-to-zero resumes with no second call — this is the difference from
+`serverless.minReplicas: 1`, which pins the model until someone unpins it. If
+real traffic arrives meanwhile, the proxy stamps `LastActiveTime` and the normal
+idle rules take over from there.
+
+Three properties worth knowing:
+
+- **Single-shot.** Only a request *strictly newer* than `status.activationRequestedAt`
+  is adopted, so an annotation left on the object cannot re-wake the model every
+  time the idle timer reaps it. Re-applying a manifest that still carries an old
+  timestamp is inert.
+- **Malformed timestamps are ignored**, not read as "now".
+- **It is demand, not an override.** A gaming lease, KV-cache eviction, or
+  shared-GPU leadership still wins, so a poke can never evict a group leader.
+
+A model still loading when the window expires is not reaped — cold starts reach
+25 minutes on the workhorse lane, and expiring mid-load would spend the whole
+window on the load and hand back nothing.
+
 #### Shared-group leadership and warm-pinning
 
 A shared GPU group serves one model at a time (`chooseSharedGroupLeader` in

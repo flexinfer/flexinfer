@@ -37,8 +37,9 @@ import (
 // handleSharedGPU implements GPU sharing logic for models with gpu.shared set.
 // Demand-based swap tuning constants for shared GPU groups.
 const (
-	// sharedDemandWindow is how recent a LastActiveTime must be to count as
-	// active demand from the proxy.
+	// sharedDemandWindow is how recent a model's demandTime must be to count as
+	// active demand — either proxy traffic (LastActiveTime) or an in-window
+	// explicit activation request.
 	sharedDemandWindow = 2 * time.Minute
 
 	// sharedSwapCooldown prevents thrashing by blocking demand-based swaps
@@ -67,9 +68,10 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 			}
 			return b
 		}
-		if a.Status.LastActiveTime != nil && b.Status.LastActiveTime != nil {
-			if !a.Status.LastActiveTime.Equal(b.Status.LastActiveTime) {
-				if a.Status.LastActiveTime.After(b.Status.LastActiveTime.Time) {
+		da, db := demandTime(a, now), demandTime(b, now)
+		if da != nil && db != nil {
+			if !da.Equal(db) {
+				if da.After(db.Time) {
 					return a
 				}
 				return b
@@ -156,13 +158,14 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 			readyLeader = better(readyLeader, m)
 			continue
 		}
-		if m.Status.LastActiveTime == nil {
+		md := demandTime(m, now)
+		if md == nil {
 			continue
 		}
-		if now.Sub(m.Status.LastActiveTime.Time) < 5*time.Minute {
+		if now.Sub(md.Time) < 5*time.Minute {
 			recentLeader = better(recentLeader, m)
 		}
-		if now.Sub(m.Status.LastActiveTime.Time) < sharedDemandWindow {
+		if now.Sub(md.Time) < sharedDemandWindow {
 			demandedLeader = better(demandedLeader, m)
 		}
 	}
@@ -174,12 +177,13 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		return activeLoadingLeader
 	}
 
-	// Demand-based preemption: if a non-ready model has recent demand
-	// (proxy set its LastActiveTime) and the current ready leader is idle,
-	// swap to the demanded model.
+	// Demand-based preemption: if a non-ready model has recent demand (the proxy
+	// set its LastActiveTime, or an operator activated it) and the current ready
+	// leader is idle, swap to the demanded model.
 	if demandedLeader != nil && readyLeader != nil {
-		readyIdle := readyLeader.Status.LastActiveTime == nil ||
-			now.Sub(readyLeader.Status.LastActiveTime.Time) > sharedDemandWindow
+		readyDemand := demandTime(readyLeader, now)
+		readyIdle := readyDemand == nil ||
+			now.Sub(readyDemand.Time) > sharedDemandWindow
 		higherPriority := demandedLeader.Spec.GetPriority() > readyLeader.Spec.GetPriority()
 		if higherPriority || (readyIdle && demandedLeader.Spec.GetPriority() >= readyLeader.Spec.GetPriority()) {
 			return demandedLeader
@@ -199,8 +203,9 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	// 350) after a burst of probes left whisper Ready. The reclaim is bounded by
 	// the anti-thrashing cooldown checked above, so it cannot flap the slot.
 	if warmPrimaryLeader != nil && readyLeader != nil && !isWarmPrimaryModel(readyLeader) {
-		readyIdle := readyLeader.Status.LastActiveTime == nil ||
-			now.Sub(readyLeader.Status.LastActiveTime.Time) > sharedDemandWindow
+		readyDemand := demandTime(readyLeader, now)
+		readyIdle := readyDemand == nil ||
+			now.Sub(readyDemand.Time) > sharedDemandWindow
 		if readyIdle {
 			return warmPrimaryLeader
 		}
@@ -262,7 +267,7 @@ func sharedModelWantsToRun(m *aiv1alpha2.Model, now time.Time) bool {
 	if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 		return true
 	}
-	if m.Status.LastActiveTime != nil && now.Sub(m.Status.LastActiveTime.Time) < sharedDemandWindow {
+	if md := demandTime(m, now); md != nil && now.Sub(md.Time) < sharedDemandWindow {
 		return true
 	}
 	return false
@@ -448,7 +453,8 @@ func isActiveSharedModelLoading(model *aiv1alpha2.Model) bool {
 }
 
 func withinSharedActivationWindow(model *aiv1alpha2.Model, now time.Time) bool {
-	if model == nil || model.Status.LastActiveTime == nil {
+	md := demandTime(model, now)
+	if md == nil {
 		return false
 	}
 
@@ -458,7 +464,7 @@ func withinSharedActivationWindow(model *aiv1alpha2.Model, now time.Time) bool {
 			window = d
 		}
 	}
-	return now.Sub(model.Status.LastActiveTime.Time) <= window
+	return now.Sub(md.Time) <= window
 }
 
 func preserveActiveSharedLoadingDuringCacheRefresh(model *aiv1alpha2.Model, now time.Time) bool {

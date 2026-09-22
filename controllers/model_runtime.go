@@ -323,9 +323,8 @@ func runtimeActivePeerProtected(model *aiv1alpha2.Model, now time.Time) bool {
 }
 
 func runtimeModelHasRecentDemand(model *aiv1alpha2.Model, now time.Time) bool {
-	return model != nil &&
-		model.Status.LastActiveTime != nil &&
-		now.Sub(model.Status.LastActiveTime.Time) < sharedDemandWindow
+	md := demandTime(model, now)
+	return md != nil && now.Sub(md.Time) < sharedDemandWindow
 }
 
 func isTransientRuntimeLoadError(err error) bool {
