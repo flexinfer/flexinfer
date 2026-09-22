@@ -317,3 +317,93 @@ func TestRunCacheCapacityReportsCandidates(t *testing.T) {
 		t.Errorf("staged total did not sum both models on the shared PVC; got:\n%s", out)
 	}
 }
+
+// Several models can point at one path on a shared model store -- two context
+// variants of the same weights, for instance. Each reports the size of that one
+// copy, so summing them would inflate the volume's total.
+func TestRunCacheCapacityCountsASharedSourceOnce(t *testing.T) {
+	pinNamespace(t)
+
+	// Two variants reading the identical directory.
+	variantA := cliTestModel("workhorse")
+	variantA.Spec.Source = "pvc://model-store/qwen/gptq-w4"
+	variantA.Spec.Cache = nil
+	variantA.Status.Cache = &aiv1alpha2.CacheStatus{
+		Strategy: "None", Ready: true, PVCName: "model-store", SizeBytes: 4 << 30,
+	}
+
+	variantB := cliTestModel("workhorse-128k")
+	variantB.Spec.Source = "pvc://model-store/qwen/gptq-w4"
+	variantB.Spec.Cache = nil
+	variantB.Status.Cache = &aiv1alpha2.CacheStatus{
+		Strategy: "None", Ready: true, PVCName: "model-store", SizeBytes: 4 << 30,
+	}
+
+	// A third model on the same PVC but a different directory does add its own
+	// bytes.
+	other := cliTestModel("other-weights")
+	other.Spec.Source = "pvc://model-store/qwen/gptq-w4-mtp"
+	other.Spec.Cache = nil
+	other.Status.Cache = &aiv1alpha2.CacheStatus{
+		Strategy: "None", Ready: true, PVCName: "model-store", SizeBytes: 2 << 30,
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(variantA, variantB, other).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+	if err := runCacheCapacity(cmd, nil); err != nil {
+		t.Fatalf("runCacheCapacity() error: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "6Gi") {
+		t.Errorf("shared source was not counted once (want 4Gi + 2Gi = 6Gi); got:\n%s", out)
+	}
+	if strings.Contains(out, "10Gi") {
+		t.Errorf("shared source double-counted; got:\n%s", out)
+	}
+	// All three still count as users of the PVC.
+	if !strings.Contains(out, "3 ") && !strings.Contains(out, " 3  ") {
+		t.Errorf("MODELS column should still report all three models; got:\n%s", out)
+	}
+}
+
+// Node-local caches have no PVC to compare against, but they are the majority
+// of a typical fleet, so the report has to account for the disk they occupy
+// rather than only naming them.
+func TestRunCacheCapacityReportsNodeLocalSizes(t *testing.T) {
+	pinNamespace(t)
+
+	measured := cliTestModel("measured-local")
+	measured.Spec.Cache = &aiv1alpha2.CacheSpec{Strategy: "Local"}
+	measured.Status.Cache = &aiv1alpha2.CacheStatus{
+		Strategy: "Local", Ready: true, SizeBytes: 2 << 30,
+	}
+
+	unmeasured := cliTestModel("unmeasured-local")
+	unmeasured.Spec.Cache = &aiv1alpha2.CacheSpec{Strategy: "Local"}
+	unmeasured.Status.Cache = &aiv1alpha2.CacheStatus{
+		Strategy: "Local", Ready: true,
+	}
+
+	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(measured, unmeasured).Build()
+	stubClient(t, c)
+
+	cmd, stdout, _ := newTestCmd()
+	if err := runCacheCapacity(cmd, nil); err != nil {
+		t.Fatalf("runCacheCapacity() error: %v", err)
+	}
+
+	out := stdout.String()
+	if !strings.Contains(out, "Node-local caches") {
+		t.Fatalf("node-local section missing; got:\n%s", out)
+	}
+	if !strings.Contains(out, "measured-local") || !strings.Contains(out, "2Gi") {
+		t.Errorf("measured node-local cache did not report its size; got:\n%s", out)
+	}
+	// The unmeasured one must stay honestly unknown rather than reading as 0.
+	if !strings.Contains(out, "TOTAL") || !strings.Contains(out, "+1?") {
+		t.Errorf("node-local total did not flag the unmeasured cache; got:\n%s", out)
+	}
+}

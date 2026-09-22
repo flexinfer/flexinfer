@@ -896,7 +896,13 @@ type CacheStatus struct {
 	// Message is an optional human-friendly cache status message.
 	// +optional
 	Message string `json:"message,omitempty"`
-	// SizeBytes is the cached model size.
+	// SizeBytes is the cached model size, as measured by the cache job that
+	// staged or verified the artifact. It is block usage, which is what the
+	// volume actually gives up, and covers only this model's own directory, so
+	// the per-model sizes on a shared cache PVC can be summed without
+	// double-counting. 0 means unknown rather than empty: a cache staged before
+	// the job reported sizes, or populated out of band, carries no measurement
+	// until its cache job next runs.
 	SizeBytes int64 `json:"sizeBytes,omitempty"`
 	// Quantization records the result of weight quantization.
 	// +optional
