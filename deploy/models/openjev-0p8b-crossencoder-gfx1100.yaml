@@ -51,9 +51,13 @@ spec:
     minReplicas: 0
     idleTimeout: 30m
     coldStartTimeout: 10m
-  litellm:
-    # A 3-class classifier is not an OpenAI-shaped chat/embedding model.
-    enabled: false
+  # NO litellm block on purpose. `litellm.enabled: false` does not mean "do not
+  # advertise this as a chat model" — the proxy reads it as PARKED and refuses
+  # to cold-start the lane by name, returning 404 model_not_found before it
+  # touches demand (internal/proxy/proxy.go, litellmExplicitlyDisabled). It only
+  # parks when the block is present AND explicitly false, so omitting it keeps
+  # the lane servable. The serve-paths annotation above is what keeps chat
+  # traffic out; that is the right tool for it, and it is already doing the job.
   config:
     dtype: half
     # Cross-encoder inputs are one premise plus one hypothesis; 4k is generous
