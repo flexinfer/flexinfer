@@ -403,3 +403,43 @@ func TestActivationDoesNotOverrideKVCacheEviction(t *testing.T) {
 		t.Fatalf("activation overrode KV-cache eviction: %d replicas, want 0", got)
 	}
 }
+
+// The annotation carries RFC3339Nano (that is what the tooling writes), but
+// metav1.Time serializes at second precision. If the parsed request keeps its
+// sub-second part, it compares as strictly newer than the watermark the API
+// server hands back forever — so the controller re-adopts on every reconcile,
+// rewriting status and re-emitting the event in a hot loop. Observed live on
+// 2026-09-22: one activation produced an ActivationRequested event with count=25.
+func TestActivationRequestDoesNotReadoptAfterStatusRoundTrip(t *testing.T) {
+	model := activatableModel("2026-09-22T02:22:21.889691Z")
+
+	if !adoptActivationRequest(model) {
+		t.Fatal("first adopt should record the request")
+	}
+
+	// What the API server gives back: metav1.Time marshals as RFC3339 seconds.
+	model.Status.ActivationRequestedAt = ptrMetaTime(model.Status.ActivationRequestedAt.Rfc3339Copy())
+
+	if adoptActivationRequest(model) {
+		t.Fatalf("re-adopted the same request after a status round-trip (watermark=%v); this loops on every reconcile",
+			model.Status.ActivationRequestedAt)
+	}
+}
+
+// Same defect, same shape, in the cache-prefetch path added by !1066.
+func TestPrefetchRequestDoesNotReadoptAfterStatusRoundTrip(t *testing.T) {
+	model := activatableModel("")
+	model.Annotations = map[string]string{AnnotationPrefetchRequestedAt: "2026-09-22T02:22:21.889691Z"}
+
+	requested, pending := prefetchRequestPending(model)
+	if !pending {
+		t.Fatal("first prefetch request should be pending")
+	}
+	model.Status.Cache = &aiv1alpha2.CacheStatus{PrefetchRequestedAt: ptrMetaTime(requested.Rfc3339Copy())}
+
+	if _, pending := prefetchRequestPending(model); pending {
+		t.Fatal("re-adopted the same prefetch request after a status round-trip; this loops on every reconcile")
+	}
+}
+
+func ptrMetaTime(t metav1.Time) *metav1.Time { return &t }

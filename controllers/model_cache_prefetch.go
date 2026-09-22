@@ -80,7 +80,11 @@ func prefetchRequestedAt(model *aiv1alpha2.Model) *metav1.Time {
 		// forgiving about anything else rather than erroring the reconcile.
 		return nil
 	}
-	t := metav1.NewTime(ts)
+	// Truncate to the precision metav1.Time serializes (RFC3339 seconds).
+	// Keeping the sub-second part would make this compare strictly newer than
+	// the watermark the API server hands back on every reconcile, re-triggering
+	// staging in a loop. See activationRequestedAt for the same reasoning.
+	t := metav1.NewTime(ts).Rfc3339Copy()
 	return &t
 }
 
