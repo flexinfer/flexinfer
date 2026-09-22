@@ -38,7 +38,13 @@ func activationRequestedAt(model *aiv1alpha2.Model) *metav1.Time {
 		// forgiving about anything else rather than erroring the reconcile.
 		return nil
 	}
-	t := metav1.NewTime(ts)
+	// Truncate to the precision metav1.Time actually serializes. Tools write
+	// RFC3339Nano, but status marshals as RFC3339 seconds, so keeping the
+	// sub-second part would make the parsed request compare strictly newer than
+	// the watermark the API server hands back — forever. The controller would
+	// re-adopt on every reconcile, rewriting status and re-emitting the event in
+	// a hot loop.
+	t := metav1.NewTime(ts).Rfc3339Copy()
 	return &t
 }
 
