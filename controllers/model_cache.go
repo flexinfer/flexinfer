@@ -259,7 +259,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 				JobPhase:  jobPhase,
 				Message:   message,
 				Ready:     ready,
-				SizeBytes: 0,
+				SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache),
 			}
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCopy", message)
 
@@ -337,7 +337,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 				JobPhase:  jobPhase,
 				Message:   message,
 				Ready:     ready,
-				SizeBytes: 0,
+				SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache),
 			}
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheStage", message)
 			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
@@ -418,7 +418,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			JobPhase:  jobPhase,
 			Message:   message,
 			Ready:     ready,
-			SizeBytes: 0,
+			SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache),
 		}
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCheck", message)
 
@@ -432,14 +432,22 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 	// Preserve existing cache sub-status (e.g. Quantization) when rebuilding.
 	// Creating a fresh struct here wiped Quantization, causing ensureQuantization
 	// to re-write status on every reconcile (infinite loop).
+	//
+	// SizeBytes is carried forward for the same reason plus one of its own: the
+	// staging Job that measured it is garbage-collected within minutes, so
+	// re-deriving the size on a later reconcile is impossible and dropping it
+	// would silently turn a known cache size back into "unknown".
 	var existingQuant *aiv1alpha2.QuantizationStatus
+	var existingSize int64
 	if model.Status.Cache != nil {
 		existingQuant = model.Status.Cache.Quantization
+		existingSize = model.Status.Cache.SizeBytes
 	}
 	model.Status.Cache = &aiv1alpha2.CacheStatus{
 		Strategy:     strategy,
 		Ready:        true,
 		Quantization: existingQuant,
+		SizeBytes:    existingSize,
 	}
 
 	// For Local cache strategy with a nodeSelector, verify the cache
@@ -505,6 +513,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			model.Status.Cache.JobName = jobName
 			model.Status.Cache.JobPhase = jobPhase
 			model.Status.Cache.Message = message
+			model.Status.Cache.SizeBytes = r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache)
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheStage", message)
 			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
 				return false, err
@@ -574,6 +583,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 		model.Status.Cache.JobName = jobName
 		model.Status.Cache.JobPhase = jobPhase
 		model.Status.Cache.Message = message
+		model.Status.Cache.SizeBytes = r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache)
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCheck", message)
 		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
 			return false, err
@@ -688,6 +698,10 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			if model.Spec.Quantize != nil {
 				model.Status.Cache.Message = "artifact prefetched and quantized"
 			}
+			// The prefetch job measures what it downloaded; quantization
+			// rewrites the artifact afterwards and reports its own before/after
+			// sizes under status.cache.quantization.
+			model.Status.Cache.SizeBytes = r.stagedCacheSize(ctx, model.Namespace, jobName, true, original.Status.Cache)
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "PrefetchSucceeded", model.Status.Cache.Message)
 		} else if job.Status.Failed > 0 {
 			model.Status.Cache.Ready = false

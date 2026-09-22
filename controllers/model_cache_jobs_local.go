@@ -40,7 +40,7 @@ import (
 func (r *ModelReconciler) jobForLocalCacheCheck(model *aiv1alpha2.Model) (*batchv1.Job, error) {
 	cachePath := resolveLocalCachePath(model)
 
-	script := fmt.Sprintf(`
+	script := cacheSizeReportFunc + fmt.Sprintf(`
 set -ex
 DIR="%s"
 if [ ! -d "$DIR" ]; then
@@ -55,6 +55,7 @@ if [ "$COUNT" -eq 0 ]; then
   exit 1
 fi
 echo "Local cache verified: $DIR ($COUNT+ model files found)"
+report_cache_size "$DIR"
 `, cachePath)
 
 	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
@@ -119,7 +120,7 @@ func (r *ModelReconciler) jobForLocalCacheStage(model *aiv1alpha2.Model, sourceP
 	sum := sha256.Sum256([]byte(model.Spec.Source))
 	marker := "/models/.flexinfer_cached_" + hex.EncodeToString(sum[:])
 
-	script := fmt.Sprintf(`
+	script := cacheSizeReportFunc + fmt.Sprintf(`
 set -ex
 SRC="%s"
 DST="%s"
@@ -127,6 +128,7 @@ MARKER="%s"
 
 if [ -f "$MARKER" ]; then
   echo "Already staged: $MARKER"
+  report_cache_size "$DST"
   exit 0
 fi
 
@@ -147,6 +149,7 @@ else
 fi
 
 touch "$MARKER"
+report_cache_size "$DST"
 echo "Local staging complete."
 `, src, dst, marker)
 
@@ -269,7 +272,7 @@ func (r *ModelReconciler) jobForLocalHFPrefetch(model *aiv1alpha2.Model) (*batch
 		})
 	}
 
-	script := fmt.Sprintf(`
+	script := cacheSizeReportFunc + fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
 DEST_DIR="/models"
@@ -281,6 +284,7 @@ EXPECTED_FILES="${EXPECTED_FILES:-}"
 if [ -f "$MARKER" ]; then
   if [ -z "$VAE_REPO" ] || [ -d "$VAE_DEST_DIR" ]; then
     echo "Model already cached at $DEST_DIR"
+    report_cache_size "$DEST_DIR"
     exit 0
   fi
   echo "Marker exists but VAE cache is incomplete; downloading VAE assets"
@@ -357,6 +361,7 @@ if [ -n "$EXPECTED_FILES" ]; then
 fi
 
 touch "$MARKER"
+report_cache_size "$DEST_DIR"
 echo "Local HF staging complete."
 `, modelID, markerName)
 

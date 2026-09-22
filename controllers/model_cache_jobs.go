@@ -77,7 +77,7 @@ func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destS
 
 	if isMlcModelSource(model.Spec.Source) {
 		image = ImageDebianSlim
-		downloadScript = fmt.Sprintf(`
+		downloadScript = cacheSizeReportFunc + fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
 DEST_DIR="%s"
@@ -88,6 +88,7 @@ VAE_DEST_DIR="${VAE_DEST_DIR:-}"
 if [ -f "$MARKER" ]; then
     if [ -z "$VAE_REPO" ] || [ -d "$VAE_DEST_DIR" ]; then
         echo "Model already cached at $DEST_DIR"
+        report_cache_size "$DEST_DIR"
         exit 0
     fi
     echo "Marker exists but VAE cache is incomplete; downloading VAE assets"
@@ -100,11 +101,12 @@ mkdir -p "$DEST_DIR"
 echo "Cloning $MODEL_ID to $DEST_DIR..."
 GIT_LFS_SKIP_SMUDGE=0 git clone "%s/$MODEL_ID" "$DEST_DIR"
 touch "$MARKER"
+report_cache_size "$DEST_DIR"
 echo "Download complete."
 `, modelID, destDir, huggingFaceRepositoryBaseURL)
 	} else {
 		image = ImagePythonSlim
-		downloadScript = fmt.Sprintf(`
+		downloadScript = cacheSizeReportFunc + fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
 DEST_DIR="%s"
@@ -112,6 +114,7 @@ MARKER="$DEST_DIR/.flexinfer_cached"
 
 if [ -f "$MARKER" ]; then
     echo "Model already cached at $DEST_DIR"
+    report_cache_size "$DEST_DIR"
     exit 0
 fi
 
@@ -155,6 +158,7 @@ if vae_repo:
     snapshot_download(repo_id=vae_repo, local_dir=vae_dir, local_dir_use_symlinks=False, cache_dir=cache_dir, token=token)
 PY
 touch "$MARKER"
+report_cache_size "$DEST_DIR"
 echo "Download complete."
 `, modelID, destDir)
 	}
@@ -216,7 +220,7 @@ func (r *ModelReconciler) jobForCacheCheck(model *aiv1alpha2.Model, pvcName, sub
 		target = "/models/" + subPath
 	}
 
-	script := fmt.Sprintf(`
+	script := cacheSizeReportFunc + fmt.Sprintf(`
 set -ex
 TARGET="%s"
 if [ ! -e "$TARGET" ]; then
@@ -229,6 +233,7 @@ if [ -d "$TARGET" ]; then
     exit 1
   fi
   echo "Artifact present at directory $TARGET"
+  report_cache_size "$TARGET"
   exit 0
 fi
 if [ ! -s "$TARGET" ]; then
@@ -236,6 +241,7 @@ if [ ! -s "$TARGET" ]; then
   exit 1
 fi
 echo "Artifact present at file $TARGET"
+report_cache_size "$TARGET"
 `, target)
 
 	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
@@ -299,7 +305,7 @@ func (r *ModelReconciler) jobForCacheCopy(model *aiv1alpha2.Model, sourcePVCName
 	sum := sha256.Sum256([]byte(model.Spec.Source))
 	marker := "/models/.flexinfer_cached_" + hex.EncodeToString(sum[:])
 
-	script := fmt.Sprintf(`
+	script := cacheSizeReportFunc + fmt.Sprintf(`
 set -ex
 SRC="%s"
 DST="%s"
@@ -307,6 +313,7 @@ MARKER="%s"
 
 if [ -f "$MARKER" ]; then
   echo "Already cached: $MARKER"
+  report_cache_size "$DST"
   exit 0
 fi
 
@@ -333,6 +340,7 @@ else
 fi
 
 touch "$MARKER"
+report_cache_size "$DST"
 echo "Copy complete."
 `, src, dst, marker)
 

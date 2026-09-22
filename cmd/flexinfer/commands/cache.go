@@ -473,9 +473,15 @@ func runCacheCapacity(cmd *cobra.Command, args []string) error {
 		models  []string
 		staged  int64
 		unknown int
+		// counted tracks which artifacts have already been added to staged.
+		// Several models can mount one source path, and each reports the size
+		// of that single copy; adding them all would inflate the PVC's total.
+		counted map[string]bool
 	}
 	usage := map[string]*pvcUsage{}
 	var local []string
+	var localStaged int64
+	var localUnknown int
 	var candidates []string
 
 	for i := range modelList.Items {
@@ -492,7 +498,14 @@ func runCacheCapacity(cmd *cobra.Command, args []string) error {
 
 		if cache.PVCName == "" {
 			if cache.Ready && cache.Strategy != "" && cache.Strategy != "None" {
-				local = append(local, fmt.Sprintf("  %-34s %s", truncate(model.Name, 34), cache.Strategy))
+				size := "-"
+				if cache.SizeBytes > 0 {
+					size = humanBytes(cache.SizeBytes)
+				} else {
+					localUnknown++
+				}
+				local = append(local, fmt.Sprintf("  %-34s %-10s %s", truncate(model.Name, 34), cache.Strategy, size))
+				localStaged += cache.SizeBytes
 			}
 			continue
 		}
@@ -500,10 +513,16 @@ func runCacheCapacity(cmd *cobra.Command, args []string) error {
 		key := model.Namespace + "/" + cache.PVCName
 		entry, ok := usage[key]
 		if !ok {
-			entry = &pvcUsage{pvc: pvcsByName[key]}
+			entry = &pvcUsage{pvc: pvcsByName[key], counted: map[string]bool{}}
 			usage[key] = entry
 		}
 		entry.models = append(entry.models, model.Name)
+
+		artifact := cacheArtifactKey(model, cache)
+		if entry.counted[artifact] {
+			continue
+		}
+		entry.counted[artifact] = true
 		if cache.SizeBytes > 0 {
 			entry.staged += cache.SizeBytes
 		} else if cache.Ready {
@@ -557,6 +576,7 @@ func runCacheCapacity(cmd *cobra.Command, args []string) error {
 		_, _ = fmt.Fprintln(out)
 		_, _ = fmt.Fprintln(out, "CAPACITY is the bound volume size; * marks a request that has not bound yet.")
 		_, _ = fmt.Fprintln(out, "STAGED sums status.cache.sizeBytes; '+N?' counts staged models that report no size.")
+		_, _ = fmt.Fprintln(out, "Models mounting the same source path share one copy and are counted once.")
 	}
 
 	if len(local) > 0 {
@@ -566,6 +586,17 @@ func runCacheCapacity(cmd *cobra.Command, args []string) error {
 		for _, line := range local {
 			_, _ = fmt.Fprintln(out, line)
 		}
+		// These share whatever disk backs spec.cache.hostPath on their node, so
+		// there is no single capacity to compare against -- the total is still
+		// the number an operator needs when sizing that disk.
+		total := "-"
+		if localStaged > 0 {
+			total = humanBytes(localStaged)
+		}
+		if localUnknown > 0 {
+			total += fmt.Sprintf(" +%d?", localUnknown)
+		}
+		_, _ = fmt.Fprintf(out, "  %-34s %-10s %s\n", "TOTAL", "", total)
 	}
 
 	_, _ = fmt.Fprintln(out)
@@ -580,6 +611,25 @@ func runCacheCapacity(cmd *cobra.Command, args []string) error {
 	}
 	_, _ = fmt.Fprintln(out, "\nReclaim one with: flexinfer cache evict MODEL --confirm")
 	return nil
+}
+
+// cacheArtifactKey identifies the bytes a model contributes to its cache PVC,
+// so that models sharing one copy are only counted once.
+//
+// A model whose cache PVC is the PVC named in its own pvc:// source mounts that
+// path directly rather than staging a copy of it -- every model pointing at the
+// same path is reading the same files, and adding each one's reported size
+// would inflate the volume's total. Anything else (a cache copy, an HF
+// prefetch) occupies space of its own and is keyed per model.
+func cacheArtifactKey(model *aiv1alpha2.Model, cache *aiv1alpha2.CacheStatus) string {
+	const scheme = "pvc://"
+	if strings.HasPrefix(model.Spec.Source, scheme) {
+		sourcePVC, _, _ := strings.Cut(strings.TrimPrefix(model.Spec.Source, scheme), "/")
+		if sourcePVC != "" && sourcePVC == cache.PVCName {
+			return model.Namespace + "|" + model.Spec.Source
+		}
+	}
+	return model.Namespace + "/" + model.Name
 }
 
 func runCacheEvict(cmd *cobra.Command, args []string) error {
