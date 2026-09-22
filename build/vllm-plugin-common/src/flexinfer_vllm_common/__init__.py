@@ -17,6 +17,8 @@ image. Callers pass the modules and classes they already hold.
 
 from .hybrid import MAMBA_STATE_METHODS, apply_hybrid_state
 from .labels import default_num_labels, repair_text_config_labels, resolve_num_labels
+from .mrope import CONFIG_ATTR as MROPE_CONFIG_ATTR
+from .mrope import attach_mrope_support, needs_mrope
 from .rocm import (
     CONSUMER_ROCM_ARCHS,
     FLA_OPS_PREFIXES,
@@ -30,7 +32,10 @@ __all__ = [
     "CONSUMER_ROCM_ARCHS",
     "FLA_OPS_PREFIXES",
     "MAMBA_STATE_METHODS",
+    "MROPE_CONFIG_ATTR",
     "apply_hybrid_state",
+    "attach_mrope_support",
+    "needs_mrope",
     "default_num_labels",
     "import_fla_kkt_module",
     "needs_safe_fla_config",

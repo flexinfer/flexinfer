@@ -104,6 +104,8 @@ class Qwen3_5MoeForCausalLM(_Base):
 
 
 class Qwen3_5ForConditionalGeneration:
+    supports_mrope = True
+
     @classmethod
     def get_mamba_state_shape_from_config(cls, config):
         return ("shape",)
@@ -115,6 +117,23 @@ class Qwen3_5ForConditionalGeneration:
     @classmethod
     def get_mamba_state_copy_func(cls):
         return "copy"
+
+    @staticmethod
+    def _get_mrope_input_positions(input_tokens, mm_features, config):
+        """Mirrors the real donor: reads VISION fields off the composite config.
+
+        vLLM evaluates these as call arguments, so they are touched even with
+        zero multimodal items — which is exactly why the text config cannot be
+        passed here.
+        """
+        _ = (
+            config.video_token_id,
+            config.vision_start_token_id,
+            config.vision_end_token_id,
+            config.vision_config.spatial_merge_size,
+        )
+        n = len(input_tokens)
+        return ([list(range(n))] * 3, 0)
 
 
 def _as_seq_cls_model(base):
@@ -132,12 +151,25 @@ class FakeTextConfig:
         self.num_labels = num_labels
 
 
+class FakeVisionConfig:
+    spatial_merge_size = 2
+
+
 class FakeHFConfig:
-    """Composite config: labels declared at the top level only."""
+    """Composite config: labels declared at the top level only.
+
+    Also carries the vision fields the M-RoPE donor reads. The TEXT config
+    deliberately does not — that asymmetry is the whole point of passing the
+    composite config through MROPE_CONFIG_ATTR.
+    """
 
     def __init__(self, top_labels: int, text_labels: int = 2) -> None:
         self.num_labels = top_labels
         self._text = FakeTextConfig(text_labels)
+        self.video_token_id = 151656
+        self.vision_start_token_id = 151652
+        self.vision_end_token_id = 151653
+        self.vision_config = FakeVisionConfig()
 
     def get_text_config(self):
         return self._text
@@ -257,6 +289,64 @@ class LabelResolutionTest(unittest.TestCase):
         self.assertEqual(cfg.get_text_config().num_labels, 3)
         self.assertEqual(model.score.output_size, 3)
 
+    def test_registered_class_supports_mrope(self) -> None:
+        """The runner asserts this before it will build positions.
+
+        2026-09-22: without it the lane loaded cleanly, reported Ready, and
+        then killed EngineCore on the FIRST request with
+        `AssertionError: M-RoPE support is not implemented.` — vLLM decides to
+        take the M-RoPE path from the CONFIG (openjev's text_config declares
+        mrope_section), not from whether any vision weights were loaded.
+        """
+        _, registry = _register()
+        for name in (
+            "Qwen3_5ForSequenceClassification",
+            "Qwen3_5MoeForSequenceClassification",
+        ):
+            cls = registry.models[name]
+            self.assertTrue(
+                getattr(cls, "supports_mrope", False),
+                f"{name} must satisfy the runner's supports_mrope assert",
+            )
+            self.assertTrue(hasattr(cls, "get_mrope_input_positions"))
+
+    def test_mrope_delegates_with_the_composite_config(self) -> None:
+        """The donor reads vision fields, so it must not get the text config.
+
+        Those reads are call arguments in the real donor, so they happen even
+        for a pure-text request. Passing self.config (the TEXT config) would
+        raise AttributeError on the first request instead of serving.
+        """
+        _, registry = _register()
+        cls = registry.models["Qwen3_5ForSequenceClassification"]
+        cfg = FakeHFConfig(top_labels=3, text_labels=2)
+        model = cls(
+            vllm_config=types.SimpleNamespace(
+                model_config=types.SimpleNamespace(hf_config=cfg)
+            )
+        )
+        # The text config lacks the vision fields; the composite one has them.
+        self.assertFalse(hasattr(cfg.get_text_config(), "vision_config"))
+        positions, delta = model.get_mrope_input_positions([1, 2, 3, 4], [])
+        # Pure text: three identical sequential rows, zero delta — i.e. exactly
+        # standard RoPE, which is what keeps logits comparable to the fp32
+        # HF reference.
+        self.assertEqual(positions, [[0, 1, 2, 3]] * 3)
+        self.assertEqual(delta, 0)
+
+    def test_mrope_attach_fails_loudly_if_the_donor_moves(self) -> None:
+        from flexinfer_vllm_common.mrope import attach_mrope_support
+
+        class DonorWithoutTheMethod:
+            pass
+
+        class Wrapped:
+            pass
+
+        with self.assertRaises(RuntimeError) as ctx:
+            attach_mrope_support(Wrapped, DonorWithoutTheMethod)
+        self.assertIn("_get_mrope_input_positions", str(ctx.exception))
+
     def test_rejects_checkpoint_whose_score_head_disagrees(self) -> None:
         _, registry = _register()
         cls = registry.models["Qwen3_5ForSequenceClassification"]
@@ -314,7 +404,9 @@ class SharedHelperTest(unittest.TestCase):
         sibling_src = SIBLING.read_text()
 
         # The seqcls plugin routes through the shared wrapper.
-        self.assertIs(plugin.prune_fla_configs_if_needed, rocm.prune_fla_configs_if_needed)
+        self.assertIs(
+            plugin.prune_fla_configs_if_needed, rocm.prune_fla_configs_if_needed
+        )
         # The text plugin imports the same module rather than redefining it.
         self.assertIn("from flexinfer_vllm_common", sibling_src)
         self.assertNotIn("def _select_rocm_safe_fla_configs", sibling_src)
@@ -329,7 +421,9 @@ class SharedHelperTest(unittest.TestCase):
             "resolve_num_labels",
             "select_rocm_safe_fla_configs",
         ):
-            self.assertTrue(hasattr(common, name), f"{name} missing from the shared API")
+            self.assertTrue(
+                hasattr(common, name), f"{name} missing from the shared API"
+            )
 
     def test_hybrid_application_is_idempotent(self) -> None:
         from flexinfer_vllm_common import apply_hybrid_state

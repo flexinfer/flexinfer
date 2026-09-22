@@ -38,6 +38,12 @@ from flexinfer_vllm_common import (
     repair_text_config_labels,
     resolve_num_labels,  # noqa: F401  (re-exported for tests and sibling plugins)
 )
+from flexinfer_vllm_common.mrope import (
+    CONFIG_ATTR as MROPE_CONFIG_ATTR,
+)
+from flexinfer_vllm_common.mrope import (
+    attach_mrope_support,
+)
 from flexinfer_vllm_common.rocm import (
     import_fla_kkt_module,
     prune_fla_configs_if_needed,
@@ -123,8 +129,14 @@ def with_label_repair(wrapped_class):
 
     class _LabelRepaired(wrapped_class):
         def __init__(self, *, vllm_config, prefix: str = "", **kwargs):
-            resolved = repair_text_config_labels(vllm_config.model_config.hf_config)
+            hf_config = vllm_config.model_config.hf_config
+            resolved = repair_text_config_labels(hf_config)
             self._flexinfer_resolved_num_labels = resolved
+            # The M-RoPE donor needs the COMPOSITE config: self.config on a
+            # causal class is the text config and has no vision fields. Set
+            # before super().__init__ so a base that builds positions during
+            # construction still finds it.
+            setattr(self, MROPE_CONFIG_ATTR, hf_config)
             super().__init__(vllm_config=vllm_config, prefix=prefix, **kwargs)
 
             built = _built_head_rows(self)
@@ -187,7 +199,13 @@ def register() -> None:
         seq_cls = as_seq_cls_model(
             build_seq_cls_base(base, WeightsMapper, AutoWeightsLoader)
         )
-        ModelRegistry.register_model(name, with_label_repair(seq_cls))
+        wrapped = with_label_repair(seq_cls)
+        # The checkpoint's text_config declares mrope_section, so the runner
+        # takes the M-RoPE path and asserts supports_mrope(model) on the FIRST
+        # request — after a clean load. Borrow the implementation from the
+        # multimodal class, the same donor the hybrid state comes from.
+        attach_mrope_support(wrapped, Qwen3_5ForConditionalGeneration)
+        ModelRegistry.register_model(name, wrapped)
         registered.append(name)
 
     print(
