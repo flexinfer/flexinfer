@@ -46,6 +46,15 @@ const (
 	// Admins who need to force a new image mid-run can set
 	// AnnotationForceImageUpdate on the ModelCache.
 	imageDriftGraceWindow = 10 * time.Minute
+
+	// activationDemandWindow is how long an explicit activation request
+	// (AnnotationActivateRequestedAt) counts as demand for a scale-to-zero
+	// model. It is deliberately a fixed bound rather than the model's own
+	// idleTimeout: idleTimeout ranges from 5m to 12h across the fleet, and an
+	// operator poke should never pin a model warm for twelve hours. Once the
+	// model is up and real traffic arrives, the proxy stamps LastActiveTime and
+	// the normal idle rules take over from there.
+	activationDemandWindow = 30 * time.Minute
 )
 
 // Annotation keys used on Jobs, Deployments, Pods, and Services.
@@ -75,6 +84,13 @@ const (
 	// status.cache.prefetchRequestedAt, so re-applying the same manifest does
 	// not replay it. A request also clears a Failed staging Job so it retries.
 	AnnotationPrefetchRequestedAt = "flexinfer.ai/prefetch-requested-at"
+
+	// AnnotationActivateRequestedAt carries an RFC3339 timestamp asking the
+	// controller to wake a scale-to-zero serverless Model now, without pinning
+	// a warm floor the way spec.serverless.minReplicas does. The controller
+	// records the request it honored in status.activationRequestedAt and holds
+	// the model warm for activationDemandWindow from that instant.
+	AnnotationActivateRequestedAt = "flexinfer.ai/activate-requested-at"
 
 	// AnnotationForceImageUpdate, when "true" on a ModelCache, bypasses the
 	// imageDriftGraceWindow and lets the controller preempt a running

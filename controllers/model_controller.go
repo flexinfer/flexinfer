@@ -196,6 +196,20 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// generation. Best-effort: never blocks reconcile.
 	observeStaleGenerationJobs(ctx, r.Client, "Model", model.Namespace, model.Name, model.UID, model.Generation, LabelModel)
 
+	// Adopt an explicit activation request before deciding replicas, and persist
+	// it immediately: the recorded timestamp is what stops the same annotation
+	// from re-waking the model every time the idle timer reaps it. This writes
+	// only when a strictly newer request arrives, so it stays out of the hot loop.
+	if adoptActivationRequest(model) {
+		if err := r.Status().Update(ctx, model); err != nil {
+			log.Error(err, "Failed to record activation request")
+			return ctrl.Result{}, err
+		}
+		r.Recorder.Eventf(model, corev1.EventTypeNormal, "ActivationRequested",
+			"Honoring activation request %s; holding warm for %s",
+			model.Status.ActivationRequestedAt.Format(time.RFC3339), activationDemandWindow)
+	}
+
 	desiredReplicas := r.desiredReplicasForContext(ctx, model, b)
 	desiredReplicas = applyPromotionGate(model, desiredReplicas)
 	requeueAfter := requeueLong

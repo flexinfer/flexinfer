@@ -116,6 +116,12 @@ func (r *ModelReconciler) modelWantsWeights(model *aiv1alpha2.Model, b backend.B
 	if isPreloadWarming(model) || isWarmPrimaryModel(model) {
 		return true
 	}
+	// An honored activation request wants weights too — otherwise an OnDemand
+	// model woken by an operator would come up against a cold cache and spend
+	// the whole activation window downloading.
+	if activationDemand(model) {
+		return true
+	}
 	// Demand signal: the proxy stamps LastActiveTime when a request arrives.
 	// Weights stay wanted for as long as the model would stay warm.
 	if model.Status.LastActiveTime != nil {

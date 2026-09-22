@@ -2045,6 +2045,10 @@ func (in *ModelStatus) DeepCopyInto(out *ModelStatus) {
 		in, out := &in.LastActiveTime, &out.LastActiveTime
 		*out = (*in).DeepCopy()
 	}
+	if in.ActivationRequestedAt != nil {
+		in, out := &in.ActivationRequestedAt, &out.ActivationRequestedAt
+		*out = (*in).DeepCopy()
+	}
 	if in.Metrics != nil {
 		in, out := &in.Metrics, &out.Metrics
 		*out = new(MetricsStatus)

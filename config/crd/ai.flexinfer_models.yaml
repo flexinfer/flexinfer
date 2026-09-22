@@ -757,6 +757,16 @@ spec:
           status:
             description: ModelStatus defines the observed state of Model
             properties:
+              activationRequestedAt:
+                description: |-
+                  ActivationRequestedAt is the explicit activation request the controller
+                  last honored, copied from the flexinfer.ai/activate-requested-at
+                  annotation. The controller only adopts a request strictly newer than this
+                  value, so re-applying a manifest that still carries an old timestamp
+                  cannot resurrect an idle model. It also anchors the activation window:
+                  the model is held warm until this instant plus activationDemandWindow.
+                format: date-time
+                type: string
               cache:
                 description: Cache tracks the cache state.
                 properties:
