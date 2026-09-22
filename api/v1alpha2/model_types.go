@@ -531,6 +531,140 @@ type CacheSpec struct {
 	// to a tmpfs volume before the backend starts, reducing cold-start I/O latency.
 	// +optional
 	FlashLoader *FlashLoaderSpec `json:"flashLoader,omitempty"`
+
+	// Prefetch controls when the controller populates this cache, independently
+	// of when the serving pod starts.
+	// +optional
+	Prefetch *PrefetchSpec `json:"prefetch,omitempty"`
+}
+
+// Prefetch policies for PrefetchSpec.Policy.
+const (
+	// PrefetchPolicyEager stages weights as soon as the Model reconciles.
+	PrefetchPolicyEager = "Eager"
+	// PrefetchPolicyOnDemand defers staging until the model is wanted.
+	PrefetchPolicyOnDemand = "OnDemand"
+	// PrefetchPolicyDisabled stages only on an explicit request.
+	PrefetchPolicyDisabled = "Disabled"
+)
+
+// PrefetchSpec controls when model weights are populated into the cache.
+//
+// Prefetch is what makes a cold start cheap: with weights already staged,
+// activation skips the download entirely. Staging them eagerly costs cache
+// storage for models that may never be asked for, so this spec lets an
+// operator trade storage against first-request latency per model.
+// +kubebuilder:object:generate=true
+type PrefetchSpec struct {
+	// Policy selects when the controller populates the cache.
+	//   - Eager: stage as soon as the Model reconciles. This is the historical
+	//     behavior and remains the default, so omitting this spec changes nothing.
+	//   - OnDemand: defer staging until the model is wanted — a request has
+	//     arrived, minReplicas is above zero, a warm policy holds it up, or an
+	//     explicit prefetch is requested. The first request after an idle period
+	//     pays the download.
+	//   - Disabled: never stage automatically. Only an explicit prefetch request
+	//     populates the cache. Use for models parked behind a slow or metered link.
+	// +kubebuilder:validation:Enum=Eager;OnDemand;Disabled
+	// +kubebuilder:default=Eager
+	// +optional
+	Policy string `json:"policy,omitempty"`
+
+	// Priority orders this model against other prefetch candidates when cache
+	// space is reclaimed. Higher values are evicted last. Mirrors the range of
+	// the v1alpha1 ModelCache retentionPriority field.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=100
+	// +kubebuilder:default=50
+	// +optional
+	Priority *int32 `json:"priority,omitempty"`
+
+	// IdleTTL marks staged weights as reclaimable once the model has been
+	// inactive for this long. Empty or "0s" keeps them indefinitely.
+	//
+	// This never deletes anything on its own: it only reports the cache as
+	// evictable so that `flexinfer cache capacity` and the eviction tooling can
+	// rank candidates. Reclaiming is always an explicit, confirmed action.
+	// +optional
+	IdleTTL *metav1.Duration `json:"idleTTL,omitempty"`
+}
+
+// GetPolicy returns the effective prefetch policy, defaulting to Eager.
+func (s *PrefetchSpec) GetPolicy() string {
+	if s == nil || s.Policy == "" {
+		return PrefetchPolicyEager
+	}
+	return s.Policy
+}
+
+// GetPriority returns the configured prefetch priority, defaulting to 50.
+func (s *PrefetchSpec) GetPriority() int32 {
+	if s == nil || s.Priority == nil {
+		return 50
+	}
+	return *s.Priority
+}
+
+// GetIdleTTL returns the configured idle TTL, or zero when weights should be
+// kept indefinitely.
+func (s *PrefetchSpec) GetIdleTTL() time.Duration {
+	if s == nil || s.IdleTTL == nil {
+		return 0
+	}
+	return s.IdleTTL.Duration
+}
+
+// PrefetchSpecOrDefault returns the model's prefetch spec, or nil when unset.
+// Callers should use the GetX accessors, which are nil-safe.
+func (s *CacheSpec) PrefetchSpecOrDefault() *PrefetchSpec {
+	if s == nil {
+		return nil
+	}
+	return s.Prefetch
+}
+
+// PrefetchSpec returns this model's cache prefetch spec, which may be nil.
+// The PrefetchSpec accessors are nil-safe, so callers need not branch.
+func (m *Model) PrefetchSpec() *PrefetchSpec {
+	if m == nil || m.Spec.Cache == nil {
+		return nil
+	}
+	return m.Spec.Cache.Prefetch
+}
+
+// PrefetchEvictable reports whether this model's staged weights have gone idle
+// past their configured IdleTTL, and by how much.
+//
+// It never deletes anything: the result ranks reclaim candidates for the
+// capacity report and the confirm-gated eviction path. A model with no TTL, no
+// staged cache, or a warm floor is never a candidate.
+func (m *Model) PrefetchEvictable(now time.Time) (bool, time.Duration) {
+	if m == nil || m.Status.Cache == nil || !m.Status.Cache.Ready {
+		return false, 0
+	}
+	ttl := m.PrefetchSpec().GetIdleTTL()
+	if ttl <= 0 {
+		return false, 0
+	}
+	// A model pinned warm is never a reclaim candidate, however long it has
+	// been since its last request.
+	if !m.Spec.IsServerless() || m.Spec.GetMinReplicas() > 0 {
+		return false, 0
+	}
+	last := m.Status.LastActiveTime
+	if last == nil {
+		// Never activated: fall back to when the weights were staged, so a
+		// model that was prefetched and then never used is still reclaimable.
+		last = m.Status.Cache.LastPrefetchTime
+	}
+	if last == nil {
+		return false, 0
+	}
+	idle := now.Sub(last.Time)
+	if idle <= ttl {
+		return false, 0
+	}
+	return true, idle - ttl
 }
 
 // CompilationCacheSpec configures host-persistent GPU compilation caching.
@@ -758,6 +892,21 @@ type CacheStatus struct {
 	// Quantization records the result of weight quantization.
 	// +optional
 	Quantization *QuantizationStatus `json:"quantization,omitempty"`
+
+	// PrefetchPolicy is the effective prefetch policy after defaulting.
+	// +optional
+	PrefetchPolicy string `json:"prefetchPolicy,omitempty"`
+	// PrefetchDeferred reports that staging is intentionally held off by
+	// policy rather than failing or still running. Message carries the reason.
+	// +optional
+	PrefetchDeferred bool `json:"prefetchDeferred,omitempty"`
+	// LastPrefetchTime is when this cache last finished staging successfully.
+	// +optional
+	LastPrefetchTime *metav1.Time `json:"lastPrefetchTime,omitempty"`
+	// PrefetchRequestedAt echoes the most recent explicit prefetch request the
+	// controller has honored, so a repeated request is not replayed forever.
+	// +optional
+	PrefetchRequestedAt *metav1.Time `json:"prefetchRequestedAt,omitempty"`
 }
 
 //+kubebuilder:object:root=true

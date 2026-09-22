@@ -40,11 +40,53 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/quantization"
 )
 
+// ensureCache populates the model's cache subject to spec.cache.prefetch, then
+// folds prefetch bookkeeping into the status that staging produced.
+//
+// The policy gate lives here rather than inside ensureCacheStaging because
+// staging patches status from a dozen branches; wrapping keeps the decision in
+// one place and leaves those branches untouched.
 func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) (bool, error) {
 	if !b.NeedsVolume() {
 		return true, nil
 	}
 
+	decision := r.evaluatePrefetch(model, b)
+	if decision.Deferred {
+		deferredOriginal := model.DeepCopy()
+		applyPrefetchDeferral(model, decision)
+		if err := r.Status().Patch(ctx, model, client.MergeFrom(deferredOriginal)); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
+
+	previous := model.Status.Cache.DeepCopy()
+
+	// An explicit request also means "try again": clear failed staging Jobs so
+	// the branches below recreate them instead of reporting the old failure.
+	if decision.RequestedAt != nil {
+		if err := r.clearFailedStagingJobs(ctx, model); err != nil {
+			return false, err
+		}
+	}
+
+	ready, err := r.ensureCacheStaging(ctx, model, b)
+	if err != nil {
+		return ready, err
+	}
+
+	bookkeepingOriginal := model.DeepCopy()
+	annotatePrefetchOutcome(model, decision, previous)
+	if !cacheStatusPrefetchEqual(bookkeepingOriginal.Status.Cache, model.Status.Cache) {
+		if err := r.Status().Patch(ctx, model, client.MergeFrom(bookkeepingOriginal)); err != nil {
+			return ready, err
+		}
+	}
+	return ready, nil
+}
+
+func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend) (bool, error) {
 	original := model.DeepCopy()
 
 	if pvcName, _, ok := parsePVCSource(model.Spec.Source); ok {

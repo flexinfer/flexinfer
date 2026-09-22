@@ -179,6 +179,48 @@ spec:
                           HostPath is the base directory on the node for Local strategy model storage.
                           A subdirectory per model is created automatically: <hostPath>/<namespace>/<model-name>/
                         type: string
+                      prefetch:
+                        description: |-
+                          Prefetch controls when the controller populates this cache, independently
+                          of when the serving pod starts.
+                        properties:
+                          idleTTL:
+                            description: |-
+                              IdleTTL marks staged weights as reclaimable once the model has been
+                              inactive for this long. Empty or "0s" keeps them indefinitely.
+
+                              This never deletes anything on its own: it only reports the cache as
+                              evictable so that `flexinfer cache capacity` and the eviction tooling can
+                              rank candidates. Reclaiming is always an explicit, confirmed action.
+                            type: string
+                          policy:
+                            default: Eager
+                            description: |-
+                              Policy selects when the controller populates the cache.
+                                - Eager: stage as soon as the Model reconciles. This is the historical
+                                  behavior and remains the default, so omitting this spec changes nothing.
+                                - OnDemand: defer staging until the model is wanted — a request has
+                                  arrived, minReplicas is above zero, a warm policy holds it up, or an
+                                  explicit prefetch is requested. The first request after an idle period
+                                  pays the download.
+                                - Disabled: never stage automatically. Only an explicit prefetch request
+                                  populates the cache. Use for models parked behind a slow or metered link.
+                            enum:
+                            - Eager
+                            - OnDemand
+                            - Disabled
+                            type: string
+                          priority:
+                            default: 50
+                            description: |-
+                              Priority orders this model against other prefetch candidates when cache
+                              space is reclaimed. Higher values are evicted last. Mirrors the range of
+                              the v1alpha1 ModelCache retentionPriority field.
+                            format: int32
+                            maximum: 100
+                            minimum: 0
+                            type: integer
+                        type: object
                       pvcName:
                         description: |-
                           PVCName is the PVC to use for SharedPVC strategy.

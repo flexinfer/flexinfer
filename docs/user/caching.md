@@ -15,6 +15,9 @@ FlexInfer supports caching at two layers:
 `Model.spec.cache.strategy`:
 
 - `Memory`: fastest reloads; uses RAM (best for homelabs)
+- `Local`: a hostPath directory on the GPU node (e.g. NVMe), under
+  `<hostPath>/<namespace>/<model-name>/`. Fast and cheap, but the weights are
+  pinned to one node and can only be cleared from that node.
 - `SharedPVC`: persistent storage shared across nodes (slower than RAM, but durable)
 - `None`: always download/prepare on demand (slowest)
 
@@ -45,6 +48,81 @@ FlexInfer also sets HuggingFace cache env vars to keep secondary caches under th
 
 - `HF_HOME=/models/.cache/huggingface`
 - `HF_HUB_CACHE=/models/.cache/huggingface/hub`
+
+## Prefetch policy
+
+By default the controller stages weights as soon as a `Model` reconciles, whether
+or not anything has asked for it. That makes cold starts cheap and costs cache
+storage for models that may never be used. `spec.cache.prefetch` lets you make
+that trade per model:
+
+```yaml
+spec:
+  cache:
+    strategy: SharedPVC
+    prefetch:
+      policy: OnDemand    # Eager (default) | OnDemand | Disabled
+      priority: 80        # 0-100; higher is evicted last
+      idleTTL: 72h        # mark reclaimable after this long idle
+```
+
+- `Eager` — stage on reconcile. The behavior before this field existed, and the
+  default, so omitting `prefetch` changes nothing.
+- `OnDemand` — defer staging until something wants the model: a request has
+  arrived within its `idleTimeout`, `minReplicas` is above zero, a warm policy
+  holds it up, or a prefetch is requested explicitly. The first request after an
+  idle period pays the download.
+- `Disabled` — never stage automatically. Only an explicit request populates the
+  cache. Use for models parked behind a slow or metered link.
+
+A deferred model reports `status.cache.prefetchDeferred: true` with the reason in
+`status.cache.message`, and its `Cached` condition carries reason
+`PrefetchDeferred`. Activation stays gated while deferred, exactly as it is while
+a download runs.
+
+`idleTTL` never deletes anything on its own. It only marks a staged cache as a
+reclaim candidate for `flexinfer cache capacity`; reclaiming is always explicit.
+
+### Requesting a prefetch
+
+Set `flexinfer.ai/prefetch-requested-at` to an RFC3339 timestamp to stage a
+model's weights immediately, whatever its policy says:
+
+```bash
+flexinfer cache prefetch qwen38-27b-autoround-workhorse
+```
+
+The controller honors a request strictly newer than
+`status.cache.prefetchRequestedAt`, so re-applying a manifest does not replay it.
+A request also clears a **failed** staging Job so it retries; a Job that is still
+running is left alone rather than restarted.
+
+This stages weights only. It does not scale the model up or claim a GPU.
+
+## Cache commands
+
+```bash
+# Cache state for every model: strategy, policy, warm/cold, staging message
+flexinfer cache status
+
+# Stage a model's weights now, without starting its GPU pod
+flexinfer cache prefetch MODEL [--wait]
+
+# Block until the weights are staged (non-zero exit on failure or timeout)
+flexinfer cache wait MODEL --timeout 30m
+
+# PVC pressure, which models share a volume, and reclaim candidates
+flexinfer cache capacity
+
+# Reclaim a model's cache storage (destructive; re-downloads on next activation)
+flexinfer cache evict MODEL --confirm
+```
+
+`evict` deletes the PVC backing the cache and is deliberately narrow. It refuses
+unless the PVC carries a controller owner reference back to that one `Model`, so
+a PVC named in `spec.cache.pvcName` or shared with another model is never
+deleted. `Local` and `Memory` caches live on a node's disk and cannot be cleared
+this way at all — that needs a privileged pod on the node.
 
 ## Flash-loader
 
