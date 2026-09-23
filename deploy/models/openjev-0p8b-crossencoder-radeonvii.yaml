@@ -14,15 +14,31 @@
 # Radeon VII keeps ~10 GB free next to the embedding / rerank / voice lanes, and
 # a 0.8B pooling model is exactly the kind of lane this card hosts.
 #
-# Status — TODO(kill-test): fill from the run before this joins
-# kustomization.yaml. NOT VERIFIED yet: engine start on gfx906, first-request
-# M-RoPE path, 10-case logit parity against the fp32 reference, VRAM and cold
-# start. Verified offline (no GPU, arch query stubbed): on this image's vLLM
-# (0.20.1 lineage) both plugins register, Qwen3_5ForSequenceClassification is
-# a pooling class with supports_mrope, and the delegate to the M-RoPE donor
+# Status — KILL-TEST PASSED 2026-09-23 01:41-01:52Z on cblevins-radeonvii
+# (MR !1073). Applied by hand, Ready 180 s after apply (image pull of the 1.4 GB
+# delta + GDN Triton JIT included), pod log: `registered Qwen3.5
+# sequence-classification architectures ... fla_autotuners=11`, `Resolved
+# architecture: Qwen3_5ForSequenceClassification`, `Setting attention block
+# size to 288 tokens` (the hybrid page rule computed below), `GPU KV cache
+# size: 4,608 tokens` (64 blocks), `Maximum concurrency for 4,096 tokens per
+# request: 3.56x`. 10-case /classify logit parity against the fp32 reference
+# (baseline_mps.json from the 2026-09-21 HF-path kill-test): **0/10 argmax
+# flips**, worst probability delta 1.39e-3 (fp16 lane vs fp32 reference, same
+# order as the gfx1100 run's 7.7e-4). VRAM on the card went 6.63 -> 8.35 GiB
+# (+2.2 GiB with the lane resident, under the 3000 MB estimate below).
+# Verified offline before the run (no GPU, arch query stubbed): both plugins
+# register on this image's vLLM (0.20.1 lineage), the seqcls class is a pooling
+# class with supports_mrope, and the delegate to the M-RoPE donor
 # (Qwen3VLForConditionalGeneration._get_mrope_input_positions, inherited by
 # Qwen3_5ForConditionalGeneration) returns standard-RoPE positions for text
 # when given the real openjev composite config.
+#
+# Found by the kill-test: without `servedModelName` the proxy rewrites the
+# request's `model` to the pvc path minus the claim (`/openjev/...`,
+# internal/proxy/resolver.go extractModelFromSource) while vLLM serves the
+# mounted path (`/models/openjev/...`), so every request THROUGH THE PROXY was
+# a vLLM 404 even though the lane was healthy. Every other pvc:// lane pins
+# `config.servedModelName`; so does this one now.
 #
 # Promotion: minReplicas 0 for the kill-test. Holding it warm (minReplicas: 1)
 # is a follow-up decision after parity, on judge demand and the co-residency
@@ -65,6 +81,11 @@ spec:
   # annotation is what keeps chat traffic out. Same reasoning as the gfx1100
   # lane.
   config:
+    # vLLM --served-model-name. Callers (Mills, parity scripts) address the
+    # lane by this name through the proxy; it MUST be unique in the namespace
+    # (the controller checks aliasOwners). Without it the proxy forwards the
+    # pvc path minus the claim and vLLM answers 404 (see header).
+    servedModelName: openjev-0p8b-crossencoder-radeonvii
     # Vega20 has no bf16.
     dtype: half
     # One premise plus one hypothesis; 4k is generous for v2s-long.

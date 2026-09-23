@@ -59,6 +59,12 @@ spec:
   # the lane servable. The serve-paths annotation above is what keeps chat
   # traffic out; that is the right tool for it, and it is already doing the job.
   config:
+    # 2026-09-23: same defect the gfx906 kill-test found — without a served
+    # name the proxy forwards `/openjev/...` and vLLM (serving `/models/openjev/
+    # ...`) answers 404 on every proxied request. Not re-verified on this lane
+    # (it is Preempted behind the 5930k workhorse; the gfx906 twin
+    # openjev-0p8b-crossencoder-radeonvii.yaml is the served one).
+    servedModelName: openjev-0p8b-crossencoder-gfx1100
     dtype: half
     # Cross-encoder inputs are one premise plus one hypothesis; 4k is generous
     # for the 0.8B v2s-long variant and keeps the KV/pooling footprint small.
