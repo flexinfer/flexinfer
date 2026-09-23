@@ -43,7 +43,13 @@ spec:
   # The gfx906 GPUProfile's default vLLM image is the v0.6.3 multiarch build,
   # which predates Qwen3.5 entirely, so without this pin the architecture
   # never resolves.
-  image: registry.harbor.lan/flexinfer/vllm@sha256:TODO-digest
+  #
+  # rocm6.3.3-gfx906-v0201-qwen35-mtp-7f362d71, built 2026-09-23 by
+  # publish_vllm_rocm_gfx906_qwen35_mtp (job 294761, MR !1073). Its base layers
+  # are shared with an image already on cblevins-radeonvii, so a first pull
+  # there is ~1.4 GB compressed, not the full 7.5 GB (the node's imagefs sits
+  # on the Longhorn NVMe with ~38 GB above the eviction floor).
+  image: registry.harbor.lan/flexinfer/vllm@sha256:e0aa1e2ef28571077dfda14aea05f9a523396e2fc13779c4d11fb2b6c634d445
   source: pvc://llm-models-nfs/openjev/qwen3.5-0.8b-nli-v2s-long
   nodeSelector:
     kubernetes.io/hostname: cblevins-radeonvii
@@ -101,7 +107,9 @@ spec:
     count: 1
     # ~1.5 GB fp16 text weights (the vision tower is skipped) + HIP context +
     # 216 MiB KV + profiler activations. With bge 1500 + reranker 700 + gte
-    # 2600 + orpheus 3300 that is 11.1 GB, inside the profile's 12 GB cap.
+    # 2600 + orpheus 3300 the group claims 11.1 GB of the 16 GB (GPUProfile
+    # vramMB) the multiModel election packs against, so it joins without
+    # evicting anyone.
     vramEstimateMB: 3000
     shared: radeonvii-models
     # Below orpheus (113) and every retrieval lane (114-120), so the judge
