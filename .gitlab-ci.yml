@@ -602,6 +602,7 @@ vllm_qwen35_seqcls_plugin_test:
       changes: &qwen35-seqcls-plugin-changes
         - .gitlab-ci.yml
         - build/Dockerfile.runtime-serving-native-w4a16
+        - build/Dockerfile.vllm-rocm-gfx906-qwen35-mtp
         - build/vllm-plugin-common/**/*
         - build/vllm-qwen35-seqcls-plugin/**/*
         - build/scripts/test_vllm_qwen35_seqcls_plugin.py
@@ -2156,6 +2157,20 @@ publish_vllm_rocm_gfx906_qwen35_mtp:
         --export-cache "type=inline" \
         --output "type=image,name=${REGISTRY}/vllm:rocm6.3.3-gfx906-v0201-qwen35-mtp-${CI_COMMIT_SHORT_SHA},push=true"
   rules:
+    # 2026-09-22: this image now bundles three FlexInfer packages and a serving
+    # lane depends on them (deploy/models/openjev-0p8b-crossencoder-radeonvii
+    # .yaml), so rebuild on master when any COPY input changes — the same
+    # contract as publish_serving_rocm_gfx1100_native_w4a16 (703cf8367). Keep
+    # this list equal to the Dockerfile's COPY lines: the plugins are shared
+    # with the vLLM 0.26 gfx1100 image, and a fix that never reaches this
+    # 0.20.1 image would leave the lane on stale plugin code.
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes:
+        - build/Dockerfile.vllm-rocm-gfx906-qwen35-mtp
+        - build/scripts/install_vllm_gfx906_compat.py
+        - build/vllm-plugin-common/**/*
+        - build/vllm-qwen35-text-plugin/**/*
+        - build/vllm-qwen35-seqcls-plugin/**/*
     - when: manual
       allow_failure: true
 

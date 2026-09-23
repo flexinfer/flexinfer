@@ -2810,3 +2810,53 @@ fails KV validation by 48 tokens at max-model-len 4096; 0.95 clean.
 
 **Restore**: verified clean (gemma lanes Ready, canary Idle, whisper Idle).
 Raw evidence: `.loom/local/validation/f5-llama33-70b-2026-06-10/`.
+
+---
+
+### 2026-09-23 OpenJEV 0.8B NLI cross-encoder on gfx906 — kill-test PASS (0/10 argmax flips)
+
+**Rig**: `deploy/models/openjev-0p8b-crossencoder-radeonvii.yaml` (MR !1073) on
+`cblevins-radeonvii`, image `registry.harbor.lan/flexinfer/vllm@sha256:e0aa1e2e…`
+(`rocm6.3.3-gfx906-v0201-qwen35-mtp-7f362d71`: vLLM 0.20.1 aiinfos lineage +
+plugin-common + text plugin + **seqcls plugin**, job 294761). Weights from the
+NFS PVC path `openjev/qwen3.5-0.8b-nli-v2s-long` (1.71 GB, staged 09-21).
+Config: `dtype half`, `maxModelLen 4096`, `gpuMemoryUtilization 0.25`,
+`numGpuBlocksOverride 64`, `maxNumSeqs 8`, eager, `TRITON_ATTN`, prefix
+caching off; group `radeonvii-models` priority 112, `vramEstimateMB 3000`.
+
+**Why**: the merged gfx1100 lane is permanently `Preempted` in `5930k-textgen`
+(both gfx1100 cards < 0.3 GB VRAM free); the VII had 10.5 GB free.
+
+**Kill-test (riskiest assumption)**: the 0.20.1-lineage gfx906 vLLM can host a
+hybrid Gated-DeltaNet seq-cls model with the M-RoPE donor delegate — PASS.
+Ready 180 s after `kubectl apply` (1.4 GB image delta + GDN Triton JIT). Pod
+log: `registered Qwen3.5 sequence-classification architectures …
+fla_autotuners=11`, `Resolved architecture: Qwen3_5ForSequenceClassification`,
+`Setting attention block size to 288 tokens` (hybrid page rule), `GPU KV cache
+size: 4,608 tokens`, `Maximum concurrency for 4,096 tokens per request: 3.56x`.
+
+| case | lane argmax | ref argmax (fp32 MPS) | max prob delta |
+|---|---|---|---|
+| 0 | entailment | entailment | 3.1e-06 |
+| 1 | contradiction | contradiction | 2.8e-05 |
+| 2 | neutral | neutral | 1.5e-06 |
+| 3 | entailment | entailment | 2.5e-05 |
+| 4 | neutral | neutral | 9.3e-04 |
+| 5 | contradiction | contradiction | 4.4e-05 |
+| 6 | contradiction | contradiction | 1.4e-03 |
+| 7 | neutral | neutral | 5.5e-05 |
+| 8 | entailment | entailment | 2.7e-04 |
+| 9 | contradiction | contradiction | 7.9e-04 |
+
+**Verdict**: 0/10 flips (gate), worst delta 1.39e-3 = fp16-vs-fp32 precision
+(gfx1100 run: 7.7e-4). VRAM 6.63 → 8.35 GiB (+2.2 GiB resident).
+
+**Defect found**: without `config.servedModelName` the proxy rewrote `model` to
+`/openjev/…` (pvc path minus the claim, `internal/proxy/resolver.go
+extractModelFromSource`) while vLLM served `/models/openjev/…` → every proxied
+request was a vLLM 404 on a healthy lane. Fixed in the CR (served name = CR
+name, like every other pvc:// lane); parity above ran direct-to-lane.
+
+**Restore**: nothing borrowed; the lane is serverless (`minReplicas 0`) and
+returns to zero after 30 min idle. Raw evidence: session scratchpad
+`openjev-gfx906/killtest.log`, `parity-radeonvii.txt`.

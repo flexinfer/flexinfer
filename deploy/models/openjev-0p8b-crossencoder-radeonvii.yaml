@@ -1,0 +1,146 @@
+---
+# openjev 0.8B cross-encoder NLI on the gfx906 retrieval plane (Radeon VII).
+#
+# Same checkpoint, plugin and serving contract as
+# openjev-0p8b-crossencoder-gfx1100.yaml — read that header for how
+# build/vllm-qwen35-seqcls-plugin turns Qwen3_5ForSequenceClassification into a
+# vLLM POOLING model answering /v1/rerank, /v1/score and /classify with a
+# 3-class verdict (contradiction / entailment / neutral). It is NOT a chat
+# model: the checkpoint has no lm_head.
+#
+# Why this lane exists: the gfx1100 lane cannot get a GPU. It sits in
+# 5930k-textgen at priority 200 behind the 131K workhorse, so it is permanently
+# Preempted, and serving it would demand-swap a 27B lane (5+ min each way). The
+# Radeon VII keeps ~10 GB free next to the embedding / rerank / voice lanes, and
+# a 0.8B pooling model is exactly the kind of lane this card hosts.
+#
+# Status — KILL-TEST PASSED 2026-09-23 01:41-01:52Z on cblevins-radeonvii
+# (MR !1073). Applied by hand, Ready 180 s after apply (image pull of the 1.4 GB
+# delta + GDN Triton JIT included), pod log: `registered Qwen3.5
+# sequence-classification architectures ... fla_autotuners=11`, `Resolved
+# architecture: Qwen3_5ForSequenceClassification`, `Setting attention block
+# size to 288 tokens` (the hybrid page rule computed below), `GPU KV cache
+# size: 4,608 tokens` (64 blocks), `Maximum concurrency for 4,096 tokens per
+# request: 3.56x`. 10-case /classify logit parity against the fp32 reference
+# (baseline_mps.json from the 2026-09-21 HF-path kill-test): **0/10 argmax
+# flips**, worst probability delta 1.39e-3 (fp16 lane vs fp32 reference, same
+# order as the gfx1100 run's 7.7e-4). VRAM on the card went 6.63 -> 8.35 GiB
+# (+2.2 GiB with the lane resident, under the 3000 MB estimate below).
+# Verified offline before the run (no GPU, arch query stubbed): both plugins
+# register on this image's vLLM (0.20.1 lineage), the seqcls class is a pooling
+# class with supports_mrope, and the delegate to the M-RoPE donor
+# (Qwen3VLForConditionalGeneration._get_mrope_input_positions, inherited by
+# Qwen3_5ForConditionalGeneration) returns standard-RoPE positions for text
+# when given the real openjev composite config.
+#
+# Found by the kill-test: without `servedModelName` the proxy rewrites the
+# request's `model` to the pvc path minus the claim (`/openjev/...`,
+# internal/proxy/resolver.go extractModelFromSource) while vLLM serves the
+# mounted path (`/models/openjev/...`), so every request THROUGH THE PROXY was
+# a vLLM 404 even though the lane was healthy. Every other pvc:// lane pins
+# `config.servedModelName`; so does this one now.
+#
+# Promotion: minReplicas 0 for the kill-test. Holding it warm (minReplicas: 1)
+# is a follow-up decision after parity, on judge demand and the co-residency
+# numbers — not something this manifest decides.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: openjev-0p8b-crossencoder-radeonvii
+  namespace: flexinfer-system
+  annotations:
+    # Non-chat lane: refuse everything except the pooling routers, so a stray
+    # chat request fails fast instead of 500-ing inside vLLM.
+    flexinfer.ai/serve-paths: /v1/rerank,/v1/score,/classify,/pooling
+spec:
+  backend: vllm
+  # The plugins live in THIS image (build/Dockerfile.vllm-rocm-gfx906-qwen35-
+  # mtp: vLLM 0.20.1 lineage, triton-gfx906, plugin-common + text + seqcls).
+  # The gfx906 GPUProfile's default vLLM image is the v0.6.3 multiarch build,
+  # which predates Qwen3.5 entirely, so without this pin the architecture
+  # never resolves.
+  #
+  # rocm6.3.3-gfx906-v0201-qwen35-mtp-7f362d71, built 2026-09-23 by
+  # publish_vllm_rocm_gfx906_qwen35_mtp (job 294761, MR !1073). Its base layers
+  # are shared with an image already on cblevins-radeonvii, so a first pull
+  # there is ~1.4 GB compressed, not the full 7.5 GB (the node's imagefs sits
+  # on the Longhorn NVMe with ~38 GB above the eviction floor).
+  image: registry.harbor.lan/flexinfer/vllm@sha256:e0aa1e2ef28571077dfda14aea05f9a523396e2fc13779c4d11fb2b6c634d445
+  source: pvc://llm-models-nfs/openjev/qwen3.5-0.8b-nli-v2s-long
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    # First start on the node pulls the image (~7.5 GB compressed) and
+    # JIT-compiles the GDN Triton kernels for Vega20.
+    coldStartTimeout: 15m
+  # NO litellm block on purpose: `litellm.enabled: false` means PARKED to the
+  # proxy (404 model_not_found before it touches demand). The serve-paths
+  # annotation is what keeps chat traffic out. Same reasoning as the gfx1100
+  # lane.
+  config:
+    # vLLM --served-model-name. Callers (Mills, parity scripts) address the
+    # lane by this name through the proxy; it MUST be unique in the namespace
+    # (the controller checks aliasOwners). Without it the proxy forwards the
+    # pvc path minus the claim and vLLM answers 404 (see header).
+    servedModelName: openjev-0p8b-crossencoder-radeonvii
+    # Vega20 has no bf16.
+    dtype: half
+    # One premise plus one hypothesis; 4k is generous for v2s-long.
+    maxModelLen: 4096
+    # The gfx906 vLLM contract (GPUProfile defaults; the Qwen3.5 certificate
+    # in .loom/iteration-gfx906-qwen35-mtp-long-context-2026-07-16.md): eager,
+    # and the Triton attention backend the fork ranks first on this card.
+    enforceEager: true
+    attentionBackend: TRITON_ATTN
+    # SHARED CARD. vLLM refuses to start unless free VRAM >= utilization x
+    # total (vllm/v1/worker/utils.py request_memory), so the 0.9 default dies
+    # whenever the other radeonvii lanes are resident. 0.25 = ~4.0 GiB: enough
+    # for the profiler's weights + activations + one max-length request, and
+    # it is only a startup check — the KV allocation below is fixed.
+    gpuMemoryUtilization: "0.25"
+    # Never let vLLM profile-derive the KV cache on Vega20 (the canary
+    # contract in qwen3-1p7b-vllm-radeonvii.yaml). This is a HYBRID model, so a
+    # "block" is not 16 tokens: vLLM grows the attention block until one
+    # attention page covers one Gated-DeltaNet state page. With fp16 state
+    # (conv 3x6144 + recurrent 16x128x128 = 561,152 B) against 2,048 B/token
+    # of attention KV (2 kv heads x 256 dim x K,V x fp16), that is 288-token
+    # blocks; confirm with the "Setting attention block size" startup line.
+    # One 4096-token request = 15 attention blocks + 1 per GDN group (3) = 18,
+    # so 2 x 4096 needs 36. 64 blocks (x6 KV tensors x 576 KiB = 216 MiB)
+    # leaves ~1.75x headroom; an 8-way batch of short pairs needs 32.
+    numGpuBlocksOverride: 64
+    maxNumSeqs: 8
+    # Prefill every in-context request in one pass, so the pooled last-token
+    # state never crosses a chunk boundary.
+    maxNumBatchedTokens: 4096
+    # Pairs are unique and hybrid-state prefix caching is still experimental;
+    # the gfx906 Qwen3.5 certificate ran with it off.
+    enablePrefixCaching: false
+  gpu:
+    # Device allocation belongs here (the webhook rejects a GPU in
+    # spec.resources). Joining radeonvii-models lets the VRAM-bounded set
+    # election co-host this lane with the retrieval and voice lanes instead of
+    # contending with them at the device level.
+    vendor: amd
+    count: 1
+    # ~1.5 GB fp16 text weights (the vision tower is skipped) + HIP context +
+    # 216 MiB KV + profiler activations. With bge 1500 + reranker 700 + gte
+    # 2600 + orpheus 3300 the group claims 11.1 GB of the 16 GB (GPUProfile
+    # vramMB) the multiModel election packs against, so it joins without
+    # evicting anyone.
+    vramEstimateMB: 3000
+    shared: radeonvii-models
+    # Below orpheus (113) and every retrieval lane (114-120), so the judge
+    # helper can never preempt the retrieval/voice plane; above the cold
+    # generative lanes (gemma4-e4b 110, qwen3-8b 100).
+    priority: 112
+  resources:
+    limits:
+      cpu: "4"
+      memory: 12Gi
+    requests:
+      cpu: "1"
+      memory: 4Gi

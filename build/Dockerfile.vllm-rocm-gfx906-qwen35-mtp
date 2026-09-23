@@ -2,8 +2,10 @@
 #
 # The base is the published amd64 artifact built from ai-infos/vllm-gfx906-
 # mobydick commit eb450bdf (vLLM 0.20.1 lineage), triton-gfx906 3.6, and the
-# native gfx906 PyTorch/ROCm 6.3.3 stack. FlexInfer's overlay only installs the
-# text-only dense/MoE registration plugin and pins the safe runtime contract.
+# native gfx906 PyTorch/ROCm 6.3.3 stack. FlexInfer's overlay installs the
+# shared plugin helpers, the text-only dense/MoE registration plugin and the
+# sequence-classification (cross-encoder) plugin, and pins the safe runtime
+# contract.
 ARG BASE_IMAGE=docker.io/mixa3607/vllm-gfx906:0.20.1-rocm-6.3.3-aiinfos@sha256:a5a54ee0494ef0a9a351cf7123620f8fe941492906ecb2afec88b3333dd7a6f0
 FROM ${BASE_IMAGE}
 
@@ -31,6 +33,23 @@ RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/vllm-plugin-c
 COPY build/vllm-qwen35-text-plugin /opt/flexinfer/qwen35-text-plugin
 RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-text-plugin \
     && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_text" for ep in entry_points(group="vllm.general_plugins"))'
+
+# Register Qwen3.5 sequence-classification checkpoints (cross-encoder NLI /
+# rerank, deploy/models/openjev-0p8b-crossencoder-radeonvii.yaml) as vLLM
+# POOLING models; same package as the gfx1100 native-W4A16 image. Pre-wrapping
+# with as_seq_cls_model means --runner auto resolves to pooling with no CLI
+# flag and no backend change.
+#
+# Unlike the gfx1100 image, register() cannot be exercised here: this fork
+# resolves the GCN arch when vllm/platforms/rocm.py is imported (amdsmi, then
+# torch.cuda), so any Qwen3.5 model import fails in a GPU-less builder with
+# "No CUDA GPUs are available". register() — including attach_mrope_support,
+# which raises if the M-RoPE donor moved — runs in load_general_plugins() at
+# engine start, before the model loads, so drift fails the lane's startup
+# loudly rather than its first request.
+COPY build/vllm-qwen35-seqcls-plugin /opt/flexinfer/qwen35-seqcls-plugin
+RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-seqcls-plugin \
+    && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_seqcls" for ep in entry_points(group="vllm.general_plugins"))'
 
 WORKDIR /workspace
 ENTRYPOINT ["vllm", "serve"]
