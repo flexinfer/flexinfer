@@ -30,9 +30,15 @@
 #
 # Roles: `mills-warm` (Mills council lenses, audit pool, spinning frames,
 # triage/consolidation — gitops k3s/mills/configmap-policy.yaml) and
-# `mills-council` (moved here from the 5930k workhorse). `workhorse`,
-# `loom-workhorse` and `reasoning` stay on the 5930k 131K lane for the research
-# stage and long prompts.
+# `mills-council` (moved here from the 5930k workhorse). Since 2026-10-03
+# (owner decision) the Mills research stage and the weaver router/subagent
+# (gitops k3s/mills/deployment.yaml FLEXINFER_WEAVER_MODEL, loom-core
+# k8s/base WEAVER_*_MODEL) also address this lane: both 27B lanes are now
+# 64K / two sequences, and this one never scales to zero or loses its card
+# to a video lane (an 8-token probe answered in 0.64 s here against 88.9 s
+# behind a research completion on the ondemand 5930k lane). `workhorse`,
+# `loom-workhorse` and `reasoning` stay on the 5930k lane, which also keeps
+# the background shadow judge.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -116,7 +122,26 @@ spec:
     kvCacheDtype: fp8_e4m3
     calculateKvScales: false
     enforceEager: false
-    enablePrefixCaching: false
+    # Hybrid-GDN prefix caching (owner decision 2026-10-03), the recipe the
+    # 9B RP primary has run since 2026-07-25 (f90b4fbfe, flexinfer #67) on
+    # this same runtime digest, dtype half and fp8 KV: the flag must be
+    # explicit (vLLM 0.23 boots hybrid lanes APC-off), "align" is the only
+    # GDN-supported cache mode (it rounds the attention block up to the
+    # mamba page — read the boot line "Setting attention block size to N
+    # tokens"; hits are counted in whole blocks, so prompts shorter than one
+    # block report cached_tokens null), bf16 SSM state halves the recurrent
+    # checkpoint so the block shrinks and more prefixes stay resident, and
+    # prompt-token details expose cached_tokens / X-Flexinfer-Cached-Tokens.
+    # Why here: weaver loops re-send an append-only history every iteration,
+    # Mills retries resend the same prompt, and prefill on this lane runs at
+    # ~1.4K tok/s, so a 20K-token hit saves ~13 s of TTFT. The pool is
+    # unchanged (mamba page == attention page already; compare the boot
+    # line "GPU KV cache size" with the 132,528 tokens of 2026-10-03).
+    # Rollback = enablePrefixCaching: false and drop the three keys below.
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
     disableAiter: true
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
