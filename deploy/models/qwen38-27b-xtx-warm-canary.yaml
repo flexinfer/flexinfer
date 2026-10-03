@@ -143,12 +143,16 @@ spec:
     # from 1568), needle and arithmetic answers unchanged.
     # Pool: the first APC boot (!1076) profiled "GPU KV cache size: 70,004
     # tokens" (1.07x); the relaunch under !1077 with identical settings
-    # profiled 132,561 tokens (2.02x), the same pool as APC-off. The short
-    # pool was therefore the rollout race (the new pod profiles free VRAM
-    # before the previous EngineCore has released its memory; RollingUpdate
-    # maxSurge 0), NOT a cost of prefix caching — the !1077 commit message
-    # said otherwise and is wrong. After any roll read the boot line; if it
-    # is far below 132K, delete the pod and it re-profiles. Verified
+    # profiled 132,561 tokens (2.02x), the same pool as APC-off, so it is
+    # NOT a cost of prefix caching (the !1077 commit message said otherwise
+    # and is wrong). The pattern across both lanes on 2026-10-03: the FIRST
+    # boot after a change that invalidates the torch.compile / cudagraph
+    # cache profiles ~70K (the cold compile/autotune inflates the peak that
+    # vLLM's profile run measures: 46 s between the block-size and KV lines
+    # here against 17 s on the warm relaunch), and a pod deleted right
+    # afterwards gets the full pool from the warm hostPath cache. After any
+    # roll read the boot line; if it is far below 132K, delete the pod once.
+    # Verified
     # 2026-10-03 17:18Z: three concurrent 400-token generations 10.4 s /
     # 19.8 s / 10.5 s against 10.2 s alone, engine "Running: 2 reqs".
     # schedulerReserveFullISL below stays false: harmless at 2 x 64K <=

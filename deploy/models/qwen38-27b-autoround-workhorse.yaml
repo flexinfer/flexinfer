@@ -146,11 +146,17 @@ spec:
     # Measured on the XTX lane 2026-10-03: a 7,627-token repeat went from
     # 12.96 s to 1.3 s with cached_tokens 7200 (blocks of 800), answers
     # unchanged, and the pool stays ~132K tokens (2.02x at 65536; the XTX
-    # lane's second APC boot read 132,561). After THIS roll read the boot
-    # line "GPU KV cache size": the XTX lane's first APC boot and this
-    # lane's first 64K boot both profiled only ~70K because the previous
-    # pod's memory had not been released yet (RollingUpdate maxSurge 0) —
-    # if the number is far below 132K, delete the pod and it re-profiles.
+    # lane's second APC boot read 132,561). After any roll read the boot
+    # line "GPU KV cache size". Three times on 2026-10-03 the FIRST boot
+    # after a change that invalidates the torch.compile / cudagraph cache
+    # (64K envelope, then APC on each lane) profiled only ~70K tokens, and
+    # the pod deleted right afterwards profiled the full pool (this lane:
+    # 70,004 then 132,561 at 17:48Z). The warm-cache boot started seconds
+    # after the deletion, so it is not the old pod's memory: the cold
+    # compile/autotune during vLLM's profile run inflates the measured
+    # peak and the KV budget is sized around it for the pod's lifetime.
+    # Rule: if the number is far below 132K, delete the pod once; the
+    # compile cache on the hostPath is warm for the next boot.
     # schedulerReserveFullISL above stays false (harmless at 2 x 64K <=
     # 132K, identical to the XTX lane). Consumers that benefit here: the
     # shadow judge (one preamble, many hunk checklists), research retries,
