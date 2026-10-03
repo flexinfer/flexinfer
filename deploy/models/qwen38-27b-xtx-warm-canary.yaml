@@ -117,9 +117,9 @@ spec:
     maxNumSeqs: 2
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
-    # false since 2026-10-03: see the prefix-caching note below — APC leaves
-    # a 70K-token pool, and full-ISL reservation would run one request at a
-    # time on a lane configured for two.
+    # false since 2026-10-03 (see the prefix-caching note below): harmless
+    # with the full pool, and it keeps two requests overlapping if a boot
+    # profiles a short pool.
     schedulerReserveFullISL: false
     gpuMemoryUtilization: "0.94"
     kvCacheDtype: fp8_e4m3
@@ -141,16 +141,20 @@ spec:
     # prompt took 12.96 s cold and 1.34 s / 1.27 s on repeats with
     # cached_tokens 7200 (9 blocks of 800; bf16 SSM state shrank the block
     # from 1568), needle and arithmetic answers unchanged.
-    # COST: align mode keeps a recurrent-state checkpoint per block, so the
-    # pool is "GPU KV cache size: 70,004 tokens" (1.07x at 65536) instead of
-    # the 132,528 this lane had APC-off. That is intrinsic, not the rollout
-    # race (the old pod was gone 2.5 min before profiling). With the pool
-    # near one sequence's worth, schedulerReserveFullISL below is false so
-    # admission goes by actual request length: this lane's 7-day p99 prompt
-    # is 19.1K and research (routed here since 2026-10-03) averages 4K, so
-    # two typical calls overlap and vLLM preempts only when two long ones
-    # collide. Rollback = enablePrefixCaching: false, drop the three keys
-    # and set schedulerReserveFullISL back to true (pool returns to ~132K).
+    # Pool: the first APC boot (!1076) profiled "GPU KV cache size: 70,004
+    # tokens" (1.07x); the relaunch under !1077 with identical settings
+    # profiled 132,561 tokens (2.02x), the same pool as APC-off. The short
+    # pool was therefore the rollout race (the new pod profiles free VRAM
+    # before the previous EngineCore has released its memory; RollingUpdate
+    # maxSurge 0), NOT a cost of prefix caching — the !1077 commit message
+    # said otherwise and is wrong. After any roll read the boot line; if it
+    # is far below 132K, delete the pod and it re-profiles. Verified
+    # 2026-10-03 17:18Z: three concurrent 400-token generations 10.4 s /
+    # 19.8 s / 10.5 s against 10.2 s alone, engine "Running: 2 reqs".
+    # schedulerReserveFullISL below stays false: harmless at 2 x 64K <=
+    # 132K, identical to the workhorse, and it keeps two requests
+    # overlapping if a boot ever profiles a short pool again.
+    # Rollback = enablePrefixCaching: false and drop the three keys.
     enablePrefixCaching: true
     mambaCacheMode: "align"
     mambaSsmCacheDtype: "bfloat16"
