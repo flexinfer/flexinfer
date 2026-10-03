@@ -123,7 +123,17 @@ spec:
     maxNumSeqs: 2
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
-    schedulerReserveFullISL: true
+    # Reserve by actual request length, not the full 64K (owner decision
+    # 2026-10-03). This card runs in the legacy 256 MiB BAR window
+    # (mem_info_vis_vram_total=256MiB on the 5930k's X99 board; Above-4G/
+    # ReBAR off), so the relaunched lane got only 2.3 GiB of KV = 69,905
+    # tokens = 1.07x at 65536 — with full-ISL reservation every request still
+    # ran alone despite maxNumSeqs 2. The lane's 7-day p95 is 18K prompt +
+    # 4.3K generation, so two typical calls overlap in that pool; vLLM
+    # preempts only when a rare >35K request collides. Full reservation
+    # protected the 128K runs this lane no longer hosts. Re-enable once the
+    # BIOS exposes the large BAR and the pool is back near 132K tokens.
+    schedulerReserveFullISL: false
     gpuMemoryUtilization: "0.94"
     # fp16 KV on purpose — fp8 KV halves long-context decode on this runtime
     # (dequant tax, research doc 8c). Pool is ~70K tokens (1.07x @64K).
