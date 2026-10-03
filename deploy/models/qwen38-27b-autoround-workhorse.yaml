@@ -107,13 +107,20 @@ spec:
     hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
     dtype: half
     languageModelOnly: true
-    # Context envelope raised 64K -> 128K (2026-08-16 context-push): fp8 KV
-    # pool = 137,098 tokens (1.05x at 131072); needle 1/1 @99,498, 1/1
-    # @128,409, 5/5 @128,509 on the canary at this exact artifact/runtime/
-    # TRITON_ATTN posture. Native 262144 — no RoPE forcing. Prefill at depth:
-    # 198 tok/s @60K, 129 @100K (quadratic-normal).
-    maxModelLen: 131072
-    maxNumSeqs: 1
+    # Context envelope: 64K / two sequences (owner decision 2026-10-03), the
+    # same posture as the 7900xtx warm lane. The 128K envelope (2026-08-16
+    # context-push: fp8 KV pool 137,098 tokens = 1.05x at 131072; needle 1/1
+    # @99,498, 1/1 @128,409, 5/5 @128,509; prefill 198 tok/s @60K, 129 @100K)
+    # still qualifies on this artifact/runtime/TRITON_ATTN posture, but on a
+    # 23 GiB gfx1100 the model takes 16.77 GiB and leaves ~4.4 GiB of KV
+    # (~132K tokens fp8), so 131072 forces maxNumSeqs 1: every Mills research,
+    # shadow-judge and weaver call serialised behind one 2-minute generation
+    # (8-token probe 88.9 s on 2026-10-03; vLLM e2e p95 204-235 s all day)
+    # while the 7-day p99 prompt on this lane was 40.7K tokens (mean 4.1K).
+    # 65536 gives 2.02x concurrency with the same pool. Raise back to 131072
+    # only with a >64K consumer in hand and the concurrency cost accepted.
+    maxModelLen: 65536
+    maxNumSeqs: 2
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
     schedulerReserveFullISL: true
@@ -169,7 +176,8 @@ spec:
       memory: 40Gi
   # 2026-09-13: mills-council moved to the warm 7900xtx lane
   # (qwen38-27b-xtx-warm-canary, alias mills-warm); this lane keeps the
-  # long-context roles (workhorse / loom-workhorse / reasoning, 131K).
+  # workhorse / loom-workhorse / reasoning roles (64K, two sequences since
+  # 2026-10-03 — see maxModelLen above).
   serviceLabels:
     - qwen38-27b
     - workhorse
