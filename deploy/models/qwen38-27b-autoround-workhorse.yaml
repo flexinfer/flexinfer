@@ -159,8 +159,9 @@ spec:
     # compile cache on the hostPath is warm for the next boot.
     # schedulerReserveFullISL above stays false (harmless at 2 x 64K <=
     # 132K, identical to the XTX lane). Consumers that benefit here: the
-    # shadow judge (one preamble, many hunk checklists), research retries,
-    # and the workhorse/reasoning alias callers that resend a system prompt.
+    # workhorse/reasoning alias callers that resend a system prompt, and
+    # the Mills fallback traffic (research, weaver and shadow judge all
+    # moved to the XTX lane on 2026-10-03, gitops !887/!889).
     # Rollback = enablePrefixCaching: false and drop the three keys below.
     enablePrefixCaching: true
     mambaCacheMode: "align"

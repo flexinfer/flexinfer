@@ -36,9 +36,9 @@
 # k8s/base WEAVER_*_MODEL) also address this lane: both 27B lanes are now
 # 64K / two sequences, and this one never scales to zero or loses its card
 # to a video lane (an 8-token probe answered in 0.64 s here against 88.9 s
-# behind a research completion on the ondemand 5930k lane). `workhorse`,
-# `loom-workhorse` and `reasoning` stay on the 5930k lane, which also keeps
-# the background shadow judge.
+# behind a research completion on the ondemand 5930k lane). The shadow
+# judge followed later the same day (gitops !889). `workhorse`,
+# `loom-workhorse` and `reasoning` stay on the 5930k lane.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
