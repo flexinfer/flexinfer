@@ -74,6 +74,8 @@ const (
 const (
 	// ConditionModelCached indicates the model is cached on disk
 	ConditionModelCached = "Cached"
+	// ConditionKVPoolShort indicates a profiled pool below the lane envelope.
+	ConditionKVPoolShort = "KVPoolShort"
 	// ConditionModelLoaded indicates the model is loaded in memory
 	ConditionModelLoaded = "Loaded"
 	// ConditionModelReady indicates the model is ready to serve
@@ -88,6 +90,9 @@ const (
 
 // Condition reasons for Model status
 const (
+	ReasonKVPoolShort   = "KVPoolShort"
+	ReasonKVPoolOK      = "KVPoolOK"
+	ReasonKVPoolRecheck = "KVPoolRecheck"
 	// ReasonNoMatchingNodes - no nodes match the model's GPU/selector requirements
 	ReasonNoMatchingNodes = "NoMatchingNodes"
 	// ReasonAmbiguousGPUVendor - multiple GPU vendors found, must specify gpu.vendor
@@ -750,9 +755,33 @@ type LiteLLMSpec struct {
 	CopilotAlias string `json:"copilotAlias,omitempty"`
 }
 
-// ModelStatus defines the observed state of Model
+// KVPoolStatus records the boot-time vLLM profile and durable recheck budget.
+// +kubebuilder:object:generate=true
+type KVPoolStatus struct {
+	// KVCacheTokens is the profiled GPU KV cache capacity in tokens.
+	// +optional
+	KVCacheTokens *int64 `json:"kvCacheTokens,omitempty"`
+	// MaxConcurrency is the profiled concurrency at the configured context length.
+	// +optional
+	MaxConcurrency string `json:"maxConcurrency,omitempty"`
+	// PodName identifies the pod whose logs were observed (even if lines were absent).
+	PodName string `json:"podName,omitempty"`
+	// PodUID distinguishes replacements that reuse a pod name.
+	PodUID     string      `json:"podUID,omitempty"`
+	ObservedAt metav1.Time `json:"observedAt,omitempty"`
+	// RecheckedReplicaSets lists ReplicaSet UIDs whose recheck budget was consumed.
+	// It is persisted before pod deletion to prevent repeated deletes after conflicts.
+	// +optional
+	RecheckedReplicaSets []string `json:"recheckedReplicaSets,omitempty"`
+}
+
+// ModelStatus contains the observed model state.
 // +kubebuilder:object:generate=true
 type ModelStatus struct {
+	// KVPool contains the last observed vLLM boot profile.
+	// +optional
+	KVPool *KVPoolStatus `json:"kvPool,omitempty"`
+
 	// Phase is the current model lifecycle phase.
 	// +optional
 	Phase ModelPhase `json:"phase,omitempty"`

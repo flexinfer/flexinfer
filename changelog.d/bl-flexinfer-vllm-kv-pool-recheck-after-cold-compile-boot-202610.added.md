@@ -1,0 +1,1 @@
+- Surface vLLM boot KV pool capacity and KVPoolShort in Model status, with one automatic recheck per ReplicaSet and Prometheus metrics (`api/v1alpha2/model_types.go`, `controllers/model_helpers.go`, `controllers/model_loading_substage.go`, `pkg/metrics/exporter.go`); update the generated Model schemas, Helm chart version and Qwen3.8 lane comments.

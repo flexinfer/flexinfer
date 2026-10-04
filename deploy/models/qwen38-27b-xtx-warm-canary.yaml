@@ -150,8 +150,9 @@ spec:
     # cache profiles ~70K (the cold compile/autotune inflates the peak that
     # vLLM's profile run measures: 46 s between the block-size and KV lines
     # here against 17 s on the warm relaunch), and a pod deleted right
-    # afterwards gets the full pool from the warm hostPath cache. After any
-    # roll read the boot line; if it is far below 132K, delete the pod once.
+    # afterwards gets the full pool from the warm hostPath cache.
+    # Inspect status.kvPool (kvCacheTokens/maxConcurrency) and KVPoolShort after rolls.
+    # The controller rechecks a short pool once per ReplicaSet.
     # Verified
     # 2026-10-03 17:18Z: three concurrent 400-token generations 10.4 s /
     # 19.8 s / 10.5 s against 10.2 s alone, engine "Running: 2 reqs".
