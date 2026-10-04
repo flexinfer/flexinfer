@@ -6,9 +6,11 @@ import (
 	"io"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -153,6 +155,19 @@ func fetchPodLogTail(ctx context.Context, kubeClient kubernetes.Interface, names
 		return strings.TrimSpace(string(data))
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// fetchKVPoolBootLog reads a bounded prefix including the boot profile rather
+// than a short tail that could have already lost the profile under traffic.
+// Errors remain retryable; a successful log without profile lines is observed once.
+func fetchKVPoolBootLog(ctx context.Context, kubeClient kubernetes.Interface, pod *corev1.Pod) (string, error) {
+	stream, err := kubeClient.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: primaryContainerName(pod)}).Stream(ctx)
+	if err != nil {
+		return "", err
+	}
+	defer func() { _ = stream.Close() }()
+	data, err := io.ReadAll(io.LimitReader(stream, 4<<20))
+	return string(data), err
 }
 
 // Regex for the vLLM safetensors shard progress line.
@@ -392,4 +407,42 @@ func truncateMessage(msg string) string {
 		msg = msg[:maxLen-1] + "…"
 	}
 	return msg
+}
+
+var kvTokensPattern = regexp.MustCompile(`GPU KV cache size:\s*([0-9][0-9,]*) tokens`)
+var kvConcurrencyPattern = regexp.MustCompile(`Maximum concurrency for [0-9][0-9,]* tokens per request:\s*([0-9]+(?:\.[0-9]+)?)x`)
+
+// parseVLLMKVPool requires both profile lines; partial profiles are not usable.
+func parseVLLMKVPool(tail string) (int64, string, bool) {
+	tokens := kvTokensPattern.FindAllStringSubmatch(tail, -1)
+	concurrency := kvConcurrencyPattern.FindAllStringSubmatch(tail, -1)
+	if len(tokens) == 0 || len(concurrency) == 0 {
+		return 0, "", false
+	}
+	n, err := strconv.ParseInt(strings.ReplaceAll(tokens[len(tokens)-1][1], ",", ""), 10, 64)
+	c := concurrency[len(concurrency)-1][1]
+	if _, e := strconv.ParseFloat(c, 64); err != nil || e != nil {
+		return 0, "", false
+	}
+	return n, c, true
+}
+
+func updateKVPoolCondition(model *aiv1alpha2.Model) bool {
+	maxSeqs := model.Spec.ConfigInt("maxNumSeqs", 0)
+	if maxSeqs <= 0 || model.Status.KVPool == nil || model.Status.KVPool.MaxConcurrency == "" {
+		meta.RemoveStatusCondition(&model.Status.Conditions, aiv1alpha2.ConditionKVPoolShort)
+		return false
+	}
+	c, err := strconv.ParseFloat(model.Status.KVPool.MaxConcurrency, 64)
+	if err != nil {
+		return false
+	}
+	short := c < 0.75*float64(maxSeqs)
+	reason := aiv1alpha2.ReasonKVPoolOK
+	if short {
+		reason = aiv1alpha2.ReasonKVPoolShort
+	}
+	setModelCondition(model, aiv1alpha2.ConditionKVPoolShort, short, reason,
+		fmt.Sprintf("Profiled maxConcurrency=%sx; maxNumSeqs=%d (short below %.2fx)", model.Status.KVPool.MaxConcurrency, maxSeqs, 0.75*float64(maxSeqs)))
+	return short
 }

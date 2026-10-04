@@ -1,9 +1,13 @@
 package controllers
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
@@ -303,4 +307,48 @@ func repeat(s string, n int) string {
 		out = append(out, s...)
 	}
 	return string(out)
+}
+
+func TestVLLMKVPoolParsing(t *testing.T) {
+	for _, tc := range []struct {
+		log    string
+		tokens int64
+		c      string
+		found  bool
+	}{
+		{"INFO kv_cache_utils.py GPU KV cache size: 70,004 tokens\nINFO Maximum concurrency for 65,536 tokens per request: 1.07x", 70004, "1.07", true},
+		{"GPU KV cache size: 132561 tokens\nMaximum concurrency for 65536 tokens per request: 2.02x", 132561, "2.02", true},
+		{"GPU KV cache size: 70004 tokens", 0, "", false},
+		{"Maximum concurrency for 65536 tokens per request: 1.07x", 0, "", false},
+		{"no profile", 0, "", false},
+		{"GPU KV cache size: 999999999999999999999999 tokens\nMaximum concurrency for 65536 tokens per request: 2x", 0, "", false},
+	} {
+		n, c, found := parseVLLMKVPool(tc.log)
+		if n != tc.tokens || c != tc.c || found != tc.found {
+			t.Fatalf("parse %q = %d/%s/%v", tc.log, n, c, found)
+		}
+	}
+}
+
+func TestKVPoolConditionThreshold(t *testing.T) {
+	for _, tc := range []struct {
+		c                string
+		seqs             int
+		short, condition bool
+	}{
+		{"1.07", 2, true, true}, {"2.02", 2, false, true}, {"1.50", 2, false, true}, {"1.49", 2, true, true}, {"1.07", 0, false, false}, {"", 2, false, false},
+	} {
+		model := &aiv1alpha2.Model{Spec: aiv1alpha2.ModelSpec{Config: &apiextensionsv1.JSON{Raw: []byte(fmt.Sprintf(`{"maxNumSeqs":%d}`, tc.seqs))}}}
+		model.Status.KVPool = &aiv1alpha2.KVPoolStatus{MaxConcurrency: tc.c}
+		if short := updateKVPoolCondition(model); short != tc.short {
+			t.Fatalf("%+v: short=%v", tc, short)
+		}
+		cond := meta.FindStatusCondition(model.Status.Conditions, aiv1alpha2.ConditionKVPoolShort)
+		if (cond != nil) != tc.condition {
+			t.Fatalf("%+v: condition=%v", tc, cond)
+		}
+		if cond != nil && (!strings.Contains(cond.Message, tc.c) || !strings.Contains(cond.Message, fmt.Sprint(tc.seqs))) {
+			t.Fatal(cond.Message)
+		}
+	}
 }
