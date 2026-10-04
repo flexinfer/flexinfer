@@ -19,6 +19,8 @@ package controllers
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -468,6 +470,13 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	// detect wedged weight loads.
 
 	if deployment.Status.ReadyReplicas > 0 {
+		if r.KubeClient != nil {
+			if err := r.observeReadyKVPool(ctx, model, func(pod *corev1.Pod) (string, error) {
+				return fetchKVPoolBootLog(ctx, r.KubeClient, pod)
+			}); err != nil {
+				return err
+			}
+		}
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady
 		clearLoadingStatus(model)
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, true, aiv1alpha2.ReasonBackendReady, "Backend is ready to serve requests")
@@ -644,4 +653,88 @@ func (r *ModelReconciler) recordPhaseMetrics(model *aiv1alpha2.Model, from, to a
 			metrics.ModelReadyLatencySeconds.WithLabelValues(name, ns, model.Spec.Backend).Observe(latency)
 		}
 	}
+}
+
+// observeReadyKVPool reads each ready pod once and consumes the ReplicaSet's
+// recheck budget in status before deletion. A failed delete consumes the budget
+// too: safety takes precedence over retrying an ambiguous API result.
+func (r *ModelReconciler) observeReadyKVPool(ctx context.Context, model *aiv1alpha2.Model, readLog func(*corev1.Pod) (string, error)) error {
+	if model.Spec.Backend != "vllm" {
+		return nil
+	}
+	pods := &corev1.PodList{}
+	if err := r.List(ctx, pods, client.InNamespace(model.Namespace), client.MatchingLabels{LabelModel: model.Name}); err != nil {
+		return err
+	}
+	sort.Slice(pods.Items, func(i, j int) bool {
+		return pods.Items[i].CreationTimestamp.After(pods.Items[j].CreationTimestamp.Time)
+	})
+	for i := range pods.Items {
+		pod := &pods.Items[i]
+		if pod.DeletionTimestamp != nil {
+			continue
+		}
+		ready := false
+		for _, c := range pod.Status.Conditions {
+			if c.Type == corev1.PodReady && c.Status == corev1.ConditionTrue {
+				ready = true
+			}
+		}
+		if !ready {
+			continue
+		}
+		owner := metav1.GetControllerOf(pod)
+		if owner == nil || owner.Kind != "ReplicaSet" {
+			continue
+		}
+		// The pod's controlling ReplicaSet UID is stable across replacements
+		// and changes on rollout. Reading it from the owner reference avoids
+		// requiring ReplicaSet read permissions on the controller.
+		pool := model.Status.KVPool
+		if pool == nil || pool.PodName != pod.Name || pool.PodUID != string(pod.UID) {
+			var marker []string
+			if pool != nil {
+				marker = pool.RecheckedReplicaSets
+			}
+			bootLog, err := readLog(pod)
+			if err != nil {
+				return fmt.Errorf("read KV pool boot log for %s: %w", pod.Name, err)
+			}
+			tokens, concurrency, found := parseVLLMKVPool(bootLog)
+			pool = &aiv1alpha2.KVPoolStatus{PodName: pod.Name, PodUID: string(pod.UID), ObservedAt: metav1.Now(), RecheckedReplicaSets: marker}
+			if found {
+				pool.KVCacheTokens = &tokens
+				pool.MaxConcurrency = concurrency
+			}
+			model.Status.KVPool = pool
+		}
+		if pool.KVCacheTokens != nil {
+			metrics.ModelKVCacheTokens.WithLabelValues(model.Name).Set(float64(*pool.KVCacheTokens))
+		} else {
+			metrics.ModelKVCacheTokens.DeleteLabelValues(model.Name)
+		}
+		short := updateKVPoolCondition(model)
+		generation := string(owner.UID)
+		if !short || !model.Spec.ConfigBool("kvPoolRecheck", true) || generation == "" || slices.Contains(pool.RecheckedReplicaSets, generation) {
+			return nil
+		}
+		pool.RecheckedReplicaSets = append(pool.RecheckedReplicaSets, generation)
+		if err := r.Status().Update(ctx, model); err != nil {
+			return err
+		}
+		// UID precondition ensures a replacement with the same name is never deleted.
+		uid := pod.UID
+		if err := r.Delete(ctx, pod, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil {
+			if errors.IsNotFound(err) {
+				return nil
+			}
+			return err
+		}
+		metrics.ModelKVPoolRecheckTotal.WithLabelValues(model.Name).Inc()
+		if r.Recorder != nil {
+			r.Recorder.Eventf(model, corev1.EventTypeNormal, aiv1alpha2.ReasonKVPoolRecheck, "Rechecking pod %s: kvCacheTokens=%d maxConcurrency=%sx maxNumSeqs=%d", pod.Name, *pool.KVCacheTokens, pool.MaxConcurrency, model.Spec.ConfigInt("maxNumSeqs", 0))
+		}
+		return nil
+	}
+	return nil
 }

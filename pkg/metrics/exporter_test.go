@@ -9,6 +9,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
 // ---------- Descriptor contract table ----------
@@ -28,6 +29,8 @@ type metricSpec struct {
 // cause a test failure, preventing silent regressions.
 func allMetrics() []metricSpec {
 	return []metricSpec{
+		{name: "flexinfer_model_kv_pool_recheck_total", help: "Automatic vLLM KV pool rechecks.", metricType: dto.MetricType_COUNTER, labels: []string{"model"}, collector: ModelKVPoolRecheckTotal},
+		{name: "flexinfer_model_kv_cache_tokens", help: "Profiled vLLM GPU KV cache capacity in tokens.", metricType: dto.MetricType_GAUGE, labels: []string{"model"}, collector: ModelKVCacheTokens},
 		// --- Core operational ---
 		{
 			name:       "flexinfer_tokens_per_second",
@@ -470,7 +473,7 @@ func TestMetricTypes(t *testing.T) {
 // TestMetricCount verifies the table is exhaustive. If a developer adds a metric
 // to exporter.go but forgets to add it to the test table, this test fails.
 func TestMetricCount(t *testing.T) {
-	const expectedMetricCount = 48 // total exported metrics in exporter.go
+	const expectedMetricCount = 50 // total exported metrics in exporter.go
 	got := len(allMetrics())
 	assert.Equal(t, expectedMetricCount, got,
 		"metric count changed — update allMetrics() table when adding/removing metrics")
@@ -925,4 +928,35 @@ func indexOf(s, substr string) int {
 		}
 	}
 	return -1
+}
+
+func TestKVPoolMetricsRegistered(t *testing.T) {
+	const model = "kv-profile-test"
+	counter := ModelKVPoolRecheckTotal.WithLabelValues(model)
+	before := promtestutil.ToFloat64(counter)
+	counter.Inc()
+	ModelKVCacheTokens.WithLabelValues(model).Set(132561)
+	defer ModelKVPoolRecheckTotal.DeleteLabelValues(model)
+	defer ModelKVCacheTokens.DeleteLabelValues(model)
+	assert.Equal(t, 1.0, promtestutil.ToFloat64(counter)-before)
+	families, err := ctrlmetrics.Registry.Gather()
+	require.NoError(t, err)
+	found := map[string]bool{}
+	for _, family := range families {
+		if family.GetName() != "flexinfer_model_kv_pool_recheck_total" && family.GetName() != "flexinfer_model_kv_cache_tokens" {
+			continue
+		}
+		for _, metric := range family.Metric {
+			for _, label := range metric.Label {
+				if label.GetName() == "model" && label.GetValue() == model {
+					found[family.GetName()] = true
+					if family.GetName() == "flexinfer_model_kv_cache_tokens" {
+						assert.Equal(t, 132561.0, metric.GetGauge().GetValue())
+					}
+				}
+			}
+		}
+	}
+	assert.True(t, found["flexinfer_model_kv_pool_recheck_total"])
+	assert.True(t, found["flexinfer_model_kv_cache_tokens"])
 }

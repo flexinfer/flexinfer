@@ -11,6 +11,11 @@ import (
 )
 
 var (
+	// ModelKVPoolRecheckTotal counts successful automatic KV pool pod deletions.
+	ModelKVPoolRecheckTotal = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "flexinfer_model_kv_pool_recheck_total", Help: "Automatic vLLM KV pool rechecks."}, []string{"model"})
+	// ModelKVCacheTokens exposes the most recently observed boot profile.
+	ModelKVCacheTokens = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "flexinfer_model_kv_cache_tokens", Help: "Profiled vLLM GPU KV cache capacity in tokens."}, []string{"model"})
+
 	// TokensPerSecond is a gauge for the tokens per second.
 	TokensPerSecond = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -577,6 +582,7 @@ var (
 func init() {
 	// Register the metrics with controller-runtime's registry so they are exposed by
 	// the manager's /metrics endpoint (and any component that serves ctrlmetrics.Registry).
+	ctrlmetrics.Registry.MustRegister(ModelKVPoolRecheckTotal, ModelKVCacheTokens)
 	ctrlmetrics.Registry.MustRegister(TokensPerSecond)
 	ctrlmetrics.Registry.MustRegister(ModelLoadSeconds)
 	ctrlmetrics.Registry.MustRegister(GPUTemperature)
