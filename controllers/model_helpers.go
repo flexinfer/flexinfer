@@ -470,18 +470,29 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	// detect wedged weight loads.
 
 	if deployment.Status.ReadyReplicas > 0 {
+		recheckDeleted := false
 		if r.KubeClient != nil {
-			if err := r.observeReadyKVPool(ctx, model, func(pod *corev1.Pod) (string, error) {
-				return fetchKVPoolBootLog(ctx, r.KubeClient, pod)
-			}); err != nil {
+			deleted, err := r.observeReadyKVPool(ctx, model, func(pod *corev1.Pod) (string, error) {
+				return readKVPoolBootLog(ctx, r.KubeClient, pod)
+			})
+			if err != nil {
 				return err
 			}
+			recheckDeleted = deleted
 		}
-		model.Status.Phase = aiv1alpha2.ModelPhaseReady
-		clearLoadingStatus(model)
-		setModelCondition(model, aiv1alpha2.ConditionModelReady, true, aiv1alpha2.ReasonBackendReady, "Backend is ready to serve requests")
+		if recheckDeleted {
+			// Publishing Ready here would release the proxy's queued requests
+			// onto the terminating pod; the replacement's readiness re-marks Ready.
+			model.Status.Phase = aiv1alpha2.ModelPhaseLoading
+			model.Status.Message = "Restarting vLLM pod to recheck a short KV cache pool"
+			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, aiv1alpha2.ReasonKVPoolRecheck, model.Status.Message)
+		} else {
+			model.Status.Phase = aiv1alpha2.ModelPhaseReady
+			clearLoadingStatus(model)
+			setModelCondition(model, aiv1alpha2.ConditionModelReady, true, aiv1alpha2.ReasonBackendReady, "Backend is ready to serve requests")
+		}
 
-		if prevPhase != aiv1alpha2.ModelPhaseReady && !readyStartedAt.IsZero() {
+		if !recheckDeleted && prevPhase != aiv1alpha2.ModelPhaseReady && !readyStartedAt.IsZero() {
 			loadDuration := now.Sub(readyStartedAt).Seconds()
 			metrics.ModelColdStartDurationSeconds.WithLabelValues(
 				model.Name,
@@ -657,14 +668,17 @@ func (r *ModelReconciler) recordPhaseMetrics(model *aiv1alpha2.Model, from, to a
 
 // observeReadyKVPool reads each ready pod once and consumes the ReplicaSet's
 // recheck budget in status before deletion. A failed delete consumes the budget
-// too: safety takes precedence over retrying an ambiguous API result.
-func (r *ModelReconciler) observeReadyKVPool(ctx context.Context, model *aiv1alpha2.Model, readLog func(*corev1.Pod) (string, error)) error {
-	if model.Spec.Backend != "vllm" {
-		return nil
+// too: safety takes precedence over retrying an ambiguous API result. The boot
+// log read is best-effort: a failure leaves status.kvPool untouched (so the next
+// reconcile retries) and never blocks Ready. deleted reports that a pod was
+// deleted this pass, so the caller must not publish Ready.
+func (r *ModelReconciler) observeReadyKVPool(ctx context.Context, model *aiv1alpha2.Model, readLog func(*corev1.Pod) (string, error)) (deleted bool, err error) {
+	if model.Spec.Backend != "vllm" || !model.Spec.ConfigBool("kvPoolRecheck", true) {
+		return false, nil
 	}
 	pods := &corev1.PodList{}
 	if err := r.List(ctx, pods, client.InNamespace(model.Namespace), client.MatchingLabels{LabelModel: model.Name}); err != nil {
-		return err
+		return false, err
 	}
 	sort.Slice(pods.Items, func(i, j int) bool {
 		return pods.Items[i].CreationTimestamp.After(pods.Items[j].CreationTimestamp.Time)
@@ -698,7 +712,8 @@ func (r *ModelReconciler) observeReadyKVPool(ctx context.Context, model *aiv1alp
 			}
 			bootLog, err := readLog(pod)
 			if err != nil {
-				return fmt.Errorf("read KV pool boot log for %s: %w", pod.Name, err)
+				log.FromContext(ctx).Info("skipping KV pool observation: boot log read failed", "pod", pod.Name, "error", err.Error())
+				return false, nil
 			}
 			tokens, concurrency, found := parseVLLMKVPool(bootLog)
 			pool = &aiv1alpha2.KVPoolStatus{PodName: pod.Name, PodUID: string(pod.UID), ObservedAt: metav1.Now(), RecheckedReplicaSets: marker}
@@ -715,26 +730,26 @@ func (r *ModelReconciler) observeReadyKVPool(ctx context.Context, model *aiv1alp
 		}
 		short := updateKVPoolCondition(model)
 		generation := string(owner.UID)
-		if !short || !model.Spec.ConfigBool("kvPoolRecheck", true) || generation == "" || slices.Contains(pool.RecheckedReplicaSets, generation) {
-			return nil
+		if !short || generation == "" || slices.Contains(pool.RecheckedReplicaSets, generation) {
+			return false, nil
 		}
 		pool.RecheckedReplicaSets = append(pool.RecheckedReplicaSets, generation)
 		if err := r.Status().Update(ctx, model); err != nil {
-			return err
+			return false, err
 		}
 		// UID precondition ensures a replacement with the same name is never deleted.
 		uid := pod.UID
 		if err := r.Delete(ctx, pod, &client.DeleteOptions{Preconditions: &metav1.Preconditions{UID: &uid}}); err != nil {
 			if errors.IsNotFound(err) {
-				return nil
+				return false, nil
 			}
-			return err
+			return false, err
 		}
 		metrics.ModelKVPoolRecheckTotal.WithLabelValues(model.Name).Inc()
 		if r.Recorder != nil {
 			r.Recorder.Eventf(model, corev1.EventTypeNormal, aiv1alpha2.ReasonKVPoolRecheck, "Rechecking pod %s: kvCacheTokens=%d maxConcurrency=%sx maxNumSeqs=%d", pod.Name, *pool.KVCacheTokens, pool.MaxConcurrency, model.Spec.ConfigInt("maxNumSeqs", 0))
 		}
-		return nil
+		return true, nil
 	}
-	return nil
+	return false, nil
 }

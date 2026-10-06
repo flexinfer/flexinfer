@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -157,10 +158,19 @@ func fetchPodLogTail(ctx context.Context, kubeClient kubernetes.Interface, names
 	return strings.TrimSpace(string(data))
 }
 
+// kvPoolBootLogTimeout bounds the boot-log read so a hung kubelet log tunnel
+// cannot stall the status reconcile.
+const kvPoolBootLogTimeout = 15 * time.Second
+
+// readKVPoolBootLog is a seam for tests; the fake clientset cannot fail GetLogs.
+var readKVPoolBootLog = fetchKVPoolBootLog
+
 // fetchKVPoolBootLog reads a bounded prefix including the boot profile rather
 // than a short tail that could have already lost the profile under traffic.
 // Errors remain retryable; a successful log without profile lines is observed once.
 func fetchKVPoolBootLog(ctx context.Context, kubeClient kubernetes.Interface, pod *corev1.Pod) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, kvPoolBootLogTimeout)
+	defer cancel()
 	stream, err := kubeClient.CoreV1().Pods(pod.Namespace).GetLogs(pod.Name, &corev1.PodLogOptions{Container: primaryContainerName(pod)}).Stream(ctx)
 	if err != nil {
 		return "", err

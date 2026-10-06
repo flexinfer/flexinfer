@@ -15,6 +15,8 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	kubefake "k8s.io/client-go/kubernetes/fake"
 	"k8s.io/client-go/tools/record"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
@@ -56,12 +58,23 @@ func TestKVPoolReadyRecheck(t *testing.T) {
 			reads := 0
 			readLog := func(*corev1.Pod) (string, error) { reads++; return tc.log, nil }
 			before := testutil.ToFloat64(metrics.ModelKVPoolRecheckTotal.WithLabelValues(model.Name))
-			if err := r.observeReadyKVPool(ctx, model, readLog); err != nil {
+			deleted, err := r.observeReadyKVPool(ctx, model, readLog)
+			if err != nil {
 				t.Fatal(err)
 			}
-			err := c.Get(ctx, client.ObjectKeyFromObject(pod), &corev1.Pod{})
+			if deleted != tc.recheck {
+				t.Fatalf("reported deleted=%v want %v", deleted, tc.recheck)
+			}
+			err = c.Get(ctx, client.ObjectKeyFromObject(pod), &corev1.Pod{})
 			if (err != nil) != tc.recheck {
 				t.Fatalf("deleted=%v want %v", err != nil, tc.recheck)
+			}
+			if tc.name == "opt-out" {
+				// Opting out skips the boot-log read entirely.
+				if reads != 0 || model.Status.KVPool != nil {
+					t.Fatalf("opt-out read %d times, kvPool=%v", reads, model.Status.KVPool)
+				}
+				return
 			}
 			if tc.backend != "vllm" {
 				if reads != 0 {
@@ -76,7 +89,7 @@ func TestKVPoolReadyRecheck(t *testing.T) {
 				t.Fatal("partial status")
 			}
 			if !tc.recheck {
-				if err := r.observeReadyKVPool(ctx, model, readLog); err != nil {
+				if _, err := r.observeReadyKVPool(ctx, model, readLog); err != nil {
 					t.Fatal(err)
 				}
 				if reads != 1 {
@@ -105,7 +118,7 @@ func TestKVPoolReadyRecheck(t *testing.T) {
 			if err := c.Create(ctx, replacement); err != nil {
 				t.Fatal(err)
 			}
-			if err := r.observeReadyKVPool(ctx, model, readLog); err != nil {
+			if _, err := r.observeReadyKVPool(ctx, model, readLog); err != nil {
 				t.Fatal(err)
 			}
 			if err := c.Get(ctx, client.ObjectKeyFromObject(replacement), &corev1.Pod{}); err != nil {
@@ -126,7 +139,7 @@ func TestKVPoolReadyRecheck(t *testing.T) {
 			if err := c.Create(ctx, third); err != nil {
 				t.Fatal(err)
 			}
-			if err := r.observeReadyKVPool(ctx, model, readLog); err != nil {
+			if _, err := r.observeReadyKVPool(ctx, model, readLog); err != nil {
 				t.Fatal(err)
 			}
 			if err := c.Get(ctx, client.ObjectKeyFromObject(third), &corev1.Pod{}); err == nil {
@@ -138,7 +151,7 @@ func TestKVPoolReadyRecheck(t *testing.T) {
 			if err := c.Create(ctx, rollback); err != nil {
 				t.Fatal(err)
 			}
-			if err := r.observeReadyKVPool(ctx, model, readLog); err != nil {
+			if _, err := r.observeReadyKVPool(ctx, model, readLog); err != nil {
 				t.Fatal(err)
 			}
 			if err := c.Get(ctx, client.ObjectKeyFromObject(rollback), &corev1.Pod{}); err != nil {
@@ -152,7 +165,7 @@ func TestKVPoolReadyRecheck(t *testing.T) {
 			if err := c.Create(ctx, warm); err != nil {
 				t.Fatal(err)
 			}
-			if err := r.observeReadyKVPool(ctx, model, func(*corev1.Pod) (string, error) {
+			if _, err := r.observeReadyKVPool(ctx, model, func(*corev1.Pod) (string, error) {
 				return "GPU KV cache size: 132,561 tokens\nMaximum concurrency for 65,536 tokens per request: 2.02x", nil
 			}); err != nil {
 				t.Fatal(err)
@@ -180,13 +193,13 @@ func TestKVPoolStatusConflictPreventsDelete(t *testing.T) {
 		return fmt.Errorf("status conflict")
 	}})
 	r := &ModelReconciler{Client: blocked}
-	if err := r.observeReadyKVPool(ctx, model, func(*corev1.Pod) (string, error) { return "", fmt.Errorf("log API unavailable") }); err == nil {
-		t.Fatal("expected log error")
+	if _, err := r.observeReadyKVPool(ctx, model, func(*corev1.Pod) (string, error) { return "", fmt.Errorf("log API unavailable") }); err != nil {
+		t.Fatal("log failure must be best-effort", err)
 	}
 	if model.Status.KVPool != nil {
 		t.Fatal("log failure consumed observation")
 	}
-	if err := r.observeReadyKVPool(ctx, model, func(*corev1.Pod) (string, error) {
+	if _, err := r.observeReadyKVPool(ctx, model, func(*corev1.Pod) (string, error) {
 		return "GPU KV cache size: 70004 tokens\nMaximum concurrency for 65536 tokens per request: 1.07x", nil
 	}); err == nil {
 		t.Fatal("expected status error")
@@ -200,5 +213,70 @@ func TestKVPoolStatusConflictPreventsDelete(t *testing.T) {
 	}
 	if persisted.Status.KVPool != nil {
 		t.Fatal("failed status write persisted")
+	}
+}
+
+// TestKVPoolBootLogBestEffortAndDeleteNotReady drives updateStatusFromDeployment
+// end to end: a failed boot-log read never blocks Ready, opting out never reads
+// the log, and a reconcile that deletes the pod does not publish Ready.
+func TestKVPoolBootLogBestEffortAndDeleteNotReady(t *testing.T) {
+	for _, tc := range []struct {
+		name, config string
+		readErr      error
+		wantReads    int
+		wantDeleted  bool
+		wantPhase    aiv1alpha2.ModelPhase
+	}{
+		{"read-error-opt-out", `{"maxNumSeqs":2,"kvPoolRecheck":false}`, fmt.Errorf("502 bad gateway"), 0, false, aiv1alpha2.ModelPhaseReady},
+		{"read-error-recheck-on", `{"maxNumSeqs":2}`, fmt.Errorf("502 bad gateway"), 1, false, aiv1alpha2.ModelPhaseReady},
+		{"short-pool-deleted", `{"maxNumSeqs":2}`, nil, 1, true, aiv1alpha2.ModelPhaseLoading},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := context.Background()
+			scheme := runtime.NewScheme()
+			_ = corev1.AddToScheme(scheme)
+			_ = appsv1.AddToScheme(scheme)
+			_ = aiv1alpha2.AddToScheme(scheme)
+			controller := true
+			replicas := int32(1)
+			model := &aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: tc.name, Namespace: "ns"}, Spec: aiv1alpha2.ModelSpec{Backend: "vllm", Config: &apiextensionsv1.JSON{Raw: []byte(tc.config)}}}
+			dep := &appsv1.Deployment{ObjectMeta: metav1.ObjectMeta{Name: tc.name, Namespace: "ns"}, Spec: appsv1.DeploymentSpec{Replicas: &replicas}, Status: appsv1.DeploymentStatus{ReadyReplicas: 1}}
+			pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "pod", Namespace: "ns", UID: "pod", Labels: map[string]string{LabelModel: model.Name}, OwnerReferences: []metav1.OwnerReference{{Kind: "ReplicaSet", Name: "rs", UID: "rs", Controller: &controller}}}, Status: corev1.PodStatus{Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}
+			c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(model).WithObjects(model, dep, pod).Build()
+			if err := c.Get(ctx, client.ObjectKeyFromObject(model), model); err != nil {
+				t.Fatal(err)
+			}
+			reads := 0
+			orig := readKVPoolBootLog
+			t.Cleanup(func() { readKVPoolBootLog = orig })
+			readKVPoolBootLog = func(context.Context, kubernetes.Interface, *corev1.Pod) (string, error) {
+				reads++
+				return "GPU KV cache size: 70004 tokens\nMaximum concurrency for 65536 tokens per request: 1.07x", tc.readErr
+			}
+			r := &ModelReconciler{Client: c, Recorder: record.NewFakeRecorder(10), KubeClient: kubefake.NewSimpleClientset()}
+			if err := r.updateStatusFromDeployment(ctx, model); err != nil {
+				t.Fatal(err)
+			}
+			if reads != tc.wantReads {
+				t.Fatalf("reads=%d want %d", reads, tc.wantReads)
+			}
+			err := c.Get(ctx, client.ObjectKeyFromObject(pod), &corev1.Pod{})
+			if (err != nil) != tc.wantDeleted {
+				t.Fatalf("deleted=%v want %v", err != nil, tc.wantDeleted)
+			}
+			persisted := &aiv1alpha2.Model{}
+			if err := c.Get(ctx, client.ObjectKeyFromObject(model), persisted); err != nil {
+				t.Fatal(err)
+			}
+			if persisted.Status.Phase != tc.wantPhase {
+				t.Fatalf("phase=%q want %q", persisted.Status.Phase, tc.wantPhase)
+			}
+			if tc.readErr != nil && persisted.Status.KVPool != nil {
+				t.Fatalf("read failure touched status.kvPool: %+v", persisted.Status.KVPool)
+			}
+			if cond := modelCondition(persisted.Status.Conditions, aiv1alpha2.ConditionModelReady); cond == nil || (cond.Status == metav1.ConditionTrue) != (tc.wantPhase == aiv1alpha2.ModelPhaseReady) {
+				t.Fatalf("ModelReady condition %+v inconsistent with phase %q", cond, tc.wantPhase)
+			}
+		})
 	}
 }
