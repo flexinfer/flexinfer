@@ -1,0 +1,1 @@
+- vLLM KV-pool recheck no longer blocks a Model from going Ready: the boot-log read is skipped when `spec.config.kvPoolRecheck` is false, is bounded by a 15s timeout, and a failed read is logged and ignored; a reconcile that deletes a short-pool pod now reports `Loading` instead of `Ready` so the proxy does not route to the terminating pod.

@@ -3,7 +3,7 @@ apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
   annotations:
-    controller-gen.kubebuilder.io/version: v0.21.0
+    controller-gen.kubebuilder.io/version: v0.22.0
   name: models.ai.flexinfer
 spec:
   group: ai.flexinfer
@@ -755,7 +755,7 @@ spec:
                 || !(''node.flexstack.io/gpu-vendor'' in self.nodeSelector) || self.nodeSelector[''node.flexstack.io/gpu-vendor'']
                 == self.gpu.vendor'
           status:
-            description: ModelStatus defines the observed state of Model
+            description: ModelStatus contains the observed model state.
             properties:
               activationRequestedAt:
                 description: |-
@@ -1057,6 +1057,37 @@ spec:
                     description: Utilization is the current KV-cache usage ratio (0.0
                       to 1.0).
                     type: string
+                type: object
+              kvPool:
+                description: KVPool contains the last observed vLLM boot profile.
+                properties:
+                  kvCacheTokens:
+                    description: KVCacheTokens is the profiled GPU KV cache capacity
+                      in tokens.
+                    format: int64
+                    type: integer
+                  maxConcurrency:
+                    description: MaxConcurrency is the profiled concurrency at the
+                      configured context length.
+                    type: string
+                  observedAt:
+                    format: date-time
+                    type: string
+                  podName:
+                    description: PodName identifies the pod whose logs were observed
+                      (even if lines were absent).
+                    type: string
+                  podUID:
+                    description: PodUID distinguishes replacements that reuse a pod
+                      name.
+                    type: string
+                  recheckedReplicaSets:
+                    description: |-
+                      RecheckedReplicaSets lists ReplicaSet UIDs whose recheck budget was consumed.
+                      It is persisted before pod deletion to prevent repeated deletes after conflicts.
+                    items:
+                      type: string
+                    type: array
                 type: object
               lastActiveTime:
                 description: LastActiveTime is when the model last served a request.

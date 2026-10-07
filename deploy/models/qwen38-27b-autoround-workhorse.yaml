@@ -155,7 +155,7 @@ spec:
     # after the deletion, so it is not the old pod's memory: the cold
     # compile/autotune during vLLM's profile run inflates the measured
     # peak and the KV budget is sized around it for the pod's lifetime.
-    # Rule: if the number is far below 132K, delete the pod once; the
+    # Rule: inspect status.kvPool (kvCacheTokens/maxConcurrency) and KVPoolShort for the automatic recheck; the
     # compile cache on the hostPath is warm for the next boot.
     # schedulerReserveFullISL above stays false (harmless at 2 x 64K <=
     # 132K, identical to the XTX lane). Consumers that benefit here: the
