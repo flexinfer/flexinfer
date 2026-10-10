@@ -77,7 +77,7 @@ func TestStallProbeScript(t *testing.T) {
 			w.WriteHeader(health)
 			return
 		}
-		fmt.Fprint(w, text)
+		_, _ = fmt.Fprint(w, text)
 	}))
 	defer server.Close()
 	script := (&VLLMBackend{}).ReadinessProbeForSpec(&ModelSpec{Config: map[string]any{"stallWindow": "30s"}}).Exec.Command[2]

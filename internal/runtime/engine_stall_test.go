@@ -17,7 +17,7 @@ import (
 func TestRuntimeEngineStallDespiteHealthyAPI(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/metrics" {
-			fmt.Fprint(w, "vllm:num_requests_running 1\nvllm:num_requests_waiting 0\nvllm:prompt_tokens_total 10\nvllm:generation_tokens_total 20\n")
+			_, _ = fmt.Fprint(w, "vllm:num_requests_running 1\nvllm:num_requests_waiting 0\nvllm:prompt_tokens_total 10\nvllm:generation_tokens_total 20\n")
 		}
 	}))
 	defer server.Close()
@@ -46,7 +46,7 @@ func TestRuntimeEngineStallDespiteHealthyAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp.Body.Close()
+	_ = resp.Body.Close()
 	if resp.StatusCode != 200 {
 		t.Fatal("API not healthy")
 	}

@@ -111,7 +111,7 @@ func ReadVLLMStallSample(ctx context.Context, url string) (VLLMStallSample, erro
 	if err != nil {
 		return VLLMStallSample{}, err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		return VLLMStallSample{}, fmt.Errorf("metrics status %d", resp.StatusCode)
 	}
