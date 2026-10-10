@@ -204,8 +204,19 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 			return
 		}
 
+		// Release on normal returns and ReverseProxy's interrupted-stream panic.
+		// Each attempt releases before retrying; the defer is a panic safeguard.
+		releasePod := func() {}
 		if targetPod != "" {
 			p.incrementPodConnections(targetPod)
+			released := false
+			releasePod = func() {
+				if !released {
+					p.decrementPodConnections(targetPod)
+					released = true
+				}
+			}
+			defer releasePod()
 		}
 		if attempt > 0 {
 			slog.Debug("retrying upstream after dial failure",
@@ -242,9 +253,7 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 				expired = attemptCtx.Err() != nil
 			}()
 			if expired && fr.err != nil {
-				if targetPod != "" {
-					p.decrementPodConnections(targetPod)
-				}
+				releasePod()
 				laneErr = fr.err
 				if ctx.Err() == nil {
 					validation.WriteError(w, http.StatusGatewayTimeout, "upstream first byte budget exceeded", "upstream_error", "timeout")
@@ -254,9 +263,7 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 		} else {
 			rp.ServeHTTP(w, areq)
 		}
-		if targetPod != "" {
-			p.decrementPodConnections(targetPod)
-		}
+		releasePod()
 
 		// fr.err is set only by the ReverseProxy ErrorHandler, which fires only
 		// on a pre-response RoundTrip error. Nil => the response was forwarded

@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+
 	"github.com/prometheus/client_golang/prometheus/testutil"
 )
 
@@ -267,5 +270,41 @@ func TestTrackAndServeOutcomeCounters(t *testing.T) {
 				t.Fatal("stream flush lost")
 			}
 		})
+	}
+}
+
+func TestLaneInterruptedStreamReleasesPodConnection(t *testing.T) {
+	p := setupTestProxyWithRouting(t)
+	p.laneConfig = Config{LaneBreakerThreshold: 3}
+	var target string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := p.getPodConnections(target); got != 1 {
+			t.Errorf("active pod connections = %d, want 1", got)
+		}
+		w.Header().Set("Content-Length", "100")
+		_, _ = w.Write([]byte("first"))
+		w.(http.Flusher).Flush()
+	}))
+	defer srv.Close()
+	name := "broken-stream"
+	model := &aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.namespace, Annotations: map[string]string{AnnotationRouting: "least-loaded"}}}
+	if err := p.client.Create(context.Background(), model); err != nil {
+		t.Fatal(err)
+	}
+	target = strings.TrimPrefix(srv.URL, "http://")
+	p.router.UpdateEndpoints(name, []string{target})
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	// ReverseProxy only propagates stream failures in a server context.
+	req = req.WithContext(context.WithValue(req.Context(), http.ServerContextKey, &http.Server{}))
+	func() {
+		defer func() {
+			if got := recover(); got != http.ErrAbortHandler {
+				t.Fatalf("abort = %v", got)
+			}
+		}()
+		p.forwardWithRetry(httptest.NewRecorder(), req, name, name, 8000, nil, nil)
+	}()
+	if got := p.getPodConnections(target); got != 0 {
+		t.Fatalf("leaked pod connections: %d", got)
 	}
 }
