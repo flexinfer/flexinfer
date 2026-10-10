@@ -290,6 +290,9 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 		env = mergeEnv(env, profileEnv)
 	}
 	probe := b.ReadinessProbe()
+	if configured, ok := b.(backend.ReadinessProbeConfigurer); ok {
+		probe = configured.ReadinessProbeForSpec(spec)
+	}
 	startupProbe := backendStartupProbe(b, spec)
 
 	// Append KV-cache tuning args if the backend supports it.

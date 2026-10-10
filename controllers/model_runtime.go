@@ -36,6 +36,7 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/k8surl"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 )
 
@@ -235,6 +236,10 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	// Model is loaded — update status based on runtime state.
 	switch status.State {
 	case "Ready":
+		if model.Spec.Backend == backend.NameVLLM {
+			metrics.ModelEngineStalled.WithLabelValues(model.Name, model.Namespace).Set(0)
+			setModelCondition(model, ConditionEngineStalled, false, "EngineProgressing", "Runtime engine is ready")
+		}
 		// Update Endpoints to point to the runtime pod's backend port.
 		port := status.Port
 		if port == 0 {
@@ -261,6 +266,15 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	case "Failed":
+		if model.Spec.Backend == backend.NameVLLM && strings.HasPrefix(status.Error, "engine stalled:") {
+			message := fmt.Sprintf("%s on node %s", status.Error, endpoint.NodeName)
+			previous := modelCondition(model.Status.Conditions, ConditionEngineStalled)
+			if previous == nil || previous.Status != metav1.ConditionTrue {
+				r.Recorder.Event(model, corev1.EventTypeWarning, ReasonEngineStalled, message)
+			}
+			setModelCondition(model, ConditionEngineStalled, true, ReasonEngineStalled, message)
+			metrics.ModelEngineStalled.WithLabelValues(model.Name, model.Namespace).Set(1)
+		}
 		r.removeRuntimeEndpoints(ctx, model)
 		model.Status.Endpoint = ""
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
@@ -275,6 +289,9 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		log.Info("Unknown runtime model state", "state", status.State)
 	}
 
+	if model.Spec.Backend == backend.NameVLLM && requeueAfter > 30*time.Second {
+		requeueAfter = 30 * time.Second
+	}
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
