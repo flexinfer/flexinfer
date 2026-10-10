@@ -7,7 +7,9 @@ import (
 )
 
 var (
-	requestsTotal = prometheus.NewCounterVec(
+	laneBreakerOpen  = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "flexinfer_proxy_lane_breaker_open", Help: "Whether a lane breaker is open."}, []string{"model"})
+	laneBreakerTrips = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "flexinfer_proxy_lane_breaker_trips_total", Help: "Lane breaker openings."}, []string{"model"})
+	requestsTotal    = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_requests_total",
 			Help: "Total number of requests processed by the proxy.",
@@ -381,6 +383,11 @@ var metricsOnce sync.Once
 // so Grafana displays "0" instead of "No data" for idle panels.
 // Safe to call repeatedly for the same model.
 func InitModelMetrics(model string) {
+	laneBreakerOpen.WithLabelValues(model).Add(0)
+	laneBreakerTrips.WithLabelValues(model)
+	for _, status := range []string{"timeout", "upstream_error", "lane_unresponsive"} {
+		requestsTotal.WithLabelValues(model, status)
+	}
 	// Counters: calling WithLabelValues creates the series at 0
 	requestsTotal.WithLabelValues(model, "success")
 	requestsTotal.WithLabelValues(model, "error")
@@ -398,6 +405,7 @@ func InitModelMetrics(model string) {
 // RegisterMetrics registers all proxy Prometheus metrics. Safe to call multiple times.
 func RegisterMetrics() {
 	metricsOnce.Do(func() {
+		prometheus.MustRegister(laneBreakerOpen, laneBreakerTrips)
 		prometheus.MustRegister(requestsTotal)
 		prometheus.MustRegister(scaleUpsTotal)
 		prometheus.MustRegister(upstreamRetriesTotal)

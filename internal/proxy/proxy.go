@@ -88,6 +88,11 @@ func init() {
 
 // Config holds all proxy configuration.
 type Config struct {
+	LaneBreakerThreshold   int
+	LaneBreakerCooldown    time.Duration
+	LaneBreakerMaxCooldown time.Duration
+	LaneFirstByteBudget    time.Duration
+
 	Namespace                        string
 	Client                           client.Client
 	MaxQueueSize                     int
@@ -148,6 +153,12 @@ type Config struct {
 // joined error describing all issues found, or nil if the config is valid.
 func (c Config) Validate() error {
 	var errs []error
+	if c.LaneBreakerThreshold < 0 || c.LaneBreakerCooldown < 0 || c.LaneBreakerMaxCooldown < 0 || c.LaneFirstByteBudget < 0 {
+		errs = append(errs, fmt.Errorf("lane breaker settings must be nonnegative"))
+	}
+	if c.LaneBreakerMaxCooldown > 0 && c.LaneBreakerCooldown > c.LaneBreakerMaxCooldown {
+		errs = append(errs, fmt.Errorf("lane breaker cooldown exceeds maximum"))
+	}
 
 	if c.MaxQueueSize <= 0 {
 		errs = append(errs, fmt.Errorf("PROXY_MAX_QUEUE_SIZE must be > 0 (got %d)", c.MaxQueueSize))
@@ -211,6 +222,10 @@ func (c Config) Validate() error {
 func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 	defaultRoutingConfig := routing.DefaultPrefixKeyConfig()
 	cfg := Config{
+		LaneBreakerThreshold:             envutil.IntOrDefault("FLEXINFER_PROXY_LANE_BREAKER_THRESHOLD", 3),
+		LaneBreakerCooldown:              envutil.DurationOrDefault("FLEXINFER_PROXY_LANE_BREAKER_COOLDOWN", time.Minute),
+		LaneBreakerMaxCooldown:           envutil.DurationOrDefault("FLEXINFER_PROXY_LANE_BREAKER_MAX_COOLDOWN", 10*time.Minute),
+		LaneFirstByteBudget:              envutil.DurationOrDefault("FLEXINFER_PROXY_LANE_FIRST_BYTE_BUDGET", 120*time.Second),
 		Namespace:                        namespace,
 		Client:                           k8sClient,
 		MaxQueueSize:                     envutil.IntOrDefault("PROXY_MAX_QUEUE_SIZE", 100),
@@ -258,6 +273,9 @@ type proxyEntry struct {
 
 // Proxy is the flexinfer reverse proxy that routes requests to model backends.
 type Proxy struct {
+	laneConfig Config
+	lanes      TypedSyncMap[string, *laneBreaker]
+
 	client       client.Client
 	namespace    string
 	proxyMap     TypedSyncMap[string, proxyEntry] // cache of ReverseProxy by target URL, with TTL
@@ -414,6 +432,7 @@ func New(cfg Config) *Proxy {
 		router:                      routing.NewRouter(),
 		routingEnabled:              cfg.RoutingEnabled,
 		validateRequests:            cfg.ValidateRequests,
+		laneConfig:                  cfg,
 		backoffEnabled:              cfg.BackoffEnabled,
 		backoffMaxRetries:           cfg.BackoffMaxRetries,
 		backoffInitialWait:          cfg.BackoffInitialWait,
@@ -765,6 +784,9 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 		// If model is ready, serve directly.
 		if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
+			if p.rejectLane(w, r, lookupName, modelName, m.Annotations) {
+				return
+			}
 			if background {
 				p.trackAndServeBackground(w, r, modelName, start)
 			} else {
@@ -858,6 +880,9 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 
 	// If model is ready, serve directly.
 	if isReady(md) && (md.Spec.Replicas != nil && *md.Spec.Replicas > 0) {
+		if p.rejectLane(w, r, lookupName, modelName, md.Annotations) {
+			return
+		}
 		if background {
 			p.trackAndServeBackground(w, r, modelName, start)
 		} else {
@@ -879,6 +904,9 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	// controller hasn't backfilled the CRD status yet, but we know it's
 	// serving on the runtime pod.
 	if _, ok := p.directLoadTargets.Load(modelName); ok {
+		if p.rejectLane(w, r, lookupName, modelName, md.Annotations) {
+			return
+		}
 		p.trackAndServe(w, r, modelName, start)
 		return
 	}
@@ -916,31 +944,35 @@ func isReady(md *aiv1alpha1.ModelDeployment) bool {
 // debugConfigView is a JSON-safe, redacted view of the proxy configuration
 // exposed via the /debug/config endpoint.
 type debugConfigView struct {
-	Namespace                    string  `json:"namespace"`
-	MaxQueueSize                 int     `json:"maxQueueSize"`
-	QueueTimeout                 string  `json:"queueTimeout"`
-	ColdStartTimeout             string  `json:"coldStartTimeout"`
-	RoutingEnabled               bool    `json:"routingEnabled"`
-	ValidateRequests             bool    `json:"validateRequests"`
-	BackoffEnabled               bool    `json:"backoffEnabled"`
-	BackoffMaxRetries            int     `json:"backoffMaxRetries"`
-	BackoffInitialWait           string  `json:"backoffInitialWait"`
-	BackoffMaxWait               string  `json:"backoffMaxWait"`
-	RateLimitEnabled             bool    `json:"rateLimitEnabled"`
-	RateLimitPerModel            float64 `json:"rateLimitPerModel"`
-	RateLimitBurst               int     `json:"rateLimitBurst"`
-	RateLimitGlobal              float64 `json:"rateLimitGlobal"`
-	RateLimitGlobalBurst         int     `json:"rateLimitGlobalBurst"`
-	AuthEnabled                  bool    `json:"authEnabled"`
-	AuthToken                    string  `json:"authToken"` // always redacted
-	DirectRuntimeEnabled         bool    `json:"directRuntimeEnabled"`
-	GracefulShutdownTimeout      string  `json:"gracefulShutdownTimeout"`
-	MaxTokensClampEnabled        bool    `json:"maxTokensClampEnabled"`
-	MaxTokensClampPromptReserve  int     `json:"maxTokensClampPromptReserve"`
-	AdmissionEnabled             bool    `json:"admissionEnabled"`
-	AdmissionSafetyMarginPercent int     `json:"admissionSafetyMarginPercent"`
-	AdmissionDefaultMaxTokens    int     `json:"admissionDefaultMaxTokens"`
-	LabelGroupRouting            string  `json:"labelGroupRouting"`
+	Namespace                    string        `json:"namespace"`
+	LaneBreakerThreshold         int           `json:"laneBreakerThreshold"`
+	LaneBreakerCooldown          time.Duration `json:"laneBreakerCooldown"`
+	LaneBreakerMaxCooldown       time.Duration `json:"laneBreakerMaxCooldown"`
+	LaneFirstByteBudget          time.Duration `json:"laneFirstByteBudget"`
+	MaxQueueSize                 int           `json:"maxQueueSize"`
+	QueueTimeout                 string        `json:"queueTimeout"`
+	ColdStartTimeout             string        `json:"coldStartTimeout"`
+	RoutingEnabled               bool          `json:"routingEnabled"`
+	ValidateRequests             bool          `json:"validateRequests"`
+	BackoffEnabled               bool          `json:"backoffEnabled"`
+	BackoffMaxRetries            int           `json:"backoffMaxRetries"`
+	BackoffInitialWait           string        `json:"backoffInitialWait"`
+	BackoffMaxWait               string        `json:"backoffMaxWait"`
+	RateLimitEnabled             bool          `json:"rateLimitEnabled"`
+	RateLimitPerModel            float64       `json:"rateLimitPerModel"`
+	RateLimitBurst               int           `json:"rateLimitBurst"`
+	RateLimitGlobal              float64       `json:"rateLimitGlobal"`
+	RateLimitGlobalBurst         int           `json:"rateLimitGlobalBurst"`
+	AuthEnabled                  bool          `json:"authEnabled"`
+	AuthToken                    string        `json:"authToken"` // always redacted
+	DirectRuntimeEnabled         bool          `json:"directRuntimeEnabled"`
+	GracefulShutdownTimeout      string        `json:"gracefulShutdownTimeout"`
+	MaxTokensClampEnabled        bool          `json:"maxTokensClampEnabled"`
+	MaxTokensClampPromptReserve  int           `json:"maxTokensClampPromptReserve"`
+	AdmissionEnabled             bool          `json:"admissionEnabled"`
+	AdmissionSafetyMarginPercent int           `json:"admissionSafetyMarginPercent"`
+	AdmissionDefaultMaxTokens    int           `json:"admissionDefaultMaxTokens"`
+	LabelGroupRouting            string        `json:"labelGroupRouting"`
 }
 
 func newDebugConfigView(cfg Config) debugConfigView {
@@ -957,12 +989,13 @@ func newDebugConfigView(cfg Config) debugConfigView {
 		gracefulShutdownTimeout = defaultGracefulShutdownTimeout
 	}
 	return debugConfigView{
-		Namespace:                    cfg.Namespace,
-		MaxQueueSize:                 cfg.MaxQueueSize,
-		QueueTimeout:                 cfg.QueueTimeout.String(),
-		ColdStartTimeout:             cfg.ColdStartTimeout.String(),
-		RoutingEnabled:               cfg.RoutingEnabled,
-		ValidateRequests:             cfg.ValidateRequests,
+		Namespace:            cfg.Namespace,
+		MaxQueueSize:         cfg.MaxQueueSize,
+		QueueTimeout:         cfg.QueueTimeout.String(),
+		ColdStartTimeout:     cfg.ColdStartTimeout.String(),
+		RoutingEnabled:       cfg.RoutingEnabled,
+		ValidateRequests:     cfg.ValidateRequests,
+		LaneBreakerThreshold: cfg.LaneBreakerThreshold, LaneBreakerCooldown: cfg.LaneBreakerCooldown, LaneBreakerMaxCooldown: cfg.LaneBreakerMaxCooldown, LaneFirstByteBudget: cfg.LaneFirstByteBudget,
 		BackoffEnabled:               cfg.BackoffEnabled,
 		BackoffMaxRetries:            cfg.BackoffMaxRetries,
 		BackoffInitialWait:           cfg.BackoffInitialWait.String(),
