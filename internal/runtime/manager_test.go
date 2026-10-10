@@ -1,7 +1,9 @@
 package runtime
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -139,8 +141,16 @@ func TestShutdownEmpty(t *testing.T) {
 func TestUnloadDoesNotBlockStatusWhileWaitingForBackendExit(t *testing.T) {
 	cmd := exec.Command(os.Args[0], "-test.run=TestRuntimeManagerHelperProcess")
 	cmd.Env = append(os.Environ(), "FLEXINFER_RUNTIME_HELPER_PROCESS=1")
+	stdout, err := cmd.StdoutPipe()
+	require.NoError(t, err)
 	require.NoError(t, cmd.Start())
-	time.Sleep(100 * time.Millisecond)
+	// Wait until the helper has installed its SIGTERM handler; a fixed sleep
+	// lets a slow runner kill it outright and finish the unload too early.
+	ready := false
+	for lines := bufio.NewScanner(stdout); !ready && lines.Scan(); {
+		ready = lines.Text() == "ready"
+	}
+	require.True(t, ready, "helper exited before installing its signal handler")
 
 	m := NewManager(ManagerConfig{
 		ShutdownTimeout: 150 * time.Millisecond,
@@ -177,7 +187,7 @@ func TestUnloadDoesNotBlockStatusWhileWaitingForBackendExit(t *testing.T) {
 	select {
 	case status := <-statusReturned:
 		assert.Equal(t, "gfx906", status.GPUArch)
-		assert.NotNil(t, status.ActiveModel)
+		require.NotNil(t, status.ActiveModel)
 		assert.Equal(t, "Stopping", status.ActiveModel.State)
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("Status blocked while unload waited for backend shutdown")
@@ -197,6 +207,7 @@ func TestRuntimeManagerHelperProcess(t *testing.T) {
 	}
 	signals := make(chan os.Signal, 1)
 	signal.Notify(signals, syscall.SIGTERM)
+	_, _ = fmt.Fprintln(os.Stdout, "ready")
 	for range signals {
 		// Keep running until SIGKILL so tests can exercise shutdown timeout.
 	}
