@@ -222,6 +222,7 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 			slog.Debug("retrying upstream after dial failure",
 				"model", resolvedModel, "attempt", attempt, "target", targetURL)
 		}
+		expired := false
 		if enabled {
 			b := p.lane(resolvedModel)
 			b.mu.Lock()
@@ -245,25 +246,23 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 				base = http.DefaultTransport
 			}
 			local.Transport = firstByteTransport{base: base, stop: timer.Stop, first: &firstByte}
-			expired := false
 			func() {
 				defer cancel()
 				defer timer.Stop()
 				local.ServeHTTP(w, areq.WithContext(attemptCtx))
 				expired = attemptCtx.Err() != nil
 			}()
-			if expired && fr.err != nil {
-				releasePod()
-				laneErr = fr.err
-				if ctx.Err() == nil {
-					validation.WriteError(w, http.StatusGatewayTimeout, "upstream first byte budget exceeded", "upstream_error", "timeout")
-				}
-				return
-			}
 		} else {
 			rp.ServeHTTP(w, areq)
 		}
 		releasePod()
+		if expired && fr.err != nil {
+			laneErr = fr.err
+			if ctx.Err() == nil {
+				validation.WriteError(w, http.StatusGatewayTimeout, "upstream first byte budget exceeded", "upstream_error", "timeout")
+			}
+			return
+		}
 
 		// fr.err is set only by the ReverseProxy ErrorHandler, which fires only
 		// on a pre-response RoundTrip error. Nil => the response was forwarded
