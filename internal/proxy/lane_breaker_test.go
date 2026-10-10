@@ -308,3 +308,34 @@ func TestLaneInterruptedStreamReleasesPodConnection(t *testing.T) {
 		t.Fatalf("leaked pod connections: %d", got)
 	}
 }
+
+func TestLaneFirstByteBudgetExpiryReleasesPodConnection(t *testing.T) {
+	t.Setenv(envMaxForwardAttempts, "1")
+	p := setupTestProxyWithRouting(t)
+	p.laneConfig = Config{LaneBreakerThreshold: 3, LaneFirstByteBudget: 20 * time.Millisecond}
+	var target string
+	var inFlight atomic.Int64
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		inFlight.Store(p.getPodConnections(target))
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	name := "hanging-pod"
+	model := &aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.namespace, Annotations: map[string]string{AnnotationRouting: "least-loaded"}}}
+	if err := p.client.Create(context.Background(), model); err != nil {
+		t.Fatal(err)
+	}
+	target = strings.TrimPrefix(srv.URL, "http://")
+	p.router.UpdateEndpoints(name, []string{target})
+	w := httptest.NewRecorder()
+	p.forwardWithRetry(w, httptest.NewRequest("POST", "/v1/chat/completions", nil), name, name, 8000, nil, nil)
+	if w.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status = %d, want 504", w.Code)
+	}
+	if got := inFlight.Load(); got != 1 {
+		t.Fatalf("pod connections during request = %d, want 1", got)
+	}
+	if got := p.getPodConnections(target); got != 0 {
+		t.Fatalf("leaked pod connections after budget expiry: %d", got)
+	}
+}
