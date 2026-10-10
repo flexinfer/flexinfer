@@ -59,6 +59,8 @@ type LoadedModel struct {
 	cmd       *exec.Cmd          `json:"-"`
 	cancel    context.CancelFunc `json:"-"`
 	done      chan error         `json:"-"`
+
+	stallWindow time.Duration
 }
 
 // NodeMode represents the operating mode of a GPU node.
@@ -487,6 +489,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		logger.Error(stderrErr, "Failed to create stderr pipe, subprocess logs will be lost")
 	}
 
+	ModelEngineStalled.WithLabelValues(name, runtimeMetricsNamespace()).Set(0)
 	loaded := &LoadedModel{
 		Name:    name,
 		Backend: req.Backend,
@@ -497,6 +500,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		cancel:  cancel,
 		done:    make(chan error, 1),
 	}
+	loaded.stallWindow = backend.StallWindowForSpec(spec)
 
 	m.mu.Lock()
 	m.models[name] = loaded
@@ -634,6 +638,7 @@ func (m *Manager) unloadActive(ctx context.Context, active *LoadedModel) error {
 	m.mu.Lock()
 	if cur, ok := m.models[active.Name]; ok && cur == active {
 		delete(m.models, active.Name)
+		ModelEngineStalled.DeleteLabelValues(active.Name, runtimeMetricsNamespace())
 	}
 	m.mu.Unlock()
 	return nil
@@ -1205,12 +1210,23 @@ func (m *Manager) continuousHealthCheck(ctx context.Context, loaded *LoadedModel
 
 	failures := 0
 	const maxFailures = 3
+	detector := backend.StallDetector{Window: loaded.stallWindow}
+	var lastScrape time.Time
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			if loaded.Backend == backend.NameVLLM && time.Since(lastScrape) >= 30*time.Second {
+				if !lastScrape.IsZero() && time.Since(lastScrape) > 90*time.Second {
+					detector.Reset()
+				}
+				lastScrape = time.Now()
+				if m.checkEngineStall(ctx, loaded, &detector, lastScrape) {
+					return
+				}
+			}
 			if checkHealth() {
 				failures = 0
 				continue
@@ -1231,6 +1247,34 @@ func (m *Manager) continuousHealthCheck(ctx context.Context, loaded *LoadedModel
 			}
 		}
 	}
+}
+
+// checkEngineStall applies an observation only to the still-current model.
+func (m *Manager) checkEngineStall(ctx context.Context, loaded *LoadedModel, detector *backend.StallDetector, now time.Time) bool {
+	sample, err := backend.ReadVLLMStallSample(ctx, fmt.Sprintf("http://127.0.0.1:%d/metrics", loaded.Port))
+	if err != nil {
+		detector.Reset()
+		return false
+	}
+	if !detector.Observe(sample, now) {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if cur := m.models[loaded.Name]; cur == loaded && loaded.State == ModelStateReady {
+		loaded.State = ModelStateFailed
+		loaded.Error = "engine stalled: " + sample.String()
+		ModelEngineStalled.WithLabelValues(loaded.Name, runtimeMetricsNamespace()).Set(1)
+		setModelStateMetric(loaded.Name, loaded.Backend, "Failed")
+	}
+	return true
+}
+
+func runtimeMetricsNamespace() string {
+	if namespace := os.Getenv("POD_NAMESPACE"); namespace != "" {
+		return namespace
+	}
+	return "flexinfer-system"
 }
 
 // resolveExecutable preserves explicit command paths when they exist, but

@@ -259,6 +259,11 @@ type Backend interface {
 	DefaultIdleTimeout() time.Duration
 }
 
+// ReadinessProbeConfigurer supplies per-model readiness checks.
+type ReadinessProbeConfigurer interface {
+	ReadinessProbeForSpec(spec *ModelSpec) *corev1.Probe
+}
+
 // StartupProbeConfigurer is an optional interface for backends that need
 // per-model startup probe sizing.
 type StartupProbeConfigurer interface {

@@ -468,6 +468,63 @@ func (b *VLLMBackend) ReadinessProbe() *corev1.Probe {
 	return HTTPReadinessProbe("/health", 8000, 10, 10, 5)
 }
 
+// ReadinessProbeForSpec checks API health and engine progress independently of startup.
+func (b *VLLMBackend) ReadinessProbeForSpec(spec *ModelSpec) *corev1.Probe {
+	script := fmt.Sprintf(vllmStallProbeScript, StallWindowForSpec(spec).Seconds())
+	return &corev1.Probe{
+		ProbeHandler:  corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"python3", "-c", script}}},
+		PeriodSeconds: 30, TimeoutSeconds: 15, FailureThreshold: 1, SuccessThreshold: 1,
+	}
+}
+
+// Monotonic time avoids wall-clock jumps; PID 1 start time protects persisted
+// state across container restarts. Missing metrics fail readiness rather than
+// silently treating an unsupported metrics format as engine progress.
+const vllmStallProbeScript = `
+import json, math, os, sys, time, urllib.request
+base = "http://127.0.0.1:8000"
+urllib.request.urlopen(base + "/health", timeout=5).close()
+text = urllib.request.urlopen(base + "/metrics", timeout=5).read(4194304).decode()
+names = ["vllm:num_requests_running", "vllm:num_requests_waiting", "vllm:prompt_tokens_total", "vllm:generation_tokens_total"]
+values = [0.0] * 4
+seen = set()
+for line in text.splitlines():
+    line = line.strip()
+    if not line or line.startswith("#"):
+        continue
+    name = line.split("{", 1)[0].split()[0]
+    if name not in names:
+        continue
+    rest = line.rsplit("}", 1)[-1] if "{" in line else line[len(name):]
+    value = float(rest.split()[0])
+    if not math.isfinite(value) or value < 0:
+        sys.exit(1)
+    i = names.index(name)
+    values[i] += value
+    seen.add(i)
+if len(seen) != 4:
+    sys.exit(1)
+path = "/tmp/flexinfer-vllm-stall.json"
+now = time.monotonic()
+with open("/proc/1/stat") as f:
+    process_start = f.read().rsplit(")", 1)[1].split()[19]
+old = {}
+try:
+    with open(path) as f:
+        old = json.load(f)
+except (OSError, ValueError):
+    pass
+active = values[0] + values[1] > 0
+since = old.get("since", now)
+if old.get("process_start") != process_start or not active or not old.get("active") or old.get("tokens") != values[2:] or now - old.get("observed", now) > 90 or now < since:
+    since = now
+state = dict(process_start=process_start, since=since, observed=now, active=active, tokens=values[2:])
+with open(path + ".new", "w") as f:
+    json.dump(state, f)
+os.replace(path + ".new", path)
+sys.exit(1 if active and now - since >= %g else 0)
+`
+
 // StartupProbe gives vLLM cold-load up to b.StartupTimeout() before kubelet
 // starts running the readiness probe. Added 2026-05-15 after the V1 promotion
 // rollback (!373): vLLM 0.19+ on ROCm gfx1100 has a longer cold-load than V0

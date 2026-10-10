@@ -11,6 +11,9 @@ import (
 )
 
 var (
+	ModelEngineStalled            = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "flexinfer_model_engine_stalled", Help: "Whether the model engine is stalled or GPU recovery is blocked."}, []string{"model", "namespace"})
+	ModelEngineStallRestartsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "flexinfer_model_engine_stall_restarts_total", Help: "Automatic pod restarts after engine stalls."}, []string{"model", "namespace"})
+
 	// ModelKVPoolRecheckTotal counts successful automatic KV pool pod deletions.
 	ModelKVPoolRecheckTotal = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "flexinfer_model_kv_pool_recheck_total", Help: "Automatic vLLM KV pool rechecks."}, []string{"model"})
 	// ModelKVCacheTokens exposes the most recently observed boot profile.
@@ -582,7 +585,7 @@ var (
 func init() {
 	// Register the metrics with controller-runtime's registry so they are exposed by
 	// the manager's /metrics endpoint (and any component that serves ctrlmetrics.Registry).
-	ctrlmetrics.Registry.MustRegister(ModelKVPoolRecheckTotal, ModelKVCacheTokens)
+	ctrlmetrics.Registry.MustRegister(ModelKVPoolRecheckTotal, ModelKVCacheTokens, ModelEngineStalled, ModelEngineStallRestartsTotal)
 	ctrlmetrics.Registry.MustRegister(TokensPerSecond)
 	ctrlmetrics.Registry.MustRegister(ModelLoadSeconds)
 	ctrlmetrics.Registry.MustRegister(GPUTemperature)

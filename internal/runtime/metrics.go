@@ -15,6 +15,8 @@ const (
 var runtimeDigestPattern = regexp.MustCompile(`^sha256:[0-9a-fA-F]{64}$`)
 
 var (
+	ModelEngineStalled = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "flexinfer_model_engine_stalled", Help: "Whether a runtime model engine is stalled."}, []string{"model", "namespace"})
+
 	// RuntimeInfo is a constant gauge with runtime metadata labels.
 	RuntimeInfo = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -156,7 +158,7 @@ var (
 
 // RegisterMetrics registers all runtime metrics with the default Prometheus registry.
 func RegisterMetrics() {
-	prometheus.MustRegister(
+	prometheus.MustRegister(ModelEngineStalled,
 		RuntimeInfo,
 		RuntimeUptimeSeconds,
 		ModelLoadsTotal,

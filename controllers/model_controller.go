@@ -114,7 +114,8 @@ type ModelReconciler struct {
 	// event to one per model per vramPressureEventCooldown. The event reflects a
 	// static spec property (VRAM estimate vs card capacity), so re-emitting it on
 	// every reconcile is pure noise. Keyed by model UID -> time.Time of last emit.
-	vramPressureLastEmit sync.Map
+	vramPressureLastEmit    sync.Map
+	engineStallObservations sync.Map
 }
 
 // vramPressureEventCooldown is the minimum interval between VRAMPressure warning
@@ -186,6 +187,12 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		log.Error(err, "Backend validation failed")
 		r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
 		return ctrl.Result{}, r.updatePhase(ctx, model, aiv1alpha2.ModelPhaseFailed)
+	}
+
+	// Observe before deployment rendering, so a GPU failure latch cannot be
+	// overwritten by the ordinary replica/status reconciliation.
+	if handled, err := r.observeEngineStall(ctx, model, time.Now(), readEngineStallMetrics); handled || err != nil {
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 	}
 
 	// Check for litellm alias conflicts across all models in the namespace.
@@ -519,6 +526,9 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		log.Error(err, "Failed to prune old failed model pods")
 	}
 
+	if model.Spec.Backend == backend.NameVLLM && requeueAfter > 30*time.Second {
+		requeueAfter = 30 * time.Second
+	}
 	return ctrl.Result{RequeueAfter: requeueAfter}, nil
 }
 
