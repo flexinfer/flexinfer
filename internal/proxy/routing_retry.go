@@ -242,6 +242,9 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 				expired = attemptCtx.Err() != nil
 			}()
 			if expired && fr.err != nil {
+				if targetPod != "" {
+					p.decrementPodConnections(targetPod)
+				}
 				laneErr = fr.err
 				if ctx.Err() == nil {
 					validation.WriteError(w, http.StatusGatewayTimeout, "upstream first byte budget exceeded", "upstream_error", "timeout")

@@ -944,35 +944,35 @@ func isReady(md *aiv1alpha1.ModelDeployment) bool {
 // debugConfigView is a JSON-safe, redacted view of the proxy configuration
 // exposed via the /debug/config endpoint.
 type debugConfigView struct {
-	Namespace                    string        `json:"namespace"`
-	LaneBreakerThreshold         int           `json:"laneBreakerThreshold"`
-	LaneBreakerCooldown          time.Duration `json:"laneBreakerCooldown"`
-	LaneBreakerMaxCooldown       time.Duration `json:"laneBreakerMaxCooldown"`
-	LaneFirstByteBudget          time.Duration `json:"laneFirstByteBudget"`
-	MaxQueueSize                 int           `json:"maxQueueSize"`
-	QueueTimeout                 string        `json:"queueTimeout"`
-	ColdStartTimeout             string        `json:"coldStartTimeout"`
-	RoutingEnabled               bool          `json:"routingEnabled"`
-	ValidateRequests             bool          `json:"validateRequests"`
-	BackoffEnabled               bool          `json:"backoffEnabled"`
-	BackoffMaxRetries            int           `json:"backoffMaxRetries"`
-	BackoffInitialWait           string        `json:"backoffInitialWait"`
-	BackoffMaxWait               string        `json:"backoffMaxWait"`
-	RateLimitEnabled             bool          `json:"rateLimitEnabled"`
-	RateLimitPerModel            float64       `json:"rateLimitPerModel"`
-	RateLimitBurst               int           `json:"rateLimitBurst"`
-	RateLimitGlobal              float64       `json:"rateLimitGlobal"`
-	RateLimitGlobalBurst         int           `json:"rateLimitGlobalBurst"`
-	AuthEnabled                  bool          `json:"authEnabled"`
-	AuthToken                    string        `json:"authToken"` // always redacted
-	DirectRuntimeEnabled         bool          `json:"directRuntimeEnabled"`
-	GracefulShutdownTimeout      string        `json:"gracefulShutdownTimeout"`
-	MaxTokensClampEnabled        bool          `json:"maxTokensClampEnabled"`
-	MaxTokensClampPromptReserve  int           `json:"maxTokensClampPromptReserve"`
-	AdmissionEnabled             bool          `json:"admissionEnabled"`
-	AdmissionSafetyMarginPercent int           `json:"admissionSafetyMarginPercent"`
-	AdmissionDefaultMaxTokens    int           `json:"admissionDefaultMaxTokens"`
-	LabelGroupRouting            string        `json:"labelGroupRouting"`
+	Namespace                    string  `json:"namespace"`
+	LaneBreakerThreshold         int     `json:"laneBreakerThreshold"`
+	LaneBreakerCooldown          string  `json:"laneBreakerCooldown"`
+	LaneBreakerMaxCooldown       string  `json:"laneBreakerMaxCooldown"`
+	LaneFirstByteBudget          string  `json:"laneFirstByteBudget"`
+	MaxQueueSize                 int     `json:"maxQueueSize"`
+	QueueTimeout                 string  `json:"queueTimeout"`
+	ColdStartTimeout             string  `json:"coldStartTimeout"`
+	RoutingEnabled               bool    `json:"routingEnabled"`
+	ValidateRequests             bool    `json:"validateRequests"`
+	BackoffEnabled               bool    `json:"backoffEnabled"`
+	BackoffMaxRetries            int     `json:"backoffMaxRetries"`
+	BackoffInitialWait           string  `json:"backoffInitialWait"`
+	BackoffMaxWait               string  `json:"backoffMaxWait"`
+	RateLimitEnabled             bool    `json:"rateLimitEnabled"`
+	RateLimitPerModel            float64 `json:"rateLimitPerModel"`
+	RateLimitBurst               int     `json:"rateLimitBurst"`
+	RateLimitGlobal              float64 `json:"rateLimitGlobal"`
+	RateLimitGlobalBurst         int     `json:"rateLimitGlobalBurst"`
+	AuthEnabled                  bool    `json:"authEnabled"`
+	AuthToken                    string  `json:"authToken"` // always redacted
+	DirectRuntimeEnabled         bool    `json:"directRuntimeEnabled"`
+	GracefulShutdownTimeout      string  `json:"gracefulShutdownTimeout"`
+	MaxTokensClampEnabled        bool    `json:"maxTokensClampEnabled"`
+	MaxTokensClampPromptReserve  int     `json:"maxTokensClampPromptReserve"`
+	AdmissionEnabled             bool    `json:"admissionEnabled"`
+	AdmissionSafetyMarginPercent int     `json:"admissionSafetyMarginPercent"`
+	AdmissionDefaultMaxTokens    int     `json:"admissionDefaultMaxTokens"`
+	LabelGroupRouting            string  `json:"labelGroupRouting"`
 }
 
 func newDebugConfigView(cfg Config) debugConfigView {
@@ -989,13 +989,16 @@ func newDebugConfigView(cfg Config) debugConfigView {
 		gracefulShutdownTimeout = defaultGracefulShutdownTimeout
 	}
 	return debugConfigView{
-		Namespace:            cfg.Namespace,
-		MaxQueueSize:         cfg.MaxQueueSize,
-		QueueTimeout:         cfg.QueueTimeout.String(),
-		ColdStartTimeout:     cfg.ColdStartTimeout.String(),
-		RoutingEnabled:       cfg.RoutingEnabled,
-		ValidateRequests:     cfg.ValidateRequests,
-		LaneBreakerThreshold: cfg.LaneBreakerThreshold, LaneBreakerCooldown: cfg.LaneBreakerCooldown, LaneBreakerMaxCooldown: cfg.LaneBreakerMaxCooldown, LaneFirstByteBudget: cfg.LaneFirstByteBudget,
+		Namespace:                    cfg.Namespace,
+		MaxQueueSize:                 cfg.MaxQueueSize,
+		QueueTimeout:                 cfg.QueueTimeout.String(),
+		ColdStartTimeout:             cfg.ColdStartTimeout.String(),
+		RoutingEnabled:               cfg.RoutingEnabled,
+		ValidateRequests:             cfg.ValidateRequests,
+		LaneBreakerThreshold:         cfg.LaneBreakerThreshold,
+		LaneBreakerCooldown:          cfg.LaneBreakerCooldown.String(),
+		LaneBreakerMaxCooldown:       cfg.LaneBreakerMaxCooldown.String(),
+		LaneFirstByteBudget:          cfg.LaneFirstByteBudget.String(),
 		BackoffEnabled:               cfg.BackoffEnabled,
 		BackoffMaxRetries:            cfg.BackoffMaxRetries,
 		BackoffInitialWait:           cfg.BackoffInitialWait.String(),
