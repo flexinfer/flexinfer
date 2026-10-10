@@ -14,8 +14,8 @@ spec:
     stallWindow: "5m"
 ```
 
-Dedicated vLLM pods use an exec readiness probe that checks both /health and token
-progress. Startup probes retain their existing cold-load allowance. Missing or
+Dedicated vLLM pods use an exec readiness probe (every 30s, three consecutive
+failures) that checks both /health and token progress. Startup probes retain their existing cold-load allowance. Missing or
 invalid metrics fail the readiness probe; controller and runtime scrape failures
 reset their progress history rather than infer a stall across missing samples.
 
@@ -26,7 +26,9 @@ replacement becomes Ready. A recurring stall or replacement startup timeout
 latches Failed/GPUUnresponsive and scales its Deployment to zero.
 
 The restart budget survives pod/controller restarts in the parent Model annotation
-flexinfer.ai/engine-stall-recovery. To retry after repairing the host GPU, remove it:
+flexinfer.ai/engine-stall-recovery. Once a replacement has stayed Ready for an hour
+the controller removes the annotation, so a later unrelated stall gets its own
+restart. To retry after repairing the host GPU, remove it:
 
 ```sh
 kubectl annotate model MODEL -n flexinfer-system flexinfer.ai/engine-stall-recovery-

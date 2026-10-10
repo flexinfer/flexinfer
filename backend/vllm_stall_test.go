@@ -51,7 +51,7 @@ func TestStallMetrics(t *testing.T) {
 func TestStallProbeDefinition(t *testing.T) {
 	b := &VLLMBackend{}
 	p := b.ReadinessProbeForSpec(&ModelSpec{Config: map[string]any{"stallWindow": "2m"}})
-	if p.Exec == nil || p.PeriodSeconds != 30 || p.FailureThreshold != 1 {
+	if p.Exec == nil || p.PeriodSeconds != 30 || p.FailureThreshold != 3 {
 		t.Fatalf("bad probe: %+v", p)
 	}
 	script := p.Exec.Command[2]

@@ -469,11 +469,13 @@ func (b *VLLMBackend) ReadinessProbe() *corev1.Probe {
 }
 
 // ReadinessProbeForSpec checks API health and engine progress independently of startup.
+// Three consecutive failures (90s) absorb a transient /health or /metrics blip, so
+// the lane leaves Ready at most one minute after the stall window elapses.
 func (b *VLLMBackend) ReadinessProbeForSpec(spec *ModelSpec) *corev1.Probe {
 	script := fmt.Sprintf(vllmStallProbeScript, StallWindowForSpec(spec).Seconds())
 	return &corev1.Probe{
 		ProbeHandler:  corev1.ProbeHandler{Exec: &corev1.ExecAction{Command: []string{"python3", "-c", script}}},
-		PeriodSeconds: 30, TimeoutSeconds: 15, FailureThreshold: 1, SuccessThreshold: 1,
+		PeriodSeconds: 30, TimeoutSeconds: 15, FailureThreshold: 3, SuccessThreshold: 1,
 	}
 }
 

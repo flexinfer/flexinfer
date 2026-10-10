@@ -4,25 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"k8s.io/apimachinery/pkg/api/resource"
-	ctrl "sigs.k8s.io/controller-runtime"
 	"strings"
 	"testing"
 	"time"
 
-	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
-	"github.com/flexinfer/flexinfer/backend"
-	"github.com/flexinfer/flexinfer/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/record"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
 
 func TestEngineStallRecovery(t *testing.T) {
@@ -212,5 +213,36 @@ func TestEngineStallReconcileLatchAndGPURecovery(t *testing.T) {
 	handled, err := r.observeEngineStall(ctx, model, time.Now(), readEngineStallMetrics)
 	if err != nil || handled || model.Annotations[EngineStallRecoveryAnnotation] != "" {
 		t.Fatal("GPU recovery did not clear latch", err)
+	}
+}
+
+func TestEngineStallRestartBudgetResetsAfterHealthyRecovery(t *testing.T) {
+	ctx := context.Background()
+	scheme := runtime.NewScheme()
+	_ = aiv1alpha2.AddToScheme(scheme)
+	_ = corev1.AddToScheme(scheme)
+	now := time.Now()
+	marker, _ := json.Marshal(engineStallRecovery{PodUID: "first", At: now, Node: "gpu-host", Message: "engine stalled"})
+	model := &aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: "recovered", Namespace: "ns", UID: "model", Annotations: map[string]string{EngineStallRecoveryAnnotation: string(marker)}}, Spec: aiv1alpha2.ModelSpec{Backend: "vllm"}}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "replacement", Namespace: "ns", UID: "replacement", Labels: map[string]string{LabelModel: model.Name}}, Status: corev1.PodStatus{PodIP: "10.0.0.2", Conditions: []corev1.PodCondition{{Type: corev1.PodReady, Status: corev1.ConditionTrue}}}}
+	c := fake.NewClientBuilder().WithScheme(scheme).WithStatusSubresource(model).WithObjects(model, pod).Build()
+	if err := c.Get(ctx, client.ObjectKeyFromObject(model), model); err != nil {
+		t.Fatal(err)
+	}
+	r := &ModelReconciler{Client: c, Recorder: record.NewFakeRecorder(10)}
+	read := func(context.Context, *corev1.Pod) (backend.VLLMStallSample, error) {
+		return backend.VLLMStallSample{}, nil
+	}
+	if _, err := r.observeEngineStall(ctx, model, now, read); err != nil {
+		t.Fatal(err)
+	}
+	if model.Annotations[EngineStallRecoveryAnnotation] == "" {
+		t.Fatal("restart budget reset before the replacement proved healthy")
+	}
+	if _, err := r.observeEngineStall(ctx, model, now.Add(engineStallRecoveryResetAfter), read); err != nil {
+		t.Fatal(err)
+	}
+	if model.Annotations[EngineStallRecoveryAnnotation] != "" {
+		t.Fatal("restart budget not restored after healthy recovery")
 	}
 }

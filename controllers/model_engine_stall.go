@@ -27,6 +27,10 @@ const (
 	// EngineStallRecoveryAnnotation lives on the parent, so deletion cannot erase
 	// the restart budget. Remove it to explicitly authorize another recovery.
 	EngineStallRecoveryAnnotation = "flexinfer.ai/engine-stall-recovery"
+	// engineStallRecoveryResetAfter restores the restart budget once a
+	// replacement has stayed Ready this long, so an unrelated later stall gets
+	// its own restart instead of latching GPUUnresponsive immediately.
+	engineStallRecoveryResetAfter = time.Hour
 )
 
 type engineStallRecovery struct {
@@ -36,6 +40,7 @@ type engineStallRecovery struct {
 	Blocked        bool      `json:"blocked"`
 	Message        string    `json:"message"`
 	Ready          bool      `json:"ready"`
+	ReadyAt        time.Time `json:"readyAt,omitempty"`
 	GPUUnavailable bool      `json:"gpuUnavailable"`
 }
 type engineStallObservation struct {
@@ -229,7 +234,15 @@ func (r *ModelReconciler) observeEngineStall(ctx context.Context, model *aiv1alp
 	}
 	if raw != "" && replacementReady && !marker.Ready {
 		marker.Ready = true
+		marker.ReadyAt = now
 		if err := r.saveEngineStallRecovery(ctx, model, marker); err != nil {
+			return true, err
+		}
+	}
+	if raw != "" && replacementReady && marker.Ready && now.Sub(marker.ReadyAt) >= engineStallRecoveryResetAfter {
+		base := model.DeepCopy()
+		delete(model.Annotations, EngineStallRecoveryAnnotation)
+		if err := r.Patch(ctx, model, client.MergeFrom(base)); err != nil {
 			return true, err
 		}
 	}
