@@ -23,7 +23,7 @@ func TestLaneBreakerSilentUpstreamAndRecovery(t *testing.T) {
 			<-r.Context().Done()
 			return
 		}
-		w.Write([]byte(`{"ok":true}`))
+		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
 	defer upstream.Close()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -92,7 +92,7 @@ func TestLaneProbePayloads(t *testing.T) {
 				} else if body["max_tokens"] != float64(1) || body["messages"] == nil {
 					t.Error(body)
 				}
-				w.Write([]byte(`{}`))
+				_, _ = w.Write([]byte(`{}`))
 			}))
 			defer srv.Close()
 			if err := probeLane(context.Background(), srv.URL, path, "base"); err != nil {
@@ -108,10 +108,10 @@ func TestLaneFirstByteStopsBudgetAndPreservesStreaming(t *testing.T) {
 		w.WriteHeader(200)
 		w.(http.Flusher).Flush()
 		time.Sleep(30 * time.Millisecond)
-		w.Write([]byte("first"))
+		_, _ = w.Write([]byte("first"))
 		w.(http.Flusher).Flush()
 		time.Sleep(150 * time.Millisecond)
-		w.Write([]byte("last"))
+		_, _ = w.Write([]byte("last"))
 	}))
 	defer srv.Close()
 	p := &Proxy{laneConfig: Config{LaneBreakerThreshold: 1, LaneFirstByteBudget: 120 * time.Millisecond}}
@@ -144,7 +144,7 @@ func TestResponseOutcomeAndFlush(t *testing.T) {
 			w.WriteHeader(tc.status)
 		}
 		if tc.body != "" {
-			io.WriteString(w, tc.body)
+			_, _ = io.WriteString(w, tc.body)
 			w.Flush()
 			if !rec.Flushed {
 				t.Fatal("flush lost")
@@ -235,7 +235,7 @@ func TestTrackAndServeOutcomeCounters(t *testing.T) {
 			p := setupTestProxy(t)
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if mode == "timeout" {
-					io.Copy(io.Discard, r.Body)
+					_, _ = io.Copy(io.Discard, r.Body)
 					<-r.Context().Done()
 					return
 				}
@@ -244,7 +244,7 @@ func TestTrackAndServeOutcomeCounters(t *testing.T) {
 				} else {
 					w.WriteHeader(200)
 				}
-				w.Write([]byte("data"))
+				_, _ = w.Write([]byte("data"))
 				w.(http.Flusher).Flush()
 			}))
 			defer srv.Close()
