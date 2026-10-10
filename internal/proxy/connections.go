@@ -29,12 +29,23 @@ func (p *Proxy) trackAndServeWithDemand(w http.ResponseWriter, r *http.Request, 
 		defer stopHeartbeat()
 	}
 
-	// Forward Request
-	p.serveProxy(w, r, modelName)
+	// Count only after forwarding completes. ReverseProxy aborts interrupted
+	// streams with ErrAbortHandler; account for the failure before propagating it.
+	observed := &outcomeWriter{ResponseWriter: w}
+	defer func() {
+		aborted := recover()
+		status := responseOutcome(observed, r)
+		if aborted != nil && status == "success" {
+			status = "upstream_error"
+		}
+		requestsTotal.WithLabelValues(modelName, status).Inc()
+		requestDuration.WithLabelValues(modelName).Observe(time.Since(start).Seconds())
+		if aborted != nil {
+			panic(aborted)
+		}
+	}()
+	p.serveProxy(observed, r, modelName)
 
-	// Metrics update
-	requestsTotal.WithLabelValues(modelName, "success").Inc()
-	requestDuration.WithLabelValues(modelName).Observe(time.Since(start).Seconds())
 }
 
 func (p *Proxy) startLastAccessHeartbeat(modelName string) func() {
@@ -113,4 +124,42 @@ func (p *Proxy) getPodConnections(podAddr string) int64 {
 		return atomic.LoadInt64(count)
 	}
 	return 0
+}
+
+// Unwrap lets ResponseController retain optional writer capabilities.
+type outcomeWriter struct {
+	http.ResponseWriter
+	status int
+	bytes  int
+}
+
+func (w *outcomeWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
+func (w *outcomeWriter) WriteHeader(status int) {
+	if w.status == 0 {
+		w.status = status
+	}
+	w.ResponseWriter.WriteHeader(status)
+}
+func (w *outcomeWriter) Write(b []byte) (int, error) {
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += n
+	return n, err
+}
+func (w *outcomeWriter) Flush() {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	_ = http.NewResponseController(w.ResponseWriter).Flush()
+}
+func responseOutcome(w *outcomeWriter, r *http.Request) string {
+	if r.Context().Err() != nil {
+		return "timeout"
+	}
+	if w.status >= 500 {
+		return "upstream_error"
+	}
+	return "success"
 }

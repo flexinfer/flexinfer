@@ -146,6 +146,27 @@ func (p *Proxy) resolveTargetURL(ctx context.Context, r *http.Request, resolvedM
 //     max_tokens clamp). It is replayed on each attempt. Either may be nil.
 func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelName, resolvedModel string, port int32, routeBody, forwardBody []byte) {
 	ctx := r.Context()
+	var laneErr error
+	var completed bool
+	var firstByte bool
+	enabled := p.laneConfig.LaneBreakerThreshold > 0
+	if enabled {
+		defer func() {
+			aborted := recover()
+			if aborted != nil {
+				completed = false
+				laneErr = io.ErrUnexpectedEOF
+				if firstByte && ctx.Err() != nil {
+					laneErr = nil
+				}
+			}
+			p.recordLane(resolvedModel, completed, laneErr)
+			if aborted != nil {
+				panic(aborted)
+			}
+		}()
+	}
+
 	maxAttempts := maxForwardAttempts()
 
 	maxTokensForLog, streamForLog := parseRequestForUsageLog(forwardBody)
@@ -183,22 +204,71 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 			return
 		}
 
+		// Release on normal returns and ReverseProxy's interrupted-stream panic.
+		// Each attempt releases before retrying; the defer is a panic safeguard.
+		releasePod := func() {}
 		if targetPod != "" {
 			p.incrementPodConnections(targetPod)
+			released := false
+			releasePod = func() {
+				if !released {
+					p.decrementPodConnections(targetPod)
+					released = true
+				}
+			}
+			defer releasePod()
 		}
 		if attempt > 0 {
 			slog.Debug("retrying upstream after dial failure",
 				"model", resolvedModel, "attempt", attempt, "target", targetURL)
 		}
-		rp.ServeHTTP(w, areq)
-		if targetPod != "" {
-			p.decrementPodConnections(targetPod)
+		expired := false
+		if enabled {
+			b := p.lane(resolvedModel)
+			b.mu.Lock()
+			budget := b.budget
+			if budget == 0 {
+				_, _, budget = p.laneDurations()
+			}
+			b.target = targetURL
+			b.upstreamModel = resolvedModel
+			if path == "/v1/embeddings" {
+				b.path = path
+			} else if path == "/v1/chat/completions" || path == "/v1/completions" || b.path == "" {
+				b.path = "/v1/chat/completions"
+			}
+			b.mu.Unlock()
+			attemptCtx, cancel := context.WithCancel(areq.Context())
+			timer := time.AfterFunc(budget, cancel)
+			local := *rp
+			base := local.Transport
+			if base == nil {
+				base = http.DefaultTransport
+			}
+			local.Transport = firstByteTransport{base: base, stop: timer.Stop, first: &firstByte}
+			func() {
+				defer cancel()
+				defer timer.Stop()
+				local.ServeHTTP(w, areq.WithContext(attemptCtx))
+				expired = attemptCtx.Err() != nil
+			}()
+		} else {
+			rp.ServeHTTP(w, areq)
+		}
+		releasePod()
+		if expired && fr.err != nil {
+			laneErr = fr.err
+			if ctx.Err() == nil {
+				validation.WriteError(w, http.StatusGatewayTimeout, "upstream first byte budget exceeded", "upstream_error", "timeout")
+			}
+			return
 		}
 
 		// fr.err is set only by the ReverseProxy ErrorHandler, which fires only
 		// on a pre-response RoundTrip error. Nil => the response was forwarded
 		// (success or a real upstream HTTP status) and was written to the client.
 		if fr.err == nil {
+			completed = true
 			return
 		}
 
@@ -211,6 +281,12 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 		}
 
 		reason, retryable := classifyUpstreamErr(fr.err)
+		if ctx.Err() != nil || reason == "timeout" || reason == "conn_reset" || reason == "eof" {
+			laneErr = fr.err
+		}
+		if ctx.Err() != nil {
+			return
+		}
 		if !retryable || attempt == maxAttempts-1 {
 			// Include caller identity so a failure pattern (e.g. a client that
 			// times out and cancels every request) is attributable to a workload.

@@ -11,6 +11,10 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
+
+	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 func TestClassifyUpstreamErr(t *testing.T) {
@@ -202,6 +206,48 @@ func TestForwardWithRetry_FailureLogIncludesCallerIdentity(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("forward-failure WARN missing %q; logs:\n%s", want, out)
+		}
+	}
+}
+
+func TestForwardWithRetryRepeatedBudgetExpiryReleasesPod(t *testing.T) {
+	t.Setenv(envMaxForwardAttempts, "1")
+	p := setupTestProxyWithRouting(t)
+	p.laneConfig = Config{LaneBreakerThreshold: 3, LaneFirstByteBudget: 100 * time.Millisecond}
+	var target string
+	observed := make(chan int64, 2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		observed <- p.getPodConnections(target)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+	name := "repeated-budget-expiry"
+	model := &aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: p.namespace, Annotations: map[string]string{AnnotationRouting: "least-loaded"}}}
+	if err := p.client.Create(context.Background(), model); err != nil {
+		t.Fatal(err)
+	}
+	target = strings.TrimPrefix(srv.URL, "http://")
+	p.router.UpdateEndpoints(name, []string{target})
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+		rec := httptest.NewRecorder()
+		p.forwardWithRetry(rec, req, name, name, 8000, nil, nil)
+		if rec.Code != http.StatusGatewayTimeout {
+			t.Fatalf("request %d: status = %d, want 504", i, rec.Code)
+		}
+		if req.Context().Err() != nil {
+			t.Fatal("caller context expired instead of first-byte budget")
+		}
+		select {
+		case got := <-observed:
+			if got != 1 {
+				t.Fatalf("request %d: active pod connections = %d, want 1", i, got)
+			}
+		default:
+			t.Fatalf("request %d never reached hanging upstream", i)
+		}
+		if got := p.getPodConnections(target); got != 0 {
+			t.Fatalf("request %d: pod connections after budget expiry = %d, want 0", i, got)
 		}
 	}
 }
