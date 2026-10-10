@@ -175,8 +175,18 @@ spec:
     servedModelName: qwen38-27b-xtx-warm-canary
     disableLogStats: false
     failOnEnvironValidation: false
+  # 2026-10-10 14:35Z TEMPORARY: lane taken out of scheduling. The 7900 XTX
+  # drops off the PCIe bus under its first sustained load on every boot
+  # (10-04, 10-06, 10-07 06:15Z, 10-10 00:35Z, 10-10 14:2xZ — the last two on
+  # fresh boots, the last with amdgpu.runpm=0, DPM pinned high and the power
+  # cap at its 294 W minimum), and each activation attempt leaves a vLLM
+  # process in state D on the host. With no node matching this selector the
+  # Model reports Schedulable=False / NoMatchingNodes and the proxy answers
+  # callers with an immediate 503 instead of a 25-minute cold-start timeout.
+  # Restore `kubernetes.io/hostname: cblevins-7900xtx` once the card has been
+  # reseated / re-cabled and survives a load soak.
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-7900xtx-gpu-offline
   resources:
     requests:
       cpu: "4"
