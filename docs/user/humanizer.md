@@ -1,7 +1,7 @@
 # Humanizer in the unified runtime
 
 Humanizer is a Gemma 4 12B prose-rewriting model. It accepts one draft per
-request. The qualification candidate is `deploy/debug/humanizer-radeonvii.yaml`:
+request. The qualification candidate is `deploy/models/humanizer.yaml`:
 Q6_K on the Radeon VII, 8192 context tokens, one slot, and scale to zero after
 two idle minutes. It uses the existing `radeonvii-models` group and the unified
 runtime's llama.cpp subprocess loader. It has no model-specific image or
@@ -38,8 +38,8 @@ Promote the resulting immutable digest through the gfx906 runtime profile in
 `deploy/system/values-k3s.yaml` and `deploy/gpuprofiles/gfx906.yaml`, using Git
 and Flux. Retain the original digest as rollback:
 `sha256:171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b`.
-Once qualified, move the candidate to `deploy/models`, list it in that
-directory's kustomization, and enable its LiteLLM registration as `humanizer`.
+The canary is listed in `deploy/models` with LiteLLM disabled so its cache can
+warm before qualification. Once qualified, enable registration as `humanizer`.
 
 Priority 130 permits rewrite demand to borrow VRAM from the existing
 retrieval/voice subprocesses. The initial 12,500 MB estimate should retain the

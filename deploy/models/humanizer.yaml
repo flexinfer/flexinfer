@@ -1,5 +1,5 @@
-# Qualification candidate; add to deploy/models only after the unified
-# runtime image and existing retrieval/voice backends pass GPU checks.
+# Qualification candidate; LiteLLM registration stays disabled until the
+# unified runtime image and existing retrieval/voice backends pass GPU checks.
 # Runtime-only: no per-model image and no dedicatedDeployment override.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -11,6 +11,9 @@ metadata:
 spec:
   backend: llamacpp
   source: HF://jialinyyzz/humanizer
+  capabilities:
+    toolCalling: false
+    vision: false
   nodeSelector:
     kubernetes.io/hostname: cblevins-radeonvii
   cache:
