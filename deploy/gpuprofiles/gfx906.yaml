@@ -149,7 +149,7 @@ spec:
       - ollama
       - diffusers
     # Humanizer + retrieval/voice GPU probes: llama.cpp b11335 and request drain.
-    image: registry.harbor.lan/flexinfer/runtime@sha256:fc55611d3b918684c7ab2d6918c4df069d22566899e9cbc23968a6608cf527ef
+    image: registry.harbor.lan/flexinfer/runtime@sha256:0f726ac970be091f12f083a56747888638bee88f5a06b0a9eb5a9a259c032e42
   containerMemoryGB: 56
   maxGPUMemoryGB: 12
   maxCPUMemoryGB: 56

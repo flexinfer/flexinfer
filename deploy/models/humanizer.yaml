@@ -28,7 +28,7 @@ spec:
     # claim a VRAM-bounded set. Idle Humanizer scales down again.
     priority: 130
     vramEstimateMB: 12500
-    swapCooldown: 30s
+    swapCooldown: 5s
   config:
     hfRevision: 7232532cb8466bd393544e97826e12e6b5e471ac
     ggufFile: humanizer-12b-Q6_K.gguf

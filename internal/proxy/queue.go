@@ -81,6 +81,13 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 		return fmt.Errorf("queue full for model %s", modelName)
 	}
 
+	// A queued foreground request is live demand even while shared election,
+	// capacity, or an incumbent's request drain delays activation. Join the same
+	// per-model heartbeat used by forwarding and release it on every exit,
+	// including cancellation and queue timeout.
+	stopHeartbeat := p.startLastAccessHeartbeat(modelName)
+	defer stopHeartbeat()
+
 	// Wait for request to be processed with timeout
 	timeout := p.queueTimeout
 	if coldStartTimeout := p.activator.GetColdStartTimeout(ctx, modelName); coldStartTimeout > timeout {

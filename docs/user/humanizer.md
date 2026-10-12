@@ -41,6 +41,8 @@ Promote the resulting immutable digest through the gfx906 runtime profile in
 `deploy/system/values-k3s.yaml` and `deploy/gpuprofiles/gfx906.yaml`, using Git
 and Flux. Retain the original digest as rollback:
 `sha256:171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b`.
+For rollback, also disable Humanizer registration (`litellm.enabled: false`)
+in Git: that older image cannot load the Gemma 4 architecture.
 The recipe is registered as `humanizer` in FlexInfer and LiteLLM. It serves
 completion and chat-completion paths only. The GPU probe on 2026-10-12
 offloaded 49/49 layers, loaded cached Q6_K weights in 6.13 seconds, and rewrote
@@ -53,7 +55,7 @@ Priority 130 permits rewrite demand to borrow VRAM from the existing
 retrieval/voice subprocesses. The initial 12,500 MB estimate should retain the
 1,500 MB BGE embedding and 700 MB reranker members within the 16,384 MB group
 budget. GTE and Orpheus may unload during rewrites. Measure the actual peak
-before changing this estimate. The group uses a 30-second `gpu.swapCooldown`
+before changing this estimate. The group uses a five-second `gpu.swapCooldown`
 override. The controller
 honors shorter overrides and releases short-idle VRAM reservations when their
 idle window ends, instead of retaining the legacy five-minute reservation.

@@ -34,7 +34,7 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
-    digest: "sha256:8f2e884e0215dc7ad99f24c8e5df3b3dd416ec1bf40bd76f02da2aba7df0d787"
+    digest: "sha256:073b5226fee40d73f164345b62d6d33a3f3ca6512794ca5131a4da1f4a9c7522"
     tag: "humanizer-fastswaps-cc7273917"
   resources:
     limits:
@@ -97,7 +97,7 @@ proxy:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-proxy
     tag: "humanizer-fastswaps-cc7273917"
-    digest: "sha256:373a5f8fcda45b1d69f7116fb722e4bc7144db8967f157827fec841e75e726a7"
+    digest: "sha256:2f2f1631f2bfe106d02caf9be5234a9b969d5b1847a17aea857ae983b44dcd14"
     pullPolicy: Always
   service:
     type: ClusterIP
@@ -577,7 +577,7 @@ runtime:
       # Humanizer qualification: unified gfx906 runtime with llama.cpp b11335.
       # The entrypoint unsets HSA_OVERRIDE_GFX_VERSION so HIP sees Vega20.
       # Rollback: 171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b.
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:fc55611d3b918684c7ab2d6918c4df069d22566899e9cbc23968a6608cf527ef"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:0f726ac970be091f12f083a56747888638bee88f5a06b0a9eb5a9a259c032e42"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
