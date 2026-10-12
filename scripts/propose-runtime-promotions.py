@@ -37,6 +37,9 @@ except ImportError:  # pragma: no cover - the CI image installs PyYAML
     yaml = None
 
 SKIP_STATUS_PREFIXES = ("current", "ok", "MISSING")
+# check-runtime-pin-drift.py status for a digest tagged `<floating>-<word>...`
+# rather than the `<floating>-<sha>` its profile's CI job pushes.
+OFF_PROFILE_STATUS = "off-profile build"
 BRANCH_PREFIX = "bot/promote-"
 
 
@@ -86,11 +89,34 @@ def select_candidates(report: dict, only: set[str] | None = None) -> list[dict]:
                     (r.get("current_push_time") for r in rows if r.get("current_push_time")), None
                 ),
                 "consumers": stale,
+                # Consumers on a build the profile's CI job did not produce:
+                # promoting replaces whatever that build added.
+                "off_profile": [r for r in stale if str(r.get("status", "")).startswith(OFF_PROFILE_STATUS)],
                 # Rollback = the digest the first stale consumer pins today.
                 "rollback": stale[0]["pinned"],
             }
         )
     return candidates
+
+
+def off_profile_warning(candidate: dict) -> list[str]:
+    """A blockquote warning per consumer that runs an off-profile build."""
+    lines: list[str] = []
+    for row in candidate.get("off_profile") or []:
+        tags = row.get("pinned_tags") or []
+        if isinstance(tags, str):
+            tags = [tags]
+        lines += [
+            f"> **WARNING: off-profile build in service.** {row.get('kind')} `{row.get('consumer')}` "
+            f"(`{row.get('file')}`) currently runs an off-profile build `{short(row.get('pinned'))}` "
+            f"({', '.join(f'`{t}`' for t in tags) or 'no tags'}); promoting `{short(candidate['current'])}` "
+            "replaces it — confirm the profile build carries the same components, e.g. llama.cpp version, "
+            "before applying.",
+            ">",
+        ]
+    if lines:
+        lines[-1] = ""
+    return lines
 
 
 def promotion_contract(runtime_yaml: Path, profile: str) -> dict:
@@ -139,6 +165,7 @@ def render_proposal(candidate: dict, contract: dict, dry_run_rc: int, dry_run_ou
     lines = [
         f"# Promotion proposal: `{profile}` → `{short(candidate['current'])}`",
         "",
+        *off_profile_warning(candidate),
         f"- Profile tag: `{candidate.get('tag') or '-'}`",
         f"- Newest immutable build: `{candidate['current']}` (pushed {(candidate.get('current_push_time') or '-')[:19]})",
         f"- Rollback digest: `{candidate['rollback']}`",
@@ -203,15 +230,27 @@ def render_index(candidates: list[dict], today: dt.date, mr_results: dict[str, s
         lines.append("No profile trails its newest immutable build. Nothing to promote.")
         return "\n".join(lines) + "\n"
     lines += [
-        "| profile | tag | pinned → newest | consumers | MR |",
-        "|---|---|---|---|---|",
+        "| profile | tag | pinned → newest | consumers | warnings | MR |",
+        "|---|---|---|---|---|---|",
     ]
     for c in candidates:
         pinned = ", ".join(sorted({short(x.get("pinned")) for x in c["consumers"]}))
+        off = c.get("off_profile") or []
+        warning = "-"
+        if off:
+            warning = "**off-profile build in service**: " + ", ".join(
+                f"`{r.get('consumer')}` on `{short(r.get('pinned'))}`" for r in off
+            )
         lines.append(
             f"| [`{c['profile']}`]({c['profile']}.md) | `{c.get('tag') or '-'}` | `{pinned}` → `{short(c['current'])}` | "
-            f"{len(c['consumers'])} | {mr_results.get(c['profile'], 'proposal only')} |"
+            f"{len(c['consumers'])} | {warning} | {mr_results.get(c['profile'], 'proposal only')} |"
         )
+    if any(c.get("off_profile") for c in candidates):
+        lines += [
+            "",
+            "A profile marked **off-profile build in service** has a consumer on a digest its CI job did not build "
+            "(an overlay pushed by hand). Promoting replaces that build; read the warning in its proposal first.",
+        ]
     return "\n".join(lines) + "\n"
 
 
@@ -356,6 +395,7 @@ def main(argv: list[str] | None = None) -> int:
     print(f"{len(candidates)} promotion proposal(s) written to {out_dir}")
     for cand in candidates:
         print(f"  {cand['profile']}: {short(cand['rollback'])} -> {short(cand['current'])}"
+              + ("  [off-profile build in service]" if cand.get("off_profile") else "")
               + (f"  [{mr_results[cand['profile']]}]" if cand["profile"] in mr_results else ""))
     if candidates and args.fail_on_candidates:
         return 2
