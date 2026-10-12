@@ -33,11 +33,9 @@ controller:
   replicas: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
-    # Use the mutable master tag for homelab continuous deployment; publish
-    # refreshes this tag on every merged master pipeline, and imagePullPolicy
-    # resolves to Always when digest is empty.
-    digest: ""
-    tag: "master"
+    # Keep controller/runtime drain contracts on the same tested revision.
+    digest: "sha256:8f2e884e0215dc7ad99f24c8e5df3b3dd416ec1bf40bd76f02da2aba7df0d787"
+    tag: "humanizer-fastswaps-cc7273917"
   resources:
     limits:
       cpu: 1000m
@@ -98,7 +96,8 @@ proxy:
   replicaCount: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-proxy
-    tag: "master"
+    tag: "humanizer-fastswaps-cc7273917"
+    digest: "sha256:373a5f8fcda45b1d69f7116fb722e4bc7144db8967f157827fec841e75e726a7"
     pullPolicy: Always
   service:
     type: ClusterIP
@@ -577,7 +576,7 @@ runtime:
     - name: gfx906
       # Humanizer qualification: same unified runtime, llama.cpp b11335 overlay.
       # Rollback: 171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b.
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:8d81c14efa8ad22ff86207d0d901a6e8d0c7e84db2fe487af484762d3ba88616"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:fc55611d3b918684c7ab2d6918c4df069d22566899e9cbc23968a6608cf527ef"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
