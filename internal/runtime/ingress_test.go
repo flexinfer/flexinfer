@@ -329,12 +329,11 @@ func TestRuntimeIngressCleanupAfterFailedStart(t *testing.T) {
 }
 
 func TestRuntimeCapacityFailureIsRetryable(t *testing.T) {
-	binDir := t.TempDir()
-	// A deterministic 4 MB of free VRAM is below the default admission margin.
-	script := "#!/bin/sh\nprintf 'device,VRAM Total (B),VRAM Used (B)\\ncard0,16777216,12582912\\n'\n"
-	require.NoError(t, os.WriteFile(filepath.Join(binDir, "rocm-smi"), []byte(script), 0o755))
-	t.Setenv("PATH", binDir)
 	m := NewManager(ManagerConfig{GPUVendor: backend.GPUVendorAMD, MultiModel: true, RequestDrain: true})
+	// Inject telemetry: real AMD sysfs counters take precedence over vendor tools.
+	m.gpuQuery = func() GPUInfo {
+		return GPUInfo{VRAMTotalMB: 16384, VRAMUsedMB: 16380, VRAMFreeMB: 4}
+	}
 	payload := LoadRequest{Backend: backend.NameLlamaCpp, Model: "test/capacity"}
 	require.ErrorIs(t, m.Load(context.Background(), "waiting", payload), ErrInsufficientVRAM)
 	assert.Empty(t, m.Status().ActiveModels)
