@@ -12,6 +12,7 @@ import importlib.util
 import pathlib
 import textwrap
 import unittest
+from unittest import mock
 
 HERE = pathlib.Path(__file__).resolve().parent
 REPO_ROOT = HERE.parent
@@ -387,13 +388,14 @@ class PublishJobContractTests(unittest.TestCase):
         )
 
     def test_stale_waiver_fails(self) -> None:
-        self.edit_job(
-            ROOT_CI,
-            "publish_runtime_rocm_gfx906",
-            "GPU_ARCH=gfx906\n",
-            "GPU_ARCH=gfx906\n      ROCM_PATH=/opt/rocm\n",
-        )
-        msg = self.failure()
+        job = "publish_runtime_rocm_gfx906"
+        waivers = {
+            (job, "runtime.env", "ROCM_PATH"): "test waiver",
+            (job, "runtime.env", "HIP_PATH"): "test waiver",
+        }
+        self.edit_job(ROOT_CI, job, "HIP_PATH=/opt/rocm\n", "")
+        with mock.patch.dict(self.m.KNOWN_PUBLISH_JOB_DIVERGENCES, waivers):
+            msg = self.failure()
         self.assertIn(
             "KNOWN_PUBLISH_JOB_DIVERGENCES entry (publish_runtime_rocm_gfx906, runtime.env, ROCM_PATH) "
             "no longer matches a divergence",
@@ -446,10 +448,11 @@ class PublishJobContractTests(unittest.TestCase):
         )
 
     def test_unparseable_build_arg_fails_instead_of_passing_vacuously(self) -> None:
+        go_version = self.m.parse_simple_yaml(self.runtime_yaml)["go_version"]
         self.edit_job(
             ROOT_CI,
             "publish_runtime_rocm_gfx906",
-            '--opt build-arg:GO_VERSION="1.26.9"',
+            f'--opt build-arg:GO_VERSION="{go_version}"',
             "--opt build-arg:GO_VERSION",
         )
         self.assertIn("has a build-arg the contract check cannot parse", self.failure())

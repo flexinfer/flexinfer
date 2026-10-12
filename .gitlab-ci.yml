@@ -1550,6 +1550,8 @@ publish_runtime_rocm_gfx906:
       GPU_ARCH=gfx906
       FLEXINFER_TRANSFORMERS_PACKAGE=transformers>=5.0
       FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL=fallback
+      ROCM_PATH=/opt/rocm
+      HIP_PATH=/opt/rocm
       HSA_ENABLE_SDMA=0
       HSA_USE_SVM=0
       PYTORCH_ROCM_ARCH=gfx906

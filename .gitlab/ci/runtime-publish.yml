@@ -9,6 +9,7 @@ runtime_patch_contracts:
   needs: []
   script:
     - python3 scripts/check-runtime-patch-contracts.py
+    - python3 scripts/test_check_runtime_patch_contracts.py
     - python3 build/scripts/test_modules_in_block_to_quantize.py
     - python3 build/scripts/test_validate_quantized_artifact.py
     - python3 build/scripts/test_runtime_gptq_patch_composition.py
@@ -35,6 +36,8 @@ runtime_patch_contracts:
         - build/scripts/qwen35_wrap_to_vl_layout.py
         - build/scripts/qwen35_unwrap_from_vl_layout.py
         - scripts/check-runtime-patch-contracts.py
+        - scripts/test_check_runtime_patch_contracts.py
+        - .gitlab-ci.yml
         - build/scripts/abliterate.py
         - build/scripts/abliterate_safety.py
         - build/scripts/test_abliterate_safety.py
@@ -61,6 +64,8 @@ runtime_patch_contracts:
         - build/scripts/qwen35_wrap_to_vl_layout.py
         - build/scripts/qwen35_unwrap_from_vl_layout.py
         - scripts/check-runtime-patch-contracts.py
+        - scripts/test_check_runtime_patch_contracts.py
+        - .gitlab-ci.yml
         - build/scripts/abliterate.py
         - build/scripts/abliterate_safety.py
         - build/scripts/test_abliterate_safety.py
@@ -87,6 +92,8 @@ runtime_patch_contracts:
         - build/scripts/qwen35_wrap_to_vl_layout.py
         - build/scripts/qwen35_unwrap_from_vl_layout.py
         - scripts/check-runtime-patch-contracts.py
+        - scripts/test_check_runtime_patch_contracts.py
+        - .gitlab-ci.yml
         - build/scripts/abliterate.py
         - build/scripts/abliterate_safety.py
         - build/scripts/test_abliterate_safety.py
@@ -264,9 +271,10 @@ publish_serving_rocm_gfx1100_native_w4a16:
     - when: never
 
 # Legacy unified gfx1100 utility runtime (vLLM + diffusers + quantizer +
-# abliteration + Steam + llama.cpp + Ollama). Keep this path for utility image
+# abliteration + llama.cpp + Ollama). Keep this path for utility image
 # refreshes and manual rebuilds; serving-only updates use
-# publish_serving_rocm_gfx1100.
+# publish_serving_rocm_gfx1100, and Sunshine gaming uses
+# publish_gaming_rocm_gfx1100.
 publish_unified_rocm_gfx1100:
   stage: publish
   # 2026-09-13 (issue #74): the repo-wide `interruptible: true` default let a
@@ -334,7 +342,8 @@ publish_unified_rocm_gfx1100:
           --opt build-arg:INCLUDE_OLLAMA="true" \
           --opt build-arg:INCLUDE_DIFFUSERS="true" \
           --opt build-arg:INCLUDE_BITSANDBYTES="true" \
-          --opt build-arg:INCLUDE_STEAM="true" \
+          --opt build-arg:INCLUDE_STEAM="false" \
+          --opt build-arg:INCLUDE_GAMING="false" \
           --opt build-arg:INCLUDE_QUANTIZER="true" \
           --opt build-arg:TRANSFORMERS_CONSTRAINT=">=5.0" \
           --opt build-arg:LLAMACPP_BUILD_IMAGE="rocm/dev-ubuntu-24.04:6.4.4" \
@@ -421,7 +430,11 @@ publish_gaming_rocm_gfx1100:
       TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
       HIP_FORCE_DEV_KERNARG=1
       TORCH_BLAS_PREFER_HIPBLASLT=1
+      VLLM_USE_TRITON_FLASH_ATTN=0
+      VLLM_ROCM_USE_AITER=0
+      VLLM_TARGET_DEVICE=rocm
       MIOPEN_FIND_MODE=2
+      PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.9,max_split_size_mb:512
       EOF
       trap 'rm -f build/.runtime-env' EXIT
     - |
@@ -634,6 +647,8 @@ runtime_pin_drift:
   before_script:
     - python3 -m pip install --disable-pip-version-check --no-cache-dir pyyaml
   script:
+    # Its tests need PyYAML, so they run here and not in runtime_patch_contracts.
+    - python3 scripts/test_check_runtime_pin_drift.py
     # Offline pass first: inventory parsing must never depend on the registry.
     - python3 scripts/check-runtime-pin-drift.py --offline > /dev/null
     # Online pass. Harbor's internal CA is not in this image's trust store;
@@ -653,6 +668,7 @@ runtime_pin_drift:
       changes:
         - .gitlab/ci/runtime-publish.yml
         - scripts/check-runtime-pin-drift.py
+        - scripts/test_check_runtime_pin_drift.py
         - build/runtime.yaml
         - deploy/system/values-k3s.yaml
         - deploy/gpuprofiles/**/*
@@ -663,6 +679,7 @@ runtime_pin_drift:
       changes:
         - .gitlab/ci/runtime-publish.yml
         - scripts/check-runtime-pin-drift.py
+        - scripts/test_check_runtime_pin_drift.py
         - build/runtime.yaml
         - deploy/system/values-k3s.yaml
         - deploy/gpuprofiles/**/*
