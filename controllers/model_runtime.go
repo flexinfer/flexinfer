@@ -347,6 +347,13 @@ func (r *ModelReconciler) shouldDeferRuntimeLoadForActivePeer(
 	if status == nil || status.ActiveModel == nil || status.ActiveModel.Name == "" || status.ActiveModel.Name == model.Name {
 		return false, "", nil
 	}
+	// A multi-model load of a different name leaves every incumbent running.
+	// Shared-group election already grants the desired slot, and runtime VRAM
+	// admission enforces capacity; single-slot demand protection would prevent
+	// warm co-resident models from ever starting behind an active peer.
+	if status.MultiModel {
+		return false, status.ActiveModel.Name, nil
+	}
 
 	active := &aiv1alpha2.Model{}
 	key := types.NamespacedName{Name: status.ActiveModel.Name, Namespace: model.Namespace}

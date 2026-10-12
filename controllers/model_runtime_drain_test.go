@@ -85,3 +85,65 @@ func TestRuntimeClientBusyIsRetryable(t *testing.T) {
 	require.True(t, errors.Is(r.LoadModel(context.Background(), ep, "humanizer", []byte(`{}`)), pkgrt.ErrModelBusy))
 	require.True(t, errors.Is(r.UnloadModel(context.Background(), ep, "humanizer"), pkgrt.ErrModelBusy))
 }
+
+func TestRuntimePeerGuardAllowsMultiModelWarmCoexistence(t *testing.T) {
+	enabled, disabled := true, false
+	for _, tc := range []struct {
+		name       string
+		multiModel *bool
+		phase      aiv1alpha2.ModelPhase
+		deferLoad  bool
+	}{
+		{"multi-model serving peer", &enabled, aiv1alpha2.ModelPhaseReady, false},
+		{"multi-model loading peer", &enabled, aiv1alpha2.ModelPhaseLoading, false},
+		{"single-slot serving peer", &disabled, aiv1alpha2.ModelPhaseReady, true},
+		{"single-slot loading peer", &disabled, aiv1alpha2.ModelPhaseLoading, true},
+		{"legacy runtime retains protection", nil, aiv1alpha2.ModelPhaseReady, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			now := time.Now()
+			active := &aiv1alpha2.Model{
+				ObjectMeta: metav1.ObjectMeta{Name: "gte", Namespace: "flexinfer-system"},
+				Spec:       aiv1alpha2.ModelSpec{GPU: &aiv1alpha2.GPUSpec{Shared: "radeonvii-models"}},
+				Status: aiv1alpha2.ModelStatus{
+					Phase: tc.phase, LastActiveTime: &metav1.Time{Time: now},
+					SharedGroup: &aiv1alpha2.SharedGroupStatus{State: "Active"},
+				},
+			}
+			one := int32(1)
+			warmPeer := &aiv1alpha2.Model{
+				ObjectMeta: metav1.ObjectMeta{Name: "bge", Namespace: active.Namespace},
+				Spec: aiv1alpha2.ModelSpec{
+					GPU:        &aiv1alpha2.GPUSpec{Shared: "radeonvii-models"},
+					Serverless: &aiv1alpha2.ServerlessSpec{MinReplicas: &one},
+				},
+				Status: aiv1alpha2.ModelStatus{
+					Phase:       aiv1alpha2.ModelPhasePending,
+					SharedGroup: &aiv1alpha2.SharedGroupStatus{State: "Active"},
+				},
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				status := map[string]any{"activeModel": RuntimeModelStatus{Name: active.Name, State: string(tc.phase)}}
+				if tc.multiModel != nil {
+					status["multiModel"] = *tc.multiModel
+				}
+				_ = json.NewEncoder(w).Encode(status)
+			}))
+			defer server.Close()
+			u, err := url.Parse(server.URL)
+			require.NoError(t, err)
+			var port int
+			_, err = fmt.Sscanf(u.Port(), "%d", &port)
+			require.NoError(t, err)
+			s := runtime.NewScheme()
+			require.NoError(t, aiv1alpha2.AddToScheme(s))
+			cl := fake.NewClientBuilder().WithScheme(s).WithObjects(active, warmPeer).Build()
+			r := &ModelReconciler{Client: cl, Runtime: &RuntimeReconciler{}}
+			deferLoad, activeName, err := r.shouldDeferRuntimeLoadForActivePeer(context.Background(), warmPeer,
+				&RuntimeEndpoint{PodIP: u.Hostname(), Port: int32(port)}, now)
+			require.NoError(t, err)
+			require.Equal(t, tc.deferLoad, deferLoad)
+			require.Equal(t, active.Name, activeName)
+		})
+	}
+}

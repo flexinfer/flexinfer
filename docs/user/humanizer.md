@@ -51,15 +51,19 @@ The same binary passed GPU embedding dimension/finite-value checks, relevance
 ordering, and Orpheus audio-token generation. These native probe timings exclude
 proxy election and queueing; measure that overhead during the managed swap test.
 
-Priority 130 permits rewrite demand to borrow VRAM from the existing
-retrieval/voice subprocesses. The initial 12,500 MB estimate should retain the
-1,500 MB BGE embedding and 700 MB reranker members within the 16,384 MB group
-budget. GTE and Orpheus may unload during rewrites. Measure the actual peak
-before changing this estimate. The group uses a five-second `gpu.swapCooldown`
-override. The controller
-honors shorter overrides and releases short-idle VRAM reservations when their
-idle window ends, instead of retaining the legacy five-minute reservation.
-Foreground activity refreshes every five seconds and at request completion.
+Priority 130 permits rewrite demand to borrow VRAM from the voice subprocess.
+The 11,000 MB scheduling estimate retains the 1,500 MB BGE embedding, 700 MB
+reranker, and 2,600 MB GTE members within the 16,384 MB group budget. Orpheus
+may unload during rewrites. The initial managed probe measured 10,956 MiB for
+Humanizer plus BGE; the additional retrieval reservations leave more than
+2,000 MiB of physical headroom. Qualify the full resident set before promotion.
+The group uses a five-second `gpu.swapCooldown` override. The controller honors
+shorter overrides and releases short-idle VRAM reservations when their idle
+window ends, instead of retaining the legacy five-minute reservation.
+Foreground activity, including queued cold requests, refreshes every five
+seconds and at request completion. Health and metrics probes do not refresh
+inference activity. Multi-model runtimes admit elected peers without applying
+the single-model replacement guard; runtime capacity checks still enforce fit.
 
 The gfx906 runtime enables `FLEXINFER_RUNTIME_REQUEST_DRAIN`. Each model's
 advertised port passes through an ingress inside the same container; its
