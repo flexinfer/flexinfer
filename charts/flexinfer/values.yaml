@@ -128,13 +128,9 @@ runtime:
   #   gpuCount: 1
   #   nodeSelector:
   #     kubernetes.io/hostname: cblevins-radeonvii
-  # - name: cuda-maxwell
-  #   image: "registry.harbor.lan/flexinfer/runtime:cuda-maxwell"
-  #   gpuVendor: nvidia
-  #   gpuArch: sm_52
-  #   gpuCount: 1
-  #   nodeSelector:
-  #     kubernetes.io/hostname: cblevins-5930k
+  # No NVIDIA profile: the runtime DaemonSet template is AMD-only, and Maxwell
+  # (sm_52) runs dedicated pods. See docs/agents/gpu-compatibility.md
+  # "Maxwell runtime posture (GTX 980 Ti)".
 
 # Optional image prewarming DaemonSets. Use this for large serving images that
 # are not otherwise kept warm by the persistent runtime DaemonSet on every GPU

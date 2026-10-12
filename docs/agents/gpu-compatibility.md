@@ -10,8 +10,10 @@ Per-architecture backend support and required configuration. For the quick-start
 | vLLM | ✅ Full | ✅ Full | ❌ Not supported | gfx906: BUILD_FA=0 image |
 | MLC-LLM | ✅ Full | ✅ Full | ⚠️ Pre-compiled only | Needs `modelLibPath` on Maxwell |
 | llama.cpp | ✅ Full | ✅ Full | ✅ Full | GGUF format, arch-specific images |
-| Diffusers | ✅ Full | ⚠️ Experimental | ❌ N/A | gfx906: runtime env override |
+| Diffusers | ✅ Full | ⚠️ Experimental | ⚠️ Experimental | gfx906: runtime env override; Maxwell: SD 1.5 only, CUDA 11.8 image |
 | ComfyUI | ✅ Full | ⚠️ Experimental | ❌ N/A | gfx906: runtime env override |
+
+Every Maxwell cell above is served by a dedicated per-model Deployment, never by a persistent runtime pod. See [Maxwell runtime posture](#maxwell-runtime-posture-gtx-980-ti).
 
 ## Maxwell (GTX 980 Ti) Configuration
 
@@ -27,6 +29,64 @@ Maxwell GPUs (compute capability 5.x) require special handling:
        gpuMemoryBytes: 5000000000  # 5GB limit for 6GB card
        jitPolicy: "OFF"
    ```
+
+## Maxwell runtime posture (GTX 980 Ti)
+
+**Decision (2026-10-12): Maxwell runs dedicated pods only.** There is no
+persistent runtime DaemonSet on `cblevins-gtx980ti`. Each Model on the node
+gets its own Deployment, and the image comes from the `sm-52` GPUProfile's
+`backends.<name>.image` pin in `deploy/gpuprofiles/sm_52.yaml`. The profile
+has no `spec.runtime` block at all. The CRD requires `runtime.image`, so the
+block could not be kept with only `bundledBackends`. Without it,
+`RuntimeProfileBundlesBackend` (`pkg/runtime/payload.go`) is permissive,
+`FindRuntimeForNode` (`controllers/runtime_controller.go`) finds no runtime pod
+matching the node's hostname selector, and the Model controller takes the
+Deployment path.
+
+Images that actually serve on the node:
+
+| Backend | Image (`sm_52.yaml`) | Built by |
+|---|---|---|
+| diffusers | `flexinfer/diffusers:cuda-maxwell-0b19f7a8@sha256:145ee552…` | CI `publish_diffusers_cuda` (`build/Dockerfile.diffusers-cuda`). This is the live lane, `dreamshaper8-imagegen-gtx980ti` (minReplicas 1). |
+| llamacpp | `flexinfer/llamacpp@sha256:18e8cb08…` (tags `cuda-maxwell-652d1f2e`, `cuda-maxwell-2ae7dc2d`) | CI `publish_llamacpp_cuda_maxwell` (`build/Dockerfile.llamacpp-cuda-maxwell`). No Model in `deploy/models/kustomization.yaml` uses it today. |
+| ollama | `flexinfer/ollama:cuda-maxwell` (also Helm `ollama.maxwellImage`) | CI `publish_ollama_maxwell`. No Model uses it today. |
+| mlc-llm | `flexinfer/mlc-llm:cuda-maxwell-v7` | CI `publish_mlcllm_maxwell`. No Model uses it today. |
+
+`flexinfer/runtime:cuda-maxwell` was never built. The profile used to pin it,
+but Harbor's `flexinfer/runtime` repository has no cuda or maxwell tag (41
+artifacts checked 2026-10-12) and no CI job publishes one. The `cuda-maxwell`
+profile in `build/runtime.yaml` is a recipe with no job and no consumer.
+
+Why the node has no runtime:
+
+- The node has one 6 GiB GPU, and the warm image-gen lane holds it. A runtime
+  pod would have no second workload to host.
+- The `cuda-maxwell` runtime recipe sets `diffusers: false`, so the only live
+  Maxwell workload could not run inside it.
+- `charts/flexinfer/templates/runtime-daemonset.yaml` is AMD-only. It mounts
+  `/dev/kfd` and `/dev/dri` and sets no `runtimeClassName: nvidia` and no
+  `nvidia.com/gpu` request.
+- **Ivy Bridge SIGILL hazard.** `build/Dockerfile.runtime` builds llama.cpp
+  for `GPU_VENDOR=nvidia` with only `-DGGML_CUDA=ON -DGGML_NATIVE=OFF`. ggml
+  then defaults AVX2, FMA and BMI2 to ON. The host CPU is an i7-3770K (Ivy
+  Bridge: AVX, SSE4.2, F16C; no AVX2, FMA or BMI2), so any runtime built from
+  that recipe would SIGILL on its first llama.cpp call.
+  `build/Dockerfile.llamacpp-cuda-maxwell` shows the fix:
+  `-DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_BMI2=OFF`.
+
+Preconditions for adding a Maxwell runtime (all of them):
+
+1. A second Maxwell workload that is worth co-hosting with image-gen on the
+   6 GiB card.
+2. NVIDIA wiring in the runtime DaemonSet template: `runtimeClassName: nvidia`,
+   an `nvidia.com/gpu` request, and no AMD device mounts.
+3. A `cuda-maxwell` runtime build carrying the Ivy Bridge GGML flags, plus
+   `diffusers: true` if image-gen moves into the runtime.
+4. A CI job that publishes an immutable `runtime:cuda-maxwell-<sha>` tag.
+5. A `runtime.profiles` entry in `deploy/system/values-k3s.yaml` for
+   `cblevins-gtx980ti`.
+6. `spec.runtime` restored in `sm_52.yaml` with a digest pin and an explicit
+   `bundledBackends` list.
 
 ## RDNA3 (RX 7900 XTX) Configuration
 

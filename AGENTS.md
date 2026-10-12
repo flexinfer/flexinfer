@@ -63,6 +63,8 @@ CRD/chart change flow: edit types → `make manifests` → `make test` → bump 
 | Diffusers | ✅ | ⚠️ experimental | ⚠️ experimental (SD 1.5 only, CUDA 11.8 image) |
 | ComfyUI | ✅ | ⚠️ experimental | ❌ |
 
+Maxwell runs dedicated per-model pods only, with no runtime DaemonSet: [Maxwell runtime posture](docs/agents/gpu-compatibility.md#maxwell-runtime-posture-gtx-980-ti).
+
 GPU nodes: `cblevins-5930k` (7900XTX), `cblevins-7900xtx` (7900XTX), `cblevins-gtx980ti` (980 Ti, sm_52, 6GB — image-gen lane: SD 1.5 / Dreamshaper 8). Per-arch config blocks: [gpu-compatibility.md](docs/agents/gpu-compatibility.md).
 
 ## Model Deployment (quick shape)
