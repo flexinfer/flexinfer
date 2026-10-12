@@ -42,6 +42,9 @@ COMPILE_ONLY = PATCH_SCRIPTS + (
 CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
     "build/scripts/test_runtime_gptq_patch_composition.py",
     "scripts/check-runtime-patch-contracts.py",
+    "scripts/test_check_runtime_patch_contracts.py",
+    # publish_runtime_rocm_gfx906 lives in the root CI file.
+    ".gitlab-ci.yml",
     "build/build-runtime.sh",
     "build/Dockerfile.runtime",
     "build/sunshine-headless.sh",
@@ -165,34 +168,12 @@ DERIVED_RUNTIME_ENV_KEYS = {
     "SKIP_GEMMA4_MOE_PATCH": "SKIP_GEMMA4_MOE_PATCH",
 }
 
-# Divergences that were already on master when this check landed
-# (b26dcef56, 2026-10-12). They are printed on every run, and an entry that no
+# {(job, kind, key): reason} for a divergence that must ship before the two
+# files can be reconciled. Each is printed on every run, and an entry that no
 # longer matches a live divergence fails the check, so whoever reconciles the
-# two files must also delete the waiver.
-KNOWN_PUBLISH_JOB_DIVERGENCES = {
-    ("publish_runtime_rocm_gfx906", "runtime.env", "ROCM_PATH"): (
-        "the gfx906 heredoc never carried the profile's ROCM_PATH/HIP_PATH"
-    ),
-    ("publish_runtime_rocm_gfx906", "runtime.env", "HIP_PATH"): (
-        "the gfx906 heredoc never carried the profile's ROCM_PATH/HIP_PATH"
-    ),
-    ("publish_unified_rocm_gfx1100", "build-arg", "INCLUDE_STEAM"): (
-        "CI still builds the legacy Steam layer (and omits INCLUDE_GAMING) "
-        "while runtime.yaml moved gfx1100 to steam: false, gaming: true"
-    ),
-    ("publish_gaming_rocm_gfx1100", "runtime.env", "VLLM_USE_TRITON_FLASH_ATTN"): (
-        "the gaming heredoc drops the profile's vLLM/allocator env keys"
-    ),
-    ("publish_gaming_rocm_gfx1100", "runtime.env", "VLLM_ROCM_USE_AITER"): (
-        "the gaming heredoc drops the profile's vLLM/allocator env keys"
-    ),
-    ("publish_gaming_rocm_gfx1100", "runtime.env", "VLLM_TARGET_DEVICE"): (
-        "the gaming heredoc drops the profile's vLLM/allocator env keys"
-    ),
-    ("publish_gaming_rocm_gfx1100", "runtime.env", "PYTORCH_HIP_ALLOC_CONF"): (
-        "the gaming heredoc drops the profile's vLLM/allocator env keys"
-    ),
-}
+# two files must also delete the waiver. The seven found when this check
+# landed (b26dcef56) were reconciled on 2026-10-12.
+KNOWN_PUBLISH_JOB_DIVERGENCES: dict[tuple[str, str, str], str] = {}
 
 
 def fail(message: str) -> None:
@@ -697,6 +678,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
         "stage: lint",
         "needs: []",
         "python3 scripts/check-runtime-patch-contracts.py",
+        "python3 scripts/test_check_runtime_patch_contracts.py",
         "python3 build/scripts/test_modules_in_block_to_quantize.py",
         "python3 build/scripts/test_validate_quantized_artifact.py",
         "python3 build/scripts/test_runtime_gptq_patch_composition.py",
@@ -709,6 +691,15 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     missing_rules = [path for path in CI_CHANGE_RULE_FILES if path not in fast_job_body]
     if missing_rules:
         fail(f"runtime_patch_contracts rules do not include: {missing_rules}")
+
+    # The pin-drift tests skip without PyYAML, which only runtime_pin_drift installs.
+    drift_job_body = ci_job_body(ci_yaml, "runtime_pin_drift") or ""
+    for snippet in (
+        "python3 scripts/test_check_runtime_pin_drift.py",
+        "- scripts/test_check_runtime_pin_drift.py",
+    ):
+        if snippet not in drift_job_body:
+            fail(f"runtime_pin_drift missing {snippet!r}")
 
     serving_job_body = ci_yaml[serving_job:native_w4a16_job]
     serving_required_snippets = (
