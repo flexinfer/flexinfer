@@ -187,6 +187,21 @@ variables:
     - export PATH=$PATH:$GOPATH/bin
 
 # --- Lint Stage ---
+docs_diff_check:
+  stage: lint
+  image: ${GO_IMAGE}
+  variables:
+    GIT_DEPTH: "0"
+  needs: []
+  script:
+    - git diff --check "$CI_MERGE_REQUEST_DIFF_BASE_SHA" "$CI_COMMIT_SHA" -- docs/
+  rules:
+    # Give docs-only MRs automatic proof for the serial merge queue.
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes:
+        - docs/**/*
+    - when: never
+
 lint:
   stage: lint
   <<: *go-cache
