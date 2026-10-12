@@ -63,6 +63,21 @@ artifacts under `promotion-proposals/`. With `FLEXINFER_PROMOTE_MR_TOKEN` set (p
 applied plus a `pending` matrix row and opens a Draft MR. Profiles with `promotion.require_prewarm` stay proposal-only
 (`--apply` gates on the live prewarm pods). Merge stays human: run the profile's kill-test, flip the matrix row.
 
+The drift report counts a digest as a build of its profile only when it carries the floating tag or
+`<floating>-<commit sha>`, the tag the profile's CI job pushes. A digest tagged `<floating>-<anything else>`, such as
+the hand-built `rocm-gfx906-humanizer-<sha>` overlay, is an **off-profile build**: it fails `--strict`, is listed under
+`off_profile_builds` in the JSON, and the proposal for that profile opens with a warning, because promoting the CI
+build would drop whatever the overlay added. The report also flags, without failing, a split pin: a GPUProfile
+`spec.runtime.image` that differs from the runtime DaemonSet image for the same `gpuArch`. No Go code reads that
+GPUProfile field today. `scripts/check-runtime-patch-contracts.py` (CI `runtime_patch_contracts`) holds the publish
+jobs that hardcode their build args and `runtime.env` heredoc instead of calling `build-runtime.sh`
+(`publish_runtime_rocm_gfx906`, `publish_unified_rocm_gfx1100`, `publish_serving_rocm_gfx1100`,
+`publish_gaming_rocm_gfx1100`, `publish_serving_rocm_gfx1100_native_w4a16`) to `runtime.yaml`. It checks each value
+against what `build-runtime.sh` would derive, where a profile-level `llamacpp_version`/`go_version`/`ollama_version`/
+`ollama_go_version` overrides the top-level key, so a version bumped in only one file fails the lint stage.
+Divergences that predate the check are listed in `KNOWN_PUBLISH_JOB_DIVERGENCES` and printed as warnings on every run.
+Reconciling one fails the check until its entry is deleted.
+
 ## vLLM family
 
 | Dockerfile | Built by | Image / consumer |

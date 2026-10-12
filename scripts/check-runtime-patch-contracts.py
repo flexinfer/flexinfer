@@ -73,6 +73,127 @@ UNIFIED_SERVING_ONLY_RULE_FILES = (
     "build/scripts/vllm_qwen35_patches_nodiag.py",
 )
 
+# Runtime publish jobs that hardcode their buildctl args and runtime.env
+# heredoc instead of running build/build-runtime.sh: (job, CI file, profile).
+# 2026-10-12: publish_runtime_rocm_gfx906 still passed LLAMACPP_VERSION=b8173
+# while the live gfx906 lane needed a newer llama.cpp, so the floating tag
+# moved to a build without it and nothing noticed.
+PUBLISH_JOB_PROFILES = (
+    ("publish_runtime_rocm_gfx906", ".gitlab-ci.yml", "gfx906"),
+    ("publish_unified_rocm_gfx1100", ".gitlab/ci/runtime-publish.yml", "gfx1100"),
+    (
+        "publish_serving_rocm_gfx1100",
+        ".gitlab/ci/runtime-publish.yml",
+        "gfx1100-serving",
+    ),
+    ("publish_gaming_rocm_gfx1100", ".gitlab/ci/runtime-publish.yml", "gfx1100-gaming"),
+    (
+        "publish_serving_rocm_gfx1100_native_w4a16",
+        ".gitlab/ci/runtime-publish.yml",
+        "gfx1100-native-w4a16",
+    ),
+)
+
+# Top-level runtime.yaml versions; a profile may override each with the same key.
+RUNTIME_YAML_VERSION_KEYS = {
+    "GO_VERSION": "go_version",
+    "LLAMACPP_VERSION": "llamacpp_version",
+    "OLLAMA_VERSION": "ollama_version",
+    "OLLAMA_GO_VERSION": "ollama_go_version",
+}
+
+# build arg -> (profile field, build-runtime.sh default). Mirrors the `pcfg`
+# calls in build/build-runtime.sh; assert_build_script_defaults() keeps the
+# two in step.
+PROFILE_BUILD_ARGS = {
+    "BASE_IMAGE": ("base_image", ""),
+    "GPU_VENDOR": ("gpu_vendor", ""),
+    "GPU_ARCH": ("gpu_arch", ""),
+    "INCLUDE_VLLM": ("backends.vllm", "false"),
+    "INCLUDE_LLAMACPP": ("backends.llamacpp", "true"),
+    "INCLUDE_OLLAMA": ("backends.ollama", "true"),
+    "INCLUDE_DIFFUSERS": ("backends.diffusers", "false"),
+    "INCLUDE_STEAM": ("backends.steam", "false"),
+    "INCLUDE_GAMING": ("backends.gaming", "false"),
+    "INCLUDE_QUANTIZER": ("include_quantizer", "false"),
+    "INCLUDE_TURBOQUANT": ("include_turboquant", "false"),
+    "INCLUDE_BITSANDBYTES": ("include_bitsandbytes", "false"),
+    "TRANSFORMERS_CONSTRAINT": ("transformers_constraint", ">=5.0"),
+    "TRANSFORMERS_INSTALL_MODE": ("transformers_install_mode", "constraint"),
+    "TRANSFORMERS_REPO": (
+        "transformers_repo",
+        "https://github.com/huggingface/transformers.git",
+    ),
+    "TRANSFORMERS_REF": ("transformers_ref", "main"),
+    "VLLM_INSTALL_MODE": ("vllm_install_mode", "wheel"),
+    "VLLM_VERSION": ("vllm_version", "0.17.0+rocm700"),
+    "VLLM_EXTRA_INDEX_URL": (
+        "vllm_extra_index_url",
+        "https://wheels.vllm.ai/rocm/0.17.0/rocm700",
+    ),
+    "VLLM_REPO": ("vllm_repo", "https://github.com/vllm-project/vllm.git"),
+    "VLLM_REF": ("vllm_ref", "main"),
+    "VLLM_SOURCE_PATCH_SCRIPT": ("vllm_source_patch_script", ""),
+    "VLLM_EXTRA_DEPS_PROFILE": ("vllm_extra_deps_profile", "full"),
+    "SKIP_GEMMA4_MOE_PATCH": ("skip_gemma4_moe_patch", "false"),
+    "INSTALL_QWEN35_FASTPATH": ("install_qwen35_fastpath", "true"),
+    "TURBOQUANT_INSTALL_MODE": ("turboquant_install_mode", "none"),
+    "TURBOQUANT_VERSION": ("turboquant_version", "1.4.0"),
+    "TURBOQUANT_REPO": (
+        "turboquant_repo",
+        "https://github.com/Alberto-Codes/turboquant-vllm.git",
+    ),
+    "TURBOQUANT_REF": ("turboquant_ref", "main"),
+    "TURBOQUANT_SOURCE_PATCH_SCRIPT": ("turboquant_source_patch_script", ""),
+    "CUDA_ARCHITECTURES": ("cuda_architectures", "52"),
+}
+
+# Args for a component the profile leaves out are never read by its build
+# stages (Dockerfile.runtime-gfx906 declares VLLM_INSTALL_MODE but no stage
+# consumes it), so they are only compared when the component is in.
+GATED_BUILD_ARG_PREFIXES = (
+    ("VLLM_", "INCLUDE_VLLM"),
+    ("TURBOQUANT_", "INCLUDE_TURBOQUANT"),
+)
+
+# runtime.env keys build-runtime.sh derives rather than copying from the
+# profile's env map. A CI heredoc may omit them (the entrypoint has defaults);
+# when it writes one, the value must match.
+DERIVED_RUNTIME_ENV_KEYS = {
+    "FLEXINFER_TRANSFORMERS_PACKAGE": "TRANSFORMERS_PACKAGE",
+    "FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL": "TRANSFORMERS_RUNTIME_INSTALL",
+    "SKIP_GEMMA4_MOE_PATCH": "SKIP_GEMMA4_MOE_PATCH",
+}
+
+# Divergences that were already on master when this check landed
+# (b26dcef56, 2026-10-12). They are printed on every run, and an entry that no
+# longer matches a live divergence fails the check, so whoever reconciles the
+# two files must also delete the waiver.
+KNOWN_PUBLISH_JOB_DIVERGENCES = {
+    ("publish_runtime_rocm_gfx906", "runtime.env", "ROCM_PATH"): (
+        "the gfx906 heredoc never carried the profile's ROCM_PATH/HIP_PATH"
+    ),
+    ("publish_runtime_rocm_gfx906", "runtime.env", "HIP_PATH"): (
+        "the gfx906 heredoc never carried the profile's ROCM_PATH/HIP_PATH"
+    ),
+    ("publish_unified_rocm_gfx1100", "build-arg", "INCLUDE_STEAM"): (
+        "CI still builds the legacy Steam layer (and omits INCLUDE_GAMING) "
+        "while runtime.yaml moved gfx1100 to steam: false, gaming: true"
+    ),
+    ("publish_gaming_rocm_gfx1100", "runtime.env", "VLLM_USE_TRITON_FLASH_ATTN"): (
+        "the gaming heredoc drops the profile's vLLM/allocator env keys"
+    ),
+    ("publish_gaming_rocm_gfx1100", "runtime.env", "VLLM_ROCM_USE_AITER"): (
+        "the gaming heredoc drops the profile's vLLM/allocator env keys"
+    ),
+    ("publish_gaming_rocm_gfx1100", "runtime.env", "VLLM_TARGET_DEVICE"): (
+        "the gaming heredoc drops the profile's vLLM/allocator env keys"
+    ),
+    ("publish_gaming_rocm_gfx1100", "runtime.env", "PYTORCH_HIP_ALLOC_CONF"): (
+        "the gaming heredoc drops the profile's vLLM/allocator env keys"
+    ),
+}
+
 
 def fail(message: str) -> None:
     raise SystemExit(f"ERROR: {message}")
@@ -645,6 +766,504 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
             fail(f"publish_gaming_rocm_gfx1100 missing {snippet!r}")
 
 
+# ---------------------------------------------------------------------------
+# CI publish jobs vs build/runtime.yaml
+# ---------------------------------------------------------------------------
+# runtime_patch_contracts runs on python:3.12-alpine with no pip install, so
+# runtime.yaml is read with the small parser below rather than PyYAML.
+
+_YAML_KEY_RE = re.compile(
+    r"""^(?P<key>"(?:[^"\\]|\\.)*"|'(?:[^']|'')*'|[^\s'"#\-][^:]*?)"""
+    r"""\s*:(?:\s+(?P<value>.*))?$"""
+)
+
+
+class SimpleYAMLError(ValueError):
+    pass
+
+
+def _strip_yaml_comment(line: str) -> str:
+    """Drop a `#` comment that is outside quotes and starts a token."""
+    quote = None
+    i = 0
+    while i < len(line):
+        ch = line[i]
+        if quote == '"':
+            if ch == "\\":
+                i += 2
+                continue
+            if ch == '"':
+                quote = None
+        elif quote == "'":
+            if ch == "'":
+                quote = None
+        elif ch in "\"'" and (i == 0 or line[i - 1] in " \t[{,:-"):
+            quote = ch
+        elif ch == "#" and (i == 0 or line[i - 1] in " \t"):
+            return line[:i].rstrip()
+        i += 1
+    return line.rstrip()
+
+
+def _yaml_scalar(raw: str, lineno: int):
+    raw = raw.strip()
+    if raw in ("", "~", "null", "Null", "NULL"):
+        return None
+    if raw == "[]":
+        return []
+    if raw == "{}":
+        return {}
+    if raw[0] == '"':
+        if len(raw) < 2 or raw[-1] != '"':
+            raise SimpleYAMLError(f"line {lineno}: unterminated double-quoted scalar")
+        body = raw[1:-1]
+        escapes = {'"': '"', "\\": "\\", "/": "/", "n": "\n", "t": "\t"}
+        out = []
+        i = 0
+        while i < len(body):
+            if body[i] == "\\":
+                if i + 1 >= len(body) or body[i + 1] not in escapes:
+                    raise SimpleYAMLError(f"line {lineno}: unsupported escape in {raw}")
+                out.append(escapes[body[i + 1]])
+                i += 2
+                continue
+            out.append(body[i])
+            i += 1
+        return "".join(out)
+    if raw[0] == "'":
+        if len(raw) < 2 or raw[-1] != "'":
+            raise SimpleYAMLError(f"line {lineno}: unterminated single-quoted scalar")
+        return raw[1:-1].replace("''", "'")
+    if raw[0] in "&*!|>[{%@`":
+        raise SimpleYAMLError(f"line {lineno}: unsupported YAML construct {raw!r}")
+    return raw
+
+
+def parse_simple_yaml(text: str) -> dict:
+    """Parse the block-style YAML subset build/runtime.yaml is written in.
+
+    Supports nested mappings by indentation, plain and quoted scalars,
+    full-line and trailing comments, block sequences of scalars, and the
+    empty flow collections `[]` / `{}`. Scalars stay strings, matching
+    `yq -r` (`true` -> "true", `"1"` -> "1"); `null`, `~` and empty values
+    become None. Anything else (anchors, block scalars, flow collections with
+    content, tabs, multiple documents) raises SimpleYAMLError rather than
+    being misread.
+    """
+    lines: list[tuple[int, str, int]] = []
+    for lineno, raw in enumerate(text.splitlines(), 1):
+        stripped = _strip_yaml_comment(raw)
+        if not stripped.strip():
+            continue
+        body = stripped.lstrip(" ")
+        if body.startswith("\t"):
+            raise SimpleYAMLError(f"line {lineno}: tab indentation is not supported")
+        if body in ("---", "..."):
+            raise SimpleYAMLError(f"line {lineno}: document markers are not supported")
+        lines.append((len(stripped) - len(body), body, lineno))
+    if not lines:
+        return {}
+    if lines[0][0] != 0:
+        raise SimpleYAMLError(f"line {lines[0][2]}: document must start at column 0")
+
+    def is_item(body: str) -> bool:
+        return body == "-" or body.startswith("- ")
+
+    def parse_sequence(i: int, indent: int):
+        items = []
+        while i < len(lines) and lines[i][0] == indent and is_item(lines[i][1]):
+            _, body, lineno = lines[i]
+            value = body[1:].strip()
+            if not value or _YAML_KEY_RE.match(value):
+                raise SimpleYAMLError(
+                    f"line {lineno}: only sequences of scalars are supported"
+                )
+            items.append(_yaml_scalar(value, lineno))
+            i += 1
+        return items, i
+
+    def parse_mapping(i: int, indent: int):
+        result: dict = {}
+        while i < len(lines) and lines[i][0] == indent and not is_item(lines[i][1]):
+            _, body, lineno = lines[i]
+            match = _YAML_KEY_RE.match(body)
+            if not match:
+                raise SimpleYAMLError(
+                    f"line {lineno}: expected 'key: value', got {body!r}"
+                )
+            key = _yaml_scalar(match.group("key"), lineno)
+            if key in result:
+                raise SimpleYAMLError(f"line {lineno}: duplicate key {key!r}")
+            value = match.group("value")
+            i += 1
+            if value is not None and value.strip():
+                result[key] = _yaml_scalar(value, lineno)
+            elif i < len(lines) and lines[i][0] > indent:
+                result[key], i = parse_node(i, lines[i][0])
+            elif i < len(lines) and lines[i][0] == indent and is_item(lines[i][1]):
+                result[key], i = parse_sequence(i, indent)
+            else:
+                result[key] = None
+        return result, i
+
+    def parse_node(i: int, indent: int):
+        if is_item(lines[i][1]):
+            node, i = parse_sequence(i, indent)
+        else:
+            node, i = parse_mapping(i, indent)
+        if i < len(lines) and lines[i][0] > indent:
+            raise SimpleYAMLError(f"line {lines[i][2]}: unexpected indentation")
+        return node, i
+
+    node, i = parse_node(0, 0)
+    if i != len(lines):
+        raise SimpleYAMLError(f"line {lines[i][2]}: could not parse from here")
+    if not isinstance(node, dict):
+        raise SimpleYAMLError("runtime.yaml must be a mapping at the top level")
+    return node
+
+
+def _lookup(mapping: dict, dotted: str):
+    node = mapping
+    for part in dotted.split("."):
+        if not isinstance(node, dict) or part not in node:
+            return None
+        node = node[part]
+    return node
+
+
+def _as_yq_string(value) -> str:
+    # yq -r prints a YAML null as "null"; build-runtime.sh writes it verbatim.
+    return "null" if value is None else str(value)
+
+
+def expected_build_args(runtime_cfg: dict, profile: str) -> dict[str, tuple[str, str]]:
+    """What build/build-runtime.sh would pass for `profile`.
+
+    Returns {build arg: (value, where the value came from)}.
+    """
+    profiles = runtime_cfg.get("profiles") or {}
+    spec = profiles.get(profile)
+    if not isinstance(spec, dict):
+        raise SimpleYAMLError(f"build/runtime.yaml has no profile {profile!r}")
+
+    def pcfg(field: str, default: str) -> tuple[str, str]:
+        # build-runtime.sh: an unset, null or empty profile value takes the default.
+        value = _lookup(spec, field)
+        if value is None or value == "" or value == "null":
+            return default, f"build-runtime.sh default for profiles.{profile}.{field}"
+        return str(value), f"profiles.{profile}.{field}"
+
+    args: dict[str, tuple[str, str]] = {}
+    for arg, key in RUNTIME_YAML_VERSION_KEYS.items():
+        value = spec.get(key)
+        if value is not None and value != "":
+            args[arg] = (str(value), f"profiles.{profile}.{key}")
+        else:
+            args[arg] = (_as_yq_string(runtime_cfg.get(key)), key)
+    for arg, (field, default) in PROFILE_BUILD_ARGS.items():
+        args[arg] = pcfg(field, default)
+    args["AMDGPU_TARGETS"] = pcfg("amdgpu_targets", args["GPU_ARCH"][0])
+    dev_image = "rocm_dev_image" if args["GPU_VENDOR"][0] == "amd" else "cuda_dev_image"
+    args["LLAMACPP_BUILD_IMAGE"] = pcfg(dev_image, "")
+
+    mode, mode_src = args["TRANSFORMERS_INSTALL_MODE"]
+    if mode == "source":
+        package = args["TRANSFORMERS_REPO"][0]
+        if not package.startswith("git+"):
+            package = f"git+{package}"
+        args["TRANSFORMERS_PACKAGE"] = (
+            f"{package}@{args['TRANSFORMERS_REF'][0]}",
+            mode_src,
+        )
+        args["TRANSFORMERS_RUNTIME_INSTALL"] = ("fallback", mode_src)
+    elif mode == "constraint":
+        constraint = args["TRANSFORMERS_CONSTRAINT"][0]
+        args["TRANSFORMERS_PACKAGE"] = (f"transformers{constraint}", mode_src)
+        args["TRANSFORMERS_RUNTIME_INSTALL"] = ("fallback", mode_src)
+    elif mode in ("none", ""):
+        args["TRANSFORMERS_PACKAGE"] = ("", mode_src)
+        args["TRANSFORMERS_RUNTIME_INSTALL"] = ("disabled", mode_src)
+    return args
+
+
+def expected_runtime_env(runtime_cfg: dict, profile: str) -> dict[str, str]:
+    """The keys build-runtime.sh always writes to build/.runtime-env."""
+    spec = (runtime_cfg.get("profiles") or {}).get(profile) or {}
+    env = {
+        "GPU_VENDOR": _as_yq_string(spec.get("gpu_vendor")),
+        "GPU_ARCH": _as_yq_string(spec.get("gpu_arch")),
+    }
+    for key, value in (spec.get("env") or {}).items():
+        env[key] = _as_yq_string(value)
+    return env
+
+
+def ci_job_body(ci_text: str, job: str) -> str | None:
+    """Return a top-level CI job's text, from its key to the next column-0 line."""
+    match = re.search(rf"^{re.escape(job)}:[ \t]*(?:#.*)?$", ci_text, re.MULTILINE)
+    if not match:
+        return None
+    end = re.search(r"^\S", ci_text[match.end() :], re.MULTILINE)
+    return ci_text[match.start() : match.end() + (end.start() if end else len(ci_text))]
+
+
+_BUILD_ARG_RE = re.compile(
+    r"""build-arg:(?P<key>[A-Za-z0-9_]+)=(?:"(?P<dq>(?:[^"\\]|\\.)*)"|'(?P<sq>[^']*)'|(?P<bare>[^\s"'\\]*))"""
+)
+
+
+def ci_build_args(job_body: str) -> tuple[dict[str, str], list[str]]:
+    """Return ({build arg: literal value}, problems) for a job's buildctl call."""
+    args: dict[str, str] = {}
+    problems: list[str] = []
+    found = 0
+    for match in _BUILD_ARG_RE.finditer(job_body):
+        found += 1
+        key = match.group("key")
+        value = next(
+            (
+                match.group(g)
+                for g in ("dq", "sq", "bare")
+                if match.group(g) is not None
+            ),
+            "",
+        )
+        if key in args:
+            problems.append(f"passes build arg {key} twice")
+        args[key] = value
+    if found != job_body.count("build-arg:"):
+        problems.append(
+            "has a build-arg the contract check cannot parse "
+            '(expected --opt build-arg:KEY="value")'
+        )
+    return args, problems
+
+
+_RUNTIME_ENV_HEREDOC_RE = re.compile(
+    r"""cat\s*>\s*build/\.runtime-env\s*<<-?\s*(?P<q>['"]?)(?P<tag>\w+)(?P=q)[ \t]*\n"""
+    r"""(?P<body>.*?)\n[ \t]*(?P=tag)[ \t]*$""",
+    re.DOTALL | re.MULTILINE,
+)
+
+
+def ci_runtime_env(job_body: str) -> tuple[dict[str, str] | None, list[str]]:
+    """Return ({key: value}, problems) from the job's build/.runtime-env heredoc."""
+    match = _RUNTIME_ENV_HEREDOC_RE.search(job_body)
+    if not match:
+        return None, []
+    env: dict[str, str] = {}
+    problems: list[str] = []
+    for line in match.group("body").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, sep, value = line.partition("=")
+        if not sep or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", key):
+            problems.append(
+                f"runtime.env heredoc has a line that is not KEY=VALUE: {line!r}"
+            )
+            continue
+        if key in env:
+            problems.append(f"runtime.env heredoc sets {key} twice")
+        env[key] = value
+    return env, problems
+
+
+def ci_output_names(job_body: str) -> set[str]:
+    names: set[str] = set()
+    for match in re.finditer(r"name=([^\"\\\s]+)", job_body):
+        names.update(n for n in match.group(1).split(",") if n)
+    return names
+
+
+def publish_job_divergences(
+    job: str, ci_file: str, job_body: str, runtime_cfg: dict, profile: str
+) -> tuple[list[tuple[str, str, str]], list[str]]:
+    """Compare one publish job with its runtime.yaml profile.
+
+    Returns (divergences, problems). Divergences are (kind, key, message)
+    and may be waived in KNOWN_PUBLISH_JOB_DIVERGENCES; problems mean the job
+    could not be checked at all and are never waived.
+    """
+    where = f"{job} ({ci_file})"
+    spec = (runtime_cfg.get("profiles") or {}).get(profile) or {}
+    expected = expected_build_args(runtime_cfg, profile)
+    divergences: list[tuple[str, str, str]] = []
+
+    passed, problems = ci_build_args(job_body)
+    problems = [f"{where} {p}" for p in problems]
+    for required in ("BASE_IMAGE", "GPU_ARCH"):
+        if required not in passed:
+            problems.append(
+                f"{where} no longer passes build arg {required}; the contract check "
+                "cannot tell which profile it builds"
+            )
+    for key, value in sorted(passed.items()):
+        if key not in expected or "$" in value:
+            # Not derived from runtime.yaml, or computed when the job runs.
+            continue
+        gate = next((g for p, g in GATED_BUILD_ARG_PREFIXES if key.startswith(p)), None)
+        if gate and expected[gate][0] != "true":
+            continue
+        want, source = expected[key]
+        if value != want:
+            divergences.append(
+                (
+                    "build-arg",
+                    key,
+                    f'{where} passes {key}="{value}" but build/runtime.yaml '
+                    f'resolves it to "{want}" ({source})',
+                )
+            )
+
+    dockerfile = str(spec.get("dockerfile") or "build/Dockerfile.runtime")
+    match = re.search(r"""--opt\s+filename=["']?([^"'\s\\]+)""", job_body)
+    if not match:
+        problems.append(
+            f"{where} has no --opt filename=...; cannot check its Dockerfile"
+        )
+    elif f"build/{match.group(1)}" != dockerfile:
+        divergences.append(
+            (
+                "dockerfile",
+                "filename",
+                f"{where} builds build/{match.group(1)} but build/runtime.yaml "
+                f"profiles.{profile}.dockerfile is {dockerfile}",
+            )
+        )
+
+    tag = str(spec.get("tag") or "")
+    names = ci_output_names(job_body)
+    for name in (
+        f"${{REGISTRY}}/{tag}",
+        f"${{REGISTRY}}/{tag}-${{CI_COMMIT_SHORT_SHA}}",
+    ):
+        if name not in names:
+            divergences.append(
+                (
+                    "image-tag",
+                    name,
+                    f"{where} does not push {name}; build/runtime.yaml profiles.{profile}.tag "
+                    f"is {tag} and the pin-drift gate recognizes a profile build only by "
+                    "its <tag>-<commit sha> tag",
+                )
+            )
+
+    if "build/.runtime-env" in job_body:
+        env, env_problems = ci_runtime_env(job_body)
+        problems.extend(f"{where} {p}" for p in env_problems)
+        if env is None:
+            problems.append(
+                f"{where} writes build/.runtime-env but no heredoc was parsed"
+            )
+        else:
+            want_env = expected_runtime_env(runtime_cfg, profile)
+            for key in sorted(set(want_env) | set(env)):
+                field = {"GPU_VENDOR": "gpu_vendor", "GPU_ARCH": "gpu_arch"}.get(
+                    key, f"env.{key}"
+                )
+                if key in want_env and key not in env:
+                    msg = (
+                        f"{where} runtime.env heredoc is missing {key}="
+                        f'"{want_env[key]}" that build/runtime.yaml profiles.{profile}.{field} sets'
+                    )
+                elif key in DERIVED_RUNTIME_ENV_KEYS and key not in want_env:
+                    want, source = expected[DERIVED_RUNTIME_ENV_KEYS[key]]
+                    if env[key] == want:
+                        continue
+                    msg = (
+                        f'{where} runtime.env heredoc sets {key}="{env[key]}" but '
+                        f'build-runtime.sh derives "{want}" from build/runtime.yaml ({source})'
+                    )
+                elif key not in want_env:
+                    msg = (
+                        f'{where} runtime.env heredoc sets {key}="{env[key]}" which '
+                        f"build/runtime.yaml profiles.{profile}.env does not declare"
+                    )
+                elif env[key] != want_env[key]:
+                    msg = (
+                        f'{where} runtime.env heredoc sets {key}="{env[key]}" but '
+                        f'build/runtime.yaml profiles.{profile}.{field} is "{want_env[key]}"'
+                    )
+                else:
+                    continue
+                divergences.append(("runtime.env", key, msg))
+    return divergences, problems
+
+
+def assert_build_script_defaults(build_script: str) -> None:
+    """PROFILE_BUILD_ARGS must carry build-runtime.sh's literal pcfg defaults."""
+    defaults = {
+        m.group(1): m.group(2)
+        for m in re.finditer(
+            r'pcfg "\$\{profile\}" "([\w.]+)"(?: "([^"$]*)")?\)', build_script
+        )
+    }
+    stale = []
+    for arg, (field, default) in PROFILE_BUILD_ARGS.items():
+        if field not in defaults:
+            stale.append(f"{arg}: build-runtime.sh no longer reads {field} via pcfg")
+        elif (defaults[field] or "") != default:
+            stale.append(
+                f"{arg}: build-runtime.sh defaults {field} to {defaults[field]!r}, "
+                f"PROFILE_BUILD_ARGS says {default!r}"
+            )
+    if stale:
+        fail(
+            "scripts/check-runtime-patch-contracts.py PROFILE_BUILD_ARGS is out of "
+            "step with build/build-runtime.sh: " + "; ".join(stale)
+        )
+
+
+def assert_publish_jobs_match_runtime_yaml(
+    runtime_yaml: str, ci_files: dict[str, str]
+) -> list[str]:
+    """Fail when a hardcoded publish job diverges from build/runtime.yaml.
+
+    Returns the waived divergences so main() can print them.
+    """
+    try:
+        runtime_cfg = parse_simple_yaml(runtime_yaml)
+    except SimpleYAMLError as exc:
+        fail(f"build/runtime.yaml: {exc}")
+    errors: list[str] = []
+    waived: list[str] = []
+    seen: set[tuple[str, str, str]] = set()
+    for job, ci_file, profile in PUBLISH_JOB_PROFILES:
+        body = ci_job_body(ci_files[ci_file], job)
+        if body is None:
+            errors.append(f"{ci_file} no longer defines {job}")
+            continue
+        if profile not in (runtime_cfg.get("profiles") or {}):
+            errors.append(
+                f"build/runtime.yaml no longer defines profile {profile} ({job})"
+            )
+            continue
+        divergences, problems = publish_job_divergences(
+            job, ci_file, body, runtime_cfg, profile
+        )
+        errors.extend(problems)
+        for kind, key, message in divergences:
+            waiver = KNOWN_PUBLISH_JOB_DIVERGENCES.get((job, kind, key))
+            if waiver:
+                seen.add((job, kind, key))
+                waived.append(f"{message} [known divergence: {waiver}]")
+            else:
+                errors.append(message)
+    for job, kind, key in sorted(set(KNOWN_PUBLISH_JOB_DIVERGENCES) - seen):
+        errors.append(
+            f"KNOWN_PUBLISH_JOB_DIVERGENCES entry ({job}, {kind}, {key}) no longer "
+            "matches a divergence; delete it from scripts/check-runtime-patch-contracts.py"
+        )
+    if errors:
+        fail(
+            "runtime publish jobs diverge from build/runtime.yaml:\n  - "
+            + "\n  - ".join(errors)
+        )
+    return waived
+
+
 def run_python_tests() -> None:
     loader = unittest.TestLoader()
     suite = unittest.TestSuite()
@@ -685,6 +1304,7 @@ def main(argv: list[str]) -> int:
     flash_loader_source = read("controllers/flash_loader.go")
     model_deployment_source = read("controllers/model_deployment.go")
     ci_yaml = read(".gitlab/ci/runtime-publish.yml")
+    root_ci_yaml = read(".gitlab-ci.yml")
 
     qwen35_patch_script = read("build/scripts/vllm_qwen35_patches_nodiag.py")
     gemma4_patch_script = read("build/scripts/vllm_gemma4_moe_gptq_patch.py")
@@ -711,10 +1331,17 @@ def main(argv: list[str]) -> int:
         flash_loader_source, model_deployment_source, chart_values_yaml
     )
     assert_ci_fast_check_wiring(ci_yaml)
+    assert_build_script_defaults(build_script)
+    waived = assert_publish_jobs_match_runtime_yaml(
+        runtime_yaml,
+        {".gitlab-ci.yml": root_ci_yaml, ".gitlab/ci/runtime-publish.yml": ci_yaml},
+    )
 
     if run_tests:
         run_python_tests()
 
+    for message in waived:
+        print(f"WARNING: {message}")
     print("runtime patch contract checks passed")
     return 0
 
