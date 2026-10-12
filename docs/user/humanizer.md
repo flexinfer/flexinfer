@@ -48,15 +48,36 @@ completion and chat-completion paths only. The GPU probe on 2026-10-12
 offloaded 49/49 layers, loaded cached Q6_K weights in 6.13 seconds, and rewrote
 the 185-token test prompt into 89 output tokens in 2.87 seconds (~37 tokens/s).
 The same binary passed GPU embedding dimension/finite-value checks, relevance
-ordering, and Orpheus audio-token generation. These native probe timings exclude
-proxy election and queueing; measure that overhead during the managed swap test.
+ordering, and Orpheus audio-token generation. These native timings exclude proxy election and queueing.
+
+The managed FlexInfer proxy qualification on the same node used a 185-token
+English prompt and 88–89 output tokens. These are measured synthetic-probe
+results, not latency guarantees:
+
+| Operation | Measured result |
+|-----------|-----------------|
+| Cold rewrite from the four warm models | 14.12 seconds |
+| Warm English / Chinese rewrite | 3.60 / 2.78 seconds |
+| All four warm models restored after last rewrite | 35.04 seconds |
+| Immediate cold rewrite after warm restoration | 14.23 seconds |
+| Peak GPU memory during the rewrite swap probe | 13,492.8 MiB |
+| LiteLLM cold chat request, repeated / initial | 14.93 / 34.35 seconds |
+
+English and Chinese probes preserved the test names, counts, date, and language.
+BGE, reranker, and GTE retained their original process IDs during the swap.
+BGE/GTE embeddings matched the pre-upgrade GPU baseline on three samples per
+model (minimum cosine similarities 0.99990 / 0.99983); reranking relevance and
+Orpheus audio-token probes passed after warm restoration. The LiteLLM cold
+chat probes used a shorter 136-token prompt and 45–54 output tokens. The slow
+pass coincided with high node CPU pressure and an 18-second backend weight
+load; the repeat returned to about 15 seconds. Keep this node contention in
+mind when setting client deadlines.
 
 Priority 130 permits rewrite demand to borrow VRAM from the voice subprocess.
 The 11,000 MB scheduling estimate retains the 1,500 MB BGE embedding, 700 MB
 reranker, and 2,600 MB GTE members within the 16,384 MB group budget. Orpheus
-may unload during rewrites. The initial managed probe measured 10,956 MiB for
-Humanizer plus BGE; the additional retrieval reservations leave more than
-2,000 MiB of physical headroom. Qualify the full resident set before promotion.
+may unload during rewrites. The full resident set during the rewrite probe peaked at 13,492.8 MiB, leaving about 2.8 GiB
+of physical headroom.
 The group uses a five-second `gpu.swapCooldown` override. The controller honors
 shorter overrides and releases short-idle VRAM reservations when their idle
 window ends, instead of retaining the legacy five-minute reservation.
@@ -73,6 +94,13 @@ streams and background requests. The controller retains the endpoint and
 retries after drainage. Insufficient VRAM returns retryable HTTP 503 instead
 of launching before the previous subprocess releases memory. The proxy's
 direct-load path also waits for shared-GPU election, so it respects cooldown.
+
+The managed drain test kept an accepted 2,048-token stream alive for 80.07
+seconds after unload was requested: unload returned 409, new ingress requests
+returned 503, and the stream completed with its final `[DONE]` marker. The
+controller then unloaded/reloaded the backend and a follow-up request passed.
+The runtime pod UID stayed constant and its restart count remained zero across
+cold/warm requests, idle unload, cold reload, and the drain test.
 
 These are subprocess swaps inside one persistent pod. Image upgrades require
 a one-time rollout; requests do not create or replace model containers. Check
