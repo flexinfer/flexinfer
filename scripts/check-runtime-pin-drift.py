@@ -13,11 +13,20 @@ Harbor v2.0 API (anonymous read of the public `flexinfer` project):
    current build, or a build from another persona entirely?
 3. Which consumers still pin a mutable tag instead of a digest?
 
+A consumer pins a build of its profile only when the digest carries the
+profile's floating tag or `<floating>-<7-12 hex>`, the tag the profile's CI
+publish job pushes. A digest tagged `<floating>-<anything else>` (an off-CI
+overlay such as `rocm-gfx906-humanizer-<sha>`) is reported as an off-profile
+build: promoting the profile's current build over it would drop whatever the
+overlay added.
+
 Default mode prints a Markdown report and exits 0 unless a pinned digest is
 missing from Harbor. `--strict` also fails on floating-only digests, persona
-mismatches, and mutable-tag pins; `--max-behind-days N` fails when a consumer
-trails its profile's current build by more than N days. `--offline` skips
-Harbor and prints the inventory only (used as the CI smoke test).
+mismatches, off-profile builds, and mutable-tag pins; `--max-behind-days N`
+fails when a consumer trails its profile's current build by more than N days.
+Split pins (a GPUProfile `spec.runtime.image` that differs from the runtime
+DaemonSet image for the same gpuArch) are reported but never fail. `--offline`
+skips Harbor and prints the inventory only (used as the CI smoke test).
 
 Tracking issue: https://gitlab.flexinfer.ai/services/flexinfer/-/issues/74
 Spec: .loom/20-product-spec-runtime-image-ci-2026-09-13.md
@@ -219,6 +228,68 @@ def parse_tag(tag: str) -> tuple[str, str]:
     return repo, floating
 
 
+PROFILE_BUILD = "profile build"
+OFF_PROFILE_BUILD = "off-profile build"
+PERSONA_MISMATCH = "persona mismatch"
+
+
+def classify_persona(tags: list[str], floating: str, all_floating: set[str]) -> str:
+    """Decide whether a digest's tags make it a build of `floating`'s profile.
+
+    Each tag belongs to the longest floating tag in `all_floating` that it
+    equals or extends with '-', so rocm-gfx1100-serving-<sha> belongs to
+    rocm-gfx1100-serving, not rocm-gfx1100. A tag that is the floating tag
+    itself or `<floating>-<7-12 hex>` (what CI pushes) is a profile build; any
+    other `<floating>-...` tag is an off-profile build of that profile; a tag
+    owned by another floating tag, or by none, is a persona mismatch.
+    """
+    off_profile = False
+    for tag in tags:
+        owners = [
+            f for f in all_floating | {floating} if tag == f or tag.startswith(f + "-")
+        ]
+        if not owners or max(owners, key=len) != floating:
+            continue
+        suffix = tag[len(floating) :]
+        if suffix == "" or IMMUTABLE_SUFFIX_RE.fullmatch(suffix):
+            return PROFILE_BUILD
+        off_profile = True
+    return OFF_PROFILE_BUILD if off_profile else PERSONA_MISMATCH
+
+
+def split_pins(root: Path, values: dict) -> list[dict]:
+    """Runtime DaemonSet profiles whose GPUProfile runtime.image differs."""
+    out: list[dict] = []
+    for entry in (values.get("runtime") or {}).get("profiles") or []:
+        arch = entry.get("gpuArch") or ""
+        path = root / "deploy/gpuprofiles" / f"{arch}.yaml"
+        if not arch or not path.is_file():
+            continue
+        doc = load_yaml(path) or {}
+        gpuprofile_image = ((doc.get("spec") or {}).get("runtime") or {}).get(
+            "image"
+        ) or ""
+        daemonset_image = entry.get("image") or ""
+        if not gpuprofile_image or not daemonset_image:
+            continue
+        m1 = DIGEST_REF_RE.search(gpuprofile_image)
+        m2 = DIGEST_REF_RE.search(daemonset_image)
+        left = m1.group("digest") if m1 else gpuprofile_image
+        right = m2.group("digest") if m2 else daemonset_image
+        if left != right:
+            out.append(
+                {
+                    "gpu_arch": arch,
+                    "gpuprofile": (doc.get("metadata") or {}).get("name", arch),
+                    "gpuprofile_file": path.relative_to(root).as_posix(),
+                    "gpuprofile_image": left,
+                    "daemonset_profile": entry.get("name"),
+                    "daemonset_image": right,
+                }
+            )
+    return out
+
+
 def profile_consumers(root: Path, name: str, spec: dict, values: dict) -> list[dict]:
     """Mirror scripts/promote-runtime-digest.sh's consumer selection."""
     promotion = spec.get("promotion") or {}
@@ -338,8 +409,28 @@ def main() -> int:
         "offline": args.offline,
         "pins": [],
         "profiles": [],
+        "off_profile_builds": [],
         "mutable_tag_pins": [],
+        "split_pins": [],
     }
+    # Every profile's floating tag per repo, so a sibling persona's build
+    # (rocm-gfx1100-serving-<sha>) is never mistaken for an off-profile build
+    # of rocm-gfx1100.
+    floating_tags: dict[str, set[str]] = {}
+    for spec in (runtime_cfg.get("profiles") or {}).values():
+        repo, floating = parse_tag((spec or {}).get("tag", ""))
+        if floating:
+            floating_tags.setdefault(repo, set()).add(floating)
+
+    lines.append("# Runtime pin drift report")
+    lines.append("")
+    lines.append(
+        "GPUProfile `spec.runtime.image` is not read by any Go code today (only "
+        "`spec.runtime.bundledBackends` is, via `RuntimeProfileBundlesBackend` in "
+        "`pkg/runtime/payload.go`); the runtime DaemonSets run the "
+        "`deploy/system/values-k3s.yaml` image, so the GPUProfile pin is documentation."
+    )
+    lines.append("")
 
     # ---- 1. Pin inventory -------------------------------------------------
     lines.append("## Digest pins under deploy/ and charts/")
@@ -457,14 +548,33 @@ def main() -> int:
                 else:
                     pinned_tags = [t.get("name", "") for t in art.get("tags") or []]
                     pinned_pushed = art.get("push_time")
-                    persona_ok = any(
-                        t == floating or t.startswith(floating + "-")
-                        for t in pinned_tags
+                    persona = classify_persona(
+                        pinned_tags, floating, floating_tags.get(repo, set())
                     )
-                    if not persona_ok:
+                    if persona == PERSONA_MISMATCH:
                         status = f"persona mismatch (expects {floating})"
                         findings.append(
                             f"{c['kind']} {c['consumer']} pins a build tagged {pinned_tags} but its profile '{name}' publishes {repo}:{floating}"
+                        )
+                    elif persona == OFF_PROFILE_BUILD:
+                        status = OFF_PROFILE_BUILD
+                        report["off_profile_builds"].append(
+                            {
+                                "profile": name,
+                                "tag": spec.get("tag"),
+                                "consumer": c["consumer"],
+                                "kind": c["kind"],
+                                "file": c["file"],
+                                "pinned": pinned,
+                                "pinned_tags": pinned_tags,
+                                "current": current,
+                            }
+                        )
+                        findings.append(
+                            f"{c['kind']} {c['consumer']} pins {short(pinned)} tagged {', '.join(pinned_tags)}: "
+                            f"an off-profile build, not produced by the {name} profile's CI job "
+                            f"(which tags {repo}:{floating}-<commit sha>); promoting "
+                            f"{short(current) if current else 'the current build'} would replace it"
                         )
                     elif current and pinned == current:
                         status = "current"
@@ -521,6 +631,27 @@ def main() -> int:
                 f"| `{ref}` | {', '.join(pin['files'][:4])}{' …' if len(pin['files']) > 4 else ''} |"
             )
     else:
+        lines.append("none")
+    lines.append("")
+
+    # ---- 4. Split pins (report-only) -------------------------------------
+    lines.append("## Split pins (GPUProfile vs. runtime DaemonSet, report-only)")
+    lines.append("")
+    owner = {(r["kind"], r["consumer"]): r["profile"] for r in report["profiles"]}
+    split_lines: list[str] = []
+    for split in split_pins(root, values):
+        report["split_pins"].append(split)
+        line = (
+            f"split pin: GPUProfile {split['gpuprofile']} runtime.image {short(split['gpuprofile_image'])} "
+            f"≠ DaemonSet profile {split['daemonset_profile']} {short(split['daemonset_image'])}"
+        )
+        gp_owner = owner.get(("GPUProfile runtime.image", split["gpuprofile"]))
+        ds_owner = owner.get(("runtime DaemonSet", split["daemonset_profile"]))
+        if gp_owner and ds_owner and gp_owner != ds_owner:
+            line += f" (promoted from different profiles: {gp_owner} vs. {ds_owner})"
+        split_lines.append(line)
+        lines.append(f"- WARNING: {line}")
+    if not split_lines:
         lines.append("none")
     lines.append("")
 

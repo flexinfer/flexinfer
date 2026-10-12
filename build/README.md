@@ -52,6 +52,7 @@ The old from-source variants (`Dockerfile.agent`, `.proxy`, `.manager`, `.sched`
 | `Dockerfile.runtime-gfx906` | CI (changes-gated job in `.gitlab-ci.yml`) | gfx906 runtime variant |
 | `Dockerfile.runtime-torch-multiarch` | `build/build-torch-multiarch.sh` (off-CI, manual-only) | `flexinfer/torch:rocm6.3.4-multiarch` — one torch wheel carrying gfx906+gfx1100 device code |
 | `Dockerfile.unified-gfx906` | CI `publish_unified_rocm_gfx906` | `flexinfer/runtime:unified-gfx906` — community PyTorch, replaces old per-task gfx906 images (incl. quantize via `USE_RUNTIME_FOR_QUANTIZE`) |
+| `Dockerfile.runtime` with nvidia args (`build/runtime.yaml` profile `cuda-maxwell`) | No CI job | `flexinfer/runtime:cuda-maxwell`, never built and with no consumer: a recipe only. Maxwell runs dedicated pods ([gpu-compatibility.md](../docs/agents/gpu-compatibility.md#maxwell-runtime-posture-gtx-980-ti)). Before anyone builds it, it needs the Ivy Bridge flags `-DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_BMI2=OFF`, which `Dockerfile.llamacpp-cuda-maxwell` already sets. Without them llama.cpp SIGILLs on the i7-3770K host. |
 
 Promotion tooling (issue #74): `scripts/check-runtime-pin-drift.py` (CI `runtime_pin_drift`, advisory) compares every
 pinned runtime digest with the newest immutable tag in Harbor; `scripts/propose-runtime-promotions.py` (CI
@@ -61,6 +62,21 @@ artifacts under `promotion-proposals/`. With `FLEXINFER_PROMOTE_MR_TOKEN` set (p
 `write_repository`; unset today) a schedule/master run also pushes `bot/promote-<profile>-<digest>` with the promotion
 applied plus a `pending` matrix row and opens a Draft MR. Profiles with `promotion.require_prewarm` stay proposal-only
 (`--apply` gates on the live prewarm pods). Merge stays human: run the profile's kill-test, flip the matrix row.
+
+The drift report counts a digest as a build of its profile only when it carries the floating tag or
+`<floating>-<commit sha>`, the tag the profile's CI job pushes. A digest tagged `<floating>-<anything else>`, such as
+the hand-built `rocm-gfx906-humanizer-<sha>` overlay, is an **off-profile build**: it fails `--strict`, is listed under
+`off_profile_builds` in the JSON, and the proposal for that profile opens with a warning, because promoting the CI
+build would drop whatever the overlay added. The report also flags, without failing, a split pin: a GPUProfile
+`spec.runtime.image` that differs from the runtime DaemonSet image for the same `gpuArch`. No Go code reads that
+GPUProfile field today. `scripts/check-runtime-patch-contracts.py` (CI `runtime_patch_contracts`) holds the publish
+jobs that hardcode their build args and `runtime.env` heredoc instead of calling `build-runtime.sh`
+(`publish_runtime_rocm_gfx906`, `publish_unified_rocm_gfx1100`, `publish_serving_rocm_gfx1100`,
+`publish_gaming_rocm_gfx1100`, `publish_serving_rocm_gfx1100_native_w4a16`) to `runtime.yaml`. It checks each value
+against what `build-runtime.sh` would derive, where a profile-level `llamacpp_version`/`go_version`/`ollama_version`/
+`ollama_go_version` overrides the top-level key, so a version bumped in only one file fails the lint stage.
+Divergences that predate the check are listed in `KNOWN_PUBLISH_JOB_DIVERGENCES` and printed as warnings on every run.
+Reconciling one fails the check until its entry is deleted.
 
 ## vLLM family
 
