@@ -11,7 +11,7 @@
 # Parsed by build-runtime.sh via yq.
 
 registry: registry.harbor.lan/flexinfer
-go_version: "1.26.0"
+go_version: "1.26.9"
 llamacpp_version: "b8173"
 ollama_version: "v0.17.4"
 ollama_go_version: "1.25.7"
@@ -448,7 +448,6 @@ profiles:
     env:
       ROCM_PATH: /opt/rocm
       HIP_PATH: /opt/rocm
-      HSA_OVERRIDE_GFX_VERSION: "9.0.6"
       HSA_ENABLE_SDMA: "0"
       HSA_USE_SVM: "0"
       PYTORCH_ROCM_ARCH: gfx906
@@ -457,6 +456,26 @@ profiles:
       TORCH_BLAS_PREFER_HIPBLASLT: "0"
       MIOPEN_FIND_MODE: "2"
       HF_HUB_DISABLE_XET: "1"
+    build_context: 7900xtx
+
+  # Text-only EmbeddingGemma 2 overlay; preserves the qualified gfx906 base.
+  # Promotion is gated on FP32 parity and co-resident BGE/GTE readiness.
+  gfx906-embeddinggemma2:
+    tag: "runtime:rocm-gfx906-embeddinggemma2-b11457"
+    dockerfile: build/Dockerfile.runtime-embeddinggemma2-gfx906
+    gpu_vendor: amd
+    gpu_arch: gfx906
+    base_image: "registry.harbor.lan/flexinfer/runtime@sha256:8d81c14efa8ad22ff86207d0d901a6e8d0c7e84db2fe487af484762d3ba88616"
+    llamacpp_version: "b11457"
+    amdgpu_targets: gfx906
+    backends:
+      llamacpp: true
+      ollama: true
+      diffusers: true
+    env:
+      HSA_ENABLE_SDMA: "0"
+      HSA_USE_SVM: "0"
+      PYTORCH_ROCM_ARCH: gfx906
     build_context: 7900xtx
 
   cuda-maxwell:

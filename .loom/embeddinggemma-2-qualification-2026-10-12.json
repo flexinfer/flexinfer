@@ -1,0 +1,265 @@
+{
+  "date": "2026-10-12",
+  "scope": "text-only /v1/embeddings; isolated flexinfer-runtime alongside BGE/GTE; fleet rollout separate",
+  "passed": true,
+  "hardware": "AMD Radeon VII gfx906 16 GiB; CPU FP32 reference on the same node with 4 threads",
+  "model_id": "google/embeddinggemma-2",
+  "reference_revision": "914f7f89142e33e77833254d9c9b90c3cef7303b",
+  "gguf_revision": "bfcd298762cc34d0357ece5ebdd31791a3a374d8",
+  "reference": {
+    "dtype": "float32",
+    "torch": "2.9.0+cpu",
+    "parameters": 271002624,
+    "dimensions": 768,
+    "max_seq_length": 8192
+  },
+  "checksums": [
+    "ccebacd0307f8aef4799511a1c705a7de0cbf97b2d6e6abcad56ce406bd47940  /artifacts/embeddinggemma-2-validation-20261012/reference.json",
+    "68bae29d62fb8c7d23e98d21fd4662753ddd636e6b62b8a70dfe059a9844f216  /artifacts/embeddinggemma-2-validation-20261012/gguf/embeddinggemma-2-BF16.gguf",
+    "2188ac1deca4b77dffefd603c2776a9d76d9d74ec01841392982ebb840b09135  /artifacts/embeddinggemma-2-validation-20261012/gguf/embeddinggemma-2-Q8_0.gguf"
+  ],
+  "runtime_image": "registry.harbor.lan/flexinfer/runtime@sha256:ad85a07230f8d27cfb8859066dedb6a53a351a8e36d9ec28077fd00427015a9b",
+  "runtime_base_and_rollback": "registry.harbor.lan/flexinfer/runtime@sha256:8d81c14efa8ad22ff86207d0d901a6e8d0c7e84db2fe487af484762d3ba88616",
+  "llamacpp_version": "b11457",
+  "cpu_validation_image": "registry.harbor.lan/flexinfer/embeddinggemma2-validation@sha256:c56f0256590bd77d1420340f9b16c8adb6959a78b650548e0c5f5b5ea9de366a",
+  "canary_commands": [
+    "kubectl apply -f deploy/debug/embeddinggemma-2-cpu-qualification.yaml",
+    "kubectl create configmap embeddinggemma-2-qualification -n flexinfer-system --from-file=qualify.py=scripts/qualify-embeddinggemma2.py",
+    "kubectl apply -f deploy/debug/embeddinggemma-2-gpu-qualification.yaml"
+  ],
+  "model_loads": [
+    {
+      "name": "bge-large-radeonvii",
+      "pid": 112,
+      "port": 18082,
+      "gpu_offload": "offloaded 25/25 layers to GPU",
+      "startup_seconds": 5.548288187012076
+    },
+    {
+      "name": "gte-qwen2-1p5b-radeonvii",
+      "pid": 167,
+      "port": 18083,
+      "gpu_offload": "offloaded 29/29 layers to GPU",
+      "startup_seconds": 5.52164720883593
+    },
+    {
+      "name": "embeddinggemma-2",
+      "pid": 215,
+      "port": 18081,
+      "gpu_offload": "offloaded 25/25 layers to GPU",
+      "startup_seconds": 5.534699331969023
+    },
+    {
+      "name": "embeddinggemma-2",
+      "pid": 279,
+      "port": 18081,
+      "gpu_offload": "offloaded 25/25 layers to GPU",
+      "startup_seconds": 5.474394541233778
+    }
+  ],
+  "reports": {
+    "cpu-BF16": {
+      "passed": true,
+      "samples": 19,
+      "minimum_cosine": 0.9999917412153924,
+      "median_cosine": 0.9999967480460275,
+      "single_batch_cosine": 1.0,
+      "dimensions": 768,
+      "prompt_tokens": 13939,
+      "seconds": 98.07441291306168,
+      "input_tokens_per_second": 142.12677482307504,
+      "documents_per_second": 0.19373044849977944,
+      "request_latency_p50_seconds": 0.529327676165849,
+      "request_latency_p95_seconds": 95.12455214560032,
+      "retrieval_top1_matches": 5
+    },
+    "cpu-Q8_0": {
+      "passed": true,
+      "samples": 19,
+      "minimum_cosine": 0.9997355897107703,
+      "median_cosine": 0.9998410030690045,
+      "single_batch_cosine": 1.0,
+      "dimensions": 768,
+      "prompt_tokens": 13939,
+      "seconds": 97.14014763385057,
+      "input_tokens_per_second": 143.4937082095051,
+      "documents_per_second": 0.19559369079421743,
+      "request_latency_p50_seconds": 0.5778584107756615,
+      "request_latency_p95_seconds": 94.09438731102273,
+      "retrieval_top1_matches": 5
+    },
+    "gfx906-BF16": {
+      "passed": true,
+      "samples": 19,
+      "minimum_cosine": 0.9999947903711556,
+      "median_cosine": 0.9999982614539203,
+      "single_batch_cosine": 1.0,
+      "dimensions": 768,
+      "prompt_tokens": 13939,
+      "seconds": 7.4253759337589145,
+      "input_tokens_per_second": 1877.2113525764241,
+      "documents_per_second": 2.558793005161924,
+      "request_latency_p50_seconds": 0.2090278291143477,
+      "request_latency_p95_seconds": 6.538832529913634,
+      "runtime_snapshot": {
+        "models": [
+          {
+            "name": "bge-large-radeonvii",
+            "backend": "llamacpp",
+            "model": "BAAI/bge-large-en-v1.5",
+            "state": "Ready",
+            "port": 18082,
+            "pid": 112,
+            "loadedAt": "2026-10-12T17:32:14.743407123Z"
+          },
+          {
+            "name": "gte-qwen2-1p5b-radeonvii",
+            "backend": "llamacpp",
+            "model": "Alibaba-NLP/gte-Qwen2-1.5B-instruct",
+            "state": "Ready",
+            "port": 18083,
+            "pid": 167,
+            "loadedAt": "2026-10-12T17:32:20.271639053Z"
+          },
+          {
+            "name": "embeddinggemma-2",
+            "backend": "llamacpp",
+            "model": "google/embeddinggemma-2",
+            "state": "Ready",
+            "port": 18081,
+            "pid": 215,
+            "loadedAt": "2026-10-12T17:32:25.820940484Z"
+          }
+        ]
+      },
+      "quantization": "BF16",
+      "retrieval_top1_matches": 5,
+      "co_resident_probes": {
+        "passed_requests": 10,
+        "models": [
+          "bge-large-radeonvii",
+          "gte-qwen2-1p5b-radeonvii"
+        ],
+        "maximum_seconds": 0.036858283914625645
+      }
+    },
+    "gfx906-Q8_0": {
+      "passed": true,
+      "samples": 19,
+      "minimum_cosine": 0.9996765592897154,
+      "median_cosine": 0.9998450323529632,
+      "single_batch_cosine": 1.0,
+      "dimensions": 768,
+      "prompt_tokens": 13939,
+      "seconds": 6.981775693595409,
+      "input_tokens_per_second": 1996.4835038723256,
+      "documents_per_second": 2.7213707277117574,
+      "request_latency_p50_seconds": 0.17993979016318917,
+      "request_latency_p95_seconds": 6.2320116721093655,
+      "runtime_snapshot": {
+        "models": [
+          {
+            "name": "bge-large-radeonvii",
+            "backend": "llamacpp",
+            "model": "BAAI/bge-large-en-v1.5",
+            "state": "Ready",
+            "port": 18082,
+            "pid": 112,
+            "loadedAt": "2026-10-12T17:32:14.743407123Z"
+          },
+          {
+            "name": "gte-qwen2-1p5b-radeonvii",
+            "backend": "llamacpp",
+            "model": "Alibaba-NLP/gte-Qwen2-1.5B-instruct",
+            "state": "Ready",
+            "port": 18083,
+            "pid": 167,
+            "loadedAt": "2026-10-12T17:32:20.271639053Z"
+          },
+          {
+            "name": "embeddinggemma-2",
+            "backend": "llamacpp",
+            "model": "google/embeddinggemma-2",
+            "state": "Ready",
+            "port": 18081,
+            "pid": 279,
+            "loadedAt": "2026-10-12T17:32:39.418699339Z"
+          }
+        ]
+      },
+      "quantization": "Q8_0",
+      "retrieval_top1_matches": 5,
+      "co_resident_probes": {
+        "passed_requests": 10,
+        "models": [
+          "bge-large-radeonvii",
+          "gte-qwen2-1p5b-radeonvii"
+        ],
+        "maximum_seconds": 0.018141127191483974
+      }
+    }
+  },
+  "quality": {
+    "passed": true,
+    "sandbox_gate": {
+      "status": "infrastructure_failure",
+      "reason": "image_pull_backoff",
+      "exec_id": "c3533211d6179e11"
+    },
+    "fallback_checks": [
+      {
+        "command": "gofmt -l agents/benchmarker cmd/flexinfer-bench",
+        "passed": true
+      },
+      {
+        "command": "golangci-lint run --timeout=5m ./...",
+        "passed": true,
+        "issues": 0
+      },
+      {
+        "command": "SKIP_ENVTEST=1 go test -short -timeout=5m ./...",
+        "passed": true
+      },
+      {
+        "command": "git diff --check",
+        "passed": true
+      }
+    ],
+    "bounded_run_receipt": "/Users/cblevins/workspace/services/flexinfer/.cache/agent-runs/20261012T172349Z-60700.status",
+    "python_tests": 34,
+    "python_black_ruff": "passed",
+    "gfx906_environment": "passed",
+    "runtime_publish_contract": "passed including newest origin/master contract",
+    "security_recovery": {
+      "go_toolchain": "1.26.9",
+      "x_net": "0.60.0",
+      "opentelemetry": "1.45.0",
+      "govulncheck": "1.8.0: no vulnerabilities found",
+      "trivy_high_critical": "passed",
+      "checks": [
+        "go build ./...",
+        "SKIP_ENVTEST=1 go test -short -timeout=5m ./...",
+        "go vet ./...",
+        "golangci-lint:0issues"
+      ],
+      "reason": "Existing required CI gates found reached HTTP/2, standard-library, and OTLP exporter vulnerabilities. Fixed upstream versions require Go1.26.",
+      "sources": [
+        "https://go.dev/doc/devel/release#go1.26.9",
+        "https://vuln.go.dev/ID/GO-2026-6505.json",
+        "https://proxy.golang.org/golang.org/x/net/@v/v0.60.0.mod"
+      ]
+    }
+  },
+  "raw_artifacts": "/Users/cblevins/workspace/services/flexinfer/.loom/local/embeddinggemma-2-validation-2026-10-12",
+  "cluster_artifacts": "llm-models-nfs:/embeddinggemma-2-validation-20261012",
+  "qualification_limits": [
+    "19 synthetic text/code/multilingual/context inputs; not a production corpus retrieval-quality benchmark",
+    "MRL dimensions and vision/audio/video excluded",
+    "Isolated3modelruntime; nofleetdefaultaliases changed",
+    "8K buffers need~2.4GiB GPU despite270M textmodel; use3000MBadmissionestimate",
+    "Existing runtime had inheritedemptyHSAoverride and CPUfallback; candidateunsetsit; olddigestrollbackrestoresprecedingimagebutGPUdiscoveryrequiresfix"
+  ],
+  "qualified_script_sha256": "ff00a5102a09365050dbdce284bd11395ee779ac08604590d3f4c9943312f5d9",
+  "previous_cpu_validation_image": "registry.harbor.lan/flexinfer/embeddinggemma2-validation@sha256:33b9a9cf2772de0cb5b7c88e534ffb308ffb71a60470a6bc60190edff25f03a1",
+  "final_cpu_repeat": "passed"
+}

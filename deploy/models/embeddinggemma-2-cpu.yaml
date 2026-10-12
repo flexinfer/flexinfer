@@ -1,0 +1,49 @@
+# Explicit CPU canary; its alias never joins the existing embeddings/RAG group.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: embeddinggemma-2-cpu
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/serve-paths: /v1/embeddings
+spec:
+  backend: llamacpp
+  image: ghcr.io/ggml-org/llama.cpp:server@sha256:ca61722be4814ebd0b36f2ad02643565a53198e4c752b06609d5666571b56409
+  source: HF://ggml-org/embeddinggemma-2-GGUF
+  gpu:
+    vendor: cpu
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  cache:
+    strategy: SharedPVC
+    pvcName: llm-models-nfs
+    size: 2Gi
+  config:
+    hfRevision: bfcd298762cc34d0357ece5ebdd31791a3a374d8
+    ggufFile: embeddinggemma-2-BF16.gguf
+    embedding: true
+    pooling: mean
+    contextSize: 8192
+    batchSize: 8192
+    ubatchSize: 8192
+    parallel: 1
+    threads: 4
+    fitOff: true
+    metrics: true
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 6Gi
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 10m
+    coldStartTimeout: 10m
+  litellm:
+    enabled: true
+    servedModelName: embeddinggemma-2-cpu
+  serviceLabels:
+    - embeddinggemma-2-cpu
