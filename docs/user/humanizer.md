@@ -61,7 +61,8 @@ results, not latency guarantees:
 | All four warm models restored after last rewrite | 35.04 seconds |
 | Immediate cold rewrite after warm restoration | 14.23 seconds |
 | Peak GPU memory during the rewrite swap probe | 13,492.8 MiB |
-| LiteLLM cold chat request, repeated / initial | 14.93 / 34.35 seconds |
+| LiteLLM cold chat request, three probes | 14.93–34.35 seconds |
+| Immediate warm LiteLLM chat request | 2.21 seconds |
 
 English and Chinese probes preserved the test names, counts, date, and language.
 BGE, reranker, and GTE retained their original process IDs during the swap.
@@ -70,7 +71,8 @@ model (minimum cosine similarities 0.99990 / 0.99983); reranking relevance and
 Orpheus audio-token probes passed after warm restoration. The LiteLLM cold
 chat probes used a shorter 136-token prompt and 45–54 output tokens. The slow
 pass coincided with high node CPU pressure and an 18-second backend weight
-load; the repeat returned to about 15 seconds. Keep this node contention in
+load; repeats took 14.93 and 25.71 seconds. The immediate warm request took 2.21
+seconds. Keep this node contention in
 mind when setting client deadlines.
 
 Priority 130 permits rewrite demand to borrow VRAM from the voice subprocess.
