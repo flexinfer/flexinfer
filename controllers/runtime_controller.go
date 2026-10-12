@@ -211,6 +211,12 @@ func (r *RuntimeReconciler) LoadModel(ctx context.Context, endpoint *RuntimeEndp
 
 	if resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusConflict {
+			return fmt.Errorf("%w: %s", pkgrt.ErrModelBusy, string(body))
+		}
+		if resp.StatusCode == http.StatusServiceUnavailable {
+			return fmt.Errorf("%w: %s", pkgrt.ErrInsufficientVRAM, string(body))
+		}
 		return fmt.Errorf("runtime load failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -235,6 +241,9 @@ func (r *RuntimeReconciler) UnloadModel(ctx context.Context, endpoint *RuntimeEn
 
 	if resp.StatusCode >= 300 && resp.StatusCode != http.StatusNotFound {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusConflict {
+			return fmt.Errorf("%w: %s", pkgrt.ErrModelBusy, string(body))
+		}
 		return fmt.Errorf("runtime unload failed (status %d): %s", resp.StatusCode, string(body))
 	}
 
@@ -243,10 +252,11 @@ func (r *RuntimeReconciler) UnloadModel(ctx context.Context, endpoint *RuntimeEn
 
 // RuntimeModelStatus is the health response from the runtime API.
 type RuntimeModelStatus struct {
-	Name  string `json:"name"`
-	State string `json:"state"`
-	Error string `json:"error"`
-	Port  int32  `json:"port,omitempty"`
+	Name     string `json:"name"`
+	State    string `json:"state"`
+	Error    string `json:"error"`
+	Port     int32  `json:"port,omitempty"`
+	Draining bool   `json:"draining,omitempty"`
 }
 
 type RuntimeStatusResponse struct {

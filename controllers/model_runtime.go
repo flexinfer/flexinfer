@@ -147,7 +147,14 @@ func (r *ModelReconciler) reconcileViaRuntime(
 
 	// If we don't want the model running, unload it from the runtime.
 	if desiredReplicas == 0 || !cacheReady {
-		r.unloadFromRuntime(ctx, model, endpoint)
+		if _, err := r.unloadRuntimeModel(ctx, model, endpoint); err != nil {
+			// Keep the endpoint and process state until unload is confirmed.
+			// In particular, HTTP 409 means accepted requests are still draining.
+			if stderrors.Is(err, pkgrt.ErrModelBusy) {
+				return ctrl.Result{RequeueAfter: requeueShort}, nil
+			}
+			return ctrl.Result{}, err
+		}
 		if model.Status.Phase == aiv1alpha2.ModelPhasePreempted {
 			model.Status.Endpoint = ""
 			// Preserve the lease-vs-preempt distinction the election recorded in
@@ -188,6 +195,22 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		log.Error(err, "Failed to check runtime model health")
 		status = nil // Can't determine state — try to load anyway.
 	}
+	// Once draining starts, finish that lifecycle operation even if fresh
+	// demand arrives. Publishing the still-running child as Ready would send
+	// traffic to an ingress that is deliberately refusing new requests.
+	if status != nil && status.Draining {
+		if _, err := r.unloadRuntimeModel(ctx, model, endpoint); err != nil {
+			if stderrors.Is(err, pkgrt.ErrModelBusy) {
+				return ctrl.Result{RequeueAfter: requeueShort}, nil
+			}
+			return ctrl.Result{}, err
+		}
+		r.removeRuntimeEndpoints(ctx, model)
+		if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhasePending, false, "RuntimeDrained", "Requests finished; preparing the next model load"); err != nil {
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{RequeueAfter: requeueShort}, nil
+	}
 
 	if status == nil {
 		if shouldDeferRuntimeLoadRetry(model) {
@@ -213,6 +236,18 @@ func (r *ModelReconciler) reconcileViaRuntime(
 
 		// Model not loaded — send load request.
 		if err := r.loadViaRuntime(ctx, model, b, gpuVendor, endpoint, gpuArch); err != nil {
+			if stderrors.Is(err, pkgrt.ErrInsufficientVRAM) {
+				if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhasePending, false, "RuntimeCapacity", "Waiting for previous models to release GPU memory"); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: requeueShort}, nil
+			}
+			if stderrors.Is(err, pkgrt.ErrModelBusy) {
+				if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhasePending, false, "RuntimeDraining", "Waiting for accepted requests on the previous model to finish"); err != nil {
+					return ctrl.Result{}, err
+				}
+				return ctrl.Result{RequeueAfter: requeueShort}, nil
+			}
 			log.Error(err, "Failed to load model via runtime")
 			r.Recorder.Event(model, corev1.EventTypeWarning, "RuntimeLoadFailed", err.Error())
 			if isTransientRuntimeLoadError(err) {
@@ -474,21 +509,6 @@ func (r *ModelReconciler) unloadRuntimeModel(ctx context.Context, model *aiv1alp
 		return false, fmt.Errorf("unloading model from runtime: %w", err)
 	}
 	return true, nil
-}
-
-// unloadFromRuntime performs the best-effort unload used by idle/preempted
-// runtime-managed models. Dedicated-deployment handoffs call the strict helper
-// above directly so a failed unload cannot race a second GPU owner into place.
-func (r *ModelReconciler) unloadFromRuntime(ctx context.Context, model *aiv1alpha2.Model, endpoint *RuntimeEndpoint) {
-	log := log.FromContext(ctx)
-	unloaded, err := r.unloadRuntimeModel(ctx, model, endpoint)
-	if err != nil {
-		log.Error(err, "Failed to unload model from runtime")
-		return
-	}
-	if unloaded {
-		log.Info("Unloaded model from runtime", "model", model.Name)
-	}
 }
 
 // ensureRuntimeEndpoints creates or updates an Endpoints resource for a

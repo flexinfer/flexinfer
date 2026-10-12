@@ -587,6 +587,150 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 	}
 }
 
+func TestChooseSharedGroupLeader_SwapCooldown(t *testing.T) {
+	now := time.Date(2026, time.October, 12, 12, 0, 0, 0, time.UTC)
+	cooldown := func(d time.Duration) *metav1.Duration {
+		return &metav1.Duration{Duration: d}
+	}
+
+	tests := []struct {
+		name               string
+		currentCooldown    *metav1.Duration
+		challengerCooldown *metav1.Duration
+		swapAge            time.Duration
+		wantName           string
+	}{
+		{
+			name:     "default blocks before five minutes",
+			swapAge:  4*time.Minute + 59*time.Second,
+			wantName: "current",
+		},
+		{
+			name:     "default expires at five minutes",
+			swapAge:  5 * time.Minute,
+			wantName: "challenger",
+		},
+		{
+			name:            "short override blocks before expiry",
+			currentCooldown: cooldown(5 * time.Second),
+			swapAge:         4 * time.Second,
+			wantName:        "current",
+		},
+		{
+			name:            "short override expires at configured duration",
+			currentCooldown: cooldown(5 * time.Second),
+			swapAge:         5 * time.Second,
+			wantName:        "challenger",
+		},
+		{
+			name:            "short override permits swap after expiry",
+			currentCooldown: cooldown(5 * time.Second),
+			swapAge:         10 * time.Second,
+			wantName:        "challenger",
+		},
+		{
+			name:               "queued member can shorten cooldown",
+			challengerCooldown: cooldown(5 * time.Second),
+			swapAge:            10 * time.Second,
+			wantName:           "challenger",
+		},
+		{
+			name:            "explicit zero disables cooldown",
+			currentCooldown: cooldown(0),
+			wantName:        "challenger",
+		},
+		{
+			name:               "queued member can disable cooldown",
+			challengerCooldown: cooldown(0),
+			wantName:           "challenger",
+		},
+		{
+			name:            "zero disables cooldown with future swap timestamp",
+			currentCooldown: cooldown(0),
+			swapAge:         -time.Second,
+			wantName:        "challenger",
+		},
+		{
+			name:               "maximum explicit override blocks after shorter expiry",
+			currentCooldown:    cooldown(5 * time.Second),
+			challengerCooldown: cooldown(15 * time.Second),
+			swapAge:            10 * time.Second,
+			wantName:           "current",
+		},
+		{
+			name:               "maximum explicit override expires below default",
+			currentCooldown:    cooldown(5 * time.Second),
+			challengerCooldown: cooldown(15 * time.Second),
+			swapAge:            15 * time.Second,
+			wantName:           "challenger",
+		},
+		{
+			name:               "maximum explicit override is independent of order",
+			currentCooldown:    cooldown(15 * time.Second),
+			challengerCooldown: cooldown(5 * time.Second),
+			swapAge:            10 * time.Second,
+			wantName:           "current",
+		},
+		{
+			name:               "positive override takes precedence over zero",
+			currentCooldown:    cooldown(0),
+			challengerCooldown: cooldown(15 * time.Second),
+			swapAge:            10 * time.Second,
+			wantName:           "current",
+		},
+		{
+			name:            "long override still blocks beyond default",
+			currentCooldown: cooldown(15 * time.Minute),
+			swapAge:         8 * time.Minute,
+			wantName:        "current",
+		},
+		{
+			name:            "long override expires at configured duration",
+			currentCooldown: cooldown(15 * time.Minute),
+			swapAge:         15 * time.Minute,
+			wantName:        "challenger",
+		},
+		{
+			name:            "negative override falls back to default",
+			currentCooldown: cooldown(-time.Second),
+			swapAge:         time.Minute,
+			wantName:        "current",
+		},
+		{
+			name:               "only negative overrides retain default expiry",
+			currentCooldown:    cooldown(-time.Second),
+			challengerCooldown: cooldown(-time.Minute),
+			swapAge:            5 * time.Minute,
+			wantName:           "challenger",
+		},
+		{
+			name:               "negative override does not mask short override",
+			currentCooldown:    cooldown(5 * time.Second),
+			challengerCooldown: cooldown(-time.Second),
+			swapAge:            10 * time.Second,
+			wantName:           "challenger",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			current := makeSharedModel("current", 100, aiv1alpha2.ModelPhaseReady, timePtr(now.Add(-10*time.Minute)), &aiv1alpha2.SharedGroupStatus{
+				State: "Active",
+			})
+			current.Spec.GPU.SwapCooldown = tc.currentCooldown
+			challenger := makeSharedModel("challenger", 200, aiv1alpha2.ModelPhasePending, timePtr(now), &aiv1alpha2.SharedGroupStatus{
+				State:       "Queued",
+				PreemptedAt: &metav1.Time{Time: now.Add(-tc.swapAge)},
+			})
+			challenger.Spec.GPU.SwapCooldown = tc.challengerCooldown
+
+			got := chooseSharedGroupLeader([]*aiv1alpha2.Model{current, challenger}, now)
+			require.NotNil(t, got)
+			assert.Equal(t, tc.wantName, got.Name)
+		})
+	}
+}
+
 func TestQueuePositionForSharedModel_EdgeCases(t *testing.T) {
 	active := makeSharedModel("active", 200, aiv1alpha2.ModelPhaseReady, nil, nil)
 	highQ := makeSharedModel("high-q", 150, aiv1alpha2.ModelPhasePending, nil, nil)
@@ -1014,4 +1158,23 @@ func TestHandleSharedGPU_MultiModelStaticParkStamp(t *testing.T) {
 		sg := run(t, 1500, false)
 		assert.Equal(t, aiv1alpha2.PreemptedByPrimaryPrefix+"workhorse", sg.PreemptedBy)
 	})
+}
+
+func TestShortIdleModelReleasesSharedVRAMReservation(t *testing.T) {
+	now := time.Now()
+	enabled := true
+	idle := metav1.Duration{Duration: 30 * time.Second}
+	borrower := makeSharedModel("humanizer", 130, aiv1alpha2.ModelPhaseIdle, timePtr(now.Add(-31*time.Second)), nil)
+	borrower.Spec.Serverless = &aiv1alpha2.ServerlessSpec{Enabled: &enabled, IdleTimeout: &idle}
+	pinned := markWarmPinned(makeSharedModel("retrieval", 120, aiv1alpha2.ModelPhasePending, nil, nil))
+	assert.Same(t, pinned, chooseSharedGroupLeader([]*aiv1alpha2.Model{borrower, pinned}, now))
+	assert.False(t, sharedModelWantsToRun(borrower, now))
+	borrower.Status.LastActiveTime = &metav1.Time{Time: now.Add(-29 * time.Second)}
+	assert.Same(t, borrower, chooseSharedGroupLeader([]*aiv1alpha2.Model{borrower, pinned}, now))
+	assert.True(t, sharedModelWantsToRun(borrower, now))
+	// Loading remains protected even when initialization exceeds the idle timer.
+	borrower.Status.Phase = aiv1alpha2.ModelPhaseLoading
+	borrower.Status.LastActiveTime = &metav1.Time{Time: now.Add(-time.Minute)}
+	borrower.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{State: "Active"}
+	assert.Same(t, borrower, chooseSharedGroupLeader([]*aiv1alpha2.Model{borrower, pinned}, now))
 }

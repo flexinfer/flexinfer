@@ -33,11 +33,9 @@ controller:
   replicas: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
-    # Use the mutable master tag for homelab continuous deployment; publish
-    # refreshes this tag on every merged master pipeline, and imagePullPolicy
-    # resolves to Always when digest is empty.
-    digest: ""
-    tag: "master"
+    # Keep controller/runtime drain contracts on the same tested revision.
+    digest: "sha256:073b5226fee40d73f164345b62d6d33a3f3ca6512794ca5131a4da1f4a9c7522"
+    tag: "humanizer-fastswaps-cc7273917"
   resources:
     limits:
       cpu: 1000m
@@ -98,7 +96,8 @@ proxy:
   replicaCount: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-proxy
-    tag: "master"
+    tag: "humanizer-fastswaps-cc7273917"
+    digest: "sha256:db4c70c04e4196bf26da174d6e529380000678be76ac8315916e7a62452f18c8"
     pullPolicy: Always
   service:
     type: ClusterIP
@@ -575,18 +574,10 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx906
-      # 2026-10-12 ROLLBACK to rocm-gfx906-882d81ba (the digest the Humanizer
-      # canary !1085 named as its rollback). The canary overlay 8d81c14e set
-      # `ENV HSA_OVERRIDE_GFX_VERSION=""`; HIP treats the empty override as a
-      # device-hiding override, so every llama.cpp subprocess in the runtime
-      # pod (bge-large, bge-reranker, gte-qwen2, orpheus) logged "no
-      # ROCm-capable device" and served on CPU from the 16:46Z roll (sysfs
-      # VRAM used 194 MB, llama-server RSS 0.5-4.1 GB, `rocminfo` fails until
-      # the variable is unset). Humanizer (Gemma 4) cannot load on this
-      # digest's llama.cpp b8173; it stays Idle (litellm disabled) until the
-      # canonical gfx906 profile ships llama.cpp >= b11457 through CI with the
-      # override unset in runtime-entrypoint.sh. Forward fix: !1089 lineage.
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b"
+      # Humanizer qualification: unified gfx906 runtime with llama.cpp b11335.
+      # The entrypoint unsets HSA_OVERRIDE_GFX_VERSION so HIP sees Vega20.
+      # Rollback: 171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b.
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:0f726ac970be091f12f083a56747888638bee88f5a06b0a9eb5a9a259c032e42"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
@@ -610,6 +601,9 @@ runtime:
         # the gfx906 GPUProfile (the controller's multi-Active election). Default
         # off everywhere else — additive, single-slot behavior is unchanged.
         - name: FLEXINFER_RUNTIME_MULTI_MODEL
+          value: "true"
+        # Accepted streams finish before a subprocess releases the GPU.
+        - name: FLEXINFER_RUNTIME_REQUEST_DRAIN
           value: "true"
       nodeSelector:
         kubernetes.io/hostname: cblevins-radeonvii

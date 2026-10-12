@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,6 +74,7 @@ func TestCalculateBackoff(t *testing.T) {
 func TestHandleColdStartRefreshesDemandForExistingQueue(t *testing.T) {
 	activator := &countingActivator{}
 	p := &Proxy{
+		client:       setupTestProxy(t).client,
 		activator:    activator,
 		maxQueueSize: 10,
 		queueTimeout: time.Millisecond,
@@ -99,6 +101,7 @@ func TestHandleColdStartConsumesCanceledQueuedRequest(t *testing.T) {
 		created: time.Now(),
 	}
 	p := &Proxy{
+		client:       setupTestProxy(t).client,
 		activator:    activator,
 		maxQueueSize: 1,
 		queueTimeout: time.Minute,
@@ -113,6 +116,100 @@ func TestHandleColdStartConsumesCanceledQueuedRequest(t *testing.T) {
 	require.ErrorIs(t, err, context.Canceled)
 	queued := <-queue.items
 	assert.True(t, queued.responded.Load(), "canceled request must not be forwarded when the queue drains")
+}
+
+func TestQueuedRequestKeepsDemandUntilItsLifetimeEnds(t *testing.T) {
+	for _, ending := range []string{"canceled", "timed out", "forwarded"} {
+		t.Run(ending, func(t *testing.T) {
+			idle := 2 * time.Second
+			p, model := connectionActivityTestProxy(t, idle)
+			model.Spec.GPU = &aiv1alpha2.GPUSpec{Shared: "blocked-group"}
+			model.Spec.Serverless.ColdStartTimeout = &metav1.Duration{Duration: 6 * time.Second}
+			require.NoError(t, p.client.Update(context.Background(), model))
+			model.Status.Phase = aiv1alpha2.ModelPhasePending
+			model.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{State: "Active"}
+			waitReason := "RuntimeDraining"
+			if ending == "timed out" {
+				waitReason = "RuntimeCapacity"
+			}
+			model.Status.Conditions = []metav1.Condition{{
+				Type: aiv1alpha2.ConditionModelReady, Status: metav1.ConditionFalse,
+				Reason: waitReason, Message: "Waiting for accepted requests on the incumbent to finish",
+				LastTransitionTime: metav1.Now(),
+			}}
+			require.NoError(t, p.client.Status().Update(context.Background(), model))
+			p.maxQueueSize = 1
+			p.queueTimeout = 6 * time.Second
+			p.activator = NewK8sModelActivator(p.client, model.Namespace, p.queueTimeout)
+			requestCtx, cancelRequest := context.WithCancel(context.Background())
+			defer cancelRequest()
+			finished := make(chan error, 1)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+				strings.NewReader(fmt.Sprintf(`{"model":%q,"messages":[{"role":"user","content":"rewrite"}]}`, model.Name))).WithContext(requestCtx)
+			go func() {
+				finished <- p.handleColdStart(requestCtx, rec, req, model.Name, time.Now())
+			}()
+			require.Eventually(t, func() bool {
+				queue, ok := p.queues.Load(model.Name)
+				return ok && len(queue.items) == 1
+			}, time.Second, 10*time.Millisecond)
+			// Activation remains blocked beyond the model's short idle timer.
+			// There are no subsequent requests to refresh its demand.
+			time.Sleep(idle + time.Second)
+			updated := &aiv1alpha2.Model{}
+			require.NoError(t, p.client.Get(context.Background(), client.ObjectKeyFromObject(model), updated))
+			require.NotNil(t, updated.Status.LastActiveTime)
+			assert.Less(t, time.Since(updated.Status.LastActiveTime.Time), idle, "the one live queued request must retain demand while the incumbent blocks activation")
+			assert.Equal(t, aiv1alpha2.ModelPhasePending, updated.Status.Phase)
+			select {
+			case err := <-finished:
+				t.Fatalf("request stopped waiting before the incumbent drained: %v", err)
+			default:
+			}
+
+			switch ending {
+			case "canceled":
+				cancelRequest()
+			case "forwarded":
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"rewritten":"complete"}`))
+				}))
+				defer server.Close()
+				p.directLoadTargets.Store(model.Name, server.URL)
+				updated.Status.Phase = aiv1alpha2.ModelPhaseReady
+				require.NoError(t, p.client.Status().Update(context.Background(), updated))
+			}
+			select {
+			case err := <-finished:
+				switch ending {
+				case "canceled":
+					require.ErrorIs(t, err, context.Canceled)
+				case "timed out":
+					require.ErrorContains(t, err, "queue timeout")
+				case "forwarded":
+					require.NoError(t, err)
+					require.Equal(t, http.StatusOK, rec.Code)
+				}
+			case <-time.After(4 * time.Second):
+				t.Fatal("request did not finish after cancellation, timeout, or readiness")
+			}
+			heartbeat, ok := p.lastAccessHeartbeats.Load(model.Name)
+			require.True(t, ok)
+			heartbeat.mu.Lock()
+			active := heartbeat.requests
+			heartbeat.mu.Unlock()
+			assert.Zero(t, active, "queued and forwarding references must both be released")
+			require.NoError(t, p.client.Get(context.Background(), client.ObjectKeyFromObject(model), updated))
+			lastDemand := updated.Status.LastActiveTime.DeepCopy()
+			// A still-waiting queue processor must not keep a canceled or timed-out
+			// request demanded. Wait for two possible ticks after release.
+			time.Sleep(2 * time.Second)
+			require.NoError(t, p.client.Get(context.Background(), client.ObjectKeyFromObject(model), updated))
+			assert.True(t, lastDemand.Equal(updated.Status.LastActiveTime), "demand heartbeat must stop with the queued request")
+		})
+	}
 }
 
 func TestDrainQueue(t *testing.T) {
@@ -978,4 +1075,32 @@ func splitHostPort(addr string) (string, int) {
 		}
 	}
 	return addr, 0
+}
+
+func TestDirectRuntimeLoadWaitsForSharedElection(t *testing.T) {
+	s := runtime.NewScheme()
+	require.NoError(t, aiv1alpha2.AddToScheme(s))
+	m := &aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: "humanizer", Namespace: "default"}, Spec: aiv1alpha2.ModelSpec{Backend: "llamacpp", GPU: &aiv1alpha2.GPUSpec{Shared: "radeonvii-models"}}, Status: aiv1alpha2.ModelStatus{SharedGroup: &aiv1alpha2.SharedGroupStatus{State: "Queued"}}}
+	p := &Proxy{client: fake.NewClientBuilder().WithScheme(s).WithObjects(m).Build(), namespace: "default"}
+	// No runtime discovery is configured: a queued member must return before
+	// touching a runtime, irrespective of priority or available VRAM.
+	require.False(t, p.tryDirectRuntimeLoad(context.Background(), m.Name))
+}
+
+func TestWaitForRuntimeReadyDoesNotRouteDrainingModel(t *testing.T) {
+	polls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		polls++
+		if polls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"state": "Ready", "port": 8004, "draining": polls == 1})
+	}))
+	defer server.Close()
+	ep := parseTestEndpoint(server.Listener.Addr().String())
+	p := &Proxy{coldStartTimeout: 5 * time.Second}
+	port, err := p.waitForRuntimeReady(context.Background(), ep, "humanizer")
+	require.NoError(t, err)
+	require.Equal(t, int32(8004), port)
+	require.Equal(t, 2, polls)
 }

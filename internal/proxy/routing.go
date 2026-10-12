@@ -608,8 +608,29 @@ func (p *Proxy) loadOrCreateProxy(targetURL string) (*httputil.ReverseProxy, boo
 
 // updateLastAccess updates the last-access timestamp for a model.
 func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
-	// Optimization: Don't update on every request to avoid API spam.
-	// Only update if current LastAccessTime is old (> 1 minute ago).
+	p.touchLastAccess(ctx, modelName, false)
+}
+
+// lastAccessIntervals keeps the existing cadence for long idle windows while
+// giving short-lived models six activity refresh opportunities per idle window.
+// A 30s idle timeout therefore uses a 5s heartbeat and write throttle.
+func lastAccessIntervals(idleTimeout time.Duration) (heartbeat, throttle time.Duration) {
+	if idleTimeout <= 0 || idleTimeout > lastAccessThrottleInterval {
+		return lastAccessHeartbeatInterval, lastAccessThrottleInterval
+	}
+	interval := idleTimeout / 6
+	if interval < time.Second {
+		interval = time.Second
+	}
+	return interval, interval
+}
+
+// touchLastAccess returns the model's heartbeat interval. Request boundaries
+// force a refresh even inside the periodic write throttle. Writes in the same
+// timestamp second are redundant because Kubernetes serializes metav1.Time at
+// second precision, so concurrent requests can share that refresh.
+func (p *Proxy) touchLastAccess(ctx context.Context, modelName string, force bool) time.Duration {
+	heartbeat := lastAccessHeartbeatInterval
 
 	// Try v1alpha2 Model first
 	var modelErr error
@@ -619,11 +640,19 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 			modelErr = err
 			break
 		}
-		if m.Status.LastActiveTime != nil && time.Since(m.Status.LastActiveTime.Time) < lastAccessThrottleInterval {
-			return
+		var idleTimeout time.Duration
+		if m.Spec.Serverless != nil && m.Spec.Serverless.IdleTimeout != nil {
+			idleTimeout = m.Spec.Serverless.IdleTimeout.Duration
+		}
+		var throttle time.Duration
+		heartbeat, throttle = lastAccessIntervals(idleTimeout)
+		now := metav1.Now()
+		if m.Status.LastActiveTime != nil &&
+			(!m.Status.LastActiveTime.Time.Before(now.Time.Truncate(time.Second)) ||
+				(!force && now.Sub(m.Status.LastActiveTime.Time) < throttle)) {
+			return heartbeat
 		}
 
-		now := metav1.Now()
 		m.Status.LastActiveTime = &now
 		if err := p.client.Status().Update(ctx, m); err != nil {
 			if errors.IsConflict(err) {
@@ -631,31 +660,40 @@ func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
 			}
 			slog.Debug("failed to update LastActiveTime", "model", modelName, "error", err)
 		}
-		return
+		return heartbeat
 	}
 	if modelErr == nil {
 		slog.Debug("failed to update LastActiveTime after retries", "model", modelName)
-		return
+		return heartbeat
 	}
 	if !errors.IsNotFound(modelErr) {
 		slog.Warn("error fetching model for stats update", "model", modelName, "error", modelErr)
-		return
+		return heartbeat
 	}
 
 	// Fallback: v1alpha1 ModelDeployment (deprecated)
 	md := &aiv1alpha1.ModelDeployment{}
 	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, md); err != nil {
 		slog.Warn("error fetching modeldeployment for stats update", "model", modelName, "error", err)
-		return
+		return heartbeat
 	}
 
-	if md.Status.LastAccessTime != nil && time.Since(md.Status.LastAccessTime.Time) < lastAccessThrottleInterval {
-		return
+	var idleTimeout time.Duration
+	if md.Spec.IdleTimeoutSeconds != nil {
+		idleTimeout = time.Duration(*md.Spec.IdleTimeoutSeconds) * time.Second
 	}
-
+	var throttle time.Duration
+	heartbeat, throttle = lastAccessIntervals(idleTimeout)
 	now := metav1.Now()
+	if md.Status.LastAccessTime != nil &&
+		(!md.Status.LastAccessTime.Time.Before(now.Time.Truncate(time.Second)) ||
+			(!force && now.Sub(md.Status.LastAccessTime.Time) < throttle)) {
+		return heartbeat
+	}
+
 	md.Status.LastAccessTime = &now
 	if err := p.client.Status().Update(ctx, md); err != nil {
 		slog.Debug("failed to update LastAccessTime", "model", modelName, "error", err)
 	}
+	return heartbeat
 }

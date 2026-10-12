@@ -104,20 +104,23 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 
 	// Anti-thrashing: if a swap happened recently, keep the currently
 	// active model regardless of demand or priority.
-	// Use the maximum SwapCooldown from any model in the group, falling
-	// back to the default (5m) if none specify it.
+	// Use the maximum nonnegative SwapCooldown from any model in the group,
+	// falling back to the default (5m) if none specify a valid override.
+	// An explicit zero disables the cooldown.
 	cooldown := sharedSwapCooldown
+	hasCooldownOverride := false
 	for _, m := range groupModels {
 		if m.Spec.GPU != nil && m.Spec.GPU.SwapCooldown != nil {
-			if d := m.Spec.GPU.SwapCooldown.Duration; d > cooldown {
+			if d := m.Spec.GPU.SwapCooldown.Duration; d >= 0 && (!hasCooldownOverride || d > cooldown) {
 				cooldown = d
+				hasCooldownOverride = true
 			}
 		}
 	}
 	recentSwap := false
 	for _, m := range groupModels {
 		if m.Status.SharedGroup != nil && m.Status.SharedGroup.PreemptedAt != nil {
-			if now.Sub(m.Status.SharedGroup.PreemptedAt.Time) < cooldown {
+			if cooldown > 0 && now.Sub(m.Status.SharedGroup.PreemptedAt.Time) < cooldown {
 				recentSwap = true
 				break
 			}
@@ -162,10 +165,10 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		if md == nil {
 			continue
 		}
-		if now.Sub(md.Time) < 5*time.Minute {
+		if now.Sub(md.Time) < sharedActivityWindow(m, 5*time.Minute) {
 			recentLeader = better(recentLeader, m)
 		}
-		if now.Sub(md.Time) < sharedDemandWindow {
+		if now.Sub(md.Time) < sharedActivityWindow(m, sharedDemandWindow) {
 			demandedLeader = better(demandedLeader, m)
 		}
 	}
@@ -183,7 +186,7 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	if demandedLeader != nil && readyLeader != nil {
 		readyDemand := demandTime(readyLeader, now)
 		readyIdle := readyDemand == nil ||
-			now.Sub(readyDemand.Time) > sharedDemandWindow
+			now.Sub(readyDemand.Time) > sharedActivityWindow(readyLeader, sharedDemandWindow)
 		higherPriority := demandedLeader.Spec.GetPriority() > readyLeader.Spec.GetPriority()
 		if higherPriority || (readyIdle && demandedLeader.Spec.GetPriority() >= readyLeader.Spec.GetPriority()) {
 			return demandedLeader
@@ -205,7 +208,7 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	if warmPrimaryLeader != nil && readyLeader != nil && !isWarmPrimaryModel(readyLeader) {
 		readyDemand := demandTime(readyLeader, now)
 		readyIdle := readyDemand == nil ||
-			now.Sub(readyDemand.Time) > sharedDemandWindow
+			now.Sub(readyDemand.Time) > sharedActivityWindow(readyLeader, sharedDemandWindow)
 		if readyIdle {
 			return warmPrimaryLeader
 		}
@@ -267,10 +270,24 @@ func sharedModelWantsToRun(m *aiv1alpha2.Model, now time.Time) bool {
 	if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 		return true
 	}
-	if md := demandTime(m, now); md != nil && now.Sub(md.Time) < sharedDemandWindow {
+	if md := demandTime(m, now); md != nil && now.Sub(md.Time) < sharedActivityWindow(m, sharedDemandWindow) {
 		return true
 	}
 	return false
+}
+
+// Short serverless idle timers must release both the subprocess and its VRAM
+// reservation. Otherwise an Idle fast-swap model can hold the elected slot for
+// the legacy five-minute recent-activity window after its process is gone.
+func sharedActivityWindow(m *aiv1alpha2.Model, fallback time.Duration) time.Duration {
+	if m.Spec.IsServerless() && m.Spec.GetMinReplicas() == 0 {
+		if m.Spec.Serverless != nil && m.Spec.Serverless.IdleTimeout != nil {
+			if idle := m.Spec.Serverless.IdleTimeout.Duration; idle > 0 && idle < fallback {
+				return idle
+			}
+		}
+	}
+	return fallback
 }
 
 // chooseSharedGroupLeaders returns the set of group members that should be

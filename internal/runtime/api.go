@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -78,6 +79,14 @@ func (s *Server) handleLoadModel(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.manager.Load(r.Context(), name, req); err != nil {
 		logger.Error(err, "Failed to load model")
+		if errors.Is(err, ErrModelBusy) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
+		if errors.Is(err, ErrInsufficientVRAM) {
+			writeError(w, http.StatusServiceUnavailable, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -97,6 +106,10 @@ func (s *Server) handleUnloadModel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.manager.Unload(r.Context(), name); err != nil {
+		if errors.Is(err, ErrModelBusy) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		if strings.Contains(err.Error(), "not loaded") {
 			writeError(w, http.StatusNotFound, err.Error())
 			return
@@ -123,15 +136,18 @@ func (s *Server) handleModelHealth(w http.ResponseWriter, r *http.Request) {
 	}
 
 	status := http.StatusOK
-	if model.State != string(ModelStateReady) {
+	if model.State != string(ModelStateReady) || model.Draining {
 		status = http.StatusServiceUnavailable
 	}
 
 	writeJSON(w, status, map[string]any{
-		"name":  model.Name,
-		"state": model.State,
-		"error": model.Error,
-		"port":  model.Port,
+		"name":            model.Name,
+		"state":           model.State,
+		"error":           model.Error,
+		"port":            model.Port,
+		"activeRequests":  model.ActiveRequests,
+		"draining":        model.Draining,
+		"lastRequestTime": model.LastRequestTime,
 	})
 }
 
@@ -219,6 +235,10 @@ func (s *Server) handleSetMode(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.manager.SetMode(r.Context(), target); err != nil {
 		logger.Error(err, "Failed to switch mode")
+		if errors.Is(err, ErrModelBusy) {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}

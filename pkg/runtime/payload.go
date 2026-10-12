@@ -179,6 +179,14 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 	config = applyGPUProfileDeviceDefaults(config, vendor, opts.GPUProfile)
 	config = applyRuntimeBackendPort(config, b)
 	config = ApplyLoRAConfig(config, opts.LoRAAdapters, opts.LoRAMaxRank)
+	// Admission must use the same estimate as the controller's shared-GPU
+	// election. Without this, the runtime sees zero and can race an eviction.
+	if model.Spec.GPU != nil && model.Spec.GPU.VRAMEstimateMB != nil {
+		if config == nil {
+			config = make(map[string]any, 1)
+		}
+		config["vramEstimateMB"] = *model.Spec.GPU.VRAMEstimateMB
+	}
 
 	payload := LoadPayload{
 		Backend: b.Name(),
