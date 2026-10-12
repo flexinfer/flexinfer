@@ -1041,9 +1041,10 @@ func (m *Manager) Status() RuntimeStatus {
 	defer m.mu.RUnlock()
 
 	s := RuntimeStatus{
-		GPUVendor: string(m.gpuVendor),
-		GPUArch:   m.gpuArch,
-		Mode:      string(m.mode),
+		GPUVendor:  string(m.gpuVendor),
+		GPUArch:    m.gpuArch,
+		Mode:       string(m.mode),
+		MultiModel: m.multiModel,
 	}
 
 	if primary := m.primaryLocked(); primary != nil {
@@ -1293,9 +1294,10 @@ func (m *Manager) sunshineClientActive() bool {
 
 // RuntimeStatus is the serializable status of the runtime manager.
 type RuntimeStatus struct {
-	GPUVendor string `json:"gpuVendor"`
-	GPUArch   string `json:"gpuArch"`
-	Mode      string `json:"mode"`
+	GPUVendor  string `json:"gpuVendor"`
+	GPUArch    string `json:"gpuArch"`
+	Mode       string `json:"mode"`
+	MultiModel bool   `json:"multiModel"`
 	// ActiveModel is a representative loaded model (back-compat with the
 	// single-slot API). Prefer ActiveModels for the full set.
 	ActiveModel *ModelSummary `json:"activeModel,omitempty"`

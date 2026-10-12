@@ -71,6 +71,20 @@ func TestStatusEndpoint(t *testing.T) {
 	assert.Equal(t, "gfx1100", body["gpuArch"])
 }
 
+func TestStatusReportsActualMultiModelMode(t *testing.T) {
+	for _, multiModel := range []bool{false, true} {
+		manager := NewManager(ManagerConfig{GPUVendor: backend.GPUVendorCPU, MultiModel: multiModel})
+		srv := NewServer(manager)
+		w := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/api/v1/status", nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(w.Body.Bytes(), &body))
+		assert.Equal(t, multiModel, body["multiModel"], "include the actual mode even when false")
+		assert.Equal(t, multiModel, manager.Status().MultiModel)
+	}
+}
+
 func TestLoadModelMissingBackend(t *testing.T) {
 	srv := newTestServer()
 

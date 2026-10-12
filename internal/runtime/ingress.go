@@ -68,6 +68,7 @@ func (i *modelIngress) start() {
 }
 
 func (i *modelIngress) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	recordActivity := !isBackendProbe(r)
 	i.mu.Lock()
 	if i.draining {
 		i.mu.Unlock()
@@ -76,18 +77,37 @@ func (i *modelIngress) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	i.active++
-	i.lastRequestTime = time.Now()
+	if recordActivity {
+		i.lastRequestTime = time.Now()
+	}
 	i.mu.Unlock()
 	defer func() {
 		i.mu.Lock()
 		i.active--
-		i.lastRequestTime = time.Now()
+		if recordActivity {
+			i.lastRequestTime = time.Now()
+		}
 		if i.draining && i.active == 0 {
 			close(i.drained)
 		}
 		i.mu.Unlock()
 	}()
 	i.proxy.ServeHTTP(w, r)
+}
+
+// Read-only health, discovery, and metrics probes are accepted requests for
+// draining purposes, but are not evidence that inference is active. Background
+// inference still records activity exactly like a foreground request.
+func isBackendProbe(r *http.Request) bool {
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		return false
+	}
+	switch r.URL.Path {
+	case "/", "/health", "/healthz", "/readyz", "/metrics", "/slots", "/props", "/v1/models", "/api/ps", "/api/tags", "/api/version":
+		return true
+	default:
+		return false
+	}
 }
 
 func (i *modelIngress) snapshot() (int64, bool, time.Time) {

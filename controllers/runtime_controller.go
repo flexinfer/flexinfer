@@ -260,8 +260,10 @@ type RuntimeModelStatus struct {
 }
 
 type RuntimeStatusResponse struct {
-	GPUVendor   string              `json:"gpuVendor"`
-	GPUArch     string              `json:"gpuArch"`
+	GPUVendor string `json:"gpuVendor"`
+	GPUArch   string `json:"gpuArch"`
+	// Missing metadata preserves single-slot protection for older runtimes.
+	MultiModel  bool                `json:"multiModel"`
 	ActiveModel *RuntimeModelStatus `json:"activeModel,omitempty"`
 }
 

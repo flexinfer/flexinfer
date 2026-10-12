@@ -157,9 +157,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	gpuInfo := QueryGPU(status.GPUVendor, status.GPUArch)
 	resp := map[string]any{
-		"gpuVendor": status.GPUVendor,
-		"gpuArch":   status.GPUArch,
-		"gpu":       gpuInfo,
+		"gpuVendor":  status.GPUVendor,
+		"gpuArch":    status.GPUArch,
+		"gpu":        gpuInfo,
+		"multiModel": status.MultiModel,
 	}
 	if status.ActiveModel != nil {
 		resp["activeModel"] = status.ActiveModel

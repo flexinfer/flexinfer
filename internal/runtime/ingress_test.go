@@ -344,3 +344,93 @@ func TestRuntimeCapacityFailureIsRetryable(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, w.Code)
 	assert.Contains(t, w.Body.String(), ErrInsufficientVRAM.Error())
 }
+
+func TestIngressProbesDoNotRefreshInferenceActivity(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer server.Close()
+	ingress, err := newModelIngress(freeIngressTestPort(t), int32(server.Listener.Addr().(*net.TCPAddr).Port))
+	require.NoError(t, err)
+	defer ingress.close()
+	ingress.start()
+	client := &http.Client{Timeout: time.Second}
+	address := "http://127.0.0.1:" + strconv.Itoa(ingress.listener.Addr().(*net.TCPAddr).Port)
+	request := func(method, path string) {
+		t.Helper()
+		req, err := http.NewRequest(method, address+path, nil)
+		require.NoError(t, err)
+		req.Header.Set("X-Flexinfer-Workload-Class", "background")
+		response, err := client.Do(req)
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, response.StatusCode)
+		_, err = io.Copy(io.Discard, response.Body)
+		require.NoError(t, err)
+		require.NoError(t, response.Body.Close())
+	}
+	request(http.MethodGet, "/health")
+	_, _, initial := ingress.snapshot()
+	require.True(t, initial.IsZero(), "health probes must not make an unused model look active")
+	request(http.MethodPost, "/v1/embeddings")
+	_, _, inference := ingress.snapshot()
+	require.False(t, inference.IsZero(), "background inference is still actual activity")
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		for _, path := range []string{"/", "/health", "/healthz", "/readyz", "/metrics", "/slots", "/props", "/v1/models", "/api/ps", "/api/tags", "/api/version"} {
+			request(method, path)
+			count, _, last := ingress.snapshot()
+			assert.Zero(t, count)
+			assert.Equal(t, inference, last, "probe %s %s must preserve the last actual inference time", method, path)
+		}
+	}
+	manager := NewManager(ManagerConfig{GPUVendor: backend.GPUVendorCPU})
+	manager.models["embedding"] = &LoadedModel{Name: "embedding", State: ModelStateReady, ingress: ingress}
+	api := NewServer(manager)
+	for _, path := range []string{"/api/v1/models", "/api/v1/status", "/api/v1/models/embedding/health"} {
+		w := httptest.NewRecorder()
+		api.Handler().ServeHTTP(w, httptest.NewRequest(http.MethodGet, path, nil))
+		require.Equal(t, http.StatusOK, w.Code)
+		_, _, last := ingress.snapshot()
+		assert.Equal(t, inference, last, "management polling must not refresh inference time")
+	}
+}
+
+func TestIngressProbeStillParticipatesInRequestDrain(t *testing.T) {
+	started, release := make(chan struct{}), make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(started)
+		<-release
+		_, _ = io.WriteString(w, "ok")
+	}))
+	defer server.Close()
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(release) })
+	ingress, err := newModelIngress(freeIngressTestPort(t), int32(server.Listener.Addr().(*net.TCPAddr).Port))
+	require.NoError(t, err)
+	defer ingress.close()
+	ingress.start()
+	finished := make(chan error, 1)
+	go func() {
+		client := &http.Client{Timeout: 3 * time.Second}
+		response, err := client.Get("http://127.0.0.1:" + strconv.Itoa(ingress.listener.Addr().(*net.TCPAddr).Port) + "/health")
+		if err == nil {
+			_, err = io.Copy(io.Discard, response.Body)
+			_ = response.Body.Close()
+		}
+		finished <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("probe did not reach the backend")
+	}
+	manager := NewManager(ManagerConfig{})
+	manager.models["embedding"] = &LoadedModel{Name: "embedding", State: ModelStateReady, ingress: ingress}
+	require.ErrorIs(t, manager.Unload(context.Background(), "embedding"), ErrModelBusy)
+	count, draining, last := ingress.snapshot()
+	assert.Equal(t, int64(1), count, "all accepted requests remain protected until forwarding finishes")
+	assert.True(t, draining)
+	assert.True(t, last.IsZero())
+	releaseOnce.Do(func() { close(release) })
+	require.NoError(t, <-finished)
+	require.NoError(t, manager.Unload(context.Background(), "embedding"))
+}
