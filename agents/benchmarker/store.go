@@ -8,24 +8,28 @@ import (
 // BenchmarkRecord holds all the data produced by a benchmark run,
 // which can be saved to one or more persistence stores.
 type BenchmarkRecord struct {
+	Task      Task
 	ModelName string
 	Backend   string
 	// NodeName is the cluster node that served the benchmarked model — the GPU
 	// node behind the proxy, resolved from the model's Endpoints — NOT the
 	// benchmarker's own runner node. Stores read GPU device-class labels from it.
-	NodeName         string
-	Namespace        string
-	ConfigMapName    string // Target ConfigMap for this specific deployment's result
-	GlobalConfigMap  string // Global results ConfigMap name
-	TokensPerSecond  float64
-	CompletionTokens int
-	Duration         time.Duration
-	Samples          int
-	BatchSize        int
-	Iterations       int
-	WarmupIterations int
-	MinDuration      time.Duration
-	Timestamp        time.Time
+	NodeName           string
+	Namespace          string
+	ConfigMapName      string // Target ConfigMap for this specific deployment's result
+	GlobalConfigMap    string // Global results ConfigMap name
+	TokensPerSecond    float64
+	CompletionTokens   int
+	PromptTokens       int // Actual input tokens for embeddings; zero for generation
+	Documents          int // Number of inputs embedded during measurement
+	DocumentsPerSecond float64
+	Duration           time.Duration
+	Samples            int
+	BatchSize          int
+	Iterations         int
+	WarmupIterations   int
+	MinDuration        time.Duration
+	Timestamp          time.Time
 }
 
 // ResultStore defines how benchmark results are saved.
