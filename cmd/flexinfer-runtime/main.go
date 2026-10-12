@@ -44,6 +44,7 @@ func main() {
 		healthInterval    time.Duration
 		multiModel        bool
 		vramHeadroomMB    int
+		vramDrainTimeout  time.Duration
 		gamingIdleTimeout time.Duration
 	)
 
@@ -57,6 +58,9 @@ func main() {
 		"Allow multiple concurrent VRAM-bounded model subprocesses on this node (default: single-slot).")
 	flag.IntVar(&vramHeadroomMB, "vram-headroom-mb", envutil.IntOrDefault("FLEXINFER_RUNTIME_VRAM_HEADROOM_MB", 0),
 		"Free-VRAM safety margin (MB) kept when admitting a concurrent model in multi-model mode (0 = default).")
+	flag.DurationVar(&vramDrainTimeout, "vram-drain-timeout",
+		envutil.DurationOrDefault("FLEXINFER_RUNTIME_VRAM_DRAIN_TIMEOUT", runtime.DefaultVRAMDrainTimeout),
+		"Max wait after unloading a model for its VRAM to be released before starting the next backend (0 = disabled).")
 	flag.DurationVar(&gamingIdleTimeout, "gaming-idle-timeout", envutil.DurationOrDefault("GAMING_IDLE_TIMEOUT", 0),
 		"Opt-in: auto-revert a gaming node to inference after this long with no Moonlight client (0 = disabled).")
 
@@ -93,6 +97,7 @@ func main() {
 		"runtimeDigest", runtimeDigest,
 		"modelBasePath", modelBasePath,
 		"multiModel", multiModel,
+		"vramDrainTimeout", vramDrainTimeout,
 		"backends", backend.List(),
 	)
 
@@ -123,6 +128,7 @@ func main() {
 		ModelBasePath:       modelBasePath,
 		MultiModel:          multiModel,
 		VRAMHeadroomMB:      int64(vramHeadroomMB),
+		VRAMDrainTimeout:    vramDrainTimeout,
 		GamingIdleTimeout:   gamingIdleTimeout,
 	})
 
