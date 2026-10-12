@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -66,6 +67,9 @@ func TestStallProbeDefinition(t *testing.T) {
 }
 
 func TestStallProbeScript(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("stall probe reads Linux procfs")
+	}
 	python, err := exec.LookPath("python3")
 	if err != nil {
 		t.Skip("python3 unavailable")
