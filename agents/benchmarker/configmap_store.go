@@ -25,6 +25,9 @@ func NewConfigMapStore(client kubernetes.Interface) *ConfigMapStore {
 
 func (c *ConfigMapStore) Save(ctx context.Context, r BenchmarkRecord) error {
 	logger := log.FromContext(ctx)
+	if r.Task == "" {
+		r.Task = TaskGeneration
+	}
 
 	nowStr := r.Timestamp.UTC().Format(time.RFC3339)
 	cm := &corev1.ConfigMap{
@@ -33,17 +36,21 @@ func (c *ConfigMapStore) Save(ctx context.Context, r BenchmarkRecord) error {
 			Namespace: r.Namespace,
 		},
 		Data: map[string]string{
-			"tokensPerSecond":  strconv.FormatFloat(r.TokensPerSecond, 'f', -1, 64),
-			"model":            r.ModelName,
-			"backend":          r.Backend,
-			"warmupIterations": strconv.Itoa(r.WarmupIterations),
-			"iterations":       strconv.Itoa(r.Iterations),
-			"batchSize":        strconv.Itoa(r.BatchSize),
-			"minDuration":      r.MinDuration.String(),
-			"completionTokens": strconv.Itoa(r.CompletionTokens),
-			"durationSeconds":  strconv.FormatFloat(r.Duration.Seconds(), 'f', -1, 64),
-			"samples":          strconv.Itoa(r.Samples),
-			"timestamp":        nowStr,
+			"task":               string(r.Task),
+			"tokensPerSecond":    strconv.FormatFloat(r.TokensPerSecond, 'f', -1, 64),
+			"model":              r.ModelName,
+			"backend":            r.Backend,
+			"warmupIterations":   strconv.Itoa(r.WarmupIterations),
+			"iterations":         strconv.Itoa(r.Iterations),
+			"batchSize":          strconv.Itoa(r.BatchSize),
+			"minDuration":        r.MinDuration.String(),
+			"completionTokens":   strconv.Itoa(r.CompletionTokens),
+			"promptTokens":       strconv.Itoa(r.PromptTokens),
+			"documents":          strconv.Itoa(r.Documents),
+			"documentsPerSecond": strconv.FormatFloat(r.DocumentsPerSecond, 'f', -1, 64),
+			"durationSeconds":    strconv.FormatFloat(r.Duration.Seconds(), 'f', -1, 64),
+			"samples":            strconv.Itoa(r.Samples),
+			"timestamp":          nowStr,
 		},
 	}
 
@@ -83,14 +90,18 @@ func (c *ConfigMapStore) upsertGlobalResult(ctx context.Context, r BenchmarkReco
 	metaKey := "meta_" + key
 
 	meta := map[string]any{
-		"backend":          r.Backend,
-		"model":            r.ModelName,
-		"deviceClass":      deviceClass,
-		"tokensPerSecond":  r.TokensPerSecond,
-		"completionTokens": r.CompletionTokens,
-		"durationSeconds":  r.Duration.Seconds(),
-		"samples":          r.Samples,
-		"timestamp":        r.Timestamp.UTC().Format(time.RFC3339),
+		"task":               r.Task,
+		"backend":            r.Backend,
+		"model":              r.ModelName,
+		"deviceClass":        deviceClass,
+		"tokensPerSecond":    r.TokensPerSecond,
+		"completionTokens":   r.CompletionTokens,
+		"promptTokens":       r.PromptTokens,
+		"documents":          r.Documents,
+		"documentsPerSecond": r.DocumentsPerSecond,
+		"durationSeconds":    r.Duration.Seconds(),
+		"samples":            r.Samples,
+		"timestamp":          r.Timestamp.UTC().Format(time.RFC3339),
 	}
 	metaJSON, err := json.Marshal(meta)
 	if err != nil {

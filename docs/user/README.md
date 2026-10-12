@@ -28,6 +28,7 @@ FlexInfer is a Kubernetes-native set of controllers and agents for running AI wo
 - `docs/user/backends-cpu.md` - CPU-only inference (no GPU required)
 - `docs/user/backends-maxwell.md` - NVIDIA Maxwell GPUs (GTX 980 Ti, etc.)
 - `docs/user/backends-rocm-gfx1100.md` - AMD RX 7900 series (RDNA3)
+- `docs/user/embeddinggemma-2.md` - Text-only embeddings and CPU/gfx906 FP32 qualification
 
 ## Caching guides
 

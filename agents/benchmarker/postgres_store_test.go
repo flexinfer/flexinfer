@@ -54,11 +54,35 @@ func TestPostgresStore_Save_InsertsRecord(t *testing.T) {
 			5,                // samples
 			128,              // batch_size
 			time.Date(2026, 3, 8, 12, 0, 0, 0, time.UTC), // timestamp
+			"generation", 0, 0, 0.0,
 		).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err = store.Save(context.Background(), pgRecord())
 	require.NoError(t, err)
+	require.NoError(t, mock.ExpectationsWereMet())
+}
+
+func TestPostgresStore_Save_EmbeddingRecord(t *testing.T) {
+	t.Parallel()
+	db, mock, err := sqlmock.New()
+	require.NoError(t, err)
+	defer func() { _ = db.Close() }()
+	store := &PostgresStore{db: db}
+	r := pgRecord()
+	r.Task = TaskEmbeddings
+	r.ModelName = "embeddinggemma-2"
+	r.Backend = "llamacpp"
+	r.CompletionTokens = 0
+	r.PromptTokens = 250
+	r.Documents = 10
+	r.DocumentsPerSecond = 10.0 / 3.4
+	mock.ExpectExec(`INSERT INTO benchmarks`).WithArgs(
+		sqlmock.AnyArg(), r.ModelName, r.Backend, "unknown", r.TokensPerSecond,
+		0, r.Duration.Seconds(), r.Samples, r.BatchSize, r.Timestamp,
+		"embeddings", r.PromptTokens, r.Documents, r.DocumentsPerSecond,
+	).WillReturnResult(sqlmock.NewResult(1, 1))
+	require.NoError(t, store.Save(context.Background(), r))
 	require.NoError(t, mock.ExpectationsWereMet())
 }
 
@@ -77,6 +101,7 @@ func TestPostgresStore_Save_DeviceClassFallback(t *testing.T) {
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			"unknown", // device_class fallback
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
@@ -123,6 +148,7 @@ func TestPostgresStore_Save_DeviceClassFromNode(t *testing.T) {
 			"qwen3-14b",         // model
 			"vllm",              // backend
 			expectedDeviceClass, // device_class from node labels
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),
 			sqlmock.AnyArg(),

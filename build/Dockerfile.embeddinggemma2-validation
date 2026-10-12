@@ -1,0 +1,16 @@
+# CPU llama.cpp canary and independent FP32 SentenceTransformers reference.
+# Pin the linux/amd64 image, packages, and model revisions for parity evidence.
+FROM ghcr.io/ggml-org/llama.cpp:server@sha256:ca61722be4814ebd0b36f2ad02643565a53198e4c752b06609d5666571b56409
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    python3 python3-venv libsndfile1 \
+    && rm -rf /var/lib/apt/lists/*
+RUN python3 -m venv /opt/validation \
+    && /opt/validation/bin/pip install --no-cache-dir torch==2.9.0 torchvision==0.24.0 \
+       --index-url https://download.pytorch.org/whl/cpu \
+    && /opt/validation/bin/pip install --no-cache-dir \
+       sentence-transformers==6.1.0 transformers==5.19.0 pillow
+COPY scripts/qualify-embeddinggemma2.py /opt/validation/qualify.py
+ENV PATH=/opt/validation/bin:$PATH HF_HUB_DISABLE_XET=1 \
+    OMP_NUM_THREADS=4 TOKENIZERS_PARALLELISM=false
+ENTRYPOINT ["python3", "/opt/validation/qualify.py"]

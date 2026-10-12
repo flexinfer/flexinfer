@@ -1,0 +1,87 @@
+# Run after CPU reference generation; create the script ConfigMap from the current checkout.
+# Isolated runtime uses existing read-only BGE/GTE caches and never replaces the fleet DaemonSet.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: embeddinggemma-2-gpu-qualification
+  namespace: flexinfer-system
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 900
+  ttlSecondsAfterFinished: 86400
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      containers:
+      - name: validation
+        image: registry.harbor.lan/flexinfer/runtime@sha256:ad85a07230f8d27cfb8859066dedb6a53a351a8e36d9ec28077fd00427015a9b
+        command:
+        - /usr/local/bin/runtime-entrypoint.sh
+        - python3
+        - /scripts/qualify.py
+        securityContext:
+          privileged: true
+        env:
+        - name: HSA_ENABLE_SDMA
+          value: '0'
+        - name: HSA_USE_SVM
+          value: '0'
+        - name: ROCR_VISIBLE_DEVICES
+          value: '0'
+        resources:
+          requests:
+            cpu: '1'
+            memory: 2Gi
+          limits:
+            cpu: '4'
+            memory: 12Gi
+        volumeMounts:
+        - name: kfd
+          mountPath: /dev/kfd
+        - name: dri
+          mountPath: /dev/dri
+        - name: artifacts
+          mountPath: /artifacts
+        - name: script
+          mountPath: /scripts
+        - name: models
+          mountPath: /models
+          readOnly: true
+        - name: dshm
+          mountPath: /dev/shm
+        args:
+        - isolated-runtime
+        - --reference
+        - /artifacts/embeddinggemma-2-validation-20261012/reference.json
+        - --artifacts
+        - /artifacts/embeddinggemma-2-validation-20261012
+        - --output-dir
+        - /artifacts/embeddinggemma-2-validation-20261012/runtime
+      volumes:
+      - name: kfd
+        hostPath:
+          path: /dev/kfd
+          type: CharDevice
+      - name: dri
+        hostPath:
+          path: /dev/dri
+          type: Directory
+      - name: artifacts
+        persistentVolumeClaim:
+          claimName: llm-models-nfs
+      - name: script
+        configMap:
+          name: embeddinggemma-2-qualification
+      - name: models
+        hostPath:
+          path: /var/lib/flexinfer/models
+          type: Directory
+      - name: dshm
+        emptyDir:
+          medium: Memory
+          sizeLimit: 4Gi
+      hostNetwork: true
+      dnsPolicy: Default

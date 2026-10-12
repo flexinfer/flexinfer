@@ -102,6 +102,9 @@ build_profile() {
     gpu_arch=$(pcfg "${profile}" "gpu_arch")
     amdgpu_targets=$(pcfg "${profile}" "amdgpu_targets" "${gpu_arch}")
     build_context=$(pcfg "${profile}" "build_context" "default")
+    # Architecture-qualified overlays may require a newer llama.cpp without
+    # changing the binaries bundled into every other runtime profile.
+    llamacpp_version=$(pcfg "${profile}" "llamacpp_version" "${llamacpp_version}")
 
     # Per-profile Dockerfile override. Profiles may set `dockerfile:` to a
     # repo-relative path to use a custom Dockerfile (e.g. gfx906 uses a slim

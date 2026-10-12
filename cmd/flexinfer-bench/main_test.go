@@ -7,6 +7,7 @@ import (
 
 	"github.com/flexinfer/flexinfer/pkg/gauntlet"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBenchFlags_Defaults(t *testing.T) {
@@ -35,6 +36,16 @@ func TestBenchFlags_Defaults(t *testing.T) {
 	assert.Equal(t, 128, *batchSize)
 	assert.Equal(t, 5*time.Minute, *coldStartTimeout)
 	assert.Equal(t, "chat", *gauntletAPI)
+}
+
+func TestEmbeddingInputFlag_PreservesPrefixesAndCollectsCorpus(t *testing.T) {
+	fs := flag.NewFlagSet("test", flag.ContinueOnError)
+	var inputs repeatedStringFlag
+	fs.Var(&inputs, "embedding-input", "")
+	require.NoError(t, fs.Parse([]string{"--embedding-input", "task: search result | query: GPU", "--embedding-input", "title: setup | text: HIP"}))
+	assert.Equal(t, repeatedStringFlag{"task: search result | query: GPU", "title: setup | text: HIP"}, inputs)
+	assert.Equal(t, "task: search result | query: GPU, title: setup | text: HIP", inputs.String())
+	require.Error(t, inputs.Set(" "))
 }
 
 func TestGauntletProbeURL(t *testing.T) {

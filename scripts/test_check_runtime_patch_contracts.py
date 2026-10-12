@@ -449,7 +449,7 @@ class PublishJobContractTests(unittest.TestCase):
         self.edit_job(
             ROOT_CI,
             "publish_runtime_rocm_gfx906",
-            '--opt build-arg:GO_VERSION="1.26.0"',
+            '--opt build-arg:GO_VERSION="1.26.9"',
             "--opt build-arg:GO_VERSION",
         )
         self.assertIn("has a build-arg the contract check cannot parse", self.failure())

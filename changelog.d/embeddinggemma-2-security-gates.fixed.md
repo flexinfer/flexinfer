@@ -1,0 +1,1 @@
+- Update the Go toolchain/build pins to 1.26.9, x/net to 0.60.0, and OpenTelemetry to 1.45.0 so EmbeddingGemma's required CI security gates pass with patched standard-library and exporter dependencies.

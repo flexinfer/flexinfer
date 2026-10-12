@@ -1,0 +1,54 @@
+# Bounded, CPU-only qualification; does not alter the shared GPU runtime.
+# Evidence is retained on the existing model PVC in its own directory.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: embeddinggemma-2-cpu-qualification
+  namespace: flexinfer-system
+  labels:
+    flexinfer.ai/purpose: qualification
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 1800
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        flexinfer.ai/purpose: qualification
+    spec:
+      automountServiceAccountToken: false
+      # The qualification downloader uses the host's working external route;
+      # its llama-server binds only localhost on the reserved port 18080.
+      hostNetwork: true
+      dnsPolicy: Default
+      restartPolicy: Never
+      nodeSelector:
+        kubernetes.io/hostname: cblevins-radeonvii
+      tolerations:
+        - key: dedicated
+          operator: Equal
+          value: gpu
+          effect: NoSchedule
+      containers:
+        - name: validation
+          image: registry.harbor.lan/flexinfer/embeddinggemma2-validation@sha256:c56f0256590bd77d1420340f9b16c8adb6959a78b650548e0c5f5b5ea9de366a
+          args:
+            - reference
+            - --artifacts
+            - /artifacts/embeddinggemma-2-validation-20261012
+            - --threads
+            - "4"
+          resources:
+            requests:
+              cpu: "2"
+              memory: 4Gi
+            limits:
+              cpu: "4"
+              memory: 12Gi
+          volumeMounts:
+            - name: artifacts
+              mountPath: /artifacts
+      volumes:
+        - name: artifacts
+          persistentVolumeClaim:
+            claimName: llm-models-nfs

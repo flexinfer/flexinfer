@@ -24,11 +24,15 @@ func main() {
 	model := flag.String("model", "", "The model to benchmark (HuggingFace model name).")
 	modelName := flag.String("model-name", "", "The ModelDeployment name for proxy routing.")
 	configMapName := flag.String("configmap", "", "The name of the ConfigMap to store results in.")
-	backend := flag.String("backend", "ollama", "The backend type (ollama, vllm, mlc-llm, tei).")
+	backend := flag.String("backend", "ollama", "The backend type (ollama, vllm, llama-cpp, mlc-llm, tei).")
+	taskFlag := flag.String("task", string(benchmarker.TaskGeneration), "Inference task: generation or embeddings (llama-cpp/vllm).")
+	prompt := flag.String("prompt", "", "Text for generation or embeddings, including any model-specific task prefix.")
+	var embeddingInputs repeatedStringFlag
+	flag.Var(&embeddingInputs, "embedding-input", "Embedding input text; repeat to supply a corpus cycled through in batches. Requires --task embeddings.")
 	warmupIterations := flag.Int("warmup-iterations", 2, "Number of warmup iterations before measurement.")
 	minDuration := flag.Duration("min-duration", 30*time.Second, "Minimum benchmark duration (wall time).")
 	iterations := flag.Int("iterations", 5, "Number of measurement iterations (minimum; may run longer to satisfy --min-duration).")
-	batchSize := flag.Int("batch-size", 128, "Target tokens to generate per request.")
+	batchSize := flag.Int("batch-size", 128, "Generation tokens per request (default 128); embedding documents per request (default 1).")
 	maxTokensAlias := flag.Int("max-tokens", 0, "Alias for --batch-size (deprecated).")
 	coldStartTimeout := flag.Duration("cold-start-timeout", 5*time.Minute, "Timeout waiting for model to become ready (cold start).")
 	postgresDsn := flag.String("postgres-dsn", "", "Optional Postgres DSN to store benchmarks in a database (e.g. postgres://user:pass@host:5432/db). If omitted, falls back to env POSTGRES_DSN.")
@@ -49,6 +53,29 @@ func main() {
 
 	log.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	setupLog := log.Log.WithName("setup")
+	task, err := benchmarker.ParseTask(*taskFlag)
+	if err != nil {
+		setupLog.Error(err, "Invalid benchmark task")
+		os.Exit(1)
+	}
+	if task == benchmarker.TaskEmbeddings {
+		if *gauntletMode || *maxTokensAlias > 0 {
+			setupLog.Error(nil, "--gauntlet and --max-tokens require the generation task.")
+			os.Exit(1)
+		}
+		batchExplicit := false
+		flag.Visit(func(f *flag.Flag) {
+			if f.Name == "batch-size" {
+				batchExplicit = true
+			}
+		})
+		if !batchExplicit {
+			*batchSize = 1
+		}
+	} else if len(embeddingInputs) > 0 {
+		setupLog.Error(nil, "--embedding-input requires --task embeddings.")
+		os.Exit(1)
+	}
 
 	if *model == "" || *configMapName == "" {
 		setupLog.Error(nil, "Both --model and --configmap flags are required.")
@@ -73,6 +100,9 @@ func main() {
 	}
 
 	bm, err := benchmarker.NewBenchmarker(*backend, benchmarker.Options{
+		Task:             task,
+		Prompt:           *prompt,
+		EmbeddingInputs:  embeddingInputs,
 		WarmupIterations: *warmupIterations,
 		MinDuration:      *minDuration,
 		Iterations:       *iterations,
@@ -133,6 +163,18 @@ func main() {
 	}
 
 	setupLog.Info("Benchmark completed successfully", "model", *model)
+}
+
+type repeatedStringFlag []string
+
+func (f *repeatedStringFlag) String() string { return strings.Join(*f, ", ") }
+
+func (f *repeatedStringFlag) Set(value string) error {
+	if strings.TrimSpace(value) == "" {
+		return fmt.Errorf("embedding input must not be empty")
+	}
+	*f = append(*f, value)
+	return nil
 }
 
 // runGauntlet measures throughput via the benchmarker and coherence/latency via a

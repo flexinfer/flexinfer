@@ -9,9 +9,9 @@ if [ -f /etc/flexinfer/runtime.env ]; then
     set +a
 fi
 
-# HIP treats an empty gfx override as an override too. Vega20 must use its
-# detected architecture; remove inherited image/profile values completely.
-if [ "${GPU_ARCH:-}" = "gfx906" ]; then
+# Vega20 must use native ISA discovery. An inherited empty override is still
+# read by ROCr and can make hipInit return hipErrorNoDevice; remove the key.
+if [ "${GPU_ARCH:-${PYTORCH_ROCM_ARCH:-}}" = "gfx906" ]; then
     unset HSA_OVERRIDE_GFX_VERSION
 fi
 

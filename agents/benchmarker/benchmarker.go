@@ -28,6 +28,8 @@ import (
 const defaultBenchmarkResultsConfigMap = benchmarkconfig.DefaultBenchmarkResultsConfigMap
 
 type Options struct {
+	Task             Task     // generation (default) or embeddings
+	EmbeddingInputs  []string // Text corpus cycled through in embedding batches
 	WarmupIterations int
 	MinDuration      time.Duration
 	Iterations       int
@@ -39,6 +41,9 @@ type Options struct {
 }
 
 func (o Options) withDefaults() Options {
+	if o.Task == "" {
+		o.Task = TaskGeneration
+	}
 	// Allow explicitly disabling warmup with 0.
 	if o.WarmupIterations < 0 {
 		o.WarmupIterations = 2
@@ -51,6 +56,9 @@ func (o Options) withDefaults() Options {
 	}
 	if o.BatchSize <= 0 {
 		o.BatchSize = 128
+		if o.Task == TaskEmbeddings {
+			o.BatchSize = 1
+		}
 	}
 	if o.Prompt == "" {
 		o.Prompt = "Write a long story about a space adventure to Mars."
@@ -81,6 +89,9 @@ type Benchmarker struct {
 
 // NewBenchmarker creates a new Benchmarker.
 func NewBenchmarker(backendType string, opts Options, dsn string) (*Benchmarker, error) {
+	if err := opts.validate(backendType); err != nil {
+		return nil, err
+	}
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
@@ -108,7 +119,7 @@ func NewBenchmarker(backendType string, opts Options, dsn string) (*Benchmarker,
 	if backendType == "" {
 		backendType = "ollama"
 	}
-	if backendType == "llama.cpp" {
+	if backendType == "llama.cpp" || backendType == "llama-cpp" {
 		backendType = "llamacpp"
 	}
 	if backendType == "mlc" {
@@ -146,7 +157,7 @@ func NewBenchmarkerWithClient(kubeClient kubernetes.Interface, namespace, proxyU
 	if backendType == "" {
 		backendType = "ollama"
 	}
-	if backendType == "llama.cpp" {
+	if backendType == "llama.cpp" || backendType == "llama-cpp" {
 		backendType = "llamacpp"
 	}
 	if backendType == "mlc" {
@@ -184,6 +195,9 @@ func (b *Benchmarker) do(req *http.Request) (*http.Response, error) {
 // RunAndReturn executes the benchmark and returns the result without persisting it.
 // This is useful for callers that need the result for further processing (e.g., autotune).
 func (b *Benchmarker) RunAndReturn(ctx context.Context, model string) (*BenchmarkRecord, error) {
+	if err := b.opts.validate(b.backendType); err != nil {
+		return nil, err
+	}
 	log := log.FromContext(ctx)
 	log.Info("Running benchmark",
 		"model", model,
@@ -204,6 +218,8 @@ func (b *Benchmarker) RunAndReturn(ctx context.Context, model string) (*Benchmar
 		"Benchmark result",
 		"tokensPerSecond", result.TokensPerSecond,
 		"tokens", result.CompletionTokens,
+		"promptTokens", result.PromptTokens,
+		"documentsPerSecond", result.DocumentsPerSecond,
 		"duration", result.Duration,
 		"samples", result.Samples,
 	)
@@ -219,19 +235,23 @@ func (b *Benchmarker) RunAndReturn(ctx context.Context, model string) (*Benchmar
 	}
 
 	record := &BenchmarkRecord{
-		ModelName:        model,
-		Backend:          b.backendType,
-		NodeName:         nodeName,
-		Namespace:        b.namespace,
-		TokensPerSecond:  result.TokensPerSecond,
-		CompletionTokens: result.CompletionTokens,
-		Duration:         result.Duration,
-		Samples:          result.Samples,
-		BatchSize:        b.opts.BatchSize,
-		Iterations:       b.opts.Iterations,
-		WarmupIterations: b.opts.WarmupIterations,
-		MinDuration:      b.opts.MinDuration,
-		Timestamp:        b.now(),
+		Task:               b.opts.withDefaults().Task,
+		ModelName:          model,
+		Backend:            b.backendType,
+		NodeName:           nodeName,
+		Namespace:          b.namespace,
+		TokensPerSecond:    result.TokensPerSecond,
+		CompletionTokens:   result.CompletionTokens,
+		PromptTokens:       result.PromptTokens,
+		Documents:          result.Documents,
+		DocumentsPerSecond: result.DocumentsPerSecond,
+		Duration:           result.Duration,
+		Samples:            result.Samples,
+		BatchSize:          b.opts.BatchSize,
+		Iterations:         b.opts.Iterations,
+		WarmupIterations:   b.opts.WarmupIterations,
+		MinDuration:        b.opts.MinDuration,
+		Timestamp:          b.now(),
 	}
 
 	return record, nil
@@ -392,15 +412,24 @@ func (b *Benchmarker) backendReadinessPaths() []string {
 }
 
 type benchmarkResult struct {
-	TokensPerSecond   float64
-	CompletionTokens  int
-	Duration          time.Duration
-	Samples           int
-	UsedBackendTiming bool
+	TokensPerSecond    float64
+	CompletionTokens   int
+	PromptTokens       int
+	Documents          int
+	DocumentsPerSecond float64
+	Duration           time.Duration
+	Samples            int
+	UsedBackendTiming  bool
 }
 
 // runBenchmark executes inference and calculates tokens per second.
 func (b *Benchmarker) runBenchmark(ctx context.Context, model string) (benchmarkResult, error) {
+	if err := b.opts.validate(b.backendType); err != nil {
+		return benchmarkResult{}, err
+	}
+	if b.opts.withDefaults().Task == TaskEmbeddings {
+		return b.runEmbeddingsBenchmark(ctx, model)
+	}
 	log := log.FromContext(ctx)
 	log.Info("Executing benchmark queries...", "backend", b.backendType)
 

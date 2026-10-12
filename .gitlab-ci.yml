@@ -125,31 +125,15 @@ default:
         - .gitlab-ci.yml
 
 variables:
-  # Prefer GO_IMAGE from the local Harbor mirror when the patched tag exists.
-  # Temporarily use Docker Hub for 1.25.12 because the Harbor mirror lags behind
-  # upstream patch releases and govulncheck flags vulnerable stdlib builds.
-  # 1.25.12 additionally patches GO-2026-5856 (crypto/tls) and GO-2026-4970 (os).
-  # Bump promptly on Go security releases; Trivy/govulncheck will flag vulnerable stdlib builds.
-  GO_VERSION: "1.25.13"
+  # x/net v0.60.0 requires Go 1.26; pin its patched toolchain for the
+  # reached HTTP/2 and standard-library vulnerabilities found by CI.
+  GO_VERSION: "1.26.9"
   GO_IMAGE: "golang:${GO_VERSION}"
   ENVTEST_VERSION: "release-0.23"
   GOLANGCI_LINT_VERSION: "v2.10.1"
-  # NOTE (`latest` triage, w1-flexinfer-g4-latest-refs): this value is
-  # unpinned in name but frozen in fact, and should be pinned.
-  #   - it is interpolated into the `gotools-...` cache key below, so while it
-  #     reads "latest" the key never changes;
-  #   - `.go/bin/` is cached and the install is guarded by
-  #     `command -v govulncheck || go install ...@${GOVULNCHECK_VERSION}`.
-  # Net effect: govulncheck is frozen at whichever version first populated that
-  # cache key, and "latest" neither tracks upstream nor is reproducible.
-  # Pinning is safe — govulncheck fetches its vulnerability data at runtime
-  # from https://vuln.go.dev, so the pin freezes the tool, not the CVE feed.
-  # Pinned 2026-09-13: golang.org/x/vuln v1.8.0 (the new "latest") requires
-  # go >= 1.26 and the CI image runs GO_VERSION 1.25.x with GOTOOLCHAIN=local,
-  # so every `go install ...@latest` failed and turned the pipeline red
-  # (!1033). v1.7.0 is the last release whose go.mod says go 1.25 (verified
-  # against proxy.golang.org). Bump alongside GO_VERSION.
-  GOVULNCHECK_VERSION: "v1.7.0"
+  # Pin the scanner and include it in the tool cache key. v1.8.0 requires
+  # Go 1.26 and reads current vulnerability data at runtime.
+  GOVULNCHECK_VERSION: "v1.8.0"
   GO_LICENSES_VERSION: "v1.6.0"
   # Disable CGO for static binaries where possible
   CGO_ENABLED: "0"
@@ -565,6 +549,26 @@ vllm_qwen35_text_plugin_test:
         - deploy/debug/qwen35-35b-clean-gptq-canary.yaml
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *qwen35-text-plugin-changes
+
+embeddinggemma2_qualification_test:
+  stage: test
+  image: python:3.12-slim
+  needs: []
+  script:
+    - python3 -m unittest discover -s scripts -p test_qualify_embeddinggemma2.py -q
+    - bash scripts/test-runtime-gfx906-env.sh
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &embeddinggemma2-qualification-changes
+        - .gitlab-ci.yml
+        - scripts/qualify-embeddinggemma2.py
+        - scripts/test_qualify_embeddinggemma2.py
+        - scripts/test-runtime-gfx906-env.sh
+        - build/runtime-entrypoint.sh
+        - build/Dockerfile.embeddinggemma2-validation
+        - build/Dockerfile.runtime-embeddinggemma2-gfx906
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *embeddinggemma2-qualification-changes
 
 propose_runtime_promotions_test:
   stage: test
@@ -1565,7 +1569,7 @@ publish_runtime_rocm_gfx906:
           --opt filename="Dockerfile.runtime-gfx906" \
           --opt platform=linux/amd64 \
           --opt build-arg:BASE_IMAGE="docker.io/mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3" \
-          --opt build-arg:GO_VERSION="1.26.0" \
+          --opt build-arg:GO_VERSION="1.26.9" \
           --opt build-arg:LLAMACPP_VERSION="b11335" \
           --opt build-arg:OLLAMA_VERSION="v0.17.4" \
           --opt build-arg:OLLAMA_GO_VERSION="1.25.7" \

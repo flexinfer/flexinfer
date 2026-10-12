@@ -46,6 +46,9 @@ func NewPostgresStore(dsn string, client kubernetes.Interface) (*PostgresStore, 
 
 func (p *PostgresStore) Save(ctx context.Context, r BenchmarkRecord) error {
 	logger := log.FromContext(ctx)
+	if r.Task == "" {
+		r.Task = TaskGeneration
+	}
 
 	// We need the node's device class.
 	deviceClass := "unknown"
@@ -63,9 +66,10 @@ func (p *PostgresStore) Save(ctx context.Context, r BenchmarkRecord) error {
 	query := `
 		INSERT INTO benchmarks (
 			id, model, backend, device_class, tokens_per_second, 
-			completion_tokens, duration_seconds, samples, batch_size, timestamp
+			completion_tokens, duration_seconds, samples, batch_size, timestamp,
+			task, prompt_tokens, documents, documents_per_second
 		) VALUES (
-			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10
+			$1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14
 		)
 	`
 
@@ -80,6 +84,10 @@ func (p *PostgresStore) Save(ctx context.Context, r BenchmarkRecord) error {
 		r.Samples,
 		r.BatchSize,
 		r.Timestamp,
+		string(r.Task),
+		r.PromptTokens,
+		r.Documents,
+		r.DocumentsPerSecond,
 	)
 
 	if err != nil {
