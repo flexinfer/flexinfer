@@ -2,6 +2,8 @@ apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: flexinfer-system
 resources:
+  # Runtime-only prose-rewrite canary; cache eagerly, activate on demand.
+  - humanizer.yaml
   # === cblevins-7900xtx (24 GB gfx1100) — abliterated RP test model ===
   # Abliterated Qwen3.5-9B @ 32K + NSFW-RP LoRA (deploy/loras/qwen35-9b-nsfw-rp.yaml)
   # for the psyche-simulator kill-test. Standalone (non-shared), litellm off the

@@ -575,7 +575,9 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx906
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b"
+      # Humanizer qualification: same unified runtime, llama.cpp b11335 overlay.
+      # Rollback: 171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b.
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:8d81c14efa8ad22ff86207d0d901a6e8d0c7e84db2fe487af484762d3ba88616"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
