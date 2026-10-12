@@ -1,7 +1,7 @@
 # Humanizer in the unified runtime
 
 Humanizer is a Gemma 4 12B prose-rewriting model. It accepts one draft per
-request. The qualification candidate is `deploy/models/humanizer.yaml`:
+request. The serving recipe is `deploy/models/humanizer.yaml`:
 Q6_K on the Radeon VII, 8192 context tokens, one slot, and scale to zero after
 30 idle seconds. It uses the existing `radeonvii-models` group and the unified
 runtime's llama.cpp subprocess loader. It has no model-specific image or
@@ -39,8 +39,13 @@ Promote the resulting immutable digest through the gfx906 runtime profile in
 `deploy/system/values-k3s.yaml` and `deploy/gpuprofiles/gfx906.yaml`, using Git
 and Flux. Retain the original digest as rollback:
 `sha256:171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b`.
-The canary is listed in `deploy/models` with LiteLLM disabled so its cache can
-warm before qualification. Once qualified, enable registration as `humanizer`.
+The recipe is registered as `humanizer` in FlexInfer and LiteLLM. It serves
+completion and chat-completion paths only. The GPU probe on 2026-10-12
+offloaded 49/49 layers, loaded cached Q6_K weights in 6.13 seconds, and rewrote
+the 185-token test prompt into 89 output tokens in 2.87 seconds (~37 tokens/s).
+The same binary passed GPU embedding dimension/finite-value checks, relevance
+ordering, and Orpheus audio-token generation. These native probe timings exclude
+proxy election and queueing; measure that overhead during the managed swap test.
 
 Priority 130 permits rewrite demand to borrow VRAM from the existing
 retrieval/voice subprocesses. The initial 12,500 MB estimate should retain the

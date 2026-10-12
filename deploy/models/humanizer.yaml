@@ -1,5 +1,4 @@
-# Qualification candidate; LiteLLM registration stays disabled until the
-# unified runtime image and existing retrieval/voice backends pass GPU checks.
+# GPU-qualified on gfx906 with the existing retrieval/voice backends.
 # Runtime-only: no per-model image and no dedicatedDeployment override.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
@@ -7,6 +6,7 @@ metadata:
   name: humanizer
   namespace: flexinfer-system
   annotations:
+    flexinfer.ai/serve-paths: /v1/completions,/v1/chat/completions
     flexinfer.ai/purpose: "On-demand English/Chinese prose rewriting in the unified runtime"
 spec:
   backend: llamacpp
@@ -53,4 +53,5 @@ spec:
     idleTimeout: 30s
     coldStartTimeout: 10m
   litellm:
-    enabled: false
+    enabled: true
+    servedModelName: humanizer
