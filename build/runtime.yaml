@@ -421,6 +421,8 @@ profiles:
 
   gfx906:
     tag: "runtime:rocm-gfx906"
+    # Qualified Humanizer architecture support on the unified Radeon VII lane.
+    llamacpp_version: "b11335"
     # Dedicated Dockerfile: swaps the runtime base to mixa3607/pytorch-gfx906
     # (community-maintained PyTorch with rebuilt rocBLAS+Tensile for gfx906)
     # and applies cycle-1 cleanup techniques (pycache purge, single-layer pip,
@@ -448,7 +450,6 @@ profiles:
     env:
       ROCM_PATH: /opt/rocm
       HIP_PATH: /opt/rocm
-      HSA_OVERRIDE_GFX_VERSION: "9.0.6"
       HSA_ENABLE_SDMA: "0"
       HSA_USE_SVM: "0"
       PYTORCH_ROCM_ARCH: gfx906

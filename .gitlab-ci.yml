@@ -1546,7 +1546,6 @@ publish_runtime_rocm_gfx906:
       GPU_ARCH=gfx906
       FLEXINFER_TRANSFORMERS_PACKAGE=transformers>=5.0
       FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL=fallback
-      HSA_OVERRIDE_GFX_VERSION=9.0.6
       HSA_ENABLE_SDMA=0
       HSA_USE_SVM=0
       PYTORCH_ROCM_ARCH=gfx906
@@ -1567,7 +1566,7 @@ publish_runtime_rocm_gfx906:
           --opt platform=linux/amd64 \
           --opt build-arg:BASE_IMAGE="docker.io/mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3" \
           --opt build-arg:GO_VERSION="1.26.0" \
-          --opt build-arg:LLAMACPP_VERSION="b8173" \
+          --opt build-arg:LLAMACPP_VERSION="b11335" \
           --opt build-arg:OLLAMA_VERSION="v0.17.4" \
           --opt build-arg:OLLAMA_GO_VERSION="1.25.7" \
           --opt build-arg:AMDGPU_TARGETS="gfx906" \

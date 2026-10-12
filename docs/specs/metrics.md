@@ -117,7 +117,13 @@ Defined in `services/flexinfer/internal/runtime/metrics.go`:
 - `flexinfer_runtime_uptime_seconds`
 - `flexinfer_runtime_model_loads_total{backend,result}`
 - `flexinfer_runtime_model_unloads_total{backend,reason}`
-- `flexinfer_runtime_model_load_duration_seconds{model,backend}` (histogram)
+- `flexinfer_runtime_model_load_duration_seconds{model,backend}` (histogram; backend process start → Ready, excludes incumbent unload and VRAM drain)
+- `flexinfer_runtime_model_swap_duration_seconds{model,backend,outcome}` (histogram; load request → Ready or terminal failure, including opMu queueing, incumbent unload and VRAM drain; `outcome` = `ready|failed|rejected|cancelled`; buckets to 900 s)
+- `flexinfer_runtime_loaded_models{backend}` (gauge; tracked backend subprocesses in any state)
+- `flexinfer_runtime_vram_drain_seconds{outcome}` (histogram; wait after unloading incumbents for VRAM release; `outcome` = `drained|plateau|timeout|telemetry_lost`; bounded by `FLEXINFER_RUNTIME_VRAM_DRAIN_TIMEOUT`, default 10s, `0` disables)
+- `flexinfer_runtime_vram_drain_timeouts_total`
+- `flexinfer_runtime_vram_telemetry_unknown_total{check,reason}` (`check` = `admission|drain`; `reason` = `absent|out_of_range|below_loaded_estimate` — a used-VRAM reading below half the Ready models' summed `vramEstimateMB` is treated as unknown and fails open)
+- `flexinfer_runtime_backend_group_leftovers_total{backend,result}` (unloads where backend process-group members outlived the direct child; `result` = `exited|killed|survived`)
 - `flexinfer_runtime_model_state{model,backend,state}`
 - `flexinfer_runtime_backend_crashes_total{model,backend}`
 - `flexinfer_runtime_health_check_failures_total{model,backend}`

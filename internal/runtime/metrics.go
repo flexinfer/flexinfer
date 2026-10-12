@@ -52,14 +52,85 @@ var (
 		[]string{"backend", "reason"},
 	)
 
-	// ModelLoadDurationSeconds tracks time to start a backend subprocess and reach Ready.
+	// ModelLoadDurationSeconds tracks time from backend subprocess start to Ready.
+	// It has always been measured from process start; the help text used to say
+	// "from load request". The full request->Ready latency, including incumbent
+	// unload and VRAM drain, is ModelSwapDurationSeconds.
 	ModelLoadDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "flexinfer_runtime_model_load_duration_seconds",
-			Help:    "Duration from load request to model Ready.",
+			Help:    "Duration from backend process start to model Ready (excludes incumbent unload and VRAM drain; see flexinfer_runtime_model_swap_duration_seconds).",
 			Buckets: []float64{1, 2, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300},
 		},
 		[]string{"model", "backend"},
+	)
+
+	// ModelSwapDurationSeconds tracks a load request end to end: incumbent
+	// unload, VRAM drain, process start and readiness. outcome is ready,
+	// failed (start error, crash or startup timeout before Ready), rejected
+	// (VRAM admission) or cancelled (unloaded before Ready).
+	ModelSwapDurationSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_runtime_model_swap_duration_seconds",
+			Help:    "Duration from runtime load request to model Ready or terminal failure, including incumbent unload and VRAM drain.",
+			Buckets: []float64{0.5, 1, 2, 5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 450, 600, 900},
+		},
+		[]string{"model", "backend", "outcome"},
+	)
+
+	// LoadedModels reports how many backend subprocesses the runtime currently
+	// tracks, per backend (any state: Loading, Ready, Failed, Stopping).
+	LoadedModels = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_runtime_loaded_models",
+			Help: "Backend subprocesses currently tracked by the runtime, by backend.",
+		},
+		[]string{"backend"},
+	)
+
+	// VRAMDrainSeconds tracks how long a load waited after unloading
+	// incumbents for GPU memory to be released. outcome is drained (used VRAM
+	// fell by half the unloaded estimate), plateau (stopped decreasing),
+	// timeout, or telemetry_lost.
+	VRAMDrainSeconds = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_runtime_vram_drain_seconds",
+			Help:    "Time spent waiting for VRAM release after unloading incumbents, before starting the next backend.",
+			Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 1.5, 2, 3, 5, 7.5, 10, 15, 30},
+		},
+		[]string{"outcome"},
+	)
+
+	// VRAMDrainTimeoutsTotal counts drain waits that hit
+	// FLEXINFER_RUNTIME_VRAM_DRAIN_TIMEOUT before VRAM was released.
+	VRAMDrainTimeoutsTotal = prometheus.NewCounter(
+		prometheus.CounterOpts{
+			Name: "flexinfer_runtime_vram_drain_timeouts_total",
+			Help: "VRAM drain waits that timed out before the unloaded backend's memory was released.",
+		},
+	)
+
+	// VRAMTelemetryUnknownTotal counts GPU memory readings the manager refused
+	// to act on (absent, out of range, or below half the Ready models' summed
+	// vramEstimateMB) and treated as unknown, failing open.
+	VRAMTelemetryUnknownTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_runtime_vram_telemetry_unknown_total",
+			Help: "VRAM telemetry readings treated as unknown (fail-open), by check (admission|drain) and reason.",
+		},
+		[]string{"check", "reason"},
+	)
+
+	// BackendGroupLeftoversTotal counts unloads where processes of the
+	// backend's process group outlived the direct child. result is exited
+	// (left on their own before the shutdown deadline), killed (needed
+	// SIGKILL) or survived (still present after SIGKILL).
+	BackendGroupLeftoversTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_runtime_backend_group_leftovers_total",
+			Help: "Unloads where backend process-group members outlived the direct child, by result (exited|killed|survived).",
+		},
+		[]string{"backend", "result"},
 	)
 
 	// ModelState reports the current state of the active model (1 for current state).
@@ -164,6 +235,12 @@ func RegisterMetrics() {
 		ModelLoadsTotal,
 		ModelUnloadsTotal,
 		ModelLoadDurationSeconds,
+		ModelSwapDurationSeconds,
+		LoadedModels,
+		VRAMDrainSeconds,
+		VRAMDrainTimeoutsTotal,
+		VRAMTelemetryUnknownTotal,
+		BackendGroupLeftoversTotal,
 		ModelActiveState,
 		BackendSubprocessCrashesTotal,
 		HealthCheckFailuresTotal,

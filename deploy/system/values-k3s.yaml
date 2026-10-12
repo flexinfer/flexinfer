@@ -574,7 +574,8 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx906
-      # Humanizer qualification: same unified runtime, llama.cpp b11335 overlay.
+      # Humanizer qualification: unified gfx906 runtime with llama.cpp b11335.
+      # The entrypoint unsets HSA_OVERRIDE_GFX_VERSION so HIP sees Vega20.
       # Rollback: 171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b.
       image: "registry.harbor.lan/flexinfer/runtime@sha256:fc55611d3b918684c7ab2d6918c4df069d22566899e9cbc23968a6608cf527ef"
       gpuVendor: amd

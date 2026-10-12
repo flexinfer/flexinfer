@@ -26,6 +26,7 @@ OLD_906 = "sha256:" + "22" * 32
 NEW_1100 = "sha256:" + "33" * 32
 OLD_1100 = "sha256:" + "44" * 32
 CURRENT_NATIVE = "sha256:" + "55" * 32
+OVERLAY_906 = "sha256:" + "66" * 32
 
 
 def _load():
@@ -297,6 +298,68 @@ class MainTests(unittest.TestCase):
         self.assertIn("skipped: FLEXINFER_PROMOTE_MR_TOKEN", index)
         calls = self.repo.calls.read_text(encoding="utf-8")
         self.assertNotIn("--apply", calls, "no token → no branch, no --apply")
+
+
+def _off_profile_report() -> dict:
+    """The gfx906 DaemonSet runs a hand-pushed overlay, not a CI build."""
+    report = _report()
+    for row in report["profiles"]:
+        if row["profile"] == "gfx906" and row["kind"] == "runtime DaemonSet":
+            row["pinned"] = OVERLAY_906
+            row["pinned_tags"] = ["rocm-gfx906-humanizer-6c3db0947", "rocm-gfx906-humanizer-b11335"]
+            row["status"] = "off-profile build"
+    return report
+
+
+class OffProfileBuildTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.module = _load()
+        self.repo = _Repo()
+        self.addCleanup(self.repo.cleanup)
+        self.repo.report.write_text(json.dumps(_off_profile_report()), encoding="utf-8")
+
+    def test_candidate_carries_the_off_profile_consumer(self) -> None:
+        gfx906 = next(c for c in self.module.select_candidates(_off_profile_report()) if c["profile"] == "gfx906")
+        self.assertEqual([r["kind"] for r in gfx906["off_profile"]], ["runtime DaemonSet"])
+        self.assertEqual(gfx906["rollback"], OVERLAY_906)
+        self.assertEqual(self.module.select_candidates(_report())[1]["off_profile"], [])
+
+    def test_proposal_leads_with_a_warning_block(self) -> None:
+        self.repo.run(self.module)
+        md = self.repo.proposal("gfx906.md")
+        warning = md.index("> **WARNING: off-profile build in service.**")
+        self.assertLess(warning, md.index("- Profile tag:"), "the warning must come before the details")
+        self.assertIn(
+            "runtime DaemonSet `gfx906` (`deploy/system/values-k3s.yaml`) currently runs an off-profile build "
+            f"`{OVERLAY_906[7:19]}` (`rocm-gfx906-humanizer-6c3db0947`, `rocm-gfx906-humanizer-b11335`); "
+            f"promoting `{NEW_906[7:19]}` replaces it",
+            md,
+        )
+        self.assertIn("confirm the profile build carries the same components, e.g. llama.cpp version", md)
+        self.assertNotIn("WARNING", self.repo.proposal("gfx1100-native-w4a16.md"))
+
+    def test_promote_command_is_unchanged(self) -> None:
+        self.repo.run(self.module)
+        md = self.repo.proposal("gfx906.md")
+        self.assertIn(f"--digest {NEW_906}", md)
+        self.assertIn(f"--rollback-digest {OVERLAY_906}", md)
+        self.assertIn("--apply", md)
+        calls = self.repo.calls.read_text(encoding="utf-8").splitlines()
+        self.assertIn(f"gfx906 --digest {NEW_906}", calls)
+
+    def test_index_marks_the_profile(self) -> None:
+        self.repo.run(self.module)
+        index = self.repo.proposal("README.md")
+        row = next(line for line in index.splitlines() if line.startswith("| [`gfx906`]"))
+        self.assertIn(f"**off-profile build in service**: `gfx906` on `{OVERLAY_906[7:19]}`", row)
+        native = next(line for line in index.splitlines() if line.startswith("| [`gfx1100-native-w4a16`]"))
+        self.assertNotIn("off-profile", native)
+        self.assertIn("read the warning in its proposal first", index)
+
+    def test_index_without_off_profile_builds_has_no_note(self) -> None:
+        self.repo.report.write_text(json.dumps(_report()), encoding="utf-8")
+        self.repo.run(self.module)
+        self.assertNotIn("off-profile", self.repo.proposal("README.md"))
 
 
 if __name__ == "__main__":

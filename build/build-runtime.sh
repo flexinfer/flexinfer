@@ -86,11 +86,11 @@ build_profile() {
         exit 1
     fi
 
-    # Read global config
+    # Read global config, allowing a profile to select its llama.cpp version.
     local registry go_version llamacpp_version ollama_version ollama_go_version
     registry=$(cfg '.registry')
     go_version=$(cfg '.go_version')
-    llamacpp_version=$(cfg '.llamacpp_version')
+    llamacpp_version=$(pcfg "${profile}" "llamacpp_version" "$(cfg '.llamacpp_version')")
     ollama_version=$(cfg '.ollama_version')
     ollama_go_version=$(cfg '.ollama_go_version')
 
