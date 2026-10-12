@@ -3,7 +3,7 @@
 Humanizer is a Gemma 4 12B prose-rewriting model. It accepts one draft per
 request. The qualification candidate is `deploy/models/humanizer.yaml`:
 Q6_K on the Radeon VII, 8192 context tokens, one slot, and scale to zero after
-two idle minutes. It uses the existing `radeonvii-models` group and the unified
+30 idle seconds. It uses the existing `radeonvii-models` group and the unified
 runtime's llama.cpp subprocess loader. It has no model-specific image or
 `dedicatedDeployment` setting.
 
@@ -16,7 +16,8 @@ The Local cache stages only this file and `prompt_format.json`.
 
 `build/Dockerfile.runtime-humanizer-gfx906` overlays llama.cpp b11335 onto the
 digest-pinned unified gfx906 image. Compilation uses that image's ROCm SDK,
-and the final image retains its runtime manager, Ollama, diffusers, and HIP
+and the final image refreshes the Go runtime manager while retaining Ollama,
+diffusers, and the HIP
 memory-info shim. No serving components run in the build stage. This avoids
 rebuilding the other backends while qualifying a new llama.cpp version.
 
@@ -45,8 +46,26 @@ Priority 130 permits rewrite demand to borrow VRAM from the existing
 retrieval/voice subprocesses. The initial 12,500 MB estimate should retain the
 1,500 MB BGE embedding and 700 MB reranker members within the 16,384 MB group
 budget. GTE and Orpheus may unload during rewrites. Measure the actual peak
-before changing this estimate. The group's five-minute swap cooldown can
-delay returning all members to the card after a rewrite.
+before changing this estimate. The group uses a 30-second `gpu.swapCooldown` override. The controller
+honors shorter overrides and releases short-idle VRAM reservations when their
+idle window ends, instead of retaining the legacy five-minute reservation.
+Foreground activity refreshes every five seconds and at request completion.
+
+The gfx906 runtime enables `FLEXINFER_RUNTIME_REQUEST_DRAIN`. Each model's
+advertised port passes through an ingress inside the same container; its
+backend subprocess listens on a separate local port. Unload closes admission
+to new requests and returns HTTP 409 while accepted requests finish, including
+streams and background requests. The controller retains the endpoint and
+retries after drainage. Insufficient VRAM returns retryable HTTP 503 instead
+of launching before the previous subprocess releases memory. The proxy's
+direct-load path also waits for shared-GPU election, so it respects cooldown.
+
+These are subprocess swaps inside one persistent pod. Image upgrades require
+a one-time rollout; requests do not create or replace model containers. Check
+pod UID and restart count across load, idle unload, and reload when qualifying.
+On gfx906, `HSA_OVERRIDE_GFX_VERSION` must be absent, including inherited image
+values. An empty string still hides the GPU in HIP. Humanizer selects `ROCm0`
+explicitly so missing GPU support fails startup instead of serving on CPU.
 
 ## Stack calls
 

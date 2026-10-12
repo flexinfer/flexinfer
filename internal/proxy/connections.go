@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	"net/http"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -48,30 +49,60 @@ func (p *Proxy) trackAndServeWithDemand(w http.ResponseWriter, r *http.Request, 
 
 }
 
+// lastAccessHeartbeat shares one ticker and serializes writes across concurrent
+// foreground requests for a model. Background requests do not join it.
+type lastAccessHeartbeat struct {
+	mu       sync.Mutex
+	requests int
+	cancel   context.CancelFunc
+}
+
 func (p *Proxy) startLastAccessHeartbeat(modelName string) func() {
 	ctx := p.ctx
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	heartbeatCtx, cancel := context.WithCancel(ctx)
+	heartbeat, _ := p.lastAccessHeartbeats.LoadOrStore(modelName, &lastAccessHeartbeat{})
+	heartbeat.mu.Lock()
+	interval := p.touchLastAccess(ctx, modelName, true)
+	if heartbeat.requests == 0 {
+		heartbeatCtx, cancel := context.WithCancel(ctx)
+		heartbeat.cancel = cancel
+		go func() {
+			ticker := time.NewTicker(interval)
+			defer ticker.Stop()
 
-	p.updateLastAccess(heartbeatCtx, modelName)
-
-	go func() {
-		ticker := time.NewTicker(lastAccessHeartbeatInterval)
-		defer ticker.Stop()
-
-		for {
-			select {
-			case <-heartbeatCtx.Done():
-				return
-			case <-ticker.C:
-				p.updateLastAccess(heartbeatCtx, modelName)
+			for {
+				select {
+				case <-heartbeatCtx.Done():
+					return
+				case <-ticker.C:
+					heartbeat.mu.Lock()
+					if heartbeatCtx.Err() == nil {
+						p.updateLastAccess(heartbeatCtx, modelName)
+					}
+					heartbeat.mu.Unlock()
+				}
 			}
-		}
-	}()
+		}()
+	}
+	heartbeat.requests++
+	heartbeat.mu.Unlock()
 
-	return cancel
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			heartbeat.mu.Lock()
+			defer heartbeat.mu.Unlock()
+			heartbeat.requests--
+			if heartbeat.requests == 0 {
+				heartbeat.cancel()
+			}
+			// A completed or canceled request starts a fresh idle window. Use
+			// the proxy context because the request context may already be done.
+			p.touchLastAccess(ctx, modelName, true)
+		})
+	}
 }
 
 // incrementConnections atomically increments the connection count.

@@ -646,3 +646,19 @@ func TestBuildLoadPayloadForModelResolvesRelativeVAEPathAgainstModelRoot(t *test
 	require.NoError(t, json.Unmarshal(data, &payload))
 	assert.Equal(t, "/models/flexinfer-system/gonzalomo-fluxpony-imagegen/.vae/sdxl-vae-fp16-fix", payload.Config["vaePath"])
 }
+
+func TestBuildLoadPayloadCarriesDeclaredVRAMForAdmission(t *testing.T) {
+	b, ok := backend.Get("llamacpp")
+	require.True(t, ok)
+	estimate := int64(12500)
+	model := &aiv1alpha2.Model{Spec: aiv1alpha2.ModelSpec{
+		Backend: "llamacpp", Source: "HF://jialinyyzz/humanizer",
+		GPU: &aiv1alpha2.GPUSpec{VRAMEstimateMB: &estimate},
+	}}
+	data, err := BuildLoadPayloadForModel(model, b, BuildLoadOptions{})
+	require.NoError(t, err)
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	assert.Equal(t, float64(estimate), payload.Config["vramEstimateMB"])
+	assert.NotContains(t, model.Spec.GetConfigMap(), "vramEstimateMB")
+}

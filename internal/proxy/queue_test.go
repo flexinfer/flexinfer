@@ -979,3 +979,31 @@ func splitHostPort(addr string) (string, int) {
 	}
 	return addr, 0
 }
+
+func TestDirectRuntimeLoadWaitsForSharedElection(t *testing.T) {
+	s := runtime.NewScheme()
+	require.NoError(t, aiv1alpha2.AddToScheme(s))
+	m := &aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: "humanizer", Namespace: "default"}, Spec: aiv1alpha2.ModelSpec{Backend: "llamacpp", GPU: &aiv1alpha2.GPUSpec{Shared: "radeonvii-models"}}, Status: aiv1alpha2.ModelStatus{SharedGroup: &aiv1alpha2.SharedGroupStatus{State: "Queued"}}}
+	p := &Proxy{client: fake.NewClientBuilder().WithScheme(s).WithObjects(m).Build(), namespace: "default"}
+	// No runtime discovery is configured: a queued member must return before
+	// touching a runtime, irrespective of priority or available VRAM.
+	require.False(t, p.tryDirectRuntimeLoad(context.Background(), m.Name))
+}
+
+func TestWaitForRuntimeReadyDoesNotRouteDrainingModel(t *testing.T) {
+	polls := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		polls++
+		if polls == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"state": "Ready", "port": 8004, "draining": polls == 1})
+	}))
+	defer server.Close()
+	ep := parseTestEndpoint(server.Listener.Addr().String())
+	p := &Proxy{coldStartTimeout: 5 * time.Second}
+	port, err := p.waitForRuntimeReady(context.Background(), ep, "humanizer")
+	require.NoError(t, err)
+	require.Equal(t, int32(8004), port)
+	require.Equal(t, 2, polls)
+}

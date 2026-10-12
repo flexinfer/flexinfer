@@ -602,6 +602,9 @@ runtime:
         # off everywhere else — additive, single-slot behavior is unchanged.
         - name: FLEXINFER_RUNTIME_MULTI_MODEL
           value: "true"
+        # Accepted streams finish before a subprocess releases the GPU.
+        - name: FLEXINFER_RUNTIME_REQUEST_DRAIN
+          value: "true"
       nodeSelector:
         kubernetes.io/hostname: cblevins-radeonvii
         # 2026-05-07: pause lifted after Track B-3 cycle 2 slim image

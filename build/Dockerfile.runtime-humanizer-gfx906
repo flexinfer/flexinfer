@@ -2,6 +2,18 @@
 # Build against the same ROCm libraries as the serving image; retain its
 # runtime manager, other backends, and HIP memory-info compatibility shim.
 ARG BASE_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b
+ARG GO_VERSION=1.26.0
+
+FROM golang:${GO_VERSION} AS go-builder
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/ cmd/
+COPY api/ api/
+COPY backend/ backend/
+COPY internal/ internal/
+COPY pkg/ pkg/
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /runtime ./cmd/flexinfer-runtime
 
 FROM ${BASE_IMAGE} AS llamacpp-builder
 ARG LLAMACPP_VERSION=b11335
@@ -24,8 +36,9 @@ RUN cmake -B build -G Ninja \
 
 FROM ${BASE_IMAGE} AS runtime
 COPY --from=llamacpp-builder /opt/src/llama.cpp/build/bin/ /opt/llamacpp/bin/
+COPY --from=go-builder /runtime /usr/local/bin/flexinfer-runtime
+COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
 # Do not apply a gfx version override to Vega20. runtime.env is sourced by
 # the inherited entrypoint, so remove the old profile's override there too.
-ENV HSA_OVERRIDE_GFX_VERSION=""
 RUN sed -i '/^HSA_OVERRIDE_GFX_VERSION=/d' /etc/flexinfer/runtime.env \
     && LD_PRELOAD="" /opt/llamacpp/bin/llama-server --version

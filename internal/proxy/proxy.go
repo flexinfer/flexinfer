@@ -295,6 +295,9 @@ type Proxy struct {
 	coldStartTimeout   time.Duration                // Default: 60s (how long to wait for model to become ready)
 	connectionTracking TypedSyncMap[string, *int64] // tracking active connections per model
 
+	// One activity heartbeat per foreground model, shared by in-flight requests.
+	lastAccessHeartbeats TypedSyncMap[string, *lastAccessHeartbeat]
+
 	// activationNotFoundGrace bounds how long waitForReady tolerates a fully
 	// missing Model/ModelDeployment before fast-failing the activation.
 	// Zero means defaultActivationNotFoundGrace; overridable in tests.

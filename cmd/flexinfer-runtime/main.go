@@ -43,6 +43,7 @@ func main() {
 		shutdownTimeout   time.Duration
 		healthInterval    time.Duration
 		multiModel        bool
+		requestDrain      bool
 		vramHeadroomMB    int
 		gamingIdleTimeout time.Duration
 	)
@@ -55,6 +56,8 @@ func main() {
 	flag.DurationVar(&healthInterval, "health-interval", 5*time.Second, "Health check polling interval.")
 	flag.BoolVar(&multiModel, "multi-model", envutil.BoolOrDefault("FLEXINFER_RUNTIME_MULTI_MODEL", false),
 		"Allow multiple concurrent VRAM-bounded model subprocesses on this node (default: single-slot).")
+	flag.BoolVar(&requestDrain, "request-drain", envutil.BoolOrDefault("FLEXINFER_RUNTIME_REQUEST_DRAIN", false),
+		"Drain accepted HTTP inference before model unload or swap (default: disabled).")
 	flag.IntVar(&vramHeadroomMB, "vram-headroom-mb", envutil.IntOrDefault("FLEXINFER_RUNTIME_VRAM_HEADROOM_MB", 0),
 		"Free-VRAM safety margin (MB) kept when admitting a concurrent model in multi-model mode (0 = default).")
 	flag.DurationVar(&gamingIdleTimeout, "gaming-idle-timeout", envutil.DurationOrDefault("GAMING_IDLE_TIMEOUT", 0),
@@ -122,6 +125,7 @@ func main() {
 		HealthCheckInterval: healthInterval,
 		ModelBasePath:       modelBasePath,
 		MultiModel:          multiModel,
+		RequestDrain:        requestDrain,
 		VRAMHeadroomMB:      int64(vramHeadroomMB),
 		GamingIdleTimeout:   gamingIdleTimeout,
 	})

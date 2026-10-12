@@ -450,6 +450,12 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 		slog.Info("direct load: cannot fetch model CR", "model", modelName, "error", err)
 		return false
 	}
+	// Shared-GPU election owns the cooldown and VRAM reservations. The direct
+	// load path must wait for that grant instead of spawning a queued member
+	// only for the controller to immediately preempt it again.
+	if m.Spec.IsShared() && (m.Status.SharedGroup == nil || m.Status.SharedGroup.State != "Active") {
+		return false
+	}
 	// Resolve backend.
 	b, ok := backend.Get(m.Spec.Backend)
 	if !ok {
@@ -592,9 +598,10 @@ func (p *Proxy) waitForRuntimeReady(ctx context.Context, ep *pkgrt.RuntimeEndpoi
 				continue
 			}
 			var status struct {
-				State string `json:"state"`
-				Error string `json:"error"`
-				Port  int32  `json:"port"`
+				State    string `json:"state"`
+				Error    string `json:"error"`
+				Port     int32  `json:"port"`
+				Draining bool   `json:"draining"`
 			}
 			if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
 				_ = resp.Body.Close()
@@ -604,7 +611,9 @@ func (p *Proxy) waitForRuntimeReady(ctx context.Context, ep *pkgrt.RuntimeEndpoi
 
 			switch status.State {
 			case "Ready":
-				return status.Port, nil
+				if !status.Draining && resp.StatusCode == http.StatusOK {
+					return status.Port, nil
+				}
 			case "Failed":
 				return 0, fmt.Errorf("runtime model failed: %s", status.Error)
 			}

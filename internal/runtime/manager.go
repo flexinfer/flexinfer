@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -47,18 +48,20 @@ type LoadRequest struct {
 
 // LoadedModel tracks a running backend subprocess and its model.
 type LoadedModel struct {
-	Name      string             `json:"name"`
-	Backend   string             `json:"backend"`
-	Model     string             `json:"model"`
-	State     ModelState         `json:"state"`
-	Port      int32              `json:"port"`
-	PID       int                `json:"pid,omitempty"`
-	LoadedAt  time.Time          `json:"loadedAt,omitempty"`
-	Error     string             `json:"error,omitempty"`
-	HealthURL string             `json:"-"`
-	cmd       *exec.Cmd          `json:"-"`
-	cancel    context.CancelFunc `json:"-"`
-	done      chan error         `json:"-"`
+	Name        string             `json:"name"`
+	Backend     string             `json:"backend"`
+	Model       string             `json:"model"`
+	State       ModelState         `json:"state"`
+	Port        int32              `json:"port"`
+	PID         int                `json:"pid,omitempty"`
+	LoadedAt    time.Time          `json:"loadedAt,omitempty"`
+	Error       string             `json:"error,omitempty"`
+	HealthURL   string             `json:"-"`
+	cmd         *exec.Cmd          `json:"-"`
+	cancel      context.CancelFunc `json:"-"`
+	done        chan error         `json:"-"`
+	backendPort int32
+	ingress     *modelIngress
 
 	stallWindow time.Duration
 }
@@ -163,6 +166,9 @@ type Manager struct {
 
 	// modelBasePath is the root path where models are mounted.
 	modelBasePath string
+
+	// requestDrain gives each HTTP model a request-counting ingress on Port.
+	requestDrain bool
 }
 
 // defaultVRAMHeadroomMB is the free-VRAM margin kept before admitting a new
@@ -176,6 +182,9 @@ type ManagerConfig struct {
 	ShutdownTimeout     time.Duration
 	HealthCheckInterval time.Duration
 	ModelBasePath       string
+	// RequestDrain routes accepted inference through a managed ingress and
+	// refuses unload/swap until those requests finish. Default false.
+	RequestDrain bool
 
 	// MultiModel enables concurrent VRAM-bounded subprocesses (default false =
 	// single-slot, behavior identical to the pre-multi-model runtime).
@@ -225,6 +234,7 @@ func NewManager(cfg ManagerConfig) *Manager {
 		shutdownTimeout:     cfg.ShutdownTimeout,
 		healthCheckInterval: cfg.HealthCheckInterval,
 		modelBasePath:       cfg.ModelBasePath,
+		requestDrain:        cfg.RequestDrain,
 	}
 	m.gamingClientActive = m.sunshineClientActive
 	m.gamingRestart = m.loadGamingBackend
@@ -285,6 +295,9 @@ func (m *Manager) usedPortsLocked() map[int32]bool {
 	ports := make(map[int32]bool, len(m.models))
 	for _, lm := range m.models {
 		ports[lm.Port] = true
+		if lm.backendPort != 0 {
+			ports[lm.backendPort] = true
+		}
 	}
 	return ports
 }
@@ -352,7 +365,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	// from fighting over the same model.
 	m.mu.Lock()
 	if existing, ok := m.models[name]; ok && existing.Backend == req.Backend &&
-		(existing.State == ModelStateReady || existing.State == ModelStateLoading) {
+		(existing.State == ModelStateReady || existing.State == ModelStateLoading) && !modelIsDraining(existing) {
 		state := string(existing.State)
 		m.mu.Unlock()
 		logger.Info("Model already loaded, skipping reload",
@@ -378,7 +391,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	for _, lm := range toUnload {
 		logger.Info("Unloading model before loading new one", "unloading", lm.Name, "loading", name)
 		if err := m.unloadActive(ctx, lm); err != nil {
-			logger.Error(err, "Failed to unload model, forcing", "model", lm.Name)
+			return fmt.Errorf("unloading incumbent %q before loading %q: %w", lm.Name, name, err)
 		}
 	}
 
@@ -416,10 +429,38 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 			estimateMB = int64(v)
 		}
 		if ok, reason := m.canAdmit(estimateMB); !ok {
-			return fmt.Errorf("cannot load %q: %s", name, reason)
+			return fmt.Errorf("%w: cannot load %q: %s", ErrInsufficientVRAM, name, reason)
 		} else {
 			logger.Info("VRAM admission passed", "model", name, "reason", reason, "port", backendPort)
 		}
+	}
+	ingressPort := backendPort
+
+	// Reserve the advertised listener before starting the child so binding
+	// failures cannot leave an untracked subprocess. The backend gets a separate
+	// kernel-selected port; only ingressPort is exposed to callers.
+	var ingress *modelIngress
+	var privatePortReservation net.Listener
+	if m.requestDrain && supportsRequestIngress(b.Name()) {
+		m.mu.RLock()
+		used := m.usedPortsLocked()
+		m.mu.RUnlock()
+		used[ingressPort] = true
+		used[pkgrt.RuntimeAPIPort] = true
+		reservation, privatePort, err := reserveBackendPort(used)
+		if err != nil {
+			return err
+		}
+		defer func() { _ = reservation.Close() }()
+		ingress, err = newModelIngress(ingressPort, privatePort)
+		if err != nil {
+			return err
+		}
+		backendPort = privatePort
+		// exec.Cmd cannot inherit a listener for arbitrary backends. Keep the
+		// selected private port in this model's allocation set until cleanup.
+		// Closed below once the full child command has been prepared.
+		privatePortReservation = reservation
 	}
 
 	// Build command and args.
@@ -446,6 +487,9 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		env = overlayEnvVars(env, []corev1.EnvVar{{Name: "LOCAL_MODEL_PATH", Value: modelPath}})
 	}
 	env = overlayEnvVars(env, req.Env)
+	if ingress != nil {
+		args, env = configureIngressBackend(b.Name(), backendPort, args, env)
+	}
 
 	// Determine the executable.
 	var executable string
@@ -491,14 +535,16 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 
 	ModelEngineStalled.WithLabelValues(name, runtimeMetricsNamespace()).Set(0)
 	loaded := &LoadedModel{
-		Name:    name,
-		Backend: req.Backend,
-		Model:   req.Model,
-		State:   ModelStateLoading,
-		Port:    backendPort,
-		cmd:     cmd,
-		cancel:  cancel,
-		done:    make(chan error, 1),
+		Name:        name,
+		Backend:     req.Backend,
+		Model:       req.Model,
+		State:       ModelStateLoading,
+		Port:        ingressPort,
+		backendPort: backendPort,
+		ingress:     ingress,
+		cmd:         cmd,
+		cancel:      cancel,
+		done:        make(chan error, 1),
 	}
 	loaded.stallWindow = backend.StallWindowForSpec(spec)
 
@@ -513,8 +559,12 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		"args", execArgs,
 		"port", backendPort,
 	)
+	if privatePortReservation != nil {
+		_ = privatePortReservation.Close()
+	}
 
 	if err := cmd.Start(); err != nil {
+		ingress.close()
 		m.mu.Lock()
 		loaded.State = ModelStateFailed
 		loaded.Error = err.Error()
@@ -535,6 +585,9 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	m.mu.Unlock()
 
 	ModelLoadsTotal.WithLabelValues(req.Backend, "ok").Inc()
+	if ingress != nil {
+		ingress.start()
+	}
 
 	// Stream subprocess output to logger. Only start goroutines if pipes
 	// were created successfully — a nil reader would panic in bufio.NewScanner.
@@ -595,8 +648,15 @@ func (m *Manager) unloadActive(ctx context.Context, active *LoadedModel) error {
 		m.mu.Unlock()
 		return nil
 	}
+	if active.ingress != nil {
+		if count := active.ingress.beginDrain(); count > 0 {
+			m.mu.Unlock()
+			return fmt.Errorf("%w: model %q has %d active requests", ErrModelBusy, active.Name, count)
+		}
+	}
 	active.State = ModelStateStopping
 	m.mu.Unlock()
+	active.ingress.close()
 
 	// Send SIGTERM for graceful shutdown.
 	if active.cmd != nil && active.cmd.Process != nil {
@@ -653,7 +713,7 @@ func (m *Manager) Active() *LoadedModel {
 }
 
 func summarize(lm *LoadedModel) ModelSummary {
-	return ModelSummary{
+	summary := ModelSummary{
 		Name:     lm.Name,
 		Backend:  lm.Backend,
 		Model:    lm.Model,
@@ -663,6 +723,15 @@ func summarize(lm *LoadedModel) ModelSummary {
 		LoadedAt: lm.LoadedAt,
 		Error:    lm.Error,
 	}
+	if lm.ingress != nil {
+		count, draining, lastRequest := lm.ingress.snapshot()
+		summary.ActiveRequests = count
+		summary.Draining = draining
+		if !lastRequest.IsZero() {
+			summary.LastRequestTime = &lastRequest
+		}
+	}
+	return summary
 }
 
 // Model returns a summary of the named loaded model, or ok=false if it is not
@@ -712,7 +781,19 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	}
 	m.mu.RUnlock()
 	var firstErr error
+	// Stop admission on every ingress before waiting for any one model, so
+	// another model cannot accept fresh work during a slow shutdown drain.
 	for _, lm := range all {
+		if lm.ingress != nil {
+			lm.ingress.beginDrain()
+		}
+	}
+	for _, lm := range all {
+		if lm.ingress != nil {
+			if err := lm.ingress.waitForDrain(ctx); err != nil {
+				return fmt.Errorf("waiting for model %q to drain: %w", lm.Name, err)
+			}
+		}
 		if err := m.unloadActive(ctx, lm); err != nil && firstErr == nil {
 			firstErr = err
 		}
@@ -748,6 +829,7 @@ func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 		m.mu.Unlock()
 		return nil
 	}
+	previousMode := m.mode
 
 	// Unload whatever is currently running (all models).
 	all := make([]*LoadedModel, 0, len(m.models))
@@ -763,7 +845,10 @@ func (m *Manager) SetMode(ctx context.Context, target NodeMode) error {
 	for _, lm := range all {
 		logger.Info("Unloading model for mode switch", "model", lm.Name)
 		if err := m.unloadActive(ctx, lm); err != nil {
-			logger.Error(err, "Failed to unload during mode switch", "model", lm.Name)
+			m.mu.Lock()
+			m.mode = previousMode
+			m.mu.Unlock()
+			return fmt.Errorf("unloading model %q during mode switch: %w", lm.Name, err)
 		}
 	}
 
@@ -932,14 +1017,17 @@ type RuntimeStatus struct {
 
 // ModelSummary is a serializable view of a loaded model.
 type ModelSummary struct {
-	Name     string    `json:"name"`
-	Backend  string    `json:"backend"`
-	Model    string    `json:"model"`
-	State    string    `json:"state"`
-	Port     int32     `json:"port"`
-	PID      int       `json:"pid,omitempty"`
-	LoadedAt time.Time `json:"loadedAt,omitempty"`
-	Error    string    `json:"error,omitempty"`
+	Name            string     `json:"name"`
+	Backend         string     `json:"backend"`
+	Model           string     `json:"model"`
+	State           string     `json:"state"`
+	Port            int32      `json:"port"`
+	PID             int        `json:"pid,omitempty"`
+	LoadedAt        time.Time  `json:"loadedAt,omitempty"`
+	Error           string     `json:"error,omitempty"`
+	ActiveRequests  int64      `json:"activeRequests,omitempty"`
+	Draining        bool       `json:"draining,omitempty"`
+	LastRequestTime *time.Time `json:"lastRequestTime,omitempty"`
 }
 
 // monitorProcess waits for the subprocess to exit and updates state. When the
@@ -951,6 +1039,7 @@ func (m *Manager) monitorProcess(ctx context.Context, loaded *LoadedModel) {
 	logger := log.FromContext(ctx).WithValues("model", loaded.Name)
 
 	err := loaded.cmd.Wait()
+	loaded.ingress.close()
 	loaded.done <- err
 	close(loaded.done)
 
@@ -1251,7 +1340,7 @@ func (m *Manager) continuousHealthCheck(ctx context.Context, loaded *LoadedModel
 
 // checkEngineStall applies an observation only to the still-current model.
 func (m *Manager) checkEngineStall(ctx context.Context, loaded *LoadedModel, detector *backend.StallDetector, now time.Time) bool {
-	sample, err := backend.ReadVLLMStallSample(ctx, fmt.Sprintf("http://127.0.0.1:%d/metrics", loaded.Port))
+	sample, err := backend.ReadVLLMStallSample(ctx, fmt.Sprintf("http://127.0.0.1:%d/metrics", modelBackendPort(loaded)))
 	if err != nil {
 		detector.Reset()
 		return false
