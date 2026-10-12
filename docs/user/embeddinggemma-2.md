@@ -108,8 +108,8 @@ flexinfer-bench --backend llama-cpp --task embeddings \
 
 | Lane | Minimum cosine to FP32 | Input tokens/s | Batch p95 | Result |
 | --- | ---: | ---: | ---: | --- |
-| CPU BF16 | 0.999991741 | 161.3 | 83.729s | PASS |
-| CPU Q8_0 | 0.999735590 | 148.4 | 91.061s | PASS |
+| CPU BF16 | 0.999991741 | 142.1 | 95.125s | PASS |
+| CPU Q8_0 | 0.999735590 | 143.5 | 94.094s | PASS |
 | gfx906 BF16 | 0.999994790 | 1877.2 | 6.539s | PASS |
 | gfx906 Q8_0 | 0.999676559 | 1996.5 | 6.232s | PASS |
 
@@ -117,8 +117,7 @@ All rows cover the same 19 inputs and 13,939 server-accounted tokens. The last
 batch contains the near-4K/8K inputs and dominates duration; these rates are not
 short-document saturation benchmarks. The final GPU repeat used warmed kernel/cache
 state; the first run measured 646.9 BF16 / 1,494.8 Q8 input tokens/s. p95 uses
-nearest rank so the longest batch
-is included. BF16's GPU model/compute allocation was about 2,373 MiB (261 MiB
+nearest rank so the longest batch is included. BF16's GPU model/compute allocation was about 2,373 MiB (261 MiB
 weights, 2,112 MiB compute); the deployment reserves a 3,000 MB admission estimate.
 
 The isolated **FlexInfer runtime** loaded BGE (25/25 GPU layers), GTE (29/29), and

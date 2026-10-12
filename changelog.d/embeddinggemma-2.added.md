@@ -1,0 +1,3 @@
+- Add text-only EmbeddingGemma 2 llama.cpp runtime/deployment recipes and FP32 CPU/gfx906 qualification alongside BGE/GTE.
+- Add an embeddings benchmark task with document batching and server-accounted input token throughput.
+- Remove inherited gfx906 ISA overrides so ROCm discovers the Radeon VII reliably.

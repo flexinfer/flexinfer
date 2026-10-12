@@ -2,7 +2,7 @@
   "date": "2026-10-12",
   "scope": "text-only /v1/embeddings; isolated flexinfer-runtime alongside BGE/GTE; fleet rollout separate",
   "passed": true,
-  "hardware": "AMD Radeon VII gfx906 16GiB, CPU reference on same node with4threads",
+  "hardware": "AMD Radeon VII gfx906 16 GiB; CPU FP32 reference on the same node with 4 threads",
   "model_id": "google/embeddinggemma-2",
   "reference_revision": "914f7f89142e33e77833254d9c9b90c3cef7303b",
   "gguf_revision": "bfcd298762cc34d0357ece5ebdd31791a3a374d8",
@@ -21,7 +21,7 @@
   "runtime_image": "registry.harbor.lan/flexinfer/runtime@sha256:ad85a07230f8d27cfb8859066dedb6a53a351a8e36d9ec28077fd00427015a9b",
   "runtime_base_and_rollback": "registry.harbor.lan/flexinfer/runtime@sha256:8d81c14efa8ad22ff86207d0d901a6e8d0c7e84db2fe487af484762d3ba88616",
   "llamacpp_version": "b11457",
-  "cpu_validation_image": "registry.harbor.lan/flexinfer/embeddinggemma2-validation@sha256:33b9a9cf2772de0cb5b7c88e534ffb308ffb71a60470a6bc60190edff25f03a1",
+  "cpu_validation_image": "registry.harbor.lan/flexinfer/embeddinggemma2-validation@sha256:c56f0256590bd77d1420340f9b16c8adb6959a78b650548e0c5f5b5ea9de366a",
   "canary_commands": [
     "kubectl apply -f deploy/debug/embeddinggemma-2-cpu-qualification.yaml",
     "kubectl create configmap embeddinggemma-2-qualification -n flexinfer-system --from-file=qualify.py=scripts/qualify-embeddinggemma2.py",
@@ -66,11 +66,11 @@
       "single_batch_cosine": 1.0,
       "dimensions": 768,
       "prompt_tokens": 13939,
-      "seconds": 86.44280796358362,
-      "input_tokens_per_second": 161.25112462649503,
-      "documents_per_second": 0.2197985054812688,
-      "request_latency_p50_seconds": 0.5587898790836334,
-      "request_latency_p95_seconds": 83.72896189894527,
+      "seconds": 98.07441291306168,
+      "input_tokens_per_second": 142.12677482307504,
+      "documents_per_second": 0.19373044849977944,
+      "request_latency_p50_seconds": 0.529327676165849,
+      "request_latency_p95_seconds": 95.12455214560032,
       "retrieval_top1_matches": 5
     },
     "cpu-Q8_0": {
@@ -81,11 +81,11 @@
       "single_batch_cosine": 1.0,
       "dimensions": 768,
       "prompt_tokens": 13939,
-      "seconds": 93.91094838595018,
-      "input_tokens_per_second": 148.42784829213144,
-      "documents_per_second": 0.2023193283270319,
-      "request_latency_p50_seconds": 0.6124469619244337,
-      "request_latency_p95_seconds": 91.06119243893772,
+      "seconds": 97.14014763385057,
+      "input_tokens_per_second": 143.4937082095051,
+      "documents_per_second": 0.19559369079421743,
+      "request_latency_p50_seconds": 0.5778584107756615,
+      "request_latency_p95_seconds": 94.09438731102273,
       "retrieval_top1_matches": 5
     },
     "gfx906-BF16": {
@@ -240,5 +240,7 @@
     "8K buffers need~2.4GiB GPU despite270M textmodel; use3000MBadmissionestimate",
     "Existing runtime had inheritedemptyHSAoverride and CPUfallback; candidateunsetsit; olddigestrollbackrestoresprecedingimagebutGPUdiscoveryrequiresfix"
   ],
-  "qualified_script_sha256": "ff00a5102a09365050dbdce284bd11395ee779ac08604590d3f4c9943312f5d9"
+  "qualified_script_sha256": "ff00a5102a09365050dbdce284bd11395ee779ac08604590d3f4c9943312f5d9",
+  "previous_cpu_validation_image": "registry.harbor.lan/flexinfer/embeddinggemma2-validation@sha256:33b9a9cf2772de0cb5b7c88e534ffb308ffb71a60470a6bc60190edff25f03a1",
+  "final_cpu_repeat": "passed"
 }
