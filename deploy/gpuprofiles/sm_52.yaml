@@ -56,11 +56,40 @@ spec:
       image: registry.harbor.lan/flexinfer/diffusers:cuda-maxwell-0b19f7a8@sha256:145ee5526017e75674e771739523962124aa00a8fc364797ca7c01b6880a0ce2
     comfyui:
       support: unsupported
-  runtime:
-    bundledBackends:
-      - ollama
-      - llamacpp
-    image: registry.harbor.lan/flexinfer/runtime:cuda-maxwell
+  # No spec.runtime: Maxwell is dedicated-pod only (decided 2026-10-12). There is
+  # no runtime DaemonSet on cblevins-gtx980ti; every Model there gets its own
+  # Deployment running the backends.<name>.image pin above.
+  #
+  # The block used to pin registry.harbor.lan/flexinfer/runtime:cuda-maxwell, a
+  # tag that was never built (Harbor has no such artifact, no CI job publishes
+  # it). The whole block is gone, not just the image line, because the CRD
+  # requires runtime.image. Its bundledBackends went with it; that list only
+  # gates loads into a runtime pod, and none exists here. With spec.runtime
+  # absent, pkg/runtime.RuntimeProfileBundlesBackend is permissive,
+  # RuntimeReconciler.FindRuntimeForNode finds no runtime pod matching the
+  # node's hostname selector, and the Model controller takes the Deployment path.
+  #
+  # Why no runtime on this node:
+  #   - One 6 GiB GPU, held by the warm dedicated image-gen lane
+  #     (dreamshaper8-imagegen-gtx980ti, minReplicas 1). A runtime pod would
+  #     have no second workload to host.
+  #   - The cuda-maxwell profile in build/runtime.yaml sets diffusers: false, so
+  #     the only live Maxwell workload could not run inside it anyway.
+  #   - charts/flexinfer/templates/runtime-daemonset.yaml is AMD-only: it mounts
+  #     /dev/kfd and /dev/dri and sets no runtimeClassName: nvidia or
+  #     nvidia.com/gpu request.
+  #   - build/Dockerfile.runtime builds llama.cpp for GPU_VENDOR=nvidia without
+  #     -DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_BMI2=OFF. The host CPU is an Ivy
+  #     Bridge i7-3770K (AVX, no AVX2/FMA/BMI2), so that binary would SIGILL.
+  #     Only build/Dockerfile.llamacpp-cuda-maxwell sets those flags.
+  #
+  # Adding one needs all of: a second Maxwell workload worth co-hosting; NVIDIA
+  # wiring in the runtime DaemonSet template; the Ivy Bridge GGML flags (plus
+  # diffusers if image-gen moves in) in the cuda-maxwell runtime build; a CI job
+  # publishing an immutable runtime:cuda-maxwell-<sha> tag; a runtime.profiles
+  # entry in deploy/system/values-k3s.yaml; then spec.runtime restored here with
+  # a digest pin and bundledBackends. See docs/agents/gpu-compatibility.md
+  # "Maxwell runtime posture (GTX 980 Ti)".
   quantization:
     supported:
       - gguf

@@ -52,6 +52,7 @@ The old from-source variants (`Dockerfile.agent`, `.proxy`, `.manager`, `.sched`
 | `Dockerfile.runtime-gfx906` | CI (changes-gated job in `.gitlab-ci.yml`) | gfx906 runtime variant |
 | `Dockerfile.runtime-torch-multiarch` | `build/build-torch-multiarch.sh` (off-CI, manual-only) | `flexinfer/torch:rocm6.3.4-multiarch` — one torch wheel carrying gfx906+gfx1100 device code |
 | `Dockerfile.unified-gfx906` | CI `publish_unified_rocm_gfx906` | `flexinfer/runtime:unified-gfx906` — community PyTorch, replaces old per-task gfx906 images (incl. quantize via `USE_RUNTIME_FOR_QUANTIZE`) |
+| `Dockerfile.runtime` with nvidia args (`build/runtime.yaml` profile `cuda-maxwell`) | No CI job | `flexinfer/runtime:cuda-maxwell`, never built and with no consumer: a recipe only. Maxwell runs dedicated pods ([gpu-compatibility.md](../docs/agents/gpu-compatibility.md#maxwell-runtime-posture-gtx-980-ti)). Before anyone builds it, it needs the Ivy Bridge flags `-DGGML_AVX2=OFF -DGGML_FMA=OFF -DGGML_BMI2=OFF`, which `Dockerfile.llamacpp-cuda-maxwell` already sets. Without them llama.cpp SIGILLs on the i7-3770K host. |
 
 Promotion tooling (issue #74): `scripts/check-runtime-pin-drift.py` (CI `runtime_pin_drift`, advisory) compares every
 pinned runtime digest with the newest immutable tag in Harbor; `scripts/propose-runtime-promotions.py` (CI
