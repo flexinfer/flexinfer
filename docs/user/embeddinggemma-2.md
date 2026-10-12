@@ -159,3 +159,10 @@ Go unit tests, lint, and runtime publish-contract checks. The sandbox gate hit
 indexed in `.loom/embeddinggemma-2-qualification-2026-10-12.json` and the runtime
 promotion matrix. The model recipes remain outside `deploy/models/kustomization.yaml`
 until the fleet runtime upgrade is planned with its other active workloads.
+The qualified overlay preserves the preceding manager binary. A fleet upgrade
+must incorporate the patched Go manager and current shared-runtime changes;
+it is not a security certificate for the historical base image.
+
+CI security gates require Go 1.26.9, x/net 0.60.0, and OpenTelemetry 1.45.0.
+The source/build pins carry these fixes. Tracing uses standard environment
+configuration and does not call the exporter URL option changed in 1.45.0.

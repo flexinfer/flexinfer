@@ -229,7 +229,26 @@
     "python_tests": 34,
     "python_black_ruff": "passed",
     "gfx906_environment": "passed",
-    "runtime_publish_contract": "passed including newest origin/master contract"
+    "runtime_publish_contract": "passed including newest origin/master contract",
+    "security_recovery": {
+      "go_toolchain": "1.26.9",
+      "x_net": "0.60.0",
+      "opentelemetry": "1.45.0",
+      "govulncheck": "1.8.0: no vulnerabilities found",
+      "trivy_high_critical": "passed",
+      "checks": [
+        "go build ./...",
+        "SKIP_ENVTEST=1 go test -short -timeout=5m ./...",
+        "go vet ./...",
+        "golangci-lint:0issues"
+      ],
+      "reason": "Existing required CI gates found reached HTTP/2, standard-library, and OTLP exporter vulnerabilities. Fixed upstream versions require Go1.26.",
+      "sources": [
+        "https://go.dev/doc/devel/release#go1.26.9",
+        "https://vuln.go.dev/ID/GO-2026-6505.json",
+        "https://proxy.golang.org/golang.org/x/net/@v/v0.60.0.mod"
+      ]
+    }
   },
   "raw_artifacts": "/Users/cblevins/workspace/services/flexinfer/.loom/local/embeddinggemma-2-validation-2026-10-12",
   "cluster_artifacts": "llm-models-nfs:/embeddinggemma-2-validation-20261012",
