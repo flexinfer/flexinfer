@@ -566,6 +566,26 @@ vllm_qwen35_text_plugin_test:
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *qwen35-text-plugin-changes
 
+embeddinggemma2_qualification_test:
+  stage: test
+  image: python:3.12-slim
+  needs: []
+  script:
+    - python3 -m unittest discover -s scripts -p test_qualify_embeddinggemma2.py -q
+    - bash scripts/test-runtime-gfx906-env.sh
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &embeddinggemma2-qualification-changes
+        - .gitlab-ci.yml
+        - scripts/qualify-embeddinggemma2.py
+        - scripts/test_qualify_embeddinggemma2.py
+        - scripts/test-runtime-gfx906-env.sh
+        - build/runtime-entrypoint.sh
+        - build/Dockerfile.embeddinggemma2-validation
+        - build/Dockerfile.runtime-embeddinggemma2-gfx906
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *embeddinggemma2-qualification-changes
+
 propose_runtime_promotions_test:
   stage: test
   image: python:3.12-slim
@@ -1546,7 +1566,6 @@ publish_runtime_rocm_gfx906:
       GPU_ARCH=gfx906
       FLEXINFER_TRANSFORMERS_PACKAGE=transformers>=5.0
       FLEXINFER_TRANSFORMERS_RUNTIME_INSTALL=fallback
-      HSA_OVERRIDE_GFX_VERSION=9.0.6
       HSA_ENABLE_SDMA=0
       HSA_USE_SVM=0
       PYTORCH_ROCM_ARCH=gfx906

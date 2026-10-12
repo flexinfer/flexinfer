@@ -9,6 +9,12 @@ if [ -f /etc/flexinfer/runtime.env ]; then
     set +a
 fi
 
+# Vega20 must use native ISA discovery. An inherited empty override is still
+# read by ROCr and can make hipInit return hipErrorNoDevice; remove the key.
+if [ "${GPU_ARCH:-${PYTORCH_ROCM_ARCH:-}}" = "gfx906" ]; then
+    unset HSA_OVERRIDE_GFX_VERSION
+fi
+
 # ── Normalize Qwen3.5 model configs ──────────────────────────────────
 # The Go runtime starts vLLM with model paths under /models/.
 # Qwen3.5 checkpoints need:

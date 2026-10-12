@@ -1,0 +1,25 @@
+# Upgrade only llama.cpp on the qualified Humanizer/retrieval runtime.
+# Keep its runtime manager, other backends, and HIP memory-info shim.
+ARG BASE_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:8d81c14efa8ad22ff86207d0d901a6e8d0c7e84db2fe487af484762d3ba88616
+FROM ${BASE_IMAGE} AS llamacpp-builder
+ARG LLAMACPP_VERSION=b11457
+ARG BUILD_JOBS=4
+ENV DEBIAN_FRONTEND=noninteractive LD_PRELOAD=""
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake ninja-build build-essential pkg-config libcurl4-openssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/src
+RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
+WORKDIR /opt/src/llama.cpp
+RUN test -f src/models/gemma-embedding2.cpp \
+    && cmake -B build -G Ninja \
+       -DGGML_HIP=ON -DGGML_NATIVE=OFF -DAMDGPU_TARGETS=gfx906 \
+       -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+       -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --target llama-server --parallel ${BUILD_JOBS}
+FROM ${BASE_IMAGE} AS runtime
+COPY --from=llamacpp-builder /opt/src/llama.cpp/build/bin/ /opt/llamacpp/bin/
+COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
+RUN sed -i '/^HSA_OVERRIDE_GFX_VERSION=/d' /etc/flexinfer/runtime.env \
+    && chmod +x /usr/local/bin/runtime-entrypoint.sh \
+    && env -u HSA_OVERRIDE_GFX_VERSION LD_PRELOAD="" /opt/llamacpp/bin/llama-server --version
