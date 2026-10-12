@@ -1,0 +1,50 @@
+# Qualification candidate; add to deploy/models only after the unified
+# runtime image and existing retrieval/voice backends pass GPU checks.
+# Runtime-only: no per-model image and no dedicatedDeployment override.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: humanizer
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/purpose: "On-demand English/Chinese prose rewriting in the unified runtime"
+spec:
+  backend: llamacpp
+  source: HF://jialinyyzz/humanizer
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  cache:
+    strategy: Local
+    hostPath: /var/lib/flexinfer/models
+    size: 12Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: radeonvii-models
+    # Above the warm retrieval/voice members so real rewrite demand can
+    # claim a VRAM-bounded set. Idle Humanizer scales down again.
+    priority: 130
+    vramEstimateMB: 12500
+  config:
+    hfRevision: 7232532cb8466bd393544e97826e12e6b5e471ac
+    ggufFile: humanizer-12b-Q6_K.gguf
+    hfAllowPatterns:
+      - prompt_format.json
+    contextSize: 8192
+    parallel: 1
+    nGPULayers: 999
+    batchSize: 512
+    ubatchSize: 128
+    # Keep the first gfx906 qualification conservative; try FA separately.
+    flashAttention: false
+    fitOff: true
+    jinja: true
+    metrics: true
+    rocrVisibleDevices: "0"
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 2m
+    coldStartTimeout: 10m
+  litellm:
+    enabled: false
