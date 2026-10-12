@@ -97,7 +97,7 @@ proxy:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-proxy
     tag: "humanizer-fastswaps-cc7273917"
-    digest: "sha256:2f2f1631f2bfe106d02caf9be5234a9b969d5b1847a17aea857ae983b44dcd14"
+    digest: "sha256:db4c70c04e4196bf26da174d6e529380000678be76ac8315916e7a62452f18c8"
     pullPolicy: Always
   service:
     type: ClusterIP
