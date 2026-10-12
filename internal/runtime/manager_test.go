@@ -15,6 +15,7 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 	_ "github.com/flexinfer/flexinfer/backend" // register all backends
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
+	"github.com/go-logr/logr"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -376,10 +377,11 @@ func TestSetModelStateMetricIsPerModel(t *testing.T) {
 }
 
 func TestCanAdmitFailsOpenWithoutTelemetry(t *testing.T) {
-	// In CI there is no rocm-smi/nvidia-smi, so QueryGPU returns zeros and
+	// Without rocm-smi/nvidia-smi/sysfs counters the query returns zeros and
 	// admission must fail open (admit) rather than block on missing telemetry.
 	m := NewManager(ManagerConfig{MultiModel: true, GPUVendor: backend.GPUVendorAMD, GPUArch: "gfx906"})
-	ok, reason := m.canAdmit(500)
+	m.gpuQuery = func() GPUInfo { return GPUInfo{} }
+	ok, reason := m.canAdmit(logr.Discard(), 500)
 	assert.True(t, ok, "expected fail-open admit, got reason=%s", reason)
 }
 

@@ -319,7 +319,7 @@ data:
         },
         {
           "title": "Model Load Duration",
-          "description": "Time from load request to model Ready (p50, p95)",
+          "description": "Time from backend process start to model Ready (p50, p95). Excludes incumbent unload and VRAM drain; see flexinfer_runtime_model_swap_duration_seconds for request-to-Ready.",
           "type": "timeseries",
           "gridPos": { "x": 8, "y": 23, "w": 8, "h": 8 },
           "targets": [

@@ -61,6 +61,27 @@ type LoadedModel struct {
 	done      chan error         `json:"-"`
 
 	stallWindow time.Duration
+
+	// pgid is the backend's own process group (its PID as group leader), or 0
+	// when it was not started in a dedicated group. Unload signals the whole
+	// group so engine workers and runner grandchildren do not keep VRAM.
+	pgid int
+	// vramEstimateMB is the load request's config.vramEstimateMB (0 = unknown).
+	vramEstimateMB int64
+	// requestedAt is when Load was called; swapObserved guards the single
+	// ModelSwapDurationSeconds observation per load. Both guarded by m.mu.
+	requestedAt  time.Time
+	swapObserved bool
+}
+
+// observeSwapLocked records the request->terminal-state latency for this load
+// exactly once. Caller must hold m.mu.
+func (lm *LoadedModel) observeSwapLocked(outcome string) {
+	if lm.swapObserved || lm.requestedAt.IsZero() {
+		return
+	}
+	lm.swapObserved = true
+	ModelSwapDurationSeconds.WithLabelValues(lm.Name, lm.Backend, outcome).Observe(time.Since(lm.requestedAt).Seconds())
 }
 
 // NodeMode represents the operating mode of a GPU node.
@@ -155,19 +176,49 @@ type Manager struct {
 	gpuVendor backend.GPUVendor
 	gpuArch   string
 
-	// shutdownTimeout is how long to wait for graceful subprocess exit.
+	// shutdownTimeout is how long to wait for graceful subprocess exit, for the
+	// direct child and the rest of its process group together.
 	shutdownTimeout time.Duration
+
+	// groupKillGrace bounds the wait for a process group to disappear after
+	// the final SIGKILL.
+	groupKillGrace time.Duration
+
+	// vramDrainTimeout bounds the wait for GPU memory to be released after
+	// unloading incumbents and before starting the next backend (0 = disabled).
+	vramDrainTimeout time.Duration
+
+	// vramDrainPoll is the telemetry sampling interval while draining.
+	vramDrainPoll time.Duration
+
+	// gpuQuery reads GPU memory telemetry (injectable for tests; default reads
+	// sysfs/rocm-smi/nvidia-smi for gpuVendor without the temperature lookup).
+	gpuQuery func() GPUInfo
 
 	// healthCheckInterval controls how often the subprocess is probed.
 	healthCheckInterval time.Duration
 
 	// modelBasePath is the root path where models are mounted.
 	modelBasePath string
+
+	// gaugedBackends remembers every backend label LoadedModels was set for,
+	// so a backend whose last model unloads is reported as 0. Guarded by mu.
+	gaugedBackends map[string]struct{}
 }
 
 // defaultVRAMHeadroomMB is the free-VRAM margin kept before admitting a new
 // concurrent model in multi-model mode.
 const defaultVRAMHeadroomMB int64 = 1024
+
+// DefaultVRAMDrainTimeout is the runtime binary's default for
+// FLEXINFER_RUNTIME_VRAM_DRAIN_TIMEOUT.
+const DefaultVRAMDrainTimeout = 10 * time.Second
+
+const (
+	defaultVRAMDrainPoll  = 500 * time.Millisecond
+	defaultGroupKillGrace = 2 * time.Second
+	groupPollInterval     = 50 * time.Millisecond
+)
 
 // ManagerConfig holds configuration for creating a Manager.
 type ManagerConfig struct {
@@ -182,6 +233,12 @@ type ManagerConfig struct {
 	MultiModel bool
 	// VRAMHeadroomMB overrides the default free-VRAM admission margin.
 	VRAMHeadroomMB int64
+
+	// VRAMDrainTimeout bounds how long Load waits, after unloading incumbents,
+	// for used VRAM to fall before starting the next backend. 0 disables the
+	// wait; the runtime binary defaults it to DefaultVRAMDrainTimeout via
+	// FLEXINFER_RUNTIME_VRAM_DRAIN_TIMEOUT.
+	VRAMDrainTimeout time.Duration
 
 	// GamingBackend overrides the backend loaded for gaming mode. Empty =
 	// "sunshine" (the default). Set to "steam" for the legacy Remote Play path.
@@ -223,9 +280,14 @@ func NewManager(cfg ManagerConfig) *Manager {
 		gpuVendor:           cfg.GPUVendor,
 		gpuArch:             cfg.GPUArch,
 		shutdownTimeout:     cfg.ShutdownTimeout,
+		groupKillGrace:      defaultGroupKillGrace,
+		vramDrainTimeout:    cfg.VRAMDrainTimeout,
+		vramDrainPoll:       defaultVRAMDrainPoll,
 		healthCheckInterval: cfg.HealthCheckInterval,
 		modelBasePath:       cfg.ModelBasePath,
+		gaugedBackends:      make(map[string]struct{}),
 	}
+	m.gpuQuery = func() GPUInfo { return queryVRAM(string(m.gpuVendor)) }
 	m.gamingClientActive = m.sunshineClientActive
 	m.gamingRestart = m.loadGamingBackend
 	// Reflect the initial mode in the gauge.
@@ -307,16 +369,52 @@ func (m *Manager) allocatePortLocked(preferred int32) int32 {
 	return preferred
 }
 
-// canAdmitLocked reports whether a new model with the given VRAM estimate fits
+// readyEstimateLocked sums vramEstimateMB over Ready models — the VRAM the
+// runtime believes is resident. Loading models are excluded because they may
+// not have allocated yet. Caller must hold m.mu.
+func (m *Manager) readyEstimateLocked() int64 {
+	var sum int64
+	for _, lm := range m.models {
+		if lm.State == ModelStateReady {
+			sum += lm.vramEstimateMB
+		}
+	}
+	return sum
+}
+
+// refreshLoadedModelsLocked publishes LoadedModels from m.models, zeroing
+// backends that no longer have a tracked subprocess. Caller must hold m.mu.
+func (m *Manager) refreshLoadedModelsLocked() {
+	counts := make(map[string]int, len(m.models))
+	for _, lm := range m.models {
+		counts[lm.Backend]++
+		m.gaugedBackends[lm.Backend] = struct{}{}
+	}
+	for b := range m.gaugedBackends {
+		LoadedModels.WithLabelValues(b).Set(float64(counts[b]))
+	}
+}
+
+// canAdmit reports whether a new model with the given VRAM estimate fits
 // alongside the currently loaded models. It is fail-open: when GPU telemetry is
-// unavailable (free==0) it admits and lets the backend's own OOM handling apply.
-// Caller need not hold m.mu (QueryGPU shells out); callers pass estimateMB=0 to
-// mean "unknown estimate" (admission then only enforces the headroom margin).
-func (m *Manager) canAdmit(estimateMB int64) (bool, string) {
-	info := QueryGPU(string(m.gpuVendor), m.gpuArch)
-	if info.VRAMFreeMB <= 0 {
-		// No telemetry — fail open.
-		return true, "vram telemetry unavailable; admitting (fail-open)"
+// unavailable, or implausible next to the Ready models' summed estimates (see
+// vramTelemetryPlausible), it admits and lets the backend's own OOM handling
+// apply. Caller must not hold m.mu (the query may shell out); callers pass
+// estimateMB=0 to mean "unknown estimate" (admission then only enforces the
+// headroom margin).
+func (m *Manager) canAdmit(logger logr.Logger, estimateMB int64) (bool, string) {
+	info := m.gpuQuery()
+	m.mu.RLock()
+	readyMB := m.readyEstimateLocked()
+	m.mu.RUnlock()
+	if ok, reason := vramTelemetryPlausible(info, readyMB); !ok {
+		VRAMTelemetryUnknownTotal.WithLabelValues("admission", reason).Inc()
+		if reason != "absent" {
+			logger.Info("WARNING: VRAM telemetry implausible; treating as unknown",
+				"reason", reason, "usedMB", info.VRAMUsedMB, "totalMB", info.VRAMTotalMB, "readyEstimateMB", readyMB)
+		}
+		return true, fmt.Sprintf("vram telemetry unknown (%s: used=%dMB total=%dMB readyEstimate=%dMB); admitting (fail-open)",
+			reason, info.VRAMUsedMB, info.VRAMTotalMB, readyMB)
 	}
 	if info.VRAMFreeMB-estimateMB < m.vramHeadroomMB {
 		return false, fmt.Sprintf("insufficient VRAM: free=%dMB estimate=%dMB headroom=%dMB",
@@ -327,8 +425,12 @@ func (m *Manager) canAdmit(estimateMB int64) (bool, string) {
 }
 
 // Load starts a backend subprocess for the named model. If another model
-// is already active, it is unloaded first (serialize load/unload).
+// is already active, it is unloaded first (serialize load/unload), and the
+// next backend only starts once the unloaded process groups are gone and GPU
+// memory has drained (bounded by vramDrainTimeout). The whole sequence runs
+// under opMu so loads and unloads stay serialized.
 func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error {
+	requestedAt := time.Now()
 	logger := log.FromContext(ctx).WithValues("model", name, "backend", req.Backend)
 
 	b, ok := backend.Get(req.Backend)
@@ -374,12 +476,24 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 			toUnload = append(toUnload, lm)
 		}
 	}
-	m.mu.Unlock()
+	readyEstimateMB := m.readyEstimateLocked()
+	var unloadEstimateMB int64
 	for _, lm := range toUnload {
-		logger.Info("Unloading model before loading new one", "unloading", lm.Name, "loading", name)
-		if err := m.unloadActive(ctx, lm); err != nil {
-			logger.Error(err, "Failed to unload model, forcing", "model", lm.Name)
+		unloadEstimateMB += lm.vramEstimateMB
+	}
+	m.mu.Unlock()
+	if len(toUnload) > 0 {
+		var pre GPUInfo
+		if m.vramDrainTimeout > 0 {
+			pre = m.gpuQuery()
 		}
+		for _, lm := range toUnload {
+			logger.Info("Unloading model before loading new one", "unloading", lm.Name, "loading", name)
+			if err := m.unloadActive(ctx, lm); err != nil {
+				logger.Error(err, "Failed to unload model, forcing", "model", lm.Name)
+			}
+		}
+		m.waitVRAMDrain(logger, pre, readyEstimateMB, unloadEstimateMB)
 	}
 
 	// Build the model spec for arg/env generation.
@@ -397,6 +511,10 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		GPUArch:   m.gpuArch,
 	}
 	backendPort := runtimeBackendPort(b, spec)
+	var estimateMB int64
+	if v := spec.ConfigInt("vramEstimateMB", 0); v > 0 {
+		estimateMB = int64(v)
+	}
 
 	// Multi-model mode: allocate a distinct port per concurrent subprocess and
 	// enforce VRAM admission. Single-slot mode keeps the fixed backend port and
@@ -411,11 +529,8 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 			spec.Config = make(map[string]any, 1)
 		}
 		spec.Config["port"] = float64(backendPort)
-		var estimateMB int64
-		if v := spec.ConfigInt("vramEstimateMB", 0); v > 0 {
-			estimateMB = int64(v)
-		}
-		if ok, reason := m.canAdmit(estimateMB); !ok {
+		if ok, reason := m.canAdmit(logger, estimateMB); !ok {
+			ModelSwapDurationSeconds.WithLabelValues(name, req.Backend, "rejected").Observe(time.Since(requestedAt).Seconds())
 			return fmt.Errorf("cannot load %q: %s", name, reason)
 		} else {
 			logger.Info("VRAM admission passed", "model", name, "reason", reason, "port", backendPort)
@@ -470,6 +585,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 
 	subCtx, cancel := context.WithCancel(context.Background())
 	cmd := exec.CommandContext(subCtx, executable, execArgs...)
+	setProcessGroup(cmd)
 
 	// Inherit current process env, then overlay backend-specific vars.
 	cmd.Env = os.Environ()
@@ -499,11 +615,15 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		cmd:     cmd,
 		cancel:  cancel,
 		done:    make(chan error, 1),
+
+		vramEstimateMB: estimateMB,
+		requestedAt:    requestedAt,
 	}
 	loaded.stallWindow = backend.StallWindowForSpec(spec)
 
 	m.mu.Lock()
 	m.models[name] = loaded
+	m.refreshLoadedModelsLocked()
 	m.mu.Unlock()
 
 	setModelStateMetric(name, req.Backend, "Loading")
@@ -521,6 +641,8 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		if cur, ok := m.models[name]; ok && cur == loaded {
 			delete(m.models, name)
 		}
+		loaded.observeSwapLocked("failed")
+		m.refreshLoadedModelsLocked()
 		m.mu.Unlock()
 		cancel()
 		close(loaded.done)
@@ -531,6 +653,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 
 	m.mu.Lock()
 	loaded.PID = cmd.Process.Pid
+	loaded.pgid = processGroupOf(cmd)
 	loaded.LoadedAt = time.Now()
 	m.mu.Unlock()
 
@@ -548,23 +671,45 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	// Monitor subprocess exit.
 	go m.monitorProcess(subCtx, loaded)
 
-	// Start health checking in background.
-	// Allow the load request config to override the backend's default startup timeout
-	// so the proxy/controller can pass the model's coldStartTimeout.
-	startupTimeout := b.StartupTimeout()
-	if v, ok := req.Config["startupTimeoutSeconds"]; ok {
-		switch t := v.(type) {
-		case float64:
-			startupTimeout = time.Duration(t) * time.Second
-		case string:
-			if d, err := time.ParseDuration(t); err == nil {
-				startupTimeout = d
-			}
-		}
+	// Start health checking in background. The load request config may raise
+	// the backend's default startup timeout (the proxy/controller pass the
+	// model's coldStartTimeout) but not lower it: the controller's 60 s
+	// coldStartTimeout default would otherwise fail a vLLM or diffusers cold
+	// load that the backend itself budgets 300 s / 900 s for.
+	startupTimeout, requested, floored := resolveStartupTimeout(b.StartupTimeout(), req.Config)
+	if floored {
+		logger.Info("Payload startupTimeoutSeconds is below the backend default; using the backend default",
+			"requested", requested, "backendDefault", startupTimeout)
 	}
 	go m.healthCheckLoop(subCtx, loaded, b, backendPort, startupTimeout)
 
 	return nil
+}
+
+// resolveStartupTimeout applies the load payload's startupTimeoutSeconds
+// (seconds as a number, or a Go duration string) on top of the backend's own
+// default, flooring it at that default. requested is the parsed payload value
+// (0 when absent or invalid); floored reports that it was raised.
+func resolveStartupTimeout(backendDefault time.Duration, config map[string]any) (timeout, requested time.Duration, floored bool) {
+	switch t := config["startupTimeoutSeconds"].(type) {
+	case float64:
+		requested = time.Duration(t * float64(time.Second))
+	case int:
+		requested = time.Duration(t) * time.Second
+	case int64:
+		requested = time.Duration(t) * time.Second
+	case string:
+		if d, err := time.ParseDuration(t); err == nil {
+			requested = d
+		}
+	}
+	if requested <= 0 {
+		return backendDefault, 0, false
+	}
+	if requested < backendDefault {
+		return backendDefault, requested, true
+	}
+	return requested, requested, false
 }
 
 // Unload stops the active model's backend subprocess.
@@ -595,38 +740,14 @@ func (m *Manager) unloadActive(ctx context.Context, active *LoadedModel) error {
 		m.mu.Unlock()
 		return nil
 	}
+	if active.State == ModelStateLoading {
+		active.observeSwapLocked("cancelled")
+	}
 	active.State = ModelStateStopping
 	m.mu.Unlock()
 
-	// Send SIGTERM for graceful shutdown.
 	if active.cmd != nil && active.cmd.Process != nil {
-		logger.Info("Sending SIGTERM to backend", "pid", active.PID)
-		_ = active.cmd.Process.Signal(syscall.SIGTERM)
-
-		select {
-		case <-time.After(m.shutdownTimeout):
-			// Only kill if the process has not yet exited. We use a
-			// non-blocking check on done to avoid a race with PID reuse:
-			// if Wait() already returned, the PID is reaped and could be
-			// reassigned to an unrelated process.
-			select {
-			case err := <-active.done:
-				// Process already exited before we could kill it.
-				if err != nil {
-					logger.Info("Backend exited during shutdown timeout", "error", err)
-				}
-			default:
-				logger.Info("Shutdown timeout exceeded, sending SIGKILL", "pid", active.PID)
-				if err := active.cmd.Process.Kill(); err != nil {
-					logger.Info("Kill returned error (process may have already exited)", "error", err)
-				}
-				<-active.done // Wait for the process to be reaped after kill.
-			}
-		case err := <-active.done:
-			if err != nil {
-				logger.Info("Backend exited", "error", err)
-			}
-		}
+		m.stopBackend(logger, active)
 	}
 
 	if active.cancel != nil {
@@ -640,8 +761,175 @@ func (m *Manager) unloadActive(ctx context.Context, active *LoadedModel) error {
 		delete(m.models, active.Name)
 		ModelEngineStalled.DeleteLabelValues(active.Name, runtimeMetricsNamespace())
 	}
+	m.refreshLoadedModelsLocked()
 	m.mu.Unlock()
 	return nil
+}
+
+// stopBackend terminates a backend subprocess and everything in its process
+// group. SIGTERM goes to the direct child and the group; whatever is still
+// running when shutdownTimeout elapses (measured once, for the child and its
+// group together) is SIGKILLed. It returns only once the direct child has been
+// reaped and the group is empty or has survived SIGKILL for groupKillGrace.
+func (m *Manager) stopBackend(logger logr.Logger, active *LoadedModel) {
+	deadline := time.Now().Add(m.shutdownTimeout)
+	pgid := active.pgid
+
+	logger.Info("Sending SIGTERM to backend", "pid", active.PID, "pgid", pgid)
+	_ = active.cmd.Process.Signal(syscall.SIGTERM)
+	if pgid > 0 {
+		if err := signalProcessGroup(pgid, syscall.SIGTERM); err != nil {
+			logger.Info("Signalling backend process group failed", "pgid", pgid, "error", err)
+		}
+	}
+
+	timer := time.NewTimer(m.shutdownTimeout)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		// Only kill if the process has not yet exited. We use a
+		// non-blocking check on done to avoid a race with PID reuse:
+		// if Wait() already returned, the PID is reaped and could be
+		// reassigned to an unrelated process. The group is safe to signal
+		// either way: its ID cannot be reused while any member is alive.
+		select {
+		case err := <-active.done:
+			// Process already exited before we could kill it.
+			if err != nil {
+				logger.Info("Backend exited during shutdown timeout", "error", err)
+			}
+		default:
+			logger.Info("Shutdown timeout exceeded, sending SIGKILL", "pid", active.PID, "pgid", pgid)
+			if err := active.cmd.Process.Kill(); err != nil {
+				logger.Info("Kill returned error (process may have already exited)", "error", err)
+			}
+			if pgid > 0 {
+				_ = signalProcessGroup(pgid, syscall.SIGKILL)
+			}
+			<-active.done // Wait for the process to be reaped after kill.
+		}
+	case err := <-active.done:
+		if err != nil {
+			logger.Info("Backend exited", "error", err)
+		}
+	}
+
+	if pgid > 0 {
+		m.reapProcessGroup(logger, active.Backend, pgid, deadline)
+	}
+}
+
+// reapProcessGroup waits for the rest of a backend's process group (engine
+// workers, runner grandchildren) to exit after the direct child has, so their
+// VRAM is released before the next load. Survivors past deadline are
+// SIGKILLed; anything still present after groupKillGrace is logged and
+// counted, since it may still hold GPU memory.
+func (m *Manager) reapProcessGroup(logger logr.Logger, backendName string, pgid int, deadline time.Time) {
+	alive, members := processGroupAlive(pgid)
+	if !alive {
+		return
+	}
+	logger.Info("Backend exited but its process group still has members; waiting", "pgid", pgid, "members", members)
+	if waitProcessGroupGone(pgid, deadline) {
+		BackendGroupLeftoversTotal.WithLabelValues(backendName, "exited").Inc()
+		return
+	}
+	_, members = processGroupAlive(pgid)
+	logger.Info("Backend process group outlived the shutdown timeout, sending SIGKILL", "pgid", pgid, "members", members)
+	_ = signalProcessGroup(pgid, syscall.SIGKILL)
+	if waitProcessGroupGone(pgid, time.Now().Add(m.groupKillGrace)) {
+		BackendGroupLeftoversTotal.WithLabelValues(backendName, "killed").Inc()
+		return
+	}
+	_, members = processGroupAlive(pgid)
+	logger.Error(nil, "Backend process group survived SIGKILL; its GPU memory may not be released",
+		"pgid", pgid, "members", members)
+	BackendGroupLeftoversTotal.WithLabelValues(backendName, "survived").Inc()
+}
+
+// waitProcessGroupGone polls until pgid has no live members or deadline passes.
+func waitProcessGroupGone(pgid int, deadline time.Time) bool {
+	for {
+		if alive, _ := processGroupAlive(pgid); !alive {
+			return true
+		}
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		time.Sleep(min(groupPollInterval, remaining))
+	}
+}
+
+// waitVRAMDrain blocks after incumbents were unloaded until the GPU reports
+// their memory released, so the next backend does not start against VRAM that
+// is still held (and OOM, or size its KV cache to the leftover). pre is the
+// reading taken before the unload, readyEstimateMB the Ready models' summed
+// estimates at that time, unloadedEstimateMB the unloaded models' estimates.
+//
+// It returns when used VRAM falls to pre - unloadedEstimateMB/2 (when the
+// estimate is known), when two consecutive samples stop decreasing, or at
+// vramDrainTimeout. It is skipped, with the reason logged and counted, when
+// telemetry is absent or implausible. Runs under opMu: releasing the lock
+// between unload and start would let another load interleave. The request
+// context is deliberately not consulted — a caller that disconnected still
+// gets a backend started against drained VRAM.
+func (m *Manager) waitVRAMDrain(logger logr.Logger, pre GPUInfo, readyEstimateMB, unloadedEstimateMB int64) {
+	if m.vramDrainTimeout <= 0 {
+		return
+	}
+	if ok, reason := vramTelemetryPlausible(pre, readyEstimateMB); !ok {
+		VRAMTelemetryUnknownTotal.WithLabelValues("drain", reason).Inc()
+		logger.Info("Skipping VRAM drain wait: telemetry unknown",
+			"reason", reason, "usedMB", pre.VRAMUsedMB, "totalMB", pre.VRAMTotalMB, "readyEstimateMB", readyEstimateMB)
+		return
+	}
+
+	start := time.Now()
+	deadline := start.Add(m.vramDrainTimeout)
+	target := pre.VRAMUsedMB - unloadedEstimateMB/2
+	prev := int64(-1)
+	flat := 0
+	outcome := "timeout"
+	var last GPUInfo
+	for {
+		last = m.gpuQuery()
+		if last.VRAMTotalMB <= 0 {
+			outcome = "telemetry_lost"
+			break
+		}
+		if unloadedEstimateMB > 0 && last.VRAMUsedMB <= target {
+			outcome = "drained"
+			break
+		}
+		if prev >= 0 && last.VRAMUsedMB >= prev {
+			flat++
+		} else {
+			flat = 0
+		}
+		if flat >= 2 {
+			outcome = "plateau"
+			break
+		}
+		prev = last.VRAMUsedMB
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			break
+		}
+		time.Sleep(min(m.vramDrainPoll, remaining))
+	}
+
+	elapsed := time.Since(start)
+	VRAMDrainSeconds.WithLabelValues(outcome).Observe(elapsed.Seconds())
+	if outcome == "timeout" {
+		VRAMDrainTimeoutsTotal.Inc()
+		logger.Info("WARNING: VRAM drain timed out; starting the next backend anyway",
+			"timeout", m.vramDrainTimeout, "preUsedMB", pre.VRAMUsedMB, "usedMB", last.VRAMUsedMB,
+			"targetMB", target, "unloadedEstimateMB", unloadedEstimateMB)
+		return
+	}
+	logger.Info("VRAM drain wait finished", "outcome", outcome, "elapsed", elapsed,
+		"preUsedMB", pre.VRAMUsedMB, "usedMB", last.VRAMUsedMB, "unloadedEstimateMB", unloadedEstimateMB)
 }
 
 // Active returns a representative loaded model, or nil. Prefers a Ready model.
@@ -963,6 +1251,7 @@ func (m *Manager) monitorProcess(ctx context.Context, loaded *LoadedModel) {
 	gamingCrash := unexpected && loaded.Name == gamingModelName && m.mode == ModeGaming
 	if unexpected && (err != nil || gamingCrash) {
 		logger.Error(err, "Backend subprocess crashed")
+		loaded.observeSwapLocked("failed") // no-op if it already reached Ready
 		loaded.State = ModelStateFailed
 		if err != nil {
 			loaded.Error = err.Error()
@@ -1118,6 +1407,7 @@ func (m *Manager) healthCheckLoop(ctx context.Context, loaded *LoadedModel, b ba
 		m.mu.Lock()
 		if m.stillLoadingLocked(loaded) {
 			loaded.State = ModelStateReady
+			loaded.observeSwapLocked("ready")
 			setModelStateMetric(name, loaded.Backend, "Ready")
 			logger.Info("Model marked ready (no probe defined, startup timeout elapsed)")
 		}
@@ -1138,6 +1428,7 @@ func (m *Manager) healthCheckLoop(ctx context.Context, loaded *LoadedModel, b ba
 			m.mu.Lock()
 			if m.stillLoadingLocked(loaded) {
 				loaded.State = ModelStateFailed
+				loaded.observeSwapLocked("failed")
 				loaded.Error = "startup timeout exceeded"
 				logger.Error(nil, "Backend startup timeout exceeded")
 				setModelStateMetric(name, loaded.Backend, "Failed")
@@ -1152,6 +1443,7 @@ func (m *Manager) healthCheckLoop(ctx context.Context, loaded *LoadedModel, b ba
 					logger.Info("Model is ready", "probe", probeDesc)
 					setModelStateMetric(name, loaded.Backend, "Ready")
 					ModelLoadDurationSeconds.WithLabelValues(name, loaded.Backend).Observe(time.Since(loaded.LoadedAt).Seconds())
+					loaded.observeSwapLocked("ready")
 				}
 				m.mu.Unlock()
 
