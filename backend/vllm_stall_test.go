@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -74,14 +75,26 @@ func TestStallProbeScript(t *testing.T) {
 	if err != nil {
 		t.Skip("python3 unavailable")
 	}
+	// The handler goroutine only reads these after the probe subprocess is
+	// started, but the race detector cannot see ordering through another
+	// process, so every access goes through mu.
+	var mu sync.Mutex
 	text := "vllm:num_requests_running 1\nvllm:num_requests_waiting 0\nvllm:prompt_tokens_total 10\nvllm:generation_tokens_total 20\n"
 	health := 200
+	update := func(f func()) {
+		mu.Lock()
+		defer mu.Unlock()
+		f()
+	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		status, body := health, text
+		mu.Unlock()
 		if r.URL.Path == "/health" {
-			w.WriteHeader(health)
+			w.WriteHeader(status)
 			return
 		}
-		_, _ = fmt.Fprint(w, text)
+		_, _ = fmt.Fprint(w, body)
 	}))
 	defer server.Close()
 	script := (&VLLMBackend{}).ReadinessProbeForSpec(&ModelSpec{Config: map[string]any{"stallWindow": "30s"}}).Exec.Command[2]
@@ -100,15 +113,14 @@ func TestStallProbeScript(t *testing.T) {
 	run("100", true)
 	run("129", true)
 	run("130", false)
-	text = strings.Replace(text, "generation_tokens_total 20", "generation_tokens_total 21", 1)
+	update(func() { text = strings.Replace(text, "generation_tokens_total 20", "generation_tokens_total 21", 1) })
 	run("131", true)
-	text = strings.Replace(text, "num_requests_running 1", "num_requests_running 0", 1)
+	update(func() { text = strings.Replace(text, "num_requests_running 1", "num_requests_running 0", 1) })
 	run("161", true)
 	run("191", true)
-	health = 503
+	update(func() { health = 503 })
 	run("192", false)
-	health = 200
-	text = ""
+	update(func() { health, text = 200, "" })
 	run("193", false)
 }
 
