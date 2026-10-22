@@ -360,7 +360,7 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	container := corev1.Container{
 		Name:            "model",
 		Image:           image,
-		ImagePullPolicy: corev1.PullAlways,
+		ImagePullPolicy: modelImagePullPolicy(image),
 		Command:         command,
 		Args:            args,
 		Env:             env,
@@ -805,6 +805,23 @@ func llamaCppSlotDirectoryInitContainer(b backend.Backend, spec *backend.ModelSp
 		TerminationMessagePath:   "/dev/termination-log",
 		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
 	}
+}
+
+// modelImagePullPolicy keeps Always for tag references (floating tags such as
+// :rocm-gfx1100 are re-pushed in place, so a cached copy can be stale) but
+// uses IfNotPresent for digest pins. A digest is immutable, so a node that
+// already holds it must be able to start the pod without the registry:
+// Harbor retention drops any digest nothing pulled for 30 days once 30 newer
+// builds land in the repo, and the prewarm DaemonSets exist precisely to keep
+// the serving digests resident on the GPU nodes. With Always, the kubelet
+// re-resolves the digest on every pod start and a resident 11 GB image is
+// useless the moment the registry answers 404 (qwen38-27b-xtx-warm-canary,
+// 2026-10-20: 24 h of ImagePullBackOff beside a local copy of the same digest).
+func modelImagePullPolicy(image string) corev1.PullPolicy {
+	if strings.Contains(image, "@sha256:") {
+		return corev1.PullIfNotPresent
+	}
+	return corev1.PullAlways
 }
 
 func backendStartupProbe(b backend.Backend, spec *backend.ModelSpec) *corev1.Probe {

@@ -258,6 +258,10 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		log.Error(err, "Failed to detect GPU")
 		r.Recorder.Event(model, corev1.EventTypeWarning, "GPUDetectionFailed", err.Error())
 		if isNoMatchingNodesError(err) {
+			if parkErr := r.parkStaleDeployment(ctx, model); parkErr != nil {
+				log.Error(parkErr, "Failed to park stale Deployment")
+				return ctrl.Result{}, parkErr
+			}
 			setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonNoMatchingNodes, err.Error())
 			model.Status.Phase = aiv1alpha2.ModelPhaseFailed
 			if err := r.Status().Update(ctx, model); err != nil {
@@ -541,6 +545,57 @@ func (r *ModelReconciler) deploymentExists(ctx context.Context, model *aiv1alpha
 		return false, err
 	}
 	return true, nil
+}
+
+// parkStaleDeployment scales an existing Deployment to zero when the Model no
+// longer matches any GPU node AND the Deployment was rendered for a node
+// selector the Model no longer declares. The reconcile returns before
+// ensureDeployment on NoMatchingNodes, so without this the Deployment rendered
+// for the previous selector keeps running: its pod stays bound to the old
+// node, holds that node's device-plugin GPU slots, and is recreated with the
+// stale template after every node reboot. Observed 2026-10-21 on
+// qwen38-27b-xtx-warm-canary: the selector was parked on 2026-10-10 to a
+// hostname no node carries, yet a pod with the old selector landed on
+// cblevins-7900xtx after its reboot and sat in ImagePullBackOff holding both
+// amd.com/gpu slots for 24 h.
+//
+// A Deployment whose selector still matches the Model's is left alone: that
+// is the "every matching node is NotReady" case, and killing a warm pod during
+// a kubelet blip would turn a transient outage into a cold start.
+func (r *ModelReconciler) parkStaleDeployment(ctx context.Context, model *aiv1alpha2.Model) error {
+	deployment := &appsv1.Deployment{}
+	if err := r.Get(ctx, client.ObjectKeyFromObject(model), deployment); err != nil {
+		if errors.IsNotFound(err) {
+			return nil
+		}
+		return err
+	}
+	if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 {
+		return nil
+	}
+	if !nodeSelectorStale(model.Spec.NodeSelector, deployment.Spec.Template.Spec.NodeSelector) {
+		return nil
+	}
+	zero := int32(0)
+	deployment.Spec.Replicas = &zero
+	if err := r.Update(ctx, deployment); err != nil {
+		return err
+	}
+	r.Recorder.Eventf(model, corev1.EventTypeNormal, "DeploymentParked",
+		"Scaled Deployment %s to 0: it was rendered for a node selector the Model no longer declares", deployment.Name)
+	return nil
+}
+
+// nodeSelectorStale reports whether a rendered pod template's node selector
+// disagrees with the Model's declared selector on any key the Model declares.
+// Keys the controller adds on top of the declared selector are ignored.
+func nodeSelectorStale(declared, rendered map[string]string) bool {
+	for key, want := range declared {
+		if got, ok := rendered[key]; !ok || got != want {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *ModelReconciler) hasActiveModelPod(ctx context.Context, model *aiv1alpha2.Model) (bool, error) {
