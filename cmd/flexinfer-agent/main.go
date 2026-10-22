@@ -29,16 +29,21 @@ func main() {
 	interval := flag.Duration("interval", 30*time.Second, "How often to re-probe hardware.")
 	metricsPort := flag.Int("metrics-port", 9100, "Prometheus scrape port.")
 	labelPrefix := flag.String("label-prefix", "flexinfer.ai/", "Customize if conflicts with other labelers.")
+	probeTimeout := flag.Duration("probe-timeout", 15*time.Second, "Upper bound for each vendor-tool invocation (rocm-smi, rocminfo, nvidia-smi). A tool that exceeds it is abandoned and the GPU is reported degraded (probe-timeout).")
+	healthSentinel := flag.Bool("gpu-health-sentinel", true, "Publish the flexinfer.ai/gpu.health node label from sysfs/tool evidence (PCIe link down, SMU I/O errors, hung tools). Off, the agent still bounds tool timeouts but never marks a node degraded.")
 	flag.Parse()
 
-	setupLog.Info("Starting FlexInfer agent", "interval", *interval, "metricsPort", *metricsPort, "labelPrefix", *labelPrefix)
+	setupLog.Info("Starting FlexInfer agent", "interval", *interval, "metricsPort", *metricsPort, "labelPrefix", *labelPrefix,
+		"probeTimeout", *probeTimeout, "gpuHealthSentinel", *healthSentinel)
 
 	// Start the metrics exporter
 	exporter := metrics.NewExporter()
 	exporter.Run(fmt.Sprintf(":%d", *metricsPort))
 	setupLog.Info("Metrics exporter started")
 
-	nodeAgent, err := agent.NewAgent(*labelPrefix)
+	nodeAgent, err := agent.NewAgent(*labelPrefix,
+		agent.WithProbeTimeout(*probeTimeout),
+		agent.WithHealthSentinel(*healthSentinel))
 	if err != nil {
 		setupLog.Error(err, "Failed to create agent")
 		os.Exit(1)

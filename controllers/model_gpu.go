@@ -28,6 +28,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/flexinfer/flexinfer/pkg/gpu"
 )
 
@@ -389,24 +390,57 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 		return false
 	}
 
+	// Nodes that would have matched but carry the agent's degraded verdict.
+	// They are reported in the error so the Schedulable condition says why the
+	// lane is parked (GPUDegraded) rather than the generic NoMatchingNodes.
+	var degraded []string
+	noteDegraded := func(node *corev1.Node) {
+		reason := strings.TrimSpace(node.Annotations[constants.NodeAnnotationGPUHealthReason])
+		if reason == "" {
+			reason = "no reason recorded"
+		}
+		degraded = append(degraded, node.Name+": "+reason)
+	}
+
 	findFirst := func(vendor backend.GPUVendor) (nodeMatch, bool) {
 		for i := range nodes {
 			node := &nodes[i]
 			if !isNodeReady(*node) {
 				continue
 			}
+			var match nodeMatch
+			matched := false
 			switch vendor {
 			case backend.GPUVendorNVIDIA:
 				if arch, ok := nvidiaGPUArchFromNode(node); ok {
-					return nodeMatch{vendor: backend.GPUVendorNVIDIA, arch: arch}, true
+					match, matched = nodeMatch{vendor: backend.GPUVendorNVIDIA, arch: arch}, true
 				}
 			case backend.GPUVendorAMD:
 				if arch, ok := amdGPUArchFromNode(node); ok {
-					return nodeMatch{vendor: backend.GPUVendorAMD, arch: arch}, true
+					match, matched = nodeMatch{vendor: backend.GPUVendorAMD, arch: arch}, true
 				}
 			}
+			if !matched {
+				continue
+			}
+			if nodeGPUDegraded(node) {
+				noteDegraded(node)
+				continue
+			}
+			return match, true
 		}
 		return nodeMatch{}, false
+	}
+
+	noMatch := func(vendorWord string) error {
+		if len(degraded) > 0 {
+			return &noMatchingNodesError{
+				reason: fmt.Sprintf("no healthy %sGPU nodes match selector for model %s: %s=%s on %s",
+					vendorWord, model.Name, constants.NodeLabelGPUHealth, constants.GPUHealthDegraded, strings.Join(degraded, "; ")),
+				gpuDegraded: true,
+			}
+		}
+		return &noMatchingNodesError{reason: fmt.Sprintf("no %sGPU nodes match selector for model %s", vendorWord, model.Name)}
 	}
 
 	switch model.Spec.GetGPUVendor() {
@@ -414,12 +448,12 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 		if match, ok := findFirst(backend.GPUVendorNVIDIA); ok {
 			return match.vendor, match.arch, nil
 		}
-		return backend.GPUVendorUnknown, "", &noMatchingNodesError{reason: fmt.Sprintf("no NVIDIA GPU nodes match selector for model %s", model.Name)}
+		return backend.GPUVendorUnknown, "", noMatch("NVIDIA ")
 	case aiv1alpha2.GPUVendorAMD:
 		if match, ok := findFirst(backend.GPUVendorAMD); ok {
 			return match.vendor, match.arch, nil
 		}
-		return backend.GPUVendorUnknown, "", &noMatchingNodesError{reason: fmt.Sprintf("no AMD GPU nodes match selector for model %s", model.Name)}
+		return backend.GPUVendorUnknown, "", noMatch("AMD ")
 	default: // auto
 		nvidiaMatch, nvidiaOK := findFirst(backend.GPUVendorNVIDIA)
 		amdMatch, amdOK := findFirst(backend.GPUVendorAMD)
@@ -445,5 +479,12 @@ func (r *ModelReconciler) detectGPU(ctx context.Context, model *aiv1alpha2.Model
 		}
 	}
 
-	return backend.GPUVendorUnknown, "", &noMatchingNodesError{reason: fmt.Sprintf("no GPU nodes match selector for model %s", model.Name)}
+	return backend.GPUVendorUnknown, "", noMatch("")
+}
+
+// nodeGPUDegraded reports whether the node agent's GPU health sentinel has
+// marked the node's card unusable (flexinfer.ai/gpu.health=degraded).
+func nodeGPUDegraded(node *corev1.Node) bool {
+	return node != nil && node.Labels != nil &&
+		node.Labels[constants.NodeLabelGPUHealth] == constants.GPUHealthDegraded
 }

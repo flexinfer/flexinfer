@@ -26,6 +26,7 @@ The node agent performs comprehensive hardware discovery and applies labels to n
 | `flexinfer.ai/gpu.arch` | `gfx90a` / `sm_89` | GPU architecture identifier |
 | `flexinfer.ai/gpu.int4` | `true` | INT4 quantization support capability |
 | `flexinfer.ai/gpu.count` | `4` | Number of GPUs detected on the node |
+| `flexinfer.ai/gpu.health` | `ok` / `degraded` | GPU health sentinel verdict (see below). Honored by the scheduler extender and the controller. |
 | `flexinfer.ai/cpu.avx512` | `false` | CPU feature detection for fallback |
 
 The node agent also applies node annotations that the scheduler can use as heuristic inputs:
@@ -35,6 +36,52 @@ The node agent also applies node annotations that the scheduler can use as heuri
 | `flexinfer.ai/gpu.util` | `12.34` | Average GPU utilization (%) across all GPUs |
 | `flexinfer.ai/gpu-free-memory` | `24550` | Sum of free VRAM across GPUs (MB) |
 | `flexinfer.ai/kv-cache-usage` | `0.1234` | Best-effort KV-cache usage ratio from backend pod metrics |
+| `flexinfer.ai/gpu.health-reason` | `card0: pcie-link-down (current_link_speed=Unknown)` | Why `gpu.health` is `degraded`; empty while `ok` |
+| `flexinfer.ai/gpu.health-since` | `2026-10-22T20:03:11Z` | Time of the last `gpu.health` transition |
+
+### GPU health sentinel
+
+Every probe cycle starts with a sysfs-only health check of each discrete AMD
+card (`/sys/class/drm/cardN/device`), before any vendor tool runs. The checks
+are deliberately narrow — each signature has only ever been seen on a card
+that was genuinely gone (the 2026-10 RX 7900 XTX PCIe/SMU drops):
+
+| Reason | Evidence | Notes |
+|--------|----------|-------|
+| `pcie-link-down` | `current_link_speed` reads `Unknown` while `power/runtime_status` is not `suspended` | amdgpu reports `Unknown` only when the PCIe capability cannot be read. A runtime-suspended card (runpm/D3cold) legitimately reads `Unknown` and is skipped. |
+| `device-io-error` | `gpu_busy_percent`, `hwmon/*/temp1_input`, `power1_average` or `power1_input` fails with `EIO`/`EREMOTEIO`/`ENXIO`/`ENODEV` | The SMU stopped answering ("Remote I/O error"). A missing attribute is not a fault. |
+| `probe-timeout` | `rocm-smi`, `rocminfo` or `nvidia-smi` did not return within `--probe-timeout` (default 15 s) | On a wedged card those tools sit in uninterruptible sleep; the agent abandons the child (`exec.Cmd.WaitDelay`) instead of hanging with it. |
+| `gpu-missing` | A discrete card this agent process had enumerated is no longer in sysfs | |
+| `fallen-off-bus` | `nvidia-smi` printed "GPU has fallen off the bus" | |
+
+The iGPU heuristic used for labels (drop amdgpu devices far below the largest
+VRAM total) applies, so the Raphael iGPU on `cblevins-7900xtx` is never
+assessed. A `pcie-link-down` or `device-io-error` verdict also makes the agent
+skip the vendor tools for the rest of that cycle, so it does not add more
+processes to the ones already stuck in state D.
+
+A degraded verdict is immediate; recovery needs three consecutive clean cycles
+(~90 s) so a half-answering card does not flap the scheduler. What happens
+downstream:
+
+- **Scheduler extender** `Filter` rejects the node (`GPU degraded (...)` in
+  `FailedNodes`), whatever the stale `gpu-free-memory` annotation says.
+- **Controller** `detectGPU` passes over degraded nodes. A Model whose only
+  matching node is degraded gets `Schedulable=False` with reason
+  `GPUDegraded` (message names the node and the agent's reason), its
+  Deployment is parked (scaled to 0) and a `GPUDegraded` warning event is
+  recorded. A Node watch keyed on the label re-reconciles every GPU Model on
+  each flip, so parking and release do not wait for the periodic requeue.
+- **Proxy** answers requests for a parked Model with an immediate 503 instead
+  of a 25-minute cold-start timeout.
+- **Metrics / alert**: `flexinfer_gpu_healthy{gpu,node,vendor}` (1/0) and
+  `flexinfer_gpu_health_degraded_total{...,reason}`; the chart's
+  `FlexInferGPUDegraded` (critical, `alerting.thresholds.gpuDegradedFor`,
+  default 1m) pages the operator.
+
+`--gpu-health-sentinel=false` keeps the bounded tool timeouts but publishes no
+verdict (the label is left untouched, not removed). Recovery runbook:
+[operations.md](operations.md#gpu-health-sentinel).
 
 ### Implementation Details
 
@@ -58,7 +105,9 @@ If the agent cannot list pods in `flexinfer-system`, it will still label hardwar
 |------|---------|-------------|
 | `--interval` | `30s` | How often to re-probe hardware |
 | `--metrics-port` | `9100` | Prometheus scrape port |
-| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers |
+| `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers (the `gpu.health` keys are fixed, shared with the scheduler/controller) |
+| `--probe-timeout` | `15s` | Upper bound per vendor-tool invocation; exceeding it marks the GPU `probe-timeout` |
+| `--gpu-health-sentinel` | `true` | Publish the `flexinfer.ai/gpu.health` verdict |
 | `--dry-run` | `false` | Log actions without applying labels |
 | `--node-name` | auto-detected | Override node name for labeling |
 
