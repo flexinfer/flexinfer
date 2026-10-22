@@ -58,6 +58,11 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       `xtx-pcie-soak-2026-10-22`) hung the SMU within ~1 min at ~230 W / 1659 MHz — draw is not
       the trigger. Software knobs exhausted; next is a card swap with the 5930k's XTX. Node left
       cordoned.
+      2026-10-22 15:36Z: update audit found the kernel held at 6.14 HWE (board BIOS 1811 from
+      2023 is the other gap; GPU firmware was not behind). Staged 7.0.0-38 HWE, power cycle, same
+      posture and firmware: **soak PASSED** (600 s, 56.8 TFLOPS, 224-233 W, 0 SMU errors; row
+      `xtx-pcie-soak-2026-10-22b`). Node uncordoned. Next: vLLM-lane soak on the XTX (selector
+      restore + startable image), burn without the clock cap, BIOS 1811 → 3854/3881.
 - [x] Stale canary Deployment (rendered for the real hostname, recreated after the reboot, 24 h of
       ImagePullBackOff holding both `amd.com/gpu` slots) scaled to 0 by hand; controller now parks a
       Deployment whose rendered selector the Model no longer declares (this branch).

@@ -202,6 +202,14 @@ spec:
   # not the trigger; sustained compute is. Software knobs are exhausted; next
   # step is physical (swap the card with the 5930k's XTX to tell card from
   # host/PSU). Row `xtx-pcie-soak-2026-10-22`.
+  # 2026-10-22 15:36Z third soak PASSED after moving the host from kernel
+  # 6.14.0-24 to 7.0.0-38 (Ubuntu 24.04.5 HWE; same posture, same SMU
+  # 78.130.0 / MES 128 firmware): 600 s at 56.8 TFLOPS, 224-233 W, 79 C,
+  # zero SMU errors. First sustained load survived since 10-04; the 6.14
+  # amdgpu driver is the prime suspect. Row `xtx-pcie-soak-2026-10-22b`.
+  # Selector still parked here because this lane's digest `2e9652ed` is no
+  # longer in Harbor (pull policy Always): restore the hostname together with
+  # a startable image (IfNotPresent from !1097, or a repin) and soak the lane.
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx-gpu-offline
   resources:
