@@ -40,7 +40,37 @@
 - Hardware-utilization arc implementation plan (2026-06-03): `30-implementation-plan-hardware-utilization-2026-06-03.md`
 - RALPH model-tools Python 3.14 candidate (2026-08-01): `45-iteration-plan-model-tools-python314-canary-2026-08-01.md`
 
-## Current Goal (2026-09-13) - Idle gfx1100 cards → loom-core / Mills utilization
+## Current Goal (2026-10-21) - gfx1100 recovery: XTX still drops under load, runtime pins unpullable
+
+State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
+
+- [x] `cblevins-5930k`: Ready, `qwen38-27b-autoround-workhorse` Ready and answering through the
+      proxy in 0.95 s. The `FreeDiskSpaceFailed` events are the intentional 60/50 image-GC policy
+      finding nothing unused (prewarm pins every serving image); not a fault.
+- [x] `cblevins-7900xtx`: rebooted 2026-10-20 23:32Z (Ubuntu 24.04.3, 6.14.0-24, `amdgpu.runpm=0`);
+      card enumerated, link x16 Gen4, 0 amdgpu errors for 24 h idle. **Load soak FAILED**: an in-pod
+      fp16 matmul burn (70 TFLOPS, 283-308 W, 73 C) wedged the SMU at +2m41s — same signature as
+      10-04..10-10 (matrix row `xtx-pcie-soak-2026-10-21`). Fault is hardware/power-side, not runtime.
+      The warm-canary selector stays parked; the host needs a reboot (likely a hard one: ttm kworker +
+      the agent's `rocminfo` are in state D).
+- [x] Stale canary Deployment (rendered for the real hostname, recreated after the reboot, 24 h of
+      ImagePullBackOff holding both `amd.com/gpu` slots) scaled to 0 by hand; controller now parks a
+      Deployment whose rendered selector the Model no longer declares (this branch).
+- [x] **Registry**: Harbor retention (`flexinfer` project: keep latest-30-pushed OR pulled-within-30d,
+      weekly) deleted `runtime@2e9652ed` (17 refs: every dedicated gfx1100 vLLM lane incl. the live
+      workhorse), `@f7d2e967` (both gfx1100 runtime DaemonSets) and `@522d0fe2` (prewarm). Nodes
+      cannot re-push them: k3s containerd discards unpacked layer blobs, only snapshots remain. Any
+      restart of a dedicated gfx1100 lane fails to pull (policy Always). Controller now uses
+      IfNotPresent for digest pins so a resident image starts without the registry (this branch).
+- [ ] Decide the repin: (a) rescue single-layer images from the 5930k snapshots (identical rootfs,
+      new digests, immutable `-rescued` tags) as the rollback anchor, and/or (b) promote the
+      qualified v0.26 native-W4A16 build (`ad93ae72` / `93c93733`, #74 S2) onto the 5930k workhorse
+      with a canary. Until then: do not restart `qwen38-27b-autoround-workhorse`.
+- [ ] Retention guard (gitops): add an `always` retain rule for `pinned-*` tags to the `flexinfer`
+      project policy and tag every digest referenced from `deploy/` (extend `runtime_pin_drift` or the
+      `harbor-buildcache-retention-ensure` cronjob).
+
+## Previous Goal (2026-09-13) - Idle gfx1100 cards → loom-core / Mills utilization
 
 Research: `10-research-flexinfer-utilization-loom-mills-2026-09-13.md`. The 7900 XTX is
 0.0015% busy over 30d and the 5930k workhorse cold-starts (>300 s, 12/12) after every
