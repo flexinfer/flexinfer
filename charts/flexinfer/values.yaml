@@ -603,6 +603,10 @@ alerting:
     gpuTempFor: "5m"
     vramFreeRatio: 0.1  # <10% free VRAM
     vramLowFor: "5m"
+    # flexinfer_gpu_healthy == 0 (node agent GPU health sentinel) for this long
+    # fires FlexInferGPUDegraded (critical). The scheduler/controller react to
+    # the node label immediately; this only paces the page.
+    gpuDegradedFor: "1m"
   # Optional node-exporter alerts for Docker/BuildKit builder filesystems.
   # Enable only in clusters where Prometheus can see node_filesystem_* metrics.
   buildNodeDisk:

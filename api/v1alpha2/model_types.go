@@ -95,6 +95,11 @@ const (
 	ReasonKVPoolRecheck = "KVPoolRecheck"
 	// ReasonNoMatchingNodes - no nodes match the model's GPU/selector requirements
 	ReasonNoMatchingNodes = "NoMatchingNodes"
+	// ReasonGPUDegraded - the only nodes matching the selector carry the node
+	// agent's flexinfer.ai/gpu.health=degraded label (PCIe link down, SMU
+	// unresponsive, hung vendor tools). The Deployment is parked until the
+	// agent clears the label; the proxy fast-fails requests meanwhile.
+	ReasonGPUDegraded = "GPUDegraded"
 	// ReasonAmbiguousGPUVendor - multiple GPU vendors found, must specify gpu.vendor
 	ReasonAmbiguousGPUVendor = "AmbiguousGPUVendor"
 	// ReasonBackendUnsupported - backend does not support the detected GPU vendor

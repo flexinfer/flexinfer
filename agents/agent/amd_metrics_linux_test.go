@@ -43,17 +43,3 @@ func TestDetectAMDMetrics_MergesSysfsWhenMemMissing(t *testing.T) {
 		t.Fatalf("expected sysfs utilization=27, got %.2f", metrics[0].Utilization)
 	}
 }
-
-func mkdirAll(t *testing.T, path string) {
-	t.Helper()
-	if err := os.MkdirAll(path, 0o755); err != nil {
-		t.Fatalf("mkdir %s: %v", path, err)
-	}
-}
-
-func writeFile(t *testing.T, path, contents string) {
-	t.Helper()
-	if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-		t.Fatalf("write %s: %v", path, err)
-	}
-}

@@ -84,6 +84,30 @@ var (
 		[]string{"gpu", "node", "vendor"},
 	)
 
+	// GPUHealthy is the node agent's per-card health verdict: 1 while the card
+	// answers (PCIe link up, SMU/driver reads succeed, vendor tools return in
+	// time), 0 once the agent marks it degraded. Mirrors the node label
+	// flexinfer.ai/gpu.health; the reason is on the node annotation
+	// flexinfer.ai/gpu.health-reason and in GPUHealthDegradedTotal.
+	GPUHealthy = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_healthy",
+			Help: "Whether the node agent considers the GPU healthy (1) or degraded (0).",
+		},
+		[]string{"gpu", "node", "vendor"},
+	)
+
+	// GPUHealthDegradedTotal counts healthy->degraded transitions per card and
+	// reason (pcie-link-down, device-io-error, probe-timeout, gpu-missing,
+	// fallen-off-bus).
+	GPUHealthDegradedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_gpu_health_degraded_total",
+			Help: "Number of times the node agent marked a GPU degraded, by reason.",
+		},
+		[]string{"gpu", "node", "vendor", "reason"},
+	)
+
 	// GPUComputeUtilizationPercent tracks GPU compute (core busy) utilization as a
 	// percentage. Distinct from VRAM utilization: this is how busy the shader/compute
 	// engine is — the signal for fleet idle-time (near-zero means an idle card).
@@ -596,6 +620,8 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(GPUVRAMUsedBytes)
 	ctrlmetrics.Registry.MustRegister(GPUVRAMUtilizationPercent)
 	ctrlmetrics.Registry.MustRegister(GPUComputeUtilizationPercent)
+	ctrlmetrics.Registry.MustRegister(GPUHealthy)
+	ctrlmetrics.Registry.MustRegister(GPUHealthDegradedTotal)
 
 	// ModelCache LRU eviction metrics
 	ctrlmetrics.Registry.MustRegister(ModelCacheResidentSeconds)

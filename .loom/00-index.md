@@ -83,6 +83,19 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       cannot re-push them: k3s containerd discards unpacked layer blobs, only snapshots remain. Any
       restart of a dedicated gfx1100 lane fails to pull (policy Always). Controller now uses
       IfNotPresent for digest pins so a resident image starts without the registry (this branch).
+- [x] 2026-10-22 (this branch, `claude/gfx1100-inference-optimization-323ab7`): **GPU health sentinel**
+      so the next drop parks itself. Agent: sysfs-first per-card check (`current_link_speed=Unknown`
+      on an awake card, EIO/EREMOTEIO on SMU-backed reads, vanished card) plus bounded vendor-tool
+      timeouts (`--probe-timeout` 15 s + `WaitDelay`; the agent hung in `rocminfo` during every drop)
+      → node label `flexinfer.ai/gpu.health=ok|degraded` + reason/since annotations +
+      `flexinfer_gpu_healthy`. Scheduler `Filter` rejects degraded nodes; controller `detectGPU`
+      skips them and reports `Schedulable=False/GPUDegraded` (Deployment parked, event) with a Node
+      watch for instant park/release; chart alert `FlexInferGPUDegraded`. Replaces the by-hand
+      `cblevins-7900xtx-gpu-offline` selector trick. Runbook
+      `docs/agents/operations.md#gpu-health-sentinel`. Live kill-test pending: needs the agent and
+      controller image pins moved after CI publishes, then a sysfs fault injection is not possible
+      without a real wedge — verify on the next drop (or by temporarily setting
+      `--probe-timeout=1ms` on one node to force `probe-timeout`).
 - [ ] Decide the repin: (a) rescue single-layer images from the 5930k snapshots (identical rootfs,
       new digests, immutable `-rescued` tags) as the rollback anchor, and/or (b) promote the
       qualified v0.26 native-W4A16 build (`ad93ae72` / `93c93733`, #74 S2) onto the 5930k workhorse
