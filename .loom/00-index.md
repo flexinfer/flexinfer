@@ -70,6 +70,10 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       p95 15 s, 182-190 W, 0 SMU errors (row `xtx-vllm-soak-2026-10-22`). `mills-warm` /
       `mills-council` are back on the XTX. Remaining: burn without the clock cap, BIOS update,
       `2e9652ed` repin (#74 S2), kernel 7.0 sits above ROCm's listed 6.17 ceiling.
+- [x] 2026-10-22 20:03Z cap-free burn PASSED with the lane resident (row `xtx-pcie-soak-2026-10-22c`):
+      73 TFLOPS pinned at the 294 W floor, ~2100 MHz, 80 C, 0 SMU errors. The 1700 MHz cap does not
+      matter on 7.0; the boot unit still applies it until changed (decision pending). Remaining:
+      BIOS 1811 → 3854/3881, `2e9652ed` repin, kernel 7.0 vs ROCm's 6.17 ceiling.
 - [x] Stale canary Deployment (rendered for the real hostname, recreated after the reboot, 24 h of
       ImagePullBackOff holding both `amd.com/gpu` slots) scaled to 0 by hand; controller now parks a
       Deployment whose rendered selector the Model no longer declares (this branch).
