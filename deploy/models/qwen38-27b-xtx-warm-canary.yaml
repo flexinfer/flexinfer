@@ -230,8 +230,23 @@ spec:
   # from the image resident on the node (IfNotPresent for digest pins). This
   # boot is the vLLM-level soak; park again (`cblevins-7900xtx-gpu-offline`)
   # if the SMU hangs under real load.
+  # 2026-10-22 23:16Z PARKED AGAIN (the rule above): the card dropped off the
+  # bus 2m54s into the first concurrency-2 soak on the vLLM 0.26 image
+  # (!1107) under the cap-free posture: 40/40 completions at 37 tok/s per
+  # stream, host 302-307 W / 2780-2837 MHz / 69-73 C junction, then the
+  # engine stalled (requests hung 371 s), the controller killed the pod at
+  # 23:22:54Z (EngineStalled), dmesg logged `SMU: bus error for message:
+  # TransferTableSmu2Dram(18) response:0xFFFFFFFF` from 23:23:13Z and
+  # `device lost from bus!` at 23:27:33Z; rocm-smi dead, 17 D-state tasks,
+  # the replacement pod never Ready. Same signature as 10-04..10-22, but
+  # the first on kernel 7.0.0-38 and the first at uncapped clocks (the 7.0
+  # passes were a <=2100 MHz burn and vLLM 0.23 at 1653-1748 MHz under the
+  # 1700 MHz cap). The 0.26 functional canary had passed (row
+  # gfx1100-native-w4a16-2026-10-22: identical answers, 43.0 tok/s). Needs
+  # a hard power cycle; restore the hostname only with a posture decision
+  # (clock cap back?) and another soak. Image pin stays on ad93ae72.
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx
+    kubernetes.io/hostname: cblevins-7900xtx-gpu-offline
   resources:
     requests:
       cpu: "4"
