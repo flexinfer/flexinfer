@@ -196,6 +196,12 @@ spec:
   # Same signature as 10-04..10-10, so the fault is not runtime-side. The
   # selector stays parked; evidence row `xtx-pcie-soak-2026-10-21` in
   # .loom/60-validation-matrix.md.
+  # 2026-10-22 13:19Z second soak FAILED under a lower-draw posture (DPM auto,
+  # 294 W floor, overdrive max sclk 1700 MHz, ASPM off, after a hard power
+  # cycle): the SMU hung within ~1 min at 227-230 W / 1659 MHz / 58 C. Draw is
+  # not the trigger; sustained compute is. Software knobs are exhausted; next
+  # step is physical (swap the card with the 5930k's XTX to tell card from
+  # host/PSU). Row `xtx-pcie-soak-2026-10-22`.
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx-gpu-offline
   resources:

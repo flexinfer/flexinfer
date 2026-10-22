@@ -53,6 +53,11 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       10-04..10-10 (matrix row `xtx-pcie-soak-2026-10-21`). Fault is hardware/power-side, not runtime.
       The warm-canary selector stays parked; the host needs a reboot (likely a hard one: ttm kworker +
       the agent's `rocminfo` are in state D).
+      2026-10-22: the warm reboot hung for 12 h (hard power cycle needed). Second soak under a
+      lower-draw posture (DPM auto, 294 W floor, OD max sclk 1700 MHz, ASPM off; row
+      `xtx-pcie-soak-2026-10-22`) hung the SMU within ~1 min at ~230 W / 1659 MHz — draw is not
+      the trigger. Software knobs exhausted; next is a card swap with the 5930k's XTX. Node left
+      cordoned.
 - [x] Stale canary Deployment (rendered for the real hostname, recreated after the reboot, 24 h of
       ImagePullBackOff holding both `amd.com/gpu` slots) scaled to 0 by hand; controller now parks a
       Deployment whose rendered selector the Model no longer declares (this branch).
