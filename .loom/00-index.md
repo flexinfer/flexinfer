@@ -63,6 +63,13 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       posture and firmware: **soak PASSED** (600 s, 56.8 TFLOPS, 224-233 W, 0 SMU errors; row
       `xtx-pcie-soak-2026-10-22b`). Node uncordoned. Next: vLLM-lane soak on the XTX (selector
       restore + startable image), burn without the clock cap, BIOS 1811 → 3854/3881.
+- [x] 2026-10-22 17:16Z: !1097 merged; !1100 moved the controller digest pin in `values-k3s.yaml`
+      so it actually rolled (`IfNotPresent` for digest pins live; the workhorse restarted once from
+      its resident image); !1099 restored the warm-canary selector. Lane Ready in 2m15s from the
+      node-resident `2e9652ed` image, then **vLLM soak PASSED**: 120/120 completions, 56.2 tok/s,
+      p95 15 s, 182-190 W, 0 SMU errors (row `xtx-vllm-soak-2026-10-22`). `mills-warm` /
+      `mills-council` are back on the XTX. Remaining: burn without the clock cap, BIOS update,
+      `2e9652ed` repin (#74 S2), kernel 7.0 sits above ROCm's listed 6.17 ceiling.
 - [x] Stale canary Deployment (rendered for the real hostname, recreated after the reboot, 24 h of
       ImagePullBackOff holding both `amd.com/gpu` slots) scaled to 0 by hand; controller now parks a
       Deployment whose rendered selector the Model no longer declares (this branch).
