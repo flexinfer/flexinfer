@@ -34,8 +34,13 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
-    digest: "sha256:d180631fda3ef13960c134047382141bb30d28da20820f04ccba335b83f3b970"
-    tag: "humanizer-fastswaps-cc7273917"
+    # 2026-10-22: master 03346e25 (!1097): digest pins render IfNotPresent so a
+    # lane whose digest Harbor dropped starts from the node-resident image, and
+    # a Deployment rendered for a selector the Model no longer declares is
+    # parked. Superset of the cc7273917 drain contract. Rolling it restarts
+    # each Ready digest-pinned lane once (maxSurge 0).
+    digest: "sha256:ad282b0b1362f6cd7371a1077004bc6b867162ae74279b66f792f1236d0643b5"
+    tag: "20261022-160928"
   resources:
     limits:
       cpu: 1000m
