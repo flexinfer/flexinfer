@@ -4098,3 +4098,114 @@ func TestEnsureDeploymentServingDefaultsDisabled(t *testing.T) {
 		t.Fatalf("ephemeral-storage request present with no default configured")
 	}
 }
+
+func TestNodeSelectorStale(t *testing.T) {
+	tests := []struct {
+		name     string
+		declared map[string]string
+		rendered map[string]string
+		want     bool
+	}{
+		{name: "no declared selector", rendered: map[string]string{"kubernetes.io/hostname": "node-a"}, want: false},
+		{
+			name:     "same host with controller-added keys",
+			declared: map[string]string{"kubernetes.io/hostname": "node-a"},
+			rendered: map[string]string{"kubernetes.io/hostname": "node-a", "flexinfer.ai/gpu.arch": "gfx1100"},
+			want:     false,
+		},
+		{
+			name:     "host parked to an unmatched hostname",
+			declared: map[string]string{"kubernetes.io/hostname": "node-a-gpu-offline"},
+			rendered: map[string]string{"kubernetes.io/hostname": "node-a"},
+			want:     true,
+		},
+		{name: "declared key absent from render", declared: map[string]string{"kubernetes.io/hostname": "node-a"}, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := nodeSelectorStale(tt.declared, tt.rendered); got != tt.want {
+				t.Fatalf("nodeSelectorStale() = %v, want %v", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestParkStaleDeployment(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := appsv1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	if err := corev1.AddToScheme(s); err != nil {
+		t.Fatal(err)
+	}
+	newDeployment := func(host string, replicas int32) *appsv1.Deployment {
+		return &appsv1.Deployment{
+			ObjectMeta: metav1.ObjectMeta{Name: "xtx-lane", Namespace: "flexinfer-system"},
+			Spec: appsv1.DeploymentSpec{
+				Replicas: ptr.To(replicas),
+				Template: corev1.PodTemplateSpec{
+					Spec: corev1.PodSpec{NodeSelector: map[string]string{"kubernetes.io/hostname": host}},
+				},
+			},
+		}
+	}
+	newModel := func(host string) *aiv1alpha2.Model {
+		return &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{Name: "xtx-lane", Namespace: "flexinfer-system"},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend:      "vllm",
+				NodeSelector: map[string]string{"kubernetes.io/hostname": host},
+			},
+		}
+	}
+
+	tests := []struct {
+		name         string
+		deployment   *appsv1.Deployment
+		model        *aiv1alpha2.Model
+		wantReplicas int32
+		wantEvent    bool
+	}{
+		{name: "no deployment", model: newModel("node-a-gpu-offline")},
+		{name: "stale selector is parked", deployment: newDeployment("node-a", 1), model: newModel("node-a-gpu-offline"), wantReplicas: 0, wantEvent: true},
+		{name: "matching selector is left alone", deployment: newDeployment("node-a", 1), model: newModel("node-a"), wantReplicas: 1},
+		{name: "already parked", deployment: newDeployment("node-a", 0), model: newModel("node-a-gpu-offline"), wantReplicas: 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			builder := fake.NewClientBuilder().WithScheme(s)
+			if tt.deployment != nil {
+				builder = builder.WithObjects(tt.deployment)
+			}
+			recorder := record.NewFakeRecorder(4)
+			r := &ModelReconciler{Client: builder.Build(), Recorder: recorder}
+
+			if err := r.parkStaleDeployment(context.Background(), tt.model); err != nil {
+				t.Fatalf("parkStaleDeployment() error = %v", err)
+			}
+			if tt.deployment == nil {
+				return
+			}
+			got := &appsv1.Deployment{}
+			if err := r.Get(context.Background(), client.ObjectKeyFromObject(tt.deployment), got); err != nil {
+				t.Fatal(err)
+			}
+			if got.Spec.Replicas == nil || *got.Spec.Replicas != tt.wantReplicas {
+				t.Fatalf("replicas = %v, want %d", got.Spec.Replicas, tt.wantReplicas)
+			}
+			select {
+			case ev := <-recorder.Events:
+				if !tt.wantEvent {
+					t.Fatalf("unexpected event %q", ev)
+				}
+				if !strings.Contains(ev, "DeploymentParked") {
+					t.Fatalf("event = %q, want DeploymentParked", ev)
+				}
+			default:
+				if tt.wantEvent {
+					t.Fatal("expected a DeploymentParked event")
+				}
+			}
+		})
+	}
+}

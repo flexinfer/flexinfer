@@ -524,3 +524,21 @@ func TestPodObjectEqual(t *testing.T) {
 		}
 	})
 }
+
+func TestModelImagePullPolicy(t *testing.T) {
+	tests := []struct {
+		image string
+		want  corev1.PullPolicy
+	}{
+		{"registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d", corev1.PullIfNotPresent},
+		{"registry.harbor.lan/flexinfer/runtime:rocm-gfx1100-serving@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0", corev1.PullIfNotPresent},
+		{"registry.harbor.lan/flexinfer/runtime:rocm-gfx1100", corev1.PullAlways},
+		{"registry.harbor.lan/flexinfer/vllm:latest", corev1.PullAlways},
+		{"vllm/vllm-openai-rocm", corev1.PullAlways},
+	}
+	for _, tt := range tests {
+		if got := modelImagePullPolicy(tt.image); got != tt.want {
+			t.Errorf("modelImagePullPolicy(%q) = %s, want %s", tt.image, got, tt.want)
+		}
+	}
+}
