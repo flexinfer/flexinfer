@@ -97,10 +97,22 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       controller image pins moved after CI publishes, then a sysfs fault injection is not possible
       without a real wedge — verify on the next drop (or by temporarily setting
       `--probe-timeout=1ms` on one node to force `probe-timeout`).
-- [ ] Decide the repin: (a) rescue single-layer images from the 5930k snapshots (identical rootfs,
+- [x] Decide the repin: (a) rescue single-layer images from the 5930k snapshots (identical rootfs,
       new digests, immutable `-rescued` tags) as the rollback anchor, and/or (b) promote the
       qualified v0.26 native-W4A16 build (`ad93ae72` / `93c93733`, #74 S2) onto the 5930k workhorse
       with a canary. Until then: do not restart `qwen38-27b-autoround-workhorse`.
+      2026-10-22 23:3xZ: (b) chosen, no rebuild needed — the plugin port landed 09-14 and `ad93ae72`
+      was still in Harbor (`pinned-ad93ae726bbe`). !1106 prewarmed it on both gfx1100 nodes; !1107
+      rolled the XTX warm lane onto it as the target-node canary: identical answers, 43.0 tok/s,
+      pool 103,517 (1.58x at 0.94; 0.26 charges cudagraph memory to the budget → draft !1108 for
+      0.96), 40/40 concurrent completions at 37 tok/s per stream — then **the card dropped off the
+      bus 2m54s into the soak** (SMU bus error, `device lost from bus!`; first time on kernel 7.0
+      and at uncapped 2.8 GHz / 307 W). Lane parked again (!1109), pin stays `ad93ae72`. This MR
+      moves the workhorse (0.96). Evidence row `gfx1100-native-w4a16-2026-10-22`. `2e9652ed` stays
+      in both prewarm lists as the rollback anchor (node snapshots only); (a) is no longer needed.
+- [ ] XTX after the hard power cycle: decide the posture (clock cap back? the two kernel-7.0 passes
+      were ≤2100 MHz burn and ≤1748 MHz vLLM 0.23 under the cap; the 0.26 drop was at 2780-2837 MHz),
+      restore the hostname selector, re-soak on `ad93ae72`, then merge !1108.
 - [ ] Retention guard (gitops): add an `always` retain rule for `pinned-*` tags to the `flexinfer`
       project policy and tag every digest referenced from `deploy/` (extend `runtime_pin_drift` or the
       `harbor-buildcache-retention-ensure` cronjob).

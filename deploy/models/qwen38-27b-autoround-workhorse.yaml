@@ -36,9 +36,27 @@ metadata:
     flexinfer.ai/promotion-evidence: "canary qwen38-27b-clean-autoround-canary ladder 2026-08-16: eager 6/6 gauntlet + graph 6/6 (34.9-40.5 tok/s vs 3.6's 39.0), needle 1/1 @28,842 + 1/1 @60,973 tokens, decode 35.4 tok/s @31,602 ctx (3.6: 36.3), RDNA3W4A16LinearKernel, KV pool 68,549 tok @64K"
 spec:
   backend: vllm
-  # Pinned vLLM 0.23 gfx1100 runtime with the native RDNA3 W4A16 HIP operator —
-  # the exact digest the 3.6 AND 3.8 qualification ladders passed against.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+  # 2026-10-22 (issue #74 S2, vLLM currency): REPINNED from `2e9652ed` — the
+  # July vLLM 0.23 build with the native RDNA3 W4A16 HIP operator that the 3.6
+  # AND 3.8 qualification ladders passed against. Harbor retention deleted
+  # that digest (2026-10-17/21, row gfx1100-runtime-pins-2026-10-21) and its
+  # CI job had been repointed to v0.26 in place, so it cannot be rebuilt; it
+  # survived only as this node's containerd snapshot under the prewarm
+  # DaemonSet, one reinstall or image GC away from ending the lane. Now on
+  # `ad93ae72` (rocm-gfx1100-v026-native-w4a16-a106504c, master a106504c
+  # 2026-09-14: vLLM 0.26.0 + the same RDNA3 W4A16 kernel, plugin 0.8.0 on
+  # 0.26's FLA layout; Harbor tag pinned-ad93ae726bbe; prewarmed here by
+  # !1106). Qualified on this node 2026-09-14 at this 64K / two-sequence
+  # envelope (rows gfx1100-native-w4a16-2026-09-14-seqs2 / -096: 3/3 probes,
+  # 41.3 tok/s vs 41.7 on v023, 65K recall in JSON mode, tools, cancellation,
+  # 82-request soak). Canaried on the XTX warm lane first (row
+  # gfx1100-native-w4a16-2026-10-22): identical answers, 43.0 tok/s vs 43.1,
+  # 40/40 concurrent completions, then the XTX card dropped off the bus
+  # (its known SMU/PCIe signature, not a runtime fault; lane parked). Every
+  # other knob below is unchanged except gpuMemoryUtilization (see there).
+  # Rollback = `2e9652ed` (still resident on this node, IfNotPresent, held
+  # by the prewarm list): revert this line.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     # 19.0 GB artifact. Serving needs NO on-disk config surgery (hfOverrides
@@ -134,7 +152,17 @@ spec:
     # profiles a short pool again. The lane's 7-day p95 is 18K prompt +
     # 4.3K generation; vLLM preempts only when two long requests collide.
     schedulerReserveFullISL: false
-    gpuMemoryUtilization: "0.94"
+    # 2026-10-22 (vLLM 0.26 repin): 0.94 -> 0.96, the value this digest was
+    # qualified with on this node on 2026-09-14 (rows gfx1100-native-w4a16-
+    # 2026-09-14-seqs2 / -096: 129,615 tokens warm, 72,817 on a fresh
+    # compile). vLLM >= 0.21 charges cudagraph capture memory to this budget
+    # ("0.94 is equivalent to 0.9232 without CUDA graph memory profiling"):
+    # on the XTX roll the same 0.94 profiled 103,517 tokens (1.58x) against
+    # 132,561 (2.02x) on 0.23, and the cold-compile-cache first boot left
+    # 1.54 GiB (< the 2.15 GiB one 64K request needs) and crashed once. The
+    # card hosts nothing else (vramEstimateMB 22000 = whole card). Rollback
+    # = 0.94 (1.58x, still above the KVPoolShort line of 1.5x).
+    gpuMemoryUtilization: "0.96"
     # fp8 KV (the 2026-08-16 context push moved this lane off fp16; research
     # doc 8c's dequant-tax note applied to the earlier runtime).
     kvCacheDtype: fp8_e4m3
