@@ -202,11 +202,26 @@ scheduler:
     requests:
       cpu: 100m
       memory: 128Mi
-  # Pin the scheduler to a healthy control-plane GPU node with the image cached.
+  # Any healthy amd64 control-plane node, preferring cblevins-7900xtx (image
+  # already cached there). The scheduler mounts only an emptyDir and its own
+  # ConfigMap and needs no GPU, so the former hostname pin had no hard
+  # dependency behind it — it only turned that host's outage into a
+  # cluster-wide control-plane outage (2026-10-22: NotReady at 00:37Z, the
+  # replacement pod sat Pending >11h on "didn't match Pod's node
+  # affinity/selector"). Same shape as controller/proxy above.
   nodeSelector:
     kubernetes.io/arch: amd64
-    kubernetes.io/hostname: cblevins-7900xtx
     node-role.kubernetes.io/control-plane: "true"
+  affinity:
+    nodeAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+              - key: kubernetes.io/hostname
+                operator: In
+                values:
+                  - cblevins-7900xtx
   tolerations:
     - key: node-role.kubernetes.io/control-plane
       operator: Exists
