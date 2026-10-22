@@ -11,7 +11,7 @@
 # Parsed by build-runtime.sh via yq.
 
 registry: registry.harbor.lan/flexinfer
-go_version: "1.26.9"
+go_version: "1.26.10"
 llamacpp_version: "b8173"
 ollama_version: "v0.17.4"
 ollama_go_version: "1.25.7"
