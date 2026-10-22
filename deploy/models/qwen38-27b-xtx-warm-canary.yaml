@@ -74,7 +74,22 @@ spec:
   # vLLM 0.26 no longer ships (ModuleNotFoundError before the engine starts).
   # The v0.26 build was never qualified for Qwen3.5 lanes; S2 needs a rebuilt
   # native-W4A16 image whose plugin tracks 0.26's FLA layout. Back on v023.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+  # 2026-10-22 (issue #74 S2, canary roll): REPINNED to `ad93ae72`
+  # (rocm-gfx1100-v026-native-w4a16-a106504c, master a106504c 2026-09-14:
+  # vLLM 0.26.0 + the RDNA3 W4A16 kernel, plugin 0.8.0 on 0.26's FLA
+  # layout; Harbor tag pinned-ad93ae726bbe; prewarmed on this node by
+  # !1106). Why now: Harbor retention deleted `2e9652ed` (row
+  # gfx1100-runtime-pins-2026-10-21); it survives only as this node's
+  # containerd snapshot under the prewarm DaemonSet, so a reinstall or
+  # image GC ends the lane for good, and the digest cannot be rebuilt. The
+  # 5930k qualified `ad93ae72` on 2026-09-14 at this 64K / two-sequence
+  # envelope (rows gfx1100-native-w4a16-2026-09-14-seqs2 / -096: 3/3
+  # probes, 41.3 tok/s vs 41.7 on v023, 65K recall, tools, cancellation,
+  # 82-request soak). This lane rolls first as the canary vehicle for the
+  # target node; the 5930k workhorse follows on pass (row
+  # gfx1100-native-w4a16-2026-10-22). Rollback = `2e9652ed` (still
+  # resident here, IfNotPresent): revert this line.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     strategy: Local
