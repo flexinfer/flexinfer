@@ -210,8 +210,13 @@ spec:
   # Selector still parked here because this lane's digest `2e9652ed` is no
   # longer in Harbor (pull policy Always): restore the hostname together with
   # a startable image (IfNotPresent from !1097, or a repin) and soak the lane.
+  # 2026-10-22 16:05Z RESTORED (operator decision): kernel 7.0.0-38 soak passed
+  # (row `xtx-pcie-soak-2026-10-22b`) and !1097 is merged, so this lane starts
+  # from the image resident on the node (IfNotPresent for digest pins). This
+  # boot is the vLLM-level soak; park again (`cblevins-7900xtx-gpu-offline`)
+  # if the SMU hangs under real load.
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx-gpu-offline
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "4"
