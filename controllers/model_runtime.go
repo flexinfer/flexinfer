@@ -167,7 +167,7 @@ func (r *ModelReconciler) reconcileViaRuntime(
 			}
 			setModelCondition(model, aiv1alpha2.ConditionModelReady, false, reason, message)
 			r.removeRuntimeEndpoints(ctx, model)
-			if err := r.Status().Update(ctx, model); err != nil {
+			if err := r.persistStatus(ctx, model); err != nil {
 				log.Error(err, "Failed to update preempted runtime status")
 			}
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
@@ -291,7 +291,11 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		}
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady
 		clearLoadingStatus(model)
-		if err := r.Status().Update(ctx, model); err != nil {
+		// Steady state — phase, endpoint, conditions and placement all already
+		// recorded — writes nothing. This branch runs on every periodic pass of
+		// every Ready runtime-served Model, so an unconditional write here was
+		// the API-server churn and the lastActiveTime race (see persistStatus).
+		if err := r.persistStatus(ctx, model); err != nil {
 			log.Error(err, "Failed to update status")
 			return ctrl.Result{}, err
 		}
@@ -310,13 +314,22 @@ func (r *ModelReconciler) reconcileViaRuntime(
 			setModelCondition(model, ConditionEngineStalled, true, ReasonEngineStalled, message)
 			metrics.ModelEngineStalled.WithLabelValues(model.Name, model.Namespace).Set(1)
 		}
+		// Warn once per failure, not once per pass: a Failed Model keeps
+		// reconciling on the periodic cadence until it is fixed or deleted.
+		alreadyRecorded := model.Status.Phase == aiv1alpha2.ModelPhaseFailed
+		if ready := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelReady); alreadyRecorded &&
+			(ready == nil || ready.Reason != "RuntimeFailed" || ready.Message != status.Error) {
+			alreadyRecorded = false
+		}
 		r.removeRuntimeEndpoints(ctx, model)
 		model.Status.Endpoint = ""
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
 		clearLoadingStatus(model)
 		setModelCondition(model, aiv1alpha2.ConditionModelReady, false, "RuntimeFailed", status.Error)
-		r.Recorder.Event(model, corev1.EventTypeWarning, "RuntimeFailed", status.Error)
-		if err := r.Status().Update(ctx, model); err != nil {
+		if !alreadyRecorded {
+			r.Recorder.Event(model, corev1.EventTypeWarning, "RuntimeFailed", status.Error)
+		}
+		if err := r.persistStatus(ctx, model); err != nil {
 			log.Error(err, "Failed to update status")
 			return ctrl.Result{}, err
 		}
@@ -448,7 +461,9 @@ func (r *ModelReconciler) updateRuntimeStatus(
 	setModelCondition(model, aiv1alpha2.ConditionModelReady, ready, reason, message)
 	r.recordPhaseMetrics(model, oldPhase, phase)
 	r.removeRuntimeEndpoints(ctx, model)
-	return r.Status().Update(ctx, model)
+	// Idle, Pending and Loading members sit in this helper on every periodic
+	// pass; the write is skipped when the pass reproduced the recorded status.
+	return r.persistStatus(ctx, model)
 }
 
 func (r *ModelReconciler) ensureRuntimeNetworking(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, port int32) error {

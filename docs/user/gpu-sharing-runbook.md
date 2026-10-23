@@ -56,7 +56,7 @@ Source: controllers/model_shared_gpu.go, lines 43-46, 87-94
 
 ### Leader Election
 
-The controller runs `chooseSharedGroupLeader()` every 3 seconds (`requeueFast`) for each shared group. The algorithm proceeds in four stages:
+The controller runs `chooseSharedGroupLeader()` on every reconcile of a group member. A member is re-enqueued as soon as something that can change the outcome happens — the proxy stamps `lastActiveTime` on it, a sibling changes `phase` or `sharedGroup.state`, a `GPULease` or `GamingSession` appears or goes away, a node's GPU health label flips, the runtime pod changes — and otherwise every 30 seconds (`requeueSharedSteady`) to catch the time-based inputs: demand windows, the swap cooldown, idle timeouts and lease TTLs. A member whose state the election just changed is polled every 3 seconds (`requeueFast`) until it settles. The algorithm proceeds in four stages:
 
 1. **Anti-thrashing gate** -- If any model has a `PreemptedAt` timestamp within the cooldown window, the current `Active` model keeps its position.
 2. **Classification** -- Models are classified into: `readyLeader` (Phase=Ready), `demandedLeader` (LastActiveTime within 2 min), `recentLeader` (LastActiveTime within 5 min), `warmPrimaryLeader` (config `warmPolicy=primary`), and `fallbackLeader` (any model).
@@ -281,7 +281,7 @@ sequenceDiagram
 
 | Phase | Typical Duration | Description |
 |-------|-----------------|-------------|
-| Demand detection | 0-3s | Controller reconcile cycle (`requeueFast = 3s`) |
+| Demand detection | <1s | The proxy's `lastActiveTime` stamp re-enqueues the demanded member through the Model watch; the sibling it displaces is re-enqueued by the Service annotation sync and the sibling watch |
 | Priority + cooldown check | <1ms | In-memory computation |
 | Preemption (scale down) | 2-5s | Graceful shutdown of active pod |
 | Pod scheduling | 1-3s | Kubernetes scheduler assigns node |
