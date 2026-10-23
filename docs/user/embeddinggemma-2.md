@@ -163,6 +163,6 @@ The qualified overlay preserves the preceding manager binary. A fleet upgrade
 must incorporate the patched Go manager and current shared-runtime changes;
 it is not a security certificate for the historical base image.
 
-CI security gates require Go 1.26.9, x/net 0.60.0, and OpenTelemetry 1.45.0.
+CI security gates require Go 1.26.10, x/net 0.60.0, and OpenTelemetry 1.45.0.
 The source/build pins carry these fixes. Tracing uses standard environment
 configuration and does not call the exporter URL option changed in 1.45.0.

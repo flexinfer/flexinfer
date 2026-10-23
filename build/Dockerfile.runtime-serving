@@ -6,7 +6,7 @@
 # for unrelated utility layers.
 
 ARG BASE_IMAGE=rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0
-ARG GO_VERSION=1.26.9
+ARG GO_VERSION=1.26.10
 ARG GPU_VENDOR=amd
 ARG GPU_ARCH=gfx1100
 ARG INCLUDE_VLLM=true

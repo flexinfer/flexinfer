@@ -12,6 +12,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Bumped the Go toolchain and every runtime build pin from 1.26.9 to 1.26.10 (`.gitlab-ci.yml`, `go.mod`, `.gitlab/ci/runtime-publish.yml`, `build/runtime.yaml`, `build/Dockerfile.runtime*`) so the required master security gates clear GO-2026-6809 / CVE-2026-111943 (`crypto/x509` distrust of compromised intermediate certificates, fixed in go1.26.10), which govulncheck and the `trivy_scan_*` image scans flagged as HIGH on pipeline #34067.
+
 - The node agent no longer hangs when a vendor tool does: every `rocm-smi` / `rocminfo` / `nvidia-smi` call now runs under a per-command deadline and `exec.Cmd.WaitDelay`, so a tool stuck in uninterruptible sleep on a wedged GPU is abandoned after the probe timeout instead of freezing the agent's label/annotation loop for the rest of the boot (observed 2026-10-21/22: the agent's `rocminfo` in state D, `gpu-free-memory` frozen at its pre-wedge value).
 
 - Parked (scaled-to-zero, Idle) Models now converge their Deployment's managed annotations (`flexinfer.ai/service-labels`, `litellm.flexinfer.ai/aliases`, and the rest of the litellm advertisement) on spec edits without an activation (`controllers/model_controller.go`, `controllers/model_deployment.go`). The steady-idle fast path returned before `ensureDeployment`, so a `spec.serviceLabels` change re-stamped only the Service — litellm's manager, which gathers aliases from Deployment annotations, kept advertising removed labels until a manual `kubectl annotate` (observed 2026-08-30 removing the borrowed `qwen35-9b-ablit-rp` label, MR !1009). The sync is metadata-only: no template render, no replica change, and no write when already converged.
