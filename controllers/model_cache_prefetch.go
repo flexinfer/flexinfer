@@ -256,22 +256,31 @@ func (r *ModelReconciler) clearFailedStagingJobs(ctx context.Context, model *aiv
 	return nil
 }
 
-// carryPrefetchBookkeeping copies the prefetch bookkeeping (policy, deferral,
-// honored request, completion time) from the cache status a staging branch is
-// about to replace onto its rebuilt replacement. ensureCacheStaging rebuilds
-// status.cache from scratch in several branches and patches the result; any
-// field the rebuild forgets is removed from the API object by that patch and
-// restored by annotatePrefetchOutcome's patch a moment later, so every pass
-// costs two writes and two watch events. Carrying the fields keeps a steady
-// pass at zero writes. Both arguments may be nil.
+// carryPrefetchBookkeeping fills the prefetch bookkeeping a staging branch's
+// rebuilt status.cache left empty (policy, honored request, completion time)
+// from the status it is replacing. ensureCacheStaging rebuilds status.cache
+// from scratch in every branch — cache-copy, local stage, cache-check and the
+// previously-staged shortcut — and patches the result; any field the rebuild
+// forgets is removed from the API object by that patch and restored by
+// annotatePrefetchOutcome's patch a moment later, so every pass costs two
+// writes and two watch events (the gte-qwen2 / qwen36-35b loops of
+// 2026-10-23). Carrying the fields keeps a steady pass at zero writes. Only
+// empty fields are filled, so a branch that deliberately sets one keeps its
+// value, and PrefetchDeferred is left to annotatePrefetchOutcome, which owns
+// it. Both arguments may be nil.
 func carryPrefetchBookkeeping(dst, src *aiv1alpha2.CacheStatus) {
 	if dst == nil || src == nil {
 		return
 	}
-	dst.PrefetchPolicy = src.PrefetchPolicy
-	dst.PrefetchDeferred = src.PrefetchDeferred
-	dst.PrefetchRequestedAt = src.PrefetchRequestedAt
-	dst.LastPrefetchTime = src.LastPrefetchTime
+	if dst.PrefetchPolicy == "" {
+		dst.PrefetchPolicy = src.PrefetchPolicy
+	}
+	if dst.PrefetchRequestedAt == nil {
+		dst.PrefetchRequestedAt = src.PrefetchRequestedAt
+	}
+	if dst.LastPrefetchTime == nil {
+		dst.LastPrefetchTime = src.LastPrefetchTime
+	}
 }
 
 // cacheStatusPrefetchEqual reports whether two cache statuses agree on every

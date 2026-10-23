@@ -261,6 +261,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 				Ready:     ready,
 				SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache),
 			}
+			carryPrefetchBookkeeping(model.Status.Cache, original.Status.Cache)
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCopy", message)
 
 			if err := r.patchModelStatus(ctx, model, original); err != nil {
@@ -339,6 +340,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 				Ready:     ready,
 				SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache),
 			}
+			carryPrefetchBookkeeping(model.Status.Cache, original.Status.Cache)
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheStage", message)
 			if err := r.patchModelStatus(ctx, model, original); err != nil {
 				return false, err
