@@ -245,8 +245,21 @@ spec:
   # gfx1100-native-w4a16-2026-10-22: identical answers, 43.0 tok/s). Needs
   # a hard power cycle; restore the hostname only with a posture decision
   # (clock cap back?) and another soak. Image pin stays on ad93ae72.
+  # 2026-10-23 ~19:00Z RESTORED (operator decision, posture: 2100 MHz cap).
+  # The host was hard power-cycled at 02:35Z and ran 16 h idle on kernel
+  # 7.0.0-38 with zero SMU / amdgpu errors (link x16 Gen4, gpu.health=ok).
+  # Both kernel-7.0 passes were at <= 2100 MHz (the 10-22 cap-free burn sat at
+  # ~2100 MHz on the 294 W floor; vLLM 0.23 ran 1653-1748 MHz under the
+  # 1700 MHz cap) and the one kernel-7.0 drop was at uncapped 2780-2837 MHz,
+  # so the boot unit (/usr/local/sbin/amdgpu-power-pin.sh,
+  # amdgpu-power-pin.service) now applies DPM auto + the 294 W floor + an
+  # overdrive max sclk of 2100 MHz, applied live before this restore. This
+  # boot is the vLLM 0.26 soak on ad93ae72 (row `xtx-vllm-soak-2026-10-23`).
+  # The GPU health sentinel (!1104 / !1112) parks the lane by itself if the
+  # card drops (Schedulable=False / GPUDegraded); the offline selector above
+  # is now only the manual fallback.
   nodeSelector:
-    kubernetes.io/hostname: cblevins-7900xtx-gpu-offline
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "4"
