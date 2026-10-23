@@ -34,13 +34,19 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
-    # 2026-10-22: master 03346e25 (!1097): digest pins render IfNotPresent so a
-    # lane whose digest Harbor dropped starts from the node-resident image, and
-    # a Deployment rendered for a selector the Model no longer declares is
-    # parked. Superset of the cc7273917 drain contract. Rolling it restarts
-    # each Ready digest-pinned lane once (maxSurge 0).
-    digest: "sha256:ad282b0b1362f6cd7371a1077004bc6b867162ae74279b66f792f1236d0643b5"
-    tag: "20261022-160928"
+    # 2026-10-23: master b8637f35 (!1104 GPU health sentinel + !1105 Go
+    # 1.26.10): detectGPU skips nodes the agent labels
+    # flexinfer.ai/gpu.health=degraded and reports Schedulable=False with
+    # reason GPUDegraded (Deployment parked, GPUDegraded event) when a Model's
+    # only matching node is degraded; a Node watch keyed on that label
+    # re-reconciles GPU Models on every flip. Built on Go 1.26.10, so
+    # govulncheck is clean (CVE-2026-111943 crypto/x509 fixed). Superset of
+    # the 03346e25 IfNotPresent/park contract below, which stays the rollback
+    # anchor: sha256:ad282b0b1362f6cd7371a1077004bc6b867162ae74279b66f792f1236d0643b5
+    # (tag 20261022-160928). The pod template of digest-pinned lanes is
+    # unchanged by this build, so no lane restart is expected from the roll.
+    digest: "sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376"
+    tag: "20261023-142445"
   resources:
     limits:
       cpu: 1000m
@@ -636,6 +642,29 @@ runtime:
 grafanaDashboard:
   enabled: true
   runtimeEnabled: false
+
+# Chart alert rules (charts/flexinfer/templates/prometheusrule.yaml). Enabled
+# 2026-10-23 together with the GPU health sentinel so FlexInferGPUDegraded
+# (critical: flexinfer_gpu_healthy == 0) pages when a card drops off the bus;
+# the pre-existing proxy, GPU-temperature, scheduler and quantization rules
+# in the same template had never been rendered in this cluster before.
+# `release: kube-prometheus-stack` is REQUIRED: the Prometheus Operator's
+# ruleSelector matches on it and a PrometheusRule without it applies cleanly
+# and then never loads (gitops k3s/monitoring/prometheus-rules-lan-storm.yaml
+# records the lesson); the other two mirror the older gitops rules.
+alerting:
+  enabled: true
+  labels:
+    release: kube-prometheus-stack
+    prometheus: kube-prometheus
+    role: alert-rules
+  thresholds:
+    # vLLM lanes reserve 94-96 % of the card by design (gpuMemoryUtilization),
+    # so free VRAM is not a health signal here: a negative threshold never
+    # matches, which keeps FlexInferGPUVRAMLow from firing permanently on
+    # every warm lane (0 would fall back to the chart's 0.1 through Helm's
+    # `default`). The agent still exports flexinfer_gpu_vram_* for dashboards.
+    vramFreeRatio: -1
 
 # Gaming lease policy for the k3s cluster (rendered into the
 # flexinfer-gaming-policy ConfigMap; consumed by the GamingSession controller
