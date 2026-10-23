@@ -565,6 +565,103 @@ func TestEnsureCache_PreviouslyStagedSteadyPassWritesNothing(t *testing.T) {
 	}
 }
 
+// The shared-PVC cache-copy branch (pvc:// source staged by a cache-copy Job
+// into the model's own cache PVC) rebuilds status.cache too. On the first
+// follow-up build it was the one rebuild still dropping the bookkeeping, and
+// qwen36-35b-mtp-uncensored-5930k looped on it exactly like gte-qwen2 had.
+func TestEnsureCache_SharedPVCCopySteadyPassWritesNothing(t *testing.T) {
+	s := steadyStateScheme(t)
+	if err := batchv1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme() error = %v", err)
+	}
+	staged := metav1.NewTime(time.Date(2026, 10, 23, 16, 8, 7, 0, time.UTC))
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "qwen36-35b-mtp-uncensored-5930k", Namespace: steadyStateNamespace, Generation: 32},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend:      "vllm",
+			Source:       "pvc://llm-models-nfs/qwen36-35b-a3b-mtp-draftq/gptq-w4-g128",
+			NodeSelector: map[string]string{"kubernetes.io/hostname": "cblevins-5930k"},
+			Cache:        &aiv1alpha2.CacheSpec{Strategy: "SharedPVC", HostPath: "/var/lib/flexinfer/models", Size: "50Gi", StorageClass: "local-path"},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhasePreempted,
+			Cache: &aiv1alpha2.CacheStatus{
+				Strategy:         "SharedPVC",
+				Ready:            true,
+				PVCName:          "qwen36-35b-mtp-uncensored-5930k-cache",
+				JobName:          "qwen36-35b-mtp-uncensored-5930k-cache-copy",
+				JobPhase:         "Succeeded",
+				Message:          "artifact copied to cache PVC",
+				PrefetchPolicy:   aiv1alpha2.PrefetchPolicyEager,
+				LastPrefetchTime: &staged,
+				SizeBytes:        21683748864,
+			},
+			Conditions: []metav1.Condition{{
+				Type:               aiv1alpha2.ConditionModelCached,
+				Status:             metav1.ConditionTrue,
+				Reason:             "CacheCopy",
+				Message:            "artifact copied to cache PVC",
+				ObservedGeneration: 32,
+				LastTransitionTime: staged,
+			}},
+		},
+	}
+	sourcePVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "llm-models-nfs", Namespace: steadyStateNamespace},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+	cachePVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: model.Name + "-cache", Namespace: steadyStateNamespace, UID: "cache-pvc-uid"},
+		Status:     corev1.PersistentVolumeClaimStatus{Phase: corev1.ClaimBound},
+	}
+	copyJob := &batchv1.Job{
+		ObjectMeta: metav1.ObjectMeta{Name: model.Name + "-cache-copy", Namespace: steadyStateNamespace},
+		Status:     batchv1.JobStatus{Succeeded: 1},
+	}
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(model, sourcePVC, cachePVC, copyJob).
+		WithStatusSubresource(&aiv1alpha2.Model{}).
+		Build()
+	r := &ModelReconciler{Client: cl, Scheme: s, Recorder: record.NewFakeRecorder(10)}
+	b, ok := backend.Get("vllm")
+	if !ok {
+		t.Fatal("vllm backend not registered")
+	}
+	get := func() *aiv1alpha2.Model {
+		t.Helper()
+		got := &aiv1alpha2.Model{}
+		if err := cl.Get(context.Background(), client.ObjectKeyFromObject(model), got); err != nil {
+			t.Fatalf("get model: %v", err)
+		}
+		return got
+	}
+
+	for pass := 1; pass <= 2; pass++ {
+		current := get()
+		before := current.ResourceVersion
+		ctx := withObservedStatus(context.Background(), current)
+		ready, err := r.ensureCache(ctx, current, b)
+		if err != nil {
+			t.Fatalf("pass %d: ensureCache() error: %v", pass, err)
+		}
+		if !ready {
+			t.Fatalf("pass %d: copied cache reported not ready: %+v", pass, current.Status.Cache)
+		}
+		after := get()
+		if after.ResourceVersion != before {
+			t.Fatalf("pass %d: steady copied cache rewrote status: resourceVersion %s -> %s, cache %+v",
+				pass, before, after.ResourceVersion, after.Status.Cache)
+		}
+		if c := after.Status.Cache; c == nil || c.LastPrefetchTime == nil || !c.LastPrefetchTime.Equal(&staged) || c.PrefetchPolicy != aiv1alpha2.PrefetchPolicyEager {
+			t.Fatalf("pass %d: prefetch bookkeeping lost: %+v", pass, after.Status.Cache)
+		}
+		if !observedStatusFrom(ctx).unchanged(current) {
+			t.Fatalf("pass %d: in-memory status drifted from the observation: %+v", pass, current.Status.Cache)
+		}
+	}
+}
+
 func TestModelMeaningfulChange(t *testing.T) {
 	base := func(phase aiv1alpha2.ModelPhase) *aiv1alpha2.Model {
 		m := newSharedModel("gte-qwen2-1p5b-radeonvii", steadyStateNamespace, "radeonvii-models")
