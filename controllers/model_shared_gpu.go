@@ -736,13 +736,21 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	r.syncActiveServiceLabels(ctx, activeSet, groupModels)
 
 	if origPhase == model.Status.Phase && sharedGroupStatusEqual(origShared, model.Status.SharedGroup) {
-		return ctrl.Result{RequeueAfter: requeueFast}, nil
+		// The election reproduced this member's recorded state: nothing is in
+		// flight for it, so re-elect at the slow cadence. Anything that can
+		// change the outcome sooner arrives as an event — the proxy's demand
+		// stamp on this Model, a sibling's Phase/State transition, a GPULease
+		// or GamingSession, a node GPU health flip, the runtime pod — and the
+		// Service annotation sync above re-enqueues the members it touches.
+		return ctrl.Result{RequeueAfter: requeueSharedSteady}, nil
 	}
 
-	if err := r.Status().Update(ctx, model); err != nil {
+	if err := r.persistStatus(ctx, model); err != nil {
 		return ctrl.Result{}, err
 	}
 
+	// A transition is in flight (promotion, park, queue shuffle): poll fast
+	// until this member settles.
 	return ctrl.Result{RequeueAfter: requeueFast}, nil
 }
 

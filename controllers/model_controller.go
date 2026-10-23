@@ -166,6 +166,9 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		log.Error(err, "Failed to get Model")
 		return ctrl.Result{}, err
 	}
+	// Remember the status as read: every status writer below compares against
+	// it (persistStatus) and skips the write when this pass changed nothing.
+	ctx = withObservedStatus(ctx, model)
 
 	// Handle finalizer
 	if model.DeletionTimestamp.IsZero() {
@@ -221,7 +224,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// from re-waking the model every time the idle timer reaps it. This writes
 	// only when a strictly newer request arrives, so it stays out of the hot loop.
 	if adoptActivationRequest(model) {
-		if err := r.Status().Update(ctx, model); err != nil {
+		if err := r.persistStatus(ctx, model); err != nil {
 			log.Error(err, "Failed to record activation request")
 			return ctrl.Result{}, err
 		}
@@ -286,7 +289,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			}
 			setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, reason, err.Error())
 			model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-			if err := r.Status().Update(ctx, model); err != nil {
+			if err := r.persistStatus(ctx, model); err != nil {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
@@ -294,7 +297,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		if isAmbiguousGPUVendorError(err) {
 			setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonAmbiguousGPUVendor, err.Error())
 			model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-			if err := r.Status().Update(ctx, model); err != nil {
+			if err := r.persistStatus(ctx, model); err != nil {
 				return ctrl.Result{}, err
 			}
 			return ctrl.Result{RequeueAfter: requeueAfter}, nil
@@ -309,7 +312,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
 		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonBackendUnsupported, err.Error())
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-		return ctrl.Result{}, r.Status().Update(ctx, model)
+		return ctrl.Result{}, r.persistStatus(ctx, model)
 	}
 
 	// Validate backend against selected GPU arch (e.g., vLLM does not support Maxwell).
@@ -318,7 +321,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
 		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonBackendUnsupported, err.Error())
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-		return ctrl.Result{}, r.Status().Update(ctx, model)
+		return ctrl.Result{}, r.persistStatus(ctx, model)
 	}
 
 	// Validate VRAM fit if the model declares an estimate.
@@ -327,7 +330,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		r.Recorder.Event(model, corev1.EventTypeWarning, "VRAMInsufficient", err.Error())
 		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonVRAMInsufficient, err.Error())
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-		return ctrl.Result{}, r.Status().Update(ctx, model)
+		return ctrl.Result{}, r.persistStatus(ctx, model)
 	}
 
 	// Emit informational events for experimental opt-ins (vLLM V1 engine, flash attention).
@@ -343,7 +346,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 			r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
 			setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonBackendUnsupported, err.Error())
 			model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-			return ctrl.Result{}, r.Status().Update(ctx, model)
+			return ctrl.Result{}, r.persistStatus(ctx, model)
 		}
 		if strings.HasPrefix(model.Spec.Source, "HF://") {
 			cfg := model.Spec.GetConfigMap()
@@ -369,7 +372,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
 				setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonBackendUnsupported, err.Error())
 				model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-				return ctrl.Result{}, r.Status().Update(ctx, model)
+				return ctrl.Result{}, r.persistStatus(ctx, model)
 			}
 			if !strings.HasSuffix(strings.ToLower(ggufFile), ".gguf") {
 				err := fmt.Errorf("spec.config.ggufFile must end with .gguf (got %q)", ggufFile)
@@ -377,7 +380,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
 				setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonBackendUnsupported, err.Error())
 				model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-				return ctrl.Result{}, r.Status().Update(ctx, model)
+				return ctrl.Result{}, r.persistStatus(ctx, model)
 			}
 		}
 	}
@@ -666,18 +669,6 @@ func (r *ModelReconciler) pruneFailedModelPods(ctx context.Context, model *aiv1a
 func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.mgr = mgr
 
-	// Delete-only predicate for the sibling fan-out watch. We only need to
-	// re-enqueue siblings when a shared-group member is deleted; Create and
-	// Update events are already covered by the primary For() watch and the
-	// per-model reconcile loop. Filtering avoids reconcile amplification on
-	// busy clusters.
-	siblingDeleteOnly := predicate.Funcs{
-		CreateFunc:  func(event.CreateEvent) bool { return false },
-		UpdateFunc:  func(event.UpdateEvent) bool { return false },
-		GenericFunc: func(event.GenericEvent) bool { return false },
-		DeleteFunc:  func(event.DeleteEvent) bool { return true },
-	}
-
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&aiv1alpha2.Model{}).
 		Owns(&appsv1.Deployment{}).
@@ -689,7 +680,9 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			builder.WithPredicates(runtimePodMeaningfulChange)).
 		Watches(&aiv1alpha2.Model{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForSharedGroupSiblings),
-			builder.WithPredicates(siblingDeleteOnly)).
+			builder.WithPredicates(sharedSiblingMeaningfulChange)).
+		Watches(&aiv1alpha2.GPULease{},
+			handler.EnqueueRequestsFromMapFunc(r.requestsForGPULeaseGroup)).
 		Watches(&aiv1alpha2.GPUProfile{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForGPUProfileModels),
 			builder.WithPredicates(gpuProfileSpecChange)).
@@ -908,36 +901,95 @@ func (r *ModelReconciler) NeedLeaderElection() bool {
 	return true
 }
 
+// sharedSiblingMeaningfulChange admits the Model events whose fan-out the
+// shared-group election needs: a member deleted (survivors must drop a
+// PreemptedBy that names it) and a member whose Phase or SharedGroup.State
+// moved — a leader idling out or failing, a member promoted or parked. Those
+// are the inputs that change another member's election outcome, and they are
+// what the 3 s shared poll used to catch. Everything else a member writes (the
+// proxy's lastActiveTime heartbeat, cache bookkeeping, conditions,
+// resourceVersion bumps) is dropped: the writer's own For() event already
+// covers it, and admitting it would amplify every status write into N-1
+// sibling reconciles. The map function ignores non-shared Models, so a phase
+// change on an exclusive Model fans out to nothing.
+var sharedSiblingMeaningfulChange = predicate.Funcs{
+	CreateFunc:  func(event.CreateEvent) bool { return false },
+	DeleteFunc:  func(event.DeleteEvent) bool { return true },
+	GenericFunc: func(event.GenericEvent) bool { return false },
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		oldModel, ok1 := e.ObjectOld.(*aiv1alpha2.Model)
+		newModel, ok2 := e.ObjectNew.(*aiv1alpha2.Model)
+		if !ok1 || !ok2 {
+			return false
+		}
+		if oldModel.Status.Phase != newModel.Status.Phase {
+			return true
+		}
+		return sharedGroupState(oldModel) != sharedGroupState(newModel)
+	},
+}
+
+// sharedGroupState returns the member's recorded election state, or "" when it
+// has not been elected yet.
+func sharedGroupState(m *aiv1alpha2.Model) string {
+	if m.Status.SharedGroup == nil {
+		return ""
+	}
+	return m.Status.SharedGroup.State
+}
+
 // requestsForSharedGroupSiblings returns reconcile requests for every Model
-// in the same shared GPU group as the deleted Model, excluding the deleted
-// Model itself. Combined with a delete-only predicate in SetupWithManager,
-// this guarantees that surviving group members re-run leader election (via
-// handleSharedGPU) and clear stale `status.sharedGroup.preemptedBy`
-// references that point at the now-gone sibling. Without this fan-out, the
-// surviving leader's status reflected the deleted Model until an operator
-// manually annotated it (workaround documented in
-// .loom/asr-diarization-kill-test-v2-inconclusive-2026-05-19.md).
+// in the same shared GPU group as the changed Model, excluding the changed
+// Model itself (its own For() event covers it). With
+// sharedSiblingMeaningfulChange in SetupWithManager this guarantees that the
+// other group members re-run leader election (via handleSharedGPU) as soon as
+// a member is deleted or transitions, rather than on their next periodic
+// pass: survivors clear a stale `status.sharedGroup.preemptedBy` that points
+// at a now-gone sibling (previously the leader's status reflected the deleted
+// Model until an operator annotated it, see
+// .loom/asr-diarization-kill-test-v2-inconclusive-2026-05-19.md), and the next
+// member in line is promoted the moment the leader idles out.
 func (r *ModelReconciler) requestsForSharedGroupSiblings(ctx context.Context, obj client.Object) []ctrl.Request {
-	deleted, ok := obj.(*aiv1alpha2.Model)
-	if !ok || deleted == nil {
+	changed, ok := obj.(*aiv1alpha2.Model)
+	if !ok || changed == nil {
 		return nil
 	}
-	if deleted.Spec.GPU == nil || deleted.Spec.GPU.Shared == "" {
+	if changed.Spec.GPU == nil || changed.Spec.GPU.Shared == "" {
 		return nil
 	}
-	groupName := deleted.Spec.GPU.Shared
+	return r.requestsForSharedGroup(ctx, changed.Namespace, changed.Spec.GPU.Shared, changed.Name)
+}
 
-	siblings := &aiv1alpha2.ModelList{}
-	if err := r.List(ctx, siblings, client.InNamespace(deleted.Namespace)); err != nil {
-		log.FromContext(ctx).Error(err, "Failed to list shared-group siblings",
-			"deletedModel", deleted.Name, "group", groupName)
+// requestsForGPULeaseGroup re-enqueues every member of the shared group a
+// GPULease names, on create, update and delete. The election reads leases on
+// every pass, but nothing re-enqueued the members when a lease appeared, was
+// extended or was released, so lease parking and release rode on the 3 s
+// shared poll; this watch keeps that latency now that the steady cadence is
+// requeueSharedSteady. The legacy ConfigMap carrier is not watched (that would
+// cache every ConfigMap in the cluster); it still takes effect on the periodic
+// pass.
+func (r *ModelReconciler) requestsForGPULeaseGroup(ctx context.Context, obj client.Object) []ctrl.Request {
+	lease, ok := obj.(*aiv1alpha2.GPULease)
+	if !ok || lease == nil || lease.Spec.Group == "" {
+		return nil
+	}
+	return r.requestsForSharedGroup(ctx, lease.Namespace, lease.Spec.Group, "")
+}
+
+// requestsForSharedGroup lists the namespace's Models and returns a request
+// for each member of groupName other than exclude.
+func (r *ModelReconciler) requestsForSharedGroup(ctx context.Context, namespace, groupName, exclude string) []ctrl.Request {
+	members := &aiv1alpha2.ModelList{}
+	if err := r.List(ctx, members, client.InNamespace(namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list shared-group members",
+			"group", groupName, "namespace", namespace)
 		return nil
 	}
 
-	requests := make([]ctrl.Request, 0, len(siblings.Items))
-	for i := range siblings.Items {
-		m := &siblings.Items[i]
-		if m.Name == deleted.Name && m.Namespace == deleted.Namespace {
+	requests := make([]ctrl.Request, 0, len(members.Items))
+	for i := range members.Items {
+		m := &members.Items[i]
+		if m.Name == exclude {
 			continue
 		}
 		if m.Spec.GPU == nil || m.Spec.GPU.Shared != groupName {

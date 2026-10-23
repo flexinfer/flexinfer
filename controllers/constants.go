@@ -11,10 +11,20 @@ const (
 
 	// Requeue intervals for reconcile loops. Using named constants makes
 	// it easy to tune cadence across all controllers from a single place.
-	requeueFast   = 3 * time.Second  // shared-GPU swap checks
+	requeueFast   = 3 * time.Second  // shared-GPU swap in flight
 	requeueShort  = 5 * time.Second  // waiting for pod/job readiness
 	requeueMedium = 10 * time.Second // waiting for cache / LoRA load
 	requeueLong   = 30 * time.Second // slow operations, default requeue
+	// requeueSharedSteady is the re-election cadence for a shared-GPU member
+	// whose recorded state the election just reproduced. Demand (the proxy's
+	// lastActiveTime stamp), sibling transitions, GPULease changes, gaming
+	// sessions, node GPU health and runtime pod events all re-enqueue members
+	// through watches; the periodic pass only has to catch the time-based
+	// inputs (demand windows, swap cooldown, idle timeout, lease TTL), none of
+	// which needs sub-30 s resolution. requeueFast here put every shared member
+	// on a 3 s loop: with 25 shared Models that was ~9 reconciles/s doing
+	// nothing (2026-10-23).
+	requeueSharedSteady = requeueLong
 	// runtimeLoadRetryBackoff suppresses duplicate runtime load requests for a
 	// short window while the runtime is still surfacing model health.
 	runtimeLoadRetryBackoff = 20 * time.Second

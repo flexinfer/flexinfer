@@ -565,7 +565,13 @@ func (r *ModelReconciler) statusUpdateIfChanged(ctx context.Context, model *aiv1
 	if orig != nil && apiequality.Semantic.DeepEqual(orig, &model.Status) {
 		return nil
 	}
-	return r.Status().Update(ctx, model)
+	if err := r.Status().Update(ctx, model); err != nil {
+		return err
+	}
+	// Keep the pass-wide observation (persistStatus) current so a later writer
+	// in the same reconcile does not repeat this write.
+	observedStatusFrom(ctx).refresh(model)
+	return nil
 }
 
 func preemptedStatusMessage(model *aiv1alpha2.Model) string {
@@ -617,12 +623,14 @@ func clearLoadingStatus(model *aiv1alpha2.Model) {
 	model.Status.LoadingProgressAt = nil
 }
 
-// updatePhase updates just the phase field in status and emits lifecycle metrics.
+// updatePhase updates just the phase field in status and emits lifecycle
+// metrics. The write is skipped when the pass reproduced the recorded status
+// (persistStatus), so re-asserting the current phase costs nothing.
 func (r *ModelReconciler) updatePhase(ctx context.Context, model *aiv1alpha2.Model, phase aiv1alpha2.ModelPhase) error {
 	oldPhase := model.Status.Phase
 	model.Status.Phase = phase
 	r.recordPhaseMetrics(model, oldPhase, phase)
-	return r.Status().Update(ctx, model)
+	return r.persistStatus(ctx, model)
 }
 
 // recordPhaseMetrics emits Prometheus metrics for a model phase transition.
