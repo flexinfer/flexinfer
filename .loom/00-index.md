@@ -143,12 +143,44 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       `qwen36-27b-autoround-workhorse`, `qwen36-27b-fable-gptq`, `qwen35-9b-ablit-rp`,
       `qwen35-9b-ablit-rp-5930k`) and gfx906 `0e590ca2` (abliteration image, gone from Harbor and
       not resident on the Radeon VII).
-- [ ] XTX after the hard power cycle: decide the posture (clock cap back? the two kernel-7.0 passes
-      were ≤2100 MHz burn and ≤1748 MHz vLLM 0.23 under the cap; the 0.26 drop was at 2780-2837 MHz),
-      restore the hostname selector, re-soak on `ad93ae72`, then merge !1108.
-- [ ] Retention guard (gitops): add an `always` retain rule for `pinned-*` tags to the `flexinfer`
-      project policy and tag every digest referenced from `deploy/` (extend `runtime_pin_drift` or the
-      `harbor-buildcache-retention-ensure` cronjob).
+- [x] 2026-10-23 17:49Z check-in: !1098 (open since 2026-10-22) merged — `flexinfer-scheduler`
+      loses its hard `cblevins-7900xtx` pin (any amd64 control-plane node, XTX preferred at
+      weight 100) and `kokoro-tts` widens to {7900xtx, 5930k}; Flux rolled both within 5 min and
+      each landed back on the XTX (`flexinfer-scheduler-59475d6ddc-w8gqk`,
+      `kokoro-tts-6d796c7546-wv6nc`). An XTX wedge no longer takes the control plane or
+      `/v1/audio/speech` down with it.
+- [x] 2026-10-23 gfx906 runtime repin (#74 S3''): the Radeon VII DaemonSet, the GPUProfile
+      `runtime.image` and its abliteration pin moved off the off-CI Humanizer overlay `8181b690`
+      (and the Harbor-deleted `0e590ca2`) onto the master CI build `90648c35`
+      (`rocm-gfx906-b8637f35`, pipeline 34198). !1118 prewarmed it, !1119 rolled it: pod Ready
+      13 s after start, retrieval plane back in 56–72 s, orpheus in 64 s, Humanizer serves on the
+      GPU from the CI build (20 s cold load, coherent rewrite, evicts only orpheus for its 30 s
+      idle window), `config.json` mtimes unchanged, probes identical to the pre-roll baseline.
+      Drift gate FAILs only on `2e9652ed` now. Row `gfx906-serving-2026-10-23`. The retired overlay
+      turned out to mix two llama.cpp library generations (its `llama-embedding` cannot start —
+      `undefined symbol: llama_params_fit`). The `amdgpu: init_user_pages … -1` bursts seen in
+      the kernel log during llama.cpp loads are pre-existing and harmless (identical 288-line
+      counts from both images in an A/B); details in the row.
+- [ ] XTX after the hard power cycle (02:35Z 2026-10-23; by 17:45Z 15 h clean idle on kernel 7.0,
+      0 SMU errors, link x16 Gen4, `gpu.health=ok`): decide the posture — the boot unit resets
+      overdrive to stock (OD max 2950 MHz, 294 W floor, DPM auto), i.e. the clocks the card
+      dropped at (2780-2837 MHz on 0.26); the two kernel-7.0 passes were ≤2100 MHz burn and
+      ≤1748 MHz vLLM 0.23 under the 1700 MHz cap — then restore the hostname selector (lane parked:
+      `Ready=False/GPUUnresponsive`, selector `cblevins-7900xtx-gpu-offline`, pin `ad93ae72`),
+      re-soak, then merge !1108. Operator-paired: a wedge still hangs the host (hard power cycle)
+      even though the sentinel now parks the lane by itself.
+- [x] Retention guard (gitops): shipped 2026-10-22 as platform/gitops !971
+      (`k3s/monitoring/harbor-flexinfer-pin-guard/`): CronJob `harbor-flexinfer-retention-ensure`
+      asserts an `always` retain rule for `pinned-*` on the `flexinfer` policy and
+      `harbor-flexinfer-pin-tags` (05:30 / 17:30Z) tags every `deploy/` + `charts/` digest pin
+      `pinned-<12hex>`; today's drift report already shows `pinned-cfefae18061f`. Runbook
+      `docs/runbooks/harbor-flexinfer-pinned-digests.md` (gitops).
+- [ ] Controller reconcile hot loop (pre-existing, measured again 2026-10-23): the `model`
+      controller runs ~9.8 reconciles/s (`requeue_after`), mostly the shared-group members on the
+      Radeon VII re-reconciled every 2–3 s, with periodic `the object has been modified` conflicts
+      on `gte-qwen2-1p5b-radeonvii`; the Ready branch of `reconcileViaRuntime`
+      (`controllers/model_runtime.go`) writes Model status unconditionally on every pass. CPU is
+      only 0.2 cores, but it is API churn and log volume. Proposed as its own session.
 
 ## Previous Goal (2026-09-13) - Idle gfx1100 cards → loom-core / Mills utilization
 

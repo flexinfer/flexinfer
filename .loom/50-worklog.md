@@ -977,3 +977,53 @@ Sources:
   - MR !555 (f3755e18); `60-validation-matrix.md` "S1.1 kill-test" + "S1.2 deploy"
   - `kubectl get model {bge-large-radeonvii,qwen3-1p7b-tools-radeonvii} -o yaml`
   - in-pod kill-test: `flexinfer-runtime-gfx906-2kbtp` llama-embedding runs
+
+## 2026-10-23
+
+### Check-in on the gfx1100 recovery sessions + gfx906 runtime repin (#74 S3'')
+
+- What changed:
+  - Verified the earlier sessions' work is merged and live: master `09d76570` (prewarm retire)
+    applied by Flux to both `flexinfer-system` and `flexinfer-models`; HelmRelease
+    `1.0.16+09d765702745.3`; gfx1100 runtime DaemonSet on `cfefae18`, both gfx1100 prewarm
+    lists match `values-k3s.yaml`, agent + scheduler on build `20261023-162550`, controller on
+    the digest-pinned `39581256` (no Go change on master since). Master pipeline 34247 green
+    except the expected `runtime_pin_drift` FAIL.
+  - Merged the one live leftover MR, !1098 (scheduler / kokoro-tts placement off the hard XTX
+    pin); Flux rolled both pods within 5 min, both back on the XTX by preference.
+  - gfx906 S3'': !1118 prewarmed the master CI build `90648c35` on the Radeon VII, !1119 moved
+    the DaemonSet, the GPUProfile `runtime.image` and the abliteration pin onto it (replacing
+    the off-CI overlay `8181b690` and the Harbor-deleted `0e590ca2`), and swapped the prewarm
+    rollback anchor from `171081de` to `8181b690`. Kill-test passed (row
+    `gfx906-serving-2026-10-23`): retrieval plane back in 56–72 s, orpheus in 64 s, probes
+    identical to the pre-roll baseline, Humanizer serves on the GPU from the CI build,
+    `config.json` untouched.
+  - Investigated a 2,302-line `amdgpu: init_user_pages: Failed to get user pages: -1` burst
+    that coincided with the roll: an A/B of both images in throwaway `k3s ctr` containers on the
+    node logged exactly 288 lines each per bge-large load, so it is pre-existing llama.cpp mmap
+    behavior on Vega20 (KFD -EPERM on file-backed userptr pages, HIP falls back), not a
+    regression. `--no-mmap` silences it but slowed the load from 3 s to > 60 s.
+  - Found the retired overlay mixes two llama.cpp library generations (`llama-embedding` fails
+    on `undefined symbol: llama_params_fit`; `llama-server` survived only via `-fit off`).
+- Why:
+  - The user asked to confirm the gfx1100 work landed and to continue the gfx1100/gfx906 serving
+    improvements; the gfx906 pins were the mirror of the morning's gfx1100 S1'' and the last
+    drift-gate FAIL that a repin could clear.
+- Observed, not fixed (handed off):
+  - `news-analyzer/data-minio-0` (Longhorn `pvc-b559b764`, attached on the Radeon VII as `sdf`)
+    has had an aborted ext4 journal / read-only remount since 05:07:06Z (20,162 kernel lines);
+    Longhorn calls the volume healthy. 20 other Longhorn volumes have been degraded since
+    ~04:05Z. Platform incident, separate from FlexInfer.
+  - `model` controller hot loop: ~9.8 reconciles/s with periodic status conflicts on
+    `gte-qwen2-1p5b-radeonvii`; the Ready branch of `reconcileViaRuntime` writes status every
+    pass. Own session proposed.
+  - XTX: host power-cycled 02:35Z, 15 h clean, but the boot unit runs the card at stock clocks
+    (the envelope that dropped it). Lane restore + re-soak + !1108 wait on the operator's posture
+    decision.
+- Sources:
+  - !1098 (75e203c1), !1118 (611279aa), !1119 (55d824ad); pipelines 34198 / 34247
+  - `kubectl -n flexinfer-system rollout status ds/flexinfer-runtime-gfx906`; pod
+    `flexinfer-runtime-gfx906-2jc2t` log; `kubectl get models … -o custom-columns`
+  - `scripts/check-runtime-pin-drift.py --allow-insecure` before/after
+  - `ssh cblevins-radeonvii 'sudo journalctl -k -o short-iso'`, `k3s ctr … run --rm` A/B
+  - Harbor API: artifacts for tags `rocm-gfx906-b8637f35`, `pinned-8181b6901ab0`
