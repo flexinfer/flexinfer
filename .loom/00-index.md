@@ -97,6 +97,21 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       controller image pins moved after CI publishes, then a sysfs fault injection is not possible
       without a real wedge — verify on the next drop (or by temporarily setting
       `--probe-timeout=1ms` on one node to force `probe-timeout`).
+      **Rolled out 2026-10-23** (!1104 merged 22:37Z as eda760ba): agent DaemonSet + scheduler
+      restarted onto build `20261022-225154` at 23:47Z (all three AMD nodes label
+      `gpu.health=ok`; the 980 Ti gets no label because a healthy NVIDIA card yields no verdict —
+      small follow-up); !1105 (Go 1.26.10, merged 14:14Z via the REST merge call, govulncheck
+      green again); !1112 (14:38Z) pinned the controller to master b8637f35 (digest `39581256`,
+      tag `20261023-142445`; pod `647ccb879c-2hpdq` Running 14:40:00Z, old pod gone 14:40:20Z, no
+      lane restarted — workhorse pod `bgjll` untouched) and enabled chart alerting for the first
+      time in this cluster (`release: kube-prometheus-stack` + prometheus/role labels; Prometheus
+      loaded `flexinfer-gpu` incl. `FlexInferGPUDegraded`; `FlexInferGPUVRAMLow` disabled via
+      `vramFreeRatio: -1` because vLLM holds 94-96 % by design). Controller reconcile rate is the
+      same before/after (10.2 vs 10.7/s — a PRE-EXISTING ~10/s loop with status conflicts on
+      `gte-qwen2-1p5b-radeonvii`, worth its own look). Master lint/vet now fail only at the
+      runner-cache save ("helper exceeded its local ephemeral storage limit 4Gi") and the drift
+      gate FAILs on `f7d2e967` (both gfx1100 runtime DaemonSets) + `522d0fe2` (prewarm) — both
+      proposed as separate tasks.
 - [x] Decide the repin: (a) rescue single-layer images from the 5930k snapshots (identical rootfs,
       new digests, immutable `-rescued` tags) as the rollback anchor, and/or (b) promote the
       qualified v0.26 native-W4A16 build (`ad93ae72` / `93c93733`, #74 S2) onto the 5930k workhorse
