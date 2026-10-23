@@ -67,6 +67,28 @@ This means **GPU compute is completely non-functional** on gfx906 with ROCm 6.4.
 This was confirmed on 2026-03-20 during abliteration testing. The `caching_allocator_warmup`
 function in transformers 5.x calls `torch.empty()` on GPU after `mem_get_info`, and both fail.
 
+### Kernel log bursts during llama.cpp model loads (harmless)
+
+Every llama.cpp model load on the Radeon VII writes a burst of
+
+```
+amdgpu: init_user_pages: Failed to get user pages: -1
+```
+
+to the kernel log (hundreds of lines per model, ~288 for the 358 MB bge-large GGUF; nothing
+between loads). llama.cpp memory-maps the GGUF and the HIP runtime tries to register those
+file-backed pages with KFD as userptr memory before the host-to-device copy; KFD only accepts
+anonymous pages for that path and answers `-EPERM`, so the runtime falls back to staging
+copies and the load succeeds. Confirmed on 2026-10-23 by loading the same GGUF from the
+2026-10-12 and 2026-10-23 gfx906 runtime images in throwaway containers on the node: both
+logged exactly 288 lines. `--no-mmap` removes the burst but made the same load take more than
+60 s instead of 3 s, so it is not a drop-in mitigation.
+
+Operational consequences: a burst can rotate real `SMU` / `amdgpu` errors out of `dmesg`, and
+`dmesg -T` wall-clock stamps drift on this long-uptime host (~50 s on 2026-10-23). Correlate
+GPU events against `journalctl -k -o short-iso` and check its earliest entry before treating a
+message as new. Evidence: `.loom/60-validation-matrix.md` row `gfx906-serving-2026-10-23`.
+
 ### Required Environment Variables
 
 These are set in the `gfx906` GPUProfile (`deploy/gpuprofiles/gfx906.yaml`):
