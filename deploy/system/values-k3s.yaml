@@ -34,19 +34,21 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
-    # 2026-10-23: master b8637f35 (!1104 GPU health sentinel + !1105 Go
-    # 1.26.10): detectGPU skips nodes the agent labels
-    # flexinfer.ai/gpu.health=degraded and reports Schedulable=False with
-    # reason GPUDegraded (Deployment parked, GPUDegraded event) when a Model's
-    # only matching node is degraded; a Node watch keyed on that label
-    # re-reconciles GPU Models on every flip. Built on Go 1.26.10, so
-    # govulncheck is clean (CVE-2026-111943 crypto/x509 fixed). Superset of
-    # the 03346e25 IfNotPresent/park contract below, which stays the rollback
-    # anchor: sha256:ad282b0b1362f6cd7371a1077004bc6b867162ae74279b66f792f1236d0643b5
-    # (tag 20261022-160928). The pod template of digest-pinned lanes is
-    # unchanged by this build, so no lane restart is expected from the roll.
-    digest: "sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376"
-    tag: "20261023-142445"
+    # 2026-10-23: master f885cf9c (!1122 reconcile hot-loop fix on top of the
+    # b8637f35 GPU health sentinel build): a steady shared-GPU member
+    # re-elects every 30 s instead of 3 s, every status writer on the Model
+    # reconcile path skips the write when the pass changed nothing (no more
+    # optimistic-lock races with the proxy's lastActiveTime stamp), the
+    # sibling watch fans out phase/sharedGroup.state transitions and a
+    # GPULease watch re-enqueues the group on lease changes, so swap, park
+    # and release latency stay event-driven. Expected: model reconcile rate
+    # from ~9/s to under 1/s, no "object has been modified" conflicts. Only
+    # the controller binary changed; no lane restart is expected from the
+    # roll. Rollback anchor (b8637f35, the sentinel build):
+    # sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376
+    # (tag 20261023-142445).
+    digest: "sha256:e273131461e97ac41ef2b5f8c283932ab3a2484468e6021ac9d662a4973f4f00"
+    tag: "20261023-193756"
   resources:
     limits:
       cpu: 1000m
