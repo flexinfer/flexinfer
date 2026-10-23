@@ -148,8 +148,13 @@ spec:
       - llamacpp
       - ollama
       - diffusers
-    # Humanizer + retrieval/voice GPU probes: llama.cpp b11335 and request drain.
-    image: registry.harbor.lan/flexinfer/runtime@sha256:8181b6901ab0ed1244a9035d88677c2c729094b847f60d63368faca147a21585
+    # 2026-10-23 (issue #74 S3''): the gfx906 runtime rebuilt by CI from master
+    # b8637f35 (rocm-gfx906-b8637f35), aligned with the image the gfx906
+    # runtime DaemonSet runs (deploy/system/values-k3s.yaml runtime.profiles).
+    # llama.cpp b11335 + request drain, as the off-CI Humanizer overlay
+    # 8181b690 it replaces, plus Go 1.26.10. No Go code reads this field (only
+    # bundledBackends above is consumed); it documents the runtime pod's image.
+    image: registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7
   containerMemoryGB: 56
   maxGPUMemoryGB: 12
   maxCPUMemoryGB: 56
@@ -174,9 +179,14 @@ spec:
       # v21 script overlay on the proven gfx906 dependency image; includes the
       # stdlib pcre.Flag compatibility shim required by GPTQModel 7.
       gptq: registry.harbor.lan/flexinfer/quantizer@sha256:12c88adf40ce92314508fc8a10fd8da677d1acbefb698fc0df36cb4e3939b588
-      # 2026-09-13 (issue #74 drift report): the previous abliteration pin
-      # (aefe41fa) is no longer in Harbor. Repinned to the current
-      # unified-gfx906 build (immutable tag unified-gfx906-0d631512 = -v4,
-      # 2026-08-23), the community-PyTorch image that carries abliterate.py
-      # for this card.
-      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:0e590ca27e451dd314b9adf4329873cee12fb302648bf6c8caf48a17efe18d5e
+      # 2026-10-23 (issue #74 S3''): the previous pin 0e590ca2 (unified-gfx906-
+      # 0d631512 = -v4, 2026-08-23) is no longer in Harbor either — the
+      # unified-gfx906 CI job only runs when its Dockerfile changes, so
+      # retention swept every artifact — and the master runtime_pin_drift gate
+      # FAILed on it. Repinned to the gfx906 runtime image this profile and the
+      # DaemonSet run: the same community-PyTorch (mixa3607) base with
+      # accelerate + safetensors and build/scripts/abliterate.py at
+      # /opt/flexinfer/scripts/; the ABLITERATION_* env above still pins the
+      # transformers ref at job start. Before 0e590ca2 the pin was aefe41fa
+      # (2026-09-13 drift report).
+      abliteration: registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7

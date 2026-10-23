@@ -341,8 +341,14 @@ imagePrewarm:
       nodeSelector:
         kubernetes.io/hostname: cblevins-radeonvii
       images:
-        # rocm-gfx906-882d81ba: gfx906 runtime rebuilt with the entrypoint fix (!1037).
-        - registry.harbor.lan/flexinfer/runtime@sha256:171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b
+        # Rollback anchor for the S3'' roll below: the off-CI Humanizer overlay
+        # 8181b690 (rocm-gfx906-humanizer-coexist-cc26086e4, pinned-8181b6901ab0,
+        # 2026-10-12) that the gfx906 DaemonSet served from 2026-10-12 until the
+        # roll. Harbor-resident and already unpacked on this node, so listing it
+        # costs nothing and keeps a rollback a container swap. 171081de
+        # (rocm-gfx906-882d81ba, the 09-13 S3' build and the Humanizer-episode
+        # rollback) left the list here: two generations back.
+        - registry.harbor.lan/flexinfer/runtime@sha256:8181b6901ab0ed1244a9035d88677c2c729094b847f60d63368faca147a21585
         # 2026-10-23 (issue #74 S3''): the gfx906 runtime rebuilt by CI from
         # master b8637f35 (pipeline 34198, publish_runtime_rocm_gfx906, 7.6 GB;
         # tags rocm-gfx906-b8637f35 / rocm-gfx906-609a955f / rocm-gfx906).
@@ -353,7 +359,8 @@ imagePrewarm:
         # already serves on both gfx1100 DaemonSets (cfefae18). Promotion target
         # for the gfx906 DaemonSet + GPUProfile; pulled here first so the roll
         # is a container swap, not a pull with the retrieval plane down.
-        # 171081de stays listed until that roll is qualified.
+        # Pinned by the gfx906 DaemonSet + GPUProfile since the S3'' roll
+        # (matrix row gfx906-serving-2026-10-23); 8181b690 above is the anchor.
         - registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
@@ -656,10 +663,16 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx906
-      # Humanizer qualification: unified gfx906 runtime with llama.cpp b11335.
-      # The entrypoint unsets HSA_OVERRIDE_GFX_VERSION so HIP sees Vega20.
-      # Rollback: 171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b.
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:8181b6901ab0ed1244a9035d88677c2c729094b847f60d63368faca147a21585"
+      # 2026-10-23 (issue #74 S3''): repinned to the gfx906 runtime rebuilt by
+      # CI from master b8637f35 (rocm-gfx906-b8637f35, pipeline 34198): the
+      # same inputs as the off-CI Humanizer overlay it replaces — llama.cpp
+      # b11335 and the entrypoint that unsets HSA_OVERRIDE_GFX_VERSION so HIP
+      # sees Vega20 (both on master since cc26086e4) — plus Go 1.26.10, i.e.
+      # the runtime-manager build already serving on both gfx1100 DaemonSets
+      # (cfefae18). Rollback anchor (Harbor-resident, pinned-8181b6901ab0,
+      # held by the radeonvii-gfx906 imagePrewarm profile):
+      #   registry.harbor.lan/flexinfer/runtime@sha256:8181b6901ab0ed1244a9035d88677c2c729094b847f60d63368faca147a21585
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
