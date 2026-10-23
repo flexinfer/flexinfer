@@ -34,21 +34,26 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
-    # 2026-10-23: master f885cf9c (!1122 reconcile hot-loop fix on top of the
-    # b8637f35 GPU health sentinel build): a steady shared-GPU member
-    # re-elects every 30 s instead of 3 s, every status writer on the Model
-    # reconcile path skips the write when the pass changed nothing (no more
-    # optimistic-lock races with the proxy's lastActiveTime stamp), the
+    # 2026-10-23: master 9dde2439 (!1122 reconcile hot-loop fix + !1125
+    # cache-status patch churn fix, on top of the b8637f35 GPU health
+    # sentinel build): a steady shared-GPU member re-elects every 30 s
+    # instead of 3 s, every status writer on the Model reconcile path skips
+    # the write when the pass changed nothing, the staged-cache branch no
+    # longer removes and restores prefetchPolicy/lastPrefetchTime on every
+    # pass (two writes and two watch events per pass, which the proxy's
+    # per-request lastActiveTime stamps on gte-qwen2 turned into a loop that
+    # starved every other Model on the first fix's build e2731314), and a
+    # lastActiveTime-only stamp on a Ready model no longer reconciles it. The
     # sibling watch fans out phase/sharedGroup.state transitions and a
     # GPULease watch re-enqueues the group on lease changes, so swap, park
     # and release latency stay event-driven. Expected: model reconcile rate
-    # from ~9/s to under 1/s, no "object has been modified" conflicts. Only
-    # the controller binary changed; no lane restart is expected from the
-    # roll. Rollback anchor (b8637f35, the sentinel build):
+    # from ~9/s to well under 1/s, no "object has been modified" conflicts.
+    # Only the controller binary changed; no lane restart is expected from
+    # the roll. Rollback anchor (b8637f35, the sentinel build; skip e2731314):
     # sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376
     # (tag 20261023-142445).
-    digest: "sha256:e273131461e97ac41ef2b5f8c283932ab3a2484468e6021ac9d662a4973f4f00"
-    tag: "20261023-193756"
+    digest: "sha256:a4495e0ca956ff14a950dd83de670d681f5258952febe174a6d9556bdc0499de"
+    tag: "20261023-201748"
   resources:
     limits:
       cpu: 1000m
