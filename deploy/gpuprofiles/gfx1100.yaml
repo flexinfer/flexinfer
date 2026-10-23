@@ -152,11 +152,16 @@ spec:
       - vllm
       - diffusers
       - snac
-    # 2026-08-24: digest bump to the first runtime build carrying
-    # server-snac.py (!990) + the torchao==0.17.0 quantizer pin (!993 — the
-    # unpinned 0.18.0 had broken this image's build since the 08-22 cache
-    # bust). Tag rocm-gfx1100-57b56bb6.
-    image: registry.harbor.lan/flexinfer/runtime@sha256:5d384ac4268310d50e01897c1a902e6cc819a6ff9352234ae95ffb221baae88c
+    # 2026-10-23 (issue #74 S1''): aligned with the image the gfx1100 runtime
+    # DaemonSets actually run (deploy/system/values-k3s.yaml runtime.profiles):
+    # the serving persona rebuilt by master pipeline 34198 from b8637f35,
+    # rocm-gfx1100-serving-b8637f35. No Go code reads this field (only
+    # bundledBackends above is consumed); it documents the runtime pod's
+    # image. Previously 5d384ac4 (rocm-gfx1100-57b56bb6, the 2026-08-24
+    # unified build: first image carrying server-snac.py (!990) + the
+    # torchao==0.17.0 quantizer pin (!993)), which had split from the
+    # DaemonSets since the S1 serving-persona promotion of 2026-09-13.
+    image: registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
   containerMemoryGB: 48
   # 2026-05-25: bumped 18 → 22 to make room for `gemma4-26b-a4b-gptq` at
   # maxModelLen=32768 with kvCacheDtype=fp8_e4m3. Math:
