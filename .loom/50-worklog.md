@@ -1054,3 +1054,80 @@ Sources:
   - `scripts/verify-vllm-canary.py` in the lane pod; `vllm_soak.py` + `xtx_sampler.sh` (session
     scratchpad) from `flexinfer-runtime-gfx1100-wprb8`
   - `ssh cblevins-7900xtx 'sudo journalctl -k -b -q | grep -c response:0xFFFFFFFF'` → 0
+
+### Controller reconcile hot loop — fixed in four MRs, controller rolled four times, verified
+
+- What changed:
+  - !1122 (`fix/model-reconcile-hot-loop`, 421423cf): `handleSharedGPU` returned `requeueFast`
+    (3 s) even when the election reproduced the member's recorded state — 25 shared Models alone
+    were ~8.6 reconciles/s doing nothing — and the Ready branch of `reconcileViaRuntime`,
+    `updateRuntimeStatus` and `updatePhase` wrote status unconditionally on every pass, losing the
+    optimistic lock to the proxy's `lastActiveTime` stamp on `gte-qwen2-1p5b-radeonvii` (14
+    conflicts/h). A steady member now re-elects every 30 s (`requeueSharedSteady`, `requeueFast`
+    only while its own transition is in flight); `Reconcile` snapshots the status it read
+    (`withObservedStatus`) and every writer goes through `persistStatus`, which skips the write
+    when the pass changed nothing. The sibling watch also fans out `phase` / `sharedGroup.state`
+    transitions (delete-only before) and a new `GPULease` watch re-enqueues the group on lease
+    changes, so swap, park and release stay event-driven. Runbook
+    `docs/user/gpu-sharing-runbook.md` updated.
+  - !1124 pinned that build (`e2731314`). It exposed a latent defect: the "previously staged"
+    branch of `ensureCacheStaging` rebuilt `status.cache` without `prefetchPolicy` /
+    `lastPrefetchTime` and patched (removing them), and `ensureCache`'s bookkeeping patch put them
+    back — two real writes and two Model watch events per pass, on the old build too (a single-pass
+    unit test against 442433391 bumps resourceVersion twice). Under the proxy's per-request stamps
+    on gte (~2 req/s since 17:40Z) that became a ~1 pass/s loop: 32 conflicts in 10 min (the Ready
+    branch repeating the write), `workqueue_depth{name="model"}` held at 25, no other Model
+    reconciled for 20 min, and two leader-election losses restarted the pod during an API-server
+    slow period (p99 4–5 s between 19:25 and 19:45Z, before the roll; the old pod's 2 restarts in
+    5 h look like the same mechanism).
+  - !1125 (`fix/model-cache-status-patch-churn`): carry the bookkeeping through the rebuild, route
+    all 17 cache status patches through `patchModelStatus` (skips an identical status, re-baselines
+    the pass's observation), and drop `lastActiveTime`-only events on Ready models
+    (`modelMeaningfulChange`). !1126 pinned it (`a4495e0c`) — and
+    `qwen36-35b-mtp-uncensored-5930k` looped the same way on the shared-PVC cache-copy branch, one
+    of the two `status.cache` rebuilds !1125 had not covered (~2 passes/s, queue depth 27, no
+    conflicts, pod stable).
+  - !1127 (`fix/cache-bookkeeping-all-rebuilds`): `carryPrefetchBookkeeping` after all four
+    rebuilds, filling only the fields the rebuild left empty. !1128 pinned it (`a517165a`):
+    clean 10-minute window — pod Running, 0 restarts, 0 ERROR lines, 0 conflicts, queue depth 0,
+    43 ms per reconcile, every runtime-served Model exactly on its 30 s cadence, Model phases
+    unchanged (Idle 14 / Ready 9 / Preempted 5), 1.5 reconciles/s.
+  - !1129 (`fix/parked-deployment-steady-requeue`): the 14 parked Deployment lanes polled every
+    10 s (`requeueMedium`) and were ~1.4/s of that 1.5/s; they now return the reconcile's own
+    `requeueAfter` (30 s). !1130 pinned it (`65d99ead`, tag `20261023-210446`, master 60009c34);
+    pod `flexinfer-controller-56b6cb4bcb-kshvs` Running 21:09:56Z.
+- Before / after (Prometheus, `controller="model"`):
+  | | `39581256` (before, 1 h) | `a517165a` (10 min) | `65d99ead` (10 min, 21:10–21:20Z) |
+  |---|---|---|---|
+  | reconciles/s (`requeue_after`) | 8.6 | 1.5 | 0.90 (0.93 over the last 5 min) |
+  | errors/s | 0.009 | 0 | 0 |
+  | mean reconcile time | 0.11 s | 0.043 s | 0.19 s (the cheap 10 s parked passes no longer dilute it) |
+  | `object has been modified` (log) | 14/h, all gte-qwen2 | 0 | 0 |
+  | ERROR log lines | — | 0 | 0 |
+  | `workqueue_depth{name="model"}` | n/a | 0 | 0 |
+  | controller log lines/min | ~88 | ~108 | 72 |
+  | runtime-served Models | every 3 s | every 30 s | every 30 s (20 passes each in 10 min) |
+  | pod | 2 restarts in 5 h | 0 restarts | 0 restarts; phases unchanged (Idle 14 / Ready 9 / Preempted 5) |
+- Why:
+  - Hand-over from the gfx906 session: API churn, log volume and status-write races on a
+    controller that otherwise idles at 0.2 cores.
+- Observed, not fixed (handed off):
+  - controller-runtime v0.23.3's priority queue: every Model from the informer's initial list is
+    queued at low priority, so one self-looping Model (normal-priority events) starves all of them
+    indefinitely — that is why one looping lane took the whole controller down with it twice today.
+    Worth a `MaxConcurrentReconciles` > 1 or a priority-queue review in loom/flexinfer.
+  - The proxy still stamps `lastActiveTime` on every request boundary (~1 write/s on a busy lane);
+    the controller now ignores those stamps on Ready models, but they are API writes all the same.
+  - The devbox sandbox for a fresh worktree path took ~15 min to build; the MCP proxy cuts any tool
+    call at 60 s (`devbox_exec_async` + poll works).
+- Sources:
+  - !1122 (e4c56347), !1124 (2ed57672), !1125 (9dde2439), !1126 (e5aafeca), !1127 (d8d70663),
+    !1128 (d9483f81), !1129 (60009c34), !1130 (c2bfd539); master pipelines 34330 / 34349 / 34362 /
+    34374
+  - `kubectl -n flexinfer-system logs flexinfer-controller-…` (per-model counts, conflict lines,
+    `--previous` for the leader-election losses); `kubectl get model … -w -o json
+    --show-managed-fields` (the removal / re-add stream on gte and qwen36)
+  - Prometheus: `controller_runtime_reconcile_total`, `controller_runtime_reconcile_errors_total`,
+    `controller_runtime_reconcile_time_seconds`, `workqueue_depth{name="model"}`,
+    `apiserver_request_duration_seconds` (p99 by verb), `flexinfer_proxy_requests_total{model=…}`
+  - Harbor API: `flexinfer-controller` artifacts by push time (tags `<BUILD_TS>`, `master`, `<sha>`)
