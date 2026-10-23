@@ -20,6 +20,7 @@ import (
 	"context"
 
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
@@ -99,5 +100,25 @@ func (r *ModelReconciler) persistStatus(ctx context.Context, model *aiv1alpha2.M
 		return err
 	}
 	obs.refresh(model)
+	return nil
+}
+
+// patchModelStatus applies model.Status as a JSON merge patch against base,
+// the copy the caller took before mutating, and re-baselines the pass's
+// observation from the server's reply. The cache staging branches patch from
+// a dozen places; routing them here means a later writer in the same pass
+// (the Ready branch, through persistStatus) sees the patched status as the
+// persisted one instead of repeating the write with an optimistic lock that
+// the proxy's lastActiveTime stamp then breaks. A status identical to base
+// issues no request at all: a merge patch of "{}" is a no-op at the API
+// server but still a round trip per pass.
+func (r *ModelReconciler) patchModelStatus(ctx context.Context, model, base *aiv1alpha2.Model) error {
+	if apiequality.Semantic.DeepEqual(&base.Status, &model.Status) {
+		return nil
+	}
+	if err := r.Status().Patch(ctx, model, client.MergeFrom(base)); err != nil {
+		return err
+	}
+	observedStatusFrom(ctx).refresh(model)
 	return nil
 }

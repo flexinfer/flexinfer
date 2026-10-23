@@ -29,6 +29,7 @@ import (
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
+	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -472,6 +473,151 @@ func TestRequestsForGPULeaseGroup_FansOutToGroupMembers(t *testing.T) {
 	}
 	if got := r.requestsForGPULeaseGroup(context.Background(), &corev1.ConfigMap{}); len(got) != 0 {
 		t.Fatalf("requests for a non-lease object = %v, want none", got)
+	}
+}
+
+// A staged Local/HF cache whose stage Job has been garbage-collected takes the
+// "local cache previously staged" branch on every pass. That branch rebuilt
+// status.cache without the prefetch bookkeeping and patched (removing
+// prefetchPolicy and lastPrefetchTime from the API object), then ensureCache's
+// bookkeeping patch restored them: two real writes and two Model watch events
+// per pass, which under the proxy's lastActiveTime stamps became a
+// self-sustaining loop on gte-qwen2-1p5b-radeonvii (2026-10-23).
+func TestEnsureCache_PreviouslyStagedSteadyPassWritesNothing(t *testing.T) {
+	s := steadyStateScheme(t)
+	if err := batchv1.AddToScheme(s); err != nil {
+		t.Fatalf("AddToScheme() error = %v", err)
+	}
+	staged := metav1.NewTime(time.Date(2026, 10, 22, 17, 0, 25, 0, time.UTC))
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "bge-large-radeonvii", Namespace: steadyStateNamespace, Generation: 328},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend:      "llamacpp",
+			Source:       "HF://CompendiumLabs/bge-large-en-v1.5-gguf",
+			NodeSelector: map[string]string{"flexinfer.ai/gpu.arch": "gfx906"},
+			Cache:        &aiv1alpha2.CacheSpec{Strategy: "Local", HostPath: "/var/lib/flexinfer/models"},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase: aiv1alpha2.ModelPhaseReady,
+			Cache: &aiv1alpha2.CacheStatus{
+				Strategy:         "Local",
+				Ready:            true,
+				JobName:          "bge-large-radeonvii-cache-stage",
+				JobPhase:         "Succeeded",
+				Message:          "local cache previously staged",
+				PrefetchPolicy:   aiv1alpha2.PrefetchPolicyEager,
+				LastPrefetchTime: &staged,
+				SizeBytes:        358342656,
+			},
+			Conditions: []metav1.Condition{{
+				Type:               aiv1alpha2.ConditionModelCached,
+				Status:             metav1.ConditionTrue,
+				Reason:             "CacheStage",
+				Message:            "local cache previously staged",
+				ObservedGeneration: 328,
+				LastTransitionTime: staged,
+			}},
+		},
+	}
+	cl := fake.NewClientBuilder().
+		WithScheme(s).
+		WithObjects(model).
+		WithStatusSubresource(&aiv1alpha2.Model{}).
+		Build()
+	r := &ModelReconciler{Client: cl, Scheme: s, Recorder: record.NewFakeRecorder(10)}
+	b, ok := backend.Get("llamacpp")
+	if !ok {
+		t.Fatal("llamacpp backend not registered")
+	}
+	get := func() *aiv1alpha2.Model {
+		t.Helper()
+		got := &aiv1alpha2.Model{}
+		if err := cl.Get(context.Background(), client.ObjectKeyFromObject(model), got); err != nil {
+			t.Fatalf("get model: %v", err)
+		}
+		return got
+	}
+
+	for pass := 1; pass <= 2; pass++ {
+		current := get()
+		before := current.ResourceVersion
+		ctx := withObservedStatus(context.Background(), current)
+		ready, err := r.ensureCache(ctx, current, b)
+		if err != nil {
+			t.Fatalf("pass %d: ensureCache() error: %v", pass, err)
+		}
+		if !ready {
+			t.Fatalf("pass %d: staged cache reported not ready", pass)
+		}
+		after := get()
+		if after.ResourceVersion != before {
+			t.Fatalf("pass %d: steady staged cache rewrote status: resourceVersion %s -> %s, cache %+v",
+				pass, before, after.ResourceVersion, after.Status.Cache)
+		}
+		if c := after.Status.Cache; c == nil || c.LastPrefetchTime == nil || !c.LastPrefetchTime.Equal(&staged) || c.PrefetchPolicy != aiv1alpha2.PrefetchPolicyEager {
+			t.Fatalf("pass %d: prefetch bookkeeping lost: %+v", pass, after.Status.Cache)
+		}
+		// The in-memory status must match what was observed, so a later writer
+		// in the same pass (the Ready branch) has nothing to persist either.
+		if !observedStatusFrom(ctx).unchanged(current) {
+			t.Fatalf("pass %d: in-memory status drifted from the observation: %+v", pass, current.Status.Cache)
+		}
+	}
+}
+
+func TestModelMeaningfulChange(t *testing.T) {
+	base := func(phase aiv1alpha2.ModelPhase) *aiv1alpha2.Model {
+		m := newSharedModel("gte-qwen2-1p5b-radeonvii", steadyStateNamespace, "radeonvii-models")
+		m.Generation = 48
+		m.Annotations = map[string]string{"flexinfer.ai/startup-sweep": "2026-10-12T21:55:53Z"}
+		m.Status.Phase = phase
+		m.Status.Endpoint = "http://gte-qwen2-1p5b-radeonvii.flexinfer-system.svc:8001"
+		m.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{GroupName: "radeonvii-models", State: "Active"}
+		m.Status.LastActiveTime = &metav1.Time{Time: time.Unix(1_700_000_000, 0)}
+		return m
+	}
+	stamp := func(m *aiv1alpha2.Model) { m.Status.LastActiveTime = &metav1.Time{Time: time.Unix(1_700_000_001, 0)} }
+
+	cases := []struct {
+		name   string
+		phase  aiv1alpha2.ModelPhase
+		mutate func(*aiv1alpha2.Model)
+		want   bool
+	}{
+		{"lastActiveTime stamp on a Ready model is dropped", aiv1alpha2.ModelPhaseReady, stamp, false},
+		{"resourceVersion-only update on a Ready model is dropped", aiv1alpha2.ModelPhaseReady, func(m *aiv1alpha2.Model) { m.ResourceVersion = "2" }, false},
+		{"lastActiveTime stamp on an Idle model is demand", aiv1alpha2.ModelPhaseIdle, stamp, true},
+		{"lastActiveTime stamp on a Preempted model is demand", aiv1alpha2.ModelPhasePreempted, stamp, true},
+		{"lastActiveTime stamp on a Loading model is admitted", aiv1alpha2.ModelPhaseLoading, stamp, true},
+		{"spec edit", aiv1alpha2.ModelPhaseReady, func(m *aiv1alpha2.Model) { m.Generation = 49; m.Spec.Source = "HF://other/repo" }, true},
+		{"activation annotation", aiv1alpha2.ModelPhaseReady, func(m *aiv1alpha2.Model) {
+			m.Annotations[AnnotationActivateRequestedAt] = "2026-10-23T19:00:00Z"
+		}, true},
+		{"deletion", aiv1alpha2.ModelPhaseReady, func(m *aiv1alpha2.Model) { now := metav1.Now(); m.DeletionTimestamp = &now }, true},
+		{"phase change", aiv1alpha2.ModelPhaseReady, func(m *aiv1alpha2.Model) { m.Status.Phase = aiv1alpha2.ModelPhaseFailed }, true},
+		{"shared state change", aiv1alpha2.ModelPhaseReady, func(m *aiv1alpha2.Model) { m.Status.SharedGroup.State = "Queued" }, true},
+		{"condition change with a stamp", aiv1alpha2.ModelPhaseReady, func(m *aiv1alpha2.Model) {
+			stamp(m)
+			setModelCondition(m, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonGPUDegraded, "card degraded")
+		}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			oldModel, newModel := base(tc.phase), base(tc.phase)
+			tc.mutate(newModel)
+			if got := modelMeaningfulChange.Update(event.UpdateEvent{ObjectOld: oldModel, ObjectNew: newModel}); got != tc.want {
+				t.Fatalf("Update admitted = %v, want %v", got, tc.want)
+			}
+		})
+	}
+	if !modelMeaningfulChange.Create(event.CreateEvent{Object: base(aiv1alpha2.ModelPhaseReady)}) {
+		t.Fatal("Create must be admitted")
+	}
+	if !modelMeaningfulChange.Delete(event.DeleteEvent{Object: base(aiv1alpha2.ModelPhaseReady)}) {
+		t.Fatal("Delete must be admitted")
+	}
+	if !modelMeaningfulChange.Update(event.UpdateEvent{ObjectOld: &corev1.Pod{}, ObjectNew: &corev1.Pod{}}) {
+		t.Fatal("unexpected object types must be admitted rather than dropped")
 	}
 }
 

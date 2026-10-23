@@ -256,6 +256,24 @@ func (r *ModelReconciler) clearFailedStagingJobs(ctx context.Context, model *aiv
 	return nil
 }
 
+// carryPrefetchBookkeeping copies the prefetch bookkeeping (policy, deferral,
+// honored request, completion time) from the cache status a staging branch is
+// about to replace onto its rebuilt replacement. ensureCacheStaging rebuilds
+// status.cache from scratch in several branches and patches the result; any
+// field the rebuild forgets is removed from the API object by that patch and
+// restored by annotatePrefetchOutcome's patch a moment later, so every pass
+// costs two writes and two watch events. Carrying the fields keeps a steady
+// pass at zero writes. Both arguments may be nil.
+func carryPrefetchBookkeeping(dst, src *aiv1alpha2.CacheStatus) {
+	if dst == nil || src == nil {
+		return
+	}
+	dst.PrefetchPolicy = src.PrefetchPolicy
+	dst.PrefetchDeferred = src.PrefetchDeferred
+	dst.PrefetchRequestedAt = src.PrefetchRequestedAt
+	dst.LastPrefetchTime = src.LastPrefetchTime
+}
+
 // cacheStatusPrefetchEqual reports whether two cache statuses agree on every
 // prefetch bookkeeping field. ensureCache uses it to skip a redundant status
 // patch once the fields have settled.

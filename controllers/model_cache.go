@@ -55,7 +55,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 	if decision.Deferred {
 		deferredOriginal := model.DeepCopy()
 		applyPrefetchDeferral(model, decision)
-		if err := r.Status().Patch(ctx, model, client.MergeFrom(deferredOriginal)); err != nil {
+		if err := r.patchModelStatus(ctx, model, deferredOriginal); err != nil {
 			return false, err
 		}
 		return false, nil
@@ -79,7 +79,7 @@ func (r *ModelReconciler) ensureCache(ctx context.Context, model *aiv1alpha2.Mod
 	bookkeepingOriginal := model.DeepCopy()
 	annotatePrefetchOutcome(model, decision, previous)
 	if !cacheStatusPrefetchEqual(bookkeepingOriginal.Status.Cache, model.Status.Cache) {
-		if err := r.Status().Patch(ctx, model, client.MergeFrom(bookkeepingOriginal)); err != nil {
+		if err := r.patchModelStatus(ctx, model, bookkeepingOriginal); err != nil {
 			return ready, err
 		}
 	}
@@ -263,7 +263,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			}
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCopy", message)
 
-			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			if err := r.patchModelStatus(ctx, model, original); err != nil {
 				return false, err
 			}
 			return ready, nil
@@ -340,7 +340,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 				SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache),
 			}
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheStage", message)
-			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			if err := r.patchModelStatus(ctx, model, original); err != nil {
 				return false, err
 			}
 			return ready, nil
@@ -420,9 +420,10 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			Ready:     ready,
 			SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache),
 		}
+		carryPrefetchBookkeeping(model.Status.Cache, original.Status.Cache)
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCheck", message)
 
-		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+		if err := r.patchModelStatus(ctx, model, original); err != nil {
 			return false, err
 		}
 		return ready, nil
@@ -449,6 +450,15 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 		Quantization: existingQuant,
 		SizeBytes:    existingSize,
 	}
+	// The prefetch bookkeeping is carried for the same reason. Dropping it
+	// here made the "previously staged" patch below remove prefetchPolicy and
+	// lastPrefetchTime from the API object and ensureCache's bookkeeping patch
+	// put them straight back: two real status writes on every pass of every
+	// staged Local/HF model, each a Model watch event that re-enqueued the
+	// model. Under the proxy's per-request lastActiveTime stamps that became a
+	// self-sustaining loop on gte-qwen2-1p5b-radeonvii (2026-10-23) that
+	// monopolised the single reconcile worker and starved the other Models.
+	carryPrefetchBookkeeping(model.Status.Cache, original.Status.Cache)
 
 	// For Local cache strategy with a nodeSelector, verify the cache
 	// directory on the target node is non-empty before marking ready.
@@ -466,7 +476,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 					model.Status.Cache.JobPhase = "Succeeded"
 					model.Status.Cache.Message = "local cache previously staged"
 					setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "CacheStage", "local cache previously staged")
-					if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+					if err := r.patchModelStatus(ctx, model, original); err != nil {
 						return false, err
 					}
 					return true, nil
@@ -486,7 +496,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 				model.Status.Cache.JobPhase = "Pending"
 				model.Status.Cache.Message = "staging HF model into local cache"
 				setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "CacheStage", "staging HF model into local cache")
-				if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+				if err := r.patchModelStatus(ctx, model, original); err != nil {
 					return false, err
 				}
 				return false, nil
@@ -515,7 +525,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			model.Status.Cache.Message = message
 			model.Status.Cache.SizeBytes = r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache)
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheStage", message)
-			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			if err := r.patchModelStatus(ctx, model, original); err != nil {
 				return false, err
 			}
 			return ready, nil
@@ -533,7 +543,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			// set at the top of ensureCache.
 			if original.Status.Cache != nil && original.Status.Cache.Ready {
 				setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "CacheCheck", "local cache previously verified")
-				if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+				if err := r.patchModelStatus(ctx, model, original); err != nil {
 					return false, err
 				}
 				return true, nil
@@ -555,7 +565,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			model.Status.Cache.JobPhase = "Pending"
 			model.Status.Cache.Message = "verifying local cache"
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "CacheCheck", "verifying local cache directory")
-			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			if err := r.patchModelStatus(ctx, model, original); err != nil {
 				return false, err
 			}
 			return false, nil
@@ -585,7 +595,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 		model.Status.Cache.Message = message
 		model.Status.Cache.SizeBytes = r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache)
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCheck", message)
-		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+		if err := r.patchModelStatus(ctx, model, original); err != nil {
 			return false, err
 		}
 		return ready, nil
@@ -593,7 +603,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 
 	if strategy != "SharedPVC" {
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "NoCacheJob", "no cache job required")
-		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+		if err := r.patchModelStatus(ctx, model, original); err != nil {
 			return false, err
 		}
 		return true, nil
@@ -674,7 +684,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			model.Status.Cache.JobPhase = "Running"
 			model.Status.Cache.Message = "prefetch job started"
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchRunning", model.Status.Cache.Message)
-			if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+			if err := r.patchModelStatus(ctx, model, original); err != nil {
 				return false, err
 			}
 			return false, nil
@@ -735,7 +745,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 		}
 	}
 
-	if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+	if err := r.patchModelStatus(ctx, model, original); err != nil {
 		return false, err
 	}
 	return model.Status.Cache.Ready, nil
@@ -936,7 +946,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		model.Status.Cache.JobPhase = "Running"
 		model.Status.Cache.Message = fmt.Sprintf("quantization job started (format=%s)", spec.Format)
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "QuantizationRunning", model.Status.Cache.Message)
-		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+		if err := r.patchModelStatus(ctx, model, original); err != nil {
 			return false, err
 		}
 		return false, nil
@@ -1010,7 +1020,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 		}
 		model.Status.Cache.Quantization = quantStatus
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "QuantizationFailed", model.Status.Cache.Message)
-		if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+		if err := r.patchModelStatus(ctx, model, original); err != nil {
 			return false, err
 		}
 		return false, nil
@@ -1026,7 +1036,7 @@ func (r *ModelReconciler) ensureQuantization(ctx context.Context, model *aiv1alp
 	model.Status.Cache.JobPhase = "Running"
 	model.Status.Cache.Message = fmt.Sprintf("quantization job running%s", elapsed)
 	setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "QuantizationRunning", model.Status.Cache.Message)
-	if err := r.Status().Patch(ctx, model, client.MergeFrom(original)); err != nil {
+	if err := r.patchModelStatus(ctx, model, original); err != nil {
 		return false, err
 	}
 	return false, nil
