@@ -180,12 +180,22 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       `harbor-flexinfer-pin-tags` (05:30 / 17:30Z) tags every `deploy/` + `charts/` digest pin
       `pinned-<12hex>`; today's drift report already shows `pinned-cfefae18061f`. Runbook
       `docs/runbooks/harbor-flexinfer-pinned-digests.md` (gitops).
-- [ ] Controller reconcile hot loop (pre-existing, measured again 2026-10-23): the `model`
-      controller runs ~9.8 reconciles/s (`requeue_after`), mostly the shared-group members on the
-      Radeon VII re-reconciled every 2–3 s, with periodic `the object has been modified` conflicts
-      on `gte-qwen2-1p5b-radeonvii`; the Ready branch of `reconcileViaRuntime`
-      (`controllers/model_runtime.go`) writes Model status unconditionally on every pass. CPU is
-      only 0.2 cores, but it is API churn and log volume. Proposed as its own session.
+- [x] Controller reconcile hot loop (pre-existing, measured again 2026-10-23): the `model`
+      controller ran ~8.6–9.8 reconciles/s (`requeue_after`) — every shared-group member on a 3 s
+      `requeueFast` poll — with periodic `the object has been modified` conflicts on
+      `gte-qwen2-1p5b-radeonvii` from the Ready branch of `reconcileViaRuntime` writing status on
+      every pass. **Fixed 2026-10-23** in !1122 (steady shared members re-elect every 30 s, every
+      status writer skips unchanged status via `persistStatus`, sibling + GPULease watches keep
+      swaps event-driven), !1125 + !1127 (the cache staging rebuilds no longer remove and restore
+      `prefetchPolicy`/`lastPrefetchTime` on every pass — a latent two-writes-per-pass churn the
+      first roll turned into a worker-starving loop on gte and then qwen36-35b; Ready-model
+      `lastActiveTime` stamps no longer reconcile) and !1129 (parked Deployment lanes at 30 s, not
+      10 s). Controller pinned to `65d99ead` (tag `20261023-210446`, !1130): verified over 10 min
+      at 0.90 reconciles/s (was 8.6), 0 conflicts, 0 errors, queue depth 0, every runtime-served
+      Model on its 30 s cadence, pod with 0 restarts, Model phases unchanged.
+      Worklog entry "Controller reconcile hot loop — fixed in four MRs". Follow-up worth a look:
+      controller-runtime's priority queue lets one self-looping Model starve every initial-list
+      Model (single worker) — consider `MaxConcurrentReconciles` > 1.
 
 ## Previous Goal (2026-09-13) - Idle gfx1100 cards → loom-core / Mills utilization
 
