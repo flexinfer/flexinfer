@@ -343,6 +343,18 @@ imagePrewarm:
       images:
         # rocm-gfx906-882d81ba: gfx906 runtime rebuilt with the entrypoint fix (!1037).
         - registry.harbor.lan/flexinfer/runtime@sha256:171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b
+        # 2026-10-23 (issue #74 S3''): the gfx906 runtime rebuilt by CI from
+        # master b8637f35 (pipeline 34198, publish_runtime_rocm_gfx906, 7.6 GB;
+        # tags rocm-gfx906-b8637f35 / rocm-gfx906-609a955f / rocm-gfx906).
+        # Same build inputs as the live off-CI Humanizer overlay 8181b690
+        # (rocm-gfx906-humanizer-coexist-cc26086e4: llama.cpp b11335 and the
+        # entrypoint that unsets HSA_OVERRIDE_GFX_VERSION, both on master since
+        # cc26086e4) plus Go 1.26.10 — the same runtime-manager build that
+        # already serves on both gfx1100 DaemonSets (cfefae18). Promotion target
+        # for the gfx906 DaemonSet + GPUProfile; pulled here first so the roll
+        # is a container swap, not a pull with the retrieval plane down.
+        # 171081de stays listed until that roll is qualified.
+        - registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
