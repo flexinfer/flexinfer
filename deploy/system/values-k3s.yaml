@@ -284,6 +284,15 @@ imagePrewarm:
         # (!1037: no node-wide config.json surgery in manager mode) —
         # rocm-gfx1100-serving-e4ad4d10, promotion target for the gfx1100 DaemonSets.
         - registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
+        # 2026-10-23 (issue #74 S1''): serving persona rebuilt by CI from master
+        # b8637f35 (pipeline 34198, publish_serving_rocm_gfx1100, 17.0 GB) —
+        # rocm-gfx1100-serving-b8637f35: Go 1.26.10, the runtime drain / fast-
+        # swap / stall-detection / warm-coexistence commits already live on the
+        # gfx906 DaemonSet, same patch stack as ad93ae72 below. Promotion target
+        # for both gfx1100 runtime DaemonSets, whose pin f7d2e967 Harbor
+        # retention deleted on 2026-10-21 (node snapshots only). Pulled here
+        # first so the DaemonSet roll is a container swap, not a 17 GB pull.
+        - registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
         # 2026-10-22 (issue #74 S2, vLLM currency): the rebuilt v0.26 native-
         # W4A16 serving image (rocm-gfx1100-v026-native-w4a16-a106504c, master
         # a106504c, plugin 0.8.0 on 0.26's FLA layout; Harbor tag
@@ -330,6 +339,12 @@ imagePrewarm:
         # (!1037: no node-wide config.json surgery in manager mode) —
         # rocm-gfx1100-serving-e4ad4d10, promotion target for the gfx1100 DaemonSets.
         - registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
+        # 2026-10-23 (issue #74 S1''): the master b8637f35 serving rebuild
+        # (rocm-gfx1100-serving-b8637f35), see the 5930k profile above. This
+        # node's runtime DaemonSet is the only gfx1100 one with pods, so it is
+        # the qualification vehicle for the digest; f7d2e967 stays listed as
+        # the rollback anchor until that roll passes.
+        - registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
         # 2026-10-22 (issue #74 S2): the v0.26 native-W4A16 serving image, see
         # the 5930k profile above. The XTX warm lane is the canary vehicle for
         # this digest (first roll after this image is resident); 2e9652ed
