@@ -53,6 +53,14 @@ const (
 	NodeAnnotationGPUFreeMemory     = "flexinfer.ai/gpu-free-memory"
 	NodeAnnotationSpotTerminating   = "flexinfer.ai/spot-terminating"
 	NodeAnnotationSpotTerminatingAt = "flexinfer.ai/spot-terminating-at"
+
+	// NodeAnnotationGPUHealthReason explains a NodeLabelGPUHealth=degraded
+	// verdict, one entry per affected card ("card0: pcie-link-down
+	// (current_link_speed=Unknown)"); empty while the node is healthy.
+	NodeAnnotationGPUHealthReason = "flexinfer.ai/gpu.health-reason"
+	// NodeAnnotationGPUHealthSince is the RFC3339 time of the last
+	// NodeLabelGPUHealth transition.
+	NodeAnnotationGPUHealthSince = "flexinfer.ai/gpu.health-since"
 )
 
 // Service annotations for model routing.

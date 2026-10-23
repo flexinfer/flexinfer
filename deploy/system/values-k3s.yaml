@@ -278,6 +278,15 @@ imagePrewarm:
         # (!1037: no node-wide config.json surgery in manager mode) —
         # rocm-gfx1100-serving-e4ad4d10, promotion target for the gfx1100 DaemonSets.
         - registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
+        # 2026-10-22 (issue #74 S2, vLLM currency): the rebuilt v0.26 native-
+        # W4A16 serving image (rocm-gfx1100-v026-native-w4a16-a106504c, master
+        # a106504c, plugin 0.8.0 on 0.26's FLA layout; Harbor tag
+        # pinned-ad93ae726bbe). Qualified on this node 2026-09-14 (matrix rows
+        # gfx1100-native-w4a16-2026-09-14-seqs2 / -096). Pulled here BEFORE the
+        # workhorse repin so the lane swap is a container restart, not an
+        # 11 GB pull. 2e9652ed above is the rollback anchor (node snapshot
+        # only: Harbor retention deleted it on 2026-10-17/21).
+        - registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Keep the 64K Qwen workhorse overlay referenced across containerd GC;
         # its first cold pull/unpack took 9m05s on this node.
@@ -315,6 +324,11 @@ imagePrewarm:
         # (!1037: no node-wide config.json surgery in manager mode) —
         # rocm-gfx1100-serving-e4ad4d10, promotion target for the gfx1100 DaemonSets.
         - registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
+        # 2026-10-22 (issue #74 S2): the v0.26 native-W4A16 serving image, see
+        # the 5930k profile above. The XTX warm lane is the canary vehicle for
+        # this digest (first roll after this image is resident); 2e9652ed
+        # stays listed as the rollback anchor until both lanes are promoted.
+        - registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.

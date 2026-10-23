@@ -44,6 +44,7 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/flexinfer/flexinfer/pkg/observability"
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -53,6 +54,11 @@ import (
 
 type noMatchingNodesError struct {
 	reason string
+	// gpuDegraded is set when at least one node matched the selector and
+	// vendor but was excluded only because the node agent marked its GPU
+	// degraded (flexinfer.ai/gpu.health). The Schedulable condition then
+	// reports GPUDegraded instead of NoMatchingNodes.
+	gpuDegraded bool
 }
 
 func (e *noMatchingNodesError) Error() string { return e.reason }
@@ -60,6 +66,13 @@ func (e *noMatchingNodesError) Error() string { return e.reason }
 func isNoMatchingNodesError(err error) bool {
 	var e *noMatchingNodesError
 	return stderrors.As(err, &e)
+}
+
+// isGPUDegradedError reports whether a no-matching-nodes error was caused by
+// the GPU health sentinel rather than by selectors or capacity.
+func isGPUDegradedError(err error) bool {
+	var e *noMatchingNodesError
+	return stderrors.As(err, &e) && e.gpuDegraded
 }
 
 type ambiguousGPUVendorError struct {
@@ -262,7 +275,16 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				log.Error(parkErr, "Failed to park stale Deployment")
 				return ctrl.Result{}, parkErr
 			}
-			setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonNoMatchingNodes, err.Error())
+			reason := aiv1alpha2.ReasonNoMatchingNodes
+			if isGPUDegradedError(err) {
+				// The node agent's sentinel took the card out (PCIe link down,
+				// SMU unresponsive, hung tools). Parking here is what the
+				// operator used to do by hand with an offline hostname
+				// selector; the node watch re-reconciles when the label clears.
+				reason = aiv1alpha2.ReasonGPUDegraded
+				r.Recorder.Event(model, corev1.EventTypeWarning, "GPUDegraded", err.Error())
+			}
+			setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, reason, err.Error())
 			model.Status.Phase = aiv1alpha2.ModelPhaseFailed
 			if err := r.Status().Update(ctx, model); err != nil {
 				return ctrl.Result{}, err
@@ -675,7 +697,51 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 			handler.EnqueueRequestsFromMapFunc(r.requestsForGamingSessionModels)).
 		Watches(&aiv1alpha2.LoRAAdapter{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForLoRAAdapterModel)).
+		Watches(&corev1.Node{},
+			handler.EnqueueRequestsFromMapFunc(r.requestsForNodeGPUHealth),
+			builder.WithPredicates(nodeGPUHealthChange)).
 		Complete(r)
+}
+
+// nodeGPUHealthChange admits only Node events in which the agent's GPU health
+// label flipped. Nodes emit a status heartbeat every few seconds; without this
+// predicate the watch would re-enqueue every GPU Model on each heartbeat.
+var nodeGPUHealthChange = predicate.Funcs{
+	CreateFunc: func(event.CreateEvent) bool { return false },
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		return e.ObjectOld.GetLabels()[constants.NodeLabelGPUHealth] != e.ObjectNew.GetLabels()[constants.NodeLabelGPUHealth]
+	},
+	DeleteFunc:  func(event.DeleteEvent) bool { return false },
+	GenericFunc: func(event.GenericEvent) bool { return false },
+}
+
+// requestsForNodeGPUHealth fans a GPU health transition on a node out to
+// every GPU Model, so a lane pinned to a card that just went degraded is
+// parked within one reconcile (Schedulable=False/GPUDegraded, proxy fast-fail)
+// and a lane parked that way is released as soon as the agent clears the
+// label, instead of waiting for the next periodic requeue.
+func (r *ModelReconciler) requestsForNodeGPUHealth(ctx context.Context, obj client.Object) []ctrl.Request {
+	node, ok := obj.(*corev1.Node)
+	if !ok || node == nil {
+		return nil
+	}
+	log := log.FromContext(ctx)
+	models := &aiv1alpha2.ModelList{}
+	if err := r.List(ctx, models); err != nil {
+		log.Error(err, "Failed to list models for node GPU health event", "node", node.Name)
+		return nil
+	}
+	requests := make([]ctrl.Request, 0, len(models.Items))
+	for i := range models.Items {
+		m := &models.Items[i]
+		if m.Spec.GetGPUCount() == 0 || m.Spec.GetGPUVendor() == aiv1alpha2.GPUVendorCPU {
+			continue
+		}
+		requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(m)})
+	}
+	log.Info("Node GPU health change fan-out to GPU models",
+		"node", node.Name, "health", node.Labels[constants.NodeLabelGPUHealth], "models", len(requests))
+	return requests
 }
 
 // steadyIdleDeployment reports whether a parked Model already has a zero-scale

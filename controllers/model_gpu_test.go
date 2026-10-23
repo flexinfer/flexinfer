@@ -30,6 +30,7 @@ import (
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/event"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
@@ -1140,4 +1141,125 @@ func TestDetectGPU_AMDFamilyGC1036(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, backend.GPUVendorAMD, vendor)
 	assert.Equal(t, "gfx1036", arch)
+}
+
+// TestDetectGPU_SkipsDegradedGPUNodes verifies the controller passes over a
+// node the agent's GPU health sentinel marked degraded and lands on a healthy
+// twin when one matches.
+func TestDetectGPU_SkipsDegradedGPUNodes(t *testing.T) {
+	scheme := gpuTestScheme()
+	model := gpuTestModel("prefers-healthy", func(m *aiv1alpha2.Model) {
+		m.Spec.GPU = &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorAMD}
+	})
+
+	degraded := readyNode("xtx-degraded", map[string]string{
+		"gpu.amd.com/gpu-architecture": "gfx1100",
+		"flexinfer.ai/gpu.health":      "degraded",
+	}, corev1.ResourceList{"amd.com/gpu": resource.MustParse("2")})
+	degraded.Annotations = map[string]string{
+		"flexinfer.ai/gpu.health-reason": "card0: pcie-link-down (current_link_speed=Unknown)",
+	}
+	healthy := readyNode("5930k-healthy", map[string]string{
+		"gpu.amd.com/gpu-architecture": "gfx1100",
+		"flexinfer.ai/gpu.health":      "ok",
+	}, corev1.ResourceList{"amd.com/gpu": resource.MustParse("1")})
+
+	r := &ModelReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithLists(&corev1.NodeList{Items: []corev1.Node{degraded, healthy}}).
+			Build(),
+		Scheme:   scheme,
+		Recorder: &FakeEventRecorder{},
+	}
+
+	vendor, arch, err := r.detectGPU(context.Background(), model)
+	require.NoError(t, err)
+	assert.Equal(t, backend.GPUVendorAMD, vendor)
+	assert.Equal(t, "gfx1100", arch)
+}
+
+// TestDetectGPU_ReportsGPUDegradedWhenOnlyDegradedNodesMatch verifies a lane
+// pinned to a degraded card gets a no-matching-nodes error flagged as GPU
+// degraded, naming the node and the agent's reason, so the Schedulable
+// condition can say GPUDegraded and the Deployment is parked.
+func TestDetectGPU_ReportsGPUDegradedWhenOnlyDegradedNodesMatch(t *testing.T) {
+	scheme := gpuTestScheme()
+	model := gpuTestModel("xtx-warm-lane", func(m *aiv1alpha2.Model) {
+		m.Spec.GPU = &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorAMD}
+		m.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": "cblevins-7900xtx"}
+	})
+
+	degraded := readyNode("cblevins-7900xtx", map[string]string{
+		"kubernetes.io/hostname":       "cblevins-7900xtx",
+		"gpu.amd.com/gpu-architecture": "gfx1100",
+		"flexinfer.ai/gpu.health":      "degraded",
+	}, corev1.ResourceList{"amd.com/gpu": resource.MustParse("2")})
+	degraded.Annotations = map[string]string{
+		"flexinfer.ai/gpu.health-reason": "card0: device-io-error (hwmon/hwmon3/temp1_input: remote I/O error)",
+	}
+	other := readyNode("cblevins-5930k", map[string]string{
+		"kubernetes.io/hostname":       "cblevins-5930k",
+		"gpu.amd.com/gpu-architecture": "gfx1100",
+	}, corev1.ResourceList{"amd.com/gpu": resource.MustParse("1")})
+
+	r := &ModelReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithLists(&corev1.NodeList{Items: []corev1.Node{degraded, other}}).
+			Build(),
+		Scheme:   scheme,
+		Recorder: &FakeEventRecorder{},
+	}
+
+	_, _, err := r.detectGPU(context.Background(), model)
+	require.Error(t, err)
+	assert.True(t, isNoMatchingNodesError(err))
+	assert.True(t, isGPUDegradedError(err), "error must be flagged as GPU degraded: %v", err)
+	assert.Contains(t, err.Error(), "cblevins-7900xtx: card0: device-io-error")
+	assert.Contains(t, err.Error(), "flexinfer.ai/gpu.health=degraded")
+
+	// A selector miss with no degraded candidate keeps the plain reason.
+	plain := gpuTestModel("nowhere", func(m *aiv1alpha2.Model) {
+		m.Spec.GPU = &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorAMD}
+		m.Spec.NodeSelector = map[string]string{"kubernetes.io/hostname": "missing"}
+	})
+	_, _, err = r.detectGPU(context.Background(), plain)
+	require.Error(t, err)
+	assert.True(t, isNoMatchingNodesError(err))
+	assert.False(t, isGPUDegradedError(err))
+}
+
+// TestNodeGPUHealthChange_PredicateAndFanOut covers the Node watch: only a
+// gpu.health label flip admits the event, and the fan-out enqueues GPU
+// Models but not CPU ones.
+func TestNodeGPUHealthChange_PredicateAndFanOut(t *testing.T) {
+	old := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "n", Labels: map[string]string{"flexinfer.ai/gpu.health": "ok"}}}
+	flipped := old.DeepCopy()
+	flipped.Labels["flexinfer.ai/gpu.health"] = "degraded"
+	heartbeat := old.DeepCopy()
+	heartbeat.Annotations = map[string]string{"flexinfer.ai/gpu.util": "3.00"}
+
+	assert.True(t, nodeGPUHealthChange.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: flipped}))
+	assert.False(t, nodeGPUHealthChange.Update(event.UpdateEvent{ObjectOld: old, ObjectNew: heartbeat}))
+	assert.False(t, nodeGPUHealthChange.Create(event.CreateEvent{Object: flipped}))
+	assert.False(t, nodeGPUHealthChange.Delete(event.DeleteEvent{Object: flipped}))
+
+	scheme := gpuTestScheme()
+	gpuModel := gpuTestModel("gpu-lane", func(m *aiv1alpha2.Model) {
+		m.Spec.GPU = &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorAMD}
+	})
+	cpuModel := gpuTestModel("cpu-embed", func(m *aiv1alpha2.Model) {
+		m.Spec.GPU = &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorCPU}
+	})
+	r := &ModelReconciler{
+		Client: fake.NewClientBuilder().
+			WithScheme(scheme).
+			WithObjects(gpuModel, cpuModel).
+			Build(),
+		Scheme: scheme,
+	}
+	requests := r.requestsForNodeGPUHealth(context.Background(), flipped)
+	require.Len(t, requests, 1)
+	assert.Equal(t, "gpu-lane", requests[0].Name)
 }

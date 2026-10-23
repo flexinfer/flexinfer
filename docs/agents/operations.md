@@ -329,6 +329,48 @@ If a GPU node crashes due to memory pressure or GPU segfaults:
    kubectl get nodes -w
    ```
 
+### GPU health sentinel
+
+The node agent labels a node `flexinfer.ai/gpu.health=degraded` when a
+discrete card drops off the PCIe bus (`current_link_speed=Unknown`), its SMU
+stops answering sysfs reads (`Remote I/O error`), the vendor tools hang past
+`--probe-timeout`, or a previously seen card vanishes. Mechanism and reasons:
+[components.md](components.md#gpu-health-sentinel). From that moment the
+scheduler extender refuses the node, the controller parks every Model whose
+only matching node is that one (`Schedulable=False`, reason `GPUDegraded`,
+Deployment scaled to 0) and the proxy fast-fails their requests. This is the
+automated form of the `cblevins-7900xtx-gpu-offline` selector trick used
+during the 2026-10 XTX incident.
+
+When `FlexInferGPUDegraded` fires:
+
+1. **Read the verdict** — the reason and when it flipped:
+   ```bash
+   kubectl get node -L flexinfer.ai/gpu.health
+   kubectl get node NODE_NAME -o jsonpath='{.metadata.annotations.flexinfer\.ai/gpu\.health-reason}{"\n"}{.metadata.annotations.flexinfer\.ai/gpu\.health-since}{"\n"}'
+   kubectl get model -n flexinfer-system -o custom-columns='NAME:.metadata.name,PHASE:.status.phase,SCHED:.status.conditions[?(@.type=="Schedulable")].reason'
+   ```
+   On the host, confirm with `dmesg | grep -iE 'amdgpu|smu'` (SMU message
+   timeouts, `TransferTableSmu2Dram`, "Failed to export SMU metrics table")
+   and `cat /sys/class/drm/card*/device/current_link_speed`.
+2. **Do not fight the label.** The agent re-applies it every 30 s; editing it
+   away only lets a lane cold-start into the dead card. If you must serve
+   from a card the sentinel distrusts, set `--gpu-health-sentinel=false` on
+   the agent DaemonSet and remove the label by hand — a deliberate, visible
+   override.
+3. **Recover the host.** Every wedge so far needed a **hard power cycle**; a
+   warm `systemctl reboot` with processes in state D hung the host for hours.
+   Lanes stay parked automatically meanwhile; nothing to scale down by hand.
+4. **Verify before trusting the card again.** After the host is back the
+   agent starts fresh, the first clean cycle labels the node `ok`, and the
+   controller's Node watch re-reconciles the parked Models within seconds —
+   so a lane with `minReplicas: 1` will cold-start on its own. If the card
+   has a history, run a load soak first (fp16 matmul burn for 8–10 min
+   sampling `rocm-smi`, then check `dmesg`); park the lane with an offline
+   hostname selector while the soak runs if you need to hold it back.
+5. **Close out** with a validation-matrix row and the `flexinfer_gpu_health_degraded_total`
+   counter as evidence of what the sentinel saw.
+
 ### GPU Memory Segfault Prevention
 
 When testing new GPU configurations:

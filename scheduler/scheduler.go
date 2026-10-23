@@ -288,6 +288,18 @@ func (s *Scheduler) Filter(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if _, ok := node.Labels[constants.NodeLabelGPUVendor]; ok {
+			// The node agent's GPU health sentinel: a card that is off the PCIe
+			// bus or whose firmware stopped answering must not receive a pod,
+			// whatever the free-VRAM annotation (which goes stale the moment
+			// the agent's tools hang) still says.
+			if node.Labels[constants.NodeLabelGPUHealth] == constants.GPUHealthDegraded {
+				reason := strings.TrimSpace(node.Annotations[constants.NodeAnnotationGPUHealthReason])
+				if reason == "" {
+					reason = "no reason recorded"
+				}
+				failed[nodeName] = "GPU degraded (" + constants.NodeLabelGPUHealth + "=" + constants.GPUHealthDegraded + "): " + reason
+				continue
+			}
 			// If we have an estimate and the node agent reports free VRAM, enforce it.
 			if vramEstimateMB > 0 && gpuCount > 0 {
 				freeVRAMStr := strings.TrimSpace(node.Annotations[constants.NodeAnnotationGPUFreeMemory])

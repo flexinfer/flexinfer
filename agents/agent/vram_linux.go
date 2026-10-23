@@ -99,15 +99,6 @@ func (a *Agent) getFreeAMDVRAMSysfs() uint64 {
 	return freeDiscrete
 }
 
-// parseBytes parses a byte count string.
-func parseBytes(s string) uint64 {
-	val, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		return 0
-	}
-	return val
-}
-
 // detectAMDGPUSysfs reads AMD GPU metrics from sysfs.
 // This is the fallback when rocm-smi (Python) is not available.
 func (a *Agent) detectAMDGPUSysfs() []AMDGPUSysfs {

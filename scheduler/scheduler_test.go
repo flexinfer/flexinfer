@@ -691,3 +691,59 @@ func spanNames(spans []sdktrace.ReadOnlySpan) []string {
 	}
 	return names
 }
+
+// TestFilter_RejectsDegradedGPUNode verifies the extender honors the node
+// agent's GPU health sentinel: a node labelled flexinfer.ai/gpu.health=degraded
+// never receives a GPU pod, and the failure names the recorded reason.
+func TestFilter_RejectsDegradedGPUNode(t *testing.T) {
+	cache := &fakeCache{
+		nodes: map[string]*corev1.Node{
+			"healthy": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "healthy",
+					Labels: map[string]string{
+						"flexinfer.ai/gpu.vendor": "AMD",
+						"flexinfer.ai/gpu.health": "ok",
+					},
+					Annotations: map[string]string{"flexinfer.ai/gpu-free-memory": "23000"},
+				},
+			},
+			"degraded": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name: "degraded",
+					Labels: map[string]string{
+						"flexinfer.ai/gpu.vendor": "AMD",
+						"flexinfer.ai/gpu.health": "degraded",
+					},
+					Annotations: map[string]string{
+						// Stale free-VRAM from before the tools hung: must not rescue the node.
+						"flexinfer.ai/gpu-free-memory":   "23000",
+						"flexinfer.ai/gpu.health-reason": "card0: pcie-link-down (current_link_speed=Unknown)",
+					},
+				},
+			},
+			"unlabelled": {
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "unlabelled",
+					Labels: map[string]string{"flexinfer.ai/gpu.vendor": "AMD"}, // pre-sentinel agent
+				},
+			},
+		},
+	}
+	sched := &Scheduler{cache: cache}
+	pod := &corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: "default"}}
+
+	kept, failed := filterNodes(t, sched, pod, "healthy", "degraded", "unlabelled")
+	if len(kept) != 2 || kept[0] != "healthy" || kept[1] != "unlabelled" {
+		t.Fatalf("expected healthy and unlabelled to survive, got %v", kept)
+	}
+	reason, ok := failed["degraded"]
+	if !ok {
+		t.Fatalf("expected degraded node in FailedNodes, got %v", failed)
+	}
+	for _, want := range []string{"GPU degraded", "flexinfer.ai/gpu.health=degraded", "pcie-link-down"} {
+		if !bytes.Contains([]byte(reason), []byte(want)) {
+			t.Fatalf("failure reason %q should mention %q", reason, want)
+		}
+	}
+}

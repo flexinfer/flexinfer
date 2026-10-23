@@ -126,6 +126,23 @@ spec:
             summary: "GPU temperature critical on node {{ "{{ $labels.node }}" }}"
             description: "GPU {{ "{{ $labels.gpu }}" }} on node {{ "{{ $labels.node }}" }} is at {{ "{{ $value }}" }}°C — thermal throttling likely."
 
+        # GPU marked degraded by the node agent's health sentinel: PCIe link
+        # down (current_link_speed=Unknown), SMU/driver I/O errors on sysfs,
+        # vendor tools hung past the probe timeout, or a card that vanished.
+        # The scheduler extender and the controller already stop placing
+        # lanes on the node and park Models pinned there
+        # (Schedulable=False/GPUDegraded); this alert is for the human, since
+        # recovery has always needed a host power cycle.
+        - alert: FlexInferGPUDegraded
+          expr: |
+            flexinfer_gpu_healthy == 0
+          for: {{ default "1m" $thresholds.gpuDegradedFor }}
+          labels:
+            severity: critical
+          annotations:
+            summary: "GPU {{ "{{ $labels.gpu }}" }} on node {{ "{{ $labels.node }}" }} is degraded"
+            description: "The flexinfer-agent marked GPU {{ "{{ $labels.gpu }}" }} ({{ "{{ $labels.vendor }}" }}) on node {{ "{{ $labels.node }}" }} degraded; the reason is on the node annotation flexinfer.ai/gpu.health-reason (kubectl get node {{ "{{ $labels.node }}" }} -o jsonpath='{.metadata.annotations.flexinfer\\.ai/gpu\\.health-reason}'). Lanes on this card are parked automatically and the proxy fast-fails them. Check dmesg for amdgpu/SMU errors; a wedged card needs a hard power cycle (a warm reboot has hung the host). Runbook: docs/agents/operations.md#gpu-health-sentinel."
+
         # VRAM nearly exhausted
         - alert: FlexInferGPUVRAMLow
           expr: |

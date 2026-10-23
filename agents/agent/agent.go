@@ -34,7 +34,49 @@ type Agent struct {
 	// sysfsRoot is the sysfs mount root (Linux). Default: /sys.
 	// This is overridable for tests to keep sysfs probing hermetic.
 	sysfsRoot string
-	runCmd    func(ctx context.Context, name string, args ...string) ([]byte, error)
+	// runCmd executes a vendor tool. Production wires exec.CommandContext with a
+	// WaitDelay; tests inject fakes. Call sites go through a.exec, which adds
+	// the probe timeout and the health-sentinel bookkeeping.
+	runCmd func(ctx context.Context, name string, args ...string) ([]byte, error)
+
+	// probeTimeout bounds each vendor-tool invocation (see defaultProbeTimeout).
+	probeTimeout time.Duration
+	// healthSentinel enables the GPU health label/annotation/metrics. Off, the
+	// agent still bounds tool timeouts but publishes no verdict.
+	healthSentinel bool
+	health         *healthState
+	// lastVendor remembers the vendor label from the last successful detection
+	// so a tool-only degraded verdict (no sysfs cards) can be attributed.
+	lastVendor string
+}
+
+// Option customizes NewAgent.
+type Option func(*Agent)
+
+// WithProbeTimeout bounds every vendor-tool invocation; non-positive keeps the
+// default.
+func WithProbeTimeout(d time.Duration) Option {
+	return func(a *Agent) {
+		if d > 0 {
+			a.probeTimeout = d
+		}
+	}
+}
+
+// WithHealthSentinel toggles the GPU health sentinel (default on).
+func WithHealthSentinel(enabled bool) Option {
+	return func(a *Agent) { a.healthSentinel = enabled }
+}
+
+// newCommandRunner returns the production runCmd: the context deadline kills
+// the child and WaitDelay abandons it if SIGKILL cannot take effect (a tool
+// stuck in uninterruptible sleep on a wedged GPU).
+func newCommandRunner(waitDelay time.Duration) func(ctx context.Context, name string, args ...string) ([]byte, error) {
+	return func(ctx context.Context, name string, args ...string) ([]byte, error) {
+		cmd := exec.CommandContext(ctx, name, args...)
+		cmd.WaitDelay = waitDelay
+		return cmd.CombinedOutput()
+	}
 }
 
 // NodeMetrics represents the aggregated metrics from all pods on a node
@@ -56,7 +98,7 @@ type GPUMetrics struct {
 }
 
 // NewAgent creates a new Agent.
-func NewAgent(labelPrefix string) (*Agent, error) {
+func NewAgent(labelPrefix string, opts ...Option) (*Agent, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get in-cluster config: %w", err)
@@ -82,16 +124,21 @@ func NewAgent(labelPrefix string) (*Agent, error) {
 		namespace = "default"
 	}
 
-	return &Agent{
-		kubeClient:  clientset,
-		nodeName:    nodeName,
-		namespace:   namespace,
-		labelPrefix: labelPrefix,
-		sysfsRoot:   "/sys",
-		runCmd: func(ctx context.Context, name string, args ...string) ([]byte, error) {
-			return exec.CommandContext(ctx, name, args...).CombinedOutput()
-		},
-	}, nil
+	a := &Agent{
+		kubeClient:     clientset,
+		nodeName:       nodeName,
+		namespace:      namespace,
+		labelPrefix:    labelPrefix,
+		sysfsRoot:      "/sys",
+		runCmd:         newCommandRunner(defaultProbeWaitDelay),
+		probeTimeout:   defaultProbeTimeout,
+		healthSentinel: true,
+		health:         newHealthState(),
+	}
+	for _, opt := range opts {
+		opt(a)
+	}
+	return a, nil
 }
 
 // ProbeAndLabel detects hardware and updates node labels.
@@ -102,14 +149,39 @@ func (a *Agent) ProbeAndLabel(ctx context.Context) error {
 	labels := make(map[string]string)
 	annotations := make(map[string]string)
 
+	// GPU health sentinel, sysfs first: it executes nothing, so it still
+	// answers when the card has taken rocm-smi/rocminfo into state D. A hard
+	// verdict (link down, device I/O error) also tells exec to skip the vendor
+	// tools for this cycle instead of adding more hung processes.
+	a.ensureHealth()
+	a.health.beginCycle()
+	var sysfsHealth []GPUHealth
+	if a.healthSentinel {
+		sysfsHealth = a.probeAMDHealthSysfs()
+		if hardDegraded(sysfsHealth) {
+			a.health.mu.Lock()
+			a.health.skipTools = true
+			a.health.mu.Unlock()
+			log.Info("GPU sysfs sentinel found the device unresponsive; skipping vendor tools this cycle")
+		}
+	}
+
 	a.detectGPU(ctx, labels)
 	a.detectCPU(labels)
+	if v := labels[a.labelPrefix+"gpu.vendor"]; v != "" {
+		a.lastVendor = v
+	}
 
 	// Detect Application Metrics (KV Cache, etc.)
 	metrics := a.collectNodeMetrics(ctx)
 	annotations[a.labelPrefix+"kv-cache-usage"] = fmt.Sprintf("%.4f", metrics.TotalKVCacheUsage)
 	annotations[a.labelPrefix+"gpu-free-memory"] = fmt.Sprintf("%d", metrics.FreeVRAMMB)
 	annotations[a.labelPrefix+"gpu.util"] = fmt.Sprintf("%.2f", metrics.GPUUtilization)
+
+	if a.healthSentinel {
+		health := a.evaluateGPUHealth(ctx, sysfsHealth, time.Now())
+		applyGPUHealth(health, labels, annotations)
+	}
 
 	log.Info("Applying labels and annotations", "labels", labels, "annotations", annotations)
 
@@ -146,7 +218,7 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 		{"chroot", []string{"/host", "nvidia-smi", "--query-gpu=memory.total,compute_cap", "--format=csv,noheader"}},
 	}
 	for _, q := range nvidiaQueries {
-		out, err := a.runCmd(ctx, q.cmd, q.args...)
+		out, err := a.exec(ctx, q.cmd, q.args...)
 		if err == nil {
 			a.parseNvidia(string(out), labels)
 			return
@@ -162,13 +234,13 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 		{"chroot", []string{"/host", "rocm-smi", "--showmeminfo", "vram", "--json"}},
 	}
 	for _, q := range rocmQueries {
-		out, err := a.runCmd(ctx, q.cmd, q.args...)
+		out, err := a.exec(ctx, q.cmd, q.args...)
 		if err == nil {
-			archOut, err := a.runCmd(ctx, "rocminfo")
+			archOut, err := a.exec(ctx, "rocminfo")
 			if err != nil {
 				// rocminfo often depends on host libs; chroot fallback keeps the agent
 				// image small while still enabling gfx* arch detection.
-				if out2, err2 := a.runCmd(ctx, "chroot", "/host", "rocminfo"); err2 == nil {
+				if out2, err2 := a.exec(ctx, "chroot", "/host", "rocminfo"); err2 == nil {
 					archOut = out2
 				} else {
 					log.V(1).Info("rocminfo failed (best-effort)", "error", err2)
@@ -194,9 +266,9 @@ func (a *Agent) detectGPU(ctx context.Context, labels map[string]string) {
 		}
 		// Try to infer arch (gfx*) via rocminfo when available. This is important
 		// for selecting gfx1100-optimized images even when rocm-smi is missing.
-		infoOut, err := a.runCmd(ctx, "rocminfo")
+		infoOut, err := a.exec(ctx, "rocminfo")
 		if err != nil {
-			if out2, err2 := a.runCmd(ctx, "chroot", "/host", "rocminfo"); err2 == nil {
+			if out2, err2 := a.exec(ctx, "chroot", "/host", "rocminfo"); err2 == nil {
 				infoOut = out2
 			} else {
 				log.V(1).Info("rocminfo failed during sysfs fallback (best-effort)", "error", err2)
@@ -536,7 +608,7 @@ func (a *Agent) detectFreeVRAM(ctx context.Context) uint64 {
 		{"chroot", []string{"/host", "nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"}},
 	}
 	for _, q := range nvidiaQueries {
-		out, err := a.runCmd(ctx, q.cmd, q.args...)
+		out, err := a.exec(ctx, q.cmd, q.args...)
 		if err == nil {
 			freeVRAM := a.parseNvidiaFreeMemory(string(out))
 			if freeVRAM > 0 {
@@ -555,7 +627,7 @@ func (a *Agent) detectFreeVRAM(ctx context.Context) uint64 {
 		{"chroot", []string{"/host", "rocm-smi", "--showmeminfo", "vram", "--json"}},
 	}
 	for _, q := range rocmQueries {
-		out, err := a.runCmd(ctx, q.cmd, q.args...)
+		out, err := a.exec(ctx, q.cmd, q.args...)
 		if err != nil {
 			continue
 		}
@@ -840,7 +912,7 @@ func (a *Agent) detectNvidiaMetrics(ctx context.Context) []GPUMetrics {
 	var out []byte
 	var err error
 	for _, q := range queries {
-		out, err = a.runCmd(ctx, q.cmd, q.args...)
+		out, err = a.exec(ctx, q.cmd, q.args...)
 		if err == nil {
 			break
 		}
@@ -895,13 +967,13 @@ func (a *Agent) detectAMDMetrics(ctx context.Context) []GPUMetrics {
 	log := log.FromContext(ctx)
 
 	runRocm := func(args ...string) ([]byte, error) {
-		if out, err := a.runCmd(ctx, "rocm-smi", args...); err == nil {
+		if out, err := a.exec(ctx, "rocm-smi", args...); err == nil {
 			return out, nil
 		}
 		// rocm-smi often depends on host Python libs; chroot fallback keeps the
 		// agent image small while still enabling metrics.
 		chrootArgs := append([]string{"/host", "rocm-smi"}, args...)
-		return a.runCmd(ctx, "chroot", chrootArgs...)
+		return a.exec(ctx, "chroot", chrootArgs...)
 	}
 
 	// Get temperature (required for rocm-smi path; otherwise we fall back to sysfs).
