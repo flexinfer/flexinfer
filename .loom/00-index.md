@@ -107,9 +107,14 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       pool 103,517 (1.58x at 0.94; 0.26 charges cudagraph memory to the budget → draft !1108 for
       0.96), 40/40 concurrent completions at 37 tok/s per stream — then **the card dropped off the
       bus 2m54s into the soak** (SMU bus error, `device lost from bus!`; first time on kernel 7.0
-      and at uncapped 2.8 GHz / 307 W). Lane parked again (!1109), pin stays `ad93ae72`. This MR
-      moves the workhorse (0.96). Evidence row `gfx1100-native-w4a16-2026-10-22`. `2e9652ed` stays
-      in both prewarm lists as the rollback anchor (node snapshots only); (a) is no longer needed.
+      and at uncapped 2.8 GHz / 307 W). Lane parked again (!1109), pin stays `ad93ae72`. !1110
+      (merged 2026-10-23 02:35Z on the user's go) moved the workhorse at 0.96: the first 0.26 boot
+      profiled 71,493 (1.09x), the controller's KVPoolRecheck relaunched it warm → 128,837 / 1.97x,
+      Ready +8m12s, 3/3 identical in-pod and via the proxy, 40.6 tok/s clean single-stream, host
+      clean. Evidence row `gfx1100-native-w4a16-2026-10-22`. `2e9652ed` stays in both prewarm lists
+      as the rollback anchor (node snapshots only); (a) is no longer needed. Still pinned to
+      `2e9652ed`: `qwen36-27b-autoround-workhorse`, `qwen36-27b-fable-gptq`, `qwen35-9b-ablit-rp`
+      (parked / fallback lanes) and three debug manifests — same repin when they are next needed.
 - [ ] XTX after the hard power cycle: decide the posture (clock cap back? the two kernel-7.0 passes
       were ≤2100 MHz burn and ≤1748 MHz vLLM 0.23 under the cap; the 0.26 drop was at 2780-2837 MHz),
       restore the hostname selector, re-soak on `ad93ae72`, then merge !1108.
