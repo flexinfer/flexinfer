@@ -164,6 +164,22 @@ variables:
   # Optional: OCI repo for Helm chart publishing (example: oci://registry.harbor.lan/flexinfer-charts)
   HELM_OCI_REPO: ""
 
+# Go caches. GOPATH stays in the project dir so `go install` lands tools in
+# .go/bin (the gotools archive). The build cache does not go through S3
+# (2026-10-23): every runner lane mounts a node-local hostPath at /cache/go
+# and exports GOCACHE=/cache/go/build, GOMODCACHE=/cache/go/mod and
+# GOLANGCI_LINT_CACHE=/cache/go/lint into the job env (platform/gitops
+# k3s/ci/gitlab/helmrelease-runner*.yaml; ci-go-cache-trim bounds it). Until
+# now before_script forced GOCACHE back to .go/cache and shipped it as a
+# gobuild-${CI_COMMIT_REF_SLUG} archive. On master that archive reached
+# 2.98-3.37 GB per job (pipelines #34198, #34209): above the runner's 2 GiB
+# MaxUploadedArchiveSize, so it was never uploaded ("stored only locally"),
+# and the helper, which builds cache.zip on its own writable layer, was
+# evicted at its 4Gi ephemeral-storage limit, failing lint/vet after their
+# checks had passed. Keeping the runner's GOCACHE removes the archive and the
+# 2-4 min restore/save per job. The gomod archive fills only on a lane that
+# exports no GOMODCACHE (today none: ".go/pkg/mod/: no matching files" is
+# expected in the save step).
 .go-cache: &go-cache
   image: ${GO_IMAGE}
   cache:
@@ -174,10 +190,6 @@ variables:
       paths:
         - .go/pkg/mod/
       policy: pull-push
-    - key: gobuild-${CI_COMMIT_REF_SLUG}
-      paths:
-        - .go/cache/
-      policy: pull-push
     - key: gotools-${GO_VERSION}-${GOLANGCI_LINT_VERSION}-${ENVTEST_VERSION}-${GOVULNCHECK_VERSION}-${GO_LICENSES_VERSION}
       paths:
         - .go/bin/
@@ -186,7 +198,7 @@ variables:
   before_script:
     - mkdir -p .go .go/cache .go/bin .go/envtest
     - export GOPATH=${CI_PROJECT_DIR}/.go
-    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
+    - export GOCACHE="${GOCACHE:-${CI_PROJECT_DIR}/.go/cache}"
     - export PATH=$PATH:$GOPATH/bin
 
 # --- Lint Stage ---
@@ -213,7 +225,7 @@ lint:
   before_script:
     - mkdir -p .go .go/cache .go/bin
     - export GOPATH=${CI_PROJECT_DIR}/.go
-    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
+    - export GOCACHE="${GOCACHE:-${CI_PROJECT_DIR}/.go/cache}"
     - export PATH=$PATH:$GOPATH/bin
     - |
       set -e
@@ -2337,7 +2349,7 @@ govulncheck:
   before_script:
     - mkdir -p .go .go/cache .go/bin
     - export GOPATH=${CI_PROJECT_DIR}/.go
-    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
+    - export GOCACHE="${GOCACHE:-${CI_PROJECT_DIR}/.go/cache}"
     - export PATH=$PATH:$GOPATH/bin
     - command -v govulncheck >/dev/null 2>&1 || go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION}
   script:
@@ -2381,7 +2393,7 @@ sbom_generate:
   before_script:
     - mkdir -p .go .go/cache
     - export GOPATH=${CI_PROJECT_DIR}/.go
-    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
+    - export GOCACHE="${GOCACHE:-${CI_PROJECT_DIR}/.go/cache}"
     - export PATH=$PATH:$GOPATH/bin
     - |
       echo "Installing syft..."
@@ -2417,7 +2429,7 @@ go_licenses_check:
   before_script:
     - mkdir -p .go .go/cache .go/bin
     - export GOPATH=${CI_PROJECT_DIR}/.go
-    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
+    - export GOCACHE="${GOCACHE:-${CI_PROJECT_DIR}/.go/cache}"
     - export PATH=$PATH:$GOPATH/bin
     - go mod download
     - command -v go-licenses >/dev/null 2>&1 || go install github.com/google/go-licenses@${GO_LICENSES_VERSION}
@@ -2449,7 +2461,7 @@ go_mod_outdated:
   before_script:
     - mkdir -p .go .go/cache
     - export GOPATH=${CI_PROJECT_DIR}/.go
-    - export GOCACHE=${CI_PROJECT_DIR}/.go/cache
+    - export GOCACHE="${GOCACHE:-${CI_PROJECT_DIR}/.go/cache}"
     - export PATH=$PATH:$GOPATH/bin
     # `latest` triage (w1-flexinfer-g4-latest-refs): unpinned tool install, but
     # not an image reference and not a policy violation under criterion 37.
