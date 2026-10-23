@@ -670,7 +670,7 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	r.mgr = mgr
 
 	return ctrl.NewControllerManagedBy(mgr).
-		For(&aiv1alpha2.Model{}).
+		For(&aiv1alpha2.Model{}, builder.WithPredicates(modelMeaningfulChange)).
 		Owns(&appsv1.Deployment{}).
 		Owns(&corev1.Service{}, builder.WithPredicates(serviceMeaningfulChange)).
 		Owns(&corev1.PersistentVolumeClaim{}).
@@ -899,6 +899,52 @@ func startupSweepShouldPoke(phase aiv1alpha2.ModelPhase) bool {
 // The sweep must only run on the elected leader to avoid duplicate reconciles.
 func (r *ModelReconciler) NeedLeaderElection() bool {
 	return true
+}
+
+// modelMeaningfulChange is the primary Model watch's predicate. It drops the
+// one update that cannot change a Ready model's reconcile outcome: a status
+// write whose only difference is lastActiveTime. The proxy stamps that field
+// on every request boundary — about once a second on a busy embedding lane —
+// and each stamp used to cost a full pass (two runtime health probes, the
+// lease and cache reads, a status comparison that found nothing to do). For a
+// Ready model the stamp only feeds time-based decisions (idle timeout, the
+// election's demand windows) that the periodic pass evaluates anyway. For a
+// model in any other phase the stamp is demand — a wake-up for a scale-to-zero
+// lane, promotion for a queued shared member — and is admitted, as is every
+// spec, metadata or other status change and every create and delete.
+var modelMeaningfulChange = predicate.Funcs{
+	CreateFunc:  func(event.CreateEvent) bool { return true },
+	DeleteFunc:  func(event.DeleteEvent) bool { return true },
+	GenericFunc: func(event.GenericEvent) bool { return true },
+	UpdateFunc: func(e event.UpdateEvent) bool {
+		oldModel, ok1 := e.ObjectOld.(*aiv1alpha2.Model)
+		newModel, ok2 := e.ObjectNew.(*aiv1alpha2.Model)
+		if !ok1 || !ok2 {
+			return true // unexpected types — admit rather than risk missing a change
+		}
+		if newModel.Status.Phase != aiv1alpha2.ModelPhaseReady {
+			return true
+		}
+		return !lastActiveTimeOnlyChange(oldModel, newModel)
+	},
+}
+
+// lastActiveTimeOnlyChange reports whether two revisions of a Model differ in
+// nothing the reconciler reads except status.lastActiveTime.
+func lastActiveTimeOnlyChange(oldModel, newModel *aiv1alpha2.Model) bool {
+	if oldModel.Generation != newModel.Generation ||
+		(oldModel.DeletionTimestamp == nil) != (newModel.DeletionTimestamp == nil) ||
+		!apiequality.Semantic.DeepEqual(oldModel.Labels, newModel.Labels) ||
+		!apiequality.Semantic.DeepEqual(oldModel.Annotations, newModel.Annotations) ||
+		!apiequality.Semantic.DeepEqual(oldModel.Finalizers, newModel.Finalizers) ||
+		!apiequality.Semantic.DeepEqual(oldModel.Spec, newModel.Spec) {
+		return false
+	}
+	oldStatus := oldModel.Status.DeepCopy()
+	newStatus := newModel.Status.DeepCopy()
+	oldStatus.LastActiveTime = nil
+	newStatus.LastActiveTime = nil
+	return apiequality.Semantic.DeepEqual(oldStatus, newStatus)
 }
 
 // sharedSiblingMeaningfulChange admits the Model events whose fan-out the
