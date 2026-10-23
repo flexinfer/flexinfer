@@ -161,14 +161,19 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       `undefined symbol: llama_params_fit`). The `amdgpu: init_user_pages … -1` bursts seen in
       the kernel log during llama.cpp loads are pre-existing and harmless (identical 288-line
       counts from both images in an A/B); details in the row.
-- [ ] XTX after the hard power cycle (02:35Z 2026-10-23; by 17:45Z 15 h clean idle on kernel 7.0,
-      0 SMU errors, link x16 Gen4, `gpu.health=ok`): decide the posture — the boot unit resets
-      overdrive to stock (OD max 2950 MHz, 294 W floor, DPM auto), i.e. the clocks the card
-      dropped at (2780-2837 MHz on 0.26); the two kernel-7.0 passes were ≤2100 MHz burn and
-      ≤1748 MHz vLLM 0.23 under the 1700 MHz cap — then restore the hostname selector (lane parked:
-      `Ready=False/GPUUnresponsive`, selector `cblevins-7900xtx-gpu-offline`, pin `ad93ae72`),
-      re-soak, then merge !1108. Operator-paired: a wedge still hangs the host (hard power cycle)
-      even though the sentinel now parks the lane by itself.
+- [x] 2026-10-23 XTX lane restored (operator decision: 2100 MHz cap). Host power-cycled 02:35Z,
+      16 h clean on kernel 7.0; the boot unit `amdgpu-power-pin.service` now sets DPM auto + the
+      294 W floor + an overdrive max sclk of 2100 MHz (both kernel-7.0 passes were ≤2100 MHz, the
+      one kernel-7.0 drop was at 2780-2837 MHz), applied live 18:54Z. !1121 flipped the selector
+      back; the Deployment stayed at 0 until the `flexinfer.ai/engine-stall-recovery` latch from
+      the 10-22 drop was removed by hand (`kubectl annotate model … flexinfer.ai/engine-stall-recovery-`,
+      the runbook step in `docs/agents/vllm-engine-stalls.md`) — Ready +3m05s after that, pool
+      103,517 / 1.58x at 0.94, probes 3/3 identical, 40.3 tok/s. **Soak PASSED**: 147/147
+      concurrency-2 completions over 604 s, 0 errors, 201-223 W / 59-72 C / 2020-2141 MHz, 0 SMU
+      or amdgpu errors, link x16 Gen4, lane 0 restarts. Then !1108 merged (0.96): pool 118,411 /
+      1.81x, probes 3/3 identical, `mills-warm` / `mills-council` / `xtx-warm` back. Row
+      `xtx-vllm-soak-2026-10-23`. Still open: BIOS 1811 → 3854/3881; a cap-free soak is a
+      separate decision — the card has never survived sustained load above ~2140 MHz.
 - [x] Retention guard (gitops): shipped 2026-10-22 as platform/gitops !971
       (`k3s/monitoring/harbor-flexinfer-pin-guard/`): CronJob `harbor-flexinfer-retention-ensure`
       asserts an `always` retain rule for `pinned-*` on the `flexinfer` policy and

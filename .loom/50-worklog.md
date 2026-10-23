@@ -1027,3 +1027,30 @@ Sources:
   - `scripts/check-runtime-pin-drift.py --allow-insecure` before/after
   - `ssh cblevins-radeonvii 'sudo journalctl -k -o short-iso'`, `k3s ctr … run --rm` A/B
   - Harbor API: artifacts for tags `rocm-gfx906-b8637f35`, `pinned-8181b6901ab0`
+
+### XTX warm lane restored under a 2100 MHz cap — vLLM 0.26 soak PASSED
+
+- What changed:
+  - Operator decision (user present): cap the 7900 XTX at 2100 MHz, restore the lane, soak on
+    `ad93ae72`. Rewrote `/usr/local/sbin/amdgpu-power-pin.sh` on the host (backup
+    `.bak-20261023-145439`): DPM auto + 294 W floor + `pp_od_clk_voltage` `s 1 2100`; restarted
+    the unit, verified `OD_SCLK 500-2100`.
+  - !1121 flipped `qwen38-27b-xtx-warm-canary` back to `cblevins-7900xtx`. The controller
+    re-rendered but held 0 replicas: the Model still carried the `flexinfer.ai/engine-stall-recovery`
+    latch from the 10-22 drop. Removed it (`kubectl annotate … engine-stall-recovery-`, the
+    documented runbook step); Ready 3m05s later, pool 103,517 / 1.58x at 0.94, probes identical.
+  - Soak 19:12:49-19:22:54Z: 147/147 completions at concurrency 2, 0 errors, p50 8.1 s,
+    48.6 tok/s aggregate; host 201-223 W / 59-72 C / 2020-2141 MHz, 0 SMU / amdgpu errors.
+  - !1108 un-drafted and merged (0.96): pod Ready in 3m11s, pool 118,411 / 1.81x, probes 3/3.
+- Why:
+  - The lane had been parked since 10-22 23:16Z; both kernel-7.0 passes were ≤2100 MHz and the
+    only kernel-7.0 drop was at uncapped 2.8 GHz, so a 2100 MHz cap reproduces the known-good
+    envelope while keeping ~94 % of uncapped single-stream decode (40.3 vs 43.0 tok/s).
+- Observed:
+  - Procedure gap: a selector flip alone does not revive a GPUUnresponsive-latched lane; the
+    latch removal belongs in the restore checklist (now in the matrix row and index).
+- Sources:
+  - !1121 (8c3006be), !1108 (a2a28862); row `xtx-vllm-soak-2026-10-23`
+  - `scripts/verify-vllm-canary.py` in the lane pod; `vllm_soak.py` + `xtx_sampler.sh` (session
+    scratchpad) from `flexinfer-runtime-gfx1100-wprb8`
+  - `ssh cblevins-7900xtx 'sudo journalctl -k -b -q | grep -c response:0xFFFFFFFF'` → 0
