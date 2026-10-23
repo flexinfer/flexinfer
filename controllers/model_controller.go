@@ -516,14 +516,23 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				log.Error(err, "Failed to converge annotations on parked Deployment")
 				return ctrl.Result{}, err
 			}
-			return ctrl.Result{RequeueAfter: requeueMedium}, nil
+			// A parked lane wakes on events, not on this timer: demand is the
+			// proxy's lastActiveTime stamp or an activation annotation (both
+			// admitted by the Model watch for a non-Ready model), a shared-group
+			// promotion arrives through the sibling watch and the Service
+			// annotation sync, and spec edits bump the generation. The periodic
+			// pass only re-checks the time-based inputs, so it runs at the
+			// reconcile's own cadence (requeueLong, or requeueFast while a
+			// shared-group transition is in flight) instead of every 10 s — with
+			// 14 parked lanes the 10 s poll alone was 1.4 reconciles/s.
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
 		}
 		exists, err := r.deploymentExists(ctx, model)
 		if err != nil {
 			return ctrl.Result{}, err
 		}
 		if !exists {
-			return ctrl.Result{RequeueAfter: requeueMedium}, nil
+			return ctrl.Result{RequeueAfter: requeueAfter}, nil
 		}
 		log.V(1).Info("Scaling idle Deployment to zero", "model", model.Name)
 	}
