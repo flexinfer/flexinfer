@@ -136,7 +136,18 @@ spec:
     # with the full pool, and it keeps two requests overlapping if a boot
     # profiles a short pool.
     schedulerReserveFullISL: false
-    gpuMemoryUtilization: "0.94"
+    # 2026-10-22 (vLLM 0.26 roll, !1107): 0.94 -> 0.96. vLLM >= 0.21 charges
+    # cudagraph capture memory to this budget (boot log: "0.94 is equivalent
+    # to 0.9232 without CUDA graph memory profiling"), so on 0.26 the same
+    # 0.94 profiled 103,517 tokens (1.58x at 64K) against 132,561 (2.02x) on
+    # 0.23, and a cold-compile-cache boot left 1.54 GiB (< the 2.15 GiB one
+    # 64K request needs) and crashed once before the warm retry passed. 0.96
+    # is the value this digest was qualified with on the 5930k (rows
+    # gfx1100-native-w4a16-2026-09-14-seqs2 / -096: 129,615 tokens warm) and
+    # restores the 2x pool; the card hosts nothing else (vramEstimateMB 23200
+    # = whole card). Rollback = 0.94 (1.58x, still above the KVPoolShort
+    # line of 1.5x).
+    gpuMemoryUtilization: "0.96"
     kvCacheDtype: fp8_e4m3
     calculateKvScales: false
     enforceEager: false
