@@ -527,7 +527,16 @@ runtime:
     # shape lives in git history (534b32a89, and the 2026-08-19 lease commit)
     # for the next lease.
     - name: gfx1100
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0"
+      # 2026-10-23 (issue #74 S1''): repinned to the serving persona rebuilt by
+      # master pipeline 34198 from b8637f35 (rocm-gfx1100-serving-b8637f35:
+      # Go 1.26.10 + the runtime drain / fast-swap / stall-detection / warm-
+      # coexistence commits, same patch stack as the ad93ae72 text lanes).
+      # The previous pin f7d2e967 (rocm-gfx1100-serving-e4ad4d10, S1',
+      # 2026-09-13) was deleted by Harbor retention on 2026-10-21 and exists
+      # only as the containerd snapshot the prewarm DaemonSet holds; rollback
+      # anchor (resident on both gfx1100 nodes, IfNotPresent):
+      #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
@@ -579,7 +588,12 @@ runtime:
         - name: VLLM_ALLOW_CHUNKED_LOCAL_ATTN_WITH_HYBRID_KV_CACHE
           value: "1"
     - name: gfx1100-5930k
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0"
+      # 2026-10-23 (issue #74 S1''): same digest as the gfx1100 profile above
+      # (this DaemonSet is desired=0 behind the quantization-pause selector;
+      # the pin is kept identical so enabling it never starts an unpullable
+      # image). Previous pin / rollback anchor, node snapshot only:
+      #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 1
