@@ -130,6 +130,19 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       as the rollback anchor (node snapshots only); (a) is no longer needed. Still pinned to
       `2e9652ed`: `qwen36-27b-autoround-workhorse`, `qwen36-27b-fable-gptq`, `qwen35-9b-ablit-rp`
       (parked / fallback lanes) and three debug manifests — same repin when they are next needed.
+- [x] 2026-10-23 runtime DaemonSet repin (#74 S1''): the gfx1100 runtime DaemonSets (`gfx1100` on
+      the XTX, `gfx1100-5930k` at desired=0) and the GPUProfile moved off the Harbor-deleted
+      `f7d2e967` onto `cfefae18` (`rocm-gfx1100-serving-b8637f35`, master pipeline 34198, Go 1.26.10).
+      !1114 prewarmed it on both nodes, !1116 rolled it: XTX runtime pod Ready in ~25 s, multi-model
+      on, entrypoint skips config normalization, `config.json` mtimes unchanged, `snac-decode-gfx1100`
+      Ready in ≤ 16 s and decoding on the GPU through the pod and the proxy. Then `f7d2e967` /
+      `522d0fe2` left both prewarm lists (`f7d2e967` stays resident on the XTX as the comment-only
+      rollback anchor). Row `gfx1100-serving-2026-10-23`. diffusers 0.40 / transformers 5.17 came
+      along unpinned; no diffusers lane runs through the XTX runtime pod today.
+      Drift gate still FAILs on `2e9652ed` (the 27B rollback anchor in both prewarm lists +
+      `qwen36-27b-autoround-workhorse`, `qwen36-27b-fable-gptq`, `qwen35-9b-ablit-rp`,
+      `qwen35-9b-ablit-rp-5930k`) and gfx906 `0e590ca2` (abliteration image, gone from Harbor and
+      not resident on the Radeon VII).
 - [ ] XTX after the hard power cycle: decide the posture (clock cap back? the two kernel-7.0 passes
       were ≤2100 MHz burn and ≤1748 MHz vLLM 0.23 under the cap; the 0.26 drop was at 2780-2837 MHz),
       restore the hostname selector, re-soak on `ad93ae72`, then merge !1108.

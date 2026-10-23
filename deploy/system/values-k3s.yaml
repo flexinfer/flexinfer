@@ -273,25 +273,26 @@ imagePrewarm:
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
       images:
-        # 2026-09-13 (issue #74): keep the two runtime digests this node
-        # actually serves resident across Harbor/containerd GC — the promoted
-        # Model lanes' serving image (rocm-gfx1100-v023-native-w4a16-037d0bc1,
-        # 15 pins, recipe no longer at HEAD) and the serving persona the
-        # DaemonSet promotion (S1) will move to (rocm-gfx1100-serving-0d631512).
+        # 2026-09-13 (issue #74): keep the Model lanes' v023 serving image
+        # (rocm-gfx1100-v023-native-w4a16-037d0bc1, recipe no longer at HEAD)
+        # resident across Harbor/containerd GC.
         - registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
-        - registry.harbor.lan/flexinfer/runtime@sha256:522d0fe22a172dbbe018d0f284a1b836fd7bbfa56c84bebb34b9ab8b19e60970
-        # 2026-09-13 (issue #74 S1'): serving persona rebuilt with the entrypoint fix
-        # (!1037: no node-wide config.json surgery in manager mode) —
-        # rocm-gfx1100-serving-e4ad4d10, promotion target for the gfx1100 DaemonSets.
-        - registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
-        # 2026-10-23 (issue #74 S1''): serving persona rebuilt by CI from master
-        # b8637f35 (pipeline 34198, publish_serving_rocm_gfx1100, 17.0 GB) —
+        # 2026-10-23 (issue #74 S1''): retired the two earlier serving-persona
+        # digests, both deleted by Harbor retention on 2026-10-21 and no longer
+        # pinned by any consumer: 522d0fe2 (rocm-gfx1100-serving-0d631512, S1)
+        # and f7d2e967 (rocm-gfx1100-serving-e4ad4d10, S1'), superseded on both
+        # gfx1100 runtime DaemonSets by cfefae18 below (matrix row
+        # gfx1100-serving-2026-10-23). This node's runtime DaemonSet is
+        # desired=0 and its image GC starts at 60 %, so their snapshots will be
+        # reclaimed here; the 7900xtx keeps f7d2e967 as the rollback anchor.
+        # 2026-10-23 (issue #74 S1''): the gfx1100 runtime DaemonSet image,
+        # the serving persona rebuilt by CI from master b8637f35 (pipeline
+        # 34198, publish_serving_rocm_gfx1100, 17.0 GB) —
         # rocm-gfx1100-serving-b8637f35: Go 1.26.10, the runtime drain / fast-
         # swap / stall-detection / warm-coexistence commits already live on the
-        # gfx906 DaemonSet, same patch stack as ad93ae72 below. Promotion target
-        # for both gfx1100 runtime DaemonSets, whose pin f7d2e967 Harbor
-        # retention deleted on 2026-10-21 (node snapshots only). Pulled here
-        # first so the DaemonSet roll is a container swap, not a 17 GB pull.
+        # gfx906 DaemonSet, same patch stack as ad93ae72 below. Held here so
+        # enabling the gfx1100-5930k DaemonSet is a container start, not a
+        # 17 GB pull.
         - registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
         # 2026-10-22 (issue #74 S2, vLLM currency): the rebuilt v0.26 native-
         # W4A16 serving image (rocm-gfx1100-v026-native-w4a16-a106504c, master
@@ -331,19 +332,19 @@ imagePrewarm:
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
       images:
-        # 2026-09-13 (issue #74): same two runtime digests as the 5930k profile
-        # — this node now serves the warm Mills lane on the v023 image.
+        # 2026-09-13 (issue #74): the v023 Model-lane image, as in the 5930k
+        # profile — this node served the warm Mills lane on it.
         - registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
-        - registry.harbor.lan/flexinfer/runtime@sha256:522d0fe22a172dbbe018d0f284a1b836fd7bbfa56c84bebb34b9ab8b19e60970
-        # 2026-09-13 (issue #74 S1'): serving persona rebuilt with the entrypoint fix
-        # (!1037: no node-wide config.json surgery in manager mode) —
-        # rocm-gfx1100-serving-e4ad4d10, promotion target for the gfx1100 DaemonSets.
-        - registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
+        # 2026-10-23 (issue #74 S1''): 522d0fe2 and f7d2e967 retired from this
+        # list, see the 5930k profile. f7d2e967 (rocm-gfx1100-serving-e4ad4d10)
+        # is the runtime DaemonSet's rollback anchor and stays resident on this
+        # node while root use is below its 90 % image-GC threshold (66 % on
+        # 2026-10-23); it is no longer in Harbor, so it can only be listed as a
+        # comment without failing the runtime_pin_drift gate:
+        #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
         # 2026-10-23 (issue #74 S1''): the master b8637f35 serving rebuild
-        # (rocm-gfx1100-serving-b8637f35), see the 5930k profile above. This
-        # node's runtime DaemonSet is the only gfx1100 one with pods, so it is
-        # the qualification vehicle for the digest; f7d2e967 stays listed as
-        # the rollback anchor until that roll passes.
+        # (rocm-gfx1100-serving-b8637f35) this node's runtime DaemonSet runs
+        # since !1116 (qualified, matrix row gfx1100-serving-2026-10-23).
         - registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
         # 2026-10-22 (issue #74 S2): the v0.26 native-W4A16 serving image, see
         # the 5930k profile above. The XTX warm lane is the canary vehicle for
