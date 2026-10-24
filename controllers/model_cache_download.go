@@ -17,6 +17,11 @@ limitations under the License.
 package controllers
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -31,6 +36,35 @@ type hfDownloadOptions struct {
 	allowPatterns  []string
 	ignorePatterns []string
 	revision       string
+}
+
+// hfCacheMarkerKey is the canonical form of the download options an HF cache
+// marker vouches for. Patterns are sorted because their order does not change
+// the file set snapshot_download selects. Changing what the key holds renames
+// every HF cache marker, so each cache downloads again on its next Job.
+type hfCacheMarkerKey struct {
+	AllowPatterns  []string `json:"allowPatterns"`
+	IgnorePatterns []string `json:"ignorePatterns"`
+	Revision       string   `json:"revision"`
+}
+
+// hfCacheMarkerName names the completion marker an HF download Job writes in
+// the model's cache directory: the Local stage on the node's hostPath and the
+// SharedPVC prefetch on the cache PVC. It hashes spec.source together with the
+// resolved download options, so a ggufFile rename, an allow or ignore pattern
+// change, or an hfRevision bump names a marker the cache does not hold yet and
+// the Job downloads again instead of trusting the old file set.
+func hfCacheMarkerName(source string, opts hfDownloadOptions) (string, error) {
+	key, err := json.Marshal(hfCacheMarkerKey{
+		AllowPatterns:  slices.Sorted(slices.Values(opts.allowPatterns)),
+		IgnorePatterns: slices.Sorted(slices.Values(opts.ignorePatterns)),
+		Revision:       opts.revision,
+	})
+	if err != nil {
+		return "", fmt.Errorf("marshal HF cache marker key: %w", err)
+	}
+	sum := sha256.Sum256([]byte(source + "\n" + string(key)))
+	return ".flexinfer_cached_" + hex.EncodeToString(sum[:]), nil
 }
 
 func configStringValue(cfg map[string]any, keys ...string) string {

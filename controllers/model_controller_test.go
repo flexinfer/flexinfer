@@ -1383,7 +1383,7 @@ func TestJobForPrefetch_IncludesHFPatternEnv(t *testing.T) {
 		},
 	}
 
-	job, err := r.jobForPrefetch(model, "glm47-cache", "glm47")
+	job, err := r.jobForPrefetch(model, "glm47-cache", "glm47", true)
 	if err != nil {
 		t.Fatalf("jobForPrefetch() error: %v", err)
 	}

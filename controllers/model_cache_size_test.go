@@ -433,10 +433,10 @@ func TestCacheJobScriptsReportTheirSize(t *testing.T) {
 
 	jobs := map[string]*batchv1.Job{
 		"prefetch": build(t, func() (*batchv1.Job, error) {
-			return r.jobForPrefetch(hfModel, "cache-pvc", hfModel.Name)
+			return r.jobForPrefetch(hfModel, "cache-pvc", hfModel.Name, true)
 		}),
 		"prefetch-mlc": build(t, func() (*batchv1.Job, error) {
-			return r.jobForPrefetch(mlcModel, "cache-pvc", mlcModel.Name)
+			return r.jobForPrefetch(mlcModel, "cache-pvc", mlcModel.Name, true)
 		}),
 		"check": build(t, func() (*batchv1.Job, error) {
 			return r.jobForCacheCheck(pvcModel, "source-pvc", "model-a")
