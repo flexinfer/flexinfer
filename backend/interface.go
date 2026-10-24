@@ -160,6 +160,27 @@ func (s *ModelSpec) ConfigBool(key string, defaultVal bool) bool {
 	}
 }
 
+// ConfigOptionalBool reports a bool config value and whether it was set to a
+// parseable bool. It accepts the same forms as ConfigBool but distinguishes
+// unset (or unparseable) from false, for tri-state flags.
+func (s *ModelSpec) ConfigOptionalBool(key string) (bool, bool) {
+	if s.Config == nil {
+		return false, false
+	}
+	switch v := s.Config[key].(type) {
+	case bool:
+		return v, true
+	case string:
+		b, err := strconv.ParseBool(v)
+		if err != nil {
+			return false, false
+		}
+		return b, true
+	default:
+		return false, false
+	}
+}
+
 // ConfigDuration returns a duration config value with a default.
 // Numeric values are interpreted as seconds. Strings may use Go duration
 // syntax ("15m") or a bare integer second count ("900").

@@ -468,6 +468,50 @@ func TestValidateBackendGPUCompatibility(t *testing.T) {
 	})
 }
 
+func TestValidateLlamaCppFlashAttentionOffNeedsUnquantizedVCache(t *testing.T) {
+	b := &fakeGPUBackend{name: backend.NameLlamaCpp}
+	r := gpuTestReconciler(func(*ModelReconciler) {})
+
+	tests := []struct {
+		name        string
+		gpuVendor   backend.GPUVendor
+		gpuArch     string
+		config      map[string]any
+		errContains string
+	}{
+		{name: "off with quantized V cache", gpuVendor: backend.GPUVendorAMD, gpuArch: "gfx906",
+			config: map[string]any{"flashAttention": false, "cacheTypeK": "q4_0", "cacheTypeV": "q4_0"}, errContains: `quantized cacheTypeV "q4_0"`},
+		{name: "string off with quantized V cache", gpuVendor: backend.GPUVendorAMD, gpuArch: "gfx906",
+			config: map[string]any{"flashAttention": "false", "cacheTypeV": "Q8_0"}, errContains: `quantized cacheTypeV "q8_0"`},
+		{name: "CPU off with quantized V cache", gpuVendor: backend.GPUVendorCPU,
+			config: map[string]any{"flashAttention": false, "cacheTypeV": "q4_0"}, errContains: "requires Flash Attention"},
+		{name: "off with quantized K cache only", gpuVendor: backend.GPUVendorAMD, gpuArch: "gfx906",
+			config: map[string]any{"flashAttention": false, "cacheTypeK": "q4_0"}},
+		{name: "off with f16 V cache", gpuVendor: backend.GPUVendorAMD, gpuArch: "gfx906",
+			config: map[string]any{"flashAttention": false, "cacheTypeV": "f16"}},
+		{name: "unset with quantized V cache", gpuVendor: backend.GPUVendorAMD, gpuArch: "gfx906",
+			config: map[string]any{"cacheTypeK": "q4_0", "cacheTypeV": "q4_0"}},
+		{name: "on with quantized V cache", gpuVendor: backend.GPUVendorAMD, gpuArch: "gfx906",
+			config: map[string]any{"flashAttention": true, "cacheTypeV": "q4_0"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := gpuTestModel("llamacpp-flash-attention", func(model *aiv1alpha2.Model) {
+				model.Spec.Backend = backend.NameLlamaCpp
+				model.Spec.Config = mustJSONConfig(tt.config)
+			})
+			err := r.validateBackendGPUCompatibility(model, b, tt.gpuVendor, tt.gpuArch)
+			if tt.errContains != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func TestValidateLlamaCppFeatureCertificates(t *testing.T) {
 	const certifiedImage = "registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim@sha256:79cc4eb24c5260e835637b9de34d93b58b74f03dc9826056a1bea22d566a3407"
 	const evidence = ".loom/iteration-gfx906-llamacpp-stateful-spec-2026-07-15.md"

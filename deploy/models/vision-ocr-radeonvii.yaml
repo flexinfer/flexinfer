@@ -32,8 +32,8 @@ spec:
     batchSize: 1024
     ubatchSize: 512
     parallel: 1
-    # Flash attention disabled on gfx906 (Vega20) -- controller sets HSA_ENABLE_SDMA=0.
-    flashAttention: false
+    # flashAttention stays unset (llama.cpp auto turns FA on for gfx906): the
+    # q4_0 V cache below requires FA, and llama.cpp refuses --flash-attn off.
     cacheTypeK: q4_0
     cacheTypeV: q4_0
     jinja: true

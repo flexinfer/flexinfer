@@ -62,7 +62,6 @@ spec:
     batchSize: 2048
     ubatchSize: 512
     embedding: true
-    flashAttention: false
     fitOff: true
     metrics: true
     rocrVisibleDevices: "0"

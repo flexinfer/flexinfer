@@ -61,7 +61,8 @@ spec:
     batchSize: 1024
     ubatchSize: 512
     parallel: 2
-    flashAttention: false
+    # flashAttention stays unset (llama.cpp auto): the q4_0 V cache below
+    # requires FA, and llama.cpp refuses --flash-attn off with it.
     fitOff: true
     jinja: true
     reasoningFormat: none
