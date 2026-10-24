@@ -196,7 +196,9 @@ KV (64K/1 seq or 32K/2 seqs).
    `qwen38-27b-v026-canary` (renamed) on the
    5930k at the production envelope with MTP off: pass = 3/3 probes
    identical, ≥ 40 tok/s, pool ≥ 1.8x, record which model runner booted.
-2. **S2 — the MTP kill-test** (§7).
+2. **S2 — the MTP kill-test** (§7; prepared 2026-10-24, §7b:
+   `deploy/debug/qwen38-27b-v032-mtp-canary.yaml` + `scripts/verify-vllm-mtp.py`,
+   waiting for the 5930k window).
 3. **S3 — segmented attention A/B** on the same canary: `attentionBackend:
    ROCM_SEGMENTED_ATTN`, autotune on, fp16 KV; decode at 2K/30K/60K and
    verify-step cost with MTP on, against TRITON_ATTN + fp8 KV.
@@ -217,11 +219,15 @@ greedy outputs identical to the no-MTP baseline.
 
 **Kill-test** (one debug Model on the 5930k, after S1 passes):
 
-1. Patch the lane's `/models/config.json` `quantization_config` to the plain
-   GPTQ form the draft `ModelConfig` reads (backup kept), unless 0.32's
-   `vllm/config/speculative.py` is shown to inherit `hf_overrides`.
-2. Flip `speculativeConfig` (K=2; the cudagraph size ladder must contain a
-   multiple of K+1 — the 9B lane's `[1,2,4]` ladder broke at K=5).
+1. ~~Patch the lane's `/models/config.json` `quantization_config`~~ —
+   resolved 2026-10-24 (§7b): not needed on 0.32. The draft `ModelConfig`
+   still re-reads `config.json` (dict `hf_overrides` stay target-only), but
+   the draft *model* is built from the target's `VllmConfig` and therefore
+   the target's AutoGPTQ config; the draft config's own quantization verify
+   settles on `inc`, which ROCm lists in 0.32 (0.23 rejected it).
+2. Flip `speculativeConfig` (K=2, draft `attention_backend` pinned to
+   `TRITON_ATTN`; 0.32 derives the cudagraph ladder from K+1 itself — the 9B
+   lane's `[1,2,4]` ladder breaking at K=5 was a 0.2x-era manual ladder).
 3. Run the 6-probe gauntlet + the 100-request concurrency-2 soak
    (`vllm_soak.py`, 400-token outputs) and read
    `vllm:spec_decode_num_accepted_tokens_total /
@@ -277,6 +283,116 @@ the current controller renders `--no-calculate-kv-scales` for the twelve
 lanes that set the key, which 0.32 rejects — or those keys removed from the
 manifests that move.
 
+## 7b. S2 PREPARATION (2026-10-24): what the v0.32.0 tree settles before the card is free
+
+Prepared while the 5930k is inside the S5 llama.cpp window
+(`muse-glimmer-30b-canary` at 520 / forcePromotion); the kill-test runs when
+that session deletes its canaries. Deliverables:
+`deploy/debug/qwen38-27b-v032-mtp-canary.yaml` (the S1 canary plus the MTP
+delta) and `scripts/verify-vllm-mtp.py` (+ `scripts/test_verify_vllm_mtp.py`,
+10 tests). Findings, each against the v0.32.0 source:
+
+- **No on-disk `config.json` patch.** `SpeculativeConfig.__post_init__`
+  (`vllm/config/speculative.py` L1147–1163, L1283–1313) builds the draft
+  `ModelConfig` from the target's model path with `quantization` inherited
+  and `hf_overrides = compose_draft_hf_overrides(target.hf_overrides)`, which
+  for a dict override returns only `hf_config_override` ("Dict overrides are
+  target-specific key patches and are not applied to the draft", L1093). So
+  the draft config carries the artifact's on-disk `quant_method: auto-round`
+  (`packing_format auto_round:auto_gptq`, `block_name_to_quantize
+  [model.language_model.layers, mtp.layers]`, `extra_config` marking
+  `mtp.fc` as bits 16); its `_verify_quantization` (`vllm/config/model.py`
+  L1370–1457) walks the override list, `auto_gptq` declines (quant_method ≠
+  gptq), `inc` claims auto-round (`inc/inc.py` L361–368) and
+  `platforms/rocm.py` L614–626 lists `inc`, so nothing raises (0.23 did not
+  list it: that ValueError is what forced the patch). The draft **model**
+  never uses that config's quantization: `LLMBaseProposer._get_model`
+  (`vllm/v1/spec_decode/llm_base_proposer.py` L1304–1317) calls
+  `get_model(vllm_config=_create_draft_vllm_config(), model_config=draft)`;
+  `_create_draft_vllm_config` (L1266–1302) replaces only the kernel,
+  attention and cache configs, and `initialize_model`
+  (`model_loader/utils.py` L74–97) resolves the class from the draft config
+  (`Qwen3_5MTP`) but constructs it with the target's `quant_config` and
+  `model_config`. `Qwen3_5MultiTokenPredictor` (`qwen3_5_mtp.py` L66–126)
+  reads `vllm_config.model_config.hf_text_config` / `.hf_config.
+  quantization_config` — the manifest's gptq dict, which has no `dynamic`
+  `-:mtp` entry, so the MTP layers stay quantized.
+- **The gptq dict already encodes the MTP census.** `is_layer_gptq_quantized`
+  (`utils/gptq_utils.py` L120–169) matches `modules_in_block_to_quantize`
+  as substrings: `mtp.fc` → unquantized (the artifact ships `mtp.fc.weight`
+  fp16), `mtp.layers.0.self_attn.{qkv,o}_proj` and `mlp.{gate_up,down}_proj`
+  → quantized (the artifact ships qweight/qzeros/scales for all seven),
+  `lm_head` unquantized (`lm_head: false`). The biMEMO
+  `model.safetensors.index.json` @ `2d7425f7` has exactly 29 `mtp.*`
+  tensors: 7 × (qweight, qzeros, scales) + 8 fp16 weights (fc and 7 norms).
+- **Plugin policy must be `checkpoint`.** With `plain` the text plugin
+  returns `UnquantizedLinearMethod` for every `mtp.*` `LinearBase`
+  (`_patch_qwen35_mtp_gptq`), so the seven INT4 tensors would be loaded into
+  fp16 parameters — the silent-garbage mode of the downstream fork's PR #258.
+  `checkpoint` leaves `AutoGPTQConfig.get_quant_method` untouched. The
+  plugin's `_patch_qwen35_text_mtp_config` only intercepts `qwen3_5_text` /
+  `qwen3_5_moe_text`; the on-disk type is `qwen3_5`, which upstream maps to
+  `qwen3_5_mtp` / `Qwen3_5MTP` with `n_predict = mtp_num_hidden_layers = 1`
+  (`speculative.py` L917–937). The env reaches the pod through the
+  `spec.config.command` wrapper (`controllers/model_deployment.go`
+  L270–281; the vLLM backend sets no command of its own — the workhorse
+  Deployment runs the image entrypoint `vllm serve` with args
+  `--host 0.0.0.0 --port 8000 …`), the same pattern as
+  `deploy/models/qwen35-35b-clean-mtp-32k.yaml`.
+- **Memory.** `Qwen3_5MTP.load_weights` keeps the `embed_tokens` and
+  `lm_head` names, so the draft first loads its own copies (vocab 248,320 ×
+  5120 × 2 B ≈ 2.5 GB each, `tie_word_embeddings: false`); the proposer then
+  `torch.equal`-compares them with the target's and shares them
+  (`_maybe_share_embeddings` / `_maybe_share_lm_head`, L1413–1545). Transient
+  +5 GB at load, steady state ≈ +0.3 GB (one INT4 attention+MLP layer plus
+  the fp16 fc) plus one more full-attention KV layer (~+6 % per token).
+  Expect the 64K pool to profile ≈ 1.9x against S1's 2.15x; the manifest
+  keeps 0.96 so MTP is the only variable.
+- **CUDA graphs.** `VllmConfig.__post_init__` (`vllm/config/vllm.py`
+  L2341–2499) appends uniform decode sizes `n × (K+1)` for
+  `n ∈ request_counts(max_num_seqs)` and caps `max_cudagraph_capture_size`
+  at `min(max_num_seqs × (K+1) × 2, 512) = 12`: expected ladder
+  `[1, 2, 3, 4, 6, 8]`, no `cudagraphCaptureSizes` override (the 35B MTP
+  lane's `"2"` was a 0.2x-era necessity).
+- **Draft attention backend.** `_create_draft_vllm_config` "never inherit[s]
+  the attention backend from base … always independently autoselect unless
+  explicitly specified in the speculative config", so the manifest sets
+  `speculativeConfig.attention_backend: TRITON_ATTN`
+  (`_parse_attention_backend`, L1802–1808, accepts the enum name) to keep the
+  draft on the RDNA3 long-context fix path next to the target.
+- **Hybrid guards.** `mamba_cache_mode: align` has no speculative-decoding
+  guard in 0.32 (`vllm.py` L3277–3283; only the ReplaySSM / RecoverSSM
+  paths constrain it) and #55760 restored dense prefix-cache retention for
+  hybrid MTP, so the production prefix-cache recipe stays on.
+- **Metrics** (`vllm/v1/spec_decode/metrics.py` L176–262):
+  `vllm:spec_decode_num_{drafts,draft_tokens,accepted_tokens}_total` and
+  `vllm:spec_decode_num_accepted_tokens_per_pos_total{position="0|1"}`.
+  pos-0 acceptance = `per_pos[0] / drafts`; mean acceptance length =
+  `1 + accepted / drafts` (vLLM's convention — the §3 "~2.3 tokens per
+  step" and the §7 "≥ 1.6" bar are read in it). The probe reads the counter
+  deltas around its whole workload rather than trusting throughput.
+- **Probe design** (`scripts/verify-vllm-mtp.py`): the three S1 coherence
+  probes, three 256-token greedy parity generations hashed for `--compare`
+  against an MTP-off rerun on the same digest (`kubectl patch … --type json
+  -p '[{"op":"remove","path":"/spec/config/speculativeConfig"}]'`, then
+  `--phase baseline`), single-stream decode at short and ~2K context, a
+  50-pair concurrency-2 soak, then the spec-decode verdict (pos-0 ≥ 0.70,
+  mean acceptance length ≥ 1.6, decode ≥ 60 tok/s). It fails closed when
+  the counters are missing, go backwards (engine restart) or record no
+  drafts.
+- **Offline image probe PASS** (no GPU, `docker --context 7900xtx run` of
+  the S1 digest with `FLEXINFER_QWEN35_MTP_HEAD=checkpoint`,
+  `s2_image_probe.py`): the plugin line reads `mtp_head=checkpoint,
+  upstream_registered=Qwen3_5ForCausalLM,Qwen3_5MoeForCausalLM,
+  fla_autotuners=11` and `AutoGPTQConfig` is left unpatched;
+  `SpeculativeConfig._parse_attention_backend("TRITON_ATTN")` →
+  `AttentionBackendEnum.TRITON_ATTN`; the manifest's quantization dict
+  overrides to `auto_gptq` and decides `mtp.fc` False, `mtp.layers.0.
+  self_attn.qkv_proj` / `o_proj` / `mlp.gate_up_proj` / `mlp.down_proj`
+  True, `linear_attn.in_proj_a` False, `lm_head_quantized` False;
+  `hf_config_override` maps the on-disk `qwen3_5` config to `qwen3_5_mtp` /
+  `['Qwen3_5MTP']`, `n_predict 1`; `Qwen3_5MTP` is in the registry.
+
 ## 8. Sources
 
 - Fleet: `deploy/models/qwen38-27b-autoround-workhorse.yaml`,
@@ -299,7 +415,15 @@ manifests that move.
 - MTP head quant-exclusion bug (downstream):
   https://github.com/weicj/vLLM-2080Ti-Definitive/pull/258
 - v0.32.0 tree: `csrc/rocm/` listing via
-  https://api.github.com/repos/vllm-project/vllm/contents/csrc/rocm?ref=v0.32.0
+  https://api.github.com/repos/vllm-project/vllm/contents/csrc/rocm?ref=v0.32.0;
+  §7b line references are to the v0.32.0 checkout of `vllm/config/speculative.py`,
+  `vllm/config/model.py`, `vllm/config/vllm.py`, `vllm/v1/spec_decode/llm_base_proposer.py`,
+  `vllm/v1/spec_decode/metrics.py`, `vllm/model_executor/models/qwen3_5_mtp.py`,
+  `vllm/model_executor/layers/quantization/auto_gptq.py`, `…/utils/gptq_utils.py`,
+  `…/quantization/inc/inc.py`, `vllm/model_executor/model_loader/utils.py`,
+  `vllm/platforms/rocm.py`
+- biMEMO artifact census: `config.json` and `model.safetensors.index.json` at
+  https://huggingface.co/biMEMO/Qwen3.8-27B-int4-AutoRound/resolve/2d7425f78ee0abd518aceabf385997fbb54c9342/
 - Docker Hub `vllm/vllm-openai-rocm` tags (v0.32.0, nightly-rocm72/rocm100)
 - ROCm 10.1.0 release notes: https://rocm.docs.amd.com/en/latest/about/release-notes.html
 - vLLM ROCm install (gfx1100/1101 listed): https://docs.vllm.ai/en/v0.32.0/getting_started/installation/gpu.html

@@ -97,6 +97,15 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       2.15x after the KVPoolRecheck relaunch, probes 3/3 identical, 41.5 tok/s, prefix cache
       10.7 s → 1.0 s, 0 restarts; one recovered HIPCachingAllocator OOM warning on a 7.5K cold prefill
       → promote at 0.95. Next: S2 MTP kill-test, S3 ROCM_SEGMENTED_ATTN A/B, S4 promotion.
+- [ ] 2026-10-24 (same branch): **slice S2, the MTP kill-test — prepared, waiting for the 5930k**
+      (research §7b). Reading v0.32.0 showed the draft model is built from the target's `VllmConfig`,
+      so the biMEMO INT4 MTP block loads through the same AutoGPTQ config as the target and the
+      `config.json` patch the 0.23 attempt needed is gone; an offline probe in the S1 image confirmed
+      the plugin's `mtp_head=checkpoint`, the per-layer GPTQ decisions (`mtp.fc` fp16, seven INT4
+      linears) and the `Qwen3_5MTP` draft mapping. Manifest `deploy/debug/qwen38-27b-v032-mtp-canary.yaml`
+      (S1 + `speculativeConfig` mtp K=2 with the draft pinned to TRITON_ATTN, env via the command
+      wrapper), probe `scripts/verify-vllm-mtp.py` (counter-delta acceptance, parity hashes, soak).
+      Blocked on the S5 llama.cpp window (`muse-glimmer-30b-canary` at 520); operator applies after.
 - [x] 2026-10-22 (this branch, `claude/gfx1100-inference-optimization-323ab7`): **GPU health sentinel**
       so the next drop parks itself. Agent: sysfs-first per-card check (`current_link_speed=Unknown`
       on an awake card, EIO/EREMOTEIO on SMU-backed reads, vanished card) plus bounded vendor-tool
