@@ -15,7 +15,7 @@ Evidence: `.loom/60-validation-matrix.md` row `qwen3-embedding-gfx906-2026-10-24
 | Gate | Status |
 | --- | --- |
 | 1. Queue fix | **Passed 2026-10-24.** `GPU_MAX_HW_QUEUES=1` landed in the gfx906 GPUProfile (!1140). One runtime pod restart took the warm lanes from 26 to 14 compute queues (the card has 24). |
-| 2. Lane gate | **Passed** in probes on the deployed configs. Both Qwen3 lanes resident make 20 queues, with no runlist oversubscription. During a 2.8-minute full-duty 4B embedding run, gte/bge/bge-reranker/orpheus answered directly at their Services with p95 11–143 ms and max 195 ms, and no errors. Lane Ready through `flexinfer-proxy` is verified after this MR merges (matrix row). |
+| 2. Lane gate | **Passed** in probes on the deployed configs. Both Qwen3 lanes resident make 20 queues, with no runlist oversubscription. During a 2.8-minute full-duty 4B embedding run, gte/bge/bge-reranker/orpheus answered directly at their Services with p95 11–143 ms and max 195 ms, and no errors. **Deployed and verified** (!1146, 17:43–17:47Z): both lanes are Ready/Active through `flexinfer-proxy` (cold first call 11.6 s / 4.5 s), the deployed vectors match the qualified run at cosine 1.000, the plane holds 20 queues, and the live lanes answered directly in ≤ 30 ms during the cold loads. |
 | 3. Canary gate | **Open.** Needs Qdrant write access (both Qdrant instances are API-key protected). |
 
 Quality favours the switch:

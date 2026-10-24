@@ -98,6 +98,14 @@ runtime pod restarted once at 15:39:08Z, and the four warm lanes were Ready agai
 | Before restart (15:37Z, through the proxy, 30 requests each) | 26 | p50 0.31 / max 0.82 s | p50 0.31 / max 7.6 s | p50 0.31 / max 15.2 s | p50 0.28 / max 2.6 s |
 | After restart (15:40Z, through the proxy, 40 each) | 14 | p50 0.21 / max 0.70 s | p50 0.16 / max 0.69 s | p50 0.19 / max 0.44 s | p50 0.23 / max 0.51 s |
 | Both Qwen3 lanes resident, 4B embedding at full duty (16:05–16:08Z, direct to each lane's Service, 49 checks) | 20 | p50 8 ms / max 23 ms | p50 74 ms / max 195 ms | p50 14 ms / max 36 ms | p50 22 ms / max 37 ms |
+| Deployed lanes just activated through the proxy (17:46Z, direct, 20 each) | 20 | p50 8 ms / max 18 ms | p50 12 ms / max 18 ms | p50 11 ms / max 23 ms | p50 10 ms / max 16 ms |
+
+The deployed lanes (!1146) were verified through `flexinfer-proxy`:
+
+- The first, cold call took 11.6 s for the embedding lane and 4.5 s for the reranker.
+- Warm embedding p50 through the proxy is 0.155 s.
+- The deployed embedding vectors match the qualification run at cosine 1.000.
+- Throughput through the proxy is 906 tok/s on code documents.
 
 With both Qwen3 lanes loaded, the total is 20 queues. No new `Runlist is getting
 oversubscribed` message appeared after the cap. Admission estimates are
