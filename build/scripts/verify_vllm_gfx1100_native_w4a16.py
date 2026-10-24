@@ -15,6 +15,12 @@ KERNEL_RELATIVE_PATH = pathlib.Path(
     "model_executor/kernels/linear/mixed_precision/rdna3_w4a16.py"
 )
 TEXT_PLUGIN_ENTRY_POINT = "flexinfer_qwen35_text"
+# Compiled extensions that must carry device code for the target ISA. Through
+# 0.26 the published ROCm wheel lacked gfx1100 objects and this image rebuilt
+# vLLM from source; since the 0.32 wheel embeds them the build relies on the
+# upstream wheel and this check is what keeps a future base image honest.
+ISA_EXTENSION_GLOBS = ("_C*.so", "_moe_C*.so", "_rocm_C*.so")
+ISA_MARKER_TEMPLATE = "amdgcn-amd-amdhsa--{isa}"
 
 
 def _parse_version(raw: str) -> tuple[int, int, int]:
@@ -40,6 +46,36 @@ def verify_source_contract(vllm_root: pathlib.Path, version: str) -> None:
         raise RuntimeError(
             f"{kernel_path} does not dispatch torch.ops._rocm_C.gptq_gemm_rdna3"
         )
+
+
+def verify_isa_contract(vllm_root: pathlib.Path, isa: str) -> list[str]:
+    """Verify every compiled vLLM extension embeds device code for ``isa``.
+
+    HIP fat binaries name each embedded code object by its target triple
+    (``amdgcn-amd-amdhsa--gfx1100``), so a byte scan of the shared objects is
+    enough to prove the wheel was built for this GPU without loading it. A
+    wheel that only carries CDNA targets would import fine and then fail every
+    kernel launch on an RDNA3 card with "no kernel image is available".
+    Returns the extension file names that were checked.
+    """
+    marker = ISA_MARKER_TEMPLATE.format(isa=isa).encode()
+    checked: list[str] = []
+    missing: list[str] = []
+    for pattern in ISA_EXTENSION_GLOBS:
+        for path in sorted(vllm_root.glob(pattern)):
+            checked.append(path.name)
+            if marker not in path.read_bytes():
+                missing.append(path.name)
+    if not checked:
+        raise RuntimeError(
+            f"no compiled vLLM extensions matching {ISA_EXTENSION_GLOBS} under {vllm_root}"
+        )
+    if missing:
+        raise RuntimeError(
+            f"compiled vLLM extensions lack {isa} device code: {missing}; "
+            "the base wheel was not built for this GPU"
+        )
+    return checked
 
 
 def verify_compiled_contract(
@@ -88,7 +124,8 @@ def verify_text_plugin_registers(entry_points: Any, environ: dict) -> None:
     """
     environ.pop("PYTORCH_ROCM_ARCH", None)
     (plugin,) = [
-        ep for ep in entry_points(group="vllm.general_plugins")
+        ep
+        for ep in entry_points(group="vllm.general_plugins")
         if ep.name == TEXT_PLUGIN_ENTRY_POINT
     ]
     plugin.load()()
@@ -109,7 +146,9 @@ def main() -> None:
 
     version = importlib.metadata.version("vllm")
     vllm_root = pathlib.Path(vllm.__file__).resolve().parent
+    isa = os.environ.get("GPU_ARCH", "gfx1100")
     verify_source_contract(vllm_root, version)
+    checked = verify_isa_contract(vllm_root, isa)
     verify_text_plugin_contract(importlib.metadata.entry_points)
     verify_text_plugin_registers(importlib.metadata.entry_points, os.environ)
 
@@ -121,7 +160,8 @@ def main() -> None:
     print(
         "verified vLLM",
         version,
-        "native gfx1100 W4A16 op: torch.ops._rocm_C.gptq_gemm_rdna3;",
+        f"native {isa} W4A16 op: torch.ops._rocm_C.gptq_gemm_rdna3;",
+        f"{isa} device code in {', '.join(checked)};",
         "flexinfer_qwen35_text register() OK",
     )
 

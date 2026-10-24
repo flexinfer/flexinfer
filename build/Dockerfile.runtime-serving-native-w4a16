@@ -10,14 +10,10 @@
 # the legacy 0.17 serving persona until full-checkpoint logit/coherence and
 # throughput acceptance passes.
 ARG BASE_IMAGE=vllm/vllm-openai-rocm:v0.32.0
-ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
-ARG VLLM_REF=v0.32.0
 
 FROM ${BASE_IMAGE}
 
 ARG GPU_ARCH=gfx1100
-ARG VLLM_REPO
-ARG VLLM_REF
 
 ENV GPU_VENDOR=amd \
     GPU_ARCH=${GPU_ARCH} \
@@ -28,33 +24,17 @@ ENV GPU_VENDOR=amd \
 
 USER root
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential ccache cmake git ninja-build python3-dev \
-    && rm -rf /var/lib/apt/lists/* \
-    && python3 -m pip install --no-cache-dir \
-      "setuptools>=74" setuptools-rust setuptools-scm wheel packaging
-
-# The published ROCm image carries the RDNA3 Python dispatcher but its generic
-# wheel omits the compiled gfx1100 op. Rebuild the same release against the
-# image's pinned ROCm/PyTorch stack, constrained to gfx1100. Reuse the Rust
-# frontend already shipped by the base image so this layer only rebuilds the
-# native C++/HIP extensions. The wheel version is derived from VLLM_REF so a
-# ref bump cannot leave a stale version string behind (0.26 hardcoded it).
-RUN git clone --depth 1 --branch "${VLLM_REF}" "${VLLM_REPO}" /tmp/vllm-src \
-    && python3 -c 'import pathlib, shutil, vllm; installed = pathlib.Path(vllm.__file__).resolve().parent / "vllm-rs"; target = pathlib.Path("/tmp/vllm-src/vllm/vllm-rs"); assert installed.is_file(), f"base image is missing precompiled Rust frontend: {installed}"; shutil.copy2(installed, target); target.chmod(0o755); print(f"reusing precompiled Rust frontend: {installed}")'
-
-RUN --mount=type=cache,target=/root/.cache/ccache \
-    --mount=type=cache,target=/root/.cache/pip \
-    cd /tmp/vllm-src \
-    && export VLLM_TARGET_DEVICE=rocm \
-       VLLM_VERSION_OVERRIDE="${VLLM_REF#v}" \
-       PYTORCH_ROCM_ARCH="${GPU_ARCH}" \
-       GPU_TARGETS="${GPU_ARCH}" \
-       MAX_JOBS=4 \
-       CMAKE_ARGS="-DGPU_TARGETS=${GPU_ARCH}" \
-    && python3 -m pip wheel --no-build-isolation --no-deps . -w /tmp/vllm-wheel \
-    && python3 -m pip install --no-deps --force-reinstall /tmp/vllm-wheel/vllm-*.whl \
-    && rm -rf /tmp/vllm-src /tmp/vllm-wheel
+# No from-source rebuild any more. Through 0.26 the published ROCm wheel
+# shipped the RDNA3 W4A16 Python dispatcher without gfx1100 device code, so
+# this image cloned the release and rebuilt vLLM's C++/HIP extensions for
+# gfx1100 (~1 h on the 7900xtx BuildKit). The 0.32.0 wheel embeds gfx1100
+# (and gfx1101/115x/120x, gfx90a/942/950) code objects in _C, _moe_C and
+# _rocm_C (checked 2026-10-24 by scanning the .so files for
+# amdgcn-amd-amdhsa--gfx1100), so the upstream build is used as is and the
+# verify script below asserts the ISA at build time: a future base image that
+# drops gfx1100 fails here instead of in the engine. Only the plugin wheels
+# need a build backend.
+RUN python3 -m pip install --no-cache-dir "setuptools>=74" wheel
 
 # vLLM 0.23 and 0.26 shipped Qwen3.5's text class while registering only the
 # multimodal wrapper; newer releases may register it themselves, in which case

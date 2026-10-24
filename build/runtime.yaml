@@ -126,8 +126,12 @@ profiles:
     gpu_vendor: amd
     gpu_arch: gfx1100
     base_image: "vllm/vllm-openai-rocm:v0.32.0"
-    vllm_install_mode: source
-    vllm_repo: "https://github.com/vllm-project/vllm.git"
+    # 2026-10-24: the upstream wheel in the base image embeds gfx1100 code
+    # objects, so the Dockerfile no longer clones and rebuilds vLLM for
+    # gfx1100 (the verify script asserts the ISA at build time): the wheel
+    # already in the base image is the one served. vllm_ref records the
+    # upstream release that wheel is.
+    vllm_install_mode: wheel
     vllm_ref: "v0.32.0"
     rocm_dev_image: "rocm/dev-ubuntu-24.04:7.2.3"
     amdgpu_targets: gfx1100
