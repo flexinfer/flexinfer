@@ -1,13 +1,19 @@
 # llama.cpp Docker image for AMD gfx1100 (RX 7900 series, RDNA3)
-# Built from source with GGML_HIPBLAS=ON targeting gfx1100
+# Built from source with GGML_HIP=ON targeting gfx1100
 #
-# Build command:
-#   docker build -f build/Dockerfile.llamacpp-rocm-gfx1100 -t llamacpp:rocm-gfx1100 .
-
-ARG ROCM_VERSION=6.4.4
+# Build command (on the GPU builder):
+#   docker --context 7900xtx build -f build/Dockerfile.llamacpp-rocm-gfx1100 \
+#     -t registry.harbor.lan/library/llamacpp:rocm-gfx1100-b11847 .
+#
+# ROCm 7.2.3 is the userspace the fleet's vLLM 0.32 runtime already serves
+# from on both gfx1100 hosts (S1, 2026-10-24: 5930k kernel 6.14.9, 7900xtx
+# kernel 7.0.0-38). b8173..b10453 built on 6.4.4.
+ARG ROCM_VERSION=7.2.3
 FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION} AS builder
 
-ARG AMDGPU_TARGETS=gfx1100
+# ggml forwards GPU_TARGETS to CMAKE_HIP_ARCHITECTURES (AMDGPU_TARGETS is the
+# deprecated alias).
+ARG GPU_TARGETS=gfx1100
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -23,19 +29,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Clone llama.cpp at pinned release.
-# b10453 (2026-08): includes muse-glimmer arch support (PR #26841, merged
-# 2026-08-10, first shipped in b10353) with the ATEM tool-call parser, the
-# Glimmer vision projector, and DFlash speculative decoding.
-ARG LLAMACPP_VERSION=b10453
+# b11847 (2026-10-24; S5 refresh from b10453 / 2026-08, research
+# .loom/10-research-gfx1100-next-feature-2026-10-23.md §4 row 3): carries
+# the `--spec-type draft-mtp` path for Qwen3.5/3.8 GGUFs that keep their MTP
+# head, DFlash2 (`draft-dflash`), the ngram-mod/ngram-cache drafters, and the
+# muse-glimmer arch + ATEM tool-call parser that b10353+ already had.
+ARG LLAMACPP_VERSION=b11847
 WORKDIR /opt/src
 RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 
-# Build llama.cpp with HIP (ROCm) support
+# Build llama.cpp with HIP (ROCm) support.
+# GGML_NATIVE=OFF: no -march=native, the 5930k host is a Haswell-E Xeon, not
+# the Zen3 build node. Tests are skipped (tools incl. llama-server,
+# llama-bench and llama-cli are what the image ships).
 WORKDIR /opt/src/llama.cpp
-RUN cmake -B build -G Ninja \
+RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
+    cmake -B build -G Ninja \
     -DGGML_HIP=ON \
     -DGGML_NATIVE=OFF \
-    -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
+    -DGPU_TARGETS=${GPU_TARGETS} \
+    -DLLAMA_BUILD_TESTS=OFF \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -j$(nproc)
 
@@ -46,10 +59,8 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # ROCm environment for gfx1100
 ENV ROCM_PATH=/opt/rocm
-ENV HIP_PATH=/opt/rocm/hip
+ENV HIP_PATH=/opt/rocm
 ENV HSA_OVERRIDE_GFX_VERSION=11.0.0
-ENV PYTORCH_ROCM_ARCH=gfx1100
-ENV TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1
 ENV HIP_VISIBLE_DEVICES=0
 ENV ROCR_VISIBLE_DEVICES=0
 

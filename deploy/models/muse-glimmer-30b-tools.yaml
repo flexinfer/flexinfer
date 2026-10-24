@@ -7,17 +7,44 @@
 # tool-orchestration / LLM-as-judge specialist. It is NOT a coding workhorse
 # (SWE-bench V 65.9 vs 77.2).
 #
-# Qualified envelope: official Meta K-Quant-17GB GGUF, text-only, 32K,
-# f16 KV, llama.cpp b10453 (muse-glimmer arch + ATEM tool parser), jinja
-# template ON (required for OpenAI tool_calls), reasoning channel split via
-# --reasoning-format auto. Evidence: 6/6 gauntlet incl. exact
-# get_weather{city:Paris} tool call and clean no-tool restraint; 30.5 tok/s.
+# Qualified envelope: official Meta K-Quant-17GB GGUF, text-only, 131K,
+# f16 KV, llama.cpp b11847 on ROCm 7.2.3 (muse-glimmer arch + ATEM tool
+# parser), jinja template ON (required for OpenAI tool_calls), reasoning
+# channel split via --reasoning-format auto.
+#
+# Re-qualified 2026-10-24 (S5, .loom/10-research-gfx1100-next-feature-2026-10-23.md
+# §4 row 3; matrix row gfx1100-llamacpp-b11847-2026-10-24 = promote): canary
+# deploy/debug/muse-glimmer-30b-canary.yaml on image sha256:95c1d3901fab…
+# passed scripts/verify-llamacpp-canary.py 7/7 — coherence 4/4, exact
+# get_weather{city:Paris} tool call, replayed tool round answered from the
+# tool result with no new call, clean no-tool restraint, 37.9 tok/s decode
+# (30.5 on b10453), 992 tok/s prompt processing at 5.5K tokens, 18.2 GiB VRAM
+# at 131K ctx, model loaded in 16 s from the local cache.
+#
+# ARTIFACT RENAME (2026-10-20 upstream, repo commit b44f1072): the GGUF is now
+# Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf (was muse-glimmer-30B-kquant-17gb.gguf).
+# Same 731 tensors, dims, types and offsets; the only metadata change is the
+# chat template (ATEM template rewritten, 7167 -> 9992 chars). The old name no
+# longer exists upstream, so a cache re-stage under the old ggufFile would fail.
+# ROLLOUT NOTE: the Local cache marker is sha256(spec.source) only, so this
+# ggufFile change does NOT re-stage by itself — the 5930k cache dir still held
+# the old file name. The stale marker
+#   /var/lib/flexinfer/models/flexinfer-system/muse-glimmer-30b-tools/.flexinfer_cached_217d2791f8dd49f4b2f950bf383d7a508e1796ee1b01788f9711ad0d99a827f0
+# was removed on cblevins-5930k on 2026-10-24 13:39Z (lane Preempted at
+# generation 4; the old GGUF left in place so demand before the merge still
+# boots). When this change lands, the generation bump recreates the stage
+# job, which wipes the dir and downloads the new file (16.76 GB, ~4 min).
+# Verify after the first activation: status.cache.message = "artifact staged
+# to local cache" and /props model_path ends in the new file name.
 #
 # Deferred (revisit when needed):
-#   - DFlash speculative drafter: needs a --model-draft passthrough in
-#     backend/llamacpp.go (only specType/draftMax/draftMin exist today).
-#   - Vision (mmproj-kquant.gguf) via config.mmproj.
-#   - Context stretch past 32K (131,072 default / 262,144 max).
+#   - DFlash speculative drafter: the repo now ships
+#     dflash-Muse-Glimmer-30B-Q4_K_M.gguf (1.6 GB) and b11847 has
+#     --spec-type draft-dflash, but the controller's certified llama.cpp
+#     feature surface exposes only ngram-simple (controllers/model_gpu.go);
+#     needs a capability + GPUProfile certificate first.
+#   - Vision (mmproj-Muse-Glimmer-30B-Q4_K_M.gguf) via config.mmproj.
+#   - Context stretch past 131,072 (262,144 max).
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -26,13 +53,18 @@ metadata:
   annotations:
     flexinfer.ai/base-model-source: meta-models/Muse-Glimmer-30B
     flexinfer.ai/base-model-posture: clean
-    flexinfer.ai/artifact-source: HF://meta-models/Muse-Glimmer-30B-GGUF (muse-glimmer-30B-kquant-17gb.gguf)
+    flexinfer.ai/artifact-source: HF://meta-models/Muse-Glimmer-30B-GGUF@b44f1072 (Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf; was muse-glimmer-30B-kquant-17gb.gguf before 2026-10-20)
     flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
-    flexinfer.ai/promotion-state: promoted-tool-lane-32k
-    flexinfer.ai/promotion-evidence: "canary muse-glimmer-30b-canary 2026-08-16: 6/6 gauntlet on llama.cpp b10453 gfx1100 (exact tool_calls, clean restraint, 30.5 tok/s); reasoning channel split re-verified with reasoningFormat auto"
+    flexinfer.ai/promotion-state: promoted-tool-lane-131k
+    flexinfer.ai/promotion-evidence: "canary muse-glimmer-30b-canary 2026-08-16: 6/6 gauntlet on llama.cpp b10453 gfx1100 (exact tool_calls, clean restraint, 30.5 tok/s); reasoning channel split re-verified with reasoningFormat auto. 2026-10-24 (S5): 7/7 gauntlet on llama.cpp b11847 / ROCm 7.2.3 (image sha256:95c1d3901fab, renamed GGUF @b44f1072) — coherence 4/4, exact get_weather{city:Paris}, tool-result follow-up clean, restraint clean, 37.9 tok/s decode, 992 tok/s PP @5.5K, 18.2 GiB VRAM @131K; matrix row gfx1100-llamacpp-b11847-2026-10-24"
 spec:
   backend: llamacpp
-  image: registry.harbor.lan/library/llamacpp:rocm-gfx1100-b10453
+  # In-house llama.cpp b11847 / ROCm 7.2.3 for gfx1100 (build/Dockerfile.llamacpp-rocm-gfx1100,
+  # built 2026-10-24; tags rocm-gfx1100-b11847, rocm-gfx1100-b11847-rocm7.2.3-s5-20261024,
+  # pinned-95c1d3901fab). Rollback: rocm-gfx1100-b10453 = sha256:c7395b23cccfbeb114cf335b8a6118481631006701396c2fac102c3936455f23
+  # (still in Harbor; pair it with ggufFile muse-glimmer-30B-kquant-17gb.gguf
+  # only while the old file is still in the node cache).
+  image: registry.harbor.lan/library/llamacpp@sha256:95c1d3901faba5fbbfa9ac173c4b40c479bcc604f1a41f873a975ce0cee0f2a1
   source: HF://meta-models/Muse-Glimmer-30B-GGUF
   cache:
     strategy: Local
@@ -56,7 +88,10 @@ spec:
     coldStartTimeout: 25m
   config:
     warmPolicy: ondemand
-    ggufFile: muse-glimmer-30B-kquant-17gb.gguf
+    # Renamed upstream 2026-10-20 (see header: the node cache needs a one-time
+    # marker removal so the stage job re-downloads under this name).
+    ggufFile: Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf
+    hfRevision: b44f1072cf75e918a1b82a3a17b45c4389b076e7
     # Context raised 32K -> 131,072 (model default; 2026-08-16 context-push):
     # canary needles 1/1 @90,869 and 1/1 @120,206 actual tokens; KV is cheap
     # on the 3:1 SWA layout (13 global layers f16), fits beside 17 GB weights.

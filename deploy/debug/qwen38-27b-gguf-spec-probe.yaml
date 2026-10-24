@@ -1,0 +1,196 @@
+# Qwen3.8-27B GGUF speculative-decoding / backend A/B probes — gfx1100
+# llama.cpp b11847. Two one-shot Models, applied together with the Glimmer
+# canary and deleted when measured.
+#
+# Research: .loom/10-research-gfx1100-next-feature-2026-10-23.md §4 row 3 /
+# §6 S5. Two measurements the S5 slice owes the matrix, both on the 5930k
+# inside the Glimmer re-qualification window:
+#   (a) `--spec-type draft-mtp` on a Qwen3.8-27B GGUF that keeps its MTP head
+#       (bartowski Q4_K_M: `blk.64.nextn.*`, `qwen35.nextn_predict_layers=1`,
+#       header parsed 2026-10-24) — a vLLM-independent MTP datapoint and the
+#       fallback if S2's INT4-MTP acceptance stays low;
+#   (b) Vulkan (Mesa RADV, build/Dockerfile.llamacpp-vulkan-gfx1100) vs ROCm
+#       token generation on the same file (upstream issue #20934: Vulkan
+#       +8.5 % TG, ROCm +5 % PP at b10809).
+# Arms:
+#   qwen38-27b-gguf-spec-probe    ROCm image; baseline first, then
+#                                 config.specType: draft-mtp (llama.cpp
+#                                 default draftMax 3, clamped to the single
+#                                 Qwen3.5-family MTP head) on the same cache
+#   qwen38-27b-gguf-vulkan-probe  Vulkan image + config.device: Vulkan0
+# Probe: scripts/verify-llamacpp-canary.py --skip-tools --decode-runs 3.
+# Thinking is off (reasoningBudget 0) so the coherence probes answer inside
+# their token budget; decode tok/s is unaffected.
+#
+# Window posture is baked in (unlike the lane canaries, these are never kept):
+# serverless.minReplicas 1 + gpu.forcePromotion true, with staggered
+# priorities so the shared-group chooser runs the arms in order without
+# further edits — Glimmer canary (patched to 520) > spec-probe 510 >
+# vulkan-probe 505 — and deleting the active Model hands the card to the
+# next. Both caches stage while the first arm runs. Never routed: no
+# serviceLabels, one unique alias each.
+#
+# MEASURED 2026-10-24 12:27–13:14Z (matrix row gfx1100-llamacpp-b11847-2026-10-24):
+#   ROCm baseline   coherence 4/4; decode 27.5–32.7 tok/s (median 27.8 gauntlet,
+#                   31.8 pp-probe); PP 808 tok/s on a 7,066-token prompt.
+#   draft-mtp       BLOCKED — the deployed controller's certified llama.cpp
+#                   feature surface (controllers/model_gpu.go,
+#                   requestedLlamaCppCapabilities) accepts only specType
+#                   ngram-simple with draftMax 16 / draftMin 1 behind a GPUProfile
+#                   certificate; `specType: draft-mtp` set the Model to
+#                   Failed/BackendUnsupported and left the Deployment untouched.
+#                   Follow-up slice: a draft-mtp capability + certificate for
+#                   95c1d390 on gfx1100.
+#   Vulkan/RADV     coherence 4/4 but 11.5 tok/s decode and 154 tok/s PP
+#                   (2.7× / 5.2× slower than ROCm on the same card and file;
+#                   sclk 1433 vs 2138 MHz) — rejected; #20934's +8.5 % TG does
+#                   not reproduce on Mesa 26.0.8 RADV with this Q4_K_M.
+# Both Models deleted 12:49Z / 13:14Z. Caches (17.44 GB each) remain under
+# /var/lib/flexinfer/models/flexinfer-system/qwen38-27b-gguf-*-probe/ on the
+# 5930k until the operator reclaims them.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-gguf-spec-probe
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://bartowski/Qwen3.8-27B-GGUF (Qwen3.8-27B-Q4_K_M.gguf)
+    flexinfer.ai/purpose: "Probe — ROCm baseline then draft-mtp on llama.cpp b11847 gfx1100; never routed, delete after the window"
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-next-feature-2026-10-23.md"
+    flexinfer.ai/promotion-state: probe-only
+spec:
+  backend: llamacpp
+  # = library/llamacpp:rocm-gfx1100-b11847 (pinned-95c1d3901fab), the S5 image.
+  image: registry.harbor.lan/library/llamacpp@sha256:95c1d3901faba5fbbfa9ac173c4b40c479bcc604f1a41f873a975ce0cee0f2a1
+  source: HF://bartowski/Qwen3.8-27B-GGUF
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    # Single 17.44 GB GGUF + headroom.
+    size: 24Gi
+    flashLoader:
+      enabled: false
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # Window posture: force-promoted, second in line behind the Glimmer canary.
+    priority: 510
+    forcePromotion: true
+    vramEstimateMB: 21000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 15m
+    coldStartTimeout: 25m
+  config:
+    warmPolicy: ondemand
+    ggufFile: Qwen3.8-27B-Q4_K_M.gguf
+    # 16K is enough for the decode probes; the hybrid 3:1 GDN layout keeps
+    # the f16 KV of the 16 full-attention layers near 1 GB at this size.
+    contextSize: 16384
+    nGPULayers: 999
+    batchSize: 2048
+    ubatchSize: 512
+    parallel: 1
+    threads: 12
+    flashAttention: true
+    jinja: true
+    reasoningFormat: auto
+    reasoningBudget: 0
+    metrics: true
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 12Gi
+    limits:
+      cpu: "8"
+      memory: 28Gi
+  serviceLabels: []
+  litellm:
+    enabled: true
+    servedModelName: qwen38-27b-gguf-spec-probe
+    aliases:
+      - qwen38-27b-gguf-spec-probe
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-gguf-vulkan-probe
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://bartowski/Qwen3.8-27B-GGUF (Qwen3.8-27B-Q4_K_M.gguf)
+    flexinfer.ai/purpose: "Probe — Vulkan/RADV arm of the ROCm vs Vulkan A/B on llama.cpp b11847 gfx1100; never routed, delete after the window"
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-next-feature-2026-10-23.md"
+    flexinfer.ai/promotion-state: probe-only
+spec:
+  backend: llamacpp
+  # Same llama.cpp release as the ROCm image, Mesa 26.0 RADV on Ubuntu 26.04
+  # (= library/llamacpp:vulkan-radv-b11847, pinned-b6c488468f55, 447 MB).
+  image: registry.harbor.lan/library/llamacpp@sha256:b6c488468f55f152f056b25c881af152531135876b0940c906b2a5ebcbe7a70f
+  source: HF://bartowski/Qwen3.8-27B-GGUF
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 24Gi
+    flashLoader:
+      enabled: false
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # Window posture: force-promoted, last in line.
+    priority: 505
+    forcePromotion: true
+    vramEstimateMB: 21000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 15m
+    coldStartTimeout: 25m
+  config:
+    warmPolicy: ondemand
+    ggufFile: Qwen3.8-27B-Q4_K_M.gguf
+    contextSize: 16384
+    nGPULayers: 999
+    batchSize: 2048
+    ubatchSize: 512
+    parallel: 1
+    threads: 12
+    flashAttention: true
+    jinja: true
+    reasoningFormat: auto
+    reasoningBudget: 0
+    metrics: true
+    # The backend renders --device from this key; the AMD device plugin
+    # mounts /dev/dri, which RADV needs (no /dev/kfd use on this arm).
+    device: Vulkan0
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 12Gi
+    limits:
+      cpu: "8"
+      memory: 28Gi
+  serviceLabels: []
+  litellm:
+    enabled: true
+    servedModelName: qwen38-27b-gguf-vulkan-probe
+    aliases:
+      - qwen38-27b-gguf-vulkan-probe
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
