@@ -143,12 +143,23 @@ proxy:
   # Deployment (deploy/system/kokoro-tts/, CPU-only). Completes the voice stack
   # (ASR + diarization + TTS) under one base URL. Empty disables the route (503).
   kokoroUpstream: "http://kokoro-tts.flexinfer-system.svc:8880"
+  # 2026-10-24: CPU limit 200m -> 2000m, request 50m -> 100m. Go 1.26 sizes
+  # GOMAXPROCS from the cgroup quota with a floor of 2, so under a 200m limit
+  # two Ps burned the 20 ms per-100 ms quota in bursts and then stalled for
+  # the rest of the period: 14% of CFS periods throttled over 7 days (21-26%
+  # on 2026-10-24) at a 33m average. Through-proxy embeddings at idle took
+  # p50 52-68 ms / p90 150-170 ms against 14-18 ms direct to the lane Service,
+  # and 0.8 s p50 / 10 s max under ~5 req/s at 16:03Z. A 2000m limit matches
+  # GOMAXPROCS=2, so the runtime cannot outrun its quota; it is a ceiling, not
+  # a reservation, on the 4-core k3s-cp-1 (16% CPU requested). The request
+  # covers the 7-day p99 of 1-minute usage (94m, already capped by the old
+  # limit). Memory is unchanged: 7-day max working set 38 MiB.
   resources:
     limits:
-      cpu: 200m
+      cpu: 2000m
       memory: 256Mi
     requests:
-      cpu: 50m
+      cpu: 100m
       memory: 128Mi
   # Large models (18GB+ GGUF via Longhorn mmap) need 15-20min to load.
   # Set proxy timeouts above worst-case load time.
