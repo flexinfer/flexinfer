@@ -1040,6 +1040,77 @@ func TestEnsureCacheLocalHFStageJobSucceeded(t *testing.T) {
 	assertCacheStatus(t, cached, true, "Succeeded", "artifact staged to local cache", "CacheStage", true)
 }
 
+// localHFStageJob is a stage Job fixture annotated with the marker it was built
+// to write for model's spec at the time.
+func localHFStageJob(t *testing.T, model *aiv1alpha2.Model, succeeded, active, failed int32) *batchv1.Job {
+	t.Helper()
+	job := copyJob(model.Name+"-cache-stage", model.Namespace, succeeded, active, failed)
+	job.Annotations = map[string]string{AnnotationCacheMarker: mustLocalHFCacheMarkerName(t, model)}
+	return job
+}
+
+func TestEnsureCacheLocalHFStageJobForCurrentOptionsSucceeded(t *testing.T) {
+	model := localHFStageModel(map[string]any{"ggufFile": glimmerNewGGUF, "hfRevision": glimmerRevision})
+
+	r, cl := newModelCacheReconciler(t, model, localHFStageJob(t, model, 1, 0, 0))
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "llamacpp"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if !ready {
+		t.Fatal("ensureCache() ready = false, want true when the stage Job was built for the current options")
+	}
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, true, "Succeeded", "artifact staged to local cache", "CacheStage", true)
+}
+
+// TestEnsureCacheLocalHFStageJobForOtherOptionsRestages covers a ggufFile
+// rename landing while the previous stage Job still lingers inside its TTL:
+// that Job's success says nothing about the renamed file, so it must be
+// replaced rather than read as the new generation staged.
+func TestEnsureCacheLocalHFStageJobForOtherOptionsRestages(t *testing.T) {
+	before := localHFStageModel(map[string]any{"ggufFile": glimmerOldGGUF})
+	model := localHFStageModel(map[string]any{"ggufFile": glimmerNewGGUF, "hfRevision": glimmerRevision})
+	model.Generation = 4
+	model.Status.Cache = &aiv1alpha2.CacheStatus{Strategy: "Local", Ready: true, JobName: model.Name + "-cache-stage", JobPhase: "Succeeded"}
+	model.Status.Conditions = []metav1.Condition{{
+		Type:               aiv1alpha2.ConditionModelCached,
+		Status:             metav1.ConditionTrue,
+		Reason:             aiv1alpha2.ReasonBackendReady,
+		ObservedGeneration: 3,
+	}}
+
+	r, cl := newModelCacheReconciler(t, model, localHFStageJob(t, before, 1, 0, 0))
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "llamacpp"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatal("ensureCache() ready = true from a stage Job built for the old ggufFile")
+	}
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, false, "Pending", "re-staging local cache: download options changed", "CacheStage", false)
+
+	stale := &batchv1.Job{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: model.Name + "-cache-stage", Namespace: model.Namespace}, stale); !apierrors.IsNotFound(err) {
+		t.Fatalf("Get(stale stage job) error = %v, want not found after deletion", err)
+	}
+
+	// The next pass stages the current options.
+	if _, err := r.ensureCache(context.Background(), cached, mustBackend(t, "llamacpp")); err != nil {
+		t.Fatalf("second ensureCache() error = %v", err)
+	}
+	restage := &batchv1.Job{}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: model.Name + "-cache-stage", Namespace: model.Namespace}, restage); err != nil {
+		t.Fatalf("expected a new stage job: %v", err)
+	}
+	if got, want := restage.Annotations[AnnotationCacheMarker], mustLocalHFCacheMarkerName(t, model); got != want {
+		t.Errorf("new stage job marker = %q, want %q", got, want)
+	}
+}
+
 func TestEnsureCacheLocalHFStageJobFailed(t *testing.T) {
 	model := modelWithCache("hf-local-fail", "flexinfer-system", "HF://org/model", &aiv1alpha2.CacheSpec{
 		Strategy: "Local",
