@@ -153,12 +153,23 @@ func (i *modelIngress) waitForDrain(ctx context.Context) error {
 	}
 }
 
+// ingressCloseGrace bounds how long close waits for connections to finish
+// writing responses. Every caller has drained the ingress, lost its backend, or
+// never started serving, so this covers only response tails, never inference.
+const ingressCloseGrace = time.Second
+
 func (i *modelIngress) close() {
 	if i == nil {
 		return
 	}
 	i.closeOnce.Do(func() {
 		i.beginDrain()
+		// net/http writes a chunked response's terminating chunk after the
+		// handler returns, so a drained request can still be on the wire.
+		// Shutdown closes each connection once its response is complete.
+		ctx, cancel := context.WithTimeout(context.Background(), ingressCloseGrace)
+		_ = i.server.Shutdown(ctx)
+		cancel()
 		_ = i.server.Close()
 		// Close the listener separately as it may not have been handed to Serve
 		// yet when subprocess startup fails.

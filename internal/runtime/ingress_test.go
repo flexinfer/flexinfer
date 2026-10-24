@@ -345,6 +345,16 @@ func TestRuntimeCapacityFailureIsRetryable(t *testing.T) {
 	assert.Contains(t, w.Body.String(), ErrInsufficientVRAM.Error())
 }
 
+// A client can read a Content-Length body to EOF before the ingress handler
+// returns and releases the request, so wait for the release rather than race it.
+func waitIngressIdle(t *testing.T, ingress *modelIngress) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		count, _, _ := ingress.snapshot()
+		return count == 0
+	}, time.Second, time.Millisecond)
+}
+
 func TestIngressProbesDoNotRefreshInferenceActivity(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = io.WriteString(w, "ok")
@@ -367,6 +377,7 @@ func TestIngressProbesDoNotRefreshInferenceActivity(t *testing.T) {
 		_, err = io.Copy(io.Discard, response.Body)
 		require.NoError(t, err)
 		require.NoError(t, response.Body.Close())
+		waitIngressIdle(t, ingress)
 	}
 	request(http.MethodGet, "/health")
 	_, _, initial := ingress.snapshot()
@@ -377,8 +388,7 @@ func TestIngressProbesDoNotRefreshInferenceActivity(t *testing.T) {
 	for _, method := range []string{http.MethodGet, http.MethodHead} {
 		for _, path := range []string{"/", "/health", "/healthz", "/readyz", "/metrics", "/slots", "/props", "/v1/models", "/api/ps", "/api/tags", "/api/version"} {
 			request(method, path)
-			count, _, last := ingress.snapshot()
-			assert.Zero(t, count)
+			_, _, last := ingress.snapshot()
 			assert.Equal(t, inference, last, "probe %s %s must preserve the last actual inference time", method, path)
 		}
 	}
@@ -432,5 +442,100 @@ func TestIngressProbeStillParticipatesInRequestDrain(t *testing.T) {
 	assert.True(t, last.IsZero())
 	releaseOnce.Do(func() { close(release) })
 	require.NoError(t, <-finished)
+	waitIngressIdle(t, ingress)
 	require.NoError(t, manager.Unload(context.Background(), "embedding"))
+}
+
+// terminatorGateListener holds each connection's write of a chunked response's
+// terminating chunk, which net/http performs after the handler has returned and
+// the ingress has already released the request.
+type terminatorGateListener struct {
+	net.Listener
+	reached, release, closed, connClosed chan struct{}
+	reachedOnce, closeOnce, connOnce     sync.Once
+}
+
+func (l *terminatorGateListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	return &terminatorGateConn{Conn: conn, gate: l}, nil
+}
+
+func (l *terminatorGateListener) Close() error {
+	l.closeOnce.Do(func() { close(l.closed) })
+	return l.Listener.Close()
+}
+
+type terminatorGateConn struct {
+	net.Conn
+	gate *terminatorGateListener
+}
+
+func (c *terminatorGateConn) Write(p []byte) (int, error) {
+	if bytes.HasSuffix(p, []byte("0\r\n\r\n")) {
+		c.gate.reachedOnce.Do(func() { close(c.gate.reached) })
+		<-c.gate.release
+	}
+	return c.Conn.Write(p)
+}
+
+func (c *terminatorGateConn) Close() error {
+	c.gate.connOnce.Do(func() { close(c.gate.connClosed) })
+	return c.Conn.Close()
+}
+
+func TestIngressCloseLetsDrainedStreamFinish(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "data: first\n\n")
+		w.(http.Flusher).Flush()
+		_, _ = io.WriteString(w, "data: last\n\n")
+	}))
+	defer server.Close()
+	ingress, err := newModelIngress(freeIngressTestPort(t), int32(server.Listener.Addr().(*net.TCPAddr).Port))
+	require.NoError(t, err)
+	gate := &terminatorGateListener{
+		Listener:   ingress.listener,
+		reached:    make(chan struct{}),
+		release:    make(chan struct{}),
+		closed:     make(chan struct{}),
+		connClosed: make(chan struct{}),
+	}
+	ingress.listener = gate
+	defer ingress.close()
+	var releaseOnce sync.Once
+	defer releaseOnce.Do(func() { close(gate.release) })
+	ingress.start()
+	client := &http.Client{Timeout: 3 * time.Second}
+	response, err := client.Get("http://127.0.0.1:" + strconv.Itoa(gate.Addr().(*net.TCPAddr).Port) + "/stream")
+	require.NoError(t, err)
+	defer func() { _ = response.Body.Close() }()
+	require.Equal(t, []string{"chunked"}, response.TransferEncoding)
+	select {
+	case <-gate.reached:
+	case <-time.After(time.Second):
+		t.Fatal("stream did not finish forwarding")
+	}
+	require.Zero(t, ingress.beginDrain(), "drain completes before the terminating chunk is written")
+	closed := make(chan struct{})
+	go func() {
+		ingress.close()
+		close(closed)
+	}()
+	<-gate.closed
+	select {
+	case <-gate.connClosed:
+		t.Fatal("close cut a connection whose response was still being written")
+	case <-time.After(50 * time.Millisecond):
+	}
+	releaseOnce.Do(func() { close(gate.release) })
+	body, err := io.ReadAll(response.Body)
+	require.NoError(t, err)
+	assert.Equal(t, "data: first\n\ndata: last\n\n", string(body))
+	select {
+	case <-closed:
+	case <-time.After(time.Second):
+		t.Fatal("close did not return once the response finished")
+	}
 }
