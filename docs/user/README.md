@@ -29,6 +29,7 @@ FlexInfer is a Kubernetes-native set of controllers and agents for running AI wo
 - `docs/user/backends-maxwell.md` - NVIDIA Maxwell GPUs (GTX 980 Ti, etc.)
 - `docs/user/backends-rocm-gfx1100.md` - AMD RX 7900 series (RDNA3)
 - `docs/user/embeddinggemma-2.md` - Text-only embeddings and CPU/gfx906 FP32 qualification
+- `docs/user/qwen3-embedding.md` - Qwen3-Embedding-4B and Qwen3-Reranker-0.6B on gfx906, with the code-retrieval comparison
 
 ## Caching guides
 

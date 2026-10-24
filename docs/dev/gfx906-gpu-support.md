@@ -148,6 +148,17 @@ Mitigation:
   Keep it at 24 or below, with headroom for the next member.
 - Rule of thumb with the cap: 3 queues per llama-server, 2 for pyannote.
 
+Applied 2026-10-24 (!1140) with one runtime pod restart at 15:39:08Z:
+
+- The four warm lanes went from 26 queues to 14 and were Ready again within 26 s.
+- Both Qwen3 lanes loaded beside them came to 20 queues, with no new oversubscription message.
+- During a full-duty Qwen3-4B embedding run (GPU busy 98%), each live lane answered directly
+  at its Service in p95 11–143 ms and max 195 ms.
+
+Measure GPU contention at each lane's Service, not only through `flexinfer-proxy`. The proxy's
+200m CPU limit throttles it in 14–26% of periods, and that adds 0.5–10 s tails unrelated to
+the card.
+
 Evidence: `.loom/60-validation-matrix.md` row `qwen3-embedding-gfx906-2026-10-24`.
 
 ### Required Environment Variables
