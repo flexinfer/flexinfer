@@ -40,6 +40,8 @@
 - Hardware-utilization arc implementation plan (2026-06-03): `30-implementation-plan-hardware-utilization-2026-06-03.md`
 - RALPH model-tools Python 3.14 candidate (2026-08-01): `45-iteration-plan-model-tools-python314-canary-2026-08-01.md`
 - Research (2026-10-23): next gfx1100 feature — MTP on the Qwen3.8-27B lanes via a vLLM 0.32 native-W4A16 runtime, llama.cpp refresh, Sep–Oct 24 GB model census: `10-research-gfx1100-next-feature-2026-10-23.md`
+- Research (2026-10-24): Timestral-209M (Mistral zero-shot time-series forecaster) — thin snac-style `timestral` backend in the gfx906 stacked runtime pod, gated on a news-analyzer backtest kill-test: `10-research-timestral-209m-2026-10-24.md`
+- Research (2026-10-24): Qwen-Image 2.1 "Uncensored-Quantized" candidate + image-inference support audit — bring Qwen-Image 2.1 to the XTX stacked runtime pod (diffusers 0.40 → 0.41 pin, GGUF/NF4 loading, pipeline-aware call contract), derivative as the second arm behind official weights, riskiest assumption = sd.cpp-converted GGUF loads in diffusers: `10-research-qwen-image-21-uncensored-2026-10-24.md`
 
 ## Current Goal (2026-10-21) - gfx1100 recovery: XTX still drops under load, runtime pins unpullable
 
