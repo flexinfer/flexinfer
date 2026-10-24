@@ -274,14 +274,25 @@ class PublishJobContractTests(unittest.TestCase):
     def test_llamacpp_version_changed_only_in_runtime_yaml_fails_every_consumer(
         self,
     ) -> None:
-        # Exercise multiple global-version consumers without a gfx906 override.
+        # Exercise multiple global-version consumers without profile overrides
+        # (both ROCm profiles pin their own llamacpp_version on master; S5
+        # 2026-10-24 moved gfx1100 onto b11847).
         self.runtime_yaml = self.runtime_yaml.replace(
             '    llamacpp_version: "b11335"\n', "", 1
+        )
+        self.runtime_yaml = self.runtime_yaml.replace(
+            '    llamacpp_version: "b11847"\n', "", 1
         )
         self.edit_job(
             ROOT_CI,
             "publish_runtime_rocm_gfx906",
             'LLAMACPP_VERSION="b11335"',
+            'LLAMACPP_VERSION="b8173"',
+        )
+        self.edit_job(
+            PUBLISH_CI,
+            "publish_unified_rocm_gfx1100",
+            'LLAMACPP_VERSION="b11847"',
             'LLAMACPP_VERSION="b8173"',
         )
         self.runtime_yaml = self.runtime_yaml.replace(
@@ -298,13 +309,28 @@ class PublishJobContractTests(unittest.TestCase):
                 msg,
             )
 
-    def test_global_llamacpp_change_preserves_gfx906_override(self) -> None:
+    def test_global_llamacpp_change_preserves_profile_overrides(self) -> None:
+        # Both ROCm profiles override the global llamacpp_version, so a global
+        # bump alone diverges no publish job.
         self.runtime_yaml = self.runtime_yaml.replace(
             'llamacpp_version: "b8173"', 'llamacpp_version: "b11457"', 1
         )
+        self.check()
+
+        # A profile that falls back to the global is still caught, and the
+        # gfx906 override stays untouched.
+        self.runtime_yaml = self.runtime_yaml.replace(
+            '    llamacpp_version: "b11847"\n', "", 1
+        )
+        self.edit_job(
+            PUBLISH_CI,
+            "publish_unified_rocm_gfx1100",
+            'LLAMACPP_VERSION="b11847"',
+            'LLAMACPP_VERSION="b8173"',
+        )
         msg = self.failure()
         self.assertIn(
-            'publish_unified_rocm_gfx1100 (.gitlab/ci/runtime-publish.yml) passes '
+            "publish_unified_rocm_gfx1100 (.gitlab/ci/runtime-publish.yml) passes "
             'LLAMACPP_VERSION="b8173" but build/runtime.yaml resolves it to '
             '"b11457" (llamacpp_version)',
             msg,
@@ -324,7 +350,7 @@ class PublishJobContractTests(unittest.TestCase):
         self.assertNotIn(
             "publish_unified_rocm_gfx1100",
             msg,
-            "other profiles keep the global version",
+            "other profiles keep their own pinned version",
         )
 
         self.edit_job(
