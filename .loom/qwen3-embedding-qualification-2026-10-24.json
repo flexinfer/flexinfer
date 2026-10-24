@@ -1,0 +1,1001 @@
+{
+ "date": "2026-10-24",
+ "scope": "Qwen3-Embedding-4B (Q8_0) /v1/embeddings and Qwen3-Reranker-0.6B (Q8_0) /v1/rerank on the Radeon VII next to the warm retrieval/voice plane; gfx906 GPU_MAX_HW_QUEUES=1 rollout",
+ "passed": true,
+ "hardware": "AMD Radeon VII gfx906 16 GiB HBM2 (cblevins-radeonvii, kernel 5.15.0-191, 24 HWS compute queues)",
+ "runtime_image": "registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7",
+ "llamacpp": "b11335 (llama-server build b1-42d9581)",
+ "artifacts": {
+  "embedding_gguf": {
+   "repo": "Qwen/Qwen3-Embedding-4B-GGUF",
+   "revision": "f4602530db1d980e16da9d7d3a70294cf5c190be",
+   "file": "Qwen3-Embedding-4B-Q8_0.gguf",
+   "bytes": 4279660224,
+   "sha256": "b60ae5ce2dd6a0b77f82cadf21def1f310a3e10cde380ad0081b07a9d416949d",
+   "metadata": {
+    "pooling_type": 3,
+    "add_eos_token": true,
+    "eos_token_id": 151643,
+    "embedding_length": 2560
+   }
+  },
+  "reranker_gguf": {
+   "repo": "ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF",
+   "revision": "a02f48bb4f057028298c21fa033da2b30d7742d5",
+   "file": "qwen3-reranker-0.6b-q8_0.gguf",
+   "bytes": 639153184,
+   "sha256": "22c9979ce4fbcdc5acdc310c6641c32797eff1aa980b8f7a2db8a8ea23429a48",
+   "metadata": {
+    "pooling_type": 4,
+    "classifier_output_labels": [
+     "yes",
+     "no"
+    ],
+    "cls_output": [
+     1024,
+     2
+    ],
+    "chat_template_rerank": true
+   }
+  },
+  "rejected_reranker_conversion": {
+   "repo": "mradermacher/Qwen3-Reranker-4B-GGUF",
+   "reason": "no cls.output tensor and no pooling_type: converted as a plain causal LM"
+  },
+  "fp32_references": {
+   "embedding": "Qwen/Qwen3-Embedding-4B@5cf2132abc99cad020ac570b19d031efec650f2b",
+   "reranker": "Qwen/Qwen3-Reranker-0.6B@e61197ed45024b0ed8a2d74b80b4d909f1255473",
+   "image": "registry.harbor.lan/flexinfer/embeddinggemma2-validation@sha256:c56f0256590bd77d1420340f9b16c8adb6959a78b650548e0c5f5b5ea9de366a",
+   "torch": "2.9.0+cpu"
+  },
+  "eval_dataset": "mteb/CodeSearchNetRetrieval@68e8f0731a656fa4bd5b7c81936d95ad48a39bfe go/python test + flexinfer Go doc comments (498)"
+ },
+ "gpu_serving": {
+  "embedding": {
+   "config": "ctx 4096, batch=ubatch 512, parallel 1, ngl 999, pooling last",
+   "offload": "offloaded 37/37 layers to GPU",
+   "buffers_mib": {
+    "model": 4075.73,
+    "cpu_mapped_token_embd": 393.42,
+    "kv": 576.0,
+    "compute": 305.23
+   },
+   "process_vram_bytes": 5353168896,
+   "load_seconds": {
+    "warm": 5.3,
+    "cold_nvme": 16.0
+   },
+   "dims": 2560,
+   "norm": 1.0,
+   "dimensions_param": "ignored (2560 returned for dimensions=1536)",
+   "over_context": "HTTP 400 exceed_context_size_error",
+   "input_tokens_per_second": {
+    "documents": {
+     "csn-go": 853,
+     "csn-python": 826,
+     "flexinfer-go": 903
+    },
+    "queries_raw": {
+     "csn-go": 413,
+     "csn-python": 550,
+     "flexinfer-go": 451
+    },
+    "queries_instructed": {
+     "csn-go": 543,
+     "csn-python": 533,
+     "flexinfer-go": 553
+    },
+    "corpus_prompt_tokens": 549360,
+    "note": "parallel 1, 16 inputs per request, plane resident, Qwen3-Reranker resident"
+   }
+  },
+  "reranker": {
+   "config": "ctx=batch=ubatch 1024, parallel 1, ngl 999, --reranking",
+   "offload": "offloaded 29/29 layers to GPU",
+   "buffers_mib": {
+    "model": 603.87,
+    "kv": 112.0,
+    "compute": 598.48
+   },
+   "process_vram_bytes": 1534390272,
+   "load_seconds": 3.8,
+   "score": "relevance_score = P(yes)",
+   "over_ubatch": "HTTP 500 input is too large (bge-reranker-radeonvii, 512)"
+  }
+ },
+ "parity": {
+  "embedding": {
+   "inputs": 13,
+   "min_cosine_fp32": 0.9994163934694845,
+   "median_cosine_fp32": 0.9995815512840485,
+   "min_single_vs_batch": 0.9999999546253476,
+   "prompt_tokens": 956,
+   "reference_tokens": 956
+  },
+  "reranker": {
+   "pairs": 6,
+   "same_order": true,
+   "max_abs_vs_fp32_p_yes": 0.008358170103208828
+  },
+  "hf_bf16_mps_shim_min_cosine": 0.9997552461088689,
+  "hf_fp16_mps_shim_min_cosine": 0.9999970159853864
+ },
+ "hqd_queue_limit": {
+  "num_cp_queues": 24,
+  "before": {
+   "at": "2026-10-24T15:37:37Z",
+   "compute_queues_total": 26,
+   "queues": {
+    "48300:gte-qwen2-1p5b-radeonvii": {
+     "compute_queues": 6,
+     "GPU_MAX_HW_QUEUES": null
+    },
+    "48313:bge-reranker-radeonvii": {
+     "compute_queues": 6,
+     "GPU_MAX_HW_QUEUES": null
+    },
+    "34829:python3": {
+     "compute_queues": 2,
+     "GPU_MAX_HW_QUEUES": null
+    },
+    "48324:orpheus-3b-radeonvii": {
+     "compute_queues": 6,
+     "GPU_MAX_HW_QUEUES": null
+    },
+    "48320:bge-large-radeonvii": {
+     "compute_queues": 6,
+     "GPU_MAX_HW_QUEUES": null
+    }
+   },
+   "proxy_latency_s": {
+    "bge-large": {
+     "ok": 30,
+     "n": 30,
+     "codes": [
+      200
+     ],
+     "p50_s": 0.31,
+     "p95_s": 0.574,
+     "max_s": 0.824
+    },
+    "gte-qwen2": {
+     "ok": 30,
+     "n": 30,
+     "codes": [
+      200
+     ],
+     "p50_s": 0.312,
+     "p95_s": 2.267,
+     "max_s": 7.597
+    },
+    "bge-reranker": {
+     "ok": 30,
+     "n": 30,
+     "codes": [
+      200
+     ],
+     "p50_s": 0.305,
+     "p95_s": 0.798,
+     "max_s": 15.243
+    },
+    "orpheus": {
+     "ok": 30,
+     "n": 30,
+     "codes": [
+      200
+     ],
+     "p50_s": 0.279,
+     "p95_s": 1.15,
+     "max_s": 2.579
+    }
+   }
+  },
+  "after": {
+   "at": "2026-10-24T15:40:52Z",
+   "compute_queues_total": 14,
+   "queues": {
+    "1608552:gte-qwen2-1p5b-radeonvii": {
+     "compute_queues": 3,
+     "GPU_MAX_HW_QUEUES": "1"
+    },
+    "34829:python3": {
+     "compute_queues": 2,
+     "GPU_MAX_HW_QUEUES": null
+    },
+    "1608806:orpheus-3b-radeonvii": {
+     "compute_queues": 3,
+     "GPU_MAX_HW_QUEUES": "1"
+    },
+    "1610546:bge-reranker-radeonvii": {
+     "compute_queues": 3,
+     "GPU_MAX_HW_QUEUES": "1"
+    },
+    "1610518:bge-large-radeonvii": {
+     "compute_queues": 3,
+     "GPU_MAX_HW_QUEUES": "1"
+    }
+   },
+   "proxy_latency_s": {
+    "bge-large": {
+     "ok": 40,
+     "n": 40,
+     "codes": [
+      200
+     ],
+     "p50_s": 0.209,
+     "p95_s": 0.421,
+     "max_s": 0.698
+    },
+    "gte-qwen2": {
+     "ok": 40,
+     "n": 40,
+     "codes": [
+      200
+     ],
+     "p50_s": 0.157,
+     "p95_s": 0.508,
+     "max_s": 0.689
+    },
+    "bge-reranker": {
+     "ok": 40,
+     "n": 40,
+     "codes": [
+      200
+     ],
+     "p50_s": 0.192,
+     "p95_s": 0.333,
+     "max_s": 0.44
+    },
+    "orpheus": {
+     "ok": 40,
+     "n": 40,
+     "codes": [
+      200
+     ],
+     "p50_s": 0.23,
+     "p95_s": 0.427,
+     "max_s": 0.506
+    }
+   }
+  },
+  "oversubscribed_kernel_messages_since_boot": 10,
+  "oversubscribed_with_both_qwen3_lanes_after_cap": "none (count stayed 10; queues 20)",
+  "gpu_profile_change": "!1140 GPU_MAX_HW_QUEUES=1, runtime pod flexinfer-runtime-gfx906-2jc2t -> -wgcgm restarted 15:39:08Z, four lanes Ready within 26 s"
+ },
+ "loaded_coresidency_direct_path": {
+  "window": "16:05:40-16:08:24Z, Qwen3-4B full duty (gpu_busy mean 98) + Qwen3-Reranker resident, queues 20",
+  "latency_s": {
+   "gte": {
+    "p50": 0.074,
+    "p95": 0.143,
+    "max": 0.195
+   },
+   "bge": {
+    "p50": 0.008,
+    "p95": 0.011,
+    "max": 0.023
+   },
+   "rr": {
+    "p50": 0.014,
+    "p95": 0.032,
+    "max": 0.036
+   },
+   "tts": {
+    "p50": 0.022,
+    "p95": 0.035,
+    "max": 0.037
+   }
+  },
+  "non200": 0,
+  "proxy_confound": "flexinfer-proxy (k3s-cp-1, CPU limit 200m) is CFS-throttled in 14-26% of periods all day; idle direct 7-13 ms vs proxy p50 0.79 s / max 10 s at 16:03Z"
+ },
+ "retrieval_quality": {
+  "full": {
+   "bge-large|q-raw|1024": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9411,
+     "ndcg@10": 0.9528,
+     "recall@1": 0.904,
+     "recall@5": 0.984,
+     "recall@10": 0.987
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.8766,
+     "ndcg@10": 0.9007,
+     "recall@1": 0.8137,
+     "recall@5": 0.9563,
+     "recall@10": 0.9738
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.7558,
+     "ndcg@10": 0.8027,
+     "recall@1": 0.6426,
+     "recall@5": 0.9056,
+     "recall@10": 0.9458
+    },
+    "macro": {
+     "mrr@10": 0.8578,
+     "ndcg@10": 0.8854,
+     "recall@1": 0.7868,
+     "recall@5": 0.9486,
+     "recall@10": 0.9689
+    }
+   },
+   "bge-large|q-inst|1024": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9364,
+     "ndcg@10": 0.9493,
+     "recall@1": 0.897,
+     "recall@5": 0.982,
+     "recall@10": 0.987
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.8674,
+     "ndcg@10": 0.8923,
+     "recall@1": 0.8037,
+     "recall@5": 0.95,
+     "recall@10": 0.9675
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.7483,
+     "ndcg@10": 0.7951,
+     "recall@1": 0.6345,
+     "recall@5": 0.8896,
+     "recall@10": 0.9378
+    },
+    "macro": {
+     "mrr@10": 0.8507,
+     "ndcg@10": 0.8789,
+     "recall@1": 0.7784,
+     "recall@5": 0.9405,
+     "recall@10": 0.9641
+    }
+   },
+   "gte-qwen2|q-raw|1536": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9412,
+     "ndcg@10": 0.9535,
+     "recall@1": 0.906,
+     "recall@5": 0.984,
+     "recall@10": 0.99
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9283,
+     "ndcg@10": 0.9432,
+     "recall@1": 0.8862,
+     "recall@5": 0.9825,
+     "recall@10": 0.9875
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.8303,
+     "ndcg@10": 0.8624,
+     "recall@1": 0.749,
+     "recall@5": 0.9378,
+     "recall@10": 0.9598
+    },
+    "macro": {
+     "mrr@10": 0.8999,
+     "ndcg@10": 0.9197,
+     "recall@1": 0.8471,
+     "recall@5": 0.9681,
+     "recall@10": 0.9791
+    }
+   },
+   "gte-qwen2|q-inst|1536": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9521,
+     "ndcg@10": 0.9622,
+     "recall@1": 0.922,
+     "recall@5": 0.987,
+     "recall@10": 0.992
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9357,
+     "ndcg@10": 0.9495,
+     "recall@1": 0.8962,
+     "recall@5": 0.9875,
+     "recall@10": 0.99
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.8502,
+     "ndcg@10": 0.8787,
+     "recall@1": 0.7731,
+     "recall@5": 0.9498,
+     "recall@10": 0.9639
+    },
+    "macro": {
+     "mrr@10": 0.9127,
+     "ndcg@10": 0.9301,
+     "recall@1": 0.8638,
+     "recall@5": 0.9748,
+     "recall@10": 0.982
+    }
+   },
+   "qwen3-4b|q-raw|2560": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9605,
+     "ndcg@10": 0.9687,
+     "recall@1": 0.935,
+     "recall@5": 0.988,
+     "recall@10": 0.993
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9363,
+     "ndcg@10": 0.9502,
+     "recall@1": 0.8962,
+     "recall@5": 0.9862,
+     "recall@10": 0.9912
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.9095,
+     "ndcg@10": 0.9278,
+     "recall@1": 0.8574,
+     "recall@5": 0.9739,
+     "recall@10": 0.9819
+    },
+    "macro": {
+     "mrr@10": 0.9354,
+     "ndcg@10": 0.9489,
+     "recall@1": 0.8962,
+     "recall@5": 0.9827,
+     "recall@10": 0.9887
+    }
+   },
+   "qwen3-4b|q-inst|2560": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9549,
+     "ndcg@10": 0.9642,
+     "recall@1": 0.925,
+     "recall@5": 0.988,
+     "recall@10": 0.991
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.941,
+     "ndcg@10": 0.9534,
+     "recall@1": 0.905,
+     "recall@5": 0.9862,
+     "recall@10": 0.99
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.9066,
+     "ndcg@10": 0.9256,
+     "recall@1": 0.8534,
+     "recall@5": 0.9699,
+     "recall@10": 0.9819
+    },
+    "macro": {
+     "mrr@10": 0.9342,
+     "ndcg@10": 0.9477,
+     "recall@1": 0.8945,
+     "recall@5": 0.9814,
+     "recall@10": 0.9876
+    }
+   }
+  },
+  "mrl_qwen3": {
+   "qwen3-4b|q-raw|2560": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9605,
+     "ndcg@10": 0.9687,
+     "recall@1": 0.935,
+     "recall@5": 0.988,
+     "recall@10": 0.993
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9363,
+     "ndcg@10": 0.9502,
+     "recall@1": 0.8962,
+     "recall@5": 0.9862,
+     "recall@10": 0.9912
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.9095,
+     "ndcg@10": 0.9278,
+     "recall@1": 0.8574,
+     "recall@5": 0.9739,
+     "recall@10": 0.9819
+    },
+    "macro": {
+     "mrr@10": 0.9354,
+     "ndcg@10": 0.9489,
+     "recall@1": 0.8962,
+     "recall@5": 0.9827,
+     "recall@10": 0.9887
+    }
+   },
+   "qwen3-4b|q-raw|2048": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9599,
+     "ndcg@10": 0.9683,
+     "recall@1": 0.934,
+     "recall@5": 0.989,
+     "recall@10": 0.993
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9369,
+     "ndcg@10": 0.9506,
+     "recall@1": 0.8975,
+     "recall@5": 0.9862,
+     "recall@10": 0.9912
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.9057,
+     "ndcg@10": 0.9248,
+     "recall@1": 0.8534,
+     "recall@5": 0.9739,
+     "recall@10": 0.9819
+    },
+    "macro": {
+     "mrr@10": 0.9342,
+     "ndcg@10": 0.9479,
+     "recall@1": 0.895,
+     "recall@5": 0.983,
+     "recall@10": 0.9887
+    }
+   },
+   "qwen3-4b|q-raw|1536": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9599,
+     "ndcg@10": 0.9681,
+     "recall@1": 0.934,
+     "recall@5": 0.989,
+     "recall@10": 0.992
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9413,
+     "ndcg@10": 0.954,
+     "recall@1": 0.905,
+     "recall@5": 0.9875,
+     "recall@10": 0.9912
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.9061,
+     "ndcg@10": 0.9255,
+     "recall@1": 0.8554,
+     "recall@5": 0.9739,
+     "recall@10": 0.9839
+    },
+    "macro": {
+     "mrr@10": 0.9358,
+     "ndcg@10": 0.9492,
+     "recall@1": 0.8981,
+     "recall@5": 0.9835,
+     "recall@10": 0.989
+    }
+   },
+   "qwen3-4b|q-raw|1024": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9604,
+     "ndcg@10": 0.9687,
+     "recall@1": 0.935,
+     "recall@5": 0.989,
+     "recall@10": 0.993
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9376,
+     "ndcg@10": 0.9513,
+     "recall@1": 0.9,
+     "recall@5": 0.9838,
+     "recall@10": 0.9925
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.9083,
+     "ndcg@10": 0.9282,
+     "recall@1": 0.8554,
+     "recall@5": 0.9719,
+     "recall@10": 0.988
+    },
+    "macro": {
+     "mrr@10": 0.9354,
+     "ndcg@10": 0.9494,
+     "recall@1": 0.8968,
+     "recall@5": 0.9816,
+     "recall@10": 0.9912
+    }
+   },
+   "qwen3-4b|q-raw|768": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9598,
+     "ndcg@10": 0.9682,
+     "recall@1": 0.933,
+     "recall@5": 0.99,
+     "recall@10": 0.993
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.937,
+     "ndcg@10": 0.9507,
+     "recall@1": 0.8988,
+     "recall@5": 0.985,
+     "recall@10": 0.9912
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.908,
+     "ndcg@10": 0.9276,
+     "recall@1": 0.8534,
+     "recall@5": 0.9779,
+     "recall@10": 0.9859
+    },
+    "macro": {
+     "mrr@10": 0.9349,
+     "ndcg@10": 0.9488,
+     "recall@1": 0.8951,
+     "recall@5": 0.9843,
+     "recall@10": 0.99
+    }
+   },
+   "qwen3-4b|q-raw|512": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.96,
+     "ndcg@10": 0.9681,
+     "recall@1": 0.934,
+     "recall@5": 0.99,
+     "recall@10": 0.992
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9405,
+     "ndcg@10": 0.953,
+     "recall@1": 0.905,
+     "recall@5": 0.985,
+     "recall@10": 0.99
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.8937,
+     "ndcg@10": 0.9166,
+     "recall@1": 0.8353,
+     "recall@5": 0.9679,
+     "recall@10": 0.9859
+    },
+    "macro": {
+     "mrr@10": 0.9314,
+     "ndcg@10": 0.9459,
+     "recall@1": 0.8914,
+     "recall@5": 0.981,
+     "recall@10": 0.9893
+    }
+   },
+   "qwen3-4b|q-inst|2560": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9549,
+     "ndcg@10": 0.9642,
+     "recall@1": 0.925,
+     "recall@5": 0.988,
+     "recall@10": 0.991
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.941,
+     "ndcg@10": 0.9534,
+     "recall@1": 0.905,
+     "recall@5": 0.9862,
+     "recall@10": 0.99
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.9066,
+     "ndcg@10": 0.9256,
+     "recall@1": 0.8534,
+     "recall@5": 0.9699,
+     "recall@10": 0.9819
+    },
+    "macro": {
+     "mrr@10": 0.9342,
+     "ndcg@10": 0.9477,
+     "recall@1": 0.8945,
+     "recall@5": 0.9814,
+     "recall@10": 0.9876
+    }
+   },
+   "qwen3-4b|q-inst|2048": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9559,
+     "ndcg@10": 0.9649,
+     "recall@1": 0.927,
+     "recall@5": 0.988,
+     "recall@10": 0.991
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9411,
+     "ndcg@10": 0.9535,
+     "recall@1": 0.905,
+     "recall@5": 0.9888,
+     "recall@10": 0.99
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.9059,
+     "ndcg@10": 0.9254,
+     "recall@1": 0.8534,
+     "recall@5": 0.9759,
+     "recall@10": 0.9839
+    },
+    "macro": {
+     "mrr@10": 0.9343,
+     "ndcg@10": 0.9479,
+     "recall@1": 0.8951,
+     "recall@5": 0.9842,
+     "recall@10": 0.9883
+    }
+   },
+   "qwen3-4b|q-inst|1536": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9546,
+     "ndcg@10": 0.9639,
+     "recall@1": 0.925,
+     "recall@5": 0.989,
+     "recall@10": 0.991
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9419,
+     "ndcg@10": 0.9541,
+     "recall@1": 0.9075,
+     "recall@5": 0.9862,
+     "recall@10": 0.99
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.9029,
+     "ndcg@10": 0.9236,
+     "recall@1": 0.8474,
+     "recall@5": 0.9699,
+     "recall@10": 0.9859
+    },
+    "macro": {
+     "mrr@10": 0.9331,
+     "ndcg@10": 0.9472,
+     "recall@1": 0.8933,
+     "recall@5": 0.9817,
+     "recall@10": 0.989
+    }
+   },
+   "qwen3-4b|q-inst|1024": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9547,
+     "ndcg@10": 0.9637,
+     "recall@1": 0.926,
+     "recall@5": 0.989,
+     "recall@10": 0.99
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9385,
+     "ndcg@10": 0.9514,
+     "recall@1": 0.9025,
+     "recall@5": 0.9838,
+     "recall@10": 0.99
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.9014,
+     "ndcg@10": 0.9231,
+     "recall@1": 0.8414,
+     "recall@5": 0.9719,
+     "recall@10": 0.988
+    },
+    "macro": {
+     "mrr@10": 0.9315,
+     "ndcg@10": 0.9461,
+     "recall@1": 0.89,
+     "recall@5": 0.9816,
+     "recall@10": 0.9893
+    }
+   },
+   "qwen3-4b|q-inst|768": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9525,
+     "ndcg@10": 0.9625,
+     "recall@1": 0.922,
+     "recall@5": 0.987,
+     "recall@10": 0.992
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9377,
+     "ndcg@10": 0.9512,
+     "recall@1": 0.9,
+     "recall@5": 0.9838,
+     "recall@10": 0.9912
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.898,
+     "ndcg@10": 0.9206,
+     "recall@1": 0.8333,
+     "recall@5": 0.9759,
+     "recall@10": 0.988
+    },
+    "macro": {
+     "mrr@10": 0.9294,
+     "ndcg@10": 0.9448,
+     "recall@1": 0.8851,
+     "recall@5": 0.9822,
+     "recall@10": 0.9904
+    }
+   },
+   "qwen3-4b|q-inst|512": {
+    "csn-go": {
+     "queries": 1000,
+     "mrr@10": 0.9523,
+     "ndcg@10": 0.9619,
+     "recall@1": 0.921,
+     "recall@5": 0.989,
+     "recall@10": 0.99
+    },
+    "csn-python": {
+     "queries": 800,
+     "mrr@10": 0.9361,
+     "ndcg@10": 0.9494,
+     "recall@1": 0.8988,
+     "recall@5": 0.985,
+     "recall@10": 0.9888
+    },
+    "flexinfer-go": {
+     "queries": 498,
+     "mrr@10": 0.8907,
+     "ndcg@10": 0.9139,
+     "recall@1": 0.8313,
+     "recall@5": 0.9699,
+     "recall@10": 0.9839
+    },
+    "macro": {
+     "mrr@10": 0.9264,
+     "ndcg@10": 0.9417,
+     "recall@1": 0.8837,
+     "recall@5": 0.9813,
+     "recall@10": 0.9876
+    }
+   }
+  }
+ },
+ "rerank": {
+  "first_stage": "/private/tmp/claude-501/-Users-cblevins-workspace-services-flexinfer--claude-worktrees-qwen3-embedding-radeonvii-3c52ca/cc93c6cf-59e8-478d-8c2f-e266992e5dfd/scratchpad/data/runs/bge-large",
+  "top_k": 20,
+  "doc_chars": 600,
+  "sets": {
+   "csn-go": {
+    "queries": 100,
+    "gold_in_top_k": 0.99,
+    "first_stage": {
+     "queries": 100,
+     "mrr@10": 0.9283,
+     "ndcg@10": 0.9415,
+     "recall@1": 0.89,
+     "recall@5": 0.98,
+     "recall@10": 0.98
+    },
+    "bge-reranker": {
+     "queries": 100,
+     "mrr@10": 0.8941,
+     "ndcg@10": 0.9147,
+     "recall@1": 0.85,
+     "recall@5": 0.94,
+     "recall@10": 0.98,
+     "seconds_per_query": 0.447
+    },
+    "qwen3-reranker": {
+     "queries": 100,
+     "mrr@10": 0.9462,
+     "ndcg@10": 0.957,
+     "recall@1": 0.92,
+     "recall@5": 0.98,
+     "recall@10": 0.99,
+     "seconds_per_query": 1.162
+    },
+    "agreement": {
+     "top1_same": 0.85,
+     "spearman_mean": 0.5799
+    }
+   },
+   "csn-python": {
+    "queries": 100,
+    "gold_in_top_k": 0.98,
+    "first_stage": {
+     "queries": 100,
+     "mrr@10": 0.8744,
+     "ndcg@10": 0.8984,
+     "recall@1": 0.81,
+     "recall@5": 0.96,
+     "recall@10": 0.97
+    },
+    "bge-reranker": {
+     "queries": 100,
+     "mrr@10": 0.7234,
+     "ndcg@10": 0.7815,
+     "recall@1": 0.59,
+     "recall@5": 0.91,
+     "recall@10": 0.96,
+     "seconds_per_query": 0.531
+    },
+    "qwen3-reranker": {
+     "queries": 100,
+     "mrr@10": 0.8942,
+     "ndcg@10": 0.9133,
+     "recall@1": 0.84,
+     "recall@5": 0.96,
+     "recall@10": 0.97,
+     "seconds_per_query": 1.243
+    },
+    "agreement": {
+     "top1_same": 0.61,
+     "spearman_mean": 0.4722
+    }
+   },
+   "flexinfer-go": {
+    "queries": 100,
+    "gold_in_top_k": 0.96,
+    "first_stage": {
+     "queries": 100,
+     "mrr@10": 0.7115,
+     "ndcg@10": 0.7646,
+     "recall@1": 0.6,
+     "recall@5": 0.87,
+     "recall@10": 0.93
+    },
+    "bge-reranker": {
+     "queries": 100,
+     "mrr@10": 0.7848,
+     "ndcg@10": 0.8222,
+     "recall@1": 0.71,
+     "recall@5": 0.88,
+     "recall@10": 0.94,
+     "seconds_per_query": 0.57
+    },
+    "qwen3-reranker": {
+     "queries": 100,
+     "mrr@10": 0.8369,
+     "ndcg@10": 0.868,
+     "recall@1": 0.75,
+     "recall@5": 0.95,
+     "recall@10": 0.96,
+     "seconds_per_query": 1.256
+    },
+    "agreement": {
+     "top1_same": 0.71,
+     "spearman_mean": 0.5767
+    }
+   }
+  }
+ }
+}
