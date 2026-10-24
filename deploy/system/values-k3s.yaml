@@ -34,6 +34,12 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
+    # 2026-10-24: master b02367ad = the 60009c34 build below plus !1133: the
+    # certified llama.cpp feature surface accepts specType draft-mtp behind a
+    # flexinfer.ai/backend-certificate-llamacpp-draft-mtp GPUProfile triple
+    # (draftMax/draftMin rejected with it). No GPUProfile carries that triple
+    # at roll time, so admission is unchanged; 65d99ead (60009c34) is the
+    # safe fallback.
     # 2026-10-23: master 60009c34 (!1122 reconcile hot-loop fix, !1125 and
     # !1127 cache-status patch churn fixes, !1129 parked-lane cadence, on top
     # of the b8637f35 GPU health sentinel build): a steady shared-GPU member
@@ -57,8 +63,8 @@ controller:
     # a517165a is also safe):
     # sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376
     # (tag 20261023-142445).
-    digest: "sha256:65d99ead07931a05c6ce4e06a527a06313f8a09ce7a7ed5996e04f9fb6a32114"
-    tag: "20261023-210446"
+    digest: "sha256:113eb1246a4cad88c34b8cfe96eef085dfa8ab16a613d70c147b5581787c82f6"
+    tag: "20261024-134916"
   resources:
     limits:
       cpu: 1000m
