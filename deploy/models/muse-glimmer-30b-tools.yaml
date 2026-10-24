@@ -13,6 +13,15 @@
 # --reasoning-format auto. Evidence: 6/6 gauntlet incl. exact
 # get_weather{city:Paris} tool call and clean no-tool restraint; 30.5 tok/s.
 #
+# Pending (S5, 2026-10-24, .loom/10-research-gfx1100-next-feature-2026-10-23.md
+# §4 row 3): the refreshed image llama.cpp b11847 / ROCm 7.2.3 =
+# registry.harbor.lan/library/llamacpp@sha256:95c1d3901fab… (pinned-95c1d3901fab)
+# is built and verified on the builder; its re-qualification canary
+# (deploy/debug/muse-glimmer-30b-canary.yaml, same gauntlet via
+# scripts/verify-llamacpp-canary.py) awaits an operator window on the 5930k.
+# Repin the image line below only once matrix row
+# gfx1100-llamacpp-b11847-2026-10-24 reads `promote`.
+#
 # Deferred (revisit when needed):
 #   - DFlash speculative drafter: needs a --model-draft passthrough in
 #     backend/llamacpp.go (only specType/draftMax/draftMin exist today).
