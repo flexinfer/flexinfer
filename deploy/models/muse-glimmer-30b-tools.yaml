@@ -27,12 +27,15 @@
 # chat template (ATEM template rewritten, 7167 -> 9992 chars). The old name no
 # longer exists upstream, so a cache re-stage under the old ggufFile would fail.
 # ROLLOUT NOTE: the Local cache marker is sha256(spec.source) only, so this
-# ggufFile change does NOT re-stage by itself — the 5930k cache dir still holds
-# the old file name. Before (or right after) this lands, the operator removes
+# ggufFile change does NOT re-stage by itself — the 5930k cache dir still held
+# the old file name. The stale marker
 #   /var/lib/flexinfer/models/flexinfer-system/muse-glimmer-30b-tools/.flexinfer_cached_217d2791f8dd49f4b2f950bf383d7a508e1796ee1b01788f9711ad0d99a827f0
-# on cblevins-5930k; the recreated stage job then wipes the dir and downloads
-# the new file (16.76 GB, ~4 min). Without that step the lane's next cold
-# start fails to open the new path.
+# was removed on cblevins-5930k on 2026-10-24 13:39Z (lane Preempted at
+# generation 4; the old GGUF left in place so demand before the merge still
+# boots). When this change lands, the generation bump recreates the stage
+# job, which wipes the dir and downloads the new file (16.76 GB, ~4 min).
+# Verify after the first activation: status.cache.message = "artifact staged
+# to local cache" and /props model_path ends in the new file name.
 #
 # Deferred (revisit when needed):
 #   - DFlash speculative drafter: the repo now ships
