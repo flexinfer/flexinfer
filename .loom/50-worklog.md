@@ -1131,3 +1131,44 @@ Sources:
     `controller_runtime_reconcile_time_seconds`, `workqueue_depth{name="model"}`,
     `apiserver_request_duration_seconds` (p99 by verb), `flexinfer_proxy_requests_total{model=…}`
   - Harbor API: `flexinfer-controller` artifacts by push time (tags `<BUILD_TS>`, `master`, `<sha>`)
+
+## 2026-10-24
+
+### vLLM currency 0.26 → 0.32 on the gfx1100 native-W4A16 image — XTX canary PASS (functional)
+
+- What changed:
+  - !1134: `gfx1100-native-w4a16` profile → `vllm/vllm-openai-rocm:v0.32.0`; the from-source
+    rebuild is gone (the 0.32 wheel embeds gfx1100 code objects in every extension, checked by
+    scanning the `.so` files; `verify_isa_contract` now asserts it at build time; contract gate
+    forbids `git clone` / `pip wheel` / `VLLM_VERSION_OVERRIDE` from returning). Probes on the
+    builder first: plugins register on 0.32 (GPU-visible: `fla_autotuners=11`), every
+    controller-rendered flag exists except `--calculate-kv-scales` (removed in 0.28).
+  - Image `cd108c9e` built off-CI on the 7900xtx docker daemon from the exact commit (BuildKit
+    group saturated by other merges' multi-hour builds), prewarmed by !1143, canaried by !1144:
+    Ready in 5m19s via one KVPoolRecheck relaunch, Model Runner V2, pool 129,582 / 1.98x, probes
+    3/3 identical, 40.5 tok/s, proxy OK, 0 SMU errors. Row `xtx-vllm-v032-2026-10-24`.
+  - Workhorse promotion staged on `ops/gfx1100-v032-workhorse-promote` (not pushed).
+- Why:
+  - Six releases of currency and the gate for the September model survey's candidates.
+- Observed / cost:
+  - The 5930k prewarm pull tipped its root into kubelet DiskPressure (17:36–17:47Z): DaemonSet
+    evictions incl. the Longhorn instance-manager, one workhorse restart, and the image GC deleted
+    `2e9652ed` from the node for good (!1149 dropped the dead entry, !1147 released the
+    `cfefae18` hold). Three parked 5930k lanes now need a repin; ~86 GB of orphaned probe caches
+    await the operator.
+  - My GPU-visible docker probe containers on the XTX host coincided with the 17:01Z host stall
+    (kubelet NotReady, Mills lane rescheduled, the langfuse-s3 Longhorn restore killed); the XTX
+    was held GPU-quiet 17:58–19:17Z for the retry, which completed.
+  - The card itself dropped at 14:03Z today under the 2100 MHz cap (another session's finding);
+    the active soak is therefore an operator decision, not a default step.
+  - A GPU-less container gets vLLM's Triton placeholders, so plugin-common's FLA pruning raises
+    "safe autotune configurations are missing" there; it is not a 0.32 incompatibility.
+- Sources:
+  - !1134 (6fcd4af7), !1143 (bf4129c5), !1144 (8ea38cb1), !1147, !1149; Harbor artifact
+    `rocm-gfx1100-v032-native-w4a16-3fc9c37f`
+  - `docker --context 7900xtx run … vllm/vllm-openai-rocm:v0.32.0` probes (scratchpad
+    `probe*-v0.32.0.log`, `fla_introspect.py`); `vllm serve --help=all`
+  - `kubectl -n flexinfer-system logs qwen38-27b-xtx-warm-canary-8dd6746d4-ndnhd`;
+    `scripts/verify-vllm-canary.py`; `xtx_sampler.sh` log
+  - `kubectl get node cblevins-5930k` conditions/events; `crictl images --digests`; `du -xsh`
+    on the 5930k
