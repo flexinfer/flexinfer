@@ -116,8 +116,9 @@ metadata:
     flexinfer.ai/promotion-state: probe-only
 spec:
   backend: llamacpp
-  # Same llama.cpp release as the ROCm image, Mesa 26.0 RADV on Ubuntu 26.04.
-  image: registry.harbor.lan/library/llamacpp:vulkan-radv-b11847
+  # Same llama.cpp release as the ROCm image, Mesa 26.0 RADV on Ubuntu 26.04
+  # (= library/llamacpp:vulkan-radv-b11847, pinned-b6c488468f55, 447 MB).
+  image: registry.harbor.lan/library/llamacpp@sha256:b6c488468f55f152f056b25c881af152531135876b0940c906b2a5ebcbe7a70f
   source: HF://bartowski/Qwen3.8-27B-GGUF
   cache:
     strategy: Local
