@@ -15,6 +15,12 @@ KERNEL_RELATIVE_PATH = pathlib.Path(
     "model_executor/kernels/linear/mixed_precision/rdna3_w4a16.py"
 )
 TEXT_PLUGIN_ENTRY_POINT = "flexinfer_qwen35_text"
+# Compiled extensions that must carry device code for the target ISA. Through
+# 0.26 the published ROCm wheel lacked gfx1100 objects and this image rebuilt
+# vLLM from source; since the 0.32 wheel embeds them the build relies on the
+# upstream wheel and this check is what keeps a future base image honest.
+ISA_EXTENSION_GLOBS = ("_C*.so", "_moe_C*.so", "_rocm_C*.so")
+ISA_MARKER_TEMPLATE = "amdgcn-amd-amdhsa--{isa}"
 
 
 def _parse_version(raw: str) -> tuple[int, int, int]:
@@ -42,6 +48,36 @@ def verify_source_contract(vllm_root: pathlib.Path, version: str) -> None:
         )
 
 
+def verify_isa_contract(vllm_root: pathlib.Path, isa: str) -> list[str]:
+    """Verify every compiled vLLM extension embeds device code for ``isa``.
+
+    HIP fat binaries name each embedded code object by its target triple
+    (``amdgcn-amd-amdhsa--gfx1100``), so a byte scan of the shared objects is
+    enough to prove the wheel was built for this GPU without loading it. A
+    wheel that only carries CDNA targets would import fine and then fail every
+    kernel launch on an RDNA3 card with "no kernel image is available".
+    Returns the extension file names that were checked.
+    """
+    marker = ISA_MARKER_TEMPLATE.format(isa=isa).encode()
+    checked: list[str] = []
+    missing: list[str] = []
+    for pattern in ISA_EXTENSION_GLOBS:
+        for path in sorted(vllm_root.glob(pattern)):
+            checked.append(path.name)
+            if marker not in path.read_bytes():
+                missing.append(path.name)
+    if not checked:
+        raise RuntimeError(
+            f"no compiled vLLM extensions matching {ISA_EXTENSION_GLOBS} under {vllm_root}"
+        )
+    if missing:
+        raise RuntimeError(
+            f"compiled vLLM extensions lack {isa} device code: {missing}; "
+            "the base wheel was not built for this GPU"
+        )
+    return checked
+
+
 def verify_compiled_contract(
     torch_module: Any,
     importer: Callable[[str], Any] = importlib.import_module,
@@ -60,52 +96,6 @@ def verify_compiled_contract(
             "vLLM's compiled _rocm_C extension loaded but does not register "
             "gptq_gemm_rdna3"
         )
-
-
-def verify_gpu_code_objects(extension_path: pathlib.Path, gpu_arch: str) -> int:
-    """Count the ``gpu_arch`` code objects bundled into a compiled extension.
-
-    ``hasattr(torch.ops._rocm_C, "gptq_gemm_rdna3")`` only proves the operator
-    was registered; the HIP kernel behind it is compiled per target and lives in
-    the fat binary as ``amdgcn-amd-amdhsa--<arch>`` bundles. A base image built
-    without ``gpu_arch`` in PYTORCH_ROCM_ARCH registers the op and then fails at
-    the first kernel launch on the card. Returns the bundle count (> 0) or
-    raises.
-    """
-    marker = f"amdgcn-amd-amdhsa--{gpu_arch}".encode()
-    count = extension_path.read_bytes().count(marker)
-    if count == 0:
-        raise RuntimeError(
-            f"{extension_path} carries no {gpu_arch} code objects "
-            f"(no {marker.decode()} bundle); rebuild vLLM with "
-            f"PYTORCH_ROCM_ARCH={gpu_arch}"
-        )
-    return count
-
-
-def rocm_extension_path(
-    importer: Callable[[str], Any] = importlib.import_module
-) -> pathlib.Path:
-    """Filesystem path of vLLM's compiled ROCm extension."""
-    return pathlib.Path(importer("vllm._rocm_C").__file__).resolve()
-
-
-def probe_base(gpu_arch: str) -> None:
-    """Exit non-zero unless this vLLM already ships the gfx op for ``gpu_arch``.
-
-    Used by build/Dockerfile.runtime-serving-native-w4a16 (``VLLM_REBUILD=auto``)
-    to decide whether the from-source rebuild is needed: the published v0.26
-    ROCm wheel omitted the compiled gfx1100 op, the v0.32.0 image ships it.
-    """
-    import torch
-
-    version = importlib.metadata.version("vllm")
-    verify_compiled_contract(torch)
-    count = verify_gpu_code_objects(rocm_extension_path(), gpu_arch)
-    print(
-        f"base vLLM {version} ships _rocm_C with gptq_gemm_rdna3 and "
-        f"{count} {gpu_arch} code objects; no rebuild needed"
-    )
 
 
 def verify_text_plugin_contract(entry_points: Any) -> None:
@@ -151,18 +141,14 @@ def verify_text_plugin_registers(entry_points: Any, environ: dict) -> None:
 
 def main() -> None:
     import os
-    import sys
     import torch
     import vllm
 
-    gpu_arch = os.environ.get("GPU_ARCH", "gfx1100")
-    if "--probe-base" in sys.argv[1:]:
-        probe_base(gpu_arch)
-        return
-
     version = importlib.metadata.version("vllm")
     vllm_root = pathlib.Path(vllm.__file__).resolve().parent
+    isa = os.environ.get("GPU_ARCH", "gfx1100")
     verify_source_contract(vllm_root, version)
+    checked = verify_isa_contract(vllm_root, isa)
     verify_text_plugin_contract(importlib.metadata.entry_points)
     verify_text_plugin_registers(importlib.metadata.entry_points, os.environ)
 
@@ -170,13 +156,12 @@ def main() -> None:
     # platform loader does not import this extension. Load it explicitly: the
     # Torch operator registration itself does not require a visible device.
     verify_compiled_contract(torch)
-    code_objects = verify_gpu_code_objects(rocm_extension_path(), gpu_arch)
 
     print(
         "verified vLLM",
         version,
-        f"native {gpu_arch} W4A16 op: torch.ops._rocm_C.gptq_gemm_rdna3",
-        f"({code_objects} {gpu_arch} code objects);",
+        f"native {isa} W4A16 op: torch.ops._rocm_C.gptq_gemm_rdna3;",
+        f"{isa} device code in {', '.join(checked)};",
         "flexinfer_qwen35_text register() OK",
     )
 

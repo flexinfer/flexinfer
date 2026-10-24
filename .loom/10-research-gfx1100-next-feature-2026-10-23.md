@@ -173,7 +173,11 @@ KV (64K/1 seq or 32K/2 seqs).
    `PYTORCH_ROCM_ARCH`), so the from-source rebuild the 0.26 image needed is
    unnecessary; the Dockerfile now probes the base (`VLLM_REBUILD=auto`) and
    skips it, and the verify script asserts both the op and the gfx1100 code
-   objects at build time. Plugin port: 0.32 registers the Qwen3.5 text
+   objects at build time. (Superseded the same day on master by `build/vllm-v032-native-w4a16`,
+   commits 85b670996 / 3fc9c37fe, which drops the rebuild path entirely —
+   wheel mode, `verify_isa_contract` over `_C`/`_moe_C`/`_rocm_C`; this branch
+   merged that version, so the S1/S2 canaries ran on the probe-built digest
+   `8ff8d14a` while CI publishes the wheel-mode image from master.) Plugin port: 0.32 registers the Qwen3.5 text
    classes itself with `IsHybrid`, `SupportsMRoPE` and the mamba helpers on
    `Qwen3_5ForCausalLMBase`, and its `SpeculativeConfig.hf_config_override`
    maps `qwen3_5_text`, so `flexinfer_vllm_common` 0.2.0 copies only helpers

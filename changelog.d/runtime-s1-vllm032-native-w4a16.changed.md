@@ -1,9 +1,12 @@
 The gfx1100 `gfx1100-native-w4a16` runtime profile, its Dockerfile and the
-`publish_serving_rocm_gfx1100_native_w4a16` CI job now track vLLM 0.32.0
+`publish_serving_rocm_gfx1100_native_w4a16` CI job track vLLM 0.32.0
 (base `vllm/vllm-openai-rocm:v0.32.0`, tag `rocm-gfx1100-v032-native-w4a16`),
-slice S1 of `.loom/10-research-gfx1100-next-feature-2026-10-23.md`. The vLLM
+slice S1 of `.loom/10-research-gfx1100-next-feature-2026-10-23.md`; the
+profile is in wheel mode (no from-source rebuild: the 0.32 base wheel embeds
+gfx1100 code objects and the verify script asserts the ISA at build time, the
+shape that landed on master as `build/vllm-v032-native-w4a16`). The vLLM
 plugins were re-ported for 0.32: `flexinfer_vllm_common` 0.2.0 only copies
-hybrid-state helpers a class does not already resolve, and
+hybrid-state helpers a class does not already resolve,
 `flexinfer_vllm_qwen35_text` 0.9.0 skips the Qwen3.5 text architectures when
 vLLM registers them itself and gains `FLEXINFER_QWEN35_MTP_HEAD=checkpoint` to
 leave the MTP head's quantization to the checkpoint, and

@@ -156,50 +156,39 @@ class NativeW4A16VerifierTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "missing flexinfer_qwen35_text"):
             verifier.verify_text_plugin_contract(mock.Mock(return_value=[]))
 
-
-class GpuCodeObjectTests(unittest.TestCase):
-    """The op being registered is not enough: the kernel must be compiled for the card."""
-
-    @staticmethod
-    def _fat_binary(*archs: str) -> bytes:
-        return b"\x00".join(f"amdgcn-amd-amdhsa--{arch}".encode() for arch in archs)
-
-    def test_counts_code_objects_for_the_target_arch(self) -> None:
+    def test_isa_contract_accepts_extensions_with_target_code_objects(self) -> None:
+        """Every compiled extension embeds the HIP target triple for gfx1100."""
         verifier = _load_verifier()
-        with tempfile.TemporaryDirectory() as tmp:
-            so = Path(tmp) / "_rocm_C.abi3.so"
-            so.write_bytes(self._fat_binary("gfx1100", "gfx942", "gfx1100", "gfx1201"))
-            self.assertEqual(verifier.verify_gpu_code_objects(so, "gfx1100"), 2)
 
-    def test_rejects_an_extension_built_without_the_target_arch(self) -> None:
-        verifier = _load_verifier()
         with tempfile.TemporaryDirectory() as tmp:
-            so = Path(tmp) / "_rocm_C.abi3.so"
-            so.write_bytes(self._fat_binary("gfx90a", "gfx942"))
-            with self.assertRaisesRegex(RuntimeError, "no gfx1100 code objects"):
-                verifier.verify_gpu_code_objects(so, "gfx1100")
-
-    def test_probe_base_checks_op_then_code_objects(self) -> None:
-        verifier = _load_verifier()
-        with tempfile.TemporaryDirectory() as tmp:
-            so = Path(tmp) / "_rocm_C.abi3.so"
-            so.write_bytes(self._fat_binary("gfx1100"))
-            fake_torch = types.SimpleNamespace(
-                ops=types.SimpleNamespace(
-                    _rocm_C=types.SimpleNamespace(gptq_gemm_rdna3=object())
+            root = Path(tmp)
+            for name in ("_C.abi3.so", "_moe_C.abi3.so", "_rocm_C.abi3.so"):
+                (root / name).write_bytes(
+                    b"\x7fELF amdgcn-amd-amdhsa--gfx942 amdgcn-amd-amdhsa--gfx1100 "
                 )
-            )
-            fake_ext = types.ModuleType("vllm._rocm_C")
-            fake_ext.__file__ = str(so)
-            with mock.patch.dict(
-                sys.modules, {"torch": fake_torch, "vllm._rocm_C": fake_ext}
+            checked = verifier.verify_isa_contract(root, "gfx1100")
+
+        self.assertEqual(checked, ["_C.abi3.so", "_moe_C.abi3.so", "_rocm_C.abi3.so"])
+
+    def test_isa_contract_rejects_extensions_without_target_code_objects(self) -> None:
+        """A CDNA-only wheel imports fine but must fail the build, not the engine."""
+        verifier = _load_verifier()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "_C.abi3.so").write_bytes(b"amdgcn-amd-amdhsa--gfx1100")
+            (root / "_rocm_C.abi3.so").write_bytes(b"amdgcn-amd-amdhsa--gfx942")
+            with self.assertRaisesRegex(
+                RuntimeError, r"lack gfx1100 device code: \['_rocm_C.abi3.so'\]"
             ):
-                with mock.patch.object(
-                    verifier.importlib.metadata, "version", return_value="0.32.0"
-                ):
-                    verifier.probe_base("gfx1100")
-                    with self.assertRaisesRegex(RuntimeError, "no gfx906 code objects"):
-                        verifier.probe_base("gfx906")
+                verifier.verify_isa_contract(root, "gfx1100")
+
+    def test_isa_contract_rejects_missing_extensions(self) -> None:
+        verifier = _load_verifier()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(RuntimeError, "no compiled vLLM extensions"):
+                verifier.verify_isa_contract(Path(tmp), "gfx1100")
 
 
 if __name__ == "__main__":

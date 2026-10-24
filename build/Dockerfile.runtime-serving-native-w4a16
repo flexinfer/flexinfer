@@ -2,23 +2,18 @@
 #
 # vLLM 0.23 was the first upstream release with the native RDNA3 W4A16 HIP
 # kernel; 0.26.0 added the hybrid-GDN mamba-block-split clamp (upstream PR
-# #47782) that the ngram speculative-decoding re-canary depends on
-# (services/flexinfer#66). This image now tracks 0.32.0 (2026-10-23, slice S1 of
-# .loom/10-research-gfx1100-next-feature-2026-10-23.md): it carries the GDN
-# gate/speculative-token alignment (#51812, 0.28), the fused GDN MTP path for
-# all Qwen head ratios (#52539, 0.29), the opt-in RDNA segmented-attention
-# backend ROCM_SEGMENTED_ATTN (#59132) and the ROCm sleep-mode VMM fix
-# (#60367). Keep this image separate from the legacy 0.17 serving persona
-# until full-checkpoint logit/coherence and throughput acceptance passes.
+# #47782) that the ngram speculative-decoding re-canary depends on — see
+# services/flexinfer#66. 2026-10-24: tracking 0.32.0, the current release
+# (Model Runner V2 default since 0.29; ROCm torch 2.13 / Triton 3.8 since
+# 0.31; the `calculate_kv_scales` CLI flag was removed in 0.28, so Models
+# pinned here must not set `calculateKvScales`). Keep this image separate from
+# the legacy 0.17 serving persona until full-checkpoint logit/coherence and
+# throughput acceptance passes.
 ARG BASE_IMAGE=vllm/vllm-openai-rocm:v0.32.0
-ARG VLLM_REPO=https://github.com/vllm-project/vllm.git
-ARG VLLM_REF=v0.32.0
 
 FROM ${BASE_IMAGE}
 
 ARG GPU_ARCH=gfx1100
-ARG VLLM_REPO
-ARG VLLM_REF
 
 ENV GPU_VENDOR=amd \
     GPU_ARCH=${GPU_ARCH} \
@@ -29,67 +24,25 @@ ENV GPU_VENDOR=amd \
 
 USER root
 
-# Whether to rebuild vLLM's native extensions from source for ${GPU_ARCH}:
-#   auto   — probe the base image first (default). The published v0.26 ROCm
-#            wheel omitted the compiled gfx1100 GPTQ op and needed the rebuild;
-#            vllm/vllm-openai-rocm:v0.32.0 ships _rocm_C with gfx1100 code
-#            objects (PYTORCH_ROCM_ARCH lists gfx1100 in upstream's
-#            docker/Dockerfile.rocm_base; verified 2026-10-23: 12 bundles,
-#            gptq_gemm_rdna3 registered), so the rebuild is skipped.
-#   always — force the rebuild (a base whose wheel drifts, or a patched ref).
-#   never  — trust the base image. The final verify step below still asserts
-#            the op AND the code objects, so a wrong base fails the build.
-ARG VLLM_REBUILD=auto
+# No from-source rebuild any more. Through 0.26 the published ROCm wheel
+# shipped the RDNA3 W4A16 Python dispatcher without gfx1100 device code, so
+# this image cloned the release and rebuilt vLLM's C++/HIP extensions for
+# gfx1100 (~1 h on the 7900xtx BuildKit). The 0.32.0 wheel embeds gfx1100
+# (and gfx1101/115x/120x, gfx90a/942/950) code objects in _C, _moe_C and
+# _rocm_C (checked 2026-10-24 by scanning the .so files for
+# amdgcn-amd-amdhsa--gfx1100), so the upstream build is used as is and the
+# verify script below asserts the ISA at build time: a future base image that
+# drops gfx1100 fails here instead of in the engine. Only the plugin wheels
+# need a build backend.
+RUN python3 -m pip install --no-cache-dir "setuptools>=74" wheel
 
-COPY build/scripts/verify_vllm_gfx1100_native_w4a16.py /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
-COPY build/scripts/reuse_vllm_rust_frontend.py /opt/flexinfer/reuse_vllm_rust_frontend.py
-
-# Rebuild the same release against the image's pinned ROCm/PyTorch stack,
-# constrained to ${GPU_ARCH}, only when the probe says the base lacks it. The
-# Rust frontend shipped by the base image is reused so the step needs no Rust
-# toolchain and rebuilds only the native C++/HIP extensions.
-RUN --mount=type=cache,target=/root/.cache/ccache \
-    --mount=type=cache,target=/root/.cache/pip \
-    set -eu; \
-    case "${VLLM_REBUILD}" in \
-      always) rebuild=1 ;; \
-      never) rebuild=0 ;; \
-      auto) if GPU_ARCH="${GPU_ARCH}" python3 /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py --probe-base; then rebuild=0; else rebuild=1; fi ;; \
-      *) echo "VLLM_REBUILD must be auto, always or never (got '${VLLM_REBUILD}')" >&2; exit 2 ;; \
-    esac; \
-    if [ "${rebuild}" = 1 ]; then \
-      echo "rebuilding vLLM ${VLLM_REF} native extensions for ${GPU_ARCH}"; \
-      apt-get update && apt-get install -y --no-install-recommends \
-        build-essential ccache cmake git ninja-build python3-dev \
-      && rm -rf /var/lib/apt/lists/* \
-      && python3 -m pip install --no-cache-dir \
-        "setuptools>=78.1.1,<80" "setuptools-rust>=1.9.0" "setuptools-scm>=8" \
-        wheel "packaging>=26.2" "cmake>=3.26.1,<4" "jinja2>=3.1.6" \
-      && git clone --depth 1 --branch "${VLLM_REF}" "${VLLM_REPO}" /tmp/vllm-src \
-      && python3 /opt/flexinfer/reuse_vllm_rust_frontend.py /tmp/vllm-src \
-      && cd /tmp/vllm-src \
-      && export VLLM_TARGET_DEVICE=rocm \
-         VLLM_VERSION_OVERRIDE="${VLLM_REF#v}" \
-         PYTORCH_ROCM_ARCH="${GPU_ARCH}" \
-         GPU_TARGETS="${GPU_ARCH}" \
-         MAX_JOBS=4 \
-         CMAKE_ARGS="-DGPU_TARGETS=${GPU_ARCH}" \
-      && python3 -m pip wheel --no-build-isolation --no-deps . -w /tmp/vllm-wheel \
-      && python3 -m pip install --no-deps --force-reinstall /tmp/vllm-wheel/vllm-*.whl \
-      && rm -rf /tmp/vllm-src /tmp/vllm-wheel; \
-    else \
-      echo "base image ships vLLM with the ${GPU_ARCH} ROCm extension; skipping the from-source rebuild"; \
-    fi
-
-# vLLM 0.32 registers Qwen3_5ForCausalLM / Qwen3_5MoeForCausalLM itself, with
-# IsHybrid, SupportsMRoPE and the mamba state helpers on
-# Qwen3_5ForCausalLMBase. The text plugin (0.9.0) skips those registrations
-# when the registry already has them (the services/flexinfer#66 duplicate-
-# registration check) and keeps what the runtime still lacks: the consumer-ROCm
-# FLA autotuner pruning (fla_autotuners=N in the boot log), the text-only MTP
-# config contract, and the MTP head quantization policy
-# (FLEXINFER_QWEN35_MTP_HEAD=plain|checkpoint). The same plugin still completes
-# the registration on 0.23/0.26 images built from this Dockerfile's history.
+# vLLM 0.23 and 0.26 shipped Qwen3.5's text class while registering only the
+# multimodal wrapper; newer releases may register it themselves, in which case
+# the plugin's register_model() call is an idempotent overwrite of the same
+# class (checked at build time by the verify script — services/flexinfer#66).
+# Install FlexInfer's existing general plugin so the extracted
+# Qwen3_5TextConfig artifact resolves to Qwen3_5ForCausalLM in both the API and
+# EngineCore processes instead of falling through to a vision_config access.
 # Shared helpers for FlexInfer's vLLM general plugins (ROCm FLA autotune
 # pruning, composite-config label resolution, hybrid-state wiring). Every
 # plugin below imports this at module scope, and the plugin installs use
@@ -112,9 +65,9 @@ COPY build/vllm-qwen35-seqcls-plugin /opt/flexinfer/qwen35-seqcls-plugin
 RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-seqcls-plugin \
     && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_seqcls" for ep in entry_points(group="vllm.general_plugins"))'
 
-# Full contract: source wrapper, compiled op + ${GPU_ARCH} code objects, and
-# the text plugin's register() on this exact vLLM (the script was COPY'd above).
-RUN GPU_ARCH="${GPU_ARCH}" python3 /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
+COPY build/scripts/verify_vllm_gfx1100_native_w4a16.py /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
+
+RUN python3 /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
 
 # The Model controller appends the normal vLLM backend flags. An explicit
 # entrypoint avoids all legacy FlexInfer Qwen/Gemma source rewriting.
