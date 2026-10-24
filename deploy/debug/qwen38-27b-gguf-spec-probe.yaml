@@ -47,8 +47,17 @@
 #                   31.8 pp-probe); PP 808 tok/s on a 7,066-token prompt. Ran as
 #                   a dedicated Deployment on this digest.
 #   draft-mtp       BLOCKED on controller 65d99ead (certified llama.cpp surface
-#                   knew only ngram-simple 16/1); unblocked in code by !1133,
-#                   not yet measured.
+#                   knew only ngram-simple 16/1); unblocked in code by !1133.
+# MEASURED 2026-10-24 16:03–16:18Z (same row; certificate kept, -since 16:18Z):
+#   draft-mtp       coherence 4/4; decode median 44.3 tok/s, 39 % of 1,050
+#                   drafts accepted; greedy story / code / list 45.6 / 64.5 /
+#                   76.7 tok/s at 42 / 75 / 97 % acceptance.
+#   baseline        same Model, config specType:null, same pod path:
+#                   coherence 4/4, median 31.3 tok/s; 34.3 / 34.3 / 33.4.
+#                   Speedup 1.42x (gauntlet), 1.33x / 1.88x / 2.30x.
+#                   Greedy text identical on list. Story and code each flip
+#                   one near-tie token (batched-verification numerics) and
+#                   stay coherent.
 #   Vulkan/RADV     coherence 4/4 but 11.5 tok/s decode and 154 tok/s PP
 #                   (2.7× / 5.2× slower than ROCm on the same card and file;
 #                   sclk 1433 vs 2138 MHz) — rejected. Its one-shot Model
