@@ -253,6 +253,14 @@ func requestedLlamaCppCapabilities(cfg map[string]any) ([]string, error) {
 			return nil, fmt.Errorf("the certified ngram-simple envelope requires spec.config.draftMax=16 and draftMin=1")
 		}
 		capabilities = append(capabilities, aiv1alpha2.LlamaCppCapabilityNgramSimpleDraft16)
+	case "draft-mtp":
+		// The backend renders draftMax/draftMin as --draft-max/--draft-min, which
+		// the certified b11847 artifact rejects at startup; the certificate covers
+		// llama.cpp's default draft window only.
+		if hasDraftMax || hasDraftMin {
+			return nil, fmt.Errorf("the certified draft-mtp envelope uses llama.cpp's default draft window; remove spec.config.draftMax and draftMin")
+		}
+		capabilities = append(capabilities, aiv1alpha2.LlamaCppCapabilityDraftMTP)
 	default:
 		return nil, fmt.Errorf("spec.config.specType %q is not exposed by the certified llama.cpp feature surface", specType)
 	}

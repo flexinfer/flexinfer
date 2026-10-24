@@ -551,6 +551,62 @@ func TestValidateLlamaCppFeatureCertificates(t *testing.T) {
 	})
 }
 
+func TestValidateLlamaCppDraftMTPCertificate(t *testing.T) {
+	const profileImage = "registry.harbor.lan/library/llamacpp@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const mtpImage = "registry.harbor.lan/library/llamacpp@sha256:95c1d3901faba5fbbfa9ac173c4b40c479bcc604f1a41f873a975ce0cee0f2a1"
+	const evidence = ".loom/60-validation-matrix.md#gfx1100-llamacpp-b11847-2026-10-24"
+	newProfile := func(certify bool) *aiv1alpha2.GPUProfile {
+		profile := &aiv1alpha2.GPUProfile{
+			ObjectMeta: metav1.ObjectMeta{Name: "gfx1100"},
+			Spec: aiv1alpha2.GPUProfileSpec{
+				Architecture: "gfx1100",
+				Backends: map[string]aiv1alpha2.BackendProfile{
+					backend.NameLlamaCpp: {Support: "full", Image: profileImage},
+				},
+			},
+		}
+		if certify {
+			aiv1alpha2.SetBackendCapabilityCertificate(profile, backend.NameLlamaCpp, aiv1alpha2.LlamaCppCapabilityDraftMTP, mtpImage, evidence)
+		}
+		return profile
+	}
+	// Mirrors deploy/debug/qwen38-27b-gguf-spec-probe.yaml: a per-model digest
+	// pin on the dedicated backend image, not the profile's default artifact.
+	newModel := func(image string) *aiv1alpha2.Model {
+		return gpuTestModel("qwen38-27b-gguf-spec-probe", func(model *aiv1alpha2.Model) {
+			model.Spec.Backend = backend.NameLlamaCpp
+			model.Spec.Image = image
+			model.Spec.Config = mustJSONConfig(map[string]any{
+				"dedicatedDeployment": true,
+				"specType":            "draft-mtp",
+			})
+		})
+	}
+	validate := func(profile *aiv1alpha2.GPUProfile, model *aiv1alpha2.Model) error {
+		profiles := &GPUProfileReconciler{}
+		profiles.Prime(profile)
+		r := gpuTestReconciler(func(r *ModelReconciler) { r.GPUProfiles = profiles })
+		return r.validateBackendGPUCompatibility(model, &fakeGPUBackend{name: backend.NameLlamaCpp}, backend.GPUVendorAMD, "gfx1100")
+	}
+
+	t.Run("certificate on the selected artifact passes", func(t *testing.T) {
+		require.NoError(t, validate(newProfile(true), newModel(mtpImage)))
+	})
+
+	t.Run("uncertified profile fails closed", func(t *testing.T) {
+		err := validate(newProfile(false), newModel(mtpImage))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not fully certified")
+		assert.Contains(t, err.Error(), "flexinfer.ai/backend-certificate-llamacpp-draft-mtp")
+	})
+
+	t.Run("profile default artifact does not inherit the certificate", func(t *testing.T) {
+		err := validate(newProfile(true), newModel(""))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is certified only for")
+	})
+}
+
 func TestRequestedLlamaCppCapabilities(t *testing.T) {
 	tests := []struct {
 		name        string
@@ -575,6 +631,22 @@ func TestRequestedLlamaCppCapabilities(t *testing.T) {
 		{name: "speculation requires proven limits", config: map[string]any{"specType": "ngram-simple", "draftMax": 8, "draftMin": 1}, errContains: "draftMax=16"},
 		{name: "draft bounds must be integers", config: map[string]any{"specType": "ngram-simple", "draftMax": 16.5, "draftMin": 1}, errContains: "must be an integer"},
 		{name: "uncertified speculation type", config: map[string]any{"specType": "ngram-cache"}, errContains: "not exposed"},
+		{
+			name:   "MTP speculation on the default draft window",
+			config: map[string]any{"specType": "draft-mtp"},
+			want:   []string{aiv1alpha2.LlamaCppCapabilityDraftMTP},
+		},
+		{
+			name: "stateful and MTP speculation",
+			config: map[string]any{
+				"slotSavePath": "/models/.flexinfer/slots/test",
+				"specType":     " draft-mtp ",
+			},
+			want: []string{aiv1alpha2.LlamaCppCapabilityStatefulSlots, aiv1alpha2.LlamaCppCapabilityDraftMTP},
+		},
+		{name: "MTP rejects draftMax", config: map[string]any{"specType": "draft-mtp", "draftMax": 1}, errContains: "default draft window"},
+		{name: "MTP rejects draftMin", config: map[string]any{"specType": "draft-mtp", "draftMin": 0}, errContains: "default draft window"},
+		{name: "combined speculation types stay uncertified", config: map[string]any{"specType": "draft-mtp,ngram-simple"}, errContains: "not exposed"},
 	}
 
 	for _, tt := range tests {
