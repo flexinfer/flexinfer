@@ -75,6 +75,19 @@
 # Rollback = delete this Model; S1's digest stands on its own result.
 # On completion (pass or fail) delete the canary Model; the workhorse reclaims
 # the card on its next demand. Keep this manifest as the reproducible probe.
+#
+# RESULT 2026-10-24 (matrix row gfx1100-native-w4a16-v032-mtp-2026-10-24):
+# PASS on the riskiest assumption. Applied 13:16Z; fresh-compile first boot
+# died once at KV profiling (2.45 GiB needed, 1.77 GiB free) and the container
+# restarted; warm boot Ready 13:39:47Z with pool 101,544 tok / 1.55x (MTP off
+# on the same digest: 140,753 / 2.15x). mtp_head=checkpoint, Qwen3_5MTP draft,
+# RDNA3W4A16LinearKernel, TRITON_ATTN, ladder [1,2,3,4,6,8]. Counters over the
+# probe workload: pos-0 acceptance 0.8018, pos-1 0.5473, mean acceptance
+# length 2.349. Decode 65.1 vs 41.3 tok/s short (1.58x), 48.4 vs 40.0 at 2K
+# (1.21x), concurrency-2 per request 55.2 vs 39.6; probes identical; long
+# greedy answers diverge ~150-200 tokens in (the MTP-off engine itself is not
+# bit-reproducible across prefix-cache states); 0 faults. Deleted 14:18Z.
+# Not met: >= 60 tok/s at 2K and strict parity — see research §7c for S3/S4.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:

@@ -380,6 +380,9 @@ delta) and `scripts/verify-vllm-mtp.py` (+ `scripts/test_verify_vllm_mtp.py`,
   mean acceptance length ≥ 1.6, decode ≥ 60 tok/s). It fails closed when
   the counters are missing, go backwards (engine restart) or record no
   drafts.
+- **Field correction (2026-10-24):** `kubectl get/logs/exec/patch/delete`
+  all work from the agent session; only `apply`/`create` are denied. The
+  MTP-off baseline patch and the canary deletion were run here directly.
 - **Offline image probe PASS** (no GPU, `docker --context 7900xtx run` of
   the S1 digest with `FLEXINFER_QWEN35_MTP_HEAD=checkpoint`,
   `s2_image_probe.py`): the plugin line reads `mtp_head=checkpoint,
@@ -392,6 +395,46 @@ delta) and `scripts/verify-vllm-mtp.py` (+ `scripts/test_verify_vllm_mtp.py`,
   True, `linear_attn.in_proj_a` False, `lm_head_quantized` False;
   `hf_config_override` maps the on-disk `qwen3_5` config to `qwen3_5_mtp` /
   `['Qwen3_5MTP']`, `n_predict 1`; `Qwen3_5MTP` is in the registry.
+
+## 7c. S2 RESULT (2026-10-24): **PASS on the riskiest assumption — the INT4 MTP head drafts at 0.80 pos-0 acceptance; the gain is context-dependent**
+
+Matrix row `gfx1100-native-w4a16-v032-mtp-2026-10-24`. Same digest as S1,
+`deploy/debug/qwen38-27b-v032-mtp-canary.yaml` on the 5930k, applied by the
+operator 13:16Z, MTP-on probe 13:59–14:04Z, MTP-off baseline on the same pod
+after a `kubectl patch` removed `speculativeConfig` (14:05Z), deleted 14:18Z.
+
+| Gate (§7) | MTP on (K=2, draft TRITON_ATTN) | MTP off (same digest) | Read |
+|---|---|---|---|
+| pos-0 acceptance ≥ 0.70 | **0.8018** (pos-1 0.5473, overall 0.6746; 11,669 drafts / 23,338 draft tokens / 15,743 accepted) | — | **met** |
+| mean acceptance length ≥ 1.6 | **2.349** (vLLM's periodic log 2.32–2.37) | — | **met**; matches the §3 "~2.3 tokens per step" expectation |
+| single-stream decode ≥ 60 tok/s, short | **65.14** median (65.14 / 65.66 / 57.32) | 41.31 (41.05 / 41.31 / 41.35; S1 41.50) | **met, 1.58x** |
+| single-stream decode ≥ 60 tok/s @ 2K | 48.41 @ 2,063 tok | 40.00 | **not met, 1.21x** |
+| concurrency-2 soak | 100/100, median per request 55.24 (min 32.0), engine aggregate 101 tok/s | 40/40, 39.59 (min 39.44) | clean, 1.40x per request |
+| probes identical | `42` / Birch JSON / `MAPLE-4827`; recall TTFT 2.32 s | identical, 2.32 s | met |
+| greedy token-identical | rain prompt ×3 byte-identical to the warm baseline; `parity_code` byte-identical to the baseline rerun (932 chars) while the baseline's own cold vs warm runs diverge at 685; `parity_explain` / `parity_list` diverge at 854/1336 and 577/1403 chars from a baseline stable across reruns | cold vs warm prefix-cache runs already diverge | **not a usable bar**: the stack is not bit-reproducible without MTP; MTP adds late (~150–200 token) near-tie argmax flips from the multi-token verify path, coherent either way |
+| KV pool @ 64K | 101,544 tok / **1.55x** (KVPoolShort threshold 1.50) | 140,753 / 2.15x | −28 %: the draft's KV layer, its graphs and the profiler's margin |
+| boot | fresh compile cache: engine dies once (`2.45 GiB KV cache needed, 1.77 GiB available`) and the container restarts; warm cache: Ready in 2 min; model 17.08 GiB (+0.28 over S1, so embed/lm_head are shared) | S1 pattern (1.32x → KVPoolRecheck relaunch) | promotion must prewarm the compile cache or accept the first-boot restart |
+| faults | 0 restarts after the cold one, 0 HIP/HSA/OOM/NaN lines in 52 min | same | met |
+
+What this settles: the artifact's INT4 MTP block, loaded through the target's
+AutoGPTQ config with `FLEXINFER_QWEN35_MTP_HEAD=checkpoint`, is a correct
+draft on gfx1100 — the 2026-08-15 33 % result was the 0.23 runtime (and the
+`plain` head policy's unquantized-load path), not the head. What it does not
+settle: whether MTP pays at the workhorse's real working-set contexts. The
+verify step's 2D attention cost on TRITON_ATTN eats the gain as context grows
+(1.58x at 30 tokens, 1.21x at 2K; §3 predicted this), the pool drops to 1.55x
+(two 64K sequences no longer fit), and K=2 on a single MTP layer gives pos-1
+only 0.55 (vLLM warns about this at boot).
+
+Next, in order: **S3** measures the verify cost with `ROCM_SEGMENTED_ATTN`
+(fp16 KV, so 64K/1 seq or 32K/2 seqs) at 2K/30K/60K with MTP on, against
+TRITON_ATTN; a **K=1 vs K=2 vs K=3** A/B on the same canary (K=1 drops the
+pos-1 forward and the pool cost); then **S4** decides MTP per lane from its
+context distribution (short-answer lanes such as the 9B RP and the
+workhorse's p50 356-token answers gain the most) and turns the 0.32 base
+into the runtime persona rather than two dedicated Deployments (owner
+direction 2026-10-24: one stacked image per GPU class, backend swaps inside
+the runtime pod, no pod churn).
 
 ## 8. Sources
 

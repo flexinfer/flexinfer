@@ -12,3 +12,9 @@ concurrency-2 soak, failing closed on the §7 bar. Reading the v0.32.0 tree
 showed the draft model is built from the target's `VllmConfig`, so the
 artifact's INT4 MTP block loads through the same AutoGPTQ config as the target
 and the on-disk `config.json` patch the 0.23 attempt needed is not required.
+The kill-test ran on the 5930k on 2026-10-24 (matrix row
+`gfx1100-native-w4a16-v032-mtp-2026-10-24`): position-0 acceptance 0.80, mean
+acceptance length 2.35, single-stream decode 65 vs 41 tok/s at short context
+and 48 vs 40 at 2K against the MTP-off baseline on the same digest, 1.40x per
+request under concurrency 2, KV pool 1.55x vs 2.15x, 0 faults; production
+lanes are unchanged.

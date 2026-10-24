@@ -97,8 +97,14 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       2.15x after the KVPoolRecheck relaunch, probes 3/3 identical, 41.5 tok/s, prefix cache
       10.7 s → 1.0 s, 0 restarts; one recovered HIPCachingAllocator OOM warning on a 7.5K cold prefill
       → promote at 0.95. Next: S2 MTP kill-test, S3 ROCM_SEGMENTED_ATTN A/B, S4 promotion.
-- [ ] 2026-10-24 (same branch): **slice S2, the MTP kill-test — prepared, waiting for the 5930k**
-      (research §7b). Reading v0.32.0 showed the draft model is built from the target's `VllmConfig`,
+- [x] 2026-10-24 (same branch): **slice S2, the MTP kill-test — PASS on the riskiest assumption**
+      (research §7b/§7c, matrix row `gfx1100-native-w4a16-v032-mtp-2026-10-24`): on the S1 digest,
+      MTP K=2 with `FLEXINFER_QWEN35_MTP_HEAD=checkpoint` reached **pos-0 acceptance 0.80**, acceptance
+      length 2.35, **65 vs 41 tok/s single-stream (1.58x)** at short context but only 48 vs 40 (1.21x)
+      at 2K, 1.40x per request under concurrency 2, pool 1.55x vs 2.15x; probes identical, long greedy
+      answers diverge ~150–200 tokens in (the MTP-off engine is not bit-reproducible either); 0 faults.
+      Next: S3 segmented-attention A/B on the verify cost, a K=1/2/3 A/B, then S4 promotion as the
+      stacked runtime persona. Preparation notes: Reading v0.32.0 showed the draft model is built from the target's `VllmConfig`,
       so the biMEMO INT4 MTP block loads through the same AutoGPTQ config as the target and the
       `config.json` patch the 0.23 attempt needed is gone; an offline probe in the S1 image confirmed
       the plugin's `mtp_head=checkpoint`, the per-layer GPTQ decisions (`mtp.fc` fp16, seven INT4
