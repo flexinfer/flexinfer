@@ -1,0 +1,14 @@
+uc-q8_0.head: 297 tensors
+  kv general.architecture = qwen_image21
+  kv general.quantization_version = 2
+  kv general.file_type = 7
+  tensor-info table ends at byte 23,306
+base-q8_0.head: 297 tensors
+  tensor-info table ends at byte 23,177
+m9-turbo-q4km.head: 297 tensors
+  kv general.architecture = qwen_image
+  kv general.quantization_version = 2
+  kv general.file_type = 15
+  tensor-info table ends at byte 23,304
+comfy-bf16.head: 265 tensors
+  kv format = pt

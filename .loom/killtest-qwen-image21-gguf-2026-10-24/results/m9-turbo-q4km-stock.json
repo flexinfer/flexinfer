@@ -1,0 +1,83 @@
+{
+ "label": "m9-turbo-q4km-stock",
+ "gguf": "qwen-image-2.1-turbo-Q4_K_M.gguf",
+ "config_repo": "Qwen/Qwen-Image-2.1-Turbo",
+ "config_revision": "fc13ba1986fcb905854dc8de2f52eee395f49b5b",
+ "diffusers": "0.41.0",
+ "torch": "2.14.1",
+ "compute_dtype": "torch.float32",
+ "static": {
+  "header_tensors": 297,
+  "model_tensors": 297,
+  "missing": [],
+  "unexpected": [],
+  "shape_mismatch": []
+ },
+ "load_seconds": 140.1,
+ "load": {
+  "params_left_on_meta": [],
+  "param_kinds": {
+   "GGUFParameter:30": 5,
+   "Parameter:torch.float32": 67,
+   "GGUFParameter:12": 187,
+   "GGUFParameter:13": 7,
+   "GGUFParameter:14": 31
+  },
+  "loader_warnings": [],
+  "rss_gib_after_load": 0.93
+ },
+ "forward": {
+  "grid": "16x16 latent tokens + 32 text tokens",
+  "seconds_per_forward": 74.6,
+  "finite": true,
+  "v_sigma1_std": 1.2805,
+  "cos_v_vs_noise_sigma1": 0.8663,
+  "neighbour_corr_noise_input": -0.0105,
+  "neighbour_corr_x0_hat_sigma1": 0.3063,
+  "neighbour_corr_euler_final": 0.6326,
+  "euler_final_std": 0.7643,
+  "euler_trajectory": [
+   {
+    "sigma": 1.0,
+    "v_std": 1.2805,
+    "x_std": 0.8764
+   },
+   {
+    "sigma": 0.875,
+    "v_std": 1.1737,
+    "x_std": 0.7602
+   },
+   {
+    "sigma": 0.75,
+    "v_std": 1.1315,
+    "x_std": 0.6644
+   },
+   {
+    "sigma": 0.625,
+    "v_std": 1.0628,
+    "x_std": 0.6046
+   },
+   {
+    "sigma": 0.5,
+    "v_std": 0.9823,
+    "x_std": 0.5879
+   },
+   {
+    "sigma": 0.375,
+    "v_std": 0.9054,
+    "x_std": 0.615
+   },
+   {
+    "sigma": 0.25,
+    "v_std": 0.8645,
+    "x_std": 0.6782
+   },
+   {
+    "sigma": 0.125,
+    "v_std": 0.8381,
+    "x_std": 0.7643
+   }
+  ],
+  "rss_gib_peak": 1.7
+ }
+}

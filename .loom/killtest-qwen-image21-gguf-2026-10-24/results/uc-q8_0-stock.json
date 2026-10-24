@@ -1,0 +1,29 @@
+{
+ "label": "uc-q8_0-stock",
+ "gguf": "qwen-image-2.1-UC-Q8_0.gguf",
+ "config_repo": "Qwen/Qwen-Image-2.1",
+ "config_revision": "b3179ad355be050328e483a9dfdd9e60cd62adfa",
+ "diffusers": "0.41.0",
+ "torch": "2.14.1",
+ "compute_dtype": "torch.float32",
+ "static": {
+  "header_tensors": 297,
+  "model_tensors": 297,
+  "missing": [],
+  "unexpected": [],
+  "shape_mismatch": []
+ },
+ "load_seconds": 30.5,
+ "load": {
+  "params_left_on_meta": [],
+  "param_kinds": {
+   "GGUFParameter:8": 229,
+   "GGUFParameter:30": 68
+  },
+  "loader_warnings": [],
+  "rss_gib_after_load": 7.7
+ },
+ "forward": {
+  "error": "RuntimeError: The size of tensor a (4096) must match the size of tensor b (8192) at non-singleton dimension 2"
+ }
+}

@@ -1,0 +1,18 @@
+A=uc-q8_0.json (297)  B=m9-turbo-q4km.json (297)
+common names: 297  only A: 0  only B: 0  shape mismatches among common: 0
+  dtypes A: {'BF16': 68, 'Q8_0': 229}
+  dtypes B: {'BF16': 5, 'Q4_K': 187, 'F32': 67, 'Q5_K': 7, 'Q6_K': 31}
+
+A=uc-q8_0.json (297)  B=base-q8_0.json (297)
+common names: 297  only A: 0  only B: 0  shape mismatches among common: 0
+  dtypes A: {'BF16': 68, 'Q8_0': 229}
+  dtypes B: {'BF16': 68, 'Q8_0': 229}
+
+A=uc-q8_0.json (297)  B=comfy-bf16.json (265)
+common names: 233  only A: 64  only B: 32  shape mismatches among common: 0
+  only A: transformer_blocks.N.img_mlp.gate_layer.weight  x32  e.g. transformer_blocks.0.img_mlp.gate_layer.weight [12288, 4096] Q8_0
+  only A: transformer_blocks.N.img_mlp.proj.weight  x32  e.g. transformer_blocks.0.img_mlp.proj.weight [12288, 4096] Q8_0
+  only B: transformer_blocks.N.img_mlp.gate_up.weight  x32  e.g. transformer_blocks.0.img_mlp.gate_up.weight [24576, 4096] BF16
+  dtypes A: {'BF16': 68, 'Q8_0': 229}
+  dtypes B: {'BF16': 265}
+

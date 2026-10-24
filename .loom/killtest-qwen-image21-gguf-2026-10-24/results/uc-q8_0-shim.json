@@ -1,0 +1,150 @@
+{
+ "label": "uc-q8_0-shim",
+ "gguf": "qwen-image-2.1-UC-Q8_0.gguf",
+ "config_repo": "Qwen/Qwen-Image-2.1",
+ "config_revision": "b3179ad355be050328e483a9dfdd9e60cd62adfa",
+ "diffusers": "0.41.0",
+ "torch": "2.14.1",
+ "compute_dtype": "torch.float32",
+ "static": {
+  "header_tensors": 297,
+  "model_tensors": 297,
+  "missing": [],
+  "unexpected": [],
+  "shape_mismatch": []
+ },
+ "load_seconds": 135.0,
+ "load": {
+  "params_left_on_meta": [],
+  "param_kinds": {
+   "GGUFParameter:8": 229,
+   "GGUFParameter:30": 68
+  },
+  "loader_warnings": [],
+  "rss_gib_after_load": 1.3
+ },
+ "shim_dequantized": {
+  "count": 65,
+  "names": [
+   "txt_in.text_norm.weight",
+   "transformer_blocks.0.attn.norm_q.weight",
+   "transformer_blocks.0.attn.norm_k.weight",
+   "transformer_blocks.1.attn.norm_q.weight",
+   "transformer_blocks.1.attn.norm_k.weight",
+   "transformer_blocks.2.attn.norm_q.weight",
+   "transformer_blocks.2.attn.norm_k.weight",
+   "transformer_blocks.3.attn.norm_q.weight",
+   "transformer_blocks.3.attn.norm_k.weight",
+   "transformer_blocks.4.attn.norm_q.weight",
+   "transformer_blocks.4.attn.norm_k.weight",
+   "transformer_blocks.5.attn.norm_q.weight",
+   "transformer_blocks.5.attn.norm_k.weight",
+   "transformer_blocks.6.attn.norm_q.weight",
+   "transformer_blocks.6.attn.norm_k.weight",
+   "transformer_blocks.7.attn.norm_q.weight",
+   "transformer_blocks.7.attn.norm_k.weight",
+   "transformer_blocks.8.attn.norm_q.weight",
+   "transformer_blocks.8.attn.norm_k.weight",
+   "transformer_blocks.9.attn.norm_q.weight",
+   "transformer_blocks.9.attn.norm_k.weight",
+   "transformer_blocks.10.attn.norm_q.weight",
+   "transformer_blocks.10.attn.norm_k.weight",
+   "transformer_blocks.11.attn.norm_q.weight",
+   "transformer_blocks.11.attn.norm_k.weight",
+   "transformer_blocks.12.attn.norm_q.weight",
+   "transformer_blocks.12.attn.norm_k.weight",
+   "transformer_blocks.13.attn.norm_q.weight",
+   "transformer_blocks.13.attn.norm_k.weight",
+   "transformer_blocks.14.attn.norm_q.weight",
+   "transformer_blocks.14.attn.norm_k.weight",
+   "transformer_blocks.15.attn.norm_q.weight",
+   "transformer_blocks.15.attn.norm_k.weight",
+   "transformer_blocks.16.attn.norm_q.weight",
+   "transformer_blocks.16.attn.norm_k.weight",
+   "transformer_blocks.17.attn.norm_q.weight",
+   "transformer_blocks.17.attn.norm_k.weight",
+   "transformer_blocks.18.attn.norm_q.weight",
+   "transformer_blocks.18.attn.norm_k.weight",
+   "transformer_blocks.19.attn.norm_q.weight",
+   "transformer_blocks.19.attn.norm_k.weight",
+   "transformer_blocks.20.attn.norm_q.weight",
+   "transformer_blocks.20.attn.norm_k.weight",
+   "transformer_blocks.21.attn.norm_q.weight",
+   "transformer_blocks.21.attn.norm_k.weight",
+   "transformer_blocks.22.attn.norm_q.weight",
+   "transformer_blocks.22.attn.norm_k.weight",
+   "transformer_blocks.23.attn.norm_q.weight",
+   "transformer_blocks.23.attn.norm_k.weight",
+   "transformer_blocks.24.attn.norm_q.weight",
+   "transformer_blocks.24.attn.norm_k.weight",
+   "transformer_blocks.25.attn.norm_q.weight",
+   "transformer_blocks.25.attn.norm_k.weight",
+   "transformer_blocks.26.attn.norm_q.weight",
+   "transformer_blocks.26.attn.norm_k.weight",
+   "transformer_blocks.27.attn.norm_q.weight",
+   "transformer_blocks.27.attn.norm_k.weight",
+   "transformer_blocks.28.attn.norm_q.weight",
+   "transformer_blocks.28.attn.norm_k.weight",
+   "transformer_blocks.29.attn.norm_q.weight",
+   "transformer_blocks.29.attn.norm_k.weight",
+   "transformer_blocks.30.attn.norm_q.weight",
+   "transformer_blocks.30.attn.norm_k.weight",
+   "transformer_blocks.31.attn.norm_q.weight",
+   "transformer_blocks.31.attn.norm_k.weight"
+  ]
+ },
+ "forward": {
+  "grid": "16x16 latent tokens + 32 text tokens",
+  "seconds_per_forward": 102.3,
+  "finite": true,
+  "v_sigma1_std": 1.2921,
+  "cos_v_vs_noise_sigma1": 0.8504,
+  "neighbour_corr_noise_input": -0.0105,
+  "neighbour_corr_x0_hat_sigma1": 0.2682,
+  "neighbour_corr_euler_final": 0.7625,
+  "euler_final_std": 0.6839,
+  "euler_trajectory": [
+   {
+    "sigma": 1.0,
+    "v_std": 1.2921,
+    "x_std": 0.8781
+   },
+   {
+    "sigma": 0.875,
+    "v_std": 1.1834,
+    "x_std": 0.7628
+   },
+   {
+    "sigma": 0.75,
+    "v_std": 1.1656,
+    "x_std": 0.6618
+   },
+   {
+    "sigma": 0.625,
+    "v_std": 1.1191,
+    "x_std": 0.5925
+   },
+   {
+    "sigma": 0.5,
+    "v_std": 1.0613,
+    "x_std": 0.5597
+   },
+   {
+    "sigma": 0.375,
+    "v_std": 0.9887,
+    "x_std": 0.568
+   },
+   {
+    "sigma": 0.25,
+    "v_std": 0.9113,
+    "x_std": 0.6118
+   },
+   {
+    "sigma": 0.125,
+    "v_std": 0.8266,
+    "x_std": 0.6839
+   }
+  ],
+  "rss_gib_peak": 8.02
+ }
+}
