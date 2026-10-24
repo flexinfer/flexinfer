@@ -14,6 +14,14 @@
 # Official Meta GGUF: the K-Quant-17GB file is Meta's explicitly-targeted
 # 24GB-card quant. Text-only: no mmproj (vision), no DFlash drafter — add both
 # only after the coherence + tool-call gauntlet passes.
+# 2026-10-20 upstream renamed the file muse-glimmer-30B-kquant-17gb.gguf ->
+# Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf (repo commit b44f1072). Header diff
+# (2026-10-24): same 731 tensors, same dims/types/offsets; the ONLY metadata
+# change is tokenizer.chat_template (7167 -> 9992 chars, the ATEM template
+# rewritten with whitespace-stripping tags and a raise_exception when tool
+# arguments arrive as a string). The lane's 2026-10-03 local cache still holds
+# the old name, so the lane manifest cannot follow the rename without a
+# re-stage (the Local cache marker hashes spec.source only).
 #
 # Qualification posture notes (learned on the 27B canary, same host):
 #   - cache stage downloads ONLY ggufFile (controller adds it to
@@ -31,7 +39,7 @@ metadata:
   annotations:
     flexinfer.ai/base-model-source: meta-models/Muse-Glimmer-30B
     flexinfer.ai/base-model-posture: clean
-    flexinfer.ai/artifact-source: HF://meta-models/Muse-Glimmer-30B-GGUF (muse-glimmer-30B-kquant-17gb.gguf)
+    flexinfer.ai/artifact-source: HF://meta-models/Muse-Glimmer-30B-GGUF@b44f1072 (Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf; was muse-glimmer-30B-kquant-17gb.gguf before 2026-10-20)
     flexinfer.ai/purpose: "Canary — Glimmer 30B tool/MCP lane on gfx1100 via llama.cpp b11847 (S5 re-qualification)"
     flexinfer.ai/plan: ".loom/10-research-gfx1100-next-feature-2026-10-23.md"
     flexinfer.ai/promotion-state: canary-qualified-promoted-as-muse-glimmer-30b-tools
@@ -67,8 +75,11 @@ spec:
     coldStartTimeout: 25m
   config:
     warmPolicy: ondemand
-    # Meta's 24GB-card target quant (Q4_K_M-class).
-    ggufFile: muse-glimmer-30B-kquant-17gb.gguf
+    # Meta's 24GB-card target quant (Q4_K_M-class). Renamed upstream on
+    # 2026-10-20 (was muse-glimmer-30B-kquant-17gb.gguf); pinned to the repo
+    # commit that carries the rename so the canary stays reproducible.
+    ggufFile: Muse-Glimmer-30B-KQuant-17GB-Q4_K_M.gguf
+    hfRevision: b44f1072cf75e918a1b82a3a17b45c4389b076e7
     # Context-push qualification (2026-08-16): raise to the model-default
     # 131,072. KV is cheap on this layout (13 global layers f16 ~1.7 GB;
     # local layers are 2048-token sliding windows); 17 GB weights + KV fits

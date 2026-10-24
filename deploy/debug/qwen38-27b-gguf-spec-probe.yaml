@@ -29,6 +29,25 @@
 # vulkan-probe 505 — and deleting the active Model hands the card to the
 # next. Both caches stage while the first arm runs. Never routed: no
 # serviceLabels, one unique alias each.
+#
+# MEASURED 2026-10-24 12:27–13:14Z (matrix row gfx1100-llamacpp-b11847-2026-10-24):
+#   ROCm baseline   coherence 4/4; decode 27.5–32.7 tok/s (median 27.8 gauntlet,
+#                   31.8 pp-probe); PP 808 tok/s on a 7,066-token prompt.
+#   draft-mtp       BLOCKED — the deployed controller's certified llama.cpp
+#                   feature surface (controllers/model_gpu.go,
+#                   requestedLlamaCppCapabilities) accepts only specType
+#                   ngram-simple with draftMax 16 / draftMin 1 behind a GPUProfile
+#                   certificate; `specType: draft-mtp` set the Model to
+#                   Failed/BackendUnsupported and left the Deployment untouched.
+#                   Follow-up slice: a draft-mtp capability + certificate for
+#                   95c1d390 on gfx1100.
+#   Vulkan/RADV     coherence 4/4 but 11.5 tok/s decode and 154 tok/s PP
+#                   (2.7× / 5.2× slower than ROCm on the same card and file;
+#                   sclk 1433 vs 2138 MHz) — rejected; #20934's +8.5 % TG does
+#                   not reproduce on Mesa 26.0.8 RADV with this Q4_K_M.
+# Both Models deleted 12:49Z / 13:14Z. Caches (17.44 GB each) remain under
+# /var/lib/flexinfer/models/flexinfer-system/qwen38-27b-gguf-*-probe/ on the
+# 5930k until the operator reclaims them.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:

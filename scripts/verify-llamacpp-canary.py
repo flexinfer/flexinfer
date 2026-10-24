@@ -12,6 +12,12 @@ Gates (all greedy, temperature 0):
   health      GET /health is 200
   coherence   4/4: capital of France, iterative fib, apples arithmetic, exact JSON
   tools       OpenAI tools round trip -> tool_calls[0] = get_weather {"city":"Paris"}
+  tools_followup  second turn: the assistant tool_call (arguments as the OpenAI
+              wire STRING) plus the tool result are replayed; the template must
+              render them and the answer must quote the 18 C result with no new
+              tool call (the 2026-10-20 Glimmer ATEM template raises when
+              arguments reach it as a string, so this gates llama.cpp's
+              requires_object_arguments handling too)
   restraint   same tools offered, "2+2" answered as 4 with no tool call
   decode      --decode-runs novel 256-token generations; tok/s from llama-server's
               `timings.predicted_per_second` (wall-clock fallback); when the
@@ -182,6 +188,50 @@ def gate_tools(base, model, timeout):
     }
 
 
+def gate_tools_followup(base, model, timeout):
+    """Replay a completed tool round and expect the model to use the result."""
+    messages = [
+        {
+            "role": "user",
+            "content": "What is the weather in Paris right now? Use the tool.",
+        },
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_paris_1",
+                    "type": "function",
+                    "function": {
+                        "name": "get_weather",
+                        # OpenAI wire format: arguments is a JSON *string*.
+                        "arguments": json.dumps({"city": "Paris"}),
+                    },
+                }
+            ],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_paris_1",
+            "content": json.dumps(
+                {"city": "Paris", "temperature_c": 18, "condition": "cloudy"}
+            ),
+        },
+    ]
+    out = chat(base, model, messages, timeout, tools=TOOLS)
+    content = out["content"]
+    ok = not out["tool_calls"] and "18" in content
+    return ok, {
+        "tool_calls": len(out["tool_calls"]),
+        "mentions_18": "18" in content,
+        "mentions_cloudy": "cloud" in content.lower(),
+        "content": content[:200],
+        "reasoning_chars": len(out["reasoning"]),
+        "finish_reason": out["finish_reason"],
+        "elapsed_s": round(out["elapsed_s"], 2),
+    }
+
+
 def gate_restraint(base, model, timeout):
     out = chat(
         base,
@@ -270,6 +320,12 @@ def main():
     )
     if not args.skip_tools:
         gates.append(("tools", lambda: gate_tools(args.base, args.model, args.timeout)))
+        gates.append(
+            (
+                "tools_followup",
+                lambda: gate_tools_followup(args.base, args.model, args.timeout),
+            )
+        )
         gates.append(
             ("restraint", lambda: gate_restraint(args.base, args.model, args.timeout))
         )
