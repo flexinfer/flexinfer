@@ -6,11 +6,14 @@
 # and DeepSearch QA while losing on SWE-bench — a candidate tool-runner/judge
 # lane beside the 27B coding workhorse, NOT a workhorse replacement.
 #
-# Serving path: llama.cpp (arch merged 2026-08-10, PR #26841, needs b10353+;
-# this lane pins the in-house rocm-gfx1100 build at release b10453). Official
-# Meta GGUF: the K-Quant-17GB file is Meta's explicitly-targeted 24GB-card
-# quant. Text-only v1: no mmproj (vision), no DFlash drafter — add both only
-# after the coherence + tool-call gauntlet passes.
+# Serving path: llama.cpp (arch merged 2026-08-10, PR #26841, needs b10353+).
+# 2026-08-16 qualified the in-house rocm-gfx1100 build at release b10453;
+# 2026-10-24 (S5, .loom/10-research-gfx1100-next-feature-2026-10-23.md §4 row
+# 3) re-qualifies the lane on b11847 / ROCm 7.2.3 with the same gauntlet
+# (scripts/verify-llamacpp-canary.py) against the 30.5 tok/s baseline.
+# Official Meta GGUF: the K-Quant-17GB file is Meta's explicitly-targeted
+# 24GB-card quant. Text-only: no mmproj (vision), no DFlash drafter — add both
+# only after the coherence + tool-call gauntlet passes.
 #
 # Qualification posture notes (learned on the 27B canary, same host):
 #   - cache stage downloads ONLY ggufFile (controller adds it to
@@ -18,6 +21,8 @@
 #   - a cold start longer than the 2-min demand window gets preempted by the
 #     warm primary; use minReplicas=1 + gpu.forcePromotion=true for the
 #     qualification window, then revert to the demand-only posture below.
+#   - the image has no Python: run the gauntlet from the workstation through
+#     `kubectl port-forward svc/muse-glimmer-30b-canary 18080:8080`.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -27,15 +32,18 @@ metadata:
     flexinfer.ai/base-model-source: meta-models/Muse-Glimmer-30B
     flexinfer.ai/base-model-posture: clean
     flexinfer.ai/artifact-source: HF://meta-models/Muse-Glimmer-30B-GGUF (muse-glimmer-30B-kquant-17gb.gguf)
-    flexinfer.ai/purpose: "Canary — Glimmer 30B tool/MCP lane on gfx1100 via llama.cpp b10453"
-    flexinfer.ai/plan: ".loom/10-research-gfx1100-model-quality-2026-08-15.md"
+    flexinfer.ai/purpose: "Canary — Glimmer 30B tool/MCP lane on gfx1100 via llama.cpp b11847 (S5 re-qualification)"
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-next-feature-2026-10-23.md"
     flexinfer.ai/promotion-state: canary-qualified-promoted-as-muse-glimmer-30b-tools
     flexinfer.ai/promotion-evidence: "2026-08-16 6/6 gauntlet PASS on llama.cpp b10453 gfx1100: coherent (Paris/fib/14-apples/JSON), tool_calls get_weather{city:Paris} exact, no-tool restraint clean, 30.5 tok/s decode; cache stage 4.5m, boot 2.5m. Known quirk: chat content echoes prompt after answer (reasoning channel inline) — tune reasoning-format before chat use; tool path clean. 2026-08-16 re-gauntlet with reasoningFormat auto: 6/6 again @31.5 tok/s, content=Paris clean with deliberation split into reasoning_content — quirk FIXED."
 spec:
   backend: llamacpp
-  # In-house llama.cpp ROCm gfx1100 build at release b10453 (>= b10353 where
-  # the muse-glimmer arch, ATEM tool parser, and DFlash support landed).
-  image: registry.harbor.lan/library/llamacpp:rocm-gfx1100-b10453
+  # In-house llama.cpp ROCm gfx1100 build at release b11847 on ROCm 7.2.3
+  # (build/Dockerfile.llamacpp-rocm-gfx1100, built 2026-10-24 on the 7900xtx
+  # context; tags rocm-gfx1100-b11847, rocm-gfx1100-b11847-rocm7.2.3-s5-20261024,
+  # pinned-95c1d3901fab). Previous qualified pin b10453 =
+  # sha256:c7395b23cccf…, kept in Harbor as the rollback.
+  image: registry.harbor.lan/library/llamacpp@sha256:95c1d3901faba5fbbfa9ac173c4b40c479bcc604f1a41f873a975ce0cee0f2a1
   source: HF://meta-models/Muse-Glimmer-30B-GGUF
   cache:
     strategy: Local

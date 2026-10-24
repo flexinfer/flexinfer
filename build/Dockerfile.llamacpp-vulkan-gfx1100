@@ -1,0 +1,74 @@
+# llama.cpp Vulkan (Mesa RADV) probe image for AMD gfx1100 — A/B arm only.
+#
+# Purpose: measure Vulkan vs ROCm token generation on the RX 7900 XTX
+# (.loom/10-research-gfx1100-next-feature-2026-10-23.md §4 row 3; upstream
+# issue #20934 reports Vulkan +8.5 % TG / ROCm +5 % PP at b10809). Not a
+# serving image: no lane pins it, and it is kept apart from
+# Dockerfile.llamacpp-rocm-gfx1100 so the production image carries no Mesa.
+#
+# Ubuntu 26.04 for Mesa 26.0 RADV (noble ships 24.0 in release, 25.2 in
+# -updates) and shaderc 2026.1 (glslc). A Model runs it with
+# `config.device: Vulkan0`; the AMD device plugin mounts /dev/dri.
+#
+# Build command (on the GPU builder):
+#   docker --context 7900xtx build -f build/Dockerfile.llamacpp-vulkan-gfx1100 \
+#     -t registry.harbor.lan/library/llamacpp:vulkan-radv-b11847 build/
+
+ARG UBUNTU_VERSION=26.04
+FROM ubuntu:${UBUNTU_VERSION} AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git \
+    cmake \
+    ninja-build \
+    build-essential \
+    curl \
+    ca-certificates \
+    libvulkan-dev \
+    glslc \
+    spirv-headers \
+    && rm -rf /var/lib/apt/lists/*
+
+# Same release as the ROCm image so the A/B compares backends, not builds.
+ARG LLAMACPP_VERSION=b11847
+WORKDIR /opt/src
+RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
+
+WORKDIR /opt/src/llama.cpp
+RUN cmake -B build -G Ninja \
+    -DGGML_VULKAN=ON \
+    -DGGML_NATIVE=OFF \
+    -DLLAMA_BUILD_TESTS=OFF \
+    -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j$(nproc)
+
+# Runtime stage
+FROM ubuntu:${UBUNTU_VERSION}
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libvulkan1 \
+    mesa-vulkan-drivers \
+    libgomp1 \
+    curl \
+    ca-certificates \
+    tini \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY --from=builder /opt/src/llama.cpp/build/bin/ /opt/src/llama.cpp/build/bin/
+ENV LD_LIBRARY_PATH=/opt/src/llama.cpp/build/bin
+
+RUN mkdir -p /models
+
+WORKDIR /opt/src/llama.cpp
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
+    CMD curl -f http://localhost:8080/health || exit 1
+
+ENTRYPOINT ["tini", "--"]
+CMD ["/opt/src/llama.cpp/build/bin/llama-server", "--host", "0.0.0.0", "--port", "8080"]
