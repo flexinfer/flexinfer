@@ -74,9 +74,7 @@ class NativeW4A16VerifierTests(unittest.TestCase):
         torch_module = types.SimpleNamespace(ops=types.SimpleNamespace())
 
         def register_operator(module_name: str) -> object:
-            torch_module.ops._rocm_C = types.SimpleNamespace(
-                gptq_gemm_rdna3=object()
-            )
+            torch_module.ops._rocm_C = types.SimpleNamespace(gptq_gemm_rdna3=object())
             return object()
 
         importer = mock.Mock(side_effect=register_operator)
@@ -157,6 +155,40 @@ class NativeW4A16VerifierTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "missing flexinfer_qwen35_text"):
             verifier.verify_text_plugin_contract(mock.Mock(return_value=[]))
+
+    def test_isa_contract_accepts_extensions_with_target_code_objects(self) -> None:
+        """Every compiled extension embeds the HIP target triple for gfx1100."""
+        verifier = _load_verifier()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name in ("_C.abi3.so", "_moe_C.abi3.so", "_rocm_C.abi3.so"):
+                (root / name).write_bytes(
+                    b"\x7fELF amdgcn-amd-amdhsa--gfx942 amdgcn-amd-amdhsa--gfx1100 "
+                )
+            checked = verifier.verify_isa_contract(root, "gfx1100")
+
+        self.assertEqual(checked, ["_C.abi3.so", "_moe_C.abi3.so", "_rocm_C.abi3.so"])
+
+    def test_isa_contract_rejects_extensions_without_target_code_objects(self) -> None:
+        """A CDNA-only wheel imports fine but must fail the build, not the engine."""
+        verifier = _load_verifier()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "_C.abi3.so").write_bytes(b"amdgcn-amd-amdhsa--gfx1100")
+            (root / "_rocm_C.abi3.so").write_bytes(b"amdgcn-amd-amdhsa--gfx942")
+            with self.assertRaisesRegex(
+                RuntimeError, r"lack gfx1100 device code: \['_rocm_C.abi3.so'\]"
+            ):
+                verifier.verify_isa_contract(root, "gfx1100")
+
+    def test_isa_contract_rejects_missing_extensions(self) -> None:
+        verifier = _load_verifier()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(RuntimeError, "no compiled vLLM extensions"):
+                verifier.verify_isa_contract(Path(tmp), "gfx1100")
 
 
 if __name__ == "__main__":

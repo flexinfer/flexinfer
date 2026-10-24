@@ -305,15 +305,24 @@ def assert_legacy_gptq_uses_reference_after_qwen_shuffle_skip(
 
 def assert_native_w4a16_dockerfile_contract(dockerfile: str) -> None:
     required = (
-        "vllm/vllm-openai-rocm:v0.26.0",
-        'CMAKE_ARGS="-DGPU_TARGETS=${GPU_ARCH}"',
-        "pip wheel --no-build-isolation --no-deps",
+        "vllm/vllm-openai-rocm:v0.32.0",
+        "PYTORCH_ROCM_ARCH=${GPU_ARCH}",
         "verify_vllm_gfx1100_native_w4a16.py",
         'ENTRYPOINT ["vllm", "serve"]',
     )
     for snippet in required:
         if snippet not in dockerfile:
             fail(f"native gfx1100 W4A16 Dockerfile missing {snippet!r}")
+    # 2026-10-24: the 0.32 base wheel ships gfx1100 code objects, so the image
+    # must not rebuild vLLM from source any more (that path cost ~1 h per build
+    # and pinned a second copy of the version string). The ISA guarantee moved
+    # into the verify script.
+    for snippet in ("git clone", "pip wheel", "VLLM_VERSION_OVERRIDE"):
+        if snippet in dockerfile:
+            fail(
+                "native gfx1100 W4A16 Dockerfile still rebuilds vLLM from source "
+                f"({snippet!r}); the 0.32 base wheel already carries gfx1100"
+            )
 
     forbidden = (
         "vllm_qwen35_patches_nodiag.py",
@@ -727,9 +736,8 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     native_w4a16_job_body = ci_yaml[native_w4a16_job:publish_job]
     native_required_snippets = (
         'filename="Dockerfile.runtime-serving-native-w4a16"',
-        'build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.26.0"',
-        'build-arg:VLLM_REF="v0.26.0"',
-        "${REGISTRY}/runtime:rocm-gfx1100-v026-native-w4a16",
+        'build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.32.0"',
+        "${REGISTRY}/runtime:rocm-gfx1100-v032-native-w4a16",
         "build/scripts/verify_vllm_gfx1100_native_w4a16.py",
         "build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
     )

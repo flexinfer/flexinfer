@@ -114,12 +114,18 @@ profiles:
     build_context: 7900xtx
 
   # Isolated vLLM canary for upstream's native RDNA3 W4A16 GPTQ kernel (first
-  # shipped in 0.23, now tracking 0.26 for the hybrid-GDN mamba-block-split fix
-  # the ngram speculation re-canary needs — see services/flexinfer#66). It
+  # shipped in 0.23; 0.26 added the hybrid-GDN mamba-block-split fix the ngram
+  # speculation re-canary needs — see services/flexinfer#66). 2026-10-24: now
+  # tracking 0.32.0 (the current release; 0.26 was six releases behind): Model
+  # Runner V2 is the default runner since 0.29, Qwen3.8 is enabled on ROCm since
+  # 0.28, the ROCm stack moved to torch 2.13 / Triton 3.8 (0.31), and 0.28
+  # removed the `calculate_kv_scales` CLI flag that the 27B lanes still set
+  # (drop `calculateKvScales` from a Model before pinning it to this image). It
   # intentionally bypasses every legacy 0.17 Qwen/Gemma patch; promote only
   # after full-checkpoint coherence and production-shape parity on gfx1100.
+  # Rollback lineage: rocm-gfx1100-v026-native-w4a16-a106504c = ad93ae72.
   gfx1100-native-w4a16:
-    tag: "runtime:rocm-gfx1100-v026-native-w4a16"
+    tag: "runtime:rocm-gfx1100-v032-native-w4a16"
     promotion:
       gpuprofile: false
       values_runtime_profiles: false
@@ -127,10 +133,14 @@ profiles:
     dockerfile: build/Dockerfile.runtime-serving-native-w4a16
     gpu_vendor: amd
     gpu_arch: gfx1100
-    base_image: "vllm/vllm-openai-rocm:v0.26.0"
-    vllm_install_mode: source
-    vllm_repo: "https://github.com/vllm-project/vllm.git"
-    vllm_ref: "v0.26.0"
+    base_image: "vllm/vllm-openai-rocm:v0.32.0"
+    # 2026-10-24: the upstream wheel in the base image embeds gfx1100 code
+    # objects, so the Dockerfile no longer clones and rebuilds vLLM for
+    # gfx1100 (the verify script asserts the ISA at build time): the wheel
+    # already in the base image is the one served. vllm_ref records the
+    # upstream release that wheel is.
+    vllm_install_mode: wheel
+    vllm_ref: "v0.32.0"
     rocm_dev_image: "rocm/dev-ubuntu-24.04:7.2.3"
     amdgpu_targets: gfx1100
     backends:
