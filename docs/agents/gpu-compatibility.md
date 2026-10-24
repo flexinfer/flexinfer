@@ -259,7 +259,8 @@ Sources:
 
 ## Certificate-gated llama.cpp features
 
-Stateful KV-slot snapshots and local n-gram speculation are explicit opt-ins.
+Stateful KV-slot snapshots, local n-gram speculation, and MTP speculation are
+explicit opt-ins.
 On a GPU, the controller admits them only when the selected `GPUProfile`
 contains a complete backend/capability certificate whose image exactly matches
 the digest-pinned image that the model will launch. A complete certificate has
@@ -296,5 +297,32 @@ the requested output by at most one final draft batch in this mode; clients that
 require exact `max_tokens` filling should leave speculation disabled. See
 `.loom/iteration-gfx906-llamacpp-stateful-spec-2026-07-15.md` for the pinned
 artifact, acceptance gate, measurements, and restoration evidence.
+
+### `draft-mtp` (capability `draft-mtp`)
+
+`specType: draft-mtp` drives the MTP (NextN) head that ships inside the target
+GGUF; there is no separate `--model-draft`. The certified envelope is
+llama.cpp's default draft window, so `draftMax` and `draftMin` are rejected
+with this spec type: the backend renders them as `--draft-max`/`--draft-min`,
+which llama.cpp removed by b11847 (the server aborts at startup), and on
+Qwen3.5-family GGUFs (`qwen35.nextn_predict_layers=1`) b11847 reuses the single
+head for each of its default three draft steps. Only multi-head models clamp
+the window to their head count.
+
+The candidate artifact is the gfx1100 S5 image
+`registry.harbor.lan/library/llamacpp@sha256:95c1d3901faba5fbbfa9ac173c4b40c479bcc604f1a41f873a975ce0cee0f2a1`
+(b11847 / ROCm 7.2.3). Until the gfx1100 `GPUProfile` carries the
+`flexinfer.ai/backend-certificate-llamacpp-draft-mtp` triple, the controller
+reports `Schedulable=False BackendUnsupported` for this spec type. The
+certificate evidence is matrix row `gfx1100-llamacpp-b11847-2026-10-24`.
+
+```yaml
+spec:
+  backend: llamacpp
+  image: registry.harbor.lan/library/llamacpp@sha256:95c1d3901faba5fbbfa9ac173c4b40c479bcc604f1a41f873a975ce0cee0f2a1
+  config:
+    dedicatedDeployment: true
+    specType: draft-mtp
+```
 
 See `build/README-gfx906.md` for detailed hardware documentation and troubleshooting.

@@ -89,6 +89,67 @@ Operational consequences: a burst can rotate real `SMU` / `amdgpu` errors out of
 GPU events against `journalctl -k -o short-iso` and check its earliest entry before treating a
 message as new. Evidence: `.loom/60-validation-matrix.md` row `gfx906-serving-2026-10-23`.
 
+### 24 hardware compute queues: every additive GPU process is a co-residency hazard
+
+The Radeon VII exposes **24 HWS compute queues**:
+
+- `num_cp_queues 24` in `/sys/class/kfd/kfd/topology/nodes/1/properties`.
+- `/sys/kernel/debug/kfd/hqds` lists 4 CP pipes × 6 queues. `sched_policy=0` (HWS).
+
+Without a cap, every HIP process takes 4–6 of them. Each llama-server starts at 4 and creates
+up to 6 lazily under concurrent requests.
+
+On 2026-10-24 the warm plane held 22, then 26 after an hour of traffic, with nothing else on
+the card:
+
+| Process | Queues |
+| --- | ---: |
+| bge-large | 4–6 |
+| bge-reranker | 4–6 |
+| gte-qwen2 | 6 |
+| orpheus | 6 |
+| pyannote-diarization | 2 |
+
+Past 24 the kernel logs `amdgpu: Runlist is getting oversubscribed. Expect reduced ROCm
+performance.` and the HWS time-slices queues. Whichever process is unmapped waits. Measured
+with throwaway llama-server containers beside the live plane:
+
+| Extra process | Queues total | Live lanes through `flexinfer-proxy` |
+| --- | ---: | --- |
+| Qwen3-Embedding-4B, default queues | 26–28 | Every probe request took a flat 30 s. gte timed out at 20–60 s and recovered the moment the probe stopped (seen twice). |
+| Same probe, `GPU_MAX_HW_QUEUES=1`, idle | 25–27 | Normal: probe 18–80 ms, gte 0.07–0.3 s |
+| + Qwen3-Reranker, `GPU_MAX_HW_QUEUES=1` | 28 | gte over 8 s; the reranker could not finish loading |
+| Qwen3-Embedding-4B, `GPU_MAX_HW_QUEUES=1`, continuous embedding | 29 | bge-large over 3 s twice in 7 s, so the watchdog killed the probe |
+
+The plane itself crossed 24 at 13:50:11Z under nothing but proxy traffic.
+
+The hazard covers every additive GPU tenant on this card:
+
+- the cold runtime members (gemma4-e4b, humanizer while its swap overlaps orpheus, any new lane);
+- dedicated pods such as the openjev vLLM cross-encoder;
+- Jobs (quantization, abliteration);
+- non-Model tenants such as pyannote.
+
+VRAM admission (`vramEstimateMB`) does not see queues. A lane can fit the VRAM budget and
+still stall the retrieval plane.
+
+Mitigation:
+
+- `GPU_MAX_HW_QUEUES=1` (HIP) caps a llama-server at 3 compute queues: 1 kernel queue plus the
+  runtime's utility queues. It is set in the gfx906 GPUProfile `spec.env`.
+- It reaches each runtime subprocess at its next load. A profile change reloads nothing, so
+  restart the gfx906 runtime pod once to apply it to the warm lanes.
+- Check the total with:
+
+  ```bash
+  sudo awk '/Compute queue/{t++} END{print t}' /sys/kernel/debug/kfd/mqds
+  ```
+
+  Keep it at 24 or below, with headroom for the next member.
+- Rule of thumb with the cap: 3 queues per llama-server, 2 for pyannote.
+
+Evidence: `.loom/60-validation-matrix.md` row `qwen3-embedding-gfx906-2026-10-24`.
+
 ### Required Environment Variables
 
 These are set in the `gfx906` GPUProfile (`deploy/gpuprofiles/gfx906.yaml`):
@@ -100,6 +161,7 @@ HSA_USE_SVM=0                     # hipMemGetInfo workaround (ROCm/ROCm#2433)
 PYTORCH_ROCM_ARCH=gfx906         # Build target
 TORCH_BLAS_PREFER_HIPBLASLT=0    # Not available on GCN5
 MIOPEN_FIND_MODE=2               # Reduce MIOpen overhead
+GPU_MAX_HW_QUEUES=1              # 3 compute queues per process; the card has 24 (see above)
 ```
 
 ## PyTorch + Transformers Compatibility Matrix

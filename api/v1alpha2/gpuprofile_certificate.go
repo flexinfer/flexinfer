@@ -46,6 +46,12 @@ const (
 	// LlamaCppCapabilityNgramSimpleDraft16 certifies the exact speculative
 	// envelope proven on gfx906: ngram-simple, draft-max=16, draft-min=1.
 	LlamaCppCapabilityNgramSimpleDraft16 = "ngram-simple-draft16-min1"
+	// LlamaCppCapabilityDraftMTP certifies --spec-type draft-mtp driving the
+	// MTP (NextN) head inside the target GGUF, with no --model-draft, at
+	// llama.cpp's default draft window. b11847 removed --draft-max/--draft-min
+	// and reuses a single Qwen3.5-family head for each of its default three
+	// draft steps, so the envelope admits neither draft bound.
+	LlamaCppCapabilityDraftMTP = "draft-mtp"
 )
 
 func BackendCapabilityCertificateAnnotationKey(backend, capability string) string {

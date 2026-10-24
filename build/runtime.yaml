@@ -12,6 +12,9 @@
 
 registry: registry.harbor.lan/flexinfer
 go_version: "1.26.10"
+# Default for profiles without their own llamacpp_version (today only
+# cuda-maxwell, whose CUDA 11.8 VMM-stub build is pinned here). gfx1100 and
+# gfx906 override it per profile below.
 llamacpp_version: "b8173"
 ollama_version: "v0.17.4"
 ollama_go_version: "1.25.7"
@@ -23,12 +26,17 @@ profiles:
       # The managed DaemonSet lanes use the slimmer gfx1100-serving persona.
       # Keep the broad unified image scoped to the GPUProfile fallback surface.
       values_runtime_profiles: false
+    # S5 (2026-10-24, .loom/10-research-gfx1100-next-feature-2026-10-23.md §4
+    # row 3): llama.cpp b11847 built on ROCm 7.2.3, the same pair as the
+    # standalone build/Dockerfile.llamacpp-rocm-gfx1100 the Glimmer lane runs.
+    # Was the global b8173 on a 6.4.4 build image.
+    llamacpp_version: "b11847"
     gpu_vendor: amd
     gpu_arch: gfx1100
     # Pre-built vLLM navi image — vLLM compiled for RDNA3.
     # Source build fails: topKPerRowDecode exceeds 64KB LDS limit on RDNA3.
     base_image: "rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0"
-    rocm_dev_image: "rocm/dev-ubuntu-24.04:6.4.4"
+    rocm_dev_image: "rocm/dev-ubuntu-24.04:7.2.3"
     amdgpu_targets: gfx1100
     backends:
       vllm: true        # already in base image
