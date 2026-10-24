@@ -309,7 +309,18 @@ imagePrewarm:
         # 2026-09-13 (issue #74): keep the Model lanes' v023 serving image
         # (rocm-gfx1100-v023-native-w4a16-037d0bc1, recipe no longer at HEAD)
         # resident across Harbor/containerd GC.
-        - registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+        # 2026-10-24 LOST ON THIS NODE: during the 17:36-17:47Z DiskPressure
+        # episode kubelet evicted this prewarm pod and its 60/50 image GC then
+        # deleted every image the pod had been holding; the replacement pod
+        # re-pulled the Harbor-resident digests but 2e9652ed was deleted from
+        # Harbor on 2026-10-21 (ErrImagePull), so listing it here would keep
+        # the DaemonSet NotReady forever and fail every 5930k prewarm gate.
+        # The 7900xtx still holds it. The three 5930k lanes pinned to it
+        # (qwen36-27b-autoround-workhorse, qwen36-27b-fable-gptq,
+        # qwen35-9b-ablit-rp-5930k; all parked, minReplicas 0) cannot start on
+        # this node until they are repinned (ad93ae72 = 0.26 or cd108c9e =
+        # 0.32, both resident here).
+        #   registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
         # 2026-10-23 (issue #74 S1''): retired the two earlier serving-persona
         # digests, both deleted by Harbor retention on 2026-10-21 and no longer
         # pinned by any consumer: 522d0fe2 (rocm-gfx1100-serving-0d631512, S1)
