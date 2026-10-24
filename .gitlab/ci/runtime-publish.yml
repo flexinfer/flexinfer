@@ -331,7 +331,7 @@ publish_unified_rocm_gfx1100:
           --opt platform=linux/amd64 \
           --opt build-arg:BASE_IMAGE="rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0" \
           --opt build-arg:GO_VERSION="1.26.10" \
-          --opt build-arg:LLAMACPP_VERSION="b8173" \
+          --opt build-arg:LLAMACPP_VERSION="b11847" \
           --opt build-arg:OLLAMA_VERSION="v0.17.4" \
           --opt build-arg:OLLAMA_GO_VERSION="1.25.7" \
           --opt build-arg:AMDGPU_TARGETS="gfx1100" \
@@ -346,7 +346,7 @@ publish_unified_rocm_gfx1100:
           --opt build-arg:INCLUDE_GAMING="false" \
           --opt build-arg:INCLUDE_QUANTIZER="true" \
           --opt build-arg:TRANSFORMERS_CONSTRAINT=">=5.0" \
-          --opt build-arg:LLAMACPP_BUILD_IMAGE="rocm/dev-ubuntu-24.04:6.4.4" \
+          --opt build-arg:LLAMACPP_BUILD_IMAGE="rocm/dev-ubuntu-24.04:7.2.3" \
           --opt build-arg:CUDA_ARCHITECTURES="52" \
           --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100-buildcache" \
           --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100" \
