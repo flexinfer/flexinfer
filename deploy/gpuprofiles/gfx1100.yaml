@@ -29,6 +29,17 @@ metadata:
     flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-gpu-util: "0.96"
     flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-since: "2026-07-16T19:38:00Z"
     flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-evidence: .loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md
+    # 2026-10-24: PROVISIONAL llama.cpp draft-mtp certificate for the S5 image
+    # (b11847 / ROCm 7.2.3, library/llamacpp:rocm-gfx1100-b11847). The
+    # controller admits specType draft-mtp only with this triple, so the
+    # measurement itself needs it; only the one-shot
+    # deploy/debug/qwen38-27b-gguf-spec-probe.yaml selects this digest with
+    # dedicatedDeployment. The matrix row named in -evidence records the
+    # acceptance rate and decode tok/s. If the row does not promote, this
+    # triple is removed in the change that records it.
+    flexinfer.ai/backend-certificate-llamacpp-draft-mtp: registry.harbor.lan/library/llamacpp@sha256:95c1d3901faba5fbbfa9ac173c4b40c479bcc604f1a41f873a975ce0cee0f2a1
+    flexinfer.ai/backend-certificate-llamacpp-draft-mtp-since: "2026-10-24T14:00:00Z"
+    flexinfer.ai/backend-certificate-llamacpp-draft-mtp-evidence: .loom/60-validation-matrix.md#gfx1100-llamacpp-b11847-2026-10-24
 spec:
   architecture: gfx1100
   vendor: amd
