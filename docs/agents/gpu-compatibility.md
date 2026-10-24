@@ -309,12 +309,24 @@ Qwen3.5-family GGUFs (`qwen35.nextn_predict_layers=1`) b11847 reuses the single
 head for each of its default three draft steps. Only multi-head models clamp
 the window to their head count.
 
-The candidate artifact is the gfx1100 S5 image
+gfx1100 certifies the S5 image
 `registry.harbor.lan/library/llamacpp@sha256:95c1d3901faba5fbbfa9ac173c4b40c479bcc604f1a41f873a975ce0cee0f2a1`
-(b11847 / ROCm 7.2.3). Until the gfx1100 `GPUProfile` carries the
-`flexinfer.ai/backend-certificate-llamacpp-draft-mtp` triple, the controller
-reports `Schedulable=False BackendUnsupported` for this spec type. The
-certificate evidence is matrix row `gfx1100-llamacpp-b11847-2026-10-24`.
+(b11847 / ROCm 7.2.3) for this capability. The controller reports
+`Schedulable=False BackendUnsupported` for any other image or architecture.
+The evidence is matrix row `gfx1100-llamacpp-b11847-2026-10-24`, measured on
+the 5930k with Qwen3.8-27B Q4_K_M at 16K context and one slot, against the same
+pod path without `--spec-type`:
+
+- 4/4 coherence on both arms.
+- Decode median 44.3 vs 31.3 tok/s (1.42x) on the 256-token story gauntlet.
+- On greedy story / code / list prompts, 1.33x / 1.88x / 2.30x, with draft
+  acceptance 42 / 75 / 97 %.
+
+The gain is largest on structured or repetitive output. Greedy output is not
+bit-identical to the non-speculative path: two of the three prompts flipped one
+near-tie token early, from batched-verification numerics, and stayed coherent.
+Clients that need exact reproducibility across the two paths should leave
+speculation disabled.
 
 ```yaml
 spec:
