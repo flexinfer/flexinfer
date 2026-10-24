@@ -104,6 +104,12 @@ spec:
       value: "0"
     - name: PYTORCH_ROCM_ARCH
       value: gfx906
+    # The card has 24 HWS compute queues and an uncapped HIP process takes 4-6;
+    # past 24 the runlist is oversubscribed and live retrieval lanes stalled for
+    # 3-60 s (2026-10-24, docs/dev/gfx906-gpu-support.md). One HW queue keeps a
+    # llama-server at 3. Reaches runtime subprocesses at their next load only.
+    - name: GPU_MAX_HW_QUEUES
+      value: "1"
     # Force the MoE expert-quantization fail-fast gate for GPTQ jobs. Only affects
     # MoE architectures (non-MoE returns early at the has_moe check); makes a run
     # abort in seconds if experts can't be quantized rather than burning ~hours and
