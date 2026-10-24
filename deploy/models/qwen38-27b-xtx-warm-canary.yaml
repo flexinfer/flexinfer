@@ -89,7 +89,26 @@ spec:
   # target node; the 5930k workhorse follows on pass (row
   # gfx1100-native-w4a16-2026-10-22). Rollback = `2e9652ed` (still
   # resident here, IfNotPresent): revert this line.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
+  # 2026-10-24 (issue #74 S2, vLLM currency 0.26 -> 0.32): REPINNED to
+  # `cd108c9e` (rocm-gfx1100-v032-native-w4a16-3fc9c37f: the native-W4A16
+  # image on the upstream vLLM 0.32.0 ROCm wheel, Dockerfile from !1134 =
+  # master 6fcd4af7, 11.6 GB; built off-CI on the 7900xtx docker daemon from
+  # that exact commit while the BuildKit group was saturated; prewarmed on
+  # both gfx1100 nodes first). Why: 0.26 was six releases behind — Model
+  # Runner V2 is the default since 0.29, Qwen3.8 is enabled on ROCm since
+  # 0.28, torch 2.13 / Triton 3.8 since 0.31 — and the September model
+  # survey's candidates (Glimmer on vLLM, Laguna XS, Smaug-Mini) need
+  # >= 0.28. The 0.32 wheel ships gfx1100 code objects, so the image no
+  # longer rebuilds vLLM from source; both FlexInfer plugins register on it
+  # with fla_autotuners=11 on this card (GPU-visible probe 2026-10-24) and
+  # every flag the controller renders exists on 0.32 except
+  # `--calculate-kv-scales` (see `calculateKvScales` below). This lane
+  # canaries the digest under the 2100 MHz cap — probes + 10-minute
+  # concurrency-2 soak, row xtx-vllm-v032-2026-10-24 — and the 5930k
+  # workhorse follows on pass. Rollback = `ad93ae72` (resident, Harbor
+  # pinned-ad93ae726bbe): revert this line and restore
+  # `calculateKvScales: false`.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99130cc98c3a45bd6e09c89a3b26cb21193c858fab9a99573c7d90
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     strategy: Local
@@ -149,7 +168,12 @@ spec:
     # line of 1.5x).
     gpuMemoryUtilization: "0.96"
     kvCacheDtype: fp8_e4m3
-    calculateKvScales: false
+    # `calculateKvScales: false` left with the 0.32 repin (2026-10-24): vLLM
+    # 0.28 removed the deprecated runtime KV-scale calculation together with
+    # its CLI flag, so the controller must not render
+    # `--no-calculate-kv-scales` any more (vllm serve rejects unknown flags).
+    # Behaviour is unchanged — fp8 KV with static scales, which is exactly
+    # what `false` selected. Restore the key only with a < 0.28 image.
     enforceEager: false
     # Hybrid-GDN prefix caching (owner decision 2026-10-03), the recipe the
     # 9B RP primary has run since 2026-07-25 (f90b4fbfe, flexinfer #67) on
