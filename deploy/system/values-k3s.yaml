@@ -323,10 +323,20 @@ imagePrewarm:
         # 34198, publish_serving_rocm_gfx1100, 17.0 GB) —
         # rocm-gfx1100-serving-b8637f35: Go 1.26.10, the runtime drain / fast-
         # swap / stall-detection / warm-coexistence commits already live on the
-        # gfx906 DaemonSet, same patch stack as ad93ae72 below. Held here so
-        # enabling the gfx1100-5930k DaemonSet is a container start, not a
+        # gfx906 DaemonSet, same patch stack as ad93ae72 below. Was held here
+        # so enabling the gfx1100-5930k DaemonSet is a container start, not a
         # 17 GB pull.
-        - registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
+        # 2026-10-24 HOLD RELEASED: the 5930k root reached 87 % (803 GB of
+        # 930 GB: 254 GB FlexInfer caches, 315 GB containerd, 144 GB Longhorn
+        # replicas) after the cd108c9e prewarm and kubelet went DiskPressure
+        # (imagefs.available < 15 %), evicting the agent, promtail,
+        # longhorn-manager and metallb-speaker DaemonSet pods in a loop and
+        # restarting the workhorse once at 16:19Z. This 18.2 GB snapshot backs
+        # a DaemonSet that is desired=0 by design, so it is the cheapest
+        # release; the pin stays as a comment (Harbor-resident,
+        # pinned-cfefae18061f, still held on the 7900xtx). Re-add it before
+        # enabling the gfx1100-5930k DaemonSet, or accept a 17 GB pull then.
+        #   registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
         # 2026-10-22 (issue #74 S2, vLLM currency): the rebuilt v0.26 native-
         # W4A16 serving image (rocm-gfx1100-v026-native-w4a16-a106504c, master
         # a106504c, plugin 0.8.0 on 0.26's FLA layout; Harbor tag
