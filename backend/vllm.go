@@ -224,7 +224,15 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if kvDtype := spec.ConfigString("kvCacheDtype", ""); kvDtype != "" {
 		args = append(args, "--kv-cache-dtype", kvDtype)
 	}
-	args = appendVLLMBooleanOptionalArg(args, spec, "calculateKvScales", "--calculate-kv-scales", "--no-calculate-kv-scales")
+	// calculateKvScales: emit only the enabling flag. vLLM 0.28 removed the
+	// option (PR #49389; it was deprecated and inert for hybrid-GDN lanes since
+	// 0.19, see issue #69), so `--no-calculate-kv-scales` fails argument
+	// parsing on every runtime from 0.28 on while `false` is the default on
+	// every runtime we have ever served. A lane that sets `true` still gets the
+	// flag so the intent fails loudly on a runtime that no longer has it.
+	if spec.ConfigBool("calculateKvScales", false) {
+		args = append(args, "--calculate-kv-scales")
+	}
 	args = appendVLLMBooleanOptionalArg(args, spec, "kvCacheMetrics", "--kv-cache-metrics", "--no-kv-cache-metrics")
 	if sample := configValueAsArg(spec, "kvCacheMetricsSample"); sample != "" {
 		args = append(args, "--kv-cache-metrics-sample", sample)

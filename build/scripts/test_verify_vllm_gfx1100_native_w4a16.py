@@ -74,9 +74,7 @@ class NativeW4A16VerifierTests(unittest.TestCase):
         torch_module = types.SimpleNamespace(ops=types.SimpleNamespace())
 
         def register_operator(module_name: str) -> object:
-            torch_module.ops._rocm_C = types.SimpleNamespace(
-                gptq_gemm_rdna3=object()
-            )
+            torch_module.ops._rocm_C = types.SimpleNamespace(gptq_gemm_rdna3=object())
             return object()
 
         importer = mock.Mock(side_effect=register_operator)
@@ -157,6 +155,51 @@ class NativeW4A16VerifierTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "missing flexinfer_qwen35_text"):
             verifier.verify_text_plugin_contract(mock.Mock(return_value=[]))
+
+
+class GpuCodeObjectTests(unittest.TestCase):
+    """The op being registered is not enough: the kernel must be compiled for the card."""
+
+    @staticmethod
+    def _fat_binary(*archs: str) -> bytes:
+        return b"\x00".join(f"amdgcn-amd-amdhsa--{arch}".encode() for arch in archs)
+
+    def test_counts_code_objects_for_the_target_arch(self) -> None:
+        verifier = _load_verifier()
+        with tempfile.TemporaryDirectory() as tmp:
+            so = Path(tmp) / "_rocm_C.abi3.so"
+            so.write_bytes(self._fat_binary("gfx1100", "gfx942", "gfx1100", "gfx1201"))
+            self.assertEqual(verifier.verify_gpu_code_objects(so, "gfx1100"), 2)
+
+    def test_rejects_an_extension_built_without_the_target_arch(self) -> None:
+        verifier = _load_verifier()
+        with tempfile.TemporaryDirectory() as tmp:
+            so = Path(tmp) / "_rocm_C.abi3.so"
+            so.write_bytes(self._fat_binary("gfx90a", "gfx942"))
+            with self.assertRaisesRegex(RuntimeError, "no gfx1100 code objects"):
+                verifier.verify_gpu_code_objects(so, "gfx1100")
+
+    def test_probe_base_checks_op_then_code_objects(self) -> None:
+        verifier = _load_verifier()
+        with tempfile.TemporaryDirectory() as tmp:
+            so = Path(tmp) / "_rocm_C.abi3.so"
+            so.write_bytes(self._fat_binary("gfx1100"))
+            fake_torch = types.SimpleNamespace(
+                ops=types.SimpleNamespace(
+                    _rocm_C=types.SimpleNamespace(gptq_gemm_rdna3=object())
+                )
+            )
+            fake_ext = types.ModuleType("vllm._rocm_C")
+            fake_ext.__file__ = str(so)
+            with mock.patch.dict(
+                sys.modules, {"torch": fake_torch, "vllm._rocm_C": fake_ext}
+            ):
+                with mock.patch.object(
+                    verifier.importlib.metadata, "version", return_value="0.32.0"
+                ):
+                    verifier.probe_base("gfx1100")
+                    with self.assertRaisesRegex(RuntimeError, "no gfx906 code objects"):
+                        verifier.probe_base("gfx906")
 
 
 if __name__ == "__main__":

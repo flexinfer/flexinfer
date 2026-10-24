@@ -1022,10 +1022,12 @@ func TestVLLMBackendArgs_BooleanOptionalCacheFlags(t *testing.T) {
 			notWant: "--no-calculate-kv-scales",
 		},
 		{
-			name:    "calculate KV scales disabled",
+			// vLLM 0.28 removed --calculate-kv-scales (#49389): an explicit
+			// false must emit neither form so the lane boots on 0.28+ while
+			// staying at vLLM's default on older runtimes.
+			name:    "calculate KV scales disabled emits no flag",
 			config:  map[string]any{"calculateKvScales": false},
-			want:    "--no-calculate-kv-scales",
-			notWant: "--calculate-kv-scales",
+			notWant: "--no-calculate-kv-scales",
 		},
 		{
 			name:    "chunked prefill disabled",

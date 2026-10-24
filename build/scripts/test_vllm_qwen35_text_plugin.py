@@ -160,9 +160,24 @@ class Qwen3_5MultiTokenPredictorV026:
     pass
 
 
-def _register_with(fla_module_name: str, model_cls: type, mtp_cls: type):
+class UpstreamRegistry(FakeRegistry):
+    """vLLM 0.32 shape: the Qwen3.5 text architectures are already registered."""
+
+    def get_supported_archs(self):
+        return ["Qwen3_5ForCausalLM", "Qwen3_5MoeForCausalLM", "LlamaForCausalLM"]
+
+
+def _register_with(
+    fla_module_name: str,
+    model_cls: type,
+    mtp_cls: type,
+    *,
+    registry=None,
+    auto_gptq_cls: type = AutoGPTQConfig,
+    env: dict | None = None,
+):
     """Load the plugin against a fake vLLM and run register(); return (plugin, registry)."""
-    registry = FakeRegistry()
+    registry = registry if registry is not None else FakeRegistry()
     vllm = types.ModuleType("vllm")
     vllm.ModelRegistry = registry
     models = types.ModuleType("vllm.model_executor.models.qwen3_5")
@@ -182,7 +197,7 @@ def _register_with(fla_module_name: str, model_cls: type, mtp_cls: type):
     fla.chunk_scaled_dot_kkt_fwd_kernel = FakeKernel
     fla.chunk_gated_delta_rule_fwd_kernel_h_blockdim64 = FakeKernelTwo
     auto_gptq = types.ModuleType("vllm.model_executor.layers.quantization.auto_gptq")
-    auto_gptq.AutoGPTQConfig = AutoGPTQConfig
+    auto_gptq.AutoGPTQConfig = auto_gptq_cls
     fused_moe = types.ModuleType("vllm.model_executor.layers.fused_moe")
     fused_moe.RoutedExperts = RoutedExperts
     fused_moe.UnquantizedFusedMoEMethod = UnquantizedFusedMoEMethod
@@ -210,8 +225,9 @@ def _register_with(fla_module_name: str, model_cls: type, mtp_cls: type):
             fake_modules[name] = None
     saved = {name: sys.modules.get(name) for name in fake_modules}
     sys.modules.update(fake_modules)
-    old_arch = os.environ.get("PYTORCH_ROCM_ARCH")
-    os.environ["PYTORCH_ROCM_ARCH"] = "gfx1100"
+    env = {"PYTORCH_ROCM_ARCH": "gfx1100", **(env or {})}
+    old_env = {name: os.environ.get(name) for name in env}
+    os.environ.update(env)
     try:
         spec = importlib.util.spec_from_file_location("qwen35_text_plugin", PLUGIN)
         assert spec and spec.loader
@@ -219,10 +235,11 @@ def _register_with(fla_module_name: str, model_cls: type, mtp_cls: type):
         spec.loader.exec_module(plugin)
         plugin.register()
     finally:
-        if old_arch is None:
-            os.environ.pop("PYTORCH_ROCM_ARCH", None)
-        else:
-            os.environ["PYTORCH_ROCM_ARCH"] = old_arch
+        for name, value in old_env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
         for name, module in saved.items():
             if module is None:
                 sys.modules.pop(name, None)
@@ -259,6 +276,71 @@ class PluginTest(unittest.TestCase):
         self.assertIn("Qwen3_5MoeForCausalLM", registry.models)
         self.assertFalse(hasattr(Qwen3_5ModelV026, "load_fused_expert_weights"))
         self.assertFalse(plugin._patch_gptq_expert_loader(Qwen3_5ModelV026))
+
+    def test_skips_architectures_the_runtime_registers_itself(self) -> None:
+        """vLLM 0.32 registers the Qwen3.5 text classes: no duplicate registration."""
+        FakeKernel.fn.configs = [FakeConfig(32, 2, 2), FakeConfig(32, 2, 4)]
+        FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
+        _, registry = _register_with(
+            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+            Qwen3_5ModelV026,
+            Qwen3_5MultiTokenPredictorV026,
+            registry=UpstreamRegistry(),
+        )
+        self.assertEqual(registry.models, {})
+        # The FLA pruning still ran: that part the runtime does not do.
+        self.assertEqual(len(FakeKernel.fn.configs), 1)
+
+    def test_checkpoint_mtp_head_policy_leaves_gptq_config_alone(self) -> None:
+        """FLEXINFER_QWEN35_MTP_HEAD=checkpoint: AutoGPTQConfig decides mtp.* itself."""
+
+        class UntouchedAutoGPTQConfig:
+            def get_quant_method(self, layer, prefix):
+                return ("quantized", layer, prefix)
+
+        FakeKernel.fn.configs = [FakeConfig(32, 2, 2), FakeConfig(32, 2, 4)]
+        FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
+        _register_with(
+            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+            Qwen3_5ModelV026,
+            Qwen3_5MultiTokenPredictorV026,
+            auto_gptq_cls=UntouchedAutoGPTQConfig,
+            env={"FLEXINFER_QWEN35_MTP_HEAD": "checkpoint"},
+        )
+        layer = LinearBase()
+        self.assertEqual(
+            UntouchedAutoGPTQConfig().get_quant_method(layer, "mtp.fc"),
+            ("quantized", layer, "mtp.fc"),
+        )
+        self.assertFalse(hasattr(UntouchedAutoGPTQConfig, "_flexinfer_qwen35_mtp_mode"))
+
+    def test_checkpoint_policy_rejects_the_experts_flag(self) -> None:
+        class SpareAutoGPTQConfig:
+            def get_quant_method(self, layer, prefix):
+                return ("quantized", layer, prefix)
+
+        with self.assertRaises(RuntimeError) as ctx:
+            _register_with(
+                "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+                Qwen3_5ModelV026,
+                Qwen3_5MultiTokenPredictorV026,
+                auto_gptq_cls=SpareAutoGPTQConfig,
+                env={
+                    "FLEXINFER_QWEN35_MTP_HEAD": "checkpoint",
+                    "FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ": "1",
+                },
+            )
+        self.assertIn("FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ", str(ctx.exception))
+
+    def test_invalid_mtp_head_policy_is_fatal(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            _register_with(
+                "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+                Qwen3_5ModelV026,
+                Qwen3_5MultiTokenPredictorV026,
+                env={"FLEXINFER_QWEN35_MTP_HEAD": "float"},
+            )
+        self.assertIn("FLEXINFER_QWEN35_MTP_HEAD", str(ctx.exception))
 
     def test_unknown_fla_layout_is_fatal(self) -> None:
         """A vLLM with neither known kernel path must fail loudly, not skip pruning."""

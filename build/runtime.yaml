@@ -106,12 +106,16 @@ profiles:
     build_context: 7900xtx
 
   # Isolated vLLM canary for upstream's native RDNA3 W4A16 GPTQ kernel (first
-  # shipped in 0.23, now tracking 0.26 for the hybrid-GDN mamba-block-split fix
-  # the ngram speculation re-canary needs — see services/flexinfer#66). It
+  # shipped in 0.23; 0.26 added the hybrid-GDN mamba-block-split fix the ngram
+  # speculation re-canary needs — services/flexinfer#66). 2026-10-23: tracking
+  # 0.32.0 for the GDN speculative-token gate alignment (#51812, 0.28), the
+  # fused GDN MTP path for all Qwen head ratios (#52539, 0.29), the RDNA
+  # segmented-attention backend (#59132, 0.32) and the ROCm sleep-mode fix
+  # (#60367) — see .loom/10-research-gfx1100-next-feature-2026-10-23.md. It
   # intentionally bypasses every legacy 0.17 Qwen/Gemma patch; promote only
   # after full-checkpoint coherence and production-shape parity on gfx1100.
   gfx1100-native-w4a16:
-    tag: "runtime:rocm-gfx1100-v026-native-w4a16"
+    tag: "runtime:rocm-gfx1100-v032-native-w4a16"
     promotion:
       gpuprofile: false
       values_runtime_profiles: false
@@ -119,10 +123,10 @@ profiles:
     dockerfile: build/Dockerfile.runtime-serving-native-w4a16
     gpu_vendor: amd
     gpu_arch: gfx1100
-    base_image: "vllm/vllm-openai-rocm:v0.26.0"
+    base_image: "vllm/vllm-openai-rocm:v0.32.0"
     vllm_install_mode: source
     vllm_repo: "https://github.com/vllm-project/vllm.git"
-    vllm_ref: "v0.26.0"
+    vllm_ref: "v0.32.0"
     rocm_dev_image: "rocm/dev-ubuntu-24.04:7.2.3"
     amdgpu_targets: gfx1100
     backends:

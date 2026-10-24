@@ -17,15 +17,20 @@ MAMBA_STATE_METHODS = (
 def apply_hybrid_state(model_classes, donor, methods=MAMBA_STATE_METHODS) -> int:
     """Mark classes hybrid and copy the state helpers from ``donor``.
 
-    Idempotent: a method already defined directly on a class is left alone, so
-    repeated application (or application after a sibling plugin) is a no-op.
-    Returns the number of methods actually copied, for logging.
+    Idempotent and additive: a method the class already resolves — defined on
+    it directly or inherited from a base — is left alone, so repeated
+    application (or application after a sibling plugin) is a no-op. vLLM 0.32
+    ships the helpers on ``Qwen3_5ForCausalLMBase`` (via ``IsHybrid``), so on
+    that runtime nothing is copied and the upstream implementation, which reads
+    ``hf_text_config``, stays in charge; on 0.23/0.26 the text classes lack
+    them and the donor's are copied as before. Returns the number of methods
+    actually copied, for logging.
     """
     copied = 0
     for model_class in model_classes:
         model_class.is_hybrid = True
         for method_name in methods:
-            if method_name in model_class.__dict__:
+            if getattr(model_class, method_name, None) is not None:
                 continue
             setattr(model_class, method_name, donor.__dict__[method_name])
             copied += 1

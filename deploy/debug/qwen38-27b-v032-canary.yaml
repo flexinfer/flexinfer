@@ -1,0 +1,162 @@
+# DEBUG CANARY — slice S1 of .loom/10-research-gfx1100-next-feature-2026-10-23.md
+# (vLLM currency 0.26 -> 0.32, MTP OFF), 2026-10-23. NOT in the models
+# kustomization: apply by hand, delete when the matrix row is decided.
+#
+# Qualifies the rebuilt vLLM 0.32.0 native-W4A16 runtime (profile
+# gfx1100-native-w4a16, plugin-common 0.2.0 / text plugin 0.9.0, register()
+# verified at build time) on the 5930k with the workhorse's exact artifact and
+# its PRODUCTION envelope: 64K, fp8 KV, two sequences, TRITON_ATTN, graph mode,
+# hybrid-GDN prefix caching (align / bf16 SSM state), prompt-token details,
+# 0.96 utilisation. The only differences from deploy/models/
+# qwen38-27b-autoround-workhorse.yaml are: the image, the name, priority 510 >
+# the workhorse's 500 with warmPolicy primary + minReplicas 1 (the shared
+# 5930k-textgen election hands this canary the card; Mills research falls back
+# to the XTX lane for the window), a separate compile-cache hostPath, litellm
+# off / no serviceLabels (direct in-pod probes only), and NO `calculateKvScales`
+# key: vLLM 0.28 removed `--calculate-kv-scales` (#49389), the backend emits
+# `--no-calculate-kv-scales` for an explicit false on the current controller,
+# and that flag fails argument parsing on 0.32. The backend fix in this branch
+# drops the negative flag; this canary must boot on the controller as deployed.
+#
+# Gate (MTP OFF — S1 pass criteria):
+#   - log: "flexinfer: registered text-only Qwen3.5 … fla_autotuners=N>0" and
+#     "Using RDNA3W4A16LinearKernel", "Using TRITON_ATTN backend"; record which
+#     model runner booted (0.32 makes MRV2 the ROCm default, #56360);
+#   - status.kvPool: >= 1.8x at 65536 after the automatic KVPoolRecheck;
+#   - scripts/verify-vllm-canary.py: 3/3 probes identical to the workhorse
+#     (`42` / `{"name": "Birch", "count": 7}` / `MAPLE-4827`), median novel
+#     decode >= 40 tok/s, 2,337-token recall TTFT < 3 s;
+#   - prefix cache: a repeated ~7K prompt reports cached_tokens > 0;
+#   - 0 restarts, no ERROR/Traceback/HIP/HSA/OOM/NaN marker.
+# Probes:
+#   kubectl -n flexinfer-system exec -i deploy/qwen38-27b-v032-canary -- \
+#     python3 - --model qwen38-27b-v032-canary < scripts/verify-vllm-canary.py
+# On completion (pass or fail) delete the canary Model; the workhorse reclaims
+# the card on its next demand. Keep this manifest as the reproducible probe.
+# S2 (MTP ON) reuses it with speculativeConfig + FLEXINFER_QWEN35_MTP_HEAD.
+#
+# RESULT 2026-10-24 (matrix row gfx1100-native-w4a16-v032-2026-10-24): PASS.
+# Applied by the operator 00:52Z; cache 00:57Z; election 00:59Z; Ready 01:11Z
+# after the automatic KVPoolRecheck relaunch (first boot 86,388 tok / 1.32x on
+# the fresh compile, relaunch 140,753 tok / 2.15x). V2 model runner,
+# RDNA3W4A16LinearKernel, TRITON_ATTN; probes 3/3 identical, median decode
+# 41.50 tok/s, recall TTFT 2.31 s; prefix cache 10.74 s -> 1.02 s with
+# cached_tokens 7200; two concurrent cold ~6-7K prefills OK; 0 restarts. One
+# HIPCachingAllocator OOM warning (recovered) during the first 7.5K cold
+# prefill — thinner headroom at 0.96 on 0.32; promote at 0.95. Deleted 01:22Z.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-v032-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    # Match the production serving class on this shared CI/GPU node.
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-next-feature-2026-10-23.md"
+    flexinfer.ai/promotion-state: debug-canary-v032-native-w4a16
+spec:
+  backend: vllm
+  # vLLM 0.32.0+rocm723 gfx1100 native-W4A16 runtime built off-CI on the
+  # 7900xtx builder from this branch on 2026-10-23 (build/Dockerfile.runtime-
+  # serving-native-w4a16; tags rocm-gfx1100-v032-native-w4a16,
+  # rocm-gfx1100-v032-native-w4a16-s1-20261023, pinned-8ff8d14aa9ec). Build
+  # log: the base probe found 12 gfx1100 code objects and skipped the
+  # from-source rebuild; the verify step passed register() on 0.32.0+rocm723.
+  # The CI job publishes the same tag from master once the branch merges.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:8ff8d14aa9ec03ab9ae5db21cf15be8059f2a22a2af4fd64ebed32bd6c04287f
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    # 19.0 GB artifact. Serving needs NO on-disk config surgery (hfOverrides
+    # rewrites quantization_config in-process); only an MTP retry does.
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # Fresh path: 0.32's torch.compile / cudagraph artifacts must not mix
+      # with the 0.26 caches. A cold first boot profiles a smaller KV pool
+      # (2026-10-03 pattern); the controller's KVPoolRecheck relaunches once.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v032-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # The bounded test takes the card from the idle-or-not workhorse (500).
+    # VACE (600) can still preempt on demand; Mills has the XTX fallback.
+    priority: 510
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    # minReplicas keeps this probe resident; idleTimeout is not a cleanup
+    # deadline. The operator must delete the Model after the bounded test.
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    # Observed source revision (all 18 non-README file ETags equal the
+    # production cache's 17c77026 revision; see iteration-runtime-s2-v026).
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    # RDNA3 long-context decode fix (research doc 8d/!967). S3 A/Bs
+    # ROCM_SEGMENTED_ATTN (0.32, fp16 KV only on gfx11) against this.
+    attentionBackend: TRITON_ATTN
+    warmPolicy: primary
+    dedicatedDeployment: true
+    quantization: gptq
+    # Match the qualified VL-layout architecture in-process; avoid on-disk
+    # config surgery (issue #74 incident #2). The quantization_config rewrite
+    # is the auto-round -> inc workaround (ROCm rejects inc); the module list
+    # is the artifact's exact INT4 census.
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 65536
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: fp8_e4m3
+    enforceEager: false
+    # Production hybrid-GDN prefix-caching recipe (owner decision 2026-10-03).
+    # 0.32 removed mamba_cache_mode "all" (#58997); "align" is unaffected.
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    # MTP stays OFF in S1; S2 adds speculativeConfig here.
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-v032-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Hidden from discovery; use direct in-pod HTTP after warm-primary startup.
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-v032-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
