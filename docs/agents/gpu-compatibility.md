@@ -298,16 +298,25 @@ require exact `max_tokens` filling should leave speculation disabled. See
 `.loom/iteration-gfx906-llamacpp-stateful-spec-2026-07-15.md` for the pinned
 artifact, acceptance gate, measurements, and restoration evidence.
 
+This envelope exists only on llama.cpp builds before b8955. That build
+(2026-04-28) replaced `--draft-max`/`--draft-min` in one commit: draft-model
+spec types take `--spec-draft-n-max`/`--spec-draft-n-min`, ngram-simple is
+sized by `--spec-ngram-simple-size-n`/`-size-m`/`-min-hits`, and the old names
+abort llama-server at startup. The backend therefore spells the draft window
+from `spec.config.llamacppBuild`, the image's build number (`8173` for b8173,
+`11847` for b11847). When it is unset the backend keeps the pre-b8955 spelling
+this envelope needs. A Model that declares a b8955-or-newer build cannot use
+the ngram-simple envelope, because the window would be silently ignored there.
+
 ### `draft-mtp` (capability `draft-mtp`)
 
 `specType: draft-mtp` drives the MTP (NextN) head that ships inside the target
-GGUF; there is no separate `--model-draft`. The certified envelope is
-llama.cpp's default draft window, so `draftMax` and `draftMin` are rejected
-with this spec type: the backend renders them as `--draft-max`/`--draft-min`,
-which llama.cpp removed by b11847 (the server aborts at startup), and on
-Qwen3.5-family GGUFs (`qwen35.nextn_predict_layers=1`) b11847 reuses the single
-head for each of its default three draft steps. Only multi-head models clamp
-the window to their head count.
+GGUF; there is no separate `--model-draft`. This capability certifies
+llama.cpp's default draft window (`n_max` 3, `n_min` 0), so it admits neither
+`draftMax` nor `draftMin`. On Qwen3.5-family GGUFs
+(`qwen35.nextn_predict_layers=1`) llama.cpp reuses the single head for each
+draft step; only multi-head models clamp the window to their head count. A
+different window is a different envelope, certified separately (next section).
 
 gfx1100 certifies the S5 image
 `registry.harbor.lan/library/llamacpp@sha256:95c1d3901faba5fbbfa9ac173c4b40c479bcc604f1a41f873a975ce0cee0f2a1`
@@ -336,5 +345,29 @@ spec:
     dedicatedDeployment: true
     specType: draft-mtp
 ```
+
+### Explicit `draft-mtp` window (capability `draft-mtp-draft<N>-min<M>`)
+
+Setting `draftMax` (1 to 16) and optionally `draftMin` (0 to `draftMax`,
+default 0) with `specType: draft-mtp` asks for capability
+`draft-mtp-draft<draftMax>-min<draftMin>`, for example `draft-mtp-draft2-min0`.
+The backend renders it as `--spec-draft-n-max`/`--spec-draft-n-min`, because
+draft-mtp exists only on b8955 and later. Like every llama.cpp opt-in it needs
+its own certificate triple on the GPUProfile, bound to the exact image digest:
+
+```yaml
+metadata:
+  annotations:
+    flexinfer.ai/backend-certificate-llamacpp-draft-mtp-draft2-min0: <image@sha256:...>
+    flexinfer.ai/backend-certificate-llamacpp-draft-mtp-draft2-min0-since: "<RFC3339>"
+    flexinfer.ai/backend-certificate-llamacpp-draft-mtp-draft2-min0-evidence: <matrix row or doc>
+```
+
+No window is certified yet. The single NextN head's acceptance decays with each
+reused step (vLLM measured 0.80 at position 0 and 0.55 at position 1 on the
+same Qwen3.8-27B head), so a shorter window can beat the default on single-head
+GGUFs. Measure the window on a debug Model behind a provisional certificate
+before setting it on a lane. A declared `llamacppBuild` below 8955 is rejected
+with draft-mtp.
 
 See `build/README-gfx906.md` for detailed hardware documentation and troubleshooting.

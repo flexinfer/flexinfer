@@ -185,14 +185,18 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 
 	// Local speculative decoding. Keep this opt-in: b8173 ngram-simple is proven
 	// on gfx906 but can finish up to one final draft batch short of max_tokens.
+	// The draft window's flag names depend on the image's llama.cpp build; see
+	// llamaCppDraftWindowFlags.
 	if specType := strings.TrimSpace(spec.ConfigString("specType", "")); specType != "" {
 		args = append(args, "--spec-type", specType)
 	}
-	if draftMax, ok := configOptionalInt(spec, "draftMax"); ok {
-		args = append(args, "--draft-max", fmt.Sprintf("%d", draftMax))
-	}
-	if draftMin, ok := configOptionalInt(spec, "draftMin"); ok {
-		args = append(args, "--draft-min", fmt.Sprintf("%d", draftMin))
+	if maxFlag, minFlag, ok := llamaCppDraftWindowFlags(spec); ok {
+		if draftMax, set := configOptionalInt(spec, "draftMax"); set {
+			args = append(args, maxFlag, fmt.Sprintf("%d", draftMax))
+		}
+		if draftMin, set := configOptionalInt(spec, "draftMin"); set {
+			args = append(args, minFlag, fmt.Sprintf("%d", draftMin))
+		}
 	}
 
 	// KV cache quantization (for memory efficiency)
@@ -285,6 +289,37 @@ func (b *LlamaCppBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	}
 
 	return env
+}
+
+// LlamaCppSpecDraftFlagsSinceBuild is the llama.cpp build (b8955, released
+// 2026-04-28) that replaced --draft-max/--draft-min with per-type spellings in
+// one commit: draft-model spec types take --spec-draft-n-max/--spec-draft-n-min
+// (defaults 3/0), and the n-gram types are sized by their own --spec-ngram-*
+// flags. From that build on the old names abort llama-server at startup.
+const LlamaCppSpecDraftFlagsSinceBuild = 8955
+
+// llamaCppDraftWindowFlags returns the flags that carry config.draftMax and
+// config.draftMin for this Model's image, or ok=false when its spec type has
+// no such window there.
+//
+// Spec types prefixed "draft-" (draft-mtp) exist only from b8955 on, so they
+// always get the new spelling. Otherwise config.llamacppBuild (the image's
+// llama.cpp build number, e.g. 11847) selects it: a b8955+ build gives the
+// draft-model spelling, except for the n-gram types, whose window moved to
+// --spec-ngram-* and is not rendered from these keys. An unset build keeps the
+// pre-b8955 spelling that the certified gfx906 b8173 ngram-simple envelope uses.
+func llamaCppDraftWindowFlags(spec *ModelSpec) (maxFlag, minFlag string, ok bool) {
+	specType := strings.TrimSpace(spec.ConfigString("specType", ""))
+	build, hasBuild := configOptionalInt(spec, "llamacppBuild")
+	modern := strings.HasPrefix(specType, "draft-") || (hasBuild && build >= LlamaCppSpecDraftFlagsSinceBuild)
+	switch {
+	case !modern:
+		return "--draft-max", "--draft-min", true
+	case strings.HasPrefix(specType, "ngram-"):
+		return "", "", false
+	default:
+		return "--spec-draft-n-max", "--spec-draft-n-min", true
+	}
 }
 
 func configOptionalInt(spec *ModelSpec, key string) (int, bool) {
