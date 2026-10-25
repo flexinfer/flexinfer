@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flexinfer-vllm-qwen35-seqcls"
-version = "0.1.0"
+version = "0.2.0"
 description = "Register Qwen3.5 cross-encoder sequence-classification checkpoints as vLLM pooling models"
 requires-python = ">=3.10"
 # Shared plugin helpers. Install build/vllm-plugin-common BEFORE this package;

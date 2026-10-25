@@ -1,0 +1,208 @@
+# DEBUG CANARY — slice S3 of .loom/10-research-gfx1100-next-feature-2026-10-23.md
+# (attention-backend A/B with MTP on and off), prepared 2026-10-25. NOT in the
+# models kustomization: the operator applies it once, the agent session
+# sequences the arms with kubectl patch, then deletes the Model.
+#
+# Question S2 left open: MTP K=2 gave 1.58x single-stream decode at a 30-token
+# prompt but only 1.21x at 2K (matrix row gfx1100-native-w4a16-v032-mtp-
+# 2026-10-24). The verify step's multi-token attention on TRITON_ATTN grows
+# with context. Does vLLM 0.32's ROCM_SEGMENTED_ATTN (#59132; RDNA, fp16 KV on
+# gfx11, head size 256 and GQA 6 supported, query length <= 8192 so prefill
+# chunks and the K+1 verify both run in it) keep MTP paying at working-set
+# contexts, and at what cost in pool and prefill?
+#
+# What "working-set" means (vLLM vllm:request_prompt_tokens, 7 days to
+# 2026-10-25 15:10Z): the 5930k workhorse served 12,625 requests with prompt
+# p50 466 / p90 4,260 / p99 15,563 tokens and generation p50 297 / p90 587;
+# cumulative share <=1K 61.1 %, <=2K 76.0 %, <=5K 94.6 %, <=10K 98.2 %,
+# <=20K 99.6 %, none above 50K. The XTX Mills lane (366 requests) had p50
+# 1,488 / p90 1,957 / p99 7,388. So the sweep weights 0.5K-4K, and a 32K lane
+# would still cover >99.6 % of real traffic.
+#
+# Image: the S1/S2 digest 8ff8d14a (pinned-8ff8d14aa9ec, still in Harbor), the
+# only 0.32 build whose text plugin has FLEXINFER_QWEN35_MTP_HEAD=checkpoint;
+# the live production image cd108c9e does not, so MTP must not run on it. It
+# is not resident on the 5930k any more (image GC); the pull shares the 0.32
+# base with cd108c9e and the node had 276 GB free on 2026-10-25 (memory floor
+# 200 GB). Autotune for the segmented kernels is on via --kernel-config in the
+# command wrapper (the vLLM backend has no kernel-config key); it only affects
+# ROCM_SEGMENTED_ATTN arms and runs once per compile cache.
+#
+# Arms, in order (each relaunches the pod; a new attention backend means one
+# cold compile, and a fresh-compile first boot with the draft resident may die
+# once at KV profiling and restart — the S2 pattern):
+#   B  ROCM_SEGMENTED_ATTN, fp16 KV, MTP K=2   (manifest as applied)
+#   C  ROCM_SEGMENTED_ATTN, fp16 KV, MTP off
+#        kubectl -n flexinfer-system patch model qwen38-27b-v032-s3-attn-canary \
+#          --type json -p '[{"op":"remove","path":"/spec/config/speculativeConfig"}]'
+#   D  TRITON_ATTN, fp8 KV, MTP off            (the production attention path)
+#        kubectl -n flexinfer-system patch model qwen38-27b-v032-s3-attn-canary \
+#          --type merge -p '{"spec":{"config":{"attentionBackend":"TRITON_ATTN","kvCacheDtype":"fp8_e4m3"}}}'
+#   A  TRITON_ATTN, fp8 KV, MTP K=2            (S2's configuration at 32K)
+#        kubectl -n flexinfer-system patch model qwen38-27b-v032-s3-attn-canary \
+#          --type merge -p '{"spec":{"config":{"speculativeConfig":"{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"TRITON_ATTN\"}"}}}'
+#   A1 TRITON_ATTN, fp8 KV, MTP K=1            (optional; K=1 drops the reused
+#                                               second step, pos-1 was 0.55)
+#        same patch with "num_speculative_tokens":1
+# Probe, every arm (contexts sized by /tokenize, unique prefix per point so each
+# TTFT is a cold prefill; per-point acceptance from the counter deltas):
+#   kubectl -n flexinfer-system exec -i deploy/qwen38-27b-v032-s3-attn-canary -- \
+#     python3 - --model qwen38-27b-v032-s3-attn-canary --phase measure \
+#     --contexts 512,2048,4096,16384,28672 --soak-pairs 10 --out /tmp/s3-<arm>.json \
+#     < scripts/verify-vllm-mtp.py
+# Record per arm: boot lines (backend for target and eagle_head, "Using token-
+# major ROCm segmented Triton attention", autotune), KV pool at 32K, and the
+# probe summary. Budget about 15 min per arm, 60-75 min for the window; the
+# canary takes the 5930k from the workhorse (priority 510 > 500) for all of it.
+#
+# Decision rule (written before the data):
+#   - MTP pays at context C when decode(MTP arm) / decode(no-MTP arm, same
+#     backend) >= 1.15 at C with pos-0 acceptance >= 0.70; report the largest
+#     C where that holds for each backend, and the traffic-weighted speedup
+#     (sweep points stand for the histogram bands: 512 for <=1K 61.1 %, 2048
+#     for 1-2K 14.9 %, 4096 for 2-5K 18.6 %, 16384 for 5-20K 5.0 %, 28672
+#     for >20K 0.4 %). MTP goes to the workhorse if that weighted speedup is
+#     >= 1.25 on the production backend.
+#   - Segmented replaces TRITON_ATTN on a lane only if its best arm beats
+#     TRITON's best arm by >= 10 % decode at 16K and 28K, TTFT is no more than
+#     20 % worse, and the lane can live at 32K (the fp16 pool cost is the
+#     price); otherwise S4 keeps TRITON_ATTN + fp8 and enables MTP only for
+#     contexts where it pays.
+#   - Any incoherent probe, engine death or HIP/HSA/OOM marker fails that arm.
+# Rollback = delete this Model; the workhorse reclaims the card on demand.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-v032-s3-attn-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    # Match the production serving class on this shared CI/GPU node.
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-next-feature-2026-10-23.md"
+    flexinfer.ai/promotion-state: debug-canary-v032-s3-attention-ab
+spec:
+  backend: vllm
+  # The S1/S2 digest: vLLM 0.32.0+rocm723 with text plugin 0.9.0, the only
+  # 0.32 build with FLEXINFER_QWEN35_MTP_HEAD=checkpoint (tag
+  # pinned-8ff8d14aa9ec). Not resident on the 5930k; one pull, see header.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:8ff8d14aa9ec03ab9ae5db21cf15be8059f2a22a2af4fd64ebed32bd6c04287f
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    # 19.0 GB artifact, served as-is: no on-disk config.json surgery (0.32
+    # builds the draft from the target's VllmConfig, research §7b).
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # Fresh path shared by every arm: each attention backend / spec config
+      # compiles once here, and the segmented autotune results live under it.
+      # A cold first boot may profile a smaller pool or, with the draft
+      # resident, die once at KV profiling (S2); the relaunch is warm.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s3-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # The bounded test takes the card from the workhorse (500) for the whole
+    # window. VACE (600) can still preempt on demand; Mills has the XTX lane.
+    priority: 510
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    # minReplicas keeps this probe resident; idleTimeout is not a cleanup
+    # deadline. The operator must delete the Model after the bounded test.
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    # Per-Model env is not a Model field: wrap the image entrypoint (`vllm
+    # serve`, which the vLLM backend leaves in place) and re-exec it with the
+    # backend args. "vllm" is argv[0] for bash -c; the args follow as "$@".
+    command:
+      - bash
+      - -lc
+      - 'export FLEXINFER_QWEN35_MTP_HEAD=checkpoint; exec vllm serve "$@" --kernel-config "{\"enable_rocm_segmented_attn_autotune\":true}"'
+      - vllm
+    # Observed source revision (all 18 non-README file ETags equal the
+    # production cache's 17c77026 revision; see iteration-runtime-s2-v026).
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    # Arm under test (see header). The arms flip this, kvCacheDtype and
+    # speculativeConfig with kubectl patch; the draft always names the same
+    # backend through speculativeConfig.attention_backend (0.32 otherwise
+    # autoselects the draft's backend on its own). TRITON_ATTN is the RDNA3
+    # long-context decode fix production runs (research doc 8d / !967).
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    warmPolicy: primary
+    dedicatedDeployment: true
+    quantization: gptq
+    # Match the qualified VL-layout architecture in-process; avoid on-disk
+    # config surgery (issue #74 incident #2). The quantization_config rewrite
+    # is the auto-round -> inc workaround (ROCm rejects inc); the module list
+    # is the artifact's exact INT4 census and, being block-relative, also
+    # selects mtp.layers.0.* while leaving mtp.fc unquantized.
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    # 32K, not the production 64K: segmented attention needs fp16 KV on gfx11
+    # (fp8 is gfx12-only), which roughly halves the pool; with the MTP draft
+    # resident S2's 101,544 fp8 tokens become ~50K fp16, below one 64K
+    # sequence. Every arm runs at 32K so the backends compare like for like.
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    # The production value (the 0.32 lanes run 0.96 with zero allocator
+    # warnings in 24 h as of 2026-10-25).
+    gpuMemoryUtilization: "0.96"
+    # auto = fp16 (the model dtype). The TRITON_ATTN arms patch fp8_e4m3 back.
+    kvCacheDtype: auto
+    enforceEager: false
+    # Production hybrid-GDN prefix-caching recipe (owner decision 2026-10-03).
+    # 0.32 removed mamba_cache_mode "all" (#58997); "align" is unaffected and
+    # has no speculative-decoding guard.
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    # Arm B: K=2 as in S2 (arm A1 measures K=1). The 0.32 cudagraph ladder
+    # adapts to K+1 by itself.
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-v032-s3-attn-canary
+    # /metrics must carry the spec-decode counters the probe reads.
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Hidden from discovery; use direct in-pod HTTP after warm-primary startup.
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-v032-s3-attn-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

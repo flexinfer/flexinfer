@@ -1,0 +1,219 @@
+# DEBUG CANARY — slice S2 of .loom/10-research-gfx1100-next-feature-2026-10-23.md
+# (the MTP kill-test, §7), 2026-10-24. NOT in the models kustomization: apply
+# by hand, delete when the matrix row is decided.
+#
+# Riskiest assumption under test: biMEMO/Qwen3.8-27B-int4-AutoRound (INT4 MTP
+# block, fp16 mtp.fc) reaches >= 0.70 position-0 draft acceptance with
+# {"method":"mtp","num_speculative_tokens":2} on the S1-qualified vLLM 0.32.0
+# native-W4A16 digest, with greedy outputs identical to MTP off.
+#
+# Identical to deploy/debug/qwen38-27b-v032-canary.yaml (S1 PASS, matrix row
+# gfx1100-native-w4a16-v032-2026-10-24) except:
+#   - speculativeConfig: method mtp, K=2, draft attention pinned to TRITON_ATTN
+#     (0.32 autoselects the draft's backend independently of the target unless
+#     the speculative config names one; the target is pinned for the RDNA3
+#     long-context decode fix, so the draft follows it);
+#   - FLEXINFER_QWEN35_MTP_HEAD=checkpoint through the spec.config.command
+#     wrapper (the controller has no per-Model env passthrough; the vLLM
+#     backend uses the image entrypoint `vllm serve`, which the wrapper
+#     re-execs with the backend args). The text plugin's default "plain"
+#     policy forces every mtp.* linear to the unquantized method, which would
+#     load the artifact's INT4 MTP block as garbage without an error; with
+#     "checkpoint" vLLM's AutoGPTQConfig decides per layer;
+#   - a separate compile-cache hostPath (the spec config changes the compile
+#     hash, so nothing from S1's cache would be reused anyway);
+#   - the name, the annotation and no serviceLabels.
+#
+# What 0.32 settles without on-disk config surgery (verified against the
+# v0.32.0 tree and an offline probe in the image, research doc §7b):
+#   - vllm/config/speculative.py builds the draft ModelConfig from the on-disk
+#     config.json with only hf_config_override applied (dict hfOverrides stay
+#     target-only), so the draft config still says quant_method auto-round and
+#     its own _verify_quantization settles on "inc" — harmless, because the
+#     draft MODEL is built from the target's VllmConfig (llm_base_proposer
+#     _create_draft_vllm_config -> get_model -> initialize_model) and so uses
+#     the target's AutoGPTQConfig from this manifest's hfOverrides. On 0.23 the
+#     same path raised (ROCm did not list "inc") and needed the config.json
+#     patch; 0.32 lists it.
+#   - That AutoGPTQConfig, with the modules_in_block_to_quantize census below,
+#     quantizes mtp.layers.0.{self_attn,mlp}.* and leaves mtp.fc and lm_head
+#     unquantized — exactly the artifact's MTP tensor census (7 INT4 linears
+#     with qweight/qzeros/scales, fc.weight fp16, lm_head: false).
+#   - The draft loads its own embed_tokens / lm_head copies (+5 GB transient),
+#     then the proposer compares them with the target's and shares them
+#     (_maybe_share_embeddings / _maybe_share_lm_head); steady-state cost is
+#     the one MTP layer (~0.3 GB) plus one more attention layer of KV.
+#   - cudagraph sizes: 0.32 derives uniform decode sizes from
+#     max_num_seqs * (K+1) itself (expected ladder 1,2,3,4,6,8 at maxNumSeqs 2,
+#     K=2); no cudagraphCaptureSizes override, unlike the 35B MTP lane on 0.2x.
+#   - mamba_cache_mode align has no speculative-decoding guard in 0.32 (only
+#     the ReplaySSM/RecoverSSM paths do).
+#
+# Gate (S2 pass bar, §7): run scripts/verify-vllm-mtp.py in the pod:
+#   kubectl -n flexinfer-system exec -i deploy/qwen38-27b-v032-mtp-canary -- \
+#     python3 - --model qwen38-27b-v032-mtp-canary --out /tmp/mtp.json \
+#     < scripts/verify-vllm-mtp.py
+#   - boot: "mtp_head=checkpoint" in the plugin line, "Using TRITON_ATTN
+#     backend" twice (target + eagle_head), the draft load/sharing lines,
+#     the capture-size ladder, status.kvPool >= 1.2x at 65536 (expect ~1.9x);
+#   - spec_decode: pos0_acceptance >= 0.70, mean_acceptance_length >= 1.6
+#     (vLLM convention, 1 + accepted/drafts), read from the counter deltas of
+#     vllm:spec_decode_num_{drafts,draft_tokens,accepted_tokens,
+#     accepted_tokens_per_pos}_total over the whole workload;
+#   - probes 3/3 identical (`42` / Birch JSON / `MAPLE-4827`), recall TTFT
+#     < 3 s, single-stream decode >= 60 tok/s at short and ~2K context
+#     (S1 MTP-off reference: 41.5 tok/s), 50-pair concurrency-2 soak clean;
+#   - greedy parity: after the MTP run, patch speculativeConfig away
+#       kubectl -n flexinfer-system patch model qwen38-27b-v032-mtp-canary \
+#         --type json -p '[{"op":"remove","path":"/spec/config/speculativeConfig"}]'
+#     rerun with `--phase baseline --out /tmp/base.json --soak-pairs 0`, copy
+#     both summaries out and `verify-vllm-mtp.py --compare mtp.json base.json`
+#     must report 0 diffs (the parity hashes are of 256-token greedy answers);
+#   - 0 restarts, no ERROR/Traceback/HIP/HSA/OOM/NaN marker; an engine death
+#     mentioning num_decodes/num_spec_decodes is the #36917 class = stop.
+#   Fail at pos-0 < 0.50 = try an FP16-MTP artifact before blaming the runtime.
+# Rollback = delete this Model; S1's digest stands on its own result.
+# On completion (pass or fail) delete the canary Model; the workhorse reclaims
+# the card on its next demand. Keep this manifest as the reproducible probe.
+#
+# RESULT 2026-10-24 (matrix row gfx1100-native-w4a16-v032-mtp-2026-10-24):
+# PASS on the riskiest assumption. Applied 13:16Z; fresh-compile first boot
+# died once at KV profiling (2.45 GiB needed, 1.77 GiB free) and the container
+# restarted; warm boot Ready 13:39:47Z with pool 101,544 tok / 1.55x (MTP off
+# on the same digest: 140,753 / 2.15x). mtp_head=checkpoint, Qwen3_5MTP draft,
+# RDNA3W4A16LinearKernel, TRITON_ATTN, ladder [1,2,3,4,6,8]. Counters over the
+# probe workload: pos-0 acceptance 0.8018, pos-1 0.5473, mean acceptance
+# length 2.349. Decode 65.1 vs 41.3 tok/s short (1.58x), 48.4 vs 40.0 at 2K
+# (1.21x), concurrency-2 per request 55.2 vs 39.6; probes identical; long
+# greedy answers diverge ~150-200 tokens in (the MTP-off engine itself is not
+# bit-reproducible across prefix-cache states); 0 faults. Deleted 14:18Z.
+# Not met: >= 60 tok/s at 2K and strict parity — see research §7c for S3/S4.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-v032-mtp-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    # Match the production serving class on this shared CI/GPU node.
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-next-feature-2026-10-23.md"
+    flexinfer.ai/promotion-state: debug-canary-v032-mtp-kill-test
+spec:
+  backend: vllm
+  # The S1-qualified vLLM 0.32.0+rocm723 gfx1100 native-W4A16 runtime (tags
+  # rocm-gfx1100-v032-native-w4a16, -s1-20261023, pinned-8ff8d14aa9ec).
+  image: registry.harbor.lan/flexinfer/runtime@sha256:8ff8d14aa9ec03ab9ae5db21cf15be8059f2a22a2af4fd64ebed32bd6c04287f
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    # 19.0 GB artifact, served as-is: no on-disk config.json surgery (see the
+    # header for why 0.32's draft path does not need it).
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # Fresh path: the speculative config changes the compile hash. A cold
+      # first boot profiles a smaller KV pool (2026-10-03 pattern); the
+      # controller's KVPoolRecheck relaunches once from the warm cache.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v032-mtp-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # The bounded test takes the card from the idle-or-not workhorse (500).
+    # VACE (600) can still preempt on demand; Mills has the XTX fallback.
+    # Apply after the llama.cpp S5 window (muse-glimmer-30b-canary at 520 with
+    # forcePromotion) is deleted, or this queues behind it.
+    priority: 510
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    # minReplicas keeps this probe resident; idleTimeout is not a cleanup
+    # deadline. The operator must delete the Model after the bounded test.
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    # Per-Model env is not a Model field: wrap the image entrypoint (`vllm
+    # serve`, which the vLLM backend leaves in place) and re-exec it with the
+    # backend args. "vllm" is argv[0] for bash -c; the args follow as "$@".
+    command:
+      - bash
+      - -lc
+      - export FLEXINFER_QWEN35_MTP_HEAD=checkpoint; exec vllm serve "$@"
+      - vllm
+    # Observed source revision (all 18 non-README file ETags equal the
+    # production cache's 17c77026 revision; see iteration-runtime-s2-v026).
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    # RDNA3 long-context decode fix (research doc 8d/!967); the draft follows
+    # it through speculativeConfig.attention_backend.
+    attentionBackend: TRITON_ATTN
+    warmPolicy: primary
+    dedicatedDeployment: true
+    quantization: gptq
+    # Match the qualified VL-layout architecture in-process; avoid on-disk
+    # config surgery (issue #74 incident #2). The quantization_config rewrite
+    # is the auto-round -> inc workaround (ROCm rejects inc); the module list
+    # is the artifact's exact INT4 census and, being block-relative, also
+    # selects mtp.layers.0.* while leaving mtp.fc unquantized.
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 65536
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    # S1 envelope kept so MTP is the only variable; S1 saw one recovered
+    # HIPCachingAllocator OOM warning at 0.96, keep that line on the watch
+    # list (promotion uses 0.95).
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: fp8_e4m3
+    enforceEager: false
+    # Production hybrid-GDN prefix-caching recipe (owner decision 2026-10-03).
+    # 0.32 removed mamba_cache_mode "all" (#58997); "align" is unaffected and
+    # has no speculative-decoding guard.
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    # The kill-test variable. K=2 per §7; the vLLM Qwen3.8-27B recipe uses 3
+    # on NVIDIA. The 0.32 cudagraph ladder adapts to K+1 by itself.
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"TRITON_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-v032-mtp-canary
+    # /metrics must carry the spec-decode counters the probe reads.
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Hidden from discovery; use direct in-pod HTTP after warm-primary startup.
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-v032-mtp-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

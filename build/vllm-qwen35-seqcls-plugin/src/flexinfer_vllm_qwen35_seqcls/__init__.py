@@ -165,6 +165,20 @@ def with_label_repair(wrapped_class):
     return _LabelRepaired
 
 
+def _supports_mrope_upstream(model_class) -> bool:
+    """Whether the generative base already satisfies the runner's M-RoPE contract.
+
+    vLLM 0.32's ``Qwen3_5ForCausalLMBase`` implements ``SupportsMRoPE`` itself
+    and returns standard sequential positions for text-only input — exactly
+    what a pooling lane needs — so borrowing the multimodal donor's
+    implementation would only replace it with an equivalent one. On 0.23/0.26
+    the text class has neither attribute and the donor path below applies.
+    """
+    return bool(getattr(model_class, "supports_mrope", False)) and callable(
+        getattr(model_class, "get_mrope_input_positions", None)
+    )
+
+
 def register() -> None:
     """Register Qwen3.5 sequence-classification architectures as pooling models.
 
@@ -194,6 +208,7 @@ def register() -> None:
     )
 
     registered = []
+    mrope_sources = []
     for name, variant in ARCHITECTURES.items():
         base = Qwen3_5ForCausalLM if variant == "dense" else Qwen3_5MoeForCausalLM
         seq_cls = as_seq_cls_model(
@@ -202,9 +217,14 @@ def register() -> None:
         wrapped = with_label_repair(seq_cls)
         # The checkpoint's text_config declares mrope_section, so the runner
         # takes the M-RoPE path and asserts supports_mrope(model) on the FIRST
-        # request — after a clean load. Borrow the implementation from the
-        # multimodal class, the same donor the hybrid state comes from.
-        attach_mrope_support(wrapped, Qwen3_5ForConditionalGeneration)
+        # request — after a clean load. vLLM 0.32's text base provides the
+        # implementation itself; older runtimes borrow it from the multimodal
+        # class, the same donor the hybrid state comes from.
+        if _supports_mrope_upstream(wrapped):
+            mrope_sources.append("upstream")
+        else:
+            attach_mrope_support(wrapped, Qwen3_5ForConditionalGeneration)
+            mrope_sources.append("donor")
         ModelRegistry.register_model(name, wrapped)
         registered.append(name)
 
@@ -215,5 +235,6 @@ def register() -> None:
         f"language_prefix={LANGUAGE_PREFIX}, "
         f"skipped={','.join(SKIP_PREFIXES)}, "
         f"hybrid_methods_copied={copied}, "
+        f"mrope={','.join(mrope_sources)}, "
         f"fla_autotuners={safe_fla_kernels})"
     )

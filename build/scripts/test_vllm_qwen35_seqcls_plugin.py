@@ -183,13 +183,22 @@ def _load_plugin():
     return plugin
 
 
-def _register():
+class UpstreamMRoPEBase(_Base):
+    """vLLM 0.32 shape: the generative text base satisfies SupportsMRoPE itself."""
+
+    supports_mrope = True
+
+    def get_mrope_input_positions(self, input_tokens, mm_features):
+        return ("upstream", len(input_tokens))
+
+
+def _register(dense_cls: type | None = None):
     """Load the plugin against a fake vLLM and run register()."""
     registry = FakeRegistry()
     vllm = types.ModuleType("vllm")
     vllm.ModelRegistry = registry
     models = types.ModuleType("vllm.model_executor.models.qwen3_5")
-    models.Qwen3_5ForCausalLM = Qwen3_5ForCausalLM
+    models.Qwen3_5ForCausalLM = dense_cls or Qwen3_5ForCausalLM
     models.Qwen3_5MoeForCausalLM = Qwen3_5MoeForCausalLM
     models.Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration
     adapters = types.ModuleType("vllm.model_executor.models.adapters")
@@ -334,6 +343,25 @@ class LabelResolutionTest(unittest.TestCase):
         self.assertEqual(positions, [[0, 1, 2, 3]] * 3)
         self.assertEqual(delta, 0)
 
+    def test_keeps_the_upstream_mrope_when_the_base_provides_it(self) -> None:
+        """vLLM 0.32: Qwen3_5ForCausalLMBase implements SupportsMRoPE itself.
+
+        Its text-only implementation (standard sequential positions) is what a
+        pooling lane wants, so the donor must NOT replace it.
+        """
+        _, registry = _register(dense_cls=UpstreamMRoPEBase)
+        cls = registry.models["Qwen3_5ForSequenceClassification"]
+        cfg = FakeHFConfig(top_labels=3, text_labels=2)
+        model = cls(
+            vllm_config=types.SimpleNamespace(
+                model_config=types.SimpleNamespace(hf_config=cfg)
+            )
+        )
+        self.assertTrue(cls.supports_mrope)
+        self.assertEqual(
+            model.get_mrope_input_positions([1, 2, 3], []), ("upstream", 3)
+        )
+
     def test_mrope_attach_fails_loudly_if_the_donor_moves(self) -> None:
         from flexinfer_vllm_common.mrope import attach_mrope_support
 
@@ -449,6 +477,46 @@ class SharedHelperTest(unittest.TestCase):
         self.assertEqual(first, 3)
         self.assertEqual(second, 0, "re-application must be a no-op")
         self.assertTrue(Target.is_hybrid)
+
+    def test_hybrid_application_respects_inherited_methods(self) -> None:
+        """vLLM 0.32 ships the helpers on the text base class: leave them alone."""
+        from flexinfer_vllm_common import apply_hybrid_state
+
+        class Donor:
+            @classmethod
+            def get_mamba_state_shape_from_config(cls, config):
+                return "donor-shape"
+
+            @classmethod
+            def get_mamba_state_dtype_from_config(cls, config):
+                return "donor-dtype"
+
+            @classmethod
+            def get_mamba_state_copy_func(cls):
+                return "donor-copy"
+
+        class UpstreamBase:
+            @classmethod
+            def get_mamba_state_shape_from_config(cls, config):
+                return "upstream-shape"
+
+            @classmethod
+            def get_mamba_state_dtype_from_config(cls, config):
+                return "upstream-dtype"
+
+            @classmethod
+            def get_mamba_state_copy_func(cls):
+                return "upstream-copy"
+
+        class Target(UpstreamBase):
+            pass
+
+        self.assertEqual(apply_hybrid_state((Target,), Donor), 0)
+        self.assertTrue(Target.is_hybrid)
+        self.assertEqual(Target.get_mamba_state_copy_func(), "upstream-copy")
+        self.assertEqual(
+            Target.get_mamba_state_shape_from_config("c"), "upstream-shape"
+        )
 
     def test_rocm_pruner_is_skipped_off_hip(self) -> None:
         from flexinfer_vllm_common.rocm import prune_fla_configs_if_needed

@@ -120,7 +120,8 @@ profiles:
   # Runner V2 is the default runner since 0.29, Qwen3.8 is enabled on ROCm since
   # 0.28, the ROCm stack moved to torch 2.13 / Triton 3.8 (0.31), and 0.28
   # removed the `calculate_kv_scales` CLI flag that the 27B lanes still set
-  # (drop `calculateKvScales` from a Model before pinning it to this image). It
+  # (the vLLM backend no longer emits `--no-calculate-kv-scales` for an explicit
+  # false since the S1 branch, so those Models need no manifest change). It
   # intentionally bypasses every legacy 0.17 Qwen/Gemma patch; promote only
   # after full-checkpoint coherence and production-shape parity on gfx1100.
   # Rollback lineage: rocm-gfx1100-v026-native-w4a16-a106504c = ad93ae72.

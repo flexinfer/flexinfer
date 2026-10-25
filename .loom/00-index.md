@@ -39,6 +39,9 @@
 - Hardware-utilization sprints brainstorm (2026-06-03): `brainstorm-hardware-utilization-sprints-2026-06-03.md`
 - Hardware-utilization arc implementation plan (2026-06-03): `30-implementation-plan-hardware-utilization-2026-06-03.md`
 - RALPH model-tools Python 3.14 candidate (2026-08-01): `45-iteration-plan-model-tools-python314-canary-2026-08-01.md`
+- Research (2026-10-23): next gfx1100 feature — MTP on the Qwen3.8-27B lanes via a vLLM 0.32 native-W4A16 runtime, llama.cpp refresh, Sep–Oct 24 GB model census: `10-research-gfx1100-next-feature-2026-10-23.md`
+- Research (2026-10-24): Timestral-209M (Mistral zero-shot time-series forecaster) — thin snac-style `timestral` backend in the gfx906 stacked runtime pod, gated on a news-analyzer backtest kill-test: `10-research-timestral-209m-2026-10-24.md`
+- Research (2026-10-24): Qwen-Image 2.1 "Uncensored-Quantized" candidate + image-inference support audit — bring Qwen-Image 2.1 to the XTX stacked runtime pod (diffusers 0.40 → 0.41 pin, GGUF/NF4 loading, pipeline-aware call contract), derivative as the second arm behind official weights, riskiest assumption = sd.cpp-converted GGUF loads in diffusers: `10-research-qwen-image-21-uncensored-2026-10-24.md`
 
 ## Current Goal (2026-10-21) - gfx1100 recovery: XTX still drops under load, runtime pins unpullable
 
@@ -84,6 +87,35 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       cannot re-push them: k3s containerd discards unpacked layer blobs, only snapshots remain. Any
       restart of a dedicated gfx1100 lane fails to pull (policy Always). Controller now uses
       IfNotPresent for digest pins so a resident image starts without the registry (this branch).
+- [x] 2026-10-24 (branch `claude/gfx1100-flexinfer-support-904425`): **gfx1100 next-feature program,
+      slice S1 PASS** — vLLM 0.26 → 0.32.0 on the native-W4A16 profile (research
+      `10-research-gfx1100-next-feature-2026-10-23.md`, matrix row `gfx1100-native-w4a16-v032-2026-10-24`).
+      Image `runtime@sha256:8ff8d14a…` (`pinned-8ff8d14aa9ec`): the official 0.32 ROCm base already
+      carries the gfx1100 `_rocm_C` op (12 code objects), so the Dockerfile's new `VLLM_REBUILD=auto`
+      probe skipped the hour-long source rebuild; plugins ported (0.32 registers the Qwen3.5 text
+      classes itself; `FLEXINFER_QWEN35_MTP_HEAD=checkpoint` added for S2); backend stops emitting
+      `--no-calculate-kv-scales` (removed in 0.28, set on 12 lanes). Canary on the 5930k at the
+      workhorse envelope: V2 model runner, RDNA3W4A16LinearKernel, TRITON_ATTN, pool 140,753 tok /
+      2.15x after the KVPoolRecheck relaunch, probes 3/3 identical, 41.5 tok/s, prefix cache
+      10.7 s → 1.0 s, 0 restarts; one recovered HIPCachingAllocator OOM warning on a 7.5K cold prefill
+      → promote at 0.95. Next: S2 MTP kill-test, S3 ROCM_SEGMENTED_ATTN A/B, S4 promotion.
+- [x] 2026-10-24 (same branch): **slice S2, the MTP kill-test — PASS on the riskiest assumption**
+      (research §7b/§7c, matrix row `gfx1100-native-w4a16-v032-mtp-2026-10-24`): on the S1 digest,
+      MTP K=2 with `FLEXINFER_QWEN35_MTP_HEAD=checkpoint` reached **pos-0 acceptance 0.80**, acceptance
+      length 2.35, **65 vs 41 tok/s single-stream (1.58x)** at short context but only 48 vs 40 (1.21x)
+      at 2K, 1.40x per request under concurrency 2, pool 1.55x vs 2.15x; probes identical, long greedy
+      answers diverge ~150–200 tokens in (the MTP-off engine is not bit-reproducible either); 0 faults.
+      Next: S3 segmented-attention A/B on the verify cost, a K=1/2/3 A/B, then S4 promotion as the
+      stacked runtime persona. S3 prepared 2026-10-25 (research §7d:
+      five-arm A/B at 32K, sweep points from the 7-day prompt histogram — workhorse p50 466 / p90 4,260
+      tokens, 76 % <= 2K). Preparation notes: Reading v0.32.0 showed the draft model is built from the target's `VllmConfig`,
+      so the biMEMO INT4 MTP block loads through the same AutoGPTQ config as the target and the
+      `config.json` patch the 0.23 attempt needed is gone; an offline probe in the S1 image confirmed
+      the plugin's `mtp_head=checkpoint`, the per-layer GPTQ decisions (`mtp.fc` fp16, seven INT4
+      linears) and the `Qwen3_5MTP` draft mapping. Manifest `deploy/debug/qwen38-27b-v032-mtp-canary.yaml`
+      (S1 + `speculativeConfig` mtp K=2 with the draft pinned to TRITON_ATTN, env via the command
+      wrapper), probe `scripts/verify-vllm-mtp.py` (counter-delta acceptance, parity hashes, soak).
+      Blocked on the S5 llama.cpp window (`muse-glimmer-30b-canary` at 520); operator applies after.
 - [x] 2026-10-22 (this branch, `claude/gfx1100-inference-optimization-323ab7`): **GPU health sentinel**
       so the next drop parks itself. Agent: sysfs-first per-card check (`current_link_speed=Unknown`
       on an awake card, EIO/EREMOTEIO on SMU-backed reads, vanished card) plus bounded vendor-tool
