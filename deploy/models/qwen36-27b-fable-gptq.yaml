@@ -45,6 +45,14 @@ spec:
   source: pvc://llm-models-nfs/qwen36-27b-fable/gptq-w4-g128
   cache:
     strategy: Local
+    # 2026-10-25: serve from the Local cache directly, as
+    # qwen36-27b-autoround-workhorse does on this node. With the flash loader
+    # on, its init container copies the 17 GB of shards into tmpfs and fails
+    # its pre-flight check on every start: "insufficient tmpfs space: need
+    # 16983.7 MB (+849 MB headroom) but only 7766.9 MB available" (this 63Gi
+    # node's tmpfs budget), so the lane could not boot after the 0.32 repin.
+    flashLoader:
+      enabled: false
   gpu:
     vendor: amd
     count: 1
