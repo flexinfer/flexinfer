@@ -19,12 +19,16 @@
 # 1,488 / p90 1,957 / p99 7,388. So the sweep weights 0.5K-4K, and a 32K lane
 # would still cover >99.6 % of real traffic.
 #
-# Image: the S1/S2 digest 8ff8d14a (pinned-8ff8d14aa9ec, still in Harbor), the
-# only 0.32 build whose text plugin has FLEXINFER_QWEN35_MTP_HEAD=checkpoint;
-# the live production image cd108c9e does not, so MTP must not run on it. It
-# is not resident on the 5930k any more (image GC); the pull shares the 0.32
-# base with cd108c9e and the node had 276 GB free on 2026-10-25 (memory floor
-# 200 GB). Autotune for the segmented kernels is on via --kernel-config in the
+# Image: b5afdb20 (pinned-b5afdb208c46, rocm-gfx1100-v032-native-w4a16-
+# e5532f9a), master's wheel-mode native-W4A16 build after !1139 merged, built
+# off-CI 2026-10-25 20:13-20:21Z on the 7900xtx Docker context while CI's
+# publish job was blocked. It is the production Dockerfile lineage (cd108c9e,
+# the live workhorse image, is the same Dockerfile before !1139) plus text
+# plugin 0.9.0 with FLEXINFER_QWEN35_MTP_HEAD=checkpoint, which MTP needs:
+# cd108c9e lacks it, so MTP must not run there. Offline probe in this image:
+# mtp_head=checkpoint, mtp.fc fp16, mtp.layers.0 INT4, draft Qwen3_5MTP. The
+# 5930k pull shares the v0.32.0 base with the resident cd108c9e; the node had
+# 276 GB free on 2026-10-25 (memory floor 200 GB). Autotune for the segmented kernels is on via --kernel-config in the
 # command wrapper (the vLLM backend has no kernel-config key); it only affects
 # ROCM_SEGMENTED_ATTN arms and runs once per compile cache.
 #
@@ -85,10 +89,9 @@ metadata:
     flexinfer.ai/promotion-state: debug-canary-v032-s3-attention-ab
 spec:
   backend: vllm
-  # The S1/S2 digest: vLLM 0.32.0+rocm723 with text plugin 0.9.0, the only
-  # 0.32 build with FLEXINFER_QWEN35_MTP_HEAD=checkpoint (tag
-  # pinned-8ff8d14aa9ec). Not resident on the 5930k; one pull, see header.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:8ff8d14aa9ec03ab9ae5db21cf15be8059f2a22a2af4fd64ebed32bd6c04287f
+  # Master's 0.32 native-W4A16 build with text plugin 0.9.0 (MTP head policy
+  # checkpoint); tag pinned-b5afdb208c46. One pull on the 5930k, see header.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b5afdb208c46c8b21d93443a512167aa2a6007b2471d245411c8d647d38a3f40
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     # 19.0 GB artifact, served as-is: no on-disk config.json surgery (0.32
