@@ -251,9 +251,10 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       aggregate 44.8 tok/s, host 302 W / ≤ 90 °C with 0 SMU and 0 amdgpu errors, 0 restarts. Row
       `workhorse-vllm-v032-2026-10-25`. XTX canary stays on `cd108c9e` as the functional reference.
 - [ ] Move the workhorse (and the XTX canary) from the off-CI `cd108c9e` to the CI-built 0.32
-      digest from master pipeline 34797 job 414103 once it publishes (same Dockerfile lineage plus
-      the newer text plugin); the other session's S3/S4 will use that digest, leaving one 0.32
-      lineage. Then drop `ad93ae72` from the 5930k prewarm list.
+      digest `b06b06fe` (master pipeline 34797 job 414103, published 2026-10-25 22:38Z, prewarmed
+      on the 5930k by !1166; same Dockerfile lineage plus the newer text plugin). The parked
+      5930k lanes already run it. The other session's S3 uses its own off-CI `b5afdb20` (same
+      inputs). Then drop `ad93ae72` from the 5930k prewarm list.
 - [x] 2026-10-25 14:2xZ 5930k disk: operator-approved deletion of the orphaned probe caches
       (`qwen38-27b-v032-canary`, `-v032-mtp-canary`, `-gguf-spec-probe`, `-gguf-vulkan-probe`,
       `muse-glimmer-30b-canary` + `compile-cache-qwen38-27b-v032{,-mtp}-5930k`): re-confirmed no
@@ -262,11 +263,19 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       free; Longhorn had already fenced the disk via platform/gitops!989). Node Ready, no
       DiskPressure, workhorse/agent/prewarm pods untouched. Longer term the 5930k root still
       cannot hold Longhorn replicas, model caches and 300 GB of images together.
-- [ ] Repin the three parked 5930k lanes that lost `2e9652ed` (`qwen36-27b-autoround-workhorse`,
-      `qwen36-27b-fable-gptq`, `qwen35-9b-ablit-rp-5930k`) to `ad93ae72` (0.26) or the 0.32
-      lineage (drop `calculateKvScales`; 0.32 is now soaked on this card, but each lane still
-      needs its own boot + probe); they cannot start on that node until then. The 3.4 GB
-      `compile-cache-qwen35-9b-v023-5930k` belongs to the 0.23 image and dies with the repin.
+- [x] 2026-10-25 22:43–23:41Z the three parked 5930k lanes that lost `2e9652ed` run the
+      CI-built 0.32 image `b06b06fe` (operator-approved; !1166, plus !1167 and !1168 to make two
+      of them boot). Each was booted and probed in turn, then parked again with the card back on
+      the workhorse: Qwen3.6 workhorse 73,068 / 1.11x at 0.96, 41.6 tok/s; Fable 46,811 / 5.71x
+      eager, 7.6 tok/s (0.23: 8.7); 9B twin 694,559 / 3.03x, 103.5 tok/s base and 68.5 with the
+      `nsfw-rp-twin` adapter. All probes coherent, 0 restarts after the fixes, host clean. Row
+      `parked-5930k-lanes-v032-2026-10-25`.
+- [ ] 5930k disk: `compile-cache-qwen35-9b-v023-5930k` (3.4 GB of 0.23 artifacts) is now
+      unreferenced (the twin moved to `compile-cache-qwen35-9b-v032-5930k`) — delete on operator
+      approval.
+- [ ] Fable decodes 13 % slower on 0.32 in its eager envelope (7.6 vs 8.7 tok/s). Graph mode
+      (`enforceEager: false`) would likely put it near the Qwen3.6 lane's ~40 tok/s, but that is
+      a separate qualification (VRAM at 0.90, coherence), not part of the repin.
 
 ## Previous Goal (2026-09-13) - Idle gfx1100 cards → loom-core / Mills utilization
 

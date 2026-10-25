@@ -1223,3 +1223,34 @@ Sources:
     `/metrics`; `scripts/verify-vllm-canary.py`; scratchpad `soak-5930k-v032.log` and
     `soak-5930k-v032-sampler.log`
   - ssh `cblevins-5930k`: `journalctl -k`, `df`
+
+### Three parked 5930k lanes repinned to the CI-built vLLM 0.32 image and boot-probed
+
+- What changed:
+  - !1166 (operator-approved) repinned `qwen36-27b-autoround-workhorse`, `qwen36-27b-fable-gptq`
+    and `qwen35-9b-ablit-rp-5930k` from the lost 0.23 runtime `2e9652ed` to the CI-built 0.32
+    image `b06b06fe` (pipeline 34797 job 414103), dropped `calculateKvScales`, moved the twin to
+    a fresh compile cache and prewarmed the image on the 5930k.
+  - Two lanes needed a fix to boot: !1167 gave the Qwen3.6 lane 0.96 GPU memory (0.32 counts
+    CUDA graph memory, so 0.94 was 0.01 GiB short of one 64K sequence), and !1168 turned off
+    Fable's flash loader (17 GB of shards against a 7.7 GB tmpfs budget).
+  - Each lane was booted and probed in turn and parked again; all probes coherent, 0 restarts
+    after the fixes, host clean. Row `parked-5930k-lanes-v032-2026-10-25`.
+- Why:
+  - The lanes could not start anywhere: Harbor retention and the 10-24 image GC took their only
+    image.
+- How (5930k-textgen election):
+  - 500-priority lanes cannot take a card from a busy 500 holder. Patch the lane to 520 with
+    `flexinfer_update_model`, activate it, and keep its demand fresh with 1-token requests
+    through flexinfer-proxy every 30 s so it holds the card after Flux restores 500.
+  - A 550 lane takes the card on activation and never hands it back to a 500 holder by itself;
+    patch it to 500 after the probe. In both cases, let the lane's demand age past 2 min and
+    ping the workhorse through the proxy; it reloads warm in about 2 min.
+  - Waiting for CI: the `buildkit-rocm-images` group is unordered, so 414103 sat 7 h behind a
+    stale unified build from pipeline 34766. The next-feature session built the same inputs
+    off-CI (`b5afdb20`) meanwhile; the lanes kept the operator's CI instruction.
+- Sources:
+  - !1166 (0724adf44), !1167 (b25d02408), !1168 (37239e0f9); `glab api` job 414103 trace
+  - lane boot logs (`kubectl logs` / `--previous`), `/v1/models`, `loraadapters` status
+  - scratchpad `verify-vllm-lane.py`, `proxy_keepalive.py`, `lane{1,2,3}-*-probes.log`,
+    `lane{1,2,3}-*-sampler.log`
