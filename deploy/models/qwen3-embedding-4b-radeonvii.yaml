@@ -68,7 +68,6 @@ spec:
     ubatchSize: 512
     parallel: 1
     nGPULayers: 999
-    flashAttention: false
     fitOff: true
     metrics: true
     rocrVisibleDevices: "0"

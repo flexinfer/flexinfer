@@ -68,7 +68,6 @@ spec:
     # Reranking mode: sets llama-server --reranking (pooling head RANK, serves
     # /v1/rerank). Mutually exclusive with embedding — do NOT set both.
     reranking: true
-    flashAttention: false
     fitOff: true
     metrics: true
     rocrVisibleDevices: "0"

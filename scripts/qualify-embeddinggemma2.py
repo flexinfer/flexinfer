@@ -485,7 +485,7 @@ def wait_runtime_model(process, base_url, name=None, timeout=180):
 def runtime_load_specs(args):
     common = {
         "nGPULayers": 999,
-        "flashAttention": False,
+        # flashAttention stays unset (llama.cpp auto), matching the deployed lanes.
         "fitOff": True,
         "threads": 4,
         "embedding": True,

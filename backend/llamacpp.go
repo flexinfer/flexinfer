@@ -135,9 +135,17 @@ func (b *LlamaCppBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--threads", fmt.Sprintf("%d", threads))
 	}
 
-	// Flash attention (GPU only, skip for CPU)
-	if spec.GPUVendor != GPUVendorCPU && spec.ConfigBool("flashAttention", false) {
-		args = append(args, "--flash-attn", "on")
+	// Flash attention is tri-state. Every pinned build (b8173 and later, plus
+	// rocm-gfx906-patched-v3 at e8e2616) defaults to --flash-attn auto, which
+	// enables FA wherever the device supports it, gfx906 and CPU included. So
+	// flashAttention: false must pass "off" rather than omit the flag; leaving
+	// the key unset keeps auto. "on" stays GPU-only as before.
+	if flashAttention, ok := spec.ConfigOptionalBool("flashAttention"); ok {
+		if !flashAttention {
+			args = append(args, "--flash-attn", "off")
+		} else if spec.GPUVendor != GPUVendorCPU {
+			args = append(args, "--flash-attn", "on")
+		}
 	}
 
 	// Multimodal projection file for vision models (e.g., LLaVA, Qwen-VL)

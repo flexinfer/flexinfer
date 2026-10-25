@@ -292,6 +292,57 @@ func TestLlamaCppBackendArgs_RerankingFlag(t *testing.T) {
 	})
 }
 
+func TestLlamaCppBackendArgs_FlashAttention(t *testing.T) {
+	b := &LlamaCppBackend{}
+
+	tests := []struct {
+		name      string
+		gpuVendor GPUVendor
+		config    map[string]any
+		want      string // "" means no --flash-attn flag
+	}{
+		{name: "true on AMD", gpuVendor: GPUVendorAMD, config: map[string]any{"flashAttention": true}, want: "on"},
+		{name: "true on NVIDIA", gpuVendor: GPUVendorNVIDIA, config: map[string]any{"flashAttention": true}, want: "on"},
+		{name: "false on AMD", gpuVendor: GPUVendorAMD, config: map[string]any{"flashAttention": false}, want: "off"},
+		{name: "false on NVIDIA", gpuVendor: GPUVendorNVIDIA, config: map[string]any{"flashAttention": false}, want: "off"},
+		{name: "string true", gpuVendor: GPUVendorAMD, config: map[string]any{"flashAttention": "true"}, want: "on"},
+		{name: "string false", gpuVendor: GPUVendorAMD, config: map[string]any{"flashAttention": "false"}, want: "off"},
+		{name: "unset keeps auto", gpuVendor: GPUVendorAMD, config: map[string]any{}, want: ""},
+		{name: "nil config keeps auto", gpuVendor: GPUVendorAMD, config: nil, want: ""},
+		{name: "unparseable keeps auto", gpuVendor: GPUVendorAMD, config: map[string]any{"flashAttention": "maybe"}, want: ""},
+		{name: "true on CPU stays omitted", gpuVendor: GPUVendorCPU, config: map[string]any{"flashAttention": true}, want: ""},
+		{name: "false on CPU turns it off", gpuVendor: GPUVendorCPU, config: map[string]any{"flashAttention": false}, want: "off"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := b.Args(&ModelSpec{
+				ModelPath: "/models/test/model.gguf",
+				GPUVendor: tt.gpuVendor,
+				Config:    tt.config,
+			})
+			count := 0
+			for _, arg := range args {
+				if arg == "--flash-attn" {
+					count++
+				}
+			}
+			if tt.want == "" {
+				if count != 0 {
+					t.Fatalf("expected no --flash-attn, got %#v", args)
+				}
+				return
+			}
+			if count != 1 {
+				t.Fatalf("expected exactly one --flash-attn, got %d in %#v", count, args)
+			}
+			if got := argValue(args, "--flash-attn"); got != tt.want {
+				t.Fatalf("--flash-attn = %q, want %q in args %#v", got, tt.want, args)
+			}
+		})
+	}
+}
+
 func TestLlamaCppBackendImage(t *testing.T) {
 	b := &LlamaCppBackend{}
 

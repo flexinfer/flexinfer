@@ -35,7 +35,6 @@ spec:
     parallel: 1
     nGPULayers: 999
     threads: 4
-    flashAttention: false
     fitOff: true
     metrics: true
     rocrVisibleDevices: "0"
