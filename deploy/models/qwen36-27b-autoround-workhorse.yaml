@@ -105,8 +105,17 @@ spec:
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
     schedulerReserveFullISL: true
-    gpuMemoryUtilization: "0.94"
-    # fp16 KV on purpose — see header. Pool is ~68K tokens (1.05x @64K).
+    # 0.94 -> 0.96 with the 0.32 repin (2026-10-25): vLLM 0.32 charges CUDA
+    # graph memory to the startup profile (0.23 did not), so at 0.94 the
+    # engine refused to start on every boot, cold and warm: "max seq len
+    # (65536), 4.16 GiB KV cache is needed, which is larger than the available
+    # KV cache memory (4.15 GiB) ... estimated maximum model length is 65072".
+    # 0.96 is what the 0.32 qwen38 workhorse runs on this same card (whole
+    # card, vramEstimateMB 22000); it keeps the qualified 64K / fp16 / graph
+    # envelope instead of trimming context or flipping KV to fp8.
+    gpuMemoryUtilization: "0.96"
+    # fp16 KV on purpose — see header. Pool is ~68K tokens (1.05x @64K) on
+    # 0.23.
     # `calculateKvScales: false` left with the 0.32 repin (2026-10-25): vLLM
     # 0.28 removed the flag, and with fp16 KV it never had an effect here.
     kvCacheDtype: auto
