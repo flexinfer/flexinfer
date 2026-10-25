@@ -938,6 +938,14 @@ type CacheStatus struct {
 	// the job reported sizes, or populated out of band, carries no measurement
 	// until its cache job next runs.
 	SizeBytes int64 `json:"sizeBytes,omitempty"`
+	// StagedKey identifies what a node-local HF cache stage put on disk: a
+	// digest of the source, the resolved download options, the cache directory
+	// and the node selector the stage ran under. It is set only while the cache
+	// is ready. A spec edit that leaves it unchanged keeps the cache ready
+	// across the generation bump instead of re-running the stage Job; any
+	// change to it stages again.
+	// +optional
+	StagedKey string `json:"stagedKey,omitempty"`
 	// Quantization records the result of weight quantization.
 	// +optional
 	Quantization *QuantizationStatus `json:"quantization,omitempty"`

@@ -23,6 +23,21 @@ FlexInfer supports caching at two layers:
 
 If `spec.cache` is omitted, FlexInfer infers a strategy based on GPU sharing.
 
+### Spec edits and a staged `Local` cache
+
+Once an `HF://` source is staged into a `Local` cache, `status.cache.stagedKey`
+records what the stage put on disk and where: a digest of `spec.source`, the
+resolved download options (`ggufFile`, a relative `mmproj`, `hfAllowPatterns`,
+`hfIgnorePatterns`, `hfRevision`), `vaeRepo`, the cache directory
+(`spec.cache.hostPath`) and `spec.nodeSelector`. A spec edit that leaves the
+key unchanged, such as a backend flag, `contextSize`, resources or labels,
+keeps the cache ready across the generation bump. No stage Job runs, and a
+runtime-served lane stays on its runtime without a reload. An edit that changes
+the key stages again before the lane is served from the new files.
+
+A status written before `stagedKey` existed is read by generation, as before;
+the controller records the key on its next pass over a ready cache.
+
 ## v1alpha2 SharedPVC provisioning
 
 For backends that mount `/models`:
