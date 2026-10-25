@@ -18,8 +18,11 @@ package controllers
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -472,11 +475,13 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			job := &batchv1.Job{}
 			err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
 			if errors.IsNotFound(err) {
-				if localCacheStageAlreadyReady(original) {
+				stagedKey := localHFStagedKey(model)
+				if localCacheStageAlreadyReady(original, stagedKey) {
 					model.Status.Cache.Ready = true
 					model.Status.Cache.JobName = jobName
 					model.Status.Cache.JobPhase = "Succeeded"
 					model.Status.Cache.Message = "local cache previously staged"
+					model.Status.Cache.StagedKey = stagedKey
 					setModelCondition(model, aiv1alpha2.ConditionModelCached, true, "CacheStage", "local cache previously staged")
 					if err := r.patchModelStatus(ctx, model, original); err != nil {
 						return false, err
@@ -526,6 +531,9 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			model.Status.Cache.JobPhase = jobPhase
 			model.Status.Cache.Message = message
 			model.Status.Cache.SizeBytes = r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache)
+			if ready {
+				model.Status.Cache.StagedKey = localHFStagedKey(model)
+			}
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheStage", message)
 			if err := r.patchModelStatus(ctx, model, original); err != nil {
 				return false, err
@@ -1153,8 +1161,8 @@ func modelCondition(conds []metav1.Condition, condType string) *metav1.Condition
 }
 
 // localCacheStageAlreadyReady reports whether a local HF cache stage already
-// completed for the current generation, so a TTL-GC'd stage Job must not be
-// recreated.
+// completed for what the spec stages now, so a TTL-GC'd stage Job must not be
+// recreated. stagedKey is localHFStagedKey for the current spec.
 //
 // It intentionally does NOT match on the Cached condition's Reason. Once the
 // backend comes up, setModelStatus rewrites that reason from "CacheStage" to
@@ -1162,16 +1170,61 @@ func modelCondition(conds []metav1.Condition, condType string) *metav1.Condition
 // "CacheStage", so after the stage Job's TTLSecondsAfterFinished (300s) GC'd it,
 // the guard failed every cycle, the stage Job was recreated with Ready=false,
 // and the model flapped 1->0->1 — a cold start every 5 minutes. Matching on the
-// persisted Cache.Ready sub-status plus generation (reason-agnostic) mirrors the
-// non-HF cache-check guard and re-stages only on a genuine spec change.
-func localCacheStageAlreadyReady(model *aiv1alpha2.Model) bool {
+// persisted Cache.Ready sub-status (reason-agnostic) mirrors the non-HF
+// cache-check guard.
+//
+// Readiness carries across a generation bump when the recorded StagedKey still
+// matches. Every spec edit bumps the generation, and gating on it alone re-ran
+// the stage Job for config-only edits too, holding the cache not-ready until
+// the Job exited "already cached". For a runtime-managed lane that window was
+// enough to leave the runtime path: on 2026-10-25 removing flashAttention:
+// false from deploy/models created throwaway Deployments, flipped Service
+// selectors and restarted the gfx906 runtime's subprocesses. A status written
+// before StagedKey existed still falls back to the generation check.
+func localCacheStageAlreadyReady(model *aiv1alpha2.Model, stagedKey string) bool {
 	if model == nil || model.Status.Cache == nil || !model.Status.Cache.Ready {
 		return false
 	}
 	cond := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelCached)
-	if cond == nil {
+	if cond == nil || cond.Status != metav1.ConditionTrue {
 		return false
 	}
-	return cond.Status == metav1.ConditionTrue &&
-		cond.ObservedGeneration == model.Generation
+	if cond.ObservedGeneration == model.Generation {
+		return true
+	}
+	return model.Status.Cache.StagedKey != "" && model.Status.Cache.StagedKey == stagedKey
+}
+
+// localHFStagedKeyFields are the spec inputs that decide what a Local HF cache
+// stage puts on disk and on which node. Spec fields the stage never reads (the
+// backend's flags, resources, labels) are deliberately absent.
+type localHFStagedKeyFields struct {
+	Source         string            `json:"source"`
+	AllowPatterns  []string          `json:"allowPatterns"`
+	IgnorePatterns []string          `json:"ignorePatterns"`
+	Revision       string            `json:"revision"`
+	VAERepo        string            `json:"vaeRepo"`
+	CachePath      string            `json:"cachePath"`
+	NodeSelector   map[string]string `json:"nodeSelector"`
+}
+
+// localHFStagedKey digests localHFStagedKeyFields for the model's current
+// spec; status.cache.stagedKey records it once the stage is ready. Patterns
+// are sorted because their order does not change the file set
+// snapshot_download selects, and encoding/json writes map keys sorted.
+func localHFStagedKey(model *aiv1alpha2.Model) string {
+	opts := resolveHFDownloadOptions(model)
+	nodeSelector, _ := modelNodeSelectorAndTolerations(model)
+	// Strings, string slices and a string map always encode.
+	raw, _ := json.Marshal(localHFStagedKeyFields{
+		Source:         model.Spec.Source,
+		AllowPatterns:  slices.Sorted(slices.Values(opts.allowPatterns)),
+		IgnorePatterns: slices.Sorted(slices.Values(opts.ignorePatterns)),
+		Revision:       opts.revision,
+		VAERepo:        model.Spec.ConfigString("vaeRepo", ""),
+		CachePath:      resolveLocalCachePath(model),
+		NodeSelector:   nodeSelector,
+	})
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:])
 }

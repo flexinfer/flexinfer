@@ -906,6 +906,15 @@ spec:
                       until its cache job next runs.
                     format: int64
                     type: integer
+                  stagedKey:
+                    description: |-
+                      StagedKey identifies what a node-local HF cache stage put on disk: a
+                      digest of the source, the resolved download options, the cache directory
+                      and the node selector the stage ran under. It is set only while the cache
+                      is ready. A spec edit that leaves it unchanged keeps the cache ready
+                      across the generation bump instead of re-running the stage Job; any
+                      change to it stages again.
+                    type: string
                   strategy:
                     description: Strategy being used.
                     type: string

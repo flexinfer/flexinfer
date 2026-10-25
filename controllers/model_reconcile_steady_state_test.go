@@ -519,6 +519,10 @@ func TestEnsureCache_PreviouslyStagedSteadyPassWritesNothing(t *testing.T) {
 			}},
 		},
 	}
+	// The steady state records the staged artifact's key; a status written
+	// before stagedKey existed takes one backfill write (see
+	// TestEnsureCacheLocalHFStageRecordsStagedKey).
+	model.Status.Cache.StagedKey = localHFStagedKey(model)
 	cl := fake.NewClientBuilder().
 		WithScheme(s).
 		WithObjects(model).
