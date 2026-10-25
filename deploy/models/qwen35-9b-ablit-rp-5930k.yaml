@@ -30,12 +30,20 @@ metadata:
     flexinfer.ai/promotion-state: apc-canary-running
 spec:
   backend: vllm
-  # Pin the same runtime the primary was certified on. Without this the twin
-  # got the 5930k's older prewarmed image, which predates
-  # --gdn-prefill-backend / --scheduler-reserve-full-isl (crash-looped on
-  # unrecognized args) and hand-patches qwen3-next instead of speaking
-  # qwen3_5 natively.
-  image: "registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d"
+  # Pin an explicit runtime. Without a pin the twin got the 5930k's older
+  # prewarmed image, which predates --gdn-prefill-backend /
+  # --scheduler-reserve-full-isl (crash-looped on unrecognized args) and
+  # hand-patches qwen3-next instead of speaking qwen3_5 natively.
+  # 2026-10-25 (issue #74 S2, vLLM currency): REPINNED from the vLLM 0.23
+  # runtime `2e9652ed` the primary was certified on. That digest is gone from
+  # Harbor and from this node; the XTX primary still runs it from its node
+  # snapshot, so the twin now runs a newer engine than the primary. New pin:
+  # the CI-built vLLM 0.32 native-W4A16 image (master pipeline 34797). Every
+  # flag this lane renders exists in 0.32 (GDN prefill backend, cudagraph and
+  # KV metrics, LoRA) except --no-calculate-kv-scales (key dropped below).
+  # Re-qualified by a boot + probe, base and nsfw-rp-twin adapter, on
+  # 2026-10-25 (matrix row parked-5930k-lanes-v032-2026-10-25).
+  image: "registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2"
   source: pvc://qwen35-9b-oci-5930k/qwen35-9b
   cache:
     strategy: Local
@@ -44,7 +52,10 @@ spec:
     storageClass: longhorn
     compilationCache:
       enabled: true
-      hostPath: /var/lib/flexinfer/compile-cache-qwen35-9b-v023-5930k
+      # 2026-10-25: fresh path for the 0.32 engine. The old
+      # compile-cache-qwen35-9b-v023-5930k (3.4 GB of 0.23 artifacts) is now
+      # unreferenced and can be deleted from the node.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen35-9b-v032-5930k
       sizeLimit: 4Gi
   gpu:
     vendor: amd
@@ -105,11 +116,11 @@ spec:
     disableAiter: true
     rocmCustomPagedAttn: false
     hipVisibleDevices: "0"
-    # Do NOT flip to true: inert on this runtime — vLLM 0.23 force-disables
-    # calculate_kv_scales for hybrid GDN models and pins scales at 1.0
-    # regardless (probed on the primary 2026-08-01, MR !956 reverted).
+    # `calculateKvScales` left with the 0.32 repin (2026-10-25): vLLM 0.28
+    # removed runtime KV-scale calculation and its flag. It was inert here
+    # anyway (vLLM 0.23 force-disabled it for hybrid GDN models and pinned
+    # scales at 1.0; probed on the primary 2026-08-01, MR !956 reverted).
     # fp8-KV outlier clipping needs checkpoint-embedded scales; see #69.
-    calculateKvScales: false
     # THE gdn-prefix-cache-flip canary, live (vanilla parity proven
     # 2026-07-25: pinned-runtime boot, 0 restarts, served completions,
     # baseline depth-recall probes recorded). GDN hybrids checkpoint
