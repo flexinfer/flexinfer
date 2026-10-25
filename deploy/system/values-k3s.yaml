@@ -34,6 +34,16 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
+    # 2026-10-25: master dc73879c (master pipeline 34797) = the b02367ad build
+    # below plus !1156 and !1139. llama.cpp: draftMax/draftMin render as
+    # --spec-draft-n-max/--spec-draft-n-min for draft-* spec types and for a
+    # declared llamacppBuild >= 8955 (the b8955 rename), and an explicit
+    # draft-mtp window is its own certificate capability
+    # (draft-mtp-draft<N>-min<M>). vLLM: calculateKvScales: false no longer
+    # renders --no-calculate-kv-scales (removed in vLLM 0.28). Also carries
+    # !1153 (flashAttention: false renders --flash-attn off). No running lane
+    # sets any affected key; the nine calculateKvScales lanes are scaled to
+    # zero. 113eb124 (b02367ad) is the safe fallback.
     # 2026-10-24: master b02367ad = the 60009c34 build below plus !1133: the
     # certified llama.cpp feature surface accepts specType draft-mtp behind a
     # flexinfer.ai/backend-certificate-llamacpp-draft-mtp GPUProfile triple
@@ -63,8 +73,8 @@ controller:
     # a517165a is also safe):
     # sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376
     # (tag 20261023-142445).
-    digest: "sha256:113eb1246a4cad88c34b8cfe96eef085dfa8ab16a613d70c147b5581787c82f6"
-    tag: "20261024-134916"
+    digest: "sha256:4ba76b65e990e9fd9f73276f1ff7f8c83c16b3b386bead16854f42a3eab581f4"
+    tag: "20261025-154512"
   resources:
     limits:
       cpu: 1000m
