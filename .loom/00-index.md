@@ -106,7 +106,9 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       at 2K, 1.40x per request under concurrency 2, pool 1.55x vs 2.15x; probes identical, long greedy
       answers diverge ~150–200 tokens in (the MTP-off engine is not bit-reproducible either); 0 faults.
       Next: S3 segmented-attention A/B on the verify cost, a K=1/2/3 A/B, then S4 promotion as the
-      stacked runtime persona. Preparation notes: Reading v0.32.0 showed the draft model is built from the target's `VllmConfig`,
+      stacked runtime persona. S3 prepared 2026-10-25 (research §7d:
+      five-arm A/B at 32K, sweep points from the 7-day prompt histogram — workhorse p50 466 / p90 4,260
+      tokens, 76 % <= 2K). Preparation notes: Reading v0.32.0 showed the draft model is built from the target's `VllmConfig`,
       so the biMEMO INT4 MTP block loads through the same AutoGPTQ config as the target and the
       `config.json` patch the 0.23 attempt needed is gone; an offline probe in the S1 image confirmed
       the plugin's `mtp_head=checkpoint`, the per-layer GPTQ decisions (`mtp.fc` fp16, seven INT4

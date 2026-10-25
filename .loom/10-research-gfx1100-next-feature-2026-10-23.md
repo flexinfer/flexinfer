@@ -205,7 +205,9 @@ KV (64K/1 seq or 32K/2 seqs).
    waiting for the 5930k window).
 3. **S3 — segmented attention A/B** on the same canary: `attentionBackend:
    ROCM_SEGMENTED_ATTN`, autotune on, fp16 KV; decode at 2K/30K/60K and
-   verify-step cost with MTP on, against TRITON_ATTN + fp8 KV.
+   verify-step cost with MTP on, against TRITON_ATTN + fp8 KV. (Prepared
+   2026-10-25, §7d: `deploy/debug/qwen38-27b-v032-s3-attn-canary.yaml`, five
+   arms at 32K, sweep points re-chosen from production traffic.)
 4. **S4 — promotion**: XTX lane first (canary vehicle, soak under the cap),
    then the workhorse (`!1110` pattern), prewarm both nodes, drift gate, and
    the `pinned-*` Harbor tag so retention cannot delete the digest again.
@@ -439,6 +441,56 @@ workhorse's p50 356-token answers gain the most) and turns the 0.32 base
 into the runtime persona rather than two dedicated Deployments (owner
 direction 2026-10-24: one stacked image per GPU class, backend swaps inside
 the runtime pod, no pod churn).
+
+## 7d. S3 PREPARATION (2026-10-25): the attention A/B, sized by real traffic
+
+State on 2026-10-25: another session promoted the 5930k workhorse to the 0.32
+wheel-mode image `cd108c9e` (!1155, Ready 14:50Z, pool 140,753 / 2.15x at 64K,
+MTP off) after canarying the XTX lane on it (!1144); both lanes logged zero
+allocator/HIP/engine-failure lines in 24 h. That image's text plugin predates
+`FLEXINFER_QWEN35_MTP_HEAD`, so MTP must not run on it: the MTP-capable 0.32
+build is still the S1/S2 digest `8ff8d14a` (pinned in Harbor) until !1139
+merges and CI publishes the native-W4A16 tag from master.
+
+**Production prompt sizes** (vLLM `vllm:request_prompt_tokens`, 7 days to
+2026-10-25 15:10Z):
+
+| Lane | Requests | Prompt p50 / p90 / p99 | Share <=1K / <=2K / <=5K / <=20K | Generation p50 / p90 |
+|---|---:|---|---|---|
+| 5930k workhorse | 12,625 | 466 / 4,260 / 15,563 | 61.1 / 76.0 / 94.6 / 99.6 % (none > 50K) | 297 / 587 |
+| XTX Mills lane | 366 | 1,488 / 1,957 / 7,388 | — | 281 / 467 |
+
+So S2's numbers already bracket most traffic (1.58x at ~30 tokens, 1.21x at
+2K), and the open question is the 2K-16K band, not 60K. A 32K lane would
+still serve > 99.6 % of requests, which makes the fp16-KV segmented backend
+a realistic production shape if it wins.
+
+**Segmented attention on gfx1100** (v0.32.0
+`vllm/v1/attention/backends/rocm_segmented_attn.py`,
+`vllm/v1/attention/ops/segmented_attention.py`): RDNA only (`on_gfx1x`), fp8
+KV only on gfx12 (`supports_combination` returns "FP8 segmented attention
+requires gfx12"), head size 64/128/256 (Qwen3.8 full attention: 256), GQA
+1-16 (6 here), decoder only, query length up to 8192 (`MAX_QUERY_LEN`), so
+4,096-token prefill chunks and the K+1 verify both run in it; it shares a
+Triton cache between target and draft and autotunes only when
+`kernel_config.enable_rocm_segmented_attn_autotune` is set (the vLLM backend
+has no kernel-config key, so the canary appends `--kernel-config` in its
+command wrapper). fp16 KV roughly halves the pool: S2's 101,544 fp8 tokens
+with the draft resident become ~50K, under one 64K sequence, so every arm
+runs at 32K.
+
+**Canary** `deploy/debug/qwen38-27b-v032-s3-attn-canary.yaml`: five arms on
+one Model, sequenced with `kubectl patch` (which the agent session can run;
+only `apply`/`create` need the operator): B segmented + fp16 + MTP K=2, C
+segmented + fp16, D TRITON + fp8, A TRITON + fp8 + MTP K=2, optional A1
+TRITON + fp8 + MTP K=1. Probe `scripts/verify-vllm-mtp.py --phase measure
+--contexts 512,2048,4096,16384,28672` (new: a single-stream sweep with a
+unique prefix per point, so each TTFT is a cold prefill, and per-point
+acceptance from the counter deltas; `measure` enforces coherence only). The
+decision rule is written in the manifest before the data: MTP goes to the
+workhorse if its traffic-weighted decode speedup on the production backend
+is >= 1.25 with pos-0 acceptance >= 0.70; segmented replaces TRITON_ATTN only
+if it beats it by >= 10 % at 16K/28K without > 20 % worse TTFT.
 
 ## 8. Sources
 

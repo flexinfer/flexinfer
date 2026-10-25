@@ -1,6 +1,8 @@
 """The MTP probe must compute acceptance from counter deltas and fail closed."""
 
 import argparse
+import contextlib
+import io
 import importlib.util
 import json
 import os
@@ -105,6 +107,53 @@ class VerdictTests(unittest.TestCase):
     def test_slow_decode_or_incoherence_fails(self):
         self.assertTrue(mtp.verdict(args(), results(short=41.5), self.spec))
         self.assertTrue(mtp.verdict(args(), results(coherent=False), self.spec))
+
+
+class ContextSweepTests(unittest.TestCase):
+    def test_parse_contexts_sorts_and_dedupes(self):
+        self.assertEqual(mtp.parse_contexts("8192, 2048,8192"), [2048, 8192])
+        self.assertEqual(mtp.parse_contexts(""), [])
+
+    def test_parse_contexts_rejects_bad_entries(self):
+        for raw in ("2k", "100", "300000"):
+            with self.assertRaises(ValueError):
+                mtp.parse_contexts(raw)
+
+    def _sweep(self, metrics_texts):
+        calls = []
+        texts = iter(metrics_texts)
+        original_chat, original_prompt = mtp.chat, mtp.sized_prompt
+        mtp.sized_prompt = lambda base, model, target, nonce=None: f"p{target}"
+        mtp.chat = lambda base, model, prompt, max_tokens: calls.append(prompt) or {
+            "answer": "Rain forms when...", "prompt_tokens": 2048, "completion_tokens": 256,
+            "ttft_s": 2.0, "decode_tps": 50.0}
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                rows = mtp.context_sweep(
+                    "http://x", "m", [2048],
+                    metrics=lambda base: mtp.parse_spec_metrics(next(texts)))
+        finally:
+            mtp.chat, mtp.sized_prompt = original_chat, original_prompt
+        self.assertEqual(calls, ["p2048"])
+        return rows
+
+    def test_sweep_reports_per_point_acceptance_and_prefill(self):
+        (row,) = self._sweep([METRICS, scaled(3)])
+        self.assertEqual(row["prefill_tps"], 1024.0)
+        self.assertAlmostEqual(row["spec"]["pos0_acceptance"], 0.8)
+        self.assertNotIn("spec_error", row)
+
+    def test_sweep_records_a_point_without_drafts(self):
+        (row,) = self._sweep([METRICS, METRICS])
+        self.assertNotIn("spec", row)
+        self.assertIn("no drafts", row["spec_error"])
+
+
+class MeasurePhaseTests(unittest.TestCase):
+    def test_measure_gates_coherence_only(self):
+        slow = results(short=41.0, two_k=40.0, ttft=5.0)
+        self.assertEqual(mtp.verdict(args("measure"), slow, None), [])
+        self.assertTrue(mtp.verdict(args("measure"), results(coherent=False), None))
 
 
 class CompareTests(unittest.TestCase):

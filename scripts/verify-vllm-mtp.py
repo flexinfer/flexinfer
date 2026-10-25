@@ -14,7 +14,11 @@ vLLM spec-decode counters before and after a fixed workload and reports:
     greedy 256-token parity generations whose text hashes are compared across
     phases with --compare (MTP on vs the same digest with MTP off);
   - single-stream decode throughput at a short and a ~2K-token context, and a
-    concurrency-2 soak of --soak-pairs request pairs.
+    concurrency-2 soak of --soak-pairs request pairs;
+  - with --contexts, a single-stream sweep at each prompt size (cold prefill
+    TTFT, decode tok/s and that request's own draft acceptance), which is how
+    S3 compares attention backends with MTP on and off. --phase measure turns
+    the throughput and acceptance gates off for such A/B arms.
 
 The thresholds are the S2 pass bar from
 .loom/10-research-gfx1100-next-feature-2026-10-23.md §7. Image identity,
@@ -32,6 +36,7 @@ import sys
 import threading
 import time
 import urllib.request
+import uuid
 
 SPEC_COUNTERS = (
     "vllm:spec_decode_num_drafts",
@@ -272,6 +277,97 @@ def context_prompt(base, model):
     raise ValueError("could not construct a ~2K-token context prompt")
 
 
+def sized_prompt(base, model, target, nonce=None, tolerance=0.10):
+    """A prompt of ``target`` +/- tolerance tokens that ends in a long novel task.
+
+    ``nonce`` opens the prompt with a unique line so consecutive sweep points
+    (and arms) never share a cached prefix: the TTFT it yields is a cold
+    prefill of the whole context.
+    """
+    low, high = target * (1 - tolerance), target * (1 + tolerance)
+    head = f"Session {nonce}.\n" if nonce else ""
+    repeats = max(1, target // 16)
+    for _ in range(8):
+        filler = (
+            "Note {i}: sensor {i} reported nominal temperature and pressure today.\n"
+        )
+        prompt = (
+            head
+            + "Context log:\n"
+            + "".join(filler.format(i=i) for i in range(repeats))
+            + "\nIgnore the log above. "
+            + DECODE_PROMPT
+        )
+        with request(
+            base,
+            "/tokenize",
+            {
+                "model": model,
+                "add_generation_prompt": True,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+        ) as response:
+            count = json.load(response)["count"]
+        if low <= count <= high:
+            return prompt
+        repeats = max(1, round(repeats * target / count))
+    raise ValueError(f"could not construct a ~{target}-token context prompt")
+
+
+def context_sweep(base, model, targets, max_tokens=256, metrics=None):
+    """Single-stream decode, cold prefill and draft acceptance at each context.
+
+    Each point is one request against a unique prefix. When the server
+    speculates, the spec-decode counter delta around that one request gives the
+    point's own acceptance, which is what shows how MTP's verify cost and
+    acceptance move with context.
+    """
+    metrics = metrics or spec_metrics
+    rows = []
+    for target in targets:
+        prompt = sized_prompt(base, model, target, nonce=uuid.uuid4().hex[:12])
+        before = metrics(base)
+        result = chat(base, model, prompt, max_tokens)
+        after = metrics(base)
+        row = {
+            "name": "context",
+            "target_tokens": target,
+            "prompt_tokens": result["prompt_tokens"],
+            "completion_tokens": result["completion_tokens"],
+            "ttft_s": result["ttft_s"],
+            "prefill_tps": (
+                round(result["prompt_tokens"] / result["ttft_s"], 1)
+                if result["ttft_s"] > 0
+                else None
+            ),
+            "decode_tps": result["decode_tps"],
+            "answer": result["answer"][:80],
+        }
+        if before is not None and after is not None:
+            try:
+                row["spec"] = spec_delta(before, after)
+            except ValueError as exc:
+                row["spec_error"] = str(exc)
+        rows.append(emit(row))
+    return rows
+
+
+def parse_contexts(raw):
+    """Parse ``--contexts 2048,8192`` into sorted unique ints in [256, 262144]."""
+    if not raw:
+        return []
+    values = []
+    for part in raw.split(","):
+        part = part.strip()
+        if not part.isdigit():
+            raise ValueError(f"--contexts entries must be integers, got {part!r}")
+        value = int(part)
+        if not 256 <= value <= 262144:
+            raise ValueError(f"--contexts entries must be in [256, 262144], got {value}")
+        values.append(value)
+    return sorted(set(values))
+
+
 def emit(record):
     print(json.dumps(record), flush=True)
     return record
@@ -320,6 +416,10 @@ def verdict(args, results, spec):
     for name in ("arithmetic", "extraction", "recall_2k"):
         if not results[name]["coherent"]:
             failures.append(f"{name}: unexpected answer")
+    if args.phase == "measure":
+        # A/B arms (S3): only coherence gates; throughput, TTFT and acceptance
+        # are the measurements being compared, not pass/fail bars.
+        return failures
     if results["recall_2k"]["ttft_s"] >= 3:
         failures.append("recall TTFT >= 3 seconds")
     if results["decode_short_median_tps"] < args.min_decode_tps:
@@ -398,6 +498,10 @@ def run(args):
     result["name"] = "decode_2k"
     results["decode_2k"] = emit({**result, "answer": result["answer"][:80]})
 
+    results["contexts"] = (
+        context_sweep(base, args.model, args.contexts) if args.contexts else []
+    )
+
     if args.soak_pairs > 0:
         results["soak"] = emit(
             {"name": "soak", **soak(base, args.model, args.soak_pairs)}
@@ -420,6 +524,10 @@ def run(args):
         "failures": failures,
         "decode_short_median_tps": results["decode_short_median_tps"],
         "decode_2k_tps": results["decode_2k"]["decode_tps"],
+        "contexts": [
+            {k: v for k, v in row.items() if k not in ("name", "answer")}
+            for row in results["contexts"]
+        ],
         "spec_decode": spec,
         "parity": {name: results[name]["sha256"] for name, _ in PARITY_PROMPTS},
         "parity_text": {name: results[name]["answer"] for name, _ in PARITY_PROMPTS},
@@ -486,9 +594,21 @@ def main(argv=None):
     parser.add_argument("--model")
     parser.add_argument(
         "--phase",
-        choices=("mtp", "baseline"),
+        choices=("mtp", "baseline", "measure"),
         default="mtp",
-        help="mtp enforces the acceptance gates; baseline only records",
+        help=(
+            "mtp enforces the acceptance and throughput gates; baseline enforces "
+            "throughput only; measure (A/B arms) enforces coherence only"
+        ),
+    )
+    parser.add_argument(
+        "--contexts",
+        default="",
+        help=(
+            "comma-separated prompt sizes in tokens for a single-stream context "
+            "sweep (decode, cold prefill and per-point acceptance), e.g. "
+            "2048,8192,16384,28672"
+        ),
     )
     parser.add_argument("--min-pos0", type=float, default=0.70)
     parser.add_argument("--min-acceptance-length", type=float, default=1.6)
@@ -514,12 +634,17 @@ def main(argv=None):
         parser.error("--model is required unless --compare is used")
     if not 0 <= args.soak_pairs <= 200:
         parser.error("--soak-pairs must be between 0 and 200")
+    try:
+        args.contexts = parse_contexts(args.contexts)
+    except ValueError as exc:
+        parser.error(str(exc))
     return run(args)
 
 
 if __name__ == "__main__":
-    # Bound the entire in-pod run; 50 soak pairs at ~40 tok/s take ~6 minutes.
-    signal.alarm(1500)
+    # Bound the entire in-pod run; 50 soak pairs at ~40 tok/s take ~6 minutes,
+    # and a 2K-28K context sweep adds about 4 more.
+    signal.alarm(2100)
     try:
         sys.exit(main())
     except Exception as exc:
