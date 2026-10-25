@@ -59,6 +59,13 @@ func (rc *RuntimeCache) ForModel(ctx context.Context, nodeSelector map[string]st
 	return nil, nil
 }
 
+// Endpoints returns the runtime pods found by the last refresh.
+func (rc *RuntimeCache) Endpoints() []*pkgrt.RuntimeEndpoint {
+	rc.mu.RLock()
+	defer rc.mu.RUnlock()
+	return append([]*pkgrt.RuntimeEndpoint(nil), rc.endpoints...)
+}
+
 // StartRefreshLoop starts a background goroutine that refreshes the cache
 // on the configured TTL interval.
 func (rc *RuntimeCache) StartRefreshLoop(ctx context.Context) {

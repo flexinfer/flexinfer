@@ -39,31 +39,10 @@ func (a *K8sModelActivator) TriggerScaleUp(ctx context.Context, modelName string
 	// Try v1alpha2 Model first: update LastActiveTime to trigger controller scale-up.
 	m, err := a.getModel(ctx, modelName)
 	if err == nil {
-		// Retry on conflict since the controller may also be updating status.
-		for i := 0; i < 3; i++ {
-			if i > 0 {
-				m, err = a.getModel(ctx, modelName)
-				if err != nil {
-					return err
-				}
-			}
-
-			now := metav1.Now()
-			m.Status.LastActiveTime = &now
-			if err := a.client.Status().Update(ctx, m); err != nil {
-				if errors.IsConflict(err) {
-					slog.Debug("conflict updating lastActiveTime, retrying", "model", modelName, "attempt", i+1)
-					continue
-				}
-				return fmt.Errorf("failed to update Model lastActiveTime: %w", err)
-			}
-			return nil
+		if err := patchLastActiveTime(ctx, a.client, m); err != nil {
+			return fmt.Errorf("failed to update Model lastActiveTime: %w", err)
 		}
-		if a.modelHasFreshDemand(ctx, modelName, 30*time.Second) {
-			slog.Debug("lastActiveTime already fresh after status conflicts", "model", modelName)
-			return nil
-		}
-		return fmt.Errorf("failed to update Model lastActiveTime after 3 retries (conflict)")
+		return nil
 	}
 	if !errors.IsNotFound(err) {
 		return err
@@ -117,31 +96,27 @@ func (a *K8sModelActivator) TriggerScaleUp(ctx context.Context, modelName string
 	return nil
 }
 
-func (a *K8sModelActivator) modelHasFreshDemand(ctx context.Context, modelName string, maxAge time.Duration) bool {
-	m, err := a.getModel(ctx, modelName)
-	if err != nil || m.Status.LastActiveTime == nil {
-		return false
-	}
-	return time.Since(m.Status.LastActiveTime.Time) <= maxAge
+// patchLastActiveTime stamps m's LastActiveTime with a status merge patch that
+// carries only the timestamp. It cannot conflict with the controller's status
+// writes or drop status fields this binary's types do not know, so it stays
+// correct when m was read from the proxy's informer cache a few milliseconds
+// behind the API server.
+func patchLastActiveTime(ctx context.Context, c client.Client, m *aiv1alpha2.Model) error {
+	base := m.DeepCopy()
+	now := metav1.Now()
+	m.Status.LastActiveTime = &now
+	return c.Status().Patch(ctx, m, client.MergeFrom(base))
 }
 
 // TouchLastActiveTime updates the model's LastActiveTime so the controller
 // can backfill Model.Status.Phase for observability. Fire-and-forget.
 func (a *K8sModelActivator) TouchLastActiveTime(ctx context.Context, modelName string) {
-	for i := 0; i < 3; i++ {
-		m, err := a.getModel(ctx, modelName)
-		if err != nil {
-			return
-		}
-		now := metav1.Now()
-		m.Status.LastActiveTime = &now
-		if err := a.client.Status().Update(ctx, m); err != nil {
-			if errors.IsConflict(err) {
-				continue
-			}
-			slog.Debug("direct load: failed to touch lastActiveTime", "model", modelName, "error", err)
-		}
+	m, err := a.getModel(ctx, modelName)
+	if err != nil {
 		return
+	}
+	if err := patchLastActiveTime(ctx, a.client, m); err != nil {
+		slog.Debug("direct load: failed to touch lastActiveTime", "model", modelName, "error", err)
 	}
 }
 

@@ -229,3 +229,64 @@ func TestRecoverDirectLoadTargets_NilRuntimeCache(t *testing.T) {
 	// Should not panic.
 	p.recoverDirectLoadTargets(context.Background())
 }
+
+// A group reload that swaps two models' ports must re-point their cached
+// targets; targets on other pods and models that are not Ready stay put.
+func TestSyncDirectLoadTargets_FollowsRuntimePorts(t *testing.T) {
+	RegisterMetrics()
+	runtimeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v1/models", r.URL.Path)
+		_ = json.NewEncoder(w).Encode(map[string]any{"models": []map[string]any{
+			{"name": "bge-reranker", "state": "Ready", "port": 8001},
+			{"name": "orpheus", "state": "Ready", "port": 8003},
+			{"name": "gte", "state": "Ready", "port": 8000},
+			{"name": "loading", "state": "Loading", "port": 8005},
+		}})
+	}))
+	defer runtimeSrv.Close()
+	host, portStr, ok := strings.Cut(strings.TrimPrefix(runtimeSrv.URL, "http://"), ":")
+	require.True(t, ok)
+	apiPort, err := strconv.Atoi(portStr)
+	require.NoError(t, err)
+
+	p := &Proxy{runtimeCache: &RuntimeCache{
+		endpoints: []*pkgrt.RuntimeEndpoint{{PodName: "runtime-0", PodIP: host, Port: int32(apiPort), Ready: true}},
+		lastFetch: time.Now(),
+		ttl:       time.Hour,
+	}}
+	p.directLoadTargets.Store("bge-reranker", "http://"+host+":8003") // swapped with orpheus
+	p.directLoadTargets.Store("orpheus", "http://"+host+":8001")
+	p.directLoadTargets.Store("gte", "http://"+host+":8000")
+	p.directLoadTargets.Store("loading", "http://"+host+":8004")
+	p.directLoadTargets.Store("elsewhere", "http://10.0.0.9:8001")
+
+	p.syncDirectLoadTargets(context.Background(), &http.Client{Timeout: time.Second})
+
+	want := map[string]string{
+		"bge-reranker": "http://" + host + ":8001",
+		"orpheus":      "http://" + host + ":8003",
+		"gte":          "http://" + host + ":8000",
+		"loading":      "http://" + host + ":8004",
+		"elsewhere":    "http://10.0.0.9:8001",
+	}
+	for model, target := range want {
+		got, ok := p.directLoadTargets.Load(model)
+		require.True(t, ok, model)
+		assert.Equal(t, target, got, model)
+	}
+}
+
+func TestSyncDirectLoadTargets_RuntimeUnreachableKeepsTargets(t *testing.T) {
+	RegisterMetrics()
+	p := &Proxy{runtimeCache: &RuntimeCache{
+		endpoints: []*pkgrt.RuntimeEndpoint{{PodName: "runtime-0", PodIP: "127.0.0.1", Port: 1, Ready: true}},
+		lastFetch: time.Now(),
+		ttl:       time.Hour,
+	}}
+	p.directLoadTargets.Store("gte", "http://127.0.0.1:8003")
+
+	p.syncDirectLoadTargets(context.Background(), &http.Client{Timeout: time.Second})
+
+	got, _ := p.directLoadTargets.Load("gte")
+	assert.Equal(t, "http://127.0.0.1:8003", got)
+}
