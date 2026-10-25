@@ -56,7 +56,18 @@ spec:
   # other knob below is unchanged except gpuMemoryUtilization (see there).
   # Rollback = `2e9652ed` (still resident on this node, IfNotPresent, held
   # by the prewarm list): revert this line.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
+  # 2026-10-25 (issue #74 S2, vLLM currency 0.26 -> 0.32): PROMOTED to
+  # `cd108c9e` (rocm-gfx1100-v032-native-w4a16-3fc9c37f: the native-W4A16
+  # image on the upstream vLLM 0.32.0 ROCm wheel, Dockerfile from !1134,
+  # prewarmed here by !1143) after the XTX warm lane canaried it (row
+  # xtx-vllm-v032-2026-10-24): Model Runner V2, RDNA3W4A16LinearKernel,
+  # TRITON_ATTN, fla_autotuners=11, pool 129,582 tokens / 1.98x at 0.96 (0.26
+  # gave 1.81x on that card), probes identical. `calculateKvScales` left the
+  # config with this repin (flag removed upstream in 0.28, see below);
+  # everything else in the envelope is unchanged. Rollback = `ad93ae72`
+  # (resident here, Harbor pinned-ad93ae726bbe): revert this line and
+  # restore `calculateKvScales: false`.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99130cc98c3a45bd6e09c89a3b26cb21193c858fab9a99573c7d90
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     # 19.0 GB artifact. Serving needs NO on-disk config surgery (hfOverrides
@@ -166,7 +177,12 @@ spec:
     # fp8 KV (the 2026-08-16 context push moved this lane off fp16; research
     # doc 8c's dequant-tax note applied to the earlier runtime).
     kvCacheDtype: fp8_e4m3
-    calculateKvScales: false
+    # `calculateKvScales: false` left with the 0.32 repin (2026-10-25): vLLM
+    # 0.28 removed the deprecated runtime KV-scale calculation and its CLI
+    # flag, so the controller must not render `--no-calculate-kv-scales`
+    # (vllm serve rejects unknown flags). fp8 KV with static scales, which is
+    # what `false` selected, is the remaining behaviour. Restore the key only
+    # with a < 0.28 image.
     enforceEager: false
     # Hybrid-GDN prefix caching (owner decision 2026-10-03), the same recipe
     # as the warm XTX lane (flexinfer !1076/!1077) and the 9B RP primary:
