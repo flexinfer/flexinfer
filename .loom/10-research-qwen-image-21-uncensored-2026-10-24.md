@@ -43,6 +43,12 @@ gitops, and imagegen-ui sends every prompt to `gpt-4o-mini` for "enhance" by def
   with a diffusers-layout control at cosine 0.985 on identical inputs.
 - R3 has to carry the shim (§6b).
 
+**R1–R3 landed (2026-10-25, §4a)** on branch `feat/qwen-image21-diffusers-r1-r3`, in one MR with
+the draft arm-A canary `deploy/debug/qwen-image-21-canary.yaml` (official weights, NF4 on load).
+The diffusers 0.41.0 overlay and its build-time checks passed off-CI on the deployed serving
+digest `cfefae18`. The serving image itself builds only on master. Not yet run: anything on the
+GPU, image quality, and the cold-swap budget. Those are R4.
+
 Branch `claude/gfx1100-flexinfer-support-904425`. No cluster writes were made. The 5930k S2 MTP
 kill-test was left alone. Upstream facts come from the Hugging Face API, model cards and docs, and
 from third-party reports cited in §7.
@@ -514,6 +520,157 @@ R4 (the Qwen-Image 2.1 canary) is gated on that build and on the §6 kill-test.
 | R8 | Qwen-Image 2.1 edit, Turbo and RGBA surface | `/v1/images/edits` → `QwenImage21Pipeline(image=[…])` multi-reference. Turbo lane (official, clean) as the latency lane. RGBA passthrough to PNG. imagegen-ui `EDIT_MODELS` | `build/server-diffusers.py`, `deploy/models/*`, imagegen-ui | 1–2 d | Editing in imagegen-ui (currently off) | Edit of a reference keeps the subject; RGBA PNG has a non-trivial alpha |
 | R9 | Watch | vLLM-Omni refresh (day-0 Qwen-Image 2.1 with prefix KV and CUDA graphs; ROCm diffusion unproven; ours is 0.14). cuda-maxwell diffusers stacking (low value: the 980 Ti stays SD 1.5). FLUX.3 Klein in diffusers | — | — | — | — |
 
+### 4a. R1–R3 as landed (2026-10-25)
+
+Branch `feat/qwen-image21-diffusers-r1-r3`, one MR. Nothing was applied to the cluster, and no
+uncensored alias exists. The dedicated diffusers images (`Dockerfile.diffusers-rocm*`,
+`-cuda`) are untouched. They pick up the new `server-diffusers.py` on their next rebuild. All
+new imports are lazy and configured-only, so the server still loads on diffusers 0.30–0.40 [I].
+
+**R1: diffusers overlay** (`build/Dockerfile.runtime-serving`, `build/check-runtime-diffusers.py`)
+
+- The layer sits after the vLLM layers and before `COPY build/server-diffusers.py`. It runs
+  `pip install --no-deps diffusers==0.41.0 transformers==5.17.0`. The transformers pin is a no-op
+  on `cfefae18`, and holds the version on a cold-cache rebuild.
+- `scripts/check-runtime-patch-contracts.py` now enforces that position, the COPY and the check.
+- 0.41.0 rather than the newer 0.42.0: it is what §6b ran. 0.42.0 has the same GGUF BF16
+  behaviour, so a bump buys nothing for Qwen-Image 2.1.
+- The check runs after the COPY and fails the build unless all of these hold:
+  - the two pins are what imports;
+  - `QwenImage21Pipeline` and `QwenImage21Transformer2DModel.from_single_file` exist;
+  - the pipeline's `__call__` takes `true_cfg_scale`, `negative_prompt`, `image` and
+    `output_resolution`, and **no `guidance_scale`**;
+  - the `GGUFQuantizationConfig` / `BitsAndBytesConfig` / `PipelineQuantizationConfig` classes and
+    the shim's `GGUFLinear` / `GGUFParameter` / `dequantize_gguf_tensor` import;
+  - `Qwen3VLForConditionalGeneration` imports;
+  - gguf ≥ 0.10, and bitsandbytes ships a ROCm library;
+  - `import vllm` still works;
+  - `server-diffusers.py` imports.
+- **Off-CI proof** (2026-10-25 21:50–21:53Z) [V]. The serving image builds only on master. So the
+  exact overlay section was layered onto the deployed digest `cfefae18` on the `7900xtx` Docker
+  context, with CI's build args and no GPU devices.
+  - diffusers went 0.40.0 → 0.41.0; transformers 5.17.0 was already installed.
+  - Every check passed: gguf 0.17.1, bitsandbytes 0.50.2 with `libbitsandbytes_rocm72.so`,
+    vLLM 0.17.0.
+  - The overlay layer is **53.4 MB**, against the < 200 MB pull bar.
+  - The XTX kernel log showed no amdgpu, SMU or PCIe lines through the run. The proof images were
+    removed afterwards, and the host Docker store is back to one image.
+- **Not done**: the broad `Dockerfile.runtime` (gfx1100 unified, gfx906) still carries unpinned
+  diffusers. Only the serving persona runs the runtime DaemonSet. Mirror the overlay there when a
+  lane needs it.
+
+**R2: call contract** (`build/server-diffusers.py`)
+
+- **The adapter.** `_call_pipeline` → `_adapt_call_kwargs` → `_filter_call_kwargs` reads
+  `inspect.signature(pipe.__call__)` once per class.
+  - A pipeline that takes `**kwargs` (SDXL, SD 1.5) receives the same kwargs as before.
+  - A strict signature drops what it lacks and logs the drop once, instead of raising TypeError.
+  - Routed through it: generation, every `/v1/images/edits` branch, variations and warmup. Video
+    and audio are unchanged.
+- **Families `qwenimage21` and `qwenimage`.** Routed by `modelFamily`, by the model_index class
+  (`QwenImage21*` / `QwenImage*`) and by repo id. A dedicated load branch uses
+  `DiffusionPipeline` with the model_index class, ahead of the SDXL edit-mode branches.
+  - Defaults: 40 steps (Turbo 8; it samples `sample_sigmas` anyway) and true-CFG 1.0. v1: 50 steps,
+    4.0.
+- **CFG mapping.** The request `guidance_scale` → `true_cfg_scale`. An explicit request
+  `true_cfg_scale` or config `trueCfgScale` (`DEFAULT_TRUE_CFG_SCALE`) wins. Above 1 a blank
+  negative prompt is supplied, because the pipeline runs CFG only with one. At or below 1 the
+  negative prompt is dropped.
+- **New request fields**: `true_cfg_scale`, `output_resolution`.
+- **Startup LoRA** is gated on `hasattr(pipe, "load_lora_weights")`, not on a family allowlist.
+- **Reference edits (the cheap half of R8).** On a `qwenimage21` pipeline in the default
+  text2image mode, `/v1/images/edits` sends the upload as `image=[...]`.
+  - Size comes from `size`, or else from the reference's aspect ratio.
+  - A `mask` gets a 400: mark the region in the image instead.
+  - Not yet built: multi-reference uploads, RGBA, and imagegen-ui `EDIT_MODELS`.
+- **Not done:**
+  - (c) families `flux2`, `zimage`, `chroma`, `hidream`. The filter plus the AutoPipeline fallback
+    now carry their call shape, but their defaults are still the generic 20 steps / 7.5.
+  - (f) the hipBLASLt precedence on the runtime path. The canary manifest says to A/B it in the
+    stage B window.
+
+**R3: quantized component loading** (`build/server-diffusers.py`, `backend/diffusers.go`,
+`controllers/model_cache_side_artifacts.go`, `controllers/model_cache_jobs*.go`,
+`controllers/model_cache.go`)
+
+- **`transformerQuantization: gguf`.**
+  - The class comes from model_index (or `transformerClass`).
+  - The file is `transformerPath`, or `<model root>/.transformer/<transformerFile>`. Failing both,
+    it is fetched from `transformerRepo@transformerRevision` with a warning.
+  - The load is `from_single_file(…, GGUFQuantizationConfig(compute_dtype), config=<snapshot>,
+    subfolder="transformer")`, then the **§6b shim** (`_dequantize_non_linear_gguf`), then the
+    model is passed in as `transformer=`. FLUX takes a GGUF transformer through the same path.
+- **NF4 on load.**
+  - `transformerQuantization: nf4` (or `quantization: nf4`) quantizes the transformer or UNet for
+    any family. FLUX keeps its own NF4 path.
+  - `textEncoderQuantization: nf4` quantizes every transformers text encoder, using the
+    transformers `BitsAndBytesConfig` inside one `PipelineQuantizationConfig`.
+  - `computeDtype` sets the compute dtype of both.
+- **GPU placement.** NF4 GPU placement is now generic: bitsandbytes components stay where they
+  were loaded, and every other module moves individually. This is detected and configured, so the
+  FLUX NF4 path behaves as before.
+  - It also removes an `UnboundLocalError` (`quant_mode`) that any single-file checkpoint would
+    have hit after loading [I].
+- **Side-artifact staging.** The `HF://` stage, Local and SharedPVC, fetches `transformerFile`
+  from `transformerRepo` at `transformerRevision` into `<model cache dir>/.transformer/` after the
+  snapshot. The check is presence, not the marker:
+  - a re-run with the file in place downloads nothing;
+  - a changed `transformerFile` (the Q8_0 ↔ Q4_K_M A/B) fetches the new file alone and removes the
+    old one, without touching the snapshot;
+  - a download that ends without the file fails the Job.
+- **Staged key.** `status.cache.stagedKey` gains `transformerRepo` / `File` / `Revision` with
+  `omitempty`, so every existing staged Local lane keeps its key and the controller roll stages
+  nothing.
+- **Not done:**
+  - (d) persisting the NF4 text encoder.
+  - A SharedPVC prefetch Job is recreated only on a source change (the !1138 bug class), so a
+    `transformerFile` change there needs the Job deleted by hand.
+  - The SharedPVC copy Job skips dot-directories.
+  - A `transformerFile` edit inside the 300 s TTL of a finished Local stage Job reads that Job's
+    success. !1137's stale-Job check keys on download options only, so it should add the
+    side-artifact fields when it lands.
+- **Merge interplay with !1137 / !1138** (both open): they rewrite the same two stage scripts, so
+  the second MR to land rebases. !1137's legacy-marker adoption should skip `.transformer/` the way
+  it skips `.vae/`. Without that, a pinned lane with a side artifact re-stages once; no live lane
+  has one.
+
+**Tests**
+
+- `scripts/test_server_diffusers.py`, new CI job `server_diffusers_test`. 35 cases, run three
+  ways:
+  - **Bare `python:3.12-slim`** (heavy libraries stubbed): 33 run, 2 skip.
+  - **Host, mixed** real torch / fastapi / pydantic / PIL: 32 run.
+  - **Inside the overlay image**, real ROCm torch, diffusers 0.41.0, transformers 5.17.0:
+    34 run, 1 stub-only skip.
+  - What they cover:
+    - a QwenImage21-signature fake receives no `guidance_scale`, and generation, warmup and edits
+      map guidance onto `true_cfg_scale`;
+    - the SDXL kwargs are unchanged;
+    - family routing;
+    - side-file resolution;
+    - the GGUF / NF4 component kwargs, checked against the real config classes in the image;
+    - bitsandbytes placement;
+    - **the shim on a real BF16 `GGUFParameter`**, after which `RMSNorm` runs;
+    - the real 0.41.0 signature.
+- `controllers/model_cache_side_artifacts_test.go`. Besides env wiring and the backward-compatible
+  staged key, it **executes the real Local stage script** against a temp dir with a fake
+  huggingface_hub, in four cases: fresh stage, idempotent re-run, A/B switch without re-fetching
+  the snapshot, and a failed download → FATAL.
+- `backend/diffusers_test.go` covers the new env keys.
+
+**Draft canary**: `deploy/debug/qwen-image-21-canary.yaml`. It is arm A, official weights, NF4
+transformer + NF4 text encoder, not applied and not in `deploy/debug/kustomization.yaml`. It
+corrects the §5 sketch on four points:
+
+- `gpu.count: 2` with `hipVisibleDevices: "0"`: the XTX exposes the Raphael iGPU as the second
+  `amd.com/gpu`, like the warm Mills lane;
+- the official repo is 33.13 GB, with a 1.35 GB VAE file;
+- head `d26bb612` has weights byte-identical to `b3179ad3` (LFS oids checked), so both arms share
+  one snapshot;
+- `warmPolicy: ondemand` with `minReplicas: 1` for the window.
+
+Arm B's delta sits at the end of the file.
+
 ## 5. "Try it" plan for the candidate
 
 **Step 0: CPU only, no cluster (§6 K1 + K2).** Header dump first (~16 MB ranged download), then a
@@ -538,8 +695,9 @@ the digest on the XTX: the pull delta should be small thanks to the late overlay
 !1114/!1116 pattern), remove `image` and `dedicatedDeployment` from the manifest, and measure the
 in-place cold swap.
 
-**Debug manifest** (keep it in this doc; do not write it to `deploy/`). Keys marked R2/R3 do not
-exist yet.
+**Debug manifest** (the 2026-10-24 sketch for arm B; the R2/R3 keys it marks exist since §4a).
+Arm A, official weights, is drafted in `deploy/debug/qwen-image-21-canary.yaml`. That file
+supersedes this block on `gpu.count` (2 on the XTX) and on the arm order.
 
 ```yaml
 # deploy/debug/qwen-image-21-uc-canary.yaml — NOT APPLIED. Requires R1–R3 and §6 K2 PASS.

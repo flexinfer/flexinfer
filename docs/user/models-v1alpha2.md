@@ -127,6 +127,9 @@ on the source string alone:
   Gonzalomo/FluxPony or RealVisXL
 - `sd3` for Stable Diffusion 3 / 3.5 families
 - `sd15` for Stable Diffusion 1.5-derived pipelines such as InstructPix2Pix
+- `qwenimage21` for Qwen-Image 2.1 and its Turbo checkpoint (needs diffusers
+  0.41, which the gfx1100 serving runtime image carries); `qwenimage` for the
+  Qwen-Image v1 pipelines
 
 Any backend accepts `env`, a map of extra environment variables for the backend
 process, for example `env: {FLEXINFER_QWEN35_MTP_HEAD: checkpoint}`. Values
@@ -142,6 +145,28 @@ which setting to use instead.
 Common imagegen knobs in this repo include `pipelineMode`, `modelFamily`,
 `cpuOffload`, `quantization`, `useFp16`, `vaeRepo`, `vaePath`, `guidanceScale`,
 `numInferenceSteps`, `warmupResolutions`, and `warmPolicy`.
+
+The diffusers server passes a pipeline only the arguments its `__call__`
+accepts, so a request field a pipeline lacks is dropped instead of failing the
+request. Qwen-Image pipelines take true CFG: the request's `guidance_scale` (or
+`true_cfg_scale`, or the `trueCfgScale` default) becomes `true_cfg_scale`, and
+CFG runs only above 1 (Qwen-Image 2.1 defaults to 1.0, no CFG). Qwen-Image 2.1
+also serves `/v1/images/edits` in the default text-to-image mode, with the
+uploaded image as a reference image and no mask.
+
+Quantized components work for any image family:
+
+- `transformerQuantization: nf4` quantizes the transformer (or UNet) on load;
+  `quantization: nf4` is the older spelling. `textEncoderQuantization: nf4`
+  does the same for the transformers text encoders. `computeDtype` sets the
+  compute dtype of both.
+- `transformerQuantization: gguf` loads the transformer from a GGUF single file:
+  `transformerFile` from `transformerRepo` (pinned with `transformerRevision`),
+  staged beside the snapshot (see [caching](caching.md)), or an explicit
+  `transformerPath`. The other components come from `spec.source`; set
+  `hfIgnorePatterns: ["transformer/*.safetensors"]` so the unused bf16
+  transformer is not downloaded. `transformerClass` overrides the class that
+  `model_index.json` names.
 
 Common `vllm` knobs include `maxModelLen`, `gpuMemoryUtilization`,
 `maxNumSeqs`, `maxNumBatchedTokens`, `startupTimeout` or

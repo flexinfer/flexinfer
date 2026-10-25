@@ -28,15 +28,37 @@ If `spec.cache` is omitted, FlexInfer infers a strategy based on GPU sharing.
 Once an `HF://` source is staged into a `Local` cache, `status.cache.stagedKey`
 records what the stage put on disk and where: a digest of `spec.source`, the
 resolved download options (`ggufFile`, a relative `mmproj`, `hfAllowPatterns`,
-`hfIgnorePatterns`, `hfRevision`), `vaeRepo`, the cache directory
-(`spec.cache.hostPath`) and `spec.nodeSelector`. A spec edit that leaves the
-key unchanged, such as a backend flag, `contextSize`, resources or labels,
-keeps the cache ready across the generation bump. No stage Job runs, and a
-runtime-served lane stays on its runtime without a reload. An edit that changes
-the key stages again before the lane is served from the new files.
+`hfIgnorePatterns`, `hfRevision`), `vaeRepo`, the transformer side artifact
+(`transformerRepo`, `transformerFile`, `transformerRevision`), the cache
+directory (`spec.cache.hostPath`) and `spec.nodeSelector`. A spec edit that
+leaves the key unchanged, such as a backend flag, `contextSize`, resources or
+labels, keeps the cache ready across the generation bump. No stage Job runs,
+and a runtime-served lane stays on its runtime without a reload. An edit that
+changes the key stages again before the lane is served from the new files.
 
 A status written before `stagedKey` existed is read by generation, as before;
 the controller records the key on its next pass over a ready cache.
+
+### Transformer side artifact (diffusers)
+
+A diffusers Model can take its transformer from a second Hugging Face repo, for
+example a GGUF quant of the official checkpoint: set `transformerRepo`,
+`transformerFile` and (recommended, as a full commit SHA) `transformerRevision`.
+The `HF://` stage, Local or SharedPVC, fetches that one file into
+`<model cache dir>/.transformer/<transformerFile>` after the snapshot, and the
+diffusers server loads it from there.
+
+The cache marker vouches for the snapshot only, so the file is checked by
+presence: a re-run with the file in place downloads nothing, and a changed
+`transformerFile` (switching quants) fetches the new file alone and removes the
+old one, without downloading the snapshot again. A stage whose download ends
+without the file fails instead of writing a ready cache.
+
+Limits: a SharedPVC prefetch Job is recreated only when `spec.source` changes,
+so a `transformerFile` change on a SharedPVC cache needs that Job deleted by
+hand. The SharedPVC copy Job (`pvc://` caches) does not copy dot-directories,
+so there the server falls back to downloading the file from `transformerRepo`
+at load time.
 
 ## v1alpha2 SharedPVC provisioning
 
