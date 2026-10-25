@@ -82,7 +82,7 @@ CPU inference is typically **10-50x slower** than modern GPUs. Real performance 
 - `threads` (int): `--threads` (set to physical cores, not hyperthreads)
 - `parallel` (int): `--parallel`
 - `nGPULayers` (int): `--n-gpu-layers` (ignored when `gpu.vendor: cpu`, which forces `0`)
-- `flashAttention` (bool): `--flash-attn on` (ignored when `gpu.vendor: cpu`)
+- `flashAttention` (bool): `true` passes `--flash-attn on` (not on `gpu.vendor: cpu`), `false` passes `--flash-attn off` on every vendor, and leaving it unset keeps llama.cpp's default `auto`, which turns FA on wherever the device supports it (gfx906 and CPU included)
 - `cacheTypeK` / `cacheTypeV` (string): `--cache-type-k` / `--cache-type-v`
 - `ubatchSize` (int): `--ubatch-size`
 - `metrics` (bool): `--metrics`

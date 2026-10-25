@@ -1,0 +1,82 @@
+# Qwen3-Reranker-0.6B (Q8_0 GGUF) on the Radeon VII (gfx906): cohere-style
+# /v1/rerank through llama-server --reranking.
+#
+# Qwen3-Reranker is a causal LM scored on the yes/no logits of its last token.
+# llama.cpp serves it only from a GGUF converted with the rerank head: the
+# ggml-org conversion below carries `cls.output.weight` [1024, 2],
+# `qwen3.pooling_type = 4` (rank), `classifier.output_labels = [yes, no]` and
+# the `tokenizer.chat_template.rerank` prompt (fixed instruct "Given a web
+# search query, retrieve relevant passages that answer the query"), so
+# `relevance_score` is P(yes) in [0, 1]. Community GGUFs converted as a plain
+# LM lack the head (mradermacher/Qwen3-Reranker-4B-GGUF has no cls.output) and
+# cannot rerank. The 4B reranker does not fit next to the 4B embedding lane.
+#
+# Qualified 2026-10-24 on runtime 90648c35 (llama.cpp b11335, matrix row
+# qwen3-embedding-gfx906-2026-10-24): 29/29 layers on the GPU, P(yes) within
+# 0.0084 of the FP32 transformers reference with identical ordering, 1,463 MiB
+# per process at ctx 1024, load 3.8 s, 20 documents in 0.9 s (ctx 2048).
+#
+# Co-residency depends on the gfx906 GPUProfile's GPU_MAX_HW_QUEUES=1; see the
+# header of qwen3-embedding-4b-radeonvii.yaml.
+#
+# Rank pooling cannot split an input across ubatches: every query+document
+# pair (plus ~70 template tokens) must fit ubatchSize = contextSize = 1024
+# (2048 cost 2.28 GB). Longer pairs fail the request with HTTP 400.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-reranker-0p6b-radeonvii
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/serve-paths: /v1/rerank
+    flexinfer.ai/purpose: "Qwen3-Reranker-0.6B /v1/rerank lane (cold, additive)"
+spec:
+  backend: llamacpp
+  source: HF://ggml-org/Qwen3-Reranker-0.6B-Q8_0-GGUF
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  cache:
+    strategy: Local
+    hostPath: /var/lib/flexinfer/models
+    size: 2Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: radeonvii-models
+    priority: 88
+    # Measured 1,463 MiB per process (model 604 + KV 112 + compute 598 MiB).
+    vramEstimateMB: 1700
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 15m
+    coldStartTimeout: 5m
+  config:
+    hfRevision: a02f48bb4f057028298c21fa033da2b30d7742d5
+    ggufFile: qwen3-reranker-0.6b-q8_0.gguf
+    reranking: true
+    contextSize: 1024
+    batchSize: 1024
+    ubatchSize: 1024
+    parallel: 1
+    nGPULayers: 999
+    fitOff: true
+    metrics: true
+    rocrVisibleDevices: "0"
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 4Gi
+  # Not the shared `rerank` label: bge-reranker-radeonvii stays the default
+  # until consumers opt in by model name.
+  serviceLabels:
+    - rerank-qwen3
+  litellm:
+    enabled: true
+    servedModelName: qwen3-reranker-0p6b-radeonvii
+    aliases:
+      - qwen3-reranker
+      - qwen3-reranker-0.6b

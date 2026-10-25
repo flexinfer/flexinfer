@@ -62,7 +62,6 @@ spec:
     nGPULayers: 999
     batchSize: 1024
     ubatchSize: 512
-    flashAttention: false
     fitOff: true
     metrics: true
     rocrVisibleDevices: "0"

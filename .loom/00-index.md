@@ -226,6 +226,38 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       Worklog entry "Controller reconcile hot loop — fixed in four MRs". Follow-up worth a look:
       controller-runtime's priority queue lets one self-looping Model starve every initial-list
       Model (single worker) — consider `MaxConcurrentReconciles` > 1.
+- [x] 2026-10-24 vLLM currency 0.26 → 0.32 (#74 S2), canary stage. !1134 moved the
+      `gfx1100-native-w4a16` profile onto the upstream `vllm/vllm-openai-rocm:v0.32.0` wheel and
+      dropped the hour-long from-source rebuild (the 0.32 wheel ships gfx1100 code objects; the
+      verify script asserts the ISA at build time); image `cd108c9e` built off-CI on the 7900xtx
+      docker daemon because the BuildKit group was saturated, prewarmed by !1143, canaried on the
+      XTX warm lane by !1144: Ready 5m19s after merge via one KVPoolRecheck relaunch, Model Runner
+      V2, pool 129,582 / 1.98x at 0.96 (1.81x on 0.26), probes 3/3 identical, 40.5 tok/s under the
+      cap, proxy `mills-warm` 0.48 s, 0 SMU errors. `calculateKvScales` left the manifest (flag
+      removed upstream in 0.28; every other 0.26-era manifest must drop it when repinned). Row
+      `xtx-vllm-v032-2026-10-24`.
+      Side effects: the 5930k prewarm pull pushed its root from 80 % to 87 % → kubelet
+      DiskPressure 17:36–17:47Z evicted DaemonSet pods (incl. the Longhorn instance-manager) and
+      the prewarm pod, and the 60/50 image GC deleted `2e9652ed` there for good (!1149 dropped the
+      dead entry; !1147 released the 18 GB `cfefae18` hold). My GPU-visible docker probe containers
+      on the XTX host coincided with the 17:01Z host stall (kubelet NotReady, Mills lane
+      rescheduled, a Longhorn restore killed) — never again on a serving host.
+- [ ] 0.32 soak mode (operator decision: active 10-min soak vs probes + passive Mills traffic — the
+      card dropped at 14:03Z today under the 2100 MHz cap), then promote the 5930k workhorse
+      (branch `ops/gfx1100-v032-workhorse-promote`, staged locally) once the 5930k has disk
+      headroom (83 % after the re-pulls; eviction line 85 %, Longhorn rebuilding onto it).
+- [x] 2026-10-25 14:2xZ 5930k disk: operator-approved deletion of the orphaned probe caches
+      (`qwen38-27b-v032-canary`, `-v032-mtp-canary`, `-gguf-spec-probe`, `-gguf-vulkan-probe`,
+      `muse-glimmer-30b-canary` + `compile-cache-qwen38-27b-v032{,-mtp}-5930k`): re-confirmed no
+      Model CR and zero open handles per directory (`lsof +D`), hostPath dirs so not reclaimable
+      through `flexinfer_evict_cache`, removed over ssh → 84 GiB freed, root 79 % → 70 % (283 GB
+      free; Longhorn had already fenced the disk via platform/gitops!989). Node Ready, no
+      DiskPressure, workhorse/agent/prewarm pods untouched. Longer term the 5930k root still
+      cannot hold Longhorn replicas, model caches and 300 GB of images together.
+- [ ] Repin the three parked 5930k lanes that lost `2e9652ed` (`qwen36-27b-autoround-workhorse`,
+      `qwen36-27b-fable-gptq`, `qwen35-9b-ablit-rp-5930k`) to `ad93ae72` (0.26) or `cd108c9e`
+      (0.32, drop `calculateKvScales`); they cannot start on that node until then. The 3.4 GB
+      `compile-cache-qwen35-9b-v023-5930k` belongs to the 0.23 image and dies with the repin.
 
 ## Previous Goal (2026-09-13) - Idle gfx1100 cards → loom-core / Mills utilization
 

@@ -1,0 +1,91 @@
+# Qwen3-Embedding-4B (Q8_0 GGUF) on the Radeon VII (gfx906) retrieval plane.
+#
+# Additive, cold lane: native 2560-dim, L2-normalized, last-token pooled
+# (the GGUF sets pooling_type=3 and add_eos_token, so llama-server appends
+# <|endoftext|> itself; clients must not). It is a separate vector space from
+# bge-large (1024) and gte-qwen2 (1536): adopting it means re-embedding both
+# documents and queries into new collections (.loom/qwen3-embedding-reindex-plan-2026-10-24.md).
+# Queries take the instruction prefix `Instruct: <task>\nQuery:<text>` (no space
+# after the colon); documents take none (docs/user/qwen3-embedding.md).
+#
+# Qualified 2026-10-24 on the fleet runtime image 90648c35 (llama.cpp b11335,
+# matrix row qwen3-embedding-gfx906-2026-10-24): 37/37 layers on the GPU, FP32
+# parity min cosine 0.99942, 956/956 tokens, per-process VRAM 5,105 MiB at the
+# config below, load 5.3 s warm / 16 s cold from NVMe. llama-server ignores the
+# OpenAI `dimensions` field (2560 is always returned) and returns 400
+# exceed_context_size_error past contextSize.
+#
+# Co-residency depends on the gfx906 GPUProfile's GPU_MAX_HW_QUEUES=1 (!1140):
+# the card has 24 HWS compute queues, and before the cap the warm lanes alone
+# held 22-26 (4-6 per llama-server). Any extra GPU process then oversubscribed
+# the runlist (`amdgpu: Runlist is getting oversubscribed`) and stalled live
+# gte/bge for 3-60 s. With the cap each llama-server holds 3: the warm plane is
+# 14 and the plane plus both Qwen3 lanes is 20. Do not remove the cap while
+# this lane is wired. See docs/dev/gfx906-gpu-support.md.
+#
+# Sizing: contextSize 4096 covers codebase-memory's 2000-token chunks plus the
+# prefix. Last-token pooling lets llama-server split one input across ubatches,
+# so ubatch 512 keeps the compute buffer at 305 MiB (ubatch 4096 cost 7.6 GB).
+# Priority 89 sits below every live member, so the lane never preempts them;
+# Humanizer (130) evicts it like the rest of the cold tier.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen3-embedding-4b-radeonvii
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/serve-paths: /v1/embeddings
+    flexinfer.ai/purpose: "Qwen3-Embedding-4B 2560-dim retrieval lane (cold, additive)"
+spec:
+  backend: llamacpp
+  source: HF://Qwen/Qwen3-Embedding-4B-GGUF
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  cache:
+    strategy: Local
+    hostPath: /var/lib/flexinfer/models
+    size: 6Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: radeonvii-models
+    priority: 89
+    # Measured 5,105 MiB per process (model 4,076 + KV 576 + compute 305 MiB
+    # + HIP context); token_embd stays CPU-mapped (393 MiB host).
+    vramEstimateMB: 5600
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 15m
+    coldStartTimeout: 5m
+  config:
+    hfRevision: f4602530db1d980e16da9d7d3a70294cf5c190be
+    ggufFile: Qwen3-Embedding-4B-Q8_0.gguf
+    embedding: true
+    pooling: last
+    contextSize: 4096
+    batchSize: 512
+    ubatchSize: 512
+    parallel: 1
+    nGPULayers: 999
+    fitOff: true
+    metrics: true
+    rocrVisibleDevices: "0"
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "4"
+      memory: 6Gi
+  # Own labels: never joins `embeddings`, `rag` or `embeddings-1536`, whose
+  # collections hold other vector spaces.
+  serviceLabels:
+    - qwen3-embedding
+    - embeddings-2560
+  litellm:
+    enabled: true
+    servedModelName: qwen3-embedding-4b-radeonvii
+    aliases:
+      - qwen3-embedding-4b
+      - qwen3-embedding

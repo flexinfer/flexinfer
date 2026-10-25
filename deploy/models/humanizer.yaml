@@ -41,8 +41,9 @@ spec:
     nGPULayers: 999
     batchSize: 512
     ubatchSize: 128
-    # Keep the first gfx906 qualification conservative; try FA separately.
-    flashAttention: false
+    # flashAttention stays unset (llama.cpp auto). The old `false` never
+    # reached llama-server, so the 2026-10-12 qualification ran on auto;
+    # `false` now renders --flash-attn off and would be an unqualified change.
     fitOff: true
     jinja: true
     metrics: true

@@ -518,7 +518,7 @@ class RuntimeTests(unittest.TestCase):
         for _, payload in specs:
             self.assertEqual(payload["backend"], "llamacpp")
             self.assertEqual(payload["config"]["nGPULayers"], 999)
-            self.assertFalse(payload["config"]["flashAttention"])
+            self.assertNotIn("flashAttention", payload["config"])
             self.assertTrue(payload["config"]["fitOff"])
             self.assertTrue(payload["config"]["embedding"])
             self.assertEqual(payload["config"]["threads"], 4)

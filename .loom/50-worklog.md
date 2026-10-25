@@ -1131,3 +1131,68 @@ Sources:
     `controller_runtime_reconcile_time_seconds`, `workqueue_depth{name="model"}`,
     `apiserver_request_duration_seconds` (p99 by verb), `flexinfer_proxy_requests_total{model=…}`
   - Harbor API: `flexinfer-controller` artifacts by push time (tags `<BUILD_TS>`, `master`, `<sha>`)
+
+## 2026-10-24
+
+### vLLM currency 0.26 → 0.32 on the gfx1100 native-W4A16 image — XTX canary PASS (functional)
+
+- What changed:
+  - !1134: `gfx1100-native-w4a16` profile → `vllm/vllm-openai-rocm:v0.32.0`; the from-source
+    rebuild is gone (the 0.32 wheel embeds gfx1100 code objects in every extension, checked by
+    scanning the `.so` files; `verify_isa_contract` now asserts it at build time; contract gate
+    forbids `git clone` / `pip wheel` / `VLLM_VERSION_OVERRIDE` from returning). Probes on the
+    builder first: plugins register on 0.32 (GPU-visible: `fla_autotuners=11`), every
+    controller-rendered flag exists except `--calculate-kv-scales` (removed in 0.28).
+  - Image `cd108c9e` built off-CI on the 7900xtx docker daemon from the exact commit (BuildKit
+    group saturated by other merges' multi-hour builds), prewarmed by !1143, canaried by !1144:
+    Ready in 5m19s via one KVPoolRecheck relaunch, Model Runner V2, pool 129,582 / 1.98x, probes
+    3/3 identical, 40.5 tok/s, proxy OK, 0 SMU errors. Row `xtx-vllm-v032-2026-10-24`.
+  - Workhorse promotion staged on `ops/gfx1100-v032-workhorse-promote` (not pushed).
+- Why:
+  - Six releases of currency and the gate for the September model survey's candidates.
+- Observed / cost:
+  - The 5930k prewarm pull tipped its root into kubelet DiskPressure (17:36–17:47Z): DaemonSet
+    evictions incl. the Longhorn instance-manager, one workhorse restart, and the image GC deleted
+    `2e9652ed` from the node for good (!1149 dropped the dead entry, !1147 released the
+    `cfefae18` hold). Three parked 5930k lanes now need a repin; ~86 GB of orphaned probe caches
+    await the operator.
+  - My GPU-visible docker probe containers on the XTX host coincided with the 17:01Z host stall
+    (kubelet NotReady, Mills lane rescheduled, the langfuse-s3 Longhorn restore killed); the XTX
+    was held GPU-quiet 17:58–19:17Z for the retry, which completed.
+  - The card itself dropped at 14:03Z today under the 2100 MHz cap (another session's finding);
+    the active soak is therefore an operator decision, not a default step.
+  - A GPU-less container gets vLLM's Triton placeholders, so plugin-common's FLA pruning raises
+    "safe autotune configurations are missing" there; it is not a 0.32 incompatibility.
+- Sources:
+  - !1134 (6fcd4af7), !1143 (bf4129c5), !1144 (8ea38cb1), !1147, !1149; Harbor artifact
+    `rocm-gfx1100-v032-native-w4a16-3fc9c37f`
+  - `docker --context 7900xtx run … vllm/vllm-openai-rocm:v0.32.0` probes (scratchpad
+    `probe*-v0.32.0.log`, `fla_introspect.py`); `vllm serve --help=all`
+  - `kubectl -n flexinfer-system logs qwen38-27b-xtx-warm-canary-8dd6746d4-ndnhd`;
+    `scripts/verify-vllm-canary.py`; `xtx_sampler.sh` log
+  - `kubectl get node cblevins-5930k` conditions/events; `crictl images --digests`; `du -xsh`
+    on the 5930k
+
+## 2026-10-25
+
+### 5930k orphaned probe caches removed (84 GiB) — operator-approved
+
+- What changed:
+  - Deleted five node-local model caches without a Model CR (`qwen38-27b-v032-canary`,
+    `qwen38-27b-v032-mtp-canary`, `qwen38-27b-gguf-spec-probe`, `qwen38-27b-gguf-vulkan-probe`,
+    `muse-glimmer-30b-canary`; 86 GB of safetensors/GGUF) and the two matching
+    `compile-cache-qwen38-27b-v032{,-mtp}-5930k` dirs (0.7 GB). Root 79 % → 70 %, 283 GB free.
+- Why:
+  - The 10-24 DiskPressure episode left ~19 GB of headroom above kubelet's eviction line; the
+    Longhorn fence (platform/gitops!989) stopped new replica placement but shrank nothing.
+- How / guardrails:
+  - `kubectl get models -A` vs directory names (the leftover `deploy/debug/*.yaml` probe
+    manifests are not applied by Flux), `lsof +D` = 0 handles per dir, hostPath dirs with a
+    `.flexinfer_cached_<sha>` marker so the PVC-based `flexinfer_evict_cache` does not apply,
+    `sudo rm -rf --one-file-system` per absolute path over ssh, `df` before/after.
+  - Left alone: `compile-cache-qwen35-9b-v023-5930k` (3.4 GB, Idle CR, dead 0.23 image — goes
+    with the repin), the legacy `/var/lib/flexinfer/flexinfer` MLC/HF dir (5.6 GB) and the empty
+    `*-nvme` dirs.
+- Sources:
+  - ssh `cblevins-5930k`: `du -xsh`, `lsof`, `df`; `kubectl get node/pods --field-selector
+    spec.nodeName=cblevins-5930k`; the only node event is the known `FreeDiskSpaceFailed` noise.

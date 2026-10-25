@@ -143,12 +143,23 @@ proxy:
   # Deployment (deploy/system/kokoro-tts/, CPU-only). Completes the voice stack
   # (ASR + diarization + TTS) under one base URL. Empty disables the route (503).
   kokoroUpstream: "http://kokoro-tts.flexinfer-system.svc:8880"
+  # 2026-10-24: CPU limit 200m -> 2000m, request 50m -> 100m. Go 1.26 sizes
+  # GOMAXPROCS from the cgroup quota with a floor of 2, so under a 200m limit
+  # two Ps burned the 20 ms per-100 ms quota in bursts and then stalled for
+  # the rest of the period: 14% of CFS periods throttled over 7 days (21-26%
+  # on 2026-10-24) at a 33m average. Through-proxy embeddings at idle took
+  # p50 52-68 ms / p90 150-170 ms against 14-18 ms direct to the lane Service,
+  # and 0.8 s p50 / 10 s max under ~5 req/s at 16:03Z. A 2000m limit matches
+  # GOMAXPROCS=2, so the runtime cannot outrun its quota; it is a ceiling, not
+  # a reservation, on the 4-core k3s-cp-1 (16% CPU requested). The request
+  # covers the 7-day p99 of 1-minute usage (94m, already capped by the old
+  # limit). Memory is unchanged: 7-day max working set 38 MiB.
   resources:
     limits:
-      cpu: 200m
+      cpu: 2000m
       memory: 256Mi
     requests:
-      cpu: 50m
+      cpu: 100m
       memory: 128Mi
   # Large models (18GB+ GGUF via Longhorn mmap) need 15-20min to load.
   # Set proxy timeouts above worst-case load time.
@@ -309,7 +320,18 @@ imagePrewarm:
         # 2026-09-13 (issue #74): keep the Model lanes' v023 serving image
         # (rocm-gfx1100-v023-native-w4a16-037d0bc1, recipe no longer at HEAD)
         # resident across Harbor/containerd GC.
-        - registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+        # 2026-10-24 LOST ON THIS NODE: during the 17:36-17:47Z DiskPressure
+        # episode kubelet evicted this prewarm pod and its 60/50 image GC then
+        # deleted every image the pod had been holding; the replacement pod
+        # re-pulled the Harbor-resident digests but 2e9652ed was deleted from
+        # Harbor on 2026-10-21 (ErrImagePull), so listing it here would keep
+        # the DaemonSet NotReady forever and fail every 5930k prewarm gate.
+        # The 7900xtx still holds it. The three 5930k lanes pinned to it
+        # (qwen36-27b-autoround-workhorse, qwen36-27b-fable-gptq,
+        # qwen35-9b-ablit-rp-5930k; all parked, minReplicas 0) cannot start on
+        # this node until they are repinned (ad93ae72 = 0.26 or cd108c9e =
+        # 0.32, both resident here).
+        #   registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
         # 2026-10-23 (issue #74 S1''): retired the two earlier serving-persona
         # digests, both deleted by Harbor retention on 2026-10-21 and no longer
         # pinned by any consumer: 522d0fe2 (rocm-gfx1100-serving-0d631512, S1)
@@ -323,10 +345,20 @@ imagePrewarm:
         # 34198, publish_serving_rocm_gfx1100, 17.0 GB) —
         # rocm-gfx1100-serving-b8637f35: Go 1.26.10, the runtime drain / fast-
         # swap / stall-detection / warm-coexistence commits already live on the
-        # gfx906 DaemonSet, same patch stack as ad93ae72 below. Held here so
-        # enabling the gfx1100-5930k DaemonSet is a container start, not a
+        # gfx906 DaemonSet, same patch stack as ad93ae72 below. Was held here
+        # so enabling the gfx1100-5930k DaemonSet is a container start, not a
         # 17 GB pull.
-        - registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
+        # 2026-10-24 HOLD RELEASED: the 5930k root reached 87 % (803 GB of
+        # 930 GB: 254 GB FlexInfer caches, 315 GB containerd, 144 GB Longhorn
+        # replicas) after the cd108c9e prewarm and kubelet went DiskPressure
+        # (imagefs.available < 15 %), evicting the agent, promtail,
+        # longhorn-manager and metallb-speaker DaemonSet pods in a loop and
+        # restarting the workhorse once at 16:19Z. This 18.2 GB snapshot backs
+        # a DaemonSet that is desired=0 by design, so it is the cheapest
+        # release; the pin stays as a comment (Harbor-resident,
+        # pinned-cfefae18061f, still held on the 7900xtx). Re-add it before
+        # enabling the gfx1100-5930k DaemonSet, or accept a 17 GB pull then.
+        #   registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
         # 2026-10-22 (issue #74 S2, vLLM currency): the rebuilt v0.26 native-
         # W4A16 serving image (rocm-gfx1100-v026-native-w4a16-a106504c, master
         # a106504c, plugin 0.8.0 on 0.26's FLA layout; Harbor tag

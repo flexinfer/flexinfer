@@ -153,6 +153,9 @@ func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Mode
 	}
 
 	if b.Name() == backend.NameLlamaCpp {
+		if err := validateLlamaCppFlashAttention(model); err != nil {
+			return err
+		}
 		selectedImage := resolveModelBackendImage(model, b, profileSpec, gpuVendor, gpuArch)
 		if err := validateLlamaCppFeatureCertificates(model, profile, gpuArch, selectedImage); err != nil {
 			return err
@@ -165,6 +168,26 @@ func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Mode
 	}
 
 	return nil
+}
+
+// validateLlamaCppFlashAttention rejects flashAttention: false next to a
+// quantized V cache. The backend renders false as --flash-attn off, and
+// llama.cpp refuses that context ("quantized V cache was requested, but this
+// requires Flash Attention"), so the load would fail on every attempt.
+func validateLlamaCppFlashAttention(model *aiv1alpha2.Model) error {
+	if model == nil {
+		return nil
+	}
+	spec := &backend.ModelSpec{Config: model.Spec.GetConfigMap()}
+	if flashAttention, set := spec.ConfigOptionalBool("flashAttention"); !set || flashAttention {
+		return nil
+	}
+	switch cacheTypeV := strings.ToLower(strings.TrimSpace(model.Spec.ConfigString("cacheTypeV", ""))); cacheTypeV {
+	case "", "f32", "f16", "bf16":
+		return nil
+	default:
+		return fmt.Errorf("spec.config.flashAttention=false cannot be combined with the quantized cacheTypeV %q: llama.cpp requires Flash Attention for a quantized V cache; unset flashAttention or use an f16 V cache", cacheTypeV)
+	}
 }
 
 func validateLlamaCppFeatureCertificates(model *aiv1alpha2.Model, profile *aiv1alpha2.GPUProfile, gpuArch, selectedImage string) error {
