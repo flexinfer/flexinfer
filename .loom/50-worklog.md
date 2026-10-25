@@ -1196,3 +1196,30 @@ Sources:
 - Sources:
   - ssh `cblevins-5930k`: `du -xsh`, `lsof`, `df`; `kubectl get node/pods --field-selector
     spec.nodeName=cblevins-5930k`; the only node event is the known `FreeDiskSpaceFailed` noise.
+
+### vLLM 0.32 promoted on the 5930k workhorse and soaked in production
+
+- What changed:
+  - !1155 (operator-approved, merged 14:39:47Z) repinned `qwen38-27b-autoround-workhorse` from
+    `ad93ae72` (0.26) to `cd108c9e` (0.32) and dropped `calculateKvScales`. Flux applied it at
+    about 14:42Z; one KVPoolRecheck relaunch later pod `grb55` was Ready at about 14:49Z with pool
+    140,753 / 2.15x (0.26 on this card: 128,837).
+  - Probes 3/3 identical at 41.5 tok/s; 10-min concurrency-2 soak 135/135 OK alongside live Mills
+    traffic, host clean (302 W, ≤ 90 °C, 0 SMU / amdgpu errors), 0 restarts. Row
+    `workhorse-vllm-v032-2026-10-25`.
+- Why:
+  - Finishes the 0.26 → 0.32 currency step on the Mills primary lane. The operator chose the 5930k
+    card for the active soak because the XTX dropped under its cap on 10-24.
+- Coordination / cost:
+  - A third session's next-feature program (S1 on its own off-CI 0.32 image `8ff8d14a`, S2 MTP)
+    shares this card. It held its S3 attention A/B canary and its controller roll (!1157) for the
+    soak window. It will run S3/S4 on the CI-built 0.32 digest from pipeline 34797 job 414103,
+    and the workhorse should follow onto that digest so one CI-built 0.32 lineage remains.
+  - The background merge watcher was blind for 25 min: zsh `echo "$J" | jq` turned `\n` inside
+    the MR description into raw newlines. Pipe API output into jq directly.
+- Sources:
+  - `glab api projects/4/merge_requests/1155` (merged_at, merge_commit 575df67c8)
+  - `kubectl -n flexinfer-system logs qwen38-27b-autoround-workhorse-76fbc5597f-grb55`; vLLM
+    `/metrics`; `scripts/verify-vllm-canary.py`; scratchpad `soak-5930k-v032.log` and
+    `soak-5930k-v032-sampler.log`
+  - ssh `cblevins-5930k`: `journalctl -k`, `df`

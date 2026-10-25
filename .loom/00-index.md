@@ -244,10 +244,16 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       dead entry; !1147 released the 18 GB `cfefae18` hold). My GPU-visible docker probe containers
       on the XTX host coincided with the 17:01Z host stall (kubelet NotReady, Mills lane
       rescheduled, a Longhorn restore killed) — never again on a serving host.
-- [ ] 0.32 soak mode (operator decision: active 10-min soak vs probes + passive Mills traffic — the
-      card dropped at 14:03Z today under the 2100 MHz cap), then promote the 5930k workhorse
-      (branch `ops/gfx1100-v032-workhorse-promote`, staged locally) once the 5930k has disk
-      headroom (83 % after the re-pulls; eviction line 85 %, Longhorn rebuilding onto it).
+- [x] 2026-10-25 0.32 promoted on the 5930k workhorse (!1155, operator-approved; operator chose to
+      soak the 5930k card rather than the XTX). Ready on `cd108c9e` at about 14:49Z after one
+      KVPoolRecheck relaunch: pool 140,753 / 2.15x (0.26: 128,837), probes 3/3 identical, 41.5 tok/s
+      (0.26: 40.6). 10-min concurrency-2 soak alongside live Mills traffic: 135/135 OK, p95 14.0 s,
+      aggregate 44.8 tok/s, host 302 W / ≤ 90 °C with 0 SMU and 0 amdgpu errors, 0 restarts. Row
+      `workhorse-vllm-v032-2026-10-25`. XTX canary stays on `cd108c9e` as the functional reference.
+- [ ] Move the workhorse (and the XTX canary) from the off-CI `cd108c9e` to the CI-built 0.32
+      digest from master pipeline 34797 job 414103 once it publishes (same Dockerfile lineage plus
+      the newer text plugin); the other session's S3/S4 will use that digest, leaving one 0.32
+      lineage. Then drop `ad93ae72` from the 5930k prewarm list.
 - [x] 2026-10-25 14:2xZ 5930k disk: operator-approved deletion of the orphaned probe caches
       (`qwen38-27b-v032-canary`, `-v032-mtp-canary`, `-gguf-spec-probe`, `-gguf-vulkan-probe`,
       `muse-glimmer-30b-canary` + `compile-cache-qwen38-27b-v032{,-mtp}-5930k`): re-confirmed no
@@ -257,8 +263,9 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       DiskPressure, workhorse/agent/prewarm pods untouched. Longer term the 5930k root still
       cannot hold Longhorn replicas, model caches and 300 GB of images together.
 - [ ] Repin the three parked 5930k lanes that lost `2e9652ed` (`qwen36-27b-autoround-workhorse`,
-      `qwen36-27b-fable-gptq`, `qwen35-9b-ablit-rp-5930k`) to `ad93ae72` (0.26) or `cd108c9e`
-      (0.32, drop `calculateKvScales`); they cannot start on that node until then. The 3.4 GB
+      `qwen36-27b-fable-gptq`, `qwen35-9b-ablit-rp-5930k`) to `ad93ae72` (0.26) or the 0.32
+      lineage (drop `calculateKvScales`; 0.32 is now soaked on this card, but each lane still
+      needs its own boot + probe); they cannot start on that node until then. The 3.4 GB
       `compile-cache-qwen35-9b-v023-5930k` belongs to the 0.23 image and dies with the repin.
 
 ## Previous Goal (2026-09-13) - Idle gfx1100 cards → loom-core / Mills utilization
