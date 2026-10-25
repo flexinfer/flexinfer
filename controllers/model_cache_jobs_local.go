@@ -257,6 +257,7 @@ func (r *ModelReconciler) jobForLocalHFPrefetch(model *aiv1alpha2.Model) (*batch
 			corev1.EnvVar{Name: "VAE_DEST_DIR", Value: vaeDest},
 		)
 	}
+	envVars = append(envVars, transformerSideArtifactEnvVars(model, "/models")...)
 
 	// EXPECTED_FILES is the post-download integrity check. We list the
 	// files we contractually require for the model to be loadable; the
@@ -272,7 +273,7 @@ func (r *ModelReconciler) jobForLocalHFPrefetch(model *aiv1alpha2.Model) (*batch
 		})
 	}
 
-	script := cacheSizeReportFunc + fmt.Sprintf(`
+	script := cacheSizeReportFunc + stageTransformerSideArtifactFunc + fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
 DEST_DIR="/models"
@@ -283,6 +284,13 @@ EXPECTED_FILES="${EXPECTED_FILES:-}"
 
 if [ -f "$MARKER" ]; then
   if [ -z "$VAE_REPO" ] || [ -d "$VAE_DEST_DIR" ]; then
+    # The marker vouches for the snapshot only. A changed transformerFile (an
+    # A/B quant) fetches that one file, not the whole model again.
+    if transformer_side_artifact_missing; then
+      echo "Marker exists but the transformer side artifact is missing; downloading it alone"
+      pip install --no-cache-dir huggingface_hub hf_transfer
+      stage_transformer_side_artifact
+    fi
     echo "Model already cached at $DEST_DIR"
     report_cache_size "$DEST_DIR"
     exit 0
@@ -336,6 +344,8 @@ if vae_repo:
     print(f"Downloading VAE: {vae_repo} -> {vae_dir}", flush=True)
     snapshot_download(repo_id=vae_repo, local_dir=vae_dir, local_dir_use_symlinks=False, cache_dir=cache_dir, token=token)
 PY
+
+stage_transformer_side_artifact
 
 # Post-download integrity check. snapshot_download is allowed to
 # return "successfully" with zero files matched (e.g. allow_patterns

@@ -618,6 +618,28 @@ propose_runtime_promotions_test:
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *propose-runtime-promotions-changes
 
+server_diffusers_test:
+  stage: test
+  image: python:3.12-slim
+  needs: []
+  script:
+    # torch, diffusers, fastapi, pydantic and PIL are stubbed when absent, so
+    # the call-contract and quantized-loading cases run on the bare image. The
+    # real-library cases (the diffusers 0.41 signature, the GGUF shim on real
+    # GGUFParameters) skip here; build/check-runtime-diffusers.py covers the
+    # signature inside the serving image build.
+    - python3 scripts/test_server_diffusers.py
+    - python3 -m py_compile build/server-diffusers.py build/check-runtime-diffusers.py
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &server-diffusers-changes
+        - .gitlab-ci.yml
+        - build/server-diffusers.py
+        - build/check-runtime-diffusers.py
+        - scripts/test_server_diffusers.py
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *server-diffusers-changes
+
 vllm_qwen35_seqcls_plugin_test:
   stage: test
   image: python:3.12-slim

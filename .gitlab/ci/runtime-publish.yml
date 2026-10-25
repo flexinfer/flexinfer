@@ -209,6 +209,7 @@ publish_serving_rocm_gfx1100:
         - build/runtime.yaml
         - build/runtime-entrypoint.sh
         - build/server-diffusers.py
+        - build/check-runtime-diffusers.py
         - build/server-snac.py
         - build/scripts/**/*
         - build/scripts/vllm_gemma4_moe_gptq_patch.py

@@ -2,11 +2,15 @@
 Diffusers API Server with image and synchronous video generation endpoints.
 ROCm-compatible version for AMD GPUs (gfx1100 / RX 7900 XTX).
 Supports text2image, inpainting, InstructPix2Pix, text2video, and image2video
-modes via PIPELINE_MODE.
+modes via PIPELINE_MODE. Every image call goes through _call_pipeline, which
+passes only what the loaded pipeline's __call__ accepts (Qwen-Image 2.1 has no
+guidance_scale). Transformers and text encoders can load quantized for any
+family: GGUF single files (TRANSFORMER_QUANTIZATION=gguf) and NF4 on load.
 """
 
 import asyncio
 import gc
+import inspect
 import os
 import io
 import base64
@@ -178,6 +182,11 @@ class ImageGenerationRequest(BaseModel):
     # This keeps SDXL Turbo fast by default (few steps, low/zero guidance).
     num_inference_steps: Optional[int] = Field(default=None, ge=1, le=100)
     guidance_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+    # True-CFG pipelines (Qwen-Image): CFG runs only above 1. When omitted,
+    # guidance_scale stands in for it on those pipelines.
+    true_cfg_scale: Optional[float] = Field(default=None, ge=0.0, le=20.0)
+    # Qwen-Image 2.1 sizes condition images (and an unsized output) from this.
+    output_resolution: Optional[int] = Field(default=None, ge=256, le=4096)
     scheduler: Optional[str] = None
     # Optional seed for reproducible generation. If None, uses random seed.
     seed: Optional[int] = None
@@ -279,6 +288,13 @@ def _is_sdxl_turbo(model_id: str) -> bool:
     return "sdxl-turbo" in model_id or "sdxl_turbo" in model_id
 
 
+# Qwen-Image pipelines take true CFG: `true_cfg_scale` plus a negative prompt,
+# and no `guidance_scale` (2.1) or a distilled-guidance one the base weights
+# ignore (v1). Their request guidance is mapped in _adapt_call_kwargs.
+_TRUE_CFG_FAMILIES = {"qwenimage", "qwenimage21"}
+_MODEL_FAMILIES = {"flux", "sdxl", "sd3", "sd15", "wan"} | _TRUE_CFG_FAMILIES
+
+
 def _normalize_model_family(value: Optional[str]) -> Optional[str]:
     value = (value or "").strip().lower()
     aliases = {
@@ -294,9 +310,16 @@ def _normalize_model_family(value: Optional[str]) -> Optional[str]:
         "sd-1.5": "sd15",
         "wan2.1": "wan",
         "wan-2.1": "wan",
+        "qwen-image": "qwenimage",
+        "qwen_image": "qwenimage",
+        "qwen-image-2.1": "qwenimage21",
+        "qwen-image-21": "qwenimage21",
+        "qwen_image21": "qwenimage21",
+        "qwenimage2.1": "qwenimage21",
+        "qwenimage21-turbo": "qwenimage21",
     }
     value = aliases.get(value, value)
-    return value if value in {"flux", "sdxl", "sd3", "sd15", "wan"} else None
+    return value if value in _MODEL_FAMILIES else None
 
 
 def _configured_model_family() -> Optional[str]:
@@ -322,6 +345,10 @@ def _class_name_model_family(class_name: Optional[str]) -> Optional[str]:
         return "sd15"
     if class_name in ("WanPipeline", "WanVACEPipeline"):
         return "wan"
+    if class_name.startswith("QwenImage21"):
+        return "qwenimage21"
+    if class_name.startswith("QwenImage"):
+        return "qwenimage"
     return None
 
 
@@ -349,6 +376,10 @@ def _heuristic_model_family(model_id: Optional[str]) -> Optional[str]:
         return "flux"
     if re.search(r"(^|[\/_-])wan(?:2[._-]?1)?($|[\/._-])", lower):
         return "wan"
+    if re.search(r"qwen[-_]?image[-_.]?2[._-]?1", lower):
+        return "qwenimage21"
+    if re.search(r"qwen[-_]?image", lower):
+        return "qwenimage"
     return None
 
 
@@ -431,14 +462,30 @@ def _default_steps(model_id: str) -> int:
         return 28
     if family == "wan":
         return 30
+    if family == "qwenimage21":
+        # Turbo samples its shipped `sample_sigmas` grid and ignores the step
+        # count; 8 keeps the logged value honest.
+        return 8 if "turbo" in (model_id or "").lower() else 40
+    if family == "qwenimage":
+        return 50
     return 20
 
 
 def _default_guidance_scale(model_id: str) -> float:
+    family = _model_family(model_id=model_id)
+    if family in _TRUE_CFG_FAMILIES:
+        # The value becomes true_cfg_scale (see _adapt_call_kwargs).
+        scale = _env_float("DEFAULT_TRUE_CFG_SCALE")
+        if scale is not None and scale >= 0.0:
+            return scale
     scale = _env_float("DEFAULT_GUIDANCE_SCALE")
     if scale is not None and scale >= 0.0:
         return scale
-    family = _model_family(model_id=model_id)
+    if family == "qwenimage21":
+        # Qwen-Image 2.1 is sampled without CFG.
+        return 1.0
+    if family == "qwenimage":
+        return 4.0
     if _is_sdxl_turbo(model_id):
         return 0.0
     if family == "flux" and _is_flux_schnell(model_id):
@@ -483,15 +530,21 @@ def _parse_video_size(value: Optional[str]) -> tuple[int, int]:
     except (TypeError, ValueError):
         raise HTTPException(status_code=400, detail="size must use WIDTHxHEIGHT")
     if width <= 0 or height <= 0 or width % 16 != 0 or height % 16 != 0:
-        raise HTTPException(status_code=400, detail="video dimensions must be positive multiples of 16")
+        raise HTTPException(
+            status_code=400, detail="video dimensions must be positive multiples of 16"
+        )
     if width * height > 832 * 480:
-        raise HTTPException(status_code=400, detail="video size exceeds the gfx1100 480p lane limit")
+        raise HTTPException(
+            status_code=400, detail="video size exceeds the gfx1100 480p lane limit"
+        )
     return width, height
 
 
 def _validate_video_num_frames(value: int) -> int:
     if value < 1 or value > 81 or (value - 1) % 4 != 0:
-        raise HTTPException(status_code=400, detail="num_frames must be 4k+1 and no greater than 81")
+        raise HTTPException(
+            status_code=400, detail="num_frames must be 4k+1 and no greater than 81"
+        )
     return value
 
 
@@ -648,6 +701,90 @@ def _temporary_scheduler(pipe, scheduler_name: Optional[str]):
         pipe.scheduler = original_scheduler
 
 
+_call_parameters_cache: dict[type, tuple[frozenset, bool]] = {}
+_logged_dropped_kwargs: set[tuple] = set()
+
+
+def _call_parameters(pipe) -> tuple[frozenset, bool]:
+    """Return the keyword names pipe.__call__ accepts and whether it takes **kwargs.
+
+    A signature that cannot be read counts as accepting everything, so the
+    caller's kwargs pass through as they did before the filter existed.
+    """
+    cls = type(pipe)
+    cached = _call_parameters_cache.get(cls)
+    if cached is not None:
+        return cached
+    try:
+        params = inspect.signature(pipe.__call__).parameters.values()
+    except (TypeError, ValueError):
+        result = (frozenset(), True)
+    else:
+        names = frozenset(
+            p.name
+            for p in params
+            if p.kind in (p.POSITIONAL_OR_KEYWORD, p.KEYWORD_ONLY)
+        )
+        result = (names, any(p.kind is p.VAR_KEYWORD for p in params))
+    _call_parameters_cache[cls] = result
+    return result
+
+
+def _filter_call_kwargs(pipe, kwargs: dict) -> dict:
+    """Drop kwargs that pipe.__call__ does not accept instead of raising TypeError."""
+    names, takes_var_kwargs = _call_parameters(pipe)
+    if takes_var_kwargs:
+        return kwargs
+    accepted = {k: v for k, v in kwargs.items() if k in names}
+    dropped = tuple(sorted(set(kwargs) - set(accepted)))
+    if dropped and (type(pipe), dropped) not in _logged_dropped_kwargs:
+        _logged_dropped_kwargs.add((type(pipe), dropped))
+        print(
+            f"{type(pipe).__name__}.__call__ does not accept {list(dropped)}; dropping them"
+        )
+    return accepted
+
+
+def _adapt_call_kwargs(pipe, kwargs: dict, model_id: Optional[str] = None) -> dict:
+    """Shape request kwargs into what the loaded pipeline's __call__ takes.
+
+    True-CFG families get the request guidance as `true_cfg_scale` (an explicit
+    true_cfg_scale wins). Above 1 they also need a negative prompt to run CFG
+    at all, so a blank one is supplied; at or below 1 the negative prompt is
+    dropped because the pipeline would ignore it. Everything is then filtered
+    by the __call__ signature.
+    """
+    kwargs = {k: v for k, v in kwargs.items() if v is not None}
+    family = _model_family(model_id=model_id or current_model, pipe=pipe)
+    if family in _TRUE_CFG_FAMILIES:
+        guidance = kwargs.pop("guidance_scale", None)
+        true_cfg = kwargs.get("true_cfg_scale")
+        if true_cfg is None:
+            true_cfg = (
+                guidance
+                if guidance is not None
+                else _default_guidance_scale(model_id or current_model)
+            )
+            kwargs["true_cfg_scale"] = true_cfg
+        if true_cfg > 1.0:
+            if not (kwargs.get("negative_prompt") or "").strip():
+                kwargs["negative_prompt"] = " "
+        else:
+            kwargs.pop("negative_prompt", None)
+    return _filter_call_kwargs(pipe, kwargs)
+
+
+def _call_pipeline(pipe, kwargs: dict, model_id: Optional[str] = None):
+    return pipe(**_adapt_call_kwargs(pipe, kwargs, model_id))
+
+
+def _supports_reference_edit(pipe, model_id: Optional[str] = None) -> bool:
+    """Qwen-Image 2.1 edits through condition images on its text-to-image pipeline."""
+    family = _model_family(model_id=model_id or current_model, pipe=pipe)
+    names, takes_var_kwargs = _call_parameters(pipe)
+    return family == "qwenimage21" and (takes_var_kwargs or "image" in names)
+
+
 async def _prepare_pipeline_for_request(requested_model: Optional[str]):
     """Resolve request model selection, including checkpoint hot-swap aliases."""
     global pipeline
@@ -710,12 +847,12 @@ def _apply_startup_lora(pipe, family: Optional[str]) -> None:
     if not lora_path and not lora_repo:
         return
 
-    if family not in {"sdxl", "sd3", "sd15", "flux"}:
-        print(f"Skipping startup LoRA for unsupported family: {family or 'unknown'}")
-        return
-
+    # The pipeline's own loader mixin decides support, not a family allowlist.
     if not hasattr(pipe, "load_lora_weights"):
-        print("WARNING: pipeline does not support load_lora_weights; skipping LoRA")
+        print(
+            f"WARNING: {type(pipe).__name__} (family {family or 'unknown'}) does not "
+            "support load_lora_weights; skipping LoRA"
+        )
         return
 
     adapter_name = os.environ.get("LORA_ADAPTER_NAME", "startup").strip() or "startup"
@@ -1159,24 +1296,31 @@ def _detect_model_format(model_path: str) -> tuple:
     return "unknown", model_path
 
 
-def _read_model_index_class_name(model_path: str) -> Optional[str]:
-    """Return the diffusers pipeline class declared in model_index.json, if present."""
+def _read_model_index(model_path: str) -> dict:
+    """Return model_index.json as a dict, or {} when it is absent or unreadable."""
     if not model_path or not os.path.isdir(model_path):
-        return None
+        return {}
 
     model_index = os.path.join(model_path, "model_index.json")
     if not os.path.isfile(model_index):
-        return None
+        return {}
 
     try:
         with open(model_index, "r", encoding="utf-8") as fh:
             payload = json.load(fh)
-        class_name = payload.get("_class_name")
-        if isinstance(class_name, str) and class_name.strip():
-            return class_name.strip()
+        if isinstance(payload, dict):
+            return payload
     except Exception as exc:
         print(f"WARNING: failed to read model_index.json from {model_path}: {exc}")
         sys.stdout.flush()
+    return {}
+
+
+def _read_model_index_class_name(model_path: str) -> Optional[str]:
+    """Return the diffusers pipeline class declared in model_index.json, if present."""
+    class_name = _read_model_index(model_path).get("_class_name")
+    if isinstance(class_name, str) and class_name.strip():
+        return class_name.strip()
     return None
 
 
@@ -1265,6 +1409,308 @@ def _load_single_file(checkpoint_path: str, model_id: str, dtype, vae=None):
             last_err = e
 
     raise RuntimeError(f"Could not load single-file checkpoint: {last_err}")
+
+
+# Side artifacts the cache stage puts beside the model: transformerFile from
+# transformerRepo lands in <model root>/.transformer/<transformerFile>.
+TRANSFORMER_SIDE_DIR = ".transformer"
+
+_QUANTIZED_DTYPES = {
+    "float32": torch.float32,
+    "fp32": torch.float32,
+    "float16": torch.float16,
+    "fp16": torch.float16,
+    "bfloat16": torch.bfloat16,
+    "bf16": torch.bfloat16,
+}
+
+
+def _quantized_compute_dtype(default):
+    """computeDtype (BNB_COMPUTE_DTYPE) sets the compute dtype of quantized components."""
+    name = os.environ.get("BNB_COMPUTE_DTYPE", "").strip().lower()
+    return _QUANTIZED_DTYPES.get(name, default)
+
+
+def _transformer_quantization() -> str:
+    mode = os.environ.get("TRANSFORMER_QUANTIZATION", "").strip().lower()
+    if mode:
+        return mode
+    # `quantization: nf4` is the older spelling of an NF4 denoiser.
+    if os.environ.get("QUANTIZATION", "").strip().lower() == "nf4":
+        return "nf4"
+    return ""
+
+
+def _text_encoder_quantization() -> str:
+    return os.environ.get("TEXT_ENCODER_QUANTIZATION", "").strip().lower()
+
+
+def _model_index_component(model_index: dict, name: str) -> Optional[tuple]:
+    """Return (library, class name) for a model_index.json component, or None."""
+    entry = model_index.get(name)
+    if (
+        isinstance(entry, (list, tuple))
+        and len(entry) == 2
+        and all(isinstance(part, str) for part in entry)
+    ):
+        return entry[0], entry[1]
+    return None
+
+
+def _denoiser_component(model_index: dict) -> str:
+    if _model_index_component(model_index, "unet") and not _model_index_component(
+        model_index, "transformer"
+    ):
+        return "unet"
+    return "transformer"
+
+
+def _text_encoder_components(model_index: dict) -> list[str]:
+    """Text encoders that transformers loads (the ones its NF4 config applies to)."""
+    return sorted(
+        name
+        for name in model_index
+        if name.startswith("text_encoder")
+        and (_model_index_component(model_index, name) or ("",))[0] == "transformers"
+    )
+
+
+def _resolve_transformer_file(model_roots: list[str]) -> str:
+    """Locate the single-file transformer that transformerQuantization loads.
+
+    TRANSFORMER_PATH (absolute, or relative to the model root) wins; otherwise
+    <model root>/.transformer/<TRANSFORMER_FILE>, where the cache stage puts
+    the file from TRANSFORMER_REPO. A file the cache did not stage is fetched
+    from the repo as a last resort, and the log says so.
+    """
+    explicit = os.environ.get("TRANSFORMER_PATH", "").strip()
+    name = os.environ.get("TRANSFORMER_FILE", "").strip().lstrip("/")
+    if ".." in name.split("/"):
+        raise RuntimeError(f"TRANSFORMER_FILE must stay inside the repo: {name!r}")
+
+    candidates = []
+    if explicit:
+        if os.path.isabs(explicit):
+            candidates.append(explicit)
+        else:
+            candidates.extend(os.path.join(root, explicit) for root in model_roots)
+            candidates.append(explicit)
+    if name:
+        candidates.extend(
+            os.path.join(root, TRANSFORMER_SIDE_DIR, name) for root in model_roots
+        )
+    candidates = list(dict.fromkeys(candidates))
+    for candidate in candidates:
+        if os.path.isfile(candidate):
+            return candidate
+
+    repo = os.environ.get("TRANSFORMER_REPO", "").strip()
+    if repo and name:
+        revision = os.environ.get("TRANSFORMER_REVISION", "").strip() or None
+        print(
+            f"WARNING: transformer file {name} is not staged (looked in {candidates}); "
+            f"downloading it from {repo}@{revision or 'main'}"
+        )
+        sys.stdout.flush()
+        from huggingface_hub import hf_hub_download
+
+        return hf_hub_download(repo_id=repo, filename=name, revision=revision)
+    raise RuntimeError(
+        "transformerQuantization=gguf needs a transformer file; "
+        f"looked in {candidates or 'nothing (set transformerFile or transformerPath)'}"
+    )
+
+
+def _dequantize_non_linear_gguf(model, dtype) -> list[str]:
+    """Dequantize GGUF weights held by modules other than GGUFLinear.
+
+    diffusers 0.41/0.42 keep every GGUF BF16 tensor as a raw-byte GGUFParameter
+    and only GGUFLinear dequantizes on the fly. stable-diffusion.cpp stores
+    norm weights as BF16, so without this a Qwen-Image 2.1 RMSNorm multiplies
+    by raw bytes ([4096] BF16 -> uint8 [8192]) and the first forward raises
+    (.loom/10-research-qwen-image-21-uncensored-2026-10-24.md §6b). A no-op
+    for files that store their norms as F32/F16.
+    """
+    from diffusers.quantizers.gguf.utils import (
+        GGUFLinear,
+        GGUFParameter,
+        dequantize_gguf_tensor,
+    )
+
+    names = []
+    for module_name, module in model.named_modules():
+        if isinstance(module, GGUFLinear):
+            continue
+        for param_name, param in list(module.named_parameters(recurse=False)):
+            if isinstance(param, GGUFParameter):
+                module._parameters[param_name] = torch.nn.Parameter(
+                    dequantize_gguf_tensor(param).to(dtype), requires_grad=False
+                )
+                names.append(
+                    f"{module_name}.{param_name}" if module_name else param_name
+                )
+    return names
+
+
+def _load_gguf_transformer(
+    config_root: str,
+    model_index: dict,
+    model_roots: list[str],
+    compute_dtype,
+    local_only: bool,
+):
+    """Load the pipeline's transformer from a GGUF single file (weights stay quantized)."""
+    import diffusers
+    from diffusers import GGUFQuantizationConfig
+
+    class_name = os.environ.get("TRANSFORMER_CLASS", "").strip()
+    if not class_name:
+        component = _model_index_component(model_index, "transformer")
+        class_name = component[1] if component else ""
+    if not class_name:
+        raise RuntimeError(
+            "transformerQuantization=gguf: model_index.json names no transformer; "
+            "set transformerClass"
+        )
+    model_cls = getattr(diffusers, class_name, None)
+    if model_cls is None or not hasattr(model_cls, "from_single_file"):
+        raise RuntimeError(
+            f"diffusers {diffusers.__version__} has no single-file loader for {class_name}"
+        )
+
+    path = _resolve_transformer_file(model_roots)
+    size_gb = os.path.getsize(path) / (1024**3)
+    print(
+        f"Loading GGUF {class_name} from {path} ({size_gb:.1f} GB, compute dtype {compute_dtype})"
+    )
+    sys.stdout.flush()
+    t0 = time.time()
+    transformer = model_cls.from_single_file(
+        path,
+        quantization_config=GGUFQuantizationConfig(compute_dtype=compute_dtype),
+        config=config_root,
+        subfolder="transformer",
+        torch_dtype=compute_dtype,
+        local_files_only=local_only,
+    )
+    dequantized = _dequantize_non_linear_gguf(transformer, compute_dtype)
+    print(
+        f"Loaded GGUF {class_name} in {time.time() - t0:.1f}s; dequantized "
+        f"{len(dequantized)} non-Linear GGUF weight(s)"
+    )
+    sys.stdout.flush()
+    return transformer
+
+
+def _nf4_config(library: str, compute_dtype):
+    if library == "transformers":
+        from transformers import BitsAndBytesConfig
+    else:
+        from diffusers import BitsAndBytesConfig
+    return BitsAndBytesConfig(
+        load_in_4bit=True,
+        bnb_4bit_quant_type="nf4",
+        bnb_4bit_compute_dtype=compute_dtype,
+    )
+
+
+def _quantized_component_kwargs(
+    config_root: str,
+    model_index: dict,
+    model_roots: list[str],
+    dtype,
+    local_only: bool,
+    include_denoiser_nf4: bool = True,
+) -> dict:
+    """from_pretrained kwargs for transformerQuantization / textEncoderQuantization.
+
+    gguf loads the transformer here and passes it in as a component; nf4
+    quantizes on load through a PipelineQuantizationConfig. FLUX keeps its own
+    NF4 transformer path, so its caller turns include_denoiser_nf4 off.
+    """
+    transformer_mode = _transformer_quantization()
+    text_encoder_mode = _text_encoder_quantization()
+    if transformer_mode not in ("", "gguf", "nf4"):
+        raise RuntimeError(f"Unsupported transformerQuantization: {transformer_mode}")
+    if text_encoder_mode not in ("", "nf4"):
+        raise RuntimeError(f"Unsupported textEncoderQuantization: {text_encoder_mode}")
+
+    out = {}
+    mapping = {}
+    if transformer_mode == "gguf":
+        out["transformer"] = _load_gguf_transformer(
+            config_root,
+            model_index,
+            model_roots,
+            _quantized_compute_dtype(dtype),
+            local_only,
+        )
+    elif transformer_mode == "nf4" and include_denoiser_nf4:
+        mapping[_denoiser_component(model_index)] = _nf4_config(
+            "diffusers", _quantized_compute_dtype(torch.bfloat16)
+        )
+    if text_encoder_mode == "nf4":
+        names = _text_encoder_components(model_index)
+        if not names:
+            print(
+                "WARNING: textEncoderQuantization=nf4 but model_index.json lists no "
+                "transformers text encoder; loading them unquantized"
+            )
+        for name in names:
+            mapping[name] = _nf4_config(
+                "transformers", _quantized_compute_dtype(torch.bfloat16)
+            )
+    if mapping:
+        from diffusers.quantizers import PipelineQuantizationConfig
+
+        out["quantization_config"] = PipelineQuantizationConfig(quant_mapping=mapping)
+        print(f"NF4 quantization on load for: {sorted(mapping)}")
+    return out
+
+
+def _merge_component_kwargs(kwargs: dict, components: dict) -> dict:
+    """Overlay component kwargs, merging two quantization_config mappings."""
+    merged = dict(kwargs)
+    for key, value in components.items():
+        if key == "quantization_config" and merged.get(key) is not None:
+            from diffusers.quantizers import PipelineQuantizationConfig
+
+            mapping = dict(merged[key].quant_mapping or {})
+            mapping.update(value.quant_mapping or {})
+            merged[key] = PipelineQuantizationConfig(quant_mapping=mapping)
+        else:
+            merged[key] = value
+    return merged
+
+
+def _is_bnb_quantized(module) -> bool:
+    """True for a bitsandbytes-quantized diffusers or transformers model."""
+    if getattr(module, "is_loaded_in_4bit", False) or getattr(
+        module, "is_loaded_in_8bit", False
+    ):
+        return True
+    method = getattr(module, "quantization_method", None)
+    if "bitsandbytes" in str(getattr(method, "value", method) or "").lower():
+        return True
+    return any(
+        type(p).__name__ in ("Params4bit", "Int8Params") for p in module.parameters()
+    )
+
+
+def _bnb_component_names(pipe) -> set[str]:
+    """Pipeline components that bitsandbytes placed while loading (left where they are)."""
+    components = getattr(pipe, "components", None) or {}
+    names = {
+        name
+        for name, comp in components.items()
+        if isinstance(comp, torch.nn.Module) and _is_bnb_quantized(comp)
+    }
+    # Count the configured ones too, so a detection miss never bulk-moves them.
+    if _transformer_quantization() == "nf4":
+        names.add("transformer" if "transformer" in components else "unet")
+    if _text_encoder_quantization() == "nf4":
+        names.update(name for name in components if name.startswith("text_encoder"))
+    return {name for name in names if components.get(name) is not None}
 
 
 def load_pipeline(model_id: str):
@@ -1434,6 +1880,24 @@ def load_pipeline(model_id: str):
         )
         is_flux_pipeline = detected_family == "flux"
 
+        # transformerQuantization (gguf | nf4) and textEncoderQuantization (nf4)
+        # for the image pipelines. FLUX keeps its own NF4 transformer path below.
+        components = {}
+        if PIPELINE_MODE not in ("text2audio", "text2video", "image2video"):
+            model_roots = [
+                root
+                for root in dict.fromkeys((local_model_path, resolved_path))
+                if root and os.path.isdir(root)
+            ]
+            components = _quantized_component_kwargs(
+                resolved_path,
+                _read_model_index(resolved_path),
+                model_roots,
+                dtype,
+                local_only,
+                include_denoiser_nf4=not is_flux_pipeline,
+            )
+
         # FLUX pipelines use explicit classes and do not use safety_checker or custom VAE overrides.
         if PIPELINE_MODE == "text2audio":
             from diffusers import StableAudioPipeline
@@ -1445,7 +1909,9 @@ def load_pipeline(model_id: str):
             }
             print("Loading StableAudioPipeline (loading to CPU, local files only)...")
             sys.stdout.flush()
-            pipeline = StableAudioPipeline.from_pretrained(resolved_path, **audio_kwargs)
+            pipeline = StableAudioPipeline.from_pretrained(
+                resolved_path, **audio_kwargs
+            )
         elif PIPELINE_MODE in ("text2video", "image2video"):
             video_kwargs = {
                 k: v
@@ -1474,9 +1940,10 @@ def load_pipeline(model_id: str):
                 for k, v in pipeline_kwargs.items()
                 if k not in ("safety_checker", "vae", "variant")
             }
-            # Optional NF4 quantization via bitsandbytes (reduces ~24GB FP16 to ~6GB NF4)
+            # Optional NF4 quantization via bitsandbytes (reduces ~24GB FP16 to ~6GB NF4).
+            # A GGUF transformer from transformerQuantization replaces it.
             _flux_nf4 = False
-            if quant_mode == "nf4":
+            if quant_mode == "nf4" and "transformer" not in components:
                 try:
                     from diffusers import BitsAndBytesConfig as DiffusersBnBConfig
                     from diffusers.quantizers import PipelineQuantizationConfig
@@ -1526,6 +1993,7 @@ def load_pipeline(model_id: str):
                     print(
                         f"WARNING: NF4 quantization not available ({e}), loading without quantization"
                     )
+            flux_kwargs = _merge_component_kwargs(flux_kwargs, components)
             if PIPELINE_MODE == "inpainting":
                 print("Loading FluxFillPipeline (loading to CPU, local files only)...")
                 sys.stdout.flush()
@@ -1572,7 +2040,8 @@ def load_pipeline(model_id: str):
                 # T5-XXL overflow (float16 max ~65504 is too small).
                 for enc_attr in ("text_encoder", "text_encoder_2"):
                     enc = getattr(pipeline, enc_attr, None)
-                    if enc is not None:
+                    # An NF4 text encoder (textEncoderQuantization) cannot be recast.
+                    if enc is not None and not _is_bnb_quantized(enc):
                         enc.to(torch.bfloat16)
                         param_mb = (
                             sum(p.numel() * p.element_size() for p in enc.parameters())
@@ -1597,6 +2066,24 @@ def load_pipeline(model_id: str):
 
                 pipeline.encode_prompt = _encode_prompt_cast
                 print(f"Wrapped encode_prompt to cast bfloat16 → {_bnb_dtype_name}")
+        elif detected_family in _TRUE_CFG_FAMILIES:
+            # Qwen-Image: model_index.json picks the pipeline class, and
+            # QwenImage21Pipeline serves both text-to-image and reference edits,
+            # so no PIPELINE_MODE switch applies. Needs diffusers >= 0.41.
+            qwen_kwargs = _merge_component_kwargs(
+                {
+                    k: v
+                    for k, v in pipeline_kwargs.items()
+                    if k not in ("safety_checker", "vae", "variant")
+                },
+                components,
+            )
+            print(
+                f"Loading {model_index_class or 'DiffusionPipeline'} for family "
+                f"{detected_family} (loading to CPU)..."
+            )
+            sys.stdout.flush()
+            pipeline = DiffusionPipeline.from_pretrained(resolved_path, **qwen_kwargs)
         elif PIPELINE_MODE == "inpainting":
             print(
                 "Loading StableDiffusionXLInpaintPipeline (loading to CPU, local files only)..."
@@ -1644,6 +2131,7 @@ def load_pipeline(model_id: str):
                 **pipeline_kwargs,
             )
         else:
+            pipeline_kwargs = _merge_component_kwargs(pipeline_kwargs, components)
             try:
                 print(
                     "Attempting AutoPipelineForText2Image (loading to CPU, local files only)..."
@@ -1711,7 +2199,8 @@ def load_pipeline(model_id: str):
     # at ~15.4GB, the model fits in 24GB VRAM without offload, avoiding the ~20-30%
     # step overhead from CPU↔GPU transfers. Set cpuOffload: "true" in the model CR
     # to re-enable if OOM occurs on smaller GPUs.
-    if quant_mode == "nf4" and not use_cpu_offload:
+    bnb_components = _bnb_component_names(pipeline)
+    if bnb_components and not use_cpu_offload:
         print(
             "NF4 quantization detected: skipping forced CPU offload (model fits in VRAM)"
         )
@@ -1743,21 +2232,24 @@ def load_pipeline(model_id: str):
                 except Exception as e3:
                     print(f"GPU transfer failed: {e3}, using CPU only")
                     pipeline = pipeline.to("cpu")
-    elif quant_mode == "nf4" and torch.cuda.is_available():
+    elif bnb_components and torch.cuda.is_available():
         # BNB-quantized models can't use pipeline.to("cuda") — the accelerate
         # dispatch hooks on the transformer conflict with bulk .to(). Move
         # non-quantized components (text encoders, VAE) to GPU individually.
-        # The BNB transformer's dispatch hooks handle GPU placement on forward pass.
-        print("NF4 model: moving non-quantized components to GPU individually...")
+        # The BNB components' dispatch hooks handle GPU placement on forward pass.
+        print(
+            f"NF4 model: {sorted(bnb_components)} stay with bitsandbytes; moving "
+            "the other components to GPU individually..."
+        )
         sys.stdout.flush()
-        for comp_name in ["text_encoder", "text_encoder_2", "vae"]:
-            comp = getattr(pipeline, comp_name, None)
-            if comp is not None:
-                try:
-                    comp.to("cuda")
-                    print(f"  Moved {comp_name} to GPU")
-                except Exception as e:
-                    print(f"  Warning: could not move {comp_name} to GPU: {e}")
+        for comp_name, comp in pipeline.components.items():
+            if comp_name in bnb_components or not isinstance(comp, torch.nn.Module):
+                continue
+            try:
+                comp.to("cuda")
+                print(f"  Moved {comp_name} to GPU")
+            except Exception as e:
+                print(f"  Warning: could not move {comp_name} to GPU: {e}")
         torch.cuda.synchronize()
         print(
             f"GPU memory after component transfer: {torch.cuda.memory_allocated() / 1024**3:.2f} GB"
@@ -1917,7 +2409,7 @@ def warmup_inference():
                 kw["control_image"] = Image.new("RGB", (w, h), (128, 128, 128))
                 kw["controlnet_conditioning_scale"] = 0.5
             with torch.inference_mode():
-                pipeline(**kw)
+                _call_pipeline(pipeline, kw)
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
             elapsed = time.time() - t0
@@ -2078,7 +2570,9 @@ async def generate_video(request: VideoGenerationRequest):
             detail="This deployment is not configured for video generation",
         )
     if request.response_format != "b64_json":
-        raise HTTPException(status_code=400, detail="Only response_format=b64_json is supported")
+        raise HTTPException(
+            status_code=400, detail="Only response_format=b64_json is supported"
+        )
 
     model_id, pipe = await _prepare_pipeline_for_request(request.model)
     if not isinstance(pipe, (WanPipeline, WanVACEPipeline)):
@@ -2088,7 +2582,9 @@ async def generate_video(request: VideoGenerationRequest):
         )
 
     width, height = _parse_video_size(request.size)
-    num_frames = _validate_video_num_frames(request.num_frames or _default_video_num_frames())
+    num_frames = _validate_video_num_frames(
+        request.num_frames or _default_video_num_frames()
+    )
     fps = request.fps or _default_video_fps()
     steps = request.num_inference_steps or _default_steps(model_id)
     guidance_scale = (
@@ -2210,7 +2706,6 @@ async def generate_video(request: VideoGenerationRequest):
     return VideoGenerationResponse(created=int(time.time()), data=[video])
 
 
-
 @app.post("/v1/audio/generations")
 async def generate_audio(request: AudioGenerationRequest):
     """Generate one bounded WAV with the Stable Audio Open pipeline."""
@@ -2220,11 +2715,15 @@ async def generate_audio(request: AudioGenerationRequest):
             detail="This deployment is not configured for audio generation",
         )
     if request.response_format != "b64_json":
-        raise HTTPException(status_code=400, detail="Only response_format=b64_json is supported")
+        raise HTTPException(
+            status_code=400, detail="Only response_format=b64_json is supported"
+        )
 
     model_id, pipe = await _prepare_pipeline_for_request(request.model)
 
-    steps = request.num_inference_steps or _env_int("DEFAULT_NUM_INFERENCE_STEPS") or 100
+    steps = (
+        request.num_inference_steps or _env_int("DEFAULT_NUM_INFERENCE_STEPS") or 100
+    )
     negative_prompt = _resolve_negative_prompt(request.negative_prompt)
     seed = (
         request.seed
@@ -2306,7 +2805,9 @@ async def generate_images(request: ImageGenerationRequest):
         else _default_guidance_scale(model_id)
     )
     negative_prompt = _resolve_negative_prompt(request.negative_prompt)
-    scheduler_name = request.scheduler.strip() if request.scheduler is not None else None
+    scheduler_name = (
+        request.scheduler.strip() if request.scheduler is not None else None
+    )
 
     # Parse size
     try:
@@ -2361,11 +2862,16 @@ async def generate_images(request: ImageGenerationRequest):
                             "prompt": request.prompt,
                             "num_inference_steps": steps,
                             "guidance_scale": guidance_scale,
+                            "true_cfg_scale": request.true_cfg_scale,
+                            "output_resolution": request.output_resolution,
                             "width": width,
                             "height": height,
                         }
                         # FLUX doesn't support negative_prompt
-                        if not _pipeline_is_flux_like(pipe, model_id) and negative_prompt:
+                        if (
+                            not _pipeline_is_flux_like(pipe, model_id)
+                            and negative_prompt
+                        ):
                             gen_kwargs["negative_prompt"] = negative_prompt
                         # ControlNet: decode base64 control image and pass conditioning scale
                         if PIPELINE_MODE == "controlnet" and request.control_image:
@@ -2379,7 +2885,7 @@ async def generate_images(request: ImageGenerationRequest):
                             gen_kwargs["controlnet_conditioning_scale"] = cn_scale
                     if gen is not None:
                         gen_kwargs["generator"] = gen
-                    result = pipe(**gen_kwargs)
+                    result = _call_pipeline(pipe, gen_kwargs, model_id)
             img = result.images[0]
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")
@@ -2418,16 +2924,25 @@ async def edit_images(
     negative_prompt: Optional[str] = Form(None),
     scheduler: Optional[str] = Form(None),
     controlnet_conditioning_scale: Optional[float] = Form(None),
+    true_cfg_scale: Optional[float] = Form(None),
 ):
     """OpenAI-compatible image editing endpoint.
 
     Supports inpainting (mask-based), instruction-based editing, img2img,
     and controlnet modes depending on PIPELINE_MODE. When no image is
     provided, falls back to text-to-image generation (blank canvas + full mask).
+    Qwen-Image 2.1 edits on its text-to-image pipeline: the image is a
+    condition (reference) image, with no mask or strength.
     """
     model_id, pipe = await _prepare_pipeline_for_request(model)
+    reference_edit = _supports_reference_edit(pipe, model_id)
 
-    if PIPELINE_MODE not in ("inpainting", "instruct", "img2img", "controlnet"):
+    if not reference_edit and PIPELINE_MODE not in (
+        "inpainting",
+        "instruct",
+        "img2img",
+        "controlnet",
+    ):
         raise HTTPException(
             status_code=400,
             detail=f"PIPELINE_MODE '{PIPELINE_MODE}' does not support /v1/images/edits. "
@@ -2452,7 +2967,48 @@ async def edit_images(
     neg = _resolve_negative_prompt(negative_prompt)
     scheduler_name = scheduler.strip() if scheduler is not None else None
 
+    def _run_reference_edit():
+        if mask_bytes is not None:
+            raise ValueError(
+                "this model edits from the reference image alone; mark the region "
+                "in the image (circle or paint it) instead of sending a mask"
+            )
+        edit_kwargs = {
+            "prompt": prompt,
+            "num_inference_steps": steps,
+            "guidance_scale": cfg_scale,
+            "true_cfg_scale": true_cfg_scale,
+            "negative_prompt": neg,
+        }
+        if image_bytes is not None:
+            edit_kwargs["image"] = [_decode_image(image_bytes)]
+        if size:
+            # Without a size the pipeline keeps the reference's aspect ratio.
+            try:
+                edit_kwargs["width"], edit_kwargs["height"] = map(
+                    int, size.lower().split("x")
+                )
+            except ValueError:
+                pass
+        results = []
+        for _ in range(n):
+            with _temporary_scheduler(pipe, scheduler_name):
+                with torch.inference_mode():
+                    result = _call_pipeline(pipe, edit_kwargs, model_id)
+            img = result.images[0]
+            buffer = io.BytesIO()
+            img.save(buffer, format="PNG")
+            b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+            results.append(ImageData(b64_json=b64_data))
+            del result, img, buffer
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        return results
+
     def _run_edit():
+        if reference_edit:
+            return _run_reference_edit()
         # img2img and controlnet require an input image
         if image_bytes is None and PIPELINE_MODE == "img2img":
             raise ValueError("img2img mode requires an input image")
@@ -2473,25 +3029,37 @@ async def edit_images(
                 with _temporary_scheduler(pipe, scheduler_name):
                     with torch.inference_mode():
                         if _pipeline_is_flux_like(pipe, model_id):
-                            result = pipe(
-                                prompt=prompt,
-                                image=blank,
-                                mask_image=full_mask,
-                                num_inference_steps=steps,
-                                guidance_scale=cfg_scale,
-                                height=h,
-                                width=w,
+                            result = _call_pipeline(
+                                pipe,
+                                dict(
+                                    prompt=prompt,
+                                    image=blank,
+                                    mask_image=full_mask,
+                                    num_inference_steps=steps,
+                                    guidance_scale=cfg_scale,
+                                    height=h,
+                                    width=w,
+                                ),
+                                model_id,
                             )
                         else:
-                            s = strength if strength is not None else _default_strength()
-                            result = pipe(
-                                prompt=prompt,
-                                image=blank,
-                                mask_image=full_mask,
-                                strength=s,
-                                guidance_scale=cfg_scale,
-                                num_inference_steps=steps,
-                                negative_prompt=neg,
+                            s = (
+                                strength
+                                if strength is not None
+                                else _default_strength()
+                            )
+                            result = _call_pipeline(
+                                pipe,
+                                dict(
+                                    prompt=prompt,
+                                    image=blank,
+                                    mask_image=full_mask,
+                                    strength=s,
+                                    guidance_scale=cfg_scale,
+                                    num_inference_steps=steps,
+                                    negative_prompt=neg,
+                                ),
+                                model_id,
                             )
                 img = result.images[0]
                 buffer = io.BytesIO()
@@ -2521,25 +3089,37 @@ async def edit_images(
                             mask_img = Image.new("L", src_img.size, 255)
                         if _pipeline_is_flux_like(pipe, model_id):
                             # FluxFillPipeline: no strength, no negative_prompt
-                            result = pipe(
-                                prompt=prompt,
-                                image=src_img,
-                                mask_image=mask_img,
-                                guidance_scale=cfg_scale,
-                                num_inference_steps=steps,
-                                height=src_img.size[1],
-                                width=src_img.size[0],
+                            result = _call_pipeline(
+                                pipe,
+                                dict(
+                                    prompt=prompt,
+                                    image=src_img,
+                                    mask_image=mask_img,
+                                    guidance_scale=cfg_scale,
+                                    num_inference_steps=steps,
+                                    height=src_img.size[1],
+                                    width=src_img.size[0],
+                                ),
+                                model_id,
                             )
                         else:
-                            s = strength if strength is not None else _default_strength()
-                            result = pipe(
-                                prompt=prompt,
-                                image=src_img,
-                                mask_image=mask_img,
-                                strength=s,
-                                guidance_scale=cfg_scale,
-                                num_inference_steps=steps,
-                                negative_prompt=neg,
+                            s = (
+                                strength
+                                if strength is not None
+                                else _default_strength()
+                            )
+                            result = _call_pipeline(
+                                pipe,
+                                dict(
+                                    prompt=prompt,
+                                    image=src_img,
+                                    mask_image=mask_img,
+                                    strength=s,
+                                    guidance_scale=cfg_scale,
+                                    num_inference_steps=steps,
+                                    negative_prompt=neg,
+                                ),
+                                model_id,
                             )
                     elif PIPELINE_MODE == "instruct":
                         img_scale = (
@@ -2547,12 +3127,16 @@ async def edit_images(
                             if image_guidance_scale is not None
                             else _default_image_guidance_scale()
                         )
-                        result = pipe(
-                            prompt=prompt,
-                            image=src_img,
-                            guidance_scale=cfg_scale,
-                            image_guidance_scale=img_scale,
-                            num_inference_steps=steps,
+                        result = _call_pipeline(
+                            pipe,
+                            dict(
+                                prompt=prompt,
+                                image=src_img,
+                                guidance_scale=cfg_scale,
+                                image_guidance_scale=img_scale,
+                                num_inference_steps=steps,
+                            ),
+                            model_id,
                         )
                     elif PIPELINE_MODE == "img2img":
                         s = strength if strength is not None else _default_strength()
@@ -2565,7 +3149,7 @@ async def edit_images(
                         }
                         if not _pipeline_is_flux_like(pipe, model_id) and neg:
                             gen_kwargs["negative_prompt"] = neg
-                        result = pipe(**gen_kwargs)
+                        result = _call_pipeline(pipe, gen_kwargs, model_id)
                     elif PIPELINE_MODE == "controlnet":
                         cn_scale = (
                             controlnet_conditioning_scale
@@ -2580,10 +3164,12 @@ async def edit_images(
                             "guidance_scale": cfg_scale,
                         }
                         if control_image_bytes is not None:
-                            gen_kwargs["control_image"] = _decode_image(control_image_bytes)
+                            gen_kwargs["control_image"] = _decode_image(
+                                control_image_bytes
+                            )
                         if not _pipeline_is_flux_like(pipe, model_id) and neg:
                             gen_kwargs["negative_prompt"] = neg
-                        result = pipe(**gen_kwargs)
+                        result = _call_pipeline(pipe, gen_kwargs, model_id)
 
             img = result.images[0]
             buffer = io.BytesIO()
@@ -2636,14 +3222,18 @@ async def image_variations(
                 if isinstance(pipe, FluxFillPipeline):
                     # Full mask = regenerate everything conditioned on the image structure
                     full_mask = Image.new("L", (w, h), 255)
-                    result = pipe(
-                        prompt="",
-                        image=src_img,
-                        mask_image=full_mask,
-                        num_inference_steps=_default_steps(model_id),
-                        guidance_scale=_default_guidance_scale(model_id),
-                        height=h,
-                        width=w,
+                    result = _call_pipeline(
+                        pipe,
+                        dict(
+                            prompt="",
+                            image=src_img,
+                            mask_image=full_mask,
+                            num_inference_steps=_default_steps(model_id),
+                            guidance_scale=_default_guidance_scale(model_id),
+                            height=h,
+                            width=w,
+                        ),
+                        model_id,
                     )
                 elif isinstance(
                     pipe, (FluxImg2ImgPipeline, StableDiffusionXLImg2ImgPipeline)
@@ -2655,7 +3245,7 @@ async def image_variations(
                         "num_inference_steps": _default_steps(model_id),
                         "guidance_scale": _default_guidance_scale(model_id),
                     }
-                    result = pipe(**gen_kwargs)
+                    result = _call_pipeline(pipe, gen_kwargs, model_id)
                 else:
                     # Fallback: text2image at the same size (degraded but functional)
                     gen_kwargs = {
@@ -2665,7 +3255,7 @@ async def image_variations(
                         "height": h,
                         "width": w,
                     }
-                    result = pipe(**gen_kwargs)
+                    result = _call_pipeline(pipe, gen_kwargs, model_id)
             img = result.images[0]
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")
