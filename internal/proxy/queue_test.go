@@ -201,6 +201,8 @@ func TestQueuedRequestKeepsDemandUntilItsLifetimeEnds(t *testing.T) {
 			active := heartbeat.requests
 			heartbeat.mu.Unlock()
 			assert.Zero(t, active, "queued and forwarding references must both be released")
+			// The release refresh is written asynchronously; snapshot after it lands.
+			require.Eventually(t, heartbeat.settled, 2*time.Second, 10*time.Millisecond)
 			require.NoError(t, p.client.Get(context.Background(), client.ObjectKeyFromObject(model), updated))
 			lastDemand := updated.Status.LastActiveTime.DeepCopy()
 			// A still-waiting queue processor must not keep a canceled or timed-out

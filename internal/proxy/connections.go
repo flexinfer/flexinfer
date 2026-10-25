@@ -49,59 +49,138 @@ func (p *Proxy) trackAndServeWithDemand(w http.ResponseWriter, r *http.Request, 
 
 }
 
-// lastAccessHeartbeat shares one ticker and serializes writes across concurrent
-// foreground requests for a model. Background requests do not join it.
+// lastAccessHeartbeat is the demand signal shared by a model's in-flight
+// foreground requests. Background requests do not join it. Request boundaries
+// only mark it dirty and wake the model's writer goroutine, which owns every
+// LastActiveTime write: no request waits on the API server, and boundaries
+// that arrive while a write is in flight coalesce into the next write.
 type lastAccessHeartbeat struct {
 	mu       sync.Mutex
 	requests int
-	cancel   context.CancelFunc
+	dirty    bool // a request boundary is waiting for its forced refresh
+	writing  bool // the writer is talking to the API server
+	wake     chan struct{}
+}
+
+// refresh records a request boundary. The writer starts a forced write after
+// this call, so the stored timestamp is never older than the boundary.
+func (h *lastAccessHeartbeat) refresh() {
+	h.mu.Lock()
+	h.dirty = true
+	h.mu.Unlock()
+	select {
+	case h.wake <- struct{}{}:
+	default: // a wake-up is already pending
+	}
+}
+
+// settled reports whether every recorded boundary has been written.
+func (h *lastAccessHeartbeat) settled() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return !h.dirty && !h.writing
+}
+
+// flushLastAccess waits, up to timeout, for every model's recorded request
+// boundaries to be written.
+func (p *Proxy) flushLastAccess(timeout time.Duration) {
+	deadline := time.Now().Add(timeout)
+	p.lastAccessHeartbeats.Range(func(_ string, heartbeat *lastAccessHeartbeat) bool {
+		for !heartbeat.settled() {
+			if time.Now().After(deadline) {
+				return false
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return true
+	})
+}
+
+func (p *Proxy) lastAccessHeartbeatFor(modelName string) *lastAccessHeartbeat {
+	if heartbeat, ok := p.lastAccessHeartbeats.Load(modelName); ok {
+		return heartbeat
+	}
+	heartbeat, loaded := p.lastAccessHeartbeats.LoadOrStore(modelName,
+		&lastAccessHeartbeat{wake: make(chan struct{}, 1)})
+	if !loaded {
+		go p.runLastAccessWriter(modelName, heartbeat)
+	}
+	return heartbeat
 }
 
 func (p *Proxy) startLastAccessHeartbeat(modelName string) func() {
-	ctx := p.ctx
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	heartbeat, _ := p.lastAccessHeartbeats.LoadOrStore(modelName, &lastAccessHeartbeat{})
+	heartbeat := p.lastAccessHeartbeatFor(modelName)
 	heartbeat.mu.Lock()
-	interval := p.touchLastAccess(ctx, modelName, true)
-	if heartbeat.requests == 0 {
-		heartbeatCtx, cancel := context.WithCancel(ctx)
-		heartbeat.cancel = cancel
-		go func() {
-			ticker := time.NewTicker(interval)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-heartbeatCtx.Done():
-					return
-				case <-ticker.C:
-					heartbeat.mu.Lock()
-					if heartbeatCtx.Err() == nil {
-						p.updateLastAccess(heartbeatCtx, modelName)
-					}
-					heartbeat.mu.Unlock()
-				}
-			}
-		}()
-	}
 	heartbeat.requests++
 	heartbeat.mu.Unlock()
+	heartbeat.refresh()
 
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			heartbeat.mu.Lock()
-			defer heartbeat.mu.Unlock()
 			heartbeat.requests--
-			if heartbeat.requests == 0 {
-				heartbeat.cancel()
-			}
-			// A completed or canceled request starts a fresh idle window. Use
-			// the proxy context because the request context may already be done.
-			p.touchLastAccess(ctx, modelName, true)
+			heartbeat.mu.Unlock()
+			// A completed or canceled request starts a fresh idle window.
+			heartbeat.refresh()
 		})
+	}
+}
+
+// runLastAccessWriter performs a forced write after every request boundary
+// and, while a foreground request is live, a throttled write on the model's
+// heartbeat interval so long requests outlive short idle timeouts. It writes
+// with the proxy context because a request context may already be done.
+func (p *Proxy) runLastAccessWriter(modelName string, heartbeat *lastAccessHeartbeat) {
+	ctx := p.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	interval := lastAccessHeartbeatInterval
+	var ticker *time.Ticker
+	var tick <-chan time.Time
+	defer func() {
+		if ticker != nil {
+			ticker.Stop()
+		}
+	}()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-heartbeat.wake:
+		case <-tick:
+		}
+
+		heartbeat.mu.Lock()
+		force := heartbeat.dirty
+		heartbeat.dirty = false
+		write := force || heartbeat.requests > 0
+		heartbeat.writing = write
+		heartbeat.mu.Unlock()
+
+		next := interval
+		if write {
+			next = p.touchLastAccess(ctx, modelName, force)
+		}
+
+		heartbeat.mu.Lock()
+		heartbeat.writing = false
+		live := heartbeat.requests > 0
+		heartbeat.mu.Unlock()
+
+		switch {
+		case !live && ticker != nil:
+			ticker.Stop()
+			ticker, tick = nil, nil
+		case live && ticker == nil:
+			ticker = time.NewTicker(next)
+			tick = ticker.C
+		case live && next != interval:
+			ticker.Reset(next)
+		}
+		interval = next
 	}
 }
 

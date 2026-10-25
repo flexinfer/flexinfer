@@ -32,6 +32,12 @@ func (m *TypedSyncMap[K, V]) LoadOrStore(key K, val V) (V, bool) {
 	return actual.(V), loaded
 }
 
+// CompareAndSwap stores newVal for key only if the stored value equals oldVal.
+// V must be comparable at runtime.
+func (m *TypedSyncMap[K, V]) CompareAndSwap(key K, oldVal, newVal V) bool {
+	return m.m.CompareAndSwap(key, oldVal, newVal)
+}
+
 // Delete deletes the value for a key.
 func (m *TypedSyncMap[K, V]) Delete(key K) {
 	m.m.Delete(key)

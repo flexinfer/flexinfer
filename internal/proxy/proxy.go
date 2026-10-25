@@ -56,6 +56,10 @@ const (
 	// long-running request is still in flight.
 	lastAccessHeartbeatInterval = 30 * time.Second
 
+	// lastAccessFlushTimeout bounds how long shutdown waits for the final
+	// asynchronous LastActiveTime writes after the HTTP drain.
+	lastAccessFlushTimeout = 2 * time.Second
+
 	// defaultBackendPort is used when a model's backend port cannot be determined.
 	defaultBackendPort int32 = 8000
 
@@ -513,6 +517,7 @@ func (p *Proxy) runServer(ctx context.Context, server *http.Server) error {
 		recoveryCtx, recoveryCancel := context.WithTimeout(p.ctx, 10*time.Second)
 		p.recoverDirectLoadTargets(recoveryCtx)
 		recoveryCancel()
+		go p.watchDirectLoadTargets(p.ctx)
 	}
 
 	slog.Info("starting proxy",
@@ -550,6 +555,7 @@ func (p *Proxy) runServerOnListener(ctx context.Context, server *http.Server, li
 	}
 	if p.runtimeCache != nil {
 		p.runtimeCache.StartRefreshLoop(p.ctx)
+		go p.watchDirectLoadTargets(p.ctx)
 	}
 
 	errCh := make(chan error, 1)
@@ -594,6 +600,9 @@ func (p *Proxy) waitForServer(ctx context.Context, server *http.Server, errCh <-
 		err := server.Shutdown(shutdownCtx)
 		duration := time.Since(start)
 		proxyShutdownDuration.Observe(duration.Seconds())
+		// The last requests' completion refreshes are written asynchronously;
+		// let them land before the writers stop with the proxy context.
+		p.flushLastAccess(lastAccessFlushTimeout)
 		p.Shutdown()
 
 		if err != nil {

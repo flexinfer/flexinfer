@@ -633,13 +633,9 @@ func (p *Proxy) touchLastAccess(ctx context.Context, modelName string, force boo
 	heartbeat := lastAccessHeartbeatInterval
 
 	// Try v1alpha2 Model first
-	var modelErr error
-	for i := 0; i < 3; i++ {
-		m := &aiv1alpha2.Model{}
-		if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
-			modelErr = err
-			break
-		}
+	m := &aiv1alpha2.Model{}
+	modelErr := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m)
+	if modelErr == nil {
 		var idleTimeout time.Duration
 		if m.Spec.Serverless != nil && m.Spec.Serverless.IdleTimeout != nil {
 			idleTimeout = m.Spec.Serverless.IdleTimeout.Duration
@@ -653,17 +649,9 @@ func (p *Proxy) touchLastAccess(ctx context.Context, modelName string, force boo
 			return heartbeat
 		}
 
-		m.Status.LastActiveTime = &now
-		if err := p.client.Status().Update(ctx, m); err != nil {
-			if errors.IsConflict(err) {
-				continue
-			}
+		if err := patchLastActiveTime(ctx, p.client, m); err != nil {
 			slog.Debug("failed to update LastActiveTime", "model", modelName, "error", err)
 		}
-		return heartbeat
-	}
-	if modelErr == nil {
-		slog.Debug("failed to update LastActiveTime after retries", "model", modelName)
 		return heartbeat
 	}
 	if !errors.IsNotFound(modelErr) {
@@ -691,8 +679,9 @@ func (p *Proxy) touchLastAccess(ctx context.Context, modelName string, force boo
 		return heartbeat
 	}
 
+	base := md.DeepCopy()
 	md.Status.LastAccessTime = &now
-	if err := p.client.Status().Update(ctx, md); err != nil {
+	if err := p.client.Status().Patch(ctx, md, client.MergeFrom(base)); err != nil {
 		slog.Debug("failed to update LastAccessTime", "model", modelName, "error", err)
 	}
 	return heartbeat

@@ -411,9 +411,11 @@ rules:
   - apiGroups: ["ai.flexinfer"]
     resources: ["gpuprofiles"]
     verbs: ["get", "list", "watch"]
+  # The proxy serves models, services and loraadapters reads from an
+  # informer cache (internal/proxy/cached_client.go), which needs watch.
   - apiGroups: ["ai.flexinfer"]
     resources: ["loraadapters"]
-    verbs: ["get", "list"]
+    verbs: ["get", "list", "watch"]
   - apiGroups: [""]
     resources: ["services", "endpoints"]
     verbs: ["get", "list", "watch"]

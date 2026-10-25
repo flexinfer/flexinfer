@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/flexinfer/flexinfer/internal/proxy"
 	"github.com/flexinfer/flexinfer/pkg/observability"
@@ -16,6 +17,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/config"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
+
+// informerSyncTimeout bounds startup when the informers cannot sync (a Role
+// missing watch); the proxy then falls back to direct API reads.
+const informerSyncTimeout = 30 * time.Second
 
 func main() {
 	var port int
@@ -63,10 +68,23 @@ func main() {
 		os.Exit(1)
 	}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	k8sClient, err := client.New(cfg, client.Options{Scheme: proxy.Scheme})
 	if err != nil {
 		slog.Error("unable to create k8s client", "error", err)
 		os.Exit(1)
+	}
+	// Serve the per-request Model/Service/LoRAAdapter reads from an informer
+	// cache. Without it every request pays several API round trips. The
+	// server starts after the sync, so /readyz is not served until then. The
+	// cache lives for the process, not ctx: requests still draining after
+	// SIGTERM keep reading from it.
+	if cached, err := proxy.NewCachedReadClient(context.Background(), cfg, k8sClient, namespace, informerSyncTimeout); err != nil {
+		slog.Error("informer cache unavailable, reading from the API server", "error", err)
+	} else {
+		k8sClient = cached
 	}
 
 	proxyCfg := proxy.ConfigFromEnv(k8sClient, namespace)
@@ -74,8 +92,6 @@ func main() {
 		slog.Error("invalid proxy configuration", "error", err)
 		os.Exit(1)
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	p := proxy.New(proxyCfg)
 	if err := p.Run(ctx, port); err != nil {

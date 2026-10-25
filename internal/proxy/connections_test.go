@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 func connectionActivityTestProxy(t *testing.T, idleTimeout time.Duration) (*Proxy, *aiv1alpha2.Model) {
@@ -150,11 +152,20 @@ func TestTrackAndServeRefreshesActivityAtCompletion(t *testing.T) {
 			observed := make(chan *metav1.Time, 1)
 			completionTime := make(chan time.Time, 1)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				// The start refresh is written asynchronously, so it has to land
+				// while the request is in flight rather than before forwarding.
 				updated := &aiv1alpha2.Model{}
-				if err := p.client.Get(context.Background(), client.ObjectKeyFromObject(model), updated); err != nil {
-					t.Error(err)
-					w.WriteHeader(http.StatusInternalServerError)
-					return
+				deadline := time.Now().Add(2 * time.Second)
+				for {
+					if err := p.client.Get(context.Background(), client.ObjectKeyFromObject(model), updated); err != nil {
+						t.Error(err)
+						w.WriteHeader(http.StatusInternalServerError)
+						return
+					}
+					if tc.background || updated.Status.LastActiveTime.After(initial.Time) || time.Now().After(deadline) {
+						break
+					}
+					time.Sleep(10 * time.Millisecond)
 				}
 				observed <- updated.Status.LastActiveTime.DeepCopy()
 				if !tc.background {
@@ -179,7 +190,13 @@ func TestTrackAndServeRefreshesActivityAtCompletion(t *testing.T) {
 				p.trackAndServeBackground(rec, req, model.Name, time.Now())
 			} else {
 				p.trackAndServe(rec, req, model.Name, time.Now())
+				heartbeat, ok := p.lastAccessHeartbeats.Load(model.Name)
+				require.True(t, ok)
+				require.Eventually(t, heartbeat.settled, 2*time.Second, 10*time.Millisecond,
+					"the completion refresh must be written after the request returns")
 			}
+			_, joined := p.lastAccessHeartbeats.Load(model.Name)
+			assert.Equal(t, !tc.background, joined, "only foreground requests join the demand heartbeat")
 
 			updated := &aiv1alpha2.Model{}
 			require.NoError(t, p.client.Get(context.Background(), client.ObjectKeyFromObject(model), updated))
@@ -233,6 +250,11 @@ func TestTrackAndServeKeepsConcurrentLongRequestsActive(t *testing.T) {
 		}
 	}
 	assert.Equal(t, int64(2), p.GetActiveConnections(model.Name))
+	// Snapshot after the start refreshes land, so only the in-flight
+	// heartbeat can satisfy the refresh below.
+	heartbeat, ok := p.lastAccessHeartbeats.Load(model.Name)
+	require.True(t, ok)
+	require.Eventually(t, heartbeat.settled, 2*time.Second, 10*time.Millisecond)
 	atStart := &aiv1alpha2.Model{}
 	require.NoError(t, p.client.Get(context.Background(), client.ObjectKeyFromObject(model), atStart))
 	require.NotNil(t, atStart.Status.LastActiveTime)
@@ -243,6 +265,95 @@ func TestTrackAndServeKeepsConcurrentLongRequestsActive(t *testing.T) {
 	}, 7*time.Second, 20*time.Millisecond, "in-flight requests must refresh before the short idle timeout")
 	unblock()
 	requests.Wait()
+	assert.Zero(t, p.GetActiveConnections(model.Name))
+}
+
+// A slow status write must not hold up forwarding, and request boundaries
+// that arrive while it is in flight coalesce into one follow-up write.
+func TestLastAccessWriteDoesNotBlockRequests(t *testing.T) {
+	RegisterMetrics()
+	model := &aiv1alpha2.Model{
+		ObjectMeta: metav1.ObjectMeta{Name: "activity-model", Namespace: "default"},
+		Spec: aiv1alpha2.ModelSpec{
+			Backend: "vllm",
+			Source:  "HF://org/model",
+			Serverless: &aiv1alpha2.ServerlessSpec{
+				IdleTimeout: &metav1.Duration{Duration: 30 * time.Second},
+			},
+		},
+		Status: aiv1alpha2.ModelStatus{
+			Phase:          aiv1alpha2.ModelPhaseReady,
+			LastActiveTime: &metav1.Time{Time: time.Now().Add(-2 * time.Second).Truncate(time.Second)},
+		},
+	}
+	var patches atomic.Int32
+	writeStarted := make(chan struct{}, 1)
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	unblock := func() { releaseOnce.Do(func() { close(release) }) }
+	defer unblock()
+	k8sClient := fake.NewClientBuilder().WithScheme(Scheme).
+		WithObjects(model).WithStatusSubresource(model).
+		WithInterceptorFuncs(interceptor.Funcs{
+			SubResourcePatch: func(ctx context.Context, c client.Client, subResource string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
+				if patches.Add(1) == 1 {
+					writeStarted <- struct{}{}
+					<-release
+				}
+				return c.SubResource(subResource).Patch(ctx, obj, patch, opts...)
+			},
+		}).Build()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	p := &Proxy{
+		client:    k8sClient,
+		namespace: model.Namespace,
+		resolver:  NewModelResolver(k8sClient, model.Namespace),
+		ctx:       ctx,
+		cancel:    cancel,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	p.directLoadTargets.Store(model.Name, server.URL)
+
+	serve := func() {
+		req := httptest.NewRequest(http.MethodPost, "/v1/embeddings", strings.NewReader(`{"model":"activity-model"}`))
+		rec := httptest.NewRecorder()
+		p.trackAndServe(rec, req, model.Name, time.Now())
+		assert.Equal(t, http.StatusOK, rec.Code)
+	}
+	serve()
+	select {
+	case <-writeStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the start refresh was never written")
+	}
+	// The first write is still blocked; further requests must not wait on it.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range 5 {
+			serve()
+		}
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("requests waited on the in-flight LastActiveTime write")
+	}
+
+	unblock()
+	heartbeat, ok := p.lastAccessHeartbeats.Load(model.Name)
+	require.True(t, ok)
+	require.Eventually(t, heartbeat.settled, 2*time.Second, 10*time.Millisecond)
+	// Twelve boundaries: the blocked write plus at most one coalesced
+	// follow-up, which a same-second timestamp may skip entirely.
+	assert.LessOrEqual(t, patches.Load(), int32(2))
+	updated := &aiv1alpha2.Model{}
+	require.NoError(t, k8sClient.Get(context.Background(), client.ObjectKeyFromObject(model), updated))
+	assert.True(t, updated.Status.LastActiveTime.After(model.Status.LastActiveTime.Time))
 	assert.Zero(t, p.GetActiveConnections(model.Name))
 }
 
