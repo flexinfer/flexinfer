@@ -346,11 +346,10 @@ imagePrewarm:
         # re-pulled the Harbor-resident digests but 2e9652ed was deleted from
         # Harbor on 2026-10-21 (ErrImagePull), so listing it here would keep
         # the DaemonSet NotReady forever and fail every 5930k prewarm gate.
-        # The 7900xtx still holds it. The three 5930k lanes pinned to it
-        # (qwen36-27b-autoround-workhorse, qwen36-27b-fable-gptq,
-        # qwen35-9b-ablit-rp-5930k; all parked, minReplicas 0) cannot start on
-        # this node until they are repinned (ad93ae72 = 0.26 or cd108c9e =
-        # 0.32, both resident here).
+        # The 7900xtx still holds it. The three 5930k lanes that were pinned to
+        # it (qwen36-27b-autoround-workhorse, qwen36-27b-fable-gptq,
+        # qwen35-9b-ablit-rp-5930k; all parked, minReplicas 0) were repinned on
+        # 2026-10-25 to the CI-built 0.32 image listed below.
         #   registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
         # 2026-10-23 (issue #74 S1''): retired the two earlier serving-persona
         # digests, both deleted by Harbor retention on 2026-10-21 and no longer
@@ -402,6 +401,16 @@ imagePrewarm:
         # rollback anchor (Harbor-resident, pinned-ad93ae726bbe). Lanes pinned
         # to this image must drop `calculateKvScales` (flag removed in 0.28).
         - registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99130cc98c3a45bd6e09c89a3b26cb21193c858fab9a99573c7d90
+        # 2026-10-25 (issue #74 S2): the CI-built 0.32 native-W4A16 image
+        # (rocm-gfx1100-v032-native-w4a16-dc73879c, 10.8 GiB; master pipeline
+        # 34797, publish_serving_rocm_gfx1100_native_w4a16 job 414103, in-build
+        # verify passed). Same Dockerfile lineage as cd108c9e above plus the
+        # newer text plugin (0.9.0, MTP-head policy). Pin for the three
+        # repinned parked lanes (qwen36-27b-autoround-workhorse,
+        # qwen36-27b-fable-gptq, qwen35-9b-ablit-rp-5930k) and the planned CI
+        # successor of cd108c9e. Same v0.32.0 base as cd108c9e; the pull is at
+        # most 10.8 GiB, which this node's ~269 GB free covers.
+        - registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Keep the 64K Qwen workhorse overlay referenced across containerd GC;
         # its first cold pull/unpack took 9m05s on this node.
