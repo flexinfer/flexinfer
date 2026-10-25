@@ -1172,3 +1172,27 @@ Sources:
     `scripts/verify-vllm-canary.py`; `xtx_sampler.sh` log
   - `kubectl get node cblevins-5930k` conditions/events; `crictl images --digests`; `du -xsh`
     on the 5930k
+
+## 2026-10-25
+
+### 5930k orphaned probe caches removed (84 GiB) — operator-approved
+
+- What changed:
+  - Deleted five node-local model caches without a Model CR (`qwen38-27b-v032-canary`,
+    `qwen38-27b-v032-mtp-canary`, `qwen38-27b-gguf-spec-probe`, `qwen38-27b-gguf-vulkan-probe`,
+    `muse-glimmer-30b-canary`; 86 GB of safetensors/GGUF) and the two matching
+    `compile-cache-qwen38-27b-v032{,-mtp}-5930k` dirs (0.7 GB). Root 79 % → 70 %, 283 GB free.
+- Why:
+  - The 10-24 DiskPressure episode left ~19 GB of headroom above kubelet's eviction line; the
+    Longhorn fence (platform/gitops!989) stopped new replica placement but shrank nothing.
+- How / guardrails:
+  - `kubectl get models -A` vs directory names (the leftover `deploy/debug/*.yaml` probe
+    manifests are not applied by Flux), `lsof +D` = 0 handles per dir, hostPath dirs with a
+    `.flexinfer_cached_<sha>` marker so the PVC-based `flexinfer_evict_cache` does not apply,
+    `sudo rm -rf --one-file-system` per absolute path over ssh, `df` before/after.
+  - Left alone: `compile-cache-qwen35-9b-v023-5930k` (3.4 GB, Idle CR, dead 0.23 image — goes
+    with the repin), the legacy `/var/lib/flexinfer/flexinfer` MLC/HF dir (5.6 GB) and the empty
+    `*-nvme` dirs.
+- Sources:
+  - ssh `cblevins-5930k`: `du -xsh`, `lsof`, `df`; `kubectl get node/pods --field-selector
+    spec.nodeName=cblevins-5930k`; the only node event is the known `FreeDiskSpaceFailed` noise.

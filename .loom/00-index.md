@@ -216,13 +216,18 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       card dropped at 14:03Z today under the 2100 MHz cap), then promote the 5930k workhorse
       (branch `ops/gfx1100-v032-workhorse-promote`, staged locally) once the 5930k has disk
       headroom (83 % after the re-pulls; eviction line 85 %, Longhorn rebuilding onto it).
-- [ ] 5930k disk: delete the ~86 GB of orphaned probe caches (`qwen38-27b-v032-canary`,
-      `-v032-mtp-canary`, `-gguf-spec-probe`, `-gguf-vulkan-probe`, `muse-glimmer-30b-canary`; no
-      Model CRs, untouched for hours) — operator decision. Longer term the 5930k root cannot hold
-      Longhorn replicas, 254 GB of model caches and 300 GB of images together.
+- [x] 2026-10-25 14:2xZ 5930k disk: operator-approved deletion of the orphaned probe caches
+      (`qwen38-27b-v032-canary`, `-v032-mtp-canary`, `-gguf-spec-probe`, `-gguf-vulkan-probe`,
+      `muse-glimmer-30b-canary` + `compile-cache-qwen38-27b-v032{,-mtp}-5930k`): re-confirmed no
+      Model CR and zero open handles per directory (`lsof +D`), hostPath dirs so not reclaimable
+      through `flexinfer_evict_cache`, removed over ssh → 84 GiB freed, root 79 % → 70 % (283 GB
+      free; Longhorn had already fenced the disk via platform/gitops!989). Node Ready, no
+      DiskPressure, workhorse/agent/prewarm pods untouched. Longer term the 5930k root still
+      cannot hold Longhorn replicas, model caches and 300 GB of images together.
 - [ ] Repin the three parked 5930k lanes that lost `2e9652ed` (`qwen36-27b-autoround-workhorse`,
       `qwen36-27b-fable-gptq`, `qwen35-9b-ablit-rp-5930k`) to `ad93ae72` (0.26) or `cd108c9e`
-      (0.32, drop `calculateKvScales`); they cannot start on that node until then.
+      (0.32, drop `calculateKvScales`); they cannot start on that node until then. The 3.4 GB
+      `compile-cache-qwen35-9b-v023-5930k` belongs to the 0.23 image and dies with the repin.
 
 ## Previous Goal (2026-09-13) - Idle gfx1100 cards → loom-core / Mills utilization
 
