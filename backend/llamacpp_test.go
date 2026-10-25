@@ -1,6 +1,7 @@
 package backend
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -88,6 +89,69 @@ func TestLlamaCppBackendArgs_StatefulSlotsAndLocalSpeculation(t *testing.T) {
 		if got := argValue(args, key); got != want {
 			t.Errorf("%s = %q, want %q in args %#v", key, got, want, args)
 		}
+	}
+}
+
+// TestLlamaCppBackendArgs_DraftWindowSpelling pins the b8955 rename: draft-model
+// spec types always use --spec-draft-n-*, n-gram types keep --draft-* only on
+// pre-b8955 builds and get no draft flags after it, and an unset build keeps
+// the legacy spelling of the certified gfx906 b8173 envelope.
+func TestLlamaCppBackendArgs_DraftWindowSpelling(t *testing.T) {
+	draftFlags := []string{"--draft-max", "--draft-min", "--spec-draft-n-max", "--spec-draft-n-min"}
+	tests := []struct {
+		name   string
+		config map[string]any
+		want   map[string]string
+	}{
+		{
+			name:   "draft-mtp max only uses the renamed max flag",
+			config: map[string]any{"specType": "draft-mtp", "draftMax": float64(2)},
+			want:   map[string]string{"--spec-draft-n-max": "2"},
+		},
+		{
+			name:   "draft-mtp window is renamed even without a declared build",
+			config: map[string]any{"specType": "draft-mtp", "draftMax": float64(3), "draftMin": float64(1)},
+			want:   map[string]string{"--spec-draft-n-max": "3", "--spec-draft-n-min": "1"},
+		},
+		{
+			name:   "declared b8173 ngram-simple keeps the legacy pair",
+			config: map[string]any{"specType": "ngram-simple", "draftMax": float64(16), "draftMin": float64(1), "llamacppBuild": float64(8173)},
+			want:   map[string]string{"--draft-max": "16", "--draft-min": "1"},
+		},
+		{
+			name:   "b8954 is the last legacy build",
+			config: map[string]any{"draftMax": float64(4), "llamacppBuild": 8954},
+			want:   map[string]string{"--draft-max": "4"},
+		},
+		{
+			name:   "b8955 is the first renamed build",
+			config: map[string]any{"draftMax": float64(4), "llamacppBuild": 8955},
+			want:   map[string]string{"--spec-draft-n-max": "4"},
+		},
+		{
+			name:   "b11335 ngram-simple renders no draft window",
+			config: map[string]any{"specType": "ngram-simple", "draftMax": float64(16), "draftMin": float64(1), "llamacppBuild": float64(11335)},
+			want:   map[string]string{},
+		},
+	}
+	b := &LlamaCppBackend{}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := b.Args(&ModelSpec{ModelPath: "/models/test/model.gguf", GPUVendor: GPUVendorAMD, Config: tt.config})
+			for _, flag := range draftFlags {
+				want, expected := tt.want[flag]
+				got := argValue(args, flag)
+				switch {
+				case expected && got != want:
+					t.Errorf("%s = %q, want %q in args %#v", flag, got, want, args)
+				case !expected && slices.Contains(args, flag):
+					t.Errorf("args unexpectedly contain %s: %#v", flag, args)
+				}
+			}
+			if slices.Contains(args, "--llamacppBuild") || slices.Contains(args, "--llamacpp-build") {
+				t.Errorf("llamacppBuild is controller metadata and must not reach llama-server: %#v", args)
+			}
+		})
 	}
 }
 

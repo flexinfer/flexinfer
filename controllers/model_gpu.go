@@ -265,31 +265,68 @@ func requestedLlamaCppCapabilities(cfg map[string]any) ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
+	// llamacppBuild declares the image's llama.cpp build number. The backend
+	// uses it to spell the draft window (b8955 renamed --draft-max/--draft-min),
+	// so it must be exact and positive when set.
+	build, hasBuild, err := strictConfigInt(cfg, "llamacppBuild")
+	if err != nil {
+		return nil, err
+	}
+	if hasBuild && build <= 0 {
+		return nil, fmt.Errorf("spec.config.llamacppBuild must be a positive llama.cpp build number (11847 for b11847)")
+	}
+	renamedDraftFlags := hasBuild && build >= backend.LlamaCppSpecDraftFlagsSinceBuild
 
 	switch specType {
 	case "", "none":
 		if hasDraftMax || hasDraftMin {
-			return nil, fmt.Errorf("spec.config.draftMax and draftMin require spec.config.specType=ngram-simple")
+			return nil, fmt.Errorf("spec.config.draftMax and draftMin require spec.config.specType=ngram-simple or draft-mtp")
 		}
 	case "ngram-simple":
+		if renamedDraftFlags {
+			// From b8955 ngram-simple is sized by --spec-ngram-simple-size-n/-m
+			// and -min-hits; draftMax/draftMin would be silently ignored, so the
+			// b8173 envelope cannot carry over.
+			return nil, fmt.Errorf("the certified ngram-simple envelope (draftMax=16, draftMin=1) is a llama.cpp b8173 surface: from b%d ngram-simple is sized by --spec-ngram-simple-* and ignores the draft window, so spec.config.llamacppBuild=%d cannot use it", backend.LlamaCppSpecDraftFlagsSinceBuild, build)
+		}
 		if !hasDraftMax || !hasDraftMin || draftMax != 16 || draftMin != 1 {
 			return nil, fmt.Errorf("the certified ngram-simple envelope requires spec.config.draftMax=16 and draftMin=1")
 		}
 		capabilities = append(capabilities, aiv1alpha2.LlamaCppCapabilityNgramSimpleDraft16)
 	case "draft-mtp":
-		// The backend renders draftMax/draftMin as --draft-max/--draft-min, which
-		// the certified b11847 artifact rejects at startup; the certificate covers
-		// llama.cpp's default draft window only.
-		if hasDraftMax || hasDraftMin {
-			return nil, fmt.Errorf("the certified draft-mtp envelope uses llama.cpp's default draft window; remove spec.config.draftMax and draftMin")
+		if hasBuild && !renamedDraftFlags {
+			return nil, fmt.Errorf("spec.config.specType=draft-mtp needs llama.cpp b%d or newer, but spec.config.llamacppBuild=%d", backend.LlamaCppSpecDraftFlagsSinceBuild, build)
 		}
-		capabilities = append(capabilities, aiv1alpha2.LlamaCppCapabilityDraftMTP)
+		if !hasDraftMax && !hasDraftMin {
+			capabilities = append(capabilities, aiv1alpha2.LlamaCppCapabilityDraftMTP)
+			break
+		}
+		// An explicit window (rendered as --spec-draft-n-max/--spec-draft-n-min)
+		// is a separate envelope that needs its own certificate: the single
+		// Qwen3.5-family NextN head is reused for every draft step.
+		if !hasDraftMax {
+			return nil, fmt.Errorf("an explicit draft-mtp window needs spec.config.draftMax; draftMin alone does not define one")
+		}
+		if !hasDraftMin {
+			draftMin = 0 // llama.cpp's default n_min
+		}
+		if draftMax < 1 || draftMax > llamaCppDraftMTPWindowMax {
+			return nil, fmt.Errorf("spec.config.draftMax for draft-mtp must be between 1 and %d (got %d)", llamaCppDraftMTPWindowMax, draftMax)
+		}
+		if draftMin < 0 || draftMin > draftMax {
+			return nil, fmt.Errorf("spec.config.draftMin for draft-mtp must be between 0 and draftMax=%d (got %d)", draftMax, draftMin)
+		}
+		capabilities = append(capabilities, aiv1alpha2.LlamaCppCapabilityDraftMTPWindow(draftMax, draftMin))
 	default:
 		return nil, fmt.Errorf("spec.config.specType %q is not exposed by the certified llama.cpp feature surface", specType)
 	}
 
 	return capabilities, nil
 }
+
+// llamaCppDraftMTPWindowMax bounds an explicit draft-mtp window. It is a sanity
+// limit, not the gate: every window still needs its own certificate.
+const llamaCppDraftMTPWindowMax = 16
 
 func strictConfigInt(cfg map[string]any, key string) (int, bool, error) {
 	raw, ok := cfg[key]

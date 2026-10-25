@@ -688,8 +688,29 @@ func TestRequestedLlamaCppCapabilities(t *testing.T) {
 			},
 			want: []string{aiv1alpha2.LlamaCppCapabilityStatefulSlots, aiv1alpha2.LlamaCppCapabilityDraftMTP},
 		},
-		{name: "MTP rejects draftMax", config: map[string]any{"specType": "draft-mtp", "draftMax": 1}, errContains: "default draft window"},
-		{name: "MTP rejects draftMin", config: map[string]any{"specType": "draft-mtp", "draftMin": 0}, errContains: "default draft window"},
+		{
+			name:   "MTP explicit window is its own envelope",
+			config: map[string]any{"specType": "draft-mtp", "draftMax": 2},
+			want:   []string{"draft-mtp-draft2-min0"},
+		},
+		{
+			name:   "MTP window keeps an explicit draftMin",
+			config: map[string]any{"specType": "draft-mtp", "draftMax": float64(3), "draftMin": float64(1), "llamacppBuild": float64(11847)},
+			want:   []string{aiv1alpha2.LlamaCppCapabilityDraftMTPWindow(3, 1)},
+		},
+		{name: "MTP draftMin alone is not a window", config: map[string]any{"specType": "draft-mtp", "draftMin": 0}, errContains: "needs spec.config.draftMax"},
+		{name: "MTP window must be positive", config: map[string]any{"specType": "draft-mtp", "draftMax": 0}, errContains: "between 1 and 16"},
+		{name: "MTP window is bounded", config: map[string]any{"specType": "draft-mtp", "draftMax": 17}, errContains: "between 1 and 16"},
+		{name: "MTP draftMin cannot exceed draftMax", config: map[string]any{"specType": "draft-mtp", "draftMax": 2, "draftMin": 3}, errContains: "between 0 and draftMax=2"},
+		{name: "MTP needs a renamed-flag build when one is declared", config: map[string]any{"specType": "draft-mtp", "llamacppBuild": 8173}, errContains: "needs llama.cpp b8955"},
+		{
+			name:   "ngram-simple envelope on its declared b8173 build",
+			config: map[string]any{"specType": "ngram-simple", "draftMax": 16, "draftMin": 1, "llamacppBuild": 8173},
+			want:   []string{aiv1alpha2.LlamaCppCapabilityNgramSimpleDraft16},
+		},
+		{name: "ngram-simple envelope refuses renamed-flag builds", config: map[string]any{"specType": "ngram-simple", "draftMax": 16, "draftMin": 1, "llamacppBuild": 11335}, errContains: "--spec-ngram-simple"},
+		{name: "build must be positive", config: map[string]any{"llamacppBuild": 0}, errContains: "positive llama.cpp build number"},
+		{name: "build must be a number", config: map[string]any{"llamacppBuild": "b11847"}, errContains: "llamacppBuild must be an integer"},
 		{name: "combined speculation types stay uncertified", config: map[string]any{"specType": "draft-mtp,ngram-simple"}, errContains: "not exposed"},
 	}
 

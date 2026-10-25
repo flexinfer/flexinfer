@@ -17,6 +17,7 @@ limitations under the License.
 package v1alpha2
 
 import (
+	"strconv"
 	"strings"
 	"time"
 )
@@ -48,11 +49,23 @@ const (
 	LlamaCppCapabilityNgramSimpleDraft16 = "ngram-simple-draft16-min1"
 	// LlamaCppCapabilityDraftMTP certifies --spec-type draft-mtp driving the
 	// MTP (NextN) head inside the target GGUF, with no --model-draft, at
-	// llama.cpp's default draft window. b11847 removed --draft-max/--draft-min
-	// and reuses a single Qwen3.5-family head for each of its default three
-	// draft steps, so the envelope admits neither draft bound.
+	// llama.cpp's default draft window (n_max 3, n_min 0). It admits neither
+	// draft bound; an explicit window is the separate capability returned by
+	// LlamaCppCapabilityDraftMTPWindow.
 	LlamaCppCapabilityDraftMTP = "draft-mtp"
 )
+
+// LlamaCppCapabilityDraftMTPWindow names the capability that certifies
+// --spec-type draft-mtp with an explicit draft window, rendered as
+// --spec-draft-n-max/--spec-draft-n-min (llama.cpp b8955 renamed the old
+// --draft-max/--draft-min). Each window is its own envelope: a Qwen3.5-family
+// GGUF (nextn_predict_layers=1) reuses its single NextN head for every draft
+// step, so acceptance and throughput depend on the window and must be proven
+// on the exact artifact before a workload may set it. Example:
+// draft-mtp-draft2-min0.
+func LlamaCppCapabilityDraftMTPWindow(draftMax, draftMin int) string {
+	return LlamaCppCapabilityDraftMTP + "-draft" + strconv.Itoa(draftMax) + "-min" + strconv.Itoa(draftMin)
+}
 
 func BackendCapabilityCertificateAnnotationKey(backend, capability string) string {
 	return BackendCertificateAnnotationPrefix + backend + "-" + capability
