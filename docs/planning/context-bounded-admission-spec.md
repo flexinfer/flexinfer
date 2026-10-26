@@ -305,6 +305,34 @@ Kill-test outcome (2026-05-25):
 Slice CC-6a-3 only opens after CC-6a-2 ships and operators ask for
 fallback. Refusing with 413 is the cleaner default.
 
+**CC-6a-3 as built (2026-10-26).** The operator asked for fallback when
+the 5930k workhorse moved from 64K to 32K (gfx1100 S4,
+`.loom/10-research-gfx1100-next-feature-2026-10-23.md` §7f) while
+psyche-simulation keeps sending ~59K prompts. It is reactive, not an
+admission decision:
+
+- **Opt-in.** A Model annotated `flexinfer.ai/context-overflow-to:
+  <model or alias>` names the larger-window lane.
+- **Trigger.** On a completion request, the proxy holds back the
+  runtime's 400. Only when the body is vLLM's own prompt-length rejection
+  ("maximum context length" / "maximum model length") does it replay the
+  original body once to the target, which applies its own served name and
+  `max_tokens` clamp.
+- **No estimator.** The runtime's tokenizer decides, so there is no
+  heuristic on the hot path.
+- **Guarded.** The target must already be Ready: the reroute never
+  cold-starts it, so a shared GPU's leader is never preempted. A rerouted
+  request is never rerouted again, so there are no chains or loops.
+- **Pass-through otherwise.** Other statuses and every stream pass
+  through untouched.
+- **Signals.** `flexinfer_proxy_context_overflow_total{model,target,outcome}`
+  (`rerouted` / `target_unavailable`) and the response header
+  `X-FlexInfer-Context-Overflow`.
+- **Do not combine with context-bounded admission on the same Model.**
+  Its 413 fires before the runtime is asked, so nothing would reroute.
+  LiteLLM and the Mills client also treat 413 differently from vLLM's
+  400.
+
 ## Agent Delegation Notes
 
 | Workstream | Safe-to-edit files/modules | Do not touch | Local verification | Expected output/signals |
