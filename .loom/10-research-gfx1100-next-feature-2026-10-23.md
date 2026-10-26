@@ -501,6 +501,136 @@ workhorse if its traffic-weighted decode speedup on the production backend
 is >= 1.25 with pos-0 acceptance >= 0.70; segmented replaces TRITON_ATTN only
 if it beats it by >= 10 % at 16K/28K without > 20 % worse TTFT.
 
+## 7e. S6 (2026-10-26): one stacked 0.32 runtime image for gfx1100 (issue #74 S2, serving half)
+
+**Why this, now.** The design goal is one runtime image per GPU that holds
+every backend, so FlexInfer swaps lanes inside the runtime pod on demand
+instead of churning Kubernetes pods. On gfx1100 that is not true today:
+
+- The runtime DaemonSets run the `gfx1100-serving` persona (`cfefae18`),
+  whose vLLM is the 0.17.0 wheel on the `rocm/vllm-dev … vllm_0.14.0rc0` base.
+- vLLM 0.32 exists only as `Dockerfile.runtime-serving-native-w4a16`, a
+  `vllm serve` image with no `flexinfer-runtime` supervisor, so it cannot
+  back a DaemonSet.
+- A runtime pod ignores a Model's `image`, so the 5930k runtime DaemonSet is
+  parked (`desired=0` behind the `quantization-pause` selector) and every
+  5930k lane runs as its own Deployment: the workhorse
+  (`qwen38-27b-autoround-workhorse-…-mng4c`), the 9B RP twin, the openjev
+  cross-encoder, stable-audio. A swap in the 5930k-textgen group deletes one
+  pod and schedules another, and the runtime's drain, fast-swap, stall
+  detection and warm coexistence do not apply to those lanes.
+
+Issue #74 S2 already names the missing half ("bump the serving persona off
+vLLM 0.17 so runtime-managed lanes can host the Qwen3.5 family"); S1 of this
+program moved only the standalone image.
+
+**S6a (this slice): the image, proven offline.**
+`build/Dockerfile.runtime-serving-v032`, profile `gfx1100-serving-v032`, CI
+`publish_serving_rocm_gfx1100_v032`. It is the native-W4A16 stack (same base,
+the same three plugins, the same ISA check) plus what the runtime spawns
+(`inferCommand` in `internal/runtime/manager.go`): `python -m
+vllm.entrypoints.openai.api_server`, `python /opt/flexinfer/server-diffusers.py`
+and `python /opt/flexinfer/server-snac.py`, with tini and the
+runtime entrypoint. diffusers is pinned at 0.42.0, not the 0.41.0 that !1165
+pins on the 0.17 persona for Qwen-Image 2.1: the first build of this image
+failed because 0.41.0 requires `huggingface-hub<2.0` and the 0.32 base ships
+2.2.0, and 0.42.0 (2026-10-23) is the first release that allows hub < 3.0.
+The 0.17 persona's vLLM source patches
+and config normalizers are not carried: 0.32 registers the Qwen3.5 classes
+itself, and the entrypoint already skips normalization in runtime-manager
+mode. bitsandbytes is deferred (no 5930k lane needs it, and its ROCm 7.2
+library is unproven). Nothing consumes the image: both promotion flags are
+false.
+
+**Riskiest assumption:** the diffusers and snac servers' dependencies install
+on the 0.32 base without moving any package vLLM 0.32 depends on (torch,
+triton, transformers, numpy, …), and every spawn target resolves in that
+image. If that fails, one image per GPU means either a second vLLM or
+diffusers held back behind vLLM's pins.
+
+**Kill-test (no GPU):** the build itself. The Dockerfile snapshots `pip list`
+after the build backend and before the overlay, installs the overlay with that
+snapshot as `--constraint` (pip may add packages but cannot change one), runs
+`pip check`, then `build/scripts/verify_runtime_serving_stack.py`, which
+re-checks the snapshot and asserts:
+
+- `python` is vLLM's interpreter;
+- the api_server module has a `__main__` guard;
+- every third-party module both servers import outside a try block resolves;
+- every name `server-diffusers.py` imports from diffusers outside a try
+  block exists in diffusers 0.42.0: 25 names, the 17 module-scope pipeline
+  and model classes plus `AutoPipelineForText2Image`, `StableAudioPipeline`
+  and six schedulers;
+- the supervisor, the entrypoint and tini are executable.
+
+PASS is a successful build.
+
+**S6a RESULT (2026-10-26): PASS, after the kill-test caught a real conflict.**
+Four builds on the 7900xtx docker daemon (`build/build-runtime.sh
+gfx1100-serving-v032`, no GPU devices, not pushed; CI publishes on merge):
+
+1. **Failed, real.** diffusers 0.41.0 requires `huggingface-hub>=1.32,<2.0`;
+   the 0.32 base ships 2.2.0, so pip refused under the constraints. Unfrozen,
+   it would have downgraded hub underneath vLLM. Fixed by pinning 0.42.0
+   (2026-10-23), the first release to allow hub < 3.0.
+2. **Failed, inherited.** A bare `pip check` fails on the base itself:
+   `pygobject 3.42.1 requires pycairo`, from Ubuntu's `python3-gi`, which
+   nothing FlexInfer runs imports. The gate now records `pip check` before the
+   overlay and fails only on new lines.
+3. **Failed, verifier bug.** Six packages (six, zipp, cryptography, pyjwt,
+   blinker, importlib-metadata) exist twice: pip's copy in
+   `/usr/local/lib/python3.12/dist-packages` and an older Ubuntu copy behind it.
+   The verifier kept the last distribution seen; it now keeps the first on
+   `sys.path`, as imports and `pip list` do.
+4. **Passed.**
+   - ISA and plugin contract: vLLM 0.32.0+rocm723 with the `gptq_gemm_rdna3`
+     op, gfx1100 code in `_C`, `_C_stable_libtorch`, `_moe_C_stable_libtorch`
+     and `_rocm_C`, and `flexinfer_qwen35_text` registering.
+   - Frozen stack: 265 packages unchanged; the only 5 additions are diffusers,
+     snac and the three plugins. pip resolved every other server dependency
+     (accelerate, fastapi, uvicorn, pillow, …) from the base.
+   - `pip check`: no new problems.
+   - Spawn contract: `python` is `/usr/bin/python3`, the api_server module
+     has its `__main__` guard, both servers' imports resolve, and all 25
+     diffusers names resolve in 0.42.0.
+   - The supervisor, the entrypoint and tini are executable.
+
+   Image `sha256:ad13d03c…` (local config ID), 34.7 GB uncompressed. Its own
+   layers come to ~92 MB: the 28 MB supervisor, 56 MB of diffusers and snac,
+   6 MB of apt tools, and ~1 MB of plugins. Everything else is the
+   `vllm/vllm-openai-rocm:v0.32.0` base the 5930k already holds for
+   `cd108c9e`/`b06b06fe`, so S6b's prewarm is a small pull, not a 17 GB one.
+
+The riskiest assumption holds: diffusers and snac fit beside vLLM 0.32
+without moving it, once diffusers is ≥ 0.42. Still not shown, and S6b's job
+on a GPU: that the runtime supervisor serves a 0.32 lane at parity with the
+dedicated pod.
+
+**Next slices:**
+
+- **S6b, GPU kill-test, needs a 5930k window.** Repin the `gfx1100-5930k`
+  runtime profile to the S6a digest (prewarm first; the shared 0.32 base
+  makes it a small pull), set `FLEXINFER_RUNTIME_MULTI_MODEL=1`, un-park the
+  DaemonSet, and let the workhorse move onto the runtime path. Pass:
+  - the three S1 probes give greedy hashes identical to the dedicated pod's;
+  - decode stays within 3 % of the dedicated pod at 512, 2K and 16K;
+  - a workhorse ↔ 9B-RP swap completes in-pod, and its time is recorded
+    against today's pod-churn swap (events: Pod Scheduled → Ready).
+
+  Rollback: re-park the DaemonSet; the dedicated Deployment returns on the
+  next reconcile.
+- **S6c:** the `dedicatedDeployment` 5930k lanes (the 9B RP twin, the 35B
+  pair) drop the opt-out one at a time. The two MTP lanes replace their
+  `bash -lc 'export FLEXINFER_QWEN35_MTP_HEAD=…'` wrappers with `spec.config.env`
+  (controller 37317c95, !1172/!1173). The runtime load payload carries no
+  command (`pkg/runtime/payload.go`; the manager runs the backend's own
+  command or `inferCommand`), so on the runtime path a wrapper's export would
+  be dropped silently and the INT4 MTP head would load with the plain policy.
+- **S6d:** the XTX DaemonSet onto the same persona once its lanes qualify.
+  whisper needs vLLM's audio extras; check them in this image first.
+- **S6e:** bitsandbytes on ROCm 7.2 and !1165's `check-runtime-diffusers.py`
+  in this image, so Qwen-Image 2.1 runs here too.
+
 ## 8. Sources
 
 - Fleet: `deploy/models/qwen38-27b-autoround-workhorse.yaml`,

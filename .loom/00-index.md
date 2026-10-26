@@ -116,6 +116,16 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       (S1 + `speculativeConfig` mtp K=2 with the draft pinned to TRITON_ATTN, env via the command
       wrapper), probe `scripts/verify-vllm-mtp.py` (counter-delta acceptance, parity hashes, soak).
       Blocked on the S5 llama.cpp window (`muse-glimmer-30b-canary` at 520); operator applies after.
+- [x] 2026-10-26 (branch `feat/gfx1100-serving-v032`): **slice S6a, one stacked 0.32 runtime image for
+      gfx1100 — PASS offline** (research §7e, issue #74 S2 serving half). The runtime DaemonSets still run the 0.17 serving
+      persona and 0.32 ships only as a `vllm serve` image, so the 5930k runtime is parked and every lane
+      there is its own Deployment. New `Dockerfile.runtime-serving-v032` / profile `gfx1100-serving-v032` /
+      CI `publish_serving_rocm_gfx1100_v032`: the native-W4A16 stack plus the runtime supervisor, diffusers
+      0.42.0 and snac, with the vLLM stack frozen by pip constraints and `verify_runtime_serving_stack.py`
+      proving the spawn contract at build time (the offline kill-test). The first build caught diffusers
+      0.41.0 needing `huggingface-hub<2` against the base's 2.2.0, so the pin is 0.42.0; the final build
+      kept all 265 base packages and adds ~92 MB over the shared base. Next: S6b un-park the 5930k runtime
+      on it and qualify the workhorse through the runtime (GPU window).
 - [x] 2026-10-22 (this branch, `claude/gfx1100-inference-optimization-323ab7`): **GPU health sentinel**
       so the next drop parks itself. Agent: sysfs-first per-card check (`current_link_speed=Unknown`
       on an awake card, EIO/EREMOTEIO on SMU-backed reads, vanished card) plus bounded vendor-tool

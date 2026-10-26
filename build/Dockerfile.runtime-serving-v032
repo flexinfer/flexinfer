@@ -1,0 +1,154 @@
+# gfx1100 serving persona on vLLM 0.32: one stacked runtime image.
+#
+# Issue #74 S2 asks for the serving persona to move off vLLM 0.17 so the
+# runtime DaemonSet can host the Qwen3.5/3.8 lanes. Until now 0.32 shipped only
+# as Dockerfile.runtime-serving-native-w4a16, a `vllm serve` image with no
+# runtime supervisor, so the 5930k runtime DaemonSet is parked and every lane on
+# that card runs as its own Deployment: a swap in the 5930k-textgen group
+# deletes one pod and schedules another. This image is that native-W4A16 stack
+# (same base, same three plugins, same ISA check) plus what the runtime
+# DaemonSet spawns (inferCommand in internal/runtime/manager.go): the
+# flexinfer-runtime supervisor, server-diffusers.py and server-snac.py.
+#
+# The vLLM stack is frozen: its package list is snapshotted before the overlay
+# and passed to the overlay's pip install as constraints, so diffusers, snac and
+# their dependencies must fit the torch / transformers / numpy that vLLM 0.32
+# ships, or the build fails at that step. verify_runtime_serving_stack.py checks
+# the snapshot and every spawn target again at the end.
+#
+# None of the 0.17 persona's vLLM source patches apply here, and build/scripts/
+# is not copied, so runtime-entrypoint.sh finds no Gemma4 patch to run: 0.32
+# registers the Qwen3.5 classes itself and the plugins cover the rest.
+# bitsandbytes is not bundled yet (no lane on this card needs it, and its ROCm
+# 7.2 library is unproven); the NF4 Qwen-Image text encoder stays on the 0.17
+# persona until it is.
+ARG BASE_IMAGE=vllm/vllm-openai-rocm:v0.32.0
+ARG GO_VERSION=1.26.10
+
+FROM golang:${GO_VERSION} AS go-builder
+
+WORKDIR /workspace
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY cmd/ cmd/
+COPY api/ api/
+COPY backend/ backend/
+COPY internal/ internal/
+COPY controllers/ controllers/
+COPY pkg/ pkg/
+COPY scheduler/ scheduler/
+COPY agents/ agents/
+
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -o /runtime cmd/flexinfer-runtime/main.go
+
+FROM ${BASE_IMAGE} AS runtime
+
+ARG GPU_ARCH=gfx1100
+# Qwen-Image 2.1 needs diffusers >= 0.41, but 0.41.0 requires
+# huggingface-hub < 2.0 and the vLLM 0.32 base ships 2.2.0 (the first build of
+# this image failed on exactly that constraint). 0.42.0 (2026-10-23) is the
+# first release that allows hub < 3.0.
+ARG DIFFUSERS_VERSION=0.42.0
+ARG SNAC_VERSION=1.2.1
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    GPU_VENDOR=amd \
+    GPU_ARCH=${GPU_ARCH} \
+    HSA_OVERRIDE_GFX_VERSION=11.0.0 \
+    PYTORCH_ROCM_ARCH=${GPU_ARCH} \
+    TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1 \
+    VLLM_ROCM_USE_AITER=0
+
+USER root
+
+# ROCm base images can ship apt sources for AMD's internal artifactory, which
+# does not resolve from the build hosts; disable only those.
+RUN if ! getent hosts compute-artifactory.amd.com >/dev/null 2>&1; then \
+      for src in /etc/apt/sources.list.d/*.list; do \
+        [ -e "${src}" ] || continue; \
+        if grep -Eq 'compute-artifactory\.amd\.com|rocm-osdb-24\.04-deb|compute-rocm-rel-7\.2' "${src}" 2>/dev/null; then \
+          mv "${src}" "${src}.disabled" && echo "Disabled stale AMD apt source: ${src}"; \
+        fi; \
+      done; \
+    fi
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl tini jq lsof procps psmisc \
+    && rm -rf /var/lib/apt/lists/*
+
+# The runtime spawns every Python backend as `python ...`.
+RUN command -v python >/dev/null 2>&1 || ln -s "$(command -v python3)" /usr/local/bin/python
+
+# Build backend for the plugin wheels, installed before the snapshot so the
+# snapshot is exactly what the overlay must not move. `pip check` is recorded
+# too: the base already fails it (pygobject from Ubuntu's python3-gi without
+# pycairo), so the verifier fails only on problems the overlay adds.
+RUN python3 -m pip install --no-cache-dir "setuptools>=74" wheel \
+    && mkdir -p /opt/flexinfer \
+    && python3 -m pip list --format=freeze > /opt/flexinfer/vllm-stack.txt \
+    && wc -l /opt/flexinfer/vllm-stack.txt \
+    && (python3 -m pip check || true) > /opt/flexinfer/vllm-stack-pip-check.txt \
+    && cat /opt/flexinfer/vllm-stack-pip-check.txt
+
+# FlexInfer's vLLM general plugins, installed exactly as in
+# Dockerfile.runtime-serving-native-w4a16 (common first: every plugin imports
+# it at module scope and the installs use --no-deps).
+COPY build/vllm-plugin-common /opt/flexinfer/vllm-plugin-common
+RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/vllm-plugin-common \
+    && python3 -c 'import flexinfer_vllm_common; assert flexinfer_vllm_common.FLA_OPS_PREFIXES'
+COPY build/vllm-qwen35-text-plugin /opt/flexinfer/qwen35-text-plugin
+RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-text-plugin \
+    && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_text" for ep in entry_points(group="vllm.general_plugins"))'
+COPY build/vllm-qwen35-seqcls-plugin /opt/flexinfer/qwen35-seqcls-plugin
+RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-seqcls-plugin \
+    && python3 -c 'from importlib.metadata import entry_points; assert any(ep.name == "flexinfer_qwen35_seqcls" for ep in entry_points(group="vllm.general_plugins"))'
+COPY build/scripts/verify_vllm_gfx1100_native_w4a16.py /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
+RUN python3 /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
+
+# The diffusers and snac servers' dependencies, constrained to the snapshot:
+# pip may add packages but cannot upgrade or downgrade any the vLLM stack has.
+RUN python3 -m pip install --no-cache-dir \
+      --constraint /opt/flexinfer/vllm-stack.txt \
+      "diffusers==${DIFFUSERS_VERSION}" \
+      "snac==${SNAC_VERSION}" \
+      accelerate \
+      safetensors \
+      pillow \
+      sentencepiece \
+      protobuf \
+      huggingface-hub \
+      fastapi \
+      uvicorn
+
+COPY build/.runtime-env /etc/flexinfer/runtime.env
+COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
+COPY build/server-snac.py /opt/flexinfer/server-snac.py
+COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
+RUN chmod +x /usr/local/bin/runtime-entrypoint.sh
+
+COPY --from=go-builder /runtime /usr/local/bin/flexinfer-runtime
+
+COPY build/scripts/verify_runtime_serving_stack.py /opt/flexinfer/verify_runtime_serving_stack.py
+RUN python3 /opt/flexinfer/verify_runtime_serving_stack.py \
+      --snapshot /opt/flexinfer/vllm-stack.txt \
+      --pip-check-baseline /opt/flexinfer/vllm-stack-pip-check.txt \
+      --server /opt/flexinfer/server-diffusers.py \
+      --server /opt/flexinfer/server-snac.py \
+      --executable /usr/local/bin/flexinfer-runtime \
+      --executable /usr/local/bin/runtime-entrypoint.sh \
+      --executable /usr/bin/tini
+
+RUN mkdir -p /models /var/lib/flexinfer/compile-cache
+
+WORKDIR /workspace
+
+EXPOSE 8080 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:8080/healthz || exit 1
+
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/runtime-entrypoint.sh"]
+CMD ["flexinfer-runtime", "--listen", ":8080"]

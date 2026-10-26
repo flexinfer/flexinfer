@@ -160,6 +160,47 @@ profiles:
       VLLM_ROCM_USE_AITER: "0"
     build_context: 7900xtx
 
+  # Stacked serving persona on vLLM 0.32 (issue #74 S2, the serving half): the
+  # native-W4A16 stack above (same base, plugins and ISA check) plus the
+  # flexinfer-runtime supervisor, server-diffusers.py and server-snac.py, so
+  # the runtime DaemonSet can host the 0.32 text lanes and swap them in-pod
+  # instead of one Deployment per lane. The vLLM stack is frozen (pip
+  # constraints from a pre-overlay snapshot); verify_runtime_serving_stack.py
+  # proves the spawn contract at build time. Not promoted anywhere yet: the
+  # next slice boots the 5930k runtime DaemonSet on it and qualifies the
+  # workhorse through the runtime against its dedicated Deployment.
+  gfx1100-serving-v032:
+    tag: "runtime:rocm-gfx1100-serving-v032"
+    promotion:
+      gpuprofile: false
+      values_runtime_profiles: false
+      require_prewarm: true
+    dockerfile: build/Dockerfile.runtime-serving-v032
+    gpu_vendor: amd
+    gpu_arch: gfx1100
+    base_image: "vllm/vllm-openai-rocm:v0.32.0"
+    vllm_install_mode: wheel
+    vllm_ref: "v0.32.0"
+    rocm_dev_image: "rocm/dev-ubuntu-24.04:7.2.3"
+    amdgpu_targets: gfx1100
+    backends:
+      vllm: true
+      llamacpp: false
+      ollama: false
+      diffusers: true
+      steam: false
+    include_bitsandbytes: false
+    include_quantizer: false
+    # transformers is the one the vLLM base ships (frozen), never reinstalled.
+    transformers_install_mode: none
+    skip_gemma4_moe_patch: true
+    env:
+      HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+      PYTORCH_ROCM_ARCH: gfx1100
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+      VLLM_ROCM_USE_AITER: "0"
+    build_context: 7900xtx
+
   # Dedicated gaming persona for cblevins-7900xtx (Sunshine/Moonlight). Uses the
   # broad Dockerfile (which carries the INCLUDE_GAMING layer) but with vLLM,
   # quantizer, llama.cpp, Ollama, and diffusers OFF: the ROCm base already
