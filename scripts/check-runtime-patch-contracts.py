@@ -30,6 +30,7 @@ PATCH_TESTS = (
     "build/scripts/test_validate_quantized_artifact.py",
     "build/scripts/test_runtime_gptq_patch_composition.py",
     "build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
+    "build/scripts/test_verify_runtime_serving_stack.py",
 )
 
 COMPILE_ONLY = PATCH_SCRIPTS + (
@@ -37,6 +38,7 @@ COMPILE_ONLY = PATCH_SCRIPTS + (
     "build/scripts/quantize_gptq.py",
     "build/scripts/validate_quantized_artifact.py",
     "build/scripts/verify_vllm_gfx1100_native_w4a16.py",
+    "build/scripts/verify_runtime_serving_stack.py",
 )
 
 CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
@@ -50,12 +52,15 @@ CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
     "build/sunshine-headless.sh",
     "build/Dockerfile.runtime-serving",
     "build/Dockerfile.runtime-serving-native-w4a16",
+    "build/Dockerfile.runtime-serving-v032",
     "build/Dockerfile.vllm-rocm-gfx906",
     "build/runtime-entrypoint.sh",
     "build/runtime.yaml",
     "build/scripts/install_vllm_gfx906_compat.py",
     "build/scripts/verify_vllm_gfx1100_native_w4a16.py",
     "build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
+    "build/scripts/verify_runtime_serving_stack.py",
+    "build/scripts/test_verify_runtime_serving_stack.py",
     "deploy/system/values-k3s.yaml",
     ".gitlab/ci/runtime-publish.yml",
 )
@@ -94,6 +99,11 @@ PUBLISH_JOB_PROFILES = (
         "publish_serving_rocm_gfx1100_native_w4a16",
         ".gitlab/ci/runtime-publish.yml",
         "gfx1100-native-w4a16",
+    ),
+    (
+        "publish_serving_rocm_gfx1100_v032",
+        ".gitlab/ci/runtime-publish.yml",
+        "gfx1100-serving-v032",
     ),
 )
 
@@ -334,6 +344,53 @@ def assert_native_w4a16_dockerfile_contract(dockerfile: str) -> None:
                 "native gfx1100 W4A16 image must bypass legacy source patches: "
                 f"{snippet}"
             )
+
+
+def assert_serving_v032_dockerfile_contract(dockerfile: str) -> None:
+    """The stacked 0.32 serving persona: native-W4A16 stack plus the runtime.
+
+    The overlay must stay constrained to the pre-overlay snapshot (a free pip
+    install could move torch or transformers under vLLM), and the runtime
+    DaemonSet entrypoint must replace the base's `vllm serve`.
+    """
+    required = (
+        "ARG BASE_IMAGE=vllm/vllm-openai-rocm:v0.32.0",
+        "pip list --format=freeze > /opt/flexinfer/vllm-stack.txt",
+        "--constraint /opt/flexinfer/vllm-stack.txt",
+        "(python3 -m pip check || true) > /opt/flexinfer/vllm-stack-pip-check.txt",
+        "--pip-check-baseline /opt/flexinfer/vllm-stack-pip-check.txt",
+        "COPY build/vllm-plugin-common /opt/flexinfer/vllm-plugin-common",
+        "COPY build/vllm-qwen35-text-plugin /opt/flexinfer/qwen35-text-plugin",
+        "COPY build/vllm-qwen35-seqcls-plugin /opt/flexinfer/qwen35-seqcls-plugin",
+        "python3 /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py",
+        "python3 /opt/flexinfer/verify_runtime_serving_stack.py",
+        "--snapshot /opt/flexinfer/vllm-stack.txt",
+        "--server /opt/flexinfer/server-diffusers.py",
+        "--server /opt/flexinfer/server-snac.py",
+        "COPY --from=go-builder /runtime /usr/local/bin/flexinfer-runtime",
+        "COPY build/.runtime-env /etc/flexinfer/runtime.env",
+        'ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/runtime-entrypoint.sh"]',
+        'CMD ["flexinfer-runtime", "--listen", ":8080"]',
+    )
+    for snippet in required:
+        if snippet not in dockerfile:
+            fail(f"gfx1100 0.32 serving Dockerfile missing {snippet!r}")
+    # The snapshot must precede every install that could move the stack.
+    snapshot = dockerfile.find("> /opt/flexinfer/vllm-stack.txt")
+    overlay = dockerfile.find("--constraint /opt/flexinfer/vllm-stack.txt")
+    if not (0 <= snapshot < overlay):
+        fail("gfx1100 0.32 serving Dockerfile installs its overlay before the snapshot")
+    forbidden = (
+        "vllm_qwen35_patches_nodiag.py",
+        "vllm_gemma4_moe_gptq_patch.py",
+        "COPY build/scripts/ ",
+        "git clone",
+        '--no-deps "diffusers',
+        'ENTRYPOINT ["vllm", "serve"]',
+    )
+    for snippet in forbidden:
+        if snippet in dockerfile:
+            fail(f"gfx1100 0.32 serving Dockerfile must not contain {snippet!r}")
 
 
 def assert_dockerfile_patch_order(dockerfile: str) -> None:
@@ -661,6 +718,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     fast_job = ci_yaml.find("runtime_patch_contracts:")
     serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
     native_w4a16_job = ci_yaml.find("publish_serving_rocm_gfx1100_native_w4a16:")
+    serving_v032_job = ci_yaml.find("publish_serving_rocm_gfx1100_v032:")
     publish_job = ci_yaml.find("publish_unified_rocm_gfx1100:")
     gaming_job = ci_yaml.find("publish_gaming_rocm_gfx1100:")
     if fast_job == -1:
@@ -671,15 +729,17 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
         fail(
             "runtime-publish CI is missing " "publish_serving_rocm_gfx1100_native_w4a16"
         )
+    if serving_v032_job == -1:
+        fail("runtime-publish CI is missing publish_serving_rocm_gfx1100_v032")
     if publish_job == -1:
         fail("runtime-publish CI is missing publish_unified_rocm_gfx1100")
     if gaming_job == -1:
         fail("runtime-publish CI is missing publish_gaming_rocm_gfx1100")
-    if not (fast_job < serving_job < native_w4a16_job < publish_job):
+    if not (fast_job < serving_job < native_w4a16_job < serving_v032_job < publish_job):
         fail(
             "runtime-publish CI order changed; expected runtime_patch_contracts "
             "-> publish_serving_rocm_gfx1100 -> native W4A16 canary "
-            "-> publish_unified_rocm_gfx1100"
+            "-> publish_serving_rocm_gfx1100_v032 -> publish_unified_rocm_gfx1100"
         )
 
     fast_job_body = ci_yaml[fast_job:serving_job]
@@ -692,6 +752,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
         "python3 build/scripts/test_validate_quantized_artifact.py",
         "python3 build/scripts/test_runtime_gptq_patch_composition.py",
         "python3 build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
+        "python3 build/scripts/test_verify_runtime_serving_stack.py",
     )
     for snippet in required_snippets:
         if snippet not in fast_job_body:
@@ -733,7 +794,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
             f"{missing_serving_rules}"
         )
 
-    native_w4a16_job_body = ci_yaml[native_w4a16_job:publish_job]
+    native_w4a16_job_body = ci_yaml[native_w4a16_job:serving_v032_job]
     native_required_snippets = (
         'filename="Dockerfile.runtime-serving-native-w4a16"',
         'build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.32.0"',
@@ -744,6 +805,26 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     for snippet in native_required_snippets:
         if snippet not in native_w4a16_job_body:
             fail("publish_serving_rocm_gfx1100_native_w4a16 missing " f"{snippet!r}")
+
+    serving_v032_job_body = ci_yaml[serving_v032_job:publish_job]
+    for snippet in (
+        'filename="Dockerfile.runtime-serving-v032"',
+        'build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.32.0"',
+        "${REGISTRY}/runtime:rocm-gfx1100-serving-v032",
+        "build/.runtime-env",
+        # Every input the Dockerfile COPYs must rebuild it.
+        "- build/Dockerfile.runtime-serving-v032",
+        "- internal/runtime/**/*",
+        "- build/server-diffusers.py",
+        "- build/server-snac.py",
+        "- build/vllm-plugin-common/**/*",
+        "- build/vllm-qwen35-text-plugin/**/*",
+        "- build/vllm-qwen35-seqcls-plugin/**/*",
+        "- build/scripts/verify_vllm_gfx1100_native_w4a16.py",
+        "- build/scripts/verify_runtime_serving_stack.py",
+    ):
+        if snippet not in serving_v032_job_body:
+            fail(f"publish_serving_rocm_gfx1100_v032 missing {snippet!r}")
 
     unified_job_body = ci_yaml[publish_job:gaming_job]
     for path in UNIFIED_SERVING_ONLY_RULE_FILES:
@@ -1283,6 +1364,7 @@ def main(argv: list[str]) -> int:
     entrypoint = read("build/runtime-entrypoint.sh")
     serving_dockerfile = read("build/Dockerfile.runtime-serving")
     native_w4a16_dockerfile = read("build/Dockerfile.runtime-serving-native-w4a16")
+    serving_v032_dockerfile = read("build/Dockerfile.runtime-serving-v032")
     gfx906_vllm_dockerfile = read("build/Dockerfile.vllm-rocm-gfx906")
     gfx906_vllm_install_script = read("build/scripts/install_vllm_gfx906_compat.py")
     sunshine_launcher = read("build/sunshine-headless.sh")
@@ -1317,6 +1399,7 @@ def main(argv: list[str]) -> int:
     assert_optional_runtime_component_contract(dockerfile)
     assert_serving_dockerfile_contract(serving_dockerfile)
     assert_native_w4a16_dockerfile_contract(native_w4a16_dockerfile)
+    assert_serving_v032_dockerfile_contract(serving_v032_dockerfile)
     assert_gfx906_vllm_diagnostics_contract(gfx906_vllm_dockerfile)
     assert_gfx906_vllm_compat_hooks_contract(gfx906_vllm_install_script)
     assert_sunshine_input_contract(sunshine_launcher, values_yaml)

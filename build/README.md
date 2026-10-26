@@ -49,6 +49,7 @@ The old from-source variants (`Dockerfile.agent`, `.proxy`, `.manager`, `.sched`
 | `Dockerfile.runtime` | CI `publish_unified_rocm_gfx1100` (changes-gated, ~4 h) and `publish_gaming_rocm_gfx1100` (`INCLUDE_GAMING`); `build/build-runtime.sh <arch> --push` off-CI fallback | `flexinfer/runtime:rocm-gfx1100[-<sha>]` unified utility runtime (GPUProfile fallback surface) and `:rocm-gfx1100-gaming`; contract-checked by `scripts/check-runtime-patch-contracts.py` |
 | `Dockerfile.runtime-serving` | CI `publish_serving_rocm_gfx1100` (changes-gated, ~3 h) | `flexinfer/runtime:rocm-gfx1100-serving[-<sha>]` — the persona `build/runtime.yaml` assigns to the managed DaemonSet lanes (promotion via `scripts/promote-runtime-digest.sh gfx1100-serving`) |
 | `Dockerfile.runtime-serving-native-w4a16` | CI `publish_serving_rocm_gfx1100_native_w4a16` | `flexinfer/runtime:rocm-gfx1100-v032-native-w4a16[-<sha>]` — vLLM-from-source canary with the native RDNA3 W4A16 op; unpromotable by design (no Go runtime binary). The v0.23 build of this recipe (`…-v023-native-w4a16-037d0bc1`, digest `2e9652ed…`) is what promoted Models pin; its recipe was repointed to v0.26 in place, see issue #74 |
+| `Dockerfile.runtime-serving-v032` | CI `publish_serving_rocm_gfx1100_v032` (changes-gated); `build/build-runtime.sh gfx1100-serving-v032` off-CI | `flexinfer/runtime:rocm-gfx1100-serving-v032[-<sha>]` — the stacked serving persona on vLLM 0.32: the native-W4A16 stack (same base, plugins and ISA check) plus the `flexinfer-runtime` supervisor, `server-diffusers.py` and `server-snac.py`, so a runtime DaemonSet can host the 0.32 text lanes. The vLLM stack is frozen: the overlay installs against a pre-overlay `pip list` snapshot as constraints, and `scripts/verify_runtime_serving_stack.py` re-checks it plus every spawn target at build time. Not promoted to any DaemonSet yet (issue #74 S2) |
 | `Dockerfile.runtime-gfx906` | CI (changes-gated job in `.gitlab-ci.yml`) | gfx906 runtime variant |
 | `Dockerfile.runtime-torch-multiarch` | `build/build-torch-multiarch.sh` (off-CI, manual-only) | `flexinfer/torch:rocm6.3.4-multiarch` — one torch wheel carrying gfx906+gfx1100 device code |
 | `Dockerfile.unified-gfx906` | CI `publish_unified_rocm_gfx906` | `flexinfer/runtime:unified-gfx906` — community PyTorch, replaces old per-task gfx906 images (incl. quantize via `USE_RUNTIME_FOR_QUANTIZE`) |
@@ -72,7 +73,8 @@ build would drop whatever the overlay added. The report also flags, without fail
 GPUProfile field today. `scripts/check-runtime-patch-contracts.py` (CI `runtime_patch_contracts`) holds the publish
 jobs that hardcode their build args and `runtime.env` heredoc instead of calling `build-runtime.sh`
 (`publish_runtime_rocm_gfx906`, `publish_unified_rocm_gfx1100`, `publish_serving_rocm_gfx1100`,
-`publish_gaming_rocm_gfx1100`, `publish_serving_rocm_gfx1100_native_w4a16`) to `runtime.yaml`. It checks each value
+`publish_gaming_rocm_gfx1100`, `publish_serving_rocm_gfx1100_native_w4a16`,
+`publish_serving_rocm_gfx1100_v032`) to `runtime.yaml`. It checks each value
 against what `build-runtime.sh` would derive, where a profile-level `llamacpp_version`/`go_version`/`ollama_version`/
 `ollama_go_version` overrides the top-level key, so a version bumped in only one file fails the lint stage.
 Divergences that predate the check are listed in `KNOWN_PUBLISH_JOB_DIVERGENCES` and printed as warnings on every run.
