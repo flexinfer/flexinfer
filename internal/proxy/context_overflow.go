@@ -200,6 +200,19 @@ func (p *Proxy) finishContextOverflow(
 		_ = cw.flushCaptured()
 		return
 	}
+	// The replay is forwarded under the target's lane: load its first-byte
+	// budget (flexinfer.ai/lane-first-byte-budget, sized for a long prefill)
+	// and stay off a lane whose breaker is open, so over-length prompts can
+	// neither time out on the default budget nor keep a tripped lane busy.
+	if p.laneConfig.LaneBreakerThreshold > 0 {
+		if open, _, _ := p.prepareLane(target, tm.Annotations); open {
+			slog.Warn("context overflow lane breaker open; returning the original 400",
+				"model", modelName, "target", target)
+			contextOverflowTotal.WithLabelValues(modelName, target, "target_unavailable").Inc()
+			_ = cw.flushCaptured()
+			return
+		}
+	}
 
 	slog.Info("context overflow reroute",
 		append([]any{

@@ -49,12 +49,15 @@ func (p *Proxy) laneDurations() (time.Duration, time.Duration, time.Duration) {
 	}
 	return c, max, budget
 }
-func (p *Proxy) rejectLane(w http.ResponseWriter, r *http.Request, name, requested string, annotations map[string]string) bool {
-	if p.laneConfig.LaneBreakerThreshold == 0 {
-		return false
-	}
+
+// prepareLane refreshes a lane's first-byte budget and probe path from its
+// Model annotations and reports whether its breaker is open. Every path that
+// forwards to a lane must call it first, or the lane keeps whatever budget the
+// last direct request left (the default after a proxy restart).
+func (p *Proxy) prepareLane(name string, annotations map[string]string) (open bool, until, last time.Time) {
 	b := p.lane(name)
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	_, _, b.budget = p.laneDurations()
 	if v, err := time.ParseDuration(annotations["flexinfer.ai/lane-first-byte-budget"]); err == nil && v > 0 {
 		b.budget = v
@@ -62,8 +65,14 @@ func (p *Proxy) rejectLane(w http.ResponseWriter, r *http.Request, name, request
 	if strings.Contains(annotations["flexinfer.ai/serve-paths"], "embeddings") && !strings.Contains(annotations["flexinfer.ai/serve-paths"], "chat/completions") {
 		b.path = "/v1/embeddings"
 	}
-	open, until, last := b.open, b.until, b.lastSuccess
-	b.mu.Unlock()
+	return b.open, b.until, b.lastSuccess
+}
+
+func (p *Proxy) rejectLane(w http.ResponseWriter, r *http.Request, name, requested string, annotations map[string]string) bool {
+	if p.laneConfig.LaneBreakerThreshold == 0 {
+		return false
+	}
+	open, until, last := p.prepareLane(name, annotations)
 	if !open {
 		return false
 	}
