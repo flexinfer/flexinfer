@@ -350,6 +350,15 @@ Two guards:
   instead.
 - A rerouted request is never rerouted again.
 
+The replay runs under the target's own lane breaker:
+
+- **Budget.** It uses the target's `flexinfer.ai/lane-first-byte-budget`. The
+  breaker waits for the first generated token, even on a streamed request, so
+  a target that has to prefill long prompts needs a budget sized for that
+  prefill. The 120 s default cuts anything longer.
+- **Open breaker.** A target whose breaker is open gets no reroute, and the
+  client gets the original 400.
+
 Watch `flexinfer_proxy_context_overflow_total{model,target,outcome}`, where
 outcome is `rerouted` or `target_unavailable`. Do not also opt the short lane
 into context-bounded admission (`flexinfer.ai/admission`): its 413 is

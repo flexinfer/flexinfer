@@ -139,7 +139,7 @@ func newOverflowFixture(t *testing.T, smallStatus int, smallBody string, smallAn
 		var body map[string]any
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.bigModel.Store(body["model"])
-		if bigAnn != nil {
+		if bigAnn[annotationContextOverflowTo] != "" {
 			// A target that itself overflows must not chain the request on.
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusBadRequest)
@@ -248,4 +248,37 @@ func TestServeProxySuccessPassesThroughWithAnOverflowLane(t *testing.T) {
 	assert.Equal(t, `{"choices":[]}`, rec.Body.String())
 	assert.Empty(t, rec.Header().Get(headerContextOverflow))
 	assert.EqualValues(t, 0, f.bigHits.Load())
+}
+
+func TestServeProxyReroutesUnderTheTargetLaneBudget(t *testing.T) {
+	budget := map[string]string{"flexinfer.ai/lane-first-byte-budget": "450s"}
+	f := newOverflowFixture(t, http.StatusBadRequest, vllmRendererContextError, overflowToBig, budget, aiv1alpha2.ModelPhaseReady)
+	f.p.laneConfig.LaneBreakerThreshold = 3
+	f.p.laneConfig.LaneFirstByteBudget = 2 * time.Minute
+
+	rec := f.serve(t)
+
+	assert.Equal(t, http.StatusOK, rec.Code)
+	assert.EqualValues(t, 1, f.bigHits.Load())
+	lane := f.p.lane("big")
+	lane.mu.Lock()
+	defer lane.mu.Unlock()
+	assert.Equal(t, 450*time.Second, lane.budget, "the replay runs under the target's annotated budget, not the default")
+}
+
+func TestServeProxyKeepsTheOriginal400WhenTheTargetBreakerIsOpen(t *testing.T) {
+	f := newOverflowFixture(t, http.StatusBadRequest, vllmRendererContextError, overflowToBig, nil, aiv1alpha2.ModelPhaseReady)
+	f.p.laneConfig.LaneBreakerThreshold = 3
+	lane := f.p.lane("big")
+	lane.mu.Lock()
+	lane.open, lane.until = true, time.Now().Add(time.Minute)
+	lane.mu.Unlock()
+	before := testutil.ToFloat64(contextOverflowTotal.WithLabelValues("small", "big", "target_unavailable"))
+
+	rec := f.serve(t)
+
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+	assert.Equal(t, vllmRendererContextError, rec.Body.String())
+	assert.EqualValues(t, 0, f.bigHits.Load(), "a tripped lane is not handed over-length prompts")
+	assert.Equal(t, before+1, testutil.ToFloat64(contextOverflowTotal.WithLabelValues("small", "big", "target_unavailable")))
 }

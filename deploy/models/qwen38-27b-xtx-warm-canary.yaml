@@ -56,6 +56,17 @@ metadata:
     flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
     flexinfer.ai/purpose: "Warm-pinned Mills/loom text lane on the 7900 XTX (mills-warm / mills-council)"
     flexinfer.ai/plan: ".loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md"
+    # 2026-10-26 (gfx1100 S4, research §7f): this lane is the context-overflow
+    # target of the 5930k workhorse (32K since S4). flexinfer-proxy's lane
+    # breaker waits for the first generated token, and its default 120 s
+    # budget cut every prompt this TRITON + fp8 lane cannot prefill in 120 s:
+    # 33,514 tokens took 119.8 s, and 50K prompts got a proxy 504 while vLLM
+    # kept working. 480 s covers a 64K prefill (~380 s extrapolated from the
+    # 33.5K point and S3's TRITON curve) with margin, under psyche-
+    # simulation's 600 s client timeout. Cost: a wedged XTX card now holds a
+    # request up to 480 s before it counts toward the breaker (3 failures
+    # open it). Rollback = drop this annotation (default 120 s).
+    flexinfer.ai/lane-first-byte-budget: "480s"
     flexinfer.ai/promotion-state: promoted-64k-fp8-graph-warm
     flexinfer.ai/promotion-evidence: "2026-09-13 §7a: Ready +6min, RDNA3W4A16, KV 69,905 tok fp8 (1.07x @64K), probes 3/3 coherent ~34 tok/s, 2.3K-token prompt 2.57 s, orpheus-tts on VII 0.72 s"
 spec:
