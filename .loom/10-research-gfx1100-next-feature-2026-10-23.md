@@ -645,6 +645,15 @@ gfx1100-serving-v032`, no GPU devices, not pushed; CI publishes on merge):
    `vllm/vllm-openai-rocm:v0.32.0` base the 5930k already holds for
    `cd108c9e`/`b06b06fe`, so S6b's prewarm is a small pull, not a 17 GB one.
 
+**CI build (2026-10-26):** !1174 merged as `c444b5ff`, and master pipeline 34930
+job 416180 published `runtime:rocm-gfx1100-serving-v032` and `-c444b5ff` as
+`sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2`
+(11.64 GB compressed; pushed 04:52:22Z). The same verifier lines passed in CI:
+265 unchanged, 5 added, no new `pip check` problems, every spawn target
+resolving. Nothing pins it yet, so Harbor retention (latest 30 pushed or
+pulled in 30 days) can delete it before S6b. Add a `pinned-ef28b7b0d1cb` tag,
+or pin it in a prewarm list, when S6b is scheduled.
+
 The riskiest assumption holds: diffusers and snac fit beside vLLM 0.32
 without moving it, once diffusers is ≥ 0.42. Still not shown, and S6b's job
 on a GPU: that the runtime supervisor serves a 0.32 lane at parity with the
