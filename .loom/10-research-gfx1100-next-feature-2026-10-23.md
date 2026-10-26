@@ -787,6 +787,97 @@ dedicated pod.
 - **S6e:** bitsandbytes on ROCm 7.2 and !1165's `check-runtime-diffusers.py`
   in this image, so Qwen-Image 2.1 runs here too.
 
+## 7f. S4 (prepared 2026-10-26): promote segmented + fp16 + MTP K=2 at 32K onto the 5930k workhorse
+
+**The change.** One manifest, `deploy/models/qwen38-27b-autoround-workhorse.yaml`, moves to S3's arm B:
+
+- image `b06b06fe` (Harbor `pinned-b06b06fe1c02`; already in the 5930k prewarm list);
+- `ROCM_SEGMENTED_ATTN` with `kernelConfig` autotune;
+- `kvCacheDtype: auto` (fp16);
+- `maxModelLen` 65536 → 32768;
+- MTP K=2 through `speculativeConfig`;
+- `FLEXINFER_QWEN35_MTP_HEAD=checkpoint` through `spec.config.env`;
+- a fresh compile-cache hostPath.
+
+Everything else in the envelope is unchanged: 0.96, two sequences, 4,096 batched tokens, align prefix caching, parsers, aliases and priority 500. There is deliberately no `hfRevision`: pinning it would change the Local cache key and re-stage 19 GB, and the production cache already holds the same revision (S3's ETag check).
+
+**What S4 changes for callers.**
+
+- **Decode** is about 1.7x faster single-stream (71.8 / 66.5 / 66.1 tok/s at 512 / 2K / 16K, against 40.8 / 40.2 / 34.3).
+- **Long prefill** is 2–3x faster.
+- **Short-prompt TTFT** is at parity once warm.
+- **The window falls from 64K to 32K.** Over the 7 days to 2026-10-26, 12,971 requests:
+  - 99.62 % had prompts ≤ 20K, 49 (0.38 %) were 20K–50K, and none exceeded 50K;
+  - `max_tokens` was ≤ 5K for 98.2 %;
+  - 117 requests above 50K are unset `max_tokens`, which vLLM fills from the remaining context, so they adapt.
+- **Who can fail:** only a request whose prompt plus `max_tokens` exceeds 32,768. Those need the overflow route below.
+
+**Riskiest assumption and kill-test.** S3/S3b measured the canary under a different Model name with the profiler on. The assumption is that the production name and path, under real concurrency-2 traffic, show the same steady-state numbers and no JIT storm. Kill-test is the post-roll verification below. If any gate fails, roll back in one revert.
+
+**Rollout (operator window, about 10–25 min of 5930k lane time).**
+
+0. **Gate: S4a is live.** The proxy pin must carry CC-6a-3 (below). Otherwise psyche-simulation's ~59K prompts fail from the moment the workhorse drops to 32K.
+1. **Seed the new compile cache from the S3/S3b canary** (optional, recommended; one node command):
+   - What carries over: the segmented autotune table (`vllm/rocm_segmented_attention/`) and the Triton variants (`triton/`). Both are keyed by GPU, toolchain, kernel source and shapes, not by Model name or path (`_identity` in `rocm_segmented_attn_autotune_warmup.py`). A seeded first boot loads the 74-workload table (`missing=0`) and the variants S3/S3b compiled.
+   - What may not: torch.compile entries whose config hash differs simply recompile.
+   - Unseeded, the first boot autotunes for about 10 min and may profile a short pool once; the controller's KVPoolShort recheck relaunches it.
+   - The command:
+     `ssh cblevins-5930k 'sudo install -d /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s4-5930k/flexinfer-system/qwen38-27b-autoround-workhorse && sudo cp -a /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s3-5930k/flexinfer-system/qwen38-27b-v032-s3-attn-canary/. /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s4-5930k/flexinfer-system/qwen38-27b-autoround-workhorse/'`
+2. **Merge.** Flux applies the Model, and the controller relaunches the Deployment; if the lane is idle, `flexinfer_activate_model` boots it.
+3. **Check the boot.** Boot lines should show:
+   - "Using token-major ROCm segmented Triton attention";
+   - block size 416;
+   - autotune `missing=0` when seeded;
+   - `status.kvPool` ≥ 1.5x at 32K (S3: 52,932 tokens = 1.62x).
+4. **Warm sweep, then verify, over a port-forward** (no writes into the pod):
+   - `scripts/probe-vllm-ttft-floor.py` covers every power-of-two query bucket and its +1 edge, a 16K and a 30K chunked prefill, and the chat path. Its first pass compiles anything the seed lacked.
+   - Then `scripts/verify-vllm-mtp.py --phase measure --contexts 512,2048,16384 --soak-pairs 4`.
+5. **Gates**, all against S3b's B':
+   - median server TTFT ≤ 0.28 / 0.52 / 1.31 s at 256 / 512 / 1,124;
+   - decode ≥ 65.2 tok/s at 2K and ≥ 62.8 at 16K;
+   - position-0 acceptance ≥ 0.70;
+   - coherent probes;
+   - 0 HIP/HSA/OOM/EngineDead lines in 30 min;
+   - `jit_monitor` lines tapering to none after the sweep.
+6. **24 h watch.**
+   - vLLM e2e p50/p95 and TTFT p95 on this lane against the previous week;
+   - 4xx with "maximum context length" (the overflow signal);
+   - preemptions (`vllm:num_preemptions_total`; two long requests can now collide in the smaller pool).
+
+**Rollback.** Revert the S4 commit: `cd108c9e` (pinned, resident), TRITON + fp8 + 64K, no MTP, and the old compile-cache path, which S4 never touches, so the rollback boot is warm.
+
+**Overflow route for requests over 32K (S4a).** Nothing rerouted a request on length before this slice. A read-only survey on 2026-10-26 found:
+
+- **flexinfer-proxy** resolves an alias to exactly one Model. Its context-bounded admission (CC-6a-2) answers 413, and fallback (CC-6a-3) was specified but never built.
+- **LiteLLM 1.80.11** supports `context_window_fallbacks`, but the gitops manager never writes it. LiteLLM forwards every FlexInfer lane through the proxy anyway.
+- **Mills' FlexInfer client** walks a fallback chain on any 400, but only for the weaver/research and judge roles.
+- **The 128K lanes are not reachable as targets.** `qwen35-35b-clean-gptq-workhorse-128k` is parked behind the XTX primary with LiteLLM disabled (proxy 404/503). Its 5930k sister shares this card at priority 300.
+- **psyche-simulation is a real >32K consumer.** It calls the `workhorse` alias proxy-direct with `LLM_CONTEXT_TOKENS 65536` and consolidates around 58.9K tokens.
+
+S4a builds CC-6a-3 reactively in flexinfer-proxy (`feat/proxy-context-overflow`):
+
+- **Mechanism.** A Model annotated `flexinfer.ai/context-overflow-to` has its runtime's 400 held back on completion paths. When the body is vLLM's own prompt-length rejection, the original request is replayed once to the target, which must already be Ready.
+- **Why only prompt length triggers it.** vLLM 0.32 trims `max_tokens` to the remaining context itself (`get_max_tokens`). Only a prompt that does not fit errors, so LiteLLM's full-window default `max_tokens` does not trigger reroutes.
+- **Target.** `qwen38-27b-xtx-warm-canary`: the same artifact and recipe at 64K, `warmPolicy: primary`, `minReplicas 1`.
+- **Coverage.** proxy-direct clients (psyche, jobsearch, loom weaver, Mills) and LiteLLM callers.
+- **Known limits.**
+  - If the XTX card drops off the bus (its history through 2026-10-22, capped at 2100 MHz since), >32K requests get the original 400. Today they would have been served at 64K.
+  - Prompts over 64K fail on both lanes, as they do today.
+  - Do not opt the workhorse into `flexinfer.ai/admission`: its 413 is returned before the runtime is asked, so nothing would reroute.
+
+**Order.**
+
+1. Merge S4a. CI builds the proxy image.
+2. Roll the proxy pin in `deploy/system/values-k3s.yaml` (the !1173 pattern).
+3. Verify a >32K request against a lane with the annotation. Until S4b, the workhorse is 64K, so check with `X-FlexInfer-Context-Overflow` on a test lane, or right after S4b with one 40K-token request through the `workhorse` alias.
+4. Then the S4 rollout above. S4b carries the annotation, so the reroute is live the moment the workhorse drops to 32K.
+
+**Follow-ups, outside S4.**
+
+- mobile-hud pins `SPAWN_LOCAL_PROVIDER_CONTEXT_WINDOW=65536` for this lane. The overflow keeps that true end to end, but the comment should name both lanes.
+- Mills' "TEMPORARY" workhorse pins from 2026-10-10 still stand.
+- The stale "131072 envelope" comment in the 128k lane's manifest.
+
 ## 8. Sources
 
 - Fleet: `deploy/models/qwen38-27b-autoround-workhorse.yaml`,
