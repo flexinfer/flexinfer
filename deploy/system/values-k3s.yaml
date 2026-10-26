@@ -146,6 +146,16 @@ proxy:
   replicaCount: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-proxy
+    # 2026-10-26: master d8758301 (master pipeline 35011) = the fe31c9ee build
+    # below plus !1177, the context-overflow reroute (CC-6a-3): a Model
+    # annotated flexinfer.ai/context-overflow-to has vLLM's prompt-length 400
+    # replayed once to that Ready lane. No Model carries the annotation until
+    # gfx1100 S4b (!1178), so routing is otherwise unchanged. The only other
+    # change in the proxy's import graph is !1172 (spec.config.env in direct
+    # runtime-load payloads, as on controller 37317c95). Rollback = the
+    # fe31c9ee build: tag 20261025-163057,
+    # sha256:1b2ffd4128b79a357d92ed4f8c65fc732f6cb8d9e8c32a69bd891ba3d88d3654.
+    #
     # 2026-10-25: master fe31c9ee = !1161 on top of the cc7273917 pin. Demand
     # (lastActiveTime) writes leave the request path: one coalescing writer
     # per model, status merge patches. Model/Service/LoRAAdapter reads come
@@ -156,8 +166,8 @@ proxy:
     # loraadapters watch from !1161. Rollback anchor: tag
     # humanizer-fastswaps-cc7273917,
     # sha256:db4c70c04e4196bf26da174d6e529380000678be76ac8315916e7a62452f18c8.
-    tag: "20261025-163057"
-    digest: "sha256:1b2ffd4128b79a357d92ed4f8c65fc732f6cb8d9e8c32a69bd891ba3d88d3654"
+    tag: "20261026-150117"
+    digest: "sha256:d0dc2dbc72d15a523abf5af63b7b9b0bbfc00517a33f4d47ad27dcaae8feb77a"
     pullPolicy: Always
   service:
     type: ClusterIP
