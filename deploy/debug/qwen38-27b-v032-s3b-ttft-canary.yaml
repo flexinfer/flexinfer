@@ -1,3 +1,14 @@
+# RESULT (2026-10-26, window 13:15-13:32Z; research §7d'', matrix row
+# gfx1100-native-w4a16-v032-s3b-ttft-2026-10-26): there is no floor. Every
+# 0.5-1.5 s outlier was the first request of a shape compiling a new
+# _segmented_attention_stage/_reduce Triton variant (all strides are constexpr,
+# and the autotuner compiles a different block-table width than the runtime);
+# the persisted cache carries them across processes. Ran S1 then B' (S2 and the
+# fix arms were unnecessary). Warm B' (segmented + fp16 + MTP K=2): server TTFT
+# 0.234 / 0.419 / 1.026 s at 256 / 512 / 1124 (production 0.237 / 0.436 /
+# 1.088), decode 71.8 / 66.5 / 66.1 tok/s at 512 / 2K / 16K, coherent, 0 faults.
+# B goes to S4 with a warm sweep before traffic. Deleted after the window.
+#
 # DEBUG CANARY — slice S3b of .loom/10-research-gfx1100-next-feature-2026-10-23.md
 # (§7d''): why does ROCM_SEGMENTED_ATTN put a ~1.7 s TTFT floor under prompts
 # of 512 tokens or fewer on gfx1100? Prepared 2026-10-26. NOT in the models
