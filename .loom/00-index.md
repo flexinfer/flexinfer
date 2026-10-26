@@ -136,8 +136,9 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       `gfx1100-native-w4a16-v032-s4-workhorse-2026-10-26`). Seeded compile cache, Ready 20:19:46 on
       `b06b06fe` (autotune missing=0, pool 52,932 / 1.62x). Gates: TTFT 0.235 / 0.423 / 1.039 s, decode
       68.5 @2K / 65.9 @16K, pos0 0.818, soak 59.8, parity 8174a49e, 0 faults. Proxy overflow works (33.5K
-      streamed -> XTX lane, correct answer) but the 120 s first-byte budget cuts >~33.6K on the TRITON
-      target, as it did on the old 64K lane above ~35K. Follow-ups: overflow-lane budget, psyche budget.
+      streamed -> XTX lane, correct answer); the 120 s first-byte budget cut >~33.6K until !1182/!1183
+      (reroute loads the target lane's budget and breaker; XTX lane budget 480 s): a cold 50,329-token
+      request then completed at 249.3 s. Follow-ups: psyche budget, 24 h watch.
 - [x] 2026-10-26 (branch `feat/gfx1100-serving-v032`): **slice S6a, one stacked 0.32 runtime image for
       gfx1100 — PASS offline** (research §7e, issue #74 S2 serving half). The runtime DaemonSets still run the 0.17 serving
       persona and 0.32 ships only as a `vllm serve` image, so the 5930k runtime is parked and every lane

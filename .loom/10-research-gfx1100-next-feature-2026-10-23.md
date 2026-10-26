@@ -787,7 +787,7 @@ dedicated pod.
 - **S6e:** bitsandbytes on ROCm 7.2 and !1165's `check-runtime-diffusers.py`
   in this image, so Qwen-Image 2.1 runs here too.
 
-## 7f. S4 (2026-10-26): **PROMOTED — the 5930k workhorse serves segmented + fp16 + MTP K=2 at 32K; every gate passes; the overflow works but is time-bound to about 33.6K by the proxy's 120 s first-byte budget**
+## 7f. S4 (2026-10-26): **PROMOTED — the 5930k workhorse serves segmented + fp16 + MTP K=2 at 32K; every gate passes; prompts over 32K overflow to the XTX lane up to its 64K window (480 s first-byte budget since !1182)**
 
 **RESULT.**
 
@@ -826,12 +826,18 @@ dedicated pod.
   - TRITON + fp8 prefills about 280 tok/s at 33K, so the XTX lane can only finish prompts up to about 33.6K inside the budget.
   - **This is not a regression.** The pre-S4 TRITON workhorse hit the same wall above about 35K (S3's arm D: 79 s at 28K). The old lane logged 115 timeouts in the 7 days to the roll, so psyche-simulation's ~59K turns have likely been cut at 120 s all along.
   - Between 32K and 35K, S4 serves slightly fewer prompts than before. Up to 32K it prefills 2–3x faster.
-- **Follow-ups.**
-  1. Give the overflow lane a budget that fits a 64K TRITON prefill, either:
-     - `flexinfer.ai/lane-first-byte-budget: 330s` on `qwen38-27b-xtx-warm-canary`, which delays the breaker's wedge detection on a card with a history of dropping; or
-     - a proxy change that scales the budget for rerouted requests by prompt length.
-  2. Decide psyche-simulation's budget. Its 64K design never fit the 120 s first-byte budget on TRITON.
-  3. The 24 h watch: e2e/TTFT p95, overflow counter, preemptions.
+- **Follow-up 1, done the same day (!1182, proxy roll !1183): the overflow lane's budget.**
+  - **A second bug.** The reroute did not load the target lane's budget at all. Only `rejectLane`, on the direct-request path, read `flexinfer.ai/lane-first-byte-budget`, so a replay kept whatever budget the target's last direct request had left: the 120 s default after a proxy restart, and the XTX lane sees only about 6 direct requests an hour. The replay also ignored an open breaker. Each cut-off counted as a lane failure, and three in a row would have opened Mills' warm lane's breaker.
+  - **The fix.** `prepareLane` loads the target's budget and breaker state for the reroute. A target whose breaker is open gets no reroute, and the client gets the original 400. `qwen38-27b-xtx-warm-canary` gets `flexinfer.ai/lane-first-byte-budget: "480s"`; applying it did not restart the lane.
+  - **Verified on proxy `dbbf7141`** (Ready 21:13:18Z):
+    - a cold 50,329-token streamed request (unique nonce, 0 cached tokens) to `workhorse` returned 200 via the XTX lane, answer `2499` correct, first token at 249.3 s;
+    - a warm repeat with 40,000 cached tokens took 84.6 s;
+    - the XTX pod, node and `gpu.health` stayed clean, and the lane's breaker stayed closed.
+  - **The 64K fit.** On the XTX lane's own TRITON curve (119.8 s at 33.5K, 249.3 s at 50.3K), a 64K prefill takes about 389 s, and the 65,536-token maximum about 406 s. 480 s leaves about 18 % headroom for a single request.
+  - **The cost.** A wedged XTX card now holds a request up to 480 s before it counts toward the breaker.
+- **Remaining follow-ups.**
+  1. Decide psyche-simulation's budget. Its ~59K turns now complete through the overflow in about 5–6 minutes, under its 600 s client timeout.
+  2. The 24 h watch: e2e/TTFT p95, overflow counter, preemptions.
 
 **The plan as prepared:**
 
