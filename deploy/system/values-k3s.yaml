@@ -34,6 +34,17 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
+    # 2026-10-26: master 68f6cda7 (master pipeline 34921) = the dc73879c build
+    # below plus !1172 and 8326613d (via d5d1365e). !1172: spec.config.env sets
+    # extra backend-process env on both launch paths (over backend and
+    # GPUProfile env); device visibility, PORT and the cache paths stay
+    # controller-owned and fail validation with ConfigInvalid; vLLM
+    # kernelConfig renders --kernel-config. No live Model sets env or
+    # kernelConfig, so nothing renders differently. 8326613d: a staged Local
+    # HF cache stays ready across a config-only spec edit
+    # (status.cache.stagedKey, already in the live CRD); expect one status
+    # write per staged Local HF Model on the first pass and no stage Jobs.
+    # 4ba76b65 (dc73879c) is the safe fallback.
     # 2026-10-25: master dc73879c (master pipeline 34797) = the b02367ad build
     # below plus !1156 and !1139. llama.cpp: draftMax/draftMin render as
     # --spec-draft-n-max/--spec-draft-n-min for draft-* spec types and for a
@@ -73,8 +84,8 @@ controller:
     # a517165a is also safe):
     # sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376
     # (tag 20261023-142445).
-    digest: "sha256:4ba76b65e990e9fd9f73276f1ff7f8c83c16b3b386bead16854f42a3eab581f4"
-    tag: "20261025-154512"
+    digest: "sha256:37317c95d9298e127db3d116d91a5cf4adae391d847c7f28ef61ad65d9079efa"
+    tag: "20261026-015819"
   resources:
     limits:
       cpu: 1000m
