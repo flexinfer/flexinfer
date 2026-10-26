@@ -1,3 +1,15 @@
+# RESULT (2026-10-26, window 03:38-04:47Z; research §7d', matrix row
+# gfx1100-native-w4a16-v032-s3-attn-2026-10-26): fail against the decision
+# rule below, with a clear lead. Decode tok/s at 512 / 2K / 4K / 16K / 28K:
+#   B segmented + fp16 + MTP  71.2 / 68.6 / 66.6 / 66.1 / 61.5  (pool 52,932)
+#   C segmented + fp16        41.6 / 41.3 / 40.7 / 38.2 / 36.0  (pool 70,749)
+#   D TRITON + fp8            40.8 / 40.2 / 39.3 / 34.3 / 30.6  (pool 80,874)
+#   A TRITON + fp8 + MTP      61.6 / 47.5 / 36.9 / 15.3 /  9.9  (pool 88,851)
+# MTP on TRITON pays only to 2K and does not go to the workhorse. Segmented beats
+# TRITON by +93 % / +101 % decode at 16K / 28K and prefills 2-3x faster there,
+# but has a ~1.7 s TTFT floor at <= 512 prompt tokens (TRITON 0.5 s), so it does
+# not replace TRITON yet (S3b diagnoses the floor). Deleted after the window.
+#
 # DEBUG CANARY — slice S3 of .loom/10-research-gfx1100-next-feature-2026-10-23.md
 # (attention-backend A/B with MTP on and off), prepared 2026-10-25. NOT in the
 # models kustomization: the operator applies it once, the agent session
