@@ -683,7 +683,7 @@ Arm B's delta sits at the end of the file.
 Owner ask (2026-10-26): serve Qwen-Image 2.1 on demand so it can take one of the gfx1100 cards.
 That is `deploy/models/qwen-image-21-gfx1100.yaml`, arm A's config (official weights, NF4
 transformer + NF4 text encoder, no CFG, 40 steps) as a scale-to-zero member of a shared-GPU
-election group. It is on branch `feat/qwen-image21-5930k-lane`, stacked on the R1–R3 MR. It
+election group. It is on branch `feat/qwen-image21-5930k-lane` (Draft !1175), stacked on the R1–R3 MR (!1165). It
 cannot merge before that MR does, because its image is the serving build master CI makes from the
 R1–R3 merge.
 
@@ -738,7 +738,7 @@ un-parking that DaemonSet would load the lane into an image with no NF4.
 - imagegen-ui sends generations and edits straight to flexinfer-proxy. It lists only the models
   in `GENERATION_MODELS` / `EDIT_MODELS` that resolve in LiteLLM's catalog
   (`server/app.py` `resolve_configured_models`) [V]. Adding `qwen-image` to both is a platform/gitops
-  change to `k3s/ai/imagegen-ui/deployment.yaml`, drafted to merge after the verification below.
+  change to `k3s/ai/imagegen-ui/deployment.yaml` (Draft platform/gitops!996), to merge after the verification below.
   The edit tab can paint a mask, which this model rejects with a 400 (§4a). Unmasked reference
   edits work.
 
