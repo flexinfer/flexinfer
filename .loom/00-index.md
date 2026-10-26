@@ -131,13 +131,13 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       processes. Warm B' (segmented + fp16 + MTP K=2): TTFT 0.234 / 0.419 / 1.026 s at 256 / 512 / 1,124
       vs production 0.237 / 0.436 / 1.088, decode 71.8 / 66.5 / 66.1 at 512 / 2K / 16K. Next: S4 with a
       warm sweep before traffic and a >32K overflow route.
-- [ ] 2026-10-26 (branches `feat/proxy-context-overflow` = S4a, `ops/gfx1100-s4-segmented-mtp-workhorse` =
-      S4b): **slice S4 prepared — promote segmented + fp16 + MTP K=2 at 32K onto the 5930k workhorse**
-      (research §7f). S4a: flexinfer-proxy CC-6a-3 reroutes vLLM's context-length 400 once to
-      `flexinfer.ai/context-overflow-to` (psyche-simulation sends ~59K through `workhorse`); 10 tests.
-      S4b: the workhorse manifest (b06b06fe, ROCM_SEGMENTED_ATTN + autotune, fp16, 32K, MTP K=2, env
-      head policy, fresh compile-cache path, overflow to the XTX warm lane). Order: S4a, proxy roll,
-      optional cache seed, S4b, warm sweep + verify; rollback = revert S4b.
+- [x] 2026-10-26 (!1177 S4a, !1179 proxy roll, !1178 S4b): **slice S4 — PROMOTED: the 5930k workhorse
+      serves segmented + fp16 + MTP K=2 at 32K** (research §7f, matrix row
+      `gfx1100-native-w4a16-v032-s4-workhorse-2026-10-26`). Seeded compile cache, Ready 20:19:46 on
+      `b06b06fe` (autotune missing=0, pool 52,932 / 1.62x). Gates: TTFT 0.235 / 0.423 / 1.039 s, decode
+      68.5 @2K / 65.9 @16K, pos0 0.818, soak 59.8, parity 8174a49e, 0 faults. Proxy overflow works (33.5K
+      streamed -> XTX lane, correct answer) but the 120 s first-byte budget cuts >~33.6K on the TRITON
+      target, as it did on the old 64K lane above ~35K. Follow-ups: overflow-lane budget, psyche budget.
 - [x] 2026-10-26 (branch `feat/gfx1100-serving-v032`): **slice S6a, one stacked 0.32 runtime image for
       gfx1100 — PASS offline** (research §7e, issue #74 S2 serving half). The runtime DaemonSets still run the 0.17 serving
       persona and 0.32 ships only as a `vllm serve` image, so the 5930k runtime is parked and every lane

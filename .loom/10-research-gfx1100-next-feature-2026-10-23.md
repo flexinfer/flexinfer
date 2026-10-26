@@ -787,7 +787,53 @@ dedicated pod.
 - **S6e:** bitsandbytes on ROCm 7.2 and !1165's `check-runtime-diffusers.py`
   in this image, so Qwen-Image 2.1 runs here too.
 
-## 7f. S4 (prepared 2026-10-26): promote segmented + fp16 + MTP K=2 at 32K onto the 5930k workhorse
+## 7f. S4 (2026-10-26): **PROMOTED — the 5930k workhorse serves segmented + fp16 + MTP K=2 at 32K; every gate passes; the overflow works but is time-bound to about 33.6K by the proxy's 120 s first-byte budget**
+
+**RESULT.**
+
+- **Timeline (UTC).**
+  - S4a (!1177) merged at 14:58 and the proxy roll (!1179) at 15:08. Proxy `d0dc2dbc` was Ready at 15:09:12.
+  - The compile cache was seeded from the S3b canary: 1.5 GB, both autotune tables, 1,266 stage and 37 reduce Triton variants.
+  - S4b (!1178) merged at 20:16:25 (`6e16eb303`). Flux applied it at 20:17:29.
+  - The new pod (`b06b06fe`) was Ready at 20:19:46, 2 m 17 s after creation, with no restarts.
+- **Boot.**
+  - `Qwen3_5MTP` draft with MTP K=2, segmented attention, block 416.
+  - KV pool 52,932 tokens (1.62x).
+  - Autotune `loaded=74 missing=0 tuned=0` in 0.02 s: the seeded cache removed the ~10 min autotune and the cold first-boot KV-profiling risk.
+- **Gates** (warm sweep then S3's probe, over a port-forward against live traffic):
+
+  | Gate | Bar | Measured |
+  |---|---|---|
+  | Server TTFT at 256 / 512 / 1,124 (chat) | ≤ 0.28 / 0.52 / 1.31 s | 0.235 / 0.423 / 1.039 s |
+  | Decode at 2K / 16K | ≥ 65.2 / 62.8 tok/s | 68.5 / 65.9 |
+  | Position-0 acceptance | ≥ 0.70 | 0.818, mean acceptance length 2.39 |
+  | Concurrency-2 soak | (S3: 59.7) | 59.8 tok/s per request |
+  | Coherence | pass | probes coherent, `parity_code` `8174a49e` as in S3 |
+  | Faults | 0 | 0 |
+
+  Prefill was 14.9 s at 16K and 28.7 s at 30K. All pass.
+- **Compiles.**
+  - The sweep compiled 4 new segmented variants, all for tiny prompts (16 / 33 / 65 tokens) that S3/S3b never sent under the MTP config. Each was slow once, at 2–4.7 s, and its repeat took 0.22 s.
+  - The three MTP sampling kernels `jit_monitor` flagged at first live traffic (`_rejection_kernel`, `_resample_kernel`, `_compute_local_logits_stats_kernel`; real callers sample, S3's probes were greedy) were already in the seeded cache, so those were disk loads.
+  - No `jit_monitor` line after 20:21:06.
+- **Overflow (S4a), end to end.**
+  - A streamed 33,514-token request to the `workhorse` alias returned 200 with `X-FlexInfer-Context-Overflow: qwen38-27b-autoround-workhorse->qwen38-27b-xtx-warm-canary`, `model` = the XTX lane, and the correct answer, `1699`.
+  - **Its first token came at 119.8 s.** Two 50,314-token requests (one streamed, one not) were rerouted the same way, and the XTX lane accepted them (`200 OK` headers within a second). The proxy then cut both at 120 s with 504 "upstream first byte budget exceeded".
+  - `flexinfer_proxy_context_overflow_total{outcome="rerouted"}` = 3.
+- **Why the 120 s cut.**
+  - The lane breaker's `firstByteTransport` waits for the first *body* byte, so the clock runs until the first generated token even on a streamed request.
+  - The default `LaneFirstByteBudget` is 120 s. Neither lane sets `flexinfer.ai/lane-first-byte-budget`.
+  - TRITON + fp8 prefills about 280 tok/s at 33K, so the XTX lane can only finish prompts up to about 33.6K inside the budget.
+  - **This is not a regression.** The pre-S4 TRITON workhorse hit the same wall above about 35K (S3's arm D: 79 s at 28K). The old lane logged 115 timeouts in the 7 days to the roll, so psyche-simulation's ~59K turns have likely been cut at 120 s all along.
+  - Between 32K and 35K, S4 serves slightly fewer prompts than before. Up to 32K it prefills 2–3x faster.
+- **Follow-ups.**
+  1. Give the overflow lane a budget that fits a 64K TRITON prefill, either:
+     - `flexinfer.ai/lane-first-byte-budget: 330s` on `qwen38-27b-xtx-warm-canary`, which delays the breaker's wedge detection on a card with a history of dropping; or
+     - a proxy change that scales the budget for rerouted requests by prompt length.
+  2. Decide psyche-simulation's budget. Its 64K design never fit the 120 s first-byte budget on TRITON.
+  3. The 24 h watch: e2e/TTFT p95, overflow counter, preemptions.
+
+**The plan as prepared:**
 
 **The change.** One manifest, `deploy/models/qwen38-27b-autoround-workhorse.yaml`, moves to S3's arm B:
 
