@@ -543,7 +543,64 @@ The window ran 03:37–04:47Z on the 5930k on `b06b06fe`. The canary took the ca
 - per-request segment planning on the host;
 - the chunked-prefill scheduler with segmented metadata.
 
-Kill-test: one segmented boot (cache warm). Read the vLLM TTFT, queue and prefill-time histograms around a run of 256-token requests; take a stack sample during one (py-spy is not in `b06b06fe`, so install it in the pod for the probe); and sweep 256 / 384 / 512 / 768 / 1024 tokens (the probe's floor is 256). If the floor goes away, B (segmented + fp16 + MTP K=2 at 32K) passes every bar and goes to S4. If it does not, choosing B anyway trades short-prompt TTFT for the −30 % end-to-end latency, and that is the owner's call. The pool is 52.9K fp16 tokens at 32K against production's 140.8K at 64K, so requests over 32K need an overflow route (the 35B 128K lane).
+Kill-test: one segmented boot (cache warm). Read the vLLM TTFT, queue and prefill-time histograms around a run of 256-token requests; take a stack sample during one (py-spy is not in `b06b06fe`, so install it in the pod for the probe); and sweep 256 / 384 / 512 / 768 / 1024 tokens (the probe's floor is 256). If the floor goes away, B (segmented + fp16 + MTP K=2 at 32K) passes every bar and goes to S4. If it does not, choosing B anyway trades short-prompt TTFT for the −30 % end-to-end latency, and that is the owner's call. The pool is 52.9K fp16 tokens at 32K against production's 140.8K at 64K, so requests over 32K need an overflow route (the 35B 128K lane). The prepared plan is §7d''.
+
+## 7d''. S3b (prepared 2026-10-26): localize the segmented short-prompt TTFT floor
+
+**What is known before the window.**
+
+- **Production baseline, measured with the new probe.** `scripts/probe-vllm-ttft-floor.py` ran against the live workhorse (TRITON_ATTN, fp8, 64K, `cd108c9e`) over a port-forward at 13:04Z on 2026-10-26, two reps per point that agreed within 2 ms. On the completions path, exact token counts, cold prefix, server TTFT was 0.187 / 0.237 / 0.436 / 1.088 s at 64 / 256 / 512 / 1,124 tokens. Queue was zero and HTTP plus frontend added about 20 ms. The chat path at 512 measured the same (0.442 s).
+- **Code read of vLLM 0.32.0 in the image** (read-only, in the workhorse pod):
+  - **Tuned-config lookup.** `segmented_attention()` calls the tuned-config lookup on every layer call. The lookup is a table scan over the boot-time records for the smallest bucket at or above the request (`get_segmented_config`). It does not tune online.
+  - **Kernel compiles.** The stage and reduce kernels compile per power-of-two query capacity, and the boot-time warmup covers them.
+  - **Neither is a per-request multi-second cost by itself.** Single-sample S3 points were also noisy, about ±0.3 s.
+- **The arms do change the KV block, through the KV dtype.** The hybrid attention block follows the KV dtype:
+  - 400 tokens for fp16 (416 with the MTP draft), against 800 / 832 on fp8 (boot lines, and `vllm:cache_config_info` shows `block_size=800` and `mamba_cache_mode=align` on the workhorse).
+  - The scheduler's mamba `align` split (`_mamba_block_aligned_split`) cuts prefill chunks at block and prefix-checkpoint boundaries.
+  - So fp16 changes the step structure of short prefills even when attention is not the cost.
+- **`vllm:iteration_tokens_total` counts output batches, not engine steps.** A 1,124-token prefill reports one batch on the workhorse. Step counts therefore come from profiler traces.
+
+**Hypotheses the arms separate.**
+
+- H1: a segmented-kernel path for small queries: its tuned or static config, or its workspace.
+- H2: the fp16 / 400-token block path: the align split or the KV write, independent of the attention kernel.
+- H3: a host-side stall: metadata building, a GPU sync or the scheduler.
+- H4: the graph and compile path for small batches.
+
+**Arms** (manifest `deploy/debug/qwen38-27b-v032-s3b-ttft-canary.yaml`):
+
+- **Setup.**
+  - Same Model name, image `b06b06fe`, Local cache and compile-cache path as S3. The 1.3 GB compile cache, including both segmented autotune tables, is still on the 5930k, so S1 boots warm.
+  - Each arm is a `spec.config` merge patch through `flexinfer_update_model`.
+  - The manifest drops S3's command wrapper for `spec.config.env` (the MTP head policy) and the `kernelConfig` field. A thin wrapper remains only to add `--profiler-config` (torch profiler, traces in `/tmp/vllm-profile`), because no Model field renders it.
+- **S1, segmented + fp16, no MTP, autotune on (S3's arm C plus the profiler).**
+  - Full sweep: 16 exact sizes from 32 to 4,096 tokens, including 399 / 401 / 799 / 801 around the block edges, three reps each.
+  - Chat path at 256 / 512 / 1,124 / 2,048.
+  - Torch-profiler traces of one 256-token and one 1,124-token prefill: GPU busy and idle time, the top kernels, and the host ops inside idle gaps.
+  - A 6 s py-spy sample of EngineCore and the API server during back-to-back 256-token requests.
+- **S2, TRITON_ATTN + fp16.** Same KV dtype and block as S1, the production kernel. One cold compile; separates H1 from H2.
+- **F, one fix candidate chosen from the S1/S2 evidence** (back on segmented):
+  - F1 autotune off (`kernelConfig: null`);
+  - F2 `enforceEager` (diagnostic only, for H4);
+  - F3 prefix caching and align off;
+  - F4 `cudagraph_mode=FULL_DECODE_ONLY`.
+- **B', S3's winner (MTP K=2) plus the accepted fix.**
+  - The TTFT sweep, including 415 / 417 around the MTP block.
+  - The S3 decode probe at 512 / 2K / 16K to catch regressions.
+- **Budget.** About 45–60 min of 5930k time, like S3.
+
+**Decision rule (written before the data).**
+
+- **Localized.** S1's 256-token trace accounts for the floor:
+  - GPU busy ≥ 80 % of the server prefill time names a kernel (compare with the 1,124-token trace);
+  - GPU idle ≥ 0.5 s inside the prefill names a host stall (the idle-gap ops and py-spy's EngineCore leaf frames).
+- **Attributed.** S2 attributes the floor to the segmented backend (H1) or to the fp16 / block path (H2).
+- **Fix accepted.** All of these must hold, and then B + fix goes to S4 at 32K, with the overflow route for requests over 32K:
+  - B' + fix gives median server TTFT ≤ 1.2x today's production baseline: ≤ 0.28 s at 256, ≤ 0.52 s at 512 and ≤ 1.31 s at 1,124;
+  - single-stream decode stays within 5 % of S3's B: ≥ 65.2 tok/s at 2K and ≥ 62.8 at 16K;
+  - the probes are coherent.
+- **No accepted fix.** Record the localized cause; the owner then chooses between B anyway (−30 % end to end, about +1.3 s on short prompts) and TRITON.
+- **Any arm fails** on an incoherent probe, an engine death, or a HIP/HSA/OOM marker.
 
 ## 7e. S6 (2026-10-26): one stacked 0.32 runtime image for gfx1100 (issue #74 S2, serving half)
 

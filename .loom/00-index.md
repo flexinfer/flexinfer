@@ -122,6 +122,12 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       segmented), TRITON + fp8 (production) 41 → 31, TRITON + MTP 62 → 10 (loses past 2K). Segmented
       prefills 2-3x faster at 16K/28K but has a ~1.7 s TTFT floor at <= 512 tokens (TRITON 0.5 s) on 61 % of
       traffic, so no promotion yet; end-to-end mean latency would drop 30 %. Next: S3b diagnoses the floor.
+- [ ] 2026-10-26 (branch `docs/s3-attention-ab-result`): **slice S3b prepared — localize the segmented
+      short-prompt TTFT floor** (research §7d''). New probe `scripts/probe-vllm-ttft-floor.py` (exact-size
+      cold prefills, server TTFT/queue/prefill split per request, torch-profiler trace summary, py-spy
+      sample; 13 unit tests). Production baseline from it: 0.24 / 0.44 / 1.09 s at 256 / 512 / 1,124.
+      Manifest `deploy/debug/qwen38-27b-v032-s3b-ttft-canary.yaml` boots warm on the S3 caches (arm S1 =
+      segmented fp16 + profiler), then S2 TRITON fp16, one fix arm, B' + fix. Waits on an operator window.
 - [x] 2026-10-26 (branch `feat/gfx1100-serving-v032`): **slice S6a, one stacked 0.32 runtime image for
       gfx1100 — PASS offline** (research §7e, issue #74 S2 serving half). The runtime DaemonSets still run the 0.17 serving
       persona and 0.32 ships only as a `vllm serve` image, so the 5930k runtime is parked and every lane
