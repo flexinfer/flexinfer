@@ -479,11 +479,14 @@ command wrapper). fp16 KV roughly halves the pool: S2's 101,544 fp8 tokens
 with the draft resident become ~50K, under one 64K sequence, so every arm
 runs at 32K.
 
-**Image (updated 2026-10-25 20:30Z):** `b5afdb20` (`pinned-b5afdb208c46`),
-master's wheel-mode native-W4A16 build after !1139, built off-CI because CI's
-`publish_serving_rocm_gfx1100_native_w4a16` sat behind a unified build that
-held the `buildkit-rocm-images` group. Same Dockerfile lineage as production
-`cd108c9e` plus the MTP head policy; offline probe passed in it.
+**Image (updated 2026-10-26 00:00Z):** `b06b06fe`, CI's build of master
+`dc73879c` (pipeline 34797, job 414103, published 22:38Z), the digest the three
+parked 5930k lanes run since !1166 and the 5930k prewarm list holds. Same
+Dockerfile lineage as production `cd108c9e` plus the MTP head policy; the
+offline MTP-contract probe passed in it at 23:56Z. The interim off-CI build
+`b5afdb20` (`pinned-b5afdb208c46`, built while job 414103 waited behind a
+unified build holding the `buildkit-rocm-images` group) passed the same probe
+and remains a fallback.
 
 **Canary** `deploy/debug/qwen38-27b-v032-s3-attn-canary.yaml`: five arms on
 one Model, sequenced with `kubectl patch` (which the agent session can run;

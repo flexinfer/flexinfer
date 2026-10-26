@@ -19,16 +19,18 @@
 # 1,488 / p90 1,957 / p99 7,388. So the sweep weights 0.5K-4K, and a 32K lane
 # would still cover >99.6 % of real traffic.
 #
-# Image: b5afdb20 (pinned-b5afdb208c46, rocm-gfx1100-v032-native-w4a16-
-# e5532f9a), master's wheel-mode native-W4A16 build after !1139 merged, built
-# off-CI 2026-10-25 20:13-20:21Z on the 7900xtx Docker context while CI's
-# publish job was blocked. It is the production Dockerfile lineage (cd108c9e,
-# the live workhorse image, is the same Dockerfile before !1139) plus text
-# plugin 0.9.0 with FLEXINFER_QWEN35_MTP_HEAD=checkpoint, which MTP needs:
-# cd108c9e lacks it, so MTP must not run there. Offline probe in this image:
-# mtp_head=checkpoint, mtp.fc fp16, mtp.layers.0 INT4, draft Qwen3_5MTP. The
-# 5930k pull shares the v0.32.0 base with the resident cd108c9e; the node had
-# 276 GB free on 2026-10-25 (memory floor 200 GB). Autotune for the segmented kernels is on via --kernel-config in the
+# Image: b06b06fe (rocm-gfx1100-v032-native-w4a16-dc73879c), CI's build of
+# master dc73879c (master pipeline 34797, job 414103, 2026-10-25 22:38Z): the
+# wheel-mode native-W4A16 Dockerfile plus text plugin 0.9.0 with
+# FLEXINFER_QWEN35_MTP_HEAD=checkpoint, which MTP needs. The three parked
+# 5930k lanes run this digest since !1166, which also holds it in the 5930k
+# prewarm list, so S3 measures the build a promotion would ship and needs no
+# pull. The production workhorse image cd108c9e is the same Dockerfile before
+# !1139 and lacks the MTP head policy, so MTP must not run there. Offline
+# probe in b06b06fe (no GPU, 2026-10-25 23:56Z): mtp_head=checkpoint,
+# fla_autotuners=11, mtp.fc fp16, mtp.layers.0 INT4, draft Qwen3_5MTP. The
+# off-CI build b5afdb20 (pinned-b5afdb208c46) from the same inputs passed the
+# same probe and stays in Harbor as a fallback. Autotune for the segmented kernels is on via --kernel-config in the
 # command wrapper (the vLLM backend has no kernel-config key); it only affects
 # ROCM_SEGMENTED_ATTN arms and runs once per compile cache.
 #
@@ -89,9 +91,9 @@ metadata:
     flexinfer.ai/promotion-state: debug-canary-v032-s3-attention-ab
 spec:
   backend: vllm
-  # Master's 0.32 native-W4A16 build with text plugin 0.9.0 (MTP head policy
-  # checkpoint); tag pinned-b5afdb208c46. One pull on the 5930k, see header.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:b5afdb208c46c8b21d93443a512167aa2a6007b2471d245411c8d647d38a3f40
+  # CI's 0.32 native-W4A16 build of master dc73879c with text plugin 0.9.0
+  # (MTP head policy checkpoint); prewarmed on the 5930k, see header.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     # 19.0 GB artifact, served as-is: no on-disk config.json surgery (0.32
