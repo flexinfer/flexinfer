@@ -1531,11 +1531,18 @@ def _dequantize_non_linear_gguf(model, dtype) -> list[str]:
     (.loom/10-research-qwen-image-21-uncensored-2026-10-24.md §6b). A no-op
     for files that store their norms as F32/F16.
     """
-    from diffusers.quantizers.gguf.utils import (
-        GGUFLinear,
-        GGUFParameter,
-        dequantize_gguf_tensor,
-    )
+    # Optional by construction: this module imports the gguf package, which a
+    # serving persona may omit (verify_runtime_serving_stack.py skips try blocks).
+    try:
+        from diffusers.quantizers.gguf.utils import (
+            GGUFLinear,
+            GGUFParameter,
+            dequantize_gguf_tensor,
+        )
+    except ImportError as exc:
+        raise RuntimeError(
+            "transformerQuantization=gguf needs the gguf package in this image"
+        ) from exc
 
     names = []
     for module_name, module in model.named_modules():
