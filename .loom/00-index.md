@@ -270,9 +270,11 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       eager, 7.6 tok/s (0.23: 8.7); 9B twin 694,559 / 3.03x, 103.5 tok/s base and 68.5 with the
       `nsfw-rp-twin` adapter. All probes coherent, 0 restarts after the fixes, host clean. Row
       `parked-5930k-lanes-v032-2026-10-25`.
-- [ ] 5930k disk: `compile-cache-qwen35-9b-v023-5930k` (3.4 GB of 0.23 artifacts) is now
-      unreferenced (the twin moved to `compile-cache-qwen35-9b-v032-5930k`) — delete on operator
-      approval.
+- [x] 2026-10-26 5930k disk: operator-approved deletion of `compile-cache-qwen35-9b-v023-5930k`
+      (3.4 GB of 0.23 artifacts, newest file 2026-09-20). Confirmed first: no Model spec, pod or
+      non-comment line on master references it (only ten scaled-to-0 rollout-history
+      ReplicaSets of the twin), 0 open handles, no mounts. 3,449 MiB freed, root 72 % → 71 %
+      (270 GB free); node Ready, no DiskPressure, workhorse Ready.
 - [ ] Fable decodes 13 % slower on 0.32 in its eager envelope (7.6 vs 8.7 tok/s). Graph mode
       (`enforceEager: false`) would likely put it near the Qwen3.6 lane's ~40 tok/s, but that is
       a separate qualification (VRAM at 0.90, coherence), not part of the repin.
