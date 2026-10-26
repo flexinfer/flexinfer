@@ -146,6 +146,16 @@ proxy:
   replicaCount: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-proxy
+    # 2026-10-26 (later): master 2ecf68cc (master pipeline 35148) = the
+    # d8758301 build below plus !1182: a context-overflow replay now loads the
+    # target lane's flexinfer.ai/lane-first-byte-budget (it kept the last
+    # direct request's budget, the 120 s default after a restart) and skips a
+    # target whose breaker is open. Pairs with the 480 s budget on
+    # qwen38-27b-xtx-warm-canary from the same MR. Nothing else changed in the
+    # proxy's import graph. Rollback = the d8758301 build: tag
+    # 20261026-150117,
+    # sha256:d0dc2dbc72d15a523abf5af63b7b9b0bbfc00517a33f4d47ad27dcaae8feb77a.
+    #
     # 2026-10-26: master d8758301 (master pipeline 35011) = the fe31c9ee build
     # below plus !1177, the context-overflow reroute (CC-6a-3): a Model
     # annotated flexinfer.ai/context-overflow-to has vLLM's prompt-length 400
@@ -166,8 +176,8 @@ proxy:
     # loraadapters watch from !1161. Rollback anchor: tag
     # humanizer-fastswaps-cc7273917,
     # sha256:db4c70c04e4196bf26da174d6e529380000678be76ac8315916e7a62452f18c8.
-    tag: "20261026-150117"
-    digest: "sha256:d0dc2dbc72d15a523abf5af63b7b9b0bbfc00517a33f4d47ad27dcaae8feb77a"
+    tag: "20261026-210805"
+    digest: "sha256:dbbf714133cbd356cb5dda715d0b8c8e0e543796fc68986e9f2f18e39dc3be45"
     pullPolicy: Always
   service:
     type: ClusterIP
