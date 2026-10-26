@@ -128,6 +128,17 @@ on the source string alone:
 - `sd3` for Stable Diffusion 3 / 3.5 families
 - `sd15` for Stable Diffusion 1.5-derived pipelines such as InstructPix2Pix
 
+Any backend accepts `env`, a map of extra environment variables for the backend
+process, for example `env: {FLEXINFER_QWEN35_MTP_HEAD: checkpoint}`. Values
+may be strings, numbers or booleans. They override the backend's defaults and
+the GPUProfile env on both the dedicated-Deployment and runtime-pod paths, so
+`env` replaces the `bash -lc 'export …; exec …'` command wrappers older
+manifests used. The controller owns device visibility (`HIP_VISIBLE_DEVICES`,
+`ROCR_VISIBLE_DEVICES`, `CUDA_VISIBLE_DEVICES`, `NVIDIA_VISIBLE_DEVICES`,
+`GPU_DEVICE_ORDINAL`), `PORT` and the compilation and HF cache paths, so a
+Model that names one of them fails validation with `ConfigInvalid` and is told
+which setting to use instead.
+
 Common imagegen knobs in this repo include `pipelineMode`, `modelFamily`,
 `cpuOffload`, `quantization`, `useFp16`, `vaeRepo`, `vaePath`, `guidanceScale`,
 `numInferenceSteps`, `warmupResolutions`, and `warmPolicy`.
@@ -135,7 +146,11 @@ Common imagegen knobs in this repo include `pipelineMode`, `modelFamily`,
 Common `vllm` knobs include `maxModelLen`, `gpuMemoryUtilization`,
 `maxNumSeqs`, `maxNumBatchedTokens`, `startupTimeout` or
 `startupTimeoutSeconds`, `cudagraphCaptureSizes`,
-`maxCudagraphCaptureSize`, `compilationConfig`, and `languageModelOnly`.
+`maxCudagraphCaptureSize`, `compilationConfig`, `kernelConfig`, and
+`languageModelOnly`. `kernelConfig` renders vLLM's `--kernel-config` (kernel
+selection and tuning); give it a YAML object or a JSON string, for example
+`kernelConfig: {enable_rocm_segmented_attn_autotune: true}` with
+`attentionBackend: ROCM_SEGMENTED_ATTN`.
 Use a YAML integer list for multiple `cudagraphCaptureSizes` values (for
 example, `[1, 2, 4]`); FlexInfer renders each size as a separate value for
 vLLM's variadic CLI option. A scalar remains supported for a single size.

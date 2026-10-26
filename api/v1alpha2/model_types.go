@@ -139,6 +139,9 @@ const (
 	ReasonAliasConflict = "AliasConflict"
 	// ReasonConfigValid - model config has no conflicts
 	ReasonConfigValid = "ConfigValid"
+	// ReasonConfigInvalid - a spec.config value cannot be rendered (for example
+	// a malformed or reserved spec.config.env entry)
+	ReasonConfigInvalid = "ConfigInvalid"
 	// ReasonPromotionGateNotRequired - no promotion gate is configured
 	ReasonPromotionGateNotRequired = "PromotionGateNotRequired"
 	// ReasonPromotionGateCanary - the gated artifact is canary/scale-to-zero only

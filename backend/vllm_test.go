@@ -2,6 +2,7 @@ package backend
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -1805,4 +1806,28 @@ func flagValue(args []string, flag string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+func TestVLLMArgsKernelConfig(t *testing.T) {
+	b := &VLLMBackend{}
+	for name, value := range map[string]any{
+		"object": map[string]any{"enable_rocm_segmented_attn_autotune": true},
+		"string": `{"enable_rocm_segmented_attn_autotune":true}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			args := b.Args(&ModelSpec{ModelPath: "/models", Config: map[string]any{"kernelConfig": value}})
+			for i, arg := range args {
+				if arg == "--kernel-config" {
+					if i+1 >= len(args) || args[i+1] != `{"enable_rocm_segmented_attn_autotune":true}` {
+						t.Fatalf("--kernel-config value = %v, want the JSON object", args[i+1:])
+					}
+					return
+				}
+			}
+			t.Fatalf("args %v lack --kernel-config", args)
+		})
+	}
+	if args := b.Args(&ModelSpec{ModelPath: "/models"}); strings.Contains(strings.Join(args, " "), "--kernel-config") {
+		t.Fatalf("--kernel-config rendered without kernelConfig: %v", args)
+	}
 }

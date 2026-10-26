@@ -315,6 +315,15 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.persistStatus(ctx, model)
 	}
 
+	// Validate per-Model env (spec.config.env) before anything renders it.
+	if _, err := backend.ModelEnvVars(model.Spec.GetConfigMap()); err != nil {
+		log.Error(err, "Model env validation failed")
+		r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
+		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonConfigInvalid, err.Error())
+		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+		return ctrl.Result{}, r.persistStatus(ctx, model)
+	}
+
 	// Validate backend against selected GPU arch (e.g., vLLM does not support Maxwell).
 	if err := r.validateBackendGPUCompatibility(model, b, gpuVendor, gpuArch); err != nil {
 		log.Error(err, "Backend GPU compatibility validation failed")

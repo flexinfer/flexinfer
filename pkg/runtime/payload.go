@@ -214,6 +214,13 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 		}
 	}
 	payload.Env = applyGPUProfileRuntimeEnv(payload.Env, config, vendor, opts.GPUProfile)
+	// Per-Model env (spec.config.env) overrides the backend's and the
+	// GPUProfile's tunables, as on the dedicated path.
+	modelEnv, err := backend.ModelEnvVars(config)
+	if err != nil {
+		return nil, err
+	}
+	payload.Env = appendCoreEnvVars(payload.Env, modelEnv)
 
 	return marshalLoadPayload(payload)
 }
