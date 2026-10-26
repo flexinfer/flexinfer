@@ -49,6 +49,13 @@ The diffusers 0.41.0 overlay and its build-time checks passed off-CI on the depl
 digest `cfefae18`. The serving image itself builds only on master. Not yet run: anything on the
 GPU, image quality, and the cold-swap budget. Those are R4.
 
+**Demand-based lane (2026-10-26, §4b)**: `deploy/models/qwen-image-21-gfx1100.yaml` is a
+scale-to-zero member of `5930k-textgen` at priority 500, with aliases `qwen-image` /
+`qwen-image-2.1`. It runs arm A's config and is on its own branch, stacked on R1–R3, with the
+image digest to fill from the R1–R3 master build. It is on the 5930k because the XTX card is the
+warm Mills lane's and drops under sustained compute. §4b has the operator's GPU verification
+plan.
+
 Branch `claude/gfx1100-flexinfer-support-904425`. No cluster writes were made. The 5930k S2 MTP
 kill-test was left alone. Upstream facts come from the Hugging Face API, model cards and docs, and
 from third-party reports cited in §7.
@@ -670,6 +677,155 @@ corrects the §5 sketch on four points:
 - `warmPolicy: ondemand` with `minReplicas: 1` for the window.
 
 Arm B's delta sits at the end of the file.
+
+### 4b. The demand-based lane (2026-10-26)
+
+Owner ask (2026-10-26): serve Qwen-Image 2.1 on demand so it can take one of the gfx1100 cards.
+That is `deploy/models/qwen-image-21-gfx1100.yaml`, arm A's config (official weights, NF4
+transformer + NF4 text encoder, no CFG, 40 steps) as a scale-to-zero member of a shared-GPU
+election group. It is on branch `feat/qwen-image21-5930k-lane`, stacked on the R1–R3 MR. It
+cannot merge before that MR does, because its image is the serving build master CI makes from the
+R1–R3 merge.
+
+**Placement: the 5930k, not the XTX runtime pod.** The stacked-image goal points at the XTX runtime
+DaemonSet, but two facts rule it out today:
+
+- **The XTX card is the warm Mills lane's.** `qwen38-27b-xtx-warm-canary` is warm-pinned
+  (minReplicas 1, `warmPolicy: primary`, priority 470, vramEstimateMB 23200 = the whole card).
+  The owner decided on 2026-10-03 that it never loses its card [V manifest]. An 18 GB image lane
+  cannot sit beside it, so any priority that wins the card would evict Mills for a 2–3 min reboot
+  per image session. The election allows that (a strictly higher-priority demand preempts even a
+  warm-pinned leader, and `warmPolicy: primary` reclaims the card once the borrower idles) [V
+  `controllers/model_shared_gpu.go`]. It is the owner's call, not this lane's.
+- **The XTX card drops off the bus under sustained compute.** The last drop was 2026-10-24
+  14:03Z, under the 2100 MHz cap, and it failed all seven XTX lanes until a hard power cycle [V
+  memory note]. Diffusion at 1024² is compute-bound at full board power, which is the matmul-burn
+  signature that wedged it. The 5930k card runs flat out for days.
+
+The 5930k fits:
+
+- `5930k-textgen` is already the demand-elected group for the generation lanes (wan21 T2V and
+  VACE, stable-audio).
+- No member there is warm-pinned outside a canary window. On 2026-10-26 every member was
+  minReplicas 0 except the S3 attention canary [V cluster].
+
+The cost is pod churn. The 5930k runtime DaemonSet is desired=0, so the lane is a dedicated
+Deployment like every lane on that card. It can move in-pod at S6b/S6e (gfx1100 research §7e):
+once the 5930k persona (vLLM 0.32, diffusers 0.42) also ships bitsandbytes, drop
+`dedicatedDeployment`. Until then `dedicatedDeployment: true` is load-bearing. Without it,
+un-parking that DaemonSet would load the lane into an image with no NF4.
+
+**Election.** Priority 500 is the borrow-idle posture of the 5930k workhorse lanes and wan21 T2V:
+
+- An image request takes the card from any lower-priority holder at once.
+- From an equal-priority holder (the 27B workhorse), it takes the card once that holder has had no
+  request for 2 min (`sharedDemandWindow`).
+- It never cuts a text completion in flight: the proxy heartbeats `LastActiveTime` while a request
+  is open [V `internal/proxy/connections.go`].
+- VACE (600) and the 9B RP twin (550) still outrank it.
+- Hand-back: after 2 idle minutes, equal-priority demand swaps the card back. With no demand at
+  all, the lane scales to zero at `idleTimeout: 15m`.
+- The 5 min anti-thrash cooldown applies in both directions.
+- 520 would let images preempt busy text. That is a one-line change if the owner wants it.
+
+**Routing.**
+
+- LiteLLM-advertised as `qwen-image-21-gfx1100` with aliases `qwen-image` and `qwen-image-2.1`,
+  plus the same two serviceLabels. Advertising it is also what lets the proxy cold-start it by
+  name.
+- It does **not** take `image-gen` / `dall-e-3` / `text-to-image`. Those stay on the warm
+  Dreamshaper lane on the 980 Ti, which answers in seconds.
+- imagegen-ui sends generations and edits straight to flexinfer-proxy. It lists only the models
+  in `GENERATION_MODELS` / `EDIT_MODELS` that resolve in LiteLLM's catalog
+  (`server/app.py` `resolve_configured_models`) [V]. Adding `qwen-image` to both is a platform/gitops
+  change to `k3s/ai/imagegen-ui/deployment.yaml`, drafted to merge after the verification below.
+  The edit tab can paint a mask, which this model rejects with a 400 (§4a). Unmasked reference
+  edits work.
+
+**Image and prewarm.**
+
+- The lane pins the R1–R3 serving build, `rocm-gfx1100-serving-<merge sha>` (~18.2 GB).
+- That build's vLLM 0.17 base is not resident on the 5930k: `cfefae18` was released there on
+  2026-10-24 to clear DiskPressure. So the 5930k `imagePrewarm` profile lists the digest, which
+  means one full pull.
+- Disk: 280 GB free (70 %) on 2026-10-26, so ~229 GB after the image and the 33 GB staged cache.
+  That is above the ≥ 200 GB rule and the 15 % DiskPressure floor.
+- Without the prewarm entry, the node's 60/50 image GC would drop the image between sessions, and
+  every cold start would re-pull 18 GB.
+- `config.env` pins `TORCH_BLAS_PREFER_HIPBLASLT: "0"` (controller 37317c95 applies Model env last
+  on both launch paths). That closes R2f at the manifest: the dedicated Deployment and a future
+  in-pod load now agree.
+
+**Also on the R1–R3 MR.** `publish_serving_rocm_gfx1100_v032` rebuilds whenever
+`server-diffusers.py` changes. Its `verify_runtime_serving_stack.py` fails the build on any
+import outside a try block that does not resolve. The §6b shim's `diffusers.quantizers.gguf.utils`
+import pulls in the `gguf` package, so it is now inside a try block and raises a clear error
+instead. Every other name R3 imports exists in diffusers 0.42 without the optional extras [I].
+That gate is first exercised by the master build after the merge.
+
+**Merge order.**
+
+1. Merge the R1–R3 MR. Master CI's `publish_serving_rocm_gfx1100` runs
+   `check-runtime-diffusers.py` inside the build, so a green job is R1's proof on the real image.
+2. Put that job's digest into the lane's `spec.image` and the 5930k prewarm entry. Both read
+   `R1R3_SERVING_DIGEST` until then, and the lane MR stays Draft.
+3. The operator merges the lane MR. That is the GPU go-ahead. Flux applies the Model and the
+   prewarm list. The prewarm pulls the image and the cache Job stages 33 GB, neither on the GPU.
+   The lane sits Idle until the first request.
+4. Run the verification below, then merge the imagegen-ui change.
+
+**GPU verification (operator window on the 5930k).** Start only after the S3 attention canary is
+deleted. Use the §5 prompt set and pass bar; this lane has no stage B.
+
+- **V0 preflight (no GPU):**
+  - `flexinfer.ai/gpu.health=ok` on the 5930k;
+  - no warm-pinned member left in `5930k-textgen`;
+  - the prewarm DaemonSet Ready with the digest, and ≥ 200 GB free;
+  - `status.cache.ready` with `sizeBytes` ≈ 33 GB;
+  - `journalctl -k` clean.
+- **V1 cold start:**
+  - Request: one `POST /v1/images/generations` through flexinfer-proxy with `model:
+    qwen-image-21-gfx1100`, P2, 1024², `response_format: b64_json`, timed client-side.
+  - Record the swap (holder Preempted → Pod Scheduled → Ready), the load lines (`NF4
+    quantization on load for: ['text_encoder', 'transformer']`, then the load time) and the
+    4-step warmup.
+  - Record the first image's wall time.
+  - Fail on any `TypeError` about `guidance_scale`. The server instead logs one
+    `QwenImage21Pipeline.__call__ does not accept [...]; dropping them` line per distinct set.
+- **V2 warm set:**
+  - P1–P6 at 1024², 40 steps; median s/image.
+  - Peak VRAM from the amdgpu series or `rocm-smi` every 10 s.
+  - Host RSS of the pod during load (40 Gi limit).
+  - The seven §5 correctness checks.
+- **V3 edits:**
+  - `POST /v1/images/edits` with V2's P2 image and "make the apple green, keep everything else" →
+    coherent.
+  - The same with a mask → 400.
+- **V4 hand-back and swap back:**
+  - After ≥ 5 min (the cooldown) and ≥ 2 idle minutes, send one short `workhorse` completion. Pass:
+    the lane is Preempted and the workhorse Ready within its cached cold start (~3 min, recorded
+    as the swap time).
+  - Then one image request after the workhorse has idled 2 min. Pass: P7 (after reload) is clean.
+- **V5 scale-to-zero:** 15 min with no traffic → the lane goes Idle and the card frees.
+- **V6 (optional) hipBLASLt A/B:** a one-line MR flips `config.env` to `"1"`, then re-run P1–P5
+  warm. Keep the faster setting only if V2's correctness holds.
+- **Pass bar:** §5's rows for warm s/image, peak VRAM, correctness and stability, plus these
+  collateral checks:
+  - the workhorse returns on its next request;
+  - wan21, VACE and stable-audio still win their elections;
+  - no 5930k DiskPressure.
+- **Evidence:** a `.loom/60-validation-matrix.md` row.
+- **Rollback:** remove the kustomization entry, or delete the Model to stop it at once. The
+  workhorse takes the card on its next request either way.
+
+**Not done:**
+
+- the in-pod move (S6b + bitsandbytes in the 0.32 persona, i.e. S6e);
+- `check-runtime-diffusers.py` against diffusers 0.42 in that persona (S6e);
+- 1024-class size presets in imagegen-ui's generate tab (its presets stop at 768; "Model default"
+  gives 1024²);
+- the Turbo checkpoint;
+- the uncensored arm, which stays a debug-window canary gated on R5.
 
 ## 5. "Try it" plan for the candidate
 

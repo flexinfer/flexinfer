@@ -1,6 +1,10 @@
 # Qwen-Image 2.1 debug canary, arm A: OFFICIAL weights, on cblevins-7900xtx.
 # DRAFT, NOT APPLIED, and not listed in deploy/debug/kustomization.yaml.
 #
+# 2026-10-26: arm A's config now ships as the demand-based production lane
+# deploy/models/qwen-image-21-gfx1100.yaml on the 5930k (research §4b), so
+# this XTX file is only the template for the arm B debug window below.
+#
 # Plan: .loom/10-research-qwen-image-21-uncensored-2026-10-24.md §5 (R4).
 # Needs a serving image with R1-R3 (diffusers 0.41.0 overlay, the call
 # contract, transformerQuantization / textEncoderQuantization): master CI

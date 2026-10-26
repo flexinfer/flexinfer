@@ -436,6 +436,16 @@ imagePrewarm:
         # digest (2026-08-23); the newer rocm-gfx1100-0d631512 build (da07169c)
         # never had the floating tag moved onto it.
         - registry.harbor.lan/flexinfer/diffusers-video@sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
+        # 2026-10-26 (Qwen-Image 2.1 lane, research qwen-image §4b): the
+        # serving persona with the R1-R3 overlay, built by master CI from the
+        # R1-R3 merge (rocm-gfx1100-serving-<sha>, ~18.2 GB). Image of the
+        # demand-based qwen-image-21-gfx1100 lane. Its vLLM 0.17 base is not
+        # resident here (cfefae18 was released 2026-10-24 for DiskPressure),
+        # so this is a full pull: 280 GB free (70 %) on 2026-10-26, ~262 GB
+        # after, plus the lane's 33 GB staged cache. Without this entry the
+        # node's 60/50 image GC would drop it between image sessions and every
+        # cold start would re-pull 18 GB. Same digest as the lane's spec.image.
+        - registry.harbor.lan/flexinfer/runtime@sha256:R1R3_SERVING_DIGEST
     # 2026-09-13 (issue #74 S3'): the gfx906 runtime DaemonSet hosts the whole
     # retrieval plane (bge-large, bge-reranker, gte-qwen2) plus the only voice
     # tier, and RollingUpdate terminates the old pod before the new one pulls.
