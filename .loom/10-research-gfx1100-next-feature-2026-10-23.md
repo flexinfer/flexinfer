@@ -501,6 +501,50 @@ workhorse if its traffic-weighted decode speedup on the production backend
 is >= 1.25 with pos-0 acceptance >= 0.70; segmented replaces TRITON_ATTN only
 if it beats it by >= 10 % at 16K/28K without > 20 % worse TTFT.
 
+## 7d'. S3 RESULT (2026-10-26): **segmented attention + MTP wins decode and long-context prefill, but fails the pre-registered TTFT bar on short prompts**
+
+The window ran 03:37–04:47Z on the 5930k on `b06b06fe`. The canary took the card from the workhorse at 03:38:51 (priority 510 vs 500). Every arm ran at 32K with `maxNumSeqs 2`, using `scripts/verify-vllm-mtp.py --phase measure --contexts 512,2048,4096,16384,28672 --soak-pairs 10`. Arms were switched with `flexinfer_update_model` merge patches.
+
+**Per arm.** Single-stream decode in tok/s, TTFT in s, 256 generated tokens per point:
+
+| Arm | Pool at 32K | 512 | 2K | 4K | 16K | 28K | Soak c=2 (median per request) |
+|---|---|---|---|---|---|---|---|
+| B segmented, fp16, MTP K=2 | 52,932 (1.62x) | 71.2 / 2.0 | 68.6 / 1.8 | 66.6 / 5.3 | 66.1 / 15.1 | 61.5 / 27.1 | 59.7 |
+| C segmented, fp16 | 70,749 (2.16x) | 41.6 / 1.9 | 41.3 / 2.3 | 40.7 / 5.2 | 38.2 / 14.4 | 36.0 / 26.4 | 39.9 |
+| D TRITON, fp8 (production attention) | 80,874 (2.47x) | 40.8 / 0.5 | 40.2 / 2.1 | 39.3 / 4.6 | 34.3 / 32.0 | 30.6 / 79.4 | 39.7 |
+| A TRITON, fp8, MTP K=2 | 88,851 (2.71x) | 61.6 / 0.5 | 47.5 / 2.0 | 36.9 / 4.8 | 15.3 / 32.9 | 9.9 / 82.3 | 55.8 |
+
+- **Acceptance.** Position-0 acceptance was 0.79–0.86 at every point in both MTP arms. Over B's whole workload it was 0.817, with position 1 at 0.566 and a mean acceptance length of 2.38.
+- **Coherence.** The three coherence probes were identical in every arm. The greedy `parity_code` hash (`8174a49e…`) matched across B, C and D; A's differed.
+- **Faults.** No HIP, HSA, OOM, EngineDead or Traceback lines in any arm.
+- **Boots.**
+  - B's cold first boot died once at KV profiling (1.96 GiB available, 2.45 GiB needed: the S2 pattern), then came up warm.
+  - The segmented autotune ran a 74-workload plan once, about 10 min, covering decode (Q=1, 2) and prefill buckets (Q=4 to 2048). Later segmented boots hit the cache (`missing=0`).
+  - C's boot also took one controller "recheck a short KV cache pool" relaunch.
+- **B2 short-prompt check.** Back on arm B's config, warm pod, `--contexts 256,512,1024,2048`: TTFT 1.71 / 1.79 / 1.05 / 1.78 s, decode 72.1 / 72.0 / 68.9 / 69.2. A 1,124-token prompt returns its first token faster than a 253-token one. The ~1.7 s floor is per request, not a first-call compile, and C shows it without MTP. TRITON returns the first token in 0.5 s at these sizes.
+
+**Decision rule, as written before the data:**
+
+1. **MTP on the production backend (TRITON_ATTN + fp8).** It pays (≥ 1.15x with position-0 acceptance ≥ 0.70) only up to 2K: 1.51x at 512 and 1.18x at 2K. Past that it loses: 0.94x at 4K, 0.45x at 16K, 0.32x at 28K. The verify step's attention cost on TRITON grows with context, which S2's 1.58x → 1.21x was the start of.
+   - The traffic-weighted speedup is 1.30 as a weighted mean of ratios, and 1.17 time-weighted (harmonic, the number a user's decode time follows).
+   - **Verdict: MTP does not go to the workhorse on TRITON_ATTN.** One engine cannot switch MTP per request, and about 24 % of requests (the 4K-and-up bands) would decode slower.
+2. **Segmented replaces TRITON on a lane.**
+   - **Decode bar: passes.** Best segmented arm vs best TRITON arm is +93 % at 16K (66.1 vs 34.3) and +101 % at 28K (61.5 vs 30.6).
+   - **32K bar: passes.** The lane can live at 32K: 52,932 fp16 tokens with the draft resident is 1.62x of 32K, and 99.6 % of requests are ≤ 20K.
+   - **TTFT bar ("no more than 20 % worse"): fails on short prompts.** It is 3.3x worse at ≤ 512 tokens (1.7–1.8 s vs 0.5 s), and that band is 61 % of requests. From 2K up it is equal or better: 15.1 vs 32.0 s at 16K, 27.1 vs 79.4 s at 28K.
+   - **Verdict: segmented does not replace TRITON yet.**
+3. **End to end, B is still the best arm overall.** Taking TTFT plus the 297-token median generation over the traffic bands, the mean request latency is 10.8 s on D (production), 9.9 s on A and **7.6 s on B (−30 %)**.
+   - At 512 tokens B's median request still beats production (6.2 vs 7.8 s): it saves 3.1 s of decode and adds 1.5 s of TTFT. A is the fastest arm in that band (5.3 s), but it is the slowest from 4K up.
+   - Decode is 1.74x production time-weighted, and 1.50x per request under concurrency 2.
+
+**Riskiest open question, and the next slice (S3b):** why does `ROCM_SEGMENTED_ATTN` put a ~1.7 s floor under prompts of 512 tokens or fewer on gfx1100 when 1,124 tokens take 1.05 s? Prefill shapes were autotuned, so it is not an untuned bucket. Candidates:
+
+- the cudagraph and mixed-batch path for small prefills;
+- per-request segment planning on the host;
+- the chunked-prefill scheduler with segmented metadata.
+
+Kill-test: one segmented boot (cache warm). Read the vLLM TTFT, queue and prefill-time histograms around a run of 256-token requests; take a stack sample during one (py-spy is not in `b06b06fe`, so install it in the pod for the probe); and sweep 256 / 384 / 512 / 768 / 1024 tokens (the probe's floor is 256). If the floor goes away, B (segmented + fp16 + MTP K=2 at 32K) passes every bar and goes to S4. If it does not, choosing B anyway trades short-prompt TTFT for the −30 % end-to-end latency, and that is the owner's call. The pool is 52.9K fp16 tokens at 32K against production's 140.8K at 64K, so requests over 32K need an overflow route (the 35B 128K lane).
+
 ## 7e. S6 (2026-10-26): one stacked 0.32 runtime image for gfx1100 (issue #74 S2, serving half)
 
 **Why this, now.** The design goal is one runtime image per GPU that holds
