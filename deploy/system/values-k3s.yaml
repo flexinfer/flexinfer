@@ -328,7 +328,9 @@ benchmarker:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-bench
     tag: "master"
-  postgresDsn: "postgres://langgraph:changeme-app@langgraph-postgres-postgresql.ai.svc:5432/flexinfer_benchmarks?sslmode=disable"
+  # No postgresDsn: the controller has not read POSTGRES_DSN since the
+  # v1alpha1 benchmark controllers were removed (DEBT-02). The gauntlet CronJob
+  # takes its DSN from the flexinfer-benchmarks-postgres Secret instead.
 
 mlcllm:
   rocmImage: registry.harbor.lan/library/mlc-llm:rocm64-llvm19

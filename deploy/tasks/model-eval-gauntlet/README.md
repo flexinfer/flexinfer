@@ -36,7 +36,7 @@ live on 2026-06-04 (see `.loom/60-validation-matrix.md` → "2026-06-04 S2.3").
 | `GAUNTLET_API` | `chat` | probe shape: `chat` for instruction-tuned models or `completions` for base models |
 | `GAUNTLET_MIN_TPS` / `GAUNTLET_MAX_TTFT` / `GAUNTLET_MIN_TOKENS` | `0` / `0s` / `1` | optional pass/fail gates |
 | `GAUNTLET_PROMPT` / `GAUNTLET_EXPECT` / `GAUNTLET_EXPECT_MODE` | `What is 2 + 2?...` / `4` / `all` | coherence probe contract |
-| `POSTGRES_DSN` | langgraph `flexinfer_benchmarks` | mirrors `values-k3s.yaml` |
+| `POSTGRES_DSN` | Secret `flexinfer-benchmarks-postgres`, key `dsn` | langgraph `flexinfer_benchmarks`; SOPS-managed in platform/gitops `k3s/ai/ai-stack/secrets` |
 | `FLEXINFER_PROXY_URL` | `http://flexinfer-proxy…:80` | proxy base |
 
 Add models as artifacts land by editing `MODELS` (or a Flux patch).
@@ -45,11 +45,14 @@ Add models as artifacts land by editing `MODELS` (or a Flux patch).
 
 The `flexinfer_benchmarks` database must exist on the Postgres host
 (`langgraph-postgres-postgresql.ai.svc:5432`). The bench store auto-creates the
-`benchmarks` **table** but not the **database**:
+`benchmarks` **table** but not the **database**. The DSN, on the langgraph role,
+is in the `flexinfer-benchmarks-postgres` Secret; from a pod that can reach the
+Service:
 
 ```bash
-PGPASSWORD=changeme-app psql -h langgraph-postgres-postgresql.ai.svc -U langgraph \
-  -d postgres -c "CREATE DATABASE flexinfer_benchmarks;"
+DSN="$(kubectl -n flexinfer-system get secret flexinfer-benchmarks-postgres \
+  -o go-template='{{ .data.dsn | base64decode }}')"
+psql "${DSN/\/flexinfer_benchmarks//postgres}" -c "CREATE DATABASE flexinfer_benchmarks;"
 ```
 
 (Already created in-cluster during the S2.3 validation.)
@@ -61,9 +64,8 @@ PGPASSWORD=changeme-app psql -h langgraph-postgres-postgresql.ai.svc -U langgrap
 kubectl -n flexinfer-system create job --from=cronjob/model-eval-gauntlet gauntlet-adhoc
 kubectl -n flexinfer-system logs -f job/gauntlet-adhoc
 
-# Inspect stored rows:
-PGPASSWORD=changeme-app psql -h langgraph-postgres-postgresql.ai.svc -U langgraph \
-  -d flexinfer_benchmarks -c \
+# Inspect stored rows (DSN as in Prerequisites):
+psql "$DSN" -c \
   "SELECT model, backend, tokens_per_second, timestamp FROM benchmarks ORDER BY timestamp DESC LIMIT 10;"
 
 # Pause:
