@@ -289,6 +289,16 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	if profileEnv, ok := backend.EnvFromProfile(profileSpec); ok {
 		env = mergeEnv(env, profileEnv)
 	}
+	// Per-Model env (spec.config.env) overrides the backend's and the
+	// GPUProfile's tunables; the controller-owned variables are reserved, so the
+	// storage env added below cannot conflict with it.
+	// envErr, not err: err still holds the initial Get's NotFound, which picks
+	// create over update below.
+	modelEnv, envErr := backend.ModelEnvVars(spec.Config)
+	if envErr != nil {
+		return envErr
+	}
+	env = mergeEnv(env, modelEnv)
 	probe := b.ReadinessProbe()
 	if configured, ok := b.(backend.ReadinessProbeConfigurer); ok {
 		probe = configured.ReadinessProbeForSpec(spec)

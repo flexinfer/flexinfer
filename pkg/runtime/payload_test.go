@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
+
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/backend"
 	_ "github.com/flexinfer/flexinfer/backend"
@@ -661,4 +663,43 @@ func TestBuildLoadPayloadCarriesDeclaredVRAMForAdmission(t *testing.T) {
 	require.NoError(t, json.Unmarshal(data, &payload))
 	assert.Equal(t, float64(estimate), payload.Config["vramEstimateMB"])
 	assert.NotContains(t, model.Spec.GetConfigMap(), "vramEstimateMB")
+}
+
+func TestBuildLoadPayloadForModelAppliesModelEnvOverProfileEnv(t *testing.T) {
+	b, ok := backend.Get("vllm")
+	require.True(t, ok)
+	newModel := func(env string) *aiv1alpha2.Model {
+		return &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{Name: "mtp-lane", Namespace: "flexinfer-system"},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Source:  "HF://Qwen/Qwen3-1.7B",
+				Config:  &apiextensionsv1.JSON{Raw: []byte(`{"env":` + env + `}`)},
+			},
+		}
+	}
+	opts := BuildLoadOptions{
+		ModelBasePath: "/models",
+		GPUVendor:     backend.GPUVendorAMD,
+		GPUProfile: &aiv1alpha2.GPUProfileSpec{Env: []corev1.EnvVar{
+			{Name: "TORCH_BLAS_PREFER_HIPBLASLT", Value: "1"},
+			{Name: "HSA_OVERRIDE_GFX_VERSION", Value: "11.0.0"},
+		}},
+	}
+
+	data, err := BuildLoadPayloadForModel(newModel(`{"FLEXINFER_QWEN35_MTP_HEAD":"checkpoint","TORCH_BLAS_PREFER_HIPBLASLT":"0"}`), b, opts)
+	require.NoError(t, err)
+	var payload LoadPayload
+	require.NoError(t, json.Unmarshal(data, &payload))
+	got := map[string]string{}
+	for _, e := range payload.Env {
+		got[e.Name] = e.Value
+	}
+	assert.Equal(t, "checkpoint", got["FLEXINFER_QWEN35_MTP_HEAD"])
+	assert.Equal(t, "0", got["TORCH_BLAS_PREFER_HIPBLASLT"], "spec.config.env overrides the GPUProfile env")
+	assert.Equal(t, "11.0.0", got["HSA_OVERRIDE_GFX_VERSION"], "profile env the Model does not name is kept")
+
+	_, err = BuildLoadPayloadForModel(newModel(`{"ROCR_VISIBLE_DEVICES":"0"}`), b, opts)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "use spec.config.rocrVisibleDevices")
 }

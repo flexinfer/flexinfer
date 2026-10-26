@@ -178,6 +178,11 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if compilation := configValueAsArg(spec, "compilationConfig"); compilation != "" {
 		args = append(args, "--compilation-config", compilation)
 	}
+	// Kernel selection and tuning (vLLM's KernelConfig), e.g.
+	// {"enable_rocm_segmented_attn_autotune": true} for ROCM_SEGMENTED_ATTN.
+	if kernel := configValueAsArg(spec, "kernelConfig"); kernel != "" {
+		args = append(args, "--kernel-config", kernel)
+	}
 	args = appendVLLMBooleanOptionalArg(args, spec, "cudagraphMetrics", "--cudagraph-metrics", "--no-cudagraph-metrics")
 
 	// CPU weight offload — moves part of model weights to CPU-pinned memory.

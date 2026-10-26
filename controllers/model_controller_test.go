@@ -1755,6 +1755,56 @@ func TestEnsureDeploymentAppliesModelImagePullSecrets(t *testing.T) {
 	}
 }
 
+func TestEnsureDeploymentAppliesModelEnv(t *testing.T) {
+	s := runtime.NewScheme()
+	if err := scheme.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add kubernetes scheme: %v", err)
+	}
+	if err := aiv1alpha2.AddToScheme(s); err != nil {
+		t.Fatalf("failed to add flexinfer scheme: %v", err)
+	}
+	b, ok := backend.Get("llamacpp")
+	if !ok {
+		t.Fatal("llamacpp backend not found")
+	}
+	newModel := func(name, env string) *aiv1alpha2.Model {
+		return &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "default"},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "llamacpp",
+				Source:  "pvc://models-pvc/tinyllama-1.1b-chat-v1.0.Q4_K_M.gguf",
+				GPU:     &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorCPU},
+				Config:  &apiextensionsv1.JSON{Raw: []byte(`{"env":` + env + `}`)},
+			},
+		}
+	}
+	fakeClient := fake.NewClientBuilder().WithScheme(s).Build()
+	r := &ModelReconciler{Client: fakeClient, Scheme: s}
+	ctx := context.Background()
+
+	model := newModel("env-model", `{"FLEXINFER_QWEN35_MTP_HEAD":"checkpoint","LLAMA_ARG_THREADS":8}`)
+	if err := r.ensureDeployment(ctx, model, b, backend.GPUVendorCPU, "", 1); err != nil {
+		t.Fatalf("ensureDeployment() error: %v", err)
+	}
+	created := &appsv1.Deployment{}
+	if err := fakeClient.Get(ctx, client.ObjectKey{Name: model.Name, Namespace: model.Namespace}, created); err != nil {
+		t.Fatalf("failed to fetch created deployment: %v", err)
+	}
+	got := map[string]string{}
+	for _, e := range created.Spec.Template.Spec.Containers[0].Env {
+		got[e.Name] = e.Value
+	}
+	if got["FLEXINFER_QWEN35_MTP_HEAD"] != "checkpoint" || got["LLAMA_ARG_THREADS"] != "8" {
+		t.Fatalf("container env = %#v, want the spec.config.env entries", got)
+	}
+
+	reserved := newModel("reserved-env-model", `{"HIP_VISIBLE_DEVICES":"1"}`)
+	err := r.ensureDeployment(ctx, reserved, b, backend.GPUVendorCPU, "", 1)
+	if err == nil || !strings.Contains(err.Error(), "use spec.config.hipVisibleDevices") {
+		t.Fatalf("ensureDeployment() with a reserved env name error = %v, want a controller-owned refusal", err)
+	}
+}
+
 func TestEnsureServicePreservesClusterIP(t *testing.T) {
 	s := runtime.NewScheme()
 	if err := scheme.AddToScheme(s); err != nil {
