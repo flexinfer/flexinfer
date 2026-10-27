@@ -42,6 +42,7 @@
 - Research (2026-10-23): next gfx1100 feature — MTP on the Qwen3.8-27B lanes via a vLLM 0.32 native-W4A16 runtime, llama.cpp refresh, Sep–Oct 24 GB model census: `10-research-gfx1100-next-feature-2026-10-23.md`
 - Research (2026-10-24): Timestral-209M (Mistral zero-shot time-series forecaster) — thin snac-style `timestral` backend in the gfx906 stacked runtime pod, gated on a news-analyzer backtest kill-test: `10-research-timestral-209m-2026-10-24.md`
 - Research (2026-10-24): Qwen-Image 2.1 "Uncensored-Quantized" candidate + image-inference support audit — bring Qwen-Image 2.1 to the XTX stacked runtime pod (diffusers 0.40 → 0.41 pin, GGUF/NF4 loading, pipeline-aware call contract), derivative as the second arm behind official weights, riskiest assumption = sd.cpp-converted GGUF loads in diffusers: `10-research-qwen-image-21-uncensored-2026-10-24.md`
+- Research (2026-10-27): gfx1100/gfx906 serving gaps, in-pod model switching and the cache stack after the October program: ranked plan (S6b pre-work, cache markers, pin hygiene, shared compile cache, cache reclaim): `10-research-serving-gaps-switching-caching-2026-10-27.md`
 
 ## Current Goal (2026-10-21) - gfx1100 recovery: XTX still drops under load, runtime pins unpullable
 
@@ -283,11 +284,17 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
       (0.26: 40.6). 10-min concurrency-2 soak alongside live Mills traffic: 135/135 OK, p95 14.0 s,
       aggregate 44.8 tok/s, host 302 W / ≤ 90 °C with 0 SMU and 0 amdgpu errors, 0 restarts. Row
       `workhorse-vllm-v032-2026-10-25`. XTX canary stays on `cd108c9e` as the functional reference.
-- [ ] Move the workhorse (and the XTX canary) from the off-CI `cd108c9e` to the CI-built 0.32
+- [x] Move the workhorse (and the XTX canary) from the off-CI `cd108c9e` to the CI-built 0.32
       digest `b06b06fe` (master pipeline 34797 job 414103, published 2026-10-25 22:38Z, prewarmed
       on the 5930k by !1166; same Dockerfile lineage plus the newer text plugin). The parked
       5930k lanes already run it. The other session's S3 uses its own off-CI `b5afdb20` (same
       inputs). Then drop `ad93ae72` from the 5930k prewarm list.
+      Done 2026-10-27: the workhorse moved with S4 (!1178); !1184 prewarmed `b06b06fe` on the
+      XTX, pinned the S6a image `ef28b7b0` on the 5930k, dropped `ad93ae72` (5930k) and
+      `8181b690` (radeonvii) and aligned the Wan digests; !1185 repinned the XTX warm lane and
+      the XTX 9B RP lane (parked) to `b06b06fe`: warm lane Ready, 3/3 proxy probes, pool as on
+      `cd108c9e`; row `xtx-warm-lane-b06b06fe-2026-10-27` (!1188). `2e9652ed` stays in the XTX
+      prewarm list as the 9B rollback anchor, so `runtime_pin_drift` is still red on it.
 - [x] 2026-10-25 14:2xZ 5930k disk: operator-approved deletion of the orphaned probe caches
       (`qwen38-27b-v032-canary`, `-v032-mtp-canary`, `-gguf-spec-probe`, `-gguf-vulkan-probe`,
       `muse-glimmer-30b-canary` + `compile-cache-qwen38-27b-v032{,-mtp}-5930k`): re-confirmed no
@@ -311,6 +318,35 @@ State found 2026-10-21 (branch `claude/flexinfer-gfx1100-improvements-bcdac9`):
 - [ ] Fable decodes 13 % slower on 0.32 in its eager envelope (7.6 vs 8.7 tok/s). Graph mode
       (`enforceEager: false`) would likely put it near the Qwen3.6 lane's ~40 tok/s, but that is
       a separate qualification (VRAM at 0.90, coherence), not part of the repin.
+- [x] 2026-10-27 (branch `claude/gfx-inference-serving-gaps-9dc401`): **review of serving gaps,
+      in-pod switching and the cache stack** after the October program
+      (`10-research-serving-gaps-switching-caching-2026-10-27.md`). Headline: the serving work
+      landed (S4 24 h watch passes: workhorse e2e p50 4.4 s vs 8.25 s, p95 26.4 s, 0 preemptions,
+      acceptance length 2.80) but every gfx1100 text lane is still a dedicated Deployment
+      (5930k cold start mean 767 s against the Radeon VII's 3.5–9 s in-pod swaps; the
+      cold-start histogram capped at 300 s), the stacked 0.32 image `ef28b7b0` was pinned
+      nowhere, the 5930k runtime park is a live-only nodeSelector, the runtime path had no
+      spec-change reload, no drain on gfx1100, no in-pod substage or KV recheck, and the two
+      cache-marker MRs were unmerged. Ranked plan in §8. Same day, from the review:
+      - !1137 (Local HF marker keyed on download options, legacy markers adopted) and !1138
+        (the SharedPVC prefetch half) rebased, CI green, merged 22:04Z / 22:11Z.
+      - S6b controller pre-work (session from the review's card): !1186 — runtime-path reload on
+        generation + launch-hash change (`RuntimeReloading`, drain-aware, Active member only;
+        unknown hashes adopted), `FLEXINFER_RUNTIME_REQUEST_DRAIN` on both gfx1100 profiles and
+        `MULTI_MODEL` on the 5930k, cold-start buckets to 1800 s / swap to 900 s with a
+        `serving_path` label, `ExperimentalGPUSupport` cooldown; !1187 — in-pod
+        `loadingSubstage` and the 0.75 × maxNumSeqs KV recheck for runtime loads.
+      - Pin hygiene (second card): !1184, !1185, !1188 (see the repin item above).
+      - **Controller rolled to master badcb8c3 = digest `4ee89231`** (tag `20261027-221332`,
+        pipeline 35422; !1189 merged 22:22Z, Helm upgrade 22:23:42Z, pod `9559846ff-bf9vz`
+        leader 22:24:25Z): 0 restarts, no lane or runtime pod restarted, the ten cache Jobs
+        untouched and none created, no error/reload/re-stage line in the log, reconcile
+        0.8/s with 0 errors and an empty queue. `37317c95` is the fallback.
+      Still open from the review: S6b itself (un-park the 5930k runtime on `ef28b7b0`, codify the
+      park selector in git first), the shared per-(image, GPU) compile cache, cache reclaim
+      (`idleTTL`, orphan sweep, free-space gate), gfx906 Track C and llama.cpp re-certification
+      on b11335, a gfx1100 retrieval pair, the Idle→Pending flap on cache re-checks
+      (`model_controller.go:437`), `MaxConcurrentReconciles`.
 
 ## Previous Goal (2026-09-13) - Idle gfx1100 cards → loom-core / Mills utilization
 
