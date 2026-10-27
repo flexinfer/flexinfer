@@ -10,6 +10,13 @@ import (
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 )
 
+// serving_path label values for flexinfer_model_cold_start_duration_seconds
+// and flexinfer_model_swap_duration_seconds.
+const (
+	ServingPathDeployment = "deployment"
+	ServingPathRuntime    = "runtime"
+)
+
 var (
 	ModelEngineStalled            = prometheus.NewGaugeVec(prometheus.GaugeOpts{Name: "flexinfer_model_engine_stalled", Help: "Whether the model engine is stalled or GPU recovery is blocked."}, []string{"model", "namespace"})
 	ModelEngineStallRestartsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{Name: "flexinfer_model_engine_stall_restarts_total", Help: "Automatic pod restarts after engine stalls."}, []string{"model", "namespace"})
@@ -28,11 +35,12 @@ var (
 		[]string{"model", "backend", "node"},
 	)
 
-	// ModelLoadSeconds is a gauge for the model load time.
+	// ModelLoadSeconds is the most recent activation-to-Ready load time, the
+	// same measurement flexinfer_model_cold_start_duration_seconds observes.
 	ModelLoadSeconds = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
 			Name: "flexinfer_model_load_seconds",
-			Help: "Time to pull model from cache/registry.",
+			Help: "Duration of the most recent activation-to-Ready load (the last flexinfer_model_cold_start_duration_seconds observation).",
 		},
 		[]string{"model", "node"},
 	)
@@ -260,23 +268,26 @@ var (
 	)
 
 	// ModelColdStartDurationSeconds tracks time from activation/startup to Ready.
+	// Buckets reach 1800 s: a dedicated-Deployment cold start on the 5930k
+	// averaged 767 s (2026-10-27), which a 300 s top bucket could not resolve.
 	ModelColdStartDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "flexinfer_model_cold_start_duration_seconds",
-			Help:    "Duration from model activation/startup to Ready.",
-			Buckets: []float64{0.5, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120, 180, 300},
+			Help:    "Duration from model activation/startup to Ready; serving_path is deployment (dedicated Deployment) or runtime (in-pod runtime load).",
+			Buckets: []float64{0.5, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120, 180, 300, 450, 600, 900, 1200, 1800},
 		},
-		[]string{"model", "namespace", "backend", "cache_strategy"},
+		[]string{"model", "namespace", "backend", "cache_strategy", "serving_path"},
 	)
 
 	// ModelSwapDurationSeconds tracks shared-GPU swap-in latency to Ready.
+	// Buckets reach 900 s, matching flexinfer_runtime_model_swap_duration_seconds.
 	ModelSwapDurationSeconds = prometheus.NewHistogramVec(
 		prometheus.HistogramOpts{
 			Name:    "flexinfer_model_swap_duration_seconds",
-			Help:    "Duration for a shared-group model to become Ready after preemption/swap.",
-			Buckets: []float64{0.25, 0.5, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120},
+			Help:    "Duration for a shared-group model to become Ready after preemption/swap; serving_path is deployment or runtime.",
+			Buckets: []float64{0.25, 0.5, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120, 180, 300, 450, 600, 900},
 		},
-		[]string{"model", "namespace", "backend", "group"},
+		[]string{"model", "namespace", "backend", "group", "serving_path"},
 	)
 
 	// ClusterHealth reports remote cluster readiness (1 ready, 0 not ready).

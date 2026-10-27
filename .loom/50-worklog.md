@@ -1254,3 +1254,42 @@ Sources:
   - lane boot logs (`kubectl logs` / `--previous`), `/v1/models`, `loraadapters` status
   - scratchpad `verify-vllm-lane.py`, `proxy_keepalive.py`, `lane{1,2,3}-*-probes.log`,
     `lane{1,2,3}-*-sampler.log`
+
+### S6b runtime-path pre-work: spec-change reload, drain profiles, latency metrics, event cooldown
+
+- What changed (review rows R1, R2, R9, R11 from the 2026-10-27 serving-gaps review; R4 follows
+  in a stacked MR):
+  - R1: the runtime load payload carries `generation` and a `specHash` of the rendered launch;
+    the runtime records and reports both, restarts a loaded model on `reload: true`, and the
+    controller reloads a Ready/Failed runtime instance in place when both moved.
+  - R2: `FLEXINFER_RUNTIME_REQUEST_DRAIN=1` on both gfx1100 runtimes, plus
+    `FLEXINFER_RUNTIME_MULTI_MODEL=1` on `gfx1100-5930k`.
+  - R9: cold-start buckets to 1800 s and swap buckets to 900 s, a `serving_path` label, and the
+    runtime path now observes both (it observed neither before).
+  - R11: `ExperimentalGPUSupport` shares the `VRAMPressure` 10-minute per-model cooldown.
+- Decisions worth keeping:
+  - Reload needs both the generation and the launch hash to move. Generation alone would reload
+    a lane on every priority patch, and the 5930k election workaround patches priority on
+    Ready lanes. Hash alone would reload when nothing was edited: every runtime lane on a
+    controller upgrade that renders differently, a LoRA lane right after the proxy's direct load
+    (the proxy omits the controller-only LoRA knobs), and a lane whose GPUProfile cache misses
+    for a moment. A missing hash (older runtime image or load) is adopted, so rolling the
+    controller reloads nothing.
+  - The runtime never compares hashes itself. Only an explicit `reload: true` restarts a loaded
+    model, so the proxy's direct load cannot trigger a reload.
+  - Drain: a reload that meets accepted requests gets 409 and leaves the instance draining. The
+    ModelReady reason `RuntimeReloading` marks the reload in flight, so the draining branch
+    retries the reload rather than unloading the lane.
+  - The label is `serving_path`, not `path`: `TestNoUnboundedLabels` reserves `path` for URL
+    paths.
+  - The runtime path keeps `SharedGroup.PreemptedAt` after Ready (the election's anti-thrash
+    anchor; the Deployment path clears it), so its swap observation is guarded by the Ready
+    transition instead.
+  - Known gap: both paths measure cold start from the ModelReady=False transition, which
+    includes idle time for scale-from-zero lanes. GPUProfile edits still do not reload a runtime
+    lane, because the Model generation does not move.
+- Sources:
+  - `controllers/model_runtime.go` (`runtimeSpecReloadReason`, `reloadViaRuntime`),
+    `internal/runtime/manager.go` (`Load`), `pkg/runtime/payload.go` (`launchSpecHash`)
+  - live 2026-10-27: `flexinfer-runtime-gfx1100-5930k` desired=0; `flexinfer-runtime-gfx1100`
+    had no models loaded (`/api/v1/models` → `[]`)

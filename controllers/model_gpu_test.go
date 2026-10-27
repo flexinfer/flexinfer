@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -417,6 +418,29 @@ func TestValidateBackendGPUCompatibility(t *testing.T) {
 			}
 		})
 	}
+
+	t.Run("ExperimentalGPUSupport is throttled per model", func(t *testing.T) {
+		r := gpuTestReconciler()
+		b := &fakeGPUBackend{name: "comfyui", image: "registry.example.com/comfyui:generic"}
+		lane := gpuTestModel("lane-a", func(m *aiv1alpha2.Model) { m.UID = "uid-a"; m.Spec.Backend = "comfyui" })
+		other := gpuTestModel("lane-b", func(m *aiv1alpha2.Model) { m.UID = "uid-b"; m.Spec.Backend = "comfyui" })
+
+		for i := 0; i < 5; i++ {
+			require.NoError(t, r.validateBackendGPUCompatibility(lane, b, backend.GPUVendorAMD, "gfx906"))
+		}
+		require.Len(t, gpuRecorderEvents(r), 1, "reconciles inside the cooldown must not re-emit")
+
+		require.NoError(t, r.validateBackendGPUCompatibility(other, b, backend.GPUVendorAMD, "gfx906"))
+		require.Len(t, gpuRecorderEvents(r), 2, "a distinct model has its own cooldown")
+
+		// The VRAMPressure cooldown for the same model is independent.
+		require.True(t, r.shouldEmitVRAMPressure(lane))
+
+		// Once the window has elapsed the warning is emitted again.
+		r.throttledEventLastEmit.Store("ExperimentalGPUSupport/uid-a", time.Now().Add(-experimentalGPUSupportEventCooldown))
+		require.NoError(t, r.validateBackendGPUCompatibility(lane, b, backend.GPUVendorAMD, "gfx906"))
+		require.Len(t, gpuRecorderEvents(r), 3)
+	})
 
 	t.Run("GPUProfile override takes precedence over matrix", func(t *testing.T) {
 		profileR := &GPUProfileReconciler{}
