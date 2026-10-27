@@ -257,6 +257,10 @@ type RuntimeModelStatus struct {
 	Error    string `json:"error"`
 	Port     int32  `json:"port,omitempty"`
 	Draining bool   `json:"draining,omitempty"`
+	// Generation and SpecHash echo the load request that started the running
+	// instance; zero/empty from runtime images or loads that predate them.
+	Generation int64  `json:"generation,omitempty"`
+	SpecHash   string `json:"specHash,omitempty"`
 }
 
 type RuntimeStatusResponse struct {

@@ -44,6 +44,15 @@ type LoadRequest struct {
 	ModelPath string          `json:"modelPath,omitempty"`
 	Config    map[string]any  `json:"config,omitempty"`
 	Env       []corev1.EnvVar `json:"env,omitempty"`
+
+	// Generation and SpecHash identify the Model spec the request was rendered
+	// from (pkg/runtime.LoadPayload). They are recorded on the loaded model and
+	// reported back; the runtime never compares them itself.
+	Generation int64  `json:"generation,omitempty"`
+	SpecHash   string `json:"specHash,omitempty"`
+	// Reload restarts an already-loaded model of the same name with this
+	// request instead of returning early. Request drain still applies.
+	Reload bool `json:"reload,omitempty"`
 }
 
 // LoadedModel tracks a running backend subprocess and its model.
@@ -56,6 +65,8 @@ type LoadedModel struct {
 	PID         int                `json:"pid,omitempty"`
 	LoadedAt    time.Time          `json:"loadedAt,omitempty"`
 	Error       string             `json:"error,omitempty"`
+	Generation  int64              `json:"generation,omitempty"`
+	SpecHash    string             `json:"specHash,omitempty"`
 	HealthURL   string             `json:"-"`
 	cmd         *exec.Cmd          `json:"-"`
 	cancel      context.CancelFunc `json:"-"`
@@ -464,15 +475,23 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 
 	// Idempotency: if the same model+backend is already loaded and healthy,
 	// skip the unload/reload cycle.  This prevents the controller and proxy
-	// from fighting over the same model.
+	// from fighting over the same model. An explicit reload (the controller
+	// applying a spec edit or a KV-pool recheck) restarts it instead, through
+	// the same incumbent unload below, so request drain still applies.
 	m.mu.Lock()
 	if existing, ok := m.models[name]; ok && existing.Backend == req.Backend &&
 		(existing.State == ModelStateReady || existing.State == ModelStateLoading) && !modelIsDraining(existing) {
 		state := string(existing.State)
-		m.mu.Unlock()
-		logger.Info("Model already loaded, skipping reload",
-			"state", state)
-		return nil
+		if !req.Reload {
+			m.mu.Unlock()
+			logger.Info("Model already loaded, skipping reload",
+				"state", state)
+			return nil
+		}
+		logger.Info("Reloading model",
+			"state", state,
+			"loadedGeneration", existing.Generation, "generation", req.Generation,
+			"loadedSpecHash", existing.SpecHash, "specHash", req.SpecHash)
 	}
 
 	// Determine which incumbents to unload before loading.
@@ -661,6 +680,9 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		cmd:         cmd,
 		cancel:      cancel,
 		done:        make(chan error, 1),
+
+		Generation: req.Generation,
+		SpecHash:   req.SpecHash,
 
 		vramEstimateMB: estimateMB,
 		requestedAt:    requestedAt,
@@ -1010,6 +1032,9 @@ func summarize(lm *LoadedModel) ModelSummary {
 		PID:      lm.PID,
 		LoadedAt: lm.LoadedAt,
 		Error:    lm.Error,
+
+		Generation: lm.Generation,
+		SpecHash:   lm.SpecHash,
 	}
 	if lm.ingress != nil {
 		count, draining, lastRequest := lm.ingress.snapshot()
@@ -1318,6 +1343,10 @@ type ModelSummary struct {
 	ActiveRequests  int64      `json:"activeRequests,omitempty"`
 	Draining        bool       `json:"draining,omitempty"`
 	LastRequestTime *time.Time `json:"lastRequestTime,omitempty"`
+	// Generation and SpecHash echo the load request that started this
+	// instance (zero/empty for requests from controllers that predate them).
+	Generation int64  `json:"generation,omitempty"`
+	SpecHash   string `json:"specHash,omitempty"`
 }
 
 // monitorProcess waits for the subprocess to exit and updates state. When the

@@ -145,9 +145,13 @@ func (s *Server) handleModelHealth(w http.ResponseWriter, r *http.Request) {
 		"state":           model.State,
 		"error":           model.Error,
 		"port":            model.Port,
+		"pid":             model.PID,
+		"loadedAt":        model.LoadedAt,
 		"activeRequests":  model.ActiveRequests,
 		"draining":        model.Draining,
 		"lastRequestTime": model.LastRequestTime,
+		"generation":      model.Generation,
+		"specHash":        model.SpecHash,
 	})
 }
 
@@ -164,6 +168,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if status.ActiveModel != nil {
 		resp["activeModel"] = status.ActiveModel
+	}
+	// Every loaded model with its own generation/specHash (one entry in
+	// single-slot mode); activeModel stays for older consumers.
+	if len(status.ActiveModels) > 0 {
+		resp["activeModels"] = status.ActiveModels
 	}
 
 	writeJSON(w, http.StatusOK, resp)

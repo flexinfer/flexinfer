@@ -4,6 +4,8 @@
 package runtime
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"path"
@@ -23,6 +25,36 @@ type LoadPayload struct {
 	ModelPath string         `json:"modelPath,omitempty"`
 	Config    map[string]any `json:"config,omitempty"`
 	Env       []EnvVar       `json:"env,omitempty"`
+
+	// Generation is the Model's metadata.generation the payload was rendered
+	// from, and SpecHash a digest of the rendered launch (every field above).
+	// The runtime records both per loaded model and reports them back, so the
+	// controller can tell when a spec edit changed what is running.
+	Generation int64  `json:"generation,omitempty"`
+	SpecHash   string `json:"specHash,omitempty"`
+	// Reload asks the runtime to restart an already-loaded model with this
+	// payload instead of treating the load as idempotent. Request drain still
+	// applies: a model with accepted requests answers 409 until they finish.
+	Reload bool `json:"reload,omitempty"`
+}
+
+// Marshal serializes the payload for the runtime load API.
+func (p *LoadPayload) Marshal() ([]byte, error) {
+	return marshalLoadPayload(*p)
+}
+
+// launchSpecHash digests the launch fields of a payload; the bookkeeping
+// fields (Generation, SpecHash, Reload) are excluded so the hash only moves
+// when what the runtime would start changes. encoding/json sorts map keys, so
+// equal payloads hash equally.
+func launchSpecHash(p LoadPayload) (string, error) {
+	p.Generation, p.SpecHash, p.Reload = 0, "", false
+	data, err := json.Marshal(p)
+	if err != nil {
+		return "", fmt.Errorf("hashing load payload: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:8]), nil
 }
 
 // BuildLoadPayload constructs a serialized LoadPayload from model metadata.
@@ -165,6 +197,16 @@ func RuntimeProfileBundlesBackend(profile *aiv1alpha2.GPUProfileSpec, backendNam
 // runtime-only enrichment such as cold-start timeout, compilation cache env,
 // and GPUProfile-derived device pinning defaults.
 func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts BuildLoadOptions) ([]byte, error) {
+	payload, err := NewLoadPayloadForModel(model, b, opts)
+	if err != nil {
+		return nil, err
+	}
+	return payload.Marshal()
+}
+
+// NewLoadPayloadForModel is BuildLoadPayloadForModel before serialization,
+// stamped with the Model generation and the launch SpecHash.
+func NewLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts BuildLoadOptions) (*LoadPayload, error) {
 	if model == nil {
 		return nil, fmt.Errorf("model is required")
 	}
@@ -222,7 +264,11 @@ func BuildLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts B
 	}
 	payload.Env = appendCoreEnvVars(payload.Env, modelEnv)
 
-	return marshalLoadPayload(payload)
+	payload.Generation = model.Generation
+	if payload.SpecHash, err = launchSpecHash(payload); err != nil {
+		return nil, err
+	}
+	return &payload, nil
 }
 
 // ResolveCompilationCachePath returns the in-container path that should back
