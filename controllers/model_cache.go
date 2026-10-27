@@ -474,6 +474,32 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			jobName := model.Name + "-cache-stage"
 			job := &batchv1.Job{}
 			err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+			if err == nil {
+				stale, staleErr := localHFStageJobStale(model, job)
+				if staleErr != nil {
+					return false, staleErr
+				}
+				if stale {
+					// Foreground deletion keeps the Job until its pod is gone, so a
+					// download still running for the old options cannot overlap the
+					// next stage's wipe of the same hostPath.
+					if job.DeletionTimestamp == nil {
+						if delErr := r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationForeground)); delErr != nil && !errors.IsNotFound(delErr) {
+							return false, fmt.Errorf("delete stale local HF cache stage job: %w", delErr)
+						}
+					}
+					const message = "re-staging local cache: download options changed"
+					model.Status.Cache.Ready = false
+					model.Status.Cache.JobName = jobName
+					model.Status.Cache.JobPhase = "Pending"
+					model.Status.Cache.Message = message
+					setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "CacheStage", message)
+					if err := r.patchModelStatus(ctx, model, original); err != nil {
+						return false, err
+					}
+					return false, nil
+				}
+			}
 			if errors.IsNotFound(err) {
 				stagedKey := localHFStagedKey(model)
 				if localCacheStageAlreadyReady(original, stagedKey) {

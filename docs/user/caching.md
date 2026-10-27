@@ -64,6 +64,42 @@ FlexInfer also sets HuggingFace cache env vars to keep secondary caches under th
 - `HF_HOME=/models/.cache/huggingface`
 - `HF_HUB_CACHE=/models/.cache/huggingface/hub`
 
+## Local HuggingFace staging
+
+For `HF://...` sources with `strategy: Local` and a `nodeSelector`, a one-shot
+`<model>-cache-stage` Job downloads the repo into
+`<hostPath>/<namespace>/<model-name>/` on the node. It runs for a new Model, a
+generation change, or a cache that is not ready. A cache already staged for the
+current generation reports `local cache previously staged` and starts no Job.
+
+The Job finishes by writing a marker, `.flexinfer_cached_<sha256>`, whose hash
+covers `spec.source` and the resolved download options: the allow patterns
+(`ggufFile`, a relative `mmproj`, `hfAllowPatterns`), `hfIgnorePatterns`, and
+`hfRevision`. A Job that finds the marker for its options exits without
+downloading. Changing any of those options names a marker the node does not
+hold, so the Job wipes the directory (keeping `.cache/`) and downloads again. A
+`ggufFile` renamed upstream or an `hfRevision` bump therefore re-stages on its
+own. The Job carries the marker in its `flexinfer.ai/cache-marker` annotation,
+and a Job left over from other options is deleted rather than read as success.
+
+The marker does not see upstream changes under an unpinned revision, or
+`vaeRepo` (whose directory is checked separately). Pin `hfRevision` when an
+upstream update should re-stage.
+
+Caches staged before October 2026 carry a marker hashed from `spec.source`
+alone. The first stage Job to find one adopts it without downloading when the
+files on disk still satisfy the current options:
+
+- the directory holds at least one file;
+- every `ggufFile` and relative `mmproj` is present and non-empty;
+- every allow pattern matches a staged file;
+- with `hfRevision` set, huggingface_hub's download metadata
+  (`.cache/huggingface/download/<file>.metadata`) records that commit for every
+  staged file.
+
+Adoption renames the old marker, so it happens once. A cache that fails a check
+is wiped and downloaded, and the Job log names the check that failed.
+
 ## Prefetch policy
 
 By default the controller stages weights as soon as a `Model` reconciles, whether
