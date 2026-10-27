@@ -735,6 +735,11 @@ runtime:
         # the pod as well as by the controller. Already set on gfx906.
         - name: FLEXINFER_RUNTIME_MULTI_MODEL
           value: "1"
+        # 2026-10-27 (S6b pre-work, review row R2): accepted streams finish
+        # before a lane swap or spec-change reload releases the GPU, as on
+        # gfx906. Adding it rolls this runtime pod once (snac reloads).
+        - name: FLEXINFER_RUNTIME_REQUEST_DRAIN
+          value: "1"
         - name: MIOPEN_CUSTOM_CACHE_DIR
           value: "/var/lib/flexinfer/compile-cache/runtime/miopen"
         - name: MIOPEN_USER_DB_PATH
@@ -775,6 +780,14 @@ runtime:
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
       env:
+        # 2026-10-27 (S6b pre-work, review row R2): co-resident lanes and
+        # request drain, matching the gfx1100 and gfx906 profiles, so the
+        # workhorse can move onto this runtime. The DaemonSet is desired=0, so
+        # nothing rolls until S6b un-parks it.
+        - name: FLEXINFER_RUNTIME_MULTI_MODEL
+          value: "1"
+        - name: FLEXINFER_RUNTIME_REQUEST_DRAIN
+          value: "1"
         - name: MIOPEN_CUSTOM_CACHE_DIR
           value: "/var/lib/flexinfer/compile-cache/runtime/miopen"
         - name: MIOPEN_USER_DB_PATH
