@@ -1,0 +1,126 @@
+# Qwen-Image 2.1 debug canary, arm A: OFFICIAL weights, on cblevins-7900xtx.
+# DRAFT, NOT APPLIED, and not listed in deploy/debug/kustomization.yaml.
+#
+# Plan: .loom/10-research-qwen-image-21-uncensored-2026-10-24.md §5 (R4).
+# Needs a serving image with R1-R3 (diffusers 0.41.0 overlay, the call
+# contract, transformerQuantization / textEncoderQuantization): master CI
+# publishes runtime:rocm-gfx1100-serving-<sha> after the R1-R3 MR merges. Fill
+# its digest into spec.image below before applying.
+#
+# Arm A is the official Qwen/Qwen-Image-2.1 checkpoint quantized on load: NF4
+# transformer (7.1B, ~4 GiB) + NF4 Qwen3-VL text encoder (~5.5 GiB) + the VAE
+# (bf16 ~0.7 GiB) ≈ 10-11 GiB resident, ~15-17 GiB peak at 1024² [I]. It runs
+# without CFG (trueCfgScale 1.0, the model's default) at 40 steps. Arm B (the
+# GGUF derivative, posture uncensored) follows only after arm A passes the §5
+# bar; see the end of this file for its delta. Posture here: clean.
+#
+# Operator window only. priority 480 > the warm Mills lane (470, minReplicas 1,
+# both XTX device-plugin slots), so applying this preempts mills-warm /
+# mills-council for the window; Mills falls back per its routing. Delete the CR
+# to end the window: the Mills lane returns in ~2-3 min (image resident).
+# Before applying, check the XTX: `gpu.health=ok`, no amdgpu/SMU lines in
+# `journalctl -k`, and ≥ 40 GB free under /var/lib/flexinfer/models (the stage
+# downloads 33.1 GB).
+#
+# Stage A (this file): a throwaway dedicated Deployment of the R1-R3 digest,
+# claiming both slots (the node exposes the Raphael iGPU as the second
+# amd.com/gpu; hipVisibleDevices pins the dGPU), so the runtime pod (snac) is
+# outside the blast radius. Stage B: repin the XTX runtime DaemonSet to the
+# same digest, then drop `image`, `config.dedicatedDeployment` and set
+# `gpu.count: 1` so the runtime pod loads it in place. On that path the
+# gfx1100 GPUProfile's TORCH_BLAS_PREFER_HIPBLASLT=1 overrides the diffusers
+# backend's 0 (research §3a); A/B it in the stage B window.
+#
+# Probe: POST /v1/images/generations by model name with response_format
+# b64_json, 1024x1024, fixed seeds (the §5 P1-P7 SFW set; P7 after a forced
+# unload/reload). Not on LiteLLM and never on the public `image-gen` alias.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen-image-21-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen-Image-2.1
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: "HF://Qwen/Qwen-Image-2.1@b3179ad355be050328e483a9dfdd9e60cd62adfa (official bf16, NF4 on load)"
+    flexinfer.ai/serve-paths: /v1/images/generations,/v1/images/edits
+    flexinfer.ai/purpose: "Qwen-Image 2.1 debug canary, official weights (research/evaluation use only: Qwen Research License)"
+    flexinfer.ai/plan: .loom/10-research-qwen-image-21-uncensored-2026-10-24.md
+    flexinfer.ai/promotion-state: debug-canary-qwen-image-21-official
+spec:
+  backend: diffusers
+  # Stage A: the R1-R3 gfx1100-serving digest as its own Deployment.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:<R1-R3 rocm-gfx1100-serving digest>
+  source: HF://Qwen/Qwen-Image-2.1
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    # 33.13 GB at the pinned revision: transformer 14.23 + text_encoder 17.53
+    # + vae 1.35 + processor/scheduler.
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache
+      sizeLimit: 6Gi
+  gpu:
+    vendor: amd
+    # Both device-plugin slots (see header); hipVisibleDevices pins the dGPU.
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 480
+    vramEstimateMB: 18000
+  serverless:
+    enabled: true
+    minReplicas: 1                     # holds the card for the window
+    idleTimeout: 10m
+    coldStartTimeout: 15m
+  config:
+    dedicatedDeployment: true          # stage A only
+    # The revision the derivative's card converted from. Head d26bb612 has
+    # byte-identical weights and configs (LFS oids checked 2026-10-25) and only
+    # adds assets/qr.png, so arm B reuses this snapshot's text encoder and VAE.
+    hfRevision: b3179ad355be050328e483a9dfdd9e60cd62adfa
+    hfIgnorePatterns: ["assets/*"]
+    modelFamily: qwenimage21
+    trueCfgScale: "1.0"                # no CFG, the model's default
+    numInferenceSteps: "40"
+    dtype: bfloat16
+    computeDtype: bfloat16
+    transformerQuantization: nf4
+    textEncoderQuantization: nf4
+    cpuOffload: "false"
+    enableVaeTiling: "false"           # "true" for the 2048² informational run
+    warmupResolutions: "1024x1024"
+    hipVisibleDevices: "0"
+    warmPolicy: ondemand
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      # NF4-on-load reads the 17.5 GB bf16 text encoder through host memory.
+      memory: 40Gi
+  litellm:
+    enabled: false                     # proxy by model name only, no alias
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists
+# Arm B delta (a separate Model named qwen-image-21-uc-canary; only after arm A
+# passes, and with posture annotations base-model-posture: uncensored and
+# artifact-source HF://abenzerps/Qwen-Image-2.1-Uncensored-Quantized@7959e658):
+#   config.hfIgnorePatterns: ["assets/*", "transformer/*.safetensors"]
+#   config.transformerQuantization: gguf
+#   config.transformerRepo: abenzerps/Qwen-Image-2.1-Uncensored-Quantized
+#   config.transformerRevision: 7959e658915f52274897fb573ffeda49de8dc16b
+#   config.transformerFile: qwen-image-2.1-UC-Q8_0.gguf   # A/B: UC-Q4_K_M
+# The cache stage puts the GGUF in <cache dir>/.transformer/ and the server
+# dequantizes its BF16 norm weights after loading (research §6b). The
+# same-converter control is the repo's `base` branch (qwen-image-2.1-Q8_0.gguf,
+# transformerRevision 4db8efdb...). Gate any uncensored lane beyond a debug
+# window on R5 (distinct alias, no prompt enhance, ingress auth).

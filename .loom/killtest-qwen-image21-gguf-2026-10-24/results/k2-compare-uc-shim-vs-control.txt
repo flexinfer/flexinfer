@@ -1,0 +1,4 @@
+v1      cos=0.9957  noise-orthogonal cos=0.9854  cos(a,noise)=0.850 cos(b,noise)=0.866
+x0_hat  cos=0.9854  noise-orthogonal cos=0.9854  cos(a,noise)=-0.128 cos(b,noise)=-0.151
+final   cos=0.9635  noise-orthogonal cos=0.9731  cos(a,noise)=0.352 cos(b,noise)=0.507
+unrelated-noise baseline cos=-0.0024

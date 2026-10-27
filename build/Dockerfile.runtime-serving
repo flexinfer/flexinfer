@@ -240,7 +240,31 @@ RUN if [ "${GPU_VENDOR}" = "amd" ] && command -v python3 >/dev/null 2>&1; then \
 COPY build/.runtime-env /etc/flexinfer/runtime.env
 
 RUN pip install --no-cache-dir "snac==1.2.1"
+
+# Diffusers overlay: Qwen-Image 2.1 needs diffusers >= 0.41 (QwenImage21Pipeline
+# and the GGUF single-file transformer loader server-diffusers.py uses). The pin
+# lives in a late layer on purpose: editing the unpinned diffusers RUN above
+# would invalidate every layer after it, vLLM included, and make nodes re-pull
+# most of the ~17 GB image; this layer is tens of MB. transformers is held at
+# the 5.17.0 the 2026-10-23 serving build (cfefae18) resolved, so a cold-cache
+# rebuild of the unpinned layers cannot drift it. The checks after the COPY
+# fail the build when the pinned stack cannot serve what the server loads.
+ARG DIFFUSERS_OVERLAY_VERSION=0.41.0
+ARG TRANSFORMERS_OVERLAY_VERSION=5.17.0
+RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ] && [ "${TRANSFORMERS_INSTALL_MODE}" != "source" ]; then \
+      pip install --no-cache-dir --no-deps \
+        "diffusers==${DIFFUSERS_OVERLAY_VERSION}" \
+        "transformers==${TRANSFORMERS_OVERLAY_VERSION}"; \
+    fi
 COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
+COPY build/check-runtime-diffusers.py /opt/flexinfer/check-runtime-diffusers.py
+RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ] && [ "${TRANSFORMERS_INSTALL_MODE}" != "source" ]; then \
+      python3 /opt/flexinfer/check-runtime-diffusers.py \
+        --diffusers "${DIFFUSERS_OVERLAY_VERSION}" \
+        --transformers "${TRANSFORMERS_OVERLAY_VERSION}" \
+        --vllm "${INCLUDE_VLLM}" \
+        --bitsandbytes "${INCLUDE_BITSANDBYTES}"; \
+    fi
 COPY build/server-snac.py /opt/flexinfer/server-snac.py
 COPY build/runtime-entrypoint.sh /usr/local/bin/runtime-entrypoint.sh
 RUN chmod +x /usr/local/bin/runtime-entrypoint.sh

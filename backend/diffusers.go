@@ -170,8 +170,34 @@ func (b *DiffusersBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 
 	// BNB compute dtype override (e.g. "bfloat16" for 2x speedup on gfx1100).
 	// Default is "float32" for numerical stability; bfloat16 needs empirical validation.
+	// It is also the compute dtype of a GGUF transformer and an NF4 text encoder.
 	if dtype := spec.ConfigString("computeDtype", ""); dtype != "" {
 		env = append(env, corev1.EnvVar{Name: "BNB_COMPUTE_DTYPE", Value: dtype})
+	}
+
+	// Quantized components for any family (server-diffusers.py
+	// _quantized_component_kwargs): transformerQuantization gguf loads
+	// transformerFile, which the cache stage puts in <model>/.transformer/ from
+	// transformerRepo@transformerRevision; nf4 quantizes on load.
+	// textEncoderQuantization nf4 quantizes the transformers text encoders.
+	for _, kv := range []struct{ key, name string }{
+		{"transformerQuantization", "TRANSFORMER_QUANTIZATION"},
+		{"transformerFile", "TRANSFORMER_FILE"},
+		{"transformerRepo", "TRANSFORMER_REPO"},
+		{"transformerRevision", "TRANSFORMER_REVISION"},
+		{"transformerPath", "TRANSFORMER_PATH"},
+		{"transformerClass", "TRANSFORMER_CLASS"},
+		{"textEncoderQuantization", "TEXT_ENCODER_QUANTIZATION"},
+	} {
+		if v := spec.ConfigString(kv.key, ""); v != "" {
+			env = append(env, corev1.EnvVar{Name: kv.name, Value: v})
+		}
+	}
+
+	// True-CFG pipelines (Qwen-Image) take this as true_cfg_scale; it wins
+	// over guidanceScale for those families only.
+	if scale := spec.ConfigString("trueCfgScale", ""); scale != "" {
+		env = append(env, corev1.EnvVar{Name: "DEFAULT_TRUE_CFG_SCALE", Value: scale})
 	}
 
 	// Image editing pipeline mode (inpainting, instruct, or default text2image)

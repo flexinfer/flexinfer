@@ -159,6 +159,7 @@ func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destS
 
 	destSubdir = strings.Trim(destSubdir, "/")
 	destDir := "/models/" + destSubdir
+	envVars = append(envVars, transformerSideArtifactEnvVars(model, destDir)...)
 
 	var image string
 	var downloadScript string
@@ -194,7 +195,7 @@ echo "Download complete."
 `, modelID, destDir, huggingFaceRepositoryBaseURL)
 	} else {
 		image = ImagePythonSlim
-		downloadScript = cacheSizeReportFunc + fmt.Sprintf(`
+		downloadScript = cacheSizeReportFunc + stageTransformerSideArtifactFunc + fmt.Sprintf(`
 set -ex
 MODEL_ID="%s"
 DEST_DIR="%s"
@@ -237,7 +238,7 @@ def refuse(reason):
 on_disk = []
 for dirpath, dirnames, filenames in os.walk(root):
     if dirpath == root:
-        dirnames[:] = [d for d in dirnames if d != ".cache"]
+        dirnames[:] = [d for d in dirnames if d not in (".cache", ".transformer")]
     for name in filenames:
         rel = os.path.relpath(os.path.join(dirpath, name), root)
         if not rel.startswith(".flexinfer_cached"):
@@ -281,6 +282,13 @@ PY
 fi
 
 if [ -f "$MARKER" ]; then
+    # The marker vouches for the snapshot only; fetch a missing transformer
+    # side artifact alone.
+    if transformer_side_artifact_missing; then
+        echo "Marker exists but the transformer side artifact is missing; downloading it alone"
+        pip install --no-cache-dir huggingface_hub
+        stage_transformer_side_artifact
+    fi
     echo "Model already cached at $DEST_DIR"
     report_cache_size "$DEST_DIR"
     exit 0
@@ -339,6 +347,7 @@ for rel in $EXPECTED_FILES; do
     fi
 done
 
+stage_transformer_side_artifact
 touch "$MARKER"
 report_cache_size "$DEST_DIR"
 echo "Download complete."

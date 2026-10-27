@@ -159,6 +159,43 @@ func TestDiffusersBackendEnv(t *testing.T) {
 				"CONTROLNET_SCALE": "0.5",
 			},
 		},
+		{
+			name: "qwen-image 2.1 gguf transformer and nf4 text encoder map to env",
+			config: map[string]any{
+				"modelFamily":             "qwenimage21",
+				"trueCfgScale":            "1.0",
+				"computeDtype":            "bfloat16",
+				"transformerQuantization": "gguf",
+				"transformerRepo":         "abenzerps/Qwen-Image-2.1-Uncensored-Quantized",
+				"transformerRevision":     "7959e658915f52274897fb573ffeda49de8dc16b",
+				"transformerFile":         "qwen-image-2.1-UC-Q8_0.gguf",
+				"textEncoderQuantization": "nf4",
+			},
+			wantEnv: map[string]string{
+				"MODEL_FAMILY":              "qwenimage21",
+				"DEFAULT_TRUE_CFG_SCALE":    "1.0",
+				"BNB_COMPUTE_DTYPE":         "bfloat16",
+				"TRANSFORMER_QUANTIZATION":  "gguf",
+				"TRANSFORMER_REPO":          "abenzerps/Qwen-Image-2.1-Uncensored-Quantized",
+				"TRANSFORMER_REVISION":      "7959e658915f52274897fb573ffeda49de8dc16b",
+				"TRANSFORMER_FILE":          "qwen-image-2.1-UC-Q8_0.gguf",
+				"TEXT_ENCODER_QUANTIZATION": "nf4",
+			},
+			absentEnv: []string{"TRANSFORMER_PATH", "TRANSFORMER_CLASS", "QUANTIZATION"},
+		},
+		{
+			name: "explicit transformer path and class map to env",
+			config: map[string]any{
+				"transformerQuantization": "gguf",
+				"transformerPath":         "/models/custom/dit.gguf",
+				"transformerClass":        "QwenImage21Transformer2DModel",
+			},
+			wantEnv: map[string]string{
+				"TRANSFORMER_PATH":  "/models/custom/dit.gguf",
+				"TRANSFORMER_CLASS": "QwenImage21Transformer2DModel",
+			},
+			absentEnv: []string{"TRANSFORMER_FILE", "TRANSFORMER_REPO", "DEFAULT_TRUE_CFG_SCALE"},
+		},
 	}
 
 	for _, tt := range tests {

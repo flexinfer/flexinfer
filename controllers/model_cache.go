@@ -1302,6 +1302,12 @@ type localHFStagedKeyFields struct {
 	VAERepo        string            `json:"vaeRepo"`
 	CachePath      string            `json:"cachePath"`
 	NodeSelector   map[string]string `json:"nodeSelector"`
+	// The transformer side artifact (transformerRepo/File/Revision). omitempty
+	// keeps the key of every Model without one unchanged, so adding these did
+	// not re-stage the fleet.
+	TransformerRepo     string `json:"transformerRepo,omitempty"`
+	TransformerFile     string `json:"transformerFile,omitempty"`
+	TransformerRevision string `json:"transformerRevision,omitempty"`
 }
 
 // localHFStagedKey digests localHFStagedKeyFields for the model's current
@@ -1311,15 +1317,19 @@ type localHFStagedKeyFields struct {
 func localHFStagedKey(model *aiv1alpha2.Model) string {
 	opts := resolveHFDownloadOptions(model)
 	nodeSelector, _ := modelNodeSelectorAndTolerations(model)
+	transformer, _ := resolveTransformerSideArtifact(model)
 	// Strings, string slices and a string map always encode.
 	raw, _ := json.Marshal(localHFStagedKeyFields{
-		Source:         model.Spec.Source,
-		AllowPatterns:  slices.Sorted(slices.Values(opts.allowPatterns)),
-		IgnorePatterns: slices.Sorted(slices.Values(opts.ignorePatterns)),
-		Revision:       opts.revision,
-		VAERepo:        model.Spec.ConfigString("vaeRepo", ""),
-		CachePath:      resolveLocalCachePath(model),
-		NodeSelector:   nodeSelector,
+		Source:              model.Spec.Source,
+		AllowPatterns:       slices.Sorted(slices.Values(opts.allowPatterns)),
+		IgnorePatterns:      slices.Sorted(slices.Values(opts.ignorePatterns)),
+		Revision:            opts.revision,
+		VAERepo:             model.Spec.ConfigString("vaeRepo", ""),
+		CachePath:           resolveLocalCachePath(model),
+		NodeSelector:        nodeSelector,
+		TransformerRepo:     transformer.repo,
+		TransformerFile:     transformer.file,
+		TransformerRevision: transformer.revision,
 	})
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])

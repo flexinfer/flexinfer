@@ -71,12 +71,14 @@ SERVING_CHANGE_RULE_FILES = (
     "build/runtime.yaml",
     "build/runtime-entrypoint.sh",
     "build/server-diffusers.py",
+    "build/check-runtime-diffusers.py",
     "build/scripts/vllm_gemma4_moe_gptq_patch.py",
     "build/scripts/vllm_qwen35_patches_nodiag.py",
 )
 
 UNIFIED_SERVING_ONLY_RULE_FILES = (
     "build/server-diffusers.py",
+    "build/check-runtime-diffusers.py",
     "build/scripts/vllm_gemma4_moe_gptq_patch.py",
     "build/scripts/vllm_qwen35_patches_nodiag.py",
 )
@@ -476,11 +478,28 @@ def assert_serving_dockerfile_contract(dockerfile: str) -> None:
         "python3 /opt/flexinfer/scripts/vllm_qwen35_patches_nodiag.py",
         "python3 /opt/flexinfer/scripts/vllm_gemma4_moe_gptq_patch.py",
         "COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py",
+        "COPY build/check-runtime-diffusers.py /opt/flexinfer/check-runtime-diffusers.py",
+        "python3 /opt/flexinfer/check-runtime-diffusers.py",
         "COPY --from=go-builder /runtime /usr/local/bin/flexinfer-runtime",
     )
     for snippet in required:
         if snippet not in dockerfile:
             fail(f"Dockerfile.runtime-serving missing {snippet!r}")
+
+    # The diffusers pin is a late overlay so nodes pull tens of MB, not the
+    # ~17 GB image: it must sit after the vLLM layers and before the server COPY.
+    overlay = dockerfile.find('"diffusers==${DIFFUSERS_OVERLAY_VERSION}"')
+    if overlay == -1:
+        fail("Dockerfile.runtime-serving missing the diffusers overlay pin")
+    if not (
+        dockerfile.find("vllm_gemma4_moe_gptq_patch.py")
+        < overlay
+        < dockerfile.find("COPY build/server-diffusers.py")
+    ):
+        fail(
+            "Dockerfile.runtime-serving diffusers overlay must follow the vLLM "
+            "layers and precede COPY build/server-diffusers.py"
+        )
 
     forbidden = (
         "AS llamacpp-builder",
