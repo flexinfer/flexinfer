@@ -20,7 +20,14 @@ spec:
   # Wan requires PyTorch >=2.4. This dedicated tag uses the ROCm 6.4.1 /
   # PyTorch 2.6 build and leaves the proven image-generation runtime untouched.
   image: registry.harbor.lan/flexinfer/diffusers-video:rocm-gfx1100
-  imageDigest: sha256:f03bfc2fbde17528aec2f95f656630c8a402385a70f591ff52931748a34ff599
+  # 2026-10-27 (pin hygiene): repinned from f03bfc2f (the off-CI
+  # rocm-gfx1100-compile-inplace-20260714 build; Harbor-resident but tagged
+  # for no guard) to 83cda206, the CI build from 2026-08-23 master that the
+  # floating tag points at and the 5930k prewarm list holds (pinned-83cda206faea).
+  # Its server-diffusers.py carries the in-place compile path this lane's
+  # compileMode needs (0c8c7b1bb) and the VACE mode the sibling uses.
+  # Rollback = f03bfc2f (Harbor-resident, not prewarmed).
+  imageDigest: sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
   source: HF://Wan-AI/Wan2.1-T2V-1.3B-Diffusers
   cache:
     strategy: Local

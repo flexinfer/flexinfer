@@ -118,9 +118,9 @@ spec:
     # both device-plugin slots and select the discrete card explicitly above.
     count: 2
     shared: 7900xtx-textgen
-    # Demand-only canary: below every production lane in the group (128K
-    # sister 700, gemma primary chain 350-240) and below the apc-canary (100)
-    # so it never wins an idle election; explicit aliases are its only demand.
+    # Demand-only canary: below every listed lane in the group (the lowest
+    # is the 128K sister at 300) so it never wins an idle election; explicit
+    # aliases are its only demand.
     priority: 90
     vramEstimateMB: 23200
   nodeSelector:
