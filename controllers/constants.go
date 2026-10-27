@@ -76,6 +76,11 @@ const (
 	AnnotationCacheDest   = "flexinfer.ai/cache-dest"
 	AnnotationCachePath   = "flexinfer.ai/cache-path"
 	AnnotationCacheSrcPVC = "flexinfer.ai/cache-src-pvc"
+	// AnnotationCacheMarker records the completion marker a Local HF stage Job
+	// or a SharedPVC HF prefetch Job was built to write, so a Job left over
+	// from different download options is not read as having staged the
+	// current ones.
+	AnnotationCacheMarker = "flexinfer.ai/cache-marker"
 	// AnnotationCacheSourceReadyJob makes cache-copy wait for an artifact
 	// transform Job before mounting a newly materialized source path. Copy Jobs
 	// record the ready Job's UID/completion time so stale failures can be

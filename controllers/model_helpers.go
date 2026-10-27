@@ -415,15 +415,7 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	// ~1Hz reconcile loop that also re-emits the VRAMPressure event every pass.
 	origStatus := model.Status.DeepCopy()
 	prevPhase := model.Status.Phase
-	prevReadyCond := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelReady)
-	readyStartedAt := time.Time{}
-	prevReadyReason := ""
-	if prevReadyCond != nil && prevReadyCond.Status == metav1.ConditionFalse {
-		readyStartedAt = prevReadyCond.LastTransitionTime.Time
-		prevReadyReason = prevReadyCond.Reason
-	} else if prevReadyCond != nil {
-		prevReadyReason = prevReadyCond.Reason
-	}
+	readyStartedAt, prevReadyReason := readyTransitionSnapshot(model)
 	now := time.Now()
 
 	deployment := &appsv1.Deployment{}
@@ -492,40 +484,11 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 			setModelCondition(model, aiv1alpha2.ConditionModelReady, true, aiv1alpha2.ReasonBackendReady, "Backend is ready to serve requests")
 		}
 
-		if !recheckDeleted && prevPhase != aiv1alpha2.ModelPhaseReady && !readyStartedAt.IsZero() {
-			loadDuration := now.Sub(readyStartedAt).Seconds()
-			metrics.ModelColdStartDurationSeconds.WithLabelValues(
-				model.Name,
-				model.Namespace,
-				model.Spec.Backend,
-				cacheStrategy(model),
-			).Observe(loadDuration)
-
-			// Set last-known load time for the Mission Control dashboard.
-			nodeName := ""
-			if model.Status.GPU != nil {
-				nodeName = model.Status.GPU.Node
-			}
-			metrics.ModelLoadSeconds.WithLabelValues(model.Name, nodeName).Set(loadDuration)
+		if !recheckDeleted && prevPhase != aiv1alpha2.ModelPhaseReady {
+			observeColdStart(model, readyStartedAt, now, metrics.ServingPathDeployment)
 		}
-
-		if model.Spec.IsShared() && model.Status.SharedGroup != nil && model.Status.SharedGroup.State == "Active" {
-			group := model.Status.SharedGroup.GroupName
-			swapStart := time.Time{}
-			if model.Status.SharedGroup.PreemptedAt != nil {
-				swapStart = model.Status.SharedGroup.PreemptedAt.Time
-			} else if (prevReadyReason == aiv1alpha2.ReasonPreempted || prevReadyReason == aiv1alpha2.ReasonGPULeaseHeld || prevReadyReason == aiv1alpha2.ReasonGamingLeaseHeld) && !readyStartedAt.IsZero() {
-				swapStart = readyStartedAt
-			}
-			if !swapStart.IsZero() {
-				metrics.ModelSwapDurationSeconds.WithLabelValues(
-					model.Name,
-					model.Namespace,
-					model.Spec.Backend,
-					group,
-				).Observe(now.Sub(swapStart).Seconds())
-				model.Status.SharedGroup.PreemptedAt = nil
-			}
+		if observeSharedSwap(model, readyStartedAt, prevReadyReason, now, metrics.ServingPathDeployment) {
+			model.Status.SharedGroup.PreemptedAt = nil
 		}
 	} else if *deployment.Spec.Replicas == 0 {
 		clearLoadingStatus(model)
@@ -552,6 +515,74 @@ func (r *ModelReconciler) updateStatusFromDeployment(ctx context.Context, model 
 	r.recordPhaseMetrics(model, prevPhase, model.Status.Phase)
 
 	return r.statusUpdateIfChanged(ctx, model, origStatus)
+}
+
+// readyTransitionSnapshot returns when ModelReady last went False (zero while it
+// is True or absent) and its current reason. Callers take it before writing the
+// pass's Ready condition, so a Model that just became Ready still reports when
+// its load started.
+func readyTransitionSnapshot(model *aiv1alpha2.Model) (time.Time, string) {
+	cond := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelReady)
+	if cond == nil {
+		return time.Time{}, ""
+	}
+	if cond.Status == metav1.ConditionFalse {
+		return cond.LastTransitionTime.Time, cond.Reason
+	}
+	return time.Time{}, cond.Reason
+}
+
+// observeColdStart records the activation-to-Ready latency for a Model that
+// just became Ready, measured from readyStartedAt (see readyTransitionSnapshot),
+// in the cold-start histogram and the last-load gauge. serving_path labels the serving
+// path so dedicated-Deployment and in-pod runtime loads can be compared.
+func observeColdStart(model *aiv1alpha2.Model, readyStartedAt, now time.Time, path string) {
+	if readyStartedAt.IsZero() {
+		return
+	}
+	loadDuration := now.Sub(readyStartedAt).Seconds()
+	metrics.ModelColdStartDurationSeconds.WithLabelValues(
+		model.Name,
+		model.Namespace,
+		model.Spec.Backend,
+		cacheStrategy(model),
+		path,
+	).Observe(loadDuration)
+
+	// Set last-known load time for the Mission Control dashboard.
+	nodeName := ""
+	if model.Status.GPU != nil {
+		nodeName = model.Status.GPU.Node
+	}
+	metrics.ModelLoadSeconds.WithLabelValues(model.Name, nodeName).Set(loadDuration)
+}
+
+// observeSharedSwap records swap-in latency for an Active shared-group member
+// that is Ready: from SharedGroup.PreemptedAt when the election recorded one,
+// else from the ModelReady=False transition when that was a preemption or lease
+// hold. It reports whether it observed; clearing PreemptedAt is the caller's
+// decision, because the election also reads it as its anti-thrash anchor.
+func observeSharedSwap(model *aiv1alpha2.Model, readyStartedAt time.Time, prevReadyReason string, now time.Time, path string) bool {
+	if !model.Spec.IsShared() || model.Status.SharedGroup == nil || model.Status.SharedGroup.State != "Active" {
+		return false
+	}
+	swapStart := time.Time{}
+	if model.Status.SharedGroup.PreemptedAt != nil {
+		swapStart = model.Status.SharedGroup.PreemptedAt.Time
+	} else if (prevReadyReason == aiv1alpha2.ReasonPreempted || prevReadyReason == aiv1alpha2.ReasonGPULeaseHeld || prevReadyReason == aiv1alpha2.ReasonGamingLeaseHeld) && !readyStartedAt.IsZero() {
+		swapStart = readyStartedAt
+	}
+	if swapStart.IsZero() {
+		return false
+	}
+	metrics.ModelSwapDurationSeconds.WithLabelValues(
+		model.Name,
+		model.Namespace,
+		model.Spec.Backend,
+		model.Status.SharedGroup.GroupName,
+		path,
+	).Observe(now.Sub(swapStart).Seconds())
+	return true
 }
 
 // statusUpdateIfChanged writes the Model status only when it differs from the

@@ -323,6 +323,47 @@ Example: the `orpheus-tts` TTS group prefers its gfx1100 twin (realtime
 generation) and falls back to the warm gfx906 twin only when a gaming lease
 evicts the primary.
 
+#### Context overflow (context-overflow-to)
+
+A lane with a short context window can hand prompts that do not fit to a
+sibling with a larger window. Annotate the short lane with the target Model
+(or one of its aliases):
+
+```yaml
+metadata:
+  annotations:
+    flexinfer.ai/context-overflow-to: qwen38-27b-xtx-warm-canary
+```
+
+On `/v1/chat/completions` and `/v1/completions`, the proxy holds back the
+runtime's 400. If it is vLLM's prompt-length rejection ("maximum context
+length" / "maximum model length"), the proxy replays the original request
+once to the target. The target rewrites the model name and clamps
+`max_tokens` for its own window, and the response carries
+`X-FlexInfer-Context-Overflow: <model>-><target>`.
+
+Everything else passes through unchanged: success, streams and other 400s.
+Two guards:
+
+- The target must already be Ready. The reroute never cold-starts it, so it
+  cannot preempt a shared GPU's leader, and the client gets the original 400
+  instead.
+- A rerouted request is never rerouted again.
+
+The replay runs under the target's own lane breaker:
+
+- **Budget.** It uses the target's `flexinfer.ai/lane-first-byte-budget`. The
+  breaker waits for the first generated token, even on a streamed request, so
+  a target that has to prefill long prompts needs a budget sized for that
+  prefill. The 120 s default cuts anything longer.
+- **Open breaker.** A target whose breaker is open gets no reroute, and the
+  client gets the original 400.
+
+Watch `flexinfer_proxy_context_overflow_total{model,target,outcome}`, where
+outcome is `rerouted` or `target_unavailable`. Do not also opt the short lane
+into context-bounded admission (`flexinfer.ai/admission`): its 413 is
+returned before the runtime is asked, so nothing would reroute.
+
 ### Logs
 
 Enable debug logging to see routing decisions:

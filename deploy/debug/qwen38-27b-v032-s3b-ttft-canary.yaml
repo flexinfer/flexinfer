@@ -1,0 +1,199 @@
+# RESULT (2026-10-26, window 13:15-13:32Z; research §7d'', matrix row
+# gfx1100-native-w4a16-v032-s3b-ttft-2026-10-26): there is no floor. Every
+# 0.5-1.5 s outlier was the first request of a shape compiling a new
+# _segmented_attention_stage/_reduce Triton variant (all strides are constexpr,
+# and the autotuner compiles a different block-table width than the runtime);
+# the persisted cache carries them across processes. Ran S1 then B' (S2 and the
+# fix arms were unnecessary). Warm B' (segmented + fp16 + MTP K=2): server TTFT
+# 0.234 / 0.419 / 1.026 s at 256 / 512 / 1124 (production 0.237 / 0.436 /
+# 1.088), decode 71.8 / 66.5 / 66.1 tok/s at 512 / 2K / 16K, coherent, 0 faults.
+# B goes to S4 with a warm sweep before traffic. Deleted after the window.
+#
+# DEBUG CANARY — slice S3b of .loom/10-research-gfx1100-next-feature-2026-10-23.md
+# (§7d''): why does ROCM_SEGMENTED_ATTN put a ~1.7 s TTFT floor under prompts
+# of 512 tokens or fewer on gfx1100? Prepared 2026-10-26. NOT in the models
+# kustomization: the operator applies it once; the agent session sequences the
+# arms through the flexinfer MCP update tool (kubectl patch from an agent shell
+# is denied), then deletes the Model.
+#
+# Same Model name, image, source, Local cache and compile-cache hostPath as the
+# S3 canary (qwen38-27b-v032-s3-attn-canary.yaml), so S1 boots warm: the
+# segmented autotune table (74 workloads) and the segmented fp16 compile are
+# already on the 5930k. The probe is scripts/probe-vllm-ttft-floor.py.
+#
+# What S3 measured (chat path, 1 sample per point): segmented + fp16 TTFT
+# 1.71 / 1.79 / 1.05 / 1.78 s at 256 / 512 / 1124 / 2041 prompt tokens, against
+# 0.5 s for TRITON + fp8 at 512. The production workhorse (TRITON_ATTN, fp8,
+# 64K, cd108c9e) measured with the S3b probe on 2026-10-26 13:04Z (completions
+# path, server TTFT, 2 reps each within 2 ms): 0.187 / 0.237 / 0.436 / 1.088 s
+# at 64 / 256 / 512 / 1124 tokens, zero queue, ~20 ms HTTP and frontend.
+#
+# Code read (vLLM 0.32.0 in the image, read-only): the segmented op's tuned
+# config lookup is a table scan with no online tuning, and its kernels compile
+# per power-of-two query capacity, so neither explains a per-request floor on
+# its own. The structural difference the arms do change: fp16 KV halves the
+# hybrid attention block (400 tokens, 416 with the MTP draft, against 800 / 832
+# on fp8), and the scheduler's mamba "align" split cuts prefill chunks at block
+# and prefix-checkpoint boundaries. vllm:iteration_tokens_total counts output
+# batches, not engine steps, so step counts come from the profiler trace.
+#
+# Arms, in order. Each patch is a JSON merge patch on spec.config, applied with
+# flexinfer_update_model (null deletes a key); each relaunches the pod:
+#   S1  ROCM_SEGMENTED_ATTN, fp16 KV, no MTP, autotune on   (manifest as applied)
+#       = S3 arm C plus the profiler. Full probe:
+#         kubectl -n flexinfer-system exec -i deploy/qwen38-27b-v032-s3-attn-canary -- \
+#           python3 - --model qwen38-27b-v032-s3-attn-canary \
+#           --chat-sizes 256,512,1124,2048 --profile-sizes 256,1124 \
+#           --pyspy-sizes 256 --install-pyspy --out /tmp/s3b-S1.json \
+#           < scripts/probe-vllm-ttft-floor.py
+#   S2  TRITON_ATTN, fp16 KV, no MTP                         {"attentionBackend":"TRITON_ATTN"}
+#       Same KV dtype and 400-token block as S1, production attention kernel.
+#       Floor present = the fp16 / block-400 path; absent = the segmented
+#       backend. One cold compile. Probe: --sizes 64,256,512,1124,2048,4096
+#       --profile-sizes 256.
+#   F*  one fix candidate, chosen from S1/S2 evidence (back on segmented):
+#       F1 autotune off       {"attentionBackend":"ROCM_SEGMENTED_ATTN","kernelConfig":null}
+#       F2 no graphs/compile  {"attentionBackend":"ROCM_SEGMENTED_ATTN","enforceEager":true}   (diagnostic only)
+#       F3 no align split     {"attentionBackend":"ROCM_SEGMENTED_ATTN","enablePrefixCaching":false,"mambaCacheMode":null}
+#       F4 decode-only graphs {"attentionBackend":"ROCM_SEGMENTED_ATTN","compilationConfig":"{\"cudagraph_mode\":\"FULL_DECODE_ONLY\"}"}
+#   B'  the S3 winner plus the accepted fix:
+#       {"speculativeConfig":"{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}"}
+#       Probe the TTFT sweep (--sizes 64,256,415,417,512,1124,2048), then the
+#       S3 decode probe with --contexts 512,2048,16384 --soak-pairs 0
+#       (scripts/verify-vllm-mtp.py --phase measure) for regressions.
+# Budget: S1 ~10 min (warm boot + probe), S2 ~12 min (cold compile), each F
+# arm ~8 min, B' ~12 min; about 45-60 min of 5930k time, like S3.
+#
+# Decision rule (written before the data):
+#   - Localized when S1's 256-token trace accounts for the floor: GPU busy
+#     >= 80 % of the server prefill time names a kernel (compare the 1124
+#     trace); GPU idle >= 0.5 s inside the prefill names a host stall (the
+#     host ops in the idle gaps and py-spy's EngineCore leaf frames).
+#   - S2 attributes it to the segmented backend or to the fp16 / block path.
+#   - A fix is accepted when B' + fix meets median server TTFT <= 1.2x the
+#     production baseline above (<= 0.28 s at 256, <= 0.52 s at 512, <= 1.31 s
+#     at 1124), single-stream decode within 5 % of S3's B (>= 65.2 tok/s at
+#     2K, >= 62.8 at 16K), and coherent probes. Then B + fix goes to S4 at 32K
+#     with an overflow route for > 32K requests.
+#   - No accepted fix: record the localized cause, and the owner chooses
+#     between B anyway (-30 % end-to-end, +1.3 s short-prompt TTFT) and TRITON.
+#   - Any incoherent probe, engine death or HIP/HSA/OOM marker fails that arm.
+# Rollback = delete this Model; the workhorse reclaims the card on demand.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-v032-s3-attn-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    # Match the production serving class on this shared CI/GPU node.
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-gfx1100-next-feature-2026-10-23.md"
+    flexinfer.ai/promotion-state: debug-canary-v032-s3b-ttft-floor
+spec:
+  backend: vllm
+  # The S3 image: CI's 0.32 native-W4A16 build of master dc73879c with text
+  # plugin 0.9.0 (MTP head policy checkpoint), held in the 5930k prewarm list.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # The S3 path: the segmented fp16 compile and its autotune table are here.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s3-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    # Takes the card from the workhorse (500) for the window, as S3 did.
+    priority: 510
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    # minReplicas keeps this probe resident; the operator deletes the Model
+    # after the bounded test.
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    # The wrapper only adds the torch profiler (no Model field renders
+    # --profiler-config). It exposes /start_profile and /stop_profile, which
+    # the probe brackets single requests with; traces go to /tmp in the pod.
+    # "vllm" is argv[0] for bash -c; the backend args follow as "$@".
+    command:
+      - bash
+      - -lc
+      - 'exec vllm serve "$@" --profiler-config "{\"profiler\":\"torch\",\"torch_profiler_dir\":\"/tmp/vllm-profile\",\"torch_profiler_with_stack\":false}"'
+      - vllm
+    # S3 exported this in the wrapper; spec.config.env carries it now (!1172).
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+    # The same --kernel-config S3 passed in the wrapper, now as a field so arm
+    # F1 can delete it with one merge patch.
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    # Observed source revision (equal to the production cache's 17c77026).
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    warmPolicy: primary
+    dedicatedDeployment: true
+    quantization: gptq
+    # Qualified VL-layout architecture in-process plus the auto-round -> gptq
+    # rewrite, exactly as S3 (issue #74 incident #2).
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    # 32K as in S3: segmented needs fp16 KV on gfx11 (fp8 is gfx12-only).
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    # auto = fp16 (the model dtype); arm S2 keeps it to isolate the kernel.
+    kvCacheDtype: auto
+    enforceEager: false
+    # Production hybrid-GDN prefix-caching recipe; arm F3 turns it off.
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    # No speculativeConfig: S1 is S3's arm C. B' patches MTP K=2 back.
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-v032-s3-attn-canary
+    # /metrics must carry the TTFT, queue and prefill histograms.
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Hidden from discovery; the probe talks to the pod over localhost.
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-v032-s3-attn-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

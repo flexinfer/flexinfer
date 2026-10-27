@@ -379,6 +379,18 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		}
 	}
 
+	// A Model with a context-overflow lane holds back the runtime's 400 so a
+	// prompt that does not fit can be replayed once to the larger window. See
+	// context_overflow.go.
+	if !isLoRA && isCompletionPath(r.URL.Path) && contextOverflowedFrom(ctx) == "" {
+		if target := p.contextOverflowTarget(ctx, resolvedModel); target != "" {
+			cw := newOverflowCaptureWriter(w)
+			p.forwardWithRetry(cw, r, modelName, resolvedModel, port, routeBody, forwardBody)
+			p.finishContextOverflow(cw, w, r, resolvedModel, target, routeBody)
+			return
+		}
+	}
+
 	// Forward to the upstream with self-healing retry on dial-class failures
 	// (stale direct-load target / rolling backend pod). See routing_retry.go.
 	p.forwardWithRetry(w, r, modelName, resolvedModel, port, routeBody, forwardBody)

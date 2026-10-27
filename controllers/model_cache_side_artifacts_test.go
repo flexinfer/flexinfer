@@ -106,7 +106,7 @@ func TestCacheJobsStageTransformerSideArtifact(t *testing.T) {
 	if err != nil {
 		t.Fatalf("jobForLocalHFPrefetch() error = %v", err)
 	}
-	shared, err := r.jobForPrefetch(qwenImageCacheModel(t, "SharedPVC", ucTransformerConfig(testUCQ8)), "models-pvc", "qwen-image-21-uc-canary")
+	shared, err := r.jobForPrefetch(qwenImageCacheModel(t, "SharedPVC", ucTransformerConfig(testUCQ8)), "models-pvc", "qwen-image-21-uc-canary", true)
 	if err != nil {
 		t.Fatalf("jobForPrefetch() error = %v", err)
 	}

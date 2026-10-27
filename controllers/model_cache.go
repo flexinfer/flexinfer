@@ -474,6 +474,32 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			jobName := model.Name + "-cache-stage"
 			job := &batchv1.Job{}
 			err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
+			if err == nil {
+				stale, staleErr := localHFStageJobStale(model, job)
+				if staleErr != nil {
+					return false, staleErr
+				}
+				if stale {
+					// Foreground deletion keeps the Job until its pod is gone, so a
+					// download still running for the old options cannot overlap the
+					// next stage's wipe of the same hostPath.
+					if job.DeletionTimestamp == nil {
+						if delErr := r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationForeground)); delErr != nil && !errors.IsNotFound(delErr) {
+							return false, fmt.Errorf("delete stale local HF cache stage job: %w", delErr)
+						}
+					}
+					const message = "re-staging local cache: download options changed"
+					model.Status.Cache.Ready = false
+					model.Status.Cache.JobName = jobName
+					model.Status.Cache.JobPhase = "Pending"
+					model.Status.Cache.Message = message
+					setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "CacheStage", message)
+					if err := r.patchModelStatus(ctx, model, original); err != nil {
+						return false, err
+					}
+					return false, nil
+				}
+			}
 			if errors.IsNotFound(err) {
 				stagedKey := localHFStagedKey(model)
 				if localCacheStageAlreadyReady(original, stagedKey) {
@@ -677,14 +703,37 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 		if err != nil && !errors.IsNotFound(err) {
 			return false, err
 		}
-		if err == nil && job.Annotations != nil && job.Annotations[AnnotationSource] != model.Spec.Source {
-			if delErr := r.Delete(ctx, job); delErr != nil && !errors.IsNotFound(delErr) {
-				return false, delErr
+		const refetchMessage = "re-fetching shared cache: source or download options changed"
+		adoptLegacyMarker := true
+		replaced := false
+		if err == nil {
+			stale, staleErr := prefetchJobStale(model, job)
+			if staleErr != nil {
+				return false, staleErr
 			}
-			err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+			if stale {
+				gone, retireErr := r.retireStalePrefetch(ctx, model, job)
+				if retireErr != nil {
+					return false, retireErr
+				}
+				if !gone {
+					model.Status.Cache.JobPhase = "Pending"
+					model.Status.Cache.Message = refetchMessage
+					setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchPending", refetchMessage)
+					if err := r.patchModelStatus(ctx, model, original); err != nil {
+						return false, err
+					}
+					return false, nil
+				}
+				// A bare legacy marker on the PVC was written for the stale
+				// Job's source; only adopt it when that is still the source.
+				adoptLegacyMarker = job.Annotations[AnnotationSource] == model.Spec.Source
+				replaced = true
+				err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+			}
 		}
 		if errors.IsNotFound(err) {
-			newJob, err := r.jobForPrefetch(model, pvcName, model.Name)
+			newJob, err := r.jobForPrefetch(model, pvcName, model.Name, adoptLegacyMarker)
 			if err != nil {
 				return false, err
 			}
@@ -693,6 +742,9 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			}
 			model.Status.Cache.JobPhase = "Running"
 			model.Status.Cache.Message = "prefetch job started"
+			if replaced {
+				model.Status.Cache.Message = refetchMessage
+			}
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchRunning", model.Status.Cache.Message)
 			if err := r.patchModelStatus(ctx, model, original); err != nil {
 				return false, err
@@ -759,6 +811,50 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 		return false, err
 	}
 	return model.Status.Cache.Ready, nil
+}
+
+// retireStalePrefetch clears the way for a prefetch Job built for the model's
+// current source and download options. It reports whether the stale Job is
+// gone, so the caller can create the replacement in the same pass.
+//
+// The model's quantize Job ran against the old file set, so it goes first,
+// together with the quantization status that points the serving path at its
+// output; the next successful prefetch starts a fresh one. The quantize Job
+// and a prefetch Job that still has a pod are deleted in the foreground and
+// waited for, so neither writes into the directory the replacement fetches
+// into. A finished prefetch Job is deleted in the background, which removes it
+// at once and lets the caller still read its source annotation.
+func (r *ModelReconciler) retireStalePrefetch(ctx context.Context, model *aiv1alpha2.Model, job *batchv1.Job) (bool, error) {
+	if model.Status.Cache != nil {
+		model.Status.Cache.Quantization = nil
+	}
+	quantize := &batchv1.Job{}
+	err := r.Get(ctx, types.NamespacedName{Name: model.Name + "-quantize", Namespace: model.Namespace}, quantize)
+	if err != nil && !errors.IsNotFound(err) {
+		return false, err
+	}
+	if err == nil && metav1.IsControlledBy(quantize, model) {
+		if quantize.DeletionTimestamp == nil {
+			if delErr := r.Delete(ctx, quantize, client.PropagationPolicy(metav1.DeletePropagationForeground)); delErr != nil && !errors.IsNotFound(delErr) {
+				return false, fmt.Errorf("delete quantize job built on a stale prefetch: %w", delErr)
+			}
+		}
+		return false, nil
+	}
+
+	if job.DeletionTimestamp != nil {
+		return false, nil
+	}
+	if job.Status.Active > 0 {
+		if err := r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationForeground)); err != nil && !errors.IsNotFound(err) {
+			return false, fmt.Errorf("delete stale prefetch job: %w", err)
+		}
+		return false, nil
+	}
+	if err := r.Delete(ctx, job, client.PropagationPolicy(metav1.DeletePropagationBackground)); err != nil && !errors.IsNotFound(err) {
+		return false, fmt.Errorf("delete stale prefetch job: %w", err)
+	}
+	return true, nil
 }
 
 func (r *ModelReconciler) pvcSourceArtifactReady(ctx context.Context, pvc *corev1.PersistentVolumeClaim) (bool, string, error) {

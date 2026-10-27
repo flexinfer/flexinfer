@@ -5,9 +5,10 @@
 # --enable-lora, --max-loras, --max-lora-rank 64, and VLLM_ALLOW_RUNTIME_LORA_UPDATING.
 #
 # ModelExperiment/qwen35-9b-context-ceiling-224k-canary PASSED twice on
-# 2026-07-22 with the exact digest below: native RDNA3 W4A16, graphs 1/2/4,
-# rank-64 LoRA, >55 aggregate tok/s across two RP streams, and exact 5/5 recall
-# in two independent 223,969-token prompts. Normal requests default to
+# 2026-07-22 on the vLLM 0.23 runtime 2e9652ed: native RDNA3 W4A16, graphs
+# 1/2/4, rank-64 LoRA, >55 aggregate tok/s across two RP streams, and exact
+# 5/5 recall in two independent 223,969-token prompts. The lane runs the 0.32
+# image below since 2026-10-27 (see spec.image). Normal requests default to
 # non-thinking; clients can opt in with chat_template_kwargs.enable_thinking=true.
 # Reach the adapter via model="nsfw-rp".
 apiVersion: ai.flexinfer/v1alpha2
@@ -19,11 +20,28 @@ metadata:
     flexinfer.ai/base-model-source: Qwen/Qwen3.5-9B
     flexinfer.ai/base-model-posture: abliterated
     flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128
-    flexinfer.ai/runtime-digest: sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+    flexinfer.ai/runtime-digest: sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+    # Earned on 2e9652ed (vLLM 0.23); the 0.32 engine is covered by the 5930k
+    # twin's re-qualification, not by this certificate (see spec.image).
     flexinfer.ai/canary-certificate: qwen35-9b-context-ceiling-224k-canary-generation-4
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+  # 2026-10-27 (pin hygiene, research serving-gaps §7): REPINNED from the vLLM
+  # 0.23 runtime 2e9652ed, which Harbor retention deleted on 2026-10-21 (it
+  # survived only as this node's prewarm snapshot, so a reinstall or image GC
+  # would have ended the lane). New pin: the CI-built vLLM 0.32 native-W4A16
+  # image (master pipeline 34797) that the 5930k twin and workhorse run, so
+  # the twins share an engine again. The twin is the template: every flag this
+  # lane renders exists in 0.32 except --no-calculate-kv-scales (key dropped
+  # below) and the compile cache moves to a fresh path. Evidence: matrix row
+  # parked-5930k-lanes-v032-2026-10-25 (the twin, same artifact and config:
+  # 694,559 tokens / 3.03x at 229,376, base + adapter probes 3/3, 103.5 /
+  # 68.5 tok/s). This lane is parked (minReplicas 0), so the repin boots
+  # nothing; the first activation on this card is its own check: read the
+  # boot's KV pool (>= 3x at 229,376 for 4 seqs, else the KVPoolRecheck
+  # relaunch) and probe base + nsfw-rp. Rollback = 2e9652ed while the 7900xtx
+  # prewarm list still holds it; after that, fix forward.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
   # Exact OCI-pull cache PVC path certified by the canary artifact gate.
   source: pvc://qwen35-9b-oci-gfx1100/qwen35-9b
   cache:
@@ -35,7 +53,10 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      hostPath: /var/lib/flexinfer/compile-cache-qwen35-9b-v023-production
+      # 2026-10-27: fresh path for the 0.32 engine, as the twin did. The old
+      # compile-cache-qwen35-9b-v023-production (2.6 GB of 0.23 artifacts) is
+      # kept on the node for a 2e9652ed rollback.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen35-9b-v032-production
       sizeLimit: 4Gi
   gpu:
     vendor: amd
@@ -78,8 +99,8 @@ spec:
     # 2026-08-30: stays ondemand after the gaming handback — the warm-pinned
     # orpheus speed tier owns the card now (see serverless block above).
     warmPolicy: ondemand
-    # Pin this model to the certified vLLM 0.23 image instead of the node's
-    # older persistent runtime bundle.
+    # Run the pinned spec.image in its own Deployment instead of the node's
+    # persistent runtime bundle.
     dedicatedDeployment: true
     dtype: "half"
     quantization: gptq
@@ -114,18 +135,15 @@ spec:
     # 2026-07-26). Doubled pool = the budget lever for multi-psyche
     # (roadmap slice E). Rollback = kvCacheDtype: auto.
     kvCacheDtype: fp8_e4m3
-    # Scales are pinned at 1.0 and outlier activations clip on cache write —
-    # a contributor to the lane's mid-sentence word substitutions (psyche
-    # .loom/decision-sampling-hygiene.md; psyche MR !71 guarded the sampling
-    # tail). Do NOT flip this to true: probed 2026-08-01 (MR !956, reverted)
-    # and vLLM 0.23 force-disables calculate_kv_scales for hybrid GDN models
-    # ("recurrent state is uninitialized" -> "Using default scale of 1.0
-    # instead"), so the flag only adds boot warnings while the config lies.
-    # The flag is deprecated upstream; the real fix is checkpoint-embedded
-    # k_scale/v_scale (requantized artifact) or a runtime bump — see #69.
-    # Probe boot for the record: clean 2.5 min restart, pool 817,285 tokens,
-    # 3.56x concurrency @ 229,376.
-    calculateKvScales: false
+    # `calculateKvScales: false` left with the 0.32 repin (2026-10-27): vLLM
+    # 0.28 removed runtime KV-scale calculation and its flag, so the controller
+    # must not render --no-calculate-kv-scales (vllm serve rejects unknown
+    # flags). Behaviour is unchanged: fp8 KV scales stay pinned at 1.0 and
+    # outlier activations clip on cache write, a contributor to the lane's
+    # mid-sentence word substitutions (psyche .loom/decision-sampling-
+    # hygiene.md). It was inert on 0.23 too (force-disabled for hybrid GDN
+    # models; probed 2026-08-01, MR !956 reverted). The real fix is
+    # checkpoint-embedded k_scale/v_scale in a requantized artifact, see #69.
     # vLLM 0.23 plugin certificate: bounded graph shapes avoid the v0.17
     # hybrid-architecture crash and deliver ~102 base / ~60 short-LoRA tok/s.
     enforceEager: false

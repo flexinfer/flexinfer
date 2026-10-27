@@ -34,6 +34,26 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
+    # 2026-10-27: master badcb8c3 (master pipeline 35422) = the 68f6cda7 build
+    # below plus !1137, !1138, !1186 and !1187 (S6b controller pre-work). Caches:
+    # !1137 keys the Local HF stage marker on source + sorted allow/ignore
+    # patterns + revision and adopts a legacy sha256(source) marker when the
+    # staged files still satisfy the options; !1138 does the same for the
+    # SharedPVC HF prefetch Job (marker annotation, stale Job replaced,
+    # quantize re-run after a re-fetch). Neither starts a Job on the roll:
+    # !1137 reads an unannotated stage Job as before, !1138 rebuilds a
+    # pre-roll prefetch Job's marker from its env and leaves a current one
+    # alone, and a Ready stagedKey cache is never deferred. Runtime path:
+    # !1186 (b834275d6) reloads
+    # a runtime-served Model when its generation and launch hash both move
+    # (RuntimeReloading, drain-aware); unknown hashes from today's runtime
+    # images are adopted, so nothing reloads on the roll. 2f1f6134f maps the
+    # runtime's loadingSubstage and the 0.75 x maxNumSeqs KV recheck onto
+    # runtime loads (only once the runtime image reports them). 9db01a181:
+    # cold-start buckets to 1800 s, swap to 900 s, serving_path label.
+    # 918da5fcd: ExperimentalGPUSupport gets the VRAMPressure cooldown.
+    # No live Model renders differently. 37317c95 (68f6cda7) is the safe
+    # fallback.
     # 2026-10-26: master 68f6cda7 (master pipeline 34921) = the dc73879c build
     # below plus !1172 and 8326613d (via d5d1365e). !1172: spec.config.env sets
     # extra backend-process env on both launch paths (over backend and
@@ -84,8 +104,8 @@ controller:
     # a517165a is also safe):
     # sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376
     # (tag 20261023-142445).
-    digest: "sha256:37317c95d9298e127db3d116d91a5cf4adae391d847c7f28ef61ad65d9079efa"
-    tag: "20261026-015819"
+    digest: "sha256:4ee892319db7b13138b6b4545b28923d02f605fc0f836fa2142d206544dddda4"
+    tag: "20261027-221332"
   resources:
     limits:
       cpu: 1000m
@@ -146,6 +166,26 @@ proxy:
   replicaCount: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-proxy
+    # 2026-10-26 (later): master 2ecf68cc (master pipeline 35148) = the
+    # d8758301 build below plus !1182: a context-overflow replay now loads the
+    # target lane's flexinfer.ai/lane-first-byte-budget (it kept the last
+    # direct request's budget, the 120 s default after a restart) and skips a
+    # target whose breaker is open. Pairs with the 480 s budget on
+    # qwen38-27b-xtx-warm-canary from the same MR. Nothing else changed in the
+    # proxy's import graph. Rollback = the d8758301 build: tag
+    # 20261026-150117,
+    # sha256:d0dc2dbc72d15a523abf5af63b7b9b0bbfc00517a33f4d47ad27dcaae8feb77a.
+    #
+    # 2026-10-26: master d8758301 (master pipeline 35011) = the fe31c9ee build
+    # below plus !1177, the context-overflow reroute (CC-6a-3): a Model
+    # annotated flexinfer.ai/context-overflow-to has vLLM's prompt-length 400
+    # replayed once to that Ready lane. No Model carries the annotation until
+    # gfx1100 S4b (!1178), so routing is otherwise unchanged. The only other
+    # change in the proxy's import graph is !1172 (spec.config.env in direct
+    # runtime-load payloads, as on controller 37317c95). Rollback = the
+    # fe31c9ee build: tag 20261025-163057,
+    # sha256:1b2ffd4128b79a357d92ed4f8c65fc732f6cb8d9e8c32a69bd891ba3d88d3654.
+    #
     # 2026-10-25: master fe31c9ee = !1161 on top of the cc7273917 pin. Demand
     # (lastActiveTime) writes leave the request path: one coalescing writer
     # per model, status merge patches. Model/Service/LoRAAdapter reads come
@@ -156,8 +196,8 @@ proxy:
     # loraadapters watch from !1161. Rollback anchor: tag
     # humanizer-fastswaps-cc7273917,
     # sha256:db4c70c04e4196bf26da174d6e529380000678be76ac8315916e7a62452f18c8.
-    tag: "20261025-163057"
-    digest: "sha256:1b2ffd4128b79a357d92ed4f8c65fc732f6cb8d9e8c32a69bd891ba3d88d3654"
+    tag: "20261026-210805"
+    digest: "sha256:dbbf714133cbd356cb5dda715d0b8c8e0e543796fc68986e9f2f18e39dc3be45"
     pullPolicy: Always
   service:
     type: ClusterIP
@@ -318,7 +358,9 @@ benchmarker:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-bench
     tag: "master"
-  postgresDsn: "postgres://langgraph:changeme-app@langgraph-postgres-postgresql.ai.svc:5432/flexinfer_benchmarks?sslmode=disable"
+  # No postgresDsn: the controller has not read POSTGRES_DSN since the
+  # v1alpha1 benchmark controllers were removed (DEBT-02). The gauntlet CronJob
+  # takes its DSN from the flexinfer-benchmarks-postgres Secret instead.
 
 mlcllm:
   rocmImage: registry.harbor.lan/library/mlc-llm:rocm64-llvm19
@@ -389,15 +431,11 @@ imagePrewarm:
         # pinned-cfefae18061f, still held on the 7900xtx). Re-add it before
         # enabling the gfx1100-5930k DaemonSet, or accept a 17 GB pull then.
         #   registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
-        # 2026-10-22 (issue #74 S2, vLLM currency): the rebuilt v0.26 native-
-        # W4A16 serving image (rocm-gfx1100-v026-native-w4a16-a106504c, master
-        # a106504c, plugin 0.8.0 on 0.26's FLA layout; Harbor tag
-        # pinned-ad93ae726bbe). Qualified on this node 2026-09-14 (matrix rows
-        # gfx1100-native-w4a16-2026-09-14-seqs2 / -096). Pulled here BEFORE the
-        # workhorse repin so the lane swap is a container restart, not an
-        # 11 GB pull. 2e9652ed above is the rollback anchor (node snapshot
-        # only: Harbor retention deleted it on 2026-10-17/21).
-        - registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
+        # 2026-10-27 (pin hygiene, research serving-gaps §7): retired the v0.26
+        # native-W4A16 image ad93ae72 (rocm-gfx1100-v026-native-w4a16-a106504c,
+        # pinned-ad93ae726bbe) from this list. No 5930k lane pins it since the
+        # workhorse moved to 0.32; its rollback anchor is cd108c9e below. The
+        # 7900xtx profile still holds it for the XTX warm lane.
         # 2026-10-24 (issue #74 S2, vLLM currency 0.26 -> 0.32): the native-
         # W4A16 image on the upstream 0.32.0 ROCm wheel
         # (rocm-gfx1100-v032-native-w4a16-3fc9c37f; Dockerfile from !1134 =
@@ -408,9 +446,8 @@ imagePrewarm:
         # resource group was saturated by multi-hour gfx1100 builds; CI
         # republishes the same Dockerfile under the merge sha later. Promotion
         # target for both 27B lanes (XTX warm lane canaries first); pulled here
-        # so the workhorse repin is a container restart. ad93ae72 above is the
-        # rollback anchor (Harbor-resident, pinned-ad93ae726bbe). Lanes pinned
-        # to this image must drop `calculateKvScales` (flag removed in 0.28).
+        # so the workhorse repin is a container restart. Lanes pinned to this
+        # image must drop `calculateKvScales` (flag removed in 0.28).
         - registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99130cc98c3a45bd6e09c89a3b26cb21193c858fab9a99573c7d90
         # 2026-10-25 (issue #74 S2): the CI-built 0.32 native-W4A16 image
         # (rocm-gfx1100-v032-native-w4a16-dc73879c, 10.8 GiB; master pipeline
@@ -422,6 +459,16 @@ imagePrewarm:
         # successor of cd108c9e. Same v0.32.0 base as cd108c9e; the pull is at
         # most 10.8 GiB, which this node's ~269 GB free covers.
         - registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+        # 2026-10-27 (S6a image, held for slice S6b): the stacked 0.32 runtime
+        # image of build profile gfx1100-serving-v032 (vLLM 0.32 + runtime
+        # supervisor + diffusers 0.42 + snac; rocm-gfx1100-serving-v032-c444b5ff,
+        # master pipeline 34930 job 416180, 11.64 GB compressed). S6b repins
+        # the gfx1100-5930k runtime DaemonSet to it; listing it here makes the
+        # pinned-* guard tag it so Harbor retention keeps it until then, and
+        # makes that repin a container start. It shares the vllm-openai-rocm
+        # v0.32.0 base with cd108c9e/b06b06fe: the pull here is ~32 MB of new
+        # compressed layers (manifest diff 2026-10-27).
+        - registry.harbor.lan/flexinfer/runtime@sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Keep the 64K Qwen workhorse overlay referenced across containerd GC;
         # its first cold pull/unpack took 9m05s on this node.
@@ -435,6 +482,10 @@ imagePrewarm:
         # actually pull — the floating diffusers-video:rocm-gfx1100 tag's current
         # digest (2026-08-23); the newer rocm-gfx1100-0d631512 build (da07169c)
         # never had the floating tag moved onto it.
+        # 2026-10-27 (pin hygiene): that premise was wrong. Both lanes set
+        # spec.imageDigest, which overrides the tag, so they launched f03bfc2f
+        # (T2V) and 52ebc2b9 (VACE, gone from Harbor) while this entry held
+        # 83cda206. Both lanes now pin 83cda206 through spec.imageDigest.
         - registry.harbor.lan/flexinfer/diffusers-video@sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
     # 2026-09-13 (issue #74 S3'): the gfx906 runtime DaemonSet hosts the whole
     # retrieval plane (bge-large, bge-reranker, gte-qwen2) plus the only voice
@@ -445,14 +496,12 @@ imagePrewarm:
       nodeSelector:
         kubernetes.io/hostname: cblevins-radeonvii
       images:
-        # Rollback anchor for the S3'' roll below: the off-CI Humanizer overlay
-        # 8181b690 (rocm-gfx906-humanizer-coexist-cc26086e4, pinned-8181b6901ab0,
-        # 2026-10-12) that the gfx906 DaemonSet served from 2026-10-12 until the
-        # roll. Harbor-resident and already unpacked on this node, so listing it
-        # costs nothing and keeps a rollback a container swap. 171081de
-        # (rocm-gfx906-882d81ba, the 09-13 S3' build and the Humanizer-episode
-        # rollback) left the list here: two generations back.
-        - registry.harbor.lan/flexinfer/runtime@sha256:8181b6901ab0ed1244a9035d88677c2c729094b847f60d63368faca147a21585
+        # 2026-10-27 (pin hygiene, research serving-gaps §7): retired the off-CI
+        # Humanizer overlay 8181b690 (rocm-gfx906-humanizer-coexist-cc26086e4,
+        # pinned-8181b6901ab0), the S3'' rollback anchor. 90648c35 below has
+        # served the gfx906 DaemonSet since 2026-10-23 and no Model pins
+        # 8181b690, so it only cost disk on this 127 G root. It stays
+        # Harbor-resident; a rollback to it is now a 7.6 GB pull.
         # 2026-10-23 (issue #74 S3''): the gfx906 runtime rebuilt by CI from
         # master b8637f35 (pipeline 34198, publish_runtime_rocm_gfx906, 7.6 GB;
         # tags rocm-gfx906-b8637f35 / rocm-gfx906-609a955f / rocm-gfx906).
@@ -464,7 +513,7 @@ imagePrewarm:
         # for the gfx906 DaemonSet + GPUProfile; pulled here first so the roll
         # is a container swap, not a pull with the retrieval plane down.
         # Pinned by the gfx906 DaemonSet + GPUProfile since the S3'' roll
-        # (matrix row gfx906-serving-2026-10-23); 8181b690 above is the anchor.
+        # (matrix row gfx906-serving-2026-10-23).
         - registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
@@ -494,6 +543,18 @@ imagePrewarm:
         # lane is the canary vehicle for this digest (first roll once it is
         # resident here); ad93ae72 above stays as the rollback anchor.
         - registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99130cc98c3a45bd6e09c89a3b26cb21193c858fab9a99573c7d90
+        # 2026-10-27 (pin hygiene, research serving-gaps §7): the CI-built 0.32
+        # native-W4A16 image the 5930k workhorse runs (see the 5930k profile).
+        # Pulled here (!1184) before !1185 repinned qwen38-27b-xtx-warm-canary
+        # and qwen35-9b-ablit-rp onto it, so both lanes run the same engine
+        # build as the workhorse they overflow from; the warm lane's repin was
+        # a container restart (Ready 2026-10-27 21:11Z, matrix row
+        # xtx-warm-b06b06fe-2026-10-27). 2e9652ed above stays listed: it is
+        # the 9B RP lane's only rollback until that lane first boots on
+        # b06b06fe on this card, and dropping it would not clear the
+        # runtime_pin_drift FAIL, which the deploy/experiments ModelExperiment
+        # records (Flux-applied) also raise.
+        - registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.
@@ -713,6 +774,11 @@ runtime:
         # the pod as well as by the controller. Already set on gfx906.
         - name: FLEXINFER_RUNTIME_MULTI_MODEL
           value: "1"
+        # 2026-10-27 (S6b pre-work, review row R2): accepted streams finish
+        # before a lane swap or spec-change reload releases the GPU, as on
+        # gfx906. Adding it rolls this runtime pod once (snac reloads).
+        - name: FLEXINFER_RUNTIME_REQUEST_DRAIN
+          value: "1"
         - name: MIOPEN_CUSTOM_CACHE_DIR
           value: "/var/lib/flexinfer/compile-cache/runtime/miopen"
         - name: MIOPEN_USER_DB_PATH
@@ -753,6 +819,14 @@ runtime:
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
       env:
+        # 2026-10-27 (S6b pre-work, review row R2): co-resident lanes and
+        # request drain, matching the gfx1100 and gfx906 profiles, so the
+        # workhorse can move onto this runtime. The DaemonSet is desired=0, so
+        # nothing rolls until S6b un-parks it.
+        - name: FLEXINFER_RUNTIME_MULTI_MODEL
+          value: "1"
+        - name: FLEXINFER_RUNTIME_REQUEST_DRAIN
+          value: "1"
         - name: MIOPEN_CUSTOM_CACHE_DIR
           value: "/var/lib/flexinfer/compile-cache/runtime/miopen"
         - name: MIOPEN_USER_DB_PATH
@@ -778,8 +852,9 @@ runtime:
       # b11335 and the entrypoint that unsets HSA_OVERRIDE_GFX_VERSION so HIP
       # sees Vega20 (both on master since cc26086e4) — plus Go 1.26.10, i.e.
       # the runtime-manager build already serving on both gfx1100 DaemonSets
-      # (cfefae18). Rollback anchor (Harbor-resident, pinned-8181b6901ab0,
-      # held by the radeonvii-gfx906 imagePrewarm profile):
+      # (cfefae18). Rollback anchor (Harbor-resident, pinned-8181b6901ab0;
+      # dropped from the radeonvii-gfx906 prewarm list 2026-10-27, so a
+      # rollback pulls it):
       #   registry.harbor.lan/flexinfer/runtime@sha256:8181b6901ab0ed1244a9035d88677c2c729094b847f60d63368faca147a21585
       image: "registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7"
       gpuVendor: amd
