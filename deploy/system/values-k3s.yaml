@@ -525,10 +525,15 @@ imagePrewarm:
         - registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99130cc98c3a45bd6e09c89a3b26cb21193c858fab9a99573c7d90
         # 2026-10-27 (pin hygiene, research serving-gaps §7): the CI-built 0.32
         # native-W4A16 image the 5930k workhorse runs (see the 5930k profile).
-        # Pulled here before the follow-up MR repins qwen38-27b-xtx-warm-canary
+        # Pulled here (!1184) before !1185 repinned qwen38-27b-xtx-warm-canary
         # and qwen35-9b-ablit-rp onto it, so both lanes run the same engine
-        # build as the workhorse they overflow from and the repin is a container
-        # restart. 2e9652ed above leaves this list after that repin is Ready.
+        # build as the workhorse they overflow from; the warm lane's repin was
+        # a container restart (Ready 2026-10-27 21:11Z, matrix row
+        # xtx-warm-b06b06fe-2026-10-27). 2e9652ed above stays listed: it is
+        # the 9B RP lane's only rollback until that lane first boots on
+        # b06b06fe on this card, and dropping it would not clear the
+        # runtime_pin_drift FAIL, which the deploy/experiments ModelExperiment
+        # records (Flux-applied) also raise.
         - registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
