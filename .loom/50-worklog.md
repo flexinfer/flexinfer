@@ -1293,3 +1293,27 @@ Sources:
     `internal/runtime/manager.go` (`Load`), `pkg/runtime/payload.go` (`launchSpecHash`)
   - live 2026-10-27: `flexinfer-runtime-gfx1100-5930k` desired=0; `flexinfer-runtime-gfx1100`
     had no models loaded (`/api/v1/models` → `[]`)
+
+### S6b runtime-path pre-work, part 2: in-pod loading substage and KV-pool recheck (R4)
+
+- What changed:
+  - The runtime tracks load progress from the backend output it streams. Model health reports
+    `loadingSubstage` / `loadingMessage` while loading, and the vLLM `kvCacheTokens` /
+    `kvMaxConcurrency` once printed. The controller maps the substage onto
+    `status.loadingSubstage` and applies the short-pool recheck in-pod.
+- Decisions worth keeping:
+  - The log scanner splits at `\r` as well as `\n`. tqdm redraws the shard bar with `\r` and
+    ends it with `\n` only when done, so a `\n` split showed weight progress only after the
+    weights had loaded, and a wedged shard could never freeze `LoadingProgressAt`. Logging still
+    emits one entry per `\n` line.
+  - `ProfilingKV` maps to `Compiling`, because the Deployment path's parser has no KV-profiling
+    stage and the profile sits between torch.compile and graph capture. `Ready` maps to
+    `HealthCheckPending`.
+  - The recheck budget key is `runtime/<pod UID>/<spec hash>`, the runtime analogue of a
+    ReplicaSet UID. The recheck reload restarts with the same hash, so the budget holds. A spec
+    reload or a new runtime pod gets a fresh budget.
+  - KV fields are omitted from health until both profile lines are seen, so an unknown pool can
+    never read as a 0-token short pool.
+- Sources:
+  - `internal/runtime/load_progress.go`, `controllers/model_runtime.go`
+    (`maybeRecheckRuntimeKVPool`, `runtimeLoadingProgress`), `backend/vllm_load_log.go`
