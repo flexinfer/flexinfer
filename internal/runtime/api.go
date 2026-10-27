@@ -140,7 +140,7 @@ func (s *Server) handleModelHealth(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusServiceUnavailable
 	}
 
-	writeJSON(w, status, map[string]any{
+	body := map[string]any{
 		"name":            model.Name,
 		"state":           model.State,
 		"error":           model.Error,
@@ -152,7 +152,16 @@ func (s *Server) handleModelHealth(w http.ResponseWriter, r *http.Request) {
 		"lastRequestTime": model.LastRequestTime,
 		"generation":      model.Generation,
 		"specHash":        model.SpecHash,
-	})
+		"loadingSubstage": model.LoadingSubstage,
+		"loadingMessage":  model.LoadingMessage,
+	}
+	// Absent until vLLM printed its KV profile, so the controller cannot read
+	// an unknown pool as an empty one.
+	if model.KVCacheTokens > 0 && model.KVMaxConcurrency != "" {
+		body["kvCacheTokens"] = model.KVCacheTokens
+		body["kvMaxConcurrency"] = model.KVMaxConcurrency
+	}
+	writeJSON(w, status, body)
 }
 
 // handleStatus returns the overall runtime status.
