@@ -22,7 +22,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	batchv1 "k8s.io/api/batch/v1"
@@ -221,34 +220,6 @@ echo "Local staging complete."
 	return job, nil
 }
 
-// localHFCacheMarkerKey is the canonical form of the download options a Local
-// HF stage marker vouches for. Patterns are sorted because their order does not
-// change the file set snapshot_download selects. Changing what the key holds
-// renames every Local HF marker, so each cache re-downloads on its next stage.
-type localHFCacheMarkerKey struct {
-	AllowPatterns  []string `json:"allowPatterns"`
-	IgnorePatterns []string `json:"ignorePatterns"`
-	Revision       string   `json:"revision"`
-}
-
-// localHFCacheMarkerName names the completion marker a Local HF stage writes
-// in the model's cache directory. It hashes spec.source together with the
-// resolved download options, so a ggufFile rename, an allow or ignore pattern
-// change, or an hfRevision bump names a marker the node does not hold yet and
-// the stage Job downloads again instead of trusting the old file set.
-func localHFCacheMarkerName(source string, opts hfDownloadOptions) (string, error) {
-	key, err := json.Marshal(localHFCacheMarkerKey{
-		AllowPatterns:  slices.Sorted(slices.Values(opts.allowPatterns)),
-		IgnorePatterns: slices.Sorted(slices.Values(opts.ignorePatterns)),
-		Revision:       opts.revision,
-	})
-	if err != nil {
-		return "", fmt.Errorf("marshal local cache marker key: %w", err)
-	}
-	sum := sha256.Sum256([]byte(source + "\n" + string(key)))
-	return ".flexinfer_cached_" + hex.EncodeToString(sum[:]), nil
-}
-
 // legacyLocalHFCacheMarkerName is the marker Local HF stages wrote before it
 // carried the download options: sha256(spec.source) alone. The stage script
 // adopts one only after checking the files on disk against the current options.
@@ -268,7 +239,7 @@ func localHFStageJobStale(model *aiv1alpha2.Model, job *batchv1.Job) (bool, erro
 	if !ok {
 		return false, nil
 	}
-	want, err := localHFCacheMarkerName(model.Spec.Source, resolveHFDownloadOptions(model))
+	want, err := hfCacheMarkerName(model.Spec.Source, resolveHFDownloadOptions(model))
 	if err != nil {
 		return false, err
 	}
@@ -279,7 +250,7 @@ func (r *ModelReconciler) jobForLocalHFPrefetch(model *aiv1alpha2.Model) (*batch
 	modelID := extractModelFromSource(model.Spec.Source)
 	hfOpts := resolveHFDownloadOptions(model)
 	cachePath := resolveLocalCachePath(model)
-	markerName, err := localHFCacheMarkerName(model.Spec.Source, hfOpts)
+	markerName, err := hfCacheMarkerName(model.Spec.Source, hfOpts)
 	if err != nil {
 		return nil, err
 	}

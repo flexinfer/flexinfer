@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	batchv1 "k8s.io/api/batch/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 
@@ -264,9 +265,9 @@ func localHFStageModel(config map[string]any) *aiv1alpha2.Model {
 
 func mustLocalHFCacheMarkerName(t *testing.T, model *aiv1alpha2.Model) string {
 	t.Helper()
-	name, err := localHFCacheMarkerName(model.Spec.Source, resolveHFDownloadOptions(model))
+	name, err := hfCacheMarkerName(model.Spec.Source, resolveHFDownloadOptions(model))
 	if err != nil {
-		t.Fatalf("localHFCacheMarkerName() error = %v", err)
+		t.Fatalf("hfCacheMarkerName() error = %v", err)
 	}
 	return name
 }
@@ -357,11 +358,6 @@ type stageScriptRun struct {
 // needs; the test skips where there is none.
 func runLocalHFStageScript(t *testing.T, model *aiv1alpha2.Model, dir string) stageScriptRun {
 	t.Helper()
-	python3, err := exec.LookPath("python3")
-	if err != nil {
-		t.Skip("python3 not on PATH; the stage script's legacy-marker check runs in Python")
-	}
-
 	scheme := runtime.NewScheme()
 	if err := aiv1alpha2.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme() error = %v", err)
@@ -369,6 +365,18 @@ func runLocalHFStageScript(t *testing.T, model *aiv1alpha2.Model, dir string) st
 	job, err := (&ModelReconciler{Scheme: scheme}).jobForLocalHFPrefetch(model)
 	if err != nil {
 		t.Fatalf("jobForLocalHFPrefetch() error = %v", err)
+	}
+	return runHFCacheJobScript(t, job, dir)
+}
+
+// runHFCacheJobScript executes an HF cache Job's script with its /models mount
+// pointed at dir, under the pip and python stubs runLocalHFStageScript
+// describes.
+func runHFCacheJobScript(t *testing.T, job *batchv1.Job, dir string) stageScriptRun {
+	t.Helper()
+	python3, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 not on PATH; the cache script's legacy-marker check runs in Python")
 	}
 	container := job.Spec.Template.Spec.Containers[0]
 
@@ -571,6 +579,346 @@ func TestLocalHFStageScriptCurrentMarker(t *testing.T) {
 			}
 			if !tc.wantDownload && run.err != nil {
 				t.Fatalf("short-circuit failed: %v\n%s", run.err, run.output)
+			}
+		})
+	}
+}
+
+const (
+	embedGemmaSource      = "HF://ggml-org/embeddinggemma-2-GGUF"
+	embedGemmaGGUF        = "embeddinggemma-2-BF16.gguf"
+	embedGemmaQ8GGUF      = "embeddinggemma-2-Q8_0.gguf"
+	embedGemmaRevision    = "bfcd298762cc34d0357ece5ebdd31791a3a374d8"
+	embedGemmaOldRevision = "4a9c1e07d2b35f68e0c7a1d94b2e3f5068c7d1a2"
+)
+
+// sharedPVCPrefetchModel builds a SharedPVC llama.cpp Model fetched from HF,
+// the shape of the embeddinggemma-2-cpu lane.
+func sharedPVCPrefetchModel(config map[string]any) *aiv1alpha2.Model {
+	model := makeModelWithConfig("llamacpp", embedGemmaSource, config)
+	model.Name = "embeddinggemma-2-cpu"
+	model.Namespace = "flexinfer-system"
+	model.Spec.Cache = &aiv1alpha2.CacheSpec{Strategy: "SharedPVC", PVCName: "llm-models-nfs"}
+	return model
+}
+
+func mustPrefetchMarkerName(t *testing.T, model *aiv1alpha2.Model) string {
+	t.Helper()
+	name, err := prefetchMarkerName(model.Spec.Source, resolveHFDownloadOptions(model))
+	if err != nil {
+		t.Fatalf("prefetchMarkerName() error = %v", err)
+	}
+	return name
+}
+
+func mustPrefetchJob(t *testing.T, model *aiv1alpha2.Model, adoptLegacyMarker bool) *batchv1.Job {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := aiv1alpha2.AddToScheme(scheme); err != nil {
+		t.Fatalf("AddToScheme() error = %v", err)
+	}
+	job, err := (&ModelReconciler{Scheme: scheme}).jobForPrefetch(model, model.Spec.Cache.PVCName, model.Name, adoptLegacyMarker)
+	if err != nil {
+		t.Fatalf("jobForPrefetch() error = %v", err)
+	}
+	return job
+}
+
+// legacyPrefetchJob is the prefetch Job the controller built before it carried
+// a marker annotation: the same env, no flexinfer.ai/cache-marker.
+func legacyPrefetchJob(t *testing.T, model *aiv1alpha2.Model) *batchv1.Job {
+	t.Helper()
+	job := mustPrefetchJob(t, model, true)
+	delete(job.Annotations, AnnotationCacheMarker)
+	return job
+}
+
+func TestPrefetchMarkerName(t *testing.T) {
+	base := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision})
+	baseName := mustPrefetchMarkerName(t, base)
+
+	if baseName == legacyPrefetchMarkerName {
+		t.Fatal("HF prefetch marker is still the bare legacy marker")
+	}
+	if want, _ := hfCacheMarkerName(embedGemmaSource, resolveHFDownloadOptions(base)); baseName != want {
+		t.Errorf("prefetch marker = %q, want the HF cache marker %q", baseName, want)
+	}
+
+	sourceChanged := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision})
+	sourceChanged.Spec.Source = "HF://unsloth/embeddinggemma-2-GGUF"
+	if mustPrefetchMarkerName(t, sourceChanged) == baseName {
+		t.Error("a source change kept the marker; the prefetch would trust the old repo's files")
+	}
+
+	t.Run("MLC clone keeps the bare marker", func(t *testing.T) {
+		mlc := makeModelWithConfig("mlc-llm", "HF://mlc-ai/Llama-3-8B-Instruct-q4f16_1-MLC", map[string]any{"hfRevision": embedGemmaRevision})
+		if got := mustPrefetchMarkerName(t, mlc); got != legacyPrefetchMarkerName {
+			t.Errorf("MLC marker = %q, want %q", got, legacyPrefetchMarkerName)
+		}
+	})
+
+	t.Run("job carries the marker and both script paths", func(t *testing.T) {
+		job := mustPrefetchJob(t, base, true)
+		if got := job.Annotations[AnnotationCacheMarker]; got != baseName {
+			t.Errorf("cache-marker annotation = %q, want %q", got, baseName)
+		}
+		script := job.Spec.Template.Spec.Containers[0].Args[0]
+		for _, want := range []string{
+			`MARKER="$DEST_DIR/` + baseName + `"`,
+			`LEGACY_MARKER="$DEST_DIR/.flexinfer_cached"`,
+			`ADOPT_LEGACY_MARKER="true"`,
+			`mv "$LEGACY_MARKER" "$MARKER"`,
+		} {
+			if !strings.Contains(script, want) {
+				t.Errorf("script missing %q", want)
+			}
+		}
+		if script := mustPrefetchJob(t, base, false).Spec.Template.Spec.Containers[0].Args[0]; !strings.Contains(script, `ADOPT_LEGACY_MARKER="false"`) {
+			t.Error("adoptLegacyMarker=false did not reach the script")
+		}
+	})
+}
+
+func TestPrefetchJobStale(t *testing.T) {
+	current := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision})
+	renamed := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaQ8GGUF, "hfRevision": embedGemmaRevision})
+	bumped := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaOldRevision})
+	reordered := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision, "hfAllowPatterns": []string{"b.json", "a.json"}})
+	ordered := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision, "hfAllowPatterns": []string{"a.json", "b.json"}})
+	otherSource := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision})
+	otherSource.Spec.Source = "HF://unsloth/embeddinggemma-2-GGUF"
+
+	mlcBefore := makeModelWithConfig("mlc-llm", "HF://mlc-ai/Llama-3-8B-Instruct-q4f16_1-MLC", nil)
+	mlcBefore.Name, mlcBefore.Namespace = "llama3-mlc", "flexinfer-system"
+	mlcBefore.Spec.Cache = &aiv1alpha2.CacheSpec{Strategy: "SharedPVC"}
+	mlcAfter := mlcBefore.DeepCopy()
+	mlcAfter.Spec.Config = &apiextensionsv1.JSON{Raw: []byte(`{"hfRevision":"` + embedGemmaRevision + `"}`)}
+
+	unannotated := legacyPrefetchJob(t, current)
+	unannotated.Annotations = nil
+
+	tests := []struct {
+		name  string
+		model *aiv1alpha2.Model
+		job   *batchv1.Job
+		want  bool
+	}{
+		{"job for the current options", current, mustPrefetchJob(t, current, true), false},
+		{"job for the old ggufFile", current, mustPrefetchJob(t, renamed, true), true},
+		{"job for the old hfRevision", current, mustPrefetchJob(t, bumped, true), true},
+		{"job for another source", otherSource, mustPrefetchJob(t, current, true), true},
+		{"legacy job for the current options", current, legacyPrefetchJob(t, current), false},
+		{"legacy job for the old ggufFile", current, legacyPrefetchJob(t, renamed), true},
+		{"legacy job for the old hfRevision", current, legacyPrefetchJob(t, bumped), true},
+		{"legacy job with reordered allow patterns", ordered, legacyPrefetchJob(t, reordered), false},
+		{"legacy MLC job after an option change", mlcAfter, legacyPrefetchJob(t, mlcBefore), false},
+		{"unannotated job", current, unannotated, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := prefetchJobStale(tc.model, tc.job)
+			if err != nil {
+				t.Fatalf("prefetchJobStale() error = %v", err)
+			}
+			if got != tc.want {
+				t.Errorf("prefetchJobStale() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+// runPrefetchScript executes the SharedPVC prefetch Job's script with the PVC
+// root pointed at root, so the model's files live under root/<model name>.
+func runPrefetchScript(t *testing.T, model *aiv1alpha2.Model, root string, adoptLegacyMarker bool) stageScriptRun {
+	t.Helper()
+	return runHFCacheJobScript(t, mustPrefetchJob(t, model, adoptLegacyMarker), root)
+}
+
+// TestPrefetchScriptLegacyMarker covers PVC caches fetched before the marker
+// carried the source and download options: one is adopted only while its
+// files still satisfy the spec, and anything else falls through to the
+// download. Unlike the Local stage nothing is wiped first.
+func TestPrefetchScriptLegacyMarker(t *testing.T) {
+	const (
+		awqDir   = "awq-w4-g128"
+		weights  = "model.safetensors"
+		revision = embedGemmaRevision
+	)
+
+	tests := []struct {
+		name       string
+		config     map[string]any
+		backend    string
+		files      map[string]string // file on disk -> commit in its download metadata ("" = none)
+		fetchedOff map[string]string // fetched file since deleted from disk -> commit in its metadata
+		noAdopt    bool              // the controller replaced a Job built for another source
+		wantAdopt  bool
+		wantReason string
+	}{
+		{
+			name:      "unchanged pinned file set is adopted without a download",
+			config:    map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": revision},
+			files:     map[string]string{embedGemmaGGUF: revision, "README.md": revision},
+			wantAdopt: true,
+		},
+		{
+			name:      "unpinned cache is adopted without download metadata",
+			config:    map[string]any{"ggufFile": embedGemmaGGUF},
+			files:     map[string]string{embedGemmaGGUF: ""},
+			wantAdopt: true,
+		},
+		{
+			// AWQ deletes the fetched safetensors after quantizing and writes
+			// its own output beside them; neither may read as a changed file set.
+			name:       "quantized cache is adopted from its download records",
+			backend:    "vllm",
+			config:     map[string]any{"hfRevision": revision, "hfAllowPatterns": []string{"*.safetensors", "config.json"}},
+			files:      map[string]string{"config.json": revision, awqDir + "/" + weights: "", awqDir + "/config.json": "", ".quantization-status.json": ""},
+			fetchedOff: map[string]string{weights: revision},
+			wantAdopt:  true,
+		},
+		{
+			name:       "ggufFile rename re-fetches",
+			config:     map[string]any{"ggufFile": embedGemmaQ8GGUF, "hfRevision": revision},
+			files:      map[string]string{embedGemmaGGUF: revision},
+			wantReason: "required file " + embedGemmaQ8GGUF + " is missing or empty",
+		},
+		{
+			name:       "hfRevision change re-fetches",
+			config:     map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": revision},
+			files:      map[string]string{embedGemmaGGUF: embedGemmaOldRevision},
+			wantReason: embedGemmaGGUF + " was fetched at revision " + embedGemmaOldRevision + ", spec pins " + revision,
+		},
+		{
+			name:       "pinned revision without download metadata re-fetches",
+			config:     map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": revision},
+			files:      map[string]string{embedGemmaGGUF: ""},
+			wantReason: "no download metadata records a revision, spec pins " + revision,
+		},
+		{
+			name:       "allow pattern with no fetched match re-fetches",
+			config:     map[string]any{"ggufFile": embedGemmaGGUF, "hfAllowPatterns": []string{"tokenizer.json"}},
+			files:      map[string]string{embedGemmaGGUF: ""},
+			wantReason: "allow pattern tokenizer.json matches no fetched file",
+		},
+		{
+			name:       "empty cache directory re-fetches",
+			config:     map[string]any{"ggufFile": embedGemmaGGUF},
+			wantReason: "the cache directory holds no files",
+		},
+		{
+			name:       "marker written before a source change is not adopted",
+			config:     map[string]any{"ggufFile": embedGemmaGGUF},
+			files:      map[string]string{embedGemmaGGUF: ""},
+			noAdopt:    true,
+			wantReason: "it was written before a source change",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			model := sharedPVCPrefetchModel(tc.config)
+			if tc.backend != "" {
+				model.Spec.Backend = tc.backend
+			}
+			marker := mustPrefetchMarkerName(t, model)
+			root := t.TempDir()
+			dir := filepath.Join(root, model.Name)
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			for rel, commit := range tc.files {
+				stageHFFile(t, dir, rel, commit)
+			}
+			for rel, commit := range tc.fetchedOff {
+				stageHFFile(t, dir, rel, commit)
+				if err := os.Remove(filepath.Join(dir, rel)); err != nil {
+					t.Fatal(err)
+				}
+			}
+			touchFile(t, filepath.Join(dir, legacyPrefetchMarkerName))
+
+			run := runPrefetchScript(t, model, root, !tc.noAdopt)
+
+			if fileExists(filepath.Join(dir, legacyPrefetchMarkerName)) {
+				t.Error("the legacy marker survived the first Job to find it")
+			}
+			if tc.wantAdopt {
+				if run.err != nil || run.downloaded {
+					t.Fatalf("want adoption without a download; err=%v downloaded=%v\n%s", run.err, run.downloaded, run.output)
+				}
+				if !fileExists(filepath.Join(dir, marker)) {
+					t.Errorf("legacy marker was not renamed to %s", marker)
+				}
+				return
+			}
+
+			if !run.downloaded {
+				t.Fatalf("want a re-fetch, script never reached it; err=%v\n%s", run.err, run.output)
+			}
+			if !strings.Contains(run.output, tc.wantReason) {
+				t.Errorf("output does not explain the re-fetch with %q:\n%s", tc.wantReason, run.output)
+			}
+			if fileExists(filepath.Join(dir, marker)) {
+				t.Error("the current marker was written before the download")
+			}
+			for rel := range tc.files {
+				if !fileExists(filepath.Join(dir, rel)) {
+					t.Errorf("file %s was removed; the PVC prefetch fetches incrementally and must not wipe", rel)
+				}
+			}
+		})
+	}
+}
+
+// TestPrefetchScriptCurrentMarker covers PVC caches fetched under the
+// option-aware marker: a match short-circuits, and an option change misses it
+// and drops the old marker, whose files the download may overwrite.
+func TestPrefetchScriptCurrentMarker(t *testing.T) {
+	fetched := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision})
+
+	tests := []struct {
+		name         string
+		config       map[string]any
+		wantDownload bool
+	}{
+		{
+			name:   "matching marker short-circuits",
+			config: map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision},
+		},
+		{
+			name:         "hfRevision change re-fetches",
+			config:       map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaOldRevision},
+			wantDownload: true,
+		},
+		{
+			name:         "ggufFile rename re-fetches",
+			config:       map[string]any{"ggufFile": embedGemmaQ8GGUF, "hfRevision": embedGemmaRevision},
+			wantDownload: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			dir := filepath.Join(root, fetched.Name)
+			oldMarker := filepath.Join(dir, mustPrefetchMarkerName(t, fetched))
+			stageHFFile(t, dir, embedGemmaGGUF, embedGemmaRevision)
+			touchFile(t, oldMarker)
+
+			run := runPrefetchScript(t, sharedPVCPrefetchModel(tc.config), root, true)
+
+			if run.downloaded != tc.wantDownload {
+				t.Fatalf("downloaded = %v, want %v; err=%v\n%s", run.downloaded, tc.wantDownload, run.err, run.output)
+			}
+			if !tc.wantDownload {
+				if run.err != nil {
+					t.Fatalf("short-circuit failed: %v\n%s", run.err, run.output)
+				}
+				return
+			}
+			if fileExists(oldMarker) {
+				t.Error("the previous option set's marker survived a re-fetch that may overwrite its files")
 			}
 		})
 	}

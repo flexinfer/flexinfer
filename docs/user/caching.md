@@ -53,7 +53,7 @@ If you use `spec.source: pvc://<pvc-name>/<path>`, FlexInfer mounts that PVC dir
 
 ## HuggingFace prefetch
 
-For `HF://...` sources with `SharedPVC`, the controller runs a one-shot prefetch Job that materializes the repo under:
+For `HF://...` sources with `SharedPVC`, the controller runs a one-shot `<model>-cache-prefetch` Job that materializes the repo under:
 
 - `/models/<model-name>/`
 
@@ -63,6 +63,55 @@ FlexInfer also sets HuggingFace cache env vars to keep secondary caches under th
 
 - `HF_HOME=/models/.cache/huggingface`
 - `HF_HUB_CACHE=/models/.cache/huggingface/hub`
+
+The Job finishes by writing `/models/<model-name>/.flexinfer_cached_<sha256>`,
+keyed like the Local stage marker below: `spec.source` plus the resolved allow
+patterns, `hfIgnorePatterns` and `hfRevision`. A Job that finds the marker for
+its options exits without downloading. The Job never expires and carries its
+marker in the `flexinfer.ai/cache-marker` annotation. When the spec resolves to
+a different marker (a `ggufFile` rename, an `mmproj` or pattern change, an
+`hfRevision` bump, a new `spec.source`), the controller replaces the Job and the
+cache reports `re-fetching shared cache: source or download options changed`
+until the new Job succeeds. A Job still downloading for the old options is
+deleted in the foreground first, so two downloads never share the directory.
+
+Unlike the Local stage, the directory is not wiped. `snapshot_download` skips
+every file whose download metadata or sha256 already matches the repo, so a
+re-fetch transfers only what changed. Files that only the old options asked for
+stay on the PVC; delete them by hand to reclaim the space. The Job refuses to
+write its marker when a `ggufFile` or relative `mmproj` is missing after the
+download.
+
+With `spec.quantize`, the quantized output was built from the old files. Before
+replacing the prefetch Job the controller deletes the `<model>-quantize` Job and
+clears `status.cache.quantization`, so the next successful prefetch quantizes
+again.
+
+MLC sources are cloned with git, which ignores the download options; they keep
+the bare `.flexinfer_cached` marker.
+
+Caches prefetched before October 2026 hold a bare `.flexinfer_cached` marker.
+Prefetch Jobs from before the upgrade still exist and carry their download
+options in their env, so the controller rebuilds their marker from it and leaves
+a Job whose options are current alone: the controller roll starts no Job. The
+first new Job for a lane adopts the bare marker without downloading when the
+files still satisfy the current options:
+
+- the directory holds at least one file;
+- every `ggufFile` and relative `mmproj` is present and non-empty;
+- every allow pattern matches a file on disk or a file huggingface_hub recorded
+  downloading;
+- with `hfRevision` set, at least one huggingface_hub download record
+  (`.cache/huggingface/download/<file>.metadata`) exists and every one names
+  that commit.
+
+The download records stand in for the directory listing because a quantizer may
+have deleted the downloaded weights (AWQ does) and written its own output
+beside them. A Job that replaced one built for another `spec.source` never
+adopts the bare marker, since the marker does not say which repo it was written
+for. The first new Job to find the bare marker consumes it either way. A cache
+it does not adopt falls through to the incremental download, and the Job log
+names the check that failed.
 
 ## Local HuggingFace staging
 

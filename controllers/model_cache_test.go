@@ -18,15 +18,18 @@ package controllers
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
@@ -1586,6 +1589,191 @@ func TestEnsureCacheSharedPVCHFSourceChangeDeletesOldPrefetchJob(t *testing.T) {
 	}
 	if got := newJob.Annotations[AnnotationSource]; got != "HF://org/new-model" {
 		t.Fatalf("new job source = %q, want HF://org/new-model", got)
+	}
+	// The bare marker on the PVC was written for the old repo.
+	if script := newJob.Spec.Template.Spec.Containers[0].Args[0]; !strings.Contains(script, `ADOPT_LEGACY_MARKER="false"`) {
+		t.Error("the replacement for a source change may adopt the old repo's legacy marker")
+	}
+}
+
+// sharedPVCPrefetchJob is a prefetch Job fixture built for model's spec at
+// the time, with the given status.
+func sharedPVCPrefetchJob(t *testing.T, model *aiv1alpha2.Model, succeeded, active, failed int32) *batchv1.Job {
+	t.Helper()
+	job := mustPrefetchJob(t, model, true)
+	job.Status = batchv1.JobStatus{Succeeded: succeeded, Active: active, Failed: failed}
+	return job
+}
+
+func getPrefetchJob(t *testing.T, cl client.Client, model *aiv1alpha2.Model) (*batchv1.Job, error) {
+	t.Helper()
+	job := &batchv1.Job{}
+	err := cl.Get(context.Background(), types.NamespacedName{Name: model.Name + "-cache-prefetch", Namespace: model.Namespace}, job)
+	return job, err
+}
+
+// TestEnsureCacheSharedPVCPrefetchJobForCurrentOptions covers the steady
+// state after the upgrade: a Job built for the current options, annotated or
+// built before the annotation existed, still reads as the cache prefetched
+// and is left alone.
+func TestEnsureCacheSharedPVCPrefetchJobForCurrentOptions(t *testing.T) {
+	for name, legacy := range map[string]bool{"annotated": false, "legacy": true} {
+		t.Run(name, func(t *testing.T) {
+			model := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision})
+			job := sharedPVCPrefetchJob(t, model, 1, 0, 0)
+			if legacy {
+				delete(job.Annotations, AnnotationCacheMarker)
+			}
+
+			r, cl := newModelCacheReconciler(t, model, cachePVC("llm-models-nfs", model.Namespace), job)
+
+			ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "llamacpp"))
+			if err != nil {
+				t.Fatalf("ensureCache() error = %v", err)
+			}
+			if !ready {
+				t.Fatal("ensureCache() ready = false, want true for a Job built for the current options")
+			}
+			cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+			assertCacheStatus(t, cached, true, "Succeeded", "artifact prefetched", "PrefetchSucceeded", true)
+
+			kept, err := getPrefetchJob(t, cl, model)
+			if err != nil {
+				t.Fatalf("Get(prefetch job) error = %v", err)
+			}
+			if kept.Annotations[AnnotationCacheMarker] != job.Annotations[AnnotationCacheMarker] {
+				t.Error("the prefetch Job was replaced although its options are current")
+			}
+		})
+	}
+}
+
+// TestEnsureCacheSharedPVCPrefetchJobForOtherOptionsRefetches covers a
+// ggufFile rename on a lane whose prefetch Job, which never expires, was built
+// for the old file. Its success says nothing about the new file, so it is
+// replaced in the same pass and the replacement may adopt the legacy marker
+// after checking the files.
+func TestEnsureCacheSharedPVCPrefetchJobForOtherOptionsRefetches(t *testing.T) {
+	for name, legacy := range map[string]bool{"annotated": false, "legacy": true} {
+		t.Run(name, func(t *testing.T) {
+			before := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision})
+			model := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaQ8GGUF, "hfRevision": embedGemmaRevision})
+			stale := sharedPVCPrefetchJob(t, before, 1, 0, 0)
+			if legacy {
+				delete(stale.Annotations, AnnotationCacheMarker)
+			}
+
+			r, cl := newModelCacheReconciler(t, model, cachePVC("llm-models-nfs", model.Namespace), stale)
+
+			ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "llamacpp"))
+			if err != nil {
+				t.Fatalf("ensureCache() error = %v", err)
+			}
+			if ready {
+				t.Fatal("ensureCache() ready = true from a prefetch Job built for the old ggufFile")
+			}
+			cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+			assertCacheStatus(t, cached, false, "Running", "re-fetching shared cache: source or download options changed", "PrefetchRunning", false)
+
+			replacement, err := getPrefetchJob(t, cl, model)
+			if err != nil {
+				t.Fatalf("expected a replacement prefetch job: %v", err)
+			}
+			if got, want := replacement.Annotations[AnnotationCacheMarker], mustPrefetchMarkerName(t, model); got != want {
+				t.Errorf("replacement marker = %q, want %q", got, want)
+			}
+			if script := replacement.Spec.Template.Spec.Containers[0].Args[0]; !strings.Contains(script, `ADOPT_LEGACY_MARKER="true"`) {
+				t.Error("an option change on the same source should still let the legacy marker be checked for adoption")
+			}
+		})
+	}
+}
+
+// TestEnsureCacheSharedPVCRunningPrefetchJobForOtherOptionsWaits covers an
+// option change while the old download still runs: the Job is deleted in the
+// foreground and its replacement waits, so the two never write into the same
+// directory at once.
+func TestEnsureCacheSharedPVCRunningPrefetchJobForOtherOptionsWaits(t *testing.T) {
+	before := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaOldRevision})
+	model := sharedPVCPrefetchModel(map[string]any{"ggufFile": embedGemmaGGUF, "hfRevision": embedGemmaRevision})
+
+	r, cl := newModelCacheReconciler(t, model, cachePVC("llm-models-nfs", model.Namespace), sharedPVCPrefetchJob(t, before, 0, 1, 0))
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "llamacpp"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatal("ensureCache() ready = true while the old download runs")
+	}
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, false, "Pending", "re-fetching shared cache: source or download options changed", "PrefetchPending", false)
+	if _, err := getPrefetchJob(t, cl, model); !apierrors.IsNotFound(err) {
+		t.Fatalf("Get(prefetch job) error = %v, want the running Job deleted and no replacement yet", err)
+	}
+
+	if _, err := r.ensureCache(context.Background(), cached, mustBackend(t, "llamacpp")); err != nil {
+		t.Fatalf("second ensureCache() error = %v", err)
+	}
+	replacement, err := getPrefetchJob(t, cl, model)
+	if err != nil {
+		t.Fatalf("expected a replacement prefetch job: %v", err)
+	}
+	if got, want := replacement.Annotations[AnnotationCacheMarker], mustPrefetchMarkerName(t, model); got != want {
+		t.Errorf("replacement marker = %q, want %q", got, want)
+	}
+}
+
+// TestEnsureCacheSharedPVCRefetchRequantizes covers a quantized lane: the
+// quantized output was built from the old file set, so its Job and status go
+// before the prefetch is replaced, and the next successful prefetch quantizes
+// again.
+func TestEnsureCacheSharedPVCRefetchRequantizes(t *testing.T) {
+	started := metav1.NewTime(time.Unix(1700000000, 0))
+	completed := metav1.NewTime(time.Unix(1700000300, 0))
+
+	before := modelWithQuantization("hf-requant", "flexinfer-system", "HF://org/model", &aiv1alpha2.CacheSpec{Strategy: "SharedPVC"})
+	model := before.DeepCopy()
+	model.UID = "hf-requant-uid"
+	model.Spec.Config = &apiextensionsv1.JSON{Raw: []byte(`{"hfRevision":"` + embedGemmaRevision + `"}`)}
+	model.Status.Cache = &aiv1alpha2.CacheStatus{
+		Strategy:     "SharedPVC",
+		Ready:        true,
+		Quantization: &aiv1alpha2.QuantizationStatus{Format: "GPTQ", CompletedAt: &completed},
+	}
+	quantize := quantizationJob("hf-requant-quantize", "flexinfer-system", started, completed)
+	quantize.OwnerReferences = []metav1.OwnerReference{*metav1.NewControllerRef(model, aiv1alpha2.GroupVersion.WithKind("Model"))}
+
+	r, cl := newModelCacheReconciler(t, model, cachePVC("hf-requant-cache", "flexinfer-system"), sharedPVCPrefetchJob(t, before, 1, 0, 0), quantize)
+
+	ready, err := r.ensureCache(context.Background(), model, mustBackend(t, "vllm"))
+	if err != nil {
+		t.Fatalf("ensureCache() error = %v", err)
+	}
+	if ready {
+		t.Fatal("ensureCache() ready = true from a quantization of the old file set")
+	}
+	cached := getModelFromClient(t, cl, model.Namespace, model.Name)
+	assertCacheStatus(t, cached, false, "Pending", "re-fetching shared cache: source or download options changed", "PrefetchPending", false)
+	if cached.Status.Cache.Quantization != nil {
+		t.Errorf("quantization status survived the re-fetch: %#v", cached.Status.Cache.Quantization)
+	}
+	if err := cl.Get(context.Background(), types.NamespacedName{Name: "hf-requant-quantize", Namespace: model.Namespace}, &batchv1.Job{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("Get(quantize job) error = %v, want deleted", err)
+	}
+	if job, err := getPrefetchJob(t, cl, model); err != nil || job.Annotations[AnnotationCacheMarker] != mustPrefetchMarkerName(t, before) {
+		t.Fatalf("the stale prefetch Job went before the quantize Job was gone: err=%v", err)
+	}
+
+	if _, err := r.ensureCache(context.Background(), cached, mustBackend(t, "vllm")); err != nil {
+		t.Fatalf("second ensureCache() error = %v", err)
+	}
+	replacement, err := getPrefetchJob(t, cl, model)
+	if err != nil {
+		t.Fatalf("expected a replacement prefetch job: %v", err)
+	}
+	if got, want := replacement.Annotations[AnnotationCacheMarker], mustPrefetchMarkerName(t, model); got != want {
+		t.Errorf("replacement marker = %q, want %q", got, want)
 	}
 }
 
