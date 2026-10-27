@@ -35,6 +35,10 @@ type RuntimeEndpoint struct {
 	// PodName is the runtime pod name.
 	PodName string
 
+	// PodUID distinguishes runtime pods that reuse a name; it keys the
+	// runtime path's KV-pool recheck budget.
+	PodUID string
+
 	// PodIP is the pod's cluster IP.
 	PodIP string
 
@@ -159,6 +163,7 @@ func (r *RuntimeReconciler) FindRuntimeForNode(ctx context.Context, namespace st
 		if pod.Status.Phase == corev1.PodRunning {
 			return &RuntimeEndpoint{
 				PodName:  pod.Name,
+				PodUID:   string(pod.UID),
 				PodIP:    pod.Status.PodIP,
 				Port:     pkgrt.RuntimeAPIPort,
 				NodeName: nodeName,
@@ -170,6 +175,7 @@ func (r *RuntimeReconciler) FindRuntimeForNode(ctx context.Context, namespace st
 		if pendingMatch == nil {
 			pendingMatch = &RuntimeEndpoint{
 				PodName:  pod.Name,
+				PodUID:   string(pod.UID),
 				NodeName: nodeName,
 				Port:     pkgrt.RuntimeAPIPort,
 				Ready:    false,
@@ -261,6 +267,15 @@ type RuntimeModelStatus struct {
 	// instance; zero/empty from runtime images or loads that predate them.
 	Generation int64  `json:"generation,omitempty"`
 	SpecHash   string `json:"specHash,omitempty"`
+	// LoadingSubstage (LoadingWeights, Compiling, ProfilingKV, Ready) and
+	// LoadingMessage are what the runtime read from the backend's output while
+	// it loads; empty before a recognised line or from older runtime images.
+	LoadingSubstage string `json:"loadingSubstage,omitempty"`
+	LoadingMessage  string `json:"loadingMessage,omitempty"`
+	// KVCacheTokens and KVMaxConcurrency are the vLLM boot profile; nil/empty
+	// until the backend printed both lines.
+	KVCacheTokens    *int64 `json:"kvCacheTokens,omitempty"`
+	KVMaxConcurrency string `json:"kvMaxConcurrency,omitempty"`
 }
 
 type RuntimeStatusResponse struct {

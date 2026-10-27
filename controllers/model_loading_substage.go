@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -18,6 +17,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/backend"
 )
 
 // populateLoadingSubstage sets model.Status.LoadingSubstage + Message based on
@@ -180,12 +180,6 @@ func fetchKVPoolBootLog(ctx context.Context, kubeClient kubernetes.Interface, po
 	return string(data), err
 }
 
-// Regex for the vLLM safetensors shard progress line.
-// Example:  Loading safetensors checkpoint shards:  91% Completed | 31/34 [08:47<07:05, 141.75s/it]
-var vllmShardRe = regexp.MustCompile(
-	`Loading safetensors checkpoint shards:\s+\d+%\s+Completed\s+\|\s+(\d+)/(\d+)\s+\[([^\]]+)\]`,
-)
-
 // parseVLLMLoadProgress scans the log tail for stage-indicating lines and
 // returns the most-advanced stage observed. Stage precedence (later is more
 // advanced):
@@ -242,39 +236,9 @@ func parseVLLMLoadProgress(logTail string) (aiv1alpha2.LoadingSubstage, string) 
 }
 
 // parseShardProgress extracts (current, total, rate) from a shard progress
-// line. rate is returned verbatim (e.g. "141.75s/it" or "2.30s/it") so
-// operators can spot stalls at a glance.
+// line; see backend.ParseVLLMShardProgress, shared with the runtime.
 func parseShardProgress(line string) (int, int, string, bool) {
-	m := vllmShardRe.FindStringSubmatch(line)
-	if len(m) != 4 {
-		return 0, 0, "", false
-	}
-	cur := atoiSafe(m[1])
-	total := atoiSafe(m[2])
-	// m[3] is the "elapsed<remaining, rate" segment. Extract the rate.
-	inner := m[3]
-	rate := ""
-	if idx := strings.LastIndex(inner, ","); idx >= 0 {
-		rate = strings.TrimSpace(inner[idx+1:])
-	}
-	if rate == "" {
-		rate = "unknown rate"
-	}
-	if cur <= 0 || total <= 0 {
-		return 0, 0, "", false
-	}
-	return cur, total, rate, true
-}
-
-func atoiSafe(s string) int {
-	n := 0
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return 0
-		}
-		n = n*10 + int(r-'0')
-	}
-	return n
+	return backend.ParseVLLMShardProgress(line)
 }
 
 // splitLines returns a slice of lines from input. Trailing empty line is
@@ -419,22 +383,10 @@ func truncateMessage(msg string) string {
 	return msg
 }
 
-var kvTokensPattern = regexp.MustCompile(`GPU KV cache size:\s*([0-9][0-9,]*) tokens`)
-var kvConcurrencyPattern = regexp.MustCompile(`Maximum concurrency for [0-9][0-9,]* tokens per request:\s*([0-9]+(?:\.[0-9]+)?)x`)
-
 // parseVLLMKVPool requires both profile lines; partial profiles are not usable.
+// The parser is shared with the runtime (backend.ParseVLLMKVPool).
 func parseVLLMKVPool(tail string) (int64, string, bool) {
-	tokens := kvTokensPattern.FindAllStringSubmatch(tail, -1)
-	concurrency := kvConcurrencyPattern.FindAllStringSubmatch(tail, -1)
-	if len(tokens) == 0 || len(concurrency) == 0 {
-		return 0, "", false
-	}
-	n, err := strconv.ParseInt(strings.ReplaceAll(tokens[len(tokens)-1][1], ",", ""), 10, 64)
-	c := concurrency[len(concurrency)-1][1]
-	if _, e := strconv.ParseFloat(c, 64); err != nil || e != nil {
-		return 0, "", false
-	}
-	return n, c, true
+	return backend.ParseVLLMKVPool(tail)
 }
 
 func updateKVPoolCondition(model *aiv1alpha2.Model) bool {

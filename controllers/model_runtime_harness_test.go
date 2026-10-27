@@ -50,6 +50,7 @@ func newRuntimeHarness(t *testing.T, handler http.HandlerFunc, objs ...client.Ob
 		recorder: recorder,
 		endpoint: &RuntimeEndpoint{
 			PodName:  "flexinfer-runtime-gfx1100-test",
+			PodUID:   "runtime-pod-uid",
 			PodIP:    u.Hostname(),
 			Port:     int32(port),
 			NodeName: "cblevins-7900xtx",

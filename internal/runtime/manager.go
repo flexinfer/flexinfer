@@ -80,6 +80,9 @@ type LoadedModel struct {
 	// when it was not started in a dedicated group. Unload signals the whole
 	// group so engine workers and runner grandchildren do not keep VRAM.
 	pgid int
+	// progress follows the backend's streamed output for the load substage
+	// and the vLLM KV-cache profile reported in model health.
+	progress *loadProgress
 	// vramEstimateMB is the load request's config.vramEstimateMB (0 = unknown).
 	vramEstimateMB int64
 	// requestedAt is when Load was called; swapObserved guards the single
@@ -683,6 +686,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 
 		Generation: req.Generation,
 		SpecHash:   req.SpecHash,
+		progress:   &loadProgress{},
 
 		vramEstimateMB: estimateMB,
 		requestedAt:    requestedAt,
@@ -737,10 +741,10 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	// Stream subprocess output to logger. Only start goroutines if pipes
 	// were created successfully — a nil reader would panic in bufio.NewScanner.
 	if stdout != nil {
-		go streamLogs(stdout, logger, "stdout")
+		go streamLogs(stdout, logger, "stdout", loaded.progress.observe)
 	}
 	if stderr != nil {
-		go streamLogs(stderr, logger, "stderr")
+		go streamLogs(stderr, logger, "stderr", loaded.progress.observe)
 	}
 
 	// Monitor subprocess exit.
@@ -1036,6 +1040,11 @@ func summarize(lm *LoadedModel) ModelSummary {
 		Generation: lm.Generation,
 		SpecHash:   lm.SpecHash,
 	}
+	substage, message, kvTokens, kvConcurrency := lm.progress.snapshot()
+	if lm.State == ModelStateLoading {
+		summary.LoadingSubstage, summary.LoadingMessage = substage, message
+	}
+	summary.KVCacheTokens, summary.KVMaxConcurrency = kvTokens, kvConcurrency
 	if lm.ingress != nil {
 		count, draining, lastRequest := lm.ingress.snapshot()
 		summary.ActiveRequests = count
@@ -1347,6 +1356,14 @@ type ModelSummary struct {
 	// instance (zero/empty for requests from controllers that predate them).
 	Generation int64  `json:"generation,omitempty"`
 	SpecHash   string `json:"specHash,omitempty"`
+	// LoadingSubstage and LoadingMessage report load progress read from the
+	// backend's output (LoadSubstage* values); set only while Loading.
+	LoadingSubstage string `json:"loadingSubstage,omitempty"`
+	LoadingMessage  string `json:"loadingMessage,omitempty"`
+	// KVCacheTokens and KVMaxConcurrency are the vLLM boot profile (0/empty
+	// until both lines were printed).
+	KVCacheTokens    int64  `json:"kvCacheTokens,omitempty"`
+	KVMaxConcurrency string `json:"kvMaxConcurrency,omitempty"`
 }
 
 // monitorProcess waits for the subprocess to exit and updates state. When the
@@ -1532,6 +1549,7 @@ func (m *Manager) healthCheckLoop(ctx context.Context, loaded *LoadedModel, b ba
 			logger.Info("Model marked ready (no probe defined, startup timeout elapsed)")
 		}
 		m.mu.Unlock()
+		loaded.progress.stop()
 		return
 	}
 
@@ -1554,6 +1572,7 @@ func (m *Manager) healthCheckLoop(ctx context.Context, loaded *LoadedModel, b ba
 				setModelStateMetric(name, loaded.Backend, "Failed")
 			}
 			m.mu.Unlock()
+			loaded.progress.stop()
 			return
 		case <-ticker.C:
 			if checkHealth() {
@@ -1566,6 +1585,7 @@ func (m *Manager) healthCheckLoop(ctx context.Context, loaded *LoadedModel, b ba
 					loaded.observeSwapLocked("ready")
 				}
 				m.mu.Unlock()
+				loaded.progress.stop()
 
 				// Continue monitoring for ongoing health.
 				m.continuousHealthCheck(ctx, loaded, checkHealth)
@@ -1820,14 +1840,42 @@ func backendLineIsNoise(line string) bool {
 // streamLogs reads a backend's stdout/stderr line-by-line and re-emits each line
 // through the structured logger, classifying severity, demoting known flood
 // noise to debug, and truncating over-long lines so downstream ingestion (Loki)
-// preserves the real events instead of dropping them under load.
-func streamLogs(r io.ReadCloser, logger logr.Logger, stream string) {
+// preserves the real events instead of dropping them under load. When observe
+// is set it also receives every output segment as it arrives, including each
+// '\r' redraw of a progress bar, so the load tracker sees weight-loading
+// progress live; logging still happens per '\n'-terminated line.
+func streamLogs(r io.ReadCloser, logger logr.Logger, stream string, observe func(string)) {
 	scanner := bufio.NewScanner(r)
 	// Allow reading up to 1MB lines (some backends produce verbose JSON output),
 	// but truncate before logging so we stay under Loki's max_line_size.
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	scanner.Split(scanLinesOrCR)
+	var pending strings.Builder
 	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+		segment := scanner.Text()
+		redraw := strings.HasSuffix(segment, "\r")
+		segment = strings.TrimRight(segment, "\r\n")
+		if observe != nil {
+			if trimmed := strings.TrimSpace(segment); trimmed != "" {
+				observe(trimmed)
+			}
+		}
+		if redraw {
+			// Keep the redraws for the line's log entry, bounded by what
+			// logging would keep anyway.
+			if pending.Len() <= maxBackendLogLine {
+				pending.WriteString(segment)
+				pending.WriteByte('\r')
+			}
+			continue
+		}
+		raw := segment
+		if pending.Len() > 0 {
+			pending.WriteString(segment)
+			raw = pending.String()
+			pending.Reset()
+		}
+		line := strings.TrimSpace(raw)
 		if line == "" {
 			continue
 		}
