@@ -41,7 +41,7 @@ func allMetrics() []metricSpec {
 		},
 		{
 			name:       "flexinfer_model_load_seconds",
-			help:       "Time to pull model from cache/registry.",
+			help:       "Duration of the most recent activation-to-Ready load (the last flexinfer_model_cold_start_duration_seconds observation).",
 			metricType: dto.MetricType_GAUGE,
 			labels:     []string{"model", "node"},
 			collector:  ModelLoadSeconds,
@@ -194,16 +194,16 @@ func allMetrics() []metricSpec {
 		},
 		{
 			name:       "flexinfer_model_cold_start_duration_seconds",
-			help:       "Duration from model activation/startup to Ready.",
+			help:       "Duration from model activation/startup to Ready; serving_path is deployment (dedicated Deployment) or runtime (in-pod runtime load).",
 			metricType: dto.MetricType_HISTOGRAM,
-			labels:     []string{"model", "namespace", "backend", "cache_strategy"},
+			labels:     []string{"model", "namespace", "backend", "cache_strategy", "serving_path"},
 			collector:  ModelColdStartDurationSeconds,
 		},
 		{
 			name:       "flexinfer_model_swap_duration_seconds",
-			help:       "Duration for a shared-group model to become Ready after preemption/swap.",
+			help:       "Duration for a shared-group model to become Ready after preemption/swap; serving_path is deployment or runtime.",
 			metricType: dto.MetricType_HISTOGRAM,
-			labels:     []string{"model", "namespace", "backend", "group"},
+			labels:     []string{"model", "namespace", "backend", "group", "serving_path"},
 			collector:  ModelSwapDurationSeconds,
 		},
 
@@ -616,27 +616,31 @@ func TestQuantizationHistogramBuckets(t *testing.T) {
 }
 
 func TestColdStartHistogramBuckets(t *testing.T) {
-	ModelColdStartDurationSeconds.WithLabelValues("cold-test", "ns", "vllm", "shm").Observe(5.0)
+	ModelColdStartDurationSeconds.WithLabelValues("cold-test", "ns", "vllm", "shm", ServingPathRuntime).Observe(767)
 
 	h := collectHistogram(t, ModelColdStartDurationSeconds)
 	require.NotNil(t, h, "expected histogram metric")
-	// 14 explicit buckets (0.5, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120, 180, 300).
-	assert.Len(t, h.Bucket, 14, "expected 14 explicit buckets")
+	// 19 explicit buckets, 0.5 s up to 1800 s, so a 767 s dedicated-Deployment
+	// cold start lands below the top bucket instead of in +Inf.
+	assert.Len(t, h.Bucket, 19, "expected 19 explicit buckets")
+	assert.Equal(t, 1800.0, h.Bucket[len(h.Bucket)-1].GetUpperBound())
+	assert.Equal(t, uint64(1), h.Bucket[len(h.Bucket)-1].GetCumulativeCount(), "767 s must fall inside the 1800 s bucket")
 	assert.Greater(t, h.GetSampleCount(), uint64(0), "sample count should be > 0")
 
-	ModelColdStartDurationSeconds.DeleteLabelValues("cold-test", "ns", "vllm", "shm")
+	ModelColdStartDurationSeconds.DeleteLabelValues("cold-test", "ns", "vllm", "shm", ServingPathRuntime)
 }
 
 func TestSwapHistogramBuckets(t *testing.T) {
-	ModelSwapDurationSeconds.WithLabelValues("swap-test", "ns", "mlc-llm", "gfx1100").Observe(3.0)
+	ModelSwapDurationSeconds.WithLabelValues("swap-test", "ns", "mlc-llm", "gfx1100", ServingPathDeployment).Observe(3.0)
 
 	h := collectHistogram(t, ModelSwapDurationSeconds)
 	require.NotNil(t, h, "expected histogram metric")
-	// 13 explicit buckets (0.25, 0.5, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120).
-	assert.Len(t, h.Bucket, 13, "expected 13 explicit buckets")
+	// 18 explicit buckets, 0.25 s up to 900 s (the runtime swap histogram's top).
+	assert.Len(t, h.Bucket, 18, "expected 18 explicit buckets")
+	assert.Equal(t, 900.0, h.Bucket[len(h.Bucket)-1].GetUpperBound())
 	assert.Greater(t, h.GetSampleCount(), uint64(0), "sample count should be > 0")
 
-	ModelSwapDurationSeconds.DeleteLabelValues("swap-test", "ns", "mlc-llm", "gfx1100")
+	ModelSwapDurationSeconds.DeleteLabelValues("swap-test", "ns", "mlc-llm", "gfx1100", ServingPathDeployment)
 }
 
 func TestReconcileDurationHistogramBuckets(t *testing.T) {

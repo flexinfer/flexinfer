@@ -2517,12 +2517,14 @@ func TestUpdateStatusFromDeployment_EmitsLatencyMetrics(t *testing.T) {
 		"namespace":      "default",
 		"backend":        "mlc-llm",
 		"cache_strategy": "Memory",
+		"serving_path":   "deployment",
 	}
 	swapLabels := map[string]string{
-		"model":     modelName,
-		"namespace": "default",
-		"backend":   "mlc-llm",
-		"group":     "fast-models",
+		"model":        modelName,
+		"namespace":    "default",
+		"backend":      "mlc-llm",
+		"group":        "fast-models",
+		"serving_path": "deployment",
 	}
 
 	beforeCold := histogramSampleCount(t, "flexinfer_model_cold_start_duration_seconds", coldLabels)

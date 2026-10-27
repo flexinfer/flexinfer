@@ -271,6 +271,8 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	// Model is loaded — update status based on runtime state.
 	switch status.State {
 	case "Ready":
+		prevPhase := model.Status.Phase
+		readyStartedAt, prevReadyReason := readyTransitionSnapshot(model)
 		if model.Spec.Backend == backend.NameVLLM {
 			metrics.ModelEngineStalled.WithLabelValues(model.Name, model.Namespace).Set(0)
 			setModelCondition(model, ConditionEngineStalled, false, "EngineProgressing", "Runtime engine is ready")
@@ -291,6 +293,15 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		}
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady
 		clearLoadingStatus(model)
+		if prevPhase != aiv1alpha2.ModelPhaseReady {
+			// Once per transition: unlike the Deployment path, PreemptedAt is
+			// kept after Ready here (the election's anti-thrash window), so the
+			// phase guard is what stops a re-observation every pass.
+			now := time.Now()
+			observeColdStart(model, readyStartedAt, now, metrics.ServingPathRuntime)
+			observeSharedSwap(model, readyStartedAt, prevReadyReason, now, metrics.ServingPathRuntime)
+			r.recordPhaseMetrics(model, prevPhase, aiv1alpha2.ModelPhaseReady)
+		}
 		// Steady state — phase, endpoint, conditions and placement all already
 		// recorded — writes nothing. This branch runs on every periodic pass of
 		// every Ready runtime-served Model, so an unconditional write here was
