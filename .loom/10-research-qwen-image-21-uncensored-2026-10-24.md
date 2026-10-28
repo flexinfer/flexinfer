@@ -539,6 +539,16 @@ new imports are lazy and configured-only, so the server still loads on diffusers
 - The layer sits after the vLLM layers and before `COPY build/server-diffusers.py`. It runs
   `pip install --no-deps diffusers==0.41.0 transformers==5.17.0`. The transformers pin is a no-op
   on `cfefae18`, and holds the version on a cold-cache rebuild.
+- **huggingface-hub pin (2026-10-28).** The first master build of the overlay (pipeline 35473, job
+  426127) failed its own check three times: `huggingface-hub>=1.5.0,<2.0 is required ... but found
+  huggingface-hub==2.3.0`. The early diffusers layer installs `huggingface-hub` unpinned and its
+  cached 2026-10-23 layer already held 2.3.0; transformers 5.17.0 (`<2.0,>=1.5.0`) and diffusers
+  0.41.0 (`<2.0,>=1.32.0`) both refuse to import against it. `cfefae18` carried the same mismatch
+  latently, since no diffusers lane runs through the XTX runtime pod. The overlay RUN now also
+  installs `huggingface-hub>=1.32,<2.0` (`HF_HUB_OVERLAY_CONSTRAINT`, `--no-deps` like the rest),
+  `check-runtime-diffusers.py --huggingface-hub` fails the build when the installed hub leaves that
+  range, and `check-runtime-patch-contracts.py` asserts the pin rides in the overlay RUN. The early
+  layer is untouched so the cached ~17 GB layers stay valid.
 - `scripts/check-runtime-patch-contracts.py` now enforces that position, the COPY and the check.
 - 0.41.0 rather than the newer 0.42.0: it is what §6b ran. 0.42.0 has the same GGUF BF16
   behaviour, so a bump buys nothing for Qwen-Image 2.1.
