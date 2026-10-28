@@ -1,0 +1,166 @@
+# Qwen-Image 2.1 text-to-image (plus reference edits) on cblevins-5930k (gfx1100).
+#
+# Demand-based: scale-to-zero in 5930k-textgen. An image request records demand,
+# the election hands this lane the card, and it gives the card back when idle.
+# Plan: .loom/10-research-qwen-image-21-uncensored-2026-10-24.md §4b (lane) and
+# §5 (GPU verification). Official weights only, posture clean; the uncensored
+# derivative stays a debug-window arm (deploy/debug/qwen-image-21-canary.yaml).
+#
+# Why the 5930k and not the XTX runtime pod:
+#   - The XTX card belongs to the warm-pinned Mills lane
+#     (qwen38-27b-xtx-warm-canary: minReplicas 1, vramEstimateMB 23200, owner
+#     decision 2026-10-03 that it never loses its card). This lane needs ~18 GB,
+#     so on the XTX every image session would evict Mills for a 2-3 min reboot.
+#   - The XTX card drops off the bus under sustained compute (last 2026-10-24
+#     14:03Z, under the 2100 MHz cap). Diffusion is compute-bound at full power,
+#     the same signature as the matmul burns that wedged it, and a wedge fails
+#     every XTX lane until a hard power cycle. The 5930k card runs flat out for
+#     days.
+#   - 5930k-textgen is already the demand-elected group for generation lanes
+#     (wan21 T2V/VACE, stable-audio); no member there is warm-pinned outside a
+#     canary window.
+# The cost is pod churn: the 5930k runtime DaemonSet is desired=0, so this is a
+# dedicated Deployment like every lane on that card. It moves in-pod once the
+# 5930k runtime persona (gfx1100-serving-v032, research gfx1100 §7e S6b) also
+# carries bitsandbytes and the R1-R3 server (S6e); until then
+# dedicatedDeployment must stay true, or un-parking that DaemonSet would load
+# this lane into an image without NF4.
+#
+# Election (5930k-textgen): priority 500 is the borrow-idle posture of the
+# workhorse lanes and wan21 T2V. The demand swap takes the card from an
+# equal-priority holder once that holder has had no request for 2 min
+# (sharedDemandWindow), and from anything below 500 immediately. It never cuts
+# a workhorse completion in flight: the proxy heartbeats LastActiveTime while a
+# request is open, so the holder is not idle. VACE (600) and the 9B RP twin
+# (550) still outrank it. Hand-back: once this lane has been idle 2 min an equal-priority
+# request (e.g. the workhorse) swaps back, and with no other demand the lane
+# scales to zero after idleTimeout. The 5 min anti-thrash cooldown applies to
+# both directions. Raise to 520 only if images should preempt busy text.
+#
+# Memory: NF4 transformer (7.1B, ~4 GiB) + NF4 Qwen3-VL text encoder (~5.5 GiB)
+# + bf16 VAE (~0.7 GiB) ≈ 10-11 GiB resident, ~15-17 GiB peak at 1024² [I];
+# vramEstimateMB 18000 leaves no room for a co-resident text lane, by design.
+#
+# Image: the gfx1100 serving persona with the R1-R3 overlay (diffusers 0.41.0,
+# bitsandbytes ROCm, gguf, the R2/R3 server), built by master CI from the R1-R3
+# merge (publish_serving_rocm_gfx1100, which runs check-runtime-diffusers.py in
+# the build). It is NOT resident on the 5930k (cfefae18's family was released
+# there 2026-10-24 to clear DiskPressure), so deploy/system/values-k3s.yaml
+# prewarms it: an ~18 GB first pull against 280 GB free on 2026-10-26, held
+# across the node's 60/50 image GC by the prewarm DaemonSet.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen-image-21-gfx1100
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen-Image-2.1
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: "HF://Qwen/Qwen-Image-2.1@b3179ad355be050328e483a9dfdd9e60cd62adfa (official bf16, NF4 on load)"
+    flexinfer.ai/serve-paths: /v1/images/generations,/v1/images/edits
+    flexinfer.ai/purpose: "Qwen-Image 2.1 text-to-image and reference edits, official weights (Qwen Research License: research/evaluation use)"
+    flexinfer.ai/plan: .loom/10-research-qwen-image-21-uncensored-2026-10-24.md
+    # Same guard as the 5930k workhorse: the pod preempts priority-0 CI job
+    # pods for CPU instead of sitting Pending behind them during a cold start.
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    # flexinfer-proxy cancels a forward that has produced no response byte
+    # within its lane first-byte budget (default 120 s, 504 "upstream first
+    # byte budget exceeded", internal/proxy/routing_retry.go). The diffusers
+    # server returns one JSON body when the render is done: 40 steps at
+    # 1024x1024 are 60-150 s warm and twice that with true_cfg_scale > 1, plus
+    # the first request's kernel search.
+    flexinfer.ai/lane-first-byte-budget: "600s"
+spec:
+  backend: diffusers
+  # rocm-gfx1100-serving-b83c3822: master CI publish_serving_rocm_gfx1100 (pipeline 35553, job
+  # 427887) from the R1-R3 merge plus the huggingface-hub pin of !1191. The
+  # same digest is held by the 5930k imagePrewarm list
+  # (deploy/system/values-k3s.yaml).
+  image: registry.harbor.lan/flexinfer/runtime@sha256:2c94c6d973fab09d9304891b26a25a026bc6e6bdecfe304b138de6c118d219cc
+  source: HF://Qwen/Qwen-Image-2.1
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    # 33.13 GB at the pinned revision: transformer 14.23 + text_encoder 17.53
+    # + vae 1.35 + processor/scheduler. Staged eagerly on apply (no GPU), so
+    # the first request does not wait on the download.
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      # MIOpen user db (VAE conv kernels) and Triton/Inductor caches survive
+      # scale-to-zero, so only the first cold start pays the kernel search.
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen-image-21-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    # cblevins-5930k exposes a single gfx1100 device-plugin slot (no iGPU).
+    count: 1
+    shared: 5930k-textgen
+    priority: 500
+    vramEstimateMB: 18000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    # Keeps the card across an imagegen-ui iteration session when nothing else
+    # wants it; any equal-priority demand reclaims it after 2 idle minutes.
+    idleTimeout: 15m
+    # Prewarmed image + staged cache: schedule, NF4-on-load of ~32 GB of bf16
+    # weights (~25-50 s) and a 1024² warmup, after the incumbent drains.
+    coldStartTimeout: 15m
+  config:
+    # See header: the 5930k runtime persona has no bitsandbytes yet.
+    dedicatedDeployment: true
+    # The revision the research verified (LFS oids, 2026-10-25); head d26bb612
+    # has byte-identical weights and configs and only adds assets/qr.png.
+    hfRevision: b3179ad355be050328e483a9dfdd9e60cd62adfa
+    hfIgnorePatterns: ["assets/*"]
+    modelFamily: qwenimage21
+    # No CFG (the model's default). A request's guidance_scale > 1 becomes
+    # true_cfg_scale with a blank negative prompt, at twice the step cost.
+    trueCfgScale: "1.0"
+    numInferenceSteps: "40"
+    dtype: bfloat16
+    computeDtype: bfloat16
+    transformerQuantization: nf4
+    textEncoderQuantization: nf4
+    cpuOffload: "false"
+    enableVaeTiling: "false"
+    warmupResolutions: "1024x1024"
+    hipVisibleDevices: "0"
+    warmPolicy: ondemand
+    env:
+      # Pinned here so the dedicated and the future in-pod launch agree: the
+      # diffusers backend sets 0, the gfx1100 GPUProfile 1, and the two paths
+      # apply them in different orders (research §3a, R2f). A/B "1" in the
+      # verification window before changing it.
+      TORCH_BLAS_PREFER_HIPBLASLT: "0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      # NF4-on-load reads the 17.5 GB bf16 text encoder through host memory.
+      # The 5930k has 63 GiB; the swap scales the displaced text lane's pod down.
+      memory: 40Gi
+  serviceLabels:
+    - qwen-image
+    - qwen-image-2.1
+  # Advertised so the proxy cold-starts it by name (the parked-model gate
+  # 404s de-advertised cold lanes) and imagegen-ui's catalog filter keeps it.
+  # It does not take image-gen / dall-e-3 / text-to-image: those stay on the
+  # warm Dreamshaper lane on the 980 Ti, which answers in seconds.
+  litellm:
+    enabled: true
+    servedModelName: qwen-image-21-gfx1100
+    aliases:
+      - qwen-image
+      - qwen-image-2.1
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists

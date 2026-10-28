@@ -111,6 +111,7 @@ resources:
   - wan21-t2v-1p3b-gfx1100.yaml     # Wan 2.1 1.3B 480p text-to-video; live gfx1100 gate passed 2026-07-14; parked on demand (minReplicas=0, priority 500) since the qwen35-9b twin canary window, see the manifest.
   - wan21-vace-1p3b-i2v-gfx1100.yaml  # Wan 2.1 VACE 1.3B image-to-video keyframe lane; on-demand (minReplicas=0, priority 600), kill-test slice 3 of .loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md.
   - stable-audio-open-gfx1100.yaml  # Stable Audio Open 1.0 neural music lane; on-demand prio 450 on 5930k-textgen; /v1/audio/generations; kill-test 2026-08-22 (10s@100steps=12.1s on gfx1100).
+  - qwen-image-21-gfx1100.yaml  # Qwen-Image 2.1 (official, NF4 on load) text-to-image + reference edits; on-demand prio 500 on 5930k-textgen; aliases qwen-image / qwen-image-2.1, not image-gen. Research qwen-image §4b.
   - snac-decode-gfx1100.yaml       # SNAC waveform decode lane for tts.lan (backend snac, !990); runtime-managed in the XTX gfx1100 runtime pod, on demand (minReplicas=0, priority 430); qualified on cfefae18 (matrix row gfx1100-serving-2026-10-23).
   - qwen36-35b-mtp-uncensored-5930k.yaml  # 2026-07-14: RETAINED on demand for uncensored/heretic use; clean Qwen3.5 owns warm workhorse/Mills/Council routing.
   # - gemma4-26b-a4b-gptq-5930k-8k-canary.yaml # disabled 2026-05-16; keep XTX lanes to the two 26B primaries.
