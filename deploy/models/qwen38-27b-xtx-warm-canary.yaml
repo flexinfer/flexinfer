@@ -56,6 +56,17 @@ metadata:
     flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
     flexinfer.ai/purpose: "Warm-pinned Mills/loom text lane on the 7900 XTX (mills-warm / mills-council)"
     flexinfer.ai/plan: ".loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md"
+    # 2026-10-26 (gfx1100 S4, research §7f): this lane is the context-overflow
+    # target of the 5930k workhorse (32K since S4). flexinfer-proxy's lane
+    # breaker waits for the first generated token, and its default 120 s
+    # budget cut every prompt this TRITON + fp8 lane cannot prefill in 120 s:
+    # 33,514 tokens took 119.8 s, and 50K prompts got a proxy 504 while vLLM
+    # kept working. 480 s covers a 64K prefill (~380 s extrapolated from the
+    # 33.5K point and S3's TRITON curve) with margin, under psyche-
+    # simulation's 600 s client timeout. Cost: a wedged XTX card now holds a
+    # request up to 480 s before it counts toward the breaker (3 failures
+    # open it). Rollback = drop this annotation (default 120 s).
+    flexinfer.ai/lane-first-byte-budget: "480s"
     flexinfer.ai/promotion-state: promoted-64k-fp8-graph-warm
     flexinfer.ai/promotion-evidence: "2026-09-13 §7a: Ready +6min, RDNA3W4A16, KV 69,905 tok fp8 (1.07x @64K), probes 3/3 coherent ~34 tok/s, 2.3K-token prompt 2.57 s, orpheus-tts on VII 0.72 s"
 spec:
@@ -108,7 +119,24 @@ spec:
   # workhorse follows on pass. Rollback = `ad93ae72` (resident, Harbor
   # pinned-ad93ae726bbe): revert this line and restore
   # `calculateKvScales: false`.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99130cc98c3a45bd6e09c89a3b26cb21193c858fab9a99573c7d90
+  # 2026-10-27 (pin hygiene, research serving-gaps §7): REPINNED to
+  # `b06b06fe` (rocm-gfx1100-v032-native-w4a16-dc73879c / -c444b5ff, master
+  # pipeline 34797; Harbor pinned-b06b06fe1c02; prewarmed on this node by
+  # !1184), the CI build of the same Dockerfile as `cd108c9e` plus text
+  # plugin 0.9.0, and the image the 5930k workhorse runs. Why: this lane is
+  # the workhorse's context-overflow target, so the overflow route no
+  # longer switches engine build mid-request-class, and the off-CI
+  # `cd108c9e` stops being a production pin. Envelope unchanged: TRITON_ATTN,
+  # fp8 KV, 64K, two sequences, no speculativeConfig (plugin 0.9.0 adds the
+  # MTP-head policy; this lane builds no draft). Evidence:
+  # S3's arm D ran TRITON + fp8 on this digest (row
+  # gfx1100-native-w4a16-v032-s3-attn-2026-10-26, 5930k, 40.8 / 40.2 / 34.3
+  # tok/s at 512 / 2K / 16K); the roll itself is row
+  # xtx-warm-b06b06fe-2026-10-27. The compile-cache path is kept: the cache
+  # is keyed by code hash, so the first boot recompiles what changed and may
+  # profile a short pool once (KVPoolRecheck relaunches). Rollback =
+  # `cd108c9e` (resident, pinned-cd108c9ebf99): revert this line.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     strategy: Local

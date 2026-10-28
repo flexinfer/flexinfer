@@ -21,7 +21,7 @@ Note: backend containers (e.g. diffusers-api, llama.cpp servers) are not require
 Defined in `services/flexinfer/pkg/metrics/exporter.go`:
 
 - `flexinfer_tokens_per_second{model,backend,node}`
-- `flexinfer_model_load_seconds{model,node}`
+- `flexinfer_model_load_seconds{model,node}` (most recent activation-to-Ready load; the last cold-start observation)
 - `flexinfer_gpu_temperature_celsius{gpu,node}`
 - `flexinfer_gpu_vram_free_bytes{gpu,node,vendor}`
 - `flexinfer_gpu_vram_total_bytes{gpu,node,vendor}`
@@ -39,8 +39,8 @@ Defined in `services/flexinfer/pkg/metrics/exporter.go`:
 - `flexinfer_quantization_compression_ratio{model,format}`
 - `flexinfer_quantization_jobs_total{model,status}`
 - `flexinfer_quantization_cache_size_bytes{model,format}`
-- `flexinfer_model_cold_start_duration_seconds{model,namespace,backend,cache_strategy}` (histogram)
-- `flexinfer_model_swap_duration_seconds{model,namespace,backend,group}` (histogram)
+- `flexinfer_model_cold_start_duration_seconds{model,namespace,backend,cache_strategy,serving_path}` (histogram; buckets to 1800 s; `serving_path` = `deployment|runtime`)
+- `flexinfer_model_swap_duration_seconds{model,namespace,backend,group,serving_path}` (histogram; buckets to 900 s; `serving_path` = `deployment|runtime`)
 - `flexinfer_gpu_lease_active{group,namespace,owner}` (1 while a training/quant GPU lease holds a shared-GPU group and the serving incumbent is parked, 0 once released)
 - `flexinfer_gpu_lease_acquired_total{group,namespace,owner}` (counter — total GPU lease acquisitions by training workloads)
 - `flexinfer_model_backfill_starts_total{backfill,namespace,model}` (counter — admitted background Job attempts)

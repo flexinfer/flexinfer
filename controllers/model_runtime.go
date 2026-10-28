@@ -21,6 +21,7 @@ import (
 	stderrors "errors"
 	"fmt"
 	"net"
+	"slices"
 	"strings"
 	"time"
 
@@ -40,12 +41,34 @@ import (
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 )
 
+// ReasonRuntimeReloading is the ModelReady reason while a runtime-served Model
+// is restarted in its runtime pod to apply a spec edit. It doubles as the
+// in-flight marker: a draining instance carrying it is reloaded, not unloaded.
+const ReasonRuntimeReloading = "RuntimeReloading"
+
+// EventRuntimeReload is the event emitted when the controller restarts a
+// runtime-served Model in place.
+const EventRuntimeReload = "RuntimeReload"
+
+// runtimeReloadFailedEventCooldown throttles the warning for a reload the
+// runtime rejected outright; the old instance keeps serving and every pass
+// retries.
+const runtimeReloadFailedEventCooldown = 10 * time.Minute
+
 // loadViaRuntime sends a model load request to a runtime pod instead of
 // creating a Deployment. This path is used when a persistent runtime
 // container exists on the target GPU node.
 func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, endpoint *RuntimeEndpoint, gpuArch string) error {
-	runtimeLog := log.FromContext(ctx)
+	payload, err := r.buildRuntimeLoadPayload(ctx, model, b, gpuVendor, gpuArch)
+	if err != nil {
+		return err
+	}
+	return r.sendRuntimeLoad(ctx, model, endpoint, payload)
+}
 
+// buildRuntimeLoadPayload renders the runtime load request for model, stamped
+// with its generation and launch SpecHash.
+func (r *ModelReconciler) buildRuntimeLoadPayload(ctx context.Context, model *aiv1alpha2.Model, b backend.Backend, gpuVendor backend.GPUVendor, gpuArch string) (*pkgrt.LoadPayload, error) {
 	var profile *aiv1alpha2.GPUProfileSpec
 	if r.GPUProfiles != nil {
 		if cached, ok := r.GPUProfiles.Lookup(gpuArch); ok {
@@ -63,24 +86,211 @@ func (r *ModelReconciler) loadViaRuntime(ctx context.Context, model *aiv1alpha2.
 
 	// Build the load request payload using the shared runtime launch builder.
 	// This keeps the reconcile path aligned with the proxy fast path.
-	data, err := pkgrt.BuildLoadPayloadForModel(model, b, pkgrt.BuildLoadOptions{
+	return pkgrt.NewLoadPayloadForModel(model, b, pkgrt.BuildLoadOptions{
 		ModelBasePath: "/models",
 		GPUVendor:     gpuVendor,
 		GPUProfile:    profile,
 		LoRAAdapters:  loraCount,
 		LoRAMaxRank:   loraMaxRank,
 	})
+}
+
+func (r *ModelReconciler) sendRuntimeLoad(ctx context.Context, model *aiv1alpha2.Model, endpoint *RuntimeEndpoint, payload *pkgrt.LoadPayload) error {
+	data, err := payload.Marshal()
 	if err != nil {
 		return err
 	}
-
-	runtimeLog.Info("Sending load request to runtime",
+	log.FromContext(ctx).Info("Sending load request to runtime",
 		"model", model.Name,
-		"backend", b.Name(),
+		"backend", payload.Backend,
 		"runtimeURL", endpoint.URL(),
+		"generation", payload.Generation,
+		"specHash", payload.SpecHash,
+		"reload", payload.Reload,
 	)
-
 	return r.Runtime.LoadModel(ctx, endpoint, model.Name, data)
+}
+
+// runtimeSpecReloadReason reports why the instance the runtime is running no
+// longer matches model, or "" when it does or the runtime cannot tell. Both
+// the generation and the launch hash must have moved:
+//   - an unknown hash (a runtime image or load that predates tracking) is
+//     adopted as-is, so rolling this controller reloads nothing;
+//   - a spec edit that renders the same launch (priority, serverless knobs)
+//     is not worth a cold start;
+//   - a hash drift without a spec edit (a controller upgrade that renders
+//     differently, the proxy's direct load omitting controller-only LoRA
+//     knobs, a transiently missing GPUProfile) applies at the next edit
+//     instead of reloading every runtime lane at once.
+func runtimeSpecReloadReason(model *aiv1alpha2.Model, status *RuntimeModelStatus, specHash string) string {
+	if model == nil || status == nil || status.SpecHash == "" || specHash == "" {
+		return ""
+	}
+	if status.Generation >= model.Generation || status.SpecHash == specHash {
+		return ""
+	}
+	return fmt.Sprintf("Spec generation %d changes the runtime launch (loaded generation %d, spec hash %s -> %s); reloading in the runtime pod",
+		model.Generation, status.Generation, status.SpecHash, specHash)
+}
+
+// runtimeReloadAllowed keeps a shared-group member from restarting while
+// another member holds the card: only the Active member reloads.
+func runtimeReloadAllowed(model *aiv1alpha2.Model) bool {
+	if !model.Spec.IsShared() {
+		return true
+	}
+	return model.Status.SharedGroup != nil && model.Status.SharedGroup.State == "Active"
+}
+
+// runtimeReloadInFlight returns the ModelReady reason of an in-place reload
+// this controller started and has not seen through yet.
+func runtimeReloadInFlight(model *aiv1alpha2.Model) (string, bool) {
+	ready := modelCondition(model.Status.Conditions, aiv1alpha2.ConditionModelReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse {
+		return "", false
+	}
+	if ready.Reason == ReasonRuntimeReloading || ready.Reason == aiv1alpha2.ReasonKVPoolRecheck {
+		return ready.Reason, true
+	}
+	return "", false
+}
+
+// maybeReloadRuntimeModel restarts the loaded instance in the runtime pod when
+// a spec edit changed its launch payload. handled reports that the pass is
+// over (the reload was sent or waits on drain); otherwise the caller carries on
+// with the instance that is running.
+func (r *ModelReconciler) maybeReloadRuntimeModel(
+	ctx context.Context,
+	model *aiv1alpha2.Model,
+	b backend.Backend,
+	gpuVendor backend.GPUVendor,
+	gpuArch string,
+	endpoint *RuntimeEndpoint,
+	status *RuntimeModelStatus,
+) (ctrl.Result, bool, error) {
+	// Cheap gate before rendering the payload (which lists LoRA adapters).
+	if status == nil || status.SpecHash == "" || status.Generation >= model.Generation {
+		return ctrl.Result{}, false, nil
+	}
+	logger := log.FromContext(ctx)
+	if !runtimeReloadAllowed(model) {
+		logger.V(1).Info("Deferring runtime reload until this lane is the Active shared-group member", "model", model.Name)
+		return ctrl.Result{}, false, nil
+	}
+	payload, err := r.buildRuntimeLoadPayload(ctx, model, b, gpuVendor, gpuArch)
+	if err != nil {
+		logger.Error(err, "Cannot render the runtime payload to compare with the loaded instance", "model", model.Name)
+		return ctrl.Result{}, false, nil
+	}
+	reason := runtimeSpecReloadReason(model, status, payload.SpecHash)
+	if reason == "" {
+		return ctrl.Result{}, false, nil
+	}
+	result, handled, err := r.reloadViaRuntime(ctx, model, endpoint, payload, ReasonRuntimeReloading, "Reloading in the runtime pod to apply a spec change")
+	if handled {
+		r.Recorder.Event(model, corev1.EventTypeNormal, EventRuntimeReload, reason)
+	}
+	return result, handled, err
+}
+
+// maybeRecheckRuntimeKVPool is the in-pod counterpart of observeReadyKVPool.
+// It records the vLLM KV-cache profile the runtime read from the instance's
+// boot output in status.kvPool and the KVPoolShort condition. When the pool is
+// short (profiled concurrency below 0.75 x maxNumSeqs, see
+// updateKVPoolCondition), it reloads the instance in the runtime pod once. The
+// budget, kept in kvPool.recheckedReplicaSets as "runtime/<pod UID>/<spec
+// hash>", outlives the recheck reload itself and resets when the spec or the
+// runtime pod changes, the way a ReplicaSet UID does on the Deployment path.
+// It is persisted before the reload, so a failed write cannot repeat it.
+func (r *ModelReconciler) maybeRecheckRuntimeKVPool(
+	ctx context.Context,
+	model *aiv1alpha2.Model,
+	b backend.Backend,
+	gpuVendor backend.GPUVendor,
+	gpuArch string,
+	endpoint *RuntimeEndpoint,
+	status *RuntimeModelStatus,
+) (ctrl.Result, bool, error) {
+	if model.Spec.Backend != backend.NameVLLM || !model.Spec.ConfigBool("kvPoolRecheck", true) ||
+		status == nil || status.KVCacheTokens == nil || *status.KVCacheTokens <= 0 || status.KVMaxConcurrency == "" {
+		return ctrl.Result{}, false, nil
+	}
+	pool := model.Status.KVPool
+	if pool == nil || pool.PodName != endpoint.PodName || pool.PodUID != endpoint.PodUID || pool.KVCacheTokens == nil ||
+		*pool.KVCacheTokens != *status.KVCacheTokens || pool.MaxConcurrency != status.KVMaxConcurrency {
+		var marker []string
+		if pool != nil {
+			marker = pool.RecheckedReplicaSets
+		}
+		tokens := *status.KVCacheTokens
+		pool = &aiv1alpha2.KVPoolStatus{
+			KVCacheTokens: &tokens, MaxConcurrency: status.KVMaxConcurrency,
+			PodName: endpoint.PodName, PodUID: endpoint.PodUID, ObservedAt: metav1.Now(),
+			RecheckedReplicaSets: marker,
+		}
+		model.Status.KVPool = pool
+	}
+	metrics.ModelKVCacheTokens.WithLabelValues(model.Name).Set(float64(*pool.KVCacheTokens))
+	if !updateKVPoolCondition(model) || endpoint.PodUID == "" || status.SpecHash == "" || !runtimeReloadAllowed(model) {
+		return ctrl.Result{}, false, nil
+	}
+	budget := "runtime/" + endpoint.PodUID + "/" + status.SpecHash
+	if slices.Contains(pool.RecheckedReplicaSets, budget) {
+		return ctrl.Result{}, false, nil
+	}
+	payload, err := r.buildRuntimeLoadPayload(ctx, model, b, gpuVendor, gpuArch)
+	if err != nil {
+		log.FromContext(ctx).Error(err, "Cannot render the runtime payload for a KV pool recheck", "model", model.Name)
+		return ctrl.Result{}, false, nil
+	}
+	pool.RecheckedReplicaSets = append(pool.RecheckedReplicaSets, budget)
+	if err := r.persistStatus(ctx, model); err != nil {
+		return ctrl.Result{}, true, err
+	}
+	result, handled, err := r.reloadViaRuntime(ctx, model, endpoint, payload, aiv1alpha2.ReasonKVPoolRecheck,
+		"Reloading vLLM in the runtime pod to recheck a short KV cache pool")
+	if handled {
+		metrics.ModelKVPoolRecheckTotal.WithLabelValues(model.Name).Inc()
+		r.Recorder.Eventf(model, corev1.EventTypeNormal, aiv1alpha2.ReasonKVPoolRecheck,
+			"Rechecking the runtime instance on %s: kvCacheTokens=%d maxConcurrency=%sx maxNumSeqs=%d",
+			endpoint.PodName, *pool.KVCacheTokens, pool.MaxConcurrency, model.Spec.ConfigInt("maxNumSeqs", 0))
+	}
+	return result, handled, err
+}
+
+// reloadViaRuntime asks the runtime to restart the named model with payload
+// and publishes the Model as Loading with readyReason, which removes its
+// Endpoints so the proxy queues instead of routing to an instance that is
+// draining or restarting. The runtime answers 409 while accepted requests are
+// still running; the draining branch of reconcileViaRuntime then retries the
+// reload (readyReason marks it) rather than unloading. handled is false only
+// when the runtime rejected the reload outright and the running instance should
+// keep serving.
+func (r *ModelReconciler) reloadViaRuntime(ctx context.Context, model *aiv1alpha2.Model, endpoint *RuntimeEndpoint, payload *pkgrt.LoadPayload, readyReason, message string) (ctrl.Result, bool, error) {
+	payload.Reload = true
+	err := r.sendRuntimeLoad(ctx, model, endpoint, payload)
+	switch {
+	case err == nil:
+	case stderrors.Is(err, pkgrt.ErrModelBusy):
+		message = "Waiting for accepted requests to finish before reloading in the runtime pod"
+	case stderrors.Is(err, pkgrt.ErrInsufficientVRAM):
+		// The runtime released the old instance before admission failed, so the
+		// next pass finds nothing loaded and takes the normal load path.
+		if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhasePending, false, "RuntimeCapacity", "Waiting for previous models to release GPU memory"); err != nil {
+			return ctrl.Result{}, true, err
+		}
+		return ctrl.Result{RequeueAfter: requeueShort}, true, nil
+	default:
+		log.FromContext(ctx).Error(err, "Runtime rejected the in-place reload; the running instance keeps serving", "model", model.Name)
+		if r.shouldEmitThrottledEvent(model, "RuntimeReloadFailed", runtimeReloadFailedEventCooldown) {
+			r.Recorder.Event(model, corev1.EventTypeWarning, "RuntimeReloadFailed", err.Error())
+		}
+		return ctrl.Result{}, false, nil
+	}
+	if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhaseLoading, false, readyReason, message); err != nil {
+		return ctrl.Result{}, true, err
+	}
+	return ctrl.Result{RequeueAfter: requeueShort}, true, nil
 }
 
 // reconcileViaRuntime manages a model's lifecycle via the runtime API.
@@ -139,7 +349,7 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	// progressing through because cache state or desired replicas briefly
 	// changed under us.
 	if status, err := r.Runtime.CheckModelHealth(ctx, endpoint, model.Name); err == nil && status != nil && status.State == "Loading" && model.Status.Phase != aiv1alpha2.ModelPhasePreempted {
-		if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhaseLoading, false, "RuntimeLoading", "Model is loading via runtime"); err != nil {
+		if err := r.updateRuntimeLoadingStatus(ctx, model, status); err != nil {
 			log.Error(err, "Failed to preserve loading phase for runtime-managed model")
 		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
@@ -199,6 +409,17 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	// demand arrives. Publishing the still-running child as Ready would send
 	// traffic to an ingress that is deliberately refusing new requests.
 	if status != nil && status.Draining {
+		// A reload this controller started drains the same way; keep asking
+		// for it until the runtime accepts, instead of unloading the lane.
+		if readyReason, ok := runtimeReloadInFlight(model); ok {
+			payload, err := r.buildRuntimeLoadPayload(ctx, model, b, gpuVendor, gpuArch)
+			if err != nil {
+				return ctrl.Result{}, err
+			}
+			if result, handled, err := r.reloadViaRuntime(ctx, model, endpoint, payload, readyReason, "Reloading in the runtime pod"); handled {
+				return result, err
+			}
+		}
 		if _, err := r.unloadRuntimeModel(ctx, model, endpoint); err != nil {
 			if stderrors.Is(err, pkgrt.ErrModelBusy) {
 				return ctrl.Result{RequeueAfter: requeueShort}, nil
@@ -271,6 +492,14 @@ func (r *ModelReconciler) reconcileViaRuntime(
 	// Model is loaded — update status based on runtime state.
 	switch status.State {
 	case "Ready":
+		if result, handled, err := r.maybeReloadRuntimeModel(ctx, model, b, gpuVendor, gpuArch, endpoint, status); handled {
+			return result, err
+		}
+		if result, handled, err := r.maybeRecheckRuntimeKVPool(ctx, model, b, gpuVendor, gpuArch, endpoint, status); handled {
+			return result, err
+		}
+		prevPhase := model.Status.Phase
+		readyStartedAt, prevReadyReason := readyTransitionSnapshot(model)
 		if model.Spec.Backend == backend.NameVLLM {
 			metrics.ModelEngineStalled.WithLabelValues(model.Name, model.Namespace).Set(0)
 			setModelCondition(model, ConditionEngineStalled, false, "EngineProgressing", "Runtime engine is ready")
@@ -291,6 +520,15 @@ func (r *ModelReconciler) reconcileViaRuntime(
 		}
 		model.Status.Phase = aiv1alpha2.ModelPhaseReady
 		clearLoadingStatus(model)
+		if prevPhase != aiv1alpha2.ModelPhaseReady {
+			// Once per transition: unlike the Deployment path, PreemptedAt is
+			// kept after Ready here (the election's anti-thrash window), so the
+			// phase guard is what stops a re-observation every pass.
+			now := time.Now()
+			observeColdStart(model, readyStartedAt, now, metrics.ServingPathRuntime)
+			observeSharedSwap(model, readyStartedAt, prevReadyReason, now, metrics.ServingPathRuntime)
+			r.recordPhaseMetrics(model, prevPhase, aiv1alpha2.ModelPhaseReady)
+		}
 		// Steady state — phase, endpoint, conditions and placement all already
 		// recorded — writes nothing. This branch runs on every periodic pass of
 		// every Ready runtime-served Model, so an unconditional write here was
@@ -300,11 +538,16 @@ func (r *ModelReconciler) reconcileViaRuntime(
 			return ctrl.Result{}, err
 		}
 	case "Loading":
-		if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhaseLoading, false, "RuntimeLoading", "Model is loading via runtime"); err != nil {
+		if err := r.updateRuntimeLoadingStatus(ctx, model, status); err != nil {
 			log.Error(err, "Failed to update phase")
 		}
 		return ctrl.Result{RequeueAfter: requeueShort}, nil
 	case "Failed":
+		// A spec edit is the usual fix for a failed launch; apply it in place
+		// rather than waiting for someone to unload the instance by hand.
+		if result, handled, err := r.maybeReloadRuntimeModel(ctx, model, b, gpuVendor, gpuArch, endpoint, status); handled {
+			return result, err
+		}
 		if model.Spec.Backend == backend.NameVLLM && strings.HasPrefix(status.Error, "engine stalled:") {
 			message := fmt.Sprintf("%s on node %s", status.Error, endpoint.NodeName)
 			previous := modelCondition(model.Status.Conditions, ConditionEngineStalled)
@@ -445,16 +688,66 @@ func (r *ModelReconciler) updateRuntimeStatus(
 	ready bool,
 	reason, message string,
 ) error {
+	return r.updateRuntimeStatusWithSubstage(ctx, model, phase, ready, reason, message, aiv1alpha2.LoadingSubstageInitializing, message)
+}
+
+// updateRuntimeLoadingStatus records a runtime-reported load in progress,
+// refined by the substage the runtime read from the backend's output.
+func (r *ModelReconciler) updateRuntimeLoadingStatus(ctx context.Context, model *aiv1alpha2.Model, status *RuntimeModelStatus) error {
+	const message = "Model is loading via runtime"
+	substage, progress := runtimeLoadingProgress(status, message)
+	return r.updateRuntimeStatusWithSubstage(ctx, model, aiv1alpha2.ModelPhaseLoading, false, "RuntimeLoading", message, substage, progress)
+}
+
+// runtimeLoadingProgress maps the runtime's load substage onto the values the
+// dedicated-Deployment path records (populateLoadingSubstage): KV profiling sits
+// between torch.compile and graph capture, so it reads as Compiling, and a
+// backend whose HTTP server is up awaits the readiness probe. Before the
+// backend prints a recognised line, or on runtime images that predate the
+// report, the load is Initializing with fallback as its message.
+func runtimeLoadingProgress(status *RuntimeModelStatus, fallback string) (aiv1alpha2.LoadingSubstage, string) {
+	if status == nil {
+		return aiv1alpha2.LoadingSubstageInitializing, fallback
+	}
+	message := status.LoadingMessage
+	if message == "" {
+		message = fallback
+	}
+	switch status.LoadingSubstage {
+	case "LoadingWeights":
+		return aiv1alpha2.LoadingSubstageLoadingWeights, message
+	case "Compiling", "ProfilingKV":
+		return aiv1alpha2.LoadingSubstageCompiling, message
+	case "Ready":
+		return aiv1alpha2.LoadingSubstageHealthCheckPending, message
+	default:
+		return aiv1alpha2.LoadingSubstageInitializing, fallback
+	}
+}
+
+// updateRuntimeStatusWithSubstage is updateRuntimeStatus with the Loading
+// refinement spelled out: substage and progress (Status.Message) apply only to
+// Phase=Loading, and LoadingProgressAt moves only when either changes, so a
+// wedged weight load freezes it and the proxy's stalled-load check can fire.
+func (r *ModelReconciler) updateRuntimeStatusWithSubstage(
+	ctx context.Context,
+	model *aiv1alpha2.Model,
+	phase aiv1alpha2.ModelPhase,
+	ready bool,
+	reason, message string,
+	substage aiv1alpha2.LoadingSubstage,
+	progress string,
+) error {
 	oldPhase := model.Status.Phase
 	model.Status.Phase = phase
 	model.Status.Endpoint = ""
 	if phase == aiv1alpha2.ModelPhaseLoading {
-		if model.Status.LoadingSubstage != aiv1alpha2.LoadingSubstageInitializing || model.Status.Message != message {
+		if model.Status.LoadingSubstage != substage || model.Status.Message != progress {
 			now := metav1.Now()
 			model.Status.LoadingProgressAt = &now
 		}
-		model.Status.LoadingSubstage = aiv1alpha2.LoadingSubstageInitializing
-		model.Status.Message = message
+		model.Status.LoadingSubstage = substage
+		model.Status.Message = progress
 	} else {
 		clearLoadingStatus(model)
 	}

@@ -132,10 +132,14 @@ spec:
                   value: "4"
                 - name: GAUNTLET_EXPECT_MODE
                   value: "all"
-                # Mirrors deploy/system/values-k3s.yaml benchmarker.postgresDsn.
-                # Password is already plaintext in that committed value.
+                # flexinfer_benchmarks on langgraph-postgres. The Secret is SOPS-managed
+                # in platform/gitops (k3s/ai/ai-stack/secrets) with the langgraph role's
+                # other credentials, so a rotation there reaches the next run.
                 - name: POSTGRES_DSN
-                  value: "postgres://langgraph:changeme-app@langgraph-postgres-postgresql.ai.svc:5432/flexinfer_benchmarks?sslmode=disable"
+                  valueFrom:
+                    secretKeyRef:
+                      name: flexinfer-benchmarks-postgres
+                      key: dsn
               resources:
                 requests:
                   cpu: 200m

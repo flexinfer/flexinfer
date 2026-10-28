@@ -140,15 +140,28 @@ func (s *Server) handleModelHealth(w http.ResponseWriter, r *http.Request) {
 		status = http.StatusServiceUnavailable
 	}
 
-	writeJSON(w, status, map[string]any{
+	body := map[string]any{
 		"name":            model.Name,
 		"state":           model.State,
 		"error":           model.Error,
 		"port":            model.Port,
+		"pid":             model.PID,
+		"loadedAt":        model.LoadedAt,
 		"activeRequests":  model.ActiveRequests,
 		"draining":        model.Draining,
 		"lastRequestTime": model.LastRequestTime,
-	})
+		"generation":      model.Generation,
+		"specHash":        model.SpecHash,
+		"loadingSubstage": model.LoadingSubstage,
+		"loadingMessage":  model.LoadingMessage,
+	}
+	// Absent until vLLM printed its KV profile, so the controller cannot read
+	// an unknown pool as an empty one.
+	if model.KVCacheTokens > 0 && model.KVMaxConcurrency != "" {
+		body["kvCacheTokens"] = model.KVCacheTokens
+		body["kvMaxConcurrency"] = model.KVMaxConcurrency
+	}
+	writeJSON(w, status, body)
 }
 
 // handleStatus returns the overall runtime status.
@@ -164,6 +177,11 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if status.ActiveModel != nil {
 		resp["activeModel"] = status.ActiveModel
+	}
+	// Every loaded model with its own generation/specHash (one entry in
+	// single-slot mode); activeModel stays for older consumers.
+	if len(status.ActiveModels) > 0 {
+		resp["activeModels"] = status.ActiveModels
 	}
 
 	writeJSON(w, http.StatusOK, resp)

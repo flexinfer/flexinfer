@@ -207,6 +207,18 @@ var (
 		[]string{"model", "reason"},
 	)
 
+	// contextOverflowTotal counts runtime context-length rejections on a Model
+	// with a flexinfer.ai/context-overflow-to lane, by outcome: "rerouted" (the
+	// request was replayed to the target) or "target_unavailable" (the target
+	// was not Ready, so the client got the original 400).
+	contextOverflowTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_context_overflow_total",
+			Help: "Total over-length prompts on a Model with a context-overflow lane, by outcome.",
+		},
+		[]string{"model", "target", "outcome"},
+	)
+
 	// Per-request token-shape histograms. Observed in logUpstreamUsage from the
 	// upstream `usage` block, labeled by resolved model so the traffic mix can be
 	// read per serving lane. This is the only place the proxy surfaces request
@@ -430,6 +442,7 @@ func RegisterMetrics() {
 		prometheus.MustRegister(proxyShutdownsTotal)
 		prometheus.MustRegister(proxyShutdownDuration)
 		prometheus.MustRegister(maxTokensClampedTotal)
+		prometheus.MustRegister(contextOverflowTotal)
 		prometheus.MustRegister(requestPromptTokens)
 		prometheus.MustRegister(requestCompletionTokens)
 		prometheus.MustRegister(completionsTotal)

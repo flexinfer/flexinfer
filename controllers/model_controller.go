@@ -123,11 +123,12 @@ type ModelReconciler struct {
 
 	mgr ctrl.Manager // set by SetupWithManager, used for startup sweep
 
-	// vramPressureLastEmit throttles the per-reconcile VRAMPressure warning
-	// event to one per model per vramPressureEventCooldown. The event reflects a
-	// static spec property (VRAM estimate vs card capacity), so re-emitting it on
-	// every reconcile is pure noise. Keyed by model UID -> time.Time of last emit.
-	vramPressureLastEmit    sync.Map
+	// throttledEventLastEmit throttles per-reconcile warning events that restate
+	// a static spec or profile property (VRAMPressure, ExperimentalGPUSupport)
+	// to one per model per reason per cooldown; re-emitting them on every
+	// reconcile is pure noise. Keyed by "<reason>/<model UID>" -> time.Time of
+	// last emit.
+	throttledEventLastEmit  sync.Map
 	engineStallObservations sync.Map
 }
 
@@ -135,6 +136,11 @@ type ModelReconciler struct {
 // events for a given model. The condition is static (estimate vs capacity), so a
 // generous cooldown keeps the event visible without flooding the event stream.
 const vramPressureEventCooldown = 10 * time.Minute
+
+// experimentalGPUSupportEventCooldown is the same window for the
+// ExperimentalGPUSupport warning, which restates the backend/arch support level
+// of the resolved image (2,600 events per lane per day before the throttle).
+const experimentalGPUSupportEventCooldown = vramPressureEventCooldown
 
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=models/status,verbs=get;update;patch

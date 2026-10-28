@@ -21,10 +21,15 @@ metadata:
     flexinfer.ai/plan: .loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md
 spec:
   backend: diffusers
-  # Same ROCm 6.4.1 / PyTorch 2.6 video build as the T2V lane, at the first
-  # digest published from a master commit containing the VACE server mode.
+  # Same ROCm 6.4.1 / PyTorch 2.6 video build as the T2V lane.
+  # 2026-10-27 (pin hygiene): repinned from 52ebc2b9 (the first VACE-capable
+  # digest, deleted from Harbor by retention, so a node without its snapshot
+  # cannot start this lane) to 83cda206: the CI build from 2026-08-23 master
+  # (WanVACEPipeline + image2video mode present) that the floating tag points
+  # at, the T2V sibling pins, and the 5930k prewarm list holds
+  # (pinned-83cda206faea).
   image: registry.harbor.lan/flexinfer/diffusers-video:rocm-gfx1100
-  imageDigest: sha256:52ebc2b978cec519843c0e28a7246e46d7d0bd24e56253e31862d951d62d4d7d
+  imageDigest: sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
   source: HF://Wan-AI/Wan2.1-VACE-1.3B-diffusers
   cache:
     strategy: Local

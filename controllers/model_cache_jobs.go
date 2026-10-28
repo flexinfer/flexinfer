@@ -32,9 +32,86 @@ import (
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 )
 
-func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destSubdir string) (*batchv1.Job, error) {
+// legacyPrefetchMarkerName is the completion marker the SharedPVC prefetch Job
+// wrote in /models/<model>/ before it carried the source and download options.
+// The MLC git clone still writes it.
+const legacyPrefetchMarkerName = ".flexinfer_cached"
+
+// prefetchMarkerName names the completion marker the SharedPVC prefetch Job
+// writes in /models/<model>/. An HF snapshot download keys it like the Local
+// stage, so a ggufFile rename, a pattern change, an hfRevision bump or a source
+// change names a marker the PVC does not hold yet. The MLC git clone fetches
+// the whole repo whatever the options say, so it keeps the bare marker.
+func prefetchMarkerName(source string, opts hfDownloadOptions) (string, error) {
+	if isMlcModelSource(source) {
+		return legacyPrefetchMarkerName, nil
+	}
+	return hfCacheMarkerName(source, opts)
+}
+
+// prefetchJobMarkerName returns the marker an existing prefetch Job was built
+// to write. Prefetch Jobs have no TTL, so ones created before
+// AnnotationCacheMarker existed are still around; their marker is rebuilt from
+// the source annotation and the download options in their env.
+func prefetchJobMarkerName(job *batchv1.Job) (string, error) {
+	if name, ok := job.Annotations[AnnotationCacheMarker]; ok {
+		return name, nil
+	}
+	var opts hfDownloadOptions
+	for _, container := range job.Spec.Template.Spec.Containers {
+		for _, env := range container.Env {
+			var err error
+			switch env.Name {
+			case "HF_ALLOW_PATTERNS":
+				err = json.Unmarshal([]byte(env.Value), &opts.allowPatterns)
+			case "HF_IGNORE_PATTERNS":
+				err = json.Unmarshal([]byte(env.Value), &opts.ignorePatterns)
+			case "HF_REVISION":
+				opts.revision = env.Value
+			}
+			if err != nil {
+				// A pattern list that does not parse vouches for no file set.
+				return "", nil
+			}
+		}
+	}
+	return prefetchMarkerName(job.Annotations[AnnotationSource], opts)
+}
+
+// prefetchJobStale reports whether an existing prefetch Job was built for a
+// different source or different download options than the model's spec
+// resolves to now. The Job never expires, so without the marker comparison its
+// success would keep standing for whatever file set it fetched. Jobs without
+// annotations were not built by this controller and are read as before.
+func prefetchJobStale(model *aiv1alpha2.Model, job *batchv1.Job) (bool, error) {
+	if job.Annotations == nil {
+		return false, nil
+	}
+	if job.Annotations[AnnotationSource] != model.Spec.Source {
+		return true, nil
+	}
+	got, err := prefetchJobMarkerName(job)
+	if err != nil {
+		return false, err
+	}
+	want, err := prefetchMarkerName(model.Spec.Source, resolveHFDownloadOptions(model))
+	if err != nil {
+		return false, err
+	}
+	return got != want, nil
+}
+
+// jobForPrefetch builds the SharedPVC prefetch Job. adoptLegacyMarker lets the
+// Job adopt a bare legacy marker it finds, after checking the files on disk;
+// the caller turns it off when the Job replaces one built for another source,
+// because the bare marker does not say which repo it was written for.
+func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destSubdir string, adoptLegacyMarker bool) (*batchv1.Job, error) {
 	modelID := extractModelFromSource(model.Spec.Source)
 	hfOpts := resolveHFDownloadOptions(model)
+	markerName, err := prefetchMarkerName(model.Spec.Source, hfOpts)
+	if err != nil {
+		return nil, err
+	}
 
 	envVars := append(
 		[]corev1.EnvVar{{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"}},
@@ -67,6 +144,17 @@ func (r *ModelReconciler) jobForPrefetch(model *aiv1alpha2.Model, pvcName, destS
 			corev1.EnvVar{Name: "VAE_REPO", Value: vaeRepo},
 			corev1.EnvVar{Name: "VAE_DEST_DIR", Value: vaeDest},
 		)
+	}
+
+	// EXPECTED_FILES names the files the spec requires (ggufFile, a relative
+	// mmproj). The legacy-marker check requires them on disk, and the download
+	// refuses to write its marker without them, the same contract as the Local
+	// stage.
+	if expected := expectedHFCacheFiles(model); len(expected) > 0 {
+		envVars = append(envVars, corev1.EnvVar{
+			Name:  "EXPECTED_FILES",
+			Value: strings.Join(expected, "\n"),
+		})
 	}
 
 	destSubdir = strings.Trim(destSubdir, "/")
@@ -111,7 +199,87 @@ echo "Download complete."
 set -ex
 MODEL_ID="%s"
 DEST_DIR="%s"
-MARKER="$DEST_DIR/.flexinfer_cached"
+MARKER="$DEST_DIR/%s"
+LEGACY_MARKER="$DEST_DIR/%s"
+ADOPT_LEGACY_MARKER="%t"
+EXPECTED_FILES="${EXPECTED_FILES:-}"
+
+# A cache fetched before the marker carried the source and download options
+# holds only the bare LEGACY_MARKER. Adopt it without downloading while the
+# files on disk still satisfy the current options. The first Job to find it
+# consumes it either way; a cache not adopted falls through to
+# snapshot_download, which skips every file whose local download metadata or
+# hash already matches the repo.
+if [ ! -f "$MARKER" ] && [ -f "$LEGACY_MARKER" ]; then
+  if [ "$ADOPT_LEGACY_MARKER" != "true" ]; then
+    echo "Legacy cache marker not adopted, re-fetching: it was written before a source change"
+  elif DEST_DIR="$DEST_DIR" python - <<'PY'
+import fnmatch
+import json
+import os
+import sys
+
+root = os.environ["DEST_DIR"]
+expected = os.environ.get("EXPECTED_FILES", "").split()
+allow_patterns = json.loads(os.environ.get("HF_ALLOW_PATTERNS", "[]") or "[]")
+revision = (os.environ.get("HF_REVISION") or "").strip()
+# huggingface_hub records the commit of every file it writes into a local_dir
+# as the first line of .cache/huggingface/download/<file>.metadata. A quantizer
+# may since have deleted the downloaded weights and written its own output
+# beside them, so the records, not the directory listing, say what was fetched.
+metadata_dir = os.path.join(root, ".cache", "huggingface", "download")
+
+
+def refuse(reason):
+    print(f"Legacy cache marker not adopted, re-fetching: {reason}", flush=True)
+    sys.exit(1)
+
+
+on_disk = []
+for dirpath, dirnames, filenames in os.walk(root):
+    if dirpath == root:
+        dirnames[:] = [d for d in dirnames if d not in (".cache", ".transformer")]
+    for name in filenames:
+        rel = os.path.relpath(os.path.join(dirpath, name), root)
+        if not rel.startswith(".flexinfer_cached"):
+            on_disk.append(rel)
+if not on_disk:
+    refuse("the cache directory holds no files")
+
+recorded = {}
+for dirpath, _, filenames in os.walk(metadata_dir):
+    for name in filenames:
+        if name.endswith(".metadata"):
+            path = os.path.join(dirpath, name)
+            with open(path) as fh:
+                recorded[os.path.relpath(path, metadata_dir)[: -len(".metadata")]] = fh.readline().strip()
+
+for rel in expected:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        refuse(f"required file {rel} is missing or empty")
+
+# Mirrors huggingface_hub's filter_repo_objects: fnmatchcase on the repo path,
+# with a trailing slash meaning everything under that directory.
+fetched = set(on_disk) | set(recorded)
+for pattern in allow_patterns:
+    glob = pattern + "*" if pattern.endswith("/") else pattern
+    if not any(fnmatch.fnmatchcase(rel, glob) for rel in fetched):
+        refuse(f"allow pattern {pattern} matches no fetched file")
+
+if revision:
+    if not recorded:
+        refuse(f"no download metadata records a revision, spec pins {revision}")
+    for rel, commit in sorted(recorded.items()):
+        if commit != revision:
+            refuse(f"{rel} was fetched at revision {commit or 'unknown'}, spec pins {revision}")
+PY
+  then
+    mv "$LEGACY_MARKER" "$MARKER"
+    echo "Adopted legacy cache marker for the current download options"
+  fi
+  rm -f "$LEGACY_MARKER"
+fi
 
 if [ -f "$MARKER" ]; then
     # The marker vouches for the snapshot only; fetch a missing transformer
@@ -126,8 +294,12 @@ if [ -f "$MARKER" ]; then
     exit 0
 fi
 
-pip install --no-cache-dir huggingface_hub
+# The directory is not wiped: snapshot_download fetches only what differs.
+# It may still overwrite files another option set's marker vouches for, so
+# those markers go before it starts.
 mkdir -p "$DEST_DIR"
+rm -f "$DEST_DIR"/.flexinfer_cached_*
+pip install --no-cache-dir huggingface_hub
 MODEL_ID="$MODEL_ID" DEST_DIR="$DEST_DIR" python - <<'PY'
 import json
 import os
@@ -165,11 +337,21 @@ if vae_repo:
     print(f"Downloading VAE: {vae_repo} -> {vae_dir}")
     snapshot_download(repo_id=vae_repo, local_dir=vae_dir, local_dir_use_symlinks=False, cache_dir=cache_dir, token=token)
 PY
+
+# snapshot_download returns successfully when allow_patterns matched nothing
+# (a ggufFile typo, a gated repo without HF_TOKEN); refuse the marker then.
+for rel in $EXPECTED_FILES; do
+    if [ ! -s "$DEST_DIR/$rel" ]; then
+        echo "FATAL: refusing to write marker: required file '$rel' is missing or empty under $DEST_DIR" >&2
+        exit 1
+    fi
+done
+
 stage_transformer_side_artifact
 touch "$MARKER"
 report_cache_size "$DEST_DIR"
 echo "Download complete."
-`, modelID, destDir)
+`, modelID, destDir, markerName, legacyPrefetchMarkerName, adoptLegacyMarker)
 	}
 
 	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
@@ -179,10 +361,11 @@ echo "Download complete."
 		Namespace: model.Namespace,
 		Labels:    r.labelsForModel(model),
 		Annotations: map[string]string{
-			AnnotationSource:    model.Spec.Source,
-			AnnotationCacheKind: "prefetch",
-			AnnotationCachePVC:  pvcName,
-			AnnotationCacheDest: destSubdir,
+			AnnotationSource:      model.Spec.Source,
+			AnnotationCacheKind:   "prefetch",
+			AnnotationCachePVC:    pvcName,
+			AnnotationCacheDest:   destSubdir,
+			AnnotationCacheMarker: markerName,
 		},
 		NodeSelector:  nodeSelector,
 		Tolerations:   tolerations,

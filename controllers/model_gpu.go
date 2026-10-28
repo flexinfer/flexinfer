@@ -92,18 +92,25 @@ func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Bac
 	return nil
 }
 
-// shouldEmitVRAMPressure reports whether enough time has elapsed since the last
-// VRAMPressure event for this model to emit another, recording the emit time
-// when it returns true. Keyed by UID so a delete+recreate re-arms immediately.
+// shouldEmitVRAMPressure reports whether the VRAMPressure event for this model
+// is outside its cooldown; see shouldEmitThrottledEvent.
 func (r *ModelReconciler) shouldEmitVRAMPressure(model *aiv1alpha2.Model) bool {
-	key := string(model.UID)
+	return r.shouldEmitThrottledEvent(model, "VRAMPressure", vramPressureEventCooldown)
+}
+
+// shouldEmitThrottledEvent reports whether enough time has elapsed since the
+// last event with this reason for this model to emit another, recording the
+// emit time when it returns true. Keyed by reason and UID, so reasons throttle
+// independently and a delete+recreate re-arms immediately.
+func (r *ModelReconciler) shouldEmitThrottledEvent(model *aiv1alpha2.Model, reason string, cooldown time.Duration) bool {
+	key := reason + "/" + string(model.UID)
 	now := time.Now()
-	if v, ok := r.vramPressureLastEmit.Load(key); ok {
-		if last, ok := v.(time.Time); ok && now.Sub(last) < vramPressureEventCooldown {
+	if v, ok := r.throttledEventLastEmit.Load(key); ok {
+		if last, ok := v.(time.Time); ok && now.Sub(last) < cooldown {
 			return false
 		}
 	}
-	r.vramPressureLastEmit.Store(key, now)
+	r.throttledEventLastEmit.Store(key, now)
 	return true
 }
 
@@ -135,7 +142,7 @@ func (r *ModelReconciler) validateBackendGPUCompatibility(model *aiv1alpha2.Mode
 			// fall back to a generic tag.
 			img := backend.ResolveBackendImage(b, profileSpec, gpuVendor, gpuArch)
 			isGenericImage := !strings.Contains(img, "gfx906") && !strings.Contains(img, "gfx110")
-			if isGenericImage {
+			if isGenericImage && r.shouldEmitThrottledEvent(model, "ExperimentalGPUSupport", experimentalGPUSupportEventCooldown) {
 				r.Recorder.Event(model, corev1.EventTypeWarning, "ExperimentalGPUSupport",
 					fmt.Sprintf("%s on %s is experimental: using generic image %s", b.Name(), gpuArch, img))
 			}

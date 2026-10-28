@@ -220,12 +220,41 @@ echo "Local staging complete."
 	return job, nil
 }
 
+// legacyLocalHFCacheMarkerName is the marker Local HF stages wrote before it
+// carried the download options: sha256(spec.source) alone. The stage script
+// adopts one only after checking the files on disk against the current options.
+func legacyLocalHFCacheMarkerName(source string) string {
+	sum := sha256.Sum256([]byte(source))
+	return ".flexinfer_cached_" + hex.EncodeToString(sum[:])
+}
+
+// localHFStageJobStale reports whether an existing Local HF stage Job was built
+// for different download options than the model's spec resolves to now. A
+// finished Job lingers for its TTL, so without this a ggufFile rename made
+// inside that window would read the old Job's success as the new file set
+// staged. Jobs created before the marker annotation existed carry none and are
+// not treated as stale.
+func localHFStageJobStale(model *aiv1alpha2.Model, job *batchv1.Job) (bool, error) {
+	got, ok := job.Annotations[AnnotationCacheMarker]
+	if !ok {
+		return false, nil
+	}
+	want, err := hfCacheMarkerName(model.Spec.Source, resolveHFDownloadOptions(model))
+	if err != nil {
+		return false, err
+	}
+	return got != want, nil
+}
+
 func (r *ModelReconciler) jobForLocalHFPrefetch(model *aiv1alpha2.Model) (*batchv1.Job, error) {
 	modelID := extractModelFromSource(model.Spec.Source)
 	hfOpts := resolveHFDownloadOptions(model)
 	cachePath := resolveLocalCachePath(model)
-	markerSum := sha256.Sum256([]byte(model.Spec.Source))
-	markerName := ".flexinfer_cached_" + hex.EncodeToString(markerSum[:])
+	markerName, err := hfCacheMarkerName(model.Spec.Source, hfOpts)
+	if err != nil {
+		return nil, err
+	}
+	legacyMarkerName := legacyLocalHFCacheMarkerName(model.Spec.Source)
 
 	envVars := append(
 		[]corev1.EnvVar{{Name: "HF_HUB_ENABLE_HF_TRANSFER", Value: "0"}},
@@ -278,9 +307,75 @@ set -ex
 MODEL_ID="%s"
 DEST_DIR="/models"
 MARKER="/models/%s"
+LEGACY_MARKER="/models/%s"
 VAE_REPO="${VAE_REPO:-}"
 VAE_DEST_DIR="${VAE_DEST_DIR:-}"
 EXPECTED_FILES="${EXPECTED_FILES:-}"
+
+# A cache staged before the marker carried the download options holds only
+# LEGACY_MARKER, keyed on spec.source alone. Adopt it without downloading
+# while the files on disk still satisfy the current options. Renaming it
+# consumes it, so a later option change cannot be adopted the same way.
+# Anything the check cannot confirm falls through to the wipe and download.
+if [ ! -f "$MARKER" ] && [ -f "$LEGACY_MARKER" ]; then
+  if DEST_DIR="$DEST_DIR" python - <<'PY'
+import fnmatch
+import json
+import os
+import sys
+
+root = os.environ["DEST_DIR"]
+expected = os.environ.get("EXPECTED_FILES", "").split()
+allow_patterns = json.loads(os.environ.get("HF_ALLOW_PATTERNS", "[]") or "[]")
+revision = (os.environ.get("HF_REVISION") or "").strip()
+# huggingface_hub records the commit of every file it writes into a local_dir
+# as the first line of .cache/huggingface/download/<file>.metadata.
+metadata_dir = os.path.join(root, ".cache", "huggingface", "download")
+
+
+def refuse(reason):
+    print(f"Legacy cache marker not adopted, re-staging: {reason}", flush=True)
+    sys.exit(1)
+
+
+staged = []
+for dirpath, dirnames, filenames in os.walk(root):
+    if dirpath == root:
+        dirnames[:] = [d for d in dirnames if d not in (".cache", ".vae", ".transformer")]
+    for name in filenames:
+        rel = os.path.relpath(os.path.join(dirpath, name), root)
+        if not rel.startswith(".flexinfer_cached_"):
+            staged.append(rel)
+if not staged:
+    refuse("the cache directory holds no files")
+
+for rel in expected:
+    path = os.path.join(root, rel)
+    if not os.path.isfile(path) or os.path.getsize(path) == 0:
+        refuse(f"required file {rel} is missing or empty")
+
+# Mirrors huggingface_hub's filter_repo_objects: fnmatchcase on the repo path,
+# with a trailing slash meaning everything under that directory.
+for pattern in allow_patterns:
+    glob = pattern + "*" if pattern.endswith("/") else pattern
+    if not any(fnmatch.fnmatchcase(rel, glob) for rel in staged):
+        refuse(f"allow pattern {pattern} matches no staged file")
+
+if revision:
+    for rel in staged:
+        try:
+            with open(os.path.join(metadata_dir, rel + ".metadata")) as fh:
+                commit = fh.readline().strip()
+        except OSError:
+            refuse(f"no download metadata records the revision of {rel}")
+        if commit != revision:
+            refuse(f"{rel} was staged at revision {commit or 'unknown'}, spec pins {revision}")
+PY
+  then
+    mv "$LEGACY_MARKER" "$MARKER"
+    echo "Adopted legacy cache marker for the current download options"
+  fi
+fi
 
 if [ -f "$MARKER" ]; then
   if [ -z "$VAE_REPO" ] || [ -d "$VAE_DEST_DIR" ]; then
@@ -373,7 +468,7 @@ fi
 touch "$MARKER"
 report_cache_size "$DEST_DIR"
 echo "Local HF staging complete."
-`, modelID, markerName)
+`, modelID, markerName, legacyMarkerName)
 
 	nodeSelector, tolerations := modelNodeSelectorAndTolerations(model)
 
@@ -382,9 +477,10 @@ echo "Local HF staging complete."
 		Namespace: model.Namespace,
 		Labels:    r.labelsForModel(model),
 		Annotations: map[string]string{
-			AnnotationSource:    model.Spec.Source,
-			AnnotationCacheKind: "local-prefetch",
-			AnnotationCachePath: cachePath,
+			AnnotationSource:      model.Spec.Source,
+			AnnotationCacheKind:   "local-prefetch",
+			AnnotationCachePath:   cachePath,
+			AnnotationCacheMarker: markerName,
 		},
 		NodeSelector:            nodeSelector,
 		Tolerations:             tolerations,

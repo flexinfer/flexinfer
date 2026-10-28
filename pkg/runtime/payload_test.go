@@ -703,3 +703,56 @@ func TestBuildLoadPayloadForModelAppliesModelEnvOverProfileEnv(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "use spec.config.rocrVisibleDevices")
 }
+
+func TestNewLoadPayloadForModelStampsGenerationAndLaunchHash(t *testing.T) {
+	b, ok := backend.Get("vllm")
+	require.True(t, ok)
+	newModel := func(generation int64, config string, priority int32) *aiv1alpha2.Model {
+		return &aiv1alpha2.Model{
+			ObjectMeta: metav1.ObjectMeta{Name: "workhorse", Namespace: "flexinfer-system", Generation: generation},
+			Spec: aiv1alpha2.ModelSpec{
+				Backend: "vllm",
+				Source:  "HF://Qwen/Qwen3-14B",
+				Config:  &apiextensionsv1.JSON{Raw: []byte(config)},
+				GPU:     &aiv1alpha2.GPUSpec{Shared: "gfx1100-5930k", Priority: &priority},
+			},
+		}
+	}
+	opts := BuildLoadOptions{ModelBasePath: "/models", GPUVendor: backend.GPUVendorAMD}
+	build := func(m *aiv1alpha2.Model) *LoadPayload {
+		p, err := NewLoadPayloadForModel(m, b, opts)
+		require.NoError(t, err)
+		return p
+	}
+
+	base := build(newModel(4, `{"maxNumSeqs":8,"env":{"VLLM_ROCM_USE_AITER":"0"}}`, 500))
+	assert.Equal(t, int64(4), base.Generation)
+	assert.Len(t, base.SpecHash, 16)
+	assert.Equal(t, base.SpecHash, build(newModel(4, `{"env":{"VLLM_ROCM_USE_AITER":"0"},"maxNumSeqs":8}`, 500)).SpecHash,
+		"config key order must not move the hash")
+	assert.Equal(t, base.SpecHash, build(newModel(5, `{"maxNumSeqs":8,"env":{"VLLM_ROCM_USE_AITER":"0"}}`, 520)).SpecHash,
+		"a spec edit outside the launch (priority) keeps the hash")
+	assert.NotEqual(t, base.SpecHash, build(newModel(5, `{"maxNumSeqs":8,"env":{"VLLM_ROCM_USE_AITER":"1"}}`, 500)).SpecHash,
+		"an env edit changes the launch")
+	assert.NotEqual(t, base.SpecHash, build(newModel(5, `{"maxNumSeqs":16,"env":{"VLLM_ROCM_USE_AITER":"0"}}`, 500)).SpecHash,
+		"a vLLM knob edit changes the launch")
+
+	withLoRA, err := NewLoadPayloadForModel(newModel(4, `{"maxNumSeqs":8,"env":{"VLLM_ROCM_USE_AITER":"0"}}`, 500), b,
+		BuildLoadOptions{ModelBasePath: "/models", GPUVendor: backend.GPUVendorAMD, LoRAAdapters: 5})
+	require.NoError(t, err)
+	assert.NotEqual(t, base.SpecHash, withLoRA.SpecHash, "a LoRA adapter count change changes the launch")
+
+	// Reload is bookkeeping, and the serialized payload carries both fields.
+	reload := *base
+	reload.Reload = true
+	data, err := reload.Marshal()
+	require.NoError(t, err)
+	var decoded LoadPayload
+	require.NoError(t, json.Unmarshal(data, &decoded))
+	assert.True(t, decoded.Reload)
+	assert.Equal(t, base.Generation, decoded.Generation)
+	assert.Equal(t, base.SpecHash, decoded.SpecHash)
+	rehash, err := launchSpecHash(decoded)
+	require.NoError(t, err)
+	assert.Equal(t, base.SpecHash, rehash)
+}

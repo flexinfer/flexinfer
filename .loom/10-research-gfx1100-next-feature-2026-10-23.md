@@ -501,6 +501,153 @@ workhorse if its traffic-weighted decode speedup on the production backend
 is >= 1.25 with pos-0 acceptance >= 0.70; segmented replaces TRITON_ATTN only
 if it beats it by >= 10 % at 16K/28K without > 20 % worse TTFT.
 
+## 7d'. S3 RESULT (2026-10-26): **segmented attention + MTP wins decode and long-context prefill, but fails the pre-registered TTFT bar on short prompts**
+
+The window ran 03:37–04:47Z on the 5930k on `b06b06fe`. The canary took the card from the workhorse at 03:38:51 (priority 510 vs 500). Every arm ran at 32K with `maxNumSeqs 2`, using `scripts/verify-vllm-mtp.py --phase measure --contexts 512,2048,4096,16384,28672 --soak-pairs 10`. Arms were switched with `flexinfer_update_model` merge patches.
+
+**Per arm.** Single-stream decode in tok/s, TTFT in s, 256 generated tokens per point:
+
+| Arm | Pool at 32K | 512 | 2K | 4K | 16K | 28K | Soak c=2 (median per request) |
+|---|---|---|---|---|---|---|---|
+| B segmented, fp16, MTP K=2 | 52,932 (1.62x) | 71.2 / 2.0 | 68.6 / 1.8 | 66.6 / 5.3 | 66.1 / 15.1 | 61.5 / 27.1 | 59.7 |
+| C segmented, fp16 | 70,749 (2.16x) | 41.6 / 1.9 | 41.3 / 2.3 | 40.7 / 5.2 | 38.2 / 14.4 | 36.0 / 26.4 | 39.9 |
+| D TRITON, fp8 (production attention) | 80,874 (2.47x) | 40.8 / 0.5 | 40.2 / 2.1 | 39.3 / 4.6 | 34.3 / 32.0 | 30.6 / 79.4 | 39.7 |
+| A TRITON, fp8, MTP K=2 | 88,851 (2.71x) | 61.6 / 0.5 | 47.5 / 2.0 | 36.9 / 4.8 | 15.3 / 32.9 | 9.9 / 82.3 | 55.8 |
+
+- **Acceptance.** Position-0 acceptance was 0.79–0.86 at every point in both MTP arms. Over B's whole workload it was 0.817, with position 1 at 0.566 and a mean acceptance length of 2.38.
+- **Coherence.** The three coherence probes were identical in every arm. The greedy `parity_code` hash (`8174a49e…`) matched across B, C and D; A's differed.
+- **Faults.** No HIP, HSA, OOM, EngineDead or Traceback lines in any arm.
+- **Boots.**
+  - B's cold first boot died once at KV profiling (1.96 GiB available, 2.45 GiB needed: the S2 pattern), then came up warm.
+  - The segmented autotune ran a 74-workload plan once, about 10 min, covering decode (Q=1, 2) and prefill buckets (Q=4 to 2048). Later segmented boots hit the cache (`missing=0`).
+  - C's boot also took one controller "recheck a short KV cache pool" relaunch.
+- **B2 short-prompt check.** Back on arm B's config, warm pod, `--contexts 256,512,1024,2048`: TTFT 1.71 / 1.79 / 1.05 / 1.78 s, decode 72.1 / 72.0 / 68.9 / 69.2. A 1,124-token prompt returns its first token faster than a 253-token one. The ~1.7 s floor is per request, not a first-call compile, and C shows it without MTP. TRITON returns the first token in 0.5 s at these sizes.
+
+**Decision rule, as written before the data:**
+
+1. **MTP on the production backend (TRITON_ATTN + fp8).** It pays (≥ 1.15x with position-0 acceptance ≥ 0.70) only up to 2K: 1.51x at 512 and 1.18x at 2K. Past that it loses: 0.94x at 4K, 0.45x at 16K, 0.32x at 28K. The verify step's attention cost on TRITON grows with context, which S2's 1.58x → 1.21x was the start of.
+   - The traffic-weighted speedup is 1.30 as a weighted mean of ratios, and 1.17 time-weighted (harmonic, the number a user's decode time follows).
+   - **Verdict: MTP does not go to the workhorse on TRITON_ATTN.** One engine cannot switch MTP per request, and about 24 % of requests (the 4K-and-up bands) would decode slower.
+2. **Segmented replaces TRITON on a lane.**
+   - **Decode bar: passes.** Best segmented arm vs best TRITON arm is +93 % at 16K (66.1 vs 34.3) and +101 % at 28K (61.5 vs 30.6).
+   - **32K bar: passes.** The lane can live at 32K: 52,932 fp16 tokens with the draft resident is 1.62x of 32K, and 99.6 % of requests are ≤ 20K.
+   - **TTFT bar ("no more than 20 % worse"): fails on short prompts.** It is 3.3x worse at ≤ 512 tokens (1.7–1.8 s vs 0.5 s), and that band is 61 % of requests. From 2K up it is equal or better: 15.1 vs 32.0 s at 16K, 27.1 vs 79.4 s at 28K.
+   - **Verdict: segmented does not replace TRITON yet.**
+3. **End to end, B is still the best arm overall.** Taking TTFT plus the 297-token median generation over the traffic bands, the mean request latency is 10.8 s on D (production), 9.9 s on A and **7.6 s on B (−30 %)**.
+   - At 512 tokens B's median request still beats production (6.2 vs 7.8 s): it saves 3.1 s of decode and adds 1.5 s of TTFT. A is the fastest arm in that band (5.3 s), but it is the slowest from 4K up.
+   - Decode is 1.74x production time-weighted, and 1.50x per request under concurrency 2.
+
+**Riskiest open question, and the next slice (S3b):** why does `ROCM_SEGMENTED_ATTN` put a ~1.7 s floor under prompts of 512 tokens or fewer on gfx1100 when 1,124 tokens take 1.05 s? Prefill shapes were autotuned, so it is not an untuned bucket. Candidates:
+
+- the cudagraph and mixed-batch path for small prefills;
+- per-request segment planning on the host;
+- the chunked-prefill scheduler with segmented metadata.
+
+Kill-test: one segmented boot (cache warm). Read the vLLM TTFT, queue and prefill-time histograms around a run of 256-token requests; take a stack sample during one (py-spy is not in `b06b06fe`, so install it in the pod for the probe); and sweep 256 / 384 / 512 / 768 / 1024 tokens (the probe's floor is 256). If the floor goes away, B (segmented + fp16 + MTP K=2 at 32K) passes every bar and goes to S4. If it does not, choosing B anyway trades short-prompt TTFT for the −30 % end-to-end latency, and that is the owner's call. The pool is 52.9K fp16 tokens at 32K against production's 140.8K at 64K, so requests over 32K need an overflow route (the 35B 128K lane). **Resolved in §7d'':** the floor was first-use Triton JIT of the segmented kernels, which one-sample probing read as a floor. Warm, B meets the TTFT bar and goes to S4.
+
+## 7d''. S3b (2026-10-26): **the "floor" was first-use Triton JIT of the segmented kernels, not a floor; B passes every bar**
+
+**RESULT.** The window ran 13:15–13:32Z on the 5930k (17 min). The operator applied the canary, and the agent activated it, since an Idle lane does not take the card on priority alone. Arms ran in this order: S1 (segmented + fp16, no MTP, profiler on), then B' (segmented + fp16 + MTP K=2). S2 and the fix arms were skipped, because S1 attributed the cost directly (below).
+
+- **S1 has no floor in steady state.**
+  - Median server TTFT over three reps of exact-size cold prefills was 0.183 / 0.236 / 0.319 / 0.561 / 0.715 / 0.927 / 1.011 / 1.776 / 3.490 s at 64 / 256 / 384 / 512 / 768 / 1,024 / 1,124 / 2,048 / 4,096 tokens.
+  - The chat path matched within 10 ms.
+  - The 256-token profiler trace held 214 ms of GPU work in a 309 ms span; the GPTQ RDNA3 GEMM was 86 % of the GPU time.
+  - py-spy over 21 back-to-back 256-token requests (all 0.236–0.240 s) showed the EngineCore mostly waiting in `torch.cuda` `synchronize`, and the API server idle.
+- **The outliers are compiles.** Five requests paid an extra 0.5–1.5 s, each the first of its shape:
+  - 256 rep 0 (1.76 s), 801 rep 0 (2.08 s), 1,024 rep 0 (1.78 s), 4,096 rep 0 (3.97 s), and a 1,225-token prompt in a re-run of S3's own probe (2.03 s).
+  - Each lines up one-to-one with a new `_segmented_attention_stage` / `_segmented_attention_reduce` entry in the persisted Triton cache (`/cache/compile/triton`).
+  - vLLM's `jit_monitor` logs "Triton kernel JIT compilation during inference" for both kernels.
+  - Every later request of the same shape is fast.
+  - S3 sampled each point once, so it caught these one-time compiles at 256 and 512 and read them as a floor. B2's 253 and ~509-token prompts were new specializations for that process.
+- **Why the boot warmup misses them.**
+  - `_segmented_attention_stage` takes every stride as a `tl.constexpr` (`Q0..T1`, `PAGE`). The block-table stride `T0` is `ceil(32768 / block)` at runtime: 82 for fp16 (block 400), 79 with MTP (block 416).
+  - The autotuner's synthetic table is `ceil(seq_len / page)` wide per workload (`_make_inputs`), so its 1,261 compiled variants mostly do not match live launches.
+  - The boot warmup only loads the tuning table (`loaded=74 missing=0`). It never launches with the runtime block table, so each (query bucket, chosen config) compiles on its first live request.
+- **The disk cache carries compiles across processes.**
+  - B' booted as a new process on the same hostPath. Its whole sweep added zero new Triton cache entries: the shapes came from S3's B and B2 processes.
+  - The one `jit_monitor` line was a 35 ms disk load.
+  - Its decode check added exactly one real compile (13:30:21, the 16K point, about +1 s).
+- **B' (the S3 winner) passes every pre-registered S3b bar.**
+  - Median server TTFT, against production's 0.237 / 0.436 / 1.088 s at the same sizes:
+    - 0.234 s at 256 (bar ≤ 0.28);
+    - 0.419 s at 512 (bar ≤ 0.52);
+    - 1.026 s at 1,124 (bar ≤ 1.31).
+  - Other points: 0.225 / 0.402 / 0.501 / 0.698 / 0.935 / 1.114 / 1.750 / 3.391 s at 64 / 415–417 / 513 / 801 / 1,024 / 1,225 / 2,048 / 4,096 tokens.
+  - Chat path: 0.238 / 0.431 / 1.035 s.
+  - S3's probe at 512 / 2K / 16K: decode 71.8 / 66.5 / 66.1 tok/s (bars ≥ 65.2 at 2K and ≥ 62.8 at 16K); TTFT 0.44 / 1.78 / 16.2 s.
+  - Position-0 acceptance 0.84 / 0.79 / 0.80, 0.814 overall, mean acceptance length 2.38.
+  - Coherent probes, `parity_code` `8174a49e` (as in S3), 0 faults.
+- **One open oddity.** S1 without MTP measured 0.561 s at 512 where B' measured 0.419 s, while 256 and 1,124 agree. It does not affect the candidate. The two configs use different autotune tables (`cd8d86c0…` for fp16 without the draft), so S1's tuned record for the 257–512 bucket is the likely suspect.
+
+**Revised S3 verdict.** Under S3's own rule, segmented + fp16 + MTP K=2 at 32K now passes all of it:
+- decode +93 % / +101 % at 16K / 28K;
+- the lane lives at 32K;
+- TTFT within 20 % of production at every size.
+
+B goes to S4, with three requirements this slice adds:
+
+1. **Warm the segmented specializations before routing traffic.** The cost is one-time per (image, config, block size, cache path).
+   - Either carry this canary's compile-cache hostPath, or run `scripts/probe-vllm-ttft-floor.py` once after the first boot as a warm sweep: every power-of-two query bucket and the 1+2^k edges, concurrency-2 pairs, and one long chunked prefill.
+   - The upstream fix is for the segmented warmup to launch with the runtime block table; vLLM's own warning asks for exactly that.
+2. **An overflow route for requests over 32K** (the 35B 128K lane), as S3 noted.
+3. **The MTP head policy.** It needs `FLEXINFER_QWEN35_MTP_HEAD=checkpoint` (now `spec.config.env`) on an image with text plugin ≥ 0.9.0 (`b06b06fe` or its successor).
+
+**What is known before the window (the plan as prepared).**
+
+- **Production baseline, measured with the new probe.** `scripts/probe-vllm-ttft-floor.py` ran against the live workhorse (TRITON_ATTN, fp8, 64K, `cd108c9e`) over a port-forward at 13:04Z on 2026-10-26, two reps per point that agreed within 2 ms. On the completions path, exact token counts, cold prefix, server TTFT was 0.187 / 0.237 / 0.436 / 1.088 s at 64 / 256 / 512 / 1,124 tokens. Queue was zero and HTTP plus frontend added about 20 ms. The chat path at 512 measured the same (0.442 s).
+- **Code read of vLLM 0.32.0 in the image** (read-only, in the workhorse pod):
+  - **Tuned-config lookup.** `segmented_attention()` calls the tuned-config lookup on every layer call. The lookup is a table scan over the boot-time records for the smallest bucket at or above the request (`get_segmented_config`). It does not tune online.
+  - **Kernel compiles.** The stage and reduce kernels compile per power-of-two query capacity, and the boot-time warmup covers them.
+  - **Neither is a per-request multi-second cost by itself.** Single-sample S3 points were also noisy, about ±0.3 s.
+- **The arms do change the KV block, through the KV dtype.** The hybrid attention block follows the KV dtype:
+  - 400 tokens for fp16 (416 with the MTP draft), against 800 / 832 on fp8 (boot lines, and `vllm:cache_config_info` shows `block_size=800` and `mamba_cache_mode=align` on the workhorse).
+  - The scheduler's mamba `align` split (`_mamba_block_aligned_split`) cuts prefill chunks at block and prefix-checkpoint boundaries.
+  - So fp16 changes the step structure of short prefills even when attention is not the cost.
+- **`vllm:iteration_tokens_total` counts output batches, not engine steps.** A 1,124-token prefill reports one batch on the workhorse. Step counts therefore come from profiler traces.
+
+**Hypotheses the arms separate.**
+
+- H1: a segmented-kernel path for small queries: its tuned or static config, or its workspace.
+- H2: the fp16 / 400-token block path: the align split or the KV write, independent of the attention kernel.
+- H3: a host-side stall: metadata building, a GPU sync or the scheduler.
+- H4: the graph and compile path for small batches.
+
+**Arms** (manifest `deploy/debug/qwen38-27b-v032-s3b-ttft-canary.yaml`):
+
+- **Setup.**
+  - Same Model name, image `b06b06fe`, Local cache and compile-cache path as S3. The 1.3 GB compile cache, including both segmented autotune tables, is still on the 5930k, so S1 boots warm.
+  - Each arm is a `spec.config` merge patch through `flexinfer_update_model`.
+  - The manifest drops S3's command wrapper for `spec.config.env` (the MTP head policy) and the `kernelConfig` field. A thin wrapper remains only to add `--profiler-config` (torch profiler, traces in `/tmp/vllm-profile`), because no Model field renders it.
+- **S1, segmented + fp16, no MTP, autotune on (S3's arm C plus the profiler).**
+  - Full sweep: 16 exact sizes from 32 to 4,096 tokens, including 399 / 401 / 799 / 801 around the block edges, three reps each.
+  - Chat path at 256 / 512 / 1,124 / 2,048.
+  - Torch-profiler traces of one 256-token and one 1,124-token prefill: GPU busy and idle time, the top kernels, and the host ops inside idle gaps.
+  - A 6 s py-spy sample of EngineCore and the API server during back-to-back 256-token requests.
+- **S2, TRITON_ATTN + fp16.** Same KV dtype and block as S1, the production kernel. One cold compile; separates H1 from H2.
+- **F, one fix candidate chosen from the S1/S2 evidence** (back on segmented):
+  - F1 autotune off (`kernelConfig: null`);
+  - F2 `enforceEager` (diagnostic only, for H4);
+  - F3 prefix caching and align off;
+  - F4 `cudagraph_mode=FULL_DECODE_ONLY`.
+- **B', S3's winner (MTP K=2) plus the accepted fix.**
+  - The TTFT sweep, including 415 / 417 around the MTP block.
+  - The S3 decode probe at 512 / 2K / 16K to catch regressions.
+- **Budget.** About 45–60 min of 5930k time, like S3.
+
+**Decision rule (written before the data).**
+
+- **Localized.** S1's 256-token trace accounts for the floor:
+  - GPU busy ≥ 80 % of the server prefill time names a kernel (compare with the 1,124-token trace);
+  - GPU idle ≥ 0.5 s inside the prefill names a host stall (the idle-gap ops and py-spy's EngineCore leaf frames).
+- **Attributed.** S2 attributes the floor to the segmented backend (H1) or to the fp16 / block path (H2).
+- **Fix accepted.** All of these must hold, and then B + fix goes to S4 at 32K, with the overflow route for requests over 32K:
+  - B' + fix gives median server TTFT ≤ 1.2x today's production baseline: ≤ 0.28 s at 256, ≤ 0.52 s at 512 and ≤ 1.31 s at 1,124;
+  - single-stream decode stays within 5 % of S3's B: ≥ 65.2 tok/s at 2K and ≥ 62.8 at 16K;
+  - the probes are coherent.
+- **No accepted fix.** Record the localized cause; the owner then chooses between B anyway (−30 % end to end, about +1.3 s on short prompts) and TRITON.
+- **Any arm fails** on an incoherent probe, an engine death, or a HIP/HSA/OOM marker.
+
 ## 7e. S6 (2026-10-26): one stacked 0.32 runtime image for gfx1100 (issue #74 S2, serving half)
 
 **Why this, now.** The design goal is one runtime image per GPU that holds
@@ -601,6 +748,15 @@ gfx1100-serving-v032`, no GPU devices, not pushed; CI publishes on merge):
    `vllm/vllm-openai-rocm:v0.32.0` base the 5930k already holds for
    `cd108c9e`/`b06b06fe`, so S6b's prewarm is a small pull, not a 17 GB one.
 
+**CI build (2026-10-26):** !1174 merged as `c444b5ff`, and master pipeline 34930
+job 416180 published `runtime:rocm-gfx1100-serving-v032` and `-c444b5ff` as
+`sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2`
+(11.64 GB compressed; pushed 04:52:22Z). The same verifier lines passed in CI:
+265 unchanged, 5 added, no new `pip check` problems, every spawn target
+resolving. Nothing pins it yet, so Harbor retention (latest 30 pushed or
+pulled in 30 days) can delete it before S6b. Add a `pinned-ef28b7b0d1cb` tag,
+or pin it in a prewarm list, when S6b is scheduled.
+
 The riskiest assumption holds: diffusers and snac fit beside vLLM 0.32
 without moving it, once diffusers is ≥ 0.42. Still not shown, and S6b's job
 on a GPU: that the runtime supervisor serves a 0.32 lane at parity with the
@@ -630,6 +786,149 @@ dedicated pod.
   whisper needs vLLM's audio extras; check them in this image first.
 - **S6e:** bitsandbytes on ROCm 7.2 and !1165's `check-runtime-diffusers.py`
   in this image, so Qwen-Image 2.1 runs here too.
+
+## 7f. S4 (2026-10-26): **PROMOTED — the 5930k workhorse serves segmented + fp16 + MTP K=2 at 32K; every gate passes; prompts over 32K overflow to the XTX lane up to its 64K window (480 s first-byte budget since !1182)**
+
+**RESULT.**
+
+- **Timeline (UTC).**
+  - S4a (!1177) merged at 14:58 and the proxy roll (!1179) at 15:08. Proxy `d0dc2dbc` was Ready at 15:09:12.
+  - The compile cache was seeded from the S3b canary: 1.5 GB, both autotune tables, 1,266 stage and 37 reduce Triton variants.
+  - S4b (!1178) merged at 20:16:25 (`6e16eb303`). Flux applied it at 20:17:29.
+  - The new pod (`b06b06fe`) was Ready at 20:19:46, 2 m 17 s after creation, with no restarts.
+- **Boot.**
+  - `Qwen3_5MTP` draft with MTP K=2, segmented attention, block 416.
+  - KV pool 52,932 tokens (1.62x).
+  - Autotune `loaded=74 missing=0 tuned=0` in 0.02 s: the seeded cache removed the ~10 min autotune and the cold first-boot KV-profiling risk.
+- **Gates** (warm sweep then S3's probe, over a port-forward against live traffic):
+
+  | Gate | Bar | Measured |
+  |---|---|---|
+  | Server TTFT at 256 / 512 / 1,124 (chat) | ≤ 0.28 / 0.52 / 1.31 s | 0.235 / 0.423 / 1.039 s |
+  | Decode at 2K / 16K | ≥ 65.2 / 62.8 tok/s | 68.5 / 65.9 |
+  | Position-0 acceptance | ≥ 0.70 | 0.818, mean acceptance length 2.39 |
+  | Concurrency-2 soak | (S3: 59.7) | 59.8 tok/s per request |
+  | Coherence | pass | probes coherent, `parity_code` `8174a49e` as in S3 |
+  | Faults | 0 | 0 |
+
+  Prefill was 14.9 s at 16K and 28.7 s at 30K. All pass.
+- **Compiles.**
+  - The sweep compiled 4 new segmented variants, all for tiny prompts (16 / 33 / 65 tokens) that S3/S3b never sent under the MTP config. Each was slow once, at 2–4.7 s, and its repeat took 0.22 s.
+  - The three MTP sampling kernels `jit_monitor` flagged at first live traffic (`_rejection_kernel`, `_resample_kernel`, `_compute_local_logits_stats_kernel`; real callers sample, S3's probes were greedy) were already in the seeded cache, so those were disk loads.
+  - No `jit_monitor` line after 20:21:06.
+- **Overflow (S4a), end to end.**
+  - A streamed 33,514-token request to the `workhorse` alias returned 200 with `X-FlexInfer-Context-Overflow: qwen38-27b-autoround-workhorse->qwen38-27b-xtx-warm-canary`, `model` = the XTX lane, and the correct answer, `1699`.
+  - **Its first token came at 119.8 s.** Two 50,314-token requests (one streamed, one not) were rerouted the same way, and the XTX lane accepted them (`200 OK` headers within a second). The proxy then cut both at 120 s with 504 "upstream first byte budget exceeded".
+  - `flexinfer_proxy_context_overflow_total{outcome="rerouted"}` = 3.
+- **Why the 120 s cut.**
+  - The lane breaker's `firstByteTransport` waits for the first *body* byte, so the clock runs until the first generated token even on a streamed request.
+  - The default `LaneFirstByteBudget` is 120 s. Neither lane sets `flexinfer.ai/lane-first-byte-budget`.
+  - TRITON + fp8 prefills about 280 tok/s at 33K, so the XTX lane can only finish prompts up to about 33.6K inside the budget.
+  - **This is not a regression.** The pre-S4 TRITON workhorse hit the same wall above about 35K (S3's arm D: 79 s at 28K). The old lane logged 115 timeouts in the 7 days to the roll, so psyche-simulation's ~59K turns have likely been cut at 120 s all along.
+  - Between 32K and 35K, S4 serves slightly fewer prompts than before. Up to 32K it prefills 2–3x faster.
+- **Follow-up 1, done the same day (!1182, proxy roll !1183): the overflow lane's budget.**
+  - **A second bug.** The reroute did not load the target lane's budget at all. Only `rejectLane`, on the direct-request path, read `flexinfer.ai/lane-first-byte-budget`, so a replay kept whatever budget the target's last direct request had left: the 120 s default after a proxy restart, and the XTX lane sees only about 6 direct requests an hour. The replay also ignored an open breaker. Each cut-off counted as a lane failure, and three in a row would have opened Mills' warm lane's breaker.
+  - **The fix.** `prepareLane` loads the target's budget and breaker state for the reroute. A target whose breaker is open gets no reroute, and the client gets the original 400. `qwen38-27b-xtx-warm-canary` gets `flexinfer.ai/lane-first-byte-budget: "480s"`; applying it did not restart the lane.
+  - **Verified on proxy `dbbf7141`** (Ready 21:13:18Z):
+    - a cold 50,329-token streamed request (unique nonce, 0 cached tokens) to `workhorse` returned 200 via the XTX lane, answer `2499` correct, first token at 249.3 s;
+    - a warm repeat with 40,000 cached tokens took 84.6 s;
+    - the XTX pod, node and `gpu.health` stayed clean, and the lane's breaker stayed closed.
+  - **The 64K fit.** On the XTX lane's own TRITON curve (119.8 s at 33.5K, 249.3 s at 50.3K), a 64K prefill takes about 389 s, and the 65,536-token maximum about 406 s. 480 s leaves about 18 % headroom for a single request.
+  - **The cost.** A wedged XTX card now holds a request up to 480 s before it counts toward the breaker.
+- **Remaining follow-ups.**
+  1. Decide psyche-simulation's budget. Its ~59K turns now complete through the overflow in about 5–6 minutes, under its 600 s client timeout.
+  2. The 24 h watch: e2e/TTFT p95, overflow counter, preemptions.
+
+**The plan as prepared:**
+
+**The change.** One manifest, `deploy/models/qwen38-27b-autoround-workhorse.yaml`, moves to S3's arm B:
+
+- image `b06b06fe` (Harbor `pinned-b06b06fe1c02`; already in the 5930k prewarm list);
+- `ROCM_SEGMENTED_ATTN` with `kernelConfig` autotune;
+- `kvCacheDtype: auto` (fp16);
+- `maxModelLen` 65536 → 32768;
+- MTP K=2 through `speculativeConfig`;
+- `FLEXINFER_QWEN35_MTP_HEAD=checkpoint` through `spec.config.env`;
+- a fresh compile-cache hostPath.
+
+Everything else in the envelope is unchanged: 0.96, two sequences, 4,096 batched tokens, align prefix caching, parsers, aliases and priority 500. There is deliberately no `hfRevision`: pinning it would change the Local cache key and re-stage 19 GB, and the production cache already holds the same revision (S3's ETag check).
+
+**What S4 changes for callers.**
+
+- **Decode** is about 1.7x faster single-stream (71.8 / 66.5 / 66.1 tok/s at 512 / 2K / 16K, against 40.8 / 40.2 / 34.3).
+- **Long prefill** is 2–3x faster.
+- **Short-prompt TTFT** is at parity once warm.
+- **The window falls from 64K to 32K.** Over the 7 days to 2026-10-26, 12,971 requests:
+  - 99.62 % had prompts ≤ 20K, 49 (0.38 %) were 20K–50K, and none exceeded 50K;
+  - `max_tokens` was ≤ 5K for 98.2 %;
+  - 117 requests above 50K are unset `max_tokens`, which vLLM fills from the remaining context, so they adapt.
+- **Who can fail:** only a request whose prompt plus `max_tokens` exceeds 32,768. Those need the overflow route below.
+
+**Riskiest assumption and kill-test.** S3/S3b measured the canary under a different Model name with the profiler on. The assumption is that the production name and path, under real concurrency-2 traffic, show the same steady-state numbers and no JIT storm. Kill-test is the post-roll verification below. If any gate fails, roll back in one revert.
+
+**Rollout (operator window, about 10–25 min of 5930k lane time).**
+
+0. **Gate: S4a is live.** The proxy pin must carry CC-6a-3 (below). Otherwise psyche-simulation's ~59K prompts fail from the moment the workhorse drops to 32K.
+1. **Seed the new compile cache from the S3/S3b canary** (optional, recommended; one node command):
+   - What carries over: the segmented autotune table (`vllm/rocm_segmented_attention/`) and the Triton variants (`triton/`). Both are keyed by GPU, toolchain, kernel source and shapes, not by Model name or path (`_identity` in `rocm_segmented_attn_autotune_warmup.py`). A seeded first boot loads the 74-workload table (`missing=0`) and the variants S3/S3b compiled.
+   - What may not: torch.compile entries whose config hash differs simply recompile.
+   - Unseeded, the first boot autotunes for about 10 min and may profile a short pool once; the controller's KVPoolShort recheck relaunches it.
+   - The command:
+     `ssh cblevins-5930k 'sudo install -d /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s4-5930k/flexinfer-system/qwen38-27b-autoround-workhorse && sudo cp -a /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s3-5930k/flexinfer-system/qwen38-27b-v032-s3-attn-canary/. /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s4-5930k/flexinfer-system/qwen38-27b-autoround-workhorse/'`
+2. **Merge.** Flux applies the Model, and the controller relaunches the Deployment; if the lane is idle, `flexinfer_activate_model` boots it.
+3. **Check the boot.** Boot lines should show:
+   - "Using token-major ROCm segmented Triton attention";
+   - block size 416;
+   - autotune `missing=0` when seeded;
+   - `status.kvPool` ≥ 1.5x at 32K (S3: 52,932 tokens = 1.62x).
+4. **Warm sweep, then verify, over a port-forward** (no writes into the pod):
+   - `scripts/probe-vllm-ttft-floor.py` covers every power-of-two query bucket and its +1 edge, a 16K and a 30K chunked prefill, and the chat path. Its first pass compiles anything the seed lacked.
+   - Then `scripts/verify-vllm-mtp.py --phase measure --contexts 512,2048,16384 --soak-pairs 4`.
+5. **Gates**, all against S3b's B':
+   - median server TTFT ≤ 0.28 / 0.52 / 1.31 s at 256 / 512 / 1,124;
+   - decode ≥ 65.2 tok/s at 2K and ≥ 62.8 at 16K;
+   - position-0 acceptance ≥ 0.70;
+   - coherent probes;
+   - 0 HIP/HSA/OOM/EngineDead lines in 30 min;
+   - `jit_monitor` lines tapering to none after the sweep.
+6. **24 h watch.**
+   - vLLM e2e p50/p95 and TTFT p95 on this lane against the previous week;
+   - 4xx with "maximum context length" (the overflow signal);
+   - preemptions (`vllm:num_preemptions_total`; two long requests can now collide in the smaller pool).
+
+**Rollback.** Revert the S4 commit: `cd108c9e` (pinned, resident), TRITON + fp8 + 64K, no MTP, and the old compile-cache path, which S4 never touches, so the rollback boot is warm.
+
+**Overflow route for requests over 32K (S4a).** Nothing rerouted a request on length before this slice. A read-only survey on 2026-10-26 found:
+
+- **flexinfer-proxy** resolves an alias to exactly one Model. Its context-bounded admission (CC-6a-2) answers 413, and fallback (CC-6a-3) was specified but never built.
+- **LiteLLM 1.80.11** supports `context_window_fallbacks`, but the gitops manager never writes it. LiteLLM forwards every FlexInfer lane through the proxy anyway.
+- **Mills' FlexInfer client** walks a fallback chain on any 400, but only for the weaver/research and judge roles.
+- **The 128K lanes are not reachable as targets.** `qwen35-35b-clean-gptq-workhorse-128k` is parked behind the XTX primary with LiteLLM disabled (proxy 404/503). Its 5930k sister shares this card at priority 300.
+- **psyche-simulation is a real >32K consumer.** It calls the `workhorse` alias proxy-direct with `LLM_CONTEXT_TOKENS 65536` and consolidates around 58.9K tokens.
+
+S4a builds CC-6a-3 reactively in flexinfer-proxy (`feat/proxy-context-overflow`):
+
+- **Mechanism.** A Model annotated `flexinfer.ai/context-overflow-to` has its runtime's 400 held back on completion paths. When the body is vLLM's own prompt-length rejection, the original request is replayed once to the target, which must already be Ready.
+- **Why only prompt length triggers it.** vLLM 0.32 trims `max_tokens` to the remaining context itself (`get_max_tokens`). Only a prompt that does not fit errors, so LiteLLM's full-window default `max_tokens` does not trigger reroutes.
+- **Target.** `qwen38-27b-xtx-warm-canary`: the same artifact and recipe at 64K, `warmPolicy: primary`, `minReplicas 1`.
+- **Coverage.** proxy-direct clients (psyche, jobsearch, loom weaver, Mills) and LiteLLM callers.
+- **Known limits.**
+  - If the XTX card drops off the bus (its history through 2026-10-22, capped at 2100 MHz since), >32K requests get the original 400. Today they would have been served at 64K.
+  - Prompts over 64K fail on both lanes, as they do today.
+  - Do not opt the workhorse into `flexinfer.ai/admission`: its 413 is returned before the runtime is asked, so nothing would reroute.
+
+**Order.**
+
+1. Merge S4a. CI builds the proxy image.
+2. Roll the proxy pin in `deploy/system/values-k3s.yaml` (the !1173 pattern).
+3. Verify a >32K request against a lane with the annotation. Until S4b, the workhorse is 64K, so check with `X-FlexInfer-Context-Overflow` on a test lane, or right after S4b with one 40K-token request through the `workhorse` alias.
+4. Then the S4 rollout above. S4b carries the annotation, so the reroute is live the moment the workhorse drops to 32K.
+
+**Follow-ups, outside S4.**
+
+- mobile-hud pins `SPAWN_LOCAL_PROVIDER_CONTEXT_WINDOW=65536` for this lane. The overflow keeps that true end to end, but the comment should name both lanes.
+- Mills' "TEMPORARY" workhorse pins from 2026-10-10 still stand.
+- The stale "131072 envelope" comment in the 128k lane's manifest.
 
 ## 8. Sources
 
