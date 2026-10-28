@@ -112,6 +112,22 @@ spec:
   config:
     # See header: the 5930k runtime persona has no bitsandbytes yet.
     dedicatedDeployment: true
+    # The serving image's default CMD is the runtime manager (flexinfer-runtime
+    # on :8080), and the diffusers backend renders no command of its own (the
+    # dedicated diffusers-api images carry the server as their CMD). Without
+    # this override the dedicated pod never opens :8000: the startup probe
+    # failed for 15 min and restarted it in a loop on 2026-10-28 15:01-15:30Z
+    # while the lane held the card. This is the launch the runtime manager
+    # uses for an in-pod diffusers load (internal/runtime/manager.go). It
+    # bypasses runtime-entrypoint.sh on purpose: that script exports
+    # /etc/flexinfer/runtime.env over the container env (TORCH_BLAS_PREFER_
+    # HIPBLASLT=1, an allocator config without expandable_segments), while the
+    # controller already renders every ROCm variable the server needs
+    # (HSA_OVERRIDE_GFX_VERSION, PYTORCH_ROCM_ARCH, MIOPEN_*, HIP_*) with the
+    # Model env last, so the pins below hold on both launch paths.
+    command:
+      - python
+      - /opt/flexinfer/server-diffusers.py
     # The revision the research verified (LFS oids, 2026-10-25); head d26bb612
     # has byte-identical weights and configs and only adds assets/qr.png.
     hfRevision: b3179ad355be050328e483a9dfdd9e60cd62adfa
@@ -136,6 +152,15 @@ spec:
       # apply them in different orders (research §3a, R2f). A/B "1" in the
       # verification window before changing it.
       TORCH_BLAS_PREFER_HIPBLASLT: "0"
+      # The R2/R3 keys above (transformerQuantization, textEncoderQuantization,
+      # trueCfgScale) are rendered by controllers built from !1165 onward. The
+      # live controller 4ee89231 (master badcb8c3) predates it and drops them,
+      # which would load 32 GB of bf16 weights onto a 24 GB card. Model env is
+      # applied last on both launch paths, so the same values ride here until
+      # the controller is rolled; they are then a harmless duplicate.
+      TRANSFORMER_QUANTIZATION: nf4
+      TEXT_ENCODER_QUANTIZATION: nf4
+      DEFAULT_TRUE_CFG_SCALE: "1.0"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
   resources:
