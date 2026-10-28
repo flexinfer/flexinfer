@@ -5,7 +5,9 @@ Build/Dockerfile.runtime-serving pins diffusers and transformers in a late layer
 (Qwen-Image 2.1 needs diffusers >= 0.41) and runs this right after it. It fails
 the build when the pinned stack cannot serve what server-diffusers.py loads:
 
-- the pinned diffusers/transformers versions are the ones importable;
+- the pinned diffusers/transformers versions are the ones importable, and
+  huggingface-hub sits inside the range both of them import against (the
+  unpinned early layer resolves to 2.x, which they refuse);
 - QwenImage21Pipeline / QwenImage21Transformer2DModel, the GGUF and pipeline
   quantization configs, and the GGUF classes the server's dequant shim uses;
 - Qwen3VLForConditionalGeneration (the Qwen-Image 2.1 text encoder) and the
@@ -38,11 +40,51 @@ def version_tuple(value: str) -> tuple:
     return tuple(parts)
 
 
+def satisfies(version: str, constraint: str) -> bool:
+    """Report whether version meets a pip-style constraint such as ">=1.32,<2.0".
+
+    Only the comparison operators pip's pins use are understood (==, !=, >=,
+    <=, >, <); the image is not guaranteed to ship `packaging`, and the check
+    must not fail on its own dependency.
+    """
+    got = version_tuple(version)
+    for clause in constraint.split(","):
+        clause = clause.strip()
+        if not clause:
+            continue
+        for op in (">=", "<=", "==", "!=", ">", "<"):
+            if clause.startswith(op):
+                want = version_tuple(clause[len(op) :].strip())
+                break
+        else:
+            raise ValueError(f"unsupported constraint clause {clause!r}")
+        width = max(len(got), len(want))
+        a = got + (0,) * (width - len(got))
+        b = want + (0,) * (width - len(want))
+        ok = {
+            ">=": a >= b,
+            "<=": a <= b,
+            "==": a == b,
+            "!=": a != b,
+            ">": a > b,
+            "<": a < b,
+        }[op]
+        if not ok:
+            return False
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--diffusers", required=True, help="pinned diffusers version")
     parser.add_argument(
         "--transformers", required=True, help="pinned transformers version"
+    )
+    parser.add_argument(
+        "--huggingface-hub",
+        default=">=1.32,<2.0",
+        help="pip constraint the installed huggingface-hub must satisfy "
+        "(transformers 5.17 needs >=1.5,<2.0; diffusers 0.41 needs >=1.32,<2.0)",
     )
     parser.add_argument(
         "--vllm", default="true", help="'true' when the image bundles vLLM"
@@ -76,6 +118,18 @@ def main() -> int:
 
     check("diffusers pin", pinned("diffusers", args.diffusers))
     check("transformers pin", pinned("transformers", args.transformers))
+
+    def hub_range():
+        got = md.version("huggingface-hub")
+        if not satisfies(got, args.huggingface_hub):
+            raise AssertionError(
+                f"huggingface-hub {got} installed, overlay needs {args.huggingface_hub}; "
+                "the unpinned early layer resolves to 2.x, which transformers "
+                f"{args.transformers} and diffusers {args.diffusers} refuse to import against"
+            )
+        return f"{got} within {args.huggingface_hub}"
+
+    check("huggingface-hub range", hub_range)
 
     def qwen_image21():
         from diffusers import QwenImage21Pipeline, QwenImage21Transformer2DModel

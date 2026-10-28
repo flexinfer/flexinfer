@@ -501,6 +501,21 @@ def assert_serving_dockerfile_contract(dockerfile: str) -> None:
             "layers and precede COPY build/server-diffusers.py"
         )
 
+    # transformers 5.17 and diffusers 0.41 import only against huggingface-hub
+    # < 2.0, and the unpinned early layer resolves to 2.x (master job 426127,
+    # 2026-10-28). The hub pin must ride in the same --no-deps overlay RUN, and
+    # the build check must be told the range.
+    hub_pin = dockerfile.find('"huggingface-hub${HF_HUB_OVERLAY_CONSTRAINT}"')
+    if hub_pin == -1:
+        fail("Dockerfile.runtime-serving diffusers overlay missing the huggingface-hub pin")
+    if not (overlay < hub_pin < dockerfile.find("COPY build/server-diffusers.py")):
+        fail(
+            "Dockerfile.runtime-serving huggingface-hub pin must sit in the "
+            "diffusers overlay RUN"
+        )
+    if '--huggingface-hub "${HF_HUB_OVERLAY_CONSTRAINT}"' not in dockerfile:
+        fail("Dockerfile.runtime-serving check-runtime-diffusers.py call lacks --huggingface-hub")
+
     forbidden = (
         "AS llamacpp-builder",
         "AS ollama-builder",

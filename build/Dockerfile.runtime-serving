@@ -247,14 +247,22 @@ RUN pip install --no-cache-dir "snac==1.2.1"
 # would invalidate every layer after it, vLLM included, and make nodes re-pull
 # most of the ~17 GB image; this layer is tens of MB. transformers is held at
 # the 5.17.0 the 2026-10-23 serving build (cfefae18) resolved, so a cold-cache
-# rebuild of the unpinned layers cannot drift it. The checks after the COPY
-# fail the build when the pinned stack cannot serve what the server loads.
+# rebuild of the unpinned layers cannot drift it. huggingface-hub is pinned
+# here too: the unpinned install above resolves to 2.x (2.3.0 in the cached
+# 2026-10-23 layer), while transformers 5.17.0 (>=1.5,<2.0) and diffusers
+# 0.41.0 (>=1.32,<2.0) both refuse to import against a 2.x hub, which failed
+# the first master build of this overlay on 2026-10-28 (job 426127). The pin
+# is --no-deps like the rest of the layer so nothing else in the image moves.
+# The checks after the COPY fail the build when the pinned stack cannot serve
+# what the server loads.
 ARG DIFFUSERS_OVERLAY_VERSION=0.41.0
 ARG TRANSFORMERS_OVERLAY_VERSION=5.17.0
+ARG HF_HUB_OVERLAY_CONSTRAINT=">=1.32,<2.0"
 RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ] && [ "${TRANSFORMERS_INSTALL_MODE}" != "source" ]; then \
       pip install --no-cache-dir --no-deps \
         "diffusers==${DIFFUSERS_OVERLAY_VERSION}" \
-        "transformers==${TRANSFORMERS_OVERLAY_VERSION}"; \
+        "transformers==${TRANSFORMERS_OVERLAY_VERSION}" \
+        "huggingface-hub${HF_HUB_OVERLAY_CONSTRAINT}"; \
     fi
 COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
 COPY build/check-runtime-diffusers.py /opt/flexinfer/check-runtime-diffusers.py
@@ -262,6 +270,7 @@ RUN if [ "${INCLUDE_DIFFUSERS}" = "true" ] && [ "${TRANSFORMERS_INSTALL_MODE}" !
       python3 /opt/flexinfer/check-runtime-diffusers.py \
         --diffusers "${DIFFUSERS_OVERLAY_VERSION}" \
         --transformers "${TRANSFORMERS_OVERLAY_VERSION}" \
+        --huggingface-hub "${HF_HUB_OVERLAY_CONSTRAINT}" \
         --vllm "${INCLUDE_VLLM}" \
         --bitsandbytes "${INCLUDE_BITSANDBYTES}"; \
     fi
