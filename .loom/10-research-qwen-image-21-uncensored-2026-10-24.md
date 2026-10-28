@@ -778,7 +778,12 @@ That gate is first exercised by the master build after the merge.
 1. Merge the R1–R3 MR. Master CI's `publish_serving_rocm_gfx1100` runs
    `check-runtime-diffusers.py` inside the build, so a green job is R1's proof on the real image.
 2. Put that job's digest into the lane's `spec.image` and the 5930k prewarm entry. Both read
-   `R1R3_SERVING_DIGEST` until then, and the lane MR stays Draft.
+   `R1R3_SERVING_DIGEST` until then, and the lane MR stays Draft. **Done 2026-10-28**: the first
+   master build (job 426127) failed on the huggingface-hub mismatch (§4a), !1191 pinned it, and
+   `rocm-gfx1100-serving-b83c3822` = `sha256:2c94c6d9…` (pipeline 35553, job 427887, 18.3 GB) is
+   now in both files. The lane also carries `flexinfer.ai/lane-first-byte-budget: "600s"`:
+   flexinfer-proxy cancels a forward with no response byte inside that budget (default 120 s), and
+   the diffusers server answers only when the render is done.
 3. The operator merges the lane MR. That is the GPU go-ahead. Flux applies the Model and the
    prewarm list. The prewarm pulls the image and the cache Job stages 33 GB, neither on the GPU.
    The lane sits Idle until the first request.

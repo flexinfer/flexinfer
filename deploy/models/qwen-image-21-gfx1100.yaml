@@ -63,11 +63,20 @@ metadata:
     # Same guard as the 5930k workhorse: the pod preempts priority-0 CI job
     # pods for CPU instead of sitting Pending behind them during a cold start.
     flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    # flexinfer-proxy cancels a forward that has produced no response byte
+    # within its lane first-byte budget (default 120 s, 504 "upstream first
+    # byte budget exceeded", internal/proxy/routing_retry.go). The diffusers
+    # server returns one JSON body when the render is done: 40 steps at
+    # 1024x1024 are 60-150 s warm and twice that with true_cfg_scale > 1, plus
+    # the first request's kernel search.
+    flexinfer.ai/lane-first-byte-budget: "600s"
 spec:
   backend: diffusers
-  # FILL BEFORE MERGE: runtime:rocm-gfx1100-serving-<R1-R3 merge sha>, and the
-  # same digest in the 5930k imagePrewarm list (deploy/system/values-k3s.yaml).
-  image: registry.harbor.lan/flexinfer/runtime@sha256:R1R3_SERVING_DIGEST
+  # rocm-gfx1100-serving-b83c3822: master CI publish_serving_rocm_gfx1100 (pipeline 35553, job
+  # 427887) from the R1-R3 merge plus the huggingface-hub pin of !1191. The
+  # same digest is held by the 5930k imagePrewarm list
+  # (deploy/system/values-k3s.yaml).
+  image: registry.harbor.lan/flexinfer/runtime@sha256:2c94c6d973fab09d9304891b26a25a026bc6e6bdecfe304b138de6c118d219cc
   source: HF://Qwen/Qwen-Image-2.1
   cache:
     strategy: Local

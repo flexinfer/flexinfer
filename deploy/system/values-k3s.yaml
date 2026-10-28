@@ -487,16 +487,18 @@ imagePrewarm:
         # (T2V) and 52ebc2b9 (VACE, gone from Harbor) while this entry held
         # 83cda206. Both lanes now pin 83cda206 through spec.imageDigest.
         - registry.harbor.lan/flexinfer/diffusers-video@sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
-        # 2026-10-26 (Qwen-Image 2.1 lane, research qwen-image §4b): the
-        # serving persona with the R1-R3 overlay, built by master CI from the
-        # R1-R3 merge (rocm-gfx1100-serving-<sha>, ~18.2 GB). Image of the
-        # demand-based qwen-image-21-gfx1100 lane. Its vLLM 0.17 base is not
-        # resident here (cfefae18 was released 2026-10-24 for DiskPressure),
-        # so this is a full pull: 280 GB free (70 %) on 2026-10-26, ~262 GB
-        # after, plus the lane's 33 GB staged cache. Without this entry the
-        # node's 60/50 image GC would drop it between image sessions and every
-        # cold start would re-pull 18 GB. Same digest as the lane's spec.image.
-        - registry.harbor.lan/flexinfer/runtime@sha256:R1R3_SERVING_DIGEST
+        # 2026-10-28 (Qwen-Image 2.1 lane, research qwen-image §4b): the
+        # serving persona with the R1-R3 overlay and the huggingface-hub pin
+        # (!1165 + !1191), built by master CI (rocm-gfx1100-serving-b83c3822,
+        # pipeline 35553 job 427887, 18.3 GB). Image of the demand-based
+        # qwen-image-21-gfx1100 lane. Its vLLM 0.17 base is not resident here
+        # (cfefae18 was released 2026-10-24 for DiskPressure), so this is a
+        # full pull: 264 GB free (72 %) on 2026-10-28, ~245 GB after, then
+        # ~212 GB once the lane's 33 GB cache is staged. Without this entry
+        # the node's 60/50 image GC would drop it between image sessions and
+        # every cold start would re-pull 18 GB. Same digest as the lane's
+        # spec.image.
+        - registry.harbor.lan/flexinfer/runtime@sha256:2c94c6d973fab09d9304891b26a25a026bc6e6bdecfe304b138de6c118d219cc
     # 2026-09-13 (issue #74 S3'): the gfx906 runtime DaemonSet hosts the whole
     # retrieval plane (bge-large, bge-reranker, gte-qwen2) plus the only voice
     # tier, and RollingUpdate terminates the old pod before the new one pulls.
