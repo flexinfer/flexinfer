@@ -232,6 +232,9 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 			}
 			b.target = targetURL
 			b.upstreamModel = resolvedModel
+			// The probe path follows the request path for chat and embeddings
+			// lanes; anything else keeps what prepareLane derived from the
+			// Model's serve-paths (the health probe for images, audio, rerank).
 			if path == "/v1/embeddings" {
 				b.path = path
 			} else if path == "/v1/chat/completions" || path == "/v1/completions" || b.path == "" {
@@ -257,10 +260,18 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 		}
 		releasePod()
 		if expired && fr.err != nil {
-			laneErr = fr.err
-			if ctx.Err() == nil {
-				validation.WriteError(w, http.StatusGatewayTimeout, "upstream first byte budget exceeded", "upstream_error", "timeout")
+			if ctx.Err() != nil {
+				// The client left before the lane produced a byte and before
+				// the lane's own first-byte budget ran out. That is the caller's
+				// patience, not the lane's health: a 40-step render or a long
+				// prefill is still working, so it does not count towards the
+				// breaker. Only the budget timer, the lane's declared bound,
+				// counts a silent upstream.
+				laneErr = nil
+				return
 			}
+			laneErr = fr.err
+			validation.WriteError(w, http.StatusGatewayTimeout, "upstream first byte budget exceeded", "upstream_error", "timeout")
 			return
 		}
 
@@ -281,11 +292,12 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 		}
 
 		reason, retryable := classifyUpstreamErr(fr.err)
-		if ctx.Err() != nil || reason == "timeout" || reason == "conn_reset" || reason == "eof" {
-			laneErr = fr.err
-		}
 		if ctx.Err() != nil {
+			// Client cancellation: see the first-byte branch above.
 			return
+		}
+		if reason == "timeout" || reason == "conn_reset" || reason == "eof" {
+			laneErr = fr.err
 		}
 		if !retryable || attempt == maxAttempts-1 {
 			// Include caller identity so a failure pattern (e.g. a client that

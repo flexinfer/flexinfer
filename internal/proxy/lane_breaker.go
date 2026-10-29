@@ -62,10 +62,31 @@ func (p *Proxy) prepareLane(name string, annotations map[string]string) (open bo
 	if v, err := time.ParseDuration(annotations["flexinfer.ai/lane-first-byte-budget"]); err == nil && v > 0 {
 		b.budget = v
 	}
-	if strings.Contains(annotations["flexinfer.ai/serve-paths"], "embeddings") && !strings.Contains(annotations["flexinfer.ai/serve-paths"], "chat/completions") {
-		b.path = "/v1/embeddings"
-	}
+	b.path = laneProbePath(annotations["flexinfer.ai/serve-paths"])
 	return b.open, b.until, b.lastSuccess
+}
+
+// laneHealthPath is the recovery probe for lanes that serve neither chat nor
+// embeddings (images, audio, rerank, ...). Every backend server answers GET
+// /health once it is up; a chat completion answers 404 there, which would hold
+// the breaker open for as long as the lane lives.
+const laneHealthPath = "/health"
+
+// laneProbePath picks the request the breaker's recovery probe sends from the
+// Model's flexinfer.ai/serve-paths annotation. A lane that serves chat or
+// completions, or declares nothing, gets a one-token chat completion; an
+// embeddings-only lane gets an embeddings call; any other lane is probed on
+// its health endpoint.
+func laneProbePath(servePaths string) string {
+	s := strings.TrimSpace(servePaths)
+	switch {
+	case s == "", strings.Contains(s, "completions"):
+		return "/v1/chat/completions"
+	case strings.Contains(s, "embeddings"):
+		return "/v1/embeddings"
+	default:
+		return laneHealthPath
+	}
 }
 
 func (p *Proxy) rejectLane(w http.ResponseWriter, r *http.Request, name, requested string, annotations map[string]string) bool {
@@ -162,18 +183,26 @@ func (p *Proxy) probeLaneAfter(name string, b *laneBreaker, delay time.Duration)
 func probeLane(parent context.Context, target, path, model string) error {
 	ctx, cancel := context.WithTimeout(parent, 20*time.Second)
 	defer cancel()
-	payload := map[string]any{"model": model, "max_tokens": 1, "messages": []map[string]string{{"role": "user", "content": "Hi"}}}
-	if path == "/v1/embeddings" {
-		payload = map[string]any{"model": model, "input": "Hi"}
+	var req *http.Request
+	var err error
+	if path == laneHealthPath {
+		req, err = http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(target, "/")+laneHealthPath, nil)
 	} else {
-		path = "/v1/chat/completions"
+		payload := map[string]any{"model": model, "max_tokens": 1, "messages": []map[string]string{{"role": "user", "content": "Hi"}}}
+		if path == "/v1/embeddings" {
+			payload = map[string]any{"model": model, "input": "Hi"}
+		} else {
+			path = "/v1/chat/completions"
+		}
+		body, _ := json.Marshal(payload)
+		req, err = http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(target, "/")+path, bytes.NewReader(body))
+		if err == nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
 	}
-	body, _ := json.Marshal(payload)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(target, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return err
@@ -186,7 +215,7 @@ func probeLane(parent context.Context, target, path, model string) error {
 	if err != nil {
 		return err
 	}
-	if n == 0 {
+	if n == 0 && path != laneHealthPath {
 		return fmt.Errorf("empty probe response")
 	}
 	return nil

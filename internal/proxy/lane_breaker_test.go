@@ -75,6 +75,23 @@ func TestLaneBreakerSilentUpstreamAndRecovery(t *testing.T) {
 }
 
 func TestLaneProbePayloads(t *testing.T) {
+	t.Run("/health", func(t *testing.T) {
+		var method string
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			method = r.Method
+			if r.URL.Path != "/health" {
+				t.Errorf("path %s", r.URL.Path)
+			}
+			w.WriteHeader(http.StatusOK) // an empty 200 is a healthy answer here
+		}))
+		defer srv.Close()
+		if err := probeLane(context.Background(), srv.URL, "/health", "base"); err != nil {
+			t.Fatal(err)
+		}
+		if method != http.MethodGet {
+			t.Fatalf("method %s, want GET", method)
+		}
+	})
 	for _, path := range []string{"/v1/chat/completions", "/v1/embeddings"} {
 		t.Run(path, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -183,12 +200,16 @@ func TestLaneFailuresResetDisableAndBudgetOverride(t *testing.T) {
 	}
 }
 
-func TestLaneClientCancellation(t *testing.T) {
+// A client that gives up before the lane's first-byte budget has run out says
+// nothing about the lane: a 40-step image render or a long prefill is still
+// working. Such a cancellation is reported as a timeout to the caller but is
+// not a lane failure, so it cannot open the breaker.
+func TestLaneClientCancellationWithinBudgetDoesNotTrip(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
 	defer srv.Close()
 	owner, stop := context.WithCancel(context.Background())
 	defer stop()
-	p := &Proxy{ctx: owner, laneConfig: Config{LaneBreakerThreshold: 1}}
+	p := &Proxy{ctx: owner, laneConfig: Config{LaneBreakerThreshold: 1, LaneFirstByteBudget: time.Minute}}
 	p.directLoadTargets.Store("cancelled", srv.URL)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
 	defer cancel()
@@ -202,8 +223,65 @@ func TestLaneClientCancellation(t *testing.T) {
 	b := p.lane("cancelled")
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.open || b.failures != 0 {
+		t.Fatalf("client cancellation counted against the lane: open=%v failures=%d", b.open, b.failures)
+	}
+}
+
+// The lane's own first-byte budget is what detects a silent upstream: when it
+// runs out while the client is still waiting, the caller gets 504 and the
+// failure counts towards the breaker.
+func TestLaneBudgetExpiryTrips(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { <-r.Context().Done() }))
+	defer srv.Close()
+	owner, stop := context.WithCancel(context.Background())
+	defer stop()
+	p := &Proxy{ctx: owner, laneConfig: Config{LaneBreakerThreshold: 1, LaneFirstByteBudget: 10 * time.Millisecond, LaneBreakerCooldown: time.Minute}}
+	p.directLoadTargets.Store("silent", srv.URL)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	rec := httptest.NewRecorder()
+	w := &outcomeWriter{ResponseWriter: rec}
+	req := httptest.NewRequest("POST", "/v1/chat/completions", nil).WithContext(ctx)
+	p.forwardWithRetry(w, req, "silent", "silent", 8000, nil, nil)
+	if rec.Code != http.StatusGatewayTimeout {
+		t.Fatalf("status %d, want 504", rec.Code)
+	}
+	b := p.lane("silent")
+	b.mu.Lock()
+	defer b.mu.Unlock()
 	if !b.open {
-		t.Fatal("cancellation did not trip")
+		t.Fatal("budget expiry did not trip")
+	}
+}
+
+// Lanes that serve neither chat nor embeddings cannot answer a chat probe: a
+// diffusers lane returns 404 to /v1/chat/completions, which held its breaker
+// open for as long as the lane lived. Such lanes are probed on /health.
+func TestLaneProbePathFromServePaths(t *testing.T) {
+	cases := map[string]string{
+		"":                                    "/v1/chat/completions",
+		"/v1/chat/completions":                "/v1/chat/completions",
+		"/v1/completions":                     "/v1/chat/completions",
+		"/v1/embeddings":                      "/v1/embeddings",
+		"/v1/embeddings,/v1/chat/completions": "/v1/chat/completions",
+		"/v1/images/generations,/v1/images/edits": "/health",
+		"/v1/audio/transcriptions":                "/health",
+		"/v1/rerank":                              "/health",
+	}
+	for servePaths, want := range cases {
+		if got := laneProbePath(servePaths); got != want {
+			t.Errorf("laneProbePath(%q) = %q, want %q", servePaths, got, want)
+		}
+	}
+	p := &Proxy{laneConfig: Config{LaneBreakerThreshold: 1}}
+	p.prepareLane("images", map[string]string{"flexinfer.ai/serve-paths": "/v1/images/generations,/v1/images/edits"})
+	b := p.lane("images")
+	b.mu.Lock()
+	path := b.path
+	b.mu.Unlock()
+	if path != "/health" {
+		t.Fatalf("prepareLane path = %q, want /health", path)
 	}
 }
 
