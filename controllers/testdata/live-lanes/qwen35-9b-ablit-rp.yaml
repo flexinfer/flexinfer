@@ -1,0 +1,89 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen35-9b-ablit-rp
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.5-9B
+    flexinfer.ai/base-model-posture: abliterated
+    flexinfer.ai/artifact-oci: registry.harbor.lan/flexinfer/qwen35-9b:gptq-w4-g128
+    flexinfer.ai/runtime-digest: sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+    flexinfer.ai/canary-certificate: qwen35-9b-context-ceiling-224k-canary-generation-4
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+  source: pvc://qwen35-9b-oci-gfx1100/qwen35-9b
+  cache:
+    strategy: Local
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen35-9b-v032-production
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    vramEstimateMB: 23200
+    priority: 500
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    attentionBackend: TRITON_ATTN
+    warmPolicy: ondemand
+    dedicatedDeployment: true
+    dtype: "half"
+    quantization: gptq
+    languageModelOnly: true
+    hfOverrides: '{"architectures":["Qwen3_5ForCausalLM"],"rope_parameters":{"rope_type":"default","rope_theta":10000000,"partial_rotary_factor":0.25}}'
+    maxModelLen: 229376
+    maxInputTokens: 228352
+    maxOutputTokens: 1024
+    gpuMemoryUtilization: "0.94"
+    maxNumSeqs: 4
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: true
+    kvCacheDtype: fp8_e4m3
+    enforceEager: false
+    cudagraphCaptureSizes: [1, 2, 4]
+    maxCudagraphCaptureSize: 4
+    gdnPrefillBackend: triton
+    cudagraphMetrics: true
+    kvCacheMetrics: true
+    kvCacheMetricsSample: "1.0"
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    servedModelName: qwen35-9b-ablit-rp
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: false
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  serviceLabels:
+    - qwen35-9b-ablit-rp
+  litellm:
+    enabled: false
+  tolerations:
+    - key: "node-role.kubernetes.io/control-plane"
+      operator: "Exists"
+      effect: "NoSchedule"

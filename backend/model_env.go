@@ -56,6 +56,9 @@ var reservedModelEnv = map[string]string{
 	"HF_HUB_CACHE":            "spec.cache",
 	"HUGGINGFACE_HUB_CACHE":   "spec.cache",
 	"TRANSFORMERS_CACHE":      "spec.cache",
+
+	// Marks a runtime load as image-scoped (pkg/runtime.CompilationCacheScopeEnv).
+	"FLEXINFER_COMPILE_CACHE_SCOPE": "spec.cache.compilationCache.scope",
 }
 
 // ModelEnvVars returns the per-Model environment declared in spec.config.env,
