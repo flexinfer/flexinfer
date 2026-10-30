@@ -119,6 +119,10 @@ spec:
       support: full
       image: registry.harbor.lan/flexinfer/comfyui:rocm-gfx1100
     mlc-llm:
+      # Retired from the fleet (no deployed Model uses it), but kept: the
+      # backend is still registered and backend.ResolveBackendImage /
+      # ResolveBackendGPUSupport read this entry for any mlc-llm Model on
+      # gfx1100. Removing it switches such a Model to the in-code image.
       support: full
       image: registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx1100
     snac:
