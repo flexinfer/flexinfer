@@ -29,7 +29,16 @@ spec:
   backend: diffusers
   # audio2: audio1 + bitsandbytes==0.49.2 pin (0.50.1 crash-looped every
   # diffusers import on this torch 2.3 base — see build MR !988).
-  image: registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-audio2
+  # 2026-10-30 (voice-stack audit, .loom/10-research-voice-stack-and-gpu-
+  # placement-2026-10-30.md §3): the digest is written into `image:` as well
+  # as `imageDigest:`. The Harbor pin guard (gitops
+  # harbor-flexinfer-pin-guard) and scripts/check-runtime-pin-drift.py only
+  # match `repo@sha256:` references, so with the tag form this digest
+  # (tag rocm-gfx1100-audio2, last pulled 2026-08-23) carried no pinned-* tag
+  # and was one retention run away from deletion. backend.ApplyImageDigest
+  # strips the tag or digest on `image:` and appends imageDigest, so the
+  # rendered image is unchanged.
+  image: registry.harbor.lan/flexinfer/diffusers@sha256:d87f75f8c69bd3e266b11fbb11ee6528d1134001721a960b6e738f6af7e788ce
   imageDigest: sha256:d87f75f8c69bd3e266b11fbb11ee6528d1134001721a960b6e738f6af7e788ce
   source: HF://stabilityai/stable-audio-open-1.0
   cache:
