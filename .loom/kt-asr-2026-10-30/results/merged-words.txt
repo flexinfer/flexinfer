@@ -1,0 +1,3 @@
+twospk words 28 monotonic True bad_spans 0
+meeting10 words 1721 monotonic True bad_spans 0
+meeting60 words 10571 monotonic True bad_spans 0
