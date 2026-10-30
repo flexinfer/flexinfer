@@ -5,7 +5,9 @@
 ## Hardware: Radeon VII / Vega20 / gfx906
 
 - **Node**: `cblevins-radeonvii` (128 GB system RAM, 16 GB HBM2)
-- **ISA**: gfx906 (reports as gfx900 at runtime)
+- **ISA**: gfx906. KFD reports it natively (`gfx_target_version 90006`; llama.cpp logs
+  `gfx906:sramecc+:xnack- (0x906)`), so no `HSA_OVERRIDE_GFX_VERSION` is needed; see
+  [Required Environment Variables](#required-environment-variables)
 - **Wave size**: 64
 - **Key limitation**: No VMM (Virtual Memory Management) support
 
@@ -146,7 +148,84 @@ Mitigation:
   ```
 
   Keep it at 24 or below, with headroom for the next member.
+- The same count is readable without debugfs, per process, from any privileged pod on the
+  node (the runtime pod, for example). KFD lists every process on the host, with queue
+  `type` 0 for compute and 1 for SDMA; only compute queues count against the 24:
+
+  ```bash
+  kubectl -n flexinfer-system exec ds/flexinfer-runtime-gfx906 -- sh -c '
+    for d in /sys/class/kfd/kfd/proc/*; do
+      c=0; for q in $d/queues/*; do [ "$(cat $q/type)" = 0 ] && c=$((c+1)); done
+      echo "$(basename $d) compute=$c vram=$(cat $d/vram_* 2>/dev/null)"
+    done'
+  ```
+
+  The PIDs are host PIDs; match a process by its VRAM. The runtime publishes the total as
+  `flexinfer_runtime_hw_queues{source="observed"}` every 15 s.
 - Rule of thumb with the cap: 3 queues per llama-server, 2 for pyannote.
+
+#### Queue admission (GPUProfile `maxHWQueues`)
+
+Since 2026-10-30 the budget is enforced, not left to convention.
+
+- **GPUProfile** `spec.maxHWQueues: 24` is KFD `num_cp_queues`.
+  `spec.reservedHWQueues: 2` is held back for pyannote, a hand-written Deployment the Model
+  API cannot see. Jobs that take a GPU lease park the serving lanes, so they need no
+  reserve. Unset `maxHWQueues` disables queue admission, which is the case on every other
+  profile.
+- **Model** `spec.gpu.hwQueueEstimate` overrides the estimate. Unset, it is
+  `(GPU_MAX_HW_QUEUES + 2) × HIP processes`, where `GPU_MAX_HW_QUEUES` is the GPUProfile
+  env overlaid by `spec.config.env` (ROCclr default 4):
+
+  | Backend | HIP processes | Estimate with the gfx906 cap of 1 | Uncapped | Basis |
+  | --- | ---: | ---: | ---: | --- |
+  | llamacpp | 1 | 3 | 6 | Measured: 3 on four live lanes; 4–6 uncapped |
+  | ollama | 1 | 3 | 6 | One runner per loaded model; the `ollama serve` parent only probes devices from short-lived children |
+  | diffusers, snac | 1 | 3 | 6 | One Python server |
+  | vllm, vllm-omni | 2 | 6 | 12 | API server + engine-core process. Not measured on gfx906, so both are assumed to reach the device |
+
+  The `+2` is what a capped llama-server holds beyond its one kernel queue with
+  `HSA_ENABLE_SDMA=0`. With SDMA on, one of the two becomes an SDMA queue, as pyannote
+  shows, so the estimate errs high there. Measure a vLLM lane with the sysfs loop above
+  and set `hwQueueEstimate` if it holds fewer.
+- **Enforcement**, wherever VRAM admission runs:
+  - Controller, multi-model election (`chooseSharedGroupLeadersBounded`): a member joins
+    the Active set only if the summed estimate stays within `maxHWQueues -
+    reservedHWQueues` = 22. The elected primary is always included. A member that cannot
+    fit stays stamped `primary/` like a member that does not fit VRAM.
+  - Controller, validation: a Model whose own estimate exceeds 22 goes `Schedulable=False`
+    with reason `HWQueuesInsufficient`.
+  - Runtime load admission, in both single-slot and multi-model mode. In-use queues are the
+    larger of (the estimates of its other subprocesses + the reserve) and (the compute
+    queues KFD reports on the GPU across all processes, which also sees dedicated pods,
+    Jobs and pyannote). A load is refused when in-use + estimate exceeds 24. The runtime
+    answers 503 with `insufficient hardware compute queues`, and the Model waits as
+    `Pending` / `RuntimeCapacity` until another model releases queues.
+  - The controller sends the budget with every load (`hwQueues` in the load payload). It is
+    left out of the launch spec hash, so changing the budget reloads nothing.
+- **Metrics**: `flexinfer_sharedgroup_hw_queues{group,gpu_arch,kind=estimated|budget|reserved}`
+  (controller, per shared group = per GPU), and `flexinfer_runtime_hw_queues{source=estimated|observed}`
+  plus `flexinfer_runtime_hw_queue_budget{kind=max|reserved}` (runtime).
+- **Live accounting, 2026-10-30 13:40Z** (read through the runtime pod's sysfs view):
+
+  | Process | Compute queues | VRAM |
+  | --- | ---: | ---: |
+  | bge-large and bge-reranker (one llama-server each; VRAM does not tell them apart) | 3 + 3 | 0.53 / 0.55 GB |
+  | gte-qwen2 (llama-server) | 3 | 2.26 GB |
+  | orpheus (llama-server) | 3 | 2.79 GB |
+  | pyannote-diarization | 2 (+2 SDMA) | 0.18 GB |
+  | **Total** | **14 of 24** | |
+
+  The estimate matches: 4 × 3 = 12 for the Models plus 2 reserved = 14. The Model budget is
+  22, so three more llama.cpp lanes fit (21) and a fourth is refused (24 > 22). The
+  2026-10-24 set with both Qwen3 lanes comes to 18 + 2 = 20. With the openjev judge at its
+  vLLM estimate of 6 it is also 18 + 2 = 20. Replaying these sets through the election
+  (`TestHWQueueBoundIsLiveNeutralOnRadeonVII`) gives exactly the VRAM-only Active sets.
+- **Second HWS limit (not enforced separately)**: KFD also oversubscribes when more
+  processes are mapped than `max_proc_per_quantum`. `hws_max_conc_proc` is `-1` on this node,
+  so the limit is the KFD VMID count, 8 on gfx9 per the amdgpu source (not measured). At 3
+  queues per process the 22-queue Model budget plus pyannote stops at 8 processes, so the
+  queue budget covers it for today's lanes.
 
 Applied 2026-10-24 (!1140) with one runtime pod restart at 15:39:08Z:
 
@@ -171,7 +250,6 @@ Evidence: `.loom/60-validation-matrix.md` row `qwen3-embedding-gfx906-2026-10-24
 These are set in the `gfx906` GPUProfile (`deploy/gpuprofiles/gfx906.yaml`):
 
 ```bash
-HSA_OVERRIDE_GFX_VERSION=9.0.6   # Hardware reports gfx900, override to gfx906
 HSA_ENABLE_SDMA=0                 # DMA stability on Vega20
 HSA_USE_SVM=0                     # hipMemGetInfo workaround (ROCm/ROCm#2433)
 PYTORCH_ROCM_ARCH=gfx906         # Build target
@@ -179,6 +257,16 @@ TORCH_BLAS_PREFER_HIPBLASLT=0    # Not available on GCN5
 MIOPEN_FIND_MODE=2               # Reduce MIOpen overhead
 GPU_MAX_HW_QUEUES=1              # 3 compute queues per process; the card has 24 (see above)
 ```
+
+`HSA_OVERRIDE_GFX_VERSION` stays **unset**, with the key absent. KFD reports the card as
+gfx906 (`gfx_target_version 90006`), so ROCr already picks the gfx906 code objects and the
+override buys nothing. An empty inherited value is worse than none: ROCr still reads it
+and `hipInit` can return `hipErrorNoDevice`. That is why `build/runtime-entrypoint.sh`
+removes the key when `GPU_ARCH=gfx906`. On 2026-10-30 the live runtime pod, the
+runtime-manager process and all four llama-server subprocesses ran without the key.
+`9.0.6` equals the native target, so an image or script that still sets it is harmless; the
+pyannote Deployment and the GPTQ job script (after `rocminfo` reports gfx906) are examples.
+The old "reports as gfx900" note was wrong for this card on ROCm 6.3.
 
 ## PyTorch + Transformers Compatibility Matrix
 
@@ -290,6 +378,10 @@ A unified image replaces the 3 separate gfx906 images with a single image based 
 **Image**: `registry.harbor.lan/flexinfer/runtime:unified-gfx906`
 **Build**: `make build-unified-gfx906`
 
+Since 2026-10-30 the image no longer bakes `HSA_OVERRIDE_GFX_VERSION=9.0.6` (see
+[Required Environment Variables](#required-environment-variables)). No GPUProfile pins this
+image any more: abliteration moved to the gfx906 runtime image on 2026-10-23.
+
 **Replaces**:
 | Old Image | Purpose | Status |
 |-----------|---------|--------|
@@ -313,6 +405,8 @@ scripts are public and self-contained; can be forked if maintenance stops.
 
 | Date | Decision | Rationale |
 |------|----------|-----------|
+| 2026-10-30 | Enforce the 24-queue HWS budget: GPUProfile `maxHWQueues: 24` / `reservedHWQueues: 2`, per-Model `hwQueueEstimate` | VRAM admission cannot see queues; past 24 the runlist oversubscribes and co-resident lanes stall |
+| 2026-10-30 | `HSA_OVERRIDE_GFX_VERSION` unset everywhere on gfx906, including the unified image | KFD reports gfx906 natively; the live runtime runs without the key; an empty value hides the GPU |
 | 2026-03-20 | Unified gfx906 image based on mixa3607 | Restores GPU compute + transformers>=5.0 in single image |
 | 2026-03-20 | CPU-only abliteration on gfx906 | GPU alloc broken on ROCm 6.4; 128GB RAM makes CPU viable |
 | 2026-03-20 | Use `gptq-rocm64-gfx906` image | Only image with transformers>=5.0 for Qwen3.5 support |

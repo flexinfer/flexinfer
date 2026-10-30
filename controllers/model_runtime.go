@@ -246,6 +246,20 @@ func (r *ModelReconciler) maybeRecheckRuntimeKVPool(
 	return result, handled, err
 }
 
+// isRuntimeCapacityError reports a runtime load refused for capacity (VRAM or
+// hardware compute queues): retryable once another model releases it.
+func isRuntimeCapacityError(err error) bool {
+	return stderrors.Is(err, pkgrt.ErrInsufficientVRAM) || stderrors.Is(err, pkgrt.ErrInsufficientHWQueues)
+}
+
+// runtimeCapacityMessage is the RuntimeCapacity condition message for err.
+func runtimeCapacityMessage(err error) string {
+	if stderrors.Is(err, pkgrt.ErrInsufficientHWQueues) {
+		return "Waiting for previous models to release GPU hardware compute queues"
+	}
+	return "Waiting for previous models to release GPU memory"
+}
+
 // reloadViaRuntime asks the runtime to restart the named model with payload
 // and publishes the Model as Loading with readyReason, which removes its
 // Endpoints so the proxy queues instead of routing to an instance that is
@@ -261,10 +275,10 @@ func (r *ModelReconciler) reloadViaRuntime(ctx context.Context, model *aiv1alpha
 	case err == nil:
 	case stderrors.Is(err, pkgrt.ErrModelBusy):
 		message = "Waiting for accepted requests to finish before reloading in the runtime pod"
-	case stderrors.Is(err, pkgrt.ErrInsufficientVRAM):
+	case isRuntimeCapacityError(err):
 		// The runtime released the old instance before admission failed, so the
 		// next pass finds nothing loaded and takes the normal load path.
-		if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhasePending, false, "RuntimeCapacity", "Waiting for previous models to release GPU memory"); err != nil {
+		if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhasePending, false, "RuntimeCapacity", runtimeCapacityMessage(err)); err != nil {
 			return ctrl.Result{}, true, err
 		}
 		return ctrl.Result{RequeueAfter: requeueShort}, true, nil
@@ -445,8 +459,8 @@ func (r *ModelReconciler) reconcileViaRuntime(
 
 		// Model not loaded — send load request.
 		if err := r.loadViaRuntime(ctx, model, b, gpuVendor, endpoint, gpuArch); err != nil {
-			if stderrors.Is(err, pkgrt.ErrInsufficientVRAM) {
-				if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhasePending, false, "RuntimeCapacity", "Waiting for previous models to release GPU memory"); err != nil {
+			if isRuntimeCapacityError(err) {
+				if err := r.updateRuntimeStatus(ctx, model, aiv1alpha2.ModelPhasePending, false, "RuntimeCapacity", runtimeCapacityMessage(err)); err != nil {
 					return ctrl.Result{}, err
 				}
 				return ctrl.Result{RequeueAfter: requeueShort}, nil

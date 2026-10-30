@@ -512,23 +512,36 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	}
 
 	// Compilation cache: persistent hostPath for MIOpen/PyTorch/Triton caches.
-	// Survives pod restarts to avoid recompilation on GPU swaps.
-	if hostDir, ccEnabled := resolveCompilationCache(model); ccEnabled {
+	// Survives pod restarts to avoid recompilation on GPU swaps. The scope
+	// (model_compile_cache.go) only picks the host directory; the mount path
+	// and env are the same in both scopes, and the default scope renders
+	// exactly what it did before the scope existed.
+	if ccPlan, ccEnabled := resolveCompilationCachePlan(model, image, gpuArch); ccEnabled {
 		if ccConfigurer, ok := b.(backend.CompilationCacheConfigurer); ok {
+			if ccPlan.FallbackReason != "" {
+				log.Info("Image-scoped compile cache does not apply; using the per-Model directory",
+					"model", model.Name, "reason", ccPlan.FallbackReason, "dir", ccPlan.HostDir)
+			}
 			volumes = append(volumes, corev1.Volume{
-				Name: "compile-cache",
+				Name: compileCacheVolumeName,
 				VolumeSource: corev1.VolumeSource{
 					HostPath: &corev1.HostPathVolumeSource{
-						Path: hostDir,
+						Path: ccPlan.HostDir,
 						Type: hostPathTypePtr(corev1.HostPathDirectoryOrCreate),
 					},
 				},
 			})
 			container.VolumeMounts = append(container.VolumeMounts, corev1.VolumeMount{
-				Name:      "compile-cache",
+				Name:      compileCacheVolumeName,
 				MountPath: compilationCacheMountPath,
 			})
 			container.Env = append(container.Env, ccConfigurer.CompilationCacheEnvVars(compilationCacheMountPath)...)
+			if prepare := compileCachePrepareInitContainer(ccPlan, container); prepare != nil {
+				initContainers = append(initContainers, *prepare)
+				if seed := compileCacheSeedVolume(ccPlan); seed != nil {
+					volumes = append(volumes, *seed)
+				}
+			}
 		}
 	}
 

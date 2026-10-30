@@ -2,10 +2,16 @@
 #
 # Node: cblevins-radeonvii (single dGPU, 16 GB HBM2)
 #
-# Serving runtimes detect the Radeon VII as gfx906 directly; do not set
-# HSA_OVERRIDE_GFX_VERSION on this profile. SDMA is disabled for stability and
-# SVM is disabled to avoid hipMemGetInfo crashes
-# (VMM not supported on Vega20, ROCm/ROCm#2433).
+# HSA_OVERRIDE_GFX_VERSION: leave it unset (the key absent) on this profile.
+# KFD reports the card natively as gfx906 (topology gfx_target_version 90006),
+# so the override buys nothing, and an empty inherited value can make hipInit
+# return hipErrorNoDevice; build/runtime-entrypoint.sh removes the key on
+# GPU_ARCH=gfx906. The live runtime pod, the runtime-manager process and every
+# llama-server it spawns run without the key (read 2026-10-30). 9.0.6 equals
+# the native target and is harmless where an image or job script still sets
+# it (pyannote, for example), but nothing on this card needs it.
+# SDMA is disabled for stability and SVM is disabled to avoid hipMemGetInfo
+# crashes (VMM not supported on Vega20, ROCm/ROCm#2433).
 #
 # diffusers/comfyui are experimental — the unified runtime can run FLUX/SDXL
 # family manifests here, but keep warmups conservative (512px) and expect
@@ -32,6 +38,23 @@ spec:
   architecture: gfx906
   vendor: amd
   vramMB: 16384
+  # Hardware compute-queue admission (docs/dev/gfx906-gpu-support.md). KFD
+  # num_cp_queues is 24 (4 CP pipes x 6); past it the HWS oversubscribes the
+  # runlist and co-resident lanes stall for seconds. The multi-model election
+  # and the runtime's load admission keep the summed per-Model estimate within
+  # maxHWQueues - reservedHWQueues = 22, and the runtime also refuses a load
+  # that would push the queues KFD reports past 24. A llama.cpp lane under
+  # GPU_MAX_HW_QUEUES=1 (env below) is estimated at 3 queues.
+  # Live accounting on 2026-10-30 (/sys/class/kfd/kfd/proc/*/queues): the four
+  # warm lanes (bge-large, bge-reranker, gte-qwen2, orpheus) hold 3 compute
+  # queues each and pyannote holds 2 (+2 SDMA queues, not counted): 14 of 24.
+  # Estimated Model use 12 of 22, so 3 more llama.cpp lanes fit. The 2026-10-24
+  # set with both Qwen3 lanes (18 + 2 = 20) passes with 4 to spare.
+  maxHWQueues: 24
+  # pyannote-diarization: a hand-written Deployment outside the Model API,
+  # measured at 2 compute queues on 2026-10-24 and 2026-10-30. GPU-leased Jobs
+  # park the serving lanes and need no reservation.
+  reservedHWQueues: 2
   features:
     fp16: true
     bf16: false
@@ -77,7 +100,7 @@ spec:
         fusedMoETriton: experimental  # Untested on Vega20; will be validated during Slice 8.
         fp8KVEmulation: unsupported   # No FP8 hardware; emulation untested on Vega20.
         marlinINT4: unsupported       # CUDA-only upstream; ExllamaV2 is the INT4 path on gfx906.
-        audioTranscription: unsupported # No FA kernel on Vega20 and runtime is paused (Track B). Whisper.cpp HIP is the gfx906 ASR fallback per .loom/asr-diarization-7900xtx-plan-2026-05-18.md.
+        audioTranscription: unsupported # No FA kernel on Vega20. Whisper.cpp HIP is the gfx906 ASR fallback per .loom/asr-diarization-7900xtx-plan-2026-05-18.md.
         defaults:
           cudagraphMode: "NONE"       # Expressed as enforceEager by controller/runtime defaults.
           enforceEager: true
@@ -95,6 +118,10 @@ spec:
       support: experimental
       image: registry.harbor.lan/flexinfer/comfyui:rocm-gfx906
     mlc-llm:
+      # Retired from the fleet (no deployed Model uses it), but kept: the
+      # backend is still registered and backend.ResolveBackendImage /
+      # ResolveBackendGPUSupport read this entry for any mlc-llm Model on
+      # gfx906. Removing it switches such a Model to the in-code image.
       support: experimental
       image: registry.harbor.lan/flexinfer/mlc-llm:rocm64-gfx906
   env:

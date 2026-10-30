@@ -290,6 +290,13 @@ func allMetrics() []metricSpec {
 			collector:  SharedGroupState,
 		},
 		{
+			name:       "flexinfer_sharedgroup_hw_queues",
+			help:       "Hardware compute queues of a shared GPU group: estimated Active-set use, budget and reserve.",
+			metricType: dto.MetricType_GAUGE,
+			labels:     []string{"group", "namespace", "gpu_arch", "kind"},
+			collector:  SharedGroupHWQueues,
+		},
+		{
 			name:       "flexinfer_sharedgroup_preemptions_total",
 			help:       "Total preemption events in shared GPU groups.",
 			metricType: dto.MetricType_COUNTER,
@@ -487,7 +494,7 @@ func TestMetricTypes(t *testing.T) {
 // TestMetricCount verifies the table is exhaustive. If a developer adds a metric
 // to exporter.go but forgets to add it to the test table, this test fails.
 func TestMetricCount(t *testing.T) {
-	const expectedMetricCount = 52 // total exported metrics in exporter.go
+	const expectedMetricCount = 53 // total exported metrics in exporter.go
 	got := len(allMetrics())
 	assert.Equal(t, expectedMetricCount, got,
 		"metric count changed — update allMetrics() table when adding/removing metrics")

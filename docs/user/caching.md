@@ -283,6 +283,162 @@ flash-loader reuses files whose sizes match the source and checks free space
 only for missing or size-mismatched files. Its startup log reports the planned
 copy and reuse file counts and bytes.
 
+## Compilation cache
+
+`spec.cache.compilationCache` keeps GPU kernel compilation caches on a node
+hostPath, so a restarted lane loads its kernels from disk instead of
+recompiling them. It is on by default for `gpu.shared` AMD Models and can be set
+explicitly for any Model whose backend supports it (vLLM, vLLM-Omni, diffusers,
+ComfyUI). A dedicated pod mounts the directory at `/cache/compile` and gets:
+
+| Variable | Path | Backends |
+|---|---|---|
+| `TRITON_CACHE_DIR` | `/cache/compile/triton` | all four |
+| `TORCHINDUCTOR_CACHE_DIR` | `/cache/compile/inductor` | all four |
+| `MIOPEN_CUSTOM_CACHE_DIR`, `MIOPEN_USER_DB_PATH` | `/cache/compile/miopen`, `…/miopen/user.db` | all four |
+| `TORCH_HOME` | `/cache/compile/torch` | all four |
+| `VLLM_CACHE_ROOT` | `/cache/compile/vllm` | vLLM, vLLM-Omni |
+| `XDG_CACHE_HOME` | `/cache/compile/xdg` (comgr's `llvmcache-*`) | vLLM, vLLM-Omni |
+
+These names are reserved: `spec.config.env` cannot override them.
+
+### Scope: one cache per Model or per image
+
+`compilationCache.scope` chooses which lanes share a directory under
+`compilationCache.hostPath` (default `/var/lib/flexinfer/compile-cache`):
+
+- `Model` (the default): `<hostPath>/<namespace>/<model-name>/`, one cache per
+  lane. Every canary or probe of an image compiles from scratch and keeps a
+  full copy.
+- `Image`: `<hostPath>/shared/<gpuArch>/<digest12>/`, where `<digest12>` is the
+  first 12 hex digits of the serving image's sha256 digest (the same digits
+  as Harbor's `pinned-<digest12>` tags). Every lane on that node, image digest
+  and GPU arch uses one directory.
+
+```yaml
+spec:
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c02…
+  cache:
+    compilationCache:
+      enabled: true
+      scope: Image
+      # Optional, once: copy a lane's earlier per-Model cache in.
+      seedFrom: /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s4-5930k/flexinfer-system/qwen38-27b-autoround-workhorse
+```
+
+Sharing is safe because none of these caches is keyed by the Model. Each tool
+keys its own entries:
+
+- Triton keys each kernel by source, compile options, Triton version and GPU
+  target.
+- vLLM's torch.compile output lives in `vllm/torch_compile_cache/<hash>/`, where
+  the hash covers the vLLM config, code and compiler. Different models or
+  envelopes therefore get different subtrees on their own.
+- The ROCm segmented-attention autotune tables
+  (`vllm/rocm_segmented_attention/<hash>.json`) are keyed by GPU, toolchain,
+  kernel source and shapes.
+- MIOpen names its databases after the GPU and its CU count.
+
+A fresh lane on an image another lane already warmed therefore skips the
+segmented autotune (`missing=0`) and the first-use Triton compiles. The digest
+scopes the directory rather than the tag: a digest pins the toolchain, and a
+retired image's directory can be deleted as a unit.
+
+The image scope needs a digest-pinned image (`repo@sha256:…`, from `spec.image`
+or `spec.imageDigest`) and a known GPU arch. Without either, the lane falls
+back to `Model` and the controller logs why. Only lanes with the same
+`hostPath` share a directory; keep the default to share with the runtime pod.
+Switching scope changes the pod template, so the lane restarts once and boots
+from the new directory. The old per-Model directory is left in place, which
+keeps a rollback warm.
+
+Every consumer must see the directory at the same in-container path,
+`/cache/compile`. The Triton release in the serving images (3.8) writes
+absolute file paths into its `__grp__*.json` manifests and treats a missing
+path as a miss. A directory mounted at two paths would make each side
+recompile what the other wrote.
+
+#### Seeding
+
+`compilationCache.seedFrom` names a node directory, normally the lane's earlier
+per-Model cache, to copy into an image-scoped cache that has not been seeded
+yet. A `compile-cache-prepare` init container (serving image, `/bin/sh`) does
+it once per directory:
+
+1. It copies the seed into a staging directory on the cache mount.
+2. It hard-links the staged files into place without replacing any existing
+   entry. A hard link publishes a file atomically, so a lane already using the
+   directory never reads a half-copied kernel.
+3. It writes `.flexinfer-seeded`.
+
+A missing or empty seed is skipped, and a failed copy boots the lane with the
+cache as it is. Seeding never blocks a lane. `seedFrom` can be dropped after
+the first boot. It is mounted read-only, and the source is never modified.
+Without `seedFrom`, the first lane on an image pays the compiles once, and
+every later lane on that image reuses them.
+
+### Runtime pod
+
+Runtime-managed loads with `scope: Image` can share the same directory. Set
+`sharedCompileCache: true` on the runtime profile:
+
+```yaml
+runtime:
+  profiles:
+    - name: gfx1100
+      image: registry.harbor.lan/flexinfer/runtime@sha256:…   # must be a digest
+      gpuArch: gfx1100
+      sharedCompileCache: true
+```
+
+The DaemonSet then mounts `/var/lib/flexinfer/compile-cache/shared/<gpuArch>/<digest12>`
+of the profile's own image at `/cache/compile`, which is the host directory
+and path a dedicated pod on the same digest uses. It also sets
+`FLEXINFER_SHARED_COMPILE_CACHE_DIR=/cache/compile`. The load payload carries
+the per-Model cache env plus `FLEXINFER_COMPILE_CACHE_SCOPE=Image`. A runtime
+with the mount re-points the cache env to `/cache/compile`. A runtime without
+the mount (the profile setting is off, or an older runtime image) keeps the
+per-Model directory. Seeding is not available on this path, because the
+runtime pod cannot mount new host directories at load time. A dedicated lane
+on the same digest seeds the directory for both paths.
+
+The runtime pod's own process env (the `…/compile-cache/runtime/*` paths in
+`deploy/system/values-k3s.yaml`) is unchanged. It still covers loads that
+request no compile cache.
+
+### Concurrent writers
+
+Two processes can write one shared directory: the runtime pod and a dedicated
+lane on the same image, or two lanes back to back. What each tool does:
+
+| Tool | Writes | Concurrent writers |
+|---|---|---|
+| Triton (`triton/`) | temp dir `tmp.pid_<pid>_<uuid>` then `os.replace`; `__grp__` manifest last | safe; a manifest whose files are missing reads as a miss |
+| TorchInductor (`inductor/`) | `write_atomic` (temp `.<pid>.<tid>.tmp`, rename); locks under `locks/` | safe |
+| vLLM AOT compile (`vllm/torch_compile_cache/torch_aot_compile/`) | `<path>.<pid>.tmp` then `os.replace`; a load failure recompiles | safe |
+| vLLM standalone artifacts | `write_atomic` (binary format) | safe |
+| vLLM compile index (`vllm_compile_cache.py`) | plain `open(..., "w")`; read with `ast.literal_eval`, no fallback | **unsafe**, see below |
+| Segmented-attention autotune (`vllm/rocm_segmented_attention/`) | `<hash>.json` guarded by `<hash>.json.lock` | safe |
+| vLLM model info (`vllm/modelinfos/`) | plain write; a failed read recomputes | safe |
+| MIOpen (`miopen/`) | file-locked perf DB, SQLite kernel cache | safe |
+| comgr (`xdg/comgr/`) | LLVM cache: temp file then rename | safe |
+
+The vLLM compile index is shared only by processes with the same vLLM config
+hash. Two such engines booting together on one node is rare: shared-GPU
+election runs one lane per card at a time, and a GPU Deployment never surges.
+If it does happen, a boot that reads a half-written index fails once, and its
+restart reads the finished file. The case that does not heal is a write cut
+short, for example when a pod is killed mid-save. Every later boot of that
+hash then crashes. That was true of a per-Model directory too, but a shared
+directory spreads it to every lane with the same config. The guard: before
+the engine starts, the `compile-cache-prepare` init container (dedicated path)
+and the runtime manager (runtime path) rename aside any
+`vllm_compile_cache.py` that does not end in `}`. vLLM writes the index as a
+pprint'ed dict, so an index that ends in `}` is complete. That config then
+recompiles once.
+
+Nothing reclaims compile caches yet, in either scope.
+
 ## v1alpha1 `ModelCache`
 
 `ModelCache` lets you pre-download (and optionally pre-warm) a model artifact.

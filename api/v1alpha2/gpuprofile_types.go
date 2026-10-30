@@ -24,6 +24,7 @@ import (
 // GPUProfileSpec declares the capabilities, images, and environment variables
 // for a specific GPU architecture. This replaces hardcoded per-arch logic
 // scattered across backend/, controllers/, and pkg/quantization/.
+// +kubebuilder:validation:XValidation:rule="!has(self.reservedHWQueues) || self.reservedHWQueues == 0 || (has(self.maxHWQueues) && self.reservedHWQueues < self.maxHWQueues)",message="reservedHWQueues must be less than maxHWQueues"
 type GPUProfileSpec struct {
 	// Architecture is the GPU microarchitecture identifier (e.g. "gfx1100", "gfx906", "sm_52").
 	Architecture string `json:"architecture"`
@@ -34,6 +35,27 @@ type GPUProfileSpec struct {
 	// VRAMMB is the usable VRAM in megabytes for inference workloads.
 	// For nodes with mixed GPUs (e.g. dGPU + iGPU), this reflects only the usable device.
 	VRAMMB int64 `json:"vramMB"`
+
+	// MaxHWQueues is the number of hardware compute queues the GPU's hardware
+	// scheduler maps at once (KFD num_cp_queues in
+	// /sys/class/kfd/kfd/topology/nodes/<n>/properties; 24 on Vega20). Past it
+	// the kernel logs "Runlist is getting oversubscribed" and time-slices the
+	// queues, which stalls co-resident lanes. When set, the multi-model
+	// shared-group election and the runtime's load admission keep the summed
+	// Model spec.gpu.hwQueueEstimate within MaxHWQueues - ReservedHWQueues, and
+	// the runtime also refuses a load that would push the queues KFD reports
+	// past MaxHWQueues. 0 or unset disables queue admission.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	MaxHWQueues int32 `json:"maxHWQueues,omitempty"`
+
+	// ReservedHWQueues holds compute queues back from MaxHWQueues for GPU
+	// tenants the Model API does not see, such as hand-written Deployments
+	// (pyannote on the Radeon VII). Jobs that take a GPU lease park the serving
+	// lanes instead and need no reservation.
+	// +kubebuilder:validation:Minimum=0
+	// +optional
+	ReservedHWQueues int32 `json:"reservedHWQueues,omitempty"`
 
 	// DeviceCount is the total number of GPU resources reported by the K8s device plugin
 	// on the target node. This may be higher than the number of usable devices when an
@@ -177,8 +199,7 @@ type VLLMCapabilities struct {
 	// flag is no longer needed (Whisper kill-test v5 evidence).
 	// gfx1100: gated on the Slice 1 kill-test in
 	// .loom/asr-diarization-7900xtx-plan-2026-05-18.md (initial value "experimental").
-	// gfx906: "unsupported" — no FlashAttention kernel on Vega20 and the gfx906
-	// vLLM runtime is currently paused (Track B in gfx1100-gfx906-next-round-plan.md).
+	// gfx906: "unsupported" — no FlashAttention kernel on Vega20.
 	// Doc-only at first; controller enforcement (refuse Whisper-architecture
 	// model CRs on profiles where this is "unsupported") lands in a follow-up slice.
 	// +optional

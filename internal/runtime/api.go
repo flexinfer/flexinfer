@@ -83,7 +83,7 @@ func (s *Server) handleLoadModel(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, err.Error())
 			return
 		}
-		if errors.Is(err, ErrInsufficientVRAM) {
+		if errors.Is(err, ErrInsufficientVRAM) || errors.Is(err, ErrInsufficientHWQueues) {
 			writeError(w, http.StatusServiceUnavailable, err.Error())
 			return
 		}

@@ -107,6 +107,14 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            {{- if .sharedCompileCache }}
+            # Image-scoped compile cache (docs/user/caching.md "Runtime pod"):
+            # loads with spec.cache.compilationCache.scope: Image re-point
+            # their cache env at this mount, the host directory and in-pod
+            # path dedicated lanes on the same digest and arch use.
+            - name: FLEXINFER_SHARED_COMPILE_CACHE_DIR
+              value: /cache/compile
+            {{- end }}
             {{- with .env }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -124,6 +132,10 @@ spec:
               mountPath: /dev/shm
             - name: compile-cache
               mountPath: /var/lib/flexinfer/compile-cache
+            {{- if .sharedCompileCache }}
+            - name: compile-cache-shared
+              mountPath: /cache/compile
+            {{- end }}
             {{- if eq .gpuVendor "amd" }}
             - name: dev-kfd
               mountPath: /dev/kfd
@@ -171,6 +183,12 @@ spec:
           hostPath:
             path: /var/lib/flexinfer/compile-cache
             type: DirectoryOrCreate
+        {{- if .sharedCompileCache }}
+        - name: compile-cache-shared
+          hostPath:
+            path: {{ include "flexinfer.runtimeSharedCompileCacheDir" . | quote }}
+            type: DirectoryOrCreate
+        {{- end }}
         {{- if eq .gpuVendor "amd" }}
         - name: dev-kfd
           hostPath:

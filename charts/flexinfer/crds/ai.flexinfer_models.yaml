@@ -94,6 +94,31 @@ spec:
                         description: |-
                           HostPath is the base directory on the node for compilation caches.
                           A subdirectory per model is created automatically: <hostPath>/<namespace>/<model-name>/
+                          (with scope Image: <hostPath>/shared/<gpuArch>/<digest12>/).
+                        type: string
+                      scope:
+                        description: |-
+                          Scope selects which lanes share the cache directory under HostPath.
+                          - Model (default): <hostPath>/<namespace>/<model-name>/, one cache per Model.
+                          - Image: <hostPath>/shared/<gpuArch>/<digest12>/, one cache per GPU arch and
+                          serving-image digest (first 12 hex digits) on each node.
+                          Triton, Inductor, vLLM, MIOpen and comgr key their entries by source,
+                          options, toolchain and shapes, so lanes on one image reuse each other's
+                          kernels while different models keep separate config-hash subtrees.
+                          Only lanes with the same HostPath share; keep the default to share with
+                          the runtime pod. An image that is not digest-pinned, or an unknown GPU
+                          arch, falls back to Model.
+                        enum:
+                        - Model
+                        - Image
+                        type: string
+                      seedFrom:
+                        description: |-
+                          SeedFrom is an absolute node directory, such as the lane's earlier
+                          per-Model cache, copied once into an Image-scoped cache that has not been
+                          seeded yet. Existing entries are kept; a missing or empty source is
+                          skipped. Mounted read-only and never modified. Ignored for scope Model.
+                        pattern: ^/
                         type: string
                       sizeLimit:
                         default: 2Gi
@@ -270,6 +295,21 @@ spec:
                       group. Set back to false (or remove) once the forced-active model is
                       no longer wanted active. Default: false.
                     type: boolean
+                  hwQueueEstimate:
+                    description: |-
+                      HWQueueEstimate is the number of hardware compute queues (HWS queue
+                      slots) this model's processes hold on one GPU. It is consulted only on
+                      architectures whose GPUProfile sets maxHWQueues: the shared-group
+                      election and the runtime's load admission keep the summed estimate
+                      within maxHWQueues - reservedHWQueues. Unset defaults from the backend
+                      and the effective GPU_MAX_HW_QUEUES (GPUProfile env overlaid by
+                      spec.config.env): (GPU_MAX_HW_QUEUES, default 4) + 2 per HIP process,
+                      one process for llamacpp, ollama and diffusers and two for vllm. 3 for a
+                      llama.cpp lane under the gfx906 cap of 1.
+                    format: int32
+                    maximum: 128
+                    minimum: 0
+                    type: integer
                   priority:
                     default: 100
                     description: |-
@@ -317,6 +357,9 @@ spec:
                   rule: self.vendor != 'cpu' || !has(self.count)
                 - message: gpu.vramEstimateMB must be omitted when gpu.vendor is cpu
                   rule: self.vendor != 'cpu' || !has(self.vramEstimateMB)
+                - message: gpu.hwQueueEstimate must be omitted when gpu.vendor is
+                    cpu
+                  rule: self.vendor != 'cpu' || !has(self.hwQueueEstimate)
                 - message: gpu.shared must be empty when gpu.vendor is cpu
                   rule: self.vendor != 'cpu' || !has(self.shared) || size(self.shared)
                     == 0

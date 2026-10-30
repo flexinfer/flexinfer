@@ -1,0 +1,77 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: wan21-t2v-1p3b-gfx1100
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/serve-paths: /v1/videos/generations
+    flexinfer.ai/purpose: 480p text-to-video on ROCm gfx1100
+    flexinfer.ai/plan: .loom/30-implementation-plan-video-gen-gfx1100-2026-07-14.md
+spec:
+  backend: diffusers
+  image: registry.harbor.lan/flexinfer/diffusers-video:rocm-gfx1100
+  imageDigest: sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
+  source: HF://Wan-AI/Wan2.1-T2V-1.3B-Diffusers
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 32Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache
+      sizeLimit: 6Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    priority: 500
+    vramEstimateMB: 18000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 30m
+  config:
+    dedicatedDeployment: true
+    pipelineMode: text2video
+    modelFamily: wan
+    dtype: bfloat16
+    cpuOffload: "true"
+    compileMode: max-autotune-no-cudagraphs
+    compileFullgraph: "false"
+    skipWarmup: "1"
+    numInferenceSteps: "30"
+    guidanceScale: "5.0"
+    videoSize: 832x480
+    videoFrames: "81"
+    videoFps: "16"
+    negativePrompt: "static, blurry, low quality, distorted, watermark, subtitles, text"
+    hipVisibleDevices: "0"
+    warmPolicy: ondemand
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 48Gi
+  serviceLabels:
+    - video-gen
+    - text-to-video
+    - wan21
+    - wan21-t2v-480p
+  litellm:
+    enabled: true
+    servedModelName: wan21-t2v-1p3b-gfx1100
+    aliases:
+      - video-gen
+      - text-to-video
+      - wan21-t2v-480p
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists

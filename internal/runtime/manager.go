@@ -53,6 +53,9 @@ type LoadRequest struct {
 	// Reload restarts an already-loaded model of the same name with this
 	// request instead of returning early. Request drain still applies.
 	Reload bool `json:"reload,omitempty"`
+	// HWQueues is the GPUProfile compute-queue budget to admit this load
+	// against (pkg/runtime.LoadPayload.HWQueues); nil keeps the last one seen.
+	HWQueues *pkgrt.HWQueueBudget `json:"hwQueues,omitempty"`
 }
 
 // LoadedModel tracks a running backend subprocess and its model.
@@ -85,6 +88,9 @@ type LoadedModel struct {
 	progress *loadProgress
 	// vramEstimateMB is the load request's config.vramEstimateMB (0 = unknown).
 	vramEstimateMB int64
+	// hwQueues is the hardware compute queues this subprocess is estimated to
+	// hold (hwQueueEstimateFor).
+	hwQueues int32
 	// requestedAt is when Load was called; swapObserved guards the single
 	// ModelSwapDurationSeconds observation per load. Both guarded by m.mu.
 	requestedAt  time.Time
@@ -224,6 +230,13 @@ type Manager struct {
 	// gaugedBackends remembers every backend label LoadedModels was set for,
 	// so a backend whose last model unloads is reported as 0. Guarded by mu.
 	gaugedBackends map[string]struct{}
+
+	// hwQueueBudget is the last GPUProfile queue budget a load carried (nil =
+	// none yet, admission open). Guarded by mu.
+	hwQueueBudget *pkgrt.HWQueueBudget
+	// hwQueueQuery counts the compute queues KFD reports on this GPU
+	// (injectable for tests; nil or ok=false = no telemetry).
+	hwQueueQuery func() (int32, bool)
 }
 
 // defaultVRAMHeadroomMB is the free-VRAM margin kept before admitting a new
@@ -312,6 +325,9 @@ func NewManager(cfg ManagerConfig) *Manager {
 		gaugedBackends:      make(map[string]struct{}),
 	}
 	m.gpuQuery = func() GPUInfo { return queryVRAM(string(m.gpuVendor)) }
+	if m.gpuVendor == backend.GPUVendorAMD {
+		m.hwQueueQuery = func() (int32, bool) { return ObservedHWQueues(m.gpuArch) }
+	}
 	m.gamingClientActive = m.sunshineClientActive
 	m.gamingRestart = m.loadGamingBackend
 	// Reflect the initial mode in the gauge.
@@ -420,6 +436,7 @@ func (m *Manager) refreshLoadedModelsLocked() {
 	for b := range m.gaugedBackends {
 		LoadedModels.WithLabelValues(b).Set(float64(counts[b]))
 	}
+	m.publishHWQueuesLocked()
 }
 
 // canAdmit reports whether a new model with the given VRAM estimate fits
@@ -551,6 +568,18 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		estimateMB = int64(v)
 	}
 
+	// Hardware compute-queue admission (GPUProfile maxHWQueues). It runs in
+	// both modes: the queues KFD reports include tenants outside this runtime.
+	hwQueues := hwQueueEstimateFor(b.Name(), req)
+	ok, reason := m.admitHWQueues(logger, name, hwQueues, req.HWQueues)
+	if !ok {
+		ModelSwapDurationSeconds.WithLabelValues(name, req.Backend, "rejected").Observe(time.Since(requestedAt).Seconds())
+		return fmt.Errorf("%w: cannot load %q: %s", ErrInsufficientHWQueues, name, reason)
+	}
+	if reason != hwQueueNoBudget {
+		logger.Info("Hardware queue admission passed", "reason", reason)
+	}
+
 	// Multi-model mode: allocate a distinct port per concurrent subprocess and
 	// enforce VRAM admission. Single-slot mode keeps the fixed backend port and
 	// skips admission (the incumbent was already unloaded above).
@@ -624,6 +653,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		env = overlayEnvVars(env, []corev1.EnvVar{{Name: "LOCAL_MODEL_PATH", Value: modelPath}})
 	}
 	env = overlayEnvVars(env, req.Env)
+	env = applySharedCompileCache(logger, b, env, os.Getenv(pkgrt.SharedCompilationCacheDirEnv))
 	if ingress != nil {
 		args, env = configureIngressBackend(b.Name(), backendPort, args, env)
 	}
@@ -689,6 +719,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		progress:   &loadProgress{},
 
 		vramEstimateMB: estimateMB,
+		hwQueues:       hwQueues,
 		requestedAt:    requestedAt,
 	}
 	loaded.stallWindow = backend.StallWindowForSpec(spec)

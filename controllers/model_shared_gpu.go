@@ -30,6 +30,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/constants"
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
@@ -256,6 +257,34 @@ func vramEstimateMB(m *aiv1alpha2.Model) int64 {
 	return *m.Spec.GPU.VRAMEstimateMB
 }
 
+// hwQueueBound bounds the summed hardware compute-queue estimate of a
+// multi-model Active set: GPUProfile maxHWQueues - reservedHWQueues. The zero
+// value disables the bound, which keeps election VRAM-only.
+type hwQueueBound struct {
+	limit    int32
+	reserved int32
+	estimate func(*aiv1alpha2.Model) int32
+}
+
+func (q hwQueueBound) enabled() bool { return q.limit > 0 && q.estimate != nil }
+
+// of returns m's queue estimate, or 0 while the bound is disabled.
+func (q hwQueueBound) of(m *aiv1alpha2.Model) int32 {
+	if !q.enabled() || m == nil {
+		return 0
+	}
+	return q.estimate(m)
+}
+
+// sum returns the summed queue estimate of models.
+func (q hwQueueBound) sum(models []*aiv1alpha2.Model) int32 {
+	var used int32
+	for _, m := range models {
+		used += q.of(m)
+	}
+	return used
+}
+
 // sharedModelWantsToRun reports whether a member should be considered for one of
 // several concurrent Active slots in multi-model mode: it must be runnable and
 // either pinned warm, currently Ready, or under recent demand. (The primary
@@ -309,6 +338,15 @@ func sharedActivityWindow(m *aiv1alpha2.Model, fallback time.Duration) time.Dura
 // released or expires. The lease is the highest-priority transient member of
 // the group -- it beats even forcePromotion (the spec's "park-and-hold").
 func chooseSharedGroupLeaders(groupModels []*aiv1alpha2.Model, now time.Time, multiModel bool, budgetMB int64, leased bool) []*aiv1alpha2.Model {
+	return chooseSharedGroupLeadersBounded(groupModels, now, multiModel, budgetMB, hwQueueBound{}, leased)
+}
+
+// chooseSharedGroupLeadersBounded is chooseSharedGroupLeaders with a second
+// admission bound: with multiModel=true a non-primary wanter joins the Active
+// set only if it also keeps the summed hardware compute-queue estimate within
+// queues.limit (GPUProfile maxHWQueues - reservedHWQueues). The primary is
+// always included, as with the VRAM bound. A disabled bound changes nothing.
+func chooseSharedGroupLeadersBounded(groupModels []*aiv1alpha2.Model, now time.Time, multiModel bool, budgetMB int64, queues hwQueueBound, leased bool) []*aiv1alpha2.Model {
 	if leased {
 		return nil
 	}
@@ -322,6 +360,7 @@ func chooseSharedGroupLeaders(groupModels []*aiv1alpha2.Model, now time.Time, mu
 
 	active := []*aiv1alpha2.Model{primary}
 	used := vramEstimateMB(primary)
+	usedQueues := queues.of(primary)
 
 	// Other wanters, highest priority first (deterministic tiebreak by name).
 	var candidates []*aiv1alpha2.Model
@@ -346,8 +385,13 @@ func chooseSharedGroupLeaders(groupModels []*aiv1alpha2.Model, now time.Time, mu
 		if budgetMB > 0 && used+est > budgetMB {
 			continue
 		}
+		q := queues.of(m)
+		if queues.enabled() && usedQueues+q > queues.limit {
+			continue
+		}
 		active = append(active, m)
 		used += est
+		usedQueues += q
 	}
 	return active
 }
@@ -431,22 +475,32 @@ func staticallyParkedBehindPrimary(member, leader *aiv1alpha2.Model) bool {
 // demand cannot buy it a slot while the current Active set holds the budget,
 // and the stamp self-heals on the reconcile after the set shrinks.
 func staticallyParkedInGroup(member, leader *aiv1alpha2.Model, activeModels []*aiv1alpha2.Model, multiModel bool, budgetMB int64) bool {
+	return staticallyParkedInGroupBounded(member, leader, activeModels, multiModel, budgetMB, hwQueueBound{})
+}
+
+// staticallyParkedInGroupBounded adds the hardware-queue bound: a multi-model
+// member whose queue estimate does not fit beside the Active set stays stamped
+// for the same reason as one whose VRAM does not fit.
+func staticallyParkedInGroupBounded(member, leader *aiv1alpha2.Model, activeModels []*aiv1alpha2.Model, multiModel bool, budgetMB int64, queues hwQueueBound) bool {
 	if !staticallyParkedBehindPrimary(member, leader) {
 		return false
 	}
 	if !multiModel {
 		return true
 	}
-	if budgetMB <= 0 {
-		// Unbounded budget admits every wanter (chooseSharedGroupLeaders skips
-		// the VRAM bound), so no member is ever statically parked.
-		return false
+	// An unbounded VRAM budget admits every wanter on VRAM
+	// (chooseSharedGroupLeaders skips that bound), so only the queue bound can
+	// then park a member statically.
+	vramFull := false
+	if budgetMB > 0 {
+		var used int64
+		for _, m := range activeModels {
+			used += vramEstimateMB(m)
+		}
+		vramFull = used+vramEstimateMB(member) > budgetMB
 	}
-	var used int64
-	for _, m := range activeModels {
-		used += vramEstimateMB(m)
-	}
-	return used+vramEstimateMB(member) > budgetMB
+	queuesFull := queues.enabled() && queues.sum(activeModels)+queues.of(member) > queues.limit
+	return vramFull || queuesFull
 }
 
 func sharedModelCanTakeDemand(model *aiv1alpha2.Model) bool {
@@ -571,6 +625,37 @@ func (r *ModelReconciler) sharedGroupMultiModel(model *aiv1alpha2.Model) (bool, 
 	return true, profile.VRAMMB
 }
 
+// sharedGroupHWQueueBound resolves the hardware compute-queue bound for the
+// model's GPU: the GPUProfile's maxHWQueues - reservedHWQueues and a per-member
+// estimator (spec.gpu.hwQueueEstimate, else the backend default for the
+// member's effective GPU_MAX_HW_QUEUES). It returns the disabled bound when
+// the profile sets no maxHWQueues, and the resolved architecture.
+func (r *ModelReconciler) sharedGroupHWQueueBound(model *aiv1alpha2.Model) (hwQueueBound, string) {
+	if r.GPUProfiles == nil || model == nil {
+		return hwQueueBound{}, ""
+	}
+	arch := gpuArchFromNodeSelector(model.Spec.NodeSelector)
+	if arch == "" {
+		return hwQueueBound{}, ""
+	}
+	profile, ok := r.GPUProfiles.Lookup(arch)
+	if !ok {
+		return hwQueueBound{}, arch
+	}
+	maxQueues, reserved, ok := backend.HWQueueBudget(profile)
+	if !ok {
+		return hwQueueBound{}, arch
+	}
+	vendor := backend.GPUVendor(strings.ToLower(strings.TrimSpace(profile.Vendor)))
+	return hwQueueBound{
+		limit:    maxQueues - reserved,
+		reserved: reserved,
+		estimate: func(m *aiv1alpha2.Model) int32 {
+			return backend.ModelHWQueueEstimate(m, profile, vendor, arch)
+		},
+	}, arch
+}
+
 func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2.Model) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
@@ -632,7 +717,15 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	// Active instead of a single leader. Single-slot (default) returns exactly
 	// the one leader, so behavior is unchanged for every existing group.
 	multiModel, budgetMB := r.sharedGroupMultiModel(model)
-	activeModels := chooseSharedGroupLeaders(groupModels, now, multiModel, budgetMB, leased)
+	// Hardware compute queues bound the multi-model set beside VRAM where the
+	// GPUProfile sets maxHWQueues (gfx906: 24 HWS queues).
+	queues, queueArch := r.sharedGroupHWQueueBound(model)
+	activeModels := chooseSharedGroupLeadersBounded(groupModels, now, multiModel, budgetMB, queues, leased)
+	if queues.enabled() {
+		metrics.SharedGroupHWQueues.WithLabelValues(groupName, model.Namespace, queueArch, "estimated").Set(float64(queues.sum(activeModels)))
+		metrics.SharedGroupHWQueues.WithLabelValues(groupName, model.Namespace, queueArch, "budget").Set(float64(queues.limit))
+		metrics.SharedGroupHWQueues.WithLabelValues(groupName, model.Namespace, queueArch, "reserved").Set(float64(queues.reserved))
+	}
 	// An empty active set is normal under a lease (everyone parks). Without a
 	// lease it is the "shouldn't happen" guard -- requeue and retry.
 	if len(activeModels) == 0 && !leased {
@@ -694,7 +787,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		// a member that still fits is admitted by demand, so its cold-start must
 		// queue normally. Lease parks take precedence and keep their own prefix.
 		effectivePreemptedBy := preemptedBy
-		if !leased && primary != nil && staticallyParkedInGroup(model, primary, activeModels, multiModel, budgetMB) {
+		if !leased && primary != nil && staticallyParkedInGroupBounded(model, primary, activeModels, multiModel, budgetMB, queues) {
 			effectivePreemptedBy = aiv1alpha2.PreemptedByPrimaryPrefix + primary.Name
 		}
 		model.Status.SharedGroup.State = "Queued"

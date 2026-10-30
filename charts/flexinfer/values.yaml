@@ -126,6 +126,12 @@ runtime:
   #     requests: {memory: "1Gi", ephemeral-storage: "2Gi"}
   #   # Optional: PriorityClass for the runtime pod (must exist in-cluster).
   #   priorityClassName: flexinfer-serving-critical
+  #   # Optional: mount this image's shared compile cache,
+  #   # /var/lib/flexinfer/compile-cache/shared/<gpuArch>/<digest12>, at
+  #   # /cache/compile so loads with spec.cache.compilationCache.scope: Image
+  #   # share kernels with dedicated lanes on the same digest. Needs a
+  #   # digest-pinned image (repo@sha256:...). See docs/user/caching.md.
+  #   sharedCompileCache: false
   #   nodeSelector:
   #     kubernetes.io/hostname: cblevins-7900xtx
   #   # Optional: hold the DaemonSet at desired=0. Adds the nodeSelector term

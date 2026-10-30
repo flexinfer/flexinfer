@@ -106,6 +106,9 @@ const (
 	ReasonBackendUnsupported = "BackendUnsupported"
 	// ReasonVRAMInsufficient - model VRAM estimate exceeds GPU capacity
 	ReasonVRAMInsufficient = "VRAMInsufficient"
+	// ReasonHWQueuesInsufficient - model hardware compute-queue estimate
+	// exceeds the GPUProfile queue budget (maxHWQueues - reservedHWQueues)
+	ReasonHWQueuesInsufficient = "HWQueuesInsufficient"
 	// ReasonSchedulable - model can be scheduled
 	ReasonSchedulable = "Schedulable"
 	// ReasonCacheNotReady - waiting for cache to be ready
@@ -412,6 +415,7 @@ const (
 // +kubebuilder:object:generate=true
 // +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.count)",message="gpu.count must be omitted when gpu.vendor is cpu"
 // +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.vramEstimateMB)",message="gpu.vramEstimateMB must be omitted when gpu.vendor is cpu"
+// +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.hwQueueEstimate)",message="gpu.hwQueueEstimate must be omitted when gpu.vendor is cpu"
 // +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.shared) || size(self.shared) == 0",message="gpu.shared must be empty when gpu.vendor is cpu"
 type GPUSpec struct {
 	// Vendor selects the GPU vendor to target.
@@ -447,6 +451,20 @@ type GPUSpec struct {
 	// Used for scheduling decisions in shared groups.
 	// +optional
 	VRAMEstimateMB *int64 `json:"vramEstimateMB,omitempty"`
+
+	// HWQueueEstimate is the number of hardware compute queues (HWS queue
+	// slots) this model's processes hold on one GPU. It is consulted only on
+	// architectures whose GPUProfile sets maxHWQueues: the shared-group
+	// election and the runtime's load admission keep the summed estimate
+	// within maxHWQueues - reservedHWQueues. Unset defaults from the backend
+	// and the effective GPU_MAX_HW_QUEUES (GPUProfile env overlaid by
+	// spec.config.env): (GPU_MAX_HW_QUEUES, default 4) + 2 per HIP process,
+	// one process for llamacpp, ollama and diffusers and two for vllm. 3 for a
+	// llama.cpp lane under the gfx906 cap of 1.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=128
+	// +optional
+	HWQueueEstimate *int32 `json:"hwQueueEstimate,omitempty"`
 
 	// SwapCooldown overrides the default anti-thrashing cooldown for this
 	// model's shared group. After a swap, the controller blocks further
@@ -680,6 +698,15 @@ func (m *Model) PrefetchEvictable(now time.Time) (bool, time.Duration) {
 	return true, idle - ttl
 }
 
+// Compilation cache scopes for CompilationCacheSpec.Scope.
+const (
+	// CompilationCacheScopeModel keeps one compile cache per Model (default).
+	CompilationCacheScopeModel = "Model"
+	// CompilationCacheScopeImage shares one compile cache per GPU arch and
+	// serving-image digest on each node.
+	CompilationCacheScopeImage = "Image"
+)
+
 // CompilationCacheSpec configures host-persistent GPU compilation caching.
 // +kubebuilder:object:generate=true
 type CompilationCacheSpec struct {
@@ -690,9 +717,32 @@ type CompilationCacheSpec struct {
 
 	// HostPath is the base directory on the node for compilation caches.
 	// A subdirectory per model is created automatically: <hostPath>/<namespace>/<model-name>/
+	// (with scope Image: <hostPath>/shared/<gpuArch>/<digest12>/).
 	// +kubebuilder:default="/var/lib/flexinfer/compile-cache"
 	// +optional
 	HostPath string `json:"hostPath,omitempty"`
+
+	// Scope selects which lanes share the cache directory under HostPath.
+	// - Model (default): <hostPath>/<namespace>/<model-name>/, one cache per Model.
+	// - Image: <hostPath>/shared/<gpuArch>/<digest12>/, one cache per GPU arch and
+	// serving-image digest (first 12 hex digits) on each node.
+	// Triton, Inductor, vLLM, MIOpen and comgr key their entries by source,
+	// options, toolchain and shapes, so lanes on one image reuse each other's
+	// kernels while different models keep separate config-hash subtrees.
+	// Only lanes with the same HostPath share; keep the default to share with
+	// the runtime pod. An image that is not digest-pinned, or an unknown GPU
+	// arch, falls back to Model.
+	// +kubebuilder:validation:Enum=Model;Image
+	// +optional
+	Scope string `json:"scope,omitempty"`
+
+	// SeedFrom is an absolute node directory, such as the lane's earlier
+	// per-Model cache, copied once into an Image-scoped cache that has not been
+	// seeded yet. Existing entries are kept; a missing or empty source is
+	// skipped. Mounted read-only and never modified. Ignored for scope Model.
+	// +kubebuilder:validation:Pattern=`^/`
+	// +optional
+	SeedFrom string `json:"seedFrom,omitempty"`
 
 	// SizeLimit is a soft limit for the compilation cache directory.
 	// Not enforced by Kubernetes (hostPath has no built-in quota), but
