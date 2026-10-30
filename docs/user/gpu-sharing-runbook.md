@@ -7,7 +7,7 @@ description: Operational runbook for managing shared GPU groups in FlexInfer.
 
 ## 1. Overview
 
-FlexInfer GPU sharing enables multiple models to time-share a single GPU. Only one model runs at a time. The controller uses priority-based leader election to decide which model holds the GPU, and the proxy signals demand when requests arrive for an inactive model.
+FlexInfer GPU sharing enables multiple models to time-share a single GPU. Only one model runs at a time, unless the GPUProfile sets `features.multiModel`, in which case several members share the card within its VRAM budget. The controller uses priority-based leader election to decide which model holds the GPU, and the proxy signals demand when requests arrive for an inactive model.
 
 Use GPU sharing when:
 
@@ -56,11 +56,11 @@ Source: controllers/model_shared_gpu.go, lines 43-46, 87-94
 
 ### Leader Election
 
-The controller runs `chooseSharedGroupLeader()` on every reconcile of a group member. A member is re-enqueued as soon as something that can change the outcome happens — the proxy stamps `lastActiveTime` on it, a sibling changes `phase` or `sharedGroup.state`, a `GPULease` or `GamingSession` appears or goes away, a node's GPU health label flips, the runtime pod changes — and otherwise every 30 seconds (`requeueSharedSteady`) to catch the time-based inputs: demand windows, the swap cooldown, idle timeouts and lease TTLs. A member whose state the election just changed is polled every 3 seconds (`requeueFast`) until it settles. The algorithm proceeds in four stages:
+The controller runs `chooseSharedGroupLeader()` on every reconcile of a group member. A member is re-enqueued as soon as something that can change the outcome happens — the proxy stamps `lastActiveTime` on it, a sibling changes `phase` or `sharedGroup.state`, a `GPULease` or `GamingSession` appears or goes away, a node's GPU health label flips, the runtime pod changes — and otherwise every 30 seconds (`requeueSharedSteady`) to catch the time-based inputs: demand windows, the swap cooldown, idle timeouts and lease TTLs. A member whose state the election just changed is polled every 3 seconds (`requeueFast`) until it settles. The algorithm proceeds in four stages (the full decision tree, including GPU leases, forced promotion and the loading window, is drawn in [gpu-sharing.md](gpu-sharing.md#leader-election-algorithm-v1alpha2)):
 
 1. **Anti-thrashing gate** -- If any model has a `PreemptedAt` timestamp within the cooldown window, the current `Active` model keeps its position.
 2. **Classification** -- Models are classified into: `readyLeader` (Phase=Ready), `demandedLeader` (LastActiveTime within 2 min), `recentLeader` (LastActiveTime within 5 min), `warmPrimaryLeader` (config `warmPolicy=primary`), and `fallbackLeader` (any model).
-3. **Demand-based preemption** -- If a demanded model exists, the ready leader is idle (LastActiveTime > 2 min or nil), and the demanded model's priority >= the ready model's priority, the swap triggers.
+3. **Demand-based preemption** -- If a demanded model exists and outranks the ready leader, the swap triggers. At equal priority it triggers only when the ready leader is idle (LastActiveTime > 2 min or nil).
 4. **Fallback chain** -- `readyLeader` > `recentLeader` > `warmPrimaryLeader` > `fallbackLeader`.
 
 Within each category, ties break by: highest priority, then most recent LastActiveTime, then alphabetical name.
@@ -204,78 +204,83 @@ Timeline:
 
 ## 5. Timing Diagram
 
-### Full Swap Cycle
+### Full Swap Cycle (dedicated Deployment path)
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Proxy
-    participant Controller
-    participant ActivePod as Active Pod (Model A)
-    participant NewPod as New Pod (Model B)
+    participant Proxy as flexinfer-proxy
+    participant Controller as flexinfer-manager
+    participant ActivePod as Lane A pod (active)
+    participant NewPod as Lane B pod
 
-    Client->>Proxy: Request for Model B
-    Note over Proxy: Model B not Ready<br/>Enqueue request
+    Client->>Proxy: request for Model B
+    Note over Proxy: B not Ready, enqueue the request
+    Proxy->>Proxy: TriggerScaleUp(B)<br/>status patch: B.lastActiveTime = now
 
-    Proxy->>Proxy: triggerScaleUp(modelB)<br/>Sets B.LastActiveTime = now
-
-    rect rgb(255, 245, 230)
-        Note over Controller: Demand Detection (~3s reconcile cycle)
+    rect rgba(167, 139, 250, 0.18)
+        Note over Controller: Demand detection, under 1 s<br/>(the status patch re-enqueues B)
         Controller->>Controller: chooseSharedGroupLeader()
-        Note over Controller: 1. Check cooldown (5 min)
-        Note over Controller: 2. Classify: B = demandedLeader
-        Note over Controller: 3. Check: B.priority >= A.priority?
-        Note over Controller: 4. Check: A idle? (LastActive > 2 min)
-        Controller->>Controller: Decision: swap to B
+        Note over Controller: swap cooldown (5 min) not active<br/>B demanded (stamp within 2 min)<br/>B outranks A, or ties A while A is idle
+        Controller->>Controller: decision: B leads
     end
 
-    rect rgb(255, 230, 230)
-        Note over ActivePod: Preemption (~2-5s)
-        Controller->>ActivePod: Scale replicas = 0
-        Controller->>Controller: Set A.phase = Preempted<br/>Set A.sharedGroup.preemptedAt = now
-        ActivePod->>ActivePod: Graceful shutdown
+    rect rgba(240, 111, 107, 0.18)
+        Note over ActivePod: Preemption, ~2–5 s
+        Controller->>ActivePod: scale Deployment to 0
+        Controller->>Controller: A.phase = Preempted<br/>A.sharedGroup.preemptedAt = now
+        ActivePod->>ActivePod: graceful shutdown
     end
 
-    rect rgb(230, 255, 230)
-        Note over NewPod: Activation (~4-30s depending on backend)
-        Controller->>NewPod: Scale replicas = 1
-        Note over NewPod: Flash-loader (if enabled): 2-6s
-        Note over NewPod: Model weight loading: 5-25s
-        Note over NewPod: Health check passes
+    rect rgba(52, 211, 153, 0.18)
+        Note over NewPod: Activation, ~4–30 s by backend
+        Controller->>NewPod: scale Deployment to 1
+        Note over NewPod: flash-loader (if enabled) 2–6 s<br/>weight loading 5–25 s<br/>readiness probe passes
         NewPod-->>Controller: Ready
     end
 
-    Controller->>Controller: Set B.phase = Ready<br/>Set B.sharedGroup.state = Active
-    Proxy->>NewPod: Drain queued requests
-    NewPod-->>Client: Response
+    Controller->>Controller: B.phase = Ready<br/>B.sharedGroup.state = Active
+    Proxy->>NewPod: forward queued requests
+    NewPod-->>Client: response
 ```
 
-### Direct Runtime Fast Path
+### Runtime Pod Path and the Direct-Load Fast Path
 
-When enabled, the proxy bypasses the controller reconcile loop for faster activation.
+When the lanes run in a node's runtime pod, the swap happens inside that pod. The proxy's direct-load fast path (`PROXY_DIRECT_RUNTIME_ENABLED`, default on) skips the controller only for a runtime-eligible Model that is not shared, or that the election has already made `Active`. A shared member still waiting for the card goes through the election first, and the controller performs the swap.
 
 ```mermaid
 sequenceDiagram
     participant Client
-    participant Proxy
-    participant RuntimePod as Runtime Pod
+    participant Proxy as flexinfer-proxy
+    participant Controller as flexinfer-manager
+    participant Runtime as Runtime pod supervisor
 
-    Client->>Proxy: Request for Model B
-    Proxy->>Proxy: Check directRuntimeEnabled
+    Client->>Proxy: request for Model B
+    Proxy->>Proxy: enqueue, stamp B.lastActiveTime
 
-    rect rgb(230, 245, 255)
-        Note over Proxy,RuntimePod: Direct Load (~4-5s total)
-        Proxy->>RuntimePod: POST /api/v1/models/B/load
-        Proxy->>RuntimePod: Poll GET /api/v1/models/B/health
-        RuntimePod-->>Proxy: state: Ready
+    alt B is shared and not yet Active
+        Note over Proxy: no direct load, wait for the election
+        Controller->>Controller: chooseSharedGroupLeader() picks B
+        Controller->>Runtime: DELETE /api/v1/models/A<br/>(request drain, where enabled)
+        Controller->>Runtime: POST /api/v1/models/B/load
+        Runtime-->>Controller: B healthy
+        Controller->>Controller: B.phase = Ready<br/>Endpoints point at the runtime pod
+        Proxy->>Proxy: readiness poll (1 s) sees Ready
+    else B is not shared, or already Active
+        rect rgba(96, 165, 250, 0.18)
+            Note over Proxy,Runtime: Direct load, ~4–5 s for llama.cpp and ollama
+            Proxy->>Runtime: POST /api/v1/models/B/load
+            Proxy->>Runtime: poll GET /api/v1/models/B/health
+            Runtime-->>Proxy: Ready on port N
+            Proxy->>Proxy: directLoadTargets[B] = podIP:N
+        end
     end
 
-    Proxy->>Proxy: Store directLoadTarget<br/>modelB → http://podIP:port
-    Proxy->>RuntimePod: Drain queued requests
-    RuntimePod-->>Client: Response
-
-    Note over Proxy: Async: touch LastActiveTime<br/>for controller backfill
+    Proxy->>Runtime: forward queued requests to B
+    Runtime-->>Client: response
 ```
+
+In single-slot mode the supervisor's load also unloads any incumbent first. With multi-model on, it admits B only when free VRAM covers it, and otherwise returns an insufficient-VRAM error until the controller frees capacity.
 
 ## 6. Hot-Swap Latency Breakdown
 
@@ -610,6 +615,7 @@ FlexInfer exposes shared-group metrics via the controller's `/metrics` endpoint.
 |--------|------|--------|-------------|
 | `flexinfer_sharedgroup_state` | Gauge | group, model, namespace, state | Current state of each model (1 = current state, 0 otherwise). States: Active, Queued, Preempted. |
 | `flexinfer_sharedgroup_preemptions_total` | Counter | group, namespace, from, to | Total preemption events. `from` = preempted model, `to` = new active model. |
+| `flexinfer_sharedgroup_hw_queues` | Gauge | group, namespace, gpu_arch, kind | Hardware compute queues where the GPUProfile sets `maxHWQueues`. `kind` is `estimated` (summed estimate of the Active set), `budget` (`maxHWQueues - reservedHWQueues`) or `reserved`. |
 | `flexinfer_model_swap_duration_seconds` | Histogram | model, namespace, backend, group, serving_path | Time from preemption to Ready for swap-in. Buckets: 0.25s to 900s. `serving_path` is `deployment` or `runtime`. |
 | `flexinfer_model_cold_start_duration_seconds` | Histogram | model, namespace, backend, cache_strategy, serving_path | Time from activation to Ready. Buckets: 0.5s to 1800s. |
 | `flexinfer_model_phase` | Gauge | model, namespace, phase | Current model phase (1 = active phase). |

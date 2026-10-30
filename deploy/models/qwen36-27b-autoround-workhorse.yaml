@@ -80,6 +80,13 @@ spec:
     # torch.compile (~5 min); cached restarts are ~3 min.
     coldStartTimeout: 25m
   config:
+    # 2026-10-30 (S6b readiness): stay a dedicated Deployment until S6b moves
+    # this lane into the 5930k runtime pod on purpose. Without the flag,
+    # un-parking that DaemonSet (deploy/system/values-k3s.yaml, profile
+    # gfx1100-5930k) loads the lane in-pod on the DaemonSet's image instead
+    # of spec.image. The flag only routes; the Deployment renders the same
+    # (controllers/model_dedicated_deployment_render_test.go).
+    dedicatedDeployment: true
     # RDNA3 long-context decode fix (2026-08-16): vLLM's ROCm default picks
     # ROCM_ATTN, whose decode has no KV-length parallelism — single-stream
     # decode collapses linearly with context (research doc 8c/8e fleet

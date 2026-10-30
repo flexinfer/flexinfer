@@ -25,49 +25,53 @@ Quantization pipelines enable automatic conversion of full-precision models to q
 
 ### Full Pipeline
 
+```mermaid
+flowchart LR
+    dl["Download<br/>BF16 / FP16"]:::store --> abl["Abliterate<br/>optional"]:::step
+    abl --> ft["Finetune<br/>optional"]:::step
+    ft --> q["Quantize<br/>GPTQ / AWQ"]:::control
+    q --> ready["Ready<br/>INT4 / INT8"]:::runtime
+    dl -.- m1[".download_complete"]:::marker
+    abl -.- m2[".abliteration-status.json"]:::marker
+    ft -.- m3[".finetune-status.json"]:::marker
+    q -.- m4["gptq-w4-g128/<br/>quantize_config.json"]:::marker
+    ready -.- pod["Model pod<br/>uses the cache"]:::runtime
+
+    classDef store fill:#94A3B8,stroke:#334155,color:#0F172A
+    classDef step fill:#E0E7FF,stroke:#6366F1,color:#0F172A
+    classDef control fill:#A78BFA,stroke:#4338CA,color:#0F172A
+    classDef runtime fill:#34D399,stroke:#047857,color:#0F172A
+    classDef marker fill:transparent,stroke:#94A3B8,stroke-dasharray:3 3
 ```
-┌────────────┐     ┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌─────────────┐
-│  Download   │────▶│  Abliterate  │────▶│   Finetune   │────▶│   Quantize   │────▶│    Ready     │
-│  (BF16/FP16)│     │  (optional)  │     │  (optional)  │     │  (GPTQ/AWQ)  │     │  (INT4/INT8) │
-└────────────┘     └─────────────┘     └──────────────┘     └──────────────┘     └─────────────┘
-      │                   │                   │                    │                      │
-      ▼                   ▼                   ▼                    ▼                      ▼
-  PVC marker:        PVC marker:         PVC marker:          PVC marker:           Model Pod
- .download_complete  .abliteration-     .finetune-           gptq-w4-g128/         (uses cache)
-                     status.json        status.json          quantize_config.json
-```
+
+Dotted boxes are the PVC completion markers each phase writes.
 
 Each phase is guarded: quantization blocks until download (and optionally abliteration/finetune) reaches `Ready`.
 
 ### Deployment Reliability
 
-```
-┌──────────────┐     ┌────────────────┐     ┌────────────────┐
-│  GPUProfile   │────▶│   Controller   │────▶│  Quantize Job  │
-│  (image ref)  │     │  (watches GP)  │     │  (version check)│
-└──────────────┘     └────────────────┘     └────────────────┘
-       │                     │                       │
-  Image digest          Spec hash =              Script version =
-  updated by admin    SHA(spec + image)         FLEXINFER_SCRIPT_VERSION
-                           │
-                    Hash mismatch →
-                    delete stale job,
-                    recreate with new image
+```mermaid
+flowchart LR
+    gp["GPUProfile<br/>image digest,<br/>updated by an admin"]:::crd --> ctrl["Controller<br/>watches GPUProfiles<br/>spec hash = SHA(spec + image)"]:::control
+    ctrl --> job["Quantize Job<br/>script version check<br/>FLEXINFER_SCRIPT_VERSION"]:::step
+    ctrl -.->|"hash mismatch: delete the<br/>stale Job, recreate it<br/>with the new image"| job
+
+    classDef crd fill:#F472B6,stroke:#9D174D,color:#0F172A
+    classDef control fill:#A78BFA,stroke:#4338CA,color:#0F172A
+    classDef step fill:#E0E7FF,stroke:#6366F1,color:#0F172A
 ```
 
 ### Legacy Architecture (simple path)
 
-```
-┌─────────────────┐     ┌────────────────────┐     ┌─────────────────┐
-│   HuggingFace   │────▶│  Quantization Job  │────▶│  Model Cache    │
-│   Model (FP16)  │     │  (llama.cpp/AWQ)   │     │  (GGUF/AWQ)     │
-└─────────────────┘     └────────────────────┘     └─────────────────┘
-                               │
-                               ▼
-                        ┌──────────────┐
-                        │   Model Pod  │
-                        │ (Uses Cache) │
-                        └──────────────┘
+```mermaid
+flowchart LR
+    hf["HuggingFace model<br/>FP16"]:::store --> job["Quantization Job<br/>llama.cpp / AWQ"]:::control
+    job --> cache[("Model cache<br/>GGUF / AWQ")]:::store
+    cache --> pod["Model pod<br/>uses the cache"]:::runtime
+
+    classDef store fill:#94A3B8,stroke:#334155,color:#0F172A
+    classDef control fill:#A78BFA,stroke:#4338CA,color:#0F172A
+    classDef runtime fill:#34D399,stroke:#047857,color:#0F172A
 ```
 
 ## API Design

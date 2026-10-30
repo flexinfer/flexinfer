@@ -295,6 +295,21 @@ spec:
                       group. Set back to false (or remove) once the forced-active model is
                       no longer wanted active. Default: false.
                     type: boolean
+                  hwQueueEstimate:
+                    description: |-
+                      HWQueueEstimate is the number of hardware compute queues (HWS queue
+                      slots) this model's processes hold on one GPU. It is consulted only on
+                      architectures whose GPUProfile sets maxHWQueues: the shared-group
+                      election and the runtime's load admission keep the summed estimate
+                      within maxHWQueues - reservedHWQueues. Unset defaults from the backend
+                      and the effective GPU_MAX_HW_QUEUES (GPUProfile env overlaid by
+                      spec.config.env): (GPU_MAX_HW_QUEUES, default 4) + 2 per HIP process,
+                      one process for llamacpp, ollama and diffusers and two for vllm. 3 for a
+                      llama.cpp lane under the gfx906 cap of 1.
+                    format: int32
+                    maximum: 128
+                    minimum: 0
+                    type: integer
                   priority:
                     default: 100
                     description: |-
@@ -342,6 +357,9 @@ spec:
                   rule: self.vendor != 'cpu' || !has(self.count)
                 - message: gpu.vramEstimateMB must be omitted when gpu.vendor is cpu
                   rule: self.vendor != 'cpu' || !has(self.vramEstimateMB)
+                - message: gpu.hwQueueEstimate must be omitted when gpu.vendor is
+                    cpu
+                  rule: self.vendor != 'cpu' || !has(self.hwQueueEstimate)
                 - message: gpu.shared must be empty when gpu.vendor is cpu
                   rule: self.vendor != 'cpu' || !has(self.shared) || size(self.shared)
                     == 0

@@ -1,0 +1,9 @@
+Hardware compute-queue admission. The Radeon VII's hardware scheduler maps 24 compute queues; past that it oversubscribes the runlist and co-resident lanes stall for seconds, which VRAM admission cannot see. GPUProfiles gain `spec.maxHWQueues` and `spec.reservedHWQueues` (queues held back for tenants outside the Model API), and Models gain `spec.gpu.hwQueueEstimate`. Unset, the estimate is `(GPU_MAX_HW_QUEUES + 2)` per HIP process: 3 for a llama.cpp, ollama or diffusers lane under the gfx906 cap of 1, and 6 for vLLM, which runs two processes and is not yet measured on gfx906. Where a profile sets `maxHWQueues`, three places enforce it:
+
+- The multi-model shared-group election admits a member only while the Active set's summed estimate stays within `maxHWQueues - reservedHWQueues`.
+- A Model whose own estimate exceeds that goes `Schedulable=False` with reason `HWQueuesInsufficient`.
+- The runtime's load admission refuses a load when in-use + estimate exceeds `maxHWQueues`. In-use is the larger of the other subprocesses' estimates plus the reserve and the compute queues KFD reports on the GPU for all processes, read from `/sys/class/kfd/kfd/proc/*/queues` (no debugfs). The refusal is a 503, and the Model waits `Pending` / `RuntimeCapacity`.
+
+The controller carries the budget in the load payload outside the launch spec hash, so a budget change reloads nothing. New gauges: `flexinfer_sharedgroup_hw_queues`, `flexinfer_runtime_hw_queues` and `flexinfer_runtime_hw_queue_budget`.
+
+The gfx906 GPUProfile sets 24 / 2. On 2026-10-30 KFD showed 14 compute queues: four warm llama.cpp lanes at 3 each and pyannote at 2. That matches the estimate, so three more llama.cpp lanes fit. The election change takes effect at the next controller roll, and the in-pod admission at the next gfx906 runtime image roll.

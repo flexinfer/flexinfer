@@ -451,7 +451,7 @@ config:
 Running FLUX on gfx906 requires additional configuration:
 
 - **bitsandbytes must be built from source** — the pip wheel only ships HIP kernels for gfx90a/gfx942/gfx1100, not gfx906
-- `HSA_OVERRIDE_GFX_VERSION=9.0.6` is required (hardware reports as gfx900)
+- `HSA_OVERRIDE_GFX_VERSION` is not needed: KFD reports the card as gfx906 natively, the controller does not set it, and the runtime entrypoint removes the key. The standalone `diffusers:rocm-gfx906` image still bakes `9.0.6`, which equals the native target (`docs/dev/gfx906-gpu-support.md`)
 - `HSA_ENABLE_SDMA=0` and `HSA_USE_SVM=0` for Vega20 stability
 - Memory allocation is tighter: `garbage_collection_threshold:0.8,max_split_size_mb:256`
 - Attention slicing is auto-enabled (`ENABLE_ATTENTION_SLICING=1`)

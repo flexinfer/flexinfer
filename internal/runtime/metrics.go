@@ -251,6 +251,8 @@ func RegisterMetrics() {
 		NodeModeGauge,
 		GamingIdleRevertsTotal,
 		GamingBackendRestartsTotal,
+		HWQueuesRT,
+		HWQueueBudgetRT,
 	)
 }
 
