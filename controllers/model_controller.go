@@ -37,6 +37,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/log"
@@ -120,8 +121,22 @@ type ModelReconciler struct {
 	// first byte of logs — that is how CI job pods (5Gi request) outlived the
 	// Mills workhorse on the 5930k on 2026-09-13. Nil disables the default.
 	ServingDefaultEphemeralStorage *resource.Quantity
+	// MaxConcurrentReconciles is the Model controller's worker count. Values
+	// below 1 keep the single worker. Reconciles of different Models share no
+	// unguarded state (see sharedGroupLocks for the one cross-Model write
+	// sequence); the same Model is never reconciled twice at once.
+	MaxConcurrentReconciles int
 
 	mgr ctrl.Manager // set by SetupWithManager, used for startup sweep
+
+	// sharedGroupLocks serializes the shared-GPU election per group
+	// ("<namespace>/<group>" -> *sync.Mutex). Each member elects from the same
+	// listed group state and writes only its own status, but it also rewrites
+	// the active-services annotation on every member's Service; with several
+	// workers, two members of one group would race those Updates (optimistic-
+	// lock conflicts, or a stale election overwriting a fresh one). Holding the
+	// group's lock keeps that sequence as ordered as the single worker did.
+	sharedGroupLocks sync.Map
 
 	// throttledEventLastEmit throttles per-reconcile warning events that restate
 	// a static spec or profile property (VRAMPressure, ExperimentalGPUSupport)
@@ -723,7 +738,26 @@ func (r *ModelReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Watches(&corev1.Node{},
 			handler.EnqueueRequestsFromMapFunc(r.requestsForNodeGPUHealth),
 			builder.WithPredicates(nodeGPUHealthChange)).
+		WithOptions(controller.Options{MaxConcurrentReconciles: modelControllerWorkers(r.MaxConcurrentReconciles)}).
 		Complete(r)
+}
+
+// modelControllerWorkers clamps the configured Model controller worker count
+// to at least one.
+func modelControllerWorkers(n int) int {
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// lockSharedGroup takes the shared-GPU election lock for one group and
+// returns its release.
+func (r *ModelReconciler) lockSharedGroup(namespace, group string) func() {
+	v, _ := r.sharedGroupLocks.LoadOrStore(namespace+"/"+group, &sync.Mutex{})
+	mu := v.(*sync.Mutex)
+	mu.Lock()
+	return mu.Unlock
 }
 
 // nodeGPUHealthChange admits only Node events in which the agent's GPU health

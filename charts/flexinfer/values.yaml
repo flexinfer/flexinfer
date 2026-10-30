@@ -63,6 +63,13 @@ controller:
     requests:
       cpu: 10m
       memory: 64Mi
+  # Workers for the Model controller (--model-max-concurrent-reconciles). With
+  # one, a single self-looping Model starves every other Model's reconcile
+  # (2026-10-23). Reconciles of different Models are safe to run in parallel;
+  # members of one shared-GPU group still elect one at a time. 1 keeps the
+  # historical behavior and renders no flag; raise it only on a controller
+  # image that knows the flag (older images exit on an unknown flag).
+  modelMaxConcurrentReconciles: 1
   runtime:
     # Shared memory volume size mounted at /dev/shm for model pods created by the v1alpha2 controller.
     shmSizeLimit: "8Gi"

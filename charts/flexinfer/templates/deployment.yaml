@@ -63,6 +63,13 @@ spec:
             - /manager
           args:
             - --leader-elect
+            {{- /* Rendered only above 1: at the default the pod template is
+                   unchanged, and an older controller image (which rejects an
+                   unknown flag) never sees it. */}}
+            {{- $modelWorkers := int (default 1 $controller.modelMaxConcurrentReconciles) }}
+            {{- if gt $modelWorkers 1 }}
+            - --model-max-concurrent-reconciles={{ $modelWorkers }}
+            {{- end }}
           ports:
             - name: metrics
               containerPort: 8080
