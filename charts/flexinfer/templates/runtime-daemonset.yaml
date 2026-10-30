@@ -191,7 +191,19 @@ spec:
         {{- with .tolerations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
-      {{- with .nodeSelector }}
+      {{- /*
+      parked: true holds the profile's DaemonSet at desired=0 by adding a
+      nodeSelector term that no node carries. The key and value are the ones
+      a 2026-04-04 kubectl patch put on the live gfx1100-5930k DaemonSet, so
+      the park renders the live selector exactly. Removing parked un-parks:
+      the previous release manifest carries the key, so Helm's 3-way merge
+      deletes it from the live object.
+      */}}
+      {{- $nodeSelector := deepCopy (.nodeSelector | default dict) }}
+      {{- if .parked }}
+      {{- $_ := set $nodeSelector "flexinfer.ai/quantization-pause" "false" }}
+      {{- end }}
+      {{- with $nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
       {{- end }}
