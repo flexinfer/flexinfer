@@ -84,7 +84,12 @@ spec:
     # ASR only takes the card when gemma4 is idle-to-zero, and yields back as
     # soon as chat demand returns. NO forcePromotion — idle-to-zero keeps the
     # card free for the primary. See the "Chat-primary" block above.
-    priority: 340
+    # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+    # placement-2026-10-30.md §6): 340 -> 290, below the flex card's idle
+    # tenant (qwen38-27b-xtx-warm-canary, now 300). Keeps the lane parked behind
+    # the idle tenant, as before; it is also litellm-disabled.
+
+    priority: 290
   serverless:
     enabled: true
     # idle-to-zero: the 24 GiB lane is not double-claimed while idle.

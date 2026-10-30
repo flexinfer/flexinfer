@@ -88,7 +88,14 @@ spec:
     # both device-plugin slots and select the discrete card explicitly above.
     count: 2
     shared: 7900xtx-textgen
-    priority: 300
+    # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+    # placement-2026-10-30.md §6): 300 -> 290, below the flex card's idle
+    # tenant (qwen38-27b-xtx-warm-canary, now 300). At 300 it would tie the idle
+    # tenant and swap in whenever that lane idles 2 min. Today it is
+    # statically parked (0 requests in the 7 days to 2026-10-30), and this
+    # keeps it parked.
+
+    priority: 290
     vramEstimateMB: 23200
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx

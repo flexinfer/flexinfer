@@ -585,6 +585,22 @@ imagePrewarm:
         # subsequent second workhorse replica. Keep it resident across GC.
         - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
+        # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+        # placement-2026-10-30.md §6): the creative lanes moved to this card.
+        # Their images are held here so that a first request after image GC is
+        # a container start, not a pull. On the 5930k the first Qwen-Image
+        # activation took 31 min, most of it this pull. About 59 GB in total
+        # against 324 GB free on this root (2026-10-30). The image GC
+        # threshold here is 90/85. The 5930k profile keeps the same pins until
+        # the layout has survived a week, as the rollback anchor; drop them
+        # there afterwards.
+        # Qwen-Image 2.1 (serving persona with the R1-R3 overlay, b83c3822).
+        - registry.harbor.lan/flexinfer/runtime@sha256:2c94c6d973fab09d9304891b26a25a026bc6e6bdecfe304b138de6c118d219cc
+        # Wan 2.1 T2V and VACE (both pin this through spec.imageDigest).
+        - registry.harbor.lan/flexinfer/diffusers-video@sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
+        # Stable Audio Open (rocm-gfx1100-audio2). Listing it here also makes
+        # the pin guard tag it pinned-d87f75f8c69b.
+        - registry.harbor.lan/flexinfer/diffusers@sha256:d87f75f8c69bd3e266b11fbb11ee6528d1134001721a960b6e738f6af7e788ce
 quantization:
   # Python 3.14 candidate promoted after the isolated ModelCache validator and
   # publisher canary passed. The former Python 3.11 digest remains the rollback
