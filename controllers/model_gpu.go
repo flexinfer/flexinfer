@@ -92,6 +92,30 @@ func (r *ModelReconciler) validateVRAMFit(model *aiv1alpha2.Model, b backend.Bac
 	return nil
 }
 
+// validateHWQueueFit rejects a model whose hardware compute-queue estimate
+// alone exceeds the GPUProfile queue budget (maxHWQueues - reservedHWQueues):
+// no election or runtime admission could ever place it. It is a no-op where
+// the profile sets no maxHWQueues or the model is CPU-only.
+func (r *ModelReconciler) validateHWQueueFit(model *aiv1alpha2.Model, gpuVendor backend.GPUVendor, gpuArch string) error {
+	if model == nil || r.GPUProfiles == nil || gpuArch == "" || model.Spec.GetGPUVendor() == aiv1alpha2.GPUVendorCPU {
+		return nil
+	}
+	profile, ok := r.GPUProfiles.Lookup(gpuArch)
+	if !ok {
+		return nil
+	}
+	maxQueues, reserved, ok := backend.HWQueueBudget(profile)
+	if !ok {
+		return nil
+	}
+	estimate := backend.ModelHWQueueEstimate(model, profile, gpuVendor, gpuArch)
+	if estimate > maxQueues-reserved {
+		return fmt.Errorf("model hardware compute-queue estimate (%d) exceeds the %s GPUProfile budget of %d (maxHWQueues %d - reservedHWQueues %d); lower GPU_MAX_HW_QUEUES in spec.config.env or set spec.gpu.hwQueueEstimate from a measurement",
+			estimate, gpuArch, maxQueues-reserved, maxQueues, reserved)
+	}
+	return nil
+}
+
 // shouldEmitVRAMPressure reports whether the VRAMPressure event for this model
 // is outside its cooldown; see shouldEmitThrottledEvent.
 func (r *ModelReconciler) shouldEmitVRAMPressure(model *aiv1alpha2.Model) bool {

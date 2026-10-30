@@ -106,6 +106,9 @@ const (
 	ReasonBackendUnsupported = "BackendUnsupported"
 	// ReasonVRAMInsufficient - model VRAM estimate exceeds GPU capacity
 	ReasonVRAMInsufficient = "VRAMInsufficient"
+	// ReasonHWQueuesInsufficient - model hardware compute-queue estimate
+	// exceeds the GPUProfile queue budget (maxHWQueues - reservedHWQueues)
+	ReasonHWQueuesInsufficient = "HWQueuesInsufficient"
 	// ReasonSchedulable - model can be scheduled
 	ReasonSchedulable = "Schedulable"
 	// ReasonCacheNotReady - waiting for cache to be ready
@@ -412,6 +415,7 @@ const (
 // +kubebuilder:object:generate=true
 // +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.count)",message="gpu.count must be omitted when gpu.vendor is cpu"
 // +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.vramEstimateMB)",message="gpu.vramEstimateMB must be omitted when gpu.vendor is cpu"
+// +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.hwQueueEstimate)",message="gpu.hwQueueEstimate must be omitted when gpu.vendor is cpu"
 // +kubebuilder:validation:XValidation:rule="self.vendor != 'cpu' || !has(self.shared) || size(self.shared) == 0",message="gpu.shared must be empty when gpu.vendor is cpu"
 type GPUSpec struct {
 	// Vendor selects the GPU vendor to target.
@@ -447,6 +451,20 @@ type GPUSpec struct {
 	// Used for scheduling decisions in shared groups.
 	// +optional
 	VRAMEstimateMB *int64 `json:"vramEstimateMB,omitempty"`
+
+	// HWQueueEstimate is the number of hardware compute queues (HWS queue
+	// slots) this model's processes hold on one GPU. It is consulted only on
+	// architectures whose GPUProfile sets maxHWQueues: the shared-group
+	// election and the runtime's load admission keep the summed estimate
+	// within maxHWQueues - reservedHWQueues. Unset defaults from the backend
+	// and the effective GPU_MAX_HW_QUEUES (GPUProfile env overlaid by
+	// spec.config.env): (GPU_MAX_HW_QUEUES, default 4) + 2 per HIP process,
+	// one process for llamacpp, ollama and diffusers and two for vllm. 3 for a
+	// llama.cpp lane under the gfx906 cap of 1.
+	// +kubebuilder:validation:Minimum=0
+	// +kubebuilder:validation:Maximum=128
+	// +optional
+	HWQueueEstimate *int32 `json:"hwQueueEstimate,omitempty"`
 
 	// SwapCooldown overrides the default anti-thrashing cooldown for this
 	// model's shared group. After a swap, the controller blocks further

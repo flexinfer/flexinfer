@@ -118,6 +118,11 @@ func main() {
 			runtime.GPUVRAMUsedBytesRT.WithLabelValues(gpuVendor, gpuArch).Set(float64(gpuInfo.VRAMUsedMB) * 1024 * 1024)
 			runtime.GPUVRAMFreeBytesRT.WithLabelValues(gpuVendor, gpuArch).Set(float64(gpuInfo.VRAMFreeMB) * 1024 * 1024)
 			runtime.GPUTemperatureCelsiusRT.WithLabelValues(gpuVendor, gpuArch).Set(gpuInfo.Temperature)
+			if backend.GPUVendor(gpuVendor) == backend.GPUVendorAMD {
+				if queues, ok := runtime.ObservedHWQueues(gpuArch); ok {
+					runtime.HWQueuesRT.WithLabelValues(gpuVendor, gpuArch, "observed").Set(float64(queues))
+				}
+			}
 
 			<-ticker.C
 		}

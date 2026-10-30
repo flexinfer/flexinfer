@@ -131,6 +131,8 @@ Defined in `services/flexinfer/internal/runtime/metrics.go`:
 - `flexinfer_runtime_gpu_vram_used_bytes{gpu_vendor,gpu_arch}`
 - `flexinfer_runtime_gpu_vram_free_bytes{gpu_vendor,gpu_arch}`
 - `flexinfer_runtime_gpu_temperature_celsius{gpu_vendor,gpu_arch}`
+- `flexinfer_runtime_hw_queues{gpu_vendor,gpu_arch,source}` (gauge; hardware compute queues on the runtime's GPU. `source="estimated"` sums the `hwQueueEstimate` of the runtime's subprocesses; `source="observed"` counts the compute queues KFD lists in `/sys/class/kfd/kfd/proc/*/queues` for every process on the GPU, refreshed every 15 s and at each load admission, AMD only)
+- `flexinfer_runtime_hw_queue_budget{gpu_vendor,gpu_arch,kind}` (gauge; the GPUProfile `maxHWQueues` / `reservedHWQueues` the runtime last received with a load, `kind` = `max|reserved`; absent until a budgeted load arrives)
 
 ## GPUGroup Controller Metrics (v1alpha1) — never implemented, superseded
 
@@ -166,6 +168,7 @@ The following metrics were added as part of the Sprint 1 observability initiativ
 - **Shared-group scheduling (v1alpha2)** (emitted by `flexinfer-manager`): ✅
   - `flexinfer_sharedgroup_state{group,model,namespace,state}` (gauge; Active/Queued/Preempted)
   - `flexinfer_sharedgroup_preemptions_total{group,namespace,from,to}` (counter)
+  - `flexinfer_sharedgroup_hw_queues{group,namespace,gpu_arch,kind}` (gauge; only where the GPUProfile sets `maxHWQueues`. `kind` = `estimated` (summed `hwQueueEstimate` of the Active set) / `budget` (`maxHWQueues - reservedHWQueues`) / `reserved`)
 - **Cache/prefetch** (emitted by `flexinfer-manager`): ✅
   - `flexinfer_model_cache_job_duration_seconds{model,namespace,job_type,result}` (histogram; download/abliterate/quantize)
   - `flexinfer_model_cache_failures_total{model,namespace,reason}` (counter)
