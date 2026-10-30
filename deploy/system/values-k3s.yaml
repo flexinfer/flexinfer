@@ -824,9 +824,9 @@ runtime:
           value: "1"
     - name: gfx1100-5930k
       # 2026-10-23 (issue #74 S1''): same digest as the gfx1100 profile above
-      # (this DaemonSet is desired=0 behind the quantization-pause selector;
-      # the pin is kept identical so enabling it never starts an unpullable
-      # image). Previous pin / rollback anchor, node snapshot only:
+      # (this DaemonSet is desired=0 behind `parked: true` below; the pin is
+      # kept identical so enabling it never starts an unpullable image).
+      # Previous pin / rollback anchor, node snapshot only:
       #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
       image: "registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278"
       gpuVendor: amd
@@ -843,6 +843,18 @@ runtime:
           ephemeral-storage: "2Gi"
       nodeSelector:
         kubernetes.io/hostname: cblevins-5930k
+      # 2026-10-30 (S6b readiness): the park, in git. The chart adds
+      # `flexinfer.ai/quantization-pause: "false"` to the nodeSelector; no node
+      # carries that label, so the DaemonSet stays at desired=0. Until now the
+      # key lived only in the live object (a 2026-04-04 kubectl patch that
+      # Helm's 3-way merge kept), so recreating the DaemonSet or a template
+      # change to nodeSelector would have started this runtime on the vLLM
+      # 0.17 pin above. Un-parking is S6b's job: delete this line in the change
+      # that moves the image to the gfx1100-serving-v032 persona, and only
+      # after this park has shipped in a Helm release (the 3-way merge deletes
+      # the key only when the previous release manifest carries it). Lanes
+      # that must stay dedicated until S6b set config.dedicatedDeployment.
+      parked: true
       env:
         # 2026-10-27 (S6b pre-work, review row R2): co-resident lanes and
         # request drain, matching the gfx1100 and gfx906 profiles, so the
