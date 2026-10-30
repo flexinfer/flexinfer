@@ -24,7 +24,6 @@
 #
 # GPU validation required before first use:
 #   docker run --device=/dev/kfd --device=/dev/dri \
-#     -e HSA_OVERRIDE_GFX_VERSION=9.0.6 \
 #     mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3 \
 #     python3 -c "import torch; x = torch.randn(1024, device='cuda'); print('OK:', x.mean())"
 #
@@ -100,11 +99,12 @@ ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1
 
 # ── gfx906 runtime environment ──────────────────────────────────────────────
-# Hardware reports gfx900; override to gfx906 for correct ISA dispatch.
+# No HSA_OVERRIDE_GFX_VERSION: KFD reports the Radeon VII natively as gfx906
+# (gfx_target_version 90006), as on the gfx906 runtime image built from the
+# same base, which runs without the key (docs/dev/gfx906-gpu-support.md).
 # HSA_USE_SVM=0 works around hipMemGetInfo crash (ROCm/ROCm#2433).
 # TORCH_BLAS_PREFER_HIPBLASLT=0 disables hipBLASLt (not available on GCN5).
 ENV PYTORCH_ROCM_ARCH=gfx906 \
-    HSA_OVERRIDE_GFX_VERSION=9.0.6 \
     HSA_ENABLE_SDMA=0 \
     HSA_USE_SVM=0 \
     TORCH_BLAS_PREFER_HIPBLASLT=0 \

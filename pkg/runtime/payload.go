@@ -36,6 +36,18 @@ type LoadPayload struct {
 	// payload instead of treating the load as idempotent. Request drain still
 	// applies: a model with accepted requests answers 409 until they finish.
 	Reload bool `json:"reload,omitempty"`
+
+	// HWQueues is the GPUProfile compute-queue budget the runtime admits this
+	// load against. It is admission metadata, not launch configuration, so it
+	// is excluded from SpecHash: a profile budget edit must not read as a spec
+	// change of every loaded model.
+	HWQueues *HWQueueBudget `json:"hwQueues,omitempty"`
+}
+
+// HWQueueBudget is a GPUProfile's maxHWQueues / reservedHWQueues pair.
+type HWQueueBudget struct {
+	Max      int32 `json:"max"`
+	Reserved int32 `json:"reserved,omitempty"`
 }
 
 // Marshal serializes the payload for the runtime load API.
@@ -48,7 +60,7 @@ func (p *LoadPayload) Marshal() ([]byte, error) {
 // when what the runtime would start changes. encoding/json sorts map keys, so
 // equal payloads hash equally.
 func launchSpecHash(p LoadPayload) (string, error) {
-	p.Generation, p.SpecHash, p.Reload = 0, "", false
+	p.Generation, p.SpecHash, p.Reload, p.HWQueues = 0, "", false, nil
 	data, err := json.Marshal(p)
 	if err != nil {
 		return "", fmt.Errorf("hashing load payload: %w", err)
@@ -80,6 +92,10 @@ func BuildLoadPayload(backendName, source, modelBasePath string, config map[stri
 	}
 	return marshalLoadPayload(payload)
 }
+
+// HWQueueEstimateConfigKey carries Model spec.gpu.hwQueueEstimate in the load
+// config, next to vramEstimateMB.
+const HWQueueEstimateConfigKey = "hwQueueEstimate"
 
 // EnvVar is a serializable env var overlay for runtime-managed subprocesses.
 type EnvVar struct {
@@ -229,6 +245,14 @@ func NewLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts Bui
 		}
 		config["vramEstimateMB"] = *model.Spec.GPU.VRAMEstimateMB
 	}
+	// The same holds for an explicit compute-queue estimate. Unset, the
+	// runtime derives it from the backend and the env it is about to launch.
+	if model.Spec.GPU != nil && model.Spec.GPU.HWQueueEstimate != nil {
+		if config == nil {
+			config = make(map[string]any, 1)
+		}
+		config[HWQueueEstimateConfigKey] = *model.Spec.GPU.HWQueueEstimate
+	}
 
 	payload := LoadPayload{
 		Backend: b.Name(),
@@ -263,6 +287,10 @@ func NewLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts Bui
 		return nil, err
 	}
 	payload.Env = appendCoreEnvVars(payload.Env, modelEnv)
+
+	if maxQueues, reserved, ok := backend.HWQueueBudget(opts.GPUProfile); ok {
+		payload.HWQueues = &HWQueueBudget{Max: maxQueues, Reserved: reserved}
+	}
 
 	payload.Generation = model.Generation
 	if payload.SpecHash, err = launchSpecHash(payload); err != nil {

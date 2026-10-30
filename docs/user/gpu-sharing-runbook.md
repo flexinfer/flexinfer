@@ -615,6 +615,7 @@ FlexInfer exposes shared-group metrics via the controller's `/metrics` endpoint.
 |--------|------|--------|-------------|
 | `flexinfer_sharedgroup_state` | Gauge | group, model, namespace, state | Current state of each model (1 = current state, 0 otherwise). States: Active, Queued, Preempted. |
 | `flexinfer_sharedgroup_preemptions_total` | Counter | group, namespace, from, to | Total preemption events. `from` = preempted model, `to` = new active model. |
+| `flexinfer_sharedgroup_hw_queues` | Gauge | group, namespace, gpu_arch, kind | Hardware compute queues where the GPUProfile sets `maxHWQueues`. `kind` is `estimated` (summed estimate of the Active set), `budget` (`maxHWQueues - reservedHWQueues`) or `reserved`. |
 | `flexinfer_model_swap_duration_seconds` | Histogram | model, namespace, backend, group, serving_path | Time from preemption to Ready for swap-in. Buckets: 0.25s to 900s. `serving_path` is `deployment` or `runtime`. |
 | `flexinfer_model_cold_start_duration_seconds` | Histogram | model, namespace, backend, cache_strategy, serving_path | Time from activation to Ready. Buckets: 0.5s to 1800s. |
 | `flexinfer_model_phase` | Gauge | model, namespace, phase | Current model phase (1 = active phase). |

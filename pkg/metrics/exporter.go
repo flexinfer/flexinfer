@@ -408,6 +408,19 @@ var (
 		[]string{"group", "model", "namespace", "state"},
 	)
 
+	// SharedGroupHWQueues reports a shared GPU group's hardware compute-queue
+	// accounting where the GPUProfile sets maxHWQueues: kind="estimated" sums
+	// the queue estimates of the Active set, kind="budget" is maxHWQueues -
+	// reservedHWQueues, kind="reserved" the queues held back for tenants
+	// outside the Model API. One group is one GPU.
+	SharedGroupHWQueues = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_sharedgroup_hw_queues",
+			Help: "Hardware compute queues of a shared GPU group: estimated Active-set use, budget and reserve.",
+		},
+		[]string{"group", "namespace", "gpu_arch", "kind"},
+	)
+
 	// SharedGroupPreemptionsTotal counts preemption events in shared GPU groups.
 	SharedGroupPreemptionsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -674,6 +687,7 @@ func init() {
 	// Shared-group scheduling metrics (v1alpha2)
 	ctrlmetrics.Registry.MustRegister(SharedGroupState)
 	ctrlmetrics.Registry.MustRegister(SharedGroupPreemptionsTotal)
+	ctrlmetrics.Registry.MustRegister(SharedGroupHWQueues)
 	ctrlmetrics.Registry.MustRegister(OwnedJobsStaleGeneration)
 	ctrlmetrics.Registry.MustRegister(GPULeaseActive)
 	ctrlmetrics.Registry.MustRegister(GPULeaseAcquiredTotal)

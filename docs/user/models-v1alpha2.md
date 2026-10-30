@@ -76,6 +76,10 @@ Controls GPU allocation and optional time-sharing.
 - `priority`: higher wins preemption decisions
 - `count`: GPUs required (default 1)
 - `vramEstimateMB`: hint for scheduling/binpacking
+- `hwQueueEstimate`: hardware compute queues the model's processes hold on one GPU. It is only
+  used where the GPUProfile sets `maxHWQueues` (gfx906). Unset, it defaults from the backend
+  and the effective `GPU_MAX_HW_QUEUES`: 3 for a llama.cpp lane under the gfx906 cap, 6 for
+  vLLM. See `docs/dev/gfx906-gpu-support.md`.
 
 Notes:
 

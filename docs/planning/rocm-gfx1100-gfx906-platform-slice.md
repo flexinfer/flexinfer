@@ -113,7 +113,7 @@ Validation:
 | GPU lane | Runtime profile | Full/default lanes | Experimental or canary lanes | Required guardrails |
 |---|---|---|---|---|
 | `gfx1100` RDNA3 | `runtime:rocm-gfx1100` / digest-pinned GPUProfile runtime | vLLM, llama.cpp, Ollama, diffusers, MLC-LLM | Gemma4/TurboQuant and long-context variants remain canary until runtime evidence is captured | `HSA_OVERRIDE_GFX_VERSION=11.0.0`, `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL=1`, dGPU-only device indices on mixed iGPU hosts |
-| `gfx906` Vega20 | `runtime:rocm-gfx906` / digest-pinned GPUProfile runtime | llama.cpp, Ollama, GPTQ/abliteration workflows | vLLM, MLC-LLM, diffusers, ComfyUI | `HSA_OVERRIDE_GFX_VERSION=9.0.6`, `HSA_ENABLE_SDMA=0`, `HSA_USE_SVM=0`, CPU offload for imagegen, conservative warmups |
+| `gfx906` Vega20 | `runtime:rocm-gfx906` / digest-pinned GPUProfile runtime | llama.cpp, Ollama, GPTQ/abliteration workflows | vLLM, MLC-LLM, diffusers, ComfyUI | No `HSA_OVERRIDE_GFX_VERSION` (KFD reports gfx906 natively; the runtime entrypoint removes the key), `HSA_ENABLE_SDMA=0`, `HSA_USE_SVM=0`, `GPU_MAX_HW_QUEUES=1` within the GPUProfile `maxHWQueues` budget, CPU offload for imagegen, conservative warmups |
 
 ## Current Reconciliation Notes
 
@@ -124,8 +124,11 @@ Validation:
 - `build/README-gfx906.md` now treats vLLM and MLC-LLM as canary/experimental
   instead of full default lanes.
 - `gfx906` docs now match the deployed/runtime Vega20 env requirements:
-  `HSA_OVERRIDE_GFX_VERSION=9.0.6`, `HSA_ENABLE_SDMA=0`, `HSA_USE_SVM=0`, and
-  `PYTORCH_ROCM_ARCH=gfx906`.
+  `HSA_ENABLE_SDMA=0`, `HSA_USE_SVM=0`, `PYTORCH_ROCM_ARCH=gfx906` and
+  `GPU_MAX_HW_QUEUES=1`, with `HSA_OVERRIDE_GFX_VERSION` unset. The earlier
+  `9.0.6` guidance came from the belief that the card reports gfx900; KFD reports
+  `gfx_target_version 90006`, and the live runtime runs without the key
+  (2026-10-30, `docs/dev/gfx906-gpu-support.md`).
 
 ## Rollback
 

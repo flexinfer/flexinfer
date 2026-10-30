@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
 	"github.com/flexinfer/flexinfer/pkg/observability"
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
@@ -221,6 +222,10 @@ func (r *RuntimeReconciler) LoadModel(ctx context.Context, endpoint *RuntimeEndp
 			return fmt.Errorf("%w: %s", pkgrt.ErrModelBusy, string(body))
 		}
 		if resp.StatusCode == http.StatusServiceUnavailable {
+			// Both capacity refusals answer 503; the body names which one.
+			if strings.Contains(string(body), pkgrt.ErrInsufficientHWQueues.Error()) {
+				return fmt.Errorf("%w: %s", pkgrt.ErrInsufficientHWQueues, string(body))
+			}
 			return fmt.Errorf("%w: %s", pkgrt.ErrInsufficientVRAM, string(body))
 		}
 		return fmt.Errorf("runtime load failed (status %d): %s", resp.StatusCode, string(body))

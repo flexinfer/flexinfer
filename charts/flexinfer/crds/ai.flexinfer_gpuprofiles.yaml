@@ -95,8 +95,7 @@ spec:
                             flag is no longer needed (Whisper kill-test v5 evidence).
                             gfx1100: gated on the Slice 1 kill-test in
                             .loom/asr-diarization-7900xtx-plan-2026-05-18.md (initial value "experimental").
-                            gfx906: "unsupported" — no FlashAttention kernel on Vega20 and the gfx906
-                            vLLM runtime is currently paused (Track B in gfx1100-gfx906-next-round-plan.md).
+                            gfx906: "unsupported" — no FlashAttention kernel on Vega20.
                             Doc-only at first; controller enforcement (refuse Whisper-architecture
                             model CRs on profiles where this is "unsupported") lands in a follow-up slice.
                           type: string
@@ -385,6 +384,20 @@ spec:
                   Used as ABLITERATION_GPU_MAX_MEMORY_GB env var in abliteration jobs.
                 format: int32
                 type: integer
+              maxHWQueues:
+                description: |-
+                  MaxHWQueues is the number of hardware compute queues the GPU's hardware
+                  scheduler maps at once (KFD num_cp_queues in
+                  /sys/class/kfd/kfd/topology/nodes/<n>/properties; 24 on Vega20). Past it
+                  the kernel logs "Runlist is getting oversubscribed" and time-slices the
+                  queues, which stalls co-resident lanes. When set, the multi-model
+                  shared-group election and the runtime's load admission keep the summed
+                  Model spec.gpu.hwQueueEstimate within MaxHWQueues - ReservedHWQueues, and
+                  the runtime also refuses a load that would push the queues KFD reports
+                  past MaxHWQueues. 0 or unset disables queue admission.
+                format: int32
+                minimum: 0
+                type: integer
               quantization:
                 description: Quantization declares which quantization formats and
                   images are available.
@@ -407,6 +420,15 @@ spec:
                       type: string
                     type: array
                 type: object
+              reservedHWQueues:
+                description: |-
+                  ReservedHWQueues holds compute queues back from MaxHWQueues for GPU
+                  tenants the Model API does not see, such as hand-written Deployments
+                  (pyannote on the Radeon VII). Jobs that take a GPU lease park the serving
+                  lanes instead and need no reservation.
+                format: int32
+                minimum: 0
+                type: integer
               runtime:
                 description: |-
                   Runtime configures the persistent runtime container for this GPU architecture.
@@ -461,6 +483,10 @@ spec:
             - vendor
             - vramMB
             type: object
+            x-kubernetes-validations:
+            - message: reservedHWQueues must be less than maxHWQueues
+              rule: '!has(self.reservedHWQueues) || self.reservedHWQueues == 0 ||
+                (has(self.maxHWQueues) && self.reservedHWQueues < self.maxHWQueues)'
           status:
             description: GPUProfileStatus holds observed state from the controller.
             properties:

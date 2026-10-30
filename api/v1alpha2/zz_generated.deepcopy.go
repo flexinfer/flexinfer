@@ -23,7 +23,7 @@ package v1alpha2
 import (
 	corev1 "k8s.io/api/core/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )
 
@@ -843,6 +843,11 @@ func (in *GPUSpec) DeepCopyInto(out *GPUSpec) {
 	if in.VRAMEstimateMB != nil {
 		in, out := &in.VRAMEstimateMB, &out.VRAMEstimateMB
 		*out = new(int64)
+		**out = **in
+	}
+	if in.HWQueueEstimate != nil {
+		in, out := &in.HWQueueEstimate, &out.HWQueueEstimate
+		*out = new(int32)
 		**out = **in
 	}
 	if in.SwapCooldown != nil {
