@@ -66,6 +66,7 @@ const (
 //   - ollama: one runner subprocess per loaded model; the `ollama serve` parent
 //     only probes devices from short-lived children.
 //   - diffusers, snac, comfyui, mlc-llm: one Python/TVM server process.
+//   - whispercpp: one whisper-server.
 //   - vllm, vllm-omni: two. The API server and the engine-core process are
 //     separate processes (V1 EngineCore, V0 MQLLMEngine). Not measured on
 //     gfx906, so the estimate assumes both reach the device; set
