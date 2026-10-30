@@ -7,9 +7,19 @@ Whisper ASR. Runs as a hand-written FastAPI Deployment on `cblevins-radeonvii`
 ## Architecture
 
 ```
-ICC ──> flexinfer-proxy ──/v1/audio/transcriptions──> Whisper Model CR (gfx1100)
-                         └─/diarize──────────────────> pyannote Deployment (gfx906)
+ICC ──> faster-whisper.ai.svc:8000 ──/v1/audio/transcriptions──> faster-whisper (CPU, namespace ai)
+    └─> pyannote-diarization.flexinfer-system.svc:8000 ──/diarize──> pyannote Deployment (gfx906)
+
+flexinfer-proxy ──/diarize──> pyannote Deployment (same Service, static route)
+                └─/v1/audio/transcriptions──> no servable lane (whisper-large-v3-turbo is parked)
 ```
+
+As of 2026-10-30, ICC calls both services directly (gitops
+`k3s/integration-command-center/deployment.yaml`, `ICC_ASR_WHISPER_URL` and
+`ICC_ASR_DIARIZE_URL`). The Whisper Model CR on the 7900 XTX has been parked
+since 2026-06-23. The planned always-on ASR lane is whisper.cpp on this same
+card. See `.loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md`
+§3–§5, which also lists what moving pyannote under the Model API needs.
 
 - **Service**: `pyannote-diarization.flexinfer-system.svc:8000`
 - **Proxy route**: `/diarize` → `FLEXINFER_PYANNOTE_UPSTREAM`
@@ -84,6 +94,14 @@ re-download (no PVC by design — the working set is tiny).
   Vega20 issue) and a TF32-disabled reproducibility note — neither affects output.
 - Auto speaker-count detection can under-count on very short or acoustically
   uniform audio; pass `num_speakers` when the count is known.
+- **Outside GPU admission**: the Deployment is not a Model, so the shared-group
+  election does not count its VRAM (~1.65 GiB). Its hardware compute queues
+  (2) are held back from the Models by `reservedHWQueues: 2` on the gfx906
+  GPUProfile (!1198). If pyannote becomes a Model, move those 2 queues from
+  the profile reservation to the Model's `hwQueueEstimate` in the same change.
+- **First call after idle is slow**: on 2026-10-30 an 11.6 s clip took 15.6 s
+  on the first request and 0.40 s on the next. Send one warm-up request before
+  you time a batch.
 
 See `.loom/pyannote-gfx906-killtest-passed-2026-06-02.md` for the kill-test
 evidence and the full compatibility-shim breakdown.
