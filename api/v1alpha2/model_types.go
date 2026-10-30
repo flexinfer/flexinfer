@@ -680,6 +680,15 @@ func (m *Model) PrefetchEvictable(now time.Time) (bool, time.Duration) {
 	return true, idle - ttl
 }
 
+// Compilation cache scopes for CompilationCacheSpec.Scope.
+const (
+	// CompilationCacheScopeModel keeps one compile cache per Model (default).
+	CompilationCacheScopeModel = "Model"
+	// CompilationCacheScopeImage shares one compile cache per GPU arch and
+	// serving-image digest on each node.
+	CompilationCacheScopeImage = "Image"
+)
+
 // CompilationCacheSpec configures host-persistent GPU compilation caching.
 // +kubebuilder:object:generate=true
 type CompilationCacheSpec struct {
@@ -690,9 +699,32 @@ type CompilationCacheSpec struct {
 
 	// HostPath is the base directory on the node for compilation caches.
 	// A subdirectory per model is created automatically: <hostPath>/<namespace>/<model-name>/
+	// (with scope Image: <hostPath>/shared/<gpuArch>/<digest12>/).
 	// +kubebuilder:default="/var/lib/flexinfer/compile-cache"
 	// +optional
 	HostPath string `json:"hostPath,omitempty"`
+
+	// Scope selects which lanes share the cache directory under HostPath.
+	// - Model (default): <hostPath>/<namespace>/<model-name>/, one cache per Model.
+	// - Image: <hostPath>/shared/<gpuArch>/<digest12>/, one cache per GPU arch and
+	// serving-image digest (first 12 hex digits) on each node.
+	// Triton, Inductor, vLLM, MIOpen and comgr key their entries by source,
+	// options, toolchain and shapes, so lanes on one image reuse each other's
+	// kernels while different models keep separate config-hash subtrees.
+	// Only lanes with the same HostPath share; keep the default to share with
+	// the runtime pod. An image that is not digest-pinned, or an unknown GPU
+	// arch, falls back to Model.
+	// +kubebuilder:validation:Enum=Model;Image
+	// +optional
+	Scope string `json:"scope,omitempty"`
+
+	// SeedFrom is an absolute node directory, such as the lane's earlier
+	// per-Model cache, copied once into an Image-scoped cache that has not been
+	// seeded yet. Existing entries are kept; a missing or empty source is
+	// skipped. Mounted read-only and never modified. Ignored for scope Model.
+	// +kubebuilder:validation:Pattern=`^/`
+	// +optional
+	SeedFrom string `json:"seedFrom,omitempty"`
 
 	// SizeLimit is a soft limit for the compilation cache directory.
 	// Not enforced by Kubernetes (hostPath has no built-in quota), but

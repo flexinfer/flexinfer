@@ -145,3 +145,25 @@ Usage: {{ include "flexinfer.imagePullPolicy" .Values.controller.image }}
 {{- default "default" (get $benchmarker "name") -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Image-scoped compile-cache directory of a runtime profile
+(runtime.profiles[].sharedCompileCache, docs/user/caching.md "Runtime pod"):
+/var/lib/flexinfer/compile-cache/shared/<gpuArch>/<first 12 hex digits of the
+image's sha256 digest>. It must match pkg/runtime.SharedCompilationCacheDir,
+which dedicated lanes with spec.cache.compilationCache.scope: Image use, so
+both paths share one host directory. A tag-only image fails the render: a
+tag can move to another toolchain under the same directory.
+Usage: {{ include "flexinfer.runtimeSharedCompileCacheDir" $profile }}
+*/}}
+{{- define "flexinfer.runtimeSharedCompileCacheDir" -}}
+{{- $digest := regexFind "@sha256:[a-f0-9]{64}$" (.image | toString) -}}
+{{- if not $digest -}}
+{{- fail (printf "runtime profile %q: sharedCompileCache needs a digest-pinned image (repo@sha256:<64 hex>), got %q" (.name | toString) (.image | toString)) -}}
+{{- end -}}
+{{- $arch := lower (.gpuArch | toString) -}}
+{{- if not (regexMatch "^[a-z0-9][a-z0-9_.-]*$" $arch) -}}
+{{- fail (printf "runtime profile %q: sharedCompileCache needs a plain gpuArch, got %q" (.name | toString) (.gpuArch | toString)) -}}
+{{- end -}}
+{{- printf "/var/lib/flexinfer/compile-cache/shared/%s/%s" $arch (substr 8 20 $digest) -}}
+{{- end -}}

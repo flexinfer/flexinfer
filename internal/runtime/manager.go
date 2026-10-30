@@ -624,6 +624,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		env = overlayEnvVars(env, []corev1.EnvVar{{Name: "LOCAL_MODEL_PATH", Value: modelPath}})
 	}
 	env = overlayEnvVars(env, req.Env)
+	env = applySharedCompileCache(logger, b, env, os.Getenv(pkgrt.SharedCompilationCacheDirEnv))
 	if ingress != nil {
 		args, env = configureIngressBackend(b.Name(), backendPort, args, env)
 	}

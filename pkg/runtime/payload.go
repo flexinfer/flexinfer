@@ -252,7 +252,7 @@ func NewLoadPayloadForModel(model *aiv1alpha2.Model, b backend.Backend, opts Bui
 
 	if cachePath, enabled := ResolveCompilationCachePath(model); enabled {
 		if cc, ok := b.(backend.CompilationCacheConfigurer); ok {
-			payload.Env = appendCoreEnvVars(payload.Env, cc.CompilationCacheEnvVars(cachePath))
+			payload.Env = appendCoreEnvVars(payload.Env, compilationCacheEnv(model, cc, cachePath))
 		}
 	}
 	payload.Env = applyGPUProfileRuntimeEnv(payload.Env, config, vendor, opts.GPUProfile)
