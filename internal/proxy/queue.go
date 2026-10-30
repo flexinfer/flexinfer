@@ -489,14 +489,10 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 		return false
 	}
 
-	// Build the load payload (shared with controller).
-	// Pass /models as modelBasePath so PVC sources resolve correctly and
-	// enrich the request with GPUProfile defaults plus compile-cache env.
-	payload, err := pkgrt.BuildLoadPayloadForModel(m, b, pkgrt.BuildLoadOptions{
-		ModelBasePath: "/models",
-		GPUVendor:     backend.GPUVendor(m.Spec.GetGPUVendor()),
-		GPUProfile:    profile,
-	})
+	// Build the load payload with the controller's builder, LoRA options and
+	// launch SpecHash included, so a load this path wins is the one the
+	// controller would have sent.
+	payload, err := DirectLoadPayload(ctx, p.client, m, b, profile)
 	if err != nil {
 		slog.Warn("direct load: failed to build payload", "model", modelName, "error", err)
 		return false
@@ -512,8 +508,9 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 	// Poll runtime health until ready. The runtime reports the model's actual
 	// bound port — in multi-model mode each concurrent model gets a distinct
 	// port, so we must route to the reported one rather than the fixed default.
-	slog.Info("direct load: waiting for runtime health", "model", modelName, "endpoint", endpoint.URL())
-	readyPort, err := p.waitForRuntimeReady(ctx, endpoint, modelName)
+	readyTimeout := modelColdStartTimeout(m, p.coldStartTimeout)
+	slog.Info("direct load: waiting for runtime health", "model", modelName, "endpoint", endpoint.URL(), "timeout", readyTimeout)
+	readyPort, err := p.waitForRuntimeReadyWithin(ctx, endpoint, modelName, readyTimeout)
 	if err != nil {
 		slog.Warn("direct load: runtime health poll failed", "model", modelName, "error", err)
 		return false
@@ -532,6 +529,28 @@ func (p *Proxy) tryDirectRuntimeLoad(ctx context.Context, modelName string) bool
 	slog.Info("direct load: registered routing target", "model", modelName, "target", targetURL, "port", backendPort)
 
 	return true
+}
+
+// DirectLoadPayload renders the runtime load request the direct-load fast path
+// sends for m: pkgrt.NewModelLoadPayload, the builder the controller's
+// reconcile path uses, with the vendor the Model's spec pins. reader lists the
+// Model's LoRAAdapters.
+func DirectLoadPayload(ctx context.Context, reader client.Reader, m *aiv1alpha2.Model, b backend.Backend, profile *aiv1alpha2.GPUProfileSpec) ([]byte, error) {
+	payload, err := pkgrt.NewModelLoadPayload(ctx, reader, m, b, pkgrt.ModelGPUVendor(m), profile)
+	if err != nil {
+		return nil, err
+	}
+	return payload.Marshal()
+}
+
+// modelColdStartTimeout is how long a load of m may take: its own
+// serverless.coldStartTimeout when set (the same budget the payload hands the
+// runtime as startupTimeoutSeconds), else fallback.
+func modelColdStartTimeout(m *aiv1alpha2.Model, fallback time.Duration) time.Duration {
+	if m != nil && m.Spec.Serverless != nil && m.Spec.Serverless.ColdStartTimeout != nil && m.Spec.Serverless.ColdStartTimeout.Duration > 0 {
+		return m.Spec.Serverless.ColdStartTimeout.Duration
+	}
+	return fallback
 }
 
 func (p *Proxy) lookupGPUProfile(ctx context.Context, arch string) *aiv1alpha2.GPUProfileSpec {
@@ -581,7 +600,11 @@ func (p *Proxy) loadOnRuntime(ctx context.Context, ep *pkgrt.RuntimeEndpoint, mo
 // pod until the model reaches "Ready" state or a timeout is exceeded. It returns
 // the model's runtime-reported port (0 if the runtime doesn't report one).
 func (p *Proxy) waitForRuntimeReady(ctx context.Context, ep *pkgrt.RuntimeEndpoint, modelName string) (int32, error) {
-	timeout := p.coldStartTimeout
+	return p.waitForRuntimeReadyWithin(ctx, ep, modelName, p.coldStartTimeout)
+}
+
+// waitForRuntimeReadyWithin is waitForRuntimeReady with an explicit timeout.
+func (p *Proxy) waitForRuntimeReadyWithin(ctx context.Context, ep *pkgrt.RuntimeEndpoint, modelName string, timeout time.Duration) (int32, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 

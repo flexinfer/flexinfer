@@ -40,6 +40,7 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/controllers"
 	"github.com/flexinfer/flexinfer/pkg/observability"
+
 	//+kubebuilder:scaffold:imports
 	"k8s.io/apimachinery/pkg/api/resource"
 )
@@ -61,7 +62,11 @@ func main() {
 	var metricsAddr string
 	var enableLeaderElection bool
 	var probeAddr string
+	var modelMaxConcurrentReconciles int
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
+	flag.IntVar(&modelMaxConcurrentReconciles, "model-max-concurrent-reconciles", 1,
+		"Workers for the Model controller. Different Models reconcile in parallel above 1; "+
+			"members of one shared-GPU group still elect one at a time.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
 		"Enable leader election for controller manager. "+
@@ -160,6 +165,8 @@ func main() {
 		// controller.runtime.servingDefaults; empty disables either.
 		ServingDefaultPriorityClass:    os.Getenv("DEFAULT_SERVING_PRIORITY_CLASS"),
 		ServingDefaultEphemeralStorage: parseOptionalQuantity("DEFAULT_SERVING_EPHEMERAL_STORAGE_REQUEST"),
+		// Chart: controller.modelMaxConcurrentReconciles (default 1).
+		MaxConcurrentReconciles: modelMaxConcurrentReconciles,
 	}
 	if err = modelReconciler.SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "Model")

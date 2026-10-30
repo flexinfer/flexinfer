@@ -664,6 +664,8 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	}
 
 	groupName := model.Spec.GPU.Shared
+	// One member of a group elects at a time (see sharedGroupLocks).
+	defer r.lockSharedGroup(model.Namespace, groupName)()
 
 	// Find all models in the same shared group
 	modelList := &aiv1alpha2.ModelList{}
