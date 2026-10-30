@@ -19,6 +19,7 @@
 #   - llamacpp:  true  (HIP build via llama.cpp, gfx906 ISA)
 #   - ollama:    true  (CGO build, links rocBLAS/hipBLAS at runtime)
 #   - diffusers: true  (SDXL/FLUX inference, bitsandbytes from source)
+#   - whispercpp: true (whisper-server, HIP build, static; KT-ASR 2026-10-30)
 #
 # Build args injected by build/build-runtime.sh from build/runtime.yaml.
 # Do NOT build this file directly — use the build script.
@@ -29,6 +30,7 @@
 # ── Global ARGs (before first FROM) ──────────────────────────────────
 ARG GO_VERSION=1.26.10
 ARG LLAMACPP_VERSION=b11335
+ARG WHISPERCPP_VERSION=v1.9.5
 ARG OLLAMA_VERSION=v0.17.4
 ARG OLLAMA_GO_VERSION=1.25.7
 ARG AMDGPU_TARGETS=gfx906
@@ -125,6 +127,38 @@ RUN cmake -B build -G Ninja \
     -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -j$(nproc)
+
+# ── Stage 2b: Build whisper.cpp whisper-server (HIP build for gfx906) ─
+# Static link (BUILD_SHARED_LIBS=OFF, PIC so the PIE link of libggml-hip.a
+# succeeds): llama.cpp's shared libggml*.so sit on
+# LD_LIBRARY_PATH below and are a different ggml version. Same hipMemGetInfo
+# patch as llama.cpp; the runtime LD_PRELOAD shim covers it as well.
+# Kill-test KT-ASR: .loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §4.
+FROM ${LLAMACPP_BUILD_IMAGE} AS whispercpp-builder
+
+ARG WHISPERCPP_VERSION
+ARG AMDGPU_TARGETS
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake ninja-build build-essential curl \
+    hipblas-dev rocblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/src
+RUN git clone --depth 1 --branch ${WHISPERCPP_VERSION} https://github.com/ggml-org/whisper.cpp.git
+
+WORKDIR /opt/src/whisper.cpp
+COPY build/patch-hipmemgetinfo.sh /tmp/
+RUN chmod +x /tmp/patch-hipmemgetinfo.sh && /tmp/patch-hipmemgetinfo.sh
+
+RUN cmake -B build -G Ninja \
+    -DGGML_HIP=ON -DGGML_NATIVE=OFF \
+    -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
+    -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DWHISPER_BUILD_TESTS=OFF \
+    -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j$(nproc) --target whisper-server
 
 # ── Stage 3: Build ollama (CGO + HIP/rocBLAS) ────────────────────────
 # Identical to Dockerfile.runtime, AMD path only.
@@ -325,6 +359,11 @@ COPY --from=llamacpp-builder /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so 
 ENV PATH="/opt/llamacpp/bin:${PATH}"
 ENV LD_LIBRARY_PATH="/opt/llamacpp/bin:${LD_LIBRARY_PATH}"
 ENV LD_PRELOAD=/opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
+
+# ── Copy whisper-server (statically linked ggml) ─────────────────────
+# backend/whispercpp.go runs /opt/whispercpp/bin/whisper-server. Kept off PATH
+# so it never shadows a llama.cpp tool name.
+COPY --from=whispercpp-builder /opt/src/whisper.cpp/build/bin/whisper-server /opt/whispercpp/bin/whisper-server
 
 # ── Copy ollama binary ───────────────────────────────────────────────
 COPY --from=ollama-builder /build/ollama /usr/local/bin/ollama

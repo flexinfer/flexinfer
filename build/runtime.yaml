@@ -18,6 +18,9 @@ go_version: "1.26.10"
 llamacpp_version: "b8173"
 ollama_version: "v0.17.4"
 ollama_go_version: "1.25.7"
+# whisper.cpp for the whispercpp ASR backend. Only Dockerfile.runtime-gfx906
+# builds it (KT-ASR, 2026-10-30); other Dockerfiles ignore the arg.
+whispercpp_version: "v1.9.5"
 
 profiles:
   gfx1100:
@@ -500,6 +503,8 @@ profiles:
       llamacpp: true
       ollama: true
       diffusers: true
+      # whisper-server (whispercpp backend) is always built by
+      # Dockerfile.runtime-gfx906 at whispercpp_version; no INCLUDE_ toggle.
     # bitsandbytes pip wheel lacks gfx906 HIP kernels — Dockerfile builds
     # from source (COMPUTE_BACKEND=hip) in a dedicated stage and copies the
     # wheel into the runtime image when this is true.

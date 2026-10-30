@@ -170,6 +170,15 @@ func TestExpectedHFCacheFiles(t *testing.T) {
 			t.Errorf("got %v, want [model.gguf]", got)
 		}
 	})
+	t.Run("whispercpp with modelFile", func(t *testing.T) {
+		m := makeModelWithConfig("whispercpp", "HF://ggerganov/whisper.cpp", map[string]any{
+			"modelFile": "ggml-large-v3-turbo-q8_0.bin",
+		})
+		got := expectedHFCacheFiles(m)
+		if len(got) != 1 || got[0] != "ggml-large-v3-turbo-q8_0.bin" {
+			t.Errorf("got %v, want [ggml-large-v3-turbo-q8_0.bin]", got)
+		}
+	})
 	t.Run("vllm with ggufFile and mmproj", func(t *testing.T) {
 		m := makeModelWithConfig("vllm", "HF://o/m", map[string]any{
 			"ggufFile": "m.gguf",
