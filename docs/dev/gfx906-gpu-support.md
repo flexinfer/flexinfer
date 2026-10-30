@@ -210,8 +210,7 @@ Since 2026-10-30 the budget is enforced, not left to convention.
 
   | Process | Compute queues | VRAM |
   | --- | ---: | ---: |
-  | bge-large (llama-server) | 3 | 0.53 GB |
-  | bge-reranker (llama-server) | 3 | 0.55 GB |
+  | bge-large and bge-reranker (one llama-server each; VRAM does not tell them apart) | 3 + 3 | 0.53 / 0.55 GB |
   | gte-qwen2 (llama-server) | 3 | 2.26 GB |
   | orpheus (llama-server) | 3 | 2.79 GB |
   | pyannote-diarization | 2 (+2 SDMA) | 0.18 GB |
