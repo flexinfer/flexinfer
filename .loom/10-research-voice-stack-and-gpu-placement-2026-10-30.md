@@ -36,9 +36,9 @@ patched or restarted. No load went to the 7900 XTX GPU.
    - Diarization: pyannote on the VII.
    - ASR: target is whisper.cpp (ggml-hip) `large-v3-turbo` on the VII, behind a kill-test (§4).
      Until then, the faster-whisper CPU Deployment that ICC already uses stays the production ASR.
-     KT-ASR ran 2026-10-30 (§4.1). It was 41.5× real time at 1.3 GB and 3 queues, with WER no worse
-     than faster-whisper. It failed one bar: gte p95 +38 % during transcription (limit 20 %).
-     Owner decision D4.
+     KT-ASR ran 2026-10-30 (§4.1) and passes with whisper.cpp confined to 40 of 60 CUs
+     (`HSA_CU_MASK=0:0-39`): 34.7× real time, 1.3 GB, 3 queues, gte p95 unchanged, WER no worse
+     than faster-whisper. Unmasked, gte p95 rose 38–54 %.
    - The parked vLLM Whisper lane on the XTX stays parked.
 4. **Failover:**
    - XTX loss: creative and the Mills warm lane go down. The workhorse is untouched.
@@ -237,9 +237,13 @@ off-CI is fine.
 
 ### 4.1 KT-ASR results (2026-10-30)
 
-**Verdict: FAIL as written, on (d) only.** gte-qwen2 p95 rose 38 % while whisper.cpp ran, against
-a 20 % limit. Every other criterion passed with a wide margin. Per the brief, the backend MRs stop
-here; the decision is the owner's (options below).
+**Verdict: PASS with a compute-unit mask (`HSA_CU_MASK=0:0-39`).**
+- Run 1 failed (d) only: gte-qwen2 p95 rose 38 % while whisper.cpp ran, against a 20 % limit.
+  Every other criterion passed with a wide margin.
+- The owner chose the retest (D4 option 1). Run 2 confined whisper.cpp to 40 of the card's 60
+  CUs, and gte p95 moved −0.2 %.
+- An unmasked control in the same pod reproduced the failure (+54 %).
+- The table below is run 1; run 2 follows it.
 
 **Setup.**
 - Image `registry.harbor.lan/flexinfer/whispercpp-killtest@sha256:5bb1d4ba…`, built off-CI on the
@@ -302,6 +306,31 @@ here; the decision is the owner's (options below).
 - It lasts as long as a transcription: about 87 s per hour of audio.
 - Per-window figures: `.loom/kt-asr-2026-10-30/results/probe-windows.txt`.
 
+**Run 2: CU-mask retest (2026-10-30 20:21–20:40Z).**
+- Same image, pod and harness. Three passes back to back in one pod, each with its own 240 s
+  baseline.
+- `HSA_CU_MASK` was set only on whisper-server. KFD spreads a contiguous mask round-robin over
+  the VII's 4 shader engines (15 CUs each).
+
+| Pass | whisper.cpp CUs | 60 min | 10 min | gte p95 base → during | bge p95 base → during | WER 60 min |
+|---|---|---|---|---|---|---|
+| 1 | **40 of 60** (`0:0-39`) | 103.6 s, **34.7×** | 20.4 s, 29.5× | 57.9 → 57.8 ms, **−0.2 %** | 30.4 → 27.5 ms, −9.6 % | 20.99 % |
+| 2 | 60, no mask (control) | 87.0 s, 41.4× | 17.6 s, 34.1× | 55.4 → 85.3 ms, **+54 %** | 29.6 → 41.4 ms, +40 % | 20.99 % |
+| 3 | 30 of 60 (`0:0-29`) | 132.9 s, 27.1× | 25.1 s, 24.0× | 53.3 → 58.6 ms, +9.9 % | 30.8 → 27.4 ms, −11 % | 20.99 % |
+
+- **The control reproduces run 1** at the same throughput (41.4×), so the mask, not the day's
+  load, removes the gte tail.
+- With 40 CUs the slowdown is gone and throughput stays 7× above the 5× bar.
+- 30 CUs costs more throughput and buys no further latency; the gte figures are within baseline
+  noise of each other.
+- In every pass: 1,319 MiB, 3 compute queues, 0 SDMA, card peak 18 of 24, 0 probe errors, no
+  `oversubscribed` or new `amdgpu` lines in dmesg. Transcripts are unchanged by the mask (WER
+  identical).
+- `spec.config.env` reaches runtime subprocesses after the GPUProfile env
+  (`pkg/runtime/payload.go`, `ModelEnvVars`). The lane therefore ships with
+  `config.env: {HSA_CU_MASK: "0:0-39"}`, which affects whisper-server alone.
+- Evidence: `.loom/kt-asr-2026-10-30/results/retest/` and `retest_summary.py`.
+
 **Other findings.**
 - **pyannote now holds 3 compute queues plus 2 SDMA**, not the 2 recorded on 10-24 and earlier on
   10-30. The pre-run card total was 15, not 14: four llama.cpp lanes at 3 each, plus pyannote at 3.
@@ -318,24 +347,19 @@ here; the decision is the owner's (options below).
 - whisper-server also serves `POST /load`, which loads any server-side path. The lane's
   `serve-paths` must stay `/v1/audio/transcriptions` only.
 
-**Options (owner decision D4).**
-1. **Retest with a compute-unit mask, then decide (recommended).**
-   - Add `HSA_CU_MASK=0:0-39` to the pod to confine whisper.cpp to 40 of the card's 60 CUs. gte's
-     kernels can then run beside it instead of waiting behind it.
-   - Delete the finished pod and apply the manifest again; about 10 min. Throughput has 8× of
-     headroom to give up.
-   - If gte p95 lands within 20 %, the lane ships with that env in the Model's `config.env`.
-2. **Accept the cost and amend (d).** gte p95 rises about 25 ms only while a transcription runs.
-   The backend is written and tested (§4.2), so this goes straight to the MRs.
-3. **Pivot to Parakeet-TDT-0.6B-v2 on CPU**, the brief's fallback. It is English only, with no
-   kill-test yet, and it shares the 5930k CPU with the workhorse.
+**Owner decision D4 (taken 2026-10-30).** After run 1 the options were:
+1. retest with a compute-unit mask;
+2. accept the gte cost and amend (d);
+3. pivot to Parakeet-TDT-0.6B-v2 on CPU.
 
-Evidence: `.loom/kt-asr-2026-10-30/results/` (summary.json, wer.json, probe-windows.txt,
-icc-check-twospk.txt, merged-words.txt, server.log).
+The owner chose 1, and run 2 passed, so the lane ships with the 40-CU mask.
 
-### 4.2 Backend prepared, not shipped
+Evidence for run 1: `.loom/kt-asr-2026-10-30/results/` (summary.json, wer.json,
+probe-windows.txt, icc-check-twospk.txt, merged-words.txt, server.log).
 
-Written and unit-tested on branch `feat/whispercpp-asr-lane`; held back because KT-ASR failed (d):
+### 4.2 Backend and lane
+
+Code MR from branch `feat/whispercpp-asr-lane` (live-neutral):
 - `backend/whispercpp.go`: no image of its own; port 8000; `--inference-path
   /v1/audio/transcriptions`; `--language auto`; `--no-language-probabilities`. `config.modelFile`
   resolves against the staged Local cache.
@@ -352,7 +376,7 @@ Written and unit-tested on branch `feat/whispercpp-asr-lane`; held back because 
 - G6 (`FLEXINFER_ASR_UPSTREAM`) is not needed once the lane lands. Until then ICC keeps its direct
   faster-whisper URL.
 
-**Live apply plan, if D4 is option 1 or 2.**
+**Live apply plan.**
 1. Open and merge the backend MR from `feat/whispercpp-asr-lane`. CI on master publishes
    `runtime:rocm-gfx906-<sha>` plus the controller and proxy images. This step is live-neutral:
    nothing live uses the floating tag.
@@ -366,9 +390,8 @@ Written and unit-tested on branch `feat/whispercpp-asr-lane`; held back because 
    - add `whispercpp` to the gfx906 GPUProfile `runtime.bundledBackends`.
    - The gfx906 runtime pod restarts. bge, reranker, gte and orpheus reload in-pod (4–10 s each);
      gte has its CPU twin on the 5930k.
-4. Model MR: move `.loom/kt-asr-2026-10-30/whisper-large-v3-turbo-radeonvii.draft.yaml` to
-   `deploy/models/` and list it in the kustomization. For option 1, add `HSA_CU_MASK` to
-   `config.env`. Its cache-stage Job downloads the 874 MB file.
+4. Model MR: `deploy/models/whisper-large-v3-turbo-radeonvii.yaml` with
+   `config.env: {HSA_CU_MASK: "0:0-39"}`. Its cache-stage Job downloads the 874 MB file.
 5. Verify:
    - a twospk transcription through flexinfer-proxy returns top-level `words`;
    - KFD compute queues ≤ 24 (expect 18);
@@ -427,7 +450,7 @@ the 500 are not compared with each other.
 | XTX | `qwen35-35b-clean-mtp-32k` | 90 | ondemand | 0 | 30m | unchanged | Parked (unchanged) |
 | **VII** | bge-large / bge-reranker / gte-qwen2 | 120 / 115 / 114 | warm | 1 | 30m | unchanged | Retrieval plane |
 | VII | orpheus-3b-radeonvii | 113 | warm | 1 | 30m | `orpheus-tts` | TTS tokens |
-| VII | *(KT-ASR, then MR)* whispercpp large-v3-turbo | 111 (was 116; §4.1: above gte it evicts gte during a Humanizer burst) | warm | 1 | 30m | `asr`, `transcription`, `whisper` | ASR; measured 1,319 MiB, 3 queues |
+| VII | *(KT-ASR, then MR)* whispercpp large-v3-turbo | 111 (was 116; §4.1: above gte it evicts gte during a Humanizer burst) | warm | 1 | 30m | `asr`, `transcription`, `whisper` | ASR; measured 1,319 MiB, 3 queues; `HSA_CU_MASK=0:0-39` |
 | VII | pyannote (Deployment → Model later) | n/a (later 117) | always on | 1 | n/a | `/diarize` | Diarization |
 | VII | humanizer, gemma4-e4b, openjev, qwen3-embedding, qwen3-reranker | unchanged in MR 2 | ondemand | 0 | unchanged | unchanged | Cold. Humanizer needs a decision (§11). |
 | CPU | kokoro (XTX host CPU, falls back to 5930k), faster-whisper (5930k CPU, ns `ai`) | n/a | always on | 1 | n/a | `/v1/audio/speech`; ICC direct | TTS; ASR until KT-ASR passes |
@@ -643,8 +666,8 @@ without rollback.
    design.
 3. **D3.** Retarget S6b to the XTX runtime profile (§7).
 4. **D4.** ASR: approve KT-ASR (whisper.cpp on the VII), with Parakeet CPU as the pivot.
-   KT-ASR ran 2026-10-30 and failed only (d), gte p95 +38 %. Choose: retest with a CU mask
-   (recommended), accept and amend (d), or pivot to Parakeet (§4.1).
+   Decided 2026-10-30: the CU-mask retest. It passed (§4.1 run 2), so the lane ships with
+   `HSA_CU_MASK=0:0-39`.
 5. **D5.** Kokoro and tts-lane off the XTX host: Kokoro RTF test on the 5930k, plus G9.
 6. **D6.** Accept that creative availability follows XTX availability. The alternative of creative
    on the 5930k and an always-on XTX puts the must-have lane on the flaky card.

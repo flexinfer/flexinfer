@@ -1,7 +1,14 @@
 # KT-ASR one-shot pod (2026-10-30): whisper.cpp v1.9.5 ggml-hip on the Radeon VII.
 # Co-resident with the live gfx906 runtime pod: no amd.com/gpu claim, hostPath
 # /dev/kfd + /dev/dri (pyannote / gfx906-gptq-gemm-probe pattern). The harness
-# runs once, prints its results to the log, idles 15 min and exits.
+# prints its results to the log, idles 15 min and exits.
+#
+# Run 1 (2026-10-30 19:59Z): one pass, no CU mask; failed (d) on gte p95.
+# Run 2 (retest, owner decision D4 option 1): three passes in one pod, each
+# with its own 240 s baseline, to compare compute-unit masks on whisper.cpp
+# against an unmasked control: 40 of 60 CUs, no mask, 30 of 60 CUs. KFD maps a
+# contiguous mask round-robin over the 4 shader engines, so each mask is spread
+# evenly. HSA_CU_MASK reaches only whisper-server; the probe is plain HTTP.
 #
 #   kubectl apply -f deploy/debug/kt-asr-whispercpp-gfx906.yaml
 #   kubectl -n flexinfer-system logs kt-asr-whispercpp-gfx906 > kt.log
@@ -32,7 +39,10 @@ spec:
         - /bin/bash
         - -c
         - >-
-          python3 -I /kt/kt.py; echo KT_DONE;
+          KT_OUT=/out/cu40 HSA_CU_MASK=0:0-39 python3 -I /kt/kt.py;
+          KT_OUT=/out/nomask python3 -I /kt/kt.py;
+          KT_OUT=/out/cu30 HSA_CU_MASK=0:0-29 python3 -I /kt/kt.py;
+          echo KT_DONE;
           echo KT_ARCHIVE_BEGIN; tar czf - -C /out . | base64 -w0; echo; echo KT_ARCHIVE_END;
           sleep 900
       env:
@@ -41,9 +51,6 @@ spec:
         - {name: HSA_ENABLE_SDMA, value: "0"}
         - {name: HSA_USE_SVM, value: "0"}
         - {name: ROCR_VISIBLE_DEVICES, value: "0"}
-        # Retest option 1 (§4.1): confine whisper.cpp to 40 of the 60 CUs so
-        # gte/bge kernels run beside it. Run 1 (2026-10-30) had no mask.
-        # - {name: HSA_CU_MASK, value: "0:0-39"}
         - {name: KT_THREADS, value: "4"}
         - {name: KT_BASELINE_S, value: "240"}
       resources:
