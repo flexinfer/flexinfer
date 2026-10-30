@@ -114,7 +114,7 @@ func TestHWQueueBoundIsLiveNeutralOnRadeonVII(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			group := radeonviiGroup(now, tc.demanded...)
 			vramOnly := chooseSharedGroupLeaders(group, now, true, profile.VRAMMB, false)
-			bounded := chooseSharedGroupLeadersBounded(group, now, true, profile.VRAMMB, queues, false)
+			bounded := chooseSharedGroupLeadersBounded(group, now, true, profile.VRAMMB, queues, nil, false)
 			assert.Equal(t, names(vramOnly), names(bounded), "the queue bound must not change a live combination")
 			want := map[string]bool{}
 			for _, n := range tc.want {
@@ -139,7 +139,7 @@ func TestHWQueueBoundCapsTheActiveSet(t *testing.T) {
 		group = append(group, radeonviiLane(fmt.Sprintf("lane-%d", i), "llamacpp", int32(200-i), 100, true, aiv1alpha2.ModelPhaseReady, timePtr(now)))
 	}
 	assert.Len(t, chooseSharedGroupLeaders(group, now, true, profile.VRAMMB, false), 9, "VRAM alone admits all nine")
-	bounded := chooseSharedGroupLeadersBounded(group, now, true, profile.VRAMMB, queues, false)
+	bounded := chooseSharedGroupLeadersBounded(group, now, true, profile.VRAMMB, queues, nil, false)
 	require.Len(t, bounded, 7)
 	assert.Equal(t, int32(21), queues.sum(bounded))
 	for i := range 7 {
@@ -153,7 +153,7 @@ func TestHWQueueBoundCapsTheActiveSet(t *testing.T) {
 		radeonviiLane("judge", "vllm", 150, 1000, true, aiv1alpha2.ModelPhaseReady, timePtr(now)),
 		radeonviiLane("small", "llamacpp", 50, 100, true, aiv1alpha2.ModelPhaseReady, timePtr(now)),
 	)
-	bounded = chooseSharedGroupLeadersBounded(group, now, true, profile.VRAMMB, queues, false)
+	bounded = chooseSharedGroupLeadersBounded(group, now, true, profile.VRAMMB, queues, nil, false)
 	assert.False(t, names(bounded)["judge"], "18 + 6 = 24 exceeds the 22-queue budget")
 	assert.True(t, names(bounded)["small"], "18 + 3 = 21 fits")
 	assert.Len(t, bounded, 7)
@@ -163,10 +163,10 @@ func TestHWQueueBoundCapsTheActiveSet(t *testing.T) {
 	huge := int32(40)
 	solo := radeonviiLane("solo", "llamacpp", 100, 100, true, aiv1alpha2.ModelPhaseReady, timePtr(now))
 	solo.Spec.GPU.HWQueueEstimate = &huge
-	assert.Len(t, chooseSharedGroupLeadersBounded([]*aiv1alpha2.Model{solo}, now, true, profile.VRAMMB, queues, false), 1)
+	assert.Len(t, chooseSharedGroupLeadersBounded([]*aiv1alpha2.Model{solo}, now, true, profile.VRAMMB, queues, nil, false), 1)
 
 	// Single-slot election ignores the bound.
-	assert.Len(t, chooseSharedGroupLeadersBounded(group, now, false, profile.VRAMMB, queues, false), 1)
+	assert.Len(t, chooseSharedGroupLeadersBounded(group, now, false, profile.VRAMMB, queues, nil, false), 1)
 }
 
 func TestStaticallyParkedInGroupBoundedQueues(t *testing.T) {
@@ -181,13 +181,13 @@ func TestStaticallyParkedInGroupBoundedQueues(t *testing.T) {
 		active = append(active, radeonviiLane(fmt.Sprintf("warm-%d", i), "llamacpp", 250, 100, true, aiv1alpha2.ModelPhaseReady, timePtr(now)))
 	}
 	// 7 x 3 = 21 queues: the member's 3 would make 24 > 22.
-	assert.True(t, staticallyParkedInGroupBounded(member, leader, active, true, profile.VRAMMB, queues))
+	assert.True(t, staticallyParkedInGroupBounded(member, leader, active, true, profile.VRAMMB, queues, nil))
 	assert.False(t, staticallyParkedInGroup(member, leader, active, true, profile.VRAMMB), "VRAM alone still fits")
 	// With room in the queue budget the member stays promotable by demand.
-	assert.False(t, staticallyParkedInGroupBounded(member, leader, active[:3], true, profile.VRAMMB, queues))
+	assert.False(t, staticallyParkedInGroupBounded(member, leader, active[:3], true, profile.VRAMMB, queues, nil))
 	// An unbounded VRAM budget no longer means "never parked" when queues bind.
-	assert.True(t, staticallyParkedInGroupBounded(member, leader, active, true, 0, queues))
-	assert.False(t, staticallyParkedInGroupBounded(member, leader, active, true, 0, hwQueueBound{}))
+	assert.True(t, staticallyParkedInGroupBounded(member, leader, active, true, 0, queues, nil))
+	assert.False(t, staticallyParkedInGroupBounded(member, leader, active, true, 0, hwQueueBound{}, nil))
 }
 
 func TestHandleSharedGPUPublishesHWQueueGauge(t *testing.T) {

@@ -85,7 +85,7 @@ func TestLeaseFreesCard(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			assert.Equal(t, tc.want, leaseFreesCard(tc.lease, tc.group))
+			assert.Equal(t, tc.want, leaseFreesCard(tc.lease, tc.group, nil))
 		})
 	}
 }
