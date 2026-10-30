@@ -59,29 +59,46 @@ For multipart requests, the payload is forwarded intact to the backend — no JS
 
 ```mermaid
 flowchart TD
-    Req([Incoming request]) --> Extract["Extract model name<br/>header → path → JSON → multipart"]
-    Extract -->|Not found| E400([400 Bad Request])
-    Extract -->|Found| Auth{Auth<br/>enabled?}
-    Auth -->|Yes| CheckAuth["checkAuth()<br/>Bearer token"]
-    CheckAuth -->|Fail| E401([401 Unauthorized])
-    CheckAuth -->|Pass| RL
-    Auth -->|No| RL{Rate limit<br/>enabled?}
-    RL -->|Yes| CheckRL["checkRateLimit()<br/>Global + per-model"]
-    CheckRL -->|Exceeded| E429([429 Too Many Requests])
-    CheckRL -->|Pass| Resolve
-    RL -->|No| Resolve
+    req(["Incoming request"]):::step --> edge{"Token, model name,<br/>rate limit OK?"}:::step
+    edge -->|"401 · 400 · 429"| rej(["Rejected"]):::fail
+    edge -->|yes| resolve["Resolve service label,<br/>alias, LoRA parent"]:::proxy
+    resolve --> gates{"Model serves this path,<br/>prompt within budget?"}:::step
+    gates -->|"404 · 413"| rej
+    gates -->|yes| ready{"Model<br/>Ready?"}:::step
+    ready -->|yes| breaker{"Lane breaker<br/>open?"}:::step
+    breaker -->|"503"| rej
+    breaker -->|no| forward["Route and forward"]:::proxy
+    ready -->|no| cold["handleColdStart()<br/>queue · activate · drain"]:::proxy
+    cold --> forward
+    forward --> overflow{"400 context length,<br/>overflow lane set?"}:::step
+    overflow -->|yes| replay["Replay once to<br/>the overflow lane"]:::proxy
+    overflow -->|no| resp(["Response"]):::ok
+    replay --> resp
 
-    Resolve["Resolve aliases<br/>service labels → model aliases"] --> Fetch["Fetch Model /<br/>ModelDeployment"]
-    Fetch -->|Not found| E404([404 Model Not Found])
-    Fetch -->|Found| Ready{Model<br/>ready?}
-
-    Ready -->|Yes| Route["Select routing strategy<br/>default / session / prefix / least-loaded"]
-    Route --> Proxy["Reverse proxy to backend<br/>(rewrite model name in JSON body,<br/>skip rewrite for multipart)"]
-    Proxy --> Response([Response to client])
-
-    Ready -->|No| ColdStart["handleColdStart()<br/>Queue → singleflight scale-up →<br/>poll readiness → drain"]
-    ColdStart --> Proxy
+    classDef step fill:#E0E7FF,stroke:#6366F1,color:#0F172A
+    classDef proxy fill:#60A5FA,stroke:#1E40AF,color:#0F172A
+    classDef fail fill:#F06F6B,stroke:#8B3A3A,color:#0F172A
+    classDef ok fill:#34D399,stroke:#047857,color:#0F172A
 ```
+
+Forwarding rewrites `"model"` in a JSON body to the backend's model name; a multipart body is forwarded intact. Status codes the proxy itself returns:
+
+| Gate | Status |
+|---|---|
+| Bearer token invalid (auth enabled) | 401 |
+| No model name in header, path, JSON or multipart | 400 |
+| Rate limit exceeded | 429 |
+| Request validation failed (when enabled) | 400 |
+| No such Model, or the Model does not serve this path (`flexinfer.ai/serve-paths`) | 404 |
+| Prompt over the context budget (`flexinfer.ai/admission` opt-in) | 413 |
+| Lane breaker open | 503 + `Retry-After` |
+| Not Ready and parked: `spec.litellm.enabled: false` | 404 |
+| Not Ready and parked behind a higher-priority warm primary | 503 |
+| Cold start: queue full | 503 |
+| Cold start: readiness timeout | 504 |
+| No first byte from the lane within its budget (counts against the breaker) | 504 |
+
+Code: `internal/proxy/proxy.go` (`handleRequest`), `lane_breaker.go`, `context_overflow.go`, `queue.go`, `pkg/validation/errors.go`.
 
 ## Scale-to-zero contract
 

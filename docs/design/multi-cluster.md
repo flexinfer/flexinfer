@@ -15,23 +15,30 @@ Multi-cluster support enables FlexInfer to federate inference workloads across m
 
 ## Architecture
 
-```
-                     ┌─────────────────┐
-                     │   Global Proxy  │
-                     │  (Entry Point)  │
-                     └────────┬────────┘
-                              │
-            ┌─────────────────┼─────────────────┐
-            │                 │                 │
-    ┌───────▼───────┐ ┌───────▼───────┐ ┌───────▼───────┐
-    │   Cluster A   │ │   Cluster B   │ │   Cluster C   │
-    │   (NVIDIA)    │ │    (AMD)      │ │    (Mixed)    │
-    │               │ │               │ │               │
-    │ ┌───────────┐ │ │ ┌───────────┐ │ │ ┌───────────┐ │
-    │ │ FlexInfer │ │ │ │ FlexInfer │ │ │ │ FlexInfer │ │
-    │ │Controller │ │ │ │Controller │ │ │ │Controller │ │
-    │ └───────────┘ │ │ └───────────┘ │ │ └───────────┘ │
-    └───────────────┘ └───────────────┘ └───────────────┘
+```mermaid
+flowchart TB
+    global["Global proxy<br/>entry point"]:::proxy
+    subgraph c["Cluster C · mixed"]
+        pc["flexinfer-proxy"]:::proxy
+        cc["flexinfer-manager"]:::control
+    end
+    subgraph b["Cluster B · AMD"]
+        pb["flexinfer-proxy"]:::proxy
+        cb["flexinfer-manager"]:::control
+    end
+    subgraph a["Cluster A · NVIDIA"]
+        pa["flexinfer-proxy"]:::proxy
+        ca["flexinfer-manager"]:::control
+    end
+    global --> pa
+    global --> pb
+    global --> pc
+
+    classDef proxy fill:#60A5FA,stroke:#1E40AF,color:#0F172A
+    classDef control fill:#A78BFA,stroke:#4338CA,color:#0F172A
+    style a fill:transparent,stroke:#6366F1,stroke-dasharray:6 4
+    style b fill:transparent,stroke:#6366F1,stroke-dasharray:6 4
+    style c fill:transparent,stroke:#6366F1,stroke-dasharray:6 4
 ```
 
 ## Components

@@ -287,35 +287,38 @@ scrape_configs:
 
 ## Communication Flow
 
+How a v1alpha2 `Model` becomes a serving lane. Sections 2 and 3 above still describe the deprecated v1alpha1 `ModelDeployment` path. The workflow diagrams for the current path are in [architecture.md](../dev/architecture.md).
+
 ```mermaid
 sequenceDiagram
-    participant User
-    participant Controller
-    participant Benchmarker
-    participant Scheduler
-    participant K8sScheduler
-    participant Agent
+    participant Ag as flexinfer-agent
+    participant API as Kubernetes API
+    participant Ctrl as flexinfer-manager
+    participant RT as Runtime pod
+    participant KS as kube-scheduler
+    participant P as flexinfer-proxy
 
-    User->>Controller: kubectl apply ModelDeployment
-    Controller->>Controller: Validate and set status to Pending
+    Ag->>API: label the Node<br/>gpu.vendor · gpu.arch · gpu.vram · gpu.count · gpu.health
+    Note over API: operator applies a Model
+    API-->>Ctrl: Model event
+    Ctrl->>API: Service, cache PVC or hostPath, prefetch Job
+    Note over Ctrl: cache ready, shared-group election done
 
-    alt Benchmark data missing
-        Controller->>Benchmarker: Create benchmark Job
-        Benchmarker->>Benchmarker: Run performance tests
-        Benchmarker->>Controller: Store results in ConfigMap
+    alt runtime-eligible and a runtime pod runs on the node
+        Ctrl->>RT: POST /api/v1/models/{name}/load
+        RT-->>Ctrl: model health: Ready
+        Ctrl->>API: Endpoints for the Service point at the runtime pod
+    else dedicated Deployment
+        Ctrl->>API: Deployment with the Model's nodeSelector
+        API-->>KS: unscheduled lane pod
+        Note over KS: pods with schedulerName flexinfer-scheduler<br/>also pass flexinfer-sched /filter and /score
+        KS->>API: bind the pod to the node
+        API-->>Ctrl: readiness probe passes
     end
 
-    Controller->>Controller: Create underlying Deployment
-    Controller->>Controller: Update status to Deploying
-
-    K8sScheduler->>Scheduler: Filter/Score request
-    Scheduler->>Scheduler: Apply filters and scoring
-    Scheduler->>K8sScheduler: Return ranked nodes
-
-    K8sScheduler->>Agent: Schedule pod to selected node
-    Agent->>Agent: Validate hardware compatibility
-
-    Controller->>Controller: Update status to Running
+    Ctrl->>API: Model status: phase Ready
+    API-->>P: Model watch (informer cache)
+    Note over P: the proxy now routes requests for this Model
 ```
 
 ---
