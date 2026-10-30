@@ -359,7 +359,7 @@ probe-windows.txt, icc-check-twospk.txt, merged-words.txt, server.log).
 
 ### 4.2 Backend and lane
 
-Code MR from branch `feat/whispercpp-asr-lane` (live-neutral):
+Code MR !1206 (live-neutral):
 - `backend/whispercpp.go`: no image of its own; port 8000; `--inference-path
   /v1/audio/transcriptions`; `--language auto`; `--no-language-probabilities`. `config.modelFile`
   resolves against the staged Local cache.
@@ -377,7 +377,7 @@ Code MR from branch `feat/whispercpp-asr-lane` (live-neutral):
   faster-whisper URL.
 
 **Live apply plan.**
-1. Open and merge the backend MR from `feat/whispercpp-asr-lane`. CI on master publishes
+1. Merge the backend MR !1206. CI on master publishes
    `runtime:rocm-gfx906-<sha>` plus the controller and proxy images. This step is live-neutral:
    nothing live uses the floating tag.
 2. Ops MR: roll the controller to that SHA, and add the new gfx906 runtime digest to the
@@ -390,7 +390,7 @@ Code MR from branch `feat/whispercpp-asr-lane` (live-neutral):
    - add `whispercpp` to the gfx906 GPUProfile `runtime.bundledBackends`.
    - The gfx906 runtime pod restarts. bge, reranker, gte and orpheus reload in-pod (4–10 s each);
      gte has its CPU twin on the 5930k.
-4. Model MR: `deploy/models/whisper-large-v3-turbo-radeonvii.yaml` with
+4. Model MR !1207 (draft): `deploy/models/whisper-large-v3-turbo-radeonvii.yaml`, with
    `config.env: {HSA_CU_MASK: "0:0-39"}`. Its cache-stage Job downloads the 874 MB file.
 5. Verify:
    - a twospk transcription through flexinfer-proxy returns top-level `words`;
