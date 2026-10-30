@@ -32,7 +32,6 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/utils/ptr"
-	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -47,19 +46,11 @@ import (
 // Deployment path and the runtime-managed load path use this so a model gets
 // identical LoRA support however it is served.
 func (r *ModelReconciler) loraRuntimeConfig(ctx context.Context, model *aiv1alpha2.Model) (count, maxRank int) {
-	loraList := &aiv1alpha2.LoRAAdapterList{}
-	if err := r.List(ctx, loraList, client.InNamespace(model.Namespace)); err != nil {
+	// A list error leaves LoRA off on the Deployment path, as before; the
+	// runtime payload builder fails the render instead.
+	count, maxRank, err := pkgrt.LoRALaunchConfig(ctx, r.Client, model)
+	if err != nil {
 		return 0, 0
-	}
-	for i := range loraList.Items {
-		la := &loraList.Items[i]
-		if la.Spec.ModelRef != model.Name {
-			continue
-		}
-		count++
-		if la.Spec.MaxRank != nil && int(*la.Spec.MaxRank) > maxRank {
-			maxRank = int(*la.Spec.MaxRank)
-		}
 	}
 	return count, maxRank
 }

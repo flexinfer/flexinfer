@@ -76,23 +76,10 @@ func (r *ModelReconciler) buildRuntimeLoadPayload(ctx context.Context, model *ai
 		}
 	}
 
-	// LoRA support flows through the payload config so the runtime launches vLLM
-	// with the same --enable-lora flags a dedicated Deployment would get. Without
-	// this, a runtime-managed model can never hot-load an adapter.
-	var loraCount, loraMaxRank int
-	if ls, ok := b.(backend.LoRASupporter); ok && ls.SupportsLoRA() {
-		loraCount, loraMaxRank = r.loraRuntimeConfig(ctx, model)
-	}
-
-	// Build the load request payload using the shared runtime launch builder.
-	// This keeps the reconcile path aligned with the proxy fast path.
-	return pkgrt.NewLoadPayloadForModel(model, b, pkgrt.BuildLoadOptions{
-		ModelBasePath: "/models",
-		GPUVendor:     gpuVendor,
-		GPUProfile:    profile,
-		LoRAAdapters:  loraCount,
-		LoRAMaxRank:   loraMaxRank,
-	})
+	// The proxy's direct-load fast path renders through the same builder (LoRA
+	// options included), so whichever side wins a load race sends the same
+	// payload and SpecHash.
+	return pkgrt.NewModelLoadPayload(ctx, r.Client, model, b, gpuVendor, profile)
 }
 
 func (r *ModelReconciler) sendRuntimeLoad(ctx context.Context, model *aiv1alpha2.Model, endpoint *RuntimeEndpoint, payload *pkgrt.LoadPayload) error {
@@ -119,8 +106,9 @@ func (r *ModelReconciler) sendRuntimeLoad(ctx context.Context, model *aiv1alpha2
 //   - a spec edit that renders the same launch (priority, serverless knobs)
 //     is not worth a cold start;
 //   - a hash drift without a spec edit (a controller upgrade that renders
-//     differently, the proxy's direct load omitting controller-only LoRA
-//     knobs, a transiently missing GPUProfile) applies at the next edit
+//     differently, a direct load from a proxy older than the shared
+//     NewModelLoadPayload, a transiently missing GPUProfile) applies at the
+//     next edit
 //     instead of reloading every runtime lane at once.
 func runtimeSpecReloadReason(model *aiv1alpha2.Model, status *RuntimeModelStatus, specHash string) string {
 	if model == nil || status == nil || status.SpecHash == "" || specHash == "" {
