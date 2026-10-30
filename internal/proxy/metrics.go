@@ -219,6 +219,20 @@ var (
 		[]string{"model", "target", "outcome"},
 	)
 
+	// unavailableRerouteTotal counts requests for a Model with a
+	// flexinfer.ai/unavailable-reroute-to lane that arrived while the Model
+	// could not serve, by reason (failed, parked, preempted) and outcome:
+	// "rerouted" (served on the target) or "target_unavailable" (the target
+	// was not Ready or its breaker was open, so the request took its normal
+	// path).
+	unavailableRerouteTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_unavailable_reroute_total",
+			Help: "Total requests for an unavailable Model with an unavailable-reroute lane, by reason and outcome.",
+		},
+		[]string{"model", "target", "reason", "outcome"},
+	)
+
 	// Per-request token-shape histograms. Observed in logUpstreamUsage from the
 	// upstream `usage` block, labeled by resolved model so the traffic mix can be
 	// read per serving lane. This is the only place the proxy surfaces request
@@ -443,6 +457,7 @@ func RegisterMetrics() {
 		prometheus.MustRegister(proxyShutdownDuration)
 		prometheus.MustRegister(maxTokensClampedTotal)
 		prometheus.MustRegister(contextOverflowTotal)
+		prometheus.MustRegister(unavailableRerouteTotal)
 		prometheus.MustRegister(requestPromptTokens)
 		prometheus.MustRegister(requestCompletionTokens)
 		prometheus.MustRegister(completionsTotal)

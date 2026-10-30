@@ -832,6 +832,15 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// Unavailable reroute (G1): a Model that cannot serve now — Failed, or
+		// parked behind a holder its demand cannot beat — is served once on
+		// its Ready equivalent (flexinfer.ai/unavailable-reroute-to) instead
+		// of fast-failing or queueing below. Never for a LoRA adapter, whose
+		// weights only its parent holds. See unavailable_reroute.go.
+		if lookupName == modelName && p.rerouteUnavailable(w, r, m, start) {
+			return
+		}
+
 		// Statically parked behind a warm primary it can never outrank: the
 		// controller has determined this shared-group member is not promotable by
 		// demand (the warm leader never idles and outranks it). Cold-starting it is
