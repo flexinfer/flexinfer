@@ -9,6 +9,21 @@
 # from the WhisperForConditionalGeneration architecture — no `task:` field
 # (dropped in MR !464; v5 evidence showed --task is rejected by 0.17+ argparse).
 #
+# === 2026-10-30 status (.loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §3-§4) ===
+# Still PARKED, for a different reason than the June text below says. The
+# gemma4 26B named there was retired 2026-09-13. Since then the card's warm
+# tenant has been qwen38-27b-xtx-warm-canary (23,200 MB, minReplicas 1,
+# both device-plugin slots), so any transcription would swap out a 27B for
+# ~3 min each way on a card that was GPU-degraded ~41 of the last 168 h.
+# Whisper itself is servable on gfx1100: June's vLLM 0.17 lane returned an
+# exact transcript, and upstream vLLM #28346 (2025-11) added encoder-decoder
+# to TRITON_ATTN, the backend RDNA3 needs on newer images.
+# Production ASR today is the CPU faster-whisper Deployment in namespace ai
+# (gitops k3s/ai/transcription), which ICC calls directly. The planned
+# always-on lane is whisper.cpp ggml-hip on the Radeon VII, gated on
+# kill-test KT-ASR. Keep this lane parked; it is at most a burst tier for
+# long recordings in a creative window on the XTX flex card.
+#
 # === PARKED 2026-06-23: ASR is un-servable on this card, so it is de-advertised ===
 # litellm.enabled=false (below) removes whisper from the servable fleet: it is
 # hidden from /v1/models, not alias/label-resolvable, and never cold-started by

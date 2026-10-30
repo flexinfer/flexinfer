@@ -1,0 +1,5 @@
+- Voice stack audit (`.loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md`), all live-neutral:
+  - `stable-audio-open-gfx1100` now names its digest in `image:`. The Harbor pin guard and the runtime pin-drift gate only match `repo@sha256:` references, so `diffusers@d87f75f8` (`rocm-gfx1100-audio2`, last pulled 2026-08-23) carried no `pinned-*` tag. The rendered image is unchanged (`backend.ApplyImageDigest`).
+  - The parked `whisper-large-v3-turbo` header gives its current reason (the 23 GB warm lane on the XTX, not the retired gemma4 26B) and the ASR plan.
+  - `voice-loop` defaults to the `workhorse` chat label instead of the retired `gemma4-26b-a4b-gptq`.
+  - The pyannote runbook shows how ICC actually calls ASR and diarization today, plus the queue-reservation and warm-up caveats.

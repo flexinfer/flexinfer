@@ -23,8 +23,13 @@ func main() {
 	proxy := flag.String("proxy", "http://localhost:18080", "flexinfer proxy base URL")
 	audioPath := flag.String("audio", "", "path to an input audio file (speech). Mutually exclusive with -text")
 	text := flag.String("text", "", "input text (skips ASR). Mutually exclusive with -audio")
-	chatModel := flag.String("chat-model", "gemma4-26b-a4b-gptq", "chat model for /v1/chat/completions")
-	asrModel := flag.String("asr-model", "whisper-large-v3-turbo", "ASR model for /v1/audio/transcriptions")
+	// The gemma4 26B default was retired with its lanes on 2026-09-13; the
+	// `workhorse` service label resolves to whichever Qwen3.8-27B lane is Ready.
+	chatModel := flag.String("chat-model", "workhorse", "chat model for /v1/chat/completions")
+	// No ASR lane is servable through the proxy today: whisper-large-v3-turbo is
+	// parked (404) and production ASR (faster-whisper, namespace ai) sits outside
+	// it. See .loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §3.
+	asrModel := flag.String("asr-model", "whisper-large-v3-turbo", "ASR model for /v1/audio/transcriptions (parked; pass -text to skip ASR)")
 	ttsModel := flag.String("tts-model", "kokoro", "TTS model for /v1/audio/speech")
 	voice := flag.String("voice", "af_heart", "Kokoro voice id")
 	format := flag.String("format", "wav", "TTS audio format (wav, mp3)")

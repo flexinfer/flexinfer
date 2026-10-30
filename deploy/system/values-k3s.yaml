@@ -34,6 +34,21 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
+    # 2026-10-30: master 3cb6cde0 (master pipeline 36196) = the badcb8c3 build
+    # below plus round 2 of the unified-runtime work. !1199: runtime-path
+    # eligibility refuses lanes with a spec.config.command wrapper
+    # (RuntimeEligible=False/LaunchOverride), the controller and the proxy build
+    # one load payload (NewModelLoadPayload, LoRA + generation + specHash), a
+    # verified cache stays ready while its check Job re-runs (no Idle->Pending
+    # flap after the 6-hourly Job cleanup), and a per-group lock around the
+    # Service label sync (the --model-max-concurrent-reconciles flag exists but
+    # stays at 1 here). !1198: shared-group election and Schedulable check
+    # against the GPUProfile HWS queue budget (gfx906 24/2). !1200: opt-in
+    # image-scoped compile cache (no lane opts in). The live-lane golden test
+    # pins the dedicated pod templates, so no lane restart is expected. Rollback
+    # = the badcb8c3 build: tag 20261027-221332,
+    # sha256:4ee892319db7b13138b6b4545b28923d02f605fc0f836fa2142d206544dddda4.
+    #
     # 2026-10-27: master badcb8c3 (master pipeline 35422) = the 68f6cda7 build
     # below plus !1137, !1138, !1186 and !1187 (S6b controller pre-work). Caches:
     # !1137 keys the Local HF stage marker on source + sorted allow/ignore
@@ -104,8 +119,8 @@ controller:
     # a517165a is also safe):
     # sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376
     # (tag 20261023-142445).
-    digest: "sha256:4ee892319db7b13138b6b4545b28923d02f605fc0f836fa2142d206544dddda4"
-    tag: "20261027-221332"
+    digest: "sha256:cb4531508c426bdcbce648a71d5c21ac2872d8b2323ba0f728414a36368e3164"
+    tag: "20261030-153940"
   resources:
     limits:
       cpu: 1000m
@@ -166,6 +181,16 @@ proxy:
   replicaCount: 1
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-proxy
+    # 2026-10-30: master 3cb6cde0 (master pipeline 36196) = the 2f421569 build
+    # below plus !1199: a direct runtime load the proxy wins now posts the
+    # controller's payload (pkg/runtime NewModelLoadPayload: LoRA options,
+    # generation, specHash, the GPUProfile HWS queue budget from !1198), so the
+    # controller no longer reloads it or no-ops without adapters, and the wait
+    # uses the Model's serverless.coldStartTimeout instead of the proxy-wide
+    # 25 min. Lanes with a spec.config.command wrapper are never direct-loaded.
+    # Rollback = the 2f421569 build: tag 20261029-154953,
+    # sha256:962427834ea973baec38bf6b94d110edf6a90e7987a674664074385d6686bf61.
+    #
     # 2026-10-29: master 2f421569 (master pipeline 35845) = the 2ecf68cc build
     # below plus !1193 and the shared packages that moved since (!1165
     # backend/diffusers, !1186 runtime-load payload generation + spec hash, !1187
@@ -209,8 +234,8 @@ proxy:
     # loraadapters watch from !1161. Rollback anchor: tag
     # humanizer-fastswaps-cc7273917,
     # sha256:db4c70c04e4196bf26da174d6e529380000678be76ac8315916e7a62452f18c8.
-    tag: "20261029-154953"
-    digest: "sha256:962427834ea973baec38bf6b94d110edf6a90e7987a674664074385d6686bf61"
+    tag: "20261030-153940"
+    digest: "sha256:e345d649ce009ea75a6d5f5370e51d4f4e6f5b8176ce2a7f874e92950549cad6"
     pullPolicy: Always
   service:
     type: ClusterIP
