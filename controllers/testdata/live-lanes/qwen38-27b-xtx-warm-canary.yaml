@@ -1,0 +1,98 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-xtx-warm-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/purpose: "Warm-pinned Mills/loom text lane on the 7900 XTX (mills-warm / mills-council)"
+    flexinfer.ai/plan: ".loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md"
+    flexinfer.ai/lane-first-byte-budget: "480s"
+    flexinfer.ai/promotion-state: promoted-64k-fp8-graph-warm
+    flexinfer.ai/promotion-evidence: "2026-09-13 §7a: Ready +6min, RDNA3W4A16, KV 69,905 tok fp8 (1.07x @64K), probes 3/3 coherent ~34 tok/s, 2.3K-token prompt 2.57 s, orpheus-tts on VII 0.72 s"
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-autoround-7900xtx
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 470
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 12h
+    coldStartTimeout: 25m
+  config:
+    attentionBackend: TRITON_ATTN
+    warmPolicy: primary
+    dedicatedDeployment: true
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 65536
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: fp8_e4m3
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-xtx-warm-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  serviceLabels:
+    - mills-warm
+    - mills-council
+    - xtx-warm
+  litellm:
+    enabled: true
+    servedModelName: qwen38-27b-xtx-warm-canary
+    aliases:
+      - qwen38-27b-xtx-warm-canary
+      - mills-warm
+      - mills-council
+      - xtx-warm
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

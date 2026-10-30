@@ -1,0 +1,299 @@
+{
+  "metadata": {
+    "labels": {
+      "app.kubernetes.io/instance": "qwen35-9b-ablit-rp",
+      "app.kubernetes.io/managed-by": "flexinfer",
+      "app.kubernetes.io/name": "model",
+      "flexinfer.ai/backend": "vllm",
+      "flexinfer.ai/gpu-group": "7900xtx-textgen",
+      "flexinfer.ai/model": "qwen35-9b-ablit-rp"
+    },
+    "annotations": {
+      "flexinfer.ai/backend": "vllm",
+      "flexinfer.ai/gpu.vram-estimate-mb": "23200",
+      "flexinfer.ai/model": "qwen35-9b-ablit-rp"
+    }
+  },
+  "spec": {
+    "volumes": [
+      {
+        "name": "model",
+        "hostPath": {
+          "path": "/var/lib/flexinfer/models/flexinfer-system/qwen35-9b-ablit-rp",
+          "type": "DirectoryOrCreate"
+        }
+      },
+      {
+        "name": "shm",
+        "emptyDir": {
+          "medium": "Memory",
+          "sizeLimit": "8Gi"
+        }
+      },
+      {
+        "name": "compile-cache",
+        "hostPath": {
+          "path": "/var/lib/flexinfer/compile-cache-qwen35-9b-v032-production/flexinfer-system/qwen35-9b-ablit-rp",
+          "type": "DirectoryOrCreate"
+        }
+      }
+    ],
+    "containers": [
+      {
+        "name": "model",
+        "image": "registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2",
+        "args": [
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "8000",
+          "--no-fail-on-environ-validation",
+          "--model",
+          "/models/qwen35-9b",
+          "--dtype",
+          "half",
+          "--max-model-len",
+          "229376",
+          "--gpu-memory-utilization",
+          "0.94",
+          "--attention-backend",
+          "TRITON_ATTN",
+          "--gdn-prefill-backend",
+          "triton",
+          "--mamba-cache-mode",
+          "align",
+          "--mamba-ssm-cache-dtype",
+          "bfloat16",
+          "--trust-remote-code",
+          "--language-model-only",
+          "--max-num-seqs",
+          "4",
+          "--max-num-batched-tokens",
+          "4096",
+          "--enable-chunked-prefill",
+          "--scheduler-reserve-full-isl",
+          "--cudagraph-capture-sizes",
+          "1",
+          "2",
+          "4",
+          "--max-cudagraph-capture-size",
+          "4",
+          "--cudagraph-metrics",
+          "--quantization",
+          "gptq",
+          "--served-model-name",
+          "qwen35-9b-ablit-rp",
+          "--kv-cache-dtype",
+          "fp8_e4m3",
+          "--kv-cache-metrics",
+          "--kv-cache-metrics-sample",
+          "1.0",
+          "--hf-overrides",
+          "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
+          "--enable-prefix-caching",
+          "--enable-prompt-tokens-details",
+          "--default-chat-template-kwargs",
+          "{\"enable_thinking\":false}"
+        ],
+        "ports": [
+          {
+            "name": "http",
+            "containerPort": 8000,
+            "protocol": "TCP"
+          }
+        ],
+        "env": [
+          {
+            "name": "CUDA_DEVICE_ORDER",
+            "value": "PCI_BUS_ID"
+          },
+          {
+            "name": "HSA_OVERRIDE_GFX_VERSION",
+            "value": "11.0.0"
+          },
+          {
+            "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
+            "value": "1"
+          },
+          {
+            "name": "HIP_FORCE_DEV_KERNARG",
+            "value": "1"
+          },
+          {
+            "name": "TORCH_BLAS_PREFER_HIPBLASLT",
+            "value": "1"
+          },
+          {
+            "name": "PYTORCH_ROCM_ARCH",
+            "value": "gfx1100"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_LINEAR",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_MOE",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_RMSNORM",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_MLA",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_MHA",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_FP8BMM",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_FP4BMM",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
+            "value": "0"
+          },
+          {
+            "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
+            "value": "0"
+          },
+          {
+            "name": "ROCR_VISIBLE_DEVICES",
+            "value": "0"
+          },
+          {
+            "name": "HIP_VISIBLE_DEVICES",
+            "value": "0"
+          },
+          {
+            "name": "MIOPEN_CUSTOM_CACHE_DIR",
+            "value": "/cache/compile/miopen"
+          },
+          {
+            "name": "MIOPEN_USER_DB_PATH",
+            "value": "/cache/compile/miopen/user.db"
+          },
+          {
+            "name": "VLLM_CACHE_ROOT",
+            "value": "/cache/compile/vllm"
+          },
+          {
+            "name": "XDG_CACHE_HOME",
+            "value": "/cache/compile/xdg"
+          },
+          {
+            "name": "TORCHINDUCTOR_CACHE_DIR",
+            "value": "/cache/compile/inductor"
+          },
+          {
+            "name": "TRITON_CACHE_DIR",
+            "value": "/cache/compile/triton"
+          },
+          {
+            "name": "TORCH_HOME",
+            "value": "/cache/compile/torch"
+          }
+        ],
+        "resources": {
+          "limits": {
+            "amd.com/gpu": "2",
+            "cpu": "8",
+            "memory": "40Gi"
+          },
+          "requests": {
+            "cpu": "4",
+            "memory": "16Gi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "model",
+            "mountPath": "/models"
+          },
+          {
+            "name": "shm",
+            "mountPath": "/dev/shm"
+          },
+          {
+            "name": "compile-cache",
+            "mountPath": "/cache/compile"
+          }
+        ],
+        "readinessProbe": {
+          "exec": {
+            "command": [
+              "python3",
+              "-c",
+              "\nimport json, math, os, sys, time, urllib.request\nbase = \"http://127.0.0.1:8000\"\nurllib.request.urlopen(base + \"/health\", timeout=5).close()\ntext = urllib.request.urlopen(base + \"/metrics\", timeout=5).read(4194304).decode()\nnames = [\"vllm:num_requests_running\", \"vllm:num_requests_waiting\", \"vllm:prompt_tokens_total\", \"vllm:generation_tokens_total\"]\nvalues = [0.0] * 4\nseen = set()\nfor line in text.splitlines():\n    line = line.strip()\n    if not line or line.startswith(\"#\"):\n        continue\n    name = line.split(\"{\", 1)[0].split()[0]\n    if name not in names:\n        continue\n    rest = line.rsplit(\"}\", 1)[-1] if \"{\" in line else line[len(name):]\n    value = float(rest.split()[0])\n    if not math.isfinite(value) or value \u003c 0:\n        sys.exit(1)\n    i = names.index(name)\n    values[i] += value\n    seen.add(i)\nif len(seen) != 4:\n    sys.exit(1)\npath = \"/tmp/flexinfer-vllm-stall.json\"\nnow = time.monotonic()\nwith open(\"/proc/1/stat\") as f:\n    process_start = f.read().rsplit(\")\", 1)[1].split()[19]\nold = {}\ntry:\n    with open(path) as f:\n        old = json.load(f)\nexcept (OSError, ValueError):\n    pass\nactive = values[0] + values[1] \u003e 0\nsince = old.get(\"since\", now)\nif old.get(\"process_start\") != process_start or not active or not old.get(\"active\") or old.get(\"tokens\") != values[2:] or now - old.get(\"observed\", now) \u003e 90 or now \u003c since:\n    since = now\nstate = dict(process_start=process_start, since=since, observed=now, active=active, tokens=values[2:])\nwith open(path + \".new\", \"w\") as f:\n    json.dump(state, f)\nos.replace(path + \".new\", path)\nsys.exit(1 if active and now - since \u003e= 300 else 0)\n"
+            ]
+          },
+          "timeoutSeconds": 15,
+          "periodSeconds": 30,
+          "successThreshold": 1,
+          "failureThreshold": 3
+        },
+        "startupProbe": {
+          "httpGet": {
+            "path": "/health",
+            "port": 8000,
+            "scheme": "HTTP"
+          },
+          "initialDelaySeconds": 5,
+          "timeoutSeconds": 3,
+          "periodSeconds": 2,
+          "successThreshold": 1,
+          "failureThreshold": 750
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "imagePullPolicy": "IfNotPresent"
+      }
+    ],
+    "restartPolicy": "Always",
+    "nodeSelector": {
+      "kubernetes.io/hostname": "cblevins-7900xtx"
+    },
+    "serviceAccountName": "default",
+    "automountServiceAccountToken": false,
+    "securityContext": {
+      "supplementalGroups": [
+        109,
+        992
+      ]
+    },
+    "tolerations": [
+      {
+        "key": "dedicated",
+        "operator": "Equal",
+        "value": "gpu",
+        "effect": "NoSchedule"
+      }
+    ]
+  }
+}

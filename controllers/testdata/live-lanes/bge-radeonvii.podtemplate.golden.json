@@ -1,0 +1,219 @@
+{
+  "metadata": {
+    "labels": {
+      "app.kubernetes.io/instance": "bge-large-radeonvii",
+      "app.kubernetes.io/managed-by": "flexinfer",
+      "app.kubernetes.io/name": "model",
+      "flexinfer.ai/backend": "llamacpp",
+      "flexinfer.ai/gpu-group": "radeonvii-models",
+      "flexinfer.ai/model": "bge-large-radeonvii"
+    },
+    "annotations": {
+      "flexinfer.ai/backend": "llamacpp",
+      "flexinfer.ai/gpu.vram-estimate-mb": "1500",
+      "flexinfer.ai/model": "bge-large-radeonvii"
+    }
+  },
+  "spec": {
+    "volumes": [
+      {
+        "name": "model",
+        "hostPath": {
+          "path": "/var/lib/flexinfer/models/flexinfer-system/bge-large-radeonvii",
+          "type": "DirectoryOrCreate"
+        }
+      },
+      {
+        "name": "shm",
+        "emptyDir": {
+          "medium": "Memory",
+          "sizeLimit": "8Gi"
+        }
+      },
+      {
+        "name": "flash-tmpfs",
+        "hostPath": {
+          "path": "/dev/shm/flexinfer/flexinfer-system/bge-large-radeonvii",
+          "type": "DirectoryOrCreate"
+        }
+      }
+    ],
+    "initContainers": [
+      {
+        "name": "flash-loader",
+        "image": "registry.harbor.lan/flexinfer/flexinfer-flash-loader:master",
+        "env": [
+          {
+            "name": "FLASH_SRC",
+            "value": "/src"
+          },
+          {
+            "name": "FLASH_DST",
+            "value": "/models"
+          },
+          {
+            "name": "FLASH_CONCURRENCY",
+            "value": "4"
+          },
+          {
+            "name": "FLASH_BUFFER_KB",
+            "value": "4096"
+          },
+          {
+            "name": "FLASH_VERIFY",
+            "value": "false"
+          },
+          {
+            "name": "FLASH_EXCLUDE"
+          },
+          {
+            "name": "FLASH_VARIANT"
+          }
+        ],
+        "resources": {},
+        "volumeMounts": [
+          {
+            "name": "model",
+            "readOnly": true,
+            "mountPath": "/src"
+          },
+          {
+            "name": "flash-tmpfs",
+            "mountPath": "/models"
+          }
+        ],
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "imagePullPolicy": "Always"
+      }
+    ],
+    "containers": [
+      {
+        "name": "model",
+        "image": "ghcr.io/ggml-org/llama.cpp:server-rocm",
+        "args": [
+          "--host",
+          "0.0.0.0",
+          "--port",
+          "8080",
+          "--model",
+          "CompendiumLabs/bge-large-en-v1.5-gguf",
+          "--ctx-size",
+          "512",
+          "--n-gpu-layers",
+          "999",
+          "--batch-size",
+          "2048",
+          "--ubatch-size",
+          "512",
+          "--embeddings",
+          "--metrics",
+          "-fit",
+          "off"
+        ],
+        "ports": [
+          {
+            "name": "http",
+            "containerPort": 8080,
+            "protocol": "TCP"
+          }
+        ],
+        "env": [
+          {
+            "name": "HSA_ENABLE_SDMA",
+            "value": "0"
+          },
+          {
+            "name": "HSA_USE_SVM",
+            "value": "0"
+          },
+          {
+            "name": "PYTORCH_ROCM_ARCH",
+            "value": "gfx906"
+          },
+          {
+            "name": "ROCR_VISIBLE_DEVICES",
+            "value": "0"
+          },
+          {
+            "name": "HIP_VISIBLE_DEVICES",
+            "value": "0"
+          },
+          {
+            "name": "HF_HOME",
+            "value": "/models/.cache/huggingface"
+          },
+          {
+            "name": "HF_HUB_CACHE",
+            "value": "/models/.cache/huggingface/hub"
+          },
+          {
+            "name": "HUGGINGFACE_HUB_CACHE",
+            "value": "/models/.cache/huggingface/hub"
+          },
+          {
+            "name": "TRANSFORMERS_CACHE",
+            "value": "/models/.cache/huggingface/transformers"
+          }
+        ],
+        "resources": {
+          "limits": {
+            "amd.com/gpu": "1",
+            "cpu": "4",
+            "memory": "4Gi"
+          },
+          "requests": {
+            "cpu": "2",
+            "memory": "2Gi"
+          }
+        },
+        "volumeMounts": [
+          {
+            "name": "flash-tmpfs",
+            "mountPath": "/models"
+          },
+          {
+            "name": "shm",
+            "mountPath": "/dev/shm"
+          }
+        ],
+        "readinessProbe": {
+          "httpGet": {
+            "path": "/health",
+            "port": 8080,
+            "scheme": "HTTP"
+          },
+          "initialDelaySeconds": 10,
+          "timeoutSeconds": 5,
+          "periodSeconds": 10,
+          "successThreshold": 1,
+          "failureThreshold": 30
+        },
+        "terminationMessagePath": "/dev/termination-log",
+        "terminationMessagePolicy": "File",
+        "imagePullPolicy": "Always"
+      }
+    ],
+    "restartPolicy": "Always",
+    "nodeSelector": {
+      "kubernetes.io/hostname": "cblevins-radeonvii"
+    },
+    "serviceAccountName": "default",
+    "automountServiceAccountToken": false,
+    "securityContext": {
+      "supplementalGroups": [
+        109,
+        992
+      ]
+    },
+    "tolerations": [
+      {
+        "key": "dedicated",
+        "operator": "Equal",
+        "value": "gpu",
+        "effect": "NoSchedule"
+      }
+    ],
+    "priorityClassName": "flexinfer-serving-critical"
+  }
+}

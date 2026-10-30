@@ -1,0 +1,85 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen-image-21-gfx1100
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen-Image-2.1
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: "HF://Qwen/Qwen-Image-2.1@b3179ad355be050328e483a9dfdd9e60cd62adfa (official bf16, NF4 on load)"
+    flexinfer.ai/serve-paths: /v1/images/generations,/v1/images/edits
+    flexinfer.ai/purpose: "Qwen-Image 2.1 text-to-image and reference edits, official weights (Qwen Research License: research/evaluation use)"
+    flexinfer.ai/plan: .loom/10-research-qwen-image-21-uncensored-2026-10-24.md
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/lane-first-byte-budget: "600s"
+spec:
+  backend: diffusers
+  image: registry.harbor.lan/flexinfer/runtime@sha256:2c94c6d973fab09d9304891b26a25a026bc6e6bdecfe304b138de6c118d219cc
+  source: HF://Qwen/Qwen-Image-2.1
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen-image-21-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    priority: 500
+    vramEstimateMB: 18000
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 15m
+    coldStartTimeout: 15m
+  config:
+    dedicatedDeployment: true
+    command:
+      - python
+      - /opt/flexinfer/server-diffusers.py
+    hfRevision: b3179ad355be050328e483a9dfdd9e60cd62adfa
+    hfIgnorePatterns: ["assets/*"]
+    modelFamily: qwenimage21
+    trueCfgScale: "1.0"
+    numInferenceSteps: "40"
+    dtype: bfloat16
+    computeDtype: bfloat16
+    transformerQuantization: nf4
+    textEncoderQuantization: nf4
+    cpuOffload: "false"
+    enableVaeTiling: "false"
+    warmupResolutions: "1024x1024"
+    hipVisibleDevices: "0"
+    warmPolicy: ondemand
+    env:
+      TORCH_BLAS_PREFER_HIPBLASLT: "0"
+      TRANSFORMER_QUANTIZATION: nf4
+      TEXT_ENCODER_QUANTIZATION: nf4
+      DEFAULT_TRUE_CFG_SCALE: "1.0"
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  serviceLabels:
+    - qwen-image
+    - qwen-image-2.1
+  litellm:
+    enabled: true
+    servedModelName: qwen-image-21-gfx1100
+    aliases:
+      - qwen-image
+      - qwen-image-2.1
+  tolerations:
+    - effect: NoSchedule
+      key: node-role.kubernetes.io/control-plane
+      operator: Exists
