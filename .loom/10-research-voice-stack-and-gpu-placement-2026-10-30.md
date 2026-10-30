@@ -352,6 +352,32 @@ Written and unit-tested on branch `feat/whispercpp-asr-lane`; held back because 
 - G6 (`FLEXINFER_ASR_UPSTREAM`) is not needed once the lane lands. Until then ICC keeps its direct
   faster-whisper URL.
 
+**Live apply plan, if D4 is option 1 or 2.**
+1. Open and merge the backend MR from `feat/whispercpp-asr-lane`. CI on master publishes
+   `runtime:rocm-gfx906-<sha>` plus the controller and proxy images. This step is live-neutral:
+   nothing live uses the floating tag.
+2. Ops MR: roll the controller to that SHA, and add the new gfx906 runtime digest to the
+   `radeonvii-gfx906` prewarm list, keeping `90648c35`. Reconcile `hr flexinfer`.
+   - It must land before step 4, because the live controller fails a `backend: whispercpp` Model.
+   - The proxy can follow later; it skips its direct-load path for unknown backends.
+3. Ops MR, with the owner present:
+   - repin `runtime.profiles` gfx906 in `deploy/system/values-k3s.yaml`, and the GPUProfile
+     `runtime.image`;
+   - add `whispercpp` to the gfx906 GPUProfile `runtime.bundledBackends`.
+   - The gfx906 runtime pod restarts. bge, reranker, gte and orpheus reload in-pod (4–10 s each);
+     gte has its CPU twin on the 5930k.
+4. Model MR: move `.loom/kt-asr-2026-10-30/whisper-large-v3-turbo-radeonvii.draft.yaml` to
+   `deploy/models/` and list it in the kustomization. For option 1, add `HSA_CU_MASK` to
+   `config.env`. Its cache-stage Job downloads the 874 MB file.
+5. Verify:
+   - a twospk transcription through flexinfer-proxy returns top-level `words`;
+   - KFD compute queues ≤ 24 (expect 18);
+   - gte p95 at its Service during a 60-minute transcription.
+6. Gitops: point ICC at the lane (`ICC_ASR_WHISPER_URL` = flexinfer-proxy,
+   `ICC_ASR_WHISPER_MODEL=whisper-large-v3-turbo-radeonvii`). Keep the faster-whisper Deployment
+   for a week as the rollback.
+7. Rollback: revert the Model MR, then repin the runtime to `90648c35`, which stays prewarmed.
+
 ## 5. Diarization: what moving pyannote into the Model API needs
 
 Today's backends are comfyui, diffusers, llamacpp, mlc-llm, ollama, snac, steam, sunshine, vllm and
