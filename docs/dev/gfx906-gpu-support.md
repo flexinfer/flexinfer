@@ -379,6 +379,10 @@ A unified image replaces the 3 separate gfx906 images with a single image based 
 **Image**: `registry.harbor.lan/flexinfer/runtime:unified-gfx906`
 **Build**: `make build-unified-gfx906`
 
+Since 2026-10-30 the image no longer bakes `HSA_OVERRIDE_GFX_VERSION=9.0.6` (see
+[Required Environment Variables](#required-environment-variables)). No GPUProfile pins this
+image any more: abliteration moved to the gfx906 runtime image on 2026-10-23.
+
 **Replaces**:
 | Old Image | Purpose | Status |
 |-----------|---------|--------|
@@ -403,7 +407,7 @@ scripts are public and self-contained; can be forked if maintenance stops.
 | Date | Decision | Rationale |
 |------|----------|-----------|
 | 2026-10-30 | Enforce the 24-queue HWS budget: GPUProfile `maxHWQueues: 24` / `reservedHWQueues: 2`, per-Model `hwQueueEstimate` | VRAM admission cannot see queues; past 24 the runlist oversubscribes and co-resident lanes stall |
-| 2026-10-30 | `HSA_OVERRIDE_GFX_VERSION` unset on gfx906 serving | KFD reports gfx906 natively; the live runtime runs without the key; an empty value hides the GPU |
+| 2026-10-30 | `HSA_OVERRIDE_GFX_VERSION` unset everywhere on gfx906, including the unified image | KFD reports gfx906 natively; the live runtime runs without the key; an empty value hides the GPU |
 | 2026-03-20 | Unified gfx906 image based on mixa3607 | Restores GPU compute + transformers>=5.0 in single image |
 | 2026-03-20 | CPU-only abliteration on gfx906 | GPU alloc broken on ROCm 6.4; 128GB RAM makes CPU viable |
 | 2026-03-20 | Use `gptq-rocm64-gfx906` image | Only image with transformers>=5.0 for Qwen3.5 support |
