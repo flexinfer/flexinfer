@@ -94,7 +94,6 @@ spec:
     # tenant and swap in whenever that lane idles 2 min. Today it is
     # statically parked (0 requests in the 7 days to 2026-10-30), and this
     # keeps it parked.
-
     priority: 290
     vramEstimateMB: 23200
   nodeSelector:
