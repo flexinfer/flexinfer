@@ -1,0 +1,59 @@
+# KT-ASR one-shot pod (2026-10-30): whisper.cpp v1.9.5 ggml-hip on the Radeon VII.
+# Co-resident with the live gfx906 runtime pod: no amd.com/gpu claim, hostPath
+# /dev/kfd + /dev/dri (pyannote / gfx906-gptq-gemm-probe pattern). The harness
+# runs once, prints its results to the log, idles 15 min and exits.
+#
+#   kubectl apply -f deploy/debug/kt-asr-whispercpp-gfx906.yaml
+#   kubectl -n flexinfer-system logs kt-asr-whispercpp-gfx906 > kt.log
+#   kubectl -n flexinfer-system delete pod kt-asr-whispercpp-gfx906
+#
+# Image: whisper.cpp v1.9.5 (HIP gfx906, static) + large-v3-turbo q8_0 +
+# fixtures + harness, layered on the live gfx906 runtime 90648c35. Results:
+# .loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §4.1.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kt-asr-whispercpp-gfx906
+  namespace: flexinfer-system
+  labels: {app: kt-asr-whispercpp}
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 14400
+  nodeSelector: {kubernetes.io/hostname: cblevins-radeonvii}
+  imagePullSecrets: [{name: harbor-creds}]
+  containers:
+    - name: kt
+      image: registry.harbor.lan/flexinfer/whispercpp-killtest@sha256:5bb1d4ba6d897c1467795e974549a37855fa30010bcfa1d20938bd60173f2d47
+      imagePullPolicy: IfNotPresent
+      securityContext: {privileged: true}
+      # Results leave through `kubectl logs` only: the summary line, then /out
+      # as base64 tar.gz between markers. The pod exits 15 min later.
+      command:
+        - /bin/bash
+        - -c
+        - >-
+          python3 -I /kt/kt.py; echo KT_DONE;
+          echo KT_ARCHIVE_BEGIN; tar czf - -C /out . | base64 -w0; echo; echo KT_ARCHIVE_END;
+          sleep 900
+      env:
+        # gfx906 GPUProfile env as runtime subprocesses get it; no HSA_OVERRIDE_GFX_VERSION
+        - {name: GPU_MAX_HW_QUEUES, value: "1"}
+        - {name: HSA_ENABLE_SDMA, value: "0"}
+        - {name: HSA_USE_SVM, value: "0"}
+        - {name: ROCR_VISIBLE_DEVICES, value: "0"}
+        # Retest option 1 (§4.1): confine whisper.cpp to 40 of the 60 CUs so
+        # gte/bge kernels run beside it. Run 1 (2026-10-30) had no mask.
+        # - {name: HSA_CU_MASK, value: "0:0-39"}
+        - {name: KT_THREADS, value: "4"}
+        - {name: KT_BASELINE_S, value: "240"}
+      resources:
+        requests: {cpu: "1", memory: 4Gi}
+        limits: {cpu: "8", memory: 12Gi}
+      volumeMounts:
+        - {name: out, mountPath: /out}
+        - {name: kfd, mountPath: /dev/kfd}
+        - {name: dri, mountPath: /dev/dri}
+  volumes:
+    - {name: out, emptyDir: {}}
+    - {name: kfd, hostPath: {path: /dev/kfd, type: CharDevice}}
+    - {name: dri, hostPath: {path: /dev/dri, type: Directory}}

@@ -1,0 +1,26 @@
+{
+ "twospk": {
+  "ref_words": 28,
+  "cpp_words": 28,
+  "fw_words": 28,
+  "wer_cpp_vs_truth": 0.0,
+  "wer_fw_vs_truth": 0.0,
+  "wer_cpp_vs_fw": 0.0
+ },
+ "meeting10": {
+  "ref_words": 2238,
+  "cpp_words": 1718,
+  "fw_words": 1131,
+  "wer_cpp_vs_truth": 32.48,
+  "wer_fw_vs_truth": 58.18,
+  "wer_cpp_vs_fw": 83.91
+ },
+ "meeting60": {
+  "ref_words": 11554,
+  "cpp_words": 10569,
+  "fw_words": 10030,
+  "wer_cpp_vs_truth": 20.99,
+  "wer_fw_vs_truth": 21.22,
+  "wer_cpp_vs_fw": 12.78
+ }
+}

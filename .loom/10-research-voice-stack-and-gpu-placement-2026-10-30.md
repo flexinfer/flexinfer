@@ -36,6 +36,9 @@ patched or restarted. No load went to the 7900 XTX GPU.
    - Diarization: pyannote on the VII.
    - ASR: target is whisper.cpp (ggml-hip) `large-v3-turbo` on the VII, behind a kill-test (§4).
      Until then, the faster-whisper CPU Deployment that ICC already uses stays the production ASR.
+     KT-ASR ran 2026-10-30 (§4.1). It was 41.5× real time at 1.3 GB and 3 queues, with WER no worse
+     than faster-whisper. It failed one bar: gte p95 +38 % during transcription (limit 20 %).
+     Owner decision D4.
    - The parked vLLM Whisper lane on the XTX stays parked.
 4. **Failover:**
    - XTX loss: creative and the Mills warm lane go down. The workhorse is untouched.
@@ -232,6 +235,123 @@ off-CI is fine.
 4. If (b) fails, retry with flash attention off (`-nfa`) and `large-v3-turbo` f16. Then pivot to
    Parakeet with its own kill-test: RTFx ≥ 10 at 4 threads, WER ≤ faster-whisper.
 
+### 4.1 KT-ASR results (2026-10-30)
+
+**Verdict: FAIL as written, on (d) only.** gte-qwen2 p95 rose 38 % while whisper.cpp ran, against
+a 20 % limit. Every other criterion passed with a wide margin. Per the brief, the backend MRs stop
+here; the decision is the owner's (options below).
+
+**Setup.**
+- Image `registry.harbor.lan/flexinfer/whispercpp-killtest@sha256:5bb1d4ba…`, built off-CI on the
+  `7900xtx` docker host (CPU only), from `.loom/kt-asr-2026-10-30/Dockerfile.ktasr`:
+  - whisper.cpp v1.9.5 (`d1be6fde`), `-DGGML_HIP=ON -DAMDGPU_TARGETS=gfx906`, on the gfx906 runtime
+    builder base `rocm/dev-ubuntu-22.04:6.2`, with the same `patch-hipmemgetinfo.sh`;
+  - linked statically (`BUILD_SHARED_LIBS=OFF` plus PIC), so it cannot load llama.cpp's
+    `libggml*.so` from the runtime's `LD_LIBRARY_PATH`. Its only GPU libraries are
+    `libamdhip64.so.6` and `libhipblas.so.2`;
+  - layered on the live gfx906 runtime `90648c35`, so the VII pulled only the new layer;
+  - model `ggml-large-v3-turbo-q8_0.bin`, HF `ggerganov/whisper.cpp@5359861c`, sha256 `317eb69c…`.
+- One-shot pod `deploy/debug/kt-asr-whispercpp-gfx906.yaml`, applied by the operator, with harness
+  `.loom/kt-asr-2026-10-30/kt.py`:
+  - privileged, hostPath `/dev/kfd` and `/dev/dri`, no `amd.com/gpu` claim, beside the live runtime
+    pod and pyannote;
+  - `GPU_MAX_HW_QUEUES=1`, `HSA_ENABLE_SDMA=0`, `HSA_USE_SVM=0`, no `HSA_OVERRIDE_GFX_VERSION`;
+  - `whisper-server --inference-path /v1/audio/transcriptions -t 4 -l auto`, with flash attention
+    on (the default).
+  - Run 2026-10-30 19:59–20:06Z: a 240 s probe baseline, then warm-up, the 10-minute file and the
+    60-minute file, back to back.
+- Fixtures:
+  - `twospk`: 10.8 s, macOS `say` (Daniel, then Samantha at 5.74 s), with a known transcript.
+  - `meeting10`: AMI EN2002a Mix-Headset, 5:00–15:00.
+  - `meeting60`: AMI EN2001a Mix-Headset, 0:00–60:00.
+  - The AMI corpus is CC BY 4.0. Ground truth is its manual word annotations (all speakers merged
+    by start time).
+- Reference: the production image `fedirz/faster-whisper-server@760e5e43`,
+  `Systran/faster-whisper-large-v3`, int8, CPU. It ran with the gitops CPU limit of 8 on the
+  7900X3D (a faster CPU than production's 5930k), with the same request ICC sends
+  (`verbose_json`, `timestamp_granularities[]=word`).
+- Scoring: `.loom/kt-asr-2026-10-30/score.py`. One normalizer is applied to every transcript:
+  lowercase, numbers to words, punctuation and fillers dropped, a few British spellings mapped.
+
+| # | Criterion | Measured | Result |
+|---|---|---|---|
+| (a) | WER within 5 points of faster-whisper large-v3 | Against AMI ground truth: 0.0 vs 0.0 %, 32.5 vs 58.2 %, 21.0 vs 21.2 % (whisper.cpp vs faster-whisper; twospk, meeting10, meeting60) | Pass |
+| (b) | ≥ 5× real time on 60 min | 86.8 s for 60 min = **41.5×**. meeting10 17.9 s (33.5×). twospk 0.94 s (11.5×), the first request after load. Server ready 3.5 s after exec. | Pass |
+| (c) | ≤ 2.5 GB VRAM, ≤ 3 compute queues | Peak **1,319 MiB** for the process (`/sys/class/kfd/kfd/proc/<pid>/vram_*`; weights 874 MB, compute buffers 202 MB). **3 compute queues, 0 SDMA.** Card total peaked at 18 of 24 queues. | Pass |
+| (d) | gte/bge p95 within 20 % of baseline; no runlist oversubscription | bge p95 43.3 → 49.0 ms (+13 %). **gte p95 64.1 → 88.9 ms (+38 %)**. 0 probe errors. dmesg: no `oversubscribed`, no new `amdgpu` lines. | **Fail (gte)** |
+| (e) | `verbose_json` word timings ICC's aligner accepts | ICC's `_parse_verbose_json` and `asr_align.align` accept the raw body (monotonic, no inverted spans, correct speaker split). But whisper-server lists **sub-word tokens**, so ICC's text reads "Infrast ructure Syn c … R ade on". With the runtime-ingress word merge (§4.2) the same body gives 28 words for 28 spoken, and 10,571 clean words on meeting60. | Pass with the merge |
+
+**Reading (a).** Two readings are possible, and the stricter one fails:
+- Against ground truth, which AMI provides, whisper.cpp is never worse than faster-whisper by more
+  than 5 points. That is the reading used above.
+- The other reading scores whisper.cpp against faster-whisper's own transcript. Cross-WER is 0.0,
+  83.9 and 12.8 %.
+- That reading is not usable here. On meeting10 faster-whisper fell into a hallucination loop:
+  207 segments of "Yeah.", and about 35 words a minute from minute 5 onward, against about 165 for
+  whisper.cpp. On the meeting the two tie on ground truth (21.0 vs 21.2 %).
+- whisper-server's default `no_context` (no conditioning on previous text) is why it does not loop.
+
+**Reading (d).** The gte slowdown is real, not sampling noise:
+- gte's baseline p95 was 60.6–70.8 ms across the four 60 s baseline windows.
+- During the 60-minute file it was 88.5 ms (n = 80) and the median rose 27 % (45.3 → 57.3 ms).
+- bge moved less.
+- whisper.cpp keeps the card's compute units busy for the whole request. The HWS then time-slices
+  gte's kernels behind it.
+- That is the bounded tail the 20 % bar was set to catch, not the 3–60 s runlist stalls of
+  2026-10-24 (none occurred).
+- It lasts as long as a transcription: about 87 s per hour of audio.
+- Per-window figures: `.loom/kt-asr-2026-10-30/results/probe-windows.txt`.
+
+**Other findings.**
+- **pyannote now holds 3 compute queues plus 2 SDMA**, not the 2 recorded on 10-24 and earlier on
+  10-30. The pre-run card total was 15, not 14: four llama.cpp lanes at 3 each, plus pyannote at 3.
+  `reservedHWQueues: 2` under-reserves by one; the plane still fits (18 of 24 with whisper.cpp).
+- **Priority 116 (§6) would evict gte during a Humanizer burst.** Humanizer (130, 11,000 MB),
+  bge-large, bge-reranker and gte sum to 15,800 of 16,384 MB. Any lane above gte that needs more
+  than 584 MB therefore pushes gte out. An ASR lane belongs below gte; the draft uses 111.
+- **The lane needs a proxy first-byte budget.** whisper-server writes nothing until the transcript
+  is done, so a recording longer than about 80 min at 41× would hit the proxy's 120 s default.
+  ICC's 600 s client timeout and LiteLLM's 180 s `FLEXINFER_TIMEOUT` bound the longest recording
+  each path can take.
+- There is no ffmpeg in the runtime image. whisper-server decodes WAV, MP3, FLAC and OGG natively;
+  m4a and webm callers must convert first. ICC already sends WAV.
+- whisper-server also serves `POST /load`, which loads any server-side path. The lane's
+  `serve-paths` must stay `/v1/audio/transcriptions` only.
+
+**Options (owner decision D4).**
+1. **Retest with a compute-unit mask, then decide (recommended).**
+   - Add `HSA_CU_MASK=0:0-39` to the pod to confine whisper.cpp to 40 of the card's 60 CUs. gte's
+     kernels can then run beside it instead of waiting behind it.
+   - Delete the finished pod and apply the manifest again; about 10 min. Throughput has 8× of
+     headroom to give up.
+   - If gte p95 lands within 20 %, the lane ships with that env in the Model's `config.env`.
+2. **Accept the cost and amend (d).** gte p95 rises about 25 ms only while a transcription runs.
+   The backend is written and tested (§4.2), so this goes straight to the MRs.
+3. **Pivot to Parakeet-TDT-0.6B-v2 on CPU**, the brief's fallback. It is English only, with no
+   kill-test yet, and it shares the 5930k CPU with the workhorse.
+
+Evidence: `.loom/kt-asr-2026-10-30/results/` (summary.json, wer.json, probe-windows.txt,
+icc-check-twospk.txt, merged-words.txt, server.log).
+
+### 4.2 Backend prepared, not shipped
+
+Written and unit-tested on branch `feat/whispercpp-asr-lane`; held back because KT-ASR failed (d):
+- `backend/whispercpp.go`: no image of its own; port 8000; `--inference-path
+  /v1/audio/transcriptions`; `--language auto`; `--no-language-probabilities`. `config.modelFile`
+  resolves against the staged Local cache.
+- `internal/runtime/whispercpp_words.go`: the model ingress turns whisper-server's per-segment
+  tokens into the OpenAI top-level `words` list. whispercpp Models always get an ingress.
+- HF prefetch filtered to `config.modelFile` for whispercpp. Without the filter,
+  `ggerganov/whisper.cpp` would pull every ggml model in the repo.
+- `build/Dockerfile.runtime-gfx906`: a static whisper.cpp v1.9.5 stage. `WHISPERCPP_VERSION` is
+  threaded through `runtime.yaml`, `build-runtime.sh`, the CI publish job and the
+  patch-contract check.
+- No proxy change is needed: `/v1/audio/transcriptions` already routes by the multipart `model`
+  field. LiteLLM needs no change either: the generator advertises audio-only `serve-paths` lanes as
+  `audio_transcription`.
+- G6 (`FLEXINFER_ASR_UPSTREAM`) is not needed once the lane lands. Until then ICC keeps its direct
+  faster-whisper URL.
+
 ## 5. Diarization: what moving pyannote into the Model API needs
 
 Today's backends are comfyui, diffusers, llamacpp, mlc-llm, ollama, snac, steam, sunshine, vllm and
@@ -281,7 +401,7 @@ the 500 are not compared with each other.
 | XTX | `qwen35-35b-clean-mtp-32k` | 90 | ondemand | 0 | 30m | unchanged | Parked (unchanged) |
 | **VII** | bge-large / bge-reranker / gte-qwen2 | 120 / 115 / 114 | warm | 1 | 30m | unchanged | Retrieval plane |
 | VII | orpheus-3b-radeonvii | 113 | warm | 1 | 30m | `orpheus-tts` | TTS tokens |
-| VII | *(KT-ASR, then MR)* whispercpp large-v3-turbo | 116 | warm | 1 | 30m | `asr`, `transcription`, `whisper` | ASR; about 2 GB, 3 queues |
+| VII | *(KT-ASR, then MR)* whispercpp large-v3-turbo | 111 (was 116; §4.1: above gte it evicts gte during a Humanizer burst) | warm | 1 | 30m | `asr`, `transcription`, `whisper` | ASR; measured 1,319 MiB, 3 queues |
 | VII | pyannote (Deployment → Model later) | n/a (later 117) | always on | 1 | n/a | `/diarize` | Diarization |
 | VII | humanizer, gemma4-e4b, openjev, qwen3-embedding, qwen3-reranker | unchanged in MR 2 | ondemand | 0 | unchanged | unchanged | Cold. Humanizer needs a decision (§11). |
 | CPU | kokoro (XTX host CPU, falls back to 5930k), faster-whisper (5930k CPU, ns `ai`) | n/a | always on | 1 | n/a | `/v1/audio/speech`; ICC direct | TTS; ASR until KT-ASR passes |
@@ -497,6 +617,8 @@ without rollback.
    design.
 3. **D3.** Retarget S6b to the XTX runtime profile (§7).
 4. **D4.** ASR: approve KT-ASR (whisper.cpp on the VII), with Parakeet CPU as the pivot.
+   KT-ASR ran 2026-10-30 and failed only (d), gte p95 +38 %. Choose: retest with a CU mask
+   (recommended), accept and amend (d), or pivot to Parakeet (§4.1).
 5. **D5.** Kokoro and tts-lane off the XTX host: Kokoro RTF test on the 5930k, plus G9.
 6. **D6.** Accept that creative availability follows XTX availability. The alternative of creative
    on the 5930k and an always-on XTX puts the must-have lane on the flaky card.
