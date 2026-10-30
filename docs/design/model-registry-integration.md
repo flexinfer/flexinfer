@@ -31,28 +31,25 @@ Model registry integration enables FlexInfer to seamlessly discover, download, a
 
 ## Architecture
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                     FlexInfer Controller                     │
-│  ┌─────────────┐  ┌─────────────┐  ┌─────────────────────┐  │
-│  │  HuggingFace │  │   Ollama    │  │   OCI Registry      │  │
-│  │   Adapter    │  │   Adapter   │  │     Adapter         │  │
-│  └──────┬──────┘  └──────┬──────┘  └──────────┬──────────┘  │
-│         │                │                     │             │
-│         └────────────────┼─────────────────────┘             │
-│                          │                                   │
-│                 ┌────────▼────────┐                         │
-│                 │  Registry Cache  │                         │
-│                 │    (In-Memory)   │                         │
-│                 └────────┬────────┘                         │
-│                          │                                   │
-│         ┌────────────────┼────────────────┐                 │
-│         │                │                │                 │
-│  ┌──────▼──────┐  ┌──────▼──────┐  ┌──────▼──────┐         │
-│  │ ModelCatalog │  │ ModelCache  │  │   Model     │         │
-│  │  (Discovery) │  │  (Storage)  │  │  (Runtime)  │         │
-│  └─────────────┘  └─────────────┘  └─────────────┘         │
-└─────────────────────────────────────────────────────────────┘
+```mermaid
+flowchart TB
+    subgraph ctrl["flexinfer-manager"]
+        hf["HuggingFace<br/>adapter"]:::store
+        ollama["Ollama<br/>adapter"]:::store
+        oci["OCI registry<br/>adapter"]:::store
+        regcache[("Registry cache<br/>in memory")]:::control
+        hf --> regcache
+        ollama --> regcache
+        oci --> regcache
+    end
+    regcache --> catalog["ModelCatalog<br/>discovery"]:::crd
+    regcache --> mcache["ModelCache<br/>storage"]:::crd
+    regcache --> model["Model<br/>serving"]:::crd
+
+    classDef store fill:#94A3B8,stroke:#334155,color:#0F172A
+    classDef control fill:#A78BFA,stroke:#4338CA,color:#0F172A
+    classDef crd fill:#F472B6,stroke:#9D174D,color:#0F172A
+    style ctrl fill:transparent,stroke:#6366F1,stroke-dasharray:6 4
 ```
 
 ## API Design
