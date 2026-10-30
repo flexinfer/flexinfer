@@ -117,41 +117,40 @@ CRD is the first-class carrier. The serving park/restore path is exercised live 
 
 ## Swap timing
 
-When a request arrives for an inactive model, the proxy signals demand and the controller orchestrates a swap. The sequence below shows the phases and their typical durations:
+When a request arrives for an inactive model, the proxy signals demand and the controller orchestrates a swap. The sequence below shows the v1alpha2 phases and their typical durations on both serving paths:
 
 ```mermaid
 sequenceDiagram
     participant C as Client
-    participant P as Proxy
-    participant Ctrl as Controller
-    participant Old as Active Pod
-    participant New as New Pod
+    participant P as flexinfer-proxy
+    participant Ctrl as flexinfer-manager
+    participant Old as Active lane
+    participant New as Demanded lane
 
-    C->>P: Request for inactive model
-    P->>P: Signal demand + enqueue
+    C->>P: request for an inactive lane
+    P->>P: enqueue, stamp lastActiveTime
 
-    rect rgb(255, 245, 230)
-        Note over P,Ctrl: Demand detection<br/>v1alpha2: up to 2 min (sharedDemandWindow)<br/>v1alpha1: ~10s (hysteresis) + 5s reconcile
-        Ctrl->>Ctrl: Priority check + anti-thrashing
+    rect rgba(167, 139, 250, 0.18)
+        Note over P,Ctrl: Election, under 1 s after the stamp
+        Ctrl->>Ctrl: chooseSharedGroupLeader()<br/>cooldown · priority · idle check
     end
 
-    rect rgb(230, 245, 255)
-        Note over Old: Preemption: ~4s
-        Ctrl->>Old: Scale replicas = 0
-        Old->>Old: Graceful shutdown
+    rect rgba(240, 111, 107, 0.18)
+        Note over Old: Preemption, ~2–5 s
+        Ctrl->>Old: Deployment to 0, or unload from the runtime pod
     end
 
-    rect rgb(230, 255, 230)
-        Note over New: Startup: ~28s total
-        Ctrl->>New: Scale replicas = 1
-        Note over New: Flash-loader (if enabled): ~6s
-        Note over New: Model load: ~22s
+    rect rgba(52, 211, 153, 0.18)
+        Ctrl->>New: Deployment to 1, or load into the runtime pod
+        Note over New: Dedicated pod: flash-loader ~6 s, then weight load ~22 s<br/>Runtime pod: the supervisor spawns the backend in place
     end
 
-    New-->>P: Readiness probe passes
-    P->>New: Drain queued requests
-    New-->>C: First response (~15s inference)
+    New-->>Ctrl: Ready
+    P->>New: forward queued requests
+    New-->>C: first response
 ```
+
+The election swaps at once only when the demanded lane outranks the active one. At equal priority it waits until the active lane has had no demand for 2 minutes. Nothing swaps within 5 minutes of the last preemption. The full decision order is in [Leader Election Algorithm](#leader-election-algorithm-v1alpha2).
 
 ### Timing constants
 
@@ -166,10 +165,10 @@ sequenceDiagram
 
 ### Priority semantics
 
-Higher `priority` values win. A model can only preempt the current active model if its priority is equal to or greater than the active model's priority. Lower-priority models must wait for the active model to go idle.
+Higher `priority` values win. A demanded model with a higher priority preempts the active model at the next reconcile. One with equal priority preempts only once the active model has been idle for the demand window. A lower-priority model cannot preempt; it runs after the active model scales to zero.
 
 For v1alpha2 (`spec.gpu.shared`):
-- The controller evaluates `demandedPriority >= readyPriority` explicitly in `chooseSharedGroupLeader()`.
+- `chooseSharedGroupLeader()` swaps when `demandedPriority > readyPriority`, or when `demandedPriority >= readyPriority` and the Ready model is idle.
 
 For v1alpha1 (`GPUGroup`):
 - Priority is encoded in the sort order of `determineActiveModel()`: models with demand are sorted by `priority DESC`, so the highest-priority model with queued requests always wins.
@@ -199,37 +198,57 @@ kubectl get models -n flexinfer-system -o custom-columns=\
 
 ### Leader Election Algorithm (v1alpha2)
 
-The controller runs `chooseSharedGroupLeader()` on every reconcile (~3 seconds) for each shared group. The algorithm has four stages:
+The controller runs `chooseSharedGroupLeader()` (`controllers/model_shared_gpu.go`) on every reconcile of a group member. It walks these checks in order and stops at the first one that decides:
 
-**Stage 1 — Anti-thrashing check:**
-If any model in the group has a `PreemptedAt` timestamp within the cooldown window (default 5 min, configurable via `spec.gpu.swapCooldown`), the current Active model keeps its position regardless of demand or priority. The cooldown is the **maximum** `swapCooldown` across all models in the group.
+```mermaid
+flowchart TD
+    start(["Reconcile a<br/>group member"]):::step --> override{"Override<br/>in force?"}:::step
+    override -->|"GPULease"| park["No leader:<br/>every member parks"]:::fail
+    override -->|"forcePromotion"| fp["Highest-priority<br/>forced member"]:::outcome
+    override -->|neither| hold{"Holder<br/>protected?"}:::step
+    hold -->|yes| keep["Current holder<br/>keeps the card"]:::outcome
+    hold -->|no| demand{"Demand<br/>preempts?"}:::step
+    demand -->|yes| swap["Swap to the<br/>demanded member"]:::swap
+    demand -->|no| reclaim{"Warm primary<br/>reclaims?"}:::step
+    reclaim -->|yes| wp["Warm primary<br/>takes the card"]:::outcome
+    reclaim -->|no| fallback["Fallback order"]:::outcome
 
-**Stage 2 — Classify models:**
-Each model is classified into one or more categories:
+    classDef step fill:#E0E7FF,stroke:#6366F1,color:#0F172A
+    classDef outcome fill:#A78BFA,stroke:#4338CA,color:#0F172A
+    classDef swap fill:#34D399,stroke:#047857,color:#0F172A
+    classDef fail fill:#F06F6B,stroke:#8B3A3A,color:#0F172A
+```
 
-| Category | Criteria | Purpose |
-|----------|----------|---------|
-| `readyLeader` | Phase = Ready | Model currently loaded and serving |
-| `recentLeader` | LastActiveTime within 5 min | Recently active, may still be warm |
-| `demandedLeader` | LastActiveTime within 2 min | Proxy signaled active demand |
-| `fallbackLeader` | Any model | Last resort if no other category matches |
+| Check | Decides when |
+|---|---|
+| Override in force | A `GPULease` frees the card (it outranks every member, or carries no priority): no member leads. Otherwise, any member with `gpu.forcePromotion: true` wins on priority among the forced members. |
+| Holder protected | A member was preempted inside the swap cooldown, so the `Active` member keeps the card. Or a member is still loading inside its activation window, so it keeps the card. |
+| Demand preempts | A demanded member outranks the Ready member, or ties it while the Ready member is idle. |
+| Warm primary reclaims | A `warmPolicy: primary` member is waiting and the Ready member, a borrower, is idle. |
+| Fallback order | Ready member, then recently demanded, warm primary, warm-pinned, any runnable member. |
 
-Within each category, ties are broken by: highest priority → most recent LastActiveTime → alphabetical name.
+| Term | Meaning |
+|---|---|
+| Swap cooldown | Any member's `status.sharedGroup.preemptedAt` is within the cooldown: default 5 min, or the **maximum** `spec.gpu.swapCooldown` across the group. An explicit `0` disables it. |
+| Demanded | `lastActiveTime` (proxy traffic) or an in-window activation request within 2 min (`sharedDemandWindow`). |
+| Recently demanded | The same, within 5 min. |
+| Idle | The Ready member has no demand within 2 min. |
+| Shorter windows | A scale-to-zero member (`minReplicas: 0`) whose `serverless.idleTimeout` is shorter than a window uses its idle timeout instead (`sharedActivityWindow()`). |
+| Warm primary | `config.warmPolicy: primary`. |
+| Warm-pinned | `serverless.minReplicas >= 1`. |
 
-**Stage 3 — Demand-based preemption:**
-If a `demandedLeader` exists **and** the `readyLeader` is idle (LastActiveTime > 2 min or nil) **and** `demandedPriority >= readyPriority`, the demanded model wins. This is the only path where a swap can happen.
+Within each category, ties are broken by: highest priority → most recent demand → alphabetical name.
 
-**Stage 4 — Fallback:**
-If no demand-based swap triggers: `readyLeader` > `recentLeader` > `fallbackLeader`.
+On GPUProfiles with `features.multiModel`, `chooseSharedGroupLeaders()` keeps the elected leader and also admits every other member that wants to run, highest priority first, while their summed `gpu.vramEstimateMB` fits the profile's VRAM budget.
 
 ### Demand Signaling Lifecycle
 
 The demand signal flows from the proxy to the controller via the model's `LastActiveTime` status field:
 
 1. A request arrives at the proxy for a model that is not currently Active in its shared group.
-2. The proxy calls `triggerScaleUp()`, which updates `model.Status.LastActiveTime = now` via a Kubernetes Status().Update() call. The proxy includes conflict retry logic (up to 3 attempts with re-fetch).
+2. The proxy calls `TriggerScaleUp()`, which stamps `model.Status.LastActiveTime = now` with a status merge patch that carries only the timestamp, so it cannot conflict with the controller's status writes (`patchLastActiveTime()` in `internal/proxy/k8s_activator.go`).
 3. The controller sees `LastActiveTime` within the 2-minute `sharedDemandWindow` and classifies the model as `demandedLeader`.
-4. If the priority gate passes (`demandedPriority >= readyPriority`) and the current active model is idle, the controller swaps to the demanded model.
+4. If the demanded model outranks the active model, the controller swaps at the next reconcile, unless the swap cooldown is active. At equal priority it swaps only when the active model is idle.
 
 **Key behavior:** The proxy sets `LastActiveTime` only once per scale-up attempt. It does not continuously ping demand. After 2 minutes, the demand signal expires. If the model still isn't loaded (e.g., the active model hasn't gone idle), a new request is needed to re-signal demand.
 

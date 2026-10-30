@@ -147,6 +147,13 @@ spec:
     # torch.compile (~5 min); cached restarts are ~3 min.
     coldStartTimeout: 25m
   config:
+    # 2026-10-30 (S6b readiness): stay a dedicated Deployment until S6b moves
+    # this lane into the 5930k runtime pod on purpose. Without the flag,
+    # un-parking that DaemonSet (deploy/system/values-k3s.yaml, profile
+    # gfx1100-5930k) loads the lane in-pod on the DaemonSet's image instead
+    # of spec.image. The flag only routes; the Deployment renders the same
+    # (controllers/model_dedicated_deployment_render_test.go).
+    dedicatedDeployment: true
     # S4 (2026-10-26): vLLM 0.32's token-major segmented attention (#59132)
     # for both prefill chunks and the MTP verify step; it holds decode at
     # 66 tok/s to 16K where TRITON_ATTN (the !967 RDNA3 split-KV decode fix,

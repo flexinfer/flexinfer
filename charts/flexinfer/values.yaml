@@ -128,6 +128,10 @@ runtime:
   #   priorityClassName: flexinfer-serving-critical
   #   nodeSelector:
   #     kubernetes.io/hostname: cblevins-7900xtx
+  #   # Optional: hold the DaemonSet at desired=0. Adds the nodeSelector term
+  #   # flexinfer.ai/quantization-pause: "false", which no node carries.
+  #   # Remove the line to un-park.
+  #   parked: true
   # - name: gfx906
   #   image: "registry.harbor.lan/flexinfer/runtime:rocm-gfx906"
   #   gpuVendor: amd
