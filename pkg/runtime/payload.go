@@ -150,6 +150,12 @@ func DirectRuntimeLoadEligibility(model *aiv1alpha2.Model, backendName string, p
 	if model.Spec.ConfigBool("dedicatedDeployment", false) {
 		return false, "config.dedicatedDeployment requires the model-specific image and Deployment path"
 	}
+	// Fail closed on launch overrides the payload cannot carry: loading such a
+	// Model in-pod would silently drop its wrapper (and the env or policy the
+	// wrapper sets), which for the INT4 MTP head means garbage output.
+	if key, ok := UncarriedLaunchOverride(model); ok {
+		return false, LaunchOverrideIneligibleReason(key)
+	}
 	// Require an explicit gpu.vendor: cpu. GetGPUVendor() also returns CPU when
 	// the GPU block is absent entirely, but GPU-less models keep their existing
 	// runtime eligibility — only an explicit CPU declaration opts out.
@@ -170,6 +176,42 @@ func DirectRuntimeLoadEligibility(model *aiv1alpha2.Model, backendName string, p
 		}
 	}
 	return true, ""
+}
+
+// uncarriedLaunchOverrideKeys are the spec.config keys that change how the
+// dedicated Deployment launches the backend process but that the runtime has
+// no counterpart for. The runtime manager always starts b.Command() (or the
+// inferred launcher) with b.Args(spec); it never reads these keys, so a load
+// payload that carries them in Config would still start the plain launcher.
+//
+//   - command: the container command override (controllers/model_deployment.go),
+//     used for wrappers such as `bash -lc 'export X=1; exec vllm serve "$@"'`.
+var uncarriedLaunchOverrideKeys = []string{"command"}
+
+// UncarriedLaunchOverride reports the first spec.config launch override on
+// model that a runtime load payload cannot carry, if any. Such a Model must be
+// served by a dedicated Deployment.
+func UncarriedLaunchOverride(model *aiv1alpha2.Model) (string, bool) {
+	if model == nil {
+		return "", false
+	}
+	cfg := model.Spec.GetConfigMap()
+	if len(cfg) == 0 {
+		return "", false
+	}
+	spec := backend.ModelSpec{Config: cfg}
+	for _, key := range uncarriedLaunchOverrideKeys {
+		if len(spec.ConfigStringSlice(key)) > 0 {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+// LaunchOverrideIneligibleReason is the eligibility reason for a Model whose
+// launch depends on the spec.config override key.
+func LaunchOverrideIneligibleReason(key string) string {
+	return fmt.Sprintf("config.%s overrides the backend launch and the runtime load payload cannot carry it; move wrapper env to config.env or keep the Deployment path", key)
 }
 
 // RuntimeProfileBundlesBackend reports whether a selected persistent runtime

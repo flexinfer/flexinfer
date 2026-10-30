@@ -318,6 +318,57 @@ func TestDirectRuntimeLoadEligibility(t *testing.T) {
 			wantReason: "config.dedicatedDeployment requires the model-specific image and Deployment path",
 		},
 		{
+			// The MTP lanes' wrapper: the runtime would start the plain vLLM
+			// launcher without FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ=1 and load the
+			// INT4 MTP head with the BF16 policy.
+			name: "command wrapper fails closed to the Deployment path",
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+					Config: &apiextensionsv1.JSON{Raw: []byte(`{"command":["bash","-lc","export FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ=1; exec python3 -m vllm.entrypoints.openai.api_server \"$@\"","vllm"]}`)},
+					GPU:    &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorAMD},
+				},
+			},
+			backend:    "vllm",
+			wantOK:     false,
+			wantReason: LaunchOverrideIneligibleReason("command"),
+		},
+		{
+			name: "single-string command override also fails closed",
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://Qwen/Qwen3-14B",
+					Config: &apiextensionsv1.JSON{Raw: []byte(`{"command":"/opt/venv/bin/vllm"}`)},
+				},
+			},
+			backend:    "vllm",
+			wantOK:     false,
+			wantReason: LaunchOverrideIneligibleReason("command"),
+		},
+		{
+			name: "dedicated deployment reason wins over a command override",
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
+					Config: &apiextensionsv1.JSON{Raw: []byte(`{"dedicatedDeployment":true,"command":["bash","-lc","exec vllm serve"]}`)},
+				},
+			},
+			backend:    "vllm",
+			wantOK:     false,
+			wantReason: "config.dedicatedDeployment requires the model-specific image and Deployment path",
+		},
+		{
+			name: "empty command override keeps runtime eligibility",
+			model: &aiv1alpha2.Model{
+				Spec: aiv1alpha2.ModelSpec{
+					Source: "HF://Qwen/Qwen3-14B",
+					Config: &apiextensionsv1.JSON{Raw: []byte(`{"command":[],"env":{"VLLM_ROCM_USE_AITER":"0"}}`)},
+				},
+			},
+			backend: "vllm",
+			wantOK:  true,
+		},
+		{
 			name: "raw pvc source without staged local cache is not eligible",
 			model: &aiv1alpha2.Model{
 				Spec: aiv1alpha2.ModelSpec{

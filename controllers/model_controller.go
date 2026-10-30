@@ -458,14 +458,20 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 				runtimeProfile = profile
 			}
 		}
-		if ok, reason := pkgrt.DirectRuntimeLoadEligibility(model, b.Name(), runtimeProfile); !ok {
+		ok, reason := pkgrt.DirectRuntimeLoadEligibility(model, b.Name(), runtimeProfile)
+		launchOverride, overrideErr := r.syncRuntimeLaunchOverride(ctx, model)
+		if overrideErr != nil {
+			return ctrl.Result{}, overrideErr
+		}
+		if !ok {
 			log.V(1).Info("Skipping runtime-managed flow for model", "reason", reason)
 			// A model that was previously runtime-managed may opt into a newer,
-			// model-specific image with dedicatedDeployment. Unload that same
-			// model from the persistent runtime before creating the Deployment;
-			// otherwise both processes race for the GPU and the Deployment
-			// crash-loops with almost no free VRAM.
-			if model.Spec.ConfigBool("dedicatedDeployment", false) {
+			// model-specific image with dedicatedDeployment, or gain a launch
+			// override the runtime cannot carry. Unload that same model from the
+			// persistent runtime before creating the Deployment; otherwise both
+			// processes race for the GPU and the Deployment crash-loops with
+			// almost no free VRAM.
+			if model.Spec.ConfigBool("dedicatedDeployment", false) || launchOverride {
 				runtimeEndpoint, err := r.Runtime.FindRuntimeForNode(ctx, model.Namespace, model.Spec.NodeSelector)
 				if err != nil {
 					return ctrl.Result{}, fmt.Errorf("discovering runtime for dedicated deployment handoff: %w", err)
