@@ -148,6 +148,9 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			ready := false
 			jobPhase := ""
 			message := ""
+			// copying: a copy Job for the current source and cache PVC exists or
+			// was just created. replaced: this pass deleted one for drift.
+			copying, replaced := false, false
 			job := &batchv1.Job{}
 			jobErr := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
 			if jobErr != nil && !errors.IsNotFound(jobErr) {
@@ -186,6 +189,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 								return false, delErr
 							}
 							err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+							replaced = true
 						}
 						// Drift-detection: if the cache PVC was recreated (e.g. an
 						// operator migrated spec.cache.storageClass, which requires
@@ -200,6 +204,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 									return false, delErr
 								}
 								err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+								replaced = true
 							}
 						}
 						if err == nil && cacheCopySourceReadyJobStale(job, sourceReadyStatus) {
@@ -207,7 +212,9 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 								return false, delErr
 							}
 							err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+							replaced = true
 						}
+						copying = true
 						if errors.IsNotFound(err) {
 							subPath := ""
 							if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
@@ -254,6 +261,10 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			if message == "" {
 				message = "waiting for cache copy job"
 			}
+			verified := ready
+			if copying && !replaced {
+				ready, message = keepVerifiedCacheReady(original, jobName, ready, jobPhase, message)
+			}
 
 			model.Status.Cache = &aiv1alpha2.CacheStatus{
 				Strategy:  cacheStrategy(model),
@@ -262,7 +273,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 				JobPhase:  jobPhase,
 				Message:   message,
 				Ready:     ready,
-				SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache),
+				SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, verified, original.Status.Cache),
 			}
 			carryPrefetchBookkeeping(model.Status.Cache, original.Status.Cache)
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCopy", message)
@@ -278,6 +289,9 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			ready := false
 			jobPhase := "Pending"
 			message := "waiting for local cache staging job"
+			// staging: a stage Job for the current source exists or was just
+			// created. replaced: this pass deleted one built for another source.
+			staging, replaced := false, false
 
 			if sourcePVC.Status.Phase != corev1.ClaimBound {
 				message = "waiting for source PVC to bind"
@@ -299,7 +313,9 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 							return false, delErr
 						}
 						err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+						replaced = true
 					}
+					staging = true
 					if errors.IsNotFound(err) {
 						subPath := ""
 						if _, sp, ok := parsePVCSource(model.Spec.Source); ok {
@@ -335,13 +351,18 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 				}
 			}
 
+			verified := ready
+			if staging && !replaced {
+				ready, message = keepVerifiedCacheReady(original, jobName, ready, jobPhase, message)
+			}
+
 			model.Status.Cache = &aiv1alpha2.CacheStatus{
 				Strategy:  cacheStrategy(model),
 				JobName:   jobName,
 				JobPhase:  jobPhase,
 				Message:   message,
 				Ready:     ready,
-				SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache),
+				SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, verified, original.Status.Cache),
 			}
 			carryPrefetchBookkeeping(model.Status.Cache, original.Status.Cache)
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheStage", message)
@@ -357,6 +378,9 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 		ready := false
 		jobPhase := "Pending"
 		message := "waiting for cache check job"
+		// checking: a check Job for the current source exists or was just
+		// created. replaced: this pass deleted a Job built for another source.
+		checking, replaced := false, false
 
 		job := &batchv1.Job{}
 		err := r.Get(ctx, types.NamespacedName{Name: jobName, Namespace: model.Namespace}, job)
@@ -368,6 +392,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 				return false, delErr
 			}
 			err = errors.NewNotFound(schema.GroupResource{Group: "batch", Resource: "jobs"}, jobName)
+			replaced = true
 		}
 		if errors.IsNotFound(err) {
 			if sourcePVC.Status.Phase != corev1.ClaimBound {
@@ -394,6 +419,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 					if err != nil {
 						return false, err
 					}
+					checking = true
 					jobPhase = "Running"
 					if created {
 						message = "cache check job started"
@@ -403,6 +429,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 				}
 			}
 		} else {
+			checking = true
 			if job.Status.Succeeded > 0 {
 				ready = true
 				jobPhase = "Succeeded"
@@ -416,6 +443,11 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			}
 		}
 
+		verified := ready
+		if checking && !replaced {
+			ready, message = keepVerifiedCacheReady(original, jobName, ready, jobPhase, message)
+		}
+
 		model.Status.Cache = &aiv1alpha2.CacheStatus{
 			Strategy:  cacheStrategy(model),
 			PVCName:   pvcName,
@@ -423,7 +455,7 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			JobPhase:  jobPhase,
 			Message:   message,
 			Ready:     ready,
-			SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, ready, original.Status.Cache),
+			SizeBytes: r.stagedCacheSize(ctx, model.Namespace, jobName, verified, original.Status.Cache),
 		}
 		carryPrefetchBookkeeping(model.Status.Cache, original.Status.Cache)
 		setModelCondition(model, aiv1alpha2.ConditionModelCached, ready, "CacheCheck", message)
@@ -744,12 +776,14 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			model.Status.Cache.Message = "prefetch job started"
 			if replaced {
 				model.Status.Cache.Message = refetchMessage
+			} else {
+				model.Status.Cache.Ready, model.Status.Cache.Message = keepVerifiedCacheReady(original, jobName, false, "Running", model.Status.Cache.Message)
 			}
-			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchRunning", model.Status.Cache.Message)
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, model.Status.Cache.Ready, "PrefetchRunning", model.Status.Cache.Message)
 			if err := r.patchModelStatus(ctx, model, original); err != nil {
 				return false, err
 			}
-			return false, nil
+			return model.Status.Cache.Ready, nil
 		}
 
 		if job.Status.Succeeded > 0 {
@@ -781,19 +815,17 @@ func (r *ModelReconciler) ensureCacheStaging(ctx context.Context, model *aiv1alp
 			model.Status.Cache.Message = "prefetch job failed"
 			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchFailed", model.Status.Cache.Message)
 		} else if job.Status.Active > 0 {
-			model.Status.Cache.Ready = false
 			model.Status.Cache.JobPhase = "Running"
-			model.Status.Cache.Message = "prefetch job running"
-			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchRunning", model.Status.Cache.Message)
+			model.Status.Cache.Ready, model.Status.Cache.Message = keepVerifiedCacheReady(original, jobName, false, "Running", "prefetch job running")
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, model.Status.Cache.Ready, "PrefetchRunning", model.Status.Cache.Message)
 		} else {
-			model.Status.Cache.Ready = false
 			model.Status.Cache.JobPhase = "Pending"
+			message := "prefetch job pending"
 			if pvc.Status.Phase != corev1.ClaimBound {
-				model.Status.Cache.Message = "prefetch job pending (waiting for PVC bind/schedule)"
-			} else {
-				model.Status.Cache.Message = "prefetch job pending"
+				message = "prefetch job pending (waiting for PVC bind/schedule)"
 			}
-			setModelCondition(model, aiv1alpha2.ConditionModelCached, false, "PrefetchPending", model.Status.Cache.Message)
+			model.Status.Cache.Ready, model.Status.Cache.Message = keepVerifiedCacheReady(original, jobName, false, "Pending", message)
+			setModelCondition(model, aiv1alpha2.ConditionModelCached, model.Status.Cache.Ready, "PrefetchPending", model.Status.Cache.Message)
 		}
 	} else {
 		model.Status.Cache.Ready = true
@@ -1289,6 +1321,42 @@ func localCacheStageAlreadyReady(model *aiv1alpha2.Model, stagedKey string) bool
 		return true
 	}
 	return model.Status.Cache.StagedKey != "" && model.Status.Cache.StagedKey == stagedKey
+}
+
+// cacheRecheckMessagePrefix marks a cache status kept ready while its Job
+// re-verifies an artifact already verified for the current spec.
+const cacheRecheckMessagePrefix = "re-verifying a cache already verified for this spec (stays ready): "
+
+// keepVerifiedCacheReady decides readiness while a pvc:// check, stage or copy
+// Job, or a SharedPVC HF prefetch Job, runs for a cache whose previous pass
+// (original) recorded it ready. It returns the readiness and the message to
+// record.
+//
+// Those Jobs carry no TTL, but the cluster's completed-Job janitor
+// (ops/cluster-cleanup, COMPLETED_JOB_AGE_HOURS=6) deletes them; the branch
+// then recreates the Job, which re-runs against an artifact its marker or
+// check already accepts. Reporting that window as not ready demoted Idle lanes
+// to Pending (11-16 transitions per lane per week) and scaled warm lanes to
+// zero: gte-qwen2-1p5b-cpu-5930k cold-started after every sweep. So a re-run
+// keeps the cache ready when the cache was verified by the same Job for the
+// current generation, the condition the Local HF stage guard
+// (localCacheStageAlreadyReady) applies first. A failed re-run still revokes
+// readiness, and callers skip this whenever the pass replaced a Job because
+// the source, cache PVC or source-ready Job changed, so a real change behaves
+// as before. A spec edit fails the generation match, which is conservative.
+func keepVerifiedCacheReady(original *aiv1alpha2.Model, jobName string, ready bool, jobPhase, message string) (bool, string) {
+	if ready || jobPhase == "Failed" || original == nil || original.Status.Cache == nil {
+		return ready, message
+	}
+	prev := original.Status.Cache
+	if !prev.Ready || prev.JobName != jobName {
+		return ready, message
+	}
+	cond := modelCondition(original.Status.Conditions, aiv1alpha2.ConditionModelCached)
+	if cond == nil || cond.Status != metav1.ConditionTrue || cond.ObservedGeneration != original.Generation {
+		return ready, message
+	}
+	return true, cacheRecheckMessagePrefix + strings.TrimPrefix(message, cacheRecheckMessagePrefix)
 }
 
 // localHFStagedKeyFields are the spec inputs that decide what a Local HF cache
