@@ -96,6 +96,15 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
   A high streaming share whose usage chunks are absent means the shape data is
   biased and the verdict must be read with caution. Streaming usage-chunk capture
   shipped in `internal/proxy/usage_log.go` (`usageSniffingBody`).
+- `flexinfer_proxy_qos_decisions_total{class,lane,outcome}` (counter) — one per request by
+  resolved QoS class (`interactive|background|batch`), lane (the Model it resolved to, the parent
+  for a LoRA adapter) and outcome (`admitted`, `queued`, `rejected`, `canceled` on lanes that enforce classes,
+  `unenforced` elsewhere). See
+  `docs/specs/proxy-api.md`, "Caller QoS classes".
+- `flexinfer_proxy_qos_ttft_seconds{class,lane}` (histogram) — streaming completions only: time
+  from the proxy receiving the request to the first upstream body byte, queueing included.
+- `flexinfer_proxy_qos_request_duration_seconds{class,lane}` (histogram) — end-to-end proxy
+  duration per class.
 
 > **Why these exist (traffic-shape observability).** The per-request usage *log*
 > line (`event=request_usage`, `internal/proxy/usage_log.go`) is the richer

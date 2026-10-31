@@ -47,15 +47,17 @@ const (
 
 // laneError is one proxy-originated error about a lane. Zero retryAfter
 // derives the hint from the code and the lane's ETA, negative sends none;
-// empty rerouteTo falls back to the Model's rerouteHintAnnotation.
+// empty rerouteTo falls back to the Model's rerouteHintAnnotation; a
+// positive queuePosition is the caller's place in the lane's QoS queue.
 type laneError struct {
-	status     int
-	errType    string
-	code       string
-	message    string
-	param      string
-	retryAfter int
-	rerouteTo  string
+	status        int
+	errType       string
+	code          string
+	message       string
+	param         string
+	retryAfter    int
+	rerouteTo     string
+	queuePosition int
 }
 
 // writeLaneError writes e with the lane-state block built from m, which may be
@@ -115,6 +117,9 @@ func (p *Proxy) laneDetails(m *aiv1alpha2.Model, e laneError, now time.Time) *va
 	}
 	if reroute != "" {
 		d.RerouteTo = &reroute
+	}
+	if pos := e.queuePosition; pos > 0 {
+		d.QueuePosition = &pos
 	}
 	if retry := e.retryAfter; retry > 0 {
 		d.RetryAfterSeconds = &retry

@@ -259,6 +259,24 @@ proxy:
     safetyMarginPercent: 5
     # Assumed max_tokens when the request omits the field.
     defaultMaxTokens: 256
+  # Caller QoS classes (D3). Each request resolves to interactive, background
+  # or batch: the X-FlexInfer-QoS header, then this caller map, then a LiteLLM
+  # alias suffix on the model name (workhorse-background), then interactive.
+  # The map renders into ConfigMap <fullname>-proxy-qos, mounted at
+  # /etc/flexinfer/qos; the proxy re-reads it every 30 s, so an edit needs no
+  # pod roll. A lane enforces classes only when it opts in
+  # (docs/specs/proxy-api.md, "Caller QoS classes").
+  qos:
+    # Caller name → class. The caller name is the X-FlexInfer-Caller header,
+    # else the User-Agent's first product token, lower-cased.
+    callers: {}
+    # "sha256:<hex sha256 of the bearer key>" → class. Hashes only: a
+    # ConfigMap is not a Secret.
+    apiKeys: {}
+    # On a lane that enforces classes, how long a background or batch request
+    # waits for a seat before a 503 queue_full, and how many may wait per lane.
+    queueWait: "60s"   # FLEXINFER_PROXY_QOS_QUEUE_WAIT
+    queueDepth: 32     # FLEXINFER_PROXY_QOS_QUEUE_DEPTH
   # Rate limiting configuration
   # Protects K8s API server from excessive per-request API calls
   rateLimit:
