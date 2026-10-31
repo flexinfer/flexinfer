@@ -190,6 +190,16 @@ func TestReadBackgroundRequest(t *testing.T) {
 		assert.True(t, bg)
 		assert.Error(t, err)
 	})
+	t.Run("an oversized plain body reaches the sync path whole", func(t *testing.T) {
+		big := `{"model":"m","pad":"` + strings.Repeat("x", maxJobSubmitBytes) + `"}`
+		r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(big))
+		r.Header.Set("Content-Type", "application/json")
+		_, bg, _ := readBackgroundRequest(r)
+		assert.False(t, bg)
+		rest, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		assert.Len(t, rest, len(big))
+	})
 	t.Run("multipart background field is dropped", func(t *testing.T) {
 		body, ct := multipartBody(t, map[string]string{"model": "whisper", "background": "true", "response_format": "json"}, "audio.wav", []byte("RIFFdata"))
 		r := httptest.NewRequest(http.MethodPost, "/v1/audio/transcriptions", bytes.NewReader(body))
