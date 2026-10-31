@@ -539,14 +539,16 @@ race_test:
   # memory of plain ones and `go test ./...` builds and runs GOMAXPROCS
   # packages at once. Ask the ci-radeonvii runner for its allowed maximum
   # (memory_request_overwrite_max_allowed 4Gi / memory_limit 8Gi in
-  # platform/gitops k3s/ci/gitlab/helmrelease-runner-radeonvii.yaml) and cap
-  # package parallelism at 2 so the peak stays well under it.
+  # platform/gitops k3s/ci/gitlab/helmrelease-runner-radeonvii.yaml) and run
+  # one package at a time: internal/proxy alone peaks at ~4.6 GiB RSS under
+  # -race (measured 2026-10-31 on master), so two packages at once could still
+  # cross 8Gi. The suite then takes several minutes, hence the longer timeout.
   variables:
     KUBERNETES_MEMORY_REQUEST: "4Gi"
     KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
     - echo "Running tests with race detector..."
-    - CGO_ENABLED=1 go test -race -p 2 ./... -short -timeout 10m
+    - CGO_ENABLED=1 go test -race -p 1 ./... -short -timeout 20m
   allow_failure: false
   rules:
     - if: $CI_COMMIT_TAG
