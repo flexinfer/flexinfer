@@ -372,6 +372,10 @@ an in-flight count against `spec.config.maxNumSeqs` (the seats):
   per background seat, 30 s per request before the lane has history) and its place in the queue in
   `flexinfer.queue_position` and `X-FlexInfer-Queue-Position`.
 - The cold-start queue drains in the same class order.
+- On a lane with `schedulingPolicy: priority` the proxy sets the vLLM per-request `priority` on
+  chat and text completions (`0` / `10` / `20` by class), overwriting any value the caller sent,
+  so a caller cannot promote itself. Every other lane forwards the body untouched: vLLM 0.32
+  rejects a non-zero `priority` unless the engine runs priority scheduling.
 
 The reserve exists because vLLM 0.32 does not preempt a running sequence to free a seat: once
 `max_num_seqs` sequences run, its scheduler stops admitting, and `--scheduling-policy priority`
