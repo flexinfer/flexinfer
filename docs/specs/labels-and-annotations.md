@@ -67,6 +67,22 @@ metadata:
 
 **Note:** Models without this annotation use Kubernetes Service DNS for load balancing, which is the recommended default for most workloads.
 
+### `flexinfer.ai/unavailable-reroute-to`
+
+Names an equivalent Model (same weights or the same vector space on another card), by name or alias. The proxy reads it in two places:
+
+- **Admission** (G1, `internal/proxy/unavailable_reroute.go`, MR !1204): a request for a Model that cannot serve now (Failed, or parked behind a holder its demand cannot beat) is served once on the equivalent if that Model is Ready with a closed breaker.
+- **Swap-safe replay** (`internal/proxy/swap_replay.go`): an idempotent request already forwarded to the lane that fails with 502/503/504 while the lane is parked, or after waiting for a draining lane runs out, is replayed once on the equivalent. See `docs/specs/proxy-api.md` § Swap-safe replay.
+
+The equivalent is never cold-started from either path, and its own `unavailable-reroute-to` is never followed. Absent, empty or naming the Model itself: no effect.
+
+```yaml
+metadata:
+  name: gte-qwen2-1p5b-radeonvii
+  annotations:
+    flexinfer.ai/unavailable-reroute-to: gte-qwen2-1p5b-cpu-5930k
+```
+
 ### `flexinfer.ai/qos` and `flexinfer.ai/qos-interactive-reserve`
 
 Caller QoS enforcement on a lane (`internal/proxy/qos_gate.go`, `docs/specs/proxy-api.md` "Caller
