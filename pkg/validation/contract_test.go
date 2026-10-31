@@ -73,10 +73,31 @@ func TestErrorWriters_Contract(t *testing.T) {
 			wantBody:   `{"error":{"message":"boom","type":"server_error","code":"server_error"}}` + "\n",
 		},
 		{
-			name:       "WriteServiceUnavailable",
-			call:       func(w http.ResponseWriter) { WriteServiceUnavailable(w, "down") },
-			wantStatus: http.StatusServiceUnavailable,
-			wantBody:   `{"error":{"message":"down","type":"service_unavailable_error","code":"service_unavailable"}}` + "\n",
+			name:        "WriteServiceUnavailable",
+			call:        func(w http.ResponseWriter) { WriteServiceUnavailable(w, "down") },
+			wantStatus:  http.StatusServiceUnavailable,
+			wantBody:    `{"error":{"message":"down","type":"service_unavailable_error","code":"service_unavailable"}}` + "\n",
+			wantHeaders: map[string]string{"Retry-After": "5"},
+		},
+		{
+			name: "WriteErrorWithDetails",
+			call: func(w http.ResponseWriter) {
+				phase, substage, eta, retry := "Loading", "Compiling", 95, 30
+				WriteErrorWithDetails(w, http.StatusServiceUnavailable, "warming", ErrorTypeServiceUnavailable, CodeModelColdStarting, "model",
+					&FlexInferDetails{Phase: &phase, LoadingSubstage: &substage, ETASeconds: &eta, RetryAfterSeconds: &retry})
+			},
+			wantStatus:  http.StatusServiceUnavailable,
+			wantBody:    `{"error":{"message":"warming","type":"service_unavailable_error","param":"model","code":"model_cold_starting","flexinfer":{"phase":"Loading","loading_substage":"Compiling","eta_seconds":95,"retry_after_seconds":30,"reroute_to":null}}}` + "\n",
+			wantHeaders: map[string]string{"Retry-After": "30"},
+		},
+		{
+			name: "WriteErrorWithDetails_unknownState",
+			call: func(w http.ResponseWriter) {
+				WriteErrorWithDetails(w, http.StatusServiceUnavailable, "queued", ErrorTypeServiceUnavailable, CodeQueueFull, "", &FlexInferDetails{})
+			},
+			wantStatus:  http.StatusServiceUnavailable,
+			wantBody:    `{"error":{"message":"queued","type":"service_unavailable_error","code":"queue_full","flexinfer":{"phase":null,"loading_substage":null,"eta_seconds":null,"retry_after_seconds":5,"reroute_to":null}}}` + "\n",
+			wantHeaders: map[string]string{"Retry-After": "5"},
 		},
 		{
 			name:       "WriteQueueFull",
@@ -119,15 +140,15 @@ func TestErrorWriters_Contract(t *testing.T) {
 			name:        "WriteStalledLoad_withRetryAfter",
 			call:        func(w http.ResponseWriter) { WriteStalledLoad(w, "stalled", 7) },
 			wantStatus:  http.StatusServiceUnavailable,
-			wantBody:    `{"error":{"message":"stalled","type":"service_unavailable_error","code":"activation_failed"}}` + "\n",
+			wantBody:    `{"error":{"message":"stalled","type":"service_unavailable_error","code":"stalled_load"}}` + "\n",
 			wantHeaders: map[string]string{"Retry-After": "7"},
 		},
 		{
 			name:        "WriteStalledLoad_noRetryAfter",
 			call:        func(w http.ResponseWriter) { WriteStalledLoad(w, "stalled", 0) },
 			wantStatus:  http.StatusServiceUnavailable,
-			wantBody:    `{"error":{"message":"stalled","type":"service_unavailable_error","code":"activation_failed"}}` + "\n",
-			wantHeaders: map[string]string{"Retry-After": ""},
+			wantBody:    `{"error":{"message":"stalled","type":"service_unavailable_error","code":"stalled_load"}}` + "\n",
+			wantHeaders: map[string]string{"Retry-After": "5"},
 		},
 		{
 			name:       "WriteUnauthorized",

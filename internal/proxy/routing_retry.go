@@ -271,7 +271,13 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 				return
 			}
 			laneErr = fr.err
-			validation.WriteError(w, http.StatusGatewayTimeout, "upstream first byte budget exceeded", "upstream_error", "timeout")
+			p.writeLaneError(w, p.peekModel(ctx, resolvedModel), laneError{
+				status:     http.StatusGatewayTimeout,
+				errType:    upstreamErrorType,
+				code:       validation.CodeLaneUnresponsive,
+				message:    "upstream first byte budget exceeded",
+				retryAfter: -1,
+			})
 			return
 		}
 
@@ -315,5 +321,11 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 
 	// All attempts failed at the transport layer; the ErrorHandler suppressed
 	// its own write, so nothing has been sent to the client yet.
-	validation.WriteError(w, http.StatusBadGateway, "upstream unavailable", "upstream_error", "bad_gateway")
+	p.writeLaneError(w, p.peekModel(ctx, resolvedModel), laneError{
+		status:     http.StatusBadGateway,
+		errType:    upstreamErrorType,
+		code:       validation.CodeLaneUnresponsive,
+		message:    "upstream unavailable",
+		retryAfter: validation.DefaultRetryAfterSeconds,
+	})
 }
