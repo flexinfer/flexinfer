@@ -67,6 +67,19 @@ metadata:
 
 **Note:** Models without this annotation use Kubernetes Service DNS for load balancing, which is the recommended default for most workloads.
 
+### `flexinfer.ai/qos` and `flexinfer.ai/qos-interactive-reserve`
+
+Caller QoS enforcement on a lane (`internal/proxy/qos_gate.go`, `docs/specs/proxy-api.md` "Caller
+QoS classes"). A lane enforces classes when `spec.config.schedulingPolicy: priority` is set (proxy
+seat gate plus vLLM per-request priority) or when `flexinfer.ai/qos: proxy` is set (the gate
+alone). `flexinfer.ai/qos: off` turns both off. The gate needs `spec.config.maxNumSeqs`.
+
+| Annotation | Value | Effect |
+|---|---|---|
+| `flexinfer.ai/qos` | `proxy` | seat gate and class-ordered queue, no vLLM priority field |
+| `flexinfer.ai/qos` | `off` | no enforcement even with `schedulingPolicy: priority` |
+| `flexinfer.ai/qos-interactive-reserve` | integer ≥ 0 | seats held for interactive requests; default 1 when `maxNumSeqs` ≥ 2, capped at `maxNumSeqs - 1` |
+
 ## Service label routing
 
 Service labels can be attached to a model and used for routing. Relevant fields/annotations:

@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"math/rand"
 	"net/http"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -33,6 +34,9 @@ type QueuedRequest struct {
 	err        error
 	enqueuedAt time.Time
 	responded  atomic.Bool
+	// rank is the QoS class rank on a lane that enforces classes, 0 elsewhere;
+	// drainQueue serves lower ranks first, FIFO within a rank.
+	rank int
 }
 
 // RequestQueue holds requests for a model during cold start.
@@ -65,6 +69,9 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 		modelName:  modelName,
 		done:       make(chan struct{}),
 		enqueuedAt: time.Now(),
+	}
+	if d := qosDecisionFrom(ctx); d != nil && p.qosLanePolicy(ctx, modelName).gated() {
+		qr.rank = d.class.rank()
 	}
 
 	// Try to add to queue (non-blocking)
@@ -267,11 +274,17 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 	slog.Info("queue processor finished", "model", modelName)
 }
 
-// drainQueue processes all pending requests.
+// drainQueue processes all pending requests: it takes everything queued so
+// far, serves it in QoS rank order (FIFO within a rank), and repeats until
+// the queue is empty.
 func (p *Proxy) drainQueue(queue *RequestQueue) {
 	for {
-		select {
-		case qr := <-queue.items:
+		batch := takeQueued(queue)
+		if len(batch) == 0 {
+			return
+		}
+		sort.SliceStable(batch, func(i, j int) bool { return batch[i].rank < batch[j].rank })
+		for _, qr := range batch {
 			queueDepth.WithLabelValues(queue.model).Dec()
 			// Only one goroutine may write a response for a queued request.
 			if qr.responded.CompareAndSwap(false, true) {
@@ -279,9 +292,19 @@ func (p *Proxy) drainQueue(queue *RequestQueue) {
 				p.trackAndServe(qr.w, qr.r, qr.modelName, start)
 			}
 			close(qr.done)
+		}
+	}
+}
+
+// takeQueued removes and returns every request currently in the queue.
+func takeQueued(queue *RequestQueue) []*QueuedRequest {
+	var batch []*QueuedRequest
+	for {
+		select {
+		case qr := <-queue.items:
+			batch = append(batch, qr)
 		default:
-			// Queue is empty
-			return
+			return batch
 		}
 	}
 }

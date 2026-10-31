@@ -95,6 +95,7 @@ Forwarding rewrites `"model"` in a JSON body to the backend's model name; a mult
 | Not Ready and parked: `spec.litellm.enabled: false` | 404 |
 | Not Ready and parked behind a higher-priority warm primary | 503 |
 | Cold start: queue full | 503 |
+| QoS: no seat for a `background`/`batch` request within the queue bound (enforcing lanes only) | 503 `queue_full` + `Retry-After` |
 | Cold start: readiness timeout | 504 |
 | No first byte from the lane within its budget (counts against the breaker) | 504 |
 
@@ -141,5 +142,34 @@ The class labels the `request start` and `request usage` log lines (`qos_class`,
 `flexinfer_proxy_qos_ttft_seconds{class,lane}` (streaming completions, time to the first upstream
 byte) and `flexinfer_proxy_qos_request_duration_seconds{class,lane}`. A lane that does not enforce
 classes serves every request as before and counts it as `outcome="unenforced"`.
+
+### Enforcement
+
+A lane enforces classes only when it opts in (`docs/specs/labels-and-annotations.md`,
+`flexinfer.ai/qos`): `spec.config.schedulingPolicy: priority`, or the annotation
+`flexinfer.ai/qos: proxy` for the proxy gate without vLLM priority. On such a lane the proxy keeps
+an in-flight count against `spec.config.maxNumSeqs` (the seats):
+
+- `interactive` is always forwarded at once, even past the seat count (vLLM queues it).
+- `background` and `batch` are forwarded while fewer than `seats - reserve` requests are in
+  flight, where the reserve (`flexinfer.ai/qos-interactive-reserve`, default 1 on a lane with two
+  or more seats) stays free for interactive turns. Otherwise they wait in a per-lane queue,
+  `background` ahead of `batch`, FIFO within a class, for up to `FLEXINFER_PROXY_QOS_QUEUE_WAIT`
+  (chart `proxy.qos.queueWait`, default 60 s) and at most `proxy.qos.queueDepth` (default 32)
+  deep.
+- A request the queue cannot take, or that waits out the bound, gets **503** with code
+  `queue_full`, `Retry-After` (the lane's recent request duration times the requests ahead per
+  background seat) and `X-FlexInfer-Queue-Position`.
+- The cold-start queue drains in the same class order.
+
+The reserve exists because vLLM 0.32 does not preempt a running sequence to free a seat: once
+`max_num_seqs` sequences run, its scheduler stops admitting, and `--scheduling-policy priority`
+only orders the waiting queue and chooses which sequence to preempt when KV blocks run out. Without
+the reserve, two background generations would hold both seats of a two-seat lane and an
+interactive turn would wait for one to finish.
+
+Outcomes in `flexinfer_proxy_qos_decisions_total`: `admitted` (took a seat at once), `queued`
+(after waiting), `rejected` (503 `queue_full`), `canceled` (the caller left while waiting),
+`unenforced`. The gate counts one proxy replica's requests and assumes one lane replica.
 
 The proxy re-reads the mounted map every 30 s, so a values change needs no pod roll.
