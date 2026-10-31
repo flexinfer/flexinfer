@@ -174,6 +174,10 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 	caller := callerIdentityFrom(r)
 	wantPrefix := prefixHitOptIn(r.Header.Get(headerWantPrefixHit))
 	path := r.URL.Path
+	var qosClass, qosSource, qosCaller string
+	if d := qosDecisionFrom(ctx); d != nil {
+		qosClass, qosSource, qosCaller = string(d.class), string(d.source), d.caller
+	}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		targetURL, targetPod, fromDirect := p.resolveTargetURL(ctx, r, resolvedModel, port, routeBody, attempt > 0)
@@ -196,6 +200,9 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 			startedAt:     startedAt,
 			wantPrefixHit: wantPrefix,
 			targetURL:     targetURL,
+			qosClass:      qosClass,
+			qosSource:     qosSource,
+			caller:        qosCaller,
 		}), fr))
 
 		rp, ok := p.loadOrCreateProxy(targetURL)
