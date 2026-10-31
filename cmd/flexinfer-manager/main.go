@@ -210,6 +210,17 @@ func main() {
 		os.Exit(1)
 	}
 
+	// InferenceJob controller - deletes finished async jobs after their
+	// ttlAfterFinished; the proxy runs them and cleans up their storage.
+	if err = (&controllers.InferenceJobReconciler{
+		Client:   mgr.GetClient(),
+		Scheme:   mgr.GetScheme(),
+		Recorder: mgr.GetEventRecorderFor("inferencejob-controller"),
+	}).SetupWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create controller", "controller", "InferenceJob")
+		os.Exit(1)
+	}
+
 	// ModelCatalog controller - registry sync and model discovery
 	if err = (&controllers.ModelCatalogReconciler{
 		Client:   mgr.GetClient(),

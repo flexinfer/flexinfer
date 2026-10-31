@@ -78,6 +78,7 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
 - `flexinfer_proxy_routing_key_cardinality_overflow_total{model,strategy,key_source}`
 - `flexinfer_proxy_rate_limited_total{model,scope}`
 - `flexinfer_proxy_activation_retries_total{model}`
+- `flexinfer_proxy_replays_total{lane,outcome}` — idempotent requests (embeddings, rerank, non-streaming transcription) replayed once after a 502/503/504 that coincided with a swap of their lane; outcome `same_lane`, `reroute` (served by the `flexinfer.ai/unavailable-reroute-to` equivalent), `failed` (the replay failed too) or `no_ready_lane` (nothing could serve within the bound). See `docs/specs/proxy-api.md` § Swap-safe replay.
 - `flexinfer_proxy_activation_retry_wait_duration_seconds{model}` (histogram)
 - `flexinfer_proxy_request_prompt_tokens{model}` (histogram) — upstream-reported
   `prompt_tokens` per request, by resolved model. Observes **all non-streaming
@@ -117,6 +118,31 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
 > (`ngram-sd-workload-conditional`), so the completion-token distribution and the
 > prompt:completion ratio per lane decide whether SD should stay on. Example:
 > `histogram_quantile(0.5, sum by (le) (rate(flexinfer_proxy_request_completion_tokens_bucket{model="gemma4-26b-a4b-gptq"}[1d])))`.
+
+### Async jobs (`internal/proxy/jobs_metrics.go`)
+
+Exported by the proxy replica that submits or runs the job; `model` is the job's requested model.
+
+- `flexinfer_jobs_submitted_total{model,path}` — jobs accepted (`background: true`, `Prefer:
+  respond-async` or `POST /v1/jobs`).
+- `flexinfer_jobs_finished_total{model,phase}` — jobs this replica brought to `completed`,
+  `failed`, `cancelled` or `incomplete`.
+- `flexinfer_jobs_running{key}` (gauge) — jobs this replica is running, by concurrency key
+  (`model/<name>`, or `gpu/<shared group>` for diffusers lanes sharing a card).
+- `flexinfer_jobs_queue_wait_seconds{model}` (histogram) — submission to first claim.
+- `flexinfer_jobs_run_seconds{model,phase}` (histogram) — first claim to terminal phase, lane cold
+  starts and retries included.
+- `flexinfer_jobs_retries_total{model,code}` — attempts that waited to retry their lane, by the
+  error-envelope code that made them wait (`model_cold_starting`, `queue_full`, …).
+- `flexinfer_jobs_webhook_deliveries_total{event,result}` — webhook attempts, `delivered` or
+  `failed`.
+
+The manager exports the job population and TTL deletions (`pkg/metrics`,
+`controllers/inferencejob_controller.go`):
+
+- `flexinfer_jobs{namespace,phase}` (gauge) — InferenceJobs by phase.
+- `flexinfer_jobs_gc_deleted_total{namespace,phase}` — finished jobs deleted after
+  `ttlAfterFinished`.
 
 ## Runtime Metrics (`flexinfer-runtime`)
 
