@@ -595,14 +595,20 @@ func readBackgroundRequest(r *http.Request) (jobSubmission, bool, error) {
 	if !async && mediaType != "application/json" && mediaType != "multipart/form-data" {
 		return jobSubmission{}, false, nil
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxJobSubmitBytes+1))
+	original := r.Body
+	raw, err := io.ReadAll(io.LimitReader(original, maxJobSubmitBytes+1))
+	if len(raw) > maxJobSubmitBytes {
+		// Too large to be a job; hand the synchronous path the whole body.
+		r.Body = struct {
+			io.Reader
+			io.Closer
+		}{io.MultiReader(bytes.NewReader(raw), original), original}
+		return jobSubmission{}, async, fmt.Errorf("request body over %d bytes", maxJobSubmitBytes)
+	}
 	r.Body = io.NopCloser(bytes.NewReader(raw))
 	r.ContentLength = int64(len(raw))
 	if err != nil {
 		return jobSubmission{}, async, fmt.Errorf("reading request body: %w", err)
-	}
-	if len(raw) > maxJobSubmitBytes {
-		return jobSubmission{}, async, fmt.Errorf("request body over %d bytes", maxJobSubmitBytes)
 	}
 	sub := jobSubmission{path: r.URL.Path, contentType: ct, model: r.Header.Get("X-Model-ID")}
 	switch mediaType {
