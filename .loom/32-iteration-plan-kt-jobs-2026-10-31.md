@@ -18,8 +18,8 @@ reservation primitive (a `GPULease`-like hold owned by the job) and this row re-
 | !1210 | typed error envelope, `Retry-After`, `X-FlexInfer-Activation`, `Prefer: wait=N` |
 | !1213 | cold capability descriptor, `GET /v1/models/{name}` (the harness reads the warm lane's phase from it) |
 | !1216 | `InferenceJob` CRD and RBAC |
-| job runner MR | `background: true`, `/v1/jobs*`, the runner, MinIO/PVC store, webhooks |
-| GC MR | manager TTL GC, `flexinfer_jobs_*` metrics, `flexinfer jobs` CLI |
+| !1218 | `background: true`, `/v1/jobs*`, the runner, MinIO/PVC store, webhooks |
+| !1219 | manager TTL GC, `flexinfer_jobs_*` metrics, `flexinfer jobs` CLI |
 
 How a job holds the card: the runner sends the job's request through the proxy's own handler. On
 a cold creative lane it sits in the cold-start queue exactly like a client request, whose
@@ -39,8 +39,8 @@ same time. Jobs waiting for that slot are not demand.
      `secretKey` (SOPS in platform/gitops, as the other flexinfer secrets).
    PVC alternative: a Longhorn `bulk-*` claim in `flexinfer-system`, `proxy.jobs.store: pvc`,
    `proxy.jobs.pvc.claimName: <claim>`.
-3. Images: a proxy build from master containing the runner and GC MRs, and a controller build
-   with the GC MR; request `pinned-<12>` Harbor tags for both digests.
+3. Images: a proxy build from master containing !1218 and !1219, and a controller build
+   with !1219; request `pinned-<12>` Harbor tags for both digests.
 4. `deploy/system/values-k3s.yaml` (one MR, Flux applies it):
 
    ```yaml
