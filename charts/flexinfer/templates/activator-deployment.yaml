@@ -62,6 +62,8 @@ spec:
               valueFrom:
                 fieldRef:
                   fieldPath: metadata.namespace
+            - name: FLEXINFER_PROXY_QOS_CONFIG
+              value: /etc/flexinfer/qos/qos.yaml
             {{- if $proxy.codebaseAnswerUpstream }}
             - name: FLEXINFER_CODEBASE_ANSWER_UPSTREAM
               value: {{ $proxy.codebaseAnswerUpstream | quote }}
@@ -179,6 +181,17 @@ spec:
             {{- end }}
           resources:
             {{- toYaml $proxy.resources | nindent 12 }}
+          volumeMounts:
+            - name: qos
+              mountPath: /etc/flexinfer/qos
+              readOnly: true
+      volumes:
+        # Caller QoS map (proxy-qos-configmap.yaml). Mounted as a directory,
+        # not a subPath, so ConfigMap edits reach the running proxy.
+        - name: qos
+          configMap:
+            name: {{ include "flexinfer.fullname" . }}-proxy-qos
+            optional: true
       {{- with $proxy.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

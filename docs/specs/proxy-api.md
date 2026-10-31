@@ -181,3 +181,37 @@ If a model has zero replicas (idle), the proxy may:
 - wait for readiness (bounded by `PROXY_QUEUE_TIMEOUT` / `PROXY_COLD_START_TIMEOUT`)
 
 Configuration details live in `docs/CONFIGURATION.md`.
+
+## Caller QoS classes
+
+Every inference request resolves to one QoS class (`internal/proxy/qos.go`). First match wins:
+
+1. `X-FlexInfer-QoS: interactive|background|batch` request header (case-insensitive; an unknown
+   value is ignored).
+2. The caller-identity map in ConfigMap `flexinfer-proxy-qos` (chart values `proxy.qos`): first
+   the sha256 of the bearer key (`apiKeys`, stored as `sha256:<hex>`), then the caller name
+   (`callers`). The caller name is the `X-FlexInfer-Caller` header, else the User-Agent's first
+   product token (`loom-mills/1.4` → `loom-mills`), lower-cased.
+3. A LiteLLM alias suffix on the requested model: `workhorse-background` routes to `workhorse` as
+   `background`, `<name>-batch` as `batch`. The suffix is honoured only when the full name is not
+   itself a Model, service label, alias or LoRA adapter.
+4. `interactive`.
+
+| Class | vLLM priority | Intended callers |
+|---|---|---|
+| `interactive` | 0 | people waiting on an answer: jobsearch, psyche, the HUD, fi-fhir |
+| `background` | 10 | agent research, shadow judging, evaluation sweeps (Mills) |
+| `batch` | 20 | asynchronous jobs |
+
+The proxy strips `X-FlexInfer-QoS` and `X-FlexInfer-Caller` before forwarding. The class is
+independent of the proxy-internal `X-FlexInfer-Internal-Workload-Class` header, which only decides
+whether a request may create cold-start demand: a `background` request still activates a cold
+lane.
+
+The class labels the `request start` and `request usage` log lines (`qos_class`, `qos_source`,
+`caller`) and three metrics: `flexinfer_proxy_qos_decisions_total{class,lane,outcome}`,
+`flexinfer_proxy_qos_ttft_seconds{class,lane}` (streaming completions, time to the first upstream
+byte) and `flexinfer_proxy_qos_request_duration_seconds{class,lane}`. A lane that does not enforce
+classes serves every request as before and counts it as `outcome="unenforced"`.
+
+The proxy re-reads the mounted map every 30 s, so a values change needs no pod roll.

@@ -1,0 +1,23 @@
+{{- $proxy := default (dict) .Values.proxy -}}
+{{- $qos := default (dict) $proxy.qos -}}
+{{- if $proxy.enabled }}
+# Caller-identity → QoS class map read by flexinfer-proxy (internal/proxy/qos.go).
+# Rendered even when empty so the mounted file always exists.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "flexinfer.fullname" . }}-proxy-qos
+  labels:
+    {{- include "flexinfer.labels" . | nindent 4 }}
+    app: flexinfer-proxy
+data:
+  qos.yaml: |
+    callers:
+      {{- range $name, $class := (default (dict) $qos.callers) }}
+      {{ $name | quote }}: {{ $class | quote }}
+      {{- end }}
+    apiKeys:
+      {{- range $key, $class := (default (dict) $qos.apiKeys) }}
+      {{ $key | quote }}: {{ $class | quote }}
+      {{- end }}
+{{- end }}

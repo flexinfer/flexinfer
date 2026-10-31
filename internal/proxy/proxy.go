@@ -155,6 +155,10 @@ type Config struct {
 	// from for the error envelope's eta_seconds (load_eta.go). Empty → the
 	// ETA falls back to the last load recorded on each Model.
 	PrometheusURL string
+	// QoSConfigPath is the mounted ConfigMap flexinfer-proxy-qos file
+	// (qos.yaml) holding the caller-identity → QoS class map. Empty or a
+	// missing file means no caller mappings (qos.go).
+	QoSConfigPath string
 }
 
 // Validate checks the Config for conflicting or invalid settings. Returns a
@@ -268,6 +272,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		KokoroUpstream:                   os.Getenv("FLEXINFER_KOKORO_UPSTREAM"),
 		CodebaseAnswerUpstream:           os.Getenv("FLEXINFER_CODEBASE_ANSWER_UPSTREAM"),
 		PrometheusURL:                    os.Getenv("FLEXINFER_PROXY_PROMETHEUS_URL"),
+		QoSConfigPath:                    os.Getenv("FLEXINFER_PROXY_QOS_CONFIG"),
 	}
 
 	return cfg
@@ -353,6 +358,11 @@ type Proxy struct {
 	// annotation; default off globally. See
 	// docs/planning/context-bounded-admission-spec.md.
 	admission *admissionFilter
+
+	// qos holds the caller-identity → QoS class map (qos.go). Nil in
+	// struct-literal test proxies, which resolve every request by header,
+	// alias suffix or the interactive default.
+	qos *qosResolver
 
 	// Direct runtime communication (fast path)
 	runtimeCache         *RuntimeCache                // cached runtime pod endpoints
@@ -467,6 +477,7 @@ func New(cfg Config) *Proxy {
 			SafetyMarginPercent: cfg.AdmissionSafetyMarginPercent,
 			DefaultMaxTokens:    cfg.AdmissionDefaultMaxTokens,
 		},
+		qos:                     newQoSResolver(cfg.QoSConfigPath),
 		directRuntimeEnabled:    cfg.DirectRuntimeEnabled,
 		gracefulShutdownTimeout: cfg.GracefulShutdownTimeout,
 		shutdownDrainDelay:      cfg.ShutdownDrainDelay,
@@ -513,6 +524,9 @@ func (p *Proxy) Run(ctx context.Context, port int) error {
 func (p *Proxy) runServer(ctx context.Context, server *http.Server) error {
 	// Start queue cleanup goroutine
 	go p.cleanupStaleQueues()
+
+	// Reload the QoS caller map when the mounted ConfigMap changes.
+	go p.qos.watch(p.ctx)
 
 	// Start endpoint watcher for routing
 	if p.routingEnabled {
@@ -564,6 +578,7 @@ func (p *Proxy) runServer(ctx context.Context, server *http.Server) error {
 
 func (p *Proxy) runServerOnListener(ctx context.Context, server *http.Server, listener net.Listener) error {
 	go p.cleanupStaleQueues()
+	go p.qos.watch(p.ctx)
 	if p.routingEnabled {
 		go p.watchEndpoints(p.ctx)
 	}
@@ -700,7 +715,18 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	span.SetAttributes(attribute.String("flexinfer.model", modelName))
+	// 1a. Caller QoS class (D3, qos.go). A LiteLLM alias suffix
+	// (workhorse-background) routes to its base name and selects the class
+	// when neither the header nor the caller map does.
+	var aliasClass qosClass
+	modelName, aliasClass = p.stripQoSAliasSuffix(r.Context(), modelName)
+	qos := p.resolveQoS(r, aliasClass)
+	r = r.WithContext(withQoSDecision(r.Context(), qos))
+
+	span.SetAttributes(
+		attribute.String("flexinfer.model", modelName),
+		attribute.String("flexinfer.qos.class", string(qos.class)),
+	)
 
 	// 1b. Rate limit check
 	if !p.checkRateLimit(modelName) {
@@ -757,6 +783,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		lookupName = parent
 		span.SetAttributes(attribute.String("flexinfer.lora_parent", parent))
 	}
+	qos.lane = lookupName
 
 	// 2d. A name that cannot be a Kubernetes resource name — e.g. a LiteLLM
 	// gateway alias such as "or/kimi-k3" that nothing above resolved — can never
