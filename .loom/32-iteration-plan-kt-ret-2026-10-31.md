@@ -110,7 +110,9 @@ park (drain 503 → `gte->twin`) and reroutes the rest at admission; the unpark 
 
 - Record the verdict in the row (`promotion_decision`) and the lane's `promotion-evidence`
   annotation, and add a line to `.loom/00-index.md`.
-- jobsearch-app can move `VECTOR_EMBEDDING_MODEL` back to `gte-qwen2-1p5b-radeonvii` with batches
-  of ≤ 16 inputs (note in `services/jobsearch-app/docs/embeddings-gpu-lane-2026-10-31.md`): each
-  input costs ~23.5 ms of the VII lane, so its default 100-input batch blocks every other gte caller
-  for ~2.35 s, and a 64-input batch costs 30 s on the twin during a failover.
+- jobsearch-app can move `VECTOR_EMBEDDING_MODEL` back to `gte-qwen2-1p5b-radeonvii`
+  (services/jobsearch-app!232, `docs/embeddings-gpu-lane-2026-10-31.md`). Its daemon embeds one text
+  per request today. `generate_embeddings_batch` has no callers; a backfill that adopts it should
+  keep `VECTOR_EMBEDDING_BATCH_SIZE` ≤ 16. Each input costs ~23.5 ms of the VII lane, so the
+  default 100 would block every other gte caller for ~2.35 s, and 64 inputs cost 30 s on the twin
+  during a failover.
