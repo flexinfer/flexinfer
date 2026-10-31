@@ -238,6 +238,11 @@ type InferenceJobStatus struct {
 	// Runner is the proxy pod that claimed the job.
 	// +optional
 	Runner string `json:"runner,omitempty"`
+	// HeartbeatAt is the runner's last liveness stamp while in_progress. A
+	// job whose heartbeat is older than three intervals is reclaimed by
+	// another runner.
+	// +optional
+	HeartbeatAt *metav1.Time `json:"heartbeatAt,omitempty"`
 	// Lane is the Model that served the job (differs from spec.model after an
 	// alias, label or reroute).
 	// +optional

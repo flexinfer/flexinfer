@@ -1344,6 +1344,10 @@ func (in *InferenceJobStatus) DeepCopyInto(out *InferenceJobStatus) {
 		*out = new(InferenceJobError)
 		**out = **in
 	}
+	if in.HeartbeatAt != nil {
+		in, out := &in.HeartbeatAt, &out.HeartbeatAt
+		*out = (*in).DeepCopy()
+	}
 	if in.Webhook != nil {
 		in, out := &in.Webhook, &out.Webhook
 		*out = new(InferenceJobWebhookStatus)

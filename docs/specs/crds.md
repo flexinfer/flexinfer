@@ -55,6 +55,7 @@ statuses, so the proxy's job object returns them unchanged.
 | `status.output` | `{uri, contentType, bytes, sha256}` of the stored response body |
 | `status.error` | `{code, message, status}`: an error-envelope code or the lane's own |
 | `status.runner`, `status.lane`, `status.attempts` | proxy pod that claimed it, the Model that served it, claims so far |
+| `status.heartbeatAt` | the runner's liveness stamp; a job silent for three intervals is reclaimed |
 | `status.webhook` | `{delivered[], attempts, lastError, lastAttemptAt}` |
 
 Printer columns: Model, Path, Phase, Completed, Age; `-o wide` adds Progress, Lane, Runner. RBAC:

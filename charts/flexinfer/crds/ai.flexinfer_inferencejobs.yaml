@@ -249,6 +249,13 @@ spec:
                   (CompletedAt + spec.ttlAfterFinished).
                 format: date-time
                 type: string
+              heartbeatAt:
+                description: |-
+                  HeartbeatAt is the runner's last liveness stamp while in_progress. A
+                  job whose heartbeat is older than three intervals is reclaimed by
+                  another runner.
+                format: date-time
+                type: string
               lane:
                 description: |-
                   Lane is the Model that served the job (differs from spec.model after an
