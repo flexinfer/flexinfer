@@ -387,6 +387,39 @@ var (
 		},
 		[]string{"model"},
 	)
+
+	// Caller QoS classes (D3, qos.go). `class` is the resolved class
+	// (interactive|background|batch), `lane` the Model the request resolved
+	// to (the parent for a LoRA adapter). `outcome` is unenforced on lanes
+	// that do not enforce classes.
+	qosDecisionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_qos_decisions_total",
+			Help: "QoS class decisions by resolved class, lane and outcome.",
+		},
+		[]string{"class", "lane", "outcome"},
+	)
+
+	// qosTTFT is time from the proxy receiving a streaming completion to the
+	// first upstream body byte. vLLM writes nothing before the first token,
+	// so this is TTFT as the caller sees it, queueing included.
+	qosTTFT = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_qos_ttft_seconds",
+			Help:    "Time to first upstream byte for streaming completions, by QoS class and lane.",
+			Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300},
+		},
+		[]string{"class", "lane"},
+	)
+
+	qosRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_qos_request_duration_seconds",
+			Help:    "End-to-end proxy request duration by QoS class and lane.",
+			Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600},
+		},
+		[]string{"class", "lane"},
+	)
 )
 
 var metricsOnce sync.Once
@@ -454,5 +487,6 @@ func RegisterMetrics() {
 		prometheus.MustRegister(labelGroupRouteTargetHitsTotal)
 		prometheus.MustRegister(leastLoadedReservationsTotal)
 		prometheus.MustRegister(leastLoadedReservationsExpiredTotal)
+		prometheus.MustRegister(qosDecisionsTotal, qosTTFT, qosRequestDuration)
 	})
 }
