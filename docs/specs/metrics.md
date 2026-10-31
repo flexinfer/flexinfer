@@ -99,7 +99,8 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
   shipped in `internal/proxy/usage_log.go` (`usageSniffingBody`).
 - `flexinfer_proxy_qos_decisions_total{class,lane,outcome}` (counter) — one per request by
   resolved QoS class (`interactive|background|batch`), lane (the Model it resolved to, the parent
-  for a LoRA adapter) and outcome (`unenforced` on lanes that do not enforce classes). See
+  for a LoRA adapter) and outcome (`admitted`, `queued`, `rejected`, `canceled` on lanes that enforce classes,
+  `unenforced` elsewhere). See
   `docs/specs/proxy-api.md`, "Caller QoS classes".
 - `flexinfer_proxy_qos_ttft_seconds{class,lane}` (histogram) — streaming completions only: time
   from the proxy receiving the request to the first upstream body byte, queueing included.
