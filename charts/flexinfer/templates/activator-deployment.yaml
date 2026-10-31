@@ -3,6 +3,9 @@
 {{- $observability := default (dict) .Values.observability -}}
 {{- $tracing := default (dict) $observability.tracing -}}
 {{- $gracefulShutdown := default (dict) $proxy.gracefulShutdown -}}
+{{- $jobs := default (dict) $proxy.jobs -}}
+{{- $jobsS3 := default (dict) $jobs.s3 -}}
+{{- $jobsPVC := default (dict) $jobs.pvc -}}
 {{- if $proxy.enabled }}
 apiVersion: apps/v1
 kind: Deployment
@@ -189,6 +192,70 @@ spec:
             - name: FLEXINFER_KOKORO_UPSTREAM
               value: {{ $proxy.kokoroUpstream | quote }}
             {{- end }}
+            {{- if $proxy.prometheusURL }}
+            - name: FLEXINFER_PROXY_PROMETHEUS_URL
+              value: {{ $proxy.prometheusURL | quote }}
+            {{- end }}
+            {{- if $jobs.enabled }}
+            - name: FLEXINFER_JOBS_ENABLED
+              value: "true"
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: FLEXINFER_JOBS_STORE
+              value: {{ default "s3" $jobs.store | quote }}
+            - name: FLEXINFER_JOBS_SPOOL_DIR
+              value: /var/run/flexinfer-jobs
+            {{- if eq (default "s3" $jobs.store) "pvc" }}
+            - name: FLEXINFER_JOBS_PVC_PATH
+              value: /var/lib/flexinfer-jobs
+            - name: FLEXINFER_JOBS_PVC_CLAIM
+              value: {{ required "proxy.jobs.pvc.claimName is required for the pvc store" $jobsPVC.claimName | quote }}
+            {{- else }}
+            - name: FLEXINFER_JOBS_S3_ENDPOINT
+              value: {{ required "proxy.jobs.s3.endpoint is required for the s3 store" $jobsS3.endpoint | quote }}
+            - name: FLEXINFER_JOBS_S3_BUCKET
+              value: {{ default "flexinfer-jobs" $jobsS3.bucket | quote }}
+            - name: FLEXINFER_JOBS_S3_REGION
+              value: {{ default "us-east-1" $jobsS3.region | quote }}
+            - name: FLEXINFER_JOBS_S3_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "proxy.jobs.s3.credentialsSecret is required for the s3 store" $jobsS3.credentialsSecret }}
+                  key: accessKey
+            - name: FLEXINFER_JOBS_S3_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $jobsS3.credentialsSecret }}
+                  key: secretKey
+            {{- end }}
+            {{- with $jobs.perModel }}
+            - name: FLEXINFER_JOBS_PER_MODEL
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $jobs.maxRunning }}
+            - name: FLEXINFER_JOBS_MAX_RUNNING
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $jobs.maxOutputBytes }}
+            - name: FLEXINFER_JOBS_MAX_OUTPUT_BYTES
+              value: {{ . | quote }}
+            {{- end }}
+            {{- with $jobs.maxWait }}
+            - name: FLEXINFER_JOBS_MAX_WAIT
+              value: {{ . | quote }}
+            {{- end }}
+            {{- end }}
+          {{- if $jobs.enabled }}
+          volumeMounts:
+            - name: job-spool
+              mountPath: /var/run/flexinfer-jobs
+            {{- if eq (default "s3" $jobs.store) "pvc" }}
+            - name: job-store
+              mountPath: /var/lib/flexinfer-jobs
+            {{- end }}
+          {{- end }}
           resources:
             {{- toYaml $proxy.resources | nindent 12 }}
           volumeMounts:
@@ -202,6 +269,17 @@ spec:
           configMap:
             name: {{ include "flexinfer.fullname" . }}-proxy-qos
             optional: true
+      {{- if $jobs.enabled }}
+      volumes:
+        - name: job-spool
+          emptyDir:
+            sizeLimit: {{ default "4Gi" $jobs.spoolSizeLimit }}
+        {{- if eq (default "s3" $jobs.store) "pvc" }}
+        - name: job-store
+          persistentVolumeClaim:
+            claimName: {{ $jobsPVC.claimName }}
+        {{- end }}
+      {{- end }}
       {{- with $proxy.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

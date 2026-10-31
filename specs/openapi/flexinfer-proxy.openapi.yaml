@@ -61,6 +61,52 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
 
+  /v1/jobs:
+    post:
+      summary: Submit an async job (docs/specs/proxy-api.md, "Jobs")
+      responses:
+        '200':
+          description: The job object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+    get:
+      summary: List jobs (status, model, limit filters)
+      responses:
+        '200':
+          description: List of job objects
+  /v1/jobs/{id}:
+    get:
+      summary: Get a job
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The job object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+  /v1/jobs/{id}/content:
+    get:
+      summary: The stored output of a completed job
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The lane's response body, with its content type
+        '409':
+          description: The job is not completed (`job_not_completed`)
+  /v1/jobs/{id}/cancel:
+    post:
+      summary: Cancel a job
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The job object
+
   /v1/chat/completions:
     post:
       summary: OpenAI-style chat completions (reverse proxied)
@@ -103,6 +149,40 @@ paths:
 
 components:
   schemas:
+    Job:
+      type: object
+      required: [id, object, created_at, status]
+      properties:
+        id: {type: string}
+        object: {type: string, example: job}
+        created_at: {type: integer}
+        status: {type: string, enum: [queued, in_progress, completed, failed, cancelled, incomplete]}
+        background: {type: boolean}
+        model: {type: string}
+        path: {type: string}
+        progress: {type: integer}
+        started_at: {type: integer, nullable: true}
+        completed_at: {type: integer, nullable: true}
+        expires_at: {type: integer, nullable: true}
+        error:
+          type: object
+          nullable: true
+          properties:
+            code: {type: string}
+            message: {type: string}
+            status: {type: integer}
+        output:
+          type: object
+          nullable: true
+          properties:
+            url: {type: string}
+            content_type: {type: string}
+            bytes: {type: integer}
+            sha256: {type: string}
+        flexinfer:
+          type: object
+          additionalProperties: true
+
     ErrorResponse:
       type: object
       required: [error]
