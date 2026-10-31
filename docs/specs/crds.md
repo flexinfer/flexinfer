@@ -15,6 +15,7 @@ FlexInfer exposes Kubernetes APIs under the `ai.flexinfer` group.
 - `Cluster` (`ai.flexinfer/v1alpha2`, Phase 5.1 scaffold)
 - `FederatedModel` (`ai.flexinfer/v1alpha2`, Phase 5.2 scaffold)
 - `GlobalProxy` (`ai.flexinfer/v1alpha2`, Phase 5.3 scaffold)
+- `InferenceJob` (`ai.flexinfer/v1alpha2`): one asynchronous inference request (below)
 
 Generated CRD:
 
@@ -24,6 +25,43 @@ Generated CRD:
 - `services/flexinfer/config/crd/ai.flexinfer_clusters.yaml`
 - `services/flexinfer/config/crd/ai.flexinfer_federatedmodels.yaml`
 - `services/flexinfer/config/crd/ai.flexinfer_globalproxies.yaml`
+- `services/flexinfer/config/crd/ai.flexinfer_inferencejobs.yaml`
+
+### `InferenceJob`
+
+Long work (a render, a transcription, a long chat) handed to the proxy, which runs it against the
+named Model through the same cold-start, first-byte budget, breaker and reroute path as a
+synchronous request, stores the output and reports it by id. The proxy creates these for
+`background: true` requests and `POST /v1/jobs`; they can also be created with `kubectl`
+(namespace `flexinfer-system`, short name `ijob`). Phases are the OpenAI Responses background
+statuses, so the proxy's job object returns them unchanged.
+
+| Field | Meaning |
+|---|---|
+| `spec.model` | Model to run against: CR name, served name or alias |
+| `spec.path` | OpenAI path, e.g. `/v1/images/generations` (must start `/v1/`) |
+| `spec.request` | inline JSON body (up to 256 KiB) |
+| `spec.requestRef` | `{kind: ConfigMap\|Secret, name, key}` holding the body, for kubectl-created jobs |
+| `spec.contentType` | body media type; default `application/json`, a multipart body carries its boundary |
+| `spec.inputRefs[]` | `{name, uri, contentType, bytes, sha256}` inputs in job storage; `name: body` is the request body (multipart uploads) |
+| `spec.webhook` | `{url, secretRef, events[]}`; Standard Webhooks headers, signed with the secret; events default to `job.completed`, `job.failed`, `job.cancelled`, `job.incomplete` |
+| `spec.ttlAfterFinished` | keep the finished job and its output this long (default 24h) |
+| `spec.qosClass` | caller QoS class (D3) |
+| `spec.idempotencyKey` | dedupe submissions per caller |
+| `spec.cancel` | set true to cancel |
+| `status.phase` | `queued`, `in_progress`, `completed`, `failed`, `cancelled`, `incomplete` |
+| `status.progress` | 0–100 |
+| `status.queuedAt`, `startedAt`, `completedAt`, `expiresAt` | lifecycle times; `expiresAt` = `completedAt` + TTL |
+| `status.output` | `{uri, contentType, bytes, sha256}` of the stored response body |
+| `status.error` | `{code, message, status}`: an error-envelope code or the lane's own |
+| `status.runner`, `status.lane`, `status.attempts` | proxy pod that claimed it, the Model that served it, claims so far |
+| `status.heartbeatAt` | the runner's liveness stamp; a job silent for three intervals is reclaimed |
+| `status.webhook` | `{delivered[], attempts, lastError, lastAttemptAt}` |
+
+Printer columns: Model, Path, Phase, Completed, Age; `-o wide` adds Progress, Lane, Runner. RBAC:
+the proxy's Role reads and writes `inferencejobs` and `inferencejobs/status`, reads ConfigMaps and
+Secrets in its namespace (`requestRef`, webhook secrets) and creates the webhook-secret Secret; the
+controller's ClusterRole manages them for TTL garbage collection.
 
 ## v1alpha1 (legacy)
 
@@ -46,6 +84,7 @@ Generated CRDs:
   - `services/flexinfer/api/v1alpha2/cluster_types.go`
   - `services/flexinfer/api/v1alpha2/federatedmodel_types.go`
   - `services/flexinfer/api/v1alpha2/globalproxy_types.go`
+  - `services/flexinfer/api/v1alpha2/inferencejob_types.go`
   - `services/flexinfer/api/v1alpha1/types.go`
   - `services/flexinfer/api/v1alpha1/modelcache_types.go`
   - `services/flexinfer/api/v1alpha1/gpugroup_types.go`
