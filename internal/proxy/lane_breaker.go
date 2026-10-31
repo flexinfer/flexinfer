@@ -9,7 +9,6 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -101,8 +100,12 @@ func (p *Proxy) rejectLane(w http.ResponseWriter, r *http.Request, name, request
 	if retry < 1 {
 		retry = 1
 	}
-	w.Header().Set("Retry-After", strconv.Itoa(retry))
-	validation.WriteError(w, http.StatusServiceUnavailable, fmt.Sprintf("model %s has not completed a request since %s; breaker open, retry after %ds", requested, last.UTC().Format(time.RFC3339), retry), "service_unavailable_error", "lane_unresponsive")
+	p.writeLaneError(w, p.peekModel(r.Context(), name), laneError{
+		status:     http.StatusServiceUnavailable,
+		code:       validation.CodeLaneUnresponsive,
+		message:    fmt.Sprintf("model %s has not completed a request since %s; breaker open, retry after %ds", requested, last.UTC().Format(time.RFC3339), retry),
+		retryAfter: retry,
+	})
 	requestsTotal.WithLabelValues(requested, "lane_unresponsive").Inc()
 	return true
 }

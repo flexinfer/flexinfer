@@ -232,7 +232,11 @@ func TestHandleRequestGatesBackgroundOnEnforcedLane(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, second.Code)
 	assert.Equal(t, "1", second.Header().Get(headerQueuePosition))
 	assert.NotEmpty(t, second.Header().Get("Retry-After"))
-	assert.Contains(t, second.Body.String(), `"queue_full"`)
+	e := envelope(t, second)
+	assert.Equal(t, "queue_full", e.Code)
+	require.NotNil(t, e.FlexInfer.QueuePosition)
+	assert.Equal(t, 1, *e.FlexInfer.QueuePosition)
+	assertRetryAfter(t, second, e, 30)
 	assert.Equal(t, before+1, testutil.ToFloat64(rejected))
 
 	// The reserved seat still serves an interactive turn at once.

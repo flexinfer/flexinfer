@@ -307,7 +307,7 @@ func (p *Proxy) qosAdmit(w http.ResponseWriter, r *http.Request, d *qosDecision)
 		qosDecisionsTotal.WithLabelValues(string(d.class), d.lane, outcome).Inc()
 		if full, isFull := err.(*qosQueueFullError); isFull {
 			requestsTotal.WithLabelValues(d.lane, "qos_queue_full").Inc()
-			writeQoSQueueFull(w, d, full)
+			p.writeQoSQueueFull(w, r, d, full)
 		}
 		return outcome, nil, false
 	}
@@ -315,13 +315,17 @@ func (p *Proxy) qosAdmit(w http.ResponseWriter, r *http.Request, d *qosDecision)
 	return outcome, func() { gate.release(time.Since(start)) }, true
 }
 
-// writeQoSQueueFull answers a refused background or batch request: 503 with
-// Retry-After and the caller's queue position.
-func writeQoSQueueFull(w http.ResponseWriter, d *qosDecision, full *qosQueueFullError) {
-	w.Header().Set("Retry-After", strconv.Itoa(full.retryAfter))
+// writeQoSQueueFull answers a refused background or batch request: 503
+// queue_full in the lane envelope with Retry-After and the caller's queue
+// position, also sent as X-FlexInfer-Queue-Position.
+func (p *Proxy) writeQoSQueueFull(w http.ResponseWriter, r *http.Request, d *qosDecision, full *qosQueueFullError) {
 	w.Header().Set(headerQueuePosition, strconv.Itoa(full.position))
-	validation.WriteError(w, http.StatusServiceUnavailable,
-		fmt.Sprintf("lane %q has no seat free for %s requests (queue position %d); retry after %ds",
+	p.writeLaneError(w, p.peekModel(r.Context(), d.lane), laneError{
+		status: http.StatusServiceUnavailable,
+		code:   validation.CodeQueueFull,
+		message: fmt.Sprintf("lane %q has no seat free for %s requests (queue position %d); retry after %ds",
 			d.lane, d.class, full.position, full.retryAfter),
-		"service_unavailable_error", validation.CodeQueueFull)
+		retryAfter:    full.retryAfter,
+		queuePosition: full.position,
+	})
 }
