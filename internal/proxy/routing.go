@@ -378,6 +378,10 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		if originalMaxTokens >= 0 && clampedMaxTokens >= 0 {
 			w.Header().Set("X-FlexInfer-MaxTokens-Clamped", fmt.Sprintf("%d->%d", originalMaxTokens, clampedMaxTokens))
 		}
+
+		// A lane on vLLM priority scheduling takes the request's QoS class as
+		// its per-request priority (qos_priority.go); other lanes are untouched.
+		forwardBody = p.applyQoSPriority(ctx, resolvedModel, r.URL.Path, forwardBody)
 	}
 
 	// A Model with a context-overflow lane holds back the runtime's 400 so a
