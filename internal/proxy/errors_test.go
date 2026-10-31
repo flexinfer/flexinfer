@@ -21,7 +21,7 @@ import (
 )
 
 // envelope decodes a proxy error body, failing the test unless it carries the
-// flexinfer block with all five keys.
+// flexinfer block with all six keys.
 func envelope(t *testing.T, rec *httptest.ResponseRecorder) validation.OpenAIError {
 	t.Helper()
 	var raw struct {
@@ -30,7 +30,7 @@ func envelope(t *testing.T, rec *httptest.ResponseRecorder) validation.OpenAIErr
 		} `json:"error"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &raw), rec.Body.String())
-	for _, key := range []string{"phase", "loading_substage", "eta_seconds", "retry_after_seconds", "reroute_to"} {
+	for _, key := range []string{"phase", "loading_substage", "eta_seconds", "retry_after_seconds", "reroute_to", "queue_position"} {
 		_, ok := raw.Error.FlexInfer[key]
 		assert.True(t, ok, "flexinfer.%s missing: %s", key, rec.Body.String())
 	}

@@ -67,6 +67,16 @@ spec:
                   fieldPath: metadata.namespace
             - name: FLEXINFER_PROXY_QOS_CONFIG
               value: /etc/flexinfer/qos/qos.yaml
+            {{- with $proxy.qos }}
+            {{- if .queueWait }}
+            - name: FLEXINFER_PROXY_QOS_QUEUE_WAIT
+              value: {{ .queueWait | quote }}
+            {{- end }}
+            {{- if .queueDepth }}
+            - name: FLEXINFER_PROXY_QOS_QUEUE_DEPTH
+              value: {{ .queueDepth | quote }}
+            {{- end }}
+            {{- end }}
             {{- if $proxy.codebaseAnswerUpstream }}
             - name: FLEXINFER_CODEBASE_ANSWER_UPSTREAM
               value: {{ $proxy.codebaseAnswerUpstream | quote }}

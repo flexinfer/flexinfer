@@ -1,0 +1,123 @@
+# DEBUG CANARY — KT-QOS, feature D3 of
+# .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md (§6.3).
+# Matrix row workhorse-qos-priority-2026-10-31; window procedure and the
+# owner's paste sequence in .loom/32-iteration-plan-kt-qos-2026-10-31.md.
+# Prepared 2026-10-31. NOT in the models kustomization: the operator applies
+# it once in a scheduled window, the agent session sequences the arms through
+# flexinfer_update_model, then the operator deletes the Model.
+#
+# Question: does vLLM 0.32 `--scheduling-policy priority` protect interactive
+# turns on the workhorse's two-seat posture (MTP K=2, ROCM_SEGMENTED_ATTN,
+# chunked prefill, 32K, fp16 KV) without costing throughput, and does the
+# proxy's interactive seat reserve (flexinfer.ai/qos) do it instead?
+#
+# This is the production workhorse config (deploy/models/
+# qwen38-27b-autoround-workhorse.yaml at 1a88df83) on its image and source,
+# with three differences: its own name and served name, priority 510 so it
+# takes the 5930k from the workhorse (500) for the window as S3/S3b did, and
+# the S3 canary's compile cache path, which already holds the warm segmented
+# + MTP K=2 variants at 32K (S3b), so the first boot is warm and production's
+# cache is never written. It boots fcfs; arm B patches schedulingPolicy.
+#
+# flexinfer.ai/qos: proxy is set from the start because the MCP update tool
+# patches spec.config only. It changes nothing for the direct arms (they talk
+# to the pod, not the proxy) and gives the proxy arms the seat gate on the
+# fcfs boot (arm C) and gate + priority after the patch (arm D). The proxy
+# arms need a proxy image with D3 MR 2 and MR 3.
+#
+# Rollback = delete this Model; the workhorse reclaims the card on demand.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-qos-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/32-iteration-plan-kt-qos-2026-10-31.md"
+    flexinfer.ai/promotion-state: debug-canary-kt-qos
+    flexinfer.ai/qos: proxy
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s3-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    priority: 510
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    warmPolicy: primary
+    dedicatedDeployment: true
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-qos-canary
+    # /metrics must carry the spec-decode, generation-token and preemption
+    # counters the harness reads.
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Hidden from discovery; the direct arms talk to the pod over localhost.
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-qos-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

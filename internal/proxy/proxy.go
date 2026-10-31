@@ -161,6 +161,11 @@ type Config struct {
 	QoSConfigPath string
 	// Jobs enables the async job API and runner (jobs.go).
 	Jobs JobsConfig
+	// QoSQueueWait bounds how long a background or batch request waits for
+	// a seat on a lane that enforces classes before a 503 queue_full;
+	// QoSQueueDepth caps the waiters per lane (qos_gate.go).
+	QoSQueueWait  time.Duration
+	QoSQueueDepth int
 }
 
 // Validate checks the Config for conflicting or invalid settings. Returns a
@@ -280,6 +285,8 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		PrometheusURL:                    os.Getenv("FLEXINFER_PROXY_PROMETHEUS_URL"),
 		QoSConfigPath:                    os.Getenv("FLEXINFER_PROXY_QOS_CONFIG"),
 		Jobs:                             jobsConfigFromEnv(),
+		QoSQueueWait:                     envutil.DurationOrDefault("FLEXINFER_PROXY_QOS_QUEUE_WAIT", defaultQoSQueueWait),
+		QoSQueueDepth:                    envutil.IntOrDefault("FLEXINFER_PROXY_QOS_QUEUE_DEPTH", defaultQoSQueueDepth),
 	}
 
 	return cfg
@@ -370,6 +377,12 @@ type Proxy struct {
 	// struct-literal test proxies, which resolve every request by header,
 	// alias suffix or the interactive default.
 	qos *qosResolver
+
+	// Per-lane QoS seat gates and their queue bounds (qos_gate.go). Zero
+	// bounds fall back to the defaults.
+	qosGates      TypedSyncMap[string, *qosGate]
+	qosQueueWait  time.Duration
+	qosQueueDepth int
 
 	// Direct runtime communication (fast path)
 	runtimeCache         *RuntimeCache                // cached runtime pod endpoints
@@ -488,6 +501,8 @@ func New(cfg Config) *Proxy {
 			DefaultMaxTokens:    cfg.AdmissionDefaultMaxTokens,
 		},
 		qos:                     newQoSResolver(cfg.QoSConfigPath),
+		qosQueueWait:            cfg.QoSQueueWait,
+		qosQueueDepth:           cfg.QoSQueueDepth,
 		directRuntimeEnabled:    cfg.DirectRuntimeEnabled,
 		gracefulShutdownTimeout: cfg.GracefulShutdownTimeout,
 		shutdownDrainDelay:      cfg.ShutdownDrainDelay,
