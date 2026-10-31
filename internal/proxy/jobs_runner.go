@@ -352,7 +352,9 @@ func (a *jobAttempt) stampsDemand() bool {
 func (r *jobRunner) execute(ctx context.Context, j *aiv1alpha2.InferenceJob) {
 	var progress atomic.Int32
 	progress.Store(jobProgressClaimed)
-	stopHeartbeat := r.heartbeat(ctx, j, &progress)
+	// Stopped before every terminal write, so a late heartbeat can never
+	// overwrite the final progress.
+	stopHeartbeat := sync.OnceFunc(r.heartbeat(ctx, j, &progress))
 	defer stopHeartbeat()
 
 	deadline := jobQueuedAt(j).Add(r.cfg.MaxWait)
@@ -361,6 +363,7 @@ func (r *jobRunner) execute(ctx context.Context, j *aiv1alpha2.InferenceJob) {
 		a, err := r.attempt(ctx, j, &progress)
 		if r.wasCancelled(j.Name) {
 			a.close()
+			stopHeartbeat()
 			r.finish(context.Background(), j.Name, aiv1alpha2.InferenceJobCancelled, nil, nil)
 			return
 		}
@@ -370,11 +373,12 @@ func (r *jobRunner) execute(ctx context.Context, j *aiv1alpha2.InferenceJob) {
 		}
 		if err != nil {
 			a.close()
+			stopHeartbeat()
 			r.finish(ctx, j.Name, aiv1alpha2.InferenceJobFailed, nil, &aiv1alpha2.InferenceJobError{Code: "job_request_unavailable", Message: err.Error()})
 			return
 		}
 		if a.status/100 == 2 {
-			r.complete(ctx, j, a)
+			r.complete(ctx, j, a, stopHeartbeat)
 			return
 		}
 		if a.status == http.StatusInternalServerError {
@@ -386,6 +390,7 @@ func (r *jobRunner) execute(ctx context.Context, j *aiv1alpha2.InferenceJob) {
 			if a.retryable(serverErrs) {
 				msg = fmt.Sprintf("lane not available within %s: %s", r.cfg.MaxWait, msg)
 			}
+			stopHeartbeat()
 			r.finish(ctx, j.Name, aiv1alpha2.InferenceJobFailed, nil, &aiv1alpha2.InferenceJobError{Code: a.code, Message: msg, Status: int32(a.status)})
 			return
 		}
@@ -467,7 +472,10 @@ func (r *jobRunner) attempt(ctx context.Context, j *aiv1alpha2.InferenceJob, pro
 	r.handler.ServeHTTP(spool, req)
 	a := &jobAttempt{status: spool.status, header: spool.header, spool: spool}
 	if a.status == 0 {
-		a.status = http.StatusOK
+		// Only a canceled request leaves the proxy's handler without an
+		// answer; anything else is treated as a lost response and retried.
+		a.status, a.code, a.message = http.StatusBadGateway, "no_response", "the proxy wrote no response"
+		return a, nil
 	}
 	if a.status/100 != 2 {
 		a.code, a.message = spool.errorBody()
@@ -534,11 +542,14 @@ func (r *jobRunner) requestBody(ctx context.Context, j *aiv1alpha2.InferenceJob)
 	return nil, "", errors.New("job has no request body")
 }
 
-// complete stores a 2xx response as the job's output.
-func (r *jobRunner) complete(ctx context.Context, j *aiv1alpha2.InferenceJob, a *jobAttempt) {
+// complete stores a 2xx response as the job's output; stopHeartbeat runs once
+// the upload is done, before the terminal write.
+func (r *jobRunner) complete(ctx context.Context, j *aiv1alpha2.InferenceJob, a *jobAttempt, stopHeartbeat func()) {
 	defer a.close()
+	defer stopHeartbeat()
 	contentType := a.header.Get("Content-Type")
 	if a.spool.overflow {
+		stopHeartbeat()
 		r.finish(ctx, j.Name, aiv1alpha2.InferenceJobIncomplete, nil, &aiv1alpha2.InferenceJobError{
 			Code: "output_too_large", Message: fmt.Sprintf("response exceeded %d bytes", r.cfg.MaxOutputBytes), Status: int32(a.status),
 		})
@@ -546,10 +557,12 @@ func (r *jobRunner) complete(ctx context.Context, j *aiv1alpha2.InferenceJob, a 
 	}
 	file, size, sum, err := a.spool.reader()
 	if err != nil {
+		stopHeartbeat()
 		r.finish(ctx, j.Name, aiv1alpha2.InferenceJobIncomplete, nil, &aiv1alpha2.InferenceJobError{Code: "storage_error", Message: err.Error()})
 		return
 	}
 	uri, err := r.cfg.Store.Put(ctx, jobObjectKey(r.p.namespace, j.Name, jobStoredOutputName), file, size, sum, contentType)
+	stopHeartbeat()
 	if err != nil {
 		slog.Warn("job output store failed", "job", j.Name, "error", err)
 		r.finish(ctx, j.Name, aiv1alpha2.InferenceJobIncomplete, nil, &aiv1alpha2.InferenceJobError{Code: "storage_error", Message: err.Error()})
