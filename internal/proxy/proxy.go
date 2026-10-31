@@ -159,6 +159,8 @@ type Config struct {
 	// (qos.yaml) holding the caller-identity → QoS class map. Empty or a
 	// missing file means no caller mappings (qos.go).
 	QoSConfigPath string
+	// Jobs enables the async job API and runner (jobs.go).
+	Jobs JobsConfig
 }
 
 // Validate checks the Config for conflicting or invalid settings. Returns a
@@ -227,6 +229,10 @@ func (c Config) Validate() error {
 		))
 	}
 
+	if err := c.Jobs.validate(); err != nil {
+		errs = append(errs, err)
+	}
+
 	return stderrors.Join(errs...)
 }
 
@@ -273,6 +279,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		CodebaseAnswerUpstream:           os.Getenv("FLEXINFER_CODEBASE_ANSWER_UPSTREAM"),
 		PrometheusURL:                    os.Getenv("FLEXINFER_PROXY_PROMETHEUS_URL"),
 		QoSConfigPath:                    os.Getenv("FLEXINFER_PROXY_QOS_CONFIG"),
+		Jobs:                             jobsConfigFromEnv(),
 	}
 
 	return cfg
@@ -408,6 +415,9 @@ type Proxy struct {
 	// envelope's ETA; nil when no Prometheus URL is configured.
 	loadLatency *loadLatencyCache
 
+	// jobs runs InferenceJobs; nil when async jobs are disabled.
+	jobs *jobRunner
+
 	// Lifecycle context for background goroutines
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -491,6 +501,10 @@ func New(cfg Config) *Proxy {
 		debugConfig:             newDebugConfigView(cfg),
 	}
 
+	if cfg.Jobs.Enabled && cfg.Jobs.Store != nil {
+		p.jobs = newJobRunner(p, cfg.Jobs)
+	}
+
 	if cfg.DirectRuntimeEnabled {
 		p.runtimeCache = NewRuntimeCache(cfg.Client, cfg.Namespace, endpointWatchInterval)
 	}
@@ -516,7 +530,7 @@ func (p *Proxy) Shutdown() {
 func (p *Proxy) Run(ctx context.Context, port int) error {
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: p.newServeMux(),
+		Handler: p.handler(),
 	}
 	return p.runServer(ctx, server)
 }
@@ -535,6 +549,9 @@ func (p *Proxy) runServer(ctx context.Context, server *http.Server) error {
 
 	if p.loadLatency != nil {
 		go p.loadLatency.run(p.ctx)
+	}
+	if p.jobs != nil {
+		go p.jobs.run(p.ctx)
 	}
 
 	// Start runtime cache for direct fast path
@@ -584,6 +601,9 @@ func (p *Proxy) runServerOnListener(ctx context.Context, server *http.Server, li
 	}
 	if p.loadLatency != nil {
 		go p.loadLatency.run(p.ctx)
+	}
+	if p.jobs != nil {
+		go p.jobs.run(p.ctx)
 	}
 	if p.runtimeCache != nil {
 		p.runtimeCache.StartRefreshLoop(p.ctx)
@@ -660,11 +680,23 @@ func (p *Proxy) shutdownTimeout() time.Duration {
 	return defaultGracefulShutdownTimeout
 }
 
+// handler is what the proxy serves: newServeMux behind the job middleware,
+// which turns background requests into InferenceJobs. The job runner itself
+// dispatches to a bare newServeMux.
+func (p *Proxy) handler() http.Handler {
+	return p.jobsMiddleware(p.newServeMux())
+}
+
 func (p *Proxy) newServeMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/v1/models", p.handleModels)
 	mux.HandleFunc("GET /v1/models/{name...}", p.handleModel)
+	mux.HandleFunc("POST /v1/jobs", p.handleCreateJob)
+	mux.HandleFunc("GET /v1/jobs", p.handleListJobs)
+	mux.HandleFunc("GET /v1/jobs/{id}", p.handleGetJob)
+	mux.HandleFunc("GET /v1/jobs/{id}/content", p.handleJobContent)
+	mux.HandleFunc("POST /v1/jobs/{id}/cancel", p.handleCancelJob)
 	mux.HandleFunc("/debug/config", p.handleDebugConfig)
 	mux.HandleFunc("/diarize", p.handleDiarize)
 	mux.HandleFunc("/v1/audio/speech", p.handleSpeech)
