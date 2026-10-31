@@ -67,6 +67,37 @@ metadata:
 
 **Note:** Models without this annotation use Kubernetes Service DNS for load balancing, which is the recommended default for most workloads.
 
+### `flexinfer.ai/qos` and `flexinfer.ai/qos-interactive-reserve`
+
+Caller QoS enforcement on a lane (`internal/proxy/qos_gate.go`, `docs/specs/proxy-api.md` "Caller
+QoS classes"). A lane enforces classes when `spec.config.schedulingPolicy: priority` is set (proxy
+seat gate plus vLLM per-request priority) or when `flexinfer.ai/qos: proxy` is set (the gate
+alone). `flexinfer.ai/qos: off` turns both off. The gate needs `spec.config.maxNumSeqs`.
+
+| Annotation | Value | Effect |
+|---|---|---|
+| `flexinfer.ai/qos` | `proxy` | seat gate and class-ordered queue, no vLLM priority field |
+| `flexinfer.ai/qos` | `off` | no enforcement even with `schedulingPolicy: priority` |
+| `flexinfer.ai/qos-interactive-reserve` | integer ≥ 0 | seats held for interactive requests; default 1 when `maxNumSeqs` ≥ 2, capped at `maxNumSeqs - 1` |
+
+## Async job annotations
+
+On a Model:
+
+| Annotation | Value | Effect |
+|---|---|---|
+| `flexinfer.ai/job-concurrency` | integer ≥ 1 | async jobs the proxy runs at once on this lane; default 1 for diffusers lanes (which share one slot per `spec.gpu.shared` group), else `FLEXINFER_JOBS_PER_MODEL` (2) |
+| `flexinfer.ai/unavailable-reroute-to` | Model name | also surfaced as `reroute_to` in the error envelope and the `GET /v1/models/{name}` descriptor |
+
+On an `InferenceJob` (written by the proxy):
+
+| Key | Kind | Meaning |
+|---|---|---|
+| `flexinfer.ai/job-caller` | annotation | the submitting caller (`X-FlexInfer-Caller`, else the User-Agent product), replayed so the job runs in the caller's QoS class |
+| `flexinfer.ai/job-user-agent` | annotation | the submitting User-Agent, replayed on the job's request |
+| `flexinfer.ai/job-idempotency` | label | hash of caller and `Idempotency-Key`; a repeat submission returns the first job |
+| `flexinfer.ai/job-storage` | finalizer | the proxy deletes the job's stored inputs and output before the job goes |
+
 ## Service label routing
 
 Service labels can be attached to a model and used for routing. Relevant fields/annotations:

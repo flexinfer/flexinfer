@@ -200,6 +200,27 @@ proxy:
   # Front-door for the codebase-answer read-path sibling (F3 Slice 2.1). When
   # set, the proxy reverse-proxies POST /v1/rag to it. Empty → /v1/rag returns 503.
   codebaseAnswerUpstream: "http://codebase-answer.flexinfer-system.svc:8000"
+  # Prometheus the proxy reads each lane's cold-start p50 from for the error
+  # envelope's eta_seconds. Empty → the ETA uses status.metrics.loadTimeSeconds.
+  prometheusURL: ""
+  # Async jobs (D2): `background: true` on inference paths and /v1/jobs, run
+  # by the proxy as InferenceJobs. Off by default; enabling needs a store.
+  jobs:
+    enabled: false
+    # s3 (MinIO, path-style, SigV4) or pvc (a claim mounted into the proxy).
+    store: s3
+    s3:
+      endpoint: ""            # e.g. http://192.168.50.240:9000
+      bucket: flexinfer-jobs
+      region: us-east-1
+      credentialsSecret: ""   # Secret with keys accessKey and secretKey
+    pvc:
+      claimName: ""
+    perModel: 2               # running jobs per lane; diffusers lanes run 1
+    maxRunning: 8             # running jobs per proxy replica
+    maxOutputBytes: 1Gi
+    maxWait: 6h               # how long a job may wait for its lane
+    spoolSizeLimit: 4Gi       # emptyDir holding a response until it is stored
   image:
     repository: ghcr.io/flexinfer/flexinfer-proxy
     tag: "latest"
@@ -259,6 +280,24 @@ proxy:
     safetyMarginPercent: 5
     # Assumed max_tokens when the request omits the field.
     defaultMaxTokens: 256
+  # Caller QoS classes (D3). Each request resolves to interactive, background
+  # or batch: the X-FlexInfer-QoS header, then this caller map, then a LiteLLM
+  # alias suffix on the model name (workhorse-background), then interactive.
+  # The map renders into ConfigMap <fullname>-proxy-qos, mounted at
+  # /etc/flexinfer/qos; the proxy re-reads it every 30 s, so an edit needs no
+  # pod roll. A lane enforces classes only when it opts in
+  # (docs/specs/proxy-api.md, "Caller QoS classes").
+  qos:
+    # Caller name → class. The caller name is the X-FlexInfer-Caller header,
+    # else the User-Agent's first product token, lower-cased.
+    callers: {}
+    # "sha256:<hex sha256 of the bearer key>" → class. Hashes only: a
+    # ConfigMap is not a Secret.
+    apiKeys: {}
+    # On a lane that enforces classes, how long a background or batch request
+    # waits for a seat before a 503 queue_full, and how many may wait per lane.
+    queueWait: "60s"   # FLEXINFER_PROXY_QOS_QUEUE_WAIT
+    queueDepth: 32     # FLEXINFER_PROXY_QOS_QUEUE_DEPTH
   # Rate limiting configuration
   # Protects K8s API server from excessive per-request API calls
   rateLimit:

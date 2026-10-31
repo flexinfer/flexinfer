@@ -151,6 +151,21 @@ type Config struct {
 	// retrieval-augmented codebase Q&A is reachable through the proxy front
 	// door. Empty → /v1/rag returns 503.
 	CodebaseAnswerUpstream string
+	// PrometheusURL is the Prometheus the proxy reads lanes' cold-start p50
+	// from for the error envelope's eta_seconds (load_eta.go). Empty → the
+	// ETA falls back to the last load recorded on each Model.
+	PrometheusURL string
+	// QoSConfigPath is the mounted ConfigMap flexinfer-proxy-qos file
+	// (qos.yaml) holding the caller-identity → QoS class map. Empty or a
+	// missing file means no caller mappings (qos.go).
+	QoSConfigPath string
+	// Jobs enables the async job API and runner (jobs.go).
+	Jobs JobsConfig
+	// QoSQueueWait bounds how long a background or batch request waits for
+	// a seat on a lane that enforces classes before a 503 queue_full;
+	// QoSQueueDepth caps the waiters per lane (qos_gate.go).
+	QoSQueueWait  time.Duration
+	QoSQueueDepth int
 }
 
 // Validate checks the Config for conflicting or invalid settings. Returns a
@@ -219,6 +234,10 @@ func (c Config) Validate() error {
 		))
 	}
 
+	if err := c.Jobs.validate(); err != nil {
+		errs = append(errs, err)
+	}
+
 	return stderrors.Join(errs...)
 }
 
@@ -263,6 +282,11 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		PyannoteUpstream:                 os.Getenv("FLEXINFER_PYANNOTE_UPSTREAM"),
 		KokoroUpstream:                   os.Getenv("FLEXINFER_KOKORO_UPSTREAM"),
 		CodebaseAnswerUpstream:           os.Getenv("FLEXINFER_CODEBASE_ANSWER_UPSTREAM"),
+		PrometheusURL:                    os.Getenv("FLEXINFER_PROXY_PROMETHEUS_URL"),
+		QoSConfigPath:                    os.Getenv("FLEXINFER_PROXY_QOS_CONFIG"),
+		Jobs:                             jobsConfigFromEnv(),
+		QoSQueueWait:                     envutil.DurationOrDefault("FLEXINFER_PROXY_QOS_QUEUE_WAIT", defaultQoSQueueWait),
+		QoSQueueDepth:                    envutil.IntOrDefault("FLEXINFER_PROXY_QOS_QUEUE_DEPTH", defaultQoSQueueDepth),
 	}
 
 	return cfg
@@ -349,6 +373,17 @@ type Proxy struct {
 	// docs/planning/context-bounded-admission-spec.md.
 	admission *admissionFilter
 
+	// qos holds the caller-identity → QoS class map (qos.go). Nil in
+	// struct-literal test proxies, which resolve every request by header,
+	// alias suffix or the interactive default.
+	qos *qosResolver
+
+	// Per-lane QoS seat gates and their queue bounds (qos_gate.go). Zero
+	// bounds fall back to the defaults.
+	qosGates      TypedSyncMap[string, *qosGate]
+	qosQueueWait  time.Duration
+	qosQueueDepth int
+
 	// Direct runtime communication (fast path)
 	runtimeCache         *RuntimeCache                // cached runtime pod endpoints
 	directRuntimeEnabled bool                         // enable direct proxy-to-runtime loading
@@ -388,6 +423,13 @@ type Proxy struct {
 	// codebaseAnswerUpstream is the base URL of the codebase-answer read-path
 	// sibling service; empty disables the /v1/rag route (returns 503).
 	codebaseAnswerUpstream string
+
+	// loadLatency caches lanes' cold-start p50 from Prometheus for the error
+	// envelope's ETA; nil when no Prometheus URL is configured.
+	loadLatency *loadLatencyCache
+
+	// jobs runs InferenceJobs; nil when async jobs are disabled.
+	jobs *jobRunner
 
 	// Lifecycle context for background goroutines
 	ctx    context.Context
@@ -458,6 +500,9 @@ func New(cfg Config) *Proxy {
 			SafetyMarginPercent: cfg.AdmissionSafetyMarginPercent,
 			DefaultMaxTokens:    cfg.AdmissionDefaultMaxTokens,
 		},
+		qos:                     newQoSResolver(cfg.QoSConfigPath),
+		qosQueueWait:            cfg.QoSQueueWait,
+		qosQueueDepth:           cfg.QoSQueueDepth,
 		directRuntimeEnabled:    cfg.DirectRuntimeEnabled,
 		gracefulShutdownTimeout: cfg.GracefulShutdownTimeout,
 		shutdownDrainDelay:      cfg.ShutdownDrainDelay,
@@ -465,9 +510,14 @@ func New(cfg Config) *Proxy {
 		pyannoteUpstream:        cfg.PyannoteUpstream,
 		kokoroUpstream:          cfg.KokoroUpstream,
 		codebaseAnswerUpstream:  cfg.CodebaseAnswerUpstream,
+		loadLatency:             newLoadLatencyCache(cfg.PrometheusURL, cfg.Namespace),
 		ctx:                     ctx,
 		cancel:                  cancel,
 		debugConfig:             newDebugConfigView(cfg),
+	}
+
+	if cfg.Jobs.Enabled && cfg.Jobs.Store != nil {
+		p.jobs = newJobRunner(p, cfg.Jobs)
 	}
 
 	if cfg.DirectRuntimeEnabled {
@@ -495,7 +545,7 @@ func (p *Proxy) Shutdown() {
 func (p *Proxy) Run(ctx context.Context, port int) error {
 	server := &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),
-		Handler: p.newServeMux(),
+		Handler: p.handler(),
 	}
 	return p.runServer(ctx, server)
 }
@@ -504,9 +554,19 @@ func (p *Proxy) runServer(ctx context.Context, server *http.Server) error {
 	// Start queue cleanup goroutine
 	go p.cleanupStaleQueues()
 
+	// Reload the QoS caller map when the mounted ConfigMap changes.
+	go p.qos.watch(p.ctx)
+
 	// Start endpoint watcher for routing
 	if p.routingEnabled {
 		go p.watchEndpoints(p.ctx)
+	}
+
+	if p.loadLatency != nil {
+		go p.loadLatency.run(p.ctx)
+	}
+	if p.jobs != nil {
+		go p.jobs.run(p.ctx)
 	}
 
 	// Start runtime cache for direct fast path
@@ -550,8 +610,15 @@ func (p *Proxy) runServer(ctx context.Context, server *http.Server) error {
 
 func (p *Proxy) runServerOnListener(ctx context.Context, server *http.Server, listener net.Listener) error {
 	go p.cleanupStaleQueues()
+	go p.qos.watch(p.ctx)
 	if p.routingEnabled {
 		go p.watchEndpoints(p.ctx)
+	}
+	if p.loadLatency != nil {
+		go p.loadLatency.run(p.ctx)
+	}
+	if p.jobs != nil {
+		go p.jobs.run(p.ctx)
 	}
 	if p.runtimeCache != nil {
 		p.runtimeCache.StartRefreshLoop(p.ctx)
@@ -628,10 +695,23 @@ func (p *Proxy) shutdownTimeout() time.Duration {
 	return defaultGracefulShutdownTimeout
 }
 
+// handler is what the proxy serves: newServeMux behind the job middleware,
+// which turns background requests into InferenceJobs. The job runner itself
+// dispatches to a bare newServeMux.
+func (p *Proxy) handler() http.Handler {
+	return p.jobsMiddleware(p.newServeMux())
+}
+
 func (p *Proxy) newServeMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/v1/models", p.handleModels)
+	mux.HandleFunc("GET /v1/models/{name...}", p.handleModel)
+	mux.HandleFunc("POST /v1/jobs", p.handleCreateJob)
+	mux.HandleFunc("GET /v1/jobs", p.handleListJobs)
+	mux.HandleFunc("GET /v1/jobs/{id}", p.handleGetJob)
+	mux.HandleFunc("GET /v1/jobs/{id}/content", p.handleJobContent)
+	mux.HandleFunc("POST /v1/jobs/{id}/cancel", p.handleCancelJob)
 	mux.HandleFunc("/debug/config", p.handleDebugConfig)
 	mux.HandleFunc("/diarize", p.handleDiarize)
 	mux.HandleFunc("/v1/audio/speech", p.handleSpeech)
@@ -683,7 +763,18 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	span.SetAttributes(attribute.String("flexinfer.model", modelName))
+	// 1a. Caller QoS class (D3, qos.go). A LiteLLM alias suffix
+	// (workhorse-background) routes to its base name and selects the class
+	// when neither the header nor the caller map does.
+	var aliasClass qosClass
+	modelName, aliasClass = p.stripQoSAliasSuffix(r.Context(), modelName)
+	qos := p.resolveQoS(r, aliasClass)
+	r = r.WithContext(withQoSDecision(r.Context(), qos))
+
+	span.SetAttributes(
+		attribute.String("flexinfer.model", modelName),
+		attribute.String("flexinfer.qos.class", string(qos.class)),
+	)
 
 	// 1b. Rate limit check
 	if !p.checkRateLimit(modelName) {
@@ -740,6 +831,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		lookupName = parent
 		span.SetAttributes(attribute.String("flexinfer.lora_parent", parent))
 	}
+	qos.lane = lookupName
 
 	// 2d. A name that cannot be a Kubernetes resource name — e.g. a LiteLLM
 	// gateway alias such as "or/kimi-k3" that nothing above resolved — can never
@@ -788,7 +880,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 				modelName, decision.Reason, strconv.FormatBool(decision.Allow),
 			).Inc()
 			if !decision.Allow {
-				writeAdmissionRejection(w, modelName, decision)
+				writeAdmissionRejection(w, modelName, decision, p.laneDetails(m, laneError{code: validation.CodeAdmissionRejected}, time.Now()))
 				requestsTotal.WithLabelValues(modelName, "admission_rejected").Inc()
 				return
 			}
@@ -812,8 +904,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if background {
 			slog.Debug("rejecting background request: model is not ready",
 				"model", modelName, "phase", m.Status.Phase, "request_id", requestID)
-			validation.WriteServiceUnavailable(w,
-				fmt.Sprintf("background request requires model %q to already be Ready", modelName))
+			p.writeLaneError(w, m, laneError{
+				status:  http.StatusServiceUnavailable,
+				code:    modelStateCode(m),
+				message: fmt.Sprintf("background request requires model %q to already be Ready", modelName),
+			})
 			requestsTotal.WithLabelValues(modelName, "background_not_ready").Inc()
 			return
 		}
@@ -827,7 +922,14 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if litellmExplicitlyDisabled(m) {
 			slog.Debug("rejecting cold start: model is parked (litellm disabled)",
 				"model", modelName, "request_id", requestID)
-			validation.WriteModelNotFound(w, modelName)
+			p.writeLaneError(w, m, laneError{
+				status:     http.StatusNotFound,
+				errType:    validation.ErrorTypeNotFound,
+				code:       validation.CodeModelParked,
+				message:    fmt.Sprintf("Model '%s' not found: parked (spec.litellm.enabled=false) and not served by name", modelName),
+				param:      "model",
+				retryAfter: -1,
+			})
 			requestsTotal.WithLabelValues(modelName, "parked").Inc()
 			return
 		}
@@ -854,8 +956,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 			slog.Debug("rejecting cold start: model is parked behind a warm primary",
 				"model", modelName, "preemptedBy", m.Status.SharedGroup.PreemptedBy,
 				"request_id", requestID)
-			validation.WriteServiceUnavailable(w,
-				fmt.Sprintf("model %q is parked behind a higher-priority primary on its shared GPU and is not currently servable", modelName))
+			p.writeLaneError(w, m, laneError{
+				status:  http.StatusServiceUnavailable,
+				code:    validation.CodeModelParked,
+				message: fmt.Sprintf("model %q is parked behind a higher-priority primary on its shared GPU and is not currently servable", modelName),
+			})
 			requestsTotal.WithLabelValues(modelName, "parked_behind_primary").Inc()
 			return
 		}
@@ -865,6 +970,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// no Model CR of its own to warm. The parent's runtime reloads its
 		// adapters on startup, so a client retry once the parent is Ready serves
 		// under the adapter name via the Ready branch above.
+		w.Header().Set(headerActivation, activationValue(m))
 		if err := p.handleColdStart(ctx, w, r, lookupName, start); err != nil {
 			slog.Error("cold start failed", "model", lookupName, "error", err)
 			requestsTotal.WithLabelValues(modelName, "error").Inc()
@@ -915,8 +1021,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if background {
 		slog.Debug("rejecting background request: legacy model is not ready",
 			"model", modelName, "request_id", requestID)
-		validation.WriteServiceUnavailable(w,
-			fmt.Sprintf("background request requires model %q to already be Ready", modelName))
+		p.writeLaneError(w, nil, laneError{
+			status:  http.StatusServiceUnavailable,
+			code:    validation.CodeModelColdStarting,
+			message: fmt.Sprintf("background request requires model %q to already be Ready", modelName),
+		})
 		requestsTotal.WithLabelValues(modelName, "background_not_ready").Inc()
 		return
 	}

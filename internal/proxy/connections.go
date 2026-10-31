@@ -21,6 +21,15 @@ func (p *Proxy) trackAndServeBackground(w http.ResponseWriter, r *http.Request, 
 }
 
 func (p *Proxy) trackAndServeWithDemand(w http.ResponseWriter, r *http.Request, modelName string, start time.Time, recordDemand bool) {
+	// A lane that enforces QoS classes may hold or refuse background work
+	// (qos_gate.go); every other lane admits at once as "unenforced".
+	qos := qosDecisionFrom(r.Context())
+	qosOutcome, releaseSeat, ok := p.qosAdmit(w, r, qos)
+	if !ok {
+		return
+	}
+	defer releaseSeat()
+
 	// Track connection
 	p.incrementConnections(modelName)
 	defer p.decrementConnections(modelName)
@@ -41,6 +50,7 @@ func (p *Proxy) trackAndServeWithDemand(w http.ResponseWriter, r *http.Request, 
 		}
 		requestsTotal.WithLabelValues(modelName, status).Inc()
 		requestDuration.WithLabelValues(modelName).Observe(time.Since(start).Seconds())
+		observeQoSServed(qos, qosOutcome, time.Since(start))
 		if aborted != nil {
 			panic(aborted)
 		}

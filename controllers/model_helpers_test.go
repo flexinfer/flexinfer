@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -27,6 +28,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
 
 func TestApplyManagedAnnotations(t *testing.T) {
@@ -783,4 +785,21 @@ func TestNodeHasActivePipelineWork(t *testing.T) {
 			t.Fatalf("nodeHasActivePipelineWork(%q) = true, want false when pending pod has no hostname selector", nodeName)
 		}
 	})
+}
+
+// TestObserveColdStartRecordsLoadTimeOnTheModel pins the fallback the proxy's
+// error envelope reads for eta_seconds when it has no Prometheus.
+func TestObserveColdStartRecordsLoadTimeOnTheModel(t *testing.T) {
+	model := &aiv1alpha2.Model{ObjectMeta: metav1.ObjectMeta{Name: "lane", Namespace: "default"}}
+	now := time.Now()
+
+	observeColdStart(model, time.Time{}, now, metrics.ServingPathRuntime)
+	if model.Status.Metrics != nil {
+		t.Fatalf("no load start, nothing recorded: %+v", model.Status.Metrics)
+	}
+
+	observeColdStart(model, now.Add(-95250*time.Millisecond), now, metrics.ServingPathRuntime)
+	if model.Status.Metrics == nil || model.Status.Metrics.LoadTimeSeconds != "95.2" {
+		t.Fatalf("loadTimeSeconds = %+v, want 95.2", model.Status.Metrics)
+	}
 }

@@ -96,6 +96,15 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
   A high streaming share whose usage chunks are absent means the shape data is
   biased and the verdict must be read with caution. Streaming usage-chunk capture
   shipped in `internal/proxy/usage_log.go` (`usageSniffingBody`).
+- `flexinfer_proxy_qos_decisions_total{class,lane,outcome}` (counter) — one per request by
+  resolved QoS class (`interactive|background|batch`), lane (the Model it resolved to, the parent
+  for a LoRA adapter) and outcome (`admitted`, `queued`, `rejected`, `canceled` on lanes that enforce classes,
+  `unenforced` elsewhere). See
+  `docs/specs/proxy-api.md`, "Caller QoS classes".
+- `flexinfer_proxy_qos_ttft_seconds{class,lane}` (histogram) — streaming completions only: time
+  from the proxy receiving the request to the first upstream body byte, queueing included.
+- `flexinfer_proxy_qos_request_duration_seconds{class,lane}` (histogram) — end-to-end proxy
+  duration per class.
 
 > **Why these exist (traffic-shape observability).** The per-request usage *log*
 > line (`event=request_usage`, `internal/proxy/usage_log.go`) is the richer
@@ -108,6 +117,31 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
 > (`ngram-sd-workload-conditional`), so the completion-token distribution and the
 > prompt:completion ratio per lane decide whether SD should stay on. Example:
 > `histogram_quantile(0.5, sum by (le) (rate(flexinfer_proxy_request_completion_tokens_bucket{model="gemma4-26b-a4b-gptq"}[1d])))`.
+
+### Async jobs (`internal/proxy/jobs_metrics.go`)
+
+Exported by the proxy replica that submits or runs the job; `model` is the job's requested model.
+
+- `flexinfer_jobs_submitted_total{model,path}` — jobs accepted (`background: true`, `Prefer:
+  respond-async` or `POST /v1/jobs`).
+- `flexinfer_jobs_finished_total{model,phase}` — jobs this replica brought to `completed`,
+  `failed`, `cancelled` or `incomplete`.
+- `flexinfer_jobs_running{key}` (gauge) — jobs this replica is running, by concurrency key
+  (`model/<name>`, or `gpu/<shared group>` for diffusers lanes sharing a card).
+- `flexinfer_jobs_queue_wait_seconds{model}` (histogram) — submission to first claim.
+- `flexinfer_jobs_run_seconds{model,phase}` (histogram) — first claim to terminal phase, lane cold
+  starts and retries included.
+- `flexinfer_jobs_retries_total{model,code}` — attempts that waited to retry their lane, by the
+  error-envelope code that made them wait (`model_cold_starting`, `queue_full`, …).
+- `flexinfer_jobs_webhook_deliveries_total{event,result}` — webhook attempts, `delivered` or
+  `failed`.
+
+The manager exports the job population and TTL deletions (`pkg/metrics`,
+`controllers/inferencejob_controller.go`):
+
+- `flexinfer_jobs{namespace,phase}` (gauge) — InferenceJobs by phase.
+- `flexinfer_jobs_gc_deleted_total{namespace,phase}` — finished jobs deleted after
+  `ttlAfterFinished`.
 
 ## Runtime Metrics (`flexinfer-runtime`)
 

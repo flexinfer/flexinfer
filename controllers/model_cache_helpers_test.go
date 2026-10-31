@@ -290,6 +290,18 @@ func TestResolveHFDownloadOptions(t *testing.T) {
 		}
 	})
 
+	t.Run("whispercpp with modelFile", func(t *testing.T) {
+		// HF://ggerganov/whisper.cpp holds every ggml model; only the named
+		// file may be downloaded.
+		model := makeModelWithConfig("whispercpp", "HF://ggerganov/whisper.cpp", map[string]any{
+			"modelFile": "ggml-large-v3-turbo-q8_0.bin",
+		})
+		opts := resolveHFDownloadOptions(model)
+		if len(opts.allowPatterns) != 1 || opts.allowPatterns[0] != "ggml-large-v3-turbo-q8_0.bin" {
+			t.Errorf("allowPatterns = %v, want [ggml-large-v3-turbo-q8_0.bin]", opts.allowPatterns)
+		}
+	})
+
 	t.Run("non-GGUF backend without ggufFile", func(t *testing.T) {
 		model := makeModelWithConfig("vllm", "HF://org/model", map[string]any{
 			"maxModelLen": 4096,

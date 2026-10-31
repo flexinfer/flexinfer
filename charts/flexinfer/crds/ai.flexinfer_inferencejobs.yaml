@@ -1,0 +1,344 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.21.0
+  name: inferencejobs.ai.flexinfer
+spec:
+  group: ai.flexinfer
+  names:
+    kind: InferenceJob
+    listKind: InferenceJobList
+    plural: inferencejobs
+    shortNames:
+    - ijob
+    singular: inferencejob
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .spec.model
+      name: Model
+      type: string
+    - jsonPath: .spec.path
+      name: Path
+      type: string
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .status.progress
+      name: Progress
+      priority: 1
+      type: integer
+    - jsonPath: .status.lane
+      name: Lane
+      priority: 1
+      type: string
+    - jsonPath: .status.runner
+      name: Runner
+      priority: 1
+      type: string
+    - jsonPath: .status.completedAt
+      name: Completed
+      type: date
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha2
+    schema:
+      openAPIV3Schema:
+        description: InferenceJob is the Schema for asynchronous inference requests.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: InferenceJobSpec is the request a job runs.
+            properties:
+              cancel:
+                description: |-
+                  Cancel asks the runner to stop the job. A queued job is cancelled at
+                  once; a running one when its forward is aborted.
+                type: boolean
+              contentType:
+                description: |-
+                  ContentType is the request body's media type. Defaults to
+                  application/json; a multipart body carries its boundary here.
+                type: string
+              idempotencyKey:
+                description: |-
+                  IdempotencyKey dedupes submissions: a second job with the same key for
+                  the same caller returns the first instead of running again.
+                maxLength: 255
+                type: string
+              inputRefs:
+                description: |-
+                  InputRefs are request inputs held in job storage. The proxy stores a
+                  multipart body (an audio file, an image to edit) as the input named
+                  "body" and replays it to the lane verbatim.
+                items:
+                  description: 'InferenceJobObject is one object in job storage: an
+                    input or the output.'
+                  properties:
+                    bytes:
+                      description: Bytes is the object's size.
+                      format: int64
+                      type: integer
+                    contentType:
+                      description: ContentType is the object's media type.
+                      type: string
+                    name:
+                      description: |-
+                        Name identifies an input ("body" for the request body); empty for the
+                        output.
+                      type: string
+                    sha256:
+                      description: SHA256 is the hex digest of the object.
+                      type: string
+                    uri:
+                      description: |-
+                        URI locates the object: s3://bucket/key for MinIO, pvc://claim/path for
+                        the PVC store.
+                      type: string
+                  required:
+                  - uri
+                  type: object
+                type: array
+              model:
+                description: |-
+                  Model is the Model the request names: CR name, served name or alias,
+                  resolved by the proxy the way a synchronous request would be.
+                minLength: 1
+                type: string
+              path:
+                description: |-
+                  Path is the OpenAI path the request is sent to, e.g.
+                  /v1/images/generations or /v1/audio/transcriptions.
+                pattern: ^/v1/
+                type: string
+              qosClass:
+                description: |-
+                  QoSClass is the caller class the job runs under (D3); empty means the
+                  class the proxy resolves for the caller.
+                type: string
+              request:
+                description: |-
+                  Request is the JSON request body, inline. Bodies over 256 KiB, and
+                  non-JSON bodies (multipart uploads), go to RequestRef or to an
+                  InputRefs entry named "body" instead.
+                x-kubernetes-preserve-unknown-fields: true
+              requestRef:
+                description: |-
+                  RequestRef points at a ConfigMap or Secret key holding the request
+                  body, for callers that create jobs with kubectl.
+                properties:
+                  key:
+                    description: Key is the data key holding the body.
+                    type: string
+                  kind:
+                    description: Kind is ConfigMap or Secret.
+                    enum:
+                    - ConfigMap
+                    - Secret
+                    type: string
+                  name:
+                    description: Name is the object's name.
+                    type: string
+                required:
+                - key
+                - kind
+                - name
+                type: object
+              ttlAfterFinished:
+                description: |-
+                  TTLAfterFinished is how long a finished job and its output are kept
+                  before the manager deletes both. Defaults to 24h.
+                type: string
+              webhook:
+                description: Webhook is called when the job reaches the listed events.
+                properties:
+                  events:
+                    description: |-
+                      Events to deliver: job.completed, job.failed, job.cancelled,
+                      job.incomplete, job.in_progress. Defaults to the four terminal events.
+                    items:
+                      type: string
+                    type: array
+                  secretRef:
+                    description: |-
+                      SecretRef holds the signing secret ("whsec_" + base64, or raw bytes).
+                      Without it deliveries are unsigned.
+                    properties:
+                      key:
+                        description: The key of the secret to select from.  Must be
+                          a valid secret key.
+                        type: string
+                      name:
+                        default: ""
+                        description: |-
+                          Name of the referent.
+                          This field is effectively required, but due to backwards compatibility is
+                          allowed to be empty. Instances of this type with an empty value here are
+                          almost certainly wrong.
+                          More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names
+                        type: string
+                      optional:
+                        description: Specify whether the Secret or its key must be
+                          defined
+                        type: boolean
+                    required:
+                    - key
+                    type: object
+                    x-kubernetes-map-type: atomic
+                  url:
+                    description: URL receives a POST per event.
+                    pattern: ^https?://
+                    type: string
+                required:
+                - url
+                type: object
+            required:
+            - model
+            - path
+            type: object
+          status:
+            description: InferenceJobStatus is a job's observed state.
+            properties:
+              attempts:
+                description: Attempts counts runner claims; a job whose runner died
+                  is reclaimed.
+                format: int32
+                type: integer
+              completedAt:
+                description: CompletedAt is when it reached a terminal phase.
+                format: date-time
+                type: string
+              error:
+                description: Error is set when the job failed or was incomplete.
+                properties:
+                  code:
+                    type: string
+                  message:
+                    type: string
+                  status:
+                    description: |-
+                      Status is the HTTP status the lane or the proxy answered, 0 when the
+                      job never reached the lane.
+                    format: int32
+                    type: integer
+                required:
+                - code
+                type: object
+              expiresAt:
+                description: |-
+                  ExpiresAt is when the manager deletes the job and its output
+                  (CompletedAt + spec.ttlAfterFinished).
+                format: date-time
+                type: string
+              heartbeatAt:
+                description: |-
+                  HeartbeatAt is the runner's last liveness stamp while in_progress. A
+                  job whose heartbeat is older than three intervals is reclaimed by
+                  another runner.
+                format: date-time
+                type: string
+              lane:
+                description: |-
+                  Lane is the Model that served the job (differs from spec.model after an
+                  alias, label or reroute).
+                type: string
+              output:
+                description: Output is the stored response body.
+                properties:
+                  bytes:
+                    description: Bytes is the object's size.
+                    format: int64
+                    type: integer
+                  contentType:
+                    description: ContentType is the object's media type.
+                    type: string
+                  name:
+                    description: |-
+                      Name identifies an input ("body" for the request body); empty for the
+                      output.
+                    type: string
+                  sha256:
+                    description: SHA256 is the hex digest of the object.
+                    type: string
+                  uri:
+                    description: |-
+                      URI locates the object: s3://bucket/key for MinIO, pvc://claim/path for
+                      the PVC store.
+                    type: string
+                required:
+                - uri
+                type: object
+              phase:
+                description: Phase is the job's lifecycle state.
+                enum:
+                - queued
+                - in_progress
+                - completed
+                - failed
+                - cancelled
+                - incomplete
+                type: string
+              progress:
+                description: |-
+                  Progress is a 0-100 estimate while in_progress, from the lane's
+                  first-byte budget and the elapsed time; 100 once completed.
+                format: int32
+                maximum: 100
+                minimum: 0
+                type: integer
+              queuedAt:
+                description: QueuedAt is when the job was accepted.
+                format: date-time
+                type: string
+              runner:
+                description: Runner is the proxy pod that claimed the job.
+                type: string
+              startedAt:
+                description: StartedAt is when a runner claimed it.
+                format: date-time
+                type: string
+              webhook:
+                description: Webhook records delivery.
+                properties:
+                  attempts:
+                    description: Attempts counts delivery attempts across events.
+                    format: int32
+                    type: integer
+                  delivered:
+                    description: Delivered lists the events delivered with a 2xx.
+                    items:
+                      type: string
+                    type: array
+                  lastAttemptAt:
+                    description: LastAttemptAt is when the last attempt was made.
+                    format: date-time
+                    type: string
+                  lastError:
+                    description: LastError is the last failed attempt's error.
+                    type: string
+                type: object
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}
