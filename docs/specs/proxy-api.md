@@ -212,6 +212,7 @@ Forwarding rewrites `"model"` in a JSON body to the backend's model name; a mult
 | Not Ready and parked behind a higher-priority warm primary | 503 | `model_parked` |
 | Background-class request to a lane that is not Ready | 503 | by lane state |
 | Cold start: queue full | 503 | `queue_full` |
+| QoS: no seat for a `background`/`batch` request within the queue bound (enforcing lanes only) | 503 + `Retry-After` | `queue_full` |
 | Cold start: `Prefer: wait=N` elapsed | 503 | by lane state |
 | Cold start: activation failed (scale-up error, Failed phase, readiness timeout in the queue processor) | 503 | by lane state, `model_failed` for a Failed Model |
 | Cold start: weight load stalled | 503 | `stalled_load` |
@@ -235,10 +236,10 @@ inside `error`:
 {"error": {"type": "service_unavailable_error", "code": "model_cold_starting",
   "message": "model \"qwen38-27b-autoround-workhorse\" is not ready after the preferred wait of 0s; activation continues",
   "flexinfer": {"phase": "Loading", "loading_substage": "Compiling",
-    "eta_seconds": 95, "retry_after_seconds": 30, "reroute_to": null}}}
+    "eta_seconds": 95, "retry_after_seconds": 30, "reroute_to": null, "queue_position": null}}}
 ```
 
-All five keys are always present; a value the proxy does not know is `null`. Errors that are not
+All six keys are always present; a value the proxy does not know is `null`. Errors that are not
 about a lane (401, 400 missing model, 404 unknown model, 429) keep the plain OpenAI shape. A 413
 from admission also keeps its top-level `admission` block.
 
@@ -251,7 +252,7 @@ from admission also keeps its top-level `admission` block.
 | `lane_unresponsive` | 503 (breaker open), 504 (first-byte budget), 502 (transport) | The lane is Ready but did not answer | breaker reopen on the 503; 5 s on the 502; none on the 504 |
 | `context_overflow` | 400 | Over the lane's context; its `flexinfer.ai/context-overflow-to` lane cannot take the replay now. `reroute_to` names it and the block describes it | none |
 | `admission_rejected` | 413 | Refused by the admission filter (was `context_window_exceeded`) | none |
-| `queue_full` | 503 | The lane's cold-start queue (`PROXY_MAX_QUEUE_SIZE`) is full | as `model_cold_starting` |
+| `queue_full` | 503 | The lane's cold-start queue (`PROXY_MAX_QUEUE_SIZE`) is full, or (QoS, enforcing lanes) no seat freed for a `background`/`batch` request within the queue bound; then `queue_position` is set | as `model_cold_starting`; QoS: recent request duration × requests ahead per background seat |
 | `stalled_load` | 503 | The weight load stopped making progress | 30 s |
 
 Fields:
@@ -269,6 +270,8 @@ Fields:
   lane otherwise 0.
 - `retry_after_seconds`: equals the `Retry-After` header. Every 503 carries one.
 - `reroute_to`: an equivalent lane (`flexinfer.ai/unavailable-reroute-to`) or the overflow lane.
+- `queue_position`: on a QoS `queue_full`, the caller's 1-based place in the lane's class queue
+  (also sent as `X-FlexInfer-Queue-Position`); `null` otherwise.
 
 The messages keep their earlier wording, so callers that still match text keep working; decide on
 `code` instead.
@@ -329,5 +332,35 @@ The class labels the `request start` and `request usage` log lines (`qos_class`,
 `flexinfer_proxy_qos_ttft_seconds{class,lane}` (streaming completions, time to the first upstream
 byte) and `flexinfer_proxy_qos_request_duration_seconds{class,lane}`. A lane that does not enforce
 classes serves every request as before and counts it as `outcome="unenforced"`.
+
+### Enforcement
+
+A lane enforces classes only when it opts in (`docs/specs/labels-and-annotations.md`,
+`flexinfer.ai/qos`): `spec.config.schedulingPolicy: priority`, or the annotation
+`flexinfer.ai/qos: proxy` for the proxy gate without vLLM priority. On such a lane the proxy keeps
+an in-flight count against `spec.config.maxNumSeqs` (the seats):
+
+- `interactive` is always forwarded at once, even past the seat count (vLLM queues it).
+- `background` and `batch` are forwarded while fewer than `seats - reserve` requests are in
+  flight, where the reserve (`flexinfer.ai/qos-interactive-reserve`, default 1 on a lane with two
+  or more seats) stays free for interactive turns. Otherwise they wait in a per-lane queue,
+  `background` ahead of `batch`, FIFO within a class, for up to `FLEXINFER_PROXY_QOS_QUEUE_WAIT`
+  (chart `proxy.qos.queueWait`, default 60 s) and at most `proxy.qos.queueDepth` (default 32)
+  deep.
+- A request the queue cannot take, or that waits out the bound, gets **503** `queue_full` in the
+  error envelope, with `Retry-After` (the lane's recent request duration times the requests ahead
+  per background seat, 30 s per request before the lane has history) and its place in the queue in
+  `flexinfer.queue_position` and `X-FlexInfer-Queue-Position`.
+- The cold-start queue drains in the same class order.
+
+The reserve exists because vLLM 0.32 does not preempt a running sequence to free a seat: once
+`max_num_seqs` sequences run, its scheduler stops admitting, and `--scheduling-policy priority`
+only orders the waiting queue and chooses which sequence to preempt when KV blocks run out. Without
+the reserve, two background generations would hold both seats of a two-seat lane and an
+interactive turn would wait for one to finish.
+
+Outcomes in `flexinfer_proxy_qos_decisions_total`: `admitted` (took a seat at once), `queued`
+(after waiting), `rejected` (503 `queue_full`), `canceled` (the caller left while waiting),
+`unenforced`. The gate counts one proxy replica's requests and assumes one lane replica.
 
 The proxy re-reads the mounted map every 30 s, so a values change needs no pod roll.

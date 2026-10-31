@@ -294,6 +294,10 @@ proxy:
     # "sha256:<hex sha256 of the bearer key>" → class. Hashes only: a
     # ConfigMap is not a Secret.
     apiKeys: {}
+    # On a lane that enforces classes, how long a background or batch request
+    # waits for a seat before a 503 queue_full, and how many may wait per lane.
+    queueWait: "60s"   # FLEXINFER_PROXY_QOS_QUEUE_WAIT
+    queueDepth: 32     # FLEXINFER_PROXY_QOS_QUEUE_DEPTH
   # Rate limiting configuration
   # Protects K8s API server from excessive per-request API calls
   rateLimit:

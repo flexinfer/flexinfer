@@ -96,7 +96,7 @@ type OpenAIError struct {
 }
 
 // FlexInferDetails is the lane state attached to a proxy-originated error. All
-// five keys are always present; a value the proxy does not know is null rather
+// six keys are always present; a value the proxy does not know is null rather
 // than absent, so clients can rely on the shape.
 type FlexInferDetails struct {
 	// Phase is the Model's status.phase (Idle, Pending, Loading, Ready,
@@ -115,6 +115,10 @@ type FlexInferDetails struct {
 	// RerouteTo names an equivalent lane the caller may use instead
 	// (flexinfer.ai/unavailable-reroute-to, or the context-overflow lane).
 	RerouteTo *string `json:"reroute_to"`
+	// QueuePosition is the caller's 1-based place in the lane's QoS queue on
+	// a queue_full refusal from a lane that enforces QoS classes; null
+	// otherwise.
+	QueuePosition *int `json:"queue_position"`
 }
 
 // OpenAIErrorResponse is the top-level error response structure.
