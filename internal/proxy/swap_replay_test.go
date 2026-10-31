@@ -230,7 +230,7 @@ func (f *swapFixture) serve(t *testing.T, path string) *httptest.ResponseRecorde
 	return rec
 }
 
-var rerouteToTwin = map[string]string{annotationSwapRerouteTo: "twin"}
+var rerouteToTwin = map[string]string{rerouteHintAnnotation: "twin"}
 
 func replays(lane, outcome string) float64 {
 	return testutil.ToFloat64(swapReplaysTotal.WithLabelValues(lane, outcome))

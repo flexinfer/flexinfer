@@ -174,6 +174,10 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 	caller := callerIdentityFrom(r)
 	wantPrefix := prefixHitOptIn(r.Header.Get(headerWantPrefixHit))
 	path := r.URL.Path
+	var qosClass, qosSource, qosCaller string
+	if d := qosDecisionFrom(ctx); d != nil {
+		qosClass, qosSource, qosCaller = string(d.class), string(d.source), d.caller
+	}
 
 	for attempt := 0; attempt < maxAttempts; attempt++ {
 		targetURL, targetPod, fromDirect := p.resolveTargetURL(ctx, r, resolvedModel, port, routeBody, attempt > 0)
@@ -196,6 +200,9 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 			startedAt:     startedAt,
 			wantPrefixHit: wantPrefix,
 			targetURL:     targetURL,
+			qosClass:      qosClass,
+			qosSource:     qosSource,
+			caller:        qosCaller,
 		}), fr))
 
 		rp, ok := p.loadOrCreateProxy(targetURL)
@@ -271,7 +278,13 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 				return
 			}
 			laneErr = fr.err
-			validation.WriteError(w, http.StatusGatewayTimeout, "upstream first byte budget exceeded", "upstream_error", "timeout")
+			p.writeLaneError(w, p.peekModel(ctx, resolvedModel), laneError{
+				status:     http.StatusGatewayTimeout,
+				errType:    upstreamErrorType,
+				code:       validation.CodeLaneUnresponsive,
+				message:    "upstream first byte budget exceeded",
+				retryAfter: -1,
+			})
 			return
 		}
 
@@ -315,5 +328,11 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 
 	// All attempts failed at the transport layer; the ErrorHandler suppressed
 	// its own write, so nothing has been sent to the client yet.
-	validation.WriteError(w, http.StatusBadGateway, "upstream unavailable", "upstream_error", "bad_gateway")
+	p.writeLaneError(w, p.peekModel(ctx, resolvedModel), laneError{
+		status:     http.StatusBadGateway,
+		errType:    upstreamErrorType,
+		code:       validation.CodeLaneUnresponsive,
+		message:    "upstream unavailable",
+		retryAfter: validation.DefaultRetryAfterSeconds,
+	})
 }

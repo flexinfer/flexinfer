@@ -57,13 +57,6 @@ const (
 	// runtimeDrainMarker is the body the runtime's per-model ingress answers
 	// with while it drains (internal/runtime/ingress.go).
 	runtimeDrainMarker = "model is draining"
-
-	// annotationSwapRerouteTo is the equivalent lane a swapped-out request is
-	// replayed on. It is the same annotation the proxy's unavailable reroute
-	// reads at admission (G1, !1204): one declaration of the equivalent serves
-	// both the requests that arrive while the lane is down and the ones it
-	// drops on the way down.
-	annotationSwapRerouteTo = "flexinfer.ai/unavailable-reroute-to"
 )
 
 // Swap signals, as logged and counted.
@@ -325,7 +318,7 @@ func (p *Proxy) swapRerouteTarget(ctx context.Context, m *aiv1alpha2.Model, path
 	if m == nil {
 		return ""
 	}
-	target := strings.TrimSpace(m.Annotations[annotationSwapRerouteTo])
+	target := strings.TrimSpace(m.Annotations[rerouteHintAnnotation])
 	if target == "" {
 		return ""
 	}
