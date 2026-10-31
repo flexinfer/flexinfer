@@ -870,6 +870,7 @@ func (p *Proxy) submitJob(w http.ResponseWriter, r *http.Request, sub jobSubmiss
 	if err := p.client.Status().Update(ctx, job); err != nil {
 		slog.Debug("job queued status write failed; the runner sets it", "job", name, "error", err)
 	}
+	jobsSubmittedTotal.WithLabelValues(sub.model, sub.path).Inc()
 	slog.Info("job submitted", append([]any{"job", name, "model", sub.model, "path", sub.path, "caller", caller},
 		callerIdentityFrom(r).logAttrs()...)...)
 	p.jobs.wake()
