@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+
+	"github.com/flexinfer/flexinfer/pkg/validation"
 )
 
 // handleSpeech reverse-proxies POST /v1/audio/speech to the Kokoro TTS sibling
@@ -19,7 +21,7 @@ import (
 // measured RTF ~0.12 on CPU, so a per-request ReverseProxy is fine — no pooling.
 func (p *Proxy) handleSpeech(w http.ResponseWriter, r *http.Request) {
 	if p.kokoroUpstream == "" {
-		http.Error(w, "TTS upstream not configured (FLEXINFER_KOKORO_UPSTREAM unset)", http.StatusServiceUnavailable)
+		validation.WriteServiceUnavailable(w, "TTS upstream not configured (FLEXINFER_KOKORO_UPSTREAM unset)")
 		return
 	}
 	target, err := url.Parse(p.kokoroUpstream)

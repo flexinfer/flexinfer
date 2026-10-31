@@ -151,6 +151,10 @@ type Config struct {
 	// retrieval-augmented codebase Q&A is reachable through the proxy front
 	// door. Empty → /v1/rag returns 503.
 	CodebaseAnswerUpstream string
+	// PrometheusURL is the Prometheus the proxy reads lanes' cold-start p50
+	// from for the error envelope's eta_seconds (load_eta.go). Empty → the
+	// ETA falls back to the last load recorded on each Model.
+	PrometheusURL string
 	// QoSConfigPath is the mounted ConfigMap flexinfer-proxy-qos file
 	// (qos.yaml) holding the caller-identity → QoS class map. Empty or a
 	// missing file means no caller mappings (qos.go).
@@ -267,6 +271,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		PyannoteUpstream:                 os.Getenv("FLEXINFER_PYANNOTE_UPSTREAM"),
 		KokoroUpstream:                   os.Getenv("FLEXINFER_KOKORO_UPSTREAM"),
 		CodebaseAnswerUpstream:           os.Getenv("FLEXINFER_CODEBASE_ANSWER_UPSTREAM"),
+		PrometheusURL:                    os.Getenv("FLEXINFER_PROXY_PROMETHEUS_URL"),
 		QoSConfigPath:                    os.Getenv("FLEXINFER_PROXY_QOS_CONFIG"),
 	}
 
@@ -399,6 +404,10 @@ type Proxy struct {
 	// sibling service; empty disables the /v1/rag route (returns 503).
 	codebaseAnswerUpstream string
 
+	// loadLatency caches lanes' cold-start p50 from Prometheus for the error
+	// envelope's ETA; nil when no Prometheus URL is configured.
+	loadLatency *loadLatencyCache
+
 	// Lifecycle context for background goroutines
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -476,6 +485,7 @@ func New(cfg Config) *Proxy {
 		pyannoteUpstream:        cfg.PyannoteUpstream,
 		kokoroUpstream:          cfg.KokoroUpstream,
 		codebaseAnswerUpstream:  cfg.CodebaseAnswerUpstream,
+		loadLatency:             newLoadLatencyCache(cfg.PrometheusURL, cfg.Namespace),
 		ctx:                     ctx,
 		cancel:                  cancel,
 		debugConfig:             newDebugConfigView(cfg),
@@ -523,6 +533,10 @@ func (p *Proxy) runServer(ctx context.Context, server *http.Server) error {
 		go p.watchEndpoints(p.ctx)
 	}
 
+	if p.loadLatency != nil {
+		go p.loadLatency.run(p.ctx)
+	}
+
 	// Start runtime cache for direct fast path
 	if p.runtimeCache != nil {
 		p.runtimeCache.StartRefreshLoop(p.ctx)
@@ -567,6 +581,9 @@ func (p *Proxy) runServerOnListener(ctx context.Context, server *http.Server, li
 	go p.qos.watch(p.ctx)
 	if p.routingEnabled {
 		go p.watchEndpoints(p.ctx)
+	}
+	if p.loadLatency != nil {
+		go p.loadLatency.run(p.ctx)
 	}
 	if p.runtimeCache != nil {
 		p.runtimeCache.StartRefreshLoop(p.ctx)
@@ -815,7 +832,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 				modelName, decision.Reason, strconv.FormatBool(decision.Allow),
 			).Inc()
 			if !decision.Allow {
-				writeAdmissionRejection(w, modelName, decision)
+				writeAdmissionRejection(w, modelName, decision, p.laneDetails(m, laneError{code: validation.CodeAdmissionRejected}, time.Now()))
 				requestsTotal.WithLabelValues(modelName, "admission_rejected").Inc()
 				return
 			}
@@ -839,8 +856,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if background {
 			slog.Debug("rejecting background request: model is not ready",
 				"model", modelName, "phase", m.Status.Phase, "request_id", requestID)
-			validation.WriteServiceUnavailable(w,
-				fmt.Sprintf("background request requires model %q to already be Ready", modelName))
+			p.writeLaneError(w, m, laneError{
+				status:  http.StatusServiceUnavailable,
+				code:    modelStateCode(m),
+				message: fmt.Sprintf("background request requires model %q to already be Ready", modelName),
+			})
 			requestsTotal.WithLabelValues(modelName, "background_not_ready").Inc()
 			return
 		}
@@ -854,7 +874,14 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		if litellmExplicitlyDisabled(m) {
 			slog.Debug("rejecting cold start: model is parked (litellm disabled)",
 				"model", modelName, "request_id", requestID)
-			validation.WriteModelNotFound(w, modelName)
+			p.writeLaneError(w, m, laneError{
+				status:     http.StatusNotFound,
+				errType:    validation.ErrorTypeNotFound,
+				code:       validation.CodeModelParked,
+				message:    fmt.Sprintf("Model '%s' not found: parked (spec.litellm.enabled=false) and not served by name", modelName),
+				param:      "model",
+				retryAfter: -1,
+			})
 			requestsTotal.WithLabelValues(modelName, "parked").Inc()
 			return
 		}
@@ -872,8 +899,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 			slog.Debug("rejecting cold start: model is parked behind a warm primary",
 				"model", modelName, "preemptedBy", m.Status.SharedGroup.PreemptedBy,
 				"request_id", requestID)
-			validation.WriteServiceUnavailable(w,
-				fmt.Sprintf("model %q is parked behind a higher-priority primary on its shared GPU and is not currently servable", modelName))
+			p.writeLaneError(w, m, laneError{
+				status:  http.StatusServiceUnavailable,
+				code:    validation.CodeModelParked,
+				message: fmt.Sprintf("model %q is parked behind a higher-priority primary on its shared GPU and is not currently servable", modelName),
+			})
 			requestsTotal.WithLabelValues(modelName, "parked_behind_primary").Inc()
 			return
 		}
@@ -883,6 +913,7 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// no Model CR of its own to warm. The parent's runtime reloads its
 		// adapters on startup, so a client retry once the parent is Ready serves
 		// under the adapter name via the Ready branch above.
+		w.Header().Set(headerActivation, activationValue(m))
 		if err := p.handleColdStart(ctx, w, r, lookupName, start); err != nil {
 			slog.Error("cold start failed", "model", lookupName, "error", err)
 			requestsTotal.WithLabelValues(modelName, "error").Inc()
@@ -933,8 +964,11 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 	if background {
 		slog.Debug("rejecting background request: legacy model is not ready",
 			"model", modelName, "request_id", requestID)
-		validation.WriteServiceUnavailable(w,
-			fmt.Sprintf("background request requires model %q to already be Ready", modelName))
+		p.writeLaneError(w, nil, laneError{
+			status:  http.StatusServiceUnavailable,
+			code:    validation.CodeModelColdStarting,
+			message: fmt.Sprintf("background request requires model %q to already be Ready", modelName),
+		})
 		requestsTotal.WithLabelValues(modelName, "background_not_ready").Inc()
 		return
 	}

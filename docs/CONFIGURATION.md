@@ -104,6 +104,7 @@ The proxy handles incoming inference requests, manages serverless scaling, and r
 | `PROXY_BACKOFF_MAX_RETRIES` | `3` | Maximum retry attempts after initial activation failure |
 | `PROXY_BACKOFF_INITIAL_WAIT` | `5s` | Initial wait time before first retry |
 | `PROXY_BACKOFF_MAX_WAIT` | `30s` | Maximum wait time between retries |
+| `FLEXINFER_PROXY_PROMETHEUS_URL` | - | Prometheus base URL the proxy reads each lane's cold-start p50 from (`flexinfer_model_cold_start_duration_seconds`, 7 d, by `serving_path`) for the error envelope's `eta_seconds`; unset falls back to the Model's `status.metrics.loadTimeSeconds` |
 | `FLEXINFER_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing export for proxy requests |
 | `FLEXINFER_OTEL_SERVICE_NAMESPACE` | - | Optional `service.namespace` attribute for proxy spans |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTEL SDK default | OTLP endpoint for proxy trace export |
