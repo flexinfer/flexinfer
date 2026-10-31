@@ -247,21 +247,24 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- end }}
-          {{- if $jobs.enabled }}
+          resources:
+            {{- toYaml $proxy.resources | nindent 12 }}
+          {{- /* One volumeMounts key (and one volumes key below): the QoS map
+               always, the async-job spool and the pvc store only when jobs are
+               enabled. Two keys rendered a duplicate-key manifest once
+               proxy.jobs.enabled was set. */}}
           volumeMounts:
+            - name: qos
+              mountPath: /etc/flexinfer/qos
+              readOnly: true
+            {{- if $jobs.enabled }}
             - name: job-spool
               mountPath: /var/run/flexinfer-jobs
             {{- if eq (default "s3" $jobs.store) "pvc" }}
             - name: job-store
               mountPath: /var/lib/flexinfer-jobs
             {{- end }}
-          {{- end }}
-          resources:
-            {{- toYaml $proxy.resources | nindent 12 }}
-          volumeMounts:
-            - name: qos
-              mountPath: /etc/flexinfer/qos
-              readOnly: true
+            {{- end }}
       volumes:
         # Caller QoS map (proxy-qos-configmap.yaml). Mounted as a directory,
         # not a subPath, so ConfigMap edits reach the running proxy.
@@ -269,8 +272,8 @@ spec:
           configMap:
             name: {{ include "flexinfer.fullname" . }}-proxy-qos
             optional: true
-      {{- if $jobs.enabled }}
-      volumes:
+        {{- if $jobs.enabled }}
+        # Async jobs: a response is spooled here until the store has it.
         - name: job-spool
           emptyDir:
             sizeLimit: {{ default "4Gi" $jobs.spoolSizeLimit }}
@@ -279,7 +282,7 @@ spec:
           persistentVolumeClaim:
             claimName: {{ $jobsPVC.claimName }}
         {{- end }}
-      {{- end }}
+        {{- end }}
       {{- with $proxy.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
