@@ -58,7 +58,11 @@ statuses, so the proxy's job object returns them unchanged.
 | `status.heartbeatAt` | the runner's liveness stamp; a job silent for three intervals is reclaimed |
 | `status.webhook` | `{delivered[], attempts, lastError, lastAttemptAt}` |
 
-Printer columns: Model, Path, Phase, Completed, Age; `-o wide` adds Progress, Lane, Runner. RBAC:
+Printer columns: Model, Path, Phase, Completed, Age; `-o wide` adds Progress, Lane, Runner. The
+manager deletes a finished job once `status.expiresAt` (completion + `ttlAfterFinished`) passes;
+the proxy's `flexinfer.ai/job-storage` finalizer deletes its stored inputs and output first. The
+CLI lists and manages jobs: `flexinfer jobs list [--phase P] [--model M]`, `flexinfer jobs get|cancel|delete
+<id>`, and `flexinfer jobs content <id> --proxy <url> [-o file]` downloads an output. RBAC:
 the proxy's Role reads and writes `inferencejobs` and `inferencejobs/status`, reads ConfigMaps and
 Secrets in its namespace (`requestRef`, webhook secrets) and creates the webhook-secret Secret; the
 controller's ClusterRole manages them for TTL garbage collection.

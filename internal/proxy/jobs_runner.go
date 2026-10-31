@@ -88,6 +88,7 @@ func newJobRunner(p *Proxy, cfg JobsConfig) *jobRunner {
 	if cfg.SpoolDir == "" {
 		cfg.SpoolDir = os.TempDir()
 	}
+	registerJobMetrics()
 	return &jobRunner{
 		p: p, cfg: cfg, handler: p.newServeMux(), nudge: make(chan struct{}, 1),
 		hooks: &http.Client{Timeout: jobWebhookTimeout}, now: time.Now,
@@ -256,7 +257,10 @@ func (r *jobRunner) pass(ctx context.Context) {
 		}
 		busy[c.key]++
 		local++
-		r.start(c.job)
+		if c.job.Status.Attempts == 1 {
+			jobsQueueWaitSeconds.WithLabelValues(c.job.Spec.Model).Observe(r.now().Sub(jobQueuedAt(c.job)).Seconds())
+		}
+		r.start(c.job, c.key)
 	}
 }
 
@@ -296,7 +300,7 @@ func (r *jobRunner) claim(ctx context.Context, j *aiv1alpha2.InferenceJob, lane 
 }
 
 // start runs a claimed job in its own goroutine.
-func (r *jobRunner) start(j *aiv1alpha2.InferenceJob) {
+func (r *jobRunner) start(j *aiv1alpha2.InferenceJob, key string) {
 	base := r.p.ctx
 	if base == nil {
 		base = context.Background()
@@ -305,8 +309,10 @@ func (r *jobRunner) start(j *aiv1alpha2.InferenceJob) {
 	r.mu.Lock()
 	r.running[j.Name] = cancel
 	r.mu.Unlock()
+	jobsRunning.WithLabelValues(key).Inc()
 	go func() {
 		defer func() {
+			jobsRunning.WithLabelValues(key).Dec()
 			cancel()
 			r.mu.Lock()
 			delete(r.running, j.Name)
@@ -395,6 +401,7 @@ func (r *jobRunner) execute(ctx context.Context, j *aiv1alpha2.InferenceJob) {
 			return
 		}
 		a.close()
+		jobsRetriesTotal.WithLabelValues(j.Spec.Model, a.code).Inc()
 		slog.Info("job waiting for its lane", "job", j.Name, "status", a.status, "code", a.code, "retry_after", a.retryAfter)
 		if !r.waitToRetry(ctx, j, a) {
 			continue
@@ -609,6 +616,13 @@ func (r *jobRunner) finish(ctx context.Context, name string, phase aiv1alpha2.In
 		slog.Warn("job runner: recording the result failed", "job", name, "phase", phase, "error", err)
 		return
 	}
+	if done.Status.CompletedAt != nil && done.Status.Runner == r.cfg.RunnerID {
+		phase := string(done.Status.Phase)
+		jobsFinishedTotal.WithLabelValues(done.Spec.Model, phase).Inc()
+		if done.Status.StartedAt != nil {
+			jobsRunSeconds.WithLabelValues(done.Spec.Model, phase).Observe(done.Status.CompletedAt.Sub(done.Status.StartedAt.Time).Seconds())
+		}
+	}
 	slog.Info("job finished", "job", name, "phase", done.Status.Phase, "lane", done.Status.Lane)
 	r.deliver(done, "job."+string(done.Status.Phase))
 }
@@ -730,8 +744,10 @@ func (r *jobRunner) deliver(j *aiv1alpha2.InferenceJob, event string) {
 			err := deliverWebhook(ctx, r.hooks, wh.URL, secret, id, r.now(), body)
 			r.recordDelivery(ctx, j.Name, event, err)
 			if err == nil {
+				jobsWebhookDeliveriesTotal.WithLabelValues(event, "delivered").Inc()
 				return
 			}
+			jobsWebhookDeliveriesTotal.WithLabelValues(event, "failed").Inc()
 			slog.Info("job webhook delivery failed", "job", j.Name, "event", event, "error", err)
 		}
 	}()
