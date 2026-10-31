@@ -78,6 +78,7 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
 - `flexinfer_proxy_routing_key_cardinality_overflow_total{model,strategy,key_source}`
 - `flexinfer_proxy_rate_limited_total{model,scope}`
 - `flexinfer_proxy_activation_retries_total{model}`
+- `flexinfer_proxy_replays_total{lane,outcome}` — idempotent requests (embeddings, rerank, non-streaming transcription) replayed once after a 502/503/504 that coincided with a swap of their lane; outcome `same_lane`, `reroute` (served by the `flexinfer.ai/unavailable-reroute-to` equivalent), `failed` (the replay failed too) or `no_ready_lane` (nothing could serve within the bound). See `docs/specs/proxy-api.md` § Swap-safe replay.
 - `flexinfer_proxy_activation_retry_wait_duration_seconds{model}` (histogram)
 - `flexinfer_proxy_request_prompt_tokens{model}` (histogram) — upstream-reported
   `prompt_tokens` per request, by resolved model. Observes **all non-streaming

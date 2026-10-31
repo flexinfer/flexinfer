@@ -219,6 +219,20 @@ var (
 		[]string{"model", "target", "outcome"},
 	)
 
+	// swapReplaysTotal counts idempotent requests held back after a drain or
+	// gateway failure that coincided with a swap of their lane, by outcome:
+	// "same_lane" or "reroute" (the replay was answered below 500 on the lane
+	// or its unavailable-reroute-to equivalent), "failed" (the replay failed
+	// too), "no_ready_lane" (nothing could serve within the bound; the
+	// original failure was returned).
+	swapReplaysTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_replays_total",
+			Help: "Total idempotent requests replayed after a lane swap, by lane and outcome.",
+		},
+		[]string{"lane", "outcome"},
+	)
+
 	// Per-request token-shape histograms. Observed in logUpstreamUsage from the
 	// upstream `usage` block, labeled by resolved model so the traffic mix can be
 	// read per serving lane. This is the only place the proxy surfaces request
@@ -443,6 +457,7 @@ func RegisterMetrics() {
 		prometheus.MustRegister(proxyShutdownDuration)
 		prometheus.MustRegister(maxTokensClampedTotal)
 		prometheus.MustRegister(contextOverflowTotal)
+		prometheus.MustRegister(swapReplaysTotal)
 		prometheus.MustRegister(requestPromptTokens)
 		prometheus.MustRegister(requestCompletionTokens)
 		prometheus.MustRegister(completionsTotal)

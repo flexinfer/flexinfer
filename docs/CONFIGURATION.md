@@ -104,6 +104,8 @@ The proxy handles incoming inference requests, manages serverless scaling, and r
 | `PROXY_BACKOFF_MAX_RETRIES` | `3` | Maximum retry attempts after initial activation failure |
 | `PROXY_BACKOFF_INITIAL_WAIT` | `5s` | Initial wait time before first retry |
 | `PROXY_BACKOFF_MAX_WAIT` | `30s` | Maximum wait time between retries |
+| `FLEXINFER_PROXY_SWAP_REPLAY` | `true` | Replay an idempotent request (embeddings, rerank, non-streaming transcription) once when a 502/503/504 coincides with a swap of its lane; `false` returns the failure as is |
+| `FLEXINFER_PROXY_SWAP_REPLAY_WAIT` | `30s` | Longest wait for a draining or reloading lane to serve again before a swap replay falls back to the lane's equivalent or returns the original failure |
 | `FLEXINFER_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing export for proxy requests |
 | `FLEXINFER_OTEL_SERVICE_NAMESPACE` | - | Optional `service.namespace` attribute for proxy spans |
 | `OTEL_EXPORTER_OTLP_ENDPOINT` | OTEL SDK default | OTLP endpoint for proxy trace export |

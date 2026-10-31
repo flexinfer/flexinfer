@@ -72,8 +72,11 @@ flowchart TD
     cold --> forward
     forward --> overflow{"400 context length,<br/>overflow lane set?"}:::step
     overflow -->|yes| replay["Replay once to<br/>the overflow lane"]:::proxy
-    overflow -->|no| resp(["Response"]):::ok
+    overflow -->|no| swap{"Idempotent path, 502/503/504<br/>during a lane swap?"}:::step
+    swap -->|yes| swapreplay["Replay once on the lane<br/>or its equivalent"]:::proxy
+    swap -->|no| resp(["Response"]):::ok
     replay --> resp
+    swapreplay --> resp
 
     classDef step fill:#E0E7FF,stroke:#6366F1,color:#0F172A
     classDef proxy fill:#60A5FA,stroke:#1E40AF,color:#0F172A
@@ -98,7 +101,24 @@ Forwarding rewrites `"model"` in a JSON body to the backend's model name; a mult
 | Cold start: readiness timeout | 504 |
 | No first byte from the lane within its budget (counts against the breaker) | 504 |
 
-Code: `internal/proxy/proxy.go` (`handleRequest`), `lane_breaker.go`, `context_overflow.go`, `queue.go`, `pkg/validation/errors.go`.
+Code: `internal/proxy/proxy.go` (`handleRequest`), `lane_breaker.go`, `context_overflow.go`, `swap_replay.go`, `queue.go`, `pkg/validation/errors.go`.
+
+## Swap-safe replay
+
+A multi-model runtime drains a lane before it unloads or reloads it: the lane's ingress answers new requests with `503 model is draining` (`Retry-After: 1`) while accepted ones finish, then the backend stops and its port closes. For idempotent, non-streaming requests the proxy holds back the failure and replays the request **once** when the failure coincides with a swap of the lane.
+
+| | |
+|---|---|
+| Paths | `POST /v1/embeddings`, `/v1/rerank`, `/rerank`, `/v1/score`, and `/v1/audio/transcriptions` without `stream=true`. Never chat or completions, never a streamed body, never a LoRA adapter. |
+| Held back | 502, 503 and 504 (bodies up to 64 KiB). Every other status passes through as it arrives. |
+| Swap signals | The lane is parked in its shared group (`status.sharedGroup.state` not `Active`); the body is the runtime's drain answer; the lane is not `Ready`; or it was preempted, or became `Ready`, in the last 60 s. Without a signal the failure is the lane's own and reaches the caller unchanged. |
+| Where | A parked lane is replayed on its `flexinfer.ai/unavailable-reroute-to` equivalent at once, if that Model is `Ready`, serves the path and its breaker is closed; a parked lane without one fails fast with the original response. A draining or reloading lane is replayed on itself once it is `Ready` and `Active` again and `GET /health` on its target answers below 500, polled every 250 ms; when the wait runs out the equivalent is used if it can serve. The equivalent is never cold-started. |
+| Bound | The wait ends at the earliest of `FLEXINFER_PROXY_SWAP_REPLAY_WAIT` (default `30s`), the lane's first-byte budget measured from the request start, and the client's own deadline or disconnect. Then the original failure is returned. |
+| Caller sees | The replay's response, with `X-FlexInfer-Replayed: <lane>-><served lane>` (for example `gte-qwen2-1p5b-radeonvii->gte-qwen2-1p5b-cpu-5930k`). The held-back response's headers are discarded. A replay that fails is returned as is; it is never replayed again. |
+| Metric | `flexinfer_proxy_replays_total{lane,outcome}`, outcome `same_lane`, `reroute`, `failed` or `no_ready_lane`. |
+| Off switch | `FLEXINFER_PROXY_SWAP_REPLAY=false` on the proxy. |
+
+This sits after the dial-class retry in `routing_retry.go`, which re-dials a refused or reset connection once through the Service before any status exists.
 
 ## Scale-to-zero contract
 

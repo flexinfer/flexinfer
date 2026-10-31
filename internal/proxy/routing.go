@@ -379,6 +379,18 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		}
 	}
 
+	// An idempotent request (embeddings, rerank, non-streaming transcription)
+	// holds back a drain or gateway failure so a request caught in a lane swap
+	// can be replayed once on the lane, or its equivalent, after the swap. See
+	// swap_replay.go.
+	if !isLoRA && swapReplayEligible(r, forwardBody) {
+		started := time.Now()
+		cw := newSwapCaptureWriter(w)
+		p.forwardWithRetry(cw, r, modelName, resolvedModel, port, routeBody, forwardBody)
+		p.finishSwapReplay(cw, w, r, resolvedModel, port, routeBody, started)
+		return
+	}
+
 	// A Model with a context-overflow lane holds back the runtime's 400 so a
 	// prompt that does not fit can be replayed once to the larger window. See
 	// context_overflow.go.
