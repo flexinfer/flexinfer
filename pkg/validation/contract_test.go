@@ -87,7 +87,7 @@ func TestErrorWriters_Contract(t *testing.T) {
 					&FlexInferDetails{Phase: &phase, LoadingSubstage: &substage, ETASeconds: &eta, RetryAfterSeconds: &retry})
 			},
 			wantStatus:  http.StatusServiceUnavailable,
-			wantBody:    `{"error":{"message":"warming","type":"service_unavailable_error","param":"model","code":"model_cold_starting","flexinfer":{"phase":"Loading","loading_substage":"Compiling","eta_seconds":95,"retry_after_seconds":30,"reroute_to":null}}}` + "\n",
+			wantBody:    `{"error":{"message":"warming","type":"service_unavailable_error","param":"model","code":"model_cold_starting","flexinfer":{"phase":"Loading","loading_substage":"Compiling","eta_seconds":95,"retry_after_seconds":30,"reroute_to":null,"queue_position":null}}}` + "\n",
 			wantHeaders: map[string]string{"Retry-After": "30"},
 		},
 		{
@@ -96,7 +96,7 @@ func TestErrorWriters_Contract(t *testing.T) {
 				WriteErrorWithDetails(w, http.StatusServiceUnavailable, "queued", ErrorTypeServiceUnavailable, CodeQueueFull, "", &FlexInferDetails{})
 			},
 			wantStatus:  http.StatusServiceUnavailable,
-			wantBody:    `{"error":{"message":"queued","type":"service_unavailable_error","code":"queue_full","flexinfer":{"phase":null,"loading_substage":null,"eta_seconds":null,"retry_after_seconds":5,"reroute_to":null}}}` + "\n",
+			wantBody:    `{"error":{"message":"queued","type":"service_unavailable_error","code":"queue_full","flexinfer":{"phase":null,"loading_substage":null,"eta_seconds":null,"retry_after_seconds":5,"reroute_to":null,"queue_position":null}}}` + "\n",
 			wantHeaders: map[string]string{"Retry-After": "5"},
 		},
 		{
