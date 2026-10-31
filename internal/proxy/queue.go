@@ -11,6 +11,7 @@ import (
 	"math/rand"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -84,7 +85,13 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	default:
 		// Queue is full
 		queueRejectedTotal.WithLabelValues(modelName).Inc()
-		validation.WriteQueueFull(w)
+		m := p.peekModel(ctx, modelName)
+		w.Header().Set(headerActivation, activationValue(m))
+		p.writeLaneError(w, m, laneError{
+			status:  http.StatusServiceUnavailable,
+			code:    validation.CodeQueueFull,
+			message: "Service overloaded, please retry",
+		})
 		return fmt.Errorf("queue full for model %s", modelName)
 	}
 
@@ -99,6 +106,15 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	timeout := p.queueTimeout
 	if coldStartTimeout := p.activator.GetColdStartTimeout(ctx, modelName); coldStartTimeout > timeout {
 		timeout = coldStartTimeout
+	}
+	// A caller that sent Prefer: wait=N waits at most N seconds and then gets
+	// a 503 model_cold_starting with the ETA; the activation it started goes on.
+	preferWait, prefersWait := preferredWait(r)
+	if prefersWait && preferWait < timeout {
+		timeout = preferWait
+		w.Header().Set("Preference-Applied", "wait="+strconv.Itoa(int(preferWait/time.Second)))
+	} else {
+		prefersWait = false
 	}
 
 	queueCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -121,7 +137,22 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 		// bounded channel until the processor drains it, but drainQueue will skip it.
 		claimed := qr.responded.CompareAndSwap(false, true)
 		if stderrors.Is(queueCtx.Err(), context.DeadlineExceeded) && claimed {
-			validation.WriteColdStartTimeout(w, timeout.String())
+			m := p.peekModel(ctx, modelName)
+			w.Header().Set(headerActivation, activationValue(m))
+			if prefersWait {
+				p.writeLaneError(w, m, laneError{
+					status:  http.StatusServiceUnavailable,
+					code:    modelStateCode(m),
+					message: fmt.Sprintf("model %q is not ready after the preferred wait of %s; activation continues", modelName, timeout),
+				})
+			} else {
+				p.writeLaneError(w, m, laneError{
+					status:  http.StatusGatewayTimeout,
+					errType: validation.ErrorTypeTimeout,
+					code:    modelStateCode(m),
+					message: "Timeout waiting for model to become ready (waited " + timeout.String() + ")",
+				})
+			}
 		}
 		if stderrors.Is(queueCtx.Err(), context.Canceled) {
 			return fmt.Errorf("queue canceled for model %s: %w", modelName, queueCtx.Err())
@@ -314,6 +345,14 @@ func (p *Proxy) drainQueueWithError(queue *RequestQueue, err error) {
 	queue.draining.Store(true)
 	stall, stalled := isStalledLoadError(err)
 	_, notFound := isModelNotFoundError(err)
+	var m *aiv1alpha2.Model
+	if !notFound {
+		ctx := p.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		m = p.peekModel(ctx, queue.model)
+	}
 	for {
 		select {
 		case qr := <-queue.items:
@@ -322,13 +361,28 @@ func (p *Proxy) drainQueueWithError(queue *RequestQueue, err error) {
 			if qr.responded.CompareAndSwap(false, true) {
 				switch {
 				case stalled:
-					validation.WriteStalledLoad(qr.w, stall.Error(), defaultStalledLoadRetryAfter)
+					qr.w.Header().Set(headerActivation, activationValue(m))
+					p.writeLaneError(qr.w, m, laneError{
+						status:     http.StatusServiceUnavailable,
+						code:       validation.CodeStalledLoad,
+						message:    stall.Error(),
+						retryAfter: defaultStalledLoadRetryAfter,
+					})
 				case notFound:
 					// Match the front door: a name with no backing CR is 404,
 					// not a retryable 503.
 					validation.WriteModelNotFound(qr.w, queue.model)
 				default:
-					validation.WriteActivationFailed(qr.w, fmt.Sprintf("Failed to activate model: %v", err))
+					code := modelStateCode(m)
+					if _, failed := isModelFailedError(err); failed {
+						code = validation.CodeModelFailed
+					}
+					qr.w.Header().Set(headerActivation, activationValue(m))
+					p.writeLaneError(qr.w, m, laneError{
+						status:  http.StatusServiceUnavailable,
+						code:    code,
+						message: fmt.Sprintf("Failed to activate model: %v", err),
+					})
 				}
 			}
 			close(qr.done)

@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+
+	"github.com/flexinfer/flexinfer/pkg/validation"
 )
 
 // codebaseAnswerUpstreamPath is the path the codebase-answer sibling service
@@ -24,7 +26,7 @@ const codebaseAnswerUpstreamPath = "/v1/answer"
 // (interactive agent queries), so a per-request ReverseProxy is fine — no pooling.
 func (p *Proxy) handleCodebaseAnswer(w http.ResponseWriter, r *http.Request) {
 	if p.codebaseAnswerUpstream == "" {
-		http.Error(w, "codebase-answer upstream not configured (FLEXINFER_CODEBASE_ANSWER_UPSTREAM unset)", http.StatusServiceUnavailable)
+		validation.WriteServiceUnavailable(w, "codebase-answer upstream not configured (FLEXINFER_CODEBASE_ANSWER_UPSTREAM unset)")
 		return
 	}
 	target, err := url.Parse(p.codebaseAnswerUpstream)

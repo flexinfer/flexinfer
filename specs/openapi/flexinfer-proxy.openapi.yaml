@@ -64,9 +64,66 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '503':
+          description: |
+            The lane cannot serve now (cold start with `Prefer: wait=N`, queue full, parked,
+            preempted, failed, stalled load, breaker open). Always carries `Retry-After`.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   schemas:
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type, code]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            param:
+              type: string
+            code:
+              type: string
+              description: See docs/specs/proxy-api.md, "Error envelope".
+            flexinfer:
+              $ref: '#/components/schemas/FlexInferErrorDetails'
+
+    FlexInferErrorDetails:
+      type: object
+      description: Lane state on a proxy-originated error. All keys are present; unknown values are null.
+      required: [phase, loading_substage, eta_seconds, retry_after_seconds, reroute_to, queue_position]
+      properties:
+        phase:
+          type: string
+          nullable: true
+        loading_substage:
+          type: string
+          nullable: true
+        eta_seconds:
+          type: integer
+          nullable: true
+        retry_after_seconds:
+          type: integer
+          nullable: true
+        reroute_to:
+          type: string
+          nullable: true
+        queue_position:
+          type: integer
+          nullable: true
+          description: 1-based place in the lane's QoS class queue on a QoS queue_full; null otherwise.
+
     OpenAIModelsResponse:
       type: object
       required: [object, data]
