@@ -326,6 +326,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 			"model", modelName,
 			"resolved_model", resolvedModel,
 			"path", r.URL.Path,
+			"qos_class", qosClassLabel(ctx),
 		}, callerIdentityFrom(r).logAttrs()...)...)
 	}
 

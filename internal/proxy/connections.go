@@ -41,6 +41,7 @@ func (p *Proxy) trackAndServeWithDemand(w http.ResponseWriter, r *http.Request, 
 		}
 		requestsTotal.WithLabelValues(modelName, status).Inc()
 		requestDuration.WithLabelValues(modelName).Observe(time.Since(start).Seconds())
+		observeQoSServed(qosDecisionFrom(r.Context()), qosOutcomeUnenforced, time.Since(start))
 		if aborted != nil {
 			panic(aborted)
 		}
