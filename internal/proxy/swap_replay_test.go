@@ -101,7 +101,7 @@ func TestSwapSignal(t *testing.T) {
 	assert.Equal(t, swapRecentLoad, swapSignal(reloaded, nil, now))
 }
 
-func multipartBody(t *testing.T, fields map[string]string) (string, []byte) {
+func swapReplayMultipartBody(t *testing.T, fields map[string]string) (string, []byte) {
 	t.Helper()
 	var buf bytes.Buffer
 	mw := multipart.NewWriter(&buf)
@@ -130,9 +130,9 @@ func TestSwapReplayEligible(t *testing.T) {
 	streamJSON := []byte(`{"model":"gte","input":"a","stream":true}`)
 	assert.False(t, swapReplayEligible(post("/v1/embeddings", "application/json", streamJSON), streamJSON))
 
-	ct, plain := multipartBody(t, map[string]string{"model": "whisper"})
+	ct, plain := swapReplayMultipartBody(t, map[string]string{"model": "whisper"})
 	assert.True(t, swapReplayEligible(post("/v1/audio/transcriptions", ct, plain), plain))
-	ct, streamed := multipartBody(t, map[string]string{"model": "whisper", "stream": "true"})
+	ct, streamed := swapReplayMultipartBody(t, map[string]string{"model": "whisper", "stream": "true"})
 	assert.False(t, swapReplayEligible(post("/v1/audio/transcriptions", ct, streamed), streamed), "a streamed transcription is never replayed")
 
 	replayed := post("/v1/embeddings", "application/json", embed)
@@ -230,7 +230,7 @@ func (f *swapFixture) serve(t *testing.T, path string) *httptest.ResponseRecorde
 	return rec
 }
 
-var rerouteToTwin = map[string]string{rerouteHintAnnotation: "twin"}
+var swapReplayRerouteToTwin = map[string]string{rerouteHintAnnotation: "twin"}
 
 func replays(lane, outcome string) float64 {
 	return testutil.ToFloat64(swapReplaysTotal.WithLabelValues(lane, outcome))
@@ -252,7 +252,7 @@ func TestServeProxyReplaysADrainOnTheSameLane(t *testing.T) {
 }
 
 func TestServeProxyReroutesAParkedLaneToItsEquivalent(t *testing.T) {
-	f := newSwapFixture(t, "Queued", aiv1alpha2.ModelPhasePreempted, rerouteToTwin, aiv1alpha2.ModelPhaseReady)
+	f := newSwapFixture(t, "Queued", aiv1alpha2.ModelPhasePreempted, swapReplayRerouteToTwin, aiv1alpha2.ModelPhaseReady)
 	f.drainFor.Store(1)
 	before := replays("gte", replayReroute)
 
@@ -284,7 +284,7 @@ func TestServeProxyFailsFastForAParkedLaneWithoutAnEquivalent(t *testing.T) {
 }
 
 func TestServeProxyFallsBackToTheEquivalentWhenTheLaneStaysDown(t *testing.T) {
-	f := newSwapFixture(t, "Active", aiv1alpha2.ModelPhaseReady, rerouteToTwin, aiv1alpha2.ModelPhaseReady)
+	f := newSwapFixture(t, "Active", aiv1alpha2.ModelPhaseReady, swapReplayRerouteToTwin, aiv1alpha2.ModelPhaseReady)
 	f.drainFor.Store(1)
 	f.healthStatus.Store(http.StatusServiceUnavailable)
 
@@ -298,7 +298,7 @@ func TestServeProxyFallsBackToTheEquivalentWhenTheLaneStaysDown(t *testing.T) {
 }
 
 func TestServeProxyReturnsTheDrainWhenNothingServesWithinTheBound(t *testing.T) {
-	f := newSwapFixture(t, "Active", aiv1alpha2.ModelPhaseReady, rerouteToTwin, aiv1alpha2.ModelPhaseIdle)
+	f := newSwapFixture(t, "Active", aiv1alpha2.ModelPhaseReady, swapReplayRerouteToTwin, aiv1alpha2.ModelPhaseIdle)
 	f.drainFor.Store(1)
 	f.healthStatus.Store(http.StatusServiceUnavailable)
 	before := replays("gte", replayNoLane)
@@ -327,7 +327,7 @@ func TestServeProxyReplaysOnlyOnce(t *testing.T) {
 }
 
 func TestServeProxyPassesThroughAFailureWithoutASwap(t *testing.T) {
-	f := newSwapFixture(t, "Active", aiv1alpha2.ModelPhaseReady, rerouteToTwin, aiv1alpha2.ModelPhaseReady)
+	f := newSwapFixture(t, "Active", aiv1alpha2.ModelPhaseReady, swapReplayRerouteToTwin, aiv1alpha2.ModelPhaseReady)
 	errSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		f.gteHits.Add(1)
 		http.Error(w, "upstream exploded", http.StatusBadGateway)

@@ -160,6 +160,9 @@ rules:
       - modelexperiments
       - modelexperiments/status
       - modelexperiments/finalizers
+      - inferencejobs
+      - inferencejobs/status
+      - inferencejobs/finalizers
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   - apiGroups: ["apps"]
     resources: ["deployments", "daemonsets"]
@@ -416,6 +419,22 @@ rules:
   - apiGroups: ["ai.flexinfer"]
     resources: ["loraadapters"]
     verbs: ["get", "list", "watch"]
+  # Async jobs (D2): the proxy creates InferenceJobs for background requests,
+  # claims and runs them, and records their status.
+  - apiGroups: ["ai.flexinfer"]
+    resources: ["inferencejobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["ai.flexinfer"]
+    resources: ["inferencejobs/status"]
+    verbs: ["get", "update", "patch"]
+  # A job's spec.requestRef body (ConfigMap or Secret) and its webhook signing
+  # secret, which the proxy stores as a Secret owned by the job.
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "create"]
   - apiGroups: [""]
     resources: ["services", "endpoints"]
     verbs: ["get", "list", "watch"]

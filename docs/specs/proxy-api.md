@@ -37,8 +37,124 @@ OpenAI-compatible model listing. It aggregates:
 Response shape:
 
 ```json
-{ "object": "list", "data": [ { "id": "llama3-8b", "object": "model", "created": 0, "owned_by": "flexinfer", "metadata": {} } ] }
+{ "object": "list", "data": [ { "id": "llama3-8b", "object": "model", "created": 0, "owned_by": "flexinfer", "metadata": {}, "flexinfer": {} } ] }
 ```
+
+Each v1alpha2 Model carries the cold capability descriptor under `flexinfer` (below). Parked
+Models (`spec.litellm.enabled: false`) are not listed.
+
+### `GET /v1/models/{name}`
+
+The OpenAI model object for one lane, answered from its Model CR. `name` may be the CR name, a
+served name or an alias. The read never touches demand, queues or activates, so a caller can learn
+a cold lane's limits and ETA without waking it. Unknown names answer 404 `model_not_found`; a
+parked Model answers 404 `model_parked` with the error envelope.
+
+```json
+{"id": "wan21-t2v-1p3b-gfx1100", "object": "model", "created": 1761868800, "owned_by": "flexinfer",
+ "metadata": {"backend": "diffusers", "phase": "Idle", "ready": false, "...": "..."},
+ "flexinfer": {
+   "phase": "Idle", "loading_substage": null, "ready": false, "eta_seconds": 212, "reroute_to": null,
+   "serve_paths": ["/v1/videos/generations"], "serve_paths_declared": true,
+   "modalities": {"input": ["text"], "output": ["video"]},
+   "limits": {"video": {"max_pixels": 399360, "dimension_multiple": 16, "max_num_frames": 81,
+     "num_frames_step": 4, "max_fps": 24, "max_num_inference_steps": 50, "max_prompt_chars": 4000,
+     "default_size": "832x480", "default_num_frames": 81, "default_fps": 16, "requires_image": false}}}}
+```
+
+| Field | Source |
+|---|---|
+| `phase`, `loading_substage`, `eta_seconds`, `reroute_to` | as in the error envelope; `eta_seconds` is 0 for a Ready lane and the whole cold-start p50 for an idle one |
+| `ready` | `status.phase == Ready` |
+| `serve_paths` | `flexinfer.ai/serve-paths` (`serve_paths_declared: true`; the proxy rejects other paths), else the backend's default paths (diffusers by `pipelineMode`, whispercpp transcriptions, LLM backends chat and completions) |
+| `modalities` | from `serve_paths` (`text`, `image`, `video`, `audio`, `embedding`, `score`); an `image2video` lane also takes `image` |
+| `max_model_len` | the context window from `spec.config` (`maxModelLen`, `maxTotalSeqLength`, `contextWindowSize`, `contextSize`); omitted for media lanes |
+| `limits.image` / `.video` / `.audio` | diffusers lanes: the bounds `build/server-diffusers.py` enforces for the lane's `pipelineMode`, with the defaults its `spec.config` sets (`numInferenceSteps`, `videoSize`, `videoFrames`, `videoFps`) |
+
+The diffusers bounds are fixed per pipeline mode in the server, not per Model, so they are derived
+rather than declared; `pkg/modelmeta` mirrors them and `TestDiffusersLimitsMatchTheServer` fails if
+the server's bounds change without the mirror. Code: `internal/proxy/models.go`,
+`pkg/modelmeta/capabilities.go`.
+
+### Jobs (async)
+
+Long work — a render, a transcription, a long chat — can run in the background instead of holding
+a connection. The shape copies the OpenAI Responses API `background` mode (OpenAI removed its
+Videos API on 2026-09-24, so nothing is modelled on `/v1/videos`). Off unless the proxy runs with
+`FLEXINFER_JOBS_ENABLED=true` (chart `proxy.jobs.enabled`); every endpoint below then needs the
+same bearer token as inference, and answers 501 `jobs_disabled` when jobs are off.
+
+**Submitting.** Either:
+
+- add `"background": true` to the JSON body, a `background=true` form field to a multipart body,
+  or send `Prefer: respond-async`, on `/v1/chat/completions`, `/v1/images/generations`,
+  `/v1/images/edits`, `/v1/audio/transcriptions`, `/v1/audio/speech`, `/v1/audio/generations` or
+  `/v1/videos/generations`. Optional headers: `X-FlexInfer-Webhook-Url`,
+  `X-FlexInfer-Webhook-Secret`, `Idempotency-Key`, `X-FlexInfer-QoS`. `stream: true` is refused
+  (400) for background requests;
+- or `POST /v1/jobs` with
+  `{"path": "/v1/…", "request": {…the inference body…}, "model": "…" (default: request.model),
+  "webhook": {"url", "secret", "events"}, "ttl_seconds", "idempotency_key", "qos_class"}`.
+
+Submission answers 200 with the job object and `Location: /v1/jobs/{id}` at once; nothing reaches
+the lane yet. It applies the same gates a synchronous request meets first: 404 `model_not_found`
+for an unknown model or one whose `flexinfer.ai/serve-paths` excludes the path, 404 `model_parked`
+for a de-advertised one. A repeated `Idempotency-Key` from the same caller returns the first job.
+
+```json
+{"id": "job-3f9c…", "object": "job", "created_at": 1761930000, "status": "queued",
+ "background": true, "model": "qwen-image-21", "path": "/v1/images/generations", "progress": 0,
+ "started_at": null, "completed_at": null, "expires_at": null, "error": null, "output": null,
+ "flexinfer": {"lane": null, "qos_class": null, "queue_position": 0, "eta_seconds": 212,
+   "attempts": 0, "runner": null},
+ "webhook": {"url": "https://…", "events": ["job.completed", "job.failed", "job.cancelled", "job.incomplete"], "delivered": []}}
+```
+
+`status` is `queued`, `in_progress`, `completed`, `failed`, `cancelled` or `incomplete`. A
+completed job's `output` is `{"url": "/v1/jobs/{id}/content", "content_type", "bytes", "sha256"}`;
+a failed one's `error` is `{"code", "message", "status"}` with an error-envelope code or the lane's
+own.
+
+| Endpoint | |
+|---|---|
+| `GET /v1/jobs/{id}` | the job object, with `queue_position` and the lane's `eta_seconds` while it waits |
+| `GET /v1/jobs/{id}/content` | the stored response body, with its `Content-Type` and `ETag: "<sha256>"`; 409 `job_not_completed` before then |
+| `POST /v1/jobs/{id}/cancel` | asks the runner to stop the job; a finished job is returned unchanged |
+| `GET /v1/jobs?status=&model=&limit=` | newest first, `{"object": "list", "data": […], "has_more"}` |
+
+**Running.** The proxy's runner (`internal/proxy/jobs_runner.go`) claims queued jobs with a status
+update on the observed `resourceVersion`, so more than one proxy replica is safe, and sends each
+job's request through the proxy's own handler: alias and label resolution, admission, the
+cold-start queue (which activates the lane and stamps its demand exactly as a client request
+does), the lane's first-byte budget, breaker and reroutes. A diffusers lane runs one job at a time,
+and diffusers lanes that share a GPU (`spec.gpu.shared`) share that one slot, so two renders never
+contend for the same card; other lanes run `FLEXINFER_JOBS_PER_MODEL` (default 2), overridable per
+Model with `flexinfer.ai/job-concurrency`. A job waiting for a slot is not demand; a running job
+is, including while it waits to retry. A 502/503/504 or 429 from the path (cold start, queue full,
+preempted, breaker open) is retried after its `Retry-After` (5–60 s) until the job has waited
+`FLEXINFER_JOBS_MAX_WAIT` (default 6 h); `model_failed`, any 4xx and a fourth 500 fail it. The
+runner stamps `status.heartbeatAt` every 15 s; another runner reclaims a job silent for 45 s.
+
+**Storage.** The response is spooled to `FLEXINFER_JOBS_SPOOL_DIR`, hashed, and stored under
+`jobs/<namespace>/<job>/output` in MinIO (`FLEXINFER_JOBS_STORE=s3`: path-style, SigV4,
+`FLEXINFER_JOBS_S3_{ENDPOINT,BUCKET,REGION,ACCESS_KEY,SECRET_KEY}`) or on a mounted PVC
+(`FLEXINFER_JOBS_STORE=pvc`, `FLEXINFER_JOBS_PVC_{PATH,CLAIM}`). A JSON request over 256 KiB, and
+any multipart upload, is stored the same way as input `body` and replayed verbatim. An output over
+`FLEXINFER_JOBS_MAX_OUTPUT_BYTES` (default 1 GiB), or a failed store, ends the job `incomplete`.
+Each job carries the `flexinfer.ai/job-storage` finalizer: when the job is deleted (TTL or by
+hand) the proxy deletes its stored objects first.
+
+**Webhooks.** [Standard Webhooks](https://www.standardwebhooks.com): a POST of
+`{"type": "job.completed", "timestamp": …, "data": <job object>}` with `webhook-id:
+<job>.<event>` (the same on every retry, for deduplication), `webhook-timestamp`, and with a secret
+`webhook-signature: v1,<base64 HMAC-SHA256(secret, id.timestamp.body)>`; a `whsec_` secret is
+base64-decoded. Events: `job.in_progress`, `job.completed`, `job.failed`, `job.cancelled`,
+`job.incomplete` (default: the four terminal ones). Retries at 0, 5 s, 30 s, 2 min and 10 min;
+deliveries are recorded in `status.webhook`. A secret sent with a request is stored as the Secret
+`<job>-webhook`, owned by the job.
+
+Not built yet: `background` with `stream: true` and resumable streams (`starting_after`, as the
+Responses API), which would give psyche-simulation a resumable chat stream.
 
 ### `/*` (reverse proxy)
 

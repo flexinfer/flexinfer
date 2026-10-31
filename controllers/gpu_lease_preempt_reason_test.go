@@ -102,37 +102,37 @@ func TestStaticallyParkedBehindPrimary(t *testing.T) {
 	t.Run("lower priority behind warm-pinned leader -> parked", func(t *testing.T) {
 		member := mk("whisper", 340, 0, false)
 		leader := mk("gemma4", 350, 1, false) // minReplicas:1 = warm-pinned
-		assert.True(t, staticallyParkedBehindPrimary(member, leader))
+		assert.True(t, staticallyParkedBehindPrimary(member, leader, nil))
 	})
 
 	t.Run("lower priority behind warm-primary leader -> parked", func(t *testing.T) {
 		member := mk("whisper", 340, 0, false)
 		leader := mk("gemma4", 350, 0, true) // warmPolicy:primary
-		assert.True(t, staticallyParkedBehindPrimary(member, leader))
+		assert.True(t, staticallyParkedBehindPrimary(member, leader, nil))
 	})
 
 	t.Run("equal priority -> NOT parked (demand can swap)", func(t *testing.T) {
 		member := mk("whisper", 350, 0, false)
 		leader := mk("gemma4", 350, 1, true)
-		assert.False(t, staticallyParkedBehindPrimary(member, leader))
+		assert.False(t, staticallyParkedBehindPrimary(member, leader, nil))
 	})
 
 	t.Run("higher priority -> NOT parked", func(t *testing.T) {
 		member := mk("whisper", 360, 0, false)
 		leader := mk("gemma4", 350, 1, true)
-		assert.False(t, staticallyParkedBehindPrimary(member, leader))
+		assert.False(t, staticallyParkedBehindPrimary(member, leader, nil))
 	})
 
 	t.Run("leader not warm (scale-to-zero, no primary) -> NOT parked (leader idles out)", func(t *testing.T) {
 		member := mk("whisper", 340, 0, false)
 		leader := mk("gemma4", 350, 0, false)
-		assert.False(t, staticallyParkedBehindPrimary(member, leader))
+		assert.False(t, staticallyParkedBehindPrimary(member, leader, nil))
 	})
 
 	t.Run("same model / nils -> NOT parked", func(t *testing.T) {
 		leader := mk("gemma4", 350, 1, true)
-		assert.False(t, staticallyParkedBehindPrimary(leader, leader))
-		assert.False(t, staticallyParkedBehindPrimary(nil, leader))
-		assert.False(t, staticallyParkedBehindPrimary(leader, nil))
+		assert.False(t, staticallyParkedBehindPrimary(leader, leader, nil))
+		assert.False(t, staticallyParkedBehindPrimary(nil, leader, nil))
+		assert.False(t, staticallyParkedBehindPrimary(leader, nil, nil))
 	})
 }

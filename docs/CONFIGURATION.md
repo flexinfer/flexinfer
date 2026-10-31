@@ -106,6 +106,17 @@ The proxy handles incoming inference requests, manages serverless scaling, and r
 | `PROXY_BACKOFF_MAX_WAIT` | `30s` | Maximum wait time between retries |
 | `FLEXINFER_PROXY_SWAP_REPLAY` | `true` | Replay an idempotent request (embeddings, rerank, non-streaming transcription) once when a 502/503/504 coincides with a swap of its lane; `false` returns the failure as is |
 | `FLEXINFER_PROXY_SWAP_REPLAY_WAIT` | `30s` | Longest wait for a draining or reloading lane to serve again before a swap replay falls back to the lane's equivalent or returns the original failure |
+| `FLEXINFER_JOBS_ENABLED` | `false` | Enable async jobs (`background: true`, `/v1/jobs`); needs a store |
+| `FLEXINFER_JOBS_STORE` | - | `s3` (MinIO) or `pvc` |
+| `FLEXINFER_JOBS_S3_ENDPOINT` / `_BUCKET` / `_REGION` / `_ACCESS_KEY` / `_SECRET_KEY` | - / - / `us-east-1` / - / - | MinIO store (path-style, SigV4) |
+| `FLEXINFER_JOBS_PVC_PATH` / `_CLAIM` | - / `jobs` | PVC store: mount path, and the claim name used in object URIs |
+| `FLEXINFER_JOBS_SPOOL_DIR` | OS temp dir | Where a running job's response is spooled before it is stored |
+| `FLEXINFER_JOBS_PER_MODEL` | `2` | Running jobs per lane (diffusers lanes, and diffusers lanes sharing a GPU, run 1) |
+| `FLEXINFER_JOBS_MAX_RUNNING` | `8` | Running jobs per proxy replica |
+| `FLEXINFER_JOBS_MAX_OUTPUT_BYTES` | `1Gi` | Largest stored output; a larger one ends the job `incomplete` |
+| `FLEXINFER_JOBS_MAX_WAIT` | `6h` | How long a job may wait for its lane before it fails |
+| `FLEXINFER_JOBS_POLL_INTERVAL` | `5s` | How often the runner lists jobs (it is also woken on submit and cancel) |
+| `POD_NAME` | hostname | Runner identity recorded in `status.runner` |
 | `FLEXINFER_PROXY_PROMETHEUS_URL` | - | Prometheus base URL the proxy reads each lane's cold-start p50 from (`flexinfer_model_cold_start_duration_seconds`, 7 d, by `serving_path`) for the error envelope's `eta_seconds`; unset falls back to the Model's `status.metrics.loadTimeSeconds` |
 | `FLEXINFER_OTEL_ENABLED` | `false` | Enable OpenTelemetry tracing export for proxy requests |
 | `FLEXINFER_OTEL_SERVICE_NAMESPACE` | - | Optional `service.namespace` attribute for proxy spans |

@@ -576,7 +576,7 @@ func TestChooseSharedGroupLeader_Comprehensive(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := chooseSharedGroupLeader(tc.models, now)
+			got := chooseSharedGroupLeader(tc.models, now, nil)
 			if tc.wantName == "" {
 				assert.Nil(t, got)
 			} else {
@@ -724,7 +724,7 @@ func TestChooseSharedGroupLeader_SwapCooldown(t *testing.T) {
 			})
 			challenger.Spec.GPU.SwapCooldown = tc.challengerCooldown
 
-			got := chooseSharedGroupLeader([]*aiv1alpha2.Model{current, challenger}, now)
+			got := chooseSharedGroupLeader([]*aiv1alpha2.Model{current, challenger}, now, nil)
 			require.NotNil(t, got)
 			assert.Equal(t, tc.wantName, got.Name)
 		})
@@ -1167,14 +1167,14 @@ func TestShortIdleModelReleasesSharedVRAMReservation(t *testing.T) {
 	borrower := makeSharedModel("humanizer", 130, aiv1alpha2.ModelPhaseIdle, timePtr(now.Add(-31*time.Second)), nil)
 	borrower.Spec.Serverless = &aiv1alpha2.ServerlessSpec{Enabled: &enabled, IdleTimeout: &idle}
 	pinned := markWarmPinned(makeSharedModel("retrieval", 120, aiv1alpha2.ModelPhasePending, nil, nil))
-	assert.Same(t, pinned, chooseSharedGroupLeader([]*aiv1alpha2.Model{borrower, pinned}, now))
-	assert.False(t, sharedModelWantsToRun(borrower, now))
+	assert.Same(t, pinned, chooseSharedGroupLeader([]*aiv1alpha2.Model{borrower, pinned}, now, nil))
+	assert.False(t, sharedModelWantsToRun(borrower, now, nil))
 	borrower.Status.LastActiveTime = &metav1.Time{Time: now.Add(-29 * time.Second)}
-	assert.Same(t, borrower, chooseSharedGroupLeader([]*aiv1alpha2.Model{borrower, pinned}, now))
-	assert.True(t, sharedModelWantsToRun(borrower, now))
+	assert.Same(t, borrower, chooseSharedGroupLeader([]*aiv1alpha2.Model{borrower, pinned}, now, nil))
+	assert.True(t, sharedModelWantsToRun(borrower, now, nil))
 	// Loading remains protected even when initialization exceeds the idle timer.
 	borrower.Status.Phase = aiv1alpha2.ModelPhaseLoading
 	borrower.Status.LastActiveTime = &metav1.Time{Time: now.Add(-time.Minute)}
 	borrower.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{State: "Active"}
-	assert.Same(t, borrower, chooseSharedGroupLeader([]*aiv1alpha2.Model{borrower, pinned}, now))
+	assert.Same(t, borrower, chooseSharedGroupLeader([]*aiv1alpha2.Model{borrower, pinned}, now, nil))
 }
