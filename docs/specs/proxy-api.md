@@ -37,8 +37,44 @@ OpenAI-compatible model listing. It aggregates:
 Response shape:
 
 ```json
-{ "object": "list", "data": [ { "id": "llama3-8b", "object": "model", "created": 0, "owned_by": "flexinfer", "metadata": {} } ] }
+{ "object": "list", "data": [ { "id": "llama3-8b", "object": "model", "created": 0, "owned_by": "flexinfer", "metadata": {}, "flexinfer": {} } ] }
 ```
+
+Each v1alpha2 Model carries the cold capability descriptor under `flexinfer` (below). Parked
+Models (`spec.litellm.enabled: false`) are not listed.
+
+### `GET /v1/models/{name}`
+
+The OpenAI model object for one lane, answered from its Model CR. `name` may be the CR name, a
+served name or an alias. The read never touches demand, queues or activates, so a caller can learn
+a cold lane's limits and ETA without waking it. Unknown names answer 404 `model_not_found`; a
+parked Model answers 404 `model_parked` with the error envelope.
+
+```json
+{"id": "wan21-t2v-1p3b-gfx1100", "object": "model", "created": 1761868800, "owned_by": "flexinfer",
+ "metadata": {"backend": "diffusers", "phase": "Idle", "ready": false, "...": "..."},
+ "flexinfer": {
+   "phase": "Idle", "loading_substage": null, "ready": false, "eta_seconds": 212, "reroute_to": null,
+   "serve_paths": ["/v1/videos/generations"], "serve_paths_declared": true,
+   "modalities": {"input": ["text"], "output": ["video"]},
+   "limits": {"video": {"max_pixels": 399360, "dimension_multiple": 16, "max_num_frames": 81,
+     "num_frames_step": 4, "max_fps": 24, "max_num_inference_steps": 50, "max_prompt_chars": 4000,
+     "default_size": "832x480", "default_num_frames": 81, "default_fps": 16, "requires_image": false}}}}
+```
+
+| Field | Source |
+|---|---|
+| `phase`, `loading_substage`, `eta_seconds`, `reroute_to` | as in the error envelope; `eta_seconds` is 0 for a Ready lane and the whole cold-start p50 for an idle one |
+| `ready` | `status.phase == Ready` |
+| `serve_paths` | `flexinfer.ai/serve-paths` (`serve_paths_declared: true`; the proxy rejects other paths), else the backend's default paths (diffusers by `pipelineMode`, whispercpp transcriptions, LLM backends chat and completions) |
+| `modalities` | from `serve_paths` (`text`, `image`, `video`, `audio`, `embedding`, `score`); an `image2video` lane also takes `image` |
+| `max_model_len` | the context window from `spec.config` (`maxModelLen`, `maxTotalSeqLength`, `contextWindowSize`, `contextSize`); omitted for media lanes |
+| `limits.image` / `.video` / `.audio` | diffusers lanes: the bounds `build/server-diffusers.py` enforces for the lane's `pipelineMode`, with the defaults its `spec.config` sets (`numInferenceSteps`, `videoSize`, `videoFrames`, `videoFps`) |
+
+The diffusers bounds are fixed per pipeline mode in the server, not per Model, so they are derived
+rather than declared; `pkg/modelmeta` mirrors them and `TestDiffusersLimitsMatchTheServer` fails if
+the server's bounds change without the mirror. Code: `internal/proxy/models.go`,
+`pkg/modelmeta/capabilities.go`.
 
 ### `/*` (reverse proxy)
 
