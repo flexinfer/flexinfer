@@ -38,6 +38,7 @@ http://10.42.8.233:8080 --out kt-ret-r`.
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
 import random
@@ -137,7 +138,7 @@ def post(url: str, body: dict, timeout: float) -> dict:
         out["err"] = (
             "timeout" if isinstance(reason, TimeoutError) else type(reason).__name__
         )
-    except (ConnectionError, OSError) as e:
+    except (ConnectionError, OSError, http.client.HTTPException) as e:
         out["err"] = type(e).__name__
     out["latency_ms"] = round((time.perf_counter() - t0) * 1000, 1)
     out["outcome"] = classify(out["status"], out["err"])
