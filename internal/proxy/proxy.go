@@ -649,6 +649,7 @@ func (p *Proxy) newServeMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.Handle("/metrics", promhttp.Handler())
 	mux.HandleFunc("/v1/models", p.handleModels)
+	mux.HandleFunc("GET /v1/models/{name...}", p.handleModel)
 	mux.HandleFunc("/debug/config", p.handleDebugConfig)
 	mux.HandleFunc("/diarize", p.handleDiarize)
 	mux.HandleFunc("/v1/audio/speech", p.handleSpeech)

@@ -37,6 +37,30 @@ paths:
               schema:
                 $ref: '#/components/schemas/OpenAIModelsResponse'
 
+  /v1/models/{name}:
+    get:
+      summary: One model with its cold capability descriptor (never wakes the lane)
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+          description: CR name, served name or alias.
+      responses:
+        '200':
+          description: OpenAI model object with the `flexinfer` descriptor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIModel'
+        '404':
+          description: Unknown (`model_not_found`) or parked (`model_parked`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
   /v1/chat/completions:
     post:
       summary: OpenAI-style chat completions (reverse proxied)
@@ -149,6 +173,10 @@ components:
           example: flexinfer
         metadata:
           type: object
+          additionalProperties: true
+        flexinfer:
+          type: object
+          description: Cold capability descriptor (docs/specs/proxy-api.md, "GET /v1/models/{name}").
           additionalProperties: true
 
     ChatCompletionRequest:
