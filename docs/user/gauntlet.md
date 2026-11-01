@@ -86,3 +86,53 @@ if !verdict.Pass {
 
 The `ModelExperiment` controller (Slice 4) will call `Evaluate` against a
 canary's measured `Sample` and write the `Verdict` into the experiment's status.
+
+## Tool-call conformance gate (`tool_call_conformance`)
+
+`flexinfer-bench tool_call_conformance` is the D4 gate and the harness of kill-test KT-SO
+(`.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md` §6.4). It drives
+schema-constrained tool-call turns through `internal/agentloop` against one lane and answers
+whether that lane's structured outputs can be certified (`vllm/structured-outputs`,
+`docs/agents/gpu-compatibility.md`).
+
+```bash
+flexinfer-bench tool_call_conformance --url http://<lane-service>:8000 --model <served-name> \
+  --parity-baseline parity_code=8174a49e --image <image@sha256> --context-length 32768 \
+  --out /tmp/kt-so.json
+```
+
+`--url` may be the Model's Service or pod, or the proxy (`http://<proxy>/model/<name>`); through
+the proxy pass `--metrics-url` to the lane's own `/metrics`. `flexinfer-bench help` lists the gates.
+
+What it runs, in order:
+
+1. **Greedy parity.** The three parity prompts of `scripts/verify-vllm-mtp.py` at temperature 0,
+   256 tokens; the hash is the first 16 hex characters of the answer's SHA-256, so
+   `parity_code` compares with recorded hashes (8174a49e on the workhorse image `b06b06fe`).
+2. **Constrained arm.** `--turns` (200) tool-call turns in append-only agent-loop sessions of
+   `--session-turns` (5). Sessions cycle `--modes`: `required` (tools + `tool_choice:
+   "required"`), `named` (`tool_choice` naming the expected tool), `json_schema`
+   (`response_format` json_schema call envelope, `strict: true`) and `structured_outputs` (vLLM
+   `structured_outputs.json`, same envelope). Six tools (enums, integer and number bounds, regex
+   patterns, arrays, `additionalProperties: false`), deterministic prompts, temperature 0. A good
+   turn appends the call and a canned tool result; a failed turn restarts its conversation.
+   `--warmup-turns` (4) unmeasured turns run first, outside the metrics window.
+3. **Unguided arm.** The same turns with the constraint removed (`tool_choice: "auto"`, no
+   `response_format` / `structured_outputs`): the decode and acceptance baseline, and the parse
+   rate the lane manages without constraints.
+4. **Parity again**, which must match step 1.
+
+Every reply lands in one class: `ok`, `invalid_json` (arguments or content not one JSON value,
+prose instead of a call), `schema_violation` (valid JSON breaking the tool schema or the envelope,
+or a call returned as message content instead of `tool_calls`), `wrong_tool_name` (a tool not
+offered, or not the one `named` forced), `truncated` (`finish_reason: length`) and `request_error`
+(transport error or non-2xx). Decode tokens/s is `(Δvllm:generation_tokens − Δvllm:request_success)
+/ Δvllm:request_decode_time_seconds_sum` over each arm's window; position-0 acceptance is
+`Δspec_decode_num_accepted_tokens_per_pos{position="0"} / Δspec_decode_num_drafts`.
+
+Pass rule (§6.4, all four): 100 % of constrained turns `ok`; constrained decode ≥ 0.90 × unguided;
+constrained pos-0 acceptance ≥ 0.75 (`--expect-spec-decode=false` makes it n/a on a lane without
+speculative decoding); parity hashes before = after (= `--parity-baseline` when given). Missing
+metrics fail the decode and pos-0 checks as unmeasured. Output: a JSON report on stdout (and
+`--out`), the 13-column `.loom/60-validation-matrix.md` row on stderr and in `matrix_row`; exit 0
+on PASS, 1 on FAIL, 2 on a flag error.

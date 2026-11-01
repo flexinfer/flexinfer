@@ -76,6 +76,18 @@ A request for an idle lane is held by the proxy, which stamps demand on the `Mod
 | Context-overflow reroute | When a lane rejects a prompt as longer than its window, the proxy replays it once to a larger-window lane. The replay runs under the target lane's own budget and breaker ([routing](docs/user/routing.md#context-overflow-context-overflow-to)). | `flexinfer.ai/context-overflow-to: <model>` |
 | Routing | Session-affinity, prefix and least-loaded strategies across a lane's ready pods. Round-robin across Ready lanes that claim the same service label. Proxy rollouts drain readiness-first. | `flexinfer.ai/routing` |
 
+**Agent-grade outputs.** Tool-calling agents (Mills, mentatlab, jobsearch) can send
+`response_format` json_schema / json_object, vLLM `structured_outputs` and required or named
+`tool_choice` through the proxy; it forwards them byte for byte (only the top-level `model`,
+`max_tokens` and `priority` values are ever edited) and tags them in the usage log and
+`flexinfer_proxy_schema_constrained_requests_total`. A vllm Model opts into the certified envelope
+with `spec.capabilities.structuredOutput: true`; the controller pins `--structured-outputs-config`
+only behind a `vllm/structured-outputs` GPUProfile certificate for its exact image, and
+`GET /v1/models/{name}` then reports `structured_output: true`. The certificate's kill-test is
+`flexinfer-bench tool_call_conformance` ([gauntlet](docs/user/gauntlet.md#tool-call-conformance-gate-tool_call_conformance)):
+200 schema-constrained tool-call turns, a parse-failure taxonomy, decode and MTP acceptance against
+unguided turns, and greedy parity. No lane is certified yet.
+
 Proxy reference: [docs/user/proxy.md](docs/user/proxy.md), [docs/user/routing.md](docs/user/routing.md), [docs/specs/proxy-api.md](docs/specs/proxy-api.md). Workflow diagrams for reconciliation, routing, GPU sharing and scheduling: [docs/dev/architecture.md](docs/dev/architecture.md).
 
 ## Quick start
