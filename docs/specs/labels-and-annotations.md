@@ -114,6 +114,24 @@ On an `InferenceJob` (written by the proxy):
 | `flexinfer.ai/job-idempotency` | label | hash of caller and `Idempotency-Key`; a repeat submission returns the first job |
 | `flexinfer.ai/job-storage` | finalizer | the proxy deletes the job's stored inputs and output before the job goes |
 
+## GPUProfile backend-capability certificates
+
+Probe evidence that binds an opt-in backend feature to the exact image that passed its kill-test
+(`api/v1alpha2/gpuprofile_certificate.go`). Three keys move together; a partial triple counts as
+uncertified, and the image must equal the digest-pinned image the Model launches.
+
+| Annotation | Value |
+|---|---|
+| `flexinfer.ai/backend-certificate-<backend>-<capability>` | `image@sha256:...` |
+| `flexinfer.ai/backend-certificate-<backend>-<capability>-since` | RFC3339 time |
+| `flexinfer.ai/backend-certificate-<backend>-<capability>-evidence` | matrix row or doc |
+
+Capabilities in use: `llamacpp-stateful-slots`, `llamacpp-ngram-simple-draft16-min1`,
+`llamacpp-draft-mtp`, `llamacpp-draft-mtp-draft<N>-min<M>` (a failed check marks the Model
+`Schedulable=False`), and `vllm-structured-outputs` (D4: gates `spec.capabilities.structuredOutput`;
+an uncertified opt-in renders nothing and reports condition `StructuredOutput=False`). Details in
+`docs/agents/gpu-compatibility.md`.
+
 ## Service label routing
 
 Service labels can be attached to a model and used for routing. Relevant fields/annotations:

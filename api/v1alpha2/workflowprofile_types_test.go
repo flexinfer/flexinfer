@@ -167,3 +167,24 @@ func TestCapabilitiesMatch(t *testing.T) {
 func metav1ObjectMeta(name string) metav1.ObjectMeta {
 	return metav1.ObjectMeta{Name: name}
 }
+
+func TestCapabilitiesMatchStructuredOutput(t *testing.T) {
+	enabled := true
+	disabled := false
+	required := &ModelCapabilities{StructuredOutput: &enabled}
+	if !CapabilitiesMatch(required, &ModelCapabilities{StructuredOutput: &enabled}) {
+		t.Error("structuredOutput required and offered must match")
+	}
+	if CapabilitiesMatch(required, &ModelCapabilities{StructuredOutput: &disabled}) {
+		t.Error("structuredOutput required but disabled must not match")
+	}
+	if CapabilitiesMatch(required, &ModelCapabilities{ToolCalling: &enabled}) {
+		t.Error("structuredOutput required but unset must not match")
+	}
+
+	copied := (&ModelCapabilities{StructuredOutput: &enabled}).DeepCopy()
+	*copied.StructuredOutput = false
+	if !enabled {
+		t.Error("DeepCopy must not alias StructuredOutput")
+	}
+}

@@ -193,6 +193,17 @@ agent:
     requests:
       cpu: 100m
       memory: 128Mi
+  # GPU board power sampling into flexinfer_gpu_power_watts, read from sysfs
+  # hwmon (power1_average, else power1_input), never through rocm-smi. Off
+  # unless a node is listed here; there is no wildcard, so every node is an
+  # explicit opt-in. The sampler stops itself (until the agent restarts) when
+  # the GPU health sentinel reports the card degraded, a read fails with a
+  # device I/O error, or reads fail 5 times in a row. An empty list renders the
+  # DaemonSet exactly as before (no args), so enabling it rolls the agents.
+  gpuPower:
+    nodes: []
+    # Sampling period on listed nodes (minimum 500ms).
+    interval: 1s
 
 proxy:
   enabled: true
