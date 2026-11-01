@@ -226,7 +226,7 @@ flowchart LR
 | GPU class | Runtime image | State |
 |---|---|---|
 | gfx906 (Radeon VII) | `runtime:rocm-gfx906`, CI build `90648c35`: llama.cpp b11335, ollama, diffusers | **In place.** The Radeon VII's llama.cpp lanes are served in-pod, with multi-model and request drain on. Its one vLLM lane, the openjev cross-encoder, runs as a dedicated Deployment because this image does not bundle vLLM. |
-| gfx1100 (RX 7900 XTX) | Built, not yet serving: profile `gfx1100-serving-v032` (`build/Dockerfile.runtime-serving-v032`), CI digest `ef28b7b0`. vLLM 0.32 with the native W4A16 plugins, the supervisor, diffusers 0.42 and snac. The build freezes the vLLM stack with pip constraints and checks every spawn target (`build/scripts/verify_runtime_serving_stack.py`). | **Pre-work merged and rolled** (controller `4ee89231`). **Today** both gfx1100 runtime DaemonSets still run the `gfx1100-serving` persona `cfefae18` (vLLM 0.17). The 5930k DaemonSet is parked at desired=0 with `ef28b7b0` prewarmed on that node; the XTX runtime pod hosts only the snac decode lane. Every gfx1100 text lane is a dedicated Deployment. |
+| gfx1100 (RX 7900 XTX) | Built, not yet serving: profile `gfx1100-serving-v032` (`build/Dockerfile.runtime-serving-v032`). vLLM 0.32 with the native W4A16 plugins, the supervisor, diffusers 0.42 and snac. The build freezes the vLLM stack with pip constraints and checks every spawn target (`build/scripts/verify_runtime_serving_stack.py`). Two CI digests are prewarmed on the XTX and certified by `controllers/runtime_pin_contract_test.go` (!1224, !1232): `ef28b7b0` (c444b5ff), the digest the D1 design names, whose supervisor predates the in-pod reload, load substages and shared compile cache; and `7ae8e92f` (5ca58769), the master rebuild that has them. The persona does not yet carry bitsandbytes, torchsde, imageio, ftfy, librosa or soundfile, so the XTX image, video, audio and ASR lanes cannot run in-pod on it. | **Pre-work merged and rolled** (controller `4ee89231`). **Today** both gfx1100 runtime DaemonSets still run the `gfx1100-serving` persona `cfefae18` (vLLM 0.17). The 5930k DaemonSet is parked at desired=0; the XTX runtime pod hosts only the snac decode lane. Every gfx1100 text lane is a dedicated Deployment. **Pending the window (≥ 2026-11-06, after KT-FLEX):** the XTX repin to `7ae8e92f` (Draft !1234) and the Mills warm lane in-pod (Draft !1235). |
 | Maxwell (GTX 980 Ti) | none | Dedicated pods only, by decision on 2026-10-12 ([gpu-compatibility](docs/agents/gpu-compatibility.md#maxwell-runtime-posture-gtx-980-ti)). |
 
 <details>
@@ -237,7 +237,7 @@ flowchart LR
 - An in-pod loading substage with KV-pool recheck.
 - Cold-start and swap histograms labelled `serving_path` (buckets to 1800 s and 900 s).
 
-The runtime half of reload and substage reporting ships in the supervisor binary, and `ef28b7b0` was built before those merges.
+The runtime half of reload and substage reporting ships in the supervisor binary. `ef28b7b0` was built before those merges; its master rebuild `7ae8e92f` carries them.
 
 </details>
 
@@ -247,8 +247,8 @@ The runtime half of reload and substage reporting ships in the supervisor binary
 |---|---|
 | S6b | Un-park the 5930k runtime on the stacked 0.32 image and move the workhorse in-pod. Pass bar: greedy hashes identical to the dedicated pod, decode within 3 % at 512, 2K and 16K tokens, and a workhorse ↔ 9B-RP swap timed against today's pod churn. |
 | S6c | The 5930k lanes that opt out with `dedicatedDeployment` drop the opt-out one at a time. The MTP lanes move their env from command wrappers into `spec.config.env`, because the runtime load payload carries no command. |
-| S6d | The XTX DaemonSet moves to the same persona once its lanes qualify. |
-| S6e | bitsandbytes on ROCm 7.2 and the Qwen-Image 2.1 diffusers checks land in this image, so that lane can move in-pod too. |
+| S6d (D1) | Repin the XTX DaemonSet to `7ae8e92f` and serve the Mills warm lane in-pod (Drafts !1234, !1235). KT-SWAP then times the in-pod swap floor by load substage with `flexinfer-bench swap` ([docs/user/swap-profiler.md](docs/user/swap-profiler.md), matrix row `gfx1100-xtx-inpod-swap-2026-11-01`). |
+| S6e | A v032 rebuild adding bitsandbytes on ROCm 7.2, torchsde, imageio, imageio-ffmpeg, ftfy, librosa and soundfile. With it, Qwen-Image 2.1, Wan T2V and VACE, Stable Audio (Drafts !1236–!1239) and whisper can move in-pod too. |
 
 ## Supported GPU classes
 
