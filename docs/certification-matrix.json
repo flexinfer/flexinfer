@@ -563,7 +563,7 @@
       "backend": "diffusers",
       "gpu_class": "gfx1100",
       "nodes": [
-        "cblevins-5930k"
+        "cblevins-7900xtx"
       ],
       "model": "qwen-image-21-gfx1100",
       "modality": "image",
@@ -632,7 +632,7 @@
       "backend": "diffusers",
       "gpu_class": "gfx1100",
       "nodes": [
-        "cblevins-5930k"
+        "cblevins-7900xtx"
       ],
       "model": "stable-audio-open-gfx1100",
       "modality": "audio",
@@ -648,7 +648,7 @@
       "backend": "diffusers",
       "gpu_class": "gfx1100",
       "nodes": [
-        "cblevins-5930k"
+        "cblevins-7900xtx"
       ],
       "model": "wan21-t2v-1p3b-gfx1100",
       "modality": "video",
@@ -668,7 +668,7 @@
       "backend": "diffusers",
       "gpu_class": "gfx1100",
       "nodes": [
-        "cblevins-5930k"
+        "cblevins-7900xtx"
       ],
       "model": "wan21-vace-1p3b-i2v-gfx1100",
       "modality": "video",
