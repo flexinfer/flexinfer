@@ -25,6 +25,23 @@
 # (orpheus twin), and cold members below a warm leader are statically parked
 # (see gte-qwen2-1p5b-radeonvii.yaml / flexinfer#70).
 #
+#
+# 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
+# WINDOW-GATED, and BLOCKED on the runtime image, see below): served IN-POD by
+# the 7900xtx runtime DaemonSet instead of its own Deployment, so a render
+# swaps the XTX warm lane out and back inside the runtime pod.
+# - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
+# - Compile cache: scope Image on the default hostPath, the directory the
+#   runtime pod mounts at /cache/compile.
+# BLOCKED: ef28b7b0 (rocm-gfx1100-serving-v032-c444b5ff) has no torchsde.
+# diffusers then swaps CosineDPMSolverMultistepScheduler, the scheduler in
+# Stable Audio Open's repo config, for a dummy that raises when
+# StableAudioPipeline.from_pretrained loads it. The dedicated image
+# (d87f75f8, rocm-gfx1100-audio2) carries torchsde 0.2.6. Checked inside
+# the image 2026-11-01. Unblock: a gfx1100-serving-v032 build adding
+# torchsde, pinned on the XTX runtime first.
+# Rollback: revert this commit (restores dedicatedDeployment and the cache
+# config); the Deployment returns on the next reconcile.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -57,7 +74,9 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      hostPath: /var/lib/flexinfer/compile-cache
+      # 2026-11-01 D1: image-scoped on the default hostPath, shared with the
+      # runtime pod (header).
+      scope: Image
       sizeLimit: 4Gi
   gpu:
     vendor: amd
@@ -73,17 +92,6 @@ spec:
     idleTimeout: 15m
     coldStartTimeout: 15m
   config:
-    # 2026-10-30 (S6b readiness): stay a dedicated Deployment until S6b moves
-    # this lane into the 5930k runtime pod on purpose. Without the flag,
-    # un-parking that DaemonSet (deploy/system/values-k3s.yaml, profile
-    # gfx1100-5930k) loads the lane in-pod on the DaemonSet's image instead
-    # of spec.image. The flag only routes; the Deployment renders the same
-    # (controllers/model_dedicated_deployment_render_test.go).
-    # 2026-10-30: on the 7900xtx the flag matters at once. That node RUNS a
-    # gfx1100 runtime pod (cfefae18, vLLM 0.17 persona with older diffusers),
-    # and without the flag this lane would load there instead of on
-    # spec.image. Same for the other three creative lanes.
-    dedicatedDeployment: true
     pipelineMode: text2audio
     dtype: float16
     hipVisibleDevices: "0"

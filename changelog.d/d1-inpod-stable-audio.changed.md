@@ -1,0 +1,1 @@
+- `stable-audio-open-gfx1100` moves onto the 7900 XTX runtime path (`dedicatedDeployment` dropped, compile cache `scope: Image`). Window-gated, and blocked until the XTX runtime image carries torchsde. Without it, diffusers cannot load Stable Audio Open's `CosineDPMSolverMultistepScheduler` on `ef28b7b0`.
