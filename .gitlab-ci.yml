@@ -681,6 +681,28 @@ server_diffusers_test:
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *server-diffusers-changes
 
+server_pyannote_test:
+  stage: test
+  image: python:3.12-slim
+  needs: []
+  script:
+    # fastapi, torch, torchaudio_compat and pyannote.audio are stubbed when
+    # absent, so the request contract and the load sequence run on the bare
+    # image. pyannote's numbers on the Radeon VII are KT-DIAR's (D5-a).
+    - python3 scripts/test_server_pyannote.py
+    - python3 -m py_compile build/server-pyannote.py
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &server-pyannote-changes
+        - .gitlab-ci.yml
+        - build/server-pyannote.py
+        - build/Dockerfile.runtime-gfx906-pyannote
+        - backend/constants.go
+        - backend/pyannote.go
+        - scripts/test_server_pyannote.py
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *server-pyannote-changes
+
 vllm_qwen35_seqcls_plugin_test:
   stage: test
   image: python:3.12-slim

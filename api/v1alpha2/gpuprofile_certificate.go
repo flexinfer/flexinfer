@@ -62,6 +62,16 @@ const (
 	// of unguided and MTP position-0 acceptance stays >= 0.75 with the lane's
 	// own speculative config, and unconstrained greedy output is unchanged.
 	VLLMCapabilityStructuredOutputs = "structured-outputs"
+
+	// PyannoteCapabilitySpeakerDiarization certifies the whole pyannote
+	// backend on the selected runtime image: server-pyannote.py with
+	// pyannote.audio and torch kernels for the profile's architecture. Unlike
+	// the opt-in features above it gates the backend itself; the controller
+	// refuses a pyannote Model on a profile without it. The kill-test is
+	// KT-DIAR (D5-a): a 30-minute AMI meeting through the diarize job path
+	// gives speaker-attributed words with DER within 5 points of the
+	// standalone pyannote Deployment and gte p95 unaffected.
+	PyannoteCapabilitySpeakerDiarization = "speaker-diarization"
 )
 
 // LlamaCppCapabilityDraftMTPWindow names the capability that certifies

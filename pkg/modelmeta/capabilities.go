@@ -141,6 +141,7 @@ var pathModalities = []struct {
 	{"/v1/audio/translations", []string{"audio"}, []string{"text"}},
 	{"/v1/audio/speech", []string{"text"}, []string{"audio"}},
 	{"/v1/audio/generations", []string{"text"}, []string{"audio"}},
+	{"/v1/audio/diarizations", []string{"audio"}, []string{"diarization"}},
 }
 
 // ResolveCapabilities derives m's capabilities from its spec and annotations.
@@ -178,13 +179,14 @@ func ResolveCapabilities(m *aiv1alpha2.Model) Capabilities {
 const (
 	backendDiffusers  = "diffusers"
 	backendWhisperCpp = "whispercpp"
+	backendPyannote   = "pyannote"
 	backendSNAC       = "snac"
 	backendComfyUI    = "comfyui"
 )
 
 func isMediaBackend(name string) bool {
 	switch name {
-	case backendDiffusers, backendWhisperCpp, backendSNAC, backendComfyUI:
+	case backendDiffusers, backendWhisperCpp, backendPyannote, backendSNAC, backendComfyUI:
 		return true
 	}
 	return false
@@ -199,6 +201,8 @@ func defaultServePaths(backend, mode string) []string {
 		return diffusersPathsByMode[""]
 	case backendWhisperCpp:
 		return []string{"/v1/audio/transcriptions"}
+	case backendPyannote:
+		return []string{"/v1/audio/diarizations"}
 	case backendSNAC:
 		return []string{"/v1/audio/decode"}
 	case backendComfyUI:

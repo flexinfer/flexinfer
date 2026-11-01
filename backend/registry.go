@@ -17,6 +17,7 @@ const (
 	NameDiffusers  = "diffusers"
 	NameSNAC       = "snac"
 	NameWhisperCpp = "whispercpp"
+	NamePyannote   = "pyannote"
 	NameComfyUI    = "comfyui"
 	NameMLCLLM     = "mlc-llm"
 	NameSteam      = "steam"
