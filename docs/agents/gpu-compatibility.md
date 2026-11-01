@@ -222,6 +222,35 @@ contract. Full evidence and artifact provenance are in
 This certificate does not replace the generic gfx906 vLLM profile image.
 Models must opt into the pinned image and exact artifact/config tuple.
 
+## Certificate-gated vLLM structured outputs
+
+`spec.capabilities.structuredOutput: true` on a vllm Model asks for capability
+`structured-outputs`. The controller renders
+`--structured-outputs-config {"backend":"auto"}` only when all of these hold:
+the Model sets `spec.config.dedicatedDeployment: true`, the image it launches
+is digest-pinned, and the GPUProfile for its architecture carries the complete
+certificate triple for exactly that image:
+
+```yaml
+metadata:
+  annotations:
+    flexinfer.ai/backend-certificate-vllm-structured-outputs: <image@sha256:...>
+    flexinfer.ai/backend-certificate-vllm-structured-outputs-since: "<RFC3339>"
+    flexinfer.ai/backend-certificate-vllm-structured-outputs-evidence: <matrix row>
+```
+
+Unlike the llama.cpp opt-ins, an uncertified request does not fail the Model.
+Nothing is rendered, the lane serves as it would without the opt-in, and the
+`StructuredOutput` condition says why (`StructuredOutputNotCertified` or
+`StructuredOutputUnsupported`); `StructuredOutputCertified` with status True
+means the flag is on the pod. vLLM serves `response_format` and
+`structured_outputs` with backend `auto` on every lane by default, so the
+certificate is evidence that this image, card and speculative config keep
+schema-constrained turns correct and fast, and the flag pins the backend so a
+runtime upgrade cannot swap it under a certified lane. The kill-test is KT-SO
+(`gfx1100-structured-outputs-<date>` in `.loom/60-validation-matrix.md`), run
+with `flexinfer-bench tool_call_conformance`. No architecture is certified yet.
+
 ## Qwen3.6-27B Fable Fusion GPTQ candidate
 
 DavidAU's `Qwen3.6-27B-Fable-Fusion-711-...-MTP-GGUF` has an exact BF16

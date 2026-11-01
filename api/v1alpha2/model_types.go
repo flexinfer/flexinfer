@@ -86,6 +86,10 @@ const (
 	ConditionConfigValid = "ConfigValid"
 	// ConditionPromotionGate indicates whether a gated quantized artifact may be promoted to a warm primary.
 	ConditionPromotionGate = "PromotionGate"
+	// ConditionStructuredOutput reports whether a Model that sets
+	// spec.capabilities.structuredOutput got its certified structured-output
+	// flag rendered (True) or why not (False). Absent when not requested.
+	ConditionStructuredOutput = "StructuredOutput"
 )
 
 // Condition reasons for Model status
@@ -153,6 +157,15 @@ const (
 	ReasonPromotionGateValidated = "PromotionGateValidated"
 	// ReasonPromotionGateBlocked - validation evidence is missing for primary promotion
 	ReasonPromotionGateBlocked = "PromotionGateBlocked"
+	// ReasonStructuredOutputCertified - the GPUProfile certificate matches the
+	// selected image and --structured-outputs-config is rendered
+	ReasonStructuredOutputCertified = "StructuredOutputCertified"
+	// ReasonStructuredOutputNotCertified - the certificate is missing, partial,
+	// not digest-pinned, or bound to another image; nothing is rendered
+	ReasonStructuredOutputNotCertified = "StructuredOutputNotCertified"
+	// ReasonStructuredOutputUnsupported - the backend or serving path cannot
+	// carry the certified flag (not vllm, or a runtime-pod load)
+	ReasonStructuredOutputUnsupported = "StructuredOutputUnsupported"
 )
 
 // KVCachePressurePolicy defines how to react to KV-cache pressure.
@@ -298,6 +311,16 @@ type ModelCapabilities struct {
 	// Auto: true for diffusers, comfyui, vllm-omni.
 	// +optional
 	ImageGeneration *bool `json:"imageGeneration,omitempty"`
+
+	// StructuredOutput opts a vllm lane into a certified structured-output
+	// envelope: the controller renders --structured-outputs-config with
+	// backend auto only when the selected GPUProfile carries a complete
+	// vllm/structured-outputs backend-capability certificate bound to the
+	// exact digest-pinned image this Model launches, and only on a dedicated
+	// Deployment (spec.config.dedicatedDeployment: true). Otherwise nothing is
+	// rendered and the StructuredOutput condition says why. Never auto-set.
+	// +optional
+	StructuredOutput *bool `json:"structuredOutput,omitempty"`
 }
 
 // ModelSpec defines the desired state of Model
