@@ -103,6 +103,7 @@ func init() {
 	rootCmd.AddCommand(imageCmd)
 	rootCmd.AddCommand(gameCmd)
 	rootCmd.AddCommand(jobsCmd)
+	rootCmd.AddCommand(certifyCmd)
 }
 
 // Execute runs the root command

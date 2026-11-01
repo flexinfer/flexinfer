@@ -1,0 +1,33 @@
+# Two documents and a non-Model kind in one file.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: chat-lane
+  annotations:
+    flexinfer.ai/promotion-evidence: "canary 2026-10-20: 6/6 gauntlet; matrix row gfx1100-llamacpp-2026-10-24"
+spec:
+  backend: llamacpp
+  source: HF://org/chat-GGUF
+  gpu:
+    vendor: amd
+    count: 1
+  nodeSelector:
+    kubernetes.io/hostname: node-b
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: chat-lane-long
+spec:
+  backend: vllm
+  source: HF://org/chat
+  gpu:
+    vendor: amd
+    count: 1
+  nodeSelector:
+    kubernetes.io/hostname: node-xtx
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: not-a-lane
