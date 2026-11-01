@@ -128,8 +128,11 @@ uncertified, and the image must equal the digest-pinned image the Model launches
 
 Capabilities in use: `llamacpp-stateful-slots`, `llamacpp-ngram-simple-draft16-min1`,
 `llamacpp-draft-mtp`, `llamacpp-draft-mtp-draft<N>-min<M>` (a failed check marks the Model
-`Schedulable=False`), and `vllm-structured-outputs` (D4: gates `spec.capabilities.structuredOutput`;
-an uncertified opt-in renders nothing and reports condition `StructuredOutput=False`). Details in
+`Schedulable=False`), `vllm-structured-outputs` (D4: gates `spec.capabilities.structuredOutput`;
+an uncertified opt-in renders nothing and reports condition `StructuredOutput=False`), and
+`pyannote-speaker-diarization` (D5-a: gates the `pyannote` backend itself, bound to the profile's
+`spec.runtime.image`; an uncertified profile fails the Model with condition
+`BackendCertificate=False`, reason `BackendNotCertified`). Details in
 `docs/agents/gpu-compatibility.md`.
 
 ## Service label routing

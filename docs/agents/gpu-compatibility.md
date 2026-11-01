@@ -251,6 +251,35 @@ runtime upgrade cannot swap it under a certified lane. The kill-test is KT-SO
 (`gfx1100-structured-outputs-<date>` in `.loom/60-validation-matrix.md`), run
 with `flexinfer-bench tool_call_conformance`. No architecture is certified yet.
 
+## Certificate-gated pyannote backend
+
+The `pyannote` backend (D5-a) runs `build/server-pyannote.py` inside the
+persistent runtime pod, from the venv the pyannote layer adds
+(`build/Dockerfile.runtime-gfx906-pyannote`). It has no image of its own, so
+its certificate binds the runtime image, and it gates the backend rather than a
+flag: the controller refuses a pyannote Model unless the GPUProfile for its
+architecture
+
+- lists `pyannote` in `spec.runtime.bundledBackends` (an empty list, which
+  means "all" for legacy profiles, does not count),
+- pins `spec.runtime.image` by digest (`runtime_pin_drift` keeps it equal to
+  the runtime DaemonSet's image), and
+- carries the complete triple for exactly that digest:
+
+```yaml
+metadata:
+  annotations:
+    flexinfer.ai/backend-certificate-pyannote-speaker-diarization: <runtime image@sha256:...>
+    flexinfer.ai/backend-certificate-pyannote-speaker-diarization-since: "<RFC3339>"
+    flexinfer.ai/backend-certificate-pyannote-speaker-diarization-evidence: <matrix row>
+```
+
+A refused Model is Phase `Failed` with `Schedulable` and `BackendCertificate`
+False, reason `BackendNotCertified`; `dedicatedDeployment` or a CPU vendor is
+`BackendUnsupported`. The kill-test is KT-DIAR
+(`gfx906-diarize-job-<date>` in `.loom/60-validation-matrix.md`). No
+architecture is certified yet.
+
 ## Qwen3.6-27B Fable Fusion GPTQ candidate
 
 DavidAU's `Qwen3.6-27B-Fable-Fusion-711-...-MTP-GGUF` has an exact BF16

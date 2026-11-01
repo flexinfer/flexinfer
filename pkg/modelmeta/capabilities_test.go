@@ -110,6 +110,11 @@ func TestResolveCapabilitiesEmbeddingAndASR(t *testing.T) {
 		strings.Join(asr.Modalities.Input, ",") != "audio" || strings.Join(asr.Modalities.Output, ",") != "text" {
 		t.Errorf("asr lane = %+v", asr)
 	}
+	diar := ResolveCapabilities(capModel("pyannote", "", nil))
+	if strings.Join(diar.ServePaths, ",") != "/v1/audio/diarizations" || diar.MaxModelLen != 0 ||
+		strings.Join(diar.Modalities.Input, ",") != "audio" || strings.Join(diar.Modalities.Output, ",") != "diarization" {
+		t.Errorf("diarization lane = %+v", diar)
+	}
 }
 
 // TestDiffusersLimitsMatchTheServer is the drift guard for the mirrored

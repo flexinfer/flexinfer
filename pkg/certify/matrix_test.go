@@ -275,6 +275,7 @@ func TestLaneModality(t *testing.T) {
 		{"snac backend", model("snac-decode-gfx1100", "snac", "HF://hubertsiuzdak/snac_24khz", nil), ModalityTTS},
 		{"orpheus on llama.cpp", model("orpheus-3b-radeonvii", "llamacpp", "HF://x/orpheus-3b-GGUF", nil), ModalityTTS},
 		{"whisper on vllm", model("whisper-large-v3-turbo", "vllm", "HF://openai/whisper-large-v3-turbo", nil), ModalityASR},
+		{"pyannote diarization", model("pyannote-diarization-radeonvii", "pyannote", "HF://pyannote/speaker-diarization-3.1", nil), ModalityASR},
 		{"stable audio", model("stable-audio-open-gfx1100", "diffusers", "HF://stabilityai/stable-audio-open-1.0", nil), ModalityAudio},
 		{"wan video", model("wan21-vace-1p3b-i2v-gfx1100", "diffusers", "HF://Wan-AI/Wan2.1-VACE-1.3B", nil), ModalityVideo},
 		{"sdxl image", model("sdxl-inpainting", "diffusers", "HF://x/sdxl-inpainting", nil), ModalityImage},
