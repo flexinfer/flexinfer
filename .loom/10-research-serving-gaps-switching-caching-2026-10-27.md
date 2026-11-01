@@ -73,6 +73,12 @@ Switch cost today, measured:
    if the DaemonSet were ever un-parked on today's pin). The owner direction of
    2026-10-24 (one stacked image per GPU class, swaps inside the runtime pod) is S6b–S6e,
    none started.
+   *Status 2026-11-01 (D1, `.loom/32-iteration-plan-d1-flex-card-window-2026-11-01.md`):
+   still true live. The XTX half is staged for the window (≥ 2026-11-06, after KT-FLEX):
+   the repin to the master v032 rebuild `7ae8e92f` (!1234) and the warm lane in-pod
+   (!1235). The four XTX creative lanes are staged (!1236–!1239) but blocked: the v032
+   persona has no bitsandbytes, torchsde, imageio or ftfy. The 5930k half stays parked
+   this round (O5).*
 2. **The 5930k runtime parking is not in git.** The live DaemonSet carries
    `flexinfer.ai/quantization-pause=false` in its nodeSelector; `values-k3s.yaml:758`
    only mentions it in a comment and !997 (open since 2026-08-24) is the stale attempt to
@@ -81,6 +87,10 @@ Switch cost today, measured:
 3. **S6a's image is unprotected.** `ef28b7b0` is in no prewarm list and no manifest, so
    the `pinned-*` guard (which tags only `deploy/` and `charts/` pins) does not cover it;
    Harbor retention (latest 30 pushed or pulled in 30 d) can delete it before S6b.
+   *Closed 2026-11-01:* the 5930k prewarm entry (!1174) got it `pinned-ef28b7b0d1cb` on
+   2026-10-28. !1224 also holds it on the XTX and adds a certified-runtime contract test.
+   The newer master rebuild `7ae8e92f` was unprotected in the same way and is now held
+   and certified too (!1232).
 4. **The two Qwen3.8 lanes run different engines.** Workhorse `b06b06fe` (CI, text plugin
    ≥ 0.9.0), XTX `cd108c9e` (off-CI, older plugin, MTP must not run on it). The overflow
    route therefore changes engine build mid-request-class. `b06b06fe` is not in the XTX
@@ -161,6 +171,21 @@ Switch cost today, measured:
 | R10 | **Idle lanes flap Idle→Pending→Idle ~twice a day.** `!cacheReady` writes Pending whenever a cache re-check Job is in flight; 11–16 transitions per Idle lane per week | `controllers/model_controller.go:437-441`; transitions metric | Noise in transitions, events and any consumer keyed on phase. |
 | R11 | **Event noise**: `ExperimentalGPUSupport` has no cooldown (2,615 events in 21 h per lane) while `VRAMPressure` has one | `controllers/model_gpu.go:139` | Events are the swap forensics tool; the noise buries them. |
 | R12 | `MaxConcurrentReconciles` is unset (single worker): one self-looping Model starves the rest | index 2026-10-23 follow-up | Latent; surfaced in the 10-23 hot loop. |
+
+*Status 2026-11-01 (D1):*
+
+- **R1, R4, C5:** shipped in the supervisor, but only in v032 runtime builds from master
+  `2f1f6134`/`04c7df40` on (`7ae8e92f` = 5ca58769). `ef28b7b0` (c444b5ff) has none of
+  them, which is why the XTX repin Draft targets `7ae8e92f`.
+- **R3:** guarded by `TestPlacementLayoutXTXRuntimeLanesLoadInPod` (!1235). An in-pod XTX
+  lane with `speculativeConfig` must carry `FLEXINFER_QWEN35_MTP_HEAD` in
+  `spec.config.env`. None of the five XTX lanes has a wrapper to move; Qwen-Image's
+  `command` is dropped because the runtime runs the same server.
+- **R5:** now concrete. Four XTX creative lanes need packages the v032 persona lacks, so
+  per-lane images still matter until one rebuild adds them.
+- **R7:** waits for KT-SWAP's substage breakdown (`flexinfer-bench swap`, !1227).
+- **R9:** the profiler measures the swap directly from the runtime API, independent of
+  the controller histograms.
 
 ### 5c. What the Deployment path still does better
 
