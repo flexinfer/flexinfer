@@ -232,6 +232,11 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 			return fmt.Errorf("validating refreshed llama.cpp feature certificates: %w", err)
 		}
 	}
+	// D4: render the certified structured-output backend only when the fresh
+	// spec still opts in and the GPUProfile certificate covers this image.
+	if r.structuredOutputDecisionFor(model, b, gpuVendor, gpuArch).Render {
+		spec.StructuredOutputsBackend = structuredOutputsBackendAuto
+	}
 	if profileSpec != nil {
 		if profileImage, ok := backend.ImageFromProfile(profileSpec, b.Name()); ok && image == profileImage {
 			log.V(1).Info("Using GPUProfile image override", "backend", b.Name(), "arch", gpuArch, "image", profileImage)

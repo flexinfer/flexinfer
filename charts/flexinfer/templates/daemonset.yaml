@@ -24,6 +24,11 @@ spec:
         - name: agent
           image: {{ include "flexinfer.imageRef" (merge (deepCopy .Values.agent.image) (dict "tag" (.Chart.AppVersion | toString))) | quote }}
           imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.agent.image }}
+          {{- with (dig "gpuPower" "nodes" (list) .Values.agent) }}
+          args:
+            - --gpu-power-nodes={{ join "," . }}
+            - --gpu-power-interval={{ dig "gpuPower" "interval" "1s" $.Values.agent }}
+          {{- end }}
           securityContext:
             privileged: true # Required for hardware access
             runAsUser: 0     # Must run as root for GPU access

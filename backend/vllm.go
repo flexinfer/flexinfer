@@ -302,6 +302,18 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--disable-log-stats")
 	}
 
+	// Certified structured outputs (D4). vLLM serves response_format and
+	// structured_outputs on every lane with backend auto by default; pinning
+	// the backend here binds the lane to the envelope its GPUProfile
+	// certificate proved, so a runtime upgrade cannot swap the backend under
+	// a certified lane. Set only by the controller (see ModelSpec).
+	if soBackend := strings.TrimSpace(spec.StructuredOutputsBackend); soBackend != "" {
+		raw, _ := json.Marshal(struct {
+			Backend string `json:"backend"`
+		}{Backend: soBackend})
+		args = append(args, "--structured-outputs-config", string(raw))
+	}
+
 	// Speculative decoding — passed as opaque JSON to --speculative-config.
 	// Supports draft_model, eagle, eagle3, mtp, ngram, suffix, mlp_speculator.
 	if specConfig := spec.ConfigString("speculativeConfig", ""); specConfig != "" {

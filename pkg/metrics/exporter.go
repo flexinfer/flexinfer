@@ -54,6 +54,29 @@ var (
 		[]string{"gpu", "node"},
 	)
 
+	// GPUPowerWatts is board power from the amdgpu hwmon sensor
+	// (power1_average, else power1_input), sampled by the node agent only on
+	// nodes listed in --gpu-power-nodes. gpu is the DRM card index, the same
+	// index flexinfer_gpu_healthy uses (not necessarily rocm-smi's).
+	GPUPowerWatts = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_power_watts",
+			Help: "GPU board power in watts from sysfs hwmon (power1_average or power1_input). Sampled only where the node agent enables power sampling.",
+		},
+		[]string{"gpu", "node"},
+	)
+
+	// GPUPowerSamplerActive is 1 while the node agent samples GPU power and 0
+	// after the sampler stopped itself (degraded GPU, device I/O error,
+	// repeated read errors). Absent on nodes where sampling is not enabled.
+	GPUPowerSamplerActive = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_power_sampler_active",
+			Help: "Whether the node agent's GPU power sampler is running (1) or stopped itself (0). Absent where sampling is not enabled.",
+		},
+		[]string{"node"},
+	)
+
 	// GPU VRAM metrics
 
 	// GPUVRAMFreeBytes tracks free VRAM per GPU.
@@ -658,6 +681,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ModelLoadSeconds)
 	ctrlmetrics.Registry.MustRegister(InferenceJobs, InferenceJobsGCDeletedTotal)
 	ctrlmetrics.Registry.MustRegister(GPUTemperature)
+	ctrlmetrics.Registry.MustRegister(GPUPowerWatts, GPUPowerSamplerActive)
 
 	// GPU VRAM metrics
 	ctrlmetrics.Registry.MustRegister(GPUVRAMFreeBytes)
