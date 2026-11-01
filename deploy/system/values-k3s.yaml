@@ -157,7 +157,17 @@ agent:
   enabled: true
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-agent
-    tag: "master"
+    # Pinned by digest like the controller and proxy. Without a digest the
+    # rendered image is :${FLEXINFER_AGENT_TAG}, the timestamp tag Flux image
+    # automation substitutes in platform/gitops k3s/flux/apps/flexinfer-system.yaml,
+    # so every master build rolled the agent on every GPU node. The digest wins
+    # over that tag (flexinfer.imageRef) and sets imagePullPolicy IfNotPresent.
+    # 2026-11-01: master eafe0204 (tags 20261101-174457, master), the build
+    # every agent pod ran when this was pinned; carries the D7 power sampler
+    # (!1225) and lane energy (!1230). Rollback: delete the digest line (the
+    # agent then follows image automation again).
+    digest: "sha256:3c8de471de1c04850b9d5a35bf23d21461ce4ab60fa47fcab5e7279c7f52c575"
+    tag: "20261101-174457"
   resources:
     limits:
       cpu: 1000m
