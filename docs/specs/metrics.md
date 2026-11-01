@@ -165,6 +165,15 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
   A high streaming share whose usage chunks are absent means the shape data is
   biased and the verdict must be read with caution. Streaming usage-chunk capture
   shipped in `internal/proxy/usage_log.go` (`usageSniffingBody`).
+- `flexinfer_proxy_schema_constrained_requests_total{model,constraint,code}` (counter) — forwarded
+  chat, completions and responses requests that constrain their output, by resolved model,
+  constraint kind (`response_format.json_schema`, `structured_outputs.json`, `text.format.json_schema`,
+  `tool_choice.required`, … see `docs/specs/proxy-api.md`, "Structured outputs and tool calls")
+  and upstream status class (`2xx`, `4xx`, `5xx`). The proxy forwards those fields untouched; this
+  is the tag. A lane's constrained share is
+  `sum(rate(flexinfer_proxy_schema_constrained_requests_total{model="M",code="2xx"}[1d])) / sum(rate(flexinfer_proxy_completions_total{model="M"}[1d]))`;
+  `code="4xx"` shows schemas the lane rejected. The `request usage` log line carries the same
+  `schema_constrained=true constraint=<kind>` fields.
 - `flexinfer_proxy_qos_decisions_total{class,lane,outcome}` (counter) — one per request by
   resolved QoS class (`interactive|background|batch`), lane (the Model it resolved to, the parent
   for a LoRA adapter) and outcome (`admitted`, `queued`, `rejected`, `canceled` on lanes that enforce classes,

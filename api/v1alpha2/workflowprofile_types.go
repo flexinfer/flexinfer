@@ -428,6 +428,9 @@ func CapabilitiesMatch(required, offered *ModelCapabilities) bool {
 	if required.ImageGeneration != nil && !capabilityBoolMatches(required.ImageGeneration, offeredBool(offered, "imageGeneration")) {
 		return false
 	}
+	if required.StructuredOutput != nil && !capabilityBoolMatches(required.StructuredOutput, offeredBool(offered, "structuredOutput")) {
+		return false
+	}
 	return true
 }
 
@@ -446,6 +449,8 @@ func offeredBool(caps *ModelCapabilities, name string) *bool {
 		return caps.Vision
 	case "imageGeneration":
 		return caps.ImageGeneration
+	case "structuredOutput":
+		return caps.StructuredOutput
 	default:
 		return nil
 	}

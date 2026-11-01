@@ -69,6 +69,7 @@ parked Model answers 404 `model_parked` with the error envelope.
 | `serve_paths` | `flexinfer.ai/serve-paths` (`serve_paths_declared: true`; the proxy rejects other paths), else the backend's default paths (diffusers by `pipelineMode`, whispercpp transcriptions, LLM backends chat and completions) |
 | `modalities` | from `serve_paths` (`text`, `image`, `video`, `audio`, `embedding`, `score`); an `image2video` lane also takes `image` |
 | `max_model_len` | the context window from `spec.config` (`maxModelLen`, `maxTotalSeqLength`, `contextWindowSize`, `contextSize`); omitted for media lanes |
+| `structured_output` | `true` when the lane's structured-output envelope is certified and rendered (Model condition `StructuredOutput=True`, see "Structured outputs and tool calls"); omitted otherwise |
 | `limits.image` / `.video` / `.audio` | diffusers lanes: the bounds `build/server-diffusers.py` enforces for the lane's `pipelineMode`, with the defaults its `spec.config` sets (`numInferenceSteps`, `videoSize`, `videoFrames`, `videoFps`) |
 
 The diffusers bounds are fixed per pipeline mode in the server, not per Model, so they are derived
@@ -293,6 +294,40 @@ waits at most N seconds in the cold-start queue, then gets a 503 whose code name
 with `eta_seconds` and `Retry-After`, instead of holding the connection to the cold-start timeout.
 The activation it started continues. The response carries `Preference-Applied: wait=N` when the
 preference shortened the wait. Without the header the queue behaves as before.
+
+## Structured outputs and tool calls
+
+The proxy forwards output constraints to the lane untouched on `/v1/chat/completions`,
+`/v1/completions` and `/v1/responses`: `response_format` (`json_schema`, `json_object`,
+`structural_tag`), the Responses `text.format`, vLLM's `structured_outputs`
+(`json | regex | choice | grammar | structural_tag`; the `guided_*` fields left vLLM in v0.12) and
+`tools` / `tool_choice`. vLLM 0.32 enforces them with its structured-output backend (`auto`:
+xgrammar or guidance) on every vllm lane; named and `required` `tool_choice` compile the tool
+schemas the same way.
+
+**Byte-exact forwarding.** The proxy edits at most three top-level fields: `model` (alias to the
+served name), `max_tokens` (the context-window clamp) and `priority` (QoS class on a priority
+lane). Each edit splices that one top-level value (`internal/proxy/body_fields.go`); every other
+byte reaches the lane as sent, on the first forward, the dial retry, a context-overflow or
+unavailable reroute, and a swap replay (which re-sends the original body). This matters because
+xgrammar emits object fields in the order a schema declares them; a body re-encoded through a Go
+map would have its schema keys sorted. A `model` property inside a schema or tool is never taken
+for the top-level field.
+
+**Tag.** A request carrying one of these constraints is logged on its `request usage` line with
+`schema_constrained=true` and `constraint=<kind>`, and counted in
+`flexinfer_proxy_schema_constrained_requests_total{model,constraint,code}`. Kinds, first match
+wins: `structured_outputs.<json|regex|choice|grammar|structural_tag>`,
+`response_format.<json_schema|json_object|structural_tag>`, `text.format.<json_schema|json_object>`,
+`tool_choice.required`, `tool_choice.function`. `response_format: text` and `tool_choice: auto`
+are unconstrained.
+
+**Certification.** Any vllm lane accepts these fields. A lane whose Model sets
+`spec.capabilities.structuredOutput` and whose GPUProfile carries the `vllm/structured-outputs`
+certificate for its image has passed KT-SO (100 % parse on schema-constrained tool-call turns,
+decode within 10 % of unguided, MTP position-0 acceptance ≥ 0.75, greedy parity unchanged); its
+descriptor says `structured_output: true`. `flexinfer-bench tool_call_conformance --url <lane>`
+runs that gate against any lane.
 
 ## Swap-safe replay
 
