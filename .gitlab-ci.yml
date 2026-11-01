@@ -315,6 +315,33 @@ vet:
   script:
     - go vet ./...
 
+# The public certification matrix (docs/certification-matrix.json, rendered by
+# `flexinfer certify render` from GPUProfiles, lane manifests, the validation
+# matrix and the runtime profiles) must match its inputs. Gating on merge
+# requests that touch an input; on master it only warns, so a branch that
+# predates this job and merged a stale copy does not block publish.
+certify_matrix:
+  stage: lint
+  <<: *go-cache
+  needs: []
+  script:
+    - go run ./cmd/flexinfer certify render --check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: &certify-matrix-changes
+        - deploy/gpuprofiles/**/*
+        - deploy/models/**/*
+        - deploy/system/values-k3s.yaml
+        - .loom/60-validation-matrix.md
+        - docs/certification-matrix.json
+        - pkg/certify/**/*
+        - cmd/flexinfer/**/*
+        - api/v1alpha2/**/*
+        - .gitlab-ci.yml
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *certify-matrix-changes
+      allow_failure: true
+
 # Pure-stdlib unit tests for the F3 read-path context-selection logic.
 # Gates the diversify_selection helper shared (by inline mirror) between the
 # kill-test harness and the codebase-answer service. No pip deps -> alpine.
