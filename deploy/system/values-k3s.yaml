@@ -175,6 +175,23 @@ agent:
   nodeSelector:
     kubernetes.io/arch: amd64
     flexinfer.ai/gpu-present: "true"
+  # D7 GPU power sampling: flexinfer_gpu_power_watts from sysfs hwmon
+  # power1_average at 1 Hz, and flexinfer_lane_energy_joules_total split
+  # equally among the Models Ready on the card (docs/specs/metrics.md). Read
+  # only, never rocm-smi; the sampler stops itself on a degraded sentinel
+  # verdict, a device I/O error or 5 failed reads in a row.
+  #
+  # cblevins-7900xtx stays OFF until the owner's PCIe/SMU soak verdict
+  # (2026-11-06 00:15Z): its hwmon power reads go through the SMU that
+  # wedged the card before. Do not add it here before that verdict.
+  #
+  # Pass rule (validation matrix row gpu-power-sampling-1hz-2026-11-01) and
+  # the off switch (empty this list): docs/agents/operations.md#gpu-power-sampling.
+  gpuPower:
+    nodes:
+      - cblevins-5930k
+      - cblevins-radeonvii
+    interval: 1s
 
 proxy:
   enabled: true
