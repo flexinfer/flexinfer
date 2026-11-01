@@ -27,6 +27,25 @@ Generated CRD:
 - `services/flexinfer/config/crd/ai.flexinfer_globalproxies.yaml`
 - `services/flexinfer/config/crd/ai.flexinfer_inferencejobs.yaml`
 
+### `Model`: structured-output opt-in
+
+`spec.capabilities.structuredOutput: true` asks the controller to render vLLM's
+`--structured-outputs-config {"backend":"auto"}` behind the GPUProfile
+certificate `vllm/structured-outputs` (`docs/agents/gpu-compatibility.md`). It
+renders only on a vllm Model with `spec.config.dedicatedDeployment: true` whose
+digest-pinned image matches the certificate. Otherwise nothing renders and the
+Model keeps serving. The outcome is condition `StructuredOutput`:
+
+| Status | Reason | Meaning |
+|---|---|---|
+| True | `StructuredOutputCertified` | flag rendered; message names the certified image, since and evidence |
+| False | `StructuredOutputNotCertified` | no GPUProfile, no or partial certificate, image not digest-pinned, or certificate bound to another image |
+| False | `StructuredOutputUnsupported` | backend is not vllm, or the lane loads into a runtime pod |
+
+The condition is absent when the field is unset or false. `structuredOutput` is
+also matched by WorkflowProfile `capabilities` and `requiredCapabilities`, as a
+declaration, like `toolCalling`.
+
 ### `InferenceJob`
 
 Long work (a render, a transcription, a long chat) handed to the proxy, which runs it against the
