@@ -211,8 +211,7 @@ func fakeParityHash(prompt string) string {
 func runTCCForTest(t *testing.T, args ...string) (int, tccReport, string) {
 	t.Helper()
 	var stdout, stderr bytes.Buffer
-	code, handled := runSubcommand(context.Background(), append([]string{"tool_call_conformance"}, args...), &stdout, &stderr)
-	require.True(t, handled)
+	code := runToolCallConformance(context.Background(), args, &stdout, &stderr)
 	var report tccReport
 	if code != 2 {
 		require.NoError(t, json.Unmarshal(stdout.Bytes(), &report), "stdout: %s\nstderr: %s", stdout.String(), stderr.String())
@@ -530,20 +529,11 @@ vllm:num_preemptions_total 1
 	require.Equal(t, 1.0, d.Preemptions)
 }
 
-func TestRunSubcommandDispatch(t *testing.T) {
+func TestToolCallConformanceIsRegistered(t *testing.T) {
+	_, ok := subcommands["tool_call_conformance"]
+	require.True(t, ok, "the gate registers itself as a flexinfer-bench subcommand")
+
 	var out, errOut bytes.Buffer
-	_, handled := runSubcommand(context.Background(), []string{"-model", "x"}, &out, &errOut)
-	require.False(t, handled, "flag invocations stay with the benchmark")
-	_, handled = runSubcommand(context.Background(), nil, &out, &errOut)
-	require.False(t, handled)
-
-	code, handled := runSubcommand(context.Background(), []string{"help"}, &out, &errOut)
-	require.True(t, handled)
-	require.Zero(t, code)
-	require.Contains(t, out.String(), "tool_call_conformance")
-
-	code, handled = runSubcommand(context.Background(), []string{"tool_call_conformance", "-h"}, &out, &errOut)
-	require.True(t, handled)
-	require.Zero(t, code)
+	require.Zero(t, runToolCallConformance(context.Background(), []string{"-h"}, &out, &errOut))
 	require.Contains(t, errOut.String(), "-metrics-url")
 }

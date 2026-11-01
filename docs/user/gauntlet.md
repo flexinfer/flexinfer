@@ -102,7 +102,7 @@ flexinfer-bench tool_call_conformance --url http://<lane-service>:8000 --model <
 ```
 
 `--url` may be the Model's Service or pod, or the proxy (`http://<proxy>/model/<name>`); through
-the proxy pass `--metrics-url` to the lane's own `/metrics`. `flexinfer-bench help` lists the gates.
+the proxy pass `--metrics-url` to the lane's own `/metrics`.
 
 What it runs, in order:
 

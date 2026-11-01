@@ -762,7 +762,7 @@ build_binaries:
     - go build -o bin/manager cmd/flexinfer-manager/main.go
     - GOOS=linux GOARCH=amd64 go build -o bin/agent cmd/flexinfer-agent/main.go
     - go build -o bin/scheduler cmd/flexinfer-sched/main.go
-    - go build -o bin/benchmarker cmd/flexinfer-bench/main.go
+    - go build -o bin/benchmarker ./cmd/flexinfer-bench/
     - go build -o bin/proxy ./cmd/flexinfer-proxy/
     - go build -o bin/flash-loader ./cmd/flexinfer-flash-loader/
   artifacts:

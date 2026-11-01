@@ -12,9 +12,11 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"sort"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/flexinfer/flexinfer/internal/agentloop"
@@ -29,10 +31,14 @@ import (
 // output on unconstrained prompts is unchanged. It prints a JSON report and a
 // ready-to-paste .loom/60-validation-matrix.md row, and exits 0 on PASS.
 
-func init() {
-	registerSubcommand("tool_call_conformance",
-		"KT-SO: schema-constrained tool-call turns via internal/agentloop; parse taxonomy, decode and pos-0 vs unguided, greedy parity",
-		runToolCallConformance)
+func init() { registerSubcommand("tool_call_conformance", runToolCallConformanceMain) }
+
+// runToolCallConformanceMain is the subcommand entry point: the gate on the
+// process's stdout and stderr, cancelled on SIGINT or SIGTERM.
+func runToolCallConformanceMain(args []string) int {
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return runToolCallConformance(ctx, args, os.Stdout, os.Stderr)
 }
 
 // Pass rule, §6.4 verbatim: 100 % parse success; decode within 10 % of

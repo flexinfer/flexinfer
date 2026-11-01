@@ -21,7 +21,9 @@ import (
 )
 
 func main() {
-	dispatchSubcommand(os.Args[1:])
+	if code, ok := dispatchSubcommand(os.Args[1:]); ok {
+		os.Exit(code)
+	}
 	model := flag.String("model", "", "The model to benchmark (HuggingFace model name).")
 	modelName := flag.String("model-name", "", "The ModelDeployment name for proxy routing.")
 	configMapName := flag.String("configmap", "", "The name of the ConfigMap to store results in.")
