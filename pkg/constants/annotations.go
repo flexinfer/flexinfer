@@ -43,6 +43,17 @@ const (
 	// the configured label-group routing mode (round-robin, least-loaded, or
 	// hash pinning) applies unchanged.
 	AnnotationRoutePriority = "flexinfer.ai/route-priority"
+
+	// AnnotationFailoverFor names a Model this shared-GPU member stands in for.
+	// While that Model is down (Failed, or pinned to a node whose GPU health
+	// label reads degraded), the member's own group election ranks it at the
+	// higher of the two gpu.priority values and counts the down Model's demand
+	// as its own, so a warm copy of an always-on lane on another card can
+	// preempt a lower-priority tenant there. The member must run once elected
+	// (serverless.minReplicas >= 1, or not serverless). Absent, empty,
+	// self-referencing, on a scale-to-zero member, or naming a Model that is
+	// up: no effect.
+	AnnotationFailoverFor = "flexinfer.ai/failover-for"
 )
 
 // Node annotations written by the flexinfer-agent for scheduler scoring.

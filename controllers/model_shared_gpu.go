@@ -49,7 +49,39 @@ const (
 	sharedSwapCooldown = 5 * time.Minute
 )
 
-func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *aiv1alpha2.Model {
+// failoverStandIns maps a group member to the Model it stands in for
+// (flexinfer.ai/failover-for) while that Model is down. The election ranks a
+// stand-in at the higher of its own and the down Model's gpu.priority, and
+// counts the down Model's demand as its own: the proxy keeps stamping
+// lastActiveTime on the Model its callers name, so traffic for a dead
+// always-on lane is what lets its warm copy on another card preempt a
+// lower-priority tenant there. The nil map is the plain election.
+type failoverStandIns map[string]*aiv1alpha2.Model
+
+// priority is m's election priority.
+func (f failoverStandIns) priority(m *aiv1alpha2.Model) int32 {
+	p := m.Spec.GetPriority()
+	if down := f[m.Name]; down != nil && down.Spec.GetPriority() > p {
+		return down.Spec.GetPriority()
+	}
+	return p
+}
+
+// demand is m's election demand time: the later of its own and, while m
+// stands in, the down Model's.
+func (f failoverStandIns) demand(m *aiv1alpha2.Model, now time.Time) *metav1.Time {
+	own := demandTime(m, now)
+	down := f[m.Name]
+	if down == nil {
+		return own
+	}
+	if inherited := demandTime(down, now); inherited != nil && (own == nil || inherited.After(own.Time)) {
+		return inherited
+	}
+	return own
+}
+
+func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time, failover failoverStandIns) *aiv1alpha2.Model {
 	if len(groupModels) == 0 {
 		return nil
 	}
@@ -61,15 +93,15 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		if b == nil {
 			return a
 		}
-		pa := a.Spec.GetPriority()
-		pb := b.Spec.GetPriority()
+		pa := failover.priority(a)
+		pb := failover.priority(b)
 		if pa != pb {
 			if pa > pb {
 				return a
 			}
 			return b
 		}
-		da, db := demandTime(a, now), demandTime(b, now)
+		da, db := failover.demand(a, now), failover.demand(b, now)
 		if da != nil && db != nil {
 			if !da.Equal(db) {
 				if da.After(db.Time) {
@@ -162,7 +194,7 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 			readyLeader = better(readyLeader, m)
 			continue
 		}
-		md := demandTime(m, now)
+		md := failover.demand(m, now)
 		if md == nil {
 			continue
 		}
@@ -185,11 +217,11 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	// set its LastActiveTime, or an operator activated it) and the current ready
 	// leader is idle, swap to the demanded model.
 	if demandedLeader != nil && readyLeader != nil {
-		readyDemand := demandTime(readyLeader, now)
+		readyDemand := failover.demand(readyLeader, now)
 		readyIdle := readyDemand == nil ||
 			now.Sub(readyDemand.Time) > sharedActivityWindow(readyLeader, sharedDemandWindow)
-		higherPriority := demandedLeader.Spec.GetPriority() > readyLeader.Spec.GetPriority()
-		if higherPriority || (readyIdle && demandedLeader.Spec.GetPriority() >= readyLeader.Spec.GetPriority()) {
+		demandedPriority, readyPriority := failover.priority(demandedLeader), failover.priority(readyLeader)
+		if demandedPriority > readyPriority || (readyIdle && demandedPriority >= readyPriority) {
 			return demandedLeader
 		}
 	}
@@ -207,7 +239,7 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 	// 350) after a burst of probes left whisper Ready. The reclaim is bounded by
 	// the anti-thrashing cooldown checked above, so it cannot flap the slot.
 	if warmPrimaryLeader != nil && readyLeader != nil && !isWarmPrimaryModel(readyLeader) {
-		readyDemand := demandTime(readyLeader, now)
+		readyDemand := failover.demand(readyLeader, now)
 		readyIdle := readyDemand == nil ||
 			now.Sub(readyDemand.Time) > sharedActivityWindow(readyLeader, sharedDemandWindow)
 		if readyIdle {
@@ -219,7 +251,7 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time) *ai
 		return readyLeader
 	}
 	if recentLeader != nil && warmPrimaryLeader != nil {
-		if recentLeader.Spec.GetPriority() >= warmPrimaryLeader.Spec.GetPriority() {
+		if failover.priority(recentLeader) >= failover.priority(warmPrimaryLeader) {
 			return recentLeader
 		}
 		return warmPrimaryLeader
@@ -289,7 +321,7 @@ func (q hwQueueBound) sum(models []*aiv1alpha2.Model) int32 {
 // several concurrent Active slots in multi-model mode: it must be runnable and
 // either pinned warm, currently Ready, or under recent demand. (The primary
 // leader is chosen separately by chooseSharedGroupLeader and always included.)
-func sharedModelWantsToRun(m *aiv1alpha2.Model, now time.Time) bool {
+func sharedModelWantsToRun(m *aiv1alpha2.Model, now time.Time, failover failoverStandIns) bool {
 	if !sharedModelCanTakeDemand(m) {
 		return false
 	}
@@ -299,7 +331,7 @@ func sharedModelWantsToRun(m *aiv1alpha2.Model, now time.Time) bool {
 	if m.Status.Phase == aiv1alpha2.ModelPhaseReady {
 		return true
 	}
-	if md := demandTime(m, now); md != nil && now.Sub(md.Time) < sharedActivityWindow(m, sharedDemandWindow) {
+	if md := failover.demand(m, now); md != nil && now.Sub(md.Time) < sharedActivityWindow(m, sharedDemandWindow) {
 		return true
 	}
 	return false
@@ -338,7 +370,7 @@ func sharedActivityWindow(m *aiv1alpha2.Model, fallback time.Duration) time.Dura
 // released or expires. The lease is the highest-priority transient member of
 // the group -- it beats even forcePromotion (the spec's "park-and-hold").
 func chooseSharedGroupLeaders(groupModels []*aiv1alpha2.Model, now time.Time, multiModel bool, budgetMB int64, leased bool) []*aiv1alpha2.Model {
-	return chooseSharedGroupLeadersBounded(groupModels, now, multiModel, budgetMB, hwQueueBound{}, leased)
+	return chooseSharedGroupLeadersBounded(groupModels, now, multiModel, budgetMB, hwQueueBound{}, nil, leased)
 }
 
 // chooseSharedGroupLeadersBounded is chooseSharedGroupLeaders with a second
@@ -346,11 +378,13 @@ func chooseSharedGroupLeaders(groupModels []*aiv1alpha2.Model, now time.Time, mu
 // set only if it also keeps the summed hardware compute-queue estimate within
 // queues.limit (GPUProfile maxHWQueues - reservedHWQueues). The primary is
 // always included, as with the VRAM bound. A disabled bound changes nothing.
-func chooseSharedGroupLeadersBounded(groupModels []*aiv1alpha2.Model, now time.Time, multiModel bool, budgetMB int64, queues hwQueueBound, leased bool) []*aiv1alpha2.Model {
+// failover ranks stand-ins for down Models (see failoverStandIns) in both the
+// leader choice and the admission order; it never relaxes either bound.
+func chooseSharedGroupLeadersBounded(groupModels []*aiv1alpha2.Model, now time.Time, multiModel bool, budgetMB int64, queues hwQueueBound, failover failoverStandIns, leased bool) []*aiv1alpha2.Model {
 	if leased {
 		return nil
 	}
-	primary := chooseSharedGroupLeader(groupModels, now)
+	primary := chooseSharedGroupLeader(groupModels, now, failover)
 	if primary == nil {
 		return nil
 	}
@@ -368,12 +402,12 @@ func chooseSharedGroupLeadersBounded(groupModels []*aiv1alpha2.Model, now time.T
 		if m.Name == primary.Name {
 			continue
 		}
-		if sharedModelWantsToRun(m, now) {
+		if sharedModelWantsToRun(m, now, failover) {
 			candidates = append(candidates, m)
 		}
 	}
 	sort.SliceStable(candidates, func(i, j int) bool {
-		pi, pj := candidates[i].Spec.GetPriority(), candidates[j].Spec.GetPriority()
+		pi, pj := failover.priority(candidates[i]), failover.priority(candidates[j])
 		if pi != pj {
 			return pi > pj
 		}
@@ -407,7 +441,8 @@ func chooseSharedGroupLeadersBounded(groupModels []*aiv1alpha2.Model, now time.T
 //     lease.Priority). A single member at or above the threshold keeps the card
 //     and the leasing workload waits (its Job stays Pending), so a low-priority
 //     training run can never evict a higher- or equal-priority serving lane.
-func leaseFreesCard(lease *activeLease, groupModels []*aiv1alpha2.Model) bool {
+//     A failover stand-in counts at its election priority.
+func leaseFreesCard(lease *activeLease, groupModels []*aiv1alpha2.Model, failover failoverStandIns) bool {
 	if lease == nil {
 		return false
 	}
@@ -415,7 +450,7 @@ func leaseFreesCard(lease *activeLease, groupModels []*aiv1alpha2.Model) bool {
 		return true
 	}
 	for _, m := range groupModels {
-		if m.Spec.GetPriority() >= *lease.Priority {
+		if failover.priority(m) >= *lease.Priority {
 			return false
 		}
 	}
@@ -449,14 +484,18 @@ func isWarmPinnedSharedModel(model *aiv1alpha2.Model) bool {
 // goes through staticallyParkedInGroup, which adds the multi-model exemption:
 // under multi-model election, "loses to the leader on priority" does not mean
 // "can never serve".
-func staticallyParkedBehindPrimary(member, leader *aiv1alpha2.Model) bool {
+//
+// Priorities are election priorities: a failover stand-in parks the members it
+// outranks while its down Model's priority lifts it, and is itself parked only
+// by a leader that outranks that lifted priority.
+func staticallyParkedBehindPrimary(member, leader *aiv1alpha2.Model, failover failoverStandIns) bool {
 	if member == nil || leader == nil || member.Name == leader.Name {
 		return false
 	}
 	if !isWarmPinnedSharedModel(leader) && !isWarmPrimaryModel(leader) {
 		return false
 	}
-	return leader.Spec.GetPriority() > member.Spec.GetPriority()
+	return failover.priority(leader) > failover.priority(member)
 }
 
 // staticallyParkedInGroup is the group-aware stamping predicate for the
@@ -475,14 +514,15 @@ func staticallyParkedBehindPrimary(member, leader *aiv1alpha2.Model) bool {
 // demand cannot buy it a slot while the current Active set holds the budget,
 // and the stamp self-heals on the reconcile after the set shrinks.
 func staticallyParkedInGroup(member, leader *aiv1alpha2.Model, activeModels []*aiv1alpha2.Model, multiModel bool, budgetMB int64) bool {
-	return staticallyParkedInGroupBounded(member, leader, activeModels, multiModel, budgetMB, hwQueueBound{})
+	return staticallyParkedInGroupBounded(member, leader, activeModels, multiModel, budgetMB, hwQueueBound{}, nil)
 }
 
 // staticallyParkedInGroupBounded adds the hardware-queue bound: a multi-model
 // member whose queue estimate does not fit beside the Active set stays stamped
-// for the same reason as one whose VRAM does not fit.
-func staticallyParkedInGroupBounded(member, leader *aiv1alpha2.Model, activeModels []*aiv1alpha2.Model, multiModel bool, budgetMB int64, queues hwQueueBound) bool {
-	if !staticallyParkedBehindPrimary(member, leader) {
+// for the same reason as one whose VRAM does not fit. failover is the
+// election's stand-in ranking.
+func staticallyParkedInGroupBounded(member, leader *aiv1alpha2.Model, activeModels []*aiv1alpha2.Model, multiModel bool, budgetMB int64, queues hwQueueBound, failover failoverStandIns) bool {
+	if !staticallyParkedBehindPrimary(member, leader, failover) {
 		return false
 	}
 	if !multiModel {
@@ -656,6 +696,63 @@ func (r *ModelReconciler) sharedGroupHWQueueBound(model *aiv1alpha2.Model) (hwQu
 	}, arch
 }
 
+// failoverStandInsFor returns the members of groupModels whose
+// flexinfer.ai/failover-for target is down, keyed by member name. Targets are
+// read from models, the namespace list the election already holds, so they
+// may sit in another group or be exclusive. A missing or self-referencing
+// target, or one that is up, leaves the member on its own rank.
+//
+// Only a member that runs once elected can stand in: warm-pinned
+// (minReplicas >= 1) or not serverless. A scale-to-zero member sizes its
+// replicas from its own lastActiveTime, so electing it on inherited demand
+// would hold the card for a lane that never starts.
+func (r *ModelReconciler) failoverStandInsFor(ctx context.Context, groupModels []*aiv1alpha2.Model, models []aiv1alpha2.Model) failoverStandIns {
+	var standIns failoverStandIns
+	for _, m := range groupModels {
+		name := strings.TrimSpace(m.Annotations[constants.AnnotationFailoverFor])
+		if name == "" || name == m.Name {
+			continue
+		}
+		if m.Spec.IsServerless() && !isWarmPinnedSharedModel(m) {
+			continue
+		}
+		for i := range models {
+			target := &models[i]
+			if target.Name != name {
+				continue
+			}
+			if r.failoverTargetDown(ctx, target) {
+				if standIns == nil {
+					standIns = failoverStandIns{}
+				}
+				standIns[m.Name] = target
+			}
+			break
+		}
+	}
+	return standIns
+}
+
+// failoverTargetDown reports whether a failover-for target cannot serve: it is
+// Failed (GPUDegraded or NoMatchingNodes park, failed load, stalled engine),
+// or the node its hostname selector pins carries the GPU health sentinel's
+// degraded label. The target turns Failed on its own next reconcile; reading
+// the label lets a stand-in reconciled first by the same node event act on it.
+func (r *ModelReconciler) failoverTargetDown(ctx context.Context, target *aiv1alpha2.Model) bool {
+	if target.Status.Phase == aiv1alpha2.ModelPhaseFailed {
+		return true
+	}
+	host := target.Spec.NodeSelector[corev1.LabelHostname]
+	if host == "" {
+		return false
+	}
+	node := &corev1.Node{}
+	if err := r.Get(ctx, client.ObjectKey{Name: host}, node); err != nil {
+		return false
+	}
+	return nodeGPUDegraded(node)
+}
+
 func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2.Model) (ctrl.Result, error) {
 	log := log.FromContext(ctx)
 
@@ -683,6 +780,10 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 
 	now := time.Now()
 
+	// Members that stand in for a down Model elsewhere (flexinfer.ai/failover-for)
+	// rank as that Model; its status comes from the namespace list above.
+	failover := r.failoverStandInsFor(ctx, groupModels, modelList.Items)
+
 	// GPU lease: a training/quant workload may hold a scheduler-honored hold on
 	// this group's card. While leased, the election yields no leader so every
 	// serving member parks (and stays parked) until the lease releases/expires,
@@ -699,7 +800,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	// leasing workload waits. PreemptedBy attribution below still reads
 	// leaseHolder directly, so a not-honored lease correctly falls back to
 	// normal leader-based preemption.
-	leased := leaseFreesCard(leaseHolder, groupModels)
+	leased := leaseFreesCard(leaseHolder, groupModels, failover)
 
 	// Gaming overlay: an active GamingSession on the group's pinned node parks
 	// the group exactly like an unconditional GPU lease — no leader elected,
@@ -720,7 +821,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 	// Hardware compute queues bound the multi-model set beside VRAM where the
 	// GPUProfile sets maxHWQueues (gfx906: 24 HWS queues).
 	queues, queueArch := r.sharedGroupHWQueueBound(model)
-	activeModels := chooseSharedGroupLeadersBounded(groupModels, now, multiModel, budgetMB, queues, leased)
+	activeModels := chooseSharedGroupLeadersBounded(groupModels, now, multiModel, budgetMB, queues, failover, leased)
 	if queues.enabled() {
 		metrics.SharedGroupHWQueues.WithLabelValues(groupName, model.Namespace, queueArch, "estimated").Set(float64(queues.sum(activeModels)))
 		metrics.SharedGroupHWQueues.WithLabelValues(groupName, model.Namespace, queueArch, "budget").Set(float64(queues.limit))
@@ -771,7 +872,12 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		model.Status.SharedGroup.PreemptedBy = ""
 		// Keep PreemptedAt until the model becomes Ready again so swap latency can be observed.
 		if origShared == nil || origShared.State != "Active" {
-			log.Info("Model is active in shared group", "group", groupName)
+			if down := failover[model.Name]; down != nil {
+				log.Info("Model is active in shared group", "group", groupName,
+					"failoverFor", down.Name, "electionPriority", failover.priority(model))
+			} else {
+				log.Info("Model is active in shared group", "group", groupName)
+			}
 		}
 		// Emit shared-group state metric
 		metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Active").Set(1)
@@ -787,7 +893,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 		// a member that still fits is admitted by demand, so its cold-start must
 		// queue normally. Lease parks take precedence and keep their own prefix.
 		effectivePreemptedBy := preemptedBy
-		if !leased && primary != nil && staticallyParkedInGroupBounded(model, primary, activeModels, multiModel, budgetMB, queues) {
+		if !leased && primary != nil && staticallyParkedInGroupBounded(model, primary, activeModels, multiModel, budgetMB, queues, failover) {
 			effectivePreemptedBy = aiv1alpha2.PreemptedByPrimaryPrefix + primary.Name
 		}
 		model.Status.SharedGroup.State = "Queued"
@@ -809,7 +915,7 @@ func (r *ModelReconciler) handleSharedGPU(ctx context.Context, model *aiv1alpha2
 				r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted", preemptMsg)
 			} else {
 				r.Recorder.Event(model, corev1.EventTypeNormal, "Preempted",
-					fmt.Sprintf("Preempted by %s with priority %d", primary.Name, primary.Spec.GetPriority()))
+					fmt.Sprintf("Preempted by %s with priority %d", primary.Name, failover.priority(primary)))
 			}
 			metrics.SharedGroupPreemptionsTotal.WithLabelValues(groupName, model.Namespace, model.Name, effectivePreemptedBy).Inc()
 			metrics.SharedGroupState.WithLabelValues(groupName, model.Name, model.Namespace, "Preempted").Set(1)

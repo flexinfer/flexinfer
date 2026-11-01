@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 )
 
 // OpenAI error types
@@ -46,12 +47,78 @@ const (
 	CodeValidationError      = "validation_error"
 )
 
+// Codes of the flexinfer state envelope (docs/specs/proxy-api.md, "Error
+// envelope"). Every error the proxy itself originates carries one of these
+// plus the FlexInferDetails block, so a caller decides from code and
+// retry_after_seconds instead of matching message text. CodeQueueFull above is
+// the queue_full member of the set.
+const (
+	// CodeModelColdStarting: the lane is not Ready and nothing blocks it from
+	// starting (scaled to zero, Pending or Loading). Retrying works.
+	CodeModelColdStarting = "model_cold_starting"
+	// CodeModelParked: the lane is parked, behind a warm primary it can never
+	// outrank (503) or de-advertised with spec.litellm.enabled=false (404).
+	CodeModelParked = "model_parked"
+	// CodeModelPreempted: the lane lost its shared GPU to a peer and waits for
+	// the election to give it back.
+	CodeModelPreempted = "model_preempted"
+	// CodeModelFailed: the lane is in Phase Failed; retrying cannot help until
+	// the operator or the controller recovers it.
+	CodeModelFailed = "model_failed"
+	// CodeLaneUnresponsive: the lane breaker is open after silent requests.
+	CodeLaneUnresponsive = "lane_unresponsive"
+	// CodeContextOverflow: the prompt is over the lane's context and its
+	// overflow lane (flexinfer.ai/context-overflow-to) cannot take it now.
+	CodeContextOverflow = "context_overflow"
+	// CodeAdmissionRejected: the proxy's admission filter refused the request
+	// before forwarding it (flexinfer.ai/admission, 413).
+	CodeAdmissionRejected = "admission_rejected"
+	// CodeStalledLoad: the lane's weight load stopped making progress.
+	CodeStalledLoad = "stalled_load"
+)
+
+// DefaultRetryAfterSeconds is the Retry-After a 503 carries when its writer
+// names none. Every 503 has one, so a client never has to guess a backoff.
+const DefaultRetryAfterSeconds = 5
+
 // OpenAIError represents an error in OpenAI API format.
+//
+// FlexInfer is the flexinfer extension carried by errors the proxy originates
+// for a lane: what state the lane is in, how long until it can serve and when
+// to retry. It is omitempty so errors that are not about a lane keep the plain
+// OpenAI shape.
 type OpenAIError struct {
-	Message string  `json:"message"`
-	Type    string  `json:"type"`
-	Param   *string `json:"param,omitempty"`
-	Code    string  `json:"code"`
+	Message   string            `json:"message"`
+	Type      string            `json:"type"`
+	Param     *string           `json:"param,omitempty"`
+	Code      string            `json:"code"`
+	FlexInfer *FlexInferDetails `json:"flexinfer,omitempty"`
+}
+
+// FlexInferDetails is the lane state attached to a proxy-originated error. All
+// six keys are always present; a value the proxy does not know is null rather
+// than absent, so clients can rely on the shape.
+type FlexInferDetails struct {
+	// Phase is the Model's status.phase (Idle, Pending, Loading, Ready,
+	// Preempted, Failed) when the error was written.
+	Phase *string `json:"phase"`
+	// LoadingSubstage is status.loadingSubstage (ImagePulling, Initializing,
+	// LoadingWeights, Compiling, HealthCheckPending, Preempted).
+	LoadingSubstage *string `json:"loading_substage"`
+	// ETASeconds estimates how long until the lane is Ready: the lane's
+	// cold-start p50 minus the time its current load has run. Null when the
+	// proxy has no load history for the lane or readiness does not depend on
+	// time (Failed, parked, preempted).
+	ETASeconds *int `json:"eta_seconds"`
+	// RetryAfterSeconds equals the Retry-After header when one is sent.
+	RetryAfterSeconds *int `json:"retry_after_seconds"`
+	// RerouteTo names an equivalent lane the caller may use instead
+	// (flexinfer.ai/unavailable-reroute-to, or the context-overflow lane).
+	RerouteTo *string `json:"reroute_to"`
+	// QueuePosition is the caller's 1-based place in the lane's QoS queue on
+	// a queue_full refusal from a lane that enforces QoS classes; null
+	// otherwise.
+	QueuePosition *int `json:"queue_position"`
 }
 
 // OpenAIErrorResponse is the top-level error response structure.
@@ -134,30 +201,66 @@ func WriteErrorWithParam(w http.ResponseWriter, statusCode int, message, errorTy
 	writeJSONError(w, statusCode, resp)
 }
 
+// WriteErrorWithDetails writes an OpenAI-format error carrying the flexinfer
+// lane-state block. param is omitted when empty. On a 503 the Retry-After
+// header and details.RetryAfterSeconds are kept equal (see writeJSONError).
+func WriteErrorWithDetails(w http.ResponseWriter, statusCode int, message, errorType, code, param string, details *FlexInferDetails) {
+	resp := NewError(message, errorType, code)
+	if param != "" {
+		resp.Error.Param = &param
+	}
+	resp.Error.FlexInfer = details
+	writeJSONError(w, statusCode, resp)
+}
+
 // WriteAdmissionError writes a 413 Payload Too Large response with the
 // OpenAI-format error body AND the flexinfer-specific admission extension
-// populated. The status code, error type, and error code are fixed because
-// this helper exists solely for the context-bounded admission filter.
-func WriteAdmissionError(w http.ResponseWriter, message, code string, details AdmissionDetails) {
+// populated. The status code and error type are fixed because this helper
+// exists solely for the context-bounded admission filter; flexinfer is the
+// lane-state block, nil to omit it.
+func WriteAdmissionError(w http.ResponseWriter, message, code string, details AdmissionDetails, flexinfer *FlexInferDetails) {
 	resp := &OpenAIErrorResponse{
 		Error: OpenAIError{
-			Message: message,
-			Type:    ErrorTypeInvalidRequest,
-			Code:    code,
+			Message:   message,
+			Type:      ErrorTypeInvalidRequest,
+			Code:      code,
+			FlexInfer: flexinfer,
 		},
 		Admission: &details,
 	}
 	writeJSONError(w, http.StatusRequestEntityTooLarge, resp)
 }
 
-// writeJSONError marshals and writes the error response.
+// writeJSONError marshals and writes the error response. Every 503 leaves with
+// a Retry-After header: the one the writer set, else the details block's
+// retry_after_seconds, else DefaultRetryAfterSeconds; the block then mirrors
+// the header.
 func writeJSONError(w http.ResponseWriter, statusCode int, resp *OpenAIErrorResponse) {
+	if statusCode == http.StatusServiceUnavailable {
+		ensureRetryAfter(w, resp)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
 	// Best-effort: if we can't write the error response, the client likely disconnected.
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
 		// Nothing else to do here; headers are already written.
 		return
+	}
+}
+
+func ensureRetryAfter(w http.ResponseWriter, resp *OpenAIErrorResponse) {
+	details := resp.Error.FlexInfer
+	secs := 0
+	if v, err := strconv.Atoi(w.Header().Get("Retry-After")); err == nil && v > 0 {
+		secs = v
+	} else if details != nil && details.RetryAfterSeconds != nil && *details.RetryAfterSeconds > 0 {
+		secs = *details.RetryAfterSeconds
+	} else {
+		secs = DefaultRetryAfterSeconds
+	}
+	w.Header().Set("Retry-After", strconv.Itoa(secs))
+	if details != nil {
+		details.RetryAfterSeconds = &secs
 	}
 }
 
@@ -283,7 +386,7 @@ func WriteStalledLoad(w http.ResponseWriter, message string, retryAfterSeconds i
 	if retryAfterSeconds > 0 {
 		w.Header().Set("Retry-After", fmt.Sprintf("%d", retryAfterSeconds))
 	}
-	classActivationFailed.write(w, message)
+	WriteError(w, http.StatusServiceUnavailable, message, ErrorTypeServiceUnavailable, CodeStalledLoad)
 }
 
 // WriteUnauthorized writes a 401 Unauthorized error.

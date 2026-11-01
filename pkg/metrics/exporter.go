@@ -290,6 +290,26 @@ var (
 		[]string{"model", "namespace", "backend", "group", "serving_path"},
 	)
 
+	// InferenceJobs counts InferenceJobs by phase; the proxy exports the
+	// submission, run and webhook metrics (flexinfer_jobs_* in internal/proxy).
+	InferenceJobs = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_jobs",
+			Help: "InferenceJobs by namespace and phase.",
+		},
+		[]string{"namespace", "phase"},
+	)
+
+	// InferenceJobsGCDeletedTotal counts finished InferenceJobs the manager
+	// deleted after their ttlAfterFinished.
+	InferenceJobsGCDeletedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_jobs_gc_deleted_total",
+			Help: "Finished InferenceJobs deleted after ttlAfterFinished, by namespace and phase.",
+		},
+		[]string{"namespace", "phase"},
+	)
+
 	// ClusterHealth reports remote cluster readiness (1 ready, 0 not ready).
 	ClusterHealth = prometheus.NewGaugeVec(
 		prometheus.GaugeOpts{
@@ -636,6 +656,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ModelKVPoolRecheckTotal, ModelKVCacheTokens, ModelEngineStalled, ModelEngineStallRestartsTotal)
 	ctrlmetrics.Registry.MustRegister(TokensPerSecond)
 	ctrlmetrics.Registry.MustRegister(ModelLoadSeconds)
+	ctrlmetrics.Registry.MustRegister(InferenceJobs, InferenceJobsGCDeletedTotal)
 	ctrlmetrics.Registry.MustRegister(GPUTemperature)
 
 	// GPU VRAM metrics

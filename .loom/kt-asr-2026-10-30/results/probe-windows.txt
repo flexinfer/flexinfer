@@ -1,0 +1,17 @@
+Embedding probe at the lanes' own Services, 1 req/s per lane, fixed 24-word input.
+gte baseline (240 s)         n=224 p50=  45.3 p95=  64.1 max= 102.4 ms
+gte   baseline   0- 60 s      n= 56 p50=  47.1 p95=  70.8 max= 102.4 ms
+gte   baseline  60-120 s      n= 56 p50=  45.1 p95=  68.4 max=  86.8 ms
+gte   baseline 120-180 s      n= 56 p50=  45.5 p95=  60.6 max=  65.6 ms
+gte   baseline 180-240 s      n= 56 p50=  44.2 p95=  61.2 max=  81.1 ms
+gte during meeting10        n= 17 p50=  46.0 p95= 103.4 max= 111.7 ms
+gte during meeting60        n= 80 p50=  57.3 p95=  88.5 max=  96.0 ms
+gte errors 0
+bge baseline (240 s)         n=224 p50=  22.1 p95=  43.3 max=  66.8 ms
+bge   baseline   0- 60 s      n= 56 p50=  23.3 p95=  45.5 max=  66.8 ms
+bge   baseline  60-120 s      n= 56 p50=  25.1 p95=  46.7 max=  66.8 ms
+bge   baseline 120-180 s      n= 56 p50=  21.8 p95=  41.3 max=  52.1 ms
+bge   baseline 180-240 s      n= 56 p50=  20.5 p95=  28.6 max=  37.5 ms
+bge during meeting10        n= 17 p50=  24.6 p95=  47.3 max=  53.6 ms
+bge during meeting60        n= 80 p50=  29.3 p95=  49.0 max=  61.0 ms
+bge errors 0

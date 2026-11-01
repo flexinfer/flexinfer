@@ -225,6 +225,7 @@ type Manager struct {
 	modelBasePath string
 
 	// requestDrain gives each HTTP model a request-counting ingress on Port.
+	// Backends listed by ingressRequired get one regardless.
 	requestDrain bool
 
 	// gaugedBackends remembers every backend label LoadedModels was set for,
@@ -607,7 +608,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 	// kernel-selected port; only ingressPort is exposed to callers.
 	var ingress *modelIngress
 	var privatePortReservation net.Listener
-	if m.requestDrain && supportsRequestIngress(b.Name()) {
+	if (m.requestDrain || ingressRequired(b.Name())) && supportsRequestIngress(b.Name()) {
 		m.mu.RLock()
 		used := m.usedPortsLocked()
 		m.mu.RUnlock()
@@ -622,6 +623,7 @@ func (m *Manager) Load(ctx context.Context, name string, req LoadRequest) error 
 		if err != nil {
 			return err
 		}
+		ingress.proxy.ModifyResponse = ingressResponseAdapter(b.Name())
 		backendPort = privatePort
 		// exec.Cmd cannot inherit a listener for arbitrary backends. Keep the
 		// selected private port in this model's allocation set until cleanup.

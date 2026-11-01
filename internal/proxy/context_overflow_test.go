@@ -199,7 +199,8 @@ func TestServeProxyReturnsTheOriginal400WhenTheTargetIsNotReady(t *testing.T) {
 	rec := f.serve(t)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Equal(t, vllmInputContextError, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"context_overflow"`, "typed, naming the overflow lane")
+	assert.Contains(t, rec.Body.String(), "longer than the maximum model length of 32768")
 	assert.Empty(t, rec.Header().Get(headerContextOverflow))
 	assert.EqualValues(t, 0, f.bigHits.Load(), "an idle target is never cold-started")
 	assert.Equal(t, before+1, testutil.ToFloat64(contextOverflowTotal.WithLabelValues("small", "big", "target_unavailable")))
@@ -278,7 +279,9 @@ func TestServeProxyKeepsTheOriginal400WhenTheTargetBreakerIsOpen(t *testing.T) {
 	rec := f.serve(t)
 
 	assert.Equal(t, http.StatusBadRequest, rec.Code)
-	assert.Equal(t, vllmRendererContextError, rec.Body.String())
+	assert.Contains(t, rec.Body.String(), `"code":"context_overflow"`)
+	assert.Contains(t, rec.Body.String(), `"reroute_to":"big"`)
+	assert.Contains(t, rec.Body.String(), "maximum context length is 32768 tokens")
 	assert.EqualValues(t, 0, f.bigHits.Load(), "a tripped lane is not handed over-length prompts")
 	assert.Equal(t, before+1, testutil.ToFloat64(contextOverflowTotal.WithLabelValues("small", "big", "target_unavailable")))
 }

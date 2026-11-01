@@ -3,12 +3,14 @@ package proxy
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"strings"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
+	"github.com/flexinfer/flexinfer/pkg/validation"
 )
 
 // Context-overflow reroute (CC-6a-3 of docs/planning/context-bounded-admission-spec.md).
@@ -160,6 +162,51 @@ func (c *overflowCaptureWriter) flushCaptured() error {
 	return err
 }
 
+// rejectContextOverflow answers a held-back context-length 400 whose overflow
+// lane cannot take the replay now: still a 400 with the runtime's message, but
+// typed context_overflow, with reroute_to naming the overflow lane and the
+// block describing that lane, so the caller can send the prompt there itself
+// (which cold-starts it) or retry once it is Ready.
+func (p *Proxy) rejectContextOverflow(cw *overflowCaptureWriter, target string, tm *aiv1alpha2.Model) {
+	if tm != nil && tm.Name != target {
+		tm = nil
+	}
+	msg := runtimeErrorMessage(cw.buf.Bytes())
+	cw.capture = false
+	cw.buf.Reset()
+	cw.copyHeader()
+	cw.w.Header().Del("Content-Length")
+	p.writeLaneError(cw.w, tm, laneError{
+		status:     http.StatusBadRequest,
+		errType:    validation.ErrorTypeInvalidRequest,
+		code:       validation.CodeContextOverflow,
+		message:    msg,
+		rerouteTo:  target,
+		retryAfter: -1,
+	})
+}
+
+// runtimeErrorMessage extracts the message from a runtime's JSON error body
+// ({"error":{"message":…}} or vLLM's flat {"message":…}), else returns the
+// body itself.
+func runtimeErrorMessage(body []byte) string {
+	var nested struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(body, &nested); err == nil {
+		if nested.Error.Message != "" {
+			return nested.Error.Message
+		}
+		if nested.Message != "" {
+			return nested.Message
+		}
+	}
+	return strings.TrimSpace(string(body))
+}
+
 func (c *overflowCaptureWriter) copyHeader() {
 	dst := c.w.Header()
 	for k, v := range c.header {
@@ -197,7 +244,7 @@ func (p *Proxy) finishContextOverflow(
 		slog.Warn("context overflow lane unavailable; returning the original 400",
 			"model", modelName, "target", target, "phase", phase, "error", err)
 		contextOverflowTotal.WithLabelValues(modelName, target, "target_unavailable").Inc()
-		_ = cw.flushCaptured()
+		p.rejectContextOverflow(cw, target, tm)
 		return
 	}
 	// The replay is forwarded under the target's lane: load its first-byte
@@ -209,7 +256,7 @@ func (p *Proxy) finishContextOverflow(
 			slog.Warn("context overflow lane breaker open; returning the original 400",
 				"model", modelName, "target", target)
 			contextOverflowTotal.WithLabelValues(modelName, target, "target_unavailable").Inc()
-			_ = cw.flushCaptured()
+			p.rejectContextOverflow(cw, target, tm)
 			return
 		}
 	}

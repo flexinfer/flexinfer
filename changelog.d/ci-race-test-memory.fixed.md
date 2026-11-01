@@ -1,0 +1,1 @@
+CI: the master `race_test` job asks the runner for 8Gi and runs `go test -race -p 1` (internal/proxy alone peaks near 4.6 GiB under the race detector); it had been OOMKilled at the 4Gi default on every master pipeline since the InferenceJob runner landed (59950366b).

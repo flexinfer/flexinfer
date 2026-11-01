@@ -2,8 +2,10 @@ package proxy
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"time"
 
 	aiv1alpha1 "github.com/flexinfer/flexinfer/api/v1alpha1"
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -11,16 +13,32 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/validation"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// OpenAIModel represents a model in OpenAI API format.
+// OpenAIModel represents a model in OpenAI API format. FlexInfer is the cold
+// capability descriptor of a v1alpha2 Model (nil for legacy ModelDeployments).
 type OpenAIModel struct {
-	ID       string         `json:"id"`
-	Object   string         `json:"object"`
-	Created  int64          `json:"created"`
-	OwnedBy  string         `json:"owned_by"`
-	Metadata map[string]any `json:"metadata,omitempty"`
+	ID        string           `json:"id"`
+	Object    string           `json:"object"`
+	Created   int64            `json:"created"`
+	OwnedBy   string           `json:"owned_by"`
+	Metadata  map[string]any   `json:"metadata,omitempty"`
+	FlexInfer *ModelDescriptor `json:"flexinfer,omitempty"`
+}
+
+// ModelDescriptor is what a caller needs to decide whether and how to call a
+// lane, answered from the Model CR without waking it: its state and ETA (the
+// same fields as the error envelope) and what it serves and accepts
+// (modelmeta.Capabilities).
+type ModelDescriptor struct {
+	Phase           *string `json:"phase"`
+	LoadingSubstage *string `json:"loading_substage"`
+	Ready           bool    `json:"ready"`
+	ETASeconds      *int    `json:"eta_seconds"`
+	RerouteTo       *string `json:"reroute_to"`
+	modelmeta.Capabilities
 }
 
 // OpenAIModelsResponse is the response format for /v1/models.
@@ -82,6 +100,70 @@ func (p *Proxy) handleModels(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if _, err := w.Write(data); err != nil {
 		slog.Warn("error writing models response", "error", err)
+	}
+}
+
+// handleModel answers GET /v1/models/{name} from the Model CR: the OpenAI model
+// object plus the cold capability descriptor. It never touches demand, queues
+// or activates, so a caller can read a cold lane's limits and ETA for free.
+// name may be a served name or alias.
+func (p *Proxy) handleModel(w http.ResponseWriter, r *http.Request) {
+	ctx := otel.GetTextMapPropagator().Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	ctx, span := otel.Tracer("flexinfer/proxy").Start(ctx, "proxy.get_model")
+	defer span.End()
+
+	requested := r.PathValue("name")
+	name := requested
+	if p.resolver != nil {
+		name = p.resolver.ResolveModelAlias(ctx, requested)
+	}
+	if !isValidModelResourceName(name) {
+		validation.WriteModelNotFound(w, requested)
+		return
+	}
+	var model OpenAIModel
+	m, err := p.getModel(ctx, name)
+	switch {
+	case err == nil && litellmExplicitlyDisabled(m):
+		p.writeLaneError(w, m, laneError{
+			status:     http.StatusNotFound,
+			errType:    validation.ErrorTypeNotFound,
+			code:       validation.CodeModelParked,
+			message:    fmt.Sprintf("Model '%s' not found: parked (spec.litellm.enabled=false) and not served by name", requested),
+			param:      "model",
+			retryAfter: -1,
+		})
+		return
+	case err == nil:
+		model = p.modelToOpenAI(m)
+	case apierrors.IsNotFound(err):
+		md, mdErr := p.getModelDeployment(ctx, name)
+		if mdErr != nil {
+			validation.WriteModelNotFound(w, requested)
+			return
+		}
+		model = p.modelDeploymentToOpenAI(md)
+	default:
+		slog.Warn("error fetching model for descriptor", "model", name, "error", err)
+		validation.WriteInternalError(w, "Internal error fetching model")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(model); err != nil {
+		slog.Warn("error writing model response", "error", err)
+	}
+}
+
+// modelDescriptor builds m's cold capability descriptor.
+func (p *Proxy) modelDescriptor(m *aiv1alpha2.Model, now time.Time) *ModelDescriptor {
+	state := p.laneDetails(m, laneError{retryAfter: -1}, now)
+	return &ModelDescriptor{
+		Phase:           state.Phase,
+		LoadingSubstage: state.LoadingSubstage,
+		Ready:           m.Status.Phase == aiv1alpha2.ModelPhaseReady,
+		ETASeconds:      state.ETASeconds,
+		RerouteTo:       state.RerouteTo,
+		Capabilities:    modelmeta.ResolveCapabilities(m),
 	}
 }
 
@@ -180,10 +262,11 @@ func (p *Proxy) modelToOpenAI(m *aiv1alpha2.Model) OpenAIModel {
 	modelmeta.ApplyTokenLimitMetadata(metadata, modelmeta.ResolveTokenLimits(&m.Spec))
 
 	return OpenAIModel{
-		ID:       m.Name,
-		Object:   "model",
-		Created:  m.CreationTimestamp.Unix(),
-		OwnedBy:  "flexinfer",
-		Metadata: metadata,
+		ID:        m.Name,
+		Object:    "model",
+		Created:   m.CreationTimestamp.Unix(),
+		OwnedBy:   "flexinfer",
+		Metadata:  metadata,
+		FlexInfer: p.modelDescriptor(m, time.Now()),
 	}
 }

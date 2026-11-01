@@ -37,6 +37,76 @@ paths:
               schema:
                 $ref: '#/components/schemas/OpenAIModelsResponse'
 
+  /v1/models/{name}:
+    get:
+      summary: One model with its cold capability descriptor (never wakes the lane)
+      parameters:
+        - in: path
+          name: name
+          required: true
+          schema:
+            type: string
+          description: CR name, served name or alias.
+      responses:
+        '200':
+          description: OpenAI model object with the `flexinfer` descriptor
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OpenAIModel'
+        '404':
+          description: Unknown (`model_not_found`) or parked (`model_parked`)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /v1/jobs:
+    post:
+      summary: Submit an async job (docs/specs/proxy-api.md, "Jobs")
+      responses:
+        '200':
+          description: The job object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+    get:
+      summary: List jobs (status, model, limit filters)
+      responses:
+        '200':
+          description: List of job objects
+  /v1/jobs/{id}:
+    get:
+      summary: Get a job
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The job object
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Job'
+  /v1/jobs/{id}/content:
+    get:
+      summary: The stored output of a completed job
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The lane's response body, with its content type
+        '409':
+          description: The job is not completed (`job_not_completed`)
+  /v1/jobs/{id}/cancel:
+    post:
+      summary: Cancel a job
+      parameters:
+        - {in: path, name: id, required: true, schema: {type: string}}
+      responses:
+        '200':
+          description: The job object
+
   /v1/chat/completions:
     post:
       summary: OpenAI-style chat completions (reverse proxied)
@@ -64,9 +134,100 @@ paths:
               schema:
                 type: object
                 additionalProperties: true
+        '503':
+          description: |
+            The lane cannot serve now (cold start with `Prefer: wait=N`, queue full, parked,
+            preempted, failed, stalled load, breaker open). Always carries `Retry-After`.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
 
 components:
   schemas:
+    Job:
+      type: object
+      required: [id, object, created_at, status]
+      properties:
+        id: {type: string}
+        object: {type: string, example: job}
+        created_at: {type: integer}
+        status: {type: string, enum: [queued, in_progress, completed, failed, cancelled, incomplete]}
+        background: {type: boolean}
+        model: {type: string}
+        path: {type: string}
+        progress: {type: integer}
+        started_at: {type: integer, nullable: true}
+        completed_at: {type: integer, nullable: true}
+        expires_at: {type: integer, nullable: true}
+        error:
+          type: object
+          nullable: true
+          properties:
+            code: {type: string}
+            message: {type: string}
+            status: {type: integer}
+        output:
+          type: object
+          nullable: true
+          properties:
+            url: {type: string}
+            content_type: {type: string}
+            bytes: {type: integer}
+            sha256: {type: string}
+        flexinfer:
+          type: object
+          additionalProperties: true
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [message, type, code]
+          properties:
+            message:
+              type: string
+            type:
+              type: string
+            param:
+              type: string
+            code:
+              type: string
+              description: See docs/specs/proxy-api.md, "Error envelope".
+            flexinfer:
+              $ref: '#/components/schemas/FlexInferErrorDetails'
+
+    FlexInferErrorDetails:
+      type: object
+      description: Lane state on a proxy-originated error. All keys are present; unknown values are null.
+      required: [phase, loading_substage, eta_seconds, retry_after_seconds, reroute_to, queue_position]
+      properties:
+        phase:
+          type: string
+          nullable: true
+        loading_substage:
+          type: string
+          nullable: true
+        eta_seconds:
+          type: integer
+          nullable: true
+        retry_after_seconds:
+          type: integer
+          nullable: true
+        reroute_to:
+          type: string
+          nullable: true
+        queue_position:
+          type: integer
+          nullable: true
+          description: 1-based place in the lane's QoS class queue on a QoS queue_full; null otherwise.
+
     OpenAIModelsResponse:
       type: object
       required: [object, data]
@@ -96,6 +257,10 @@ components:
           example: flexinfer
         metadata:
           type: object
+          additionalProperties: true
+        flexinfer:
+          type: object
+          description: Cold capability descriptor (docs/specs/proxy-api.md, "GET /v1/models/{name}").
           additionalProperties: true
 
     ChatCompletionRequest:

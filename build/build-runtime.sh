@@ -87,12 +87,13 @@ build_profile() {
     fi
 
     # Read global config, allowing a profile to select its llama.cpp version.
-    local registry go_version llamacpp_version ollama_version ollama_go_version
+    local registry go_version llamacpp_version ollama_version ollama_go_version whispercpp_version
     registry=$(cfg '.registry')
     go_version=$(cfg '.go_version')
     llamacpp_version=$(pcfg "${profile}" "llamacpp_version" "$(cfg '.llamacpp_version')")
     ollama_version=$(cfg '.ollama_version')
     ollama_go_version=$(cfg '.ollama_go_version')
+    whispercpp_version=$(pcfg "${profile}" "whispercpp_version" "$(cfg '.whispercpp_version')")
 
     # Read profile config
     local tag base_image gpu_vendor gpu_arch amdgpu_targets build_context dockerfile_override dockerfile
@@ -235,6 +236,7 @@ build_profile() {
         "--build-arg" "LLAMACPP_VERSION=${llamacpp_version}"
         "--build-arg" "OLLAMA_VERSION=${ollama_version}"
         "--build-arg" "OLLAMA_GO_VERSION=${ollama_go_version}"
+        "--build-arg" "WHISPERCPP_VERSION=${whispercpp_version}"
         "--build-arg" "AMDGPU_TARGETS=${amdgpu_targets}"
         "--build-arg" "GPU_VENDOR=${gpu_vendor}"
         "--build-arg" "GPU_ARCH=${gpu_arch}"

@@ -31,6 +31,13 @@ type usageLogCtx struct {
 	requestID string
 	startedAt time.Time
 
+	// qosClass, qosSource and caller are the request's resolved QoS class,
+	// the rule that resolved it, and the caller name (qos.go). Empty for
+	// requests that bypassed handleRequest.
+	qosClass  string
+	qosSource string
+	caller    string
+
 	// wantPrefixHit is set when the inbound request opts in via the
 	// X-Flexinfer-Want-Prefix-Hit header. Only then does the response hook
 	// pay the extra upstream /metrics round-trip to derive the prefix-cache
@@ -502,6 +509,11 @@ func (p *Proxy) logUpstreamUsage(resp *http.Response) error {
 				shapeModel = lc.model
 			}
 			completionsTotal.WithLabelValues(shapeModel, strconv.FormatBool(lc.stream)).Inc()
+			// With the lane breaker on, ModifyResponse runs after the first
+			// body byte (firstByteTransport), so for a stream this is TTFT.
+			if lc.stream && lc.qosClass != "" {
+				qosTTFT.WithLabelValues(lc.qosClass, shapeModel).Observe(time.Since(lc.startedAt).Seconds())
+			}
 		}
 	}
 
@@ -516,6 +528,9 @@ func (p *Proxy) logUpstreamUsage(resp *http.Response) error {
 		"user_agent", lc.userAgent,
 		"request_id", lc.requestID,
 		"duration_ms", durMs,
+	}
+	if lc.qosClass != "" {
+		args = append(args, "qos_class", lc.qosClass, "qos_source", lc.qosSource, "caller", lc.caller)
 	}
 
 	// Opt-in prefix-cache hit-rate header. Only paid for when the client

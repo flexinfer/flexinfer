@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -555,6 +556,13 @@ func observeColdStart(model *aiv1alpha2.Model, readyStartedAt, now time.Time, pa
 		nodeName = model.Status.GPU.Node
 	}
 	metrics.ModelLoadSeconds.WithLabelValues(model.Name, nodeName).Set(loadDuration)
+
+	// And on the Model, written with this pass's status: the proxy's error
+	// envelope falls back to it for eta_seconds when it has no Prometheus.
+	if model.Status.Metrics == nil {
+		model.Status.Metrics = &aiv1alpha2.MetricsStatus{}
+	}
+	model.Status.Metrics.LoadTimeSeconds = strconv.FormatFloat(loadDuration, 'f', 1, 64)
 }
 
 // observeSharedSwap records swap-in latency for an Active shared-group member

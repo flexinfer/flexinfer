@@ -312,7 +312,7 @@ func TestChooseSharedGroupLeader(t *testing.T) {
 		},
 	}
 
-	leader := chooseSharedGroupLeader(models, now)
+	leader := chooseSharedGroupLeader(models, now, nil)
 	if leader == nil || leader.Name != "high" {
 		t.Fatalf("expected high-priority fallback leader, got %v", leader)
 	}
@@ -333,7 +333,7 @@ func TestChooseSharedGroupLeader(t *testing.T) {
 			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)},
 		},
 	}
-	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{readyLow, recentHigh}, now)
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{readyLow, recentHigh}, now, nil)
 	if leader == nil || leader.Name != "recent-high" {
 		t.Fatalf("expected demanded model to preempt idle ready model, got %v", leaderName(leader))
 	}
@@ -348,7 +348,7 @@ func TestChooseSharedGroupLeader(t *testing.T) {
 			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)},
 		},
 	}
-	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{readyActive, recentHigh}, now)
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{readyActive, recentHigh}, now, nil)
 	if leader == nil || leader.Name != "recent-high" {
 		t.Fatalf("expected higher-priority demand to preempt busy ready model, got %v", leaderName(leader))
 	}
@@ -367,7 +367,7 @@ func TestChooseSharedGroupLeader(t *testing.T) {
 			LastActiveTime: &metav1.Time{Time: now.Add(-20 * time.Second)},
 		},
 	}
-	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{oldHigh, recentMid}, now)
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{oldHigh, recentMid}, now, nil)
 	if leader == nil || leader.Name != "recent-mid" {
 		t.Fatalf("expected recent active model to win when none are ready, got %v", leader)
 	}
@@ -397,7 +397,7 @@ func TestChooseSharedGroupLeader_DemandSwap(t *testing.T) {
 		},
 	}
 
-	leader := chooseSharedGroupLeader([]*aiv1alpha2.Model{activeIdle, demandedQueued}, now)
+	leader := chooseSharedGroupLeader([]*aiv1alpha2.Model{activeIdle, demandedQueued}, now, nil)
 	if leader == nil || leader.Name != "active-idle" {
 		t.Fatalf("expected high-priority idle model to stay (priority gate), got %v", leaderName(leader))
 	}
@@ -412,7 +412,7 @@ func TestChooseSharedGroupLeader_DemandSwap(t *testing.T) {
 			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)}, // recent traffic
 		},
 	}
-	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{activeBusy, demandedQueued}, now)
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{activeBusy, demandedQueued}, now, nil)
 	if leader == nil || leader.Name != "active-busy" {
 		t.Fatalf("expected busy active model to stay, got %v", leaderName(leader))
 	}
@@ -440,7 +440,7 @@ func TestChooseSharedGroupLeader_DemandSwap(t *testing.T) {
 			},
 		},
 	}
-	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{recentlySwappedIn, preemptedRecently}, now)
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{recentlySwappedIn, preemptedRecently}, now, nil)
 	if leader == nil || leader.Name != "swapped-in" {
 		t.Fatalf("expected cooldown to keep current active model, got %v", leaderName(leader))
 	}
@@ -475,7 +475,7 @@ func TestChooseSharedGroupLeader_DemandSwap(t *testing.T) {
 			LastActiveTime: &metav1.Time{Time: now.Add(-20 * time.Second)}, // fresh demand
 		},
 	}
-	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{preemptedLongAgo, idleReady, newDemand}, now)
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{preemptedLongAgo, idleReady, newDemand}, now, nil)
 	if leader == nil || leader.Name != "idle-ready" {
 		t.Fatalf("expected high-priority idle-ready to stay despite low-priority demand, got %v", leaderName(leader))
 	}
@@ -505,7 +505,7 @@ func TestChooseSharedGroupLeader_DemandPriorityGate(t *testing.T) {
 			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)},
 		},
 	}
-	leader := chooseSharedGroupLeader([]*aiv1alpha2.Model{idleReady, highDemand}, now)
+	leader := chooseSharedGroupLeader([]*aiv1alpha2.Model{idleReady, highDemand}, now, nil)
 	if leader == nil || leader.Name != "high-demand" {
 		t.Fatalf("expected higher-priority demand to preempt idle ready, got %v", leaderName(leader))
 	}
@@ -518,7 +518,7 @@ func TestChooseSharedGroupLeader_DemandPriorityGate(t *testing.T) {
 			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)},
 		},
 	}
-	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{idleReady, equalDemand}, now)
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{idleReady, equalDemand}, now, nil)
 	if leader == nil || leader.Name != "equal-demand" {
 		t.Fatalf("expected equal-priority demand to preempt idle ready, got %v", leaderName(leader))
 	}
@@ -531,7 +531,7 @@ func TestChooseSharedGroupLeader_DemandPriorityGate(t *testing.T) {
 			LastActiveTime: &metav1.Time{Time: now.Add(-30 * time.Second)},
 		},
 	}
-	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{idleReady, lowDemand}, now)
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{idleReady, lowDemand}, now, nil)
 	if leader == nil || leader.Name != "idle-ready" {
 		t.Fatalf("expected idle ready to stay when demand has lower priority, got %v", leaderName(leader))
 	}
@@ -545,7 +545,7 @@ func TestChooseSharedGroupLeader_DemandPriorityGate(t *testing.T) {
 			Phase: aiv1alpha2.ModelPhaseReady,
 		},
 	}
-	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{nilActiveReady, highDemand}, now)
+	leader = chooseSharedGroupLeader([]*aiv1alpha2.Model{nilActiveReady, highDemand}, now, nil)
 	if leader == nil || leader.Name != "high-demand" {
 		t.Fatalf("expected higher-priority demand to preempt nil-active ready, got %v", leaderName(leader))
 	}

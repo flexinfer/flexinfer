@@ -297,7 +297,7 @@ func TestRuntimeIngressPortsAndCleanupOnProcessExit(t *testing.T) {
 }
 
 func TestConfigureIngressBackendBindings(t *testing.T) {
-	for _, name := range []string{backend.NameLlamaCpp, backend.NameVLLM, backend.NameVLLMOmni, backend.NameMLCLLM} {
+	for _, name := range []string{backend.NameLlamaCpp, backend.NameVLLM, backend.NameVLLMOmni, backend.NameMLCLLM, backend.NameWhisperCpp} {
 		t.Run(name, func(t *testing.T) {
 			args, _ := configureIngressBackend(name, 19000, []string{"--host", "0.0.0.0", "--port", "8000"}, nil)
 			assert.Equal(t, []string{"--host", "127.0.0.1", "--port", "19000"}, args)

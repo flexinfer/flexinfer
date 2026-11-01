@@ -1,0 +1,140 @@
+{
+ "cu40": {
+  "ready_s": 3.0,
+  "peak": {
+   "whisper_vram_mb": 1318.9,
+   "whisper_compute_queues": 3,
+   "whisper_sdma_queues": 0,
+   "plane_compute_queues": 18,
+   "card_vram_used_mb": 8059.3
+  },
+  "x_rt": {
+   "twospk": 9.23,
+   "meeting10": 29.47,
+   "meeting60": 34.73
+  },
+  "wall": {
+   "twospk": 1.17,
+   "meeting10": 20.36,
+   "meeting60": 103.65
+  },
+  "pre_queues": 15,
+  "oversubscribed": [],
+  "amdgpu_new": [],
+  "gte": {
+   "base_p50": 40.9,
+   "base_p95": 57.9,
+   "during_p50": 44.8,
+   "during_p95": 57.8,
+   "during_p95_pct": -0.2,
+   "m60_p95": 57.8,
+   "m60_p95_pct": -0.2,
+   "n_during": 117,
+   "errors": 0
+  },
+  "bge": {
+   "base_p50": 18.9,
+   "base_p95": 30.4,
+   "during_p50": 19.0,
+   "during_p95": 27.5,
+   "during_p95_pct": -9.6,
+   "m60_p95": 26.8,
+   "m60_p95_pct": -11.8,
+   "n_during": 117,
+   "errors": 0
+  },
+  "wer_m60_vs_truth": 20.99
+ },
+ "nomask": {
+  "ready_s": 3.0,
+  "peak": {
+   "whisper_vram_mb": 1318.9,
+   "whisper_compute_queues": 3,
+   "whisper_sdma_queues": 0,
+   "plane_compute_queues": 18,
+   "card_vram_used_mb": 8059.3
+  },
+  "x_rt": {
+   "twospk": 11.95,
+   "meeting10": 34.07,
+   "meeting60": 41.36
+  },
+  "wall": {
+   "twospk": 0.9,
+   "meeting10": 17.61,
+   "meeting60": 87.04
+  },
+  "pre_queues": 15,
+  "oversubscribed": [],
+  "amdgpu_new": [],
+  "gte": {
+   "base_p50": 40.8,
+   "base_p95": 55.4,
+   "during_p50": 50.0,
+   "during_p95": 85.3,
+   "during_p95_pct": 54.0,
+   "m60_p95": 84.3,
+   "m60_p95_pct": 52.3,
+   "n_during": 97,
+   "errors": 0
+  },
+  "bge": {
+   "base_p50": 19.1,
+   "base_p95": 29.6,
+   "during_p50": 20.4,
+   "during_p95": 41.4,
+   "during_p95_pct": 39.8,
+   "m60_p95": 41.6,
+   "m60_p95_pct": 40.4,
+   "n_during": 97,
+   "errors": 0
+  },
+  "wer_m60_vs_truth": 20.99
+ },
+ "cu30": {
+  "ready_s": 3.0,
+  "peak": {
+   "whisper_vram_mb": 1318.9,
+   "whisper_compute_queues": 3,
+   "whisper_sdma_queues": 0,
+   "plane_compute_queues": 18,
+   "card_vram_used_mb": 8059.4
+  },
+  "x_rt": {
+   "twospk": 6.69,
+   "meeting10": 23.96,
+   "meeting60": 27.08
+  },
+  "wall": {
+   "twospk": 1.61,
+   "meeting10": 25.05,
+   "meeting60": 132.94
+  },
+  "pre_queues": 15,
+  "oversubscribed": [],
+  "amdgpu_new": [],
+  "gte": {
+   "base_p50": 40.6,
+   "base_p95": 53.3,
+   "during_p50": 42.5,
+   "during_p95": 58.6,
+   "during_p95_pct": 9.9,
+   "m60_p95": 56.6,
+   "m60_p95_pct": 6.3,
+   "n_during": 150,
+   "errors": 0
+  },
+  "bge": {
+   "base_p50": 18.7,
+   "base_p95": 30.8,
+   "during_p50": 18.4,
+   "during_p95": 27.4,
+   "during_p95_pct": -11.0,
+   "m60_p95": 27.4,
+   "m60_p95_pct": -11.0,
+   "n_during": 150,
+   "errors": 0
+  },
+  "wer_m60_vs_truth": 20.99
+ }
+}

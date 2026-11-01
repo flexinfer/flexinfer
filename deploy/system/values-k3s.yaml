@@ -605,6 +605,18 @@ imagePrewarm:
         # runtime_pin_drift FAIL, which the deploy/experiments ModelExperiment
         # records (Flux-applied) also raise.
         - registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+        # 2026-11-01 (D1, research next-differentiators-2026-10-31 §6.1 step
+        # 1): the stacked 0.32 runtime (rocm-gfx1100-serving-v032-c444b5ff,
+        # see the 5930k profile), target of the window-gated repin of this
+        # node's runtime DaemonSet (profile gfx1100 below) from cfefae18.
+        # Holding it here makes that repin a container start; cfefae18 above
+        # stays listed as its rollback anchor. Harbor already tags it
+        # pinned-ef28b7b0d1cb (2026-10-28 05:30Z, from the 5930k entry). It
+        # shares the v0.32.0 base with cd108c9e/b06b06fe above, so the pull
+        # is the ~32 MB layer delta and the GPU is not touched.
+        # controllers/runtime_pin_contract_test.go keeps this list, the
+        # runtime profiles and the gfx1100 GPUProfile in step.
+        - registry.harbor.lan/flexinfer/runtime@sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.

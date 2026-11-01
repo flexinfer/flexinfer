@@ -326,6 +326,7 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 			"model", modelName,
 			"resolved_model", resolvedModel,
 			"path", r.URL.Path,
+			"qos_class", qosClassLabel(ctx),
 		}, callerIdentityFrom(r).logAttrs()...)...)
 	}
 
@@ -377,6 +378,22 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		if originalMaxTokens >= 0 && clampedMaxTokens >= 0 {
 			w.Header().Set("X-FlexInfer-MaxTokens-Clamped", fmt.Sprintf("%d->%d", originalMaxTokens, clampedMaxTokens))
 		}
+
+		// A lane on vLLM priority scheduling takes the request's QoS class as
+		// its per-request priority (qos_priority.go); other lanes are untouched.
+		forwardBody = p.applyQoSPriority(ctx, resolvedModel, r.URL.Path, forwardBody)
+	}
+
+	// An idempotent request (embeddings, rerank, non-streaming transcription)
+	// holds back a drain or gateway failure so a request caught in a lane swap
+	// can be replayed once on the lane, or its equivalent, after the swap. See
+	// swap_replay.go.
+	if !isLoRA && swapReplayEligible(r, forwardBody) {
+		started := time.Now()
+		cw := newSwapCaptureWriter(w)
+		p.forwardWithRetry(cw, r, modelName, resolvedModel, port, routeBody, forwardBody)
+		p.finishSwapReplay(cw, w, r, resolvedModel, port, routeBody, started)
+		return
 	}
 
 	// A Model with a context-overflow lane holds back the runtime's 400 so a

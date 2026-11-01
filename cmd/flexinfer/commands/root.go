@@ -102,6 +102,7 @@ func init() {
 	rootCmd.AddCommand(migrateCmd)
 	rootCmd.AddCommand(imageCmd)
 	rootCmd.AddCommand(gameCmd)
+	rootCmd.AddCommand(jobsCmd)
 }
 
 // Execute runs the root command

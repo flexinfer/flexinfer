@@ -162,7 +162,13 @@ Mitigation:
 
   The PIDs are host PIDs; match a process by its VRAM. The runtime publishes the total as
   `flexinfer_runtime_hw_queues{source="observed"}` every 15 s.
-- Rule of thumb with the cap: 3 queues per llama-server, 2 for pyannote.
+- Rule of thumb with the cap: 3 queues per llama-server or whisper-server. pyannote held 2 on
+  2026-10-24 but 3 (plus 2 SDMA) on 2026-10-30, after serving requests, so the warm plane plus
+  pyannote reads 15.
+- whisper-server (whispercpp backend) saturates every CU while it transcribes and pushed gte's
+  p95 up 38–54 %. Its Model sets `HSA_CU_MASK=0:0-39` in `config.env`, which confines it to 40
+  of the 60 CUs and leaves the retrieval lanes at baseline latency
+  ([ASR on the Radeon VII](../operations/whispercpp-asr.md)).
 
 #### Queue admission (GPUProfile `maxHWQueues`)
 
