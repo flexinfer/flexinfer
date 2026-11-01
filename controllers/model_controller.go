@@ -426,6 +426,11 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// GPU detection succeeded - model is schedulable
 	setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, true, aiv1alpha2.ReasonSchedulable, "Model can be scheduled on available nodes")
 
+	// D4: report whether a structured-output opt-in is certified for this
+	// arch and image. ensureDeployment re-evaluates on the fresh spec before
+	// rendering; an uncertified opt-in renders nothing and never blocks.
+	applyStructuredOutputCondition(model, r.structuredOutputDecisionFor(model, b, gpuVendor, gpuArch))
+
 	// Ensure Service exists early (needed for stable endpoints even while cache is warming).
 	if err := r.ensureService(ctx, model, b); err != nil {
 		log.Error(err, "Failed to ensure Service")
