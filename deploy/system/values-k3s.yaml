@@ -803,10 +803,32 @@ runtime:
       # only as the containerd snapshot the prewarm DaemonSet holds; rollback
       # anchor (resident on both gfx1100 nodes, IfNotPresent):
       #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278"
+      # 2026-11-01 (D1 step 2, research next-differentiators-2026-10-31
+      # §6.1; WINDOW-GATED, owner-run after KT-FLEX): repinned to the stacked
+      # vLLM 0.32 runtime ef28b7b0 (rocm-gfx1100-serving-v032-c444b5ff:
+      # vLLM 0.32.0 + the three FlexInfer plugins, text plugin 0.9.0 as in the
+      # warm lane's b06b06fe, + runtime supervisor, server-diffusers.py,
+      # server-snac.py; Harbor pinned-ef28b7b0d1cb; prewarmed on this node by
+      # !1224). This rolls the runtime pod once; snac-decode-gfx1100 reloads on
+      # its next demand. What ef28b7b0 cannot serve in-pod yet (checked
+      # 2026-11-01 inside the image): diffusers lanes needing bitsandbytes,
+      # torchsde, imageio or ftfy, Qwen-Image 2.1 (R1-R3 server code is newer
+      # than c444b5ff), and whisper (no librosa/soundfile). Rollback = the
+      # cfefae18 pin below, still prewarmed here (pinned-cfefae18061f), and
+      # drop sharedCompileCache:
+      #   registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
+      # 2026-11-01 (D1): mount this image's shared compile cache
+      # (/var/lib/flexinfer/compile-cache/shared/gfx1100/ef28b7b0d1cb at
+      # /cache/compile, C5 !1200, docs/user/caching.md "Runtime pod"). In-pod
+      # lanes set spec.cache.compilationCache.scope: Image, so their Triton,
+      # Inductor, vLLM and MIOpen caches survive a runtime-pod roll and a
+      # swap. A per-Model compile-cache hostPath is never mounted in this pod.
+      # Loads without the scope (snac) keep the per-Model directory.
+      sharedCompileCache: true
       shmSize: "8Gi"
       # 2026-09-13 disk-pressure guard (issue #74): CI job pods share the
       # physical GPU nodes. Three concurrent pipelines filled the 5930k root
