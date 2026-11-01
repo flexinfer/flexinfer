@@ -44,6 +44,18 @@ Backend plugin name. Common values:
 - `diffusers`
 - `comfyui`
 - `vllm-omni`
+- `whispercpp` (alias: `whisper.cpp`): OpenAI `/v1/audio/transcriptions` from whisper.cpp's
+  `whisper-server`, run inside a runtime image that builds it (gfx906 only). See
+  [ASR on the Radeon VII](../operations/whispercpp-asr.md).
+- `pyannote` (aliases: `pyannote-audio`, `pyannote.audio`): speaker diarization at
+  `/v1/audio/diarizations` (multipart `file`, optional `num_speakers`, `min_speakers`,
+  `max_speakers`; JSON speaker turns) from pyannote.audio, run inside a runtime image with the
+  pyannote layer. Refused unless the GPUProfile certifies that runtime image (condition
+  `BackendCertificate`). `spec.source` names the HF pipeline (default
+  `pyannote/speaker-diarization-3.1`); `spec.config.hfTokenSecret` names the Secret holding the
+  token for the gated pipeline, which the runtime pod mounts at
+  `/var/run/flexinfer/secrets/<name>/<key>` (key `spec.config.hfTokenSecretKey`, default
+  `HF_TOKEN`). See [pyannote diarization](../operations/pyannote-diarization.md).
 
 Exact images/args/ports are defined by the backend registry in `services/flexinfer/backend/`.
 
@@ -62,6 +74,8 @@ Notes:
 - FlexInfer now auto-prefetches only required llama.cpp files for HF GGUF repos:
   - If `spec.config.ggufFile` is set, the prefetch job downloads just that GGUF (plus optional relative `spec.config.mmproj`).
   - This avoids pulling full multi-quant repos by default.
+- For `backend: whispercpp` with `HF://ggerganov/whisper.cpp`, set `spec.config.modelFile` to the ggml
+  file (for example `ggml-large-v3-turbo-q8_0.bin`). The prefetch downloads only that file.
 - Optional advanced download controls (all in `spec.config`):
   - `hfAllowPatterns`: list (or comma-separated string) passed to `snapshot_download(..., allow_patterns=...)`
   - `hfIgnorePatterns`: list (or comma-separated string) passed to `snapshot_download(..., ignore_patterns=...)`

@@ -1,0 +1,29 @@
+# KT-ASR kill-test image (2026-10-30): whisper.cpp v1.9.5 ggml-hip for gfx906,
+# layered on the live gfx906 runtime image so the VII pulls only this layer.
+# Static link: llama.cpp's shared libggml*.so sit on the runtime's
+# LD_LIBRARY_PATH and are a different ggml version.
+ARG RUNTIME_BASE=registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7
+
+FROM rocm/dev-ubuntu-22.04:6.2 AS whispercpp-builder
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake ninja-build build-essential curl hipblas-dev rocblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/src
+RUN git clone --depth 1 --branch v1.9.5 https://github.com/ggml-org/whisper.cpp.git
+WORKDIR /opt/src/whisper.cpp
+COPY patch-hipmemgetinfo.sh /tmp/
+RUN chmod +x /tmp/patch-hipmemgetinfo.sh && /tmp/patch-hipmemgetinfo.sh
+RUN cmake -B build -G Ninja \
+      -DGGML_HIP=ON -DGGML_NATIVE=OFF -DAMDGPU_TARGETS=gfx906 \
+      -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DWHISPER_BUILD_TESTS=OFF \
+      -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j"$(nproc)" --target whisper-server whisper-cli \
+    && ldd build/bin/whisper-server
+
+FROM ${RUNTIME_BASE}
+COPY --from=whispercpp-builder /opt/src/whisper.cpp/build/bin/whisper-server /opt/whispercpp/bin/whisper-server
+COPY --from=whispercpp-builder /opt/src/whisper.cpp/build/bin/whisper-cli /opt/whispercpp/bin/whisper-cli
+COPY models/ggml-large-v3-turbo-q8_0.bin /models/whisper/ggml-large-v3-turbo-q8_0.bin
+COPY fixtures/ /fixtures/
+COPY kt.py /kt/kt.py

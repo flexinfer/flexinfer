@@ -1,0 +1,172 @@
+{
+ "model": "/models/whisper/ggml-large-v3-turbo-q8_0.bin",
+ "threads": "4",
+ "extra_args": [],
+ "env": {
+  "GPU_MAX_HW_QUEUES": "1",
+  "HSA_ENABLE_SDMA": "0",
+  "HSA_USE_SVM": "0",
+  "ROCR_VISIBLE_DEVICES": "0",
+  "HSA_OVERRIDE_GFX_VERSION": null,
+  "LD_PRELOAD": "/opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so"
+ },
+ "pre": {
+  "card_vram_used": 7067672576,
+  "kfd": {
+   "34829": {
+    "compute": 3,
+    "sdma": 2,
+    "other": 0,
+    "vram": 921186304
+   },
+   "3381316": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 2788089856
+   },
+   "2475805": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 549449728
+   },
+   "2099892": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 2256814080
+   },
+   "1936810": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 531968000
+   }
+  },
+  "plane_compute_queues": 15
+ },
+ "server_ready_s": 3.51,
+ "whisper_kfd_pids": {
+  "827136": {
+   "compute": 3,
+   "sdma": 0,
+   "other": 0,
+   "vram": 1268834304
+  }
+ },
+ "runs": {
+  "twospk": {
+   "audio_s": 10.79,
+   "wall_s": 0.94,
+   "x_realtime": 11.47,
+   "t_start": 1793390615.9361796,
+   "t_end": 1793390616.8787603,
+   "language": "english",
+   "segments": 4,
+   "chars": 180
+  },
+  "meeting10": {
+   "audio_s": 600.0,
+   "wall_s": 17.94,
+   "x_realtime": 33.45,
+   "t_start": 1793390616.8788538,
+   "t_end": 1793390634.8728106,
+   "language": "english",
+   "segments": 330,
+   "chars": 9059
+  },
+  "meeting60": {
+   "audio_s": 3600.0,
+   "wall_s": 86.83,
+   "x_realtime": 41.46,
+   "t_start": 1793390634.8728788,
+   "t_end": 1793390722.0346634,
+   "language": "english",
+   "segments": 1561,
+   "chars": 58324
+  }
+ },
+ "post": {
+  "card_vram_used": 8450818048,
+  "plane_compute_queues": 18,
+  "whisper": {
+   "827136": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 1382957056
+   }
+  }
+ },
+ "peak": {
+  "whisper_vram_mb": 1318.9,
+  "whisper_compute_queues": 3,
+  "whisper_sdma_queues": 0,
+  "plane_compute_queues": 18,
+  "card_vram_used_mb": 8059.3
+ },
+ "probe": {
+  "gte_baseline": {
+   "n": 224,
+   "errors": 0,
+   "p50_ms": 45.3,
+   "p95_ms": 64.1,
+   "max_ms": 102.4
+  },
+  "bge_baseline": {
+   "n": 224,
+   "errors": 0,
+   "p50_ms": 22.1,
+   "p95_ms": 43.3,
+   "max_ms": 66.8
+  },
+  "gte_during": {
+   "n": 98,
+   "errors": 0,
+   "p50_ms": 54.0,
+   "p95_ms": 88.9,
+   "max_ms": 111.7
+  },
+  "bge_during": {
+   "n": 98,
+   "errors": 0,
+   "p50_ms": 26.9,
+   "p95_ms": 49.0,
+   "max_ms": 61.0
+  }
+ },
+ "dmesg_new": [
+  "[Fri Oct 30 19:59:57 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 19:59:57 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth737fe462: link becomes ready",
+  "[Fri Oct 30 19:59:59 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 19:59:59 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth002066a5: link becomes ready",
+  "[Fri Oct 30 20:00:00 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:00:00 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth39a3fb13: link becomes ready",
+  "[Fri Oct 30 20:00:01 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth4cdf9c21: link becomes ready",
+  "[Fri Oct 30 20:00:01 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth0f309e15: link becomes ready",
+  "[Fri Oct 30 20:00:07 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:00:07 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth09844b46: link becomes ready",
+  "[Fri Oct 30 20:00:24 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:00:24 2026] IPv6: ADDRCONF(NETDEV_CHANGE): vethdbd5516f: link becomes ready",
+  "[Fri Oct 30 20:00:54 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:00:54 2026] IPv6: ADDRCONF(NETDEV_CHANGE): vethe401eeaf: link becomes ready",
+  "[Fri Oct 30 20:00:59 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:00:59 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth33bcf162: link becomes ready",
+  "[Fri Oct 30 20:01:01 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:01:01 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth029e7a6c: link becomes ready",
+  "[Fri Oct 30 20:01:24 2026] IPv6: ADDRCONF(NETDEV_CHANGE): vethf0f5dd35: link becomes ready",
+  "[Fri Oct 30 20:01:24 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth39d3d297: link becomes ready",
+  "[Fri Oct 30 20:01:27 2026] IPv6: ADDRCONF(NETDEV_CHANGE): vethe7a734b7: link becomes ready",
+  "[Fri Oct 30 20:02:05 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:02:05 2026] IPv6: ADDRCONF(NETDEV_CHANGE): vetha1ff14e0: link becomes ready",
+  "[Fri Oct 30 20:02:12 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth76c66a21: link becomes ready",
+  "[Fri Oct 30 20:02:53 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:02:53 2026] IPv6: ADDRCONF(NETDEV_CHANGE): vethea9a6fc4: link becomes ready",
+  "[Fri Oct 30 20:03:26 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:03:26 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth60f5445a: link becomes ready",
+  "[Fri Oct 30 20:05:07 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:05:07 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth9ad576f2: link becomes ready"
+ ],
+ "dmesg_oversubscribed": []
+}

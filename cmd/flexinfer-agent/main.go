@@ -21,20 +21,21 @@ func main() {
 		Development: true,
 	}
 	opts.BindFlags(flag.CommandLine)
-	flag.Parse()
-
-	log.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
-	setupLog := log.Log.WithName("setup")
 
 	interval := flag.Duration("interval", 30*time.Second, "How often to re-probe hardware.")
 	metricsPort := flag.Int("metrics-port", 9100, "Prometheus scrape port.")
 	labelPrefix := flag.String("label-prefix", "flexinfer.ai/", "Customize if conflicts with other labelers.")
 	probeTimeout := flag.Duration("probe-timeout", 15*time.Second, "Upper bound for each vendor-tool invocation (rocm-smi, rocminfo, nvidia-smi). A tool that exceeds it is abandoned and the GPU is reported degraded (probe-timeout).")
 	healthSentinel := flag.Bool("gpu-health-sentinel", true, "Publish the flexinfer.ai/gpu.health node label from sysfs/tool evidence (PCIe link down, SMU I/O errors, hung tools). Off, the agent still bounds tool timeouts but never marks a node degraded.")
+	powerNodes := flag.String("gpu-power-nodes", "", "Comma-separated node names that sample GPU board power from sysfs hwmon into flexinfer_gpu_power_watts. Empty (default) samples nowhere; there is no wildcard. Needs --gpu-health-sentinel: the sampler stops itself when the sentinel reports the GPU degraded.")
+	powerInterval := flag.Duration("gpu-power-interval", agent.DefaultPowerInterval, "GPU power sampling period on nodes listed in --gpu-power-nodes (minimum 500ms).")
 	flag.Parse()
 
+	log.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	setupLog := log.Log.WithName("setup")
+
 	setupLog.Info("Starting FlexInfer agent", "interval", *interval, "metricsPort", *metricsPort, "labelPrefix", *labelPrefix,
-		"probeTimeout", *probeTimeout, "gpuHealthSentinel", *healthSentinel)
+		"probeTimeout", *probeTimeout, "gpuHealthSentinel", *healthSentinel, "gpuPowerNodes", *powerNodes)
 
 	// Start the metrics exporter
 	exporter := metrics.NewExporter()
@@ -56,8 +57,19 @@ func main() {
 	ticker := time.NewTicker(*interval)
 	defer ticker.Stop()
 
-	// Run immediately on startup
+	// Run immediately on startup, so the power sampler starts behind a
+	// first health verdict.
 	runProbeAndMetrics(ctx, nodeAgent, setupLog)
+
+	if agent.PowerSamplingEnabled(nodeAgent.GetNodeName(), *powerNodes) {
+		sampler := nodeAgent.NewPowerSampler(*powerInterval, log.Log.WithName("gpu-power"))
+		if lanes, err := nodeAgent.NewModelLaneSource(); err != nil {
+			setupLog.Error(err, "Lane energy attribution off: cannot build the Model client")
+		} else {
+			sampler.SetLaneSource(lanes)
+		}
+		go sampler.Run(ctx)
+	}
 
 	for {
 		select {

@@ -17,7 +17,7 @@ func TestWriteAdmissionError_StatusAndBody(t *testing.T) {
 		SuggestTruncateTo: 29744,
 		ContextWindow:     32768,
 	}
-	WriteAdmissionError(w, "over budget by 2500 tokens", "context_window_exceeded", details)
+	WriteAdmissionError(w, "over budget by 2500 tokens", CodeAdmissionRejected, details, nil)
 
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status = %d, want 413", w.Code)
@@ -30,8 +30,8 @@ func TestWriteAdmissionError_StatusAndBody(t *testing.T) {
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("unmarshal: %v; body=%q", err, w.Body.String())
 	}
-	if resp.Error.Code != "context_window_exceeded" {
-		t.Errorf("error.code = %q, want context_window_exceeded", resp.Error.Code)
+	if resp.Error.Code != CodeAdmissionRejected {
+		t.Errorf("error.code = %q, want %s", resp.Error.Code, CodeAdmissionRejected)
 	}
 	if resp.Error.Type != ErrorTypeInvalidRequest {
 		t.Errorf("error.type = %q, want %q", resp.Error.Type, ErrorTypeInvalidRequest)

@@ -1,0 +1,130 @@
+# DEBUG CANARY — KT-SO, feature D4 of
+# .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md (§6.4).
+# Matrix row gfx1100-structured-outputs-2026-11-01; window procedure and the
+# owner's paste sequence in .loom/32-iteration-plan-kt-so-2026-11-01.md.
+# Prepared 2026-11-01. NOT in the models kustomization: the operator applies
+# it once in a scheduled window, the agent runs
+# `flexinfer-bench tool_call_conformance` against it, then the operator
+# deletes the Model.
+#
+# Question: on the workhorse posture (MTP K=2, ROCM_SEGMENTED_ATTN, fp16 KV,
+# 32K, qwen3_coder tools, qwen3 reasoning parser with thinking off), do
+# schema-constrained tool-call turns parse 100 %, keep decode within 10 % of
+# unguided and keep MTP position-0 acceptance >= 0.75, with unconstrained
+# greedy output unchanged? vLLM 0.32 fills the structured-output bitmask on
+# the serial CPU path whenever speculative tokens > 0, so the riskiest
+# assumption is that this path does not eat the MTP gain.
+#
+# This is the production workhorse config (deploy/models/
+# qwen38-27b-autoround-workhorse.yaml at bd06864f) on its image and source,
+# with four differences: its own name and served name, priority 510 so it
+# takes the 5930k from the workhorse (500) for the window as S3/S3b and the
+# KT-QOS canary do (the workhorse's vramEstimateMB 22000 is the whole card, so
+# a twin cannot run beside it), the S3 canary's compile cache path (warm
+# segmented + MTP K=2 variants at 32K; production's cache is never written),
+# and spec.capabilities.structuredOutput: true.
+#
+# The opt-in renders --structured-outputs-config {"backend":"auto"} only once
+# the gfx1100 GPUProfile carries the vllm/structured-outputs certificate for
+# this image, which follows the verdict. Until then the controller renders
+# nothing and reports StructuredOutput=False StructuredOutputNotCertified;
+# vLLM still serves response_format and structured_outputs with backend auto,
+# its default, so the measured engine behaviour is the one the flag pins.
+#
+# Rollback = delete this Model; the workhorse reclaims the card on demand.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-so-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/32-iteration-plan-kt-so-2026-11-01.md"
+    flexinfer.ai/promotion-state: debug-canary-kt-so
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  capabilities:
+    structuredOutput: true
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s3-5930k
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 1
+    shared: 5930k-textgen
+    priority: 510
+    vramEstimateMB: 22000
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    warmPolicy: primary
+    dedicatedDeployment: true
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-so-canary
+    # /metrics must carry the spec-decode, generation-token and decode-time
+    # counters tool_call_conformance reads.
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-5930k
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Hidden from discovery; the gate talks to the Service through a port-forward.
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-so-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

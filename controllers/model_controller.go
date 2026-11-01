@@ -354,6 +354,18 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.persistStatus(ctx, model)
 	}
 
+	// Backends served only behind a GPUProfile certificate (pyannote, D5-a)
+	// are refused on a profile whose runtime image is not certified for them.
+	certificate := r.backendCertificateDecisionFor(model, b, gpuArch)
+	applyBackendCertificateCondition(model, certificate)
+	if certificate.Required && !certificate.Certified {
+		log.Info("Backend certificate gate refused the Model", "backend", b.Name(), "reason", certificate.Reason, "message", certificate.Message)
+		r.Recorder.Event(model, corev1.EventTypeWarning, certificate.Reason, certificate.Message)
+		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, certificate.Reason, certificate.Message)
+		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+		return ctrl.Result{}, r.persistStatus(ctx, model)
+	}
+
 	// Validate VRAM fit if the model declares an estimate.
 	if err := r.validateVRAMFit(model, b, gpuArch); err != nil {
 		log.Error(err, "VRAM fit validation failed")
@@ -425,6 +437,11 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 
 	// GPU detection succeeded - model is schedulable
 	setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, true, aiv1alpha2.ReasonSchedulable, "Model can be scheduled on available nodes")
+
+	// D4: report whether a structured-output opt-in is certified for this
+	// arch and image. ensureDeployment re-evaluates on the fresh spec before
+	// rendering; an uncertified opt-in renders nothing and never blocks.
+	applyStructuredOutputCondition(model, r.structuredOutputDecisionFor(model, b, gpuVendor, gpuArch))
 
 	// Ensure Service exists early (needed for stable endpoints even while cache is warming).
 	if err := r.ensureService(ctx, model, b); err != nil {
@@ -1028,8 +1045,8 @@ func lastActiveTimeOnlyChange(oldModel, newModel *aiv1alpha2.Model) bool {
 // proxy's lastActiveTime heartbeat, cache bookkeeping, conditions,
 // resourceVersion bumps) is dropped: the writer's own For() event already
 // covers it, and admitting it would amplify every status write into N-1
-// sibling reconciles. The map function ignores non-shared Models, so a phase
-// change on an exclusive Model fans out to nothing.
+// sibling reconciles. A phase change on an exclusive Model fans out only to
+// the groups of its failover stand-ins, which usually means nothing.
 var sharedSiblingMeaningfulChange = predicate.Funcs{
 	CreateFunc:  func(event.CreateEvent) bool { return false },
 	DeleteFunc:  func(event.DeleteEvent) bool { return true },
@@ -1067,15 +1084,50 @@ func sharedGroupState(m *aiv1alpha2.Model) string {
 // Model until an operator annotated it, see
 // .loom/asr-diarization-kill-test-v2-inconclusive-2026-05-19.md), and the next
 // member in line is promoted the moment the leader idles out.
+//
+// It also returns every member of each group that holds a failover stand-in
+// for the changed Model (flexinfer.ai/failover-for). That group usually is not
+// the changed Model's own, which may even be exclusive: the target failing or
+// recovering lifts or drops the stand-in's election priority there.
 func (r *ModelReconciler) requestsForSharedGroupSiblings(ctx context.Context, obj client.Object) []ctrl.Request {
 	changed, ok := obj.(*aiv1alpha2.Model)
 	if !ok || changed == nil {
 		return nil
 	}
-	if changed.Spec.GPU == nil || changed.Spec.GPU.Shared == "" {
+	var requests []ctrl.Request
+	if changed.Spec.GPU != nil && changed.Spec.GPU.Shared != "" {
+		requests = r.requestsForSharedGroup(ctx, changed.Namespace, changed.Spec.GPU.Shared, changed.Name)
+	}
+	return append(requests, r.requestsForFailoverStandInGroups(ctx, changed)...)
+}
+
+// requestsForFailoverStandInGroups returns a request for every member of each
+// shared group that holds a stand-in for target, except target itself.
+func (r *ModelReconciler) requestsForFailoverStandInGroups(ctx context.Context, target *aiv1alpha2.Model) []ctrl.Request {
+	models := &aiv1alpha2.ModelList{}
+	if err := r.List(ctx, models, client.InNamespace(target.Namespace)); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to list failover stand-ins",
+			"target", target.Name, "namespace", target.Namespace)
 		return nil
 	}
-	return r.requestsForSharedGroup(ctx, changed.Namespace, changed.Spec.GPU.Shared, changed.Name)
+	groups := map[string]bool{}
+	for i := range models.Items {
+		m := &models.Items[i]
+		if m.Name == target.Name || m.Spec.GPU == nil || m.Spec.GPU.Shared == "" {
+			continue
+		}
+		if strings.TrimSpace(m.Annotations[constants.AnnotationFailoverFor]) == target.Name {
+			groups[m.Spec.GPU.Shared] = true
+		}
+	}
+	var requests []ctrl.Request
+	for i := range models.Items {
+		m := &models.Items[i]
+		if m.Name != target.Name && m.Spec.GPU != nil && groups[m.Spec.GPU.Shared] {
+			requests = append(requests, ctrl.Request{NamespacedName: client.ObjectKeyFromObject(m)})
+		}
+	}
+	return requests
 }
 
 // requestsForGPULeaseGroup re-enqueues every member of the shared group a

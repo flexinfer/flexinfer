@@ -1,0 +1,72 @@
+== raw whisper-server verbose_json
+{
+ "top_level_words": false,
+ "words": 38,
+ "monotonic": true,
+ "bad_spans": 0,
+ "segments": 4,
+ "merged": [
+  {
+   "start_ms": 10,
+   "end_ms": 5610,
+   "speaker_label": "SPEAKER_00",
+   "text": "Welcome to the weekly Infrast ructure Syn c . Today we review the R ade on 7 transcription lane ."
+  },
+  {
+   "start_ms": 5790,
+   "end_ms": 10680,
+   "speaker_label": "SPEAKER_01",
+   "text": "Thanks . The kill test measures word error rate , throughput , and memory on the card ."
+  }
+ ],
+ "first_words": [
+  " Welcome",
+  " to",
+  " the",
+  " weekly",
+  " Infrast",
+  "ructure",
+  " Syn",
+  "c",
+  ".",
+  " Today",
+  " we",
+  " review"
+ ]
+}
+== after the runtime ingress word merge
+{
+ "top_level_words": true,
+ "words": 28,
+ "monotonic": true,
+ "bad_spans": 0,
+ "segments": 4,
+ "merged": [
+  {
+   "start_ms": 10,
+   "end_ms": 5610,
+   "speaker_label": "SPEAKER_00",
+   "text": "Welcome to the weekly Infrastructure Sync. Today we review the Radeon 7 transcription lane."
+  },
+  {
+   "start_ms": 5790,
+   "end_ms": 10680,
+   "speaker_label": "SPEAKER_01",
+   "text": "Thanks. The kill test measures word error rate, throughput, and memory on the card."
+  }
+ ],
+ "first_words": [
+  "Welcome",
+  "to",
+  "the",
+  "weekly",
+  "Infrastructure",
+  "Sync.",
+  "Today",
+  "we",
+  "review",
+  "the",
+  "Radeon",
+  "7"
+ ]
+}

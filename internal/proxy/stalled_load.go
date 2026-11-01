@@ -115,6 +115,16 @@ func (e *ModelFailedError) Error() string {
 	return fmt.Sprintf("model %q is Failed: %s", e.Model, e.Message)
 }
 
+// isModelFailedError reports whether err (or anything wrapped in err) is a
+// *ModelFailedError.
+func isModelFailedError(err error) (*ModelFailedError, bool) {
+	var f *ModelFailedError
+	if errors.As(err, &f) {
+		return f, true
+	}
+	return nil, false
+}
+
 func detectFailedModel(model *aiv1alpha2.Model) *ModelFailedError {
 	if model == nil || model.Status.Phase != aiv1alpha2.ModelPhaseFailed {
 		return nil

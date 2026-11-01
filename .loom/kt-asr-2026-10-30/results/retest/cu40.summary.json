@@ -1,0 +1,141 @@
+{
+ "model": "/models/whisper/ggml-large-v3-turbo-q8_0.bin",
+ "threads": "4",
+ "extra_args": [],
+ "env": {
+  "GPU_MAX_HW_QUEUES": "1",
+  "HSA_ENABLE_SDMA": "0",
+  "HSA_USE_SVM": "0",
+  "ROCR_VISIBLE_DEVICES": "0",
+  "HSA_OVERRIDE_GFX_VERSION": null,
+  "LD_PRELOAD": "/opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so"
+ },
+ "pre": {
+  "card_vram_used": 7067672576,
+  "kfd": {
+   "34829": {
+    "compute": 3,
+    "sdma": 2,
+    "other": 0,
+    "vram": 921186304
+   },
+   "3381316": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 2788089856
+   },
+   "2475805": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 549449728
+   },
+   "2099892": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 2256814080
+   },
+   "1936810": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 531968000
+   }
+  },
+  "plane_compute_queues": 15
+ },
+ "server_ready_s": 3.0,
+ "whisper_kfd_pids": {
+  "2034286": {
+   "compute": 3,
+   "sdma": 0,
+   "other": 0,
+   "vram": 1268834304
+  }
+ },
+ "runs": {
+  "twospk": {
+   "audio_s": 10.79,
+   "wall_s": 1.17,
+   "x_realtime": 9.23,
+   "t_start": 1793391925.6619012,
+   "t_end": 1793391926.832939,
+   "language": "english",
+   "segments": 4,
+   "chars": 180
+  },
+  "meeting10": {
+   "audio_s": 600.0,
+   "wall_s": 20.36,
+   "x_realtime": 29.47,
+   "t_start": 1793391926.8330455,
+   "t_end": 1793391947.2604456,
+   "language": "english",
+   "segments": 330,
+   "chars": 9059
+  },
+  "meeting60": {
+   "audio_s": 3600.0,
+   "wall_s": 103.65,
+   "x_realtime": 34.73,
+   "t_start": 1793391947.26051,
+   "t_end": 1793392051.2473967,
+   "language": "english",
+   "segments": 1561,
+   "chars": 58324
+  }
+ },
+ "post": {
+  "card_vram_used": 8450813952,
+  "plane_compute_queues": 18,
+  "whisper": {
+   "2034286": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 1382957056
+   }
+  }
+ },
+ "peak": {
+  "whisper_vram_mb": 1318.9,
+  "whisper_compute_queues": 3,
+  "whisper_sdma_queues": 0,
+  "plane_compute_queues": 18,
+  "card_vram_used_mb": 8059.3
+ },
+ "probe": {
+  "gte_baseline": {
+   "n": 226,
+   "errors": 0,
+   "p50_ms": 40.9,
+   "p95_ms": 57.9,
+   "max_ms": 83.2
+  },
+  "bge_baseline": {
+   "n": 226,
+   "errors": 0,
+   "p50_ms": 18.9,
+   "p95_ms": 30.4,
+   "max_ms": 40.0
+  },
+  "gte_during": {
+   "n": 117,
+   "errors": 0,
+   "p50_ms": 44.8,
+   "p95_ms": 57.8,
+   "max_ms": 68.7
+  },
+  "bge_during": {
+   "n": 117,
+   "errors": 0,
+   "p50_ms": 19.0,
+   "p95_ms": 27.5,
+   "max_ms": 34.9
+  }
+ },
+ "dmesg_new": [],
+ "dmesg_oversubscribed": []
+}

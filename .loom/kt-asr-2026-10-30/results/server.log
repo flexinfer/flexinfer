@@ -1,0 +1,79 @@
+whisper_init_from_file_with_params_no_state: loading model from '/models/whisper/ggml-large-v3-turbo-q8_0.bin'
+whisper_init_with_params_no_state: use gpu    = 1
+whisper_init_with_params_no_state: flash attn = 1
+whisper_init_with_params_no_state: gpu_device = 0
+whisper_init_with_params_no_state: dtw        = 0
+ggml_cuda_init: found 1 ROCm devices (Total VRAM: 16368 MiB):
+  Device 0: AMD Radeon VII, gfx906:sramecc+:xnack- (0x906), VMM: no, Wave Size: 64, VRAM: 16368 MiB
+whisper_init_with_params_no_state: devices    = 2
+whisper_init_with_params_no_state: backends   = 2
+whisper_model_load: loading model
+whisper_model_load: n_vocab       = 51866
+whisper_model_load: n_audio_ctx   = 1500
+whisper_model_load: n_audio_state = 1280
+whisper_model_load: n_audio_head  = 20
+whisper_model_load: n_audio_layer = 32
+whisper_model_load: n_text_ctx    = 448
+whisper_model_load: n_text_state  = 1280
+whisper_model_load: n_text_head   = 20
+whisper_model_load: n_text_layer  = 4
+whisper_model_load: n_mels        = 128
+whisper_model_load: ftype         = 7
+whisper_model_load: qntvr         = 2
+whisper_model_load: type          = 5 (large v3)
+whisper_model_load: adding 1609 extra tokens
+whisper_model_load: n_langs       = 100
+whisper_model_load:        ROCm0 total size =   873.62 MB
+whisper_model_load: model size    =  873.55 MB
+whisper_backend_init_gpu: device 0: ROCm0 (type: 1)
+whisper_backend_init_gpu: found GPU device 0: ROCm0 (type: 1, cnt: 0)
+whisper_backend_init_gpu: using ROCm0 backend
+whisper_init_state: kv self size  =   10.49 MB
+whisper_init_state: kv cross size =   31.46 MB
+whisper_init_state: kv pad  size  =    7.86 MB
+whisper_init_state: compute buffer (conv)   =   37.69 MB
+whisper_init_state: compute buffer (encode) =   55.35 MB
+whisper_init_state: compute buffer (cross)  =    9.27 MB
+whisper_init_state: compute buffer (decode) =  100.04 MB
+
+system_info: n_threads = 4 / 28 | WHISPER : VITISAI = 0 | COREML = 0 | OPENVINO = 0 | ROCm : NO_VMM = 1 | FA_QUANTS = q4_0-q4_0,q8_0-q8_0,f16-f16,bf16-bf16 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | OPENMP = 1 | REPACK = 1 | 
+
+operator(): processing 'twospk.wav' (172650 samples, 10.8 sec), 4 threads, 1 processors, lang = auto, task = transcribe, timestamps = 1 ...
+
+whisper_full_with_state: auto-detected language: en (p = 0.999406)
+
+system_info: n_threads = 4 / 28 | WHISPER : VITISAI = 0 | COREML = 0 | OPENVINO = 0 | ROCm : NO_VMM = 1 | FA_QUANTS = q4_0-q4_0,q8_0-q8_0,f16-f16,bf16-bf16 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | OPENMP = 1 | REPACK = 1 | 
+
+operator(): processing 'meeting10.wav' (9600000 samples, 600.0 sec), 4 threads, 1 processors, lang = auto, task = transcribe, timestamps = 1 ...
+
+whisper_full_with_state: auto-detected language: en (p = 0.999586)
+
+system_info: n_threads = 4 / 28 | WHISPER : VITISAI = 0 | COREML = 0 | OPENVINO = 0 | ROCm : NO_VMM = 1 | FA_QUANTS = q4_0-q4_0,q8_0-q8_0,f16-f16,bf16-bf16 | CPU : SSE3 = 1 | SSSE3 = 1 | AVX = 1 | AVX2 = 1 | F16C = 1 | FMA = 1 | BMI2 = 1 | OPENMP = 1 | REPACK = 1 | 
+
+operator(): processing 'meeting60.wav' (57600000 samples, 3600.0 sec), 4 threads, 1 processors, lang = auto, task = transcribe, timestamps = 1 ...
+
+whisper_full_with_state: auto-detected language: en (p = 0.986328)
+
+whisper_print_timings:     load time =   983.95 ms
+whisper_print_timings:     fallbacks =  12 p /  12 h
+whisper_print_timings:      mel time =  4950.99 ms
+whisper_print_timings:   sample time = 15586.07 ms /     1 runs ( 15586.07 ms per run)
+whisper_print_timings:   encode time = 44155.64 ms /   215 runs (   205.38 ms per run)
+whisper_print_timings:   decode time = 26122.46 ms / 18286 runs (     1.43 ms per run)
+whisper_print_timings:   batchd time =  2790.18 ms /  3111 runs (     0.90 ms per run)
+whisper_print_timings:   prompt time =  3582.64 ms / 48437 runs (     0.07 ms per run)
+whisper_print_timings:    total time = 113595.21 ms
+
+whisper server listening at http://127.0.0.1:8090
+
+Received request: twospk.wav
+Successfully loaded twospk.wav
+Running whisper.cpp inference on twospk.wav
+Received request: meeting10.wav
+Successfully loaded meeting10.wav
+Running whisper.cpp inference on meeting10.wav
+Received request: meeting60.wav
+Successfully loaded meeting60.wav
+Running whisper.cpp inference on meeting60.wav
+
+Caught signal 15, shutting down gracefully...

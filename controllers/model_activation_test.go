@@ -341,7 +341,7 @@ func TestActivationWinsSharedLeadershipFromIdleLeader(t *testing.T) {
 
 	group := []*aiv1alpha2.Model{leader, challenger}
 
-	if got := chooseSharedGroupLeader(group, now); got == nil || got.Name != "incumbent" {
+	if got := chooseSharedGroupLeader(group, now, nil); got == nil || got.Name != "incumbent" {
 		t.Fatalf("before activation, leader = %v, want incumbent", got)
 	}
 
@@ -349,7 +349,7 @@ func TestActivationWinsSharedLeadershipFromIdleLeader(t *testing.T) {
 	req := metav1.NewTime(now.Add(-time.Second))
 	challenger.Status.ActivationRequestedAt = &req
 
-	got := chooseSharedGroupLeader(group, now)
+	got := chooseSharedGroupLeader(group, now, nil)
 	if got == nil || got.Name != "queued-idle" {
 		t.Fatalf("after activation, leader = %v, want queued-idle", got)
 	}
@@ -384,7 +384,7 @@ func TestActivationDoesNotPreemptBusySharedLeader(t *testing.T) {
 	req := metav1.NewTime(now.Add(-time.Second))
 	challenger.Status.ActivationRequestedAt = &req
 
-	got := chooseSharedGroupLeader([]*aiv1alpha2.Model{leader, challenger}, now)
+	got := chooseSharedGroupLeader([]*aiv1alpha2.Model{leader, challenger}, now, nil)
 	if got == nil || got.Name != "busy-incumbent" {
 		t.Fatalf("activation preempted a busy leader: leader = %v, want busy-incumbent", got)
 	}

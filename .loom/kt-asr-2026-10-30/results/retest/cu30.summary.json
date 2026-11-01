@@ -1,0 +1,144 @@
+{
+ "model": "/models/whisper/ggml-large-v3-turbo-q8_0.bin",
+ "threads": "4",
+ "extra_args": [],
+ "env": {
+  "GPU_MAX_HW_QUEUES": "1",
+  "HSA_ENABLE_SDMA": "0",
+  "HSA_USE_SVM": "0",
+  "ROCR_VISIBLE_DEVICES": "0",
+  "HSA_OVERRIDE_GFX_VERSION": null,
+  "LD_PRELOAD": "/opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so"
+ },
+ "pre": {
+  "card_vram_used": 7067672576,
+  "kfd": {
+   "34829": {
+    "compute": 3,
+    "sdma": 2,
+    "other": 0,
+    "vram": 921186304
+   },
+   "3381316": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 2788089856
+   },
+   "2475805": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 549449728
+   },
+   "2099892": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 2256814080
+   },
+   "1936810": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 531968000
+   }
+  },
+  "plane_compute_queues": 15
+ },
+ "server_ready_s": 3.0,
+ "whisper_kfd_pids": {
+  "2705613": {
+   "compute": 3,
+   "sdma": 0,
+   "other": 0,
+   "vram": 1268834304
+  }
+ },
+ "runs": {
+  "twospk": {
+   "audio_s": 10.79,
+   "wall_s": 1.61,
+   "x_realtime": 6.69,
+   "t_start": 1793392656.1100607,
+   "t_end": 1793392657.7254174,
+   "language": "english",
+   "segments": 4,
+   "chars": 180
+  },
+  "meeting10": {
+   "audio_s": 600.0,
+   "wall_s": 25.05,
+   "x_realtime": 23.96,
+   "t_start": 1793392657.7254798,
+   "t_end": 1793392682.832982,
+   "language": "english",
+   "segments": 330,
+   "chars": 9059
+  },
+  "meeting60": {
+   "audio_s": 3600.0,
+   "wall_s": 132.94,
+   "x_realtime": 27.08,
+   "t_start": 1793392682.8330479,
+   "t_end": 1793392816.1439903,
+   "language": "english",
+   "segments": 1561,
+   "chars": 58324
+  }
+ },
+ "post": {
+  "card_vram_used": 8450813952,
+  "plane_compute_queues": 18,
+  "whisper": {
+   "2705613": {
+    "compute": 3,
+    "sdma": 0,
+    "other": 0,
+    "vram": 1382957056
+   }
+  }
+ },
+ "peak": {
+  "whisper_vram_mb": 1318.9,
+  "whisper_compute_queues": 3,
+  "whisper_sdma_queues": 0,
+  "plane_compute_queues": 18,
+  "card_vram_used_mb": 8059.4
+ },
+ "probe": {
+  "gte_baseline": {
+   "n": 226,
+   "errors": 0,
+   "p50_ms": 40.6,
+   "p95_ms": 53.3,
+   "max_ms": 76.3
+  },
+  "bge_baseline": {
+   "n": 226,
+   "errors": 0,
+   "p50_ms": 18.7,
+   "p95_ms": 30.8,
+   "max_ms": 53.9
+  },
+  "gte_during": {
+   "n": 150,
+   "errors": 0,
+   "p50_ms": 42.5,
+   "p95_ms": 58.6,
+   "max_ms": 74.9
+  },
+  "bge_during": {
+   "n": 150,
+   "errors": 0,
+   "p50_ms": 18.4,
+   "p95_ms": 27.4,
+   "max_ms": 57.1
+  }
+ },
+ "dmesg_new": [
+  "[Fri Oct 30 20:35:07 2026] IPv6: ADDRCONF(NETDEV_CHANGE): eth0: link becomes ready",
+  "[Fri Oct 30 20:35:07 2026] IPv6: ADDRCONF(NETDEV_CHANGE): veth2088f37d: link becomes ready"
+ ],
+ "dmesg_oversubscribed": []
+}

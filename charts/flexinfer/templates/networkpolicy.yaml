@@ -107,6 +107,11 @@ spec:
           port: 8188
         - protocol: TCP
           port: 11434
+    {{- if (default (dict) $proxy.jobs).enabled }}
+    # Async jobs: the job store (MinIO) and callers' webhook endpoints, which
+    # live outside the namespace on arbitrary hosts and ports.
+    - to: []
+    {{- end }}
     # Allow DNS
     - to:
         - namespaceSelector: {}

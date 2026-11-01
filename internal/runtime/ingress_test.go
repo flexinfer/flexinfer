@@ -297,7 +297,7 @@ func TestRuntimeIngressPortsAndCleanupOnProcessExit(t *testing.T) {
 }
 
 func TestConfigureIngressBackendBindings(t *testing.T) {
-	for _, name := range []string{backend.NameLlamaCpp, backend.NameVLLM, backend.NameVLLMOmni, backend.NameMLCLLM} {
+	for _, name := range []string{backend.NameLlamaCpp, backend.NameVLLM, backend.NameVLLMOmni, backend.NameMLCLLM, backend.NameWhisperCpp} {
 		t.Run(name, func(t *testing.T) {
 			args, _ := configureIngressBackend(name, 19000, []string{"--host", "0.0.0.0", "--port", "8000"}, nil)
 			assert.Equal(t, []string{"--host", "127.0.0.1", "--port", "19000"}, args)
@@ -305,8 +305,12 @@ func TestConfigureIngressBackendBindings(t *testing.T) {
 	}
 	_, env := configureIngressBackend(backend.NameOllama, 19000, nil, []corev1.EnvVar{{Name: "OLLAMA_HOST", Value: "0.0.0.0"}})
 	assert.Equal(t, []corev1.EnvVar{{Name: "OLLAMA_HOST", Value: "127.0.0.1:19000"}}, env)
-	_, env = configureIngressBackend(backend.NameDiffusers, 19000, nil, []corev1.EnvVar{{Name: "PORT", Value: "8000"}})
-	assert.Equal(t, []corev1.EnvVar{{Name: "PORT", Value: "19000"}}, env)
+	for _, name := range []string{backend.NameDiffusers, backend.NameSNAC, backend.NamePyannote} {
+		_, env = configureIngressBackend(name, 19000, nil, []corev1.EnvVar{{Name: "PORT", Value: "8000"}})
+		assert.Equal(t, []corev1.EnvVar{{Name: "PORT", Value: "19000"}}, env, name)
+		assert.True(t, supportsRequestIngress(name), name)
+	}
+	assert.False(t, ingressRequired(backend.NamePyannote), "pyannote's API needs no ingress adapter")
 	assert.False(t, supportsRequestIngress(backend.NameSunshine))
 }
 

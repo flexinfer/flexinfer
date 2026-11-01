@@ -184,12 +184,12 @@ func (i *modelIngress) close() {
 // their private port is never advertised by the runtime.
 func configureIngressBackend(name string, port int32, args []string, env []corev1.EnvVar) ([]string, []corev1.EnvVar) {
 	switch name {
-	case backend.NameLlamaCpp, backend.NameVLLM, backend.NameVLLMOmni, backend.NameMLCLLM:
+	case backend.NameLlamaCpp, backend.NameVLLM, backend.NameVLLMOmni, backend.NameMLCLLM, backend.NameWhisperCpp:
 		args = setRuntimeArg(args, "--host", "127.0.0.1")
 		args = setRuntimeArg(args, "--port", strconv.Itoa(int(port)))
 	case backend.NameOllama:
 		env = overlayEnvVars(env, []corev1.EnvVar{{Name: "OLLAMA_HOST", Value: net.JoinHostPort("127.0.0.1", strconv.Itoa(int(port)))}})
-	case backend.NameDiffusers, backend.NameSNAC:
+	case backend.NameDiffusers, backend.NameSNAC, backend.NamePyannote:
 		env = overlayEnvVars(env, []corev1.EnvVar{{Name: "PORT", Value: strconv.Itoa(int(port))}})
 	}
 	return args, env
@@ -207,7 +207,7 @@ func setRuntimeArg(args []string, flag, value string) []string {
 
 func supportsRequestIngress(name string) bool {
 	switch name {
-	case backend.NameLlamaCpp, backend.NameVLLM, backend.NameVLLMOmni, backend.NameMLCLLM, backend.NameOllama, backend.NameDiffusers, backend.NameSNAC:
+	case backend.NameLlamaCpp, backend.NameVLLM, backend.NameVLLMOmni, backend.NameMLCLLM, backend.NameOllama, backend.NameDiffusers, backend.NameSNAC, backend.NameWhisperCpp, backend.NamePyannote:
 		return true
 	default:
 		return false

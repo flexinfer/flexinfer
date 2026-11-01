@@ -181,12 +181,12 @@ func TestWriteAdmissionRejection_413WithCode(t *testing.T) {
 		Ceiling:               4000,
 		RawContextWindow:      4096,
 	}
-	writeAdmissionRejection(w, "gemma4-26b-a4b-gptq", d)
+	writeAdmissionRejection(w, "gemma4-26b-a4b-gptq", d, nil)
 	if w.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("status = %d, want 413", w.Code)
 	}
 	body := w.Body.String()
-	if !strings.Contains(body, "context_window_exceeded") {
+	if !strings.Contains(body, `"code":"admission_rejected"`) {
 		t.Errorf("body missing error code: %q", body)
 	}
 	if !strings.Contains(body, "gemma4-26b-a4b-gptq") {
@@ -233,7 +233,7 @@ func TestWriteAdmissionRejection_MaxTokensExceedsBudget(t *testing.T) {
 		Ceiling:               4000,
 		RawContextWindow:      4096,
 	}
-	writeAdmissionRejection(w, "test-model", d)
+	writeAdmissionRejection(w, "test-model", d, nil)
 
 	var resp validation.OpenAIErrorResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {

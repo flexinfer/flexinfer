@@ -96,6 +96,21 @@ rules:
   - list
   - watch
 - apiGroups:
+  - ai.flexinfer
+  resources:
+  - inferencejobs
+  verbs:
+  - delete
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ai.flexinfer
+  resources:
+  - inferencejobs/status
+  verbs:
+  - get
+- apiGroups:
   - apps
   resources:
   - daemonsets

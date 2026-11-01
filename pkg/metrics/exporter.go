@@ -54,6 +54,41 @@ var (
 		[]string{"gpu", "node"},
 	)
 
+	// GPUPowerWatts is board power from the amdgpu hwmon sensor
+	// (power1_average, else power1_input), sampled by the node agent only on
+	// nodes listed in --gpu-power-nodes. gpu is the DRM card index, the same
+	// index flexinfer_gpu_healthy uses (not necessarily rocm-smi's).
+	GPUPowerWatts = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_power_watts",
+			Help: "GPU board power in watts from sysfs hwmon (power1_average or power1_input). Sampled only where the node agent enables power sampling.",
+		},
+		[]string{"gpu", "node"},
+	)
+
+	// GPUPowerSamplerActive is 1 while the node agent samples GPU power and 0
+	// after the sampler stopped itself (degraded GPU, device I/O error,
+	// repeated read errors). Absent on nodes where sampling is not enabled.
+	GPUPowerSamplerActive = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_gpu_power_sampler_active",
+			Help: "Whether the node agent's GPU power sampler is running (1) or stopped itself (0). Absent where sampling is not enabled.",
+		},
+		[]string{"node"},
+	)
+
+	// LaneEnergyJoulesTotal is GPU energy attributed to a lane: the card's
+	// energy between two power samples, split equally among the lanes Active
+	// (phase Ready) on the card at the later sample. Energy while no lane is
+	// Active is attributed to nobody. Only where GPU power sampling is on.
+	LaneEnergyJoulesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_lane_energy_joules_total",
+			Help: "GPU energy in joules attributed to a lane, the card's sampled power split equally among the lanes Active on it.",
+		},
+		[]string{"model", "node", "gpu"},
+	)
+
 	// GPU VRAM metrics
 
 	// GPUVRAMFreeBytes tracks free VRAM per GPU.
@@ -288,6 +323,26 @@ var (
 			Buckets: []float64{0.25, 0.5, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 120, 180, 300, 450, 600, 900},
 		},
 		[]string{"model", "namespace", "backend", "group", "serving_path"},
+	)
+
+	// InferenceJobs counts InferenceJobs by phase; the proxy exports the
+	// submission, run and webhook metrics (flexinfer_jobs_* in internal/proxy).
+	InferenceJobs = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_jobs",
+			Help: "InferenceJobs by namespace and phase.",
+		},
+		[]string{"namespace", "phase"},
+	)
+
+	// InferenceJobsGCDeletedTotal counts finished InferenceJobs the manager
+	// deleted after their ttlAfterFinished.
+	InferenceJobsGCDeletedTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_jobs_gc_deleted_total",
+			Help: "Finished InferenceJobs deleted after ttlAfterFinished, by namespace and phase.",
+		},
+		[]string{"namespace", "phase"},
 	)
 
 	// ClusterHealth reports remote cluster readiness (1 ready, 0 not ready).
@@ -636,7 +691,9 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ModelKVPoolRecheckTotal, ModelKVCacheTokens, ModelEngineStalled, ModelEngineStallRestartsTotal)
 	ctrlmetrics.Registry.MustRegister(TokensPerSecond)
 	ctrlmetrics.Registry.MustRegister(ModelLoadSeconds)
+	ctrlmetrics.Registry.MustRegister(InferenceJobs, InferenceJobsGCDeletedTotal)
 	ctrlmetrics.Registry.MustRegister(GPUTemperature)
+	ctrlmetrics.Registry.MustRegister(GPUPowerWatts, GPUPowerSamplerActive, LaneEnergyJoulesTotal)
 
 	// GPU VRAM metrics
 	ctrlmetrics.Registry.MustRegister(GPUVRAMFreeBytes)

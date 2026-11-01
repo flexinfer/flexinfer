@@ -127,6 +127,7 @@ These look orphaned to a CI-only audit but are the only build recipes for images
 | Dockerfile | Image | Pinned by |
 |---|---|---|
 | `Dockerfile.pyannote-rocm-gfx906` | `flexinfer/pyannote-diarization@sha256:…` | `deploy/system/pyannote-diarization/deployment.yaml` (live voice stack) |
+| `Dockerfile.runtime-gfx906-pyannote` | `flexinfer/runtime:rocm-gfx906-pyannote-<base12>` (a layer on the gfx906 runtime digest) | Nothing yet: the KT-DIAR window builds it (`.loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md` W1); the `pyannote` backend is refused until `deploy/gpuprofiles/gfx906.yaml` certifies the digest |
 | `Dockerfile.quantizer-gptq-rocm` | `flexinfer/quantizer:gptq-rocm-gfx1100` | `pkg/quantization/gpu_job.go` (`DefaultGPTQROCmImage`) + `deploy/system/values-k3s.yaml` |
 | `Dockerfile.quantizer-awq-rocm` | `flexinfer/quantizer:awq-rocm-gfx1100` | `deploy/system/values-k3s.yaml` (`images.quantization.awq`) |
 | `Dockerfile.mlc-rocm64-gfx1100` | `flexinfer/mlc-llm:rocm64-gfx1100` | `deploy/gpuprofiles/` |

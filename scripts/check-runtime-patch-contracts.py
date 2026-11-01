@@ -115,6 +115,7 @@ RUNTIME_YAML_VERSION_KEYS = {
     "LLAMACPP_VERSION": "llamacpp_version",
     "OLLAMA_VERSION": "ollama_version",
     "OLLAMA_GO_VERSION": "ollama_go_version",
+    "WHISPERCPP_VERSION": "whispercpp_version",
 }
 
 # build arg -> (profile field, build-runtime.sh default). Mirrors the `pcfg`

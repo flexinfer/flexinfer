@@ -241,6 +241,40 @@ Within each category, ties are broken by: highest priority → most recent deman
 
 On GPUProfiles with `features.multiModel`, `chooseSharedGroupLeaders()` keeps the elected leader and also admits every other member that wants to run, highest priority first, while their summed `gpu.vramEstimateMB` fits the profile's VRAM budget.
 
+### Failover stand-ins (`failover-for`)
+
+A member can stand in for a Model on another card, usually a warm copy of an always-on lane:
+
+```yaml
+metadata:
+  annotations:
+    flexinfer.ai/failover-for: qwen38-27b-autoround-workhorse
+```
+
+While the named Model is down, every priority and demand comparison in this group's election treats the stand-in differently:
+
+- **Priority.** It ranks at the higher of its own `gpu.priority` and the down Model's.
+- **Demand.** The down Model's `lastActiveTime` counts as its own. Callers keep asking for the dead lane, and the proxy stamps demand there (or on its label), so that traffic is what promotes the stand-in.
+
+"Down" means the Model is `Failed`, or its `kubernetes.io/hostname` selector pins a node labelled `flexinfer.ai/gpu.health=degraded`. A target that is missing, up or the stand-in itself has no effect.
+
+The stand-in must run once elected: `serverless.minReplicas: 1` or more, or not serverless. A scale-to-zero member sizes its replicas from its own `lastActiveTime`, so electing it on inherited demand would hold the card for a lane that never starts. On such a member the annotation is ignored.
+
+What changes while the target is down:
+
+- **Preemption.** A stand-in whose target has callers preempts a Ready member it now outranks, even one that is busy.
+- **Holding the card.** A Ready stand-in keeps the card against demand from members below the target's priority.
+- **Parking.** A warm-pinned stand-in parks members it outranks behind `primary/<stand-in>`, so the proxy fails their requests fast.
+- **Leases.** A priority-gated `GPULease` must outrank the lifted priority to free the card.
+
+What does not change:
+
+- The swap cooldown and a loading member's activation window still hold the card.
+- The VRAM budget and the hardware-queue bound still apply.
+- `forcePromotion` still wins.
+
+When the target recovers, its phase change re-elects the stand-in's group, and the stand-in drops back to its own priority. The controller logs `Model is active in shared group` with `failoverFor` and `electionPriority` when a stand-in takes the card. Pair it with the proxy's [`unavailable-reroute-to`](routing.md#unavailable-reroute-unavailable-reroute-to), which moves concrete-name callers to whichever copy is Ready.
+
 ### Demand Signaling Lifecycle
 
 The demand signal flows from the proxy to the controller via the model's `LastActiveTime` status field:

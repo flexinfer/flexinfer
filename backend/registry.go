@@ -10,16 +10,18 @@ import (
 // Backend name constants. Use these instead of raw string literals
 // so typos become compile errors.
 const (
-	NameVLLM      = "vllm"
-	NameVLLMOmni  = "vllm-omni"
-	NameOllama    = "ollama"
-	NameLlamaCpp  = "llamacpp"
-	NameDiffusers = "diffusers"
-	NameSNAC      = "snac"
-	NameComfyUI   = "comfyui"
-	NameMLCLLM    = "mlc-llm"
-	NameSteam     = "steam"
-	NameSunshine  = "sunshine"
+	NameVLLM       = "vllm"
+	NameVLLMOmni   = "vllm-omni"
+	NameOllama     = "ollama"
+	NameLlamaCpp   = "llamacpp"
+	NameDiffusers  = "diffusers"
+	NameSNAC       = "snac"
+	NameWhisperCpp = "whispercpp"
+	NamePyannote   = "pyannote"
+	NameComfyUI    = "comfyui"
+	NameMLCLLM     = "mlc-llm"
+	NameSteam      = "steam"
+	NameSunshine   = "sunshine"
 )
 
 var (

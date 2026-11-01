@@ -1,0 +1,5 @@
+;; Two-minute three-speaker clip for TestDiarizeConformanceCheckedInFixtures.
+SPEAKER clip 1 0.000 40.000 <NA> <NA> A <NA> <NA>
+SPEAKER clip 1 40.000 40.000 <NA> <NA> B <NA> <NA>
+SPEAKER clip 1 80.000 40.000 <NA> <NA> C <NA> <NA>
+SPEAKER other 1 0.000 120.000 <NA> <NA> Z <NA> <NA>

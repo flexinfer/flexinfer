@@ -219,6 +219,34 @@ var (
 		[]string{"model", "target", "outcome"},
 	)
 
+	// swapReplaysTotal counts idempotent requests held back after a drain or
+	// gateway failure that coincided with a swap of their lane, by outcome:
+	// "same_lane" or "reroute" (the replay was answered below 500 on the lane
+	// or its unavailable-reroute-to equivalent), "failed" (the replay failed
+	// too), "no_ready_lane" (nothing could serve within the bound; the
+	// original failure was returned).
+	swapReplaysTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_replays_total",
+			Help: "Total idempotent requests replayed after a lane swap, by lane and outcome.",
+		},
+		[]string{"lane", "outcome"},
+	)
+
+	// unavailableRerouteTotal counts requests for a Model with a
+	// flexinfer.ai/unavailable-reroute-to lane that arrived while the Model
+	// could not serve, by reason (failed, parked, preempted) and outcome:
+	// "rerouted" (served on the target) or "target_unavailable" (the target
+	// was not Ready or its breaker was open, so the request took its normal
+	// path).
+	unavailableRerouteTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_unavailable_reroute_total",
+			Help: "Total requests for an unavailable Model with an unavailable-reroute lane, by reason and outcome.",
+		},
+		[]string{"model", "target", "reason", "outcome"},
+	)
+
 	// Per-request token-shape histograms. Observed in logUpstreamUsage from the
 	// upstream `usage` block, labeled by resolved model so the traffic mix can be
 	// read per serving lane. This is the only place the proxy surfaces request
@@ -266,6 +294,21 @@ var (
 	// requests that omit it. The stream=true share here bounds that gap — a high
 	// streaming share whose usage chunks are absent means the histogram-based
 	// workload verdict (e.g. blanket n-gram SD) must be read with caution.
+	// schemaConstrainedRequestsTotal counts forwarded requests that constrain
+	// their output (response_format json_schema/json_object/structural_tag,
+	// Responses text.format, vLLM structured_outputs, required or named
+	// tool_choice), by resolved model, constraint kind and upstream status
+	// class. The proxy passes those fields through untouched; this is the tag.
+	// Against flexinfer_proxy_completions_total it gives a lane's
+	// schema-constrained share; code="4xx" catches schemas the lane rejects.
+	schemaConstrainedRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_schema_constrained_requests_total",
+			Help: "Forwarded requests that constrain their output (response_format, text.format, structured_outputs, required/named tool_choice), by resolved model, constraint kind and upstream status class.",
+		},
+		[]string{"model", "constraint", "code"},
+	)
+
 	completionsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_completions_total",
@@ -387,6 +430,39 @@ var (
 		},
 		[]string{"model"},
 	)
+
+	// Caller QoS classes (D3, qos.go). `class` is the resolved class
+	// (interactive|background|batch), `lane` the Model the request resolved
+	// to (the parent for a LoRA adapter). `outcome` is unenforced on lanes
+	// that do not enforce classes.
+	qosDecisionsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_qos_decisions_total",
+			Help: "QoS class decisions by resolved class, lane and outcome.",
+		},
+		[]string{"class", "lane", "outcome"},
+	)
+
+	// qosTTFT is time from the proxy receiving a streaming completion to the
+	// first upstream body byte. vLLM writes nothing before the first token,
+	// so this is TTFT as the caller sees it, queueing included.
+	qosTTFT = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_qos_ttft_seconds",
+			Help:    "Time to first upstream byte for streaming completions, by QoS class and lane.",
+			Buckets: []float64{0.1, 0.25, 0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300},
+		},
+		[]string{"class", "lane"},
+	)
+
+	qosRequestDuration = prometheus.NewHistogramVec(
+		prometheus.HistogramOpts{
+			Name:    "flexinfer_proxy_qos_request_duration_seconds",
+			Help:    "End-to-end proxy request duration by QoS class and lane.",
+			Buckets: []float64{0.5, 1, 2, 5, 10, 20, 30, 60, 120, 300, 600},
+		},
+		[]string{"class", "lane"},
+	)
 )
 
 var metricsOnce sync.Once
@@ -443,9 +519,12 @@ func RegisterMetrics() {
 		prometheus.MustRegister(proxyShutdownDuration)
 		prometheus.MustRegister(maxTokensClampedTotal)
 		prometheus.MustRegister(contextOverflowTotal)
+		prometheus.MustRegister(swapReplaysTotal)
+		prometheus.MustRegister(unavailableRerouteTotal)
 		prometheus.MustRegister(requestPromptTokens)
 		prometheus.MustRegister(requestCompletionTokens)
 		prometheus.MustRegister(completionsTotal)
+		prometheus.MustRegister(schemaConstrainedRequestsTotal)
 		prometheus.MustRegister(observedPromptTokensTotal)
 		prometheus.MustRegister(cachedPromptTokensTotal)
 		prometheus.MustRegister(stalledLoadTotal)
@@ -454,5 +533,6 @@ func RegisterMetrics() {
 		prometheus.MustRegister(labelGroupRouteTargetHitsTotal)
 		prometheus.MustRegister(leastLoadedReservationsTotal)
 		prometheus.MustRegister(leastLoadedReservationsExpiredTotal)
+		prometheus.MustRegister(qosDecisionsTotal, qosTTFT, qosRequestDuration)
 	})
 }

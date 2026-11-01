@@ -21,13 +21,26 @@ const (
 	PortMLCLLM    int32 = 8000
 	PortDiffusers int32 = 8000
 	PortSNAC      int32 = 8000
-	PortLlamaCpp  int32 = 8080
-	PortComfyUI   int32 = 8188
-	PortOllama    int32 = 11434
-	PortSteam     int32 = 27036
+	// PortWhisperCpp avoids whisper-server's own default 8080, the runtime API port.
+	PortWhisperCpp int32 = 8000
+	PortPyannote   int32 = 8000
+	PortLlamaCpp   int32 = 8080
+	PortComfyUI    int32 = 8188
+	PortOllama     int32 = 11434
+	PortSteam      int32 = 27036
 	// PortSunshine is Sunshine's Moonlight HTTP control port (base 47989). It is
 	// the canonical "is the gaming host up" TCP target; the HTTPS Moonlight port
 	// (47984), HTTPS web UI (47990), RTSP (48010/tcp) and the UDP media ports
 	// (47998-48010) are exposed at the DaemonSet/networking layer, not here.
 	PortSunshine int32 = 47989
+
+	// WhisperCppInferencePath is the OpenAI transcription route whisper-server
+	// is started with (--inference-path).
+	WhisperCppInferencePath = "/v1/audio/transcriptions"
+
+	// PyannoteDiarizationPath is the speaker-diarization route the bundled
+	// server-pyannote.py serves: multipart audio in, speaker turns out. It is a
+	// flexinfer extension named after the OpenAI audio routes; OpenAI has no
+	// standalone diarization endpoint.
+	PyannoteDiarizationPath = "/v1/audio/diarizations"
 )

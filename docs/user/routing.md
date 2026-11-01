@@ -364,6 +364,54 @@ outcome is `rerouted` or `target_unavailable`. Do not also opt the short lane
 into context-bounded admission (`flexinfer.ai/admission`): its 413 is
 returned before the runtime is asked, so nothing would reroute.
 
+#### Unavailable reroute (unavailable-reroute-to)
+
+A lane with an equivalent elsewhere, such as the same weights on another card,
+can hand requests to it while it cannot serve. Annotate the lane with the
+equivalent Model (or one of its aliases):
+
+```yaml
+metadata:
+  annotations:
+    flexinfer.ai/unavailable-reroute-to: qwen38-27b-xtx-warm-canary
+```
+
+The proxy serves the request once on the equivalent when two things hold. The
+requested Model must be in one of these states:
+
+| Reason | State |
+|---|---|
+| `failed` | `Failed`: GPU-degraded or missing node, failed load, stalled engine. |
+| `parked` | Shared-group `preemptedBy` carries `primary/`, `gpu-lease/` or `gaming/`. |
+| `preempted` | Queued behind a holder of strictly higher `gpu.priority`, which keeps the card until it idles out. |
+
+The equivalent must also be Ready, serve the request path, and have a closed
+lane breaker. The equivalent rewrites the model name, and the response carries
+`X-FlexInfer-Unavailable-Reroute: <model>-><target>`. The reroute runs under
+the target's lane breaker and `flexinfer.ai/lane-first-byte-budget`, as the
+context-overflow replay does.
+
+Everything else takes the normal path unchanged:
+
+- A Model that is Ready, scaled to zero, or queued behind an equal- or
+  lower-priority holder. Demand promotes those.
+- A target that is not Ready. It is never cold-started from here, so the
+  reroute cannot preempt a shared GPU's leader. The requested Model's own cold
+  start still records demand, which a
+  [`failover-for`](gpu-sharing.md#failover-stand-ins-failover-for) stand-in
+  inherits.
+- Background requests, which measure the lane they name.
+- LoRA adapter requests.
+- Models with `litellm.enabled: false`.
+
+The target is served directly, so its own `unavailable-reroute-to` is never
+consulted, and a pair can point at each other. Mills and LiteLLM's alias
+rewrite address lanes by concrete name, so the label-group fallback never sees
+their requests; this annotation is what moves them.
+
+Watch `flexinfer_proxy_unavailable_reroute_total{model,target,reason,outcome}`,
+where outcome is `rerouted` or `target_unavailable`.
+
 ### Logs
 
 Enable debug logging to see routing decisions:

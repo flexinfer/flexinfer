@@ -152,9 +152,10 @@ func resolveHFDownloadOptions(model *aiv1alpha2.Model) hfDownloadOptions {
 
 	backendName := strings.ToLower(strings.TrimSpace(model.Spec.Backend))
 
-	// Backends that load GGUF files: filter downloads to just the specified file
-	// to avoid downloading all quantization variants from multi-GGUF repos.
-	if backendName == backend.NameLlamaCpp || backendName == "llama.cpp" || backendName == backend.NameVLLM {
+	// Backends that load one weights file: filter downloads to just the specified
+	// file to avoid downloading every quantization variant from multi-file repos
+	// (GGUF repos, and ggerganov/whisper.cpp for whispercpp).
+	if singleFileBackend(backendName) {
 		ggufFile := configStringValue(cfg, "ggufFile", "modelFile")
 		if ggufFile != "" {
 			opts.allowPatterns = append(opts.allowPatterns, ggufFile)
@@ -182,7 +183,8 @@ func resolveHFDownloadOptions(model *aiv1alpha2.Model) hfDownloadOptions {
 // hiccup that huggingface_hub absorbed.
 //
 // We currently only return non-empty for backends where a single
-// concrete filename is in the spec (llamacpp/vllm + ggufFile). For
+// concrete filename is in the spec (llamacpp/vllm/whispercpp + ggufFile
+// or modelFile). For
 // other backends the controller has no way to know up-front which
 // specific files MUST be present, so we leave the check disabled and
 // let the existing "size of downloaded tree" heuristics catch
@@ -190,7 +192,7 @@ func resolveHFDownloadOptions(model *aiv1alpha2.Model) hfDownloadOptions {
 func expectedHFCacheFiles(model *aiv1alpha2.Model) []string {
 	cfg := model.Spec.GetConfigMap()
 	backendName := strings.ToLower(strings.TrimSpace(model.Spec.Backend))
-	if backendName != backend.NameLlamaCpp && backendName != "llama.cpp" && backendName != backend.NameVLLM {
+	if !singleFileBackend(backendName) {
 		return nil
 	}
 	var out []string
@@ -201,4 +203,15 @@ func expectedHFCacheFiles(model *aiv1alpha2.Model) []string {
 		out = append(out, mmproj)
 	}
 	return out
+}
+
+// singleFileBackend reports backends whose HF download is filtered to the
+// ggufFile/modelFile named in the spec, and whose cache stage requires it.
+func singleFileBackend(backendName string) bool {
+	switch backendName {
+	case backend.NameLlamaCpp, "llama.cpp", backend.NameVLLM, backend.NameWhisperCpp:
+		return true
+	default:
+		return false
+	}
 }

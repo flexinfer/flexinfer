@@ -1,0 +1,87 @@
+# pyannote speaker diarization under the Model API, on the Radeon VII (gfx906)
+#
+# D5-a of .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md
+# §6.5: the lane `diarize=true` on /v1/audio/transcriptions calls after
+# whisper.cpp, inside a D2 job. It replaces the hand-written privileged
+# Deployment deploy/system/pyannote-diarization once KT-DIAR passes.
+#
+# NOT applied by Flux: deploy/debug is not in deploy/kustomization.yaml. The
+# owner applies it in the KT-DIAR window, after the three steps the controller
+# checks (.loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md):
+#   1. the gfx906 runtime runs the pyannote layer
+#      (build/Dockerfile.runtime-gfx906-pyannote) and mounts the HF token
+#      Secret at /var/run/flexinfer/secrets/flexinfer-hf-token;
+#   2. deploy/gpuprofiles/gfx906.yaml pins that digest as spec.runtime.image
+#      and lists pyannote in spec.runtime.bundledBackends;
+#   3. the profile carries the flexinfer.ai/backend-certificate-pyannote-
+#      speaker-diarization triple bound to that digest.
+# Until then the controller refuses this Model (Phase Failed, Schedulable and
+# BackendCertificate False, reason BackendNotCertified) and nothing loads.
+#
+# Request contract (build/server-pyannote.py): POST /v1/audio/diarizations,
+# multipart `file` plus optional `num_speakers`, `min_speakers`,
+# `max_speakers`; JSON speaker turns. Clients reach it through the
+# transcription job (`diarize=true`), which names this lane with the
+# flexinfer.ai/diarization-model annotation on the ASR lane.
+#
+# Budget: the Deployment measured ~1.65 GiB and 2 compute queues with SDMA on;
+# under the profile env (SDMA off, GPU_MAX_HW_QUEUES=1) one HIP process is 3
+# queues. Warm plane 12 + whisper.cpp 3 + this lane 3 = 18 of 24.
+# Priority 109 sits below whisper.cpp (111) and gte (114): a Humanizer burst
+# evicts diarization before ASR and never gte. HSA_CU_MASK=0:0-39 follows
+# KT-ASR, where an unmasked whisper.cpp moved gte p95 +38 % and the mask
+# brought it back to baseline; KT-DIAR checks gte p95 with this lane loaded.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: pyannote-diarization-radeonvii
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/purpose: "Speaker diarization (pyannote speaker-diarization-3.1) for diarize=true transcription jobs on the Radeon VII"
+    flexinfer.ai/serve-paths: /v1/audio/diarizations
+    # pyannote answers when the whole file is done; a 60-minute meeting is
+    # well under this on the VII.
+    flexinfer.ai/lane-first-byte-budget: "900s"
+spec:
+  backend: pyannote
+  source: HF://pyannote/speaker-diarization-3.1
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-radeonvii
+  # No cache block: PyannoteBackend.NeedsVolume() is false (the server pulls
+  # the gated pipeline from the hub into the runtime's HF cache), and a Local
+  # cache block would deadlock runtime eligibility (see snac-decode-gfx1100).
+  gpu:
+    vendor: amd
+    count: 1
+    shared: radeonvii-models
+    priority: 109
+    vramEstimateMB: 1700
+    hwQueueEstimate: 3
+  serverless:
+    enabled: true
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 10m
+  config:
+    # Mounted into the runtime pod by the gfx906 runtime profile's
+    # extraVolumes; the server reads the file, the value never enters a load
+    # payload.
+    hfTokenSecret: flexinfer-hf-token
+    hfTokenSecretKey: HF_TOKEN
+    rocrVisibleDevices: "0"
+    env:
+      HSA_CU_MASK: "0:0-39"
+  resources:
+    requests:
+      cpu: "1"
+      memory: 3Gi
+    limits:
+      cpu: "4"
+      memory: 6Gi
+  serviceLabels:
+    - diarization
+    - speaker-diarization
+    - pyannote
+  litellm:
+    enabled: true
+    servedModelName: pyannote-diarization-radeonvii

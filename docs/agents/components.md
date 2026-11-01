@@ -83,6 +83,29 @@ downstream:
 verdict (the label is left untouched, not removed). Recovery runbook:
 [operations.md](operations.md#gpu-health-sentinel).
 
+### GPU power sampling
+
+Off by default. On a node named in `--gpu-power-nodes` (chart:
+`agent.gpuPower.nodes`) the agent reads each discrete amdgpu card's hwmon
+`power1_average` (fallback `power1_input`) once per `--gpu-power-interval` and
+exports `flexinfer_gpu_power_watts{gpu,node}`. It is a sysfs read only, the
+same attribute the sentinel already reads once per probe cycle, never
+`rocm-smi`. Because those reads go through the SMU, and the SMU is what wedged
+on `cblevins-7900xtx`, the sampler is built to back off rather than retry:
+
+- it refuses to start without `--gpu-health-sentinel`;
+- it skips a runtime-suspended card;
+- it stops itself, latched until the agent restarts, when the sentinel reports
+  the node degraded, on the first device I/O error, or after 5 consecutive
+  failed reads, logging `GPU power sampling stopped` with the reason and
+  setting `flexinfer_gpu_power_sampler_active{node}` to `0`.
+
+The same samples feed `flexinfer_lane_energy_joules_total{model,node,gpu}`:
+each step's energy is split equally among the Models Ready on the node's GPU
+(rule and limits in [metrics.md](../specs/metrics.md#lane-energy-node-agent)).
+
+Runbook (enable, watch, turn off): [operations.md](operations.md#gpu-power-sampling).
+
 ### Implementation Details
 
 - **Hardware Detection**: Uses system calls and PCI enumeration to identify GPU hardware
@@ -108,6 +131,8 @@ If the agent cannot list pods in `flexinfer-system`, it will still label hardwar
 | `--label-prefix` | `flexinfer.ai/` | Customize if conflicts with other labelers (the `gpu.health` keys are fixed, shared with the scheduler/controller) |
 | `--probe-timeout` | `15s` | Upper bound per vendor-tool invocation; exceeding it marks the GPU `probe-timeout` |
 | `--gpu-health-sentinel` | `true` | Publish the `flexinfer.ai/gpu.health` verdict |
+| `--gpu-power-nodes` | `""` | Comma-separated node names that sample GPU board power (`flexinfer_gpu_power_watts`); empty samples nowhere, no wildcard |
+| `--gpu-power-interval` | `1s` | Power sampling period on listed nodes (minimum `500ms`) |
 | `--dry-run` | `false` | Log actions without applying labels |
 | `--node-name` | auto-detected | Override node name for labeling |
 

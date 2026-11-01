@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+
+	"github.com/flexinfer/flexinfer/pkg/validation"
 )
 
 // handleDiarize reverse-proxies POST /diarize to the pyannote diarization
@@ -18,7 +20,7 @@ import (
 // (post-meeting batch), so a per-request ReverseProxy is fine — no pooling.
 func (p *Proxy) handleDiarize(w http.ResponseWriter, r *http.Request) {
 	if p.pyannoteUpstream == "" {
-		http.Error(w, "diarization upstream not configured (FLEXINFER_PYANNOTE_UPSTREAM unset)", http.StatusServiceUnavailable)
+		validation.WriteServiceUnavailable(w, "diarization upstream not configured (FLEXINFER_PYANNOTE_UPSTREAM unset)")
 		return
 	}
 	target, err := url.Parse(p.pyannoteUpstream)

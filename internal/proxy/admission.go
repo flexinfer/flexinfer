@@ -19,8 +19,9 @@ const admissionAnnotation = "flexinfer.ai/admission"
 const admissionAnnotationValue = "context-bounded"
 
 // admissionRejectCode is the OpenAI-style error code returned with the 413
-// response when a request fails admission.
-const admissionRejectCode = "context_window_exceeded"
+// response when a request fails admission. It was context_window_exceeded
+// before the typed envelope (docs/specs/proxy-api.md, "Error envelope").
+const admissionRejectCode = validation.CodeAdmissionRejected
 
 // defaultAdmissionMaxTokens is the assumed generation budget when a request
 // omits max_tokens. Chat completions clients commonly omit it; choosing a
@@ -167,7 +168,7 @@ func (f *admissionFilter) checkAdmission(
 // breach amount, plus a flexinfer `admission` extension carrying numeric
 // fields a client can use to render an affordance (e.g. "trim by N tokens").
 // See docs/planning/context-bounded-admission-spec.md (F4-413-as-feature).
-func writeAdmissionRejection(w http.ResponseWriter, modelName string, d admissionDecision) {
+func writeAdmissionRejection(w http.ResponseWriter, modelName string, d admissionDecision, lane *validation.FlexInferDetails) {
 	submitted := d.EstimatedPromptTokens + d.MaxTokens
 	over := submitted - d.Ceiling
 	if over < 0 {
@@ -194,7 +195,7 @@ func writeAdmissionRejection(w http.ResponseWriter, modelName string, d admissio
 		TokensOver:        over,
 		SuggestTruncateTo: truncateTo,
 		ContextWindow:     d.RawContextWindow,
-	})
+	}, lane)
 }
 
 // logAdmission emits a structured log line for the decision when enforcement
