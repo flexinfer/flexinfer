@@ -3,6 +3,7 @@ package agentloop
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -262,4 +263,57 @@ func TestChatClientContextOverflowIsBudgetError(t *testing.T) {
 	_, _, err = c.Complete(context.Background(), []Message{{Role: RoleUser, Content: "x"}}, nil, 48)
 	var be *BudgetError
 	require.ErrorAs(t, err, &be)
+}
+
+// TestChatClientCompleteKeepsItsWireShape pins Complete's request body to the
+// shape it had before TurnRequest: tool_choice "auto" with tools, and none of
+// the optional constraint fields.
+func TestChatClientCompleteKeepsItsWireShape(t *testing.T) {
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"},"finish_reason":"stop"}]}`))
+	}))
+	defer srv.Close()
+	c, err := NewChatClient(ChatClientConfig{Endpoint: srv.URL, Model: "m", Temperature: 0.2})
+	require.NoError(t, err)
+	tools := []ToolDef{{Type: "function", Function: ToolFunctionDef{Name: "f", Parameters: json.RawMessage(`{"type":"object"}`)}}}
+	_, _, err = c.Complete(context.Background(), []Message{{Role: RoleUser, Content: "hi"}}, tools, 16)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"model":"m","messages":[{"role":"user","content":"hi"}],
+		"tools":[{"type":"function","function":{"name":"f","description":"","parameters":{"type":"object"}}}],
+		"tool_choice":"auto","max_tokens":16,"temperature":0.2,"stream":false}`, string(raw))
+}
+
+func TestChatClientCompleteTurnSendsConstraintsVerbatim(t *testing.T) {
+	var raw []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		raw, _ = io.ReadAll(r.Body)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":null,"tool_calls":[{"id":"c1","type":"function","function":{"name":"f","arguments":"{\"b\":1,\"a\":2}"}}]},"finish_reason":"tool_calls"}],"usage":{"prompt_tokens":9,"completion_tokens":7}}`))
+	}))
+	defer srv.Close()
+	c, err := NewChatClient(ChatClientConfig{Endpoint: srv.URL, Model: "m", Temperature: 0.7})
+	require.NoError(t, err)
+	zero, seed := 0.0, 7
+	schema := `{"type":"json_schema","json_schema":{"name":"x","schema":{"properties":{"zeta":{},"alpha":{}}}}}`
+	res, err := c.CompleteTurn(context.Background(), TurnRequest{
+		Messages:          []Message{{Role: RoleUser, Content: "hi"}},
+		ToolChoice:        json.RawMessage(`{"type":"function","function":{"name":"f"}}`),
+		ResponseFormat:    json.RawMessage(schema),
+		StructuredOutputs: json.RawMessage(`{"choice":["a","b"]}`),
+		MaxTokens:         32,
+		Temperature:       &zero,
+		Seed:              &seed,
+	})
+	require.NoError(t, err)
+	body := string(raw)
+	require.Contains(t, body, `"response_format":`+schema, "schema bytes and key order reach the server as given")
+	require.Contains(t, body, `"tool_choice":{"type":"function","function":{"name":"f"}}`)
+	require.Contains(t, body, `"structured_outputs":{"choice":["a","b"]}`)
+	require.Contains(t, body, `"temperature":0,`)
+	require.Contains(t, body, `"seed":7`)
+	require.Equal(t, "tool_calls", res.FinishReason)
+	require.Equal(t, 7, res.CompletionTokens)
+	require.Equal(t, `{"b":1,"a":2}`, res.Message.ToolCalls[0].Function.Arguments)
+	require.Equal(t, 9, res.Metrics.PromptTokens)
 }

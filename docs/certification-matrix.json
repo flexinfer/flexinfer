@@ -1881,6 +1881,22 @@
       "source": ".loom/60-validation-matrix.md"
     },
     {
+      "id": "gfx1100-structured-outputs-2026-11-01",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "pending",
+      "title": "KT-SO, feature D4 (structured-output certificate) of .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.4: do schema-constrained tool-call turns on the workhorse posture parse…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-structured-outputs-2026-11-01",
+      "date": "2026-11-01",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx906-retrieval-swap-safety-2026-10-31",
       "kind": "validation",
       "support_level": "supported",
