@@ -1831,3 +1831,35 @@ func TestVLLMArgsKernelConfig(t *testing.T) {
 		t.Fatalf("--kernel-config rendered without kernelConfig: %v", args)
 	}
 }
+
+// TestVLLMBackendArgs_StructuredOutputs pins the D4 flag: it renders only from
+// the controller-set ModelSpec field, never from a spec.config key, so a
+// Model cannot render it past the GPUProfile certificate gate.
+func TestVLLMBackendArgs_StructuredOutputs(t *testing.T) {
+	b := &VLLMBackend{}
+
+	unset := b.Args(&ModelSpec{Model: "org/model", Config: map[string]any{
+		"structuredOutputsBackend": "auto",
+		"structuredOutputsConfig":  `{"backend":"xgrammar"}`,
+	}})
+	for _, arg := range unset {
+		if arg == "--structured-outputs-config" {
+			t.Fatalf("spec.config must not render --structured-outputs-config: %v", unset)
+		}
+	}
+
+	args := b.Args(&ModelSpec{Model: "org/model", StructuredOutputsBackend: "auto"})
+	found := 0
+	for i, arg := range args {
+		if arg != "--structured-outputs-config" {
+			continue
+		}
+		found++
+		if i+1 >= len(args) || args[i+1] != `{"backend":"auto"}` {
+			t.Fatalf("--structured-outputs-config value = %v, want {\"backend\":\"auto\"}", args[i+1:])
+		}
+	}
+	if found != 1 {
+		t.Fatalf("--structured-outputs-config rendered %d times, want 1: %v", found, args)
+	}
+}
