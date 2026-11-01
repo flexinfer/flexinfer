@@ -569,11 +569,12 @@
       "modality": "image",
       "decision": "pending",
       "evidenced": false,
-      "evidence": ".loom/60-validation-matrix.md#proxy-async-jobs-2026-10-31",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-swap-2026-11-01",
       "validation_rows": [
+        "gfx1100-xtx-inpod-swap-2026-11-01",
         "proxy-async-jobs-2026-10-31"
       ],
-      "date": "2026-10-31",
+      "date": "2026-11-01",
       "source": "deploy/models/qwen-image-21-gfx1100.yaml"
     },
     {
@@ -1419,6 +1420,7 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#xtx-warm-b06b06fe-2026-10-27",
       "validation_rows": [
+        "gfx1100-xtx-inpod-swap-2026-11-01",
         "proxy-async-jobs-2026-10-31",
         "xtx-warm-b06b06fe-2026-10-27",
         "xtx-vllm-v032-2026-10-24",
@@ -1859,6 +1861,22 @@
       "title": "D7 (.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.7) riskiest assumption: the node agent reading sysfs hwmon power1_average at 1 Hz on the ROCm 7.2 gfx1100 (cblevins-5930k)…",
       "evidenced": false,
       "evidence": ".loom/60-validation-matrix.md#gpu-power-sampling-1hz-2026-11-01",
+      "date": "2026-11-01",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-swap-2026-11-01",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "KT-SWAP, feature D1 (instant flex card) of .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.1. Riskiest assumption: an in-pod vLLM 0.32 load of the 27B warm lane on gfx1100…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-swap-2026-11-01",
       "date": "2026-11-01",
       "source": ".loom/60-validation-matrix.md"
     },

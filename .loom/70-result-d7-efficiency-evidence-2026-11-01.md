@@ -6,7 +6,7 @@ Feature D7 of `10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md` §
 | MR | Repo | State | What |
 |---|---|---|---|
 | !1225 | services/flexinfer | merged (bd06864f) | `flexinfer_gpu_power_watts{gpu,node}` from sysfs hwmon, off by default; agent flag-parse fix |
-| !1230 | services/flexinfer | see the session report | `flexinfer_lane_energy_joules_total{model,node,gpu}`, tokens-per-joule and power panels |
+| !1230 | services/flexinfer | merged (c36b5f2a) | `flexinfer_lane_energy_joules_total{model,node,gpu}`, tokens-per-joule and power panels |
 | !1228 | services/flexinfer | merged (85911b49) | `flexinfer certify render`, `docs/certification-matrix.json`, `make certify-matrix`, CI `certify_matrix` |
 | !1231 | services/flexinfer | **Draft, owner rolls** | `agent.gpuPower.nodes: [cblevins-5930k, cblevins-radeonvii]` |
 | !187 | services/flexinfer-site | **Draft, not merged** | `/products/flexinfer/serving-matrix` page + evidence-derived product copy |

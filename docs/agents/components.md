@@ -100,6 +100,10 @@ on `cblevins-7900xtx`, the sampler is built to back off rather than retry:
   failed reads, logging `GPU power sampling stopped` with the reason and
   setting `flexinfer_gpu_power_sampler_active{node}` to `0`.
 
+The same samples feed `flexinfer_lane_energy_joules_total{model,node,gpu}`:
+each step's energy is split equally among the Models Ready on the node's GPU
+(rule and limits in [metrics.md](../specs/metrics.md#lane-energy-node-agent)).
+
 Runbook (enable, watch, turn off): [operations.md](operations.md#gpu-power-sampling).
 
 ### Implementation Details

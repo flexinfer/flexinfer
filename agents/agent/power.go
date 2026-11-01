@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -34,6 +35,20 @@ import (
 //     error, or a card's reads fail powerMaxConsecutiveErrors times in a row.
 //     Stopping is logged with the reason, the power series are deleted and
 //     flexinfer_gpu_power_sampler_active drops to 0.
+//
+// Lane energy (flexinfer_lane_energy_joules_total) integrates the same
+// samples. Attribution rule: the card's energy between two consecutive good
+// samples, (P_prev + P_now) / 2 × Δt, is split equally among the lanes Active
+// on the card at the later sample (LaneSource; Models in phase Ready on this
+// node that allocate a GPU). With no Active lane it is attributed to nobody:
+// an idle card's draw is no lane's cost. On a shared card (the Radeon VII
+// holds four co-Active retrieval and voice lanes) an equal split overstates
+// idle co-residents and understates the busy one; it is the simple rule, and
+// sum by (node) of the counter still equals the card's energy while any lane
+// is Active. A node with more than one sampled card attributes nothing,
+// because the agent cannot tell which card a lane holds. Gaps longer than
+// powerMaxGapIntervals sampling periods (a stalled loop, a suspended card, a
+// failed read) are not integrated.
 
 const (
 	// DefaultPowerInterval is the sampling period when sampling is enabled.
@@ -48,6 +63,15 @@ const (
 	// maxPlausibleWatts rejects readings no card in the fleet can produce
 	// (a 7900 XTX is a 355 W board, a Radeon VII 300 W).
 	maxPlausibleWatts = 1000.0
+	// powerMaxGapIntervals bounds the interval one energy step may cover.
+	powerMaxGapIntervals = 5
+	// laneRefreshInterval is how often the Active lane set is re-listed; a
+	// lane that turns Ready or parks is attributed at most this late.
+	laneRefreshInterval = 15 * time.Second
+	laneListTimeout     = 5 * time.Second
+	// laneListMaxFailures consecutive failed listings clear the lane set, so
+	// a lost API connection stops attribution instead of freezing it.
+	laneListMaxFailures = 3
 )
 
 // Reasons the power sampler stops itself.
@@ -80,6 +104,10 @@ type powerSensor struct {
 	devicePath string
 	path       string // .../hwmon/hwmonN/power1_average or power1_input
 	errors     int    // consecutive failed reads
+
+	// Last good sample, for the energy integral. Zero after a gap.
+	lastAt    time.Time
+	lastWatts float64
 }
 
 // PowerSampler samples GPU board power from sysfs. Create it with
@@ -91,6 +119,13 @@ type PowerSampler struct {
 
 	sensors []powerSensor
 	stopped bool
+
+	lanes        LaneSource
+	laneRefresh  time.Duration
+	attributing  bool
+	mu           sync.Mutex
+	active       []string
+	laneFailures int
 }
 
 // NewPowerSampler returns a sampler for the agent's node. interval is clamped
@@ -103,8 +138,11 @@ func (a *Agent) NewPowerSampler(interval time.Duration, log logr.Logger) *PowerS
 		interval = minPowerInterval
 	}
 	a.ensureHealth()
-	return &PowerSampler{agent: a, interval: interval, log: log}
+	return &PowerSampler{agent: a, interval: interval, log: log, laneRefresh: laneRefreshInterval}
 }
+
+// SetLaneSource enables lane energy attribution. Call before Run.
+func (p *PowerSampler) SetLaneSource(src LaneSource) { p.lanes = src }
 
 // Interval is the effective sampling period.
 func (p *PowerSampler) Interval() time.Duration { return p.interval }
@@ -114,6 +152,14 @@ func (p *PowerSampler) Run(ctx context.Context) {
 	if reason, detail := p.start(); reason != "" {
 		p.stop(reason, detail)
 		return
+	}
+	if p.attributing {
+		// The refresh loop lives as long as Run: a sampler that stopped
+		// itself stops listing Models too.
+		lctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		p.refreshLanes(lctx)
+		go p.refreshLanesLoop(lctx)
 	}
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
@@ -144,6 +190,13 @@ func (p *PowerSampler) start() (reason, detail string) {
 	metrics.GPUPowerSamplerActive.WithLabelValues(p.agent.nodeName).Set(1)
 	for _, s := range p.sensors {
 		p.log.Info("GPU power sampling enabled", "gpu", s.index, "sensor", relPath(s.devicePath, s.path), "interval", p.interval)
+	}
+	switch {
+	case p.lanes == nil:
+	case len(p.sensors) > 1:
+		p.log.Info("Lane energy attribution off: more than one sampled card, and the agent cannot tell which card a lane holds", "cards", len(p.sensors))
+	default:
+		p.attributing = true
 	}
 	return "", ""
 }
@@ -176,10 +229,12 @@ func (p *PowerSampler) sample(now time.Time) {
 	for i := range p.sensors {
 		s := &p.sensors[i]
 		if cardSuspended(s.devicePath) {
+			s.lastAt = time.Time{}
 			continue
 		}
 		watts, err := readPowerWatts(s.path)
 		if err != nil {
+			s.lastAt = time.Time{}
 			if isDeviceIOError(err) {
 				p.stop(PowerStopDeviceIOError, fmt.Sprintf("card%d %s: %v", s.index, relPath(s.devicePath, s.path), trimPathErr(err)))
 				return
@@ -193,7 +248,67 @@ func (p *PowerSampler) sample(now time.Time) {
 		}
 		s.errors = 0
 		metrics.GPUPowerWatts.WithLabelValues(strconv.Itoa(s.index), p.agent.nodeName).Set(watts)
+		if !s.lastAt.IsZero() {
+			if dt := now.Sub(s.lastAt); dt > 0 && dt <= powerMaxGapIntervals*p.interval {
+				p.attribute(s, (s.lastWatts+watts)/2*dt.Seconds())
+			}
+		}
+		s.lastAt, s.lastWatts = now, watts
 	}
+}
+
+// attribute splits one energy step equally among the Active lanes.
+func (p *PowerSampler) attribute(s *powerSensor, joules float64) {
+	if !p.attributing || joules <= 0 {
+		return
+	}
+	p.mu.Lock()
+	lanes := p.active
+	p.mu.Unlock()
+	if len(lanes) == 0 {
+		return
+	}
+	share := joules / float64(len(lanes))
+	gpu := strconv.Itoa(s.index)
+	for _, lane := range lanes {
+		metrics.LaneEnergyJoulesTotal.WithLabelValues(lane, p.agent.nodeName, gpu).Add(share)
+	}
+}
+
+func (p *PowerSampler) refreshLanesLoop(ctx context.Context) {
+	ticker := time.NewTicker(p.laneRefresh)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			p.refreshLanes(ctx)
+		}
+	}
+}
+
+// refreshLanes re-lists the Active lanes. A failed listing keeps the last set
+// until laneListMaxFailures in a row, then clears it.
+func (p *PowerSampler) refreshLanes(ctx context.Context) {
+	lctx, cancel := context.WithTimeout(ctx, laneListTimeout)
+	defer cancel()
+	lanes, err := p.lanes.ActiveLanes(lctx, p.agent.nodeName)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if err != nil {
+		p.laneFailures++
+		if p.laneFailures == laneListMaxFailures {
+			p.active = nil
+			p.log.Info("Lane energy attribution paused: cannot list Active lanes", "error", err.Error(), "failures", p.laneFailures)
+		}
+		return
+	}
+	if p.laneFailures >= laneListMaxFailures {
+		p.log.Info("Lane energy attribution resumed")
+	}
+	p.laneFailures = 0
+	p.active = lanes
 }
 
 // stop latches the sampler off. It does not re-arm when the card recovers: a
