@@ -27,7 +27,8 @@
 # - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
 # - Compile cache: scope Image on the default hostPath, the directory the
 #   runtime pod mounts at /cache/compile.
-# BLOCKED: ef28b7b0 (rocm-gfx1100-serving-v032-c444b5ff) has no ftfy, and
+# BLOCKED: the v032 persona (ef28b7b0 and its master rebuild 7ae8e92f,
+# the repin target; same package set) has no ftfy, and
 # diffusers 0.42 WanVACEPipeline.basic_clean calls ftfy.fix_text without the
 # is_ftfy_available guard WanPipeline has (pipelines/wan/pipeline_wan_vace.py
 # line 111), so every request would fail with NameError. It also lacks

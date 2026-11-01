@@ -23,7 +23,8 @@
 # - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
 # - Compile cache: scope Image on the default hostPath, the directory the
 #   runtime pod mounts at /cache/compile.
-# BLOCKED: ef28b7b0 (rocm-gfx1100-serving-v032-c444b5ff) has no imageio or
+# BLOCKED: the v032 persona (ef28b7b0 and its master rebuild 7ae8e92f,
+# the repin target; same package set) has no imageio or
 # imageio-ffmpeg, so diffusers 0.42 export_to_video falls back to OpenCV and
 # writes MPEG-4 Part 2 (mp4v), which browsers do not play; the dedicated
 # image (diffusers-video 83cda206) writes H.264 through imageio-ffmpeg. It
