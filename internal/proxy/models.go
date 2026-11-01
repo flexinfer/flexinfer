@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -39,6 +40,10 @@ type ModelDescriptor struct {
 	ETASeconds      *int    `json:"eta_seconds"`
 	RerouteTo       *string `json:"reroute_to"`
 	modelmeta.Capabilities
+	// Diarization answers whether diarize=true is accepted on a lane that
+	// serves transcriptions (or a pyannote lane is certified), with the code
+	// a diarize request gets when not. Omitted for other lanes.
+	Diarization *DiarizationDescriptor `json:"diarization,omitempty"`
 }
 
 // OpenAIModelsResponse is the response format for /v1/models.
@@ -164,6 +169,8 @@ func (p *Proxy) modelDescriptor(m *aiv1alpha2.Model, now time.Time) *ModelDescri
 		ETASeconds:      state.ETASeconds,
 		RerouteTo:       state.RerouteTo,
 		Capabilities:    modelmeta.ResolveCapabilities(m),
+		// The informer cache answers the diarization lane's lookup.
+		Diarization: p.diarizationDescriptor(context.Background(), m),
 	}
 }
 

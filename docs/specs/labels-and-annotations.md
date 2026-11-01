@@ -104,6 +104,7 @@ On a Model:
 |---|---|---|
 | `flexinfer.ai/job-concurrency` | integer ≥ 1 | async jobs the proxy runs at once on this lane; default 1 for diffusers lanes (which share one slot per `spec.gpu.shared` group), else `FLEXINFER_JOBS_PER_MODEL` (2) |
 | `flexinfer.ai/unavailable-reroute-to` | Model name | also surfaced as `reroute_to` in the error envelope and the `GET /v1/models/{name}` descriptor |
+| `flexinfer.ai/diarization-model` | Model name | on an ASR lane: the pyannote lane a `diarize=true` transcription calls after it (D5-a); accepted only while that lane has `BackendCertificate=True`, else 501 `diarization_not_certified` |
 
 On an `InferenceJob` (written by the proxy):
 
@@ -113,6 +114,8 @@ On an `InferenceJob` (written by the proxy):
 | `flexinfer.ai/job-user-agent` | annotation | the submitting User-Agent, replayed on the job's request |
 | `flexinfer.ai/job-idempotency` | label | hash of caller and `Idempotency-Key`; a repeat submission returns the first job |
 | `flexinfer.ai/job-storage` | finalizer | the proxy deletes the job's stored inputs and output before the job goes |
+| `flexinfer.ai/job-pipeline` | annotation | `diarize` for a diarized transcription: the runner transcribes, then diarizes, then merges |
+| `flexinfer.ai/job-diarization-model` | annotation | the diarization lane a `diarize` job calls, resolved and checked at submission |
 
 ## GPUProfile backend-capability certificates
 

@@ -257,6 +257,12 @@ type jobFixture struct {
 	status   atomic.Int32
 	hooks    chan *http.Request
 	hookBody chan []byte
+	// replies and statusFor override, per lane name, the 200 body and the
+	// status every upstream answers with.
+	replies   sync.Map
+	statusFor sync.Map
+	// requests counts requests per lane name.
+	requests sync.Map
 }
 
 func newJobFixture(t *testing.T, models ...*aiv1alpha2.Model) *jobFixture {
@@ -285,14 +291,24 @@ func newJobFixture(t *testing.T, models ...*aiv1alpha2.Model) *jobFixture {
 		queueTimeout: time.Second, coldStartTimeout: time.Second, ctx: ctx, cancel: cancel,
 	}
 	for _, m := range models {
+		name := m.Name
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			b, _ := io.ReadAll(r.Body)
 			f.bodies <- b
+			n, _ := f.requests.LoadOrStore(name, new(atomic.Int32))
+			n.(*atomic.Int32).Add(1)
 			code := int(f.status.Load())
+			if v, ok := f.statusFor.Load(name); ok {
+				code = v.(int)
+			}
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(code)
 			if code == http.StatusOK {
-				_, _ = io.WriteString(w, `{"created":1,"data":[{"b64_json":"aW1hZ2U="}]}`)
+				reply := `{"created":1,"data":[{"b64_json":"aW1hZ2U="}]}`
+				if v, ok := f.replies.Load(name); ok {
+					reply = v.(string)
+				}
+				_, _ = io.WriteString(w, reply)
 				return
 			}
 			_, _ = io.WriteString(w, `{"error":{"code":"model_cold_starting","message":"warming"}}`)
@@ -313,6 +329,14 @@ func newJobFixture(t *testing.T, models ...*aiv1alpha2.Model) *jobFixture {
 	t.Cleanup(hook.Close)
 	f.upstream["hook"] = hook
 	return f
+}
+
+// requestCount is how many requests lane name's upstream received.
+func (f *jobFixture) requestCount(name string) int32 {
+	if n, ok := f.requests.Load(name); ok {
+		return n.(*atomic.Int32).Load()
+	}
+	return 0
 }
 
 func readyLane(name, backend string, annotations map[string]string) *aiv1alpha2.Model {
