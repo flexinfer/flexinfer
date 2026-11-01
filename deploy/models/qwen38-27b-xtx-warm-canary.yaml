@@ -60,13 +60,14 @@
 # Rollback: 470, warmPolicy primary, drop the four workhorse labels.
 #
 # 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
-# WINDOW-GATED, after the XTX runtime repin to ef28b7b0): served IN-POD by the
+# WINDOW-GATED, after the XTX runtime repin to 7ae8e92f): served IN-POD by the
 # 7900xtx runtime DaemonSet instead of its own Deployment, so a creative
 # render swaps this lane out and back inside the runtime pod (KT-SWAP measures
 # the floor) instead of deleting and scheduling a 23 GB pod.
-# - dedicatedDeployment dropped. In-pod the runtime image (ef28b7b0: vLLM
-#   0.32.0, text plugin 0.9.0, the same three plugins as b06b06fe below)
-#   serves the lane; spec.image stays the dedicated rollback image.
+# - dedicatedDeployment dropped. In-pod the runtime image (7ae8e92f,
+#   rocm-gfx1100-serving-v032-5ca58769: vLLM 0.32.0, text plugin 0.9.0, the
+#   same three plugins as b06b06fe below) serves the lane; spec.image stays
+#   the dedicated rollback image.
 # - No launch wrapper to move: this lane builds no MTP draft (no
 #   speculativeConfig), so FLEXINFER_QWEN35_MTP_HEAD is not needed here.
 # - Compile cache: scope Image on the default hostPath, the directory the
