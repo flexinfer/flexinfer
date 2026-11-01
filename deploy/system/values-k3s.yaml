@@ -617,6 +617,19 @@ imagePrewarm:
         # controllers/runtime_pin_contract_test.go keeps this list, the
         # runtime profiles and the gfx1100 GPUProfile in step.
         - registry.harbor.lan/flexinfer/runtime@sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2
+        # 2026-11-01 (D1): the master CI rebuild of the same persona,
+        # rocm-gfx1100-serving-v032-5ca58769 (pipeline 36312, job 442027,
+        # 2026-10-30 22:08Z): the Dockerfile and frozen stack of ef28b7b0 (265
+        # packages unchanged, diffusers and snac added) with the newer
+        # flexinfer-runtime supervisor and servers. Against ef28b7b0 (c444b5ff)
+        # it adds in-pod reload on a spec edit (R1), the loading substages and
+        # short-KV-pool recheck (R4, internal/runtime/load_progress.go), the
+        # image-scoped compile cache (C5) and the Qwen-Image 2.1 server code
+        # (R1-R3). It is the recommended target of the window-gated XTX
+        # repin. Listing it here also makes harbor-flexinfer-pin-tags tag it
+        # pinned-7ae8e92ff28a; it had no pinned tag and had never been pulled.
+        # The pull is the supervisor and server layers on the shared base.
+        - registry.harbor.lan/flexinfer/runtime@sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.
@@ -821,24 +834,27 @@ runtime:
       #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
       # 2026-11-01 (D1 step 2, research next-differentiators-2026-10-31
       # §6.1; WINDOW-GATED, owner-run after KT-FLEX): repinned to the stacked
-      # vLLM 0.32 runtime ef28b7b0 (rocm-gfx1100-serving-v032-c444b5ff:
-      # vLLM 0.32.0 + the three FlexInfer plugins, text plugin 0.9.0 as in the
-      # warm lane's b06b06fe, + runtime supervisor, server-diffusers.py,
-      # server-snac.py; Harbor pinned-ef28b7b0d1cb; prewarmed on this node by
-      # !1224). This rolls the runtime pod once; snac-decode-gfx1100 reloads on
-      # its next demand. What ef28b7b0 cannot serve in-pod yet (checked
-      # 2026-11-01 inside the image): diffusers lanes needing bitsandbytes,
-      # torchsde, imageio or ftfy, Qwen-Image 2.1 (R1-R3 server code is newer
-      # than c444b5ff), and whisper (no librosa/soundfile). Rollback = the
-      # cfefae18 pin below, still prewarmed here (pinned-cfefae18061f), and
-      # drop sharedCompileCache:
+      # vLLM 0.32 runtime 7ae8e92f (rocm-gfx1100-serving-v032-5ca58769, master
+      # CI pipeline 36312: vLLM 0.32.0 + the three FlexInfer plugins, text
+      # plugin 0.9.0 as in the warm lane's b06b06fe, + the runtime supervisor
+      # with in-pod reload, load substages and the short-KV-pool recheck,
+      # server-diffusers.py, server-snac.py; prewarmed here by !1232). The
+      # design named ef28b7b0 (c444b5ff), the same Dockerfile and stack whose
+      # supervisor predates R1/R4/C5; it is certified and prewarmed too, so it
+      # is a one-line fallback. This rolls the runtime pod once;
+      # snac-decode-gfx1100 reloads at its next election. What this persona
+      # cannot serve in-pod yet (checked 2026-11-01 inside ef28b7b0, same
+      # package set): diffusers lanes needing bitsandbytes, torchsde, imageio
+      # or ftfy, and whisper (no librosa/soundfile). Rollback = the cfefae18
+      # pin below, still prewarmed here (pinned-cfefae18061f), and drop
+      # sharedCompileCache:
       #   registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
       # 2026-11-01 (D1): mount this image's shared compile cache
-      # (/var/lib/flexinfer/compile-cache/shared/gfx1100/ef28b7b0d1cb at
+      # (/var/lib/flexinfer/compile-cache/shared/gfx1100/7ae8e92ff28a at
       # /cache/compile, C5 !1200, docs/user/caching.md "Runtime pod"). In-pod
       # lanes set spec.cache.compilationCache.scope: Image, so their Triton,
       # Inductor, vLLM and MIOpen caches survive a runtime-pod roll and a

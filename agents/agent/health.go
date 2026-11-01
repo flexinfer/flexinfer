@@ -174,6 +174,18 @@ func (s *healthState) shouldSkipTools() bool {
 	return s.skipTools
 }
 
+// verdict returns the node verdict for readers outside the probe loop (the
+// power sampler). A hard sysfs failure found this cycle counts as degraded
+// before evaluateGPUHealth has folded it in.
+func (s *healthState) verdict() (degraded bool, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.skipTools && !s.degraded {
+		return true, "sysfs sentinel found the device unresponsive this cycle"
+	}
+	return s.degraded, s.reason
+}
+
 // exec runs a vendor tool with the probe timeout and records health evidence
 // from the outcome. Every hardware probe in the agent goes through here so a
 // hung rocm-smi or nvidia-smi can neither stall the agent nor go unnoticed.

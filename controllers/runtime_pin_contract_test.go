@@ -25,9 +25,14 @@ var gfx1100CertifiedRuntimes = map[string]string{
 	// Rollback anchor for the D1 repin.
 	"sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278": "gfx1100-serving-2026-10-23",
 	// rocm-gfx1100-serving-v032-c444b5ff (vLLM 0.32 stacked serving persona,
-	// S6a !1174, spawn contract verified at build time): target of the D1
-	// repin (research next-differentiators-2026-10-31 §6.1 step 2).
+	// S6a !1174, spawn contract verified at build time). Its supervisor
+	// predates the R1/R4/C5 runtime work; fallback repin target only.
 	"sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2": "S6a !1174",
+	// rocm-gfx1100-serving-v032-5ca58769: the master CI rebuild of the same
+	// Dockerfile and frozen stack (pipeline 36312, build-time verify passed)
+	// with the R1 reload, R4 load-substage and C5 shared-cache supervisor. The
+	// recommended D1 repin target.
+	"sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250": "CI pipeline 36312 job 442027",
 }
 
 var runtimeDigestPattern = regexp.MustCompile(`^registry\.harbor\.lan/flexinfer/runtime@(sha256:[0-9a-f]{64})$`)

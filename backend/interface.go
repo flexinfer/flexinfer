@@ -67,6 +67,14 @@ type ModelSpec struct {
 	// StartupTimeout is an optional per-model startup budget derived from the
 	// model cold-start budget. Backends may use this to size startup probes.
 	StartupTimeout time.Duration
+
+	// StructuredOutputsBackend is the vLLM structured-output backend to pin
+	// with --structured-outputs-config. Only the controller sets it, after the
+	// GPUProfile certificate gate (vllm/structured-outputs) passes for the
+	// exact image a dedicated Deployment launches. It is deliberately not a
+	// spec.config key, so a Model cannot render the flag past the gate and
+	// runtime-pod loads (which build ModelSpec from the payload) never do.
+	StructuredOutputsBackend string
 }
 
 // ConfigString returns a string config value with a default.
