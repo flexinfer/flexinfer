@@ -70,6 +70,7 @@ parked Model answers 404 `model_parked` with the error envelope.
 | `modalities` | from `serve_paths` (`text`, `image`, `video`, `audio`, `embedding`, `score`); an `image2video` lane also takes `image` |
 | `max_model_len` | the context window from `spec.config` (`maxModelLen`, `maxTotalSeqLength`, `contextWindowSize`, `contextSize`); omitted for media lanes |
 | `structured_output` | `true` when the lane's structured-output envelope is certified and rendered (Model condition `StructuredOutput=True`, see "Structured outputs and tool calls"); omitted otherwise |
+| `diarization` | lanes that serve `/v1/audio/transcriptions`, and pyannote lanes: `{"available", "model", "code", "reason"}`, all keys present. `available` is whether `diarize=true` is accepted now, `model` the diarization lane, and `code`/`reason` what a diarize request would get otherwise (`diarization_not_certified`). Omitted for other lanes. See "Diarized transcriptions" |
 | `limits.image` / `.video` / `.audio` | diffusers lanes: the bounds `build/server-diffusers.py` enforces for the lane's `pipelineMode`, with the defaults its `spec.config` sets (`numInferenceSteps`, `videoSize`, `videoFrames`, `videoFps`) |
 
 The diffusers bounds are fixed per pipeline mode in the server, not per Model, so they are derived
@@ -156,6 +157,56 @@ deliveries are recorded in `status.webhook`. A secret sent with a request is sto
 
 Not built yet: `background` with `stream: true` and resumable streams (`starting_after`, as the
 Responses API), which would give psyche-simulation a resumable chat stream.
+
+### Diarized transcriptions
+
+`POST /v1/audio/transcriptions` with the multipart field `diarize=true`, or with `speaker` in
+`timestamp_granularities[]`, asks for speaker-attributed words (D5-a of
+`.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md` §6.5). It is always a job,
+with or without `background`; the answer is the job object, and the job's content is the diarized
+transcript. A transcription without those fields is untouched by any of this: it is forwarded to
+the ASR lane with the bytes the client sent (`TestTranscriptionWithoutDiarizeIsUnchanged`).
+
+The ASR lane names its diarization lane with the annotation `flexinfer.ai/diarization-model` (a
+`pyannote` Model serving `/v1/audio/diarizations`); a request may name another with the field
+`diarization_model`. Extra fields: `num_speakers`, or `min_speakers` and `max_speakers` (1–64),
+passed to the diarization lane. `response_format` may be absent, `json`, `verbose_json` or
+`diarized_json`; all answer the same document. Submission refuses:
+
+| Status | Code | When |
+|---|---|---|
+| 501 | `jobs_disabled` | the job API is off |
+| 501 | `diarization_not_certified` | the ASR lane names no diarization lane, or it does not exist, is not `pyannote`, is parked by name, does not serve `/v1/audio/diarizations`, or is not certified: its Model lacks condition `BackendCertificate=True`, which the controller sets only when the GPUProfile certifies the runtime image it loads in (`docs/specs/crds.md`). `param` is `diarize`; no `Retry-After`. The `flexinfer` block describes the diarization lane. The ASR lane's descriptor carries the same code and reason under `flexinfer.diarization` |
+| 400 | `invalid_field_value` | `stream=true`, or another `response_format` (`text`, `srt`, `vtt`) |
+| 404 | `model_not_found` | as for any job |
+
+**Running.** The runner (`internal/proxy/jobs_diarize.go`) sends the upload to the ASR lane with
+`response_format=verbose_json` and `timestamp_granularities[]=word` and `segment` (the diarize and
+speaker fields removed), then to the diarization lane with `file`, the speaker counts and
+`model=<lane>`. Both are ordinary forwards through the proxy (cold start, first-byte budget,
+breaker, retries). A retry resumes at the step that failed, so a cold diarization lane does not
+re-run the transcription, and the wait demands the lane it waits on. The job's concurrency is the
+ASR lane's. A transcription without word timings fails the job with `transcript_unusable`.
+
+**Result.** The ASR lane's verbose_json with every field kept, plus:
+
+```json
+{"text": " Hi all. Thanks, it works.", "language": "english", "duration": 4.0, "segments": […],
+ "words": [{"word": "Hi", "start": 0.1, "end": 0.3, "probability": 0.9, "speaker": "SPEAKER_00"}, …],
+ "speakers": ["SPEAKER_00", "SPEAKER_01"],
+ "utterances": [{"speaker": "SPEAKER_00", "start": 0.1, "end": 0.7, "text": "Hi all."},
+                {"speaker": "SPEAKER_01", "start": 2.0, "end": 3.1, "text": "Thanks, it works."}],
+ "diarization": {"model": "pyannote-diarization-radeonvii", "pipeline": "pyannote/speaker-diarization-3.1",
+   "num_speakers": 2, "segments": [{"start": 0.0, "end": 1.0, "speaker": "SPEAKER_00"}, …]}}
+```
+
+A word's speaker is the one whose turns overlap it longest (ties: the turn that starts first); a
+word inside no turn takes the nearest turn's speaker within 1 s, else it has no `speaker` key.
+`utterances` are runs of one speaker's words. `diarization.segments` are the lane's turns as it
+returned them, for clients that align themselves or score against an RTTM. Words come from the ASR
+lane's top-level `words` (the whispercpp runtime ingress adds them); without them they are merged
+from whisper-server's per-segment tokens (`pkg/transcript`). Runner-recorded errors add
+`transcript_unusable` to those of "Jobs (async)".
 
 ### `/*` (reverse proxy)
 
@@ -258,6 +309,7 @@ from admission also keeps its top-level `admission` block.
 | `admission_rejected` | 413 | Refused by the admission filter (was `context_window_exceeded`) | none |
 | `queue_full` | 503 | The lane's cold-start queue (`PROXY_MAX_QUEUE_SIZE`) is full, or (QoS, enforcing lanes) no seat freed for a `background`/`batch` request within the queue bound; then `queue_position` is set | as `model_cold_starting`; QoS: recent request duration × requests ahead per background seat |
 | `stalled_load` | 503 | The weight load stopped making progress | 30 s |
+| `diarization_not_certified` | 501 | `diarize=true` on a transcription whose ASR lane has no certified diarization lane (see "Diarized transcriptions"); the block describes the diarization lane, the ASR lane's descriptor has the same reason | none |
 
 Fields:
 

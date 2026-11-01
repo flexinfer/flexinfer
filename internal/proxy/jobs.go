@@ -538,14 +538,20 @@ type jobSubmission struct {
 	ttl            time.Duration
 	idempotencyKey string
 	qosClass       string
+	// annotations are added to the InferenceJob (a diarize job's pipeline).
+	annotations map[string]string
 }
 
-// jobsMiddleware turns a background request on a jobBackgroundPaths path into
-// a job; every other request reaches next unchanged.
+// jobsMiddleware turns a background request on a jobBackgroundPaths path, or
+// a transcription that asks for speakers (jobs_diarize.go), into a job; every
+// other request reaches next unchanged.
 func (p *Proxy) jobsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost || !jobBackgroundPaths[r.URL.Path] {
 			next.ServeHTTP(w, r)
+			return
+		}
+		if r.URL.Path == pathAudioTranscriptions && p.maybeDiarizeJob(w, r) {
 			return
 		}
 		sub, background, err := readBackgroundRequest(r)
@@ -822,6 +828,9 @@ func (p *Proxy) submitJob(w http.ResponseWriter, r *http.Request, sub jobSubmiss
 	}
 	if idemLabel != "" {
 		job.Labels = map[string]string{jobLabelIdempotency: idemLabel}
+	}
+	for k, v := range sub.annotations {
+		job.Annotations[k] = v
 	}
 	mediaType, _, _ := mime.ParseMediaType(sub.contentType)
 	if mediaType == "application/json" && len(sub.body) <= maxInlineJobRequestBytes {
