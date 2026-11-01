@@ -1,0 +1,1 @@
+- `wan21-t2v-1p3b-gfx1100` moves onto the 7900 XTX runtime path (`dedicatedDeployment` dropped, compile cache `scope: Image`). Window-gated, and blocked until the XTX runtime image carries imageio and imageio-ffmpeg. Without them `ef28b7b0` would write OpenCV `mp4v` video that browsers do not play, instead of H.264.

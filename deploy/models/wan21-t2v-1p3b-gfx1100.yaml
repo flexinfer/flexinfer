@@ -15,6 +15,26 @@
 # the demoted 5930k Qwen workhorse (priority 300, minReplicas 0) cold-starts
 # on demand but loses the election to video.
 # Remove this parent Model (not its Deployment/pod) to roll the lane back.
+#
+# 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
+# WINDOW-GATED, and BLOCKED on the runtime image, see below): served IN-POD by
+# the 7900xtx runtime DaemonSet instead of its own Deployment, so a render
+# swaps the XTX warm lane out and back inside the runtime pod.
+# - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
+# - Compile cache: scope Image on the default hostPath, the directory the
+#   runtime pod mounts at /cache/compile.
+# BLOCKED: ef28b7b0 (rocm-gfx1100-serving-v032-c444b5ff) has no imageio or
+# imageio-ffmpeg, so diffusers 0.42 export_to_video falls back to OpenCV and
+# writes MPEG-4 Part 2 (mp4v), which browsers do not play; the dedicated
+# image (diffusers-video 83cda206) writes H.264 through imageio-ffmpeg. It
+# also lacks ftfy (WanPipeline skips prompt cleaning without it). Checked
+# inside the image 2026-11-01. Unblock: a gfx1100-serving-v032 build adding
+# imageio, imageio-ffmpeg and ftfy, pinned on the XTX runtime first.
+# Host RAM: this lane's dedicated limit (48 GiB) equals the runtime pod's
+# whole limit; a render that needed all of it in-pod would leave the runtime
+# manager nothing.
+# Rollback: revert this commit (restores dedicatedDeployment and the cache
+# config); the Deployment returns on the next reconcile.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -49,7 +69,9 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      hostPath: /var/lib/flexinfer/compile-cache
+      # 2026-11-01 D1: image-scoped on the default hostPath, shared with the
+      # runtime pod (header).
+      scope: Image
       sizeLimit: 6Gi
   gpu:
     vendor: amd
@@ -70,9 +92,6 @@ spec:
     idleTimeout: 15m
     coldStartTimeout: 30m
   config:
-    # The gfx1100 GPUProfile bundles the older generic Diffusers runtime. This
-    # lane must exercise its model-specific PyTorch 2.6 image instead.
-    dedicatedDeployment: true
     pipelineMode: text2video
     modelFamily: wan
     dtype: bfloat16
