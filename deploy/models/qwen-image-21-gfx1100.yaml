@@ -83,13 +83,13 @@
 #   runtime path (pkg/runtime UncarriedLaunchOverride).
 #   The config.env pins still hold in-pod: the load payload applies the
 #   Model env last, over the runtime's /etc/flexinfer/runtime.env.
-# BLOCKED: ef28b7b0 (rocm-gfx1100-serving-v032-c444b5ff, 2026-10-26) cannot
-# serve this lane. It has no bitsandbytes (the NF4 transformer and text
-# encoder), and its server-diffusers.py predates the Qwen-Image 2.1 support
-# (R1-R3 1b62ad00 and the 0.32-persona shim fix ea8bbb8f landed after
-# c444b5ff); checked inside the image 2026-11-01. Unblock: a
-# gfx1100-serving-v032 build from master with bitsandbytes on ROCm 7.2
-# (R §7e S6e), certified, prewarmed and pinned on the XTX runtime first.
+# BLOCKED: the v032 persona has no bitsandbytes (the NF4 transformer and
+# text encoder): checked inside ef28b7b0 on 2026-11-01, and 7ae8e92f (the
+# repin target, rocm-gfx1100-serving-v032-5ca58769) has the same package
+# set. 7ae8e92f does carry the Qwen-Image 2.1 server code (R1-R3 1b62ad00,
+# shim fix ea8bbb8f); ef28b7b0 (c444b5ff) predates it. Unblock: a
+# gfx1100-serving-v032 build with bitsandbytes on ROCm 7.2 (R §7e S6e),
+# certified, prewarmed and pinned on the XTX runtime first.
 # Host RAM: NF4-on-load of ~32 GB bf16 runs inside the runtime pod's 48 GiB
 # limit (this lane's dedicated limit was 40 GiB).
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
