@@ -690,7 +690,7 @@ server_pyannote_test:
     # absent, so the request contract and the load sequence run on the bare
     # image. pyannote's numbers on the Radeon VII are KT-DIAR's (D5-a).
     - python3 scripts/test_server_pyannote.py
-    - python3 -m py_compile build/server-pyannote.py
+    - python3 -m py_compile build/server-pyannote.py scripts/kt-diar.py
   rules:
     - if: $CI_MERGE_REQUEST_ID
       changes: &server-pyannote-changes
@@ -700,6 +700,7 @@ server_pyannote_test:
         - backend/constants.go
         - backend/pyannote.go
         - scripts/test_server_pyannote.py
+        - scripts/kt-diar.py
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *server-pyannote-changes
 
