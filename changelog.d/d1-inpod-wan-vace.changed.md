@@ -1,0 +1,1 @@
+- `wan21-vace-1p3b-i2v-gfx1100` moves onto the 7900 XTX runtime path (`dedicatedDeployment` dropped, compile cache `scope: Image`). Window-gated, and blocked until the XTX runtime image carries ftfy, imageio and imageio-ffmpeg. diffusers 0.42 `WanVACEPipeline` calls `ftfy.fix_text` without the availability guard, so on `ef28b7b0` every request would fail.
