@@ -182,7 +182,13 @@ spec:
     # unified build: first image carrying server-snac.py (!990) + the
     # torchao==0.17.0 quantizer pin (!993)), which had split from the
     # DaemonSets since the S1 serving-persona promotion of 2026-09-13.
-    image: registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
+    # 2026-11-01 (D1 step 2, WINDOW-GATED): follows the 7900xtx runtime
+    # DaemonSet (values-k3s.yaml runtime profile gfx1100) to the stacked
+    # vLLM 0.32 runtime ef28b7b0 (rocm-gfx1100-serving-v032-c444b5ff). The
+    # parked gfx1100-5930k profile stays on cfefae18 until S6b.
+    # controllers/runtime_pin_contract_test.go fails if this and the live
+    # DaemonSet pin differ. Rollback = cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278.
+    image: registry.harbor.lan/flexinfer/runtime@sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2
   containerMemoryGB: 48
   # 2026-05-25: bumped 18 → 22 to make room for `gemma4-26b-a4b-gptq` at
   # maxModelLen=32768 with kvCacheDtype=fp8_e4m3. Math:
