@@ -294,6 +294,21 @@ var (
 	// requests that omit it. The stream=true share here bounds that gap — a high
 	// streaming share whose usage chunks are absent means the histogram-based
 	// workload verdict (e.g. blanket n-gram SD) must be read with caution.
+	// schemaConstrainedRequestsTotal counts forwarded requests that constrain
+	// their output (response_format json_schema/json_object/structural_tag,
+	// Responses text.format, vLLM structured_outputs, required or named
+	// tool_choice), by resolved model, constraint kind and upstream status
+	// class. The proxy passes those fields through untouched; this is the tag.
+	// Against flexinfer_proxy_completions_total it gives a lane's
+	// schema-constrained share; code="4xx" catches schemas the lane rejects.
+	schemaConstrainedRequestsTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_proxy_schema_constrained_requests_total",
+			Help: "Forwarded requests that constrain their output (response_format, text.format, structured_outputs, required/named tool_choice), by resolved model, constraint kind and upstream status class.",
+		},
+		[]string{"model", "constraint", "code"},
+	)
+
 	completionsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
 			Name: "flexinfer_proxy_completions_total",
@@ -509,6 +524,7 @@ func RegisterMetrics() {
 		prometheus.MustRegister(requestPromptTokens)
 		prometheus.MustRegister(requestCompletionTokens)
 		prometheus.MustRegister(completionsTotal)
+		prometheus.MustRegister(schemaConstrainedRequestsTotal)
 		prometheus.MustRegister(observedPromptTokensTotal)
 		prometheus.MustRegister(cachedPromptTokensTotal)
 		prometheus.MustRegister(stalledLoadTotal)
