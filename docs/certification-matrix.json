@@ -1847,6 +1847,22 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gpu-power-sampling-1hz-2026-11-01",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "agent",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "pending",
+      "title": "D7 (.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.7) riskiest assumption: the node agent reading sysfs hwmon power1_average at 1 Hz on the ROCm 7.2 gfx1100 (cblevins-5930k)…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gpu-power-sampling-1hz-2026-11-01",
+      "date": "2026-11-01",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx906-retrieval-swap-safety-2026-10-31",
       "kind": "validation",
       "support_level": "supported",
