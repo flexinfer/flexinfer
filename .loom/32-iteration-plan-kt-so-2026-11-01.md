@@ -66,12 +66,15 @@ HIP/HSA/OOM markers in the canary log, no restarts, boot line `GPU KV cache size
 
 ## Reading the result
 
-- **PASS** (exit 0): paste the printed row over the pending one, then open the certificate MR:
+- **PASS** (exit 0): paste the printed row over the pending one and run `make certify-matrix`
+  (commit `docs/certification-matrix.json`; CI's `certify_matrix` job checks it), then open the
+  certificate MR, which needs the same regeneration:
   `flexinfer.ai/backend-certificate-vllm-structured-outputs` (the image above), `-since` (the run's
   finish time) and `-evidence` (`.loom/60-validation-matrix.md#gfx1100-structured-outputs-2026-11-01`)
   in `deploy/gpuprofiles/gfx1100.yaml`. Optional, same window: once Flux applies it the canary
   re-renders with the flag (condition `Certified`, ~3 min relaunch); rerun the gate with
   `--turns 40` and confirm parse and parity are unchanged with the flag on the pod.
+- Any verdict: the row edit needs `make certify-matrix` too.
 - **FAIL on parse**: read `constrained.failures` and the taxonomy. Failures in one mode only point
   at that request shape; `invalid_json` with prose on the JSON modes points at the reasoning
   parser (secondary risk).
