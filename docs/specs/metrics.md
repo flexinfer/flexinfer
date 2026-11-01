@@ -23,6 +23,8 @@ Defined in `services/flexinfer/pkg/metrics/exporter.go`:
 - `flexinfer_tokens_per_second{model,backend,node}`
 - `flexinfer_model_load_seconds{model,node}` (most recent activation-to-Ready load; the last cold-start observation)
 - `flexinfer_gpu_temperature_celsius{gpu,node}`
+- `flexinfer_gpu_power_watts{gpu,node}` (node agent; board power from sysfs hwmon, only on nodes in `--gpu-power-nodes`; see [GPU power](#gpu-power-node-agent))
+- `flexinfer_gpu_power_sampler_active{node}` (node agent; `1` while sampling, `0` after the sampler stopped itself, absent where sampling is off)
 - `flexinfer_gpu_vram_free_bytes{gpu,node,vendor}`
 - `flexinfer_gpu_vram_total_bytes{gpu,node,vendor}`
 - `flexinfer_gpu_vram_used_bytes{gpu,node,vendor}`
@@ -47,6 +49,29 @@ Defined in `services/flexinfer/pkg/metrics/exporter.go`:
 - `flexinfer_model_backfill_completions_total{backfill,namespace,model,result}` (counter — terminal attempts by result)
 - `flexinfer_model_backfill_preemptions_total{backfill,namespace,model,reason}` (counter — foreground/gaming cancellations)
 - `flexinfer_model_backfill_useful_running_seconds_total{backfill,namespace,model}` (counter — cumulative running time, excluding idle waits)
+
+### GPU power (node agent)
+
+`flexinfer_gpu_power_watts` is read from the amdgpu hwmon attribute
+`power1_average` (the SMU's averaged board power, what `rocm-smi` reports), or
+`power1_input` where a kernel exposes only that, converted from microwatts. The
+agent never runs `rocm-smi`/`amd-smi` for it. Sampling is **off by default** and
+enabled per node by name (`--gpu-power-nodes`, chart `agent.gpuPower.nodes`; no
+wildcard), at `--gpu-power-interval` (default `1s`, minimum `500ms`).
+
+- `gpu` is the DRM card index (`/sys/class/drm/cardN`), the same index
+  `flexinfer_gpu_healthy` uses. It can differ from the `rocm-smi` index that
+  `flexinfer_gpu_temperature_celsius` carries (the 5930k's discrete card is
+  `card1` in sysfs and `0` in `rocm-smi`), so join power and temperature on
+  `node`, not `gpu`.
+- Only discrete cards are sampled (the iGPU filter of the health sentinel
+  applies); a runtime-suspended card is skipped, not woken.
+- The sampler stops for good, until the agent restarts, when the health
+  sentinel reports the node degraded, a read fails with a device I/O error
+  (`EIO`/`EREMOTEIO`/`ENXIO`/`ENODEV`), or a card's reads fail 5 times in a row
+  (missing file, unparsable, or above 1000 W). It logs the reason
+  (`GPU power sampling stopped`), deletes its `flexinfer_gpu_power_watts`
+  series and sets `flexinfer_gpu_power_sampler_active` to `0`.
 
 ### Registry Note (Important)
 
