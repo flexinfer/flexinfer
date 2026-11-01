@@ -1,4 +1,25 @@
-# Qwen-Image 2.1 text-to-image (plus reference edits) on cblevins-5930k (gfx1100).
+# Qwen-Image 2.1 text-to-image (plus reference edits) on cblevins-7900xtx (gfx1100).
+#
+# 2026-10-30 MOVED to the 7900xtx flex card (placement layout,
+# .loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §6, §9).
+# This supersedes the "Why the 5930k" and "Election" notes below. Those notes
+# describe the 5930k-textgen posture that let this lane make 3 successful
+# renders in the 7 days before the move. On the 5930k it tied the workhorse
+# at 500, could only take the card after 2 idle minutes, and lost to the 9B
+# RP twin (550) outright. The 5930k is now the always-on workhorse card
+# (900, minReplicas 1), where this lane would be statically parked.
+# In 7900xtx-textgen:
+# - 500 outranks the idle tenant (the Mills warm lane, now 300 ondemand), so
+#   an image request preempts it at once.
+# - It ties the other creative lanes (Wan T2V/VACE, Stable Audio, the 9B RP
+#   lane), so they queue first-come-first-served without killing a render.
+# - The warm lane returns after this lane's 15 min idleTimeout.
+# The header's objection still applies: diffusion is sustained full-power
+# compute on a card that has dropped off PCIe. That is the layout's riskiest
+# assumption, gated by kill-test KT-FLEX after the 2026-11-06 soak verdict.
+# A wedge here now costs only best-effort lanes; the workhorse is on the 5930k.
+# gpu.count 2: the XTX advertises the Raphael iGPU as a second amd.com/gpu.
+# The image is prewarmed on the XTX (deploy/system/values-k3s.yaml).
 #
 # Demand-based: scale-to-zero in 5930k-textgen. An image request records demand,
 # the election hands this lane the card, and it gives the card back when idle.
@@ -91,13 +112,18 @@ spec:
       # MIOpen user db (VAE conv kernels) and Triton/Inductor caches survive
       # scale-to-zero, so only the first cold start pays the kernel search.
       enabled: true
-      hostPath: /var/lib/flexinfer/compile-cache-qwen-image-21-5930k
+      # 2026-10-30: a fresh per-node path for the move. The 5930k copy at
+      # compile-cache-qwen-image-21-5930k stays on that host until cleanup.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen-image-21-7900xtx
       sizeLimit: 4Gi
   gpu:
     vendor: amd
-    # cblevins-5930k exposes a single gfx1100 device-plugin slot (no iGPU).
-    count: 1
-    shared: 5930k-textgen
+    # cblevins-7900xtx exposes the dGPU and the Raphael iGPU as two
+    # device-plugin slots. Claim both so the pod can never be handed the iGPU;
+    # hipVisibleDevices "0" pins the dGPU (same as every dedicated XTX lane).
+    count: 2
+    shared: 7900xtx-textgen
+    # The creative tier of the flex card (header).
     priority: 500
     vramEstimateMB: 18000
   serverless:
@@ -162,7 +188,7 @@ spec:
       TEXT_ENCODER_QUANTIZATION: nf4
       DEFAULT_TRUE_CFG_SCALE: "1.0"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "4"

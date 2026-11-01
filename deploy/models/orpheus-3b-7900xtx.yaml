@@ -48,7 +48,14 @@ spec:
   gpu:
     vendor: amd
     shared: 7900xtx-textgen
-    priority: 460
+    # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+    # placement-2026-10-30.md §6): 460 -> 250, below the flex card's idle
+    # tenant (qwen38-27b-xtx-warm-canary, now 300). Above it, an orpheus-tts
+    # request made while the VII twin is not Ready (e.g. evicted by a
+    # humanizer burst) would cold-start this route-priority-100 twin and
+    # preempt the warm lane. It stays parked, as since 2026-09-13.
+
+    priority: 250
     count: 1
     vramEstimateMB: 3300
   serverless:

@@ -49,6 +49,13 @@ metadata:
     # `workhorse` alias). If the XTX lane is down, those requests get the
     # original 400. Counted in flexinfer_proxy_context_overflow_total.
     flexinfer.ai/context-overflow-to: qwen38-27b-xtx-warm-canary
+    # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+    # placement-2026-10-30.md §6): the XTX warm lane also claims the
+    # workhorse / loom-workhorse / reasoning / qwen38-27b labels, so a
+    # label-addressed request fails over to it when this lane is not Ready.
+    # This tier keeps those labels here while this lane is Ready. It only
+    # affects label groups that contain this lane; aliases are unchanged.
+    flexinfer.ai/route-priority: "100"
     flexinfer.ai/promotion-state: promoted-32k-segmented-mtp
     flexinfer.ai/promotion-evidence: "canaries qwen38-27b-v032-s3-attn-canary (S3) and S3b on b06b06fe, 2026-10-26: segmented + fp16 + MTP K=2 at 32K decode 71.8/66.5/66.1 tok/s at 512/2K/16K vs TRITON+fp8 40.8/40.2/34.3, pos0 acceptance 0.81, warm TTFT 0.234/0.419/1.026 s at 256/512/1124 vs this lane's 0.237/0.436/1.088, coherent probes, parity hash 8174a49e, KV pool 52,932 tok (1.62x) @32K"
 spec:
@@ -121,15 +128,26 @@ spec:
     vendor: amd
     count: 1
     shared: 5930k-textgen
-    # Borrow-idle posture (fable/wan pattern): explicit workhorse demand may
-    # take an idle card, while the higher-priority VACE video lane stays
-    # authoritative. Cold-load window: demand must persist ~4-6 min; Mills'
-    # proxy retries cover this.
-    priority: 500
+    # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+    # placement-2026-10-30.md §6): this card is the ALWAYS-ON workhorse card.
+    # 900 is the top of 5930k-textgen, and with minReplicas 1 plus warmPolicy
+    # primary nothing in the group can preempt this lane. Every other 5930k
+    # member is statically parked (the proxy answers 503 at once and records
+    # no demand). The creative lanes (Qwen-Image, Wan, Stable Audio) moved to
+    # the 7900xtx flex card. Why here and not the XTX: over the 7 days before
+    # 2026-10-30 the 5930k's GPU never left flexinfer_gpu_healthy=1, while the
+    # XTX was degraded ~41 of 168 h.
+    # Rollback: 500, minReplicas 0, warmPolicy ondemand (the borrow-idle
+    # posture: equal-priority creative lanes took the card only when this lane
+    # was idle 2 min, so Qwen-Image made 3 successful renders in a week).
+    priority: 900
     vramEstimateMB: 22000
   serverless:
     enabled: true
-    minReplicas: 0
+    # 2026-10-30 placement layout: 0 -> 1, always on (see gpu.priority). The
+    # 2026-09-13 note below describes the ondemand posture this replaces; the
+    # creative lanes it protected now live on the 7900xtx.
+    minReplicas: 1
     # 2026-09-13 (utilization slice 1, .loom/10-research-flexinfer-utilization-
     # loom-mills-2026-09-13.md): 30m -> 12h. Every recorded cold start of this
     # lane exceeded 300 s (12/12 in flexinfer_model_cold_start_duration_seconds)
@@ -168,7 +186,11 @@ spec:
     # (mtp.fc fp16, mtp.layers.0 INT4) instead of re-reading config.json.
     env:
       FLEXINFER_QWEN35_MTP_HEAD: checkpoint
-    warmPolicy: ondemand
+    # 2026-10-30 placement layout: ondemand -> primary. The lane is the group's
+    # designated tenant and reclaims the card if anything ever holds it (an
+    # operator activation, a forcePromotion canary). Controller-only key: it
+    # does not render into the pod, so this edit does not restart the lane.
+    warmPolicy: primary
     # vLLM 0.23 resolves quant_method "auto-round" to "inc" (rejected on
     # ROCm) before honoring --quantization. hfOverrides therefore rewrites
     # quantization_config wholesale to plain GPTQ form; the checkpoint's

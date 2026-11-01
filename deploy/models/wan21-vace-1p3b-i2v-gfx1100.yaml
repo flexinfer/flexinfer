@@ -1,4 +1,13 @@
-# Wan 2.1 VACE 1.3B image-to-video lane on cblevins-5930k (gfx1100).
+# Wan 2.1 VACE 1.3B image-to-video lane on cblevins-7900xtx (gfx1100).
+#
+# 2026-10-30 MOVED back to the 7900xtx flex card (placement layout,
+# .loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §6).
+# Priority 600 -> 500, the shared creative tier. Equal priority means a
+# Qwen-Image click no longer kills a running clip, and the reverse also holds:
+# the holder keeps the card while its request is open. Any creative lane
+# outranks the idle tenant (the Mills warm lane, 300 ondemand), which
+# returns after this lane's 15 min idleTimeout. The T2V-primary and
+# 5930k-workhorse notes below are history.
 #
 # 2026-07-18 psyche fleet layout: rehomed from cblevins-7900xtx together with
 # the T2V sibling; the 5930k gfx1100 card is now the psyche VIDEO lane.
@@ -50,10 +59,11 @@ spec:
       sizeLimit: 6Gi
   gpu:
     vendor: amd
-    # cblevins-5930k exposes a single gfx1100 device-plugin slot (no iGPU).
-    count: 1
-    shared: 5930k-textgen
-    priority: 600
+    # cblevins-7900xtx exposes the dGPU and the Raphael iGPU as two
+    # device-plugin slots: claim both so the pod can never be handed the iGPU.
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 500
     vramEstimateMB: 18000
   serverless:
     enabled: true
@@ -87,7 +97,7 @@ spec:
     hipVisibleDevices: "0"
     warmPolicy: ondemand
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "4"
