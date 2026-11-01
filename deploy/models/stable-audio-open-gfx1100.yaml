@@ -33,7 +33,8 @@
 # - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
 # - Compile cache: scope Image on the default hostPath, the directory the
 #   runtime pod mounts at /cache/compile.
-# BLOCKED: ef28b7b0 (rocm-gfx1100-serving-v032-c444b5ff) has no torchsde.
+# BLOCKED: the v032 persona (ef28b7b0 and its master rebuild 7ae8e92f,
+# the repin target; same package set) has no torchsde.
 # diffusers then swaps CosineDPMSolverMultistepScheduler, the scheduler in
 # Stable Audio Open's repo config, for a dummy that raises when
 # StableAudioPipeline.from_pretrained loads it. The dedicated image
