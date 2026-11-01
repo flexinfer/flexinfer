@@ -121,6 +121,7 @@ type PowerSampler struct {
 	stopped bool
 
 	lanes        LaneSource
+	laneRefresh  time.Duration
 	attributing  bool
 	mu           sync.Mutex
 	active       []string
@@ -137,7 +138,7 @@ func (a *Agent) NewPowerSampler(interval time.Duration, log logr.Logger) *PowerS
 		interval = minPowerInterval
 	}
 	a.ensureHealth()
-	return &PowerSampler{agent: a, interval: interval, log: log}
+	return &PowerSampler{agent: a, interval: interval, log: log, laneRefresh: laneRefreshInterval}
 }
 
 // SetLaneSource enables lane energy attribution. Call before Run.
@@ -153,8 +154,12 @@ func (p *PowerSampler) Run(ctx context.Context) {
 		return
 	}
 	if p.attributing {
-		p.refreshLanes(ctx)
-		go p.refreshLanesLoop(ctx)
+		// The refresh loop lives as long as Run: a sampler that stopped
+		// itself stops listing Models too.
+		lctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		p.refreshLanes(lctx)
+		go p.refreshLanesLoop(lctx)
 	}
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
@@ -271,7 +276,7 @@ func (p *PowerSampler) attribute(s *powerSensor, joules float64) {
 }
 
 func (p *PowerSampler) refreshLanesLoop(ctx context.Context) {
-	ticker := time.NewTicker(laneRefreshInterval)
+	ticker := time.NewTicker(p.laneRefresh)
 	defer ticker.Stop()
 	for {
 		select {

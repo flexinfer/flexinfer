@@ -3,9 +3,11 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -18,12 +20,15 @@ import (
 	"github.com/flexinfer/flexinfer/pkg/metrics"
 )
 
+var powerTestRun atomic.Int64
+
 // newPowerTestSampler builds a sampler over a fake sysfs tree on a node name
-// unique to the test, so gauge assertions do not see other tests' series.
+// unique to the test run, so metric assertions never see another test's (or
+// an earlier -count run's) series.
 func newPowerTestSampler(t *testing.T, root string) *PowerSampler {
 	t.Helper()
 	a := newHealthTestAgent(t, root)
-	a.nodeName = "power-" + strings.ReplaceAll(t.Name(), "/", "-")
+	a.nodeName = fmt.Sprintf("power-%s-%d", strings.ReplaceAll(t.Name(), "/", "-"), powerTestRun.Add(1))
 	return a.NewPowerSampler(time.Second, logr.Discard())
 }
 
@@ -379,4 +384,38 @@ func TestLaneEnergy_ListFailuresClearTheLaneSet(t *testing.T) {
 	lanes.err = nil
 	p.refreshLanes(context.Background())
 	assert.Equal(t, []string{"lane"}, p.active)
+}
+
+func TestLaneEnergy_RefreshLoopEndsWithRun(t *testing.T) {
+	root := t.TempDir()
+	writeSysfsCard(t, root, 0, testDiscreteVRAMBytes)
+	p := newPowerTestSampler(t, root)
+	p.interval = 10 * time.Millisecond
+	p.laneRefresh = 5 * time.Millisecond
+	lanes := &countingLanes{}
+	p.SetLaneSource(lanes)
+
+	done := make(chan struct{})
+	go func() { p.Run(context.Background()); close(done) }()
+	require.Eventually(t, func() bool { return lanes.n.Load() >= 3 }, time.Second, time.Millisecond, "the loop lists lanes while sampling")
+
+	p.agent.health.mu.Lock()
+	p.agent.health.degraded = true // the next sample stops the sampler
+	p.agent.health.mu.Unlock()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Run did not return after the sampler stopped")
+	}
+	require.True(t, p.Stopped())
+	after := lanes.n.Load()
+	time.Sleep(50 * time.Millisecond)
+	assert.Equal(t, after, lanes.n.Load(), "a stopped sampler stops listing Models")
+}
+
+type countingLanes struct{ n atomic.Int64 }
+
+func (c *countingLanes) ActiveLanes(context.Context, string) ([]string, error) {
+	c.n.Add(1)
+	return nil, nil
 }
