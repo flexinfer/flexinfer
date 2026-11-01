@@ -240,6 +240,14 @@ rules:
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch"]
+  {{- if (dig "gpuPower" "nodes" (list) .Values.agent) }}
+  # GPU power sampling attributes card energy to the Models Active on the
+  # node (flexinfer_lane_energy_joules_total); granted only while sampling is
+  # enabled somewhere.
+  - apiGroups: ["ai.flexinfer"]
+    resources: ["models"]
+    verbs: ["get", "list"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

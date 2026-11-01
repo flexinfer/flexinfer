@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -266,3 +267,116 @@ func TestPowerSampler_RunStopsWithContext(t *testing.T) {
 }
 
 func firstReturn(reason, _ string) string { return reason }
+
+type fakeLanes struct {
+	lanes []string
+	err   error
+	calls int
+}
+
+func (f *fakeLanes) ActiveLanes(_ context.Context, _ string) ([]string, error) {
+	f.calls++
+	return f.lanes, f.err
+}
+
+func laneJoules(p *PowerSampler, lane, gpu string) float64 {
+	return promtestutil.ToFloat64(metrics.LaneEnergyJoulesTotal.WithLabelValues(lane, p.agent.nodeName, gpu))
+}
+
+// startAttributing starts a sampler over one card with the given lanes Active.
+func startAttributing(t *testing.T, root string, lanes *fakeLanes) *PowerSampler {
+	t.Helper()
+	p := newPowerTestSampler(t, root)
+	p.SetLaneSource(lanes)
+	require.Empty(t, firstReturn(p.start()))
+	require.True(t, p.attributing)
+	p.refreshLanes(context.Background())
+	return p
+}
+
+func TestLaneEnergy_TrapezoidSplitEqually(t *testing.T) {
+	root := t.TempDir()
+	dev := writeSysfsCard(t, root, 0, testDiscreteVRAMBytes)
+	power := filepath.Join(dev, "hwmon", "hwmon3", "power1_average")
+	p := startAttributing(t, root, &fakeLanes{lanes: []string{"bge-large-radeonvii", "gte-qwen2-1p5b-radeonvii"}})
+
+	t0 := time.Unix(1_800_000_000, 0)
+	writeFile(t, power, "100000000\n")
+	p.sample(t0) // first sample: nothing to integrate yet
+	assert.Equal(t, 0.0, laneJoules(p, "gte-qwen2-1p5b-radeonvii", "0"))
+
+	writeFile(t, power, "200000000\n")
+	p.sample(t0.Add(time.Second)) // (100 + 200) / 2 W × 1 s = 150 J, 75 J each
+	assert.InDelta(t, 75.0, laneJoules(p, "bge-large-radeonvii", "0"), 1e-9)
+	assert.InDelta(t, 75.0, laneJoules(p, "gte-qwen2-1p5b-radeonvii", "0"), 1e-9)
+
+	p.sample(t0.Add(3 * time.Second)) // 200 W × 2 s = 400 J
+	assert.InDelta(t, 275.0, laneJoules(p, "gte-qwen2-1p5b-radeonvii", "0"), 1e-9)
+}
+
+func TestLaneEnergy_IdleCardIsAttributedToNobody(t *testing.T) {
+	root := t.TempDir()
+	writeSysfsCard(t, root, 0, testDiscreteVRAMBytes)
+	lanes := &fakeLanes{}
+	p := startAttributing(t, root, lanes)
+
+	t0 := time.Unix(1_800_000_000, 0)
+	p.sample(t0)
+	p.sample(t0.Add(time.Second))
+
+	lanes.lanes = []string{"orpheus-3b-radeonvii"}
+	p.refreshLanes(context.Background())
+	p.sample(t0.Add(2 * time.Second)) // 9 W × 1 s, only this step
+	assert.InDelta(t, 9.0, laneJoules(p, "orpheus-3b-radeonvii", "0"), 1e-9)
+}
+
+func TestLaneEnergy_GapsAreNotIntegrated(t *testing.T) {
+	root := t.TempDir()
+	dev := writeSysfsCard(t, root, 0, testDiscreteVRAMBytes)
+	p := startAttributing(t, root, &fakeLanes{lanes: []string{"lane"}})
+
+	t0 := time.Unix(1_800_000_000, 0)
+	p.sample(t0)
+	p.sample(t0.Add(powerMaxGapIntervals*time.Second + time.Millisecond)) // stalled loop
+	assert.Equal(t, 0.0, laneJoules(p, "lane", "0"))
+
+	// A suspended sample breaks the integral too.
+	writeFile(t, filepath.Join(dev, "power", "runtime_status"), "suspended\n")
+	p.sample(t0.Add(7 * time.Second))
+	writeFile(t, filepath.Join(dev, "power", "runtime_status"), "active\n")
+	p.sample(t0.Add(8 * time.Second))
+	assert.Equal(t, 0.0, laneJoules(p, "lane", "0"))
+
+	p.sample(t0.Add(9 * time.Second))
+	assert.InDelta(t, 9.0, laneJoules(p, "lane", "0"), 1e-9)
+}
+
+func TestLaneEnergy_OffWithMoreThanOneCard(t *testing.T) {
+	root := t.TempDir()
+	writeSysfsCard(t, root, 0, testDiscreteVRAMBytes)
+	writeSysfsCard(t, root, 1, testDiscreteVRAMBytes)
+	p := newPowerTestSampler(t, root)
+	p.SetLaneSource(&fakeLanes{lanes: []string{"lane"}})
+	require.Empty(t, firstReturn(p.start()))
+	require.Len(t, p.sensors, 2)
+	assert.False(t, p.attributing, "the agent cannot tell which card a lane holds")
+}
+
+func TestLaneEnergy_ListFailuresClearTheLaneSet(t *testing.T) {
+	root := t.TempDir()
+	writeSysfsCard(t, root, 0, testDiscreteVRAMBytes)
+	lanes := &fakeLanes{lanes: []string{"lane"}}
+	p := startAttributing(t, root, lanes)
+
+	lanes.err = errors.New("apiserver unavailable")
+	for i := 1; i < laneListMaxFailures; i++ {
+		p.refreshLanes(context.Background())
+		assert.Equal(t, []string{"lane"}, p.active, "a failed listing keeps the last set (%d)", i)
+	}
+	p.refreshLanes(context.Background())
+	assert.Empty(t, p.active)
+
+	lanes.err = nil
+	p.refreshLanes(context.Background())
+	assert.Equal(t, []string{"lane"}, p.active)
+}
