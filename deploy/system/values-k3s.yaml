@@ -976,7 +976,11 @@ runtime:
       # dropped from the radeonvii-gfx906 prewarm list 2026-10-27, so a
       # rollback pulls it):
       #   registry.harbor.lan/flexinfer/runtime@sha256:8181b6901ab0ed1244a9035d88677c2c729094b847f60d63368faca147a21585
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7"
+      # 2026-11-02 (!1207 apply plan step 3): repinned to rocm-gfx906-5ca58769, the
+      # master CI publish from the !1206 merge, the first gfx906 runtime with the
+      # whisper.cpp stage (KT-ASR 2026-10-30). Prewarmed on the Radeon VII first.
+      # Rollback anchor: 90648c35 (rocm-gfx906-b8637f35), still prewarmed.
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:6fc6fcbd936115679e8c5adc43e14c2b1cb86d7f4c702b5ce94b9bdae52c4871"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1

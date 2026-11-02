@@ -187,7 +187,9 @@ spec:
     # llama.cpp b11335 + request drain, as the off-CI Humanizer overlay
     # 8181b690 it replaces, plus Go 1.26.10. No Go code reads this field (only
     # bundledBackends above is consumed); it documents the runtime pod's image.
-    image: registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7
+    # 2026-11-02: rocm-gfx906-5ca58769 (!1206 whisper.cpp stage), aligned with
+    # values-k3s.yaml runtime.profiles gfx906 (!1207 apply plan step 3).
+    image: registry.harbor.lan/flexinfer/runtime@sha256:6fc6fcbd936115679e8c5adc43e14c2b1cb86d7f4c702b5ce94b9bdae52c4871
   containerMemoryGB: 56
   maxGPUMemoryGB: 12
   maxCPUMemoryGB: 56
