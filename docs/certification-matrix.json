@@ -53,7 +53,7 @@
     {
       "modality": "asr",
       "level": "supported",
-      "lanes": 3,
+      "lanes": 4,
       "evidenced_lanes": 1,
       "gpu_classes": [
         "gfx906"
@@ -492,6 +492,19 @@
       "evidenced": true,
       "evidence": ".loom/iteration-gfx906-llamacpp-stateful-spec-2026-07-15.md",
       "date": "2026-07-15",
+      "source": "deploy/gpuprofiles/gfx906.yaml"
+    },
+    {
+      "id": "gfx906/pyannote/speaker-diarization",
+      "kind": "certificate",
+      "support_level": "certified",
+      "backend": "pyannote",
+      "gpu_class": "gfx906",
+      "capability": "speaker-diarization",
+      "image": "registry.harbor.lan/flexinfer/runtime@sha256:cb4c8dc3c2bd55e0a5935642ed71b06d6fa1236ddd00f15b73627c1660359bc5",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx906-diarize-job-2026-11-xx (provisional: KT-DIAR window, verdict pending)",
+      "date": "2026-11-02",
       "source": "deploy/gpuprofiles/gfx906.yaml"
     },
     {
@@ -1784,6 +1797,26 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/vision-ocr-radeonvii.yaml"
+    },
+    {
+      "id": "pyannote-diarization-radeonvii",
+      "kind": "lane",
+      "support_level": "unverified",
+      "backend": "pyannote",
+      "gpu_class": "gfx906",
+      "nodes": [
+        "cblevins-radeonvii"
+      ],
+      "model": "pyannote-diarization-radeonvii",
+      "modality": "asr",
+      "decision": "pending",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx906-diarize-job-2026-11-xx@2026-11-01",
+      "validation_rows": [
+        "gfx906-diarize-job-2026-11-xx@2026-11-01"
+      ],
+      "date": "2026-11-01",
+      "source": "deploy/models/pyannote-diarization-radeonvii.yaml"
     },
     {
       "id": "openjev-0p8b-crossencoder-radeonvii",

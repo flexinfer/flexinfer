@@ -121,7 +121,7 @@ Nothing in this section is live yet; the KT-DIAR window plan
 | Server: `POST /v1/audio/diarizations`, `GET /health` | `build/server-pyannote.py` (tests: `scripts/test_server_pyannote.py`) |
 | Image layer: venv `/opt/pyannote` on the gfx906 runtime digest | `build/Dockerfile.runtime-gfx906-pyannote` (not built by CI) |
 | Certificate gate | `controllers/model_backend_certificate.go`, condition `BackendCertificate` |
-| Model | `deploy/debug/pyannote-diarization-radeonvii.yaml` (not applied by Flux) |
+| Model | `deploy/models/pyannote-diarization-radeonvii.yaml` (applied by Flux from the KT-DIAR window MR) |
 
 What changes against the Deployment:
 
