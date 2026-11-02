@@ -582,6 +582,11 @@ imagePrewarm:
         # Pinned by the gfx906 DaemonSet + GPUProfile since the S3'' roll
         # (matrix row gfx906-serving-2026-10-23).
         - registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7
+        # rocm-gfx906-5ca58769: master CI publish_runtime_rocm_gfx906 from the
+        # !1206 merge (whisper.cpp stage, KT-ASR 2026-10-30). Pulled ahead of the
+        # runtime.profiles gfx906 repin so the Radeon VII lanes return in seconds,
+        # not after a 7.6 GB pull. 90648c35 stays as the rollback anchor.
+        - registry.harbor.lan/flexinfer/runtime@sha256:6fc6fcbd936115679e8c5adc43e14c2b1cb86d7f4c702b5ce94b9bdae52c4871
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx

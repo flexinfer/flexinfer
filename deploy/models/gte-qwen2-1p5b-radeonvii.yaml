@@ -28,6 +28,16 @@ kind: Model
 metadata:
   name: gte-qwen2-1p5b-radeonvii
   namespace: flexinfer-system
+  annotations:
+    # D6 twin by failover (.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md
+    # §6.6 c): the CPU twin serves the same GGUF in the same vector space. The
+    # proxy serves a request here on the twin when this lane is Failed or
+    # parked at admission (G1, unavailable_reroute.go), and replays a request
+    # that the lane dropped on the way down (D6 a, swap_replay.go). Measured
+    # 2026-10-31 (matrix row gfx906-retrieval-swap-safety-2026-10-31): the twin
+    # serves 2 req/s of production-shaped singles at p95 0.93 s, ~4 req/s at
+    # most; a 64-input batch takes 30 s there.
+    flexinfer.ai/unavailable-reroute-to: gte-qwen2-1p5b-cpu-5930k
 spec:
   backend: llamacpp
   source: HF://second-state/gte-Qwen2-1.5B-instruct-GGUF
