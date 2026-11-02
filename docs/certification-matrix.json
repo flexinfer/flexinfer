@@ -52,11 +52,16 @@
   "modalities": [
     {
       "modality": "asr",
-      "level": "unverified",
-      "lanes": 2,
-      "evidenced_lanes": 0,
-      "gpu_classes": [],
-      "latest_evidence_date": null
+      "level": "supported",
+      "lanes": 3,
+      "evidenced_lanes": 1,
+      "gpu_classes": [
+        "gfx906"
+      ],
+      "latest_evidence_date": "2026-11-02",
+      "evidence": [
+        "whisper-large-v3-turbo-radeonvii"
+      ]
     },
     {
       "modality": "audio",
@@ -354,6 +359,21 @@
         "qwen3-1p7b-vllm-radeonvii@2026-06-09"
       ],
       "date": "2026-06-09",
+      "source": "deploy/gpuprofiles/gfx906.yaml"
+    },
+    {
+      "id": "gfx906/whispercpp",
+      "kind": "backend",
+      "support_level": "supported",
+      "backend": "whispercpp",
+      "gpu_class": "gfx906",
+      "decision": "promote",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx906-whispercpp-asr-2026-11-02",
+      "validation_rows": [
+        "gfx906-whispercpp-asr-2026-11-02"
+      ],
+      "date": "2026-11-02",
       "source": "deploy/gpuprofiles/gfx906.yaml"
     },
     {
@@ -1803,6 +1823,27 @@
       "source": "deploy/models/qwen3-1p7b-vllm-radeonvii.yaml"
     },
     {
+      "id": "whisper-large-v3-turbo-radeonvii",
+      "kind": "lane",
+      "support_level": "supported",
+      "backend": "whispercpp",
+      "gpu_class": "gfx906",
+      "nodes": [
+        "cblevins-radeonvii"
+      ],
+      "model": "whisper-large-v3-turbo-radeonvii",
+      "modality": "asr",
+      "decision": "promote",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx906-whispercpp-asr-2026-11-02",
+      "validation_rows": [
+        "gfx906-whispercpp-asr-2026-11-02",
+        "gfx906-diarize-job-2026-11-xx@2026-11-01"
+      ],
+      "date": "2026-11-02",
+      "source": "deploy/models/whisper-large-v3-turbo-radeonvii.yaml"
+    },
+    {
       "id": "dreamshaper8-imagegen-gtx980ti",
       "kind": "lane",
       "support_level": "unverified",
@@ -1849,6 +1890,22 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/embeddings.yaml"
+    },
+    {
+      "id": "gfx906-whispercpp-asr-2026-11-02",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "whispercpp",
+      "gpu_class": "gfx906",
+      "nodes": [
+        "radeonvii"
+      ],
+      "decision": "promote",
+      "title": "the whisper.cpp ASR lane whisper-large-v3-turbo-radeonvii live on the Radeon VII: !1206 (whispercpp backend), !1250 (prewarm), !1252 (gfx906 runtime repin 90648c35 → 6fc6fcbd), !1207 (lane manifest…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx906-whispercpp-asr-2026-11-02",
+      "date": "2026-11-02",
+      "source": ".loom/60-validation-matrix.md"
     },
     {
       "id": "xtx-pcie-soak-2026-11-02",
