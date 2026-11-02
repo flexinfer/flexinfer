@@ -607,6 +607,14 @@ imagePrewarm:
         # runtime.profiles gfx906 repin so the Radeon VII lanes return in seconds,
         # not after a 7.6 GB pull. 90648c35 stays as the rollback anchor.
         - registry.harbor.lan/flexinfer/runtime@sha256:6fc6fcbd936115679e8c5adc43e14c2b1cb86d7f4c702b5ce94b9bdae52c4871
+        # rocm-gfx906-pyannote-6fc6fcbd9361 (pinned-cb4c8dc3c2bd): the D5-a pyannote
+        # layer (build/Dockerfile.runtime-gfx906-pyannote at !1259, venv
+        # /opt/pyannote) on 6fc6fcbd, built on the 7900xtx host 2026-11-02.
+        # Pulled ahead of the runtime.profiles gfx906 repin (KT-DIAR window,
+        # .loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md); only the
+        # layer delta is new on this node (~88 MB compressed, 290 MB on disk).
+        # 6fc6fcbd becomes the rollback anchor.
+        - registry.harbor.lan/flexinfer/runtime@sha256:cb4c8dc3c2bd55e0a5935642ed71b06d6fa1236ddd00f15b73627c1660359bc5
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
