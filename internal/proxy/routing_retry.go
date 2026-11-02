@@ -170,6 +170,7 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 	maxAttempts := maxForwardAttempts()
 
 	maxTokensForLog, streamForLog := parseRequestForUsageLog(forwardBody)
+	constraintForLog := requestConstraint(r.URL.Path, forwardBody)
 	startedAt := time.Now()
 	caller := callerIdentityFrom(r)
 	wantPrefix := prefixHitOptIn(r.Header.Get(headerWantPrefixHit))
@@ -203,6 +204,7 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 			qosClass:      qosClass,
 			qosSource:     qosSource,
 			caller:        qosCaller,
+			constraint:    constraintForLog,
 		}), fr))
 
 		rp, ok := p.loadOrCreateProxy(targetURL)

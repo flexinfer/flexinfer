@@ -371,6 +371,40 @@ When `FlexInferGPUDegraded` fires:
 5. **Close out** with a validation-matrix row and the `flexinfer_gpu_health_degraded_total`
    counter as evidence of what the sentinel saw.
 
+### GPU power sampling
+
+Power sampling (`flexinfer_gpu_power_watts`, mechanism in
+[components.md](components.md#gpu-power-sampling)) is enabled per node by name
+in the chart values:
+
+```yaml
+agent:
+  gpuPower:
+    nodes: [cblevins-5930k, cblevins-radeonvii]
+    interval: 1s
+```
+
+An empty list renders the agent DaemonSet with no args, so the first non-empty
+list (and every later change) rolls the agent pod on **every** node, listed or
+not. The agent only reads sysfs on listed nodes.
+
+- **Watch**: `flexinfer_gpu_power_sampler_active{node}` should stay `1`;
+  `0` means it stopped itself, and that node's agent log says why:
+  ```bash
+  kubectl logs -n flexinfer-system $(kubectl get pod -n flexinfer-system \
+    -l app.kubernetes.io/component=agent --field-selector spec.nodeName=NODE_NAME -o name) | grep "GPU power"
+  ```
+  On the host, `journalctl -k -f | grep -iE 'amdgpu|smu'` (or
+  `/var/log/kern.log` if journald is flooded) should show nothing new: SMU
+  message timeouts, `TransferTableSmu2Dram` failures or "Failed to export SMU
+  metrics table" after enabling are the signal to turn it off.
+- **Turn off**: remove the node from `agent.gpuPower.nodes` (or empty the
+  list) and let Flux roll the agents. A sampler that stopped itself stays
+  stopped until its pod restarts, so a self-stop needs no action beyond
+  deciding whether to keep the node listed.
+- **cblevins-7900xtx**: do not list it until the PCIe/SMU soak verdict
+  (see the XTX rows in `.loom/60-validation-matrix.md`).
+
 ### GPU Memory Segfault Prevention
 
 When testing new GPU configurations:

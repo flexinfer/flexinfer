@@ -175,6 +175,23 @@ agent:
   nodeSelector:
     kubernetes.io/arch: amd64
     flexinfer.ai/gpu-present: "true"
+  # D7 GPU power sampling: flexinfer_gpu_power_watts from sysfs hwmon
+  # power1_average at 1 Hz, and flexinfer_lane_energy_joules_total split
+  # equally among the Models Ready on the card (docs/specs/metrics.md). Read
+  # only, never rocm-smi; the sampler stops itself on a degraded sentinel
+  # verdict, a device I/O error or 5 failed reads in a row.
+  #
+  # cblevins-7900xtx stays OFF until the owner's PCIe/SMU soak verdict
+  # (2026-11-06 00:15Z): its hwmon power reads go through the SMU that
+  # wedged the card before. Do not add it here before that verdict.
+  #
+  # Pass rule (validation matrix row gpu-power-sampling-1hz-2026-11-01) and
+  # the off switch (empty this list): docs/agents/operations.md#gpu-power-sampling.
+  gpuPower:
+    nodes:
+      - cblevins-5930k
+      - cblevins-radeonvii
+    interval: 1s
 
 proxy:
   enabled: true
@@ -605,11 +622,52 @@ imagePrewarm:
         # runtime_pin_drift FAIL, which the deploy/experiments ModelExperiment
         # records (Flux-applied) also raise.
         - registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+        # 2026-11-01 (D1, research next-differentiators-2026-10-31 §6.1 step
+        # 1): the stacked 0.32 runtime (rocm-gfx1100-serving-v032-c444b5ff,
+        # see the 5930k profile), target of the window-gated repin of this
+        # node's runtime DaemonSet (profile gfx1100 below) from cfefae18.
+        # Holding it here makes that repin a container start; cfefae18 above
+        # stays listed as its rollback anchor. Harbor already tags it
+        # pinned-ef28b7b0d1cb (2026-10-28 05:30Z, from the 5930k entry). It
+        # shares the v0.32.0 base with cd108c9e/b06b06fe above, so the pull
+        # is the ~32 MB layer delta and the GPU is not touched.
+        # controllers/runtime_pin_contract_test.go keeps this list, the
+        # runtime profiles and the gfx1100 GPUProfile in step.
+        - registry.harbor.lan/flexinfer/runtime@sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2
+        # 2026-11-01 (D1): the master CI rebuild of the same persona,
+        # rocm-gfx1100-serving-v032-5ca58769 (pipeline 36312, job 442027,
+        # 2026-10-30 22:08Z): the Dockerfile and frozen stack of ef28b7b0 (265
+        # packages unchanged, diffusers and snac added) with the newer
+        # flexinfer-runtime supervisor and servers. Against ef28b7b0 (c444b5ff)
+        # it adds in-pod reload on a spec edit (R1), the loading substages and
+        # short-KV-pool recheck (R4, internal/runtime/load_progress.go), the
+        # image-scoped compile cache (C5) and the Qwen-Image 2.1 server code
+        # (R1-R3). It is the recommended target of the window-gated XTX
+        # repin. Listing it here also makes harbor-flexinfer-pin-tags tag it
+        # pinned-7ae8e92ff28a; it had no pinned tag and had never been pulled.
+        # The pull is the supervisor and server layers on the shared base.
+        - registry.harbor.lan/flexinfer/runtime@sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.
         - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
+        # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+        # placement-2026-10-30.md §6): the creative lanes moved to this card.
+        # Their images are held here so that a first request after image GC is
+        # a container start, not a pull. On the 5930k the first Qwen-Image
+        # activation took 31 min, most of it this pull. About 59 GB in total
+        # against 324 GB free on this root (2026-10-30). The image GC
+        # threshold here is 90/85. The 5930k profile keeps the same pins until
+        # the layout has survived a week, as the rollback anchor; drop them
+        # there afterwards.
+        # Qwen-Image 2.1 (serving persona with the R1-R3 overlay, b83c3822).
+        - registry.harbor.lan/flexinfer/runtime@sha256:2c94c6d973fab09d9304891b26a25a026bc6e6bdecfe304b138de6c118d219cc
+        # Wan 2.1 T2V and VACE (both pin this through spec.imageDigest).
+        - registry.harbor.lan/flexinfer/diffusers-video@sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
+        # Stable Audio Open (rocm-gfx1100-audio2). Listing it here also makes
+        # the pin guard tag it pinned-d87f75f8c69b.
+        - registry.harbor.lan/flexinfer/diffusers@sha256:d87f75f8c69bd3e266b11fbb11ee6528d1134001721a960b6e738f6af7e788ce
 quantization:
   # Python 3.14 candidate promoted after the isolated ModelCache validator and
   # publisher canary passed. The former Python 3.11 digest remains the rollback

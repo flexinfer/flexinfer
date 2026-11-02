@@ -110,6 +110,11 @@ func TestResolveCapabilitiesEmbeddingAndASR(t *testing.T) {
 		strings.Join(asr.Modalities.Input, ",") != "audio" || strings.Join(asr.Modalities.Output, ",") != "text" {
 		t.Errorf("asr lane = %+v", asr)
 	}
+	diar := ResolveCapabilities(capModel("pyannote", "", nil))
+	if strings.Join(diar.ServePaths, ",") != "/v1/audio/diarizations" || diar.MaxModelLen != 0 ||
+		strings.Join(diar.Modalities.Input, ",") != "audio" || strings.Join(diar.Modalities.Output, ",") != "diarization" {
+		t.Errorf("diarization lane = %+v", diar)
+	}
 }
 
 // TestDiffusersLimitsMatchTheServer is the drift guard for the mirrored
@@ -143,5 +148,24 @@ func TestDiffusersLimitsMatchTheServer(t *testing.T) {
 		if !strings.Contains(string(src), want) {
 			t.Errorf("server-diffusers.py no longer contains %q: update the mirrored limits in capabilities.go", want)
 		}
+	}
+}
+
+func TestResolveCapabilitiesStructuredOutputFollowsTheCondition(t *testing.T) {
+	m := capModel("vllm", `{"maxModelLen":32768}`, nil)
+	if ResolveCapabilities(m).StructuredOutput {
+		t.Fatal("no StructuredOutput condition must not advertise structured_output")
+	}
+	m.Status.Conditions = []metav1.Condition{{
+		Type: aiv1alpha2.ConditionStructuredOutput, Status: metav1.ConditionFalse,
+		Reason: aiv1alpha2.ReasonStructuredOutputNotCertified,
+	}}
+	if ResolveCapabilities(m).StructuredOutput {
+		t.Fatal("an uncertified opt-in must not advertise structured_output")
+	}
+	m.Status.Conditions[0].Status = metav1.ConditionTrue
+	m.Status.Conditions[0].Reason = aiv1alpha2.ReasonStructuredOutputCertified
+	if !ResolveCapabilities(m).StructuredOutput {
+		t.Fatal("a certified, rendered envelope must advertise structured_output")
 	}
 }

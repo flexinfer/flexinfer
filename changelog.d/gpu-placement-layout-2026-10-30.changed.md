@@ -1,0 +1,10 @@
+- gfx1100 placement layout, live-impacting (`.loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md` §6, §10):
+  - **`cblevins-5930k` is the always-on workhorse card.**
+    - `qwen38-27b-autoround-workhorse` moves to priority 900, `warmPolicy: primary`, `minReplicas: 1` and `route-priority: 100`, so nothing in `5930k-textgen` can preempt it.
+    - The other 5930k members are statically parked: the proxy answers them 503 at once.
+  - **`cblevins-7900xtx` is the flex card.**
+    - `qwen38-27b-xtx-warm-canary` becomes the idle tenant: 300, `ondemand`, still `minReplicas: 1`. It also claims the workhorse serviceLabels for failover.
+    - Qwen-Image 2.1, Wan T2V, Wan VACE and Stable Audio move here at one creative priority, 500, with `gpu.count: 2` and a 15 min idleTimeout. A creative request takes the card at once; creative lanes queue first-come-first-served; the warm lane returns when the last one scales to zero.
+    - SNAC, the Orpheus twin, Whisper and the 35B 128k lane drop below the idle tenant (250–290), so they stay parked as before.
+    - The XTX prewarm DaemonSet holds the three creative images, about 59 GB.
+  - Neither Ready 27B lane restarts. `controllers/placement_layout_test.go` pins the layout's election contract against the real manifests and proves both pod templates are unchanged.

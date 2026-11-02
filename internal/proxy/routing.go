@@ -1,7 +1,6 @@
 package proxy
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -10,7 +9,6 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -378,6 +376,22 @@ func (p *Proxy) serveProxy(w http.ResponseWriter, r *http.Request, modelName str
 		if originalMaxTokens >= 0 && clampedMaxTokens >= 0 {
 			w.Header().Set("X-FlexInfer-MaxTokens-Clamped", fmt.Sprintf("%d->%d", originalMaxTokens, clampedMaxTokens))
 		}
+
+		// A lane on vLLM priority scheduling takes the request's QoS class as
+		// its per-request priority (qos_priority.go); other lanes are untouched.
+		forwardBody = p.applyQoSPriority(ctx, resolvedModel, r.URL.Path, forwardBody)
+	}
+
+	// An idempotent request (embeddings, rerank, non-streaming transcription)
+	// holds back a drain or gateway failure so a request caught in a lane swap
+	// can be replayed once on the lane, or its equivalent, after the swap. See
+	// swap_replay.go.
+	if !isLoRA && swapReplayEligible(r, forwardBody) {
+		started := time.Now()
+		cw := newSwapCaptureWriter(w)
+		p.forwardWithRetry(cw, r, modelName, resolvedModel, port, routeBody, forwardBody)
+		p.finishSwapReplay(cw, w, r, resolvedModel, port, routeBody, started)
+		return
 	}
 
 	// A Model with a context-overflow lane holds back the runtime's 400 so a
@@ -490,86 +504,45 @@ func (p *Proxy) getServicePort(ctx context.Context, modelName string) (int32, bo
 	return picked, true
 }
 
-// rewriteModelInBody replaces the "model" field in a JSON request body with the backend model name.
-// This allows clients to use FlexInfer model names/aliases while backends receive their native model IDs.
+// rewriteModelInBody replaces the top-level "model" field in a JSON request
+// body with the backend model name. This allows clients to use FlexInfer model
+// names/aliases while backends receive their native model IDs.
 //
-// Uses surgical byte-level replacement when possible to avoid full JSON parse/remarshal overhead.
-// Falls back to full parse when the fast path cannot locate the field.
+// Only the top-level value is spliced (body_fields.go): a "model" property
+// declared inside response_format, structured_outputs or a tool schema is
+// never touched, and every other byte of the body is forwarded as sent.
 func (p *Proxy) rewriteModelInBody(body []byte, backendModelName string) []byte {
-	// Fast path: locate "model" key and splice the value
 	if result := spliceModelField(body, backendModelName); result != nil {
 		return result
 	}
-
-	// Slow path: full JSON parse
-	var data map[string]any
-	if err := json.Unmarshal(body, &data); err != nil {
+	// A non-string top-level model value is replaced too; a body without a
+	// top-level model, or one that is not a JSON object, is left alone.
+	if _, _, found, ok := topLevelField(body, "model"); !ok || !found {
 		return body
 	}
-	if _, ok := data["model"]; !ok {
-		return body
-	}
-	data["model"] = backendModelName
-	modified, err := json.Marshal(data)
+	quoted, err := json.Marshal(backendModelName)
 	if err != nil {
 		return body
 	}
+	modified, _ := setTopLevelField(body, "model", quoted)
 	return modified
 }
 
-// spliceModelField performs surgical byte-level replacement of the "model" JSON value.
-// Returns nil if the fast path is not applicable (no "model" key, nested object, etc.).
+// spliceModelField replaces the top-level "model" string value. Returns nil
+// when the body is not a JSON object or has no top-level string "model".
 func spliceModelField(body []byte, replacement string) []byte {
-	// Find "model" key — must be a top-level key (before any nested object).
-	needle := []byte(`"model"`)
-	idx := bytes.Index(body, needle)
-	if idx < 0 {
+	start, end, found, ok := topLevelField(body, "model")
+	if !ok || !found || body[start] != '"' {
 		return nil
 	}
-
-	// Walk past the key and the colon
-	pos := idx + len(needle)
-	for pos < len(body) && (body[pos] == ' ' || body[pos] == '\t' || body[pos] == '\n' || body[pos] == '\r') {
-		pos++
-	}
-	if pos >= len(body) || body[pos] != ':' {
+	quoted, err := json.Marshal(replacement)
+	if err != nil {
 		return nil
 	}
-	pos++ // skip ':'
-	for pos < len(body) && (body[pos] == ' ' || body[pos] == '\t' || body[pos] == '\n' || body[pos] == '\r') {
-		pos++
-	}
-	if pos >= len(body) || body[pos] != '"' {
-		return nil // value isn't a string — bail to full parse
-	}
-
-	// Find the end of the quoted value, handling escaped quotes
-	valStart := pos
-	pos++ // skip opening '"'
-	for pos < len(body) {
-		if body[pos] == '\\' {
-			pos += 2 // skip escaped char
-			continue
-		}
-		if body[pos] == '"' {
-			break
-		}
-		pos++
-	}
-	if pos >= len(body) {
-		return nil // unterminated string
-	}
-	valEnd := pos + 1 // include closing '"'
-
-	// Build replacement value (JSON-escaped string)
-	newVal := []byte(strconv.Quote(replacement))
-
-	// Splice: body[:valStart] + newVal + body[valEnd:]
-	result := make([]byte, 0, len(body)-valEnd+valStart+len(newVal))
-	result = append(result, body[:valStart]...)
-	result = append(result, newVal...)
-	result = append(result, body[valEnd:]...)
-	return result
+	out := make([]byte, 0, len(body)-(end-start)+len(quoted))
+	out = append(out, body[:start]...)
+	out = append(out, quoted...)
+	return append(out, body[end:]...)
 }
 
 // loadOrCreateProxy returns a cached httputil.ReverseProxy for the target URL,

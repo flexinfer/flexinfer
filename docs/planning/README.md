@@ -6,7 +6,7 @@ If you’re looking for “what exists today” docs, start here instead:
 
 - Project overview: `README.md`
 - Roadmap (high-level): `ROADMAP.md`
-- Implementation status (detailed): `docs/IMPLEMENTATION_STATUS.md`
+- Implementation status (pointers to the current sources and the latest deliveries): `docs/IMPLEMENTATION_STATUS.md`
 - Architecture overview: `docs/dev/architecture.md`
 - CRD / contract docs: `docs/specs/README.md`
 - v1alpha2 user docs: `docs/user/models-v1alpha2.md`

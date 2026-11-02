@@ -67,6 +67,11 @@ const (
 //     only probes devices from short-lived children.
 //   - diffusers, snac, comfyui, mlc-llm: one Python/TVM server process.
 //   - whispercpp: one whisper-server.
+//   - pyannote: one Python server; the segmentation and embedding models
+//     share its torch process. The hand-written Deployment held 2 compute
+//     queues plus 2 SDMA queues with SDMA on (2026-10-30); under the gfx906
+//     profile env (SDMA off, GPU_MAX_HW_QUEUES=1) it is accounted like
+//     llama-server at 3, which the D5-a Model declares as hwQueueEstimate.
 //   - vllm, vllm-omni: two. The API server and the engine-core process are
 //     separate processes (V1 EngineCore, V0 MQLLMEngine). Not measured on
 //     gfx906, so the estimate assumes both reach the device; set

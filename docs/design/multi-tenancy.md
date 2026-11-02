@@ -52,8 +52,9 @@ Namespace isolation does nothing for the case the fleet actually has: several ca
 model lane with a handful of seats. The production text lane `qwen38-27b-autoround-workhorse` runs
 `maxNumSeqs: 2` and serves interactive callers (jobsearch, psyche, the HUD, fi-fhir) next to Mills'
 background research and shadow judging. D3 is the first fairness slice, at the request level rather
-than the namespace level. State on 2026-10-31: class resolution and labels are in code (!1209);
-the seat gate and vLLM priority are in review; no lane opts in until KT-QOS passes.
+than the namespace level. State on 2026-10-31: class resolution and labels (!1209), the seat gate
+(!1212) and vLLM priority (!1214) are in code; no lane opts in until KT-QOS passes, and enforcement
+needs a proxy image built after them.
 
 - **Classes.** The proxy resolves every request to `interactive`, `background` or `batch` from the
   `X-FlexInfer-QoS` header, the caller map in ConfigMap `flexinfer-proxy-qos` (hashed bearer key or

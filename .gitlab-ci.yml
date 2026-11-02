@@ -315,6 +315,33 @@ vet:
   script:
     - go vet ./...
 
+# The public certification matrix (docs/certification-matrix.json, rendered by
+# `flexinfer certify render` from GPUProfiles, lane manifests, the validation
+# matrix and the runtime profiles) must match its inputs. Gating on merge
+# requests that touch an input; on master it only warns, so a branch that
+# predates this job and merged a stale copy does not block publish.
+certify_matrix:
+  stage: lint
+  <<: *go-cache
+  needs: []
+  script:
+    - go run ./cmd/flexinfer certify render --check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: &certify-matrix-changes
+        - deploy/gpuprofiles/**/*
+        - deploy/models/**/*
+        - deploy/system/values-k3s.yaml
+        - .loom/60-validation-matrix.md
+        - docs/certification-matrix.json
+        - pkg/certify/**/*
+        - cmd/flexinfer/**/*
+        - api/v1alpha2/**/*
+        - .gitlab-ci.yml
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *certify-matrix-changes
+      allow_failure: true
+
 # Pure-stdlib unit tests for the F3 read-path context-selection logic.
 # Gates the diversify_selection helper shared (by inline mirror) between the
 # kill-test harness and the codebase-answer service. No pip deps -> alpine.
@@ -532,9 +559,23 @@ race_test:
   stage: test
   <<: *go-cache
   needs: []
+  # 2026-10-31: the job ran at the runner's default 4Gi pod limit and was
+  # OOMKilled (runner_system_failure, exit 137) on every master pipeline from
+  # 59950366b (the InferenceJob runner, !1218) onward, after passing in ~90 s
+  # through 15b9bdcd1. Race-instrumented test binaries use several times the
+  # memory of plain ones and `go test ./...` builds and runs GOMAXPROCS
+  # packages at once. Ask the ci-radeonvii runner for its allowed maximum
+  # (memory_request_overwrite_max_allowed 4Gi / memory_limit 8Gi in
+  # platform/gitops k3s/ci/gitlab/helmrelease-runner-radeonvii.yaml) and run
+  # one package at a time: internal/proxy alone peaks at ~4.6 GiB RSS under
+  # -race (measured 2026-10-31 on master), so two packages at once could still
+  # cross 8Gi. The suite then takes several minutes, hence the longer timeout.
+  variables:
+    KUBERNETES_MEMORY_REQUEST: "4Gi"
+    KUBERNETES_MEMORY_LIMIT: "8Gi"
   script:
     - echo "Running tests with race detector..."
-    - CGO_ENABLED=1 go test -race ./... -short -timeout 10m
+    - CGO_ENABLED=1 go test -race -p 1 ./... -short -timeout 20m
   allow_failure: false
   rules:
     - if: $CI_COMMIT_TAG
@@ -639,6 +680,29 @@ server_diffusers_test:
         - scripts/test_server_diffusers.py
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *server-diffusers-changes
+
+server_pyannote_test:
+  stage: test
+  image: python:3.12-slim
+  needs: []
+  script:
+    # fastapi, torch, torchaudio_compat and pyannote.audio are stubbed when
+    # absent, so the request contract and the load sequence run on the bare
+    # image. pyannote's numbers on the Radeon VII are KT-DIAR's (D5-a).
+    - python3 scripts/test_server_pyannote.py
+    - python3 -m py_compile build/server-pyannote.py scripts/kt-diar.py
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &server-pyannote-changes
+        - .gitlab-ci.yml
+        - build/server-pyannote.py
+        - build/Dockerfile.runtime-gfx906-pyannote
+        - backend/constants.go
+        - backend/pyannote.go
+        - scripts/test_server_pyannote.py
+        - scripts/kt-diar.py
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *server-pyannote-changes
 
 vllm_qwen35_seqcls_plugin_test:
   stage: test
@@ -748,7 +812,7 @@ build_binaries:
     - go build -o bin/manager cmd/flexinfer-manager/main.go
     - GOOS=linux GOARCH=amd64 go build -o bin/agent cmd/flexinfer-agent/main.go
     - go build -o bin/scheduler cmd/flexinfer-sched/main.go
-    - go build -o bin/benchmarker cmd/flexinfer-bench/main.go
+    - go build -o bin/benchmarker ./cmd/flexinfer-bench/
     - go build -o bin/proxy ./cmd/flexinfer-proxy/
     - go build -o bin/flash-loader ./cmd/flexinfer-flash-loader/
   artifacts:

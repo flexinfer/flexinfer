@@ -2,14 +2,13 @@ package runtime
 
 import (
 	"bytes"
-	"encoding/json"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
-	"unicode"
 
 	"github.com/flexinfer/flexinfer/backend"
+	"github.com/flexinfer/flexinfer/pkg/transcript"
 )
 
 // maxWhisperCppResponseBytes bounds the body the ingress buffers to add words.
@@ -64,95 +63,9 @@ func addWhisperCppWords(resp *http.Response) error {
 	return nil
 }
 
-type whisperCppToken struct {
-	Word        string   `json:"word"`
-	Start       *float64 `json:"start"`
-	End         *float64 `json:"end"`
-	Probability *float64 `json:"probability"`
-}
-
-type whisperCppWord struct {
-	Word        string  `json:"word"`
-	Start       float64 `json:"start"`
-	End         float64 `json:"end"`
-	Probability float64 `json:"probability"`
-	probSum     float64
-	probN       int
-}
-
-// mergeWhisperCppWords joins each segment's tokens into words: a token that
-// starts with whitespace, or a segment's first token, opens a word; other
-// tokens and punctuation-only tokens extend it. Word probability is the mean
-// of its tokens'. It returns false when the body is not a verbose_json
-// transcription, already has top-level words, or carries no token timings.
+// mergeWhisperCppWords is transcript.MergeWhisperCppWords. The merge lives in
+// pkg/transcript so a diarize job (D5-a) labels the same words with speakers;
+// without a speaker the bytes are those this ingress always returned.
 func mergeWhisperCppWords(body []byte) ([]byte, bool) {
-	var doc map[string]json.RawMessage
-	if err := json.Unmarshal(body, &doc); err != nil {
-		return nil, false
-	}
-	if _, ok := doc["words"]; ok {
-		return nil, false
-	}
-	var segments []struct {
-		Words []whisperCppToken `json:"words"`
-	}
-	if raw, ok := doc["segments"]; !ok || json.Unmarshal(raw, &segments) != nil {
-		return nil, false
-	}
-	words := make([]*whisperCppWord, 0, 256)
-	for _, seg := range segments {
-		var cur *whisperCppWord
-		for _, tok := range seg.Words {
-			if tok.Start == nil || tok.End == nil || strings.TrimSpace(tok.Word) == "" {
-				continue
-			}
-			start, end := max(*tok.Start, 0), max(*tok.End, 0)
-			opens := cur == nil || unicode.IsSpace([]rune(tok.Word)[0])
-			if opens && !isPunctuationOnly(tok.Word) {
-				cur = &whisperCppWord{Start: start, End: max(end, start)}
-				words = append(words, cur)
-			}
-			if cur == nil {
-				continue
-			}
-			cur.Word += tok.Word
-			cur.End = max(cur.End, end)
-			if tok.Probability != nil {
-				cur.probSum += *tok.Probability
-				cur.probN++
-			}
-		}
-	}
-	if len(words) == 0 {
-		return nil, false
-	}
-	for _, w := range words {
-		w.Word = strings.TrimSpace(w.Word)
-		if w.probN > 0 {
-			w.Probability = w.probSum / float64(w.probN)
-		}
-	}
-	raw, err := json.Marshal(words)
-	if err != nil {
-		return nil, false
-	}
-	doc["words"] = raw
-	out, err := json.Marshal(doc)
-	if err != nil {
-		return nil, false
-	}
-	return out, true
-}
-
-func isPunctuationOnly(s string) bool {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if !unicode.IsPunct(r) && !unicode.IsSymbol(r) {
-			return false
-		}
-	}
-	return true
+	return transcript.MergeWhisperCppWords(body)
 }

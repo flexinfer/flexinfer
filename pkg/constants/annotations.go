@@ -18,6 +18,12 @@ const (
 	// model serves all paths (default).
 	AnnotationServePaths = "flexinfer.ai/serve-paths"
 
+	// AnnotationDiarizationModel, on an ASR Model, names the diarization lane
+	// (a pyannote Model) a diarize=true transcription on it runs after the
+	// transcription, inside a job (D5-a). The proxy accepts diarize=true only
+	// while that lane's GPUProfile certifies it (condition BackendCertificate).
+	AnnotationDiarizationModel = "flexinfer.ai/diarization-model"
+
 	// AnnotationServingPriorityClass, when set on a Model, is written to the
 	// serving Deployment pod's PriorityClassName. Use it to protect a warm
 	// retrieval/serving lane from GPU preemption by lower-priority ModelCache
@@ -43,6 +49,17 @@ const (
 	// the configured label-group routing mode (round-robin, least-loaded, or
 	// hash pinning) applies unchanged.
 	AnnotationRoutePriority = "flexinfer.ai/route-priority"
+
+	// AnnotationFailoverFor names a Model this shared-GPU member stands in for.
+	// While that Model is down (Failed, or pinned to a node whose GPU health
+	// label reads degraded), the member's own group election ranks it at the
+	// higher of the two gpu.priority values and counts the down Model's demand
+	// as its own, so a warm copy of an always-on lane on another card can
+	// preempt a lower-priority tenant there. The member must run once elected
+	// (serverless.minReplicas >= 1, or not serverless). Absent, empty,
+	// self-referencing, on a scale-to-zero member, or naming a Model that is
+	// up: no effect.
+	AnnotationFailoverFor = "flexinfer.ai/failover-for"
 )
 
 // Node annotations written by the flexinfer-agent for scheduler scoring.

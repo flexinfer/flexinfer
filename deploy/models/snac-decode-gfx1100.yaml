@@ -58,7 +58,13 @@ spec:
     # election queue — and it is the same node as tts.lan, so decode calls
     # stay node-local. Mirrors orpheus-3b-7900xtx.
     shared: 7900xtx-textgen
-    priority: 430
+    # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+    # placement-2026-10-30.md §6): 430 -> 250, below the flex card's idle
+    # tenant (qwen38-27b-xtx-warm-canary, now 300). Above it, every tts-lane
+    # decode would preempt the 23 GB warm lane for ~3 min. It still joins a
+    # creative holder by VRAM (18000 + 1500 fits the 24576 budget).
+
+    priority: 250
     vramEstimateMB: 1500
   serverless:
     enabled: true

@@ -67,6 +67,22 @@ metadata:
 
 **Note:** Models without this annotation use Kubernetes Service DNS for load balancing, which is the recommended default for most workloads.
 
+### `flexinfer.ai/unavailable-reroute-to`
+
+Names an equivalent Model (same weights or the same vector space on another card), by name or alias. The proxy reads it in two places:
+
+- **Admission** (G1, `internal/proxy/unavailable_reroute.go`, MR !1204): a request for a Model that cannot serve now (Failed, or parked behind a holder its demand cannot beat) is served once on the equivalent if that Model is Ready with a closed breaker.
+- **Swap-safe replay** (`internal/proxy/swap_replay.go`): an idempotent request already forwarded to the lane that fails with 502/503/504 while the lane is parked, or after waiting for a draining lane runs out, is replayed once on the equivalent. See `docs/specs/proxy-api.md` § Swap-safe replay.
+
+The equivalent is never cold-started from either path, and its own `unavailable-reroute-to` is never followed. Absent, empty or naming the Model itself: no effect.
+
+```yaml
+metadata:
+  name: gte-qwen2-1p5b-radeonvii
+  annotations:
+    flexinfer.ai/unavailable-reroute-to: gte-qwen2-1p5b-cpu-5930k
+```
+
 ### `flexinfer.ai/qos` and `flexinfer.ai/qos-interactive-reserve`
 
 Caller QoS enforcement on a lane (`internal/proxy/qos_gate.go`, `docs/specs/proxy-api.md` "Caller
@@ -79,6 +95,48 @@ alone). `flexinfer.ai/qos: off` turns both off. The gate needs `spec.config.maxN
 | `flexinfer.ai/qos` | `proxy` | seat gate and class-ordered queue, no vLLM priority field |
 | `flexinfer.ai/qos` | `off` | no enforcement even with `schedulingPolicy: priority` |
 | `flexinfer.ai/qos-interactive-reserve` | integer ≥ 0 | seats held for interactive requests; default 1 when `maxNumSeqs` ≥ 2, capped at `maxNumSeqs - 1` |
+
+## Async job annotations
+
+On a Model:
+
+| Annotation | Value | Effect |
+|---|---|---|
+| `flexinfer.ai/job-concurrency` | integer ≥ 1 | async jobs the proxy runs at once on this lane; default 1 for diffusers lanes (which share one slot per `spec.gpu.shared` group), else `FLEXINFER_JOBS_PER_MODEL` (2) |
+| `flexinfer.ai/unavailable-reroute-to` | Model name | also surfaced as `reroute_to` in the error envelope and the `GET /v1/models/{name}` descriptor |
+| `flexinfer.ai/diarization-model` | Model name | on an ASR lane: the pyannote lane a `diarize=true` transcription calls after it (D5-a); accepted only while that lane has `BackendCertificate=True`, else 501 `diarization_not_certified` |
+
+On an `InferenceJob` (written by the proxy):
+
+| Key | Kind | Meaning |
+|---|---|---|
+| `flexinfer.ai/job-caller` | annotation | the submitting caller (`X-FlexInfer-Caller`, else the User-Agent product), replayed so the job runs in the caller's QoS class |
+| `flexinfer.ai/job-user-agent` | annotation | the submitting User-Agent, replayed on the job's request |
+| `flexinfer.ai/job-idempotency` | label | hash of caller and `Idempotency-Key`; a repeat submission returns the first job |
+| `flexinfer.ai/job-storage` | finalizer | the proxy deletes the job's stored inputs and output before the job goes |
+| `flexinfer.ai/job-pipeline` | annotation | `diarize` for a diarized transcription: the runner transcribes, then diarizes, then merges |
+| `flexinfer.ai/job-diarization-model` | annotation | the diarization lane a `diarize` job calls, resolved and checked at submission |
+
+## GPUProfile backend-capability certificates
+
+Probe evidence that binds an opt-in backend feature to the exact image that passed its kill-test
+(`api/v1alpha2/gpuprofile_certificate.go`). Three keys move together; a partial triple counts as
+uncertified, and the image must equal the digest-pinned image the Model launches.
+
+| Annotation | Value |
+|---|---|
+| `flexinfer.ai/backend-certificate-<backend>-<capability>` | `image@sha256:...` |
+| `flexinfer.ai/backend-certificate-<backend>-<capability>-since` | RFC3339 time |
+| `flexinfer.ai/backend-certificate-<backend>-<capability>-evidence` | matrix row or doc |
+
+Capabilities in use: `llamacpp-stateful-slots`, `llamacpp-ngram-simple-draft16-min1`,
+`llamacpp-draft-mtp`, `llamacpp-draft-mtp-draft<N>-min<M>` (a failed check marks the Model
+`Schedulable=False`), `vllm-structured-outputs` (D4: gates `spec.capabilities.structuredOutput`;
+an uncertified opt-in renders nothing and reports condition `StructuredOutput=False`), and
+`pyannote-speaker-diarization` (D5-a: gates the `pyannote` backend itself, bound to the profile's
+`spec.runtime.image`; an uncertified profile fails the Model with condition
+`BackendCertificate=False`, reason `BackendNotCertified`). Details in
+`docs/agents/gpu-compatibility.md`.
 
 ## Service label routing
 

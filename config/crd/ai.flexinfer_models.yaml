@@ -254,6 +254,16 @@ spec:
                       ImageGeneration marks this as an image generation model.
                       Auto: true for diffusers, comfyui, vllm-omni.
                     type: boolean
+                  structuredOutput:
+                    description: |-
+                      StructuredOutput opts a vllm lane into a certified structured-output
+                      envelope: the controller renders --structured-outputs-config with
+                      backend auto only when the selected GPUProfile carries a complete
+                      vllm/structured-outputs backend-capability certificate bound to the
+                      exact digest-pinned image this Model launches, and only on a dedicated
+                      Deployment (spec.config.dedicatedDeployment: true). Otherwise nothing is
+                      rendered and the StructuredOutput condition says why. Never auto-set.
+                    type: boolean
                   toolCalling:
                     description: |-
                       ToolCalling enables OpenAI-compatible function/tool calling.

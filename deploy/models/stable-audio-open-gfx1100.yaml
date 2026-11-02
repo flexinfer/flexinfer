@@ -10,6 +10,14 @@
 # 10 s @ 100 steps = 12.1 s wall — step count dominates wall time, audio
 # duration is nearly free, so a 40 s film score costs ~13 s.
 #
+# 2026-10-30 MOVED to the 7900xtx flex card (placement layout,
+# .loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §6).
+# Priority 450 -> 500, the shared creative tier: it outranks the idle tenant
+# (the Mills warm lane, 300 ondemand) and ties the image and video lanes.
+# The warm-pinned XTX leader that the next paragraph avoided is now an
+# ondemand idle tenant BELOW the creative lanes, so they are not statically
+# parked. The image is prewarmed on the XTX (deploy/system/values-k3s.yaml).
+# The original 2026-08-22 kill-test ran on this card. History:
 # Placement: 5930k-textgen (demand-based elections since the 08-21/22
 # warm-policy cleanup). Priority 450 sits below the workhorse (500) and the
 # video lanes (600): a ~15 s music render queues politely behind film clips
@@ -53,9 +61,11 @@ spec:
       sizeLimit: 4Gi
   gpu:
     vendor: amd
-    count: 1
-    shared: 5930k-textgen
-    priority: 450
+    # cblevins-7900xtx exposes the dGPU and the Raphael iGPU as two
+    # device-plugin slots: claim both so the pod can never be handed the iGPU.
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 500
     vramEstimateMB: 7000
   serverless:
     enabled: true
@@ -69,6 +79,10 @@ spec:
     # gfx1100-5930k) loads the lane in-pod on the DaemonSet's image instead
     # of spec.image. The flag only routes; the Deployment renders the same
     # (controllers/model_dedicated_deployment_render_test.go).
+    # 2026-10-30: on the 7900xtx the flag matters at once. That node RUNS a
+    # gfx1100 runtime pod (cfefae18, vLLM 0.17 persona with older diffusers),
+    # and without the flag this lane would load there instead of on
+    # spec.image. Same for the other three creative lanes.
     dedicatedDeployment: true
     pipelineMode: text2audio
     dtype: float16
@@ -76,7 +90,7 @@ spec:
     skipWarmup: "1"
     numInferenceSteps: "100"
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "2"

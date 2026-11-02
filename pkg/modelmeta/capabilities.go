@@ -3,6 +3,8 @@ package modelmeta
 import (
 	"strings"
 
+	"k8s.io/apimachinery/pkg/api/meta"
+
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/pkg/constants"
 )
@@ -30,6 +32,12 @@ type Capabilities struct {
 	MaxModelLen int `json:"max_model_len,omitempty"`
 	// Limits are the request bounds of a media lane; nil for token lanes.
 	Limits *Limits `json:"limits,omitempty"`
+	// StructuredOutput is true when the lane's structured-output envelope is
+	// certified and rendered (Model condition StructuredOutput=True, D4), so a
+	// caller may send response_format json_schema or structured_outputs and
+	// rely on KT-SO's evidence. Omitted otherwise; the lane may still accept
+	// those fields, uncertified.
+	StructuredOutput bool `json:"structured_output,omitempty"`
 }
 
 // Modalities lists input and output kinds: text, image, video, audio,
@@ -133,6 +141,7 @@ var pathModalities = []struct {
 	{"/v1/audio/translations", []string{"audio"}, []string{"text"}},
 	{"/v1/audio/speech", []string{"text"}, []string{"audio"}},
 	{"/v1/audio/generations", []string{"text"}, []string{"audio"}},
+	{"/v1/audio/diarizations", []string{"audio"}, []string{"diarization"}},
 }
 
 // ResolveCapabilities derives m's capabilities from its spec and annotations.
@@ -163,19 +172,21 @@ func ResolveCapabilities(m *aiv1alpha2.Model) Capabilities {
 	if m.Spec.Backend == backendDiffusers {
 		c.Limits = diffusersLimits(&m.Spec, mode, c.Modalities.Output)
 	}
+	c.StructuredOutput = meta.IsStatusConditionTrue(m.Status.Conditions, aiv1alpha2.ConditionStructuredOutput)
 	return c
 }
 
 const (
 	backendDiffusers  = "diffusers"
 	backendWhisperCpp = "whispercpp"
+	backendPyannote   = "pyannote"
 	backendSNAC       = "snac"
 	backendComfyUI    = "comfyui"
 )
 
 func isMediaBackend(name string) bool {
 	switch name {
-	case backendDiffusers, backendWhisperCpp, backendSNAC, backendComfyUI:
+	case backendDiffusers, backendWhisperCpp, backendPyannote, backendSNAC, backendComfyUI:
 		return true
 	}
 	return false
@@ -190,6 +201,8 @@ func defaultServePaths(backend, mode string) []string {
 		return diffusersPathsByMode[""]
 	case backendWhisperCpp:
 		return []string{"/v1/audio/transcriptions"}
+	case backendPyannote:
+		return []string{"/v1/audio/diarizations"}
 	case backendSNAC:
 		return []string{"/v1/audio/decode"}
 	case backendComfyUI:

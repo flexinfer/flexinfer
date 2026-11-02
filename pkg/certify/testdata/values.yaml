@@ -1,0 +1,10 @@
+runtime:
+  profiles:
+    - name: gfx1100
+      gpuArch: gfx1100
+      nodeSelector:
+        kubernetes.io/hostname: node-xtx
+    - name: gfx1100-b
+      gpuArch: gfx1100
+      nodeSelector:
+        kubernetes.io/hostname: node-b

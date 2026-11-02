@@ -18,4 +18,5 @@ Entry points:
 - `docs/specs/crds.md`
 - `docs/specs/proxy-api.md`
 - `docs/specs/scheduler-extender.md`
+- `docs/specs/certification-matrix.md`
 

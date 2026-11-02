@@ -51,6 +51,27 @@ curl -sS http://flexinfer-proxy.flexinfer-system.svc/v1/audio/transcriptions \
   - The Model therefore sets `flexinfer.ai/lane-first-byte-budget`.
   - Size it for the longest recording you expect at the measured speed.
 
+### Speaker-attributed transcripts (`diarize=true`, D5-a)
+
+Add `-F diarize=true` (and optionally `-F num_speakers=N`) and the transcription runs as a job:
+whisper.cpp, then the pyannote lane the ASR Model names in `flexinfer.ai/diarization-model`, then a
+merge that labels every word with a speaker. The answer is the job object; poll it and read the
+content when it is `completed`:
+
+```bash
+JOB=$(curl -sS http://flexinfer-proxy.flexinfer-system.svc/v1/audio/transcriptions \
+  -F model=whisper-large-v3-turbo-radeonvii -F diarize=true -F file=@meeting.wav | jq -r .id)
+curl -sS http://flexinfer-proxy.flexinfer-system.svc/v1/jobs/$JOB            # status, progress
+curl -sS http://flexinfer-proxy.flexinfer-system.svc/v1/jobs/$JOB/content    # words[].speaker, utterances
+```
+
+This replaces the client-side merge of `/v1/audio/transcriptions` and `/diarize`: ICC's aligner
+and jobsearch read `words[].speaker` or `utterances` instead. Until the KT-DIAR window certifies
+the gfx906 profile for pyannote, the request answers 501 `diarization_not_certified` and
+`GET /v1/models/whisper-large-v3-turbo-radeonvii` shows why under `flexinfer.diarization`; clients
+keep their current path on that code. Contract: `docs/specs/proxy-api.md`, "Diarized
+transcriptions".
+
 ## Measured on the Radeon VII (KT-ASR, 2026-10-30)
 
 `large-v3-turbo` q8_0, `GPU_MAX_HW_QUEUES=1`, `HSA_CU_MASK=0:0-39`:

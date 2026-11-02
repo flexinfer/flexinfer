@@ -1,0 +1,13 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: GPUProfile
+metadata:
+  name: sm-52
+spec:
+  architecture: sm_52
+  vendor: nvidia
+  vramMB: 6144
+  backends:
+    llamacpp:
+      support: full
+    vllm:
+      support: unsupported
