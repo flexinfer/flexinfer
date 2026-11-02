@@ -104,7 +104,7 @@
       "gpu_classes": [
         "gfx906"
       ],
-      "latest_evidence_date": "2026-10-24",
+      "latest_evidence_date": "2026-10-31",
       "evidence": [
         "bge-large-radeonvii",
         "gte-qwen2-1p5b-radeonvii"
@@ -310,13 +310,13 @@
       "support_level": "supported",
       "backend": "llamacpp",
       "gpu_class": "gfx906",
-      "decision": "promote",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#qwen3-embedding-gfx906-2026-10-24",
+      "evidence": ".loom/60-validation-matrix.md#gfx906-retrieval-swap-safety-2026-10-31",
       "validation_rows": [
-        "qwen3-embedding-gfx906-2026-10-24"
+        "gfx906-retrieval-swap-safety-2026-10-31"
       ],
-      "date": "2026-10-24",
+      "date": "2026-10-31",
       "source": "deploy/gpuprofiles/gfx906.yaml"
     },
     {
@@ -1643,15 +1643,15 @@
       ],
       "model": "gte-qwen2-1p5b-radeonvii",
       "modality": "embeddings",
-      "decision": "pass",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx906-llamacpp-flash-attn-ab-2026-10-24",
+      "evidence": ".loom/60-validation-matrix.md#gfx906-retrieval-swap-safety-2026-10-31",
       "validation_rows": [
         "gfx906-retrieval-swap-safety-2026-10-31",
         "gfx906-llamacpp-flash-attn-ab-2026-10-24",
         "gfx906-serving-2026-10-23"
       ],
-      "date": "2026-10-24",
+      "date": "2026-10-31",
       "source": "deploy/models/gte-qwen2-1p5b-radeonvii.yaml"
     },
     {
@@ -1955,9 +1955,9 @@
       "nodes": [
         "radeonvii"
       ],
-      "decision": "pending",
+      "decision": "conditional",
       "title": "D6 retrieval plane protection (.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.6, brief §9 D6): kill-test KT-RET on gte-qwen2-1p5b-radeonvii. Two runs: (R) reproduction…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx906-retrieval-swap-safety-2026-10-31",
       "date": "2026-10-31",
       "source": ".loom/60-validation-matrix.md"
