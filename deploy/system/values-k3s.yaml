@@ -289,6 +289,37 @@ proxy:
   # Deployment (deploy/system/kokoro-tts/, CPU-only). Completes the voice stack
   # (ASR + diarization + TTS) under one base URL. Empty disables the route (503).
   kokoroUpstream: "http://kokoro-tts.flexinfer-system.svc:8880"
+  # Async jobs (D2, !1218/!1219): `background: true` (or Prefer:
+  # respond-async) on chat/completions, images/generations|edits,
+  # audio/transcriptions|speech|generations and videos/generations, plus
+  # POST/GET /v1/jobs*, run by the proxy as InferenceJobs. The live proxy
+  # (master d5aa35a7, !1251) already carries the job API and the runner; this
+  # block only switches it on, so no image moves. Store = MinIO in daemon
+  # (ClusterIP Service minio, S3 API on 9000; 9001 is the console), bucket
+  # flexinfer-jobs, credentials from Secret flexinfer-jobs-minio in
+  # flexinfer-system (keys accessKey, secretKey; platform/gitops!1024, bucket
+  # bootstrap Job 2026-10-31). The proxy fails to start when the Secret is
+  # missing (secretKeyRef is required). Limits are the binary defaults, written
+  # out because this file replaces the chart's values.yaml under Flux.
+  # Live consequences: imagegen-ui (services/imagegen-ui!24) renders videos as
+  # jobs instead of its synchronous fallback, and diarize=true on
+  # /v1/audio/transcriptions answers 501 diarization_not_certified instead of
+  # jobs_disabled until a lane carries flexinfer.ai/diarization-model (D5-a).
+  # Rollback: enabled: false (queued InferenceJobs stay until re-enabled or
+  # deleted; the synchronous paths do not change either way).
+  jobs:
+    enabled: true
+    store: s3
+    s3:
+      endpoint: "http://minio.daemon.svc:9000"
+      bucket: flexinfer-jobs
+      region: us-east-1
+      credentialsSecret: flexinfer-jobs-minio
+    perModel: 2               # running jobs per lane; diffusers lanes run 1
+    maxRunning: 8             # running jobs per proxy replica
+    maxOutputBytes: 1Gi
+    maxWait: 6h               # how long a job may wait for its lane
+    spoolSizeLimit: 4Gi       # emptyDir holding a response until it is stored
   # 2026-10-24: CPU limit 200m -> 2000m, request 50m -> 100m. Go 1.26 sizes
   # GOMAXPROCS from the cgroup quota with a floor of 2, so under a 200m limit
   # two Ps burned the 20 ms per-100 ms quota in bursts and then stalled for
