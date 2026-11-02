@@ -372,7 +372,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		r.Recorder.Event(model, corev1.EventTypeWarning, "VRAMInsufficient", err.Error())
 		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonVRAMInsufficient, err.Error())
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-		return ctrl.Result{}, r.persistStatus(ctx, model)
+		return r.persistRefusedFit(ctx, model)
 	}
 	// Same for the hardware compute-queue budget (GPUProfile maxHWQueues).
 	if err := r.validateHWQueueFit(model, gpuVendor, gpuArch); err != nil {
@@ -380,7 +380,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		r.Recorder.Event(model, corev1.EventTypeWarning, aiv1alpha2.ReasonHWQueuesInsufficient, err.Error())
 		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonHWQueuesInsufficient, err.Error())
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-		return ctrl.Result{}, r.persistStatus(ctx, model)
+		return r.persistRefusedFit(ctx, model)
 	}
 
 	// Emit informational events for experimental opt-ins (vLLM V1 engine, flash attention).
