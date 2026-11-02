@@ -119,8 +119,19 @@ controller:
     # a517165a is also safe):
     # sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376
     # (tag 20261023-142445).
-    digest: "sha256:cb4531508c426bdcbce648a71d5c21ac2872d8b2323ba0f728414a36368e3164"
-    tag: "20261030-153940"
+    # 2026-11-02: master d5aa35a7 (tag 20261102-144015; the controller binary
+    # last changed in the 1411f5a2 build, so this digest also carries
+    # 20261102-001509). The 3cb6cde0 build below plus every merge from
+    # 2026-10-30 21:00Z to 2026-11-02: !1206 whispercpp backend (needed by the
+    # !1207 lane), !1204 election failover-for (G2), D2 async-jobs API +
+    # InferenceJob reconciler (!1216/!1219; the API stays off, see !1221),
+    # D4 structured-output certificate gate (!1226, inert without the
+    # annotation), D5-a pyannote backend (!1244, certificate-gated), D1 runtime
+    # pin contract (!1224, CI only), D7 certify tooling. No pod template
+    # changes: no lane restarts expected. Rollback = the 3cb6cde0 build:
+    # tag 20261030-153940, sha256:cb4531508c426bdcbce648a71d5c21ac2872d8b2323ba0f728414a36368e3164.
+    digest: "sha256:1286a2f15c0a5a9f95de19275ce57bfa564ddcbd75517be4b80cf306d29b7c0f"
+    tag: "20261102-144015"
   resources:
     limits:
       cpu: 1000m
@@ -252,7 +263,16 @@ proxy:
     # humanizer-fastswaps-cc7273917,
     # sha256:db4c70c04e4196bf26da174d6e529380000678be76ac8315916e7a62452f18c8.
     tag: "20261030-153940"
-    digest: "sha256:e345d649ce009ea75a6d5f5370e51d4f4e6f5b8176ce2a7f874e92950549cad6"
+    # 2026-11-02: master d5aa35a7 (tag 20261102-144015) = the 3cb6cde0 build
+    # below plus D2 typed error envelope + cold descriptor (!1210/!1213; Mills
+    # classifies by error.code since loom-core!3289), D3 QoS classes (!1209/
+    # !1212, opt-in), D6-a swap replay (!1215, on by default) and D6-c gte
+    # reroute via !1204 (G1, annotation-driven: gte-qwen2-1p5b-radeonvii ->
+    # its CPU twin, !1217), D4 structured-output pass-through (!1229), D5-a
+    # diarize=true as a job (!1245, needs the jobs API, off), lane first-byte
+    # budgets for the Wan lanes (!1247). Rollback = the 3cb6cde0 build:
+    # tag 20261030-153940, sha256:e345d649ce009ea75a6d5f5370e51d4f4e6f5b8176ce2a7f874e92950549cad6.
+    digest: "sha256:b07a52ce3c72200cd961ad2903a86485387da7a051ea06258db0001aa7580a87"
     pullPolicy: Always
   service:
     type: ClusterIP
