@@ -98,3 +98,29 @@ The same card model has run for 133 days on `cblevins-5930k` without a drop.
 - Everything downstream on the XTX is blocked until then: D1 repin and in-pod lanes
   (!1234, !1235), KT-SWAP, the KT-JOBS flex-card arm, XTX power sampling, !1243.
 - Make `TestLaneEnergy_RefreshLoopEndsWithRun` deterministic (synchronous stop or `>= 4`).
+
+## Addendum 2026-11-02: the burn on the new posture also fails
+
+The owner power-cycled the node through its Home Assistant plug (`switch.christmas_tree_socket_1`,
+"cblevins-7900xtx Socket 1") at 14:16Z after k3s was stopped and disks synced; the host booted on
+its own at 14:18Z. The pinned firmware loaded (SMU 78.128.0, MES 120) and, with it, the
+`amdgpu.pcie_gen_cap` cap took effect for the first time: the host link trained at Gen3 at both
+ends and `pp_dpm_pcie` topped out at the 8 GT/s level. The card re-enumerated, the node rejoined
+as a voter, and the warm lane reloaded to Ready.
+
+The 600 s fp16 matmul burn then ran at 14:23:23Z inside the runtime pod with the warm lane
+resident: 71 TFLOPS steady, 282–287 W, junction 65→78 C, sclk ~2050 MHz, link 8 GT/s, zero kernel
+errors for 357 s. At 14:29:14Z the kernel logged `device lost from bus!` with no preceding line;
+the GPU core and on-card downstream port read `0xffff`, the upstream port stayed alive and the
+host link retrained to Gen4 once the SMU that held the cap was gone. Matrix row
+`xtx-pcie-soak-2026-11-02`, decision `fail`.
+
+**Conclusion.** Every software axis is now exhausted: kernel 6.14 → 7.0, GPU firmware newer →
+older (the stable twin's exact blobs), host link Gen4 → Gen3, ASPM off, power cap at the floor,
+clock cap, card reseat, OS reinstall. The card dies under its first sustained compute on every
+boot regardless. The fault is hardware: the card (VRM or die), the PSU or its 8-pin cables, or
+the B650 board and its 2023 BIOS. The slot link is not involved. Next: swap the two XTX cards
+between hosts (if the drop follows the card, it is the card; if it stays with the B650 host, it
+is the PSU, board or BIOS), one PSU cable per 8-pin, BIOS 1811 → 38xx. Until then the XTX is not
+a flex card: D1 repin and in-pod lanes, KT-SWAP, the KT-JOBS flex arm and XTX power sampling stay
+blocked, and the layout (!1203) stays as is with text on the always-on 5930k workhorse.
