@@ -114,7 +114,7 @@
       "modality": "image",
       "level": "experimental",
       "lanes": 9,
-      "evidenced_lanes": 1,
+      "evidenced_lanes": 2,
       "gpu_classes": [
         "gfx906"
       ],
@@ -195,13 +195,13 @@
       "support_level": "supported",
       "backend": "diffusers",
       "gpu_class": "gfx1100",
-      "decision": "skip",
-      "evidenced": false,
-      "evidence": ".loom/60-validation-matrix.md#retired-gfx1100-imagegen-canary-slot-2026-05-22",
+      "decision": "fail",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-01",
       "validation_rows": [
-        "retired-gfx1100-imagegen-canary-slot-2026-05-22"
+        "gfx1100-flex-card-layout-2026-11-01"
       ],
-      "date": "2026-05-22",
+      "date": "2026-11-01",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -559,7 +559,7 @@
     {
       "id": "qwen-image-21-gfx1100",
       "kind": "lane",
-      "support_level": "unverified",
+      "support_level": "experimental",
       "backend": "diffusers",
       "gpu_class": "gfx1100",
       "nodes": [
@@ -567,11 +567,12 @@
       ],
       "model": "qwen-image-21-gfx1100",
       "modality": "image",
-      "decision": "pending",
-      "evidenced": false,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-swap-2026-11-01",
+      "decision": "fail",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-01",
       "validation_rows": [
         "gfx1100-xtx-inpod-swap-2026-11-01",
+        "gfx1100-flex-card-layout-2026-11-01",
         "proxy-async-jobs-2026-10-31"
       ],
       "date": "2026-11-01",
@@ -1877,6 +1878,22 @@
       "title": "KT-SWAP, feature D1 (instant flex card) of .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.1. Riskiest assumption: an in-pod vLLM 0.32 load of the 27B warm lane on gfx1100…",
       "evidenced": false,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-swap-2026-11-01",
+      "date": "2026-11-01",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-flex-card-layout-2026-11-01",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "KT-FLEX, the GPU placement layout !1203 (.loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §9): can the 7900 XTX carry the creative tier plus the warm lane through repeated swaps without…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-01",
       "date": "2026-11-01",
       "source": ".loom/60-validation-matrix.md"
     },
