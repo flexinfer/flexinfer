@@ -62,7 +62,8 @@ func (d *clusterIPDialer) refusedDials() int {
 }
 
 // readyOnScaleUp is the controller in miniature: scaling a lane up marks its
-// Model Ready.
+// Model Ready. It patches rather than updates, because the proxy's demand
+// heartbeat writes the same Model's status concurrently.
 type readyOnScaleUp struct{ c client.Client }
 
 func (a readyOnScaleUp) TriggerScaleUp(ctx context.Context, name string) error {
@@ -70,8 +71,9 @@ func (a readyOnScaleUp) TriggerScaleUp(ctx context.Context, name string) error {
 	if err := a.c.Get(ctx, client.ObjectKey{Namespace: "default", Name: name}, m); err != nil {
 		return err
 	}
+	base := m.DeepCopy()
 	m.Status.Phase = aiv1alpha2.ModelPhaseReady
-	return a.c.Status().Update(ctx, m)
+	return a.c.Status().Patch(ctx, m, client.MergeFrom(base))
 }
 
 func (readyOnScaleUp) TouchLastActiveTime(context.Context, string) {}
