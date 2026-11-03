@@ -1550,7 +1550,11 @@ publish_diffusers_video_rocm_gfx1100:
   interruptible: false
   stage: publish
   image: registry.harbor.lan/library/buildkit:v0.12.5
-  timeout: 1h
+  # 2026-11-03: 1h -> 2h. When BuildKit has pruned the rocm6.4.1/PyTorch 2.6
+  # base, step 7 pulls and extracts it from the inline cache first: ~55 min
+  # on job 458565, so the build hit the 1h limit (and job 426137 before it,
+  # 2026-10-27). retry.when does not cover job_execution_timeout.
+  timeout: 2h
   needs: []
   resource_group: buildkit-rocm-images
   retry:
