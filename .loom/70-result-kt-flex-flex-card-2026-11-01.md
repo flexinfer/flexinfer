@@ -124,3 +124,14 @@ between hosts (if the drop follows the card, it is the card; if it stays with th
 is the PSU, board or BIOS), one PSU cable per 8-pin, BIOS 1811 → 38xx. Until then the XTX is not
 a flex card: D1 repin and in-pod lanes, KT-SWAP, the KT-JOBS flex arm and XTX power sampling stay
 blocked, and the layout (!1203) stays as is with text on the always-on 5930k workhorse.
+
+## Addendum 2026-11-03: the burn passes after the hardware work
+
+The owner did physical work on cblevins-7900xtx on 2026-11-02 (recorded separately); the host came
+back at 19:48Z on the same XFX card with BIOS 1811, the pinned firmware and a clean boot, but the
+host link trained at Gen3 **x8** where every earlier boot was x16. The same 600 s fp16 matmul burn
+that had killed the card at 357 s that morning ran 01:01:51–01:11:53Z and passed: 71 TFLOPS steady,
+277–289 W, junction 61→82 C, zero kernel errors, card alive afterwards. Row `xtx-pcie-soak-2026-11-03`,
+decision `conditional`: KT-FLEX may rerun, and `promote` waits on a KT-FLEX pass plus 24 h of
+`flexinfer_gpu_healthy == 1`. The x8 link is a loose end: half the lanes did not train after the
+reseat, which argues for one more careful reseat before the slot is called good.

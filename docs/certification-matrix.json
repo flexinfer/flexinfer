@@ -1428,7 +1428,7 @@
     {
       "id": "qwen38-27b-xtx-warm-canary",
       "kind": "lane",
-      "support_level": "unsupported",
+      "support_level": "experimental",
       "backend": "vllm",
       "gpu_class": "gfx1100",
       "nodes": [
@@ -1437,12 +1437,13 @@
       "model": "qwen38-27b-xtx-warm-canary",
       "modality": "chat",
       "canary": true,
-      "decision": "fail",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#xtx-pcie-soak-2026-11-02",
+      "evidence": ".loom/60-validation-matrix.md#xtx-pcie-soak-2026-11-03",
       "validation_rows": [
         "gfx1100-xtx-inpod-swap-2026-11-01",
         "xtx-pcie-soak-2026-11-02",
+        "xtx-pcie-soak-2026-11-03",
         "proxy-async-jobs-2026-10-31",
         "xtx-warm-b06b06fe-2026-10-27",
         "xtx-vllm-v032-2026-10-24",
@@ -1452,7 +1453,7 @@
         "xtx-pcie-soak-2026-10-21",
         "gfx1100-native-w4a16-2026-09-13"
       ],
-      "date": "2026-11-02",
+      "date": "2026-11-03",
       "source": "deploy/models/qwen38-27b-xtx-warm-canary.yaml"
     },
     {
@@ -1890,6 +1891,22 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/embeddings.yaml"
+    },
+    {
+      "id": "xtx-pcie-soak-2026-11-03",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "flexinfer-runtime-gfx1100",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "conditional",
+      "title": "cap-free fp16 matmul burn on cblevins-7900xtx after the owner's hardware work on 2026-11-02 (the host returned at 19:48Z on the same XFX SPEEDSTER MERC 310 card, BIOS 1811 unchanged; the host link…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#xtx-pcie-soak-2026-11-03",
+      "date": "2026-11-03",
+      "source": ".loom/60-validation-matrix.md"
     },
     {
       "id": "gfx906-whispercpp-asr-2026-11-02",
