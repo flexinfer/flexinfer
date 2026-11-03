@@ -1026,6 +1026,43 @@ def _apply_compile_controls(pipe, family: Optional[str], cpu_offload: bool) -> N
             pass
 
 
+def _bypass_miopen_for_wan_vae(pipe, family: Optional[str]) -> bool:
+    """Run a 16-bit Wan VAE's encode and decode with MIOpen off on ROCm.
+
+    PyTorch 2.6 asks MIOpen 3.4 for a zero-workspace convolution, and for the
+    VAE's 3D convolutions on gfx1100 that leaves only ConvDirectNaiveConvFwd,
+    in every find mode and with cudnn.benchmark on. Measured on the XTX on
+    2026-11-03: a bf16 3x3x3 conv at (1,96,6,480,832) took 7.9 s through MIOpen
+    and 31 ms through PyTorch's im2col + GEMM path, and the 33-frame 832x480
+    decode dropped from 370 s to 5-11 s at an 11.6 GiB peak. An fp32 VAE (the
+    VACE lane) is left alone: its im2col buffer needs 15.4 GiB at that shape.
+    """
+    is_rocm = hasattr(torch.version, "hip") and torch.version.hip is not None
+    vae = getattr(pipe, "vae", None)
+    if family != "wan" or not is_rocm or vae is None:
+        return False
+    if getattr(vae, "dtype", None) not in (torch.bfloat16, torch.float16):
+        print(f"Keeping MIOpen for the Wan VAE in {getattr(vae, 'dtype', None)}")
+        return False
+
+    def without_miopen(method):
+        def call(*args, **kwargs):
+            enabled = torch.backends.cudnn.enabled
+            torch.backends.cudnn.enabled = False
+            try:
+                return method(*args, **kwargs)
+            finally:
+                torch.backends.cudnn.enabled = enabled
+
+        return call
+
+    for name in ("encode", "decode"):
+        if hasattr(vae, name):
+            setattr(vae, name, without_miopen(getattr(vae, name)))
+    print("Wan VAE encode/decode run with MIOpen off (naive 3D conv kernels)")
+    return True
+
+
 def _load_controlnet(family: Optional[str], dtype):
     """Load a ControlNet model from env config. Returns the loaded model or None."""
     cn_path = os.environ.get("CONTROLNET_PATH", "").strip()
@@ -2319,6 +2356,7 @@ def load_pipeline(model_id: str):
             print(f"Could not enable VAE tiling: {e}")
 
     _apply_compile_controls(pipeline, loaded_family, use_cpu_offload)
+    _bypass_miopen_for_wan_vae(pipeline, loaded_family)
 
     # Apply scheduler override if configured
     _apply_scheduler(pipeline, None)
