@@ -971,6 +971,12 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// adapters on startup, so a client retry once the parent is Ready serves
 		// under the adapter name via the Ready branch above.
 		w.Header().Set(headerActivation, activationValue(m))
+		// The queue drains through trackAndServe, which never passes
+		// rejectLane, so load the lane's first-byte budget here. Otherwise a
+		// lane whose first request after a proxy restart is a cold start runs
+		// under the default budget instead of its annotation. The breaker
+		// state is not consulted: a lane that is starting has not answered yet.
+		p.prepareLane(lookupName, m.Annotations)
 		if err := p.handleColdStart(ctx, w, r, lookupName, start); err != nil {
 			slog.Error("cold start failed", "model", lookupName, "error", err)
 			requestsTotal.WithLabelValues(modelName, "error").Inc()
@@ -1041,7 +1047,9 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Model is scaled to zero or not ready - use queue.
+	// Model is scaled to zero or not ready - use queue. Load the lane's
+	// first-byte budget first, as on the v1alpha2 path above.
+	p.prepareLane(lookupName, md.Annotations)
 	if err := p.handleColdStart(ctx, w, r, modelName, start); err != nil {
 		slog.Error("cold start failed", "model", modelName, "error", err)
 		requestsTotal.WithLabelValues(modelName, "error").Inc()
