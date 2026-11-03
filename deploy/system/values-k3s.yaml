@@ -277,7 +277,13 @@ proxy:
     # flexinfer.ai/lane-first-byte-budget instead of the 120 s default (KT-FLEX
     # rerun: a cold Wan clip was cut at 120 s while the card rendered). Rollback
     # = the d5aa35a7 digest sha256:b07a52ce3c72200cd961ad2903a86485387da7a051ea06258db0001aa7580a87.
-    digest: "sha256:ce24751b46e3732be06f221937c0f1edaa2af355cb135da560fba3ed7643232d"
+    # 2026-11-03: master 72628e0e (tag 20261103-172712) = the c500a1fd build
+    # above plus !1270: a request drained from the cold-start queue retries a
+    # refused dial for up to 5 s. The Model turns Ready before its Service has
+    # endpoints, so the 2x50 ms retry hit a ClusterIP that still REJECTed and a
+    # cold Wan clip came back 502. Ready lanes keep the 2x50 ms retry. Rollback
+    # = the c500a1fd digest sha256:ce24751b46e3732be06f221937c0f1edaa2af355cb135da560fba3ed7643232d.
+    digest: "sha256:bdd4bd256cc43c0fb0e23f05b5a62f9eefb984e70caf8af26cde4fb6a2eb60f8"
     pullPolicy: Always
   service:
     type: ClusterIP
