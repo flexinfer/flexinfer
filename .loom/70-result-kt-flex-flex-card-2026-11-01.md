@@ -164,3 +164,49 @@ of the clip, at 60–110 W with the GPU fully busy, is a performance problem of 
 Row `gfx1100-flex-card-layout-2026-11-03`, decision `conditional`: the riskiest assumption holds;
 `promote` waits on 24 h of `flexinfer_gpu_healthy == 1` (to 2026-11-04 05:56Z) and on either a Wan
 criterion that matches its decode-bound floor or a faster decode.
+
+## Addendum 2026-11-03 (afternoon): Wan's decode is MIOpen's naive kernel, not a floor
+
+The owner approved an A/B on the XTX to tell a per-pod first-use cost from the steady state. Three
+clips of the KT-FLEX request (832x480, 33 frames, 20 steps, seed 42) went through `flexinfer-proxy`
+from 15:22Z.
+
+| Clip | Pod state | Result | Denoise | Decode + postprocess |
+|---|---|---|---|---|
+| 1 | cold | 502 `lane_unresponsive` at 81 s: both forwards `connection refused` | — | — |
+| 2 | first render in the pod | 200, 505 s | 132 s | 370 s |
+| 3 | warm, same pod | 200, 489 s, byte-identical MP4 | 116 s | 371 s |
+
+The decode is steady state. During it the card read 100 % busy at about 2170 MHz sclk and 73 W on
+average (36–115 W). Memory sat mostly idle: `mem_busy` at 0 %, mclk at 96 MHz in half the samples,
+and fclk at 601 MHz in 58 %. That is a long, low-occupancy kernel.
+
+Microbenchmarks inside the Wan pod (torch 2.6.0, HIP 6.4, MIOpen 3.4, diffusers 0.36.0):
+
+| Case | MIOpen (`cudnn.enabled=True`) | PyTorch im2col + GEMM (`False`) |
+|---|---|---|
+| Conv3d 96→96 k3, (1,96,6,480,832), bf16 | 7,876 ms | 31 ms |
+| same, fp32 | 9,645 ms | 219 ms |
+| VAE decode, 2 latent frames → 5 frames, bf16 | 46.4 s | 0.79 s |
+| VAE decode, 9 latent frames → 33 frames, bf16 | (370 s in the lane) | 5.3 s and 10.7 s, peak 11.6 GiB |
+| VAE decode, 2 latent frames, fp32 | 60.8 s | OOM: one 15.4 GiB im2col allocation |
+
+MIOpen logs `FW Chosen Algorithm: ConvDirectNaiveConvFwd` with `workspace = 0` under
+`MIOPEN_FIND_MODE=2` (the lane's), under `MIOPEN_FIND_MODE=1` and with `cudnn.benchmark=True`
+alike. PyTorch asks for a zero-workspace convolution, which leaves the naive kernel as the only
+3D solver on gfx1100. The find mode is not a lever. The MIOpen kernel cache for the lane on the
+host was last written 2026-07-14, so nothing new compiled. The July 14.6 s decode is still
+unexplained: the image recipe matches, and the host posture changed since (kernel 7.0, pinned
+firmware, Gen3 x8, 2100 MHz / 294 W).
+
+**Fix.** `build/server-diffusers.py` runs a 16-bit Wan VAE's `encode`/`decode` with MIOpen off on
+ROCm (`fix/wan-vae-bypass-miopen`). Expected clip time: about 120–135 s of denoise plus 5–11 s of
+decode, inside the 5-minute rule. The fp32 VAE of the VACE lane keeps MIOpen because of the
+im2col size, so VACE stays slow until its VAE moves to bf16 or the conv is chunked. Taking it live
+needs the CI `diffusers-video` build, an XTX prewarm of the new digest and a repin of
+`wan21-t2v-1p3b-gfx1100`.
+
+**Second proxy race.** Clip 1 is a separate cold-start bug. `waitForReady` returns on
+`Model.Status.Phase == Ready` (`internal/proxy/queue.go`). The Service had no ready endpoint 100 ms
+later, so both forwards, 50 ms apart, hit a rejecting ClusterIP and the client got a 502.
+Yesterday's cold Qwen-Image and Stable Audio requests won the same race by luck.
