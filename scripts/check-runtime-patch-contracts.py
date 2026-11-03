@@ -370,6 +370,12 @@ def assert_serving_v032_dockerfile_contract(dockerfile: str) -> None:
         "--snapshot /opt/flexinfer/vllm-stack.txt",
         "--server /opt/flexinfer/server-diffusers.py",
         "--server /opt/flexinfer/server-snac.py",
+        # D1: the XTX creative lanes in-pod (Qwen-Image NF4, Stable Audio,
+        # Wan T2V and VACE) need these, and diffusers imports them lazily.
+        "--require-module bitsandbytes",
+        "--require-module torchsde",
+        "--require-module imageio_ffmpeg",
+        "--require-module ftfy",
         "COPY --from=go-builder /runtime /usr/local/bin/flexinfer-runtime",
         "COPY build/.runtime-env /etc/flexinfer/runtime.env",
         'ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/runtime-entrypoint.sh"]',
@@ -508,14 +514,18 @@ def assert_serving_dockerfile_contract(dockerfile: str) -> None:
     # the build check must be told the range.
     hub_pin = dockerfile.find('"huggingface-hub${HF_HUB_OVERLAY_CONSTRAINT}"')
     if hub_pin == -1:
-        fail("Dockerfile.runtime-serving diffusers overlay missing the huggingface-hub pin")
+        fail(
+            "Dockerfile.runtime-serving diffusers overlay missing the huggingface-hub pin"
+        )
     if not (overlay < hub_pin < dockerfile.find("COPY build/server-diffusers.py")):
         fail(
             "Dockerfile.runtime-serving huggingface-hub pin must sit in the "
             "diffusers overlay RUN"
         )
     if '--huggingface-hub "${HF_HUB_OVERLAY_CONSTRAINT}"' not in dockerfile:
-        fail("Dockerfile.runtime-serving check-runtime-diffusers.py call lacks --huggingface-hub")
+        fail(
+            "Dockerfile.runtime-serving check-runtime-diffusers.py call lacks --huggingface-hub"
+        )
 
     forbidden = (
         "AS llamacpp-builder",

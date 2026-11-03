@@ -19,9 +19,12 @@
 # None of the 0.17 persona's vLLM source patches apply here, and build/scripts/
 # is not copied, so runtime-entrypoint.sh finds no Gemma4 patch to run: 0.32
 # registers the Qwen3.5 classes itself and the plugins cover the rest.
-# bitsandbytes is not bundled yet (no lane on this card needs it, and its ROCm
-# 7.2 library is unproven); the NF4 Qwen-Image text encoder stays on the 0.17
-# persona until it is.
+# The overlay also carries what the XTX creative lanes need in-pod (D1, .loom/
+# 32-iteration-plan-d1-flex-card-window-2026-11-01.md §3.2): bitsandbytes for
+# Qwen-Image 2.1's NF4 components, torchsde for Stable Audio's SDE scheduler,
+# imageio + imageio-ffmpeg for Wan's MP4 export and ftfy for Wan VACE prompts.
+# bitsandbytes 0.50.2 ships libbitsandbytes_rocm72.so with gfx1100 code
+# objects; NF4 numerics on the card are still the Qwen-Image canary's to prove.
 ARG BASE_IMAGE=vllm/vllm-openai-rocm:v0.32.0
 ARG GO_VERSION=1.26.10
 
@@ -110,6 +113,8 @@ RUN python3 /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
 
 # The diffusers and snac servers' dependencies, constrained to the snapshot:
 # pip may add packages but cannot upgrade or downgrade any the vLLM stack has.
+# The creative-lane pins match requirements-diffusers-rocm.txt except
+# bitsandbytes: 0.50 needs torch >= 2.4, which this base has.
 RUN python3 -m pip install --no-cache-dir \
       --constraint /opt/flexinfer/vllm-stack.txt \
       "diffusers==${DIFFUSERS_VERSION}" \
@@ -121,7 +126,12 @@ RUN python3 -m pip install --no-cache-dir \
       protobuf \
       huggingface-hub \
       fastapi \
-      uvicorn
+      uvicorn \
+      "bitsandbytes==0.50.2" \
+      "torchsde==0.2.6" \
+      "imageio==2.37.0" \
+      "imageio-ffmpeg==0.6.0" \
+      "ftfy==6.3.1"
 
 COPY build/.runtime-env /etc/flexinfer/runtime.env
 COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
@@ -139,7 +149,12 @@ RUN python3 /opt/flexinfer/verify_runtime_serving_stack.py \
       --server /opt/flexinfer/server-snac.py \
       --executable /usr/local/bin/flexinfer-runtime \
       --executable /usr/local/bin/runtime-entrypoint.sh \
-      --executable /usr/bin/tini
+      --executable /usr/bin/tini \
+      --require-module bitsandbytes \
+      --require-module torchsde \
+      --require-module imageio \
+      --require-module imageio_ffmpeg \
+      --require-module ftfy
 
 RUN mkdir -p /models /var/lib/flexinfer/compile-cache
 

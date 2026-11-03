@@ -85,6 +85,18 @@ frozen-stack constraint, with the verifier extended. Then certify it,
 prewarm it and repin in one line. bitsandbytes on ROCm 7.2 is the unproven
 piece (R §7e S6e).
 
+**2026-11-03: the rebuild is in** (`feat/d1-v032-creative-deps`). The overlay
+adds bitsandbytes 0.50.2, torchsde 0.2.6, imageio 2.37.0, imageio-ffmpeg 0.6.0
+and ftfy 6.3.1 under the snapshot constraints. `verify_runtime_serving_stack.py
+--require-module` fails the build when one of them is missing, when
+bitsandbytes lacks `libbitsandbytes_rocm<maj><min>.so` for the image's
+`torch.version.hip`, or when imageio-ffmpeg has no executable ffmpeg. The
+0.50.2 wheel's `libbitsandbytes_rocm72.so` carries gfx1100 code objects (read
+from its compressed offload bundle). NF4 numerics on the card are still open:
+the !1236 Qwen-Image canary has to prove them. librosa and soundfile stay out,
+per Q2 (ASR moved to the Radeon VII). The new image also carries the Wan VAE
+MIOpen bypass (!1268), so in-pod Wan T2V decodes in seconds.
+
 ### 3.3 Other findings
 
 - **Per-lane compile caches do not exist in-pod.** The runtime pod mounts only
