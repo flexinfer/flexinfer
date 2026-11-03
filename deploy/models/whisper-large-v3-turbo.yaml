@@ -19,10 +19,11 @@
 # exact transcript, and upstream vLLM #28346 (2025-11) added encoder-decoder
 # to TRITON_ATTN, the backend RDNA3 needs on newer images.
 # Production ASR today is the CPU faster-whisper Deployment in namespace ai
-# (gitops k3s/ai/transcription), which ICC calls directly. The planned
-# always-on lane is whisper.cpp ggml-hip on the Radeon VII, gated on
-# kill-test KT-ASR. Keep this lane parked; it is at most a burst tier for
-# long recordings in a creative window on the XTX flex card.
+# (gitops k3s/ai/transcription), which ICC calls directly. The always-on lane
+# is whisper-large-v3-turbo-radeonvii (whisper.cpp ggml-hip on the Radeon VII;
+# KT-ASR passed 2026-10-30, docs/operations/whispercpp-asr.md). Keep this lane
+# parked; it is at most a burst tier for long recordings in a creative window
+# on the XTX flex card.
 #
 # === PARKED 2026-06-23: ASR is un-servable on this card, so it is de-advertised ===
 # litellm.enabled=false (below) removes whisper from the servable fleet: it is
@@ -99,7 +100,12 @@ spec:
     # ASR only takes the card when gemma4 is idle-to-zero, and yields back as
     # soon as chat demand returns. NO forcePromotion — idle-to-zero keeps the
     # card free for the primary. See the "Chat-primary" block above.
-    priority: 340
+    # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+    # placement-2026-10-30.md §6): 340 -> 290, below the flex card's idle
+    # tenant (qwen38-27b-xtx-warm-canary, now 300). Keeps the lane parked behind
+    # the idle tenant, as before; it is also litellm-disabled.
+
+    priority: 290
   serverless:
     enabled: true
     # idle-to-zero: the 24 GiB lane is not double-claimed while idle.

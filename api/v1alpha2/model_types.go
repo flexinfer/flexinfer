@@ -90,6 +90,10 @@ const (
 	// spec.capabilities.structuredOutput got its certified structured-output
 	// flag rendered (True) or why not (False). Absent when not requested.
 	ConditionStructuredOutput = "StructuredOutput"
+	// ConditionBackendCertificate reports, for a backend the controller serves
+	// only behind a GPUProfile certificate (pyannote), whether the selected
+	// image is certified (True) or why not (False). Absent for other backends.
+	ConditionBackendCertificate = "BackendCertificate"
 )
 
 // Condition reasons for Model status
@@ -166,6 +170,13 @@ const (
 	// ReasonStructuredOutputUnsupported - the backend or serving path cannot
 	// carry the certified flag (not vllm, or a runtime-pod load)
 	ReasonStructuredOutputUnsupported = "StructuredOutputUnsupported"
+	// ReasonBackendCertified - the GPUProfile carries a complete certificate
+	// for the backend, bound to the image this Model selects
+	ReasonBackendCertified = "BackendCertified"
+	// ReasonBackendNotCertified - the certificate is missing, partial, not
+	// digest-pinned or bound to another image, so the controller refuses the
+	// Model (Phase Failed, Schedulable False with this reason)
+	ReasonBackendNotCertified = "BackendNotCertified"
 )
 
 // KVCachePressurePolicy defines how to react to KV-cache pressure.

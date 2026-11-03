@@ -315,6 +315,33 @@ vet:
   script:
     - go vet ./...
 
+# The public certification matrix (docs/certification-matrix.json, rendered by
+# `flexinfer certify render` from GPUProfiles, lane manifests, the validation
+# matrix and the runtime profiles) must match its inputs. Gating on merge
+# requests that touch an input; on master it only warns, so a branch that
+# predates this job and merged a stale copy does not block publish.
+certify_matrix:
+  stage: lint
+  <<: *go-cache
+  needs: []
+  script:
+    - go run ./cmd/flexinfer certify render --check
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      changes: &certify-matrix-changes
+        - deploy/gpuprofiles/**/*
+        - deploy/models/**/*
+        - deploy/system/values-k3s.yaml
+        - .loom/60-validation-matrix.md
+        - docs/certification-matrix.json
+        - pkg/certify/**/*
+        - cmd/flexinfer/**/*
+        - api/v1alpha2/**/*
+        - .gitlab-ci.yml
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *certify-matrix-changes
+      allow_failure: true
+
 # Pure-stdlib unit tests for the F3 read-path context-selection logic.
 # Gates the diversify_selection helper shared (by inline mirror) between the
 # kill-test harness and the codebase-answer service. No pip deps -> alpine.
@@ -654,6 +681,29 @@ server_diffusers_test:
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *server-diffusers-changes
 
+server_pyannote_test:
+  stage: test
+  image: python:3.12-slim
+  needs: []
+  script:
+    # fastapi, torch, torchaudio_compat and pyannote.audio are stubbed when
+    # absent, so the request contract and the load sequence run on the bare
+    # image. pyannote's numbers on the Radeon VII are KT-DIAR's (D5-a).
+    - python3 scripts/test_server_pyannote.py
+    - python3 -m py_compile build/server-pyannote.py scripts/kt-diar.py
+  rules:
+    - if: $CI_MERGE_REQUEST_ID
+      changes: &server-pyannote-changes
+        - .gitlab-ci.yml
+        - build/server-pyannote.py
+        - build/Dockerfile.runtime-gfx906-pyannote
+        - backend/constants.go
+        - backend/pyannote.go
+        - scripts/test_server_pyannote.py
+        - scripts/kt-diar.py
+    - if: $CI_COMMIT_BRANCH == "master"
+      changes: *server-pyannote-changes
+
 vllm_qwen35_seqcls_plugin_test:
   stage: test
   image: python:3.12-slim
@@ -762,7 +812,7 @@ build_binaries:
     - go build -o bin/manager cmd/flexinfer-manager/main.go
     - GOOS=linux GOARCH=amd64 go build -o bin/agent cmd/flexinfer-agent/main.go
     - go build -o bin/scheduler cmd/flexinfer-sched/main.go
-    - go build -o bin/benchmarker cmd/flexinfer-bench/main.go
+    - go build -o bin/benchmarker ./cmd/flexinfer-bench/
     - go build -o bin/proxy ./cmd/flexinfer-proxy/
     - go build -o bin/flash-loader ./cmd/flexinfer-flash-loader/
   artifacts:
@@ -1500,7 +1550,11 @@ publish_diffusers_video_rocm_gfx1100:
   interruptible: false
   stage: publish
   image: registry.harbor.lan/library/buildkit:v0.12.5
-  timeout: 1h
+  # 2026-11-03: 1h -> 2h. When BuildKit has pruned the rocm6.4.1/PyTorch 2.6
+  # base, step 7 pulls and extracts it from the inline cache first: ~55 min
+  # on job 458565, so the build hit the 1h limit (and job 426137 before it,
+  # 2026-10-27). retry.when does not cover job_execution_timeout.
+  timeout: 2h
   needs: []
   resource_group: buildkit-rocm-images
   retry:

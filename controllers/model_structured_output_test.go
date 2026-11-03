@@ -264,3 +264,32 @@ func renderStructuredOutputArgs(t *testing.T, model *aiv1alpha2.Model, profile *
 	t.Fatalf("rendered Deployment has no container args")
 	return nil
 }
+
+// TestStructuredOutputCanaryManifest renders the KT-SO paste manifest. Before
+// the verdict (no certificate) it must render no flag and report
+// NotCertified; once deploy/gpuprofiles/gfx1100.yaml carries the certificate
+// for its image, the same manifest renders the flag and reports Certified.
+func TestStructuredOutputCanaryManifest(t *testing.T) {
+	canary := loadDeployModelManifest(t, filepath.Join("..", "deploy", "debug", "qwen38-27b-so-canary.yaml"))
+	require.True(t, structuredOutputRequested(canary))
+	require.Equal(t, soCertifiedImage, canary.Spec.Image)
+
+	for _, tc := range []struct {
+		name    string
+		profile *aiv1alpha2.GPUProfile
+		want    bool
+		reason  string
+	}{
+		{"before the verdict", soProfile(nil), false, aiv1alpha2.ReasonStructuredOutputNotCertified},
+		{"after the certificate", soProfile(soCertify(soCertifiedImage)), true, aiv1alpha2.ReasonStructuredOutputCertified},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := evaluateStructuredOutput(canary, backend.NameVLLM, tc.profile, "gfx1100", canary.Spec.Image)
+			require.Equal(t, tc.want, decision.Render)
+			require.Equal(t, tc.reason, decision.Reason)
+			args := strings.Join(renderStructuredOutputArgs(t, canary, tc.profile), " ")
+			require.Equal(t, tc.want, strings.Contains(args, `--structured-outputs-config {"backend":"auto"}`), args)
+			require.Contains(t, args, `--speculative-config {"method":"mtp","num_speculative_tokens":2`)
+		})
+	}
+}

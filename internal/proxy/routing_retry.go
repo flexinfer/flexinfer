@@ -36,6 +36,14 @@ import (
 // RoundTrip (pre-response) errors — at that point nothing has been written to
 // the client, so the buffered request body can be replayed without corrupting a
 // partially-sent response.
+//
+// A request drained from a cold-start queue gets a longer retry for a refused
+// dial. The controller marks a Model Ready from the same pod readiness that
+// puts the pod into the Service's EndpointSlice, and kube-proxy programs the
+// ClusterIP after that, so the drain can reach the Service while the dial is
+// still REJECTed. KT-FLEX 2026-11-03: the first request drained from a cold
+// Wan 2.1 queue was refused on both attempts and got a 502; a request 150 ms
+// later was served. Requests to a Ready lane keep the short retry.
 
 const (
 	defaultMaxForwardAttempts = 2
@@ -43,7 +51,35 @@ const (
 	maxForwardAttemptsCap     = 3
 	// envMaxForwardAttempts tunes (or disables, with "1") the upstream retry.
 	envMaxForwardAttempts = "FLEXINFER_PROXY_UPSTREAM_MAX_ATTEMPTS"
+
+	// defaultColdStartDialWindow is how long a drained cold-start request
+	// keeps retrying a refused dial, with the backoff doubling from
+	// upstreamRetryBackoff to coldStartRetryBackoffCap.
+	defaultColdStartDialWindow = 5 * time.Second
+	coldStartRetryBackoffCap   = time.Second
 )
+
+type coldStartDrainCtxKey struct{}
+
+// withColdStartDrain marks r as drained from a cold-start queue.
+func withColdStartDrain(r *http.Request) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), coldStartDrainCtxKey{}, true))
+}
+
+func isColdStartDrain(ctx context.Context) bool {
+	drained, _ := ctx.Value(coldStartDrainCtxKey{}).(bool)
+	return drained
+}
+
+// coldStartRetryBackoff is the wait after the (attempt+1)th refused dial of a
+// drained cold-start request: 50 ms, 100 ms, 200 ms, ... up to 1 s.
+func coldStartRetryBackoff(attempt int) time.Duration {
+	wait := upstreamRetryBackoff
+	for i := 0; i < attempt && wait < coldStartRetryBackoffCap; i++ {
+		wait *= 2
+	}
+	return min(wait, coldStartRetryBackoffCap)
+}
 
 // forwardResult carries the upstream transport error (if any) from the
 // ReverseProxy ErrorHandler back to forwardWithRetry. A non-nil err means the
@@ -168,8 +204,19 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 	}
 
 	maxAttempts := maxForwardAttempts()
+	// A drained cold-start request retries a refused dial until dialDeadline;
+	// a single configured attempt still disables every retry.
+	var dialDeadline time.Time
+	if maxAttempts > 1 && isColdStartDrain(ctx) {
+		window := p.coldStartDialWindow
+		if window == 0 {
+			window = defaultColdStartDialWindow
+		}
+		dialDeadline = time.Now().Add(window)
+	}
 
 	maxTokensForLog, streamForLog := parseRequestForUsageLog(forwardBody)
+	constraintForLog := requestConstraint(r.URL.Path, forwardBody)
 	startedAt := time.Now()
 	caller := callerIdentityFrom(r)
 	wantPrefix := prefixHitOptIn(r.Header.Get(headerWantPrefixHit))
@@ -179,7 +226,7 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 		qosClass, qosSource, qosCaller = string(d.class), string(d.source), d.caller
 	}
 
-	for attempt := 0; attempt < maxAttempts; attempt++ {
+	for attempt := 0; ; attempt++ {
 		targetURL, targetPod, fromDirect := p.resolveTargetURL(ctx, r, resolvedModel, port, routeBody, attempt > 0)
 
 		// Replay the buffered body for this attempt.
@@ -203,6 +250,7 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 			qosClass:      qosClass,
 			qosSource:     qosSource,
 			caller:        qosCaller,
+			constraint:    constraintForLog,
 		}), fr))
 
 		rp, ok := p.loadOrCreateProxy(targetURL)
@@ -293,6 +341,10 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 		// (success or a real upstream HTTP status) and was written to the client.
 		if fr.err == nil {
 			completed = true
+			if attempt > 0 && !dialDeadline.IsZero() {
+				slog.Info("cold-start forward reached the lane after refused dials",
+					"model", resolvedModel, "attempts", attempt+1, "waited", time.Since(startedAt))
+			}
 			return
 		}
 
@@ -312,7 +364,8 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 		if reason == "timeout" || reason == "conn_reset" || reason == "eof" {
 			laneErr = fr.err
 		}
-		if !retryable || attempt == maxAttempts-1 {
+		coldStartRefused := reason == "conn_refused" && time.Now().Before(dialDeadline)
+		if !retryable || (attempt >= maxAttempts-1 && !coldStartRefused) {
 			// Include caller identity so a failure pattern (e.g. a client that
 			// times out and cancels every request) is attributable to a workload.
 			slog.Warn("upstream forward failed",
@@ -323,7 +376,16 @@ func (p *Proxy) forwardWithRetry(w http.ResponseWriter, r *http.Request, modelNa
 			break
 		}
 		upstreamRetriesTotal.WithLabelValues(resolvedModel, reason).Inc()
-		time.Sleep(upstreamRetryBackoff)
+		wait := upstreamRetryBackoff
+		if coldStartRefused {
+			wait = min(coldStartRetryBackoff(attempt), time.Until(dialDeadline))
+		}
+		select {
+		case <-ctx.Done():
+			// Client cancellation: see the first-byte branch above.
+			return
+		case <-time.After(wait):
+		}
 	}
 
 	// All attempts failed at the transport layer; the ErrorHandler suppressed

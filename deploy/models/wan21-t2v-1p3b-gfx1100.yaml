@@ -1,4 +1,13 @@
-# Wan 2.1 1.3B text-to-video lane on cblevins-5930k (gfx1100).
+# Wan 2.1 1.3B text-to-video lane on cblevins-7900xtx (gfx1100).
+#
+# 2026-10-30 MOVED back to the 7900xtx flex card (placement layout,
+# .loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §6). The
+# 5930k is now the always-on workhorse card (900, minReplicas 1), where
+# this lane would be statically parked. In 7900xtx-textgen, 500 outranks the
+# idle tenant (the Mills warm lane, 300 ondemand) and ties the other creative
+# lanes, so they queue first-come-first-served without killing a render.
+# idleTimeout 30m -> 15m hands the card back to the warm lane sooner. The
+# 2026-07-18 note below is history.
 #
 # 2026-07-18 psyche fleet layout: rehomed from cblevins-7900xtx so the 7900xtx
 # card is the psyche TEXT lane (warm qwen35-9b-ablit-rp) and the 5930k gfx1100
@@ -13,6 +22,17 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/serve-paths: /v1/videos/generations
+    # flexinfer-proxy cancels a forward with no response byte inside the lane
+    # first-byte budget (default 120 s, 504 "upstream first byte budget
+    # exceeded", internal/proxy/routing_retry.go). The diffusers server answers
+    # once the clip is rendered, and a cold start adds the weight load, so 480p
+    # clips through the proxy need the same budget as Qwen-Image (KT-FLEX,
+    # 2026-11-01). Direct callers of the lane Service are unaffected.
+    # 2026-11-03 KT-FLEX rerun on the XTX: a 33-frame 832x480 20-step clip
+    # took 506 s to its first byte (server timing: denoise 137 s, VAE
+    # decode + postprocess 367 s; the July proving run took 6m57s), so 600 s
+    # left ~90 s of margin. 900 s covers the decode-bound floor with room.
+    flexinfer.ai/lane-first-byte-budget: "900s"
     flexinfer.ai/purpose: 480p text-to-video on ROCm gfx1100
     flexinfer.ai/plan: .loom/30-implementation-plan-video-gen-gfx1100-2026-07-14.md
 spec:
@@ -44,9 +64,10 @@ spec:
       sizeLimit: 6Gi
   gpu:
     vendor: amd
-    # cblevins-5930k exposes a single gfx1100 device-plugin slot (no iGPU).
-    count: 1
-    shared: 5930k-textgen
+    # cblevins-7900xtx exposes the dGPU and the Raphael iGPU as two
+    # device-plugin slots: claim both so the pod can never be handed the iGPU.
+    count: 2
+    shared: 7900xtx-textgen
     priority: 500
     vramEstimateMB: 18000
   serverless:
@@ -56,7 +77,8 @@ spec:
     # 5930k-textgen (VACE at 600 and the twin at 550 both queued for hours).
     # Restore to 1 + warmPolicy: primary when the twin canary cascade closes.
     minReplicas: 0
-    idleTimeout: 30m
+    # 2026-10-30: 30m -> 15m, same hand-back window as the other creative lanes.
+    idleTimeout: 15m
     coldStartTimeout: 30m
   config:
     # The gfx1100 GPUProfile bundles the older generic Diffusers runtime. This
@@ -91,7 +113,7 @@ spec:
     # replicas and would keep the GPU held.
     warmPolicy: ondemand
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "4"

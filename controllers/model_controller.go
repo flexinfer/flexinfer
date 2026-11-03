@@ -354,13 +354,25 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		return ctrl.Result{}, r.persistStatus(ctx, model)
 	}
 
+	// Backends served only behind a GPUProfile certificate (pyannote, D5-a)
+	// are refused on a profile whose runtime image is not certified for them.
+	certificate := r.backendCertificateDecisionFor(model, b, gpuArch)
+	applyBackendCertificateCondition(model, certificate)
+	if certificate.Required && !certificate.Certified {
+		log.Info("Backend certificate gate refused the Model", "backend", b.Name(), "reason", certificate.Reason, "message", certificate.Message)
+		r.Recorder.Event(model, corev1.EventTypeWarning, certificate.Reason, certificate.Message)
+		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, certificate.Reason, certificate.Message)
+		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
+		return ctrl.Result{}, r.persistStatus(ctx, model)
+	}
+
 	// Validate VRAM fit if the model declares an estimate.
 	if err := r.validateVRAMFit(model, b, gpuArch); err != nil {
 		log.Error(err, "VRAM fit validation failed")
 		r.Recorder.Event(model, corev1.EventTypeWarning, "VRAMInsufficient", err.Error())
 		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonVRAMInsufficient, err.Error())
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-		return ctrl.Result{}, r.persistStatus(ctx, model)
+		return r.persistRefusedFit(ctx, model)
 	}
 	// Same for the hardware compute-queue budget (GPUProfile maxHWQueues).
 	if err := r.validateHWQueueFit(model, gpuVendor, gpuArch); err != nil {
@@ -368,7 +380,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		r.Recorder.Event(model, corev1.EventTypeWarning, aiv1alpha2.ReasonHWQueuesInsufficient, err.Error())
 		setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonHWQueuesInsufficient, err.Error())
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
-		return ctrl.Result{}, r.persistStatus(ctx, model)
+		return r.persistRefusedFit(ctx, model)
 	}
 
 	// Emit informational events for experimental opt-ins (vLLM V1 engine, flash attention).

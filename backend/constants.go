@@ -23,6 +23,7 @@ const (
 	PortSNAC      int32 = 8000
 	// PortWhisperCpp avoids whisper-server's own default 8080, the runtime API port.
 	PortWhisperCpp int32 = 8000
+	PortPyannote   int32 = 8000
 	PortLlamaCpp   int32 = 8080
 	PortComfyUI    int32 = 8188
 	PortOllama     int32 = 11434
@@ -36,4 +37,10 @@ const (
 	// WhisperCppInferencePath is the OpenAI transcription route whisper-server
 	// is started with (--inference-path).
 	WhisperCppInferencePath = "/v1/audio/transcriptions"
+
+	// PyannoteDiarizationPath is the speaker-diarization route the bundled
+	// server-pyannote.py serves: multipart audio in, speaker turns out. It is a
+	// flexinfer extension named after the OpenAI audio routes; OpenAI has no
+	// standalone diarization endpoint.
+	PyannoteDiarizationPath = "/v1/audio/diarizations"
 )

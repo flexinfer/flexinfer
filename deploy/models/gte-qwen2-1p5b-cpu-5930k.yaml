@@ -21,6 +21,10 @@ metadata:
   namespace: flexinfer-system
 spec:
   backend: llamacpp
+  # Digest the twin ran on 2026-10-31 under the controller's unpinned CPU
+  # default (ghcr.io/ggml-org/llama.cpp:server); pinned so a roll cannot
+  # change llama.cpp under the measured capacity curve.
+  image: ghcr.io/ggml-org/llama.cpp:server@sha256:b32890309c1a33a534a01b0b461e953dc2c5a6bac20213abcf48e22847a19c85
   source: HF://second-state/gte-Qwen2-1.5B-instruct-GGUF
   cache:
     size: 3Gi
@@ -53,9 +57,16 @@ spec:
     rocrVisibleDevices: "-1"
   nodeSelector:
     kubernetes.io/hostname: cblevins-5930k
+  # Sized for 2 req/s sustained as the VII lane's failover (D6, matrix row
+  # gfx906-retrieval-swap-safety-2026-10-31). Production-shaped singles
+  # (~8 tokens) cost ~250 ms of 6 threads; closed loop the twin tops out at
+  # ~4 req/s, CFS-throttled at the 6-core limit. Open loop through the proxy:
+  # 2 req/s p95 0.93 s on 3.0-3.7 cores, 3 req/s p95 1.85 s on 4.6-5.1 cores.
+  # The request reserves the 2 req/s working set on the node; threads and the
+  # limit stay at the measured 6.
   resources:
     requests:
-      cpu: "2"
+      cpu: "4"
       memory: 3Gi
     limits:
       cpu: "6"
