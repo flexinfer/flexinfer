@@ -135,3 +135,32 @@ that had killed the card at 357 s that morning ran 01:01:51–01:11:53Z and pass
 decision `conditional`: KT-FLEX may rerun, and `promote` waits on a KT-FLEX pass plus 24 h of
 `flexinfer_gpu_healthy == 1`. The x8 link is a loose end: half the lanes did not train after the
 reseat, which argues for one more careful reseat before the slot is called good.
+
+## Addendum 2026-11-03 (later): the KT-FLEX rerun
+
+After the passing burn, KT-FLEX ran again through the proxy from 05:07Z to 05:56Z.
+
+| Step | First output | Result |
+|---|---|---|
+| Qwen-Image 1024² (cold) | 173 s | pass |
+| Qwen-Image 1024² ×2 | 72 s, 71 s | pass |
+| Wan T2V 33 frames 832x480, cold | cut at 120 s by the proxy | proxy bug, fixed in !1264 |
+| Wan T2V, retried on the Ready path | 506 s | 200, valid MP4; over the 5-minute rule |
+| Stable Audio 40 s (cold) | 194 s | pass |
+| Warm lane reclaim after the last creative hold | ~2 min | pass |
+
+The card carried all of it with zero amdgpu, SMU, MES or AER kernel lines, peaking at 203 W and 66 C.
+
+**The proxy bug.** The cold-start queue drained requests without loading the lane's
+`flexinfer.ai/lane-first-byte-budget`, so after a proxy restart a lane whose first request was cold
+ran under the 120 s default. Qwen-Image and Stable Audio passed only because they render inside two
+minutes. !1264 loads the budget before queueing (with regression tests); !1266 rolled the proxy.
+
+**Wan's time.** The diffusers server reports denoise 137 s and VAE decode plus postprocess 367 s,
+and the July proving run of the same clip took 6m57s, so Wan was never a 5-minute lane on this card.
+!1265 raises both Wan lanes' first-byte budget from 600 s to 900 s. The decode being three quarters
+of the clip, at 60–110 W with the GPU fully busy, is a performance problem of its own.
+
+Row `gfx1100-flex-card-layout-2026-11-03`, decision `conditional`: the riskiest assumption holds;
+`promote` waits on 24 h of `flexinfer_gpu_healthy == 1` (to 2026-11-04 05:56Z) and on either a Wan
+criterion that matches its decode-bound floor or a faster decode.
