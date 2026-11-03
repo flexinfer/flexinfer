@@ -155,11 +155,19 @@ func (p *PowerSampler) Run(ctx context.Context) {
 	}
 	if p.attributing {
 		// The refresh loop lives as long as Run: a sampler that stopped
-		// itself stops listing Models too.
+		// itself stops listing Models too. Run waits for the loop, so no
+		// listing lands after it returns.
 		lctx, cancel := context.WithCancel(ctx)
-		defer cancel()
 		p.refreshLanes(lctx)
-		go p.refreshLanesLoop(lctx)
+		loopDone := make(chan struct{})
+		go func() {
+			defer close(loopDone)
+			p.refreshLanesLoop(lctx)
+		}()
+		defer func() {
+			cancel()
+			<-loopDone
+		}()
 	}
 	ticker := time.NewTicker(p.interval)
 	defer ticker.Stop()
@@ -283,6 +291,11 @@ func (p *PowerSampler) refreshLanesLoop(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// select picks at random when the tick and the cancel are both
+			// ready; a cancelled loop must not list once more.
+			if ctx.Err() != nil {
+				return
+			}
 			p.refreshLanes(ctx)
 		}
 	}
