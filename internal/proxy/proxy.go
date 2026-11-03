@@ -331,6 +331,11 @@ type Proxy struct {
 	// Zero means defaultActivationNotFoundGrace; overridable in tests.
 	activationNotFoundGrace time.Duration
 
+	// coldStartDialWindow bounds how long a request drained from a cold-start
+	// queue retries a refused dial while kube-proxy programs the new endpoint.
+	// Zero means defaultColdStartDialWindow; overridable in tests.
+	coldStartDialWindow time.Duration
+
 	// Routing for multi-replica models
 	router             *routing.Router
 	routingEnabled     bool                         // Enable advanced routing (session affinity, prefix-based)
