@@ -272,7 +272,12 @@ proxy:
     # diarize=true as a job (!1245, needs the jobs API, off), lane first-byte
     # budgets for the Wan lanes (!1247). Rollback = the 3cb6cde0 build:
     # tag 20261030-153940, sha256:e345d649ce009ea75a6d5f5370e51d4f4e6f5b8176ce2a7f874e92950549cad6.
-    digest: "sha256:b07a52ce3c72200cd961ad2903a86485387da7a051ea06258db0001aa7580a87"
+    # 2026-11-03: master c500a1fd (tag 20261103-053612) = the d5aa35a7 build
+    # below plus !1264: cold-started requests run under the lane's
+    # flexinfer.ai/lane-first-byte-budget instead of the 120 s default (KT-FLEX
+    # rerun: a cold Wan clip was cut at 120 s while the card rendered). Rollback
+    # = the d5aa35a7 digest sha256:b07a52ce3c72200cd961ad2903a86485387da7a051ea06258db0001aa7580a87.
+    digest: "sha256:ce24751b46e3732be06f221937c0f1edaa2af355cb135da560fba3ed7643232d"
     pullPolicy: Always
   service:
     type: ClusterIP
