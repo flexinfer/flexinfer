@@ -691,6 +691,17 @@ imagePrewarm:
         # pinned-7ae8e92ff28a; it had no pinned tag and had never been pulled.
         # The pull is the supervisor and server layers on the shared base.
         - registry.harbor.lan/flexinfer/runtime@sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250
+        # 2026-11-03 (D1): rocm-gfx1100-serving-v032-ddf22437 (pipeline 37264,
+        # job 460293): 7ae8e92f plus the creative-lane deps the in-pod
+        # Qwen-Image, Wan and Stable Audio lanes import (bitsandbytes 0.50.2
+        # with its ROCm 7.2 library, torchsde, imageio + imageio-ffmpeg,
+        # ftfy; !1269), the Wan VAE MIOpen bypass (!1268) and the D5-a
+        # diarization backend. Frozen stack unchanged (265 packages); the
+        # build-time verify checked the new modules, the bitsandbytes HIP
+        # library and the ffmpeg binary. The recommended target of the
+        # window-gated XTX repin; this entry also gets it pinned. The pull is
+        # the new upper layers on the shared v0.32.0 base.
+        - registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.
