@@ -909,10 +909,41 @@ runtime:
       # only as the containerd snapshot the prewarm DaemonSet holds; rollback
       # anchor (resident on both gfx1100 nodes, IfNotPresent):
       #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278"
+      # 2026-11-01 (D1 step 2, research next-differentiators-2026-10-31
+      # §6.1; staged for the owner window, landed 2026-11-04 after KT-FLEX
+      # passed, matrix row xtx-runtime-v032-527e2714-2026-11-04): repinned
+      # to the stacked vLLM 0.32 runtime 7ae8e92f (rocm-gfx1100-serving-v032-5ca58769, master
+      # CI pipeline 36312: vLLM 0.32.0 + the three FlexInfer plugins, text
+      # plugin 0.9.0 as in the warm lane's b06b06fe, + the runtime supervisor
+      # with in-pod reload, load substages and the short-KV-pool recheck,
+      # server-diffusers.py, server-snac.py; prewarmed here by !1232). The
+      # design named ef28b7b0 (c444b5ff), the same Dockerfile and stack whose
+      # supervisor predates R1/R4/C5; it is certified and prewarmed too, so it
+      # is a one-line fallback. This rolls the runtime pod once;
+      # snac-decode-gfx1100 reloads at its next election.
+      # 2026-11-03: retargeted 7ae8e92f -> 527e2714
+      # (rocm-gfx1100-serving-v032-ddf22437, pipeline 37264 job 460293,
+      # prewarmed here by !1274): the same stack plus bitsandbytes 0.50.2
+      # (ROCm 7.2 library), torchsde, imageio + imageio-ffmpeg and ftfy (!1269),
+      # which 7ae8e92f lacked for the in-pod Qwen-Image, Wan and Stable Audio
+      # lanes, and the Wan VAE MIOpen bypass (!1268). Still no audio decode
+      # (no librosa/soundfile), so whisper stays out of the pod. 7ae8e92f and
+      # ef28b7b0 remain certified fallbacks. Rollback = the cfefae18 pin
+      # below, still prewarmed here (pinned-cfefae18061f), and drop
+      # sharedCompileCache:
+      #   registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
+      # 2026-11-01 (D1): mount this image's shared compile cache
+      # (/var/lib/flexinfer/compile-cache/shared/gfx1100/527e2714c163 at
+      # /cache/compile, C5 !1200, docs/user/caching.md "Runtime pod"). In-pod
+      # lanes set spec.cache.compilationCache.scope: Image, so their Triton,
+      # Inductor, vLLM and MIOpen caches survive a runtime-pod roll and a
+      # swap. A per-Model compile-cache hostPath is never mounted in this pod.
+      # Loads without the scope (snac) keep the per-Model directory.
+      sharedCompileCache: true
       shmSize: "8Gi"
       # 2026-09-13 disk-pressure guard (issue #74): CI job pods share the
       # physical GPU nodes. Three concurrent pipelines filled the 5930k root
