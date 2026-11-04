@@ -7,14 +7,17 @@ text classes itself with ``IsHybrid``, ``SupportsMRoPE`` and the mamba state
 helpers on ``Qwen3_5ForCausalLMBase``, so on that runtime the registration and
 hybrid-state steps are skipped (the registry already has the names; the
 helpers already resolve) and the plugin keeps only what the runtime still
-lacks: the consumer-ROCm FLA autotuner pruning, the text-only MTP config
-contract, and the MTP head quantization policy
-(``FLEXINFER_QWEN35_MTP_HEAD``).
+lacks: the consumer-ROCm FLA autotuner pruning (``FLEXINFER_FLA_AUTOTUNE``),
+the text-only MTP config contract, and the MTP head quantization policy
+(``FLEXINFER_QWEN35_MTP_HEAD``). It also installs, opt-in, the segmented
+attention autotune at the runtime block-table width
+(``FLEXINFER_SEGMENTED_RUNTIME_TABLES``); this is the plugin every gfx1100
+serving image loads, so it carries that model-agnostic patch.
 
-ROCm autotune pruning and the hybrid-state contract live in
-``flexinfer_vllm_common``, shared with every other FlexInfer vLLM plugin so the
-two copies cannot drift. Install ``build/vllm-plugin-common`` before this
-package.
+ROCm autotune pruning, the segmented-attention patch and the hybrid-state
+contract live in ``flexinfer_vllm_common``, shared with every other FlexInfer
+vLLM plugin so the copies cannot drift. Install ``build/vllm-plugin-common``
+before this package.
 """
 
 import os
@@ -24,10 +27,14 @@ from flexinfer_vllm_common.hybrid import MAMBA_STATE_METHODS as _MAMBA_METHODS
 from flexinfer_vllm_common.rocm import (
     FLA_KKT_MODULE as _FLA_KKT_MODULE,
     FLA_OPS_PREFIXES as _FLA_OPS_PREFIXES,
+    fla_autotune_policy,
     import_fla_kkt_module as _import_fla_kkt_module,
     needs_safe_fla_config as _needs_safe_fla_config,
     prune_fla_configs_if_needed,
     select_rocm_safe_fla_configs as _select_rocm_safe_fla_configs,
+)
+from flexinfer_vllm_common.segmented import (
+    install_segmented_runtime_tables_if_enabled,
 )
 
 ARCHITECTURES = {
@@ -107,15 +114,26 @@ def _upstream_registers(registry, architecture: str) -> bool:
 
 
 def _patch_qwen35_text_mtp_config(speculative_config) -> None:
-    """Teach vLLM 0.23's MTP override about the text-only model type."""
+    """Teach vLLM's MTP override the text-only model type and its rope contract.
+
+    vLLM 0.23 does not map ``qwen3_5_text`` / ``qwen3_5_moe_text`` at all; 0.32
+    maps them but keeps the artifact's MRoPE ``rope_parameters``. The wrapper
+    takes whatever upstream's signature is: 0.33 added
+    ``transformers_mtp_overrides`` and calls the override positionally and
+    through ``functools.partial``. A call that carries a value in any of those
+    extra arguments belongs to upstream (the Transformers modeling backend
+    builds its draft from them and wants none of the rewrites), so only calls
+    whose extras are all ``None`` get the text-only rewrite.
+    """
     if getattr(speculative_config, "_flexinfer_qwen35_text_mtp", False):
         return
 
     original_hf_config_override = speculative_config.hf_config_override
 
-    def hf_config_override(hf_config):
+    def hf_config_override(hf_config, *args, **kwargs):
         model_type = getattr(hf_config, "model_type", None)
-        if model_type in {"qwen3_5_text", "qwen3_5_moe_text"}:
+        extras_unset = all(value is None for value in (*args, *kwargs.values()))
+        if extras_unset and model_type in {"qwen3_5_text", "qwen3_5_moe_text"}:
             n_predict = getattr(hf_config, "mtp_num_hidden_layers", None)
             hf_config.model_type = "qwen3_5_mtp"
             hf_config.update(
@@ -137,7 +155,7 @@ def _patch_qwen35_text_mtp_config(speculative_config) -> None:
                 }
             )
             return hf_config
-        return original_hf_config_override(hf_config)
+        return original_hf_config_override(hf_config, *args, **kwargs)
 
     speculative_config.hf_config_override = staticmethod(hf_config_override)
     speculative_config._flexinfer_qwen35_text_mtp = True
@@ -266,7 +284,9 @@ def register() -> None:
     )
     from vllm.model_executor.models.qwen3_5_mtp import Qwen3_5MultiTokenPredictor
 
-    safe_fla_kernels = prune_fla_configs_if_needed(torch)
+    fla_policy = fla_autotune_policy()
+    safe_fla_kernels = prune_fla_configs_if_needed(torch, policy=fla_policy)
+    segmented_runtime_tables = install_segmented_runtime_tables_if_enabled()
     _patch_qwen35_text_mtp_config(SpeculativeConfig)
     mtp_head_policy = _mtp_head_policy()
     quantized_mtp_experts = _strict_env_flag("FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ")
@@ -327,6 +347,8 @@ def register() -> None:
         f"upstream_registered={','.join(upstream_registered) or '-'}, "
         f"hybrid_methods_copied={hybrid_methods_copied}, "
         f"fla_autotuners={safe_fla_kernels}, "
+        f"fla_autotune={fla_policy}, "
+        f"segmented_runtime_tables={'on' if segmented_runtime_tables else 'off'}, "
         f"mtp_head={mtp_head_policy}, "
         f"mtp_experts={'gptq' if quantized_mtp_experts else 'plain'}, "
         f"gptq_expert_loader_hooks={expert_loader_hooks})"

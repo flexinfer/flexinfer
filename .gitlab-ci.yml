@@ -712,9 +712,11 @@ vllm_qwen35_seqcls_plugin_test:
     PYTHONPATH: build/vllm-plugin-common/src
   script:
     - python3 build/scripts/test_vllm_qwen35_seqcls_plugin.py
+    - python3 build/scripts/test_vllm_plugin_common.py
     - python3 -m py_compile build/vllm-qwen35-seqcls-plugin/src/flexinfer_vllm_qwen35_seqcls/__init__.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/__init__.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/rocm.py
+    - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/segmented.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/labels.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/hybrid.py
   rules:
@@ -726,6 +728,7 @@ vllm_qwen35_seqcls_plugin_test:
         - build/vllm-plugin-common/**/*
         - build/vllm-qwen35-seqcls-plugin/**/*
         - build/scripts/test_vllm_qwen35_seqcls_plugin.py
+        - build/scripts/test_vllm_plugin_common.py
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *qwen35-seqcls-plugin-changes
 
