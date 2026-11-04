@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flexinfer-vllm-plugin-common"
-version = "0.2.0"
-description = "Shared helpers for FlexInfer's vLLM general plugins (ROCm autotune pruning, composite-config label resolution, hybrid-state wiring)"
+version = "0.3.0"
+description = "Shared helpers for FlexInfer's vLLM general plugins (ROCm autotune pruning, segmented-attention runtime-width tuning, composite-config label resolution, hybrid-state wiring)"
 requires-python = ">=3.10"
 
 [tool.setuptools]

@@ -109,46 +109,59 @@ class NativeW4A16VerifierTests(unittest.TestCase):
 
         entry_points.assert_called_once_with(group="vllm.general_plugins")
 
-    def test_text_plugin_registers_clears_rocm_arch_and_checks_registry(self) -> None:
-        verifier = _load_verifier()
-        calls = []
-
-        def register():
-            calls.append("register")
-
+    def _register_case(self, verifier, register, archs=None):
         registry = mock.Mock()
-        registry.get_supported_archs.return_value = [
+        registry.get_supported_archs.return_value = archs or [
             "Qwen3_5ForCausalLM",
             "Qwen3_5MoeForCausalLM",
         ]
         fake_vllm = types.ModuleType("vllm")
         fake_vllm.ModelRegistry = registry
+        warmup = types.ModuleType(verifier.SEGMENTED_WARMUP_MODULE)
         entry = mock.Mock()
         entry.name = verifier.TEXT_PLUGIN_ENTRY_POINT
-        entry.load.return_value = register
+        entry.load.return_value = lambda: register(warmup)
+        modules = {"vllm": fake_vllm, warmup.__name__: warmup}
+        return mock.Mock(return_value=[entry]), modules
+
+    def test_text_plugin_registers_clears_rocm_arch_and_checks_registry(self) -> None:
+        verifier = _load_verifier()
+        calls = []
         environ = {"PYTORCH_ROCM_ARCH": "gfx1100"}
-        with mock.patch.dict(sys.modules, {"vllm": fake_vllm}):
-            verifier.verify_text_plugin_registers(
-                mock.Mock(return_value=[entry]), environ
-            )
-        self.assertEqual(calls, ["register"])
+
+        def register(warmup):
+            calls.append(environ.get(verifier.SEGMENTED_RUNTIME_TABLES_ENV))
+            setattr(warmup, verifier.SEGMENTED_PATCH_MARKER, True)
+
+        entry_points, modules = self._register_case(verifier, register)
+        with mock.patch.dict(sys.modules, modules):
+            verifier.verify_text_plugin_registers(entry_points, environ)
+        # register() ran once, with the segmented flag on.
+        self.assertEqual(calls, ["1"])
         self.assertNotIn("PYTORCH_ROCM_ARCH", environ)
 
     def test_text_plugin_registers_rejects_unregistered_architecture(self) -> None:
         verifier = _load_verifier()
-        registry = mock.Mock()
-        registry.get_supported_archs.return_value = ["Qwen3_5ForConditionalGeneration"]
-        fake_vllm = types.ModuleType("vllm")
-        fake_vllm.ModelRegistry = registry
-        entry = mock.Mock()
-        entry.name = verifier.TEXT_PLUGIN_ENTRY_POINT
-        entry.load.return_value = lambda: None
-        with mock.patch.dict(sys.modules, {"vllm": fake_vllm}):
+
+        def register(warmup):
+            setattr(warmup, verifier.SEGMENTED_PATCH_MARKER, True)
+
+        entry_points, modules = self._register_case(
+            verifier, register, archs=["Qwen3_5ForConditionalGeneration"]
+        )
+        with mock.patch.dict(sys.modules, modules):
             with self.assertRaises(RuntimeError) as ctx:
-                verifier.verify_text_plugin_registers(
-                    mock.Mock(return_value=[entry]), {}
-                )
+                verifier.verify_text_plugin_registers(entry_points, {})
         self.assertIn("Qwen3_5ForCausalLM", str(ctx.exception))
+
+    def test_text_plugin_registers_requires_the_segmented_patch(self) -> None:
+        """A plugin that ignores the flag (or a vLLM it cannot patch) fails the build."""
+        verifier = _load_verifier()
+        entry_points, modules = self._register_case(verifier, lambda warmup: None)
+        with mock.patch.dict(sys.modules, modules):
+            with self.assertRaises(RuntimeError) as ctx:
+                verifier.verify_text_plugin_registers(entry_points, {})
+        self.assertIn(verifier.SEGMENTED_WARMUP_MODULE, str(ctx.exception))
 
     def test_rejects_missing_qwen35_text_plugin_entry_point(self) -> None:
         verifier = _load_verifier()

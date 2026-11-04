@@ -7,6 +7,7 @@ import importlib
 import importlib.metadata
 import pathlib
 import re
+import sys
 from typing import Any, Callable
 
 
@@ -15,6 +16,14 @@ KERNEL_RELATIVE_PATH = pathlib.Path(
     "model_executor/kernels/linear/mixed_precision/rdna3_w4a16.py"
 )
 TEXT_PLUGIN_ENTRY_POINT = "flexinfer_qwen35_text"
+# The text plugin's opt-in segmented-attention autotune patch
+# (flexinfer_vllm_common.segmented): the flag, the module it patches and the
+# marker it leaves there.
+SEGMENTED_RUNTIME_TABLES_ENV = "FLEXINFER_SEGMENTED_RUNTIME_TABLES"
+SEGMENTED_WARMUP_MODULE = (
+    "vllm.model_executor.warmup.rocm_segmented_attn_autotune_warmup"
+)
+SEGMENTED_PATCH_MARKER = "_flexinfer_runtime_tables"
 # Compiled extensions that must carry device code for the target ISA. Through
 # 0.26 the published ROCm wheel lacked gfx1100 objects and this image rebuilt
 # vLLM from source; since the 0.32 wheel embeds them the build relies on the
@@ -121,8 +130,14 @@ def verify_text_plugin_registers(entry_points: Any, environ: dict) -> None:
     autotuner pruning needs Triton's kernels, which a driverless build
     container does not load; that path is verified by the runtime log line
     (fla_autotuners > 0) on the first GPU start instead.
+
+    FLEXINFER_SEGMENTED_RUNTIME_TABLES is set for the call, so the opt-in
+    segmented-attention patch must install on this vLLM: its import and every
+    upstream name it wraps are checked here, not on the first lane that turns
+    it on. The flag affects only this build-time process.
     """
     environ.pop("PYTORCH_ROCM_ARCH", None)
+    environ[SEGMENTED_RUNTIME_TABLES_ENV] = "1"
     (plugin,) = [
         ep
         for ep in entry_points(group="vllm.general_plugins")
@@ -136,6 +151,12 @@ def verify_text_plugin_registers(entry_points: Any, environ: dict) -> None:
     if missing:
         raise RuntimeError(
             f"flexinfer_qwen35_text register() ran but did not register {sorted(missing)}"
+        )
+    warmup = sys.modules.get(SEGMENTED_WARMUP_MODULE)
+    if not getattr(warmup, SEGMENTED_PATCH_MARKER, False):
+        raise RuntimeError(
+            f"flexinfer_qwen35_text register() ran with {SEGMENTED_RUNTIME_TABLES_ENV}=1 "
+            f"but did not patch {SEGMENTED_WARMUP_MODULE}"
         )
 
 
@@ -162,7 +183,7 @@ def main() -> None:
         version,
         f"native {isa} W4A16 op: torch.ops._rocm_C.gptq_gemm_rdna3;",
         f"{isa} device code in {', '.join(checked)};",
-        "flexinfer_qwen35_text register() OK",
+        "flexinfer_qwen35_text register() OK (segmented runtime-tables patch installs)",
     )
 
 

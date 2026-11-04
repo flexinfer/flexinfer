@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import functools
 import importlib.util
 import os
 import sys
@@ -134,6 +135,95 @@ class SpeculativeConfig:
         return config
 
 
+class SpeculativeConfigV033:
+    """vLLM 0.33 shape: a second, optional argument reached two ways.
+
+    Mirrors ``vllm/config/speculative.py`` at v0.33.0: the draft config's
+    ``hf_overrides`` is a ``functools.partial`` over ``hf_config_override`` (or
+    over ``_apply_composed_hf_override``, which calls it positionally).
+    """
+
+    calls: list = []
+
+    @staticmethod
+    def hf_config_override(hf_config, transformers_mtp_overrides=None):
+        SpeculativeConfigV033.calls.append(transformers_mtp_overrides)
+        if transformers_mtp_overrides is not None:
+            hf_config.update(transformers_mtp_overrides)
+            return hf_config
+        hf_config.delegated = True
+        return hf_config
+
+    @staticmethod
+    def _apply_composed_hf_override(
+        target_hf_overrides, hf_config, transformers_mtp_overrides=None
+    ):
+        hf_config = SpeculativeConfigV033.hf_config_override(
+            hf_config, transformers_mtp_overrides
+        )
+        return target_hf_overrides(hf_config)
+
+    @staticmethod
+    def compose_draft_hf_overrides(
+        target_hf_overrides, transformers_mtp_overrides=None
+    ):
+        if not callable(target_hf_overrides):
+            return functools.partial(
+                SpeculativeConfigV033.hf_config_override,
+                transformers_mtp_overrides=transformers_mtp_overrides,
+            )
+        return functools.partial(
+            SpeculativeConfigV033._apply_composed_hf_override,
+            target_hf_overrides,
+            transformers_mtp_overrides=transformers_mtp_overrides,
+        )
+
+
+SEGMENTED_WARMUP_MODULE = (
+    "vllm.model_executor.warmup.rocm_segmented_attn_autotune_warmup"
+)
+
+
+def _segmented_warmup_module():
+    """The names the segmented patch needs, with upstream's tuning signature."""
+    warmup = types.ModuleType(SEGMENTED_WARMUP_MODULE)
+
+    def warmup_segmented_attention(
+        device,
+        dtype,
+        heads,
+        kv_heads,
+        dim,
+        page,
+        scale,
+        max_tokens,
+        max_len,
+        max_seqs,
+        *,
+        kv_dtype=None,
+        sliding_window=-1,
+        causal=True,
+        has_sinks=False,
+        physical_max_len=None,
+    ):
+        return None
+
+    warmup.warmup_segmented_attention = warmup_segmented_attention
+    for name in (
+        "_key",
+        "_make_inputs",
+        "_warmup_segmented_attention",
+        "compile_segmented_attention",
+        "rocm_segmented_attn_autotune_warmup",
+        "segmented_query_capacity",
+        "segmented_workspace_shapes",
+    ):
+        setattr(warmup, name, lambda *args, **kwargs: None)
+    warmup._TABLES = {}
+    warmup.torch = types.SimpleNamespace()
+    return warmup
+
+
 class FakeHFConfig:
     def __init__(self, model_type: str) -> None:
         self.model_type = model_type
@@ -175,6 +265,7 @@ def _register_with(
     registry=None,
     auto_gptq_cls: type = AutoGPTQConfig,
     env: dict | None = None,
+    extra_modules: dict | None = None,
 ):
     """Load the plugin against a fake vLLM and run register(); return (plugin, registry)."""
     registry = registry if registry is not None else FakeRegistry()
@@ -215,6 +306,7 @@ def _register_with(
         auto_gptq.__name__: auto_gptq,
         fused_moe.__name__: fused_moe,
         linear.__name__: linear,
+        **(extra_modules or {}),
     }
     # Make sure the *other* FLA layout is absent so the resolver has to pick.
     for name in (
@@ -341,6 +433,112 @@ class PluginTest(unittest.TestCase):
                 env={"FLEXINFER_QWEN35_MTP_HEAD": "float"},
             )
         self.assertIn("FLEXINFER_QWEN35_MTP_HEAD", str(ctx.exception))
+
+    def test_mtp_override_accepts_the_v033_signature(self) -> None:
+        """0.33 calls the override positionally and through functools.partial."""
+        plugin, _ = _register_with(
+            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+            Qwen3_5ModelV026,
+            Qwen3_5MultiTokenPredictorV026,
+        )
+        plugin._patch_qwen35_text_mtp_config(SpeculativeConfigV033)
+        SpeculativeConfigV033.calls.clear()
+        text_only_rope = {
+            "rope_type": "default",
+            "rope_theta": 10_000_000,
+            "partial_rotary_factor": 0.25,
+        }
+
+        # Dict target overrides: partial(hf_config_override, kw=None).
+        draft = SpeculativeConfigV033.compose_draft_hf_overrides({"max_model_len": 1})
+        config = draft(FakeHFConfig("qwen3_5_moe_text"))
+        self.assertEqual(config.model_type, "qwen3_5_mtp")
+        self.assertEqual(config.architectures, ["Qwen3_5MoeMTP"])
+        self.assertEqual(config.rope_parameters, text_only_rope)
+
+        # Callable target overrides: positional (hf_config, None) inside.
+        draft = SpeculativeConfigV033.compose_draft_hf_overrides(lambda c: c)
+        config = draft(FakeHFConfig("qwen3_5_text"))
+        self.assertEqual(config.architectures, ["Qwen3_5MTP"])
+        self.assertEqual(config.n_predict, 1)
+        self.assertEqual(config.rope_parameters, text_only_rope)
+        self.assertEqual(SpeculativeConfigV033.calls, [])
+
+        # Other model types reach upstream with their extra argument intact.
+        draft = SpeculativeConfigV033.compose_draft_hf_overrides({})
+        self.assertTrue(draft(FakeHFConfig("qwen3_next")).delegated)
+        self.assertEqual(SpeculativeConfigV033.calls, [None])
+
+        # A Transformers-backend draft (overrides set) is upstream's alone.
+        overrides = {"architectures": ["TransformersForMTP"], "n_predict": 1}
+        draft = SpeculativeConfigV033.compose_draft_hf_overrides({}, overrides)
+        config = draft(FakeHFConfig("qwen3_5_text"))
+        self.assertEqual(config.model_type, "qwen3_5_text")
+        self.assertEqual(config.architectures, ["TransformersForMTP"])
+        self.assertIn("mrope_section", config.rope_parameters)
+        self.assertEqual(SpeculativeConfigV033.calls, [None, overrides])
+
+    def test_relaxed_fla_policy_keeps_every_sub_four_stage_config(self) -> None:
+        FakeKernel.fn.configs = [
+            FakeConfig(32, 2, 2),
+            FakeConfig(64, 4, 3),
+            FakeConfig(32, 2, 4),
+        ]
+        FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
+        _register_with(
+            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+            Qwen3_5ModelV026,
+            Qwen3_5MultiTokenPredictorV026,
+            env={"FLEXINFER_FLA_AUTOTUNE": "relaxed"},
+        )
+        self.assertEqual([c.num_stages for c in FakeKernel.fn.configs], [2, 3])
+        self.assertEqual([c.num_stages for c in FakeKernelTwo.configs], [2])
+
+    def test_invalid_fla_policy_is_fatal(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            _register_with(
+                "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+                Qwen3_5ModelV026,
+                Qwen3_5MultiTokenPredictorV026,
+                env={"FLEXINFER_FLA_AUTOTUNE": "on"},
+            )
+        self.assertIn("FLEXINFER_FLA_AUTOTUNE", str(ctx.exception))
+
+    def test_segmented_runtime_tables_are_opt_in(self) -> None:
+        FakeKernel.fn.configs = [FakeConfig(32, 2, 2), FakeConfig(32, 2, 4)]
+        FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
+        default_warmup = _segmented_warmup_module()
+        untouched = dict(vars(default_warmup))
+        _register_with(
+            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+            Qwen3_5ModelV026,
+            Qwen3_5MultiTokenPredictorV026,
+            extra_modules={SEGMENTED_WARMUP_MODULE: default_warmup},
+        )
+        self.assertEqual(vars(default_warmup), untouched)
+
+        flagged_warmup = _segmented_warmup_module()
+        tune = flagged_warmup.warmup_segmented_attention
+        _register_with(
+            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+            Qwen3_5ModelV026,
+            Qwen3_5MultiTokenPredictorV026,
+            env={"FLEXINFER_SEGMENTED_RUNTIME_TABLES": "1"},
+            extra_modules={SEGMENTED_WARMUP_MODULE: flagged_warmup},
+        )
+        self.assertTrue(flagged_warmup._flexinfer_runtime_tables)
+        self.assertIsNot(flagged_warmup.warmup_segmented_attention, tune)
+
+    def test_segmented_flag_without_the_warmup_module_is_fatal(self) -> None:
+        with self.assertRaises(RuntimeError) as ctx:
+            _register_with(
+                "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
+                Qwen3_5ModelV026,
+                Qwen3_5MultiTokenPredictorV026,
+                env={"FLEXINFER_SEGMENTED_RUNTIME_TABLES": "1"},
+                extra_modules={SEGMENTED_WARMUP_MODULE: None},
+            )
+        self.assertIn("FLEXINFER_SEGMENTED_RUNTIME_TABLES", str(ctx.exception))
 
     def test_unknown_fla_layout_is_fatal(self) -> None:
         """A vLLM with neither known kernel path must fail loudly, not skip pruning."""
