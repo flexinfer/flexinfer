@@ -61,6 +61,7 @@
 - Addendum (2026-11-03): after the owner's hardware work the same 600 s burn PASSES on the XTX (71 TFLOPS, 289 W, 82 C, 0 errors; link now Gen3 x8) — row `xtx-pcie-soak-2026-11-03` `conditional`; KT-FLEX may rerun: `70-result-kt-flex-flex-card-2026-11-01.md` §Addendum 2026-11-03
 - Result (2026-11-03): KT-FLEX rerun — the XTX carried 3 Qwen-Image, 2 Wan and 1 Stable Audio renders plus 4 swaps with 0 errors and the warm lane reclaimed in ~2 min; Wan's first output took 506 s (decode-bound, over the 5-min rule) and a cold-start proxy budget bug was found and fixed (!1264, !1266). Row `gfx1100-flex-card-layout-2026-11-03` `conditional` pending 24 h: `70-result-kt-flex-flex-card-2026-11-01.md` §Addendum (rerun)
 - Result (2026-11-04): Wan's decode was MIOpen's naive Conv3d kernel (!1268 bypass, repinned in !1275); a cold Wan clip now takes 252 s through the proxy (decode 7 s) with no cold-start 502 (!1270, rolled in !1271), so the row waits only on the 24 h window: `70-result-kt-flex-flex-card-2026-11-01.md` §Addendum 2026-11-04
+- Result (2026-11-04, promoted): the 24 h window closed with no unhealthy reading (metric to 03:50Z, agent log across a Prometheus outage), so row `gfx1100-flex-card-layout-2026-11-03` is `promote`: `70-result-kt-flex-flex-card-2026-11-01.md` §Addendum 2026-11-04 (promotion)
 
 ## Current Goal (2026-10-21) - gfx1100 recovery: XTX still drops under load, runtime pins unpullable
 

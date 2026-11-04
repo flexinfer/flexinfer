@@ -238,3 +238,35 @@ Row `gfx1100-flex-card-layout-2026-11-03`: criterion 1 now passes for all three 
 and criteria 2 and 3 passed on 11-03. The row waits only on criterion 4, 24 h of
 `flexinfer_gpu_healthy == 1` until 2026-11-04 05:56Z; at 01:40Z it had held for 19h44m. VACE's
 fp32 VAE is still on MIOpen's naive kernel and is not part of this row.
+
+## Addendum 2026-11-04 (promotion): the 24 h window
+
+The window ran from 2026-11-03 05:56Z to 2026-11-04 05:56Z. The owner approved the promotion on
+2026-11-04, with the agent log standing in for the hours Prometheus missed.
+
+| Source | Covers | Result |
+|---|---|---|
+| `flexinfer_gpu_healthy{node="cblevins-7900xtx",gpu="0"}` | 05:56Z to 03:50Z | never 0; a sample every minute up to 04:00Z (1,321 one-minute buckets in the 24 h) |
+| agent log (`flexinfer-agent-5d5w6`) | 02:57:55Z to 14:57:55Z | 1,441 readings, all `gpu.health=ok`, no gap over 90 s |
+| `journalctl -k -b` on the node | the whole boot (since 11-02 19:47 local) | 0 amdgpu/SMU/MES/AER errors; only the boot-time SMU init lines |
+| PCIe link | read at 06:00Z | Gen3 x8 at the root port (`00:01.1`, `01:00.0`); x16 behind the card's own bridge |
+
+Prometheus lost samples from 03:50Z for reasons that had nothing to do with the card. Writes to the
+Longhorn device under its volume on `cblevins-radeonvii` failed with `Medium Error / Unrecovered
+read error` at 03:50:36Z, while Longhorn was rebuilding replicas. ext4 aborted its journal and
+remounted read-only, and every scrape from then on failed to write the WAL. Repair, approved by the
+owner:
+1. Suspend the HelmRelease and scale Prometheus to 0.
+2. Attach the volume for maintenance on `cblevins-5930k` and run `e2fsck -f -y` (22 s). It
+   corrected the free counts and optimized eight extent trees, and deleted no files.
+3. Restart Prometheus. It cut the corrupt tail of WAL segment 24156 and has been ingesting since
+   14:57Z.
+
+Earlier, at 02:57Z, etcd lost its leader (term 421). k3s on the XTX, an etcd voter, exited and
+systemd restarted it within 25 s. Every container on the node restarted once and Longhorn rebuilt
+the node's replicas between 03:01Z and 03:04Z. The card reported healthy before, during and after.
+
+Row `gfx1100-flex-card-layout-2026-11-03` is `promote`. The XTX flex-card layout of !1203 is
+validated for the warm lane plus Qwen-Image, Wan T2V and Stable Audio. Not covered:
+- VACE, whose fp32 VAE still uses MIOpen's naive kernel;
+- in-pod switching (D1, Draft !1234), which has its own window.
