@@ -59,6 +59,9 @@ spec:
   # the lane servable. The serve-paths annotation above is what keeps chat
   # traffic out; that is the right tool for it, and it is already doing the job.
   config:
+    # 2026-11-04: pinned to the eager mode this lane inherited from the
+    # gfx1100 GPUProfile vLLM default, which is now enforceEager=false.
+    enforceEager: true
     # 2026-09-23: same defect the gfx906 kill-test found — without a served
     # name the proxy forwards `/openjev/...` and vLLM (serving `/models/openjev/
     # ...`) answers 404 on every proxied request. Not re-verified on this lane
