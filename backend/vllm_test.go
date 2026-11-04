@@ -238,8 +238,6 @@ func TestVLLMBackendArgs_ServingEfficiencyControls(t *testing.T) {
 			"mambaCacheMode":            "align",
 			"mambaSsmCacheDtype":        "bfloat16",
 			"schedulingPolicy":          "priority",
-			"maxNumPartialPrefills":     2,
-			"maxLongPartialPrefills":    1,
 			"longPrefillTokenThreshold": 4096,
 			"schedulerReserveFullISL":   true,
 			"enableSleepMode":           true,
@@ -255,8 +253,6 @@ func TestVLLMBackendArgs_ServingEfficiencyControls(t *testing.T) {
 		"--mamba-cache-mode":             "align",
 		"--mamba-ssm-cache-dtype":        "bfloat16",
 		"--scheduling-policy":            "priority",
-		"--max-num-partial-prefills":     "2",
-		"--max-long-partial-prefills":    "1",
 		"--long-prefill-token-threshold": "4096",
 		"--kv-cache-metrics-sample":      "0.25",
 	}
