@@ -96,9 +96,23 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	// recurrent state at block boundaries. GDN models require "align" mode —
 	// "all" is unsupported for GDN, and without a mode APC on hybrids stays
 	// inert. Pairs with enablePrefixCaching on Qwen3.5/3.6-class lanes.
-	if mambaCacheMode := spec.ConfigString("mambaCacheMode", ""); mambaCacheMode != "" {
+	// From 0.33.0 the flag is a deprecated no-op (Mamba prefix caching follows
+	// --enable-prefix-caching, vLLM #60043) and 0.34 removes it (#64838), so a
+	// lane that declares vllmVersion 0.33 or later does not render it.
+	if mambaCacheMode := spec.ConfigString("mambaCacheMode", ""); mambaCacheMode != "" && !vllmVersionAtLeast(spec, vllmMambaCacheModeIgnoredSince) {
 		args = append(args, "--mamba-cache-mode", mambaCacheMode)
 	}
+	// Prefix-cache hit granularity in tokens (vLLM 0.32+). It may be finer
+	// than a hybrid model's physical block as long as every KV cache group's
+	// block size divides by it, so hits can land inside a block.
+	if unit := spec.ConfigInt("prefixMatchUnit", 0); unit > 0 {
+		args = append(args, "--prefix-match-unit", strconv.Itoa(unit))
+	}
+	// Also checkpoint Mamba state where an MTP/EAGLE sibling resumes, not only
+	// at the prompt tail (vLLM 0.32+). Needs prefix caching (Mamba "align"
+	// mode), MTP or EAGLE on the Mamba group and a prefixMatchUnit below the
+	// Mamba block size.
+	args = appendVLLMBooleanOptionalArg(args, spec, "enableMambaSharedPrefixCheckpoint", "--enable-mamba-shared-prefix-checkpoint", "--no-enable-mamba-shared-prefix-checkpoint")
 	// Quantize the mamba/GDN SSM state cache (e.g. "float32" -> "bfloat16").
 	// Smaller recurrent-state checkpoints mean more align-mode blocks stay
 	// resident, which lifts hybrid prefix-cache hit rates.
@@ -127,6 +141,12 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if spec.ConfigBool("enableSleepMode", false) {
 		args = append(args, "--enable-sleep-mode")
 	}
+	// Parameter-name globs a level-2 sleep keeps resident (vLLM 0.32+), e.g.
+	// ["draft.*"] for an MTP head. The flag takes one token per glob.
+	if names := configValuesAsArgs(spec, "sleepPreserveParameterNames"); len(names) > 0 {
+		args = append(args, "--sleep-preserve-parameter-names")
+		args = append(args, names...)
+	}
 
 	// Max concurrent sequences
 	if maxSeqs := spec.ConfigInt("maxNumSeqs", 0); maxSeqs > 0 {
@@ -138,12 +158,8 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 		args = append(args, "--max-num-batched-tokens", fmt.Sprintf("%d", maxBatched))
 	}
 	args = appendVLLMBooleanOptionalArg(args, spec, "enableChunkedPrefill", "--enable-chunked-prefill", "--no-enable-chunked-prefill")
-	if maxPartial := spec.ConfigInt("maxNumPartialPrefills", 0); maxPartial > 0 {
-		args = append(args, "--max-num-partial-prefills", strconv.Itoa(maxPartial))
-	}
-	if maxLongPartial := spec.ConfigInt("maxLongPartialPrefills", 0); maxLongPartial > 0 {
-		args = append(args, "--max-long-partial-prefills", strconv.Itoa(maxLongPartial))
-	}
+	// maxNumPartialPrefills and maxLongPartialPrefills are refused by
+	// ValidateVLLMConfig: their flags exist in no vLLM release we serve.
 	if longThreshold := spec.ConfigInt("longPrefillTokenThreshold", 0); longThreshold > 0 {
 		args = append(args, "--long-prefill-token-threshold", strconv.Itoa(longThreshold))
 	}
@@ -241,6 +257,12 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	args = appendVLLMBooleanOptionalArg(args, spec, "kvCacheMetrics", "--kv-cache-metrics", "--no-kv-cache-metrics")
 	if sample := configValueAsArg(spec, "kvCacheMetricsSample"); sample != "" {
 		args = append(args, "--kv-cache-metrics-sample", sample)
+	}
+	// KV connector (e.g. offloading), passed through as a JSON object. Accept
+	// an encoded string or a native YAML/JSON map. From 0.33 a connector also
+	// keeps the legacy prefix-cache block hashes (no MTP lookahead hashes).
+	if kvTransfer := configValueAsArg(spec, "kvTransferConfig"); kvTransfer != "" {
+		args = append(args, "--kv-transfer-config", kvTransfer)
 	}
 
 	// HF config overrides — passed through verbatim to vLLM as --hf-overrides
@@ -404,7 +426,12 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
 			}
 		} else {
-			// AITER: only applicable to gfx110x (RDNA3) and gfx942 (MI300X/CDNA3)
+			// vLLM uses AITER only on CDNA 3 or newer (gfx942/gfx950:
+			// is_aiter_found_and_supported checks the CDNA version), so on
+			// gfx110x every VLLM_ROCM_USE_AITER* variable is a no-op and
+			// enableAiter, disableAiter and rocmUseAiter change nothing there.
+			// gfx110 stays in this check only so existing gfx1100 lanes keep
+			// rendering the env they render today.
 			supportsAiter := strings.HasPrefix(spec.GPUArch, "gfx110") ||
 				strings.HasPrefix(spec.GPUArch, "gfx942")
 			if spec.ConfigBool("enableAiter", false) && supportsAiter {
@@ -473,7 +500,130 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		env = append(env, corev1.EnvVar{Name: "VLLM_SERVER_DEV_MODE", Value: "1"})
 	}
 
-	return env
+	return withoutRemovedVLLMEnv(spec, env)
+}
+
+// vllmRelease is a vLLM release number, major.minor.patch.
+type vllmRelease struct{ major, minor, patch int }
+
+func (v vllmRelease) atLeast(o vllmRelease) bool {
+	if v.major != o.major {
+		return v.major > o.major
+	}
+	if v.minor != o.minor {
+		return v.minor > o.minor
+	}
+	return v.patch >= o.patch
+}
+
+func (v vllmRelease) String() string {
+	return fmt.Sprintf("%d.%d.%d", v.major, v.minor, v.patch)
+}
+
+// vllmMambaCacheModeIgnoredSince is the release from which --mamba-cache-mode
+// is a deprecated no-op.
+var vllmMambaCacheModeIgnoredSince = vllmRelease{0, 33, 0}
+
+// vllmEnvRemovedSince maps VLLM_* variables the backend renders to the first
+// release whose vllm/envs.py does not define them. With
+// --fail-on-environ-validation, Platform.validate_environ refuses to start on
+// any VLLM_* variable that envs.py does not define. The 0.32.0 entries are
+// absent from 0.32.0 and every later release; when they went is not tracked,
+// so a lane on an older declared release keeps them.
+var vllmEnvRemovedSince = map[string]vllmRelease{
+	"VLLM_ROCM_USE_AITER_PAGED_ATTN":   {0, 32, 0},
+	"VLLM_USE_TRITON_FLASH_ATTN":       {0, 32, 0},
+	"VLLM_ROCM_USE_AITER_FP4_ASM_GEMM": {0, 33, 0}, // vLLM #61278
+}
+
+// parseVLLMVersion reads a config.vllmVersion value: "0.33.0", optionally
+// with a leading "v" or a "+local" suffix ("0.33.0+rocm72"). The patch
+// number may be left out ("0.33").
+func parseVLLMVersion(raw string) (vllmRelease, error) {
+	s := strings.TrimPrefix(strings.TrimSpace(raw), "v")
+	if i := strings.IndexByte(s, '+'); i >= 0 {
+		s = s[:i]
+	}
+	parts := strings.Split(s, ".")
+	if len(parts) < 2 || len(parts) > 3 {
+		return vllmRelease{}, fmt.Errorf("spec.config.vllmVersion %q is not a vLLM release such as \"0.33.0\"", raw)
+	}
+	nums := make([]int, 3)
+	for i, part := range parts {
+		n, err := strconv.Atoi(part)
+		if err != nil || strings.Trim(part, "0123456789") != "" {
+			return vllmRelease{}, fmt.Errorf("spec.config.vllmVersion %q is not a vLLM release such as \"0.33.0\"", raw)
+		}
+		nums[i] = n
+	}
+	return vllmRelease{nums[0], nums[1], nums[2]}, nil
+}
+
+// declaredVLLMVersion returns config.vllmVersion, the vLLM release the lane's
+// image carries. Like config.llamacppBuild it is controller-side metadata
+// that never reaches the server: it only selects which flags and VLLM_*
+// variables to render. ok is false when the key is unset or unreadable
+// (ValidateVLLMConfig refuses the latter), and then the backend renders what
+// it rendered before the key existed.
+func declaredVLLMVersion(spec *ModelSpec) (vllmRelease, bool) {
+	raw := spec.ConfigString("vllmVersion", "")
+	if raw == "" {
+		return vllmRelease{}, false
+	}
+	v, err := parseVLLMVersion(raw)
+	if err != nil {
+		return vllmRelease{}, false
+	}
+	return v, true
+}
+
+func vllmVersionAtLeast(spec *ModelSpec, release vllmRelease) bool {
+	v, ok := declaredVLLMVersion(spec)
+	return ok && v.atLeast(release)
+}
+
+// withoutRemovedVLLMEnv drops the variables the lane's declared vLLM release
+// no longer defines. Without a declared release env is returned unchanged.
+func withoutRemovedVLLMEnv(spec *ModelSpec, env []corev1.EnvVar) []corev1.EnvVar {
+	v, ok := declaredVLLMVersion(spec)
+	if !ok {
+		return env
+	}
+	kept := env[:0:0]
+	for _, e := range env {
+		if since, removed := vllmEnvRemovedSince[e.Name]; removed && v.atLeast(since) {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	return kept
+}
+
+// ValidateVLLMConfig refuses spec.config keys the vLLM backend cannot render
+// for any release, and an unreadable vllmVersion. The controller runs it
+// before rendering, so a refused Model never reaches a Deployment or a
+// runtime pod.
+func ValidateVLLMConfig(cfg map[string]any) error {
+	// The flags were never in a vLLM release we serve: argument parsing
+	// rejects them in 0.32.0, 0.33.0 and main alike.
+	for _, dead := range []struct{ key, flag string }{
+		{"maxNumPartialPrefills", "--max-num-partial-prefills"},
+		{"maxLongPartialPrefills", "--max-long-partial-prefills"},
+	} {
+		if _, ok := cfg[dead.key]; ok {
+			return fmt.Errorf("spec.config.%s is not supported: vLLM has no %s flag (absent from 0.32.0, 0.33.0 and main), so the server would refuse to start; remove the key", dead.key, dead.flag)
+		}
+	}
+	if raw, ok := cfg["vllmVersion"]; ok {
+		s, isString := raw.(string)
+		if !isString {
+			return fmt.Errorf("spec.config.vllmVersion must be a quoted string such as \"0.33.0\" (got %v)", raw)
+		}
+		if _, err := parseVLLMVersion(s); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func resolveVLLMAttentionBackend(spec *ModelSpec) string {
@@ -740,6 +890,9 @@ func configValuesAsArgs(spec *ModelSpec, key string) []string {
 	return args
 }
 
+// rocmAiterDisabledEnvVars turns every AITER kernel family off. The list is
+// the pre-0.32 surface; Env drops the names a lane's declared vllmVersion no
+// longer defines (see vllmEnvRemovedSince).
 func rocmAiterDisabledEnvVars() []corev1.EnvVar {
 	names := []string{
 		"VLLM_ROCM_USE_AITER",
