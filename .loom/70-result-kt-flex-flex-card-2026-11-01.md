@@ -210,3 +210,31 @@ needs the CI `diffusers-video` build, an XTX prewarm of the new digest and a rep
 `Model.Status.Phase == Ready` (`internal/proxy/queue.go`). The Service had no ready endpoint 100 ms
 later, so both forwards, 50 ms apart, hit a rejecting ClusterIP and the client got a 502.
 Yesterday's cold Qwen-Image and Stable Audio requests won the same race by luck.
+
+## Addendum 2026-11-04: Wan verified on the bypass build
+
+Taking the fix live took three CI runs. The `diffusers-video` publish hit its 1 h timeout twice while
+BuildKit re-extracted the PyTorch 2.6 base (jobs 458565 and 460030; job 426137 had failed the same
+way on 10-27). !1273 raised the timeout to 2 h, and job 460942 (API pipeline 37384) published
+`rocm-gfx1100-2c0cc642` = `sha256:b1f98ad0`. 58 of its 60 layers are `83cda206`'s; the other two
+are the server scripts. !1275 repinned `wan21-t2v-1p3b-gfx1100` and added the digest to the XTX
+prewarm. VACE stays on `83cda206`, which is also the rollback. The proxy had been rolled to
+`bdd4bd25` in !1271, which carries the cold-start dial retry of !1270.
+
+Two clips of the KT-FLEX request (832x480, 33 frames, 20 steps, seed 42) went through
+`flexinfer-proxy` from 01:33Z. The warm lane held the card when the first one arrived.
+
+| Clip | Pod state | Result (wall) | Denoise | Decode + postprocess |
+|---|---|---|---|---|
+| 1 | cold: preempt the warm lane, start, load, compile | 200, 252 s | 144 s | 7.3 s |
+| 2 | warm, same pod | 200, 124 s | 115 s | 6.4 s |
+
+The pod logged `Wan VAE encode/decode run with MIOpen off`. Decode went from 367–371 s to 6–7 s,
+and the cold clip's first byte from 506 s to 252 s, inside the 5-minute rule. The cold request
+took the proxy's cold-start path and got a 200; on 11-03 that path returned a 502. The two MP4s
+are byte-identical, and frames 0, 16 and 32 show a coherent scene.
+
+Row `gfx1100-flex-card-layout-2026-11-03`: criterion 1 now passes for all three creative lanes,
+and criteria 2 and 3 passed on 11-03. The row waits only on criterion 4, 24 h of
+`flexinfer_gpu_healthy == 1` until 2026-11-04 05:56Z; at 01:40Z it had held for 19h44m. VACE's
+fp32 VAE is still on MIOpen's naive kernel and is not part of this row.

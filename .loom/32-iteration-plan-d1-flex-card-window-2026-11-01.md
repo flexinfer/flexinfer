@@ -95,7 +95,15 @@ bitsandbytes lacks `libbitsandbytes_rocm<maj><min>.so` for the image's
 from its compressed offload bundle). NF4 numerics on the card are still open:
 the !1236 Qwen-Image canary has to prove them. librosa and soundfile stay out,
 per Q2 (ASR moved to the Radeon VII). The new image also carries the Wan VAE
-MIOpen bypass (!1268), so in-pod Wan T2V decodes in seconds.
+MIOpen bypass (!1268). It took the dedicated Wan lane's decode from 370 s to
+7 s on 2026-11-04. In-pod on ROCm 7.2 it is unmeasured.
+
+CI published it as `527e2714` (`rocm-gfx1100-serving-v032-ddf22437`, pipeline
+37264, job 460293, 2026-11-03 22:21Z). The build-time verify passed: 265
+packages unchanged, the new modules resolve, bitsandbytes finds HIP 7.2.53211,
+and the ffmpeg binary runs. !1274 certified it and prewarmed it on the XTX
+(resident 00:48Z), and Draft !1234 now repins to it. `7ae8e92f` and `ef28b7b0`
+stay certified fallbacks.
 
 ### 3.3 Other findings
 
