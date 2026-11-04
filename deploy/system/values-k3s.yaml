@@ -910,8 +910,9 @@ runtime:
       # anchor (resident on both gfx1100 nodes, IfNotPresent):
       #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
       # 2026-11-01 (D1 step 2, research next-differentiators-2026-10-31
-      # §6.1; WINDOW-GATED, owner-run after KT-FLEX): repinned to the stacked
-      # vLLM 0.32 runtime 7ae8e92f (rocm-gfx1100-serving-v032-5ca58769, master
+      # §6.1; staged for the owner window, landed 2026-11-04 after KT-FLEX
+      # passed, matrix row xtx-runtime-v032-527e2714-2026-11-04): repinned
+      # to the stacked vLLM 0.32 runtime 7ae8e92f (rocm-gfx1100-serving-v032-5ca58769, master
       # CI pipeline 36312: vLLM 0.32.0 + the three FlexInfer plugins, text
       # plugin 0.9.0 as in the warm lane's b06b06fe, + the runtime supervisor
       # with in-pod reload, load substages and the short-KV-pool recheck,

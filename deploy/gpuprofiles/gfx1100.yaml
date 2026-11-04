@@ -194,7 +194,8 @@ spec:
     # unified build: first image carrying server-snac.py (!990) + the
     # torchao==0.17.0 quantizer pin (!993)), which had split from the
     # DaemonSets since the S1 serving-persona promotion of 2026-09-13.
-    # 2026-11-01 (D1 step 2, WINDOW-GATED): follows the 7900xtx runtime
+    # 2026-11-04 (D1 step 2, staged 2026-11-01; the owner overrode the
+    # 11-06 window after KT-FLEX passed): follows the 7900xtx runtime
     # DaemonSet (values-k3s.yaml runtime profile gfx1100) to the stacked
     # vLLM 0.32 runtime 527e2714 (rocm-gfx1100-serving-v032-ddf22437, with
     # the creative-lane deps; retargeted from 7ae8e92f on 2026-11-03). The
