@@ -46,8 +46,15 @@ spec:
   # floating tag points at and the 5930k prewarm list holds (pinned-83cda206faea).
   # Its server-diffusers.py carries the in-place compile path this lane's
   # compileMode needs (0c8c7b1bb) and the VACE mode the sibling uses.
-  # Rollback = f03bfc2f (Harbor-resident, not prewarmed).
-  imageDigest: sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
+  # 2026-11-03: repinned from 83cda206 to rocm-gfx1100-2c0cc642 (API
+  # pipeline 37384 job 460942), the first master build with !1268.
+  # It runs the bf16 Wan VAE with MIOpen off. MIOpen 3.4 only offers gfx1100
+  # its naive kernel for the VAE's 3D convs, so a 33-frame 832x480 clip spent
+  # 370 s in decode. The PyTorch im2col path takes 5-11 s (A/B in .loom/
+  # 70-result-kt-flex-flex-card-2026-11-01.md). Same recipe and base
+  # otherwise: 58 of 60 layers are 83cda206's, the other two are the
+  # server scripts. Rollback = 83cda206, still prewarmed on the XTX.
+  imageDigest: sha256:b1f98ad0d9adbf8927145bed242e5e49b5cc0f6ac3fa27196cbc4c3e885644bb
   source: HF://Wan-AI/Wan2.1-T2V-1.3B-Diffusers
   cache:
     strategy: Local

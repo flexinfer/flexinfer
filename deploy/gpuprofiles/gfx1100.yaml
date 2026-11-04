@@ -78,23 +78,35 @@ spec:
   backends:
     vllm:
       support: full
-      # 2026-09-14 (issue #74 S5): rebuilt by CI from master —
-      # rocm-gfx1100-qwen35-patched-nodiag-textcfg-aefeb697 (API pipeline 26956,
-      # job 276644). Previous pin a9b306af = …-4ef74842 (2026-05-20).
-      image: registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
-      # Wave 1 capability matrix backfill (2026-05-15, spec .loom/21-product-spec-vllm-feature-parity-2026-05-15.md).
-      # Controller/runtime load paths consume safe defaults when Model config omits them.
+      # 2026-11-04: the default for gfx1100 vLLM Models that set no
+      # spec.image is the promoted vLLM 0.32 Deployment-lane image, the one
+      # the 5930k workhorse and the XTX warm lane run
+      # (rocm-gfx1100-serving-v032, matrix row
+      # gfx1100-native-w4a16-v032-s4-workhorse-2026-10-26, pinned-b06b06fe1c02).
+      # Every lane that relied on the previous default (the standalone
+      # qwen35-patched vLLM image vllm@7ac257f3, issue #74 S5) pins it in its
+      # own manifest, so this move changed no lane. backend.ResolveBackendImage reads this
+      # field; values-k3s.yaml vllm.gfx1100Image is only its fallback.
+      image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+      # Capability strings follow the vLLM 0.32.0+rocm723 evidence (matrix
+      # rows gfx1100-native-w4a16-v032-*, 2026-10-24..26). defaults are not
+      # documentation: backend.ApplyVLLMDefaultsFromProfile fills them into
+      # every gfx1100 vLLM Model that omits the key, on the Deployment path
+      # (controllers/model_backend.go) and in the runtime load payload
+      # (pkg/runtime/payload.go), so in-pod lanes inherit them too.
       vllm:
-        v1Engine: supported          # V0 removed in vLLM >=0.18; production target is 0.19.x.
-        piecewiseGraphs: experimental # Gated on upstream vllm-project/vllm#39010, #41622.
-        flashAttention: ck            # CK FA from rocm/vllm-dev Navi base; AOTriton experimental.
-        fusedMoETriton: experimental  # BF16 path works (gemma4.py in 0.19+); INT4 weight-loader unproven.
-        fp8KVEmulation: experimental  # patch_vllm_env_override_torch29.py wires kv_cache_dtype="fp8"; overhead unmeasured.
-        marlinINT4: unsupported       # CUDA-only upstream; turboquant-vllm Tq4 is our INT4 path.
-        audioTranscription: experimental # Gated on Slice 1 kill-test in .loom/asr-diarization-7900xtx-plan-2026-05-18.md.
+        v1Engine: supported           # V1 is the only engine (V0 removed in 0.18); 0.32 runs the V2 model runner on it.
+        piecewiseGraphs: supported    # 0.32 captures CUDA graphs on gfx1100 (ladder auto-derived); every promoted lane runs enforceEager=false.
+        flashAttention: triton        # TRITON_ATTN and ROCM_SEGMENTED_ATTN (Triton kernels); no CK FA in the 0.32 stack.
+        fusedMoETriton: experimental  # Qwen3.5-35B-A3B MoE lanes serve on their own vLLM 0.23 overlays; not qualified on 0.32.
+        fp8KVEmulation: experimental  # fp8_e4m3 KV serves (XTX warm lane, for pool size at 64K); slower than fp16 KV (vllm#56992).
+        marlinINT4: unsupported       # Marlin is CUDA-only; RDNA3W4A16LinearKernel is the INT4 (W4A16 GPTQ/AutoRound) path on 0.32.
+        audioTranscription: experimental # Whisper lanes pin vllm@7ac257f3; the 0.32 serving images carry no librosa/soundfile.
         defaults:
-          cudagraphMode: "NONE"       # Expressed as enforceEager by controller/runtime defaults.
-          enforceEager: true
+          # Graphs on. The promoted posture is ROCM_SEGMENTED_ATTN + fp16 KV
+          # (kvCacheDtype auto), set per lane: attentionBackend has no
+          # profile default.
+          enforceEager: false
           kvCacheDtype: auto
     vllm-omni:
       # vLLM-Omni shares the gfx1100 vLLM build but ships multimodal endpoints.

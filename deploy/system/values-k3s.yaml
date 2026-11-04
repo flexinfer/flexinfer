@@ -718,8 +718,13 @@ imagePrewarm:
         # there afterwards.
         # Qwen-Image 2.1 (serving persona with the R1-R3 overlay, b83c3822).
         - registry.harbor.lan/flexinfer/runtime@sha256:2c94c6d973fab09d9304891b26a25a026bc6e6bdecfe304b138de6c118d219cc
-        # Wan 2.1 T2V and VACE (both pin this through spec.imageDigest).
+        # Wan 2.1 VACE pins this through spec.imageDigest. It is also the
+        # T2V lane's rollback anchor.
         - registry.harbor.lan/flexinfer/diffusers-video@sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
+        # Wan 2.1 T2V (2026-11-03, rocm-gfx1100-2c0cc642): the same recipe
+        # plus the VAE MIOpen bypass of !1268. 58 of its 60 layers are
+        # 83cda206's; the other two are the server scripts.
+        - registry.harbor.lan/flexinfer/diffusers-video@sha256:b1f98ad0d9adbf8927145bed242e5e49b5cc0f6ac3fa27196cbc4c3e885644bb
         # Stable Audio Open (rocm-gfx1100-audio2). Listing it here also makes
         # the pin guard tag it pinned-d87f75f8c69b.
         - registry.harbor.lan/flexinfer/diffusers@sha256:d87f75f8c69bd3e266b11fbb11ee6528d1134001721a960b6e738f6af7e788ce

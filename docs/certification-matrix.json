@@ -212,7 +212,7 @@
       "support_level": "supported",
       "backend": "diffusers",
       "gpu_class": "gfx1100",
-      "decision": "conditional",
+      "decision": "promote",
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
@@ -599,7 +599,7 @@
       ],
       "model": "qwen-image-21-gfx1100",
       "modality": "image",
-      "decision": "conditional",
+      "decision": "promote",
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
@@ -670,7 +670,7 @@
       ],
       "model": "stable-audio-open-gfx1100",
       "modality": "audio",
-      "decision": "conditional",
+      "decision": "promote",
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
@@ -690,7 +690,7 @@
       ],
       "model": "wan21-t2v-1p3b-gfx1100",
       "modality": "video",
-      "decision": "conditional",
+      "decision": "promote",
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
@@ -1936,7 +1936,7 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "conditional",
+      "decision": "promote",
       "title": "KT-FLEX rerun of the GPU placement layout !1203 (.loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §9) after the owner's hardware work and the passing burn xtx-pcie-soak-2026-11-03: can…",
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
