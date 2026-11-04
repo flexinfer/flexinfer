@@ -173,12 +173,13 @@ agent:
     # automation substitutes in platform/gitops k3s/flux/apps/flexinfer-system.yaml,
     # so every master build rolled the agent on every GPU node. The digest wins
     # over that tag (flexinfer.imageRef) and sets imagePullPolicy IfNotPresent.
-    # 2026-11-04: the build the agents ran when this landed (master 1d5ca03d,
-    # pushed 18:52Z, tag 20261104-185128); drafted 2026-11-01 on de13ce8f
-    # (62c87123), which image automation had since replaced. Rollback: delete
-    # the digest line (the agent then follows image automation again).
-    digest: "sha256:ba2fe9066b9224cd40881b84ab9ffcde99a1e349660a4a708828776441b16e5b"
-    tag: "20261104-185128"
+    # 2026-11-04: the build the agents ran when this landed (tags master,
+    # 20261104-190946 / ac73e607, 20261104-185809 / 71a768e9); drafted
+    # 2026-11-01 on de13ce8f (62c87123), which image automation had since
+    # replaced. Rollback: delete the digest line (the agent then follows image
+    # automation again).
+    digest: "sha256:6b832f384c69063dc33248709ae715f3398190b8ed00990501bcca3a139d7b8a"
+    tag: "20261104-190946"
   resources:
     limits:
       cpu: 1000m
