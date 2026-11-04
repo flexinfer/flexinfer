@@ -75,6 +75,12 @@ const (
 	CodeAdmissionRejected = "admission_rejected"
 	// CodeStalledLoad: the lane's weight load stopped making progress.
 	CodeStalledLoad = "stalled_load"
+	// CodeDiarizationNotCertified: a transcription asked for speakers
+	// (diarize=true) but the ASR lane has no diarization lane whose GPUProfile
+	// certifies the pyannote backend (D5-a). The model's descriptor (GET
+	// /v1/models/{name}, flexinfer.diarization) carries the same code and
+	// reason; retrying cannot help until the profile is certified.
+	CodeDiarizationNotCertified = "diarization_not_certified"
 )
 
 // DefaultRetryAfterSeconds is the Retry-After a 503 carries when its writer

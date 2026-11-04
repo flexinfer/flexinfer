@@ -136,3 +136,38 @@ speculative decoding); parity hashes before = after (= `--parity-baseline` when 
 metrics fail the decode and pos-0 checks as unmeasured. Output: a JSON report on stdout (and
 `--out`), the 13-column `.loom/60-validation-matrix.md` row on stderr and in `matrix_row`; exit 0
 on PASS, 1 on FAIL, 2 on a flag error.
+
+## Diarization conformance gate (`diarize_conformance`)
+
+`flexinfer-bench diarize_conformance` is the D5-a gate and the scorer of kill-test KT-DIAR
+(`.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md` §6.5, window plan
+`.loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md`). It runs no inference: it scores a
+`diarize=true` job's content and the standalone pyannote Deployment's answer for the same clip
+against a reference RTTM, and answers whether the gfx906 profile may carry the
+`pyannote/speaker-diarization` certificate (`docs/agents/gpu-compatibility.md`).
+`scripts/kt-diar.py` produces its inputs in the window and prints the command.
+
+```bash
+flexinfer-bench diarize_conformance --reference EN2002a.rttm --uri EN2002a --ref-offset 0 \
+  --hypothesis kt-diar/job.json --baseline kt-diar/baseline.json \
+  --gte-baseline-p95-ms 64.1 --gte-run-p95-ms 66.0 --image <runtime image@sha256> --out kt-diar.json
+```
+
+- `--hypothesis`: `GET /v1/jobs/{id}/content` of the diarize job (words with `speaker`,
+  `utterances`, `diarization.segments`).
+- `--baseline`: the `/diarize` JSON, or any RTTM.
+- `--reference`, `--uri`: the AMI `only_words` RTTM and its file id; `--ref-offset` moves
+  reference times onto the clip (`-300` for a clip cut from 5:00) and `--duration` (default: the
+  transcript's) bounds the scored region.
+
+DER is md-eval's: missed + false alarm + confusion over reference speech, overlapped speech
+counted per speaker, a `--collar` (0.25 s) excluded each side of every reference boundary, and
+each hypothesis speaker mapped to at most one reference speaker by the assignment with the most
+overlap (Hungarian, `pkg/transcript`). Checks, all required: `meeting_length` ≥ `--min-minutes`
+(29.5); `speaker_attributed_words` ≥ `--min-word-coverage` (95 %) of the job's words carry a
+speaker; `der_vs_standalone`: the job's DER (its `diarization.segments`) at most `--max-der-delta`
+(5) points above the standalone's; `gte_p95` ≤ (1 + `--gte-tolerance`, 0.20) × baseline. Without
+the gte flags the verdict is `INCOMPLETE`. The DER of the turns the labelled words imply is
+reported as `words_der`, not gated. Output as `tool_call_conformance`: JSON report, the 13-column
+matrix row on stderr and in `matrix_row`; exit 0 on PASS, 1 on FAIL or INCOMPLETE, 2 on a flag
+or input error.

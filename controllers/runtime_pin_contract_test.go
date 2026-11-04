@@ -31,8 +31,14 @@ var gfx1100CertifiedRuntimes = map[string]string{
 	// rocm-gfx1100-serving-v032-5ca58769: the master CI rebuild of the same
 	// Dockerfile and frozen stack (pipeline 36312, build-time verify passed)
 	// with the R1 reload, R4 load-substage and C5 shared-cache supervisor. The
-	// recommended D1 repin target.
+	// D1 repin target before the creative-lane deps.
 	"sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250": "CI pipeline 36312 job 442027",
+	// rocm-gfx1100-serving-v032-ddf22437: 7ae8e92f's Dockerfile and frozen
+	// stack plus the creative-lane deps (bitsandbytes 0.50.2 with its ROCm
+	// 7.2 library, torchsde, imageio + imageio-ffmpeg, ftfy; !1269), the Wan
+	// VAE MIOpen bypass (!1268) and the D5-a diarization backend. Build-time
+	// verify passed. The recommended D1 repin target.
+	"sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b": "CI pipeline 37264 job 460293",
 }
 
 var runtimeDigestPattern = regexp.MustCompile(`^registry\.harbor\.lan/flexinfer/runtime@(sha256:[0-9a-f]{64})$`)

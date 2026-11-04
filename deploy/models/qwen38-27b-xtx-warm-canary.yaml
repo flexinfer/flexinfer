@@ -39,6 +39,25 @@
 # behind a research completion on the ondemand 5930k lane). The shadow
 # judge followed later the same day (gitops !889). `workhorse`,
 # `loom-workhorse` and `reasoning` stay on the 5930k lane.
+#
+# 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+# placement-2026-10-30.md §6). The 7900xtx is now the FLEX card: this lane
+# is its idle tenant, and the creative lanes (Qwen-Image 2.1, Wan T2V/VACE,
+# Stable Audio, all at 500) take the card on demand.
+# - Priority 470 -> 300: every creative lane outranks this lane, so it is
+#   preempted at once. SNAC, the Orpheus twin, Whisper and the 35B 128k lane
+#   drop to 250-290 so they stay parked behind it, as they are today.
+# - warmPolicy primary -> ondemand, minReplicas still 1: a primary reclaims
+#   2 min after a borrower's last request, which would cost a studio user
+#   ~6 min of swaps every few images. A warm-pinned ondemand tenant waits
+#   until the creative lane scales to zero (its 15 min idleTimeout), then
+#   wins the election through the warm-pinned fallback.
+# - It also claims the workhorse labels for failover. The 5930k lane keeps
+#   route-priority 100, so these labels only land here when that lane is not
+#   Ready. LiteLLM aliases stay on the 5930k lane, because alias claims are
+#   first-wins.
+# The 5930k workhorse is now always on (900, primary, minReplicas 1).
+# Rollback: 470, warmPolicy primary, drop the four workhorse labels.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -153,7 +172,8 @@ spec:
     # Both device-plugin slots (see header); hipVisibleDevices pins the dGPU.
     count: 2
     shared: 7900xtx-textgen
-    priority: 470
+    # 2026-10-30 placement layout: 470 -> 300, the flex card's idle tenant (see header).
+    priority: 300
     vramEstimateMB: 23200
   serverless:
     enabled: true
@@ -162,7 +182,10 @@ spec:
     coldStartTimeout: 25m
   config:
     attentionBackend: TRITON_ATTN
-    warmPolicy: primary
+    # 2026-10-30 placement layout: primary -> ondemand (header). Controller-only
+    # key; with minReplicas 1 the lane still returns by itself once the
+    # creative lane scales to zero.
+    warmPolicy: ondemand
     dedicatedDeployment: true
     quantization: gptq
     # 2026-09-13: `architectures` pinned in-process (issue #74 incident #2).
@@ -338,6 +361,13 @@ spec:
     - mills-warm
     - mills-council
     - xtx-warm
+    # 2026-10-30 placement layout: failover claims on the 5930k workhorse's
+    # labels (route-priority keeps them on that lane while it is Ready). Not
+    # added to litellm.aliases.
+    - qwen38-27b
+    - workhorse
+    - loom-workhorse
+    - reasoning
   litellm:
     enabled: true
     servedModelName: qwen38-27b-xtx-warm-canary

@@ -332,6 +332,9 @@ type jobAttempt struct {
 	code       string
 	message    string
 	retryAfter time.Duration
+	// lane is the Model this attempt waited on when it is not the job's own
+	// (a diarize job's diarization lane); the wait before a retry demands it.
+	lane string
 }
 
 // retryable reports whether waiting can fix the attempt's failure.
@@ -365,8 +368,12 @@ func (r *jobRunner) execute(ctx context.Context, j *aiv1alpha2.InferenceJob) {
 
 	deadline := jobQueuedAt(j).Add(r.cfg.MaxWait)
 	serverErrs := 0
+	step := r.attempt
+	if isDiarizeJob(j) {
+		step = newDiarizeRun(r, j).attempt
+	}
 	for {
-		a, err := r.attempt(ctx, j, &progress)
+		a, err := step(ctx, j, &progress)
 		if r.wasCancelled(j.Name) {
 			a.close()
 			stopHeartbeat()
@@ -419,7 +426,11 @@ func (r *jobRunner) wasCancelled(name string) bool {
 // meanwhile. It returns false when ctx ended.
 func (r *jobRunner) waitToRetry(ctx context.Context, j *aiv1alpha2.InferenceJob, a *jobAttempt) bool {
 	wait := min(max(a.retryAfter, jobRetryMinWait), max(jobRetryMax, jobRetryMinWait))
-	lane := r.p.jobLaneModel(ctx, j.Spec.Model)
+	laneName := j.Spec.Model
+	if a.lane != "" {
+		laneName = a.lane
+	}
+	lane := r.p.jobLaneModel(ctx, laneName)
 	timer := time.NewTimer(wait)
 	defer timer.Stop()
 	tick := time.NewTicker(jobDemandInterval)
@@ -449,13 +460,34 @@ func (r *jobRunner) attempt(ctx context.Context, j *aiv1alpha2.InferenceJob, pro
 		return &jobAttempt{}, err
 	}
 	defer func() { _ = body.Close() }()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://flexinfer-jobs"+j.Spec.Path, body)
+	return r.forward(ctx, j, jobForward{path: j.Spec.Path, contentType: contentType, body: body, firstByte: jobProgressFirstByte}, progress)
+}
+
+// jobForward is one request a job sends through the proxy's handler.
+type jobForward struct {
+	path        string
+	contentType string
+	body        io.Reader
+	// firstByte is the progress the response's first byte reports.
+	firstByte int32
+	// step names a pipeline step in X-Request-ID ("" for a one-step job).
+	step string
+}
+
+// forward sends f once through the proxy's handler for j and spools the
+// response.
+func (r *jobRunner) forward(ctx context.Context, j *aiv1alpha2.InferenceJob, f jobForward, progress *atomic.Int32) (*jobAttempt, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://flexinfer-jobs"+f.path, f.body)
 	if err != nil {
 		return &jobAttempt{}, err
 	}
+	requestID := fmt.Sprintf("%s-%d", j.Name, j.Status.Attempts)
+	if f.step != "" {
+		requestID += "-" + f.step
+	}
 	req.RemoteAddr = "job/" + j.Name
-	req.Header.Set("Content-Type", contentType)
-	req.Header.Set("X-Request-ID", fmt.Sprintf("%s-%d", j.Name, j.Status.Attempts))
+	req.Header.Set("Content-Type", f.contentType)
+	req.Header.Set("X-Request-ID", requestID)
 	if ua := j.Annotations[jobAnnotationUserAgent]; ua != "" {
 		req.Header.Set("User-Agent", ua)
 	}
@@ -469,9 +501,7 @@ func (r *jobRunner) attempt(ctx context.Context, j *aiv1alpha2.InferenceJob, pro
 		req.Header.Set("Authorization", "Bearer "+r.p.authToken)
 	}
 	spool, err := newJobSpoolWriter(r.cfg.SpoolDir, r.cfg.MaxOutputBytes, func() {
-		if progress.Load() < jobProgressFirstByte {
-			progress.Store(jobProgressFirstByte)
-		}
+		raiseProgress(progress, f.firstByte)
 	})
 	if err != nil {
 		return &jobAttempt{}, err
@@ -861,6 +891,18 @@ func (s *jobSpoolWriter) Write(b []byte) (int, error) {
 
 // Flush satisfies http.Flusher for streamed upstream bodies.
 func (s *jobSpoolWriter) Flush() {}
+
+// contents reads the whole spooled body (a pipeline step's answer).
+func (s *jobSpoolWriter) contents() ([]byte, error) {
+	if s.overflow {
+		return nil, fmt.Errorf("response exceeded %d bytes", s.max)
+	}
+	f, size, _, err := s.reader()
+	if err != nil {
+		return nil, err
+	}
+	return io.ReadAll(io.LimitReader(f, size))
+}
 
 // reader rewinds the spooled body for storing.
 func (s *jobSpoolWriter) reader() (*os.File, int64, string, error) {

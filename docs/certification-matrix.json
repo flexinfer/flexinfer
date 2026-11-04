@@ -52,19 +52,29 @@
   "modalities": [
     {
       "modality": "asr",
-      "level": "unverified",
-      "lanes": 2,
-      "evidenced_lanes": 0,
-      "gpu_classes": [],
-      "latest_evidence_date": null
+      "level": "supported",
+      "lanes": 3,
+      "evidenced_lanes": 1,
+      "gpu_classes": [
+        "gfx906"
+      ],
+      "latest_evidence_date": "2026-11-02",
+      "evidence": [
+        "whisper-large-v3-turbo-radeonvii"
+      ]
     },
     {
       "modality": "audio",
-      "level": "unverified",
+      "level": "experimental",
       "lanes": 1,
-      "evidenced_lanes": 0,
-      "gpu_classes": [],
-      "latest_evidence_date": null
+      "evidenced_lanes": 1,
+      "gpu_classes": [
+        "gfx1100"
+      ],
+      "latest_evidence_date": "2026-11-03",
+      "evidence": [
+        "stable-audio-open-gfx1100"
+      ]
     },
     {
       "modality": "chat",
@@ -104,7 +114,7 @@
       "gpu_classes": [
         "gfx906"
       ],
-      "latest_evidence_date": "2026-10-24",
+      "latest_evidence_date": "2026-10-31",
       "evidence": [
         "bge-large-radeonvii",
         "gte-qwen2-1p5b-radeonvii"
@@ -114,12 +124,14 @@
       "modality": "image",
       "level": "experimental",
       "lanes": 9,
-      "evidenced_lanes": 1,
+      "evidenced_lanes": 2,
       "gpu_classes": [
+        "gfx1100",
         "gfx906"
       ],
-      "latest_evidence_date": "2026-05-22",
+      "latest_evidence_date": "2026-11-03",
       "evidence": [
+        "qwen-image-21-gfx1100",
         "sdxl-inpainting-radeonvii"
       ]
     },
@@ -162,11 +174,16 @@
     },
     {
       "modality": "video",
-      "level": "unverified",
+      "level": "experimental",
       "lanes": 2,
-      "evidenced_lanes": 0,
-      "gpu_classes": [],
-      "latest_evidence_date": null
+      "evidenced_lanes": 1,
+      "gpu_classes": [
+        "gfx1100"
+      ],
+      "latest_evidence_date": "2026-11-03",
+      "evidence": [
+        "wan21-t2v-1p3b-gfx1100"
+      ]
     },
     {
       "modality": "vision",
@@ -195,13 +212,13 @@
       "support_level": "supported",
       "backend": "diffusers",
       "gpu_class": "gfx1100",
-      "decision": "skip",
-      "evidenced": false,
-      "evidence": ".loom/60-validation-matrix.md#retired-gfx1100-imagegen-canary-slot-2026-05-22",
+      "decision": "promote",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
-        "retired-gfx1100-imagegen-canary-slot-2026-05-22"
+        "gfx1100-flex-card-layout-2026-11-03"
       ],
-      "date": "2026-05-22",
+      "date": "2026-11-03",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -310,13 +327,13 @@
       "support_level": "supported",
       "backend": "llamacpp",
       "gpu_class": "gfx906",
-      "decision": "promote",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#qwen3-embedding-gfx906-2026-10-24",
+      "evidence": ".loom/60-validation-matrix.md#gfx906-retrieval-swap-safety-2026-10-31",
       "validation_rows": [
-        "qwen3-embedding-gfx906-2026-10-24"
+        "gfx906-retrieval-swap-safety-2026-10-31"
       ],
-      "date": "2026-10-24",
+      "date": "2026-10-31",
       "source": "deploy/gpuprofiles/gfx906.yaml"
     },
     {
@@ -354,6 +371,21 @@
         "qwen3-1p7b-vllm-radeonvii@2026-06-09"
       ],
       "date": "2026-06-09",
+      "source": "deploy/gpuprofiles/gfx906.yaml"
+    },
+    {
+      "id": "gfx906/whispercpp",
+      "kind": "backend",
+      "support_level": "supported",
+      "backend": "whispercpp",
+      "gpu_class": "gfx906",
+      "decision": "promote",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx906-whispercpp-asr-2026-11-02",
+      "validation_rows": [
+        "gfx906-whispercpp-asr-2026-11-02"
+      ],
+      "date": "2026-11-02",
       "source": "deploy/gpuprofiles/gfx906.yaml"
     },
     {
@@ -559,22 +591,24 @@
     {
       "id": "qwen-image-21-gfx1100",
       "kind": "lane",
-      "support_level": "unverified",
+      "support_level": "experimental",
       "backend": "diffusers",
       "gpu_class": "gfx1100",
       "nodes": [
-        "cblevins-5930k"
+        "cblevins-7900xtx"
       ],
       "model": "qwen-image-21-gfx1100",
       "modality": "image",
-      "decision": "pending",
-      "evidenced": false,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-swap-2026-11-01",
+      "decision": "promote",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
         "gfx1100-xtx-inpod-swap-2026-11-01",
+        "gfx1100-flex-card-layout-2026-11-01",
+        "gfx1100-flex-card-layout-2026-11-03",
         "proxy-async-jobs-2026-10-31"
       ],
-      "date": "2026-11-01",
+      "date": "2026-11-03",
       "source": "deploy/models/qwen-image-21-gfx1100.yaml"
     },
     {
@@ -628,37 +662,42 @@
     {
       "id": "stable-audio-open-gfx1100",
       "kind": "lane",
-      "support_level": "unverified",
+      "support_level": "experimental",
       "backend": "diffusers",
       "gpu_class": "gfx1100",
       "nodes": [
-        "cblevins-5930k"
+        "cblevins-7900xtx"
       ],
       "model": "stable-audio-open-gfx1100",
       "modality": "audio",
-      "evidenced": false,
-      "evidence": "",
-      "date": null,
+      "decision": "promote",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
+      "validation_rows": [
+        "gfx1100-flex-card-layout-2026-11-03"
+      ],
+      "date": "2026-11-03",
       "source": "deploy/models/stable-audio-open-gfx1100.yaml"
     },
     {
       "id": "wan21-t2v-1p3b-gfx1100",
       "kind": "lane",
-      "support_level": "unverified",
+      "support_level": "experimental",
       "backend": "diffusers",
       "gpu_class": "gfx1100",
       "nodes": [
-        "cblevins-5930k"
+        "cblevins-7900xtx"
       ],
       "model": "wan21-t2v-1p3b-gfx1100",
       "modality": "video",
-      "decision": "pending",
-      "evidenced": false,
-      "evidence": ".loom/60-validation-matrix.md#proxy-async-jobs-2026-10-31",
+      "decision": "promote",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
+        "gfx1100-flex-card-layout-2026-11-03",
         "proxy-async-jobs-2026-10-31"
       ],
-      "date": "2026-10-31",
+      "date": "2026-11-03",
       "source": "deploy/models/wan21-t2v-1p3b-gfx1100.yaml"
     },
     {
@@ -668,7 +707,7 @@
       "backend": "diffusers",
       "gpu_class": "gfx1100",
       "nodes": [
-        "cblevins-5930k"
+        "cblevins-7900xtx"
       ],
       "model": "wan21-vace-1p3b-i2v-gfx1100",
       "modality": "video",
@@ -1407,7 +1446,7 @@
     {
       "id": "qwen38-27b-xtx-warm-canary",
       "kind": "lane",
-      "support_level": "supported",
+      "support_level": "experimental",
       "backend": "vllm",
       "gpu_class": "gfx1100",
       "nodes": [
@@ -1416,11 +1455,14 @@
       "model": "qwen38-27b-xtx-warm-canary",
       "modality": "chat",
       "canary": true,
-      "decision": "promote",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#xtx-warm-b06b06fe-2026-10-27",
+      "evidence": ".loom/60-validation-matrix.md#xtx-pcie-soak-2026-11-03",
       "validation_rows": [
         "gfx1100-xtx-inpod-swap-2026-11-01",
+        "xtx-pcie-soak-2026-11-02",
+        "xtx-pcie-soak-2026-11-03",
+        "gfx1100-flex-card-layout-2026-11-03",
         "proxy-async-jobs-2026-10-31",
         "xtx-warm-b06b06fe-2026-10-27",
         "xtx-vllm-v032-2026-10-24",
@@ -1430,7 +1472,7 @@
         "xtx-pcie-soak-2026-10-21",
         "gfx1100-native-w4a16-2026-09-13"
       ],
-      "date": "2026-10-27",
+      "date": "2026-11-03",
       "source": "deploy/models/qwen38-27b-xtx-warm-canary.yaml"
     },
     {
@@ -1641,15 +1683,15 @@
       ],
       "model": "gte-qwen2-1p5b-radeonvii",
       "modality": "embeddings",
-      "decision": "pass",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx906-llamacpp-flash-attn-ab-2026-10-24",
+      "evidence": ".loom/60-validation-matrix.md#gfx906-retrieval-swap-safety-2026-10-31",
       "validation_rows": [
         "gfx906-retrieval-swap-safety-2026-10-31",
         "gfx906-llamacpp-flash-attn-ab-2026-10-24",
         "gfx906-serving-2026-10-23"
       ],
-      "date": "2026-10-24",
+      "date": "2026-10-31",
       "source": "deploy/models/gte-qwen2-1p5b-radeonvii.yaml"
     },
     {
@@ -1801,6 +1843,27 @@
       "source": "deploy/models/qwen3-1p7b-vllm-radeonvii.yaml"
     },
     {
+      "id": "whisper-large-v3-turbo-radeonvii",
+      "kind": "lane",
+      "support_level": "supported",
+      "backend": "whispercpp",
+      "gpu_class": "gfx906",
+      "nodes": [
+        "cblevins-radeonvii"
+      ],
+      "model": "whisper-large-v3-turbo-radeonvii",
+      "modality": "asr",
+      "decision": "promote",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx906-whispercpp-asr-2026-11-02",
+      "validation_rows": [
+        "gfx906-whispercpp-asr-2026-11-02",
+        "gfx906-diarize-job-2026-11-xx@2026-11-01"
+      ],
+      "date": "2026-11-02",
+      "source": "deploy/models/whisper-large-v3-turbo-radeonvii.yaml"
+    },
+    {
       "id": "dreamshaper8-imagegen-gtx980ti",
       "kind": "lane",
       "support_level": "unverified",
@@ -1849,6 +1912,70 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "xtx-pcie-soak-2026-11-03",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "flexinfer-runtime-gfx1100",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "conditional",
+      "title": "cap-free fp16 matmul burn on cblevins-7900xtx after the owner's hardware work on 2026-11-02 (the host returned at 19:48Z on the same XFX SPEEDSTER MERC 310 card, BIOS 1811 unchanged; the host link…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#xtx-pcie-soak-2026-11-03",
+      "date": "2026-11-03",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-flex-card-layout-2026-11-03",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "promote",
+      "title": "KT-FLEX rerun of the GPU placement layout !1203 (.loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §9) after the owner's hardware work and the passing burn xtx-pcie-soak-2026-11-03: can…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
+      "date": "2026-11-03",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx906-whispercpp-asr-2026-11-02",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "whispercpp",
+      "gpu_class": "gfx906",
+      "nodes": [
+        "radeonvii"
+      ],
+      "decision": "promote",
+      "title": "the whisper.cpp ASR lane whisper-large-v3-turbo-radeonvii live on the Radeon VII: !1206 (whispercpp backend), !1250 (prewarm), !1252 (gfx906 runtime repin 90648c35 → 6fc6fcbd), !1207 (lane manifest…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx906-whispercpp-asr-2026-11-02",
+      "date": "2026-11-02",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "xtx-pcie-soak-2026-11-02",
+      "kind": "validation",
+      "support_level": "unsupported",
+      "backend": "flexinfer-runtime-gfx1100",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "cap-free fp16 matmul burn on cblevins-7900xtx after the 2026-11-01 KT-FLEX drop, on the new posture: the 5930k's firmware set pinned under /lib/firmware/updates/amdgpu (SMU 78.128.0, MES 120 instead…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#xtx-pcie-soak-2026-11-02",
+      "date": "2026-11-02",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gpu-power-sampling-1hz-2026-11-01",
       "kind": "validation",
       "support_level": "experimental",
@@ -1881,6 +2008,22 @@
       "source": ".loom/60-validation-matrix.md"
     },
     {
+      "id": "gfx1100-flex-card-layout-2026-11-01",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "KT-FLEX, the GPU placement layout !1203 (.loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §9): can the 7900 XTX carry the creative tier plus the warm lane through repeated swaps without…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-01",
+      "date": "2026-11-01",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-structured-outputs-2026-11-01",
       "kind": "validation",
       "support_level": "experimental",
@@ -1897,6 +2040,22 @@
       "source": ".loom/60-validation-matrix.md"
     },
     {
+      "id": "gfx906-diarize-job-2026-11-xx@2026-11-01",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "pyannote",
+      "gpu_class": "gfx906",
+      "nodes": [
+        "radeonvii"
+      ],
+      "decision": "pending",
+      "title": "KT-DIAR, feature D5-a (meeting pipeline), plan .loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md, design .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.5: does a…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx906-diarize-job-2026-11-xx@2026-11-01",
+      "date": "2026-11-01",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx906-retrieval-swap-safety-2026-10-31",
       "kind": "validation",
       "support_level": "supported",
@@ -1905,9 +2064,9 @@
       "nodes": [
         "radeonvii"
       ],
-      "decision": "pending",
+      "decision": "conditional",
       "title": "D6 retrieval plane protection (.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.6, brief §9 D6): kill-test KT-RET on gte-qwen2-1p5b-radeonvii. Two runs: (R) reproduction…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx906-retrieval-swap-safety-2026-10-31",
       "date": "2026-10-31",
       "source": ".loom/60-validation-matrix.md"

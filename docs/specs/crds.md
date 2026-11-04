@@ -46,6 +46,28 @@ The condition is absent when the field is unset or false. `structuredOutput` is
 also matched by WorkflowProfile `capabilities` and `requiredCapabilities`, as a
 declaration, like `toolCalling`.
 
+### `Model`: certificate-gated backends
+
+A backend that only a GPUProfile certificate admits (`pyannote` today, D5-a) is
+refused on a profile that does not certify the runtime image it would load in.
+The profile must list the backend in `spec.runtime.bundledBackends`, pin
+`spec.runtime.image` by digest, and carry the complete
+`flexinfer.ai/backend-certificate-pyannote-speaker-diarization` triple bound to
+that digest. The outcome is condition `BackendCertificate`, and a refusal also
+sets Phase `Failed` and `Schedulable=False` with the same reason:
+
+| Status | Reason | Meaning |
+|---|---|---|
+| True | `BackendCertified` | the runtime image is certified; message names it, since and evidence |
+| False | `BackendNotCertified` | no GPUProfile, backend not bundled, runtime image not digest-pinned, no or partial certificate, or certificate bound to another image |
+| False | `BackendUnsupported` | `spec.config.dedicatedDeployment: true` or `gpu.vendor: cpu`: the backend runs only in a GPU runtime pod |
+| False | `ConfigInvalid` | `spec.config.hfTokenSecret` / `hfTokenSecretKey` is not a Secret name / key |
+
+The condition is absent for other backends. A GPUProfile change re-reconciles
+the Model, so certifying the profile un-fails it without a re-apply. The proxy
+reads `BackendCertificate=True` on a diarization lane before it accepts a
+`diarize=true` transcription.
+
 ### `InferenceJob`
 
 Long work (a render, a transcription, a long chat) handed to the proxy, which runs it against the

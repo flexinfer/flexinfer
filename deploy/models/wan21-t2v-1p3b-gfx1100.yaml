@@ -1,4 +1,13 @@
-# Wan 2.1 1.3B text-to-video lane on cblevins-5930k (gfx1100).
+# Wan 2.1 1.3B text-to-video lane on cblevins-7900xtx (gfx1100).
+#
+# 2026-10-30 MOVED back to the 7900xtx flex card (placement layout,
+# .loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §6). The
+# 5930k is now the always-on workhorse card (900, minReplicas 1), where
+# this lane would be statically parked. In 7900xtx-textgen, 500 outranks the
+# idle tenant (the Mills warm lane, 300 ondemand) and ties the other creative
+# lanes, so they queue first-come-first-served without killing a render.
+# idleTimeout 30m -> 15m hands the card back to the warm lane sooner. The
+# 2026-07-18 note below is history.
 #
 # 2026-07-18 psyche fleet layout: rehomed from cblevins-7900xtx so the 7900xtx
 # card is the psyche TEXT lane (warm qwen35-9b-ablit-rp) and the 5930k gfx1100
@@ -13,6 +22,17 @@ metadata:
   namespace: flexinfer-system
   annotations:
     flexinfer.ai/serve-paths: /v1/videos/generations
+    # flexinfer-proxy cancels a forward with no response byte inside the lane
+    # first-byte budget (default 120 s, 504 "upstream first byte budget
+    # exceeded", internal/proxy/routing_retry.go). The diffusers server answers
+    # once the clip is rendered, and a cold start adds the weight load, so 480p
+    # clips through the proxy need the same budget as Qwen-Image (KT-FLEX,
+    # 2026-11-01). Direct callers of the lane Service are unaffected.
+    # 2026-11-03 KT-FLEX rerun on the XTX: a 33-frame 832x480 20-step clip
+    # took 506 s to its first byte (server timing: denoise 137 s, VAE
+    # decode + postprocess 367 s; the July proving run took 6m57s), so 600 s
+    # left ~90 s of margin. 900 s covers the decode-bound floor with room.
+    flexinfer.ai/lane-first-byte-budget: "900s"
     flexinfer.ai/purpose: 480p text-to-video on ROCm gfx1100
     flexinfer.ai/plan: .loom/30-implementation-plan-video-gen-gfx1100-2026-07-14.md
 spec:
@@ -26,8 +46,15 @@ spec:
   # floating tag points at and the 5930k prewarm list holds (pinned-83cda206faea).
   # Its server-diffusers.py carries the in-place compile path this lane's
   # compileMode needs (0c8c7b1bb) and the VACE mode the sibling uses.
-  # Rollback = f03bfc2f (Harbor-resident, not prewarmed).
-  imageDigest: sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
+  # 2026-11-03: repinned from 83cda206 to rocm-gfx1100-2c0cc642 (API
+  # pipeline 37384 job 460942), the first master build with !1268.
+  # It runs the bf16 Wan VAE with MIOpen off. MIOpen 3.4 only offers gfx1100
+  # its naive kernel for the VAE's 3D convs, so a 33-frame 832x480 clip spent
+  # 370 s in decode. The PyTorch im2col path takes 5-11 s (A/B in .loom/
+  # 70-result-kt-flex-flex-card-2026-11-01.md). Same recipe and base
+  # otherwise: 58 of 60 layers are 83cda206's, the other two are the
+  # server scripts. Rollback = 83cda206, still prewarmed on the XTX.
+  imageDigest: sha256:b1f98ad0d9adbf8927145bed242e5e49b5cc0f6ac3fa27196cbc4c3e885644bb
   source: HF://Wan-AI/Wan2.1-T2V-1.3B-Diffusers
   cache:
     strategy: Local
@@ -44,9 +71,10 @@ spec:
       sizeLimit: 6Gi
   gpu:
     vendor: amd
-    # cblevins-5930k exposes a single gfx1100 device-plugin slot (no iGPU).
-    count: 1
-    shared: 5930k-textgen
+    # cblevins-7900xtx exposes the dGPU and the Raphael iGPU as two
+    # device-plugin slots: claim both so the pod can never be handed the iGPU.
+    count: 2
+    shared: 7900xtx-textgen
     priority: 500
     vramEstimateMB: 18000
   serverless:
@@ -56,7 +84,8 @@ spec:
     # 5930k-textgen (VACE at 600 and the twin at 550 both queued for hours).
     # Restore to 1 + warmPolicy: primary when the twin canary cascade closes.
     minReplicas: 0
-    idleTimeout: 30m
+    # 2026-10-30: 30m -> 15m, same hand-back window as the other creative lanes.
+    idleTimeout: 15m
     coldStartTimeout: 30m
   config:
     # The gfx1100 GPUProfile bundles the older generic Diffusers runtime. This
@@ -91,7 +120,7 @@ spec:
     # replicas and would keep the GPU held.
     warmPolicy: ondemand
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "4"

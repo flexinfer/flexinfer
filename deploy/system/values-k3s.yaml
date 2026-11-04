@@ -119,8 +119,19 @@ controller:
     # a517165a is also safe):
     # sha256:39581256217d78a9f0a9698547d3596d0dd31648d43f6598e159d53a5d5b4376
     # (tag 20261023-142445).
-    digest: "sha256:cb4531508c426bdcbce648a71d5c21ac2872d8b2323ba0f728414a36368e3164"
-    tag: "20261030-153940"
+    # 2026-11-02: master d5aa35a7 (tag 20261102-144015; the controller binary
+    # last changed in the 1411f5a2 build, so this digest also carries
+    # 20261102-001509). The 3cb6cde0 build below plus every merge from
+    # 2026-10-30 21:00Z to 2026-11-02: !1206 whispercpp backend (needed by the
+    # !1207 lane), !1204 election failover-for (G2), D2 async-jobs API +
+    # InferenceJob reconciler (!1216/!1219; the API stays off, see !1221),
+    # D4 structured-output certificate gate (!1226, inert without the
+    # annotation), D5-a pyannote backend (!1244, certificate-gated), D1 runtime
+    # pin contract (!1224, CI only), D7 certify tooling. No pod template
+    # changes: no lane restarts expected. Rollback = the 3cb6cde0 build:
+    # tag 20261030-153940, sha256:cb4531508c426bdcbce648a71d5c21ac2872d8b2323ba0f728414a36368e3164.
+    digest: "sha256:1286a2f15c0a5a9f95de19275ce57bfa564ddcbd75517be4b80cf306d29b7c0f"
+    tag: "20261102-144015"
   resources:
     limits:
       cpu: 1000m
@@ -186,6 +197,23 @@ agent:
   nodeSelector:
     kubernetes.io/arch: amd64
     flexinfer.ai/gpu-present: "true"
+  # D7 GPU power sampling: flexinfer_gpu_power_watts from sysfs hwmon
+  # power1_average at 1 Hz, and flexinfer_lane_energy_joules_total split
+  # equally among the Models Ready on the card (docs/specs/metrics.md). Read
+  # only, never rocm-smi; the sampler stops itself on a degraded sentinel
+  # verdict, a device I/O error or 5 failed reads in a row.
+  #
+  # cblevins-7900xtx stays OFF until the owner's PCIe/SMU soak verdict
+  # (2026-11-06 00:15Z): its hwmon power reads go through the SMU that
+  # wedged the card before. Do not add it here before that verdict.
+  #
+  # Pass rule (validation matrix row gpu-power-sampling-1hz-2026-11-01) and
+  # the off switch (empty this list): docs/agents/operations.md#gpu-power-sampling.
+  gpuPower:
+    nodes:
+      - cblevins-5930k
+      - cblevins-radeonvii
+    interval: 1s
 
 proxy:
   enabled: true
@@ -246,7 +274,27 @@ proxy:
     # humanizer-fastswaps-cc7273917,
     # sha256:db4c70c04e4196bf26da174d6e529380000678be76ac8315916e7a62452f18c8.
     tag: "20261030-153940"
-    digest: "sha256:e345d649ce009ea75a6d5f5370e51d4f4e6f5b8176ce2a7f874e92950549cad6"
+    # 2026-11-02: master d5aa35a7 (tag 20261102-144015) = the 3cb6cde0 build
+    # below plus D2 typed error envelope + cold descriptor (!1210/!1213; Mills
+    # classifies by error.code since loom-core!3289), D3 QoS classes (!1209/
+    # !1212, opt-in), D6-a swap replay (!1215, on by default) and D6-c gte
+    # reroute via !1204 (G1, annotation-driven: gte-qwen2-1p5b-radeonvii ->
+    # its CPU twin, !1217), D4 structured-output pass-through (!1229), D5-a
+    # diarize=true as a job (!1245, needs the jobs API, off), lane first-byte
+    # budgets for the Wan lanes (!1247). Rollback = the 3cb6cde0 build:
+    # tag 20261030-153940, sha256:e345d649ce009ea75a6d5f5370e51d4f4e6f5b8176ce2a7f874e92950549cad6.
+    # 2026-11-03: master c500a1fd (tag 20261103-053612) = the d5aa35a7 build
+    # below plus !1264: cold-started requests run under the lane's
+    # flexinfer.ai/lane-first-byte-budget instead of the 120 s default (KT-FLEX
+    # rerun: a cold Wan clip was cut at 120 s while the card rendered). Rollback
+    # = the d5aa35a7 digest sha256:b07a52ce3c72200cd961ad2903a86485387da7a051ea06258db0001aa7580a87.
+    # 2026-11-03: master 72628e0e (tag 20261103-172712) = the c500a1fd build
+    # above plus !1270: a request drained from the cold-start queue retries a
+    # refused dial for up to 5 s. The Model turns Ready before its Service has
+    # endpoints, so the 2x50 ms retry hit a ClusterIP that still REJECTed and a
+    # cold Wan clip came back 502. Ready lanes keep the 2x50 ms retry. Rollback
+    # = the c500a1fd digest sha256:ce24751b46e3732be06f221937c0f1edaa2af355cb135da560fba3ed7643232d.
+    digest: "sha256:bdd4bd256cc43c0fb0e23f05b5a62f9eefb984e70caf8af26cde4fb6a2eb60f8"
     pullPolicy: Always
   service:
     type: ClusterIP
@@ -576,6 +624,19 @@ imagePrewarm:
         # Pinned by the gfx906 DaemonSet + GPUProfile since the S3'' roll
         # (matrix row gfx906-serving-2026-10-23).
         - registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7
+        # rocm-gfx906-5ca58769: master CI publish_runtime_rocm_gfx906 from the
+        # !1206 merge (whisper.cpp stage, KT-ASR 2026-10-30). Pulled ahead of the
+        # runtime.profiles gfx906 repin so the Radeon VII lanes return in seconds,
+        # not after a 7.6 GB pull. 90648c35 stays as the rollback anchor.
+        - registry.harbor.lan/flexinfer/runtime@sha256:6fc6fcbd936115679e8c5adc43e14c2b1cb86d7f4c702b5ce94b9bdae52c4871
+        # rocm-gfx906-pyannote-6fc6fcbd9361 (pinned-cb4c8dc3c2bd): the D5-a pyannote
+        # layer (build/Dockerfile.runtime-gfx906-pyannote at !1259, venv
+        # /opt/pyannote) on 6fc6fcbd, built on the 7900xtx host 2026-11-02.
+        # Pulled ahead of the runtime.profiles gfx906 repin (KT-DIAR window,
+        # .loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md); only the
+        # layer delta is new on this node (~88 MB compressed, 290 MB on disk).
+        # 6fc6fcbd becomes the rollback anchor.
+        - registry.harbor.lan/flexinfer/runtime@sha256:cb4c8dc3c2bd55e0a5935642ed71b06d6fa1236ddd00f15b73627c1660359bc5
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
@@ -641,11 +702,43 @@ imagePrewarm:
         # pinned-7ae8e92ff28a; it had no pinned tag and had never been pulled.
         # The pull is the supervisor and server layers on the shared base.
         - registry.harbor.lan/flexinfer/runtime@sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250
+        # 2026-11-03 (D1): rocm-gfx1100-serving-v032-ddf22437 (pipeline 37264,
+        # job 460293): 7ae8e92f plus the creative-lane deps the in-pod
+        # Qwen-Image, Wan and Stable Audio lanes import (bitsandbytes 0.50.2
+        # with its ROCm 7.2 library, torchsde, imageio + imageio-ffmpeg,
+        # ftfy; !1269), the Wan VAE MIOpen bypass (!1268) and the D5-a
+        # diarization backend. Frozen stack unchanged (265 packages); the
+        # build-time verify checked the new modules, the bitsandbytes HIP
+        # library and the ffmpeg binary. The recommended target of the
+        # window-gated XTX repin; this entry also gets it pinned. The pull is
+        # the new upper layers on the shared v0.32.0 base.
+        - registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.
         - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
+        # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
+        # placement-2026-10-30.md §6): the creative lanes moved to this card.
+        # Their images are held here so that a first request after image GC is
+        # a container start, not a pull. On the 5930k the first Qwen-Image
+        # activation took 31 min, most of it this pull. About 59 GB in total
+        # against 324 GB free on this root (2026-10-30). The image GC
+        # threshold here is 90/85. The 5930k profile keeps the same pins until
+        # the layout has survived a week, as the rollback anchor; drop them
+        # there afterwards.
+        # Qwen-Image 2.1 (serving persona with the R1-R3 overlay, b83c3822).
+        - registry.harbor.lan/flexinfer/runtime@sha256:2c94c6d973fab09d9304891b26a25a026bc6e6bdecfe304b138de6c118d219cc
+        # Wan 2.1 VACE pins this through spec.imageDigest. It is also the
+        # T2V lane's rollback anchor.
+        - registry.harbor.lan/flexinfer/diffusers-video@sha256:83cda206faea929c181cc13fe4fdb928db2942f22d45938201965527e3beb80f
+        # Wan 2.1 T2V (2026-11-03, rocm-gfx1100-2c0cc642): the same recipe
+        # plus the VAE MIOpen bypass of !1268. 58 of its 60 layers are
+        # 83cda206's; the other two are the server scripts.
+        - registry.harbor.lan/flexinfer/diffusers-video@sha256:b1f98ad0d9adbf8927145bed242e5e49b5cc0f6ac3fa27196cbc4c3e885644bb
+        # Stable Audio Open (rocm-gfx1100-audio2). Listing it here also makes
+        # the pin guard tag it pinned-d87f75f8c69b.
+        - registry.harbor.lan/flexinfer/diffusers@sha256:d87f75f8c69bd3e266b11fbb11ee6528d1134001721a960b6e738f6af7e788ce
 quantization:
   # Python 3.14 candidate promoted after the isolated ModelCache validator and
   # publisher canary passed. The former Python 3.11 digest remains the rollback
@@ -954,7 +1047,11 @@ runtime:
       # dropped from the radeonvii-gfx906 prewarm list 2026-10-27, so a
       # rollback pulls it):
       #   registry.harbor.lan/flexinfer/runtime@sha256:8181b6901ab0ed1244a9035d88677c2c729094b847f60d63368faca147a21585
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:90648c350783694d4858e88a31aefcdf682d171571801905c3ddd64c64c530d7"
+      # 2026-11-02 (!1207 apply plan step 3): repinned to rocm-gfx906-5ca58769, the
+      # master CI publish from the !1206 merge, the first gfx906 runtime with the
+      # whisper.cpp stage (KT-ASR 2026-10-30). Prewarmed on the Radeon VII first.
+      # Rollback anchor: 90648c35 (rocm-gfx906-b8637f35), still prewarmed.
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:6fc6fcbd936115679e8c5adc43e14c2b1cb86d7f4c702b5ce94b9bdae52c4871"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1

@@ -200,7 +200,7 @@ func laneModality(m *aiv1alpha2.Model) string {
 	switch {
 	case backend == "snac" || has("orpheus", "kokoro", "tts"):
 		return ModalityTTS
-	case has("whisper", "transcri", "asr"):
+	case backend == "pyannote" || has("whisper", "transcri", "asr", "diariz"):
 		return ModalityASR
 	case has("stable-audio", "musicgen"):
 		return ModalityAudio
