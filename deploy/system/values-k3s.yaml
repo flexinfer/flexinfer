@@ -168,7 +168,18 @@ agent:
   enabled: true
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-agent
-    tag: "master"
+    # Pinned by digest like the controller and proxy. Without a digest the
+    # rendered image is :${FLEXINFER_AGENT_TAG}, the timestamp tag Flux image
+    # automation substitutes in platform/gitops k3s/flux/apps/flexinfer-system.yaml,
+    # so every master build rolled the agent on every GPU node. The digest wins
+    # over that tag (flexinfer.imageRef) and sets imagePullPolicy IfNotPresent.
+    # 2026-11-04: the build the agents ran when this landed (tags master,
+    # 20261104-190946 / ac73e607, 20261104-185809 / 71a768e9); drafted
+    # 2026-11-01 on de13ce8f (62c87123), which image automation had since
+    # replaced. Rollback: delete the digest line (the agent then follows image
+    # automation again).
+    digest: "sha256:6b832f384c69063dc33248709ae715f3398190b8ed00990501bcca3a139d7b8a"
+    tag: "20261104-190946"
   resources:
     limits:
       cpu: 1000m
