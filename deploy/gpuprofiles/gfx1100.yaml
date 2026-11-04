@@ -98,8 +98,8 @@ spec:
         v1Engine: supported           # V1 is the only engine (V0 removed in 0.18); 0.32 runs the V2 model runner on it.
         piecewiseGraphs: supported    # 0.32 captures CUDA graphs on gfx1100 (ladder auto-derived); every promoted lane runs enforceEager=false.
         flashAttention: triton        # TRITON_ATTN and ROCM_SEGMENTED_ATTN (Triton kernels); no CK FA in the 0.32 stack.
-        fusedMoETriton: experimental  # Qwen3.5-35B-A3B MoE lanes serve on their own vLLM 0.23 overlays; not qualified on 0.32.
-        fp8KVEmulation: experimental  # fp8_e4m3 KV serves (XTX warm lane, for pool size at 64K); slower than fp16 KV (vllm#56992).
+        fusedMoETriton: experimental  # 0.32 ships an RDNA3 W4A16 MoE HIP kernel (moe_gptq_gemm_rdna3, per upstream); our MoE lanes still run 0.23 overlays, unqualified on 0.32.
+        fp8KVEmulation: experimental  # fp8_e4m3 KV serves on TRITON_ATTN (XTX warm lane, pool size at 64K), slower than fp16 KV (vllm#56992); ROCM_SEGMENTED_ATTN rejects fp8 KV on gfx11 (per upstream).
         marlinINT4: unsupported       # Marlin is CUDA-only; RDNA3W4A16LinearKernel is the INT4 (W4A16 GPTQ/AutoRound) path on 0.32.
         audioTranscription: experimental # Whisper lanes pin vllm@7ac257f3; the 0.32 serving images carry no librosa/soundfile.
         defaults:

@@ -166,7 +166,7 @@
         "gfx1100",
         "gfx906"
       ],
-      "latest_evidence_date": "2026-10-23",
+      "latest_evidence_date": "2026-11-04",
       "evidence": [
         "orpheus-3b-radeonvii",
         "snac-decode-gfx1100"
@@ -877,12 +877,12 @@
       "modality": "tts",
       "decision": "promote",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-serving-2026-10-23",
+      "evidence": ".loom/60-validation-matrix.md#xtx-runtime-v032-527e2714-2026-11-04",
       "validation_rows": [
         "xtx-runtime-v032-527e2714-2026-11-04",
         "gfx1100-serving-2026-10-23"
       ],
-      "date": "2026-10-23",
+      "date": "2026-11-04",
       "source": "deploy/models/snac-decode-gfx1100.yaml"
     },
     {
@@ -1915,15 +1915,15 @@
     {
       "id": "xtx-runtime-v032-527e2714-2026-11-04",
       "kind": "validation",
-      "support_level": "experimental",
+      "support_level": "supported",
       "backend": "runtime",
       "gpu_class": "gfx1100",
       "nodes": [
         "7900xtx"
       ],
-      "decision": "other",
+      "decision": "promote",
       "title": "D1 step 2 (.loom/32-iteration-plan-d1-flex-card-window-2026-11-01.md §2 order 1): the 7900 XTX runtime DaemonSet (runtime.profiles gfx1100) and the gfx1100 GPUProfile spec.runtime.image move from…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#xtx-runtime-v032-527e2714-2026-11-04",
       "date": "2026-11-04",
       "source": ".loom/60-validation-matrix.md"
