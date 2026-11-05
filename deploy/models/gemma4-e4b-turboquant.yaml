@@ -35,6 +35,9 @@ spec:
     idleTimeout: 30m
     coldStartTimeout: 15m
   config:
+    # 2026-11-04: pinned to the eager mode this lane inherited from the
+    # gfx1100 GPUProfile vLLM default, which is now enforceEager=false.
+    enforceEager: true
     dtype: "half"
     maxModelLen: 16384
     gpuMemoryUtilization: "0.90"

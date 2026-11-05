@@ -77,6 +77,18 @@ var (
 		[]string{"node"},
 	)
 
+	// LaneEnergyJoulesTotal is GPU energy attributed to a lane: the card's
+	// energy between two power samples, split equally among the lanes Active
+	// (phase Ready) on the card at the later sample. Energy while no lane is
+	// Active is attributed to nobody. Only where GPU power sampling is on.
+	LaneEnergyJoulesTotal = prometheus.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "flexinfer_lane_energy_joules_total",
+			Help: "GPU energy in joules attributed to a lane, the card's sampled power split equally among the lanes Active on it.",
+		},
+		[]string{"model", "node", "gpu"},
+	)
+
 	// GPU VRAM metrics
 
 	// GPUVRAMFreeBytes tracks free VRAM per GPU.
@@ -681,7 +693,7 @@ func init() {
 	ctrlmetrics.Registry.MustRegister(ModelLoadSeconds)
 	ctrlmetrics.Registry.MustRegister(InferenceJobs, InferenceJobsGCDeletedTotal)
 	ctrlmetrics.Registry.MustRegister(GPUTemperature)
-	ctrlmetrics.Registry.MustRegister(GPUPowerWatts, GPUPowerSamplerActive)
+	ctrlmetrics.Registry.MustRegister(GPUPowerWatts, GPUPowerSamplerActive, LaneEnergyJoulesTotal)
 
 	// GPU VRAM metrics
 	ctrlmetrics.Registry.MustRegister(GPUVRAMFreeBytes)

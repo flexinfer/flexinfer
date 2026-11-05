@@ -25,6 +25,7 @@ Defined in `services/flexinfer/pkg/metrics/exporter.go`:
 - `flexinfer_gpu_temperature_celsius{gpu,node}`
 - `flexinfer_gpu_power_watts{gpu,node}` (node agent; board power from sysfs hwmon, only on nodes in `--gpu-power-nodes`; see [GPU power](#gpu-power-node-agent))
 - `flexinfer_gpu_power_sampler_active{node}` (node agent; `1` while sampling, `0` after the sampler stopped itself, absent where sampling is off)
+- `flexinfer_lane_energy_joules_total{model,node,gpu}` (node agent; counter of GPU energy attributed to a lane, see [lane energy](#lane-energy-node-agent))
 - `flexinfer_gpu_vram_free_bytes{gpu,node,vendor}`
 - `flexinfer_gpu_vram_total_bytes{gpu,node,vendor}`
 - `flexinfer_gpu_vram_used_bytes{gpu,node,vendor}`
@@ -72,6 +73,48 @@ wildcard), at `--gpu-power-interval` (default `1s`, minimum `500ms`).
   (missing file, unparsable, or above 1000 W). It logs the reason
   (`GPU power sampling stopped`), deletes its `flexinfer_gpu_power_watts`
   series and sets `flexinfer_gpu_power_sampler_active` to `0`.
+
+### Lane energy (node agent)
+
+`flexinfer_lane_energy_joules_total{model,node,gpu}` integrates the power
+samples on nodes where power sampling is on.
+
+**Attribution rule.** Between two consecutive good samples of a card the agent
+adds `(P_prev + P_now) / 2 × Δt` joules, split **equally** among the lanes
+Active on the card at the later sample. A lane is Active on the card when its
+`Model` (in the agent's namespace) is phase `Ready`, `status.gpu.node` is this
+node, and it allocates a GPU (CPU-only lanes on the same node are not counted).
+The lane set is re-listed every 15 s, so a lane that turns Ready or parks is
+attributed at most 15 s late; three failed listings in a row clear it until
+the API answers again.
+
+- Energy while no lane is Active is attributed to nobody (an idle card's draw
+  is no lane's cost). While any lane is Active, `sum by (node, gpu)` of the
+  counter's rate equals the card's sampled power.
+- On a shared card the split is by head count, not by work: the Radeon VII's
+  four co-Active lanes (bge-large, bge-reranker, gte, orpheus) each get a
+  quarter of its draw although gte carries most of the ~119K requests a day.
+  A traffic- or busy-time-weighted split is a possible refinement; the equal
+  split is the stated rule.
+- Steps longer than 5 sampling periods (a stalled loop, a runtime-suspended
+  card, a failed read) are not integrated. `Loading` and `Preempted` time is
+  not attributed.
+- A node with more than one sampled discrete card attributes nothing: the
+  agent cannot tell which card a lane holds. Every node in the fleet has one.
+- Needs `get`/`list` on `models.ai.flexinfer` in the agent's namespace; the
+  chart grants it only while `agent.gpuPower.nodes` is non-empty.
+
+Tokens per joule (the chart's Mission Control dashboard, "Tokens per Joule by
+Lane"):
+
+```promql
+sum by (model) (rate(flexinfer_proxy_request_completion_tokens_sum[5m]))
+  / sum by (model) (rate(flexinfer_lane_energy_joules_total[5m]) > 0)
+```
+
+and the same with `flexinfer_proxy_prompt_tokens_total` for embedding and
+rerank lanes. Both token counters are the proxy's, keyed by resolved model,
+and miss streaming requests that end without a usage chunk.
 
 ### Registry Note (Important)
 
@@ -122,6 +165,15 @@ Defined in `services/flexinfer/internal/proxy/metrics.go`:
   A high streaming share whose usage chunks are absent means the shape data is
   biased and the verdict must be read with caution. Streaming usage-chunk capture
   shipped in `internal/proxy/usage_log.go` (`usageSniffingBody`).
+- `flexinfer_proxy_schema_constrained_requests_total{model,constraint,code}` (counter) — forwarded
+  chat, completions and responses requests that constrain their output, by resolved model,
+  constraint kind (`response_format.json_schema`, `structured_outputs.json`, `text.format.json_schema`,
+  `tool_choice.required`, … see `docs/specs/proxy-api.md`, "Structured outputs and tool calls")
+  and upstream status class (`2xx`, `4xx`, `5xx`). The proxy forwards those fields untouched; this
+  is the tag. A lane's constrained share is
+  `sum(rate(flexinfer_proxy_schema_constrained_requests_total{model="M",code="2xx"}[1d])) / sum(rate(flexinfer_proxy_completions_total{model="M"}[1d]))`;
+  `code="4xx"` shows schemas the lane rejected. The `request usage` log line carries the same
+  `schema_constrained=true constraint=<kind>` fields.
 - `flexinfer_proxy_qos_decisions_total{class,lane,outcome}` (counter) — one per request by
   resolved QoS class (`interactive|background|batch`), lane (the Model it resolved to, the parent
   for a LoRA adapter) and outcome (`admitted`, `queued`, `rejected`, `canceled` on lanes that enforce classes,

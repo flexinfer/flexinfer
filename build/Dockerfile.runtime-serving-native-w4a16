@@ -36,15 +36,12 @@ USER root
 # need a build backend.
 RUN python3 -m pip install --no-cache-dir "setuptools>=74" wheel
 
-# vLLM 0.23 and 0.26 shipped Qwen3.5's text class while registering only the
-# multimodal wrapper; newer releases may register it themselves, in which case
-# the plugin's register_model() call is an idempotent overwrite of the same
-# class (checked at build time by the verify script — services/flexinfer#66).
-# Install FlexInfer's existing general plugin so the extracted
-# Qwen3_5TextConfig artifact resolves to Qwen3_5ForCausalLM in both the API and
-# EngineCore processes instead of falling through to a vision_config access.
+# vLLM 0.32 registers Qwen3.5's text classes itself; the text plugin (0.11+)
+# refuses a runtime that does not, and only adds the ROCm FLA pruning, the MTP
+# contract and the MoE name map in both the API and EngineCore processes. The
+# verify script runs its register() at build time (services/flexinfer#66).
 # Shared helpers for FlexInfer's vLLM general plugins (ROCm FLA autotune
-# pruning, composite-config label resolution, hybrid-state wiring). Every
+# pruning, segmented-attention tuning, composite-config label resolution). Every
 # plugin below imports this at module scope, and the plugin installs use
 # --no-deps, so it must be installed FIRST.
 COPY build/vllm-plugin-common /opt/flexinfer/vllm-plugin-common

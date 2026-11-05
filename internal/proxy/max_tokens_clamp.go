@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"strconv"
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -40,13 +41,12 @@ func clampMaxTokensInBody(body []byte, limits modelmeta.TokenLimits, promptReser
 		promptReserveTokens = defaultPromptReserveTokens
 	}
 
-	var data map[string]any
-	if err := json.Unmarshal(body, &data); err != nil {
+	rawValue, ok := topLevelValue(body, "max_tokens")
+	if !ok {
 		return body, -1, -1
 	}
-
-	raw, ok := data["max_tokens"]
-	if !ok {
+	var raw any
+	if err := json.Unmarshal(rawValue, &raw); err != nil {
 		return body, -1, -1
 	}
 
@@ -63,13 +63,10 @@ func clampMaxTokensInBody(body []byte, limits modelmeta.TokenLimits, promptReser
 		return body, -1, -1
 	}
 
-	data["max_tokens"] = cap
-	modified, err := json.Marshal(data)
-	if err != nil {
-		return body, -1, -1
-	}
-	// Preserve original body if marshalling somehow produces identical bytes.
-	if bytes.Equal(modified, body) {
+	// Splice only the max_tokens value so a structured-output schema in the
+	// same body keeps its key order (body_fields.go).
+	modified, ok := setTopLevelField(body, "max_tokens", []byte(strconv.Itoa(cap)))
+	if !ok || bytes.Equal(modified, body) {
 		return body, -1, -1
 	}
 	return modified, orig, cap
