@@ -1,0 +1,765 @@
+# S8 canary (B4, .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md
+# §3.2 and §4 B4): llama.cpp b11335 vs b11847 on the Radeon VII, before the
+# gfx906 runtime repin. One-shot pod, co-resident with the live gfx906 runtime:
+# no amd.com/gpu claim, hostPath /dev/kfd + /dev/dri (KT-ASR pattern), hostPID
+# so each llama-server's pid is its KFD process entry.
+#
+# For every llama.cpp lane the runtime serves on this card (bge-large,
+# bge-reranker, gte-qwen2, qwen3-reranker, orpheus, the gemma3-4b lane,
+# qwen3-embedding-4b; humanizer on the CPU only) the harness starts the lane's
+# model with the lane's flags on b11335 (copied from the live runtime image by
+# the init container) and then on b11847 (this image), one server at a time,
+# and records KFD VRAM and compute queues per process, latency or decode speed,
+# and output parity. It probes the live gte Service every 2 s and stops on three
+# slow (> 1 s) or failed probes in a row. Pass rule: matrix row
+# `gfx906-llamacpp-b11847-2026-11-05` in .loom/60-validation-matrix.md.
+#
+#   kubectl apply -f deploy/debug/s8-gfx906-llamacpp-b11847-canary.yaml
+#   kubectl -n flexinfer-system logs -f s8-gfx906-llamacpp-canary   # ~25 min, ends at KT_DONE
+#   kubectl -n flexinfer-system logs s8-gfx906-llamacpp-canary > s8-canary.log
+#   kubectl delete -f deploy/debug/s8-gfx906-llamacpp-b11847-canary.yaml
+#
+# Results leave through `kubectl logs` only: S8_ROW summary lines, then /out
+# (results.json and the server logs) as base64 tar.gz between KT_ARCHIVE_BEGIN
+# and KT_ARCHIVE_END. The pod idles 15 min after KT_DONE, then exits.
+#
+# Generated from the harness by the S8 session; edit the harness block below
+# directly if it needs to change.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: s8-gfx906-llamacpp-canary
+  namespace: flexinfer-system
+data:
+  canary.py: |
+    #!/usr/bin/env python3
+    """S8 canary: llama.cpp b11335 vs b11847 on the Radeon VII (gfx906).
+
+    Runs inside one privileged hostPID pod next to the live gfx906 runtime. For
+    each llama.cpp lane the runtime serves it starts llama-server from the b11335
+    build (copied from the live runtime image by the init container) and then
+    from the b11847 build (this image), with the lane's own model file and the
+    flags the runtime renders for it, one server at a time. Per arm it records:
+
+      - VRAM of that process from KFD (/sys/class/kfd/kfd/proc/<pid>/vram_*),
+        idle after load and peak under load (hostPID: the Popen pid is the KFD pid);
+      - its compute queues from KFD (/sys/class/kfd/kfd/proc/<pid>/queues), idle
+        and peak, and the card-wide total (must stay <= 24);
+      - embedding/rerank lanes: latency of a sequential pass and a concurrency-4
+        pass, and the outputs for fixed inputs (cosine for embeddings, score delta
+        and order for rerank);
+      - generative lanes: greedy completions, decode tokens/s and output parity.
+
+    A watcher probes the live gte lane at its Service the whole time. Three
+    consecutive probes slower than KT_ABORT_S (or failing) stop the canary: the
+    running arm's server is killed and the remaining arms are skipped. Before each
+    GPU arm the card must have room for the lane's vramEstimateMB plus 1 GiB, and
+    3 compute queues under 24.
+
+    stdlib only. Results: /out/results.json, /out/<lane>-<build>.log (server output).
+    """
+    import json
+    import math
+    import os
+    import signal
+    import statistics
+    import subprocess
+    import threading
+    import time
+    import urllib.request
+
+    OUT = os.environ.get("KT_OUT", "/out")
+    KFD = os.environ.get("KT_KFD", "/sys/class/kfd/kfd/proc")
+    CARD = os.environ.get("KT_CARD", "/sys/class/drm/card0/device")
+    LIVE_GTE = os.environ.get("KT_LIVE_GTE", "http://10.43.153.107:8000")
+    ABORT_S = float(os.environ.get("KT_ABORT_S", "1.0"))
+    BASELINE_S = int(os.environ.get("KT_BASELINE_S", "120"))
+    SEQ_N = int(os.environ.get("KT_SEQ_N", "100"))
+    CONC_N = int(os.environ.get("KT_CONC_N", "100"))
+    THREADS = os.environ.get("KT_THREADS", "6")
+    HEADROOM_MB = 1024
+    MAX_QUEUES = 24
+    SHIM = "/opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so"
+
+    BINS = [
+        ("b11335", os.environ.get("KT_OLD_BIN", "/old/bin")),
+        ("b11847", os.environ.get("KT_NEW_BIN", "/opt/llamacpp/bin")),
+    ]
+    M = os.environ.get("KT_MODELS", "/models/flexinfer-system")
+
+
+    def lane(name, kind, est, ctx, file, args, **kw):
+        d = {
+            "name": name,
+            "kind": kind,
+            "est": est,
+            "ctx": ctx,
+            "file": f"{M}/{file}",
+            "args": args.split(),
+        }
+        d.update(kw)
+        return d
+
+
+    LANES = [
+        lane(
+            "bge-large",
+            "embed",
+            1500,
+            512,
+            "bge-large-radeonvii/bge-large-en-v1.5-q8_0.gguf",
+            "--ctx-size 512 --batch-size 2048 --ubatch-size 512 --embeddings",
+        ),
+        lane(
+            "bge-reranker",
+            "rerank",
+            700,
+            512,
+            "bge-reranker-radeonvii/bge-reranker-v2-m3-Q8_0.gguf",
+            "--ctx-size 512 --batch-size 2048 --ubatch-size 512 --reranking",
+        ),
+        lane(
+            "gte-qwen2-1p5b",
+            "embed",
+            2600,
+            1024,
+            "gte-qwen2-1p5b-radeonvii/gte-Qwen2-1.5B-instruct-Q8_0.gguf",
+            "--ctx-size 1024 --batch-size 2048 --ubatch-size 512 --embeddings --pooling last",
+        ),
+        lane(
+            "qwen3-reranker-0p6b",
+            "rerank",
+            1700,
+            1024,
+            "qwen3-reranker-0p6b-radeonvii/qwen3-reranker-0.6b-q8_0.gguf",
+            "--ctx-size 1024 --batch-size 1024 --ubatch-size 1024 --parallel 1 --reranking",
+        ),
+        # Generative lanes in the same runtime pod: decode speed and greedy parity.
+        lane(
+            "orpheus-3b",
+            "complete",
+            3300,
+            4096,
+            "orpheus-3b-radeonvii/orpheus-3b-0.1-ft.Q4_K_M.gguf",
+            "--ctx-size 4096 --batch-size 1024 --ubatch-size 512",
+            n_predict=128,
+            reps=5,
+        ),
+        lane(
+            "gemma3-4b-e4b-lane",
+            "complete",
+            4000,
+            32768,
+            "gemma4-e4b-radeonvii/google_gemma-3-4b-it-Q4_K_M.gguf",
+            "--ctx-size 32768 --batch-size 1024 --ubatch-size 512 --parallel 2 --flash-attn on "
+            "--cache-type-k q4_0 --cache-type-v q4_0 --jinja",
+            n_predict=128,
+            reps=5,
+        ),
+        lane(
+            "qwen3-embedding-4b",
+            "embed",
+            5600,
+            4096,
+            "qwen3-embedding-4b-radeonvii/Qwen3-Embedding-4B-Q8_0.gguf",
+            "--ctx-size 4096 --batch-size 512 --ubatch-size 512 --parallel 1 --embeddings --pooling last",
+        ),
+        # Humanizer (Gemma 4 12B, 11 GB estimate) cannot sit beside the warm set on
+        # the card, so it is checked on the CPU only: the architecture loads on
+        # both builds and the greedy output matches.
+        lane(
+            "humanizer-cpu",
+            "complete",
+            0,
+            2048,
+            "humanizer/humanizer-12b-Q6_K.gguf",
+            "--ctx-size 2048 --batch-size 512 --ubatch-size 128 --parallel 1 --jinja",
+            n_predict=32,
+            reps=1,
+            cpu=True,
+            ngl="0",
+        ),
+    ]
+
+    SENT = "The Radeon VII serves the retrieval plane for the home cluster every day. "
+    DOCS = [
+        "Embeddings map text to vectors so similar passages land close together.",
+        "A reranker scores each query and document pair with a cross-encoder.",
+        "The weather in the mountains turned cold and the river froze overnight.",
+        "Kubernetes schedules pods onto nodes that satisfy their resource requests.",
+        "HBM2 memory on the Radeon VII gives it a wide bus and high bandwidth.",
+        "Sourdough bread needs a starter, flour, water, salt and a long proof.",
+        "llama.cpp exposes OpenAI-compatible embedding and rerank endpoints.",
+        "The committee postponed the vote until the spring session.",
+    ]
+    QUERY = "how does a cross-encoder rerank retrieved passages"
+    PROMPT = (
+        "Write a short paragraph about why a home lab keeps an old Radeon VII in service "
+        "for embeddings and speech, in plain words."
+    )
+
+
+    def common_args(ln):
+        return [
+            "--n-gpu-layers",
+            ln.get("ngl", "999"),
+            "--metrics",
+            "-fit",
+            "off",
+            "--threads",
+            THREADS,
+        ]
+
+
+    def now():
+        return time.time()
+
+
+    def log(*a):
+        print(time.strftime("%H:%M:%SZ", time.gmtime()), *a, flush=True)
+
+
+    def read_int(path):
+        try:
+            with open(path) as f:
+                return int(f.read().strip() or 0)
+        except (OSError, ValueError):
+            return None
+
+
+    def kfd_vram(pid):
+        d = f"{KFD}/{pid}"
+        try:
+            for n in os.listdir(d):
+                if n.startswith("vram_"):
+                    return read_int(f"{d}/{n}")
+        except OSError:
+            pass
+        return None
+
+
+    def kfd_compute_queues(pid):
+        d = f"{KFD}/{pid}/queues"
+        n = 0
+        try:
+            for q in os.listdir(d):
+                try:
+                    with open(f"{d}/{q}/type") as f:
+                        if f.read().strip().lower() == "compute":
+                            n += 1
+                except OSError:
+                    pass
+        except OSError:
+            return None
+        return n
+
+
+    def card_compute_queues():
+        total = 0
+        per = {}
+        try:
+            pids = os.listdir(KFD)
+        except OSError:
+            return None, {}
+        for p in pids:
+            q = kfd_compute_queues(p)
+            if q:
+                total += q
+                per[p] = q
+        return total, per
+
+
+    def post(url, body, timeout=60):
+        data = json.dumps(body).encode()
+        req = urllib.request.Request(
+            url, data=data, headers={"Content-Type": "application/json"}
+        )
+        t0 = now()
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            out = json.loads(r.read())
+        return now() - t0, out
+
+
+    def pct(xs, p):
+        if not xs:
+            return None
+        xs = sorted(xs)
+        k = max(0, min(len(xs) - 1, int(math.ceil(p / 100.0 * len(xs))) - 1))
+        return round(xs[k] * 1000, 1)
+
+
+    def cosine(a, b):
+        num = sum(x * y for x, y in zip(a, b))
+        da = math.sqrt(sum(x * x for x in a))
+        db = math.sqrt(sum(y * y for y in b))
+        return num / (da * db) if da and db else 0.0
+
+
+    class Watcher(threading.Thread):
+        """Probes the live gte lane at its Service; sets abort on a sustained stall."""
+
+        def __init__(self):
+            super().__init__(daemon=True)
+            self.samples = []  # (t, phase, latency_s or None)
+            self.phase = "baseline"
+            self.abort = threading.Event()
+            self.reason = ""
+            self.stop = threading.Event()
+
+        def run(self):
+            bad = 0
+            err = ""
+            while not self.stop.is_set():
+                try:
+                    lat, _ = post(
+                        f"{LIVE_GTE}/v1/embeddings",
+                        {
+                            "input": "live gte probe from the S8 canary",
+                            "model": "gte-qwen2-1p5b-radeonvii",
+                        },
+                        timeout=10,
+                    )
+                except Exception as e:  # noqa: BLE001
+                    lat = None
+                    err = str(e)[:120]
+                self.samples.append(
+                    (round(now(), 2), self.phase, None if lat is None else round(lat, 4))
+                )
+                if lat is None or lat > ABORT_S:
+                    bad += 1
+                    if (
+                        bad >= 3
+                        and not self.abort.is_set()
+                        and self.phase not in ("baseline", "after")
+                    ):
+                        last = "error " + err if lat is None else round(lat, 3)
+                        self.reason = f"live gte: 3 consecutive probes slow or failing in {self.phase} (last {last})"
+                        log("ABORT", self.reason)
+                        self.abort.set()
+                else:
+                    bad = 0
+                self.stop.wait(2.0)
+
+        def summary(self, phase):
+            xs = [s[2] for s in self.samples if s[1] == phase and s[2] is not None]
+            fails = sum(1 for s in self.samples if s[1] == phase and s[2] is None)
+            return {
+                "n": len(xs),
+                "fail": fails,
+                "p50_ms": pct(xs, 50),
+                "p95_ms": pct(xs, 95),
+                "max_ms": pct(xs, 100),
+            }
+
+
+    def probe_inputs(ln):
+        n_long = {512: 30, 1024: 70, 4096: 250}[ln["ctx"]]
+        return ["retrieval plane", SENT * 4, SENT * n_long]
+
+
+    def wait_ready(proc, base, t0, watcher, limit):
+        while now() - t0 < limit and not watcher.abort.is_set():
+            if proc.poll() is not None:
+                return f"server exited rc={proc.returncode}"
+            try:
+                with urllib.request.urlopen(f"{base}/health", timeout=2) as r:
+                    if r.status == 200:
+                        return None
+            except Exception:  # noqa: BLE001
+                pass
+            time.sleep(0.5)
+        return "aborted" if watcher.abort.is_set() else f"not ready in {limit} s"
+
+
+    def run_arm(ln, tag, bindir, port, watcher):
+        arm = f"{ln['name']}@{tag}"
+        res = {"arm": arm, "lane": ln["name"], "build": tag}
+        gpu = not ln.get("cpu")
+        if not os.path.exists(ln["file"]):
+            res["skipped"] = "model file missing"
+            return res
+        total = (read_int(f"{CARD}/mem_info_vram_total") or 0) // 2**20
+        used = (read_int(f"{CARD}/mem_info_vram_used") or 0) // 2**20
+        q_total, _ = card_compute_queues()
+        res["card_before"] = {"vram_used_mib": used, "compute_queues": q_total}
+        if gpu and used + ln["est"] + HEADROOM_MB > total:
+            res["skipped"] = (
+                f"VRAM: used {used} MiB + estimate {ln['est']} + headroom {HEADROOM_MB} > {total}"
+            )
+            return res
+        if gpu and q_total is not None and q_total + 3 > MAX_QUEUES:
+            res["skipped"] = f"queues: card at {q_total}, +3 would pass {MAX_QUEUES}"
+            return res
+
+        env = dict(os.environ)
+        env.pop("HSA_OVERRIDE_GFX_VERSION", None)
+        env["LD_LIBRARY_PATH"] = bindir
+        env["LD_PRELOAD"] = SHIM
+        if not gpu:
+            env["ROCR_VISIBLE_DEVICES"] = "-1"
+            env["HIP_VISIBLE_DEVICES"] = "-1"
+        cmd = (
+            [
+                f"{bindir}/llama-server",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--model",
+                ln["file"],
+            ]
+            + ln["args"]
+            + common_args(ln)
+        )
+        res["cmd"] = " ".join(cmd)
+        logf = open(f"{OUT}/{ln['name']}-{tag}.log", "w")
+        watcher.phase = arm
+        t0 = now()
+        proc = subprocess.Popen(cmd, env=env, stdout=logf, stderr=subprocess.STDOUT)
+        base = f"http://127.0.0.1:{port}"
+        sampling = threading.Event()
+        st = None
+        try:
+            err = wait_ready(proc, base, t0, watcher, 300)
+            if err:
+                res["error"] = err
+                return res
+            res["load_s"] = round(now() - t0, 2)
+            time.sleep(2)
+            res["vram_idle_mib"] = round((kfd_vram(proc.pid) or 0) / 2**20, 1)
+            res["queues_idle"] = kfd_compute_queues(proc.pid)
+
+            peak = {"vram": 0, "q": 0, "card_q": 0}
+
+            def sampler():
+                while not sampling.is_set():
+                    peak["vram"] = max(peak["vram"], kfd_vram(proc.pid) or 0)
+                    peak["q"] = max(peak["q"], kfd_compute_queues(proc.pid) or 0)
+                    cq, _ = card_compute_queues()
+                    peak["card_q"] = max(peak["card_q"], cq or 0)
+                    sampling.wait(0.25)
+
+            st = threading.Thread(target=sampler, daemon=True)
+            st.start()
+
+            path, body = None, None
+            if ln["kind"] == "embed":
+                _, out = post(f"{base}/v1/embeddings", {"input": probe_inputs(ln)})
+                res["outputs"] = [
+                    d["embedding"] for d in sorted(out["data"], key=lambda d: d["index"])
+                ]
+                res["dim"] = len(res["outputs"][0])
+                path, body = "/v1/embeddings", {"input": SENT * 4}
+            elif ln["kind"] == "rerank":
+                _, out = post(f"{base}/v1/rerank", {"query": QUERY, "documents": DOCS})
+                res["outputs"] = {
+                    str(r["index"]): r["relevance_score"] for r in out["results"]
+                }
+                path, body = "/v1/rerank", {"query": QUERY, "documents": DOCS}
+            else:
+                cbody = {
+                    "prompt": PROMPT,
+                    "n_predict": ln["n_predict"],
+                    "temperature": 0,
+                    "top_k": 1,
+                    "seed": 42,
+                    "cache_prompt": False,
+                }
+                runs = []
+                for _ in range(ln["reps"]):
+                    if watcher.abort.is_set():
+                        break
+                    dt, out = post(f"{base}/completion", cbody, timeout=900)
+                    t = out.get("timings", {})
+                    runs.append(
+                        {
+                            "wall_s": round(dt, 3),
+                            "decode_tps": t.get("predicted_per_second"),
+                            "prefill_tps": t.get("prompt_per_second"),
+                            "n": t.get("predicted_n"),
+                        }
+                    )
+                    res.setdefault("outputs", out.get("content", ""))
+                tps = [r["decode_tps"] for r in runs if r["decode_tps"]]
+                res["complete"] = {
+                    "runs": runs,
+                    "decode_tps_median": round(statistics.median(tps), 2) if tps else None,
+                }
+
+            if path:
+                lat = []
+                for _ in range(SEQ_N):
+                    if watcher.abort.is_set():
+                        break
+                    dt, _ = post(base + path, body)
+                    lat.append(dt)
+                res["seq"] = {"n": len(lat), "p50_ms": pct(lat, 50), "p95_ms": pct(lat, 95)}
+
+                clat = []
+                lock = threading.Lock()
+
+                def worker(k):
+                    for _ in range(k):
+                        if watcher.abort.is_set():
+                            return
+                        dt, _ = post(base + path, body)
+                        with lock:
+                            clat.append(dt)
+
+                ws = [
+                    threading.Thread(target=worker, args=(CONC_N // 4,)) for _ in range(4)
+                ]
+                for w in ws:
+                    w.start()
+                for w in ws:
+                    w.join()
+                res["conc4"] = {
+                    "n": len(clat),
+                    "p50_ms": pct(clat, 50),
+                    "p95_ms": pct(clat, 95),
+                }
+            time.sleep(1)
+            sampling.set()
+            st.join()
+            res["vram_peak_mib"] = round(peak["vram"] / 2**20, 1)
+            res["queues_peak"] = peak["q"]
+            res["card_queues_peak"] = peak["card_q"]
+            res["live_gte"] = watcher.summary(arm)
+            if watcher.abort.is_set():
+                res["aborted"] = watcher.reason
+        except Exception as e:  # noqa: BLE001
+            res["error"] = f"{type(e).__name__}: {str(e)[:300]}"
+        finally:
+            sampling.set()
+            proc.send_signal(signal.SIGTERM)
+            try:
+                proc.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait()
+            logf.close()
+            watcher.phase = "between"
+            for _ in range(60):  # let KFD release the process before the next arm
+                if not os.path.exists(f"{KFD}/{proc.pid}"):
+                    break
+                time.sleep(0.5)
+            time.sleep(5)
+        return res
+
+
+    def parity(a, b, kind):
+        if "outputs" not in a or "outputs" not in b:
+            return None
+        if kind == "embed":
+            cs = [round(cosine(x, y), 6) for x, y in zip(a["outputs"], b["outputs"])]
+            return {"cosine": cs, "min": min(cs), "dim_equal": a.get("dim") == b.get("dim")}
+        if kind == "complete":
+            ta, tb = a["outputs"], b["outputs"]
+            k = 0
+            while k < min(len(ta), len(tb)) and ta[k] == tb[k]:
+                k += 1
+            tpa = (a.get("complete") or {}).get("decode_tps_median")
+            tpb = (b.get("complete") or {}).get("decode_tps_median")
+            return {
+                "identical": ta == tb,
+                "common_prefix_chars": k,
+                "len": [len(ta), len(tb)],
+                "decode_tps": [tpa, tpb],
+                "decode_ratio": round(tpb / tpa, 3) if tpa and tpb else None,
+                "text_b11335": ta[:200],
+                "text_b11847": tb[:200],
+            }
+        sa, sb = a["outputs"], b["outputs"]
+        deltas = {k: round(abs(sa[k] - sb.get(k, float("nan"))), 6) for k in sa}
+        order_a = sorted(sa, key=lambda k: -sa[k])
+        order_b = sorted(sb, key=lambda k: -sb[k])
+        return {
+            "max_abs_delta": max(deltas.values()),
+            "same_order": order_a == order_b,
+            "scores_b11847": sb,
+        }
+
+
+    def row(a):
+        if "skipped" in a or "error" in a:
+            return f"S8_ROW {a['arm']} SKIP/ERR: {a.get('skipped') or a.get('error')}"
+        if a.get("seq"):
+            speed = f"seq {a['seq']['p50_ms']}/{a['seq']['p95_ms']} ms conc4 {a['conc4']['p50_ms']}/{a['conc4']['p95_ms']} ms"
+        else:
+            speed = f"decode {(a.get('complete') or {}).get('decode_tps_median')} tok/s"
+        return (
+            f"S8_ROW {a['lane']} {a['build']} load {a.get('load_s')} s vram idle/peak {a.get('vram_idle_mib')}/"
+            f"{a.get('vram_peak_mib')} MiB queues idle/peak {a.get('queues_idle')}/{a.get('queues_peak')} card_q_peak "
+            f"{a.get('card_queues_peak')} | {speed} | live_gte p95 {a['live_gte']['p95_ms']} ms | parity "
+            f"{json.dumps(a.get('parity_vs_b11335'))}"
+        )
+
+
+    def main():
+        os.makedirs(OUT, exist_ok=True)
+        meta = {
+            "started": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "env": {
+                k: os.environ.get(k)
+                for k in (
+                    "GPU_MAX_HW_QUEUES",
+                    "HSA_ENABLE_SDMA",
+                    "HSA_USE_SVM",
+                    "ROCR_VISIBLE_DEVICES",
+                    "KT_THREADS",
+                )
+            },
+        }
+        for tag, d in BINS:
+            try:
+                p = subprocess.run(
+                    [f"{d}/llama-server", "--version"],
+                    env={
+                        **os.environ,
+                        "LD_LIBRARY_PATH": d,
+                        "LD_PRELOAD": "",
+                        "ROCR_VISIBLE_DEVICES": "-1",
+                    },
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                meta[f"version_{tag}"] = " | ".join(
+                    x for x in (p.stdout + p.stderr).splitlines() if "version" in x
+                )[:200]
+            except Exception as e:  # noqa: BLE001
+                meta[f"version_{tag}"] = f"error {e}"
+        q, per = card_compute_queues()
+        meta["card_start"] = {
+            "vram_used_mib": (read_int(f"{CARD}/mem_info_vram_used") or 0) // 2**20,
+            "compute_queues": q,
+            "per_pid": per,
+        }
+        log("META", json.dumps(meta))
+
+        w = Watcher()
+        w.start()
+        log(f"baseline {BASELINE_S}s on live gte {LIVE_GTE}")
+        time.sleep(BASELINE_S)
+        meta["live_gte_baseline"] = w.summary("baseline")
+        log("BASELINE", json.dumps(meta["live_gte_baseline"]))
+
+        arms = []
+        port = 18900
+        for ln in LANES:
+            pair = {}
+            for tag, d in BINS:
+                if w.abort.is_set():
+                    arms.append(
+                        {
+                            "arm": f"{ln['name']}@{tag}",
+                            "skipped": "aborted earlier: " + w.reason,
+                        }
+                    )
+                    continue
+                port += 1
+                r = run_arm(ln, tag, d, port, w)
+                pair[tag] = r
+                log(
+                    "ARM",
+                    json.dumps({k: v for k, v in r.items() if k not in ("outputs", "cmd")}),
+                )
+                arms.append(r)
+            if len(pair) == 2:
+                p = parity(pair["b11335"], pair["b11847"], ln["kind"])
+                log("PARITY", ln["name"], json.dumps(p))
+                pair["b11847"]["parity_vs_b11335"] = p
+        w.phase = "after"
+        time.sleep(30)
+        w.stop.set()
+        meta["live_gte_after"] = w.summary("after")
+        meta["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+        meta["aborted"] = w.reason or None
+        for a in arms:
+            if isinstance(a.get("outputs"), list):
+                a["outputs"] = [v[:8] for v in a["outputs"]]  # keep the archive small
+        with open(f"{OUT}/results.json", "w") as f:
+            json.dump(
+                {"meta": meta, "arms": arms, "live_gte_samples": w.samples}, f, indent=1
+            )
+
+        for a in arms:
+            print(row(a), flush=True)
+        print(
+            "S8_LIVE_GTE baseline",
+            json.dumps(meta["live_gte_baseline"]),
+            "after",
+            json.dumps(meta["live_gte_after"]),
+            "aborted",
+            meta["aborted"],
+            flush=True,
+        )
+
+
+    if __name__ == "__main__":
+        main()
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: s8-gfx906-llamacpp-canary
+  namespace: flexinfer-system
+  labels: {app: s8-gfx906-llamacpp-canary}
+spec:
+  restartPolicy: Never
+  activeDeadlineSeconds: 7200
+  hostPID: true
+  nodeSelector: {kubernetes.io/hostname: cblevins-radeonvii}
+  imagePullSecrets: [{name: harbor-creds}]
+  initContainers:
+    # b11335 control: the live gfx906 runtime image (resident on the node).
+    - name: b11335
+      image: registry.harbor.lan/flexinfer/runtime@sha256:6fc6fcbd936115679e8c5adc43e14c2b1cb86d7f4c702b5ce94b9bdae52c4871
+      imagePullPolicy: IfNotPresent
+      command: [/bin/sh, -c, "cp -a /opt/llamacpp/bin /old/ && ls /old/bin | wc -l"]
+      resources:
+        requests: {cpu: 100m, memory: 128Mi}
+        limits: {cpu: "1", memory: 512Mi}
+      volumeMounts:
+        - {name: old, mountPath: /old}
+  containers:
+    - name: canary
+      image: registry.harbor.lan/flexinfer/runtime@sha256:34e60fd38905750312b27822ad57d4a8a05f6a98e025aee88ec90122013dc129
+      imagePullPolicy: IfNotPresent
+      securityContext: {privileged: true}
+      command:
+        - /bin/bash
+        - -c
+        - >-
+          python3 -I /kt/canary.py;
+          echo KT_DONE;
+          echo KT_ARCHIVE_BEGIN; tar czf - -C /out . | base64 -w0; echo; echo KT_ARCHIVE_END;
+          sleep 900
+      env:
+        # gfx906 GPUProfile env as runtime subprocesses get it; no HSA_OVERRIDE_GFX_VERSION
+        - {name: GPU_MAX_HW_QUEUES, value: "1"}
+        - {name: HSA_ENABLE_SDMA, value: "0"}
+        - {name: HSA_USE_SVM, value: "0"}
+        - {name: ROCR_VISIBLE_DEVICES, value: "0"}
+        - {name: KT_THREADS, value: "6"}
+        - {name: KT_BASELINE_S, value: "120"}
+        - {name: KT_ABORT_S, value: "1.0"}
+        # gte-qwen2-1p5b-radeonvii Service (ClusterIP), not flexinfer-proxy
+        - {name: KT_LIVE_GTE, value: "http://10.43.153.107:8000"}
+      resources:
+        requests: {cpu: "1", memory: 4Gi}
+        limits: {cpu: "8", memory: 16Gi}
+      volumeMounts:
+        - {name: kt, mountPath: /kt, readOnly: true}
+        - {name: out, mountPath: /out}
+        - {name: old, mountPath: /old}
+        - {name: models, mountPath: /models, readOnly: true}
+        - {name: kfd, mountPath: /dev/kfd}
+        - {name: dri, mountPath: /dev/dri}
+  volumes:
+    - {name: kt, configMap: {name: s8-gfx906-llamacpp-canary}}
+    - {name: out, emptyDir: {}}
+    - {name: old, emptyDir: {}}
+    - {name: models, hostPath: {path: /var/lib/flexinfer/models, type: Directory}}
+    - {name: kfd, hostPath: {path: /dev/kfd, type: CharDevice}}
+    - {name: dri, hostPath: {path: /dev/dri, type: Directory}}
