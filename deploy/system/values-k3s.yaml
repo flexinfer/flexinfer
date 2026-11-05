@@ -567,9 +567,8 @@ imagePrewarm:
         # compressed layers (manifest diff 2026-10-27).
         - registry.harbor.lan/flexinfer/runtime@sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
-        # Keep the 64K Qwen workhorse overlay referenced across containerd GC;
-        # its first cold pull/unpack took 9m05s on this node.
-        - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
+        # 7bc680b4 (vLLM 0.23 Qwen3.5 text-MoE overlay) dropped 2026-11-05: its
+        # two lanes were retired (qwen35-35b-clean-gptq-workhorse{,-128k}).
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
         # wan21 video lanes (t2v/vace): first cold pull took 14m04s (22.7GB)
         # on 2026-08-22 and the pod was preempted 30s after the pull finished.
@@ -739,9 +738,8 @@ imagePrewarm:
         # 5930k is left out: 194 GB free, below the 200 GB rule for pulls there.
         - registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
-        # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
-        # subsequent second workhorse replica. Keep it resident across GC.
-        - registry.harbor.lan/flexinfer/vllm@sha256:7bc680b43ab91e60ea120d65e5af5d0d70300602ac881790ca5cbcfebad90604
+        # 7bc680b4 (vLLM 0.23 Qwen3.5 text-MoE overlay) dropped 2026-11-05: its
+        # two lanes were retired (qwen35-35b-clean-gptq-workhorse{,-128k}).
         - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
         # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
         # placement-2026-10-30.md §6): the creative lanes moved to this card.
