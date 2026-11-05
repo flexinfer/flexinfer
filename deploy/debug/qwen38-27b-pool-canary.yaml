@@ -1,0 +1,158 @@
+# DEBUG CANARY: slices S7 and G3 of
+# .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md (§5.2 G2/G3,
+# §5.3 candidate 3 and candidate 2's fallback). Two levers on the
+# workhorse's KV pool, which on this posture cannot hold one 64K request:
+#   S7  the 2.37 GiB fp16 input-embedding table in mapped host memory
+#       (FLEXINFER_EMBED_HOST=1, plugin-common 0.5.0 embed_host.py), lossless;
+#   G3  fp8 e4m3 KV on ROCM_SEGMENTED_ATTN for gfx11
+#       (FLEXINFER_SEGMENTED_FP8_GFX11=1, plugin-common 0.5.0 segmented_fp8.py).
+# Matrix rows xtx-s7-embed-host-2026-11-05 and
+# xtx-g3-segmented-fp8-gfx11-2026-11-05 hold the pass and kill rules, written
+# and merged before the run (!1298). NOT in any kustomization: the operator
+# applies this file once, the agent drives the arms over the flexinfer MCP
+# tools and reads results with `kubectl exec`, then deletes the Model.
+#
+# One Model on rocm-gfx1100-v032-native-w4a16-b461833c (runtime@316f8188, the
+# workhorse's image lineage: vLLM 0.32.0+rocm723 and the same base as
+# b06b06fe; text plugin 0.12.0, plugin-common 0.5.0), rendered like the
+# workhorse (no vllmVersion). Built by job 470054 from master b461833c, which
+# carries !1298: two master pushes cancelled the queued master builds, so it
+# ran in an API pipeline on a throwaway branch at that commit. The build
+# verifier installed the embed-host patch into vLLM 0.32's BaseModelLoader and
+# found every name the fp8 gate lift wraps. Arms are
+# `flexinfer_update_model` config merge patches (null removes a key):
+#   arm 0  as applied: the 5930k workhorse's S4 posture exactly, no flag.
+#          The same-window baseline for both rows.
+#   arm 1  {"env":{"FLEXINFER_EMBED_HOST":"1"}}                       (S7)
+#   arm 2  {"kvCacheDtype":"fp8_e4m3",
+#           "env":{"FLEXINFER_EMBED_HOST":null,
+#                  "FLEXINFER_SEGMENTED_FP8_GFX11":"1"}}               (G3)
+#   arm 3  {"env":{"FLEXINFER_EMBED_HOST":"1"}}            (S7 + G3 stacked)
+#   phase L {"maxModelLen":65536} on arm 3's config (64K boot, 60K needles)
+# The draft keeps `attention_backend: ROCM_SEGMENTED_ATTN` on every arm and
+# inherits the KV dtype; the plugin lifts the fp8 gate for it too.
+#
+# Compile cache: S4's step-0 path on this node (same vLLM 0.32.0 wheel, torch
+# and posture, so its segmented autotune table and Inductor cache are warm
+# for arms 0-1). The fp8 arms add their own autotune table there once. Local
+# cache: a fresh 19 GB copy under this Model's name (158 GB free on
+# 2026-11-05).
+#
+# kvPoolRecheck is off from the start: S4 measured this posture at 42,490
+# tokens (1.30x at 32K) on this card, below the 1.50x KVPoolShort line, so the
+# recheck would delete arm 0's first Ready pod. A cold-compile first boot can
+# still exit once on the 32K KV check before Ready (S3, S4, S6); the container
+# restart boots.
+#
+# Placement: the XTX warm lane's slot (cblevins-7900xtx, count 2 /
+# hipVisibleDevices 0, shared group 7900xtx-textgen, vramEstimateMB 23200 =
+# the whole card), priority 480 like S6 and KT-QOS / KT-SO: above the warm
+# lane (300), below the creative lanes (500). Applied at minReplicas 0, so the
+# apply only stages the Local cache; the agent raises it to 1 once no other
+# Model at >= 480 holds the group.
+#
+# Window cost: the warm lane (mills-warm, mills-council, weaver, the 32K
+# overflow route) is off the card for ~2.5-3 h; the 5930k workhorse is
+# untouched. Rollback = delete this Model; the warm lane returns on its next
+# request.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-pool-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md"
+    flexinfer.ai/promotion-state: debug-canary-s7-g3-pool
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:316f818851c859cdac9451d94fd97eb0515e3c3c2c485d2a7365527671bf4c76
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-s4-step0-7900xtx
+      sizeLimit: 8Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    # Raised to 1 over MCP once no other canary at >= 480 holds the XTX.
+    minReplicas: 0
+    idleTimeout: 3h
+    # Covers a cold fp8 segmented autotune plus the cold-compile restart.
+    coldStartTimeout: 45m
+  config:
+    # No vllmVersion, like the workhorse on this same 0.32.0 base: the render
+    # then matches the workhorse's exactly, and the owner window's controller
+    # roll (!1289, A1) does not restart this Model mid-arm (runbook §3).
+    kvPoolRecheck: false
+    dedicatedDeployment: true
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    warmPolicy: primary
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    # Arms 0-1: fp16 KV. Arms 2-3: fp8_e4m3.
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    # Needed for the APC probe: vLLM reports cached_tokens only with this on.
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-pool-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      # +2.4 GiB of mapped host memory on the S7 arms; the workhorse's 40Gi
+      # leaves room for it.
+      memory: 40Gi
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-pool-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
