@@ -1953,9 +1953,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "fail",
       "title": "KT-OCTAVE, slice S6 of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md (§5.2 correction, §5.3 candidate 2, §6.1): does vLLM 0.33's Octave 3–4 bit KV cache (ROCM_OCTAVE, gfx1100…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#xtx-vllm-v033-octave-kv-2026-11-05",
       "date": "2026-11-05",
       "source": ".loom/60-validation-matrix.md"
