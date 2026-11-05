@@ -25,11 +25,13 @@ import (
 func TestReconcile_VLLMRefusedConfigFailsBeforeRender(t *testing.T) {
 	for _, tt := range []struct {
 		name    string
+		backend string
 		config  string
 		wantMsg string
 	}{
-		{"dead partial-prefill flag", `{"maxNumPartialPrefills":2}`, "vLLM has no --max-num-partial-prefills flag"},
-		{"unquoted vllmVersion", `{"vllmVersion":0.33}`, "spec.config.vllmVersion must be a quoted string"},
+		{"dead partial-prefill flag", backend.NameVLLM, `{"maxNumPartialPrefills":2}`, "vLLM has no --max-num-partial-prefills flag"},
+		{"unquoted vllmVersion", backend.NameVLLM, `{"vllmVersion":0.33}`, "spec.config.vllmVersion must be a quoted string"},
+		{"vllm-omni unreadable vllmVersion", backend.NameVLLMOmni, `{"vllmVersion":"latest"}`, `spec.config.vllmVersion "latest" is not a vLLM release`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			model := &aiv1alpha2.Model{
@@ -40,7 +42,7 @@ func TestReconcile_VLLMRefusedConfigFailsBeforeRender(t *testing.T) {
 					Finalizers: []string{aiv1alpha2.ModelFinalizer},
 				},
 				Spec: aiv1alpha2.ModelSpec{
-					Backend:      backend.NameVLLM,
+					Backend:      tt.backend,
 					Source:       "HF://Qwen/Qwen3-0.6B",
 					GPU:          &aiv1alpha2.GPUSpec{Vendor: aiv1alpha2.GPUVendorAMD},
 					NodeSelector: map[string]string{"kubernetes.io/hostname": "cblevins-7900xtx"},

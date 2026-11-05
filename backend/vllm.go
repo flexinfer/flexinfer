@@ -328,8 +328,9 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	// structured_outputs on every lane with backend auto by default; pinning
 	// the backend here binds the lane to the envelope its GPUProfile
 	// certificate proved, so a runtime upgrade cannot swap the backend under
-	// a certified lane. Set only by the controller (see ModelSpec).
-	if soBackend := strings.TrimSpace(spec.StructuredOutputsBackend); soBackend != "" {
+	// a certified lane. Set only by the controller (see ModelSpec), and
+	// never for a backend the certificate cannot cover (LM-Format-Enforcer).
+	if soBackend := strings.TrimSpace(spec.StructuredOutputsBackend); soBackend != "" && CertifiableStructuredOutputsBackend(soBackend) == nil {
 		raw, _ := json.Marshal(struct {
 			Backend string `json:"backend"`
 		}{Backend: soBackend})
@@ -425,18 +426,12 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			} else {
 				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
 			}
-		} else {
-			// vLLM uses AITER only on CDNA 3 or newer (gfx942/gfx950:
-			// is_aiter_found_and_supported checks the CDNA version), so on
-			// gfx110x every VLLM_ROCM_USE_AITER* variable is a no-op and
-			// enableAiter, disableAiter and rocmUseAiter change nothing there.
-			// gfx110 stays in this check only so existing gfx1100 lanes keep
-			// rendering the env they render today.
-			supportsAiter := strings.HasPrefix(spec.GPUArch, "gfx110") ||
-				strings.HasPrefix(spec.GPUArch, "gfx942")
-			if spec.ConfigBool("enableAiter", false) && supportsAiter {
-				vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
-			}
+		} else if spec.ConfigBool("enableAiter", false) && vllmArchSupportsAiter(spec.GPUArch) {
+			// enableAiter means "use AITER where vLLM can": it renders
+			// nothing on an architecture vLLM never runs AITER on.
+			// rocmUseAiter and disableAiter above stay literal env
+			// overrides on every architecture.
+			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
 		}
 
 		if value, ok := rocmBoolOverride(spec, "rocmCustomPagedAttn"); ok && !aiterDisabled {
@@ -501,6 +496,43 @@ func (b *VLLMBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 	}
 
 	return withoutRemovedVLLMEnv(spec, env)
+}
+
+// Structured-output backends as vLLM's --structured-outputs-config names them.
+const (
+	// VLLMStructuredOutputsBackendAuto lets vLLM pick per request: xgrammar,
+	// falling back to guidance for a schema xgrammar cannot compile. It is
+	// the only backend the vllm/structured-outputs certificate covers.
+	VLLMStructuredOutputsBackendAuto = "auto"
+	// VLLMStructuredOutputsBackendLMFormatEnforcer is deprecated in vLLM
+	// 0.33 and is never certified.
+	VLLMStructuredOutputsBackendLMFormatEnforcer = "lm-format-enforcer"
+)
+
+// CertifiableStructuredOutputsBackend reports whether the D4 certificate
+// (GPUProfile vllm/structured-outputs) may cover a structured-output backend,
+// and why not. KT-SO proved backend auto only; another backend is another
+// envelope with its own kill-test. LM-Format-Enforcer is refused outright,
+// whatever a later certificate or kill-test says: vLLM 0.33 deprecates it, so
+// a certificate for it would bind lanes to a backend on its way out.
+func CertifiableStructuredOutputsBackend(name string) error {
+	normalized := strings.ReplaceAll(strings.ToLower(strings.TrimSpace(name)), "_", "-")
+	switch normalized {
+	case VLLMStructuredOutputsBackendAuto:
+		return nil
+	case VLLMStructuredOutputsBackendLMFormatEnforcer, "lmformatenforcer", "lm-formatenforcer":
+		return fmt.Errorf("structured-output backend %q (LM-Format-Enforcer) is never certified: vLLM 0.33 deprecates it", name)
+	}
+	return fmt.Errorf("structured-output backend %q is not covered by the vllm/structured-outputs certificate, which proves backend %q only", name, VLLMStructuredOutputsBackendAuto)
+}
+
+// vllmArchSupportsAiter reports whether vLLM can run AITER kernels on the
+// architecture: CDNA 3 or newer, gfx942 (MI300) and gfx950 (MI350).
+// is_aiter_found_and_supported checks the CDNA version, so on RDNA (gfx110x)
+// and older CDNA/GCN (gfx90a, gfx906) every VLLM_ROCM_USE_AITER* variable is
+// a no-op.
+func vllmArchSupportsAiter(gpuArch string) bool {
+	return strings.HasPrefix(gpuArch, "gfx942") || strings.HasPrefix(gpuArch, "gfx950")
 }
 
 // vllmRelease is a vLLM release number, major.minor.patch.
@@ -614,16 +646,26 @@ func ValidateVLLMConfig(cfg map[string]any) error {
 			return fmt.Errorf("spec.config.%s is not supported: vLLM has no %s flag (absent from 0.32.0, 0.33.0 and main), so the server would refuse to start; remove the key", dead.key, dead.flag)
 		}
 	}
-	if raw, ok := cfg["vllmVersion"]; ok {
-		s, isString := raw.(string)
-		if !isString {
-			return fmt.Errorf("spec.config.vllmVersion must be a quoted string such as \"0.33.0\" (got %v)", raw)
-		}
-		if _, err := parseVLLMVersion(s); err != nil {
-			return err
-		}
+	return validateDeclaredVLLMVersion(cfg)
+}
+
+// ValidateVLLMOmniConfig refuses an unreadable vllmVersion on a vllm-omni
+// Model, which declares the vLLM release under it the same way.
+func ValidateVLLMOmniConfig(cfg map[string]any) error {
+	return validateDeclaredVLLMVersion(cfg)
+}
+
+func validateDeclaredVLLMVersion(cfg map[string]any) error {
+	raw, ok := cfg["vllmVersion"]
+	if !ok {
+		return nil
 	}
-	return nil
+	s, isString := raw.(string)
+	if !isString {
+		return fmt.Errorf("spec.config.vllmVersion must be a quoted string such as \"0.33.0\" (got %v)", raw)
+	}
+	_, err := parseVLLMVersion(s)
+	return err
 }
 
 func resolveVLLMAttentionBackend(spec *ModelSpec) string {

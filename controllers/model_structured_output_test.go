@@ -179,6 +179,38 @@ func TestEvaluateStructuredOutput(t *testing.T) {
 	}
 }
 
+// A7: the gate never certifies LM-Format-Enforcer (deprecated in vLLM 0.33)
+// or any backend KT-SO did not prove, even when a complete certificate binds
+// the selected image.
+func TestEvaluateStructuredOutputRefusesUncertifiedBackends(t *testing.T) {
+	model := soModel(soBool(true), map[string]any{"dedicatedDeployment": true})
+	profile := soProfile(soCertify(soCertifiedImage))
+
+	auto := evaluateStructuredOutputBackend(model, backend.NameVLLM, profile, "gfx1100", soCertifiedImage, backend.VLLMStructuredOutputsBackendAuto)
+	require.True(t, auto.Render)
+	require.Equal(t, backend.VLLMStructuredOutputsBackendAuto, auto.Backend)
+	require.Equal(t, auto, evaluateStructuredOutput(model, backend.NameVLLM, profile, "gfx1100", soCertifiedImage))
+
+	for _, tc := range []struct {
+		soBackend   string
+		wantMessage string
+	}{
+		{backend.VLLMStructuredOutputsBackendLMFormatEnforcer, "LM-Format-Enforcer) is never certified: vLLM 0.33 deprecates it"},
+		{"lm_format_enforcer", "is never certified"},
+		{"xgrammar", `proves backend "auto" only`},
+	} {
+		t.Run(tc.soBackend, func(t *testing.T) {
+			got := evaluateStructuredOutputBackend(model, backend.NameVLLM, profile, "gfx1100", soCertifiedImage, tc.soBackend)
+			require.True(t, got.Requested)
+			require.False(t, got.Render)
+			require.Empty(t, got.Backend)
+			require.Equal(t, aiv1alpha2.ReasonStructuredOutputNotCertified, got.Reason)
+			require.Contains(t, got.Message, tc.wantMessage)
+			require.Contains(t, got.Message, "--structured-outputs-config not rendered")
+		})
+	}
+}
+
 func TestApplyStructuredOutputCondition(t *testing.T) {
 	model := soModel(soBool(true), map[string]any{"dedicatedDeployment": true})
 
