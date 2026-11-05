@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"context"
-	"encoding/json"
 	"log/slog"
 	"strconv"
 )
@@ -30,13 +29,10 @@ func (p *Proxy) applyQoSPriority(ctx context.Context, lane, path string, body []
 	if d := qosDecisionFrom(ctx); d != nil {
 		class = d.class
 	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(body, &fields); err != nil || fields == nil {
-		return body
-	}
-	fields["priority"] = json.RawMessage(strconv.Itoa(class.vllmPriority()))
-	out, err := json.Marshal(fields)
-	if err != nil {
+	// Splice the one field so the rest of the body, including any
+	// structured-output schema, is forwarded byte for byte (body_fields.go).
+	out, ok := setTopLevelField(body, "priority", []byte(strconv.Itoa(class.vllmPriority())))
+	if !ok {
 		return body
 	}
 	slog.Debug("qos: set vLLM priority", "lane", lane, "class", class, "priority", class.vllmPriority())

@@ -63,6 +63,11 @@ func main() {
 
 	if agent.PowerSamplingEnabled(nodeAgent.GetNodeName(), *powerNodes) {
 		sampler := nodeAgent.NewPowerSampler(*powerInterval, log.Log.WithName("gpu-power"))
+		if lanes, err := nodeAgent.NewModelLaneSource(); err != nil {
+			setupLog.Error(err, "Lane energy attribution off: cannot build the Model client")
+		} else {
+			sampler.SetLaneSource(lanes)
+		}
 		go sampler.Run(ctx)
 	}
 

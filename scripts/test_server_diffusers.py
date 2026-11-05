@@ -883,6 +883,83 @@ class BnbPlacementTest(ServerTestCase):
         )
 
 
+class WanVaeMiopenTest(ServerTestCase):
+    """The Wan VAE bypasses MIOpen on ROCm (KT-FLEX rerun, 2026-11-03)."""
+
+    def setUp(self):
+        super().setUp()
+        cudnn = types.SimpleNamespace(enabled=True)
+        self.cudnn = cudnn
+        for patch in (
+            mock.patch.object(server.torch.version, "hip", "6.4"),
+            mock.patch.object(
+                server.torch,
+                "backends",
+                types.SimpleNamespace(cudnn=cudnn),
+                create=True,
+            ),
+        ):
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def vae(self, dtype):
+        seen = []
+
+        def record(name):
+            def method(*args, **kwargs):
+                seen.append((name, self.cudnn.enabled, args, kwargs))
+                if kwargs.get("fail"):
+                    raise RuntimeError("decode failed")
+                return name
+
+            return method
+
+        vae = types.SimpleNamespace(
+            dtype=dtype, encode=record("encode"), decode=record("decode")
+        )
+        return vae, seen
+
+    def test_bf16_vae_runs_without_miopen_and_restores_it(self):
+        vae, seen = self.vae(server.torch.bfloat16)
+        pipe = types.SimpleNamespace(vae=vae)
+        self.assertTrue(self.quiet(server._bypass_miopen_for_wan_vae, pipe, "wan"))
+        self.assertEqual(vae.decode("z", return_dict=False), "decode")
+        self.assertEqual(vae.encode("video"), "encode")
+        self.assertEqual(
+            seen,
+            [
+                ("decode", False, ("z",), {"return_dict": False}),
+                ("encode", False, ("video",), {}),
+            ],
+        )
+        self.assertTrue(self.cudnn.enabled)
+
+    def test_flag_is_restored_when_decode_raises(self):
+        vae, _ = self.vae(server.torch.float16)
+        self.quiet(
+            server._bypass_miopen_for_wan_vae, types.SimpleNamespace(vae=vae), "wan"
+        )
+        with self.assertRaises(RuntimeError):
+            vae.decode("z", fail=True)
+        self.assertTrue(self.cudnn.enabled)
+
+    def test_fp32_vae_keeps_miopen(self):
+        vae, seen = self.vae(server.torch.float32)
+        pipe = types.SimpleNamespace(vae=vae)
+        self.assertFalse(self.quiet(server._bypass_miopen_for_wan_vae, pipe, "wan"))
+        vae.decode("z")
+        self.assertEqual(seen[0][1], True)
+
+    def test_other_families_and_cuda_are_untouched(self):
+        vae, seen = self.vae(server.torch.bfloat16)
+        pipe = types.SimpleNamespace(vae=vae)
+        self.assertFalse(server._bypass_miopen_for_wan_vae(pipe, "flux"))
+        with mock.patch.object(server.torch.version, "hip", None):
+            self.assertFalse(server._bypass_miopen_for_wan_vae(pipe, "wan"))
+        vae.decode("z")
+        self.assertEqual(seen[0][1], True)
+
+
 @unittest.skipUnless("torch" in STUBBED, "stubbed torch and GGUF classes only")
 class GGUFShimStubTest(ServerTestCase):
     """The shim's traversal, against stand-ins for diffusers' GGUF classes."""

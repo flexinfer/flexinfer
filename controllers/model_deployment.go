@@ -234,8 +234,8 @@ func (r *ModelReconciler) ensureDeployment(ctx context.Context, model *aiv1alpha
 	}
 	// D4: render the certified structured-output backend only when the fresh
 	// spec still opts in and the GPUProfile certificate covers this image.
-	if r.structuredOutputDecisionFor(model, b, gpuVendor, gpuArch).Render {
-		spec.StructuredOutputsBackend = structuredOutputsBackendAuto
+	if decision := r.structuredOutputDecisionFor(model, b, gpuVendor, gpuArch); decision.Render {
+		spec.StructuredOutputsBackend = decision.Backend
 	}
 	if profileSpec != nil {
 		if profileImage, ok := backend.ImageFromProfile(profileSpec, b.Name()); ok && image == profileImage {

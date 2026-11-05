@@ -1,0 +1,52 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: embed-lane
+spec:
+  backend: llamacpp
+  source: HF://org/gte-GGUF
+  gpu:
+    vendor: amd
+    count: 1
+  config:
+    embedding: true
+  nodeSelector:
+    kubernetes.io/hostname: node-b
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: rerank-cpu
+spec:
+  backend: llamacpp
+  source: HF://org/bge-reranker-GGUF
+  gpu:
+    vendor: cpu
+  nodeSelector:
+    kubernetes.io/hostname: node-b
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: video-canary
+spec:
+  backend: diffusers
+  source: HF://org/Wan2.1-T2V
+  gpu:
+    vendor: amd
+    count: 1
+  nodeSelector:
+    kubernetes.io/hostname: node-xtx
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: image-980ti
+spec:
+  backend: diffusers
+  source: HF://org/dreamshaper
+  gpu:
+    vendor: nvidia
+    count: 1
+  nodeSelector:
+    kubernetes.io/hostname: node-980ti

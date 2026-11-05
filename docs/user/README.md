@@ -15,6 +15,7 @@ FlexInfer is a Kubernetes-native set of controllers and agents for running AI wo
 - `docs/user/proxy.md` for how requests are routed (OpenAI-style payloads supported).
 - `docs/user/model-backfill.md` for bounded background evaluations on warm models.
 - `docs/user/model-experiments.md` for isolated canary Models with durable gauntlet verdicts.
+- `docs/user/swap-profiler.md` for timing in-pod lane swaps on a runtime pod by load substage (`flexinfer-bench swap`).
 
 ## API versions
 

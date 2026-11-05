@@ -18,7 +18,8 @@ import (
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 )
 
-// mtpWrapperCommand is the qwen35-35b-clean-mtp-32k launch wrapper.
+// mtpWrapperCommand is the launch wrapper of the retired (2026-11-05)
+// qwen35-35b-clean-mtp-32k lane, kept as a command-override fixture.
 var mtpWrapperCommand = []string{"bash", "-lc", `export FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ=1; exec python3 -m vllm.entrypoints.openai.api_server "$@"`, "vllm"}
 
 func drainEvents(rec *record.FakeRecorder) []string {

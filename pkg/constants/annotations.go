@@ -18,6 +18,12 @@ const (
 	// model serves all paths (default).
 	AnnotationServePaths = "flexinfer.ai/serve-paths"
 
+	// AnnotationDiarizationModel, on an ASR Model, names the diarization lane
+	// (a pyannote Model) a diarize=true transcription on it runs after the
+	// transcription, inside a job (D5-a). The proxy accepts diarize=true only
+	// while that lane's GPUProfile certifies it (condition BackendCertificate).
+	AnnotationDiarizationModel = "flexinfer.ai/diarization-model"
+
 	// AnnotationServingPriorityClass, when set on a Model, is written to the
 	// serving Deployment pod's PriorityClassName. Use it to protect a warm
 	// retrieval/serving lane from GPU preemption by lower-priority ModelCache

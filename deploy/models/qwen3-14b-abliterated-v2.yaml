@@ -18,6 +18,11 @@ metadata:
     flexinfer.ai/routing: least-loaded
 spec:
   backend: vllm
+  # 2026-11-04: pinned to the image this lane inherited from the gfx1100
+  # GPUProfile vLLM default (the standalone qwen35-patched build, issue #74
+  # S5) when that default moved to the vLLM 0.32 image b06b06fe. Not
+  # qualified on 0.32.
+  image: registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
   source: pvc://qwen3-14b-abliterated-v2-gptq/qwen3-14b-abliterated-v2-gptq/gptq-w4-g128
   gpu:
     vendor: amd
