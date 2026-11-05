@@ -27,20 +27,17 @@
 #
 #
 # 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
-# WINDOW-GATED, and BLOCKED on the runtime image, see below): served IN-POD by
-# the 7900xtx runtime DaemonSet instead of its own Deployment, so a render
-# swaps the XTX warm lane out and back inside the runtime pod.
+# WINDOW-GATED): served IN-POD by the 7900xtx runtime DaemonSet instead of its
+# own Deployment, so a render swaps the XTX warm lane out and back inside the
+# runtime pod.
 # - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
 # - Compile cache: scope Image on the default hostPath, the directory the
 #   runtime pod mounts at /cache/compile.
-# BLOCKED: the v032 persona (ef28b7b0 and its master rebuild 7ae8e92f,
-# the repin target; same package set) has no torchsde.
-# diffusers then swaps CosineDPMSolverMultistepScheduler, the scheduler in
-# Stable Audio Open's repo config, for a dummy that raises when
-# StableAudioPipeline.from_pretrained loads it. The dedicated image
-# (d87f75f8, rocm-gfx1100-audio2) carries torchsde 0.2.6. Checked inside
-# the image 2026-11-01. Unblock: a gfx1100-serving-v032 build adding
-# torchsde, pinned on the XTX runtime first.
+# Runtime image: 527e2714 (rocm-gfx1100-serving-v032-ddf22437, live on the XTX runtime since !1234 on 2026-11-04). It carries torchsde 0.2.6, so diffusers loads Stable
+# Audio Open's CosineDPMSolverMultistepScheduler (without it the scheduler is
+# a dummy that raises in StableAudioPipeline.from_pretrained); checked in the
+# live runtime pod 2026-11-05. The dedicated image (d87f75f8,
+# rocm-gfx1100-audio2) is the rollback.
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
 # config); the Deployment returns on the next reconcile.
 apiVersion: ai.flexinfer/v1alpha2
