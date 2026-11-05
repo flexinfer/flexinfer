@@ -5306,6 +5306,7 @@
       "speculativeConfig": "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}",
       "toolCallParser": "qwen3_coder",
       "trustRemoteCode": true,
+      "vllmVersion": "0.33.0",
       "warmPolicy": "primary"
     },
     "args": [
@@ -5324,8 +5325,6 @@
       "0.96",
       "--attention-backend",
       "ROCM_SEGMENTED_ATTN",
-      "--mamba-cache-mode",
-      "align",
       "--mamba-ssm-cache-dtype",
       "bfloat16",
       "--trust-remote-code",
@@ -5388,10 +5387,6 @@
         "value": "0"
       },
       {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
         "name": "VLLM_ROCM_USE_AITER_LINEAR",
         "value": "0"
       },
@@ -5409,10 +5404,6 @@
       },
       {
         "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
         "value": "0"
       },
       {
@@ -5491,6 +5482,7 @@
       "speculativeConfig": "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}",
       "toolCallParser": "qwen3_coder",
       "trustRemoteCode": true,
+      "vllmVersion": "0.33.0",
       "warmPolicy": "primary"
     },
     "args": [
@@ -5509,8 +5501,6 @@
       "0.96",
       "--attention-backend",
       "ROCM_SEGMENTED_ATTN",
-      "--mamba-cache-mode",
-      "align",
       "--mamba-ssm-cache-dtype",
       "bfloat16",
       "--trust-remote-code",
@@ -5573,10 +5563,6 @@
         "value": "0"
       },
       {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
         "name": "VLLM_ROCM_USE_AITER_LINEAR",
         "value": "0"
       },
@@ -5594,10 +5580,6 @@
       },
       {
         "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
         "value": "0"
       },
       {

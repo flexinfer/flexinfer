@@ -91,6 +91,34 @@ func TestValidateVLLMConfig(t *testing.T) {
 	}
 }
 
+func TestValidateVLLMOmniConfig(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		cfg     map[string]any
+		wantErr string
+	}{
+		{name: "empty config", cfg: nil},
+		{name: "declared release", cfg: map[string]any{"vllmVersion": "0.32.0"}},
+		// vllm-omni never reads the partial-prefill keys; only vllm refuses them.
+		{name: "partial prefill cap is not omni's concern", cfg: map[string]any{"maxNumPartialPrefills": 2.0}},
+		{name: "unquoted release", cfg: map[string]any{"vllmVersion": 0.32}, wantErr: "spec.config.vllmVersion must be a quoted string"},
+		{name: "unreadable release", cfg: map[string]any{"vllmVersion": "latest"}, wantErr: `spec.config.vllmVersion "latest" is not a vLLM release`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateVLLMOmniConfig(tt.cfg)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("ValidateVLLMOmniConfig() = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("ValidateVLLMOmniConfig() = %v, want an error containing %q", err, tt.wantErr)
+			}
+		})
+	}
+}
+
 // A Model that slipped past validation still never renders the dead flags.
 func TestVLLMBackendArgs_DeadPartialPrefillKeysNotRendered(t *testing.T) {
 	args := (&VLLMBackend{}).Args(&ModelSpec{Model: "m", Config: map[string]any{
