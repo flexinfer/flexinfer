@@ -17,20 +17,19 @@
 # Remove this parent Model (not its Deployment/pod) to roll the lane back.
 #
 # 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
-# WINDOW-GATED, and BLOCKED on the runtime image, see below): served IN-POD by
-# the 7900xtx runtime DaemonSet instead of its own Deployment, so a render
-# swaps the XTX warm lane out and back inside the runtime pod.
+# WINDOW-GATED): served IN-POD by the 7900xtx runtime DaemonSet instead of its
+# own Deployment, so a render swaps the XTX warm lane out and back inside the
+# runtime pod.
 # - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
 # - Compile cache: scope Image on the default hostPath, the directory the
 #   runtime pod mounts at /cache/compile.
-# BLOCKED: the v032 persona (ef28b7b0 and its master rebuild 7ae8e92f,
-# the repin target; same package set) has no imageio or
-# imageio-ffmpeg, so diffusers 0.42 export_to_video falls back to OpenCV and
-# writes MPEG-4 Part 2 (mp4v), which browsers do not play; the dedicated
-# image (diffusers-video 83cda206) writes H.264 through imageio-ffmpeg. It
-# also lacks ftfy (WanPipeline skips prompt cleaning without it). Checked
-# inside the image 2026-11-01. Unblock: a gfx1100-serving-v032 build adding
-# imageio, imageio-ffmpeg and ftfy, pinned on the XTX runtime first.
+# Runtime image: 527e2714 (rocm-gfx1100-serving-v032-ddf22437, live on the XTX runtime since !1234 on 2026-11-04). It carries imageio 2.37.0, imageio-ffmpeg 0.6.0 (H.264
+# export) and ftfy 6.3.1, and its server-diffusers.py has the Wan VAE MIOpen
+# bypass (!1268, 225b7150); checked in the live runtime pod 2026-11-05. Its
+# stack is torch 2.13 / ROCm 7.2.3 (MIOpen of that release), not the dedicated
+# image's, so the in-pod decode time is unmeasured: A/B one 33-frame 832x480
+# clip in-pod against the dedicated lane (b1f98ad0: cold clip 252 s, decode
+# 7 s on 2026-11-04) before promotion.
 # Host RAM: this lane's dedicated limit (48 GiB) equals the runtime pod's
 # whole limit; a render that needed all of it in-pod would leave the runtime
 # manager nothing.

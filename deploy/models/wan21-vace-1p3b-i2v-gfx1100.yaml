@@ -21,20 +21,18 @@
 # Remove this parent Model (not its Deployment/pod) to roll the lane back.
 #
 # 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
-# WINDOW-GATED, and BLOCKED on the runtime image, see below): served IN-POD by
-# the 7900xtx runtime DaemonSet instead of its own Deployment, so a render
-# swaps the XTX warm lane out and back inside the runtime pod.
+# WINDOW-GATED): served IN-POD by the 7900xtx runtime DaemonSet instead of its
+# own Deployment, so a render swaps the XTX warm lane out and back inside the
+# runtime pod.
 # - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
 # - Compile cache: scope Image on the default hostPath, the directory the
 #   runtime pod mounts at /cache/compile.
-# BLOCKED: the v032 persona (ef28b7b0 and its master rebuild 7ae8e92f,
-# the repin target; same package set) has no ftfy, and
-# diffusers 0.42 WanVACEPipeline.basic_clean calls ftfy.fix_text without the
-# is_ftfy_available guard WanPipeline has (pipelines/wan/pipeline_wan_vace.py
-# line 111), so every request would fail with NameError. It also lacks
-# imageio/imageio-ffmpeg (OpenCV mp4v export, see the T2V lane). Checked
-# inside the image 2026-11-01. Unblock: a gfx1100-serving-v032 build adding
-# ftfy, imageio and imageio-ffmpeg, pinned on the XTX runtime first.
+# Runtime image: 527e2714 (rocm-gfx1100-serving-v032-ddf22437, live on the XTX runtime since !1234 on 2026-11-04). It carries ftfy 6.3.1 (WanVACEPipeline.basic_clean calls
+# ftfy.fix_text unguarded), imageio 2.37.0 and imageio-ffmpeg 0.6.0; checked in
+# the live runtime pod 2026-11-05. This lane's VAE is fp32, so the Wan VAE
+# MIOpen bypass (!1268) does not apply and the decode runs through the MIOpen
+# of torch 2.13 / ROCm 7.2.3: A/B one clip in-pod against the dedicated lane
+# (83cda206) before promotion.
 # Host RAM: dedicated limit 48 GiB = the runtime pod's whole limit.
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
 # config); the Deployment returns on the next reconcile.
