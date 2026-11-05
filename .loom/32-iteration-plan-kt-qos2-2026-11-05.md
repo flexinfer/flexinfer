@@ -125,8 +125,8 @@ The pass rule is the matrix row's, copied here:
 
 **Validity.** The control repeats KT-QOS arm C (same image, card and harness, plus the warm-ups). If its aggregate
 decode is outside ±5 % of C's 61.20 tok/s, or its idle p95 outside ±10 % of C's 0.575 s, the window is reported and not
-judged. An arm interrupted by a controller or proxy roll is rerun. The result records the proxy and controller digests
-per arm.
+judged. An arm is rerun if it is interrupted by a controller or proxy roll, or by a creative-lane request: those lanes
+sit at 500, above the canary's 480, and can preempt it. The result records the proxy and controller digests per arm.
 
 **Prediction (from §2, written before the run).**
 
@@ -156,8 +156,9 @@ per arm.
 
 ```bash
 export KUBECONFIG=/Users/cblevins/workspace/platform/gitops/.kube/k3s.yaml
-# 1. Nothing else on the group at >= 480 (the S7 pool canary and the D-step lanes are gone)
-kubectl get models.ai.flexinfer -n flexinfer-system -o json | jq -r '.items[] | select(.spec.gpu.shared=="7900xtx-textgen" and .spec.gpu.priority >= 480) | "\(.metadata.name) \(.spec.gpu.priority) \(.status.phase)"'   # prints nothing
+# 1. No other debug canary on the group, and nothing at >= 480 holding it. The on-demand creative
+#    lanes sit at 500 and are expected while Idle (the S7 pool canary is gone; no D-step lane is loaded).
+kubectl get models.ai.flexinfer -n flexinfer-system -o json | jq -r '.items[] | select(.spec.gpu.shared=="7900xtx-textgen" and .spec.gpu.priority >= 480) | select(((.metadata.annotations["flexinfer.ai/promotion-state"] // "") | startswith("debug-canary")) or (.status.phase != "Idle")) | "\(.metadata.name) \(.spec.gpu.priority) \(.status.phase)"'   # prints nothing
 # 2. No GPULease left from KT-SWAP
 kubectl get gpuleases.ai.flexinfer -A   # none on cblevins-7900xtx
 # 3. The controller roll !1289 (A1) has merged and soaked: this canary declares vllmVersion
