@@ -1,0 +1,173 @@
+# DEBUG CANARY: slice S4 "step 0" of
+# .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.3, with
+# matrix rows gfx1100-s4-step0-decode-anatomy-2026-11-05 (arm A) and
+# gfx1100-s4-plugin-flags-q2-q3-2026-11-05 (arm B). Prepared 2026-11-05.
+# NOT in the models kustomization: the operator applies it once, the agent
+# session sequences the arms with the flexinfer MCP tools (config merge
+# patches), then deletes the Model and hands the card back to the warm lane.
+#
+# Posture: the production workhorse recipe (qwen38-27b-autoround-workhorse:
+# ROCM_SEGMENTED_ATTN, fp16 KV, MTP K=2, 32K, 0.96, maxNumSeqs 2, graphs on)
+# on the 7900 XTX flex card, borrowed from the warm lane. The 5930k workhorse
+# (900) is untouched. gpu.forcePromotion + priority 520 hold the card for the
+# whole window whatever the demand: the warm lane (300, ondemand) and the
+# creative lanes (500) queue behind it. Count 2 because the XTX node also
+# exposes the Raphael iGPU (same as the warm lane); hipVisibleDevices 0.
+#
+# Image: the gfx1100 vLLM 0.32 serving persona built from master 511a9f68
+# (!1282: text plugin 0.10.0 / plugin-common 0.3.0, Q2 and Q3 behind opt-in
+# env flags). Same vllm/vllm-openai-rocm:v0.32.0 base, wheel and kernels as
+# the workhorse's b06b06fe, so arm A's anatomy carries over; with no flag set
+# the plugins behave as 0.9.0 (S2 note). vllmVersion "0.32.0" renders the 0.32
+# env surface (!1281).
+#
+# The wrapper adds what no Model field renders:
+#   - the torch profiler (--profiler-config; /start_profile takes
+#     delay_iterations / max_iterations, so a trace holds exactly N steps);
+#   - --jit-monitor-verbose: vLLM arms jit_monitor after warmup and, without
+#     this flag, logs each kernel function once (warning_once); verbose logs
+#     every post-warmup compile or Triton disk load, so the Q2 count is exact;
+#   - S4_MODE=hold: the container starts but runs no engine, so the kernel
+#     microbench (scripts/bench-gfx1100-decode-kernels.py) gets the whole card;
+#   - S4_CACHE_SUBDIR=<name>: every compile cache (VLLM_CACHE_ROOT, which holds
+#     the segmented autotune table, TRITON_CACHE_DIR, TORCHINDUCTOR_CACHE_DIR)
+#     moves to a fresh subdirectory of the compile-cache hostPath, for the Q2
+#     cold-cache boot. The controller reserves those names in spec.config.env.
+#
+# Arms, in order (each config merge patch relaunches the pod):
+#   H   S4_MODE=hold (as applied). kubectl exec the microbench.
+#   A0  {"env":{"S4_MODE":null}}  cold boot, no flags = baseline B0.
+#       jit-sweep (the 100-request Q2 sequence, control), 16K TTFT x5,
+#       scripts/verify-vllm-mtp.py --phase measure --contexts 512,2048,16384,
+#       then profile 20 decode steps at 2K, c = 1 and 2 (2 traces each).
+#   A1  {"env":{"S4_ARM":"b0-warm"}}  warm reboot: baseline boot time, 16K TTFT x5.
+#   Q3  {"env":{"S4_ARM":"q3","FLEXINFER_FLA_AUTOTUNE":"relaxed"}}  boot on the
+#       baseline-warm cache, 16K TTFT x5, verify-vllm-mtp parity.
+#   Q2  {"env":{"S4_ARM":"q2","FLEXINFER_FLA_AUTOTUNE":null,
+#       "FLEXINFER_SEGMENTED_RUNTIME_TABLES":"1","S4_CACHE_SUBDIR":"q2-cold"}}
+#       cold boot with the flag, then the same jit-sweep first; count
+#       jit_monitor lines from boot to the sweep's end.
+# Budget about 2 h of XTX time (two cold boots of ~10 min).
+#
+# Rollback / end: flexinfer_delete_model, then one chat request to
+# qwen38-27b-xtx-warm-canary through flexinfer-proxy (an idle ondemand lane
+# only takes a borrowed card back on demand).
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-s4-step0-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md"
+    flexinfer.ai/promotion-state: debug-canary-s4-step0
+spec:
+  backend: vllm
+  # rocm-gfx1100-serving-v032-511a9f68 (pipeline 37714, job 467912; text plugin 0.10.0, plugin-common 0.3.0, build verifier passed with the segmented patch installing).
+  image: registry.harbor.lan/flexinfer/runtime@sha256:50d3f899c32ec538de431459f5c17ad658cb86d361b7c8b23f294f2b7da87e9d
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # New path: A0 is a cold boot; Q2 uses the q2-cold subdirectory.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-s4-step0-7900xtx
+      sizeLimit: 8Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 520
+    forcePromotion: true
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 3h
+    # Covers the hold arm and the cold segmented autotune + compile boots.
+    coldStartTimeout: 45m
+  config:
+    command:
+      - bash
+      - -lc
+      - |
+        if [ -n "${S4_CACHE_SUBDIR:-}" ]; then
+          for v in VLLM_CACHE_ROOT TRITON_CACHE_DIR TORCHINDUCTOR_CACHE_DIR; do
+            cur="$(printenv "$v" || true)"
+            if [ -n "$cur" ]; then
+              mkdir -p "$cur/$S4_CACHE_SUBDIR"
+              export "$v=$cur/$S4_CACHE_SUBDIR"
+            fi
+          done
+        fi
+        echo "s4: arm=${S4_ARM:-} mode=${S4_MODE:-serve} cache_subdir=${S4_CACHE_SUBDIR:-} fla=${FLEXINFER_FLA_AUTOTUNE:-} seg_tables=${FLEXINFER_SEGMENTED_RUNTIME_TABLES:-} at $(date -u +%FT%TZ)"
+        if [ "${S4_MODE:-serve}" = hold ]; then
+          exec sleep 5400
+        fi
+        exec vllm serve "$@" --jit-monitor-verbose --profiler-config '{"profiler":"torch","torch_profiler_dir":"/tmp/vllm-profile","torch_profiler_with_stack":false,"ignore_frontend":true}'
+      - vllm
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+      S4_MODE: hold
+      S4_ARM: hold
+    vllmVersion: "0.32.0"
+    cudagraphMetrics: true
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    warmPolicy: primary
+    dedicatedDeployment: true
+    quantization: gptq
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-s4-step0-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Hidden from discovery; the probes talk to the pod over localhost.
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-s4-step0-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
