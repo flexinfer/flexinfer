@@ -7,7 +7,11 @@ import importlib
 import importlib.metadata
 import pathlib
 import re
+import shutil
+import struct
+import subprocess
 import sys
+import tempfile
 from typing import Any, Callable
 
 
@@ -29,7 +33,20 @@ SEGMENTED_PATCH_MARKER = "_flexinfer_runtime_tables"
 # vLLM from source; since the 0.32 wheel embeds them the build relies on the
 # upstream wheel and this check is what keeps a future base image honest.
 ISA_EXTENSION_GLOBS = ("_C*.so", "_moe_C*.so", "_rocm_C*.so")
-ISA_MARKER_TEMPLATE = "amdgcn-amd-amdhsa--{isa}"
+# HIP keeps device code in the ELF section .hip_fatbin as a run of clang
+# offload bundles, one per translation unit. A plain bundle names its targets
+# in a header (magic, count, then offset/size/triple per entry). 0.33's
+# _rocm_C ships compressed bundles instead ("CCOB": magic, version, method,
+# sizes, hash, then a zstd or zlib stream of a plain bundle), whose triples
+# are only visible after decompression, so those go to clang-offload-bundler.
+HIP_FATBIN_SECTION = b".hip_fatbin"
+PLAIN_BUNDLE_MAGIC = b"__CLANG_OFFLOAD_BUNDLE__"
+COMPRESSED_BUNDLE_MAGIC = b"CCOB"
+DEVICE_TRIPLE_MARKER = "amdgcn-amd-amdhsa--"
+CLANG_OFFLOAD_BUNDLER_CANDIDATES = (
+    "/opt/rocm/llvm/bin/clang-offload-bundler",
+    "clang-offload-bundler",
+)
 
 
 def _parse_version(raw: str) -> tuple[int, int, int]:
@@ -57,24 +74,179 @@ def verify_source_contract(vllm_root: pathlib.Path, version: str) -> None:
         )
 
 
-def verify_isa_contract(vllm_root: pathlib.Path, isa: str) -> list[str]:
-    """Verify every compiled vLLM extension embeds device code for ``isa``.
+def elf_section(data: bytes, name: bytes) -> bytes | None:
+    """Return the bytes of section ``name`` of a 64-bit little-endian ELF."""
+    if data[:4] != b"\x7fELF" or data[4] != 2 or data[5] != 1:
+        raise RuntimeError("not a 64-bit little-endian ELF file")
+    (shoff,) = struct.unpack_from("<Q", data, 0x28)
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x3A)
 
-    HIP fat binaries name each embedded code object by its target triple
-    (``amdgcn-amd-amdhsa--gfx1100``), so a byte scan of the shared objects is
-    enough to prove the wheel was built for this GPU without loading it. A
-    wheel that only carries CDNA targets would import fine and then fail every
-    kernel launch on an RDNA3 card with "no kernel image is available".
+    def header(index: int) -> tuple[int, int, int]:
+        fields = struct.unpack_from("<IIQQQQ", data, shoff + index * shentsize)
+        return fields[0], fields[4], fields[5]  # sh_name, sh_offset, sh_size
+
+    _, strtab, _ = header(shstrndx)
+    for index in range(shnum):
+        name_offset, offset, size = header(index)
+        start = strtab + name_offset
+        if data[start : data.index(b"\0", start)] == name:
+            return data[offset : offset + size]
+    return None
+
+
+def _plain_bundle_triples(blob: bytes, start: int) -> tuple[list[str], int]:
+    """Parse one plain offload bundle header; return its triples and end."""
+    (count,) = struct.unpack_from("<Q", blob, start + len(PLAIN_BUNDLE_MAGIC))
+    cursor = start + len(PLAIN_BUNDLE_MAGIC) + 8
+    end = cursor
+    triples: list[str] = []
+    for _ in range(count):
+        offset, size, triple_size = struct.unpack_from("<QQQ", blob, cursor)
+        cursor += 24
+        triples.append(blob[cursor : cursor + triple_size].decode("ascii"))
+        cursor += triple_size
+        end = max(end, cursor, start + offset + size)
+    if end > len(blob):
+        raise RuntimeError(f"offload bundle at {start:#x} runs past the fat binary")
+    return triples, end
+
+
+def _compressed_bundle_end(blob: bytes, start: int) -> int:
+    """End of the compressed bundle at ``start``, from its header.
+
+    clang's CompressedOffloadBundle header: magic, uint16 version, uint16
+    method, then v2 a uint32 and v3 a uint64 total size (header included).
+    v1 has no total size, so it runs to the next bundle or the section end.
+    """
+    (version,) = struct.unpack_from("<H", blob, start + 4)
+    if version == 3:
+        (total,) = struct.unpack_from("<Q", blob, start + 8)
+    elif version == 2:
+        (total,) = struct.unpack_from("<I", blob, start + 8)
+    elif version == 1:
+        following = [
+            index
+            for index in (
+                blob.find(PLAIN_BUNDLE_MAGIC, start + 4),
+                blob.find(COMPRESSED_BUNDLE_MAGIC, start + 4),
+            )
+            if index >= 0
+        ]
+        return min(following, default=len(blob))
+    else:
+        raise RuntimeError(
+            f"compressed offload bundle at {start:#x} has unsupported version {version}"
+        )
+    if total <= 0 or start + total > len(blob):
+        raise RuntimeError(
+            f"compressed offload bundle at {start:#x} declares size {total} "
+            f"past the fat binary ({len(blob)} bytes)"
+        )
+    return start + total
+
+
+def offload_bundle_triples(
+    fatbin: bytes, list_compressed: Callable[[bytes], list[str]]
+) -> list[list[str]]:
+    """Return the target triples of every offload bundle in a .hip_fatbin.
+
+    Bundles are walked structurally (each header gives its length), so magic
+    bytes inside a code object are never mistaken for a bundle. Compressed
+    bundles are sliced out whole and handed to ``list_compressed``.
+    """
+    bundles: list[list[str]] = []
+    cursor = 0
+    while True:
+        starts = [
+            (index, magic)
+            for magic in (PLAIN_BUNDLE_MAGIC, COMPRESSED_BUNDLE_MAGIC)
+            if (index := fatbin.find(magic, cursor)) >= 0
+        ]
+        if not starts:
+            return bundles
+        start, magic = min(starts)
+        if magic == PLAIN_BUNDLE_MAGIC:
+            triples, end = _plain_bundle_triples(fatbin, start)
+        else:
+            end = _compressed_bundle_end(fatbin, start)
+            triples = list_compressed(fatbin[start:end])
+        bundles.append(triples)
+        cursor = end
+
+
+def clang_offload_bundler_list(bundle: bytes) -> list[str]:
+    """List a compressed bundle's targets with ROCm's clang-offload-bundler."""
+    bundler = next(
+        (
+            found
+            for candidate in CLANG_OFFLOAD_BUNDLER_CANDIDATES
+            if (found := shutil.which(candidate))
+        ),
+        None,
+    )
+    if bundler is None:
+        raise RuntimeError(
+            "compressed offload bundles need clang-offload-bundler to list their "
+            f"targets; none of {CLANG_OFFLOAD_BUNDLER_CANDIDATES} is executable"
+        )
+    with tempfile.TemporaryDirectory() as tmp:
+        path = pathlib.Path(tmp) / "bundle.o"
+        path.write_bytes(bundle)
+        result = subprocess.run(
+            [bundler, "--list", "--type=o", f"--input={path}"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    if result.returncode != 0:
+        raise RuntimeError(
+            f"clang-offload-bundler --list failed ({result.returncode}): "
+            f"{result.stderr.strip()}"
+        )
+    return result.stdout.split()
+
+
+def _triple_isa(triple: str) -> str | None:
+    """``hipv4-amdgcn-amd-amdhsa--gfx1100[:feature±]`` -> ``gfx1100``."""
+    if DEVICE_TRIPLE_MARKER not in triple:
+        return None
+    return triple.split(DEVICE_TRIPLE_MARKER, 1)[1].split(":", 1)[0]
+
+
+def verify_isa_contract(
+    vllm_root: pathlib.Path,
+    isa: str,
+    list_compressed: Callable[[bytes], list[str]] = clang_offload_bundler_list,
+) -> list[str]:
+    """Verify every device bundle of every compiled vLLM extension targets ``isa``.
+
+    Reads each extension's .hip_fatbin and the target list of every offload
+    bundle in it, plain or compressed, and requires ``isa`` in each one: a
+    wheel that only carries CDNA targets (or one translation unit built
+    without gfx1100) imports fine and then fails kernel launches on an RDNA3
+    card with "no kernel image is available". A byte scan for the triple was
+    enough through 0.32, but 0.33 compresses _rocm_C's bundles and hides it.
     Returns the extension file names that were checked.
     """
-    marker = ISA_MARKER_TEMPLATE.format(isa=isa).encode()
     checked: list[str] = []
     missing: list[str] = []
     for pattern in ISA_EXTENSION_GLOBS:
         for path in sorted(vllm_root.glob(pattern)):
             checked.append(path.name)
-            if marker not in path.read_bytes():
-                missing.append(path.name)
+            fatbin = elf_section(path.read_bytes(), HIP_FATBIN_SECTION)
+            bundles = offload_bundle_triples(fatbin or b"", list_compressed)
+            if not bundles:
+                missing.append(f"{path.name} (no offload bundles)")
+                continue
+            lacking = [
+                index
+                for index, triples in enumerate(bundles)
+                if isa not in {_triple_isa(triple) for triple in triples}
+            ]
+            if len(lacking) == len(bundles):
+                missing.append(f"{path.name} (all {len(bundles)} bundles)")
+            elif lacking:
+                missing.append(f"{path.name} (bundles {lacking} of {len(bundles)})")
     if not checked:
         raise RuntimeError(
             f"no compiled vLLM extensions matching {ISA_EXTENSION_GLOBS} under {vllm_root}"
