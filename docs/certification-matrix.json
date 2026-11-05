@@ -1359,6 +1359,7 @@
       "evidence": "deploy/models/qwen38-27b-autoround-workhorse.yaml#flexinfer.ai/promotion-evidence",
       "evidence_note": "canaries qwen38-27b-v032-s3-attn-canary (S3) and S3b on b06b06fe, 2026-10-26: segmented + fp16 + MTP K=2 at 32K decode 71.8/66.5/66.1 tok/s at 512/2K/16K vs TRITON+fp8 40.8/40.2/34.3, pos0 acceptance 0.81, warm TTFT 0.234/0.419/1.026 s at 256/512/1124 vs this lane's 0.237/0.436/1.088, coherent probes, parity hash 8174a49e, KV pool 52,932 tok (1.62x) @32K",
       "validation_rows": [
+        "xtx-workhorse-v033-promotion-2026-11-05",
         "workhorse-vllm-v032-2026-10-25"
       ],
       "date": "2026-10-26",
@@ -1831,6 +1832,22 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/embeddings.yaml"
+    },
+    {
+      "id": "xtx-workhorse-v033-promotion-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "the gfx1100 workhorse promotion (qwen38-27b-autoround-workhorse, cblevins-5930k, priority 900) that cashes in the 2026-11-05 canaries: S3 (row xtx-vllm-v033-parity-2026-11-05, 0.33 at parity), KT-SO…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#xtx-workhorse-v033-promotion-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
     },
     {
       "id": "workhorse-qos-prefill-budget-2026-11-05",
