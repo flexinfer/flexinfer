@@ -522,8 +522,11 @@ profiles:
 
   gfx906:
     tag: "runtime:rocm-gfx906"
-    # Qualified Humanizer architecture support on the unified Radeon VII lane.
-    llamacpp_version: "b11335"
+    # b11847 since S8 (2026-11-05): the LM-head and logits-buffer skip for
+    # pooled embeddings (b11597). Ceiling b11878 (b11879's MMQ grid order slows
+    # MoE prompt processing on gfx906); fallback v0.7.0 = b11669. The live
+    # runtime carries it as the build/Dockerfile.runtime-gfx906-llamacpp layer.
+    llamacpp_version: "b11847"
     # Dedicated Dockerfile: swaps the runtime base to mixa3607/pytorch-gfx906
     # (community-maintained PyTorch with rebuilt rocBLAS+Tensile for gfx906)
     # and applies cycle-1 cleanup techniques (pycache purge, single-layer pip,

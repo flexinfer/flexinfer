@@ -21,6 +21,13 @@ HAVE_YAML = importlib.util.find_spec("yaml") is not None
 
 ROOT_CI = ".gitlab-ci.yml"
 PUBLISH_CI = ".gitlab/ci/runtime-publish.yml"
+# gfx906's own llamacpp_version line in build/runtime.yaml. gfx1100 pins the
+# same build (b11847) earlier in the file, so edits aimed at gfx906 anchor on
+# the profile comment that precedes its line.
+GFX906_LLAMACPP_LINE = (
+    '    # runtime carries it as the build/Dockerfile.runtime-gfx906-llamacpp layer.\n'
+    '    llamacpp_version: "b11847"'
+)
 
 
 def _load():
@@ -260,13 +267,13 @@ class PublishJobContractTests(unittest.TestCase):
         self.edit_job(
             ROOT_CI,
             "publish_runtime_rocm_gfx906",
-            'LLAMACPP_VERSION="b11335"',
+            'LLAMACPP_VERSION="b11847"',
             'LLAMACPP_VERSION="b11457"',
         )
         msg = self.failure()
         self.assertIn(
             'publish_runtime_rocm_gfx906 (.gitlab-ci.yml) passes LLAMACPP_VERSION="b11457" but '
-            'build/runtime.yaml resolves it to "b11335" (profiles.gfx906.llamacpp_version)',
+            'build/runtime.yaml resolves it to "b11847" (profiles.gfx906.llamacpp_version)',
             msg,
         )
         self.assertNotIn("publish_unified_rocm_gfx1100", msg)
@@ -276,17 +283,14 @@ class PublishJobContractTests(unittest.TestCase):
     ) -> None:
         # Exercise multiple global-version consumers without profile overrides
         # (both ROCm profiles pin their own llamacpp_version on master; S5
-        # 2026-10-24 moved gfx1100 onto b11847).
+        # 2026-10-24 moved gfx1100 onto b11847, S8 2026-11-05 gfx906 too).
         self.runtime_yaml = self.runtime_yaml.replace(
-            '    llamacpp_version: "b11335"\n', "", 1
-        )
-        self.runtime_yaml = self.runtime_yaml.replace(
-            '    llamacpp_version: "b11847"\n', "", 1
+            '    llamacpp_version: "b11847"\n', "", 2
         )
         self.edit_job(
             ROOT_CI,
             "publish_runtime_rocm_gfx906",
-            'LLAMACPP_VERSION="b11335"',
+            'LLAMACPP_VERSION="b11847"',
             'LLAMACPP_VERSION="b8173"',
         )
         self.edit_job(
@@ -339,11 +343,11 @@ class PublishJobContractTests(unittest.TestCase):
 
     def test_profile_level_llamacpp_version(self) -> None:
         self.runtime_yaml = self.runtime_yaml.replace(
-            '    llamacpp_version: "b11335"', '    llamacpp_version: "b11457"', 1
+            GFX906_LLAMACPP_LINE, GFX906_LLAMACPP_LINE.replace("b11847", "b11457"), 1
         )
         msg = self.failure()
         self.assertIn(
-            'publish_runtime_rocm_gfx906 (.gitlab-ci.yml) passes LLAMACPP_VERSION="b11335" but '
+            'publish_runtime_rocm_gfx906 (.gitlab-ci.yml) passes LLAMACPP_VERSION="b11847" but '
             'build/runtime.yaml resolves it to "b11457" (profiles.gfx906.llamacpp_version)',
             msg,
         )
@@ -356,7 +360,7 @@ class PublishJobContractTests(unittest.TestCase):
         self.edit_job(
             ROOT_CI,
             "publish_runtime_rocm_gfx906",
-            'LLAMACPP_VERSION="b11335"',
+            'LLAMACPP_VERSION="b11847"',
             'LLAMACPP_VERSION="b11457"',
         )
         self.check()
@@ -487,7 +491,7 @@ class PublishJobContractTests(unittest.TestCase):
         self.edit_job(
             ROOT_CI,
             "publish_runtime_rocm_gfx906",
-            'LLAMACPP_VERSION="b11335"',
+            'LLAMACPP_VERSION="b11847"',
             'LLAMACPP_VERSION="${LLAMACPP_VERSION}"',
         )
         self.check()
