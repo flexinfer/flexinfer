@@ -329,11 +329,11 @@
       "gpu_class": "gfx906",
       "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx906-retrieval-swap-safety-2026-10-31",
+      "evidence": ".loom/60-validation-matrix.md#gfx906-llamacpp-b11847-2026-11-05",
       "validation_rows": [
-        "gfx906-retrieval-swap-safety-2026-10-31"
+        "gfx906-llamacpp-b11847-2026-11-05"
       ],
-      "date": "2026-10-31",
+      "date": "2026-11-05",
       "source": "deploy/gpuprofiles/gfx906.yaml"
     },
     {
@@ -1668,7 +1668,6 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gemma4-e4b-radeonvii@2026-05-25",
       "validation_rows": [
-        "gfx906-llamacpp-b11847-2026-11-05",
         "gemma4-e4b-radeonvii@2026-05-25"
       ],
       "date": "2026-05-25",
@@ -1711,7 +1710,6 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx906-serving-2026-10-23",
       "validation_rows": [
-        "gfx906-llamacpp-b11847-2026-11-05",
         "gfx906-serving-2026-10-23"
       ],
       "date": "2026-10-23",
@@ -1923,9 +1921,9 @@
       "nodes": [
         "radeonvii"
       ],
-      "decision": "pending",
+      "decision": "conditional",
       "title": "S8 / B4 of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md (§3.2, §4 B4): the Radeon VII runtime's llama.cpp b11335 → b11847 for b11597's LM-head and logits-buffer skip on pooled…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx906-llamacpp-b11847-2026-11-05",
       "date": "2026-11-05",
       "source": ".loom/60-validation-matrix.md"

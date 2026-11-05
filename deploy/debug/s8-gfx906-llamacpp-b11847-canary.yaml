@@ -245,7 +245,7 @@ data:
             for q in os.listdir(d):
                 try:
                     with open(f"{d}/{q}/type") as f:
-                        if f.read().strip().lower() == "compute":
+                        if f.read().strip() in ("0", "compute"):  # KFD_QUEUE_TYPE_COMPUTE = 0
                             n += 1
                 except OSError:
                     pass
@@ -463,6 +463,7 @@ data:
                     "temperature": 0,
                     "top_k": 1,
                     "seed": 42,
+                    "ignore_eos": True,  # Orpheus hit EOS at once on 2026-11-05; measure decode
                     "cache_prompt": False,
                 }
                 runs = []
