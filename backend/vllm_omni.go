@@ -2,7 +2,6 @@ package backend
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -206,9 +205,7 @@ func (b *VLLMOmniBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_USE_TRITON_FLASH_ATTN", Value: "1"})
 		}
 
-		supportsAiter := strings.HasPrefix(spec.GPUArch, "gfx110") ||
-			strings.HasPrefix(spec.GPUArch, "gfx942")
-		if enableAiter && supportsAiter {
+		if enableAiter && vllmArchSupportsAiter(spec.GPUArch) {
 			vllmEnv = append(vllmEnv, corev1.EnvVar{Name: "VLLM_ROCM_USE_AITER", Value: "1"})
 		}
 
@@ -232,7 +229,10 @@ func (b *VLLMOmniBackend) Env(spec *ModelSpec) []corev1.EnvVar {
 		})
 	}
 
-	return env
+	// vllm-omni runs on a vLLM release, declared like the vllm backend's
+	// with spec.config.vllmVersion; drop the VLLM_* names it no longer
+	// defines (VLLM_USE_TRITON_FLASH_ATTN from 0.32.0).
+	return withoutRemovedVLLMEnv(spec, env)
 }
 
 func (b *VLLMOmniBackend) ReadinessProbe() *corev1.Probe {

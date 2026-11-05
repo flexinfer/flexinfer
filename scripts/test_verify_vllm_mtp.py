@@ -125,13 +125,20 @@ class ContextSweepTests(unittest.TestCase):
         original_chat, original_prompt = mtp.chat, mtp.sized_prompt
         mtp.sized_prompt = lambda base, model, target, nonce=None: f"p{target}"
         mtp.chat = lambda base, model, prompt, max_tokens: calls.append(prompt) or {
-            "answer": "Rain forms when...", "prompt_tokens": 2048, "completion_tokens": 256,
-            "ttft_s": 2.0, "decode_tps": 50.0}
+            "answer": "Rain forms when...",
+            "prompt_tokens": 2048,
+            "completion_tokens": 256,
+            "ttft_s": 2.0,
+            "decode_tps": 50.0,
+        }
         try:
             with contextlib.redirect_stdout(io.StringIO()):
                 rows = mtp.context_sweep(
-                    "http://x", "m", [2048],
-                    metrics=lambda base: mtp.parse_spec_metrics(next(texts)))
+                    "http://x",
+                    "m",
+                    [2048],
+                    metrics=lambda base: mtp.parse_spec_metrics(next(texts)),
+                )
         finally:
             mtp.chat, mtp.sized_prompt = original_chat, original_prompt
         self.assertEqual(calls, ["p2048"])
@@ -154,6 +161,121 @@ class MeasurePhaseTests(unittest.TestCase):
         slow = results(short=41.0, two_k=40.0, ttft=5.0)
         self.assertEqual(mtp.verdict(args("measure"), slow, None), [])
         self.assertTrue(mtp.verdict(args("measure"), results(coherent=False), None))
+
+
+def sse(*events):
+    lines = [f"data: {json.dumps(event)}\n".encode() for event in events]
+    return lines + [b"data: [DONE]\n"]
+
+
+class ReadStreamTests(unittest.TestCase):
+    def read(self, usage):
+        clock = iter([1.0, 2.0])
+        return mtp.read_stream(
+            sse(
+                {"choices": [{"delta": {"content": "Hi"}}]},
+                {
+                    "choices": [
+                        {"delta": {"content": " there"}, "finish_reason": "stop"}
+                    ]
+                },
+                {"choices": [], "usage": usage},
+            ),
+            0.5,
+            clock=lambda: next(clock),
+        )
+
+    def test_cached_tokens_come_from_prompt_token_details(self):
+        result = self.read(
+            {
+                "prompt_tokens": 7600,
+                "completion_tokens": 3,
+                "prompt_tokens_details": {"cached_tokens": 7200},
+            }
+        )
+        self.assertEqual(result["cached_tokens"], 7200)
+        self.assertEqual(result["answer"], "Hi there")
+
+    def test_absent_details_mean_no_hit(self):
+        result = self.read({"prompt_tokens": 7600, "completion_tokens": 3})
+        self.assertEqual(result["cached_tokens"], 0)
+
+
+class ApcRepeatTests(unittest.TestCase):
+    def run_apc(self, replies):
+        calls = []
+        replies = iter(replies)
+        original_chat, original_prompt = mtp.chat, mtp.apc_prompt
+        mtp.apc_prompt = lambda base, model, target, nonce: f"apc{target}"
+
+        def fake_chat(base, model, prompt, max_tokens):
+            calls.append(prompt)
+            answer, cached, ttft = next(replies)
+            return {
+                "answer": answer,
+                "sha256": mtp.hashlib.sha256(answer.encode()).hexdigest()[:16],
+                "prompt_tokens": 7600,
+                "cached_tokens": cached,
+                "ttft_s": ttft,
+            }
+
+        mtp.chat = fake_chat
+        try:
+            with contextlib.redirect_stdout(io.StringIO()):
+                record = mtp.apc_repeat("http://x", "m", 7600)
+        finally:
+            mtp.chat, mtp.apc_prompt = original_chat, original_prompt
+        self.assertEqual(calls, ["apc7600"] * 3)
+        return record
+
+    code = mtp.APC_CODE
+
+    def test_hit_and_identical_warm_answers_pass(self):
+        record = self.run_apc(
+            [
+                (f"{self.code}\nA sensor log.", 0, 8.0),
+                (f"{self.code}\nA sensor log of readings.", 5712, 2.0),
+                (f"{self.code}\nA sensor log of readings.", 5712, 2.0),
+            ]
+        )
+        self.assertEqual(record["hit_tokens"], 5712)
+        self.assertEqual(record["warm_ttft_ratio"], 0.25)
+        self.assertTrue(record["warm_identical"])
+        self.assertFalse(record["cold_warm_identical"])
+        self.assertEqual(
+            record["cold_warm_common_prefix_chars"], len(f"{self.code}\nA sensor log")
+        )
+        self.assertEqual(mtp.apc_failures(record), [])
+
+    def test_missing_code_or_hit_fails(self):
+        record = self.run_apc(
+            [
+                (f"{self.code}\nA log.", 0, 8.0),
+                ("I do not know.", 0, 8.0),
+                (f"{self.code}\nA log.", 400, 1.0),
+            ]
+        )
+        failures = mtp.apc_failures(record)
+        self.assertIn("apc warm_1: access code missing", failures)
+        self.assertIn("apc warm_1: no prefix-cache hit", failures)
+
+    def test_apc_failures_gate_the_measure_phase(self):
+        broken = {
+            **results(),
+            "apc": {
+                "code_ok": {"cold": True, "warm_1": False, "warm_2": True},
+                "cold_cached_tokens": 0,
+                "hit_tokens": 5712,
+            },
+        }
+        self.assertEqual(
+            mtp.verdict(args("measure"), broken, None),
+            ["apc warm_1: access code missing"],
+        )
+
+    def test_bad_apc_size_is_rejected(self):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            mtp.main(["--model", "m", "--apc-repeat", "100"])
 
 
 class CompareTests(unittest.TestCase):

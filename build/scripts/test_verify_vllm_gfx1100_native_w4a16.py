@@ -110,7 +110,7 @@ class NativeW4A16VerifierTests(unittest.TestCase):
 
         entry_points.assert_called_once_with(group="vllm.general_plugins")
 
-    def _register_case(self, verifier, register, archs=None):
+    def _register_case(self, verifier, register, archs=None, embed_patched=True):
         registry = mock.Mock()
         registry.get_supported_archs.return_value = archs or [
             "Qwen3_5ForCausalLM",
@@ -119,10 +119,24 @@ class NativeW4A16VerifierTests(unittest.TestCase):
         fake_vllm = types.ModuleType("vllm")
         fake_vllm.ModelRegistry = registry
         warmup = types.ModuleType(verifier.SEGMENTED_WARMUP_MODULE)
+        base_loader = types.ModuleType(verifier.EMBED_HOST_LOADER_MODULE)
+        base_loader.BaseModelLoader = type("BaseModelLoader", (), {})
+
+        def load():
+            register(warmup)
+            if embed_patched:
+                setattr(
+                    base_loader.BaseModelLoader, verifier.EMBED_HOST_PATCH_MARKER, True
+                )
+
         entry = mock.Mock()
         entry.name = verifier.TEXT_PLUGIN_ENTRY_POINT
-        entry.load.return_value = lambda: register(warmup)
-        modules = {"vllm": fake_vllm, warmup.__name__: warmup}
+        entry.load.return_value = load
+        modules = {
+            "vllm": fake_vllm,
+            warmup.__name__: warmup,
+            base_loader.__name__: base_loader,
+        }
         return mock.Mock(return_value=[entry]), modules
 
     def test_text_plugin_registers_clears_rocm_arch_and_checks_registry(self) -> None:
@@ -131,14 +145,19 @@ class NativeW4A16VerifierTests(unittest.TestCase):
         environ = {"PYTORCH_ROCM_ARCH": "gfx1100"}
 
         def register(warmup):
-            calls.append(environ.get(verifier.SEGMENTED_RUNTIME_TABLES_ENV))
+            calls.append(
+                (
+                    environ.get(verifier.SEGMENTED_RUNTIME_TABLES_ENV),
+                    environ.get(verifier.EMBED_HOST_ENV),
+                )
+            )
             setattr(warmup, verifier.SEGMENTED_PATCH_MARKER, True)
 
         entry_points, modules = self._register_case(verifier, register)
         with mock.patch.dict(sys.modules, modules):
             verifier.verify_text_plugin_registers(entry_points, environ)
-        # register() ran once, with the segmented flag on.
-        self.assertEqual(calls, ["1"])
+        # register() ran once, with the segmented and embed-host flags on.
+        self.assertEqual(calls, [("1", "1")])
         self.assertNotIn("PYTORCH_ROCM_ARCH", environ)
 
     def test_text_plugin_registers_rejects_unregistered_architecture(self) -> None:
@@ -163,6 +182,77 @@ class NativeW4A16VerifierTests(unittest.TestCase):
             with self.assertRaises(RuntimeError) as ctx:
                 verifier.verify_text_plugin_registers(entry_points, {})
         self.assertIn(verifier.SEGMENTED_WARMUP_MODULE, str(ctx.exception))
+
+    def test_text_plugin_registers_requires_the_embed_host_patch(self) -> None:
+        verifier = _load_verifier()
+
+        def register(warmup):
+            setattr(warmup, verifier.SEGMENTED_PATCH_MARKER, True)
+
+        entry_points, modules = self._register_case(
+            verifier, register, embed_patched=False
+        )
+        with mock.patch.dict(sys.modules, modules):
+            with self.assertRaises(RuntimeError) as ctx:
+                verifier.verify_text_plugin_registers(entry_points, {})
+        self.assertIn("BaseModelLoader", str(ctx.exception))
+
+    def _fp8_tree(
+        self, root: Path, *, gated=True, drop=None, impl_param="kv_cache_dtype"
+    ):
+        gate = "on_gfx12x()" if gated else "on_gfx1x()"
+        files = {
+            "v1/attention/backends/rocm_segmented_attn.py": (
+                "from vllm.v1.attention.ops.segmented_attention import "
+                "segmented_attention\n"
+                "class RocmSegmentedAttentionBackend:\n"
+                "    @classmethod\n"
+                "    def supports_combination(cls, head_size, dtype, kv_cache_dtype):\n"
+                f"        return {gate}\n"
+                "class RocmSegmentedAttentionImpl:\n"
+                f"    def __init__(self, num_heads, {impl_param}):\n"
+                "        pass\n"
+            ),
+            "v1/attention/ops/segmented_attention.py": (
+                "def run_segmented_attention(q):\n    pass\n"
+                "def segmented_attention(query, *, kv_cache_dtype):\n"
+                f"    return {gate}\n"
+            ),
+            "platforms/rocm.py": (
+                "def on_gfx11():\n    pass\n"
+                "def on_gfx1x():\n    pass\n"
+                "def on_gfx12x():\n    pass\n"
+            ),
+        }
+        for relative, text in files.items():
+            if drop is not None and drop in text:
+                text = text.replace(drop, "renamed_" + drop)
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+
+    def test_segmented_fp8_contract_reports_the_upstream_gate(self) -> None:
+        verifier = _load_verifier()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._fp8_tree(Path(tmp))
+            self.assertTrue(verifier.verify_segmented_fp8_contract(Path(tmp)))
+        with tempfile.TemporaryDirectory() as tmp:
+            self._fp8_tree(Path(tmp), gated=False)
+            self.assertFalse(verifier.verify_segmented_fp8_contract(Path(tmp)))
+
+    def test_segmented_fp8_contract_rejects_a_renamed_name(self) -> None:
+        verifier = _load_verifier()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._fp8_tree(Path(tmp), drop="run_segmented_attention")
+            with self.assertRaisesRegex(RuntimeError, "run_segmented_attention"):
+                verifier.verify_segmented_fp8_contract(Path(tmp))
+
+    def test_segmented_fp8_contract_rejects_a_renamed_parameter(self) -> None:
+        verifier = _load_verifier()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._fp8_tree(Path(tmp), impl_param="cache_dtype")
+            with self.assertRaisesRegex(RuntimeError, "kv_cache_dtype"):
+                verifier.verify_segmented_fp8_contract(Path(tmp))
 
     def test_rejects_missing_qwen35_text_plugin_entry_point(self) -> None:
         verifier = _load_verifier()

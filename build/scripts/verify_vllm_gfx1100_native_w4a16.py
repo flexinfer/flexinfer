@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import ast
 import importlib
 import importlib.metadata
 import pathlib
@@ -28,6 +29,36 @@ SEGMENTED_WARMUP_MODULE = (
     "vllm.model_executor.warmup.rocm_segmented_attn_autotune_warmup"
 )
 SEGMENTED_PATCH_MARKER = "_flexinfer_runtime_tables"
+# The opt-in input-embedding host offload (flexinfer_vllm_common.embed_host):
+# it wraps BaseModelLoader.load_model and marks the class. Its imports need no
+# GPU, so register() installs it here like the segmented patch.
+EMBED_HOST_ENV = "FLEXINFER_EMBED_HOST"
+EMBED_HOST_LOADER_MODULE = "vllm.model_executor.model_loader.base_loader"
+EMBED_HOST_PATCH_MARKER = "_flexinfer_embed_host"
+# The opt-in fp8 segmented KV gate lift for gfx11
+# (flexinfer_vllm_common.segmented_fp8) imports vllm.platforms.rocm, which
+# queries the GPU at import, so a driverless build checks the names it wraps
+# from source instead: file -> (top-level name, parameter it reads or None).
+SEGMENTED_FP8_SOURCE_API = {
+    "v1/attention/backends/rocm_segmented_attn.py": (
+        ("RocmSegmentedAttentionBackend.supports_combination", "kv_cache_dtype"),
+        ("RocmSegmentedAttentionImpl.__init__", "kv_cache_dtype"),
+        ("segmented_attention", None),
+    ),
+    "v1/attention/ops/segmented_attention.py": (
+        ("segmented_attention", "kv_cache_dtype"),
+        ("run_segmented_attention", None),
+    ),
+    "platforms/rocm.py": (
+        ("on_gfx11", None),
+        ("on_gfx1x", None),
+        ("on_gfx12x", None),
+    ),
+}
+SEGMENTED_FP8_GATED_FILES = (
+    "v1/attention/backends/rocm_segmented_attn.py",
+    "v1/attention/ops/segmented_attention.py",
+)
 # Compiled extensions that must carry device code for the target ISA. Through
 # 0.26 the published ROCm wheel lacked gfx1100 objects and this image rebuilt
 # vLLM from source; since the 0.32 wheel embeds them the build relies on the
@@ -303,13 +334,14 @@ def verify_text_plugin_registers(entry_points: Any, environ: dict) -> None:
     container does not load; that path is verified by the runtime log line
     (fla_autotuners > 0) on the first GPU start instead.
 
-    FLEXINFER_SEGMENTED_RUNTIME_TABLES is set for the call, so the opt-in
-    segmented-attention patch must install on this vLLM: its import and every
-    upstream name it wraps are checked here, not on the first lane that turns
-    it on. The flag affects only this build-time process.
+    FLEXINFER_SEGMENTED_RUNTIME_TABLES and FLEXINFER_EMBED_HOST are set for
+    the call, so both opt-in patches must install on this vLLM: their imports
+    and every upstream name they wrap are checked here, not on the first lane
+    that turns them on. The flags affect only this build-time process.
     """
     environ.pop("PYTORCH_ROCM_ARCH", None)
     environ[SEGMENTED_RUNTIME_TABLES_ENV] = "1"
+    environ[EMBED_HOST_ENV] = "1"
     (plugin,) = [
         ep
         for ep in entry_points(group="vllm.general_plugins")
@@ -330,6 +362,60 @@ def verify_text_plugin_registers(entry_points: Any, environ: dict) -> None:
             f"flexinfer_qwen35_text register() ran with {SEGMENTED_RUNTIME_TABLES_ENV}=1 "
             f"but did not patch {SEGMENTED_WARMUP_MODULE}"
         )
+    base_loader = sys.modules.get(EMBED_HOST_LOADER_MODULE)
+    loader_cls = getattr(base_loader, "BaseModelLoader", None)
+    if not getattr(loader_cls, EMBED_HOST_PATCH_MARKER, False):
+        raise RuntimeError(
+            f"flexinfer_qwen35_text register() ran with {EMBED_HOST_ENV}=1 "
+            f"but did not patch {EMBED_HOST_LOADER_MODULE}.BaseModelLoader"
+        )
+
+
+def _top_level_definitions(tree: ast.Module) -> dict[str, ast.AST]:
+    """Map top-level functions, classes, class methods and imported names."""
+    found: dict[str, ast.AST] = {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.ClassDef)):
+            found[node.name] = node
+            if isinstance(node, ast.ClassDef):
+                for item in node.body:
+                    if isinstance(item, ast.FunctionDef):
+                        found[f"{node.name}.{item.name}"] = item
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                found[alias.asname or alias.name] = node
+    return found
+
+
+def verify_segmented_fp8_contract(vllm_root: pathlib.Path) -> bool:
+    """Check the names the fp8 segmented gate lift wraps; return whether gated.
+
+    Fails the build when a wrapped name or the parameter it reads is gone.
+    Returns whether upstream still gates fp8 to gfx12 (an ``on_gfx12x`` call
+    in the backend or the dispatcher); once it does not, the patch is a no-op
+    and can be retired.
+    """
+    for relative, names in SEGMENTED_FP8_SOURCE_API.items():
+        path = vllm_root / relative
+        if not path.is_file():
+            raise RuntimeError(f"segmented fp8 contract: {path} is missing")
+        found = _top_level_definitions(ast.parse(path.read_text(encoding="utf-8")))
+        for name, parameter in names:
+            node = found.get(name)
+            if node is None:
+                raise RuntimeError(f"segmented fp8 contract: {relative} lacks {name}")
+            if parameter is not None:
+                arguments = node.args
+                params = [a.arg for a in arguments.args + arguments.kwonlyargs]
+                if parameter not in params:
+                    raise RuntimeError(
+                        f"segmented fp8 contract: {relative} {name} has no "
+                        f"{parameter!r} parameter"
+                    )
+    return any(
+        "on_gfx12x()" in (vllm_root / relative).read_text(encoding="utf-8")
+        for relative in SEGMENTED_FP8_GATED_FILES
+    )
 
 
 def main() -> None:
@@ -344,6 +430,7 @@ def main() -> None:
     checked = verify_isa_contract(vllm_root, isa)
     verify_text_plugin_contract(importlib.metadata.entry_points)
     verify_text_plugin_registers(importlib.metadata.entry_points, os.environ)
+    fp8_gated = verify_segmented_fp8_contract(vllm_root)
 
     # Image assembly has no GPU, so vLLM cannot detect ROCm and its generic
     # platform loader does not import this extension. Load it explicitly: the
@@ -355,7 +442,10 @@ def main() -> None:
         version,
         f"native {isa} W4A16 op: torch.ops._rocm_C.gptq_gemm_rdna3;",
         f"{isa} device code in {', '.join(checked)};",
-        "flexinfer_qwen35_text register() OK (segmented runtime-tables patch installs)",
+        "flexinfer_qwen35_text register() OK (segmented runtime-tables and "
+        "embed-host patches install);",
+        "segmented fp8 gate-lift names present"
+        + ("" if fp8_gated else " (upstream no longer gates fp8 to gfx12)"),
     )
 
 

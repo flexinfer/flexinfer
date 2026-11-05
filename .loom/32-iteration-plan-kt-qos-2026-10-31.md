@@ -5,6 +5,53 @@ Feature D3 (caller QoS classes), `.loom/10-research-gfx1100-gfx906-next-differen
 (written before the run). Canary `deploy/debug/qwen38-27b-qos-canary.yaml`; harness
 `scripts/kt-qos-priority.py` (tests: `scripts/test_kt_qos_priority.py`).
 
+## 2026-11-05 re-target: vLLM 0.33.0 on the XTX slot (supersedes the placement below)
+
+Owner decision P2 (`.loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md` §6.2): judge
+KT-QOS and KT-SO on vLLM 0.33.0-rocm72, which passed parity against 0.32 on the XTX (row
+`xtx-vllm-v033-parity-2026-11-05`, `.loom/70-result-s3-vllm-v033-parity-2026-11-05.md`).
+0.33 fixes priority self-preemption (#61976), so a 0.32 failure could have been upstream's bug
+rather than this design.
+
+- **Image**: `registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69` with `spec.config.vllmVersion: "0.33.0"`. The live controller (1286a2f1)
+  predates !1281 and ignores the key: the pod renders two dead `VLLM_*` names and
+  `--mamba-cache-mode` as warnings (`failOnEnvironValidation: false`), as S3 arm B did. If the
+  controller rolls to a !1281 build mid-window, the pod template changes and the arm in progress
+  is rerun.
+- **Placement**: the XTX warm lane's slot, as S3 ran: `cblevins-7900xtx`, `7900xtx-textgen`,
+  count 2 / `hipVisibleDevices 0`, `vramEstimateMB 23200`, priority 480. The image is prewarmed only
+  there; the 5930k root has 194 GB free (under the 200 GB pull rule) and **its workhorse is never
+  preempted**. The warm lane (mills-warm, mills-council, weaver) is off the XTX for the window.
+- **Caches**: a new Local cache PVC per Model (19 GB, ~11 min to stage); the compile cache is S3
+  arm B's XTX path `compile-cache-qwen38-27b-v033-parity-b-xtx` (vLLM loads `/models` for every
+  Model, so the hash matches and the boot is warm). A first boot that still fails the 32K KV check
+  once and recovers through the warm restart and KVPoolRecheck is this card's known cold-compile
+  pattern, not a failure.
+- **This card's pool** at the posture is ~44.6K tokens (S3 arm B), not 52.9K. Absolute decode is
+  ~3 % below the 5930k (2100 MHz sclk cap); every bar is relative, so none moves.
+- **One window, one paste for both kill-tests** (after S4 step 0 and S6 KT-OCTAVE have released the
+  XTX, and only once `kubectl get models.ai.flexinfer -n flexinfer-system` shows no other canary on
+  `7900xtx-textgen` at priority ≥ 480):
+
+  ```bash
+  kubectl apply -f deploy/debug/qwen38-27b-so-canary.yaml -f deploy/debug/qwen38-27b-qos-canary.yaml
+  ```
+
+  KT-SO runs first (`minReplicas 1`); the KT-QOS canary waits at `minReplicas 0` while its Local
+  cache stages. The agent deletes the KT-SO canary (`flexinfer_delete_model`), raises the KT-QOS
+  canary with `flexinfer_update_model qwen38-27b-qos-canary min_replicas=1`, runs its arms, deletes
+  it, and confirms `qwen38-27b-xtx-warm-canary` is Ready again (one proxied `xtx-warm` request if it
+  stays Idle). Window ≈ 2.5 h.
+- **Proxy arms C and D run in this window**: the live proxy (72628e0e, tag 20261103-172712)
+  carries D3 MR 2 (!1212) and MR 3 (`feat/qos-vllm-priority`).
+- **`--verdict` applies ±5 % decode to every arm**; for C and D the bar is ≥ 0.60 × arm A, judged by
+  hand from their `decode_vs_fcfs`.
+- **KV pair on this pool**: `--background-filler 1050 --interactive-filler 400` (two ~19K-prompt
+  background sequences fit 44.6K alone; adding the ~7K interactive prompt overruns it).
+- **Prediction**: the source read below is v0.32.0; re-read `vllm/v1/core/sched/scheduler.py` in the
+  0.33 image (or the v0.33.0 tag) before the run and record any change with the result.
+
+
 ## What the code says before the run
 
 The design assumed vLLM's `--scheduling-policy priority` "preempts lower-priority running

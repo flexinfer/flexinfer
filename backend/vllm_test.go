@@ -574,8 +574,9 @@ func TestVLLMBackendEnv_FullOptIn(t *testing.T) {
 	if v := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; v != "1" {
 		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=1, got %q", v)
 	}
-	if v := envMap["VLLM_ROCM_USE_AITER"]; v != "1" {
-		t.Errorf("expected VLLM_ROCM_USE_AITER=1, got %q", v)
+	// AITER needs CDNA 3 or newer: enableAiter renders nothing on gfx1100.
+	if v, ok := envMap["VLLM_ROCM_USE_AITER"]; ok {
+		t.Errorf("expected VLLM_ROCM_USE_AITER to be absent on gfx1100 with enableAiter, got %q", v)
 	}
 }
 
@@ -773,26 +774,60 @@ func TestVLLMBackendEnv_GFX90aSettings(t *testing.T) {
 	}
 }
 
-func TestVLLMBackendEnv_GFX942AiterOptIn(t *testing.T) {
-	b := &VLLMBackend{}
-
-	spec := &ModelSpec{
-		GPUVendor: GPUVendorAMD,
-		GPUArch:   "gfx942",
-		Config: map[string]any{
-			"enableAiter": true,
-		},
+func TestVLLMBackendEnv_EnableAiterFollowsArch(t *testing.T) {
+	for _, tt := range []struct {
+		arch string
+		want bool
+	}{
+		{arch: "gfx942", want: true}, // MI300, CDNA 3
+		{arch: "gfx950", want: true}, // MI350, CDNA 4
+		{arch: "gfx1100", want: false},
+		{arch: "gfx1101", want: false},
+		{arch: "gfx906", want: false},
+		{arch: "gfx90a", want: false},
+		{arch: "", want: false},
+	} {
+		t.Run("arch="+tt.arch, func(t *testing.T) {
+			for _, b := range []Backend{&VLLMBackend{}, &VLLMOmniBackend{}} {
+				env := b.Env(&ModelSpec{
+					GPUVendor: GPUVendorAMD,
+					GPUArch:   tt.arch,
+					Config:    map[string]any{"enableAiter": true},
+				})
+				var got []string
+				for _, e := range env {
+					if strings.HasPrefix(e.Name, "VLLM_ROCM_USE_AITER") {
+						got = append(got, e.Name+"="+e.Value)
+					}
+				}
+				want := []string(nil)
+				if tt.want {
+					want = []string{"VLLM_ROCM_USE_AITER=1"}
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Errorf("%s on %q: AITER env = %v, want %v", b.Name(), tt.arch, got, want)
+				}
+			}
+		})
 	}
+}
 
-	env := b.Env(spec)
-	envMap := make(map[string]string)
-	for _, e := range env {
-		envMap[e.Name] = e.Value
-	}
-
-	// AITER should be enabled on MI300X when opted in
-	if v, ok := envMap["VLLM_ROCM_USE_AITER"]; !ok || v != "1" {
-		t.Errorf("expected VLLM_ROCM_USE_AITER=1 with AITER opt-in on gfx942, got %q", v)
+// rocmUseAiter and disableAiter stay literal env overrides on every arch.
+func TestVLLMBackendEnv_ExplicitAiterOverridesIgnoreArch(t *testing.T) {
+	for _, cfg := range []map[string]any{
+		{"rocmUseAiter": true},
+		{"disableAiter": false},
+	} {
+		env := (&VLLMBackend{}).Env(&ModelSpec{GPUVendor: GPUVendorAMD, GPUArch: "gfx1100", Config: cfg})
+		found := false
+		for _, e := range env {
+			if e.Name == "VLLM_ROCM_USE_AITER" && e.Value == "1" {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("config %v: expected VLLM_ROCM_USE_AITER=1 on gfx1100, got %v", cfg, env)
+		}
 	}
 }
 
@@ -1857,5 +1892,45 @@ func TestVLLMBackendArgs_StructuredOutputs(t *testing.T) {
 	}
 	if found != 1 {
 		t.Fatalf("--structured-outputs-config rendered %d times, want 1: %v", found, args)
+	}
+
+	// A7: LM-Format-Enforcer (deprecated in vLLM 0.33) and any backend the
+	// certificate did not prove never render, even if a caller sets them.
+	for _, soBackend := range []string{"lm-format-enforcer", "LM_Format_Enforcer", "xgrammar"} {
+		args := b.Args(&ModelSpec{Model: "org/model", StructuredOutputsBackend: soBackend})
+		if containsVLLMArg(args, "--structured-outputs-config") {
+			t.Fatalf("backend %q rendered --structured-outputs-config: %v", soBackend, args)
+		}
+	}
+}
+
+func TestCertifiableStructuredOutputsBackend(t *testing.T) {
+	for _, tt := range []struct {
+		name    string
+		wantErr string
+	}{
+		{name: "auto"},
+		{name: " Auto "},
+		{name: "lm-format-enforcer", wantErr: "never certified: vLLM 0.33 deprecates it"},
+		{name: "lm_format_enforcer", wantErr: "never certified"},
+		{name: "LM-Format-Enforcer", wantErr: "never certified"},
+		{name: "lmformatenforcer", wantErr: "never certified"},
+		{name: "xgrammar", wantErr: `proves backend "auto" only`},
+		{name: "guidance", wantErr: `proves backend "auto" only`},
+		{name: "outlines", wantErr: `proves backend "auto" only`},
+		{name: "", wantErr: `proves backend "auto" only`},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			err := CertifiableStructuredOutputsBackend(tt.name)
+			if tt.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CertifiableStructuredOutputsBackend(%q) = %v, want nil", tt.name, err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tt.wantErr) {
+				t.Fatalf("CertifiableStructuredOutputsBackend(%q) = %v, want an error containing %q", tt.name, err, tt.wantErr)
+			}
+		})
 	}
 }

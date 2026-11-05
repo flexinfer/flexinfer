@@ -1,29 +1,32 @@
-"""Complete vLLM's registration for text-only Qwen3.5 models.
+"""Fill the gaps vLLM still has for text-only Qwen3.5 models on consumer ROCm.
 
-vLLM 0.23 and 0.26 ship ``Qwen3_5ForCausalLM`` / ``Qwen3_5MoeForCausalLM`` but
-register only the multimodal wrapper, and the text classes lack the hybrid
-marker and state helpers; this plugin fills both gaps. vLLM 0.32 registers the
-text classes itself with ``IsHybrid``, ``SupportsMRoPE`` and the mamba state
-helpers on ``Qwen3_5ForCausalLMBase``, so on that runtime the registration and
-hybrid-state steps are skipped (the registry already has the names; the
-helpers already resolve) and the plugin keeps only what the runtime still
-lacks: the consumer-ROCm FLA autotuner pruning (``FLEXINFER_FLA_AUTOTUNE``),
-the text-only MTP config contract, and the MTP head quantization policy
-(``FLEXINFER_QWEN35_MTP_HEAD``). It also installs, opt-in, the segmented
-attention autotune at the runtime block-table width
-(``FLEXINFER_SEGMENTED_RUNTIME_TABLES``); this is the plugin every gfx1100
-serving image loads, so it carries that model-agnostic patch.
+Targets vLLM 0.32 or later, which registers ``Qwen3_5ForCausalLM`` /
+``Qwen3_5MoeForCausalLM`` itself with ``IsHybrid``, ``SupportsMRoPE`` and the
+mamba state helpers on ``Qwen3_5ForCausalLMBase``. The plugin keeps only what
+the runtime still lacks: the consumer-ROCm FLA autotuner pruning
+(``FLEXINFER_FLA_AUTOTUNE``), the text-only MTP config contract, the MTP head
+quantization policy (``FLEXINFER_QWEN35_MTP_HEAD``) and the MoE expert-name
+normalization. It also installs three opt-in, model-agnostic patches, since
+this is the plugin every gfx1100 serving image loads: the segmented attention
+autotune at the runtime block-table width
+(``FLEXINFER_SEGMENTED_RUNTIME_TABLES``), the input-embedding table in mapped
+host memory (``FLEXINFER_EMBED_HOST``, 0.12.0) and fp8 KV on segmented
+attention for gfx11 (``FLEXINFER_SEGMENTED_FP8_GFX11``, 0.12.0).
 
-ROCm autotune pruning, the segmented-attention patch and the hybrid-state
-contract live in ``flexinfer_vllm_common``, shared with every other FlexInfer
-vLLM plugin so the copies cannot drift. Install ``build/vllm-plugin-common``
-before this package.
+0.11.0 removed the vLLM 0.23/0.26 compatibility code: the text-class
+registration, the hybrid-state copy and the GPTQ fused-expert loader hook
+(``load_fused_expert_weights`` no longer exists from 0.26). ``register()`` now
+refuses to run on a vLLM whose registry lacks the text classes, instead of
+silently registering them on a runtime nothing qualifies any more. The frozen
+gfx906 vLLM 0.20.1 image keeps the 0.8.0 plugin it was certified with.
+
+ROCm autotune pruning and those three patches live in
+``flexinfer_vllm_common``, shared with every other FlexInfer vLLM plugin so the
+copies cannot drift. Install ``build/vllm-plugin-common`` before this package.
 """
 
 import os
 
-from flexinfer_vllm_common import apply_hybrid_state
-from flexinfer_vllm_common.hybrid import MAMBA_STATE_METHODS as _MAMBA_METHODS
 from flexinfer_vllm_common.rocm import (
     FLA_KKT_MODULE as _FLA_KKT_MODULE,
     FLA_OPS_PREFIXES as _FLA_OPS_PREFIXES,
@@ -33,9 +36,11 @@ from flexinfer_vllm_common.rocm import (
     prune_fla_configs_if_needed,
     select_rocm_safe_fla_configs as _select_rocm_safe_fla_configs,
 )
+from flexinfer_vllm_common.embed_host import install_embed_host_if_enabled
 from flexinfer_vllm_common.segmented import (
     install_segmented_runtime_tables_if_enabled,
 )
+from flexinfer_vllm_common.segmented_fp8 import install_segmented_fp8_if_enabled
 
 ARCHITECTURES = {
     "Qwen3_5ForCausalLM": "dense",
@@ -48,24 +53,14 @@ _TEXT_ONLY_ROPE_PARAMETERS = {
 }
 
 
-# vLLM's flash-linear-attention (GDN) kernels moved between releases:
-#   <= 0.23  vllm.model_executor.layers.fla.ops.*
-#   >= 0.26  vllm.third_party.flash_linear_attention.ops.*
+# Maps fused-expert names ``.moe.gate_up_proj`` / ``.moe.down_proj`` onto the
+# ``.mlp.experts.*`` names vLLM's Qwen3.5 MoE loader expects.
 def _rename_expert_weights(weights):
     for name, weight in weights:
         name = name.replace(".moe.gate_up_proj", ".mlp.experts.gate_up_proj").replace(
             ".moe.down_proj", ".mlp.experts.down_proj"
         )
         yield name, weight
-
-
-def _gptq_expert_parameter_name(name: str) -> str:
-    for projection in ("w13", "w2"):
-        for suffix in ("qweight", "scales", "qzeros", "g_idx", "g_idx_sort_indices"):
-            name = name.replace(
-                f"{projection}_weight.{suffix}", f"{projection}_{suffix}"
-            )
-    return name
 
 
 def _strict_env_flag(name: str) -> bool:
@@ -99,13 +94,11 @@ def _mtp_head_policy() -> str:
 
 
 def _upstream_registers(registry, architecture: str) -> bool:
-    """Whether this vLLM already registers ``architecture`` itself.
+    """Whether this vLLM registers ``architecture`` itself.
 
-    vLLM 0.32 lists the Qwen3.5 text classes in its own registry; registering
-    them again only replaces the lazy upstream entry with an eager one and logs
-    an "already registered" debug line (the duplicate-registration check from
-    services/flexinfer#66). A registry without ``get_supported_archs`` (older
-    vLLM, or a test double) reports nothing, so the plugin registers as before.
+    vLLM 0.32 lists the Qwen3.5 text classes in its own registry. A registry
+    without ``get_supported_archs`` reports nothing, which ``register()``
+    treats as a runtime it does not support.
     """
     getter = getattr(registry, "get_supported_archs", None)
     if not callable(getter):
@@ -201,92 +194,48 @@ def _patch_qwen35_mtp_gptq(
     auto_gptq_config._flexinfer_qwen35_mtp_mode = mode
 
 
-def _patch_gptq_expert_loader(model_class) -> bool:
-    """Normalize vLLM's mapped GPTQ expert parameter names for one model class.
-
-    Returns whether the hook is installed. vLLM 0.23 loads fused MoE experts
-    through ``load_fused_expert_weights`` on the model class; vLLM 0.26 no
-    longer has that method (expert loading moved into the generic weight
-    loader), so there is nothing to wrap and the MoE GPTQ expert-name contract
-    is NOT provided on that runtime. Dense Qwen3.5/3.8 lanes never reach this
-    path; MoE GPTQ lanes must stay on a runtime where the hook installs until
-    the 0.26 expert loader is re-qualified.
-    """
-    if model_class.__dict__.get("_flexinfer_gptq_expert_names", False):
-        return True
-    if not hasattr(model_class, "load_fused_expert_weights"):
-        return False
-    original_load_fused_expert_weights = model_class.load_fused_expert_weights
-
-    def load_fused_expert_weights(
-        self,
-        name,
-        params_dict,
-        loaded_weight,
-        shard_id,
-        num_experts,
-    ):
-        name = _gptq_expert_parameter_name(name)
-        if name not in params_dict:
-            return False
-        return original_load_fused_expert_weights(
-            self,
-            name,
-            params_dict,
-            loaded_weight,
-            shard_id,
-            num_experts,
-        )
-
-    model_class.load_fused_expert_weights = load_fused_expert_weights
-    model_class._flexinfer_gptq_expert_names = True
-    return True
-
-
 def register() -> None:
-    """Register the existing text class and its hybrid-state contract.
+    """Install the ROCm, MTP and MoE patches on a vLLM that registers Qwen3.5.
 
-    vLLM 0.23 and 0.26 ship the class but only register the multimodal wrapper. A
-    text-only checkpoint consequently falls through to that wrapper and tries
-    to access ``vision_config``. The text class also omits the hybrid marker
-    and state helpers that the wrapper supplies. General plugins run in both
-    the API process and EngineCore, so this repair survives multiprocessing.
+    General plugins run in both the API process and EngineCore, so the patches
+    survive multiprocessing. Raises before patching anything when the runtime
+    does not register the text classes itself (vLLM older than 0.32): there a
+    text-only checkpoint would fall through to the multimodal wrapper, and the
+    compatibility code that used to cover that was removed in 0.11.0.
     """
     import torch
     from vllm import ModelRegistry
     from vllm.config.speculative import SpeculativeConfig
 
     _import_fla_kkt_module()
-    from vllm.model_executor.layers.fused_moe import UnquantizedFusedMoEMethod
+    from vllm.model_executor.layers.fused_moe import (
+        RoutedExperts,
+        UnquantizedFusedMoEMethod,
+    )
     from vllm.model_executor.layers.linear import (
         LinearBase,
         UnquantizedLinearMethod,
     )
+    from vllm.model_executor.layers.quantization.auto_gptq import AutoGPTQConfig
+    from vllm.model_executor.models.qwen3_5 import Qwen3_5MoeForCausalLM
 
-    try:
-        from vllm.model_executor.layers.fused_moe import RoutedExperts
-    except ImportError:
-        # vLLM <=0.20 predates the modular RoutedExperts abstraction. Dense
-        # Qwen3.5 MTP only needs the LinearBase override; keep MoE registration
-        # available while declining to invent an unsafe expert type mapping.
-        RoutedExperts = None
-    try:
-        from vllm.model_executor.layers.quantization.auto_gptq import AutoGPTQConfig
-    except ImportError:
-        from vllm.model_executor.layers.quantization.gptq import (
-            GPTQConfig as AutoGPTQConfig,
+    missing = [
+        architecture
+        for architecture in ARCHITECTURES
+        if not _upstream_registers(ModelRegistry, architecture)
+    ]
+    if missing:
+        raise RuntimeError(
+            "flexinfer_qwen35_text needs a vLLM that registers the Qwen3.5 text "
+            f"classes itself (0.32 or later); this one lacks {missing}. The "
+            "0.23/0.26 registration fallback was removed in plugin 0.11.0."
         )
-    from vllm.model_executor.models.qwen3_5 import (
-        Qwen3_5ForCausalLM,
-        Qwen3_5ForConditionalGeneration,
-        Qwen3_5Model,
-        Qwen3_5MoeForCausalLM,
-    )
-    from vllm.model_executor.models.qwen3_5_mtp import Qwen3_5MultiTokenPredictor
 
     fla_policy = fla_autotune_policy()
     safe_fla_kernels = prune_fla_configs_if_needed(torch, policy=fla_policy)
     segmented_runtime_tables = install_segmented_runtime_tables_if_enabled()
+    embed_host = install_embed_host_if_enabled()
+    segmented_fp8 = install_segmented_fp8_if_enabled()
     _patch_qwen35_text_mtp_config(SpeculativeConfig)
     mtp_head_policy = _mtp_head_policy()
     quantized_mtp_experts = _strict_env_flag("FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ")
@@ -306,13 +255,6 @@ def register() -> None:
             "decides every MTP layer from the checkpoint"
         )
 
-    # Additive: on 0.32 the text base class already resolves these and
-    # nothing is copied (flexinfer_vllm_common.hybrid).
-    hybrid_methods_copied = apply_hybrid_state(
-        (Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM),
-        Qwen3_5ForConditionalGeneration,
-    )
-
     if not getattr(Qwen3_5MoeForCausalLM, "_flexinfer_expert_names", False):
         original_load_weights = Qwen3_5MoeForCausalLM.load_weights
 
@@ -322,34 +264,15 @@ def register() -> None:
         Qwen3_5MoeForCausalLM.load_weights = load_weights
         Qwen3_5MoeForCausalLM._flexinfer_expert_names = True
 
-    expert_loader_hooks = sum(
-        1
-        for model_class in (Qwen3_5Model, Qwen3_5MultiTokenPredictor)
-        if _patch_gptq_expert_loader(model_class)
-    )
-
-    registered = []
-    upstream_registered = []
-    for architecture, model_class in (
-        ("Qwen3_5ForCausalLM", Qwen3_5ForCausalLM),
-        ("Qwen3_5MoeForCausalLM", Qwen3_5MoeForCausalLM),
-    ):
-        if _upstream_registers(ModelRegistry, architecture):
-            upstream_registered.append(architecture)
-            continue
-        ModelRegistry.register_model(architecture, model_class)
-        registered.append(architecture)
     print(
-        "flexinfer: registered text-only Qwen3.5 dense + MoE architectures "
-        "with hybrid-state support "
-        "and ROCm-safe FLA/MTP GPTQ handling "
-        f"(registered={','.join(registered) or '-'}, "
-        f"upstream_registered={','.join(upstream_registered) or '-'}, "
-        f"hybrid_methods_copied={hybrid_methods_copied}, "
+        "flexinfer: patched upstream text-only Qwen3.5 dense + MoE architectures "
+        "with ROCm-safe FLA/MTP GPTQ handling "
+        f"(archs={','.join(ARCHITECTURES)}, "
         f"fla_autotuners={safe_fla_kernels}, "
         f"fla_autotune={fla_policy}, "
         f"segmented_runtime_tables={'on' if segmented_runtime_tables else 'off'}, "
+        f"embed_host={'on' if embed_host else 'off'}, "
+        f"segmented_fp8_gfx11={'on' if segmented_fp8 else 'off'}, "
         f"mtp_head={mtp_head_policy}, "
-        f"mtp_experts={'gptq' if quantized_mtp_experts else 'plain'}, "
-        f"gptq_expert_loader_hooks={expert_loader_hooks})"
+        f"mtp_experts={'gptq' if quantized_mtp_experts else 'plain'})"
     )

@@ -1,10 +1,11 @@
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 namespace: flexinfer-system
-resources:
-  - qwen35-35b-clean-gptq-128k.yaml
-  - qwen36-27b-fable-rp-canary.yaml
-  - qwen35-9b-v023-rp-canary.yaml
-  - qwen35-9b-default-nonthinking-canary.yaml
-  - qwen35-9b-context-ceiling-192k-canary.yaml
-  - qwen35-9b-context-ceiling-224k-canary.yaml
+# Flux-applied ModelExperiment records. Empty since 2026-11-05: the seven
+# Succeeded records here (qwen35-35b-clean-gptq-128k-graph and the five
+# qwen35-9b / qwen36-27b canaries) all ran vLLM 0.23 candidates
+# (vllm@7bc680b4, runtime@2e9652ed) whose lanes are retired or repinned.
+# Their verdicts are kept in
+# .loom/70-result-qwen35-35b-v023-retirement-2026-11-05.md. Add new
+# one-shot qualifications here; the directory stays in deploy/kustomization.yaml.
+resources: []

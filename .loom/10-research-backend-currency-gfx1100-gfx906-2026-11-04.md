@@ -296,7 +296,7 @@ Checked against the code on 2026-11-04 where marked (✓).
 | B3 | vLLM `v0.33.0-rocm72` serving image (B1 + B2 in the overlay) | `build/Dockerfile.runtime-serving-v032` `BASE_IMAGE` | parity canary (§6 S1) |
 | B4 | gfx906 llama.cpp b11335 → b11847 | `build/Dockerfile.runtime-gfx906` `LLAMACPP_VERSION` | trial build on the ROCm 6.2 builder; LM-head skip VRAM re-measure; HW-queue count; slot files discarded and the slots certificate re-issued |
 | B5 | whisper.cpp v1.9.5 → v1.9.6 or a pinned master commit | same Dockerfile | KT-ASR rerun (34.7× real time at 40 CUs is the bar) |
-| B6 | Delete dead plugin code (`hybrid.py`, `mrope.py`, the `Qwen3_5ForCausalLM` registration, `_patch_gptq_expert_loader`, the seqcls label repair minus its assertions) | `build/vllm-plugin-common`, `build/vllm-qwen35-*-plugin` | only once no 0.23/0.26 image is pinned by any lane |
+| B6 | Delete dead plugin code (`hybrid.py`, `mrope.py`, the `Qwen3_5ForCausalLM` registration, `_patch_gptq_expert_loader`, the seqcls label repair minus its assertions) | `build/vllm-plugin-common`, `build/vllm-qwen35-*-plugin` | only once no 0.23/0.26 image is pinned by any lane. **Done 2026-11-05**: the 0.23 lanes and the 0.26 OpenJEV gfx1100 lane were retired (!1296, `.loom/70-result-qwen35-35b-v023-retirement-2026-11-05.md`), and the gfx906 0.20.1 image copies frozen plugins out of `vllm@e0aa1e2e` (B6 MR) |
 
 **C. Workarounds to re-test, not remove blind**: `HSA_OVERRIDE_GFX_VERSION=11.0.0` (redundant on a
 native gfx1100, may also stop the XTX iGPU being spoofed), `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL`
@@ -379,6 +379,14 @@ layer shapes at M = 1, 2, 3, 4, 6, 8. Pre-registered: G1 proceeds if the two dra
 ≥ 12 % of step GPU time; G4's row padding ships if Σt(M=4) ≤ 0.95 × Σt(M=3); G5 goes upstream if
 wvSplitK at n=1 reaches < 75 % of the read ceiling; inter-kernel gaps ≥ 10 % of the step get written
 up as a fusion target.
+
+**Step 0 result (2026-11-05, `70-result-s4-step0-decode-anatomy-2026-11-05.md`).** On the XTX
+(66.5 tok/s at 2K, step 35.65 ms): GPU busy 31.85 ms per step = GPTQ 62 %, the two draft
+lm_heads 17 % (5.42 ms, at the bandwidth ceiling), target lm_head 8.5 %; idle 16 %. G1 proceeds
+(S5 go); G4 padding is 1.08× slower (Q1 dropped); wvSplitK already reads at 1.00× the 934 GB/s
+ceiling (G5 dropped); the idle (1,468 dispatch gaps of 4.1 µs, incl. a per-call `at::zeros` ticket
+fill before each GPTQ GEMM) is the fusion target. New lever: the W4A16 body reads at only 63–73 %
+of the ceiling. Q2 and Q3 failed their bars (Q2 has a found, fixable cause).
 
 **Candidate 1 — pruned-vocabulary MTP draft head (G1).** The text plugin wraps
 `MTPSpeculator.load_draft_model`, gathers `W_sub = lm_head.weight[ids]` (335 MB at V′ = 32,768) and

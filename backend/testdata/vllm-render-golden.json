@@ -1364,58 +1364,6 @@
     ]
   },
   {
-    "manifest": "deploy/models/openjev-0p8b-crossencoder-gfx1100.yaml#openjev-0p8b-crossencoder-gfx1100",
-    "gpuArch": "gfx1100",
-    "model": "pvc://llm-models-nfs/openjev/qwen3.5-0.8b-nli-v2s-long",
-    "config": {
-      "dtype": "half",
-      "enforceEager": true,
-      "maxModelLen": 4096,
-      "servedModelName": "openjev-0p8b-crossencoder-gfx1100"
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--model",
-      "pvc://llm-models-nfs/openjev/qwen3.5-0.8b-nli-v2s-long",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "4096",
-      "--enforce-eager",
-      "--served-model-name",
-      "openjev-0p8b-crossencoder-gfx1100"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      }
-    ]
-  },
-  {
     "manifest": "deploy/models/openjev-0p8b-crossencoder-radeonvii.yaml#openjev-0p8b-crossencoder-radeonvii",
     "gpuArch": "gfx906",
     "model": "pvc://llm-models-nfs/openjev/qwen3.5-0.8b-nli-v2s-long",
@@ -2181,519 +2129,6 @@
       {
         "name": "PYTORCH_ROCM_ARCH",
         "value": "gfx1100"
-      },
-      {
-        "name": "ROCR_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "HIP_VISIBLE_DEVICES",
-        "value": "0"
-      }
-    ]
-  },
-  {
-    "manifest": "deploy/models/qwen35-35b-clean-gptq-workhorse-128k.yaml#qwen35-35b-clean-gptq-workhorse-128k",
-    "gpuArch": "gfx1100",
-    "model": "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn",
-    "config": {
-      "attentionBackend": "TRITON_ATTN",
-      "calculateKvScales": false,
-      "cudagraphMetrics": true,
-      "dedicatedDeployment": true,
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enableChunkedPrefill": true,
-      "enablePrefixCaching": false,
-      "enableToolCalling": true,
-      "enforceEager": false,
-      "failOnEnvironValidation": true,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.94",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "hipVisibleDevices": "0",
-      "kvCacheDtype": "fp8_e4m3",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "0.01",
-      "languageModelOnly": true,
-      "maxModelLen": 184320,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 1,
-      "quantization": "gptq",
-      "rocmCustomPagedAttn": false,
-      "schedulerReserveFullISL": true,
-      "servedModelName": "qwen35-35b-clean-gptq-workhorse-128k",
-      "toolCallParser": "qwen3_coder",
-      "trustRemoteCode": true,
-      "warmPolicy": "ondemand"
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--fail-on-environ-validation",
-      "--model",
-      "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "184320",
-      "--gpu-memory-utilization",
-      "0.94",
-      "--attention-backend",
-      "TRITON_ATTN",
-      "--gdn-prefill-backend",
-      "triton",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "1",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-chunked-prefill",
-      "--scheduler-reserve-full-isl",
-      "--cudagraph-metrics",
-      "--quantization",
-      "gptq",
-      "--served-model-name",
-      "qwen35-35b-clean-gptq-workhorse-128k",
-      "--kv-cache-dtype",
-      "fp8_e4m3",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "0.01",
-      "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "qwen3_coder"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "ROCR_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "HIP_VISIBLE_DEVICES",
-        "value": "0"
-      }
-    ]
-  },
-  {
-    "manifest": "deploy/models/qwen35-35b-clean-gptq-workhorse.yaml#qwen35-35b-clean-gptq-workhorse",
-    "gpuArch": "gfx1100",
-    "model": "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn",
-    "config": {
-      "attentionBackend": "TRITON_ATTN",
-      "calculateKvScales": false,
-      "cudagraphMetrics": true,
-      "dedicatedDeployment": true,
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enableChunkedPrefill": true,
-      "enablePrefixCaching": false,
-      "enableToolCalling": true,
-      "enforceEager": false,
-      "failOnEnvironValidation": true,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.94",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "kvCacheDtype": "fp8_e4m3",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "0.01",
-      "languageModelOnly": true,
-      "maxModelLen": 184320,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 1,
-      "quantization": "gptq",
-      "rocmCustomPagedAttn": false,
-      "schedulerReserveFullISL": true,
-      "servedModelName": "qwen35-35b-clean-gptq-workhorse",
-      "toolCallParser": "qwen3_coder",
-      "trustRemoteCode": true,
-      "warmPolicy": "ondemand"
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--fail-on-environ-validation",
-      "--model",
-      "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "184320",
-      "--gpu-memory-utilization",
-      "0.94",
-      "--attention-backend",
-      "TRITON_ATTN",
-      "--gdn-prefill-backend",
-      "triton",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "1",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-chunked-prefill",
-      "--scheduler-reserve-full-isl",
-      "--cudagraph-metrics",
-      "--quantization",
-      "gptq",
-      "--served-model-name",
-      "qwen35-35b-clean-gptq-workhorse",
-      "--kv-cache-dtype",
-      "fp8_e4m3",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "0.01",
-      "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "qwen3_coder"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
-      }
-    ]
-  },
-  {
-    "manifest": "deploy/models/qwen35-35b-clean-mtp-32k.yaml#qwen35-35b-clean-mtp-32k",
-    "gpuArch": "gfx1100",
-    "model": "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn-mtp-experts-w4g128",
-    "config": {
-      "attentionBackend": "TRITON_ATTN",
-      "calculateKvScales": false,
-      "command": [
-        "bash",
-        "-lc",
-        "export FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ=1; exec python3 -m vllm.entrypoints.openai.api_server \"$@\"",
-        "vllm"
-      ],
-      "cudagraphCaptureSizes": "2",
-      "cudagraphMetrics": true,
-      "dedicatedDeployment": true,
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enableChunkedPrefill": true,
-      "enablePrefixCaching": false,
-      "enableToolCalling": true,
-      "enforceEager": false,
-      "failOnEnvironValidation": true,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.96",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "hipVisibleDevices": "0",
-      "kvCacheDtype": "fp8_e4m3",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "0.01",
-      "languageModelOnly": true,
-      "maxModelLen": 32768,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 1,
-      "quantization": "gptq",
-      "rocmCustomPagedAttn": false,
-      "schedulerReserveFullISL": true,
-      "servedModelName": "qwen35-35b-clean-mtp-32k",
-      "speculativeConfig": "{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":1}",
-      "toolCallParser": "qwen3_coder",
-      "trustRemoteCode": true,
-      "warmPolicy": "ondemand"
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--fail-on-environ-validation",
-      "--model",
-      "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn-mtp-experts-w4g128",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "32768",
-      "--gpu-memory-utilization",
-      "0.96",
-      "--attention-backend",
-      "TRITON_ATTN",
-      "--gdn-prefill-backend",
-      "triton",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "1",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-chunked-prefill",
-      "--scheduler-reserve-full-isl",
-      "--cudagraph-capture-sizes",
-      "2",
-      "--cudagraph-metrics",
-      "--quantization",
-      "gptq",
-      "--served-model-name",
-      "qwen35-35b-clean-mtp-32k",
-      "--kv-cache-dtype",
-      "fp8_e4m3",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "0.01",
-      "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "qwen3_coder",
-      "--speculative-config",
-      "{\"method\":\"qwen3_5_mtp\",\"num_speculative_tokens\":1}"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
       },
       {
         "name": "ROCR_VISIBLE_DEVICES",
@@ -4222,480 +3657,6 @@
     ]
   },
   {
-    "manifest": "deploy/debug/qwen35-35b-clean-gptq-canary.yaml#qwen35-35b-clean-gptq-64k-graph",
-    "gpuArch": "gfx1100",
-    "model": "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn",
-    "config": {
-      "calculateKvScales": false,
-      "command": [
-        "bash",
-        "-lc",
-        "set -e; D=/tmp/flexinfer-qwen35-text; mkdir -p \"$D/src/flexinfer_vllm_qwen35_text\"; echo IiIiQ29tcGxldGUgdkxMTSAwLjIzJ3MgcmVnaXN0cmF0aW9uIGZvciB0ZXh0LW9ubHkgUXdlbjMuNSBNb0UgbW9kZWxzLiIiIgoKQVJDSElURUNUVVJFID0gIlF3ZW4zXzVNb2VGb3JDYXVzYWxMTSIKX01BTUJBX01FVEhPRFMgPSAoCiAgICAiZ2V0X21hbWJhX3N0YXRlX3NoYXBlX2Zyb21fY29uZmlnIiwKICAgICJnZXRfbWFtYmFfc3RhdGVfZHR5cGVfZnJvbV9jb25maWciLAogICAgImdldF9tYW1iYV9zdGF0ZV9jb3B5X2Z1bmMiLAopCgoKZGVmIF9yZW5hbWVfZXhwZXJ0X3dlaWdodHMod2VpZ2h0cyk6CiAgICBmb3IgbmFtZSwgd2VpZ2h0IGluIHdlaWdodHM6CiAgICAgICAgbmFtZSA9IG5hbWUucmVwbGFjZSgKICAgICAgICAgICAgIi5tb2UuZ2F0ZV91cF9wcm9qIiwgIi5tbHAuZXhwZXJ0cy5nYXRlX3VwX3Byb2oiCiAgICAgICAgKS5yZXBsYWNlKCIubW9lLmRvd25fcHJvaiIsICIubWxwLmV4cGVydHMuZG93bl9wcm9qIikKICAgICAgICB5aWVsZCBuYW1lLCB3ZWlnaHQKCgpkZWYgX2dwdHFfZXhwZXJ0X3BhcmFtZXRlcl9uYW1lKG5hbWU6IHN0cikgLT4gc3RyOgogICAgZm9yIHByb2plY3Rpb24gaW4gKCJ3MTMiLCAidzIiKToKICAgICAgICBmb3Igc3VmZml4IGluICgicXdlaWdodCIsICJzY2FsZXMiLCAicXplcm9zIiwgImdfaWR4IiwgImdfaWR4X3NvcnRfaW5kaWNlcyIpOgogICAgICAgICAgICBuYW1lID0gbmFtZS5yZXBsYWNlKAogICAgICAgICAgICAgICAgZiJ7cHJvamVjdGlvbn1fd2VpZ2h0LntzdWZmaXh9IiwgZiJ7cHJvamVjdGlvbn1fe3N1ZmZpeH0iCiAgICAgICAgICAgICkKICAgIHJldHVybiBuYW1lCgoKZGVmIF9zZWxlY3RfZ2Z4MTEwMF9zYWZlX2ZsYV9jb25maWcoa2VybmVsKSAtPiBOb25lOgogICAgIiIiQXZvaWQgYSBUcml0b24vTExWTSBjb2RlZ2VuIGNsaWZmIGluIHRoZSBGTEEgS0tUIGF1dG90dW5lci4KCiAgICBUaGUgNC1zdGFnZSBnZngxMTAwIHZhcmlhbnQgY2FuIHJlbWFpbiBpbiBMTFZNIGNvZGVnZW4gaW5kZWZpbml0ZWx5LiBUaGUKICAgIGZpcnN0IDItc3RhZ2UgY29uZmlndXJhdGlvbiBpcyBhbHJlYWR5IGNvbXBpbGVkIGFuZCBwcm92ZW4gb24gdGhpcyBtb2RlbC4KICAgICIiIgogICAgYXV0b3R1bmVyID0ga2VybmVsLmZuCiAgICBzYWZlID0gWwogICAgICAgIGNvbmZpZwogICAgICAgIGZvciBjb25maWcgaW4gYXV0b3R1bmVyLmNvbmZpZ3MKICAgICAgICBpZiBjb25maWcua3dhcmdzLmdldCgiQksiKSA9PSAzMgogICAgICAgIGFuZCBjb25maWcubnVtX3dhcnBzID09IDIKICAgICAgICBhbmQgY29uZmlnLm51bV9zdGFnZXMgPT0gMgogICAgXQogICAgaWYgbm90IHNhZmU6CiAgICAgICAgcmFpc2UgUnVudGltZUVycm9yKCJ2TExNIEZMQSBzYWZlIGF1dG90dW5lIGNvbmZpZ3VyYXRpb24gaXMgbWlzc2luZyIpCiAgICBhdXRvdHVuZXIuY29uZmlncyA9IHNhZmUKCgpkZWYgcmVnaXN0ZXIoKSAtPiBOb25lOgogICAgIiIiUmVnaXN0ZXIgdGhlIGV4aXN0aW5nIHRleHQgY2xhc3MgYW5kIGl0cyBoeWJyaWQtc3RhdGUgY29udHJhY3QuCgogICAgdkxMTSAwLjIzIHNoaXBzIHRoZSBjbGFzcyBidXQgb25seSByZWdpc3RlcnMgdGhlIG11bHRpbW9kYWwgd3JhcHBlci4gQQogICAgdGV4dC1vbmx5IGNoZWNrcG9pbnQgY29uc2VxdWVudGx5IGZhbGxzIHRocm91Z2ggdG8gdGhhdCB3cmFwcGVyIGFuZCB0cmllcwogICAgdG8gYWNjZXNzIGBgdmlzaW9uX2NvbmZpZ2BgLiBUaGUgdGV4dCBjbGFzcyBhbHNvIG9taXRzIHRoZSBoeWJyaWQgbWFya2VyCiAgICBhbmQgc3RhdGUgaGVscGVycyB0aGF0IHRoZSB3cmFwcGVyIHN1cHBsaWVzLiBHZW5lcmFsIHBsdWdpbnMgcnVuIGluIGJvdGgKICAgIHRoZSBBUEkgcHJvY2VzcyBhbmQgRW5naW5lQ29yZSwgc28gdGhpcyByZXBhaXIgc3Vydml2ZXMgbXVsdGlwcm9jZXNzaW5nLgogICAgIiIiCiAgICBpbXBvcnQgdG9yY2gKICAgIGZyb20gdmxsbSBpbXBvcnQgTW9kZWxSZWdpc3RyeQogICAgZnJvbSB2bGxtLm1vZGVsX2V4ZWN1dG9yLmxheWVycy5mbGEub3BzLmNodW5rX3NjYWxlZF9kb3Rfa2t0IGltcG9ydCAoCiAgICAgICAgY2h1bmtfc2NhbGVkX2RvdF9ra3RfZndkX2tlcm5lbCwKICAgICkKICAgIGZyb20gdmxsbS5tb2RlbF9leGVjdXRvci5tb2RlbHMucXdlbjNfNSBpbXBvcnQgKAogICAgICAgIFF3ZW4zXzVGb3JDb25kaXRpb25hbEdlbmVyYXRpb24sCiAgICAgICAgUXdlbjNfNU1vZGVsLAogICAgICAgIFF3ZW4zXzVNb2VGb3JDYXVzYWxMTSwKICAgICkKCiAgICBpZiB0b3JjaC52ZXJzaW9uLmhpcCBpcyBub3QgTm9uZToKICAgICAgICBfc2VsZWN0X2dmeDExMDBfc2FmZV9mbGFfY29uZmlnKGNodW5rX3NjYWxlZF9kb3Rfa2t0X2Z3ZF9rZXJuZWwpCgogICAgUXdlbjNfNU1vZUZvckNhdXNhbExNLmlzX2h5YnJpZCA9IFRydWUKICAgIGZvciBtZXRob2RfbmFtZSBpbiBfTUFNQkFfTUVUSE9EUzoKICAgICAgICBzZXRhdHRyKAogICAgICAgICAgICBRd2VuM181TW9lRm9yQ2F1c2FsTE0sCiAgICAgICAgICAgIG1ldGhvZF9uYW1lLAogICAgICAgICAgICBRd2VuM181Rm9yQ29uZGl0aW9uYWxHZW5lcmF0aW9uLl9fZGljdF9fW21ldGhvZF9uYW1lXSwKICAgICAgICApCgogICAgaWYgbm90IGdldGF0dHIoUXdlbjNfNU1vZUZvckNhdXNhbExNLCAiX2ZsZXhpbmZlcl9leHBlcnRfbmFtZXMiLCBGYWxzZSk6CiAgICAgICAgb3JpZ2luYWxfbG9hZF93ZWlnaHRzID0gUXdlbjNfNU1vZUZvckNhdXNhbExNLmxvYWRfd2VpZ2h0cwoKICAgICAgICBkZWYgbG9hZF93ZWlnaHRzKHNlbGYsIHdlaWdodHMpOgogICAgICAgICAgICByZXR1cm4gb3JpZ2luYWxfbG9hZF93ZWlnaHRzKHNlbGYsIF9yZW5hbWVfZXhwZXJ0X3dlaWdodHMod2VpZ2h0cykpCgogICAgICAgIFF3ZW4zXzVNb2VGb3JDYXVzYWxMTS5sb2FkX3dlaWdodHMgPSBsb2FkX3dlaWdodHMKICAgICAgICBRd2VuM181TW9lRm9yQ2F1c2FsTE0uX2ZsZXhpbmZlcl9leHBlcnRfbmFtZXMgPSBUcnVlCgogICAgaWYgbm90IGdldGF0dHIoUXdlbjNfNU1vZGVsLCAiX2ZsZXhpbmZlcl9ncHRxX2V4cGVydF9uYW1lcyIsIEZhbHNlKToKICAgICAgICBvcmlnaW5hbF9sb2FkX2Z1c2VkX2V4cGVydF93ZWlnaHRzID0gUXdlbjNfNU1vZGVsLmxvYWRfZnVzZWRfZXhwZXJ0X3dlaWdodHMKCiAgICAgICAgZGVmIGxvYWRfZnVzZWRfZXhwZXJ0X3dlaWdodHMoCiAgICAgICAgICAgIHNlbGYsCiAgICAgICAgICAgIG5hbWUsCiAgICAgICAgICAgIHBhcmFtc19kaWN0LAogICAgICAgICAgICBsb2FkZWRfd2VpZ2h0LAogICAgICAgICAgICBzaGFyZF9pZCwKICAgICAgICAgICAgbnVtX2V4cGVydHMsCiAgICAgICAgKToKICAgICAgICAgICAgbmFtZSA9IF9ncHRxX2V4cGVydF9wYXJhbWV0ZXJfbmFtZShuYW1lKQogICAgICAgICAgICBpZiBuYW1lIG5vdCBpbiBwYXJhbXNfZGljdDoKICAgICAgICAgICAgICAgIHJldHVybiBGYWxzZQogICAgICAgICAgICByZXR1cm4gb3JpZ2luYWxfbG9hZF9mdXNlZF9leHBlcnRfd2VpZ2h0cygKICAgICAgICAgICAgICAgIHNlbGYsCiAgICAgICAgICAgICAgICBuYW1lLAogICAgICAgICAgICAgICAgcGFyYW1zX2RpY3QsCiAgICAgICAgICAgICAgICBsb2FkZWRfd2VpZ2h0LAogICAgICAgICAgICAgICAgc2hhcmRfaWQsCiAgICAgICAgICAgICAgICBudW1fZXhwZXJ0cywKICAgICAgICAgICAgKQoKICAgICAgICBRd2VuM181TW9kZWwubG9hZF9mdXNlZF9leHBlcnRfd2VpZ2h0cyA9IGxvYWRfZnVzZWRfZXhwZXJ0X3dlaWdodHMKICAgICAgICBRd2VuM181TW9kZWwuX2ZsZXhpbmZlcl9ncHRxX2V4cGVydF9uYW1lcyA9IFRydWUKCiAgICBNb2RlbFJlZ2lzdHJ5LnJlZ2lzdGVyX21vZGVsKEFSQ0hJVEVDVFVSRSwgUXdlbjNfNU1vZUZvckNhdXNhbExNKQogICAgcHJpbnQoCiAgICAgICAgZiJmbGV4aW5mZXI6IHJlZ2lzdGVyZWQge0FSQ0hJVEVDVFVSRX0gd2l0aCBoeWJyaWQtc3RhdGUgc3VwcG9ydCAiCiAgICAgICAgImFuZCBST0NtLXNhZmUgRkxBIGF1dG90dW5pbmciCiAgICApCg== | base64 -d \u003e \"$D/src/flexinfer_vllm_qwen35_text/__init__.py\"; echo W2J1aWxkLXN5c3RlbV0KcmVxdWlyZXMgPSBbInNldHVwdG9vbHM+PTY4Il0KYnVpbGQtYmFja2VuZCA9ICJzZXR1cHRvb2xzLmJ1aWxkX21ldGEiCgpbcHJvamVjdF0KbmFtZSA9ICJmbGV4aW5mZXItdmxsbS1xd2VuMzUtdGV4dCIKdmVyc2lvbiA9ICIwLjEuMCIKZGVzY3JpcHRpb24gPSAiUmVnaXN0ZXIgdkxMTSdzIFF3ZW4zLjUgTW9FIHRleHQtb25seSBydW50aW1lIGFzIGEgaHlicmlkIG1vZGVsIgpyZXF1aXJlcy1weXRob24gPSAiPj0zLjEwIgoKW3Byb2plY3QuZW50cnktcG9pbnRzLiJ2bGxtLmdlbmVyYWxfcGx1Z2lucyJdCmZsZXhpbmZlcl9xd2VuMzVfdGV4dCA9ICJmbGV4aW5mZXJfdmxsbV9xd2VuMzVfdGV4dDpyZWdpc3RlciIKClt0b29sLnNldHVwdG9vbHNdCnBhY2thZ2UtZGlyID0geyIiID0gInNyYyJ9CgpbdG9vbC5zZXR1cHRvb2xzLnBhY2thZ2VzLmZpbmRdCndoZXJlID0gWyJzcmMiXQo= | base64 -d \u003e \"$D/pyproject.toml\"; python3 -m pip install --no-deps -q \"$D\"; exec vllm serve \"$@\"",
-        "flexinfer-vllm"
-      ],
-      "cudagraphMetrics": true,
-      "dedicatedDeployment": true,
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enableChunkedPrefill": true,
-      "enablePrefixCaching": false,
-      "enableToolCalling": true,
-      "enforceEager": false,
-      "failOnEnvironValidation": true,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.90",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "kvCacheDtype": "fp8_e4m3",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "1.0",
-      "languageModelOnly": true,
-      "maxModelLen": 65536,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 1,
-      "quantization": "gptq",
-      "rocmCustomPagedAttn": false,
-      "schedulerReserveFullISL": true,
-      "servedModelName": "qwen35-35b-clean-gptq-64k-graph",
-      "toolCallParser": "qwen3_coder",
-      "trustRemoteCode": true
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--fail-on-environ-validation",
-      "--model",
-      "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "65536",
-      "--gpu-memory-utilization",
-      "0.90",
-      "--gdn-prefill-backend",
-      "triton",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "1",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-chunked-prefill",
-      "--scheduler-reserve-full-isl",
-      "--cudagraph-metrics",
-      "--quantization",
-      "gptq",
-      "--served-model-name",
-      "qwen35-35b-clean-gptq-64k-graph",
-      "--kv-cache-dtype",
-      "fp8_e4m3",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "1.0",
-      "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "qwen3_coder"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
-      }
-    ]
-  },
-  {
-    "manifest": "deploy/debug/qwen35-35b-stretch-canary.yaml#qwen35-35b-stretch-canary",
-    "gpuArch": "gfx1100",
-    "model": "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn",
-    "config": {
-      "attentionBackend": "TRITON_ATTN",
-      "calculateKvScales": false,
-      "cudagraphMetrics": true,
-      "dedicatedDeployment": true,
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enableChunkedPrefill": true,
-      "enablePrefixCaching": false,
-      "enableToolCalling": true,
-      "enforceEager": false,
-      "failOnEnvironValidation": true,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.94",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "kvCacheDtype": "fp8_e4m3",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "0.01",
-      "languageModelOnly": true,
-      "maxModelLen": 184320,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 1,
-      "quantization": "gptq",
-      "rocmCustomPagedAttn": false,
-      "schedulerReserveFullISL": true,
-      "servedModelName": "qwen35-35b-stretch-canary",
-      "toolCallParser": "qwen3_coder",
-      "trustRemoteCode": true,
-      "warmPolicy": "ondemand"
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--fail-on-environ-validation",
-      "--model",
-      "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "184320",
-      "--gpu-memory-utilization",
-      "0.94",
-      "--attention-backend",
-      "TRITON_ATTN",
-      "--gdn-prefill-backend",
-      "triton",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "1",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-chunked-prefill",
-      "--scheduler-reserve-full-isl",
-      "--cudagraph-metrics",
-      "--quantization",
-      "gptq",
-      "--served-model-name",
-      "qwen35-35b-stretch-canary",
-      "--kv-cache-dtype",
-      "fp8_e4m3",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "0.01",
-      "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "qwen3_coder"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
-      }
-    ]
-  },
-  {
-    "manifest": "deploy/debug/qwen35-35b-workhorse-experiment.yaml#qwen35-35b-workhorse-128k",
-    "gpuArch": "gfx1100",
-    "model": "HF://Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
-    "config": {
-      "dedicatedDeployment": true,
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enablePrefixCaching": false,
-      "enableToolCalling": true,
-      "enforceEager": true,
-      "gpuMemoryUtilization": "0.98",
-      "hipVisibleDevices": "0",
-      "kvCacheDtype": "fp8_e4m3",
-      "languageModelOnly": true,
-      "maxModelLen": 65536,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 1,
-      "quantization": "gptq",
-      "reasoningParser": "qwen3",
-      "rocmCustomPagedAttn": false,
-      "servedModelName": "qwen35-35b-workhorse-64k-eager",
-      "toolCallParser": "qwen3_coder",
-      "trustRemoteCode": true
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--model",
-      "HF://Qwen/Qwen3.5-35B-A3B-GPTQ-Int4",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "65536",
-      "--gpu-memory-utilization",
-      "0.98",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "1",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enforce-eager",
-      "--quantization",
-      "gptq",
-      "--served-model-name",
-      "qwen35-35b-workhorse-64k-eager",
-      "--kv-cache-dtype",
-      "fp8_e4m3",
-      "--no-enable-prefix-caching",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "qwen3_coder",
-      "--reasoning-parser",
-      "qwen3"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "ROCR_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "HIP_VISIBLE_DEVICES",
-        "value": "0"
-      }
-    ]
-  },
-  {
     "manifest": "deploy/debug/qwen36-27b-clean-autoround-canary.yaml#qwen36-27b-clean-autoround-canary",
     "gpuArch": "gfx1100",
     "model": "HF://Intel/Qwen3.6-27B-int4-AutoRound",
@@ -5089,6 +4050,182 @@
     ]
   },
   {
+    "manifest": "deploy/debug/qwen38-27b-octave-kv-canary.yaml#qwen38-27b-octave-kv-canary",
+    "gpuArch": "gfx1100",
+    "model": "HF://biMEMO/Qwen3.8-27B-int4-AutoRound",
+    "config": {
+      "attentionBackend": "ROCM_SEGMENTED_ATTN",
+      "dedicatedDeployment": true,
+      "defaultChatTemplateKwargs": {
+        "enable_thinking": false
+      },
+      "disableAiter": true,
+      "disableLogStats": false,
+      "dtype": "half",
+      "enableChunkedPrefill": true,
+      "enablePrefixCaching": true,
+      "enablePromptTokensDetails": true,
+      "enableToolCalling": true,
+      "enforceEager": false,
+      "env": {
+        "FLEXINFER_QWEN35_MTP_HEAD": "checkpoint"
+      },
+      "failOnEnvironValidation": false,
+      "gpuMemoryUtilization": "0.96",
+      "hfOverrides": "{\"architectures\":[\"Qwen3_5ForConditionalGeneration\"],\"quantization_config\":{\"quant_method\":\"gptq\",\"bits\":4,\"group_size\":128,\"sym\":true,\"desc_act\":false,\"lm_head\":false,\"modules_in_block_to_quantize\":[\"self_attn.q_proj\",\"self_attn.k_proj\",\"self_attn.v_proj\",\"self_attn.o_proj\",\"mlp.gate_proj\",\"mlp.up_proj\",\"mlp.down_proj\",\"linear_attn.in_proj_qkv\",\"linear_attn.in_proj_z\",\"linear_attn.out_proj\"]}}",
+      "hfRevision": "2d7425f78ee0abd518aceabf385997fbb54c9342",
+      "hipVisibleDevices": "0",
+      "kernelConfig": "{\"enable_rocm_segmented_attn_autotune\":true}",
+      "kvCacheDtype": "auto",
+      "languageModelOnly": true,
+      "mambaCacheMode": "align",
+      "mambaSsmCacheDtype": "bfloat16",
+      "maxModelLen": 32768,
+      "maxNumBatchedTokens": 4096,
+      "maxNumSeqs": 2,
+      "quantization": "gptq",
+      "reasoningParser": "qwen3",
+      "rocmCustomPagedAttn": false,
+      "schedulerReserveFullISL": false,
+      "servedModelName": "qwen38-27b-octave-kv-canary",
+      "speculativeConfig": "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}",
+      "toolCallParser": "qwen3_coder",
+      "trustRemoteCode": true,
+      "vllmVersion": "0.33.0",
+      "warmPolicy": "primary"
+    },
+    "args": [
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8000",
+      "--no-fail-on-environ-validation",
+      "--model",
+      "HF://biMEMO/Qwen3.8-27B-int4-AutoRound",
+      "--dtype",
+      "half",
+      "--max-model-len",
+      "32768",
+      "--gpu-memory-utilization",
+      "0.96",
+      "--attention-backend",
+      "ROCM_SEGMENTED_ATTN",
+      "--mamba-ssm-cache-dtype",
+      "bfloat16",
+      "--trust-remote-code",
+      "--language-model-only",
+      "--max-num-seqs",
+      "2",
+      "--max-num-batched-tokens",
+      "4096",
+      "--enable-chunked-prefill",
+      "--no-scheduler-reserve-full-isl",
+      "--kernel-config",
+      "{\"enable_rocm_segmented_attn_autotune\":true}",
+      "--quantization",
+      "gptq",
+      "--served-model-name",
+      "qwen38-27b-octave-kv-canary",
+      "--kv-cache-dtype",
+      "auto",
+      "--hf-overrides",
+      "{\"architectures\":[\"Qwen3_5ForConditionalGeneration\"],\"quantization_config\":{\"quant_method\":\"gptq\",\"bits\":4,\"group_size\":128,\"sym\":true,\"desc_act\":false,\"lm_head\":false,\"modules_in_block_to_quantize\":[\"self_attn.q_proj\",\"self_attn.k_proj\",\"self_attn.v_proj\",\"self_attn.o_proj\",\"mlp.gate_proj\",\"mlp.up_proj\",\"mlp.down_proj\",\"linear_attn.in_proj_qkv\",\"linear_attn.in_proj_z\",\"linear_attn.out_proj\"]}}",
+      "--enable-prefix-caching",
+      "--enable-prompt-tokens-details",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+      "--reasoning-parser",
+      "qwen3",
+      "--default-chat-template-kwargs",
+      "{\"enable_thinking\":false}",
+      "--speculative-config",
+      "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}"
+    ],
+    "env": [
+      {
+        "name": "CUDA_DEVICE_ORDER",
+        "value": "PCI_BUS_ID"
+      },
+      {
+        "name": "HSA_OVERRIDE_GFX_VERSION",
+        "value": "11.0.0"
+      },
+      {
+        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
+        "value": "1"
+      },
+      {
+        "name": "HIP_FORCE_DEV_KERNARG",
+        "value": "1"
+      },
+      {
+        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
+        "value": "1"
+      },
+      {
+        "name": "PYTORCH_ROCM_ARCH",
+        "value": "gfx1100"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_LINEAR",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_MOE",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_MLA",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_MHA",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
+        "value": "0"
+      },
+      {
+        "name": "ROCR_VISIBLE_DEVICES",
+        "value": "0"
+      },
+      {
+        "name": "HIP_VISIBLE_DEVICES",
+        "value": "0"
+      }
+    ]
+  },
+  {
     "manifest": "deploy/debug/qwen38-27b-qos-canary.yaml#qwen38-27b-qos-canary",
     "gpuArch": "gfx1100",
     "model": "HF://biMEMO/Qwen3.8-27B-int4-AutoRound",
@@ -5130,6 +4267,7 @@
       "speculativeConfig": "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}",
       "toolCallParser": "qwen3_coder",
       "trustRemoteCode": true,
+      "vllmVersion": "0.33.0",
       "warmPolicy": "primary"
     },
     "args": [
@@ -5148,8 +4286,6 @@
       "0.96",
       "--attention-backend",
       "ROCM_SEGMENTED_ATTN",
-      "--mamba-cache-mode",
-      "align",
       "--mamba-ssm-cache-dtype",
       "bfloat16",
       "--trust-remote-code",
@@ -5212,10 +4348,6 @@
         "value": "0"
       },
       {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
         "name": "VLLM_ROCM_USE_AITER_LINEAR",
         "value": "0"
       },
@@ -5233,10 +4365,6 @@
       },
       {
         "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
         "value": "0"
       },
       {
@@ -5315,6 +4443,7 @@
       "speculativeConfig": "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}",
       "toolCallParser": "qwen3_coder",
       "trustRemoteCode": true,
+      "vllmVersion": "0.33.0",
       "warmPolicy": "primary"
     },
     "args": [
@@ -5333,8 +4462,6 @@
       "0.96",
       "--attention-backend",
       "ROCM_SEGMENTED_ATTN",
-      "--mamba-cache-mode",
-      "align",
       "--mamba-ssm-cache-dtype",
       "bfloat16",
       "--trust-remote-code",
@@ -5397,10 +4524,6 @@
         "value": "0"
       },
       {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
         "name": "VLLM_ROCM_USE_AITER_LINEAR",
         "value": "0"
       },
@@ -5418,10 +4541,6 @@
       },
       {
         "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
         "value": "0"
       },
       {
@@ -6362,968 +5481,45 @@
     ]
   },
   {
-    "manifest": "deploy/experiments/qwen35-35b-clean-gptq-128k.yaml#qwen35-35b-clean-gptq-128k-graph",
+    "manifest": "deploy/debug/qwen38-27b-v033-parity-canary.yaml#qwen38-27b-v033-parity-a",
     "gpuArch": "gfx1100",
-    "model": "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn",
+    "model": "HF://biMEMO/Qwen3.8-27B-int4-AutoRound",
     "config": {
-      "calculateKvScales": false,
-      "cudagraphMetrics": true,
+      "attentionBackend": "ROCM_SEGMENTED_ATTN",
       "dedicatedDeployment": true,
+      "defaultChatTemplateKwargs": {
+        "enable_thinking": false
+      },
       "disableAiter": true,
       "disableLogStats": false,
       "dtype": "half",
       "enableChunkedPrefill": true,
-      "enablePrefixCaching": false,
+      "enablePrefixCaching": true,
+      "enablePromptTokensDetails": true,
       "enableToolCalling": true,
       "enforceEager": false,
-      "failOnEnvironValidation": true,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.94",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "hipVisibleDevices": "0",
-      "kvCacheDtype": "fp8_e4m3",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "1.0",
-      "languageModelOnly": true,
-      "maxModelLen": 131072,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 1,
-      "quantization": "gptq",
-      "rocmCustomPagedAttn": false,
-      "schedulerReserveFullISL": true,
-      "servedModelName": "qwen35-35b-clean-gptq-128k-graph",
-      "toolCallParser": "qwen3_coder",
-      "trustRemoteCode": true
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--fail-on-environ-validation",
-      "--model",
-      "pvc://llm-models-nfs/qwen35-35b-a3b-clean/gptq-w4-g128-gdn",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "131072",
-      "--gpu-memory-utilization",
-      "0.94",
-      "--gdn-prefill-backend",
-      "triton",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "1",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-chunked-prefill",
-      "--scheduler-reserve-full-isl",
-      "--cudagraph-metrics",
-      "--quantization",
-      "gptq",
-      "--served-model-name",
-      "qwen35-35b-clean-gptq-128k-graph",
-      "--kv-cache-dtype",
-      "fp8_e4m3",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "1.0",
-      "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5MoeForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
-      "--enable-auto-tool-choice",
-      "--tool-call-parser",
-      "qwen3_coder"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
+      "env": {
+        "FLEXINFER_QWEN35_MTP_HEAD": "checkpoint"
       },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "ROCR_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "HIP_VISIBLE_DEVICES",
-        "value": "0"
-      }
-    ]
-  },
-  {
-    "manifest": "deploy/experiments/qwen35-9b-context-ceiling-192k-canary.yaml#qwen35-9b-context-ceiling-192k-canary",
-    "gpuArch": "gfx1100",
-    "model": "pvc://qwen35-9b-oci-gfx1100/qwen35-9b",
-    "config": {
-      "calculateKvScales": false,
-      "cudagraphCaptureSizes": [
-        1,
-        2,
-        4
-      ],
-      "cudagraphMetrics": true,
-      "dedicatedDeployment": true,
-      "defaultChatTemplateKwargs": {
-        "enable_thinking": false
-      },
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enableChunkedPrefill": true,
-      "enableLora": true,
-      "enablePrefixCaching": false,
-      "enableToolCalling": false,
-      "enforceEager": false,
       "failOnEnvironValidation": false,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.94",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
+      "gpuMemoryUtilization": "0.96",
+      "hfOverrides": "{\"architectures\":[\"Qwen3_5ForConditionalGeneration\"],\"quantization_config\":{\"quant_method\":\"gptq\",\"bits\":4,\"group_size\":128,\"sym\":true,\"desc_act\":false,\"lm_head\":false,\"modules_in_block_to_quantize\":[\"self_attn.q_proj\",\"self_attn.k_proj\",\"self_attn.v_proj\",\"self_attn.o_proj\",\"mlp.gate_proj\",\"mlp.up_proj\",\"mlp.down_proj\",\"linear_attn.in_proj_qkv\",\"linear_attn.in_proj_z\",\"linear_attn.out_proj\"]}}",
+      "hfRevision": "2d7425f78ee0abd518aceabf385997fbb54c9342",
       "hipVisibleDevices": "0",
+      "kernelConfig": "{\"enable_rocm_segmented_attn_autotune\":true}",
       "kvCacheDtype": "auto",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "1.0",
       "languageModelOnly": true,
-      "maxCudagraphCaptureSize": 4,
-      "maxInputTokens": 195584,
-      "maxLoraRank": 64,
-      "maxLoras": 1,
-      "maxModelLen": 196608,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 4,
-      "maxOutputTokens": 1024,
-      "quantization": "gptq",
-      "rocmCustomPagedAttn": false,
-      "schedulerReserveFullISL": true,
-      "trustRemoteCode": true,
-      "warmPolicy": "primary"
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--no-fail-on-environ-validation",
-      "--model",
-      "pvc://qwen35-9b-oci-gfx1100/qwen35-9b",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "196608",
-      "--gpu-memory-utilization",
-      "0.94",
-      "--gdn-prefill-backend",
-      "triton",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "4",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-chunked-prefill",
-      "--scheduler-reserve-full-isl",
-      "--cudagraph-capture-sizes",
-      "1",
-      "2",
-      "4",
-      "--max-cudagraph-capture-size",
-      "4",
-      "--cudagraph-metrics",
-      "--quantization",
-      "gptq",
-      "--kv-cache-dtype",
-      "auto",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "1.0",
-      "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
-      "--default-chat-template-kwargs",
-      "{\"enable_thinking\":false}",
-      "--enable-lora",
-      "--max-loras",
-      "1",
-      "--max-lora-rank",
-      "64"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "ROCR_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "HIP_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ALLOW_RUNTIME_LORA_UPDATING",
-        "value": "True"
-      }
-    ]
-  },
-  {
-    "manifest": "deploy/experiments/qwen35-9b-context-ceiling-224k-canary.yaml#qwen35-9b-context-ceiling-224k-canary",
-    "gpuArch": "gfx1100",
-    "model": "pvc://qwen35-9b-oci-gfx1100/qwen35-9b",
-    "config": {
-      "calculateKvScales": false,
-      "cudagraphCaptureSizes": [
-        1,
-        2,
-        4
-      ],
-      "cudagraphMetrics": true,
-      "dedicatedDeployment": true,
-      "defaultChatTemplateKwargs": {
-        "enable_thinking": false
-      },
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enableChunkedPrefill": true,
-      "enableLora": true,
-      "enablePrefixCaching": false,
-      "enableToolCalling": false,
-      "enforceEager": false,
-      "failOnEnvironValidation": false,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.94",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "hipVisibleDevices": "0",
-      "kvCacheDtype": "auto",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "1.0",
-      "languageModelOnly": true,
-      "maxCudagraphCaptureSize": 4,
-      "maxInputTokens": 228352,
-      "maxLoraRank": 64,
-      "maxLoras": 1,
-      "maxModelLen": 229376,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 4,
-      "maxOutputTokens": 1024,
-      "quantization": "gptq",
-      "rocmCustomPagedAttn": false,
-      "schedulerReserveFullISL": true,
-      "trustRemoteCode": true,
-      "warmPolicy": "primary"
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--no-fail-on-environ-validation",
-      "--model",
-      "pvc://qwen35-9b-oci-gfx1100/qwen35-9b",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "229376",
-      "--gpu-memory-utilization",
-      "0.94",
-      "--gdn-prefill-backend",
-      "triton",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "4",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-chunked-prefill",
-      "--scheduler-reserve-full-isl",
-      "--cudagraph-capture-sizes",
-      "1",
-      "2",
-      "4",
-      "--max-cudagraph-capture-size",
-      "4",
-      "--cudagraph-metrics",
-      "--quantization",
-      "gptq",
-      "--kv-cache-dtype",
-      "auto",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "1.0",
-      "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
-      "--default-chat-template-kwargs",
-      "{\"enable_thinking\":false}",
-      "--enable-lora",
-      "--max-loras",
-      "1",
-      "--max-lora-rank",
-      "64"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "ROCR_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "HIP_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ALLOW_RUNTIME_LORA_UPDATING",
-        "value": "True"
-      }
-    ]
-  },
-  {
-    "manifest": "deploy/experiments/qwen35-9b-default-nonthinking-canary.yaml#qwen35-9b-default-nonthinking-canary",
-    "gpuArch": "gfx1100",
-    "model": "pvc://qwen35-9b-oci-gfx1100/qwen35-9b",
-    "config": {
-      "calculateKvScales": false,
-      "cudagraphCaptureSizes": [
-        1,
-        2,
-        4
-      ],
-      "cudagraphMetrics": true,
-      "dedicatedDeployment": true,
-      "defaultChatTemplateKwargs": {
-        "enable_thinking": false
-      },
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enableChunkedPrefill": true,
-      "enableLora": true,
-      "enablePrefixCaching": false,
-      "enableToolCalling": false,
-      "enforceEager": false,
-      "failOnEnvironValidation": false,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.94",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "hipVisibleDevices": "0",
-      "kvCacheDtype": "auto",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "1.0",
-      "languageModelOnly": true,
-      "maxCudagraphCaptureSize": 4,
-      "maxInputTokens": 130048,
-      "maxLoraRank": 64,
-      "maxLoras": 1,
-      "maxModelLen": 131072,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 4,
-      "maxOutputTokens": 1024,
-      "quantization": "gptq",
-      "rocmCustomPagedAttn": false,
-      "schedulerReserveFullISL": true,
-      "trustRemoteCode": true,
-      "warmPolicy": "primary"
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--no-fail-on-environ-validation",
-      "--model",
-      "pvc://qwen35-9b-oci-gfx1100/qwen35-9b",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "131072",
-      "--gpu-memory-utilization",
-      "0.94",
-      "--gdn-prefill-backend",
-      "triton",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "4",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-chunked-prefill",
-      "--scheduler-reserve-full-isl",
-      "--cudagraph-capture-sizes",
-      "1",
-      "2",
-      "4",
-      "--max-cudagraph-capture-size",
-      "4",
-      "--cudagraph-metrics",
-      "--quantization",
-      "gptq",
-      "--kv-cache-dtype",
-      "auto",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "1.0",
-      "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
-      "--default-chat-template-kwargs",
-      "{\"enable_thinking\":false}",
-      "--enable-lora",
-      "--max-loras",
-      "1",
-      "--max-lora-rank",
-      "64"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "ROCR_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "HIP_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ALLOW_RUNTIME_LORA_UPDATING",
-        "value": "True"
-      }
-    ]
-  },
-  {
-    "manifest": "deploy/experiments/qwen35-9b-v023-rp-canary.yaml#qwen35-9b-v023-rp-canary",
-    "gpuArch": "gfx1100",
-    "model": "pvc://qwen35-9b-oci-gfx1100/qwen35-9b",
-    "config": {
-      "calculateKvScales": false,
-      "cudagraphCaptureSizes": [
-        1,
-        2,
-        4
-      ],
-      "cudagraphMetrics": true,
-      "dedicatedDeployment": true,
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enableChunkedPrefill": true,
-      "enableLora": true,
-      "enablePrefixCaching": false,
-      "enableToolCalling": false,
-      "enforceEager": false,
-      "failOnEnvironValidation": false,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.94",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "hipVisibleDevices": "0",
-      "kvCacheDtype": "auto",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "1.0",
-      "languageModelOnly": true,
-      "maxCudagraphCaptureSize": 4,
-      "maxInputTokens": 130048,
-      "maxLoraRank": 64,
-      "maxLoras": 1,
-      "maxModelLen": 131072,
-      "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 4,
-      "maxOutputTokens": 1024,
-      "quantization": "gptq",
-      "rocmCustomPagedAttn": false,
-      "schedulerReserveFullISL": true,
-      "trustRemoteCode": true,
-      "warmPolicy": "primary"
-    },
-    "args": [
-      "--host",
-      "0.0.0.0",
-      "--port",
-      "8000",
-      "--no-fail-on-environ-validation",
-      "--model",
-      "pvc://qwen35-9b-oci-gfx1100/qwen35-9b",
-      "--dtype",
-      "half",
-      "--max-model-len",
-      "131072",
-      "--gpu-memory-utilization",
-      "0.94",
-      "--gdn-prefill-backend",
-      "triton",
-      "--trust-remote-code",
-      "--language-model-only",
-      "--max-num-seqs",
-      "4",
-      "--max-num-batched-tokens",
-      "4096",
-      "--enable-chunked-prefill",
-      "--scheduler-reserve-full-isl",
-      "--cudagraph-capture-sizes",
-      "1",
-      "2",
-      "4",
-      "--max-cudagraph-capture-size",
-      "4",
-      "--cudagraph-metrics",
-      "--quantization",
-      "gptq",
-      "--kv-cache-dtype",
-      "auto",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "1.0",
-      "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
-      "--enable-lora",
-      "--max-loras",
-      "1",
-      "--max-lora-rank",
-      "64"
-    ],
-    "env": [
-      {
-        "name": "CUDA_DEVICE_ORDER",
-        "value": "PCI_BUS_ID"
-      },
-      {
-        "name": "HSA_OVERRIDE_GFX_VERSION",
-        "value": "11.0.0"
-      },
-      {
-        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
-        "value": "1"
-      },
-      {
-        "name": "HIP_FORCE_DEV_KERNARG",
-        "value": "1"
-      },
-      {
-        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
-        "value": "1"
-      },
-      {
-        "name": "PYTORCH_ROCM_ARCH",
-        "value": "gfx1100"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_PAGED_ATTN",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_LINEAR",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MOE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MLA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_MHA",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
-        "value": "0"
-      },
-      {
-        "name": "ROCR_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "HIP_VISIBLE_DEVICES",
-        "value": "0"
-      },
-      {
-        "name": "VLLM_ALLOW_RUNTIME_LORA_UPDATING",
-        "value": "True"
-      }
-    ]
-  },
-  {
-    "manifest": "deploy/experiments/qwen36-27b-fable-rp-canary.yaml#qwen36-27b-fable-rp-canary",
-    "gpuArch": "gfx1100",
-    "model": "pvc://qwen36-27b-fable-oci-7900xtx/qwen36-27b-fable",
-    "config": {
-      "calculateKvScales": false,
-      "cudagraphCaptureSizes": [
-        1,
-        2,
-        4
-      ],
-      "cudagraphMetrics": true,
-      "dedicatedDeployment": true,
-      "disableAiter": true,
-      "disableLogStats": false,
-      "dtype": "half",
-      "enableChunkedPrefill": true,
-      "enablePrefixCaching": false,
-      "enableToolCalling": true,
-      "enforceEager": false,
-      "failOnEnvironValidation": false,
-      "gdnPrefillBackend": "triton",
-      "gpuMemoryUtilization": "0.94",
-      "hfOverrides": "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "hipVisibleDevices": "0",
-      "kvCacheDtype": "auto",
-      "kvCacheMetrics": true,
-      "kvCacheMetricsSample": "1.0",
-      "languageModelOnly": true,
-      "maxCudagraphCaptureSize": 4,
-      "maxInputTokens": 28672,
+      "mambaCacheMode": "align",
+      "mambaSsmCacheDtype": "bfloat16",
       "maxModelLen": 32768,
       "maxNumBatchedTokens": 4096,
-      "maxNumSeqs": 4,
-      "maxOutputTokens": 2048,
+      "maxNumSeqs": 2,
       "quantization": "gptq",
+      "reasoningParser": "qwen3",
       "rocmCustomPagedAttn": false,
-      "servedModelName": "qwen36-27b-fable-rp-canary",
+      "schedulerReserveFullISL": false,
+      "servedModelName": "qwen38-27b-v033-parity-a",
+      "speculativeConfig": "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}",
       "toolCallParser": "qwen3_coder",
       "trustRemoteCode": true,
       "warmPolicy": "primary"
@@ -7335,44 +5531,48 @@
       "8000",
       "--no-fail-on-environ-validation",
       "--model",
-      "pvc://qwen36-27b-fable-oci-7900xtx/qwen36-27b-fable",
+      "HF://biMEMO/Qwen3.8-27B-int4-AutoRound",
       "--dtype",
       "half",
       "--max-model-len",
       "32768",
       "--gpu-memory-utilization",
-      "0.94",
-      "--gdn-prefill-backend",
-      "triton",
+      "0.96",
+      "--attention-backend",
+      "ROCM_SEGMENTED_ATTN",
+      "--mamba-cache-mode",
+      "align",
+      "--mamba-ssm-cache-dtype",
+      "bfloat16",
       "--trust-remote-code",
       "--language-model-only",
       "--max-num-seqs",
-      "4",
+      "2",
       "--max-num-batched-tokens",
       "4096",
       "--enable-chunked-prefill",
-      "--cudagraph-capture-sizes",
-      "1",
-      "2",
-      "4",
-      "--max-cudagraph-capture-size",
-      "4",
-      "--cudagraph-metrics",
+      "--no-scheduler-reserve-full-isl",
+      "--kernel-config",
+      "{\"enable_rocm_segmented_attn_autotune\":true}",
       "--quantization",
       "gptq",
       "--served-model-name",
-      "qwen36-27b-fable-rp-canary",
+      "qwen38-27b-v033-parity-a",
       "--kv-cache-dtype",
       "auto",
-      "--kv-cache-metrics",
-      "--kv-cache-metrics-sample",
-      "1.0",
       "--hf-overrides",
-      "{\"architectures\":[\"Qwen3_5ForCausalLM\"],\"rope_parameters\":{\"rope_type\":\"default\",\"rope_theta\":10000000,\"partial_rotary_factor\":0.25}}",
-      "--no-enable-prefix-caching",
+      "{\"architectures\":[\"Qwen3_5ForConditionalGeneration\"],\"quantization_config\":{\"quant_method\":\"gptq\",\"bits\":4,\"group_size\":128,\"sym\":true,\"desc_act\":false,\"lm_head\":false,\"modules_in_block_to_quantize\":[\"self_attn.q_proj\",\"self_attn.k_proj\",\"self_attn.v_proj\",\"self_attn.o_proj\",\"mlp.gate_proj\",\"mlp.up_proj\",\"mlp.down_proj\",\"linear_attn.in_proj_qkv\",\"linear_attn.in_proj_z\",\"linear_attn.out_proj\"]}}",
+      "--enable-prefix-caching",
+      "--enable-prompt-tokens-details",
       "--enable-auto-tool-choice",
       "--tool-call-parser",
-      "qwen3_coder"
+      "qwen3_coder",
+      "--reasoning-parser",
+      "qwen3",
+      "--default-chat-template-kwargs",
+      "{\"enable_thinking\":false}",
+      "--speculative-config",
+      "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}"
     ],
     "env": [
       {
@@ -7429,6 +5629,182 @@
       },
       {
         "name": "VLLM_ROCM_USE_AITER_FP4_ASM_GEMM",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_TRITON_ROPE",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_FP8BMM",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_FP4BMM",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_UNIFIED_ATTENTION",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_FUSION_SHARED_EXPERTS",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_TRITON_GEMM",
+        "value": "0"
+      },
+      {
+        "name": "ROCR_VISIBLE_DEVICES",
+        "value": "0"
+      },
+      {
+        "name": "HIP_VISIBLE_DEVICES",
+        "value": "0"
+      }
+    ]
+  },
+  {
+    "manifest": "deploy/debug/qwen38-27b-v033-parity-canary.yaml#qwen38-27b-v033-parity-b",
+    "gpuArch": "gfx1100",
+    "model": "HF://biMEMO/Qwen3.8-27B-int4-AutoRound",
+    "config": {
+      "attentionBackend": "ROCM_SEGMENTED_ATTN",
+      "dedicatedDeployment": true,
+      "defaultChatTemplateKwargs": {
+        "enable_thinking": false
+      },
+      "disableAiter": true,
+      "disableLogStats": false,
+      "dtype": "half",
+      "enableChunkedPrefill": true,
+      "enablePrefixCaching": true,
+      "enablePromptTokensDetails": true,
+      "enableToolCalling": true,
+      "enforceEager": false,
+      "env": {
+        "FLEXINFER_QWEN35_MTP_HEAD": "checkpoint"
+      },
+      "failOnEnvironValidation": false,
+      "gpuMemoryUtilization": "0.96",
+      "hfOverrides": "{\"architectures\":[\"Qwen3_5ForConditionalGeneration\"],\"quantization_config\":{\"quant_method\":\"gptq\",\"bits\":4,\"group_size\":128,\"sym\":true,\"desc_act\":false,\"lm_head\":false,\"modules_in_block_to_quantize\":[\"self_attn.q_proj\",\"self_attn.k_proj\",\"self_attn.v_proj\",\"self_attn.o_proj\",\"mlp.gate_proj\",\"mlp.up_proj\",\"mlp.down_proj\",\"linear_attn.in_proj_qkv\",\"linear_attn.in_proj_z\",\"linear_attn.out_proj\"]}}",
+      "hfRevision": "2d7425f78ee0abd518aceabf385997fbb54c9342",
+      "hipVisibleDevices": "0",
+      "kernelConfig": "{\"enable_rocm_segmented_attn_autotune\":true}",
+      "kvCacheDtype": "auto",
+      "languageModelOnly": true,
+      "mambaCacheMode": "align",
+      "mambaSsmCacheDtype": "bfloat16",
+      "maxModelLen": 32768,
+      "maxNumBatchedTokens": 4096,
+      "maxNumSeqs": 2,
+      "quantization": "gptq",
+      "reasoningParser": "qwen3",
+      "rocmCustomPagedAttn": false,
+      "schedulerReserveFullISL": false,
+      "servedModelName": "qwen38-27b-v033-parity-b",
+      "speculativeConfig": "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}",
+      "toolCallParser": "qwen3_coder",
+      "trustRemoteCode": true,
+      "vllmVersion": "0.33.0",
+      "warmPolicy": "primary"
+    },
+    "args": [
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "8000",
+      "--no-fail-on-environ-validation",
+      "--model",
+      "HF://biMEMO/Qwen3.8-27B-int4-AutoRound",
+      "--dtype",
+      "half",
+      "--max-model-len",
+      "32768",
+      "--gpu-memory-utilization",
+      "0.96",
+      "--attention-backend",
+      "ROCM_SEGMENTED_ATTN",
+      "--mamba-ssm-cache-dtype",
+      "bfloat16",
+      "--trust-remote-code",
+      "--language-model-only",
+      "--max-num-seqs",
+      "2",
+      "--max-num-batched-tokens",
+      "4096",
+      "--enable-chunked-prefill",
+      "--no-scheduler-reserve-full-isl",
+      "--kernel-config",
+      "{\"enable_rocm_segmented_attn_autotune\":true}",
+      "--quantization",
+      "gptq",
+      "--served-model-name",
+      "qwen38-27b-v033-parity-b",
+      "--kv-cache-dtype",
+      "auto",
+      "--hf-overrides",
+      "{\"architectures\":[\"Qwen3_5ForConditionalGeneration\"],\"quantization_config\":{\"quant_method\":\"gptq\",\"bits\":4,\"group_size\":128,\"sym\":true,\"desc_act\":false,\"lm_head\":false,\"modules_in_block_to_quantize\":[\"self_attn.q_proj\",\"self_attn.k_proj\",\"self_attn.v_proj\",\"self_attn.o_proj\",\"mlp.gate_proj\",\"mlp.up_proj\",\"mlp.down_proj\",\"linear_attn.in_proj_qkv\",\"linear_attn.in_proj_z\",\"linear_attn.out_proj\"]}}",
+      "--enable-prefix-caching",
+      "--enable-prompt-tokens-details",
+      "--enable-auto-tool-choice",
+      "--tool-call-parser",
+      "qwen3_coder",
+      "--reasoning-parser",
+      "qwen3",
+      "--default-chat-template-kwargs",
+      "{\"enable_thinking\":false}",
+      "--speculative-config",
+      "{\"method\":\"mtp\",\"num_speculative_tokens\":2,\"attention_backend\":\"ROCM_SEGMENTED_ATTN\"}"
+    ],
+    "env": [
+      {
+        "name": "CUDA_DEVICE_ORDER",
+        "value": "PCI_BUS_ID"
+      },
+      {
+        "name": "HSA_OVERRIDE_GFX_VERSION",
+        "value": "11.0.0"
+      },
+      {
+        "name": "TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL",
+        "value": "1"
+      },
+      {
+        "name": "HIP_FORCE_DEV_KERNARG",
+        "value": "1"
+      },
+      {
+        "name": "TORCH_BLAS_PREFER_HIPBLASLT",
+        "value": "1"
+      },
+      {
+        "name": "PYTORCH_ROCM_ARCH",
+        "value": "gfx1100"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_LINEAR",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_MOE",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_RMSNORM",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_MLA",
+        "value": "0"
+      },
+      {
+        "name": "VLLM_ROCM_USE_AITER_MHA",
         "value": "0"
       },
       {
