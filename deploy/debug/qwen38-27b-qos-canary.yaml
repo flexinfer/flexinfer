@@ -1,50 +1,50 @@
-# DEBUG CANARY — KT-QOS, feature D3 of
+# DEBUG CANARY — KT-QOS2 (re-plan of KT-QOS), feature D3 of
 # .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md (§6.3).
-# Matrix row workhorse-qos-priority-2026-10-31; window procedure and the
-# owner's paste sequence in .loom/32-iteration-plan-kt-qos-2026-10-31.md.
-# Prepared 2026-10-31; re-targeted 2026-11-05 to vLLM 0.33.0 on the XTX (see
-# below). NOT in the models kustomization: the operator applies it once in a
-# scheduled window (together with the KT-SO canary, one command), the agent
-# session sequences the arms through flexinfer_update_model, then deletes it.
+# Matrix row workhorse-qos-prefill-budget-2026-11-05; window procedure and the
+# owner's paste in .loom/32-iteration-plan-kt-qos2-2026-11-05.md. KT-QOS itself
+# (row workhorse-qos-priority-2026-10-31, result
+# .loom/70-result-kt-qos-v033-2026-11-05.md) ran this file on 2026-11-05 and
+# failed bar 1 only. NOT in the models kustomization: the operator applies it
+# once in a scheduled window, the agent session sequences the arms through
+# flexinfer_update_model, then deletes it.
 #
-# Question: does vLLM `--scheduling-policy priority` protect interactive turns
-# on the workhorse's two-seat posture (MTP K=2, ROCM_SEGMENTED_ATTN, chunked
-# prefill, 32K, fp16 KV) without costing throughput, and does the proxy's
-# interactive seat reserve (flexinfer.ai/qos) do it instead?
+# Question (KT-QOS2): with the proxy's interactive seat reserve
+# (flexinfer.ai/qos: proxy), does a smaller vLLM per-step prefill budget
+# (maxNumBatchedTokens 512 + longPrefillTokenThreshold 256) bring interactive
+# TTFT p95 within 1.3x idle on the workhorse's two-seat posture, and what does
+# it cost long prompts and background throughput? KT-QOS's residual tail was
+# interactive turns that arrived while a background request's one-step ~2K
+# prefill was already running on the GPU; the reserve already admits no
+# background while an interactive is in flight, so a proxy admission gate was
+# dropped (proxy-log evidence in the plan).
+#
+# This file boots the reserve-only control as written (fcfs,
+# maxNumBatchedTokens 4096, no threshold). The budget arm is one MCP
+# config patch, which restarts the pod.
 #
 # This is the production workhorse config (deploy/models/
 # qwen38-27b-autoround-workhorse.yaml at 1a88df83) on its source, with its own
 # name and served name and the changes below.
 #
-# 2026-11-05 re-target (owner decision P2, research
-# 10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §6.2): judged on
-# vLLM 0.33.0-rocm72, runtime@29378fe0, which passed parity against 0.32 on
-# the XTX (row xtx-vllm-v033-parity-2026-11-05). 0.33 fixes priority
-# self-preemption (#61976), so a 0.32 failure could have been upstream's bug.
-# `vllmVersion: "0.33.0"` goes with the pin (!1281); the live controller
-# (1286a2f1) predates !1281 and ignores it, which renders two dead VLLM_* names
-# and --mamba-cache-mode as warnings only (failOnEnvironValidation false).
+# vLLM 0.33.0-rocm72, runtime@29378fe0 (owner decision P2; parity with 0.32 on
+# the XTX in row xtx-vllm-v033-parity-2026-11-05). `vllmVersion: "0.33.0"`
+# goes with the pin (!1281). While this Model exists, the controller roll
+# !1289's pre-merge gate (no Model declares vllmVersion) is not empty: apply it
+# only after !1289 has merged and soaked, or delete it before that roll.
 #
-# Placement: the XTX warm lane's slot, as S3 ran (cblevins-7900xtx, both
-# device-plugin slots with hipVisibleDevices 0, shared group 7900xtx-textgen,
-# vramEstimateMB 23200 = the whole card, priority 480: above the warm lane's
-# 300, below the creative lanes' 500). The 0.33 image is prewarmed only there;
-# the 5930k's root has < 200 GB free for a pull and its workhorse is never
-# preempted. This card's KV pool at this posture is ~44.6K tokens (S3 arm B),
-# not the 5930k's 52.9K; the main arms use ~7K and are unaffected, the
-# optional KV pair is rescaled in the plan. The compile cache is S3 arm B's
-# XTX path (warm 0.33 segmented + MTP K=2 variants at this config; the model
-# sits at /models for every Model, so the fcfs boot is warm).
+# Placement: the XTX warm lane's slot, as S3 and KT-QOS ran (cblevins-7900xtx,
+# both device-plugin slots with hipVisibleDevices 0, shared group
+# 7900xtx-textgen, vramEstimateMB 23200 = the whole card, priority 480: above
+# the warm lane's 300, below the creative lanes' 500). It is the only KT-QOS2
+# Model, so minReplicas is 1; before applying, no other Model on the group may
+# sit at priority >= 480 (equal-priority primaries are elected by name). The
+# 0.33 image is prewarmed only there; the 5930k workhorse is never preempted.
+# The compile cache is S3 arm B's XTX path, warm for the control; the budget
+# arm changes the compile range (max_num_batched_tokens) and compiles cold.
 #
-# minReplicas 0: its Local cache stages while the KT-SO canary runs; the agent
-# raises it to 1 over MCP once KT-SO is deleted. It boots fcfs; arm B patches
-# schedulingPolicy.
-#
-# flexinfer.ai/qos: proxy is set from the start because the MCP update tool
-# patches spec.config only. It changes nothing for the direct arms (they talk
-# to the pod, not the proxy) and gives the proxy arms the seat gate on the
-# fcfs boot (arm C) and gate + priority after the patch (arm D). The live
-# proxy (72628e0e) carries D3 MR 2 and MR 3.
+# flexinfer.ai/qos: proxy gives both arms the seat reserve; the harness runs
+# through the proxy in both. The live proxy's seat gate is unchanged from
+# KT-QOS's 72628e0e through master (no QoS or forwarding code changed).
 #
 # Window cost: the warm lane (mills-warm, mills-council, weaver) is off the XTX
 # for the window; the 5930k workhorse is untouched. Rollback = delete this
@@ -59,8 +59,8 @@ metadata:
     flexinfer.ai/serving-priority-class: flexinfer-serving-critical
     flexinfer.ai/base-model-posture: clean
     flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
-    flexinfer.ai/plan: ".loom/32-iteration-plan-kt-qos-2026-10-31.md"
-    flexinfer.ai/promotion-state: debug-canary-kt-qos
+    flexinfer.ai/plan: ".loom/32-iteration-plan-kt-qos2-2026-11-05.md"
+    flexinfer.ai/promotion-state: debug-canary-kt-qos2
     flexinfer.ai/qos: proxy
 spec:
   backend: vllm
@@ -85,8 +85,8 @@ spec:
     vramEstimateMB: 23200
   serverless:
     enabled: true
-    # Raised to 1 over MCP once the KT-SO canary is deleted.
-    minReplicas: 0
+    # The only KT-QOS2 Model: it boots once applied (after the pre-check).
+    minReplicas: 1
     idleTimeout: 30m
     coldStartTimeout: 25m
   config:
