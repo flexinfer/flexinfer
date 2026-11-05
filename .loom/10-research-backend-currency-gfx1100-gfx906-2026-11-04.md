@@ -424,6 +424,22 @@ PCIe (Gen3 x16 on the 5930k, Gen3 x8 on the XTX) add ≤ 1 % decode and ≤ 2 % 
 regression. Stacks with Octave or stands alone if Octave fails; also worth 2.0 GB on the 9B lanes.
 Effort M. Clean upstream PR afterwards.
 
+**S7 and G3 results (2026-11-05, `70-result-s7-g3-kv-pool-2026-11-05.md`).** Both were measured on the XTX at the
+workhorse posture, against one fp16 baseline (42,490 tokens).
+
+- **S7 (`FLEXINFER_EMBED_HOST=1`, plugin-common 0.5.0) is `conditional`.**
+  - It moves the 2.37 GiB table out of VRAM, for **73,818 tokens** (+31,328; 2.25× at 32K; about 84K projected on
+    the 5930k).
+  - TTFT is 1.00×, outputs are bit-identical, and step time is unchanged. A 33-min soak was clean.
+  - Decode at 16K read 0.984×, then 0.896× on the rerun. Both reads are artifacts: an acceptance-variant draw, then
+    one first-use segmented compile.
+  - The confirming rerun goes to the workhorse-promotion canary (vLLM 0.33).
+- **G3 (`FLEXINFER_SEGMENTED_FP8_GFX11=1`) is killed.**
+  - The gate lift works: the segmented kernel ran with 0 fallbacks.
+  - But software fp8 conversion costs 0.926 / 0.740 / 0.670× decode at 2K / 16K / 28K, and the hybrid pool gains only
+    1.69× (71,837 tokens), since GDN state shares it.
+  - A cold fp8 autotune takes about 42 min. Keep G3 off.
+
 **Quick wins gated by step 0:** Q1 row padding (G4); Q2 segmented autotune tables at runtime width
 (G7; bar: zero `jit_monitor` lines in the first 100 live requests after a cold-cache boot); Q3 relax
 our FLA pruning (G10; bar: 16K prefill ≥ 3 % faster, boot ≤ +60 s); Q4 a tuned MoE JSON when the 35B
