@@ -80,6 +80,19 @@ class Analyze(unittest.TestCase):
             result["draft_lm_heads_pct_of_busy"], round(100 * 5 / 18.5, 2)
         )
 
+    def test_idle_is_charged_to_the_kernel_that_waited(self):
+        result = probe.analyze_events(synthetic_trace(steps=4))
+        charged = {name: ms for name, ms, _ in result["idle_before_kernel_per_step"]}
+        # Steps 2-4: 0.9 ms of host time before the first GEMM and 0.1 ms
+        # before each of the other nine; step 1 starts with 1.0 ms instead.
+        self.assertAlmostEqual(charged["void gemm_q4_kernel_rdna3<__half, 2>(...)"], 1.825)
+        # 0.1 ms before the first draft head, 0.3 ms before the second.
+        self.assertAlmostEqual(charged["void wvSplitK_hf_big_<__half, 32, 2, 16, 8, 2, 1>(int)"], 0.4)
+        self.assertAlmostEqual(charged["void wvSplitK_hf_big_<__half, 32, 2, 16, 8, 2, 3>(int)"], 0.1)
+        total = sum(ms for _, ms, _ in result["idle_before_kernel_per_step"])
+        # Mean idle over the four steps: (2.4 + 3 * 2.3) / 4.
+        self.assertAlmostEqual(total, 2.325)
+
     def test_no_kernels_is_reported_not_raised(self):
         result = probe.analyze_events(
             [{"ph": "X", "cat": "cpu_op", "name": "x", "ts": 0, "dur": 5}]

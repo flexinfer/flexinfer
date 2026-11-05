@@ -494,7 +494,11 @@ def analyze_events(events, lm_head_ms=1.0, drafts_per_step=2):
             k += 1
         j = k
         by_class, spans, names = {}, [], {}
+        gaps_before = {}
         first_ts, last_end = None, None
+        # Idle is charged to the kernel that waited, starting at the step
+        # boundary, so the charges add up to the step's idle exactly.
+        prev_end = left
         heads_in_step = {"lm_head_target": [], "lm_head_draft": []}
         while j < len(kernels) and kernels[j]["ts"] < right:
             e = kernels[j]
@@ -509,12 +513,16 @@ def analyze_events(events, lm_head_ms=1.0, drafts_per_step=2):
                 )
             by_class[label] = by_class.get(label, 0.0) + e["dur"]
             short = e.get("name", "?")[:110]
+            if e["ts"] > prev_end:
+                g_total, g_count = gaps_before.get(short, (0.0, 0))
+                gaps_before[short] = (g_total + e["ts"] - prev_end, g_count + 1)
             total, count = names.get(short, (0.0, 0))
             names[short] = (total + e["dur"], count + 1)
             end = min(e["ts"] + e["dur"], right)
             spans.append((e["ts"], end))
             first_ts = e["ts"] if first_ts is None else first_ts
             last_end = end if last_end is None else max(last_end, end)
+            prev_end = max(prev_end, end)
             j += 1
         period = right - left
         busy = merged_busy(spans)
@@ -530,6 +538,7 @@ def analyze_events(events, lm_head_ms=1.0, drafts_per_step=2):
                 "by_class_us": by_class,
                 "heads": heads_in_step,
                 "names": names,
+                "gaps_before": gaps_before,
             }
         )
     if not steps:
@@ -550,6 +559,13 @@ def analyze_events(events, lm_head_ms=1.0, drafts_per_step=2):
             t, c = names.get(name, (0.0, 0))
             names[name] = (t + total, c + count)
     top = sorted(names.items(), key=lambda kv: -kv[1][0])[:25]
+    gap_names = {}
+    for s in steps:
+        for name, (total, count) in s["gaps_before"].items():
+            t, c = gap_names.get(name, (0.0, 0))
+            gap_names[name] = (t + total, c + count)
+    gap_top = sorted(gap_names.items(), key=lambda kv: -kv[1][0])[:15]
+    gap_count = sum(c for _, c in gap_names.values()) / len(steps)
     return {
         "kernel_count": len(kernels),
         "steps": len(steps),
@@ -567,6 +583,12 @@ def analyze_events(events, lm_head_ms=1.0, drafts_per_step=2):
         "target_lm_head_ms": round(target_head / 1000, 3),
         "head_samples": steps[0]["heads"],
         "periods_ms": [round(s["period_us"] / 1000, 3) for s in steps],
+        "gaps_per_step": round(gap_count, 1),
+        "mean_gap_us": round(sum(t for t, _ in gap_names.values()) / max(1, sum(c for _, c in gap_names.values())), 2),
+        "idle_before_kernel_per_step": [
+            [name, round(total / len(steps) / 1000, 4), round(count / len(steps), 2)]
+            for name, (total, count) in gap_top
+        ],
         "top_kernels_per_step": [
             [name, round(total / len(steps) / 1000, 4), round(count / len(steps), 2)]
             for name, (total, count) in top

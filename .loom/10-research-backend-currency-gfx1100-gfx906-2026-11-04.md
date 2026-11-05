@@ -380,6 +380,14 @@ layer shapes at M = 1, 2, 3, 4, 6, 8. Pre-registered: G1 proceeds if the two dra
 wvSplitK at n=1 reaches < 75 % of the read ceiling; inter-kernel gaps ≥ 10 % of the step get written
 up as a fusion target.
 
+**Step 0 result (2026-11-05, `70-result-s4-step0-decode-anatomy-2026-11-05.md`).** On the XTX
+(66.5 tok/s at 2K, step 35.65 ms): GPU busy 31.85 ms per step = GPTQ 62 %, the two draft
+lm_heads 17 % (5.42 ms, at the bandwidth ceiling), target lm_head 8.5 %; idle 16 %. G1 proceeds
+(S5 go); G4 padding is 1.08× slower (Q1 dropped); wvSplitK already reads at 1.00× the 934 GB/s
+ceiling (G5 dropped); the idle (1,468 dispatch gaps of 4.1 µs, incl. a per-call `at::zeros` ticket
+fill before each GPTQ GEMM) is the fusion target. New lever: the W4A16 body reads at only 63–73 %
+of the ceiling. Q2 and Q3 failed their bars (Q2 has a found, fixable cause).
+
 **Candidate 1 — pruned-vocabulary MTP draft head (G1).** The text plugin wraps
 `MTPSpeculator.load_draft_model`, gathers `W_sub = lm_head.weight[ids]` (335 MB at V′ = 32,768) and
 overrides `Qwen3_5MTP.get_top_tokens`; the manifest adds `"use_local_argmax_reduction": true` to

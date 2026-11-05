@@ -1,3 +1,14 @@
+# RESULT (2026-11-05, window 05:32-06:44Z; .loom/70-result-s4-step0-decode-anatomy-2026-11-05.md,
+# matrix rows gfx1100-s4-step0-decode-anatomy-2026-11-05 = pass and
+# gfx1100-s4-plugin-flags-q2-q3-2026-11-05 = fail). Decode step at 2K, c = 1:
+# 35.65 ms unprofiled, 31.85 ms GPU busy: GPTQ 62 %, draft lm_heads 17 % (G1
+# >= 12 %: S5 go), target lm_head 8.5 %; GPU idle 16 % (1,468 dispatch gaps
+# of 4.1 us: fusion target). G4 padding 1.08x slower (no-go); wvSplitK at
+# the 934 GB/s read ceiling (G5 no-go). Q3 relaxed FLA: 16K TTFT 1.004x
+# (fail). Q2 runtime tables: 16 jit_monitor lines vs 15 (fail; precompiled
+# K/V specialization 'DS' never matches the live cache's 'D'). Deleted after
+# the window; the card went to S6's Octave canary.
+#
 # DEBUG CANARY: slice S4 "step 0" of
 # .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.3, with
 # matrix rows gfx1100-s4-step0-decode-anatomy-2026-11-05 (arm A) and
@@ -119,6 +130,13 @@ spec:
       S4_ARM: hold
     vllmVersion: "0.32.0"
     cudagraphMetrics: true
+    # Patched in during the window (2026-11-05 05:49Z, controller-only key, no
+    # relaunch): on the XTX this posture profiles 42,490 tokens (1.30x at 32K)
+    # once warm, below the 1.50x KVPoolShort line, so the recheck would delete
+    # the first Ready pod of every arm's ReplicaSet. A cold torch.compile boot
+    # also fails once at KV allocation (1.19 GiB left for 2.45 GiB) and boots
+    # on the container restart, as the workhorse's KVPoolRecheck history shows.
+    kvPoolRecheck: false
     attentionBackend: ROCM_SEGMENTED_ATTN
     kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
     warmPolicy: primary
