@@ -315,8 +315,9 @@ proxy:
   # respond-async) on chat/completions, images/generations|edits,
   # audio/transcriptions|speech|generations and videos/generations, plus
   # POST/GET /v1/jobs*, run by the proxy as InferenceJobs. The live proxy
-  # (master d5aa35a7, !1251) already carries the job API and the runner; this
-  # block only switches it on, so no image moves. Store = MinIO in daemon
+  # (master 72628e0e, sha256:bdd4bd25, on top of the d5aa35a7 build from
+  # !1251) already carries the job API and the runner; this block only
+  # switches it on, so no image moves. Store = MinIO in daemon
   # (ClusterIP Service minio, S3 API on 9000; 9001 is the console), bucket
   # flexinfer-jobs, credentials from Secret flexinfer-jobs-minio in
   # flexinfer-system (keys accessKey, secretKey; platform/gitops!1024, bucket
