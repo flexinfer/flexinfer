@@ -294,7 +294,18 @@ proxy:
     # endpoints, so the 2x50 ms retry hit a ClusterIP that still REJECTed and a
     # cold Wan clip came back 502. Ready lanes keep the 2x50 ms retry. Rollback
     # = the c500a1fd digest sha256:ce24751b46e3732be06f221937c0f1edaa2af355cb135da560fba3ed7643232d.
-    digest: "sha256:bdd4bd256cc43c0fb0e23f05b5a62f9eefb984e70caf8af26cde4fb6a2eb60f8"
+    # 2026-11-05: master 51e6bd81 (tag 20261105-153904), rolled in the same
+    # restart that turns the jobs API on (owner window 2026-11-06, Q2). The
+    # 72628e0e build above plus !1281 and !1291: the proxy's direct-load path
+    # now renders a declared spec.config.vllmVersion the way the controller
+    # does (!1289), so in-pod vLLM lanes may declare it. Between 72628e0e and
+    # 51e6bd81 the proxy's sources differ only in backend/vllm.go,
+    # backend/vllm_omni.go (the vllmVersion-gated render) and a comment in
+    # api/v1alpha2/gpuprofile_types.go; the 2026-11-05 16:14Z live-snapshot
+    # render gives byte-identical runtime payloads for all 28 Models without
+    # vllmVersion. Rollback = the 72628e0e digest
+    # sha256:bdd4bd256cc43c0fb0e23f05b5a62f9eefb984e70caf8af26cde4fb6a2eb60f8.
+    digest: "sha256:d0439aacec17a4dc7655a99bd06c72f3dd65018fb9aaf4fc7ac226328fe3cc72"
     pullPolicy: Always
   service:
     type: ClusterIP
@@ -314,10 +325,9 @@ proxy:
   # Async jobs (D2, !1218/!1219): `background: true` (or Prefer:
   # respond-async) on chat/completions, images/generations|edits,
   # audio/transcriptions|speech|generations and videos/generations, plus
-  # POST/GET /v1/jobs*, run by the proxy as InferenceJobs. The live proxy
-  # (master 72628e0e, sha256:bdd4bd25, on top of the d5aa35a7 build from
-  # !1251) already carries the job API and the runner; this block only
-  # switches it on, so no image moves. Store = MinIO in daemon
+  # POST/GET /v1/jobs*, run by the proxy as InferenceJobs. The job API and
+  # the runner have been in the proxy since the d5aa35a7 build (!1251); this
+  # block switches them on, in the same restart as the 51e6bd81 repin above. Store = MinIO in daemon
   # (ClusterIP Service minio, S3 API on 9000; 9001 is the console), bucket
   # flexinfer-jobs, credentials from Secret flexinfer-jobs-minio in
   # flexinfer-system (keys accessKey, secretKey; platform/gitops!1024, bucket
