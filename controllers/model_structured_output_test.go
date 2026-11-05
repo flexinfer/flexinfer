@@ -20,7 +20,12 @@ import (
 )
 
 const (
-	soCertifiedImage = "registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2"
+	// The KT-SO canary's image: vLLM 0.33.0-rocm72 since the 2026-11-05
+	// re-target (owner decision P2), so a PASS certifies this digest.
+	soCertifiedImage = "registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69"
+	// The production workhorse's pin (vLLM 0.32.0), which a certificate for
+	// the 0.33 canary image does not cover.
+	soWorkhorseImage = "registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2"
 	soOtherImage     = "registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	soEvidence       = ".loom/60-validation-matrix.md#gfx1100-structured-outputs-2026-11-06"
 )
@@ -206,7 +211,7 @@ func TestApplyStructuredOutputCondition(t *testing.T) {
 // renders it, certificate or not, so D4 is live-neutral at merge.
 func TestStructuredOutputDeploymentRender(t *testing.T) {
 	workhorse := loadDeployModelManifest(t, filepath.Join("..", "deploy", "models", "qwen38-27b-autoround-workhorse.yaml"))
-	require.Equal(t, soCertifiedImage, workhorse.Spec.Image, "fixture image must be the workhorse's pinned digest")
+	require.Equal(t, soWorkhorseImage, workhorse.Spec.Image, "fixture image must be the workhorse's pinned digest")
 	optedIn := workhorse.DeepCopy()
 	optedIn.Spec.Capabilities = &aiv1alpha2.ModelCapabilities{StructuredOutput: soBool(true)}
 
@@ -216,10 +221,11 @@ func TestStructuredOutputDeploymentRender(t *testing.T) {
 		profile *aiv1alpha2.GPUProfile
 		want    bool
 	}{
-		{name: "shipped workhorse, certified profile", model: workhorse, profile: soProfile(soCertify(soCertifiedImage)), want: false},
+		{name: "shipped workhorse, certified profile", model: workhorse, profile: soProfile(soCertify(soWorkhorseImage)), want: false},
 		{name: "opted in, no certificate", model: optedIn, profile: soProfile(nil), want: false},
 		{name: "opted in, certificate for another image", model: optedIn, profile: soProfile(soCertify(soOtherImage)), want: false},
-		{name: "opted in, certificate for its image", model: optedIn, profile: soProfile(soCertify(soCertifiedImage)), want: true},
+		{name: "opted in, certificate for the KT-SO canary's 0.33 image", model: optedIn, profile: soProfile(soCertify(soCertifiedImage)), want: false},
+		{name: "opted in, certificate for its image", model: optedIn, profile: soProfile(soCertify(soWorkhorseImage)), want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
