@@ -25,6 +25,12 @@
 # imageio + imageio-ffmpeg for Wan's MP4 export and ftfy for Wan VACE prompts.
 # bitsandbytes 0.50.2 ships libbitsandbytes_rocm72.so with gfx1100 code
 # objects; NF4 numerics on the card are still the Qwen-Image canary's to prove.
+#
+# The 0.33 persona (build/runtime.yaml gfx1100-serving-v033) is this file with
+# BASE_IMAGE=vllm/vllm-openai-rocm:v0.33.0-rocm72: same ROCm 7.2.3 and torch
+# 2.13, so the overlay and both verifiers apply unchanged. 0.33's _rocm_C ships
+# compressed offload bundles, which the ISA check lists with
+# clang-offload-bundler (in both bases under /opt/rocm/llvm/bin).
 ARG BASE_IMAGE=vllm/vllm-openai-rocm:v0.32.0
 ARG GO_VERSION=1.26.10
 
@@ -51,8 +57,9 @@ ARG GPU_ARCH=gfx1100
 # Qwen-Image 2.1 needs diffusers >= 0.41, but 0.41.0 requires
 # huggingface-hub < 2.0 and the vLLM 0.32 base ships 2.2.0 (the first build of
 # this image failed on exactly that constraint). 0.42.0 (2026-10-23) is the
-# first release that allows hub < 3.0.
-ARG DIFFUSERS_VERSION=0.42.0
+# first release that allows hub < 3.0; 0.42.1 is its security fix
+# (GHSA-4prv-5hj7-c2xr).
+ARG DIFFUSERS_VERSION=0.42.1
 ARG SNAC_VERSION=1.2.1
 
 ENV DEBIAN_FRONTEND=noninteractive \
