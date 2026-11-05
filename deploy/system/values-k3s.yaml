@@ -130,25 +130,29 @@ controller:
     # pin contract (!1224, CI only), D7 certify tooling. No pod template
     # changes: no lane restarts expected. Rollback = the 3cb6cde0 build:
     # tag 20261030-153940, sha256:cb4531508c426bdcbce648a71d5c21ac2872d8b2323ba0f728414a36368e3164.
-    # 2026-11-05: master ccb2b61b (tag 20261105-030246; the controller source
-    # equals the ac73e607 build's). The d5aa35a7 build above plus three
-    # controller-side commits. !1281 renders vLLM flags and VLLM_* env for a
-    # declared spec.config.vllmVersion (unset = the pre-!1281 render, frozen
-    # in backend/testdata/vllm-render-golden.json) and refuses
+    # 2026-11-05: master 51e6bd81 (tag 20261105-153904). The d5aa35a7 build
+    # above plus four controller-side commits; the controller sources are
+    # identical from 470d0fe9 to 51e6bd81. !1281 renders vLLM flags and VLLM_*
+    # env for a declared spec.config.vllmVersion (unset = the pre-!1281 render,
+    # frozen in backend/testdata/vllm-render-golden.json) and refuses
     # maxNumPartialPrefills, maxLongPartialPrefills and an unreadable
-    # vllmVersion as ConfigInvalid. 3a502a43 unloads an in-pod lane from its
-    # runtime when the VRAM or HW-queue fit check refuses it. bf035c08 changes
-    # comments only. All 32 live Models and the 3 live GPUProfiles
-    # (snapshot 2026-11-05 04:56Z) render byte-identical pod templates and
-    # runtime launch payloads (specHash) on both builds, and no live Model
-    # sets a refused key, vllmVersion or a refused fit: no lane restarts
-    # expected. The proxy stays on d5aa35a7, and its direct-load path renders
-    # the runtime payload with the pre-!1281 code, so declare vllmVersion on
+    # vllmVersion as ConfigInvalid. !1291 (95e96f66) drops the VLLM_* names a
+    # declared vllmVersion removed on vllm-omni too and refuses an unreadable
+    # one there, renders enableAiter only on gfx942/gfx950, and certifies the
+    # structured-output backend `auto` only (never LM-Format-Enforcer).
+    # 3a502a43 unloads an in-pod lane from its runtime when the VRAM or
+    # HW-queue fit check refuses it. bf035c08 changes comments only. All 28
+    # live Models without vllmVersion and the 3 live GPUProfiles (snapshot
+    # 2026-11-05 16:14Z) render byte-identical pod templates and runtime launch
+    # payloads (specHash) on both builds; a Model that declares vllmVersion
+    # re-renders and restarts, so merge only when none exists. The proxy stays
+    # on the 72628e0e build, and its direct-load path renders the runtime
+    # payload with the pre-!1281 code, so declare vllmVersion on
     # Deployment-path lanes only until the proxy runs a !1281 build too.
     # Rollback = the d5aa35a7 build: tag 20261102-144015,
     # sha256:1286a2f15c0a5a9f95de19275ce57bfa564ddcbd75517be4b80cf306d29b7c0f.
-    digest: "sha256:78a5ef9ae6a71b9ea87eea09476feac1b75970206214dc468b0a0a15e0d9b57f"
-    tag: "20261105-030246"
+    digest: "sha256:6a3ad9e603110df8207a59f815d4e809e4b4a3357138302fd2faa39cfc5ccdcd"
+    tag: "20261105-153904"
   resources:
     limits:
       cpu: 1000m
