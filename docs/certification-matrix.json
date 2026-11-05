@@ -1931,6 +1931,22 @@
       "source": ".loom/60-validation-matrix.md"
     },
     {
+      "id": "xtx-vllm-v033-parity-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "slice S3 of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md (§6.1, owner decision P1): is vLLM v0.33.0-rocm72 a like-for-like replacement for 0.32.0 on gfx1100? Canary…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#xtx-vllm-v033-parity-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "xtx-runtime-v032-527e2714-2026-11-04",
       "kind": "validation",
       "support_level": "supported",

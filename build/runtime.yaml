@@ -204,6 +204,44 @@ profiles:
       VLLM_ROCM_USE_AITER: "0"
     build_context: 7900xtx
 
+  # The same stacked serving persona on vLLM 0.33.0 (slice S3 of .loom/
+  # 10-research-backend-currency-gfx1100-gfx906-2026-11-04.md): one Dockerfile,
+  # only the base moves. Always the -rocm72 image (ROCm 7.2.3, torch 2.13, like
+  # 0.32): the default v0.33.0 tag is TheRock's ROCm 10 and 18 GB. Base pinned
+  # by digest (Docker Hub, pushed 2026-11-02). Canary-only: no CI publish job
+  # and no promotion target until its parity canary passes; built and pushed
+  # from the 7900xtx docker host, tagged rocm-gfx1100-serving-v033-<sha>.
+  gfx1100-serving-v033:
+    tag: "runtime:rocm-gfx1100-serving-v033"
+    promotion:
+      gpuprofile: false
+      values_runtime_profiles: false
+      require_prewarm: true
+    dockerfile: build/Dockerfile.runtime-serving-v032
+    gpu_vendor: amd
+    gpu_arch: gfx1100
+    base_image: "vllm/vllm-openai-rocm:v0.33.0-rocm72@sha256:4fe7bc121cbe2f0791ebc38dcc2f0d615612233b4bfc0c1f4b9daeab05aba182"
+    vllm_install_mode: wheel
+    vllm_ref: "v0.33.0"
+    rocm_dev_image: "rocm/dev-ubuntu-24.04:7.2.3"
+    amdgpu_targets: gfx1100
+    backends:
+      vllm: true
+      llamacpp: false
+      ollama: false
+      diffusers: true
+      steam: false
+    include_bitsandbytes: false
+    include_quantizer: false
+    transformers_install_mode: none
+    skip_gemma4_moe_patch: true
+    env:
+      HSA_OVERRIDE_GFX_VERSION: "11.0.0"
+      PYTORCH_ROCM_ARCH: gfx1100
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"
+      VLLM_ROCM_USE_AITER: "0"
+    build_context: 7900xtx
+
   # Dedicated gaming persona for cblevins-7900xtx (Sunshine/Moonlight). Uses the
   # broad Dockerfile (which carries the INCLUDE_GAMING layer) but with vLLM,
   # quantizer, llama.cpp, Ollama, and diffusers OFF: the ROCm base already

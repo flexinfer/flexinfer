@@ -1,0 +1,227 @@
+# DEBUG CANARY — slice S3 of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md
+# (§6.1): vLLM 0.33.0 parity on the 7900 XTX with only the image changed.
+# Matrix row xtx-vllm-v033-parity-2026-11-05 (pass rule written before the
+# run). NOT in any kustomization: the operator applies this file once, the
+# agent drives the arms over the flexinfer MCP tools and reads results with
+# `kubectl exec` / `kubectl logs`, then deletes both Models.
+#
+# Two Models, one per image, because the MCP tools cannot change spec.image:
+#   qwen38-27b-v033-parity-a  vLLM 0.32.0, runtime@b06b06fe (the workhorse's
+#                             image): the same-card baseline. The 0.32
+#                             reference (rows ...-s3b-ttft / -s4-workhorse:
+#                             71.8 / 66.5 / 66.1 tok/s at 512 / 2K / 16K,
+#                             pos0 0.84 / 0.79 / 0.80, parity_code 8174a49e)
+#                             was measured on the 5930k; this card runs under
+#                             a 2100 MHz sclk cap.
+#   qwen38-27b-v033-parity-b  vLLM 0.33.0-rocm72, runtime@<0.33 digest>
+#                             (rocm-gfx1100-serving-v033-<sha>), plus
+#                             `vllmVersion: "0.33.0"`, which 0.32+ pins need
+#                             since !1281 (it drops VLLM_* names 0.33 lacks and
+#                             the deprecated --mamba-cache-mode).
+# Everything else is identical between the two: the 5930k workhorse's S4
+# posture (ROCM_SEGMENTED_ATTN + autotune, fp16 KV, MTP K=2 with the
+# checkpoint head, 32K, two seats, 0.96, GDN prefix caching align / bf16 SSM,
+# chunked prefill 4096) on the XTX warm lane's slot (cblevins-7900xtx, both
+# device-plugin slots with hipVisibleDevices 0, shared group 7900xtx-textgen,
+# vramEstimateMB 23200 = the whole card), the S3 source revision 2d7425f7 and
+# one compile cache per arm. No serviceLabels and no LiteLLM entry: nothing
+# routes here but the probe.
+#
+# Priority 480: above the warm lane (300) so the canary borrows the card,
+# below the creative lanes (500) so a studio request still wins it. Arm A
+# starts with minReplicas 1; arm B waits at minReplicas 0 (its Local cache
+# stages meanwhile) until arm A is deleted. The G6 arm is arm B with
+# `VLLM_ROCM_USE_SKINNY_GEMM=0` patched into spec.config.env (0.33.0 has no
+# VLLM_SKINNY_GEMM_MAX_WEIGHT_BYTES; see the matrix row).
+#
+# Window cost: the warm lane (mills-warm, mills-council, weaver) is off the
+# card for ~45-60 min, two cold boots plus one warm restart; the 5930k
+# workhorse is untouched. Afterwards one proxied request returns the card to
+# the warm lane (ondemand hand-back gap, row xtx-runtime-v032-527e2714).
+# Rollback = delete both Models.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-v033-parity-a
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md"
+    flexinfer.ai/promotion-state: debug-canary-v033-parity-arm-a-v032
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-a-xtx
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    dedicatedDeployment: true
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    warmPolicy: primary
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-v033-parity-a
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-v033-parity-a
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
+---
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-v033-parity-b
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md"
+    flexinfer.ai/promotion-state: debug-canary-v033-parity-arm-b-v033
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-b-xtx
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    # Raised to 1 over MCP once arm A is deleted.
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    # The one config difference from arm A, required with a 0.32+ image (!1281).
+    vllmVersion: "0.33.0"
+    dedicatedDeployment: true
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    warmPolicy: primary
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-v033-parity-b
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-v033-parity-b
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
