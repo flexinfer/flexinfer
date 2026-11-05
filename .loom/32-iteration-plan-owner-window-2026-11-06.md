@@ -1,6 +1,13 @@
 # Owner window from 2026-11-06 00:15Z: one ordered runbook for the held Drafts
 
-Status: **prepared 2026-11-05, nothing merged.** The owner gives the go per step. Every Draft
+Status: **prepared 2026-11-05; owner answers recorded 2026-11-05 (§5); no window Draft merged.**
+The owner gives the go per step. Since the answers:
+- !1255 also rolls the proxy (Q2);
+- !1221 is closed (Q3);
+- the four control-plane digests are pinned for retention (Q6);
+- this window's XTX phase stops at KT-SWAP (Q7). !1237–!1239 are deferred.
+
+Every Draft
 below was refreshed on 2026-11-05 by merging `master` (`51e6bd81`) into it, with no force-push.
 Each one merges cleanly with master and with every other Draft (`git merge-tree`, pairwise).
 `docs/certification-matrix.json` is current on every branch.
@@ -15,8 +22,8 @@ most moving parts and the canary queue may still hold it at 00:15Z.
 | # | MR | Component | Change | Needs | Time incl. soak |
 |---|---|---|---|---|---|
 | A1 | !1289 | controller | roll to master `51e6bd81` (`6a3ad9e6`): `vllmVersion` render (!1281), render hygiene (!1291), refused-fit unload (!1256) | no Model declares `vllmVersion` | 40 min |
-| A2 | !1255 | proxy | InferenceJob API on, no image move | A1 soaked; no KT harness running through the proxy | 45 min |
-| — | !1221 | — | **do not merge**: superseded (stale pins, and its jobs half is in !1255) | close it | — |
+| A2 | !1255 | proxy | InferenceJob API on **and** proxy roll to master `51e6bd81` (`d0439aac`), one restart (Q2) | A1 soaked; no KT harness running through the proxy | 45 min |
+| — | !1221 | — | **closed 2026-11-05** as superseded (Q3) | — | — |
 | B1 | !1257 | 5930k CPU twin | gte twin 12 threads, 14-core limit | A1 | 15 min |
 | B2 | — | VII gte lane (test) | KT-RET K2 re-run, forced 5 min park | B1 at ≥ 140 tok/s; A1 (for !1256) | 15 min |
 | C1 | !1261 | VII runtime | `6fc6fcbd` → `cb4c8dc3` (pyannote layer), HF token mount | B1 | 45 min |
@@ -27,11 +34,11 @@ most moving parts and the canary queue may still hold it at 00:15Z.
 | D2 | !1235 | XTX warm lane | warm lane in-pod on `527e2714` | D0 | 60 min |
 | D3 | !1236 | XTX Qwen-Image | Qwen-Image in-pod; NF4 check | D2 | 30 min |
 | D4 | — | XTX (test) | KT-SWAP | D3, GPULease | 90 min |
-| D5 | !1237 | XTX Wan T2V | Wan T2V in-pod; decode A/B | D4 | 45 min |
-| D6 | !1238 | XTX Wan VACE | VACE in-pod; decode A/B | D5 | 45 min |
-| D7 | !1239 | XTX Stable Audio | Stable Audio in-pod | D6 | 20 min |
+| ~~D5~~ | !1237 | XTX Wan T2V | **deferred (Q7)**: waits for the Wan decode A/B on the 0.32 base | — | — |
+| ~~D6~~ | !1238 | XTX Wan VACE | **deferred (Q7)** | — | — |
+| ~~D7~~ | !1239 | XTX Stable Audio | **deferred (Q7)** | — | — |
 
-Suggested split, about 2.5 h each: **night 1** A1–B2, **night 2** C1–C3, **nights 3–4** D0–D7.
+Suggested split, about 2.5 h each: **night 1** A1–B2, **night 2** C1–C3, **night 3** D0–D4.
 Each step is a natural stop point. A step that fails stops its phase, not the other phases. The
 exception is A1: nothing in phases B to D should start on a failed controller roll.
 
@@ -96,8 +103,9 @@ exception is A1: nothing in phases B to D should start on a failed controller ro
     `d87f75f8`.
 - **Harbor `pinned-*` tags.**
   - Present on every runtime digest above.
-  - **Absent on every controller and proxy digest**, target and rollback alike. The pin-tags
-    guard does not match the split `digest:` keys.
+  - **Absent on every controller and proxy digest** at 16:15Z, target and rollback alike. The
+    pin-tags guard does not match the split `digest:` keys. Since Q6, the four that matter are
+    listed in `deploy/pins/control-plane-retention-pins.yaml` (§5).
   - Rollback controller `1286a2f1` was last pulled 11-02 and can leave retention after about
     12-02. Proxy `bdd4bd25` was last pulled 11-03.
 - **Secrets and CRD.** `flexinfer-jobs-minio`, `flexinfer-hf-token` and the CRD
@@ -125,16 +133,15 @@ exception is A1: nothing in phases B to D should start on a failed controller ro
 
 | Pair | Conflict | Resolution in this order |
 |---|---|---|
-| !1289 vs !1221 | two controller rolls; !1221's pins (10-31) are older than live | close !1221; A1 is the only controller roll |
-| !1255 vs !1221 | both turn jobs on; !1221 also rolls the proxy back to 10-31 | A2 only; close !1221 |
+| !1289 / !1255 vs !1221 | !1221 rolled both images back to 10-31 builds and turned jobs on | !1221 closed 2026-11-05 (Q3); A1 and A2 are the only control-plane rolls |
 | !1289 vs any Model with `vllmVersion` | the roll re-renders and restarts it (drops dead `VLLM_*` env, `--mamba-cache-mode` on 0.33) | A1 gate: the jq check prints nothing |
 | !1255 vs a KT harness through the proxy (KT-QOS seat reserve, KT-SO) | the proxy pod restarts mid-run | A2 only when no harness targets `10.43.49.107` |
 | !1261 → !1262 → !1287 | the same DaemonSet `flexinfer-runtime-gfx906` repinned twice; the pyannote certificate must follow the runtime image | strictly C1 → C2 → C3 with a soak between; if KT-DIAR fails and !1262 is reverted, !1287 needs a rebase onto !1261 that drops its certificate hunk before C3 |
 | !1257 (K2) vs !1287 | !1287 lowers gte `vramEstimateMB` 2600 → 2400; K2's unpark patch writes 2600 | B2 runs before C3, so 2600 is right; if K2 slips past C3, unpark to **2400** |
 | B2 vs any `flexinfer-models` merge | K2 suspends the `flexinfer-models` Kustomization for ~8 min | merge nothing under `deploy/` until it is resumed |
 | VII rolls (C1, C3) vs gte | each roll unloads gte ~80 s; gte fails over to the CPU twin | B1 lands first, so the twin has 12 threads for both rolls |
-| !1235–!1239 | one stack: each branch carries its predecessors and targets `master` | merge strictly in order; merging a later one first brings the earlier lanes with it |
-| proxy (72628e0e, pre-!1281) vs in-pod lanes | the proxy's direct-load path renders the pre-!1281 payload | no in-pod lane declares `vllmVersion` here (D2–D7 do not); see question Q2 |
+| !1235–!1239 | one stack: each branch carries its predecessors and targets `master` | merge strictly in order, and in this window only !1235 and !1236 (Q7). Merging !1237–!1239 would bring the Wan and Stable Audio lanes in-pod |
+| proxy (72628e0e, pre-!1281) vs in-pod lanes | the live proxy's direct-load path renders the pre-!1281 payload | A2 rolls the proxy to `51e6bd81` (Q2), so after A2 an in-pod vLLM lane may declare `vllmVersion`; D2–D4 declare none |
 
 **Queued XTX canaries.** Check right before A1 and before each D step:
 
@@ -147,13 +154,13 @@ kubectl get gpuleases.ai.flexinfer -A
 - **KT-QOS / KT-SO** (`qwen38-27b-qos-canary`, `qwen38-27b-so-canary`): due to end around
   18:15Z on 11-05. They block A1 (`vllmVersion`) and A2 (harness through the proxy) until both
   Models are deleted.
-- **S7 + G3 pool canary** (`qwen38-27b-pool-canary`, 480, ~2.5–3 h, after KT-QOS/SO): its MR is
-  not on master yet. It blocks A1 only if it declares `vllmVersion` (the jq check decides). It
-  blocks every D step while it holds the group. Wait for "XTX free" in
-  `s7-g3-kv-pool-2026-11-05.md` in the shared notes.
-- **S5 draft head**: stage A is offline first. **GPTQ split-K kernel**: an upstream PR first.
-  Neither has a canary manifest yet. Ask both to queue after D7, or schedule D between them. No
-  XTX canary may start while D2–D7 or KT-SWAP's GPULease is in flight.
+- **S7 + G3 pool canary** (`qwen38-27b-pool-canary`, 480, ~2.5–3 h). **Owner (Q5):** it runs
+  between KT's end (~18:15Z on 11-05) and the 00:15Z window if its image is ready in time, and is
+  deleted before phase D. Otherwise it runs after phase D. It blocks A1 only if it declares
+  `vllmVersion` (the jq check decides). It blocks every D step while it holds the group. Wait for
+  "XTX free" in `s7-g3-kv-pool-2026-11-05.md` in the shared notes.
+- **S5 draft head** and the **GPTQ split-K kernel** canary go after phase D (Q5). Neither has a
+  canary manifest yet. No XTX canary may start while D2–D4 or KT-SWAP's GPULease is in flight.
 
 ## 4. Common procedure
 
@@ -269,8 +276,16 @@ ssh <node> 'sudo journalctl -k --since "-30 min" | grep -iE "amdgpu|smu|pcie|lin
   `sha256:1286a2f15c0a5a9f95de19275ce57bfa564ddcbd75517be4b80cf306d29b7c0f` (tag
   `20261102-144015`), then reconcile the HelmRelease.
 
-### A2. !1255: InferenceJob API on (no image move)
+### A2. !1255: InferenceJob API on, and the proxy rolls to master `51e6bd81` (Q2)
 
+- **What moves.** One proxy restart carries both changes:
+  - `proxy.image.digest` `bdd4bd25` (72628e0e) → `sha256:d0439aacec17a4dc7655a99bd06c72f3dd65018fb9aaf4fc7ac226328fe3cc72`
+    (51e6bd81, tag `20261105-153904`);
+  - `proxy.jobs.enabled: true`.
+
+  The proxy's sources differ from 72628e0e only in the `vllmVersion`-gated render (!1281,
+  !1291). The live-snapshot render gives identical payloads for the 28 Models without
+  `vllmVersion` (§1).
 - **Depends on.** A1 soaked, so one component changes at a time.
 - **Conflicts.**
   - The proxy pod restarts. It is one replica, rolling, so expect seconds of disturbance.
@@ -284,6 +299,7 @@ ssh <node> 'sudo journalctl -k --since "-30 min" | grep -iE "amdgpu|smu|pcie|lin
     ```
 
   - `GET /v1/jobs` answers 501 `jobs_disabled` today.
+  - Harbor has `d0439aac` (target) and `bdd4bd25` (rollback), both `pinned-*` since Q6.
 - **Merge and reconcile.** Merge !1255, then reconcile the HelmRelease.
 - **Live checks (pass)**, from its description:
 
@@ -307,6 +323,13 @@ ssh <node> 'sudo journalctl -k --since "-30 min" | grep -iE "amdgpu|smu|pcie|lin
   kubectl -n flexinfer-system get inferencejobs -o wide
   ```
 
+  - The proxy pod's `imageID` ends in `d0439aacec17…`:
+
+    ```bash
+    kubectl -n flexinfer-system get pods -o wide | grep flexinfer-proxy
+    ```
+
+    Then read `-o jsonpath='{..imageID}'` on that pod.
   - `GET /v1/jobs` returns `{"object":"list","data":[]…}`.
   - The background job goes `queued` → `completed` within seconds, and `/v1/jobs/<id>/content`
     returns the completion.
@@ -319,7 +342,9 @@ ssh <node> 'sudo journalctl -k --since "-30 min" | grep -iE "amdgpu|smu|pcie|lin
     ```
 
 - **Soak.** 30 min. Watch `flexinfer_jobs_running` and proxy 5xx.
-- **Rollback.** Revert, or set `proxy.jobs.enabled: false`, then reconcile the HelmRelease.
+- **Rollback.** Revert the MR, or set `proxy.image.digest` back to
+  `sha256:bdd4bd256cc43c0fb0e23f05b5a62f9eefb984e70caf8af26cde4fb6a2eb60f8` and
+  `proxy.jobs.enabled: false`, then reconcile the HelmRelease.
   - Queued InferenceJobs stay until re-enabled or deleted.
   - imagegen-ui falls back on the 501.
 
@@ -501,6 +526,11 @@ histogram_quantile(0.95, sum by (le) (rate(flexinfer_proxy_request_duration_seco
 
 ## Phase D: the 7900 XTX flex card
 
+**This window: D0–D4 only (owner, Q7).** Only the warm lane and Qwen-Image move in-pod, and
+KT-SWAP measures them. D5–D7 (Wan T2V, Wan VACE, Stable Audio) are deferred. Their Drafts
+!1237–!1239 are titled `DEFERRED` and wait for the Wan decode A/B on the 0.32 base. Their sections
+below stay as the plan for that later window, pass rules included.
+
 Before every D step:
 - "XTX free" (§3 check prints nothing at ≥ 480; no GPULease);
 - the card is on the bus at its link, Gen3 x8 since 11-03:
@@ -642,7 +672,7 @@ Copy `deploy/gpuprofiles/gfx1100.yaml` and the five lane manifests there too.
   Record the substage breakdown whatever the verdict.
 - **On a FAIL.** Roll back D3 then D2, and stop phase D.
 
-### D5. !1237: Wan 2.1 T2V in-pod (decode A/B)
+### D5. !1237: Wan 2.1 T2V in-pod (decode A/B) — DEFERRED from this window (Q7)
 
 - **Why an A/B.** In-pod Wan runs on the runtime image's torch 2.13 / ROCm 7.2.3 MIOpen, not
   the dedicated `b1f98ad0` stack. The VAE bypass is the same code (MIOpen off for 16-bit Wan
@@ -670,7 +700,7 @@ Copy `deploy/gpuprofiles/gfx1100.yaml` and the five lane manifests there too.
   reconcile `flexinfer-models`.
 - **Rollback.** Revert (restores `dedicatedDeployment` on `b1f98ad0`), then reconcile.
 
-### D6. !1238: Wan 2.1 VACE in-pod (decode A/B)
+### D6. !1238: Wan 2.1 VACE in-pod (decode A/B) — DEFERRED from this window (Q7)
 
 - **Why an A/B.** The VACE VAE is fp32, so the bypass does not apply. Its decode runs through
   MIOpen on both arms: the dedicated `83cda206` stack against the runtime's ROCm 7.2.3 MIOpen.
@@ -686,7 +716,7 @@ Copy `deploy/gpuprofiles/gfx1100.yaml` and the five lane manifests there too.
 - **Merge and reconcile.** Merge !1238, then reconcile `flexinfer-models`.
 - **Rollback.** Revert, then reconcile.
 
-### D7. !1239: Stable Audio Open in-pod
+### D7. !1239: Stable Audio Open in-pod — DEFERRED from this window (Q7)
 
 - **Pass.**
   - One render (the lane's default length) returns 200.
@@ -698,45 +728,52 @@ Copy `deploy/gpuprofiles/gfx1100.yaml` and the five lane manifests there too.
 - **Merge and reconcile.** Merge !1239, then reconcile `flexinfer-models`.
 - **Rollback.** Revert (back to `d87f75f8`, `rocm-gfx1100-audio2`), then reconcile.
 
-After D7, the XTX is free for S5 / GPTQ-kernel canaries. Write "XTX free" in the shared notes.
+**In this window, the XTX phase ends after D4.** Release KT-SWAP's GPULease, send the hand-back
+ping, and write "XTX free" in the shared notes. The card is then free for S5 and the GPTQ-kernel
+canary (Q5), and for S7 if it did not run before the window.
 
-## 5. Open questions only the owner can answer
+## 5. Owner decisions (answered 2026-11-05)
 
-- **Q1. S8 verdict (gates C3).** Accept the three calibration misses of row
-  `gfx906-llamacpp-b11847-2026-11-05` and mark it `promote`? The misses:
-  - bge-reranker |Δscore| 0.033 on a logit scale, same order;
-  - Qwen3-Reranker ranks 5 and 6 swap at about 8e-5;
-  - one 13-probe live-gte tail that did not reproduce on 59 probes.
+The owner answered all seven, accepting the recommended answer for each ("Yes, all of them",
+relayed by the coordinating session).
 
-  The alternative is a rerank rerun with a scale-aware bound first.
-- **Q2. Proxy repin.** Should a proxy repin to master `51e6bd81`
-  (`sha256:d0439aacec17a4dc7655a99bd06c72f3dd65018fb9aaf4fc7ac226328fe3cc72`) ride in !1255's
-  restart (one proxy restart instead of two)?
-  - Between the live `72628e0e` build and master, the proxy's sources differ only in
-    `backend/vllm.go`, `backend/vllm_omni.go` (the `vllmVersion`-gated render) and a comment.
-  - The same live-snapshot test shows identical payloads for all 28 lanes.
-  - It removes the "no `vllmVersion` on in-pod lanes" caveat.
-  - If yes, a session adds the hunk to !1255 before A2. If no, it waits for the first in-pod 0.33
-    lane.
-- **Q3. Close !1221?** Recommended: its pins are older than live, and its jobs half is !1255.
-- **Q4. Warm-lane hand-back.** Keep `warmPolicy: ondemand` and the ping rule, or make the warm
-  lane `warmPolicy: primary`, so it reclaims the card on its own after a borrow (D2–D7, KT-SWAP,
-  KT-JOBS)?
-- **Q5. XTX canary queue.** Order S7's pool canary, S5 stage B and the GPTQ split-K canary
-  around phase D. Recommended: S7 before phase D (it may already run at 00:15Z); S5 and GPTQ
-  after D7.
-- **Q6. Harbor protection for the control-plane digests.** No controller or proxy digest has a
-  `pinned-*` tag, including rollbacks `1286a2f1` and `bdd4bd25`. Tag the four (target and
-  rollback for each) by hand before the next Saturday 02:00Z retention run, or wait for the
-  pin-guard fix?
-- **Q7. Wan and Stable Audio in-pod at all?** D5–D7 put a 48 GiB-limit render inside the same
-  pod as the warm lane. If the owner would rather keep video and audio dedicated this round,
-  stop after D4. The Drafts stay valid.
+| Q | Question | Decision | Where it lands |
+|---|---|---|---|
+| Q1 | Accept S8's three calibration misses (row `gfx906-llamacpp-b11847-2026-11-05`)? | **Yes.** !1287 may merge in this window after !1261 → !1262. | C3. The S8 row's decision becomes `promote` in the verdict MR. |
+| Q2 | Proxy repin to master `51e6bd81` in !1255's restart? | **Yes.** | A2. !1255 commit `68df0f143` pins `d0439aac`; rollback `bdd4bd25`. |
+| Q3 | Close !1221? | **Yes**, as superseded by !1289 and !1255. | Closed 2026-11-05 with a comment; the branch is kept. |
+| Q4 | Warm lane `warmPolicy: primary`? | **No, not tonight.** It stays `ondemand`, with the hand-back ping rule. `primary` is a separate later change with its own check. | Phase D hand-back rule unchanged. |
+| Q5 | Order of the XTX canaries around phase D? | **S7** between KT's end (~18:15Z) and 00:15Z if its image is ready, deleted before phase D; otherwise after phase D. **S5** and the **GPTQ** canary after phase D. | §3 queue. The coordinating session tells S7. |
+| Q6 | Protect the control-plane digests in Harbor before Saturday's retention run? | **Yes, today**: the live digests, both rollback targets, and the !1289 and !1255 targets. | !1300 (`b461833c`, 17:20Z) adds `deploy/pins/control-plane-retention-pins.yaml`. |
+| Q7 | Wan and Stable Audio in-pod this round? | **No.** Only the warm lane and Qwen-Image (!1235, !1236, KT-SWAP). | Phase D stops after D4; !1237–!1239 are retitled `DEFERRED`. |
+
+**How Q6 was done.** Hand-tagging needs the Harbor robot credential, and reading it was refused
+to this agent session. So the four digests went through the gitops tagging job's normal path:
+inline `registry.harbor.lan/...@sha256:` references in a file under flexinfer `deploy/` that no
+Flux Kustomization applies.
+
+| Repo | Digest | Role |
+|---|---|---|
+| flexinfer-controller | `1286a2f15c0a` | live, rollback for !1289 |
+| flexinfer-controller | `6a3ad9e60311` | !1289 target |
+| flexinfer-proxy | `bdd4bd256cc4` | live, rollback for !1255 |
+| flexinfer-proxy | `d0439aacec17` | !1255 target |
+
+`monitoring/harbor-flexinfer-pin-tags` (05:30/17:30Z) tags each one `pinned-<12hex>`. Check it
+with the unauthenticated listing:
+
+```bash
+curl -sk --resolve registry.harbor.lan:443:192.168.50.230 'https://registry.harbor.lan/api/v2.0/projects/flexinfer/repositories/flexinfer-controller/artifacts?q=digest%3D~sha256%3A6a3ad9e6&with_tag=true' | jq -r '.[].tags[].name'
+```
 
 ## 6. Follow-ups (not in the window)
 
 - Pin `flexinfer-scheduler` by digest (it rolls on every master build).
-- Teach the Harbor pin-tags guard the split `repository:`/`digest:` form.
+- Teach the Harbor pin-tags guard the split `repository:`/`digest:` form. Then drop
+  `deploy/pins/control-plane-retention-pins.yaml`, or keep it as the list of rollback anchors.
+- Q4 follow-up: `warmPolicy: primary` for the XTX warm lane, as its own change with its own check.
+- The deferred D5–D7 window: Wan T2V, VACE and Stable Audio in-pod, after the Wan decode A/B on
+  the 0.32 base.
 - After D4, the KT-SWAP verdict MR corrects the row's runtime image to `527e2714`.
 - After C2 PASS: retire the standalone pyannote Deployment and its queue reservation (D5-a plan
   § After a PASS).
