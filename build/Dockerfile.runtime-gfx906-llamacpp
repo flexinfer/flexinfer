@@ -1,0 +1,138 @@
+# llama.cpp layer for the gfx906 runtime: S8 / B4 of
+# .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md (§3.2, §4 B4).
+#
+# NOT built by CI. Like build/Dockerfile.runtime-gfx906-pyannote, this goes on
+# top of the gfx906 runtime digest the Radeon VII runs (or is about to run),
+# so the node pulls only the new layers instead of a 7.6 GB image, and every
+# other binary and Python package stays byte-identical to that base.
+#
+# What it changes:
+#   - /opt/llamacpp/bin is replaced with a llama.cpp build at LLAMACPP_VERSION
+#     (b11847 for S8: the LM-head and logits-buffer skip for pooled embeddings
+#     landed in b11597). Ceiling b11878: b11879's MMQ grid-order change slows
+#     MoE prompt processing on gfx906. Fallback: v0.7.0 = b11669.
+#   - diffusers is set to DIFFUSERS_VERSION (0.42.1, the GHSA-4prv-5hj7-c2xr
+#     security release), the version build/Dockerfile.runtime-gfx906 now pins.
+#     --no-deps: 0.42.1 has the same requirements as the base's 0.42.0.
+#
+# What it keeps: flexinfer-runtime, runtime-entrypoint.sh, whisper-server
+# (whisper.cpp v1.9.5, statically linked, so a different ggml is fine),
+# ollama, the HIP memory-info shim (LD_PRELOAD), the pyannote venv and every
+# other Python package of the base.
+#
+# The llamacpp-builder stage below is a line-for-line copy of stage 2 of
+# build/Dockerfile.runtime-gfx906, on the same ROCm 6.2 builder, plus one
+# trailing step that records the tag and commit. Keep the two in step:
+# identical instructions share the BuildKit cache, so the trial build
+# of that Dockerfile (`--target llamacpp-builder`) and this layer compile
+# llama.cpp once and produce the same binaries. Stay on the ROCm 6.2 builder:
+# llama.cpp b11710+ does not compile against ROCm 6.3.x (upstream #30755; the
+# code path is compiled out below 6.3).
+#
+# Build (from the repository root, on the 7900xtx docker host, which holds the
+# Harbor credentials; push in the same script, the host prunes unpushed
+# images within minutes):
+#   docker build -f build/Dockerfile.runtime-gfx906-llamacpp \
+#     --build-arg RUNTIME_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:<gfx906 digest> \
+#     --build-arg LLAMACPP_VERSION=b11847 \
+#     -t registry.harbor.lan/flexinfer/runtime:rocm-gfx906-<base12>-llamacpp-b11847 .
+# then push, and tag the pushed digest pinned-<12>.
+
+# ── Global ARGs (before first FROM) ──────────────────────────────────
+ARG RUNTIME_IMAGE
+ARG LLAMACPP_VERSION=b11847
+ARG AMDGPU_TARGETS=gfx906
+ARG LLAMACPP_BUILD_IMAGE=rocm/dev-ubuntu-22.04:6.2
+ARG DIFFUSERS_VERSION=0.42.1
+
+# ── Stage 1: Build llama.cpp (HIP build for gfx906) ─────────────────
+# Copy of build/Dockerfile.runtime-gfx906 stage 2; keep in step.
+FROM ${LLAMACPP_BUILD_IMAGE} AS llamacpp-builder
+
+ARG LLAMACPP_VERSION
+ARG AMDGPU_TARGETS
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git cmake ninja-build build-essential curl \
+    hipblas-dev rocblas-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/src
+RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
+
+WORKDIR /opt/src/llama.cpp
+COPY build/patch-hipmemgetinfo.sh /tmp/
+RUN chmod +x /tmp/patch-hipmemgetinfo.sh && /tmp/patch-hipmemgetinfo.sh
+
+# Build the image-level HIP memory-info compatibility shim used by the
+# standalone gfx906 llama.cpp canaries. The live runtime inherits LD_PRELOAD so
+# runtime-managed llama.cpp children use the same sysfs fallback when Vega20
+# returns hipErrorInvalidValue from hipMemGetInfo.
+COPY build/hipmemgetinfo_shim.cpp /tmp/
+RUN mkdir -p /opt/flexinfer/lib \
+    && g++ -std=c++17 -fPIC -shared -I/opt/rocm/include \
+        /tmp/hipmemgetinfo_shim.cpp -ldl \
+        -o /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
+
+RUN cmake -B build -G Ninja \
+    -DGGML_HIP=ON -DGGML_NATIVE=OFF \
+    -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
+    -DCMAKE_BUILD_TYPE=Release \
+    && cmake --build build --config Release -j$(nproc)
+
+# Not in Dockerfile.runtime-gfx906 (kept last so the steps above stay shared).
+# A --depth 1 clone makes llama-server report "build 1" (b11335 printed
+# "version: 0.5.0-dev (build 1, commit 42d9581)"), so the build number is
+# recorded here from the tag the clone checked out, next to its commit.
+RUN printf '%s %s\n' "$(git describe --tags --exact-match HEAD)" "$(git rev-parse HEAD)" > /opt/src/llamacpp-build.txt \
+    && cat /opt/src/llamacpp-build.txt \
+    && test "$(cut -d' ' -f1 /opt/src/llamacpp-build.txt)" = "${LLAMACPP_VERSION}"
+
+# ── Stage 2: the runtime with the new llama.cpp ─────────────────────
+FROM ${RUNTIME_IMAGE} AS runtime
+
+ARG LLAMACPP_VERSION
+ARG DIFFUSERS_VERSION
+
+# Replace, not merge: a COPY over the old directory would leave b11335 files
+# whose names the new build no longer produces on LD_LIBRARY_PATH.
+RUN rm -rf /opt/llamacpp/bin
+COPY --from=llamacpp-builder /opt/src/llama.cpp/build/bin/ /opt/llamacpp/bin/
+# "<tag> <commit>", e.g. "b11847 9145ddb9…": the build llama-server no longer reports.
+COPY --from=llamacpp-builder /opt/src/llamacpp-build.txt /opt/llamacpp/BUILD
+
+RUN python3 -m pip install --no-cache-dir --no-deps "diffusers==${DIFFUSERS_VERSION}" \
+    && rm -rf /root/.cache \
+    && (find / -xdev -type d -name __pycache__ -prune -exec rm -rf {} + 2>/dev/null || true)
+
+# Build-time gates:
+#   - llama-server runs and reports the commit recorded for LLAMACPP_VERSION
+#     in /opt/llamacpp/BUILD, and every shared
+#     library it and libggml-hip need resolves in this image (the binaries
+#     were linked against the ROCm 6.2 builder; the runtime ships the base's
+#     hipblas/rocblas, as the b11335 build did);
+#   - diffusers imports at the pinned version from the runtime python;
+#   - the runtime python's torch is still the ROCm fork.
+# HSA_OVERRIDE_GFX_VERSION unset and LD_PRELOAD empty, as the entrypoint and
+# build/Dockerfile.runtime-embeddinggemma2-gfx906 run it; no GPU at build time.
+RUN set -e; \
+    cat /opt/llamacpp/BUILD; \
+    tag="$(cut -d' ' -f1 /opt/llamacpp/BUILD)"; commit="$(cut -d' ' -f2 /opt/llamacpp/BUILD | cut -c1-7)"; \
+    test "$tag" = "${LLAMACPP_VERSION}" || { echo "BUILD says $tag, want ${LLAMACPP_VERSION}"; exit 1; }; \
+    out="$(env -u HSA_OVERRIDE_GFX_VERSION LD_PRELOAD="" /opt/llamacpp/bin/llama-server --version 2>&1 || true)"; \
+    echo "$out"; \
+    echo "$out" | grep -q "commit ${commit})" || { echo "llama-server is not ${LLAMACPP_VERSION} (${commit})"; exit 1; }; \
+    for f in /opt/llamacpp/bin/llama-server /opt/llamacpp/bin/libggml-hip.so; do \
+      test -e "$f" || { echo "missing $f"; exit 1; }; \
+      if LD_LIBRARY_PATH=/opt/llamacpp/bin:${LD_LIBRARY_PATH} ldd "$f" | grep "not found"; then echo "unresolved libraries in $f"; exit 1; fi; \
+    done; \
+    sha256sum /opt/llamacpp/bin/llama-server /opt/whispercpp/bin/whisper-server /usr/local/bin/flexinfer-runtime; \
+    python3 -c "import sys, diffusers, torch; \
+assert diffusers.__version__ == '${DIFFUSERS_VERSION}', diffusers.__version__; \
+assert torch.version.hip, 'torch is not the ROCm build'; \
+print('python', sys.version.split()[0], '| diffusers', diffusers.__version__, '| torch', torch.__version__, '| hip', torch.version.hip)"
+
+LABEL org.flexinfer.gfx906.llamacpp-version="${LLAMACPP_VERSION}" \
+      org.flexinfer.gfx906.diffusers-version="${DIFFUSERS_VERSION}"

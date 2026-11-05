@@ -18,7 +18,13 @@ vLLM spec-decode counters before and after a fixed workload and reports:
   - with --contexts, a single-stream sweep at each prompt size (cold prefill
     TTFT, decode tok/s and that request's own draft acceptance), which is how
     S3 compares attention backends with MTP on and off. --phase measure turns
-    the throughput and acceptance gates off for such A/B arms.
+    the throughput and acceptance gates off for such A/B arms;
+  - with --apc-repeat N, one ~N-token prompt with a planted access code sent
+    three times (cold, warm, warm): the prefix-cache hit tokens vLLM reports
+    (`prompt_tokens_details.cached_tokens`, needs
+    --enable-prompt-tokens-details), the warm/cold TTFT ratio and whether the
+    answers match. A missing code or a warm request with no hit fails the run
+    in every phase (S6: a KV-cache format must not break the hybrid APC path).
 
 The thresholds are the S2 pass bar from
 .loom/10-research-gfx1100-next-feature-2026-10-23.md §7. Image identity,
@@ -114,10 +120,13 @@ def read_stream(response, started, clock=time.perf_counter):
         raise ValueError("non-thinking default emitted reasoning")
     tokens = usage["completion_tokens"]
     answer = "".join(content).strip()
+    # vLLM omits prompt_tokens_details when nothing was cached.
+    details = usage.get("prompt_tokens_details") or {}
     return {
         "answer": answer,
         "sha256": hashlib.sha256(answer.encode("utf-8")).hexdigest()[:16],
         "prompt_tokens": usage["prompt_tokens"],
+        "cached_tokens": int(details.get("cached_tokens") or 0),
         "completion_tokens": tokens,
         "finish_reason": finish,
         "ttft_s": round(first - started, 4),
@@ -125,7 +134,13 @@ def read_stream(response, started, clock=time.perf_counter):
     }
 
 
-def request(base, path, payload=None, timeout=180):
+REQUEST_TIMEOUT = 180.0
+APC_CODE = "CEDAR-6194"
+
+
+def request(base, path, payload=None, timeout=None):
+    """POST (or GET) ``path``; ``timeout`` defaults to --request-timeout."""
+    timeout = REQUEST_TIMEOUT if timeout is None else timeout
     body = None if payload is None else json.dumps(payload).encode()
     return urllib.request.urlopen(
         urllib.request.Request(
@@ -314,6 +329,119 @@ def sized_prompt(base, model, target, nonce=None, tolerance=0.10):
     raise ValueError(f"could not construct a ~{target}-token context prompt")
 
 
+def count_tokens(base, model, prompt):
+    with request(
+        base,
+        "/tokenize",
+        {
+            "model": model,
+            "add_generation_prompt": True,
+            "messages": [{"role": "user", "content": prompt}],
+        },
+    ) as response:
+        return json.load(response)["count"]
+
+
+def apc_prompt(base, model, target, nonce, tolerance=0.05):
+    """A ~``target``-token log with ``APC_CODE`` planted at 40 % depth.
+
+    The nonce opens the prompt, so the first request of each run is a true
+    prefix-cache miss and the repeats can only hit what that request cached.
+    """
+    low, high = target * (1 - tolerance), target * (1 + tolerance)
+    repeats = max(1, target // 16)
+    filler = "Note {i}: sensor {i} reported nominal temperature and pressure today.\n"
+    for _ in range(8):
+        lines = [filler.format(i=i) for i in range(repeats)]
+        lines.insert(
+            len(lines) * 2 // 5,
+            f"Maintenance note: the access code for cabinet 7 is {APC_CODE}.\n",
+        )
+        prompt = (
+            f"Session {nonce}.\nContext log:\n"
+            + "".join(lines)
+            + "\nWhat is the access code for cabinet 7? Give the code alone on the "
+            "first line, then one sentence describing what the log contains."
+        )
+        count = count_tokens(base, model, prompt)
+        if low <= count <= high:
+            return prompt
+        repeats = max(1, round(repeats * target / count))
+    raise ValueError(f"could not construct a ~{target}-token APC prompt")
+
+
+def common_prefix_chars(a, b):
+    prefix = 0
+    while prefix < min(len(a), len(b)) and a[prefix] == b[prefix]:
+        prefix += 1
+    return prefix
+
+
+def apc_repeat(base, model, target, max_tokens=64):
+    """Send one prompt cold, then twice warm; report the prefix-cache path.
+
+    On a lossy KV format the cold and warm answers may legitimately differ
+    (the miss path attends to the last chunk's keys unquantized, the hit path
+    reads them from the cache), so only the planted code and a non-zero hit
+    are gated; the two warm answers read the same cached prefix and are
+    expected to match, which is reported.
+    """
+    prompt = apc_prompt(base, model, target, uuid.uuid4().hex[:12])
+    rows = []
+    for label in ("cold", "warm_1", "warm_2"):
+        result = chat(base, model, prompt, max_tokens)
+        lines = result["answer"].splitlines()
+        rows.append(
+            {
+                "label": label,
+                "prompt_tokens": result["prompt_tokens"],
+                "cached_tokens": result.get("cached_tokens", 0),
+                "ttft_s": result["ttft_s"],
+                "sha256": result["sha256"],
+                "code_ok": bool(lines) and APC_CODE in lines[0],
+                "answer": result["answer"],
+            }
+        )
+    cold, warm, again = rows
+    return emit(
+        {
+            "name": "apc_repeat",
+            "target_tokens": target,
+            "prompt_tokens": cold["prompt_tokens"],
+            "cold_cached_tokens": cold["cached_tokens"],
+            "hit_tokens": warm["cached_tokens"],
+            "warm_2_cached_tokens": again["cached_tokens"],
+            "cold_ttft_s": cold["ttft_s"],
+            "warm_ttft_s": warm["ttft_s"],
+            "warm_2_ttft_s": again["ttft_s"],
+            "warm_ttft_ratio": (
+                round(warm["ttft_s"] / cold["ttft_s"], 3) if cold["ttft_s"] > 0 else None
+            ),
+            "code_ok": {row["label"]: row["code_ok"] for row in rows},
+            "warm_identical": warm["sha256"] == again["sha256"],
+            "cold_warm_identical": cold["sha256"] == warm["sha256"],
+            "cold_warm_common_prefix_chars": common_prefix_chars(
+                cold["answer"], warm["answer"]
+            ),
+            "answers": {row["label"]: row["answer"][:160] for row in rows},
+        }
+    )
+
+
+def apc_failures(record):
+    """Correctness gates of the APC repeat; they apply in every phase."""
+    failures = [
+        f"apc {label}: access code missing"
+        for label, ok in record["code_ok"].items()
+        if not ok
+    ]
+    if record["cold_cached_tokens"] > 0:
+        failures.append("apc cold: unexpected prefix-cache hit")
+    if record["hit_tokens"] <= 0:
+        failures.append("apc warm_1: no prefix-cache hit")
+    return failures
+
+
 def context_sweep(base, model, targets, max_tokens=256, metrics=None):
     """Single-stream decode, cold prefill and draft acceptance at each context.
 
@@ -416,6 +544,8 @@ def verdict(args, results, spec):
     for name in ("arithmetic", "extraction", "recall_2k"):
         if not results[name]["coherent"]:
             failures.append(f"{name}: unexpected answer")
+    if results.get("apc"):
+        failures.extend(apc_failures(results["apc"]))
     if args.phase == "measure":
         # A/B arms (S3): only coherence gates; throughput, TTFT and acceptance
         # are the measurements being compared, not pass/fail bars.
@@ -501,6 +631,8 @@ def run(args):
     results["contexts"] = (
         context_sweep(base, args.model, args.contexts) if args.contexts else []
     )
+    if args.apc_repeat:
+        results["apc"] = apc_repeat(base, args.model, args.apc_repeat)
 
     if args.soak_pairs > 0:
         results["soak"] = emit(
@@ -529,6 +661,7 @@ def run(args):
             for row in results["contexts"]
         ],
         "spec_decode": spec,
+        "apc": results.get("apc"),
         "parity": {name: results[name]["sha256"] for name, _ in PARITY_PROMPTS},
         "parity_text": {name: results[name]["answer"] for name, _ in PARITY_PROMPTS},
         "probes": {
@@ -555,9 +688,7 @@ def compare(paths):
             a, b = first["parity_text"].get(name, ""), second["parity_text"].get(
                 name, ""
             )
-            prefix = 0
-            while prefix < min(len(a), len(b)) and a[prefix] == b[prefix]:
-                prefix += 1
+            prefix = common_prefix_chars(a, b)
             diffs.append(
                 {
                     "name": name,
@@ -620,6 +751,20 @@ def main(argv=None):
         default=50,
         help="concurrency-2 pairs of 256-token generations (0 skips)",
     )
+    parser.add_argument(
+        "--apc-repeat",
+        type=int,
+        default=0,
+        metavar="TOKENS",
+        help="send one ~TOKENS-token prompt cold then twice warm and report the "
+        "prefix-cache hit (0 skips; S6 uses 7600)",
+    )
+    parser.add_argument(
+        "--request-timeout",
+        type=float,
+        default=180.0,
+        help="per-request timeout in seconds (raise it for 64K+ cold prefills)",
+    )
     parser.add_argument("--out", help="write the full summary JSON here for --compare")
     parser.add_argument(
         "--compare",
@@ -634,10 +779,16 @@ def main(argv=None):
         parser.error("--model is required unless --compare is used")
     if not 0 <= args.soak_pairs <= 200:
         parser.error("--soak-pairs must be between 0 and 200")
+    if args.apc_repeat and not 1024 <= args.apc_repeat <= 131072:
+        parser.error("--apc-repeat must be 0 or in [1024, 131072]")
+    if args.request_timeout <= 0:
+        parser.error("--request-timeout must be positive")
     try:
         args.contexts = parse_contexts(args.contexts)
     except ValueError as exc:
         parser.error(str(exc))
+    global REQUEST_TIMEOUT
+    REQUEST_TIMEOUT = args.request_timeout
     return run(args)
 
 

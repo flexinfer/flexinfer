@@ -637,6 +637,15 @@ imagePrewarm:
         # layer delta is new on this node (~88 MB compressed, 290 MB on disk).
         # 6fc6fcbd becomes the rollback anchor.
         - registry.harbor.lan/flexinfer/runtime@sha256:cb4c8dc3c2bd55e0a5935642ed71b06d6fa1236ddd00f15b73627c1660359bc5
+        # rocm-gfx906-cb4c8dc3c2bd-llamacpp-b11847 (pinned-34e60fd38905): S8, llama.cpp
+        # b11847 (commit 9145ddb9, ROCm 6.2 builder) and diffusers 0.42.1 as a layer
+        # on cb4c8dc3 (build/Dockerfile.runtime-gfx906-llamacpp), built on the
+        # 7900xtx host 2026-11-05. Pulled ahead of the S8 runtime repin (owner
+        # window, after the KT-DIAR Drafts) and used by the S8 canary
+        # (deploy/debug/s8-gfx906-llamacpp-b11847-canary.yaml); only the llama.cpp
+        # and diffusers layers are new on this node. cb4c8dc3 becomes the rollback
+        # anchor.
+        - registry.harbor.lan/flexinfer/runtime@sha256:34e60fd38905750312b27822ad57d4a8a05f6a98e025aee88ec90122013dc129
     - name: 7900xtx-gfx1100-serving
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
@@ -713,6 +722,22 @@ imagePrewarm:
         # window-gated XTX repin; this entry also gets it pinned. The pull is
         # the new upper layers on the shared v0.32.0 base.
         - registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
+        # 2026-11-05 (S3, .loom/10-research-backend-currency-gfx1100-gfx906-
+        # 2026-11-04.md §6.1): the stacked serving persona on vLLM
+        # 0.33.0-rocm72 (build profile gfx1100-serving-v033 at !1284,
+        # rocm-gfx1100-serving-v033-bebfb52e, pinned-29378fe07274): text plugin
+        # 0.10.0, plugin-common 0.3.0, diffusers 0.42.1, the same supervisor
+        # and servers as 527e2714. Built on the 7900xtx docker host; the
+        # in-build ISA, plugin-register and frozen-stack verifiers passed.
+        # Image of the parity canary deploy/debug/qwen38-27b-v033-parity-
+        # canary.yaml (matrix row xtx-vllm-v033-parity-2026-11-05); no lane
+        # or DaemonSet pins it. Its v0.33.0-rocm72 base shares no layers with
+        # the v0.32.0 images above, so this is a full 11.9 GB pull (about
+        # 34 GB unpacked). It lands on this node's imagefs, which had 445 GB
+        # free on 2026-11-05 (kubelet stats; image GC 90/85), not on the root
+        # that holds the model caches (182 GiB free, evicts below 10 %). The
+        # 5930k is left out: 194 GB free, below the 200 GB rule for pulls there.
+        - registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69
         - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
         # Exact Qwen3.5 text-MoE overlay used by the 128K qualification and
         # subsequent second workhorse replica. Keep it resident across GC.

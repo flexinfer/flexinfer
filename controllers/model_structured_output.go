@@ -10,18 +10,16 @@ import (
 	"github.com/flexinfer/flexinfer/backend"
 )
 
-// structuredOutputsBackendAuto is the only structured-output backend the D4
-// certificate covers: vLLM picks xgrammar or guidance per request. Another
-// backend would be another envelope with its own kill-test.
-const structuredOutputsBackendAuto = "auto"
-
 // structuredOutputDecision is the outcome of the D4 certificate gate for one
 // Model on one GPU architecture and selected image.
 type structuredOutputDecision struct {
 	// Requested is true when spec.capabilities.structuredOutput is true.
 	Requested bool
 	// Render is true when --structured-outputs-config may be rendered.
-	Render  bool
+	Render bool
+	// Backend is the structured-output backend to render; set only with
+	// Render.
+	Backend string
 	Reason  string
 	Message string
 }
@@ -42,6 +40,14 @@ func structuredOutputRequested(model *aiv1alpha2.Model) bool {
 // nothing and is reported through the StructuredOutput condition, so the lane
 // keeps serving exactly as it would without the opt-in.
 func evaluateStructuredOutput(model *aiv1alpha2.Model, backendName string, profile *aiv1alpha2.GPUProfile, gpuArch, selectedImage string) structuredOutputDecision {
+	return evaluateStructuredOutputBackend(model, backendName, profile, gpuArch, selectedImage, backend.VLLMStructuredOutputsBackendAuto)
+}
+
+// evaluateStructuredOutputBackend is evaluateStructuredOutput for a given
+// structured-output backend. The controller only ever asks for auto; the
+// parameter exists so the refusal of every other backend, LM-Format-Enforcer
+// above all, is enforced here and tested, not merely implied by a constant.
+func evaluateStructuredOutputBackend(model *aiv1alpha2.Model, backendName string, profile *aiv1alpha2.GPUProfile, gpuArch, selectedImage, soBackend string) structuredOutputDecision {
 	if !structuredOutputRequested(model) {
 		return structuredOutputDecision{}
 	}
@@ -70,6 +76,9 @@ func evaluateStructuredOutput(model *aiv1alpha2.Model, backendName string, profi
 			Message:   "spec.capabilities.structuredOutput requires spec.config.dedicatedDeployment=true so the certified image is launched instead of a persistent runtime; nothing rendered",
 		}
 	}
+	if err := backend.CertifiableStructuredOutputsBackend(soBackend); err != nil {
+		return notCertified("%v", err)
+	}
 	if gpuArch == "" {
 		return notCertified("no GPU architecture resolved for the structured-output certificate")
 	}
@@ -93,9 +102,10 @@ func evaluateStructuredOutput(model *aiv1alpha2.Model, backendName string, profi
 	return structuredOutputDecision{
 		Requested: true,
 		Render:    true,
+		Backend:   soBackend,
 		Reason:    aiv1alpha2.ReasonStructuredOutputCertified,
 		Message: fmt.Sprintf("--structured-outputs-config backend %s rendered: GPUProfile %s certifies %s since %s (evidence: %s)",
-			structuredOutputsBackendAuto, profile.Name, certifiedImage, since.UTC().Format("2006-01-02T15:04:05Z"), evidence),
+			soBackend, profile.Name, certifiedImage, since.UTC().Format("2006-01-02T15:04:05Z"), evidence),
 	}
 }
 
