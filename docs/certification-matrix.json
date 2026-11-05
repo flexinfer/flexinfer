@@ -272,11 +272,11 @@
       "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
-      "decision": "pass",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-s4-step0-decode-anatomy-2026-11-05",
+      "evidence": ".loom/60-validation-matrix.md#xtx-s7-embed-host-2026-11-05",
       "validation_rows": [
-        "gfx1100-s4-step0-decode-anatomy-2026-11-05"
+        "xtx-s7-embed-host-2026-11-05"
       ],
       "date": "2026-11-05",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
@@ -1857,9 +1857,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "conditional",
       "title": "slice S7 of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md (§5.2 G2, §5.3 candidate 3, §6.1): does serving Qwen3.8-27B's fp16 input-embedding table (248,320 × 5,120 = 2.37 GiB)…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#xtx-s7-embed-host-2026-11-05",
       "date": "2026-11-05",
       "source": ".loom/60-validation-matrix.md"
@@ -1873,9 +1873,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "fail",
       "title": "G3 of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.2, the fallback S6's decision table names for a failed Octave: does fp8 e4m3 KV on ROCM_SEGMENTED_ATTN keep the workhorse's…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#xtx-g3-segmented-fp8-gfx11-2026-11-05",
       "date": "2026-11-05",
       "source": ".loom/60-validation-matrix.md"
