@@ -658,6 +658,7 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
+        "gfx1100-wan-decode-ab-v032-2026-11-05",
         "gfx1100-flex-card-layout-2026-11-03"
       ],
       "date": "2026-11-03",
@@ -678,6 +679,7 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
+        "gfx1100-wan-decode-ab-v032-2026-11-05",
         "gfx1100-flex-card-layout-2026-11-03",
         "proxy-async-jobs-2026-10-31"
       ],
@@ -695,9 +697,13 @@
       ],
       "model": "wan21-vace-1p3b-i2v-gfx1100",
       "modality": "video",
+      "decision": "pending",
       "evidenced": false,
-      "evidence": "",
-      "date": null,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-2026-11-05",
+      "validation_rows": [
+        "gfx1100-wan-decode-ab-v032-2026-11-05"
+      ],
+      "date": "2026-11-05",
       "source": "deploy/models/wan21-vace-1p3b-i2v-gfx1100.yaml"
     },
     {
@@ -1831,6 +1837,54 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/embeddings.yaml"
+    },
+    {
+      "id": "gfx1100-wan-decode-ab-v032-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "S9, the Wan decode A/B that gates D1's deferred in-pod creative lanes (owner Q7 in .loom/32-iteration-plan-owner-window-2026-11-06.md; slice S9 of…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-wan-vace-vae-bypass-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "S9, the VACE VAE kill-test (research §3.3: \"cast the decode half to bf16 and reuse the bypass\"; unsloth #12681 claims 580 s → ~178 s on gfx1151). Riskiest assumption: VACE latents decode in bf16…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-vace-vae-bypass-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-wan-denoise-cache-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "S9, optional: does a diffusers cache hook on the Wan transformer (First Block Cache or TaylorSeer; research §3.3) cut T2V denoise by ≥ 25 % inside a quality bar? Opt-in WAN_DENOISE_CACHE in…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-denoise-cache-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
     },
     {
       "id": "workhorse-qos-prefill-budget-2026-11-05",
