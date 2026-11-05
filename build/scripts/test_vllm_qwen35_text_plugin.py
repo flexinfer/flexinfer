@@ -91,43 +91,6 @@ class Qwen3_5ForCausalLM:
     pass
 
 
-class Qwen3_5Model:
-    def load_fused_expert_weights(
-        self, name, params_dict, loaded_weight, shard_id, num_experts
-    ):
-        self.loaded_expert = (name, loaded_weight, shard_id, num_experts)
-        return name in params_dict
-
-
-class Qwen3_5MultiTokenPredictor:
-    def load_fused_expert_weights(
-        self, name, params_dict, loaded_weight, shard_id, num_experts
-    ):
-        self.loaded_expert = (name, loaded_weight, shard_id, num_experts)
-        return name in params_dict
-
-
-class Qwen3_5MoeMTP:
-    """Match vLLM 0.23: the fused loader lives on the inner predictor."""
-
-    def __init__(self) -> None:
-        self.model = Qwen3_5MultiTokenPredictor()
-
-
-class Qwen3_5ForConditionalGeneration:
-    @classmethod
-    def get_mamba_state_shape_from_config(cls, config):
-        return (cls, config)
-
-    @classmethod
-    def get_mamba_state_dtype_from_config(cls, config):
-        return (cls, config)
-
-    @classmethod
-    def get_mamba_state_copy_func(cls):
-        return cls
-
-
 class SpeculativeConfig:
     @staticmethod
     def hf_config_override(config):
@@ -242,25 +205,21 @@ class FakeHFConfig:
             setattr(self, name, value)
 
 
-class Qwen3_5ModelV026:
-    """vLLM 0.26 shape: expert loading is generic; no load_fused_expert_weights."""
-
-
-class Qwen3_5MultiTokenPredictorV026:
-    pass
-
-
 class UpstreamRegistry(FakeRegistry):
     """vLLM 0.32 shape: the Qwen3.5 text architectures are already registered."""
 
+    archs = ["Qwen3_5ForCausalLM", "Qwen3_5MoeForCausalLM", "LlamaForCausalLM"]
+
     def get_supported_archs(self):
-        return ["Qwen3_5ForCausalLM", "Qwen3_5MoeForCausalLM", "LlamaForCausalLM"]
+        return list(self.archs)
+
+
+class DenseOnlyRegistry(UpstreamRegistry):
+    archs = ["Qwen3_5ForCausalLM", "LlamaForCausalLM"]
 
 
 def _register_with(
-    fla_module_name: str,
-    model_cls: type,
-    mtp_cls: type,
+    fla_module_name: str = "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
     *,
     registry=None,
     auto_gptq_cls: type = AutoGPTQConfig,
@@ -268,17 +227,12 @@ def _register_with(
     extra_modules: dict | None = None,
 ):
     """Load the plugin against a fake vLLM and run register(); return (plugin, registry)."""
-    registry = registry if registry is not None else FakeRegistry()
+    registry = registry if registry is not None else UpstreamRegistry()
     vllm = types.ModuleType("vllm")
     vllm.ModelRegistry = registry
     models = types.ModuleType("vllm.model_executor.models.qwen3_5")
     models.Qwen3_5MoeForCausalLM = Qwen3_5MoeForCausalLM
     models.Qwen3_5ForCausalLM = Qwen3_5ForCausalLM
-    models.Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration
-    models.Qwen3_5Model = model_cls
-    mtp_models = types.ModuleType("vllm.model_executor.models.qwen3_5_mtp")
-    mtp_models.Qwen3_5MoeMTP = Qwen3_5MoeMTP
-    mtp_models.Qwen3_5MultiTokenPredictor = mtp_cls
     config_package = types.ModuleType("vllm.config")
     speculative = types.ModuleType("vllm.config.speculative")
     speculative.SpeculativeConfig = SpeculativeConfig
@@ -301,7 +255,6 @@ def _register_with(
         config_package.__name__: config_package,
         speculative.__name__: speculative,
         models.__name__: models,
-        mtp_models.__name__: mtp_models,
         fla.__name__: fla,
         auto_gptq.__name__: auto_gptq,
         fused_moe.__name__: fused_moe,
@@ -341,47 +294,46 @@ def _register_with(
 
 
 class PluginTest(unittest.TestCase):
-    def test_registers_on_vllm_026_fla_layout(self) -> None:
-        """vLLM >= 0.26 ships the GDN kernels under vllm.third_party."""
+    def test_patches_without_registering_on_vllm_032(self) -> None:
+        """vLLM 0.32 registers the Qwen3.5 text classes: the plugin adds nothing to the registry."""
         FakeKernel.fn.configs = [FakeConfig(32, 2, 2), FakeConfig(32, 2, 4)]
         FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
-        plugin, registry = _register_with(
-            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-            Qwen3_5Model,
-            Qwen3_5MultiTokenPredictor,
-        )
-        self.assertIn("Qwen3_5ForCausalLM", registry.models)
-        self.assertEqual(len(FakeKernel.fn.configs), 1)
-        self.assertEqual(len(FakeKernelTwo.configs), 1)
-        self.assertTrue(Qwen3_5Model.__dict__.get("_flexinfer_gptq_expert_names"))
-
-    def test_registers_without_fused_expert_loader(self) -> None:
-        """vLLM 0.26 has no load_fused_expert_weights: the hook is skipped, not fatal."""
-        FakeKernel.fn.configs = [FakeConfig(32, 2, 2), FakeConfig(32, 2, 4)]
-        FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
-        plugin, registry = _register_with(
-            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-            Qwen3_5ModelV026,
-            Qwen3_5MultiTokenPredictorV026,
-        )
-        self.assertIn("Qwen3_5ForCausalLM", registry.models)
-        self.assertIn("Qwen3_5MoeForCausalLM", registry.models)
-        self.assertFalse(hasattr(Qwen3_5ModelV026, "load_fused_expert_weights"))
-        self.assertFalse(plugin._patch_gptq_expert_loader(Qwen3_5ModelV026))
-
-    def test_skips_architectures_the_runtime_registers_itself(self) -> None:
-        """vLLM 0.32 registers the Qwen3.5 text classes: no duplicate registration."""
-        FakeKernel.fn.configs = [FakeConfig(32, 2, 2), FakeConfig(32, 2, 4)]
-        FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
-        _, registry = _register_with(
-            "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-            Qwen3_5ModelV026,
-            Qwen3_5MultiTokenPredictorV026,
-            registry=UpstreamRegistry(),
-        )
+        _, registry = _register_with()
         self.assertEqual(registry.models, {})
         # The FLA pruning still ran: that part the runtime does not do.
         self.assertEqual(len(FakeKernel.fn.configs), 1)
+        self.assertEqual(len(FakeKernelTwo.configs), 1)
+        # The 0.23/0.26 hybrid-state copy is gone: nothing is grafted onto the
+        # upstream classes, which carry IsHybrid themselves on 0.32.
+        for model_class in (Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM):
+            self.assertNotIn("is_hybrid", model_class.__dict__)
+            self.assertNotIn("get_mamba_state_shape_from_config", model_class.__dict__)
+
+    def test_refuses_a_vllm_that_does_not_register_qwen35(self) -> None:
+        """vLLM older than 0.32 lacks the text classes in its registry: fail before patching."""
+        for registry, missing in (
+            (FakeRegistry(), "Qwen3_5ForCausalLM"),
+            (DenseOnlyRegistry(), "Qwen3_5MoeForCausalLM"),
+        ):
+            FakeKernel.fn.configs = [FakeConfig(32, 2, 2), FakeConfig(32, 2, 4)]
+            with self.subTest(registry=type(registry).__name__):
+                with self.assertRaises(RuntimeError) as ctx:
+                    _register_with(registry=registry)
+                self.assertIn("0.32", str(ctx.exception))
+                self.assertIn(missing, str(ctx.exception))
+                self.assertEqual(registry.models, {})
+                # Nothing was patched: the autotuner configs are untouched.
+                self.assertEqual(len(FakeKernel.fn.configs), 2)
+
+    def test_compat_helpers_are_gone(self) -> None:
+        plugin, _ = _register_with()
+        for name in (
+            "_patch_gptq_expert_loader",
+            "_gptq_expert_parameter_name",
+            "apply_hybrid_state",
+            "_MAMBA_METHODS",
+        ):
+            self.assertFalse(hasattr(plugin, name), name)
 
     def test_checkpoint_mtp_head_policy_leaves_gptq_config_alone(self) -> None:
         """FLEXINFER_QWEN35_MTP_HEAD=checkpoint: AutoGPTQConfig decides mtp.* itself."""
@@ -394,8 +346,6 @@ class PluginTest(unittest.TestCase):
         FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
         _register_with(
             "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-            Qwen3_5ModelV026,
-            Qwen3_5MultiTokenPredictorV026,
             auto_gptq_cls=UntouchedAutoGPTQConfig,
             env={"FLEXINFER_QWEN35_MTP_HEAD": "checkpoint"},
         )
@@ -414,8 +364,6 @@ class PluginTest(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             _register_with(
                 "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-                Qwen3_5ModelV026,
-                Qwen3_5MultiTokenPredictorV026,
                 auto_gptq_cls=SpareAutoGPTQConfig,
                 env={
                     "FLEXINFER_QWEN35_MTP_HEAD": "checkpoint",
@@ -428,8 +376,6 @@ class PluginTest(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             _register_with(
                 "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-                Qwen3_5ModelV026,
-                Qwen3_5MultiTokenPredictorV026,
                 env={"FLEXINFER_QWEN35_MTP_HEAD": "float"},
             )
         self.assertIn("FLEXINFER_QWEN35_MTP_HEAD", str(ctx.exception))
@@ -438,8 +384,6 @@ class PluginTest(unittest.TestCase):
         """0.33 calls the override positionally and through functools.partial."""
         plugin, _ = _register_with(
             "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-            Qwen3_5ModelV026,
-            Qwen3_5MultiTokenPredictorV026,
         )
         plugin._patch_qwen35_text_mtp_config(SpeculativeConfigV033)
         SpeculativeConfigV033.calls.clear()
@@ -487,8 +431,6 @@ class PluginTest(unittest.TestCase):
         FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
         _register_with(
             "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-            Qwen3_5ModelV026,
-            Qwen3_5MultiTokenPredictorV026,
             env={"FLEXINFER_FLA_AUTOTUNE": "relaxed"},
         )
         self.assertEqual([c.num_stages for c in FakeKernel.fn.configs], [2, 3])
@@ -498,8 +440,6 @@ class PluginTest(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             _register_with(
                 "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-                Qwen3_5ModelV026,
-                Qwen3_5MultiTokenPredictorV026,
                 env={"FLEXINFER_FLA_AUTOTUNE": "on"},
             )
         self.assertIn("FLEXINFER_FLA_AUTOTUNE", str(ctx.exception))
@@ -511,8 +451,6 @@ class PluginTest(unittest.TestCase):
         untouched = dict(vars(default_warmup))
         _register_with(
             "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-            Qwen3_5ModelV026,
-            Qwen3_5MultiTokenPredictorV026,
             extra_modules={SEGMENTED_WARMUP_MODULE: default_warmup},
         )
         self.assertEqual(vars(default_warmup), untouched)
@@ -521,8 +459,6 @@ class PluginTest(unittest.TestCase):
         tune = flagged_warmup.warmup_segmented_attention
         _register_with(
             "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-            Qwen3_5ModelV026,
-            Qwen3_5MultiTokenPredictorV026,
             env={"FLEXINFER_SEGMENTED_RUNTIME_TABLES": "1"},
             extra_modules={SEGMENTED_WARMUP_MODULE: flagged_warmup},
         )
@@ -533,8 +469,6 @@ class PluginTest(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             _register_with(
                 "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt",
-                Qwen3_5ModelV026,
-                Qwen3_5MultiTokenPredictorV026,
                 env={"FLEXINFER_SEGMENTED_RUNTIME_TABLES": "1"},
                 extra_modules={SEGMENTED_WARMUP_MODULE: None},
             )
@@ -545,91 +479,25 @@ class PluginTest(unittest.TestCase):
         with self.assertRaises(RuntimeError) as ctx:
             _register_with(
                 "vllm.somewhere_else.chunk_scaled_dot_kkt",
-                Qwen3_5Model,
-                Qwen3_5MultiTokenPredictor,
             )
         self.assertIn("FLA_OPS_PREFIXES", str(ctx.exception))
         self.assertIn("flexinfer_vllm_common", str(ctx.exception))
 
-    def test_registers_text_architecture_with_hybrid_contract(self) -> None:
-        registry = FakeRegistry()
-        vllm = types.ModuleType("vllm")
-        vllm.ModelRegistry = registry
-        models = types.ModuleType("vllm.model_executor.models.qwen3_5")
-        models.Qwen3_5MoeForCausalLM = Qwen3_5MoeForCausalLM
-        models.Qwen3_5ForCausalLM = Qwen3_5ForCausalLM
-        models.Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration
-        models.Qwen3_5Model = Qwen3_5Model
-        mtp_models = types.ModuleType("vllm.model_executor.models.qwen3_5_mtp")
-        mtp_models.Qwen3_5MoeMTP = Qwen3_5MoeMTP
-        mtp_models.Qwen3_5MultiTokenPredictor = Qwen3_5MultiTokenPredictor
-        config_package = types.ModuleType("vllm.config")
-        speculative = types.ModuleType("vllm.config.speculative")
-        speculative.SpeculativeConfig = SpeculativeConfig
+    def test_patches_fla_moe_names_and_mtp_contract(self) -> None:
+        FakeKernel.fn.configs = [
+            FakeConfig(32, 2, 2),
+            FakeConfig(32, 2, 3),
+            FakeConfig(32, 2, 4),
+        ]
+        FakeKernelTwo.configs = [FakeConfig(64, 4, 4), FakeConfig(32, 2, 2)]
+        plugin, registry = _register_with(env={"PYTORCH_ROCM_ARCH": "gfx906"})
 
-        torch = types.ModuleType("torch")
-        torch.version = types.SimpleNamespace(hip="7.2")
-        fla = types.ModuleType(
-            "vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt"
-        )
-        fla.chunk_scaled_dot_kkt_fwd_kernel = FakeKernel
-        fla.chunk_gated_delta_rule_fwd_kernel_h_blockdim64 = FakeKernelTwo
-        auto_gptq = types.ModuleType(
-            "vllm.model_executor.layers.quantization.auto_gptq"
-        )
-        auto_gptq.AutoGPTQConfig = AutoGPTQConfig
-        fused_moe = types.ModuleType("vllm.model_executor.layers.fused_moe")
-        fused_moe.RoutedExperts = RoutedExperts
-        fused_moe.UnquantizedFusedMoEMethod = UnquantizedFusedMoEMethod
-        linear = types.ModuleType("vllm.model_executor.layers.linear")
-        linear.LinearBase = LinearBase
-        linear.UnquantizedLinearMethod = UnquantizedLinearMethod
-
-        fake_modules = {
-            "torch": torch,
-            "vllm": vllm,
-            config_package.__name__: config_package,
-            speculative.__name__: speculative,
-            models.__name__: models,
-            mtp_models.__name__: mtp_models,
-            fla.__name__: fla,
-            auto_gptq.__name__: auto_gptq,
-            fused_moe.__name__: fused_moe,
-            linear.__name__: linear,
-        }
-        saved = {name: sys.modules.get(name) for name in fake_modules}
-        sys.modules.update(fake_modules)
-        old_arch = os.environ.get("PYTORCH_ROCM_ARCH")
-        os.environ["PYTORCH_ROCM_ARCH"] = "gfx906"
-        try:
-            spec = importlib.util.spec_from_file_location("qwen35_text_plugin", PLUGIN)
-            assert spec and spec.loader
-            plugin = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(plugin)
-            plugin.register()
-        finally:
-            if old_arch is None:
-                os.environ.pop("PYTORCH_ROCM_ARCH", None)
-            else:
-                os.environ["PYTORCH_ROCM_ARCH"] = old_arch
-            for name, module in saved.items():
-                if module is None:
-                    sys.modules.pop(name, None)
-                else:
-                    sys.modules[name] = module
-
-        model_class = registry.models["Qwen3_5MoeForCausalLM"]
-        self.assertTrue(model_class.is_hybrid)
-        self.assertEqual(
-            model_class.get_mamba_state_shape_from_config("cfg"),
-            (model_class, "cfg"),
-        )
-        self.assertIs(model_class.get_mamba_state_copy_func(), model_class)
+        self.assertEqual(registry.models, {})
         self.assertEqual(len(FakeKernel.fn.configs), 1)
         self.assertEqual(FakeKernel.fn.configs[0].num_stages, 2)
         self.assertEqual(len(FakeKernelTwo.configs), 1)
         self.assertEqual(FakeKernelTwo.configs[0].num_stages, 2)
-        instance = model_class()
+        instance = Qwen3_5MoeForCausalLM()
         instance.load_weights(
             [
                 ("model.layers.0.moe.gate_up_proj.qweight", 1),
@@ -644,46 +512,13 @@ class PluginTest(unittest.TestCase):
             ],
         )
 
-        dense_model_class = registry.models["Qwen3_5ForCausalLM"]
-        self.assertTrue(dense_model_class.is_hybrid)
-        self.assertEqual(
-            dense_model_class.get_mamba_state_shape_from_config("dense-cfg"),
-            (dense_model_class, "dense-cfg"),
-        )
+        torch = types.ModuleType("torch")
+        torch.version = types.SimpleNamespace(hip="7.2")
         os.environ["PYTORCH_ROCM_ARCH"] = "gfx906"
         try:
             self.assertTrue(plugin._needs_safe_fla_config(torch))
         finally:
             os.environ.pop("PYTORCH_ROCM_ARCH", None)
-
-        qwen_model = Qwen3_5Model()
-        self.assertTrue(
-            qwen_model.load_fused_expert_weights(
-                "model.layers.0.mlp.experts.w2_weight.qweight",
-                {"model.layers.0.mlp.experts.w2_qweight": object()},
-                "tensor",
-                "w2",
-                256,
-            )
-        )
-        self.assertEqual(
-            qwen_model.loaded_expert[0],
-            "model.layers.0.mlp.experts.w2_qweight",
-        )
-        mtp_model = Qwen3_5MoeMTP().model
-        self.assertTrue(
-            mtp_model.load_fused_expert_weights(
-                "mtp.layers.0.mlp.experts.w13_weight.scales",
-                {"mtp.layers.0.mlp.experts.w13_scales": object()},
-                "tensor",
-                "w13",
-                256,
-            )
-        )
-        self.assertEqual(
-            mtp_model.loaded_expert[0],
-            "mtp.layers.0.mlp.experts.w13_scales",
-        )
 
         mtp_config = SpeculativeConfig.hf_config_override(
             FakeHFConfig("qwen3_5_moe_text")

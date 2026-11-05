@@ -716,7 +716,6 @@ vllm_qwen35_seqcls_plugin_test:
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/rocm.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/segmented.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/labels.py
-    - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/hybrid.py
   rules:
     - if: $CI_MERGE_REQUEST_ID
       changes: &qwen35-seqcls-plugin-changes
@@ -2252,20 +2251,12 @@ publish_vllm_rocm_gfx906_qwen35_mtp:
         --export-cache "type=inline" \
         --output "type=image,name=${REGISTRY}/vllm:rocm6.3.3-gfx906-v0201-qwen35-mtp-${CI_COMMIT_SHORT_SHA},push=true"
   rules:
-    # 2026-09-22: this image now bundles three FlexInfer packages and a serving
-    # lane depends on them (deploy/models/openjev-0p8b-crossencoder-radeonvii
-    # .yaml), so rebuild on master when any COPY input changes — the same
-    # contract as publish_serving_rocm_gfx1100_native_w4a16 (703cf8367). Keep
-    # this list equal to the Dockerfile's COPY lines: the plugins are shared
-    # with the vLLM 0.26 gfx1100 image, and a fix that never reaches this
-    # 0.20.1 image would leave the lane on stale plugin code.
-    - if: $CI_COMMIT_BRANCH == "master"
-      changes:
-        - build/Dockerfile.vllm-rocm-gfx906-qwen35-mtp
-        - build/scripts/install_vllm_gfx906_compat.py
-        - build/vllm-plugin-common/**/*
-        - build/vllm-qwen35-text-plugin/**/*
-        - build/vllm-qwen35-seqcls-plugin/**/*
+    # 2026-11-05 (B6): manual only. The image is frozen: its FlexInfer plugins
+    # are copied out of the pinned image the OpenJEV gfx906 lane runs
+    # (vllm@e0aa1e2e, vLLM 0.20.1), not built from build/vllm-*-plugin, which
+    # now target vLLM 0.32+ and dropped the compat code this runtime needs.
+    # Rebuild by hand after a deliberate change to the Dockerfile or the gfx906
+    # compat script, then repin the lane through a canary.
     - when: manual
       allow_failure: true
 
