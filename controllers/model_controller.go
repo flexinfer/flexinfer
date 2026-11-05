@@ -344,8 +344,8 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		model.Status.Phase = aiv1alpha2.ModelPhaseFailed
 		return ctrl.Result{}, r.persistStatus(ctx, model)
 	}
-	if b.Name() == backend.NameVLLM {
-		if err := backend.ValidateVLLMConfig(model.Spec.GetConfigMap()); err != nil {
+	if validate := vllmConfigValidator(b.Name()); validate != nil {
+		if err := validate(model.Spec.GetConfigMap()); err != nil {
 			log.Error(err, "vLLM config validation failed")
 			r.Recorder.Event(model, corev1.EventTypeWarning, "ValidationFailed", err.Error())
 			setModelCondition(model, aiv1alpha2.ConditionModelSchedulable, false, aiv1alpha2.ReasonConfigInvalid, err.Error())
@@ -1325,4 +1325,16 @@ func runtimePodTargetsModel(ctx context.Context, c client.Client, pod *corev1.Po
 		return nodeMatchesSelector(ctx, c, pod.Spec.NodeName, model.Spec.NodeSelector)
 	}
 	return podNodeSelectorMatches(pod.Spec.NodeSelector, model.Spec.NodeSelector)
+}
+
+// vllmConfigValidator returns the spec.config check for a backend built on
+// vLLM, run before anything renders, or nil for other backends.
+func vllmConfigValidator(backendName string) func(map[string]any) error {
+	switch backendName {
+	case backend.NameVLLM:
+		return backend.ValidateVLLMConfig
+	case backend.NameVLLMOmni:
+		return backend.ValidateVLLMOmniConfig
+	}
+	return nil
 }
