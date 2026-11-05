@@ -56,7 +56,10 @@ metadata:
     # This tier keeps those labels here while this lane is Ready. It only
     # affects label groups that contain this lane; aliases are unchanged.
     flexinfer.ai/route-priority: "100"
-    flexinfer.ai/promotion-state: promoted-32k-segmented-mtp
+    # 2026-11-05 (prepared): candidate state until the promotion canary
+    # (row xtx-workhorse-v033-promotion-2026-11-05) records its verdict;
+    # promotion-evidence below is replaced with its numbers then.
+    flexinfer.ai/promotion-state: candidate-v033-s7-32k-segmented-mtp
     flexinfer.ai/promotion-evidence: "canaries qwen38-27b-v032-s3-attn-canary (S3) and S3b on b06b06fe, 2026-10-26: segmented + fp16 + MTP K=2 at 32K decode 71.8/66.5/66.1 tok/s at 512/2K/16K vs TRITON+fp8 40.8/40.2/34.3, pos0 acceptance 0.81, warm TTFT 0.234/0.419/1.026 s at 256/512/1124 vs this lane's 0.237/0.436/1.088, coherent probes, parity hash 8174a49e, KV pool 52,932 tok (1.62x) @32K"
 spec:
   backend: vllm
@@ -99,8 +102,27 @@ spec:
   # digest on this node. Rollback = revert the S4 commit: `cd108c9e` (resident,
   # pinned-cd108c9ebf99) with the TRITON + fp8 + 64K config and its warm
   # compile cache path.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+  # 2026-11-05 (prepared; promotion to vLLM 0.33 + S7, row
+  # xtx-workhorse-v033-promotion-2026-11-05): `51afd0d3` (rocm-gfx1100-serving-v033-3e8ae3c2,
+  # pinned-51afd0d377f7; CI job publish_serving_rocm_gfx1100_v033 from master 4da96d96 +
+  # the CI-only commit of !1306): the gfx1100-serving-v033 persona, vLLM
+  # 0.33.0-rocm72 (S3 parity, row xtx-vllm-v033-parity-2026-11-05) with text
+  # plugin 0.12.0 and plugin-common 0.5.0, which carry the S7 embed-host
+  # loader patch. Canaried at this exact posture on the XTX against this
+  # lane's own b06b06fe in the same window: VERDICT PENDING (this Draft
+  # gets the numbers before it leaves Draft).
+  # Rollback = revert the promotion commit: `b06b06fe` (resident here,
+  # pinned-b06b06fe1c02) with no vllmVersion, no FLEXINFER_EMBED_HOST, no
+  # structuredOutput, and the S4 compile cache path.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  # D4 (KT-SO): renders --structured-outputs-config {"backend":"auto"} once the
+  # gfx1100 GPUProfile certifies exactly this digest (Draft !1303, re-targeted
+  # after the promotion canary's phase S re-ran KT-SO on it); until then the
+  # condition reads StructuredOutputNotCertified and nothing renders. Needs
+  # dedicatedDeployment: true (set below). Rollback = drop this block.
+  capabilities:
+    structuredOutput: true
   cache:
     # 19.0 GB artifact. Serving needs NO on-disk config surgery (hfOverrides
     # rewrites quantization_config in-process); only an MTP retry does.
@@ -122,7 +144,11 @@ spec:
       # first-use compiles S3/S3b already paid. Unseeded, it still boots; the
       # first boot autotunes and may profile a short pool once (the controller
       # rechecks it).
-      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s4-5930k
+      # 2026-11-05 (0.33): a fresh path, so the 0.32 S4 cache
+      # (compile-cache-qwen38-27b-v032-s4-5930k) stays warm for a rollback.
+      # Unseeded, the first boot autotunes the segmented kernels (~10 min) and
+      # may profile a short pool once (the controller rechecks it).
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-5930k
       sizeLimit: 4Gi
   gpu:
     vendor: amd
@@ -165,6 +191,10 @@ spec:
     # torch.compile (~5 min); cached restarts are ~3 min.
     coldStartTimeout: 25m
   config:
+    # 2026-11-05 (promotion to 0.33): required with a 0.32+ image pin (!1281,
+    # live in the controller since A1/!1289). It drops the VLLM_* env names
+    # 0.33 removed and --mamba-cache-mode. Rollback = drop this key.
+    vllmVersion: "0.33.0"
     # 2026-10-30 (S6b readiness): stay a dedicated Deployment until S6b moves
     # this lane into the 5930k runtime pod on purpose. Without the flag,
     # un-parking that DaemonSet (deploy/system/values-k3s.yaml, profile
@@ -184,8 +214,15 @@ spec:
     kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
     # Text plugin 0.9.0 builds the MTP draft from the checkpoint's own head
     # (mtp.fc fp16, mtp.layers.0 INT4) instead of re-reading config.json.
+    # S7 (2026-11-05, rows xtx-s7-embed-host-2026-11-05 and
+    # xtx-workhorse-v033-promotion-2026-11-05): FLEXINFER_EMBED_HOST moves the
+    # untied 2.37 GiB fp16 embed_tokens table to exact-size mapped host memory
+    # (cudaHostAlloc), so vLLM sizes the KV pool ~2.37 GiB larger. The MTP
+    # draft shares the module. Gathered rows are bit-identical (parity held).
+    # Rollback = drop the key.
     env:
       FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+      FLEXINFER_EMBED_HOST: "1"
     # 2026-10-30 placement layout: ondemand -> primary. The lane is the group's
     # designated tenant and reclaims the card if anything ever holds it (an
     # operator activation, a forcePromotion canary). Controller-only key: it
