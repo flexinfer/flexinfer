@@ -71,9 +71,9 @@
 # across the node's 60/50 image GC by the prewarm DaemonSet.
 #
 # 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
-# WINDOW-GATED, and BLOCKED on the runtime image, see below): served IN-POD by
-# the 7900xtx runtime DaemonSet instead of its own Deployment, so a render
-# swaps the XTX warm lane out and back inside the runtime pod.
+# WINDOW-GATED): served IN-POD by the 7900xtx runtime DaemonSet instead of its
+# own Deployment, so a render swaps the XTX warm lane out and back inside the
+# runtime pod.
 # - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
 # - Compile cache: scope Image on the default hostPath, the directory the
 #   runtime pod mounts at /cache/compile.
@@ -83,13 +83,11 @@
 #   runtime path (pkg/runtime UncarriedLaunchOverride).
 #   The config.env pins still hold in-pod: the load payload applies the
 #   Model env last, over the runtime's /etc/flexinfer/runtime.env.
-# BLOCKED: the v032 persona has no bitsandbytes (the NF4 transformer and
-# text encoder): checked inside ef28b7b0 on 2026-11-01, and 7ae8e92f (the
-# repin target, rocm-gfx1100-serving-v032-5ca58769) has the same package
-# set. 7ae8e92f does carry the Qwen-Image 2.1 server code (R1-R3 1b62ad00,
-# shim fix ea8bbb8f); ef28b7b0 (c444b5ff) predates it. Unblock: a
-# gfx1100-serving-v032 build with bitsandbytes on ROCm 7.2 (R §7e S6e),
-# certified, prewarmed and pinned on the XTX runtime first.
+# Runtime image: 527e2714 (rocm-gfx1100-serving-v032-ddf22437, live on the XTX runtime since !1234 on 2026-11-04). It carries bitsandbytes 0.50.2
+# (libbitsandbytes_rocm72.so with gfx1100 code objects) and the Qwen-Image 2.1
+# server code (R1-R3 1b62ad00, shim fix ea8bbb8f); checked in the live runtime
+# pod 2026-11-05. NF4 numerics on the card are unproven: the first in-pod
+# render is the check.
 # Host RAM: NF4-on-load of ~32 GB bf16 runs inside the runtime pod's 48 GiB
 # limit (this lane's dedicated limit was 40 GiB).
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
