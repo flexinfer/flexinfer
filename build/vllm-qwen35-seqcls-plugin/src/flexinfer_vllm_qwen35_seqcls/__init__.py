@@ -12,16 +12,17 @@ Registering a class already wrapped by ``as_seq_cls_model`` makes it report
 architecture-name suffix — so ``--runner auto`` selects the pooling runner with
 no extra CLI flag.
 
-Two model-specific problems, both handled here:
+Two model-specific problems:
 
-1. **The label count is read from the wrong config.** vLLM sizes the score head
-   from ``get_text_config().num_labels``. A composite Qwen3.5 config builds
-   ``text_config`` from the checkpoint's ``text_config`` block, which carries no
-   ``id2label``, so that yields the ``PretrainedConfig`` default of 2 while the
-   checkpoint's ``score.weight`` is ``[3, hidden]``. A wrong head does not
-   crash: it silently serves a two-class distribution while ``id2label`` still
-   advertises three. ``flexinfer_vllm_common.labels`` repairs the input and both
-   the built head and the incoming tensor are asserted.
+1. **The label count lives on the composite config.** A composite Qwen3.5
+   config builds ``text_config`` from the checkpoint's ``text_config`` block,
+   which carries no ``id2label``, so ``get_text_config().num_labels`` is the
+   ``PretrainedConfig`` default of 2 while the checkpoint's ``score.weight`` is
+   ``[3, hidden]``. vLLM 0.32 sizes the head from the top-level config itself
+   (``_resolve_num_labels``). A wrong head would not crash: it would silently
+   serve a two-class distribution while ``id2label`` advertises three. So the
+   built head and the incoming tensor are both asserted against the declared
+   label space (``flexinfer_vllm_common.labels.resolve_num_labels``).
 
 2. **The checkpoint is not extracted.** Our existing Qwen3.5 lanes serve a
    flattened text artifact; a cross-encoder served straight from its repo keeps
@@ -29,21 +30,17 @@ Two model-specific problems, both handled here:
    top-level ``score.weight``. The language prefix is remapped and the vision
    tower skipped, which also saves its VRAM.
 
-ROCm autotune pruning and the hybrid-state contract come from
-``flexinfer_vllm_common``, shared with every other FlexInfer vLLM plugin.
+Targets vLLM 0.32 or later, whose ``Qwen3_5ForCausalLMBase`` carries the hybrid
+state contract and ``SupportsMRoPE``. 0.3.0 removed the 0.23/0.26 compatibility
+code (the hybrid-state copy, the multimodal M-RoPE donor and the in-place label
+repair); ``register()`` refuses a runtime without the upstream contract. The
+frozen gfx906 vLLM 0.20.1 image keeps the 0.1.0 plugin it was certified with.
+
+ROCm autotune pruning comes from ``flexinfer_vllm_common``, shared with every
+other FlexInfer vLLM plugin.
 """
 
-from flexinfer_vllm_common import (
-    apply_hybrid_state,
-    repair_text_config_labels,
-    resolve_num_labels,  # noqa: F401  (re-exported for tests and sibling plugins)
-)
-from flexinfer_vllm_common.mrope import (
-    CONFIG_ATTR as MROPE_CONFIG_ATTR,
-)
-from flexinfer_vllm_common.mrope import (
-    attach_mrope_support,
-)
+from flexinfer_vllm_common import resolve_num_labels
 from flexinfer_vllm_common.rocm import (
     import_fla_kkt_module,
     prune_fla_configs_if_needed,
@@ -120,23 +117,28 @@ def build_seq_cls_base(base_class, weights_mapper_cls, auto_weights_loader_cls):
     return _SeqClsBase
 
 
-def with_label_repair(wrapped_class):
-    """Resolve the label count before construction; assert the head after.
+def declared_num_labels(hf_config) -> int:
+    """The label count the checkpoint declares, read the way vLLM 0.32 does."""
+    resolved = resolve_num_labels(hf_config, hf_config.get_text_config())
+    if resolved is None or int(resolved) < 1:
+        raise RuntimeError(
+            f"could not resolve a label count from the model config (got {resolved!r})"
+        )
+    return int(resolved)
+
+
+def with_label_assertions(wrapped_class):
+    """Assert the score head against the declared label space.
 
     The assertions turn the silent-wrong-head failure mode into a loud one, both
-    for the head vLLM builds and for the tensor the checkpoint supplies.
+    for the head vLLM builds and for the tensor the checkpoint supplies. The
+    config is read, never modified.
     """
 
-    class _LabelRepaired(wrapped_class):
+    class _LabelAsserted(wrapped_class):
         def __init__(self, *, vllm_config, prefix: str = "", **kwargs):
-            hf_config = vllm_config.model_config.hf_config
-            resolved = repair_text_config_labels(hf_config)
+            resolved = declared_num_labels(vllm_config.model_config.hf_config)
             self._flexinfer_resolved_num_labels = resolved
-            # The M-RoPE donor needs the COMPOSITE config: self.config on a
-            # causal class is the text config and has no vision fields. Set
-            # before super().__init__ so a base that builds positions during
-            # construction still finds it.
-            setattr(self, MROPE_CONFIG_ATTR, hf_config)
             super().__init__(vllm_config=vllm_config, prefix=prefix, **kwargs)
 
             built = _built_head_rows(self)
@@ -160,22 +162,29 @@ def with_label_repair(wrapped_class):
                 )
             return result
 
-    _LabelRepaired.__name__ = f"{wrapped_class.__name__}LabelRepaired"
-    _LabelRepaired.__qualname__ = _LabelRepaired.__name__
-    return _LabelRepaired
+    _LabelAsserted.__name__ = f"{wrapped_class.__name__}LabelAsserted"
+    _LabelAsserted.__qualname__ = _LabelAsserted.__name__
+    return _LabelAsserted
 
 
 def _supports_mrope_upstream(model_class) -> bool:
-    """Whether the generative base already satisfies the runner's M-RoPE contract.
+    """Whether the generative base satisfies the runner's M-RoPE contract.
 
-    vLLM 0.32's ``Qwen3_5ForCausalLMBase`` implements ``SupportsMRoPE`` itself
-    and returns standard sequential positions for text-only input — exactly
-    what a pooling lane needs — so borrowing the multimodal donor's
-    implementation would only replace it with an equivalent one. On 0.23/0.26
-    the text class has neither attribute and the donor path below applies.
+    The checkpoint's text_config declares ``mrope_section``, so the runner takes
+    the M-RoPE path and asserts ``supports_mrope(model)`` on the FIRST request,
+    after a clean load. vLLM 0.32's ``Qwen3_5ForCausalLMBase`` implements
+    ``SupportsMRoPE`` and returns standard sequential positions for text-only
+    input, which is exactly what a pooling lane needs.
     """
     return bool(getattr(model_class, "supports_mrope", False)) and callable(
         getattr(model_class, "get_mrope_input_positions", None)
+    )
+
+
+def _is_hybrid_upstream(model_class) -> bool:
+    """Whether the generative base carries vLLM 0.32's hybrid-state contract."""
+    return bool(getattr(model_class, "is_hybrid", False)) and callable(
+        getattr(model_class, "get_mamba_state_shape_from_config", None)
     )
 
 
@@ -190,7 +199,6 @@ def register() -> None:
     from vllm.model_executor.models.adapters import as_seq_cls_model
     from vllm.model_executor.models.qwen3_5 import (
         Qwen3_5ForCausalLM,
-        Qwen3_5ForConditionalGeneration,
         Qwen3_5MoeForCausalLM,
     )
     from vllm.model_executor.models.utils import AutoWeightsLoader, WeightsMapper
@@ -200,41 +208,35 @@ def register() -> None:
     import_fla_kkt_module()
     safe_fla_kernels = prune_fla_configs_if_needed(torch)
 
-    # Entry-point ordering is not guaranteed, so apply the hybrid contract here
-    # too rather than assuming the sibling text plugin ran first. Idempotent.
-    copied = apply_hybrid_state(
-        (Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM),
-        Qwen3_5ForConditionalGeneration,
+    # Fail at engine start, not on the first request: without the upstream
+    # contract (vLLM older than 0.32) the runner would assert supports_mrope
+    # after a clean load, and the mamba state would be unsized.
+    bases = {"dense": Qwen3_5ForCausalLM, "moe": Qwen3_5MoeForCausalLM}
+    lacking = sorted(
+        base.__name__
+        for base in bases.values()
+        if not (_supports_mrope_upstream(base) and _is_hybrid_upstream(base))
     )
+    if lacking:
+        raise RuntimeError(
+            "flexinfer_qwen35_seqcls needs vLLM 0.32 or later, whose Qwen3.5 text "
+            f"classes carry the hybrid and M-RoPE contracts; {lacking} do not. The "
+            "0.23/0.26 donor fallback was removed in plugin 0.3.0."
+        )
 
     registered = []
-    mrope_sources = []
     for name, variant in ARCHITECTURES.items():
-        base = Qwen3_5ForCausalLM if variant == "dense" else Qwen3_5MoeForCausalLM
         seq_cls = as_seq_cls_model(
-            build_seq_cls_base(base, WeightsMapper, AutoWeightsLoader)
+            build_seq_cls_base(bases[variant], WeightsMapper, AutoWeightsLoader)
         )
-        wrapped = with_label_repair(seq_cls)
-        # The checkpoint's text_config declares mrope_section, so the runner
-        # takes the M-RoPE path and asserts supports_mrope(model) on the FIRST
-        # request — after a clean load. vLLM 0.32's text base provides the
-        # implementation itself; older runtimes borrow it from the multimodal
-        # class, the same donor the hybrid state comes from.
-        if _supports_mrope_upstream(wrapped):
-            mrope_sources.append("upstream")
-        else:
-            attach_mrope_support(wrapped, Qwen3_5ForConditionalGeneration)
-            mrope_sources.append("donor")
-        ModelRegistry.register_model(name, wrapped)
+        ModelRegistry.register_model(name, with_label_assertions(seq_cls))
         registered.append(name)
 
     print(
         "flexinfer: registered Qwen3.5 sequence-classification architectures "
-        "as vLLM pooling models with composite-config label repair "
+        "as vLLM pooling models with composite-config label assertions "
         f"(archs={','.join(registered)}, "
         f"language_prefix={LANGUAGE_PREFIX}, "
         f"skipped={','.join(SKIP_PREFIXES)}, "
-        f"hybrid_methods_copied={copied}, "
-        f"mrope={','.join(mrope_sources)}, "
         f"fla_autotuners={safe_fla_kernels})"
     )

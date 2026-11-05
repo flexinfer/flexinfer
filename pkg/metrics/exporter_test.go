@@ -67,6 +67,13 @@ func allMetrics() []metricSpec {
 			labels:     []string{"node"},
 			collector:  GPUPowerSamplerActive,
 		},
+		{
+			name:       "flexinfer_lane_energy_joules_total",
+			help:       "GPU energy in joules attributed to a lane, the card's sampled power split equally among the lanes Active on it.",
+			metricType: dto.MetricType_COUNTER,
+			labels:     []string{"model", "node", "gpu"},
+			collector:  LaneEnergyJoulesTotal,
+		},
 
 		// --- GPU VRAM ---
 		{
@@ -508,7 +515,7 @@ func TestMetricTypes(t *testing.T) {
 // TestMetricCount verifies the table is exhaustive. If a developer adds a metric
 // to exporter.go but forgets to add it to the test table, this test fails.
 func TestMetricCount(t *testing.T) {
-	const expectedMetricCount = 55 // total exported metrics in exporter.go
+	const expectedMetricCount = 56 // total exported metrics in exporter.go
 	got := len(allMetrics())
 	assert.Equal(t, expectedMetricCount, got,
 		"metric count changed — update allMetrics() table when adding/removing metrics")

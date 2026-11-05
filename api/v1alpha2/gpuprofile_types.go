@@ -150,7 +150,8 @@ type BackendProfile struct {
 
 	// VLLM declares vLLM-specific feature capability per architecture.
 	// Only meaningful when Support != "unsupported" and the backend key is "vllm".
-	// Wave 1 schema-only addition (2026-05-15): consumers come in a follow-up slice.
+	// The capability strings are documentation; Defaults is applied (see
+	// VLLMCapabilities.Defaults).
 	// +optional
 	VLLM *VLLMCapabilities `json:"vllm,omitempty"`
 }
@@ -163,14 +164,12 @@ type VLLMCapabilities struct {
 	V1Engine string `json:"v1Engine,omitempty"`
 
 	// PiecewiseGraphs reports V1 piecewise CUDA-graph capture support.
-	// gfx1100 as of 2026-05: "experimental" pending upstream vllm-project/vllm#39010 / #41622.
 	// +optional
 	PiecewiseGraphs string `json:"piecewiseGraphs,omitempty"`
 
 	// FlashAttention reports which FA backend is supported.
 	// One of "ck", "triton", "aotriton", or "none".
-	// gfx1100 today: "ck" with AOTriton experimental.
-	// gfx906 today: "none" (no FA kernel exists for Vega20).
+	// gfx906: "none" (no FA kernel exists for Vega20).
 	// +optional
 	FlashAttention string `json:"flashAttention,omitempty"`
 
@@ -188,7 +187,6 @@ type VLLMCapabilities struct {
 
 	// MarlinINT4 reports Marlin INT4 GEMM kernel support. CUDA-only upstream;
 	// ROCm variants (Conch, rocm_aiter_marlin) ship in newer vLLM versions.
-	// turboquant-vllm Tq4 backend is the current INT4 path on AMD, tracked separately.
 	// +optional
 	MarlinINT4 string `json:"marlinINT4,omitempty"`
 
@@ -206,20 +204,22 @@ type VLLMCapabilities struct {
 	AudioTranscription string `json:"audioTranscription,omitempty"`
 
 	// Defaults specifies default engine args injected when this profile is selected.
-	// Wave 1 lands the field; controller consumers come in a follow-up slice.
+	// backend.ApplyVLLMDefaultsFromProfile fills each one into any Model config
+	// that omits the key, on the Deployment path and in the runtime load payload.
 	// +optional
 	Defaults *VLLMDefaults `json:"defaults,omitempty"`
 }
 
 // VLLMDefaults specifies per-arch default vLLM engine args.
 type VLLMDefaults struct {
-	// CudagraphMode is the default --cudagraph-mode engine arg.
-	// One of "NONE", "PIECEWISE", or "FULL".
-	// gfx1100 Wave 1: "NONE" until upstream piecewise capture bugs close.
+	// CudagraphMode is the default CUDA-graph mode.
+	// One of "NONE", "PIECEWISE", or "FULL". Only "NONE" is consumed: with
+	// EnforceEager unset it is expressed as enforceEager=true. No
+	// --cudagraph-mode flag is rendered.
 	// +optional
 	CudagraphMode string `json:"cudagraphMode,omitempty"`
 
-	// EnforceEager forces enforce_eager=true at the engine level.
+	// EnforceEager is the default enforceEager (--enforce-eager) value.
 	// +optional
 	EnforceEager *bool `json:"enforceEager,omitempty"`
 

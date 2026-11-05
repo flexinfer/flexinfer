@@ -75,6 +75,20 @@ func TestMergeWhisperCppWords(t *testing.T) {
 	assert.InDelta(t, 0.6, probs.Words[3].Probability, 1e-9, "word probability is the token mean")
 }
 
+// whisperCppMergedGolden is mergeWhisperCppWords' output for
+// whisperCppVerboseJSON as the runtime ingress produced it before the merge
+// moved to pkg/transcript (captured at f9a9bdfc4). D5-a added an optional
+// speaker label to the word type; a transcription without diarization must
+// keep these exact bytes.
+const whisperCppMergedGolden = `{"duration":10.8,"language":"english","segments":[{"id":0,"text":" Welcome to the Radeon VII lane.","start":0.0,"end":5.7,"words":[{"word":" Welcome","start":0.0,"end":0.6,"probability":0.9},{"word":" to","start":0.6,"end":0.8,"probability":0.8},{"word":" the","start":0.8,"end":1.0,"probability":1.0},{"word":" Rade","start":1.0,"end":1.4,"probability":0.5},{"word":"on","start":1.4,"end":1.7,"probability":0.7},{"word":" VII","start":1.7,"end":2.2,"probability":0.6},{"word":" lane","start":2.2,"end":2.8,"probability":0.9},{"word":".","start":2.8,"end":2.8,"probability":0.95}]},{"id":1,"text":"Thanks, it works.","start":5.7,"end":8.0,"words":[{"word":"Thanks","start":5.7,"end":6.2,"probability":0.9},{"word":",","start":6.2,"end":6.2,"probability":0.9},{"word":" it","start":6.3,"end":6.5,"probability":0.9},{"word":" works","start":6.5,"end":7.0,"probability":0.9},{"word":".","start":7.0,"end":7.1,"probability":0.9}]}],"task":"transcribe","text":" Welcome to the Radeon VII lane. Thanks, it works.","words":[{"word":"Welcome","start":0,"end":0.6,"probability":0.9},{"word":"to","start":0.6,"end":0.8,"probability":0.8},{"word":"the","start":0.8,"end":1,"probability":1},{"word":"Radeon","start":1,"end":1.7,"probability":0.6},{"word":"VII","start":1.7,"end":2.2,"probability":0.6},{"word":"lane.","start":2.2,"end":2.8,"probability":0.925},{"word":"Thanks,","start":5.7,"end":6.2,"probability":0.9},{"word":"it","start":6.3,"end":6.5,"probability":0.9},{"word":"works.","start":6.5,"end":7.1,"probability":0.9}]}`
+
+func TestMergeWhisperCppWordsBytesUnchangedWithoutSpeakers(t *testing.T) {
+	out, ok := mergeWhisperCppWords([]byte(whisperCppVerboseJSON))
+	require.True(t, ok)
+	assert.Equal(t, whisperCppMergedGolden, string(out))
+	assert.NotContains(t, string(out), "speaker")
+}
+
 func TestMergeWhisperCppWordsLeavesOtherBodiesAlone(t *testing.T) {
 	for name, body := range map[string]string{
 		"not json":         `{"text":`,

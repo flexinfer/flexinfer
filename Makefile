@@ -50,6 +50,10 @@ fmt: ## Run go fmt against code.
 vet: ## Run go vet against code.
 	go vet ./...
 
+.PHONY: certify-matrix
+certify-matrix: ## Regenerate docs/certification-matrix.json from GPUProfiles, lane manifests and the validation matrix.
+	go run ./cmd/flexinfer certify render
+
 .PHONY: test
 test: manifests generate fmt vet envtest ## Run tests.
 	KUBEBUILDER_ASSETS="$(shell $(ENVTEST) use $(ENVTEST_K8S_VERSION) --bin-dir $(LOCALBIN) -p path)" go test ./... -coverprofile cover.out

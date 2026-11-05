@@ -12,7 +12,7 @@ As upstream ROCm support matures, you can opt into experimental features per-mod
 |-----|------|---------|-------------|
 | `vllmEngineVersion` | string | `"v0"` | `"v0"` or `"v1"`. V1 engine uses Triton-based attention. |
 | `enableFlashAttention` | bool | `false` | Enable Triton flash attention kernels. |
-| `enableAiter` | bool | `false` | Enable AITER (Asynchronous Iteration). gfx1100 only. |
+| `enableAiter` | bool | `false` | Enable AITER kernels. Renders only on CDNA 3 or newer (gfx942, gfx950); ignored on gfx1100 and gfx906. |
 
 ## Prerequisites
 
@@ -61,7 +61,7 @@ spec:
     enableFlashAttention: true
 ```
 
-### Full Opt-In (V1 + FA + AITER, gfx1100 only)
+### Full Opt-In (V1 + FA + AITER; AITER renders on gfx942/gfx950 only)
 
 ```yaml
 apiVersion: ai.flexinfer/v1alpha2
@@ -97,7 +97,8 @@ kubectl describe model llama-7b-v1-fa
 
 - V1 engine may cause GPU hangs under sustained load with certain models.
 - Triton flash attention may trigger SIGSEGV on models with unusual head dimensions.
-- AITER is experimental and designed for MI300X; behavior on RDNA3 is best-effort.
+- `enableAiter` is ignored on gfx1100: vLLM runs AITER only on CDNA 3 or newer (gfx942, gfx950), so `VLLM_ROCM_USE_AITER=1` would be a no-op.
+- With `spec.config.vllmVersion` 0.32 or later, `enableFlashAttention` renders nothing: `VLLM_USE_TRITON_FLASH_ATTN` left vLLM in 0.32.0 (`docs/specs/crds.md`).
 
 ### gfx906 (Radeon VII)
 

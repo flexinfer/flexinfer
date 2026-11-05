@@ -1,0 +1,5 @@
+{"segments": [
+  {"start": 0.0, "end": 41.0, "speaker": "SPEAKER_00"},
+  {"start": 41.0, "end": 80.0, "speaker": "SPEAKER_01"},
+  {"start": 80.0, "end": 120.0, "speaker": "SPEAKER_02"}
+], "num_speakers": 3, "speakers": ["SPEAKER_00", "SPEAKER_01", "SPEAKER_02"]}

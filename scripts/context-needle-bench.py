@@ -61,6 +61,11 @@ QUESTION = (
     "near the very beginning. Repeat that passphrase verbatim. "
     "Answer with only the passphrase."
 )
+# Depth-grid cells past the start must not claim the needle is at the beginning.
+DEEP_QUESTION = (
+    "Earlier in this message I stated a vault override passphrase exactly once. "
+    "Repeat that passphrase verbatim. Answer with only the passphrase."
+)
 # Phonetic labels for the multi-needle mode.
 PHONETIC = ["ALPHA", "BRAVO", "CHARLIE", "DELTA", "ECHO", "FOXTROT", "GOLF", "HOTEL"]
 FILLER_LINE = (
@@ -110,7 +115,7 @@ def build_prompt(
     body = "".join(lines)
 
     if len(needles) == 1 and not needles[0].get("label"):
-        question = QUESTION
+        question = QUESTION if needles[0]["depth"] <= 0.05 else DEEP_QUESTION
     else:
         labels = ", ".join(nd["label"] for nd in needles)
         question = (

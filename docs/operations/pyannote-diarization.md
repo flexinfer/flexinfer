@@ -105,3 +105,37 @@ re-download (no PVC by design — the working set is tiny).
 
 See `.loom/pyannote-gfx906-killtest-passed-2026-06-02.md` for the kill-test
 evidence and the full compatibility-shim breakdown.
+
+## Under the Model API (D5-a)
+
+The `pyannote` backend runs the same pipeline as a runtime lane, so the
+election counts its VRAM and queues and a `diarize=true` transcription job can
+call it (design §6.5 of
+`.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md`).
+Nothing in this section is live yet; the KT-DIAR window plan
+(`.loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md`) turns it on.
+
+| Piece | Where |
+|---|---|
+| Backend (env, probes, venv launcher) | `backend/pyannote.go` |
+| Server: `POST /v1/audio/diarizations`, `GET /health` | `build/server-pyannote.py` (tests: `scripts/test_server_pyannote.py`) |
+| Image layer: venv `/opt/pyannote` on the gfx906 runtime digest | `build/Dockerfile.runtime-gfx906-pyannote` (not built by CI) |
+| Certificate gate | `controllers/model_backend_certificate.go`, condition `BackendCertificate` |
+| Model | `deploy/debug/pyannote-diarization-radeonvii.yaml` (not applied by Flux) |
+
+What changes against the Deployment:
+
+- **Token by file.** `spec.config.hfTokenSecret: flexinfer-hf-token` names the
+  Secret; the gfx906 runtime profile mounts it read-only at
+  `/var/run/flexinfer/secrets/flexinfer-hf-token` and the server reads
+  `PYANNOTE_HF_TOKEN_FILE`. The token never enters a load payload, a command
+  line or the runtime pod's environment.
+- **Queues move to the Model.** The lane declares `hwQueueEstimate: 3` (one
+  HIP process under the profile env: `GPU_MAX_HW_QUEUES=1`, SDMA off). Retire
+  the Deployment and set the profile's `reservedHWQueues` to 0 in the same
+  change, so the 2 reserved queues are not counted twice.
+- **One request at a time.** The server serializes pipeline calls, so the
+  lane never holds two pipelines' activations.
+- **Response.** `{"object": "audio.diarization", "model", "duration",
+  "num_speakers", "speakers", "segments": [{"start", "end", "speaker"}]}`;
+  speaker bounds are `num_speakers` or `min_speakers`/`max_speakers`, 1-64.

@@ -46,6 +46,7 @@ This directory is the canonical documentation for `services/flexinfer`.
 | [Scheduler Extender](specs/scheduler-extender.md) | Kubernetes scheduler integration |
 | [Labels & Annotations](specs/labels-and-annotations.md) | Resource metadata conventions |
 | [Metrics](specs/metrics.md) | Prometheus metrics reference |
+| [Certification matrix](specs/certification-matrix.md) | Generated JSON of support levels and evidence per GPU class |
 
 ## Planning
 

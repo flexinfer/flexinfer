@@ -62,13 +62,18 @@ func NewChatClient(cfg ChatClientConfig) (*ChatClient, error) {
 }
 
 type chatRequest struct {
-	Model       string    `json:"model"`
-	Messages    []Message `json:"messages"`
-	Tools       []ToolDef `json:"tools,omitempty"`
-	ToolChoice  string    `json:"tool_choice,omitempty"`
-	MaxTokens   int       `json:"max_tokens"`
-	Temperature float64   `json:"temperature"`
-	Stream      bool      `json:"stream"`
+	Model       string          `json:"model"`
+	Messages    []Message       `json:"messages"`
+	Tools       []ToolDef       `json:"tools,omitempty"`
+	ToolChoice  json.RawMessage `json:"tool_choice,omitempty"`
+	MaxTokens   int             `json:"max_tokens"`
+	Temperature float64         `json:"temperature"`
+	Stream      bool            `json:"stream"`
+	// Optional controls TurnRequest adds; omitted when unset, so Complete's
+	// wire shape is unchanged.
+	Seed              *int            `json:"seed,omitempty"`
+	ResponseFormat    json.RawMessage `json:"response_format,omitempty"`
+	StructuredOutputs json.RawMessage `json:"structured_outputs,omitempty"`
 }
 
 type chatResponse struct {
@@ -77,8 +82,38 @@ type chatResponse struct {
 		FinishReason string  `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
-		PromptTokens int `json:"prompt_tokens"`
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
 	} `json:"usage"`
+}
+
+// TurnRequest is one chat turn with the request controls a caller may need
+// beyond Complete's fixed shape: an explicit tool_choice, an output
+// constraint (OpenAI response_format or vLLM structured_outputs) and a seed.
+// Raw JSON fields are sent verbatim and omitted when empty.
+type TurnRequest struct {
+	Messages []Message
+	Tools    []ToolDef
+	// ToolChoice is the raw tool_choice: "auto", "required", "none" or a
+	// named function object.
+	ToolChoice        json.RawMessage
+	ResponseFormat    json.RawMessage
+	StructuredOutputs json.RawMessage
+	MaxTokens         int
+	// Temperature overrides the client's temperature when non-nil.
+	Temperature *float64
+	Seed        *int
+}
+
+// TurnResult is the assistant message of one turn plus what a conformance
+// check reads off the response.
+type TurnResult struct {
+	Message          Message
+	FinishReason     string
+	CompletionTokens int
+	Metrics          TurnMetrics
+	// Latency is the client-observed request time, prefill included.
+	Latency time.Duration
 }
 
 // Complete runs one chat turn: it sends the full append-only message slice
@@ -86,27 +121,47 @@ type chatResponse struct {
 // per-turn metrics. A context-overflow response (HTTP 400/413) is surfaced
 // as a *BudgetError so the loop can stop cleanly.
 func (c *ChatClient) Complete(ctx context.Context, msgs []Message, tools []ToolDef, maxTokens int) (Message, TurnMetrics, error) {
-	reqBody := chatRequest{
-		Model:       c.model,
-		Messages:    msgs,
-		Tools:       tools,
-		MaxTokens:   maxTokens,
-		Temperature: c.temperature,
-		Stream:      false,
-	}
+	req := TurnRequest{Messages: msgs, Tools: tools, MaxTokens: maxTokens}
 	if len(tools) > 0 {
-		reqBody.ToolChoice = "auto"
+		req.ToolChoice = json.RawMessage(`"auto"`)
+	}
+	res, err := c.CompleteTurn(ctx, req)
+	if err != nil {
+		return Message{}, TurnMetrics{}, err
+	}
+	return res.Message, res.Metrics, nil
+}
+
+// CompleteTurn runs one chat turn with the full TurnRequest surface. Errors
+// follow Complete: a context overflow is a *BudgetError, any other non-2xx
+// status an error carrying the status and a body excerpt.
+func (c *ChatClient) CompleteTurn(ctx context.Context, req TurnRequest) (TurnResult, error) {
+	temperature := c.temperature
+	if req.Temperature != nil {
+		temperature = *req.Temperature
+	}
+	reqBody := chatRequest{
+		Model:             c.model,
+		Messages:          req.Messages,
+		Tools:             req.Tools,
+		ToolChoice:        req.ToolChoice,
+		MaxTokens:         req.MaxTokens,
+		Temperature:       temperature,
+		Stream:            false,
+		Seed:              req.Seed,
+		ResponseFormat:    req.ResponseFormat,
+		StructuredOutputs: req.StructuredOutputs,
 	}
 
 	payload, err := json.Marshal(reqBody)
 	if err != nil {
-		return Message{}, TurnMetrics{}, fmt.Errorf("marshal chat request: %w", err)
+		return TurnResult{}, fmt.Errorf("marshal chat request: %w", err)
 	}
 
 	url := c.endpoint + "/v1/chat/completions"
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 	if err != nil {
-		return Message{}, TurnMetrics{}, fmt.Errorf("new chat request: %w", err)
+		return TurnResult{}, fmt.Errorf("new chat request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if c.cacheKey != "" {
@@ -116,42 +171,50 @@ func (c *ChatClient) Complete(ctx context.Context, msgs []Message, tools []ToolD
 		httpReq.Header.Set(HeaderWantPrefixHit, "1")
 	}
 
+	started := time.Now()
 	httpResp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return Message{}, TurnMetrics{}, fmt.Errorf("chat http do: %w", err)
+		return TurnResult{}, fmt.Errorf("chat http do: %w", err)
 	}
 	defer func() { _ = httpResp.Body.Close() }()
 
 	respBody, err := io.ReadAll(httpResp.Body)
 	if err != nil {
-		return Message{}, TurnMetrics{}, fmt.Errorf("read chat body: %w", err)
+		return TurnResult{}, fmt.Errorf("read chat body: %w", err)
 	}
+	latency := time.Since(started)
 	if c.reqLogger != nil {
 		c.reqLogger(payload, respBody, httpResp.StatusCode)
 	}
 
 	if httpResp.StatusCode == http.StatusRequestEntityTooLarge || httpResp.StatusCode == http.StatusBadRequest {
 		if be := budgetErrorFromBody(respBody); be != nil {
-			return Message{}, TurnMetrics{}, be
+			return TurnResult{}, be
 		}
 	}
 	if httpResp.StatusCode/100 != 2 {
-		return Message{}, TurnMetrics{}, fmt.Errorf("chat: status %d: %s", httpResp.StatusCode, truncate(respBody, 512))
+		return TurnResult{}, fmt.Errorf("chat: status %d: %s", httpResp.StatusCode, truncate(respBody, 512))
 	}
 
 	var resp chatResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return Message{}, TurnMetrics{}, fmt.Errorf("decode chat response: %w (body=%s)", err, truncate(respBody, 256))
+		return TurnResult{}, fmt.Errorf("decode chat response: %w (body=%s)", err, truncate(respBody, 256))
 	}
 	if len(resp.Choices) == 0 {
-		return Message{}, TurnMetrics{}, fmt.Errorf("chat: empty choices array")
+		return TurnResult{}, fmt.Errorf("chat: empty choices array")
 	}
 
 	metrics := parseTurnMetrics(httpResp.Header, resp.Usage.PromptTokens)
 	if metrics.FinishReason == "" {
 		metrics.FinishReason = resp.Choices[0].FinishReason
 	}
-	return resp.Choices[0].Message, metrics, nil
+	return TurnResult{
+		Message:          resp.Choices[0].Message,
+		FinishReason:     resp.Choices[0].FinishReason,
+		CompletionTokens: resp.Usage.CompletionTokens,
+		Metrics:          metrics,
+		Latency:          latency,
+	}, nil
 }
 
 // budgetErrorFromBody looks for the admission filter's structured
