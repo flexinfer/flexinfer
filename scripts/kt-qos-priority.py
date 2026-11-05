@@ -28,6 +28,22 @@ Arms (the class reaches the engine differently in each):
 The engine /metrics come from --endpoint in the direct arms; pass --metrics
 http://<lane-svc>:8000/metrics in the proxy arm. Stdlib only, so the file can be
 piped into the serving pod (kubectl exec -i <pod> -- python3 - ... < this file).
+
+KT-QOS2 (matrix row workhorse-qos-prefill-budget-2026-11-05) adds, all off by
+default so a KT-QOS run is unchanged:
+
+  --idle-warmup N         discard N interactive requests before the idle baseline;
+  --warm-sweep S          run the full load pattern S seconds before the measured
+                          window opens (engine counters, gaps and turns count
+                          from then);
+  --long-probe-fillers    after the load window, time long interactive prompts
+                          (filler lines per size, e.g. 110,440,1540) idle and
+                          while one background request decodes, one discarded
+                          warm rep per size and condition;
+  --verdict-qos2 CONTROL.json ARM.json ...   the KT-QOS2 pass rule;
+  --collisions LOKI.json ...   classify proxy request_usage lines: which
+                          interactive turns were forwarded while a background
+                          request was before its first byte, and the reverse.
 """
 
 import argparse
@@ -48,6 +64,16 @@ PASS_DECODE_DELTA = 0.05  # aggregate decode within 5 % of the fcfs arm
 PASS_POS0 = 0.75  # MTP position-0 acceptance under load
 
 PRIORITY = {"interactive": 0, "background": 10, "batch": 20}
+
+# KT-QOS2 pass rule (row workhorse-qos-prefill-budget-2026-11-05). Every bar
+# but the first is relative to the same window's reserve-only control arm.
+QOS2_TTFT_RATIO = 1.3  # interactive TTFT p95 under load <= 1.3x the arm's idle p95
+QOS2_IDLE_VS_CONTROL = 1.10  # idle interactive TTFT p95 <= 1.10x the control's
+QOS2_MAX_GAP_S = 60.0  # no background worker goes 60 s without a token
+QOS2_DECODE_VS_CONTROL = 0.95  # aggregate decode >= 0.95x the control's
+QOS2_POS0 = 0.75  # MTP position-0 acceptance under load
+QOS2_POS0_DELTA = 0.02  # ... and within 0.02 of the control's
+QOS2_LONG_PROMPT_RATIO = 1.25  # every long-prompt probe median TTFT <= 1.25x control
 
 PARITY_PROMPTS = [
     (
@@ -78,6 +104,9 @@ BACKGROUND_PROMPT = (
 )
 FILLER = (
     "Reference note {i}: the archive lists shipments, dates and carriers in order.\n"
+)
+LONG_PROMPT = (
+    "Using the reference notes above, say in two sentences what the archive records."
 )
 
 METRIC_LINE = re.compile(r"^([A-Za-z_:][A-Za-z0-9_:]*)(\{[^}]*\})?\s+(\S+)")
@@ -165,6 +194,14 @@ def scrape(url):
         return None
 
 
+class StreamAborted(Exception):
+    """Raised from an on_token callback to close a stream early.
+
+    Leaving the urlopen context closes the connection, so the proxy and the
+    engine abort the request.
+    """
+
+
 class Client:
     def __init__(self, args):
         self.base = args.endpoint.rstrip("/")
@@ -197,6 +234,7 @@ class Client:
             headers=headers,
         )
         started = time.monotonic()
+        started_epoch = time.time()
         first = last = None
         parts, usage, finish = [], None, None
         with urllib.request.urlopen(req, timeout=900) as response:
@@ -224,8 +262,10 @@ class Client:
         answer = "".join(parts).strip()
         tokens = usage.get("completion_tokens", 0)
         return {
+            "started_epoch": round(started_epoch, 3),
             "ttft_s": round(first - started, 4),
             "total_s": round(last - started, 4),
+            "prompt_tokens": usage.get("prompt_tokens"),
             "completion_tokens": tokens,
             "decode_tps": (
                 round((tokens - 1) / (last - first), 3) if last > first else None
@@ -260,21 +300,23 @@ def run(args):
         result["parity"][name] = r["sha256"]
 
     idle = []
-    for _ in range(args.baseline_reps):
-        idle.append(
-            client.stream(
-                nonce_prompt(INTERACTIVE_PROMPT, args.interactive_filler),
-                args.interactive_tokens,
-                "interactive",
-            )
+    for i in range(args.idle_warmup + args.baseline_reps):
+        r = client.stream(
+            nonce_prompt(INTERACTIVE_PROMPT, args.interactive_filler),
+            args.interactive_tokens,
+            "interactive",
         )
+        if i >= args.idle_warmup:  # warm reps absorb first-use compiles
+            idle.append(r)
         time.sleep(2)
     result["idle_ttft_s"] = [r["ttft_s"] for r in idle]
+    result["interactive_prompt_tokens"] = idle[0]["prompt_tokens"] if idle else None
 
     stop = threading.Event()
     worker_events = [[], []]
     worker_errors = [0, 0]
     worker_tokens = [0, 0]
+    background_requests = []
     lock = threading.Lock()
 
     def background(i):
@@ -289,25 +331,23 @@ def run(args):
                 )
                 with lock:
                     worker_tokens[i] += r["completion_tokens"]
+                    background_requests.append(
+                        {
+                            "worker": i,
+                            "started_epoch": r["started_epoch"],
+                            "ttft_s": r["ttft_s"],
+                            "prompt_tokens": r["prompt_tokens"],
+                        }
+                    )
             except (OSError, ValueError) as err:
                 worker_errors[i] += 1
                 print(json.dumps({"background": i, "error": str(err)}), file=sys.stderr)
                 time.sleep(5)
 
-    before = scrape(metrics_url)
-    window_start = time.monotonic()
-    workers = [
-        threading.Thread(target=background, args=(i,), daemon=True) for i in range(2)
-    ]
-    for w in workers:
-        w.start()
-    time.sleep(args.warmup)  # let both seats fill before the first interactive turn
-
-    interactive, interactive_errors = [], 0
-    deadline = time.monotonic() + args.duration
+    interactive, warm_turns, interactive_errors = [], [], 0
     threads = []
 
-    def turn():
+    def turn(sink):
         nonlocal interactive_errors
         try:
             r = client.stream(
@@ -316,39 +356,77 @@ def run(args):
                 "interactive",
             )
             with lock:
-                interactive.append(r)
+                sink.append(r)
         except (OSError, ValueError) as err:
             with lock:
-                interactive_errors += 1
+                if sink is interactive:
+                    interactive_errors += 1
             print(json.dumps({"interactive_error": str(err)}), file=sys.stderr)
 
-    while time.monotonic() < deadline:
-        t = threading.Thread(target=turn, daemon=True)
-        t.start()
-        threads.append(t)
-        time.sleep(args.interval)
+    def drive(until, sink):
+        """Start one interactive turn every --interval seconds until `until`."""
+        while time.monotonic() < until:
+            t = threading.Thread(target=turn, args=(sink,), daemon=True)
+            t.start()
+            threads.append(t)
+            time.sleep(args.interval)
+
+    before = None
+    if args.warm_sweep <= 0:
+        before = scrape(metrics_url)
+        window_start = time.monotonic()
+    workers = [
+        threading.Thread(target=background, args=(i,), daemon=True) for i in range(2)
+    ]
+    for w in workers:
+        w.start()
+    time.sleep(args.warmup)  # let both seats fill before the first interactive turn
+    gap_start = None if args.warm_sweep > 0 else window_start + args.warmup
+    if args.warm_sweep > 0:
+        # The full load pattern runs, unmeasured, so the measured window does
+        # not pay the first-use compiles of every new batch shape.
+        drive(time.monotonic() + args.warm_sweep, warm_turns)
+        before = scrape(metrics_url)
+        window_start = gap_start = time.monotonic()
+
+    drive(time.monotonic() + args.duration, interactive)
     for t in threads:
         t.join(timeout=900)
     window_end = time.monotonic()
+    window_end_epoch = time.time()
     after = scrape(metrics_url)
     stop.set()
     for w in workers:
         w.join(timeout=900)
 
     window = window_end - window_start
+    window_start_epoch = window_end_epoch - window
     ttfts = [r["ttft_s"] for r in interactive]
     delta = metrics_delta(before, after)
     result.update(
         {
             "window_s": round(window, 1),
+            "window_start_epoch": round(window_start_epoch, 3),
+            "warm_sweep_s": args.warm_sweep,
+            "warm_turns_n": len(warm_turns),
             "interactive_n": len(ttfts),
             "interactive_errors": interactive_errors,
             "interactive_ttft_s": ttfts,
             "interactive_ttft_p50_s": percentile(ttfts, 50),
             "interactive_ttft_p95_s": percentile(ttfts, 95),
             "idle_ttft_p95_s": percentile(result["idle_ttft_s"], 95),
+            "interactive_turns": sorted(
+                (
+                    {"started_epoch": r["started_epoch"], "ttft_s": r["ttft_s"]}
+                    for r in interactive
+                ),
+                key=lambda r: r["started_epoch"],
+            ),
+            "background_requests": sorted(
+                background_requests, key=lambda r: r["started_epoch"]
+            ),
             "background_max_gap_s": [
-                round(max_gap(sorted(ev), window_start + args.warmup, window_end), 2)
+                round(max_gap(sorted(ev), gap_start, window_end), 2)
                 for ev in worker_events
             ],
             "background_errors": worker_errors,
@@ -362,12 +440,112 @@ def run(args):
         else sum(worker_tokens) + sum(r["completion_tokens"] for r in interactive)
     )
     result["aggregate_decode_tps"] = round(gen / window, 2)
+    if args.long_probe_fillers:
+        result["long_probes"] = long_probes(client, args)
     return result
+
+
+def parse_fillers(text):
+    """'110,440,1540' -> [110, 440, 1540]; empty -> []."""
+    return [int(v) for v in str(text or "").split(",") if v.strip()]
+
+
+def probe_once(client, args, filler, loaded):
+    """Time one long interactive prompt, idle or while a background request decodes.
+
+    Loaded: a background request (background class, ~2K-token prompt) starts
+    first; the probe is sent one second after its first token, so its prefill
+    is done and it is decoding. It is closed once the probe returns.
+    """
+    prompt = nonce_prompt(LONG_PROMPT, filler)
+    if not loaded:
+        return client.stream(prompt, args.long_probe_tokens, "interactive")
+    decoding, done, box = threading.Event(), threading.Event(), {}
+
+    def on_token(_t):
+        decoding.set()
+        if done.is_set():
+            raise StreamAborted()
+
+    def background():
+        try:
+            client.stream(
+                nonce_prompt(BACKGROUND_PROMPT, args.background_filler),
+                args.long_probe_background_tokens,
+                "background",
+                ignore_eos=True,
+                on_token=on_token,
+            )
+            box["finished_early"] = True
+        except StreamAborted:
+            pass
+        except (OSError, ValueError) as err:
+            box["error"] = str(err)
+        finally:
+            decoding.set()
+
+    worker = threading.Thread(target=background, daemon=True)
+    worker.start()
+    decoding.wait(timeout=600)
+    time.sleep(1.0)
+    try:
+        r = client.stream(prompt, args.long_probe_tokens, "interactive")
+    finally:
+        done.set()
+        worker.join(timeout=900)
+    r["background_overlapped"] = not box
+    if box.get("error"):
+        r["background_error"] = box["error"]
+    return r
+
+
+def probe_size(client, args, filler, loaded):
+    """One discarded warm rep, then --long-probe-reps timed reps."""
+    reps, errors = [], []
+    for i in range(1 + args.long_probe_reps):
+        try:
+            r = probe_once(client, args, filler, loaded)
+        except (OSError, ValueError) as err:
+            errors.append(str(err))
+            print(
+                json.dumps({"long_probe": filler, "loaded": loaded, "error": str(err)}),
+                file=sys.stderr,
+            )
+            continue
+        if i > 0:  # rep 0 absorbs the first-use compile of this shape
+            reps.append(r)
+    ttfts = [r["ttft_s"] for r in reps]
+    median = round(statistics.median(ttfts), 4) if ttfts else None
+    tokens = reps[0]["prompt_tokens"] if reps else None
+    entry = {
+        "filler": filler,
+        "prompt_tokens": tokens,
+        "ttft_s": ttfts,
+        "ttft_median_s": median,
+        "prefill_tps": round(tokens / median, 1) if tokens and median else None,
+        "errors": errors,
+    }
+    if loaded:
+        entry["overlapped"] = [r.get("background_overlapped") for r in reps]
+    return entry
+
+
+def long_probes(client, args):
+    sizes = parse_fillers(args.long_probe_fillers)
+    return {
+        "idle": [probe_size(client, args, f, loaded=False) for f in sizes],
+        "loaded": [probe_size(client, args, f, loaded=True) for f in sizes],
+    }
+
+
+def load_json(path):
+    with open(path) as f:
+        return json.load(f)
 
 
 def verdict(paths):
     """Judge each arm against the §6.3 pass rule; the first file is the fcfs arm."""
-    arms = [json.load(open(p)) for p in paths]
+    arms = [load_json(p) for p in paths]
     fcfs = arms[0]
     if fcfs["arm"] != "fcfs":
         raise SystemExit("the first --verdict file must be the fcfs arm")
@@ -400,6 +578,193 @@ def verdict(paths):
     return rows
 
 
+def long_prompt_ratios(arm, control):
+    """Median TTFT of each long-prompt probe over the control's matching probe.
+
+    Returns {"idle/110": ratio, ...}. A probe the control or the arm lacks, has
+    no median for, or (loaded) ran without a decoding background request maps
+    to None, which fails the cost cap.
+    """
+    ratios = {}
+    for cond in ("idle", "loaded"):
+        ref = {p["filler"]: p for p in (control.get("long_probes") or {}).get(cond, [])}
+        for probe in (arm.get("long_probes") or {}).get(cond, []):
+            key = f"{cond}/{probe['filler']}"
+            base = ref.get(probe["filler"])
+            valid = (
+                base is not None
+                and probe.get("ttft_median_s")
+                and base.get("ttft_median_s")
+                and (
+                    cond == "idle"
+                    or (
+                        all(probe.get("overlapped") or [False])
+                        and all(base.get("overlapped") or [False])
+                    )
+                )
+            )
+            ratios[key] = (
+                round(probe["ttft_median_s"] / base["ttft_median_s"], 3)
+                if valid
+                else None
+            )
+        for filler in ref:
+            ratios.setdefault(f"{cond}/{filler}", None)
+    return ratios
+
+
+def verdict_qos2(paths):
+    """Judge KT-QOS2 arms against the first file, the reserve-only control."""
+    arms = [load_json(p) for p in paths]
+    control = arms[0]
+    rows = []
+    for arm in arms:
+        checks = {}
+        ratio = arm["interactive_ttft_p95_s"] / arm["idle_ttft_p95_s"]
+        checks["ttft_p95_vs_idle"] = (round(ratio, 3), ratio <= QOS2_TTFT_RATIO)
+        idle = arm["idle_ttft_p95_s"] / control["idle_ttft_p95_s"]
+        checks["idle_ttft_vs_control"] = (round(idle, 3), idle <= QOS2_IDLE_VS_CONTROL)
+        gap = max(arm["background_max_gap_s"])
+        checks["background_max_gap_s"] = (gap, gap <= QOS2_MAX_GAP_S)
+        decode = arm["aggregate_decode_tps"] / control["aggregate_decode_tps"]
+        checks["decode_vs_control"] = (
+            round(decode, 4),
+            decode >= QOS2_DECODE_VS_CONTROL,
+        )
+        checks["greedy_parity"] = (arm["parity"] == control["parity"],) * 2
+        pos0 = (arm.get("engine") or {}).get("pos0_acceptance")
+        ref0 = (control.get("engine") or {}).get("pos0_acceptance")
+        checks["mtp_pos0"] = (
+            pos0,
+            pos0 is not None
+            and ref0 is not None
+            and pos0 >= QOS2_POS0
+            and abs(pos0 - ref0) <= QOS2_POS0_DELTA,
+        )
+        ratios = long_prompt_ratios(arm, control)
+        worst = max((v for v in ratios.values() if v is not None), default=None)
+        checks["long_prompt_ttft_vs_control"] = (
+            {"worst": worst, "probes": ratios},
+            bool(ratios)
+            and all(
+                v is not None and v <= QOS2_LONG_PROMPT_RATIO for v in ratios.values()
+            ),
+        )
+        rows.append(
+            {
+                "arm": arm.get("label") or arm["arm"],
+                "interactive_ttft_p50_s": arm["interactive_ttft_p50_s"],
+                "interactive_ttft_p95_s": arm["interactive_ttft_p95_s"],
+                "interactive_ttft_max_s": max(arm["interactive_ttft_s"], default=None),
+                "idle_ttft_p95_s": arm["idle_ttft_p95_s"],
+                "aggregate_decode_tps": arm["aggregate_decode_tps"],
+                "preemptions": (arm.get("engine") or {}).get("preemptions"),
+                "checks": {
+                    k: {"value": v, "pass": ok} for k, (v, ok) in checks.items()
+                },
+                "pass": all(ok for _, ok in checks.values()),
+            }
+        )
+    return rows
+
+
+def parse_usage_line(ts_ns, line):
+    """One proxy request_usage log line -> (class, arrival, forward, first_byte, ttft_s).
+
+    Accepts the raw JSON line or the LogQL line_format
+    "{{.qos_class}} {{.duration_ms}} {{.request_id}}". The line is written at
+    the first body byte (lane breaker on), duration_ms is measured from the
+    forward, and the request id's numeric prefix is the proxy arrival in ns.
+    None for a line without a class or id.
+    """
+    line = line.strip()
+    if line.startswith("{"):
+        try:
+            rec = json.loads(line)
+        except ValueError:
+            return None
+        cls, dur, rid = (
+            rec.get("qos_class"),
+            rec.get("duration_ms"),
+            rec.get("request_id"),
+        )
+    else:
+        parts = line.split()
+        if len(parts) < 3:
+            return None
+        cls, dur, rid = parts[0], parts[1], parts[2]
+    try:
+        first_byte = int(ts_ns) / 1e9
+        arrival = int(str(rid).split("-")[0]) / 1e9
+        ttft = int(dur) / 1000.0
+    except (TypeError, ValueError):
+        return None
+    if cls not in PRIORITY:
+        return None
+    return cls, arrival, first_byte - ttft, first_byte, ttft
+
+
+def collisions(rows, slow_s=0.9):
+    """Classify interactive turns against background prefills.
+
+    rows are parse_usage_line tuples. A request is "in prefill" from its
+    forward to its first byte. Reports how many background requests were
+    forwarded while an interactive was in prefill (what an admission gate
+    could hold) and, for every interactive forwarded while a background was
+    in prefill, the lag behind that forward and its TTFT.
+    """
+    bg = sorted((r for r in rows if r[0] != "interactive"), key=lambda r: r[2])
+    it = sorted((r for r in rows if r[0] == "interactive"), key=lambda r: r[2])
+    held = [
+        {"lag_s": round(b[2] - i[2], 3), "interactive_ttft_s": i[4]}
+        for b in bg
+        for i in it
+        if i[2] < b[2] < i[3]
+    ]
+    overlapped = []
+    for i in it:
+        running = [b for b in bg if b[2] <= i[2] < b[3]]
+        if running:
+            b = running[-1]
+            overlapped.append(
+                {
+                    "lag_s": round(i[2] - b[2], 3),
+                    "ttft_s": i[4],
+                    "background_ttft_s": b[4],
+                }
+            )
+    slow = [i for i in it if i[4] > slow_s]
+    return {
+        "background_n": len(bg),
+        "interactive_n": len(it),
+        "background_forwarded_during_interactive_prefill": len(held),
+        "held_examples": held[:20],
+        "interactive_forwarded_during_background_prefill": len(overlapped),
+        "overlaps": overlapped,
+        "slow_threshold_s": slow_s,
+        "slow_interactive_n": len(slow),
+        "slow_interactive_overlapping_background_prefill": sum(
+            1 for i in slow if any(b[2] <= i[2] < b[3] for b in bg)
+        ),
+    }
+
+
+def load_usage_rows(paths):
+    """Parse Loki query_range JSON exports (the MCP tool's output) of request_usage lines."""
+    rows = []
+    for path in paths:
+        data = load_json(path)
+        streams = (data.get("result") or {}).get("result") or data.get("data", {}).get(
+            "result", []
+        )
+        for stream in streams:
+            for ts, line in stream.get("values", []):
+                row = parse_usage_line(ts, line)
+                if row:
+                    rows.append(row)
+    return rows
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -423,17 +788,66 @@ def main(argv=None):
     )
     parser.add_argument("--background-tokens", type=int, default=1024)
     parser.add_argument("--background-filler", type=int, default=100)
+    parser.add_argument(
+        "--idle-warmup",
+        type=int,
+        default=0,
+        help="interactive requests discarded before the idle baseline",
+    )
+    parser.add_argument(
+        "--warm-sweep",
+        type=float,
+        default=0,
+        help="seconds of unmeasured load before the measured window",
+    )
+    parser.add_argument(
+        "--long-probe-fillers",
+        default="",
+        help="filler lines per long-prompt probe size, e.g. 110,440,1540",
+    )
+    parser.add_argument("--long-probe-reps", type=int, default=3)
+    parser.add_argument("--long-probe-tokens", type=int, default=16)
+    parser.add_argument(
+        "--long-probe-background-tokens",
+        type=int,
+        default=4096,
+        help="generation length of the background request a loaded probe runs beside",
+    )
+    parser.add_argument(
+        "--label", help="arm label stored in the output (e.g. control, budget)"
+    )
     parser.add_argument("--out")
     parser.add_argument("--verdict", nargs="+", metavar="ARM_JSON")
+    parser.add_argument(
+        "--verdict-qos2",
+        nargs="+",
+        metavar="ARM_JSON",
+        help="KT-QOS2 pass rule; the first file is the reserve-only control",
+    )
+    parser.add_argument(
+        "--collisions",
+        nargs="+",
+        metavar="LOKI_JSON",
+        help="Loki exports of the proxy's request_usage lines for one arm",
+    )
     args = parser.parse_args(argv)
 
     if args.verdict:
         rows = verdict(args.verdict)
         print(json.dumps(rows, indent=2))
         return 0 if all(r["pass"] for r in rows[1:]) else 1
+    if args.verdict_qos2:
+        rows = verdict_qos2(args.verdict_qos2)
+        print(json.dumps(rows, indent=2))
+        return 0 if all(r["pass"] for r in rows[1:]) else 1
+    if args.collisions:
+        print(json.dumps(collisions(load_usage_rows(args.collisions)), indent=2))
+        return 0
     if not (args.endpoint and args.model and args.arm):
         parser.error("--endpoint, --model and --arm are required for a run")
     result = run(args)
+    if args.label:
+        result["label"] = args.label
     text = json.dumps({k: v for k, v in result.items()}, indent=2)
     if args.out:
         with open(args.out, "w") as f:
