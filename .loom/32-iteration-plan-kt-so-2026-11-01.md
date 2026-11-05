@@ -1,5 +1,7 @@
 # KT-SO — structured outputs with MTP on the workhorse posture (canary plan)
 
+> **Result 2026-11-05: PASS** on vLLM 0.33 at the XTX slot (200/200 parse, decode 0.997×, pos-0 1.000, parity `8174a49e`; grammar confirmed applied by probes). Certificate for `runtime@29378fe0` in a Draft MR. See `.loom/70-result-kt-so-v033-2026-11-05.md`.
+
 Feature D4, `.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md` §6.4 and brief
 D4. Matrix row `gfx1100-structured-outputs-2026-11-01` in `60-validation-matrix.md` (pass rule
 written before the run). Canary `deploy/debug/qwen38-27b-so-canary.yaml`; gate
