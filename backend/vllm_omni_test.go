@@ -346,8 +346,45 @@ func TestVLLMOmniBackendEnv_FAAndAiter(t *testing.T) {
 	if v := envMap["VLLM_USE_TRITON_FLASH_ATTN"]; v != "1" {
 		t.Errorf("expected VLLM_USE_TRITON_FLASH_ATTN=1, got %q", v)
 	}
-	if v := envMap["VLLM_ROCM_USE_AITER"]; v != "1" {
-		t.Errorf("expected VLLM_ROCM_USE_AITER=1, got %q", v)
+	// AITER needs CDNA 3 or newer: enableAiter renders nothing on gfx1100.
+	if v, ok := envMap["VLLM_ROCM_USE_AITER"]; ok {
+		t.Errorf("expected VLLM_ROCM_USE_AITER to be absent on gfx1100, got %q", v)
+	}
+}
+
+// vllm-omni drops the VLLM_* names its declared vLLM release no longer
+// defines, like the vllm backend: VLLM_USE_TRITON_FLASH_ATTN left envs.py in
+// 0.32.0.
+func TestVLLMOmniBackendEnv_FlashAttnFollowsDeclaredVersion(t *testing.T) {
+	for _, tt := range []struct {
+		version string // "" leaves vllmVersion unset
+		want    bool
+	}{
+		{version: "", want: true},
+		{version: "0.31.1", want: true},
+		{version: "0.32.0", want: false},
+		{version: "v0.33.0+rocm72", want: false},
+		{version: "latest", want: true}, // unreadable: the controller refuses it, the render stays legacy
+	} {
+		t.Run("version="+tt.version, func(t *testing.T) {
+			cfg := map[string]any{"enableFlashAttention": true}
+			if tt.version != "" {
+				cfg["vllmVersion"] = tt.version
+			}
+			env := (&VLLMOmniBackend{}).Env(&ModelSpec{GPUVendor: GPUVendorAMD, GPUArch: "gfx1100", Config: cfg})
+			got := false
+			for _, e := range env {
+				if e.Name == "VLLM_USE_TRITON_FLASH_ATTN" {
+					got = true
+				}
+				if e.Name == "VLLM_VERSION" || e.Value == tt.version && tt.version != "" {
+					t.Fatalf("vllmVersion reached the env: %v", env)
+				}
+			}
+			if got != tt.want {
+				t.Fatalf("VLLM_USE_TRITON_FLASH_ATTN rendered=%v, want %v in %v", got, tt.want, env)
+			}
+		})
 	}
 }
 

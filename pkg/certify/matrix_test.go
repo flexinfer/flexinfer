@@ -131,6 +131,30 @@ func TestCertificates(t *testing.T) {
 	assert.Len(t, certs, 3, "-artifact / -max-model-len are attributes, not certificates: %v", certs)
 }
 
+// A7: a complete vLLM certificate for LM-Format-Enforcer never renders as
+// certified; the controller's D4 gate does not read it either.
+func TestCertificates_RefuseLMFormatEnforcer(t *testing.T) {
+	obj := &aiv1alpha2.GPUProfile{Spec: aiv1alpha2.GPUProfileSpec{
+		Architecture: "gfx1100",
+		Backends:     map[string]aiv1alpha2.BackendProfile{"vllm": {Support: "full"}},
+	}}
+	for _, capability := range []string{"structured-outputs-lm-format-enforcer", "structured-outputs", "lm_format_enforcer"} {
+		aiv1alpha2.SetBackendCapabilityCertificate(obj, "vllm", capability, "registry.example/vllm@sha256:dddd", ".loom/so.md")
+	}
+	got := map[string]Entry{}
+	for _, e := range (profile{obj: obj, class: "gfx1100", source: "gfx1100.yaml"}).certificateEntries() {
+		got[e.Capability] = e
+	}
+	require.Len(t, got, 3)
+	assert.Equal(t, SupportCertified, got["structured-outputs"].SupportLevel)
+	for _, capability := range []string{"structured-outputs-lm-format-enforcer", "lm_format_enforcer"} {
+		e := got[capability]
+		assert.Equal(t, SupportUnsupported, e.SupportLevel, capability)
+		assert.False(t, e.Evidenced, capability)
+		assert.Contains(t, e.EvidenceNote, "LM-Format-Enforcer is never certified", capability)
+	}
+}
+
 func TestBackendPosture(t *testing.T) {
 	m := renderFixture(t)
 

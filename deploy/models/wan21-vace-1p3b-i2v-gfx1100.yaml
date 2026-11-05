@@ -32,7 +32,11 @@ metadata:
     # once the clip is rendered, and a cold start adds the weight load, so 480p
     # clips through the proxy need the same budget as Qwen-Image (KT-FLEX,
     # 2026-11-01). Direct callers of the lane Service are unaffected.
-    flexinfer.ai/lane-first-byte-budget: "600s"
+    # 2026-11-03 KT-FLEX rerun on the XTX: a 33-frame 832x480 20-step clip
+    # took 506 s to its first byte (server timing: denoise 137 s, VAE
+    # decode + postprocess 367 s; the July proving run took 6m57s), so 600 s
+    # left ~90 s of margin. 900 s covers the decode-bound floor with room.
+    flexinfer.ai/lane-first-byte-budget: "900s"
     flexinfer.ai/purpose: 480p image-to-video (first-frame keyframe) on ROCm gfx1100
     flexinfer.ai/plan: .loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md
 spec:

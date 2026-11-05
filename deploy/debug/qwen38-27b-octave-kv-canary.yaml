@@ -1,0 +1,143 @@
+# DEBUG CANARY — slice S6, KT-OCTAVE, of
+# .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md (§5.3
+# candidate 2, §6.1 S6): does vLLM 0.33's Octave 3-4 bit KV cache
+# (ROCM_OCTAVE, gfx1100 WMMA kernels) hold the workhorse's speed and
+# correctness while multiplying its KV pool? Matrix row
+# xtx-vllm-v033-octave-kv-2026-11-05 (pass/kill rules written before the
+# run). NOT in any kustomization: the operator applies this file once, the
+# agent drives the arms over the flexinfer MCP tools and reads results with
+# `kubectl exec`, then deletes the Model.
+#
+# One Model, the 0.33 image that passed parity in S3
+# (runtime@29378fe0, row xtx-vllm-v033-parity-2026-11-05), arms as
+# `flexinfer_update_model` config merge patches (null removes a key):
+#   arm 0  as applied: S3 arm B exactly — ROCM_SEGMENTED_ATTN + autotune,
+#          fp16 KV (kvCacheDtype auto), MTP K=2 with the checkpoint head and
+#          the segmented draft backend. The same-window baseline; it also
+#          supplies the fp16 parity texts and the APC reference.
+#   arm 1  {"kvCacheDtype":"octave_k3v3","attentionBackend":null,
+#           "kernelConfig":null,
+#           "speculativeConfig":"{\"method\":\"mtp\",\"num_speculative_tokens\":2}"}
+#          No attention backend anywhere: the octave_* dtype selects
+#          ROCM_OCTAVE on ROCm and the MTP draft inherits it.
+#   arm 2  {"kvCacheDtype":"octave_k3v4","maxModelLen":32768}
+#   phase L of an Octave arm that passes its 32K phase:
+#          {"maxModelLen":135168} (32K/64K decode, 3 x 128K needle).
+# Checked before writing (2026-11-05): v1alpha2 spec.config.kvCacheDtype has
+# no enum and backend/vllm.go renders it verbatim as --kv-cache-dtype, so the
+# live controller (1286a2f1) needs no change; the image ships
+# rocm_octave_attn.py, octave_k3v4 / octave_k3v3 / octave_k3v3_compact in
+# config/cache.py and the octave_* ops in _C.abi3.so; the model is head 256,
+# 64 rotary dims, 24 q / 4 kv heads (GQA 6), all inside Octave's contract.
+# `vllmVersion: "0.33.0"` is ignored by the live controller (pre-!1281), which
+# then renders two dead VLLM_* env names and --mamba-cache-mode (warnings
+# only, as in S3); a !1281 controller drops them.
+#
+# Placement: the XTX warm lane's slot (cblevins-7900xtx, count 2 /
+# hipVisibleDevices 0, shared group 7900xtx-textgen, vramEstimateMB 23200 =
+# the whole card), priority 480 like S3: above the warm lane (300), below the
+# creative lanes (500). It is applied at minReplicas 0, so the apply only
+# stages the Local cache; the agent raises it to 1 after S4's step-0 window
+# (priority 520) has ended. KT-QOS and KT-SO queue behind this window.
+#
+# Window cost: the warm lane (mills-warm, mills-council, weaver) is off the
+# card for ~1.5-2 h (arm 0, two Octave arms, up to two long phases); the 5930k
+# workhorse is untouched. Afterwards one proxied request returns the card to
+# the warm lane. Rollback = delete this Model.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-octave-kv-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md"
+    flexinfer.ai/promotion-state: debug-canary-kt-octave
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-octave-kv-xtx
+      sizeLimit: 8Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    # Raised to 1 over MCP once S4's step-0 canary has left the XTX.
+    minReplicas: 0
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    vllmVersion: "0.33.0"
+    dedicatedDeployment: true
+    # Arm 0 (fp16 baseline). Arms 1-2 remove attentionBackend and kernelConfig.
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    warmPolicy: primary
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    # Arm 0: fp16 KV. Arm 1: octave_k3v3. Arm 2: octave_k3v4.
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    # Needed for the APC probe: vLLM reports cached_tokens only with this on.
+    enablePromptTokensDetails: true
+    # Arm 0. Arms 1-2: '{"method":"mtp","num_speculative_tokens":2}'.
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-octave-kv-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-octave-kv-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

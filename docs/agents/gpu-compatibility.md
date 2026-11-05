@@ -250,6 +250,10 @@ schema-constrained turns correct and fast, and the flag pins the backend so a
 runtime upgrade cannot swap it under a certified lane. The kill-test is KT-SO
 (`gfx1100-structured-outputs-<date>` in `.loom/60-validation-matrix.md`), run
 with `flexinfer-bench tool_call_conformance`. No architecture is certified yet.
+The certificate covers backend `auto` only: the gate never certifies
+LM-Format-Enforcer (deprecated in vLLM 0.33) or any other backend, and
+`make certify-matrix` renders a vLLM certificate naming LM-Format-Enforcer as
+`unsupported`.
 
 ## Certificate-gated pyannote backend
 
