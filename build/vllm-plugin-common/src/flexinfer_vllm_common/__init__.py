@@ -8,19 +8,22 @@ here once instead of being copied per plugin:
 * ``segmented`` — tuning ROCm segmented attention at the engine's block-table
   width, opt-in (``FLEXINFER_SEGMENTED_RUNTIME_TABLES``).
 * ``labels`` — resolving the label space of a composite (multimodal) config,
-  whose ``text_config`` does not carry ``id2label``.
-* ``hybrid`` — applying the hybrid/mamba state contract to model classes that
-  ship without it.
+  whose ``text_config`` does not carry ``id2label``, for the seqcls plugin's
+  head-size assertions.
+
+Every plugin targets vLLM 0.32 or later. The 0.23/0.26 compatibility helpers
+(``hybrid``: the hybrid/mamba state contract; ``mrope``: the multimodal M-RoPE
+donor; the in-place label repair) were removed in 0.4.0 once no lane pinned
+those runtimes: 0.32 ships all three upstream. The frozen gfx906 vLLM 0.20.1
+image still needs them; it copies its plugin sources (plugin-common 0.1.0) out
+of the image it already runs (build/Dockerfile.vllm-rocm-gfx906-qwen35-mtp).
 
 This package imports neither vLLM nor torch at module scope, so it is safe to
 import from a plugin's module body and can be unit-tested in a bare Python
 image. Callers pass the modules and classes they already hold.
 """
 
-from .hybrid import MAMBA_STATE_METHODS, apply_hybrid_state
-from .labels import default_num_labels, repair_text_config_labels, resolve_num_labels
-from .mrope import CONFIG_ATTR as MROPE_CONFIG_ATTR
-from .mrope import attach_mrope_support, needs_mrope
+from .labels import default_num_labels, resolve_num_labels
 from .rocm import (
     CONSUMER_ROCM_ARCHS,
     FLA_AUTOTUNE_ENV,
@@ -43,12 +46,7 @@ __all__ = [
     "FLA_AUTOTUNE_ENV",
     "FLA_AUTOTUNE_POLICIES",
     "FLA_OPS_PREFIXES",
-    "MAMBA_STATE_METHODS",
-    "MROPE_CONFIG_ATTR",
     "SEGMENTED_RUNTIME_TABLES_ENV",
-    "apply_hybrid_state",
-    "attach_mrope_support",
-    "needs_mrope",
     "default_num_labels",
     "fla_autotune_policy",
     "import_fla_kkt_module",
@@ -56,7 +54,6 @@ __all__ = [
     "install_segmented_runtime_tables_if_enabled",
     "needs_safe_fla_config",
     "prune_fla_configs_if_needed",
-    "repair_text_config_labels",
     "resolve_num_labels",
     "select_rocm_safe_fla_configs",
 ]

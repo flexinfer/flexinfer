@@ -296,7 +296,7 @@ Checked against the code on 2026-11-04 where marked (✓).
 | B3 | vLLM `v0.33.0-rocm72` serving image (B1 + B2 in the overlay) | `build/Dockerfile.runtime-serving-v032` `BASE_IMAGE` | parity canary (§6 S1) |
 | B4 | gfx906 llama.cpp b11335 → b11847 | `build/Dockerfile.runtime-gfx906` `LLAMACPP_VERSION` | trial build on the ROCm 6.2 builder; LM-head skip VRAM re-measure; HW-queue count; slot files discarded and the slots certificate re-issued |
 | B5 | whisper.cpp v1.9.5 → v1.9.6 or a pinned master commit | same Dockerfile | KT-ASR rerun (34.7× real time at 40 CUs is the bar) |
-| B6 | Delete dead plugin code (`hybrid.py`, `mrope.py`, the `Qwen3_5ForCausalLM` registration, `_patch_gptq_expert_loader`, the seqcls label repair minus its assertions) | `build/vllm-plugin-common`, `build/vllm-qwen35-*-plugin` | only once no 0.23/0.26 image is pinned by any lane |
+| B6 | Delete dead plugin code (`hybrid.py`, `mrope.py`, the `Qwen3_5ForCausalLM` registration, `_patch_gptq_expert_loader`, the seqcls label repair minus its assertions) | `build/vllm-plugin-common`, `build/vllm-qwen35-*-plugin` | only once no 0.23/0.26 image is pinned by any lane. **Done 2026-11-05**: the 0.23 lanes and the 0.26 OpenJEV gfx1100 lane were retired (!1296, `.loom/70-result-qwen35-35b-v023-retirement-2026-11-05.md`), and the gfx906 0.20.1 image copies frozen plugins out of `vllm@e0aa1e2e` (B6 MR) |
 
 **C. Workarounds to re-test, not remove blind**: `HSA_OVERRIDE_GFX_VERSION=11.0.0` (redundant on a
 native gfx1100, may also stop the XTX iGPU being spoofed), `TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL`
