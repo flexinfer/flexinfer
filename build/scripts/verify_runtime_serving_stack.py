@@ -18,6 +18,10 @@ internal/runtime/manager.go), so the build proves, without a GPU:
 - every third-party module the servers import outside a try block resolves,
   and every name they import from a diffusers module exists in the installed
   diffusers;
+- every module an in-pod lane needs that no server imports directly resolves
+  (diffusers imports them lazily: NF4 loading, the SDE scheduler, MP4 export,
+  VACE prompt cleaning), bitsandbytes ships the ROCm library for this torch's
+  HIP version, and imageio-ffmpeg's bundled ffmpeg is executable;
 - the supervisor binary and tini are executable.
 
 Every failing check is reported before the build fails once.
@@ -217,6 +221,66 @@ def non_executable(paths: Iterable[str], access: Callable = os.access) -> list[s
     return [path for path in paths if not access(path, os.X_OK)]
 
 
+def package_dir(module: str, find_spec: Callable) -> Path | None:
+    try:
+        spec = find_spec(module)
+    except (ImportError, ValueError):
+        return None
+    if spec is None or not spec.submodule_search_locations:
+        return None
+    return Path(list(spec.submodule_search_locations)[0])
+
+
+def torch_hip_version(torch_dir: Path | None) -> str | None:
+    """torch.version.hip, read from torch/version.py without importing torch."""
+    if torch_dir is None:
+        return None
+    try:
+        tree = ast.parse((torch_dir / "version.py").read_text())
+    except (OSError, SyntaxError):
+        return None
+    for node in tree.body:
+        if (
+            isinstance(node, (ast.Assign, ast.AnnAssign))
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        ):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            if any(isinstance(t, ast.Name) and t.id == "hip" for t in targets):
+                return node.value.value
+    return None
+
+
+def bnb_library_error(hip_version: str | None, bnb_dir: Path | None) -> str | None:
+    """bitsandbytes loads libbitsandbytes_rocm<major><minor>.so for torch's HIP
+    version and quietly falls back to its CPU library when no GPU is visible,
+    so importing it at build time proves nothing. The file must be there."""
+    if bnb_dir is None:
+        return "bitsandbytes is not installed"
+    parts = (hip_version or "").split(".")
+    if len(parts) < 2 or not all(p.isdigit() for p in parts[:2]):
+        return f"torch reports no usable HIP version ({hip_version!r})"
+    name = f"libbitsandbytes_rocm{parts[0]}{parts[1]}.so"
+    if not (bnb_dir / name).is_file():
+        shipped = sorted(p.name for p in bnb_dir.glob("libbitsandbytes_rocm*.so"))
+        return f"{name} (HIP {hip_version}) is not in {bnb_dir}; it ships {shipped or 'no ROCm library'}"
+    return None
+
+
+def ffmpeg_error(
+    get_exe: Callable[[], str], access: Callable = os.access
+) -> str | None:
+    """diffusers' export_to_video needs imageio-ffmpeg's ffmpeg; without it the
+    Wan lanes fall back to OpenCV mp4v, which browsers do not play."""
+    try:
+        exe = get_exe()
+    except Exception as exc:  # imageio-ffmpeg raises RuntimeError when absent
+        return f"imageio-ffmpeg has no ffmpeg: {exc}"
+    if not access(exe, os.X_OK):
+        return f"{exe} is not executable"
+    return None
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument(
@@ -240,6 +304,12 @@ def main(argv: list[str] | None = None) -> int:
         action="append",
         default=[],
         help="a binary that must be executable (repeatable)",
+    )
+    parser.add_argument(
+        "--require-module",
+        action="append",
+        default=[],
+        help="a module an in-pod lane needs that no server imports directly (repeatable)",
     )
     args = parser.parse_args(argv)
     failures: list[str] = []
@@ -308,6 +378,31 @@ def main(argv: list[str] | None = None) -> int:
                 ],
                 f"{count} names",
             )
+
+    if args.require_module:
+        report(
+            "lane modules",
+            [
+                f"{module} does not resolve"
+                for module in missing_modules(
+                    args.require_module, importlib.util.find_spec
+                )
+            ],
+            ", ".join(sorted(args.require_module)),
+        )
+    if "bitsandbytes" in args.require_module:
+        hip = torch_hip_version(package_dir("torch", importlib.util.find_spec))
+        error = bnb_library_error(
+            hip, package_dir("bitsandbytes", importlib.util.find_spec)
+        )
+        report("bitsandbytes ROCm library", [error] if error else [], f"HIP {hip}")
+    if "imageio_ffmpeg" in args.require_module:
+
+        def get_exe() -> str:
+            return importlib.import_module("imageio_ffmpeg").get_ffmpeg_exe()
+
+        error = ffmpeg_error(get_exe)
+        report("imageio-ffmpeg binary", [error] if error else [])
 
     report(
         "executables",

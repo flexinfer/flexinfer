@@ -23,7 +23,8 @@
 #
 # Package pins match build/Dockerfile.pyannote-rocm-gfx906, the image the live
 # Deployment has run on this card since 2026-06-02 on the same mixa3607
-# v2.9.0-rocm-6.3.3 base the gfx906 runtime uses.
+# v2.9.0-rocm-6.3.3 base the gfx906 runtime uses, plus the venv-local
+# transformers pin explained below.
 #
 # Build (from the repository root, on a host that can push to Harbor):
 #   docker --context 7900xtx build -f build/Dockerfile.runtime-gfx906-pyannote \
@@ -42,11 +43,21 @@ print('torchaudio==%s' % torchaudio.__version__)" > /opt/flexinfer/pyannote-torc
 # --without-pip: the base python may lack ensurepip. With
 # --system-site-packages the venv's interpreter runs the base's pip module,
 # which installs into the venv because sys.prefix is the venv.
+#
+# transformers 4.46.3 shadows the runtime's transformers 5 inside the venv
+# only. pyannote.audio imports pytorch_lightning -> torchmetrics, and
+# torchmetrics.functional.text.bert imports transformers whenever one is
+# installed. The runtime's transformers 5 needs huggingface_hub 1.x and fails
+# that import against the venv's 0.25.2 (first build, 2026-11-02:
+# "cannot import name 'ResolvedRevision' from 'huggingface_hub'"). 4.46.x is
+# the last line that accepts huggingface_hub < 1.0. pyannote never calls it;
+# the Deployment's image (no transformers in its base) never needed this.
 RUN python3 -m venv --system-site-packages --without-pip /opt/pyannote \
     && PIP_CONSTRAINT=/opt/flexinfer/pyannote-torch-constraints.txt \
        /opt/pyannote/bin/python -m pip install --no-cache-dir \
         "numpy==1.26.4" \
         "huggingface_hub==0.25.2" \
+        "transformers==4.46.3" \
         "pyannote.audio==3.3.2" \
         "onnxruntime==1.17.3" \
         "soundfile==0.12.1" \

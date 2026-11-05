@@ -42,9 +42,60 @@ Model keeps serving. The outcome is condition `StructuredOutput`:
 | False | `StructuredOutputNotCertified` | no GPUProfile, no or partial certificate, image not digest-pinned, or certificate bound to another image |
 | False | `StructuredOutputUnsupported` | backend is not vllm, or the lane loads into a runtime pod |
 
+The certificate covers backend `auto` only (xgrammar, falling back to guidance
+per request). The gate never certifies LM-Format-Enforcer, which vLLM 0.33
+deprecates, nor any other backend KT-SO did not prove; the renderer drops such a
+backend too, and the certification matrix shows a vLLM certificate naming
+LM-Format-Enforcer as `unsupported` whatever its keys.
+
 The condition is absent when the field is unset or false. `structuredOutput` is
 also matched by WorkflowProfile `capabilities` and `requiredCapabilities`, as a
 declaration, like `toolCalling`.
+
+### `Model`: vLLM release and release-specific keys
+
+`spec.config.vllmVersion` declares the vLLM release a `vllm` or `vllm-omni`
+Model's image carries, as a quoted string: `"0.33.0"`, `"v0.33.0"`, `"0.33.0+rocm72"` or
+`"0.33"`. Like `llamacppBuild` for llama.cpp it is controller metadata: it never
+reaches the server, it only selects what the backend renders for that release.
+Leave it unset and the lane renders exactly what it rendered before the key
+existed. Set it when a lane moves to vLLM 0.32 or later, and in the same change
+as the image pin, because `failOnEnvironValidation: true` makes vLLM refuse to
+start on any `VLLM_*` variable its `vllm/envs.py` does not define.
+
+| Key / output | Unset `vllmVersion` | `vllmVersion` ≥ 0.32.0 | ≥ 0.33.0 |
+|---|---|---|---|
+| `VLLM_ROCM_USE_AITER_PAGED_ATTN` (from `disableAiter`, `rocmUseAiter: false`, `rocmCustomPagedAttn`) | rendered | dropped (not in 0.32.0 or later) | dropped |
+| `VLLM_USE_TRITON_FLASH_ATTN` (from `enableFlashAttention`) | rendered | dropped | dropped |
+| `VLLM_ROCM_USE_AITER_FP4_ASM_GEMM` (from `disableAiter`, `rocmUseAiter: false`) | rendered | rendered | dropped (removed in 0.33.0, vLLM #61278) |
+| `mambaCacheMode` → `--mamba-cache-mode` | rendered | rendered (0.32 already picks `align` when prefix caching is on) | not rendered: a deprecated no-op in 0.33.0 that 0.34 removes; prefix caching on hybrids follows `enablePrefixCaching` |
+
+`vllm-omni` drops the same `VLLM_*` names (today only
+`VLLM_USE_TRITON_FLASH_ATTN`, from `enableFlashAttention`) by the same rule.
+
+The AITER keys (`enableAiter`, `disableAiter`, `rocmUseAiter`) do nothing on
+gfx1100 or gfx906: vLLM uses AITER only on CDNA 3 or newer (gfx942, gfx950).
+`enableAiter` renders `VLLM_ROCM_USE_AITER=1` on gfx942 and gfx950 only, on
+both `vllm` and `vllm-omni`; `rocmUseAiter` and `disableAiter` stay literal env
+overrides on every architecture.
+
+Pass-through keys, each rendered only when set (all exist in vLLM 0.32.0 and
+0.33.0):
+
+| Key | Flag | Value |
+|---|---|---|
+| `prefixMatchUnit` | `--prefix-match-unit` | integer > 0; the token boundary a prefix-cache hit can land on. Every KV cache group's block size must divide by it |
+| `enableMambaSharedPrefixCheckpoint` | `--enable-mamba-shared-prefix-checkpoint` / `--no-…` | bool; also checkpoints Mamba state where an MTP/EAGLE sibling resumes. Needs prefix caching (Mamba `align` mode), MTP or EAGLE and a `prefixMatchUnit` below the Mamba block size |
+| `kvTransferConfig` | `--kv-transfer-config` | JSON object, as an encoded string or a YAML map |
+| `sleepPreserveParameterNames` | `--sleep-preserve-parameter-names` | list of parameter-name globs kept across a level-2 sleep, e.g. `["draft.*"]`; one token per glob |
+
+The controller refuses these with Phase `Failed`, `Schedulable=False` and reason
+`ConfigInvalid` before anything renders:
+
+- `maxNumPartialPrefills` or `maxLongPartialPrefills`: vLLM has no
+  `--max-num-partial-prefills` / `--max-long-partial-prefills` flag (absent from
+  0.32.0, 0.33.0 and main), so the server would abort in argument parsing.
+- a `vllmVersion` that is not a quoted release string (on `vllm-omni` too).
 
 ### `Model`: certificate-gated backends
 

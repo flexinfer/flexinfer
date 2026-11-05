@@ -21,6 +21,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- A Model the VRAM or hardware-queue fit check refuses now leaves the runtime pod (`controllers/model_runtime.go` `persistRefusedFit`, `controllers/model_controller.go`).
+  - KT-RET K2 (2026-11-02) parked `gte-qwen2-1p5b-radeonvii` by raising `spec.gpu.vramEstimateMB` 2600 → 20000. The election parked it (`ParkedBehindPrimary`) and the proxy rerouted to the CPU twin, but the engine stayed loaded: its Service answered 136/136 at p50 37 ms for the whole park.
+  - 20000 MB is above 95 % of the card, so `validateVRAMFit` marked the Model Failed and returned before `reconcileViaRuntime`, the only path that unloads an in-pod lane. A refused estimate never fits the group's Active set, so the election had already stopped counting the lane's VRAM and queues while the engine still held them.
+  - The refusal now unloads the instance and clears its Endpoints. While the runtime drains accepted requests (HTTP 409) the Endpoints stay and the reconcile requeues short. A budget park (an estimate that fits the card but not the room beside the leader) already unloaded and is unchanged.
+  - Tests: `controllers/model_refused_fit_release_test.go` (the gte manifest beside the bge leader and the reranker on the shipped gfx906 profile: budget park, refused park, refused park while draining).
+
 - The gfx906 GPUProfile now sets `GPU_MAX_HW_QUEUES=1` (`deploy/gpuprofiles/gfx906.yaml`, !1140).
   - The Radeon VII exposes 24 HWS compute queues. Each uncapped HIP process took 4–6, and the warm retrieval/voice plane alone reached 26.
   - Every further GPU process oversubscribed the runlist (`amdgpu: Runlist is getting oversubscribed`). Requests to a Qwen3 probe took a flat 30 s, and live gte timed out until the probe stopped.
