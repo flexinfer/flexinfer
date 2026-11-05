@@ -173,9 +173,29 @@ func (p profile) certificateEntries() []Entry {
 			e.SupportLevel = SupportCertified
 			e.Evidenced = true
 		}
+		if note := refusedCertificate(backend, capability); note != "" {
+			e.SupportLevel = SupportUnsupported
+			e.Evidenced = false
+			e.EvidenceNote = note
+		}
 		out = append(out, e)
 	}
 	return out
+}
+
+// refusedCertificate names a certificate the matrix must never show as
+// certified, whatever its keys say, and why. A vLLM structured-output
+// certificate for LM-Format-Enforcer is one: vLLM 0.33 deprecates that
+// backend and the controller's D4 gate refuses it (backend auto only).
+func refusedCertificate(backend, capability string) string {
+	if !strings.HasPrefix(backend, "vllm") {
+		return ""
+	}
+	c := strings.ReplaceAll(strings.ToLower(capability), "_", "-")
+	if strings.Contains(c, "lm-format-enforcer") || strings.Contains(c, "lmformatenforcer") {
+		return "LM-Format-Enforcer is never certified: vLLM 0.33 deprecates it and the D4 gate refuses it"
+	}
+	return ""
 }
 
 // splitCertificateKey splits "<backend>-<capability>" on the longest backend

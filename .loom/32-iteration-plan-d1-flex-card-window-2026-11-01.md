@@ -31,6 +31,24 @@ HelmRelease covers the runtime DaemonSet.
 | 3 | KT-SWAP | Hold the card with a GPULease on `7900xtx-textgen` and run the profiler (matrix row). Use the fallback arm (warm-lane reloads) unless a v032 image with bitsandbytes exists by then. | after 2 is Ready in-pod |
 | 4 | !1236 Qwen-Image, !1237 Wan T2V, !1238 Wan VACE, !1239 Stable Audio | Creative lanes in-pod, one per MR, stacked in that order. | **Blocked** on the runtime image (§3.2) |
 
+**Status 2026-11-04:** order 1 is done, ahead of the 11-06 window (owner override after KT-FLEX
+passed, !1277). Merged in this order:
+
+1. !1278 moved the gfx1100 GPUProfile vLLM defaults to 0.32 (graphs on, default image `b06b06fe`).
+   The lanes that relied on the old defaults pin them.
+2. !1234, retargeted to `527e2714`, rolled the XTX runtime pod at 18:59:36Z.
+3. !1243 pinned the agent by digest (`6b832f38`).
+
+Verdict: `promote` (all five pass criteria met), matrix row `xtx-runtime-v032-527e2714-2026-11-04`. snac served in-pod on a
+borrowed card. whisper stays runtime-eligible but cannot transcribe in-pod (§4 Q2, accepted). The
+5930k profile stays on `cfefae18`. Next is order 2 (!1235), whose gate (runtime Running with 0
+restarts) is met. Order 0 (the warm-lane Deployment baseline) has to run first.
+
+Finding for !1235 and KT-SWAP: a borrowed card does not come back to the warm lane on its own.
+The warm lane is `minReplicas: 1` but `warmPolicy: ondemand`, so the election's Ready-first rule
+keeps any Ready borrower until the warm lane sees proxy demand. After the snac borrow it stayed
+Queued for 16 min past the 5-min cooldown, and one proxied request brought it back in 1m35s.
+
 Rollbacks:
 
 - !1234: revert. `cfefae18` stays prewarmed and pinned.
@@ -84,6 +102,26 @@ The unblock is one v032 rebuild adding these to the overlay, under the
 frozen-stack constraint, with the verifier extended. Then certify it,
 prewarm it and repin in one line. bitsandbytes on ROCm 7.2 is the unproven
 piece (R §7e S6e).
+
+**2026-11-03: the rebuild is in** (`feat/d1-v032-creative-deps`). The overlay
+adds bitsandbytes 0.50.2, torchsde 0.2.6, imageio 2.37.0, imageio-ffmpeg 0.6.0
+and ftfy 6.3.1 under the snapshot constraints. `verify_runtime_serving_stack.py
+--require-module` fails the build when one of them is missing, when
+bitsandbytes lacks `libbitsandbytes_rocm<maj><min>.so` for the image's
+`torch.version.hip`, or when imageio-ffmpeg has no executable ffmpeg. The
+0.50.2 wheel's `libbitsandbytes_rocm72.so` carries gfx1100 code objects (read
+from its compressed offload bundle). NF4 numerics on the card are still open:
+the !1236 Qwen-Image canary has to prove them. librosa and soundfile stay out,
+per Q2 (ASR moved to the Radeon VII). The new image also carries the Wan VAE
+MIOpen bypass (!1268). It took the dedicated Wan lane's decode from 370 s to
+7 s on 2026-11-04. In-pod on ROCm 7.2 it is unmeasured.
+
+CI published it as `527e2714` (`rocm-gfx1100-serving-v032-ddf22437`, pipeline
+37264, job 460293, 2026-11-03 22:21Z). The build-time verify passed: 265
+packages unchanged, the new modules resolve, bitsandbytes finds HIP 7.2.53211,
+and the ffmpeg binary runs. !1274 certified it and prewarmed it on the XTX
+(resident 00:48Z), and Draft !1234 now repins to it. `7ae8e92f` and `ef28b7b0`
+stay certified fallbacks.
 
 ### 3.3 Other findings
 

@@ -101,13 +101,16 @@ resources:
   # qwen3-14b-ablit-newimg.yaml is retained as a restore recipe but excluded
   # while parked; reconciling its idle Deployment template can hot-loop and
   # starve active Model updates. Restore only with minReplicas 1 + promotion.
-  - qwen35-35b-clean-gptq-workhorse.yaml  # 2026-07-14: PROMOTED clean 64K graph-mode workhorse; 2026-08-16: base role aliases moved to qwen36-27b-autoround-workhorse, keeps *-128k routes.
+  # qwen35-35b-clean-gptq-workhorse{,-128k}.yaml, qwen35-35b-clean-mtp-32k.yaml:
+  # RETIRED 2026-11-05 (owner). The three Qwen3.5-35B-A3B MoE lanes ran vLLM
+  # 0.23 overlays (vllm@7bc680b4 / f467e202) and served 0 requests in 30+
+  # days: the 5930k lane was parked behind the 900 workhorse since 08-26,
+  # the XTX pair idle since 07-19. Evidence and recovery:
+  # .loom/70-result-qwen35-35b-v023-retirement-2026-11-05.md.
   - qwen36-27b-autoround-workhorse.yaml  # 2026-08-16: base role aliases moved to qwen38-27b-autoround-workhorse; parked fallback until 3.8 soak.
   - qwen38-27b-autoround-workhorse.yaml  # 2026-10-30: ALWAYS-ON workhorse on cblevins-5930k (priority 900, warmPolicy primary, minReplicas 1); every other 5930k-textgen member is statically parked behind it. .loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md §6.
   - qwen38-27b-xtx-warm-canary.yaml  # 2026-09-13: PROMOTED warm Mills text lane on the 7900xtx (mills-warm / mills-council, 64K fp8, minReplicas 1); qualified in .loom/10-research-flexinfer-utilization-loom-mills-2026-09-13.md §7a. Voice runs on the VII twin. 2026-10-30: the flex card's idle tenant (300, ondemand, minReplicas 1) below the creative lanes (500), plus failover claims on the workhorse labels.
   - muse-glimmer-30b-tools.yaml  # 2026-08-16: PROMOTED Mills tool/judge lane — Muse Glimmer 30B official K-Quant GGUF on gfx1100 llama.cpp (b11847 since 2026-10-24, matrix row gfx1100-llamacpp-b11847-2026-10-24); aliases glimmer/mills-tools/judge; qualification .loom/10-research-gfx1100-model-quality-2026-08-15.md §8e.
-  - qwen35-35b-clean-gptq-workhorse-128k.yaml  # 2026-07-14: PROMOTED 128K sister on released 7900xtx; exact 129,919-token five-depth pass + isolated proxy smoke.
-  - qwen35-35b-clean-mtp-32k.yaml  # 2026-07-16: PROMOTED native-MTP 32K lane on 7900xtx (demand-only, priority 90, aliases qwen35-mtp/qwen35-mtp-32k); certified 1.230x median decode speedup at 80.18% draft acceptance (.loom/iteration-gfx1100-clean-qwen35-mtp-2026-07-16.md).
   - wan21-t2v-1p3b-gfx1100.yaml     # Wan 2.1 1.3B 480p text-to-video; live gfx1100 gate passed 2026-07-14; on demand (minReplicas=0). 2026-10-30: moved to the 7900xtx flex card, creative tier 500.
   - wan21-vace-1p3b-i2v-gfx1100.yaml  # Wan 2.1 VACE 1.3B image-to-video keyframe lane; on-demand (minReplicas=0), kill-test slice 3 of .loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md. 2026-10-30: moved to the 7900xtx flex card, creative tier 500 (was 600).
   - stable-audio-open-gfx1100.yaml  # Stable Audio Open 1.0 neural music lane; on demand; /v1/audio/generations; kill-test 2026-08-22 (10s@100steps=12.1s on gfx1100). 2026-10-30: moved to the 7900xtx flex card, creative tier 500 (was 450 on 5930k-textgen).

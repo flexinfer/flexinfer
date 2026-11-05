@@ -84,7 +84,8 @@ spec:
                       description: |-
                         VLLM declares vLLM-specific feature capability per architecture.
                         Only meaningful when Support != "unsupported" and the backend key is "vllm".
-                        Wave 1 schema-only addition (2026-05-15): consumers come in a follow-up slice.
+                        The capability strings are documentation; Defaults is applied (see
+                        VLLMCapabilities.Defaults).
                       properties:
                         audioTranscription:
                           description: |-
@@ -102,17 +103,19 @@ spec:
                         defaults:
                           description: |-
                             Defaults specifies default engine args injected when this profile is selected.
-                            Wave 1 lands the field; controller consumers come in a follow-up slice.
+                            backend.ApplyVLLMDefaultsFromProfile fills each one into any Model config
+                            that omits the key, on the Deployment path and in the runtime load payload.
                           properties:
                             cudagraphMode:
                               description: |-
-                                CudagraphMode is the default --cudagraph-mode engine arg.
-                                One of "NONE", "PIECEWISE", or "FULL".
-                                gfx1100 Wave 1: "NONE" until upstream piecewise capture bugs close.
+                                CudagraphMode is the default CUDA-graph mode.
+                                One of "NONE", "PIECEWISE", or "FULL". Only "NONE" is consumed: with
+                                EnforceEager unset it is expressed as enforceEager=true. No
+                                --cudagraph-mode flag is rendered.
                               type: string
                             enforceEager:
-                              description: EnforceEager forces enforce_eager=true
-                                at the engine level.
+                              description: EnforceEager is the default enforceEager
+                                (--enforce-eager) value.
                               type: boolean
                             kvCacheDtype:
                               description: |-
@@ -124,8 +127,7 @@ spec:
                           description: |-
                             FlashAttention reports which FA backend is supported.
                             One of "ck", "triton", "aotriton", or "none".
-                            gfx1100 today: "ck" with AOTriton experimental.
-                            gfx906 today: "none" (no FA kernel exists for Vega20).
+                            gfx906: "none" (no FA kernel exists for Vega20).
                           type: string
                         fp8KVEmulation:
                           description: |-
@@ -143,12 +145,10 @@ spec:
                           description: |-
                             MarlinINT4 reports Marlin INT4 GEMM kernel support. CUDA-only upstream;
                             ROCm variants (Conch, rocm_aiter_marlin) ship in newer vLLM versions.
-                            turboquant-vllm Tq4 backend is the current INT4 path on AMD, tracked separately.
                           type: string
                         piecewiseGraphs:
-                          description: |-
-                            PiecewiseGraphs reports V1 piecewise CUDA-graph capture support.
-                            gfx1100 as of 2026-05: "experimental" pending upstream vllm-project/vllm#39010 / #41622.
+                          description: PiecewiseGraphs reports V1 piecewise CUDA-graph
+                            capture support.
                           type: string
                         v1Engine:
                           description: V1Engine reports vLLM V1 engine support. V0

@@ -257,5 +257,81 @@ def load():
         self.assertIn("snac", snac_modules)
 
 
+class LaneModuleTests(unittest.TestCase):
+    def _package(self, root: Path, name: str, files: dict[str, str]) -> Path:
+        package = root / name
+        package.mkdir()
+        for file, text in files.items():
+            (package / file).write_text(text)
+        return package
+
+    def test_hip_version_is_read_without_importing_torch(self) -> None:
+        verifier = _load_verifier()
+        with tempfile.TemporaryDirectory() as tmp:
+            torch_dir = self._package(
+                Path(tmp),
+                "torch",
+                {
+                    "version.py": "from typing import Optional\n"
+                    "__version__ = '2.13.0+rocm7.2.3'\n"
+                    "cuda: Optional[str] = None\n"
+                    "hip: Optional[str] = '7.2.53211-e2a85a4f9a'\n"
+                },
+            )
+            self.assertEqual(
+                verifier.torch_hip_version(torch_dir), "7.2.53211-e2a85a4f9a"
+            )
+            (torch_dir / "version.py").write_text("hip = None\n")
+            self.assertIsNone(verifier.torch_hip_version(torch_dir))
+        self.assertIsNone(verifier.torch_hip_version(None))
+
+    def test_bnb_needs_the_library_for_this_hip_version(self) -> None:
+        verifier = _load_verifier()
+        with tempfile.TemporaryDirectory() as tmp:
+            bnb = self._package(
+                Path(tmp),
+                "bitsandbytes",
+                {"libbitsandbytes_rocm72.so": "", "libbitsandbytes_cpu.so": ""},
+            )
+            self.assertIsNone(verifier.bnb_library_error("7.2.53211-e2a85a4f9a", bnb))
+            error = verifier.bnb_library_error("7.3.1", bnb)
+            self.assertIn("libbitsandbytes_rocm73.so", error)
+            self.assertIn("libbitsandbytes_rocm72.so", error)
+            self.assertIn(
+                "no usable HIP version", verifier.bnb_library_error(None, bnb)
+            )
+        self.assertEqual(
+            verifier.bnb_library_error("7.2.0", None), "bitsandbytes is not installed"
+        )
+
+    def test_package_dir(self) -> None:
+        verifier = _load_verifier()
+
+        def find_spec(name):
+            if name == "pkg":
+                return types.SimpleNamespace(submodule_search_locations=["/x/pkg"])
+            if name == "flat":
+                return types.SimpleNamespace(submodule_search_locations=None)
+            return None
+
+        self.assertEqual(verifier.package_dir("pkg", find_spec), Path("/x/pkg"))
+        self.assertIsNone(verifier.package_dir("flat", find_spec))
+        self.assertIsNone(verifier.package_dir("absent", find_spec))
+
+    def test_ffmpeg(self) -> None:
+        verifier = _load_verifier()
+        ok = lambda path, mode: True  # noqa: E731
+        self.assertIsNone(verifier.ffmpeg_error(lambda: "/bin/ffmpeg", access=ok))
+
+        def absent():
+            raise RuntimeError("No ffmpeg exe could be found")
+
+        self.assertIn("No ffmpeg exe", verifier.ffmpeg_error(absent, access=ok))
+        self.assertIn(
+            "not executable",
+            verifier.ffmpeg_error(lambda: "/bin/ffmpeg", access=lambda p, m: False),
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

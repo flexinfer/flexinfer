@@ -5,6 +5,12 @@ the nested ``text_config`` block carries no ``id2label``. Sizing a
 classification head from ``get_text_config().num_labels`` therefore returns the
 ``PretrainedConfig`` default and builds a head of the wrong size — which does
 not crash, it silently serves the wrong number of classes.
+
+vLLM 0.32 sizes the head with its own ``_resolve_num_labels`` (models/adapters.py),
+so nothing here mutates the config any more (the 0.23/0.26 in-place repair was
+removed in 0.4.0). ``resolve_num_labels`` mirrors the upstream rule so the
+seqcls plugin can assert that the head vLLM built, and the checkpoint tensor it
+loads, both match the declared label space.
 """
 
 # transformers' historical default when nobody declares a label space.
@@ -26,30 +32,10 @@ def default_num_labels() -> int:
 def resolve_num_labels(hf_config, text_config) -> int:
     """Prefer the top-level label space whenever it declares one.
 
-    Mirrors upstream vLLM's ``_resolve_num_labels``, which released builds do
-    not yet carry.
+    Mirrors upstream vLLM's ``_resolve_num_labels`` (0.32 and later).
     """
     if text_config is hf_config:
         return hf_config.num_labels
     if hf_config.num_labels != default_num_labels():
         return hf_config.num_labels
     return text_config.num_labels
-
-
-def repair_text_config_labels(hf_config) -> int:
-    """Resolve the label count and write it onto the nested text config.
-
-    Repairs the INPUT rather than patching vLLM internals, so the fix is
-    version-independent and becomes a no-op against a build that already
-    resolves labels correctly. Returns the resolved count.
-    """
-    text_config = hf_config.get_text_config()
-    resolved = resolve_num_labels(hf_config, text_config)
-    if resolved is None or int(resolved) < 1:
-        raise RuntimeError(
-            f"could not resolve a label count from the model config (got {resolved!r})"
-        )
-    resolved = int(resolved)
-    if text_config is not hf_config:
-        text_config.num_labels = resolved
-    return resolved
