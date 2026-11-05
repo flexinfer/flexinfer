@@ -277,9 +277,9 @@
       "gpu_class": "gfx1100",
       "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#xtx-vllm-v033-parity-2026-11-05",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-s4-step0-decode-anatomy-2026-11-05",
       "validation_rows": [
-        "xtx-vllm-v033-parity-2026-11-05"
+        "gfx1100-s4-step0-decode-anatomy-2026-11-05"
       ],
       "date": "2026-11-05",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
@@ -1911,6 +1911,38 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/embeddings.yaml"
+    },
+    {
+      "id": "gfx1100-s4-step0-decode-anatomy-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pass",
+      "title": "slice S4 \"step 0\" of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.3 (arm A): where does the Qwen3.8-27B decode step (segmented attention, fp16 KV, MTP K=2, graphs on) spend its…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-s4-step0-decode-anatomy-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-s4-plugin-flags-q2-q3-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "slice S4 arm B, quick wins Q2 (G7) and Q3 (G10) of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.3, shipped opt-in by S2 (!1282, text plugin 0.10.0 / plugin-common 0.3.0)…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-s4-plugin-flags-q2-q3-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
     },
     {
       "id": "xtx-vllm-v033-octave-kv-2026-11-05",
