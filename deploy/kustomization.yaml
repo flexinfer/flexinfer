@@ -11,8 +11,9 @@ resources:
   # the ephemeral, TTL-bound GamingSession directly, gated by the gaming
   # policy in system/values-k3s.yaml (docs/user/gaming-mode-runbook.md).
   # Only the node's gaming capability and that policy live in git.
-  # Bounded, one-shot long-context qualification. The experiment deletes its
-  # candidate after the retained 96K/128K recall gauntlet reaches a verdict.
+  # Bounded, one-shot ModelExperiment qualifications. Each experiment deletes
+  # its candidate once its gauntlet reaches a verdict. Empty since the
+  # 2026-11-05 vLLM 0.23 retirement; kept for the next one.
   - experiments/
   # One-shot, Flux-managed artifact-transform tasks. Each subdirectory
   # is idempotent so Flux re-reconciles are no-ops once complete.

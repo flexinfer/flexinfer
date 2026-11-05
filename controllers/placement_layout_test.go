@@ -48,7 +48,6 @@ var layout5930kMembers = []string{
 	layoutWorkhorse,
 	"qwen36-27b-autoround-workhorse",
 	"qwen36-27b-fable-gptq",
-	"qwen35-35b-clean-gptq-workhorse",
 	"muse-glimmer-30b-tools",
 	"qwen35-9b-ablit-rp-5930k",
 	"qwen36-35b-mtp-uncensored-5930k",
@@ -68,8 +67,6 @@ var layoutXTXParked = []string{
 	"snac-decode-gfx1100",
 	"orpheus-3b-7900xtx",
 	"whisper-large-v3-turbo",
-	"qwen35-35b-clean-gptq-workhorse-128k",
-	"qwen35-35b-clean-mtp-32k",
 }
 
 func loadLayoutGroup(t *testing.T, names ...string) map[string]*aiv1alpha2.Model {
