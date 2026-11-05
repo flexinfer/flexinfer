@@ -1,0 +1,78 @@
+# pyannote layer for the gfx906 runtime: the `pyannote` backend (D5-a of
+# .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.5).
+#
+# NOT built by CI and not referenced by any manifest yet. The owner builds it
+# in the KT-DIAR window on the 7900xtx docker host, on top of the gfx906
+# runtime digest the cluster runs then, so the Radeon VII pulls only this
+# layer (as KT-ASR did); .loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md
+# step W1 has the exact command. Until a GPUProfile carries the
+# flexinfer.ai/backend-certificate-pyannote-speaker-diarization triple for
+# the resulting digest, the controller refuses every pyannote Model, so this
+# file changes nothing by existing.
+#
+# What it adds:
+#   - /opt/pyannote: a venv with --system-site-packages. It uses the runtime's
+#     mixa3607 gfx906 torch/torchaudio (the only torch with Vega20 kernels) and
+#     its fastapi/uvicorn, but keeps pyannote.audio 3.3.2's pins out of the
+#     runtime's site-packages: huggingface_hub 0.25.2 (pyannote 3.3.2 still
+#     calls hf_hub_download(use_auth_token=...), removed in 1.x) would break
+#     transformers 5 and diffusers for every other lane.
+#   - /opt/flexinfer/server-pyannote.py, launched by backend.PyannotePython.
+#   - /opt/flexinfer/torchaudio_compat.py, the shim pyannote 3.3.2 needs on
+#     the fork's torchaudio 2.9 (imported before pyannote by the server).
+#
+# Package pins match build/Dockerfile.pyannote-rocm-gfx906, the image the live
+# Deployment has run on this card since 2026-06-02 on the same mixa3607
+# v2.9.0-rocm-6.3.3 base the gfx906 runtime uses, plus the venv-local
+# transformers pin explained below.
+#
+# Build (from the repository root, on a host that can push to Harbor):
+#   docker --context 7900xtx build -f build/Dockerfile.runtime-gfx906-pyannote \
+#     --build-arg RUNTIME_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:<gfx906 digest> \
+#     -t registry.harbor.lan/flexinfer/runtime:rocm-gfx906-pyannote-<base12> .
+ARG RUNTIME_IMAGE
+FROM ${RUNTIME_IMAGE}
+
+# Pin the base's torch/torchaudio so nothing below can replace the HIP fork
+# with a PyPI (CUDA) wheel. The fork's +rocm local tag makes the pin exact.
+RUN python3 -c "import torch, torchaudio; \
+print('torch==%s' % torch.__version__); \
+print('torchaudio==%s' % torchaudio.__version__)" > /opt/flexinfer/pyannote-torch-constraints.txt \
+    && cat /opt/flexinfer/pyannote-torch-constraints.txt
+
+# --without-pip: the base python may lack ensurepip. With
+# --system-site-packages the venv's interpreter runs the base's pip module,
+# which installs into the venv because sys.prefix is the venv.
+#
+# transformers 4.46.3 shadows the runtime's transformers 5 inside the venv
+# only. pyannote.audio imports pytorch_lightning -> torchmetrics, and
+# torchmetrics.functional.text.bert imports transformers whenever one is
+# installed. The runtime's transformers 5 needs huggingface_hub 1.x and fails
+# that import against the venv's 0.25.2 (first build, 2026-11-02:
+# "cannot import name 'ResolvedRevision' from 'huggingface_hub'"). 4.46.x is
+# the last line that accepts huggingface_hub < 1.0. pyannote never calls it;
+# the Deployment's image (no transformers in its base) never needed this.
+RUN python3 -m venv --system-site-packages --without-pip /opt/pyannote \
+    && PIP_CONSTRAINT=/opt/flexinfer/pyannote-torch-constraints.txt \
+       /opt/pyannote/bin/python -m pip install --no-cache-dir \
+        "numpy==1.26.4" \
+        "huggingface_hub==0.25.2" \
+        "transformers==4.46.3" \
+        "pyannote.audio==3.3.2" \
+        "onnxruntime==1.17.3" \
+        "soundfile==0.12.1" \
+    && rm -rf /root/.cache
+
+COPY build/scripts/torchaudio_compat.py /opt/flexinfer/torchaudio_compat.py
+COPY build/server-pyannote.py /opt/flexinfer/server-pyannote.py
+
+# Build-time gates, both on the venv interpreter the backend launches:
+#   - the import chain the server runs (shim, then pyannote, then the server's
+#     own imports) works on the fork's torchaudio 2.9;
+#   - the base's torch is still the ROCm fork, and the runtime's own python
+#     still sees its newer huggingface_hub (the venv did not leak).
+RUN cd /opt/flexinfer && /opt/pyannote/bin/python -c "import torchaudio_compat, torch, torchaudio, pyannote.audio, fastapi, uvicorn, multipart, soundfile, huggingface_hub; \
+assert torch.version.hip, 'torch is not the ROCm build'; \
+print('torch', torch.__version__, '| hip', torch.version.hip, '| pyannote', pyannote.audio.__version__, '| huggingface_hub', huggingface_hub.__version__)" \
+    && /opt/pyannote/bin/python -m py_compile /opt/flexinfer/server-pyannote.py \
+    && python3 -c "import huggingface_hub, sys; v = huggingface_hub.__version__; print('runtime huggingface_hub', v); sys.exit(v == '0.25.2')"

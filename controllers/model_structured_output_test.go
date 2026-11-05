@@ -20,7 +20,12 @@ import (
 )
 
 const (
-	soCertifiedImage = "registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2"
+	// The KT-SO canary's image: vLLM 0.33.0-rocm72 since the 2026-11-05
+	// re-target (owner decision P2), so a PASS certifies this digest.
+	soCertifiedImage = "registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69"
+	// The production workhorse's pin (vLLM 0.32.0), which a certificate for
+	// the 0.33 canary image does not cover.
+	soWorkhorseImage = "registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2"
 	soOtherImage     = "registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 	soEvidence       = ".loom/60-validation-matrix.md#gfx1100-structured-outputs-2026-11-06"
 )
@@ -179,6 +184,38 @@ func TestEvaluateStructuredOutput(t *testing.T) {
 	}
 }
 
+// A7: the gate never certifies LM-Format-Enforcer (deprecated in vLLM 0.33)
+// or any backend KT-SO did not prove, even when a complete certificate binds
+// the selected image.
+func TestEvaluateStructuredOutputRefusesUncertifiedBackends(t *testing.T) {
+	model := soModel(soBool(true), map[string]any{"dedicatedDeployment": true})
+	profile := soProfile(soCertify(soCertifiedImage))
+
+	auto := evaluateStructuredOutputBackend(model, backend.NameVLLM, profile, "gfx1100", soCertifiedImage, backend.VLLMStructuredOutputsBackendAuto)
+	require.True(t, auto.Render)
+	require.Equal(t, backend.VLLMStructuredOutputsBackendAuto, auto.Backend)
+	require.Equal(t, auto, evaluateStructuredOutput(model, backend.NameVLLM, profile, "gfx1100", soCertifiedImage))
+
+	for _, tc := range []struct {
+		soBackend   string
+		wantMessage string
+	}{
+		{backend.VLLMStructuredOutputsBackendLMFormatEnforcer, "LM-Format-Enforcer) is never certified: vLLM 0.33 deprecates it"},
+		{"lm_format_enforcer", "is never certified"},
+		{"xgrammar", `proves backend "auto" only`},
+	} {
+		t.Run(tc.soBackend, func(t *testing.T) {
+			got := evaluateStructuredOutputBackend(model, backend.NameVLLM, profile, "gfx1100", soCertifiedImage, tc.soBackend)
+			require.True(t, got.Requested)
+			require.False(t, got.Render)
+			require.Empty(t, got.Backend)
+			require.Equal(t, aiv1alpha2.ReasonStructuredOutputNotCertified, got.Reason)
+			require.Contains(t, got.Message, tc.wantMessage)
+			require.Contains(t, got.Message, "--structured-outputs-config not rendered")
+		})
+	}
+}
+
 func TestApplyStructuredOutputCondition(t *testing.T) {
 	model := soModel(soBool(true), map[string]any{"dedicatedDeployment": true})
 
@@ -206,7 +243,7 @@ func TestApplyStructuredOutputCondition(t *testing.T) {
 // renders it, certificate or not, so D4 is live-neutral at merge.
 func TestStructuredOutputDeploymentRender(t *testing.T) {
 	workhorse := loadDeployModelManifest(t, filepath.Join("..", "deploy", "models", "qwen38-27b-autoround-workhorse.yaml"))
-	require.Equal(t, soCertifiedImage, workhorse.Spec.Image, "fixture image must be the workhorse's pinned digest")
+	require.Equal(t, soWorkhorseImage, workhorse.Spec.Image, "fixture image must be the workhorse's pinned digest")
 	optedIn := workhorse.DeepCopy()
 	optedIn.Spec.Capabilities = &aiv1alpha2.ModelCapabilities{StructuredOutput: soBool(true)}
 
@@ -216,10 +253,11 @@ func TestStructuredOutputDeploymentRender(t *testing.T) {
 		profile *aiv1alpha2.GPUProfile
 		want    bool
 	}{
-		{name: "shipped workhorse, certified profile", model: workhorse, profile: soProfile(soCertify(soCertifiedImage)), want: false},
+		{name: "shipped workhorse, certified profile", model: workhorse, profile: soProfile(soCertify(soWorkhorseImage)), want: false},
 		{name: "opted in, no certificate", model: optedIn, profile: soProfile(nil), want: false},
 		{name: "opted in, certificate for another image", model: optedIn, profile: soProfile(soCertify(soOtherImage)), want: false},
-		{name: "opted in, certificate for its image", model: optedIn, profile: soProfile(soCertify(soCertifiedImage)), want: true},
+		{name: "opted in, certificate for the KT-SO canary's 0.33 image", model: optedIn, profile: soProfile(soCertify(soCertifiedImage)), want: false},
+		{name: "opted in, certificate for its image", model: optedIn, profile: soProfile(soCertify(soWorkhorseImage)), want: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -263,4 +301,33 @@ func renderStructuredOutputArgs(t *testing.T, model *aiv1alpha2.Model, profile *
 	}
 	t.Fatalf("rendered Deployment has no container args")
 	return nil
+}
+
+// TestStructuredOutputCanaryManifest renders the KT-SO paste manifest. Before
+// the verdict (no certificate) it must render no flag and report
+// NotCertified; once deploy/gpuprofiles/gfx1100.yaml carries the certificate
+// for its image, the same manifest renders the flag and reports Certified.
+func TestStructuredOutputCanaryManifest(t *testing.T) {
+	canary := loadDeployModelManifest(t, filepath.Join("..", "deploy", "debug", "qwen38-27b-so-canary.yaml"))
+	require.True(t, structuredOutputRequested(canary))
+	require.Equal(t, soCertifiedImage, canary.Spec.Image)
+
+	for _, tc := range []struct {
+		name    string
+		profile *aiv1alpha2.GPUProfile
+		want    bool
+		reason  string
+	}{
+		{"before the verdict", soProfile(nil), false, aiv1alpha2.ReasonStructuredOutputNotCertified},
+		{"after the certificate", soProfile(soCertify(soCertifiedImage)), true, aiv1alpha2.ReasonStructuredOutputCertified},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			decision := evaluateStructuredOutput(canary, backend.NameVLLM, tc.profile, "gfx1100", canary.Spec.Image)
+			require.Equal(t, tc.want, decision.Render)
+			require.Equal(t, tc.reason, decision.Reason)
+			args := strings.Join(renderStructuredOutputArgs(t, canary, tc.profile), " ")
+			require.Equal(t, tc.want, strings.Contains(args, `--structured-outputs-config {"backend":"auto"}`), args)
+			require.Contains(t, args, `--speculative-config {"method":"mtp","num_speculative_tokens":2`)
+		})
+	}
 }

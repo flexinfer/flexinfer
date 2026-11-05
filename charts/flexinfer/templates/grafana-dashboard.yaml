@@ -586,6 +586,73 @@ data:
             "textMode": "value_and_name",
             "colorMode": "value"
           }
+        },
+        {
+          "title": "Power & Efficiency",
+          "type": "row",
+          "gridPos": { "x": 0, "y": 41, "w": 24, "h": 1 },
+          "collapsed": false
+        },
+        {
+          "title": "GPU Board Power",
+          "description": "flexinfer_gpu_power_watts from sysfs hwmon (power1_average), sampled only on nodes listed in agent.gpuPower.nodes. A dashed line at 0 labelled 'sampler stopped' is a node whose sampler stopped itself (flexinfer_gpu_power_sampler_active = 0); the agent log says why.",
+          "type": "timeseries",
+          "gridPos": { "x": 0, "y": 42, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (node) (flexinfer_gpu_power_watts{node=~\"$node\"})",
+              "legendFormat": "{{ "{{" }}node{{ "}}" }}",
+              "refId": "A"
+            },
+            {
+              "expr": "flexinfer_gpu_power_sampler_active{node=~\"$node\"} == 0",
+              "legendFormat": "{{ "{{" }}node{{ "}}" }} sampler stopped",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "watt",
+              "min": 0,
+              "custom": { "lineWidth": 2, "fillOpacity": 10 },
+              "color": { "mode": "palette-classic" }
+            },
+            "overrides": [
+              {
+                "matcher": { "id": "byFrameRefID", "options": "B" },
+                "properties": [
+                  { "id": "custom.lineStyle", "value": { "fill": "dash", "dash": [10, 10] } },
+                  { "id": "custom.fillOpacity", "value": 0 }
+                ]
+              }
+            ]
+          }
+        },
+        {
+          "title": "Tokens per Joule by Lane",
+          "description": "Proxy-reported tokens per joule of GPU energy attributed to the lane (flexinfer_lane_energy_joules_total: the card's power split equally among the lanes Active on it, so co-resident lanes on a shared card share its idle draw). Generated = completion tokens (chat lanes); prompt = prompt tokens (embedding and rerank lanes). Streaming requests without a terminal usage chunk are not counted.",
+          "type": "timeseries",
+          "gridPos": { "x": 12, "y": 42, "w": 12, "h": 8 },
+          "targets": [
+            {
+              "expr": "sum by (model) (rate(flexinfer_proxy_request_completion_tokens_sum[$__rate_interval])) / sum by (model) (rate(flexinfer_lane_energy_joules_total[$__rate_interval]) > 0)",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }} generated",
+              "refId": "A"
+            },
+            {
+              "expr": "sum by (model) (rate(flexinfer_proxy_prompt_tokens_total[$__rate_interval])) / sum by (model) (rate(flexinfer_lane_energy_joules_total[$__rate_interval]) > 0)",
+              "legendFormat": "{{ "{{" }}model{{ "}}" }} prompt",
+              "refId": "B"
+            }
+          ],
+          "fieldConfig": {
+            "defaults": {
+              "unit": "suffix: tok/J",
+              "min": 0,
+              "custom": { "lineWidth": 2, "fillOpacity": 0 },
+              "color": { "mode": "palette-classic" }
+            }
+          }
         }
       ],
       "refresh": "10s",

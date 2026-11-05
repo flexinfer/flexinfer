@@ -1,0 +1,149 @@
+# DEBUG CANARY — KT-SO, feature D4 of
+# .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md (§6.4).
+# Matrix row gfx1100-structured-outputs-2026-11-01; window procedure and the
+# owner's paste sequence in .loom/32-iteration-plan-kt-so-2026-11-01.md.
+# Prepared 2026-11-01; re-targeted 2026-11-05 to vLLM 0.33.0 on the XTX (see
+# below). NOT in the models kustomization: the operator applies it once in a
+# scheduled window (together with the KT-QOS canary, one command), the agent
+# runs `flexinfer-bench tool_call_conformance` against it, then deletes it.
+#
+# Question: on the workhorse posture (MTP K=2, ROCM_SEGMENTED_ATTN, fp16 KV,
+# 32K, qwen3_coder tools, qwen3 reasoning parser with thinking off), do
+# schema-constrained tool-call turns parse 100 %, keep decode within 10 % of
+# unguided and keep MTP position-0 acceptance >= 0.75, with unconstrained
+# greedy output unchanged? vLLM fills the structured-output bitmask on the
+# serial CPU path whenever speculative tokens > 0, so the riskiest assumption
+# is that this path does not eat the MTP gain.
+#
+# 2026-11-05 re-target (owner decision P2, research
+# 10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §6.2): judged on
+# vLLM 0.33.0-rocm72, runtime@29378fe0, which passed parity against 0.32 on
+# the XTX (row xtx-vllm-v033-parity-2026-11-05). 0.33 fixes structured outputs
+# with MTP plus the reasoning parser (#52477, #61574, #63423: grammar masks
+# from GPU logit counts, no HTTP 500 on an implicit reasoning end), so a 0.32
+# failure could have been upstream's bug. `vllmVersion: "0.33.0"` goes with the
+# pin (!1281); the live controller (1286a2f1) predates !1281 and ignores it,
+# which renders two dead VLLM_* names and --mamba-cache-mode as warnings only
+# (failOnEnvironValidation false; S3 arm B ran the same way).
+#
+# Placement: the XTX warm lane's slot, as S3 ran (cblevins-7900xtx, both
+# device-plugin slots with hipVisibleDevices 0, shared group 7900xtx-textgen,
+# vramEstimateMB 23200 = the whole card, priority 480: above the warm lane's
+# 300, below the creative lanes' 500). The 0.33 image is prewarmed only there;
+# the 5930k's root has < 200 GB free for a pull and its workhorse is never
+# preempted. The compile cache is S3 arm B's XTX path, which already holds the
+# 0.33 segmented + MTP K=2 variants at this exact config (vLLM sees the model
+# at /models for every Model, so the hash matches and the first boot is warm,
+# avoiding the cold-compile 32K KV-check crash S3 saw on every first boot).
+# The Local cache is a new 19 GB PVC for this name (~11 min to stage).
+#
+# spec.capabilities.structuredOutput: true renders --structured-outputs-config
+# {"backend":"auto"} only once the gfx1100 GPUProfile carries the
+# vllm/structured-outputs certificate for this image, which follows the
+# verdict. Until then the controller renders nothing and reports
+# StructuredOutput=False StructuredOutputNotCertified; vLLM still serves
+# response_format and structured_outputs with backend auto, its default, so the
+# measured engine behaviour is the one the flag pins.
+#
+# Window cost: the warm lane (mills-warm, mills-council, weaver) is off the XTX
+# for the window; the 5930k workhorse is untouched. Rollback = delete this
+# Model; one proxied xtx-warm request hands the card back to the warm lane.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-so-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/32-iteration-plan-kt-so-2026-11-01.md"
+    flexinfer.ai/promotion-state: debug-canary-kt-so
+spec:
+  backend: vllm
+  # vLLM 0.33.0-rocm72 (rocm-gfx1100-serving-v033-bebfb52e, pinned-29378fe07274).
+  image: registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  capabilities:
+    structuredOutput: true
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-b-xtx
+      sizeLimit: 4Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 30m
+    coldStartTimeout: 25m
+  config:
+    # Required with a 0.32+ image pin (!1281).
+    vllmVersion: "0.33.0"
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    warmPolicy: primary
+    dedicatedDeployment: true
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-so-canary
+    # /metrics must carry the spec-decode, generation-token and decode-time
+    # counters tool_call_conformance reads.
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Hidden from discovery; the gate talks to the Service through a port-forward.
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-so-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule

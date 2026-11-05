@@ -1,0 +1,30 @@
+apiVersion: ai.flexinfer/v1alpha2
+kind: GPUProfile
+metadata:
+  name: gfx1100
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/backend-certificate-llamacpp-draft-mtp: registry.example/llamacpp@sha256:aaaa
+    flexinfer.ai/backend-certificate-llamacpp-draft-mtp-since: "2026-10-24T16:18:00Z"
+    flexinfer.ai/backend-certificate-llamacpp-draft-mtp-evidence: .loom/60-validation-matrix.md#gfx1100-llamacpp-2026-10-24
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1: registry.example/vllm@sha256:bbbb
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-artifact: sha256:cccc
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-max-model-len: "32768"
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-since: "2026-07-16T19:38:00Z"
+    flexinfer.ai/backend-certificate-vllm-qwen35-moe-mtp1-evidence: .loom/iteration-mtp.md
+    # Partial triple: no image key.
+    flexinfer.ai/backend-certificate-vllm-omni-audio-since: "2026-10-01T00:00:00Z"
+    flexinfer.ai/backend-certificate-vllm-omni-audio-evidence: .loom/omni.md
+spec:
+  architecture: gfx1100
+  vendor: amd
+  vramMB: 24576
+  backends:
+    vllm:
+      support: full
+    vllm-omni:
+      support: experimental
+    llamacpp:
+      support: full
+    diffusers:
+      support: full
