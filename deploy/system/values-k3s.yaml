@@ -556,6 +556,17 @@ imagePrewarm:
         # successor of cd108c9e. Same v0.32.0 base as cd108c9e; the pull is at
         # most 10.8 GiB, which this node's ~269 GB free covers.
         - registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+        # 2026-11-05 (workhorse promotion to vLLM 0.33 + S7, row
+        # xtx-workhorse-v033-promotion-2026-11-05, Draft !1311): the
+        # gfx1100-serving-v033 persona (rocm-gfx1100-serving-v033-3e8ae3c2,
+        # pinned-51afd0d377f7; CI job publish_serving_rocm_gfx1100_v033 from
+        # master 4da96d96, vLLM 0.33.0-rocm72, text plugin 0.12.0,
+        # plugin-common 0.5.0). Pulled ahead of the repin so it is a container
+        # restart, and listed so the pinned-* guard keeps it in Harbor. It
+        # shares ~6.8 GiB of compressed layers with b06b06fe; the new pull is
+        # ~4.3 GiB compressed (235 GB free on the root on 2026-11-05). b06b06fe
+        # above stays as the workhorse's rollback.
+        - registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
         # 2026-10-27 (S6a image, held for slice S6b): the stacked 0.32 runtime
         # image of build profile gfx1100-serving-v032 (vLLM 0.32 + runtime
         # supervisor + diffusers 0.42 + snac; rocm-gfx1100-serving-v032-c444b5ff,
