@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flexinfer-vllm-qwen35-text"
-version = "0.11.0"
+version = "0.12.0"
 description = "ROCm FLA, MTP and MoE patches for vLLM's upstream Qwen3.5 text-only runtimes (vLLM 0.32+)"
 requires-python = ">=3.10"
 

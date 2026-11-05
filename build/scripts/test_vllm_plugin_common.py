@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """Unit contract for flexinfer_vllm_common's opt-in ROCm tuning paths.
 
-Covers the two FlexInfer changes that sit behind env flags: the relaxed FLA
-autotune pruning (``FLEXINFER_FLA_AUTOTUNE``) and the segmented-attention
+Covers the FlexInfer changes that sit behind env flags: the relaxed FLA
+autotune pruning (``FLEXINFER_FLA_AUTOTUNE``), the segmented-attention
 autotune at the runtime block-table width
-(``FLEXINFER_SEGMENTED_RUNTIME_TABLES``). Neither vLLM nor torch is needed:
-the segmented tests drive a fake warmup module whose functions call each other
-through module globals, as upstream's do, so the patch is exercised on the same
-call path the engine takes.
+(``FLEXINFER_SEGMENTED_RUNTIME_TABLES``), the input-embedding table in mapped
+host memory (``FLEXINFER_EMBED_HOST``) and fp8 KV on segmented attention for
+gfx11 (``FLEXINFER_SEGMENTED_FP8_GFX11``). Neither vLLM nor torch is needed:
+the tests drive fake vLLM modules whose functions call each other through
+module globals, as upstream's do, so each patch is exercised on the same call
+path the engine takes.
 """
 
 from __future__ import annotations
@@ -24,7 +26,12 @@ from unittest import mock
 COMMON_SRC = Path(__file__).parents[1] / "vllm-plugin-common" / "src"
 sys.path.insert(0, str(COMMON_SRC))
 
-from flexinfer_vllm_common import rocm, segmented  # noqa: E402
+from flexinfer_vllm_common import (  # noqa: E402
+    embed_host,
+    rocm,
+    segmented,
+    segmented_fp8,
+)
 
 
 class Config:
@@ -524,6 +531,449 @@ class SegmentedRuntimeTablesTest(unittest.TestCase):
         warmup.rocm_segmented_attn_autotune_warmup(_worker([88, 82]))
         self.assertEqual(warmup.tuned_widths, [6, 82, 82])
         self.assertEqual(warmup.compiled, [])
+
+
+# --- embed_host (FLEXINFER_EMBED_HOST) ---------------------------------------
+
+
+class _Storage:
+    def __init__(self, ptr: int) -> None:
+        self.ptr = ptr
+
+    def data_ptr(self) -> int:
+        return self.ptr
+
+
+class EmbedTensor:
+    """Just enough of a torch tensor for embed_host: rows are plain values."""
+
+    _next_ptr = 1000
+
+    def __init__(self, rows, *, cuda=True, dtype="torch.float16", storage=None):
+        self.rows = list(rows)
+        self.shape = (len(self.rows), 4)
+        self.dtype = dtype
+        self.is_cuda = cuda
+        self.device = "cuda:0" if cuda else "cpu"
+        if storage is None:
+            EmbedTensor._next_ptr += 1
+            storage = _Storage(EmbedTensor._next_ptr)
+        self._storage = storage
+
+    def untyped_storage(self):
+        return self._storage
+
+    def is_floating_point(self) -> bool:
+        return "float" in self.dtype
+
+    def numel(self) -> int:
+        return self.shape[0] * self.shape[1]
+
+    def element_size(self) -> int:
+        return 2
+
+    def to(self, device):
+        assert device == "cpu"
+        return EmbedTensor(self.rows, cuda=False, dtype=self.dtype)
+
+    def index_select(self, dim, rows):
+        assert dim == 0
+        return [self.rows[row] for row in rows]
+
+
+class EmbedParam:
+    """A Parameter whose tensor attributes follow ``.data``, as torch's do."""
+
+    def __init__(self, data) -> None:
+        self.data = data
+
+    def __getattr__(self, name):
+        return getattr(self.data, name)
+
+
+class FakeEmbedTorch:
+    long = "long"
+
+    def __init__(self) -> None:
+        self.allocated = 20 * 2**30
+        self.empty_cache_calls = 0
+        torch = self
+
+        class _Cuda:
+            @staticmethod
+            def memory_allocated():
+                return torch.allocated
+
+            @staticmethod
+            def synchronize():
+                return None
+
+            @staticmethod
+            def empty_cache():
+                torch.empty_cache_calls += 1
+
+        self.cuda = _Cuda()
+        self.accelerator = types.SimpleNamespace(empty_cache=_Cuda.empty_cache)
+
+    @staticmethod
+    def equal(a, b) -> bool:
+        return a == b
+
+    @staticmethod
+    def tensor(values, dtype=None, device=None):
+        return list(values)
+
+    @staticmethod
+    def zeros(count, dtype=None, device=None):
+        return [0] * count
+
+
+class Embedding:
+    def __init__(self, weight) -> None:
+        self.weight = weight
+
+
+class LMHead(Embedding):
+    pass
+
+
+class Visual:
+    pass
+
+
+class EmbedModel:
+    def __init__(self, modules) -> None:
+        self._modules = modules
+
+    def named_modules(self):
+        return list(self._modules)
+
+
+def _embed_model(*, tied=False, cuda=True, extra=()):
+    table = EmbedParam(EmbedTensor(range(40), cuda=cuda))
+    head = EmbedParam(table.data if tied else EmbedTensor(range(100, 140)))
+    embed = Embedding(table)
+    modules = [
+        ("", None),
+        ("language_model.model.embed_tokens", embed),
+        ("language_model.lm_head", LMHead(head)),
+        ("visual.patch_embed", Visual()),
+        *extra,
+    ]
+    return EmbedModel(modules), embed
+
+
+class _Mapper:
+    """Stand-in for get_accelerator_view_from_cpu_tensor."""
+
+    def __init__(self, corrupt: bool = False) -> None:
+        self.calls = []
+        self.corrupt = corrupt
+
+    def __call__(self, cpu):
+        assert not cpu.is_cuda, "the op must receive a host tensor"
+        self.calls.append(cpu)
+        rows = [-1] * len(cpu.rows) if self.corrupt else cpu.rows
+        mapped = EmbedTensor(rows, cuda=True, dtype=cpu.dtype)
+        mapped.mapped = True
+        return mapped
+
+
+def _embed_loader(model):
+    module = types.ModuleType("fake_base_loader")
+
+    class BaseModelLoader:
+        def __init__(self) -> None:
+            self.loads = []
+
+        def load_model(self, vllm_config, model_config, prefix=""):
+            self.loads.append((model_config, prefix))
+            return model
+
+    module.BaseModelLoader = BaseModelLoader
+    return module
+
+
+class EmbedHostTest(unittest.TestCase):
+    def setUp(self) -> None:
+        embed_host._state = embed_host._State()
+        self.torch = FakeEmbedTorch()
+
+    def _install(self, model, mapper=None):
+        loader = _embed_loader(model)
+        mapper = mapper or _Mapper()
+        embed_host.install_embed_host(loader, self.torch, Embedding, LMHead, mapper)
+        return loader, mapper
+
+    def test_flag_is_strict(self) -> None:
+        self.assertFalse(embed_host.embed_host_enabled({}))
+        self.assertTrue(embed_host.embed_host_enabled({"FLEXINFER_EMBED_HOST": "1"}))
+        with self.assertRaises(RuntimeError):
+            embed_host.embed_host_enabled({"FLEXINFER_EMBED_HOST": "yes"})
+        self.assertFalse(embed_host.install_embed_host_if_enabled({}))
+
+    def test_selects_the_untied_input_table_only(self) -> None:
+        model, embed = _embed_model()
+        found = list(embed_host.embedding_tables(model, Embedding, LMHead))
+        self.assertEqual(found, [("language_model.model.embed_tokens", embed)])
+
+    def test_a_table_tied_to_the_lm_head_stays_on_the_device(self) -> None:
+        model, _ = _embed_model(tied=True)
+        with mock.patch("builtins.print") as printed:
+            found = list(embed_host.embedding_tables(model, Embedding, LMHead))
+        self.assertEqual(found, [])
+        self.assertIn("tied to an lm_head", printed.call_args[0][0])
+
+    def test_other_embeddings_and_host_tables_are_ignored(self) -> None:
+        other = Embedding(EmbedParam(EmbedTensor(range(8))))
+        model, _ = _embed_model(cuda=False, extra=[("visual.pos_embed", other)])
+        self.assertEqual(
+            list(embed_host.embedding_tables(model, Embedding, LMHead)), []
+        )
+
+    def test_target_load_swaps_in_the_mapped_view(self) -> None:
+        model, embed = _embed_model()
+        original = embed.weight.data
+        loader, mapper = self._install(model)
+        vllm_config = types.SimpleNamespace(model_config=object())
+        with mock.patch("builtins.print") as printed:
+            loaded = loader.BaseModelLoader().load_model(
+                vllm_config=vllm_config, model_config=vllm_config.model_config
+            )
+        self.assertIs(loaded, model)
+        self.assertEqual(len(mapper.calls), 1)
+        self.assertTrue(getattr(embed.weight.data, "mapped", False))
+        self.assertEqual(embed.weight.data.rows, original.rows)
+        self.assertEqual(self.torch.empty_cache_calls, 1)
+        record = embed_host._state.moved[0]
+        self.assertEqual(record["name"], "language_model.model.embed_tokens")
+        self.assertEqual(record["bytes"], 40 * 4 * 2)
+        lines = [call[0][0] for call in printed.call_args_list]
+        self.assertTrue(
+            any("moved language_model.model.embed_tokens" in line for line in lines)
+        )
+        self.assertTrue(any("device allocated" in line for line in lines))
+
+    def test_draft_loads_are_left_alone(self) -> None:
+        model, embed = _embed_model()
+        original = embed.weight.data
+        loader, mapper = self._install(model)
+        vllm_config = types.SimpleNamespace(model_config=object())
+        loader.BaseModelLoader().load_model(vllm_config, object(), prefix="draft")
+        self.assertEqual(mapper.calls, [])
+        self.assertIs(embed.weight.data, original)
+        self.assertEqual(embed_host._state.loads, 0)
+
+    def test_a_target_without_an_eligible_table_fails_the_boot(self) -> None:
+        model, _ = _embed_model(tied=True)
+        loader, _ = self._install(model)
+        vllm_config = types.SimpleNamespace(model_config=object())
+        with mock.patch("builtins.print"), self.assertRaises(RuntimeError):
+            loader.BaseModelLoader().load_model(vllm_config, vllm_config.model_config)
+
+    def test_a_view_that_reads_back_wrong_is_refused(self) -> None:
+        model, embed = _embed_model()
+        original = embed.weight.data
+        loader, _ = self._install(model, _Mapper(corrupt=True))
+        vllm_config = types.SimpleNamespace(model_config=object())
+        with self.assertRaises(RuntimeError):
+            loader.BaseModelLoader().load_model(vllm_config, vllm_config.model_config)
+        self.assertIs(embed.weight.data, original)
+
+    def test_install_is_idempotent_and_checks_the_loader(self) -> None:
+        model, _ = _embed_model()
+        loader, mapper = self._install(model)
+        wrapped = loader.BaseModelLoader.load_model
+        embed_host.install_embed_host(loader, self.torch, Embedding, LMHead, mapper)
+        self.assertIs(loader.BaseModelLoader.load_model, wrapped)
+        with self.assertRaises(RuntimeError):
+            embed_host.install_embed_host(
+                types.ModuleType("empty"), self.torch, Embedding, LMHead, mapper
+            )
+
+    def test_spot_rows_span_the_table(self) -> None:
+        rows = embed_host._spot_rows(FakeEmbedTorch(), 248320, "cuda:0")
+        self.assertEqual(rows[0], 0)
+        self.assertEqual(rows[-1], 248319)
+        self.assertEqual(len(rows), 8)
+
+
+# --- segmented_fp8 (FLEXINFER_SEGMENTED_FP8_GFX11) --------------------------
+
+
+def _fake_segmented(arch: str = "gfx11"):
+    """Fake platform, ops and backend modules with upstream's three gates."""
+    platform = types.ModuleType("fake_platforms_rocm")
+    platform.on_gfx11 = lambda: arch == "gfx11"
+    platform.on_gfx1x = lambda: arch in ("gfx11", "gfx12")
+    platform.on_gfx12x = lambda: arch == "gfx12"
+    fp8 = ("fp8", "fp8_e4m3")
+
+    ops = types.ModuleType("fake_ops_segmented_attention")
+    ops.launched = []
+    ops.eligible = True
+
+    def run_segmented_attention(*args, **kwargs):
+        ops.launched.append(kwargs.get("tag"))
+        return "segmented"
+
+    def segmented_attention(query=None, *, kv_cache_dtype, tag=None):
+        # Upstream reads the platform at call time, then calls the runner
+        # through its module global.
+        is_fp8 = kv_cache_dtype in fp8
+        if ops.eligible and (platform.on_gfx12x() if is_fp8 else platform.on_gfx1x()):
+            return ops.run_segmented_attention(tag=tag)
+        return "unified"
+
+    ops.run_segmented_attention = run_segmented_attention
+    ops.segmented_attention = segmented_attention
+
+    backend_module = types.ModuleType("fake_rocm_segmented_attn")
+
+    class RocmSegmentedAttentionBackend:
+        @classmethod
+        def supports_combination(
+            cls, head_size, dtype, kv_cache_dtype, block_size, use_mla
+        ):
+            if kv_cache_dtype in fp8 and not platform.on_gfx12x():
+                return "FP8 segmented attention requires gfx12"
+            return None
+
+    class RocmSegmentedAttentionImpl:
+        def __init__(self, num_heads, head_size, kv_cache_dtype, sinks=None):
+            supported = (
+                platform.on_gfx12x() if kv_cache_dtype in fp8 else platform.on_gfx1x()
+            )
+            if not supported:
+                raise ValueError("ROCM_SEGMENTED_ATTN requires gfx12 for FP8")
+            self.kv_cache_dtype = kv_cache_dtype
+
+        def forward(self, query):
+            return backend_module.segmented_attention(
+                query, kv_cache_dtype=self.kv_cache_dtype, tag="forward"
+            )
+
+    backend_module.RocmSegmentedAttentionBackend = RocmSegmentedAttentionBackend
+    backend_module.RocmSegmentedAttentionImpl = RocmSegmentedAttentionImpl
+    backend_module.segmented_attention = segmented_attention
+    return platform, ops, backend_module
+
+
+class SegmentedFp8Test(unittest.TestCase):
+    def setUp(self) -> None:
+        segmented_fp8._state = segmented_fp8._State()
+
+    def _installed(self, arch="gfx11"):
+        platform, ops, backend = _fake_segmented(arch)
+        active = segmented_fp8.install_segmented_fp8(backend, ops, platform)
+        return active, platform, ops, backend
+
+    def test_flag_is_strict(self) -> None:
+        env = segmented_fp8.SEGMENTED_FP8_ENV
+        self.assertFalse(segmented_fp8.segmented_fp8_enabled({}))
+        self.assertTrue(segmented_fp8.segmented_fp8_enabled({env: "1"}))
+        with self.assertRaises(RuntimeError):
+            segmented_fp8.segmented_fp8_enabled({env: "true"})
+        self.assertFalse(segmented_fp8.install_segmented_fp8_if_enabled({}))
+
+    def test_upstream_gates_fp8_to_gfx12(self) -> None:
+        platform, ops, backend = _fake_segmented("gfx11")
+        b, impl = (
+            backend.RocmSegmentedAttentionBackend,
+            backend.RocmSegmentedAttentionImpl,
+        )
+        self.assertIsNotNone(b.supports_combination(256, "half", "fp8_e4m3", 16, False))
+        with self.assertRaises(ValueError):
+            impl(24, 256, "fp8_e4m3")
+        self.assertEqual(
+            backend.segmented_attention(kv_cache_dtype="fp8_e4m3"), "unified"
+        )
+
+    def test_gfx11_fp8_takes_the_segmented_kernel(self) -> None:
+        active, platform, ops, backend = self._installed()
+        self.assertTrue(active)
+        b = backend.RocmSegmentedAttentionBackend
+        self.assertIsNone(b.supports_combination(256, "half", "fp8_e4m3", 16, False))
+        self.assertIsNone(
+            b.supports_combination(
+                head_size=256,
+                dtype="half",
+                kv_cache_dtype="fp8",
+                block_size=16,
+                use_mla=False,
+            )
+        )
+        layer = backend.RocmSegmentedAttentionImpl(24, 256, "fp8_e4m3")
+        with mock.patch("builtins.print") as printed:
+            self.assertEqual(layer.forward("q"), "segmented")
+        self.assertEqual(ops.launched, ["forward"])
+        self.assertEqual(
+            segmented_fp8.fp8_dispatch_counts(), {"segmented": 1, "fallback": 0}
+        )
+        self.assertIn("segmented=1 fallback=0", printed.call_args[0][0])
+        # The scope closes: everything else still sees a gfx11 host.
+        self.assertFalse(platform.on_gfx12x())
+        self.assertIs(ops.run_segmented_attention.__name__, "run_segmented_attention")
+
+    def test_fp16_paths_are_untouched(self) -> None:
+        _, platform, ops, backend = self._installed()
+        layer = backend.RocmSegmentedAttentionImpl(24, 256, "auto")
+        self.assertEqual(layer.forward("q"), "segmented")
+        self.assertEqual(
+            segmented_fp8.fp8_dispatch_counts(), {"segmented": 0, "fallback": 0}
+        )
+        self.assertIsNone(
+            backend.RocmSegmentedAttentionBackend.supports_combination(
+                256, "half", "auto", 16, False
+            )
+        )
+
+    def test_an_ineligible_fp8_shape_is_counted_as_fallback(self) -> None:
+        _, platform, ops, backend = self._installed()
+        ops.eligible = False
+        layer = backend.RocmSegmentedAttentionImpl(24, 256, "fp8")
+        with mock.patch("builtins.print"):
+            self.assertEqual(layer.forward("q"), "unified")
+        self.assertEqual(
+            segmented_fp8.fp8_dispatch_counts(), {"segmented": 0, "fallback": 1}
+        )
+
+    def test_the_gate_closes_when_the_call_raises(self) -> None:
+        _, platform, ops, backend = self._installed()
+
+        def boom(*args, **kwargs):
+            raise RuntimeError("kernel failed")
+
+        ops.run_segmented_attention = boom
+        layer = backend.RocmSegmentedAttentionImpl(24, 256, "fp8_e4m3")
+        with self.assertRaises(RuntimeError):
+            layer.forward("q")
+        self.assertFalse(platform.on_gfx12x())
+        self.assertIs(ops.run_segmented_attention, boom)
+
+    def test_counts_print_at_powers_of_ten(self) -> None:
+        self.assertEqual(
+            [n for n in range(1, 1001) if segmented_fp8._is_power_of_ten(n)],
+            [1, 10, 100, 1000],
+        )
+
+    def test_gfx12_and_non_rdna_hosts_are_not_patched(self) -> None:
+        for arch in ("gfx12", "cdna"):
+            active, platform, ops, backend = self._installed(arch)
+            self.assertFalse(active)
+            self.assertFalse(hasattr(backend, segmented_fp8.PATCH_MARKER))
+
+    def test_install_is_idempotent(self) -> None:
+        _, platform, ops, backend = self._installed()
+        wrapped = backend.segmented_attention
+        self.assertTrue(segmented_fp8.install_segmented_fp8(backend, ops, platform))
+        self.assertIs(backend.segmented_attention, wrapped)
+
+    def test_a_reshaped_vllm_fails_the_boot(self) -> None:
+        platform, ops, backend = _fake_segmented()
+        del ops.run_segmented_attention
+        with self.assertRaises(RuntimeError):
+            segmented_fp8.install_segmented_fp8(backend, ops, platform)
 
 
 if __name__ == "__main__":

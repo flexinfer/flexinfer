@@ -6,10 +6,12 @@ mamba state helpers on ``Qwen3_5ForCausalLMBase``. The plugin keeps only what
 the runtime still lacks: the consumer-ROCm FLA autotuner pruning
 (``FLEXINFER_FLA_AUTOTUNE``), the text-only MTP config contract, the MTP head
 quantization policy (``FLEXINFER_QWEN35_MTP_HEAD``) and the MoE expert-name
-normalization. It also installs, opt-in, the segmented attention autotune at
-the runtime block-table width (``FLEXINFER_SEGMENTED_RUNTIME_TABLES``); this is
-the plugin every gfx1100 serving image loads, so it carries that
-model-agnostic patch.
+normalization. It also installs three opt-in, model-agnostic patches, since
+this is the plugin every gfx1100 serving image loads: the segmented attention
+autotune at the runtime block-table width
+(``FLEXINFER_SEGMENTED_RUNTIME_TABLES``), the input-embedding table in mapped
+host memory (``FLEXINFER_EMBED_HOST``, 0.12.0) and fp8 KV on segmented
+attention for gfx11 (``FLEXINFER_SEGMENTED_FP8_GFX11``, 0.12.0).
 
 0.11.0 removed the vLLM 0.23/0.26 compatibility code: the text-class
 registration, the hybrid-state copy and the GPTQ fused-expert loader hook
@@ -18,7 +20,7 @@ refuses to run on a vLLM whose registry lacks the text classes, instead of
 silently registering them on a runtime nothing qualifies any more. The frozen
 gfx906 vLLM 0.20.1 image keeps the 0.8.0 plugin it was certified with.
 
-ROCm autotune pruning and the segmented-attention patch live in
+ROCm autotune pruning and those three patches live in
 ``flexinfer_vllm_common``, shared with every other FlexInfer vLLM plugin so the
 copies cannot drift. Install ``build/vllm-plugin-common`` before this package.
 """
@@ -34,9 +36,11 @@ from flexinfer_vllm_common.rocm import (
     prune_fla_configs_if_needed,
     select_rocm_safe_fla_configs as _select_rocm_safe_fla_configs,
 )
+from flexinfer_vllm_common.embed_host import install_embed_host_if_enabled
 from flexinfer_vllm_common.segmented import (
     install_segmented_runtime_tables_if_enabled,
 )
+from flexinfer_vllm_common.segmented_fp8 import install_segmented_fp8_if_enabled
 
 ARCHITECTURES = {
     "Qwen3_5ForCausalLM": "dense",
@@ -230,6 +234,8 @@ def register() -> None:
     fla_policy = fla_autotune_policy()
     safe_fla_kernels = prune_fla_configs_if_needed(torch, policy=fla_policy)
     segmented_runtime_tables = install_segmented_runtime_tables_if_enabled()
+    embed_host = install_embed_host_if_enabled()
+    segmented_fp8 = install_segmented_fp8_if_enabled()
     _patch_qwen35_text_mtp_config(SpeculativeConfig)
     mtp_head_policy = _mtp_head_policy()
     quantized_mtp_experts = _strict_env_flag("FLEXINFER_QWEN35_MTP_EXPERTS_GPTQ")
@@ -265,6 +271,8 @@ def register() -> None:
         f"fla_autotuners={safe_fla_kernels}, "
         f"fla_autotune={fla_policy}, "
         f"segmented_runtime_tables={'on' if segmented_runtime_tables else 'off'}, "
+        f"embed_host={'on' if embed_host else 'off'}, "
+        f"segmented_fp8_gfx11={'on' if segmented_fp8 else 'off'}, "
         f"mtp_head={mtp_head_policy}, "
         f"mtp_experts={'gptq' if quantized_mtp_experts else 'plain'})"
     )
