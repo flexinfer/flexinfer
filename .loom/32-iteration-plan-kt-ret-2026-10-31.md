@@ -62,7 +62,9 @@ from `~/kt-ret-20261031`; the copy there is current.
    ```
 
    At PARK, suspend Flux for the models (it would revert the patch within 5 min), then make gte's
-   VRAM estimate too large for the group budget so the election parks it and the runtime unloads it:
+   VRAM estimate too large for the group budget so the election parks it and the runtime unloads it.
+   *As run on 2026-11-02 (K2).* 20000 is above 95 % of the card, so before !1256 the controller
+   refused the Model and left the engine loaded. Use § K2 re-run below.
 
    ```bash
    flux -n flux-system suspend kustomization flexinfer-models
@@ -98,8 +100,101 @@ Expected: K1 replays nothing (nothing fails, as in (R)); K2 replays the requests
 park (drain 503 → `gte->twin`) and reroutes the rest at admission; the unpark reloads gte in about
 4 s while new requests wait in the cold-start queue.
 
+## K2 re-run (after K2, 2026-11-02)
+
+K2 passed availability (635/635, 0 5xx) and failed latency (park p95 8,484 ms) on one 60 s stall.
+The two follow-ups:
+
+- **The park did not unload the engine: a controller bug, fixed in !1256.** `vramEstimateMB 20000`
+  is above 95 % of the 16,384 MB card. `validateVRAMFit` therefore marked gte Failed and returned
+  before `reconcileViaRuntime`, the only path that unloads an in-pod lane, while the election had
+  already dropped gte from the card's VRAM accounting. A refused Model now leaves the runtime. A
+  budget park (an estimate that fits the card but not the room beside the leader) already unloaded,
+  and is the park a real burst causes. The re-run uses that park: 15000, since bge 1500 + reranker
+  700 + 15000 > 16384 and 15000 ≤ 95 % of the card.
+- **The stall was head-of-line blocking at the twin.** One rerouted production input of 956 tokens
+  held the twin's single llama.cpp decode for 12.4 s (16:45:36.98–49.37Z, 82.5 tokens/s at 6
+  threads). Every slot waited behind it, three production clients cancelled, and 41 park requests
+  ran over 2 s against the 31 the p95 allows; without them the park p95 is 845 ms. The twin carried
+  ~5.6 req/s, not 2: rerouted production added ~3.6 req/s (daytime gte runs 2.4–4.5 req/s). The
+  host is a 14-core / 28-thread Xeon E5-2680 v4 with p50 2.7 / p99 11.4 busy CPUs, so Draft !1257
+  gives the twin 12 threads and a 14-core limit (request unchanged). Thread scaling is not measured
+  yet; step 2 measures it before the park.
+
+Preconditions: !1256 in the running controller (for the unload), !1257 merged in the window.
+Context: `export KUBECONFIG=platform/gitops/.kube/k3s.yaml`.
+
+1. Mark !1257 ready and merge it, then check that the twin rolled with `"--threads","12"` and a CPU
+   limit of `14`:
+
+   ```bash
+   flux -n flux-system reconcile kustomization flexinfer-models --with-source
+   ```
+
+   ```bash
+   kubectl -n flexinfer-system rollout status deploy/gte-qwen2-1p5b-cpu-5930k --timeout=5m
+   ```
+
+   ```bash
+   kubectl -n flexinfer-system get deploy gte-qwen2-1p5b-cpu-5930k -o jsonpath='{.spec.template.spec.containers[0].args}{"\n"}{.spec.template.spec.containers[0].resources.limits.cpu}{"\n"}'
+   ```
+
+2. Twin-only check, about 3 min, with nothing touched on the VII. Run short singles at concurrency
+   1 and 4, then long singles of 550 words (about 560–950 tokens, inside the 1024 context). Then read the twin's prompt
+   throughput:
+
+   ```bash
+   ssh cblevins-5930k 'cd ~/kt-ret-20261031 && python3 -I ~/kt-ret-retrieval-swap.py capacity --url http://10.43.94.177:8080 --concurrency 1 4 --seconds 30 --out cap-t12 && python3 -I ~/kt-ret-retrieval-swap.py capacity --url http://10.43.94.177:8080 --concurrency 1 --seconds 30 --words 550 --out cap-t12-long'
+   ```
+
+   ```bash
+   kubectl -n flexinfer-system logs deploy/gte-qwen2-1p5b-cpu-5930k --since=3m | grep -E "prompt processing|stop processing: n_tokens = [5-9][0-9][0-9]" | tail -4
+   ```
+
+   Go on at ≥ 140 tokens/s (K2 at 6 threads: 82.5). At ≤ 100, revert !1257 and stop.
+
+3. The K2 twin stream with the park, about 8 min. The gfx906 runtime pod has moved since K2
+   (10.42.8.233 then), so read its IP and put it in `RUNTIME_POD_IP`:
+
+   ```bash
+   kubectl -n flexinfer-system get pod -o wide | grep flexinfer-runtime-gfx906
+   ```
+
+   ```bash
+   ssh cblevins-5930k 'cd ~/kt-ret-20261031 && python3 -I ~/kt-ret-retrieval-swap.py run --proxy http://10.43.49.107 --lane http://10.43.153.107:8000 --runtime http://RUNTIME_POD_IP:8080 --out k2b --baseline-min 2 --swap-min 0 --swaps 0 --park-minutes 5 --batch-period 0 2>&1 | tee k2b.log'
+   ```
+
+   At `PARK gte-qwen2-1p5b-radeonvii NOW`:
+
+   ```bash
+   flux -n flux-system suspend kustomization flexinfer-models
+   ```
+
+   ```bash
+   kubectl -n flexinfer-system patch model gte-qwen2-1p5b-radeonvii --type merge -p '{"spec":{"gpu":{"vramEstimateMB":15000}}}'
+   ```
+
+   gte goes `Preempted` (`primary/bge-large-radeonvii`) and the runtime unloads it. The Service
+   stream fails from then on, by design.
+
+   At `UNPARK gte-qwen2-1p5b-radeonvii NOW`:
+
+   ```bash
+   kubectl -n flexinfer-system patch model gte-qwen2-1p5b-radeonvii --type merge -p '{"spec":{"gpu":{"vramEstimateMB":2600}}}'
+   ```
+
+   ```bash
+   flux -n flux-system resume kustomization flexinfer-models
+   ```
+
+4. Tell the session the run is done. It reads `~/kt-ret-20261031/k2b` and the twin's CFS throttle
+   ratio, and records the verdict in the row. The pass rule is unchanged. The twin's park load
+   includes rerouted production, so a park with several long production inputs can still miss p95.
+   In that case the next lever is a smaller `ubatchSize` on the twin, which bounds each decode step.
+
 ## Rollback
 
+- Twin headroom: revert !1257 (Flux restores 6 threads and the 6-core limit).
 - Twin failover: revert this MR, or
   `kubectl -n flexinfer-system annotate model gte-qwen2-1p5b-radeonvii flexinfer.ai/unavailable-reroute-to-`.
 - Replay: `FLEXINFER_PROXY_SWAP_REPLAY=false` on the proxy Deployment, or revert !1215.

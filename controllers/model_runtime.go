@@ -828,6 +828,56 @@ func (r *ModelReconciler) unloadRuntimeModel(ctx context.Context, model *aiv1alp
 	return true, nil
 }
 
+// persistRefusedFit records a Model the VRAM or hardware-queue fit check
+// refused, after releasing the runtime instance it may still hold. A refused
+// estimate never fits the shared group's Active set, so the election has
+// already dropped the Model from the card's VRAM and queue accounting; an
+// engine left resident would hold memory and queues the group no longer
+// counts, and its Service would keep answering while the proxy reroutes
+// around a Failed lane (KT-RET K2, 2026-11-02: gte parked by a 20000 MB
+// estimate stayed loaded for the whole park). The reconcile returns before the
+// runtime path, so the release happens here.
+func (r *ModelReconciler) persistRefusedFit(ctx context.Context, model *aiv1alpha2.Model) (ctrl.Result, error) {
+	releaseErr := r.releaseRuntimeInstance(ctx, model)
+	if err := r.persistStatus(ctx, model); err != nil {
+		return ctrl.Result{}, err
+	}
+	if stderrors.Is(releaseErr, pkgrt.ErrModelBusy) {
+		// Accepted requests are draining; the runtime refuses new ones meanwhile.
+		return ctrl.Result{RequeueAfter: requeueShort}, nil
+	}
+	return ctrl.Result{}, releaseErr
+}
+
+// releaseRuntimeInstance unloads model from the runtime pod on its node and
+// clears its Endpoints. It is a no-op when no ready runtime pod serves the
+// node or the runtime does not hold the model. The Endpoints stay while the
+// runtime drains accepted requests (ErrModelBusy), as in reconcileViaRuntime.
+func (r *ModelReconciler) releaseRuntimeInstance(ctx context.Context, model *aiv1alpha2.Model) error {
+	if r.Runtime == nil {
+		return nil
+	}
+	endpoint, err := r.Runtime.FindRuntimeForNode(ctx, model.Namespace, model.Spec.NodeSelector)
+	if err != nil {
+		return fmt.Errorf("discovering runtime to release model: %w", err)
+	}
+	if endpoint == nil || !endpoint.CanAcceptLoad() {
+		return nil
+	}
+	unloaded, err := r.unloadRuntimeModel(ctx, model, endpoint)
+	if err != nil {
+		return err
+	}
+	r.removeRuntimeEndpoints(ctx, model)
+	model.Status.Endpoint = ""
+	if unloaded {
+		log.FromContext(ctx).Info("Unloaded refused model from runtime", "model", model.Name, "runtimePod", endpoint.PodName)
+		r.Recorder.Eventf(model, corev1.EventTypeNormal, "RuntimeReleased",
+			"Unloaded from runtime pod %s: the Model no longer fits the GPU", endpoint.PodName)
+	}
+	return nil
+}
+
 // ensureRuntimeEndpoints creates or updates an Endpoints resource for a
 // runtime-managed model, pointing to the runtime pod's backend port.
 // The model's Service must not have a selector for this to take effect.

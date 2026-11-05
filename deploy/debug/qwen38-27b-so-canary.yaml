@@ -2,36 +2,52 @@
 # .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md (§6.4).
 # Matrix row gfx1100-structured-outputs-2026-11-01; window procedure and the
 # owner's paste sequence in .loom/32-iteration-plan-kt-so-2026-11-01.md.
-# Prepared 2026-11-01. NOT in the models kustomization: the operator applies
-# it once in a scheduled window, the agent runs
-# `flexinfer-bench tool_call_conformance` against it, then the operator
-# deletes the Model.
+# Prepared 2026-11-01; re-targeted 2026-11-05 to vLLM 0.33.0 on the XTX (see
+# below). NOT in the models kustomization: the operator applies it once in a
+# scheduled window (together with the KT-QOS canary, one command), the agent
+# runs `flexinfer-bench tool_call_conformance` against it, then deletes it.
 #
 # Question: on the workhorse posture (MTP K=2, ROCM_SEGMENTED_ATTN, fp16 KV,
 # 32K, qwen3_coder tools, qwen3 reasoning parser with thinking off), do
 # schema-constrained tool-call turns parse 100 %, keep decode within 10 % of
 # unguided and keep MTP position-0 acceptance >= 0.75, with unconstrained
-# greedy output unchanged? vLLM 0.32 fills the structured-output bitmask on
-# the serial CPU path whenever speculative tokens > 0, so the riskiest
-# assumption is that this path does not eat the MTP gain.
+# greedy output unchanged? vLLM fills the structured-output bitmask on the
+# serial CPU path whenever speculative tokens > 0, so the riskiest assumption
+# is that this path does not eat the MTP gain.
 #
-# This is the production workhorse config (deploy/models/
-# qwen38-27b-autoround-workhorse.yaml at bd06864f) on its image and source,
-# with four differences: its own name and served name, priority 510 so it
-# takes the 5930k from the workhorse (500) for the window as S3/S3b and the
-# KT-QOS canary do (the workhorse's vramEstimateMB 22000 is the whole card, so
-# a twin cannot run beside it), the S3 canary's compile cache path (warm
-# segmented + MTP K=2 variants at 32K; production's cache is never written),
-# and spec.capabilities.structuredOutput: true.
+# 2026-11-05 re-target (owner decision P2, research
+# 10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §6.2): judged on
+# vLLM 0.33.0-rocm72, runtime@29378fe0, which passed parity against 0.32 on
+# the XTX (row xtx-vllm-v033-parity-2026-11-05). 0.33 fixes structured outputs
+# with MTP plus the reasoning parser (#52477, #61574, #63423: grammar masks
+# from GPU logit counts, no HTTP 500 on an implicit reasoning end), so a 0.32
+# failure could have been upstream's bug. `vllmVersion: "0.33.0"` goes with the
+# pin (!1281); the live controller (1286a2f1) predates !1281 and ignores it,
+# which renders two dead VLLM_* names and --mamba-cache-mode as warnings only
+# (failOnEnvironValidation false; S3 arm B ran the same way).
 #
-# The opt-in renders --structured-outputs-config {"backend":"auto"} only once
-# the gfx1100 GPUProfile carries the vllm/structured-outputs certificate for
-# this image, which follows the verdict. Until then the controller renders
-# nothing and reports StructuredOutput=False StructuredOutputNotCertified;
-# vLLM still serves response_format and structured_outputs with backend auto,
-# its default, so the measured engine behaviour is the one the flag pins.
+# Placement: the XTX warm lane's slot, as S3 ran (cblevins-7900xtx, both
+# device-plugin slots with hipVisibleDevices 0, shared group 7900xtx-textgen,
+# vramEstimateMB 23200 = the whole card, priority 480: above the warm lane's
+# 300, below the creative lanes' 500). The 0.33 image is prewarmed only there;
+# the 5930k's root has < 200 GB free for a pull and its workhorse is never
+# preempted. The compile cache is S3 arm B's XTX path, which already holds the
+# 0.33 segmented + MTP K=2 variants at this exact config (vLLM sees the model
+# at /models for every Model, so the hash matches and the first boot is warm,
+# avoiding the cold-compile 32K KV-check crash S3 saw on every first boot).
+# The Local cache is a new 19 GB PVC for this name (~11 min to stage).
 #
-# Rollback = delete this Model; the workhorse reclaims the card on demand.
+# spec.capabilities.structuredOutput: true renders --structured-outputs-config
+# {"backend":"auto"} only once the gfx1100 GPUProfile carries the
+# vllm/structured-outputs certificate for this image, which follows the
+# verdict. Until then the controller renders nothing and reports
+# StructuredOutput=False StructuredOutputNotCertified; vLLM still serves
+# response_format and structured_outputs with backend auto, its default, so the
+# measured engine behaviour is the one the flag pins.
+#
+# Window cost: the warm lane (mills-warm, mills-council, weaver) is off the XTX
+# for the window; the 5930k workhorse is untouched. Rollback = delete this
+# Model; one proxied xtx-warm request hands the card back to the warm lane.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -46,7 +62,8 @@ metadata:
     flexinfer.ai/promotion-state: debug-canary-kt-so
 spec:
   backend: vllm
-  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+  # vLLM 0.33.0-rocm72 (rocm-gfx1100-serving-v033-bebfb52e, pinned-29378fe07274).
+  image: registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   capabilities:
     structuredOutput: true
@@ -58,20 +75,22 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s3-5930k
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-b-xtx
       sizeLimit: 4Gi
   gpu:
     vendor: amd
-    count: 1
-    shared: 5930k-textgen
-    priority: 510
-    vramEstimateMB: 22000
+    count: 2
+    shared: 7900xtx-textgen
+    priority: 480
+    vramEstimateMB: 23200
   serverless:
     enabled: true
     minReplicas: 1
     idleTimeout: 30m
     coldStartTimeout: 25m
   config:
+    # Required with a 0.32+ image pin (!1281).
+    vllmVersion: "0.33.0"
     env:
       FLEXINFER_QWEN35_MTP_HEAD: checkpoint
     kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
@@ -111,7 +130,7 @@ spec:
     disableLogStats: false
     failOnEnvironValidation: false
   nodeSelector:
-    kubernetes.io/hostname: cblevins-5930k
+    kubernetes.io/hostname: cblevins-7900xtx
   resources:
     requests:
       cpu: "4"
