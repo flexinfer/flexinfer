@@ -320,7 +320,7 @@ func (p *Proxy) drainQueue(queue *RequestQueue) {
 			// Only one goroutine may write a response for a queued request.
 			if qr.responded.CompareAndSwap(false, true) {
 				start := time.Now()
-				p.trackAndServe(qr.w, qr.r, qr.modelName, start)
+				p.trackAndServe(qr.w, withColdStartDrain(qr.r), qr.modelName, start)
 			}
 			close(qr.done)
 		}

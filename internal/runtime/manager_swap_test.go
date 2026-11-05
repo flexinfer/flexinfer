@@ -230,6 +230,7 @@ func TestStartupTimeoutFloorUsesBackendDefaults(t *testing.T) {
 		backend.NameVLLM:      300 * time.Second,
 		backend.NameDiffusers: 900 * time.Second,
 		backend.NameSNAC:      300 * time.Second,
+		backend.NamePyannote:  300 * time.Second,
 		backend.NameLlamaCpp:  60 * time.Second,
 		backend.NameOllama:    60 * time.Second,
 		backend.NameMLCLLM:    90 * time.Second,

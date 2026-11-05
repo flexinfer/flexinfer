@@ -370,6 +370,12 @@ def assert_serving_v032_dockerfile_contract(dockerfile: str) -> None:
         "--snapshot /opt/flexinfer/vllm-stack.txt",
         "--server /opt/flexinfer/server-diffusers.py",
         "--server /opt/flexinfer/server-snac.py",
+        # D1: the XTX creative lanes in-pod (Qwen-Image NF4, Stable Audio,
+        # Wan T2V and VACE) need these, and diffusers imports them lazily.
+        "--require-module bitsandbytes",
+        "--require-module torchsde",
+        "--require-module imageio_ffmpeg",
+        "--require-module ftfy",
         "COPY --from=go-builder /runtime /usr/local/bin/flexinfer-runtime",
         "COPY build/.runtime-env /etc/flexinfer/runtime.env",
         'ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/runtime-entrypoint.sh"]',
@@ -508,14 +514,18 @@ def assert_serving_dockerfile_contract(dockerfile: str) -> None:
     # the build check must be told the range.
     hub_pin = dockerfile.find('"huggingface-hub${HF_HUB_OVERLAY_CONSTRAINT}"')
     if hub_pin == -1:
-        fail("Dockerfile.runtime-serving diffusers overlay missing the huggingface-hub pin")
+        fail(
+            "Dockerfile.runtime-serving diffusers overlay missing the huggingface-hub pin"
+        )
     if not (overlay < hub_pin < dockerfile.find("COPY build/server-diffusers.py")):
         fail(
             "Dockerfile.runtime-serving huggingface-hub pin must sit in the "
             "diffusers overlay RUN"
         )
     if '--huggingface-hub "${HF_HUB_OVERLAY_CONSTRAINT}"' not in dockerfile:
-        fail("Dockerfile.runtime-serving check-runtime-diffusers.py call lacks --huggingface-hub")
+        fail(
+            "Dockerfile.runtime-serving check-runtime-diffusers.py call lacks --huggingface-hub"
+        )
 
     forbidden = (
         "AS llamacpp-builder",
@@ -648,9 +658,10 @@ def assert_validator_image_contract(values_yaml: str, qwen35_cache_yaml: str) ->
         fail("qwen35 cache must revalidate with the model-tools image")
 
 
-def assert_long_context_gauntlet_contract(
-    cronjob_yaml: str, experiment_yaml: str
-) -> None:
+def assert_long_context_gauntlet_contract(cronjob_yaml: str) -> None:
+    # The suspended template stays for the next long-context ModelExperiment.
+    # Its only consumer, ModelExperiment qwen35-35b-clean-gptq-128k-graph, was
+    # retired with the vLLM 0.23 Qwen3.5-35B lanes on 2026-11-05.
     required_cronjob = (
         "name: qwen35-long-context-gauntlet",
         "kubernetes.io/hostname: cblevins-7900xtx",
@@ -667,59 +678,6 @@ def assert_long_context_gauntlet_contract(
     for snippet in required_cronjob:
         if snippet not in cronjob_yaml:
             fail(f"Qwen long-context gauntlet missing scheduling fence: {snippet!r}")
-
-    if "templateRef: qwen35-long-context-gauntlet" not in experiment_yaml:
-        fail("Qwen 128K experiment no longer references its context gauntlet")
-
-
-def assert_qwen128_production_contract(primary_yaml: str, sister_yaml: str) -> None:
-    required_sister = (
-        "name: qwen35-35b-clean-gptq-workhorse-128k",
-        # 2026-08-16 context push (!976): both 35B lanes raised to the
-        # qualified 184320 envelope (needle-proven 5/5 @180,930).
-        "maxModelLen: 184320",
-        'gpuMemoryUtilization: "0.94"',
-        'hipVisibleDevices: "0"',
-        "count: 2",
-        "shared: 7900xtx-textgen",
-        # 2026-07-18 psyche fleet layout (MR !862): demoted below the warm
-        # qwen35-9b-ablit-rp text-lane leader (500); on-demand only.
-        # 2026-10-30 placement layout (!1203): 290, below the XTX flex card's
-        # idle tenant qwen38-27b-xtx-warm-canary (300), so it never ties it.
-        "priority: 290",
-        "kubernetes.io/hostname: cblevins-7900xtx",
-        "warmPolicy: ondemand",
-        "minReplicas: 0",
-        "coldStartTimeout: 25m",
-        "- qwen35-128k",
-        "- workhorse-128k",
-        "- mills-council-128k",
-    )
-    for snippet in required_sister:
-        if snippet not in sister_yaml:
-            fail(f"Qwen 128K sister model contract regressed: {snippet!r}")
-    if "forcePromotion: true" in sister_yaml:
-        fail("Qwen 128K sister must yield the idle 7900 XTX to the warm video lane")
-
-    required_primary = (
-        "name: qwen35-35b-clean-gptq-workhorse",
-        # 2026-08-16 context push (!976): 184320 on the 5930k lane too.
-        "maxModelLen: 184320",
-        'gpuMemoryUtilization: "0.94"',
-        "count: 1",
-        "shared: 5930k-textgen",
-        "kubernetes.io/hostname: cblevins-5930k",
-        # 2026-07-18 psyche fleet layout (MR !862): scale-to-zero; the 5930k
-        # card belongs to the rehomed wan video lanes now.
-        "minReplicas: 0",
-        "coldStartTimeout: 25m",
-        "- qwen35-128k",
-        "- workhorse-128k",
-        "- mills-council-128k",
-    )
-    for snippet in required_primary:
-        if snippet not in primary_yaml:
-            fail(f"Qwen 128K primary model contract regressed: {snippet!r}")
 
 
 def assert_wan_video_parked_contract(wan_yaml: str) -> None:
@@ -1413,13 +1371,6 @@ def main(argv: list[str]) -> int:
     long_context_cronjob_yaml = read(
         "deploy/tasks/model-eval-gauntlet/qwen35-long-context-cronjob.yaml"
     )
-    long_context_experiment_yaml = read(
-        "deploy/experiments/qwen35-35b-clean-gptq-128k.yaml"
-    )
-    qwen128_production_yaml = read(
-        "deploy/models/qwen35-35b-clean-gptq-workhorse-128k.yaml"
-    )
-    qwen128_primary_yaml = read("deploy/models/qwen35-35b-clean-gptq-workhorse.yaml")
     wan_video_yaml = read("deploy/models/wan21-t2v-1p3b-gfx1100.yaml")
     flash_loader_source = read("controllers/flash_loader.go")
     model_deployment_source = read("controllers/model_deployment.go")
@@ -1443,10 +1394,7 @@ def main(argv: list[str]) -> int:
     assert_gfx906_vllm_compat_hooks_contract(gfx906_vllm_install_script)
     assert_sunshine_input_contract(sunshine_launcher, values_yaml)
     assert_validator_image_contract(values_yaml, qwen35_cache_yaml)
-    assert_long_context_gauntlet_contract(
-        long_context_cronjob_yaml, long_context_experiment_yaml
-    )
-    assert_qwen128_production_contract(qwen128_primary_yaml, qwen128_production_yaml)
+    assert_long_context_gauntlet_contract(long_context_cronjob_yaml)
     assert_wan_video_parked_contract(wan_video_yaml)
     assert_flash_loader_image_contract(
         flash_loader_source, model_deployment_source, chart_values_yaml

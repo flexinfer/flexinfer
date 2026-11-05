@@ -305,8 +305,12 @@ func TestConfigureIngressBackendBindings(t *testing.T) {
 	}
 	_, env := configureIngressBackend(backend.NameOllama, 19000, nil, []corev1.EnvVar{{Name: "OLLAMA_HOST", Value: "0.0.0.0"}})
 	assert.Equal(t, []corev1.EnvVar{{Name: "OLLAMA_HOST", Value: "127.0.0.1:19000"}}, env)
-	_, env = configureIngressBackend(backend.NameDiffusers, 19000, nil, []corev1.EnvVar{{Name: "PORT", Value: "8000"}})
-	assert.Equal(t, []corev1.EnvVar{{Name: "PORT", Value: "19000"}}, env)
+	for _, name := range []string{backend.NameDiffusers, backend.NameSNAC, backend.NamePyannote} {
+		_, env = configureIngressBackend(name, 19000, nil, []corev1.EnvVar{{Name: "PORT", Value: "8000"}})
+		assert.Equal(t, []corev1.EnvVar{{Name: "PORT", Value: "19000"}}, env, name)
+		assert.True(t, supportsRequestIngress(name), name)
+	}
+	assert.False(t, ingressRequired(backend.NamePyannote), "pyannote's API needs no ingress adapter")
 	assert.False(t, supportsRequestIngress(backend.NameSunshine))
 }
 

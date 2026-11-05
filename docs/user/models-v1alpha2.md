@@ -47,6 +47,15 @@ Backend plugin name. Common values:
 - `whispercpp` (alias: `whisper.cpp`): OpenAI `/v1/audio/transcriptions` from whisper.cpp's
   `whisper-server`, run inside a runtime image that builds it (gfx906 only). See
   [ASR on the Radeon VII](../operations/whispercpp-asr.md).
+- `pyannote` (aliases: `pyannote-audio`, `pyannote.audio`): speaker diarization at
+  `/v1/audio/diarizations` (multipart `file`, optional `num_speakers`, `min_speakers`,
+  `max_speakers`; JSON speaker turns) from pyannote.audio, run inside a runtime image with the
+  pyannote layer. Refused unless the GPUProfile certifies that runtime image (condition
+  `BackendCertificate`). `spec.source` names the HF pipeline (default
+  `pyannote/speaker-diarization-3.1`); `spec.config.hfTokenSecret` names the Secret holding the
+  token for the gated pipeline, which the runtime pod mounts at
+  `/var/run/flexinfer/secrets/<name>/<key>` (key `spec.config.hfTokenSecretKey`, default
+  `HF_TOKEN`). See [pyannote diarization](../operations/pyannote-diarization.md).
 
 Exact images/args/ports are defined by the backend registry in `services/flexinfer/backend/`.
 

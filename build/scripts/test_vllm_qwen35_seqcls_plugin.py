@@ -82,14 +82,36 @@ class FakeScore:
         self.output_size = rows
 
 
+def _upstream_num_labels(hf_config) -> int:
+    """vLLM 0.32's ``_resolve_num_labels``: the top-level label space wins."""
+    text = hf_config.get_text_config()
+    if text is hf_config or hf_config.num_labels != 2:
+        return hf_config.num_labels
+    return text.num_labels
+
+
 class _Base:
-    """Stand-in for a generative Qwen3.5 class."""
+    """Stand-in for vLLM 0.32's ``Qwen3_5ForCausalLMBase``.
+
+    Carries the IsHybrid and SupportsMRoPE contracts itself and, wrapped by
+    ``as_seq_cls_model``, sizes the score head the way upstream does.
+    """
+
+    is_hybrid = True
+    supports_mrope = True
+
+    @classmethod
+    def get_mamba_state_shape_from_config(cls, vllm_config):
+        return ("shape",)
+
+    def get_mrope_input_positions(self, input_tokens, mm_features):
+        n = len(input_tokens)
+        return ([list(range(n))] * 3, 0)
 
     def __init__(self, *, vllm_config, prefix: str = "", **kwargs) -> None:
         self.vllm_config = vllm_config
         self.prefix = prefix
-        rows = vllm_config.model_config.hf_config.get_text_config().num_labels
-        self.score = FakeScore(rows)
+        self.score = FakeScore(_upstream_num_labels(vllm_config.model_config.hf_config))
 
     def load_weights(self, weights):
         return list(weights)
@@ -103,37 +125,27 @@ class Qwen3_5MoeForCausalLM(_Base):
     pass
 
 
-class Qwen3_5ForConditionalGeneration:
-    supports_mrope = True
+class TextSizedBase(_Base):
+    """A runtime that sizes the head from ``get_text_config()`` (the pre-0.32 bug)."""
 
-    @classmethod
-    def get_mamba_state_shape_from_config(cls, config):
-        return ("shape",)
+    def __init__(self, *, vllm_config, prefix: str = "", **kwargs) -> None:
+        super().__init__(vllm_config=vllm_config, prefix=prefix, **kwargs)
+        rows = vllm_config.model_config.hf_config.get_text_config().num_labels
+        self.score = FakeScore(rows)
 
-    @classmethod
-    def get_mamba_state_dtype_from_config(cls, config):
-        return ("dtype",)
 
-    @classmethod
-    def get_mamba_state_copy_func(cls):
-        return "copy"
+class NoMRoPEBase(_Base):
+    """vLLM 0.23/0.26 shape: the text class has no SupportsMRoPE."""
 
-    @staticmethod
-    def _get_mrope_input_positions(input_tokens, mm_features, config):
-        """Mirrors the real donor: reads VISION fields off the composite config.
+    supports_mrope = False
+    get_mrope_input_positions = None
 
-        vLLM evaluates these as call arguments, so they are touched even with
-        zero multimodal items — which is exactly why the text config cannot be
-        passed here.
-        """
-        _ = (
-            config.video_token_id,
-            config.vision_start_token_id,
-            config.vision_end_token_id,
-            config.vision_config.spatial_merge_size,
-        )
-        n = len(input_tokens)
-        return ([list(range(n))] * 3, 0)
+
+class NotHybridBase(_Base):
+    """vLLM 0.23/0.26 shape: the text class lacks the hybrid-state contract."""
+
+    is_hybrid = False
+    get_mamba_state_shape_from_config = None
 
 
 def _as_seq_cls_model(base):
@@ -151,28 +163,19 @@ class FakeTextConfig:
         self.num_labels = num_labels
 
 
-class FakeVisionConfig:
-    spatial_merge_size = 2
-
-
 class FakeHFConfig:
-    """Composite config: labels declared at the top level only.
-
-    Also carries the vision fields the M-RoPE donor reads. The TEXT config
-    deliberately does not — that asymmetry is the whole point of passing the
-    composite config through MROPE_CONFIG_ATTR.
-    """
+    """Composite config: labels declared at the top level only."""
 
     def __init__(self, top_labels: int, text_labels: int = 2) -> None:
         self.num_labels = top_labels
         self._text = FakeTextConfig(text_labels)
-        self.video_token_id = 151656
-        self.vision_start_token_id = 151652
-        self.vision_end_token_id = 151653
-        self.vision_config = FakeVisionConfig()
 
     def get_text_config(self):
         return self._text
+
+
+def _vllm_config(cfg):
+    return types.SimpleNamespace(model_config=types.SimpleNamespace(hf_config=cfg))
 
 
 def _load_plugin():
@@ -183,24 +186,14 @@ def _load_plugin():
     return plugin
 
 
-class UpstreamMRoPEBase(_Base):
-    """vLLM 0.32 shape: the generative text base satisfies SupportsMRoPE itself."""
-
-    supports_mrope = True
-
-    def get_mrope_input_positions(self, input_tokens, mm_features):
-        return ("upstream", len(input_tokens))
-
-
-def _register(dense_cls: type | None = None):
+def _register(dense_cls: type | None = None, moe_cls: type | None = None):
     """Load the plugin against a fake vLLM and run register()."""
     registry = FakeRegistry()
     vllm = types.ModuleType("vllm")
     vllm.ModelRegistry = registry
     models = types.ModuleType("vllm.model_executor.models.qwen3_5")
     models.Qwen3_5ForCausalLM = dense_cls or Qwen3_5ForCausalLM
-    models.Qwen3_5MoeForCausalLM = Qwen3_5MoeForCausalLM
-    models.Qwen3_5ForConditionalGeneration = Qwen3_5ForConditionalGeneration
+    models.Qwen3_5MoeForCausalLM = moe_cls or Qwen3_5MoeForCausalLM
     adapters = types.ModuleType("vllm.model_executor.models.adapters")
     adapters.as_seq_cls_model = _as_seq_cls_model
     utils = types.ModuleType("vllm.model_executor.models.utils")
@@ -208,7 +201,9 @@ def _register(dense_cls: type | None = None):
     utils.WeightsMapper = FakeWeightsMapper
     torch = types.ModuleType("torch")
     torch.version = types.SimpleNamespace(hip="7.2")
-    fla = types.ModuleType("vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt")
+    fla = types.ModuleType(
+        "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt"
+    )
     fla.chunk_scaled_dot_kkt_fwd_kernel = FakeKernel
     fake_modules = {
         "torch": torch,
@@ -217,6 +212,8 @@ def _register(dense_cls: type | None = None):
         adapters.__name__: adapters,
         utils.__name__: utils,
         fla.__name__: fla,
+        # Make the resolver pick the 0.26+ layout.
+        "vllm.model_executor.layers.fla.ops.chunk_scaled_dot_kkt": None,
     }
     saved = {name: sys.modules.get(name) for name in fake_modules}
     sys.modules.update(fake_modules)
@@ -251,14 +248,26 @@ class RegistrationTest(unittest.TestCase):
                 f"{name} must report is_pooling_model so --runner auto picks pooling",
             )
 
-    def test_applies_hybrid_contract_idempotently(self) -> None:
+    def test_leaves_the_upstream_base_classes_untouched(self) -> None:
+        """No hybrid-state copy and no M-RoPE donor: 0.32 carries both itself."""
+        before = {
+            cls: dict(cls.__dict__) for cls in (Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM)
+        }
         _register()
-        for cls in (Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM):
-            self.assertTrue(cls.is_hybrid)
-            self.assertEqual(cls.get_mamba_state_copy_func(), "copy")
-        # A second pass must not raise or change anything.
-        _register()
-        self.assertTrue(Qwen3_5ForCausalLM.is_hybrid)
+        for cls, attrs in before.items():
+            self.assertEqual(dict(cls.__dict__), attrs, cls.__name__)
+
+    def test_refuses_a_vllm_without_the_upstream_contracts(self) -> None:
+        """vLLM older than 0.32: fail at engine start, not on the first request."""
+        for dense, moe, lacking in (
+            (NoMRoPEBase, None, "NoMRoPEBase"),
+            (None, NotHybridBase, "NotHybridBase"),
+        ):
+            with self.subTest(lacking=lacking):
+                with self.assertRaises(RuntimeError) as ctx:
+                    _register(dense_cls=dense, moe_cls=moe)
+                self.assertIn("0.32", str(ctx.exception))
+                self.assertIn(lacking, str(ctx.exception))
 
     def test_prunes_rocm_fla_autotuners(self) -> None:
         FakeKernel.fn.configs = [
@@ -287,16 +296,28 @@ class LabelResolutionTest(unittest.TestCase):
         cfg = FakeHFConfig(top_labels=7)
         self.assertEqual(plugin.resolve_num_labels(cfg, cfg), 7)
 
-    def test_repairs_text_config_and_builds_a_three_row_head(self) -> None:
+    def test_builds_a_three_row_head_without_touching_the_config(self) -> None:
+        """Upstream sizes the head; the plugin only reads the config to assert it."""
         _, registry = _register()
         cls = registry.models["Qwen3_5ForSequenceClassification"]
         cfg = FakeHFConfig(top_labels=3, text_labels=2)
-        vllm_config = types.SimpleNamespace(
-            model_config=types.SimpleNamespace(hf_config=cfg)
-        )
-        model = cls(vllm_config=vllm_config)
-        self.assertEqual(cfg.get_text_config().num_labels, 3)
+        model = cls(vllm_config=_vllm_config(cfg))
         self.assertEqual(model.score.output_size, 3)
+        self.assertEqual(model._flexinfer_resolved_num_labels, 3)
+        self.assertEqual(cfg.get_text_config().num_labels, 2)
+
+    def test_rejects_a_head_sized_from_the_text_config(self) -> None:
+        """The silent wrong-head failure (2 rows for a 3-label checkpoint) is loud."""
+        _, registry = _register(dense_cls=TextSizedBase)
+        cls = registry.models["Qwen3_5ForSequenceClassification"]
+        with self.assertRaises(RuntimeError) as ctx:
+            cls(vllm_config=_vllm_config(FakeHFConfig(top_labels=3, text_labels=2)))
+        self.assertIn("2 rows but the config declares 3", str(ctx.exception))
+
+    def test_unresolvable_label_count_is_fatal(self) -> None:
+        plugin = _load_plugin()
+        with self.assertRaises(RuntimeError):
+            plugin.declared_num_labels(FakeHFConfig(top_labels=0, text_labels=0))
 
     def test_registered_class_supports_mrope(self) -> None:
         """The runner asserts this before it will build positions.
@@ -319,61 +340,14 @@ class LabelResolutionTest(unittest.TestCase):
             )
             self.assertTrue(hasattr(cls, "get_mrope_input_positions"))
 
-    def test_mrope_delegates_with_the_composite_config(self) -> None:
-        """The donor reads vision fields, so it must not get the text config.
-
-        Those reads are call arguments in the real donor, so they happen even
-        for a pure-text request. Passing self.config (the TEXT config) would
-        raise AttributeError on the first request instead of serving.
-        """
+    def test_uses_the_upstream_mrope_positions(self) -> None:
+        """vLLM 0.32's text base returns standard sequential positions for text."""
         _, registry = _register()
         cls = registry.models["Qwen3_5ForSequenceClassification"]
-        cfg = FakeHFConfig(top_labels=3, text_labels=2)
-        model = cls(
-            vllm_config=types.SimpleNamespace(
-                model_config=types.SimpleNamespace(hf_config=cfg)
-            )
-        )
-        # The text config lacks the vision fields; the composite one has them.
-        self.assertFalse(hasattr(cfg.get_text_config(), "vision_config"))
+        model = cls(vllm_config=_vllm_config(FakeHFConfig(top_labels=3, text_labels=2)))
         positions, delta = model.get_mrope_input_positions([1, 2, 3, 4], [])
-        # Pure text: three identical sequential rows, zero delta — i.e. exactly
-        # standard RoPE, which is what keeps logits comparable to the fp32
-        # HF reference.
         self.assertEqual(positions, [[0, 1, 2, 3]] * 3)
         self.assertEqual(delta, 0)
-
-    def test_keeps_the_upstream_mrope_when_the_base_provides_it(self) -> None:
-        """vLLM 0.32: Qwen3_5ForCausalLMBase implements SupportsMRoPE itself.
-
-        Its text-only implementation (standard sequential positions) is what a
-        pooling lane wants, so the donor must NOT replace it.
-        """
-        _, registry = _register(dense_cls=UpstreamMRoPEBase)
-        cls = registry.models["Qwen3_5ForSequenceClassification"]
-        cfg = FakeHFConfig(top_labels=3, text_labels=2)
-        model = cls(
-            vllm_config=types.SimpleNamespace(
-                model_config=types.SimpleNamespace(hf_config=cfg)
-            )
-        )
-        self.assertTrue(cls.supports_mrope)
-        self.assertEqual(
-            model.get_mrope_input_positions([1, 2, 3], []), ("upstream", 3)
-        )
-
-    def test_mrope_attach_fails_loudly_if_the_donor_moves(self) -> None:
-        from flexinfer_vllm_common.mrope import attach_mrope_support
-
-        class DonorWithoutTheMethod:
-            pass
-
-        class Wrapped:
-            pass
-
-        with self.assertRaises(RuntimeError) as ctx:
-            attach_mrope_support(Wrapped, DonorWithoutTheMethod)
-        self.assertIn("_get_mrope_input_positions", str(ctx.exception))
 
     def test_rejects_checkpoint_whose_score_head_disagrees(self) -> None:
         _, registry = _register()
@@ -443,80 +417,29 @@ class SharedHelperTest(unittest.TestCase):
     def test_shared_package_imports_without_vllm_or_torch(self) -> None:
         import flexinfer_vllm_common as common
 
-        for name in (
-            "apply_hybrid_state",
-            "repair_text_config_labels",
-            "resolve_num_labels",
-            "select_rocm_safe_fla_configs",
-        ):
+        for name in ("resolve_num_labels", "select_rocm_safe_fla_configs"):
             self.assertTrue(
                 hasattr(common, name), f"{name} missing from the shared API"
             )
 
-    def test_hybrid_application_is_idempotent(self) -> None:
-        from flexinfer_vllm_common import apply_hybrid_state
+    def test_0_23_compat_helpers_are_gone(self) -> None:
+        """B6: hybrid.py, mrope.py and the in-place label repair were removed."""
+        import importlib
 
-        class Donor:
-            @classmethod
-            def get_mamba_state_shape_from_config(cls, config):
-                return "shape"
+        import flexinfer_vllm_common as common
 
-            @classmethod
-            def get_mamba_state_dtype_from_config(cls, config):
-                return "dtype"
-
-            @classmethod
-            def get_mamba_state_copy_func(cls):
-                return "copy"
-
-        class Target:
-            pass
-
-        first = apply_hybrid_state((Target,), Donor)
-        second = apply_hybrid_state((Target,), Donor)
-        self.assertEqual(first, 3)
-        self.assertEqual(second, 0, "re-application must be a no-op")
-        self.assertTrue(Target.is_hybrid)
-
-    def test_hybrid_application_respects_inherited_methods(self) -> None:
-        """vLLM 0.32 ships the helpers on the text base class: leave them alone."""
-        from flexinfer_vllm_common import apply_hybrid_state
-
-        class Donor:
-            @classmethod
-            def get_mamba_state_shape_from_config(cls, config):
-                return "donor-shape"
-
-            @classmethod
-            def get_mamba_state_dtype_from_config(cls, config):
-                return "donor-dtype"
-
-            @classmethod
-            def get_mamba_state_copy_func(cls):
-                return "donor-copy"
-
-        class UpstreamBase:
-            @classmethod
-            def get_mamba_state_shape_from_config(cls, config):
-                return "upstream-shape"
-
-            @classmethod
-            def get_mamba_state_dtype_from_config(cls, config):
-                return "upstream-dtype"
-
-            @classmethod
-            def get_mamba_state_copy_func(cls):
-                return "upstream-copy"
-
-        class Target(UpstreamBase):
-            pass
-
-        self.assertEqual(apply_hybrid_state((Target,), Donor), 0)
-        self.assertTrue(Target.is_hybrid)
-        self.assertEqual(Target.get_mamba_state_copy_func(), "upstream-copy")
-        self.assertEqual(
-            Target.get_mamba_state_shape_from_config("c"), "upstream-shape"
-        )
+        for name in (
+            "apply_hybrid_state",
+            "MAMBA_STATE_METHODS",
+            "attach_mrope_support",
+            "needs_mrope",
+            "MROPE_CONFIG_ATTR",
+            "repair_text_config_labels",
+        ):
+            self.assertFalse(hasattr(common, name), name)
+        for module in ("flexinfer_vllm_common.hybrid", "flexinfer_vllm_common.mrope"):
+            with self.assertRaises(ModuleNotFoundError):
+                importlib.import_module(module)
 
     def test_rocm_pruner_is_skipped_off_hip(self) -> None:
         from flexinfer_vllm_common.rocm import prune_fla_configs_if_needed
