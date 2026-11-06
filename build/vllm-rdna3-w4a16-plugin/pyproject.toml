@@ -1,0 +1,20 @@
+[build-system]
+# torch is required at build time too, but it must be the image's own ROCm
+# build: install with `pip install --no-deps --no-build-isolation .`.
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flexinfer-vllm-rdna3-w4a16"
+version = "0.1.0"
+description = "RDNA3 W4A16 GPTQ GEMM for vLLM with persistent split-K tickets (vLLM 0.32/0.33 csrc/rocm/q_gemm_rdna3.cu + patch), opt-in via FLEXINFER_RDNA3_W4A16"
+requires-python = ">=3.10"
+
+[project.entry-points."vllm.general_plugins"]
+flexinfer_rdna3_w4a16 = "flexinfer_vllm_rdna3_w4a16:register"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -31,6 +31,7 @@ PATCH_TESTS = (
     "build/scripts/test_runtime_gptq_patch_composition.py",
     "build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
     "build/scripts/test_verify_runtime_serving_stack.py",
+    "build/scripts/test_vllm_rdna3_w4a16_plugin.py",
 )
 
 COMPILE_ONLY = PATCH_SCRIPTS + (
@@ -39,6 +40,7 @@ COMPILE_ONLY = PATCH_SCRIPTS + (
     "build/scripts/validate_quantized_artifact.py",
     "build/scripts/verify_vllm_gfx1100_native_w4a16.py",
     "build/scripts/verify_runtime_serving_stack.py",
+    "build/scripts/verify_vllm_rdna3_w4a16_plugin.py",
 )
 
 CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
@@ -61,6 +63,9 @@ CI_CHANGE_RULE_FILES = PATCH_SCRIPTS + (
     "build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
     "build/scripts/verify_runtime_serving_stack.py",
     "build/scripts/test_verify_runtime_serving_stack.py",
+    "build/scripts/verify_vllm_rdna3_w4a16_plugin.py",
+    "build/scripts/test_vllm_rdna3_w4a16_plugin.py",
+    "build/vllm-rdna3-w4a16-plugin/**/*",
     "deploy/system/values-k3s.yaml",
     ".gitlab/ci/runtime-publish.yml",
 )
@@ -371,6 +376,11 @@ def assert_serving_v032_dockerfile_contract(dockerfile: str) -> None:
         "COPY build/vllm-qwen35-text-plugin /opt/flexinfer/qwen35-text-plugin",
         "COPY build/vllm-qwen35-seqcls-plugin /opt/flexinfer/qwen35-seqcls-plugin",
         "python3 /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py",
+        # GPTQ-RDNA3: the persistent-ticket W4A16 kernel, opt-in per lane; its
+        # verifier proves the vendored kernels match this base's _rocm_C.
+        "COPY build/vllm-rdna3-w4a16-plugin /opt/flexinfer/rdna3-w4a16-plugin",
+        "--no-deps --no-build-isolation /opt/flexinfer/rdna3-w4a16-plugin",
+        "python3 /opt/flexinfer/verify_vllm_rdna3_w4a16_plugin.py",
         "python3 /opt/flexinfer/verify_runtime_serving_stack.py",
         "--snapshot /opt/flexinfer/vllm-stack.txt",
         "--server /opt/flexinfer/server-diffusers.py",
@@ -766,6 +776,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
         "python3 build/scripts/test_runtime_gptq_patch_composition.py",
         "python3 build/scripts/test_verify_vllm_gfx1100_native_w4a16.py",
         "python3 build/scripts/test_verify_runtime_serving_stack.py",
+        "python3 build/scripts/test_vllm_rdna3_w4a16_plugin.py",
     )
     for snippet in required_snippets:
         if snippet not in fast_job_body:
@@ -849,7 +860,9 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
             "- build/vllm-plugin-common/**/*",
             "- build/vllm-qwen35-text-plugin/**/*",
             "- build/vllm-qwen35-seqcls-plugin/**/*",
+            "- build/vllm-rdna3-w4a16-plugin/**/*",
             "- build/scripts/verify_vllm_gfx1100_native_w4a16.py",
+            "- build/scripts/verify_vllm_rdna3_w4a16_plugin.py",
             "- build/scripts/verify_runtime_serving_stack.py",
         ):
             if snippet not in job_body:
