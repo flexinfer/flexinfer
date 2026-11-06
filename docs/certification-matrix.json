@@ -1840,6 +1840,22 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx1100-wan-decode-ab-v032-fix-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "S9 addendum, written 2026-11-06 ~00:23Z after arm t2v-B of row gfx1100-wan-decode-ab-v032-2026-11-05 ran out of memory and before any further arm ran. t2v-B finished c0's 20 denoise steps (2.35…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-fix-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-wan-decode-ab-v032-2026-11-05",
       "kind": "validation",
       "support_level": "experimental",
