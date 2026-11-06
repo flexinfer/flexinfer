@@ -1117,6 +1117,34 @@ def _since(runs, phase, cid):
     return None
 
 
+def _clip_valid(clip, stats) -> bool:
+    return bool(
+        stats
+        and not clip.get("nan_count")
+        and list(clip.get("frames_shape") or []) == [33, 480, 832, 3]
+        and _sane(stats)
+    )
+
+
+def _dx_resolved(phase, run, sims) -> bool:
+    """Row gfx1100-wan-decode-ab-v032-fix2-2026-11-06: c1 and c2 valid, xA meets bar 9."""
+    if run.get("error"):
+        return False
+    clips = {c["id"]: c for c in run.get("clips", [])}
+    if set(clips) != {"c1", "c2"}:
+        return False
+    if not all(_clip_valid(c, sims["stats"].get(f"{phase}-{cid}")) for cid, c in clips.items()):
+        return False
+    dec = sims.get(f"{phase}:decode_equivalence") or {}
+    if dec.get("identical"):
+        return True
+    return (
+        (dec.get("psnr_mean") or 0) >= 35
+        and (dec.get("psnr_min") or 0) >= 32
+        and (dec.get("ssim_mean") or 0) >= 0.98
+    )
+
+
 T2V_FIX_VARIANTS = ("t2v-B-tile", "t2v-B-tile-noexp", "t2v-B-noexp", "t2v-B-fix2")
 
 
@@ -1165,6 +1193,8 @@ def collect(root: Path) -> dict:
         cmp(f"{phase}:decode_equivalence", "t2v-A-c1", f"{phase}-xA")
         for cid in ("c1", "c2"):
             cmp(f"{phase}:e2e_{cid}", f"t2v-A-{cid}", f"{phase}-{cid}")
+    for phase in [p for p in runs if p.startswith("dx-")]:
+        cmp(f"{phase}:decode_equivalence", "t2v-A-c1", f"{phase}-xA")
     fix_arm = next((p for p in ("t2v-B-tile-noexp", "t2v-B-tile") if p in runs), None)
     cache_phases = [p for p in runs if p.startswith("cache-B-")]
     for phase in cache_phases:
@@ -1205,9 +1235,12 @@ def collect(root: Path) -> dict:
     # Second addendum: report-only diagnostics (did both renders complete?).
     host["diagnostics"] = {
         phase: {
-            "resolved": len(run.get("clips", [])) >= 1
-            and len(run.get("decodes", [])) >= 1
-            and not run.get("error"),
+            "resolved": _dx_resolved(phase, run, sims),
+            "clips_valid": {
+                c["id"]: _clip_valid(c, sims["stats"].get(f"{phase}-{c['id']}"))
+                for c in run.get("clips", [])
+            },
+            "decode_equivalence": sims.get(f"{phase}:decode_equivalence"),
             "error": run.get("error"),
             "env_overrides": run.get("env_overrides"),
             "card_peak_mib": vram.get(phase),

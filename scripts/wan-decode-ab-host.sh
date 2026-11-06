@@ -276,13 +276,19 @@ phase() {
 	dx-B-noexp2) run_arm dx-B-noexp2 "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
 		--setenv "PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.7,max_split_size_mb:256" \
 		--setenv "PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.9,max_split_size_mb:512" \
-		--clip c1:boat:42 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+		--clip c1:boat:42 --clip c2:fox:7 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
 	dx-B-scratch) run_arm dx-B-scratch "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
 		--unsetenv HSA_NO_SCRATCH_RECLAIM \
-		--clip c1:boat:42 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+		--clip c1:boat:42 --clip c2:fox:7 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
 	dx-B-rocblas) run_arm dx-B-rocblas "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
 		--setenv TORCH_BLAS_PREFER_HIPBLASLT=0 \
-		--clip c1:boat:42 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+		--clip c1:boat:42 --clip c2:fox:7 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	dx-B-tile-nooffload) run_arm dx-B-tile-nooffload "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
+		--setenv ENABLE_VAE_TILING=1 --setenv USE_CPU_OFFLOAD=0 \
+		--clip c1:boat:42 --clip c2:fox:7 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	dx-B-tile-nocompile) run_arm dx-B-tile-nocompile "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
+		--setenv ENABLE_VAE_TILING=1 --setenv COMPILE_MODE=off \
+		--clip c1:boat:42 --clip c2:fox:7 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
 	t2v-B-fix2)
 		[ -n "${FIX2_ARGS:-}" ] || { log "phase t2v-B-fix2 needs FIX2_ARGS"; return 2; }
 		# shellcheck disable=SC2086 # FIX2_ARGS is a list of harness flags

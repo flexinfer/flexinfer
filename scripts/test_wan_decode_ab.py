@@ -421,6 +421,38 @@ class EnvOverrideTest(unittest.TestCase):
             wanab._apply_env_overrides(["NOEQUALS"], [])
 
 
+class DiagnosticResolveTest(unittest.TestCase):
+    def setUp(self):
+        good = {"luma_std_min": 50.0, "luma_mean_min": 100.0, "luma_mean_max": 120.0}
+        self.sims = {
+            "stats": {"dx-B-x-c1": good, "dx-B-x-c2": dict(good)},
+            "dx-B-x:decode_equivalence": {"psnr_mean": 40.0, "psnr_min": 36.0, "ssim_mean": 0.99},
+        }
+        shape = [33, 480, 832, 3]
+        self.run = {
+            "clips": [
+                {"id": "c1", "nan_count": 0, "frames_shape": shape},
+                {"id": "c2", "nan_count": 0, "frames_shape": shape},
+            ]
+        }
+
+    def test_resolves(self):
+        self.assertTrue(wanab._dx_resolved("dx-B-x", self.run, self.sims))
+
+    def test_nan_second_clip_does_not_resolve(self):
+        self.run["clips"][1]["nan_count"] = 4325376
+        self.assertFalse(wanab._dx_resolved("dx-B-x", self.run, self.sims))
+
+    def test_gray_decode_does_not_resolve(self):
+        self.sims["dx-B-x:decode_equivalence"] = {"psnr_mean": 12.2, "psnr_min": 12.1, "ssim_mean": 0.38}
+        self.assertFalse(wanab._dx_resolved("dx-B-x", self.run, self.sims))
+
+    def test_oom_does_not_resolve(self):
+        self.assertFalse(
+            wanab._dx_resolved("dx-B-x", {"error": "OutOfMemoryError", "clips": []}, self.sims)
+        )
+
+
 class ClipSpecTest(unittest.TestCase):
     def test_parse(self):
         self.assertEqual(
