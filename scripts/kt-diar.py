@@ -173,16 +173,6 @@ def main():
         "--proxy", default="http://flexinfer-proxy.flexinfer-system.svc.cluster.local"
     )
     ap.add_argument("--asr-model", default="whisper-large-v3-turbo-radeonvii")
-    # Node shells have no cluster DNS: pass the Services' ClusterIPs there
-    # (kubectl -n flexinfer-system get svc), as KT-RET did.
-    ap.add_argument(
-        "--gte-url",
-        default="http://gte-qwen2-1p5b-radeonvii.flexinfer-system.svc:8000/v1/embeddings",
-    )
-    ap.add_argument(
-        "--bge-url",
-        default="http://bge-large-radeonvii.flexinfer-system.svc:8000/v1/embeddings",
-    )
     ap.add_argument(
         "--standalone",
         default="http://pyannote-diarization.flexinfer-system.svc:8000/diarize",
@@ -211,8 +201,16 @@ def main():
     os.makedirs(args.out, exist_ok=True)
 
     targets = [
-        ("gte", args.gte_url, "gte-qwen2-1p5b-radeonvii"),
-        ("bge", args.bge_url, "bge-large-radeonvii"),
+        (
+            "gte",
+            "http://gte-qwen2-1p5b-radeonvii.flexinfer-system.svc:8000/v1/embeddings",
+            "gte-qwen2-1p5b-radeonvii",
+        ),
+        (
+            "bge",
+            "http://bge-large-radeonvii.flexinfer-system.svc:8000/v1/embeddings",
+            "bge-large-radeonvii",
+        ),
     ]
     probe = Probe(targets, args.probe_period_s)
     queues = Queues(args.kfd) if args.kfd else None

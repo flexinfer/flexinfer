@@ -38,9 +38,6 @@ func loadGfx906GPUProfile(t *testing.T) *aiv1alpha2.GPUProfile {
 func diarCertifiedProfile(t *testing.T, certified string) *aiv1alpha2.GPUProfile {
 	t.Helper()
 	profile := loadGfx906GPUProfile(t).DeepCopy()
-	// Start from no certificate: the shipped profile carries one for the
-	// KT-DIAR window, and each variant below sets its own.
-	aiv1alpha2.ClearBackendCapabilityCertificate(profile, backend.NamePyannote, aiv1alpha2.PyannoteCapabilitySpeakerDiarization)
 	profile.Spec.Runtime.Image = diarRuntimeImage
 	if !bundlesBackendExplicitly(profile.Spec.Runtime.BundledBackends, backend.NamePyannote) {
 		profile.Spec.Runtime.BundledBackends = append(profile.Spec.Runtime.BundledBackends, backend.NamePyannote)
@@ -53,7 +50,7 @@ func diarCertifiedProfile(t *testing.T, certified string) *aiv1alpha2.GPUProfile
 
 func loadDiarizationModel(t *testing.T) *aiv1alpha2.Model {
 	t.Helper()
-	return loadDeployModelManifest(t, filepath.Join("..", "deploy", "models", diarManifest))
+	return loadDeployModelManifest(t, filepath.Join("..", "deploy", "debug", diarManifest))
 }
 
 func TestEvaluateBackendCertificate(t *testing.T) {
@@ -92,8 +89,8 @@ func TestEvaluateBackendCertificate(t *testing.T) {
 		wantMessage   string
 	}{
 		{name: "other backends are not gated", model: lane, backend: backend.NameLlamaCpp, profile: loadGfx906GPUProfile(t), arch: "gfx906"},
-		{name: "the shipped gfx906 profile certifies pyannote on its runtime image", model: lane, backend: backend.NamePyannote, profile: loadGfx906GPUProfile(t), arch: "gfx906",
-			wantRequired: true, wantCertified: true, wantReason: aiv1alpha2.ReasonBackendCertified, wantMessage: "evidence: " + diarEvidence},
+		{name: "the shipped gfx906 profile bundles pyannote but refuses it uncertified", model: lane, backend: backend.NamePyannote, profile: loadGfx906GPUProfile(t), arch: "gfx906",
+			wantRequired: true, wantReason: aiv1alpha2.ReasonBackendNotCertified, wantMessage: "no complete " + key},
 		{name: "no profile", model: lane, backend: backend.NamePyannote, arch: "gfx906",
 			wantRequired: true, wantReason: aiv1alpha2.ReasonBackendNotCertified, wantMessage: "no GPUProfile for gfx906"},
 		{name: "no arch", model: lane, backend: backend.NamePyannote, profile: diarCertifiedProfile(t, diarRuntimeImage),
@@ -133,7 +130,7 @@ func TestEvaluateBackendCertificate(t *testing.T) {
 func TestApplyBackendCertificateCondition(t *testing.T) {
 	lane := loadDiarizationModel(t)
 
-	applyBackendCertificateCondition(lane, evaluateBackendCertificate(lane, backend.NamePyannote, diarCertifiedProfile(t, ""), "gfx906"))
+	applyBackendCertificateCondition(lane, evaluateBackendCertificate(lane, backend.NamePyannote, loadGfx906GPUProfile(t), "gfx906"))
 	cond := meta.FindStatusCondition(lane.Status.Conditions, aiv1alpha2.ConditionBackendCertificate)
 	require.NotNil(t, cond)
 	assert.Equal(t, metav1.ConditionFalse, cond.Status)
@@ -157,16 +154,11 @@ func TestBackendCertificateDecisionUsesTheProfileCache(t *testing.T) {
 	b, ok := backend.Get(lane.Spec.Backend)
 	require.True(t, ok)
 
-	// The KT-DIAR window certifies the runtime image the profile pins; a
-	// repin that forgets to move the certificate turns the lane Failed.
-	profile := loadGfx906GPUProfile(t)
-	image, _, _ := aiv1alpha2.GetBackendCapabilityCertificate(profile, backend.NamePyannote, aiv1alpha2.PyannoteCapabilitySpeakerDiarization)
-	assert.Equal(t, profile.Spec.Runtime.Image, image, "the pyannote certificate must cover the gfx906 runtime image")
 	shipped := &GPUProfileReconciler{}
-	shipped.Prime(profile)
+	shipped.Prime(loadGfx906GPUProfile(t))
 	got := (&ModelReconciler{GPUProfiles: shipped}).backendCertificateDecisionFor(lane, b, "gfx906")
 	assert.True(t, got.Required)
-	assert.True(t, got.Certified, got.Message)
+	assert.False(t, got.Certified, "the gfx906 profile on master must refuse pyannote until KT-DIAR certifies the runtime image")
 
 	certified := &GPUProfileReconciler{}
 	certified.Prime(diarCertifiedProfile(t, diarRuntimeImage))

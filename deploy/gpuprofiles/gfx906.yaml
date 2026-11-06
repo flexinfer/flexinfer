@@ -34,14 +34,6 @@ metadata:
     flexinfer.ai/backend-certificate-vllm-qwen35-dense-mtp1-gpu-util: "0.80"
     flexinfer.ai/backend-certificate-vllm-qwen35-dense-mtp1-since: "2026-07-17T02:27:00Z"
     flexinfer.ai/backend-certificate-vllm-qwen35-dense-mtp1-evidence: .loom/iteration-gfx906-qwen35-mtp-long-context-2026-07-16.md
-    # D5-a, PROVISIONAL for the KT-DIAR window: admits the
-    # pyannote-diarization-radeonvii lane on exactly the runtime image below
-    # (spec.runtime.image). The verdict MR rewrites the evidence to the
-    # row's verdict on a PASS; a FAIL reverts the MR that added these three
-    # keys (.loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md).
-    flexinfer.ai/backend-certificate-pyannote-speaker-diarization: registry.harbor.lan/flexinfer/runtime@sha256:cb4c8dc3c2bd55e0a5935642ed71b06d6fa1236ddd00f15b73627c1660359bc5
-    flexinfer.ai/backend-certificate-pyannote-speaker-diarization-since: "2026-11-02T18:43:35Z"
-    flexinfer.ai/backend-certificate-pyannote-speaker-diarization-evidence: ".loom/60-validation-matrix.md#gfx906-diarize-job-2026-11-xx (provisional: KT-DIAR window, verdict pending)"
 spec:
   architecture: gfx906
   vendor: amd
