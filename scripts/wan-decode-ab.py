@@ -395,7 +395,30 @@ def _parse_clip(text: str) -> dict:
     return clip
 
 
+def _apply_env_overrides(setenv, unsetenv) -> dict:
+    """Apply --setenv/--unsetenv before torch loads.
+
+    The runtime image's entrypoint exports /etc/flexinfer/runtime.env over the
+    container env, so an env-file value can lose to it; HSA and HIP read their
+    variables when torch first touches the device, after this runs.
+    """
+    applied = {}
+    for item in setenv or []:
+        key, sep, value = item.partition("=")
+        if not sep or not key:
+            raise SystemExit(f"--setenv wants KEY=VALUE, got {item!r}")
+        os.environ[key] = value
+        applied[key] = value
+    for key in unsetenv or []:
+        os.environ.pop(key, None)
+        applied[key] = None
+    return applied
+
+
 def cmd_run(args) -> int:
+    overrides = _apply_env_overrides(
+        getattr(args, "setenv", None), getattr(args, "unsetenv", None)
+    )
     process_start = time.time()
     t0 = args.t0 or process_start
     out = Path(args.out)
@@ -412,6 +435,7 @@ def cmd_run(args) -> int:
             for k in sorted(os.environ)
             if k.startswith(_ENV_PREFIXES)
         },
+        "env_overrides": overrides,
         "clips": [],
         "decodes": [],
     }
@@ -1093,6 +1117,37 @@ def _since(runs, phase, cid):
     return None
 
 
+def _clip_valid(clip, stats) -> bool:
+    return bool(
+        stats
+        and not clip.get("nan_count")
+        and list(clip.get("frames_shape") or []) == [33, 480, 832, 3]
+        and _sane(stats)
+    )
+
+
+def _dx_resolved(phase, run, sims) -> bool:
+    """Row gfx1100-wan-decode-ab-v032-fix2-2026-11-06: c1 and c2 valid, xA meets bar 9."""
+    if run.get("error"):
+        return False
+    clips = {c["id"]: c for c in run.get("clips", [])}
+    if set(clips) != {"c1", "c2"}:
+        return False
+    if not all(_clip_valid(c, sims["stats"].get(f"{phase}-{cid}")) for cid, c in clips.items()):
+        return False
+    dec = sims.get(f"{phase}:decode_equivalence") or {}
+    if dec.get("identical"):
+        return True
+    return (
+        (dec.get("psnr_mean") or 0) >= 35
+        and (dec.get("psnr_min") or 0) >= 32
+        and (dec.get("ssim_mean") or 0) >= 0.98
+    )
+
+
+T2V_FIX_VARIANTS = ("t2v-B-tile", "t2v-B-tile-noexp", "t2v-B-noexp", "t2v-B-fix2")
+
+
 def collect(root: Path) -> dict:
     import re
 
@@ -1131,11 +1186,22 @@ def collect(root: Path) -> dict:
     for name in ("bf16", "fp32"):
         cmp(f"decode_{name}", "vace-B-v1", f"vace-B-{name}-x0")
         cmp(f"e2e_{name}", "vace-B-v1", f"vace-B-{name}-v1")
+    # Addendum row gfx1100-wan-decode-ab-v032-fix-2026-11-06: B variants of
+    # t2v-B, each judged against A on the same bars.
+    fix_variants = [p for p in T2V_FIX_VARIANTS if p in runs]
+    for phase in fix_variants:
+        cmp(f"{phase}:decode_equivalence", "t2v-A-c1", f"{phase}-xA")
+        for cid in ("c1", "c2"):
+            cmp(f"{phase}:e2e_{cid}", f"t2v-A-{cid}", f"{phase}-{cid}")
+    for phase in [p for p in runs if p.startswith("dx-")]:
+        cmp(f"{phase}:decode_equivalence", "t2v-A-c1", f"{phase}-xA")
+    fix_arm = next((p for p in ("t2v-B-tile-noexp", "t2v-B-tile") if p in runs), None)
     cache_phases = [p for p in runs if p.startswith("cache-B-")]
     for phase in cache_phases:
         name = phase[len("cache-B-"):]
+        base = fix_arm if name.endswith("-fix") else "t2v-B"
         for cid in ("c1", "c2"):
-            cmp(f"cache_{name}_{cid}", f"t2v-B-{cid}", f"{phase}-{cid}")
+            cmp(f"cache_{name}_{cid}", f"{base}-{cid}", f"{phase}-{cid}")
 
     pattern = re.compile(KERNEL_ERROR_RE, re.IGNORECASE)
     kernel_lines = 0
@@ -1161,11 +1227,33 @@ def collect(root: Path) -> dict:
             "b_sa_scheduler_line": _first_line(
                 root / "sa-B" / "run.log", "CosineDPMSolverMultistepScheduler"
             ),
-            "b_sa_dummy_errors": _count_lines(root / "sa-B" / "run.log", "torchsde"),
+            "b_sa_dummy_errors": _count_lines(
+                root / "sa-B" / "run.log", "requires the torchsde library"
+            ),
             "b_sa_vram_peak_mib": vram.get("sa-B"),
             "kernel_error_lines": kernel_lines,
         }
     )
+    # Second addendum: report-only diagnostics (did both renders complete?).
+    host["diagnostics"] = {
+        phase: {
+            "resolved": _dx_resolved(phase, run, sims),
+            "clips_valid": {
+                c["id"]: _clip_valid(c, sims["stats"].get(f"{phase}-{c['id']}"))
+                for c in run.get("clips", [])
+            },
+            "decode_equivalence": sims.get(f"{phase}:decode_equivalence"),
+            "error": run.get("error"),
+            "env_overrides": run.get("env_overrides"),
+            "card_peak_mib": vram.get(phase),
+            "decode_seconds": [
+                (c.get("timings") or {}).get("decode_postprocess_seconds")
+                for c in run.get("clips", [])
+            ],
+        }
+        for phase, run in runs.items()
+        if phase.startswith("dx-")
+    }
     verdicts = {}
     if "t2v-A" in runs and "t2v-B" in runs:
         verdicts["t2v"] = verdict_t2v(runs["t2v-A"], runs["t2v-B"], host, sims)
@@ -1176,10 +1264,27 @@ def collect(root: Path) -> dict:
             verdicts[f"vace-vae-{name}"] = verdict_vace_vae(
                 runs["vace-B"], runs[f"vace-B-{name}"], host, sims, name
             )
+    for phase in fix_variants:
+        view_host = {
+            **host,
+            "b_vram_peak_mib": vram.get(phase),
+            "b_first_cold_seconds": _since(runs, phase, "c0"),
+            "b_cold_clip_seconds": _since(runs, f"{phase}-cold", "k"),
+            "b_bypass_line": _first_line(root / phase / "run.log", BYPASS_LINE),
+        }
+        view_sims = {
+            **sims,
+            "decode_equivalence": sims.get(f"{phase}:decode_equivalence"),
+            "e2e_c1": sims.get(f"{phase}:e2e_c1"),
+            "e2e_c2": sims.get(f"{phase}:e2e_c2"),
+        }
+        if "t2v-A" in runs:
+            verdicts[phase] = verdict_t2v(runs["t2v-A"], runs[phase], view_host, view_sims)
     for phase in cache_phases:
-        if "t2v-B" in runs:
-            name = phase[len("cache-B-"):]
-            verdicts[f"cache-{name}"] = verdict_cache(runs["t2v-B"], runs[phase], sims, name)
+        name = phase[len("cache-B-"):]
+        base = fix_arm if name.endswith("-fix") else "t2v-B"
+        if base in runs:
+            verdicts[f"cache-{name}"] = verdict_cache(runs[base], runs[phase], sims, name)
     if "sa-A" in runs and "sa-B" in runs:
         verdicts["stable-audio"] = verdict_audio(runs["sa-A"], runs["sa-B"], host)
     return {"host": host, "sims": sims, "verdicts": verdicts}
@@ -1223,6 +1328,8 @@ def main(argv=None) -> int:
     run.add_argument("--audio-seconds", type=float, default=20.0)
     run.add_argument("--audio-renders", type=int, default=2)
     run.add_argument("--t0", type=float, help="epoch seconds the container was started")
+    run.add_argument("--setenv", action="append", default=[], help="KEY=VALUE, set before torch loads")
+    run.add_argument("--unsetenv", action="append", default=[], help="KEY, removed before torch loads")
 
     cmp_ = sub.add_parser("compare")
     cmp_.add_argument("a")

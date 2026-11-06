@@ -209,13 +209,13 @@
       "support_level": "supported",
       "backend": "diffusers",
       "gpu_class": "gfx1100",
-      "decision": "promote",
+      "decision": "fail",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
       "validation_rows": [
-        "gfx1100-flex-card-layout-2026-11-03"
+        "gfx1100-wan-decode-ab-v032-fix2-2026-11-06"
       ],
-      "date": "2026-11-03",
+      "date": "2026-11-06",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -658,7 +658,6 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
-        "gfx1100-wan-decode-ab-v032-2026-11-05",
         "gfx1100-flex-card-layout-2026-11-03"
       ],
       "date": "2026-11-03",
@@ -679,7 +678,6 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
       "validation_rows": [
-        "gfx1100-wan-decode-ab-v032-2026-11-05",
         "gfx1100-flex-card-layout-2026-11-03",
         "proxy-async-jobs-2026-10-31"
       ],
@@ -697,13 +695,9 @@
       ],
       "model": "wan21-vace-1p3b-i2v-gfx1100",
       "modality": "video",
-      "decision": "pending",
       "evidenced": false,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-2026-11-05",
-      "validation_rows": [
-        "gfx1100-wan-decode-ab-v032-2026-11-05"
-      ],
-      "date": "2026-11-05",
+      "evidence": "",
+      "date": null,
       "source": "deploy/models/wan21-vace-1p3b-i2v-gfx1100.yaml"
     },
     {
@@ -1840,6 +1834,38 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "S9 second addendum, written 2026-11-06 ~00:35Z after t2v-B-tile and t2v-B-noexp ran and before any arm below. Results so far: t2v-B-tile rendered every clip (warm totals 70.3 s and 72.1 s against A's…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-wan-decode-ab-v032-fix-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "S9 addendum, written 2026-11-06 ~00:23Z after arm t2v-B of row gfx1100-wan-decode-ab-v032-2026-11-05 ran out of memory and before any further arm ran. t2v-B finished c0's 20 denoise steps (2.35…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-fix-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-wan-decode-ab-v032-2026-11-05",
       "kind": "validation",
       "support_level": "experimental",
@@ -1848,9 +1874,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "fail",
       "title": "S9, the Wan decode A/B that gates D1's deferred in-pod creative lanes (owner Q7 in .loom/32-iteration-plan-owner-window-2026-11-06.md; slice S9 of…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-2026-11-05",
       "date": "2026-11-05",
       "source": ".loom/60-validation-matrix.md"
@@ -1864,9 +1890,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "fail",
       "title": "S9, the VACE VAE kill-test (research §3.3: \"cast the decode half to bf16 and reuse the bypass\"; unsloth #12681 claims 580 s → ~178 s on gfx1151). Riskiest assumption: VACE latents decode in bf16…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-vace-vae-bypass-2026-11-05",
       "date": "2026-11-05",
       "source": ".loom/60-validation-matrix.md"

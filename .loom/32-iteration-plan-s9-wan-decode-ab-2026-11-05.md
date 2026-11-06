@@ -1,7 +1,8 @@
 # S9: the Wan decode A/B on the 0.32 base, the VACE VAE kill-test and a denoise cache (2026-11-05)
 
-Status: **pre-registered 2026-11-05 ~23:00Z; no run yet.** The pass rules are the three matrix rows below,
-written before any data. The run needs the XTX held by a GPULease, which the owner applies.
+Status: **run 2026-11-06 00:00–01:13Z; result in `70-result-s9-wan-decode-ab-2026-11-05.md`.** The pass rules are
+the three matrix rows below, written before any data, plus two addenda written before the arms they govern
+(`gfx1100-wan-decode-ab-v032-fix-2026-11-06`, `gfx1100-wan-decode-ab-v032-fix2-2026-11-06`).
 
 | Row | Question | Gates |
 |---|---|---|

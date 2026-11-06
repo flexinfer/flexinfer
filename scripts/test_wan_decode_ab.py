@@ -9,6 +9,7 @@ Run: python3 scripts/test_wan_decode_ab.py
 import copy
 import importlib.util
 import json
+import os
 import math
 import tempfile
 import unittest
@@ -365,6 +366,91 @@ class MetricsTest(unittest.TestCase):
         self.assertTrue(sims["e2e_c1"]["identical"])
         self.assertIn("t2v", result["verdicts"])
         self.assertEqual(host["ffprobe"]["t2v-A-c1"], ["h264", 33])
+
+    def test_collect_judges_fix_variant_and_its_cache_arm(self):
+        a, b, _, _ = t2v_runs()
+        tile = {**b, "label": "t2v-B-tile"}
+        cached = {**b, "label": "cache-B-fbc005-fix"}
+        crashed = {"label": "t2v-B", "error": "OutOfMemoryError", "clips": []}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            f = self.frames(n=2)
+            for run in (a, tile, cached, crashed):
+                d = root / run["label"]
+                d.mkdir()
+                run["clips"] = [dict(c) for c in run["clips"]]
+                for c in run["clips"]:
+                    c["frames_file"] = f"{run['label']}-{c['id']}.frames.npz"
+                    np.savez_compressed(d / c["frames_file"], frames=f)
+                (d / f"{run['label']}.json").write_text(json.dumps(run))
+            a["decodes"] = [{"id": "own", "frames_file": "t2v-A-own.frames.npz"}]
+            np.savez_compressed(root / "t2v-A" / "t2v-A-own.frames.npz", frames=f)
+            (root / "t2v-A" / "t2v-A.json").write_text(json.dumps(a))
+            tile["decodes"] = [{"id": "xA", "frames_file": "t2v-B-tile-xA.frames.npz"}]
+            np.savez_compressed(
+                root / "t2v-B-tile" / "t2v-B-tile-xA.frames.npz", frames=f
+            )
+            (root / "t2v-B-tile" / "t2v-B-tile.json").write_text(json.dumps(tile))
+            (root / "t2v-B-tile" / "run.log").write_text(wanab.BYPASS_LINE + "\n")
+            with mock.patch.object(wanab, "_ffprobe", return_value=["h264", 33]):
+                result = wanab.collect(root)
+        sims, verdicts = result["sims"], result["verdicts"]
+        self.assertTrue(sims["t2v-B-tile:decode_equivalence"]["identical"])
+        self.assertEqual(sims["t2v-B-tile:e2e_c1"]["b"], "t2v-B-tile-c1")
+        self.assertEqual(sims["cache_fbc005-fix_c1"]["a"], "t2v-B-tile-c1")
+        self.assertIn("t2v-B-tile", verdicts)
+        self.assertIn("cache-fbc005-fix", verdicts)
+        self.assertEqual(verdicts["t2v"]["decision"], "fail")
+
+
+class EnvOverrideTest(unittest.TestCase):
+    def test_set_and_unset_before_torch(self):
+        with mock.patch.dict(os.environ, {"HSA_NO_SCRATCH_RECLAIM": "1"}, clear=False):
+            applied = wanab._apply_env_overrides(
+                ["TORCH_BLAS_PREFER_HIPBLASLT=0", "PYTORCH_ALLOC_CONF=a:1,b:2"],
+                ["HSA_NO_SCRATCH_RECLAIM"],
+            )
+            self.assertEqual(os.environ["TORCH_BLAS_PREFER_HIPBLASLT"], "0")
+            self.assertEqual(os.environ["PYTORCH_ALLOC_CONF"], "a:1,b:2")
+            self.assertNotIn("HSA_NO_SCRATCH_RECLAIM", os.environ)
+        self.assertEqual(applied["HSA_NO_SCRATCH_RECLAIM"], None)
+        self.assertEqual(applied["PYTORCH_ALLOC_CONF"], "a:1,b:2")
+
+    def test_bad_setenv_exits(self):
+        with self.assertRaises(SystemExit):
+            wanab._apply_env_overrides(["NOEQUALS"], [])
+
+
+class DiagnosticResolveTest(unittest.TestCase):
+    def setUp(self):
+        good = {"luma_std_min": 50.0, "luma_mean_min": 100.0, "luma_mean_max": 120.0}
+        self.sims = {
+            "stats": {"dx-B-x-c1": good, "dx-B-x-c2": dict(good)},
+            "dx-B-x:decode_equivalence": {"psnr_mean": 40.0, "psnr_min": 36.0, "ssim_mean": 0.99},
+        }
+        shape = [33, 480, 832, 3]
+        self.run = {
+            "clips": [
+                {"id": "c1", "nan_count": 0, "frames_shape": shape},
+                {"id": "c2", "nan_count": 0, "frames_shape": shape},
+            ]
+        }
+
+    def test_resolves(self):
+        self.assertTrue(wanab._dx_resolved("dx-B-x", self.run, self.sims))
+
+    def test_nan_second_clip_does_not_resolve(self):
+        self.run["clips"][1]["nan_count"] = 4325376
+        self.assertFalse(wanab._dx_resolved("dx-B-x", self.run, self.sims))
+
+    def test_gray_decode_does_not_resolve(self):
+        self.sims["dx-B-x:decode_equivalence"] = {"psnr_mean": 12.2, "psnr_min": 12.1, "ssim_mean": 0.38}
+        self.assertFalse(wanab._dx_resolved("dx-B-x", self.run, self.sims))
+
+    def test_oom_does_not_resolve(self):
+        self.assertFalse(
+            wanab._dx_resolved("dx-B-x", {"error": "OutOfMemoryError", "clips": []}, self.sims)
+        )
 
 
 class ClipSpecTest(unittest.TestCase):

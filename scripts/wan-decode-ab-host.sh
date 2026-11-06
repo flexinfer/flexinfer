@@ -139,7 +139,14 @@ run_arm() {
 	shift 9
 	local out=$ROOT/$name envf=$ROOT/env-$name.env
 	local used
+	# A crashed arm frees its VRAM over several seconds; give it 90 s.
+	local waited=0
 	used=$(cat "$VRAM")
+	while [ "$used" -gt "$BUSY_LIMIT" ] && [ "$waited" -lt 90 ]; do
+		sleep 5
+		waited=$((waited + 5))
+		used=$(cat "$VRAM")
+	done
 	if [ "$used" -gt "$BUSY_LIMIT" ]; then
 		log "phase $name SKIPPED: card busy ($((used / 1024 / 1024)) MiB used); is the GPULease active?"
 		return 3
@@ -148,8 +155,16 @@ run_arm() {
 	{
 		common_env
 		"${kind}_env"
-		if [ "$image" = "$IMG_B" ]; then pod_env; fi
-		if [ -n "$extra" ]; then tr ',' '\n' <<<"$extra"; fi
+		# EXTRA_ENV is ';'-separated (PYTORCH_ALLOC_CONF values hold commas);
+		# a PYTORCH_ALLOC_CONF there replaces the pod's.
+		if [ "$image" = "$IMG_B" ]; then
+			if [[ ";$extra" == *";PYTORCH_ALLOC_CONF="* ]]; then
+				pod_env | grep -v '^PYTORCH_ALLOC_CONF='
+			else
+				pod_env
+			fi
+		fi
+		if [ -n "$extra" ]; then tr ';' '\n' <<<"$extra"; fi
 		echo "WAN_AB_IMAGE=$image"
 	} >"$envf"
 	echo "$used" >"$ROOT/baseline-$name.txt"
@@ -210,6 +225,11 @@ print('[smoke] model_index', os.path.exists('/models/model_index.json'), 'versio
 }
 
 KF=/out/t2v-A/keyframe.png
+# Addendum row gfx1100-wan-decode-ab-v032-fix-2026-11-06: the pod allocator
+# without expandable segments, and the fix arm's env for the cache phases.
+NOEXP="PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.7,max_split_size_mb:256"
+FIX_ENV=${FIX_ENV:-ENABLE_VAE_TILING=1}
+FIX_CACHE=${FIX_CACHE:-t2v-B-tile}
 phase() {
 	case "$1" in
 	smoke)
@@ -238,6 +258,53 @@ phase() {
 		--keyframe "$KF" --clip v1:boat:42 --decode /out/vace-B/vace-B-v1.latents.pt:x0 ;;
 	sa-A) run_arm sa-A "$IMG_SA" "$SRV_A" sa sa-A 6 16 "$SA" "" ;;
 	sa-B) run_arm sa-B "$IMG_B" "$SRV_B" sa sa-B "" 48 "$SA" "" ;;
+	t2v-B-tile) run_arm t2v-B-tile "$IMG_B" "$SRV_B" t2v t2v-B-tile "" 48 "$T2V" "ENABLE_VAE_TILING=1" \
+		--clip c0:boat:42 --clip c1:boat:42 --clip c2:fox:7 \
+		--decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	t2v-B-noexp) run_arm t2v-B-noexp "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "$NOEXP" \
+		--clip c0:boat:42 --clip c1:boat:42 --clip c2:fox:7 \
+		--decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	t2v-B-tile-noexp) run_arm t2v-B-tile-noexp "$IMG_B" "$SRV_B" t2v t2v-B-tile "" 48 "$T2V" "ENABLE_VAE_TILING=1;$NOEXP" \
+		--clip c0:boat:42 --clip c1:boat:42 --clip c2:fox:7 \
+		--decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	t2v-B-tile-cold) run_arm t2v-B-tile-cold "$IMG_B" "$SRV_B" t2v t2v-B-tile "" 48 "$T2V" "ENABLE_VAE_TILING=1" --clip k:boat:42 ;;
+	t2v-B-tile-noexp-cold) run_arm t2v-B-tile-noexp-cold "$IMG_B" "$SRV_B" t2v t2v-B-tile "" 48 "$T2V" "ENABLE_VAE_TILING=1;$NOEXP" --clip k:boat:42 ;;
+	vace-B-noexp) run_arm vace-B-noexp "$IMG_B" "$SRV_B" vace vace-B "" 48 "$VACE" "$NOEXP" \
+		--keyframe "$KF" --clip v0:boat:42 --clip v1:boat:42 ;;
+	# Second addendum (row gfx1100-wan-decode-ab-v032-fix2-2026-11-06):
+	# single-clip diagnostics, then the judged arm with FIX2_ARGS.
+	dx-B-noexp2) run_arm dx-B-noexp2 "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
+		--setenv "PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.7,max_split_size_mb:256" \
+		--setenv "PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.9,max_split_size_mb:512" \
+		--clip c1:boat:42 --clip c2:fox:7 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	dx-B-scratch) run_arm dx-B-scratch "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
+		--unsetenv HSA_NO_SCRATCH_RECLAIM \
+		--clip c1:boat:42 --clip c2:fox:7 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	dx-B-rocblas) run_arm dx-B-rocblas "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
+		--setenv TORCH_BLAS_PREFER_HIPBLASLT=0 \
+		--clip c1:boat:42 --clip c2:fox:7 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	dx-B-tile-nooffload) run_arm dx-B-tile-nooffload "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
+		--setenv ENABLE_VAE_TILING=1 --setenv USE_CPU_OFFLOAD=0 \
+		--clip c1:boat:42 --clip c2:fox:7 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	dx-B-tile-nocompile) run_arm dx-B-tile-nocompile "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
+		--setenv ENABLE_VAE_TILING=1 --setenv COMPILE_MODE=off \
+		--clip c1:boat:42 --clip c2:fox:7 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	t2v-B-fix2)
+		[ -n "${FIX2_ARGS:-}" ] || { log "phase t2v-B-fix2 needs FIX2_ARGS"; return 2; }
+		# shellcheck disable=SC2086 # FIX2_ARGS is a list of harness flags
+		run_arm t2v-B-fix2 "$IMG_B" "$SRV_B" t2v t2v-B-fix2 "" 48 "$T2V" "" $FIX2_ARGS \
+			--clip c0:boat:42 --clip c1:boat:42 --clip c2:fox:7 \
+			--decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	t2v-B-fix2-cold)
+		[ -n "${FIX2_ARGS:-}" ] || { log "phase t2v-B-fix2-cold needs FIX2_ARGS"; return 2; }
+		# shellcheck disable=SC2086
+		run_arm t2v-B-fix2-cold "$IMG_B" "$SRV_B" t2v t2v-B-fix2 "" 48 "$T2V" "" $FIX2_ARGS --clip k:boat:42 ;;
+	cache-B-fbc005-fix) run_arm cache-B-fbc005-fix "$IMG_B" "$SRV_BRANCH" t2v "$FIX_CACHE" "" 48 "$T2V" \
+		"WAN_DENOISE_CACHE=fbc:0.05;$FIX_ENV" --clip c0:boat:42 --clip c1:boat:42 --clip c2:fox:7 ;;
+	cache-B-fbc010-fix) run_arm cache-B-fbc010-fix "$IMG_B" "$SRV_BRANCH" t2v "$FIX_CACHE" "" 48 "$T2V" \
+		"WAN_DENOISE_CACHE=fbc:0.1;$FIX_ENV" --clip c0:boat:42 --clip c1:boat:42 --clip c2:fox:7 ;;
+	cache-B-ts541-fix) run_arm cache-B-ts541-fix "$IMG_B" "$SRV_BRANCH" t2v "$FIX_CACHE" "" 48 "$T2V" \
+		"WAN_DENOISE_CACHE=taylorseer:5:4:1;$FIX_ENV" --clip c0:boat:42 --clip c1:boat:42 --clip c2:fox:7 ;;
 	cache-B-fbc005) run_arm cache-B-fbc005 "$IMG_B" "$SRV_BRANCH" t2v t2v-B "" 48 "$T2V" \
 		"WAN_DENOISE_CACHE=fbc:0.05" --clip c0:boat:42 --clip c1:boat:42 --clip c2:fox:7 ;;
 	cache-B-fbc010) run_arm cache-B-fbc010 "$IMG_B" "$SRV_BRANCH" t2v t2v-B "" 48 "$T2V" \
