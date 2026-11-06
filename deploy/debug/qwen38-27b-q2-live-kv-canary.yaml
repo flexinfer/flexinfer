@@ -1,0 +1,160 @@
+# DEBUG CANARY: the Q2 re-test (plugin-common 0.6.0: FLEXINFER_SEGMENTED_RUNTIME_TABLES
+# compiles the tuned segmented-attention winners against each layer's bound KV
+# cache, so their Triton pointer specialization matches live traffic).
+# Rules: .loom/60-validation-matrix.md row xtx-q2-segmented-live-kv-2026-11-06
+# (split out of xtx-s5-draft-vocab-canary-2026-11-06 when S5's stage A stopped,
+# .loom/70-result-s5-draft-vocab-stage-a-2026-11-06.md). NOT in the models
+# kustomization: the operator applies it once; the agent runs the sweep and
+# deletes the Model.
+#
+# Queue: the XTX is the only canary card. This canary takes S5's place: after
+# the owner window's phase D (to D4 KT-SWAP), KT-QOS2 and the workhorse-v2 0.33
+# promotion canary (deploy/debug/qwen38-27b-promo-canary.yaml), before the GPTQ
+# kernel canary. Before the apply, confirm no other canary Model sits on
+# 7900xtx-textgen at priority >= 480 and no GPULease is held (runbook §3 jq).
+# About 45 min of XTX time: one cold boot (segmented autotune + winner
+# precompile), the 100-request jit sweep, one verify run.
+#
+# Model name: reused from S4 on purpose. S4's Local cache of the same artifact
+# and revision (HF://biMEMO/Qwen3.8-27B-int4-AutoRound @ 2d7425f7, 18 GB,
+# /var/lib/flexinfer/models/flexinfer-system/qwen38-27b-s4-step0-canary) is
+# still on cblevins-7900xtx, and S4's result (§7) left it for this follow-up.
+# The cache fields below match S4's exactly so nothing is staged. The compile
+# cache is a NEW path: this boot is the Q2 cold-cache boot.
+# deploy/debug/qwen38-27b-s4-step0-canary.yaml is S4's historical record; do
+# not apply both.
+#
+# Posture: the workhorse-v2 promotion candidate (row
+# xtx-workhorse-v033-promotion-2026-11-05, arm B1) plus the Q2 flag: vLLM
+# 0.33.0 with vllmVersion "0.33.0", ROCM_SEGMENTED_ATTN + autotune, fp16 KV,
+# MTP K=2 with the checkpoint head and the segmented draft backend, 32K,
+# maxNumSeqs 2, 0.96, chunked prefill 4096, GDN prefix caching align / bf16
+# SSM, qwen3_coder tools, qwen3 reasoning parser with thinking off,
+# FLEXINFER_EMBED_HOST=1 (S7). Count 2 / hipVisibleDevices 0 because the XTX
+# also exposes the Raphael iGPU.
+#
+# The wrapper adds --jit-monitor-verbose, which no Model field renders: vLLM
+# arms jit_monitor after warmup and, without the flag, logs each kernel
+# function once; verbose logs every post-warmup compile or Triton disk load,
+# so the count is exact.
+#
+# End: flexinfer_delete_model qwen38-27b-s4-step0-canary, then one chat
+# request to qwen38-27b-xtx-warm-canary through flexinfer-proxy (an idle
+# ondemand lane only takes a borrowed card back on demand). Leave the Local
+# cache; the compile cache path below can be removed after the result is
+# written.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-s4-step0-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/60-validation-matrix.md#xtx-q2-segmented-live-kv-2026-11-06"
+    flexinfer.ai/promotion-state: debug-canary-q2-segmented-live-kv
+spec:
+  backend: vllm
+  # IMAGE: the first rocm-gfx1100-serving-v033-<sha> built from a master that
+  # carries plugin-common 0.6.0, pinned by digest and Harbor pinned-* tag.
+  # Filled in when that build exists.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:IMAGE_DIGEST_PENDING
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # Fresh: this boot is the Q2 cold-cache boot.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-q2-live-kv-xtx
+      sizeLimit: 8Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    # The promotion canary's level: above the warm lane's 300, below the
+    # creative lanes' 500 (Idle). Raise to 520 with forcePromotion only if the
+    # card is not elected within 5 min with no other canary at >= 480.
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 3h
+    # Covers the cold segmented autotune + winner precompile boot.
+    coldStartTimeout: 45m
+  config:
+    command:
+      - bash
+      - -lc
+      - |
+        echo "q2: seg_tables=${FLEXINFER_SEGMENTED_RUNTIME_TABLES:-} embed_host=${FLEXINFER_EMBED_HOST:-} at $(date -u +%FT%TZ)"
+        exec vllm serve "$@" --jit-monitor-verbose
+      - vllm
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+      FLEXINFER_EMBED_HOST: "1"
+      FLEXINFER_SEGMENTED_RUNTIME_TABLES: "1"
+    vllmVersion: "0.33.0"
+    cudagraphMetrics: true
+    # The XTX's warm pool at this posture can sit near the 1.50x KVPoolShort
+    # line (42,490 tokens without S7 on 0.32); a recheck relaunch would cost
+    # the cold boot this canary measures.
+    kvPoolRecheck: false
+    dedicatedDeployment: true
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    warmPolicy: primary
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 32768
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-s4-step0-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  # Hidden from discovery; the probes talk to the pod over localhost.
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-s4-step0-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
