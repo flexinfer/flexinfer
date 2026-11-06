@@ -26,3 +26,7 @@ pins:
   - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:bdd4bd256cc43c0fb0e23f05b5a62f9eefb984e70caf8af26cde4fb6a2eb60f8
   # Proxy: the !1255 target, master 51e6bd81 (tag 20261105-153904).
   - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:d0439aacec17a4dc7655a99bd06c72f3dd65018fb9aaf4fc7ac226328fe3cc72
+  # Agent: live master ac73e607 (tag 20261104-190946), pinned in values-k3s since !1243.
+  - registry.harbor.lan/flexinfer/flexinfer-agent@sha256:6b832f384c69063dc33248709ae715f3398190b8ed00990501bcca3a139d7b8a
+  # Scheduler: live master 4546a85d (tag 20261106-171118), pinned in values-k3s since 2026-11-06.
+  - registry.harbor.lan/flexinfer/flexinfer-scheduler@sha256:f76cc08cd3bfd40c4b7f84ee52fdb73b0667ca478b5e9e0fad8007449d363cc8
