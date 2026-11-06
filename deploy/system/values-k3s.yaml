@@ -454,7 +454,16 @@ scheduler:
   port: 8082
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-scheduler
-    tag: "master"
+    # Pinned by digest like the controller, proxy and agent. Without a digest
+    # the rendered image is :${FLEXINFER_SCHEDULER_TAG}, the timestamp tag Flux
+    # image automation substitutes in platform/gitops
+    # k3s/flux/apps/flexinfer-system.yaml, so every master build rolled the
+    # scheduler ~20-30 min later. The digest wins over that tag
+    # (flexinfer.imageRef). 2026-11-06: master 4546a85d (tag 20261106-171118),
+    # the build the scheduler pod ran when this was pinned. Rollback: delete
+    # the digest line (the scheduler then follows image automation again).
+    digest: "sha256:f76cc08cd3bfd40c4b7f84ee52fdb73b0667ca478b5e9e0fad8007449d363cc8"
+    tag: "20261106-171118"
     pullPolicy: IfNotPresent
   # kube-scheduler sidecar uses upstream k8s image (keep as-is)
   kubeScheduler:
