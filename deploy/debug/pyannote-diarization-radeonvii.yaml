@@ -5,11 +5,9 @@
 # whisper.cpp, inside a D2 job. It replaces the hand-written privileged
 # Deployment deploy/system/pyannote-diarization once KT-DIAR passes.
 #
-# Applied by Flux (deploy/models) from the KT-DIAR window MR on, together
-# with the flexinfer.ai/diarization-model annotation on the whisper.cpp lane
-# and the provisional certificate on deploy/gpuprofiles/gfx906.yaml; the
-# window plan is .loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md. The
-# controller serves it only when all three hold:
+# NOT applied by Flux: deploy/debug is not in deploy/kustomization.yaml. The
+# owner applies it in the KT-DIAR window, after the three steps the controller
+# checks (.loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md):
 #   1. the gfx906 runtime runs the pyannote layer
 #      (build/Dockerfile.runtime-gfx906-pyannote) and mounts the HF token
 #      Secret at /var/run/flexinfer/secrets/flexinfer-hf-token;
@@ -17,9 +15,8 @@
 #      and lists pyannote in spec.runtime.bundledBackends;
 #   3. the profile carries the flexinfer.ai/backend-certificate-pyannote-
 #      speaker-diarization triple bound to that digest.
-# Otherwise the controller refuses this Model (Phase Failed, Schedulable and
+# Until then the controller refuses this Model (Phase Failed, Schedulable and
 # BackendCertificate False, reason BackendNotCertified) and nothing loads.
-# A KT-DIAR FAIL reverts that MR; Flux prunes this Model.
 #
 # Request contract (build/server-pyannote.py): POST /v1/audio/diarizations,
 # multipart `file` plus optional `num_speakers`, `min_speakers`,

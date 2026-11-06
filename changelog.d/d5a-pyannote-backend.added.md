@@ -7,4 +7,4 @@ new GPUProfile certificate, `pyannote/speaker-diarization`, bound to the profile
 `spec.runtime.image`: without it the controller fails the Model with condition
 `BackendCertificate=False` (reason `BackendNotCertified`). No profile carries the certificate, so
 nothing live changes; the KT-DIAR window builds the layer, certifies gfx906 and applies
-`deploy/models/pyannote-diarization-radeonvii.yaml`.
+`deploy/debug/pyannote-diarization-radeonvii.yaml`.

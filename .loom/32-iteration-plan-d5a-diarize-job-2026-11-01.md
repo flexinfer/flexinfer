@@ -6,7 +6,7 @@ Matrix row `gfx906-diarize-job-2026-11-xx` in `60-validation-matrix.md` (pass ru
 
 | MR | What | State |
 |---|---|---|
-| !1244 | `pyannote` backend, `build/server-pyannote.py`, `build/Dockerfile.runtime-gfx906-pyannote` (built 2026-11-02 after the !1259 fix), GPUProfile certificate `pyannote/speaker-diarization` gating the backend, `deploy/debug/pyannote-diarization-radeonvii.yaml` | merged `6a335596` |
+| !1244 | `pyannote` backend, `build/server-pyannote.py`, `build/Dockerfile.runtime-gfx906-pyannote` (not built), GPUProfile certificate `pyannote/speaker-diarization` gating the backend, `deploy/debug/pyannote-diarization-radeonvii.yaml` | merged `6a335596` |
 | !1245 | `diarize=true` on `/v1/audio/transcriptions` as a D2 job, `flexinfer.ai/diarization-model`, 501 `diarization_not_certified`, descriptor `flexinfer.diarization`, `pkg/transcript` speaker attribution | see the MR |
 | D5-a MR 3 | `flexinfer-bench diarize_conformance` (DER vs a reference RTTM), `scripts/kt-diar.py`, this plan, the KT-DIAR row | see the MR |
 
@@ -71,187 +71,7 @@ Owner decision **Q1**: roll the VII once by building the pyannote layer on the w
 digest *before* the !1206 roll and rolling straight to the layered image (one roll, both
 features), or keep two rolls (simpler rollback). This plan assumes two.
 
-## Window as prepared 2026-11-02 (replaces W1–W6; W7–W8 amended)
-
-Prepared by the agent on 2026-11-02, with nothing live applied. The layer is built and in Harbor,
-and every live step is a merge request the owner merges. The certificate goes through git instead
-of the W5 kubectl annotation, so Flux stays on: `flexinfer-models` applies `./deploy` (models and
-gpuprofiles) with `prune: true`, so reverting the Model MR removes the lane, the certificate and
-the annotation in one step. The certificate does **not** ride on the repin. A complete triple
-renders as `certified` in `docs/certification-matrix.json`, so it lands only with the lane it
-admits, in the window, with evidence that names this row as provisional.
-
-**Layer (W1, done).** Built on the `7900xtx` host's CPU from !1259 (`635c80ce`). The first build,
-from master `eed95f97`, failed the Dockerfile's own import gate: torchmetrics imports the runtime's
-transformers 5, which the venv's huggingface_hub 0.25.2 cannot satisfy. !1259 shadows it in the
-venv with transformers 4.46.3. Base
-`runtime@sha256:6fc6fcbd…` (`rocm-gfx906-5ca58769`, the live gfx906 runtime with whisper.cpp),
-and pushed with the host's own Harbor login:
-
-- `NEW=registry.harbor.lan/flexinfer/runtime@sha256:cb4c8dc3c2bd55e0a5935642ed71b06d6fa1236ddd00f15b73627c1660359bc5`
-- tags `rocm-gfx906-pyannote-6fc6fcbd9361`, `pinned-cb4c8dc3c2bd`; 7.689 GB compressed in Harbor (base 7.601 GB); the venv layer is 290 MB on disk, about 88 MB compressed
-- Verified read-only on the build host: the venv imports torchaudio_compat, torch 2.9.0a0+git0fabc3b (the base's HIP fork, HIP 6.3.42134; no torch in the venv), pyannote.audio 3.3.2, huggingface_hub 0.25.2 and transformers 4.46.3; `SpeakerDiarization` and `server-pyannote.py` load; the runtime python (transformers 5.20.2, huggingface_hub 2.3.0, diffusers 0.42.0) and flexinfer-runtime, llama-server and whisper-server are byte-identical to the base.
-
-| Step | MR | Owner go? | Live effect |
-|---|---|---|---|
-| P. prewarm `${NEW}` on the VII | !1260 | no (auto-merge) | the prewarm DaemonSet pulls the pyannote delta; nothing restarts |
-| G1. jobs API on | !1255 (Draft) | **yes** | proxy restarts; `background: true` and `/v1/jobs*` live; imagegen-ui video goes async |
-| G2. repin gfx906 runtime + HF token mount + `pyannote` bundled | !1261 (Draft) | **yes, quiet hour** | the VII runtime pod restarts; warm lanes reload in ~80 s; gte fails over to its CPU twin meanwhile |
-| G3. lane + provisional certificate + `diarization-model` annotation, then KT-DIAR | the lane MR, branch `ops/pyannote-lane-kt-diar` (Draft, stacked on G2) | **yes, KT-DIAR window** | `pyannote-diarization-radeonvii` appears Idle (scale-to-zero); `diarize=true` jobs run |
-| G4. verdict | new MR after the run | **yes** | PASS: evidence → the row, verdict; FAIL: revert G3 |
-
-G1 and G2 are independent of each other. G3 needs both, and needs P's image resident.
-
-```bash
-export KUBECONFIG=/Users/cblevins/workspace/platform/gitops/.kube/k3s.yaml
-NEW=registry.harbor.lan/flexinfer/runtime@sha256:cb4c8dc3c2bd55e0a5935642ed71b06d6fa1236ddd00f15b73627c1660359bc5
-```
-
-**P (after the prewarm MR merges).** `flux reconcile hr flexinfer -n flexinfer-system --with-source`, then:
-
-```bash
-kubectl -n flexinfer-system rollout status ds/flexinfer-image-prewarm-radeonvii-gfx906 --timeout=30m
-ssh cblevins-radeonvii "sudo crictl images --digests | grep ${NEW##*sha256:} | head -c 200"   # first 12 hex chars appear
-```
-
-**G1 (owner go).** Merge !1255; smoke per its description (`GET /v1/jobs` lists, a
-`background: true` chat completes). Rollback: revert !1255.
-
-**G2 (owner go, quiet hour).** Merge the repin MR, `flux reconcile hr flexinfer -n
-flexinfer-system --with-source`, then:
-
-```bash
-kubectl -n flexinfer-system rollout status ds/flexinfer-runtime-gfx906 --timeout=15m
-kubectl -n flexinfer-system get models -o wide | grep radeonvii      # warm set back to Ready
-kubectl -n flexinfer-system exec ds/flexinfer-runtime-gfx906 -- /opt/pyannote/bin/python -c "import torchaudio_compat, torch, pyannote.audio; print(torch.__version__, torch.version.hip, torch.cuda.is_available(), torch.cuda.get_device_name(0), pyannote.audio.__version__)"
-kubectl -n flexinfer-system exec ds/flexinfer-runtime-gfx906 -- test -r /var/run/flexinfer/secrets/flexinfer-hf-token/HF_TOKEN && echo token-mounted
-```
-
-Expect `2.9.0… 6.3… True AMD Radeon VII 3.3.2` (run from `/opt/flexinfer`, where the shim lives:
-add `-w /opt/flexinfer` if `kubectl exec` supports it, else `sh -c 'cd /opt/flexinfer && …'`) and
-`token-mounted`. Rollback: revert the repin MR (the VII returns to `6fc6fcbd`, still prewarmed;
-revert G3 first if it merged).
-
-**G3 (owner go, KT-DIAR window, owner present).** Merge the Model MR (after G2 merged, GitLab
-retargets it to master), reconcile, then:
-
-```bash
-flux reconcile kustomization flexinfer-models -n flux-system --with-source
-kubectl -n flexinfer-system get model pyannote-diarization-radeonvii -o jsonpath='{.status.conditions[?(@.type=="BackendCertificate")].status} {.status.phase}{"\n"}'
-ssh cblevins-radeonvii 'curl -s http://10.43.49.107/v1/models/whisper-large-v3-turbo-radeonvii' | python3 -c 'import json,sys; print(json.load(sys.stdin).get("flexinfer",{}).get("diarization"))'
-```
-
-Expect `True Idle`, then `{"available": true, "model": "pyannote-diarization-radeonvii", ...}`.
-Warm once with a short clip. The first load downloads the gated weights, about 50 MiB. KT-ASR's
-`twospk.wav` or the first 60 s of the fixture below both work:
-
-```bash
-ssh cblevins-radeonvii 'cd ~/kt-diar && curl -s http://10.43.49.107/v1/audio/transcriptions -F model=whisper-large-v3-turbo-radeonvii -F diarize=true -F num_speakers=2 -F file=@warm-60s.wav'
-# -> {"object":"job","id":"job_…","status":"queued",…}; poll it:
-ssh cblevins-radeonvii 'curl -s http://10.43.49.107/v1/jobs/<id>'          # status completed
-ssh cblevins-radeonvii 'curl -s http://10.43.49.107/v1/jobs/<id>/content' | head -c 600
-```
-
-**W7 amended (KT-DIAR).** The nodes have no cluster DNS (`getent hosts
-flexinfer-proxy.flexinfer-system.svc.cluster.local` fails on `cblevins-radeonvii` and
-`cblevins-5930k`), so the harness takes ClusterIPs, as KT-RET did. Proxy `10.43.49.107`, gte
-`10.43.153.107:8000`, bge-large `10.43.47.6:8000`, standalone pyannote `10.43.139.54:8000`; re-read
-them with `kubectl -n flexinfer-system get svc` on the day. Run it on `cblevins-radeonvii` itself:
-`--kfd` needs the host sysfs, the node has python3 and 102 GB free on `/`, and neither node has
-ffmpeg, so the clip is cut with the stdlib.
-
-Fixture (not committed; CC BY 4.0, AMI Meeting Corpus, University of Edinburgh mirror):
-`EN2002a.Mix-Headset.wav` is 68,566,744 bytes, 16 kHz mono s16le, 35.7 min, 4 speakers. The
-reference is pyannote's AMI-diarization-setup `only_words/rttms/test/EN2002a.rttm`, 746 turns,
-speakers FEO070, FEO072, MEE071, MEE073.
-
-```bash
-scp scripts/kt-diar.py cblevins-radeonvii:~/kt-diar/   # mkdir -p ~/kt-diar first
-ssh cblevins-radeonvii 'cd ~/kt-diar && \
-  curl -sfLO https://groups.inf.ed.ac.uk/ami/AMICorpusMirror/amicorpus/EN2002a/audio/EN2002a.Mix-Headset.wav && \
-  curl -sfLO https://raw.githubusercontent.com/pyannote/AMI-diarization-setup/main/only_words/rttms/test/EN2002a.rttm && \
-  python3 -I -c "
-import wave
-src = wave.open(\"EN2002a.Mix-Headset.wav\")
-assert (src.getnchannels(), src.getframerate(), src.getsampwidth()) == (1, 16000, 2)
-for name, secs in ((\"en2002a-30m.wav\", 1800), (\"warm-60s.wav\", 60)):
-    src.rewind()
-    out = wave.open(name, \"wb\"); out.setparams(src.getparams()); out.writeframes(src.readframes(16000 * secs)); out.close()
-print(\"ok\")"'
-```
-
-Run (owner present; gte p95 baseline is the harness's own 240 s probe; 2026-11-02 reference
-through the proxy: p95 24.7 ms at 3.8 req/s over 30 min):
-
-```bash
-ssh cblevins-radeonvii 'cd ~/kt-diar && sudo python3 -I kt-diar.py --audio en2002a-30m.wav --num-speakers 4 \
-  --proxy http://10.43.49.107 \
-  --gte-url http://10.43.153.107:8000/v1/embeddings --bge-url http://10.43.47.6:8000/v1/embeddings \
-  --standalone http://10.43.139.54:8000/diarize \
-  --kfd /sys/class/kfd/kfd/proc --out kt-diar-$(date -u +%Y%m%d) \
-  --reference EN2002a.rttm --uri EN2002a --ref-offset 0 2>&1 | tee kt-diar.log'
-```
-
-`sudo` is only for the KFD queue `type` files. The harness counts compute queues only; SDMA queues
-are not part of the 24-queue HWS limit. The task's `ls -d …/queues/* | wc -l` counts SDMA too
-(20 on 2026-11-02 = 18 compute + the standalone Deployment's 2 SDMA). Spot check during the run:
-
-```bash
-ssh cblevins-radeonvii 'n=0; for t in /sys/class/kfd/kfd/proc/*/queues/*/type; do [ "$(sudo cat $t)" = 0 ] && n=$((n+1)); done; echo compute=$n'   # must stay <= 24
-```
-
-Then copy `kt-diar-<date>/` back and run the printed gate from the repo root:
-
-```bash
-scp -r cblevins-radeonvii:~/kt-diar/kt-diar-<date> . && scp cblevins-radeonvii:~/kt-diar/EN2002a.rttm .
-go run ./cmd/flexinfer-bench diarize_conformance --reference EN2002a.rttm --uri EN2002a --ref-offset 0 \
-  --hypothesis kt-diar-<date>/job.json --baseline kt-diar-<date>/baseline.json \
-  --gte-baseline-p95-ms <printed> --gte-run-p95-ms <printed> --job <printed> \
-  --image "${NEW}" --row gfx906-diarize-job-<date> --out kt-diar-report.json
-```
-
-Window telemetry. The plan's `node=` selector above returns nothing: `flexinfer_runtime_hw_queues`
-carries `gpu_arch`/`pod`/`source`, not `node`. Use the loom Prometheus/Loki MCP tools or Grafana:
-
-```promql
-max_over_time(flexinfer_runtime_hw_queues{gpu_arch="gfx906",source="observed"}[1h])
-histogram_quantile(0.95, sum by (le) (rate(flexinfer_proxy_request_duration_seconds_bucket{model="gte-qwen2-1p5b-radeonvii"}[5m])))
-sum(rate(flexinfer_proxy_request_duration_seconds_count{model="gte-qwen2-1p5b-radeonvii"}[5m]))
-```
-
-```logql
-{job="node-kernel"} |= "oversubscribed"
-```
-
-pyannote process VRAM for the evidence: `kubectl -n flexinfer-system exec ds/flexinfer-runtime-gfx906 -- curl -s localhost:8080/api/v1/models`, or the agent's `flexinfer_gpu_vram_*` series for the card, before and after the lane loads.
-
-**Window hazards.** `gemma4-e4b-radeonvii` (priority 110) and
-`openjev-0p8b-crossencoder-radeonvii` (112) outrank the lane (109) and are Idle. Activating either
-during the run pushes the estimate past 21 queues and evicts the lowest lanes, the pyannote lane
-first. Keep them idle for the window. A Humanizer burst (130) evicts pyannote by design.
-
-**Queue budget and the standalone Deployment.** Measured 2026-11-02 18:10Z from
-`/sys/class/kfd/kfd/proc`: 18 compute queues. That is bge-large, bge-reranker, gte, orpheus and
-whisper.cpp at 3 each, plus the standalone pyannote Deployment's 3 (and 2 SDMA). Model estimates:
-15 of 21 (24 − `reservedHWQueues 3`). With the lane: 18 of 21 estimated, 21 of 24 compute
-measured. The Deployment and `reservedHWQueues: 3` both stay through KT-DIAR: the Deployment is
-the DER baseline, and the reservation is what keeps the election from spending its queues.
-Retiring them is §"After a PASS" 2: one MR drops `deploy/system/pyannote-diarization` and sets
-`reservedHWQueues: 0` together, after ICC and jobsearch move to `diarize=true`.
-
-**Rollbacks (as prepared).**
-
-| Step | Rollback | Effect |
-|---|---|---|
-| G3 | revert the Model MR, `flux reconcile kustomization flexinfer-models -n flux-system --with-source` | prune removes the lane; the ASR annotation and the certificate go with it; `diarize=true` → 501 `diarization_not_certified` |
-| G2 | revert the repin MR (G3 first), `flux reconcile hr flexinfer -n flexinfer-system --with-source` | the VII returns to `6fc6fcbd` (prewarmed, seconds); the token is unmounted |
-| G1 | revert !1255 (or `proxy.jobs.enabled: false`), reconcile the HelmRelease | the proxy restarts with jobs off; imagegen-ui falls back to synchronous video |
-| P | revert the prewarm MR | the prewarm DaemonSet drops `${NEW}` |
-
-## Window steps (owner paste sequence, 2026-11-01 original)
-
-W1–W6 are superseded by "Window as prepared 2026-11-02" above (layer built, certificate via git
-instead of a Flux suspend and kubectl annotate). W7–W8 stand, amended there for node shells.
+## Window steps (owner paste sequence)
 
 ```bash
 export KUBECONFIG=/Users/cblevins/workspace/platform/gitops/.kube/k3s.yaml
@@ -379,9 +199,6 @@ process VRAM in `validation_evidence`.
 
 ## Rollbacks (paste-ready)
 
-For the prepared window, the rollbacks at the end of "Window as prepared 2026-11-02" apply
-(reverts through Flux); R5–R6 below describe the superseded kubectl path.
-
 | Step | Rollback | Effect |
 |---|---|---|
 | R6 (lane, annotation) | `kubectl -n flexinfer-system delete model pyannote-diarization-radeonvii` and `kubectl -n flexinfer-system annotate model whisper-large-v3-turbo-radeonvii flexinfer.ai/diarization-model-` | `diarize=true` answers 501 `diarization_not_certified`; plain transcriptions untouched |
@@ -393,9 +210,6 @@ The standalone `pyannote-diarization` Deployment and the proxy's `/diarize` rout
 throughout; nothing in this plan touches them.
 
 ## Budget during the window
-
-Superseded by the measured budget in "Window as prepared 2026-11-02" (`reservedHWQueues` is 3
-since !1207, so the Models' limit is 21, not 22).
 
 Warm set 12 queues + whisper.cpp 3 + the pyannote lane 3 = 18 of the Models' 22 (24 − 2 reserved
 for the Deployment), and 20–21 of 24 with the Deployment's own 2–3. VRAM by estimate: 8,100 +

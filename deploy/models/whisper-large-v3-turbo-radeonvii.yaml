@@ -43,12 +43,6 @@ metadata:
     # default 120 s first-byte budget would 504 a long recording. 900 s covers
     # about 8.5 h of audio at 34.7x.
     flexinfer.ai/lane-first-byte-budget: "900s"
-    # D5-a: diarize=true (or timestamp_granularities[]=speaker) on a
-    # transcription of this lane runs as a D2 job: this lane, then the named
-    # pyannote lane, words labelled with speakers. The proxy answers 501
-    # diarization_not_certified while that lane's BackendCertificate is not
-    # True, so plain transcriptions never depend on it.
-    flexinfer.ai/diarization-model: pyannote-diarization-radeonvii
 spec:
   backend: whispercpp
   source: HF://ggerganov/whisper.cpp
