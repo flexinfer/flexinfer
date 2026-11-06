@@ -1227,7 +1227,9 @@ def collect(root: Path) -> dict:
             "b_sa_scheduler_line": _first_line(
                 root / "sa-B" / "run.log", "CosineDPMSolverMultistepScheduler"
             ),
-            "b_sa_dummy_errors": _count_lines(root / "sa-B" / "run.log", "torchsde"),
+            "b_sa_dummy_errors": _count_lines(
+                root / "sa-B" / "run.log", "requires the torchsde library"
+            ),
             "b_sa_vram_peak_mib": vram.get("sa-B"),
             "kernel_error_lines": kernel_lines,
         }
