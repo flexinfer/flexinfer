@@ -57,10 +57,12 @@ metadata:
     flexinfer.ai/promotion-state: debug-canary-q2-segmented-live-kv
 spec:
   backend: vllm
-  # IMAGE: the first rocm-gfx1100-serving-v033-<sha> built from a master that
-  # carries plugin-common 0.6.0, pinned by digest and Harbor pinned-* tag.
-  # Filled in when that build exists.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:IMAGE_DIGEST_PENDING
+  # rocm-gfx1100-serving-v033-5d815c0d: master 5d815c0d (!1319), pipeline 38086,
+  # job 473189 (publish_serving_rocm_gfx1100_v033, 2026-11-06 ~20:26Z). vLLM
+  # 0.33.0+rocm72, plugin-common 0.6.0, text plugin 0.12.0; the in-build
+  # verifier passed with the segmented runtime-tables and embed-host patches
+  # installing. pinned-0dc5cd0b4a21 comes from harbor-flexinfer-pin-tags.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:0dc5cd0b4a210c133e8208444f0f8a1b848ae9e4b655e0deb0e09c06b28e4c67
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     strategy: Local
