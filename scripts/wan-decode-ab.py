@@ -1093,6 +1093,9 @@ def _since(runs, phase, cid):
     return None
 
 
+T2V_FIX_VARIANTS = ("t2v-B-tile", "t2v-B-tile-noexp", "t2v-B-noexp")
+
+
 def collect(root: Path) -> dict:
     import re
 
@@ -1131,11 +1134,20 @@ def collect(root: Path) -> dict:
     for name in ("bf16", "fp32"):
         cmp(f"decode_{name}", "vace-B-v1", f"vace-B-{name}-x0")
         cmp(f"e2e_{name}", "vace-B-v1", f"vace-B-{name}-v1")
+    # Addendum row gfx1100-wan-decode-ab-v032-fix-2026-11-06: B variants of
+    # t2v-B, each judged against A on the same bars.
+    fix_variants = [p for p in T2V_FIX_VARIANTS if p in runs]
+    for phase in fix_variants:
+        cmp(f"{phase}:decode_equivalence", "t2v-A-c1", f"{phase}-xA")
+        for cid in ("c1", "c2"):
+            cmp(f"{phase}:e2e_{cid}", f"t2v-A-{cid}", f"{phase}-{cid}")
+    fix_arm = next((p for p in ("t2v-B-tile-noexp", "t2v-B-tile") if p in runs), None)
     cache_phases = [p for p in runs if p.startswith("cache-B-")]
     for phase in cache_phases:
         name = phase[len("cache-B-"):]
+        base = fix_arm if name.endswith("-fix") else "t2v-B"
         for cid in ("c1", "c2"):
-            cmp(f"cache_{name}_{cid}", f"t2v-B-{cid}", f"{phase}-{cid}")
+            cmp(f"cache_{name}_{cid}", f"{base}-{cid}", f"{phase}-{cid}")
 
     pattern = re.compile(KERNEL_ERROR_RE, re.IGNORECASE)
     kernel_lines = 0
@@ -1176,10 +1188,27 @@ def collect(root: Path) -> dict:
             verdicts[f"vace-vae-{name}"] = verdict_vace_vae(
                 runs["vace-B"], runs[f"vace-B-{name}"], host, sims, name
             )
+    for phase in fix_variants:
+        view_host = {
+            **host,
+            "b_vram_peak_mib": vram.get(phase),
+            "b_first_cold_seconds": _since(runs, phase, "c0"),
+            "b_cold_clip_seconds": _since(runs, f"{phase}-cold", "k"),
+            "b_bypass_line": _first_line(root / phase / "run.log", BYPASS_LINE),
+        }
+        view_sims = {
+            **sims,
+            "decode_equivalence": sims.get(f"{phase}:decode_equivalence"),
+            "e2e_c1": sims.get(f"{phase}:e2e_c1"),
+            "e2e_c2": sims.get(f"{phase}:e2e_c2"),
+        }
+        if "t2v-A" in runs:
+            verdicts[phase] = verdict_t2v(runs["t2v-A"], runs[phase], view_host, view_sims)
     for phase in cache_phases:
-        if "t2v-B" in runs:
-            name = phase[len("cache-B-"):]
-            verdicts[f"cache-{name}"] = verdict_cache(runs["t2v-B"], runs[phase], sims, name)
+        name = phase[len("cache-B-"):]
+        base = fix_arm if name.endswith("-fix") else "t2v-B"
+        if base in runs:
+            verdicts[f"cache-{name}"] = verdict_cache(runs[base], runs[phase], sims, name)
     if "sa-A" in runs and "sa-B" in runs:
         verdicts["stable-audio"] = verdict_audio(runs["sa-A"], runs["sa-B"], host)
     return {"host": host, "sims": sims, "verdicts": verdicts}

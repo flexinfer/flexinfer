@@ -366,6 +366,41 @@ class MetricsTest(unittest.TestCase):
         self.assertIn("t2v", result["verdicts"])
         self.assertEqual(host["ffprobe"]["t2v-A-c1"], ["h264", 33])
 
+    def test_collect_judges_fix_variant_and_its_cache_arm(self):
+        a, b, _, _ = t2v_runs()
+        tile = {**b, "label": "t2v-B-tile"}
+        cached = {**b, "label": "cache-B-fbc005-fix"}
+        crashed = {"label": "t2v-B", "error": "OutOfMemoryError", "clips": []}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            f = self.frames(n=2)
+            for run in (a, tile, cached, crashed):
+                d = root / run["label"]
+                d.mkdir()
+                run["clips"] = [dict(c) for c in run["clips"]]
+                for c in run["clips"]:
+                    c["frames_file"] = f"{run['label']}-{c['id']}.frames.npz"
+                    np.savez_compressed(d / c["frames_file"], frames=f)
+                (d / f"{run['label']}.json").write_text(json.dumps(run))
+            a["decodes"] = [{"id": "own", "frames_file": "t2v-A-own.frames.npz"}]
+            np.savez_compressed(root / "t2v-A" / "t2v-A-own.frames.npz", frames=f)
+            (root / "t2v-A" / "t2v-A.json").write_text(json.dumps(a))
+            tile["decodes"] = [{"id": "xA", "frames_file": "t2v-B-tile-xA.frames.npz"}]
+            np.savez_compressed(
+                root / "t2v-B-tile" / "t2v-B-tile-xA.frames.npz", frames=f
+            )
+            (root / "t2v-B-tile" / "t2v-B-tile.json").write_text(json.dumps(tile))
+            (root / "t2v-B-tile" / "run.log").write_text(wanab.BYPASS_LINE + "\n")
+            with mock.patch.object(wanab, "_ffprobe", return_value=["h264", 33]):
+                result = wanab.collect(root)
+        sims, verdicts = result["sims"], result["verdicts"]
+        self.assertTrue(sims["t2v-B-tile:decode_equivalence"]["identical"])
+        self.assertEqual(sims["t2v-B-tile:e2e_c1"]["b"], "t2v-B-tile-c1")
+        self.assertEqual(sims["cache_fbc005-fix_c1"]["a"], "t2v-B-tile-c1")
+        self.assertIn("t2v-B-tile", verdicts)
+        self.assertIn("cache-fbc005-fix", verdicts)
+        self.assertEqual(verdicts["t2v"]["decision"], "fail")
+
 
 class ClipSpecTest(unittest.TestCase):
     def test_parse(self):
