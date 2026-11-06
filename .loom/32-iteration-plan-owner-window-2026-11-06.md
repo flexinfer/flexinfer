@@ -642,9 +642,29 @@ Copy `deploy/gpuprofiles/gfx1100.yaml` and the five lane manifests there too.
 
   The dedicated Qwen-Image lane runs a different base (`2c94c6d9`,
   `rocm-gfx1100-serving-b83c3822`), so a clean dedicated A arm does not clear the in-pod one.
-- **Owner choice before D3.** Either hold !1236 until S9's diagnostics explain the corruption, or
-  run D3 with the multi-render gate below. A gate failure reverts !1236. KT-SWAP (D4) then runs
-  its fallback arm (warm-lane reloads only).
+- **S9's verdict (!1314, 01:22Z on 11-06) and what it means for D3.**
+  - The cause is `expandable_segments:True` **combined with model CPU offload**. With both, the
+    process holds ~19 GiB outside torch's accounting and corrupts every VAE use after the first.
+    Removing either one renders sound. Its H6 arm kept `expandable_segments` on with
+    `USE_CPU_OFFLOAD=0`: sound, 0 NaN.
+  - In-pod Qwen-Image runs **without offload**. The lane sets `cpuOffload: "false"`, the
+    diffusers backend renders `USE_CPU_OFFLOAD=0`, and `server-diffusers.py` skips forced offload
+    for NF4 ("NF4 quantization detected: skipping forced CPU offload").
+  - It does inherit `expandable_segments:True` twice: the runtime pod's
+    `PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.7,max_split_size_mb:256,expandable_segments:True`,
+    and the backend's gfx110x `PYTORCH_HIP_ALLOC_CONF=…,expandable_segments:True`.
+  - So D3 sits outside S9's failing pattern, and the gate is **not expected** to fail on that
+    mechanism. Still untested on this base: NF4/bitsandbytes, and expandable-segments memory
+    accounting without offload. The gate stays.
+  - **Extra check before the four renders.** The runtime log for the in-pod load must show the NF4
+    skip line and no `Enabling model CPU offload`. If offload is on, stop: the gate would be
+    expected to fail.
+  - **Optional hardening (owner's call, not in !1236 today).** Add both allocator variables
+    without `expandable_segments` to the lane's `config.env`, which is applied last in-pod. That is
+    S9's sound configuration.
+- **Owner choice before D3.** S9 has now explained the corruption (above), so holding !1236 is
+  no longer needed for that. Run D3 with the multi-render gate below. A gate failure reverts
+  !1236, and KT-SWAP (D4) then runs its fallback arm (warm-lane reloads only).
 - **Depends on.** D2 soaked.
 - **Conflicts.**
   - The branch carries !1235's commits; merge only after D2.
