@@ -118,6 +118,21 @@ RUN python3 -m pip install --no-cache-dir --no-deps /opt/flexinfer/qwen35-seqcls
 COPY build/scripts/verify_vllm_gfx1100_native_w4a16.py /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
 RUN python3 /opt/flexinfer/verify_vllm_gfx1100_native_w4a16.py
 
+# The RDNA3 W4A16 GEMM with persistent split-K tickets (.loom/
+# 70-result-gptq-rdna3-2026-11-06.md): vLLM's own csrc/rocm/q_gemm_rdna3.cu
+# with the per-call at::zeros ticket fill replaced by a pool zeroed once,
+# compiled here against this base's torch and hipcc with _rocm_C's flags, plus
+# a general plugin that makes it the CUDA kernel of
+# _rocm_C::gptq_gemm_rdna3. Off unless a lane sets
+# FLEXINFER_RDNA3_W4A16=tickets. The verifier runs with no GPU: it swaps the
+# kernel in and back out next to the real _rocm_C, and requires the vendored
+# GEMM kernels to disassemble to exactly the code in this base's _rocm_C.
+COPY build/vllm-rdna3-w4a16-plugin /opt/flexinfer/rdna3-w4a16-plugin
+RUN python3 -m pip install --no-cache-dir --no-deps --no-build-isolation /opt/flexinfer/rdna3-w4a16-plugin \
+    && rm -rf /opt/flexinfer/rdna3-w4a16-plugin/build /opt/flexinfer/rdna3-w4a16-plugin/src/*.egg-info
+COPY build/scripts/verify_vllm_rdna3_w4a16_plugin.py /opt/flexinfer/verify_vllm_rdna3_w4a16_plugin.py
+RUN python3 /opt/flexinfer/verify_vllm_rdna3_w4a16_plugin.py
+
 # The diffusers and snac servers' dependencies, constrained to the snapshot:
 # pip may add packages but cannot upgrade or downgrade any the vLLM stack has.
 # The creative-lane pins match requirements-diffusers-rocm.txt except

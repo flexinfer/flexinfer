@@ -1879,6 +1879,38 @@
       "source": ".loom/60-validation-matrix.md"
     },
     {
+      "id": "gfx1100-gptq-rdna3-tickets-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "GPTQ-RDNA3 piece 1: the split-K ticket fill of _rocm_C::gptq_gemm_rdna3. S4 (row gfx1100-s4-step0-decode-anatomy-2026-11-05) found the fp16 W4A16 GEMM allocates its arrival tickets with at::zeros on…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-gptq-rdna3-tickets-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-gptq-rdna3-read-efficiency-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "GPTQ-RDNA3 piece 2: why the RDNA3 W4A16 GEMMs read at only 63–73 % of the 934 GB/s ceiling (S4: 260 M = 3 calls per step move ~12.83 GB in 18.83 ms of kernel time = ~681 GB/s, 62 % of decode-step…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-gptq-rdna3-read-efficiency-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
       "kind": "validation",
       "support_level": "experimental",

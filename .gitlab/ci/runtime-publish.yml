@@ -15,6 +15,7 @@ runtime_patch_contracts:
     - python3 build/scripts/test_runtime_gptq_patch_composition.py
     - python3 build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
     - python3 build/scripts/test_verify_runtime_serving_stack.py
+    - python3 build/scripts/test_vllm_rdna3_w4a16_plugin.py
     - python3 build/scripts/test_abliterate_safety.py
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
@@ -48,6 +49,9 @@ runtime_patch_contracts:
         - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
         - build/scripts/verify_runtime_serving_stack.py
         - build/scripts/test_verify_runtime_serving_stack.py
+        - build/scripts/verify_vllm_rdna3_w4a16_plugin.py
+        - build/scripts/test_vllm_rdna3_w4a16_plugin.py
+        - build/vllm-rdna3-w4a16-plugin/**/*
     - if: $CI_MERGE_REQUEST_ID
       changes:
         - .gitlab/ci/runtime-publish.yml
@@ -79,6 +83,9 @@ runtime_patch_contracts:
         - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
         - build/scripts/verify_runtime_serving_stack.py
         - build/scripts/test_verify_runtime_serving_stack.py
+        - build/scripts/verify_vllm_rdna3_w4a16_plugin.py
+        - build/scripts/test_vllm_rdna3_w4a16_plugin.py
+        - build/vllm-rdna3-w4a16-plugin/**/*
     - if: $CI_COMMIT_BRANCH
       changes:
         - .gitlab/ci/runtime-publish.yml
@@ -110,6 +117,9 @@ runtime_patch_contracts:
         - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
         - build/scripts/verify_runtime_serving_stack.py
         - build/scripts/test_verify_runtime_serving_stack.py
+        - build/scripts/verify_vllm_rdna3_w4a16_plugin.py
+        - build/scripts/test_vllm_rdna3_w4a16_plugin.py
+        - build/vllm-rdna3-w4a16-plugin/**/*
     - when: never
 
 publish_serving_rocm_gfx1100:
@@ -348,7 +358,9 @@ publish_serving_rocm_gfx1100_v032:
         - build/vllm-plugin-common/**/*
         - build/vllm-qwen35-text-plugin/**/*
         - build/vllm-qwen35-seqcls-plugin/**/*
+        - build/vllm-rdna3-w4a16-plugin/**/*
         - build/scripts/verify_vllm_gfx1100_native_w4a16.py
+        - build/scripts/verify_vllm_rdna3_w4a16_plugin.py
         - build/scripts/verify_runtime_serving_stack.py
         - build/scripts/test_verify_runtime_serving_stack.py
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
@@ -428,7 +440,9 @@ publish_serving_rocm_gfx1100_v033:
         - build/vllm-plugin-common/**/*
         - build/vllm-qwen35-text-plugin/**/*
         - build/vllm-qwen35-seqcls-plugin/**/*
+        - build/vllm-rdna3-w4a16-plugin/**/*
         - build/scripts/verify_vllm_gfx1100_native_w4a16.py
+        - build/scripts/verify_vllm_rdna3_w4a16_plugin.py
         - build/scripts/verify_runtime_serving_stack.py
         - build/scripts/test_verify_runtime_serving_stack.py
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
