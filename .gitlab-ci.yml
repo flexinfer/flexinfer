@@ -668,7 +668,10 @@ server_diffusers_test:
     # GGUFParameters) skip here; build/check-runtime-diffusers.py covers the
     # signature inside the serving image build.
     - python3 scripts/test_server_diffusers.py
-    - python3 -m py_compile build/server-diffusers.py build/check-runtime-diffusers.py
+    # The S9 Wan harness: verdict arithmetic runs bare; its metric and collect
+    # cases need numpy and skip here.
+    - python3 scripts/test_wan_decode_ab.py
+    - python3 -m py_compile build/server-diffusers.py build/check-runtime-diffusers.py scripts/wan-decode-ab.py
   rules:
     - if: $CI_MERGE_REQUEST_ID
       changes: &server-diffusers-changes
@@ -676,6 +679,8 @@ server_diffusers_test:
         - build/server-diffusers.py
         - build/check-runtime-diffusers.py
         - scripts/test_server_diffusers.py
+        - scripts/wan-decode-ab.py
+        - scripts/test_wan_decode_ab.py
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *server-diffusers-changes
 
