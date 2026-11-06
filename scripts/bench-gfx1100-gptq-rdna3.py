@@ -202,7 +202,99 @@ def bench_correctness(torch, ops, args):
     }
 
 
-def bench_per_call(torch, ops, args):
+def kernel_busy(torch, fn, reps):
+    """Profile reps calls of fn; per-call kernel time and counts by class.
+
+    gemm_us: GEMM kernels only (gemm_q4_kernel*), the bandwidth numerator's
+    true denominator; all_us: every kernel (fills, reduces included);
+    fills: zero-fill kernels per call.
+    """
+    from torch.profiler import ProfilerActivity, profile
+
+    fn()
+    torch.cuda.synchronize()
+    with profile(activities=[ProfilerActivity.CUDA]) as prof:
+        for _ in range(reps):
+            fn()
+        torch.cuda.synchronize()
+    gemm = total = 0.0
+    n_gemm = n_fill = n_all = 0
+    for ev in prof.events():
+        if ev.device_type is None or "CUDA" not in str(ev.device_type):
+            continue
+        dur = ev.time_range.elapsed_us()
+        n_all += 1
+        total += dur
+        if "gemm_q4_kernel" in ev.name:
+            n_gemm += 1
+            gemm += dur
+        elif "fill" in ev.name.lower() or "zero" in ev.name.lower():
+            n_fill += 1
+    return {
+        "gemm_us": round(gemm / reps, 2),
+        "all_us": round(total / reps, 2),
+        "gemm_kernels": round(n_gemm / reps, 2),
+        "fill_kernels": round(n_fill / reps, 2),
+        "kernels": round(n_all / reps, 2),
+    }
+
+
+def triton_read(torch, buf, iters, warmup):
+    """A plain streaming-read kernel (as in bench-gfx1100-decode-kernels.py)."""
+    import triton
+    import triton.language as tl
+
+    @triton.jit
+    def _read(x_ptr, out_ptr, n, BLOCK: tl.constexpr, UNROLL: tl.constexpr):
+        pid = tl.program_id(0)
+        base = pid * BLOCK * UNROLL
+        acc = tl.zeros([BLOCK], dtype=tl.float32)
+        for u in tl.static_range(UNROLL):
+            offs = base + u * BLOCK + tl.arange(0, BLOCK)
+            acc += tl.load(x_ptr + offs, mask=offs < n, other=0.0).to(tl.float32)
+        tl.store(out_ptr + pid, tl.sum(acc, axis=0))
+
+    n = buf.numel()
+    best = 0.0
+    for block, unroll, warps in ((1024, 8, 4), (2048, 8, 8), (4096, 4, 8)):
+        programs = triton.cdiv(n, block * unroll)
+        out = torch.empty(programs, dtype=torch.float32, device=buf.device)
+
+        def run(block=block, unroll=unroll, warps=warps, programs=programs, out=out):
+            _read[(programs,)](buf, out, n, BLOCK=block, UNROLL=unroll, num_warps=warps)
+
+        t = timed_rounds(torch, {"r": run}, iters, warmup)["r"]
+        best = max(best, gbps(n * buf.element_size(), t["median_ms"]) or 0.0)
+    return best
+
+
+def read_ceiling(torch, gib=2, iters=30, warmup=5):
+    """Best read-only rate (GB/s): fp32-accumulated sum, amax, Triton read."""
+    nbytes = gib * 2**30
+    buf = torch.empty(nbytes // 2, dtype=torch.float16, device="cuda").fill_(1.0)
+    rates = {}
+    t = timed_rounds(
+        torch,
+        {
+            "sum": lambda: torch.sum(buf, dtype=torch.float32),
+            "amax": lambda: torch.amax(buf),
+        },
+        iters,
+        warmup,
+    )
+    for k, v in t.items():
+        rates[k] = gbps(nbytes, v["median_ms"])
+    try:
+        rates["triton_read"] = triton_read(torch, buf, iters, warmup)
+    except Exception as exc:  # noqa: BLE001 - keep the torch reads
+        rates["triton_read_error"] = f"{type(exc).__name__}: {exc}"
+    del buf
+    torch.cuda.empty_cache()
+    rates["ceiling_gbps"] = max(v for v in rates.values() if isinstance(v, float))
+    return rates
+
+
+def bench_per_call(torch, ops, args, ceiling=None):
     results = []
     for role, (k, n) in SHAPES.items():
         if role == "gdn.out_proj":
@@ -250,13 +342,23 @@ def bench_per_call(torch, ops, args):
                 }
                 for nm, v in t.items()
             }
+            if m in args.busy_rows:
+                for nm in names:
+                    busy = kernel_busy(torch, make(nm), args.busy_reps)
+                    if busy["gemm_us"] > 0:
+                        busy["gemm_gbps"] = gbps(nbytes, busy["gemm_us"] / 1000)
+                        if ceiling:
+                            busy["fraction_of_ceiling"] = round(
+                                busy["gemm_gbps"] / ceiling, 3
+                            )
+                    entry["by_m"][str(m)][nm]["busy"] = busy
         results.append(entry)
         del ring
         torch.cuda.empty_cache()
     return results
 
 
-def bench_forward_graph(torch, ops, args, plugin):
+def bench_forward_graph(torch, ops, args, plugin, ceiling=None):
     """Graph of one target forward's 256 GPTQ GEMMs, per arm and M."""
     roles = layer_roles()
     free, _ = torch.cuda.mem_get_info()
@@ -307,6 +409,13 @@ def bench_forward_graph(torch, ops, args, plugin):
         out["by_m"][str(m)] = {
             nm: {**v, "gbps": gbps(need, v["median_ms"])} for nm, v in t.items()
         }
+        for nm, g in graphs.items():
+            busy = kernel_busy(torch, g.replay, 3)
+            if busy["gemm_us"] > 0:
+                busy["gemm_gbps"] = gbps(need, busy["gemm_us"] / 1000)
+                if ceiling:
+                    busy["fraction_of_ceiling"] = round(busy["gemm_gbps"] / ceiling, 3)
+            out["by_m"][str(m)][nm]["busy_per_replay"] = busy
         del graphs
     del weights
     torch.cuda.empty_cache()
@@ -423,11 +532,13 @@ def main(argv=None):
     parser.add_argument("--graph-iters", type=int, default=50)
     parser.add_argument("--graph-rows", type=int, nargs="+", default=[1, 3, 6])
     parser.add_argument("--waves", type=int, nargs="+", default=[0, 8, 16, 32])
+    parser.add_argument("--busy-rows", type=int, nargs="+", default=[1, 3])
+    parser.add_argument("--busy-reps", type=int, default=20)
     parser.add_argument(
         "--skip",
         nargs="*",
         default=[],
-        choices=["correctness", "per_call", "forward", "safety", "census"],
+        choices=["correctness", "per_call", "forward", "safety", "census", "ceiling"],
     )
     parser.add_argument("--out", default="/tmp/gptq-rdna3.json")
     args = parser.parse_args(argv)
@@ -471,8 +582,19 @@ def main(argv=None):
         ("safety", lambda: check_graph_safety(torch, ops, plugin)),
         ("correctness", lambda: bench_correctness(torch, ops, args)),
         ("census", lambda: kernel_census(torch, ops, plugin)),
-        ("per_call", lambda: bench_per_call(torch, ops, args)),
-        ("forward", lambda: bench_forward_graph(torch, ops, args, plugin)),
+        ("ceiling", lambda: read_ceiling(torch)),
+        (
+            "per_call",
+            lambda: bench_per_call(
+                torch, ops, args, summary.get("ceiling", {}).get("ceiling_gbps")
+            ),
+        ),
+        (
+            "forward",
+            lambda: bench_forward_graph(
+                torch, ops, args, plugin, summary.get("ceiling", {}).get("ceiling_gbps")
+            ),
+        ),
     )
     for name, fn in steps:
         if name in args.skip:

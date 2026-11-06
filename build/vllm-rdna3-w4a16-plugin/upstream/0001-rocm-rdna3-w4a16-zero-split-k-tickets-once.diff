@@ -1,0 +1,435 @@
+diff --git a/csrc/rocm/q_gemm_rdna3.cu b/csrc/rocm/q_gemm_rdna3.cu
+index 8ba5b48..972bca0 100644
+--- a/csrc/rocm/q_gemm_rdna3.cu
++++ b/csrc/rocm/q_gemm_rdna3.cu
+@@ -10,8 +10,9 @@
+ //      each block stores its FP32 block partial to a scratch tensor, and the
+ //      last z block of each (x, y) tile reduces the z-slices in fixed
+ //      ascending order with a single final cast to T — the reduction runs
+-//      in the GEMM kernel itself, gated by a per-call ticket counter (no
+-//      cross-launch state; see the epilogue). When gridDim.z == 1 each
++//      in the GEMM kernel itself, gated by a per-tile ticket counter that
++//      the kernel re-arms to zero (see the epilogue, and split_k_tickets for
++//      where the tickets live). When gridDim.z == 1 each
+ //      output element has exactly one writer and the kernel stores the
+ //      rounded accumulator directly — no scratch, no reduce, no atomics.
+ //      (Legacy design, pre-#54706: a packed CAS-loop atomic add on a 64-bit
+@@ -45,6 +46,8 @@
+ 
+ #include <cstdint>
+ #include <cstdio>
++#include <map>
++#include <mutex>
+ 
+ #include <torch/all.h>
+ #include <c10/cuda/CUDAGuard.h>
+@@ -200,11 +203,12 @@ __global__ void gemm_q4_kernel_rdna3(
+     // last z block of each (x, y) tile then
+     // performs the fixed ascending-z
+     // reduction in-kernel (see the epilogue
+-    // below). `tickets` (same length as the
+-    // number of tiles) is a per-call
+-    // zero-filled arrival counter array —
+-    // one ticket per tile — so concurrent
+-    // invocations never share state.
++    // below). `tickets` (at least as long as
++    // the number of tiles) is an arrival
++    // counter array, one ticket per tile,
++    // zero at launch and re-armed to zero by
++    // the kernel; no two concurrent launches
++    // share one (see split_k_tickets).
+     float* __restrict__ partials, int* __restrict__ tickets) {
+   const int t = threadIdx.x;
+   const int offset_n = blockIdx.x * BLOCK_KN_SIZE * 4;
+@@ -606,13 +610,13 @@ __global__ void gemm_q4_kernel_rdna3(
+   // in-kernel fixed-order reduce below never reads). n is a multiple of 4
+   // and size_n % 8 == 0, so the 4-lane store never crosses the right edge.
+   // After the stores, the block publishes its arrival on the tile's ticket
+-  // (a per-call zero-filled counter); the LAST z block of the tile then
++  // (a counter that is zero at launch); the LAST z block of the tile then
+   // sums the z slices in fixed ascending order with a single final cast —
+   // the reduction order is a pure function of the launch shape, so the
+-  // result stays bit-reproducible for identical inputs. Tickets are
+-  // per-invocation state (see launch_gemm_q4_deterministic); nothing is
+-  // shared across kernel launches, so concurrent invocations on other
+-  // streams cannot interfere.
++  // result stays bit-reproducible for identical inputs. The last block
++  // re-arms the ticket to zero, so launches ordered on one stream can reuse
++  // one ticket array; launches that may run concurrently never share one
++  // (see split_k_tickets).
+   //
+   // partials == nullptr && gridDim.z == 1: single split block per output
+   //   element — direct store of the rounded accumulator. No scratch, no
+@@ -685,9 +689,9 @@ __global__ void gemm_q4_kernel_rdna3(
+   // the block is device-visible. The last block's second __threadfence()
+   // pairs with the writers' fences (acquire side), making the other blocks'
+   // partials visible before they are read. The ticket is re-armed after the
+-  // reduction so the same per-call array serves the next row tile
+-  // (launches on a stream are ordered, so the re-arm is complete before any
+-  // later launch reads the ticket).
++  // reduction so the same array serves the next row tile and every later
++  // call on the stream (launches on a stream are ordered, so the re-arm is
++  // complete before any later launch reads the ticket).
+   if constexpr (std::is_same<T, half>::value) {
+     if (partials != nullptr) {
+       __shared__ int s_last;
+@@ -851,13 +855,105 @@ __global__ void reduce_partials_rdna3(const float* __restrict__ partials,
+ // tile covers it). The PyTorch caching allocator (including its CUDA-graph
+ // capture pool) owns scratch reuse and lifetime.
+ //
+-// The arrival tickets are per-call at::zeros state: every launch of this
+-// call counts on tickets that start at zero (the kernel re-arms them for
+-// the next row tile), and concurrent invocations get distinct allocations
+-// from the stream-aware caching allocator, so no synchronization state is
+-// ever shared between invocations. When z_count == 1 the kernel's
+-// direct-store epilogue (gridDim.z == 1) is already deterministic, so the
+-// scratch and ticket allocations are skipped entirely.
++// The arrival tickets come from split_k_tickets below: every launch counts
++// on tickets that start at zero, and the kernel re-arms each one it used, so
++// an array that was zeroed once stays zero for every later launch ordered
++// after it on the same stream. When z_count == 1 the kernel's direct-store
++// epilogue (gridDim.z == 1) is already deterministic, so the scratch and
++// ticket arrays are skipped entirely.
++//
++// Split-K tickets: one zeroed pool per device, cut into slots.
++//
++// The tickets used to be a fresh at::zeros per call: one fill kernel, and
++// one dispatch gap, in front of every fp16 GEMM with K > BLOCK_KN_SIZE —
++// 260 extra launches per decode step of a 27B dense model, inside the CUDA
++// graph too. They only need to be zero when a launch starts, and the kernel
++// leaves them zero, so they can live in memory that is zeroed once, provided
++// no two launches that may overlap share a slot. This is the scheme
++// wvSplitKrc uses in skinny_gemms.cu:
++//   * the pool is allocated and zeroed eagerly on the first call that is not
++//     being captured, and the stream is synchronized once so every slot is
++//     zero before any stream can be handed one;
++//   * an eager stream takes one of kTicketSlots slots on first use and keeps
++//     it: launches on one stream are ordered, launches on different streams
++//     use different slots;
++//   * a capturing stream takes one of kTicketCaptureSlots reserved slots, so
++//     nothing is allocated or enqueued for the tickets during capture. Graphs
++//     captured on the same stream share that slot, which is safe because
++//     their replays do not overlap (vLLM captures one graph per padded batch
++//     size and replays one per step on one stream).
++// When there is no pool yet during capture, every slot is taken, or a launch
++// needs more tickets than a slot holds, the call falls back to a per-call
++// zeroed array (the previous behaviour, also correct inside a capture).
++static constexpr int64_t kTicketSlots = 8;
++static constexpr int64_t kTicketCaptureSlots = 8;
++static constexpr int64_t kTicketsPerSlot = 8192;  // (x, y) tiles per call
++
++static int* split_k_tickets(int64_t needed, const at::TensorOptions& dev_opts,
++                            cudaStream_t stream, at::Tensor& spill) {
++  struct TicketPool {
++    at::Tensor tickets;
++    int next_slot = 0;
++    int next_capture_slot = 0;
++    std::map<cudaStream_t, int> slot_of;
++    std::map<cudaStream_t, int> capture_slot_of;
++  };
++  static std::mutex pool_mu;
++  static std::map<int, TicketPool> pools;
++
++  // A stream whose capture was invalidated reports an error; treat it as not
++  // capturing, since that capture is lost either way.
++  cudaStreamCaptureStatus capture_status = cudaStreamCaptureStatusNone;
++  unsigned long long capture_id = 0;
++  if (cudaStreamGetCaptureInfo(stream, &capture_status, &capture_id) !=
++      cudaSuccess) {
++    capture_status = cudaStreamCaptureStatusNone;
++  }
++  const bool capturing = capture_status != cudaStreamCaptureStatusNone;
++
++  if (needed <= kTicketsPerSlot) {
++    std::lock_guard<std::mutex> lock(pool_mu);
++    TicketPool& pool = pools[dev_opts.device().index()];
++    if (!pool.tickets.defined() && !capturing) {
++      pool.tickets = at::zeros(
++          {kTicketsPerSlot * (kTicketSlots + kTicketCaptureSlots)},
++          dev_opts.dtype(at::kInt));
++      // The lock orders host access to the slot maps, not device execution:
++      // without this, another stream could be handed a slot that the fill
++      // above has not cleared yet.
++      const cudaError_t err = cudaStreamSynchronize(stream);
++      TORCH_CHECK(err == cudaSuccess,
++                  "gptq_gemm_rdna3: failed to zero the split-K ticket pool: ",
++                  cudaGetErrorString(err));
++    }
++    if (pool.tickets.defined()) {
++      int slot = -1;
++      if (capturing) {
++        auto it = pool.capture_slot_of.find(stream);
++        if (it != pool.capture_slot_of.end()) {
++          slot = it->second;
++        } else if (pool.next_capture_slot < kTicketCaptureSlots) {
++          slot = static_cast<int>(kTicketSlots) + pool.next_capture_slot++;
++          pool.capture_slot_of.emplace(stream, slot);
++        }
++      } else {
++        auto it = pool.slot_of.find(stream);
++        if (it != pool.slot_of.end()) {
++          slot = it->second;
++        } else if (pool.next_slot < kTicketSlots) {
++          slot = pool.next_slot++;
++          pool.slot_of.emplace(stream, slot);
++        }
++      }
++      if (slot >= 0) {
++        return pool.tickets.data_ptr<int>() + slot * kTicketsPerSlot;
++      }
++    }
++  }
++  spill = at::zeros({needed}, dev_opts.dtype(at::kInt));
++  return spill.data_ptr<int>();
++}
++
+ template <typename T>
+ void launch_gemm_q4_deterministic(const T* a, const uint32_t* b_q_weight,
+                                   const uint32_t* b_qzeros, const T* b_scales,
+@@ -889,14 +985,14 @@ void launch_gemm_q4_deterministic(const T* a, const uint32_t* b_q_weight,
+       const int mc = mcount_for_rows(rows);
+       max_gy = std::max(max_gy, (rows + mc - 1) / mc);
+     }
+-    at::Tensor tickets =
+-        at::zeros({(long)gx * max_gy}, dev_opts.dtype(at::kInt));
++    at::Tensor spill;
++    int* tickets =
++        split_k_tickets((int64_t)gx * max_gy, dev_opts, stream, spill);
+     for (int row0 = 0; row0 < size_m; row0 += TILE_M) {
+       const int rows = std::min(TILE_M, size_m - row0);
+       launch_gemm_q4(a + (long)row0 * size_k, b_q_weight, b_qzeros, b_scales,
+                      c + (long)row0 * size_n, rows, size_n, size_k, groups,
+-                     use_v2_format, partials_ptr, tickets.data_ptr<int>(),
+-                     stream);
++                     use_v2_format, partials_ptr, tickets, stream);
+     }
+   } else {
+     // bf16: separate fixed-order reduce (measured faster than the fused
+diff --git a/tests/kernels/quantization/test_rdna3_w4a16_tickets.py b/tests/kernels/quantization/test_rdna3_w4a16_tickets.py
+new file mode 100644
+index 0000000..04a8c2e
+--- /dev/null
++++ b/tests/kernels/quantization/test_rdna3_w4a16_tickets.py
+@@ -0,0 +1,148 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Split-K ticket pool of the fp16 RDNA3 W4A16 GEMM (gptq_gemm_rdna3).
++
++The scalar kernel reduces its split-K partials in-kernel, gated by one
++arrival ticket per output tile. The tickets come from a per-device pool that
++is zeroed once (csrc/rocm/q_gemm_rdna3.cu, split_k_tickets) instead of a fresh
++at::zeros per call; the kernel re-arms every ticket it uses. These tests pin
++what that must preserve, all against the same op's own eager output:
++
++A. no zero-fill kernel per call once the pool exists;
++B. a CUDA graph captured on a side stream replays bit-identically, many times;
++C. two graphs captured on one stream replay alternately without interference;
++D. eager calls racing on two streams stay correct (distinct slots);
++E. a graph captured before the pool exists (per-call fallback) is correct.
++
++E must run first in a fresh process, so it lives in its own subprocess.
++"""
++
++import subprocess
++import sys
++import textwrap
++
++import pytest
++import torch
++
++from vllm.platforms import current_platform
++
++if not current_platform.is_rocm():
++    pytest.skip("RDNA3 W4A16 kernel is ROCm-only", allow_module_level=True)
++
++from vllm import _custom_ops as ops  # noqa: E402
++from vllm.platforms.rocm import on_gfx1100  # noqa: E402
++
++pytestmark = pytest.mark.skipif(
++    not (
++        on_gfx1100()
++        and hasattr(torch.ops, "_rocm_C")
++        and hasattr(torch.ops._rocm_C, "gptq_gemm_rdna3")
++    ),
++    reason="requires gfx1100 with the _rocm_C.gptq_gemm_rdna3 op built in",
++)
++
++GROUP = 128
++# K > 256 so the call splits K and takes tickets; N spans several tiles.
++K, N = 4352, 5120
++
++
++def _weights(seed=0):
++    g = torch.Generator(device="cuda").manual_seed(seed)
++    qweight = torch.randint(
++        -(2**31), 2**31 - 1, (K // 8, N), dtype=torch.int32, device="cuda",
++        generator=g,
++    )
++    qzeros = torch.randint(
++        -(2**31), 2**31 - 1, (K // GROUP, N // 8), dtype=torch.int32,
++        device="cuda", generator=g,
++    )
++    scales = (
++        torch.rand(K // GROUP, N, dtype=torch.float16, device="cuda", generator=g)
++        * 0.01
++    )
++    return qweight, qzeros, scales
++
++
++def _gemm(a, w):
++    return ops.gptq_gemm_rdna3(a, *w, False)
++
++
++@pytest.mark.parametrize("m", [1, 3, 6])
++def test_no_fill_per_call(m):
++    from torch.profiler import ProfilerActivity, profile
++
++    w = _weights()
++    a = torch.randn(m, K, dtype=torch.float16, device="cuda")
++    _gemm(a, w)  # creates the pool
++    torch.cuda.synchronize()
++    with profile(activities=[ProfilerActivity.CUDA]) as prof:
++        for _ in range(10):
++            _gemm(a, w)
++        torch.cuda.synchronize()
++    names = [e.name for e in prof.events() if "CUDA" in str(e.device_type)]
++    assert sum("gemm_q4_kernel_rdna3" in n for n in names) == 10
++    assert not [n for n in names if "fill" in n.lower()], names
++
++
++@pytest.mark.parametrize("m", [1, 3, 6])
++def test_graphs_and_streams(m):
++    w = _weights()
++    a1 = torch.randn(m, K, dtype=torch.float16, device="cuda")
++    a2 = torch.randn(m, K, dtype=torch.float16, device="cuda")
++    ref1, ref2 = _gemm(a1, w), _gemm(a2, w)
++    side = torch.cuda.Stream()
++    with torch.cuda.stream(side):
++        _gemm(a1, w)
++    torch.cuda.synchronize()
++    g1, g2 = torch.cuda.CUDAGraph(), torch.cuda.CUDAGraph()
++    with torch.cuda.graph(g1, stream=side):
++        o1 = _gemm(a1, w)
++        o1b = _gemm(a1, w)
++    with torch.cuda.graph(g2, stream=side):
++        o2 = _gemm(a2, w)
++    for _ in range(25):  # B, C
++        g1.replay()
++        g2.replay()
++        torch.cuda.synchronize()
++        assert torch.equal(o1, ref1) and torch.equal(o1b, ref1)
++        assert torch.equal(o2, ref2)
++    s_a, s_b = torch.cuda.Stream(), torch.cuda.Stream()
++    for _ in range(25):  # D
++        with torch.cuda.stream(s_a):
++            xa = _gemm(a1, w)
++        with torch.cuda.stream(s_b):
++            xb = _gemm(a2, w)
++        torch.cuda.synchronize()
++        assert torch.equal(xa, ref1) and torch.equal(xb, ref2)
++
++
++def test_capture_before_pool_exists():
++    script = textwrap.dedent(
++        f"""
++        import torch
++        from vllm import _custom_ops as ops
++        K, N, G = {K}, {N}, {GROUP}
++        qw = torch.randint(-2**31, 2**31 - 1, (K // 8, N), dtype=torch.int32, device="cuda")
++        qz = torch.randint(-2**31, 2**31 - 1, (K // G, N // 8), dtype=torch.int32, device="cuda")
++        sc = torch.rand(K // G, N, dtype=torch.float16, device="cuda") * 0.01
++        a = torch.randn(3, K, dtype=torch.float16, device="cuda")
++        # Load the kernel module with a one-split call (no tickets, no pool).
++        ops.gptq_gemm_rdna3(torch.randn(3, 256, dtype=torch.float16, device="cuda"),
++                            qw[:32].contiguous(), qz[:2].contiguous(), sc[:2].contiguous(), False)
++        side = torch.cuda.Stream()
++        torch.cuda.synchronize()
++        g = torch.cuda.CUDAGraph()
++        with torch.cuda.graph(g, stream=side):
++            out = ops.gptq_gemm_rdna3(a, qw, qz, sc, False)
++        ref = ops.gptq_gemm_rdna3(a, qw, qz, sc, False)
++        for _ in range(10):
++            g.replay()
++            torch.cuda.synchronize()
++            assert torch.equal(out, ref)
++        print("ok")
++        """
++    )
++    result = subprocess.run(
++        [sys.executable, "-c", script], capture_output=True, text=True
++    )
++    assert result.returncode == 0 and "ok" in result.stdout, result.stderr
+diff --git a/vllm/model_executor/layers/utils.py b/vllm/model_executor/layers/utils.py
+index 8d285dd..6070a6d 100644
+--- a/vllm/model_executor/layers/utils.py
++++ b/vllm/model_executor/layers/utils.py
+@@ -425,6 +425,34 @@ def warmup_rocm_skinny_gemm_workspaces(device: torch.device) -> None:
+         logger.debug("wvSplitKrc workspace warmup failed", exc_info=True)
+ 
+ 
++def warmup_rocm_rdna3_w4a16_tickets(device: torch.device) -> None:
++    """Eagerly create gptq_gemm_rdna3's per-device split-K ticket pool.
++
++    The fp16 scalar W4A16 kernel on gfx1100 reduces its split-K partials in
++    the kernel, gated by one arrival ticket per output tile. The tickets live
++    in a per-device pool that is zeroed once (csrc/rocm/q_gemm_rdna3.cu,
++    split_k_tickets); eager streams and capturing streams each take a slot.
++    The pool is otherwise created by the first eager qualifying GEMM. Like
++    wvSplitKrc's pool above it should exist before the KV cache backing buffer
++    and before any cudagraph capture: a call captured with no pool falls back
++    to a per-call zeroed array, which is correct but puts one fill per GEMM
++    back into the graph.
++    """
++    from vllm.platforms.rocm import on_gfx1100
++
++    if not on_gfx1100() or not hasattr(torch.ops._rocm_C, "gptq_gemm_rdna3"):
++        return
++    try:
++        # K = 512 is two K splits, so the fp16 path takes tickets.
++        x = torch.zeros(1, 512, dtype=torch.float16, device=device)
++        qweight = torch.zeros(512 // 8, 64, dtype=torch.int32, device=device)
++        qzeros = torch.zeros(4, 64 // 8, dtype=torch.int32, device=device)
++        scales = torch.zeros(4, 64, dtype=torch.float16, device=device)
++        ops.gptq_gemm_rdna3(x, qweight, qzeros, scales, False)
++    except Exception:
++        logger.debug("gptq_gemm_rdna3 ticket pool warmup failed", exc_info=True)
++
++
+ # Above this weight size, oneDNN's onednn_mm consistently matches or beats
+ # the SGL AMX kernel once M grows past decode-sized batches, and is within
+ # noise of it at decode-sized M -- so larger weights default to oneDNN
+diff --git a/vllm/v1/worker/utils.py b/vllm/v1/worker/utils.py
+index d10cdce..af1edfe 100644
+--- a/vllm/v1/worker/utils.py
++++ b/vllm/v1/worker/utils.py
+@@ -14,7 +14,10 @@ from vllm.config import CacheConfig
+ from vllm.logger import init_logger
+ from vllm.model_executor.layers.attention import Attention
+ from vllm.model_executor.layers.mamba.mamba_mixer2 import share_replayssm_ring_trackers
+-from vllm.model_executor.layers.utils import warmup_rocm_skinny_gemm_workspaces
++from vllm.model_executor.layers.utils import (
++    warmup_rocm_rdna3_w4a16_tickets,
++    warmup_rocm_skinny_gemm_workspaces,
++)
+ from vllm.model_executor.models.interfaces import MultiModalEmbeddings
+ from vllm.model_executor.models.utils import extract_layer_index
+ from vllm.platforms import current_platform
+@@ -579,12 +582,14 @@ def allocate_kv_cache(
+     sizes = {tensor.size for tensor in kv_cache_config.kv_cache_tensors}
+     assert len(sizes) == 1, "KV cache tensors must share one backing allocation."
+     raw_size = sizes.pop()
+-    # wvSplitKrc's process-lifetime static workspaces (csrc/rocm/skinny_gemms.cu)
+-    # are created lazily on the first qualifying GEMM. Force that now, before
+-    # the giant backing allocation below: if one landed in this segment's
+-    # rounding tail it would pin the whole segment at engine shutdown.
++    # wvSplitKrc's and gptq_gemm_rdna3's process-lifetime static workspaces
++    # (csrc/rocm/skinny_gemms.cu, csrc/rocm/q_gemm_rdna3.cu) are created
++    # lazily on the first qualifying GEMM. Force that now, before the giant
++    # backing allocation below: if one landed in this segment's rounding tail
++    # it would pin the whole segment at engine shutdown.
+     if current_platform.is_rocm():
+         warmup_rocm_skinny_gemm_workspaces(device)
++        warmup_rocm_rdna3_w4a16_tickets(device)
+         # Pad to the page granularity MoRIIO needs to register the shared
+         # backing as a single RDMA memory region. Other platforms keep the
+         # exact-size allocation (see #53974), so anything reading
