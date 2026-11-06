@@ -1168,7 +1168,14 @@ runtime:
       # master CI publish from the !1206 merge, the first gfx906 runtime with the
       # whisper.cpp stage (KT-ASR 2026-10-30). Prewarmed on the Radeon VII first.
       # Rollback anchor: 90648c35 (rocm-gfx906-b8637f35), still prewarmed.
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:6fc6fcbd936115679e8c5adc43e14c2b1cb86d7f4c702b5ce94b9bdae52c4871"
+      # Prepared 2026-11-02 for the D5-a KT-DIAR window (go point G2): repinned to
+      # rocm-gfx906-pyannote-6fc6fcbd9361 (pinned-cb4c8dc3c2bd), 6fc6fcbd plus the
+      # pyannote venv layer (build/Dockerfile.runtime-gfx906-pyannote at !1259,
+      # built on the 7900xtx host 2026-11-02); flexinfer-runtime, llama-server and
+      # whisper-server are byte-identical to 6fc6fcbd (sha256).
+      # Prewarmed on the Radeon VII first. Rollback anchor: 6fc6fcbd
+      # (rocm-gfx906-5ca58769), still prewarmed.
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:cb4c8dc3c2bd55e0a5935642ed71b06d6fa1236ddd00f15b73627c1660359bc5"
       gpuVendor: amd
       gpuArch: gfx906
       gpuCount: 1
@@ -1196,6 +1203,23 @@ runtime:
         # Accepted streams finish before a subprocess releases the GPU.
         - name: FLEXINFER_RUNTIME_REQUEST_DRAIN
           value: "true"
+      # D5-a: the pyannote backend reads the gated-model token from
+      # backend.RuntimeSecretsDir/<hfTokenSecret>/<hfTokenSecretKey>; the value
+      # never enters a load payload. Same Secret the standalone
+      # pyannote-diarization Deployment uses (accepted pyannote/segmentation-3.0
+      # and speaker-diarization-3.1).
+      extraVolumes:
+        - name: hf-token
+          secret:
+            secretName: flexinfer-hf-token
+            defaultMode: 0400
+            items:
+              - key: HF_TOKEN
+                path: HF_TOKEN
+      extraVolumeMounts:
+        - name: hf-token
+          mountPath: /var/run/flexinfer/secrets/flexinfer-hf-token
+          readOnly: true
       nodeSelector:
         kubernetes.io/hostname: cblevins-radeonvii
         # 2026-05-07: pause lifted after Track B-3 cycle 2 slim image
