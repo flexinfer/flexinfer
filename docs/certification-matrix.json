@@ -1834,6 +1834,51 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "xtx-q2-segmented-live-kv-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "the Q2 re-test (gap G7, .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.3), split out of row xtx-s5-draft-vocab-canary-2026-11-06 when S5's stage A stopped; its rules are that…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#xtx-q2-segmented-live-kv-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "xtx-s5-draft-vocab-canary-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "skip",
+      "title": "S5 stage B (research .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.3 candidate 1, gap G1) plus the Q2 re-test (G7). Question 1 (S5): on the workhorse-v2 posture, does the MTP…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#xtx-s5-draft-vocab-canary-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-s5-draft-vocab-coverage-2026-11-06",
+      "kind": "validation",
+      "support_level": "n/a",
+      "backend": "n/a",
+      "gpu_class": "n/a",
+      "decision": "fail",
+      "title": "S5 stage A, offline (research .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.3 candidate 1, gap G1; go from S4's 17.0 % draft-lm_head share, row…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-s5-draft-vocab-coverage-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
       "kind": "validation",
       "support_level": "experimental",
