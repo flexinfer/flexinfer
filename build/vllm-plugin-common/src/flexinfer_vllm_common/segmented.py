@@ -22,6 +22,17 @@ first request a Triton cache load.
    is compiled at that width outside the tuner's unload scope, so it is
    resident when the first request needs it.
 
+Step 3 compiles against the layer's own bound KV cache (the K/V views and
+scales its backend launches with), not the tuner's synthetic one. Triton keys
+a kernel on each pointer's specialization as well as its constexprs, and on
+the AMD backend that includes whether the tensor's storage fits in 2 GiB
+(``tt.pointer_range = 32``, the ``S`` in ``'DS'``). The synthetic cache always
+does; a live 32K cache (3.2 GiB on the workhorse) does not, so winners
+compiled on the synthetic cache were keyed ``'DS'`` while traffic launched
+``'D'`` and none was reused (S4, 2026-11-05: 16 ``jit_monitor`` lines against
+15 without the flag). Plugin-common 0.6.0 fixed that. A layer with no bound
+cache falls back to the synthetic one and says so on the boot line.
+
 Unset or ``0`` leaves vLLM untouched. A runner whose block tables cannot be
 found keeps upstream's tables and logs why. Like the rest of this package, the
 module imports neither vLLM nor torch at module scope.
@@ -67,12 +78,16 @@ _WARMUP_PARAMETERS = (
     "physical_max_len",
 )
 PATCH_MARKER = "_flexinfer_runtime_tables"
+# Triton's AMD backend adds ``tt.pointer_range = 32`` (the ``S`` in a ``'DS'``
+# key) to a tensor argument whose storage is at most this many bytes.
+POINTER_RANGE_32_MAX_BYTES = 2**31 - 1
 
 
 class _State:
     def __init__(self) -> None:
         self.layer_widths: dict[int, int] = {}
         self.width: int | None = None
+        self.layer = None
         self.compiled: set = set()
         self.warned = False
 
@@ -138,8 +153,46 @@ def _widen(table, width):
     return wide
 
 
-def _compile_winners(warmup, arguments, width) -> None:
-    """Compile each tuned record's winner at ``width``; never raises on a record."""
+def live_kv_cache(layer, kv_dtype):
+    """The K/V cache views and scales ``layer``'s backend launches with, or None.
+
+    Mirrors ``RocmSegmentedAttentionImpl.forward``: the bound ``layer.kv_cache``
+    split by the impl's own ``_split_kv_cache`` and, for a quantized cache,
+    viewed as the kernel's dtype. Returns ``(kc, vc, k_scale, v_scale)``;
+    ``None`` when the layer has no bound cache or the views cannot be made to
+    match ``kv_dtype``, so the caller keeps the synthetic cache.
+    """
+    cache = getattr(layer, "kv_cache", None)
+    if isinstance(cache, (list, tuple)):
+        cache = cache[0] if cache else None
+    split = getattr(getattr(layer, "impl", None), "_split_kv_cache", None)
+    if cache is None or not callable(split) or cache.numel() == 0:
+        return None
+    try:
+        kc, vc = split(cache)
+        if kc.dtype != kv_dtype:
+            if kc.element_size() != getattr(kv_dtype, "itemsize", None):
+                return None
+            kc, vc = kc.view(kv_dtype), vc.view(kv_dtype)
+    except (RuntimeError, TypeError, ValueError):
+        return None
+    k_scale = getattr(layer, "_k_scale", None)
+    v_scale = getattr(layer, "_v_scale", None)
+    return kc, vc, k_scale, v_scale
+
+
+def _storage_bytes(tensor) -> int:
+    return tensor.untyped_storage().size()
+
+
+def _compile_winners(warmup, arguments, width, live=None) -> None:
+    """Compile each tuned record's winner at ``width``; never raises on a record.
+
+    ``live`` is ``live_kv_cache``'s result for the layer being warmed: its K/V
+    views (and scales) replace the synthetic cache so the compiled kernels
+    carry the same pointer specialization as traffic. Layers whose caches
+    differ in that respect compile separately.
+    """
     a = arguments
     key = warmup._key(
         a["device"],
@@ -154,9 +207,16 @@ def _compile_winners(warmup, arguments, width) -> None:
         a["causal"],
         a["has_sinks"],
     )
-    if (key, width) in _state.compiled:
+    pointer_class = (
+        None
+        if live is None
+        else tuple(
+            _storage_bytes(t) <= POINTER_RANGE_32_MAX_BYTES for t in live[:2]
+        )
+    )
+    if (key, width, pointer_class) in _state.compiled:
         return
-    _state.compiled.add((key, width))
+    _state.compiled.add((key, width, pointer_class))
     records = warmup._TABLES.get(key, {}).get("records", ())
     if not records:
         return
@@ -186,6 +246,11 @@ def _compile_winners(warmup, arguments, width) -> None:
                     workload,
                     physical,
                 )
+                k_scale = v_scale = kv_scale
+                if live is not None:
+                    kc, vc = live[0], live[1]
+                    k_scale = kv_scale if live[2] is None else live[2]
+                    v_scale = kv_scale if live[3] is None else live[3]
                 shapes = warmup.segmented_workspace_shapes(
                     batch,
                     warmup.segmented_query_capacity(query_len),
@@ -218,8 +283,8 @@ def _compile_winners(warmup, arguments, width) -> None:
                     starts,
                     lengths,
                     query_len,
-                    kv_scale,
-                    kv_scale,
+                    k_scale,
+                    v_scale,
                     a["scale"],
                     config,
                     workspace,
@@ -241,10 +306,18 @@ def _compile_winners(warmup, arguments, width) -> None:
             finally:
                 gc.collect()
                 torch.accelerator.empty_cache()
+    if live is None:
+        against = "synthetic KV cache (no live cache bound to the layer)"
+    else:
+        against = (
+            f"live KV cache ({_storage_bytes(live[0]) / 2**30:.2f} GiB storage, "
+            f"pointer_range_32={'yes' if all(pointer_class) else 'no'})"
+        )
     print(
         "flexinfer: segmented runtime tables: block-table width "
         f"{width} (page {a['page']}), compiled {compiled} tuned winners "
-        f"({skipped} skipped) in {time.monotonic() - start:.1f}s",
+        f"({skipped} skipped) against the {against} in "
+        f"{time.monotonic() - start:.1f}s",
         flush=True,
     )
 
@@ -280,6 +353,7 @@ def install_segmented_runtime_tables(warmup) -> None:
 
     def _warmup_segmented_attention(layer, device, **limits):
         _state.width = _state.layer_widths.get(id(layer))
+        _state.layer = layer
         if _state.width is None and not _state.warned:
             _state.warned = True
             print(
@@ -291,6 +365,7 @@ def install_segmented_runtime_tables(warmup) -> None:
             return warmup_layer(layer, device, **limits)
         finally:
             _state.width = None
+            _state.layer = None
 
     def _make_inputs(*args, **kwargs):
         inputs = make_inputs(*args, **kwargs)
@@ -305,7 +380,12 @@ def install_segmented_runtime_tables(warmup) -> None:
         if _state.width is not None:
             bound = signature.bind(*args, **kwargs)
             bound.apply_defaults()
-            _compile_winners(warmup, bound.arguments, _state.width)
+            live = (
+                None
+                if _state.layer is None
+                else live_kv_cache(_state.layer, bound.arguments["kv_dtype"])
+            )
+            _compile_winners(warmup, bound.arguments, _state.width, live)
         return result
 
     warmup.rocm_segmented_attn_autotune_warmup = rocm_segmented_attn_autotune_warmup

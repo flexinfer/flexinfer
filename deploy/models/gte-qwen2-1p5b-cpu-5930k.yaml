@@ -45,7 +45,8 @@ spec:
     nGPULayers: 0
     batchSize: 2048
     ubatchSize: 512
-    threads: 6
+    # 12 of the node's 14 physical cores; see resources below.
+    threads: 12
     embedding: true
     # gte-Qwen2 GGUF defaults to pooling 'none' (token-level), which the
     # OpenAI-compatible /v1/embeddings endpoint rejects. Qwen2 instruct
@@ -62,14 +63,23 @@ spec:
   # (~8 tokens) cost ~250 ms of 6 threads; closed loop the twin tops out at
   # ~4 req/s, CFS-throttled at the 6-core limit. Open loop through the proxy:
   # 2 req/s p95 0.93 s on 3.0-3.7 cores, 3 req/s p95 1.85 s on 4.6-5.1 cores.
-  # The request reserves the 2 req/s working set on the node; threads and the
-  # limit stay at the measured 6.
+  #
+  # Threads 6 -> 12 and limit 6 -> 14 (KT-RET K2, 2026-11-02): the 5-min park
+  # sent the twin ~5.6 req/s (the 2 req/s harness plus ~3.6 req/s of rerouted
+  # production), and one production input of 956 tokens held its single
+  # llama.cpp decode for 12.4 s at 82.5 tokens/s; every slot waited behind it,
+  # which was the whole 60 s stall (park p95 8.5 s). Prompt processing is
+  # compute-bound, the pod was CFS-throttled in 17-24 % of periods at
+  # threads = limit = 6, and "cblevins-5930k" is a Xeon E5-2680 v4 (14 cores /
+  # 28 threads, 25 allocatable) whose busy CPUs ran p50 2.7 / p99 11.4 of 28
+  # over the week before. The limit leaves two cores above the threads for the
+  # server's own threads. The request stays at the 2 req/s working set.
   resources:
     requests:
       cpu: "4"
       memory: 3Gi
     limits:
-      cpu: "6"
+      cpu: "14"
       memory: 5Gi
   # Distinct label so it does NOT join the default `embeddings`/`rag` routing
   # group; addressed explicitly via its served-model name/aliases.

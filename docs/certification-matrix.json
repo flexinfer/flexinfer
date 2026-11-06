@@ -209,13 +209,13 @@
       "support_level": "supported",
       "backend": "diffusers",
       "gpu_class": "gfx1100",
-      "decision": "promote",
+      "decision": "fail",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-flex-card-layout-2026-11-03",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
       "validation_rows": [
-        "gfx1100-flex-card-layout-2026-11-03"
+        "gfx1100-wan-decode-ab-v032-fix2-2026-11-06"
       ],
-      "date": "2026-11-03",
+      "date": "2026-11-06",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -272,11 +272,11 @@
       "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
-      "decision": "pass",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-s4-step0-decode-anatomy-2026-11-05",
+      "evidence": ".loom/60-validation-matrix.md#xtx-s7-embed-host-2026-11-05",
       "validation_rows": [
-        "gfx1100-s4-step0-decode-anatomy-2026-11-05"
+        "xtx-s7-embed-host-2026-11-05"
       ],
       "date": "2026-11-05",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
@@ -1372,6 +1372,7 @@
       "evidence": "deploy/models/qwen38-27b-autoround-workhorse.yaml#flexinfer.ai/promotion-evidence",
       "evidence_note": "canaries qwen38-27b-v032-s3-attn-canary (S3) and S3b on b06b06fe, 2026-10-26: segmented + fp16 + MTP K=2 at 32K decode 71.8/66.5/66.1 tok/s at 512/2K/16K vs TRITON+fp8 40.8/40.2/34.3, pos0 acceptance 0.81, warm TTFT 0.234/0.419/1.026 s at 256/512/1124 vs this lane's 0.237/0.436/1.088, coherent probes, parity hash 8174a49e, KV pool 52,932 tok (1.62x) @32K",
       "validation_rows": [
+        "xtx-workhorse-v033-promotion-2026-11-05",
         "workhorse-vllm-v032-2026-10-25"
       ],
       "date": "2026-10-26",
@@ -1866,7 +1867,7 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
-      "id": "xtx-s7-embed-host-2026-11-05",
+      "id": "xtx-q2-segmented-live-kv-2026-11-06",
       "kind": "validation",
       "support_level": "experimental",
       "backend": "vllm",
@@ -1875,8 +1876,165 @@
         "7900xtx"
       ],
       "decision": "pending",
-      "title": "slice S7 of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md (§5.2 G2, §5.3 candidate 3, §6.1): does serving Qwen3.8-27B's fp16 input-embedding table (248,320 × 5,120 = 2.37 GiB)…",
+      "title": "the Q2 re-test (gap G7, .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.3), split out of row xtx-s5-draft-vocab-canary-2026-11-06 when S5's stage A stopped; its rules are that…",
       "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#xtx-q2-segmented-live-kv-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "xtx-s5-draft-vocab-canary-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "skip",
+      "title": "S5 stage B (research .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.3 candidate 1, gap G1) plus the Q2 re-test (G7). Question 1 (S5): on the workhorse-v2 posture, does the MTP…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#xtx-s5-draft-vocab-canary-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-s5-draft-vocab-coverage-2026-11-06",
+      "kind": "validation",
+      "support_level": "n/a",
+      "backend": "n/a",
+      "gpu_class": "n/a",
+      "decision": "fail",
+      "title": "S5 stage A, offline (research .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.3 candidate 1, gap G1; go from S4's 17.0 % draft-lm_head share, row…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-s5-draft-vocab-coverage-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "S9 second addendum, written 2026-11-06 ~00:35Z after t2v-B-tile and t2v-B-noexp ran and before any arm below. Results so far: t2v-B-tile rendered every clip (warm totals 70.3 s and 72.1 s against A's…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-wan-decode-ab-v032-fix-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "S9 addendum, written 2026-11-06 ~00:23Z after arm t2v-B of row gfx1100-wan-decode-ab-v032-2026-11-05 ran out of memory and before any further arm ran. t2v-B finished c0's 20 denoise steps (2.35…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-fix-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-wan-decode-ab-v032-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "S9, the Wan decode A/B that gates D1's deferred in-pod creative lanes (owner Q7 in .loom/32-iteration-plan-owner-window-2026-11-06.md; slice S9 of…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-wan-vace-vae-bypass-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "S9, the VACE VAE kill-test (research §3.3: \"cast the decode half to bf16 and reuse the bypass\"; unsloth #12681 claims 580 s → ~178 s on gfx1151). Riskiest assumption: VACE latents decode in bf16…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-vace-vae-bypass-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-wan-denoise-cache-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "S9, optional: does a diffusers cache hook on the Wan transformer (First Block Cache or TaylorSeer; research §3.3) cut T2V denoise by ≥ 25 % inside a quality bar? Opt-in WAN_DENOISE_CACHE in…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-denoise-cache-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "xtx-workhorse-v033-promotion-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "the gfx1100 workhorse promotion (qwen38-27b-autoround-workhorse, cblevins-5930k, priority 900) that cashes in the 2026-11-05 canaries: S3 (row xtx-vllm-v033-parity-2026-11-05, 0.33 at parity), KT-SO…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#xtx-workhorse-v033-promotion-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "workhorse-qos-prefill-budget-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "KT-QOS2, the re-plan of KT-QOS (row workhorse-qos-priority-2026-10-31, feature D3 of .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.3) the owner chose on 2026-11-05: with the…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#workhorse-qos-prefill-budget-2026-11-05",
+      "date": "2026-11-05",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "xtx-s7-embed-host-2026-11-05",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "conditional",
+      "title": "slice S7 of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md (§5.2 G2, §5.3 candidate 3, §6.1): does serving Qwen3.8-27B's fp16 input-embedding table (248,320 × 5,120 = 2.37 GiB)…",
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#xtx-s7-embed-host-2026-11-05",
       "date": "2026-11-05",
       "source": ".loom/60-validation-matrix.md"
@@ -1890,9 +2048,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "fail",
       "title": "G3 of .loom/10-research-backend-currency-gfx1100-gfx906-2026-11-04.md §5.2, the fallback S6's decision table names for a failed Octave: does fp8 e4m3 KV on ROCM_SEGMENTED_ATTN keep the workhorse's…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#xtx-g3-segmented-fp8-gfx11-2026-11-05",
       "date": "2026-11-05",
       "source": ".loom/60-validation-matrix.md"
@@ -2131,9 +2289,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "pass",
       "title": "KT-SO, feature D4 (structured-output certificate) of .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.4: do schema-constrained tool-call turns on the workhorse posture parse…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-structured-outputs-2026-11-01",
       "date": "2026-11-01",
       "source": ".loom/60-validation-matrix.md"
@@ -2179,9 +2337,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "fail",
       "title": "KT-QOS, feature D3 (caller QoS classes) of .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.3: does vLLM --scheduling-policy priority protect interactive turns on the…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#workhorse-qos-priority-2026-10-31",
       "date": "2026-10-31",
       "source": ".loom/60-validation-matrix.md"

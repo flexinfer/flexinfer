@@ -107,6 +107,11 @@ PUBLISH_JOB_PROFILES = (
         ".gitlab/ci/runtime-publish.yml",
         "gfx1100-serving-v032",
     ),
+    (
+        "publish_serving_rocm_gfx1100_v033",
+        ".gitlab/ci/runtime-publish.yml",
+        "gfx1100-serving-v033",
+    ),
 )
 
 # Top-level runtime.yaml versions; a profile may override each with the same key.
@@ -716,6 +721,7 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
     serving_job = ci_yaml.find("publish_serving_rocm_gfx1100:")
     native_w4a16_job = ci_yaml.find("publish_serving_rocm_gfx1100_native_w4a16:")
     serving_v032_job = ci_yaml.find("publish_serving_rocm_gfx1100_v032:")
+    serving_v033_job = ci_yaml.find("publish_serving_rocm_gfx1100_v033:")
     publish_job = ci_yaml.find("publish_unified_rocm_gfx1100:")
     gaming_job = ci_yaml.find("publish_gaming_rocm_gfx1100:")
     if fast_job == -1:
@@ -728,15 +734,25 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
         )
     if serving_v032_job == -1:
         fail("runtime-publish CI is missing publish_serving_rocm_gfx1100_v032")
+    if serving_v033_job == -1:
+        fail("runtime-publish CI is missing publish_serving_rocm_gfx1100_v033")
     if publish_job == -1:
         fail("runtime-publish CI is missing publish_unified_rocm_gfx1100")
     if gaming_job == -1:
         fail("runtime-publish CI is missing publish_gaming_rocm_gfx1100")
-    if not (fast_job < serving_job < native_w4a16_job < serving_v032_job < publish_job):
+    if not (
+        fast_job
+        < serving_job
+        < native_w4a16_job
+        < serving_v032_job
+        < serving_v033_job
+        < publish_job
+    ):
         fail(
             "runtime-publish CI order changed; expected runtime_patch_contracts "
             "-> publish_serving_rocm_gfx1100 -> native W4A16 canary "
-            "-> publish_serving_rocm_gfx1100_v032 -> publish_unified_rocm_gfx1100"
+            "-> publish_serving_rocm_gfx1100_v032 "
+            "-> publish_serving_rocm_gfx1100_v033 -> publish_unified_rocm_gfx1100"
         )
 
     fast_job_body = ci_yaml[fast_job:serving_job]
@@ -803,25 +819,41 @@ def assert_ci_fast_check_wiring(ci_yaml: str) -> None:
         if snippet not in native_w4a16_job_body:
             fail("publish_serving_rocm_gfx1100_native_w4a16 missing " f"{snippet!r}")
 
-    serving_v032_job_body = ci_yaml[serving_v032_job:publish_job]
-    for snippet in (
-        'filename="Dockerfile.runtime-serving-v032"',
-        'build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.32.0"',
-        "${REGISTRY}/runtime:rocm-gfx1100-serving-v032",
-        "build/.runtime-env",
-        # Every input the Dockerfile COPYs must rebuild it.
-        "- build/Dockerfile.runtime-serving-v032",
-        "- internal/runtime/**/*",
-        "- build/server-diffusers.py",
-        "- build/server-snac.py",
-        "- build/vllm-plugin-common/**/*",
-        "- build/vllm-qwen35-text-plugin/**/*",
-        "- build/vllm-qwen35-seqcls-plugin/**/*",
-        "- build/scripts/verify_vllm_gfx1100_native_w4a16.py",
-        "- build/scripts/verify_runtime_serving_stack.py",
-    ):
-        if snippet not in serving_v032_job_body:
-            fail(f"publish_serving_rocm_gfx1100_v032 missing {snippet!r}")
+    # Both stacked serving personas build the same Dockerfile from the same
+    # inputs; only the base differs. The 0.33 base is pinned by digest.
+    serving_persona_jobs = (
+        (
+            "publish_serving_rocm_gfx1100_v032",
+            ci_yaml[serving_v032_job:serving_v033_job],
+            'build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.32.0"',
+            "${REGISTRY}/runtime:rocm-gfx1100-serving-v032",
+        ),
+        (
+            "publish_serving_rocm_gfx1100_v033",
+            ci_yaml[serving_v033_job:publish_job],
+            'build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.33.0-rocm72@sha256:',
+            "${REGISTRY}/runtime:rocm-gfx1100-serving-v033",
+        ),
+    )
+    for job_name, job_body, base_snippet, tag_snippet in serving_persona_jobs:
+        for snippet in (
+            'filename="Dockerfile.runtime-serving-v032"',
+            base_snippet,
+            tag_snippet,
+            "build/.runtime-env",
+            # Every input the Dockerfile COPYs must rebuild it.
+            "- build/Dockerfile.runtime-serving-v032",
+            "- internal/runtime/**/*",
+            "- build/server-diffusers.py",
+            "- build/server-snac.py",
+            "- build/vllm-plugin-common/**/*",
+            "- build/vllm-qwen35-text-plugin/**/*",
+            "- build/vllm-qwen35-seqcls-plugin/**/*",
+            "- build/scripts/verify_vllm_gfx1100_native_w4a16.py",
+            "- build/scripts/verify_runtime_serving_stack.py",
+        ):
+            if snippet not in job_body:
+                fail(f"{job_name} missing {snippet!r}")
 
     unified_job_body = ci_yaml[publish_job:gaming_job]
     for path in UNIFIED_SERVING_ONLY_RULE_FILES:

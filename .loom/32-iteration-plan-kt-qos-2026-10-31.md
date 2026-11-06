@@ -1,5 +1,7 @@
 # KT-QOS — vLLM priority scheduling vs the proxy seat reserve on the workhorse posture
 
+> **Result 2026-11-05: FAIL** on vLLM 0.33 at the XTX slot (bar 1 in every arm; the seat reserve cuts interactive p95 from 19–23 s to 1.67 s, 2.9× idle against 1.3×; vLLM priority alone changes nothing). MR 4 is not shipped. See `.loom/70-result-kt-qos-v033-2026-11-05.md`.
+
 Feature D3 (caller QoS classes), `.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md`
 §6.3 and brief D3. Matrix row `workhorse-qos-priority-2026-10-31` in `60-validation-matrix.md`
 (written before the run). Canary `deploy/debug/qwen38-27b-qos-canary.yaml`; harness

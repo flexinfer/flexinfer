@@ -208,9 +208,11 @@ profiles:
   # 10-research-backend-currency-gfx1100-gfx906-2026-11-04.md): one Dockerfile,
   # only the base moves. Always the -rocm72 image (ROCm 7.2.3, torch 2.13, like
   # 0.32): the default v0.33.0 tag is TheRock's ROCm 10 and 18 GB. Base pinned
-  # by digest (Docker Hub, pushed 2026-11-02). Canary-only: no CI publish job
-  # and no promotion target until its parity canary passes; built and pushed
-  # from the 7900xtx docker host, tagged rocm-gfx1100-serving-v033-<sha>.
+  # by digest (Docker Hub, pushed 2026-11-02). Its parity canary passed (S3,
+  # 2026-11-05) and the first image (pinned-29378fe07274) was built by hand on
+  # the 7900xtx docker host. Since 2026-11-05 CI publishes it
+  # (publish_serving_rocm_gfx1100_v033, tagged rocm-gfx1100-serving-v033-<sha>)
+  # for the gfx1100 workhorse promotion. Still no automatic promotion target.
   gfx1100-serving-v033:
     tag: "runtime:rocm-gfx1100-serving-v033"
     promotion:
