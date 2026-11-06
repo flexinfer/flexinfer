@@ -17,6 +17,14 @@ time, and each change soaks before the next. The steps fall into four phases: co
 the 5930k CPU twin, the Radeon VII, then the 7900 XTX. The XTX goes last because it carries the
 most moving parts and the canary queue may still hold it at 00:15Z.
 
+## Execution log
+
+| Step | Result | Time (11-06) | Evidence |
+|---|---|---|---|
+| A1 !1289 | **done, soak passed** | merged 14:41:45Z (`5f47a900`); controller `6a3ad9e6` from 14:42:19Z, leader 14:42:56Z | Pre-checks: no `vllmVersion` Model, no lease, both digests `pinned-*`. Soak to 15:12Z: 0 lane pod restarts, 0 Model phase changes, 0 Failed/ConfigInvalid, 0 controller ERROR lines, 0 runtime loads. The hourly cache Jobs re-ran at 15:07Z, the same cadence as 14:07Z. |
+| A2 !1255 | **done, soak passed** | merged 15:16:04Z (`c4044a31`); proxy `d0439aac` from 15:16:34Z | Pre-roll `/v1/jobs` gave 501 `jobs_disabled`; after the roll it gives 200 with an empty list. A background chat job on `qwen3-1p7b-tools-radeonvii` went `queued` → `completed`, `/content` returned 200, and the `InferenceJob` CR shows completed. Sync chat 200 (0.6 s); gte embed 200 (15 ms). Soak to 15:45Z: 0 lane pod or Model changes, 0 proxy restarts or error lines, gte p95 24.4–24.6 ms (baseline 24.4 ms), proxy `error` 0/s, `timeout` at the pre-roll 0.002–0.004/s. |
+| B1 !1257 | next: waits for the owner's go | — | — |
+
 ## 0. Summary
 
 | # | MR | Component | Change | Needs | Time incl. soak |
