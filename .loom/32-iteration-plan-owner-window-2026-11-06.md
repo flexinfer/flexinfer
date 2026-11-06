@@ -628,16 +628,56 @@ Copy `deploy/gpuprofiles/gfx1100.yaml` and the five lane manifests there too.
     Deployment returns on `b06b06fe`; Flux does not undo an added field.
   - Full: revert, which also restores the per-Model compile-cache path.
 
-### D3. !1236: Qwen-Image 2.1 in-pod (NF4 check)
+### D3. !1236: Qwen-Image 2.1 in-pod (NF4 check and multi-render gate)
 
+- **Why the gate (added 2026-11-06 ~00:40Z, before any Qwen-Image data on this base).** S9 found
+  a problem on the XTX runtime base `527e2714` (torch 2.13 / ROCm 7.2.3), the image that serves
+  in-pod lanes:
+  - Wan T2V fits in memory only with VAE tiling.
+  - The first clip in a process is correct, but later clips come out NaN or black, and decoding
+    known-good latents gives flat gray.
+  - S9 suspects any runtime-image diffusers lane that renders more than once per process. Its
+    single-setting diagnostics run until ~02:15Z on 11-06: row
+    `gfx1100-wan-decode-ab-v032-fix2-2026-11-06`, branch `docs/s9-wan-decode-ab-addendum`.
+
+  The dedicated Qwen-Image lane runs a different base (`2c94c6d9`,
+  `rocm-gfx1100-serving-b83c3822`), so a clean dedicated A arm does not clear the in-pod one.
+- **Owner choice before D3.** Either hold !1236 until S9's diagnostics explain the corruption, or
+  run D3 with the multi-render gate below. A gate failure reverts !1236. KT-SWAP (D4) then runs
+  its fallback arm (warm-lane reloads only).
 - **Depends on.** D2 soaked.
 - **Conflicts.**
   - The branch carries !1235's commits; merge only after D2.
   - Its fast rollback must restore the `command` wrapper too, so roll back by **revert** only.
-- **A arm, before merging.** One 1024² render on the dedicated lane, at a fixed prompt and seed,
-  through the proxy. Save the PNG and the server's render time.
+- **A arm, before merging.** On the dedicated lane, through the proxy, run the same sequence the
+  gate uses: four 1024² renders back to back in one process, seeds S, S+1, S+2, then S again. Save
+  the PNGs and the server's render times. This is the control: it shows whether a corruption is
+  specific to the 0.32 base.
 - **Merge and reconcile.** Merge !1236, then reconcile `flexinfer-models`. At its next demand the
   lane loads in-pod and preempts the warm lane (500 > 300).
+- **Multi-render gate (pass rule fixed here, before the data).**
+  - **Setup.**
+    - Once the lane is Ready in-pod, send the A arm's four requests back to back to the same
+      process: seeds S, S+1, S+2, then S again.
+    - Confirm the runtime did not reload the lane between them: the lane's runtime PID and its
+      `/api/v1/models/qwen-image-21-gfx1100/health` load time stay the same.
+  - **Every image must pass all of these:**
+    - HTTP 200, and the PNG decodes at 1024².
+    - No NaN, black or flat gray: per channel, the pixel standard deviation is ≥ 10 on the 0–255
+      scale, and the mean is between 5 and 250.
+    - The owner sees a coherent image.
+  - **Repeatability.** The two seed-S renders match: identical PNG bytes, or a max per-pixel
+    difference ≤ 2 if the server's encoder is not deterministic.
+  - **Log.** The runtime log has no `nan`/`inf` warning from diffusers or bitsandbytes for any of
+    the four.
+  - **Check script** (Python 3 on the Mac, Pillow only):
+
+    ```bash
+    python3 -I -c "import sys; from PIL import Image, ImageStat; [print(f, Image.open(f).size, [round(x,1) for x in ImageStat.Stat(Image.open(f).convert('RGB')).stddev], [round(x,1) for x in ImageStat.Stat(Image.open(f).convert('RGB')).mean]) for f in sys.argv[1:]]" r1.png r2.png r3.png r4.png
+    ```
+
+  - **On any miss:** revert !1236, keep Qwen-Image dedicated, and write the miss into S9's thread.
+    It is the same class of bug.
 - **Live checks (pass).**
   - The same render in-pod returns 200, and the PNG decodes at 1024².
   - The owner, side by side with the A arm, sees a coherent image: not noise, not black, not
@@ -651,8 +691,11 @@ Copy `deploy/gpuprofiles/gfx1100.yaml` and the five lane manifests there too.
 
 ### D4. KT-SWAP (test, row `gfx1100-xtx-inpod-swap-2026-11-01`)
 
-- **Depends on.** D2 and D3 in-pod, and D0's baseline. The full arm (warm ↔ Qwen-Image) is
-  possible now that bitsandbytes is in the image.
+- **Depends on.** D2 and D3 in-pod with D3's multi-render gate passed, and D0's baseline. The full
+  arm (warm ↔ Qwen-Image) is possible now that bitsandbytes is in the image. If D3 was held or
+  reverted, run the fallback arm (warm-lane reloads only), as the row allows.
+- **Lease timing.** S9 holds the XTX lease until 03:09Z on 11-06. Phase D starts only after S9
+  writes "XTX free".
 - **Hold the card first.** Create a GPULease on `7900xtx-textgen`, so the controller does not
   reload lanes into the VRAM being measured. Release it at the end.
 - **Run** (row command, runtime image corrected):
@@ -773,7 +816,9 @@ curl -sk --resolve registry.harbor.lan:443:192.168.50.230 'https://registry.harb
   `deploy/pins/control-plane-retention-pins.yaml`, or keep it as the list of rollback anchors.
 - Q4 follow-up: `warmPolicy: primary` for the XTX warm lane, as its own change with its own check.
 - The deferred D5–D7 window: Wan T2V, VACE and Stable Audio in-pod, after the Wan decode A/B on
-  the 0.32 base.
+  the 0.32 base (S9).
+- S9 measured the dedicated Wan T2V lane peaking at 24,492 MiB on 11-06, about 80 MiB from OOM,
+  against a declared `vramEstimateMB` of 18,000. Fixing the estimate is a separate lane change.
 - After D4, the KT-SWAP verdict MR corrects the row's runtime image to `527e2714`.
 - After C2 PASS: retire the standalone pyannote Deployment and its queue reservation (D5-a plan
   § After a PASS).
