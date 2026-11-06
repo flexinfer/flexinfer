@@ -271,6 +271,28 @@ phase() {
 	t2v-B-tile-noexp-cold) run_arm t2v-B-tile-noexp-cold "$IMG_B" "$SRV_B" t2v t2v-B-tile "" 48 "$T2V" "ENABLE_VAE_TILING=1;$NOEXP" --clip k:boat:42 ;;
 	vace-B-noexp) run_arm vace-B-noexp "$IMG_B" "$SRV_B" vace vace-B "" 48 "$VACE" "$NOEXP" \
 		--keyframe "$KF" --clip v0:boat:42 --clip v1:boat:42 ;;
+	# Second addendum (row gfx1100-wan-decode-ab-v032-fix2-2026-11-06):
+	# single-clip diagnostics, then the judged arm with FIX2_ARGS.
+	dx-B-noexp2) run_arm dx-B-noexp2 "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
+		--setenv "PYTORCH_ALLOC_CONF=garbage_collection_threshold:0.7,max_split_size_mb:256" \
+		--setenv "PYTORCH_HIP_ALLOC_CONF=garbage_collection_threshold:0.9,max_split_size_mb:512" \
+		--clip c1:boat:42 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	dx-B-scratch) run_arm dx-B-scratch "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
+		--unsetenv HSA_NO_SCRATCH_RECLAIM \
+		--clip c1:boat:42 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	dx-B-rocblas) run_arm dx-B-rocblas "$IMG_B" "$SRV_B" t2v t2v-B "" 48 "$T2V" "" \
+		--setenv TORCH_BLAS_PREFER_HIPBLASLT=0 \
+		--clip c1:boat:42 --decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	t2v-B-fix2)
+		[ -n "${FIX2_ARGS:-}" ] || { log "phase t2v-B-fix2 needs FIX2_ARGS"; return 2; }
+		# shellcheck disable=SC2086 # FIX2_ARGS is a list of harness flags
+		run_arm t2v-B-fix2 "$IMG_B" "$SRV_B" t2v t2v-B-fix2 "" 48 "$T2V" "" $FIX2_ARGS \
+			--clip c0:boat:42 --clip c1:boat:42 --clip c2:fox:7 \
+			--decode /out/t2v-A/t2v-A-c1.latents.pt:xA ;;
+	t2v-B-fix2-cold)
+		[ -n "${FIX2_ARGS:-}" ] || { log "phase t2v-B-fix2-cold needs FIX2_ARGS"; return 2; }
+		# shellcheck disable=SC2086
+		run_arm t2v-B-fix2-cold "$IMG_B" "$SRV_B" t2v t2v-B-fix2 "" 48 "$T2V" "" $FIX2_ARGS --clip k:boat:42 ;;
 	cache-B-fbc005-fix) run_arm cache-B-fbc005-fix "$IMG_B" "$SRV_BRANCH" t2v "$FIX_CACHE" "" 48 "$T2V" \
 		"WAN_DENOISE_CACHE=fbc:0.05;$FIX_ENV" --clip c0:boat:42 --clip c1:boat:42 --clip c2:fox:7 ;;
 	cache-B-fbc010-fix) run_arm cache-B-fbc010-fix "$IMG_B" "$SRV_BRANCH" t2v "$FIX_CACHE" "" 48 "$T2V" \

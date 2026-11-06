@@ -1840,6 +1840,22 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "S9 second addendum, written 2026-11-06 ~00:35Z after t2v-B-tile and t2v-B-noexp ran and before any arm below. Results so far: t2v-B-tile rendered every clip (warm totals 70.3 s and 72.1 s against A's…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
+      "date": "2026-11-06",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-wan-decode-ab-v032-fix-2026-11-06",
       "kind": "validation",
       "support_level": "experimental",

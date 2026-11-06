@@ -9,6 +9,7 @@ Run: python3 scripts/test_wan_decode_ab.py
 import copy
 import importlib.util
 import json
+import os
 import math
 import tempfile
 import unittest
@@ -400,6 +401,24 @@ class MetricsTest(unittest.TestCase):
         self.assertIn("t2v-B-tile", verdicts)
         self.assertIn("cache-fbc005-fix", verdicts)
         self.assertEqual(verdicts["t2v"]["decision"], "fail")
+
+
+class EnvOverrideTest(unittest.TestCase):
+    def test_set_and_unset_before_torch(self):
+        with mock.patch.dict(os.environ, {"HSA_NO_SCRATCH_RECLAIM": "1"}, clear=False):
+            applied = wanab._apply_env_overrides(
+                ["TORCH_BLAS_PREFER_HIPBLASLT=0", "PYTORCH_ALLOC_CONF=a:1,b:2"],
+                ["HSA_NO_SCRATCH_RECLAIM"],
+            )
+            self.assertEqual(os.environ["TORCH_BLAS_PREFER_HIPBLASLT"], "0")
+            self.assertEqual(os.environ["PYTORCH_ALLOC_CONF"], "a:1,b:2")
+            self.assertNotIn("HSA_NO_SCRATCH_RECLAIM", os.environ)
+        self.assertEqual(applied["HSA_NO_SCRATCH_RECLAIM"], None)
+        self.assertEqual(applied["PYTORCH_ALLOC_CONF"], "a:1,b:2")
+
+    def test_bad_setenv_exits(self):
+        with self.assertRaises(SystemExit):
+            wanab._apply_env_overrides(["NOEQUALS"], [])
 
 
 class ClipSpecTest(unittest.TestCase):

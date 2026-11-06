@@ -395,7 +395,30 @@ def _parse_clip(text: str) -> dict:
     return clip
 
 
+def _apply_env_overrides(setenv, unsetenv) -> dict:
+    """Apply --setenv/--unsetenv before torch loads.
+
+    The runtime image's entrypoint exports /etc/flexinfer/runtime.env over the
+    container env, so an env-file value can lose to it; HSA and HIP read their
+    variables when torch first touches the device, after this runs.
+    """
+    applied = {}
+    for item in setenv or []:
+        key, sep, value = item.partition("=")
+        if not sep or not key:
+            raise SystemExit(f"--setenv wants KEY=VALUE, got {item!r}")
+        os.environ[key] = value
+        applied[key] = value
+    for key in unsetenv or []:
+        os.environ.pop(key, None)
+        applied[key] = None
+    return applied
+
+
 def cmd_run(args) -> int:
+    overrides = _apply_env_overrides(
+        getattr(args, "setenv", None), getattr(args, "unsetenv", None)
+    )
     process_start = time.time()
     t0 = args.t0 or process_start
     out = Path(args.out)
@@ -412,6 +435,7 @@ def cmd_run(args) -> int:
             for k in sorted(os.environ)
             if k.startswith(_ENV_PREFIXES)
         },
+        "env_overrides": overrides,
         "clips": [],
         "decodes": [],
     }
@@ -1093,7 +1117,7 @@ def _since(runs, phase, cid):
     return None
 
 
-T2V_FIX_VARIANTS = ("t2v-B-tile", "t2v-B-tile-noexp", "t2v-B-noexp")
+T2V_FIX_VARIANTS = ("t2v-B-tile", "t2v-B-tile-noexp", "t2v-B-noexp", "t2v-B-fix2")
 
 
 def collect(root: Path) -> dict:
@@ -1178,6 +1202,23 @@ def collect(root: Path) -> dict:
             "kernel_error_lines": kernel_lines,
         }
     )
+    # Second addendum: report-only diagnostics (did both renders complete?).
+    host["diagnostics"] = {
+        phase: {
+            "resolved": len(run.get("clips", [])) >= 1
+            and len(run.get("decodes", [])) >= 1
+            and not run.get("error"),
+            "error": run.get("error"),
+            "env_overrides": run.get("env_overrides"),
+            "card_peak_mib": vram.get(phase),
+            "decode_seconds": [
+                (c.get("timings") or {}).get("decode_postprocess_seconds")
+                for c in run.get("clips", [])
+            ],
+        }
+        for phase, run in runs.items()
+        if phase.startswith("dx-")
+    }
     verdicts = {}
     if "t2v-A" in runs and "t2v-B" in runs:
         verdicts["t2v"] = verdict_t2v(runs["t2v-A"], runs["t2v-B"], host, sims)
@@ -1252,6 +1293,8 @@ def main(argv=None) -> int:
     run.add_argument("--audio-seconds", type=float, default=20.0)
     run.add_argument("--audio-renders", type=int, default=2)
     run.add_argument("--t0", type=float, help="epoch seconds the container was started")
+    run.add_argument("--setenv", action="append", default=[], help="KEY=VALUE, set before torch loads")
+    run.add_argument("--unsetenv", action="append", default=[], help="KEY, removed before torch loads")
 
     cmp_ = sub.add_parser("compare")
     cmp_.add_argument("a")
