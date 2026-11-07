@@ -278,6 +278,36 @@ the Model annotation first and the controller default second:
 The compilation cache (`spec.cache.compilationCache.hostPath`) is not touched by
 either policy: it can be shared between lanes.
 
+#### Finding orphaned `Local` caches
+
+The policy only acts on future deletions. Directories already left behind, and
+caches retained on purpose, are reported by the node agent's inventory (Helm
+`agent.localCacheInventory.enabled: true`, default off; it mounts
+`agent.localCacheInventory.hostPath`, default `/var/lib/flexinfer/models`,
+read-only). Every agent interval it sizes each directory under the base (du-style
+allocated bytes, re-walked when the directory's mtime changes or after 10 min)
+and exports `flexinfer_node_local_cache_bytes{node,namespace,model,orphan}`,
+with `orphan="true"` when no Model of that namespace/name exists in the cluster,
+and `flexinfer_node_local_cache_orphans{node}`. A directory directly under the
+base that is not a Model namespace (a legacy flat cache such as
+`qwen35-27b-opus-distill`, another tool's store such as `ollama`, a namespace
+whose Models are all gone) is one orphan entry with an empty `namespace`. "Not an
+orphan" only means a Model of that name exists: a Model that moved to another
+node or left `strategy: Local` keeps its old directory counted as owned, and a
+Model whose `spec.cache.hostPath` names another base is not seen at all.
+
+```promql
+# Orphans on a node, largest first
+sort_desc(flexinfer_node_local_cache_bytes{orphan="true", node="cblevins-7900xtx"})
+```
+
+With `alerting.enabled`, `FlexInferNodeLocalCacheOrphanBytesHigh` warns when a
+node's orphans exceed 50 GB for 1 h (`alerting.thresholds.localCacheOrphanBytes`,
+`localCacheOrphanFor`). The agent only reports; remove a directory nobody will
+reuse on the node itself (`rm -rf --one-file-system <base>/<namespace>/<name>`),
+and annotate canaries with `flexinfer.ai/local-cache-on-delete: delete` so their
+next deletion cleans up.
+
 ## Flash-loader
 
 Flash-loader preloads model artifacts from the mounted cache volume into
