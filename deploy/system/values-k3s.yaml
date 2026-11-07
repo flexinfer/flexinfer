@@ -184,6 +184,17 @@ controller:
     servingDefaults:
       priorityClass: flexinfer-serving-critical
       ephemeralStorageRequest: "2Gi"
+    # 2026-11-07: remove a deleted Model's cache.strategy: Local directory
+    # (<hostPath>/<namespace>/<name>) from its node with the one-shot
+    # <name>-cache-cleanup Job from !1329. Nothing else reaps these: eight 18 GB
+    # copies of one canary artifact tripped the 7900 XTX root into a 17-hour
+    # DiskPressure eviction on 2026-11-06. Per-Model opt-out, for a canary that
+    # will be recreated under the same name and should keep its staged weights:
+    # annotation flexinfer.ai/local-cache-on-delete: retain. Inert on the
+    # 51e6bd81 controller pin above (only builds from d8aabcb48 on read the
+    # env); it takes effect with the next controller roll. Rollback = retain.
+    localCache:
+      onDelete: delete
 
 agent:
   enabled: true
