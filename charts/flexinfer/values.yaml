@@ -87,6 +87,17 @@ controller:
     servingDefaults:
       priorityClass: flexinfer-serving-critical
       ephemeralStorageRequest: "2Gi"
+    # What a deleted Model's `cache.strategy: Local` directory gets
+    # (<hostPath>/<namespace>/<name> on its GPU node). `retain` leaves it, as
+    # before; `delete` runs a one-shot Job on that node that removes it. The
+    # Model annotation flexinfer.ai/local-cache-on-delete (retain|delete)
+    # overrides this default per Model. Nothing else reaps these directories:
+    # eight 18 GB copies of one canary artifact tripped the 7900 XTX root into
+    # a 17-hour DiskPressure eviction on 2026-11-06. `retain` renders no env
+    # (it is the controller's built-in default), so the pod template only
+    # changes when this is set to `delete`.
+    localCache:
+      onDelete: retain
     # Flash-loader defaults used by v1alpha2 model deployments when enabled globally
     # or when a matching v1alpha1 ModelCache enables flashLoader.
     flashLoader:
