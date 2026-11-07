@@ -121,6 +121,12 @@ type ModelReconciler struct {
 	// first byte of logs — that is how CI job pods (5Gi request) outlived the
 	// Mills workhorse on the 5930k on 2026-09-13. Nil disables the default.
 	ServingDefaultEphemeralStorage *resource.Quantity
+	// LocalCacheOnDelete is the default fate of a `strategy: Local` cache
+	// directory when its Model is deleted: "retain" (empty, the historical
+	// behavior) or "delete" (a one-shot Job on the node removes it). The Model
+	// annotation flexinfer.ai/local-cache-on-delete overrides it. From
+	// DEFAULT_LOCAL_CACHE_ON_DELETE; see model_cache_cleanup.go.
+	LocalCacheOnDelete string
 	// MaxConcurrentReconciles is the Model controller's worker count. Values
 	// below 1 keep the single worker. Reconciles of different Models share no
 	// unguarded state (see sharedGroupLocks for the one cross-Model write
@@ -239,6 +245,10 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// Surface (without deleting) any cache Jobs left from a superseded spec
 	// generation. Best-effort: never blocks reconcile.
 	observeStaleGenerationJobs(ctx, r.Client, "Model", model.Namespace, model.Name, model.UID, model.Generation, LabelModel)
+
+	// A Model recreated under a deleted Model's name keeps that Local cache:
+	// cancel a cleanup Job the deletion left behind that has not run yet.
+	r.cancelPendingLocalCacheCleanup(ctx, model)
 
 	// Adopt an explicit activation request before deciding replicas, and persist
 	// it immediately: the recorded timestamp is what stops the same annotation

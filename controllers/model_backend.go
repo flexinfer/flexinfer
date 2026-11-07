@@ -463,11 +463,7 @@ func resolveCompilationCache(model *aiv1alpha2.Model) (hostPath string, enabled 
 
 // resolveLocalCachePath returns the hostPath directory for this model's local cache.
 func resolveLocalCachePath(model *aiv1alpha2.Model) string {
-	basePath := "/var/lib/flexinfer/models"
-	if model.Spec.Cache != nil && model.Spec.Cache.HostPath != "" {
-		basePath = model.Spec.Cache.HostPath
-	}
-	return filepath.Join(basePath, model.Namespace, model.Name)
+	return filepath.Join(localCacheBasePath(model), model.Namespace, model.Name)
 }
 
 func parsePVCSource(source string) (pvcName string, subPath string, ok bool) {

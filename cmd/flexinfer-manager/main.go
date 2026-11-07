@@ -165,6 +165,9 @@ func main() {
 		// controller.runtime.servingDefaults; empty disables either.
 		ServingDefaultPriorityClass:    os.Getenv("DEFAULT_SERVING_PRIORITY_CLASS"),
 		ServingDefaultEphemeralStorage: parseOptionalQuantity("DEFAULT_SERVING_EPHEMERAL_STORAGE_REQUEST"),
+		// What a deleted Model's `strategy: Local` cache directory gets: retain
+		// (default) or delete. Chart: controller.runtime.localCache.onDelete.
+		LocalCacheOnDelete: parseLocalCacheOnDelete(controllers.EnvLocalCacheOnDelete),
 		// Chart: controller.modelMaxConcurrentReconciles (default 1).
 		MaxConcurrentReconciles: modelMaxConcurrentReconciles,
 	}
@@ -276,6 +279,19 @@ func main() {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
 	}
+}
+
+// parseLocalCacheOnDelete reads the Local cache on-delete policy from the named
+// environment variable. Unset or empty means retain; any other spelling than
+// retain|delete is a startup error, because a typo must not silently turn a
+// requested cleanup into a retain.
+func parseLocalCacheOnDelete(envName string) string {
+	policy, err := controllers.ParseLocalCacheOnDelete(os.Getenv(envName))
+	if err != nil {
+		setupLog.Error(err, "invalid Local cache on-delete policy", "env", envName)
+		os.Exit(1)
+	}
+	return policy
 }
 
 // parseOptionalQuantity reads a resource.Quantity from the named environment
