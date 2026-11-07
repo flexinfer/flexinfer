@@ -142,6 +142,20 @@ func allMetrics() []metricSpec {
 			collector:  DevShmUtilizationPercent,
 		},
 		{
+			name:       "flexinfer_node_local_cache_bytes",
+			help:       "Allocated bytes of a Local model cache directory on the node, by namespace and model directory; orphan is true when no Model of that namespace/name exists.",
+			metricType: dto.MetricType_GAUGE,
+			labels:     []string{"node", "namespace", "model", "orphan"},
+			collector:  NodeLocalCacheBytes,
+		},
+		{
+			name:       "flexinfer_node_local_cache_orphans",
+			help:       "Number of Local model cache directories on the node that no Model owns.",
+			metricType: dto.MetricType_GAUGE,
+			labels:     []string{"node"},
+			collector:  NodeLocalCacheOrphans,
+		},
+		{
 			name:       "flexinfer_modelcache_evictions_total",
 			help:       "Total number of cache evictions.",
 			metricType: dto.MetricType_COUNTER,
@@ -515,7 +529,7 @@ func TestMetricTypes(t *testing.T) {
 // TestMetricCount verifies the table is exhaustive. If a developer adds a metric
 // to exporter.go but forgets to add it to the test table, this test fails.
 func TestMetricCount(t *testing.T) {
-	const expectedMetricCount = 56 // total exported metrics in exporter.go
+	const expectedMetricCount = 58 // total exported metrics in exporter.go
 	got := len(allMetrics())
 	assert.Equal(t, expectedMetricCount, got,
 		"metric count changed — update allMetrics() table when adding/removing metrics")

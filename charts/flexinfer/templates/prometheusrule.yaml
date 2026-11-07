@@ -158,6 +158,27 @@ spec:
             summary: "Low VRAM on GPU {{ "{{ $labels.gpu }}" }} (node {{ "{{ $labels.node }}" }})"
             description: "GPU {{ "{{ $labels.gpu }}" }} on node {{ "{{ $labels.node }}" }} has only {{ "{{ $value | humanizePercentage }}" }} VRAM free."
 
+{{- if and .Values.agent.enabled (dig "localCacheInventory" "enabled" false .Values.agent) }}
+    - name: flexinfer-node-local-cache
+      rules:
+        # Local model caches that no Model owns (deleted canaries under
+        # retain, legacy flat caches, other tools' stores under the base),
+        # from the node agent's inventory. On 2026-11-06 about 190 GB of them
+        # on the 7900 XTX root fed a DiskPressure trip that evicted every pod
+        # on the card for 17 hours; the node disk alert fired, but nothing
+        # said whose bytes they were.
+        - alert: FlexInferNodeLocalCacheOrphanBytesHigh
+          expr: |
+            sum by (node) (flexinfer_node_local_cache_bytes{orphan="true"}) > {{ default "50e9" $thresholds.localCacheOrphanBytes }}
+          for: {{ default "1h" $thresholds.localCacheOrphanFor }}
+          labels:
+            severity: warning
+          annotations:
+            summary: "Orphaned Local model caches on node {{ "{{ $labels.node }}" }}"
+            description: "Local cache directories that no Model owns hold {{ "{{ $value | humanize1024 }}" }}B on node {{ "{{ $labels.node }}" }}. List them with: sort_desc(flexinfer_node_local_cache_bytes{orphan=\"true\",node=\"{{ "{{ $labels.node }}" }}\"}). Delete the ones nobody will reuse from the node (the agent only reports), and set flexinfer.ai/local-cache-on-delete: delete on canaries so their next deletion cleans up. Runbook: docs/user/caching.md#deleting-a-model-with-a-local-cache."
+            runbook_url: "https://github.com/flexinfer/flexinfer/blob/master/docs/user/caching.md#deleting-a-model-with-a-local-cache"
+
+{{- end }}
 {{- if default false $buildNodeDisk.enabled }}
     - name: flexinfer-build-node-disk
       rules:

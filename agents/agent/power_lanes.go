@@ -31,6 +31,16 @@ type modelLaneSource struct {
 // agent ServiceAccount needs get/list on models.ai.flexinfer in its
 // namespace, which the chart grants only when agent.gpuPower.nodes is set.
 func (a *Agent) NewModelLaneSource() (LaneSource, error) {
+	c, err := newModelReader()
+	if err != nil {
+		return nil, err
+	}
+	return modelLaneSource{c: c, namespace: a.namespace}, nil
+}
+
+// newModelReader builds an uncached client that reads Model objects with the
+// agent's in-cluster ServiceAccount.
+func newModelReader() (client.Reader, error) {
 	cfg, err := rest.InClusterConfig()
 	if err != nil {
 		return nil, fmt.Errorf("in-cluster config: %w", err)
@@ -43,7 +53,7 @@ func (a *Agent) NewModelLaneSource() (LaneSource, error) {
 	if err != nil {
 		return nil, fmt.Errorf("model client: %w", err)
 	}
-	return modelLaneSource{c: c, namespace: a.namespace}, nil
+	return c, nil
 }
 
 func (s modelLaneSource) ActiveLanes(ctx context.Context, node string) ([]string, error) {
