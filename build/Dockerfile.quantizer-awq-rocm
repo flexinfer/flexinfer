@@ -4,9 +4,9 @@
 # so quantization works on gfx1100 (7900 XTX) and gfx90a (MI250) without
 # custom CUDA kernels.
 #
-# Build:
-#   docker --context 7900xtx build -f build/Dockerfile.quantizer-awq-rocm \
-#     -t registry.harbor.lan/flexinfer/quantizer:awq-rocm-gfx1100 .
+# Build and push (cluster BuildKit):
+#   cluster-buildkit build -f build/Dockerfile.quantizer-awq-rocm \
+#     -t registry.harbor.lan/flexinfer/quantizer:awq-rocm-gfx1100 --push .
 #
 # The resulting image is ~12 GB (ROCm base + PyTorch + AutoAWQ).
 

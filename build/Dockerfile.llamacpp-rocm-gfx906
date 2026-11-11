@@ -6,9 +6,9 @@
 # falls back to sysfs VRAM totals, then a conservative 16 GB default, instead of
 # aborting.
 #
-# Build command (on GPU node with docker):
-#   docker --context 7900xtx build -f build/Dockerfile.llamacpp-rocm-gfx906 \
-#     -t registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim .
+# Build and push (cluster BuildKit; the build needs no GPU):
+#   cluster-buildkit build -f build/Dockerfile.llamacpp-rocm-gfx906 \
+#     -t registry.harbor.lan/library/llamacpp:rocm-gfx906-hipmem-shim --push .
 
 ARG ROCM_VERSION=6.4.4
 FROM rocm/dev-ubuntu-24.04:${ROCM_VERSION} AS builder

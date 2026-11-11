@@ -1,9 +1,9 @@
 # llama.cpp Docker image for AMD gfx1100 (RX 7900 series, RDNA3)
 # Built from source with GGML_HIP=ON targeting gfx1100
 #
-# Build command (on the GPU builder):
-#   docker --context 7900xtx build -f build/Dockerfile.llamacpp-rocm-gfx1100 \
-#     -t registry.harbor.lan/library/llamacpp:rocm-gfx1100-b11847 .
+# Build and push (cluster BuildKit; the build needs no GPU):
+#   cluster-buildkit build -f build/Dockerfile.llamacpp-rocm-gfx1100 \
+#     -t registry.harbor.lan/library/llamacpp:rocm-gfx1100-b11847 --push .
 #
 # ROCm 7.2.3 is the userspace the fleet's vLLM 0.32 runtime already serves
 # from on both gfx1100 hosts (S1, 2026-10-24: 5930k kernel 6.14.9, 7900xtx
