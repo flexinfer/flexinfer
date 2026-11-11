@@ -9,7 +9,7 @@ for f in build/Dockerfile.*; do b=$(basename "$f"); \
   grep -rqE "${b}[\"' ]|${b}\$" .gitlab-ci.yml .gitlab/ Makefile build/*.sh scripts/ || echo "ORPHAN: $b"; done
 ```
 
-A file with no CI/Makefile/script reference is either an orphan (delete it) or an **off-CI manual recipe** (document it in the off-CI table below). Heavy ROCm images are deliberately built off-CI on the `7900xtx` Docker context because the in-cluster buildkit nodes cannot hold large from-source builds.
+A file with no CI/Makefile/script reference is either an orphan (delete it) or an **off-CI manual recipe** (document it in the off-CI table below). Off-CI recipes build on the cluster BuildKit (`ci-build/buildkitd-central`) through `cluster-buildkit build ... --push` from `~/workspace/bin`; the Makefile's `BUILDX` defaults to it. A dropped port-forward cancels the build, so leave multi-hour compiles to their CI `publish_*` jobs. The from-source multi-arch builds (`build/build-torch-multiarch.sh`, `build/build-vllm-multiarch*.sh`) still use the `7900xtx` Docker engine: their working set is too large for the in-cluster BuildKit nodes, and the vLLM scripts `docker run` the result.
 
 Build-node disk pressure is tracked in GitLab issue
 [#35](https://gitlab.flexinfer.ai/services/flexinfer/-/issues/35). Before large
@@ -97,7 +97,7 @@ Reconciling one fails the check until its entry is deleted.
 | Dockerfile | Built by | Image / consumer |
 |---|---|---|
 | `Dockerfile.llamacpp-rocm-gfx1100` | CI `publish_llamacpp_rocm_gfx1100` + `make` | gfx1100 llama.cpp server (`library/llamacpp:rocm-gfx1100-<release>`, Glimmer lane; b11847 on ROCm 7.2.3 since S5 2026-10-24) |
-| `Dockerfile.llamacpp-vulkan-gfx1100` | off-CI (`docker --context 7900xtx build`) | gfx1100 llama.cpp Vulkan/RADV probe (`library/llamacpp:vulkan-radv-<release>`), the A/B arm of `deploy/debug/qwen38-27b-gguf-spec-probe.yaml`; never pinned by a lane |
+| `Dockerfile.llamacpp-vulkan-gfx1100` | off-CI (`cluster-buildkit build`, see the file header) | gfx1100 llama.cpp Vulkan/RADV probe (`library/llamacpp:vulkan-radv-<release>`), the A/B arm of `deploy/debug/qwen38-27b-gguf-spec-probe.yaml`; never pinned by a lane |
 | `Dockerfile.llamacpp-rocm-gfx906` | CI `publish_llamacpp_rocm_gfx906` + `make` | gfx906 llama.cpp (`library/llamacpp:rocm-gfx906-patched-*`, hipMemGetInfo patch) |
 | `Dockerfile.llamacpp-cuda-maxwell` | CI `publish_llamacpp_cuda_maxwell` + `make` | GTX 980 Ti (sm_52, no-AVX2 host) |
 | `Dockerfile.ollama-cuda-maxwell` | CI `publish_ollama_maxwell` + `make` | `flexinfer/ollama:cuda-maxwell` |

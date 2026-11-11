@@ -510,13 +510,16 @@ ROCm 6.4+ is the stable baseline for gfx1100, but you may choose between:
 
 #### Building Images
 
-**Local builds** (for testing or when CI is slow):
+**Local builds** (for testing or when CI is slow). The Makefile builds on
+the cluster BuildKit through `cluster-buildkit`; `push-X` builds and pushes
+in one step. A dropped port-forward cancels the build, so prefer the CI
+jobs below for these multi-hour images.
 ```bash
-# ROCm 6.4 gfx1100 (~3 hours, use 7900xtx docker context)
-make build-mlc-rocm64 push-mlc-rocm64
+# ROCm 6.4 gfx1100 (~3 hours)
+make push-mlc-rocm64
 
 # Maxwell sm_52 (~2 hours)
-make build-mlc-maxwell push-mlc-maxwell
+make push-mlc-maxwell
 
 # Verify all images exist
 make verify-images

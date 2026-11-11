@@ -14,7 +14,11 @@
 #   deploy-quantizer.sh gfx906 --restart-job gemma4-26b-a4b-gptq-quantize
 #
 # Environment:
-#   DOCKER_CONTEXT_GPU   Docker context (default: 7900xtx)
+#   DOCKER_CONTEXT_GPU   Docker context (default: 7900xtx). It needs a Docker
+#                        engine, not a GPU: the script runs the built image
+#                        to check script parity. To build and push without an
+#                        engine, use the cluster-buildkit command in the
+#                        quantizer Dockerfile header.
 #   HARBOR_REGISTRY      Registry hostname (default: registry.harbor.lan)
 #   KUBECONFIG           Kubernetes config (defaults to k3s.yaml in repo)
 set -euo pipefail
