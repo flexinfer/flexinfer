@@ -177,7 +177,7 @@ publish_serving_rocm_gfx1100:
           --opt filename="Dockerfile.runtime-serving" \
           --opt platform=linux/amd64 \
           --opt build-arg:BASE_IMAGE="rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0" \
-          --opt build-arg:GO_VERSION="1.26.10" \
+          --opt build-arg:GO_VERSION="1.26.11" \
           --opt build-arg:GPU_VENDOR="amd" \
           --opt build-arg:GPU_ARCH="gfx1100" \
           --opt build-arg:INCLUDE_VLLM="true" \
@@ -334,7 +334,7 @@ publish_serving_rocm_gfx1100_v032:
         --opt filename="Dockerfile.runtime-serving-v032" \
         --opt platform=linux/amd64 \
         --opt build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.32.0" \
-        --opt build-arg:GO_VERSION="1.26.10" \
+        --opt build-arg:GO_VERSION="1.26.11" \
         --opt build-arg:GPU_ARCH="gfx1100" \
         --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100-serving-v032" \
         --export-cache "type=inline" \
@@ -416,7 +416,7 @@ publish_serving_rocm_gfx1100_v033:
         --opt filename="Dockerfile.runtime-serving-v032" \
         --opt platform=linux/amd64 \
         --opt build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.33.0-rocm72@sha256:4fe7bc121cbe2f0791ebc38dcc2f0d615612233b4bfc0c1f4b9daeab05aba182" \
-        --opt build-arg:GO_VERSION="1.26.10" \
+        --opt build-arg:GO_VERSION="1.26.11" \
         --opt build-arg:GPU_ARCH="gfx1100" \
         --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100-serving-v033" \
         --export-cache "type=inline" \
@@ -509,7 +509,7 @@ publish_unified_rocm_gfx1100:
           --opt filename="Dockerfile.runtime" \
           --opt platform=linux/amd64 \
           --opt build-arg:BASE_IMAGE="rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0" \
-          --opt build-arg:GO_VERSION="1.26.10" \
+          --opt build-arg:GO_VERSION="1.26.11" \
           --opt build-arg:LLAMACPP_VERSION="b11847" \
           --opt build-arg:OLLAMA_VERSION="v0.17.4" \
           --opt build-arg:OLLAMA_GO_VERSION="1.25.7" \
@@ -628,7 +628,7 @@ publish_gaming_rocm_gfx1100:
           --opt filename="Dockerfile.runtime" \
           --opt platform=linux/amd64 \
           --opt build-arg:BASE_IMAGE="rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0" \
-          --opt build-arg:GO_VERSION="1.26.10" \
+          --opt build-arg:GO_VERSION="1.26.11" \
           --opt build-arg:GPU_VENDOR="amd" \
           --opt build-arg:GPU_ARCH="gfx1100" \
           --opt build-arg:INCLUDE_VLLM="false" \
