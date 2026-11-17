@@ -32,7 +32,7 @@ Also merged in this period:
 
 - !1204, workhorse failover between the gfx1100 cards, which D6's twin failover uses, and !1208, the design itself.
 - !1203, the placement layout that D1 and D2 assume: the always-on workhorse on the 5930k and the XTX as the flex card. KT-FLEX failed on 2026-11-01 when the XTX fell off the PCIe bus, passed its rerun after the owner's hardware work, and was promoted on 2026-11-04 (!1277; row `gfx1100-flex-card-layout-2026-11-03`).
-- whisper.cpp ASR on the Radeon VII: !1206 backend, !1250 prewarm, !1252 runtime repin, !1207 the lane. ICC transcribes through it. Row `gfx906-whispercpp-asr-2026-11-02`, promoted.
+- whisper.cpp ASR on the Radeon VII: !1206 backend, !1250 prewarm, !1252 runtime repin, !1207 the lane. The transcription client transcribes through it. Row `gfx906-whispercpp-asr-2026-11-02`, promoted.
 - The Wan VAE without MIOpen (!1268, live through !1275): a cold Wan clip takes 252 s, with VAE decode at 7 s.
 - Proxy cold start: the lane first-byte budget is loaded before a cold-start request is queued (!1264, rolled by !1266), and a refused dial is retried while a cold lane's ClusterIP is programmed (!1270, rolled by !1271).
 
