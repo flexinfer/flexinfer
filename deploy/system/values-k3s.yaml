@@ -568,7 +568,8 @@ imagePrewarm:
         # re-pulled the Harbor-resident digests but 2e9652ed was deleted from
         # Harbor on 2026-10-21 (ErrImagePull), so listing it here would keep
         # the DaemonSet NotReady forever and fail every 5930k prewarm gate.
-        # The 7900xtx still holds it. The three 5930k lanes that were pinned to
+        # The 7900xtx lost its copy the same way on 2026-11-06 (see that
+        # profile). The three 5930k lanes that were pinned to
         # it (qwen36-27b-autoround-workhorse, qwen36-27b-fable-gptq,
         # qwen35-9b-ablit-rp-5930k; all parked, minReplicas 0) were repinned on
         # 2026-10-25 to the CI-built 0.32 image listed below.
@@ -731,9 +732,20 @@ imagePrewarm:
       nodeSelector:
         kubernetes.io/hostname: cblevins-7900xtx
       images:
-        # 2026-09-13 (issue #74): the v023 Model-lane image, as in the 5930k
-        # profile — this node served the warm Mills lane on it.
-        - registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
+        # 2026-11-16 REMOVED: the v023 Model-lane image 2e9652ed (listed since
+        # 2026-09-13, issue #74; this node served the warm Mills lane on it).
+        # Harbor retention deleted it on 2026-10-21 and it survived only as
+        # this node's snapshot, which the 2026-11-06 nodefs eviction
+        # wiped with every other image on the node. The replacement prewarm
+        # pod could never pull it (Harbor NOT_FOUND), so image-0 sat in
+        # ImagePullBackOff, the DaemonSet stayed 0 ready and KubePodNotReady
+        # fired from 2026-11-07. No live Model, GPUProfile or runtime profile
+        # pins it (qwen38-27b-xtx-warm-canary and qwen35-9b-ablit-rp moved to
+        # b06b06fe on 2026-10-27), and the 5930k profile dropped it on
+        # 2026-10-24 for the same reason. It cannot be rebuilt (recipe no
+        # longer at HEAD), so a 2e9652ed rollback no longer exists on either
+        # node: fix forward. Kept as a comment for the record:
+        #   registry.harbor.lan/flexinfer/runtime@sha256:2e9652edee30ed078843935ce5672280efd3585de0527d27703dd6880592981d
         # 2026-10-23 (issue #74 S1''): 522d0fe2 and f7d2e967 retired from this
         # list, see the 5930k profile. f7d2e967 (rocm-gfx1100-serving-e4ad4d10)
         # is the runtime DaemonSet's rollback anchor and stays resident on this
@@ -747,8 +759,8 @@ imagePrewarm:
         - registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
         # 2026-10-22 (issue #74 S2): the v0.26 native-W4A16 serving image, see
         # the 5930k profile above. The XTX warm lane is the canary vehicle for
-        # this digest (first roll after this image is resident); 2e9652ed
-        # stays listed as the rollback anchor until both lanes are promoted.
+        # this digest (first roll after this image is resident). 2e9652ed
+        # was its rollback anchor until that image was lost (see above).
         - registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
         # 2026-10-24 (issue #74 S2, vLLM 0.32): the native-W4A16 image on the
         # upstream 0.32.0 wheel, see the 5930k profile above. The XTX warm
@@ -761,11 +773,9 @@ imagePrewarm:
         # and qwen35-9b-ablit-rp onto it, so both lanes run the same engine
         # build as the workhorse they overflow from; the warm lane's repin was
         # a container restart (Ready 2026-10-27 21:11Z, matrix row
-        # xtx-warm-b06b06fe-2026-10-27). 2e9652ed above stays listed: it is
-        # the 9B RP lane's only rollback until that lane first boots on
-        # b06b06fe on this card, and dropping it would not clear the
-        # runtime_pin_drift FAIL, which the deploy/experiments ModelExperiment
-        # records (Flux-applied) also raise.
+        # xtx-warm-b06b06fe-2026-10-27). 2e9652ed stayed listed after that as
+        # the 9B RP lane's only rollback; it was lost on 2026-11-06 and removed
+        # on 2026-11-16 (see the top of this list), so that lane fixes forward.
         - registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
         # 2026-11-01 (D1, research next-differentiators-2026-10-31 §6.1 step
         # 1): the stacked 0.32 runtime (rocm-gfx1100-serving-v032-c444b5ff,
