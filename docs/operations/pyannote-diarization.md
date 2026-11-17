@@ -7,17 +7,16 @@ Whisper ASR. Runs as a hand-written FastAPI Deployment on `cblevins-radeonvii`
 ## Architecture
 
 ```
-ICC ──> faster-whisper.ai.svc:8000 ──/v1/audio/transcriptions──> faster-whisper (CPU, namespace ai)
-    └─> pyannote-diarization.flexinfer-system.svc:8000 ──/diarize──> pyannote Deployment (gfx906)
+client ──> faster-whisper.ai.svc:8000 ──/v1/audio/transcriptions──> faster-whisper (CPU, namespace ai)
+       └─> pyannote-diarization.flexinfer-system.svc:8000 ──/diarize──> pyannote Deployment (gfx906)
 
 flexinfer-proxy ──/diarize──> pyannote Deployment (same Service, static route)
                 └─/v1/audio/transcriptions──> no servable lane (whisper-large-v3-turbo is parked)
 ```
 
-As of 2026-10-30, ICC calls both services directly (gitops
-`k3s/integration-command-center/deployment.yaml`, `ICC_ASR_WHISPER_URL` and
-`ICC_ASR_DIARIZE_URL`). The Whisper Model CR on the 7900 XTX has been parked
-since 2026-06-23. The planned always-on ASR lane is whisper.cpp on this same
+As of 2026-10-30, the transcription client calls both services directly,
+through its Whisper URL and diarization URL settings. The Whisper Model CR on
+the 7900 XTX has been parked since 2026-06-23. The planned always-on ASR lane is whisper.cpp on this same
 card. See `.loom/10-research-voice-stack-and-gpu-placement-2026-10-30.md`
 §3–§5, which also lists what moving pyannote under the Model API needs.
 
