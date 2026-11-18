@@ -99,7 +99,7 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	// capacity, or an incumbent's request drain delays activation. Join the same
 	// per-model heartbeat used by forwarding and release it on every exit,
 	// including cancellation and queue timeout.
-	stopHeartbeat := p.startLastAccessHeartbeat(modelName)
+	stopHeartbeat := p.startLastAccessHeartbeat(ctx, modelName)
 	defer stopHeartbeat()
 
 	// Wait for request to be processed with timeout
