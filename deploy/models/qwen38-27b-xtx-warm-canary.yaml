@@ -58,25 +58,6 @@
 #   first-wins.
 # The 5930k workhorse is now always on (900, primary, minReplicas 1).
 # Rollback: 470, warmPolicy primary, drop the four workhorse labels.
-#
-# 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
-# WINDOW-GATED; the XTX runtime repin it waited for is live): served IN-POD by the
-# 7900xtx runtime DaemonSet instead of its own Deployment, so a creative
-# render swaps this lane out and back inside the runtime pod (KT-SWAP measures
-# the floor) instead of deleting and scheduling a 23 GB pod.
-# - dedicatedDeployment dropped. In-pod the runtime image (527e2714,
-#   rocm-gfx1100-serving-v032-ddf22437, live since !1234 on 2026-11-04:
-#   vLLM 0.32.0, text plugin 0.9.0, the same three plugins as b06b06fe
-#   below) serves the lane; spec.image stays the dedicated rollback image.
-# - No launch wrapper to move: this lane builds no MTP draft (no
-#   speculativeConfig), so FLEXINFER_QWEN35_MTP_HEAD is not needed here.
-# - Compile cache: scope Image on the default hostPath, the directory the
-#   runtime pod mounts at /cache/compile. The per-Model hostPath
-#   (compile-cache-qwen38-27b-autoround-7900xtx) is never mounted in the
-#   runtime pod; the first in-pod load compiles cold once.
-# Rollback: dedicatedDeployment: true (the Deployment returns on the next
-# reconcile, compiling cold once under the image scope), or revert this
-# commit to restore the per-Model cache too.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -184,9 +165,7 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      # 2026-11-01 D1: image-scoped on the default hostPath, shared with the
-      # runtime pod (header).
-      scope: Image
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-autoround-7900xtx
       sizeLimit: 4Gi
   gpu:
     vendor: amd
@@ -207,6 +186,7 @@ spec:
     # key; with minReplicas 1 the lane still returns by itself once the
     # creative lane scales to zero.
     warmPolicy: ondemand
+    dedicatedDeployment: true
     quantization: gptq
     # 2026-09-13: `architectures` pinned in-process (issue #74 incident #2).
     # The runtime DaemonSet's entrypoint rewrote this lane's on-disk
