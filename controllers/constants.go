@@ -107,6 +107,13 @@ const (
 	// the model warm for activationDemandWindow from that instant.
 	AnnotationActivateRequestedAt = "flexinfer.ai/activate-requested-at"
 
+	// AnnotationLocalCacheOnDelete decides what happens to a Model's
+	// `strategy: Local` hostPath directory when the Model is deleted:
+	// "retain" leaves it on the node, "delete" removes it through a one-shot
+	// Job there. It overrides the controller default
+	// (DEFAULT_LOCAL_CACHE_ON_DELETE). See model_cache_cleanup.go.
+	AnnotationLocalCacheOnDelete = "flexinfer.ai/local-cache-on-delete"
+
 	// AnnotationForceImageUpdate, when "true" on a ModelCache, bypasses the
 	// imageDriftGraceWindow and lets the controller preempt a running
 	// quantization job to pick up the current GPUProfile image. Used for

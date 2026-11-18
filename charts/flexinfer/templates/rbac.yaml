@@ -212,6 +212,14 @@ rules:
   - apiGroups: [""]
     resources: ["nodes"]
     verbs: ["get", "list", "watch", "update", "patch"]
+  {{- if (dig "localCacheInventory" "enabled" false .Values.agent) }}
+  # The Local cache inventory joins <base>/<namespace>/<name> directories with
+  # the Models of every namespace (an uncached List each agent interval, no
+  # watch); granted only while agent.localCacheInventory.enabled.
+  - apiGroups: ["ai.flexinfer"]
+    resources: ["models"]
+    verbs: ["get", "list"]
+  {{- end }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

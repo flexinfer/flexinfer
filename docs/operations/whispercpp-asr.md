@@ -24,8 +24,8 @@ caller ──/v1/audio/transcriptions (multipart, model=<lane or label>)──> 
 - **Ingress:** whisper-server lists sub-word tokens under `segments[].words`.
   - The runtime ingress (`internal/runtime/whispercpp_words.go`) merges them into the OpenAI
     top-level `words` list (`{word, start, end, probability}`).
-  - ICC's aligner reads that list. A whispercpp Model always gets this ingress, with or without
-    `FLEXINFER_RUNTIME_REQUEST_DRAIN`.
+  - The transcription client's aligner reads that list. A whispercpp Model always gets this
+    ingress, with or without `FLEXINFER_RUNTIME_REQUEST_DRAIN`.
 - **Routing:** the proxy resolves the multipart `model` field like any other Model.
   - No static route or upstream env is involved.
   - LiteLLM advertises the lane as `audio_transcription` because its `serve-paths` is audio-only.
@@ -65,8 +65,8 @@ curl -sS http://flexinfer-proxy.flexinfer-system.svc/v1/jobs/$JOB            # s
 curl -sS http://flexinfer-proxy.flexinfer-system.svc/v1/jobs/$JOB/content    # words[].speaker, utterances
 ```
 
-This replaces the client-side merge of `/v1/audio/transcriptions` and `/diarize`: ICC's aligner
-and jobsearch read `words[].speaker` or `utterances` instead. Until the KT-DIAR window certifies
+This replaces the client-side merge of `/v1/audio/transcriptions` and `/diarize`: the transcription
+client's aligner and jobsearch read `words[].speaker` or `utterances` instead. Until the KT-DIAR window certifies
 the gfx906 profile for pyannote, the request answers 501 `diarization_not_certified` and
 `GET /v1/models/whisper-large-v3-turbo-radeonvii` shows why under `flexinfer.diarization`; clients
 keep their current path on that code. Contract: `docs/specs/proxy-api.md`, "Diarized
@@ -111,5 +111,5 @@ scheduler queues gte's kernels behind it.
   ```bash
   for d in /sys/class/kfd/kfd/proc/*; do c=0; for q in $d/queues/*; do [ "$(cat $q/type)" = 0 ] && c=$((c+1)); done; echo "$(basename $d) $c"; done
   ```
-- **Rollback:** delete or revert the Model. ICC keeps working against the CPU faster-whisper
-  Deployment in namespace `ai` until its `ICC_ASR_WHISPER_URL` moves to the proxy.
+- **Rollback:** delete or revert the Model. The transcription client keeps working against the
+  CPU faster-whisper Deployment in namespace `ai` until its Whisper URL setting moves to the proxy.

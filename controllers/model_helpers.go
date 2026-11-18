@@ -282,6 +282,11 @@ func (r *ModelReconciler) cleanupModel(ctx context.Context, model *aiv1alpha2.Mo
 		log.Error(err, "Failed to create flash-tmpfs cleanup job (non-fatal)")
 	}
 
+	// Apply the on-delete policy to a Local cache directory on the node.
+	if err := r.cleanupLocalCache(ctx, model); err != nil {
+		log.Error(err, "Failed to create Local cache cleanup job (non-fatal)")
+	}
+
 	return nil
 }
 
