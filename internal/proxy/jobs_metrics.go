@@ -40,6 +40,10 @@ var (
 		Name: "flexinfer_jobs_webhook_deliveries_total",
 		Help: "Job webhook delivery attempts, by event and result (delivered, failed).",
 	}, []string{"event", "result"})
+	jobsLaneReleasesTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "flexinfer_jobs_lane_releases_total",
+		Help: "Shared-GPU lanes the runner considered handing back after their last job, by lane and result (released, kept_interactive, not_applicable).",
+	}, []string{"lane", "result"})
 
 	jobMetricsOnce sync.Once
 )
@@ -47,6 +51,6 @@ var (
 func registerJobMetrics() {
 	jobMetricsOnce.Do(func() {
 		prometheus.MustRegister(jobsSubmittedTotal, jobsFinishedTotal, jobsRunning, jobsQueueWaitSeconds,
-			jobsRunSeconds, jobsRetriesTotal, jobsWebhookDeliveriesTotal)
+			jobsRunSeconds, jobsRetriesTotal, jobsWebhookDeliveriesTotal, jobsLaneReleasesTotal)
 	})
 }

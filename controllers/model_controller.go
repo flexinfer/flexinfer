@@ -299,6 +299,12 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 	}
 
+	// A release takes effect when its grace ends; come back then rather than
+	// on the next periodic pass.
+	if wait := releaseGraceRemaining(model, time.Now()); wait > 0 && wait+time.Second < requeueAfter {
+		requeueAfter = wait + time.Second
+	}
+
 	// Detect GPU info from node
 	gpuVendor, gpuArch, err := r.detectGPU(ctx, model)
 	if err != nil {

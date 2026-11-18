@@ -91,6 +91,14 @@ func (r *ModelReconciler) desiredReplicasForContext(ctx context.Context, model *
 		return max(1, minReplicas)
 	}
 
+	// The job runner released the lane and nothing has asked for it since: end
+	// the idle window now. This sits above the Loading guard below, so a job
+	// cancelled during its lane's cold start does not finish the load just to
+	// idle out. An activation request still holds the lane (checked above).
+	if modelReleased(model, time.Now()) {
+		return minReplicas
+	}
+
 	if model.Status.LastActiveTime == nil {
 		// preload-on-deploy: warm a non-shared serverless model proactively from
 		// deploy until its first request, so the first post-deploy request skips
