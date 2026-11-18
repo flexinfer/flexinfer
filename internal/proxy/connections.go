@@ -72,6 +72,9 @@ type lastAccessHeartbeat struct {
 	// release asks the writer to hand the lane's shared GPU back
 	// (status.releasedAt) once every recorded boundary is written.
 	release bool
+	// released is set once this replica has written a release and cleared
+	// by its next demand write, which must not be skipped as redundant.
+	released bool
 	// interactiveAt is the last boundary of a client request, as opposed to
 	// a job's forward: the job runner keeps a lane's idle window when a
 	// client used it recently.
@@ -188,17 +191,24 @@ func (p *Proxy) runLastAccessWriter(modelName string, heartbeat *lastAccessHeart
 		// request is the demand the release would deny.
 		release := heartbeat.release && heartbeat.requests == 0
 		heartbeat.release = false
+		answerRelease := write && heartbeat.released
+		if answerRelease {
+			heartbeat.released = false
+		}
 		heartbeat.writing = write || release
 		heartbeat.mu.Unlock()
 
 		next := interval
 		if write {
-			next = p.touchLastAccess(ctx, modelName, force)
+			next = p.touchLastAccess(ctx, modelName, force, answerRelease)
 		}
-		// After the boundary write, so releasedAt is never older than the
-		// lane's last demand stamp from this replica.
-		if release {
-			p.writeLaneRelease(ctx, modelName)
+		// After the boundary write, so the job's own last demand stamp does
+		// not cancel the release. A request that starts from here on is a
+		// new boundary: its write clears the release again.
+		if release && p.writeLaneRelease(ctx, modelName) {
+			heartbeat.mu.Lock()
+			heartbeat.released = true
+			heartbeat.mu.Unlock()
 		}
 
 		heartbeat.mu.Lock()

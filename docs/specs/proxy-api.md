@@ -138,12 +138,14 @@ preempted, breaker open) is retried after its `Retry-After` (5–60 s) until the
 runner stamps `status.heartbeatAt` every 15 s; another runner reclaims a job silent for 45 s.
 
 **Giving the card back.** When a job on a shared-GPU slot ends, the runner releases its lane
-unless a running job, or the next queued job for that slot, uses the same lane. A release is
-`status.releasedAt` on the Model, written after the job's last demand stamp. The controller
+unless a running job, or a queued job about to take one of the slot's free places, uses the
+same lane. A release is `status.releasedAt` on the Model, written after the job's last demand
+stamp. The controller
 treats a release that no demand has answered for 45 s as "idle now": the lane scales to
 `minReplicas` without waiting for `serverless.idleTimeout`, stops holding the slot through the
-swap cooldown, and the lane it displaced takes the card back. Any later request for the lane
-writes a newer `lastActiveTime` and cancels the release. Three cases keep the normal idle
+swap cooldown, and the lane it displaced takes the card back. Every demand stamp clears
+`releasedAt`, and a standing release makes the next stamp unskippable, so any later request for
+the lane, on any proxy replica, cancels the release within one 30 s heartbeat. Three cases keep the normal idle
 window: a client request reached the lane within one idle timeout on this proxy replica, a
 request is in flight on it, or the lane is not a serverless member of a shared group.
 `flexinfer_jobs_lane_releases_total{lane,result}` counts the decisions (`released`,

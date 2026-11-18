@@ -68,9 +68,64 @@ func TestLastJobOnASharedCardReleasesItsLane(t *testing.T) {
 
 	m := f.lane(t, "qwen-image")
 	require.NotNil(t, m.Status.ReleasedAt, "the lane is handed back once no job needs it")
+	// Every demand stamp clears releasedAt, so a release that survives was
+	// written after the job's last stamp.
 	require.NotNil(t, m.Status.LastActiveTime, "the job's forward stamped demand")
-	assert.False(t, m.Status.ReleasedAt.Before(m.Status.LastActiveTime),
-		"the release is written after the job's last demand stamp")
+}
+
+// A request that reaches a released lane cancels the release, also in the
+// same second, where lastActiveTime and releasedAt compare equal.
+func TestARequestAfterAReleaseCancelsIt(t *testing.T) {
+	f := newJobFixture(t, sharedCardLane("qwen-image"))
+	ctx := context.Background()
+
+	rec, obj := f.do(t, http.MethodPost, "/v1/images/generations",
+		strings.NewReader(`{"model":"qwen-image","prompt":"first","background":true}`), nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	f.waitJob(t, obj.ID)
+	f.settleReleases(t)
+	require.NotNil(t, f.lane(t, "qwen-image").Status.ReleasedAt)
+
+	stop := f.p.startLastAccessHeartbeat(jobForwardContext(ctx), "qwen-image")
+	defer stop()
+	f.p.flushLastAccess(5 * time.Second)
+
+	m := f.lane(t, "qwen-image")
+	assert.Nil(t, m.Status.ReleasedAt, "the next job's forward is demand: the lane must not be scaled down under it")
+	assert.NotNil(t, m.Status.LastActiveTime)
+}
+
+// A request live on another proxy replica answers a release at its next
+// heartbeat: a standing release overrides the same-second and throttle skips.
+func TestTouchLastAccessAnswersAStandingRelease(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		released bool
+		wantNil  bool
+	}{
+		{name: "standing release is cleared inside the write throttle", released: true, wantNil: true},
+		{name: "no release keeps the throttle", released: false, wantNil: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			lane := sharedCardLane("qwen-image")
+			idle := metav1.Duration{Duration: 15 * time.Minute}
+			lane.Spec.Serverless = &aiv1alpha2.ServerlessSpec{IdleTimeout: &idle}
+			stamp := metav1.NewTime(time.Now().Add(-10 * time.Second).Truncate(time.Second))
+			lane.Status.LastActiveTime = &stamp
+			if tc.released {
+				lane.Status.ReleasedAt = &stamp
+			}
+			f := newJobFixture(t, lane)
+
+			f.p.touchLastAccess(context.Background(), "qwen-image", false, false)
+
+			m := f.lane(t, "qwen-image")
+			assert.Equal(t, tc.wantNil, m.Status.ReleasedAt == nil)
+			require.NotNil(t, m.Status.LastActiveTime)
+			assert.Equal(t, tc.released, m.Status.LastActiveTime.After(stamp.Time),
+				"only a standing release forces a write inside the throttle")
+		})
+	}
 }
 
 func TestJobLaneKeepsItsIdleWindowAfterAClientUsedIt(t *testing.T) {
@@ -158,6 +213,39 @@ func TestPassReleasesAFinishedLaneWhenTheNextJobNeedsAnotherLane(t *testing.T) {
 	assert.NotNil(t, f.lane(t, "qwen-image").Status.ReleasedAt,
 		"the queue head is the video job, so the image lane gives the card up now")
 	assert.Nil(t, f.lane(t, "wan-t2v").Status.ReleasedAt)
+}
+
+// With two slots on the card, both queued jobs are about to run, so the lane
+// the second one needs is not released just because it is not the queue head.
+func TestPassKeepsALaneAQueuedJobWithAFreeSlotNeeds(t *testing.T) {
+	two := func(name string) *aiv1alpha2.Model {
+		m := sharedCardLane(name)
+		m.Annotations[annotationJobConcurrency] = "2"
+		return m
+	}
+	f := newJobFixture(t, two("qwen-image"), two("wan-t2v"))
+	ctx := context.Background()
+	base := time.Now().Add(-time.Minute)
+	f.queueJob(t, "job-video", "wan-t2v", base)
+	f.queueJob(t, "job-image", "qwen-image", base.Add(time.Second))
+	f.p.jobs.releasable["qwen-image"] = "gpu/xtx-flex"
+	f.status.Store(http.StatusServiceUnavailable)
+	jobRetryMinWait = time.Hour
+	t.Cleanup(func() { jobRetryMinWait = 5 * time.Second })
+
+	f.p.jobs.pass(ctx)
+	f.p.flushLastAccess(5 * time.Second)
+	t.Cleanup(func() {
+		f.p.jobs.mu.Lock()
+		for _, cancel := range f.p.jobs.running {
+			cancel()
+		}
+		f.p.jobs.mu.Unlock()
+	})
+
+	assert.Nil(t, f.lane(t, "qwen-image").Status.ReleasedAt)
+	_, stillRecorded := f.p.jobs.releasable["qwen-image"]
+	assert.True(t, stillRecorded)
 }
 
 func TestReleaseIsDroppedWhileARequestIsLive(t *testing.T) {

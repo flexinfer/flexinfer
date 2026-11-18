@@ -48,8 +48,8 @@ import (
 // including the waits between retries.
 //
 // Release: when a job on a shared-GPU key ("gpu/<group>") ends, its lane is
-// handed back (lane_release.go) unless a running job, or the next queued job
-// for that key, uses the same lane. The card then returns to the lane the
+// handed back (lane_release.go) unless a running job, or a queued job about
+// to take one of the key's free slots, uses the same lane. The card then returns to the lane the
 // election parked without waiting out the job lane's idle timeout, and a
 // queued job for another lane on the card does not wait for this one to look
 // idle.
@@ -215,8 +215,8 @@ func (r *jobRunner) pass(ctx context.Context) {
 		lane string
 	}
 	busy := map[string]int{}
-	// wanted is, per key, the lanes a running job holds and the lane the
-	// next queued job will ask for.
+	// wanted is, per key, the lanes running jobs hold and the lanes the
+	// queued jobs that fit the key's free slots will ask for.
 	wanted := map[string]map[string]bool{}
 	want := func(key, lane string) {
 		if wanted[key] == nil {
@@ -268,10 +268,10 @@ func (r *jobRunner) pass(ctx context.Context) {
 		queued = append(queued, candidate{job: j, key: key, pool: pool, lane: laneName})
 	}
 	sort.SliceStable(queued, func(a, b int) bool { return jobBefore(queued[a].job, queued[b].job) })
-	headSeen := map[string]bool{}
+	next := map[string]int{}
 	for _, c := range queued {
-		if !headSeen[c.key] {
-			headSeen[c.key] = true
+		if next[c.key] < max(c.pool-busy[c.key], 1) {
+			next[c.key]++
 			want(c.key, c.lane)
 		}
 	}

@@ -92,9 +92,9 @@ func (r *ModelReconciler) desiredReplicasForContext(ctx context.Context, model *
 	}
 
 	// The job runner released the lane and nothing has asked for it since: end
-	// the idle window now. This also overrides the Loading guard below, so a
-	// job cancelled during its lane's cold start does not finish the load
-	// just to idle out.
+	// the idle window now. This sits above the Loading guard below, so a job
+	// cancelled during its lane's cold start does not finish the load just to
+	// idle out. An activation request still holds the lane (checked above).
 	if modelReleased(model, time.Now()) {
 		return minReplicas
 	}

@@ -18,16 +18,19 @@ import (
 // inert. A stale releasedAt left on the object is therefore harmless.
 
 // releaseGrace is how long a release must stand unanswered before the
-// controller acts on it. It is longer than the proxy's longest demand
-// heartbeat (30 s), so a request that another proxy replica is serving on the
-// lane re-stamps lastActiveTime and cancels the release before it takes
-// effect.
+// controller acts on it. A proxy replica with a request live on the lane
+// sees the standing release at its next demand heartbeat (at most 30 s
+// apart) and clears it whatever its write throttle says, so the grace is
+// longer than one heartbeat.
 const releaseGrace = 45 * time.Second
 
 // releaseStanding reports whether the model carries a release that no demand
-// signal has answered. A lastActiveTime in the same second does not answer
-// it: the runner writes the release after the job's own last stamp, and both
-// serialize at second precision.
+// signal has answered. The proxy clears releasedAt with every demand stamp,
+// so a release that is still present was written after the last one; the
+// lastActiveTime comparison only guards against a writer that does not clear
+// it (an older proxy). A lastActiveTime in the same second does not answer
+// the release: that is the job's own last stamp, and both serialize at
+// second precision.
 func releaseStanding(model *aiv1alpha2.Model, now time.Time) bool {
 	if model == nil || model.Status.ReleasedAt == nil {
 		return false

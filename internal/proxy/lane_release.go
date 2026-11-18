@@ -21,6 +21,9 @@ import (
 //
 // The lane's last-access writer owns the write, so it lands after the job's
 // own last demand stamp and is dropped when a request is live on the lane.
+// Every later demand stamp clears the field (patchLastActiveTime), and a
+// standing release makes the next stamp unskippable (touchLastAccess), so a
+// request on any replica cancels a release within one heartbeat.
 
 // defaultReleaseInteractiveWindow stands in for a lane's idle timeout when
 // its spec leaves the backend default in place.
@@ -78,22 +81,24 @@ func (p *Proxy) releaseJobLane(ctx context.Context, lane string) string {
 }
 
 // writeLaneRelease stamps status.releasedAt with a status merge patch that
-// carries only that field (see patchLastActiveTime).
-func (p *Proxy) writeLaneRelease(ctx context.Context, modelName string) {
+// carries only that field (see patchLastActiveTime). It reports whether the
+// release was written.
+func (p *Proxy) writeLaneRelease(ctx context.Context, modelName string) bool {
 	if p.client == nil {
-		return
+		return false
 	}
 	m := &aiv1alpha2.Model{}
 	if err := p.client.Get(ctx, client.ObjectKey{Name: modelName, Namespace: p.namespace}, m); err != nil {
 		slog.Debug("lane release: reading the model failed", "model", modelName, "error", err)
-		return
+		return false
 	}
 	base := m.DeepCopy()
 	now := metav1.Now()
 	m.Status.ReleasedAt = &now
 	if err := p.client.Status().Patch(ctx, m, client.MergeFrom(base)); err != nil {
 		slog.Warn("lane release: writing status.releasedAt failed", "model", modelName, "error", err)
-		return
+		return false
 	}
 	slog.Info("released the shared GPU lane after its last job", "model", modelName)
+	return true
 }
