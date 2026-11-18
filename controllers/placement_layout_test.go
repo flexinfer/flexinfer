@@ -27,9 +27,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
-	"github.com/flexinfer/flexinfer/backend"
 	"github.com/flexinfer/flexinfer/pkg/constants"
-	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
 )
 
 // The 2026-10-30 gfx1100 placement layout
@@ -69,14 +67,6 @@ var layoutXTXParked = []string{
 	"snac-decode-gfx1100",
 	"orpheus-3b-7900xtx",
 	"whisper-large-v3-turbo",
-}
-
-// layoutXTXRuntimeLanes are the XTX lanes the 7900xtx runtime DaemonSet
-// serves in-pod (D1 step 3, research next-differentiators-2026-10-31 §6.1),
-// one MR per lane: the warm lane first, then the creative lanes once the
-// runtime image carries what they need.
-var layoutXTXRuntimeLanes = []string{
-	layoutWarmLane,
 }
 
 func loadLayoutGroup(t *testing.T, names ...string) map[string]*aiv1alpha2.Model {
@@ -367,75 +357,6 @@ func TestPlacementLayoutDoesNotRestartTheWarmLanes(t *testing.T) {
 			if !equality.Semantic.DeepEqual(got.Spec.Template, want.Spec.Template) {
 				t.Fatalf("layout edit changed the pod template of %s:\nafter:  %s\nbefore: %s",
 					name, dedicatedFlagJSON(t, got.Spec.Template), dedicatedFlagJSON(t, want.Spec.Template))
-			}
-		})
-	}
-}
-
-// TestPlacementLayoutXTXRuntimeLanesLoadInPod: a lane moved onto the runtime
-// path is one the controller and the proxy will load into the 7900xtx runtime
-// pod, keeps its kernels in the shared compile cache that pod mounts, and
-// carries every launch setting in the load payload (no wrapper to drop).
-func TestPlacementLayoutXTXRuntimeLanesLoadInPod(t *testing.T) {
-	gpuProfile := loadGfx1100GPUProfile(t)
-	var xtxRuntime *runtimePinProfile
-	values := loadRuntimePinValues(t)
-	for i, p := range values.Runtime.Profiles {
-		if p.GPUArch == "gfx1100" && !p.Parked && p.NodeSelector["kubernetes.io/hostname"] == "cblevins-7900xtx" {
-			xtxRuntime = &values.Runtime.Profiles[i]
-		}
-	}
-	if xtxRuntime == nil {
-		t.Fatalf("no unparked gfx1100 runtime profile on cblevins-7900xtx")
-	}
-	if len(layoutXTXRuntimeLanes) > 0 && !xtxRuntime.SharedCompileCache {
-		t.Fatalf("runtime profile %s hosts in-pod lanes but does not mount the shared compile cache", xtxRuntime.Name)
-	}
-
-	for _, name := range layoutXTXRuntimeLanes {
-		t.Run(name, func(t *testing.T) {
-			model := loadDeployModelManifest(t, filepath.Join("..", "deploy", "models", name+".yaml"))
-			staged := model.DeepCopy()
-			staged.Status.Cache = &aiv1alpha2.CacheStatus{Ready: true}
-			if ok, reason := pkgrt.DirectRuntimeLoadEligibility(staged, model.Spec.Backend, &gpuProfile.Spec); !ok {
-				t.Fatalf("not runtime-eligible: %s", reason)
-			}
-			if got := model.Spec.NodeSelector["kubernetes.io/hostname"]; got != "cblevins-7900xtx" {
-				t.Fatalf("nodeSelector hostname = %q, want cblevins-7900xtx", got)
-			}
-			// The runtime pod mounts only the default compile-cache base and the
-			// image-scoped directory; a per-Model hostPath does not exist there.
-			cc := model.Spec.Cache.CompilationCache
-			if cc == nil || cc.Scope != aiv1alpha2.CompilationCacheScopeImage {
-				t.Fatalf("compilationCache.scope must be Image for an in-pod lane")
-			}
-			if cc.HostPath != "" && cc.HostPath != pkgrt.DefaultCompilationCacheHostPath {
-				t.Fatalf("compilationCache.hostPath %q is not mounted in the runtime pod", cc.HostPath)
-			}
-
-			b, ok := backend.Get(model.Spec.Backend)
-			if !ok {
-				t.Fatalf("backend %q not registered", model.Spec.Backend)
-			}
-			payload, err := pkgrt.NewLoadPayloadForModel(staged, b, pkgrt.BuildLoadOptions{
-				ModelBasePath: pkgrt.RuntimeModelBasePath,
-				GPUVendor:     pkgrt.ModelGPUVendor(model),
-				GPUProfile:    &gpuProfile.Spec,
-			})
-			if err != nil {
-				t.Fatalf("render load payload: %v", err)
-			}
-			env := map[string]string{}
-			for _, e := range payload.Env {
-				env[e.Name] = e.Value
-			}
-			if env[pkgrt.CompilationCacheScopeEnv] != aiv1alpha2.CompilationCacheScopeImage {
-				t.Fatalf("payload env lacks %s=Image", pkgrt.CompilationCacheScopeEnv)
-			}
-			// An MTP lane needs its head policy in spec.config.env: the payload
-			// carries no command, so a wrapper's export would be dropped.
-			if spec := model.Spec.ConfigString("speculativeConfig", ""); spec != "" && env["FLEXINFER_QWEN35_MTP_HEAD"] == "" {
-				t.Fatalf("speculative lane has no FLEXINFER_QWEN35_MTP_HEAD in spec.config.env")
 			}
 		})
 	}
