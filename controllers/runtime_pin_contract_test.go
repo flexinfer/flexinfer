@@ -57,11 +57,12 @@ type runtimePinValues struct {
 }
 
 type runtimePinProfile struct {
-	Name         string            `json:"name"`
-	Image        string            `json:"image"`
-	GPUArch      string            `json:"gpuArch"`
-	NodeSelector map[string]string `json:"nodeSelector"`
-	Parked       bool              `json:"parked"`
+	Name               string            `json:"name"`
+	Image              string            `json:"image"`
+	GPUArch            string            `json:"gpuArch"`
+	NodeSelector       map[string]string `json:"nodeSelector"`
+	Parked             bool              `json:"parked"`
+	SharedCompileCache bool              `json:"sharedCompileCache"`
 }
 
 func loadRuntimePinValues(t *testing.T) runtimePinValues {
