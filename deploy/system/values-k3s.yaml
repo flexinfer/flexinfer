@@ -151,8 +151,28 @@ controller:
     # Deployment-path lanes only until the proxy runs a !1281 build too.
     # Rollback = the d5aa35a7 build: tag 20261102-144015,
     # sha256:1286a2f15c0a5a9f95de19275ce57bfa564ddcbd75517be4b80cf306d29b7c0f.
-    digest: "sha256:6a3ad9e603110df8207a59f815d4e809e4b4a3357138302fd2faa39cfc5ccdcd"
-    tag: "20261105-153904"
+    # 2026-11-18: master 6500e342 (tag 20261118-161042, master pipeline 39584,
+    # every scan green). The 51e6bd81 build above plus seven controller-side
+    # commits. !1329 (45d1756f): a deleted Model's cache.strategy: Local
+    # directory follows an on-delete policy; without
+    # DEFAULT_LOCAL_CACHE_ON_DELETE it is retain, today's behavior. !1331
+    # (48831010): two series-less gauge registrations. !1332 (7deb3447) and
+    # 1eea7098: golang.org/x/net v0.62.0 and Go 1.26.11. !1343 (2d28c56c,
+    # f58edf50): a shared-GPU lane whose status.releasedAt no demand has
+    # answered for 45 s counts as idle; inert until the proxy below writes
+    # releases. !1345 (d8016f66): when the runtime path makes a Service
+    # selectorless the controller deletes the EndpointSlices the selector
+    # left behind, and on its first pass it does the same once for every
+    # Service that is already selectorless and stamps
+    # flexinfer.ai/selector-removed-at on it. All 28 live Models and the 3
+    # live GPUProfiles (snapshot 2026-11-18 16:38Z, live controller env)
+    # render byte-identical pod templates, Deployment metadata, runtime
+    # launch payloads (specHash) and desired replica counts on both builds;
+    # no Model declares vllmVersion. Rollback = the 51e6bd81 build: tag
+    # 20261105-153904,
+    # sha256:6a3ad9e603110df8207a59f815d4e809e4b4a3357138302fd2faa39cfc5ccdcd.
+    digest: "sha256:89fb41fc9ad384b21319a87774a332624a7e814501360dd0056c557096aabb1a"
+    tag: "20261118-161042"
   resources:
     limits:
       cpu: 1000m
@@ -326,7 +346,18 @@ proxy:
     # render gives byte-identical runtime payloads for all 28 Models without
     # vllmVersion. Rollback = the 72628e0e digest
     # sha256:bdd4bd256cc43c0fb0e23f05b5a62f9eefb984e70caf8af26cde4fb6a2eb60f8.
-    digest: "sha256:d0439aacec17a4dc7655a99bd06c72f3dd65018fb9aaf4fc7ac226328fe3cc72"
+    # 2026-11-18: master 6500e342 (tag 20261118-161042), rolled with the
+    # controller pin above. The 51e6bd81 build plus !1343: the job runner
+    # writes status.releasedAt on a shared-GPU diffusers lane when no running
+    # or about-to-run job on that card uses it (KT-JOBS bars 5 and 7), every
+    # lastActiveTime stamp now also clears releasedAt, and a standing release
+    # makes the next stamp unskippable. Also !1331's gauge registrations,
+    # x/net v0.62.0 and Go 1.26.11. backend/ and pkg/runtime/ are unchanged
+    # since 51e6bd81, so the direct-load payloads are the ones the
+    # 2026-11-18 16:38Z live-snapshot render compared. Rollback = the
+    # 51e6bd81 digest
+    # sha256:d0439aacec17a4dc7655a99bd06c72f3dd65018fb9aaf4fc7ac226328fe3cc72.
+    digest: "sha256:9b8bbe8a44c9080aba65d490469e36f445ca4a98e3a150624c678893347b1720"
     pullPolicy: Always
   service:
     type: ClusterIP
