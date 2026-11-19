@@ -77,7 +77,6 @@ var layoutXTXParked = []string{
 // runtime image carries what they need.
 var layoutXTXRuntimeLanes = []string{
 	layoutWarmLane,
-	"qwen-image-21-gfx1100",
 }
 
 func loadLayoutGroup(t *testing.T, names ...string) map[string]*aiv1alpha2.Model {
