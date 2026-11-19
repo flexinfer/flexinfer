@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -183,15 +184,95 @@ func (r *ModelReconciler) maybeReloadRuntimeModel(
 	return result, handled, err
 }
 
-// maybeRecheckRuntimeKVPool is the in-pod counterpart of observeReadyKVPool.
-// It records the vLLM KV-cache profile the runtime read from the instance's
-// boot output in status.kvPool and the KVPoolShort condition. When the pool is
-// short (profiled concurrency below 0.75 x maxNumSeqs, see
-// updateKVPoolCondition), it reloads the instance in the runtime pod once. The
-// budget, kept in kvPool.recheckedReplicaSets as "runtime/<pod UID>/<spec
-// hash>", outlives the recheck reload itself and resets when the spec or the
-// runtime pod changes, the way a ReplicaSet UID does on the Deployment path.
-// It is persisted before the reload, so a failed write cannot repeat it.
+// runtimeKVMaxConcurrency returns the max concurrency for the runtime's KV
+// profile: the value vLLM printed when the runtime has it, otherwise tokens /
+// maxModelLen with two decimals, as vLLM computes it for full-attention models.
+// derived reports the second case. It is empty when neither is known
+// (no token count, or no maxModelLen in the spec).
+func runtimeKVMaxConcurrency(model *aiv1alpha2.Model, status *RuntimeModelStatus) (concurrency string, derived bool) {
+	if status.KVMaxConcurrency != "" {
+		return status.KVMaxConcurrency, false
+	}
+	if status.KVCacheTokens == nil || *status.KVCacheTokens <= 0 {
+		return "", false
+	}
+	maxLen := int64(model.Spec.ConfigInt("maxModelLen", 0))
+	// The KV-cache reconfigure path launches with a reduced maxModelLen.
+	if kv := model.Status.KVCache; kv != nil && kv.Reconfigured && kv.ReconfiguredMaxModelLen != nil {
+		maxLen = int64(*kv.ReconfiguredMaxModelLen)
+	}
+	if maxLen <= 0 {
+		return "", false
+	}
+	return strconv.FormatFloat(float64(*status.KVCacheTokens)/float64(maxLen), 'f', 2, 64), true
+}
+
+// observeRuntimeKVPool makes status.kvPool describe the instance the runtime
+// pod serves, the in-pod counterpart of the pool observation in
+// observeReadyKVPool. It replaces the pool when it names another pod (a
+// Deployment pod the lane ran on before, or an earlier runtime pod), when the
+// profile changed, or when it was observed before the running instance
+// started. A runtime that has no profile for the instance yet still replaces
+// a pool from another pod, with the tokens and concurrency left empty, the
+// way the Deployment path records a pod whose log has no profile. The recheck
+// budget in recheckedReplicaSets carries over. It returns the pool, never nil.
+func observeRuntimeKVPool(model *aiv1alpha2.Model, endpoint *RuntimeEndpoint, status *RuntimeModelStatus) *aiv1alpha2.KVPoolStatus {
+	var tokens *int64
+	if status.KVCacheTokens != nil && *status.KVCacheTokens > 0 {
+		n := *status.KVCacheTokens
+		tokens = &n
+	}
+	concurrency, _ := runtimeKVMaxConcurrency(model, status)
+
+	pool := model.Status.KVPool
+	stale := pool == nil || pool.PodName != endpoint.PodName || pool.PodUID != endpoint.PodUID ||
+		!ptrInt64Equal(pool.KVCacheTokens, tokens) || pool.MaxConcurrency != concurrency
+	// metav1.Time keeps whole seconds, so compare at that precision; the
+	// observation of a fresh load comes minutes after the load started.
+	// LoadedAt is the runtime node's clock: one ahead of the controller's
+	// would make every pass look newer than the observation, so a LoadedAt
+	// in the controller's future is ignored rather than rewriting status on
+	// each pass.
+	loadedAt := status.LoadedAt.Truncate(time.Second)
+	if !stale && !loadedAt.IsZero() && !loadedAt.After(time.Now()) && pool.ObservedAt.Time.Before(loadedAt) {
+		stale = true
+	}
+	if !stale {
+		return pool
+	}
+	var marker []string
+	if pool != nil {
+		marker = pool.RecheckedReplicaSets
+	}
+	pool = &aiv1alpha2.KVPoolStatus{
+		KVCacheTokens: tokens, MaxConcurrency: concurrency,
+		PodName: endpoint.PodName, PodUID: endpoint.PodUID, ObservedAt: metav1.Now(),
+		RecheckedReplicaSets: marker,
+	}
+	model.Status.KVPool = pool
+	return pool
+}
+
+func ptrInt64Equal(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// maybeRecheckRuntimeKVPool records the vLLM KV-cache profile of the instance
+// in the runtime pod in status.kvPool (observeRuntimeKVPool) and the
+// KVPoolShort condition. When the pool is short (concurrency below 0.75 x
+// maxNumSeqs, see updateKVPoolCondition) and vLLM printed that concurrency
+// itself, it reloads the instance in the runtime pod once, as the Deployment
+// path restarts the pod once. A concurrency the controller derived from
+// tokens / maxModelLen sets the condition but never triggers a reload: it
+// can understate the pool of a sliding-window or hybrid model, and the
+// Deployment path only acts on the printed value. The budget, kept in
+// kvPool.recheckedReplicaSets as "runtime/<pod UID>/<spec hash>", outlives
+// the recheck reload itself and resets when the spec or the runtime pod
+// changes, the way a ReplicaSet UID does on the Deployment path. It is
+// persisted before the reload, so a failed write cannot repeat it.
 func (r *ModelReconciler) maybeRecheckRuntimeKVPool(
 	ctx context.Context,
 	model *aiv1alpha2.Model,
@@ -201,27 +282,17 @@ func (r *ModelReconciler) maybeRecheckRuntimeKVPool(
 	endpoint *RuntimeEndpoint,
 	status *RuntimeModelStatus,
 ) (ctrl.Result, bool, error) {
-	if model.Spec.Backend != backend.NameVLLM || !model.Spec.ConfigBool("kvPoolRecheck", true) ||
-		status == nil || status.KVCacheTokens == nil || *status.KVCacheTokens <= 0 || status.KVMaxConcurrency == "" {
+	if model.Spec.Backend != backend.NameVLLM || !model.Spec.ConfigBool("kvPoolRecheck", true) || status == nil {
 		return ctrl.Result{}, false, nil
 	}
-	pool := model.Status.KVPool
-	if pool == nil || pool.PodName != endpoint.PodName || pool.PodUID != endpoint.PodUID || pool.KVCacheTokens == nil ||
-		*pool.KVCacheTokens != *status.KVCacheTokens || pool.MaxConcurrency != status.KVMaxConcurrency {
-		var marker []string
-		if pool != nil {
-			marker = pool.RecheckedReplicaSets
-		}
-		tokens := *status.KVCacheTokens
-		pool = &aiv1alpha2.KVPoolStatus{
-			KVCacheTokens: &tokens, MaxConcurrency: status.KVMaxConcurrency,
-			PodName: endpoint.PodName, PodUID: endpoint.PodUID, ObservedAt: metav1.Now(),
-			RecheckedReplicaSets: marker,
-		}
-		model.Status.KVPool = pool
+	pool := observeRuntimeKVPool(model, endpoint, status)
+	if pool.KVCacheTokens != nil {
+		metrics.ModelKVCacheTokens.WithLabelValues(model.Name).Set(float64(*pool.KVCacheTokens))
+	} else {
+		metrics.ModelKVCacheTokens.DeleteLabelValues(model.Name)
 	}
-	metrics.ModelKVCacheTokens.WithLabelValues(model.Name).Set(float64(*pool.KVCacheTokens))
-	if !updateKVPoolCondition(model) || endpoint.PodUID == "" || status.SpecHash == "" || !runtimeReloadAllowed(model) {
+	if !updateKVPoolCondition(model) || status.KVMaxConcurrency == "" ||
+		endpoint.PodUID == "" || status.SpecHash == "" || !runtimeReloadAllowed(model) {
 		return ctrl.Result{}, false, nil
 	}
 	budget := "runtime/" + endpoint.PodUID + "/" + status.SpecHash
