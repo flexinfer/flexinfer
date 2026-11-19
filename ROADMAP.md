@@ -105,6 +105,11 @@ state the same day.
 - **Plan store**: no live flexinfer plan; the only one, `plan-gaming-mode-v2-sunshine-moonlight-on-gfx1100-7900xtx-declara-ced675`, is parked (2026-10-11)
 - **Deployed**: K3s GPU cluster via Flux (`flexinfer-system`, `flexinfer-models`)
 - **CI**: custom (bespoke `.gitlab-ci.yml` + `.gitlab/ci/` includes: BuildKit image matrix, Go build/test, Trivy, Helm, runtime pin-drift and certification-matrix checks)
+- **Climb** (2026-11-07): [.loom/climb.yaml](.loom/climb.yaml) declares this
+  repository's Mills climb (problem, proxy-success / roadmap-gates / CI / cadence
+  summit, constraints, tier 1) for flexinfer.ai/lab; from now on, Mills push
+  bullets in this roadmap name their `bl-` backlog row so each merged step joins
+  to its bullet.
 
 ## Now
 

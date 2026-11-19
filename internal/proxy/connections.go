@@ -35,7 +35,7 @@ func (p *Proxy) trackAndServeWithDemand(w http.ResponseWriter, r *http.Request, 
 	defer p.decrementConnections(modelName)
 
 	if recordDemand {
-		stopHeartbeat := p.startLastAccessHeartbeat(modelName)
+		stopHeartbeat := p.startLastAccessHeartbeat(r.Context(), modelName)
 		defer stopHeartbeat()
 	}
 
@@ -69,7 +69,17 @@ type lastAccessHeartbeat struct {
 	requests int
 	dirty    bool // a request boundary is waiting for its forced refresh
 	writing  bool // the writer is talking to the API server
-	wake     chan struct{}
+	// release asks the writer to hand the lane's shared GPU back
+	// (status.releasedAt) once every recorded boundary is written.
+	release bool
+	// released is set once this replica has written a release and cleared
+	// by its next demand write, which must not be skipped as redundant.
+	released bool
+	// interactiveAt is the last boundary of a client request, as opposed to
+	// a job's forward: the job runner keeps a lane's idle window when a
+	// client used it recently.
+	interactiveAt time.Time
+	wake          chan struct{}
 }
 
 // refresh records a request boundary. The writer starts a forced write after
@@ -84,11 +94,12 @@ func (h *lastAccessHeartbeat) refresh() {
 	}
 }
 
-// settled reports whether every recorded boundary has been written.
+// settled reports whether every recorded boundary and release has been
+// written.
 func (h *lastAccessHeartbeat) settled() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	return !h.dirty && !h.writing
+	return !h.dirty && !h.release && !h.writing
 }
 
 // flushLastAccess waits, up to timeout, for every model's recorded request
@@ -118,10 +129,16 @@ func (p *Proxy) lastAccessHeartbeatFor(modelName string) *lastAccessHeartbeat {
 	return heartbeat
 }
 
-func (p *Proxy) startLastAccessHeartbeat(modelName string) func() {
+// A request that is not a job's forward (jobForwardContext) also counts as
+// interactive use of the lane at both of its boundaries.
+func (p *Proxy) startLastAccessHeartbeat(ctx context.Context, modelName string) func() {
+	interactive := !isJobForward(ctx)
 	heartbeat := p.lastAccessHeartbeatFor(modelName)
 	heartbeat.mu.Lock()
 	heartbeat.requests++
+	if interactive {
+		heartbeat.interactiveAt = time.Now()
+	}
 	heartbeat.mu.Unlock()
 	heartbeat.refresh()
 
@@ -130,6 +147,9 @@ func (p *Proxy) startLastAccessHeartbeat(modelName string) func() {
 		once.Do(func() {
 			heartbeat.mu.Lock()
 			heartbeat.requests--
+			if interactive {
+				heartbeat.interactiveAt = time.Now()
+			}
 			heartbeat.mu.Unlock()
 			// A completed or canceled request starts a fresh idle window.
 			heartbeat.refresh()
@@ -167,12 +187,28 @@ func (p *Proxy) runLastAccessWriter(modelName string, heartbeat *lastAccessHeart
 		force := heartbeat.dirty
 		heartbeat.dirty = false
 		write := force || heartbeat.requests > 0
-		heartbeat.writing = write
+		// A release is dropped, not deferred, while a request is live: that
+		// request is the demand the release would deny.
+		release := heartbeat.release && heartbeat.requests == 0
+		heartbeat.release = false
+		answerRelease := write && heartbeat.released
+		if answerRelease {
+			heartbeat.released = false
+		}
+		heartbeat.writing = write || release
 		heartbeat.mu.Unlock()
 
 		next := interval
 		if write {
-			next = p.touchLastAccess(ctx, modelName, force)
+			next = p.touchLastAccess(ctx, modelName, force, answerRelease)
+		}
+		// After the boundary write, so the job's own last demand stamp does
+		// not cancel the release. A request that starts from here on is a
+		// new boundary: its write clears the release again.
+		if release && p.writeLaneRelease(ctx, modelName) {
+			heartbeat.mu.Lock()
+			heartbeat.released = true
+			heartbeat.mu.Unlock()
 		}
 
 		heartbeat.mu.Lock()

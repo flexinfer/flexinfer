@@ -124,8 +124,12 @@ func activationDemand(model *aiv1alpha2.Model) bool {
 // loading leader is held by withinSharedActivationWindow, which budgets
 // ColdStartTimeout rather than activationDemandWindow. A model that has run out
 // of both is one the election should be free to replace.
+//
+// A release that has outlived its grace (modelReleased) withdraws the demand:
+// the job runner handed the lane back, so the election and the loader see a
+// model nobody wants until the next request stamps it again.
 func demandTime(model *aiv1alpha2.Model, now time.Time) *metav1.Time {
-	if model == nil {
+	if model == nil || modelReleased(model, now) {
 		return nil
 	}
 	last := model.Status.LastActiveTime

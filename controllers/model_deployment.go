@@ -170,6 +170,8 @@ func (r *ModelReconciler) restoreServiceSelector(ctx context.Context, model *aiv
 		return nil
 	}
 	svc.Spec.Selector = desired
+	// The next switch to runtime management records its own removal time.
+	delete(svc.Annotations, AnnotationSelectorRemovedAt)
 	log := log.FromContext(ctx)
 	log.Info("Restoring selector on Service for deployment management", "service", svc.Name)
 	return r.Update(ctx, svc)

@@ -27,11 +27,13 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -771,6 +773,22 @@ func (r *ModelReconciler) ensureRuntimeNetworking(ctx context.Context, model *ai
 	return r.removeRuntimeServiceSelector(ctx, model)
 }
 
+// removeRuntimeServiceSelector makes the model's Service selectorless, so the
+// Endpoints the runtime path writes are its only backends, and prunes the
+// EndpointSlices Kubernetes built from the selector.
+//
+// The prune is what makes a live Deployment → in-pod switch safe. The
+// endpointslice controller ignores a Service once its selector is gone: it
+// neither updates nor deletes the slices it made, so the Deployment pod's
+// address stays "ready" in one of them after the pod is deleted, beside the
+// slice mirrored from the runtime Endpoints. kube-proxy then sends part of the
+// traffic to a dead IP (the 502s of the 2026-11-18 warm-lane switch).
+//
+// The removal time is recorded on the Service. The prune repeats for
+// staleSlicePruneWindow after it, because a slice sync that was already in
+// flight when the selector went can still write one; after that the Service
+// is left alone. A selectorless Service without the record (one switched by
+// an older controller) gets the same treatment once.
 func (r *ModelReconciler) removeRuntimeServiceSelector(ctx context.Context, model *aiv1alpha2.Model) error {
 	log := log.FromContext(ctx)
 
@@ -778,16 +796,52 @@ func (r *ModelReconciler) removeRuntimeServiceSelector(ctx context.Context, mode
 	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, svc); err != nil {
 		return fmt.Errorf("getting service for runtime management: %w", err)
 	}
-	if svc.Spec.Selector == nil {
+
+	now := time.Now()
+	removedAt, recorded := selectorRemovedAt(svc)
+	if svc.Spec.Selector != nil || !recorded {
+		hadSelector := svc.Spec.Selector != nil
+		svc.Spec.Selector = nil
+		if svc.Annotations == nil {
+			svc.Annotations = map[string]string{}
+		}
+		svc.Annotations[AnnotationSelectorRemovedAt] = now.UTC().Format(time.RFC3339)
+		if err := r.Update(ctx, svc); err != nil {
+			return fmt.Errorf("removing selector from service: %w", err)
+		}
+		if hadSelector {
+			log.Info("Removed selector from Service for runtime management", "service", svc.Name)
+		}
+	} else if now.Sub(removedAt) > staleSlicePruneWindow {
 		return nil
 	}
 
-	svc.Spec.Selector = nil
-	if err := r.Update(ctx, svc); err != nil {
-		return fmt.Errorf("removing selector from service: %w", err)
-	}
-	log.Info("Removed selector from Service for runtime management", "service", svc.Name)
+	r.pruneSelectorEndpointSlices(ctx, svc)
 	return nil
+}
+
+// selectorRemovedAt reads when the runtime path made svc selectorless.
+func selectorRemovedAt(svc *corev1.Service) (time.Time, bool) {
+	at, err := time.Parse(time.RFC3339, svc.Annotations[AnnotationSelectorRemovedAt])
+	return at, err == nil
+}
+
+// pruneSelectorEndpointSlices deletes the EndpointSlices the endpointslice
+// controller built for svc while it had a selector. The slices mirrored from
+// the runtime Endpoints carry another managed-by value and are kept. A failure
+// is logged, not returned: the lane still serves through the mirrored slice,
+// and the caller retries inside the prune window.
+func (r *ModelReconciler) pruneSelectorEndpointSlices(ctx context.Context, svc *corev1.Service) {
+	err := r.DeleteAllOf(ctx, &discoveryv1.EndpointSlice{},
+		client.InNamespace(svc.Namespace),
+		client.MatchingLabels{
+			discoveryv1.LabelServiceName: svc.Name,
+			discoveryv1.LabelManagedBy:   endpointSliceControllerName,
+		})
+	if err != nil {
+		log.FromContext(ctx).Error(err, "Failed to prune selector-built EndpointSlices; a deleted pod may stay routable",
+			"service", svc.Name)
+	}
 }
 
 func (r *ModelReconciler) deleteLegacyDeploymentForRuntime(ctx context.Context, model *aiv1alpha2.Model) error {

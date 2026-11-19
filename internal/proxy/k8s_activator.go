@@ -11,6 +11,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
@@ -101,11 +102,15 @@ func (a *K8sModelActivator) TriggerScaleUp(ctx context.Context, modelName string
 // writes or drop status fields this binary's types do not know, so it stays
 // correct when m was read from the proxy's informer cache a few milliseconds
 // behind the API server.
+//
+// Every demand stamp also clears status.releasedAt, whether or not m shows
+// one: a request after the job runner released the lane must cancel that
+// release even when it lands in the same second, where the two timestamps
+// compare equal, and even when m is a cached copy that predates the release.
 func patchLastActiveTime(ctx context.Context, c client.Client, m *aiv1alpha2.Model) error {
-	base := m.DeepCopy()
-	now := metav1.Now()
-	m.Status.LastActiveTime = &now
-	return c.Status().Patch(ctx, m, client.MergeFrom(base))
+	stamp := metav1.Now().UTC().Format(time.RFC3339)
+	patch := []byte(`{"status":{"lastActiveTime":"` + stamp + `","releasedAt":null}}`)
+	return c.Status().Patch(ctx, m, client.RawPatch(types.MergePatchType, patch))
 }
 
 // TouchLastActiveTime updates the model's LastActiveTime so the controller

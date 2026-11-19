@@ -21,6 +21,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Master pipeline red since 2026-11-11 (#38739, #38839). `govulncheck` reported GO-2026-6859 (net/http MaxBytesReader header race) in go1.26.10, fixed in go1.26.11: `GO_VERSION`, the go.mod `toolchain` line and every `GO_VERSION` build pin move to 1.26.11. `publish_llamacpp_rocm_gfx1100` / `_gfx906` timed out at 30m on a cold build (no inline-cache hits; about an hour on buildkitd-central), so their `timeout:` is now 2h.
+
 - A Model the VRAM or hardware-queue fit check refuses now leaves the runtime pod (`controllers/model_runtime.go` `persistRefusedFit`, `controllers/model_controller.go`).
   - KT-RET K2 (2026-11-02) parked `gte-qwen2-1p5b-radeonvii` by raising `spec.gpu.vramEstimateMB` 2600 → 20000. The election parked it (`ParkedBehindPrimary`) and the proxy rerouted to the CPU twin, but the engine stayed loaded: its Service answered 136/136 at p50 37 ms for the whole park.
   - 20000 MB is above 95 % of the card, so `validateVRAMFit` marked the Model Failed and returned before `reconcileViaRuntime`, the only path that unloads an in-pod lane. A refused estimate never fits the group's Active set, so the election had already stopped counting the lane's VRAM and queues while the engine still held them.

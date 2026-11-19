@@ -39,7 +39,9 @@ func diarCertifiedProfile(t *testing.T, certified string) *aiv1alpha2.GPUProfile
 	t.Helper()
 	profile := loadGfx906GPUProfile(t).DeepCopy()
 	profile.Spec.Runtime.Image = diarRuntimeImage
-	profile.Spec.Runtime.BundledBackends = append(profile.Spec.Runtime.BundledBackends, backend.NamePyannote)
+	if !bundlesBackendExplicitly(profile.Spec.Runtime.BundledBackends, backend.NamePyannote) {
+		profile.Spec.Runtime.BundledBackends = append(profile.Spec.Runtime.BundledBackends, backend.NamePyannote)
+	}
 	if certified != "" {
 		aiv1alpha2.SetBackendCapabilityCertificate(profile, backend.NamePyannote, aiv1alpha2.PyannoteCapabilitySpeakerDiarization, certified, diarEvidence)
 	}
@@ -87,8 +89,8 @@ func TestEvaluateBackendCertificate(t *testing.T) {
 		wantMessage   string
 	}{
 		{name: "other backends are not gated", model: lane, backend: backend.NameLlamaCpp, profile: loadGfx906GPUProfile(t), arch: "gfx906"},
-		{name: "the shipped gfx906 profile refuses pyannote", model: lane, backend: backend.NamePyannote, profile: loadGfx906GPUProfile(t), arch: "gfx906",
-			wantRequired: true, wantReason: aiv1alpha2.ReasonBackendNotCertified, wantMessage: "does not list pyannote in spec.runtime.bundledBackends"},
+		{name: "the shipped gfx906 profile bundles pyannote but refuses it uncertified", model: lane, backend: backend.NamePyannote, profile: loadGfx906GPUProfile(t), arch: "gfx906",
+			wantRequired: true, wantReason: aiv1alpha2.ReasonBackendNotCertified, wantMessage: "no complete " + key},
 		{name: "no profile", model: lane, backend: backend.NamePyannote, arch: "gfx906",
 			wantRequired: true, wantReason: aiv1alpha2.ReasonBackendNotCertified, wantMessage: "no GPUProfile for gfx906"},
 		{name: "no arch", model: lane, backend: backend.NamePyannote, profile: diarCertifiedProfile(t, diarRuntimeImage),
@@ -156,7 +158,7 @@ func TestBackendCertificateDecisionUsesTheProfileCache(t *testing.T) {
 	shipped.Prime(loadGfx906GPUProfile(t))
 	got := (&ModelReconciler{GPUProfiles: shipped}).backendCertificateDecisionFor(lane, b, "gfx906")
 	assert.True(t, got.Required)
-	assert.False(t, got.Certified, "the gfx906 profile on master must refuse pyannote: D5-a is live-neutral")
+	assert.False(t, got.Certified, "the gfx906 profile on master must refuse pyannote until KT-DIAR certifies the runtime image")
 
 	certified := &GPUProfileReconciler{}
 	certified.Prime(diarCertifiedProfile(t, diarRuntimeImage))

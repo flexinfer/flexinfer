@@ -1,0 +1,166 @@
+{
+  "gate": "tool_call_conformance",
+  "row": "gfx1100-structured-outputs-2026-11-01",
+  "started_utc": "2026-11-05T17:56:00Z",
+  "finished_utc": "2026-11-05T18:03:19Z",
+  "url": "http://localhost:18000",
+  "model": "qwen38-27b-so-canary",
+  "metrics_url": "http://localhost:18000/metrics",
+  "command": "flexinfer-bench tool_call_conformance --url http://localhost:18000 --model qwen38-27b-so-canary --parity-baseline parity_code=8174a49e --row gfx1100-structured-outputs-2026-11-01 --gpu-class gfx1100/7900xtx --context-length 32768 --image registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69 --source HF://biMEMO/Qwen3.8-27B-int4-AutoRound@2d7425f7 --out kt-so-A.json",
+  "modes": [
+    "required",
+    "named",
+    "json_schema",
+    "structured_outputs"
+  ],
+  "turns": 200,
+  "parity": {
+    "before": {
+      "parity_code": "8174a49eefc74a4e",
+      "parity_explain": "f1f04ef3adab13f7",
+      "parity_list": "ad819b115b2d8233"
+    },
+    "after": {
+      "parity_code": "8174a49eefc74a4e",
+      "parity_explain": "f1f04ef3adab13f7",
+      "parity_list": "ad819b115b2d8233"
+    },
+    "baseline": {
+      "parity_code": "8174a49e"
+    }
+  },
+  "constrained": {
+    "name": "constrained",
+    "turns": 200,
+    "ok": 200,
+    "parse_success": 1,
+    "taxonomy": {
+      "invalid_json": 0,
+      "request_error": 0,
+      "schema_violation": 0,
+      "truncated": 0,
+      "wrong_tool_name": 0
+    },
+    "by_mode": {
+      "json_schema": {
+        "turns": 50,
+        "ok": 50
+      },
+      "named": {
+        "turns": 50,
+        "ok": 50
+      },
+      "required": {
+        "turns": 50,
+        "ok": 50
+      },
+      "structured_outputs": {
+        "turns": 50,
+        "ok": 50
+      }
+    },
+    "expected_tool_accuracy": 1,
+    "completion_tokens": 9773,
+    "latency_p50_ms": 961,
+    "latency_p95_ms": 1449,
+    "engine": {
+      "generation_tokens": 9773,
+      "requests": 200,
+      "decode_seconds": 115.74555285426322,
+      "decode_source": "vllm:request_decode_time_seconds_sum",
+      "decode_tokens_per_s": 82.7073,
+      "spec_drafts": 3250,
+      "spec_draft_tokens": 6450,
+      "spec_accepted_tokens": 6443,
+      "pos0_acceptance": 1,
+      "acceptance_rate": 0.9989,
+      "mean_acceptance_length": 2.9825,
+      "preemptions": 0
+    }
+  },
+  "unguided": {
+    "name": "unguided",
+    "turns": 200,
+    "ok": 200,
+    "parse_success": 1,
+    "taxonomy": {
+      "invalid_json": 0,
+      "request_error": 0,
+      "schema_violation": 0,
+      "truncated": 0,
+      "wrong_tool_name": 0
+    },
+    "by_mode": {
+      "json_schema": {
+        "turns": 50,
+        "ok": 50
+      },
+      "named": {
+        "turns": 50,
+        "ok": 50
+      },
+      "required": {
+        "turns": 50,
+        "ok": 50
+      },
+      "structured_outputs": {
+        "turns": 50,
+        "ok": 50
+      }
+    },
+    "expected_tool_accuracy": 1,
+    "completion_tokens": 9773,
+    "latency_p50_ms": 955,
+    "latency_p95_ms": 1437,
+    "engine": {
+      "generation_tokens": 9773,
+      "requests": 200,
+      "decode_seconds": 115.40043353327201,
+      "decode_source": "vllm:request_decode_time_seconds_sum",
+      "decode_tokens_per_s": 82.9546,
+      "spec_drafts": 3250,
+      "spec_draft_tokens": 6500,
+      "spec_accepted_tokens": 6493,
+      "pos0_acceptance": 1,
+      "acceptance_rate": 0.9989,
+      "mean_acceptance_length": 2.9978,
+      "preemptions": 0
+    }
+  },
+  "checks": [
+    {
+      "name": "parse_success",
+      "status": "pass",
+      "value": "200/200",
+      "threshold": "1.0000 (every constrained turn)"
+    },
+    {
+      "name": "decode_vs_unguided",
+      "status": "pass",
+      "value": "0.997 (82.7 vs 83.0 tok/s)",
+      "threshold": "\u2265 0.90"
+    },
+    {
+      "name": "pos0_acceptance",
+      "status": "pass",
+      "value": "1.0000",
+      "threshold": "\u2265 0.75",
+      "detail": "unguided 1.0000"
+    },
+    {
+      "name": "greedy_parity",
+      "status": "pass",
+      "value": "parity_code 8174a49e",
+      "threshold": "before = after = baseline"
+    }
+  ],
+  "pass": true,
+  "verdict": "PASS",
+  "matrix_row": "| `gfx1100-structured-outputs-2026-11-01` \u2014 KT-SO, feature D4 (structured-output certificate) on `qwen38-27b-so-canary` via `flexinfer-bench tool_call_conformance` | 32768 | `gfx1100/7900xtx` | `vllm`; structured outputs backend `auto`; 200 turns per arm, sessions of 5 | `experimental` (canary) | `registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69` | `HF://biMEMO/Qwen3.8-27B-int4-AutoRound@2d7425f7` | **PASS** (2026-11-05T17:56:00Z \u2192 2026-11-05T18:03:19Z). Constrained 200/200 parse across required/named/json_schema/structured_outputs (no failures) [required 50/50, named 50/50, json_schema 50/50, structured_outputs 50/50], expected tool 100 %, p50/p95 961/1449 ms; unguided 200/200 parse (no failures), expected tool 100 %, p50/p95 955/1437 ms; parse_success pass 200/200; decode_vs_unguided pass 0.997 (82.7 vs 83.0 tok/s); pos0_acceptance pass 1.0000 (unguided 1.0000); greedy_parity pass parity_code 8174a49e; constrained mean acceptance length 2.98, preemptions 0 | none | `flexinfer-bench tool_call_conformance --url http://localhost:18000 --model qwen38-27b-so-canary --parity-baseline parity_code=8174a49e --row gfx1100-structured-outputs-2026-11-01 --gpu-class gfx1100/7900xtx --context-length 32768 --image registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69 --source HF://biMEMO/Qwen3.8-27B-int4-AutoRound@2d7425f7 --out /private/tmp/claude-501/-Users-cblevins-workspace-services-flexinfer--claude-worktrees-kt-qos-so-v033-31b255/1de3565b-e3d3-4ca8-afcd-8cff66c5cb5b/scratchpad/kt/kt-so-A.json` | delete the canary Model; no certificate is set | `.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md` \u00a76.4 and brief D4 | `promote` (set the `vllm/structured-outputs` certificate for this image) |",
+  "pass_rule": {
+    "decode_vs_unguided": "constrained decode tok/s \u2265 0.90 \u00d7 unguided",
+    "greedy_parity": "unconstrained greedy hashes unchanged (before = after = baseline)",
+    "parse_success": "100 % of constrained turns parse and validate",
+    "pos0_acceptance": "constrained MTP position-0 acceptance \u2265 0.75"
+  }
+}
