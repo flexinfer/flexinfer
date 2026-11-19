@@ -47,24 +47,76 @@ type QueuedRequest struct {
 // from items goes through mu, so a request that leaves the queue early can
 // take its entry out (forget) without racing a drain: a slot is taken only
 // while its request still waits.
+//
+// A queue leaves p.queues only through retireQueue or retireIdleQueue, which
+// close it under mu and remove it with a compare-and-delete on the pointer:
+// a closed queue takes no more requests, and one queue's processor can never
+// unmap another queue registered later under the same model name.
 type RequestQueue struct {
 	model    string
 	mu       sync.Mutex
 	items    chan *QueuedRequest
+	closed   bool // under mu: retired, takes no more requests
 	created  time.Time
 	draining atomic.Bool
+	// processing is true from creation until processQueue returns. The stale
+	// sweeper leaves a queue alone while it is set, however long the
+	// processor waits for readiness and however empty the queue is.
+	processing atomic.Bool
 }
 
-// offer adds qr to the queue and reports whether a slot was free.
-func (q *RequestQueue) offer(qr *QueuedRequest) bool {
+// offer adds qr to the queue. queued reports whether a slot was free; closed
+// reports that the queue was retired, and the caller must get the model's
+// current queue and offer again.
+func (q *RequestQueue) offer(qr *QueuedRequest) (queued, closed bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
+	if q.closed {
+		return false, true
+	}
 	select {
 	case q.items <- qr:
-		return true
+		return true, false
 	default:
+		return false, false
+	}
+}
+
+// retireQueue closes q, takes the requests still in it and removes q from
+// p.queues if it is still the model's registered queue. The caller serves or
+// fails the returned requests. Closing and taking under mu means no request
+// can be offered to q after its last take.
+func (p *Proxy) retireQueue(q *RequestQueue) []*QueuedRequest {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.closed = true
+	var rest []*QueuedRequest
+	for taking := true; taking; {
+		select {
+		case qr := <-q.items:
+			rest = append(rest, qr)
+		default:
+			taking = false
+		}
+	}
+	p.queues.CompareAndDelete(q.model, q)
+	return rest
+}
+
+// retireIdleQueue retires q only if no processor runs for it and it holds no
+// request, and reports whether it did.
+func (p *Proxy) retireIdleQueue(q *RequestQueue) bool {
+	if q.processing.Load() {
 		return false
 	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if q.processing.Load() || len(q.items) > 0 {
+		return false
+	}
+	q.closed = true
+	p.queues.CompareAndDelete(q.model, q)
+	return true
 }
 
 // forget takes every request whose waiter has already claimed it (it timed
@@ -123,9 +175,6 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	// demand and prevent priority preemption.
 	p.activator.TouchLastActiveTime(ctx, modelName)
 
-	// Get or create queue for this model
-	queue := p.getOrCreateQueue(modelName)
-
 	// Create queued request
 	qr := &QueuedRequest{
 		w:          w,
@@ -138,8 +187,19 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 		qr.rank = d.class.rank()
 	}
 
-	// Try to add to queue (non-blocking)
-	if !queue.offer(qr) {
+	// Add the request to the model's queue (non-blocking). A queue retired
+	// between the lookup and the offer is already unmapped, so the next
+	// lookup returns the model's current queue or creates one.
+	var queue *RequestQueue
+	queued := false
+	for {
+		queue = p.getOrCreateQueue(modelName)
+		var closed bool
+		if queued, closed = queue.offer(qr); !closed {
+			break
+		}
+	}
+	if !queued {
 		queueRejectedTotal.WithLabelValues(modelName).Inc()
 		m := p.peekModel(ctx, modelName)
 		w.Header().Set(headerActivation, activationValue(m))
@@ -195,9 +255,13 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	if !sentPrefer && !isJobForward(ctx) {
 		if m := p.peekModel(ctx, modelName); p.losingCardTo(ctx, m) != "" {
 			if preemptedBound = p.preemptedWait(m); preemptedBound < timeout {
-				timer := time.NewTimer(preemptedBound)
-				defer timer.Stop()
-				preemptedC = timer.C
+				if p.preemptedWaitTimer != nil {
+					preemptedC = p.preemptedWaitTimer(preemptedBound)
+				} else {
+					timer := time.NewTimer(preemptedBound)
+					defer timer.Stop()
+					preemptedC = timer.C
+				}
 			}
 		}
 	}
@@ -296,6 +360,9 @@ func (p *Proxy) getOrCreateQueue(modelName string) *RequestQueue {
 		items:   make(chan *QueuedRequest, p.maxQueueSize),
 		created: time.Now(),
 	}
+	// Set before the queue is visible, so the sweeper never sees a live
+	// queue without its processor.
+	queue.processing.Store(true)
 	p.queues.Store(modelName, queue)
 
 	// Start queue processor (handles scale-up and draining)
@@ -307,6 +374,7 @@ func (p *Proxy) getOrCreateQueue(modelName string) *RequestQueue {
 
 // processQueue handles scale-up and drains the queue when model is ready.
 func (p *Proxy) processQueue(queue *RequestQueue) {
+	defer queue.processing.Store(false)
 	modelName := queue.model
 	ctx := p.ctx
 	if ctx == nil {
@@ -327,8 +395,7 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 			activationDurationSeconds.WithLabelValues(modelName, "direct", "success").Observe(time.Since(activationStart).Seconds())
 			slog.Info("model ready via direct runtime load, draining queue", "model", modelName)
 			queue.draining.Store(true)
-			p.drainQueue(queue)
-			p.queues.Delete(modelName)
+			p.drainQueue(queue) // retires the queue
 			slog.Info("queue processor finished (direct)", "model", modelName)
 
 			// Async: update LastActiveTime so controller backfills status.
@@ -410,22 +477,20 @@ func (p *Proxy) processQueue(queue *RequestQueue) {
 	// Mark queue as draining (prevents new requests from being queued here)
 	queue.draining.Store(true)
 
-	// Drain queue - serve all pending requests
+	// Drain queue - serve all pending requests, then retire it
 	p.drainQueue(queue)
-
-	// Clean up queue
-	p.queues.Delete(modelName)
 	slog.Info("queue processor finished", "model", modelName)
 }
 
 // drainQueue processes all pending requests: it takes everything queued so
 // far, serves it in QoS rank order (FIFO within a rank), and repeats until
-// the queue is empty.
+// the queue is empty. It then retires the queue (retireQueue) and serves
+// whatever was offered between the last take and the retirement.
 func (p *Proxy) drainQueue(queue *RequestQueue) {
-	for {
+	for retired := false; !retired; {
 		batch := takeQueued(queue)
 		if len(batch) == 0 {
-			return
+			batch, retired = p.retireQueue(queue), true
 		}
 		sort.SliceStable(batch, func(i, j int) bool { return batch[i].rank < batch[j].rank })
 		for _, qr := range batch {
@@ -468,12 +533,12 @@ func (p *Proxy) drainQueueWithError(queue *RequestQueue, err error) {
 		}
 		m = p.peekModel(ctx, queue.model)
 	}
-	for {
+	for retired := false; !retired; {
 		batch := takeQueued(queue)
 		if len(batch) == 0 {
-			// Queue is empty
-			p.queues.Delete(queue.model)
-			return
+			// Queue is empty: retire it and fail what was offered since the
+			// last take.
+			batch, retired = p.retireQueue(queue), true
 		}
 		for _, qr := range batch {
 			queueDepth.WithLabelValues(queue.model).Dec()
@@ -525,17 +590,24 @@ func (p *Proxy) cleanupStaleQueues() {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			now := time.Now()
-			p.queues.Range(func(key string, queue *RequestQueue) bool {
-				// Remove queues older than 2x queue timeout that are empty
-				if now.Sub(queue.created) > 2*p.queueTimeout && len(queue.items) == 0 {
-					slog.Debug("cleaning up stale queue", "model", key)
-					p.queues.Delete(key)
-				}
-				return true
-			})
+			p.sweepStaleQueues(time.Now())
 		}
 	}
+}
+
+// sweepStaleQueues retires queues older than 2x the queue timeout that hold
+// no request and have no running processor. A processor can wait on
+// readiness for a lane's whole coldStartTimeout (25 min on a preempted lane)
+// while every client has left its queue; removing that queue would let the
+// next request start a second processor for the same model, so the sweeper
+// only collects queues whose processor has exited without retiring them.
+func (p *Proxy) sweepStaleQueues(now time.Time) {
+	p.queues.Range(func(key string, queue *RequestQueue) bool {
+		if now.Sub(queue.created) > 2*p.queueTimeout && p.retireIdleQueue(queue) {
+			slog.Debug("cleaned up stale queue", "model", key)
+		}
+		return true
+	})
 }
 
 // waitForReady polls until the model is ready or timeout.

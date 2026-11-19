@@ -345,6 +345,11 @@ type Proxy struct {
 	// Zero means defaultColdStartDialWindow; overridable in tests.
 	coldStartDialWindow time.Duration
 
+	// preemptedWaitTimer, when set, replaces the real timer of the preempted
+	// wait in handleColdStart: it receives the bound and returns the channel
+	// that fires it. Nil outside tests.
+	preemptedWaitTimer func(time.Duration) <-chan time.Time
+
 	// Routing for multi-replica models
 	router             *routing.Router
 	routingEnabled     bool                         // Enable advanced routing (session affinity, prefix-based)

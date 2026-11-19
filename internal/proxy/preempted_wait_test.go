@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"context"
+	stderrors "errors"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -11,6 +12,7 @@ import (
 	promtestutil "github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
@@ -30,6 +32,15 @@ func (a *touchCounter) GetColdStartTimeout(context.Context, string) time.Duratio
 func (a *touchCounter) IsNodeTerminating(context.Context, string) bool { return false }
 
 func priority(v int32) *int32 { return &v }
+
+func ago(d time.Duration) *metav1.Time {
+	t := metav1.NewTime(time.Now().Add(-d))
+	return &t
+}
+
+func setWarmPolicy(m *aiv1alpha2.Model, policy string) {
+	m.Spec.Config = &apiextensionsv1.JSON{Raw: []byte(`{"warmPolicy":"` + policy + `"}`)}
+}
 
 // sharedLane is a serverless member of shared group "xtx" at priority prio.
 func sharedLane(name string, prio int32, phase aiv1alpha2.ModelPhase, sg *aiv1alpha2.SharedGroupStatus) *aiv1alpha2.Model {
@@ -113,6 +124,51 @@ func TestLosingCardTo(t *testing.T) {
 			force := true
 			w.Spec.GPU.ForcePromotion = &force
 		}},
+		// Release: the job runner handed the card back; the controller acts
+		// after its 45 s grace, while the holder still reads Active.
+		{name: "holder with a standing release", mutate: func(_, c *aiv1alpha2.Model) {
+			c.Status.LastActiveTime = ago(10 * time.Second)
+			c.Status.ReleasedAt = ago(5 * time.Second)
+		}},
+		{name: "release in the same second as the last stamp still stands", mutate: func(_, c *aiv1alpha2.Model) {
+			at := ago(5 * time.Second)
+			c.Status.LastActiveTime, c.Status.ReleasedAt = at, at
+		}},
+		{name: "release answered by later demand", mutate: func(_, c *aiv1alpha2.Model) {
+			c.Status.ReleasedAt = ago(10 * time.Second)
+			c.Status.LastActiveTime = ago(5 * time.Second)
+		}, want: "creative"},
+		{name: "release overridden by an activation request", mutate: func(_, c *aiv1alpha2.Model) {
+			c.Status.ReleasedAt = ago(5 * time.Second)
+			c.Status.ActivationRequestedAt = ago(time.Minute)
+		}, want: "creative"},
+		// Warm primary: reclaims the card from a holder whose demand lapsed.
+		{name: "warm primary behind a holder with fresh demand", mutate: func(w, c *aiv1alpha2.Model) {
+			setWarmPolicy(w, "primary")
+			c.Status.LastActiveTime = ago(30 * time.Second)
+		}, want: "creative"},
+		{name: "warm primary behind a holder whose demand lapsed", mutate: func(w, c *aiv1alpha2.Model) {
+			setWarmPolicy(w, "primary")
+			c.Status.LastActiveTime = ago(3 * time.Minute)
+		}},
+		{name: "warm primary behind a holder with no demand", mutate: func(w, _ *aiv1alpha2.Model) {
+			setWarmPolicy(w, "primary")
+		}},
+		{name: "warm primary, holder demand lapsed past its shorter idle timeout", mutate: func(w, c *aiv1alpha2.Model) {
+			setWarmPolicy(w, "primary")
+			idle := metav1.Duration{Duration: 30 * time.Second}
+			c.Spec.Serverless = &aiv1alpha2.ServerlessSpec{IdleTimeout: &idle}
+			c.Status.LastActiveTime = ago(time.Minute)
+		}},
+		{name: "warm primary, holder kept fresh by an activation request", mutate: func(w, c *aiv1alpha2.Model) {
+			setWarmPolicy(w, "primary")
+			c.Status.LastActiveTime = ago(10 * time.Minute)
+			c.Status.ActivationRequestedAt = ago(time.Minute)
+		}, want: "creative"},
+		{name: "on-demand lane behind an idle holder", mutate: func(w, c *aiv1alpha2.Model) {
+			setWarmPolicy(w, "ondemand")
+			c.Status.LastActiveTime = ago(10 * time.Minute)
+		}, want: "creative"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -222,40 +278,141 @@ func TestPreemptedWaitLeavesOtherWaitsAlone(t *testing.T) {
 	}
 }
 
-// The bound re-reads the lane: one that won the card while the request waited
-// keeps the request for its load.
+// The bound re-reads the lanes when it fires. The test owns the timer, so the
+// status change lands before the bound fires on any runner: a lane that won the
+// card, or a holder that released it, keeps the request; an unchanged lane
+// gets the 503.
 func TestPreemptedWaitRechecksWhenItFires(t *testing.T) {
-	warm, creative := warmBehindCreative()
-	p := newGateTestProxy(t, &touchCounter{}, warm, creative)
-	p.queueTimeout = 2 * time.Second
-	p.laneConfig.PreemptedWait = time.Second
-	q := stalledQueue(p, "warm", 4)
+	for _, tc := range []struct {
+		name    string
+		change  func(t *testing.T, p *Proxy)
+		want503 bool
+	}{
+		{name: "lane won the card", change: func(t *testing.T, p *Proxy) {
+			updateStatus(t, p, "warm", func(m *aiv1alpha2.Model) {
+				m.Status.Phase = aiv1alpha2.ModelPhaseLoading
+				m.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{GroupName: "xtx", State: "Active"}
+			})
+		}},
+		{name: "holder released the card", change: func(t *testing.T, p *Proxy) {
+			updateStatus(t, p, "creative", func(m *aiv1alpha2.Model) {
+				m.Status.LastActiveTime = ago(10 * time.Second)
+				m.Status.ReleasedAt = ago(time.Second)
+			})
+		}},
+		{name: "nothing changed", change: func(*testing.T, *Proxy) {}, want503: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			warm, creative := warmBehindCreative()
+			p := newGateTestProxy(t, &touchCounter{}, warm, creative)
+			p.queueTimeout = time.Hour
+			armed := make(chan time.Duration, 1)
+			fire := make(chan time.Time)
+			p.preemptedWaitTimer = func(d time.Duration) <-chan time.Time {
+				armed <- d
+				return fire
+			}
+			stalledQueue(p, "warm", 4)
 
-	rec := httptest.NewRecorder()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		p.handleRequest(rec, chatReq("warm"))
-	}()
-	require.Eventually(t, func() bool {
-		q.mu.Lock()
-		defer q.mu.Unlock()
-		return len(q.items) == 1
-	}, 5*time.Second, 5*time.Millisecond)
+			ctx, leave := context.WithCancel(context.Background())
+			defer leave()
+			rec := httptest.NewRecorder()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				p.handleRequest(rec, chatReq("warm").WithContext(ctx))
+			}()
+			select {
+			case d := <-armed:
+				assert.Equal(t, defaultPreemptedWait, d)
+			case <-time.After(10 * time.Second):
+				t.Fatal("the preempted wait was not armed")
+			}
 
-	won := &aiv1alpha2.Model{}
-	require.NoError(t, p.client.Get(context.Background(), client.ObjectKeyFromObject(warm), won))
-	won.Status.Phase = aiv1alpha2.ModelPhaseLoading
-	won.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{GroupName: "xtx", State: "Active"}
-	require.NoError(t, p.client.Update(context.Background(), won))
+			tc.change(t, p)
+			// The send returns only once the handler's select took it.
+			fire <- time.Now()
 
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatal("request still held after the queue timeout")
+			if tc.want503 {
+				select {
+				case <-done:
+				case <-time.After(10 * time.Second):
+					t.Fatal("request still held after the bound fired")
+				}
+				require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+				assert.Equal(t, validation.CodeModelPreempted, envelope(t, rec).Code)
+				return
+			}
+			// The request keeps waiting for the load; the client leaves.
+			leave()
+			select {
+			case <-done:
+			case <-time.After(10 * time.Second):
+				t.Fatal("request did not return after its client left")
+			}
+			assert.Empty(t, rec.Body.String(), "the re-check kept the request: no 503 was written")
+		})
 	}
-	require.Equal(t, http.StatusGatewayTimeout, rec.Code, rec.Body.String())
-	assert.Equal(t, validation.CodeModelColdStarting, envelope(t, rec).Code)
+}
+
+func updateStatus(t *testing.T, p *Proxy, name string, mutate func(*aiv1alpha2.Model)) {
+	t.Helper()
+	m := &aiv1alpha2.Model{}
+	require.NoError(t, p.client.Get(context.Background(), client.ObjectKey{Namespace: "default", Name: name}, m))
+	mutate(m)
+	require.NoError(t, p.client.Update(context.Background(), m))
+}
+
+// The reviewer's sweeper scenario: a processor waits on a preempted lane
+// while every client has left its queue. The sweep must not unmap that queue,
+// the next request must join it, and a finishing processor must not unmap a
+// queue registered after its own.
+func TestStaleQueueSweepSparesALiveProcessor(t *testing.T) {
+	const model = "swept-lane"
+	p := newGateTestProxy(t, &touchCounter{}, sharedLane(model, 300, aiv1alpha2.ModelPhasePreempted,
+		&aiv1alpha2.SharedGroupStatus{GroupName: "xtx", State: "Preempted"}))
+	p.queueTimeout = time.Second
+	long := time.Now().Add(time.Hour)
+
+	live := &RequestQueue{model: model, items: make(chan *QueuedRequest, 4), created: time.Now().Add(-time.Hour)}
+	live.processing.Store(true) // its processor is still in waitForReady
+	p.queues.Store(model, live)
+
+	p.sweepStaleQueues(long)
+	got, ok := p.queues.Load(model)
+	require.True(t, ok, "an empty queue with a live processor survives the sweep")
+	assert.Same(t, live, got)
+	assert.Same(t, live, p.getOrCreateQueue(model), "the next request joins the live queue instead of starting a second processor")
+	queued, closed := live.offer(&QueuedRequest{modelName: model, done: make(chan struct{})})
+	assert.True(t, queued)
+	assert.False(t, closed)
+	takeQueued(live)
+
+	// The old processor finishes after a newer queue took the name: its
+	// retirement leaves the newer queue mapped.
+	newer := &RequestQueue{model: model, items: make(chan *QueuedRequest, 4), created: time.Now()}
+	newer.processing.Store(true)
+	p.queues.Store(model, newer)
+	live.processing.Store(false)
+	p.drainQueue(live)
+	got, ok = p.queues.Load(model)
+	require.True(t, ok)
+	assert.Same(t, newer, got, "a finishing processor does not unmap a different queue")
+	_, closed = live.offer(&QueuedRequest{modelName: model, done: make(chan struct{})})
+	assert.True(t, closed, "a retired queue takes no more requests")
+
+	p.drainQueueWithError(live, stderrors.New("late failure"))
+	got, _ = p.queues.Load(model)
+	assert.Same(t, newer, got, "a failing processor does not unmap a different queue either")
+
+	// A queue whose processor has exited and that holds nothing is swept.
+	newer.processing.Store(false)
+	newer.created = time.Now().Add(-time.Hour)
+	p.sweepStaleQueues(long)
+	_, ok = p.queues.Load(model)
+	assert.False(t, ok, "an idle queue without a processor is collected")
+	_, closed = newer.offer(&QueuedRequest{modelName: model, done: make(chan struct{})})
+	assert.True(t, closed)
 }
 
 // Fix for the KT-JOBS slot leak: requests whose clients went away give their

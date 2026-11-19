@@ -383,7 +383,15 @@ The proxy decides from the Model status in its informer cache, with no API-serve
   `Queued`;
 - `status.sharedGroup.preemptedBy` names a Model (not a park class such as `primary/` or
   `gpu-lease/`) in the same shared group whose `status.sharedGroup.state` is `Active`;
-- that Model's `gpu.priority` is strictly higher than the lane's.
+- that Model's `gpu.priority` is strictly higher than the lane's;
+- that Model has no standing release: no `status.releasedAt` that is newer than or in the same
+  second as its `lastActiveTime` (the controller's `releaseStanding`). A released holder gives the
+  card up after the 45 s release grace, so the lane is about to come back;
+- for a lane with `spec.config.warmPolicy: primary` only: that Model's demand (`lastActiveTime`, or
+  an activation request from the last 30 min) is within its activity window (2 min, or its
+  `idleTimeout` when shorter for a scale-to-zero holder). A warm primary reclaims the card from an
+  idle holder of any priority, so once the holder's demand lapses its request keeps the full wait.
+  An on-demand lane has no such reclaim and returns only when the holder idles out or is released.
 
 When the bound fires the proxy reads the status again; a lane that has taken the card in the
 meantime keeps the request for its load, up to the cold-start timeout. Everything else keeps the
@@ -391,6 +399,10 @@ full wait: a lane that holds the card and is loading, an equal- or lower-priorit
 election can hand the card over on demand), a failover stand-in (`flexinfer.ai/failover-for`), a
 force-promoted lane, a request with `Prefer: wait=N` (its own wait applies), and a job's forward
 (the runner retries on its own schedule).
+
+Trade-off: the decision is read from the informer cache, so a request can be refused in the short
+window between the controller admitting the lane and the proxy's cache showing it. The client's
+retry after `Retry-After` then succeeds or waits for the load.
 
 Settings: `FLEXINFER_PROXY_PREEMPTED_WAIT` (Go duration, default `20s`) and, per lane, the Model
 annotation `flexinfer.ai/preempted-wait` (a positive duration, overrides the setting). The proxy
@@ -401,7 +413,9 @@ counts these answers as `flexinfer_proxy_requests_total{status="preempted"}`, no
 The cold-start queue holds at most `PROXY_MAX_QUEUE_SIZE` (default 100) waiting requests per lane.
 A request leaves the queue as soon as it stops waiting: when it is served, refused, times out, or
 its client disconnects. A slot is therefore taken only while a client waits on it, and `queue_full`
-means that many clients are waiting now.
+means that many clients are waiting now. A lane has one queue and one activation at a time: the
+queue stays registered while its activation waits, even with no request in it, and the stale-queue
+sweeper only removes a queue whose activation has ended.
 
 ## Structured outputs and tool calls
 
