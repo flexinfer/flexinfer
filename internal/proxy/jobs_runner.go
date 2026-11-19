@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -530,6 +531,21 @@ type jobForward struct {
 	step string
 }
 
+// serveJobForward runs a job's forward through the proxy's handler on the job
+// goroutine. No http.Server recovers a panic there, so it is recovered here
+// and logged with a stack; the caller treats the forward as a lost response.
+func serveJobForward(h http.Handler, w http.ResponseWriter, req *http.Request, job string) (panicked bool) {
+	defer func() {
+		if v := recover(); v != nil {
+			panicked = true
+			slog.Error("panic serving a job's forward", "job", job, "path", req.URL.Path,
+				"panic", fmt.Sprint(v), "stack", string(debug.Stack()))
+		}
+	}()
+	h.ServeHTTP(w, req)
+	return false
+}
+
 // forward sends f once through the proxy's handler for j and spools the
 // response.
 func (r *jobRunner) forward(ctx context.Context, j *aiv1alpha2.InferenceJob, f jobForward, progress *atomic.Int32) (*jobAttempt, error) {
@@ -562,8 +578,13 @@ func (r *jobRunner) forward(ctx context.Context, j *aiv1alpha2.InferenceJob, f j
 	if err != nil {
 		return &jobAttempt{}, err
 	}
-	r.handler.ServeHTTP(spool, req)
+	panicked := serveJobForward(r.handler, spool, req, j.Name)
 	a := &jobAttempt{status: spool.status, header: spool.header, spool: spool}
+	if panicked {
+		// Whatever was spooled is incomplete: retry it as a lost response.
+		a.status, a.code, a.message = http.StatusBadGateway, "no_response", "the proxy failed while serving the forward"
+		return a, nil
+	}
 	if a.status == 0 {
 		// Only a canceled request leaves the proxy's handler without an
 		// answer; anything else is treated as a lost response and retried.

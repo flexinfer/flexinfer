@@ -114,8 +114,7 @@ func TestHandleColdStartConsumesCanceledQueuedRequest(t *testing.T) {
 	err := p.handleColdStart(req.Context(), httptest.NewRecorder(), req, "test-model", time.Now())
 
 	require.ErrorIs(t, err, context.Canceled)
-	queued := <-queue.items
-	assert.True(t, queued.responded.Load(), "canceled request must not be forwarded when the queue drains")
+	assert.Empty(t, takeQueued(queue), "a canceled request leaves the queue at once, so a drain cannot forward it and its slot is free")
 }
 
 func TestQueuedRequestKeepsDemandUntilItsLifetimeEnds(t *testing.T) {
