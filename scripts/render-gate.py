@@ -19,14 +19,25 @@ Checks per image:
   mode                RGB, or RGBA (Qwen-Image 2.1 returns RGBA even when sound;
                       --require-rgb rejects any alpha channel)
   opaque              at most MAX_TRANSPARENT_SHARE of the pixels have alpha < 128
+                      (--allow-transparent skips it)
   channel_std         every RGB channel's standard deviation >= MIN_CHANNEL_STD
   channel_mean        every RGB channel's mean within MEAN_RANGE
   flat_tiles          at most MAX_FLAT_TILE_SHARE of the 64x64 blocks are flat
                       (largest per-channel standard deviation in the block below
-                      FLAT_TILE_STD)
+                      FLAT_TILE_STD); --max-flat-tile-share changes the share
 Check across images:
   same_seed_match     the seed-S renders are identical bytes or differ by at most
                       MAX_SAME_SEED_DIFF on every pixel and channel
+
+The same-seed check assumes both seed-S renders ran on the same lane and GPU.
+Through the proxy, name a model that only one lane serves; two lanes or two
+cards can differ legitimately and fail it.
+
+opaque and flat_tiles were calibrated on the default prompt, a busy photographic
+scene. A custom --prompt that asks for a plain or transparent image (a logo on a
+flat background, a sticker with an alpha cutout) can fail them while sound; use
+--max-flat-tile-share and --allow-transparent for such prompts, and expect them
+to catch less.
 
 The 2026-11-19 garbage passed channel_std and channel_mean (that is why this
 gate exists). It fails opaque and flat_tiles by a wide margin: 91-95 % of its
@@ -38,7 +49,9 @@ pixels were transparent and 93-96 % of its blocks flat, against 0 % and at most
     python3 scripts/render-gate.py --verdict gate-B/render-gate.json
     python3 scripts/render-gate.py --score some.png other.png
 
-Stdlib plus Pillow. Exit status 0 when the gate passes, 1 when it fails.
+Stdlib plus Pillow. Exit status 0 when the gate passes, 1 when it fails, 2 on
+an error (bad arguments, an unwritable --out-dir, an unreadable or malformed
+report, a missing file to score).
 """
 
 import argparse
@@ -131,6 +144,8 @@ def run(args):
             "seed": args.seed,
             "renders": args.renders,
             "require_rgb": args.require_rgb,
+            "max_flat_tile_share": args.max_flat_tile_share,
+            "allow_transparent": args.allow_transparent,
         },
         "renders": [],
     }
@@ -164,6 +179,10 @@ def run(args):
 # ── scoring ───────────────────────────────────────────────────────
 
 
+class GateError(Exception):
+    """An error that is not a gate failure; main() exits 2 with its message."""
+
+
 def flat_tile_share(rgb):
     """Share of TILE x TILE blocks whose busiest channel has std < FLAT_TILE_STD.
     Only whole blocks count; an image smaller than one block is one block."""
@@ -179,7 +198,14 @@ def flat_tile_share(rgb):
     return flat / len(boxes)
 
 
-def score_image(path, expected_size=None, require_rgb=False, status=None):
+def score_image(
+    path,
+    expected_size=None,
+    require_rgb=False,
+    status=None,
+    max_flat_share=MAX_FLAT_TILE_SHARE,
+    allow_transparent=False,
+):
     """Return (checks, metrics) for one PNG. A check is True, False, or None
     (not applicable, e.g. no HTTP status when scoring a file by hand)."""
     checks = {"http_200": None if status is None else status == 200}
@@ -205,7 +231,9 @@ def score_image(path, expected_size=None, require_rgb=False, status=None):
     else:
         transparent = 0.0
     metrics["transparent_share"] = round(transparent, 4)
-    checks["opaque"] = transparent <= MAX_TRANSPARENT_SHARE
+    checks["opaque"] = (
+        None if allow_transparent else transparent <= MAX_TRANSPARENT_SHARE
+    )
     rgb = image.convert("RGB")
     stat = ImageStat.Stat(rgb)
     metrics["channel_std"] = [round(v, 2) for v in stat.stddev]
@@ -215,7 +243,7 @@ def score_image(path, expected_size=None, require_rgb=False, status=None):
     checks["channel_mean"] = all(lo <= v <= hi for v in stat.mean)
     share = flat_tile_share(rgb)
     metrics["flat_tile_share"] = round(share, 4)
-    checks["flat_tiles"] = share <= MAX_FLAT_TILE_SHARE
+    checks["flat_tiles"] = share <= max_flat_share
     return checks, metrics
 
 
@@ -245,12 +273,18 @@ def verdict(report, base_dir):
     """Score the files a report names. Returns (pass, result dict)."""
     args = report.get("args", {})
     expected = args.get("size")
-    require_rgb = bool(args.get("require_rgb"))
+    options = dict(
+        require_rgb=bool(args.get("require_rgb")),
+        max_flat_share=args.get("max_flat_tile_share", MAX_FLAT_TILE_SHARE),
+        allow_transparent=bool(args.get("allow_transparent")),
+    )
     images = []
     for r in report["renders"]:
         path = os.path.join(base_dir, r["file"]) if r.get("file") else None
         if path and os.path.exists(path):
-            checks, metrics = score_image(path, expected, require_rgb, r.get("status"))
+            checks, metrics = score_image(
+                path, expected, status=r.get("status"), **options
+            )
         else:
             checks = {"http_200": r.get("status") == 200, "decodes": False}
             metrics = {"error": r.get("error")}
@@ -299,10 +333,12 @@ def verdict(report, base_dir):
     return ok, {"pass": ok, "images": images, "same_seed": same_seed}
 
 
-def score_files(paths, expected_size, require_rgb):
+def score_files(paths, expected_size, **options):
     results = []
     for path in paths:
-        checks, metrics = score_image(path, expected_size, require_rgb)
+        if not os.path.isfile(path):
+            raise GateError(f"no such file to score: {path}")
+        checks, metrics = score_image(path, expected_size, **options)
         failed = [k for k, v in checks.items() if v is False]
         results.append(
             {
@@ -317,13 +353,32 @@ def score_files(paths, expected_size, require_rgb):
     return ok, {"pass": ok, "images": results}
 
 
-def main():
+def load_report(path):
+    try:
+        with open(path) as f:
+            report = json.load(f)
+    except OSError as e:
+        raise GateError(f"cannot read {path}: {e.strerror or e}")
+    except ValueError as e:
+        raise GateError(f"{path} is not valid JSON: {e}")
+    renders = report.get("renders") if isinstance(report, dict) else None
+    if not isinstance(renders, list) or not all(
+        isinstance(r, dict) and "i" in r and "seed" in r for r in renders
+    ):
+        raise GateError(f"{path} is not a render-gate report (no renders list)")
+    return report
+
+
+def main(argv=None):
     ap = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     ap.add_argument("--url", help="base URL of the proxy or lane (no /v1 suffix)")
     ap.add_argument("--auth", default="", help="bearer token")
-    ap.add_argument("--model")
+    ap.add_argument(
+        "--model",
+        help="model name; for the same-seed check it must be served by one lane",
+    )
     ap.add_argument("--prompt", default=DEFAULT_PROMPT)
     ap.add_argument(
         "--size", help="WIDTHxHEIGHT; 1024x1024 when rendering, unchecked with --score"
@@ -334,35 +389,64 @@ def main():
         "--timeout", type=float, default=1800, help="per-request timeout, seconds"
     )
     ap.add_argument("--require-rgb", action="store_true", help="reject RGBA output")
+    ap.add_argument(
+        "--max-flat-tile-share",
+        type=float,
+        default=MAX_FLAT_TILE_SHARE,
+        help="largest share of flat 64x64 blocks allowed (default %(default)s); "
+        "raise it for prompts that ask for plain backgrounds",
+    )
+    ap.add_argument(
+        "--allow-transparent",
+        action="store_true",
+        help="skip the opaque check, for prompts that ask for transparency",
+    )
     ap.add_argument("--out-dir", default="render-gate")
     ap.add_argument("--verdict", metavar="REPORT_JSON", help="re-score a saved run")
     ap.add_argument("--score", nargs="+", metavar="PNG", help="score files by hand")
-    args = ap.parse_args()
-    if args.verdict:
-        with open(args.verdict) as f:
-            report = json.load(f)
-        ok, result = verdict(report, os.path.dirname(os.path.abspath(args.verdict)))
-    elif args.score:
-        ok, result = score_files(args.score, args.size, args.require_rgb)
-    else:
-        args.size = args.size or "1024x1024"
-        for need in ("url", "model"):
-            if not getattr(args, need):
-                ap.error(f"--{need} is required")
-        try:
-            seeds_for(args.seed, args.renders)
-        except ValueError as e:
-            ap.error(str(e))
-        args.url = args.url.rstrip("/")
-        report = run(args)
-        path = os.path.join(args.out_dir, "render-gate.json")
-        with open(path, "w") as f:
-            json.dump(report, f, indent=1)
-        ok, result = verdict(report, args.out_dir)
-        result["report"] = path
+    args = ap.parse_args(argv)
+    if not 0 <= args.max_flat_tile_share <= 1:
+        ap.error("--max-flat-tile-share must be between 0 and 1")
+    try:
+        if args.verdict:
+            report = load_report(args.verdict)
+            ok, result = verdict(report, os.path.dirname(os.path.abspath(args.verdict)))
+        elif args.score:
+            ok, result = score_files(
+                args.score,
+                args.size,
+                require_rgb=args.require_rgb,
+                max_flat_share=args.max_flat_tile_share,
+                allow_transparent=args.allow_transparent,
+            )
+        else:
+            for need in ("url", "model"):
+                if not getattr(args, need):
+                    ap.error(f"--{need} is required")
+            try:
+                seeds_for(args.seed, args.renders)
+            except ValueError as e:
+                ap.error(str(e))
+            args.size = args.size or "1024x1024"
+            args.url = args.url.rstrip("/")
+            path = os.path.join(args.out_dir, "render-gate.json")
+            try:
+                os.makedirs(args.out_dir, exist_ok=True)
+                with open(path, "w") as f:  # fail before the first render
+                    f.write("{}\n")
+                report = run(args)
+                with open(path, "w") as f:
+                    json.dump(report, f, indent=1)
+            except OSError as e:
+                raise GateError(f"cannot write to {args.out_dir}: {e.strerror or e}")
+            ok, result = verdict(report, args.out_dir)
+            result["report"] = path
+    except GateError as e:
+        print(f"render-gate: error: {e}", file=sys.stderr)
+        return 2
     print(json.dumps(result, indent=2))
-    sys.exit(0 if ok else 1)
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

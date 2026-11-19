@@ -375,6 +375,7 @@ SERVER_ENV = (
     "WARMUP_RESOLUTIONS",
     "NONFINITE_GUARD",
     "NONFINITE_RENDER_RETRIES",
+    "NONFINITE_VIDEO_RETRIES",
     "WARMUP_NONFINITE_RETRIES",
     "WARMUP_NONFINITE_STRICT",
 )
@@ -1158,7 +1159,7 @@ class NonFiniteGuardTest(ServerTestCase):
         self.assertEqual(server._nonfinite_counts["warmup"], 3)
         self.assertEqual(server._nonfinite_counts["warmup_unrecovered"], 1)
         log = out.getvalue()
-        self.assertIn("Warmup 1024x1024 decoded 5 NaN/Inf values (attempt 1/3)", log)
+        self.assertIn("Warmup 1024x1024 decoded 5 NaN values (attempt 1/3)", log)
         self.assertIn("not known to clear", log)
         self.assertIn("ERROR: warmup 1024x1024", log)
 
@@ -1190,7 +1191,7 @@ class NonFiniteGuardTest(ServerTestCase):
         self.quiet(server.warmup_inference)
         self.assertTrue(server.warmup_complete)
 
-    def test_video_retries_then_fails_with_the_same_seed(self):
+    def video(self, *counts):
         class FakeWan:
             def __init__(self):
                 self.calls = []
@@ -1201,7 +1202,7 @@ class NonFiniteGuardTest(ServerTestCase):
 
         server.PIPELINE_MODE = "text2video"
         pipe = self.serve(FakeWan(), "Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
-        self.detector(4, 4)
+        self.detector(*counts)
         request = server.VideoGenerationRequest(
             prompt="p", size="480x320", num_frames=5, seed=11
         )
@@ -1210,9 +1211,46 @@ class NonFiniteGuardTest(ServerTestCase):
                 self.quiet(asyncio.run, server.generate_video(request))
         self.assertEqual(caught.exception.status_code, 500)
         self.assertEqual(caught.exception.detail["type"], "nonfinite_output")
+        return pipe
+
+    def test_video_does_not_retry_by_default(self):
+        # A NONFINITE_RENDER_RETRIES setting is for images only.
+        os.environ["NONFINITE_RENDER_RETRIES"] = "3"
+        pipe = self.video(4)
+        self.assertEqual(len(pipe.calls), 1)
+        self.assertEqual(server._nonfinite_counts["render_failed"], 1)
+
+    def test_video_retry_is_opt_in_and_keeps_the_seed(self):
+        os.environ["NONFINITE_VIDEO_RETRIES"] = "1"
+        pipe = self.video(4, 4)
         self.assertEqual(len(pipe.calls), 2)
         if "torch" in STUBBED:
             self.assertEqual([_seed_of(c["generator"]) for c in pipe.calls], [11, 11])
+
+    def test_log_says_what_a_retry_does(self):
+        for seeded, want in (
+            (True, "rendering again with the same seed"),
+            (False, "the request has no seed, so the retry draws new noise"),
+        ):
+            self.detector(2, 0)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                server._guarded_render(lambda: "x", lambda r: r, "t", seeded=seeded)
+            self.assertIn(want, out.getvalue())
+            self.assertIn("2 NaN values", out.getvalue())
+            self.assertNotIn("Inf", out.getvalue())
+
+    def test_unseeded_image_request_stays_unseeded_on_retry(self):
+        pipe = self.serve(QwenImage21Pipeline(), "Qwen/Qwen-Image-2.1")
+        self.detector(3, 0)
+        request = server.ImageGenerationRequest(prompt="p", size="512x512")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            asyncio.run(server.generate_images(request))
+        self.assertEqual(len(pipe.calls), 2)
+        for call in pipe.calls:
+            self.assertNotIn("generator", call)
+        self.assertIn("draws new noise", out.getvalue())
 
     def test_health_reports_the_counters(self):
         server._nonfinite_counts["render_failed"] = 2

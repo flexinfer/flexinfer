@@ -228,6 +228,8 @@ class RunTest(unittest.TestCase):
                 seed=7,
                 renders=4,
                 require_rgb=False,
+                max_flat_tile_share=gate.MAX_FLAT_TILE_SHARE,
+                allow_transparent=False,
                 auth="",
                 timeout=10,
                 out_dir=out,
@@ -242,6 +244,103 @@ class RunTest(unittest.TestCase):
         self.assertFalse(ok)
         self.assertEqual(result["images"][0]["failed"], ["opaque", "flat_tiles"])
         self.assertTrue(all(i["pass"] for i in result["images"][1:]))
+
+
+@unittest.skipUnless(Image is not None, "needs Pillow")
+class RelaxFlagsTest(unittest.TestCase):
+    def test_flags_relax_flat_tiles_and_opaque(self):
+        path = save(tiled_garbage(), tempfile.mkdtemp(), "g.png")
+        checks, _ = gate.score_image(path)
+        self.assertEqual((checks["opaque"], checks["flat_tiles"]), (False, False))
+        checks, _ = gate.score_image(path, max_flat_share=1.0, allow_transparent=True)
+        self.assertEqual((checks["opaque"], checks["flat_tiles"]), (None, True))
+
+    def test_report_carries_the_flags_into_verdict(self):
+        d = tempfile.mkdtemp()
+        save(tiled_garbage(), d, "r1.png")
+        report = {
+            "args": {"max_flat_tile_share": 1.0, "allow_transparent": True},
+            "renders": [{"i": 1, "seed": 1, "status": 200, "file": "r1.png"}],
+        }
+        _, result = gate.verdict(report, d)
+        self.assertEqual(result["images"][0]["failed"], [])
+
+
+@unittest.skipUnless(Image is not None, "needs Pillow")
+class ExitCodeTest(unittest.TestCase):
+    """0 pass, 1 failed gate, 2 error (with a one-line message, no traceback)."""
+
+    def main(self, *argv):
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            try:
+                code = gate.main(list(argv))
+            except SystemExit as e:  # argparse errors
+                code = e.code
+        return code, err.getvalue()
+
+    def report_file(self, renders, images):
+        d = tempfile.mkdtemp()
+        for name, image in images.items():
+            save(image, d, name)
+        path = os.path.join(d, "render-gate.json")
+        with open(path, "w") as f:
+            json.dump({"args": {}, "renders": renders}, f)
+        return path
+
+    def test_pass_and_fail(self):
+        renders = [
+            {"i": 1, "seed": 1, "status": 200, "file": "a.png"},
+            {"i": 2, "seed": 1, "status": 200, "file": "b.png"},
+        ]
+        good = self.report_file(renders, {"a.png": sound(0), "b.png": sound(0)})
+        self.assertEqual(self.main("--verdict", good)[0], 0)
+        bad = self.report_file(renders, {"a.png": tiled_garbage(), "b.png": sound(0)})
+        self.assertEqual(self.main("--verdict", bad)[0], 1)
+
+    def test_malformed_and_missing_reports_are_errors(self):
+        d = tempfile.mkdtemp()
+        broken = os.path.join(d, "broken.json")
+        with open(broken, "w") as f:
+            f.write("{not json")
+        wrong = os.path.join(d, "wrong.json")
+        with open(wrong, "w") as f:
+            json.dump({"renders": "nope"}, f)
+        for path in (broken, wrong, os.path.join(d, "missing.json")):
+            code, err = self.main("--verdict", path)
+            self.assertEqual(code, 2, path)
+            self.assertTrue(err.startswith("render-gate: error: "), err)
+            self.assertNotIn("Traceback", err)
+
+    def test_missing_score_file_is_an_error(self):
+        code, err = self.main("--score", "/nonexistent/x.png")
+        self.assertEqual(code, 2)
+        self.assertIn("no such file", err)
+
+    def test_unwritable_out_dir_is_an_error(self):
+        d = tempfile.mkdtemp()
+        blocker = os.path.join(d, "file")
+        with open(blocker, "w") as f:
+            f.write("x")
+        code, err = self.main(
+            "--url",
+            "http://127.0.0.1:9",
+            "--model",
+            "m",
+            "--out-dir",
+            os.path.join(blocker, "sub"),
+        )
+        self.assertEqual(code, 2)
+        self.assertIn("cannot write", err)
+
+    def test_bad_arguments_are_errors(self):
+        self.assertEqual(self.main("--url", "http://x")[0], 2)
+        self.assertEqual(
+            self.main("--url", "http://x", "--model", "m", "--renders", "1")[0], 2
+        )
+        self.assertEqual(
+            self.main("--score", "x.png", "--max-flat-tile-share", "2")[0], 2
+        )
 
 
 if __name__ == "__main__":

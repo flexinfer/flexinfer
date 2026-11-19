@@ -285,11 +285,11 @@ def _env_bool(name: str, default: bool = False) -> bool:
 
 # --- non-finite output guard --------------------------------------------------
 #
-# A decode that produces NaN or Inf pixels still turns into a PNG: diffusers
-# casts the float image to uint8 in numpy_to_pil (the "invalid value
-# encountered in cast" RuntimeWarning from image_processor.py), and what comes
-# out is garbage that the server used to return with HTTP 200. On 2026-11-19
-# the Qwen-Image 2.1 lane did exactly that on the 7900 XTX runtime pod (row
+# A decode that produces NaN pixels still turns into a PNG: diffusers casts the
+# float image to uint8 in numpy_to_pil (the "invalid value encountered in
+# cast" RuntimeWarning from image_processor.py), and what comes out is garbage
+# that the server used to return with HTTP 200. On 2026-11-19 the Qwen-Image
+# 2.1 lane did exactly that on the 7900 XTX runtime pod (row
 # gfx1100-xtx-inpod-qwen-image-gate-2026-11-19 in .loom/60-validation-matrix.md):
 # the warmup decoded NaN, the first real render was flat and noisy tiles, and
 # every later render in the process was sound. The cause is not known.
@@ -300,23 +300,28 @@ def _env_bool(name: str, default: bool = False) -> bool:
 # output gives the same bytes as before. Video pipelines (Wan) already return
 # float frames, so the same check runs on them as is.
 #
+# Only NaN is caught in practice: diffusers' postprocess clamps the decoded
+# image to [0, 1] before the server sees it, which turns +/-Inf into 1 or 0
+# but leaves NaN as NaN. The names below say "nonfinite"; read them as NaN.
+#
 #   NONFINITE_GUARD=1            check outputs at all (0 restores the old path)
-#   NONFINITE_RENDER_RETRIES=1   re-runs of a request whose output is non-finite
-#   WARMUP_NONFINITE_RETRIES=2   re-runs of a warmup pass whose output is non-finite
-#   WARMUP_NONFINITE_STRICT=0    1: fail startup when a warmup stays non-finite
+#   NONFINITE_RENDER_RETRIES=1   re-runs of an image request whose output is NaN
+#   NONFINITE_VIDEO_RETRIES=0    re-runs of a video request whose output is NaN
+#   WARMUP_NONFINITE_RETRIES=2   re-runs of a warmup pass whose output is NaN
+#   WARMUP_NONFINITE_STRICT=0    1: fail startup when a warmup stays NaN
 
 # Occurrence counters, reported under "nonfinite" by GET /health.
 _nonfinite_counts = {
-    "warmup": 0,  # warmup passes whose output held non-finite values
-    "warmup_unrecovered": 0,  # warmup resolutions still non-finite after retries
-    "render": 0,  # request renders (attempts) whose output held non-finite values
-    "render_recovered": 0,  # requests whose retry came back finite
+    "warmup": 0,  # warmup passes whose output held NaN
+    "warmup_unrecovered": 0,  # warmup resolutions still NaN after their repeats
+    "render": 0,  # request renders (attempts) whose output held NaN
+    "render_recovered": 0,  # requests whose retry came back without NaN
     "render_failed": 0,  # requests answered with HTTP 500 nonfinite_output
 }
 
 
 class WarmupNonFiniteError(RuntimeError):
-    """A warmup pass stayed non-finite and WARMUP_NONFINITE_STRICT=1."""
+    """A warmup pass stayed NaN and WARMUP_NONFINITE_STRICT=1."""
 
 
 def _nonfinite_guard_enabled() -> bool:
@@ -337,12 +342,13 @@ def _float_ndarray(value) -> bool:
 
 
 def _nonfinite_count(pixels) -> Optional[int]:
-    """Count NaN/Inf values in a decoded float image or video array.
+    """Count non-finite values in a decoded float image or video array.
 
-    Returns None when the output cannot be checked (a list of PIL images from a
-    pipeline that ignored output_type, or numpy missing), so callers treat it
-    as unchecked rather than as bad. Cost: one np.isfinite pass, a few
-    milliseconds for a 1024x1024 RGB image.
+    In practice these are NaN: diffusers clamps the decode to [0, 1] first, so
+    an Inf arrives here as 0 or 1. Returns None when the output cannot be
+    checked (a list of PIL images from a pipeline that ignored output_type, or
+    numpy missing), so callers treat it as unchecked rather than as bad. Cost:
+    one np.isfinite pass, a few milliseconds for a 1024x1024 RGB image.
     """
     if not _float_ndarray(pixels):
         return None
@@ -382,19 +388,32 @@ def _release_gpu_memory() -> None:
         torch.cuda.empty_cache()
 
 
-def _guarded_render(render, pixels, label: str):
-    """Run render() and check pixels(result) for NaN/Inf.
+def _guarded_render(
+    render,
+    pixels,
+    label: str,
+    seeded: bool = True,
+    retries_env: str = "NONFINITE_RENDER_RETRIES",
+    default_retries: int = 1,
+):
+    """Run render() and check pixels(result) for NaN.
 
-    A non-finite result is logged, counted and rendered again (render() must
-    rebuild its own generator so the retry uses the same seed), up to
-    NONFINITE_RENDER_RETRIES times. If every attempt is non-finite the request
-    fails with HTTP 500 and a typed detail instead of returning a garbage
-    image. Whether a retry helps is not known: on 2026-11-19 the render after
-    the bad one was sound, so one retry is the default.
+    A NaN result is logged, counted and rendered again, up to `retries_env`
+    times (default `default_retries`). For a seeded request render() must
+    rebuild its generator so the retry uses the same seed; an unseeded request
+    has no seed to reuse, so its retry draws new noise. If every attempt holds
+    NaN the request fails with HTTP 500 and a typed detail instead of returning
+    a garbage image. Whether a retry helps is not known: on 2026-11-19 the
+    render after the bad one was sound, so images retry once by default.
     """
     if not _nonfinite_guard_enabled():
         return render()
-    attempts = 1 + _env_retries("NONFINITE_RENDER_RETRIES", 1)
+    attempts = 1 + _env_retries(retries_env, default_retries)
+    again = (
+        "rendering again with the same seed"
+        if seeded
+        else "rendering again (the request has no seed, so the retry draws new noise)"
+    )
     bad = 0
     for attempt in range(1, attempts + 1):
         result = render()
@@ -402,14 +421,14 @@ def _guarded_render(render, pixels, label: str):
         if not bad:
             if attempt > 1:
                 _nonfinite_counts["render_recovered"] += 1
-                print(f"[nonfinite] {label}: attempt {attempt} is finite; serving it")
+                print(f"[nonfinite] {label}: attempt {attempt} has no NaN; serving it")
             return result
         _nonfinite_counts["render"] += 1
         retrying = attempt < attempts
         print(
-            f"[nonfinite] {label}: decoded output holds {bad} NaN/Inf values "
+            f"[nonfinite] {label}: decoded output holds {bad} NaN values "
             f"(attempt {attempt}/{attempts}); "
-            + ("rendering again with the same seed" if retrying else "giving up")
+            + (again if retrying else f"giving up ({retries_env}={attempts - 1})")
         )
         sys.stdout.flush()
         del result
@@ -420,8 +439,8 @@ def _guarded_render(render, pixels, label: str):
         detail={
             "type": "nonfinite_output",
             "message": (
-                f"the decoded output held NaN/Inf values on all {attempts} "
-                "attempt(s); no image was returned because it would be garbage"
+                f"the decoded output held NaN values on all {attempts} "
+                "attempt(s); no output was returned because it would be garbage"
             ),
             "attempts": attempts,
             "nonfinite_values": bad,
@@ -2573,6 +2592,10 @@ def warmup_inference():
     )
     sys.stdout.flush()
 
+    # A lane whose warmup is NaN every time runs 1 + WARMUP_NONFINITE_RETRIES
+    # passes per resolution (3 by default). They all run inside the startup
+    # probe window (900 s), which also covers the model load, so a
+    # slow-loading lane should set WARMUP_NONFINITE_RETRIES=0.
     guard = _nonfinite_guard_enabled()
     attempts = 1 + (_env_retries("WARMUP_NONFINITE_RETRIES", 2) if guard else 0)
     unrecovered = []
@@ -2584,7 +2607,7 @@ def warmup_inference():
             _nonfinite_counts["warmup"] += 1
             if attempt < attempts:
                 print(
-                    f"  Warmup {w}x{h} decoded {bad} NaN/Inf values "
+                    f"  Warmup {w}x{h} decoded {bad} NaN values "
                     f"(attempt {attempt}/{attempts}); repeating the warmup pass. "
                     "A repeat is not known to clear this: on 2026-11-19 the "
                     "warmup and the first real render were both bad and the "
@@ -2594,10 +2617,10 @@ def warmup_inference():
                 _nonfinite_counts["warmup_unrecovered"] += 1
                 unrecovered.append(f"{w}x{h}")
                 print(
-                    f"  ERROR: warmup {w}x{h} decoded NaN/Inf values on all "
+                    f"  ERROR: warmup {w}x{h} decoded NaN on all "
                     f"{attempts} attempt(s). Renders from this process may be "
                     "garbage; requests are checked and retried "
-                    "(NONFINITE_RENDER_RETRIES)"
+                    "(NONFINITE_RENDER_RETRIES, NONFINITE_VIDEO_RETRIES)"
                 )
             sys.stdout.flush()
 
@@ -2609,7 +2632,7 @@ def warmup_inference():
 
     if unrecovered and _env_bool("WARMUP_NONFINITE_STRICT", False):
         message = (
-            f"warmup output stayed non-finite at {', '.join(unrecovered)}; "
+            f"warmup output stayed NaN at {', '.join(unrecovered)}; "
             "WARMUP_NONFINITE_STRICT=1, so startup fails and the lane never "
             "goes Ready"
         )
@@ -2623,7 +2646,7 @@ def warmup_inference():
 
 
 def _warmup_pass(w: int, h: int, steps: int, guidance, guard: bool) -> Optional[int]:
-    """One warmup inference at w x h. Returns the number of NaN/Inf values in
+    """One warmup inference at w x h. Returns the number of NaN values in
     the decoded output when the guard can check it, else None. A pipeline error
     is logged and treated as non-fatal, as before the guard existed."""
     t0 = time.time()
@@ -2666,7 +2689,7 @@ def _warmup_pass(w: int, h: int, steps: int, guidance, guard: bool) -> Optional[
         del result
         elapsed = time.time() - t0
         if bad:
-            print(f"  Warmup {w}x{h} finished in {elapsed:.1f}s with non-finite output")
+            print(f"  Warmup {w}x{h} finished in {elapsed:.1f}s with NaN output")
         else:
             print(f"  Warmup {w}x{h} complete in {elapsed:.1f}s")
     except Exception as e:
@@ -2900,9 +2923,15 @@ async def generate_video(request: VideoGenerationRequest):
                 kwargs["mask"] = condition_mask
 
             def _render():
-                # Wan returns float frames (output_type "np"), so the
-                # non-finite guard checks them as they are. A retry rebuilds
-                # the generator from the same seed and restarts the timings.
+                # Wan returns float frames (output_type "np"), so the NaN
+                # guard checks them as they are. Video does not retry by
+                # default (NONFINITE_VIDEO_RETRIES=0): a render takes minutes
+                # under the generation lock, a same-seed repeat of a
+                # deterministic NaN cannot help, and a retry would run past
+                # the proxy's first-byte budget (900 s on the Wan lane), so
+                # the client would get a 504 instead of the typed 500. If
+                # retries are enabled, each one rebuilds the generator from
+                # the same seed and restarts the timings.
                 nonlocal started_at, last_step_at
                 started_at = time.perf_counter()
                 last_step_at = None
@@ -2918,6 +2947,8 @@ async def generate_video(request: VideoGenerationRequest):
                 lambda r: r.frames,
                 f"video model={model_id} size={width}x{height} "
                 f"frames={num_frames} seed={seed}",
+                retries_env="NONFINITE_VIDEO_RETRIES",
+                default_retries=0,
             )
             pipeline_returned_at = time.perf_counter()
             if last_step_at is None:
@@ -3105,7 +3136,9 @@ async def generate_images(request: ImageGenerationRequest):
         def _render_one(i):
             # Seed handling: if seed is provided, use it for reproducibility.
             # For multi-image (n>1), increment seed per image to get variation.
-            # The generator is built here so a non-finite retry reuses the seed.
+            # The generator is built here so a NaN retry reuses the seed. An
+            # unseeded request stays unseeded (the response carries no seed),
+            # so its retry draws new noise and the log says so.
             gen = None
             if request.seed is not None:
                 img_seed = request.seed + i
@@ -3165,6 +3198,7 @@ async def generate_images(request: ImageGenerationRequest):
                 lambda r: r.images,
                 f"image {i + 1}/{request.n} model={model_id} "
                 f"size={width}x{height} seed={seed}",
+                seeded=seed is not None,
             )
             img = _first_pil_image(pipe, result.images)
             buffer = io.BytesIO()
