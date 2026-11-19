@@ -96,6 +96,11 @@ type Config struct {
 	LaneBreakerCooldown    time.Duration
 	LaneBreakerMaxCooldown time.Duration
 	LaneFirstByteBudget    time.Duration
+	// PreemptedWait bounds how long a request without Prefer: wait waits in
+	// the cold-start queue of a shared-GPU lane a higher-priority peer holds
+	// the card against (preempted_wait.go). Zero means defaultPreemptedWait;
+	// the flexinfer.ai/preempted-wait annotation overrides it per lane.
+	PreemptedWait time.Duration
 
 	Namespace                        string
 	Client                           client.Client
@@ -175,6 +180,9 @@ func (c Config) Validate() error {
 	if c.LaneBreakerThreshold < 0 || c.LaneBreakerCooldown < 0 || c.LaneBreakerMaxCooldown < 0 || c.LaneFirstByteBudget < 0 {
 		errs = append(errs, fmt.Errorf("lane breaker settings must be nonnegative"))
 	}
+	if c.PreemptedWait < 0 {
+		errs = append(errs, fmt.Errorf("FLEXINFER_PROXY_PREEMPTED_WAIT must be >= 0 (got %s)", c.PreemptedWait))
+	}
 	if c.LaneBreakerMaxCooldown > 0 && c.LaneBreakerCooldown > c.LaneBreakerMaxCooldown {
 		errs = append(errs, fmt.Errorf("lane breaker cooldown exceeds maximum"))
 	}
@@ -249,6 +257,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		LaneBreakerCooldown:              envutil.DurationOrDefault("FLEXINFER_PROXY_LANE_BREAKER_COOLDOWN", time.Minute),
 		LaneBreakerMaxCooldown:           envutil.DurationOrDefault("FLEXINFER_PROXY_LANE_BREAKER_MAX_COOLDOWN", 10*time.Minute),
 		LaneFirstByteBudget:              envutil.DurationOrDefault("FLEXINFER_PROXY_LANE_FIRST_BYTE_BUDGET", 120*time.Second),
+		PreemptedWait:                    envutil.DurationOrDefault("FLEXINFER_PROXY_PREEMPTED_WAIT", defaultPreemptedWait),
 		Namespace:                        namespace,
 		Client:                           k8sClient,
 		MaxQueueSize:                     envutil.IntOrDefault("PROXY_MAX_QUEUE_SIZE", 100),
@@ -983,6 +992,14 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// state is not consulted: a lane that is starting has not answered yet.
 		p.prepareLane(lookupName, m.Annotations)
 		if err := p.handleColdStart(ctx, w, r, lookupName, start); err != nil {
+			var refused *preemptedRefusal
+			if stderrors.As(err, &refused) {
+				// An answer the lane's state calls for, not a proxy fault:
+				// kept out of the "error" count the HighErrorRate alert reads.
+				slog.Info("cold start refused: lane is preempted", "model", lookupName, "holder", refused.holder, "waited", refused.waited.String())
+				requestsTotal.WithLabelValues(modelName, "preempted").Inc()
+				return
+			}
 			slog.Error("cold start failed", "model", lookupName, "error", err)
 			requestsTotal.WithLabelValues(modelName, "error").Inc()
 		}
@@ -1092,6 +1109,7 @@ type debugConfigView struct {
 	LaneBreakerCooldown          string  `json:"laneBreakerCooldown"`
 	LaneBreakerMaxCooldown       string  `json:"laneBreakerMaxCooldown"`
 	LaneFirstByteBudget          string  `json:"laneFirstByteBudget"`
+	PreemptedWait                string  `json:"preemptedWait"`
 	MaxQueueSize                 int     `json:"maxQueueSize"`
 	QueueTimeout                 string  `json:"queueTimeout"`
 	ColdStartTimeout             string  `json:"coldStartTimeout"`
@@ -1142,6 +1160,7 @@ func newDebugConfigView(cfg Config) debugConfigView {
 		LaneBreakerCooldown:          cfg.LaneBreakerCooldown.String(),
 		LaneBreakerMaxCooldown:       cfg.LaneBreakerMaxCooldown.String(),
 		LaneFirstByteBudget:          cfg.LaneFirstByteBudget.String(),
+		PreemptedWait:                cfg.PreemptedWait.String(),
 		BackoffEnabled:               cfg.BackoffEnabled,
 		BackoffMaxRetries:            cfg.BackoffMaxRetries,
 		BackoffInitialWait:           cfg.BackoffInitialWait.String(),

@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -41,11 +42,73 @@ type QueuedRequest struct {
 }
 
 // RequestQueue holds requests for a model during cold start.
+//
+// items is bounded by the proxy's maxQueueSize. Every send to and receive
+// from items goes through mu, so a request that leaves the queue early can
+// take its entry out (forget) without racing a drain: a slot is taken only
+// while its request still waits.
 type RequestQueue struct {
 	model    string
+	mu       sync.Mutex
 	items    chan *QueuedRequest
 	created  time.Time
 	draining atomic.Bool
+}
+
+// offer adds qr to the queue and reports whether a slot was free.
+func (q *RequestQueue) offer(qr *QueuedRequest) bool {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	select {
+	case q.items <- qr:
+		return true
+	default:
+		return false
+	}
+}
+
+// forget takes every request whose waiter has already claimed it (it timed
+// out, was refused, or its client went away) out of the queue, so its slot is
+// free for the next request instead of staying taken until a drain. The other
+// entries keep their order. It returns how many entries it removed.
+func (q *RequestQueue) forget() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	var keep []*QueuedRequest
+	removed := 0
+	for taking := true; taking; {
+		select {
+		case qr := <-q.items:
+			if qr.responded.Load() {
+				removed++
+			} else {
+				keep = append(keep, qr)
+			}
+		default:
+			taking = false
+		}
+	}
+	// mu blocks every other send, so the kept entries fit back.
+	for _, qr := range keep {
+		q.items <- qr
+	}
+	if removed > 0 {
+		queueDepth.WithLabelValues(q.model).Sub(float64(removed))
+	}
+	return removed
+}
+
+// preemptedRefusal is the error handleColdStart returns after it answered a
+// request with model_preempted at the end of the preempted wait. It is an
+// expected answer, not a proxy fault, so the caller counts it apart from
+// errors.
+type preemptedRefusal struct {
+	model, holder string
+	waited        time.Duration
+}
+
+func (e *preemptedRefusal) Error() string {
+	return fmt.Sprintf("model %s preempted by %s; refused after waiting %s", e.model, e.holder, e.waited)
 }
 
 // handleColdStart handles requests when model is scaled to zero.
@@ -76,14 +139,7 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	}
 
 	// Try to add to queue (non-blocking)
-	select {
-	case queue.items <- qr:
-		// Successfully queued
-		queuedRequestsTotal.WithLabelValues(modelName).Inc()
-		queueDepth.WithLabelValues(modelName).Inc()
-		slog.Debug("request queued", "model", modelName, "queue_depth", len(queue.items))
-	default:
-		// Queue is full
+	if !queue.offer(qr) {
 		queueRejectedTotal.WithLabelValues(modelName).Inc()
 		m := p.peekModel(ctx, modelName)
 		w.Header().Set(headerActivation, activationValue(m))
@@ -94,12 +150,18 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 		})
 		return fmt.Errorf("queue full for model %s", modelName)
 	}
+	queuedRequestsTotal.WithLabelValues(modelName).Inc()
+	queueDepth.WithLabelValues(modelName).Inc()
+	slog.Debug("request queued", "model", modelName, "queue_depth", len(queue.items))
 
 	// A queued foreground request is live demand even while shared election,
 	// capacity, or an incumbent's request drain delays activation. Join the same
 	// per-model heartbeat used by forwarding and release it on every exit,
-	// including cancellation and queue timeout.
-	stopHeartbeat := p.startLastAccessHeartbeat(ctx, modelName)
+	// including cancellation and queue timeout. It joins as demand only: the
+	// request counts as interactive use of the lane (lane_release.go) when the
+	// drain forwards it to the backend, not while it waits and not when the
+	// proxy refuses it.
+	stopHeartbeat := p.startDemandHeartbeat(modelName, false)
 	defer stopHeartbeat()
 
 	// Wait for request to be processed with timeout
@@ -110,6 +172,7 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	// A caller that sent Prefer: wait=N waits at most N seconds and then gets
 	// a 503 model_cold_starting with the ETA; the activation it started goes on.
 	preferWait, prefersWait := preferredWait(r)
+	sentPrefer := prefersWait
 	if prefersWait && preferWait < timeout {
 		timeout = preferWait
 		w.Header().Set("Preference-Applied", "wait="+strconv.Itoa(int(preferWait/time.Second)))
@@ -120,44 +183,94 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	queueCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	select {
-	case <-qr.done:
-		// Request was processed
-		queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
-		if qr.err != nil {
-			return qr.err
-		}
-		// Success metrics recorded by the processing goroutine
-		return nil
-	case <-queueCtx.Done():
-		// Distinguish an actual queue timeout from caller cancellation.
-		queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
-		// Claim the item before returning so a later queue drain cannot forward a
-		// request whose client has already disconnected. The request stays in the
-		// bounded channel until the processor drains it, but drainQueue will skip it.
-		claimed := qr.responded.CompareAndSwap(false, true)
-		if stderrors.Is(queueCtx.Err(), context.DeadlineExceeded) && claimed {
-			m := p.peekModel(ctx, modelName)
-			w.Header().Set(headerActivation, activationValue(m))
-			if prefersWait {
-				p.writeLaneError(w, m, laneError{
-					status:  http.StatusServiceUnavailable,
-					code:    modelStateCode(m),
-					message: fmt.Sprintf("model %q is not ready after the preferred wait of %s; activation continues", modelName, timeout),
-				})
-			} else {
-				p.writeLaneError(w, m, laneError{
-					status:  http.StatusGatewayTimeout,
-					errType: validation.ErrorTypeTimeout,
-					code:    modelStateCode(m),
-					message: "Timeout waiting for model to become ready (waited " + timeout.String() + ")",
-				})
+	// A request without Prefer: wait, on a shared-GPU lane that a
+	// higher-priority peer holds the card against, waits at most the
+	// preempted wait (preempted_wait.go). A job's forward keeps the full wait:
+	// the job runner has no client timeout, and its queued forward is the
+	// demand that brings the lane back. When the bound fires the check runs
+	// again, so a lane that won the card in the meantime keeps the request
+	// for its load.
+	var preemptedC <-chan time.Time
+	var preemptedBound time.Duration
+	if !sentPrefer && !isJobForward(ctx) {
+		if m := p.peekModel(ctx, modelName); p.losingCardTo(ctx, m) != "" {
+			if preemptedBound = p.preemptedWait(m); preemptedBound < timeout {
+				timer := time.NewTimer(preemptedBound)
+				defer timer.Stop()
+				preemptedC = timer.C
 			}
 		}
-		if stderrors.Is(queueCtx.Err(), context.Canceled) {
-			return fmt.Errorf("queue canceled for model %s: %w", modelName, queueCtx.Err())
+	}
+
+	for {
+		select {
+		case <-qr.done:
+			// Request was processed
+			queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
+			if qr.err != nil {
+				return qr.err
+			}
+			// Success metrics recorded by the processing goroutine
+			return nil
+		case <-preemptedC:
+			preemptedC = nil
+			m := p.peekModel(ctx, modelName)
+			holder := p.losingCardTo(ctx, m)
+			if holder == "" {
+				// The lane may win the card now: wait for its load as
+				// before, up to the full timeout.
+				continue
+			}
+			if !qr.responded.CompareAndSwap(false, true) {
+				// A drain claimed the request first and is serving it.
+				continue
+			}
+			queue.forget()
+			queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
+			w.Header().Set(headerActivation, activationValue(m))
+			p.writeLaneError(w, m, laneError{
+				status: http.StatusServiceUnavailable,
+				code:   modelStateCode(m),
+				message: fmt.Sprintf("model %q is not ready after the preempted wait of %s: %q holds its shared GPU at a higher priority; the request is recorded as demand",
+					modelName, preemptedBound, holder),
+			})
+			return &preemptedRefusal{model: modelName, holder: holder, waited: preemptedBound}
+		case <-queueCtx.Done():
+			// Distinguish an actual queue timeout from caller cancellation.
+			queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
+			// Claim the item before returning so a later queue drain cannot
+			// forward a request whose client has already disconnected, then
+			// take it out of the queue so its slot is free at once.
+			if !qr.responded.CompareAndSwap(false, true) {
+				// A drain claimed the request first and is writing its
+				// response: wait until it is done with the writer.
+				<-qr.done
+				return qr.err
+			}
+			queue.forget()
+			if stderrors.Is(queueCtx.Err(), context.DeadlineExceeded) {
+				m := p.peekModel(ctx, modelName)
+				w.Header().Set(headerActivation, activationValue(m))
+				if prefersWait {
+					p.writeLaneError(w, m, laneError{
+						status:  http.StatusServiceUnavailable,
+						code:    modelStateCode(m),
+						message: fmt.Sprintf("model %q is not ready after the preferred wait of %s; activation continues", modelName, timeout),
+					})
+				} else {
+					p.writeLaneError(w, m, laneError{
+						status:  http.StatusGatewayTimeout,
+						errType: validation.ErrorTypeTimeout,
+						code:    modelStateCode(m),
+						message: "Timeout waiting for model to become ready (waited " + timeout.String() + ")",
+					})
+				}
+			}
+			if stderrors.Is(queueCtx.Err(), context.Canceled) {
+				return fmt.Errorf("queue canceled for model %s: %w", modelName, queueCtx.Err())
+			}
+			return fmt.Errorf("queue timeout for model %s", modelName)
 		}
-		return fmt.Errorf("queue timeout for model %s", modelName)
 	}
 }
 
@@ -329,6 +442,8 @@ func (p *Proxy) drainQueue(queue *RequestQueue) {
 
 // takeQueued removes and returns every request currently in the queue.
 func takeQueued(queue *RequestQueue) []*QueuedRequest {
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
 	var batch []*QueuedRequest
 	for {
 		select {
@@ -354,8 +469,13 @@ func (p *Proxy) drainQueueWithError(queue *RequestQueue, err error) {
 		m = p.peekModel(ctx, queue.model)
 	}
 	for {
-		select {
-		case qr := <-queue.items:
+		batch := takeQueued(queue)
+		if len(batch) == 0 {
+			// Queue is empty
+			p.queues.Delete(queue.model)
+			return
+		}
+		for _, qr := range batch {
 			queueDepth.WithLabelValues(queue.model).Dec()
 			qr.err = err
 			if qr.responded.CompareAndSwap(false, true) {
@@ -386,10 +506,6 @@ func (p *Proxy) drainQueueWithError(queue *RequestQueue, err error) {
 				}
 			}
 			close(qr.done)
-		default:
-			// Queue is empty
-			p.queues.Delete(queue.model)
-			return
 		}
 	}
 }

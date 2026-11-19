@@ -75,9 +75,10 @@ type lastAccessHeartbeat struct {
 	// released is set once this replica has written a release and cleared
 	// by its next demand write, which must not be skipped as redundant.
 	released bool
-	// interactiveAt is the last boundary of a client request, as opposed to
-	// a job's forward: the job runner keeps a lane's idle window when a
-	// client used it recently.
+	// interactiveAt is the last boundary of a client request the proxy
+	// forwarded to the backend, as opposed to a job's forward or a request
+	// the proxy answered itself: the job runner keeps a lane's idle window
+	// when a client used it recently.
 	interactiveAt time.Time
 	wake          chan struct{}
 }
@@ -129,10 +130,23 @@ func (p *Proxy) lastAccessHeartbeatFor(modelName string) *lastAccessHeartbeat {
 	return heartbeat
 }
 
-// A request that is not a job's forward (jobForwardContext) also counts as
-// interactive use of the lane at both of its boundaries.
+// startLastAccessHeartbeat joins a request the proxy forwards to the lane's
+// backend to the lane's demand heartbeat. A forward that is not a job's
+// (jobForwardContext) also counts as interactive use of the lane at both of
+// its boundaries.
 func (p *Proxy) startLastAccessHeartbeat(ctx context.Context, modelName string) func() {
-	interactive := !isJobForward(ctx)
+	return p.startDemandHeartbeat(modelName, !isJobForward(ctx))
+}
+
+// startDemandHeartbeat joins a request to the lane's demand heartbeat; the
+// returned func leaves it. interactive marks heartbeat.interactiveAt at both
+// boundaries, which keeps the job runner from releasing the lane
+// (releaseJobLane). Only a request that reaches the backend marks it: a
+// request waiting in the cold-start queue joins with interactive false, so a
+// request the proxy then refuses (a Prefer: wait=0 probe, the preempted wait,
+// a queue timeout) is demand but not interactive use. The drain forwards a
+// queued request through trackAndServe, which marks it then.
+func (p *Proxy) startDemandHeartbeat(modelName string, interactive bool) func() {
 	heartbeat := p.lastAccessHeartbeatFor(modelName)
 	heartbeat.mu.Lock()
 	heartbeat.requests++
