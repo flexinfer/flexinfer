@@ -283,6 +283,152 @@ def _env_bool(name: str, default: bool = False) -> bool:
     return value.strip().lower() in ("1", "true", "yes", "on")
 
 
+# --- non-finite output guard --------------------------------------------------
+#
+# A decode that produces NaN or Inf pixels still turns into a PNG: diffusers
+# casts the float image to uint8 in numpy_to_pil (the "invalid value
+# encountered in cast" RuntimeWarning from image_processor.py), and what comes
+# out is garbage that the server used to return with HTTP 200. On 2026-11-19
+# the Qwen-Image 2.1 lane did exactly that on the 7900 XTX runtime pod (row
+# gfx1100-xtx-inpod-qwen-image-gate-2026-11-19 in .loom/60-validation-matrix.md):
+# the warmup decoded NaN, the first real render was flat and noisy tiles, and
+# every later render in the process was sound. The cause is not known.
+#
+# The guard asks image pipelines for output_type="np" (the float image in
+# [0, 1] that the "pil" path would have cast), checks it with one np.isfinite
+# pass, and converts it to PIL with the pipeline's own numpy_to_pil, so sound
+# output gives the same bytes as before. Video pipelines (Wan) already return
+# float frames, so the same check runs on them as is.
+#
+#   NONFINITE_GUARD=1            check outputs at all (0 restores the old path)
+#   NONFINITE_RENDER_RETRIES=1   re-runs of a request whose output is non-finite
+#   WARMUP_NONFINITE_RETRIES=2   re-runs of a warmup pass whose output is non-finite
+#   WARMUP_NONFINITE_STRICT=0    1: fail startup when a warmup stays non-finite
+
+# Occurrence counters, reported under "nonfinite" by GET /health.
+_nonfinite_counts = {
+    "warmup": 0,  # warmup passes whose output held non-finite values
+    "warmup_unrecovered": 0,  # warmup resolutions still non-finite after retries
+    "render": 0,  # request renders (attempts) whose output held non-finite values
+    "render_recovered": 0,  # requests whose retry came back finite
+    "render_failed": 0,  # requests answered with HTTP 500 nonfinite_output
+}
+
+
+class WarmupNonFiniteError(RuntimeError):
+    """A warmup pass stayed non-finite and WARMUP_NONFINITE_STRICT=1."""
+
+
+def _nonfinite_guard_enabled() -> bool:
+    return _env_bool("NONFINITE_GUARD", True)
+
+
+def _env_retries(name: str, default: int) -> int:
+    value = _env_int(name)
+    return default if value is None or value < 0 else value
+
+
+def _float_ndarray(value) -> bool:
+    try:
+        import numpy as np
+    except ImportError:
+        return False
+    return isinstance(value, np.ndarray) and value.dtype.kind == "f"
+
+
+def _nonfinite_count(pixels) -> Optional[int]:
+    """Count NaN/Inf values in a decoded float image or video array.
+
+    Returns None when the output cannot be checked (a list of PIL images from a
+    pipeline that ignored output_type, or numpy missing), so callers treat it
+    as unchecked rather than as bad. Cost: one np.isfinite pass, a few
+    milliseconds for a 1024x1024 RGB image.
+    """
+    if not _float_ndarray(pixels):
+        return None
+    import numpy as np
+
+    finite = np.isfinite(pixels)
+    return int(pixels.size - np.count_nonzero(finite))
+
+
+def _numpy_to_pil(images):
+    """Copy of diffusers' numpy_to_pil, used when a pipeline exposes neither its
+    image processor's nor its own."""
+    if images.ndim == 3:
+        images = images[None, ...]
+    images = (images * 255).round().astype("uint8")
+    if images.shape[-1] == 1:
+        return [Image.fromarray(image.squeeze(), mode="L") for image in images]
+    return [Image.fromarray(image) for image in images]
+
+
+def _first_pil_image(pipe, images):
+    """The first output image as PIL, converted the way the pipeline would have
+    converted it for output_type="pil"."""
+    if not _float_ndarray(images):
+        return images[0]
+    convert = getattr(getattr(pipe, "image_processor", None), "numpy_to_pil", None)
+    if convert is None:
+        convert = getattr(pipe, "numpy_to_pil", None)
+    if convert is None:
+        convert = _numpy_to_pil
+    return convert(images[:1])[0]
+
+
+def _release_gpu_memory() -> None:
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _guarded_render(render, pixels, label: str):
+    """Run render() and check pixels(result) for NaN/Inf.
+
+    A non-finite result is logged, counted and rendered again (render() must
+    rebuild its own generator so the retry uses the same seed), up to
+    NONFINITE_RENDER_RETRIES times. If every attempt is non-finite the request
+    fails with HTTP 500 and a typed detail instead of returning a garbage
+    image. Whether a retry helps is not known: on 2026-11-19 the render after
+    the bad one was sound, so one retry is the default.
+    """
+    if not _nonfinite_guard_enabled():
+        return render()
+    attempts = 1 + _env_retries("NONFINITE_RENDER_RETRIES", 1)
+    bad = 0
+    for attempt in range(1, attempts + 1):
+        result = render()
+        bad = _nonfinite_count(pixels(result))
+        if not bad:
+            if attempt > 1:
+                _nonfinite_counts["render_recovered"] += 1
+                print(f"[nonfinite] {label}: attempt {attempt} is finite; serving it")
+            return result
+        _nonfinite_counts["render"] += 1
+        retrying = attempt < attempts
+        print(
+            f"[nonfinite] {label}: decoded output holds {bad} NaN/Inf values "
+            f"(attempt {attempt}/{attempts}); "
+            + ("rendering again with the same seed" if retrying else "giving up")
+        )
+        sys.stdout.flush()
+        del result
+        _release_gpu_memory()
+    _nonfinite_counts["render_failed"] += 1
+    raise HTTPException(
+        status_code=500,
+        detail={
+            "type": "nonfinite_output",
+            "message": (
+                f"the decoded output held NaN/Inf values on all {attempts} "
+                "attempt(s); no image was returned because it would be garbage"
+            ),
+            "attempts": attempts,
+            "nonfinite_values": bad,
+        },
+    )
+
+
 def _is_sdxl_turbo(model_id: str) -> bool:
     model_id = (model_id or "").lower()
     return "sdxl-turbo" in model_id or "sdxl_turbo" in model_id
@@ -2427,41 +2573,33 @@ def warmup_inference():
     )
     sys.stdout.flush()
 
+    guard = _nonfinite_guard_enabled()
+    attempts = 1 + (_env_retries("WARMUP_NONFINITE_RETRIES", 2) if guard else 0)
+    unrecovered = []
     for w, h in resolutions:
-        t0 = time.time()
-        try:
-            gen = torch.Generator(device="cpu").manual_seed(42)
-            kw = {
-                "prompt": "warmup",
-                "num_inference_steps": warmup_steps,
-                "generator": gen,
-                "height": h,
-                "width": w,
-                "guidance_scale": warmup_guidance,
-            }
-            if PIPELINE_MODE == "inpainting":
-                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
-                kw["mask_image"] = Image.new("L", (w, h), 255)
-                if not _pipeline_is_flux_like(pipeline, current_model):
-                    kw["strength"] = 0.5
-            elif PIPELINE_MODE == "instruct":
-                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
-            elif PIPELINE_MODE == "img2img":
-                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
-                kw["strength"] = 0.5
-            elif PIPELINE_MODE == "controlnet":
-                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
-                kw["control_image"] = Image.new("RGB", (w, h), (128, 128, 128))
-                kw["controlnet_conditioning_scale"] = 0.5
-            with torch.inference_mode():
-                _call_pipeline(pipeline, kw)
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            elapsed = time.time() - t0
-            print(f"  Warmup {w}x{h} complete in {elapsed:.1f}s")
-        except Exception as e:
-            elapsed = time.time() - t0
-            print(f"  Warmup {w}x{h} failed after {elapsed:.1f}s (non-fatal): {e}")
+        for attempt in range(1, attempts + 1):
+            bad = _warmup_pass(w, h, warmup_steps, warmup_guidance, guard)
+            if not bad:
+                break
+            _nonfinite_counts["warmup"] += 1
+            if attempt < attempts:
+                print(
+                    f"  Warmup {w}x{h} decoded {bad} NaN/Inf values "
+                    f"(attempt {attempt}/{attempts}); repeating the warmup pass. "
+                    "A repeat is not known to clear this: on 2026-11-19 the "
+                    "warmup and the first real render were both bad and the "
+                    "render after them was sound"
+                )
+            else:
+                _nonfinite_counts["warmup_unrecovered"] += 1
+                unrecovered.append(f"{w}x{h}")
+                print(
+                    f"  ERROR: warmup {w}x{h} decoded NaN/Inf values on all "
+                    f"{attempts} attempt(s). Renders from this process may be "
+                    "garbage; requests are checked and retried "
+                    "(NONFINITE_RENDER_RETRIES)"
+                )
+            sys.stdout.flush()
 
         # Free VRAM between resolutions to avoid OOM on the next size
         gc.collect()
@@ -2469,9 +2607,73 @@ def warmup_inference():
             torch.cuda.empty_cache()
         sys.stdout.flush()
 
+    if unrecovered and _env_bool("WARMUP_NONFINITE_STRICT", False):
+        message = (
+            f"warmup output stayed non-finite at {', '.join(unrecovered)}; "
+            "WARMUP_NONFINITE_STRICT=1, so startup fails and the lane never "
+            "goes Ready"
+        )
+        print(f"FATAL: {message}")
+        sys.stdout.flush()
+        raise WarmupNonFiniteError(message)
+
     print("All warmup passes complete")
     warmup_complete = True
     sys.stdout.flush()
+
+
+def _warmup_pass(w: int, h: int, steps: int, guidance, guard: bool) -> Optional[int]:
+    """One warmup inference at w x h. Returns the number of NaN/Inf values in
+    the decoded output when the guard can check it, else None. A pipeline error
+    is logged and treated as non-fatal, as before the guard existed."""
+    t0 = time.time()
+    bad = None
+    try:
+        gen = torch.Generator(device="cpu").manual_seed(42)
+        kw = {
+            "prompt": "warmup",
+            "num_inference_steps": steps,
+            "generator": gen,
+            "height": h,
+            "width": w,
+            "guidance_scale": guidance,
+        }
+        if PIPELINE_MODE == "inpainting":
+            kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+            kw["mask_image"] = Image.new("L", (w, h), 255)
+            if not _pipeline_is_flux_like(pipeline, current_model):
+                kw["strength"] = 0.5
+        elif PIPELINE_MODE == "instruct":
+            kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+        elif PIPELINE_MODE == "img2img":
+            kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+            kw["strength"] = 0.5
+        elif PIPELINE_MODE == "controlnet":
+            kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+            kw["control_image"] = Image.new("RGB", (w, h), (128, 128, 128))
+            kw["controlnet_conditioning_scale"] = 0.5
+        if guard:
+            kw["output_type"] = "np"
+        with torch.inference_mode():
+            result = _call_pipeline(pipeline, kw)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        if guard:
+            pixels = getattr(result, "images", None)
+            if pixels is None:
+                pixels = getattr(result, "frames", None)
+            bad = _nonfinite_count(pixels)
+        del result
+        elapsed = time.time() - t0
+        if bad:
+            print(f"  Warmup {w}x{h} finished in {elapsed:.1f}s with non-finite output")
+        else:
+            print(f"  Warmup {w}x{h} complete in {elapsed:.1f}s")
+    except Exception as e:
+        elapsed = time.time() - t0
+        print(f"  Warmup {w}x{h} failed after {elapsed:.1f}s (non-fatal): {e}")
+    sys.stdout.flush()
+    return bad
 
 
 @asynccontextmanager
@@ -2484,6 +2686,8 @@ async def lifespan(app: FastAPI):
     model_id = os.environ.get("MODEL_ID", os.environ.get("MODEL", ""))
     if model_id:
         load_pipeline(model_id)
+        # Raises WarmupNonFiniteError under WARMUP_NONFINITE_STRICT=1; uvicorn
+        # then reports "Application startup failed" and exits non-zero.
         warmup_inference()
     yield
     # Shutdown
@@ -2509,6 +2713,7 @@ async def health():
             "ready": ready,
             "model": current_model,
             "gpu": gpu_info,
+            "nonfinite": dict(_nonfinite_counts),
         },
     )
 
@@ -2675,7 +2880,6 @@ async def generate_video(request: VideoGenerationRequest):
                     last_step_at = time.perf_counter()
                 return callback_kwargs
 
-            generator = torch.Generator(device="cpu").manual_seed(seed)
             kwargs = {
                 "prompt": request.prompt,
                 "num_frames": num_frames,
@@ -2683,7 +2887,6 @@ async def generate_video(request: VideoGenerationRequest):
                 "guidance_scale": guidance_scale,
                 "height": height,
                 "width": width,
-                "generator": generator,
                 "callback_on_step_end": _record_last_denoising_step,
                 "callback_on_step_end_tensor_inputs": [],
             }
@@ -2695,10 +2898,27 @@ async def generate_video(request: VideoGenerationRequest):
                 )
                 kwargs["video"] = condition_video
                 kwargs["mask"] = condition_mask
-            with torch.inference_mode():
-                result = pipe(**kwargs)
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
+
+            def _render():
+                # Wan returns float frames (output_type "np"), so the
+                # non-finite guard checks them as they are. A retry rebuilds
+                # the generator from the same seed and restarts the timings.
+                nonlocal started_at, last_step_at
+                started_at = time.perf_counter()
+                last_step_at = None
+                kwargs["generator"] = torch.Generator(device="cpu").manual_seed(seed)
+                with torch.inference_mode():
+                    out = pipe(**kwargs)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                return out
+
+            result = _guarded_render(
+                _render,
+                lambda r: r.frames,
+                f"video model={model_id} size={width}x{height} "
+                f"frames={num_frames} seed={seed}",
+            )
             pipeline_returned_at = time.perf_counter()
             if last_step_at is None:
                 last_step_at = pipeline_returned_at
@@ -2879,10 +3099,13 @@ async def generate_images(request: ImageGenerationRequest):
         # a blank image + full mask so a single Fill model can serve both
         # /v1/images/generations and /v1/images/edits endpoints.
         is_fill = isinstance(pipe, FluxFillPipeline)
+        guard = _nonfinite_guard_enabled()
         results = []
-        for i in range(request.n):
+
+        def _render_one(i):
             # Seed handling: if seed is provided, use it for reproducibility.
             # For multi-image (n>1), increment seed per image to get variation.
+            # The generator is built here so a non-finite retry reuses the seed.
             gen = None
             if request.seed is not None:
                 img_seed = request.seed + i
@@ -2930,13 +3153,26 @@ async def generate_images(request: ImageGenerationRequest):
                             gen_kwargs["controlnet_conditioning_scale"] = cn_scale
                     if gen is not None:
                         gen_kwargs["generator"] = gen
-                    result = _call_pipeline(pipe, gen_kwargs, model_id)
-            img = result.images[0]
+                    if guard:
+                        # Float pixels, checked before they become uint8.
+                        gen_kwargs["output_type"] = "np"
+                    return _call_pipeline(pipe, gen_kwargs, model_id)
+
+        for i in range(request.n):
+            seed = request.seed + i if request.seed is not None else None
+            result = _guarded_render(
+                lambda i=i: _render_one(i),
+                lambda r: r.images,
+                f"image {i + 1}/{request.n} model={model_id} "
+                f"size={width}x{height} seed={seed}",
+            )
+            img = _first_pil_image(pipe, result.images)
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")
             b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
             results.append(ImageData(b64_json=b64_data))
             del result, img, buffer  # break reference cycles
+
         # Critical: gc.collect() BEFORE empty_cache() to free PyTorch tensors
         # held by Python reference cycles from the diffusers pipeline + CPU offload hooks.
         # Without this, consecutive generations leak ~10-20GB of host RAM.

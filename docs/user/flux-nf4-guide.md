@@ -134,6 +134,25 @@ These keys go in `spec.config` on the Model CR. The controller translates them t
 | `compilationCache` | (compilation cache volume) | `true`, `false` | `false` | Persist MIOpen/Triton kernel cache across restarts |
 | `hipVisibleDevices` | `HIP_VISIBLE_DEVICES` | device indices | (all) | Restrict visible GPU devices |
 
+### Non-finite output checks (env only)
+
+`build/server-diffusers.py` checks every decoded image and video for NaN or Inf pixels before it encodes them. Without the check, a NaN decode still becomes a PNG: diffusers casts it to uint8 (the `invalid value encountered in cast` warning from `image_processor.py`) and the server returned the garbage with HTTP 200. That happened on 2026-11-19 with Qwen-Image 2.1 on the 7900 XTX runtime pod (row `gfx1100-xtx-inpod-qwen-image-gate-2026-11-19` in `.loom/60-validation-matrix.md`): the warmup decoded NaN, the first real render was flat and noisy tiles, and every later render was sound. The cause is not known.
+
+For images the server asks the pipeline for `output_type="np"` (the float pixels the PNG path would have cast), runs one `np.isfinite` pass over them (a few milliseconds at 1024x1024), and converts them with the pipeline's own `numpy_to_pil`, so a sound render gives the same PNG bytes as before. Wan video already returns float frames and gets the same check. A pipeline whose `__call__` has no `output_type` is served unchecked. `/v1/images/edits` and `/v1/images/variations` are not checked.
+
+These have no Model config key; set them under `spec.env` on the Model.
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `NONFINITE_GUARD` | `1` | `0` turns every check below off and restores the old call exactly |
+| `NONFINITE_RENDER_RETRIES` | `1` | How many times a request whose output is non-finite is rendered again, with the same seed and parameters. If every attempt is non-finite the request fails with HTTP 500 and `{"detail": {"type": "nonfinite_output", ...}}` instead of returning an image |
+| `WARMUP_NONFINITE_RETRIES` | `2` | How many times a warmup pass (per resolution in `WARMUP_RESOLUTIONS`) whose output is non-finite is repeated. A repeat is not known to clear the fault: on 2026-11-19 the 4-step warmup and the next 40-step render were both bad, and the render after that was good |
+| `WARMUP_NONFINITE_STRICT` | `0` | `1`: if a warmup resolution is still non-finite after its repeats, startup fails (uvicorn exits non-zero) and the lane never goes Ready. `0`: an error is logged and the server goes Ready as before |
+
+Each occurrence is logged with a `[nonfinite]` prefix (warmup lines name the resolution), and `GET /health` reports counts under `nonfinite`: `warmup`, `warmup_unrecovered`, `render`, `render_recovered`, `render_failed`.
+
+To test a lane's first renders after a load end to end, run `scripts/render-gate.py` (four renders, seeds S, S+1, S+2, S, scored for transparency, flat 64x64 blocks, channel statistics and same-seed match; `--verdict` re-scores a saved run).
+
 ### GPU Spec Fields
 
 | Field | Type | Description |
