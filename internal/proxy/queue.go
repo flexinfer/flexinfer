@@ -39,6 +39,9 @@ type QueuedRequest struct {
 	// rank is the QoS class rank on a lane that enforces classes, 0 elsewhere;
 	// drainQueue serves lower ranks first, FIFO within a rank.
 	rank int
+	// aborted is set by the drain before it closes done when serving the
+	// request panicked after part of the response went out (serveDrained).
+	aborted bool
 }
 
 // RequestQueue holds requests for a model during cold start.
@@ -271,11 +274,8 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 		case <-qr.done:
 			// Request was processed
 			queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
-			if qr.err != nil {
-				return qr.err
-			}
 			// Success metrics recorded by the processing goroutine
-			return nil
+			return qr.finish()
 		case <-preemptedC:
 			preemptedC = nil
 			m := p.peekModel(ctx, modelName)
@@ -309,7 +309,7 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 				// A drain claimed the request first and is writing its
 				// response: wait until it is done with the writer.
 				<-qr.done
-				return qr.err
+				return qr.finish()
 			}
 			queue.forget()
 			if stderrors.Is(queueCtx.Err(), context.DeadlineExceeded) {
@@ -497,8 +497,7 @@ func (p *Proxy) drainQueue(queue *RequestQueue) {
 			queueDepth.WithLabelValues(queue.model).Dec()
 			// Only one goroutine may write a response for a queued request.
 			if qr.responded.CompareAndSwap(false, true) {
-				start := time.Now()
-				p.trackAndServe(qr.w, withColdStartDrain(qr.r), qr.modelName, start)
+				p.serveDrained(qr)
 			}
 			close(qr.done)
 		}

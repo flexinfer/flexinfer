@@ -384,14 +384,18 @@ The proxy decides from the Model status in its informer cache, with no API-serve
 - `status.sharedGroup.preemptedBy` names a Model (not a park class such as `primary/` or
   `gpu-lease/`) in the same shared group whose `status.sharedGroup.state` is `Active`;
 - that Model's `gpu.priority` is strictly higher than the lane's;
-- that Model has no standing release: no `status.releasedAt` that is newer than or in the same
-  second as its `lastActiveTime` (the controller's `releaseStanding`). A released holder gives the
-  card up after the 45 s release grace, so the lane is about to come back;
-- for a lane with `spec.config.warmPolicy: primary` only: that Model's demand (`lastActiveTime`, or
-  an activation request from the last 30 min) is within its activity window (2 min, or its
-  `idleTimeout` when shorter for a scale-to-zero holder). A warm primary reclaims the card from an
-  idle holder of any priority, so once the holder's demand lapses its request keeps the full wait.
-  An on-demand lane has no such reclaim and returns only when the holder idles out or is released.
+- that Model has not handed the card back. It has handed it back when it carries a standing
+  release (a `status.releasedAt` newer than or in the same second as its `lastActiveTime`, the
+  controller's `releaseStanding`) and a release scales it off the card: it is serverless with
+  `minReplicas: 0` and is not a warm primary. Such a holder gives the card up after the 45 s release
+  grace, so the lane is about to come back. A released holder that is not serverless, has
+  `minReplicas >= 1` or is a warm primary keeps its replica and the card;
+- for a lane with `spec.config.warmPolicy: primary` behind a holder that is not a warm primary
+  itself: that Model's demand (`lastActiveTime`, or an activation request from the last 30 min) is
+  within its activity window (2 min, or its `idleTimeout` when shorter for a scale-to-zero holder).
+  A warm primary reclaims the card from an idle holder of any priority that is not a warm primary,
+  so once that holder's demand lapses its request keeps the full wait. An on-demand lane has no such
+  reclaim and returns only when the holder idles out or is released.
 
 When the bound fires the proxy reads the status again; a lane that has taken the card in the
 meantime keeps the request for its load, up to the cold-start timeout. Everything else keeps the
@@ -416,6 +420,13 @@ its client disconnects. A slot is therefore taken only while a client waits on i
 means that many clients are waiting now. A lane has one queue and one activation at a time: the
 queue stays registered while its activation waits, even with no request in it, and the stale-queue
 sweeper only removes a queue whose activation has ended.
+
+A queued request is served on the activation's goroutine once the lane is Ready. A failure while
+serving it (the client leaving mid-stream, the upstream resetting after the headers, or any other
+panic) ends only that request: the queue goes on with the next one. If nothing was sent yet the
+client gets a 500; if the response was cut short, its connection is closed, as for a request
+served directly. A job's forward that fails this way is retried as a lost response (502
+`no_response`).
 
 ## Structured outputs and tool calls
 

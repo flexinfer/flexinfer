@@ -142,7 +142,31 @@ func TestLosingCardTo(t *testing.T) {
 			c.Status.ReleasedAt = ago(5 * time.Second)
 			c.Status.ActivationRequestedAt = ago(time.Minute)
 		}, want: "creative"},
+		// A release scales only a serverless scale-to-zero holder off the
+		// card (desiredReplicas); others keep it.
+		{name: "released holder with minReplicas 1 keeps the card", mutate: func(_, c *aiv1alpha2.Model) {
+			one := int32(1)
+			c.Spec.Serverless = &aiv1alpha2.ServerlessSpec{MinReplicas: &one}
+			c.Status.LastActiveTime = ago(10 * time.Second)
+			c.Status.ReleasedAt = ago(5 * time.Second)
+		}, want: "creative"},
+		{name: "released holder that is not serverless keeps the card", mutate: func(_, c *aiv1alpha2.Model) {
+			off := false
+			c.Spec.Serverless = &aiv1alpha2.ServerlessSpec{Enabled: &off}
+			c.Status.LastActiveTime = ago(10 * time.Second)
+			c.Status.ReleasedAt = ago(5 * time.Second)
+		}, want: "creative"},
+		{name: "released warm-primary holder keeps the card", mutate: func(_, c *aiv1alpha2.Model) {
+			setWarmPolicy(c, "primary")
+			c.Status.LastActiveTime = ago(10 * time.Second)
+			c.Status.ReleasedAt = ago(5 * time.Second)
+		}, want: "creative"},
 		// Warm primary: reclaims the card from a holder whose demand lapsed.
+		{name: "warm primary behind a higher warm primary does not reclaim", mutate: func(w, c *aiv1alpha2.Model) {
+			setWarmPolicy(w, "primary")
+			setWarmPolicy(c, "primary")
+			c.Status.LastActiveTime = ago(10 * time.Minute)
+		}, want: "creative"},
 		{name: "warm primary behind a holder with fresh demand", mutate: func(w, c *aiv1alpha2.Model) {
 			setWarmPolicy(w, "primary")
 			c.Status.LastActiveTime = ago(30 * time.Second)

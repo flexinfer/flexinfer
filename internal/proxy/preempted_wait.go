@@ -73,9 +73,11 @@ const warmPolicyPrimary = "primary"
 //     group with state Active, so it holds the card or is loading onto it;
 //   - that Model's gpu.priority is strictly higher than m's;
 //   - that Model has not handed the card back: it carries no standing
-//     release (holderReleaseStanding);
-//   - when m is a warm primary (spec.config.warmPolicy: primary), that
-//     Model's demand is still inside its activity window.
+//     release (holderReleaseStanding), or it is a holder a release does not
+//     scale off the card (releaseFreesCard);
+//   - when m is a warm primary (spec.config.warmPolicy: primary) and that
+//     Model is not one, that Model's demand is still inside its activity
+//     window.
 //
 // The election hands the card to a demanded lane only when it outranks the
 // holder, or ties it while the holder is idle (chooseSharedGroupLeader in
@@ -83,13 +85,14 @@ const warmPolicyPrimary = "primary"
 // the holder to idle out or be released, whatever its own demand. Two
 // handovers do come on a short clock, and m keeps the full wait for both:
 //
-//   - A holder with a standing release gives the card up after the
+//   - A scale-to-zero holder with a standing release gives the card up after the
 //     controller's 45 s releaseGrace (the job runner wrote releasedAt after
 //     its last job). m is about to come back, so its request waits for it.
 //   - A warm primary reclaims the card from a holder whose demand is older
 //     than the holder's activity window (2 min, or its idleTimeout when that
 //     is shorter and the holder scales to zero), even from a higher-priority
-//     holder; the swap cooldown delays it by at most 5 min more. While the
+//     holder that is not a warm primary itself; the swap cooldown delays it
+//     by at most 5 min more. While the
 //     holder's demand is fresh (a job or a client keeps stamping it) the
 //     primary cannot reclaim, and that can last as long as the holder is
 //     used, so the bound still applies then. An on-demand lane (the XTX warm
@@ -129,13 +132,27 @@ func (p *Proxy) losingCardTo(ctx context.Context, m *aiv1alpha2.Model) string {
 		return ""
 	}
 	now := time.Now()
-	if holderReleaseStanding(holder, now) {
+	if releaseFreesCard(holder) && holderReleaseStanding(holder, now) {
 		return ""
 	}
-	if isWarmPrimaryLane(m) && !holderDemandFresh(holder, now) {
+	// chooseSharedGroupLeader reclaims for a warm primary only from a Ready
+	// holder that is not itself a warm primary (!isWarmPrimaryModel).
+	if isWarmPrimaryLane(m) && !isWarmPrimaryLane(holder) && !holderDemandFresh(holder, now) {
 		return ""
 	}
 	return holderName
+}
+
+// releaseFreesCard reports whether a standing release on m makes the
+// controller scale m off the card. The release acts through desiredReplicas
+// (controllers/model_helpers.go): a Model that is not serverless keeps one
+// replica before the release is looked at, and a released serverless Model
+// scales to minReplicas, which shouldKeepWarmPrimary raises to 1 for a warm
+// primary. Only a serverless, scale-to-zero, non-primary holder gives the
+// card back, the same condition sharedActivityWindow uses for its idle
+// window.
+func releaseFreesCard(m *aiv1alpha2.Model) bool {
+	return m.Spec.IsServerless() && m.Spec.GetMinReplicas() == 0 && !isWarmPrimaryLane(m)
 }
 
 // holderReleaseStanding reports whether m carries a release no demand has
