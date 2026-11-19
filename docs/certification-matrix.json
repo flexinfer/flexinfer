@@ -272,13 +272,13 @@
       "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
-      "decision": "conditional",
+      "decision": "fail",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#xtx-s7-embed-host-2026-11-05",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-swap-2026-11-19",
       "validation_rows": [
-        "xtx-s7-embed-host-2026-11-05"
+        "gfx1100-xtx-inpod-swap-2026-11-19"
       ],
-      "date": "2026-11-05",
+      "date": "2026-11-19",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -1846,6 +1846,22 @@
       "title": "owner-window step D3: the XTX Qwen-Image 2.1 lane served in-pod by the 7900 XTX runtime (!1236; the lane is not named here because this row fails the in-pod launch only, and the dedicated lane's…",
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-qwen-image-gate-2026-11-19",
+      "date": "2026-11-19",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-swap-2026-11-19",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "KT-SWAP in-pod swap floor, fallback arm of row gfx1100-xtx-inpod-swap-2026-11-01 (the XTX warm lane alone, 5 reloads): Qwen-Image failed its in-pod gate twice that day (row…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-swap-2026-11-19",
       "date": "2026-11-19",
       "source": ".loom/60-validation-matrix.md"
     },
