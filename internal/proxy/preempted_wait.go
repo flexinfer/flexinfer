@@ -184,14 +184,21 @@ func (p *Proxy) losingCardTo(ctx context.Context, m *aiv1alpha2.Model) string {
 //   - it is not a failover stand-in, which ranks as the Model it stands in
 //     for, a rank the proxy does not resolve.
 //
-// A multi-model group admits every wanter that fits, highest priority first,
-// so a higher-priority wanter need not keep m off the card; no contender is
-// named there and m keeps the full wait. The group is multi-model when the
-// GPUProfile for the architecture in m's nodeSelector sets
-// features.multiModel (sharedGroupMultiModel in
-// controllers/model_shared_gpu.go reads the same label and flag), or when a
-// member besides the holder is Active, which only a multi-model group allows
-// for long.
+// A multi-model group admits the leader and then every other wanter that
+// fits the GPUProfile's vramMB, highest priority first
+// (chooseSharedGroupLeadersBounded), so a higher-priority wanter keeps m off
+// the card only when the two do not fit together. The group is multi-model
+// when the GPUProfile for the architecture of m's nodeSelector sets
+// features.multiModel: sharedGroupMultiModel in
+// controllers/model_shared_gpu.go resolves it with the same
+// gpu.ArchFromLabels, whose hostname heuristic maps a hostname-only selector
+// such as the XTX lanes' to gfx1100. There a contender is named only when its
+// gpu.vramEstimateMB and m's sum past the budget (the XTX warm lane, 23200,
+// beside an 18000 creative lane, on a 24576 card); when they fit, or the
+// profile sets no budget, m may be admitted beside it and keeps the full
+// wait. Higher wanters that would take budget ahead of m are not counted,
+// which errs toward the long wait. A member besides the holder that is
+// Active also keeps the full wait (see above).
 //
 // A warm primary m reclaims the card from an idle holder that is not a warm
 // primary, ahead of a lower-ranked wanter (chooseSharedGroupLeader): a
@@ -213,11 +220,9 @@ func (p *Proxy) outrankingContender(ctx context.Context, m, holder *aiv1alpha2.M
 	if err := p.client.List(ctx, &list, client.InNamespace(m.Namespace)); err != nil {
 		return ""
 	}
-	if p.groupIsMultiModel(ctx, m) {
-		return ""
-	}
 	group := m.Spec.GPU.Shared
-	best, bestPriority := "", m.Spec.GetPriority()
+	var best *aiv1alpha2.Model
+	bestPriority := m.Spec.GetPriority()
 	if isWarmPrimaryLane(m) && !isWarmPrimaryLane(holder) {
 		// Strictly above means at or above the holder's priority.
 		bestPriority = max(bestPriority, holder.Spec.GetPriority()-1)
@@ -244,23 +249,44 @@ func (p *Proxy) outrankingContender(ctx context.Context, m, holder *aiv1alpha2.M
 			continue
 		}
 		if prio := c.Spec.GetPriority(); prio > bestPriority && holderDemandFresh(c, now) {
-			best, bestPriority = c.Name, prio
+			best, bestPriority = c, prio
 		}
 	}
-	return best
+	if best == nil {
+		return ""
+	}
+	if multi, budgetMB := p.sharedGroupBudget(ctx, m); multi &&
+		(budgetMB <= 0 || laneVRAMEstimateMB(best)+laneVRAMEstimateMB(m) <= budgetMB) {
+		// The election may admit m beside the contender.
+		return ""
+	}
+	return best.Name
 }
 
-// groupIsMultiModel reports whether the GPUProfile for the architecture in
-// m's nodeSelector declares a multi-model runtime, as the election resolves
-// it. A selector without an architecture label resolves to single-slot there
-// too.
-func (p *Proxy) groupIsMultiModel(ctx context.Context, m *aiv1alpha2.Model) bool {
+// sharedGroupBudget mirrors sharedGroupMultiModel in
+// controllers/model_shared_gpu.go: whether the GPUProfile for the
+// architecture of m's nodeSelector declares a multi-model runtime, and its
+// vramMB budget. A selector that resolves to no architecture, or to one with
+// no GPUProfile, is single-slot there too.
+func (p *Proxy) sharedGroupBudget(ctx context.Context, m *aiv1alpha2.Model) (bool, int64) {
 	arch := gpu.ArchFromLabels(m.Spec.NodeSelector)
 	if arch == "" {
-		return false
+		return false, 0
 	}
 	profile := p.lookupGPUProfile(ctx, arch)
-	return profile != nil && profile.Features.MultiModel
+	if profile == nil || !profile.Features.MultiModel {
+		return false, 0
+	}
+	return true, profile.VRAMMB
+}
+
+// laneVRAMEstimateMB mirrors vramEstimateMB in
+// controllers/model_shared_gpu.go.
+func laneVRAMEstimateMB(m *aiv1alpha2.Model) int64 {
+	if m == nil || m.Spec.GPU == nil || m.Spec.GPU.VRAMEstimateMB == nil {
+		return 0
+	}
+	return *m.Spec.GPU.VRAMEstimateMB
 }
 
 // contenderReleased mirrors modelReleased in controllers/model_release.go: a

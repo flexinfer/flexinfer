@@ -315,28 +315,72 @@ func TestLosingCardToAfterARelease(t *testing.T) {
 			"a second Active member marks a multi-model group, where the lane may be admitted beside a higher wanter")
 	})
 
-	t.Run("multi-model GPUProfile with only the holder on the card", func(t *testing.T) {
-		warm, creative := releasedCreative()
-		arch := map[string]string{"kubernetes.io/hostname": "xtx", "flexinfer.ai/gpu.arch": "gfx1100"}
-		warm.Spec.NodeSelector, creative.Spec.NodeSelector = arch, arch
-		want := video(500, func(v *aiv1alpha2.Model) {
-			v.Spec.NodeSelector = arch
-			v.Status.LastActiveTime = ago(time.Second)
+	// The election admits wanters beside the leader while their
+	// vramEstimateMB fits the GPUProfile's vramMB
+	// (chooseSharedGroupLeadersBounded). The XTX lanes select the node by
+	// hostname alone, which gpu.ArchFromLabels maps to gfx1100, a multi-model
+	// profile; the 23200 MB warm lane does not fit beside an 18000 MB
+	// creative lane on the 24576 MB card, so the card goes to the creative
+	// lane (KT-JOBS 2026-11-20 run 2: 14 requests held 30-70 s through the
+	// image-to-video handover while the proxy took the group for one where
+	// the warm lane could be admitted).
+	for _, tc := range []struct {
+		name          string
+		selector      map[string]string
+		multiModel    bool
+		budget        int64
+		warmMB, vidMB int64
+		want          string
+	}{
+		{name: "XTX by hostname: the warm lane does not fit beside the wanter",
+			selector:   map[string]string{"kubernetes.io/hostname": "cblevins-7900xtx"},
+			multiModel: true, budget: 24576, warmMB: 23200, vidMB: 18000, want: "video"},
+		{name: "arch label: the two do not fit",
+			selector:   map[string]string{"kubernetes.io/hostname": "xtx", "flexinfer.ai/gpu.arch": "gfx1100"},
+			multiModel: true, budget: 24576, warmMB: 23200, vidMB: 18000, want: "video"},
+		{name: "the two fit: the warm lane may be admitted beside the wanter",
+			selector:   map[string]string{"kubernetes.io/hostname": "cblevins-7900xtx"},
+			multiModel: true, budget: 24576, warmMB: 4000, vidMB: 18000},
+		{name: "exactly at the budget still fits",
+			selector:   map[string]string{"kubernetes.io/hostname": "cblevins-7900xtx"},
+			multiModel: true, budget: 24576, warmMB: 6576, vidMB: 18000},
+		{name: "no budget: every wanter is admitted",
+			selector:   map[string]string{"kubernetes.io/hostname": "cblevins-7900xtx"},
+			multiModel: true, warmMB: 23200, vidMB: 18000},
+		{name: "no estimates count as zero",
+			selector:   map[string]string{"kubernetes.io/hostname": "cblevins-7900xtx"},
+			multiModel: true, budget: 24576},
+		{name: "single-slot profile",
+			selector: map[string]string{"kubernetes.io/hostname": "cblevins-7900xtx"},
+			budget:   24576, warmMB: 4000, vidMB: 4000, want: "video"},
+		{name: "selector with no architecture",
+			selector:   map[string]string{"kubernetes.io/hostname": "elsewhere"},
+			multiModel: true, budget: 24576, warmMB: 4000, vidMB: 4000, want: "video"},
+	} {
+		t.Run("GPUProfile admission: "+tc.name, func(t *testing.T) {
+			warm, creative := releasedCreative()
+			estimate := func(m *aiv1alpha2.Model, mb int64) {
+				if mb > 0 {
+					m.Spec.GPU.VRAMEstimateMB = &mb
+				}
+			}
+			warm.Spec.NodeSelector, creative.Spec.NodeSelector = tc.selector, tc.selector
+			estimate(warm, tc.warmMB)
+			estimate(creative, 18000)
+			want := video(500, func(v *aiv1alpha2.Model) {
+				v.Spec.NodeSelector = tc.selector
+				v.Status.LastActiveTime = ago(time.Second)
+				estimate(v, tc.vidMB)
+			})
+			profile := &aiv1alpha2.GPUProfile{
+				ObjectMeta: metav1.ObjectMeta{Name: "gfx1100", Namespace: "default"},
+				Spec: aiv1alpha2.GPUProfileSpec{Architecture: "gfx1100", VRAMMB: tc.budget,
+					Features: aiv1alpha2.GPUFeatures{MultiModel: tc.multiModel}},
+			}
+			p := newGateTestProxy(t, &touchCounter{}, warm, creative, want, profile)
+			assert.Equal(t, tc.want, p.losingCardTo(context.Background(), warm))
 		})
-		profile := &aiv1alpha2.GPUProfile{
-			ObjectMeta: metav1.ObjectMeta{Name: "gfx1100", Namespace: "default"},
-			Spec: aiv1alpha2.GPUProfileSpec{Architecture: "gfx1100",
-				Features: aiv1alpha2.GPUFeatures{MultiModel: true}},
-		}
-		p := newGateTestProxy(t, &touchCounter{}, warm, creative, want, profile)
-		assert.Empty(t, p.losingCardTo(context.Background(), warm),
-			"the election admits every wanter that fits in a multi-model group")
-
-		profile.Spec.Features.MultiModel = false
-		p = newGateTestProxy(t, &touchCounter{}, warm, creative, want, profile)
-		assert.Equal(t, "video", p.losingCardTo(context.Background(), warm),
-			"a single-slot profile gives the card to the higher wanter")
-	})
+	}
 
 	// A warm primary reclaims the card from the released, idle holder ahead
 	// of any wanter ranked below that holder.
