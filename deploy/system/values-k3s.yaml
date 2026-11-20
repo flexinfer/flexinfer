@@ -376,7 +376,22 @@ proxy:
     # so the direct-load payloads and their specHash are the ones the live
     # controller computes. Rollback = the 6500e342 digest
     # sha256:9b8bbe8a44c9080aba65d490469e36f445ca4a98e3a150624c678893347b1720.
-    digest: "sha256:9d6524000ff8760d9f01351b227248718513cb6cdc2400547346d7a7084e69f0"
+    # 2026-11-20 (2): master 5a796de0 (tag 20261120-164437, master pipeline
+    # 40035, every scan green), proxy only. The 535f56fb build above plus
+    # !1360, the only change under the proxy's packages since then: a released
+    # shared-GPU holder counts as handing the card back to the waiting lane
+    # only when no other member with a strictly higher priority wants it (not
+    # on the card, can take demand, demand in its activity window, no release
+    # of its own past the 45 s grace); no contender is named in a multi-model
+    # group (the GPUProfile flag the election reads, or a second Active
+    # member), and a warm primary counts only contenders at or above the
+    # holder. The preempted wait is armed for every request to a shared-GPU
+    # lane and re-checks every 5 s while the request waits (KT-JOBS
+    # 2026-11-20: 44 requests held to the client timeout around two
+    # releases). backend/, pkg/runtime/ and api/ are unchanged. Rollback =
+    # the 535f56fb digest
+    # sha256:9d6524000ff8760d9f01351b227248718513cb6cdc2400547346d7a7084e69f0.
+    digest: "sha256:6624e3252f07114974d1eb80046762296a890abd62aaac060588fad13935045c"
     pullPolicy: Always
   service:
     type: ClusterIP
