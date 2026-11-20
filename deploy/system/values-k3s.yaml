@@ -357,7 +357,26 @@ proxy:
     # 2026-11-18 16:38Z live-snapshot render compared. Rollback = the
     # 51e6bd81 digest
     # sha256:d0439aacec17a4dc7655a99bd06c72f3dd65018fb9aaf4fc7ac226328fe3cc72.
-    digest: "sha256:9b8bbe8a44c9080aba65d490469e36f445ca4a98e3a150624c678893347b1720"
+    # 2026-11-20: master 535f56fb (tag 20261119-191941, master pipeline 39940,
+    # every scan green), proxy only; the controller pin above stays. The
+    # 6500e342 build plus !1356, the only change under the proxy's packages
+    # since then. (1) A request without Prefer: wait to a shared-GPU lane that
+    # a strictly higher-priority plain Model holds the card against waits at
+    # most the preempted wait (FLEXINFER_PROXY_PREEMPTED_WAIT, default 20 s;
+    # annotation flexinfer.ai/preempted-wait per lane), then gets 503
+    # model_preempted with Retry-After; before, it waited up to the lane's
+    # coldStartTimeout. The bound is checked again when it fires, so a lane the
+    # election admitted in the meantime keeps the request for its load; a park
+    # behind primary/, gpu-lease/ or gaming/ keeps the full wait. (2) A queued
+    # request whose client disconnects frees its cold-start queue slot at once.
+    # (3) A request the proxy refuses with a typed 503 no longer counts as
+    # interactive use. (4) A panic while serving a request drained from the
+    # cold-start queue is recovered; on the 6500e342 build it ends the proxy
+    # process. backend/, pkg/runtime/ and api/ are unchanged since 6500e342,
+    # so the direct-load payloads and their specHash are the ones the live
+    # controller computes. Rollback = the 6500e342 digest
+    # sha256:9b8bbe8a44c9080aba65d490469e36f445ca4a98e3a150624c678893347b1720.
+    digest: "sha256:9d6524000ff8760d9f01351b227248718513cb6cdc2400547346d7a7084e69f0"
     pullPolicy: Always
   service:
     type: ClusterIP
