@@ -28,8 +28,10 @@ pins:
   - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:bdd4bd256cc43c0fb0e23f05b5a62f9eefb984e70caf8af26cde4fb6a2eb60f8
   # Proxy: the !1255 target, master 51e6bd81 (tag 20261105-153904); the rollback for the 6500e342 roll.
   - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:d0439aacec17a4dc7655a99bd06c72f3dd65018fb9aaf4fc7ac226328fe3cc72
-  # Proxy: master 6500e342 (tag 20261118-161042), the 2026-11-18 repin target.
+  # Proxy: master 6500e342 (tag 20261118-161042), the 2026-11-18 repin target; the rollback for the 535f56fb roll.
   - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:9b8bbe8a44c9080aba65d490469e36f445ca4a98e3a150624c678893347b1720
+  # Proxy: master 535f56fb (tag 20261119-191941), the 2026-11-20 repin target.
+  - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:9d6524000ff8760d9f01351b227248718513cb6cdc2400547346d7a7084e69f0
   # Agent: live master ac73e607 (tag 20261104-190946), pinned in values-k3s since !1243.
   - registry.harbor.lan/flexinfer/flexinfer-agent@sha256:6b832f384c69063dc33248709ae715f3398190b8ed00990501bcca3a139d7b8a
   # Scheduler: live master 4546a85d (tag 20261106-171118), pinned in values-k3s since 2026-11-06.
