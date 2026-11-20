@@ -397,10 +397,12 @@ The proxy decides from the Model status in its informer cache, with no API-serve
   a lane after its last job on it and then forwards the group's next job to another lane, whose
   cold-start queue stamps that lane's demand at once, so the card goes there and not to the waiting
   lane. That Model is named in the 503. A failover stand-in is not counted (it ranks as the Model it
-  stands in for). In a multi-model group the lane may be admitted beside a higher wanter, so no
-  contender is named there: the group counts as multi-model when the GPUProfile for the
-  architecture label in the lane's `nodeSelector` sets `features.multiModel` (the election's own
-  switch), or when a member other than the holder is `Active`. For a lane with
+  stands in for). A multi-model group admits other wanters beside the leader while their
+  `gpu.vramEstimateMB` fits the GPUProfile's `vramMB`, so there the contender is named only when it
+  and the lane do not fit together. The group is multi-model when the GPUProfile for the
+  architecture of the lane's `nodeSelector` sets `features.multiModel`, as the election resolves it,
+  hostname heuristic included (a `cblevins-7900xtx` selector resolves to gfx1100). When a member
+  other than the holder is `Active`, no contender is named. For a lane with
   `warmPolicy: primary` behind a holder that is not one, only a contender at or above the holder's
   priority counts, since the warm primary reclaims the card from the idle released holder ahead of
   lower wanters. With no such member the lane is about to come back and keeps the full wait;
