@@ -391,7 +391,18 @@ proxy:
     # releases). backend/, pkg/runtime/ and api/ are unchanged. Rollback =
     # the 535f56fb digest
     # sha256:9d6524000ff8760d9f01351b227248718513cb6cdc2400547346d7a7084e69f0.
-    digest: "sha256:6624e3252f07114974d1eb80046762296a890abd62aaac060588fad13935045c"
+    # 2026-11-20 (3): master d90cb4bc (tag 20261120-183257, master pipeline
+    # 40098), proxy only. The 5a796de0 build above plus !1363, the only code
+    # change since then (internal/proxy/preempted_wait.go): in a multi-model
+    # group the contender is named unless its gpu.vramEstimateMB and the
+    # waiting lane's fit the GPUProfile's vramMB, as the election admits
+    # them. The XTX lanes resolve to the multi-model gfx1100 profile through
+    # their hostname, and the warm lane (23200) never fits beside a creative
+    # lane (18000) on 24576 (KT-JOBS 2026-11-20 run 2: 14 requests held
+    # 30-70 s through the image-to-video handover). Rollback = the 5a796de0
+    # digest
+    # sha256:6624e3252f07114974d1eb80046762296a890abd62aaac060588fad13935045c.
+    digest: "sha256:14cead95bb51a1ec899be2a73011f309e622ec0a8e7c6b439fe0774c8cd75190"
     pullPolicy: Always
   service:
     type: ClusterIP
