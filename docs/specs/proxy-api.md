@@ -388,8 +388,22 @@ The proxy decides from the Model status in its informer cache, with no API-serve
   release (a `status.releasedAt` newer than or in the same second as its `lastActiveTime`, the
   controller's `releaseStanding`) and a release scales it off the card: it is serverless with
   `minReplicas: 0` and is not a warm primary. Such a holder gives the card up after the 45 s release
-  grace, so the lane is about to come back. A released holder that is not serverless, has
-  `minReplicas >= 1` or is a warm primary keeps its replica and the card;
+  grace. A released holder that is not serverless, has `minReplicas >= 1` or is a warm primary keeps
+  its replica and the card;
+- when the holder has handed the card back, another member of the group still outranks the lane
+  for it: a Model with a strictly higher `gpu.priority` that is not on the card itself, can take
+  demand (not `Failed`, cache ready), and has demand within its activity window that a release of
+  its own has not withdrawn (a standing release older than the 45 s grace). The job runner releases
+  a lane after its last job on it and then forwards the group's next job to another lane, whose
+  cold-start queue stamps that lane's demand at once, so the card goes there and not to the waiting
+  lane. That Model is named in the 503. A failover stand-in is not counted (it ranks as the Model it
+  stands in for). In a multi-model group the lane may be admitted beside a higher wanter, so no
+  contender is named there: the group counts as multi-model when the GPUProfile for the
+  architecture label in the lane's `nodeSelector` sets `features.multiModel` (the election's own
+  switch), or when a member other than the holder is `Active`. For a lane with
+  `warmPolicy: primary` behind a holder that is not one, only a contender at or above the holder's
+  priority counts, since the warm primary reclaims the card from the idle released holder ahead of
+  lower wanters. With no such member the lane is about to come back and keeps the full wait;
 - for a lane with `spec.config.warmPolicy: primary` behind a holder that is not a warm primary
   itself: that Model's demand (`lastActiveTime`, or an activation request from the last 30 min) is
   within its activity window (2 min, or its `idleTimeout` when shorter for a scale-to-zero holder).
@@ -397,8 +411,13 @@ The proxy decides from the Model status in its informer cache, with no API-serve
   so once that holder's demand lapses its request keeps the full wait. An on-demand lane has no such
   reclaim and returns only when the holder idles out or is released.
 
-When the bound fires the proxy reads the status again; a lane that has taken the card in the
-meantime keeps the request for its load, up to the cold-start timeout. Everything else keeps the
+The bound is armed for every request to a shared-GPU lane, whether or not the lane is losing when
+the request arrives. When it fires the proxy reads the status again: a lane that cannot win answers
+the 503; any other keeps the request and checks again every 5 s until the request is served or the
+cold-start timeout ends it. A handover passes through states in which the lane only seems to be
+winning (a released holder before the next job's lane shows demand), and a lane elected but not yet
+loading can be set aside again by a higher-priority lane's demand; the repeated check catches both.
+The refusal message gives the time the request actually waited. Everything else keeps the
 full wait: a lane that holds the card and is loading, an equal- or lower-priority holder (the
 election can hand the card over on demand), a failover stand-in (`flexinfer.ai/failover-for`), a
 force-promoted lane, a request with `Prefer: wait=N` (its own wait applies), and a job's forward

@@ -7,6 +7,8 @@ import (
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
 	"github.com/flexinfer/flexinfer/pkg/constants"
+	"github.com/flexinfer/flexinfer/pkg/gpu"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 // Preempted wait: how long a synchronous request may sit in the cold-start
@@ -32,6 +34,13 @@ const annotationPreemptedWait = "flexinfer.ai/preempted-wait"
 // under the 30 s bar KT-JOBS holds every client connection to.
 const defaultPreemptedWait = 20 * time.Second
 
+// preemptedRecheckInterval is how often a request that passed the preempted
+// wait without a refusal re-reads the lanes while its lane still waits for the
+// card. Lane status moves through short intermediate states during a handover
+// (a released holder still Active, an attribution naming a peer that already
+// left), so one check at the bound can land in one of them.
+const preemptedRecheckInterval = 5 * time.Second
+
 // preemptedWait is the bound for lane m: its annotation when it parses to a
 // positive duration, else the proxy setting, else defaultPreemptedWait.
 func (p *Proxy) preemptedWait(m *aiv1alpha2.Model) time.Duration {
@@ -54,6 +63,9 @@ func (p *Proxy) preemptedWait(m *aiv1alpha2.Model) time.Duration {
 const (
 	electionActivationDemandWindow = 30 * time.Minute
 	electionSharedDemandWindow     = 2 * time.Minute
+	// electionReleaseGrace mirrors releaseGrace in
+	// controllers/model_release.go.
+	electionReleaseGrace = 45 * time.Second
 )
 
 // warmPolicyPrimary is the spec.config.warmPolicy value of the lane that
@@ -74,7 +86,9 @@ const warmPolicyPrimary = "primary"
 //   - that Model's gpu.priority is strictly higher than m's;
 //   - that Model has not handed the card back: it carries no standing
 //     release (holderReleaseStanding), or it is a holder a release does not
-//     scale off the card (releaseFreesCard);
+//     scale off the card (releaseFreesCard); when it has handed the card
+//     back, m still loses to a higher-priority member that wants the card
+//     (outrankingContender), and that member is named instead;
 //   - when m is a warm primary (spec.config.warmPolicy: primary) and that
 //     Model is not one, that Model's demand is still inside its activity
 //     window.
@@ -87,7 +101,11 @@ const warmPolicyPrimary = "primary"
 //
 //   - A scale-to-zero holder with a standing release gives the card up after the
 //     controller's 45 s releaseGrace (the job runner wrote releasedAt after
-//     its last job). m is about to come back, so its request waits for it.
+//     its last job on it). m is about to come back only when no other member
+//     outranks it for the card; when the runner's next job is for another,
+//     higher-priority lane, the card goes there (KT-JOBS 2026-11-20: two
+//     windows of requests held to the client's 120 s timeout, one after each
+//     release that handed the card to the next job's lane).
 //   - A warm primary reclaims the card from a holder whose demand is older
 //     than the holder's activity window (2 min, or its idleTimeout when that
 //     is shorter and the holder scales to zero), even from a higher-priority
@@ -133,7 +151,11 @@ func (p *Proxy) losingCardTo(ctx context.Context, m *aiv1alpha2.Model) string {
 	}
 	now := time.Now()
 	if releaseFreesCard(holder) && holderReleaseStanding(holder, now) {
-		return ""
+		// The holder is handing the card back, but the election gives it to
+		// the highest-priority lane that wants it, which need not be m: the
+		// job runner releases a lane after its last job on that lane and
+		// then forwards the group's next job to another creative lane.
+		return p.outrankingContender(ctx, m, holder, now)
 	}
 	// chooseSharedGroupLeader reclaims for a warm primary only from a Ready
 	// holder that is not itself a warm primary (!isWarmPrimaryModel).
@@ -141,6 +163,110 @@ func (p *Proxy) losingCardTo(ctx context.Context, m *aiv1alpha2.Model) string {
 		return ""
 	}
 	return holderName
+}
+
+// outrankingContender names a member of m's shared group, other than m and
+// the releasing holder, that the election would give the card to ahead of m
+// once the holder is gone, or returns "" when there is none and m may win.
+//
+// It counts only a member that waits for the card itself and that the
+// election would rank as a wanter ahead of m (sharedModelWantsToRun and
+// demandTime in controllers/model_shared_gpu.go and
+// controllers/model_activation.go):
+//   - it is not Active: a member already on the card is either the next
+//     holder (then m's attribution moves to it and the next check names it)
+//     or, in a multi-model group, a co-resident that m may join;
+//   - it can take demand (not Failed, its cache ready when it has one);
+//   - its gpu.priority is strictly higher than m's (an equal one can lose to
+//     m on demand);
+//   - its demand is inside its activity window, and a release of its own has
+//     not outlived the controller's grace (modelReleased withdraws demand);
+//   - it is not a failover stand-in, which ranks as the Model it stands in
+//     for, a rank the proxy does not resolve.
+//
+// A multi-model group admits every wanter that fits, highest priority first,
+// so a higher-priority wanter need not keep m off the card; no contender is
+// named there and m keeps the full wait. The group is multi-model when the
+// GPUProfile for the architecture in m's nodeSelector sets
+// features.multiModel (sharedGroupMultiModel in
+// controllers/model_shared_gpu.go reads the same label and flag), or when a
+// member besides the holder is Active, which only a multi-model group allows
+// for long.
+//
+// A warm primary m reclaims the card from an idle holder that is not a warm
+// primary, ahead of a lower-ranked wanter (chooseSharedGroupLeader): a
+// released holder's demand is withdrawn after the grace, so it is idle. For
+// such an m only a contender that ranks at or above the holder can still
+// take the card first, through the demand path.
+//
+// A job forwarded to a lane that is not ready waits in that lane's cold-start
+// queue, whose first step stamps the lane's lastActiveTime, so the next job's
+// lane shows fresh demand within moments of the release that precedes it.
+// Demand older than the 2 min window (the election ranks some wanters on a
+// 5 min window when nothing is Ready) is not counted: that errs toward a long
+// wait, never toward a 503 the election would not back.
+func (p *Proxy) outrankingContender(ctx context.Context, m, holder *aiv1alpha2.Model, now time.Time) string {
+	if p.client == nil {
+		return ""
+	}
+	var list aiv1alpha2.ModelList
+	if err := p.client.List(ctx, &list, client.InNamespace(m.Namespace)); err != nil {
+		return ""
+	}
+	if p.groupIsMultiModel(ctx, m) {
+		return ""
+	}
+	group := m.Spec.GPU.Shared
+	best, bestPriority := "", m.Spec.GetPriority()
+	if isWarmPrimaryLane(m) && !isWarmPrimaryLane(holder) {
+		// Strictly above means at or above the holder's priority.
+		bestPriority = max(bestPriority, holder.Spec.GetPriority()-1)
+	}
+	for i := range list.Items {
+		c := &list.Items[i]
+		if c.Name == m.Name || c.Name == holder.Name {
+			continue
+		}
+		if c.Spec.GPU == nil || c.Spec.GPU.Shared != group {
+			continue
+		}
+		if c.Status.SharedGroup != nil && c.Status.SharedGroup.State == "Active" {
+			// Two members on the card at once: a multi-model group.
+			return ""
+		}
+		if strings.TrimSpace(c.Annotations[constants.AnnotationFailoverFor]) != "" {
+			continue
+		}
+		if c.Status.Phase == aiv1alpha2.ModelPhaseFailed || (c.Status.Cache != nil && !c.Status.Cache.Ready) {
+			continue
+		}
+		if contenderReleased(c, now) {
+			continue
+		}
+		if prio := c.Spec.GetPriority(); prio > bestPriority && holderDemandFresh(c, now) {
+			best, bestPriority = c.Name, prio
+		}
+	}
+	return best
+}
+
+// groupIsMultiModel reports whether the GPUProfile for the architecture in
+// m's nodeSelector declares a multi-model runtime, as the election resolves
+// it. A selector without an architecture label resolves to single-slot there
+// too.
+func (p *Proxy) groupIsMultiModel(ctx context.Context, m *aiv1alpha2.Model) bool {
+	arch := gpu.ArchFromLabels(m.Spec.NodeSelector)
+	if arch == "" {
+		return false
+	}
+	profile := p.lookupGPUProfile(ctx, arch)
+	return profile != nil && profile.Features.MultiModel
+}
+
+// contenderReleased mirrors modelReleased in controllers/model_release.go: a
+// standing release that has outlived the grace withdraws the member's demand.
+func contenderReleased(m *aiv1alpha2.Model, now time.Time) bool {
+	return holderReleaseStanding(m, now) && now.Sub(m.Status.ReleasedAt.Time) >= electionReleaseGrace
 }
 
 // releaseFreesCard reports whether a standing release on m makes the

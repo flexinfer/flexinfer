@@ -3,6 +3,7 @@ package proxy
 import (
 	"context"
 	stderrors "errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -212,6 +213,156 @@ func TestLosingCardTo(t *testing.T) {
 	})
 }
 
+// releasedCreative is the KT-JOBS handover: the image lane (500) released the
+// card after its last job and still reads Active during the controller's
+// grace; the warm lane (300) is set aside behind it.
+func releasedCreative() (warm, creative *aiv1alpha2.Model) {
+	warm, creative = warmBehindCreative()
+	creative.Status.LastActiveTime = ago(10 * time.Second)
+	creative.Status.ReleasedAt = ago(5 * time.Second)
+	return warm, creative
+}
+
+// A released holder hands the card to the election's next winner, which is
+// the warm lane only when no other member outranks it for the card.
+func TestLosingCardToAfterARelease(t *testing.T) {
+	video := func(prio int32, mutate func(v *aiv1alpha2.Model)) *aiv1alpha2.Model {
+		v := sharedLane("video", prio, aiv1alpha2.ModelPhaseIdle,
+			&aiv1alpha2.SharedGroupStatus{GroupName: "xtx", State: "Queued", PreemptedBy: "creative"})
+		if mutate != nil {
+			mutate(v)
+		}
+		return v
+	}
+	tests := []struct {
+		name  string
+		other *aiv1alpha2.Model
+		want  string
+	}{
+		{name: "no other member: the card comes back"},
+		{name: "next job's lane has fresh demand", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.LastActiveTime = ago(time.Second)
+		}), want: "video"},
+		// A second Active member: in a single-slot group the attribution
+		// moves to it and the next check names it as the holder; in a
+		// multi-model group the lane may join it. Either way, not named here.
+		{name: "another member already on the card", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.Phase = aiv1alpha2.ModelPhaseLoading
+			v.Status.SharedGroup.State = "Active"
+			v.Status.LastActiveTime = ago(time.Second)
+		})},
+		{name: "member whose own release outlived the grace", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.LastActiveTime = ago(60 * time.Second)
+			v.Status.ReleasedAt = ago(50 * time.Second)
+		})},
+		{name: "member whose own release is inside the grace", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.LastActiveTime = ago(10 * time.Second)
+			v.Status.ReleasedAt = ago(5 * time.Second)
+		}), want: "video"},
+		{name: "Ready member with lapsed demand", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.Phase = aiv1alpha2.ModelPhaseReady
+			v.Status.LastActiveTime = ago(10 * time.Minute)
+		})},
+		{name: "activation request in its window", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.ActivationRequestedAt = ago(time.Minute)
+		}), want: "video"},
+		{name: "higher member with lapsed demand", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.LastActiveTime = ago(10 * time.Minute)
+		})},
+		{name: "higher member that never had demand", other: video(500, nil)},
+		{name: "equal priority can lose to the warm lane", other: video(300, func(v *aiv1alpha2.Model) {
+			v.Status.LastActiveTime = ago(time.Second)
+		})},
+		{name: "lower priority", other: video(200, func(v *aiv1alpha2.Model) {
+			v.Status.LastActiveTime = ago(time.Second)
+		})},
+		{name: "failed member", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.LastActiveTime = ago(time.Second)
+			v.Status.Phase = aiv1alpha2.ModelPhaseFailed
+		})},
+		{name: "member whose cache is not ready", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.LastActiveTime = ago(time.Second)
+			v.Status.Cache = &aiv1alpha2.CacheStatus{Ready: false}
+		})},
+		{name: "failover stand-in keeps the full wait", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.LastActiveTime = ago(time.Second)
+			v.Annotations[constants.AnnotationFailoverFor] = "down"
+		})},
+		{name: "member of another group", other: video(500, func(v *aiv1alpha2.Model) {
+			v.Status.LastActiveTime = ago(time.Second)
+			v.Spec.GPU.Shared = "other"
+		})},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			warm, creative := releasedCreative()
+			objs := []client.Object{warm, creative}
+			if tt.other != nil {
+				objs = append(objs, tt.other)
+			}
+			p := newGateTestProxy(t, &touchCounter{}, objs...)
+			assert.Equal(t, tt.want, p.losingCardTo(context.Background(), warm))
+		})
+	}
+
+	t.Run("multi-model group with a co-resident member", func(t *testing.T) {
+		warm, creative := releasedCreative()
+		embed := sharedLane("embed", 400, aiv1alpha2.ModelPhaseReady,
+			&aiv1alpha2.SharedGroupStatus{GroupName: "xtx", State: "Active"})
+		want := video(600, func(v *aiv1alpha2.Model) { v.Status.LastActiveTime = ago(time.Second) })
+		p := newGateTestProxy(t, &touchCounter{}, warm, creative, embed, want)
+		assert.Empty(t, p.losingCardTo(context.Background(), warm),
+			"a second Active member marks a multi-model group, where the lane may be admitted beside a higher wanter")
+	})
+
+	t.Run("multi-model GPUProfile with only the holder on the card", func(t *testing.T) {
+		warm, creative := releasedCreative()
+		arch := map[string]string{"kubernetes.io/hostname": "xtx", "flexinfer.ai/gpu.arch": "gfx1100"}
+		warm.Spec.NodeSelector, creative.Spec.NodeSelector = arch, arch
+		want := video(500, func(v *aiv1alpha2.Model) {
+			v.Spec.NodeSelector = arch
+			v.Status.LastActiveTime = ago(time.Second)
+		})
+		profile := &aiv1alpha2.GPUProfile{
+			ObjectMeta: metav1.ObjectMeta{Name: "gfx1100", Namespace: "default"},
+			Spec: aiv1alpha2.GPUProfileSpec{Architecture: "gfx1100",
+				Features: aiv1alpha2.GPUFeatures{MultiModel: true}},
+		}
+		p := newGateTestProxy(t, &touchCounter{}, warm, creative, want, profile)
+		assert.Empty(t, p.losingCardTo(context.Background(), warm),
+			"the election admits every wanter that fits in a multi-model group")
+
+		profile.Spec.Features.MultiModel = false
+		p = newGateTestProxy(t, &touchCounter{}, warm, creative, want, profile)
+		assert.Equal(t, "video", p.losingCardTo(context.Background(), warm),
+			"a single-slot profile gives the card to the higher wanter")
+	})
+
+	// A warm primary reclaims the card from the released, idle holder ahead
+	// of any wanter ranked below that holder.
+	for _, tc := range []struct {
+		prio int32
+		want string
+	}{{prio: 400}, {prio: 500, want: "video"}, {prio: 600, want: "video"}} {
+		t.Run(fmt.Sprintf("warm primary with a %d wanter behind a 500 holder", tc.prio), func(t *testing.T) {
+			warm, creative := releasedCreative()
+			setWarmPolicy(warm, "primary")
+			want := video(tc.prio, func(v *aiv1alpha2.Model) { v.Status.LastActiveTime = ago(time.Second) })
+			p := newGateTestProxy(t, &touchCounter{}, warm, creative, want)
+			assert.Equal(t, tc.want, p.losingCardTo(context.Background(), warm))
+		})
+	}
+
+	t.Run("the highest contender is named", func(t *testing.T) {
+		warm, creative := releasedCreative()
+		mid := video(400, func(v *aiv1alpha2.Model) { v.Status.LastActiveTime = ago(time.Second) })
+		mid.Name = "audio"
+		top := video(600, func(v *aiv1alpha2.Model) { v.Status.LastActiveTime = ago(time.Second) })
+		p := newGateTestProxy(t, &touchCounter{}, warm, creative, mid, top)
+		assert.Equal(t, "video", p.losingCardTo(context.Background(), warm))
+	})
+}
+
 func TestPreemptedWaitSetting(t *testing.T) {
 	warm, _ := warmBehindCreative()
 	p := &Proxy{}
@@ -240,7 +391,7 @@ func TestPreemptedLaneAnswersAtTheBound(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
 	e := envelope(t, rec)
 	assert.Equal(t, validation.CodeModelPreempted, e.Code)
-	assert.Contains(t, e.Message, `"creative" holds its shared GPU`)
+	assert.Contains(t, e.Message, `"creative" outranks it for its shared GPU`)
 	assertRetryAfter(t, rec, e, retryAfterPreempted)
 	assert.Equal(t, "Preempted", rec.Header().Get(headerActivation))
 	assert.Empty(t, rec.Header().Get("Preference-Applied"))
@@ -377,6 +528,131 @@ func TestPreemptedWaitRechecksWhenItFires(t *testing.T) {
 			assert.Empty(t, rec.Body.String(), "the re-check kept the request: no 503 was written")
 		})
 	}
+}
+
+// The KT-JOBS 2026-11-20 holds: a request arrives while the warm lane reads
+// as winning the card (its holder released it), and the card then goes to the
+// next job's lane. The bound keeps re-checking while the lane waits for the
+// card, so the request gets the 503 once that is visible instead of waiting
+// for its client to give up.
+func TestPreemptedWaitKeepsCheckingThroughAHandover(t *testing.T) {
+	warm, creative := releasedCreative()
+	video := sharedLane("video", 500, aiv1alpha2.ModelPhaseIdle,
+		&aiv1alpha2.SharedGroupStatus{GroupName: "xtx", State: "Queued", PreemptedBy: "creative"})
+	p := newGateTestProxy(t, &touchCounter{}, warm, creative, video)
+	p.queueTimeout = time.Hour
+	armed := make(chan time.Duration, 4)
+	fire := make(chan time.Time)
+	p.preemptedWaitTimer = func(d time.Duration) <-chan time.Time {
+		armed <- d
+		return fire
+	}
+	stalledQueue(p, "warm", 4)
+
+	ctx, leave := context.WithCancel(context.Background())
+	defer leave()
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.handleRequest(rec, chatReq("warm").WithContext(ctx))
+	}()
+	next := func(want time.Duration) {
+		t.Helper()
+		select {
+		case d := <-armed:
+			assert.Equal(t, want, d)
+		case <-time.After(10 * time.Second):
+			t.Fatal("the preempted wait was not armed")
+		}
+	}
+
+	// Armed although nothing outranks the warm lane yet: the released holder
+	// reads as handing the card back to it.
+	next(defaultPreemptedWait)
+	fire <- time.Now()
+	// Still nothing outranks it: the request waits and checks again.
+	next(preemptedRecheckInterval)
+	select {
+	case <-done:
+		t.Fatalf("request answered while the lane could still win the card: %s", rec.Body.String())
+	default:
+	}
+
+	// The job runner forwards the next job to the video lane.
+	updateStatus(t, p, "video", func(m *aiv1alpha2.Model) { m.Status.LastActiveTime = ago(0) })
+	fire <- time.Now()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("request still held after the next job's lane outranked it")
+	}
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	e := envelope(t, rec)
+	assert.Equal(t, validation.CodeModelPreempted, e.Code)
+	assert.Contains(t, e.Message, `"video" outranks it`)
+}
+
+// A request to a lane that held the card when it arrived (elected, not yet
+// loading) is still bounded: the lane is set aside again when a
+// higher-priority lane registers demand, and the re-check answers the 503
+// instead of holding the request to the cold-start timeout.
+func TestPreemptedWaitBoundsALaneSetAsideAfterArrival(t *testing.T) {
+	warm, creative := warmBehindCreative()
+	warm.Status.Phase = aiv1alpha2.ModelPhaseIdle
+	warm.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{GroupName: "xtx", State: "Active"}
+	creative.Status.Phase = aiv1alpha2.ModelPhaseIdle
+	creative.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{GroupName: "xtx", State: "Queued", PreemptedBy: "warm"}
+	p := newGateTestProxy(t, &touchCounter{}, warm, creative)
+	p.queueTimeout = time.Hour
+	armed := make(chan time.Duration, 4)
+	fire := make(chan time.Time)
+	p.preemptedWaitTimer = func(d time.Duration) <-chan time.Time {
+		armed <- d
+		return fire
+	}
+	stalledQueue(p, "warm", 4)
+
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		p.handleRequest(rec, chatReq("warm"))
+	}()
+	select {
+	case d := <-armed:
+		assert.Equal(t, defaultPreemptedWait, d)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the bound was not armed for a lane that held the card")
+	}
+	// The lane still holds the card: the request waits and checks again.
+	fire <- time.Now()
+	select {
+	case d := <-armed:
+		assert.Equal(t, preemptedRecheckInterval, d)
+	case <-time.After(10 * time.Second):
+		t.Fatal("no re-check was armed")
+	}
+
+	// A higher-priority lane wins the card before the warm lane loads.
+	updateStatus(t, p, "creative", func(m *aiv1alpha2.Model) {
+		m.Status.Phase = aiv1alpha2.ModelPhaseLoading
+		m.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{GroupName: "xtx", State: "Active"}
+	})
+	updateStatus(t, p, "warm", func(m *aiv1alpha2.Model) {
+		m.Status.Phase = aiv1alpha2.ModelPhasePreempted
+		m.Status.SharedGroup = &aiv1alpha2.SharedGroupStatus{GroupName: "xtx", State: "Preempted", PreemptedBy: "creative"}
+	})
+	fire <- time.Now()
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("request still held after the lane was set aside")
+	}
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, rec.Body.String())
+	assert.Equal(t, validation.CodeModelPreempted, envelope(t, rec).Code)
 }
 
 func updateStatus(t *testing.T, p *Proxy, name string, mutate func(*aiv1alpha2.Model)) {

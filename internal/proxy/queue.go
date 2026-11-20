@@ -250,21 +250,38 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 	// higher-priority peer holds the card against, waits at most the
 	// preempted wait (preempted_wait.go). A job's forward keeps the full wait:
 	// the job runner has no client timeout, and its queued forward is the
-	// demand that brings the lane back. When the bound fires the check runs
-	// again, so a lane that won the card in the meantime keeps the request
-	// for its load.
+	// demand that brings the lane back. The bound is armed for every request
+	// to a shared-GPU lane, because whether the lane loses the card can change
+	// while the request waits: a holder hands the card on, or a lane just
+	// elected is set aside again before it loads. When it fires the check
+	// runs again: a lane that loses the card answers the 503; any other keeps
+	// the request and checks again every preemptedRecheckInterval until the
+	// request is served or times out.
 	var preemptedC <-chan time.Time
 	var preemptedBound time.Duration
+	var stopPreemptedTimer func()
+	defer func() {
+		if stopPreemptedTimer != nil {
+			stopPreemptedTimer()
+		}
+	}()
+	armPreempted := func(d time.Duration) {
+		if stopPreemptedTimer != nil {
+			stopPreemptedTimer()
+			stopPreemptedTimer = nil
+		}
+		if p.preemptedWaitTimer != nil {
+			preemptedC = p.preemptedWaitTimer(d)
+			return
+		}
+		timer := time.NewTimer(d)
+		preemptedC = timer.C
+		stopPreemptedTimer = func() { timer.Stop() }
+	}
 	if !sentPrefer && !isJobForward(ctx) {
-		if m := p.peekModel(ctx, modelName); p.losingCardTo(ctx, m) != "" {
+		if m := p.peekModel(ctx, modelName); m != nil && m.Spec.IsShared() {
 			if preemptedBound = p.preemptedWait(m); preemptedBound < timeout {
-				if p.preemptedWaitTimer != nil {
-					preemptedC = p.preemptedWaitTimer(preemptedBound)
-				} else {
-					timer := time.NewTimer(preemptedBound)
-					defer timer.Stop()
-					preemptedC = timer.C
-				}
+				armPreempted(preemptedBound)
 			}
 		}
 	}
@@ -281,8 +298,13 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 			m := p.peekModel(ctx, modelName)
 			holder := p.losingCardTo(ctx, m)
 			if holder == "" {
-				// The lane may win the card now: wait for its load as
-				// before, up to the full timeout.
+				// The lane may win the card, or holds it: wait for its
+				// load, up to the full timeout, and look again shortly,
+				// since a handover passes through states in which it only
+				// seems to be winning and a lane can be set aside again.
+				if m != nil {
+					armPreempted(min(preemptedRecheckInterval, preemptedBound))
+				}
 				continue
 			}
 			if !qr.responded.CompareAndSwap(false, true) {
@@ -290,15 +312,16 @@ func (p *Proxy) handleColdStart(ctx context.Context, w http.ResponseWriter, r *h
 				continue
 			}
 			queue.forget()
-			queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
+			waited := time.Since(qr.enqueuedAt)
+			queueWaitDuration.WithLabelValues(modelName).Observe(waited.Seconds())
 			w.Header().Set(headerActivation, activationValue(m))
 			p.writeLaneError(w, m, laneError{
 				status: http.StatusServiceUnavailable,
 				code:   modelStateCode(m),
-				message: fmt.Sprintf("model %q is not ready after the preempted wait of %s: %q holds its shared GPU at a higher priority; the request is recorded as demand",
-					modelName, preemptedBound, holder),
+				message: fmt.Sprintf("model %q is not ready after waiting %s: %q outranks it for its shared GPU; the request is recorded as demand",
+					modelName, waited.Round(time.Second), holder),
 			})
-			return &preemptedRefusal{model: modelName, holder: holder, waited: preemptedBound}
+			return &preemptedRefusal{model: modelName, holder: holder, waited: waited.Round(time.Millisecond)}
 		case <-queueCtx.Done():
 			// Distinguish an actual queue timeout from caller cancellation.
 			queueWaitDuration.WithLabelValues(modelName).Observe(time.Since(qr.enqueuedAt).Seconds())
