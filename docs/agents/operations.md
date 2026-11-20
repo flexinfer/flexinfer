@@ -334,7 +334,8 @@ If a GPU node crashes due to memory pressure or GPU segfaults:
 The node agent labels a node `flexinfer.ai/gpu.health=degraded` when a
 discrete card drops off the PCIe bus (`current_link_speed=Unknown`), its SMU
 stops answering sysfs reads (`Remote I/O error`), the vendor tools hang past
-`--probe-timeout`, or a previously seen card vanishes. Mechanism and reasons:
+`--probe-timeout` on two consecutive cycles, or a previously seen card
+vanishes. Mechanism and reasons:
 [components.md](components.md#gpu-health-sentinel). From that moment the
 scheduler extender refuses the node, the controller parks every Model whose
 only matching node is that one (`Schedulable=False`, reason `GPUDegraded`,
