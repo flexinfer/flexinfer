@@ -322,6 +322,27 @@ class StableDiffusionXLPipeline(_FakePipeline):
         pass
 
 
+class WanT2VPipeline(_FakePipeline):
+    """The text-to-video keywords a WanPipeline __call__ accepts."""
+
+    @recording
+    def __call__(
+        self,
+        prompt=None,
+        negative_prompt=None,
+        height=480,
+        width=832,
+        num_frames=81,
+        num_inference_steps=50,
+        guidance_scale=5.0,
+        generator=None,
+        output_type="np",
+        callback_on_step_end=None,
+        callback_on_step_end_tensor_inputs=("latents",),
+    ):
+        pass
+
+
 class StrictPipeline(_FakePipeline):
     """A pipeline without **kwargs and without negative_prompt."""
 
@@ -378,6 +399,9 @@ SERVER_ENV = (
     "NONFINITE_VIDEO_RETRIES",
     "WARMUP_NONFINITE_RETRIES",
     "WARMUP_NONFINITE_STRICT",
+    "WARMUP_STEPS",
+    "WARMUP_VIDEO_FRAMES",
+    "TORCH_DETERMINISTIC",
 )
 
 
@@ -1389,6 +1413,96 @@ class RealLibrariesTest(ServerTestCase):
         self.assertIs(model.proj.weight, linear_weight)
         model.norm(torch.ones(1, 8, dtype=torch.bfloat16))  # raised before the shim
 
+
+
+
+# --- determinism controls and exact-shape video warmup ------------------------
+
+
+class DeterminismControlTest(ServerTestCase):
+    def fake_torch(self):
+        fake = types.SimpleNamespace(
+            use_deterministic_algorithms=mock.Mock(),
+            utils=types.SimpleNamespace(
+                deterministic=types.SimpleNamespace(fill_uninitialized_memory=True)
+            ),
+            backends=types.SimpleNamespace(
+                cudnn=types.SimpleNamespace(deterministic=False)
+            ),
+        )
+        patch = mock.patch.object(server, "torch", fake)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return fake
+
+    def test_off_by_default(self):
+        fake = self.fake_torch()
+        self.assertFalse(self.quiet(server._apply_determinism_controls))
+        fake.use_deterministic_algorithms.assert_not_called()
+        self.assertFalse(fake.backends.cudnn.deterministic)
+
+    def test_unrecognised_value_stays_off(self):
+        fake = self.fake_torch()
+        os.environ["TORCH_DETERMINISTIC"] = "0"
+        self.assertFalse(self.quiet(server._apply_determinism_controls))
+        fake.use_deterministic_algorithms.assert_not_called()
+
+    def test_on_sets_warn_only_and_skips_memory_fill(self):
+        fake = self.fake_torch()
+        os.environ["TORCH_DETERMINISTIC"] = "1"
+        self.assertTrue(self.quiet(server._apply_determinism_controls))
+        fake.use_deterministic_algorithms.assert_called_once_with(True, warn_only=True)
+        self.assertFalse(fake.utils.deterministic.fill_uninitialized_memory)
+        self.assertTrue(fake.backends.cudnn.deterministic)
+
+    def test_on_without_utils_deterministic(self):
+        fake = self.fake_torch()
+        fake.utils = types.SimpleNamespace()
+        os.environ["TORCH_DETERMINISTIC"] = "true"
+        self.assertTrue(self.quiet(server._apply_determinism_controls))
+        fake.use_deterministic_algorithms.assert_called_once_with(True, warn_only=True)
+
+
+class VideoWarmupTest(ServerTestCase):
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.object(server, "_nonfinite_count", return_value=0)
+        patch.start()
+        self.addCleanup(patch.stop)
+        server.PIPELINE_MODE = "text2video"
+
+    def test_warmup_renders_the_served_clip_shape(self):
+        pipe = self.serve(WanT2VPipeline(), "Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
+        os.environ.update(
+            WARMUP_RESOLUTIONS="832x480",
+            WARMUP_VIDEO_FRAMES="33",
+            WARMUP_STEPS="20",
+            DEFAULT_NEGATIVE_PROMPT="static, blurry",
+        )
+        self.quiet(server.warmup_inference)
+        self.assertTrue(server.warmup_complete)
+        (call,) = pipe.calls
+        self.assertEqual(call["num_frames"], 33)
+        self.assertEqual(call["num_inference_steps"], 20)
+        self.assertEqual((call["width"], call["height"]), (832, 480))
+        self.assertEqual(call["negative_prompt"], "static, blurry")
+
+    def test_warmup_without_frames_keeps_the_pipeline_default(self):
+        pipe = self.serve(WanT2VPipeline(), "Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
+        os.environ["WARMUP_RESOLUTIONS"] = "832x480"
+        self.quiet(server.warmup_inference)
+        (call,) = pipe.calls
+        self.assertNotIn("num_frames", call)
+        self.assertNotIn("negative_prompt", call)
+        self.assertEqual(call["num_inference_steps"], 4)
+
+    def test_frames_ignored_outside_text2video(self):
+        server.PIPELINE_MODE = "text2image"
+        pipe = self.serve(StableDiffusionXLPipeline(), "stabilityai/sdxl")
+        os.environ.update(WARMUP_RESOLUTIONS="512x512", WARMUP_VIDEO_FRAMES="33")
+        self.quiet(server.warmup_inference)
+        (call,) = pipe.calls
+        self.assertNotIn("num_frames", call)
 
 if __name__ == "__main__":
     print(
