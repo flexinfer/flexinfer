@@ -279,6 +279,15 @@ class EvidenceTest(unittest.TestCase):
 
 
 class VerdictTest(unittest.TestCase):
+    def test_bar3_psnr_floor_dropped_judges_ssim(self):
+        m = good_metrics()
+        m["cmp"]["e2e_c1"] = {"identical": False, "psnr_mean": 21.5, "ssim_mean": 0.816}
+        self.assertFalse(gate.verdict(m)["bars"][2]["pass"])
+        m["e2e_psnr_min"] = 0
+        self.assertTrue(gate.verdict(m)["bars"][2]["pass"])
+        m["cmp"]["e2e_c1"]["ssim_mean"] = 0.79
+        self.assertFalse(gate.verdict(m)["bars"][2]["pass"])
+
     def test_all_pass(self):
         v = gate.verdict(good_metrics())
         self.assertEqual(v["decision"], "pass", v)

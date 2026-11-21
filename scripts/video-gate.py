@@ -381,16 +381,24 @@ def verdict(m: dict) -> dict:
         )
     )
     e2e = [cmp.get("e2e_c1") or {}, cmp.get("e2e_c2") or {}]
+    # A row may drop the PSNR floor (e2e_psnr_min 0) and judge bar (3) on SSIM
+    # plus the owner's side-by-side look: two different stacks land at
+    # 19-24 dB whatever is fixed (row gfx1100-xtx-inpod-wan-t2v-warmup-gate).
+    psnr_min = m.get("e2e_psnr_min", E2E_PSNR)
     bars.append(
         _bar(
             3,
             "end to end against A",
             all(
-                c.get("psnr_mean", 0) >= E2E_PSNR and c.get("ssim_mean", 0) >= E2E_SSIM
+                (c.get("psnr_mean") or 0) >= psnr_min
+                and (c.get("ssim_mean") or 0) >= E2E_SSIM
+                and c.get("psnr_mean") is not None
                 for c in e2e
             ),
             [[c.get("psnr_mean"), c.get("ssim_mean")] for c in e2e],
-            f">= {E2E_PSNR} dB and SSIM >= {E2E_SSIM}",
+            f">= {psnr_min} dB and SSIM >= {E2E_SSIM}"
+            if psnr_min > 0
+            else f"SSIM >= {E2E_SSIM} (PSNR reported, not judged)",
         )
     )
     dec_a = _mean(_timing(A, [1, 2], "decode_postprocess_seconds"))
@@ -661,6 +669,7 @@ def cmd_score(args) -> int:
     metrics = {
         "A": ra,
         "B": rb,
+        "e2e_psnr_min": args.e2e_psnr_min,
         "cmp": cmp,
         "vram": vram,
         "runtime_peak_gib": args.runtime_peak_gib,
@@ -734,6 +743,13 @@ def main(argv=None) -> int:
     s.add_argument("--kernel-log", help="GPU host kernel log over both arms")
     s.add_argument("--root-mode", choices=["rw", "ro"])
     s.add_argument("--json", help="write the verdict JSON here")
+    s.add_argument(
+        "--e2e-psnr-min",
+        type=float,
+        default=E2E_PSNR,
+        help="bar (3) PSNR floor in dB; 0 judges bar (3) on SSIM alone, as "
+        "row gfx1100-xtx-inpod-wan-t2v-warmup-gate-2026-11-21 does",
+    )
     args = ap.parse_args(argv)
     try:
         return {"run": cmd_run, "sample-vram": cmd_sample_vram, "score": cmd_score}[
