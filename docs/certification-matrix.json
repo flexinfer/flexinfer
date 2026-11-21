@@ -1834,6 +1834,22 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "xtx-128k-fp8-segmented-s7-2026-11-21",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "a 128K lane for the Qwen3.8-27B workhorse model, written 2026-11-21 ~16:10Z before any run. The owner chose a split-lane design: the always-on 5930k workhorse keeps its fast 32K posture, and the XTX…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#xtx-128k-fp8-segmented-s7-2026-11-21",
+      "date": "2026-11-21",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21",
       "kind": "validation",
       "support_level": "experimental",
