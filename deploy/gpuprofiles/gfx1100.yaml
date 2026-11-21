@@ -192,7 +192,10 @@ spec:
     # parked gfx1100-5930k profile stays on cfefae18 until S6b.
     # controllers/runtime_pin_contract_test.go fails if this and the live
     # DaemonSet pin differ. Rollback = cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278.
-    image: registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
+    # 2026-11-21 (D5, WINDOW-GATED): follows the runtime DaemonSet to
+    # 12f30206 (527e2714 plus master fb8182fc's server-diffusers.py).
+    # Rollback = 527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b.
+    image: registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
   containerMemoryGB: 48
   # 2026-05-25: bumped 18 → 22 to make room for `gemma4-26b-a4b-gptq` at
   # maxModelLen=32768 with kvCacheDtype=fp8_e4m3. Math:
