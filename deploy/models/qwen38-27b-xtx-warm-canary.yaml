@@ -227,10 +227,16 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      # 2026-11-21 128K: the canary's cache, which holds the 131072 segmented
-      # fp8 autotune (129 workloads, ~45 min cold) and the 0.33 compile. A
-      # fresh path would autotune past the startup probe once and fail the
-      # 131072 KV check on its cold boot. Rollback restores scope Image.
+      # 2026-11-21 128K: the canary's cache base. hostPath is a BASE: the
+      # controller mounts <hostPath>/<namespace>/<Model name>, so this lane
+      # reads .../flexinfer-system/qwen38-27b-xtx-warm-canary, which was
+      # seeded by hand before the roll (`cp -a` of the canary's
+      # .../qwen38-27b-128k-canary subdir, 4.0 GB: the 131072 segmented fp8
+      # autotune, 129 workloads, ~45 min cold, and the 0.33 compile). The
+      # seeded boot was Ready in ~3 min with no restart. If that subdir is ever
+      # lost, the next boot autotunes past the 45-min startup probe once and
+      # fails the 131072 KV check on its cold boot; both self-heal on restart.
+      # Rollback restores scope Image.
       hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-b-xtx
       sizeLimit: 8Gi
   gpu:
