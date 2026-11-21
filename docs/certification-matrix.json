@@ -1890,9 +1890,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "fail",
       "title": "owner-window step D5, second re-gate: the XTX Wan 2.1 T2V 1.3B lane in-pod with rocBLAS pinned (!1373) and config.env COMPILE_MODE=none added, so the transformer runs eagerly in-pod. The lane is not…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-t2v-eager-gate-2026-11-21",
       "date": "2026-11-21",
       "source": ".loom/60-validation-matrix.md"
