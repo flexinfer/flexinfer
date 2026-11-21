@@ -39,6 +39,12 @@ var gfx1100CertifiedRuntimes = map[string]string{
 	// VAE MIOpen bypass (!1268) and the D5-a diarization backend. Build-time
 	// verify passed. The recommended D1 repin target.
 	"sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b": "CI pipeline 37264 job 460293",
+	// rocm-gfx1100-serving-v032-527e2714-dfo-fb8182fc: 527e2714 with only
+	// server-diffusers.py replaced by master fb8182fc (non-finite render guard,
+	// opt-in TORCH_DETERMINISTIC and exact-shape video warmup, !1379), built
+	// off-CI from build/Dockerfile.runtime-serving-v032-diffusers-overlay with
+	// the base image's build-time verifier re-run. The D5 repin target.
+	"sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba": "overlay build 2026-11-21, Dockerfile.runtime-serving-v032-diffusers-overlay",
 }
 
 var runtimeDigestPattern = regexp.MustCompile(`^registry\.harbor\.lan/flexinfer/runtime@(sha256:[0-9a-f]{64})$`)

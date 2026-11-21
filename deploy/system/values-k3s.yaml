@@ -896,6 +896,14 @@ imagePrewarm:
         # window-gated XTX repin; this entry also gets it pinned. The pull is
         # the new upper layers on the shared v0.32.0 base.
         - registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
+        # 2026-11-21 (D5 determinism): rocm-gfx1100-serving-v032-527e2714-dfo-
+        # fb8182fc, built off-CI from build/Dockerfile.runtime-serving-v032-
+        # diffusers-overlay: 527e2714 above with only server-diffusers.py
+        # replaced by master fb8182fc (the non-finite render guard and the
+        # opt-in TORCH_DETERMINISTIC and exact-shape video warmup switches,
+        # !1379). The base image's build-time verifier re-ran with the CI
+        # build's arguments. The pull is one small layer on 527e2714.
+        - registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
         # 2026-11-05 (S3, .loom/10-research-backend-currency-gfx1100-gfx906-
         # 2026-11-04.md §6.1): the stacked serving persona on vLLM
         # 0.33.0-rocm72 (build profile gfx1100-serving-v033 at !1284,
@@ -1141,7 +1149,15 @@ runtime:
       # below, still prewarmed here (pinned-cfefae18061f), and drop
       # sharedCompileCache:
       #   registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b"
+      # 2026-11-21 (D5, WINDOW-GATED): 527e2714 -> 12f30206, the same image
+      # with only server-diffusers.py replaced by master fb8182fc (prewarm
+      # entry above). The vLLM stack, plugins, supervisor and server-snac.py
+      # are unchanged, so the warm text lane runs the same code. The shared
+      # compile cache moves with the digest (shared/gfx1100/12f30206d9e6), so
+      # every in-pod lane loads cold once. Rollback = 527e2714, still
+      # prewarmed and certified:
+      #   registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
