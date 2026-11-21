@@ -1834,6 +1834,22 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "owner-window step D5 (D1 step 3, lane 3 of 5): the XTX Wan 2.1 T2V 1.3B lane served in-pod by the 7900 XTX runtime with the allocator pinned (Draft !1237, refreshed 2026-11-21 at f16dc2f8). The lane…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21",
+      "date": "2026-11-21",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-xtx-inpod-qwen-image-gate-2026-11-19",
       "kind": "validation",
       "support_level": "experimental",
