@@ -180,11 +180,16 @@ spec:
     # (header, 2026-11-21 gate).
     env:
       TORCH_BLAS_PREFER_HIPBLASLT: "0"
-      # 2026-11-21 Wan determinism run 1 (research-determinism.md F2, on runtime
+      # 2026-11-21 exact-shape warmup (research-determinism.md F2, on runtime
       # 12f30206 / !1380): warm the served clip shape before the first
       # request so its one-time event happens in warmup, and log Dynamo
       # recompiles and graph breaks. Overrides skipWarmup "1" in-pod
-      # (config.env is applied last). Diagnostic, not a gate.
+      # (config.env is applied last). Gated by row
+      # gfx1100-xtx-inpod-wan-t2v-warmup-gate-2026-11-21: pass, owner
+      # accepted the side-by-sides. Same-seed clips repeat byte-for-byte from
+      # the first request and across loads; warm clips 63 s against 129 s
+      # dedicated; the warmup adds ~84 s per load. Only 832x480 x 33 frames is
+      # warmed: other shapes get a first request that may differ.
       SKIP_WARMUP: "0"
       WARMUP_RESOLUTIONS: "832x480"
       WARMUP_VIDEO_FRAMES: "33"
