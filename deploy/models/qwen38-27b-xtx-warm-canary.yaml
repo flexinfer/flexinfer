@@ -105,10 +105,12 @@
 #   120K (this lane today: 40.2 at 2K, 34.3 at 16K). Cold TTFT 2.0 / 20 / 40 /
 #   134 / 360 s. MTP pos0 0.81. Needle 1/1 at 33K-127K, 5/5 and depths
 #   0/50/100 % at 127K. 25-min soak: no restart, no fault line.
-# - Leaves the D2 in-pod launch: the XTX runtime image (527e2714) carries
-#   neither patch. After a creative render the lane returns as a warm
-#   dedicated boot (~2.5 min measured) instead of D2's in-pod p50 38 s.
-# Rollback: revert this commit (in-pod, TRITON_ATTN + fp8, 64K, b06b06fe).
+# - Leaves the D2 in-pod launch: the XTX runtime image (12f30206 since !1380,
+#   527e2714's vLLM stack plus a diffusers server) carries neither patch.
+#   After a creative render the lane returns as a warm dedicated boot
+#   (~2.5 min measured) instead of D2's in-pod p50 38 s.
+# Rollback: revert this commit (in-pod on the 12f30206 runtime, TRITON_ATTN +
+# fp8, 64K; spec.image b06b06fe).
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
