@@ -180,6 +180,17 @@ spec:
     # (header, 2026-11-21 gate).
     env:
       TORCH_BLAS_PREFER_HIPBLASLT: "0"
+      # 2026-11-21 Wan determinism run 1 (research-determinism.md F2, on runtime
+      # 12f30206 / !1380): warm the served clip shape before the first
+      # request so its one-time event happens in warmup, and log Dynamo
+      # recompiles and graph breaks. Overrides skipWarmup "1" in-pod
+      # (config.env is applied last). Diagnostic, not a gate.
+      SKIP_WARMUP: "0"
+      WARMUP_RESOLUTIONS: "832x480"
+      WARMUP_VIDEO_FRAMES: "33"
+      WARMUP_STEPS: "20"
+      WARMUP_NONFINITE_RETRIES: "0"
+      TORCH_LOGS: "recompiles,graph_breaks"
       PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
       PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
   nodeSelector:
