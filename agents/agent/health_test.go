@@ -165,9 +165,65 @@ func TestExec_TimeoutMarksProbeTimeout(t *testing.T) {
 
 	health := a.evaluateGPUHealth(context.Background(), a.probeAMDHealthSysfs(), time.Now())
 	require.True(t, health.Known)
+	assert.False(t, health.Degraded, "one timed-out cycle alone does not degrade the node")
+
+	// The next cycle times out too: now it is degraded.
+	a.health.beginCycle()
+	_, err = a.exec(context.Background(), "chroot", "/host", "rocm-smi", "--showtemp", "--json")
+	require.ErrorIs(t, err, errProbeTimeout)
+	health = a.evaluateGPUHealth(context.Background(), a.probeAMDHealthSysfs(), time.Now())
 	assert.True(t, health.Degraded)
 	assert.Contains(t, health.Reason, "card0: probe-timeout")
 	assert.Contains(t, health.Reason, "rocm-smi did not return within")
+}
+
+// KT-JOBS run 4 (2026-11-20): one rocm-smi call overran the timeout on a
+// healthy card while a diffusers pod loaded on the CPU, then every later
+// probe answered. The node must stay ok throughout.
+func TestEvaluateGPUHealth_SingleProbeTimeoutDoesNotDegrade(t *testing.T) {
+	root := t.TempDir()
+	writeSysfsCard(t, root, 0, testDiscreteVRAMBytes)
+	a := newHealthTestAgent(t, root)
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 20, 19, 38, 43, 0, time.UTC)
+
+	h := a.evaluateGPUHealth(ctx, a.probeAMDHealthSysfs(), t0)
+	require.False(t, h.Degraded)
+
+	for cycle := 1; cycle <= 3; cycle++ {
+		a.health.beginCycle()
+		if cycle%2 == 1 { // timeouts on alternate cycles never form a streak
+			a.health.noteTimeout("rocm-smi", "rocm-smi did not return within 15s: gpu probe timed out")
+		}
+		h = a.evaluateGPUHealth(ctx, a.probeAMDHealthSysfs(), t0.Add(time.Duration(30*cycle)*time.Second))
+		assert.False(t, h.Degraded, "cycle %d", cycle)
+		assert.Empty(t, h.Reason, "cycle %d", cycle)
+		require.Len(t, h.Cards, 1)
+		assert.True(t, h.Cards[0].Healthy, "cycle %d", cycle)
+	}
+	assert.Equal(t, t0, h.Since, "no transition was published")
+}
+
+func TestEvaluateGPUHealth_TimeoutKeepsDegradedNodeDegraded(t *testing.T) {
+	root := t.TempDir()
+	dev := writeSysfsCard(t, root, 0, testDiscreteVRAMBytes)
+	a := newHealthTestAgent(t, root)
+	ctx := context.Background()
+	t0 := time.Date(2026, 11, 20, 12, 0, 0, 0, time.UTC)
+
+	writeFile(t, filepath.Join(dev, "current_link_speed"), "Unknown\n")
+	h := a.evaluateGPUHealth(ctx, a.probeAMDHealthSysfs(), t0)
+	require.True(t, h.Degraded, "a hard sysfs fault still degrades on the first cycle")
+
+	// sysfs reads clean again, but rocm-smi still hangs: not a clean cycle.
+	writeFile(t, filepath.Join(dev, "current_link_speed"), "16.0 GT/s PCIe\n")
+	for cycle := 1; cycle <= healthRecoveryStreak; cycle++ {
+		a.health.beginCycle()
+		a.health.noteTimeout("rocm-smi", "rocm-smi did not return within 15s: gpu probe timed out")
+		h = a.evaluateGPUHealth(ctx, a.probeAMDHealthSysfs(), t0.Add(time.Duration(30*cycle)*time.Second))
+		assert.True(t, h.Degraded, "cycle %d", cycle)
+		assert.Contains(t, h.Reason, "probe-timeout", "cycle %d", cycle)
+	}
 }
 
 func TestExec_SkipsGPUToolsAfterHardDegrade(t *testing.T) {

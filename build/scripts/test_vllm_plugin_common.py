@@ -181,6 +181,7 @@ def _fake_warmup(workloads=((1, 1, 2048), (1, 512, 32768), (2, 1, 32768))):
     m._TABLES = {}
     m.tuned_widths = []
     m.compiled = []
+    m.compiled_kv = []
 
     def _key(
         device,
@@ -242,6 +243,7 @@ def _fake_warmup(workloads=((1, 1, 2048), (1, 512, 32768), (2, 1, 32768))):
         sinks=None,
     ):
         m.compiled.append((table.shape[1], max_query_len, config["bm"], workspace))
+        m.compiled_kv.append((kc, vc, k_scale, v_scale))
 
     def warmup_segmented_attention(
         device,
@@ -331,6 +333,77 @@ class Stride:
 
     def stride(self, dim):
         return (self.width, 1)[dim]
+
+
+class FakeStorage:
+    def __init__(self, nbytes: int) -> None:
+        self.nbytes = nbytes
+
+    def size(self) -> int:
+        return self.nbytes
+
+
+class FakeKV:
+    """One K or V view of a bound KV cache: its storage size and dtype."""
+
+    def __init__(self, name, nbytes, dtype="fp16", itemsize=2) -> None:
+        self.name = name
+        self.nbytes = nbytes
+        self.dtype = dtype
+        self.itemsize = itemsize
+
+    def untyped_storage(self):
+        return FakeStorage(self.nbytes)
+
+    def element_size(self) -> int:
+        return self.itemsize
+
+    def view(self, dtype):
+        return FakeKV(f"{self.name}:{dtype}", self.nbytes, dtype, self.itemsize)
+
+    def __repr__(self) -> str:
+        return self.name
+
+
+class FakeDtype(str):
+    itemsize = 1
+
+
+class FakeCache:
+    def __init__(self, nbytes, dtype="fp16", itemsize=2, numel=1) -> None:
+        self.nbytes = nbytes
+        self.dtype = dtype
+        self.itemsize = itemsize
+        self._numel = numel
+
+    def numel(self) -> int:
+        return self._numel
+
+
+def _live_layer(nbytes, *, dtype="fp16", itemsize=2, scales=True, tag="live"):
+    """An attention layer whose backend splits a bound cache like upstream's."""
+    cache = FakeCache(nbytes, dtype, itemsize)
+
+    def _split_kv_cache(kv_cache):
+        assert kv_cache is cache
+        return (
+            FakeKV(f"{tag}-k", nbytes, dtype, itemsize),
+            FakeKV(f"{tag}-v", nbytes, dtype, itemsize),
+        )
+
+    layer = types.SimpleNamespace(
+        page=400,
+        segmented=True,
+        kv_cache=cache,
+        impl=types.SimpleNamespace(_split_kv_cache=_split_kv_cache),
+    )
+    if scales:
+        layer._k_scale = f"{tag}-k-scale"
+        layer._v_scale = f"{tag}-v-scale"
+    return layer
+
+
+GIB = 2**30
 
 
 def _worker(group_widths, *, runner="v2", layers=None):
@@ -525,6 +598,79 @@ class SegmentedRuntimeTablesTest(unittest.TestCase):
         with mock.patch("builtins.print"):
             warmup.rocm_segmented_attn_autotune_warmup(_worker([88, 82]))
         self.assertEqual([entry[1] for entry in warmup.compiled], [1, 1])
+
+    def test_winners_compile_against_the_live_kv_cache(self) -> None:
+        # S4 Q2: a 3.2 GiB cache launches K/V without pointer_range 32 ('D'),
+        # the synthetic one with it ('DS'). The compile must see the live views.
+        warmup = self._installed()
+        layers = {
+            "model.layers.3.self_attn.attn": _live_layer(int(3.2 * GIB)),
+            "model.layers.7.self_attn.attn": _live_layer(int(3.2 * GIB), tag="l7"),
+            "model.layers.0.linear_attn": types.SimpleNamespace(page=400),
+        }
+        stdout = []
+        with mock.patch("builtins.print", side_effect=lambda *a, **k: stdout.append(a)):
+            warmup.rocm_segmented_attn_autotune_warmup(
+                _worker([88, 82], layers=layers)
+            )
+        # One compile per record: the second layer has the same key and the
+        # same pointer class, so it adds nothing.
+        self.assertEqual(len(warmup.compiled), 3)
+        for kc, vc, k_scale, v_scale in warmup.compiled_kv:
+            self.assertEqual((repr(kc), repr(vc)), ("live-k", "live-v"))
+            self.assertEqual((k_scale, v_scale), ("live-k-scale", "live-v-scale"))
+        self.assertEqual(len(stdout), 1)
+        self.assertIn("live KV cache (3.20 GiB storage", stdout[0][0])
+        self.assertIn("pointer_range_32=no", stdout[0][0])
+
+    def test_layers_whose_caches_differ_in_pointer_class_compile_separately(
+        self,
+    ) -> None:
+        warmup = self._installed()
+        layers = {
+            "model.layers.3.self_attn.attn": _live_layer(int(3.2 * GIB)),
+            "model.layers.7.self_attn.attn": _live_layer(GIB, tag="small"),
+        }
+        with mock.patch("builtins.print"):
+            warmup.rocm_segmented_attn_autotune_warmup(_worker([88, 82], layers=layers))
+        self.assertEqual(
+            [repr(kc) for kc, _, _, _ in warmup.compiled_kv],
+            ["live-k"] * 3 + ["small-k"] * 3,
+        )
+
+    def test_layers_without_a_bound_cache_compile_against_the_synthetic_one(
+        self,
+    ) -> None:
+        warmup = self._installed()
+        unbound = _live_layer(int(3.2 * GIB))
+        unbound.kv_cache = FakeCache(0, numel=0)  # upstream's torch.tensor([])
+        stdout = []
+        with mock.patch("builtins.print", side_effect=lambda *a, **k: stdout.append(a)):
+            warmup.rocm_segmented_attn_autotune_warmup(
+                _worker([88, 82], layers={"model.layers.3.self_attn.attn": unbound})
+            )
+        self.assertEqual(
+            warmup.compiled_kv, [("kc", "vc", "kv_scale", "kv_scale")] * 3
+        )
+        self.assertIn("synthetic KV cache", stdout[0][0])
+
+    def test_quantized_live_cache_is_viewed_as_the_kernel_dtype(self) -> None:
+        fp8 = FakeDtype("fp8e4m3")
+        layer = _live_layer(int(1.6 * GIB), dtype="uint8", itemsize=1, scales=False)
+        kc, vc, k_scale, v_scale = segmented.live_kv_cache(layer, fp8)
+        self.assertEqual((repr(kc), repr(vc)), ("live-k:fp8e4m3", "live-v:fp8e4m3"))
+        self.assertEqual((k_scale, v_scale), (None, None))
+        # A dtype of another width cannot be viewed: keep the synthetic cache.
+        wide = FakeDtype("fp32")
+        wide.itemsize = 4
+        self.assertIsNone(segmented.live_kv_cache(layer, wide))
+
+    def test_live_cache_falls_back_on_a_layer_without_the_split_helper(self) -> None:
+        layer = types.SimpleNamespace(kv_cache=FakeCache(GIB))
+        self.assertIsNone(segmented.live_kv_cache(layer, "fp16"))
+        listed = _live_layer(GIB)
+        listed.kv_cache = [listed.kv_cache]  # pre-0.32 per-virtual-engine list
+        self.assertEqual(repr(segmented.live_kv_cache(listed, "fp16")[0]), "live-k")
 
     def test_unpatched_module_tunes_at_upstream_width(self) -> None:
         warmup = _fake_warmup()

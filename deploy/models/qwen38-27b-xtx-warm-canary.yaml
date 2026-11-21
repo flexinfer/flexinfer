@@ -77,6 +77,21 @@
 # Rollback: dedicatedDeployment: true (the Deployment returns on the next
 # reconcile, compiling cold once under the image scope), or revert this
 # commit to restore the per-Model cache too.
+#
+# 2026-11-18 D2 retry. The first in-pod attempt (2026-11-18 15:02Z, reverted
+# by !1344) failed two live checks:
+# - 502s from a stale EndpointSlice: fixed in the controller (!1345, live
+#   since !1346).
+# - KV pool 103,517 tokens (1.58x) against 129,582 (1.98x) on the Deployment.
+#   Same weights, peak activation (1.33 GiB) and CUDA graph memory (0.63 GiB);
+#   vLLM's "consumed memory (weights + non-torch)" was 18.29 GiB in-pod against
+#   17.43 GiB. The runtime pod exports PYTORCH_ALLOC_CONF with
+#   expandable_segments:True (values-k3s runtime profile env) and an in-pod
+#   load inherits it; the dedicated pod sets no allocator config. This retry
+#   pins the allocator to the dedicated lane's default through config.env
+#   (applied last in-pod) to test that as the cause.
+#   Pass: in-pod KV pool >= 125,700 tokens (0.97 x the Deployment's 129,582).
+#   A pool still near 103K refutes the cause and fails the retry.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -207,6 +222,11 @@ spec:
     # key; with minReplicas 1 the lane still returns by itself once the
     # creative lane scales to zero.
     warmPolicy: ondemand
+    # 2026-11-18 D2 retry (header): the dedicated lane's allocator default,
+    # overriding the runtime pod's expandable_segments:True for this lane's
+    # in-pod process. No effect on the Deployment, which sets none.
+    env:
+      PYTORCH_ALLOC_CONF: "expandable_segments:False"
     quantization: gptq
     # 2026-09-13: `architectures` pinned in-process (issue #74 incident #2).
     # The runtime DaemonSet's entrypoint rewrote this lane's on-disk

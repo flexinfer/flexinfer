@@ -334,7 +334,8 @@ If a GPU node crashes due to memory pressure or GPU segfaults:
 The node agent labels a node `flexinfer.ai/gpu.health=degraded` when a
 discrete card drops off the PCIe bus (`current_link_speed=Unknown`), its SMU
 stops answering sysfs reads (`Remote I/O error`), the vendor tools hang past
-`--probe-timeout`, or a previously seen card vanishes. Mechanism and reasons:
+`--probe-timeout` on two consecutive cycles, or a previously seen card
+vanishes. Mechanism and reasons:
 [components.md](components.md#gpu-health-sentinel). From that moment the
 scheduler extender refuses the node, the controller parks every Model whose
 only matching node is that one (`Schedulable=False`, reason `GPUDegraded`,
@@ -510,13 +511,16 @@ ROCm 6.4+ is the stable baseline for gfx1100, but you may choose between:
 
 #### Building Images
 
-**Local builds** (for testing or when CI is slow):
+**Local builds** (for testing or when CI is slow). The Makefile builds on
+the cluster BuildKit through `cluster-buildkit`; `push-X` builds and pushes
+in one step. A dropped port-forward cancels the build, so prefer the CI
+jobs below for these multi-hour images.
 ```bash
-# ROCm 6.4 gfx1100 (~3 hours, use 7900xtx docker context)
-make build-mlc-rocm64 push-mlc-rocm64
+# ROCm 6.4 gfx1100 (~3 hours)
+make push-mlc-rocm64
 
 # Maxwell sm_52 (~2 hours)
-make build-mlc-maxwell push-mlc-maxwell
+make push-mlc-maxwell
 
 # Verify all images exist
 make verify-images

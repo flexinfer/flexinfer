@@ -155,10 +155,15 @@ func (s *Server) handleModelHealth(w http.ResponseWriter, r *http.Request) {
 		"loadingSubstage": model.LoadingSubstage,
 		"loadingMessage":  model.LoadingMessage,
 	}
-	// Absent until vLLM printed its KV profile, so the controller cannot read
-	// an unknown pool as an empty one.
-	if model.KVCacheTokens > 0 && model.KVMaxConcurrency != "" {
+	// Each field is absent until vLLM printed its line, so the controller
+	// cannot read an unknown pool as an empty one. They are reported
+	// separately, as in GET /api/v1/models: a missing concurrency line used to
+	// hide the token count as well, and the controller then left status.kvPool
+	// on whatever it had recorded before.
+	if model.KVCacheTokens > 0 {
 		body["kvCacheTokens"] = model.KVCacheTokens
+	}
+	if model.KVMaxConcurrency != "" {
 		body["kvMaxConcurrency"] = model.KVMaxConcurrency
 	}
 	writeJSON(w, status, body)

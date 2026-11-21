@@ -91,6 +91,14 @@ func (r *ModelReconciler) desiredReplicasForContext(ctx context.Context, model *
 		return max(1, minReplicas)
 	}
 
+	// The job runner released the lane and nothing has asked for it since: end
+	// the idle window now. This sits above the Loading guard below, so a job
+	// cancelled during its lane's cold start does not finish the load just to
+	// idle out. An activation request still holds the lane (checked above).
+	if modelReleased(model, time.Now()) {
+		return minReplicas
+	}
+
 	if model.Status.LastActiveTime == nil {
 		// preload-on-deploy: warm a non-shared serverless model proactively from
 		// deploy until its first request, so the first post-deploy request skips
@@ -280,6 +288,11 @@ func (r *ModelReconciler) cleanupModel(ctx context.Context, model *aiv1alpha2.Mo
 	// Clean up persistent flash-tmpfs on the node for shared models.
 	if err := r.cleanupFlashTmpfs(ctx, model); err != nil {
 		log.Error(err, "Failed to create flash-tmpfs cleanup job (non-fatal)")
+	}
+
+	// Apply the on-delete policy to a Local cache directory on the node.
+	if err := r.cleanupLocalCache(ctx, model); err != nil {
+		log.Error(err, "Failed to create Local cache cleanup job (non-fatal)")
 	}
 
 	return nil

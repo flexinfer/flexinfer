@@ -594,7 +594,7 @@ func (p *Proxy) loadOrCreateProxy(targetURL string) (*httputil.ReverseProxy, boo
 
 // updateLastAccess updates the last-access timestamp for a model.
 func (p *Proxy) updateLastAccess(ctx context.Context, modelName string) {
-	p.touchLastAccess(ctx, modelName, false)
+	p.touchLastAccess(ctx, modelName, false, false)
 }
 
 // lastAccessIntervals keeps the existing cadence for long idle windows while
@@ -615,7 +615,12 @@ func lastAccessIntervals(idleTimeout time.Duration) (heartbeat, throttle time.Du
 // force a refresh even inside the periodic write throttle. Writes in the same
 // timestamp second are redundant because Kubernetes serializes metav1.Time at
 // second precision, so concurrent requests can share that refresh.
-func (p *Proxy) touchLastAccess(ctx context.Context, modelName string, force bool) time.Duration {
+//
+// A standing release (status.releasedAt, or answerRelease when this replica
+// wrote one the cache may not show yet) overrides both skips: the write is
+// what cancels the release, and a live request must cancel it at its next
+// heartbeat, not when the write throttle next allows.
+func (p *Proxy) touchLastAccess(ctx context.Context, modelName string, force, answerRelease bool) time.Duration {
 	heartbeat := lastAccessHeartbeatInterval
 
 	// Try v1alpha2 Model first
@@ -629,7 +634,8 @@ func (p *Proxy) touchLastAccess(ctx context.Context, modelName string, force boo
 		var throttle time.Duration
 		heartbeat, throttle = lastAccessIntervals(idleTimeout)
 		now := metav1.Now()
-		if m.Status.LastActiveTime != nil &&
+		released := answerRelease || m.Status.ReleasedAt != nil
+		if !released && m.Status.LastActiveTime != nil &&
 			(!m.Status.LastActiveTime.Time.Before(now.Time.Truncate(time.Second)) ||
 				(!force && now.Sub(m.Status.LastActiveTime.Time) < throttle)) {
 			return heartbeat
