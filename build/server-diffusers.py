@@ -53,6 +53,45 @@ if not hasattr(torch.nn, "RMSNorm"):
     torch.nn.RMSNorm = _RMSNorm
     print("Patched torch.nn.RMSNorm for PyTorch < 2.4 compatibility")
 
+
+def _apply_determinism_controls() -> bool:
+    """Turn on PyTorch's deterministic algorithms when TORCH_DETERMINISTIC is set.
+
+    Off by default. On ROCm, PyTorch sets every rocBLAS handle to
+    HIPBLAS_ATOMICS_ALLOWED unless deterministic algorithms are on
+    (aten/src/ATen/cuda/CublasHandlePool.cpp), and no environment variable
+    overrides that, so split-K GEMMs accumulate in a different order on each
+    call. Deterministic mode also makes MIOpen pick deterministic convolution
+    solvers and puts Inductor in its deterministic mode (no template
+    autotuning, no runtime reduction tuning). warn_only keeps ops without a
+    deterministic kernel running, with a UserWarning. Filling uninitialized
+    memory is turned off: it costs time on every torch.empty and the
+    pipelines never read uninitialized memory.
+
+    Measured need, 2026-11-21: the in-pod Wan T2V lane on torch 2.13 / ROCm
+    7.2 gave a different clip for the same seed on every eager request
+    (rows gfx1100-xtx-inpod-wan-t2v-*-gate-2026-11-21).
+    """
+    raw = os.environ.get("TORCH_DETERMINISTIC", "").strip().lower()
+    if raw not in ("1", "true", "yes", "on"):
+        return False
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    deterministic = getattr(getattr(torch, "utils", None), "deterministic", None)
+    if deterministic is not None and hasattr(
+        deterministic, "fill_uninitialized_memory"
+    ):
+        deterministic.fill_uninitialized_memory = False
+    torch.backends.cudnn.deterministic = True
+    print(
+        "TORCH_DETERMINISTIC: deterministic algorithms on (warn_only); rocBLAS "
+        "atomics off, MIOpen deterministic solvers, Inductor deterministic mode"
+    )
+    sys.stdout.flush()
+    return True
+
+
+_apply_determinism_controls()
+
 # Polyfill enable_gqa for scaled_dot_product_attention (PyTorch < 2.5).
 # diffusers 0.36+ FLUX attention processors pass enable_gqa=True, which
 # PyTorch 2.3 doesn't accept. Strip it and fall back to standard SDPA.
@@ -2583,7 +2622,10 @@ def warmup_inference():
         return
 
     resolutions = _parse_warmup_resolutions()
-    warmup_steps = 4
+    # WARMUP_STEPS: a lane whose first request differs from later ones can warm
+    # with the served step count, so any one-time event inside the denoise
+    # loop happens during warmup.
+    warmup_steps = _env_int("WARMUP_STEPS") or 4
     warmup_guidance = _default_guidance_scale(current_model)
     print(
         f"Running warmup inference at {len(resolutions)} resolution(s): "
@@ -2675,6 +2717,17 @@ def _warmup_pass(w: int, h: int, steps: int, guidance, guard: bool) -> Optional[
             kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
             kw["control_image"] = Image.new("RGB", (w, h), (128, 128, 128))
             kw["controlnet_conditioning_scale"] = 0.5
+        elif PIPELINE_MODE == "text2video":
+            # WARMUP_VIDEO_FRAMES warms the served clip shape. Without it the
+            # pipeline renders its default frame count (81 for Wan), a
+            # different shape from a shorter served clip, so a compiled
+            # transformer (dynamic=False) still meets that clip cold.
+            frames = _env_int("WARMUP_VIDEO_FRAMES")
+            if frames:
+                kw["num_frames"] = frames
+                negative = _resolve_negative_prompt(None)
+                if negative:
+                    kw["negative_prompt"] = negative
         if guard:
             kw["output_type"] = "np"
         with torch.inference_mode():
