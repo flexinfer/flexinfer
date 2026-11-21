@@ -26,6 +26,10 @@ func TestStallSequences(t *testing.T) {
 		{"waiting", []VLLMStallSample{{Waiting: 1}, {Waiting: 1}}, true},
 		{"new work", []VLLMStallSample{{}, {Running: 1}}, false},
 		{"reset counter", []VLLMStallSample{{Running: 1, Prompt: 5}, {Running: 1}}, false},
+		// A chunked prefill longer than the window: counters flat, KV usage rising.
+		{"long prefill", []VLLMStallSample{{Running: 1, KVUsage: 0.17, HasKVUsage: true}, {Running: 1, KVUsage: 0.35, HasKVUsage: true}}, false},
+		{"kv frozen", []VLLMStallSample{{Running: 1, KVUsage: 0.74, HasKVUsage: true}, {Running: 1, KVUsage: 0.74, HasKVUsage: true}}, true},
+		{"kv freed", []VLLMStallSample{{Running: 1, KVUsage: 0.74, HasKVUsage: true}, {Running: 1, KVUsage: 0.2, HasKVUsage: true}}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			d := StallDetector{Window: time.Minute}
@@ -37,6 +41,56 @@ func TestStallSequences(t *testing.T) {
 		})
 	}
 }
+
+// TestStallLongPrefillThenHang replays the 2026-11-21 shape: a 120K-token
+// prefill moves only the KV gauge for longer than the window and is never a
+// stall; once the gauge freezes too, the window runs from the last change.
+func TestStallLongPrefillThenHang(t *testing.T) {
+	d := StallDetector{Window: 5 * time.Minute}
+	start := time.Now()
+	kv := []float64{0.17, 0.35, 0.47, 0.56, 0.66, 0.74, 0.80}
+	for i, v := range kv {
+		at := start.Add(time.Duration(i) * time.Minute)
+		if d.Observe(VLLMStallSample{Running: 1, Prompt: 428923, Generation: 4432, KVUsage: v, HasKVUsage: true}, at) {
+			t.Fatalf("minute %d: long prefill declared stalled", i)
+		}
+	}
+	frozen := VLLMStallSample{Running: 1, Prompt: 428923, Generation: 4432, KVUsage: 0.80, HasKVUsage: true}
+	last := start.Add(time.Duration(len(kv)-1) * time.Minute)
+	if d.Observe(frozen, last.Add(4*time.Minute)) {
+		t.Fatal("stalled before the window elapsed")
+	}
+	if !d.Observe(frozen, last.Add(5*time.Minute)) {
+		t.Fatal("frozen gauge and counters not declared stalled after the window")
+	}
+}
+
+func TestStallMetricsKVUsage(t *testing.T) {
+	base := "vllm:num_requests_running 1\nvllm:num_requests_waiting 0\nvllm:prompt_tokens_total 20\nvllm:generation_tokens_total 30\n"
+	for _, tc := range []struct {
+		name  string
+		extra string
+		want  float64
+		hasKV bool
+	}{
+		{"absent", "", 0, false},
+		{"current name", "vllm:kv_cache_usage_perc{engine=\"0\",model_name=\"m\"} 0.25\n", 0.25, true},
+		{"legacy name", "vllm:gpu_cache_usage_perc{model_name=\"m\"} 0.5\n", 0.5, true},
+		{"current wins", "vllm:gpu_cache_usage_perc 0.5\nvllm:kv_cache_usage_perc 0.25\n", 0.25, true},
+		{"invalid ignored", "vllm:kv_cache_usage_perc NaN\n", 0, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, err := ParseVLLMStallSample(base + tc.extra)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if s.HasKVUsage != tc.hasKV || s.KVUsage != tc.want || s.Running != 1 || s.Generation != 30 {
+				t.Fatalf("got %+v", s)
+			}
+		})
+	}
+}
+
 func TestStallMetrics(t *testing.T) {
 	text := "vllm:num_requests_running{model_name=\"a b\"} 1\nvllm:num_requests_running{model_name=\"c\"} 2\nvllm:num_requests_waiting 0\nvllm:prompt_tokens_total 20\nvllm:generation_tokens_total 30\n"
 	s, err := ParseVLLMStallSample(text)
@@ -118,6 +172,19 @@ func TestStallProbeScript(t *testing.T) {
 	update(func() { text = strings.Replace(text, "num_requests_running 1", "num_requests_running 0", 1) })
 	run("161", true)
 	run("191", true)
+	// A long chunked prefill: the token counters stay flat past the window
+	// while the KV gauge moves, so the lane stays ready; once the gauge
+	// freezes too, readiness fails a window after its last change.
+	update(func() {
+		text = strings.Replace(text, "num_requests_running 0", "num_requests_running 1", 1) + "vllm:kv_cache_usage_perc 0.17\n"
+	})
+	run("200", true)
+	update(func() { text = strings.Replace(text, "kv_cache_usage_perc 0.17", "kv_cache_usage_perc 0.35", 1) })
+	run("225", true)
+	update(func() { text = strings.Replace(text, "kv_cache_usage_perc 0.35", "kv_cache_usage_perc 0.47", 1) })
+	run("250", true)
+	run("279", true)
+	run("280", false)
 	update(func() { health = 503 })
 	run("192", false)
 	update(func() { health, text = 200, "" })
