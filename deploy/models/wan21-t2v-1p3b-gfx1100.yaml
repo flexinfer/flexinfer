@@ -54,6 +54,13 @@
 # dedicated path sets 0 (backend/diffusers.go) and qwen-image-21-gfx1100 pins
 # 0 in its config.env. config.env now pins 0 here too. Re-gated by row
 # gfx1100-xtx-inpod-wan-t2v-rocblas-gate-2026-11-21.
+# That re-gate (!1374) made warm requests byte-identical, but the first
+# request after a load still differed (31.41 dB) and sat at 21.38 dB against
+# the dedicated lane. Both launch paths compile the transformer with
+# max-autotune, but on different torch (dedicated 2.6, in-pod 2.13), and only
+# the in-pod first call differs. config.env now sets COMPILE_MODE=none, so the
+# in-pod transformer runs eagerly. Re-gated by row
+# gfx1100-xtx-inpod-wan-t2v-eager-gate-2026-11-21.
 # Host RAM: this lane's dedicated limit (48 GiB) equals the runtime pod's
 # whole limit; a render that needed all of it in-pod would leave the runtime
 # manager nothing.
@@ -144,6 +151,8 @@ spec:
     # `reduce-overhead` captures CUDA graphs whose output is overwritten by
     # Wan's second classifier-free-guidance transformer call. Autotune without
     # CUDA graphs keeps the safe execution model while tuning generated kernels.
+    # In-pod, config.env COMPILE_MODE=none overrides this (header, eager
+    # re-gate 2026-11-21); the dedicated rollback keeps compiling.
     compileMode: max-autotune-no-cudagraphs
     # Accelerate's model-offload hook performs device moves that cannot be
     # captured in a single full graph; allow graph breaks around those hooks.
@@ -171,6 +180,9 @@ spec:
     # (header, 2026-11-21 gate).
     env:
       TORCH_BLAS_PREFER_HIPBLASLT: "0"
+      # Eager transformer in-pod: torch 2.13's compiled first call differs
+      # from every later call (header, eager re-gate 2026-11-21).
+      COMPILE_MODE: "none"
       PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
       PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
   nodeSelector:
