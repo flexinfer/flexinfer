@@ -15,6 +15,41 @@
 # the demoted 5930k Qwen workhorse (priority 300, minReplicas 0) cold-starts
 # on demand but loses the election to video.
 # Remove this parent Model (not its Deployment/pod) to roll the lane back.
+#
+# 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
+# WINDOW-GATED): served IN-POD by the 7900xtx runtime DaemonSet instead of its
+# own Deployment, so a render swaps the XTX warm lane out and back inside the
+# runtime pod.
+# - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
+# - Compile cache: scope Image on the default hostPath, the directory the
+#   runtime pod mounts at /cache/compile.
+# Runtime image: 527e2714 (rocm-gfx1100-serving-v032-ddf22437, live on the XTX runtime since !1234 on 2026-11-04). It carries imageio 2.37.0, imageio-ffmpeg 0.6.0 (H.264
+# export) and ftfy 6.3.1, and its server-diffusers.py has the Wan VAE MIOpen
+# bypass (!1268, 225b7150); checked in the live runtime pod 2026-11-05. Its
+# stack is torch 2.13 / ROCm 7.2.3 (MIOpen of that release), not the dedicated
+# image's. S9 (2026-11-05/06, rows gfx1100-wan-decode-ab-v032-*) A/B'd it
+# against the dedicated lane (b1f98ad0, warm clip 121.7 s, decode 5.9 s).
+#
+# 2026-11-21 refresh: the allocator pinned (config.env below).
+# - S9 cause: expandable_segments:True with model CPU offload on this stack
+#   holds ~19 GiB on the card outside torch's accounting and corrupts every
+#   VAE use after the first in a process. In-pod this lane would inherit the
+#   runtime pod's PYTORCH_ALLOC_CONF (gc 0.7, split 256, expandable True),
+#   which torch 2.13 reads before PYTORCH_HIP_ALLOC_CONF.
+# - With both variables off (S9 diagnostic dx-B-noexp2, untiled) the lane was
+#   sound in one process across three VAE uses: decode 6.1/5.8 s, clips in
+#   61-70 s against 122 s dedicated, card peak 24,431 MiB (the dedicated lane
+#   peaks at 24.47 GB too). It missed S9's pre-registered decode equivalence
+#   against the dedicated lane's latents: 34.22/31.76 dB and SSIM 0.9789
+#   against 35/32/0.98. Whether that is acceptable is the owner's call, and
+#   it needs a pre-registered gate row before this merges.
+# - The same pin made Qwen-Image sound in-pod on 2026-11-21 (D3 third
+#   attempt, !1368, row gfx1100-xtx-inpod-qwen-image-gate-2026-11-19).
+# Host RAM: this lane's dedicated limit (48 GiB) equals the runtime pod's
+# whole limit; a render that needed all of it in-pod would leave the runtime
+# manager nothing.
+# Rollback: revert this commit (restores dedicatedDeployment and the cache
+# config); the Deployment returns on the next reconcile.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -67,7 +102,9 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      hostPath: /var/lib/flexinfer/compile-cache
+      # 2026-11-01 D1: image-scoped on the default hostPath, shared with the
+      # runtime pod (header).
+      scope: Image
       sizeLimit: 6Gi
   gpu:
     vendor: amd
@@ -88,9 +125,6 @@ spec:
     idleTimeout: 15m
     coldStartTimeout: 30m
   config:
-    # The gfx1100 GPUProfile bundles the older generic Diffusers runtime. This
-    # lane must exercise its model-specific PyTorch 2.6 image instead.
-    dedicatedDeployment: true
     pipelineMode: text2video
     modelFamily: wan
     dtype: bfloat16
@@ -119,6 +153,13 @@ spec:
     # as the Fable GPTQ smoke). `primary` forces a backend start even at zero
     # replicas and would keep the GPU held.
     warmPolicy: ondemand
+    # 2026-11-21 (header): no expandable_segments, on both names so torch's
+    # precedence does not matter; overrides the runtime pod's
+    # PYTORCH_ALLOC_CONF in-pod (config.env is applied last). Same values as
+    # qwen-image-21-gfx1100 (!1368).
+    env:
+      PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
+      PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
