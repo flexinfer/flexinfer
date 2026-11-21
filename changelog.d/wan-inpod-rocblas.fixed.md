@@ -1,0 +1,1 @@
+- `wan21-t2v-1p3b-gfx1100` pins `TORCH_BLAS_PREFER_HIPBLASLT=0` in `config.env`. In-pod the lane inherited the gfx1100 GPUProfile's `1` (hipBLASLt), and the same seed gave a different clip on every request in one process (gate row `gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21`, bar 2). The dedicated path and `qwen-image-21-gfx1100` already run rocBLAS.
