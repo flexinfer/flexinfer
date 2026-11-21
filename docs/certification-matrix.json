@@ -2384,7 +2384,7 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "fail",
+      "decision": "pass",
       "title": "KT-JOBS, feature D2 (scale-to-zero contract) of .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.2: can async jobs take the 7900xtx flex card from the warm lane only while they…",
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#proxy-async-jobs-2026-10-31",
