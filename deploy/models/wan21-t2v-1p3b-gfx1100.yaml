@@ -45,6 +45,15 @@
 #   it needs a pre-registered gate row before this merges.
 # - The same pin made Qwen-Image sound in-pod on 2026-11-21 (D3 third
 #   attempt, !1368, row gfx1100-xtx-inpod-qwen-image-gate-2026-11-19).
+# 2026-11-21 gate (row gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21, !1372):
+# fail on bar (2) alone. In-pod every clip was sound and warm clips took
+# 63.9 s against 128.8 s dedicated, but the same seed gave a different clip
+# on each request in one process (31.98/33.33 dB against a 50 dB bar; the
+# dedicated lane is byte-identical within a load). The in-pod process
+# inherited TORCH_BLAS_PREFER_HIPBLASLT=1 from the gfx1100 GPUProfile; the
+# dedicated path sets 0 (backend/diffusers.go) and qwen-image-21-gfx1100 pins
+# 0 in its config.env. config.env now pins 0 here too. Re-gated by row
+# gfx1100-xtx-inpod-wan-t2v-rocblas-gate-2026-11-21.
 # Host RAM: this lane's dedicated limit (48 GiB) equals the runtime pod's
 # whole limit; a render that needed all of it in-pod would leave the runtime
 # manager nothing.
@@ -157,7 +166,11 @@ spec:
     # precedence does not matter; overrides the runtime pod's
     # PYTORCH_ALLOC_CONF in-pod (config.env is applied last). Same values as
     # qwen-image-21-gfx1100 (!1368).
+    # TORCH_BLAS_PREFER_HIPBLASLT: rocBLAS, as the dedicated path and
+    # qwen-image-21-gfx1100 run; overrides the gfx1100 GPUProfile's 1 in-pod
+    # (header, 2026-11-21 gate).
     env:
+      TORCH_BLAS_PREFER_HIPBLASLT: "0"
       PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
       PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
   nodeSelector:
