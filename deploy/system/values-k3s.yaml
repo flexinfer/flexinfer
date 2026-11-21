@@ -219,8 +219,15 @@ agent:
     # 2026-11-01 on de13ce8f (62c87123), which image automation had since
     # replaced. Rollback: delete the digest line (the agent then follows image
     # automation again).
-    digest: "sha256:6b832f384c69063dc33248709ae715f3398190b8ed00990501bcca3a139d7b8a"
-    tag: "20261104-190946"
+    # 2026-11-20: master a541c524 (tag 20261120-220622, pipeline of !1365):
+    # probe-timeout degrades a healthy node only on two consecutive cycles
+    # (!1365); also carries the Local cache inventory (488310104), which stays
+    # off because agent.localCacheInventory.enabled is false (no
+    # --local-cache-root flag, no new mount or RBAC). Rollback: the 2026-11-04
+    # digest sha256:6b832f384c69063dc33248709ae715f3398190b8ed00990501bcca3a139d7b8a
+    # (tag 20261104-190946, master ac73e607).
+    digest: "sha256:ccabfae44e61ab143e8f4cb4506e97fd3a11906d9e31fa8f0e38b5581d0f9018"
+    tag: "20261120-220622"
   resources:
     limits:
       cpu: 1000m
