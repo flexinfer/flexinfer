@@ -322,6 +322,29 @@ class StableDiffusionXLPipeline(_FakePipeline):
         pass
 
 
+class WanVACEI2VPipeline(_FakePipeline):
+    """The image-to-video keywords a WanVACEPipeline __call__ accepts."""
+
+    @recording
+    def __call__(
+        self,
+        prompt=None,
+        negative_prompt=None,
+        video=None,
+        mask=None,
+        height=480,
+        width=832,
+        num_frames=81,
+        num_inference_steps=50,
+        guidance_scale=5.0,
+        generator=None,
+        output_type="np",
+        callback_on_step_end=None,
+        callback_on_step_end_tensor_inputs=("latents",),
+    ):
+        pass
+
+
 class WanT2VPipeline(_FakePipeline):
     """The text-to-video keywords a WanPipeline __call__ accepts."""
 
@@ -1414,8 +1437,6 @@ class RealLibrariesTest(ServerTestCase):
         model.norm(torch.ones(1, 8, dtype=torch.bfloat16))  # raised before the shim
 
 
-
-
 # --- determinism controls and exact-shape video warmup ------------------------
 
 
@@ -1496,6 +1517,38 @@ class VideoWarmupTest(ServerTestCase):
         self.assertNotIn("negative_prompt", call)
         self.assertEqual(call["num_inference_steps"], 4)
 
+    def test_vace_warmup_renders_the_served_shape_with_a_condition(self):
+        server.PIPELINE_MODE = "image2video"
+        pipe = self.serve(WanVACEI2VPipeline(), "Wan-AI/Wan2.1-VACE-1.3B-diffusers")
+        os.environ.update(
+            WARMUP_RESOLUTIONS="832x480",
+            WARMUP_VIDEO_FRAMES="33",
+            WARMUP_STEPS="20",
+            DEFAULT_NEGATIVE_PROMPT="static, blurry",
+        )
+        self.quiet(server.warmup_inference)
+        self.assertTrue(server.warmup_complete)
+        (call,) = pipe.calls
+        self.assertEqual(call["num_frames"], 33)
+        self.assertEqual(call["num_inference_steps"], 20)
+        self.assertEqual((call["width"], call["height"]), (832, 480))
+        self.assertEqual(call["negative_prompt"], "static, blurry")
+        # The same conditioning the request path builds: one kept frame, the
+        # rest generated, at the served size.
+        self.assertEqual((len(call["video"]), len(call["mask"])), (33, 33))
+        self.assertEqual(call["video"][0].size, (832, 480))
+        self.assertEqual(call["mask"][0].getpixel((0, 0)), 0)
+        self.assertEqual(call["mask"][1].getpixel((0, 0)), 255)
+
+    def test_vace_warmup_without_frames_uses_the_served_default(self):
+        server.PIPELINE_MODE = "image2video"
+        pipe = self.serve(WanVACEI2VPipeline(), "Wan-AI/Wan2.1-VACE-1.3B-diffusers")
+        os.environ.update(WARMUP_RESOLUTIONS="832x480", DEFAULT_VIDEO_NUM_FRAMES="49")
+        self.quiet(server.warmup_inference)
+        (call,) = pipe.calls
+        self.assertEqual(call["num_frames"], 49)
+        self.assertEqual(len(call["video"]), 49)
+
     def test_frames_ignored_outside_text2video(self):
         server.PIPELINE_MODE = "text2image"
         pipe = self.serve(StableDiffusionXLPipeline(), "stabilityai/sdxl")
@@ -1522,9 +1575,13 @@ class BrownianNoiseBoundsTest(ServerTestCase):
 
         def run(seed):
             sch = CosineDPMSolverMultistepScheduler(
-                sigma_min=0.3, sigma_max=500.0, sigma_data=1.0,
-                sigma_schedule="exponential", solver_order=2,
-                prediction_type="v_prediction", final_sigmas_type="zero",
+                sigma_min=0.3,
+                sigma_max=500.0,
+                sigma_data=1.0,
+                sigma_schedule="exponential",
+                solver_order=2,
+                prediction_type="v_prediction",
+                final_sigmas_type="zero",
             )
             sch.set_timesteps(20, device="cpu")
             g = torch.Generator("cpu").manual_seed(seed)
@@ -1538,6 +1595,7 @@ class BrownianNoiseBoundsTest(ServerTestCase):
         self.assertTrue(bool(torch.isfinite(a).all()))
         self.assertTrue(torch.equal(a, b))
         self.assertFalse(torch.equal(a, c))
+
 
 if __name__ == "__main__":
     print(
