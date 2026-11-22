@@ -847,6 +847,11 @@ imagePrewarm:
         # 2026-10-23); it is no longer in Harbor, so it can only be listed as a
         # comment without failing the runtime_pin_drift gate:
         #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
+        # 2026-11-21 (128K lane, !1383): the image the dedicated XTX warm lane
+        # qwen38-27b-xtx-warm-canary runs at 131072 (rocm-gfx1100-serving-v033-
+        # 3e8ae3c2, pinned-51afd0d377f7). Resident since the 128K canary pulled
+        # it; listed so image GC cannot drop the live lane's image.
+        - registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
         # 2026-10-23 (issue #74 S1''): the master b8637f35 serving rebuild
         # (rocm-gfx1100-serving-b8637f35) this node's runtime DaemonSet runs
         # since !1116 (qualified, matrix row gfx1100-serving-2026-10-23).
