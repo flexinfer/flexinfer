@@ -51,6 +51,10 @@ var gfx1100CertifiedRuntimes = map[string]string{
 	// Wan VACE exact-shape warmup with a conditioning frame (!1399). Base
 	// verifier re-run. The D1 Stable Audio and VACE repin target.
 	"sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409": "overlay build 2026-11-22, Dockerfile.runtime-serving-v032-diffusers-overlay",
+	// rocm-gfx1100-serving-v032-527e2714-dfo-75a382f7: the same overlay with
+	// master 75a382f7's server-diffusers.py, which adds the WAN_VAE_MIOPEN
+	// switch (!1407) for the in-pod VACE float32 VAE. Base verifier re-run.
+	"sha256:c54cad123fd667bd82413e102e785348347148856b144d1fff1ef894901ab0c7": "overlay build 2026-11-22, Dockerfile.runtime-serving-v032-diffusers-overlay",
 }
 
 var runtimeDigestPattern = regexp.MustCompile(`^registry\.harbor\.lan/flexinfer/runtime@(sha256:[0-9a-f]{64})$`)

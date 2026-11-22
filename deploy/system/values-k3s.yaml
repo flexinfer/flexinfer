@@ -938,6 +938,12 @@ imagePrewarm:
         # conditioning frame (!1399). Base verifier re-ran. One small layer on
         # 527e2714.
         - registry.harbor.lan/flexinfer/runtime@sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409
+        # 2026-11-22 (D1 VACE): rocm-gfx1100-serving-v032-527e2714-dfo-75a382f7,
+        # the same overlay with master 75a382f7's server-diffusers.py:
+        # a8d525e0's server plus the WAN_VAE_MIOPEN switch (!1407) that lets
+        # the in-pod VACE lane run its tiled float32 VAE without MIOpen. Base
+        # verifier re-ran. One small layer on 527e2714.
+        - registry.harbor.lan/flexinfer/runtime@sha256:c54cad123fd667bd82413e102e785348347148856b144d1fff1ef894901ab0c7
         # 2026-11-05 (S3, .loom/10-research-backend-currency-gfx1100-gfx906-
         # 2026-11-04.md §6.1): the stacked serving persona on vLLM
         # 0.33.0-rocm72 (build profile gfx1100-serving-v033 at !1284,
@@ -1200,7 +1206,14 @@ runtime:
       # (shared/gfx1100/a8d525e02c21): seed it from 12f30206d9e6 before the
       # roll. Rollback = 12f30206, still prewarmed and certified:
       #   registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409"
+      # 2026-11-22 (D1 VACE, WINDOW-GATED): a8d525e0 -> c54cad12, the same
+      # overlay with master 75a382f7's server-diffusers.py (adds only the
+      # WAN_VAE_MIOPEN switch, !1407, default auto = unchanged behaviour;
+      # prewarm entry above). The shared compile cache moves with the digest
+      # (shared/gfx1100/c54cad123fd6): seed it from a8d525e02c21 before the
+      # roll. Rollback = a8d525e0, still prewarmed and certified:
+      #   registry.harbor.lan/flexinfer/runtime@sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:c54cad123fd667bd82413e102e785348347148856b144d1fff1ef894901ab0c7"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
