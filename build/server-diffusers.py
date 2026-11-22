@@ -1296,15 +1296,34 @@ def _bypass_miopen_for_wan_vae(pipe, family: Optional[str]) -> bool:
     2026-11-03: a bf16 3x3x3 conv at (1,96,6,480,832) took 7.9 s through MIOpen
     and 31 ms through PyTorch's im2col + GEMM path, and the 33-frame 832x480
     decode dropped from 370 s to 5-11 s at an 11.6 GiB peak. An fp32 VAE (the
-    VACE lane) is left alone: its im2col buffer needs 15.4 GiB at that shape.
+    VACE lane) is left alone by default: untiled, its im2col buffer needs
+    15.4 GiB at that shape.
+
+    WAN_VAE_MIOPEN overrides the dtype rule: "off" bypasses MIOpen for any
+    dtype, "on" keeps it for any dtype, and "auto" (the default) is the rule
+    above. The in-pod VACE lane sets "off": through MIOpen its fp32 VAE gave
+    same-seed requests that differ (37 dB), while the bypassed 16-bit T2V VAE
+    repeats byte-for-byte. VAE tiling (ENABLE_VAE_TILING=1) bounds the fp32
+    im2col buffer per tile; without it the bypass can run out of memory.
     """
     is_rocm = hasattr(torch.version, "hip") and torch.version.hip is not None
     vae = getattr(pipe, "vae", None)
     if family != "wan" or not is_rocm or vae is None:
         return False
-    if getattr(vae, "dtype", None) not in (torch.bfloat16, torch.float16):
-        print(f"Keeping MIOpen for the Wan VAE in {getattr(vae, 'dtype', None)}")
+    dtype = getattr(vae, "dtype", None)
+    sixteen_bit = dtype in (torch.bfloat16, torch.float16)
+    mode = os.environ.get("WAN_VAE_MIOPEN", "auto").strip().lower() or "auto"
+    if mode not in ("auto", "on", "off"):
+        print(f"WARNING: WAN_VAE_MIOPEN={mode!r} is not auto, on or off; using auto")
+        mode = "auto"
+    if mode == "on" or (mode == "auto" and not sixteen_bit):
+        print(f"Keeping MIOpen for the Wan VAE in {dtype} (WAN_VAE_MIOPEN={mode})")
         return False
+    if not sixteen_bit and os.environ.get("ENABLE_VAE_TILING", "0") != "1":
+        print(
+            f"WARNING: WAN_VAE_MIOPEN=off on a {dtype} Wan VAE without "
+            "ENABLE_VAE_TILING=1: the untiled im2col buffer can exceed the card"
+        )
 
     def without_miopen(method):
         def call(*args, **kwargs):
@@ -1320,7 +1339,10 @@ def _bypass_miopen_for_wan_vae(pipe, family: Optional[str]) -> bool:
     for name in ("encode", "decode"):
         if hasattr(vae, name):
             setattr(vae, name, without_miopen(getattr(vae, name)))
-    print("Wan VAE encode/decode run with MIOpen off (naive 3D conv kernels)")
+    print(
+        f"Wan VAE encode/decode run with MIOpen off in {dtype} "
+        f"(WAN_VAE_MIOPEN={mode}; im2col + GEMM)"
+    )
     return True
 
 
