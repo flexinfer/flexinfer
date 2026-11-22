@@ -65,6 +65,13 @@
 # warmup are set in env only, so the dedicated rollback stays eager. Needs a
 # runtime carrying !1399 (Draft !1390, repinned to that overlay). Gate: row
 # gfx1100-xtx-inpod-wan-vace-warmup-gate-2026-11-22.
+# 2026-11-22 diagnostic (uncounted, 20:37-20:51Z on a8d525e0): compiled and
+# warmed as above, same-seed clips still differed at 37.4 dB (40 dB at the kept
+# first frame, 36-37 dB later), below the row's 43.96 dB floor; warm clips
+# 150 s, warmup 292 s per load. TORCH_DETERMINISTIC is dropped to run the exact
+# in-pod T2V recipe (plain compile: Triton templates instead of the aten GEMMs
+# Inductor's deterministic mode picks). If clips still differ, the float32
+# VAE on MIOpen is the remaining VACE-only suspect.
 # Host RAM: dedicated limit 48 GiB = the runtime pod's whole limit.
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
 # config); the Deployment returns on the next reconcile.
@@ -162,7 +169,7 @@ spec:
       PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
       PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
       TORCH_BLAS_PREFER_HIPBLASLT: "0"
-      TORCH_DETERMINISTIC: "1"
+      # TORCH_DETERMINISTIC dropped 2026-11-22 after the diagnostic (header).
       # 2026-11-22 compiled transformer plus exact-shape warmup (header).
       # Overrides skipWarmup "1" in-pod; the dedicated rollback ignores them.
       COMPILE_MODE: "max-autotune-no-cudagraphs"

@@ -1,0 +1,1 @@
+In-pod Wan VACE drops `TORCH_DETERMINISTIC`, so it runs the exact in-pod Wan T2V recipe (plain compile plus the exact-shape warmup); diagnostic for row `gfx1100-xtx-inpod-wan-vace-warmup-gate-2026-11-22`.
