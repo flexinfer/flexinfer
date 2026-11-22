@@ -48,6 +48,23 @@
 #   PyTorch, which made every eager T2V request differ. Untested on VACE; the
 #   gate checks it. The exact-shape warmup that fixed the compiled T2V lane
 #   does not apply: the server's warmup cannot send a conditioning image.
+#
+# 2026-11-22 gate fail and fix: row gfx1100-xtx-inpod-wan-vace-gate-2026-11-22
+# failed bar (2) on the eager lane above. Same-seed clips matched at 29-41 dB
+# against the dedicated lane's 43.96, clip 3 the outlier, with no op logged as
+# lacking a deterministic implementation. Every other bar passed, NaN-free
+# included. The fix follows the in-pod Wan T2V lane, which became
+# byte-identical from the first request and across loads once compiled and
+# warmed at the served shape (research-determinism.md F2): compile the
+# transformer (max-autotune-no-cudagraphs, graph breaks allowed around the
+# offload hooks) and warm 832x480 x 33 frames x 20 steps with the server's
+# image2video warmup (!1399), which sends the request path's own VACE
+# conditioning. TORCH_DETERMINISTIC stays on (F1+F2): it keeps the float32
+# VAE's MIOpen convs, which T2V never ran, on deterministic solvers, and
+# Inductor's deterministic mode drops runtime reduction tuning. Compile and
+# warmup are set in env only, so the dedicated rollback stays eager. Needs a
+# runtime carrying !1399 (Draft !1390, repinned to that overlay). Gate: row
+# gfx1100-xtx-inpod-wan-vace-warmup-gate-2026-11-22.
 # Host RAM: dedicated limit 48 GiB = the runtime pod's whole limit.
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
 # config); the Deployment returns on the next reconcile.
@@ -146,6 +163,16 @@ spec:
       PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
       TORCH_BLAS_PREFER_HIPBLASLT: "0"
       TORCH_DETERMINISTIC: "1"
+      # 2026-11-22 compiled transformer plus exact-shape warmup (header).
+      # Overrides skipWarmup "1" in-pod; the dedicated rollback ignores them.
+      COMPILE_MODE: "max-autotune-no-cudagraphs"
+      COMPILE_FULLGRAPH: "false"
+      SKIP_WARMUP: "0"
+      WARMUP_RESOLUTIONS: "832x480"
+      WARMUP_VIDEO_FRAMES: "33"
+      WARMUP_STEPS: "20"
+      WARMUP_NONFINITE_RETRIES: "0"
+      TORCH_LOGS: "recompiles,graph_breaks"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
