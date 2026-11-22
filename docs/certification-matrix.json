@@ -211,11 +211,11 @@
       "gpu_class": "gfx1100",
       "decision": "fail",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-vace-gate-2026-11-22",
       "validation_rows": [
-        "gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21"
+        "gfx1100-xtx-inpod-wan-vace-gate-2026-11-22"
       ],
-      "date": "2026-11-21",
+      "date": "2026-11-22",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -1859,9 +1859,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "fail",
       "title": "owner-window step D5 (D1 step 3, lane 4 of 5): the XTX Wan 2.1 VACE 1.3B image-to-video lane served in-pod by the 7900 XTX runtime (Draft !1238, refreshed 2026-11-22 at b25fbc27). The lane is not…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-vace-gate-2026-11-22",
       "date": "2026-11-22",
       "source": ".loom/60-validation-matrix.md"
