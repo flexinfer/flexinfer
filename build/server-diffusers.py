@@ -135,6 +135,57 @@ from diffusers import (
 )
 
 
+def _bound_brownian_noise_sampler() -> bool:
+    """Keep diffusers' Brownian-tree noise queries inside the tree's interval.
+
+    BrownianTreeNoiseSampler builds a torchsde BrownianInterval over
+    [sigma_min, sigma_max] and is then queried at each step's (sigma,
+    sigma_next). Two queries fall outside it: the first sigma comes out of the
+    schedule as 500.00006 against sigma_max 500, and with final_sigmas_type
+    "zero" the last step asks for sigma_next 0 below sigma_min. torchsde 0.2.6
+    only warns on the old dedicated stack (Python 3.10, torch 2.6), but on the
+    runtime image (Python 3.12, torch 2.13) the below-start query recurses
+    until RecursionError, so Stable Audio Open crashed on its last step
+    (S9 2026-11-06; reproduced on CPU in runtime 12f30206 on 2026-11-22).
+
+    The query endpoints are clamped to the interval. When the clamped interval
+    is empty the noise is zeros: that is the final step to sigma 0, whose
+    first-order update multiplies the noise by sigma_t = 0, so any finite value
+    gives the same sample. Queries inside the interval are unchanged.
+    """
+    try:
+        from diffusers.schedulers import scheduling_dpmsolver_sde as sde
+    except Exception:  # noqa: BLE001 - optional on stub or older diffusers
+        return False
+    cls = getattr(sde, "BrownianTreeNoiseSampler", None)
+    if cls is None or getattr(cls, "_flexinfer_bounded", False):
+        return False
+    orig_init = cls.__init__
+
+    def __init__(self, x, sigma_min, sigma_max, seed=None, transform=lambda v: v):
+        orig_init(self, x, sigma_min, sigma_max, seed, transform)
+        a = self.transform(torch.as_tensor(sigma_min))
+        b = self.transform(torch.as_tensor(sigma_max))
+        self._flexinfer_lo, self._flexinfer_hi = torch.minimum(a, b), torch.maximum(a, b)
+        self._flexinfer_zeros = torch.zeros_like(x)
+
+    def __call__(self, sigma, sigma_next):
+        lo, hi = self._flexinfer_lo, self._flexinfer_hi
+        t0 = torch.minimum(torch.maximum(self.transform(torch.as_tensor(sigma)), lo), hi)
+        t1 = torch.minimum(torch.maximum(self.transform(torch.as_tensor(sigma_next)), lo), hi)
+        if bool(t0 == t1):
+            return self._flexinfer_zeros.clone()
+        return self.tree(t0, t1) / (t1 - t0).abs().sqrt()
+
+    cls.__init__ = __init__
+    cls.__call__ = __call__
+    cls._flexinfer_bounded = True
+    return True
+
+
+_bound_brownian_noise_sampler()
+
+
 # Lazy-import AutoPipeline* to avoid cascading import of all pipelines
 # (CogView4, QwenImage etc. require transformers >= 4.49)
 def _lazy_auto_pipeline_text2image():

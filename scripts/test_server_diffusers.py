@@ -1504,6 +1504,41 @@ class VideoWarmupTest(ServerTestCase):
         (call,) = pipe.calls
         self.assertNotIn("num_frames", call)
 
+
+# --- Brownian-tree noise bounds (Stable Audio on the runtime image) ----------
+
+
+class BrownianNoiseBoundsTest(ServerTestCase):
+    def test_no_scheduler_module_is_a_no_op(self):
+        with mock.patch.dict(sys.modules, {"diffusers.schedulers": None}):
+            self.assertFalse(server._bound_brownian_noise_sampler())
+
+    @unittest.skipUnless(REAL_DIFFUSERS, "needs real torch and diffusers")
+    def test_cosine_dpm_schedule_finishes_and_repeats(self):
+        import torch
+        from diffusers import CosineDPMSolverMultistepScheduler
+
+        server._bound_brownian_noise_sampler()  # idempotent after import
+
+        def run(seed):
+            sch = CosineDPMSolverMultistepScheduler(
+                sigma_min=0.3, sigma_max=500.0, sigma_data=1.0,
+                sigma_schedule="exponential", solver_order=2,
+                prediction_type="v_prediction", final_sigmas_type="zero",
+            )
+            sch.set_timesteps(20, device="cpu")
+            g = torch.Generator("cpu").manual_seed(seed)
+            lat = torch.randn(1, 8, 64, generator=g) * sch.init_noise_sigma
+            for t in sch.timesteps:
+                x = sch.scale_model_input(lat, t)
+                lat = sch.step(-0.01 * x, t, lat, generator=g).prev_sample
+            return lat
+
+        a, b, c = run(42), run(42), run(7)
+        self.assertTrue(bool(torch.isfinite(a).all()))
+        self.assertTrue(torch.equal(a, b))
+        self.assertFalse(torch.equal(a, c))
+
 if __name__ == "__main__":
     print(
         f"stubbed: {sorted(STUBBED) or 'none'}; real diffusers: {REAL_DIFFUSERS}",
