@@ -274,170 +274,178 @@ DIFFUSERS_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers:rocm-gfx906
 UNIFIED_GFX906_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/runtime:unified-gfx906
 DIFFUSERS_CUDA_IMAGE ?= $(HARBOR_REGISTRY)/flexinfer/diffusers:cuda-maxwell
 
-# Docker context for GPU builds (requires remote builder with GPU access)
-DOCKER_CONTEXT_GPU ?= 7900xtx
+# Backend images build on the cluster BuildKit (ci-build/buildkitd-central)
+# through the cluster-buildkit wrapper in ~/workspace/bin. A Docker build needs
+# no GPU, and CI already builds these images there (publish_* jobs).
+# build-X leaves the result in the BuildKit cache; push-X builds and pushes in
+# one step. A dropped port-forward cancels the build, so leave the multi-hour
+# compiles (mlc-*) to their CI publish_* jobs.
+# Override the builder, e.g. once 7900xtx is back:
+#   make push-X BUILDX="docker buildx build --builder 7900xtx"
+BUILDX ?= cluster-buildkit build
+BUILD_OUTPUT ?=
 
 .PHONY: build-mlc-rocm64
-build-mlc-rocm64: ## Build MLC-LLM ROCm 6.4 image on GPU node (gfx1100, ~3 hours)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.mlc-rocm64-full -t $(MLC_ROCM64_IMAGE) build/
+build-mlc-rocm64: ## Build MLC-LLM ROCm 6.4 image (gfx1100, ~3 hours)
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.mlc-rocm64-full -t $(MLC_ROCM64_IMAGE) build/
 
 .PHONY: push-mlc-rocm64
-push-mlc-rocm64: ## Push MLC-LLM ROCm 6.4 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(MLC_ROCM64_IMAGE)
+push-mlc-rocm64: ## Build and push MLC-LLM ROCm 6.4 image to Harbor
+	$(MAKE) --no-print-directory build-mlc-rocm64 BUILD_OUTPUT=--push
 
 .PHONY: build-mlc-gfx906
-build-mlc-gfx906: ## Build MLC-LLM gfx906 image on GPU node (~3 hours)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.mlc-rocm64-gfx906 -t $(MLC_GFX906_IMAGE) build/
+build-mlc-gfx906: ## Build MLC-LLM gfx906 image (~3 hours)
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.mlc-rocm64-gfx906 -t $(MLC_GFX906_IMAGE) build/
 
 .PHONY: push-mlc-gfx906
-push-mlc-gfx906: ## Push MLC-LLM gfx906 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(MLC_GFX906_IMAGE)
+push-mlc-gfx906: ## Build and push MLC-LLM gfx906 image to Harbor
+	$(MAKE) --no-print-directory build-mlc-gfx906 BUILD_OUTPUT=--push
 
 .PHONY: build-vllm-gfx1100
 build-vllm-gfx1100: ## Build vLLM gfx1100 image (no FA)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-rocm-gfx1100 -t $(VLLM_GFX1100_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.vllm-rocm-gfx1100 -t $(VLLM_GFX1100_IMAGE) .
 
 .PHONY: push-vllm-gfx1100
-push-vllm-gfx1100: ## Push vLLM gfx1100 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX1100_IMAGE)
+push-vllm-gfx1100: ## Build and push vLLM gfx1100 image to Harbor
+	$(MAKE) --no-print-directory build-vllm-gfx1100 BUILD_OUTPUT=--push
 
 .PHONY: build-vllm-gfx1100-fa
 build-vllm-gfx1100-fa: ## Build vLLM gfx1100 flash attention image (prebuilt Navi base, vLLM 0.14.0)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-rocm-gfx1100-fa -t $(VLLM_GFX1100_FA_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.vllm-rocm-gfx1100-fa -t $(VLLM_GFX1100_FA_IMAGE) .
 
 .PHONY: push-vllm-gfx1100-fa
-push-vllm-gfx1100-fa: ## Push vLLM gfx1100 FA image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX1100_FA_IMAGE)
+push-vllm-gfx1100-fa: ## Build and push vLLM gfx1100 FA image to Harbor
+	$(MAKE) --no-print-directory build-vllm-gfx1100-fa BUILD_OUTPUT=--push
 
 .PHONY: build-vllm-gfx1100-nightly
 build-vllm-gfx1100-nightly: ## Build vLLM nightly gfx1100 image (from-source, Qwen3.5 + AWQ, ~30-60 min)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-nightly-rocm-gfx1100 -t $(VLLM_GFX1100_NIGHTLY_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.vllm-nightly-rocm-gfx1100 -t $(VLLM_GFX1100_NIGHTLY_IMAGE) .
 
 .PHONY: push-vllm-gfx1100-nightly
-push-vllm-gfx1100-nightly: ## Push vLLM nightly gfx1100 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX1100_NIGHTLY_IMAGE)
+push-vllm-gfx1100-nightly: ## Build and push vLLM nightly gfx1100 image to Harbor
+	$(MAKE) --no-print-directory build-vllm-gfx1100-nightly BUILD_OUTPUT=--push
 
 .PHONY: build-vllm-gfx906
 build-vllm-gfx906: ## Build custom vLLM gfx906 image from source (no FA)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-rocm-gfx906 -t $(VLLM_GFX906_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.vllm-rocm-gfx906 -t $(VLLM_GFX906_IMAGE) .
 
 .PHONY: push-vllm-gfx906
-push-vllm-gfx906: ## Push vLLM gfx906 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX906_IMAGE)
+push-vllm-gfx906: ## Build and push vLLM gfx906 image to Harbor
+	$(MAKE) --no-print-directory build-vllm-gfx906 BUILD_OUTPUT=--push
 
 .PHONY: build-vllm-gfx906-qwen35-mtp
 build-vllm-gfx906-qwen35-mtp: ## Build modern gfx906 Qwen3.5/MTP canary overlay
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-rocm-gfx906-qwen35-mtp -t $(VLLM_GFX906_QWEN35_MTP_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.vllm-rocm-gfx906-qwen35-mtp -t $(VLLM_GFX906_QWEN35_MTP_IMAGE) .
 
 .PHONY: push-vllm-gfx906-qwen35-mtp
-push-vllm-gfx906-qwen35-mtp: ## Push modern gfx906 Qwen3.5/MTP canary overlay
-	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX906_QWEN35_MTP_IMAGE)
+push-vllm-gfx906-qwen35-mtp: ## Build and push modern gfx906 Qwen3.5/MTP canary overlay
+	$(MAKE) --no-print-directory build-vllm-gfx906-qwen35-mtp BUILD_OUTPUT=--push
 
 .PHONY: build-vllm-gfx906-fa
 build-vllm-gfx906-fa: ## Build vLLM gfx906 flash attention image (DEPRECATED — see Dockerfile header)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-rocm-gfx906-fa -t $(VLLM_GFX906_FA_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.vllm-rocm-gfx906-fa -t $(VLLM_GFX906_FA_IMAGE) .
 
 .PHONY: push-vllm-gfx906-fa
-push-vllm-gfx906-fa: ## Push vLLM gfx906 FA image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_GFX906_FA_IMAGE)
+push-vllm-gfx906-fa: ## Build and push vLLM gfx906 FA image to Harbor
+	$(MAKE) --no-print-directory build-vllm-gfx906-fa BUILD_OUTPUT=--push
 
 .PHONY: build-vllm-omni-gfx1100
 build-vllm-omni-gfx1100: ## Build vLLM-Omni gfx1100 image (multimodal generation, Navi base + pip)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.vllm-omni-rocm-gfx1100 -t $(VLLM_OMNI_GFX1100_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.vllm-omni-rocm-gfx1100 -t $(VLLM_OMNI_GFX1100_IMAGE) .
 
 .PHONY: push-vllm-omni-gfx1100
-push-vllm-omni-gfx1100: ## Push vLLM-Omni gfx1100 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(VLLM_OMNI_GFX1100_IMAGE)
+push-vllm-omni-gfx1100: ## Build and push vLLM-Omni gfx1100 image to Harbor
+	$(MAKE) --no-print-directory build-vllm-omni-gfx1100 BUILD_OUTPUT=--push
 
 .PHONY: build-llamacpp-gfx1100
 build-llamacpp-gfx1100: ## Build llama.cpp gfx1100 image (ROCm, RX 7900 series)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.llamacpp-rocm-gfx1100 -t $(LLAMACPP_GFX1100_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.llamacpp-rocm-gfx1100 -t $(LLAMACPP_GFX1100_IMAGE) .
 
 .PHONY: push-llamacpp-gfx1100
-push-llamacpp-gfx1100: ## Push llama.cpp gfx1100 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(LLAMACPP_GFX1100_IMAGE)
+push-llamacpp-gfx1100: ## Build and push llama.cpp gfx1100 image to Harbor
+	$(MAKE) --no-print-directory build-llamacpp-gfx1100 BUILD_OUTPUT=--push
 
 .PHONY: build-llamacpp-gfx906
 build-llamacpp-gfx906: ## Build llama.cpp gfx906 image (ROCm, Radeon VII / Vega20)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.llamacpp-rocm-gfx906 -t $(LLAMACPP_GFX906_IMAGE) build/
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.llamacpp-rocm-gfx906 -t $(LLAMACPP_GFX906_IMAGE) build/
 
 .PHONY: push-llamacpp-gfx906
-push-llamacpp-gfx906: ## Push llama.cpp gfx906 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(LLAMACPP_GFX906_IMAGE)
+push-llamacpp-gfx906: ## Build and push llama.cpp gfx906 image to Harbor
+	$(MAKE) --no-print-directory build-llamacpp-gfx906 BUILD_OUTPUT=--push
 
 .PHONY: build-llamacpp-maxwell
 build-llamacpp-maxwell: ## Build llama.cpp Maxwell image (CUDA 11.8, sm_52)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.llamacpp-cuda-maxwell -t $(LLAMACPP_MAXWELL_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.llamacpp-cuda-maxwell -t $(LLAMACPP_MAXWELL_IMAGE) .
 
 .PHONY: push-llamacpp-maxwell
-push-llamacpp-maxwell: ## Push llama.cpp Maxwell image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(LLAMACPP_MAXWELL_IMAGE)
+push-llamacpp-maxwell: ## Build and push llama.cpp Maxwell image to Harbor
+	$(MAKE) --no-print-directory build-llamacpp-maxwell BUILD_OUTPUT=--push
 
 .PHONY: build-mlc-maxwell
-build-mlc-maxwell: ## Build MLC-LLM Maxwell image on GPU node (sm_52, ~2 hours)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.mlc-cuda-maxwell -t $(MLC_MAXWELL_IMAGE) build/
+build-mlc-maxwell: ## Build MLC-LLM Maxwell image (sm_52, ~2 hours)
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.mlc-cuda-maxwell -t $(MLC_MAXWELL_IMAGE) build/
 
 .PHONY: push-mlc-maxwell
-push-mlc-maxwell: ## Push MLC-LLM Maxwell image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(MLC_MAXWELL_IMAGE)
+push-mlc-maxwell: ## Build and push MLC-LLM Maxwell image to Harbor
+	$(MAKE) --no-print-directory build-mlc-maxwell BUILD_OUTPUT=--push
 
 .PHONY: build-ollama-maxwell
 build-ollama-maxwell: ## Build Ollama Maxwell image (CUDA 11.8, sm_52)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.ollama-cuda-maxwell -t $(OLLAMA_MAXWELL_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.ollama-cuda-maxwell -t $(OLLAMA_MAXWELL_IMAGE) .
 
 .PHONY: push-ollama-maxwell
-push-ollama-maxwell: ## Push Ollama Maxwell image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(OLLAMA_MAXWELL_IMAGE)
+push-ollama-maxwell: ## Build and push Ollama Maxwell image to Harbor
+	$(MAKE) --no-print-directory build-ollama-maxwell BUILD_OUTPUT=--push
 
 .PHONY: build-diffusers-rocm
-build-diffusers-rocm: ## Build Diffusers ROCm image on GPU node (gfx1100)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.diffusers-rocm -t $(DIFFUSERS_ROCM_IMAGE) .
+build-diffusers-rocm: ## Build Diffusers ROCm image (gfx1100)
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.diffusers-rocm -t $(DIFFUSERS_ROCM_IMAGE) .
 
 .PHONY: push-diffusers-rocm
-push-diffusers-rocm: ## Push Diffusers ROCm image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_ROCM_IMAGE)
+push-diffusers-rocm: ## Build and push Diffusers ROCm image to Harbor
+	$(MAKE) --no-print-directory build-diffusers-rocm BUILD_OUTPUT=--push
 
 .PHONY: build-diffusers-gfx1100
 build-diffusers-gfx1100: ## Build Diffusers ROCm image for gfx1100 (uses generic Dockerfile)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.diffusers-rocm -t $(DIFFUSERS_GFX1100_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.diffusers-rocm -t $(DIFFUSERS_GFX1100_IMAGE) .
 
 .PHONY: push-diffusers-gfx1100
-push-diffusers-gfx1100: ## Push Diffusers ROCm gfx1100 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_GFX1100_IMAGE)
+push-diffusers-gfx1100: ## Build and push Diffusers ROCm gfx1100 image to Harbor
+	$(MAKE) --no-print-directory build-diffusers-gfx1100 BUILD_OUTPUT=--push
 
 .PHONY: build-diffusers-video-gfx1100
 build-diffusers-video-gfx1100: ## Build text-to-video Diffusers image for gfx1100 (ROCm 6.4.1 / PyTorch 2.6)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.diffusers-rocm \
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.diffusers-rocm \
 		--build-arg ROCM_PYTORCH_TAG=rocm6.4.1_ubuntu22.04_py3.10_pytorch_release_2.6.0 \
 		-t $(DIFFUSERS_VIDEO_GFX1100_IMAGE) .
 
 .PHONY: push-diffusers-video-gfx1100
-push-diffusers-video-gfx1100: ## Push text-to-video Diffusers gfx1100 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_VIDEO_GFX1100_IMAGE)
+push-diffusers-video-gfx1100: ## Build and push text-to-video Diffusers gfx1100 image to Harbor
+	$(MAKE) --no-print-directory build-diffusers-video-gfx1100 BUILD_OUTPUT=--push
 
 .PHONY: build-diffusers-gfx906
 build-diffusers-gfx906: ## Build Diffusers ROCm image for gfx906 (Radeon VII, bitsandbytes from source)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.diffusers-rocm-gfx906 -t $(DIFFUSERS_GFX906_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.diffusers-rocm-gfx906 -t $(DIFFUSERS_GFX906_IMAGE) .
 
 .PHONY: push-diffusers-gfx906
-push-diffusers-gfx906: ## Push Diffusers ROCm gfx906 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_GFX906_IMAGE)
+push-diffusers-gfx906: ## Build and push Diffusers ROCm gfx906 image to Harbor
+	$(MAKE) --no-print-directory build-diffusers-gfx906 BUILD_OUTPUT=--push
 
 .PHONY: build-unified-gfx906
 build-unified-gfx906: ## Build unified gfx906 image (quantizer + diffusers + abliteration, mixa3607 base)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.unified-gfx906 -t $(UNIFIED_GFX906_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.unified-gfx906 -t $(UNIFIED_GFX906_IMAGE) .
 
 .PHONY: push-unified-gfx906
-push-unified-gfx906: ## Push unified gfx906 image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(UNIFIED_GFX906_IMAGE)
+push-unified-gfx906: ## Build and push unified gfx906 image to Harbor
+	$(MAKE) --no-print-directory build-unified-gfx906 BUILD_OUTPUT=--push
 
 .PHONY: build-diffusers-cuda
 build-diffusers-cuda: ## Build Diffusers CUDA image for Maxwell (sm_52, CUDA 11.8)
-	docker --context $(DOCKER_CONTEXT_GPU) build -f build/Dockerfile.diffusers-cuda -t $(DIFFUSERS_CUDA_IMAGE) .
+	$(BUILDX) $(BUILD_OUTPUT) -f build/Dockerfile.diffusers-cuda -t $(DIFFUSERS_CUDA_IMAGE) .
 
 .PHONY: push-diffusers-cuda
-push-diffusers-cuda: ## Push Diffusers CUDA Maxwell image to Harbor
-	docker --context $(DOCKER_CONTEXT_GPU) push $(DIFFUSERS_CUDA_IMAGE)
+push-diffusers-cuda: ## Build and push Diffusers CUDA Maxwell image to Harbor
+	$(MAKE) --no-print-directory build-diffusers-cuda BUILD_OUTPUT=--push
 
 .PHONY: verify-images
 verify-images: ## Verify all backend images exist in Harbor registry

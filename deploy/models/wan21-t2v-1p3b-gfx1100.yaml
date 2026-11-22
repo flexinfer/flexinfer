@@ -27,9 +27,42 @@
 # export) and ftfy 6.3.1, and its server-diffusers.py has the Wan VAE MIOpen
 # bypass (!1268, 225b7150); checked in the live runtime pod 2026-11-05. Its
 # stack is torch 2.13 / ROCm 7.2.3 (MIOpen of that release), not the dedicated
-# image's, so the in-pod decode time is unmeasured: A/B one 33-frame 832x480
-# clip in-pod against the dedicated lane (b1f98ad0: cold clip 252 s, decode
-# 7 s on 2026-11-04) before promotion.
+# image's. S9 (2026-11-05/06, rows gfx1100-wan-decode-ab-v032-*) A/B'd it
+# against the dedicated lane (b1f98ad0, warm clip 121.7 s, decode 5.9 s).
+#
+# 2026-11-21 refresh: the allocator pinned (config.env below).
+# - S9 cause: expandable_segments:True with model CPU offload on this stack
+#   holds ~19 GiB on the card outside torch's accounting and corrupts every
+#   VAE use after the first in a process. In-pod this lane would inherit the
+#   runtime pod's PYTORCH_ALLOC_CONF (gc 0.7, split 256, expandable True),
+#   which torch 2.13 reads before PYTORCH_HIP_ALLOC_CONF.
+# - With both variables off (S9 diagnostic dx-B-noexp2, untiled) the lane was
+#   sound in one process across three VAE uses: decode 6.1/5.8 s, clips in
+#   61-70 s against 122 s dedicated, card peak 24,431 MiB (the dedicated lane
+#   peaks at 24.47 GB too). It missed S9's pre-registered decode equivalence
+#   against the dedicated lane's latents: 34.22/31.76 dB and SSIM 0.9789
+#   against 35/32/0.98. Whether that is acceptable is the owner's call, and
+#   it needs a pre-registered gate row before this merges.
+# - The same pin made Qwen-Image sound in-pod on 2026-11-21 (D3 third
+#   attempt, !1368, row gfx1100-xtx-inpod-qwen-image-gate-2026-11-19).
+# 2026-11-21 gate (row gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21, !1372):
+# fail on bar (2) alone. In-pod every clip was sound and warm clips took
+# 63.9 s against 128.8 s dedicated, but the same seed gave a different clip
+# on each request in one process (31.98/33.33 dB against a 50 dB bar; the
+# dedicated lane is byte-identical within a load). The in-pod process
+# inherited TORCH_BLAS_PREFER_HIPBLASLT=1 from the gfx1100 GPUProfile; the
+# dedicated path sets 0 (backend/diffusers.go) and qwen-image-21-gfx1100 pins
+# 0 in its config.env. config.env now pins 0 here too. Re-gated by row
+# gfx1100-xtx-inpod-wan-t2v-rocblas-gate-2026-11-21.
+# That re-gate (!1374) made warm requests byte-identical, but the first
+# request after a load still differed (31.41 dB) and sat at 21.38 dB against
+# the dedicated lane. Both launch paths compile the transformer with
+# max-autotune, but on different torch (dedicated 2.6, in-pod 2.13), and only
+# the in-pod first call differs. !1376 tried COMPILE_MODE=none (eager) under
+# row gfx1100-xtx-inpod-wan-t2v-eager-gate-2026-11-21 and failed worse: every
+# request differed (32-34 dB), and warm clips took 72 s against 61 s. It is
+# undone here, so the lane is back on compiled rocBLAS (warm requests repeat;
+# the first after a load does not) while the cause is researched.
 # Host RAM: this lane's dedicated limit (48 GiB) equals the runtime pod's
 # whole limit; a render that needed all of it in-pod would leave the runtime
 # manager nothing.
@@ -138,6 +171,33 @@ spec:
     # as the Fable GPTQ smoke). `primary` forces a backend start even at zero
     # replicas and would keep the GPU held.
     warmPolicy: ondemand
+    # 2026-11-21 (header): no expandable_segments, on both names so torch's
+    # precedence does not matter; overrides the runtime pod's
+    # PYTORCH_ALLOC_CONF in-pod (config.env is applied last). Same values as
+    # qwen-image-21-gfx1100 (!1368).
+    # TORCH_BLAS_PREFER_HIPBLASLT: rocBLAS, as the dedicated path and
+    # qwen-image-21-gfx1100 run; overrides the gfx1100 GPUProfile's 1 in-pod
+    # (header, 2026-11-21 gate).
+    env:
+      TORCH_BLAS_PREFER_HIPBLASLT: "0"
+      # 2026-11-21 exact-shape warmup (research-determinism.md F2, on runtime
+      # 12f30206 / !1380): warm the served clip shape before the first
+      # request so its one-time event happens in warmup, and log Dynamo
+      # recompiles and graph breaks. Overrides skipWarmup "1" in-pod
+      # (config.env is applied last). Gated by row
+      # gfx1100-xtx-inpod-wan-t2v-warmup-gate-2026-11-21: pass, owner
+      # accepted the side-by-sides. Same-seed clips repeat byte-for-byte from
+      # the first request and across loads; warm clips 63 s against 129 s
+      # dedicated; the warmup adds ~84 s per load. Only 832x480 x 33 frames is
+      # warmed: other shapes get a first request that may differ.
+      SKIP_WARMUP: "0"
+      WARMUP_RESOLUTIONS: "832x480"
+      WARMUP_VIDEO_FRAMES: "33"
+      WARMUP_STEPS: "20"
+      WARMUP_NONFINITE_RETRIES: "0"
+      TORCH_LOGS: "recompiles,graph_breaks"
+      PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
+      PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:

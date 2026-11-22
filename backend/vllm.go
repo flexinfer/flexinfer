@@ -698,14 +698,17 @@ func (b *VLLMBackend) ReadinessProbeForSpec(spec *ModelSpec) *corev1.Probe {
 
 // Monotonic time avoids wall-clock jumps; PID 1 start time protects persisted
 // state across container restarts. Missing metrics fail readiness rather than
-// silently treating an unsupported metrics format as engine progress.
+// silently treating an unsupported metrics format as engine progress. The
+// KV-cache usage gauge (either name) counts as progress when present, the same
+// rule as StallDetector: it moves during a long chunked prefill, which moves
+// neither token counter.
 const vllmStallProbeScript = `
 import json, math, os, sys, time, urllib.request
 base = "http://127.0.0.1:8000"
 urllib.request.urlopen(base + "/health", timeout=5).close()
 text = urllib.request.urlopen(base + "/metrics", timeout=5).read(4194304).decode()
-names = ["vllm:num_requests_running", "vllm:num_requests_waiting", "vllm:prompt_tokens_total", "vllm:generation_tokens_total"]
-values = [0.0] * 4
+names = ["vllm:num_requests_running", "vllm:num_requests_waiting", "vllm:prompt_tokens_total", "vllm:generation_tokens_total", "vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc"]
+values = [0.0] * 6
 seen = set()
 for line in text.splitlines():
     line = line.strip()
@@ -715,14 +718,20 @@ for line in text.splitlines():
     if name not in names:
         continue
     rest = line.rsplit("}", 1)[-1] if "{" in line else line[len(name):]
-    value = float(rest.split()[0])
-    if not math.isfinite(value) or value < 0:
-        sys.exit(1)
     i = names.index(name)
+    try:
+        value = float(rest.split()[0])
+    except (IndexError, ValueError):
+        value = math.nan
+    if not math.isfinite(value) or value < 0:
+        if i >= 4:
+            continue
+        sys.exit(1)
     values[i] += value
     seen.add(i)
-if len(seen) != 4:
+if not seen.issuperset(range(4)):
     sys.exit(1)
+kv = values[4] if 4 in seen else (values[5] if 5 in seen else None)
 path = "/tmp/flexinfer-vllm-stall.json"
 now = time.monotonic()
 with open("/proc/1/stat") as f:
@@ -735,9 +744,9 @@ except (OSError, ValueError):
     pass
 active = values[0] + values[1] > 0
 since = old.get("since", now)
-if old.get("process_start") != process_start or not active or not old.get("active") or old.get("tokens") != values[2:] or now - old.get("observed", now) > 90 or now < since:
+if old.get("process_start") != process_start or not active or not old.get("active") or old.get("tokens") != values[2:4] or old.get("kv") != kv or now - old.get("observed", now) > 90 or now < since:
     since = now
-state = dict(process_start=process_start, since=since, observed=now, active=active, tokens=values[2:])
+state = dict(process_start=process_start, since=since, observed=now, active=active, tokens=values[2:4], kv=kv)
 with open(path + ".new", "w") as f:
     json.dump(state, f)
 os.replace(path + ".new", path)

@@ -77,6 +77,40 @@
 # Rollback: dedicatedDeployment: true (the Deployment returns on the next
 # reconcile, compiling cold once under the image scope), or revert this
 # commit to restore the per-Model cache too.
+#
+# 2026-11-18 D2 retry. The first in-pod attempt (2026-11-18 15:02Z, reverted
+# by !1344) failed two live checks:
+# - 502s from a stale EndpointSlice: fixed in the controller (!1345, live
+#   since !1346).
+# - KV pool 103,517 tokens (1.58x) against 129,582 (1.98x) on the Deployment.
+#   Same weights, peak activation (1.33 GiB) and CUDA graph memory (0.63 GiB);
+#   vLLM's "consumed memory (weights + non-torch)" was 18.29 GiB in-pod against
+#   17.43 GiB. The runtime pod exports PYTORCH_ALLOC_CONF with
+#   expandable_segments:True (values-k3s runtime profile env) and an in-pod
+#   load inherits it; the dedicated pod sets no allocator config. This retry
+#   pins the allocator to the dedicated lane's default through config.env
+#   (applied last in-pod) to test that as the cause.
+#   Pass: in-pod KV pool >= 125,700 tokens (0.97 x the Deployment's 129,582).
+#   A pool still near 103K refutes the cause and fails the retry.#
+# 2026-11-21 128K (owner decision: split lanes; row
+# xtx-128k-fp8-segmented-s7-2026-11-21, result
+# .loom/70-result-xtx-128k-fp8-segmented-s7-2026-11-21.md). LIVE-IMPACTING,
+# owner window. The 5930k workhorse stays the fast 32K lane; this lane becomes
+# the 128K lane, and the workhorse's context-overflow-to already points here.
+# Recipe measured on the canary (same artifact, this card):
+# - fp8 KV on ROCM_SEGMENTED_ATTN (FLEXINFER_SEGMENTED_FP8_GFX11=1) plus the
+#   embed table in mapped host memory (FLEXINFER_EMBED_HOST=1) plus MTP K=2:
+#   5.61 GiB of KV = 159,599 tokens at 131072 (1.22x).
+# - Decode 59.4 / 46.7 / 40.7 / 27.1 / 18.7 tok/s at 2K / 16K / 28K / 64K /
+#   120K (this lane today: 40.2 at 2K, 34.3 at 16K). Cold TTFT 2.0 / 20 / 40 /
+#   134 / 360 s. MTP pos0 0.81. Needle 1/1 at 33K-127K, 5/5 and depths
+#   0/50/100 % at 127K. 25-min soak: no restart, no fault line.
+# - Leaves the D2 in-pod launch: the XTX runtime image (12f30206 since !1380,
+#   527e2714's vLLM stack plus a diffusers server) carries neither patch.
+#   After a creative render the lane returns as a warm dedicated boot
+#   (~2.5 min measured) instead of D2's in-pod p50 38 s.
+# Rollback: revert this commit (in-pod on the 12f30206 runtime, TRITON_ATTN +
+# fp8, 64K; spec.image b06b06fe).
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -104,9 +138,13 @@ metadata:
     # simulation's 600 s client timeout. Cost: a wedged XTX card now holds a
     # request up to 480 s before it counts toward the breaker (3 failures
     # open it). Rollback = drop this annotation (default 120 s).
-    flexinfer.ai/lane-first-byte-budget: "480s"
-    flexinfer.ai/promotion-state: promoted-64k-fp8-graph-warm
-    flexinfer.ai/promotion-evidence: "2026-09-13 §7a: Ready +6min, RDNA3W4A16, KV 69,905 tok fp8 (1.07x @64K), probes 3/3 coherent ~34 tok/s, 2.3K-token prompt 2.57 s, orpheus-tts on VII 0.72 s"
+    # 2026-11-21 128K: 480s -> 900s. A 119.5K cold prefill took 360 s (414 s
+    # with the long-prefill cap below); 900 s is 2x that and also covers a
+    # 130K prompt overlapped by short traffic. The overflow reroute loads this
+    # lane's budget (!1182/!1183).
+    flexinfer.ai/lane-first-byte-budget: "900s"
+    flexinfer.ai/promotion-state: promoted-128k-fp8-segmented-s7-mtp
+    flexinfer.ai/promotion-evidence: "canary qwen38-27b-128k-canary 2026-11-21 (row xtx-128k-fp8-segmented-s7-2026-11-21): 51afd0d3 vLLM 0.33, fp8 segmented + embed host + MTP K=2 at 131072, pool 159,599 tok (1.22x), decode 59.4/46.7/18.7 tok/s at 2K/16K/120K, cold TTFT 360 s at 119.5K, needle 1/1 33K-127K, 5/5 + depths 0/50/100 at 127K, pos0 0.81, 25-min soak clean"
 spec:
   backend: vllm
   # 2026-09-13 (issue #74 S2, vLLM currency): this lane is the qualification
@@ -174,7 +212,12 @@ spec:
   # is keyed by code hash, so the first boot recompiles what changed and may
   # profile a short pool once (KVPoolRecheck relaunches). Rollback =
   # `cd108c9e` (resident, pinned-cd108c9ebf99): revert this line.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+  # 2026-11-21 128K: the workhorse promotion candidate (Draft !1311),
+  # rocm-gfx1100-serving-v033-3e8ae3c2, Harbor pinned-51afd0d377f7: vLLM
+  # 0.33.0-rocm72, text plugin 0.12.0, plugin-common 0.5.0 (embed-host patch,
+  # segmented fp8 gate lift). Resident on the XTX since the canary pulled it.
+  # Rollback = b06b06fe (resident, pinned-b06b06fe1c02), in-pod.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     strategy: Local
@@ -184,10 +227,18 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      # 2026-11-01 D1: image-scoped on the default hostPath, shared with the
-      # runtime pod (header).
-      scope: Image
-      sizeLimit: 4Gi
+      # 2026-11-21 128K: the canary's cache base. hostPath is a BASE: the
+      # controller mounts <hostPath>/<namespace>/<Model name>, so this lane
+      # reads .../flexinfer-system/qwen38-27b-xtx-warm-canary, which was
+      # seeded by hand before the roll (`cp -a` of the canary's
+      # .../qwen38-27b-128k-canary subdir, 4.0 GB: the 131072 segmented fp8
+      # autotune, 129 workloads, ~45 min cold, and the 0.33 compile). The
+      # seeded boot was Ready in ~3 min with no restart. If that subdir is ever
+      # lost, the next boot autotunes past the 45-min startup probe once and
+      # fails the 131072 KV check on its cold boot; both self-heal on restart.
+      # Rollback restores scope Image.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-b-xtx
+      sizeLimit: 8Gi
   gpu:
     vendor: amd
     # Both device-plugin slots (see header); hipVisibleDevices pins the dGPU.
@@ -200,13 +251,42 @@ spec:
     enabled: true
     minReplicas: 1
     idleTimeout: 12h
-    coldStartTimeout: 25m
+    # 2026-11-21 128K: 25m -> 45m for a retune after any maxModelLen change.
+    coldStartTimeout: 45m
   config:
-    attentionBackend: TRITON_ATTN
+    # 2026-11-21 128K (header): back to a dedicated Deployment on spec.image.
+    dedicatedDeployment: true
+    vllmVersion: "0.33.0"
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    # The controller's engine-stall detector reads unchanged vLLM token
+    # counters as a stall, and a prefill adds its prompt tokens only when it
+    # completes: the canary's 120K cold prefill (360 s) was killed at the 5 min
+    # default. 20m covers a 130K prompt under load.
+    stallWindow: 20m
+    # The 131072 pool is 1.22x by design, below the controller's 1.5x
+    # KVPoolShort line for maxNumSeqs 2; a recheck restart would buy nothing.
+    # A cold boot that profiles short fails vLLM's one-request check and the
+    # restart is warm.
+    kvPoolRecheck: false
+    # A running long prefill takes the whole 4096 budget each step: in the
+    # canary soak, short requests arriving during a 118K cold prefill waited
+    # 338-432 s. Capping a long request at 1664 tokens (two 832-token blocks)
+    # per step let them through in 6-66 s; the long TTFT went 360 -> 414 s.
+    longPrefillTokenThreshold: 1664
     # 2026-10-30 placement layout: primary -> ondemand (header). Controller-only
     # key; with minReplicas 1 the lane still returns by itself once the
     # creative lane scales to zero.
     warmPolicy: ondemand
+    # 2026-11-18 D2 retry (header): the dedicated lane's allocator default,
+    # overriding the runtime pod's expandable_segments:True for this lane's
+    # in-pod process. No effect on the Deployment, which sets none.
+    env:
+      PYTORCH_ALLOC_CONF: "expandable_segments:False"
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+      FLEXINFER_EMBED_HOST: "1"
+      FLEXINFER_SEGMENTED_FP8_GFX11: "1"
     quantization: gptq
     # 2026-09-13: `architectures` pinned in-process (issue #74 incident #2).
     # The runtime DaemonSet's entrypoint rewrote this lane's on-disk
@@ -218,7 +298,8 @@ spec:
     hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
     dtype: half
     languageModelOnly: true
-    maxModelLen: 65536
+    # 2026-11-21: 65536 -> 131072 (header).
+    maxModelLen: 131072
     maxNumSeqs: 2
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true

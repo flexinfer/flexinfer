@@ -75,8 +75,12 @@ var layoutXTXParked = []string{
 // serves in-pod (D1 step 3, research next-differentiators-2026-10-31 §6.1),
 // one MR per lane: the warm lane first, then the creative lanes once the
 // runtime image carries what they need.
+//
+// The warm lane left the list on 2026-11-21: it became the 128K lane
+// (fp8 segmented attention + embeddings in host memory on runtime@51afd0d3,
+// row xtx-128k-fp8-segmented-s7-2026-11-21), and the XTX runtime image
+// carries neither patch, so it is a dedicated Deployment again.
 var layoutXTXRuntimeLanes = []string{
-	layoutWarmLane,
 	"qwen-image-21-gfx1100",
 	"wan21-t2v-1p3b-gfx1100",
 	"wan21-vace-1p3b-i2v-gfx1100",

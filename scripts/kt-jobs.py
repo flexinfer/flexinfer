@@ -15,7 +15,9 @@ Kill-test for D2 (.loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-
      to be Ready again;
   4. tail: keep the replay up --tail-min minutes after the last job.
 
-Every HTTP call is timed (no client connection may be held > 30 s), every
+Every HTTP call is timed (no client connection may be held > 30 s, except the
+chat requests waiting for the warm lane's own return after the last job; see
+reload_window), every
 status is counted (504/524 must be 0) and every 503 body is checked for the
 typed envelope. A Prefer: wait=0 probe against the video lane while it is cold
 shows the code Mills will read instead of the body string.
@@ -48,6 +50,9 @@ PASS_TTFT_DELTA = 0.20  # chat p95 TTFT within ±20 % of baseline until the flip
 PASS_WARM_BACK_S = 300.0  # warm lane Ready <= 5 min after the last job
 PASS_WEBHOOK_S = 10.0  # >= 3 of 4 webhooks within 10 s of completion
 PASS_WEBHOOKS_MIN = 3
+# The proxy's preempted wait (FLEXINFER_PROXY_PREEMPTED_WAIT): a chat request
+# started this long before the hand-back can still be waiting at it.
+DEFAULT_PREEMPTED_WAIT_S = 20.0
 
 IMAGE_PROMPTS = [
     "a lighthouse on a basalt cliff at dusk, long exposure, crisp detail",
@@ -322,6 +327,39 @@ def warm_ready_after(timeline, t0):
     return None
 
 
+def reload_window(r, preempted_wait):
+    """(start, end) of the warm lane's own return after the last job, or None.
+
+    Owner decision 2026-11-20 on bar (2): a chat request that waits for the
+    warm lane coming back is the cold-start queue doing its job, so the
+    30 s connection rule does not score it. The hand-back is the last
+    completed job's completed_at (the job runner releases the lane as the job
+    ends); a request started up to the proxy's preempted wait before it can
+    still be queued at it, and one second covers completed_at's precision.
+    The window ends when the lane watcher first sees the warm lane Ready.
+    """
+    done = [
+        j["completed_at"]
+        for j in r.get("jobs", {}).values()
+        if j.get("status") == "completed" and j.get("completed_at")
+    ]
+    if not done:
+        return None
+    handback = max(done)
+    back = warm_ready_after(r["warm_timeline"], handback)
+    if back is None:
+        return None
+    return handback - preempted_wait - 1.0, handback + back
+
+
+def in_reload(call, window):
+    """Whether a chat call started inside window. A call's t is its end."""
+    if window is None or call.get("kind") != "chat" or "t" not in call:
+        return False
+    start = call["t"] - call["seconds"]
+    return window[0] <= start < window[1]
+
+
 def first_flip(timeline, t0):
     for t, phase, _ in timeline:
         if t >= t0 and phase != "Ready":
@@ -448,7 +486,9 @@ def p95(values):
     return values[min(len(values) - 1, int(round(0.95 * (len(values) - 1))))]
 
 
-def verdict(r, cooldown):
+def verdict(r, cooldown, preempted_wait=None):
+    if preempted_wait is None:
+        preempted_wait = r.get("args", {}).get("preempted_wait") or DEFAULT_PREEMPTED_WAIT_S
     checks = {}
     jobs = r.get("jobs", {})
     completed = [i for i, j in jobs.items() if j["status"] == "completed"]
@@ -459,9 +499,11 @@ def verdict(r, cooldown):
     checks["all_jobs_complete_with_output"] = (
         len(completed) == len(r["job_ids"]) and contents_ok
     )
-    longest = max(
-        (c["seconds"] for c in r["calls"] if c["kind"] != "content"), default=0
-    )
+    reload = reload_window(r, preempted_wait)
+    scored = [c for c in r["calls"] if c["kind"] != "content" and not in_reload(c, reload)]
+    longest = max((c["seconds"] for c in scored), default=0)
+    held = [c for c in scored if c["seconds"] > PASS_MAX_CONN_S]
+    excluded = [c for c in r["calls"] if in_reload(c, reload)]
     checks["no_connection_over_30s"] = longest <= PASS_MAX_CONN_S
     gateway = [c for c in r["calls"] if c["status"] in (504, 524)]
     checks["zero_504_524"] = not gateway
@@ -507,6 +549,14 @@ def verdict(r, cooldown):
     )
     detail = {
         "longest_connection_s": longest,
+        "connections_over_30s": len(held),
+        "reload_window_s": (
+            [reload[0] - r["jobs_submitted_at"], reload[1] - r["jobs_submitted_at"]]
+            if reload
+            else None
+        ),
+        "reload_excluded_chat": len(excluded),
+        "reload_excluded_over_30s": sum(1 for c in excluded if c["seconds"] > PASS_MAX_CONN_S),
         "gateway_timeouts": len(gateway),
         "chat_ttft_p95_baseline_s": b95,
         "chat_ttft_p95_until_flip_s": d95,
@@ -556,6 +606,12 @@ def main():
         "--cooldown", type=float, default=300, help="shared-GPU swap cooldown, seconds"
     )
     ap.add_argument("--out", default="kt-jobs.json")
+    ap.add_argument(
+        "--preempted-wait",
+        type=float,
+        default=DEFAULT_PREEMPTED_WAIT_S,
+        help="the proxy's preempted wait, seconds (bounds the reload window, bar 2)",
+    )
     ap.add_argument("--verdict", nargs="?", const=True, metavar="RESULT_JSON")
     args = ap.parse_args()
     if isinstance(args.verdict, str):

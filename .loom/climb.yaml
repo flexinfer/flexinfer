@@ -1,0 +1,51 @@
+# .loom/climb.yaml — services/flexinfer (Climbs, loom-core .loom/208 §5; .loom/209 C.18)
+version: 1
+problem:
+  text: >-
+    Self-hosted inference on a mixed homelab fleet (two gfx1100 cards, a Radeon VII and a
+    GTX 980 Ti) breaks in ways nobody measures: lanes that hog a card, crash on load or time
+    out behind a cold start. FlexInfer is the Kubernetes operator and OpenAI-compatible proxy
+    that serves the lab's LLM, embedding, rerank, speech, image, audio and video lanes with
+    scale-to-zero, breakers, reroute and per-GPU certification, climbing toward a fleet where
+    every request the proxy routes is answered and every backend change is certified before
+    it serves.
+  source: ROADMAP.md#current-status
+  since: 2026-07-02
+summit:
+  - id: serving
+    label: Proxy request success ratio (rolling 1d)
+    metric:
+      kind: promql
+      expr: >-
+        sum(increase(flexinfer_proxy_requests_total{status="success"}[1d]))
+        / sum(increase(flexinfer_proxy_requests_total[1d]))
+    target: 0.995
+    direction: up
+    unit: ratio
+  - id: gates
+    label: Roadmap gates met (Now list)
+    metric: { kind: roadmap-gates }
+    target: 1
+    direction: up
+    unit: ratio
+  - id: ci-green
+    label: Master pipeline success ratio (7d)
+    metric: { kind: gitlab, expr: pipeline_success_ratio }
+    target: 0.9
+    direction: up
+    unit: ratio
+  - id: cadence
+    label: Merges per week
+    metric: { kind: git, expr: merges_per_week }
+    target: 40
+    direction: up
+    unit: merges
+composite:
+  weights: { serving: 0.4, gates: 0.3, ci-green: 0.2, cadence: 0.1 }
+constraints:
+  - AGENTS.md#critical-conventions-read-before-touching-the-cluster
+  - AGENTS.md#loom-agent-safety-policy-generated
+  - docs/agents/operations.md#resource-cleanup-procedures
+route: ROADMAP.md
+camps: { tags: 'v*' }
+tier: 1

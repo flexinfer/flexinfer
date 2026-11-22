@@ -92,6 +92,29 @@
 # limit (this lane's dedicated limit was 40 GiB).
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
 # config); the Deployment returns on the next reconcile.
+#
+# 2026-11-21 D3 third attempt: the allocator pinned to the dedicated pod's.
+# - Attempts 1 and 2 (2026-11-19, !1236 and !1351, reverted by !1349 and
+#   !1352) failed the multi-render gate the same way: the in-pod warmup logged
+#   "RuntimeWarning: invalid value encountered in cast" and the first render
+#   after every in-pod load was tiled garbage; every later render was sound.
+#   Row gfx1100-xtx-inpod-qwen-image-gate-2026-11-19.
+# - Allocator: torch 2.13 in runtime 527e2714 reads PYTORCH_ALLOC_CONF before
+#   PYTORCH_HIP_ALLOC_CONF. In-pod the process inherits the runtime pod's
+#   PYTORCH_ALLOC_CONF (garbage_collection_threshold:0.7,max_split_size_mb:256,
+#   expandable_segments:True, values-k3s runtime profile env); the dedicated
+#   pod has only PYTORCH_HIP_ALLOC_CONF (0.9 / 512 / expandable_segments:True)
+#   on runtime image 2c94c6d9. S9 (2026-11-06) found expandable_segments
+#   corrupts VAE decodes on this same runtime image, and the XTX warm lane
+#   only matched its Deployment in-pod once !1348 pinned
+#   expandable_segments:False.
+# - This attempt pins both variables to the dedicated thresholds with
+#   expandable_segments:False (config.env below, applied last in-pod).
+#   Pass: the same multi-render gate as attempts 1 and 2 (no NaN warning in
+#   the warmup, render 1 coherent, seed-S renders byte-identical to each
+#   other). A first render that is still garbage rules the allocator out and
+#   leaves the image difference (527e2714 vs 2c94c6d9) and the server's
+#   warmup as the suspects.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -192,6 +215,11 @@ spec:
       TRANSFORMER_QUANTIZATION: nf4
       TEXT_ENCODER_QUANTIZATION: nf4
       DEFAULT_TRUE_CFG_SCALE: "1.0"
+      # 2026-11-21 D3 third attempt (header): the dedicated pod's thresholds
+      # without expandable_segments, on both names so torch's precedence does
+      # not matter. Overrides the runtime pod's PYTORCH_ALLOC_CONF in-pod.
+      PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
+      PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
