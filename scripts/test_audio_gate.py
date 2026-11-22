@@ -99,7 +99,7 @@ class _Stub(BaseHTTPRequestHandler):
                     "sample_rate": RATE,
                     "duration": body["seconds"],
                     "seed": seed,
-                    "timings": {"denoise_seconds": 11.0, "total_seconds": 12.0},
+                    "timings": {"denoise_seconds": 3.2, "total_seconds": 3.24},
                 }
             ]
         }
@@ -159,12 +159,12 @@ def render(i, clip, total, wall=None, **media_over):
 
 
 def good_metrics():
-    A = [render(1, "a1", 30.0), render(2, "a2", 12.2), render(3, "a1", 12.0)]
+    A = [render(1, "a1", 5.3), render(2, "a2", 3.3), render(3, "a1", 3.24)]
     B = [
-        render(1, "a1", 14.0, wall=200.0),
-        render(2, "a2", 12.5),
-        render(3, "a1", 12.4),
-        render(4, "a1", 12.6),
+        render(1, "a1", 5.0, wall=60.0),
+        render(2, "a2", 3.4),
+        render(3, "a1", 3.3),
+        render(4, "a1", 3.5),
     ]
     same = {"identical": True, "snr_db": math.inf, "spectral_cosine": 1.0}
     return {
@@ -312,11 +312,11 @@ class VerdictTest(unittest.TestCase):
         v = gate.verdict(m)
         self.assertEqual((v["decision"], v["not_measured"]), ("incomplete", [3]))
 
-    def test_listen_fail_alone_is_conditional(self):
+    def test_listen_rejected_fails(self):
         m = good_metrics()
         m["evidence"]["owner_listen"] = False
         v = gate.verdict(m)
-        self.assertEqual((v["decision"], v["failed_bars"]), ("conditional", [3]))
+        self.assertEqual((v["decision"], v["failed_bars"]), ("fail", [3]))
 
     def test_corrupt_later_clip_fails(self):
         m = good_metrics()
@@ -328,7 +328,7 @@ class VerdictTest(unittest.TestCase):
     def test_slow_warm_total_fails(self):
         m = good_metrics()
         for r in m["B"]["renders"][1:]:
-            r["timings"]["total_seconds"] = 16.0  # > 1.25 x 12.1 s
+            r["timings"]["total_seconds"] = 4.5  # > 1.25 x 3.27 s
         self.assertEqual(gate.verdict(m)["failed_bars"], [4])
 
     def test_warnings_and_kernel_fail(self):
@@ -340,7 +340,7 @@ class VerdictTest(unittest.TestCase):
     def test_invalid_control_and_range_override(self):
         m = good_metrics()
         for r in m["A"]["renders"]:
-            r["timings"]["total_seconds"] = 60.0  # outside 6-36 s
+            r["timings"]["total_seconds"] = 60.0  # outside 1.5-10 s
         self.assertEqual(gate.verdict(m)["decision"], "invalid")
         m["a_warm_total_range"] = [50.0, 70.0]
         self.assertEqual(gate.verdict(m)["decision"], "pass")

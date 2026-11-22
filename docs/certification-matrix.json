@@ -1835,6 +1835,38 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx1100-xtx-inpod-wan-vace-gate-2026-11-22",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "owner-window step D5 (D1 step 3, lane 4 of 5): the XTX Wan 2.1 VACE 1.3B image-to-video lane served in-pod by the 7900 XTX runtime (Draft !1238, refreshed 2026-11-22 at b25fbc27). The lane is not…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-vace-gate-2026-11-22",
+      "date": "2026-11-22",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-stable-audio-gate-2026-11-22",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "owner-window step D5 (D1 step 3, lane 5 of 5): the XTX Stable Audio Open 1.0 lane served in-pod by the 7900 XTX runtime (Draft !1239, refreshed 2026-11-22 at a55a0329). The lane is not named here, as…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-stable-audio-gate-2026-11-22",
+      "date": "2026-11-22",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "xtx-128k-fp8-segmented-s7-2026-11-21",
       "kind": "validation",
       "support_level": "experimental",

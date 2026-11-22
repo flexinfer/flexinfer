@@ -16,8 +16,13 @@ Two profiles (--profile on run; score reads it from the arm reports):
             harness draws (or --image), saved as condition.png beside the
             clips with its sha256 in the report. The fp32 VACE VAE is not
             covered by the MIOpen bypass, so bar (9) does not need the bypass
-            line and bar (4) has no absolute decode cap. Score also reports how
-            close each clip's first frame stays to the conditioning image.
+            line and bar (4) has no absolute decode cap. The dedicated VACE
+            lane is not byte-repeatable within a load (S9: 37.3 dB between
+            same-seed clips), so A's same-seed check needs 35 dB and bar (2)
+            needs B to repeat no worse than A. Row
+            gfx1100-xtx-inpod-wan-vace-gate-2026-11-22 holds these bars.
+            Score also reports how close each clip's first frame stays to the
+            conditioning image.
 
 Three steps, on different hosts:
 
@@ -104,9 +109,17 @@ VRAM_MARGIN_MIB = 1024.0
 RUNTIME_PEAK_MAX_GIB = 44.0
 A_WARM_TOTAL_RANGE = (105.0, 143.0)
 
+# VACE control figures from S9 (row gfx1100-wan-decode-ab-v032-2026-11-05,
+# arm vace-A, dedicated diffusers-video on the XTX): warm total 264.8 s, and
+# the two same-seed clips of one load matched at only 37.3 dB (SSIM 0.993),
+# so the dedicated VACE lane is not byte-repeatable within a load.
+VACE_A_WARM_TOTAL_RANGE = (185.0, 345.0)  # 0.7x to 1.3x of 264.8 s
+VACE_A_SAME_SEED_MIN_DB = 35.0
+
 # Per-profile prompts and the bars that differ. a_warm_total_range None skips
-# that validity check until a row sets one (score --a-warm-range): the VACE A
-# arm is the first warm measurement of that lane.
+# that validity check (score --a-warm-range overrides it). b_same_seed_vs_a:
+# bar (2) passes at 50 dB, or at the control's own same-seed PSNR when that is
+# lower, so B must repeat no worse than the dedicated lane does.
 PROFILES = {
     "wan-t2v": {
         "prompts": PROMPTS,
@@ -115,6 +128,8 @@ PROFILES = {
         "bypass_required": True,
         "decode_max_s": DECODE_MAX_S,
         "a_warm_total_range": A_WARM_TOTAL_RANGE,
+        "a_same_seed_min_db": SAME_SEED_PSNR,
+        "b_same_seed_vs_a": False,
     },
     "vace-i2v": {
         "prompts": VACE_PROMPTS,
@@ -122,7 +137,9 @@ PROFILES = {
         "image": True,
         "bypass_required": False,
         "decode_max_s": None,
-        "a_warm_total_range": None,
+        "a_warm_total_range": VACE_A_WARM_TOTAL_RANGE,
+        "a_same_seed_min_db": VACE_A_SAME_SEED_MIN_DB,
+        "b_same_seed_vs_a": True,
     },
 }
 CONDITION_FILE = "condition.png"
@@ -445,9 +462,9 @@ def sound(r: dict) -> bool:
     )
 
 
-def matches(cmp) -> bool:
+def matches(cmp, floor: float = SAME_SEED_PSNR) -> bool:
     return bool(cmp) and (
-        cmp.get("identical") is True or cmp.get("psnr_mean", 0) >= SAME_SEED_PSNR
+        cmp.get("identical") is True or (cmp.get("psnr_mean") or 0) >= floor
     )
 
 
@@ -493,13 +510,23 @@ def verdict(m: dict) -> dict:
             "200, h264, 33x480x832, luma std/mean",
         )
     )
+    b_floor = SAME_SEED_PSNR
+    a_same = cmp.get("A_c1_r3") or {}
+    if (
+        prof["b_same_seed_vs_a"]
+        and a_same.get("identical") is not True
+        and isinstance(a_same.get("psnr_mean"), (int, float))
+    ):
+        b_floor = min(SAME_SEED_PSNR, a_same["psnr_mean"])
     bars.append(
         _bar(
             2,
             "B same-seed c1 clips match",
-            matches(cmp.get("B_c1_r3")) and matches(cmp.get("B_c1_r4")),
+            matches(cmp.get("B_c1_r3"), b_floor)
+            and matches(cmp.get("B_c1_r4"), b_floor),
             [(cmp.get(k) or {}).get("psnr_mean") for k in ("B_c1_r3", "B_c1_r4")],
-            f"identical or >= {SAME_SEED_PSNR} dB",
+            f"identical or >= {b_floor} dB"
+            + (" (A's own same-seed PSNR)" if b_floor < SAME_SEED_PSNR else ""),
         )
     )
     e2e = [cmp.get("e2e_c1") or {}, cmp.get("e2e_c2") or {}]
@@ -623,7 +650,7 @@ def verdict(m: dict) -> dict:
     validity = {
         "A complete and sound": len(A) == len(SEQUENCES["A"])
         and all(sound(r) for r in A),
-        "A same-seed c1 match": matches(cmp.get("A_c1_r3")),
+        "A same-seed c1 match": matches(cmp.get("A_c1_r3"), prof["a_same_seed_min_db"]),
     }
     warm_range = m.get("a_warm_total_range") or prof["a_warm_total_range"]
     if warm_range:
@@ -962,8 +989,7 @@ def main(argv=None) -> int:
         type=float,
         nargs=2,
         metavar=("LO", "HI"),
-        help="validity range of A's warm total in seconds (default: the "
-        "profile's; vace-i2v has none until a row sets it)",
+        help="validity range of A's warm total in seconds (default: the " "profile's)",
     )
     args = ap.parse_args(argv)
     if args.cmd == "score" and args.a_warm_range:

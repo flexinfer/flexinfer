@@ -376,6 +376,10 @@ def vace_metrics():
     m["evidence"]["bypass_line"] = False  # fp32 VACE VAE: no bypass
     for r in m["A"]["renders"] + m["B"]["renders"]:
         r["timings"]["decode_postprocess_seconds"] = 40.0  # fp32 decode
+    for r in m["A"]["renders"]:
+        r["timings"]["total_seconds"] = 265.0  # S9's dedicated VACE warm total
+    for r in m["B"]["renders"]:
+        r["timings"]["total_seconds"] = 170.0
     return m
 
 
@@ -426,8 +430,27 @@ class VaceProfileTest(unittest.TestCase):
     def test_vace_verdict_passes_without_bypass_or_decode_cap(self):
         v = gate.verdict(vace_metrics())
         self.assertEqual(v["decision"], "pass", v)
-        self.assertNotIn("A warm total in range", v["validity"])
         self.assertIn("no warnings", v["bars"][8]["name"])
+
+    def test_vace_same_seed_is_judged_against_the_control(self):
+        # S9: the dedicated VACE lane repeats a seed at 37.3 dB, not 50.
+        m = vace_metrics()
+        m["cmp"]["A_c1_r3"] = {"identical": False, "psnr_mean": 37.3}
+        m["cmp"]["B_c1_r3"] = {"identical": False, "psnr_mean": 38.0}
+        m["cmp"]["B_c1_r4"] = {"identical": False, "psnr_mean": 37.5}
+        v = gate.verdict(m)
+        self.assertEqual(v["decision"], "pass", v)
+        self.assertIn("A's own", v["bars"][1]["limit"])
+        m["cmp"]["B_c1_r4"]["psnr_mean"] = 33.0  # worse than the control
+        self.assertEqual(gate.verdict(m)["failed_bars"], [2])
+        m["cmp"]["A_c1_r3"]["psnr_mean"] = 30.0  # control below 35 dB
+        self.assertEqual(gate.verdict(m)["decision"], "invalid")
+
+    def test_wan_same_seed_stays_at_50_db(self):
+        m = good_metrics()
+        m["cmp"]["A_c1_r3"] = {"identical": False, "psnr_mean": 52.0}
+        m["cmp"]["B_c1_r3"] = {"identical": False, "psnr_mean": 40.0}
+        self.assertEqual(gate.verdict(m)["failed_bars"], [2])
 
     def test_vace_decode_ratio_still_judged(self):
         m = vace_metrics()
@@ -440,6 +463,7 @@ class VaceProfileTest(unittest.TestCase):
         m["image_sha256_b"] = "cd" * 32
         self.assertEqual(gate.verdict(m)["decision"], "invalid")
         m = vace_metrics()
+        self.assertTrue(gate.verdict(m)["validity"]["A warm total in range"])
         m["a_warm_total_range"] = [300.0, 400.0]
         v = gate.verdict(m)
         self.assertEqual(v["decision"], "invalid")

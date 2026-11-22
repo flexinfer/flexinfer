@@ -35,8 +35,10 @@ Three steps, on different hosts:
 
 Two stacks do not render the same waveform for a seed (diffusion amplifies
 float differences), so bar (3) is the owner's A/B listen of a1 and a2; the
-SNR and spectral cosine are reported beside it. A bar without its evidence is
-reported as not measured and the decision is "incomplete", never "pass".
+SNR and spectral cosine are reported beside it; a rejected listen fails the
+row. A bar without its evidence is reported as not measured and the decision
+is "incomplete", never "pass". Row gfx1100-xtx-inpod-stable-audio-gate-
+2026-11-22 holds these bars.
 
 Exit status: run and score return 0 on success (score: decision "pass"), 1
 otherwise; 2 on an error (bad arguments, unreadable input, missing tool).
@@ -94,12 +96,16 @@ SILENT_FRAC_MAX = 0.5
 # Bars.
 SAME_SEED_SNR_DB = 50.0
 TOTAL_RATIO = 1.25
-FIRST_CLIP_MAX_S = 900.0
+# The lane sets no flexinfer.ai/lane-first-byte-budget, so the proxy's
+# default 120 s bounds the first request, load included.
+FIRST_CLIP_MAX_S = 120.0
 VRAM_MARGIN_MIB = 1024.0
 RUNTIME_PEAK_MAX_GIB = 44.0
-# The 2026-08-22 kill test rendered 10 s at 100 steps in 12.1 s on gfx1100;
-# the guard is 0.5x to 3x of it, so a broken control is caught, not a slow one.
-A_WARM_TOTAL_RANGE = (6.0, 36.0)
+# S9 arm sa-A (the dedicated lane on d87f75f8, 2026-11-05) rendered 20 s at
+# 100 steps in 3.24 s warm, byte-identical to its first clip; length is nearly
+# free, so 10 s lands about there. The guard is about 0.5x to 3x of it, so a
+# broken control is caught, not a slow one.
+A_WARM_TOTAL_RANGE = (1.5, 10.0)
 
 # The torchsde RecursionError (!1389) and tracebacks count as warning lines.
 WARNING_RE = re.compile(
@@ -464,10 +470,10 @@ def verdict(m: dict) -> dict:
 
     failed = [b["bar"] for b in bars if b["pass"] is False]
     missing = [b["bar"] for b in bars if b["pass"] is None]
+    # Bar (3) is already the owner's judgment, so unlike the video gate a
+    # rejected listen is a fail, not a conditional.
     if not all(validity.values()):
         decision = "invalid"
-    elif failed == [3] and not missing:
-        decision = "conditional"
     elif failed:
         decision = "fail"
     elif missing:
