@@ -13,6 +13,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strconv"
 	"strings"
@@ -46,6 +47,13 @@ import (
 // (flexinfer.ai/job-concurrency overrides both). A job waiting for its key is
 // not demand; a claimed job is, from its first forward until it finishes,
 // including the waits between retries.
+//
+// Release: when a job on a shared-GPU key ("gpu/<group>") ends, its lane is
+// handed back (lane_release.go) unless a running job, or a queued job about
+// to take one of the key's free slots, uses the same lane. The card then returns to the lane the
+// election parked without waiting out the job lane's idle timeout, and a
+// queued job for another lane on the card does not wait for this one to look
+// idle.
 
 const (
 	jobHeartbeatInterval   = 15 * time.Second
@@ -79,6 +87,9 @@ type jobRunner struct {
 	running    map[string]context.CancelFunc
 	cancelled  map[string]bool
 	delivering map[string]bool
+	// releasable maps a shared-GPU lane a job of this replica ended on to
+	// its concurrency key, until the lane is released.
+	releasable map[string]string
 }
 
 func newJobRunner(p *Proxy, cfg JobsConfig) *jobRunner {
@@ -93,8 +104,12 @@ func newJobRunner(p *Proxy, cfg JobsConfig) *jobRunner {
 		p: p, cfg: cfg, handler: p.newServeMux(), nudge: make(chan struct{}, 1),
 		hooks: &http.Client{Timeout: jobWebhookTimeout}, now: time.Now,
 		running: map[string]context.CancelFunc{}, cancelled: map[string]bool{}, delivering: map[string]bool{},
+		releasable: map[string]string{},
 	}
 }
+
+// sharedGPUJobKey reports whether key serializes jobs on one shared GPU.
+func sharedGPUJobKey(key string) bool { return strings.HasPrefix(key, "gpu/") }
 
 // wake asks for a pass now (after a submission or a cancel).
 func (r *jobRunner) wake() {
@@ -201,6 +216,15 @@ func (r *jobRunner) pass(ctx context.Context) {
 		lane string
 	}
 	busy := map[string]int{}
+	// wanted is, per key, the lanes running jobs hold and the lanes the
+	// queued jobs that fit the key's free slots will ask for.
+	wanted := map[string]map[string]bool{}
+	want := func(key, lane string) {
+		if wanted[key] == nil {
+			wanted[key] = map[string]bool{}
+		}
+		wanted[key][lane] = true
+	}
 	var queued []candidate
 	models := map[string]*aiv1alpha2.Model{}
 	laneOf := func(model string) *aiv1alpha2.Model {
@@ -233,17 +257,26 @@ func (r *jobRunner) pass(ctx context.Context) {
 		}
 		lane := laneOf(j.Spec.Model)
 		key, pool := r.jobKey(lane, j.Spec.Model)
-		if active {
-			busy[key]++
-			continue
-		}
 		laneName := ""
 		if lane != nil {
 			laneName = lane.Name
 		}
+		if active {
+			busy[key]++
+			want(key, laneName)
+			continue
+		}
 		queued = append(queued, candidate{job: j, key: key, pool: pool, lane: laneName})
 	}
 	sort.SliceStable(queued, func(a, b int) bool { return jobBefore(queued[a].job, queued[b].job) })
+	next := map[string]int{}
+	for _, c := range queued {
+		if next[c.key] < max(c.pool-busy[c.key], 1) {
+			next[c.key]++
+			want(c.key, c.lane)
+		}
+	}
+	r.releaseLanes(ctx, wanted)
 	local := r.runningCount()
 	for _, c := range queued {
 		if local >= r.cfg.MaxRunning {
@@ -261,6 +294,27 @@ func (r *jobRunner) pass(ctx context.Context) {
 			jobsQueueWaitSeconds.WithLabelValues(c.job.Spec.Model).Observe(r.now().Sub(jobQueuedAt(c.job)).Seconds())
 		}
 		r.start(c.job, c.key)
+	}
+}
+
+// releaseLanes hands back every lane a job of this replica ended on that no
+// running job and no key's next queued job uses. A lane that is still wanted
+// stays recorded, so it is released on the pass after that use ends (or after
+// the queued job that wanted it is cancelled).
+func (r *jobRunner) releaseLanes(ctx context.Context, wanted map[string]map[string]bool) {
+	r.mu.Lock()
+	var due []string
+	for lane, key := range r.releasable {
+		if wanted[key][lane] {
+			continue
+		}
+		due = append(due, lane)
+		delete(r.releasable, lane)
+	}
+	r.mu.Unlock()
+	sort.Strings(due)
+	for _, lane := range due {
+		jobsLaneReleasesTotal.WithLabelValues(lane, r.p.releaseJobLane(ctx, lane)).Inc()
 	}
 }
 
@@ -317,6 +371,9 @@ func (r *jobRunner) start(j *aiv1alpha2.InferenceJob, key string) {
 			r.mu.Lock()
 			delete(r.running, j.Name)
 			delete(r.cancelled, j.Name)
+			if sharedGPUJobKey(key) && j.Status.Lane != "" {
+				r.releasable[j.Status.Lane] = key
+			}
 			r.mu.Unlock()
 			r.wake()
 		}()
@@ -474,10 +531,25 @@ type jobForward struct {
 	step string
 }
 
+// serveJobForward runs a job's forward through the proxy's handler on the job
+// goroutine. No http.Server recovers a panic there, so it is recovered here
+// and logged with a stack; the caller treats the forward as a lost response.
+func serveJobForward(h http.Handler, w http.ResponseWriter, req *http.Request, job string) (panicked bool) {
+	defer func() {
+		if v := recover(); v != nil {
+			panicked = true
+			slog.Error("panic serving a job's forward", "job", job, "path", req.URL.Path,
+				"panic", fmt.Sprint(v), "stack", string(debug.Stack()))
+		}
+	}()
+	h.ServeHTTP(w, req)
+	return false
+}
+
 // forward sends f once through the proxy's handler for j and spools the
 // response.
 func (r *jobRunner) forward(ctx context.Context, j *aiv1alpha2.InferenceJob, f jobForward, progress *atomic.Int32) (*jobAttempt, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://flexinfer-jobs"+f.path, f.body)
+	req, err := http.NewRequestWithContext(jobForwardContext(ctx), http.MethodPost, "http://flexinfer-jobs"+f.path, f.body)
 	if err != nil {
 		return &jobAttempt{}, err
 	}
@@ -506,8 +578,13 @@ func (r *jobRunner) forward(ctx context.Context, j *aiv1alpha2.InferenceJob, f j
 	if err != nil {
 		return &jobAttempt{}, err
 	}
-	r.handler.ServeHTTP(spool, req)
+	panicked := serveJobForward(r.handler, spool, req, j.Name)
 	a := &jobAttempt{status: spool.status, header: spool.header, spool: spool}
+	if panicked {
+		// Whatever was spooled is incomplete: retry it as a lost response.
+		a.status, a.code, a.message = http.StatusBadGateway, "no_response", "the proxy failed while serving the forward"
+		return a, nil
+	}
 	if a.status == 0 {
 		// Only a canceled request leaves the proxy's handler without an
 		// answer; anything else is treated as a lost response and retried.

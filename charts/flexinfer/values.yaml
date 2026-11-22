@@ -87,6 +87,17 @@ controller:
     servingDefaults:
       priorityClass: flexinfer-serving-critical
       ephemeralStorageRequest: "2Gi"
+    # What a deleted Model's `cache.strategy: Local` directory gets
+    # (<hostPath>/<namespace>/<name> on its GPU node). `retain` leaves it, as
+    # before; `delete` runs a one-shot Job on that node that removes it. The
+    # Model annotation flexinfer.ai/local-cache-on-delete (retain|delete)
+    # overrides this default per Model. Nothing else reaps these directories:
+    # eight 18 GB copies of one canary artifact tripped the 7900 XTX root into
+    # a 17-hour DiskPressure eviction on 2026-11-06. `retain` renders no env
+    # (it is the controller's built-in default), so the pod template only
+    # changes when this is set to `delete`.
+    localCache:
+      onDelete: retain
     # Flash-loader defaults used by v1alpha2 model deployments when enabled globally
     # or when a matching v1alpha1 ModelCache enables flashLoader.
     flashLoader:
@@ -204,6 +215,21 @@ agent:
     nodes: []
     # Sampling period on listed nodes (minimum 500ms).
     interval: 1s
+  # Inventory of `strategy: Local` model caches on every agent node into
+  # flexinfer_node_local_cache_bytes{node,namespace,model,orphan} and
+  # flexinfer_node_local_cache_orphans{node}: the agent sizes each
+  # <hostPath>/<namespace>/<name> directory (du-style, re-walked when its
+  # mtime moves) every agent interval and marks it orphan when no Model of
+  # that namespace/name exists. Read only, it never deletes. Enabling mounts
+  # hostPath read-only into the agent, grants it cluster-wide get/list on
+  # models.ai.flexinfer, adds the FlexInferNodeLocalCacheOrphanBytesHigh alert
+  # (when alerting.enabled) and rolls the agents. Disabled renders exactly as
+  # before. See docs/user/caching.md.
+  localCacheInventory:
+    enabled: false
+    # The Local cache base on the node (the controller default; a Model's
+    # spec.cache.hostPath can name another, which this does not cover).
+    hostPath: /var/lib/flexinfer/models
 
 proxy:
   enabled: true
@@ -674,6 +700,11 @@ alerting:
     # fires FlexInferGPUDegraded (critical). The scheduler/controller react to
     # the node label immediately; this only paces the page.
     gpuDegradedFor: "1m"
+    # FlexInferNodeLocalCacheOrphanBytesHigh (warning): orphaned Local model
+    # caches on one node above this many bytes for this long. Rendered only
+    # while agent.localCacheInventory.enabled.
+    localCacheOrphanBytes: 50000000000  # 50 GB
+    localCacheOrphanFor: "1h"
   # Optional node-exporter alerts for Docker/BuildKit builder filesystems.
   # Enable only in clusters where Prometheus can see node_filesystem_* metrics.
   buildNodeDisk:

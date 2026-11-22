@@ -15,6 +15,7 @@ runtime_patch_contracts:
     - python3 build/scripts/test_runtime_gptq_patch_composition.py
     - python3 build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
     - python3 build/scripts/test_verify_runtime_serving_stack.py
+    - python3 build/scripts/test_vllm_rdna3_w4a16_plugin.py
     - python3 build/scripts/test_abliterate_safety.py
   rules:
     - if: $CI_COMMIT_BRANCH == "master"
@@ -48,6 +49,9 @@ runtime_patch_contracts:
         - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
         - build/scripts/verify_runtime_serving_stack.py
         - build/scripts/test_verify_runtime_serving_stack.py
+        - build/scripts/verify_vllm_rdna3_w4a16_plugin.py
+        - build/scripts/test_vllm_rdna3_w4a16_plugin.py
+        - build/vllm-rdna3-w4a16-plugin/**/*
     - if: $CI_MERGE_REQUEST_ID
       changes:
         - .gitlab/ci/runtime-publish.yml
@@ -79,6 +83,9 @@ runtime_patch_contracts:
         - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
         - build/scripts/verify_runtime_serving_stack.py
         - build/scripts/test_verify_runtime_serving_stack.py
+        - build/scripts/verify_vllm_rdna3_w4a16_plugin.py
+        - build/scripts/test_vllm_rdna3_w4a16_plugin.py
+        - build/vllm-rdna3-w4a16-plugin/**/*
     - if: $CI_COMMIT_BRANCH
       changes:
         - .gitlab/ci/runtime-publish.yml
@@ -110,6 +117,9 @@ runtime_patch_contracts:
         - build/scripts/test_verify_vllm_gfx1100_native_w4a16.py
         - build/scripts/verify_runtime_serving_stack.py
         - build/scripts/test_verify_runtime_serving_stack.py
+        - build/scripts/verify_vllm_rdna3_w4a16_plugin.py
+        - build/scripts/test_vllm_rdna3_w4a16_plugin.py
+        - build/vllm-rdna3-w4a16-plugin/**/*
     - when: never
 
 publish_serving_rocm_gfx1100:
@@ -167,7 +177,7 @@ publish_serving_rocm_gfx1100:
           --opt filename="Dockerfile.runtime-serving" \
           --opt platform=linux/amd64 \
           --opt build-arg:BASE_IMAGE="rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0" \
-          --opt build-arg:GO_VERSION="1.26.10" \
+          --opt build-arg:GO_VERSION="1.26.11" \
           --opt build-arg:GPU_VENDOR="amd" \
           --opt build-arg:GPU_ARCH="gfx1100" \
           --opt build-arg:INCLUDE_VLLM="true" \
@@ -324,7 +334,7 @@ publish_serving_rocm_gfx1100_v032:
         --opt filename="Dockerfile.runtime-serving-v032" \
         --opt platform=linux/amd64 \
         --opt build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.32.0" \
-        --opt build-arg:GO_VERSION="1.26.10" \
+        --opt build-arg:GO_VERSION="1.26.11" \
         --opt build-arg:GPU_ARCH="gfx1100" \
         --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100-serving-v032" \
         --export-cache "type=inline" \
@@ -348,7 +358,9 @@ publish_serving_rocm_gfx1100_v032:
         - build/vllm-plugin-common/**/*
         - build/vllm-qwen35-text-plugin/**/*
         - build/vllm-qwen35-seqcls-plugin/**/*
+        - build/vllm-rdna3-w4a16-plugin/**/*
         - build/scripts/verify_vllm_gfx1100_native_w4a16.py
+        - build/scripts/verify_vllm_rdna3_w4a16_plugin.py
         - build/scripts/verify_runtime_serving_stack.py
         - build/scripts/test_verify_runtime_serving_stack.py
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
@@ -404,7 +416,7 @@ publish_serving_rocm_gfx1100_v033:
         --opt filename="Dockerfile.runtime-serving-v032" \
         --opt platform=linux/amd64 \
         --opt build-arg:BASE_IMAGE="vllm/vllm-openai-rocm:v0.33.0-rocm72@sha256:4fe7bc121cbe2f0791ebc38dcc2f0d615612233b4bfc0c1f4b9daeab05aba182" \
-        --opt build-arg:GO_VERSION="1.26.10" \
+        --opt build-arg:GO_VERSION="1.26.11" \
         --opt build-arg:GPU_ARCH="gfx1100" \
         --import-cache "type=registry,ref=${REGISTRY}/runtime:rocm-gfx1100-serving-v033" \
         --export-cache "type=inline" \
@@ -428,7 +440,9 @@ publish_serving_rocm_gfx1100_v033:
         - build/vllm-plugin-common/**/*
         - build/vllm-qwen35-text-plugin/**/*
         - build/vllm-qwen35-seqcls-plugin/**/*
+        - build/vllm-rdna3-w4a16-plugin/**/*
         - build/scripts/verify_vllm_gfx1100_native_w4a16.py
+        - build/scripts/verify_vllm_rdna3_w4a16_plugin.py
         - build/scripts/verify_runtime_serving_stack.py
         - build/scripts/test_verify_runtime_serving_stack.py
     - if: $CI_PIPELINE_SOURCE == "web" || $CI_PIPELINE_SOURCE == "api"
@@ -495,7 +509,7 @@ publish_unified_rocm_gfx1100:
           --opt filename="Dockerfile.runtime" \
           --opt platform=linux/amd64 \
           --opt build-arg:BASE_IMAGE="rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0" \
-          --opt build-arg:GO_VERSION="1.26.10" \
+          --opt build-arg:GO_VERSION="1.26.11" \
           --opt build-arg:LLAMACPP_VERSION="b11847" \
           --opt build-arg:OLLAMA_VERSION="v0.17.4" \
           --opt build-arg:OLLAMA_GO_VERSION="1.25.7" \
@@ -614,7 +628,7 @@ publish_gaming_rocm_gfx1100:
           --opt filename="Dockerfile.runtime" \
           --opt platform=linux/amd64 \
           --opt build-arg:BASE_IMAGE="rocm/vllm-dev:rocm7.2_navi_ubuntu24.04_py3.12_pytorch_2.9_vllm_0.14.0rc0" \
-          --opt build-arg:GO_VERSION="1.26.10" \
+          --opt build-arg:GO_VERSION="1.26.11" \
           --opt build-arg:GPU_VENDOR="amd" \
           --opt build-arg:GPU_ARCH="gfx1100" \
           --opt build-arg:INCLUDE_VLLM="false" \

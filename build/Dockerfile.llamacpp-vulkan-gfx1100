@@ -10,9 +10,9 @@
 # -updates) and shaderc 2026.1 (glslc). A Model runs it with
 # `config.device: Vulkan0`; the AMD device plugin mounts /dev/dri.
 #
-# Build command (on the GPU builder):
-#   docker --context 7900xtx build -f build/Dockerfile.llamacpp-vulkan-gfx1100 \
-#     -t registry.harbor.lan/library/llamacpp:vulkan-radv-b11847 build/
+# Build and push (cluster BuildKit; the build needs no GPU):
+#   cluster-buildkit build -f build/Dockerfile.llamacpp-vulkan-gfx1100 \
+#     -t registry.harbor.lan/library/llamacpp:vulkan-radv-b11847 --push build/
 
 ARG UBUNTU_VERSION=26.04
 FROM ubuntu:${UBUNTU_VERSION} AS builder

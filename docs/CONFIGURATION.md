@@ -26,6 +26,7 @@ The controller manager handles reconciliation of FlexInfer CRDs and manages the 
 | `HEALTH_PROBE_BIND_ADDRESS` | `:8081` | Address for health and readiness probes |
 | `LEADER_ELECT` | `false` | Enable leader election for HA deployments |
 | `DEFAULT_SHM_SIZE_LIMIT` | `8Gi` | Default `/dev/shm` size limit for v1alpha2 model pods |
+| `DEFAULT_LOCAL_CACHE_ON_DELETE` | `retain` | What a deleted Model's `cache.strategy: Local` directory gets: `retain` leaves it on the node, `delete` removes it through a one-shot Job there. The Model annotation `flexinfer.ai/local-cache-on-delete` overrides it. Any other value fails startup. Helm: `controller.runtime.localCache.onDelete` |
 | `DEFAULT_FLASH_LOADER_ENABLED` | `false` | Enable flash-loader init container by default for eligible v1alpha2 models |
 | `DEFAULT_FLASH_LOADER_IMAGE` | `registry.harbor.lan/flexinfer/flexinfer-flash-loader:latest` | Default flash-loader image |
 | `DEFAULT_FLASH_LOADER_CONCURRENCY` | `4` | Default flash-loader copy parallelism |

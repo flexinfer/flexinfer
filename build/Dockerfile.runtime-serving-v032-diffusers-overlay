@@ -1,0 +1,38 @@
+# syntax=docker/dockerfile:1
+#
+# The live XTX runtime with only server-diffusers.py replaced.
+#
+# Why an overlay and not the master CI build: between ddf22437 (the source of
+# the live runtime 527e2714) and master, the runtime image inputs differ by
+# ~10,900 lines (vLLM plugins, the Go runtime binary, the Dockerfile). A
+# master build would also change the XTX warm text lane. This image changes
+# the diffusers server only, so in-pod image and video lanes can use the
+# opt-in TORCH_DETERMINISTIC and exact-shape video warmup switches (!1379)
+# while the vLLM stack, the supervisor and server-snac.py stay byte-identical.
+#
+# The verify step is the base image's own build-time verifier with the same
+# arguments as build/Dockerfile.runtime-serving-v032: the frozen vLLM stack is
+# unchanged, both servers compile, the executables run and the creative-lane
+# modules resolve.
+#
+# Build and push (cluster BuildKit, no local Docker):
+#   cluster-buildkit build -f build/Dockerfile.runtime-serving-v032-diffusers-overlay \
+#     -t registry.harbor.lan/flexinfer/runtime:<tag> --push .
+ARG BASE=registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
+FROM ${BASE}
+
+COPY build/server-diffusers.py /opt/flexinfer/server-diffusers.py
+
+RUN python3 /opt/flexinfer/verify_runtime_serving_stack.py \
+      --snapshot /opt/flexinfer/vllm-stack.txt \
+      --pip-check-baseline /opt/flexinfer/vllm-stack-pip-check.txt \
+      --server /opt/flexinfer/server-diffusers.py \
+      --server /opt/flexinfer/server-snac.py \
+      --executable /usr/local/bin/flexinfer-runtime \
+      --executable /usr/local/bin/runtime-entrypoint.sh \
+      --executable /usr/bin/tini \
+      --require-module bitsandbytes \
+      --require-module torchsde \
+      --require-module imageio \
+      --require-module imageio_ffmpeg \
+      --require-module ftfy
