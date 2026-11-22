@@ -34,8 +34,10 @@ pins:
   - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:9d6524000ff8760d9f01351b227248718513cb6cdc2400547346d7a7084e69f0
   # Proxy: master 5a796de0 (tag 20261120-164437), the second 2026-11-20 repin target; the rollback for the d90cb4bc roll.
   - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:6624e3252f07114974d1eb80046762296a890abd62aaac060588fad13935045c
-  # Proxy: master d90cb4bc (tag 20261120-183257), the third 2026-11-20 repin target.
+  # Proxy: master d90cb4bc (tag 20261120-183257), the third 2026-11-20 repin target; the rollback for the 2544a1bc roll.
   - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:14cead95bb51a1ec899be2a73011f309e622ec0a8e7c6b439fe0774c8cd75190
+  # Proxy: master 2544a1bc (tag 20261122-174845), the 2026-11-22 repin target (videos alias).
+  - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:cb6771553539fbe556d885395eff11abf872c2eb117b05c19b055f143f6ccf3e
   # Agent: master ac73e607 (tag 20261104-190946), pinned in values-k3s since !1243; the rollback for the a541c524 roll.
   - registry.harbor.lan/flexinfer/flexinfer-agent@sha256:6b832f384c69063dc33248709ae715f3398190b8ed00990501bcca3a139d7b8a
   # Agent: master a541c524 (tag 20261120-220622), the 2026-11-20 repin target (probe-timeout streak, !1365).
