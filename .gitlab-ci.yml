@@ -673,11 +673,14 @@ server_diffusers_test:
     # The S9 Wan harness: verdict arithmetic runs bare; its metric and collect
     # cases need numpy and skip here.
     - python3 scripts/test_wan_decode_ab.py
-    # The in-pod Wan T2V gate (row gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21):
-    # run, evidence and verdict cases run bare; its decode case needs numpy and
-    # ffmpeg and skips here.
+    # The in-pod Wan T2V and VACE gates (row gfx1100-xtx-inpod-wan-t2v-gate-
+    # 2026-11-21 and its successors): run, evidence and verdict cases run bare;
+    # the decode cases need numpy and ffmpeg and skip here.
     - python3 scripts/test_video_gate.py
-    - python3 -m py_compile build/server-diffusers.py build/check-runtime-diffusers.py scripts/wan-decode-ab.py scripts/video-gate.py
+    # The in-pod Stable Audio gate (Draft !1239): stdlib except the spectral
+    # case, which needs numpy and skips here.
+    - python3 scripts/test_audio_gate.py
+    - python3 -m py_compile build/server-diffusers.py build/check-runtime-diffusers.py scripts/wan-decode-ab.py scripts/video-gate.py scripts/audio-gate.py
   rules:
     - if: $CI_MERGE_REQUEST_ID
       changes: &server-diffusers-changes
@@ -689,6 +692,8 @@ server_diffusers_test:
         - scripts/test_wan_decode_ab.py
         - scripts/video-gate.py
         - scripts/test_video_gate.py
+        - scripts/audio-gate.py
+        - scripts/test_audio_gate.py
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *server-diffusers-changes
 
