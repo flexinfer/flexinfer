@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- OpenAI Videos API alias on the proxy (`internal/proxy/videos.go`): `POST /v1/videos`, `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content` and `DELETE /v1/videos/{id}` run a clip as an InferenceJob on `/v1/videos/generations`, so creative frontends that still speak the (since-removed) OpenAI shape, such as Infinite Canvas, reach the Wan lanes without an adapter. Multipart or JSON creates; a conditioning image in `input_reference`/`first_frame`/`image`/`image[]`/`images` becomes the lane's `image`; `size` snaps to 832x480, 480x832 or 624x624 unless it already fits; `seconds` becomes 16 fps frames capped at 33 (about 2 s, inside the ~5 minute poll budget these clients allow) unless `num_frames` is given; `content` serves the decoded MP4. Needs `FLEXINFER_JOBS_ENABLED`. `submitJob` is split so the alias reuses job creation (`createJob`). Spec: `docs/specs/proxy-api.md#jobs-async`.
+
 - Qwen3-Embedding-4B and Qwen3-Reranker-0.6B lanes on the Radeon VII retrieval plane (`deploy/models/qwen3-embedding-4b-radeonvii.yaml`, `deploy/models/qwen3-reranker-0p6b-radeonvii.yaml`, `docs/user/qwen3-embedding.md`). Both are cold, additive llama.cpp lanes (priorities 89 / 88, `minReplicas: 0`) on the fleet gfx906 runtime `90648c35` (b11335), opt-in by name (`qwen3-embedding`, `qwen3-reranker`), with no existing alias repointed.
   - The embedding lane serves native 2560-dim, last-token-pooled, normalized vectors from the official Q8_0 GGUF.
   - The reranker uses the ggml-org conversion with llama.cpp's rerank head (`cls.output`, pooling rank, yes/no labels), so `/v1/rerank` returns P(yes). Plain-LM conversions such as `mradermacher/Qwen3-Reranker-4B-GGUF` lack the head.
