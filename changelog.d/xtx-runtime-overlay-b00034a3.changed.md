@@ -1,0 +1,1 @@
+XTX runtime repin (window-gated): `12f30206` -> `29e97cf2`, the diffusers-server overlay rebuilt on `527e2714` with master `b00034a3`'s `server-diffusers.py`. The only server change is the bounded Brownian-tree noise sampler (!1389), which in-pod Stable Audio needs. `12f30206` stays prewarmed, certified and the rollback.

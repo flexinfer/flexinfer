@@ -195,7 +195,10 @@ spec:
     # 2026-11-21 (D5, WINDOW-GATED): follows the runtime DaemonSet to
     # 12f30206 (527e2714 plus master fb8182fc's server-diffusers.py).
     # Rollback = 527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b.
-    image: registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
+    # 2026-11-22 (D1 Stable Audio, WINDOW-GATED): follows the runtime
+    # DaemonSet to 29e97cf2 (12f30206 plus the !1389 noise-sampler fix).
+    # Rollback = 12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba.
+    image: registry.harbor.lan/flexinfer/runtime@sha256:29e97cf2e60d56f619bafb432cfa59dfd8fee3d8cfa585049c9cf2be34de234f
   containerMemoryGB: 48
   # 2026-05-25: bumped 18 → 22 to make room for `gemma4-26b-a4b-gptq` at
   # maxModelLen=32768 with kvCacheDtype=fp8_e4m3. Math:
