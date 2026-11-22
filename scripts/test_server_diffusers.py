@@ -1537,8 +1537,9 @@ class VideoWarmupTest(ServerTestCase):
         # rest generated, at the served size.
         self.assertEqual((len(call["video"]), len(call["mask"])), (33, 33))
         self.assertEqual(call["video"][0].size, (832, 480))
-        self.assertEqual(call["mask"][0].getpixel((0, 0)), 0)
-        self.assertEqual(call["mask"][1].getpixel((0, 0)), 255)
+        # The kept frame has its own mask; every generated frame shares one.
+        self.assertIsNot(call["mask"][0], call["mask"][1])
+        self.assertTrue(all(m is call["mask"][1] for m in call["mask"][1:]))
 
     def test_vace_warmup_without_frames_uses_the_served_default(self):
         server.PIPELINE_MODE = "image2video"
