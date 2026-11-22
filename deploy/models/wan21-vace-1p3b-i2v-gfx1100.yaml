@@ -72,6 +72,13 @@
 # in-pod T2V recipe (plain compile: Triton templates instead of the aten GEMMs
 # Inductor's deterministic mode picks). If clips still differ, the float32
 # VAE on MIOpen is the remaining VACE-only suspect.
+# 2026-11-22 diagnostic 2 (uncounted, 21:06-21:16Z, plain compile): still
+# 37.1 dB, same profile; its first clip matched diagnostic 1's at 43.9 dB, so
+# the transformer is not the source. The VACE pipeline encodes the condition
+# with sample_mode="argmax" (no RNG). WAN_VAE_MIOPEN=off (!1407, runtime
+# c54cad12) runs the float32 VAE's two condition encodes and the decode
+# through PyTorch's im2col + GEMM path, as the 16-bit T2V VAE runs and
+# repeats; enableVaeTiling bounds the float32 im2col buffer per tile.
 # Host RAM: dedicated limit 48 GiB = the runtime pod's whole limit.
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
 # config); the Deployment returns on the next reconcile.
@@ -170,6 +177,8 @@ spec:
       PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
       TORCH_BLAS_PREFER_HIPBLASLT: "0"
       # TORCH_DETERMINISTIC dropped 2026-11-22 after the diagnostic (header).
+      # 2026-11-22 float32 VAE without MIOpen (header; needs runtime c54cad12).
+      WAN_VAE_MIOPEN: "off"
       # 2026-11-22 compiled transformer plus exact-shape warmup (header).
       # Overrides skipWarmup "1" in-pod; the dedicated rollback ignores them.
       COMPILE_MODE: "max-autotune-no-cudagraphs"
