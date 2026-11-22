@@ -1,0 +1,1 @@
+Diffusers server: `image2video` (Wan VACE) warmup renders the served clip shape with the request path's own conditioning (a kept first frame, neutral frames to generate, and the matching mask), honouring `WARMUP_VIDEO_FRAMES`, so a compiled in-pod VACE lane can absorb its one-time events before the first request, as the in-pod Wan T2V lane does.

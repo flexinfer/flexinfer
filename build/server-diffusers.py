@@ -166,13 +166,19 @@ def _bound_brownian_noise_sampler() -> bool:
         orig_init(self, x, sigma_min, sigma_max, seed, transform)
         a = self.transform(torch.as_tensor(sigma_min))
         b = self.transform(torch.as_tensor(sigma_max))
-        self._flexinfer_lo, self._flexinfer_hi = torch.minimum(a, b), torch.maximum(a, b)
+        self._flexinfer_lo, self._flexinfer_hi = torch.minimum(a, b), torch.maximum(
+            a, b
+        )
         self._flexinfer_zeros = torch.zeros_like(x)
 
     def __call__(self, sigma, sigma_next):
         lo, hi = self._flexinfer_lo, self._flexinfer_hi
-        t0 = torch.minimum(torch.maximum(self.transform(torch.as_tensor(sigma)), lo), hi)
-        t1 = torch.minimum(torch.maximum(self.transform(torch.as_tensor(sigma_next)), lo), hi)
+        t0 = torch.minimum(
+            torch.maximum(self.transform(torch.as_tensor(sigma)), lo), hi
+        )
+        t1 = torch.minimum(
+            torch.maximum(self.transform(torch.as_tensor(sigma_next)), lo), hi
+        )
         if bool(t0 == t1):
             return self._flexinfer_zeros.clone()
         return self.tree(t0, t1) / (t1 - t0).abs().sqrt()
@@ -2779,6 +2785,23 @@ def _warmup_pass(w: int, h: int, steps: int, guidance, guard: bool) -> Optional[
                 negative = _resolve_negative_prompt(None)
                 if negative:
                     kw["negative_prompt"] = negative
+        elif PIPELINE_MODE == "image2video":
+            # Wan VACE warms through the request path's own conditioning: a
+            # first frame to keep plus neutral frames to generate, with the
+            # matching mask, so the VAE encode of the condition, the VACE
+            # blocks and a compiled transformer all see the served shape
+            # before the first request. The frame's content does not pick
+            # kernels; a flat gray keeps it independent of any input.
+            frames = _env_int("WARMUP_VIDEO_FRAMES") or _default_video_num_frames()
+            kw["num_frames"] = frames
+            video, mask = _prepare_vace_i2v_condition(
+                Image.new("RGB", (w, h), (128, 128, 128)), w, h, frames
+            )
+            kw["video"] = video
+            kw["mask"] = mask
+            negative = _resolve_negative_prompt(None)
+            if negative:
+                kw["negative_prompt"] = negative
         if guard:
             kw["output_type"] = "np"
         with torch.inference_mode():

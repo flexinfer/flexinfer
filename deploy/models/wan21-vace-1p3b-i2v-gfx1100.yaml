@@ -19,6 +19,38 @@
 # Slice 3 of .loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md;
 # the kill test must pass before any downstream pipeline ships.
 # Remove this parent Model (not its Deployment/pod) to roll the lane back.
+#
+# 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
+# WINDOW-GATED): served IN-POD by the 7900xtx runtime DaemonSet instead of its
+# own Deployment, so a render swaps the XTX warm lane out and back inside the
+# runtime pod.
+# - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
+# - Compile cache: scope Image on the default hostPath, the directory the
+#   runtime pod mounts at /cache/compile.
+# Runtime image: 12f30206 (527e2714 with server-diffusers.py at fb8182fc, live
+# on the XTX runtime since !1380 on 2026-11-21). 527e2714 carries ftfy 6.3.1
+# (WanVACEPipeline.basic_clean calls ftfy.fix_text unguarded), imageio 2.37.0
+# and imageio-ffmpeg 0.6.0. This lane's VAE is fp32, so the Wan VAE MIOpen
+# bypass (!1268) does not apply and the decode runs through the MIOpen of
+# torch 2.13 / ROCm 7.2.3: A/B in-pod against the dedicated lane before
+# promotion.
+#
+# 2026-11-22 refresh: config.env pins what the in-pod Wan T2V gates found
+# (rows gfx1100-xtx-inpod-wan-t2v-*-2026-11-21):
+# - both allocator variables without expandable_segments: with model CPU
+#   offload, expandable_segments corrupts every VAE use on this stack, and
+#   VACE corrupted even its first clip because it encodes the keyframe through
+#   the VAE (S9);
+# - TORCH_BLAS_PREFER_HIPBLASLT=0: in-pod the lane would inherit the gfx1100
+#   GPUProfile's 1, and hipBLASLt made same-seed requests differ;
+# - TORCH_DETERMINISTIC=1 (server switch from !1379): this lane runs eager
+#   (no compile), and eager rocBLAS GEMMs run with atomics allowed under
+#   PyTorch, which made every eager T2V request differ. Untested on VACE; the
+#   gate checks it. The exact-shape warmup that fixed the compiled T2V lane
+#   does not apply: the server's warmup cannot send a conditioning image.
+# Host RAM: dedicated limit 48 GiB = the runtime pod's whole limit.
+# Rollback: revert this commit (restores dedicatedDeployment and the cache
+# config); the Deployment returns on the next reconcile.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -66,7 +98,9 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      hostPath: /var/lib/flexinfer/compile-cache
+      # 2026-11-01 D1: image-scoped on the default hostPath, shared with the
+      # runtime pod (header).
+      scope: Image
       sizeLimit: 6Gi
   gpu:
     vendor: amd
@@ -84,7 +118,6 @@ spec:
     idleTimeout: 15m
     coldStartTimeout: 30m
   config:
-    dedicatedDeployment: true
     pipelineMode: image2video
     modelFamily: wan
     dtype: bfloat16
@@ -107,6 +140,12 @@ spec:
     negativePrompt: "static, blurry, low quality, distorted, watermark, subtitles, text"
     hipVisibleDevices: "0"
     warmPolicy: ondemand
+    # 2026-11-22 (header): in-pod pins; config.env is applied last in-pod.
+    env:
+      PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
+      PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
+      TORCH_BLAS_PREFER_HIPBLASLT: "0"
+      TORCH_DETERMINISTIC: "1"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:

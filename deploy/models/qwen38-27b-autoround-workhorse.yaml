@@ -41,6 +41,8 @@ metadata:
     flexinfer.ai/base-model-posture: clean
     flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
     flexinfer.ai/plan: ".loom/10-research-gfx1100-next-feature-2026-10-23.md"
+    # 2026-11-22: the window is 64K (see maxModelLen) and the target is the
+    # 128K lane (!1383), so this route now carries 64K-128K prompts.
     # S4: prompts that no longer fit the 32K window (vLLM's context-length
     # 400) are replayed once by flexinfer-proxy to the warm XTX lane: same
     # Qwen3.8-27B artifact and recipe at 64K, warmPolicy primary. Needs the
@@ -56,8 +58,11 @@ metadata:
     # This tier keeps those labels here while this lane is Ready. It only
     # affects label groups that contain this lane; aliases are unchanged.
     flexinfer.ai/route-priority: "100"
-    flexinfer.ai/promotion-state: promoted-32k-segmented-mtp
-    flexinfer.ai/promotion-evidence: "canaries qwen38-27b-v032-s3-attn-canary (S3) and S3b on b06b06fe, 2026-10-26: segmented + fp16 + MTP K=2 at 32K decode 71.8/66.5/66.1 tok/s at 512/2K/16K vs TRITON+fp8 40.8/40.2/34.3, pos0 acceptance 0.81, warm TTFT 0.234/0.419/1.026 s at 256/512/1124 vs this lane's 0.237/0.436/1.088, coherent probes, parity hash 8174a49e, KV pool 52,932 tok (1.62x) @32K"
+    # 2026-11-22 (owner decision): promoted straight to 64K on the evidence
+    # in the image comment below; row
+    # gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22 records the live checks.
+    flexinfer.ai/promotion-state: promoted-64k-v033-s7-segmented-mtp
+    flexinfer.ai/promotion-evidence: "runtime@51afd0d3 (vLLM 0.33 + S7 embed host + segmented + MTP K=2) live on the XTX 128K lane since !1383: parity hash 8174a49e, pos0 0.81, 159,599-token fp8 pool; S7 row xtx-s7-embed-host-2026-11-05: +2.36 GiB KV, parity identical; 0.33 parity row xtx-vllm-v033-parity-2026-11-05; 5930k 64K live checks in row gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22"
 spec:
   backend: vllm
   # 2026-10-22 (issue #74 S2, vLLM currency): REPINNED from `2e9652ed` — the
@@ -99,8 +104,29 @@ spec:
   # digest on this node. Rollback = revert the S4 commit: `cd108c9e` (resident,
   # pinned-cd108c9ebf99) with the TRITON + fp8 + 64K config and its warm
   # compile cache path.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+  # 2026-11-05 (prepared; promotion to vLLM 0.33 + S7, row
+  # xtx-workhorse-v033-promotion-2026-11-05): `51afd0d3` (rocm-gfx1100-serving-v033-3e8ae3c2,
+  # pinned-51afd0d377f7; CI job publish_serving_rocm_gfx1100_v033 from master 4da96d96 +
+  # the CI-only commit of !1306): the gfx1100-serving-v033 persona, vLLM
+  # 0.33.0-rocm72 (S3 parity, row xtx-vllm-v033-parity-2026-11-05) with text
+  # plugin 0.12.0 and plugin-common 0.5.0, which carry the S7 embed-host
+  # loader patch. 2026-11-22: promoted without the separate XTX promotion
+  # canary (owner decision). This digest with S7, segmented attention and
+  # MTP K=2 has served the XTX 128K lane since !1383 (fp8 KV there; parity
+  # hash 8174a49e, pos0 0.81, row xtx-128k-fp8-segmented-s7-2026-11-21), and
+  # fp16 parity of 0.33 is row xtx-vllm-v033-parity-2026-11-05.
+  # Rollback = revert the promotion commit: `b06b06fe` (resident here,
+  # pinned-b06b06fe1c02) with no vllmVersion, no FLEXINFER_EMBED_HOST, no
+  # structuredOutput, and the S4 compile cache path.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  # D4 (KT-SO): renders --structured-outputs-config {"backend":"auto"} once the
+  # gfx1100 GPUProfile certifies exactly this digest (Draft !1303, re-targeted
+  # after the promotion canary's phase S re-ran KT-SO on it); until then the
+  # condition reads StructuredOutputNotCertified and nothing renders. Needs
+  # dedicatedDeployment: true (set below). Rollback = drop this block.
+  capabilities:
+    structuredOutput: true
   cache:
     # 19.0 GB artifact. Serving needs NO on-disk config surgery (hfOverrides
     # rewrites quantization_config in-process); only an MTP retry does.
@@ -122,7 +148,13 @@ spec:
       # first-use compiles S3/S3b already paid. Unseeded, it still boots; the
       # first boot autotunes and may profile a short pool once (the controller
       # rechecks it).
-      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v032-s4-5930k
+      # 2026-11-05 (0.33): a fresh path, so the 0.32 S4 cache
+      # (compile-cache-qwen38-27b-v032-s4-5930k) stays warm for a rollback.
+      # Unseeded, the first boot autotunes the segmented kernels for the 64K
+      # table width (10-30 min) and may fail the one-request 64K KV check on
+      # that cold boot; the automatic restart is warm (the 128K canary saw
+      # both, row xtx-128k-fp8-segmented-s7-2026-11-21 §3.3).
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-5930k
       sizeLimit: 4Gi
   gpu:
     vendor: amd
@@ -163,8 +195,13 @@ spec:
     idleTimeout: 12h
     # First activation on a cold cache covers the 19 GB HF prefetch + fresh
     # torch.compile (~5 min); cached restarts are ~3 min.
-    coldStartTimeout: 25m
+    # 2026-11-22: 25m -> 45m for the cold 64K autotune.
+    coldStartTimeout: 45m
   config:
+    # 2026-11-05 (promotion to 0.33): required with a 0.32+ image pin (!1281,
+    # live in the controller since A1/!1289). It drops the VLLM_* env names
+    # 0.33 removed and --mamba-cache-mode. Rollback = drop this key.
+    vllmVersion: "0.33.0"
     # 2026-10-30 (S6b readiness): stay a dedicated Deployment until S6b moves
     # this lane into the 5930k runtime pod on purpose. Without the flag,
     # un-parking that DaemonSet (deploy/system/values-k3s.yaml, profile
@@ -184,8 +221,15 @@ spec:
     kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
     # Text plugin 0.9.0 builds the MTP draft from the checkpoint's own head
     # (mtp.fc fp16, mtp.layers.0 INT4) instead of re-reading config.json.
+    # S7 (2026-11-05, rows xtx-s7-embed-host-2026-11-05 and
+    # xtx-workhorse-v033-promotion-2026-11-05): FLEXINFER_EMBED_HOST moves the
+    # untied 2.37 GiB fp16 embed_tokens table to exact-size mapped host memory
+    # (cudaHostAlloc), so vLLM sizes the KV pool ~2.37 GiB larger. The MTP
+    # draft shares the module. Gathered rows are bit-identical (parity held).
+    # Rollback = drop the key.
     env:
       FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+      FLEXINFER_EMBED_HOST: "1"
     # 2026-10-30 placement layout: ondemand -> primary. The lane is the group's
     # designated tenant and reclaims the card if anything ever holds it (an
     # operator activation, a forcePromotion canary). Controller-only key: it
@@ -227,7 +271,13 @@ spec:
     # prompts <= 20K and none exceeded 50K (49 were 20K-50K). Longer requests
     # take the overflow route (research §7f). Rollback restores 65536 with
     # fp8 KV and TRITON_ATTN.
-    maxModelLen: 32768
+    # 2026-11-22 (owner decision): 32768 -> 65536, fp16 KV kept. S7 frees
+    # 2.37 GiB of VRAM, so the pool goes from 52,932 to ~84K tokens (~1.29x at
+    # 64K). Why: at 32K the Mills pi harness compacted 4.1-12.5 times per run
+    # (S0, 2026-11-22), and every render on the XTX paused the overflow lane.
+    # Now 0-64K stays on this always-on card at full fp16 speed, and 64K-128K
+    # overflows to the XTX 128K lane. Rollback = 32768.
+    maxModelLen: 65536
     maxNumSeqs: 2
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
@@ -243,7 +293,21 @@ spec:
     # 4.3K generation; vLLM preempts only when two long requests collide.
     # S4: now load-bearing. 2 x 32K exceeds the 52,932-token pool, so
     # reserving by actual length is what lets two typical requests overlap.
+    # Still load-bearing at 64K (2 x 64K > ~84K).
     schedulerReserveFullISL: false
+    # 2026-11-22 (64K): the ~84K pool is ~1.29x at 65536, below the
+    # controller's 1.5x KVPoolShort line for maxNumSeqs 2 by design, so a
+    # recheck restart would buy nothing (a cold boot that profiles short fails
+    # vLLM's own check and its restart is warm).
+    kvPoolRecheck: false
+    # 2026-11-22 (64K): cap a long prefill at 1664 tokens (four 416-token
+    # blocks) per step, so short requests are not stuck behind a 64K cold
+    # prefill (the 128K canary: 338-432 s without the cap, 6-66 s with it).
+    longPrefillTokenThreshold: 1664
+    # 2026-11-22 (64K): the engine-stall detector reads a long prefill as
+    # frozen counters; 64K cold prefills run ~2-3 min here, under load longer.
+    # Controller fix !1381 (KV growth counts as progress) is not live yet.
+    stallWindow: 10m
     # 2026-10-22 (vLLM 0.26 repin): 0.94 -> 0.96, the value this digest was
     # qualified with on this node on 2026-09-14 (rows gfx1100-native-w4a16-
     # 2026-09-14-seqs2 / -096: 129,615 tokens warm, 72,817 on a fresh

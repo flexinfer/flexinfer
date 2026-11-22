@@ -1,0 +1,1 @@
+Audio gate: Stable Audio A warm-total validity range corrected to 9.5–17.5 s. The earlier 1.5–10 s came from S9's `sa-A` clip, which ran 20 denoising steps rather than 100; 100 steps at its 7.4 it/s take about 13.5 s, as the 2026-11-22 A arm measured (14.07 s). The in-pod VACE and Stable Audio rows record their A arms.

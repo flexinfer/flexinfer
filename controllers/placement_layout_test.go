@@ -83,6 +83,7 @@ var layoutXTXParked = []string{
 var layoutXTXRuntimeLanes = []string{
 	"qwen-image-21-gfx1100",
 	"wan21-t2v-1p3b-gfx1100",
+	"wan21-vace-1p3b-i2v-gfx1100",
 }
 
 func loadLayoutGroup(t *testing.T, names ...string) map[string]*aiv1alpha2.Model {

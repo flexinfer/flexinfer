@@ -81,8 +81,9 @@ the server's bounds change without the mirror. Code: `internal/proxy/models.go`,
 ### Jobs (async)
 
 Long work — a render, a transcription, a long chat — can run in the background instead of holding
-a connection. The shape copies the OpenAI Responses API `background` mode (OpenAI removed its
-Videos API on 2026-09-24, so nothing is modelled on `/v1/videos`). Off unless the proxy runs with
+a connection. The shape copies the OpenAI Responses API `background` mode. OpenAI removed its
+Videos API on 2026-09-24; frontends that still speak it reach the video lanes through the
+`/v1/videos` alias below. Off unless the proxy runs with
 `FLEXINFER_JOBS_ENABLED=true` (chart `proxy.jobs.enabled`); every endpoint below then needs the
 same bearer token as inference, and answers 501 `jobs_disabled` when jobs are off.
 
@@ -123,6 +124,27 @@ own.
 | `GET /v1/jobs/{id}/content` | the stored response body, with its `Content-Type` and `ETag: "<sha256>"`; 409 `job_not_completed` before then |
 | `POST /v1/jobs/{id}/cancel` | asks the runner to stop the job; a finished job is returned unchanged |
 | `GET /v1/jobs?status=&model=&limit=` | newest first, `{"object": "list", "data": […], "has_more"}` |
+
+**Videos alias.** `POST /v1/videos`, `GET /v1/videos/{id}`, `GET /v1/videos/{id}/content` and
+`DELETE /v1/videos/{id}` accept the OpenAI Videos API shape (Infinite Canvas and similar creative
+frontends still send it) and run it as a job on `/v1/videos/generations` (`internal/proxy/videos.go`).
+The create is multipart (`model`, `prompt`, `seconds`, `size`, an image in `input_reference`,
+`first_frame`, `image`, `image[]` or `images`) or JSON (`input_reference`/`image` as a data URI);
+`negative_prompt`, `seed`, `num_frames`, `fps` and `num_inference_steps` pass through, and fields
+the lanes have no use for (`ratio`, `generate_audio`, `watermark`, reference video/audio) are dropped.
+
+- `size` is kept when it fits the Wan lanes (area ≤ 832×480, sides multiples of 16); otherwise it
+  snaps by orientation to `832x480`, `480x832` or `624x624`.
+- Without `num_frames`, `seconds` becomes frames at 16 fps, **capped at 33 frames (2 s)**, so a warm
+  1.3B lane finishes inside the ~5 minute poll budget these clients give a clip. An explicit
+  `num_frames` is kept up to the lane's 81. Frames always round down to 4k+1.
+- The answer is a video object: `{"id", "object": "video", "model", "status", "progress",
+  "created_at", "completed_at", "expires_at", "seconds", "size", "error", "flexinfer"}`, where
+  `seconds` and `size` are what the lane renders, not what was asked. `incomplete` reads as `failed`.
+- `content` decodes the lane's `b64_json` and serves the MP4 itself (`?variant=video` only;
+  `thumbnail` and `spritesheet` are 404). 409 `job_not_completed` before then.
+- `DELETE` cancels a queued or running clip and deletes a finished one with its stored output.
+- Only jobs on `/v1/videos/generations` are visible here; any other id is 404.
 
 **Running.** The proxy's runner (`internal/proxy/jobs_runner.go`) claims queued jobs with a status
 update on the observed `resourceVersion`, so more than one proxy replica is safe, and sends each
