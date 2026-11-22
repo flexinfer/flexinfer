@@ -27,12 +27,27 @@
 # - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
 # - Compile cache: scope Image on the default hostPath, the directory the
 #   runtime pod mounts at /cache/compile.
-# Runtime image: 527e2714 (rocm-gfx1100-serving-v032-ddf22437, live on the XTX runtime since !1234 on 2026-11-04). It carries ftfy 6.3.1 (WanVACEPipeline.basic_clean calls
-# ftfy.fix_text unguarded), imageio 2.37.0 and imageio-ffmpeg 0.6.0; checked in
-# the live runtime pod 2026-11-05. This lane's VAE is fp32, so the Wan VAE
-# MIOpen bypass (!1268) does not apply and the decode runs through the MIOpen
-# of torch 2.13 / ROCm 7.2.3: A/B one clip in-pod against the dedicated lane
-# (83cda206) before promotion.
+# Runtime image: 12f30206 (527e2714 with server-diffusers.py at fb8182fc, live
+# on the XTX runtime since !1380 on 2026-11-21). 527e2714 carries ftfy 6.3.1
+# (WanVACEPipeline.basic_clean calls ftfy.fix_text unguarded), imageio 2.37.0
+# and imageio-ffmpeg 0.6.0. This lane's VAE is fp32, so the Wan VAE MIOpen
+# bypass (!1268) does not apply and the decode runs through the MIOpen of
+# torch 2.13 / ROCm 7.2.3: A/B in-pod against the dedicated lane before
+# promotion.
+#
+# 2026-11-22 refresh: config.env pins what the in-pod Wan T2V gates found
+# (rows gfx1100-xtx-inpod-wan-t2v-*-2026-11-21):
+# - both allocator variables without expandable_segments: with model CPU
+#   offload, expandable_segments corrupts every VAE use on this stack, and
+#   VACE corrupted even its first clip because it encodes the keyframe through
+#   the VAE (S9);
+# - TORCH_BLAS_PREFER_HIPBLASLT=0: in-pod the lane would inherit the gfx1100
+#   GPUProfile's 1, and hipBLASLt made same-seed requests differ;
+# - TORCH_DETERMINISTIC=1 (server switch from !1379): this lane runs eager
+#   (no compile), and eager rocBLAS GEMMs run with atomics allowed under
+#   PyTorch, which made every eager T2V request differ. Untested on VACE; the
+#   gate checks it. The exact-shape warmup that fixed the compiled T2V lane
+#   does not apply: the server's warmup cannot send a conditioning image.
 # Host RAM: dedicated limit 48 GiB = the runtime pod's whole limit.
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
 # config); the Deployment returns on the next reconcile.
@@ -125,6 +140,12 @@ spec:
     negativePrompt: "static, blurry, low quality, distorted, watermark, subtitles, text"
     hipVisibleDevices: "0"
     warmPolicy: ondemand
+    # 2026-11-22 (header): in-pod pins; config.env is applied last in-pod.
+    env:
+      PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
+      PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
+      TORCH_BLAS_PREFER_HIPBLASLT: "0"
+      TORCH_DETERMINISTIC: "1"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:
