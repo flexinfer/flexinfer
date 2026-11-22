@@ -1,0 +1,1 @@
+In-pod Wan VACE turns `TORCH_DETERMINISTIC` back on alongside `WAN_VAE_MIOPEN=off`, so the bypassed float32 VAE's rocBLAS GEMMs run without atomics; diagnostic for row `gfx1100-xtx-inpod-wan-vace-warmup-gate-2026-11-22`.
