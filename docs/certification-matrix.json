@@ -85,7 +85,7 @@
         "gfx1100",
         "gfx906"
       ],
-      "latest_evidence_date": "2026-11-05",
+      "latest_evidence_date": "2026-11-22",
       "evidence": [
         "gemma4-26b-a4b-gptq",
         "gemma4-26b-a4b-gptq-22k",
@@ -274,11 +274,11 @@
       "gpu_class": "gfx1100",
       "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#xtx-128k-fp8-segmented-s7-2026-11-21",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
       "validation_rows": [
-        "xtx-128k-fp8-segmented-s7-2026-11-21"
+        "gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22"
       ],
-      "date": "2026-11-21",
+      "date": "2026-11-22",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -1354,16 +1354,15 @@
       ],
       "model": "qwen38-27b-autoround-workhorse",
       "modality": "chat",
-      "decision": "promote",
+      "decision": "pass",
       "evidenced": true,
-      "evidence": "deploy/models/qwen38-27b-autoround-workhorse.yaml#flexinfer.ai/promotion-evidence",
-      "evidence_note": "runtime@51afd0d3 (vLLM 0.33 + S7 embed host + segmented + MTP K=2) live on the XTX 128K lane since !1383: parity hash 8174a49e, pos0 0.81, 159,599-token fp8 pool; S7 row xtx-s7-embed-host-2026-11-05: +2.36 GiB KV, parity identical; 0.33 parity row xtx-vllm-v033-parity-2026-11-05; 5930k 64K live checks in row gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
       "validation_rows": [
         "gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
         "xtx-workhorse-v033-promotion-2026-11-05",
         "workhorse-vllm-v032-2026-10-25"
       ],
-      "date": "2026-11-05",
+      "date": "2026-11-22",
       "source": "deploy/models/qwen38-27b-autoround-workhorse.yaml"
     },
     {
@@ -1844,9 +1843,9 @@
       "nodes": [
         "5930k"
       ],
-      "decision": "pending",
+      "decision": "pass",
       "title": "qwen38-27b-autoround-workhorse moves to vLLM 0.33 + S7 embed host at 64K with fp16 KV kept (owner decision 2026-11-22). The rules were written before the roll and are checked live after it. The…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
       "date": "2026-11-22",
       "source": ".loom/60-validation-matrix.md"
