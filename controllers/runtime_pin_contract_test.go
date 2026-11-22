@@ -45,11 +45,12 @@ var gfx1100CertifiedRuntimes = map[string]string{
 	// off-CI from build/Dockerfile.runtime-serving-v032-diffusers-overlay with
 	// the base image's build-time verifier re-run. The D5 repin target.
 	"sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba": "overlay build 2026-11-21, Dockerfile.runtime-serving-v032-diffusers-overlay",
-	// rocm-gfx1100-serving-v032-527e2714-dfo-b00034a3: the same overlay with
-	// master b00034a3's server-diffusers.py, which adds the bounded
-	// Brownian-tree noise sampler (!1389) for in-pod Stable Audio. Base
-	// verifier re-run. The D1 Stable Audio repin target.
-	"sha256:29e97cf2e60d56f619bafb432cfa59dfd8fee3d8cfa585049c9cf2be34de234f": "overlay build 2026-11-22, Dockerfile.runtime-serving-v032-diffusers-overlay",
+	// rocm-gfx1100-serving-v032-527e2714-dfo-a056a493: the same overlay with
+	// master a056a493's server-diffusers.py, which adds the bounded
+	// Brownian-tree noise sampler (!1389) for in-pod Stable Audio and the
+	// Wan VACE exact-shape warmup with a conditioning frame (!1399). Base
+	// verifier re-run. The D1 Stable Audio and VACE repin target.
+	"sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409": "overlay build 2026-11-22, Dockerfile.runtime-serving-v032-diffusers-overlay",
 }
 
 var runtimeDigestPattern = regexp.MustCompile(`^registry\.harbor\.lan/flexinfer/runtime@(sha256:[0-9a-f]{64})$`)

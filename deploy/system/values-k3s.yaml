@@ -921,12 +921,13 @@ imagePrewarm:
         # build's arguments. The pull is one small layer on 527e2714.
         - registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
         # 2026-11-22 (D1 Stable Audio): rocm-gfx1100-serving-v032-527e2714-
-        # dfo-b00034a3, the same overlay rebuilt with master b00034a3's
+        # dfo-a056a493, the same overlay rebuilt with master a056a493's
         # server-diffusers.py: 12f30206's server plus the bounded Brownian-tree
         # noise sampler (!1389) that stops the torchsde RecursionError on the
-        # Stable Audio final step. Base verifier re-ran. One small layer on
+        # Stable Audio final step, and the Wan VACE exact-shape warmup with a
+        # conditioning frame (!1399). Base verifier re-ran. One small layer on
         # 527e2714.
-        - registry.harbor.lan/flexinfer/runtime@sha256:29e97cf2e60d56f619bafb432cfa59dfd8fee3d8cfa585049c9cf2be34de234f
+        - registry.harbor.lan/flexinfer/runtime@sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409
         # 2026-11-05 (S3, .loom/10-research-backend-currency-gfx1100-gfx906-
         # 2026-11-04.md §6.1): the stacked serving persona on vLLM
         # 0.33.0-rocm72 (build profile gfx1100-serving-v033 at !1284,
@@ -1180,15 +1181,16 @@ runtime:
       # every in-pod lane loads cold once. Rollback = 527e2714, still
       # prewarmed and certified:
       #   registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
-      # 2026-11-22 (D1 Stable Audio, WINDOW-GATED): 12f30206 -> 29e97cf2, the
-      # same overlay with master b00034a3's server-diffusers.py (adds only the
-      # bounded Brownian-tree noise sampler, !1389; prewarm entry above). The
+      # 2026-11-22 (D1 Stable Audio and VACE, WINDOW-GATED): 12f30206 ->
+      # a8d525e0, the same overlay with master a056a493's server-diffusers.py
+      # (adds the bounded Brownian-tree noise sampler, !1389, and the VACE
+      # exact-shape warmup, !1399; prewarm entry above). The
       # vLLM stack, plugins, supervisor and server-snac.py stay byte-identical
       # to 527e2714. The shared compile cache moves with the digest
-      # (shared/gfx1100/29e97cf2e60d): seed it from 12f30206d9e6 before the
+      # (shared/gfx1100/a8d525e02c21): seed it from 12f30206d9e6 before the
       # roll. Rollback = 12f30206, still prewarmed and certified:
       #   registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:29e97cf2e60d56f619bafb432cfa59dfd8fee3d8cfa585049c9cf2be34de234f"
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2
