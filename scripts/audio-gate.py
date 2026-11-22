@@ -101,11 +101,11 @@ TOTAL_RATIO = 1.25
 FIRST_CLIP_MAX_S = 120.0
 VRAM_MARGIN_MIB = 1024.0
 RUNTIME_PEAK_MAX_GIB = 44.0
-# S9 arm sa-A (the dedicated lane on d87f75f8, 2026-11-05) rendered 20 s at
-# 100 steps in 3.24 s warm, byte-identical to its first clip; length is nearly
-# free, so 10 s lands about there. The guard is about 0.5x to 3x of it, so a
-# broken control is caught, not a slow one.
-A_WARM_TOTAL_RANGE = (1.5, 10.0)
+# S9 arm sa-A (the dedicated lane on d87f75f8, 2026-11-05) denoised at 7.4 it/s
+# (its 3.24 s clip ran 20 steps, not 100), so 100 steps take about 13.5 s; the
+# A arm of 2026-11-22 measured 14.07 s. The guard is 0.7x to 1.3x of 13.5 s,
+# the proportions of video-gate's VACE range.
+A_WARM_TOTAL_RANGE = (9.5, 17.5)
 
 # The torchsde RecursionError (!1389) and tracebacks count as warning lines.
 WARNING_RE = re.compile(

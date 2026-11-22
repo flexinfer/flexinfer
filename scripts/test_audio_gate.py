@@ -99,7 +99,7 @@ class _Stub(BaseHTTPRequestHandler):
                     "sample_rate": RATE,
                     "duration": body["seconds"],
                     "seed": seed,
-                    "timings": {"denoise_seconds": 3.2, "total_seconds": 3.24},
+                    "timings": {"denoise_seconds": 13.5, "total_seconds": 14.07},
                 }
             ]
         }
@@ -159,12 +159,12 @@ def render(i, clip, total, wall=None, **media_over):
 
 
 def good_metrics():
-    A = [render(1, "a1", 5.3), render(2, "a2", 3.3), render(3, "a1", 3.24)]
+    A = [render(1, "a1", 14.86), render(2, "a2", 14.03), render(3, "a1", 14.12)]
     B = [
-        render(1, "a1", 5.0, wall=60.0),
-        render(2, "a2", 3.4),
-        render(3, "a1", 3.3),
-        render(4, "a1", 3.5),
+        render(1, "a1", 15.0, wall=60.0),
+        render(2, "a2", 14.2),
+        render(3, "a1", 14.1),
+        render(4, "a1", 14.3),
     ]
     same = {"identical": True, "snr_db": math.inf, "spectral_cosine": 1.0}
     return {
@@ -328,7 +328,7 @@ class VerdictTest(unittest.TestCase):
     def test_slow_warm_total_fails(self):
         m = good_metrics()
         for r in m["B"]["renders"][1:]:
-            r["timings"]["total_seconds"] = 4.5  # > 1.25 x 3.27 s
+            r["timings"]["total_seconds"] = 18.0  # > 1.25 x 14.075 s
         self.assertEqual(gate.verdict(m)["failed_bars"], [4])
 
     def test_warnings_and_kernel_fail(self):
@@ -340,7 +340,7 @@ class VerdictTest(unittest.TestCase):
     def test_invalid_control_and_range_override(self):
         m = good_metrics()
         for r in m["A"]["renders"]:
-            r["timings"]["total_seconds"] = 60.0  # outside 1.5-10 s
+            r["timings"]["total_seconds"] = 60.0  # outside 9.5-17.5 s
         self.assertEqual(gate.verdict(m)["decision"], "invalid")
         m["a_warm_total_range"] = [50.0, 70.0]
         self.assertEqual(gate.verdict(m)["decision"], "pass")
