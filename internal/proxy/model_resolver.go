@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -16,16 +17,25 @@ import (
 // modelAliasCacheTTL is how long the model alias cache is valid before refresh.
 const modelAliasCacheTTL = 5 * time.Second
 
+// labelSnapshot is one complete service-label cache. A refresh builds a new
+// one and publishes it with a single atomic store; readers never see a cache
+// that is being cleared or refilled. Its maps are never written after
+// publication.
+type labelSnapshot struct {
+	first       map[string]string   // service label -> first claimant (sorted)
+	groups      map[string][]string // service label -> all claimants (sorted)
+	groupModels map[string][]string // model -> members of every shared label it is in
+}
+
 // ModelResolver handles model name resolution: service labels, aliases,
 // LoRA adapters, and label group membership.
 type ModelResolver struct {
 	client    client.Client
 	namespace string
 
-	// Service label resolution
-	serviceLabelCache   sync.Map // map[string]string: service label -> model name
-	labelGroupCache     sync.Map // map[string][]string: label -> []modelName (all claimants)
-	labelGroupModels    sync.Map // map[string][]string: modelName -> []relatedModelNames (reverse index)
+	// Service label resolution. The mutex serializes refreshes (and guards
+	// lastCacheRefresh and loggedSharedLabels); readers only load labels.
+	labels              atomic.Pointer[labelSnapshot]
 	serviceLabelCacheMu sync.Mutex
 	lastCacheRefresh    time.Time
 	// loggedSharedLabels remembers the last-logged claimant set per shared label
@@ -34,8 +44,8 @@ type ModelResolver struct {
 	// or removed, or label drops below 2 claimants.
 	loggedSharedLabels map[string]string
 
-	// Model alias resolution
-	modelAliasCache   sync.Map // map[string]string: alias -> K8s model name
+	// Model alias resolution: alias -> K8s model name, published like labels.
+	aliases           atomic.Pointer[map[string]string]
 	modelAliasCacheMu sync.Mutex
 	lastAliasRefresh  time.Time
 }
@@ -57,16 +67,16 @@ func NewModelResolver(c client.Client, namespace string) *ModelResolver {
 // across all claimants should use ResolveServiceLabelGroup.
 func (r *ModelResolver) ResolveServiceLabel(ctx context.Context, labelOrModelName string) string {
 	// First check cache
-	if modelName, ok := r.serviceLabelCache.Load(labelOrModelName); ok {
-		return modelName.(string)
+	if modelName, ok := r.labelSnapshot().first[labelOrModelName]; ok {
+		return modelName
 	}
 
 	// Refresh cache if stale (>5 seconds old) or first time
 	r.refreshServiceLabelCache(ctx)
 
 	// Check cache again after refresh
-	if modelName, ok := r.serviceLabelCache.Load(labelOrModelName); ok {
-		return modelName.(string)
+	if modelName, ok := r.labelSnapshot().first[labelOrModelName]; ok {
+		return modelName
 	}
 
 	// Not a service label, return as-is (it's probably a model name)
@@ -84,14 +94,23 @@ func (r *ModelResolver) ResolveServiceLabel(ctx context.Context, labelOrModelNam
 // For single-claimant labels this returns a one-element slice; the routing
 // path can treat that as a no-op pick.
 func (r *ModelResolver) ResolveServiceLabelGroup(ctx context.Context, labelOrModelName string) ([]string, bool) {
-	if members, ok := r.labelGroupCache.Load(labelOrModelName); ok {
-		return members.([]string), true
+	if members, ok := r.labelSnapshot().groups[labelOrModelName]; ok {
+		return members, true
 	}
 	r.refreshServiceLabelCache(ctx)
-	if members, ok := r.labelGroupCache.Load(labelOrModelName); ok {
-		return members.([]string), true
+	if members, ok := r.labelSnapshot().groups[labelOrModelName]; ok {
+		return members, true
 	}
 	return nil, false
+}
+
+// labelSnapshot is the published service-label cache; empty before the
+// first refresh. Reading a nil map is safe, so callers index it directly.
+func (r *ModelResolver) labelSnapshot() *labelSnapshot {
+	if snap := r.labels.Load(); snap != nil {
+		return snap
+	}
+	return &labelSnapshot{}
 }
 
 // refreshServiceLabelCache updates the service label to model name mapping.
@@ -140,15 +159,15 @@ func (r *ModelResolver) refreshServiceLabelCache(ctx context.Context) {
 		}
 	}
 
-	// Clear the caches
-	r.serviceLabelCache = sync.Map{}
-	r.labelGroupCache = sync.Map{}
-	r.labelGroupModels = sync.Map{}
-
-	// Second pass: build caches
+	// Second pass: build a new snapshot, published below in one store
 	// - serviceLabelCache: first claimant per label (backward compat for ResolveServiceLabel)
 	// - labelGroupCache: all claimants per label (for multi-model routing)
 	// - labelGroupModels: reverse index from model name to all group members
+	snap := &labelSnapshot{
+		first:       make(map[string]string, len(labelClaims)),
+		groups:      make(map[string][]string, len(labelClaims)),
+		groupModels: make(map[string][]string),
+	}
 	groupMembers := make(map[string]map[string]bool) // modelName -> set of related models
 
 	if r.loggedSharedLabels == nil {
@@ -169,9 +188,9 @@ func (r *ModelResolver) refreshServiceLabelCache(ctx context.Context) {
 			}
 		}
 		// First claimant for backward-compat single-model resolution
-		r.serviceLabelCache.Store(label, claimants[0])
+		snap.first[label] = claimants[0]
 		// All claimants for group routing
-		r.labelGroupCache.Store(label, claimants)
+		snap.groups[label] = claimants
 		slog.Debug("service label cache updated", "label", label, "model", claimants[0])
 
 		// Build reverse index for labels with 2+ claimants
@@ -193,8 +212,9 @@ func (r *ModelResolver) refreshServiceLabelCache(ctx context.Context) {
 		for m := range memberSet {
 			members = append(members, m)
 		}
-		r.labelGroupModels.Store(model, members)
+		snap.groupModels[model] = members
 	}
+	r.labels.Store(snap)
 
 	// Drop labels that are no longer shared so a later re-share is logged again.
 	for label := range r.loggedSharedLabels {
@@ -210,16 +230,16 @@ func (r *ModelResolver) refreshServiceLabelCache(ctx context.Context) {
 // Returns the K8s name if the alias was resolved, or the original input if no mapping found.
 func (r *ModelResolver) ResolveModelAlias(ctx context.Context, nameOrAlias string) string {
 	// Check cache first
-	if k8sName, ok := r.modelAliasCache.Load(nameOrAlias); ok {
-		return k8sName.(string)
+	if k8sName, ok := r.aliasSnapshot()[nameOrAlias]; ok {
+		return k8sName
 	}
 
 	// Refresh cache if stale
 	r.refreshModelAliasCache(ctx)
 
 	// Check again after refresh
-	if k8sName, ok := r.modelAliasCache.Load(nameOrAlias); ok {
-		return k8sName.(string)
+	if k8sName, ok := r.aliasSnapshot()[nameOrAlias]; ok {
+		return k8sName
 	}
 
 	return nameOrAlias
@@ -274,19 +294,27 @@ func (r *ModelResolver) refreshModelAliasCache(ctx context.Context) {
 		}
 	}
 
-	// Clear and rebuild cache
-	r.modelAliasCache = sync.Map{}
-
+	// Build a new map and publish it in one store.
+	cache := make(map[string]string, len(aliasClaims))
 	for alias, claimants := range aliasClaims {
 		if len(claimants) > 1 {
 			slog.Warn("model alias claimed by multiple models",
 				"alias", alias, "models", claimants, "using", claimants[0])
 		}
-		r.modelAliasCache.Store(alias, claimants[0])
+		cache[alias] = claimants[0]
 		slog.Debug("model alias cache updated", "alias", alias, "model", claimants[0])
 	}
+	r.aliases.Store(&cache)
 
 	r.lastAliasRefresh = time.Now()
+}
+
+// aliasSnapshot is the published alias cache; nil before the first refresh.
+func (r *ModelResolver) aliasSnapshot() map[string]string {
+	if m := r.aliases.Load(); m != nil {
+		return *m
+	}
+	return nil
 }
 
 // ResolveLoRAAdapter checks if a model name matches a LoRA adapter and returns
@@ -308,13 +336,15 @@ func (r *ModelResolver) ResolveLoRAAdapter(ctx context.Context, modelName string
 
 // IsModelInLabelGroup checks if a model is part of a label group (shares service labels with other models).
 func (r *ModelResolver) IsModelInLabelGroup(modelName string) bool {
-	_, ok := r.labelGroupModels.Load(modelName)
+	_, ok := r.labelSnapshot().groupModels[modelName]
 	return ok
 }
 
 // RangeLabelGroupModels iterates over all label group model entries.
 func (r *ModelResolver) RangeLabelGroupModels(f func(modelName string, groupMembers []string) bool) {
-	r.labelGroupModels.Range(func(key, value any) bool {
-		return f(key.(string), value.([]string))
-	})
+	for model, members := range r.labelSnapshot().groupModels {
+		if !f(model, members) {
+			return
+		}
+	}
 }
