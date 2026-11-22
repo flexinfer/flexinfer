@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Video gate: request shape and run against a local stub endpoint, evidence
-parsers and the verdict arithmetic run on the bare interpreter; the decode
-case needs numpy, ffmpeg and ffprobe and skips without them.
+"""Video gate: request shape and run against a local stub endpoint (both
+profiles), the VACE conditioning image, evidence parsers and the verdict
+arithmetic run on the bare interpreter; the decode cases need numpy, ffmpeg
+and ffprobe and skip without them.
 
 Run: python3 scripts/test_video_gate.py
 """
@@ -9,6 +10,7 @@ Run: python3 scripts/test_video_gate.py
 import base64
 import contextlib
 import copy
+import hashlib
 import importlib.util
 import io
 import json
@@ -342,6 +344,113 @@ class VerdictTest(unittest.TestCase):
         self.assertEqual(v["failed_bars"], [7, 10])
 
 
+def png_pixels(png: bytes):
+    """(width, height, raw scanlines) of a PNG written by condition_png."""
+    import struct
+    import zlib
+
+    assert png[:8] == b"\x89PNG\r\n\x1a\n"
+    i, idat, ihdr = 8, b"", None
+    while i < len(png):
+        n = struct.unpack(">I", png[i : i + 4])[0]
+        kind, data = png[i + 4 : i + 8], png[i + 8 : i + 8 + n]
+        i += 12 + n
+        if kind == b"IHDR":
+            ihdr = struct.unpack(">IIBBBBB", data)
+        elif kind == b"IDAT":
+            idat += data
+    return ihdr[0], ihdr[1], zlib.decompress(idat)
+
+
+# The conditioning image's pixels (raw scanlines); a change to the drawing
+# changes every VACE gate's input, so it must also change this hash.
+CONDITION_PIXELS_SHA256 = (
+    "3084996814f04a8992dfd0b81862b07efe4cebd17f7b480206a17df9caefdc07"
+)
+
+
+def vace_metrics():
+    m = good_metrics()
+    m["profile"] = "vace-i2v"
+    m["image_sha256_a"] = m["image_sha256_b"] = "ab" * 32
+    m["evidence"]["bypass_line"] = False  # fp32 VACE VAE: no bypass
+    for r in m["A"]["renders"] + m["B"]["renders"]:
+        r["timings"]["decode_postprocess_seconds"] = 40.0  # fp32 decode
+    return m
+
+
+class VaceProfileTest(unittest.TestCase):
+    def test_condition_png_pixels(self):
+        w, h, raw = png_pixels(gate.condition_png())
+        self.assertEqual((w, h), (832, 480))
+        self.assertEqual(len(raw), 480 * (1 + 832 * 3))
+        self.assertEqual(hashlib.sha256(raw).hexdigest(), CONDITION_PIXELS_SHA256)
+
+    def test_request_body_carries_the_image(self):
+        b = gate.request_body("vace-x", "c2", "vace-i2v", "aW1n")
+        self.assertEqual(b["image"], "aW1n")
+        self.assertEqual(b["prompt"], gate.VACE_PROMPTS["breeze"])
+        self.assertEqual((b["seed"], b["size"], b["num_frames"]), (7, "832x480", 33))
+        self.assertNotIn("image", gate.request_body("wan-x", "c2"))
+        with self.assertRaises(ValueError):
+            gate.request_body("vace-x", "c1", "vace-i2v")
+
+    def test_run_sends_one_image_and_saves_it(self):
+        with stub_server() as url, tempfile.TemporaryDirectory() as d:
+            with contextlib.redirect_stdout(io.StringIO()):
+                rc = gate.main(
+                    [
+                        "run",
+                        "--url",
+                        url,
+                        "--model",
+                        "vace-x",
+                        "--arm",
+                        "A",
+                        "--profile",
+                        "vace-i2v",
+                        "--out-dir",
+                        d,
+                    ]
+                )
+            self.assertEqual(rc, 0)
+            images = {b["image"] for _, b in _Stub.bodies}
+            self.assertEqual(len(_Stub.bodies), 3)
+            self.assertEqual(len(images), 1)
+            png = (Path(d) / gate.CONDITION_FILE).read_bytes()
+            self.assertEqual(base64.b64decode(images.pop()), png)
+            rep = json.loads((Path(d) / "video-gate-A.json").read_text())
+            self.assertEqual(rep["profile"], "vace-i2v")
+            self.assertEqual(rep["image_sha256"], hashlib.sha256(png).hexdigest())
+
+    def test_vace_verdict_passes_without_bypass_or_decode_cap(self):
+        v = gate.verdict(vace_metrics())
+        self.assertEqual(v["decision"], "pass", v)
+        self.assertNotIn("A warm total in range", v["validity"])
+        self.assertIn("no warnings", v["bars"][8]["name"])
+
+    def test_vace_decode_ratio_still_judged(self):
+        m = vace_metrics()
+        for r in m["B"]["renders"]:
+            r["timings"]["decode_postprocess_seconds"] = 61.0  # > 1.5 x 40 s
+        self.assertEqual(gate.verdict(m)["failed_bars"], [4])
+
+    def test_vace_needs_one_image_and_honours_a_range(self):
+        m = vace_metrics()
+        m["image_sha256_b"] = "cd" * 32
+        self.assertEqual(gate.verdict(m)["decision"], "invalid")
+        m = vace_metrics()
+        m["a_warm_total_range"] = [300.0, 400.0]
+        v = gate.verdict(m)
+        self.assertEqual(v["decision"], "invalid")
+        self.assertFalse(v["validity"]["A warm total in range"])
+
+    def test_wan_still_needs_the_bypass_line(self):
+        m = good_metrics()
+        m["evidence"]["bypass_line"] = False
+        self.assertEqual(gate.verdict(m)["failed_bars"], [9])
+
+
 @unittest.skipUnless(HAVE_NUMPY and HAVE_FFMPEG, "needs numpy, ffmpeg and ffprobe")
 class DecodeTest(unittest.TestCase):
     def test_probe_and_decode_h264(self):
@@ -378,6 +487,39 @@ class DecodeTest(unittest.TestCase):
             self.assertGreater(stats["luma_std_min"], 5)
             same = s9.compare_frames(f, f)
             self.assertTrue(same["identical"])
+
+    def test_first_frame_fidelity_against_the_image(self):
+        with tempfile.TemporaryDirectory() as d:
+            d = Path(d)
+            (d / gate.CONDITION_FILE).write_bytes(gate.condition_png())
+            clip = d / "c.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg",
+                    "-v",
+                    "error",
+                    "-loop",
+                    "1",
+                    "-i",
+                    str(d / gate.CONDITION_FILE),
+                    "-frames:v",
+                    "33",
+                    "-c:v",
+                    "libx264",
+                    "-pix_fmt",
+                    "yuv420p",
+                    str(clip),
+                ],
+                check=True,
+            )
+            s9 = gate._s9()
+            frames = {1: gate.decode_rgb(clip, 832, 480)}
+            fid = gate.first_frame_fidelity(
+                s9, {"image_file": gate.CONDITION_FILE}, frames, d
+            )
+            self.assertGreater(fid[1]["psnr_mean"], 30.0)
+            self.assertGreater(fid[1]["ssim_mean"], 0.9)
+            self.assertIsNone(gate.first_frame_fidelity(s9, {}, frames, d))
 
 
 if __name__ == "__main__":
