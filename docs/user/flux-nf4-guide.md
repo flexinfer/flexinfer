@@ -134,6 +134,32 @@ These keys go in `spec.config` on the Model CR. The controller translates them t
 | `compilationCache` | (compilation cache volume) | `true`, `false` | `false` | Persist MIOpen/Triton kernel cache across restarts |
 | `hipVisibleDevices` | `HIP_VISIBLE_DEVICES` | device indices | (all) | Restrict visible GPU devices |
 
+### Non-finite (NaN) output checks (env only)
+
+`build/server-diffusers.py` checks decoded images and videos for NaN pixels before it encodes them. Without the check, a NaN decode still becomes a PNG: diffusers casts it to uint8 (the `invalid value encountered in cast` warning from `image_processor.py`) and the server returned the garbage with HTTP 200. That happened on 2026-11-19 with Qwen-Image 2.1 on the 7900 XTX runtime pod (row `gfx1100-xtx-inpod-qwen-image-gate-2026-11-19` in `.loom/60-validation-matrix.md`): the warmup decoded NaN, the first real render was flat and noisy tiles, and every later render was sound. The cause is not known.
+
+For images the server asks the pipeline for `output_type="np"` (the float pixels the PNG path would have cast), runs one `np.isfinite` pass over them (a few milliseconds at 1024x1024), and converts them with the pipeline's own `numpy_to_pil`, so a sound render gives the same PNG bytes as before. Wan video already returns float frames and gets the same check. Only NaN is caught: diffusers clamps the decode to [0, 1] before the server sees it, which turns Inf into 0 or 1. The env and JSON names say "nonfinite"; they mean NaN.
+
+What is not guarded:
+
+- `/v1/images/edits` and `/v1/images/variations` are not checked at all. A NaN edit or variation is still returned as a garbage PNG with HTTP 200.
+- A pipeline whose `__call__` has no `output_type` is served unchecked.
+- A pipeline loaded through the generic AutoPipeline fallback whose "pil" path adds steps that the "np" path skips would change its output under the guard. DeepFloyd IF is one: its "pil" path applies the watermark and the safety checker. Set `NONFINITE_GUARD=0` for such a lane. The pipeline classes the server loads by name (FLUX, SDXL, SD, Qwen-Image, Wan) give the same bytes either way.
+
+These have no Model config key; set them under `spec.env` on the Model.
+
+| Env Var | Default | Description |
+|---------|---------|-------------|
+| `NONFINITE_GUARD` | `1` | `0` turns every check below off and restores the old call exactly |
+| `NONFINITE_RENDER_RETRIES` | `1` | How many times an image request whose output holds NaN is rendered again with the same parameters. A seeded request reuses its seed; an unseeded one has no seed to reuse, so its retry draws new noise. If every attempt holds NaN the request fails with HTTP 500 and `{"detail": {"type": "nonfinite_output", ...}}` instead of returning an image |
+| `NONFINITE_VIDEO_RETRIES` | `0` | The same for `/v1/videos/generations`, off by default. A Wan render takes minutes and holds the generation lock, a same-seed repeat of a deterministic NaN cannot help, and a retry would run past the proxy's first-byte budget (900 s on the Wan lane), so the client would get a 504 instead of the typed 500. With the default a NaN video fails with the 500 at once |
+| `WARMUP_NONFINITE_RETRIES` | `2` | How many times a warmup pass (per resolution in `WARMUP_RESOLUTIONS`) whose output holds NaN is repeated. A repeat is not known to clear the fault: on 2026-11-19 the 4-step warmup and the next 40-step render were both bad, and the render after that was good. A lane whose warmup is NaN every time now runs 1 + this many passes per resolution (3 by default), all inside the 900 s startup probe that also covers the model load. For a slow-loading lane set it to `0` |
+| `WARMUP_NONFINITE_STRICT` | `0` | `1`: if a warmup resolution still holds NaN after its repeats, startup fails (uvicorn exits non-zero) and the lane never goes Ready. `0`: an error is logged and the server goes Ready as before |
+
+Each occurrence is logged with a `[nonfinite]` prefix (warmup lines name the resolution), and `GET /health` reports counts under `nonfinite`: `warmup` (warmup passes with NaN), `warmup_unrecovered` (resolutions still NaN after their repeats), `render` (request attempts with NaN), `render_recovered` (requests whose retry had no NaN) and `render_failed` (requests answered with the 500).
+
+To test a lane's first renders after a load end to end, run `scripts/render-gate.py`. It does four renders with seeds S, S+1, S+2, S and scores them for transparency, flat 64x64 blocks, channel statistics and same-seed match; `--verdict` re-scores a saved run. Exit status: 0 pass, 1 failed gate, 2 error. The same-seed check assumes both seed-S renders ran on the same lane and GPU, so name a model only one lane serves. The transparency and flat-block checks were calibrated on the default, busy prompt; with a custom `--prompt` for a plain or transparent image, relax them with `--max-flat-tile-share` and `--allow-transparent`.
+
 ### GPU Spec Fields
 
 | Field | Type | Description |

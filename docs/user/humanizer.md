@@ -21,12 +21,14 @@ diffusers, and the HIP memory-info shim. No serving components run in the build 
 rebuilding the other backends while qualifying a new llama.cpp version.
 
 ```sh
-docker --context 7900xtx build \
+cluster-buildkit build \
   -f build/Dockerfile.runtime-humanizer-gfx906 \
-  -t registry.harbor.lan/flexinfer/runtime:rocm-gfx906-humanizer-b11335 .
-docker --context 7900xtx push \
-  registry.harbor.lan/flexinfer/runtime:rocm-gfx906-humanizer-b11335
+  -t registry.harbor.lan/flexinfer/runtime:rocm-gfx906-humanizer-b11335 \
+  --push .
 ```
+
+`cluster-buildkit` (in `~/workspace/bin`) runs the build on the cluster
+BuildKit and pushes with your local `docker login registry.harbor.lan`.
 
 The load-bearing assumption is that b11335 runs Gemma 4 on gfx906 while
 preserving the existing embedding, reranking, and voice lanes. The kill-test

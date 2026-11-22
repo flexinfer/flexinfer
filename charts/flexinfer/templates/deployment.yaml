@@ -120,6 +120,14 @@ spec:
               value: {{ . | quote }}
             {{- end }}
             {{- end }}
+            {{- /* retain is the controller's built-in default: render nothing for
+                 it so enabling this feature does not change the pod template. */}}
+            {{- with $controllerRuntime.localCache }}
+            {{- if and .onDelete (ne (toString .onDelete) "retain") }}
+            - name: DEFAULT_LOCAL_CACHE_ON_DELETE
+              value: {{ .onDelete | quote }}
+            {{- end }}
+            {{- end }}
             {{- if $controllerRuntime.flashLoader }}
             - name: DEFAULT_FLASH_LOADER_ENABLED
               value: {{ default false $flashLoader.enabled | quote }}

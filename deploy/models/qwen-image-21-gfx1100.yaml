@@ -69,6 +69,52 @@
 # there 2026-10-24 to clear DiskPressure), so deploy/system/values-k3s.yaml
 # prewarms it: an ~18 GB first pull against 280 GB free on 2026-10-26, held
 # across the node's 60/50 image GC by the prewarm DaemonSet.
+#
+# 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
+# WINDOW-GATED): served IN-POD by the 7900xtx runtime DaemonSet instead of its
+# own Deployment, so a render swaps the XTX warm lane out and back inside the
+# runtime pod.
+# - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
+# - Compile cache: scope Image on the default hostPath, the directory the
+#   runtime pod mounts at /cache/compile.
+# - The command wrapper is dropped: in-pod the runtime launches the same
+#   python /opt/flexinfer/server-diffusers.py itself (internal/runtime/
+#   manager.go), and a command override makes a Model ineligible for the
+#   runtime path (pkg/runtime UncarriedLaunchOverride).
+#   The config.env pins still hold in-pod: the load payload applies the
+#   Model env last, over the runtime's /etc/flexinfer/runtime.env.
+# Runtime image: 527e2714 (rocm-gfx1100-serving-v032-ddf22437, live on the XTX runtime since !1234 on 2026-11-04). It carries bitsandbytes 0.50.2
+# (libbitsandbytes_rocm72.so with gfx1100 code objects) and the Qwen-Image 2.1
+# server code (R1-R3 1b62ad00, shim fix ea8bbb8f); checked in the live runtime
+# pod 2026-11-05. NF4 numerics on the card are unproven: the first in-pod
+# render is the check.
+# Host RAM: NF4-on-load of ~32 GB bf16 runs inside the runtime pod's 48 GiB
+# limit (this lane's dedicated limit was 40 GiB).
+# Rollback: revert this commit (restores dedicatedDeployment and the cache
+# config); the Deployment returns on the next reconcile.
+#
+# 2026-11-21 D3 third attempt: the allocator pinned to the dedicated pod's.
+# - Attempts 1 and 2 (2026-11-19, !1236 and !1351, reverted by !1349 and
+#   !1352) failed the multi-render gate the same way: the in-pod warmup logged
+#   "RuntimeWarning: invalid value encountered in cast" and the first render
+#   after every in-pod load was tiled garbage; every later render was sound.
+#   Row gfx1100-xtx-inpod-qwen-image-gate-2026-11-19.
+# - Allocator: torch 2.13 in runtime 527e2714 reads PYTORCH_ALLOC_CONF before
+#   PYTORCH_HIP_ALLOC_CONF. In-pod the process inherits the runtime pod's
+#   PYTORCH_ALLOC_CONF (garbage_collection_threshold:0.7,max_split_size_mb:256,
+#   expandable_segments:True, values-k3s runtime profile env); the dedicated
+#   pod has only PYTORCH_HIP_ALLOC_CONF (0.9 / 512 / expandable_segments:True)
+#   on runtime image 2c94c6d9. S9 (2026-11-06) found expandable_segments
+#   corrupts VAE decodes on this same runtime image, and the XTX warm lane
+#   only matched its Deployment in-pod once !1348 pinned
+#   expandable_segments:False.
+# - This attempt pins both variables to the dedicated thresholds with
+#   expandable_segments:False (config.env below, applied last in-pod).
+#   Pass: the same multi-render gate as attempts 1 and 2 (no NaN warning in
+#   the warmup, render 1 coherent, seed-S renders byte-identical to each
+#   other). A first render that is still garbage rules the allocator out and
+#   leaves the image difference (527e2714 vs 2c94c6d9) and the server's
+#   warmup as the suspects.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -112,9 +158,9 @@ spec:
       # MIOpen user db (VAE conv kernels) and Triton/Inductor caches survive
       # scale-to-zero, so only the first cold start pays the kernel search.
       enabled: true
-      # 2026-10-30: a fresh per-node path for the move. The 5930k copy at
-      # compile-cache-qwen-image-21-5930k stays on that host until cleanup.
-      hostPath: /var/lib/flexinfer/compile-cache-qwen-image-21-7900xtx
+      # 2026-11-01 D1: image-scoped on the default hostPath, shared with the
+      # runtime pod (header).
+      scope: Image
       sizeLimit: 4Gi
   gpu:
     vendor: amd
@@ -136,24 +182,6 @@ spec:
     # weights (~25-50 s) and a 1024² warmup, after the incumbent drains.
     coldStartTimeout: 15m
   config:
-    # See header: the 5930k runtime persona has no bitsandbytes yet.
-    dedicatedDeployment: true
-    # The serving image's default CMD is the runtime manager (flexinfer-runtime
-    # on :8080), and the diffusers backend renders no command of its own (the
-    # dedicated diffusers-api images carry the server as their CMD). Without
-    # this override the dedicated pod never opens :8000: the startup probe
-    # failed for 15 min and restarted it in a loop on 2026-10-28 15:01-15:30Z
-    # while the lane held the card. This is the launch the runtime manager
-    # uses for an in-pod diffusers load (internal/runtime/manager.go). It
-    # bypasses runtime-entrypoint.sh on purpose: that script exports
-    # /etc/flexinfer/runtime.env over the container env (TORCH_BLAS_PREFER_
-    # HIPBLASLT=1, an allocator config without expandable_segments), while the
-    # controller already renders every ROCm variable the server needs
-    # (HSA_OVERRIDE_GFX_VERSION, PYTORCH_ROCM_ARCH, MIOPEN_*, HIP_*) with the
-    # Model env last, so the pins below hold on both launch paths.
-    command:
-      - python
-      - /opt/flexinfer/server-diffusers.py
     # The revision the research verified (LFS oids, 2026-10-25); head d26bb612
     # has byte-identical weights and configs and only adds assets/qr.png.
     hfRevision: b3179ad355be050328e483a9dfdd9e60cd62adfa
@@ -187,6 +215,11 @@ spec:
       TRANSFORMER_QUANTIZATION: nf4
       TEXT_ENCODER_QUANTIZATION: nf4
       DEFAULT_TRUE_CFG_SCALE: "1.0"
+      # 2026-11-21 D3 third attempt (header): the dedicated pod's thresholds
+      # without expandable_segments, on both names so torch's precedence does
+      # not matter. Overrides the runtime pod's PYTORCH_ALLOC_CONF in-pod.
+      PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
+      PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:

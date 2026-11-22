@@ -926,6 +926,15 @@ type ModelStatus struct {
 	// +optional
 	ActivationRequestedAt *metav1.Time `json:"activationRequestedAt,omitempty"`
 
+	// ReleasedAt is when the proxy's job runner gave this model's shared GPU
+	// back: the last background job that needed the lane ended and no other
+	// job or client asked for it. A release that no demand signal has
+	// answered makes the controller treat the model as idle after a short
+	// grace instead of after serverless.idleTimeout. Any later request
+	// supersedes it by writing a newer lastActiveTime.
+	// +optional
+	ReleasedAt *metav1.Time `json:"releasedAt,omitempty"`
+
 	// Metrics contains runtime performance metrics.
 	// +optional
 	Metrics *MetricsStatus `json:"metrics,omitempty"`

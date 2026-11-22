@@ -17,7 +17,9 @@ FlexInfer supports caching at two layers:
 - `Memory`: fastest reloads; uses RAM (best for homelabs)
 - `Local`: a hostPath directory on the GPU node (e.g. NVMe), under
   `<hostPath>/<namespace>/<model-name>/`. Fast and cheap, but the weights are
-  pinned to one node and can only be cleared from that node.
+  pinned to one node and can only be cleared from that node. Deleting the
+  Model leaves the directory there unless the on-delete policy says otherwise
+  (see [Deleting a Model with a `Local` cache](#deleting-a-model-with-a-local-cache)).
 - `SharedPVC`: persistent storage shared across nodes (slower than RAM, but durable)
 - `None`: always download/prepare on demand (slowest)
 
@@ -244,7 +246,67 @@ flexinfer cache evict MODEL --confirm
 unless the PVC carries a controller owner reference back to that one `Model`, so
 a PVC named in `spec.cache.pvcName` or shared with another model is never
 deleted. `Local` and `Memory` caches live on a node's disk and cannot be cleared
-this way at all — that needs a privileged pod on the node.
+this way at all — that needs a privileged pod on the node, which is what the
+on-delete policy below runs for `Local` caches.
+
+### Deleting a Model with a `Local` cache
+
+Nothing in Kubernetes owns `<hostPath>/<namespace>/<model-name>/`, so by default a
+deleted Model leaves its weights on the node for good. The policy is decided by
+the Model annotation first and the controller default second:
+
+| Setting | Values | Where |
+|---|---|---|
+| `flexinfer.ai/local-cache-on-delete` | `retain`, `delete` | annotation on the Model |
+| `DEFAULT_LOCAL_CACHE_ON_DELETE` | `retain` (default), `delete` | controller env; Helm `controller.runtime.localCache.onDelete` |
+
+- `retain` keeps the directory. The controller logs `Local cache retained on
+  delete` with the path. Reusing the deleted Model's name later picks the
+  staged weights up as they are (the stage marker is keyed on the source and the
+  download options, not on the Model's UID), which is why canaries of one
+  artifact are often re-applied under the same name.
+- `delete` creates a one-shot Job `<model-name>-cache-cleanup` on the Model's
+  node (its `spec.nodeSelector`, else `status.gpu.node`) that removes exactly
+  `<hostPath>/<namespace>/<model-name>` and logs the KiB it freed. The Job has
+  no owner reference, so it outlives the Model, and is reaped by its TTL. A
+  misspelled annotation is reported in the controller log and falls back to the
+  default. A Model that names no node is retained with a `LocalCacheRetained`
+  warning event.
+- A Model recreated under the same name while its cleanup Job is still pending
+  (the node was unschedulable, say) cancels that Job and keeps the cache.
+
+The compilation cache (`spec.cache.compilationCache.hostPath`) is not touched by
+either policy: it can be shared between lanes.
+
+#### Finding orphaned `Local` caches
+
+The policy only acts on future deletions. Directories already left behind, and
+caches retained on purpose, are reported by the node agent's inventory (Helm
+`agent.localCacheInventory.enabled: true`, default off; it mounts
+`agent.localCacheInventory.hostPath`, default `/var/lib/flexinfer/models`,
+read-only). Every agent interval it sizes each directory under the base (du-style
+allocated bytes, re-walked when the directory's mtime changes or after 10 min)
+and exports `flexinfer_node_local_cache_bytes{node,namespace,model,orphan}`,
+with `orphan="true"` when no Model of that namespace/name exists in the cluster,
+and `flexinfer_node_local_cache_orphans{node}`. A directory directly under the
+base that is not a Model namespace (a legacy flat cache such as
+`qwen35-27b-opus-distill`, another tool's store such as `ollama`, a namespace
+whose Models are all gone) is one orphan entry with an empty `namespace`. "Not an
+orphan" only means a Model of that name exists: a Model that moved to another
+node or left `strategy: Local` keeps its old directory counted as owned, and a
+Model whose `spec.cache.hostPath` names another base is not seen at all.
+
+```promql
+# Orphans on a node, largest first
+sort_desc(flexinfer_node_local_cache_bytes{orphan="true", node="cblevins-7900xtx"})
+```
+
+With `alerting.enabled`, `FlexInferNodeLocalCacheOrphanBytesHigh` warns when a
+node's orphans exceed 50 GB for 1 h (`alerting.thresholds.localCacheOrphanBytes`,
+`localCacheOrphanFor`). The agent only reports; remove a directory nobody will
+reuse on the node itself (`rm -rf --one-file-system <base>/<namespace>/<name>`),
+and annotate canaries with `flexinfer.ai/local-cache-on-delete: delete` so their
+next deletion cleans up.
 
 ## Flash-loader
 

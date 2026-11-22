@@ -137,6 +137,24 @@ preempted, breaker open) is retried after its `Retry-After` (5–60 s) until the
 `FLEXINFER_JOBS_MAX_WAIT` (default 6 h); `model_failed`, any 4xx and a fourth 500 fail it. The
 runner stamps `status.heartbeatAt` every 15 s; another runner reclaims a job silent for 45 s.
 
+**Giving the card back.** When a job on a shared-GPU slot ends, the runner releases its lane
+unless a running job, or a queued job about to take one of the slot's free places, uses the
+same lane. A release is `status.releasedAt` on the Model, written after the job's last demand
+stamp. The controller
+treats a release that no demand has answered for 45 s as "idle now": the lane scales to
+`minReplicas` without waiting for `serverless.idleTimeout`, stops holding the slot through the
+swap cooldown, and the lane it displaced takes the card back. Every demand stamp clears
+`releasedAt`, and a standing release makes the next stamp unskippable, so any later request for
+the lane, on any proxy replica, cancels the release within one 30 s heartbeat. Three cases keep the normal idle
+window: a client request reached the lane within one idle timeout on this proxy replica, a
+request is in flight on it, or the lane is not a serverless member of a shared group. "Reached
+the lane" means the proxy forwarded it to the lane's backend. A request the proxy answered
+itself while the lane was not Ready (a `Prefer: wait=0` probe, the preempted wait, a queue
+timeout or `queue_full`) still stamps demand but does not keep the idle window.
+`flexinfer_jobs_lane_releases_total{lane,result}` counts the decisions (`released`,
+`kept_interactive`, `not_applicable`). A cluster whose Model CRD predates `status.releasedAt`
+drops the field, and lanes then idle out as before.
+
 **Storage.** The response is spooled to `FLEXINFER_JOBS_SPOOL_DIR`, hashed, and stored under
 `jobs/<namespace>/<job>/output` in MinIO (`FLEXINFER_JOBS_STORE=s3`: path-style, SigV4,
 `FLEXINFER_JOBS_S3_{ENDPOINT,BUCKET,REGION,ACCESS_KEY,SECRET_KEY}`) or on a mounted PVC
@@ -269,6 +287,7 @@ Forwarding rewrites `"model"` in a JSON body to the backend's model name; a mult
 | Cold start: queue full | 503 | `queue_full` |
 | QoS: no seat for a `background`/`batch` request within the queue bound (enforcing lanes only) | 503 + `Retry-After` | `queue_full` |
 | Cold start: `Prefer: wait=N` elapsed | 503 | by lane state |
+| Cold start: preempted wait elapsed, a higher-priority lane holds the shared GPU (no `Prefer: wait`) | 503 | `model_preempted` |
 | Cold start: activation failed (scale-up error, Failed phase, readiness timeout in the queue processor) | 503 | by lane state, `model_failed` for a Failed Model |
 | Cold start: weight load stalled | 503 | `stalled_load` |
 | Cold start: readiness timeout | 504 | by lane state |
@@ -302,7 +321,7 @@ from admission also keeps its top-level `admission` block.
 |---|---|---|---|
 | `model_cold_starting` | 503 (`Prefer: wait`, failed activation), 504 (queue timeout) | Not Ready and nothing blocks it: scaled to zero, Pending or Loading. Retrying works. | ETA clamped to 5–30 s; 30 s when the ETA is unknown |
 | `model_parked` | 503, or 404 for `spec.litellm.enabled: false` | Parked behind a warm primary it cannot outrank, or de-advertised | 60 s on the 503; none on the 404 |
-| `model_preempted` | 503 / 504 | Lost its shared GPU to a peer; waits on the election | 30 s |
+| `model_preempted` | 503 / 504 | Lost its shared GPU to a peer; waits on the election. Also the answer at the end of the preempted wait (20 s by default) | 30 s |
 | `model_failed` | 503 / 504 | Phase Failed; retrying cannot help until it recovers | 60 s |
 | `lane_unresponsive` | 503 (breaker open), 504 (first-byte budget), 502 (transport) | The lane is Ready but did not answer | breaker reopen on the 503; 5 s on the 502; none on the 504 |
 | `context_overflow` | 400 | Over the lane's context; its `flexinfer.ai/context-overflow-to` lane cannot take the replay now. `reroute_to` names it and the block describes it | none |
@@ -345,7 +364,90 @@ A caller that sends `Prefer: wait=N` ([RFC 7240](https://www.rfc-editor.org/rfc/
 waits at most N seconds in the cold-start queue, then gets a 503 whose code names the lane state,
 with `eta_seconds` and `Retry-After`, instead of holding the connection to the cold-start timeout.
 The activation it started continues. The response carries `Preference-Applied: wait=N` when the
-preference shortened the wait. Without the header the queue behaves as before.
+preference shortened the wait. Without the header the queue waits up to the lane's cold-start
+timeout, except on a lane that cannot win its shared GPU (next section).
+
+### Preempted wait
+
+A request without `Prefer: wait`, to a shared-GPU lane that a higher-priority lane holds the card
+against, waits at most the preempted wait (default 20 s) and then gets 503 `model_preempted` with
+`Retry-After: 30` and the `flexinfer` block. Without the bound such a request waited up to the
+lane's `serverless.coldStartTimeout` (25 min on the XTX warm lane), since demand cannot move the
+card to a lower-priority lane. The request still stamps `lastActiveTime` on arrival, so the lane
+comes back when the card frees. If the lane is served within the bound, the caller gets the answer.
+
+The proxy decides from the Model status in its informer cache, with no API-server call. A lane
+"cannot win right now" when all of these hold:
+
+- it is set aside by the election: phase `Preempted`, or `status.sharedGroup.state` `Preempted` or
+  `Queued`;
+- `status.sharedGroup.preemptedBy` names a Model (not a park class such as `primary/` or
+  `gpu-lease/`) in the same shared group whose `status.sharedGroup.state` is `Active`;
+- that Model's `gpu.priority` is strictly higher than the lane's;
+- that Model has not handed the card back. It has handed it back when it carries a standing
+  release (a `status.releasedAt` newer than or in the same second as its `lastActiveTime`, the
+  controller's `releaseStanding`) and a release scales it off the card: it is serverless with
+  `minReplicas: 0` and is not a warm primary. Such a holder gives the card up after the 45 s release
+  grace. A released holder that is not serverless, has `minReplicas >= 1` or is a warm primary keeps
+  its replica and the card;
+- when the holder has handed the card back, another member of the group still outranks the lane
+  for it: a Model with a strictly higher `gpu.priority` that is not on the card itself, can take
+  demand (not `Failed`, cache ready), and has demand within its activity window that a release of
+  its own has not withdrawn (a standing release older than the 45 s grace). The job runner releases
+  a lane after its last job on it and then forwards the group's next job to another lane, whose
+  cold-start queue stamps that lane's demand at once, so the card goes there and not to the waiting
+  lane. That Model is named in the 503. A failover stand-in is not counted (it ranks as the Model it
+  stands in for). A multi-model group admits other wanters beside the leader while their
+  `gpu.vramEstimateMB` fits the GPUProfile's `vramMB`, so there the contender is named only when it
+  and the lane do not fit together. The group is multi-model when the GPUProfile for the
+  architecture of the lane's `nodeSelector` sets `features.multiModel`, as the election resolves it,
+  hostname heuristic included (a `cblevins-7900xtx` selector resolves to gfx1100). When a member
+  other than the holder is `Active`, no contender is named. For a lane with
+  `warmPolicy: primary` behind a holder that is not one, only a contender at or above the holder's
+  priority counts, since the warm primary reclaims the card from the idle released holder ahead of
+  lower wanters. With no such member the lane is about to come back and keeps the full wait;
+- for a lane with `spec.config.warmPolicy: primary` behind a holder that is not a warm primary
+  itself: that Model's demand (`lastActiveTime`, or an activation request from the last 30 min) is
+  within its activity window (2 min, or its `idleTimeout` when shorter for a scale-to-zero holder).
+  A warm primary reclaims the card from an idle holder of any priority that is not a warm primary,
+  so once that holder's demand lapses its request keeps the full wait. An on-demand lane has no such
+  reclaim and returns only when the holder idles out or is released.
+
+The bound is armed for every request to a shared-GPU lane, whether or not the lane is losing when
+the request arrives. When it fires the proxy reads the status again: a lane that cannot win answers
+the 503; any other keeps the request and checks again every 5 s until the request is served or the
+cold-start timeout ends it. A handover passes through states in which the lane only seems to be
+winning (a released holder before the next job's lane shows demand), and a lane elected but not yet
+loading can be set aside again by a higher-priority lane's demand; the repeated check catches both.
+The refusal message gives the time the request actually waited. Everything else keeps the
+full wait: a lane that holds the card and is loading, an equal- or lower-priority holder (the
+election can hand the card over on demand), a failover stand-in (`flexinfer.ai/failover-for`), a
+force-promoted lane, a request with `Prefer: wait=N` (its own wait applies), and a job's forward
+(the runner retries on its own schedule).
+
+Trade-off: the decision is read from the informer cache, so a request can be refused in the short
+window between the controller admitting the lane and the proxy's cache showing it. The client's
+retry after `Retry-After` then succeeds or waits for the load.
+
+Settings: `FLEXINFER_PROXY_PREEMPTED_WAIT` (Go duration, default `20s`) and, per lane, the Model
+annotation `flexinfer.ai/preempted-wait` (a positive duration, overrides the setting). The proxy
+counts these answers as `flexinfer_proxy_requests_total{status="preempted"}`, not `error`.
+
+### Cold-start queue slots
+
+The cold-start queue holds at most `PROXY_MAX_QUEUE_SIZE` (default 100) waiting requests per lane.
+A request leaves the queue as soon as it stops waiting: when it is served, refused, times out, or
+its client disconnects. A slot is therefore taken only while a client waits on it, and `queue_full`
+means that many clients are waiting now. A lane has one queue and one activation at a time: the
+queue stays registered while its activation waits, even with no request in it, and the stale-queue
+sweeper only removes a queue whose activation has ended.
+
+A queued request is served on the activation's goroutine once the lane is Ready. A failure while
+serving it (the client leaving mid-stream, the upstream resetting after the headers, or any other
+panic) ends only that request: the queue goes on with the next one. If nothing was sent yet the
+client gets a 500; if the response was cut short, its connection is closed, as for a request
+served directly. A job's forward that fails this way is retried as a lost response (502
+`no_response`).
 
 ## Structured outputs and tool calls
 

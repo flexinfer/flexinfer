@@ -29,14 +29,14 @@
 # llama.cpp b11710+ does not compile against ROCm 6.3.x (upstream #30755; the
 # code path is compiled out below 6.3).
 #
-# Build (from the repository root, on the 7900xtx docker host, which holds the
-# Harbor credentials; push in the same script, the host prunes unpushed
-# images within minutes):
-#   docker build -f build/Dockerfile.runtime-gfx906-llamacpp \
+# Build and push (from the repository root, on the cluster BuildKit; the
+# push uses your local `docker login registry.harbor.lan`):
+#   cluster-buildkit build -f build/Dockerfile.runtime-gfx906-llamacpp \
 #     --build-arg RUNTIME_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:<gfx906 digest> \
 #     --build-arg LLAMACPP_VERSION=b11847 \
-#     -t registry.harbor.lan/flexinfer/runtime:rocm-gfx906-<base12>-llamacpp-b11847 .
-# then push, and tag the pushed digest pinned-<12>.
+#     -t registry.harbor.lan/flexinfer/runtime:rocm-gfx906-<base12>-llamacpp-b11847 --push .
+# then tag the pushed digest pinned-<12> (read it with
+# `docker buildx imagetools inspect <ref>`).
 
 # ── Global ARGs (before first FROM) ──────────────────────────────────
 ARG RUNTIME_IMAGE

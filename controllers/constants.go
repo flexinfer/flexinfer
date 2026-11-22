@@ -25,6 +25,12 @@ const (
 	// on a 3 s loop: with 25 shared Models that was ~9 reconciles/s doing
 	// nothing (2026-10-23).
 	requeueSharedSteady = requeueLong
+	// staleSlicePruneWindow is how long after a Service loses its selector the
+	// controller keeps deleting the EndpointSlices the selector produced.
+	staleSlicePruneWindow = 2 * time.Minute
+	// endpointSliceControllerName is the managed-by value of the slices
+	// Kubernetes builds from a Service selector.
+	endpointSliceControllerName = "endpointslice-controller.k8s.io"
 	// runtimeLoadRetryBackoff suppresses duplicate runtime load requests for a
 	// short window while the runtime is still surfacing model health.
 	runtimeLoadRetryBackoff = 20 * time.Second
@@ -106,6 +112,19 @@ const (
 	// records the request it honored in status.activationRequestedAt and holds
 	// the model warm for activationDemandWindow from that instant.
 	AnnotationActivateRequestedAt = "flexinfer.ai/activate-requested-at"
+
+	// AnnotationSelectorRemovedAt is written on a Model's Service when the
+	// runtime path makes it selectorless (RFC3339). It bounds the prune of the
+	// EndpointSlices the selector left behind (removeRuntimeServiceSelector)
+	// and is dropped when the selector is restored.
+	AnnotationSelectorRemovedAt = "flexinfer.ai/selector-removed-at"
+
+	// AnnotationLocalCacheOnDelete decides what happens to a Model's
+	// `strategy: Local` hostPath directory when the Model is deleted:
+	// "retain" leaves it on the node, "delete" removes it through a one-shot
+	// Job there. It overrides the controller default
+	// (DEFAULT_LOCAL_CACHE_ON_DELETE). See model_cache_cleanup.go.
+	AnnotationLocalCacheOnDelete = "flexinfer.ai/local-cache-on-delete"
 
 	// AnnotationForceImageUpdate, when "true" on a ModelCache, bypasses the
 	// imageDriftGraceWindow and lets the controller preempt a running

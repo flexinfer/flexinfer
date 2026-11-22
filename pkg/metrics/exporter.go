@@ -182,6 +182,36 @@ var (
 		[]string{"node"},
 	)
 
+	// NodeLocalCacheBytes is the node agent's inventory of `strategy: Local`
+	// model cache directories, <base>/<namespace>/<name> on the node's disk,
+	// in allocated bytes (du-style). orphan="true" when no Model of that
+	// namespace/name exists; entries directly under the base that are not a
+	// Model namespace (legacy flat caches, other tools' stores) carry an empty
+	// namespace and are orphans too. Exported only where the agent runs with
+	// --local-cache-root.
+	//
+	// namespace and model come from directory names, not from requests: they
+	// are bounded by the directories on one node's disk (a few dozen; each
+	// holds GBs of weights, so the disk bounds them before Prometheus does),
+	// and a series is deleted when its directory goes or its orphan state
+	// flips. The Model list never adds a series by itself.
+	NodeLocalCacheBytes = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_node_local_cache_bytes",
+			Help: "Allocated bytes of a Local model cache directory on the node, by namespace and model directory; orphan is true when no Model of that namespace/name exists.",
+		},
+		[]string{"node", "namespace", "model", "orphan"},
+	)
+
+	// NodeLocalCacheOrphans counts the orphan entries in NodeLocalCacheBytes.
+	NodeLocalCacheOrphans = prometheus.NewGaugeVec(
+		prometheus.GaugeOpts{
+			Name: "flexinfer_node_local_cache_orphans",
+			Help: "Number of Local model cache directories on the node that no Model owns.",
+		},
+		[]string{"node"},
+	)
+
 	// ModelCacheEvictionsTotal counts evictions per cache and policy.
 	ModelCacheEvictionsTotal = prometheus.NewCounterVec(
 		prometheus.CounterOpts{
@@ -707,6 +737,7 @@ func init() {
 	// ModelCache LRU eviction metrics
 	ctrlmetrics.Registry.MustRegister(ModelCacheResidentSeconds)
 	ctrlmetrics.Registry.MustRegister(DevShmUtilizationPercent)
+	ctrlmetrics.Registry.MustRegister(NodeLocalCacheBytes, NodeLocalCacheOrphans)
 	ctrlmetrics.Registry.MustRegister(ModelCacheEvictionsTotal)
 	ctrlmetrics.Registry.MustRegister(ModelCacheHitRate)
 	ctrlmetrics.Registry.MustRegister(ModelCacheSizeBytes)

@@ -73,6 +73,57 @@ class Verdict(unittest.TestCase):
             self.assertFalse(ok, name)
             self.assertFalse(checks[name], name)
 
+    # Owner decision 2026-11-20: bar (2) does not score chat requests waiting
+    # for the warm lane's own return after the last job. In passing_run the
+    # last job completes at T0 + 200 and the warm lane is next Ready at
+    # T0 + 400, so with the 20 s preempted wait the window is [T0 + 179,
+    # T0 + 400). A call's t is its end; it is scored by its start.
+    def held_chat(self, r, start, seconds=100.0, kind="chat"):
+        r["calls"].append({"t": start + seconds, "kind": kind, "status": 200, "seconds": seconds})
+
+    def test_reload_window_excludes_chat_waiting_for_the_warm_lane(self):
+        for start in (T0 + 179, T0 + 200, T0 + 399):
+            r = passing_run()
+            self.held_chat(r, start)
+            ok, checks, detail = ktjobs.verdict(r, 300)
+            self.assertTrue(checks["no_connection_over_30s"], start - T0)
+            self.assertTrue(ok, checks)
+            self.assertEqual(detail["reload_excluded_over_30s"], 1)
+            self.assertEqual(detail["reload_window_s"], [179.0, 400.0])
+
+    def test_reload_window_scores_everything_else(self):
+        cases = {
+            "chat held before the hand-back": dict(start=T0 + 178),
+            "chat held after the warm lane is Ready": dict(start=T0 + 400),
+            "a job call held inside the window": dict(start=T0 + 250, kind="poll"),
+        }
+        for name, kw in cases.items():
+            r = passing_run()
+            self.held_chat(r, **kw)
+            ok, checks, detail = ktjobs.verdict(r, 300)
+            self.assertFalse(checks["no_connection_over_30s"], name)
+            self.assertEqual(detail["connections_over_30s"], 1, name)
+
+    def test_reload_window_follows_the_preempted_wait(self):
+        r = passing_run()
+        r["args"]["preempted_wait"] = 45
+        self.held_chat(r, T0 + 160)
+        _, checks, detail = ktjobs.verdict(r, 300)
+        self.assertTrue(checks["no_connection_over_30s"])
+        self.assertEqual(detail["reload_window_s"], [154.0, 400.0])
+
+    def test_no_reload_window_without_a_completed_job_or_a_return(self):
+        for name, breaks in {
+            "no completed job": lambda r: [j.update(status="failed") for j in r["jobs"].values()],
+            "warm lane never back": lambda r: r.update(warm_timeline=[(T0 - 10, "Ready", None), (T0 + 60, "Preempted", None)]),
+        }.items():
+            r = passing_run()
+            breaks(r)
+            self.held_chat(r, T0 + 250)
+            _, checks, detail = ktjobs.verdict(r, 300)
+            self.assertFalse(checks["no_connection_over_30s"], name)
+            self.assertIsNone(detail["reload_window_s"], name)
+
     def test_p95(self):
         self.assertIsNone(ktjobs.p95([None]))
         self.assertEqual(ktjobs.p95(list(range(1, 101))), 95)
