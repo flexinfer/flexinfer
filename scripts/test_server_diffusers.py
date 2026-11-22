@@ -425,6 +425,8 @@ SERVER_ENV = (
     "WARMUP_STEPS",
     "WARMUP_VIDEO_FRAMES",
     "TORCH_DETERMINISTIC",
+    "WAN_VAE_MIOPEN",
+    "ENABLE_VAE_TILING",
 )
 
 
@@ -1004,6 +1006,51 @@ class WanVaeMiopenTest(ServerTestCase):
         self.assertFalse(self.quiet(server._bypass_miopen_for_wan_vae, pipe, "wan"))
         vae.decode("z")
         self.assertEqual(seen[0][1], True)
+
+    def test_switch_off_bypasses_an_fp32_vae(self):
+        vae, seen = self.vae(server.torch.float32)
+        pipe = types.SimpleNamespace(vae=vae)
+        os.environ.update(WAN_VAE_MIOPEN="off", ENABLE_VAE_TILING="1")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertTrue(server._bypass_miopen_for_wan_vae(pipe, "wan"))
+        vae.encode("video")
+        vae.decode("z")
+        self.assertEqual([s[1] for s in seen], [False, False])
+        self.assertTrue(self.cudnn.enabled)
+        # The gate harness keys on this prefix (scripts/video-gate.py).
+        self.assertIn("Wan VAE encode/decode run with MIOpen off", out.getvalue())
+        self.assertNotIn("WARNING", out.getvalue())
+
+    def test_switch_off_without_tiling_warns(self):
+        vae, _ = self.vae(server.torch.float32)
+        os.environ["WAN_VAE_MIOPEN"] = "off"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertTrue(
+                server._bypass_miopen_for_wan_vae(types.SimpleNamespace(vae=vae), "wan")
+            )
+        self.assertIn("without ENABLE_VAE_TILING=1", out.getvalue())
+
+    def test_switch_on_keeps_miopen_for_a_bf16_vae(self):
+        vae, seen = self.vae(server.torch.bfloat16)
+        os.environ["WAN_VAE_MIOPEN"] = "on"
+        self.assertFalse(
+            self.quiet(
+                server._bypass_miopen_for_wan_vae, types.SimpleNamespace(vae=vae), "wan"
+            )
+        )
+        vae.decode("z")
+        self.assertEqual(seen[0][1], True)
+
+    def test_unknown_switch_value_falls_back_to_auto(self):
+        vae, _ = self.vae(server.torch.float32)
+        os.environ["WAN_VAE_MIOPEN"] = "maybe"
+        self.assertFalse(
+            self.quiet(
+                server._bypass_miopen_for_wan_vae, types.SimpleNamespace(vae=vae), "wan"
+            )
+        )
 
     def test_other_families_and_cuda_are_untouched(self):
         vae, seen = self.vae(server.torch.bfloat16)
