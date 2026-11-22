@@ -3,9 +3,9 @@
 # Uses GPTQModel (actively maintained successor to auto-gptq) which has
 # native ROCm/HIP support via auto-detected pip install.
 #
-# Build:
-#   docker --context 7900xtx build -f build/Dockerfile.quantizer-gptq-rocm \
-#     -t registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100 .
+# Build and push (cluster BuildKit):
+#   cluster-buildkit build -f build/Dockerfile.quantizer-gptq-rocm \
+#     -t registry.harbor.lan/flexinfer/quantizer:gptq-rocm-gfx1100 --push .
 #
 # The resulting image is ~12 GB (ROCm base + PyTorch + GPTQModel).
 

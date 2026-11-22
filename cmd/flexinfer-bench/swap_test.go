@@ -393,7 +393,7 @@ func TestSwapLaneFromModelManifest(t *testing.T) {
 	lane := lanes[0]
 	assert.Equal(t, "vllm", lane.Backend)
 	assert.True(t, lane.Text)
-	assert.Equal(t, int64(65536), lane.Context)
+	assert.Equal(t, int64(131072), lane.Context) // the warm lane is the 128K lane since 2026-11-21
 	assert.NotEmpty(t, lane.SpecHash)
 	var payload map[string]any
 	require.NoError(t, json.Unmarshal(lane.payload, &payload))

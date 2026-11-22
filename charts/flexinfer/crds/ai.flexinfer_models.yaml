@@ -1201,6 +1201,16 @@ spec:
               phase:
                 description: Phase is the current model lifecycle phase.
                 type: string
+              releasedAt:
+                description: |-
+                  ReleasedAt is when the proxy's job runner gave this model's shared GPU
+                  back: the last background job that needed the lane ended and no other
+                  job or client asked for it. A release that no demand signal has
+                  answered makes the controller treat the model as idle after a short
+                  grace instead of after serverless.idleTimeout. Any later request
+                  supersedes it by writing a newer lastActiveTime.
+                format: date-time
+                type: string
               sharedGroup:
                 description: |-
                   SharedGroup tracks state within the shared GPU group.

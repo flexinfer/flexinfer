@@ -127,6 +127,18 @@ func TestModelHealthReportsLoadProgressAndKVProfile(t *testing.T) {
 
 	body = health("llama")
 	assert.NotContains(t, body, "kvCacheTokens", "an unknown pool must not read as an empty one")
+	assert.NotContains(t, body, "kvMaxConcurrency")
+
+	// Tokens without the concurrency line: health reports the tokens, as the
+	// model list does, and leaves the concurrency out.
+	tokensOnly := &loadProgress{}
+	tokensOnly.observe("INFO [kv_cache_utils.py:1087] GPU KV cache size: 129,582 tokens")
+	m.mu.Lock()
+	m.models["tokens-only"] = &LoadedModel{Name: "tokens-only", Backend: backend.NameVLLM, State: ModelStateReady, progress: tokensOnly}
+	m.mu.Unlock()
+	body = health("tokens-only")
+	assert.Equal(t, 129582.0, body["kvCacheTokens"])
+	assert.NotContains(t, body, "kvMaxConcurrency")
 
 	m.mu.Lock()
 	m.models["lane"].State = ModelStateReady

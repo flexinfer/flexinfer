@@ -192,6 +192,13 @@ spec:
       # Needs a runtime image built with the whisper.cpp stage (!1206) at the
       # image pinned below and in values-k3s runtime.profiles gfx906.
       - whispercpp
+      # D5-a: the image below carries the pyannote layer
+      # (build/Dockerfile.runtime-gfx906-pyannote, venv /opt/pyannote). Listing
+      # it is not enough to serve it: the controller also requires the
+      # flexinfer.ai/backend-certificate-pyannote-speaker-diarization triple
+      # bound to spec.runtime.image, which only the KT-DIAR window adds
+      # (.loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md).
+      - pyannote
     # 2026-10-23 (issue #74 S3''): the gfx906 runtime rebuilt by CI from master
     # b8637f35 (rocm-gfx906-b8637f35), aligned with the image the gfx906
     # runtime DaemonSet runs (deploy/system/values-k3s.yaml runtime.profiles).
@@ -200,7 +207,11 @@ spec:
     # bundledBackends above is consumed); it documents the runtime pod's image.
     # 2026-11-02: rocm-gfx906-5ca58769 (!1206 whisper.cpp stage), aligned with
     # values-k3s.yaml runtime.profiles gfx906 (!1207 apply plan step 3).
-    image: registry.harbor.lan/flexinfer/runtime@sha256:6fc6fcbd936115679e8c5adc43e14c2b1cb86d7f4c702b5ce94b9bdae52c4871
+    # Prepared 2026-11-02 (D5-a G2): rocm-gfx906-pyannote-6fc6fcbd9361, the same image
+    # plus the pyannote venv layer, aligned with values-k3s runtime.profiles
+    # gfx906. The pyannote backend certificate (KT-DIAR) binds to this value:
+    # a later repin must move the certificate too or the lane turns Failed.
+    image: registry.harbor.lan/flexinfer/runtime@sha256:cb4c8dc3c2bd55e0a5935642ed71b06d6fa1236ddd00f15b73627c1660359bc5
   containerMemoryGB: 56
   maxGPUMemoryGB: 12
   maxCPUMemoryGB: 56

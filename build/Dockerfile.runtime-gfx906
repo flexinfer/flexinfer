@@ -28,7 +28,7 @@
 #   ./build/build-runtime.sh gfx906 --push
 
 # ── Global ARGs (before first FROM) ──────────────────────────────────
-ARG GO_VERSION=1.26.10
+ARG GO_VERSION=1.26.11
 ARG LLAMACPP_VERSION=b11847
 ARG WHISPERCPP_VERSION=v1.9.5
 ARG OLLAMA_VERSION=v0.17.4

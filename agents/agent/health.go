@@ -69,10 +69,19 @@ const (
 	// driver releases it; without this bound Wait() would block forever.
 	defaultProbeWaitDelay = 2 * time.Second
 	// healthRecoveryStreak is the number of consecutive clean cycles needed to
-	// clear a degraded verdict. Flips to degraded are immediate (the signals
-	// are unambiguous); recovery is damped so a card that is half-answering
-	// does not flap the scheduler.
+	// clear a degraded verdict. Recovery is damped so a card that is
+	// half-answering does not flap the scheduler.
 	healthRecoveryStreak = 3
+	// probeTimeoutDegradeStreak is the number of consecutive cycles with a
+	// vendor-tool timeout needed before probe-timeout alone degrades a healthy
+	// node. The sysfs and driver signals (pcie-link-down, device-io-error,
+	// gpu-missing, fallen-off-bus) are unambiguous and still flip at once. A
+	// lone timeout is not: on 2026-11-20 one rocm-smi call on a healthy
+	// cblevins-7900xtx overran 15 s while a diffusers pod loaded checkpoints
+	// and compiled on the CPU, and the one-cycle degrade failed every lane on
+	// the node (KT-JOBS run 4). A wedged card times out on every cycle, so
+	// this costs one probe interval on a real fault.
+	probeTimeoutDegradeStreak = 2
 )
 
 // errProbeTimeout wraps vendor-tool timeouts so callers can tell a hung tool
@@ -130,6 +139,7 @@ type healthState struct {
 	reason            string
 	since             time.Time
 	cleanStreak       int
+	timeoutStreak     int // consecutive cycles with a vendor-tool timeout
 	known             bool
 	lastCards         map[string]GPUHealth // "vendor/index" -> last verdict, for metrics cleanup
 }
@@ -442,8 +452,21 @@ func (a *Agent) evaluateGPUHealth(ctx context.Context, cards []GPUHealth, now ti
 			}
 		}
 	}
-	for _, tool := range sortedKeys(s.cycleTimeouts) {
-		applyTool(HealthReasonProbeTimeout, s.cycleTimeouts[tool])
+	// A timeout counts against a healthy node only once it repeats; on a node
+	// that is already degraded it keeps the verdict (resets the clean streak).
+	if len(s.cycleTimeouts) > 0 {
+		s.timeoutStreak++
+	} else {
+		s.timeoutStreak = 0
+	}
+	if s.degraded || s.timeoutStreak >= probeTimeoutDegradeStreak {
+		for _, tool := range sortedKeys(s.cycleTimeouts) {
+			applyTool(HealthReasonProbeTimeout, s.cycleTimeouts[tool])
+		}
+	} else if s.timeoutStreak > 0 {
+		log.Info("GPU probe timed out; not degrading on a single cycle",
+			"timeoutCycles", s.timeoutStreak, "needed", probeTimeoutDegradeStreak,
+			"tools", sortedKeys(s.cycleTimeouts))
 	}
 	for _, reason := range sortedKeys(s.cycleToolVerdict) {
 		applyTool(reason, s.cycleToolVerdict[reason])

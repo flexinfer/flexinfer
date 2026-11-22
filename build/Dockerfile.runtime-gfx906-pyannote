@@ -2,7 +2,7 @@
 # .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.5).
 #
 # NOT built by CI and not referenced by any manifest yet. The owner builds it
-# in the KT-DIAR window on the 7900xtx docker host, on top of the gfx906
+# in the KT-DIAR window, on top of the gfx906
 # runtime digest the cluster runs then, so the Radeon VII pulls only this
 # layer (as KT-ASR did); .loom/32-iteration-plan-d5a-diarize-job-2026-11-01.md
 # step W1 has the exact command. Until a GPUProfile carries the
@@ -26,10 +26,12 @@
 # v2.9.0-rocm-6.3.3 base the gfx906 runtime uses, plus the venv-local
 # transformers pin explained below.
 #
-# Build (from the repository root, on a host that can push to Harbor):
-#   docker --context 7900xtx build -f build/Dockerfile.runtime-gfx906-pyannote \
+# Build and push (from the repository root, on the cluster BuildKit; the
+# push uses your local `docker login registry.harbor.lan`):
+#   cluster-buildkit build -f build/Dockerfile.runtime-gfx906-pyannote \
 #     --build-arg RUNTIME_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:<gfx906 digest> \
-#     -t registry.harbor.lan/flexinfer/runtime:rocm-gfx906-pyannote-<base12> .
+#     -t registry.harbor.lan/flexinfer/runtime:rocm-gfx906-pyannote-<base12> --push .
+# Read the pushed digest with `docker buildx imagetools inspect <ref>`.
 ARG RUNTIME_IMAGE
 FROM ${RUNTIME_IMAGE}
 
