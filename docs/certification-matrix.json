@@ -1357,6 +1357,7 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
       "validation_rows": [
+        "gfx1100-5930k-workhorse-4-seats-2026-11-23",
         "gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
         "gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
         "xtx-workhorse-v033-promotion-2026-11-05",
@@ -1833,6 +1834,22 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/embeddings.yaml"
+    },
+    {
+      "id": "gfx1100-5930k-workhorse-4-seats-2026-11-23",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "pending",
+      "title": "qwen38-27b-autoround-workhorse goes from maxNumSeqs 2 to 4 (optimization #1, owner 2026-11-23), written before the roll. Why: on two slots one long prompt plus one other request fill the lane. KT-QOS…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
+      "date": "2026-11-23",
+      "source": ".loom/60-validation-matrix.md"
     },
     {
       "id": "gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23",
