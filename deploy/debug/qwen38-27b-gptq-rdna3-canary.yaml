@@ -1,0 +1,153 @@
+# GPTQ-RDNA3 canary: the RDNA3 W4A16 GEMM with persistent split-K tickets.
+#
+# Rows (pre-registered 2026-11-06, before any GPU data):
+#   .loom/60-validation-matrix.md `gfx1100-gptq-rdna3-tickets-2026-11-06`
+#   and `gfx1100-gptq-rdna3-read-efficiency-2026-11-06`.
+# Plan and CPU-side evidence: .loom/70-result-gptq-rdna3-2026-11-06.md §5.
+#
+# Why: the int4 GPTQ GEMM is ~62 % of the Qwen3.8-27B decode step on gfx1100
+# (S4 anatomy), and vLLM's kernel launches a zero-fill per call (~265 fills a
+# step). The opt-in plugin build/vllm-rdna3-w4a16-plugin swaps in the same
+# kernel code with tickets from a pool zeroed once (bit-identical), or the
+# split-K-free dot2 candidate (measurement only).
+#
+# Image: the first v033 serving build that carries the plugin and is still in
+# Harbor under a pinned tag, rocm-gfx1100-serving-v033-91085346 (master
+# 91085346, 2026-11-06), pinned-1a2dd85c9bcd. Same vLLM 0.33.0-rocm72 as the
+# live lanes' 51afd0d3, plus the plugin (off unless FLEXINFER_RDNA3_W4A16 is
+# set) and plugin-common >= 0.6.0.
+#
+# Posture: the live 5930k workhorse's (64K fp16 KV, embed host, MTP K=2,
+# ROCM_SEGMENTED_ATTN, long-prefill cap), so a pass carries straight to it.
+#
+# Sequence (arms by flexinfer MCP update_model config merge patches, each a
+# Deployment restart; the row has the full rules):
+#   H   as applied: GPTQ_MODE=hold, no engine. kubectl exec the microbench:
+#       python3 - --out /tmp/gptq-rdna3.json < scripts/bench-gfx1100-gptq-rdna3.py
+#       Any T1 (bit equality) or T2 (graph safety) failure kills the row here.
+#   A1  {"env":{"GPTQ_MODE":null,"GPTQ_ARM":"A1"}}            vLLM's kernel
+#   B1  {"env":{"FLEXINFER_RDNA3_W4A16":"tickets","GPTQ_ARM":"B1"}}
+#   A2  {"env":{"FLEXINFER_RDNA3_W4A16":null,"GPTQ_ARM":"A2"}}
+#   B2  {"env":{"FLEXINFER_RDNA3_W4A16":"tickets","GPTQ_ARM":"B2"}}
+#   C   {"env":{"FLEXINFER_RDNA3_W4A16":"dot2","GPTQ_ARM":"C"}} only if D1-D4 pass
+#
+# Local cache: reuses the 18 GB staged copy of the same artifact and revision
+# left by the 128K canary, renamed on the XTX to this Model's directory before
+# the apply, so there is no 19 GB download.
+#
+# Apply (operator, once): kubectl apply -f deploy/debug/qwen38-27b-gptq-rdna3-canary.yaml
+# Remove: flexinfer MCP delete_model qwen38-27b-gptq-rdna3-canary. The XTX warm
+# lane (priority 300) returns on its own.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-gptq-rdna3-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/60-validation-matrix.md#gfx1100-gptq-rdna3-tickets-2026-11-06"
+    flexinfer.ai/promotion-state: debug-canary-gptq-rdna3
+spec:
+  backend: vllm
+  image: registry.harbor.lan/flexinfer/runtime@sha256:1a2dd85c9bcd17f75c80fe8ba8649e81cb96038ca247f2469e5167db799758c0
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # Shared XTX canary base; this Model gets its own subdir. The first
+      # serving arm autotunes the 64K fp16 segmented kernels (~10-15 min).
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-b-xtx
+      sizeLimit: 8Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    # The usual XTX canary slot: above the 128K warm lane (300), below the
+    # creative lanes (500).
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 3h
+    coldStartTimeout: 45m
+  config:
+    command:
+      - bash
+      - -lc
+      - |
+        echo "gptq-rdna3: arm=${GPTQ_ARM:-} mode=${GPTQ_MODE:-serve} rdna3_w4a16=${FLEXINFER_RDNA3_W4A16:-off} at $(date -u +%FT%TZ)"
+        if [ "${GPTQ_MODE:-serve}" = hold ]; then
+          exec sleep 5400
+        fi
+        exec vllm serve "$@" --profiler-config '{"profiler":"torch","torch_profiler_dir":"/tmp/vllm-profile","torch_profiler_with_stack":false,"ignore_frontend":true}'
+      - vllm
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+      FLEXINFER_EMBED_HOST: "1"
+      GPTQ_MODE: hold
+      GPTQ_ARM: hold
+    vllmVersion: "0.33.0"
+    cudagraphMetrics: true
+    kvPoolRecheck: false
+    stallWindow: 10m
+    dedicatedDeployment: true
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    warmPolicy: primary
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 65536
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    longPrefillTokenThreshold: 1664
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: auto
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-gptq-rdna3-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-gptq-rdna3-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
