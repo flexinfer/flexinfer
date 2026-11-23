@@ -41,9 +41,6 @@ metadata:
     flexinfer.ai/base-model-posture: clean
     flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
     flexinfer.ai/plan: ".loom/10-research-gfx1100-next-feature-2026-10-23.md"
-    # 2026-11-22 (128K, owner decision): REMOVED. This lane now serves 131072
-    # itself, the same window as the XTX lane, so a replay of an over-long
-    # prompt would only get the same 400 there. History kept below.
     # 2026-11-22: the window is 64K (see maxModelLen) and the target is the
     # 128K lane (!1383), so this route now carries 64K-128K prompts.
     # S4: prompts that no longer fit the 32K window (vLLM's context-length
@@ -53,10 +50,7 @@ metadata:
     # consumer is psyche-simulation (consolidates around 58.9K through the
     # `workhorse` alias). If the XTX lane is down, those requests get the
     # original 400. Counted in flexinfer_proxy_context_overflow_total.
-    # 2026-11-22 (128K): a 120K cold prefill takes ~6-7 min on gfx1100 (XTX
-    # lane 360 s uncapped, 414 s with the long-prefill cap); the proxy's
-    # default first-byte budget is 120 s. Same value as the XTX 128K lane.
-    flexinfer.ai/lane-first-byte-budget: "900s"
+    flexinfer.ai/context-overflow-to: qwen38-27b-xtx-warm-canary
     # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
     # placement-2026-10-30.md §6): the XTX warm lane also claims the
     # workhorse / loom-workhorse / reasoning / qwen38-27b labels, so a
@@ -64,12 +58,11 @@ metadata:
     # This tier keeps those labels here while this lane is Ready. It only
     # affects label groups that contain this lane; aliases are unchanged.
     flexinfer.ai/route-priority: "100"
-    # 2026-11-22 (owner decision): 64K (row
-    # gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22), then 128K the same day
-    # on the XTX 128K lane's recipe (row
-    # gfx1100-5930k-workhorse-128k-fp8-2026-11-22 records the live checks).
-    flexinfer.ai/promotion-state: promoted-128k-fp8-segmented-s7-mtp
-    flexinfer.ai/promotion-evidence: "recipe of the XTX 128K lane (row xtx-128k-fp8-segmented-s7-2026-11-21, live since !1383): runtime@51afd0d3, fp8 segmented + embed host + MTP K=2 at 131072, decode 59.4/46.7/18.7 tok/s at 2K/16K/120K, needle clean to 127K; Mills pi S0 window A/B 2026-11-22: research recall tracks the window (60K->120K +0.14), fp8 vs fp16 KV equivalent; 5930k live checks in row gfx1100-5930k-workhorse-128k-fp8-2026-11-22"
+    # 2026-11-22 (owner decision): promoted straight to 64K on the evidence
+    # in the image comment below; row
+    # gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22 records the live checks.
+    flexinfer.ai/promotion-state: promoted-64k-v033-s7-segmented-mtp
+    flexinfer.ai/promotion-evidence: "runtime@51afd0d3 (vLLM 0.33 + S7 embed host + segmented + MTP K=2) live on the XTX 128K lane since !1383: parity hash 8174a49e, pos0 0.81, 159,599-token fp8 pool; S7 row xtx-s7-embed-host-2026-11-05: +2.36 GiB KV, parity identical; 0.33 parity row xtx-vllm-v033-parity-2026-11-05; 5930k 64K live checks in row gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22"
 spec:
   backend: vllm
   # 2026-10-22 (issue #74 S2, vLLM currency): REPINNED from `2e9652ed` — the
@@ -161,16 +154,8 @@ spec:
       # table width (10-30 min) and may fail the one-request 64K KV check on
       # that cold boot; the automatic restart is warm (the 128K canary saw
       # both, row xtx-128k-fp8-segmented-s7-2026-11-21 §3.3).
-      # 2026-11-22 (128K): a new base, so the 64K fp16 cache above stays warm
-      # for a rollback. hostPath is a BASE (the controller mounts
-      # <hostPath>/<namespace>/<Model>); .../flexinfer-system/qwen38-27b-
-      # autoround-workhorse was seeded by hand from the XTX 128K lane's
-      # subdir (same gfx1100 arch, image and recipe: the 131072 segmented fp8
-      # autotune, 129 workloads, ~45 min cold). Unseeded, the first boot
-      # outlasts the 45-min startup probe once and fails the 131072 KV check
-      # on its cold boot; both self-heal on restart.
-      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-128k-5930k
-      sizeLimit: 8Gi
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-5930k
+      sizeLimit: 4Gi
   gpu:
     vendor: amd
     count: 1
@@ -245,10 +230,6 @@ spec:
     env:
       FLEXINFER_QWEN35_MTP_HEAD: checkpoint
       FLEXINFER_EMBED_HOST: "1"
-      # 2026-11-22 (128K): lift vLLM's gfx12-only gate so fp8 KV runs on
-      # segmented attention (G3; software dequant on gfx11). Rollback = drop
-      # with kvCacheDtype auto.
-      FLEXINFER_SEGMENTED_FP8_GFX11: "1"
     # 2026-10-30 placement layout: ondemand -> primary. The lane is the group's
     # designated tenant and reclaims the card if anything ever holds it (an
     # operator activation, a forcePromotion canary). Controller-only key: it
@@ -296,15 +277,15 @@ spec:
     # (S0, 2026-11-22), and every render on the XTX paused the overflow lane.
     # Now 0-64K stays on this always-on card at full fp16 speed, and 64K-128K
     # overflows to the XTX 128K lane. Rollback = 32768.
-    # 2026-11-22 (128K, owner decision): 65536 -> 131072 with fp8 KV (see
-    # kvCacheDtype). Why: the Mills pi S0 window A/B showed research recall
-    # tracks the window (60K -> 120K: +0.14 on the same lane, 7 better / 1
-    # worse), while fp8 vs fp16 KV at identical settings was within noise.
-    # This makes the always-on card a second 120K-eligible lane, so research
-    # no longer stops when renders preempt the XTX lane. Cost: short traffic
-    # decodes ~59 / ~47 tok/s at 2K / 16K against 69 / 67 on fp16 (XTX lane
-    # numbers). Rollback = 65536 with kvCacheDtype auto and no fp8 flag.
-    maxModelLen: 131072
+    # 2026-11-22/23: 131072 with fp8 KV was tried (!1405) and ROLLED BACK (row
+    # gfx1100-5930k-workhorse-128k-fp8-2026-11-22, `fail` on P2): pool
+    # 182,729 tokens and everything else passed, but under this lane's own
+    # production traffic long-context decode was 18.9-19.4 tok/s at 64K and
+    # 9.1 at 120K (bars 24 / 15; the isolated XTX canary did 27.1 / 18.7), in
+    # four runs including two with the XTX lane up, and short requests queued
+    # (up to 4 waiting) behind 120K prefills on the two sequence slots.
+    # Research keeps the XTX 128K lane (equal quality in the S0 window A/B).
+    maxModelLen: 65536
     maxNumSeqs: 2
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
@@ -330,14 +311,11 @@ spec:
     # 2026-11-22 (64K): cap a long prefill at 1664 tokens (four 416-token
     # blocks) per step, so short requests are not stuck behind a 64K cold
     # prefill (the 128K canary: 338-432 s without the cap, 6-66 s with it).
-    # 2026-11-22 (128K): with fp8 the attention block is 832 tokens, so 1664
-    # is two blocks (the XTX lane's value).
     longPrefillTokenThreshold: 1664
     # 2026-11-22 (64K): the engine-stall detector reads a long prefill as
     # frozen counters; 64K cold prefills run ~2-3 min here, under load longer.
     # Controller fix !1381 (KV growth counts as progress) is not live yet.
-    # 2026-11-22 (128K): 10m -> 20m; a 120K cold prefill takes ~6-7 min.
-    stallWindow: 20m
+    stallWindow: 10m
     # 2026-10-22 (vLLM 0.26 repin): 0.94 -> 0.96, the value this digest was
     # qualified with on this node on 2026-09-14 (rows gfx1100-native-w4a16-
     # 2026-09-14-seqs2 / -096: 129,615 tokens warm, 72,817 on a fresh
@@ -351,10 +329,7 @@ spec:
     gpuMemoryUtilization: "0.96"
     # S4: auto = fp16 (the model dtype). ROCM_SEGMENTED_ATTN rejects fp8 KV
     # on gfx11. The fp8_e4m3 value (2026-08-16 context push) is the rollback.
-    # 2026-11-22 (128K): fp8_e4m3 on ROCM_SEGMENTED_ATTN through the
-    # FLEXINFER_SEGMENTED_FP8_GFX11 gate lift (env above), the XTX 128K lane's
-    # recipe. Rollback = auto.
-    kvCacheDtype: fp8_e4m3
+    kvCacheDtype: auto
     # `calculateKvScales: false` left with the 0.32 repin (2026-10-25): vLLM
     # 0.28 removed the deprecated runtime KV-scale calculation and its CLI
     # flag, so the controller must not render `--no-calculate-kv-scales`
