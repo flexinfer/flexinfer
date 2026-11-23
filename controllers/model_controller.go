@@ -312,7 +312,7 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		log.Error(err, "Failed to detect GPU")
 		r.Recorder.Event(model, corev1.EventTypeWarning, "GPUDetectionFailed", err.Error())
 		if isNoMatchingNodesError(err) {
-			if parkErr := r.parkStaleDeployment(ctx, model); parkErr != nil {
+			if parkErr := r.parkStaleDeployment(ctx, model, isGPUDegradedError(err)); parkErr != nil {
 				log.Error(parkErr, "Failed to park stale Deployment")
 				return ctrl.Result{}, parkErr
 			}
@@ -683,7 +683,19 @@ func (r *ModelReconciler) deploymentExists(ctx context.Context, model *aiv1alpha
 // A Deployment whose selector still matches the Model's is left alone: that
 // is the "every matching node is NotReady" case, and killing a warm pod during
 // a kubelet blip would turn a transient outage into a cold start.
-func (r *ModelReconciler) parkStaleDeployment(ctx context.Context, model *aiv1alpha2.Model) error {
+//
+// gpuDegraded is the exception: every matching node carries the GPU health
+// sentinel's degraded label, so the pod cannot serve, and the card only
+// recovers through a host power cycle. The reconcile returns before
+// ensureDeployment while the lane is parked, so the rendered template goes
+// stale: a spec change made during the outage never reaches it, and after the
+// power cycle kubelet restarts the old pod on the recovering card. Observed
+// 2026-11-23 on qwen38-27b-xtx-warm-canary: a revert of the dot2 GEMM merged
+// while the card was down, yet the dot2 pod (replicas 1) came back with the
+// host and the card dropped again 3m14s into its warmup. At zero, the release
+// reconcile (the node watch fires when the label clears) renders the current
+// spec with the desired replicas through ensureDeployment.
+func (r *ModelReconciler) parkStaleDeployment(ctx context.Context, model *aiv1alpha2.Model, gpuDegraded bool) error {
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(model), deployment); err != nil {
 		if errors.IsNotFound(err) {
@@ -694,8 +706,12 @@ func (r *ModelReconciler) parkStaleDeployment(ctx context.Context, model *aiv1al
 	if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 {
 		return nil
 	}
-	if !nodeSelectorStale(model.Spec.NodeSelector, deployment.Spec.Template.Spec.NodeSelector) {
-		return nil
+	reason := "its GPU is degraded (flexinfer.ai/gpu.health); the release renders the current spec"
+	if !gpuDegraded {
+		if !nodeSelectorStale(model.Spec.NodeSelector, deployment.Spec.Template.Spec.NodeSelector) {
+			return nil
+		}
+		reason = "it was rendered for a node selector the Model no longer declares"
 	}
 	zero := int32(0)
 	deployment.Spec.Replicas = &zero
@@ -703,7 +719,7 @@ func (r *ModelReconciler) parkStaleDeployment(ctx context.Context, model *aiv1al
 		return err
 	}
 	r.Recorder.Eventf(model, corev1.EventTypeNormal, "DeploymentParked",
-		"Scaled Deployment %s to 0: it was rendered for a node selector the Model no longer declares", deployment.Name)
+		"Scaled Deployment %s to 0: %s", deployment.Name, reason)
 	return nil
 }
 
