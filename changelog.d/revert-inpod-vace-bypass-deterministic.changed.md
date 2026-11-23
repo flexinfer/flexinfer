@@ -1,0 +1,1 @@
+In-pod Wan VACE drops `TORCH_DETERMINISTIC` again (diagnostic 4: no repeat gain, slower) and stays on the float32 VAE bypass alone, the setup row `gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23` judges.

@@ -79,13 +79,12 @@
 # c54cad12) runs the float32 VAE's two condition encodes and the decode
 # through PyTorch's im2col + GEMM path, as the 16-bit T2V VAE runs and
 # repeats; enableVaeTiling bounds the float32 im2col buffer per tile.
-# 2026-11-22 diagnostic 3 (uncounted, 23:02-23:13Z, c54cad12, VAE bypass):
-# 42.3 dB (was 37), the residual now at the kept first frame (36 dB, later
-# frames 39-44 dB), where the causal VAE runs its single-frame chunk with its
-# own conv shapes. The bypass runs those convs as rocBLAS GEMMs, and without
-# deterministic mode PyTorch allows rocBLAS atomics (split-K GEMMs then
-# differ per call; research-determinism.md E-H1). TORCH_DETERMINISTIC=1 is
-# back on top of the bypass to turn the atomics off.
+# 2026-11-23 diagnostic 4 (bypass plus TORCH_DETERMINISTIC=1, reverted):
+# 39.9 dB, warm clips 158 s, warmup 274 s. Deterministic mode does not help
+# and costs time, so the lane stays on the bypass alone (diagnostic 3: 42.3 dB,
+# 141 s, warmup 172 s). Gate: row gfx1100-xtx-inpod-wan-vace-repeat-gate-
+# 2026-11-23, which judges the same-seed repeat on row-set floors (neither the
+# dedicated lane nor any in-pod setup repeats byte-for-byte).
 # Host RAM: dedicated limit 48 GiB = the runtime pod's whole limit.
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
 # config); the Deployment returns on the next reconcile.
@@ -183,9 +182,7 @@ spec:
       PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
       PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
       TORCH_BLAS_PREFER_HIPBLASLT: "0"
-      # TORCH_DETERMINISTIC dropped after diagnostic 1, back after diagnostic 3
-      # (header): with the VAE bypass it turns rocBLAS atomics off.
-      TORCH_DETERMINISTIC: "1"
+      # TORCH_DETERMINISTIC dropped 2026-11-22 after the diagnostic (header).
       # 2026-11-22 float32 VAE without MIOpen (header; needs runtime c54cad12).
       WAN_VAE_MIOPEN: "off"
       # 2026-11-22 compiled transformer plus exact-shape warmup (header).
