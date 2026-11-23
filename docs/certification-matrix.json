@@ -1836,6 +1836,22 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "owner-window step D5, VACE re-gate on row-set repeat floors: the XTX Wan 2.1 VACE 1.3B image-to-video lane in-pod on runtime c54cad12 (!1408) with the transformer compiled, the exact-shape warmup…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23",
+      "date": "2026-11-23",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
       "kind": "validation",
       "support_level": "supported",
@@ -1892,7 +1908,7 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "skip",
       "title": "owner-window step D5, VACE re-gate: the XTX Wan 2.1 VACE 1.3B image-to-video lane in-pod on the XTX runtime overlay that carries !1399 (pinned by Draft !1390 once repinned), with the transformer…",
       "evidenced": false,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-vace-warmup-gate-2026-11-22",
