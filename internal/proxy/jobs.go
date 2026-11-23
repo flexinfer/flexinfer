@@ -785,13 +785,23 @@ func (p *Proxy) jobLaneModel(ctx context.Context, model string) *aiv1alpha2.Mode
 	return p.peekModel(ctx, name)
 }
 
-// submitJob validates sub, stores what does not fit inline, creates the
-// InferenceJob (or returns the one its idempotency key names) and answers
-// with the job object.
+// submitJob creates the job for sub and answers with the job object.
 func (p *Proxy) submitJob(w http.ResponseWriter, r *http.Request, sub jobSubmission) {
+	job, ok := p.createJob(w, r, sub)
+	if !ok {
+		return
+	}
+	w.Header().Set("Location", "/v1/jobs/"+job.Name)
+	writeJSON(w, http.StatusOK, p.describeJob(r.Context(), job))
+}
+
+// createJob validates sub, stores what does not fit inline and creates the
+// InferenceJob, or returns the one its idempotency key names. On failure it
+// has answered w and reports false; on success the caller answers.
+func (p *Proxy) createJob(w http.ResponseWriter, r *http.Request, sub jobSubmission) (*aiv1alpha2.InferenceJob, bool) {
 	ctx := r.Context()
 	if !p.checkJobTarget(w, r, sub.model, sub.path) {
-		return
+		return nil, false
 	}
 	caller := qosCallerName(r)
 	idemLabel := ""
@@ -800,14 +810,13 @@ func (p *Proxy) submitJob(w http.ResponseWriter, r *http.Request, sub jobSubmiss
 		idemLabel = hex.EncodeToString(sum[:])[:40]
 		var existing aiv1alpha2.InferenceJobList
 		if err := p.client.List(ctx, &existing, client.InNamespace(p.namespace), client.MatchingLabels{jobLabelIdempotency: idemLabel}); err == nil && len(existing.Items) > 0 {
-			writeJSON(w, http.StatusOK, p.describeJob(ctx, &existing.Items[0]))
-			return
+			return &existing.Items[0], true
 		}
 	}
 	name, err := newJobName()
 	if err != nil {
 		validation.WriteInternalError(w, "naming job: "+err.Error())
-		return
+		return nil, false
 	}
 	ttl := sub.ttl
 	if ttl <= 0 {
@@ -844,7 +853,7 @@ func (p *Proxy) submitJob(w http.ResponseWriter, r *http.Request, sub jobSubmiss
 		if err != nil {
 			slog.Warn("job input store failed", "job", name, "error", err)
 			validation.WriteInternalError(w, "storing job input: "+err.Error())
-			return
+			return nil, false
 		}
 		job.Spec.InputRefs = []aiv1alpha2.InferenceJobObject{{
 			Name: jobStoredBodyInput, URI: uri, ContentType: sub.contentType, Bytes: int64(len(sub.body)), SHA256: digest,
@@ -853,7 +862,7 @@ func (p *Proxy) submitJob(w http.ResponseWriter, r *http.Request, sub jobSubmiss
 	if wh := sub.webhook; wh != nil && wh.URL != "" {
 		if !strings.HasPrefix(wh.URL, "http://") && !strings.HasPrefix(wh.URL, "https://") {
 			validation.WriteInvalidFieldValue(w, "webhook.url", "must be an http(s) URL")
-			return
+			return nil, false
 		}
 		job.Spec.Webhook = &aiv1alpha2.InferenceJobWebhook{URL: wh.URL, Events: wh.Events}
 		if wh.Secret != "" {
@@ -864,7 +873,7 @@ func (p *Proxy) submitJob(w http.ResponseWriter, r *http.Request, sub jobSubmiss
 	}
 	if err := p.client.Create(ctx, job); err != nil {
 		validation.WriteInternalError(w, "creating job: "+err.Error())
-		return
+		return nil, false
 	}
 	if wh := sub.webhook; wh != nil && wh.Secret != "" && job.Spec.Webhook != nil {
 		secret := &corev1.Secret{
@@ -889,8 +898,7 @@ func (p *Proxy) submitJob(w http.ResponseWriter, r *http.Request, sub jobSubmiss
 	slog.Info("job submitted", append([]any{"job", name, "model", sub.model, "path", sub.path, "caller", caller},
 		callerIdentityFrom(r).logAttrs()...)...)
 	p.jobs.wake()
-	w.Header().Set("Location", "/v1/jobs/"+name)
-	writeJSON(w, http.StatusOK, p.describeJob(ctx, job))
+	return job, true
 }
 
 // newJobName returns "job-" + 24 random hex characters.

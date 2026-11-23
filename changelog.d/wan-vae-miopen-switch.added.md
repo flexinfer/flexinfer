@@ -1,0 +1,1 @@
+Diffusers server: `WAN_VAE_MIOPEN` (`auto` default, `off`, `on`) overrides the Wan VAE MIOpen bypass's dtype rule, so a tiled float32 VAE (in-pod VACE) can run its encode and decode through PyTorch's im2col + GEMM path instead of MIOpen; `off` without `ENABLE_VAE_TILING=1` on a float32 VAE logs a memory warning.

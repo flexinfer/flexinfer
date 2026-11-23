@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Video gate: is a Wan text-to-video lane sound after a load, and as fast?
+"""Video gate: is a Wan video lane sound after a load, and as fast?
 
 The live gate of row gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21 in
 .loom/60-validation-matrix.md (Draft !1237: Wan 2.1 T2V in-pod on the XTX
@@ -7,6 +7,22 @@ runtime with the allocator pinned). S9 found that expandable_segments with
 model CPU offload corrupts every Wan VAE use after the first in a process, so
 the in-pod arm renders four clips in one process; the dedicated lane renders
 three as the control.
+
+Two profiles (--profile on run; score reads it from the arm reports):
+
+  wan-t2v   (default) Wan 2.1 T2V, the prompts and bars above.
+  vace-i2v  Wan 2.1 VACE image-to-video (Draft !1238). Every request also
+            sends one conditioning image: a deterministic 832x480 PNG the
+            harness draws (or --image), saved as condition.png beside the
+            clips with its sha256 in the report. The fp32 VACE VAE is not
+            covered by the MIOpen bypass, so bar (9) does not need the bypass
+            line and bar (4) has no absolute decode cap. The dedicated VACE
+            lane is not byte-repeatable within a load (S9: 37.3 dB between
+            same-seed clips), so A's same-seed check needs 35 dB and bar (2)
+            needs B to repeat no worse than A. Row
+            gfx1100-xtx-inpod-wan-vace-gate-2026-11-22 holds these bars.
+            Score also reports how close each clip's first frame stays to the
+            conditioning image.
 
 Three steps, on different hosts:
 
@@ -67,6 +83,12 @@ PROMPTS = {
     "fox": "a red fox trotting through fresh snow at dusk, cinematic lighting",
 }
 CLIPS = {"c1": ("boat", 42), "c2": ("fox", 7)}
+# VACE image-to-video: both clips start from the one conditioning image.
+VACE_PROMPTS = {
+    "dusk": "the sun sinks behind the hills as the sky slowly turns orange",
+    "breeze": "a light breeze ripples the lake while the camera pans slowly right",
+}
+VACE_CLIPS = {"c1": ("dusk", 42), "c2": ("breeze", 7)}
 SEQUENCES = {"A": ["c1", "c2", "c1"], "B": ["c1", "c2", "c1", "c1"]}
 SIZE = "832x480"
 WIDTH, HEIGHT = 832, 480
@@ -87,6 +109,41 @@ VRAM_MARGIN_MIB = 1024.0
 RUNTIME_PEAK_MAX_GIB = 44.0
 A_WARM_TOTAL_RANGE = (105.0, 143.0)
 
+# VACE control figures from S9 (row gfx1100-wan-decode-ab-v032-2026-11-05,
+# arm vace-A, dedicated diffusers-video on the XTX): warm total 264.8 s, and
+# the two same-seed clips of one load matched at only 37.3 dB (SSIM 0.993),
+# so the dedicated VACE lane is not byte-repeatable within a load.
+VACE_A_WARM_TOTAL_RANGE = (185.0, 345.0)  # 0.7x to 1.3x of 264.8 s
+VACE_A_SAME_SEED_MIN_DB = 35.0
+
+# Per-profile prompts and the bars that differ. a_warm_total_range None skips
+# that validity check (score --a-warm-range overrides it). b_same_seed_vs_a:
+# bar (2) passes at 50 dB, or at the control's own same-seed PSNR when that is
+# lower, so B must repeat no worse than the dedicated lane does.
+PROFILES = {
+    "wan-t2v": {
+        "prompts": PROMPTS,
+        "clips": CLIPS,
+        "image": False,
+        "bypass_required": True,
+        "decode_max_s": DECODE_MAX_S,
+        "a_warm_total_range": A_WARM_TOTAL_RANGE,
+        "a_same_seed_min_db": SAME_SEED_PSNR,
+        "b_same_seed_vs_a": False,
+    },
+    "vace-i2v": {
+        "prompts": VACE_PROMPTS,
+        "clips": VACE_CLIPS,
+        "image": True,
+        "bypass_required": False,
+        "decode_max_s": None,
+        "a_warm_total_range": VACE_A_WARM_TOTAL_RANGE,
+        "a_same_seed_min_db": VACE_A_SAME_SEED_MIN_DB,
+        "b_same_seed_vs_a": True,
+    },
+}
+CONDITION_FILE = "condition.png"
+
 PIN_VARS = ("PYTORCH_ALLOC_CONF", "PYTORCH_HIP_ALLOC_CONF")
 BYPASS_LINE = "Wan VAE encode/decode run with MIOpen off"
 WARNING_RE = re.compile(r"RuntimeWarning|\bnan\b|\binf\b", re.IGNORECASE)
@@ -102,21 +159,85 @@ def iso(t: float) -> str:
 # --------------------------------------------------------------------------
 
 
-def request_body(model: str, clip: str) -> dict:
-    key, seed = CLIPS[clip]
-    return {
+def condition_png(width: int = WIDTH, height: int = HEIGHT) -> bytes:
+    """The VACE conditioning image: a fixed landscape drawn in stdlib.
+
+    Sky gradient, a sun disc, two hill bands and a lake, so the clip has
+    edges and flat areas to keep. The pixels are the same on every host (a
+    test pins their hash); the compressed bytes can differ between zlib
+    builds, so run both arms from one host and score checks the two arms'
+    PNG sha256 match.
+    """
+    import struct
+    import zlib
+
+    far = [
+        height * 0.55 - 40 * math.sin(x / width * math.pi * 2.0) for x in range(width)
+    ]
+    near = [
+        height * 0.68 - 25 * math.sin(x / width * math.pi * 3.0 + 1.0)
+        for x in range(width)
+    ]
+    sun_x, sun_y, sun_r2 = int(width * 0.7), int(height * 0.3), (height // 10) ** 2
+    lake_y = height * 0.8
+    rows = []
+    for y in range(height):
+        row = bytearray(b"\x00")  # PNG filter type 0
+        t = y / (height - 1)
+        sky = bytes((int(90 + 120 * t), int(140 + 80 * t), int(220 - 40 * t)))
+        if y >= lake_y:
+            d = (y - lake_y) / (height - lake_y)
+            row += bytes((30, int(70 + 40 * d), int(120 + 60 * d))) * width
+            rows.append(bytes(row))
+            continue
+        for x in range(width):
+            if y >= near[x]:
+                row += b"\x28\x5f\x23"  # near hill (40, 95, 35)
+            elif y >= far[x]:
+                row += b"\x46\x78\x46"  # far hill (70, 120, 70)
+            elif (x - sun_x) ** 2 + (y - sun_y) ** 2 <= sun_r2:
+                row += b"\xfa\xd7\x5a"  # sun (250, 215, 90)
+            else:
+                row += sky
+        rows.append(bytes(row))
+    raw = zlib.compress(b"".join(rows), 9)
+
+    def chunk(kind, data):
+        body = kind + data
+        return struct.pack(">I", len(data)) + body + struct.pack(">I", zlib.crc32(body))
+
+    ihdr = struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", ihdr)
+        + chunk(b"IDAT", raw)
+        + chunk(b"IEND", b"")
+    )
+
+
+def request_body(
+    model: str, clip: str, profile: str = "wan-t2v", image_b64: str | None = None
+) -> dict:
+    prof = PROFILES[profile]
+    key, seed = prof["clips"][clip]
+    body = {
         "model": model,
-        "prompt": PROMPTS[key],
+        "prompt": prof["prompts"][key],
         "size": SIZE,
         "num_frames": FRAMES,
         "num_inference_steps": STEPS,
         "seed": seed,
         "response_format": "b64_json",
     }
+    if prof["image"]:
+        if not image_b64:
+            raise ValueError(f"profile {profile} needs a conditioning image")
+        body["image"] = image_b64
+    return body
 
 
-def render_one(url, model, clip, auth, timeout):
-    body = json.dumps(request_body(model, clip)).encode()
+def render_one(url, model, clip, auth, timeout, profile="wan-t2v", image_b64=None):
+    body = json.dumps(request_body(model, clip, profile, image_b64)).encode()
     req = urllib.request.Request(
         url.rstrip("/") + "/v1/videos/generations", data=body, method="POST"
     )
@@ -124,7 +245,8 @@ def render_one(url, model, clip, auth, timeout):
     if auth:
         req.add_header("Authorization", "Bearer " + auth)
     t0 = time.time()
-    rec = {"clip": clip, "seed": CLIPS[clip][1], "start": iso(t0), "t0": t0}
+    seed = PROFILES[profile]["clips"][clip][1]
+    rec = {"clip": clip, "seed": seed, "start": iso(t0), "t0": t0}
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             raw = resp.read()
@@ -157,8 +279,10 @@ def cmd_run(args) -> int:
     out = Path(args.out_dir)
     out.mkdir(parents=True, exist_ok=True)
     seq = SEQUENCES[args.arm]
+    profile = getattr(args, "profile", "wan-t2v")
     report = {
         "arm": args.arm,
+        "profile": profile,
         "model": args.model,
         "url": args.url,
         "sequence": seq,
@@ -166,10 +290,23 @@ def cmd_run(args) -> int:
         "t0": time.time(),
         "renders": [],
     }
+    image_b64 = None
+    if PROFILES[profile]["image"]:
+        image = (
+            Path(args.image).read_bytes()
+            if getattr(args, "image", None)
+            else condition_png()
+        )
+        (out / CONDITION_FILE).write_bytes(image)
+        report["image_file"] = CONDITION_FILE
+        report["image_sha256"] = hashlib.sha256(image).hexdigest()
+        image_b64 = base64.b64encode(image).decode()
     report["started_at"] = iso(report["t0"])
     ok = True
     for i, clip in enumerate(seq, 1):
-        rec, video = render_one(args.url, args.model, clip, args.auth, args.timeout)
+        rec, video = render_one(
+            args.url, args.model, clip, args.auth, args.timeout, profile, image_b64
+        )
         rec["i"] = i
         if video is not None:
             name = f"{args.arm}-r{i}-{clip}.mp4"
@@ -325,9 +462,13 @@ def sound(r: dict) -> bool:
     )
 
 
-def matches(cmp) -> bool:
+def matches(cmp, floor: float = SAME_SEED_PSNR, ssim_floor: float = 0.0) -> bool:
     return bool(cmp) and (
-        cmp.get("identical") is True or cmp.get("psnr_mean", 0) >= SAME_SEED_PSNR
+        cmp.get("identical") is True
+        or (
+            (cmp.get("psnr_mean") or 0) >= floor
+            and (cmp.get("ssim_mean") or 0) >= ssim_floor
+        )
     )
 
 
@@ -359,6 +500,8 @@ def verdict(m: dict) -> dict:
     B = m["B"]["renders"]
     cmp = m.get("cmp", {})
     ev = m.get("evidence") or {}
+    prof = PROFILES[m.get("profile", "wan-t2v")]
+    decode_max = prof["decode_max_s"]
     bars = []
 
     b_complete = len(B) == len(SEQUENCES["B"])
@@ -371,13 +514,37 @@ def verdict(m: dict) -> dict:
             "200, h264, 33x480x832, luma std/mean",
         )
     )
+    b_floor = SAME_SEED_PSNR
+    a_same = cmp.get("A_c1_r3") or {}
+    if (
+        prof["b_same_seed_vs_a"]
+        and a_same.get("identical") is not True
+        and isinstance(a_same.get("psnr_mean"), (int, float))
+    ):
+        b_floor = min(SAME_SEED_PSNR, a_same["psnr_mean"])
+    b_ssim_floor = 0.0
+    limit = f"identical or >= {b_floor} dB" + (
+        " (A's own same-seed PSNR)" if b_floor < SAME_SEED_PSNR else ""
+    )
+    # A row may set its own repeat floors (score --b-repeat-psnr-min and
+    # --b-repeat-ssim-min), replacing the rule above: each same-seed pair is
+    # byte-identical or reaches both floors.
+    repeat = m.get("b_repeat") or {}
+    if repeat.get("psnr_min") is not None or repeat.get("ssim_min") is not None:
+        b_floor = repeat.get("psnr_min") or 0.0
+        b_ssim_floor = repeat.get("ssim_min") or 0.0
+        limit = (
+            f"identical or (PSNR >= {b_floor} dB and SSIM >= {b_ssim_floor}) "
+            "(row-set repeat floors)"
+        )
+    pairs = [cmp.get(k) or {} for k in ("B_c1_r3", "B_c1_r4")]
     bars.append(
         _bar(
             2,
             "B same-seed c1 clips match",
-            matches(cmp.get("B_c1_r3")) and matches(cmp.get("B_c1_r4")),
-            [(cmp.get(k) or {}).get("psnr_mean") for k in ("B_c1_r3", "B_c1_r4")],
-            f"identical or >= {SAME_SEED_PSNR} dB",
+            all(matches(c, b_floor, b_ssim_floor) for c in pairs),
+            [[c.get("psnr_mean"), c.get("ssim_mean")] for c in pairs],
+            limit,
         )
     )
     e2e = [cmp.get("e2e_c1") or {}, cmp.get("e2e_c2") or {}]
@@ -396,9 +563,11 @@ def verdict(m: dict) -> dict:
                 for c in e2e
             ),
             [[c.get("psnr_mean"), c.get("ssim_mean")] for c in e2e],
-            f">= {psnr_min} dB and SSIM >= {E2E_SSIM}"
-            if psnr_min > 0
-            else f"SSIM >= {E2E_SSIM} (PSNR reported, not judged)",
+            (
+                f">= {psnr_min} dB and SSIM >= {E2E_SSIM}"
+                if psnr_min > 0
+                else f"SSIM >= {E2E_SSIM} (PSNR reported, not judged)"
+            ),
         )
     )
     dec_a = _mean(_timing(A, [1, 2], "decode_postprocess_seconds"))
@@ -410,10 +579,12 @@ def verdict(m: dict) -> dict:
             (
                 None
                 if dec_a is None or dec_b is None
-                else dec_b <= DECODE_RATIO * dec_a and dec_b <= DECODE_MAX_S
+                else dec_b <= DECODE_RATIO * dec_a
+                and (decode_max is None or dec_b <= decode_max)
             ),
             [dec_b, dec_a],
-            f"B <= {DECODE_RATIO} x A and <= {DECODE_MAX_S} s",
+            f"B <= {DECODE_RATIO} x A"
+            + (f" and <= {decode_max} s" if decode_max is not None else ""),
         )
     )
     tot_a = _mean(_timing(A, [1, 2], "total_seconds"))
@@ -463,17 +634,23 @@ def verdict(m: dict) -> dict:
         )
     )
     pins, bypass, warns = ev.get("pins"), ev.get("bypass_line"), ev.get("warning_lines")
+    need_bypass = prof["bypass_required"]
+    needed = (pins, bypass, warns) if need_bypass else (pins, warns)
     bars.append(
         _bar(
             9,
-            "pins, bypass line, no warnings",
+            "pins, bypass line, no warnings" if need_bypass else "pins, no warnings",
             (
                 None
-                if None in (pins, bypass, warns)
-                else bool(pins) and bool(bypass) and warns == 0
+                if None in needed
+                else bool(pins) and (bool(bypass) or not need_bypass) and warns == 0
             ),
             {"pins": pins, "bypass_line": bypass, "warning_lines": warns},
-            "both pins, bypass line, 0 warning lines",
+            (
+                "both pins, bypass line, 0 warning lines"
+                if need_bypass
+                else "both pins, 0 warning lines (bypass line reported, not needed)"
+            ),
         )
     )
     kl, rw = ev.get("kernel_lines"), ev.get("root_rw")
@@ -491,10 +668,18 @@ def verdict(m: dict) -> dict:
     validity = {
         "A complete and sound": len(A) == len(SEQUENCES["A"])
         and all(sound(r) for r in A),
-        "A same-seed c1 match": matches(cmp.get("A_c1_r3")),
-        "A warm total in range": a_warm is not None
-        and A_WARM_TOTAL_RANGE[0] <= a_warm <= A_WARM_TOTAL_RANGE[1],
+        "A same-seed c1 match": matches(cmp.get("A_c1_r3"), prof["a_same_seed_min_db"]),
     }
+    warm_range = m.get("a_warm_total_range") or prof["a_warm_total_range"]
+    if warm_range:
+        validity["A warm total in range"] = (
+            a_warm is not None and warm_range[0] <= a_warm <= warm_range[1]
+        )
+    if prof["image"]:
+        validity["A and B conditioned on one image"] = bool(
+            m.get("image_sha256_a")
+            and m.get("image_sha256_a") == m.get("image_sha256_b")
+        )
 
     failed = [b["bar"] for b in bars if b["pass"] is False]
     missing = [b["bar"] for b in bars if b["pass"] is None]
@@ -625,6 +810,49 @@ def _compare(s9, ra, fa, i, rb, fb, j):
     }
 
 
+def decode_image(path: Path, width: int, height: int):
+    """The conditioning image as one RGB frame at the clip size (ffmpeg lanczos,
+    as the server resizes with PIL LANCZOS)."""
+    import numpy as np
+
+    raw = subprocess.run(
+        [
+            "ffmpeg",
+            "-v",
+            "error",
+            "-i",
+            str(path),
+            "-vf",
+            f"scale={width}:{height}:flags=lanczos",
+            "-frames:v",
+            "1",
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "-",
+        ],
+        capture_output=True,
+        check=True,
+    ).stdout
+    return np.frombuffer(raw, dtype=np.uint8).reshape(1, height, width, 3)
+
+
+def first_frame_fidelity(s9, report, frames, d: Path):
+    """Per render: PSNR/SSIM of the clip's first frame against the image."""
+    name = report.get("image_file")
+    if not name or not (d / name).exists():
+        return None
+    cond = decode_image(d / name, WIDTH, HEIGHT)
+    out = {}
+    for i, f in sorted(frames.items()):
+        if f.shape[1:3] != cond.shape[1:3]:
+            continue
+        c = s9.compare_frames(cond, f[:1])
+        out[i] = {k: c.get(k) for k in ("psnr_mean", "ssim_mean")}
+    return out
+
+
 def cmd_score(args) -> int:
     for tool in ("ffmpeg", "ffprobe"):
         if not shutil.which(tool):
@@ -633,6 +861,13 @@ def cmd_score(args) -> int:
     s9 = _s9()
     ra, fa = load_arm(Path(args.a_dir), "A", s9)
     rb, fb = load_arm(Path(args.b_dir), "B", s9)
+    profile = ra.get("profile", "wan-t2v")
+    if rb.get("profile", "wan-t2v") != profile:
+        print(
+            f"arm profiles differ: A {profile}, B {rb.get('profile', 'wan-t2v')}",
+            file=sys.stderr,
+        )
+        return 2
     cmp = {
         "A_c1_r3": _compare(s9, ra, fa, 1, ra, fa, 3),
         "B_c1_r3": _compare(s9, rb, fb, 1, rb, fb, 3),
@@ -666,20 +901,36 @@ def cmd_score(args) -> int:
         )
     if args.root_mode:
         ev["root_rw"] = args.root_mode == "rw"
+    fidelity = None
+    if PROFILES[profile]["image"]:
+        fidelity = {
+            "A": first_frame_fidelity(s9, ra, fa, Path(args.a_dir)),
+            "B": first_frame_fidelity(s9, rb, fb, Path(args.b_dir)),
+        }
     metrics = {
         "A": ra,
         "B": rb,
+        "profile": profile,
+        "image_sha256_a": ra.get("image_sha256"),
+        "image_sha256_b": rb.get("image_sha256"),
+        "a_warm_total_range": args.a_warm_range,
         "e2e_psnr_min": args.e2e_psnr_min,
+        "b_repeat": {
+            "psnr_min": args.b_repeat_psnr_min,
+            "ssim_min": args.b_repeat_ssim_min,
+        },
         "cmp": cmp,
         "vram": vram,
         "runtime_peak_gib": args.runtime_peak_gib,
         "evidence": ev,
     }
     result = verdict(metrics)
+    result["profile"] = profile
     result["metrics"] = {
         "cmp": cmp,
         "vram": vram,
         "evidence": ev,
+        "first_frame_vs_image": fidelity,
         "A": [
             {
                 k: r.get(k)
@@ -719,6 +970,11 @@ def main(argv=None) -> int:
     r.add_argument("--arm", required=True, choices=sorted(SEQUENCES))
     r.add_argument("--out-dir", required=True)
     r.add_argument("--auth", default="")
+    r.add_argument("--profile", choices=sorted(PROFILES), default="wan-t2v")
+    r.add_argument(
+        "--image",
+        help="vace-i2v: conditioning image file (default: the harness's own PNG)",
+    )
     r.add_argument(
         "--timeout",
         type=float,
@@ -750,7 +1006,27 @@ def main(argv=None) -> int:
         help="bar (3) PSNR floor in dB; 0 judges bar (3) on SSIM alone, as "
         "row gfx1100-xtx-inpod-wan-t2v-warmup-gate-2026-11-21 does",
     )
+    s.add_argument(
+        "--b-repeat-psnr-min",
+        type=float,
+        help="bar (2): a row-set PSNR floor (dB) for B's same-seed pairs, "
+        "replacing the profile rule; used with --b-repeat-ssim-min",
+    )
+    s.add_argument(
+        "--b-repeat-ssim-min",
+        type=float,
+        help="bar (2): a row-set SSIM floor for B's same-seed pairs",
+    )
+    s.add_argument(
+        "--a-warm-range",
+        type=float,
+        nargs=2,
+        metavar=("LO", "HI"),
+        help="validity range of A's warm total in seconds (default: the " "profile's)",
+    )
     args = ap.parse_args(argv)
+    if args.cmd == "score" and args.a_warm_range:
+        args.a_warm_range = list(args.a_warm_range)
     try:
         return {"run": cmd_run, "sample-vram": cmd_sample_vram, "score": cmd_score}[
             args.cmd

@@ -322,6 +322,29 @@ class StableDiffusionXLPipeline(_FakePipeline):
         pass
 
 
+class WanVACEI2VPipeline(_FakePipeline):
+    """The image-to-video keywords a WanVACEPipeline __call__ accepts."""
+
+    @recording
+    def __call__(
+        self,
+        prompt=None,
+        negative_prompt=None,
+        video=None,
+        mask=None,
+        height=480,
+        width=832,
+        num_frames=81,
+        num_inference_steps=50,
+        guidance_scale=5.0,
+        generator=None,
+        output_type="np",
+        callback_on_step_end=None,
+        callback_on_step_end_tensor_inputs=("latents",),
+    ):
+        pass
+
+
 class WanT2VPipeline(_FakePipeline):
     """The text-to-video keywords a WanPipeline __call__ accepts."""
 
@@ -402,6 +425,8 @@ SERVER_ENV = (
     "WARMUP_STEPS",
     "WARMUP_VIDEO_FRAMES",
     "TORCH_DETERMINISTIC",
+    "WAN_VAE_MIOPEN",
+    "ENABLE_VAE_TILING",
 )
 
 
@@ -982,6 +1007,51 @@ class WanVaeMiopenTest(ServerTestCase):
         vae.decode("z")
         self.assertEqual(seen[0][1], True)
 
+    def test_switch_off_bypasses_an_fp32_vae(self):
+        vae, seen = self.vae(server.torch.float32)
+        pipe = types.SimpleNamespace(vae=vae)
+        os.environ.update(WAN_VAE_MIOPEN="off", ENABLE_VAE_TILING="1")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertTrue(server._bypass_miopen_for_wan_vae(pipe, "wan"))
+        vae.encode("video")
+        vae.decode("z")
+        self.assertEqual([s[1] for s in seen], [False, False])
+        self.assertTrue(self.cudnn.enabled)
+        # The gate harness keys on this prefix (scripts/video-gate.py).
+        self.assertIn("Wan VAE encode/decode run with MIOpen off", out.getvalue())
+        self.assertNotIn("WARNING", out.getvalue())
+
+    def test_switch_off_without_tiling_warns(self):
+        vae, _ = self.vae(server.torch.float32)
+        os.environ["WAN_VAE_MIOPEN"] = "off"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertTrue(
+                server._bypass_miopen_for_wan_vae(types.SimpleNamespace(vae=vae), "wan")
+            )
+        self.assertIn("without ENABLE_VAE_TILING=1", out.getvalue())
+
+    def test_switch_on_keeps_miopen_for_a_bf16_vae(self):
+        vae, seen = self.vae(server.torch.bfloat16)
+        os.environ["WAN_VAE_MIOPEN"] = "on"
+        self.assertFalse(
+            self.quiet(
+                server._bypass_miopen_for_wan_vae, types.SimpleNamespace(vae=vae), "wan"
+            )
+        )
+        vae.decode("z")
+        self.assertEqual(seen[0][1], True)
+
+    def test_unknown_switch_value_falls_back_to_auto(self):
+        vae, _ = self.vae(server.torch.float32)
+        os.environ["WAN_VAE_MIOPEN"] = "maybe"
+        self.assertFalse(
+            self.quiet(
+                server._bypass_miopen_for_wan_vae, types.SimpleNamespace(vae=vae), "wan"
+            )
+        )
+
     def test_other_families_and_cuda_are_untouched(self):
         vae, seen = self.vae(server.torch.bfloat16)
         pipe = types.SimpleNamespace(vae=vae)
@@ -1414,8 +1484,6 @@ class RealLibrariesTest(ServerTestCase):
         model.norm(torch.ones(1, 8, dtype=torch.bfloat16))  # raised before the shim
 
 
-
-
 # --- determinism controls and exact-shape video warmup ------------------------
 
 
@@ -1496,6 +1564,39 @@ class VideoWarmupTest(ServerTestCase):
         self.assertNotIn("negative_prompt", call)
         self.assertEqual(call["num_inference_steps"], 4)
 
+    def test_vace_warmup_renders_the_served_shape_with_a_condition(self):
+        server.PIPELINE_MODE = "image2video"
+        pipe = self.serve(WanVACEI2VPipeline(), "Wan-AI/Wan2.1-VACE-1.3B-diffusers")
+        os.environ.update(
+            WARMUP_RESOLUTIONS="832x480",
+            WARMUP_VIDEO_FRAMES="33",
+            WARMUP_STEPS="20",
+            DEFAULT_NEGATIVE_PROMPT="static, blurry",
+        )
+        self.quiet(server.warmup_inference)
+        self.assertTrue(server.warmup_complete)
+        (call,) = pipe.calls
+        self.assertEqual(call["num_frames"], 33)
+        self.assertEqual(call["num_inference_steps"], 20)
+        self.assertEqual((call["width"], call["height"]), (832, 480))
+        self.assertEqual(call["negative_prompt"], "static, blurry")
+        # The same conditioning the request path builds: one kept frame, the
+        # rest generated, at the served size.
+        self.assertEqual((len(call["video"]), len(call["mask"])), (33, 33))
+        self.assertEqual(call["video"][0].size, (832, 480))
+        # The kept frame has its own mask; every generated frame shares one.
+        self.assertIsNot(call["mask"][0], call["mask"][1])
+        self.assertTrue(all(m is call["mask"][1] for m in call["mask"][1:]))
+
+    def test_vace_warmup_without_frames_uses_the_served_default(self):
+        server.PIPELINE_MODE = "image2video"
+        pipe = self.serve(WanVACEI2VPipeline(), "Wan-AI/Wan2.1-VACE-1.3B-diffusers")
+        os.environ.update(WARMUP_RESOLUTIONS="832x480", DEFAULT_VIDEO_NUM_FRAMES="49")
+        self.quiet(server.warmup_inference)
+        (call,) = pipe.calls
+        self.assertEqual(call["num_frames"], 49)
+        self.assertEqual(len(call["video"]), 49)
+
     def test_frames_ignored_outside_text2video(self):
         server.PIPELINE_MODE = "text2image"
         pipe = self.serve(StableDiffusionXLPipeline(), "stabilityai/sdxl")
@@ -1522,9 +1623,13 @@ class BrownianNoiseBoundsTest(ServerTestCase):
 
         def run(seed):
             sch = CosineDPMSolverMultistepScheduler(
-                sigma_min=0.3, sigma_max=500.0, sigma_data=1.0,
-                sigma_schedule="exponential", solver_order=2,
-                prediction_type="v_prediction", final_sigmas_type="zero",
+                sigma_min=0.3,
+                sigma_max=500.0,
+                sigma_data=1.0,
+                sigma_schedule="exponential",
+                solver_order=2,
+                prediction_type="v_prediction",
+                final_sigmas_type="zero",
             )
             sch.set_timesteps(20, device="cpu")
             g = torch.Generator("cpu").manual_seed(seed)
@@ -1538,6 +1643,7 @@ class BrownianNoiseBoundsTest(ServerTestCase):
         self.assertTrue(bool(torch.isfinite(a).all()))
         self.assertTrue(torch.equal(a, b))
         self.assertFalse(torch.equal(a, c))
+
 
 if __name__ == "__main__":
     print(

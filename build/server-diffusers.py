@@ -166,13 +166,19 @@ def _bound_brownian_noise_sampler() -> bool:
         orig_init(self, x, sigma_min, sigma_max, seed, transform)
         a = self.transform(torch.as_tensor(sigma_min))
         b = self.transform(torch.as_tensor(sigma_max))
-        self._flexinfer_lo, self._flexinfer_hi = torch.minimum(a, b), torch.maximum(a, b)
+        self._flexinfer_lo, self._flexinfer_hi = torch.minimum(a, b), torch.maximum(
+            a, b
+        )
         self._flexinfer_zeros = torch.zeros_like(x)
 
     def __call__(self, sigma, sigma_next):
         lo, hi = self._flexinfer_lo, self._flexinfer_hi
-        t0 = torch.minimum(torch.maximum(self.transform(torch.as_tensor(sigma)), lo), hi)
-        t1 = torch.minimum(torch.maximum(self.transform(torch.as_tensor(sigma_next)), lo), hi)
+        t0 = torch.minimum(
+            torch.maximum(self.transform(torch.as_tensor(sigma)), lo), hi
+        )
+        t1 = torch.minimum(
+            torch.maximum(self.transform(torch.as_tensor(sigma_next)), lo), hi
+        )
         if bool(t0 == t1):
             return self._flexinfer_zeros.clone()
         return self.tree(t0, t1) / (t1 - t0).abs().sqrt()
@@ -1290,15 +1296,34 @@ def _bypass_miopen_for_wan_vae(pipe, family: Optional[str]) -> bool:
     2026-11-03: a bf16 3x3x3 conv at (1,96,6,480,832) took 7.9 s through MIOpen
     and 31 ms through PyTorch's im2col + GEMM path, and the 33-frame 832x480
     decode dropped from 370 s to 5-11 s at an 11.6 GiB peak. An fp32 VAE (the
-    VACE lane) is left alone: its im2col buffer needs 15.4 GiB at that shape.
+    VACE lane) is left alone by default: untiled, its im2col buffer needs
+    15.4 GiB at that shape.
+
+    WAN_VAE_MIOPEN overrides the dtype rule: "off" bypasses MIOpen for any
+    dtype, "on" keeps it for any dtype, and "auto" (the default) is the rule
+    above. The in-pod VACE lane sets "off": through MIOpen its fp32 VAE gave
+    same-seed requests that differ (37 dB), while the bypassed 16-bit T2V VAE
+    repeats byte-for-byte. VAE tiling (ENABLE_VAE_TILING=1) bounds the fp32
+    im2col buffer per tile; without it the bypass can run out of memory.
     """
     is_rocm = hasattr(torch.version, "hip") and torch.version.hip is not None
     vae = getattr(pipe, "vae", None)
     if family != "wan" or not is_rocm or vae is None:
         return False
-    if getattr(vae, "dtype", None) not in (torch.bfloat16, torch.float16):
-        print(f"Keeping MIOpen for the Wan VAE in {getattr(vae, 'dtype', None)}")
+    dtype = getattr(vae, "dtype", None)
+    sixteen_bit = dtype in (torch.bfloat16, torch.float16)
+    mode = os.environ.get("WAN_VAE_MIOPEN", "auto").strip().lower() or "auto"
+    if mode not in ("auto", "on", "off"):
+        print(f"WARNING: WAN_VAE_MIOPEN={mode!r} is not auto, on or off; using auto")
+        mode = "auto"
+    if mode == "on" or (mode == "auto" and not sixteen_bit):
+        print(f"Keeping MIOpen for the Wan VAE in {dtype} (WAN_VAE_MIOPEN={mode})")
         return False
+    if not sixteen_bit and os.environ.get("ENABLE_VAE_TILING", "0") != "1":
+        print(
+            f"WARNING: WAN_VAE_MIOPEN=off on a {dtype} Wan VAE without "
+            "ENABLE_VAE_TILING=1: the untiled im2col buffer can exceed the card"
+        )
 
     def without_miopen(method):
         def call(*args, **kwargs):
@@ -1314,7 +1339,10 @@ def _bypass_miopen_for_wan_vae(pipe, family: Optional[str]) -> bool:
     for name in ("encode", "decode"):
         if hasattr(vae, name):
             setattr(vae, name, without_miopen(getattr(vae, name)))
-    print("Wan VAE encode/decode run with MIOpen off (naive 3D conv kernels)")
+    print(
+        f"Wan VAE encode/decode run with MIOpen off in {dtype} "
+        f"(WAN_VAE_MIOPEN={mode}; im2col + GEMM)"
+    )
     return True
 
 
@@ -2779,6 +2807,23 @@ def _warmup_pass(w: int, h: int, steps: int, guidance, guard: bool) -> Optional[
                 negative = _resolve_negative_prompt(None)
                 if negative:
                     kw["negative_prompt"] = negative
+        elif PIPELINE_MODE == "image2video":
+            # Wan VACE warms through the request path's own conditioning: a
+            # first frame to keep plus neutral frames to generate, with the
+            # matching mask, so the VAE encode of the condition, the VACE
+            # blocks and a compiled transformer all see the served shape
+            # before the first request. The frame's content does not pick
+            # kernels; a flat gray keeps it independent of any input.
+            frames = _env_int("WARMUP_VIDEO_FRAMES") or _default_video_num_frames()
+            kw["num_frames"] = frames
+            video, mask = _prepare_vace_i2v_condition(
+                Image.new("RGB", (w, h), (128, 128, 128)), w, h, frames
+            )
+            kw["video"] = video
+            kw["mask"] = mask
+            negative = _resolve_negative_prompt(None)
+            if negative:
+                kw["negative_prompt"] = negative
         if guard:
             kw["output_type"] = "np"
         with torch.inference_mode():

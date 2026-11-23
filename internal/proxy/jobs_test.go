@@ -336,6 +336,27 @@ func newJobFixture(t *testing.T, models ...*aiv1alpha2.Model) *jobFixture {
 	return f
 }
 
+// stopRunning cancels every job this fixture's runner still runs and waits
+// for their goroutines to exit. Cancelling alone races the test's cleanup: a
+// goroutine still unwinding can write into the spool t.TempDir is removing
+// ("TempDir RemoveAll cleanup: directory not empty").
+func (f *jobFixture) stopRunning(t *testing.T) {
+	t.Helper()
+	f.p.jobs.mu.Lock()
+	for _, cancel := range f.p.jobs.running {
+		cancel()
+	}
+	f.p.jobs.mu.Unlock()
+	deadline := time.Now().Add(10 * time.Second)
+	for f.p.jobs.runningCount() > 0 {
+		if time.Now().After(deadline) {
+			t.Errorf("%d job goroutines still running after cancel", f.p.jobs.runningCount())
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
 // requestCount is how many requests lane name's upstream received.
 func (f *jobFixture) requestCount(name string) int32 {
 	if n, ok := f.requests.Load(name); ok {
@@ -529,11 +550,7 @@ func TestDiffusersLanesOnOneCardRunOneJobAtATime(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, running, "one render at a time per shared card")
-	f.p.jobs.mu.Lock()
-	for _, cancel := range f.p.jobs.running {
-		cancel()
-	}
-	f.p.jobs.mu.Unlock()
+	f.stopRunning(t)
 }
 
 func TestStaleClaimIsReclaimedAndDeletionCleansStorage(t *testing.T) {

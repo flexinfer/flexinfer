@@ -1,0 +1,1 @@
+The k3s proxy pin moves to the master `fae6e89e` build (`sha256:1c2a6150…`, tag `20261122-204550`); the controller pin is unchanged. This is the roll that makes !1403 live: the model resolver publishes its service-label and alias caches atomically, so a request no longer misses a label or alias during a cache refresh. Rollback digest: proxy `sha256:cb677155…`.

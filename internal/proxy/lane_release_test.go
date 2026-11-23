@@ -202,13 +202,7 @@ func TestPassReleasesAFinishedLaneWhenTheNextJobNeedsAnotherLane(t *testing.T) {
 
 	f.p.jobs.pass(ctx)
 	f.p.flushLastAccess(5 * time.Second)
-	t.Cleanup(func() {
-		f.p.jobs.mu.Lock()
-		for _, cancel := range f.p.jobs.running {
-			cancel()
-		}
-		f.p.jobs.mu.Unlock()
-	})
+	t.Cleanup(func() { f.stopRunning(t) })
 
 	assert.NotNil(t, f.lane(t, "qwen-image").Status.ReleasedAt,
 		"the queue head is the video job, so the image lane gives the card up now")
@@ -235,13 +229,7 @@ func TestPassKeepsALaneAQueuedJobWithAFreeSlotNeeds(t *testing.T) {
 
 	f.p.jobs.pass(ctx)
 	f.p.flushLastAccess(5 * time.Second)
-	t.Cleanup(func() {
-		f.p.jobs.mu.Lock()
-		for _, cancel := range f.p.jobs.running {
-			cancel()
-		}
-		f.p.jobs.mu.Unlock()
-	})
+	t.Cleanup(func() { f.stopRunning(t) })
 
 	assert.Nil(t, f.lane(t, "qwen-image").Status.ReleasedAt)
 	_, stillRecorded := f.p.jobs.releasable["qwen-image"]

@@ -409,7 +409,25 @@ proxy:
     # 30-70 s through the image-to-video handover). Rollback = the 5a796de0
     # digest
     # sha256:6624e3252f07114974d1eb80046762296a890abd62aaac060588fad13935045c.
-    digest: "sha256:14cead95bb51a1ec899be2a73011f309e622ec0a8e7c6b439fe0774c8cd75190"
+    # 2026-11-22: master 2544a1bc (tag 20261122-174845, master pipeline
+    # 40475), proxy only. The d90cb4bc build above plus !1394 (the OpenAI
+    # Videos API alias, internal/proxy/videos.go: POST /v1/videos, GET
+    # /v1/videos/{id}[/content], DELETE, run as InferenceJobs on
+    # /v1/videos/generations, so Infinite Canvas on canvas.flexinfer.ai can
+    # drive the Wan lanes) and !1398 (test-only). The proxy imports backend/,
+    # where only the vLLM readiness-probe stall detector changed (8324997f,
+    # controller-rendered, not reached by the proxy). Rollback = the d90cb4bc
+    # digest
+    # sha256:14cead95bb51a1ec899be2a73011f309e622ec0a8e7c6b439fe0774c8cd75190.
+    # 2026-11-22 (2): master fae6e89e (tag 20261122-204550, master pipeline
+    # 40497), proxy only. The 2544a1bc build above plus !1403, the only change
+    # in the proxy's tree since (internal/proxy/model_resolver.go): service-
+    # label and alias caches are built as immutable snapshots and published
+    # with one atomic.Pointer store, ending a data race in which a request
+    # landing mid-refresh could miss a label or alias and get a spurious
+    # model_not_found. Rollback = the 2544a1bc digest
+    # sha256:cb6771553539fbe556d885395eff11abf872c2eb117b05c19b055f143f6ccf3e.
+    digest: "sha256:1c2a6150dc130c663df2be976bd12df79220177dec88aeaef35890b25d4baa27"
     pullPolicy: Always
   service:
     type: ClusterIP
@@ -712,6 +730,17 @@ imagePrewarm:
         # successor of cd108c9e. Same v0.32.0 base as cd108c9e; the pull is at
         # most 10.8 GiB, which this node's ~269 GB free covers.
         - registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
+        # 2026-11-05 (workhorse promotion to vLLM 0.33 + S7, row
+        # xtx-workhorse-v033-promotion-2026-11-05, Draft !1311): the
+        # gfx1100-serving-v033 persona (rocm-gfx1100-serving-v033-3e8ae3c2,
+        # pinned-51afd0d377f7; CI job publish_serving_rocm_gfx1100_v033 from
+        # master 4da96d96, vLLM 0.33.0-rocm72, text plugin 0.12.0,
+        # plugin-common 0.5.0). Pulled ahead of the repin so it is a container
+        # restart, and listed so the pinned-* guard keeps it in Harbor. It
+        # shares ~6.8 GiB of compressed layers with b06b06fe; the new pull is
+        # ~4.3 GiB compressed (235 GB free on the root on 2026-11-05). b06b06fe
+        # above stays as the workhorse's rollback.
+        - registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
         # 2026-10-27 (S6a image, held for slice S6b): the stacked 0.32 runtime
         # image of build profile gfx1100-serving-v032 (vLLM 0.32 + runtime
         # supervisor + diffusers 0.42 + snac; rocm-gfx1100-serving-v032-c444b5ff,
@@ -836,6 +865,11 @@ imagePrewarm:
         # 2026-10-23); it is no longer in Harbor, so it can only be listed as a
         # comment without failing the runtime_pin_drift gate:
         #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
+        # 2026-11-21 (128K lane, !1383): the image the dedicated XTX warm lane
+        # qwen38-27b-xtx-warm-canary runs at 131072 (rocm-gfx1100-serving-v033-
+        # 3e8ae3c2, pinned-51afd0d377f7). Resident since the 128K canary pulled
+        # it; listed so image GC cannot drop the live lane's image.
+        - registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
         # 2026-10-23 (issue #74 S1''): the master b8637f35 serving rebuild
         # (rocm-gfx1100-serving-b8637f35) this node's runtime DaemonSet runs
         # since !1116 (qualified, matrix row gfx1100-serving-2026-10-23).
@@ -904,6 +938,20 @@ imagePrewarm:
         # !1379). The base image's build-time verifier re-ran with the CI
         # build's arguments. The pull is one small layer on 527e2714.
         - registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
+        # 2026-11-22 (D1 Stable Audio): rocm-gfx1100-serving-v032-527e2714-
+        # dfo-a056a493, the same overlay rebuilt with master a056a493's
+        # server-diffusers.py: 12f30206's server plus the bounded Brownian-tree
+        # noise sampler (!1389) that stops the torchsde RecursionError on the
+        # Stable Audio final step, and the Wan VACE exact-shape warmup with a
+        # conditioning frame (!1399). Base verifier re-ran. One small layer on
+        # 527e2714.
+        - registry.harbor.lan/flexinfer/runtime@sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409
+        # 2026-11-22 (D1 VACE): rocm-gfx1100-serving-v032-527e2714-dfo-75a382f7,
+        # the same overlay with master 75a382f7's server-diffusers.py:
+        # a8d525e0's server plus the WAN_VAE_MIOPEN switch (!1407) that lets
+        # the in-pod VACE lane run its tiled float32 VAE without MIOpen. Base
+        # verifier re-ran. One small layer on 527e2714.
+        - registry.harbor.lan/flexinfer/runtime@sha256:c54cad123fd667bd82413e102e785348347148856b144d1fff1ef894901ab0c7
         # 2026-11-05 (S3, .loom/10-research-backend-currency-gfx1100-gfx906-
         # 2026-11-04.md §6.1): the stacked serving persona on vLLM
         # 0.33.0-rocm72 (build profile gfx1100-serving-v033 at !1284,
@@ -1157,7 +1205,23 @@ runtime:
       # every in-pod lane loads cold once. Rollback = 527e2714, still
       # prewarmed and certified:
       #   registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
-      image: "registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba"
+      # 2026-11-22 (D1 Stable Audio and VACE, WINDOW-GATED): 12f30206 ->
+      # a8d525e0, the same overlay with master a056a493's server-diffusers.py
+      # (adds the bounded Brownian-tree noise sampler, !1389, and the VACE
+      # exact-shape warmup, !1399; prewarm entry above). The
+      # vLLM stack, plugins, supervisor and server-snac.py stay byte-identical
+      # to 527e2714. The shared compile cache moves with the digest
+      # (shared/gfx1100/a8d525e02c21): seed it from 12f30206d9e6 before the
+      # roll. Rollback = 12f30206, still prewarmed and certified:
+      #   registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
+      # 2026-11-22 (D1 VACE, WINDOW-GATED): a8d525e0 -> c54cad12, the same
+      # overlay with master 75a382f7's server-diffusers.py (adds only the
+      # WAN_VAE_MIOPEN switch, !1407, default auto = unchanged behaviour;
+      # prewarm entry above). The shared compile cache moves with the digest
+      # (shared/gfx1100/c54cad123fd6): seed it from a8d525e02c21 before the
+      # roll. Rollback = a8d525e0, still prewarmed and certified:
+      #   registry.harbor.lan/flexinfer/runtime@sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409
+      image: "registry.harbor.lan/flexinfer/runtime@sha256:c54cad123fd667bd82413e102e785348347148856b144d1fff1ef894901ab0c7"
       gpuVendor: amd
       gpuArch: gfx1100
       gpuCount: 2

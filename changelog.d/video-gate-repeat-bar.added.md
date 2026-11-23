@@ -1,0 +1,1 @@
+Video gate harness: `score --b-repeat-psnr-min` / `--b-repeat-ssim-min` let a row set its own bar (2) floors for B's same-seed pairs (byte-identical, or both floors met), in place of the profile's rule; bar (2) now reports PSNR and SSIM for each pair.
