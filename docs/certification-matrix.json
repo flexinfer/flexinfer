@@ -1383,6 +1383,7 @@
       "evidence": "deploy/models/qwen38-27b-xtx-warm-canary.yaml#flexinfer.ai/promotion-evidence",
       "evidence_note": "canary qwen38-27b-128k-canary 2026-11-21 (row xtx-128k-fp8-segmented-s7-2026-11-21): 51afd0d3 vLLM 0.33, fp8 segmented + embed host + MTP K=2 at 131072, pool 159,599 tok (1.22x), decode 59.4/46.7/18.7 tok/s at 2K/16K/120K, cold TTFT 360 s at 119.5K, needle 1/1 33K-127K, 5/5 + depths 0/50/100 at 127K, pos0 0.81, 25-min soak clean",
       "validation_rows": [
+        "gfx1100-xtx-128k-dot2-2026-11-23",
         "gfx1100-xtx-inpod-swap-2026-11-01",
         "xtx-pcie-soak-2026-11-02",
         "xtx-pcie-soak-2026-11-03",
@@ -1834,6 +1835,22 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/embeddings.yaml"
+    },
+    {
+      "id": "gfx1100-xtx-128k-dot2-2026-11-23",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "the XTX 128K lane qwen38-27b-xtx-warm-canary moves to runtime@1a2dd85c with FLEXINFER_RDNA3_W4A16=dot2 (owner decision 2026-11-23, written before the roll). The first lane of the dot2 rollout; the…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-dot2-2026-11-23",
+      "date": "2026-11-23",
+      "source": ".loom/60-validation-matrix.md"
     },
     {
       "id": "gfx1100-5930k-workhorse-4-seats-2026-11-23",
