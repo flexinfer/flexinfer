@@ -286,7 +286,17 @@ spec:
     # (up to 4 waiting) behind 120K prefills on the two sequence slots.
     # Research keeps the XTX 128K lane (equal quality in the S0 window A/B).
     maxModelLen: 65536
-    maxNumSeqs: 2
+    # 2026-11-23 (owner: optimization #1): 2 -> 4 sequence slots. On two slots
+    # a long prompt plus one other request fill the lane. The seat-mix probe
+    # (scripts/probe-lane-seat-mix.py, one ~56K prompt with a 2K request every
+    # 5 s) measured 2K-request TTFT p50 27 s / p95 55-57 s on two slots, and
+    # the 128K trial saw up to 4 production requests waiting. The 92,906-token
+    # pool with reserve-by-length (schedulerReserveFullISL false) holds four
+    # typical requests (7-day p95: 18K prompt + 4.3K output). vLLM priority
+    # alone does nothing on a full lane (KT-QOS: no running request is evicted
+    # for a seat), so seats come first and caller classes later. Row
+    # gfx1100-5930k-workhorse-4-seats-2026-11-23. Rollback = 2.
+    maxNumSeqs: 4
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
     # Reserve by actual request length, not the full 64K (owner decision
