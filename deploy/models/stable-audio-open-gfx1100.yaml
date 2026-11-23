@@ -55,6 +55,10 @@
 #   allocator variables without expandable_segments (this lane has no CPU
 #   offload, where S9 saw corruption; pinned so the in-pod process does not
 #   inherit the runtime pod's value). The gate checks same-seed WAVs repeat.
+# - 2026-11-23 gate PASSED (row gfx1100-xtx-inpod-stable-audio-gate-2026-11-22,
+#   owner accepted the listen): same-seed WAVs byte-identical, first clip 43 s
+#   (proxy default budget 120 s), warm 11.7 s against 14.1 s dedicated. The
+#   lane stays in-pod.
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
 # config); the Deployment returns on the next reconcile.
 apiVersion: ai.flexinfer/v1alpha2
