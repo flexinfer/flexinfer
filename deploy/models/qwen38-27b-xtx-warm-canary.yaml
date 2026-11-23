@@ -112,14 +112,14 @@
 # Rollback: revert this commit (in-pod on the 12f30206 runtime, TRITON_ATTN +
 # fp8, 64K; spec.image b06b06fe).
 #
-# 2026-11-23 dot2 (owner decision; rows gfx1100-gptq-rdna3-* and
-# gfx1100-xtx-128k-dot2-2026-11-23): runtime@1a2dd85c carries
-# build/vllm-rdna3-w4a16-plugin, and FLEXINFER_RDNA3_W4A16=dot2 swaps vLLM's
-# RDNA3 W4A16 GEMM for vllm#57925's split-K-free kernel. The canary measured
-# 2K decode 72.97 tok/s against 65.90 (+10.7 %) and 16K 71.5 against ~63.5,
-# with the GEMM going 19.7 -> 16.8 ms per step and identical probe answers.
-# Not bit-identical to vLLM's kernel (fp32 accumulation order). Rollback =
-# image 51afd0d3 and drop the env key.
+# 2026-11-23 dot2 rolled back (owner decision, row
+# gfx1100-xtx-128k-dot2-2026-11-23). The card fell off the bus twice after
+# dot2 went live (!1422). The first drop came at 17:15Z, 59 min into the
+# 120K load. The second came at 17:54Z, seconds into the lane's first warmup
+# compute after a cold boot. Before dot2, the same x16 boot had held 6.7 days
+# of heavier load (up to 326 W). This revert is the discriminator: the same
+# load on 51afd0d3 without FLEXINFER_RDNA3_W4A16. If the card holds, dot2 is
+# the trigger. If it drops, the card or PSU has degraded on its own.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -226,11 +226,7 @@ spec:
   # 0.33.0-rocm72, text plugin 0.12.0, plugin-common 0.5.0 (embed-host patch,
   # segmented fp8 gate lift). Resident on the XTX since the canary pulled it.
   # Rollback = b06b06fe (resident, pinned-b06b06fe1c02), in-pod.
-  # 2026-11-23 dot2: pinned-1a2dd85c9bcd (rocm-gfx1100-serving-v033-91085346),
-  # the same vLLM 0.33.0 plus the RDNA3 W4A16 plugin; its plugin-off arms
-  # gave the same greedy parity hash (8174a49e) as 51afd0d3. Rollback =
-  # 51afd0d3 (prewarmed) without FLEXINFER_RDNA3_W4A16.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:1a2dd85c9bcd17f75c80fe8ba8649e81cb96038ca247f2469e5167db799758c0
+  image: registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     strategy: Local
@@ -300,8 +296,6 @@ spec:
       FLEXINFER_QWEN35_MTP_HEAD: checkpoint
       FLEXINFER_EMBED_HOST: "1"
       FLEXINFER_SEGMENTED_FP8_GFX11: "1"
-      # 2026-11-23: the dot2 RDNA3 W4A16 GEMM (header).
-      FLEXINFER_RDNA3_W4A16: dot2
     quantization: gptq
     # 2026-09-13: `architectures` pinned in-process (issue #74 incident #2).
     # The runtime DaemonSet's entrypoint rewrote this lane's on-disk
