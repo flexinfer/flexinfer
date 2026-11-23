@@ -296,7 +296,14 @@ spec:
     # alone does nothing on a full lane (KT-QOS: no running request is evicted
     # for a seat), so seats come first and caller classes later. Row
     # gfx1100-5930k-workhorse-4-seats-2026-11-23. Rollback = 2.
-    maxNumSeqs: 4
+    # 2026-11-23: ROLLED BACK to 2 (that row: `fail` on P2). With 4 slots the
+    # 2K-request TTFT during a 56K prefill was p50 14.3 / 26.7 s and p95
+    # 39.2 / 58.2 s (bars 13.5 / 28 s; two slots 27 / 56 s), and short decode
+    # during the prefill fell to 2.7-6.4 tok/s (two slots 11-18): every step
+    # still carries the long prompt's 1664-token chunk, so more slots only let
+    # more short requests share slow steps. The bottleneck is the per-step
+    # token budget, not the slot count. Idle decode was unchanged (16K 66.3).
+    maxNumSeqs: 2
     maxNumBatchedTokens: 4096
     enableChunkedPrefill: true
     # Reserve by actual request length, not the full 64K (owner decision

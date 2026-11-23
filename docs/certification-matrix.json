@@ -273,11 +273,11 @@
       "gpu_class": "gfx1100",
       "decision": "fail",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
       "validation_rows": [
-        "gfx1100-5930k-workhorse-128k-fp8-2026-11-22"
+        "gfx1100-5930k-workhorse-4-seats-2026-11-23"
       ],
-      "date": "2026-11-22",
+      "date": "2026-11-23",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -1355,7 +1355,7 @@
       "modality": "chat",
       "decision": "fail",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
       "validation_rows": [
         "gfx1100-5930k-workhorse-4-seats-2026-11-23",
         "gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
@@ -1363,7 +1363,7 @@
         "xtx-workhorse-v033-promotion-2026-11-05",
         "workhorse-vllm-v032-2026-10-25"
       ],
-      "date": "2026-11-22",
+      "date": "2026-11-23",
       "source": "deploy/models/qwen38-27b-autoround-workhorse.yaml"
     },
     {
@@ -1844,9 +1844,9 @@
       "nodes": [
         "5930k"
       ],
-      "decision": "pending",
+      "decision": "fail",
       "title": "qwen38-27b-autoround-workhorse goes from maxNumSeqs 2 to 4 (optimization #1, owner 2026-11-23), written before the roll. Why: on two slots one long prompt plus one other request fill the lane. KT-QOS…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
       "date": "2026-11-23",
       "source": ".loom/60-validation-matrix.md"
