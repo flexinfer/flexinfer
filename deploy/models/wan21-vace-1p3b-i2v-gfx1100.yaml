@@ -85,6 +85,10 @@
 # 141 s, warmup 172 s). Gate: row gfx1100-xtx-inpod-wan-vace-repeat-gate-
 # 2026-11-23, which judges the same-seed repeat on row-set floors (neither the
 # dedicated lane nor any in-pod setup repeats byte-for-byte).
+# 2026-11-23 gate: row gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23
+# PASSED, owner accepted the side-by-sides: same-seed clips 42.4 / 42.1 dB
+# (SSIM 0.993), warm clips 141 s against 264 s dedicated, warmup ~250 s per
+# load, first request ~490 s (first-byte budget 900 s). VACE stays in-pod.
 # Host RAM: dedicated limit 48 GiB = the runtime pod's whole limit.
 # Rollback: revert this commit (restores dedicatedDeployment and the cache
 # config); the Deployment returns on the next reconcile.
