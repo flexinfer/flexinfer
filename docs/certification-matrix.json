@@ -85,7 +85,7 @@
         "gfx1100",
         "gfx906"
       ],
-      "latest_evidence_date": "2026-11-22",
+      "latest_evidence_date": "2026-10-27",
       "evidence": [
         "gemma4-26b-a4b-gptq",
         "gemma4-26b-a4b-gptq-22k",
@@ -99,8 +99,7 @@
         "qwen35-9b-ablit-rp",
         "qwen36-27b-autoround-workhorse",
         "qwen36-27b-fable-gptq",
-        "qwen36-35b-mtp-uncensored-5930k",
-        "qwen38-27b-autoround-workhorse"
+        "qwen36-35b-mtp-uncensored-5930k"
       ]
     },
     {
@@ -272,11 +271,11 @@
       "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
-      "decision": "pass",
+      "decision": "fail",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
       "validation_rows": [
-        "gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22"
+        "gfx1100-5930k-workhorse-128k-fp8-2026-11-22"
       ],
       "date": "2026-11-22",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
@@ -1354,9 +1353,9 @@
       ],
       "model": "qwen38-27b-autoround-workhorse",
       "modality": "chat",
-      "decision": "pass",
+      "decision": "fail",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
       "validation_rows": [
         "gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
         "gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
@@ -1860,9 +1859,9 @@
       "nodes": [
         "5930k"
       ],
-      "decision": "pending",
+      "decision": "fail",
       "title": "qwen38-27b-autoround-workhorse moves from 64K fp16 to 131072 on the XTX 128K lane's recipe (fp8 KV via FLEXINFER_SEGMENTED_FP8_GFX11=1, embed host, MTP K=2, segmented), owner decision 2026-11-22…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
       "date": "2026-11-22",
       "source": ".loom/60-validation-matrix.md"
