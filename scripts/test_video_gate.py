@@ -446,6 +446,42 @@ class VaceProfileTest(unittest.TestCase):
         m["cmp"]["A_c1_r3"]["psnr_mean"] = 30.0  # control below 35 dB
         self.assertEqual(gate.verdict(m)["decision"], "invalid")
 
+    def test_row_set_repeat_floors_replace_the_control_rule(self):
+        # Row gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23: B's
+        # same-seed pairs reach PSNR >= 35 dB and SSIM >= 0.99, whatever A's
+        # own repeat is.
+        m = vace_metrics()
+        m["cmp"]["A_c1_r3"] = {"identical": False, "psnr_mean": 43.96}
+        m["cmp"]["B_c1_r3"] = {
+            "identical": False,
+            "psnr_mean": 42.3,
+            "ssim_mean": 0.9935,
+        }
+        m["cmp"]["B_c1_r4"] = {
+            "identical": False,
+            "psnr_mean": 39.9,
+            "ssim_mean": 0.9935,
+        }
+        self.assertEqual(gate.verdict(m)["failed_bars"], [2])  # control rule
+        m["b_repeat"] = {"psnr_min": 35.0, "ssim_min": 0.99}
+        v = gate.verdict(m)
+        self.assertEqual(v["decision"], "pass", v)
+        self.assertIn("row-set", v["bars"][1]["limit"])
+        self.assertEqual(v["bars"][1]["value"], [[42.3, 0.9935], [39.9, 0.9935]])
+        m["cmp"]["B_c1_r4"]["ssim_mean"] = 0.9856  # gate-B eager outlier
+        self.assertEqual(gate.verdict(m)["failed_bars"], [2])
+        m["cmp"]["B_c1_r4"] = {
+            "identical": False,
+            "psnr_mean": 34.0,
+            "ssim_mean": 0.995,
+        }
+        self.assertEqual(gate.verdict(m)["failed_bars"], [2])
+        m["cmp"]["B_c1_r4"] = {"identical": True}
+        self.assertEqual(gate.verdict(m)["decision"], "pass")
+        m["b_repeat"] = {"psnr_min": None, "ssim_min": None}  # flags unset
+        m["cmp"]["B_c1_r3"] = {"identical": False, "psnr_mean": 42.3}
+        self.assertEqual(gate.verdict(m)["failed_bars"], [2])
+
     def test_wan_same_seed_stays_at_50_db(self):
         m = good_metrics()
         m["cmp"]["A_c1_r3"] = {"identical": False, "psnr_mean": 52.0}

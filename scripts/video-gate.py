@@ -462,9 +462,13 @@ def sound(r: dict) -> bool:
     )
 
 
-def matches(cmp, floor: float = SAME_SEED_PSNR) -> bool:
+def matches(cmp, floor: float = SAME_SEED_PSNR, ssim_floor: float = 0.0) -> bool:
     return bool(cmp) and (
-        cmp.get("identical") is True or (cmp.get("psnr_mean") or 0) >= floor
+        cmp.get("identical") is True
+        or (
+            (cmp.get("psnr_mean") or 0) >= floor
+            and (cmp.get("ssim_mean") or 0) >= ssim_floor
+        )
     )
 
 
@@ -518,15 +522,29 @@ def verdict(m: dict) -> dict:
         and isinstance(a_same.get("psnr_mean"), (int, float))
     ):
         b_floor = min(SAME_SEED_PSNR, a_same["psnr_mean"])
+    b_ssim_floor = 0.0
+    limit = f"identical or >= {b_floor} dB" + (
+        " (A's own same-seed PSNR)" if b_floor < SAME_SEED_PSNR else ""
+    )
+    # A row may set its own repeat floors (score --b-repeat-psnr-min and
+    # --b-repeat-ssim-min), replacing the rule above: each same-seed pair is
+    # byte-identical or reaches both floors.
+    repeat = m.get("b_repeat") or {}
+    if repeat.get("psnr_min") is not None or repeat.get("ssim_min") is not None:
+        b_floor = repeat.get("psnr_min") or 0.0
+        b_ssim_floor = repeat.get("ssim_min") or 0.0
+        limit = (
+            f"identical or (PSNR >= {b_floor} dB and SSIM >= {b_ssim_floor}) "
+            "(row-set repeat floors)"
+        )
+    pairs = [cmp.get(k) or {} for k in ("B_c1_r3", "B_c1_r4")]
     bars.append(
         _bar(
             2,
             "B same-seed c1 clips match",
-            matches(cmp.get("B_c1_r3"), b_floor)
-            and matches(cmp.get("B_c1_r4"), b_floor),
-            [(cmp.get(k) or {}).get("psnr_mean") for k in ("B_c1_r3", "B_c1_r4")],
-            f"identical or >= {b_floor} dB"
-            + (" (A's own same-seed PSNR)" if b_floor < SAME_SEED_PSNR else ""),
+            all(matches(c, b_floor, b_ssim_floor) for c in pairs),
+            [[c.get("psnr_mean"), c.get("ssim_mean")] for c in pairs],
+            limit,
         )
     )
     e2e = [cmp.get("e2e_c1") or {}, cmp.get("e2e_c2") or {}]
@@ -897,6 +915,10 @@ def cmd_score(args) -> int:
         "image_sha256_b": rb.get("image_sha256"),
         "a_warm_total_range": args.a_warm_range,
         "e2e_psnr_min": args.e2e_psnr_min,
+        "b_repeat": {
+            "psnr_min": args.b_repeat_psnr_min,
+            "ssim_min": args.b_repeat_ssim_min,
+        },
         "cmp": cmp,
         "vram": vram,
         "runtime_peak_gib": args.runtime_peak_gib,
@@ -983,6 +1005,17 @@ def main(argv=None) -> int:
         default=E2E_PSNR,
         help="bar (3) PSNR floor in dB; 0 judges bar (3) on SSIM alone, as "
         "row gfx1100-xtx-inpod-wan-t2v-warmup-gate-2026-11-21 does",
+    )
+    s.add_argument(
+        "--b-repeat-psnr-min",
+        type=float,
+        help="bar (2): a row-set PSNR floor (dB) for B's same-seed pairs, "
+        "replacing the profile rule; used with --b-repeat-ssim-min",
+    )
+    s.add_argument(
+        "--b-repeat-ssim-min",
+        type=float,
+        help="bar (2): a row-set SSIM floor for B's same-seed pairs",
     )
     s.add_argument(
         "--a-warm-range",
