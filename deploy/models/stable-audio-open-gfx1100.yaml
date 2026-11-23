@@ -39,12 +39,14 @@
 # The dedicated image (d87f75f8, rocm-gfx1100-audio2) is the rollback.
 #
 # 2026-11-22 refresh:
-# - BLOCKED on a runtime image carrying !1389. On the runtime's Python 3.12 /
-#   torch 2.13 the scheduler's final step asks torchsde's Brownian tree for
-#   noise below its interval and recurses until RecursionError (S9;
-#   reproduced on CPU in 12f30206). !1389 bounds those queries in
-#   server-diffusers.py; 12f30206 predates it, so this needs a new runtime
-#   overlay and repin first.
+# - Needs a runtime carrying !1389. On the runtime's Python 3.12 / torch 2.13
+#   the scheduler's final step asks torchsde's Brownian tree for noise below
+#   its interval and recurses until RecursionError (S9; reproduced on CPU in
+#   12f30206). !1389 bounds those queries in server-diffusers.py. Unblocked
+#   2026-11-22/23: the XTX runtime runs c54cad12 (!1408), which carries it.
+# - Gate: row gfx1100-xtx-inpod-stable-audio-gate-2026-11-22 (A arm valid
+#   2026-11-22; B after this merges). No first-byte-budget annotation: the
+#   proxy's 120 s default bounds the in-pod load, as bar (5) states.
 # - config.env pins what the in-pod Wan T2V gates found (rows
 #   gfx1100-xtx-inpod-wan-t2v-*-2026-11-21): TORCH_BLAS_PREFER_HIPBLASLT=0
 #   (in-pod the lane inherits the GPUProfile's hipBLASLt, which made
