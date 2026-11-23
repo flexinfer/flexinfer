@@ -1357,6 +1357,7 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
       "validation_rows": [
+        "gfx1100-5930k-workhorse-dot2-2026-11-23",
         "gfx1100-5930k-workhorse-4-seats-2026-11-23",
         "gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
         "gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
@@ -1835,6 +1836,22 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/embeddings.yaml"
+    },
+    {
+      "id": "gfx1100-5930k-workhorse-dot2-2026-11-23",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "pending",
+      "title": "the 5930k workhorse qwen38-27b-autoround-workhorse moves to runtime@1a2dd85c with FLEXINFER_RDNA3_W4A16=dot2 at its 64K fp16 posture (owner decision 2026-11-23, step 2 of 2). Written before the roll.…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-dot2-2026-11-23",
+      "date": "2026-11-23",
+      "source": ".loom/60-validation-matrix.md"
     },
     {
       "id": "gfx1100-xtx-128k-dot2-2026-11-23",
