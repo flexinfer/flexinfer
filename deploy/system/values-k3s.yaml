@@ -210,9 +210,9 @@ controller:
     # copies of one canary artifact tripped the 7900 XTX root into a 17-hour
     # DiskPressure eviction on 2026-11-06. Per-Model opt-out, for a canary that
     # will be recreated under the same name and should keep its staged weights:
-    # annotation flexinfer.ai/local-cache-on-delete: retain. Inert on the
-    # 51e6bd81 controller pin above (only builds from d8aabcb48 on read the
-    # env); it takes effect with the next controller roll. Rollback = retain.
+    # annotation flexinfer.ai/local-cache-on-delete: retain. Effective as soon
+    # as this merges: every controller pin since 6500e342 (2026-11-18) reads
+    # the env. Rollback = retain.
     localCache:
       onDelete: delete
 
