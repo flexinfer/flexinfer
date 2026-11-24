@@ -129,8 +129,10 @@ variables:
   # reached HTTP/2 and standard-library vulnerabilities found by CI.
   # 1.26.10 clears GO-2026-6809 / CVE-2026-111943 (crypto/x509), which
   # govulncheck and trivy_scan_* flagged on master at 1.26.9 (#34067).
+  # 1.26.11 clears GO-2026-6859 (net/http MaxBytesReader header race),
+  # which govulncheck flagged on master at 1.26.10 (#38839).
   # Move go.mod `toolchain` and the build-arg:GO_VERSION pins with it.
-  GO_VERSION: "1.26.10"
+  GO_VERSION: "1.26.11"
   GO_IMAGE: "golang:${GO_VERSION}"
   ENVTEST_VERSION: "release-0.23"
   GOLANGCI_LINT_VERSION: "v2.10.1"
@@ -671,7 +673,14 @@ server_diffusers_test:
     # The S9 Wan harness: verdict arithmetic runs bare; its metric and collect
     # cases need numpy and skip here.
     - python3 scripts/test_wan_decode_ab.py
-    - python3 -m py_compile build/server-diffusers.py build/check-runtime-diffusers.py scripts/wan-decode-ab.py
+    # The in-pod Wan T2V and VACE gates (row gfx1100-xtx-inpod-wan-t2v-gate-
+    # 2026-11-21 and its successors): run, evidence and verdict cases run bare;
+    # the decode cases need numpy and ffmpeg and skip here.
+    - python3 scripts/test_video_gate.py
+    # The in-pod Stable Audio gate (Draft !1239): stdlib except the spectral
+    # case, which needs numpy and skips here.
+    - python3 scripts/test_audio_gate.py
+    - python3 -m py_compile build/server-diffusers.py build/check-runtime-diffusers.py scripts/wan-decode-ab.py scripts/video-gate.py scripts/audio-gate.py
   rules:
     - if: $CI_MERGE_REQUEST_ID
       changes: &server-diffusers-changes
@@ -681,6 +690,10 @@ server_diffusers_test:
         - scripts/test_server_diffusers.py
         - scripts/wan-decode-ab.py
         - scripts/test_wan_decode_ab.py
+        - scripts/video-gate.py
+        - scripts/test_video_gate.py
+        - scripts/audio-gate.py
+        - scripts/test_audio_gate.py
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *server-diffusers-changes
 
@@ -1696,7 +1709,7 @@ publish_runtime_rocm_gfx906:
           --opt filename="Dockerfile.runtime-gfx906" \
           --opt platform=linux/amd64 \
           --opt build-arg:BASE_IMAGE="docker.io/mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3" \
-          --opt build-arg:GO_VERSION="1.26.10" \
+          --opt build-arg:GO_VERSION="1.26.11" \
           --opt build-arg:LLAMACPP_VERSION="b11847" \
           --opt build-arg:WHISPERCPP_VERSION="v1.9.5" \
           --opt build-arg:OLLAMA_VERSION="v0.17.4" \
@@ -1949,7 +1962,11 @@ publish_llamacpp_rocm_gfx1100:
   interruptible: false
   stage: publish
   image: registry.harbor.lan/library/buildkit:v0.12.5
-  timeout: 30m
+  # A cold build (no matching inline cache in the import ref) takes about
+  # an hour on buildkitd-central: ~10 min of ROCm apt installs, then ~485
+  # HIP/CXX objects. Pipeline 38839 timed out at 30m at object 161/485, and
+  # 34470 timed out the same way, so the cache ref was never refreshed.
+  timeout: 2h
   needs: []
   resource_group: buildkit-llamacpp
   retry:
@@ -2004,7 +2021,9 @@ publish_llamacpp_rocm_gfx906:
   interruptible: false
   stage: publish
   image: registry.harbor.lan/library/buildkit:v0.12.5
-  timeout: 30m
+  # Cold build is ~1h on buildkitd-central (pipeline 38839 timed out at 30m
+  # at object 131/567 with no cache hits); see publish_llamacpp_rocm_gfx1100.
+  timeout: 2h
   needs: []
   resource_group: buildkit-llamacpp
   retry:

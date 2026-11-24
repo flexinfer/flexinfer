@@ -161,7 +161,11 @@ func chooseSharedGroupLeader(groupModels []*aiv1alpha2.Model, now time.Time, fai
 	}
 	if recentSwap {
 		for _, m := range groupModels {
-			if m.Status.SharedGroup != nil && m.Status.SharedGroup.State == "Active" {
+			// A released Active member does not hold the slot through the
+			// cooldown: its job is over, so keeping the card empty protects
+			// nothing. While it is still Ready it stays leader through the
+			// Ready preference below until its pod is gone.
+			if m.Status.SharedGroup != nil && m.Status.SharedGroup.State == "Active" && !modelReleased(m, now) {
 				return m
 			}
 		}

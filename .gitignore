@@ -87,3 +87,13 @@ docs/roadmap-reconciliation-*.md
 # deploy/tasks/*). Build artifact — never committed.
 __pycache__/
 *.pyc
+
+# Planning notes under .loom/ stay out of the repository (2026-11-16).
+# Files that tooling reads stay tracked.
+.loom/**/*.md
+.loom/**/*.txt
+.loom/**/*.html
+.loom/**/*.log
+.loom/**/*.csv
+!.loom/00-index.md
+!.loom/60-validation-matrix.md

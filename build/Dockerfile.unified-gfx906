@@ -27,9 +27,9 @@
 #     mixa3607/pytorch-gfx906:v2.9.0-rocm-6.3.3 \
 #     python3 -c "import torch; x = torch.randn(1024, device='cuda'); print('OK:', x.mean())"
 #
-# Build:
-#   docker --context 7900xtx build -f build/Dockerfile.unified-gfx906 \
-#     -t registry.harbor.lan/flexinfer/runtime:unified-gfx906 .
+# Build and push (cluster BuildKit):
+#   cluster-buildkit build -f build/Dockerfile.unified-gfx906 \
+#     -t registry.harbor.lan/flexinfer/runtime:unified-gfx906 --push .
 
 ARG PYTORCH_GFX906_TAG=v2.9.0-rocm-6.3.3
 

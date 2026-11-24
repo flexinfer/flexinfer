@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/flexinfer/flexinfer/pkg/observability"
 	pkgrt "github.com/flexinfer/flexinfer/pkg/runtime"
@@ -277,10 +278,14 @@ type RuntimeModelStatus struct {
 	// it loads; empty before a recognised line or from older runtime images.
 	LoadingSubstage string `json:"loadingSubstage,omitempty"`
 	LoadingMessage  string `json:"loadingMessage,omitempty"`
-	// KVCacheTokens and KVMaxConcurrency are the vLLM boot profile; nil/empty
-	// until the backend printed both lines.
+	// KVCacheTokens and KVMaxConcurrency are the vLLM boot profile, each
+	// nil/empty until the backend printed its line. Runtime images before
+	// 2026-11-19 report both or neither.
 	KVCacheTokens    *int64 `json:"kvCacheTokens,omitempty"`
 	KVMaxConcurrency string `json:"kvMaxConcurrency,omitempty"`
+	// LoadedAt is when the runtime started the running instance; zero from
+	// runtimes that do not report it.
+	LoadedAt time.Time `json:"loadedAt,omitempty"`
 }
 
 type RuntimeStatusResponse struct {

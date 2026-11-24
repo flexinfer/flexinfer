@@ -96,6 +96,11 @@ type Config struct {
 	LaneBreakerCooldown    time.Duration
 	LaneBreakerMaxCooldown time.Duration
 	LaneFirstByteBudget    time.Duration
+	// PreemptedWait bounds how long a request without Prefer: wait waits in
+	// the cold-start queue of a shared-GPU lane a higher-priority peer holds
+	// the card against (preempted_wait.go). Zero means defaultPreemptedWait;
+	// the flexinfer.ai/preempted-wait annotation overrides it per lane.
+	PreemptedWait time.Duration
 
 	Namespace                        string
 	Client                           client.Client
@@ -175,6 +180,9 @@ func (c Config) Validate() error {
 	if c.LaneBreakerThreshold < 0 || c.LaneBreakerCooldown < 0 || c.LaneBreakerMaxCooldown < 0 || c.LaneFirstByteBudget < 0 {
 		errs = append(errs, fmt.Errorf("lane breaker settings must be nonnegative"))
 	}
+	if c.PreemptedWait < 0 {
+		errs = append(errs, fmt.Errorf("FLEXINFER_PROXY_PREEMPTED_WAIT must be >= 0 (got %s)", c.PreemptedWait))
+	}
 	if c.LaneBreakerMaxCooldown > 0 && c.LaneBreakerCooldown > c.LaneBreakerMaxCooldown {
 		errs = append(errs, fmt.Errorf("lane breaker cooldown exceeds maximum"))
 	}
@@ -249,6 +257,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		LaneBreakerCooldown:              envutil.DurationOrDefault("FLEXINFER_PROXY_LANE_BREAKER_COOLDOWN", time.Minute),
 		LaneBreakerMaxCooldown:           envutil.DurationOrDefault("FLEXINFER_PROXY_LANE_BREAKER_MAX_COOLDOWN", 10*time.Minute),
 		LaneFirstByteBudget:              envutil.DurationOrDefault("FLEXINFER_PROXY_LANE_FIRST_BYTE_BUDGET", 120*time.Second),
+		PreemptedWait:                    envutil.DurationOrDefault("FLEXINFER_PROXY_PREEMPTED_WAIT", defaultPreemptedWait),
 		Namespace:                        namespace,
 		Client:                           k8sClient,
 		MaxQueueSize:                     envutil.IntOrDefault("PROXY_MAX_QUEUE_SIZE", 100),
@@ -335,6 +344,11 @@ type Proxy struct {
 	// queue retries a refused dial while kube-proxy programs the new endpoint.
 	// Zero means defaultColdStartDialWindow; overridable in tests.
 	coldStartDialWindow time.Duration
+
+	// preemptedWaitTimer, when set, replaces the real timer of the preempted
+	// wait in handleColdStart: it receives the bound and returns the channel
+	// that fires it. Nil outside tests.
+	preemptedWaitTimer func(time.Duration) <-chan time.Time
 
 	// Routing for multi-replica models
 	router             *routing.Router
@@ -717,6 +731,10 @@ func (p *Proxy) newServeMux() *http.ServeMux {
 	mux.HandleFunc("GET /v1/jobs/{id}", p.handleGetJob)
 	mux.HandleFunc("GET /v1/jobs/{id}/content", p.handleJobContent)
 	mux.HandleFunc("POST /v1/jobs/{id}/cancel", p.handleCancelJob)
+	mux.HandleFunc("POST /v1/videos", p.handleCreateVideo)
+	mux.HandleFunc("GET /v1/videos/{id}", p.handleGetVideo)
+	mux.HandleFunc("GET /v1/videos/{id}/content", p.handleVideoContent)
+	mux.HandleFunc("DELETE /v1/videos/{id}", p.handleDeleteVideo)
 	mux.HandleFunc("/debug/config", p.handleDebugConfig)
 	mux.HandleFunc("/diarize", p.handleDiarize)
 	mux.HandleFunc("/v1/audio/speech", p.handleSpeech)
@@ -983,6 +1001,14 @@ func (p *Proxy) handleRequest(w http.ResponseWriter, r *http.Request) {
 		// state is not consulted: a lane that is starting has not answered yet.
 		p.prepareLane(lookupName, m.Annotations)
 		if err := p.handleColdStart(ctx, w, r, lookupName, start); err != nil {
+			var refused *preemptedRefusal
+			if stderrors.As(err, &refused) {
+				// An answer the lane's state calls for, not a proxy fault:
+				// kept out of the "error" count the HighErrorRate alert reads.
+				slog.Info("cold start refused: lane is preempted", "model", lookupName, "holder", refused.holder, "waited", refused.waited.String())
+				requestsTotal.WithLabelValues(modelName, "preempted").Inc()
+				return
+			}
 			slog.Error("cold start failed", "model", lookupName, "error", err)
 			requestsTotal.WithLabelValues(modelName, "error").Inc()
 		}
@@ -1092,6 +1118,7 @@ type debugConfigView struct {
 	LaneBreakerCooldown          string  `json:"laneBreakerCooldown"`
 	LaneBreakerMaxCooldown       string  `json:"laneBreakerMaxCooldown"`
 	LaneFirstByteBudget          string  `json:"laneFirstByteBudget"`
+	PreemptedWait                string  `json:"preemptedWait"`
 	MaxQueueSize                 int     `json:"maxQueueSize"`
 	QueueTimeout                 string  `json:"queueTimeout"`
 	ColdStartTimeout             string  `json:"coldStartTimeout"`
@@ -1142,6 +1169,7 @@ func newDebugConfigView(cfg Config) debugConfigView {
 		LaneBreakerCooldown:          cfg.LaneBreakerCooldown.String(),
 		LaneBreakerMaxCooldown:       cfg.LaneBreakerMaxCooldown.String(),
 		LaneFirstByteBudget:          cfg.LaneFirstByteBudget.String(),
+		PreemptedWait:                cfg.PreemptedWait.String(),
 		BackoffEnabled:               cfg.BackoffEnabled,
 		BackoffMaxRetries:            cfg.BackoffMaxRetries,
 		BackoffInitialWait:           cfg.BackoffInitialWait.String(),

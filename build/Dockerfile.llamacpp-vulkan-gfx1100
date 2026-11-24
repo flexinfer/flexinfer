@@ -10,9 +10,9 @@
 # -updates) and shaderc 2026.1 (glslc). A Model runs it with
 # `config.device: Vulkan0`; the AMD device plugin mounts /dev/dri.
 #
-# Build command (on the GPU builder):
-#   docker --context 7900xtx build -f build/Dockerfile.llamacpp-vulkan-gfx1100 \
-#     -t registry.harbor.lan/library/llamacpp:vulkan-radv-b11847 build/
+# Build and push (cluster BuildKit; the build needs no GPU):
+#   cluster-buildkit build -f build/Dockerfile.llamacpp-vulkan-gfx1100 \
+#     -t registry.harbor.lan/library/llamacpp:vulkan-radv-b11847 --push build/
 
 ARG UBUNTU_VERSION=26.04
 FROM ubuntu:${UBUNTU_VERSION} AS builder
@@ -37,10 +37,14 @@ WORKDIR /opt/src
 RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 
 WORKDIR /opt/src/llama.cpp
+# LLAMA_USE_PREBUILT_UI=OFF: no web UI in this image. Left ON, a --depth 1
+# clone (build number 1) asks Hugging Face for UI bundle `b1`, falls back to
+# `latest`, and fails when that bundle no longer matches the pinned tag.
 RUN cmake -B build -G Ninja \
     -DGGML_VULKAN=ON \
     -DGGML_NATIVE=OFF \
     -DLLAMA_BUILD_TESTS=OFF \
+    -DLLAMA_USE_PREBUILT_UI=OFF \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -j$(nproc)
 

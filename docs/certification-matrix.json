@@ -99,8 +99,7 @@
         "qwen35-9b-ablit-rp",
         "qwen36-27b-autoround-workhorse",
         "qwen36-27b-fable-gptq",
-        "qwen36-35b-mtp-uncensored-5930k",
-        "qwen38-27b-autoround-workhorse"
+        "qwen36-35b-mtp-uncensored-5930k"
       ]
     },
     {
@@ -209,13 +208,13 @@
       "support_level": "supported",
       "backend": "diffusers",
       "gpu_class": "gfx1100",
-      "decision": "fail",
+      "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-wan-decode-ab-v032-fix2-2026-11-06",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23",
       "validation_rows": [
-        "gfx1100-wan-decode-ab-v032-fix2-2026-11-06"
+        "gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23"
       ],
-      "date": "2026-11-06",
+      "date": "2026-11-23",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -272,13 +271,13 @@
       "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
-      "decision": "conditional",
+      "decision": "fail",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#xtx-s7-embed-host-2026-11-05",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
       "validation_rows": [
-        "xtx-s7-embed-host-2026-11-05"
+        "gfx1100-5930k-workhorse-4-seats-2026-11-23"
       ],
-      "date": "2026-11-05",
+      "date": "2026-11-23",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -1354,15 +1353,19 @@
       ],
       "model": "qwen38-27b-autoround-workhorse",
       "modality": "chat",
-      "decision": "promote",
+      "decision": "fail",
       "evidenced": true,
-      "evidence": "deploy/models/qwen38-27b-autoround-workhorse.yaml#flexinfer.ai/promotion-evidence",
-      "evidence_note": "canaries qwen38-27b-v032-s3-attn-canary (S3) and S3b on b06b06fe, 2026-10-26: segmented + fp16 + MTP K=2 at 32K decode 71.8/66.5/66.1 tok/s at 512/2K/16K vs TRITON+fp8 40.8/40.2/34.3, pos0 acceptance 0.81, warm TTFT 0.234/0.419/1.026 s at 256/512/1124 vs this lane's 0.237/0.436/1.088, coherent probes, parity hash 8174a49e, KV pool 52,932 tok (1.62x) @32K",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
       "validation_rows": [
+        "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
+        "gfx1100-5930k-workhorse-dot2-2026-11-23",
+        "gfx1100-5930k-workhorse-4-seats-2026-11-23",
+        "gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
+        "gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
         "xtx-workhorse-v033-promotion-2026-11-05",
         "workhorse-vllm-v032-2026-10-25"
       ],
-      "date": "2026-10-26",
+      "date": "2026-11-23",
       "source": "deploy/models/qwen38-27b-autoround-workhorse.yaml"
     },
     {
@@ -1379,8 +1382,10 @@
       "canary": true,
       "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#xtx-pcie-soak-2026-11-03",
+      "evidence": "deploy/models/qwen38-27b-xtx-warm-canary.yaml#flexinfer.ai/promotion-evidence",
+      "evidence_note": "canary qwen38-27b-128k-canary 2026-11-21 (row xtx-128k-fp8-segmented-s7-2026-11-21): 51afd0d3 vLLM 0.33, fp8 segmented + embed host + MTP K=2 at 131072, pool 159,599 tok (1.22x), decode 59.4/46.7/18.7 tok/s at 2K/16K/120K, cold TTFT 360 s at 119.5K, needle 1/1 33K-127K, 5/5 + depths 0/50/100 at 127K, pos0 0.81, 25-min soak clean",
       "validation_rows": [
+        "gfx1100-xtx-128k-dot2-2026-11-23",
         "gfx1100-xtx-inpod-swap-2026-11-01",
         "xtx-pcie-soak-2026-11-02",
         "xtx-pcie-soak-2026-11-03",
@@ -1394,7 +1399,7 @@
         "xtx-pcie-soak-2026-10-21",
         "gfx1100-native-w4a16-2026-09-13"
       ],
-      "date": "2026-11-03",
+      "date": "2026-11-21",
       "source": "deploy/models/qwen38-27b-xtx-warm-canary.yaml"
     },
     {
@@ -1834,6 +1839,278 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "pending",
+      "title": "qwen38-27b-autoround-workhorse lowers longPrefillTokenThreshold from 1664 to 416, the follow-up to the failed 4-seat row. Written 2026-11-24, before any roll or measurement. Why: while a long prompt…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
+      "date": "2026-11-24",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-5930k-workhorse-dot2-2026-11-23",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "pending",
+      "title": "the 5930k workhorse qwen38-27b-autoround-workhorse moves to runtime@1a2dd85c with FLEXINFER_RDNA3_W4A16=dot2 at its 64K fp16 posture (owner decision 2026-11-23, step 2 of 2). Written before the roll.…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-dot2-2026-11-23",
+      "date": "2026-11-23",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-128k-dot2-2026-11-23",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "the XTX 128K lane qwen38-27b-xtx-warm-canary moves to runtime@1a2dd85c with FLEXINFER_RDNA3_W4A16=dot2 (owner decision 2026-11-23, written before the roll). The first lane of the dot2 rollout; the…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-dot2-2026-11-23",
+      "date": "2026-11-23",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-5930k-workhorse-4-seats-2026-11-23",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "fail",
+      "title": "qwen38-27b-autoround-workhorse goes from maxNumSeqs 2 to 4 (optimization #1, owner 2026-11-23), written before the roll. Why: on two slots one long prompt plus one other request fill the lane. KT-QOS…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
+      "date": "2026-11-23",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pass",
+      "title": "owner-window step D5, VACE re-gate on row-set repeat floors: the XTX Wan 2.1 VACE 1.3B image-to-video lane in-pod on runtime c54cad12 (!1408) with the transformer compiled, the exact-shape warmup…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23",
+      "date": "2026-11-23",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "fail",
+      "title": "qwen38-27b-autoround-workhorse moves from 64K fp16 to 131072 on the XTX 128K lane's recipe (fp8 KV via FLEXINFER_SEGMENTED_FP8_GFX11=1, embed host, MTP K=2, segmented), owner decision 2026-11-22…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
+      "date": "2026-11-22",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "pass",
+      "title": "qwen38-27b-autoround-workhorse moves to vLLM 0.33 + S7 embed host at 64K with fp16 KV kept (owner decision 2026-11-22). The rules were written before the roll and are checked live after it. The…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-v033-s7-64k-2026-11-22",
+      "date": "2026-11-22",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-wan-vace-gate-2026-11-22",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "owner-window step D5 (D1 step 3, lane 4 of 5): the XTX Wan 2.1 VACE 1.3B image-to-video lane served in-pod by the 7900 XTX runtime (Draft !1238, refreshed 2026-11-22 at b25fbc27). The lane is not…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-vace-gate-2026-11-22",
+      "date": "2026-11-22",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-wan-vace-warmup-gate-2026-11-22",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "skip",
+      "title": "owner-window step D5, VACE re-gate: the XTX Wan 2.1 VACE 1.3B image-to-video lane in-pod on the XTX runtime overlay that carries !1399 (pinned by Draft !1390 once repinned), with the transformer…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-vace-warmup-gate-2026-11-22",
+      "date": "2026-11-22",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-stable-audio-gate-2026-11-22",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pass",
+      "title": "owner-window step D5 (D1 step 3, lane 5 of 5): the XTX Stable Audio Open 1.0 lane served in-pod by the 7900 XTX runtime (Draft !1239, refreshed 2026-11-22 at a55a0329). The lane is not named here, as…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-stable-audio-gate-2026-11-22",
+      "date": "2026-11-22",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "xtx-128k-fp8-segmented-s7-2026-11-21",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pass",
+      "title": "a 128K lane for the Qwen3.8-27B workhorse model, written 2026-11-21 ~16:10Z before any run. The owner chose a split-lane design: the always-on 5930k workhorse keeps its fast 32K posture, and the XTX…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#xtx-128k-fp8-segmented-s7-2026-11-21",
+      "date": "2026-11-21",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "owner-window step D5 (D1 step 3, lane 3 of 5): the XTX Wan 2.1 T2V 1.3B lane served in-pod by the 7900 XTX runtime with the allocator pinned (Draft !1237, refreshed 2026-11-21 at f16dc2f8). The lane…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-t2v-gate-2026-11-21",
+      "date": "2026-11-21",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-wan-t2v-rocblas-gate-2026-11-21",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "owner-window step D5 re-gate: the XTX Wan 2.1 T2V 1.3B lane in-pod (live since !1237) with config.env TORCH_BLAS_PREFER_HIPBLASLT=0 added. The lane is not named here, as in row…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-t2v-rocblas-gate-2026-11-21",
+      "date": "2026-11-21",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-wan-t2v-eager-gate-2026-11-21",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "owner-window step D5, second re-gate: the XTX Wan 2.1 T2V 1.3B lane in-pod with rocBLAS pinned (!1373) and config.env COMPILE_MODE=none added, so the transformer runs eagerly in-pod. The lane is not…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-t2v-eager-gate-2026-11-21",
+      "date": "2026-11-21",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-wan-t2v-warmup-gate-2026-11-21",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pass",
+      "title": "owner-window step D5, third re-gate: the XTX Wan 2.1 T2V 1.3B lane in-pod on runtime 12f30206 (!1380) with the transformer compiled, rocBLAS pinned and an exact-shape warmup at load (!1384). The lane…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-wan-t2v-warmup-gate-2026-11-21",
+      "date": "2026-11-21",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-qwen-image-gate-2026-11-19",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "diffusers",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pass",
+      "title": "owner-window step D3: the XTX Qwen-Image 2.1 lane served in-pod by the 7900 XTX runtime (!1236; the lane is not named here because this row fails the in-pod launch only, and the dedicated lane's…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-qwen-image-gate-2026-11-19",
+      "date": "2026-11-19",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-inpod-swap-2026-11-19",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "fail",
+      "title": "KT-SWAP in-pod swap floor, fallback arm of row gfx1100-xtx-inpod-swap-2026-11-01 (the XTX warm lane alone, 5 reloads): Qwen-Image failed its in-pod gate twice that day (row…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-inpod-swap-2026-11-19",
+      "date": "2026-11-19",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "xtx-q2-segmented-live-kv-2026-11-06",
       "kind": "validation",
       "support_level": "experimental",
@@ -1887,9 +2164,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "conditional",
       "title": "GPTQ-RDNA3 piece 1: the split-K ticket fill of _rocm_C::gptq_gemm_rdna3. S4 (row gfx1100-s4-step0-decode-anatomy-2026-11-05) found the fp16 W4A16 GEMM allocates its arrival tickets with at::zeros on…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-gptq-rdna3-tickets-2026-11-06",
       "date": "2026-11-06",
       "source": ".loom/60-validation-matrix.md"
@@ -1903,9 +2180,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "conditional",
       "title": "GPTQ-RDNA3 piece 2: why the RDNA3 W4A16 GEMMs read at only 63–73 % of the 934 GB/s ceiling (S4: 260 M = 3 calls per step move ~12.83 GB in 18.83 ms of kernel time = ~681 GB/s, 62 % of decode-step…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-gptq-rdna3-read-efficiency-2026-11-06",
       "date": "2026-11-06",
       "source": ".loom/60-validation-matrix.md"
@@ -2352,9 +2629,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "pass",
       "title": "KT-JOBS, feature D2 (scale-to-zero contract) of .loom/10-research-gfx1100-gfx906-next-differentiators-2026-10-31.md §6.2: can async jobs take the 7900xtx flex card from the warm lane only while they…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#proxy-async-jobs-2026-10-31",
       "date": "2026-10-31",
       "source": ".loom/60-validation-matrix.md"

@@ -22,16 +22,19 @@ import (
 	"fmt"
 	"net"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apiequality "k8s.io/apimachinery/pkg/api/equality"
 	k8serrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	aiv1alpha2 "github.com/flexinfer/flexinfer/api/v1alpha2"
@@ -181,15 +184,95 @@ func (r *ModelReconciler) maybeReloadRuntimeModel(
 	return result, handled, err
 }
 
-// maybeRecheckRuntimeKVPool is the in-pod counterpart of observeReadyKVPool.
-// It records the vLLM KV-cache profile the runtime read from the instance's
-// boot output in status.kvPool and the KVPoolShort condition. When the pool is
-// short (profiled concurrency below 0.75 x maxNumSeqs, see
-// updateKVPoolCondition), it reloads the instance in the runtime pod once. The
-// budget, kept in kvPool.recheckedReplicaSets as "runtime/<pod UID>/<spec
-// hash>", outlives the recheck reload itself and resets when the spec or the
-// runtime pod changes, the way a ReplicaSet UID does on the Deployment path.
-// It is persisted before the reload, so a failed write cannot repeat it.
+// runtimeKVMaxConcurrency returns the max concurrency for the runtime's KV
+// profile: the value vLLM printed when the runtime has it, otherwise tokens /
+// maxModelLen with two decimals, as vLLM computes it for full-attention models.
+// derived reports the second case. It is empty when neither is known
+// (no token count, or no maxModelLen in the spec).
+func runtimeKVMaxConcurrency(model *aiv1alpha2.Model, status *RuntimeModelStatus) (concurrency string, derived bool) {
+	if status.KVMaxConcurrency != "" {
+		return status.KVMaxConcurrency, false
+	}
+	if status.KVCacheTokens == nil || *status.KVCacheTokens <= 0 {
+		return "", false
+	}
+	maxLen := int64(model.Spec.ConfigInt("maxModelLen", 0))
+	// The KV-cache reconfigure path launches with a reduced maxModelLen.
+	if kv := model.Status.KVCache; kv != nil && kv.Reconfigured && kv.ReconfiguredMaxModelLen != nil {
+		maxLen = int64(*kv.ReconfiguredMaxModelLen)
+	}
+	if maxLen <= 0 {
+		return "", false
+	}
+	return strconv.FormatFloat(float64(*status.KVCacheTokens)/float64(maxLen), 'f', 2, 64), true
+}
+
+// observeRuntimeKVPool makes status.kvPool describe the instance the runtime
+// pod serves, the in-pod counterpart of the pool observation in
+// observeReadyKVPool. It replaces the pool when it names another pod (a
+// Deployment pod the lane ran on before, or an earlier runtime pod), when the
+// profile changed, or when it was observed before the running instance
+// started. A runtime that has no profile for the instance yet still replaces
+// a pool from another pod, with the tokens and concurrency left empty, the
+// way the Deployment path records a pod whose log has no profile. The recheck
+// budget in recheckedReplicaSets carries over. It returns the pool, never nil.
+func observeRuntimeKVPool(model *aiv1alpha2.Model, endpoint *RuntimeEndpoint, status *RuntimeModelStatus) *aiv1alpha2.KVPoolStatus {
+	var tokens *int64
+	if status.KVCacheTokens != nil && *status.KVCacheTokens > 0 {
+		n := *status.KVCacheTokens
+		tokens = &n
+	}
+	concurrency, _ := runtimeKVMaxConcurrency(model, status)
+
+	pool := model.Status.KVPool
+	stale := pool == nil || pool.PodName != endpoint.PodName || pool.PodUID != endpoint.PodUID ||
+		!ptrInt64Equal(pool.KVCacheTokens, tokens) || pool.MaxConcurrency != concurrency
+	// metav1.Time keeps whole seconds, so compare at that precision; the
+	// observation of a fresh load comes minutes after the load started.
+	// LoadedAt is the runtime node's clock: one ahead of the controller's
+	// would make every pass look newer than the observation, so a LoadedAt
+	// in the controller's future is ignored rather than rewriting status on
+	// each pass.
+	loadedAt := status.LoadedAt.Truncate(time.Second)
+	if !stale && !loadedAt.IsZero() && !loadedAt.After(time.Now()) && pool.ObservedAt.Time.Before(loadedAt) {
+		stale = true
+	}
+	if !stale {
+		return pool
+	}
+	var marker []string
+	if pool != nil {
+		marker = pool.RecheckedReplicaSets
+	}
+	pool = &aiv1alpha2.KVPoolStatus{
+		KVCacheTokens: tokens, MaxConcurrency: concurrency,
+		PodName: endpoint.PodName, PodUID: endpoint.PodUID, ObservedAt: metav1.Now(),
+		RecheckedReplicaSets: marker,
+	}
+	model.Status.KVPool = pool
+	return pool
+}
+
+func ptrInt64Equal(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// maybeRecheckRuntimeKVPool records the vLLM KV-cache profile of the instance
+// in the runtime pod in status.kvPool (observeRuntimeKVPool) and the
+// KVPoolShort condition. When the pool is short (concurrency below 0.75 x
+// maxNumSeqs, see updateKVPoolCondition) and vLLM printed that concurrency
+// itself, it reloads the instance in the runtime pod once, as the Deployment
+// path restarts the pod once. A concurrency the controller derived from
+// tokens / maxModelLen sets the condition but never triggers a reload: it
+// can understate the pool of a sliding-window or hybrid model, and the
+// Deployment path only acts on the printed value. The budget, kept in
+// kvPool.recheckedReplicaSets as "runtime/<pod UID>/<spec hash>", outlives
+// the recheck reload itself and resets when the spec or the runtime pod
+// changes, the way a ReplicaSet UID does on the Deployment path. It is
+// persisted before the reload, so a failed write cannot repeat it.
 func (r *ModelReconciler) maybeRecheckRuntimeKVPool(
 	ctx context.Context,
 	model *aiv1alpha2.Model,
@@ -199,27 +282,17 @@ func (r *ModelReconciler) maybeRecheckRuntimeKVPool(
 	endpoint *RuntimeEndpoint,
 	status *RuntimeModelStatus,
 ) (ctrl.Result, bool, error) {
-	if model.Spec.Backend != backend.NameVLLM || !model.Spec.ConfigBool("kvPoolRecheck", true) ||
-		status == nil || status.KVCacheTokens == nil || *status.KVCacheTokens <= 0 || status.KVMaxConcurrency == "" {
+	if model.Spec.Backend != backend.NameVLLM || !model.Spec.ConfigBool("kvPoolRecheck", true) || status == nil {
 		return ctrl.Result{}, false, nil
 	}
-	pool := model.Status.KVPool
-	if pool == nil || pool.PodName != endpoint.PodName || pool.PodUID != endpoint.PodUID || pool.KVCacheTokens == nil ||
-		*pool.KVCacheTokens != *status.KVCacheTokens || pool.MaxConcurrency != status.KVMaxConcurrency {
-		var marker []string
-		if pool != nil {
-			marker = pool.RecheckedReplicaSets
-		}
-		tokens := *status.KVCacheTokens
-		pool = &aiv1alpha2.KVPoolStatus{
-			KVCacheTokens: &tokens, MaxConcurrency: status.KVMaxConcurrency,
-			PodName: endpoint.PodName, PodUID: endpoint.PodUID, ObservedAt: metav1.Now(),
-			RecheckedReplicaSets: marker,
-		}
-		model.Status.KVPool = pool
+	pool := observeRuntimeKVPool(model, endpoint, status)
+	if pool.KVCacheTokens != nil {
+		metrics.ModelKVCacheTokens.WithLabelValues(model.Name).Set(float64(*pool.KVCacheTokens))
+	} else {
+		metrics.ModelKVCacheTokens.DeleteLabelValues(model.Name)
 	}
-	metrics.ModelKVCacheTokens.WithLabelValues(model.Name).Set(float64(*pool.KVCacheTokens))
-	if !updateKVPoolCondition(model) || endpoint.PodUID == "" || status.SpecHash == "" || !runtimeReloadAllowed(model) {
+	if !updateKVPoolCondition(model) || status.KVMaxConcurrency == "" ||
+		endpoint.PodUID == "" || status.SpecHash == "" || !runtimeReloadAllowed(model) {
 		return ctrl.Result{}, false, nil
 	}
 	budget := "runtime/" + endpoint.PodUID + "/" + status.SpecHash
@@ -771,6 +844,22 @@ func (r *ModelReconciler) ensureRuntimeNetworking(ctx context.Context, model *ai
 	return r.removeRuntimeServiceSelector(ctx, model)
 }
 
+// removeRuntimeServiceSelector makes the model's Service selectorless, so the
+// Endpoints the runtime path writes are its only backends, and prunes the
+// EndpointSlices Kubernetes built from the selector.
+//
+// The prune is what makes a live Deployment → in-pod switch safe. The
+// endpointslice controller ignores a Service once its selector is gone: it
+// neither updates nor deletes the slices it made, so the Deployment pod's
+// address stays "ready" in one of them after the pod is deleted, beside the
+// slice mirrored from the runtime Endpoints. kube-proxy then sends part of the
+// traffic to a dead IP (the 502s of the 2026-11-18 warm-lane switch).
+//
+// The removal time is recorded on the Service. The prune repeats for
+// staleSlicePruneWindow after it, because a slice sync that was already in
+// flight when the selector went can still write one; after that the Service
+// is left alone. A selectorless Service without the record (one switched by
+// an older controller) gets the same treatment once.
 func (r *ModelReconciler) removeRuntimeServiceSelector(ctx context.Context, model *aiv1alpha2.Model) error {
 	log := log.FromContext(ctx)
 
@@ -778,16 +867,52 @@ func (r *ModelReconciler) removeRuntimeServiceSelector(ctx context.Context, mode
 	if err := r.Get(ctx, types.NamespacedName{Name: model.Name, Namespace: model.Namespace}, svc); err != nil {
 		return fmt.Errorf("getting service for runtime management: %w", err)
 	}
-	if svc.Spec.Selector == nil {
+
+	now := time.Now()
+	removedAt, recorded := selectorRemovedAt(svc)
+	if svc.Spec.Selector != nil || !recorded {
+		hadSelector := svc.Spec.Selector != nil
+		svc.Spec.Selector = nil
+		if svc.Annotations == nil {
+			svc.Annotations = map[string]string{}
+		}
+		svc.Annotations[AnnotationSelectorRemovedAt] = now.UTC().Format(time.RFC3339)
+		if err := r.Update(ctx, svc); err != nil {
+			return fmt.Errorf("removing selector from service: %w", err)
+		}
+		if hadSelector {
+			log.Info("Removed selector from Service for runtime management", "service", svc.Name)
+		}
+	} else if now.Sub(removedAt) > staleSlicePruneWindow {
 		return nil
 	}
 
-	svc.Spec.Selector = nil
-	if err := r.Update(ctx, svc); err != nil {
-		return fmt.Errorf("removing selector from service: %w", err)
-	}
-	log.Info("Removed selector from Service for runtime management", "service", svc.Name)
+	r.pruneSelectorEndpointSlices(ctx, svc)
 	return nil
+}
+
+// selectorRemovedAt reads when the runtime path made svc selectorless.
+func selectorRemovedAt(svc *corev1.Service) (time.Time, bool) {
+	at, err := time.Parse(time.RFC3339, svc.Annotations[AnnotationSelectorRemovedAt])
+	return at, err == nil
+}
+
+// pruneSelectorEndpointSlices deletes the EndpointSlices the endpointslice
+// controller built for svc while it had a selector. The slices mirrored from
+// the runtime Endpoints carry another managed-by value and are kept. A failure
+// is logged, not returned: the lane still serves through the mirrored slice,
+// and the caller retries inside the prune window.
+func (r *ModelReconciler) pruneSelectorEndpointSlices(ctx context.Context, svc *corev1.Service) {
+	err := r.DeleteAllOf(ctx, &discoveryv1.EndpointSlice{},
+		client.InNamespace(svc.Namespace),
+		client.MatchingLabels{
+			discoveryv1.LabelServiceName: svc.Name,
+			discoveryv1.LabelManagedBy:   endpointSliceControllerName,
+		})
+	if err != nil {
+		log.FromContext(ctx).Error(err, "Failed to prune selector-built EndpointSlices; a deleted pod may stay routable",
+			"service", svc.Name)
+	}
 }
 
 func (r *ModelReconciler) deleteLegacyDeploymentForRuntime(ctx context.Context, model *aiv1alpha2.Model) error {

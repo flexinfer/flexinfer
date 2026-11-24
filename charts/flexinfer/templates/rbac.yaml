@@ -170,6 +170,11 @@ rules:
   - apiGroups: [""]
     resources: ["pods", "services", "endpoints", "persistentvolumeclaims", "configmaps", "events", "secrets"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # A runtime-served Model's Service is selectorless; the controller deletes
+  # the EndpointSlices its former selector left behind.
+  - apiGroups: ["discovery.k8s.io"]
+    resources: ["endpointslices"]
+    verbs: ["delete", "deletecollection"]
   - apiGroups: [""]
     resources: ["pods/log"]
     verbs: ["get"]

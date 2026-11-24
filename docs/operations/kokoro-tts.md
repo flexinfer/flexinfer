@@ -8,10 +8,10 @@ reachable through `flexinfer-proxy` at `POST /v1/audio/speech`.
 ## Architecture
 
 ```
-              ┌─/v1/audio/transcriptions─> Whisper Model CR   (gfx1100)  [ASR]
-ICC / client ─┼─/v1/chat/completions──────> gemma4-26b Model CR (gfx1100) [LLM]
-              ├─/v1/audio/speech──────────> Kokoro Deployment  (CPU, 7900xtx) [TTS]
-              └─/diarize──────────────────> pyannote Deployment (gfx906)  [diar]
+        ┌─/v1/audio/transcriptions─> Whisper Model CR   (gfx1100)  [ASR]
+client ─┼─/v1/chat/completions──────> gemma4-26b Model CR (gfx1100) [LLM]
+        ├─/v1/audio/speech──────────> Kokoro Deployment  (CPU, 7900xtx) [TTS]
+        └─/diarize──────────────────> pyannote Deployment (gfx906)  [diar]
 ```
 
 - **Service**: `kokoro-tts.flexinfer-system.svc:8880`

@@ -11,7 +11,7 @@
 # Parsed by build-runtime.sh via yq.
 
 registry: registry.harbor.lan/flexinfer
-go_version: "1.26.10"
+go_version: "1.26.11"
 # Default for profiles without their own llamacpp_version (today only
 # cuda-maxwell, whose CUDA 11.8 VMM-stub build is pinned here). gfx1100 and
 # gfx906 override it per profile below.

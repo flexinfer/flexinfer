@@ -1,9 +1,9 @@
 # llama.cpp Docker image for AMD gfx1100 (RX 7900 series, RDNA3)
 # Built from source with GGML_HIP=ON targeting gfx1100
 #
-# Build command (on the GPU builder):
-#   docker --context 7900xtx build -f build/Dockerfile.llamacpp-rocm-gfx1100 \
-#     -t registry.harbor.lan/library/llamacpp:rocm-gfx1100-b11847 .
+# Build and push (cluster BuildKit; the build needs no GPU):
+#   cluster-buildkit build -f build/Dockerfile.llamacpp-rocm-gfx1100 \
+#     -t registry.harbor.lan/library/llamacpp:rocm-gfx1100-b11847 --push .
 #
 # ROCm 7.2.3 is the userspace the fleet's vLLM 0.32 runtime already serves
 # from on both gfx1100 hosts (S1, 2026-10-24: 5930k kernel 6.14.9, 7900xtx
@@ -42,6 +42,9 @@ RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org
 # GGML_NATIVE=OFF: no -march=native, the 5930k host is a Haswell-E Xeon, not
 # the Zen3 build node. Tests are skipped (tools incl. llama-server,
 # llama-bench and llama-cli are what the image ships).
+# LLAMA_USE_PREBUILT_UI=OFF: no web UI in this image. Left ON, a --depth 1
+# clone (build number 1) asks Hugging Face for UI bundle `b1`, falls back to
+# `latest`, and fails when that bundle no longer matches the pinned tag.
 WORKDIR /opt/src/llama.cpp
 RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
     cmake -B build -G Ninja \
@@ -49,6 +52,7 @@ RUN HIPCXX="$(hipconfig -l)/clang" HIP_PATH="$(hipconfig -R)" \
     -DGGML_NATIVE=OFF \
     -DGPU_TARGETS=${GPU_TARGETS} \
     -DLLAMA_BUILD_TESTS=OFF \
+    -DLLAMA_USE_PREBUILT_UI=OFF \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -j$(nproc)
 

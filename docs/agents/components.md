@@ -60,9 +60,14 @@ assessed. A `pcie-link-down` or `device-io-error` verdict also makes the agent
 skip the vendor tools for the rest of that cycle, so it does not add more
 processes to the ones already stuck in state D.
 
-A degraded verdict is immediate; recovery needs three consecutive clean cycles
-(~90 s) so a half-answering card does not flap the scheduler. What happens
-downstream:
+A `pcie-link-down`, `device-io-error`, `gpu-missing` or `fallen-off-bus`
+verdict is immediate. `probe-timeout` degrades a healthy node only when it
+repeats on two consecutive cycles (~30 s): a single slow `rocm-smi` happens
+on a healthy card under host load (2026-11-20, `cblevins-7900xtx`, while a
+diffusers pod loaded and compiled on the CPU), and a wedged card times out on
+every cycle. On a node that is already degraded, any timeout keeps the
+verdict. Recovery needs three consecutive clean cycles (~90 s) so a
+half-answering card does not flap the scheduler. What happens downstream:
 
 - **Scheduler extender** `Filter` rejects the node (`GPU degraded (...)` in
   `FailedNodes`), whatever the stale `gpu-free-memory` annotation says.

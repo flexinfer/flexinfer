@@ -1,0 +1,1 @@
+k3s: the node agent is repinned to master `a541c524` (`sha256:ccabfae4…`, tag `20261120-220622`), which carries the probe-timeout streak fix (!1365). The Local cache inventory in the same build stays off. Rollback: `sha256:6b832f38…` (master `ac73e607`).

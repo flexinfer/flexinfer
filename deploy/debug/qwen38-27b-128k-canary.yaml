@@ -1,0 +1,167 @@
+# 128K canary for the split-lane workhorse design (owner decision 2026-11-21).
+#
+# Design: the always-on 5930k workhorse keeps its fast 32K posture for short
+# traffic (99.6 % of its requests have prompts <= 20K). The XTX warm lane
+# (qwen38-27b-xtx-warm-canary, same Qwen3.8-27B artifact) becomes the 128K
+# lane. The workhorse already replays prompts that overflow 32K to that lane
+# (flexinfer.ai/context-overflow-to), so raising the warm lane to 131072 also
+# extends the overflow route to 128K.
+#
+# Why this recipe. One 24 GB gfx1100 cannot hold 128K of fp16 KV for this
+# hybrid model: fp16 gives 13.3K tokens per GiB of KV (row
+# xtx-s7-embed-host-2026-11-05) and 131072 tokens need ~9.9 GiB, while the
+# XTX has 3.2 GiB (5.56 GiB with S7). fp8 KV on segmented attention (G3) gives
+# 23.3K tokens per GiB. G3 was killed for the 32K workhorse (decode 0.74x at
+# 16K against fp16 segmented), but against the warm lane's current posture
+# (TRITON_ATTN + fp8, no MTP: 40.8 / 40.2 / 34.3 tok/s at 512 / 2K / 16K) G3
+# reads 66.2 / - / 47.1 tok/s, so it is a decode upgrade for this lane. The
+# stacked S7 + G3 pool on the XTX is estimated, not measured, at ~127K tokens
+# (5.44 GiB x 23.3K), right at the edge of 131072: hence arm B.
+#
+# Row: .loom/60-validation-matrix.md `xtx-128k-fp8-segmented-s7-2026-11-21`
+# (pre-registered before any run; arms and pass/kill rules are there).
+#
+# Arms (sequenced through the flexinfer MCP update_model config merge patch
+# after one operator apply; each patch restarts the Deployment):
+#   A0  this file as written: maxModelLen 65536, to read the pool without the
+#       boot failing if one 131072 request does not fit.
+#   A1  maxModelLen 131072 (only if A0's pool >= 131072).
+#   B   if A0's pool < 131072: cudagraphCaptureSizes [1,2,3,4,6] at 65536
+#       (decode batches here are at most 2 seqs x (1 + 2 MTP drafts) = 6
+#       tokens; S7 measured 1.15 GiB of CUDA graphs), then 131072 if it fits.
+#
+# Apply (operator, once): kubectl apply -f deploy/debug/qwen38-27b-128k-canary.yaml
+# Not in deploy/debug/kustomization.yaml on purpose: `apply -k` would recreate
+# unrelated debug Models.
+# Remove: flexinfer MCP delete_model qwen38-27b-128k-canary. The warm lane
+# (priority 300) comes back on its own. The Local cache dir
+# /var/lib/flexinfer/models/flexinfer-system/qwen38-27b-128k-canary (~18 GB,
+# XTX root) is retained by the current controller; remove it by hand after
+# the row is closed.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-128k-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/60-validation-matrix.md#xtx-128k-fp8-segmented-s7-2026-11-21"
+    flexinfer.ai/promotion-state: debug-canary-128k-fp8-segmented-s7
+    # A cold 120K prefill on this card is unmeasured (estimated 4-8 min); the
+    # canary is timed at its Service, but keep proxy-routed probes possible.
+    flexinfer.ai/lane-first-byte-budget: "1200s"
+spec:
+  backend: vllm
+  # The workhorse promotion candidate (Draft !1311): rocm-gfx1100-serving-
+  # v033-3e8ae3c2, Harbor pinned-51afd0d377f7. vLLM 0.33.0-rocm72, text
+  # plugin 0.12.0, plugin-common 0.5.0; its build verifier confirmed the
+  # embed-host patch and the segmented fp8 gate-lift names. Using the same
+  # digest means a pass here also carries to the 5930k later. Not resident on
+  # the XTX: the first boot pulls ~4.3 GiB beyond b06b06fe.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # The 0.33 parity canary's arm-B cache (2.8 GB): same image family,
+      # GPU and toolchain, so the fp16 segmented and GDN kernels are warm.
+      # The fp8 segmented autotune and the 64K/128K block-table widths
+      # compile fresh. Caches key on GPU, toolchain, kernel source and
+      # shapes, never on Model name, so sharing is safe.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-b-xtx
+      sizeLimit: 8Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    # Above the warm lane (300) so it takes the card; below the creative
+    # lanes (500) so a media render still wins. Same slot every XTX canary
+    # has used.
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 3h
+    # Cold fp8 segmented autotune: G3's first boot was killed once by the
+    # startup probe mid-autotune and resumed on the second boot.
+    coldStartTimeout: 45m
+  config:
+    command:
+      - bash
+      - -lc
+      - |
+        echo "128k-canary: embed_host=${FLEXINFER_EMBED_HOST:-} seg_fp8_gfx11=${FLEXINFER_SEGMENTED_FP8_GFX11:-} at $(date -u +%FT%TZ)"
+        exec vllm serve "$@" --jit-monitor-verbose
+      - vllm
+    env:
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+      # S7: the 2.37 GiB fp16 embed table in mapped host memory.
+      FLEXINFER_EMBED_HOST: "1"
+      # G3: lift vLLM's gfx12-only gate so fp8 KV runs on segmented attention.
+      FLEXINFER_SEGMENTED_FP8_GFX11: "1"
+    vllmVersion: "0.33.0"
+    cudagraphMetrics: true
+    kvPoolRecheck: false
+    dedicatedDeployment: true
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    warmPolicy: primary
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    # A0 reads the pool at 65536; A1 patches this to 131072.
+    maxModelLen: 65536
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    # Reserve by actual length: one 128K request plus a short one share the
+    # pool, and vLLM preempts only when two long requests collide.
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: fp8_e4m3
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-128k-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-128k-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
