@@ -1357,6 +1357,7 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
       "validation_rows": [
+        "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
         "gfx1100-5930k-workhorse-dot2-2026-11-23",
         "gfx1100-5930k-workhorse-4-seats-2026-11-23",
         "gfx1100-5930k-workhorse-128k-fp8-2026-11-22",
@@ -1836,6 +1837,22 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/embeddings.yaml"
+    },
+    {
+      "id": "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "pending",
+      "title": "qwen38-27b-autoround-workhorse lowers longPrefillTokenThreshold from 1664 to 416, the follow-up to the failed 4-seat row. Written 2026-11-24, before any roll or measurement. Why: while a long prompt…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
+      "date": "2026-11-24",
+      "source": ".loom/60-validation-matrix.md"
     },
     {
       "id": "gfx1100-5930k-workhorse-dot2-2026-11-23",
