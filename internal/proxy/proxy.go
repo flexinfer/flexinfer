@@ -151,6 +151,10 @@ type Config struct {
 	// set, POST /v1/audio/speech is reverse-proxied to it so the voice stack
 	// exposes ASR + diarization + TTS under one base URL. Empty → 503.
 	KokoroUpstream string
+	// A1111Model is the image lane (Model name, alias or service label) that
+	// the AUTOMATIC1111-style /sdapi/v1 routes render on when a client names
+	// no checkpoint (a1111.go). Empty → those routes return 503.
+	A1111Model string
 	// CodebaseAnswerUpstream is the base URL of the codebase-answer read-path
 	// sibling service. When set, POST /v1/rag is reverse-proxied to it so
 	// retrieval-augmented codebase Q&A is reachable through the proxy front
@@ -290,6 +294,7 @@ func ConfigFromEnv(k8sClient client.Client, namespace string) Config {
 		LabelGroupRouting:                os.Getenv("FLEXINFER_PROXY_LABEL_GROUP_ROUTING"),
 		PyannoteUpstream:                 os.Getenv("FLEXINFER_PYANNOTE_UPSTREAM"),
 		KokoroUpstream:                   os.Getenv("FLEXINFER_KOKORO_UPSTREAM"),
+		A1111Model:                       os.Getenv("FLEXINFER_A1111_MODEL"),
 		CodebaseAnswerUpstream:           os.Getenv("FLEXINFER_CODEBASE_ANSWER_UPSTREAM"),
 		PrometheusURL:                    os.Getenv("FLEXINFER_PROXY_PROMETHEUS_URL"),
 		QoSConfigPath:                    os.Getenv("FLEXINFER_PROXY_QOS_CONFIG"),
@@ -439,6 +444,13 @@ type Proxy struct {
 	// disables the /v1/audio/speech route (returns 503).
 	kokoroUpstream string
 
+	// a1111Model is the default image lane of the /sdapi/v1 routes; empty
+	// disables them (a1111.go).
+	a1111Model string
+	// a1111Dispatch serves the translated image request; nil means
+	// handleRequest. Tests replace it.
+	a1111Dispatch http.HandlerFunc
+
 	// codebaseAnswerUpstream is the base URL of the codebase-answer read-path
 	// sibling service; empty disables the /v1/rag route (returns 503).
 	codebaseAnswerUpstream string
@@ -528,6 +540,7 @@ func New(cfg Config) *Proxy {
 		labelGroupRouting:       canonicalLabelGroupRoutingMode(cfg.LabelGroupRouting),
 		pyannoteUpstream:        cfg.PyannoteUpstream,
 		kokoroUpstream:          cfg.KokoroUpstream,
+		a1111Model:              strings.TrimSpace(cfg.A1111Model),
 		codebaseAnswerUpstream:  cfg.CodebaseAnswerUpstream,
 		loadLatency:             newLoadLatencyCache(cfg.PrometheusURL, cfg.Namespace),
 		ctx:                     ctx,
@@ -739,6 +752,12 @@ func (p *Proxy) newServeMux() *http.ServeMux {
 	mux.HandleFunc("/diarize", p.handleDiarize)
 	mux.HandleFunc("/v1/audio/speech", p.handleSpeech)
 	mux.HandleFunc("/v1/rag", p.handleCodebaseAnswer)
+	mux.HandleFunc("GET /sdapi/v1/samplers", p.handleA1111Samplers)
+	mux.HandleFunc("GET /sdapi/v1/schedulers", p.handleA1111Schedulers)
+	mux.HandleFunc("GET /sdapi/v1/sd-models", p.handleA1111Models)
+	mux.HandleFunc("GET /sdapi/v1/options", p.handleA1111Options)
+	mux.HandleFunc("POST /sdapi/v1/txt2img", p.handleA1111Txt2Img)
+	mux.HandleFunc("POST /sdapi/v1/interrupt", p.handleA1111Interrupt)
 	mux.HandleFunc("/", p.handleRequest)
 	mux.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
