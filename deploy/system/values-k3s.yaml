@@ -883,6 +883,31 @@ imagePrewarm:
         # 2026-10-23); it is no longer in Harbor, so it can only be listed as a
         # comment without failing the runtime_pin_drift gate:
         #   registry.harbor.lan/flexinfer/runtime@sha256:f7d2e967c51487220e91285fc1c357a73dad04b62cd3279d23d6ae5f2705aef0
+        # 2026-11-24 TRIM (19 -> 11 entries). Rule: an image stays if something on
+        # this node runs it, if it is the documented rollback of something that
+        # does, or if the pin contract requires it. Eight entries met none of
+        # those. All eight are still in Harbor under their pinned-* tags (the
+        # 66af64f tag has none), and each shares its base with a kept image, so a
+        # re-pull is small. Distinct compressed layers held: 75.4 -> 71.2 GiB.
+        #   ad93ae72  vLLM 0.26 native-W4A16; warm-lane pin 10-22..10-24; 3.8 GiB re-pull
+        #   cd108c9e  off-CI 0.32; warm-lane pin 10-24..10-27; 1 MiB next to b06b06fe
+        #   ef28b7b0  D1 design target, never run here; 28 MiB; decertified
+        #   7ae8e92f  D1 target before the 11-03 retarget; 37 MiB; decertified
+        #   12f30206  first diffusers overlay, two pins back; 0 MiB; decertified
+        #   29378fe0  0.33 parity/SO/QoS canary image, superseded by 51afd0d3; 112 MiB
+        #   vllm@7ac257f3  whisper-large-v3-turbo here, idle since 2026-06-24; 139 MiB
+        #   diffusers:rocm-gfx1100-66af64f  shadowed values fallback; 140 MiB
+        # Kept as comments for the record:
+        #   registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
+        #   registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99130cc98c3a45bd6e09c89a3b26cb21193c858fab9a99573c7d90
+        #   registry.harbor.lan/flexinfer/runtime@sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2
+        #   registry.harbor.lan/flexinfer/runtime@sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250
+        #   registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
+        #   registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69
+        #   registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
+        #   registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
+        # 7bc680b4 (vLLM 0.23 Qwen3.5 text-MoE overlay) dropped 2026-11-05: its
+        # two lanes were retired (qwen35-35b-clean-gptq-workhorse{,-128k}).
         # 2026-11-21 (128K lane, !1383): the image the dedicated XTX warm lane
         # qwen38-27b-xtx-warm-canary runs at 131072 (rocm-gfx1100-serving-v033-
         # 3e8ae3c2, pinned-51afd0d377f7). Resident since the 128K canary pulled
@@ -894,21 +919,20 @@ imagePrewarm:
         # measured FLEXINFER_RDNA3_W4A16=dot2 at +10.7 % decode at 2K (rows
         # gfx1100-gptq-rdna3-*). Pulled ahead of the lane repins; 51afd0d3 above
         # stays as their rollback.
+        # 2026-11-24: the XTX lane went back to 51afd0d3 on 2026-11-23 (the card
+        # drops were hardware; dot2 was cleared, !1427). The 5930k workhorse runs
+        # this image. Kept here for the XTX lane's dot2 retry: 114 MiB next to
+        # 51afd0d3.
         - registry.harbor.lan/flexinfer/runtime@sha256:1a2dd85c9bcd17f75c80fe8ba8649e81cb96038ca247f2469e5167db799758c0
         # 2026-10-23 (issue #74 S1''): the master b8637f35 serving rebuild
         # (rocm-gfx1100-serving-b8637f35) this node's runtime DaemonSet runs
         # since !1116 (qualified, matrix row gfx1100-serving-2026-10-23).
+        # 2026-11-24: no longer this node's DaemonSet image (527e2714 took over on
+        # 2026-11-04). It stays because the parked gfx1100-5930k runtime profile
+        # pins it, so it is certified, and the pin contract test wants every
+        # certified digest held here. It also holds the vLLM 0.17 base that
+        # 2c94c6d9 below shares (16.2 GiB).
         - registry.harbor.lan/flexinfer/runtime@sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278
-        # 2026-10-22 (issue #74 S2): the v0.26 native-W4A16 serving image, see
-        # the 5930k profile above. The XTX warm lane is the canary vehicle for
-        # this digest (first roll after this image is resident). 2e9652ed
-        # was its rollback anchor until that image was lost (see above).
-        - registry.harbor.lan/flexinfer/runtime@sha256:ad93ae726bbeb27b2731e3d9ca1ba8f0a9d4234ad7c6d58ef6423e4dc40beeb5
-        # 2026-10-24 (issue #74 S2, vLLM 0.32): the native-W4A16 image on the
-        # upstream 0.32.0 wheel, see the 5930k profile above. The XTX warm
-        # lane is the canary vehicle for this digest (first roll once it is
-        # resident here); ad93ae72 above stays as the rollback anchor.
-        - registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99130cc98c3a45bd6e09c89a3b26cb21193c858fab9a99573c7d90
         # 2026-10-27 (pin hygiene, research serving-gaps §7): the CI-built 0.32
         # native-W4A16 image the 5930k workhorse runs (see the 5930k profile).
         # Pulled here (!1184) before !1185 repinned qwen38-27b-xtx-warm-canary
@@ -918,32 +942,10 @@ imagePrewarm:
         # xtx-warm-b06b06fe-2026-10-27). 2e9652ed stayed listed after that as
         # the 9B RP lane's only rollback; it was lost on 2026-11-06 and removed
         # on 2026-11-16 (see the top of this list), so that lane fixes forward.
+        # 2026-11-24: the warm lane moved on to 51afd0d3 (2026-11-21). This is
+        # still the image of qwen35-9b-ablit-rp on this node and the gfx1100
+        # GPUProfile's vLLM default.
         - registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2
-        # 2026-11-01 (D1, research next-differentiators-2026-10-31 §6.1 step
-        # 1): the stacked 0.32 runtime (rocm-gfx1100-serving-v032-c444b5ff,
-        # see the 5930k profile), target of the window-gated repin of this
-        # node's runtime DaemonSet (profile gfx1100 below) from cfefae18.
-        # Holding it here makes that repin a container start; cfefae18 above
-        # stays listed as its rollback anchor. Harbor already tags it
-        # pinned-ef28b7b0d1cb (2026-10-28 05:30Z, from the 5930k entry). It
-        # shares the v0.32.0 base with cd108c9e/b06b06fe above, so the pull
-        # is the ~32 MB layer delta and the GPU is not touched.
-        # controllers/runtime_pin_contract_test.go keeps this list, the
-        # runtime profiles and the gfx1100 GPUProfile in step.
-        - registry.harbor.lan/flexinfer/runtime@sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2
-        # 2026-11-01 (D1): the master CI rebuild of the same persona,
-        # rocm-gfx1100-serving-v032-5ca58769 (pipeline 36312, job 442027,
-        # 2026-10-30 22:08Z): the Dockerfile and frozen stack of ef28b7b0 (265
-        # packages unchanged, diffusers and snac added) with the newer
-        # flexinfer-runtime supervisor and servers. Against ef28b7b0 (c444b5ff)
-        # it adds in-pod reload on a spec edit (R1), the loading substages and
-        # short-KV-pool recheck (R4, internal/runtime/load_progress.go), the
-        # image-scoped compile cache (C5) and the Qwen-Image 2.1 server code
-        # (R1-R3). It is the recommended target of the window-gated XTX
-        # repin. Listing it here also makes harbor-flexinfer-pin-tags tag it
-        # pinned-7ae8e92ff28a; it had no pinned tag and had never been pulled.
-        # The pull is the supervisor and server layers on the shared base.
-        - registry.harbor.lan/flexinfer/runtime@sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250
         # 2026-11-03 (D1): rocm-gfx1100-serving-v032-ddf22437 (pipeline 37264,
         # job 460293): 7ae8e92f plus the creative-lane deps the in-pod
         # Qwen-Image, Wan and Stable Audio lanes import (bitsandbytes 0.50.2
@@ -954,22 +956,21 @@ imagePrewarm:
         # library and the ffmpeg binary. The recommended target of the
         # window-gated XTX repin; this entry also gets it pinned. The pull is
         # the new upper layers on the shared v0.32.0 base.
+        # 2026-11-24: the DaemonSet now runs the c54cad12 overlay below. This is
+        # that overlay's base (every layer is shared) and a certified fallback.
         - registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
-        # 2026-11-21 (D5 determinism): rocm-gfx1100-serving-v032-527e2714-dfo-
-        # fb8182fc, built off-CI from build/Dockerfile.runtime-serving-v032-
-        # diffusers-overlay: 527e2714 above with only server-diffusers.py
-        # replaced by master fb8182fc (the non-finite render guard and the
-        # opt-in TORCH_DETERMINISTIC and exact-shape video warmup switches,
-        # !1379). The base image's build-time verifier re-ran with the CI
-        # build's arguments. The pull is one small layer on 527e2714.
-        - registry.harbor.lan/flexinfer/runtime@sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
         # 2026-11-22 (D1 Stable Audio): rocm-gfx1100-serving-v032-527e2714-
-        # dfo-a056a493, the same overlay rebuilt with master a056a493's
-        # server-diffusers.py: 12f30206's server plus the bounded Brownian-tree
+        # dfo-a056a493, built off-CI from build/Dockerfile.runtime-serving-
+        # v032-diffusers-overlay: 527e2714 above with only server-diffusers.py
+        # replaced, here by master a056a493's. That is the first overlay's
+        # server (12f30206: the non-finite render guard and the opt-in
+        # TORCH_DETERMINISTIC and exact-shape video warmup switches, !1379)
+        # plus the bounded Brownian-tree
         # noise sampler (!1389) that stops the torchsde RecursionError on the
         # Stable Audio final step, and the Wan VACE exact-shape warmup with a
         # conditioning frame (!1399). Base verifier re-ran. One small layer on
         # 527e2714.
+        # 2026-11-24: the documented rollback of the live pin c54cad12.
         - registry.harbor.lan/flexinfer/runtime@sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409
         # 2026-11-22 (D1 VACE): rocm-gfx1100-serving-v032-527e2714-dfo-75a382f7,
         # the same overlay with master 75a382f7's server-diffusers.py:
@@ -977,26 +978,6 @@ imagePrewarm:
         # the in-pod VACE lane run its tiled float32 VAE without MIOpen. Base
         # verifier re-ran. One small layer on 527e2714.
         - registry.harbor.lan/flexinfer/runtime@sha256:c54cad123fd667bd82413e102e785348347148856b144d1fff1ef894901ab0c7
-        # 2026-11-05 (S3, .loom/10-research-backend-currency-gfx1100-gfx906-
-        # 2026-11-04.md §6.1): the stacked serving persona on vLLM
-        # 0.33.0-rocm72 (build profile gfx1100-serving-v033 at !1284,
-        # rocm-gfx1100-serving-v033-bebfb52e, pinned-29378fe07274): text plugin
-        # 0.10.0, plugin-common 0.3.0, diffusers 0.42.1, the same supervisor
-        # and servers as 527e2714. Built on the 7900xtx docker host; the
-        # in-build ISA, plugin-register and frozen-stack verifiers passed.
-        # Image of the parity canary deploy/debug/qwen38-27b-v033-parity-
-        # canary.yaml (matrix row xtx-vllm-v033-parity-2026-11-05); no lane
-        # or DaemonSet pins it. Its v0.33.0-rocm72 base shares no layers with
-        # the v0.32.0 images above, so this is a full 11.9 GB pull (about
-        # 34 GB unpacked). It lands on this node's imagefs, which had 445 GB
-        # free on 2026-11-05 (kubelet stats; image GC 90/85), not on the root
-        # that holds the model caches (182 GiB free, evicts below 10 %). The
-        # 5930k is left out: 194 GB free, below the 200 GB rule for pulls there.
-        - registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69
-        - registry.harbor.lan/flexinfer/vllm@sha256:7ac257f3f04246b02c2cb05c610aeb56b19c2f57ef4ac4273c35d592a8ef1464
-        # 7bc680b4 (vLLM 0.23 Qwen3.5 text-MoE overlay) dropped 2026-11-05: its
-        # two lanes were retired (qwen35-35b-clean-gptq-workhorse{,-128k}).
-        - registry.harbor.lan/flexinfer/diffusers:rocm-gfx1100-66af64f
         # 2026-10-30 placement layout (.loom/10-research-voice-stack-and-gpu-
         # placement-2026-10-30.md §6): the creative lanes moved to this card.
         # Their images are held here so that a first request after image GC is
@@ -1006,6 +987,10 @@ imagePrewarm:
         # threshold here is 90/85. The 5930k profile keeps the same pins until
         # the layout has survived a week, as the rollback anchor; drop them
         # there afterwards.
+        # 2026-11-24: all four creative lanes are served in-pod by the runtime
+        # DaemonSet since 2026-11-21..23. The four images below are now their
+        # dedicated-Deployment rollback only (39 GiB of distinct layers). Kept
+        # while in-pod is days old; the next trim once it has soaked.
         # Qwen-Image 2.1 (serving persona with the R1-R3 overlay, b83c3822).
         - registry.harbor.lan/flexinfer/runtime@sha256:2c94c6d973fab09d9304891b26a25a026bc6e6bdecfe304b138de6c118d219cc
         # Wan 2.1 VACE pins this through spec.imageDigest. It is also the
@@ -1246,6 +1231,10 @@ runtime:
       # (shared/gfx1100/c54cad123fd6): seed it from a8d525e02c21 before the
       # roll. Rollback = a8d525e0, still prewarmed and certified:
       #   registry.harbor.lan/flexinfer/runtime@sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409
+      # 2026-11-24 (XTX prewarm trim): ef28b7b0, 7ae8e92f and 12f30206 named
+      # above are no longer prewarmed on the XTX or certified. The certified
+      # set is cfefae18, 527e2714, a8d525e0 and this pin; the rollback of this
+      # pin is still a8d525e0.
       image: "registry.harbor.lan/flexinfer/runtime@sha256:c54cad123fd667bd82413e102e785348347148856b144d1fff1ef894901ab0c7"
       gpuVendor: amd
       gpuArch: gfx1100
