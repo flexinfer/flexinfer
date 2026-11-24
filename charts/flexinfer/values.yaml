@@ -240,6 +240,10 @@ proxy:
   # Prometheus the proxy reads each lane's cold-start p50 from for the error
   # envelope's eta_seconds. Empty → the ETA uses status.metrics.loadTimeSeconds.
   prometheusURL: ""
+  # AUTOMATIC1111-style image API (/sdapi/v1/*, docs/specs/proxy-api.md): the
+  # image lane txt2img renders on when a client names no checkpoint (a Model
+  # name, alias or service label). Empty → those routes return 503.
+  a1111Model: ""
   # Async jobs (D2): `background: true` on inference paths and /v1/jobs, run
   # by the proxy as InferenceJobs. Off by default; enabling needs a store.
   jobs:
