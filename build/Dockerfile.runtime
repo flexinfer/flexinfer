@@ -110,12 +110,17 @@ WORKDIR /opt/src/llama.cpp
 RUN if [ "${GPU_VENDOR}" = "nvidia" ]; then \
       ln -s /usr/local/cuda/lib64/stubs/libcuda.so /usr/local/cuda/lib64/libcuda.so.1 && ldconfig; \
     fi
+# LLAMA_USE_PREBUILT_UI=OFF: no web UI in the runtime. Left ON, a --depth 1
+# clone (build number 1) asks Hugging Face for UI bundle `b1`, falls back to
+# `latest`, and fails when that bundle no longer matches the pinned tag.
+# Tags before the downloaded UI (b8173, cuda-maxwell) ignore the option.
 RUN cmake -B build -G Ninja \
     $(if [ "${GPU_VENDOR}" = "amd" ]; then \
       echo "-DGGML_HIP=ON -DGGML_NATIVE=OFF -DAMDGPU_TARGETS=${AMDGPU_TARGETS}"; \
     else \
       echo "-DGGML_CUDA=ON -DGGML_NATIVE=OFF -DCMAKE_CUDA_ARCHITECTURES=${CUDA_ARCHITECTURES}"; \
     fi) \
+    -DLLAMA_USE_PREBUILT_UI=OFF \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -j$(nproc)
 
