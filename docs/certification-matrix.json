@@ -1839,6 +1839,23 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx1100-fp8-attention-convert-2026-11-24",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k",
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "kill test for 128K without the fp8 decode hit. Does a cheaper fp8 → fp16 conversion in vLLM's segmented attention stage kernel bring the fp8 KV cache's attention cost near fp16's on gfx1100?…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-fp8-attention-convert-2026-11-24",
+      "date": "2026-11-24",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
       "kind": "validation",
       "support_level": "supported",
