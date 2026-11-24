@@ -34,6 +34,23 @@ controller:
   image:
     repository: registry.harbor.lan/flexinfer/flexinfer-controller
     # Keep controller/runtime drain contracts on the same tested revision.
+    # 2026-11-24 (WINDOW-GATED): master 25d61e41 (tag 20261124-013442) =
+    # 6500e342 below plus three controller-side commits and a dependency bump.
+    # !1426 (4633d882): a lane whose GPU is degraded has its Deployment scaled
+    # to 0, so a spec change made while the card is down reaches the pod
+    # template before kubelet can restart the old one. !1381 (8324997f): the
+    # stall detector counts KV-cache growth as progress, in the controller and
+    # in the readiness probe. dab9833b: status.kvPool describes in-pod loads.
+    # !1429 (0268f27f): OpenTelemetry v1.47.0 (GO-2026-6975, GO-2026-6974).
+    # Render check (snapshot 2026-11-24T01:23:11Z, live controller env): all 28
+    # Models and 3 GPUProfiles render identical runtime payloads, Deployment
+    # metadata and replica counts; 9 vLLM pod templates differ only in the
+    # readiness probe script. Two of them have a pod and restart once at the
+    # roll: qwen38-27b-autoround-workhorse (5930k) and
+    # qwen38-27b-xtx-warm-canary (the XTX 128K lane). Do not roll before the
+    # workhorse's dot2 P7 window closes (2026-11-24 21:22Z). Rollback = the
+    # 6500e342 build: tag 20261118-161042,
+    # sha256:89fb41fc9ad384b21319a87774a332624a7e814501360dd0056c557096aabb1a.
     # 2026-10-30: master 3cb6cde0 (master pipeline 36196) = the badcb8c3 build
     # below plus round 2 of the unified-runtime work. !1199: runtime-path
     # eligibility refuses lanes with a spec.config.command wrapper
@@ -171,8 +188,8 @@ controller:
     # no Model declares vllmVersion. Rollback = the 51e6bd81 build: tag
     # 20261105-153904,
     # sha256:6a3ad9e603110df8207a59f815d4e809e4b4a3357138302fd2faa39cfc5ccdcd.
-    digest: "sha256:89fb41fc9ad384b21319a87774a332624a7e814501360dd0056c557096aabb1a"
-    tag: "20261118-161042"
+    digest: "sha256:7d4154433906882f92826c2a7101edeaf237c492108a9c8afc2fa05e6cc1ed0b"
+    tag: "20261124-013442"
   resources:
     limits:
       cpu: 1000m
