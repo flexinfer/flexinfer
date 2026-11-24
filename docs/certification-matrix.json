@@ -1845,7 +1845,6 @@
       "backend": "vllm",
       "gpu_class": "gfx1100",
       "nodes": [
-        "5930k",
         "7900xtx"
       ],
       "decision": "pass",
