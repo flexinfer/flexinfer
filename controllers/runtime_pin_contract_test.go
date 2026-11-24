@@ -24,30 +24,33 @@ var gfx1100CertifiedRuntimes = map[string]string{
 	// DaemonSet since 2026-10-23, matrix row gfx1100-serving-2026-10-23.
 	// Rollback anchor for the D1 repin.
 	"sha256:cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278": "gfx1100-serving-2026-10-23",
-	// rocm-gfx1100-serving-v032-c444b5ff (vLLM 0.32 stacked serving persona,
-	// S6a !1174, spawn contract verified at build time). Its supervisor
-	// predates the R1/R4/C5 runtime work; fallback repin target only.
-	"sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2": "S6a !1174",
-	// rocm-gfx1100-serving-v032-5ca58769: the master CI rebuild of the same
-	// Dockerfile and frozen stack (pipeline 36312, build-time verify passed)
-	// with the R1 reload, R4 load-substage and C5 shared-cache supervisor. The
-	// D1 repin target before the creative-lane deps.
-	"sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250": "CI pipeline 36312 job 442027",
-	// rocm-gfx1100-serving-v032-ddf22437: 7ae8e92f's Dockerfile and frozen
-	// stack plus the creative-lane deps (bitsandbytes 0.50.2 with its ROCm
-	// 7.2 library, torchsde, imageio + imageio-ffmpeg, ftfy; !1269), the Wan
+	// 2026-11-24 (XTX prewarm trim): three certified digests that nothing
+	// pinned were dropped from the XTX prewarm list and so from this map
+	// (TestRuntimePinsArePrewarmedOnTheirNode holds every entry here on the
+	// XTX). To restore one, put it back here and in the prewarm list:
+	//   sha256:ef28b7b0d1cb0103953a296ae4aeff8c567b5548002ad1e000b39a77853208f2
+	//     rocm-gfx1100-serving-v032-c444b5ff, "S6a !1174": fallback only, its
+	//     supervisor predates the R1/R4/C5 runtime work.
+	//   sha256:7ae8e92ff28a99a301c3f9df42a7e8d50f174161c7140794cf208e5e9e024250
+	//     rocm-gfx1100-serving-v032-5ca58769, "CI pipeline 36312 job 442027":
+	//     the D1 target before the creative-lane deps.
+	//   sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba
+	//     rocm-gfx1100-serving-v032-527e2714-dfo-fb8182fc, "overlay build
+	//     2026-11-21": the first diffusers overlay, two pins behind the live one.
+	// rocm-gfx1100-serving-v032-ddf22437: the vLLM 0.32 stacked serving
+	// persona's Dockerfile and frozen stack plus the creative-lane deps
+	// (bitsandbytes 0.50.2 with its ROCm 7.2 library, torchsde, imageio +
+	// imageio-ffmpeg, ftfy; !1269), the Wan
 	// VAE MIOpen bypass (!1268) and the D5-a diarization backend. Build-time
 	// verify passed. The recommended D1 repin target.
 	"sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b": "CI pipeline 37264 job 460293",
-	// rocm-gfx1100-serving-v032-527e2714-dfo-fb8182fc: 527e2714 with only
-	// server-diffusers.py replaced by master fb8182fc (non-finite render guard,
-	// opt-in TORCH_DETERMINISTIC and exact-shape video warmup, !1379), built
-	// off-CI from build/Dockerfile.runtime-serving-v032-diffusers-overlay with
-	// the base image's build-time verifier re-run. The D5 repin target.
-	"sha256:12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba": "overlay build 2026-11-21, Dockerfile.runtime-serving-v032-diffusers-overlay",
-	// rocm-gfx1100-serving-v032-527e2714-dfo-a056a493: the same overlay with
-	// master a056a493's server-diffusers.py, which adds the bounded
-	// Brownian-tree noise sampler (!1389) for in-pod Stable Audio and the
+	// rocm-gfx1100-serving-v032-527e2714-dfo-a056a493: 527e2714 with only
+	// server-diffusers.py replaced, built off-CI from
+	// build/Dockerfile.runtime-serving-v032-diffusers-overlay with the base
+	// image's build-time verifier re-run. Master a056a493's server carries
+	// the non-finite render guard and the opt-in TORCH_DETERMINISTIC and
+	// exact-shape video warmup (!1379), the bounded Brownian-tree noise
+	// sampler (!1389) for in-pod Stable Audio and the
 	// Wan VACE exact-shape warmup with a conditioning frame (!1399). Base
 	// verifier re-run. The D1 Stable Audio and VACE repin target.
 	"sha256:a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409": "overlay build 2026-11-22, Dockerfile.runtime-serving-v032-diffusers-overlay",
