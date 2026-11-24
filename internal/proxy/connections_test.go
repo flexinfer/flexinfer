@@ -116,7 +116,7 @@ func TestUpdateLastAccessIdleCadence(t *testing.T) {
 					k8sClient := fake.NewClientBuilder().WithScheme(Scheme).
 						WithObjects(object).WithStatusSubresource(object).Build()
 					p := &Proxy{client: k8sClient, namespace: "default"}
-					p.touchLastAccess(context.Background(), object.GetName(), tc.force)
+					p.touchLastAccess(context.Background(), object.GetName(), tc.force, false)
 					require.NoError(t, k8sClient.Get(context.Background(), client.ObjectKeyFromObject(object), object))
 					updated := m.Status.LastActiveTime
 					if legacy {

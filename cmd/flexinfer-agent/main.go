@@ -29,13 +29,15 @@ func main() {
 	healthSentinel := flag.Bool("gpu-health-sentinel", true, "Publish the flexinfer.ai/gpu.health node label from sysfs/tool evidence (PCIe link down, SMU I/O errors, hung tools). Off, the agent still bounds tool timeouts but never marks a node degraded.")
 	powerNodes := flag.String("gpu-power-nodes", "", "Comma-separated node names that sample GPU board power from sysfs hwmon into flexinfer_gpu_power_watts. Empty (default) samples nowhere; there is no wildcard. Needs --gpu-health-sentinel: the sampler stops itself when the sentinel reports the GPU degraded.")
 	powerInterval := flag.Duration("gpu-power-interval", agent.DefaultPowerInterval, "GPU power sampling period on nodes listed in --gpu-power-nodes (minimum 500ms).")
+	localCacheRoot := flag.String("local-cache-root", "", "Local model cache base as mounted in the agent (<root>/<namespace>/<name>; the controller's default is "+agent.DefaultLocalCacheRoot+"). Set, the agent sizes every directory there each --interval, joins it with the Models of all namespaces and exports flexinfer_node_local_cache_bytes and flexinfer_node_local_cache_orphans. Read only. Empty (default) disables the inventory.")
 	flag.Parse()
 
 	log.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 	setupLog := log.Log.WithName("setup")
 
 	setupLog.Info("Starting FlexInfer agent", "interval", *interval, "metricsPort", *metricsPort, "labelPrefix", *labelPrefix,
-		"probeTimeout", *probeTimeout, "gpuHealthSentinel", *healthSentinel, "gpuPowerNodes", *powerNodes)
+		"probeTimeout", *probeTimeout, "gpuHealthSentinel", *healthSentinel, "gpuPowerNodes", *powerNodes,
+		"localCacheRoot", *localCacheRoot)
 
 	// Start the metrics exporter
 	exporter := metrics.NewExporter()
@@ -69,6 +71,16 @@ func main() {
 			sampler.SetLaneSource(lanes)
 		}
 		go sampler.Run(ctx)
+	}
+
+	if *localCacheRoot != "" {
+		// Its own goroutine: a slow walk or API call never delays the probe
+		// loop and the health sentinel.
+		if inv, err := nodeAgent.NewLocalCacheInventory(*localCacheRoot, log.Log.WithName("local-cache")); err != nil {
+			setupLog.Error(err, "Local cache inventory off: cannot build the Model client")
+		} else {
+			go inv.Run(ctx, *interval)
+		}
 	}
 
 	for {

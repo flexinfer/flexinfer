@@ -4215,13 +4215,20 @@ func TestParkStaleDeployment(t *testing.T) {
 		name         string
 		deployment   *appsv1.Deployment
 		model        *aiv1alpha2.Model
+		gpuDegraded  bool
 		wantReplicas int32
 		wantEvent    bool
+		wantReason   string
 	}{
 		{name: "no deployment", model: newModel("node-a-gpu-offline")},
-		{name: "stale selector is parked", deployment: newDeployment("node-a", 1), model: newModel("node-a-gpu-offline"), wantReplicas: 0, wantEvent: true},
+		{name: "stale selector is parked", deployment: newDeployment("node-a", 1), model: newModel("node-a-gpu-offline"), wantReplicas: 0, wantEvent: true, wantReason: "node selector"},
 		{name: "matching selector is left alone", deployment: newDeployment("node-a", 1), model: newModel("node-a"), wantReplicas: 1},
 		{name: "already parked", deployment: newDeployment("node-a", 0), model: newModel("node-a-gpu-offline"), wantReplicas: 0},
+		// 2026-11-23: a degraded card parks the lane even though its selector
+		// still matches, so the stale template cannot restart with the host.
+		{name: "degraded GPU parks a matching selector", deployment: newDeployment("node-a", 1), model: newModel("node-a"), gpuDegraded: true, wantReplicas: 0, wantEvent: true, wantReason: "GPU is degraded"},
+		{name: "degraded GPU already parked", deployment: newDeployment("node-a", 0), model: newModel("node-a"), gpuDegraded: true, wantReplicas: 0},
+		{name: "degraded GPU with no deployment", model: newModel("node-a"), gpuDegraded: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -4232,7 +4239,7 @@ func TestParkStaleDeployment(t *testing.T) {
 			recorder := record.NewFakeRecorder(4)
 			r := &ModelReconciler{Client: builder.Build(), Recorder: recorder}
 
-			if err := r.parkStaleDeployment(context.Background(), tt.model); err != nil {
+			if err := r.parkStaleDeployment(context.Background(), tt.model, tt.gpuDegraded); err != nil {
 				t.Fatalf("parkStaleDeployment() error = %v", err)
 			}
 			if tt.deployment == nil {
@@ -4252,6 +4259,9 @@ func TestParkStaleDeployment(t *testing.T) {
 				}
 				if !strings.Contains(ev, "DeploymentParked") {
 					t.Fatalf("event = %q, want DeploymentParked", ev)
+				}
+				if !strings.Contains(ev, tt.wantReason) {
+					t.Fatalf("event = %q, want reason containing %q", ev, tt.wantReason)
 				}
 			default:
 				if tt.wantEvent {

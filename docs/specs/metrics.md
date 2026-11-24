@@ -32,6 +32,8 @@ Defined in `services/flexinfer/pkg/metrics/exporter.go`:
 - `flexinfer_gpu_vram_utilization_percent{gpu,node,vendor}`
 - `flexinfer_modelcache_resident_seconds{cache,node,strategy}`
 - `flexinfer_dev_shm_utilization_percent{node}`
+- `flexinfer_node_local_cache_bytes{node,namespace,model,orphan}` (node agent; allocated bytes of each `strategy: Local` cache directory, only with `--local-cache-root`; see [Local cache inventory](#local-cache-inventory-node-agent))
+- `flexinfer_node_local_cache_orphans{node}` (node agent; count of the orphan entries above)
 - `flexinfer_modelcache_evictions_total{cache,node,policy}`
 - `flexinfer_modelcache_hit_rate{cache,node}`
 - `flexinfer_modelcache_size_bytes{cache,node,strategy}`
@@ -115,6 +117,26 @@ sum by (model) (rate(flexinfer_proxy_request_completion_tokens_sum[5m]))
 and the same with `flexinfer_proxy_prompt_tokens_total` for embedding and
 rerank lanes. Both token counters are the proxy's, keyed by resolved model,
 and miss streaming requests that end without a usage chunk.
+
+### Local cache inventory (node agent)
+
+With `--local-cache-root` (chart `agent.localCacheInventory.enabled`, default
+off) the agent walks the Local cache base every `--interval` in its own
+goroutine: `<base>/<ns>/<name>` is one entry when a Model lives in namespace
+`<ns>`, and anything else directly under the base is one entry with an empty
+`namespace`. `orphan="true"` when no Model of that namespace/name exists (the
+Models of every namespace, an uncached `List`; the chart grants cluster-wide
+`get`/`list` on `models.ai.flexinfer` only while enabled). Sizes are du's:
+allocated blocks, hard links once, symlinks not followed, cached per directory
+until its mtime moves or 10 min pass.
+
+- Before the first successful Model listing nothing is exported; afterwards a
+  failed listing reuses the last good one. An unreadable base deletes the
+  node's series.
+- Cardinality: `namespace` and `model` are directory names on one node's disk,
+  a few dozen per node, each holding GBs. A series is deleted when its
+  directory goes or its orphan state flips; the Model list never adds one.
+- User guide and alert: [Finding orphaned `Local` caches](../user/caching.md#finding-orphaned-local-caches).
 
 ### Registry Note (Important)
 

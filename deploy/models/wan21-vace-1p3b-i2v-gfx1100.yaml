@@ -19,6 +19,79 @@
 # Slice 3 of .loom/30-implementation-plan-keyframe-video-pipeline-2026-07-15.md;
 # the kill test must pass before any downstream pipeline ships.
 # Remove this parent Model (not its Deployment/pod) to roll the lane back.
+#
+# 2026-11-01 D1 step 3 (S6c, research next-differentiators-2026-10-31 §6.1;
+# WINDOW-GATED): served IN-POD by the 7900xtx runtime DaemonSet instead of its
+# own Deployment, so a render swaps the XTX warm lane out and back inside the
+# runtime pod.
+# - dedicatedDeployment dropped; spec.image stays the dedicated rollback image.
+# - Compile cache: scope Image on the default hostPath, the directory the
+#   runtime pod mounts at /cache/compile.
+# Runtime image: 12f30206 (527e2714 with server-diffusers.py at fb8182fc, live
+# on the XTX runtime since !1380 on 2026-11-21). 527e2714 carries ftfy 6.3.1
+# (WanVACEPipeline.basic_clean calls ftfy.fix_text unguarded), imageio 2.37.0
+# and imageio-ffmpeg 0.6.0. This lane's VAE is fp32, so the Wan VAE MIOpen
+# bypass (!1268) does not apply and the decode runs through the MIOpen of
+# torch 2.13 / ROCm 7.2.3: A/B in-pod against the dedicated lane before
+# promotion.
+#
+# 2026-11-22 refresh: config.env pins what the in-pod Wan T2V gates found
+# (rows gfx1100-xtx-inpod-wan-t2v-*-2026-11-21):
+# - both allocator variables without expandable_segments: with model CPU
+#   offload, expandable_segments corrupts every VAE use on this stack, and
+#   VACE corrupted even its first clip because it encodes the keyframe through
+#   the VAE (S9);
+# - TORCH_BLAS_PREFER_HIPBLASLT=0: in-pod the lane would inherit the gfx1100
+#   GPUProfile's 1, and hipBLASLt made same-seed requests differ;
+# - TORCH_DETERMINISTIC=1 (server switch from !1379): this lane runs eager
+#   (no compile), and eager rocBLAS GEMMs run with atomics allowed under
+#   PyTorch, which made every eager T2V request differ. Untested on VACE; the
+#   gate checks it. The exact-shape warmup that fixed the compiled T2V lane
+#   does not apply: the server's warmup cannot send a conditioning image.
+#
+# 2026-11-22 gate fail and fix: row gfx1100-xtx-inpod-wan-vace-gate-2026-11-22
+# failed bar (2) on the eager lane above. Same-seed clips matched at 29-41 dB
+# against the dedicated lane's 43.96, clip 3 the outlier, with no op logged as
+# lacking a deterministic implementation. Every other bar passed, NaN-free
+# included. The fix follows the in-pod Wan T2V lane, which became
+# byte-identical from the first request and across loads once compiled and
+# warmed at the served shape (research-determinism.md F2): compile the
+# transformer (max-autotune-no-cudagraphs, graph breaks allowed around the
+# offload hooks) and warm 832x480 x 33 frames x 20 steps with the server's
+# image2video warmup (!1399), which sends the request path's own VACE
+# conditioning. TORCH_DETERMINISTIC stays on (F1+F2): it keeps the float32
+# VAE's MIOpen convs, which T2V never ran, on deterministic solvers, and
+# Inductor's deterministic mode drops runtime reduction tuning. Compile and
+# warmup are set in env only, so the dedicated rollback stays eager. Needs a
+# runtime carrying !1399 (Draft !1390, repinned to that overlay). Gate: row
+# gfx1100-xtx-inpod-wan-vace-warmup-gate-2026-11-22.
+# 2026-11-22 diagnostic (uncounted, 20:37-20:51Z on a8d525e0): compiled and
+# warmed as above, same-seed clips still differed at 37.4 dB (40 dB at the kept
+# first frame, 36-37 dB later), below the row's 43.96 dB floor; warm clips
+# 150 s, warmup 292 s per load. TORCH_DETERMINISTIC is dropped to run the exact
+# in-pod T2V recipe (plain compile: Triton templates instead of the aten GEMMs
+# Inductor's deterministic mode picks). If clips still differ, the float32
+# VAE on MIOpen is the remaining VACE-only suspect.
+# 2026-11-22 diagnostic 2 (uncounted, 21:06-21:16Z, plain compile): still
+# 37.1 dB, same profile; its first clip matched diagnostic 1's at 43.9 dB, so
+# the transformer is not the source. The VACE pipeline encodes the condition
+# with sample_mode="argmax" (no RNG). WAN_VAE_MIOPEN=off (!1407, runtime
+# c54cad12) runs the float32 VAE's two condition encodes and the decode
+# through PyTorch's im2col + GEMM path, as the 16-bit T2V VAE runs and
+# repeats; enableVaeTiling bounds the float32 im2col buffer per tile.
+# 2026-11-23 diagnostic 4 (bypass plus TORCH_DETERMINISTIC=1, reverted):
+# 39.9 dB, warm clips 158 s, warmup 274 s. Deterministic mode does not help
+# and costs time, so the lane stays on the bypass alone (diagnostic 3: 42.3 dB,
+# 141 s, warmup 172 s). Gate: row gfx1100-xtx-inpod-wan-vace-repeat-gate-
+# 2026-11-23, which judges the same-seed repeat on row-set floors (neither the
+# dedicated lane nor any in-pod setup repeats byte-for-byte).
+# 2026-11-23 gate: row gfx1100-xtx-inpod-wan-vace-repeat-gate-2026-11-23
+# PASSED, owner accepted the side-by-sides: same-seed clips 42.4 / 42.1 dB
+# (SSIM 0.993), warm clips 141 s against 264 s dedicated, warmup ~250 s per
+# load, first request ~490 s (first-byte budget 900 s). VACE stays in-pod.
+# Host RAM: dedicated limit 48 GiB = the runtime pod's whole limit.
+# Rollback: revert this commit (restores dedicatedDeployment and the cache
+# config); the Deployment returns on the next reconcile.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -66,7 +139,9 @@ spec:
       enabled: false
     compilationCache:
       enabled: true
-      hostPath: /var/lib/flexinfer/compile-cache
+      # 2026-11-01 D1: image-scoped on the default hostPath, shared with the
+      # runtime pod (header).
+      scope: Image
       sizeLimit: 6Gi
   gpu:
     vendor: amd
@@ -84,7 +159,6 @@ spec:
     idleTimeout: 15m
     coldStartTimeout: 30m
   config:
-    dedicatedDeployment: true
     pipelineMode: image2video
     modelFamily: wan
     dtype: bfloat16
@@ -107,6 +181,24 @@ spec:
     negativePrompt: "static, blurry, low quality, distorted, watermark, subtitles, text"
     hipVisibleDevices: "0"
     warmPolicy: ondemand
+    # 2026-11-22 (header): in-pod pins; config.env is applied last in-pod.
+    env:
+      PYTORCH_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
+      PYTORCH_HIP_ALLOC_CONF: "garbage_collection_threshold:0.9,max_split_size_mb:512,expandable_segments:False"
+      TORCH_BLAS_PREFER_HIPBLASLT: "0"
+      # TORCH_DETERMINISTIC dropped 2026-11-22 after the diagnostic (header).
+      # 2026-11-22 float32 VAE without MIOpen (header; needs runtime c54cad12).
+      WAN_VAE_MIOPEN: "off"
+      # 2026-11-22 compiled transformer plus exact-shape warmup (header).
+      # Overrides skipWarmup "1" in-pod; the dedicated rollback ignores them.
+      COMPILE_MODE: "max-autotune-no-cudagraphs"
+      COMPILE_FULLGRAPH: "false"
+      SKIP_WARMUP: "0"
+      WARMUP_RESOLUTIONS: "832x480"
+      WARMUP_VIDEO_FRAMES: "33"
+      WARMUP_STEPS: "20"
+      WARMUP_NONFINITE_RETRIES: "0"
+      TORCH_LOGS: "recompiles,graph_breaks"
   nodeSelector:
     kubernetes.io/hostname: cblevins-7900xtx
   resources:

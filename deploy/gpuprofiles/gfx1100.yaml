@@ -192,7 +192,17 @@ spec:
     # parked gfx1100-5930k profile stays on cfefae18 until S6b.
     # controllers/runtime_pin_contract_test.go fails if this and the live
     # DaemonSet pin differ. Rollback = cfefae18061fd2f9f07cfbfb9b0c2abb51cb4ab34dabda86f3969c13eca9f278.
-    image: registry.harbor.lan/flexinfer/runtime@sha256:527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b
+    # 2026-11-21 (D5, WINDOW-GATED): follows the runtime DaemonSet to
+    # 12f30206 (527e2714 plus master fb8182fc's server-diffusers.py).
+    # Rollback = 527e2714c163f3c284bcba7e168590e8cb8960e2b1cf247b00976bb7b8f30d0b.
+    # 2026-11-22 (D1 Stable Audio and VACE, WINDOW-GATED): follows the
+    # runtime DaemonSet to a8d525e0 (12f30206 plus the !1389 noise-sampler fix
+    # and the !1399 VACE warmup).
+    # Rollback = 12f30206d9e6abf4b470fe1012b85b9236aa7ef901eb6ea918b6fe43721a42ba.
+    # 2026-11-22 (D1 VACE, WINDOW-GATED): follows the runtime DaemonSet to
+    # c54cad12 (a8d525e0 plus the WAN_VAE_MIOPEN switch, !1407).
+    # Rollback = a8d525e02c2106856a20768349b6708334eff1f5f53ecd849170fa134564a409.
+    image: registry.harbor.lan/flexinfer/runtime@sha256:c54cad123fd667bd82413e102e785348347148856b144d1fff1ef894901ab0c7
   containerMemoryGB: 48
   # 2026-05-25: bumped 18 → 22 to make room for `gemma4-26b-a4b-gptq` at
   # maxModelLen=32768 with kvCacheDtype=fp8_e4m3. Math:

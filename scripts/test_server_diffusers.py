@@ -13,6 +13,7 @@ Run: python3 scripts/test_server_diffusers.py
 """
 
 import asyncio
+import base64
 import contextlib
 import functools
 import importlib
@@ -321,6 +322,50 @@ class StableDiffusionXLPipeline(_FakePipeline):
         pass
 
 
+class WanVACEI2VPipeline(_FakePipeline):
+    """The image-to-video keywords a WanVACEPipeline __call__ accepts."""
+
+    @recording
+    def __call__(
+        self,
+        prompt=None,
+        negative_prompt=None,
+        video=None,
+        mask=None,
+        height=480,
+        width=832,
+        num_frames=81,
+        num_inference_steps=50,
+        guidance_scale=5.0,
+        generator=None,
+        output_type="np",
+        callback_on_step_end=None,
+        callback_on_step_end_tensor_inputs=("latents",),
+    ):
+        pass
+
+
+class WanT2VPipeline(_FakePipeline):
+    """The text-to-video keywords a WanPipeline __call__ accepts."""
+
+    @recording
+    def __call__(
+        self,
+        prompt=None,
+        negative_prompt=None,
+        height=480,
+        width=832,
+        num_frames=81,
+        num_inference_steps=50,
+        guidance_scale=5.0,
+        generator=None,
+        output_type="np",
+        callback_on_step_end=None,
+        callback_on_step_end_tensor_inputs=("latents",),
+    ):
+        pass
+
+
 class StrictPipeline(_FakePipeline):
     """A pipeline without **kwargs and without negative_prompt."""
 
@@ -372,6 +417,16 @@ SERVER_ENV = (
     "BNB_COMPUTE_DTYPE",
     "SKIP_WARMUP",
     "WARMUP_RESOLUTIONS",
+    "NONFINITE_GUARD",
+    "NONFINITE_RENDER_RETRIES",
+    "NONFINITE_VIDEO_RETRIES",
+    "WARMUP_NONFINITE_RETRIES",
+    "WARMUP_NONFINITE_STRICT",
+    "WARMUP_STEPS",
+    "WARMUP_VIDEO_FRAMES",
+    "TORCH_DETERMINISTIC",
+    "WAN_VAE_MIOPEN",
+    "ENABLE_VAE_TILING",
 )
 
 
@@ -387,6 +442,8 @@ class ServerTestCase(unittest.TestCase):
         server.current_model = None
         server.current_model_family = None
         server.PIPELINE_MODE = "text2image"
+        for key in server._nonfinite_counts:
+            server._nonfinite_counts[key] = 0
 
     def tearDown(self):
         self._env.stop()
@@ -950,6 +1007,51 @@ class WanVaeMiopenTest(ServerTestCase):
         vae.decode("z")
         self.assertEqual(seen[0][1], True)
 
+    def test_switch_off_bypasses_an_fp32_vae(self):
+        vae, seen = self.vae(server.torch.float32)
+        pipe = types.SimpleNamespace(vae=vae)
+        os.environ.update(WAN_VAE_MIOPEN="off", ENABLE_VAE_TILING="1")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertTrue(server._bypass_miopen_for_wan_vae(pipe, "wan"))
+        vae.encode("video")
+        vae.decode("z")
+        self.assertEqual([s[1] for s in seen], [False, False])
+        self.assertTrue(self.cudnn.enabled)
+        # The gate harness keys on this prefix (scripts/video-gate.py).
+        self.assertIn("Wan VAE encode/decode run with MIOpen off", out.getvalue())
+        self.assertNotIn("WARNING", out.getvalue())
+
+    def test_switch_off_without_tiling_warns(self):
+        vae, _ = self.vae(server.torch.float32)
+        os.environ["WAN_VAE_MIOPEN"] = "off"
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            self.assertTrue(
+                server._bypass_miopen_for_wan_vae(types.SimpleNamespace(vae=vae), "wan")
+            )
+        self.assertIn("without ENABLE_VAE_TILING=1", out.getvalue())
+
+    def test_switch_on_keeps_miopen_for_a_bf16_vae(self):
+        vae, seen = self.vae(server.torch.bfloat16)
+        os.environ["WAN_VAE_MIOPEN"] = "on"
+        self.assertFalse(
+            self.quiet(
+                server._bypass_miopen_for_wan_vae, types.SimpleNamespace(vae=vae), "wan"
+            )
+        )
+        vae.decode("z")
+        self.assertEqual(seen[0][1], True)
+
+    def test_unknown_switch_value_falls_back_to_auto(self):
+        vae, _ = self.vae(server.torch.float32)
+        os.environ["WAN_VAE_MIOPEN"] = "maybe"
+        self.assertFalse(
+            self.quiet(
+                server._bypass_miopen_for_wan_vae, types.SimpleNamespace(vae=vae), "wan"
+            )
+        )
+
     def test_other_families_and_cuda_are_untouched(self):
         vae, seen = self.vae(server.torch.bfloat16)
         pipe = types.SimpleNamespace(vae=vae)
@@ -1023,6 +1125,305 @@ class GGUFShimStubTest(ServerTestCase):
         self.assertEqual(f32_norm._parameters["weight"].data, "f32")
 
 
+# --- non-finite output guard (2026-11-19 D3) ---------------------------------
+
+
+def _numpy():
+    try:
+        import numpy
+
+        return numpy
+    except ImportError:
+        return None
+
+
+NUMPY = _numpy()
+REAL_PIL = "PIL" not in STUBBED
+
+
+def _seed_of(generator):
+    seed = getattr(generator, "seed", None)
+    return seed if not callable(seed) else generator.initial_seed()
+
+
+class NonFiniteGuardTest(ServerTestCase):
+    """Detection, retry and 500, with the detector patched so these run without
+    numpy (the CI image has none)."""
+
+    def detector(self, *counts):
+        patch = mock.patch.object(server, "_nonfinite_count", side_effect=list(counts))
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def test_finite_render_runs_once(self):
+        self.detector(0)
+        calls = []
+        result = self.quiet(
+            server._guarded_render, lambda: calls.append(1) or "ok", lambda r: r, "t"
+        )
+        self.assertEqual((result, len(calls)), ("ok", 1))
+        self.assertEqual(server._nonfinite_counts["render"], 0)
+
+    def test_unchecked_output_is_not_treated_as_bad(self):
+        self.detector(None)
+        self.assertEqual(
+            self.quiet(server._guarded_render, lambda: "ok", lambda r: r, "t"), "ok"
+        )
+
+    def test_non_finite_render_is_retried_once(self):
+        self.detector(7, 0)
+        calls = []
+        result = self.quiet(
+            server._guarded_render, lambda: calls.append(1) or "ok", lambda r: r, "t"
+        )
+        self.assertEqual((result, len(calls)), ("ok", 2))
+        self.assertEqual(server._nonfinite_counts["render"], 1)
+        self.assertEqual(server._nonfinite_counts["render_recovered"], 1)
+
+    def test_still_non_finite_is_a_typed_500(self):
+        self.detector(7, 9)
+        with self.assertRaises(server.HTTPException) as caught:
+            self.quiet(server._guarded_render, lambda: "x", lambda r: r, "t")
+        self.assertEqual(caught.exception.status_code, 500)
+        detail = caught.exception.detail
+        self.assertEqual(detail["type"], "nonfinite_output")
+        self.assertEqual((detail["attempts"], detail["nonfinite_values"]), (2, 9))
+        self.assertEqual(server._nonfinite_counts["render"], 2)
+        self.assertEqual(server._nonfinite_counts["render_failed"], 1)
+
+    def test_retries_env_and_guard_off(self):
+        os.environ["NONFINITE_RENDER_RETRIES"] = "0"
+        self.detector(7)
+        with self.assertRaises(server.HTTPException):
+            self.quiet(server._guarded_render, lambda: "x", lambda r: r, "t")
+        os.environ["NONFINITE_GUARD"] = "0"
+        # Guard off: no check at all (the detector has no values left to give).
+        self.assertEqual(server._guarded_render(lambda: "x", lambda r: r, "t"), "x")
+
+    def test_generation_retries_with_the_same_seed_and_asks_for_floats(self):
+        pipe = self.serve(QwenImage21Pipeline(), "Qwen/Qwen-Image-2.1")
+        self.detector(3, 0)
+        request = server.ImageGenerationRequest(
+            prompt="a red apple", size="512x512", seed=20261119
+        )
+        response = self.quiet(asyncio.run, server.generate_images(request))
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(len(pipe.calls), 2)
+        for call in pipe.calls:
+            self.assertEqual(call["output_type"], "np")
+            if "torch" in STUBBED:
+                self.assertEqual(_seed_of(call["generator"]), 20261119)
+        self.assertIsNot(pipe.calls[0]["generator"], pipe.calls[1]["generator"])
+
+    def test_generation_fails_instead_of_serving_garbage(self):
+        self.serve(QwenImage21Pipeline(), "Qwen/Qwen-Image-2.1")
+        self.detector(3, 3)
+        request = server.ImageGenerationRequest(prompt="p", size="512x512", seed=1)
+        with self.assertRaises(server.HTTPException) as caught:
+            self.quiet(asyncio.run, server.generate_images(request))
+        self.assertEqual(caught.exception.status_code, 500)
+        self.assertEqual(caught.exception.detail["type"], "nonfinite_output")
+
+    def test_guard_off_leaves_the_call_as_it_was(self):
+        os.environ["NONFINITE_GUARD"] = "0"
+        pipe = self.serve(QwenImage21Pipeline(), "Qwen/Qwen-Image-2.1")
+        request = server.ImageGenerationRequest(prompt="p", size="512x512")
+        self.quiet(asyncio.run, server.generate_images(request))
+        (call,) = pipe.calls
+        self.assertNotIn("output_type", call)
+
+    def test_pipeline_without_output_type_is_served_unchecked(self):
+        pipe = self.serve(StrictPipeline(), "some/strict-model")
+        request = server.ImageGenerationRequest(prompt="p", size="512x512")
+        response = self.quiet(asyncio.run, server.generate_images(request))
+        self.assertEqual(len(response.data), 1)
+        (call,) = pipe.calls
+        self.assertNotIn("output_type", call)
+
+    def test_warmup_repeats_then_continues_by_default(self):
+        pipe = self.serve(QwenImage21Pipeline(), "Qwen/Qwen-Image-2.1")
+        os.environ["WARMUP_RESOLUTIONS"] = "1024x1024"
+        self.detector(5, 5, 5)
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            server.warmup_inference()
+        self.assertTrue(server.warmup_complete)
+        self.assertEqual(len(pipe.calls), 3)  # 1 + WARMUP_NONFINITE_RETRIES=2
+        self.assertEqual(pipe.calls[0]["output_type"], "np")
+        self.assertEqual(server._nonfinite_counts["warmup"], 3)
+        self.assertEqual(server._nonfinite_counts["warmup_unrecovered"], 1)
+        log = out.getvalue()
+        self.assertIn("Warmup 1024x1024 decoded 5 NaN values (attempt 1/3)", log)
+        self.assertIn("not known to clear", log)
+        self.assertIn("ERROR: warmup 1024x1024", log)
+
+    def test_warmup_stops_repeating_once_finite(self):
+        pipe = self.serve(QwenImage21Pipeline(), "Qwen/Qwen-Image-2.1")
+        os.environ["WARMUP_RESOLUTIONS"] = "1024x1024"
+        self.detector(5, 0)
+        self.quiet(server.warmup_inference)
+        self.assertEqual(len(pipe.calls), 2)
+        self.assertEqual(server._nonfinite_counts["warmup_unrecovered"], 0)
+
+    def test_strict_warmup_fails_startup(self):
+        self.serve(QwenImage21Pipeline(), "Qwen/Qwen-Image-2.1")
+        os.environ.update(
+            WARMUP_RESOLUTIONS="1024x1024",
+            WARMUP_NONFINITE_RETRIES="1",
+            WARMUP_NONFINITE_STRICT="1",
+        )
+        server.warmup_complete = False
+        self.detector(5, 5)
+        with self.assertRaises(server.WarmupNonFiniteError):
+            self.quiet(server.warmup_inference)
+        self.assertFalse(server.warmup_complete)
+
+    def test_strict_warmup_passes_when_finite(self):
+        self.serve(QwenImage21Pipeline(), "Qwen/Qwen-Image-2.1")
+        os.environ.update(WARMUP_RESOLUTIONS="512x512", WARMUP_NONFINITE_STRICT="1")
+        self.detector(0)
+        self.quiet(server.warmup_inference)
+        self.assertTrue(server.warmup_complete)
+
+    def video(self, *counts):
+        class FakeWan:
+            def __init__(self):
+                self.calls = []
+
+            def __call__(self, **kwargs):
+                self.calls.append(kwargs)
+                return types.SimpleNamespace(frames=["frames"])
+
+        server.PIPELINE_MODE = "text2video"
+        pipe = self.serve(FakeWan(), "Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
+        self.detector(*counts)
+        request = server.VideoGenerationRequest(
+            prompt="p", size="480x320", num_frames=5, seed=11
+        )
+        with mock.patch.object(server, "WanPipeline", FakeWan):
+            with self.assertRaises(server.HTTPException) as caught:
+                self.quiet(asyncio.run, server.generate_video(request))
+        self.assertEqual(caught.exception.status_code, 500)
+        self.assertEqual(caught.exception.detail["type"], "nonfinite_output")
+        return pipe
+
+    def test_video_does_not_retry_by_default(self):
+        # A NONFINITE_RENDER_RETRIES setting is for images only.
+        os.environ["NONFINITE_RENDER_RETRIES"] = "3"
+        pipe = self.video(4)
+        self.assertEqual(len(pipe.calls), 1)
+        self.assertEqual(server._nonfinite_counts["render_failed"], 1)
+
+    def test_video_retry_is_opt_in_and_keeps_the_seed(self):
+        os.environ["NONFINITE_VIDEO_RETRIES"] = "1"
+        pipe = self.video(4, 4)
+        self.assertEqual(len(pipe.calls), 2)
+        if "torch" in STUBBED:
+            self.assertEqual([_seed_of(c["generator"]) for c in pipe.calls], [11, 11])
+
+    def test_log_says_what_a_retry_does(self):
+        for seeded, want in (
+            (True, "rendering again with the same seed"),
+            (False, "the request has no seed, so the retry draws new noise"),
+        ):
+            self.detector(2, 0)
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                server._guarded_render(lambda: "x", lambda r: r, "t", seeded=seeded)
+            self.assertIn(want, out.getvalue())
+            self.assertIn("2 NaN values", out.getvalue())
+            self.assertNotIn("Inf", out.getvalue())
+
+    def test_unseeded_image_request_stays_unseeded_on_retry(self):
+        pipe = self.serve(QwenImage21Pipeline(), "Qwen/Qwen-Image-2.1")
+        self.detector(3, 0)
+        request = server.ImageGenerationRequest(prompt="p", size="512x512")
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            asyncio.run(server.generate_images(request))
+        self.assertEqual(len(pipe.calls), 2)
+        for call in pipe.calls:
+            self.assertNotIn("generator", call)
+        self.assertIn("draws new noise", out.getvalue())
+
+    def test_health_reports_the_counters(self):
+        server._nonfinite_counts["render_failed"] = 2
+        with mock.patch.object(
+            server, "JSONResponse", lambda status_code, content: content, create=True
+        ):
+            body = asyncio.run(server.health())
+        self.assertEqual(body["nonfinite"]["render_failed"], 2)
+
+
+@unittest.skipUnless(NUMPY is not None, "needs numpy")
+class NonFiniteCountTest(ServerTestCase):
+    def test_counts_nan_and_inf(self):
+        image = NUMPY.full((1, 4, 4, 3), 0.5, dtype=NUMPY.float32)
+        self.assertEqual(server._nonfinite_count(image), 0)
+        image[0, 0, 0, 0] = NUMPY.nan
+        image[0, 1, 1, 2] = NUMPY.inf
+        image[0, 2, 2, 1] = -NUMPY.inf
+        self.assertEqual(server._nonfinite_count(image), 3)
+
+    def test_unchecked_inputs(self):
+        self.assertIsNone(server._nonfinite_count(None))
+        self.assertIsNone(server._nonfinite_count([object()]))
+        self.assertIsNone(
+            server._nonfinite_count(NUMPY.zeros((2, 2), dtype=NUMPY.uint8))
+        )
+
+    def test_video_frames_are_checked(self):
+        frames = NUMPY.zeros((1, 3, 4, 4, 3), dtype=NUMPY.float32)
+        frames[0, 2] = NUMPY.nan
+        self.assertEqual(server._nonfinite_count(frames), 48)
+
+    def test_pipeline_converter_is_preferred(self):
+        image = NUMPY.full((1, 2, 2, 3), 0.25, dtype=NUMPY.float32)
+        seen = []
+        processor = types.SimpleNamespace(
+            numpy_to_pil=lambda images: seen.append(images.shape) or ["pil"]
+        )
+        pipe = types.SimpleNamespace(image_processor=processor)
+        self.assertEqual(server._first_pil_image(pipe, image), "pil")
+        self.assertEqual(seen, [(1, 2, 2, 3)])
+        self.assertEqual(server._first_pil_image(None, ["already pil"]), "already pil")
+
+
+@unittest.skipUnless(NUMPY is not None and REAL_PIL, "needs numpy and Pillow")
+class NonFiniteEndToEndTest(ServerTestCase):
+    """Float output through generate_images, as a real pipeline returns it with
+    output_type="np": NaN first, then a sound image on the retry."""
+
+    def test_nan_then_sound_serves_the_sound_png(self):
+        np = NUMPY
+        rng = np.random.default_rng(0)
+        sound = rng.random((1, 16, 16, 3), dtype=np.float32)
+        broken = sound.copy()
+        broken[0, :8] = np.nan
+        outputs = [broken, sound]
+        pipe = self.serve(QwenImage21Pipeline(), "Qwen/Qwen-Image-2.1")
+        recorded = QwenImage21Pipeline.__call__
+
+        def float_call(self, **kwargs):
+            recorded(self, **kwargs)
+            return types.SimpleNamespace(images=outputs.pop(0))
+
+        with mock.patch.object(
+            QwenImage21Pipeline, "__call__", functools.wraps(recorded)(float_call)
+        ):
+            request = server.ImageGenerationRequest(prompt="p", size="16x16", seed=3)
+            response = self.quiet(asyncio.run, server.generate_images(request))
+        self.assertEqual(len(pipe.calls), 2)
+        from PIL import Image as RealImage
+
+        png = base64.b64decode(response.data[0].b64_json)
+        got = np.asarray(RealImage.open(io.BytesIO(png)))
+        # The bytes diffusers' numpy_to_pil would have produced from `sound`.
+        want = (sound[0] * 255).round().astype("uint8")
+        self.assertTrue(np.array_equal(got, want))
+        self.assertEqual(server._nonfinite_counts["render_recovered"], 1)
+
+
 # --- real libraries ---------------------------------------------------------
 
 
@@ -1081,6 +1482,167 @@ class RealLibrariesTest(ServerTestCase):
         self.assertTrue(torch.equal(model.norm.weight.data, expected))
         self.assertIs(model.proj.weight, linear_weight)
         model.norm(torch.ones(1, 8, dtype=torch.bfloat16))  # raised before the shim
+
+
+# --- determinism controls and exact-shape video warmup ------------------------
+
+
+class DeterminismControlTest(ServerTestCase):
+    def fake_torch(self):
+        fake = types.SimpleNamespace(
+            use_deterministic_algorithms=mock.Mock(),
+            utils=types.SimpleNamespace(
+                deterministic=types.SimpleNamespace(fill_uninitialized_memory=True)
+            ),
+            backends=types.SimpleNamespace(
+                cudnn=types.SimpleNamespace(deterministic=False)
+            ),
+        )
+        patch = mock.patch.object(server, "torch", fake)
+        patch.start()
+        self.addCleanup(patch.stop)
+        return fake
+
+    def test_off_by_default(self):
+        fake = self.fake_torch()
+        self.assertFalse(self.quiet(server._apply_determinism_controls))
+        fake.use_deterministic_algorithms.assert_not_called()
+        self.assertFalse(fake.backends.cudnn.deterministic)
+
+    def test_unrecognised_value_stays_off(self):
+        fake = self.fake_torch()
+        os.environ["TORCH_DETERMINISTIC"] = "0"
+        self.assertFalse(self.quiet(server._apply_determinism_controls))
+        fake.use_deterministic_algorithms.assert_not_called()
+
+    def test_on_sets_warn_only_and_skips_memory_fill(self):
+        fake = self.fake_torch()
+        os.environ["TORCH_DETERMINISTIC"] = "1"
+        self.assertTrue(self.quiet(server._apply_determinism_controls))
+        fake.use_deterministic_algorithms.assert_called_once_with(True, warn_only=True)
+        self.assertFalse(fake.utils.deterministic.fill_uninitialized_memory)
+        self.assertTrue(fake.backends.cudnn.deterministic)
+
+    def test_on_without_utils_deterministic(self):
+        fake = self.fake_torch()
+        fake.utils = types.SimpleNamespace()
+        os.environ["TORCH_DETERMINISTIC"] = "true"
+        self.assertTrue(self.quiet(server._apply_determinism_controls))
+        fake.use_deterministic_algorithms.assert_called_once_with(True, warn_only=True)
+
+
+class VideoWarmupTest(ServerTestCase):
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.object(server, "_nonfinite_count", return_value=0)
+        patch.start()
+        self.addCleanup(patch.stop)
+        server.PIPELINE_MODE = "text2video"
+
+    def test_warmup_renders_the_served_clip_shape(self):
+        pipe = self.serve(WanT2VPipeline(), "Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
+        os.environ.update(
+            WARMUP_RESOLUTIONS="832x480",
+            WARMUP_VIDEO_FRAMES="33",
+            WARMUP_STEPS="20",
+            DEFAULT_NEGATIVE_PROMPT="static, blurry",
+        )
+        self.quiet(server.warmup_inference)
+        self.assertTrue(server.warmup_complete)
+        (call,) = pipe.calls
+        self.assertEqual(call["num_frames"], 33)
+        self.assertEqual(call["num_inference_steps"], 20)
+        self.assertEqual((call["width"], call["height"]), (832, 480))
+        self.assertEqual(call["negative_prompt"], "static, blurry")
+
+    def test_warmup_without_frames_keeps_the_pipeline_default(self):
+        pipe = self.serve(WanT2VPipeline(), "Wan-AI/Wan2.1-T2V-1.3B-Diffusers")
+        os.environ["WARMUP_RESOLUTIONS"] = "832x480"
+        self.quiet(server.warmup_inference)
+        (call,) = pipe.calls
+        self.assertNotIn("num_frames", call)
+        self.assertNotIn("negative_prompt", call)
+        self.assertEqual(call["num_inference_steps"], 4)
+
+    def test_vace_warmup_renders_the_served_shape_with_a_condition(self):
+        server.PIPELINE_MODE = "image2video"
+        pipe = self.serve(WanVACEI2VPipeline(), "Wan-AI/Wan2.1-VACE-1.3B-diffusers")
+        os.environ.update(
+            WARMUP_RESOLUTIONS="832x480",
+            WARMUP_VIDEO_FRAMES="33",
+            WARMUP_STEPS="20",
+            DEFAULT_NEGATIVE_PROMPT="static, blurry",
+        )
+        self.quiet(server.warmup_inference)
+        self.assertTrue(server.warmup_complete)
+        (call,) = pipe.calls
+        self.assertEqual(call["num_frames"], 33)
+        self.assertEqual(call["num_inference_steps"], 20)
+        self.assertEqual((call["width"], call["height"]), (832, 480))
+        self.assertEqual(call["negative_prompt"], "static, blurry")
+        # The same conditioning the request path builds: one kept frame, the
+        # rest generated, at the served size.
+        self.assertEqual((len(call["video"]), len(call["mask"])), (33, 33))
+        self.assertEqual(call["video"][0].size, (832, 480))
+        # The kept frame has its own mask; every generated frame shares one.
+        self.assertIsNot(call["mask"][0], call["mask"][1])
+        self.assertTrue(all(m is call["mask"][1] for m in call["mask"][1:]))
+
+    def test_vace_warmup_without_frames_uses_the_served_default(self):
+        server.PIPELINE_MODE = "image2video"
+        pipe = self.serve(WanVACEI2VPipeline(), "Wan-AI/Wan2.1-VACE-1.3B-diffusers")
+        os.environ.update(WARMUP_RESOLUTIONS="832x480", DEFAULT_VIDEO_NUM_FRAMES="49")
+        self.quiet(server.warmup_inference)
+        (call,) = pipe.calls
+        self.assertEqual(call["num_frames"], 49)
+        self.assertEqual(len(call["video"]), 49)
+
+    def test_frames_ignored_outside_text2video(self):
+        server.PIPELINE_MODE = "text2image"
+        pipe = self.serve(StableDiffusionXLPipeline(), "stabilityai/sdxl")
+        os.environ.update(WARMUP_RESOLUTIONS="512x512", WARMUP_VIDEO_FRAMES="33")
+        self.quiet(server.warmup_inference)
+        (call,) = pipe.calls
+        self.assertNotIn("num_frames", call)
+
+
+# --- Brownian-tree noise bounds (Stable Audio on the runtime image) ----------
+
+
+class BrownianNoiseBoundsTest(ServerTestCase):
+    def test_no_scheduler_module_is_a_no_op(self):
+        with mock.patch.dict(sys.modules, {"diffusers.schedulers": None}):
+            self.assertFalse(server._bound_brownian_noise_sampler())
+
+    @unittest.skipUnless(REAL_DIFFUSERS, "needs real torch and diffusers")
+    def test_cosine_dpm_schedule_finishes_and_repeats(self):
+        import torch
+        from diffusers import CosineDPMSolverMultistepScheduler
+
+        server._bound_brownian_noise_sampler()  # idempotent after import
+
+        def run(seed):
+            sch = CosineDPMSolverMultistepScheduler(
+                sigma_min=0.3,
+                sigma_max=500.0,
+                sigma_data=1.0,
+                sigma_schedule="exponential",
+                solver_order=2,
+                prediction_type="v_prediction",
+                final_sigmas_type="zero",
+            )
+            sch.set_timesteps(20, device="cpu")
+            g = torch.Generator("cpu").manual_seed(seed)
+            lat = torch.randn(1, 8, 64, generator=g) * sch.init_noise_sigma
+            for t in sch.timesteps:
+                x = sch.scale_model_input(lat, t)
+                lat = sch.step(-0.01 * x, t, lat, generator=g).prev_sample
+            return lat
+
+        a, b, c = run(42), run(42), run(7)
+        self.assertTrue(bool(torch.isfinite(a).all()))
+        self.assertTrue(torch.equal(a, b))
+        self.assertFalse(torch.equal(a, c))
 
 
 if __name__ == "__main__":

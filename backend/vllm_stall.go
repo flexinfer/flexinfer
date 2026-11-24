@@ -13,15 +13,40 @@ import (
 )
 
 // VLLMStallSample aggregates all labeled engine series.
-type VLLMStallSample struct{ Running, Waiting, Prompt, Generation float64 }
+//
+// KVUsage is the KV-cache usage gauge (vllm:kv_cache_usage_perc, or the older
+// vllm:gpu_cache_usage_perc). vLLM counts prompt tokens only when a request's
+// prefill completes, so a chunked prefill longer than the stall window moves
+// neither token counter. The scheduler publishes KV usage every engine step,
+// and each prefill chunk allocates blocks, so the gauge moves while the
+// prefill runs (2026-11-21: a 120K-token prefill on the XTX held both
+// counters flat for five minutes while the gauge rose 0.17 -> 0.74). A hung
+// engine does not step, so the gauge freezes with the counters. The gauge is
+// optional: an engine that does not export it is judged on the counters
+// alone, as before.
+type VLLMStallSample struct {
+	Running, Waiting, Prompt, Generation float64
+	KVUsage                              float64
+	HasKVUsage                           bool
+}
 
 func (s VLLMStallSample) String() string {
-	return fmt.Sprintf("running=%g waiting=%g prompt_tokens=%g generation_tokens=%g", s.Running, s.Waiting, s.Prompt, s.Generation)
+	out := fmt.Sprintf("running=%g waiting=%g prompt_tokens=%g generation_tokens=%g", s.Running, s.Waiting, s.Prompt, s.Generation)
+	if s.HasKVUsage {
+		out += fmt.Sprintf(" kv_cache_usage=%g", s.KVUsage)
+	}
+	return out
 }
+
+// vllmKVUsageMetrics are the KV-cache usage gauge names, newest first. vLLM
+// renamed vllm:gpu_cache_usage_perc to vllm:kv_cache_usage_perc; an engine
+// exports one of them.
+var vllmKVUsageMetrics = []string{"vllm:kv_cache_usage_perc", "vllm:gpu_cache_usage_perc"}
+
 func ParseVLLMStallSample(text string) (VLLMStallSample, error) {
-	names := []string{"vllm:num_requests_running", "vllm:num_requests_waiting", "vllm:prompt_tokens_total", "vllm:generation_tokens_total"}
-	values := make([]float64, 4)
-	seen := make([]bool, 4)
+	names := append([]string{"vllm:num_requests_running", "vllm:num_requests_waiting", "vllm:prompt_tokens_total", "vllm:generation_tokens_total"}, vllmKVUsageMetrics...)
+	values := make([]float64, len(names))
+	seen := make([]bool, len(names))
 	scanner := bufio.NewScanner(strings.NewReader(text))
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -51,6 +76,11 @@ func ParseVLLMStallSample(text string) (VLLMStallSample, error) {
 			}
 			v, err := strconv.ParseFloat(fields[0], 64)
 			if err != nil || math.IsNaN(v) || math.IsInf(v, 0) || v < 0 {
+				if i >= 4 {
+					// A bad optional gauge is ignored, never a reason to
+					// reset the detector on every scrape.
+					break
+				}
 				return VLLMStallSample{}, fmt.Errorf("invalid value %s", n)
 			}
 			values[i] += v
@@ -60,15 +90,24 @@ func ParseVLLMStallSample(text string) (VLLMStallSample, error) {
 	if err := scanner.Err(); err != nil {
 		return VLLMStallSample{}, err
 	}
-	for i, ok := range seen {
+	for i, ok := range seen[:4] {
 		if !ok {
 			return VLLMStallSample{}, fmt.Errorf("missing metric %s", names[i])
 		}
 	}
-	return VLLMStallSample{values[0], values[1], values[2], values[3]}, nil
+	sample := VLLMStallSample{Running: values[0], Waiting: values[1], Prompt: values[2], Generation: values[3]}
+	for i := 4; i < len(names); i++ {
+		if seen[i] {
+			sample.KVUsage, sample.HasKVUsage = values[i], true
+			break
+		}
+	}
+	return sample, nil
 }
 
-// StallDetector requires continuous outstanding work without token progress.
+// StallDetector requires continuous outstanding work without progress: no
+// change in either token counter or, when the engine exports it, in the
+// KV-cache usage gauge (see VLLMStallSample).
 // Reset on scrape errors to avoid declaring a stall across an observation gap.
 type StallDetector struct {
 	Window   time.Duration
@@ -83,7 +122,8 @@ func (d *StallDetector) Observe(s VLLMStallSample, now time.Time) bool {
 	if window <= 0 {
 		window = 5 * time.Minute
 	}
-	if !d.observed || s.Running+s.Waiting == 0 || d.last.Running+d.last.Waiting == 0 || s.Prompt != d.last.Prompt || s.Generation != d.last.Generation || now.Before(d.since) {
+	kvMoved := s.HasKVUsage != d.last.HasKVUsage || s.KVUsage != d.last.KVUsage
+	if !d.observed || s.Running+s.Waiting == 0 || d.last.Running+d.last.Waiting == 0 || s.Prompt != d.last.Prompt || s.Generation != d.last.Generation || kvMoved || now.Before(d.since) {
 		d.since = now
 	}
 	d.last = s

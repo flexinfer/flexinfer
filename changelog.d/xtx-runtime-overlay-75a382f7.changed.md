@@ -1,0 +1,1 @@
+XTX runtime repin (window-gated): `a8d525e0` -> `c54cad12`, the diffusers-server overlay rebuilt on `527e2714` with master `75a382f7`'s `server-diffusers.py`, which adds only the `WAN_VAE_MIOPEN` switch (!1407; default `auto` keeps current behaviour). `a8d525e0` stays prewarmed, certified and the rollback.

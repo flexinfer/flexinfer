@@ -1,4 +1,7 @@
 {{- if .Values.agent.enabled }}
+{{- $gpuPowerNodes := dig "gpuPower" "nodes" (list) .Values.agent }}
+{{- $localCacheInventory := dig "localCacheInventory" "enabled" false .Values.agent }}
+{{- $localCacheHostPath := dig "localCacheInventory" "hostPath" "/var/lib/flexinfer/models" .Values.agent }}
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
@@ -24,10 +27,15 @@ spec:
         - name: agent
           image: {{ include "flexinfer.imageRef" (merge (deepCopy .Values.agent.image) (dict "tag" (.Chart.AppVersion | toString))) | quote }}
           imagePullPolicy: {{ include "flexinfer.imagePullPolicy" .Values.agent.image }}
-          {{- with (dig "gpuPower" "nodes" (list) .Values.agent) }}
+          {{- if or $gpuPowerNodes $localCacheInventory }}
           args:
+            {{- with $gpuPowerNodes }}
             - --gpu-power-nodes={{ join "," . }}
             - --gpu-power-interval={{ dig "gpuPower" "interval" "1s" $.Values.agent }}
+            {{- end }}
+            {{- if $localCacheInventory }}
+            - --local-cache-root={{ $localCacheHostPath }}
+            {{- end }}
           {{- end }}
           securityContext:
             privileged: true # Required for hardware access
@@ -70,6 +78,14 @@ spec:
             # Host /dev for NVIDIA devices
             - name: dev
               mountPath: /dev
+            {{- if $localCacheInventory }}
+            # Local model caches, read only, for the orphan inventory
+            # (flexinfer_node_local_cache_bytes). Same path as on the host so
+            # the agent's log lines name host paths.
+            - name: local-cache
+              mountPath: {{ $localCacheHostPath }}
+              readOnly: true
+            {{- end }}
           resources:
             {{- toYaml .Values.agent.resources | nindent 12 }}
       volumes:
@@ -98,6 +114,14 @@ spec:
           hostPath:
             path: /dev
             type: Directory
+        {{- if $localCacheInventory }}
+        # DirectoryOrCreate like the controller's Local stage Jobs on the same
+        # base, so a node without Local caches still starts the agent.
+        - name: local-cache
+          hostPath:
+            path: {{ $localCacheHostPath }}
+            type: DirectoryOrCreate
+        {{- end }}
       {{- with .Values.agent.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}

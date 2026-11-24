@@ -32,7 +32,7 @@
 # compressed offload bundles, which the ISA check lists with
 # clang-offload-bundler (in both bases under /opt/rocm/llvm/bin).
 ARG BASE_IMAGE=vllm/vllm-openai-rocm:v0.32.0
-ARG GO_VERSION=1.26.10
+ARG GO_VERSION=1.26.11
 
 FROM golang:${GO_VERSION} AS go-builder
 

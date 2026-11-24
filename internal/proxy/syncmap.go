@@ -38,6 +38,12 @@ func (m *TypedSyncMap[K, V]) CompareAndSwap(key K, oldVal, newVal V) bool {
 	return m.m.CompareAndSwap(key, oldVal, newVal)
 }
 
+// CompareAndDelete deletes the entry for key only if its value equals old,
+// and reports whether it did. V must be comparable at runtime.
+func (m *TypedSyncMap[K, V]) CompareAndDelete(key K, old V) bool {
+	return m.m.CompareAndDelete(key, old)
+}
+
 // Delete deletes the value for a key.
 func (m *TypedSyncMap[K, V]) Delete(key K) {
 	m.m.Delete(key)

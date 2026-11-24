@@ -121,6 +121,12 @@ type ModelReconciler struct {
 	// first byte of logs — that is how CI job pods (5Gi request) outlived the
 	// Mills workhorse on the 5930k on 2026-09-13. Nil disables the default.
 	ServingDefaultEphemeralStorage *resource.Quantity
+	// LocalCacheOnDelete is the default fate of a `strategy: Local` cache
+	// directory when its Model is deleted: "retain" (empty, the historical
+	// behavior) or "delete" (a one-shot Job on the node removes it). The Model
+	// annotation flexinfer.ai/local-cache-on-delete overrides it. From
+	// DEFAULT_LOCAL_CACHE_ON_DELETE; see model_cache_cleanup.go.
+	LocalCacheOnDelete string
 	// MaxConcurrentReconciles is the Model controller's worker count. Values
 	// below 1 keep the single worker. Reconciles of different Models share no
 	// unguarded state (see sharedGroupLocks for the one cross-Model write
@@ -164,6 +170,7 @@ const experimentalGPUSupportEventCooldown = vramPressureEventCooldown
 //+kubebuilder:rbac:groups=ai.flexinfer,resources=gpuleases/status,verbs=get;update;patch
 //+kubebuilder:rbac:groups=apps,resources=deployments,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=discovery.k8s.io,resources=endpointslices,verbs=delete;deletecollection
 //+kubebuilder:rbac:groups=core,resources=persistentvolumeclaims,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=batch,resources=jobs,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups="",resources=nodes,verbs=get;list;watch
@@ -240,6 +247,10 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 	// generation. Best-effort: never blocks reconcile.
 	observeStaleGenerationJobs(ctx, r.Client, "Model", model.Namespace, model.Name, model.UID, model.Generation, LabelModel)
 
+	// A Model recreated under a deleted Model's name keeps that Local cache:
+	// cancel a cleanup Job the deletion left behind that has not run yet.
+	r.cancelPendingLocalCacheCleanup(ctx, model)
+
 	// Adopt an explicit activation request before deciding replicas, and persist
 	// it immediately: the recorded timestamp is what stops the same annotation
 	// from re-waking the model every time the idle timer reaps it. This writes
@@ -289,13 +300,19 @@ func (r *ModelReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl
 		}
 	}
 
+	// A release takes effect when its grace ends; come back then rather than
+	// on the next periodic pass.
+	if wait := releaseGraceRemaining(model, time.Now()); wait > 0 && wait+time.Second < requeueAfter {
+		requeueAfter = wait + time.Second
+	}
+
 	// Detect GPU info from node
 	gpuVendor, gpuArch, err := r.detectGPU(ctx, model)
 	if err != nil {
 		log.Error(err, "Failed to detect GPU")
 		r.Recorder.Event(model, corev1.EventTypeWarning, "GPUDetectionFailed", err.Error())
 		if isNoMatchingNodesError(err) {
-			if parkErr := r.parkStaleDeployment(ctx, model); parkErr != nil {
+			if parkErr := r.parkStaleDeployment(ctx, model, isGPUDegradedError(err)); parkErr != nil {
 				log.Error(parkErr, "Failed to park stale Deployment")
 				return ctrl.Result{}, parkErr
 			}
@@ -666,7 +683,19 @@ func (r *ModelReconciler) deploymentExists(ctx context.Context, model *aiv1alpha
 // A Deployment whose selector still matches the Model's is left alone: that
 // is the "every matching node is NotReady" case, and killing a warm pod during
 // a kubelet blip would turn a transient outage into a cold start.
-func (r *ModelReconciler) parkStaleDeployment(ctx context.Context, model *aiv1alpha2.Model) error {
+//
+// gpuDegraded is the exception: every matching node carries the GPU health
+// sentinel's degraded label, so the pod cannot serve, and the card only
+// recovers through a host power cycle. The reconcile returns before
+// ensureDeployment while the lane is parked, so the rendered template goes
+// stale: a spec change made during the outage never reaches it, and after the
+// power cycle kubelet restarts the old pod on the recovering card. Observed
+// 2026-11-23 on qwen38-27b-xtx-warm-canary: a revert of the dot2 GEMM merged
+// while the card was down, yet the dot2 pod (replicas 1) came back with the
+// host and the card dropped again 3m14s into its warmup. At zero, the release
+// reconcile (the node watch fires when the label clears) renders the current
+// spec with the desired replicas through ensureDeployment.
+func (r *ModelReconciler) parkStaleDeployment(ctx context.Context, model *aiv1alpha2.Model, gpuDegraded bool) error {
 	deployment := &appsv1.Deployment{}
 	if err := r.Get(ctx, client.ObjectKeyFromObject(model), deployment); err != nil {
 		if errors.IsNotFound(err) {
@@ -677,8 +706,12 @@ func (r *ModelReconciler) parkStaleDeployment(ctx context.Context, model *aiv1al
 	if deployment.Spec.Replicas != nil && *deployment.Spec.Replicas == 0 {
 		return nil
 	}
-	if !nodeSelectorStale(model.Spec.NodeSelector, deployment.Spec.Template.Spec.NodeSelector) {
-		return nil
+	reason := "its GPU is degraded (flexinfer.ai/gpu.health); the release renders the current spec"
+	if !gpuDegraded {
+		if !nodeSelectorStale(model.Spec.NodeSelector, deployment.Spec.Template.Spec.NodeSelector) {
+			return nil
+		}
+		reason = "it was rendered for a node selector the Model no longer declares"
 	}
 	zero := int32(0)
 	deployment.Spec.Replicas = &zero
@@ -686,7 +719,7 @@ func (r *ModelReconciler) parkStaleDeployment(ctx context.Context, model *aiv1al
 		return err
 	}
 	r.Recorder.Eventf(model, corev1.EventTypeNormal, "DeploymentParked",
-		"Scaled Deployment %s to 0: it was rendered for a node selector the Model no longer declares", deployment.Name)
+		"Scaled Deployment %s to 0: %s", deployment.Name, reason)
 	return nil
 }
 

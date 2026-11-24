@@ -294,13 +294,18 @@ func newJobFixture(t *testing.T, models ...*aiv1alpha2.Model) *jobFixture {
 		name := m.Name
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			b, _ := io.ReadAll(r.Body)
-			f.bodies <- b
 			n, _ := f.requests.LoadOrStore(name, new(atomic.Int32))
 			n.(*atomic.Int32).Add(1)
 			code := int(f.status.Load())
 			if v, ok := f.statusFor.Load(name); ok {
 				code = v.(int)
 			}
+			// Publish the body only after this request is counted and its
+			// status is chosen. A test that receives the body and then changes
+			// status or statusFor must not affect the request it just saw:
+			// publishing first let the handler read the changed status, so a
+			// forced 503 was answered 200 and the retry never happened.
+			f.bodies <- b
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(code)
 			if code == http.StatusOK {
@@ -329,6 +334,27 @@ func newJobFixture(t *testing.T, models ...*aiv1alpha2.Model) *jobFixture {
 	t.Cleanup(hook.Close)
 	f.upstream["hook"] = hook
 	return f
+}
+
+// stopRunning cancels every job this fixture's runner still runs and waits
+// for their goroutines to exit. Cancelling alone races the test's cleanup: a
+// goroutine still unwinding can write into the spool t.TempDir is removing
+// ("TempDir RemoveAll cleanup: directory not empty").
+func (f *jobFixture) stopRunning(t *testing.T) {
+	t.Helper()
+	f.p.jobs.mu.Lock()
+	for _, cancel := range f.p.jobs.running {
+		cancel()
+	}
+	f.p.jobs.mu.Unlock()
+	deadline := time.Now().Add(10 * time.Second)
+	for f.p.jobs.runningCount() > 0 {
+		if time.Now().After(deadline) {
+			t.Errorf("%d job goroutines still running after cancel", f.p.jobs.runningCount())
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // requestCount is how many requests lane name's upstream received.
@@ -524,11 +550,7 @@ func TestDiffusersLanesOnOneCardRunOneJobAtATime(t *testing.T) {
 		}
 	}
 	assert.Equal(t, 1, running, "one render at a time per shared card")
-	f.p.jobs.mu.Lock()
-	for _, cancel := range f.p.jobs.running {
-		cancel()
-	}
-	f.p.jobs.mu.Unlock()
+	f.stopRunning(t)
 }
 
 func TestStaleClaimIsReclaimedAndDeletionCleansStorage(t *testing.T) {

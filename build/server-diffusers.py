@@ -53,6 +53,45 @@ if not hasattr(torch.nn, "RMSNorm"):
     torch.nn.RMSNorm = _RMSNorm
     print("Patched torch.nn.RMSNorm for PyTorch < 2.4 compatibility")
 
+
+def _apply_determinism_controls() -> bool:
+    """Turn on PyTorch's deterministic algorithms when TORCH_DETERMINISTIC is set.
+
+    Off by default. On ROCm, PyTorch sets every rocBLAS handle to
+    HIPBLAS_ATOMICS_ALLOWED unless deterministic algorithms are on
+    (aten/src/ATen/cuda/CublasHandlePool.cpp), and no environment variable
+    overrides that, so split-K GEMMs accumulate in a different order on each
+    call. Deterministic mode also makes MIOpen pick deterministic convolution
+    solvers and puts Inductor in its deterministic mode (no template
+    autotuning, no runtime reduction tuning). warn_only keeps ops without a
+    deterministic kernel running, with a UserWarning. Filling uninitialized
+    memory is turned off: it costs time on every torch.empty and the
+    pipelines never read uninitialized memory.
+
+    Measured need, 2026-11-21: the in-pod Wan T2V lane on torch 2.13 / ROCm
+    7.2 gave a different clip for the same seed on every eager request
+    (rows gfx1100-xtx-inpod-wan-t2v-*-gate-2026-11-21).
+    """
+    raw = os.environ.get("TORCH_DETERMINISTIC", "").strip().lower()
+    if raw not in ("1", "true", "yes", "on"):
+        return False
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    deterministic = getattr(getattr(torch, "utils", None), "deterministic", None)
+    if deterministic is not None and hasattr(
+        deterministic, "fill_uninitialized_memory"
+    ):
+        deterministic.fill_uninitialized_memory = False
+    torch.backends.cudnn.deterministic = True
+    print(
+        "TORCH_DETERMINISTIC: deterministic algorithms on (warn_only); rocBLAS "
+        "atomics off, MIOpen deterministic solvers, Inductor deterministic mode"
+    )
+    sys.stdout.flush()
+    return True
+
+
+_apply_determinism_controls()
+
 # Polyfill enable_gqa for scaled_dot_product_attention (PyTorch < 2.5).
 # diffusers 0.36+ FLUX attention processors pass enable_gqa=True, which
 # PyTorch 2.3 doesn't accept. Strip it and fall back to standard SDPA.
@@ -94,6 +133,63 @@ from diffusers import (
     WanPipeline,
     WanVACEPipeline,
 )
+
+
+def _bound_brownian_noise_sampler() -> bool:
+    """Keep diffusers' Brownian-tree noise queries inside the tree's interval.
+
+    BrownianTreeNoiseSampler builds a torchsde BrownianInterval over
+    [sigma_min, sigma_max] and is then queried at each step's (sigma,
+    sigma_next). Two queries fall outside it: the first sigma comes out of the
+    schedule as 500.00006 against sigma_max 500, and with final_sigmas_type
+    "zero" the last step asks for sigma_next 0 below sigma_min. torchsde 0.2.6
+    only warns on the old dedicated stack (Python 3.10, torch 2.6), but on the
+    runtime image (Python 3.12, torch 2.13) the below-start query recurses
+    until RecursionError, so Stable Audio Open crashed on its last step
+    (S9 2026-11-06; reproduced on CPU in runtime 12f30206 on 2026-11-22).
+
+    The query endpoints are clamped to the interval. When the clamped interval
+    is empty the noise is zeros: that is the final step to sigma 0, whose
+    first-order update multiplies the noise by sigma_t = 0, so any finite value
+    gives the same sample. Queries inside the interval are unchanged.
+    """
+    try:
+        from diffusers.schedulers import scheduling_dpmsolver_sde as sde
+    except Exception:  # noqa: BLE001 - optional on stub or older diffusers
+        return False
+    cls = getattr(sde, "BrownianTreeNoiseSampler", None)
+    if cls is None or getattr(cls, "_flexinfer_bounded", False):
+        return False
+    orig_init = cls.__init__
+
+    def __init__(self, x, sigma_min, sigma_max, seed=None, transform=lambda v: v):
+        orig_init(self, x, sigma_min, sigma_max, seed, transform)
+        a = self.transform(torch.as_tensor(sigma_min))
+        b = self.transform(torch.as_tensor(sigma_max))
+        self._flexinfer_lo, self._flexinfer_hi = torch.minimum(a, b), torch.maximum(
+            a, b
+        )
+        self._flexinfer_zeros = torch.zeros_like(x)
+
+    def __call__(self, sigma, sigma_next):
+        lo, hi = self._flexinfer_lo, self._flexinfer_hi
+        t0 = torch.minimum(
+            torch.maximum(self.transform(torch.as_tensor(sigma)), lo), hi
+        )
+        t1 = torch.minimum(
+            torch.maximum(self.transform(torch.as_tensor(sigma_next)), lo), hi
+        )
+        if bool(t0 == t1):
+            return self._flexinfer_zeros.clone()
+        return self.tree(t0, t1) / (t1 - t0).abs().sqrt()
+
+    cls.__init__ = __init__
+    cls.__call__ = __call__
+    cls._flexinfer_bounded = True
+    return True
+
+
+_bound_brownian_noise_sampler()
 
 
 # Lazy-import AutoPipeline* to avoid cascading import of all pipelines
@@ -281,6 +377,171 @@ def _env_bool(name: str, default: bool = False) -> bool:
     if value is None or value == "":
         return default
     return value.strip().lower() in ("1", "true", "yes", "on")
+
+
+# --- non-finite output guard --------------------------------------------------
+#
+# A decode that produces NaN pixels still turns into a PNG: diffusers casts the
+# float image to uint8 in numpy_to_pil (the "invalid value encountered in
+# cast" RuntimeWarning from image_processor.py), and what comes out is garbage
+# that the server used to return with HTTP 200. On 2026-11-19 the Qwen-Image
+# 2.1 lane did exactly that on the 7900 XTX runtime pod (row
+# gfx1100-xtx-inpod-qwen-image-gate-2026-11-19 in .loom/60-validation-matrix.md):
+# the warmup decoded NaN, the first real render was flat and noisy tiles, and
+# every later render in the process was sound. The cause is not known.
+#
+# The guard asks image pipelines for output_type="np" (the float image in
+# [0, 1] that the "pil" path would have cast), checks it with one np.isfinite
+# pass, and converts it to PIL with the pipeline's own numpy_to_pil, so sound
+# output gives the same bytes as before. Video pipelines (Wan) already return
+# float frames, so the same check runs on them as is.
+#
+# Only NaN is caught in practice: diffusers' postprocess clamps the decoded
+# image to [0, 1] before the server sees it, which turns +/-Inf into 1 or 0
+# but leaves NaN as NaN. The names below say "nonfinite"; read them as NaN.
+#
+#   NONFINITE_GUARD=1            check outputs at all (0 restores the old path)
+#   NONFINITE_RENDER_RETRIES=1   re-runs of an image request whose output is NaN
+#   NONFINITE_VIDEO_RETRIES=0    re-runs of a video request whose output is NaN
+#   WARMUP_NONFINITE_RETRIES=2   re-runs of a warmup pass whose output is NaN
+#   WARMUP_NONFINITE_STRICT=0    1: fail startup when a warmup stays NaN
+
+# Occurrence counters, reported under "nonfinite" by GET /health.
+_nonfinite_counts = {
+    "warmup": 0,  # warmup passes whose output held NaN
+    "warmup_unrecovered": 0,  # warmup resolutions still NaN after their repeats
+    "render": 0,  # request renders (attempts) whose output held NaN
+    "render_recovered": 0,  # requests whose retry came back without NaN
+    "render_failed": 0,  # requests answered with HTTP 500 nonfinite_output
+}
+
+
+class WarmupNonFiniteError(RuntimeError):
+    """A warmup pass stayed NaN and WARMUP_NONFINITE_STRICT=1."""
+
+
+def _nonfinite_guard_enabled() -> bool:
+    return _env_bool("NONFINITE_GUARD", True)
+
+
+def _env_retries(name: str, default: int) -> int:
+    value = _env_int(name)
+    return default if value is None or value < 0 else value
+
+
+def _float_ndarray(value) -> bool:
+    try:
+        import numpy as np
+    except ImportError:
+        return False
+    return isinstance(value, np.ndarray) and value.dtype.kind == "f"
+
+
+def _nonfinite_count(pixels) -> Optional[int]:
+    """Count non-finite values in a decoded float image or video array.
+
+    In practice these are NaN: diffusers clamps the decode to [0, 1] first, so
+    an Inf arrives here as 0 or 1. Returns None when the output cannot be
+    checked (a list of PIL images from a pipeline that ignored output_type, or
+    numpy missing), so callers treat it as unchecked rather than as bad. Cost:
+    one np.isfinite pass, a few milliseconds for a 1024x1024 RGB image.
+    """
+    if not _float_ndarray(pixels):
+        return None
+    import numpy as np
+
+    finite = np.isfinite(pixels)
+    return int(pixels.size - np.count_nonzero(finite))
+
+
+def _numpy_to_pil(images):
+    """Copy of diffusers' numpy_to_pil, used when a pipeline exposes neither its
+    image processor's nor its own."""
+    if images.ndim == 3:
+        images = images[None, ...]
+    images = (images * 255).round().astype("uint8")
+    if images.shape[-1] == 1:
+        return [Image.fromarray(image.squeeze(), mode="L") for image in images]
+    return [Image.fromarray(image) for image in images]
+
+
+def _first_pil_image(pipe, images):
+    """The first output image as PIL, converted the way the pipeline would have
+    converted it for output_type="pil"."""
+    if not _float_ndarray(images):
+        return images[0]
+    convert = getattr(getattr(pipe, "image_processor", None), "numpy_to_pil", None)
+    if convert is None:
+        convert = getattr(pipe, "numpy_to_pil", None)
+    if convert is None:
+        convert = _numpy_to_pil
+    return convert(images[:1])[0]
+
+
+def _release_gpu_memory() -> None:
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+
+def _guarded_render(
+    render,
+    pixels,
+    label: str,
+    seeded: bool = True,
+    retries_env: str = "NONFINITE_RENDER_RETRIES",
+    default_retries: int = 1,
+):
+    """Run render() and check pixels(result) for NaN.
+
+    A NaN result is logged, counted and rendered again, up to `retries_env`
+    times (default `default_retries`). For a seeded request render() must
+    rebuild its generator so the retry uses the same seed; an unseeded request
+    has no seed to reuse, so its retry draws new noise. If every attempt holds
+    NaN the request fails with HTTP 500 and a typed detail instead of returning
+    a garbage image. Whether a retry helps is not known: on 2026-11-19 the
+    render after the bad one was sound, so images retry once by default.
+    """
+    if not _nonfinite_guard_enabled():
+        return render()
+    attempts = 1 + _env_retries(retries_env, default_retries)
+    again = (
+        "rendering again with the same seed"
+        if seeded
+        else "rendering again (the request has no seed, so the retry draws new noise)"
+    )
+    bad = 0
+    for attempt in range(1, attempts + 1):
+        result = render()
+        bad = _nonfinite_count(pixels(result))
+        if not bad:
+            if attempt > 1:
+                _nonfinite_counts["render_recovered"] += 1
+                print(f"[nonfinite] {label}: attempt {attempt} has no NaN; serving it")
+            return result
+        _nonfinite_counts["render"] += 1
+        retrying = attempt < attempts
+        print(
+            f"[nonfinite] {label}: decoded output holds {bad} NaN values "
+            f"(attempt {attempt}/{attempts}); "
+            + (again if retrying else f"giving up ({retries_env}={attempts - 1})")
+        )
+        sys.stdout.flush()
+        del result
+        _release_gpu_memory()
+    _nonfinite_counts["render_failed"] += 1
+    raise HTTPException(
+        status_code=500,
+        detail={
+            "type": "nonfinite_output",
+            "message": (
+                f"the decoded output held NaN values on all {attempts} "
+                "attempt(s); no output was returned because it would be garbage"
+            ),
+            "attempts": attempts,
+            "nonfinite_values": bad,
+        },
+    )
 
 
 def _is_sdxl_turbo(model_id: str) -> bool:
@@ -1035,15 +1296,34 @@ def _bypass_miopen_for_wan_vae(pipe, family: Optional[str]) -> bool:
     2026-11-03: a bf16 3x3x3 conv at (1,96,6,480,832) took 7.9 s through MIOpen
     and 31 ms through PyTorch's im2col + GEMM path, and the 33-frame 832x480
     decode dropped from 370 s to 5-11 s at an 11.6 GiB peak. An fp32 VAE (the
-    VACE lane) is left alone: its im2col buffer needs 15.4 GiB at that shape.
+    VACE lane) is left alone by default: untiled, its im2col buffer needs
+    15.4 GiB at that shape.
+
+    WAN_VAE_MIOPEN overrides the dtype rule: "off" bypasses MIOpen for any
+    dtype, "on" keeps it for any dtype, and "auto" (the default) is the rule
+    above. The in-pod VACE lane sets "off": through MIOpen its fp32 VAE gave
+    same-seed requests that differ (37 dB), while the bypassed 16-bit T2V VAE
+    repeats byte-for-byte. VAE tiling (ENABLE_VAE_TILING=1) bounds the fp32
+    im2col buffer per tile; without it the bypass can run out of memory.
     """
     is_rocm = hasattr(torch.version, "hip") and torch.version.hip is not None
     vae = getattr(pipe, "vae", None)
     if family != "wan" or not is_rocm or vae is None:
         return False
-    if getattr(vae, "dtype", None) not in (torch.bfloat16, torch.float16):
-        print(f"Keeping MIOpen for the Wan VAE in {getattr(vae, 'dtype', None)}")
+    dtype = getattr(vae, "dtype", None)
+    sixteen_bit = dtype in (torch.bfloat16, torch.float16)
+    mode = os.environ.get("WAN_VAE_MIOPEN", "auto").strip().lower() or "auto"
+    if mode not in ("auto", "on", "off"):
+        print(f"WARNING: WAN_VAE_MIOPEN={mode!r} is not auto, on or off; using auto")
+        mode = "auto"
+    if mode == "on" or (mode == "auto" and not sixteen_bit):
+        print(f"Keeping MIOpen for the Wan VAE in {dtype} (WAN_VAE_MIOPEN={mode})")
         return False
+    if not sixteen_bit and os.environ.get("ENABLE_VAE_TILING", "0") != "1":
+        print(
+            f"WARNING: WAN_VAE_MIOPEN=off on a {dtype} Wan VAE without "
+            "ENABLE_VAE_TILING=1: the untiled im2col buffer can exceed the card"
+        )
 
     def without_miopen(method):
         def call(*args, **kwargs):
@@ -1059,7 +1339,10 @@ def _bypass_miopen_for_wan_vae(pipe, family: Optional[str]) -> bool:
     for name in ("encode", "decode"):
         if hasattr(vae, name):
             setattr(vae, name, without_miopen(getattr(vae, name)))
-    print("Wan VAE encode/decode run with MIOpen off (naive 3D conv kernels)")
+    print(
+        f"Wan VAE encode/decode run with MIOpen off in {dtype} "
+        f"(WAN_VAE_MIOPEN={mode}; im2col + GEMM)"
+    )
     return True
 
 
@@ -2418,7 +2701,10 @@ def warmup_inference():
         return
 
     resolutions = _parse_warmup_resolutions()
-    warmup_steps = 4
+    # WARMUP_STEPS: a lane whose first request differs from later ones can warm
+    # with the served step count, so any one-time event inside the denoise
+    # loop happens during warmup.
+    warmup_steps = _env_int("WARMUP_STEPS") or 4
     warmup_guidance = _default_guidance_scale(current_model)
     print(
         f"Running warmup inference at {len(resolutions)} resolution(s): "
@@ -2427,41 +2713,37 @@ def warmup_inference():
     )
     sys.stdout.flush()
 
+    # A lane whose warmup is NaN every time runs 1 + WARMUP_NONFINITE_RETRIES
+    # passes per resolution (3 by default). They all run inside the startup
+    # probe window (900 s), which also covers the model load, so a
+    # slow-loading lane should set WARMUP_NONFINITE_RETRIES=0.
+    guard = _nonfinite_guard_enabled()
+    attempts = 1 + (_env_retries("WARMUP_NONFINITE_RETRIES", 2) if guard else 0)
+    unrecovered = []
     for w, h in resolutions:
-        t0 = time.time()
-        try:
-            gen = torch.Generator(device="cpu").manual_seed(42)
-            kw = {
-                "prompt": "warmup",
-                "num_inference_steps": warmup_steps,
-                "generator": gen,
-                "height": h,
-                "width": w,
-                "guidance_scale": warmup_guidance,
-            }
-            if PIPELINE_MODE == "inpainting":
-                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
-                kw["mask_image"] = Image.new("L", (w, h), 255)
-                if not _pipeline_is_flux_like(pipeline, current_model):
-                    kw["strength"] = 0.5
-            elif PIPELINE_MODE == "instruct":
-                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
-            elif PIPELINE_MODE == "img2img":
-                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
-                kw["strength"] = 0.5
-            elif PIPELINE_MODE == "controlnet":
-                kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
-                kw["control_image"] = Image.new("RGB", (w, h), (128, 128, 128))
-                kw["controlnet_conditioning_scale"] = 0.5
-            with torch.inference_mode():
-                _call_pipeline(pipeline, kw)
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
-            elapsed = time.time() - t0
-            print(f"  Warmup {w}x{h} complete in {elapsed:.1f}s")
-        except Exception as e:
-            elapsed = time.time() - t0
-            print(f"  Warmup {w}x{h} failed after {elapsed:.1f}s (non-fatal): {e}")
+        for attempt in range(1, attempts + 1):
+            bad = _warmup_pass(w, h, warmup_steps, warmup_guidance, guard)
+            if not bad:
+                break
+            _nonfinite_counts["warmup"] += 1
+            if attempt < attempts:
+                print(
+                    f"  Warmup {w}x{h} decoded {bad} NaN values "
+                    f"(attempt {attempt}/{attempts}); repeating the warmup pass. "
+                    "A repeat is not known to clear this: on 2026-11-19 the "
+                    "warmup and the first real render were both bad and the "
+                    "render after them was sound"
+                )
+            else:
+                _nonfinite_counts["warmup_unrecovered"] += 1
+                unrecovered.append(f"{w}x{h}")
+                print(
+                    f"  ERROR: warmup {w}x{h} decoded NaN on all "
+                    f"{attempts} attempt(s). Renders from this process may be "
+                    "garbage; requests are checked and retried "
+                    "(NONFINITE_RENDER_RETRIES, NONFINITE_VIDEO_RETRIES)"
+                )
+            sys.stdout.flush()
 
         # Free VRAM between resolutions to avoid OOM on the next size
         gc.collect()
@@ -2469,9 +2751,101 @@ def warmup_inference():
             torch.cuda.empty_cache()
         sys.stdout.flush()
 
+    if unrecovered and _env_bool("WARMUP_NONFINITE_STRICT", False):
+        message = (
+            f"warmup output stayed NaN at {', '.join(unrecovered)}; "
+            "WARMUP_NONFINITE_STRICT=1, so startup fails and the lane never "
+            "goes Ready"
+        )
+        print(f"FATAL: {message}")
+        sys.stdout.flush()
+        raise WarmupNonFiniteError(message)
+
     print("All warmup passes complete")
     warmup_complete = True
     sys.stdout.flush()
+
+
+def _warmup_pass(w: int, h: int, steps: int, guidance, guard: bool) -> Optional[int]:
+    """One warmup inference at w x h. Returns the number of NaN values in
+    the decoded output when the guard can check it, else None. A pipeline error
+    is logged and treated as non-fatal, as before the guard existed."""
+    t0 = time.time()
+    bad = None
+    try:
+        gen = torch.Generator(device="cpu").manual_seed(42)
+        kw = {
+            "prompt": "warmup",
+            "num_inference_steps": steps,
+            "generator": gen,
+            "height": h,
+            "width": w,
+            "guidance_scale": guidance,
+        }
+        if PIPELINE_MODE == "inpainting":
+            kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+            kw["mask_image"] = Image.new("L", (w, h), 255)
+            if not _pipeline_is_flux_like(pipeline, current_model):
+                kw["strength"] = 0.5
+        elif PIPELINE_MODE == "instruct":
+            kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+        elif PIPELINE_MODE == "img2img":
+            kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+            kw["strength"] = 0.5
+        elif PIPELINE_MODE == "controlnet":
+            kw["image"] = Image.new("RGB", (w, h), (128, 128, 128))
+            kw["control_image"] = Image.new("RGB", (w, h), (128, 128, 128))
+            kw["controlnet_conditioning_scale"] = 0.5
+        elif PIPELINE_MODE == "text2video":
+            # WARMUP_VIDEO_FRAMES warms the served clip shape. Without it the
+            # pipeline renders its default frame count (81 for Wan), a
+            # different shape from a shorter served clip, so a compiled
+            # transformer (dynamic=False) still meets that clip cold.
+            frames = _env_int("WARMUP_VIDEO_FRAMES")
+            if frames:
+                kw["num_frames"] = frames
+                negative = _resolve_negative_prompt(None)
+                if negative:
+                    kw["negative_prompt"] = negative
+        elif PIPELINE_MODE == "image2video":
+            # Wan VACE warms through the request path's own conditioning: a
+            # first frame to keep plus neutral frames to generate, with the
+            # matching mask, so the VAE encode of the condition, the VACE
+            # blocks and a compiled transformer all see the served shape
+            # before the first request. The frame's content does not pick
+            # kernels; a flat gray keeps it independent of any input.
+            frames = _env_int("WARMUP_VIDEO_FRAMES") or _default_video_num_frames()
+            kw["num_frames"] = frames
+            video, mask = _prepare_vace_i2v_condition(
+                Image.new("RGB", (w, h), (128, 128, 128)), w, h, frames
+            )
+            kw["video"] = video
+            kw["mask"] = mask
+            negative = _resolve_negative_prompt(None)
+            if negative:
+                kw["negative_prompt"] = negative
+        if guard:
+            kw["output_type"] = "np"
+        with torch.inference_mode():
+            result = _call_pipeline(pipeline, kw)
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        if guard:
+            pixels = getattr(result, "images", None)
+            if pixels is None:
+                pixels = getattr(result, "frames", None)
+            bad = _nonfinite_count(pixels)
+        del result
+        elapsed = time.time() - t0
+        if bad:
+            print(f"  Warmup {w}x{h} finished in {elapsed:.1f}s with NaN output")
+        else:
+            print(f"  Warmup {w}x{h} complete in {elapsed:.1f}s")
+    except Exception as e:
+        elapsed = time.time() - t0
+        print(f"  Warmup {w}x{h} failed after {elapsed:.1f}s (non-fatal): {e}")
+    sys.stdout.flush()
+    return bad
 
 
 @asynccontextmanager
@@ -2484,6 +2858,8 @@ async def lifespan(app: FastAPI):
     model_id = os.environ.get("MODEL_ID", os.environ.get("MODEL", ""))
     if model_id:
         load_pipeline(model_id)
+        # Raises WarmupNonFiniteError under WARMUP_NONFINITE_STRICT=1; uvicorn
+        # then reports "Application startup failed" and exits non-zero.
         warmup_inference()
     yield
     # Shutdown
@@ -2509,6 +2885,7 @@ async def health():
             "ready": ready,
             "model": current_model,
             "gpu": gpu_info,
+            "nonfinite": dict(_nonfinite_counts),
         },
     )
 
@@ -2675,7 +3052,6 @@ async def generate_video(request: VideoGenerationRequest):
                     last_step_at = time.perf_counter()
                 return callback_kwargs
 
-            generator = torch.Generator(device="cpu").manual_seed(seed)
             kwargs = {
                 "prompt": request.prompt,
                 "num_frames": num_frames,
@@ -2683,7 +3059,6 @@ async def generate_video(request: VideoGenerationRequest):
                 "guidance_scale": guidance_scale,
                 "height": height,
                 "width": width,
-                "generator": generator,
                 "callback_on_step_end": _record_last_denoising_step,
                 "callback_on_step_end_tensor_inputs": [],
             }
@@ -2695,10 +3070,35 @@ async def generate_video(request: VideoGenerationRequest):
                 )
                 kwargs["video"] = condition_video
                 kwargs["mask"] = condition_mask
-            with torch.inference_mode():
-                result = pipe(**kwargs)
-            if torch.cuda.is_available():
-                torch.cuda.synchronize()
+
+            def _render():
+                # Wan returns float frames (output_type "np"), so the NaN
+                # guard checks them as they are. Video does not retry by
+                # default (NONFINITE_VIDEO_RETRIES=0): a render takes minutes
+                # under the generation lock, a same-seed repeat of a
+                # deterministic NaN cannot help, and a retry would run past
+                # the proxy's first-byte budget (900 s on the Wan lane), so
+                # the client would get a 504 instead of the typed 500. If
+                # retries are enabled, each one rebuilds the generator from
+                # the same seed and restarts the timings.
+                nonlocal started_at, last_step_at
+                started_at = time.perf_counter()
+                last_step_at = None
+                kwargs["generator"] = torch.Generator(device="cpu").manual_seed(seed)
+                with torch.inference_mode():
+                    out = pipe(**kwargs)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
+                return out
+
+            result = _guarded_render(
+                _render,
+                lambda r: r.frames,
+                f"video model={model_id} size={width}x{height} "
+                f"frames={num_frames} seed={seed}",
+                retries_env="NONFINITE_VIDEO_RETRIES",
+                default_retries=0,
+            )
             pipeline_returned_at = time.perf_counter()
             if last_step_at is None:
                 last_step_at = pipeline_returned_at
@@ -2879,10 +3279,15 @@ async def generate_images(request: ImageGenerationRequest):
         # a blank image + full mask so a single Fill model can serve both
         # /v1/images/generations and /v1/images/edits endpoints.
         is_fill = isinstance(pipe, FluxFillPipeline)
+        guard = _nonfinite_guard_enabled()
         results = []
-        for i in range(request.n):
+
+        def _render_one(i):
             # Seed handling: if seed is provided, use it for reproducibility.
             # For multi-image (n>1), increment seed per image to get variation.
+            # The generator is built here so a NaN retry reuses the seed. An
+            # unseeded request stays unseeded (the response carries no seed),
+            # so its retry draws new noise and the log says so.
             gen = None
             if request.seed is not None:
                 img_seed = request.seed + i
@@ -2930,13 +3335,27 @@ async def generate_images(request: ImageGenerationRequest):
                             gen_kwargs["controlnet_conditioning_scale"] = cn_scale
                     if gen is not None:
                         gen_kwargs["generator"] = gen
-                    result = _call_pipeline(pipe, gen_kwargs, model_id)
-            img = result.images[0]
+                    if guard:
+                        # Float pixels, checked before they become uint8.
+                        gen_kwargs["output_type"] = "np"
+                    return _call_pipeline(pipe, gen_kwargs, model_id)
+
+        for i in range(request.n):
+            seed = request.seed + i if request.seed is not None else None
+            result = _guarded_render(
+                lambda i=i: _render_one(i),
+                lambda r: r.images,
+                f"image {i + 1}/{request.n} model={model_id} "
+                f"size={width}x{height} seed={seed}",
+                seeded=seed is not None,
+            )
+            img = _first_pil_image(pipe, result.images)
             buffer = io.BytesIO()
             img.save(buffer, format="PNG")
             b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
             results.append(ImageData(b64_json=b64_data))
             del result, img, buffer  # break reference cycles
+
         # Critical: gc.collect() BEFORE empty_cache() to free PyTorch tensors
         # held by Python reference cycles from the diffusers pipeline + CPU offload hooks.
         # Without this, consecutive generations leak ~10-20GB of host RAM.

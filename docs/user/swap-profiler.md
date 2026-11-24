@@ -26,7 +26,7 @@ lane is unloaded and reloaded each cycle. Each swap-in records:
 | `loadS` | From the accepted load to model state `Ready`. |
 | `substages` | Seconds in each load substage the runtime reports (`internal/runtime/load_progress.go`). |
 | `timeline` | Every observed state or substage change, in order. |
-| `kvCacheTokens`, `kvMaxConcurrency` | The vLLM KV profile from model health. |
+| `kvCacheTokens`, `kvMaxConcurrency` | The vLLM KV profile from model health. Each is absent until vLLM printed its line. |
 | `firstTokenS`, `swapToFirstTokenS` | TTFT of the first request after Ready, and from the unload to that first token. |
 | `probes` | Text lanes only: three greedy parity generations and one decode probe per `--decode-contexts` size. |
 

@@ -69,6 +69,7 @@ start on any `VLLM_*` variable its `vllm/envs.py` does not define.
 | `VLLM_USE_TRITON_FLASH_ATTN` (from `enableFlashAttention`) | rendered | dropped | dropped |
 | `VLLM_ROCM_USE_AITER_FP4_ASM_GEMM` (from `disableAiter`, `rocmUseAiter: false`) | rendered | rendered | dropped (removed in 0.33.0, vLLM #61278) |
 | `mambaCacheMode` → `--mamba-cache-mode` | rendered | rendered (0.32 already picks `align` when prefix caching is on) | not rendered: a deprecated no-op in 0.33.0 that 0.34 removes; prefix caching on hybrids follows `enablePrefixCaching` |
+| `prefillScheduleInterval` → `--prefill-schedule-interval` | refused above 1 | refused above 1 (0.32 images were not checked for the flag) | rendered when above 1. vLLM admits prefill once every N engine steps and runs decode-only steps in between, so a request decoding beside a long prefill gets N−1 short steps per chunk-carrying step; the long prompt takes up to N times as many steps. 1 is vLLM's default and renders nothing |
 
 `vllm-omni` drops the same `VLLM_*` names (today only
 `VLLM_USE_TRITON_FLASH_ATTN`, from `enableFlashAttention`) by the same rule.
@@ -96,6 +97,9 @@ The controller refuses these with Phase `Failed`, `Schedulable=False` and reason
   `--max-num-partial-prefills` / `--max-long-partial-prefills` flag (absent from
   0.32.0, 0.33.0 and main), so the server would abort in argument parsing.
 - a `vllmVersion` that is not a quoted release string (on `vllm-omni` too).
+- a `prefillScheduleInterval` that is not a whole number of 1 or more, or one
+  above 1 on a Model that does not declare `vllmVersion` 0.33.0 or later: a
+  server without `--prefill-schedule-interval` would abort in argument parsing.
 
 ### `Model`: certificate-gated backends
 

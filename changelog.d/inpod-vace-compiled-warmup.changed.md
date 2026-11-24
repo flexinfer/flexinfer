@@ -1,0 +1,1 @@
+In-pod Wan VACE on the XTX compiles its transformer and warms 832x480 × 33 frames × 20 steps with a conditioning frame (env only, so the dedicated rollback stays eager), the recipe that made in-pod Wan T2V repeat byte-for-byte; gated by row `gfx1100-xtx-inpod-wan-vace-warmup-gate-2026-11-22`.

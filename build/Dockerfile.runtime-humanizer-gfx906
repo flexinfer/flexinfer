@@ -2,7 +2,7 @@
 # Build against the same ROCm libraries as the serving image; retain its
 # runtime manager, other backends, and HIP memory-info compatibility shim.
 ARG BASE_IMAGE=registry.harbor.lan/flexinfer/runtime@sha256:171081dee2b593153b1e2b999f77d080f5a86e42144c3b20b4153a7b3b73910b
-ARG GO_VERSION=1.26.10
+ARG GO_VERSION=1.26.11
 
 FROM golang:${GO_VERSION} AS go-builder
 WORKDIR /workspace
@@ -28,9 +28,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /opt/src
 RUN git clone --depth 1 --branch ${LLAMACPP_VERSION} https://github.com/ggml-org/llama.cpp.git
 WORKDIR /opt/src/llama.cpp
+# LLAMA_USE_PREBUILT_UI=OFF: no web UI in this image. Left ON, a --depth 1
+# clone (build number 1) asks Hugging Face for UI bundle `b1`, falls back to
+# `latest`, and fails when that bundle no longer matches the pinned tag.
 RUN cmake -B build -G Ninja \
     -DGGML_HIP=ON -DGGML_NATIVE=OFF -DAMDGPU_TARGETS=gfx906 \
     -DLLAMA_BUILD_TESTS=OFF -DLLAMA_BUILD_EXAMPLES=OFF \
+    -DLLAMA_USE_PREBUILT_UI=OFF \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --target llama-server --parallel ${BUILD_JOBS}
 

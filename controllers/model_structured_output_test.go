@@ -23,11 +23,18 @@ const (
 	// The KT-SO canary's image: vLLM 0.33.0-rocm72 since the 2026-11-05
 	// re-target (owner decision P2), so a PASS certifies this digest.
 	soCertifiedImage = "registry.harbor.lan/flexinfer/runtime@sha256:29378fe072741a9be5c23333762e37759c027dde5e445e9bc4a1b37bd730cf69"
-	// The production workhorse's pin (vLLM 0.32.0), which a certificate for
-	// the 0.33 canary image does not cover.
-	soWorkhorseImage = "registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2"
-	soOtherImage     = "registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	soEvidence       = ".loom/60-validation-matrix.md#gfx1100-structured-outputs-2026-11-06"
+	// The production workhorse's pin: the vLLM 0.33 promotion image
+	// (rocm-gfx1100-serving-v033-3e8ae3c2, row
+	// xtx-workhorse-v033-promotion-2026-11-05). A certificate for the KT-SO
+	// canary's 0.33 image (soCertifiedImage) does not cover it.
+	// 2026-11-23: the dot2 repin (row gfx1100-5930k-workhorse-dot2-2026-11-23)
+	// moved the workhorse from 51afd0d3 to pinned-1a2dd85c9bcd, the same vLLM
+	// 0.33 plus the RDNA3 W4A16 plugin; a certificate must name this digest.
+	soWorkhorseImage = "registry.harbor.lan/flexinfer/runtime@sha256:1a2dd85c9bcd17f75c80fe8ba8649e81cb96038ca247f2469e5167db799758c0"
+	// The workhorse's 0.32 pin before the promotion, its rollback.
+	soWorkhorseRollbackImage = "registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2"
+	soOtherImage             = "registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	soEvidence               = ".loom/60-validation-matrix.md#gfx1100-structured-outputs-2026-11-06"
 )
 
 func soProfile(certify func(*aiv1alpha2.GPUProfile)) *aiv1alpha2.GPUProfile {
@@ -238,14 +245,20 @@ func TestApplyStructuredOutputCondition(t *testing.T) {
 }
 
 // TestStructuredOutputDeploymentRender renders the production workhorse
-// manifest through ensureDeployment. The flag appears only for an opted-in
-// copy whose image the GPUProfile certifies; the manifest as shipped never
-// renders it, certificate or not, so D4 is live-neutral at merge.
+// manifest through ensureDeployment. The manifest opts in (promotion to vLLM
+// 0.33, row xtx-workhorse-v033-promotion-2026-11-05), so the flag renders
+// exactly when the GPUProfile certifies the workhorse's own digest: a
+// certificate for the KT-SO canary's image, for another image or none at all
+// renders nothing, and neither does the rollback (the 0.32 pin without the
+// opt-in) under any certificate.
 func TestStructuredOutputDeploymentRender(t *testing.T) {
 	workhorse := loadDeployModelManifest(t, filepath.Join("..", "deploy", "models", "qwen38-27b-autoround-workhorse.yaml"))
 	require.Equal(t, soWorkhorseImage, workhorse.Spec.Image, "fixture image must be the workhorse's pinned digest")
-	optedIn := workhorse.DeepCopy()
-	optedIn.Spec.Capabilities = &aiv1alpha2.ModelCapabilities{StructuredOutput: soBool(true)}
+	require.NotNil(t, workhorse.Spec.Capabilities, "the shipped workhorse opts in to structured outputs")
+	require.True(t, structuredOutputRequested(workhorse), "the shipped workhorse opts in to structured outputs")
+	rollback := workhorse.DeepCopy()
+	rollback.Spec.Image = soWorkhorseRollbackImage
+	rollback.Spec.Capabilities = nil
 
 	cases := []struct {
 		name    string
@@ -253,11 +266,11 @@ func TestStructuredOutputDeploymentRender(t *testing.T) {
 		profile *aiv1alpha2.GPUProfile
 		want    bool
 	}{
-		{name: "shipped workhorse, certified profile", model: workhorse, profile: soProfile(soCertify(soWorkhorseImage)), want: false},
-		{name: "opted in, no certificate", model: optedIn, profile: soProfile(nil), want: false},
-		{name: "opted in, certificate for another image", model: optedIn, profile: soProfile(soCertify(soOtherImage)), want: false},
-		{name: "opted in, certificate for the KT-SO canary's 0.33 image", model: optedIn, profile: soProfile(soCertify(soCertifiedImage)), want: false},
-		{name: "opted in, certificate for its image", model: optedIn, profile: soProfile(soCertify(soWorkhorseImage)), want: true},
+		{name: "shipped workhorse, no certificate", model: workhorse, profile: soProfile(nil), want: false},
+		{name: "shipped workhorse, certificate for another image", model: workhorse, profile: soProfile(soCertify(soOtherImage)), want: false},
+		{name: "shipped workhorse, certificate for the KT-SO canary's 0.33 image", model: workhorse, profile: soProfile(soCertify(soCertifiedImage)), want: false},
+		{name: "shipped workhorse, certificate for its image", model: workhorse, profile: soProfile(soCertify(soWorkhorseImage)), want: true},
+		{name: "rollback (0.32, no opt-in), certificate for its image", model: rollback, profile: soProfile(soCertify(soWorkhorseRollbackImage)), want: false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
