@@ -163,6 +163,15 @@ func (b *VLLMBackend) Args(spec *ModelSpec) []string {
 	if longThreshold := spec.ConfigInt("longPrefillTokenThreshold", 0); longThreshold > 0 {
 		args = append(args, "--long-prefill-token-threshold", strconv.Itoa(longThreshold))
 	}
+	// Decode-only steps between prefill steps (vLLM 0.33+): prefill is admitted
+	// once every N engine steps, so a request decoding beside a long prefill
+	// gets N-1 short steps for each chunk-carrying one. The long prompt takes
+	// up to N times as many steps. 1 is vLLM's default and renders nothing.
+	// ValidateVLLMConfig refuses a value above 1 on a lane that does not
+	// declare vllmVersion 0.33.0 or later.
+	if interval := spec.ConfigInt("prefillScheduleInterval", 0); interval > 1 && vllmVersionAtLeast(spec, vllmPrefillScheduleIntervalSince) {
+		args = append(args, "--prefill-schedule-interval", strconv.Itoa(interval))
+	}
 	args = appendVLLMBooleanOptionalArg(args, spec, "schedulerReserveFullISL", "--scheduler-reserve-full-isl", "--no-scheduler-reserve-full-isl")
 	// Scheduler policy ("fcfs" or "priority"). "priority" honors per-request
 	// priority values, letting background traffic (e.g. dream cycles) yield
@@ -556,6 +565,11 @@ func (v vllmRelease) String() string {
 // is a deprecated no-op.
 var vllmMambaCacheModeIgnoredSince = vllmRelease{0, 33, 0}
 
+// vllmPrefillScheduleIntervalSince is the first release whose serving image
+// is known to accept --prefill-schedule-interval (confirmed in 0.33.0+rocm72;
+// 0.32 images were not checked).
+var vllmPrefillScheduleIntervalSince = vllmRelease{0, 33, 0}
+
 // vllmEnvRemovedSince maps VLLM_* variables the backend renders to the first
 // release whose vllm/envs.py does not define them. With
 // --fail-on-environ-validation, Platform.validate_environ refuses to start on
@@ -646,7 +660,44 @@ func ValidateVLLMConfig(cfg map[string]any) error {
 			return fmt.Errorf("spec.config.%s is not supported: vLLM has no %s flag (absent from 0.32.0, 0.33.0 and main), so the server would refuse to start; remove the key", dead.key, dead.flag)
 		}
 	}
-	return validateDeclaredVLLMVersion(cfg)
+	if err := validateDeclaredVLLMVersion(cfg); err != nil {
+		return err
+	}
+	return validatePrefillScheduleInterval(cfg)
+}
+
+// validatePrefillScheduleInterval refuses a prefillScheduleInterval that is
+// not a whole number of 1 or more, and a value above 1 on a lane whose
+// declared release is not known to have the flag: vLLM aborts in argument
+// parsing on a flag it does not define.
+func validatePrefillScheduleInterval(cfg map[string]any) error {
+	raw, ok := cfg["prefillScheduleInterval"]
+	if !ok {
+		return nil
+	}
+	var n float64
+	switch v := raw.(type) {
+	case int:
+		n = float64(v)
+	case int64:
+		n = float64(v)
+	case float64:
+		n = v
+	default:
+		return fmt.Errorf("spec.config.prefillScheduleInterval must be a whole number of 1 or more (got %v)", raw)
+	}
+	if n < 1 || n != float64(int(n)) {
+		return fmt.Errorf("spec.config.prefillScheduleInterval must be a whole number of 1 or more (got %v)", raw)
+	}
+	if n == 1 {
+		return nil
+	}
+	since := vllmPrefillScheduleIntervalSince
+	declared, _ := cfg["vllmVersion"].(string)
+	if v, err := parseVLLMVersion(declared); declared == "" || err != nil || !v.atLeast(since) {
+		return fmt.Errorf("spec.config.prefillScheduleInterval above 1 needs spec.config.vllmVersion \"%d.%d.%d\" or later: --prefill-schedule-interval is confirmed only from that release, and a server without the flag would refuse to start", since.major, since.minor, since.patch)
+	}
+	return nil
 }
 
 // ValidateVLLMOmniConfig refuses an unreadable vllmVersion on a vllm-omni
