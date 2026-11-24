@@ -1,0 +1,163 @@
+# fp8 table-kernel canary: the XTX 128K lane's posture plus
+# FLEXINFER_SEGMENTED_FP8_LUT=1.
+#
+# Row: .loom/60-validation-matrix.md `gfx1100-xtx-128k-fp8-lut-2026-11-24`
+# (pre-registered before any run; arms, bars and kill rules are there).
+#
+# What it tests. The kill test (row gfx1100-fp8-attention-convert-2026-11-24)
+# measured fp8 attention at 1.17x the fp16 time per decode step with a
+# 256-entry table in place of Triton's fp8 -> fp16 lowering, against 5.8-6.1x
+# stock, on one eager layer call with vLLM's default kernel configs. This
+# canary asks whether that carries into the engine: the tuner's configs, CUDA
+# graphs and a whole decode step, at 64K and 120K of context.
+#
+# The spec is the lane's (deploy/models/qwen38-27b-xtx-warm-canary.yaml).
+# What differs, and why:
+#   - the image and FLEXINFER_SEGMENTED_FP8_LUT: the arm under test;
+#   - name, servedModelName, priority 480, warmPolicy primary, idleTimeout 3h,
+#     no LiteLLM route and no service labels: it holds the card for the run
+#     and takes no live traffic;
+#   - hfRevision pinned to the snapshot the lane's node cache holds (2d7425f7);
+#   - the command wrapper (--jit-monitor-verbose) and cudagraphMetrics: they
+#     log a JIT compile or a graph miss under traffic, which the row excludes
+#     from decode numbers. The lane runs without them, so arm B1 (this Model
+#     with the flag removed) is the like-for-like baseline if L misses a bar.
+# The baseline arm B0 is the lane itself, measured the same day before this
+# is applied.
+#
+# Apply (operator, once): kubectl apply -f deploy/debug/qwen38-27b-fp8-lut-canary.yaml
+# Not in deploy/debug/kustomization.yaml on purpose: `apply -k` would recreate
+# unrelated debug Models.
+# Remove: flexinfer MCP delete_model qwen38-27b-fp8-lut-canary. The 128K lane
+# (priority 300) comes back on its own. The Local cache (~18 GB, XTX root) is
+# removed with the Model: the on-delete policy has been `delete` since
+# 2026-11-24. Arm B1 (the flag removed) is an update_model config patch on
+# this Model, not a delete and re-apply.
+apiVersion: ai.flexinfer/v1alpha2
+kind: Model
+metadata:
+  name: qwen38-27b-fp8-lut-canary
+  namespace: flexinfer-system
+  annotations:
+    flexinfer.ai/base-model-source: Qwen/Qwen3.8-27B
+    flexinfer.ai/serving-priority-class: flexinfer-serving-critical
+    flexinfer.ai/base-model-posture: clean
+    flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+    flexinfer.ai/plan: ".loom/60-validation-matrix.md#gfx1100-xtx-128k-fp8-lut-2026-11-24"
+    flexinfer.ai/promotion-state: debug-canary-128k-fp8-lut
+    # The lane's budget: a cold 120K prefill took 360 s on 2026-11-21.
+    flexinfer.ai/lane-first-byte-budget: "900s"
+spec:
+  backend: vllm
+  # runtime:rocm-gfx1100-serving-v033-9fe2350e, published by master pipeline
+  # 40906 (job 516982) from the merge of !1442; digest read from Harbor
+  # 2026-11-24. vLLM 0.33.0+rocm72 with plugin-common 0.7.0 / text plugin
+  # 0.13.0. Build log: "segmented fp8 table kernel installable (rewritten
+  # source 8ad2e5d048ed)". Not prewarmed on the XTX: the first start pulls the
+  # plugin layers on top of the vLLM base the lane's image already holds.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:4e337e5e50aed88ef7231611879d14067cda12a2a59a2fb12602be6f91d0f72a
+  source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
+  cache:
+    strategy: Local
+    storageClass: nvme-1r-gpu
+    size: 40Gi
+    flashLoader:
+      enabled: false
+    compilationCache:
+      enabled: true
+      # The lane's base. The controller mounts <hostPath>/<namespace>/<Model
+      # name>, so this canary compiles and tunes into a directory of its own
+      # and the lane's tuned tables and kernels are untouched. Everything is
+      # cold on the first boot.
+      hostPath: /var/lib/flexinfer/compile-cache-qwen38-27b-v033-parity-b-xtx
+      sizeLimit: 8Gi
+  gpu:
+    vendor: amd
+    count: 2
+    shared: 7900xtx-textgen
+    # Above the 128K lane (300) so it takes the card; below the creative
+    # lanes (500) so a media render still wins. Same slot every XTX canary
+    # has used.
+    priority: 480
+    vramEstimateMB: 23200
+  serverless:
+    enabled: true
+    minReplicas: 1
+    idleTimeout: 3h
+    # The stock fp8 tune took about 45 min cold on 2026-11-21 and outlasted
+    # this probe once; the tuner resumes from its saved shards on the restart.
+    coldStartTimeout: 45m
+  config:
+    command:
+      - bash
+      - -lc
+      - |
+        echo "fp8-lut-canary: seg_fp8_lut=${FLEXINFER_SEGMENTED_FP8_LUT:-} seg_fp8_gfx11=${FLEXINFER_SEGMENTED_FP8_GFX11:-} embed_host=${FLEXINFER_EMBED_HOST:-} at $(date -u +%FT%TZ)"
+        exec vllm serve "$@" --jit-monitor-verbose
+      - vllm
+    env:
+      PYTORCH_ALLOC_CONF: "expandable_segments:False"
+      FLEXINFER_QWEN35_MTP_HEAD: checkpoint
+      FLEXINFER_EMBED_HOST: "1"
+      FLEXINFER_SEGMENTED_FP8_GFX11: "1"
+      # The arm under test: fp8 KV converted to fp16 through a 256-entry
+      # table (plugin-common 0.7.0). Arm B1 removes this line.
+      FLEXINFER_SEGMENTED_FP8_LUT: "1"
+    dedicatedDeployment: true
+    vllmVersion: "0.33.0"
+    attentionBackend: ROCM_SEGMENTED_ATTN
+    kernelConfig: '{"enable_rocm_segmented_attn_autotune":true}'
+    speculativeConfig: '{"method":"mtp","num_speculative_tokens":2,"attention_backend":"ROCM_SEGMENTED_ATTN"}'
+    # The lane's values: a cold 120K prefill adds no prompt tokens for minutes,
+    # and the first cold boot at 131072 fails the one-request KV check once.
+    stallWindow: 20m
+    kvPoolRecheck: false
+    longPrefillTokenThreshold: 1664
+    cudagraphMetrics: true
+    hfRevision: 2d7425f78ee0abd518aceabf385997fbb54c9342
+    warmPolicy: primary
+    quantization: gptq
+    hfOverrides: '{"architectures":["Qwen3_5ForConditionalGeneration"],"quantization_config":{"quant_method":"gptq","bits":4,"group_size":128,"sym":true,"desc_act":false,"lm_head":false,"modules_in_block_to_quantize":["self_attn.q_proj","self_attn.k_proj","self_attn.v_proj","self_attn.o_proj","mlp.gate_proj","mlp.up_proj","mlp.down_proj","linear_attn.in_proj_qkv","linear_attn.in_proj_z","linear_attn.out_proj"]}}'
+    dtype: half
+    languageModelOnly: true
+    maxModelLen: 131072
+    maxNumSeqs: 2
+    maxNumBatchedTokens: 4096
+    enableChunkedPrefill: true
+    schedulerReserveFullISL: false
+    gpuMemoryUtilization: "0.96"
+    kvCacheDtype: fp8_e4m3
+    enforceEager: false
+    enablePrefixCaching: true
+    mambaCacheMode: "align"
+    mambaSsmCacheDtype: "bfloat16"
+    enablePromptTokensDetails: true
+    disableAiter: true
+    rocmCustomPagedAttn: false
+    hipVisibleDevices: "0"
+    trustRemoteCode: true
+    defaultChatTemplateKwargs:
+      enable_thinking: false
+    enableToolCalling: true
+    toolCallParser: qwen3_coder
+    reasoningParser: qwen3
+    servedModelName: qwen38-27b-fp8-lut-canary
+    disableLogStats: false
+    failOnEnvironValidation: false
+  nodeSelector:
+    kubernetes.io/hostname: cblevins-7900xtx
+  resources:
+    requests:
+      cpu: "4"
+      memory: 16Gi
+      ephemeral-storage: 2Gi
+    limits:
+      cpu: "8"
+      memory: 40Gi
+  litellm:
+    enabled: false
+    servedModelName: qwen38-27b-fp8-lut-canary
+  tolerations:
+    - key: node-role.kubernetes.io/control-plane
+      operator: Exists
+      effect: NoSchedule
