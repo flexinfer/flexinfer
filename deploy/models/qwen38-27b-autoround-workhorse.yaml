@@ -350,7 +350,8 @@ spec:
     # 416-token chunk should cut the step to ~0.5 s. vLLM applies the cap only
     # while another request is running or waiting, so a solo prompt keeps the
     # full 4096-token step. Chunk ends align to the 416-token block: 832 and
-    # 416 are the only smaller values. Rollback = 1664.
+    # 416 keep every contended chunk on a boundary (a smaller cap is legal,
+    # the scheduler re-aligns at the next boundary). Rollback = 1664.
     longPrefillTokenThreshold: 416
     # 2026-11-22 (64K): the engine-stall detector reads a long prefill as
     # frozen counters; 64K cold prefills run ~2-3 min here, under load longer.
