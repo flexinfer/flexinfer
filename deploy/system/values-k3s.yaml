@@ -438,7 +438,19 @@ proxy:
     # landing mid-refresh could miss a label or alias and get a spurious
     # model_not_found. Rollback = the 2544a1bc digest
     # sha256:cb6771553539fbe556d885395eff11abf872c2eb117b05c19b055f143f6ccf3e.
-    digest: "sha256:1c2a6150dc130c663df2be976bd12df79220177dec88aeaef35890b25d4baa27"
+    # 2026-11-24 (WINDOW-GATED): master 0e890760 (tag 20261124-073324, master
+    # pipeline 40860), proxy only. The fae6e89e build above plus the three
+    # changes in the proxy's tree since. !1437 (internal/proxy/a1111.go): the
+    # AUTOMATIC1111-style image API, GET /sdapi/v1/{samplers,schedulers,
+    # sd-models,options}, POST /sdapi/v1/txt2img and /interrupt, translated to
+    # the lane's /v1/images/generations so Talemate and SillyTavern can
+    # create images on the Qwen-Image lane; on only with a1111Model below.
+    # !1429: OpenTelemetry v1.47.0 (GO-2026-6975, GO-2026-6974). !1434
+    # (backend/vllm.go): the prefillScheduleInterval key, controller-
+    # rendered and not reached by the proxy. Rollback = the fae6e89e digest
+    # sha256:1c2a6150dc130c663df2be976bd12df79220177dec88aeaef35890b25d4baa27
+    # and remove a1111Model.
+    digest: "sha256:717f77ba5b93917d755d8e1aa3148602d3c43f6e0116ab2f155b83f8695190af"
     pullPolicy: Always
   service:
     type: ClusterIP
@@ -455,6 +467,12 @@ proxy:
   # Deployment (deploy/system/kokoro-tts/, CPU-only). Completes the voice stack
   # (ASR + diarization + TTS) under one base URL. Empty disables the route (503).
   kokoroUpstream: "http://kokoro-tts.flexinfer-system.svc:8880"
+  # 2026-11-24 (WINDOW-GATED, with the 0e890760 proxy pin above): default
+  # lane of the AUTOMATIC1111-style image API (/sdapi/v1/*, !1437). Talemate
+  # (ai/talemate-web) and SillyTavern only create images through that API.
+  # "qwen-image" is the alias of qwen-image-21-gfx1100, in-pod on the XTX at
+  # priority 500, so a render swaps out the XTX 128K lane and gives it back.
+  a1111Model: "qwen-image"
   # Async jobs (D2, !1218/!1219): `background: true` (or Prefer:
   # respond-async) on chat/completions, images/generations|edits,
   # audio/transcriptions|speech|generations and videos/generations, plus
