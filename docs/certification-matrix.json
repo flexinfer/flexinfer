@@ -1358,6 +1358,7 @@
       "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
       "validation_rows": [
+        "gfx1100-5930k-workhorse-prefill-sched-2026-11-25",
         "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
         "gfx1100-5930k-workhorse-dot2-2026-11-23",
         "gfx1100-5930k-workhorse-4-seats-2026-11-23",
@@ -1838,6 +1839,22 @@
       "evidence": "",
       "date": null,
       "source": "deploy/models/embeddings.yaml"
+    },
+    {
+      "id": "gfx1100-5930k-workhorse-prefill-sched-2026-11-25",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "5930k"
+      ],
+      "decision": "pending",
+      "title": "a watched trial of the scheduler patch on the live lane. qwen38-27b-autoround-workhorse moves to the image that carries plugin-common 0.8.0 and sets FLEXINFER_PREFILL_SOLO_CAP=832 and…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-sched-2026-11-25",
+      "date": "2026-11-25",
+      "source": ".loom/60-validation-matrix.md"
     },
     {
       "id": "gfx1100-xtx-prefill-sched-2026-11-25",

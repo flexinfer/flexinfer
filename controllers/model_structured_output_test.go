@@ -30,7 +30,10 @@ const (
 	// 2026-11-23: the dot2 repin (row gfx1100-5930k-workhorse-dot2-2026-11-23)
 	// moved the workhorse from 51afd0d3 to pinned-1a2dd85c9bcd, the same vLLM
 	// 0.33 plus the RDNA3 W4A16 plugin; a certificate must name this digest.
-	soWorkhorseImage = "registry.harbor.lan/flexinfer/runtime@sha256:1a2dd85c9bcd17f75c80fe8ba8649e81cb96038ca247f2469e5167db799758c0"
+	// 2026-11-25: the prefill-scheduler trial (row
+	// gfx1100-5930k-workhorse-prefill-sched-2026-11-25) moves it to
+	// pinned-56367fb1b4db, the same vLLM 0.33 with plugin-common 0.8.0.
+	soWorkhorseImage = "registry.harbor.lan/flexinfer/runtime@sha256:56367fb1b4db1f11b96dd34402946764da9d3db191e8258498c07ec17971d58e"
 	// The workhorse's 0.32 pin before the promotion, its rollback.
 	soWorkhorseRollbackImage = "registry.harbor.lan/flexinfer/runtime@sha256:b06b06fe1c0265ce207f3fc719c181e8edd18eae50bdb8490c122800b17abfe2"
 	soOtherImage             = "registry.harbor.lan/flexinfer/runtime@sha256:cd108c9ebf99aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
