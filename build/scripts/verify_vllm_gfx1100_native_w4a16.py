@@ -59,6 +59,13 @@ SEGMENTED_FP8_GATED_FILES = (
     "v1/attention/backends/rocm_segmented_attn.py",
     "v1/attention/ops/segmented_attention.py",
 )
+# The opt-in prefill scheduling patch (flexinfer_vllm_common.prefill_sched)
+# rewrites three lines of Scheduler.schedule at boot and only accepts a
+# scheduler.py it knows by sha256. The build rewrites the file it ships with
+# representative values and checks AsyncScheduler still inherits the method.
+PREFILL_SCHED_FILE = "v1/core/sched/scheduler.py"
+PREFILL_SCHED_ASYNC_FILE = "v1/core/sched/async_scheduler.py"
+PREFILL_SCHED_PROBE_VALUES = (832, 2080)
 # The opt-in fp8 table kernel (flexinfer_vllm_common.segmented_fp8_lut)
 # rewrites vLLM's segmented_attention.py at boot and only accepts a source it
 # knows by sha256. A driverless build cannot run the install (it asks the
@@ -473,6 +480,56 @@ def verify_segmented_fp8_lut_contract(vllm_root: pathlib.Path, lut) -> str:
     )
 
 
+def verify_prefill_sched_contract(vllm_root: pathlib.Path, sched) -> str:
+    """Say whether the prefill scheduling patch can install on this image.
+
+    ``sched`` is ``flexinfer_vllm_common.prefill_sched`` as the image
+    installed it. As with the fp8 table kernel, an unknown ``scheduler.py`` is
+    reported, not failed: the boot that sets ``FLEXINFER_PREFILL_SOLO_CAP`` or
+    ``FLEXINFER_PREFILL_CAP_EXEMPT`` fails loudly there. A known source must
+    rewrite to valid Python, and ``AsyncScheduler`` must still inherit
+    ``schedule``, or the build fails.
+    """
+    path = vllm_root / PREFILL_SCHED_FILE
+    if not path.is_file():
+        raise RuntimeError(f"prefill scheduling contract: {path} is missing")
+    source = path.read_text(encoding="utf-8")
+    digest = sched.source_sha256(source)
+    if digest not in sched.KNOWN_SOURCES:
+        return (
+            "prefill scheduling patch NOT installable on this vLLM "
+            f"(scheduler.py sha256 {digest} is unknown to the plugin)"
+        )
+    rewritten = sched.rewrite_source(source, *PREFILL_SCHED_PROBE_VALUES)
+    compile(rewritten, str(path), "exec")
+    async_path = vllm_root / PREFILL_SCHED_ASYNC_FILE
+    if not async_path.is_file():
+        raise RuntimeError(f"prefill scheduling contract: {async_path} is missing")
+    definitions = _top_level_definitions(
+        ast.parse(async_path.read_text(encoding="utf-8"))
+    )
+    async_class = definitions.get("AsyncScheduler")
+    if not isinstance(async_class, ast.ClassDef):
+        raise RuntimeError(
+            f"prefill scheduling contract: {PREFILL_SCHED_ASYNC_FILE} does not "
+            "define the AsyncScheduler class"
+        )
+    if any(
+        isinstance(node, ast.FunctionDef) and node.name == "schedule"
+        for node in async_class.body
+    ):
+        raise RuntimeError(
+            "prefill scheduling contract: AsyncScheduler overrides schedule, so "
+            "replacing Scheduler.schedule would not reach it"
+        )
+    return (
+        "prefill scheduling patch installable "
+        f"(rewritten source {sched.source_sha256(rewritten)[:12]} at "
+        f"solo cap {PREFILL_SCHED_PROBE_VALUES[0]}, "
+        f"exempt {PREFILL_SCHED_PROBE_VALUES[1]})"
+    )
+
+
 def main() -> None:
     import os
     import torch
@@ -489,6 +546,9 @@ def main() -> None:
     from flexinfer_vllm_common import segmented_fp8_lut
 
     fp8_lut = verify_segmented_fp8_lut_contract(vllm_root, segmented_fp8_lut)
+    from flexinfer_vllm_common import prefill_sched
+
+    prefill = verify_prefill_sched_contract(vllm_root, prefill_sched)
 
     # Image assembly has no GPU, so vLLM cannot detect ROCm and its generic
     # platform loader does not import this extension. Load it explicitly: the
@@ -505,7 +565,8 @@ def main() -> None:
         "segmented fp8 gate-lift names present"
         + ("" if fp8_gated else " (upstream no longer gates fp8 to gfx12)")
         + ";",
-        fp8_lut,
+        fp8_lut + ";",
+        prefill,
     )
 
 

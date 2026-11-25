@@ -737,6 +737,7 @@ vllm_qwen35_seqcls_plugin_test:
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/rocm.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/segmented.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/segmented_fp8_lut.py
+    - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/prefill_sched.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/labels.py
   rules:
     - if: $CI_MERGE_REQUEST_ID

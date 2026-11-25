@@ -48,6 +48,26 @@ def _load_lut_fixture() -> str:
 LUT_FIXTURE = _load_lut_fixture()
 
 
+def _load_prefill_sched():
+    """flexinfer_vllm_common.prefill_sched and its stand-in scheduler source."""
+    _load_lut()
+    from flexinfer_vllm_common import prefill_sched
+
+    path = Path(__file__).with_name("test_vllm_plugin_common.py")
+    spec = importlib.util.spec_from_file_location("_fx_plugin_common_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return prefill_sched, module.FAKE_SCHEDULER
+
+
+ASYNC_SCHEDULER_SOURCE = (
+    "from .scheduler import Scheduler\n\n\n"
+    "class AsyncScheduler(Scheduler):\n"
+    "    def _update_after_schedule(self, scheduler_output):\n"
+    "        return None\n"
+)
+
+
 class NativeW4A16VerifierTests(unittest.TestCase):
     def test_accepts_v023_rdna3_kernel_contract(self) -> None:
         verifier = _load_verifier()
@@ -330,6 +350,68 @@ class NativeW4A16VerifierTests(unittest.TestCase):
             with mock.patch.dict(lut.KNOWN_SOURCES, {digest: "test fixture"}):
                 with self.assertRaises(lut.RewriteError):
                     verifier.verify_segmented_fp8_lut_contract(Path(tmp), lut)
+
+    def _sched_tree(self, root: Path, source: str, async_source=ASYNC_SCHEDULER_SOURCE):
+        directory = root / "v1" / "core" / "sched"
+        directory.mkdir(parents=True)
+        (directory / "scheduler.py").write_text(source, encoding="utf-8")
+        if async_source is not None:
+            (directory / "async_scheduler.py").write_text(
+                async_source, encoding="utf-8"
+            )
+
+    def test_prefill_sched_contract_reports_an_installable_image(self) -> None:
+        verifier = _load_verifier()
+        sched, source = _load_prefill_sched()
+        digest = sched.source_sha256(source)
+        with tempfile.TemporaryDirectory() as tmp:
+            self._sched_tree(Path(tmp), source)
+            with mock.patch.dict(sched.KNOWN_SOURCES, {digest: "test fixture"}):
+                status = verifier.verify_prefill_sched_contract(Path(tmp), sched)
+        self.assertRegex(status, r"^prefill scheduling patch installable \(")
+        self.assertIn("solo cap 832, exempt 2080", status)
+
+    def test_prefill_sched_contract_reports_an_unknown_vllm(self) -> None:
+        verifier = _load_verifier()
+        sched, source = _load_prefill_sched()
+        with tempfile.TemporaryDirectory() as tmp:
+            self._sched_tree(Path(tmp), source)
+            status = verifier.verify_prefill_sched_contract(Path(tmp), sched)
+        self.assertIn("NOT installable", status)
+        self.assertIn(sched.source_sha256(source), status)
+
+    def test_prefill_sched_contract_fails_a_known_source_it_cannot_patch(
+        self,
+    ) -> None:
+        verifier = _load_verifier()
+        sched, source = _load_prefill_sched()
+        digest = sched.source_sha256(source)
+        overriding = ASYNC_SCHEDULER_SOURCE + (
+            "\n    def schedule(self, throttle_prefills=False):\n        return {}\n"
+        )
+        with mock.patch.dict(sched.KNOWN_SOURCES, {digest: "test fixture"}):
+            with tempfile.TemporaryDirectory() as tmp:
+                self._sched_tree(Path(tmp), source, overriding)
+                with self.assertRaisesRegex(RuntimeError, "AsyncScheduler overrides"):
+                    verifier.verify_prefill_sched_contract(Path(tmp), sched)
+            with tempfile.TemporaryDirectory() as tmp:
+                self._sched_tree(Path(tmp), source, None)
+                with self.assertRaisesRegex(
+                    RuntimeError, "async_scheduler.py is missing"
+                ):
+                    verifier.verify_prefill_sched_contract(Path(tmp), sched)
+            with tempfile.TemporaryDirectory() as tmp:
+                self._sched_tree(Path(tmp), source, "AsyncScheduler = object\n")
+                with self.assertRaisesRegex(RuntimeError, "AsyncScheduler class"):
+                    verifier.verify_prefill_sched_contract(Path(tmp), sched)
+        broken = source.replace("            else 0\n", "            else None\n")
+        with mock.patch.dict(
+            sched.KNOWN_SOURCES, {sched.source_sha256(broken): "test fixture"}
+        ):
+            with tempfile.TemporaryDirectory() as tmp:
+                self._sched_tree(Path(tmp), broken)
+                with self.assertRaises(sched.RewriteError):
+                    verifier.verify_prefill_sched_contract(Path(tmp), sched)
 
     def test_rejects_missing_qwen35_text_plugin_entry_point(self) -> None:
         verifier = _load_verifier()

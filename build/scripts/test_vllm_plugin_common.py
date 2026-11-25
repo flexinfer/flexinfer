@@ -6,8 +6,10 @@ autotune pruning (``FLEXINFER_FLA_AUTOTUNE``), the segmented-attention
 autotune at the runtime block-table width
 (``FLEXINFER_SEGMENTED_RUNTIME_TABLES``), the input-embedding table in mapped
 host memory (``FLEXINFER_EMBED_HOST``), fp8 KV on segmented attention for
-gfx11 (``FLEXINFER_SEGMENTED_FP8_GFX11``) and that fp8 KV converted through a
-table (``FLEXINFER_SEGMENTED_FP8_LUT``). Neither vLLM nor torch is needed:
+gfx11 (``FLEXINFER_SEGMENTED_FP8_GFX11``), that fp8 KV converted through a
+table (``FLEXINFER_SEGMENTED_FP8_LUT``) and the scheduler's prefill chunk
+sizing (``FLEXINFER_PREFILL_SOLO_CAP``, ``FLEXINFER_PREFILL_CAP_EXEMPT``).
+Neither vLLM nor torch is needed:
 the tests drive fake vLLM modules whose functions call each other through
 module globals, as upstream's do, so each patch is exercised on the same call
 path the engine takes.
@@ -32,6 +34,7 @@ sys.path.insert(0, str(COMMON_SRC))
 
 from flexinfer_vllm_common import (  # noqa: E402
     embed_host,
+    prefill_sched,
     rocm,
     segmented,
     segmented_fp8,
@@ -1518,6 +1521,394 @@ class SegmentedFp8LutTest(unittest.TestCase):
         with self.assertRaises(SyntaxError):
             segmented_fp8_lut.load_variant_module("def broken(:\n")
         self.assertNotIn(segmented_fp8_lut.VARIANT_MODULE, sys.modules)
+
+
+# A stand-in for vLLM 0.33.0's scheduler.py: the three sites the rewrite
+# touches, verbatim and at their indentation, inside a schedule() small enough
+# to run. Requests are dicts with an id and the tokens they have left.
+FAKE_SCHEDULER = '''\
+"""Stand-in scheduler."""
+
+SchedulerInterface = object
+
+
+class Scheduler(SchedulerInterface):
+    def __init__(self, threshold, budget, running=(), waiting=()):
+        self.scheduler_config = type(
+            "Config", (), {"long_prefill_token_threshold": threshold}
+        )()
+        self.max_num_scheduled_tokens = budget
+        self.running = list(running)
+        self.waiting = list(waiting)
+
+    def get_request_counts(self):
+        return len(self.running), len(self.waiting)
+
+    def schedule(self, throttle_prefills: bool = False):
+        token_budget = self.max_num_scheduled_tokens
+        scheduled = {}
+        num_running, num_waiting = self.get_request_counts()
+        num_eligible_reqs = num_running + num_waiting
+        long_prefill_token_threshold = (
+            self.scheduler_config.long_prefill_token_threshold
+            if num_eligible_reqs > 1
+            else 0
+        )
+        req_index = 0
+        while req_index < len(self.running) and token_budget > 0:
+            request = self.running[req_index]
+            num_new_tokens = request["left"]
+            if 0 < long_prefill_token_threshold < num_new_tokens:
+                num_new_tokens = long_prefill_token_threshold
+            num_new_tokens = min(num_new_tokens, token_budget)
+            scheduled[request["id"]] = num_new_tokens
+            token_budget -= num_new_tokens
+            req_index += 1
+        if not throttle_prefills:
+            while self.waiting and token_budget > 0:
+                request = self.waiting[0]
+                if request["left"] > 0:
+                    num_new_tokens = request["left"]
+                    if 0 < long_prefill_token_threshold < num_new_tokens:
+                        num_new_tokens = long_prefill_token_threshold
+                    num_new_tokens = min(num_new_tokens, token_budget)
+                    scheduled[request["id"]] = num_new_tokens
+                    token_budget -= num_new_tokens
+                self.running.append(self.waiting.pop(0))
+        return scheduled
+'''
+
+
+def _req(name, left):
+    return {"id": name, "left": left}
+
+
+def _schedule_with(source, threshold, running=(), waiting=(), budget=4096):
+    namespace = {}
+    exec(compile(source, "fake_scheduler", "exec"), namespace)
+    return namespace["Scheduler"](threshold, budget, running, waiting).schedule()
+
+
+def _fake_scheduler_modules(directory, source=FAKE_SCHEDULER, override=False):
+    """vllm.v1.core.sched.scheduler and async_scheduler, with a file on disk."""
+    path = os.path.join(directory, "scheduler.py")
+    with open(path, "w", encoding="utf-8") as handle:
+        handle.write(source)
+    scheduler = types.ModuleType(prefill_sched.SCHEDULER_MODULE)
+    scheduler.__file__ = path
+    exec(compile(source, path, "exec"), scheduler.__dict__)
+    async_scheduler = types.ModuleType(prefill_sched.ASYNC_SCHEDULER_MODULE)
+    body = {"schedule": lambda self, throttle_prefills=False: {}} if override else {}
+    async_scheduler.AsyncScheduler = type(
+        "AsyncScheduler", (scheduler.Scheduler,), body
+    )
+    return scheduler, async_scheduler
+
+
+class PrefillSchedTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.directory = tempfile.mkdtemp(prefix="fx-prefill-sched-test-")
+        known = mock.patch.dict(
+            prefill_sched.KNOWN_SOURCES,
+            {prefill_sched.source_sha256(FAKE_SCHEDULER): "test stand-in"},
+        )
+        known.start()
+        self.addCleanup(known.stop)
+        self.addCleanup(sys.modules.pop, prefill_sched.VARIANT_MODULE, None)
+
+    # --- the rewrite ---------------------------------------------------------
+
+    def test_zero_values_make_the_stock_decisions(self) -> None:
+        rewritten = prefill_sched.rewrite_source(FAKE_SCHEDULER, 0, 0)
+        self.assertNotEqual(rewritten, FAKE_SCHEDULER)
+        cases = (
+            dict(threshold=416, running=[_req("long", 56000)]),
+            dict(
+                threshold=416, running=[_req("long", 56000)], waiting=[_req("s", 2080)]
+            ),
+            dict(threshold=416, running=[_req("long", 56000), _req("s", 300)]),
+            dict(threshold=0, running=[_req("long", 56000)], waiting=[_req("s", 2080)]),
+            dict(threshold=416, waiting=[_req("s", 2080)]),
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                self.assertEqual(
+                    _schedule_with(
+                        rewritten,
+                        **{
+                            k: list(v) if isinstance(v, list) else v
+                            for k, v in case.items()
+                        },
+                    ),
+                    _schedule_with(
+                        FAKE_SCHEDULER,
+                        **{
+                            k: list(v) if isinstance(v, list) else v
+                            for k, v in case.items()
+                        },
+                    ),
+                )
+
+    def test_a_lone_request_is_capped_at_the_solo_cap(self) -> None:
+        lone = dict(threshold=416, running=[_req("long", 56000)])
+        self.assertEqual(_schedule_with(FAKE_SCHEDULER, **lone), {"long": 4096})
+        rewritten = prefill_sched.rewrite_source(FAKE_SCHEDULER, 832, 0)
+        lone = dict(threshold=416, running=[_req("long", 56000)])
+        self.assertEqual(_schedule_with(rewritten, **lone), {"long": 832})
+        # Admitted from the waiting queue alone: the same cap.
+        lone = dict(threshold=416, waiting=[_req("long", 56000)])
+        self.assertEqual(_schedule_with(rewritten, **lone), {"long": 832})
+        # With company the configured threshold applies, not the solo cap.
+        both = dict(
+            threshold=416, running=[_req("long", 56000)], waiting=[_req("s", 2080)]
+        )
+        self.assertEqual(_schedule_with(rewritten, **both), {"long": 416, "s": 416})
+
+    def test_the_solo_cap_does_not_need_a_configured_threshold(self) -> None:
+        rewritten = prefill_sched.rewrite_source(FAKE_SCHEDULER, 832, 0)
+        lone = dict(threshold=0, running=[_req("long", 56000)])
+        self.assertEqual(_schedule_with(rewritten, **lone), {"long": 832})
+
+    def test_a_request_with_few_tokens_left_is_not_capped(self) -> None:
+        rewritten = prefill_sched.rewrite_source(FAKE_SCHEDULER, 0, 2080)
+        # Waiting short beside a running long prompt.
+        both = dict(
+            threshold=416, running=[_req("long", 56000)], waiting=[_req("s", 2080)]
+        )
+        self.assertEqual(_schedule_with(rewritten, **both), {"long": 416, "s": 2080})
+        # One token over the exemption is capped like any other.
+        over = dict(
+            threshold=416, running=[_req("long", 56000)], waiting=[_req("s", 2081)]
+        )
+        self.assertEqual(_schedule_with(rewritten, **over), {"long": 416, "s": 416})
+        # A running request (a prompt on its last stretch) is exempt too.
+        running = dict(threshold=416, running=[_req("long", 56000), _req("s", 1664)])
+        self.assertEqual(_schedule_with(rewritten, **running), {"long": 416, "s": 1664})
+
+    def test_the_exemption_also_lifts_the_solo_cap(self) -> None:
+        capped = prefill_sched.rewrite_source(FAKE_SCHEDULER, 832, 0)
+        lone = dict(threshold=416, waiting=[_req("s", 2080)])
+        self.assertEqual(_schedule_with(capped, **lone), {"s": 832})
+        both = prefill_sched.rewrite_source(FAKE_SCHEDULER, 832, 2080)
+        lone = dict(threshold=416, waiting=[_req("s", 2080)])
+        self.assertEqual(_schedule_with(both, **lone), {"s": 2080})
+
+    def test_an_exempt_chunk_still_fits_the_step_budget(self) -> None:
+        rewritten = prefill_sched.rewrite_source(FAKE_SCHEDULER, 0, 4096)
+        both = dict(
+            threshold=416,
+            budget=2496,
+            running=[_req("long", 56000)],
+            waiting=[_req("s", 4000)],
+        )
+        self.assertEqual(_schedule_with(rewritten, **both), {"long": 416, "s": 2080})
+
+    def test_a_missing_site_fails_the_rewrite_by_name(self) -> None:
+        for what, old in (
+            ("solo threshold", "            else 0\n"),
+            (
+                "running-request cap",
+                "            if 0 < long_prefill_token_threshold < num_new_tokens:\n                num",
+            ),
+            (
+                "waiting-request cap",
+                "                    if 0 < long_prefill_token_threshold < num_new_tokens:\n",
+            ),
+            ("Scheduler class", "class Scheduler(SchedulerInterface):"),
+        ):
+            with self.subTest(what=what):
+                self.assertIn(old, FAKE_SCHEDULER)
+                broken = FAKE_SCHEDULER.replace(
+                    old,
+                    old.replace("0", "1").replace(
+                        "class Scheduler(", "class Scheduler2("
+                    ),
+                    1,
+                )
+                with self.assertRaises(prefill_sched.RewriteError) as ctx:
+                    prefill_sched.rewrite_source(broken, 832, 2080)
+                self.assertIn(what, str(ctx.exception))
+
+    def test_a_schedule_that_cannot_move_is_refused(self) -> None:
+        helper = FAKE_SCHEDULER + "\n\ndef helper():\n    return 1\n"
+        with self.assertRaises(prefill_sched.RewriteError) as ctx:
+            prefill_sched.rewrite_source(helper, 832, 2080)
+        self.assertIn("only the Scheduler class", str(ctx.exception))
+        for name, line in (
+            ("super", "        token_budget = super().budget()\n"),
+            ("Scheduler", "        token_budget = Scheduler.BUDGET\n"),
+        ):
+            with self.subTest(name=name):
+                source = FAKE_SCHEDULER.replace(
+                    "        token_budget = self.max_num_scheduled_tokens\n", line
+                )
+                with self.assertRaises(prefill_sched.RewriteError) as ctx:
+                    prefill_sched.rewrite_source(source, 832, 2080)
+                self.assertIn(repr(name), str(ctx.exception))
+
+    def test_values_must_be_non_negative_ints(self) -> None:
+        for solo, exempt in ((-1, 0), (0, -1), (True, 0), (0, 1.5), ("832", 0)):
+            with self.subTest(solo=solo, exempt=exempt):
+                with self.assertRaises(ValueError):
+                    prefill_sched.rewrite_source(FAKE_SCHEDULER, solo, exempt)
+        twice = prefill_sched.rewrite_source(FAKE_SCHEDULER, 832, 2080)
+        with self.assertRaises(prefill_sched.RewriteError):
+            prefill_sched.rewrite_source(twice, 832, 2080)
+
+    # --- the settings --------------------------------------------------------
+
+    def test_settings_default_to_off_and_are_strict(self) -> None:
+        self.assertEqual(prefill_sched.prefill_sched_settings({}), (0, 0))
+        env = {
+            prefill_sched.PREFILL_SOLO_CAP_ENV: "832",
+            prefill_sched.PREFILL_CAP_EXEMPT_ENV: "2080",
+        }
+        self.assertEqual(prefill_sched.prefill_sched_settings(env), (832, 2080))
+        for raw in ("", "on", "-1", "1.5", " 832", "8e2", "\u0663", str((1 << 20) + 1)):
+            for name in (
+                prefill_sched.PREFILL_SOLO_CAP_ENV,
+                prefill_sched.PREFILL_CAP_EXEMPT_ENV,
+            ):
+                with self.subTest(name=name, raw=raw):
+                    with self.assertRaises(RuntimeError) as ctx:
+                        prefill_sched.prefill_sched_settings({name: raw})
+                    self.assertIn(name, str(ctx.exception))
+
+    # --- the install ---------------------------------------------------------
+
+    def test_install_replaces_schedule_for_both_classes(self) -> None:
+        scheduler, async_scheduler = _fake_scheduler_modules(self.directory)
+        stock = vars(scheduler.Scheduler)["schedule"]
+        with contextlib.redirect_stdout(open(os.devnull, "w")):
+            self.assertTrue(
+                prefill_sched.install_prefill_sched(
+                    scheduler, async_scheduler, 832, 2080
+                )
+            )
+        replaced = vars(scheduler.Scheduler)["schedule"]
+        self.assertIsNot(replaced, stock)
+        self.assertIs(replaced.__wrapped__, stock)
+        self.assertIs(async_scheduler.AsyncScheduler.schedule, replaced)
+        self.assertEqual(getattr(scheduler, prefill_sched.PATCH_MARKER), (832, 2080))
+        # The engine's class, built by the stock module, takes the new decisions.
+        engine = async_scheduler.AsyncScheduler(416, 4096, [_req("long", 56000)])
+        self.assertEqual(engine.schedule(), {"long": 832})
+        engine = async_scheduler.AsyncScheduler(
+            416, 4096, [_req("long", 56000)], [_req("s", 2080)]
+        )
+        self.assertEqual(engine.schedule(), {"long": 416, "s": 2080})
+        # Every other method is still the stock class's own.
+        self.assertEqual(engine.get_request_counts(), (2, 0))
+        self.assertIs(type(engine).__mro__[1], scheduler.Scheduler)
+
+    def test_install_reports_what_it_installed(self) -> None:
+        scheduler, async_scheduler = _fake_scheduler_modules(self.directory)
+        import io
+
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            prefill_sched.install_prefill_sched(scheduler, async_scheduler, 832, 0)
+        line = out.getvalue()
+        self.assertIn("solo cap=832 tokens", line)
+        self.assertIn("cap-exempt<=off tokens", line)
+        self.assertIn(prefill_sched.source_sha256(FAKE_SCHEDULER)[:12], line)
+
+    def test_second_install_is_a_noop_or_an_error(self) -> None:
+        scheduler, async_scheduler = _fake_scheduler_modules(self.directory)
+        loads = []
+
+        def load(rewritten):
+            loads.append(rewritten)
+            return prefill_sched.load_variant_module(rewritten)
+
+        with contextlib.redirect_stdout(open(os.devnull, "w")):
+            prefill_sched.install_prefill_sched(
+                scheduler, async_scheduler, 832, 2080, load_variant=load
+            )
+            first = vars(scheduler.Scheduler)["schedule"]
+            self.assertTrue(
+                prefill_sched.install_prefill_sched(
+                    scheduler, async_scheduler, 832, 2080, load_variant=load
+                )
+            )
+        self.assertEqual(len(loads), 1)
+        self.assertIs(vars(scheduler.Scheduler)["schedule"], first)
+        with self.assertRaises(RuntimeError) as ctx:
+            prefill_sched.install_prefill_sched(scheduler, async_scheduler, 416, 2080)
+        self.assertIn("already installed", str(ctx.exception))
+
+    def test_unknown_source_fails_and_leaves_the_class_alone(self) -> None:
+        source = FAKE_SCHEDULER.replace("Stand-in scheduler.", "Another vLLM.")
+        scheduler, async_scheduler = _fake_scheduler_modules(self.directory, source)
+        stock = vars(scheduler.Scheduler)["schedule"]
+        with self.assertRaises(RuntimeError) as ctx:
+            prefill_sched.install_prefill_sched(scheduler, async_scheduler, 832, 2080)
+        self.assertIn(prefill_sched.source_sha256(source), str(ctx.exception))
+        self.assertIn(prefill_sched.PREFILL_SOLO_CAP_ENV, str(ctx.exception))
+        self.assertIs(vars(scheduler.Scheduler)["schedule"], stock)
+        self.assertFalse(hasattr(scheduler, prefill_sched.PATCH_MARKER))
+
+    def test_an_async_scheduler_with_its_own_schedule_is_refused(self) -> None:
+        scheduler, async_scheduler = _fake_scheduler_modules(
+            self.directory, override=True
+        )
+        stock = vars(scheduler.Scheduler)["schedule"]
+        with self.assertRaises(RuntimeError) as ctx:
+            prefill_sched.install_prefill_sched(scheduler, async_scheduler, 832, 2080)
+        self.assertIn("AsyncScheduler overrides schedule", str(ctx.exception))
+        self.assertIs(vars(scheduler.Scheduler)["schedule"], stock)
+
+    def test_a_vllm_without_the_classes_is_refused(self) -> None:
+        scheduler, async_scheduler = _fake_scheduler_modules(self.directory)
+        del async_scheduler.AsyncScheduler
+        with self.assertRaises(RuntimeError) as ctx:
+            prefill_sched.install_prefill_sched(scheduler, async_scheduler, 832, 2080)
+        self.assertIn("lacks AsyncScheduler", str(ctx.exception))
+
+    def test_if_enabled_does_nothing_when_both_are_off(self) -> None:
+        missing = {
+            prefill_sched.SCHEDULER_MODULE: None,
+            prefill_sched.ASYNC_SCHEDULER_MODULE: None,
+        }
+        with mock.patch.dict(sys.modules, missing):
+            self.assertEqual(prefill_sched.install_prefill_sched_if_enabled({}), (0, 0))
+            env = {prefill_sched.PREFILL_CAP_EXEMPT_ENV: "2080"}
+            with self.assertRaises(RuntimeError) as ctx:
+                prefill_sched.install_prefill_sched_if_enabled(env)
+        self.assertIn(prefill_sched.PREFILL_CAP_EXEMPT_ENV, str(ctx.exception))
+        self.assertIn(prefill_sched.SCHEDULER_MODULE, str(ctx.exception))
+
+    def test_if_enabled_installs_from_sys_modules(self) -> None:
+        scheduler, async_scheduler = _fake_scheduler_modules(self.directory)
+        present = {
+            prefill_sched.SCHEDULER_MODULE: scheduler,
+            prefill_sched.ASYNC_SCHEDULER_MODULE: async_scheduler,
+        }
+        env = {
+            prefill_sched.PREFILL_SOLO_CAP_ENV: "832",
+            prefill_sched.PREFILL_CAP_EXEMPT_ENV: "2080",
+        }
+        with mock.patch.dict(sys.modules, present):
+            with contextlib.redirect_stdout(open(os.devnull, "w")):
+                self.assertEqual(
+                    prefill_sched.install_prefill_sched_if_enabled(env), (832, 2080)
+                )
+        self.assertEqual(getattr(scheduler, prefill_sched.PATCH_MARKER), (832, 2080))
+
+    def test_a_file_that_fails_to_import_leaves_no_module_behind(self) -> None:
+        with self.assertRaises(SyntaxError):
+            prefill_sched.load_variant_module("def broken(:\n")
+        self.assertNotIn(prefill_sched.VARIANT_MODULE, sys.modules)
+
+    def test_the_shipped_source_hash_is_the_one_both_lanes_run(self) -> None:
+        """Read from both live serving images on 2026-11-25."""
+        self.assertEqual(
+            sorted(SHIPPED_PREFILL_KNOWN_SOURCES),
+            ["d76cc22257550972137df9c893505d0bd0f5d482374691e6eca4372772de501a"],
+        )
+
+
+SHIPPED_PREFILL_KNOWN_SOURCES = dict(prefill_sched.KNOWN_SOURCES)
 
 
 # The lines of vLLM 0.33.0's segmented_attention.py the rewrite touches, and
