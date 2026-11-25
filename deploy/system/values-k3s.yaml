@@ -930,7 +930,16 @@ imagePrewarm:
         # qwen38-27b-xtx-warm-canary runs at 131072 (rocm-gfx1100-serving-v033-
         # 3e8ae3c2, pinned-51afd0d377f7). Resident since the 128K canary pulled
         # it; listed so image GC cannot drop the live lane's image.
+        # 2026-11-25: the lane's rollback once it moves to 4e337e5e below.
         - registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
+        # 2026-11-25 (fp8 table kernel, row gfx1100-xtx-128k-lane-fp8-lut-
+        # 2026-11-25): the image qwen38-27b-xtx-warm-canary moves to
+        # (rocm-gfx1100-serving-v033-9fe2350e, pinned-4e337e5e50ae: 51afd0d3's
+        # vLLM 0.33.0-rocm72 base with text plugin 0.13.0 / plugin-common
+        # 0.7.0). Not resident on 2026-11-25: the canary's pull of the layers
+        # above that base took about 8 s. Listed so image GC cannot drop the
+        # live lane's image and the pinned-* guard keeps it in Harbor.
+        - registry.harbor.lan/flexinfer/runtime@sha256:4e337e5e50aed88ef7231611879d14067cda12a2a59a2fb12602be6f91d0f72a
         # 2026-11-23 (dot2 rollout, owner decision): the v033 serving build of
         # master 91085346 (rocm-gfx1100-serving-v033-91085346, pinned-1a2dd85c9bcd)
         # that carries build/vllm-rdna3-w4a16-plugin. The GPTQ-RDNA3 canary
