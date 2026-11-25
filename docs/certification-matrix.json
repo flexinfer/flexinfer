@@ -273,11 +273,11 @@
       "gpu_class": "gfx1100",
       "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-fp8-lut-2026-11-24",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
       "validation_rows": [
-        "gfx1100-xtx-128k-fp8-lut-2026-11-24"
+        "gfx1100-xtx-128k-lane-fp8-lut-2026-11-25"
       ],
-      "date": "2026-11-24",
+      "date": "2026-11-25",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -1371,7 +1371,7 @@
     {
       "id": "qwen38-27b-xtx-warm-canary",
       "kind": "lane",
-      "support_level": "experimental",
+      "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
       "nodes": [
@@ -1380,10 +1380,9 @@
       "model": "qwen38-27b-xtx-warm-canary",
       "modality": "chat",
       "canary": true,
-      "decision": "conditional",
+      "decision": "pass",
       "evidenced": true,
-      "evidence": "deploy/models/qwen38-27b-xtx-warm-canary.yaml#flexinfer.ai/promotion-evidence",
-      "evidence_note": "canary qwen38-27b-128k-canary 2026-11-21 (row xtx-128k-fp8-segmented-s7-2026-11-21): 51afd0d3 vLLM 0.33, fp8 segmented + embed host + MTP K=2 at 131072, pool 159,599 tok (1.22x), decode 59.4/46.7/18.7 tok/s at 2K/16K/120K, cold TTFT 360 s at 119.5K, needle 1/1 33K-127K, 5/5 + depths 0/50/100 at 127K, pos0 0.81, 25-min soak clean; fp8 table kernel on 4e337e5e: canary qwen38-27b-fp8-lut-canary 2026-11-25 (row gfx1100-xtx-128k-fp8-lut-2026-11-24), decode 67.0/58.7/47.8/38.5 tok/s at 2K/16K/64K/120K against 61.6/45.5/28.2/18.8 the same day, pool 158,828 tok, cold TTFT 211 s at 119.5K, needle 1/1 at 67K and 127K, 5/5 at 127K, pos0 0.815; the lane's own roll is row gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
       "validation_rows": [
         "gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
         "gfx1100-xtx-128k-dot2-2026-11-23",
@@ -1400,7 +1399,7 @@
         "xtx-pcie-soak-2026-10-21",
         "gfx1100-native-w4a16-2026-09-13"
       ],
-      "date": "2026-11-21",
+      "date": "2026-11-25",
       "source": "deploy/models/qwen38-27b-xtx-warm-canary.yaml"
     },
     {
@@ -1848,9 +1847,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "pass",
       "title": "the XTX 128K lane qwen38-27b-xtx-warm-canary moves to runtime@4e337e5e with FLEXINFER_SEGMENTED_FP8_LUT=1 (written 2026-11-25, before the roll; the owner merges). Evidence: row…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
       "date": "2026-11-25",
       "source": ".loom/60-validation-matrix.md"
