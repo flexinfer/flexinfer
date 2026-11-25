@@ -120,6 +120,30 @@
 # of heavier load (up to 326 W). This revert is the discriminator: the same
 # load on 51afd0d3 without FLEXINFER_RDNA3_W4A16. If the card holds, dot2 is
 # the trigger. If it drops, the card or PSU has degraded on its own.
+#
+# 2026-11-25 fp8 table kernel (row gfx1100-xtx-128k-lane-fp8-lut-2026-11-25;
+# canary row gfx1100-xtx-128k-fp8-lut-2026-11-24). LIVE-IMPACTING, owner
+# window: merging this restarts the lane.
+# - What changes: spec.image 51afd0d3 -> 4e337e5e (the same vLLM 0.33.0+rocm72
+#   base, text plugin 0.13.0, plugin-common 0.7.0) and
+#   FLEXINFER_SEGMENTED_FP8_LUT=1. Nothing else: same artifact, pool, context,
+#   MTP, priority and routing.
+# - Why: the fp8 KV decode hit on this card was Triton's fp8 -> fp16
+#   conversion inside segmented attention. The flag converts through a
+#   256-entry table, bit-identical to stock. The canary ran this lane's spec
+#   on this card: decode 61.6 / 45.5 / 28.2 / 18.8 -> 67.0 / 58.7 / 47.8 / 38.5
+#   tok/s at 2K / 16K / 64K / 120K, cold 120K TTFT 354 -> 211 s, pool 158,828
+#   tokens (this lane: 159,599), needles and tool calls intact.
+# - The first boot: the flag gives fp8 its own tuning-table identity
+#   (04af85d5...; the stock table b5f72b05... stays in the same directory for
+#   the rollback). Seeded from the canary's cache directory (the row's step 1),
+#   the boot loads the table like the canary's second boot did (Ready in 2 min
+#   9 s). Unseeded it tunes cold once (817 s on the canary) and may fail the
+#   131072 KV check once first; both fit the 45 min startup probe.
+# - Not covered by the canary: two concurrent long requests and real traffic.
+#   The roll row measures both.
+# Rollback: revert this commit (51afd0d3 without the flag; the image is
+# prewarmed on the node and the stock tuning table is untouched).
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -153,7 +177,7 @@ metadata:
     # lane's budget (!1182/!1183).
     flexinfer.ai/lane-first-byte-budget: "900s"
     flexinfer.ai/promotion-state: promoted-128k-fp8-segmented-s7-mtp
-    flexinfer.ai/promotion-evidence: "canary qwen38-27b-128k-canary 2026-11-21 (row xtx-128k-fp8-segmented-s7-2026-11-21): 51afd0d3 vLLM 0.33, fp8 segmented + embed host + MTP K=2 at 131072, pool 159,599 tok (1.22x), decode 59.4/46.7/18.7 tok/s at 2K/16K/120K, cold TTFT 360 s at 119.5K, needle 1/1 33K-127K, 5/5 + depths 0/50/100 at 127K, pos0 0.81, 25-min soak clean"
+    flexinfer.ai/promotion-evidence: "canary qwen38-27b-128k-canary 2026-11-21 (row xtx-128k-fp8-segmented-s7-2026-11-21): 51afd0d3 vLLM 0.33, fp8 segmented + embed host + MTP K=2 at 131072, pool 159,599 tok (1.22x), decode 59.4/46.7/18.7 tok/s at 2K/16K/120K, cold TTFT 360 s at 119.5K, needle 1/1 33K-127K, 5/5 + depths 0/50/100 at 127K, pos0 0.81, 25-min soak clean; fp8 table kernel on 4e337e5e: canary qwen38-27b-fp8-lut-canary 2026-11-25 (row gfx1100-xtx-128k-fp8-lut-2026-11-24), decode 67.0/58.7/47.8/38.5 tok/s at 2K/16K/64K/120K against 61.6/45.5/28.2/18.8 the same day, pool 158,828 tok, cold TTFT 211 s at 119.5K, needle 1/1 at 67K and 127K, 5/5 at 127K, pos0 0.815; the lane's own roll is row gfx1100-xtx-128k-lane-fp8-lut-2026-11-25"
 spec:
   backend: vllm
   # 2026-09-13 (issue #74 S2, vLLM currency): this lane is the qualification
@@ -226,7 +250,16 @@ spec:
   # 0.33.0-rocm72, text plugin 0.12.0, plugin-common 0.5.0 (embed-host patch,
   # segmented fp8 gate lift). Resident on the XTX since the canary pulled it.
   # Rollback = b06b06fe (resident, pinned-b06b06fe1c02), in-pod.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:51afd0d377f7ef6914c69e3e1486294bf89a0e8ad84d5a3344f85d2adbc44c28
+  # 2026-11-25 fp8 table kernel (header): rocm-gfx1100-serving-v033-9fe2350e,
+  # Harbor pinned-4e337e5e50ae, published by master pipeline 40906 from the
+  # merge of !1442: the same vLLM 0.33.0-rocm72 base as 51afd0d3, text plugin
+  # 0.13.0, plugin-common 0.7.0 (FLEXINFER_SEGMENTED_FP8_LUT). Its build log
+  # reads "segmented fp8 table kernel installable (rewritten source
+  # 8ad2e5d048ed)". Not resident on the XTX on 2026-11-25 (the canary pulled it
+  # in about 8 s; it left the node after the canary was deleted); listed in
+  # the node's prewarm profile by this change.
+  # Rollback = 51afd0d3 (resident, pinned-51afd0d377f7) and drop the flag.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:4e337e5e50aed88ef7231611879d14067cda12a2a59a2fb12602be6f91d0f72a
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   cache:
     strategy: Local
@@ -296,6 +329,11 @@ spec:
       FLEXINFER_QWEN35_MTP_HEAD: checkpoint
       FLEXINFER_EMBED_HOST: "1"
       FLEXINFER_SEGMENTED_FP8_GFX11: "1"
+      # 2026-11-25 (header): fp8 KV converted to fp16 through a 256-entry
+      # table instead of Triton's compare-and-select lowering. Needs the gate
+      # lift above and plugin-common >= 0.7.0; a vLLM whose
+      # segmented_attention.py the plugin does not know fails the boot.
+      FLEXINFER_SEGMENTED_FP8_LUT: "1"
     quantization: gptq
     # 2026-09-13: `architectures` pinned in-process (issue #74 incident #2).
     # The runtime DaemonSet's entrypoint rewrote this lane's on-disk
