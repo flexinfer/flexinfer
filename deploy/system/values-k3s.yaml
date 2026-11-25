@@ -54,6 +54,11 @@ controller:
     # workhorse's dot2 P7 window closes (2026-11-24 21:22Z). Rollback = the
     # 6500e342 build: tag 20261118-161042,
     # sha256:89fb41fc9ad384b21319a87774a332624a7e814501360dd0056c557096aabb1a.
+    # 2026-11-25: the P7 window closed with a pass (row
+    # gfx1100-5930k-workhorse-dot2-2026-11-23) and the owner said merge. Render
+    # check repeated on a snapshot of 2026-11-25T04:51:03Z, after the XTX lane moved to
+    # 4e337e5e with the fp8 table kernel: the same nine templates, the same one
+    # path, the same two lanes with a pod.
     # 2026-10-30: master 3cb6cde0 (master pipeline 36196) = the badcb8c3 build
     # below plus round 2 of the unified-runtime work. !1199: runtime-path
     # eligibility refuses lanes with a spec.config.command wrapper
