@@ -85,7 +85,7 @@
         "gfx1100",
         "gfx906"
       ],
-      "latest_evidence_date": "2026-11-23",
+      "latest_evidence_date": "2026-11-24",
       "evidence": [
         "gemma4-26b-a4b-gptq",
         "gemma4-26b-a4b-gptq-22k",
@@ -1354,9 +1354,9 @@
       ],
       "model": "qwen38-27b-autoround-workhorse",
       "modality": "chat",
-      "decision": "pass",
+      "decision": "conditional",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-dot2-2026-11-23",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
       "validation_rows": [
         "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
         "gfx1100-5930k-workhorse-dot2-2026-11-23",
@@ -1366,7 +1366,7 @@
         "xtx-workhorse-v033-promotion-2026-11-05",
         "workhorse-vllm-v032-2026-10-25"
       ],
-      "date": "2026-11-23",
+      "date": "2026-11-24",
       "source": "deploy/models/qwen38-27b-autoround-workhorse.yaml"
     },
     {
@@ -1896,9 +1896,9 @@
       "nodes": [
         "5930k"
       ],
-      "decision": "pending",
+      "decision": "conditional",
       "title": "qwen38-27b-autoround-workhorse lowers longPrefillTokenThreshold from 1664 to 416, the follow-up to the failed 4-seat row. Written 2026-11-24, before any roll or measurement. Why: while a long prompt…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
       "date": "2026-11-24",
       "source": ".loom/60-validation-matrix.md"

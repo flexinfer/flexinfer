@@ -352,6 +352,13 @@ spec:
     # full 4096-token step. Chunk ends align to the 416-token block: 832 and
     # 416 keep every contended chunk on a boundary (a smaller cap is legal,
     # the scheduler re-aligns at the next boundary). Rollback = 1664.
+    # LIVE 2026-11-25 05:14Z (!1432), kept by owner decision with the row at
+    # `conditional`: the contended step fell from 1.90 s to 0.60-0.64 s and a
+    # short request holding the slot finished in 14.7 s against 32.8 s; a long
+    # prompt's first token came at ~80 s against 65.7 s when contended, and
+    # unchanged when alone. One scored run missed the slot bar with another
+    # caller's request in the second slot, so reliable slot access under real
+    # traffic is not shown; prefillScheduleInterval is the next lever.
     longPrefillTokenThreshold: 416
     # 2026-11-22 (64K): the engine-stall detector reads a long prefill as
     # frozen counters; 64K cold prefills run ~2-3 min here, under load longer.
