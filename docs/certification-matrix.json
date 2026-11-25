@@ -273,9 +273,9 @@
       "gpu_class": "gfx1100",
       "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-fp8-attention-convert-2026-11-24",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-fp8-lut-2026-11-24",
       "validation_rows": [
-        "gfx1100-fp8-attention-convert-2026-11-24"
+        "gfx1100-xtx-128k-fp8-lut-2026-11-24"
       ],
       "date": "2026-11-24",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
@@ -1847,9 +1847,9 @@
       "nodes": [
         "7900xtx"
       ],
-      "decision": "pending",
+      "decision": "pass",
       "title": "does the fp8 table kernel carry from the microbench to the engine? Canary qwen38-27b-fp8-lut-canary, the XTX 128K lane's posture (fp8 KV on segmented attention, embed host, MTP K=2, 131072) with…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-fp8-lut-2026-11-24",
       "date": "2026-11-24",
       "source": ".loom/60-validation-matrix.md"
