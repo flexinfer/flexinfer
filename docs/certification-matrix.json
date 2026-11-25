@@ -85,7 +85,7 @@
         "gfx1100",
         "gfx906"
       ],
-      "latest_evidence_date": "2026-10-27",
+      "latest_evidence_date": "2026-11-23",
       "evidence": [
         "gemma4-26b-a4b-gptq",
         "gemma4-26b-a4b-gptq-22k",
@@ -99,7 +99,8 @@
         "qwen35-9b-ablit-rp",
         "qwen36-27b-autoround-workhorse",
         "qwen36-27b-fable-gptq",
-        "qwen36-35b-mtp-uncensored-5930k"
+        "qwen36-35b-mtp-uncensored-5930k",
+        "qwen38-27b-autoround-workhorse"
       ]
     },
     {
@@ -1353,9 +1354,9 @@
       ],
       "model": "qwen38-27b-autoround-workhorse",
       "modality": "chat",
-      "decision": "fail",
+      "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-dot2-2026-11-23",
       "validation_rows": [
         "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
         "gfx1100-5930k-workhorse-dot2-2026-11-23",
@@ -1911,9 +1912,9 @@
       "nodes": [
         "5930k"
       ],
-      "decision": "pending",
+      "decision": "pass",
       "title": "the 5930k workhorse qwen38-27b-autoround-workhorse moves to runtime@1a2dd85c with FLEXINFER_RDNA3_W4A16=dot2 at its 64K fp16 posture (owner decision 2026-11-23, step 2 of 2). Written before the roll.…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-dot2-2026-11-23",
       "date": "2026-11-23",
       "source": ".loom/60-validation-matrix.md"
