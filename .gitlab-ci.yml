@@ -729,10 +729,14 @@ vllm_qwen35_seqcls_plugin_test:
   script:
     - python3 build/scripts/test_vllm_qwen35_seqcls_plugin.py
     - python3 build/scripts/test_vllm_plugin_common.py
+    # The fp8 table kernel the plugin installs is held equal to the `lut`
+    # variant of this script, the text the kill test ran on the XTX.
+    - python3 scripts/test_fp8_convert_variants.py
     - python3 -m py_compile build/vllm-qwen35-seqcls-plugin/src/flexinfer_vllm_qwen35_seqcls/__init__.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/__init__.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/rocm.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/segmented.py
+    - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/segmented_fp8_lut.py
     - python3 -m py_compile build/vllm-plugin-common/src/flexinfer_vllm_common/labels.py
   rules:
     - if: $CI_MERGE_REQUEST_ID
@@ -744,6 +748,8 @@ vllm_qwen35_seqcls_plugin_test:
         - build/vllm-qwen35-seqcls-plugin/**/*
         - build/scripts/test_vllm_qwen35_seqcls_plugin.py
         - build/scripts/test_vllm_plugin_common.py
+        - scripts/fp8_convert_variants.py
+        - scripts/test_fp8_convert_variants.py
     - if: $CI_COMMIT_BRANCH == "master"
       changes: *qwen35-seqcls-plugin-changes
 

@@ -35,6 +35,18 @@
 # left by the 128K canary, renamed on the XTX to this Model's directory before
 # the apply, so there is no 19 GB download.
 #
+# 2026-11-24: also the hold vehicle for the fp8 attention kill test (row
+# gfx1100-fp8-attention-convert-2026-11-24). Applied as written it holds the
+# XTX with no engine, on the image that row's rewrite anchors were written
+# against, and parks the 128K lane (300) below it. Nothing but the H step
+# runs for that row:
+#   kubectl -n flexinfer-system exec -i <pod> -- sh -c 'cat > /tmp/fp8_convert_variants.py' \
+#       < scripts/fp8_convert_variants.py
+#   kubectl -n flexinfer-system exec -i <pod> -- sh -c \
+#       'cat > /tmp/fp8-bench.py && python3 /tmp/fp8-bench.py --out /tmp/fp8-bench.json' \
+#       < scripts/bench-gfx1100-fp8-attention.py
+# The hold lasts 90 min (`sleep 5400`); delete the Model when the bench is done.
+#
 # Apply (operator, once): kubectl apply -f deploy/debug/qwen38-27b-gptq-rdna3-canary.yaml
 # Remove: flexinfer MCP delete_model qwen38-27b-gptq-rdna3-canary. The XTX warm
 # lane (priority 300) returns on its own.
@@ -50,6 +62,11 @@ metadata:
     flexinfer.ai/artifact-source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
     flexinfer.ai/plan: ".loom/60-validation-matrix.md#gfx1100-gptq-rdna3-tickets-2026-11-06"
     flexinfer.ai/promotion-state: debug-canary-gptq-rdna3
+    # 2026-11-24: the controller now removes a deleted Model's Local cache
+    # (controller.runtime.localCache.onDelete: delete, !1333). This canary is
+    # re-applied under the same name precisely to reuse its 18 GB staged copy,
+    # so keep it.
+    flexinfer.ai/local-cache-on-delete: retain
 spec:
   backend: vllm
   image: registry.harbor.lan/flexinfer/runtime@sha256:1a2dd85c9bcd17f75c80fe8ba8649e81cb96038ca247f2469e5167db799758c0

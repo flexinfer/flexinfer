@@ -85,7 +85,7 @@
         "gfx1100",
         "gfx906"
       ],
-      "latest_evidence_date": "2026-10-27",
+      "latest_evidence_date": "2026-11-23",
       "evidence": [
         "gemma4-26b-a4b-gptq",
         "gemma4-26b-a4b-gptq-22k",
@@ -99,7 +99,8 @@
         "qwen35-9b-ablit-rp",
         "qwen36-27b-autoround-workhorse",
         "qwen36-27b-fable-gptq",
-        "qwen36-35b-mtp-uncensored-5930k"
+        "qwen36-35b-mtp-uncensored-5930k",
+        "qwen38-27b-autoround-workhorse"
       ]
     },
     {
@@ -271,13 +272,13 @@
       "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
-      "decision": "fail",
+      "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
       "validation_rows": [
-        "gfx1100-5930k-workhorse-4-seats-2026-11-23"
+        "gfx1100-xtx-128k-lane-fp8-lut-2026-11-25"
       ],
-      "date": "2026-11-23",
+      "date": "2026-11-25",
       "source": "deploy/gpuprofiles/gfx1100.yaml"
     },
     {
@@ -1353,9 +1354,9 @@
       ],
       "model": "qwen38-27b-autoround-workhorse",
       "modality": "chat",
-      "decision": "fail",
+      "decision": "pass",
       "evidenced": true,
-      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-4-seats-2026-11-23",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-dot2-2026-11-23",
       "validation_rows": [
         "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
         "gfx1100-5930k-workhorse-dot2-2026-11-23",
@@ -1371,7 +1372,7 @@
     {
       "id": "qwen38-27b-xtx-warm-canary",
       "kind": "lane",
-      "support_level": "experimental",
+      "support_level": "supported",
       "backend": "vllm",
       "gpu_class": "gfx1100",
       "nodes": [
@@ -1380,11 +1381,11 @@
       "model": "qwen38-27b-xtx-warm-canary",
       "modality": "chat",
       "canary": true,
-      "decision": "conditional",
+      "decision": "pass",
       "evidenced": true,
-      "evidence": "deploy/models/qwen38-27b-xtx-warm-canary.yaml#flexinfer.ai/promotion-evidence",
-      "evidence_note": "canary qwen38-27b-128k-canary 2026-11-21 (row xtx-128k-fp8-segmented-s7-2026-11-21): 51afd0d3 vLLM 0.33, fp8 segmented + embed host + MTP K=2 at 131072, pool 159,599 tok (1.22x), decode 59.4/46.7/18.7 tok/s at 2K/16K/120K, cold TTFT 360 s at 119.5K, needle 1/1 33K-127K, 5/5 + depths 0/50/100 at 127K, pos0 0.81, 25-min soak clean",
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
       "validation_rows": [
+        "gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
         "gfx1100-xtx-128k-dot2-2026-11-23",
         "gfx1100-xtx-inpod-swap-2026-11-01",
         "xtx-pcie-soak-2026-11-02",
@@ -1399,7 +1400,7 @@
         "xtx-pcie-soak-2026-10-21",
         "gfx1100-native-w4a16-2026-09-13"
       ],
-      "date": "2026-11-21",
+      "date": "2026-11-25",
       "source": "deploy/models/qwen38-27b-xtx-warm-canary.yaml"
     },
     {
@@ -1839,6 +1840,54 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
+      "kind": "validation",
+      "support_level": "supported",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pass",
+      "title": "the XTX 128K lane qwen38-27b-xtx-warm-canary moves to runtime@4e337e5e with FLEXINFER_SEGMENTED_FP8_LUT=1 (written 2026-11-25, before the roll; the owner merges). Evidence: row…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
+      "date": "2026-11-25",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-xtx-128k-fp8-lut-2026-11-24",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pass",
+      "title": "does the fp8 table kernel carry from the microbench to the engine? Canary qwen38-27b-fp8-lut-canary, the XTX 128K lane's posture (fp8 KV on segmented attention, embed host, MTP K=2, 131072) with…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-128k-fp8-lut-2026-11-24",
+      "date": "2026-11-24",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
+      "id": "gfx1100-fp8-attention-convert-2026-11-24",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pass",
+      "title": "kill test for 128K without the fp8 decode hit. Does a cheaper fp8 → fp16 conversion in vLLM's segmented attention stage kernel bring the fp8 KV cache's attention cost near fp16's on gfx1100?…",
+      "evidenced": true,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-fp8-attention-convert-2026-11-24",
+      "date": "2026-11-24",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24",
       "kind": "validation",
       "support_level": "supported",
@@ -1863,9 +1912,9 @@
       "nodes": [
         "5930k"
       ],
-      "decision": "pending",
+      "decision": "pass",
       "title": "the 5930k workhorse qwen38-27b-autoround-workhorse moves to runtime@1a2dd85c with FLEXINFER_RDNA3_W4A16=dot2 at its 64K fp16 posture (owner decision 2026-11-23, step 2 of 2). Written before the roll.…",
-      "evidenced": false,
+      "evidenced": true,
       "evidence": ".loom/60-validation-matrix.md#gfx1100-5930k-workhorse-dot2-2026-11-23",
       "date": "2026-11-23",
       "source": ".loom/60-validation-matrix.md"

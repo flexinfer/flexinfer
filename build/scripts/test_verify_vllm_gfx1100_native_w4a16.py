@@ -26,6 +26,28 @@ def _load_verifier():
     return module
 
 
+def _load_lut():
+    """flexinfer_vllm_common.segmented_fp8_lut, from the source tree."""
+    common = str(Path(__file__).parents[1] / "vllm-plugin-common" / "src")
+    if common not in sys.path:
+        sys.path.insert(0, common)
+    from flexinfer_vllm_common import segmented_fp8_lut
+
+    return segmented_fp8_lut
+
+
+def _load_lut_fixture() -> str:
+    """The lines of vLLM 0.33.0's segmented_attention.py the rewrite touches."""
+    path = Path(__file__).parents[2] / "scripts" / "test_fp8_convert_variants.py"
+    spec = importlib.util.spec_from_file_location("_fx_variants_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.FIXTURE
+
+
+LUT_FIXTURE = _load_lut_fixture()
+
+
 class NativeW4A16VerifierTests(unittest.TestCase):
     def test_accepts_v023_rdna3_kernel_contract(self) -> None:
         verifier = _load_verifier()
@@ -253,6 +275,61 @@ class NativeW4A16VerifierTests(unittest.TestCase):
             self._fp8_tree(Path(tmp), impl_param="cache_dtype")
             with self.assertRaisesRegex(RuntimeError, "kv_cache_dtype"):
                 verifier.verify_segmented_fp8_contract(Path(tmp))
+
+    def _lut_tree(self, root: Path, lut, *, ops=None, identity_param="kv_dtype"):
+        files = {
+            "v1/attention/ops/segmented_attention.py": (
+                LUT_FIXTURE
+                + "\n\ndef run_segmented_attention(q):\n    pass\n"
+                + "\n\ndef compile_segmented_attention(q):\n    pass\n"
+                if ops is None
+                else ops
+            ),
+            "model_executor/warmup/rocm_segmented_attn_autotune_warmup.py": (
+                f"def _identity(device, dtype, {identity_param}):\n    pass\n"
+                "def _temporary_tuning_kernels(device):\n    pass\n"
+                "def rocm_segmented_attn_autotune_warmup(worker):\n    pass\n"
+            ),
+        }
+        for relative, text in files.items():
+            path = root / relative
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(text)
+        return lut.source_sha256(files["v1/attention/ops/segmented_attention.py"])
+
+    def test_segmented_fp8_lut_contract_reports_an_installable_image(self) -> None:
+        verifier = _load_verifier()
+        lut = _load_lut()
+        with tempfile.TemporaryDirectory() as tmp:
+            digest = self._lut_tree(Path(tmp), lut)
+            with mock.patch.dict(lut.KNOWN_SOURCES, {digest: "test fixture"}):
+                status = verifier.verify_segmented_fp8_lut_contract(Path(tmp), lut)
+        self.assertRegex(status, r"^segmented fp8 table kernel installable \(")
+
+    def test_segmented_fp8_lut_contract_reports_an_unknown_vllm(self) -> None:
+        verifier = _load_verifier()
+        lut = _load_lut()
+        with tempfile.TemporaryDirectory() as tmp:
+            digest = self._lut_tree(Path(tmp), lut)
+            status = verifier.verify_segmented_fp8_lut_contract(Path(tmp), lut)
+        self.assertIn("NOT installable", status)
+        self.assertIn(digest, status)
+
+    def test_segmented_fp8_lut_contract_fails_a_known_source_it_cannot_patch(
+        self,
+    ) -> None:
+        verifier = _load_verifier()
+        lut = _load_lut()
+        with tempfile.TemporaryDirectory() as tmp:
+            digest = self._lut_tree(Path(tmp), lut, identity_param="cache_dtype")
+            with mock.patch.dict(lut.KNOWN_SOURCES, {digest: "test fixture"}):
+                with self.assertRaisesRegex(RuntimeError, "kv_dtype"):
+                    verifier.verify_segmented_fp8_lut_contract(Path(tmp), lut)
+        with tempfile.TemporaryDirectory() as tmp:
+            digest = self._lut_tree(Path(tmp), lut, ops="def unrelated():\n    pass\n")
+            with mock.patch.dict(lut.KNOWN_SOURCES, {digest: "test fixture"}):
+                with self.assertRaises(lut.RewriteError):
+                    verifier.verify_segmented_fp8_lut_contract(Path(tmp), lut)
 
     def test_rejects_missing_qwen35_text_plugin_entry_point(self) -> None:
         verifier = _load_verifier()

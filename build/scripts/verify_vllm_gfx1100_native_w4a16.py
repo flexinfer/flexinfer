@@ -59,6 +59,26 @@ SEGMENTED_FP8_GATED_FILES = (
     "v1/attention/backends/rocm_segmented_attn.py",
     "v1/attention/ops/segmented_attention.py",
 )
+# The opt-in fp8 table kernel (flexinfer_vllm_common.segmented_fp8_lut)
+# rewrites vLLM's segmented_attention.py at boot and only accepts a source it
+# knows by sha256. A driverless build cannot run the install (it asks the
+# platform for gfx11, and vLLM stubs triton.jit without a GPU), so the build
+# rewrites the file it ships and checks the names the install replaces.
+SEGMENTED_FP8_LUT_OPS_FILE = "v1/attention/ops/segmented_attention.py"
+SEGMENTED_FP8_LUT_SOURCE_API = {
+    SEGMENTED_FP8_LUT_OPS_FILE: (
+        ("_launch_segmented_attention", None),
+        ("_segmented_attention_stage", None),
+        ("_segmented_attention_reduce", None),
+        ("run_segmented_attention", None),
+        ("compile_segmented_attention", None),
+    ),
+    "model_executor/warmup/rocm_segmented_attn_autotune_warmup.py": (
+        ("_identity", "kv_dtype"),
+        ("_temporary_tuning_kernels", None),
+        ("rocm_segmented_attn_autotune_warmup", None),
+    ),
+}
 # Compiled extensions that must carry device code for the target ISA. Through
 # 0.26 the published ROCm wheel lacked gfx1100 objects and this image rebuilt
 # vLLM from source; since the 0.32 wheel embeds them the build relies on the
@@ -387,6 +407,26 @@ def _top_level_definitions(tree: ast.Module) -> dict[str, ast.AST]:
     return found
 
 
+def _verify_source_api(vllm_root: pathlib.Path, api: dict, label: str) -> None:
+    """Fail when a file lacks a top-level name or a parameter a patch reads."""
+    for relative, names in api.items():
+        path = vllm_root / relative
+        if not path.is_file():
+            raise RuntimeError(f"{label}: {path} is missing")
+        found = _top_level_definitions(ast.parse(path.read_text(encoding="utf-8")))
+        for name, parameter in names:
+            node = found.get(name)
+            if node is None:
+                raise RuntimeError(f"{label}: {relative} lacks {name}")
+            if parameter is not None:
+                arguments = node.args
+                params = [a.arg for a in arguments.args + arguments.kwonlyargs]
+                if parameter not in params:
+                    raise RuntimeError(
+                        f"{label}: {relative} {name} has no {parameter!r} parameter"
+                    )
+
+
 def verify_segmented_fp8_contract(vllm_root: pathlib.Path) -> bool:
     """Check the names the fp8 segmented gate lift wraps; return whether gated.
 
@@ -395,26 +435,41 @@ def verify_segmented_fp8_contract(vllm_root: pathlib.Path) -> bool:
     in the backend or the dispatcher); once it does not, the patch is a no-op
     and can be retired.
     """
-    for relative, names in SEGMENTED_FP8_SOURCE_API.items():
-        path = vllm_root / relative
-        if not path.is_file():
-            raise RuntimeError(f"segmented fp8 contract: {path} is missing")
-        found = _top_level_definitions(ast.parse(path.read_text(encoding="utf-8")))
-        for name, parameter in names:
-            node = found.get(name)
-            if node is None:
-                raise RuntimeError(f"segmented fp8 contract: {relative} lacks {name}")
-            if parameter is not None:
-                arguments = node.args
-                params = [a.arg for a in arguments.args + arguments.kwonlyargs]
-                if parameter not in params:
-                    raise RuntimeError(
-                        f"segmented fp8 contract: {relative} {name} has no "
-                        f"{parameter!r} parameter"
-                    )
+    _verify_source_api(vllm_root, SEGMENTED_FP8_SOURCE_API, "segmented fp8 contract")
     return any(
         "on_gfx12x()" in (vllm_root / relative).read_text(encoding="utf-8")
         for relative in SEGMENTED_FP8_GATED_FILES
+    )
+
+
+def verify_segmented_fp8_lut_contract(vllm_root: pathlib.Path, lut) -> str:
+    """Say whether ``FLEXINFER_SEGMENTED_FP8_LUT=1`` can install on this image.
+
+    ``lut`` is ``flexinfer_vllm_common.segmented_fp8_lut`` as the image
+    installed it. A vLLM whose ``segmented_attention.py`` the plugin does not
+    know by sha256 is reported, not failed: images for other vLLM versions
+    build from the same Dockerfile, and the boot that sets the flag fails
+    loudly there. A known source must rewrite to valid Python and both files
+    must still define what the install replaces, or the build fails.
+    """
+    path = vllm_root / SEGMENTED_FP8_LUT_OPS_FILE
+    if not path.is_file():
+        raise RuntimeError(f"segmented fp8 table contract: {path} is missing")
+    source = path.read_text(encoding="utf-8")
+    digest = lut.source_sha256(source)
+    if digest not in lut.KNOWN_SOURCES:
+        return (
+            "segmented fp8 table kernel NOT installable on this vLLM "
+            f"(segmented_attention.py sha256 {digest} is unknown to the plugin)"
+        )
+    rewritten = lut.rewrite_source(source)
+    compile(rewritten, str(path), "exec")
+    _verify_source_api(
+        vllm_root, SEGMENTED_FP8_LUT_SOURCE_API, "segmented fp8 table contract"
+    )
+    return (
+        "segmented fp8 table kernel installable "
+        f"(rewritten source {lut.source_sha256(rewritten)[:12]})"
     )
 
 
@@ -431,6 +486,9 @@ def main() -> None:
     verify_text_plugin_contract(importlib.metadata.entry_points)
     verify_text_plugin_registers(importlib.metadata.entry_points, os.environ)
     fp8_gated = verify_segmented_fp8_contract(vllm_root)
+    from flexinfer_vllm_common import segmented_fp8_lut
+
+    fp8_lut = verify_segmented_fp8_lut_contract(vllm_root, segmented_fp8_lut)
 
     # Image assembly has no GPU, so vLLM cannot detect ROCm and its generic
     # platform loader does not import this extension. Load it explicitly: the
@@ -445,7 +503,9 @@ def main() -> None:
         "flexinfer_qwen35_text register() OK (segmented runtime-tables and "
         "embed-host patches install);",
         "segmented fp8 gate-lift names present"
-        + ("" if fp8_gated else " (upstream no longer gates fp8 to gfx12)"),
+        + ("" if fp8_gated else " (upstream no longer gates fp8 to gfx12)")
+        + ";",
+        fp8_lut,
     )
 
 
