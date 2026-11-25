@@ -1,0 +1,32 @@
+# The adapter half of the pi-adapted LoRA kill test. Apply it after arm B0 has
+# been measured on the Model alone (deploy/debug/qwen38-27b-pi-lora-canary.yaml).
+#
+# Row: .loom/60-validation-matrix.md `gfx1100-xtx-qwen38-pi-lora-killtest-2026-11-25`.
+#
+# Adapter: harness-hub/Qwen3.8-27B-pi-adapted, Apache-2.0, PEFT LoRA r=32
+# alpha=64 on q_proj, k_proj, v_proj, o_proj, gate_proj, up_proj and down_proj,
+# no modules_to_save (nothing touches embeddings or the LM head, which vLLM
+# cannot adapt over a quantized base). 638 MB of safetensors. Its chat template
+# is byte-identical to Qwen/Qwen3.8-27B's current one, which differs from the
+# lane artifact's only by generation tags that render the same text.
+#
+# The source has no revision field, so the pod downloads the repo's head at
+# load time. Repo head on 2026-11-25: 41396a9f14d9c1a1bf5bee4fb89e9dddadaeae7e
+# (last modified 2026-11-24). Record the head again when the run starts.
+#
+# Clients select the adapter with model="qwen38-27b-pi-adapted". The base model
+# stays available under the Model's own name on the same pod.
+#
+# Apply (operator): kubectl apply -f deploy/debug/qwen38-27b-pi-lora-canary-adapter.yaml
+apiVersion: ai.flexinfer/v1alpha2
+kind: LoRAAdapter
+metadata:
+  name: qwen38-27b-pi-adapted-canary
+  namespace: flexinfer-system
+spec:
+  modelRef: qwen38-27b-pi-lora-canary   # must equal the serving Model's metadata.name
+  adapterName: qwen38-27b-pi-adapted     # value clients pass in the "model" field
+  source:
+    type: HuggingFace
+    uri: harness-hub/Qwen3.8-27B-pi-adapted
+  maxRank: 32

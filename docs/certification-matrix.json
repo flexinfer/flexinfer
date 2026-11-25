@@ -1840,6 +1840,22 @@
       "source": "deploy/models/embeddings.yaml"
     },
     {
+      "id": "gfx1100-xtx-qwen38-pi-lora-killtest-2026-11-25",
+      "kind": "validation",
+      "support_level": "experimental",
+      "backend": "vllm",
+      "gpu_class": "gfx1100",
+      "nodes": [
+        "7900xtx"
+      ],
+      "decision": "pending",
+      "title": "does the pi-adapted LoRA make Qwen3.8-27B a better Mills model on this stack? Canary qwen38-27b-pi-lora-canary (the 5930k workhorse's posture: 64K fp16 KV, embed host, MTP K=2, segmented attention)…",
+      "evidenced": false,
+      "evidence": ".loom/60-validation-matrix.md#gfx1100-xtx-qwen38-pi-lora-killtest-2026-11-25",
+      "date": "2026-11-25",
+      "source": ".loom/60-validation-matrix.md"
+    },
+    {
       "id": "gfx1100-xtx-128k-lane-fp8-lut-2026-11-25",
       "kind": "validation",
       "support_level": "supported",
