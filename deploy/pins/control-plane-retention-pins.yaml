@@ -22,8 +22,10 @@ pins:
   - registry.harbor.lan/flexinfer/flexinfer-controller@sha256:1286a2f15c0a5a9f95de19275ce57bfa564ddcbd75517be4b80cf306d29b7c0f
   # Controller: the !1289 target, master 51e6bd81 (tag 20261105-153904); the rollback for the 6500e342 roll.
   - registry.harbor.lan/flexinfer/flexinfer-controller@sha256:6a3ad9e603110df8207a59f815d4e809e4b4a3357138302fd2faa39cfc5ccdcd
-  # Controller: master 6500e342 (tag 20261118-161042), the 2026-11-18 repin target.
+  # Controller: master 6500e342 (tag 20261118-161042), the 2026-11-18 repin target; the rollback for the 236d3c22 roll.
   - registry.harbor.lan/flexinfer/flexinfer-controller@sha256:89fb41fc9ad384b21319a87774a332624a7e814501360dd0056c557096aabb1a
+  # Controller: master 236d3c22 (tag 20261124-024937), the 2026-11-24 repin target (degraded-lane park !1426, stall fix !1381, prefillScheduleInterval !1434).
+  - registry.harbor.lan/flexinfer/flexinfer-controller@sha256:63e418fc369b8454f9453738d2aa224621290da45dd68a64039c749f56f14c07
   # Proxy: live master 72628e0e (tag 20261103-172712), the rollback for !1255.
   - registry.harbor.lan/flexinfer/flexinfer-proxy@sha256:bdd4bd256cc43c0fb0e23f05b5a62f9eefb984e70caf8af26cde4fb6a2eb60f8
   # Proxy: the !1255 target, master 51e6bd81 (tag 20261105-153904); the rollback for the 6500e342 roll.
