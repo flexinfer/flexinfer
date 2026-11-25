@@ -248,6 +248,37 @@ lane's top-level `words` (the whispercpp runtime ingress adds them); without the
 from whisper-server's per-segment tokens (`pkg/transcript`). Runner-recorded errors add
 `transcript_unusable` to those of "Jobs (async)".
 
+### `/sdapi/v1/*` (AUTOMATIC1111 image alias)
+
+Roleplay front ends (Talemate, SillyTavern) create images through
+the Stable Diffusion WebUI REST API, not the OpenAI Images API. The proxy answers the calls they
+make and runs `txt2img` on an image lane (`internal/proxy/a1111.go`). Off unless the proxy runs with
+`FLEXINFER_A1111_MODEL` (chart value `proxy.a1111Model`): without it every route below returns 503.
+
+| Route | Answer |
+|---|---|
+| `GET /sdapi/v1/samplers` | one entry, "Lane default". Clients use this as the readiness probe |
+| `GET /sdapi/v1/schedulers` | one entry, "automatic" |
+| `GET /sdapi/v1/sd-models` | the default lane, as `title` and `model_name` |
+| `GET /sdapi/v1/options` | `{"sd_model_checkpoint": "<default lane>"}` |
+| `POST /sdapi/v1/txt2img` | `{"images": ["<base64>"], "parameters": {…}, "info": "<JSON string>"}` |
+| `POST /sdapi/v1/interrupt` | `{}`. A client that cancels drops its `txt2img` connection, which already cancels the wait |
+
+`txt2img` becomes `POST /v1/images/generations` on the lane and goes through the normal request
+path, so alias resolution, activation, the GPU swap and the lane's first-byte budget apply.
+
+- **Lane:** `override_settings.sd_model_checkpoint` when the client names one, otherwise the default.
+- **Translated:** `prompt`, `negative_prompt`, `width` and `height` (default 1024, clamped to
+  256–2048, rounded down to a multiple of 16), `seed` (−1 means random and is dropped), and
+  `batch_size` × `n_iter` as the image count, capped at 4.
+- **Not translated:** `steps`, `cfg_scale`, `sampler_name` and `scheduler`. These clients send
+  Stable Diffusion defaults on every request (Talemate: `cfg_scale` 7, "DPM++ 2M"), which are wrong
+  for a Qwen-Image lane, so the lane's own defaults apply.
+- **Errors:** a non-200 from the proxy or the lane is returned unchanged, with its `Retry-After`.
+  A 200 with no image is a 502.
+- The routes take the same bearer token as the rest of the proxy when auth is on. WebUI clients send
+  none, so they can only use the alias where the proxy is reachable without one (in-cluster).
+
 ### `/*` (reverse proxy)
 
 All other paths are forwarded to the selected model backend (subject to scale-to-zero/activation).

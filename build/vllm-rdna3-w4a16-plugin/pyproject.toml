@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "flexinfer-vllm-rdna3-w4a16"
-version = "0.1.0"
+version = "0.1.1"
 description = "RDNA3 W4A16 GPTQ GEMM for vLLM with persistent split-K tickets (vLLM 0.32/0.33 csrc/rocm/q_gemm_rdna3.cu + patch), opt-in via FLEXINFER_RDNA3_W4A16"
 requires-python = ">=3.10"
 

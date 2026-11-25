@@ -474,6 +474,21 @@ class PluginTest(unittest.TestCase):
             )
         self.assertIn("FLEXINFER_SEGMENTED_RUNTIME_TABLES", str(ctx.exception))
 
+    def test_fp8_table_kernel_flag_reaches_the_install(self) -> None:
+        """The flag is strict, and a vLLM without the modules fails the boot."""
+        kkt = "vllm.third_party.flash_linear_attention.ops.chunk_scaled_dot_kkt"
+        with self.assertRaises(RuntimeError) as ctx:
+            _register_with(kkt, env={"FLEXINFER_SEGMENTED_FP8_LUT": "lut"})
+        self.assertIn("FLEXINFER_SEGMENTED_FP8_LUT must be 0 or 1", str(ctx.exception))
+        with self.assertRaises(RuntimeError) as ctx:
+            _register_with(
+                kkt,
+                env={"FLEXINFER_SEGMENTED_FP8_LUT": "1"},
+                extra_modules={"vllm.platforms.rocm": None},
+            )
+        self.assertIn("FLEXINFER_SEGMENTED_FP8_LUT=1", str(ctx.exception))
+        self.assertIn("vllm.platforms.rocm", str(ctx.exception))
+
     def test_unknown_fla_layout_is_fatal(self) -> None:
         """A vLLM with neither known kernel path must fail loudly, not skip pruning."""
         with self.assertRaises(RuntimeError) as ctx:

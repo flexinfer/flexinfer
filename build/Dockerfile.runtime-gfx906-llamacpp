@@ -76,9 +76,15 @@ RUN mkdir -p /opt/flexinfer/lib \
         /tmp/hipmemgetinfo_shim.cpp -ldl \
         -o /opt/flexinfer/lib/libflexinfer_hipmeminfo_shim.so
 
+# LLAMA_USE_PREBUILT_UI=OFF: the runtime serves the API, not llama.cpp's web
+# UI. Left ON, the build downloads a UI bundle from Hugging Face by build
+# number; a --depth 1 clone reports build 1, `b1` does not exist, and the
+# `latest` fallback is whatever upstream ships today, which this tag's
+# scripts/ui-assets.cmake rejects. OFF embeds no assets and needs no network.
 RUN cmake -B build -G Ninja \
     -DGGML_HIP=ON -DGGML_NATIVE=OFF \
     -DAMDGPU_TARGETS=${AMDGPU_TARGETS} \
+    -DLLAMA_USE_PREBUILT_UI=OFF \
     -DCMAKE_BUILD_TYPE=Release \
     && cmake --build build --config Release -j$(nproc)
 

@@ -11,6 +11,8 @@ is scripts/bench-gfx1100-gptq-rdna3.py's job.
 
 from __future__ import annotations
 
+import contextlib
+import io
 import pathlib
 import struct
 import sys
@@ -128,6 +130,57 @@ class RegisterTest(unittest.TestCase):
             sys.modules, {"torch": None}
         ):
             plugin.register()  # would raise ImportError if it touched torch
+
+    def _fake_vllm(self, release="0.33.0", rocm=True, gfx1100=True):
+        torch = types.SimpleNamespace(
+            version=types.SimpleNamespace(hip="7.2"),
+            ops=types.SimpleNamespace(
+                _rocm_C=types.SimpleNamespace(gptq_gemm_rdna3=object())
+            ),
+        )
+        vllm = types.ModuleType("vllm")
+        vllm.__version__ = release
+        platforms = types.ModuleType("vllm.platforms")
+        platforms.current_platform = types.SimpleNamespace(is_rocm=lambda: rocm)
+        rocm_mod = types.ModuleType("vllm.platforms.rocm")
+        rocm_mod.on_gfx1100 = lambda: gfx1100
+        return {
+            "torch": torch,
+            "vllm": vllm,
+            "vllm.platforms": platforms,
+            "vllm.platforms.rocm": rocm_mod,
+            "vllm._custom_ops": types.ModuleType("vllm._custom_ops"),
+            "vllm._rocm_C": types.ModuleType("vllm._rocm_C"),
+        }
+
+    def _register(self, modules, install_line="registered at x:1 [kernel]"):
+        out = io.StringIO()
+        with mock.patch.dict("os.environ", {plugin.ENV: "tickets"}), mock.patch.dict(
+            sys.modules, modules
+        ), mock.patch.object(
+            plugin, "install", return_value=f"CUDA: {install_line}"
+        ) as install, contextlib.redirect_stdout(
+            out
+        ):
+            plugin.register()
+        return out.getvalue(), install
+
+    def test_boot_line_printed_on_install(self):
+        text, install = self._register(self._fake_vllm())
+        install.assert_called_once()
+        self.assertEqual(install.call_args.args[0], 1)
+        self.assertIn("flexinfer: rdna3_w4a16: FLEXINFER_RDNA3_W4A16=tickets", text)
+        self.assertIn("is now registered at x:1 [kernel]", text)
+
+    def test_unsupported_release_prints_and_skips(self):
+        text, install = self._register(self._fake_vllm(release="0.34.0"))
+        install.assert_not_called()
+        self.assertIn("ignored: vLLM 0.34.0", text)
+
+    def test_not_gfx1100_prints_and_skips(self):
+        text, install = self._register(self._fake_vllm(gfx1100=False))
+        install.assert_not_called()
+        self.assertIn("ignored: not a gfx1100 device", text)
 
     def test_typo_raises(self):
         with mock.patch.dict("os.environ", {plugin.ENV: "tikets"}):

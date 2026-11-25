@@ -5,8 +5,9 @@ Covers the FlexInfer changes that sit behind env flags: the relaxed FLA
 autotune pruning (``FLEXINFER_FLA_AUTOTUNE``), the segmented-attention
 autotune at the runtime block-table width
 (``FLEXINFER_SEGMENTED_RUNTIME_TABLES``), the input-embedding table in mapped
-host memory (``FLEXINFER_EMBED_HOST``) and fp8 KV on segmented attention for
-gfx11 (``FLEXINFER_SEGMENTED_FP8_GFX11``). Neither vLLM nor torch is needed:
+host memory (``FLEXINFER_EMBED_HOST``), fp8 KV on segmented attention for
+gfx11 (``FLEXINFER_SEGMENTED_FP8_GFX11``) and that fp8 KV converted through a
+table (``FLEXINFER_SEGMENTED_FP8_LUT``). Neither vLLM nor torch is needed:
 the tests drive fake vLLM modules whose functions call each other through
 module globals, as upstream's do, so each patch is exercised on the same call
 path the engine takes.
@@ -15,9 +16,12 @@ path the engine takes.
 from __future__ import annotations
 
 import contextlib
+import importlib.util
+import inspect
 import math
 import os
 import sys
+import tempfile
 import types
 import unittest
 from pathlib import Path
@@ -31,7 +35,17 @@ from flexinfer_vllm_common import (  # noqa: E402
     rocm,
     segmented,
     segmented_fp8,
+    segmented_fp8_lut,
 )
+
+SCRIPTS = Path(__file__).parents[2] / "scripts"
+
+
+def _load_script(filename: str, name: str):
+    spec = importlib.util.spec_from_file_location(name, SCRIPTS / filename)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class Config:
@@ -610,9 +624,7 @@ class SegmentedRuntimeTablesTest(unittest.TestCase):
         }
         stdout = []
         with mock.patch("builtins.print", side_effect=lambda *a, **k: stdout.append(a)):
-            warmup.rocm_segmented_attn_autotune_warmup(
-                _worker([88, 82], layers=layers)
-            )
+            warmup.rocm_segmented_attn_autotune_warmup(_worker([88, 82], layers=layers))
         # One compile per record: the second layer has the same key and the
         # same pointer class, so it adds nothing.
         self.assertEqual(len(warmup.compiled), 3)
@@ -649,9 +661,7 @@ class SegmentedRuntimeTablesTest(unittest.TestCase):
             warmup.rocm_segmented_attn_autotune_warmup(
                 _worker([88, 82], layers={"model.layers.3.self_attn.attn": unbound})
             )
-        self.assertEqual(
-            warmup.compiled_kv, [("kc", "vc", "kv_scale", "kv_scale")] * 3
-        )
+        self.assertEqual(warmup.compiled_kv, [("kc", "vc", "kv_scale", "kv_scale")] * 3)
         self.assertIn("synthetic KV cache", stdout[0][0])
 
     def test_quantized_live_cache_is_viewed_as_the_kernel_dtype(self) -> None:
@@ -1120,6 +1130,402 @@ class SegmentedFp8Test(unittest.TestCase):
         del ops.run_segmented_attention
         with self.assertRaises(RuntimeError):
             segmented_fp8.install_segmented_fp8(backend, ops, platform)
+
+
+class _Device(str):
+    """A device name that also answers ``.index`` like torch.device."""
+
+    @property
+    def index(self):
+        return int(self.rsplit(":", 1)[1]) if ":" in self else None
+
+
+class _Kernel:
+    """A Triton JITFunction's compiled-kernel cache, per device index."""
+
+    def __init__(self, name) -> None:
+        self.name = name
+        self.device_caches = {0: ({},)}
+
+
+class _LutTorch:
+    def __init__(self) -> None:
+        self.capturing = False
+        self.synchronized = []
+        self.cuda = types.SimpleNamespace(
+            is_current_stream_capturing=lambda: self.capturing
+        )
+        self.accelerator = types.SimpleNamespace(
+            current_device_index=lambda: 0,
+            synchronize=self.synchronized.append,
+        )
+
+    @staticmethod
+    def device(device):
+        return _Device(device)
+
+    @staticmethod
+    def empty(size, device=None):
+        # torch normalizes "cuda" to the current device on the tensor.
+        return types.SimpleNamespace(device=_Device("cuda:0"))
+
+
+def _cache(itemsize):
+    return types.SimpleNamespace(element_size=lambda: itemsize)
+
+
+def _fake_lut_modules(directory, arch="gfx11", source=None):
+    """Fake platform, ops and warmup modules for the table-kernel install.
+
+    ``ops`` sits on a real file, as the install reads vLLM's source from
+    ``ops.__file__``. Its functions reach the launcher through the module
+    attribute, the way upstream's reach it through their module globals.
+    """
+    platform = types.ModuleType("fake_platforms_rocm")
+    platform.on_gfx11 = lambda: arch == "gfx11"
+
+    ops = types.ModuleType("fake_ops_segmented_attention")
+    path = Path(directory) / "segmented_attention.py"
+    path.write_text(LUT_FIXTURE if source is None else source, encoding="utf-8")
+    ops.__file__ = str(path)
+    ops.launched = []
+    ops._segmented_attention_stage = _Kernel("stock stage")
+    ops._segmented_attention_reduce = _Kernel("stock reduce")
+
+    def _launch_segmented_attention(q, out, kc, vc, *, compile_only):
+        ops.launched.append(("stock", compile_only))
+
+    def run_segmented_attention(q, out, kc, vc):
+        ops._launch_segmented_attention(q, out, kc, vc, compile_only=False)
+
+    def compile_segmented_attention(q, out, kc, vc):
+        ops._launch_segmented_attention(q, out, kc, vc, compile_only=True)
+
+    ops._launch_segmented_attention = _launch_segmented_attention
+    ops.run_segmented_attention = run_segmented_attention
+    ops.compile_segmented_attention = compile_segmented_attention
+
+    warmup = types.ModuleType("fake_segmented_warmup")
+    warmup.torch = _LutTorch()
+    warmup.events = []
+
+    def _identity(device, dtype, kv_dtype, heads):
+        return {"schema": 5, "kv_dtype": str(kv_dtype), "heads": heads}
+
+    @contextlib.contextmanager
+    def _temporary_tuning_kernels(device):
+        cache = ops._segmented_attention_stage.device_caches[0][0]
+        existing = set(cache)
+        warmup.events.append("upstream enter")
+        try:
+            yield
+        finally:
+            for key in cache.keys() - existing:
+                del cache[key]
+            warmup.events.append("upstream exit")
+
+    def rocm_segmented_attn_autotune_warmup(worker):
+        warmup.events.append("autotune")
+
+    warmup._identity = _identity
+    warmup._temporary_tuning_kernels = _temporary_tuning_kernels
+    warmup.rocm_segmented_attn_autotune_warmup = rocm_segmented_attn_autotune_warmup
+    return platform, ops, warmup
+
+
+def _fake_variant(ops):
+    """What importing the rewritten file yields, minus Triton."""
+
+    def load(rewritten):
+        variant = types.ModuleType("fake_variant")
+        variant.__file__ = "/tmp/fake/flexinfer_segmented_attention_fp8_lut.py"
+        variant.rewritten = rewritten
+        variant.tables = []
+        variant._fx_lut_cache = {}
+        variant._segmented_attention_stage = _Kernel("table stage")
+        variant._segmented_attention_reduce = _Kernel("table reduce")
+
+        def _fx_lut(device):
+            if device not in variant._fx_lut_cache:
+                variant.tables.append(device)
+                variant._fx_lut_cache[device] = f"table@{device}"
+            return variant._fx_lut_cache[device]
+
+        def _launch_segmented_attention(q, out, kc, vc, *, compile_only):
+            ops.launched.append(("table", compile_only))
+
+        variant._fx_lut = _fx_lut
+        variant._launch_segmented_attention = _launch_segmented_attention
+        load.variant = variant
+        return variant
+
+    return load
+
+
+class SegmentedFp8LutTest(unittest.TestCase):
+    def setUp(self) -> None:
+        segmented_fp8_lut._state = segmented_fp8_lut._State()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        known = mock.patch.dict(
+            segmented_fp8_lut.KNOWN_SOURCES,
+            {segmented_fp8_lut.source_sha256(LUT_FIXTURE): "test fixture"},
+        )
+        known.start()
+        self.addCleanup(known.stop)
+
+    def _installed(self, arch="gfx11"):
+        platform, ops, warmup = _fake_lut_modules(self.tmp.name, arch)
+        load = _fake_variant(ops)
+        with contextlib.redirect_stdout(None):
+            active = segmented_fp8_lut.install_segmented_fp8_lut(
+                ops, warmup, platform, load_variant=load
+            )
+        return active, ops, warmup, getattr(load, "variant", None)
+
+    def test_flag_is_strict(self) -> None:
+        env = segmented_fp8_lut.SEGMENTED_FP8_LUT_ENV
+        self.assertFalse(segmented_fp8_lut.segmented_fp8_lut_enabled({}))
+        self.assertTrue(segmented_fp8_lut.segmented_fp8_lut_enabled({env: "1"}))
+        with self.assertRaises(RuntimeError):
+            segmented_fp8_lut.segmented_fp8_lut_enabled({env: "lut"})
+        self.assertFalse(segmented_fp8_lut.install_segmented_fp8_lut_if_enabled({}))
+
+    def test_the_table_is_stock_vllm_s_conversion_for_every_code(self) -> None:
+        table = segmented_fp8_lut.lut_table()
+        self.assertEqual(len(table), 256)
+        self.assertEqual(table[0x00], 0x0000)
+        self.assertEqual(table[0x80], 0x8000)
+        self.assertEqual(table[0x38], 0x3C00)  # 1.0
+        self.assertEqual(table[0x7E], 0x5F00)  # 448.0, the largest value
+        self.assertEqual((table[0x7F], table[0xFF]), (0x7E00, 0xFE00))
+        # The constants read out of Triton's own lowering (2026-11-24) are
+        # held by the variants script's stock model.
+        self.assertEqual(table, [FX_VARIANTS.stock_bits(c) for c in range(256)])
+
+    def test_the_rewrite_is_the_text_the_kill_test_ran(self) -> None:
+        self.assertEqual(
+            segmented_fp8_lut.rewrite_source(LUT_FIXTURE),
+            FX_VARIANTS.rewrite_source(LUT_FIXTURE, "lut"),
+        )
+        # Every vLLM source the plugin accepts is one the bench was run on.
+        self.assertLessEqual(set(SHIPPED_KNOWN_SOURCES), set(FX_VARIANTS.KNOWN_SOURCES))
+        for digest in SHIPPED_KNOWN_SOURCES:
+            self.assertEqual(len(digest), 64)
+
+    def test_a_changed_source_is_not_rewritten(self) -> None:
+        for missing in (
+            "k.to(q.dtype), scores",
+            "v_low.to(prob.dtype)",
+            "v.to(Q.dtype.element_ty), acc",
+            "def _segmented_attention_stage(",
+            "        q.stride(0),\n",
+        ):
+            with self.assertRaises(segmented_fp8_lut.RewriteError, msg=missing):
+                segmented_fp8_lut.rewrite_source(LUT_FIXTURE.replace(missing, "X"))
+
+    def test_an_unknown_vllm_source_fails_the_boot(self) -> None:
+        platform, ops, warmup = _fake_lut_modules(
+            self.tmp.name, source=LUT_FIXTURE + "\n# one upstream edit\n"
+        )
+        launcher = ops._launch_segmented_attention
+        with self.assertRaisesRegex(RuntimeError, "sha256 [0-9a-f]{64}"):
+            segmented_fp8_lut.install_segmented_fp8_lut(
+                ops, warmup, platform, load_variant=_fake_variant(ops)
+            )
+        self.assertIs(ops._launch_segmented_attention, launcher)
+        self.assertFalse(hasattr(ops, segmented_fp8_lut.PATCH_MARKER))
+
+    def test_fp8_caches_launch_the_table_kernel_and_fp16_the_stock_one(self) -> None:
+        active, ops, warmup, variant = self._installed()
+        self.assertTrue(active)
+        q = types.SimpleNamespace(device=_Device("cuda:0"))
+        with contextlib.redirect_stdout(None):
+            ops.run_segmented_attention(q, "out", _cache(2), _cache(2))
+            ops.run_segmented_attention(q, "out", _cache(1), _cache(1))
+            ops.compile_segmented_attention(q, "out", _cache(1), _cache(1))
+            ops.compile_segmented_attention(q, "out", _cache(2), _cache(2))
+        self.assertEqual(
+            ops.launched,
+            [("stock", False), ("table", False), ("table", True), ("stock", True)],
+        )
+        self.assertEqual(
+            segmented_fp8_lut.fp8_lut_launch_counts(),
+            {"launches": 1, "compiles": 1},
+        )
+        self.assertEqual(
+            variant.rewritten, FX_VARIANTS.rewrite_source(LUT_FIXTURE, "lut")
+        )
+
+    def test_the_reduce_kernel_stays_upstream_s(self) -> None:
+        _, ops, _, variant = self._installed()
+        self.assertIs(
+            variant._segmented_attention_reduce, ops._segmented_attention_reduce
+        )
+        self.assertIsNot(
+            variant._segmented_attention_stage, ops._segmented_attention_stage
+        )
+
+    def test_fp8_gets_a_tuning_table_of_its_own(self) -> None:
+        _, ops, warmup, _ = self._installed()
+        fp8 = types.SimpleNamespace(itemsize=1)
+        fp16 = types.SimpleNamespace(itemsize=2)
+        tagged = warmup._identity("cuda:0", "fp16", fp8, heads=24)
+        self.assertEqual(
+            tagged[segmented_fp8_lut.IDENTITY_KEY],
+            "lut:" + getattr(ops, segmented_fp8_lut.PATCH_MARKER),
+        )
+        self.assertEqual(len(getattr(ops, segmented_fp8_lut.PATCH_MARKER)), 64)
+        self.assertEqual(tagged["heads"], 24)
+        self.assertNotIn(
+            segmented_fp8_lut.IDENTITY_KEY,
+            warmup._identity("cuda:0", "fp16", kv_dtype=fp16, heads=24),
+        )
+
+    def test_the_tuner_unloads_table_kernels_it_compiled_while_tuning(self) -> None:
+        _, ops, warmup, variant = self._installed()
+        table_cache = variant._segmented_attention_stage.device_caches[0][0]
+        stock_cache = ops._segmented_attention_stage.device_caches[0][0]
+        table_cache["resident"] = "captured by a graph"
+        with self.assertRaises(ValueError):
+            with warmup._temporary_tuning_kernels("cuda"):
+                table_cache["candidate"] = "tuning only"
+                stock_cache["candidate"] = "tuning only"
+                raise ValueError("a candidate failed")
+        self.assertEqual(table_cache, {"resident": "captured by a graph"})
+        self.assertEqual(stock_cache, {})
+        self.assertEqual(warmup.events, ["upstream enter", "upstream exit"])
+        self.assertEqual(warmup.torch.synchronized, ["cuda"])
+
+    def test_the_table_exists_before_anything_can_capture(self) -> None:
+        _, ops, warmup, variant = self._installed()
+        self.assertEqual(variant.tables, [])
+        warmup.rocm_segmented_attn_autotune_warmup(types.SimpleNamespace(device="cuda"))
+        self.assertEqual(variant.tables, ["cuda:0"])
+        self.assertEqual(warmup.events, ["autotune"])
+        warmup.torch.capturing = True
+        q = types.SimpleNamespace(device=_Device("cuda:0"))
+        with contextlib.redirect_stdout(None):
+            ops.run_segmented_attention(q, "out", _cache(1), _cache(1))
+        self.assertEqual(ops.launched, [("table", False)])
+        self.assertEqual(variant.tables, ["cuda:0"])
+
+    def test_a_table_first_needed_inside_a_capture_is_refused(self) -> None:
+        _, ops, warmup, variant = self._installed()
+        q = types.SimpleNamespace(device=_Device("cuda:0"))
+        warmup.torch.capturing = True
+        with self.assertRaisesRegex(RuntimeError, "inside a graph capture"):
+            ops.run_segmented_attention(q, "out", _cache(1), _cache(1))
+        self.assertEqual(ops.launched, [])
+        # An fp16 cache needs no table and is not held up.
+        ops.run_segmented_attention(q, "out", _cache(2), _cache(2))
+        warmup.torch.capturing = False
+        with contextlib.redirect_stdout(None):
+            ops.run_segmented_attention(q, "out", _cache(1), _cache(1))
+        self.assertEqual(ops.launched, [("stock", False), ("table", False)])
+
+    def test_other_hosts_are_not_patched(self) -> None:
+        for arch in ("gfx12", "cdna"):
+            active, ops, warmup, variant = self._installed(arch)
+            self.assertFalse(active)
+            self.assertIsNone(variant)
+            self.assertFalse(hasattr(ops, segmented_fp8_lut.PATCH_MARKER))
+
+    def test_install_is_idempotent(self) -> None:
+        platform, ops, warmup = _fake_lut_modules(self.tmp.name)
+        load = _fake_variant(ops)
+        with contextlib.redirect_stdout(None):
+            segmented_fp8_lut.install_segmented_fp8_lut(
+                ops, warmup, platform, load_variant=load
+            )
+            launcher, identity = ops._launch_segmented_attention, warmup._identity
+            self.assertTrue(
+                segmented_fp8_lut.install_segmented_fp8_lut(
+                    ops, warmup, platform, load_variant=load
+                )
+            )
+        self.assertIs(ops._launch_segmented_attention, launcher)
+        self.assertIs(warmup._identity, identity)
+
+    def test_a_reshaped_vllm_fails_the_boot(self) -> None:
+        for module_index, name in (
+            (1, "_launch_segmented_attention"),
+            (2, "_identity"),
+        ):
+            modules = _fake_lut_modules(self.tmp.name)
+            delattr(modules[module_index], name)
+            platform, ops, warmup = modules
+            with self.assertRaisesRegex(RuntimeError, name):
+                segmented_fp8_lut.install_segmented_fp8_lut(
+                    ops, warmup, platform, load_variant=_fake_variant(ops)
+                )
+        platform, ops, warmup = _fake_lut_modules(self.tmp.name)
+        warmup._identity = lambda device, dtype, cache_dtype, heads: {}
+        with self.assertRaisesRegex(RuntimeError, "kv_dtype"):
+            segmented_fp8_lut.install_segmented_fp8_lut(
+                ops, warmup, platform, load_variant=_fake_variant(ops)
+            )
+        self.assertFalse(hasattr(ops, segmented_fp8_lut.PATCH_MARKER))
+
+    def test_the_rewritten_file_imports_with_the_table_wired_in(self) -> None:
+        """The real loader, with Triton and torch stubbed to bare decorators."""
+
+        class Tensor(list):
+            def view(self, dtype):
+                return ("view", dtype, list(self))
+
+        torch = types.ModuleType("torch")
+        torch.int16, torch.float16 = "int16", "float16"
+        torch.tensor = lambda values, dtype, device: Tensor(values)
+        triton_utils = types.ModuleType("vllm.triton_utils")
+        triton_utils.triton = types.SimpleNamespace(jit=lambda fn: fn)
+        triton_utils.tl = types.SimpleNamespace(constexpr=int)
+        stubs = {
+            "torch": torch,
+            "vllm": types.ModuleType("vllm"),
+            "vllm.triton_utils": triton_utils,
+        }
+        with mock.patch.dict(sys.modules, stubs):
+            variant = segmented_fp8_lut.load_variant_module(
+                segmented_fp8_lut.rewrite_source(LUT_FIXTURE)
+            )
+            self.addCleanup(os.remove, variant.__file__)
+            self.assertIs(sys.modules[segmented_fp8_lut.VARIANT_MODULE], variant)
+        self.assertNotIn(segmented_fp8_lut.VARIANT_MODULE, sys.modules)
+        parameters = list(
+            inspect.signature(variant._segmented_attention_stage).parameters
+        )
+        self.assertEqual(parameters[3:6], ["OUT", "FXLUT", "Q0"])
+        self.assertNotIn(
+            "FXLUT", inspect.signature(variant._segmented_attention_reduce).parameters
+        )
+        q = types.SimpleNamespace(device="cuda:0", stride=lambda dim: 7)
+        stage_args = variant._launch_segmented_attention(q, "out", "kc", "vc")
+        table = variant._fx_lut("cuda:0")
+        self.assertEqual(stage_args, (q, "kc", "vc", "out", table, 7))
+        self.assertIs(variant._fx_lut("cuda:0"), table)
+        kind, dtype, values = table
+        self.assertEqual((kind, dtype), ("view", "float16"))
+        self.assertEqual(
+            [bits & 0xFFFF for bits in values], segmented_fp8_lut.lut_table()
+        )
+        with open(variant.__file__, encoding="utf-8") as handle:
+            self.assertEqual(
+                handle.read(), segmented_fp8_lut.rewrite_source(LUT_FIXTURE)
+            )
+
+    def test_a_file_that_fails_to_import_leaves_no_module_behind(self) -> None:
+        with self.assertRaises(SyntaxError):
+            segmented_fp8_lut.load_variant_module("def broken(:\n")
+        self.assertNotIn(segmented_fp8_lut.VARIANT_MODULE, sys.modules)
+
+
+# The lines of vLLM 0.33.0's segmented_attention.py the rewrite touches, and
+# the variants module whose `lut` output passed the kill test on the XTX.
+_VARIANTS_TEST = _load_script("test_fp8_convert_variants.py", "_fx_variants_test")
+LUT_FIXTURE = _VARIANTS_TEST.FIXTURE
+FX_VARIANTS = _VARIANTS_TEST.fx
+SHIPPED_KNOWN_SOURCES = dict(segmented_fp8_lut.KNOWN_SOURCES)
 
 
 if __name__ == "__main__":

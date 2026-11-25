@@ -26,7 +26,6 @@ arm into a silent copy of the control.
 from __future__ import annotations
 
 import importlib.util
-import logging
 import os
 from collections.abc import Mapping
 
@@ -42,13 +41,12 @@ OVERRIDE_MARKER = "flexinfer_rdna3_w4a16_override"
 OP = "_rocm_C::gptq_gemm_rdna3"
 
 
-def _logger() -> logging.Logger:
-    try:
-        from vllm.logger import init_logger
-
-        return init_logger(__name__)
-    except Exception:  # pragma: no cover - outside vLLM
-        return logging.getLogger(__name__)
+def _say(message: str) -> None:
+    """One line on stdout, flushed: vLLM's logging config only routes the
+    ``vllm.*`` loggers to a handler, so an INFO line from this package's own
+    logger would never reach the pod log (the other FlexInfer plugins print
+    their boot line for the same reason)."""
+    print(f"flexinfer: rdna3_w4a16: {message}", flush=True)
 
 
 def requested_mode(environ: Mapping[str, str] | None = None) -> int:
@@ -109,45 +107,34 @@ def register() -> None:
     mode = requested_mode()
     if mode == 0:
         return
-    log = _logger()
+    name = MODE_NAMES[mode]
 
     import torch
 
     if torch.version.hip is None:
-        log.info("%s: %s=%s ignored: not a ROCm build", __name__, ENV, MODE_NAMES[mode])
+        _say(f"{ENV}={name} ignored: not a ROCm build")
         return
     from vllm.platforms import current_platform
 
     if not current_platform.is_rocm():
-        log.info(
-            "%s: %s=%s ignored: the vLLM platform is not ROCm",
-            __name__,
-            ENV,
-            MODE_NAMES[mode],
-        )
+        _say(f"{ENV}={name} ignored: the vLLM platform is not ROCm (pid {os.getpid()})")
         return
     # Only importable once the platform is ROCm: on a host with no visible
     # GPU its module-level arch probe raises.
     from vllm.platforms.rocm import on_gfx1100
 
     if not on_gfx1100():
-        log.info(
-            "%s: %s=%s ignored: not a gfx1100 device", __name__, ENV, MODE_NAMES[mode]
-        )
+        _say(f"{ENV}={name} ignored: not a gfx1100 device")
         return
 
     import vllm
 
     release = vllm_release(vllm.__version__)
     if release not in SUPPORTED_VLLM:
-        log.warning(
-            "%s: %s=%s ignored: vLLM %s is not one of %s, whose RDNA3 W4A16 "
-            "kernel source the vendored copy matches",
-            __name__,
-            ENV,
-            MODE_NAMES[mode],
-            vllm.__version__,
-            ", ".join(SUPPORTED_VLLM),
+        _say(
+            f"{ENV}={name} ignored: vLLM {vllm.__version__} is not one of "
+            f"{', '.join(SUPPORTED_VLLM)}, whose RDNA3 W4A16 kernel source the "
+            "vendored copy matches"
         )
         return
 
@@ -155,22 +142,11 @@ def register() -> None:
     import vllm._rocm_C  # noqa: F401  the op's schema; _custom_ops loads it on ROCm
 
     if not hasattr(torch.ops._rocm_C, "gptq_gemm_rdna3"):
-        log.warning(
-            "%s: %s=%s ignored: this vLLM build has no %s",
-            __name__,
-            ENV,
-            MODE_NAMES[mode],
-            OP,
-        )
+        _say(f"{ENV}={name} ignored: this vLLM build has no {OP}")
         return
 
     line = install(mode, torch)
-    log.info(
-        "%s: %s=%s, the CUDA kernel of %s is now %s (pid %d)",
-        __name__,
-        ENV,
-        MODE_NAMES[mode],
-        OP,
-        line.split(":", 1)[-1].strip(),
-        os.getpid(),
+    _say(
+        f"{ENV}={name}, the CUDA kernel of {OP} is now "
+        f"{line.split(':', 1)[-1].strip()} (pid {os.getpid()})"
     )

@@ -74,6 +74,15 @@ func TestValidateVLLMConfig(t *testing.T) {
 		{name: "partial prefill cap set to zero", cfg: map[string]any{"maxNumPartialPrefills": 0.0}, wantErr: "maxNumPartialPrefills is not supported"},
 		{name: "unquoted release", cfg: map[string]any{"vllmVersion": 0.33}, wantErr: "spec.config.vllmVersion must be a quoted string"},
 		{name: "unreadable release", cfg: map[string]any{"vllmVersion": "latest"}, wantErr: `spec.config.vllmVersion "latest" is not a vLLM release`},
+		{name: "prefill interval on 0.33", cfg: map[string]any{"vllmVersion": "0.33.0", "prefillScheduleInterval": 4.0}},
+		{name: "prefill interval on a local build tag", cfg: map[string]any{"vllmVersion": "0.33.0+rocm72", "prefillScheduleInterval": 8}},
+		{name: "prefill interval of 1 needs no release", cfg: map[string]any{"prefillScheduleInterval": 1.0}},
+		{name: "prefill interval without a release", cfg: map[string]any{"prefillScheduleInterval": 4.0}, wantErr: `spec.config.prefillScheduleInterval above 1 needs spec.config.vllmVersion "0.33.0" or later`},
+		{name: "prefill interval on 0.32", cfg: map[string]any{"vllmVersion": "0.32.0", "prefillScheduleInterval": 4.0}, wantErr: "prefillScheduleInterval above 1 needs spec.config.vllmVersion"},
+		{name: "prefill interval of zero", cfg: map[string]any{"vllmVersion": "0.33.0", "prefillScheduleInterval": 0.0}, wantErr: "spec.config.prefillScheduleInterval must be a whole number of 1 or more"},
+		{name: "fractional prefill interval", cfg: map[string]any{"vllmVersion": "0.33.0", "prefillScheduleInterval": 2.5}, wantErr: "must be a whole number of 1 or more"},
+		{name: "quoted prefill interval", cfg: map[string]any{"vllmVersion": "0.33.0", "prefillScheduleInterval": "4"}, wantErr: "must be a whole number of 1 or more"},
+		{name: "unreadable release wins over the interval", cfg: map[string]any{"vllmVersion": "latest", "prefillScheduleInterval": 4.0}, wantErr: `spec.config.vllmVersion "latest" is not a vLLM release`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -350,5 +359,35 @@ func TestVLLMBackendEnv_DeclaredV033RendersOnlyDefinedVariables(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestVLLMBackendArgs_PrefillScheduleInterval(t *testing.T) {
+	b := &VLLMBackend{}
+	for _, tt := range []struct {
+		name string
+		cfg  map[string]any
+		want string // the flag's value, or "" when it must not render
+	}{
+		{name: "0.33 lane", cfg: map[string]any{"vllmVersion": "0.33.0", "prefillScheduleInterval": 4.0}, want: "4"},
+		{name: "default of 1 renders nothing", cfg: map[string]any{"vllmVersion": "0.33.0", "prefillScheduleInterval": 1.0}},
+		{name: "unset", cfg: map[string]any{"vllmVersion": "0.33.0"}},
+		// ValidateVLLMConfig refuses these two; the renderer still must not
+		// emit a flag the server may not have.
+		{name: "0.32 lane", cfg: map[string]any{"vllmVersion": "0.32.0", "prefillScheduleInterval": 4.0}},
+		{name: "no declared release", cfg: map[string]any{"prefillScheduleInterval": 4.0}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			args := b.Args(&ModelSpec{Model: "test-model", Config: tt.cfg})
+			got := ""
+			for i := 0; i < len(args)-1; i++ {
+				if args[i] == "--prefill-schedule-interval" {
+					got = args[i+1]
+				}
+			}
+			if got != tt.want {
+				t.Fatalf("--prefill-schedule-interval = %q, want %q (args %v)", got, tt.want, args)
+			}
+		})
 	}
 }
