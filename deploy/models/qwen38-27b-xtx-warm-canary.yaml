@@ -144,6 +144,9 @@
 #   The roll row measures both.
 # Rollback: revert this commit (51afd0d3 without the flag; the image is
 # prewarmed on the node and the stock tuning table is untouched).
+# LIVE 2026-11-25 03:28Z (!1446): Ready 2 min 17 s after the pod started, no
+# restart, decode 66.6 / 58.5 / 47.9 / 38.5 tok/s at 2K / 16K / 64K / 120K;
+# the roll row passed. Rollback is now a revert of !1446.
 apiVersion: ai.flexinfer/v1alpha2
 kind: Model
 metadata:
@@ -177,7 +180,7 @@ metadata:
     # lane's budget (!1182/!1183).
     flexinfer.ai/lane-first-byte-budget: "900s"
     flexinfer.ai/promotion-state: promoted-128k-fp8-segmented-s7-mtp
-    flexinfer.ai/promotion-evidence: "canary qwen38-27b-128k-canary 2026-11-21 (row xtx-128k-fp8-segmented-s7-2026-11-21): 51afd0d3 vLLM 0.33, fp8 segmented + embed host + MTP K=2 at 131072, pool 159,599 tok (1.22x), decode 59.4/46.7/18.7 tok/s at 2K/16K/120K, cold TTFT 360 s at 119.5K, needle 1/1 33K-127K, 5/5 + depths 0/50/100 at 127K, pos0 0.81, 25-min soak clean; fp8 table kernel on 4e337e5e: canary qwen38-27b-fp8-lut-canary 2026-11-25 (row gfx1100-xtx-128k-fp8-lut-2026-11-24), decode 67.0/58.7/47.8/38.5 tok/s at 2K/16K/64K/120K against 61.6/45.5/28.2/18.8 the same day, pool 158,828 tok, cold TTFT 211 s at 119.5K, needle 1/1 at 67K and 127K, 5/5 at 127K, pos0 0.815; the lane's own roll is row gfx1100-xtx-128k-lane-fp8-lut-2026-11-25"
+    flexinfer.ai/promotion-evidence: "canary qwen38-27b-128k-canary 2026-11-21 (row xtx-128k-fp8-segmented-s7-2026-11-21): 51afd0d3 vLLM 0.33, fp8 segmented + embed host + MTP K=2 at 131072, pool 159,599 tok (1.22x), decode 59.4/46.7/18.7 tok/s at 2K/16K/120K, cold TTFT 360 s at 119.5K, needle 1/1 33K-127K, 5/5 + depths 0/50/100 at 127K, pos0 0.81, 25-min soak clean; fp8 table kernel on 4e337e5e: canary qwen38-27b-fp8-lut-canary 2026-11-25 (row gfx1100-xtx-128k-fp8-lut-2026-11-24), decode 67.0/58.7/47.8/38.5 tok/s at 2K/16K/64K/120K against 61.6/45.5/28.2/18.8 the same day, pool 158,828 tok, cold TTFT 211 s at 119.5K, needle 1/1 at 67K and 127K, 5/5 at 127K, pos0 0.815; lane roll 2026-11-25 (row gfx1100-xtx-128k-lane-fp8-lut-2026-11-25): Ready in 2 min 17 s with the seeded tuning table, decode 66.6/58.5/47.9/38.5 tok/s, pool 158,828 tok, needles and tool calls pass, two 67K prompts side by side recall 1/1, 30-min hold clean"
 spec:
   backend: vllm
   # 2026-09-13 (issue #74 S2, vLLM currency): this lane is the qualification
