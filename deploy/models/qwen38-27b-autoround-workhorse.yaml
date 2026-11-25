@@ -342,7 +342,17 @@ spec:
     # 2026-11-22 (64K): cap a long prefill at 1664 tokens (four 416-token
     # blocks) per step, so short requests are not stuck behind a 64K cold
     # prefill (the 128K canary: 338-432 s without the cap, 6-66 s with it).
-    longPrefillTokenThreshold: 1664
+    # 2026-11-24 (WINDOW-GATED trial, row
+    # gfx1100-5930k-workhorse-prefill-cap-416-2026-11-24): 1664 -> 416, one
+    # state block. While a long prompt prefills, a request on the other slot
+    # gets one stream chunk per engine step, and a 1664-token chunk at 56K
+    # depth is ~1.8 s, so it decodes at ~1.3 tok/s and holds the slot. A
+    # 416-token chunk should cut the step to ~0.5 s. vLLM applies the cap only
+    # while another request is running or waiting, so a solo prompt keeps the
+    # full 4096-token step. Chunk ends align to the 416-token block: 832 and
+    # 416 keep every contended chunk on a boundary (a smaller cap is legal,
+    # the scheduler re-aligns at the next boundary). Rollback = 1664.
+    longPrefillTokenThreshold: 416
     # 2026-11-22 (64K): the engine-stall detector reads a long prefill as
     # frozen counters; 64K cold prefills run ~2-3 min here, under load longer.
     # Controller fix !1381 (KV growth counts as progress) is not live yet.
