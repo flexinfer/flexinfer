@@ -125,7 +125,18 @@ spec:
   # this posture; the XTX 128K lane on it read +17.8 % at 2K. Not bit-identical
   # to vLLM's kernel. Rollback = 51afd0d3 (prewarmed) without the env key and
   # the compile-cache-qwen38-27b-v033-5930k base.
-  image: registry.harbor.lan/flexinfer/runtime@sha256:1a2dd85c9bcd17f75c80fe8ba8649e81cb96038ca247f2469e5167db799758c0
+  # 2026-11-25 prefill-scheduler trial (LIVE-IMPACTING, WINDOW-GATED; row
+  # gfx1100-5930k-workhorse-prefill-sched-2026-11-25): pinned-56367fb1b4db
+  # (rocm-gfx1100-serving-v033-1d448a25), the same vLLM 0.33.0-rocm72 with
+  # plugin-common 0.8.0, which carries the scheduler patch the two
+  # FLEXINFER_PREFILL_* variables below turn on. Against 1a2dd85c the build
+  # also moves Go 1.26.10 -> 1.26.11 and the weight-kernel plugin 0.1.0 ->
+  # 0.1.1 (its boot line goes to stdout; the kernel is the same). The XTX
+  # canary ran this lane's posture on this digest: same parity hashes, same
+  # tuned-table key, so the boot here should be warm. Not prewarmed on the
+  # 5930k: the roll pulls the plugin layers on top of the resident vLLM base.
+  # Rollback = 1a2dd85c (prewarmed) without the two variables, same cache.
+  image: registry.harbor.lan/flexinfer/runtime@sha256:56367fb1b4db1f11b96dd34402946764da9d3db191e8258498c07ec17971d58e
   source: HF://biMEMO/Qwen3.8-27B-int4-AutoRound
   # D4 (KT-SO): renders --structured-outputs-config {"backend":"auto"} once the
   # gfx1100 GPUProfile certifies exactly this digest (Draft !1303, re-targeted
@@ -244,6 +255,19 @@ spec:
       FLEXINFER_EMBED_HOST: "1"
       # 2026-11-23: the dot2 RDNA3 W4A16 GEMM (see the image comment).
       FLEXINFER_RDNA3_W4A16: dot2
+      # 2026-11-25 trial (row gfx1100-5930k-workhorse-prefill-sched-2026-11-25).
+      # A 2K request beside a 56K prefill waited 8-10 s for its first token:
+      # about half behind one uncapped 3,744-token step of the long prompt
+      # (vLLM drops the cap while a request is alone, and schedules one step
+      # ahead), about half in its own five 416-token steps. SOLO_CAP caps a
+      # lone prompt at two state blocks a step; CAP_EXEMPT lets a prompt with
+      # at most five blocks left skip the cap. XTX canary: 9.28 s -> 4.86 s,
+      # and 10.79 s -> 4.68 s for a request that arrives while the long prompt
+      # is alone. Cost there: a long prompt's first token 12-13 % later while
+      # short requests keep arriving, 6.6 % later alone. Values are whole
+      # multiples of the 416-token block. Rollback = drop both keys.
+      FLEXINFER_PREFILL_SOLO_CAP: "832"
+      FLEXINFER_PREFILL_CAP_EXEMPT: "2080"
     # 2026-10-30 placement layout: ondemand -> primary. The lane is the group's
     # designated tenant and reclaims the card if anything ever holds it (an
     # operator activation, a forcePromotion canary). Controller-only key: it
